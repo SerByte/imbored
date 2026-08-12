@@ -21,6 +21,9 @@ export function Footer() {
           <Link href="/compat" className="hover:text-ink transition-colors">
             Совместимость
           </Link>
+          <Link href="/privacy" className="hover:text-ink transition-colors">
+            Конфиденциальность
+          </Link>
         </nav>
       </div>
     </footer>
