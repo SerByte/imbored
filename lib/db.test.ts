@@ -10,6 +10,7 @@ import {
   getAllGamesMeta,
   getGameJson,
   getGameMeta,
+  getGamesMeta,
   getLatestSnapshot,
   getRoom,
   getStaleAppids,
@@ -109,6 +110,24 @@ describe('db', () => {
     expect(all.size).toBe(2)
     expect(all.get(620)?.name).toBe('Portal 2')
     expect(all.get(730)?.name).toBe('CS2')
+  })
+
+  test('выборка по списку не упирается в лимит параметров SQLite', async () => {
+    // Библиотека на несколько тысяч игр — обычное дело в Steam, а один
+    // плейсхолдер на игру упирается в потолок переменных SQLite
+    const db = await freshDb()
+    const appids = Array.from({ length: 2500 }, (_, i) => 1000 + i)
+    await upsertGameMeta(db, { ...META, appid: 1000, name: 'Первая' }, NOW)
+    await upsertGameMeta(db, { ...META, appid: 3499, name: 'Последняя' }, NOW)
+
+    const metas = await getGamesMeta(db, appids)
+    expect(metas.get(1000)?.name).toBe('Первая')
+    expect(metas.get(3499)?.name).toBe('Последняя')
+    expect(metas.size).toBe(2)
+
+    const stale = await getStaleAppids(db, appids, 14 * 86_400, NOW)
+    expect(stale).toHaveLength(2498)
+    expect(stale).not.toContain(1000)
   })
 
   test('setGameJson с невалидной колонкой бросает, а не строит SQL', async () => {
