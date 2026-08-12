@@ -37,17 +37,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ steamid: strin
     metaOf,
     extraPool: [...metas.values()].filter((m) => Object.keys(m.tags).length > 0),
     limit: 3,
-  }).map((c) => ({
-    ...c,
-    headerImage:
-      c.headerImage ??
-      (c.appid > 0
-        ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${c.appid}/header.jpg`
-        : null),
-  }))
+  })
 
+  // Ссылку на арт не угадываем шаблоном — путь Steam контент-адресуемый.
+  // Отдаём то, что резолвлено в базе, остальное доберёт GameArt на клиенте.
   return NextResponse.json({
     ...compat,
+    commonGames: compat.commonGames.map((g) => ({
+      ...g,
+      headerImage: metaOf(g.appid)?.headerImage ?? null,
+    })),
     playTogether,
     myName: nameOf(me, myName),
     otherName: nameOf(otherRaw, otherName),

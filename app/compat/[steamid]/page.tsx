@@ -3,11 +3,18 @@
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { GameArt } from '@/components/GameArt'
 import { STORE_LABEL } from '@/lib/stores'
 
 type CompatData = {
   percent: number
-  commonGames: Array<{ appid: number; name: string; hoursA: number; hoursB: number }>
+  commonGames: Array<{
+    appid: number
+    name: string
+    hoursA: number
+    hoursB: number
+    headerImage: string | null
+  }>
   sharedTags: string[]
   playTogether: Array<{
     appid: number
@@ -30,10 +37,6 @@ function verdict(percent: number): string {
   if (percent >= 40) return 'Есть о чём поиграть вместе'
   if (percent >= 20) return 'Разные, но это даже интересно'
   return 'Противоположности. Притянетесь?'
-}
-
-function capsule(appid: number): string {
-  return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/capsule_231x87.jpg`
 }
 
 const RING_R = 84
@@ -167,20 +170,20 @@ export default function CompatResultPage() {
       {/* шапка: арт общих игр красит экран */}
       <section className="relative overflow-hidden">
         {artA && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${artA.appid}/header.jpg`}
-            alt=""
-            aria-hidden
+          <GameArt
+            appid={artA.appid}
+            name=""
+            headerImage={artA.headerImage}
+            fallback={null}
             className="absolute -left-10 -top-10 w-2/3 blur-3xl opacity-25 scale-125"
           />
         )}
         {artB && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${artB.appid}/header.jpg`}
-            alt=""
-            aria-hidden
+          <GameArt
+            appid={artB.appid}
+            name=""
+            headerImage={artB.headerImage}
+            fallback={null}
             className="absolute -right-10 top-20 w-2/3 blur-3xl opacity-20 scale-125"
           />
         )}
@@ -224,12 +227,11 @@ export default function CompatResultPage() {
                   href={`/game/${g.appid}`}
                   className="glass glass-hover rounded-[14px] p-2 pr-4 flex items-center gap-3"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={capsule(g.appid)}
-                    alt=""
-                    loading="lazy"
-                    className="h-12 w-auto rounded-[8px] border border-edge"
+                  <GameArt
+                    appid={g.appid}
+                    name={g.name}
+                    headerImage={g.headerImage}
+                    className="h-12 w-[104px] object-cover rounded-[8px] border border-edge"
                   />
                   <span className="font-semibold text-sm flex-1">{g.name}</span>
                   <span className="font-mono text-xs text-dim shrink-0">
@@ -251,14 +253,12 @@ export default function CompatResultPage() {
                   href={`/game/${c.appid}`}
                   className="glass glass-hover rounded-[14px] overflow-hidden"
                 >
-                  {c.headerImage ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={c.headerImage} alt="" className="w-full aspect-[460/215] object-cover" />
-                  ) : (
-                    <div className="w-full aspect-[460/215] flex items-center justify-center bg-white/5 font-bold px-2 text-center text-sm">
-                      {c.name}
-                    </div>
-                  )}
+                  <GameArt
+                    appid={c.appid}
+                    name={c.name}
+                    headerImage={c.headerImage}
+                    className="w-full aspect-[460/215] object-cover"
+                  />
                   <div className="p-3">
                     <div className="text-sm font-semibold leading-tight">{c.name}</div>
                     <div className="text-[11px] text-dim mt-1">

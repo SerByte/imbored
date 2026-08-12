@@ -3,16 +3,16 @@
  * под тёмным скримом. Арт — главный цвет бренда; UI остаётся тихим.
  */
 
+import { legacyHeaderUrl } from '@/lib/art'
+
 const COLLAGE_APPIDS = [
   [1245620, 1091500, 292030, 1086940, 632470, 753640],
   [1145360, 548430, 367520, 504230, 588650, 427520],
   [570, 730, 413150, 105600, 892970, 646570],
 ]
 
-function headerUrl(appid: number): string {
-  return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`
-}
-
+// Список зафиксирован и состоит из давних игр, у которых плоский путь ещё живой,
+// поэтому здесь хватает шаблона без резолва — но хост общий, из lib/art.
 export function CinemaCollage() {
   return (
     <div aria-hidden className="absolute inset-0 overflow-hidden pointer-events-none select-none">
@@ -27,7 +27,7 @@ export function CinemaCollage() {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   key={`${appid}-${j}`}
-                  src={headerUrl(appid)}
+                  src={legacyHeaderUrl(appid)}
                   alt=""
                   loading={j < 6 ? 'eager' : 'lazy'}
                   className="w-full rounded-[14px] object-cover aspect-[460/215]"

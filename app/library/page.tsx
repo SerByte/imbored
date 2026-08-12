@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { feedbackStats, getAllGamesMeta, getLatestSnapshot } from '@/lib/db'
+import { GameArt } from '@/components/GameArt'
+import { WarmCatalog } from '@/components/WarmCatalog'
+import { feedbackStats, getGamesMeta, getLatestSnapshot } from '@/lib/db'
 import { classifyLibraryGame, type LibraryGameState } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
@@ -27,12 +29,20 @@ export default async function LibraryPage() {
   const totalHours = Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   const unplayed = games.filter((g) => classifyLibraryGame(g, now) === 'unplayed').length
 
-  const metas = await getAllGamesMeta(db)
+  // Только игры библиотеки, а не весь каталог: нужны обложки для сетки и
+  // цена бэклога, и то и другое считается по своим играм
+  const metas = await getGamesMeta(
+    db,
+    games.map((g) => g.appid),
+  )
   const backlog = backlogValue(games, (id) => metas.get(id), now)
   const stats = await feedbackStats(db, steamid)
+  // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
+  const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
 
   return (
     <div className="flex-1 mx-auto w-full max-w-6xl px-5 pt-28 pb-16">
+      <WarmCatalog enabled={missingArt > 0} />
       <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
         <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
           Твоя библиотека глазами сервиса
@@ -98,11 +108,10 @@ export default async function LibraryPage() {
                 state === 'comeback' ? 'opacity-75 hover:opacity-100' : ''
               }`}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/header.jpg`}
-                alt=""
-                loading="lazy"
+              <GameArt
+                appid={g.appid}
+                name={g.name}
+                headerImage={metas.get(g.appid)?.headerImage ?? null}
                 className="w-full aspect-[460/215] object-cover"
               />
               <div className="p-3">

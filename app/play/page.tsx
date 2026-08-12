@@ -3,6 +3,8 @@
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { GameArt } from '@/components/GameArt'
+import { HeroArt } from '@/components/HeroArt'
 import { LogoMark } from '@/components/Logo'
 import { STORE_LABEL } from '@/lib/stores'
 import type { Mood } from '@/lib/types'
@@ -43,38 +45,6 @@ const SKIP_REASONS: Array<{ key: string; label: string }> = [
 
 const COZY_TAGS = ['Casual', 'Relaxing', 'Cozy', 'Wholesome', 'Puzzle', 'Farming Sim']
 const BURNOUT_AFTER_SKIPS = 5
-
-function heroUrl(pick: Pick): string | null {
-  if (pick.appid > 0)
-    return `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${pick.appid}/library_hero.jpg`
-  return pick.headerImage
-}
-
-function HeroArt({ pick }: { pick: Pick }) {
-  const [src, setSrc] = useState(heroUrl(pick))
-  useEffect(() => setSrc(heroUrl(pick)), [pick])
-  if (!src) {
-    return (
-      <div
-        aria-hidden
-        className="absolute inset-0"
-        style={{
-          background:
-            'radial-gradient(60% 50% at 70% 20%, rgba(255,158,100,0.16), transparent 70%), radial-gradient(50% 45% at 20% 80%, rgba(100,140,255,0.10), transparent 70%)',
-        }}
-      />
-    )
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt=""
-      onError={() => setSrc(src !== pick.headerImage ? pick.headerImage : null)}
-      className="absolute inset-0 h-full w-full object-cover anim-kenburns"
-    />
-  )
-}
 
 function weightedRandomIndex(length: number, exclude?: number): number {
   // ранние (лучше отранжированные) позиции весят больше
@@ -267,7 +237,7 @@ function Player() {
         key={pick.appid}
         className="media-dark relative min-h-[78vh] flex items-end overflow-hidden anim-reveal"
       >
-        <HeroArt pick={pick} />
+        <HeroArt appid={pick.appid} headerImage={pick.headerImage} name={pick.name} />
         <div
           aria-hidden
           className="absolute inset-0"
@@ -447,14 +417,12 @@ function Player() {
                 className="glass glass-hover rounded-[14px] overflow-hidden text-left anim-rise cursor-pointer"
                 style={{ animationDelay: `${i * 60}ms` }}
               >
-                {p.headerImage ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.headerImage} alt="" className="w-full aspect-[460/215] object-cover" />
-                ) : (
-                  <div className="w-full aspect-[460/215] flex items-center justify-center bg-white/5 text-ink font-bold text-lg px-3 text-center">
-                    {p.name}
-                  </div>
-                )}
+                <GameArt
+                  appid={p.appid}
+                  name={p.name}
+                  headerImage={p.headerImage}
+                  className="w-full aspect-[460/215] object-cover"
+                />
                 <div className="p-3">
                   <div className="text-sm font-semibold leading-tight">{p.name}</div>
                   <div className="text-[11px] text-dim mt-1">

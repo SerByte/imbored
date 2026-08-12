@@ -1,8 +1,9 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { GameArt } from '@/components/GameArt'
 import { Wordmark } from '@/components/Wordmark'
 import {
-  getAllGamesMeta,
+  getGamesMeta,
   getLatestSnapshot,
   getPersonaName,
   getUserPortrait,
@@ -49,7 +50,11 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     )
   }
 
-  const metas = await getAllGamesMeta(db)
+  // Портрет строится по библиотеке игрока — весь каталог для этого не нужен
+  const metas = await getGamesMeta(
+    db,
+    snapshot.games.map((g) => g.appid),
+  )
   const portrait = buildPortrait(snapshot.games, (id) => metas.get(id))
   const name = (await getPersonaName(db, steamid)) ?? `Игрок ${steamid.slice(-4)}`
 
@@ -74,11 +79,11 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   return (
     <div className="flex-1 relative overflow-hidden">
       {topArt && topArt > 0 && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${topArt}/header.jpg`}
-          alt=""
-          aria-hidden
+        <GameArt
+          appid={topArt}
+          name=""
+          headerImage={metas.get(topArt)?.headerImage ?? null}
+          fallback={null}
           className="absolute -top-16 left-1/2 -translate-x-1/2 w-[120%] blur-3xl opacity-20"
         />
       )}

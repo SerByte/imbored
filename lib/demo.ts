@@ -1,3 +1,4 @@
+import { legacyHeaderUrl } from './art'
 import { getGameMeta, saveLibrarySnapshot, upsertGameMeta, upsertUser, type Db } from './db'
 import { seedOtherStores } from './otherstores'
 import type { GameMeta, LibraryGame } from './types'
@@ -25,7 +26,7 @@ function meta(
     genres: [],
     categories,
     shortDescription,
-    headerImage: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
+    headerImage: legacyHeaderUrl(appid),
     ...(priceFinal !== undefined ? { priceFinal } : {}),
   }
 }

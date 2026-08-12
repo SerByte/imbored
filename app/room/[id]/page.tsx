@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { GameArt } from '@/components/GameArt'
 import { LogoMark } from '@/components/Logo'
 import { STORE_LABEL } from '@/lib/stores'
 
@@ -134,15 +135,13 @@ export default function RoomPage() {
     const g = state.matchedGame
     return (
       <div className="media-dark relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
-        {g.headerImage && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={g.headerImage}
-            alt=""
-            aria-hidden
-            className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
-          />
-        )}
+        <GameArt
+          appid={g.appid}
+          name=""
+          headerImage={g.headerImage}
+          fallback={null}
+          className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
+        />
         <div
           aria-hidden
           className="absolute inset-0"
@@ -152,14 +151,13 @@ export default function RoomPage() {
           <LogoMark size={56} happy />
           <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">Это матч!</h1>
           <p className="text-dim">Все в комнате хотят играть в одно и то же:</p>
-          {g.headerImage && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={g.headerImage}
-              alt={g.name}
-              className="w-full max-w-md rounded-[20px] border border-edge"
-            />
-          )}
+          <GameArt
+            appid={g.appid}
+            name={g.name}
+            headerImage={g.headerImage}
+            fallback={null}
+            className="w-full max-w-md rounded-[20px] border border-edge"
+          />
           <div className="text-2xl font-bold">{g.name}</div>
           {g.storeUrl ? (
             <a
@@ -294,14 +292,12 @@ export default function RoomPage() {
         </div>
       ) : card ? (
         <div key={card.appid} className="glass rounded-[20px] overflow-hidden anim-reveal">
-          {card.headerImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={card.headerImage} alt="" className="w-full aspect-[460/215] object-cover" />
-          ) : (
-            <div className="w-full aspect-[460/215] flex items-center justify-center bg-white/5 text-2xl font-bold px-6 text-center">
-              {card.name}
-            </div>
-          )}
+          <GameArt
+            appid={card.appid}
+            name={card.name}
+            headerImage={card.headerImage}
+            className="w-full aspect-[460/215] object-cover"
+          />
           <div className="p-6 flex flex-col gap-3">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <h2 className="text-2xl font-bold tracking-tight">{card.name}</h2>

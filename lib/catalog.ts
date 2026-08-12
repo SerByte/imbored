@@ -1,3 +1,4 @@
+import { parseStoreAssets, type StoreAssets } from './art'
 import { getGameMeta, getStaleAppids, upsertGameMeta, type Db } from './db'
 import { pace } from './pace'
 import type { GameMeta } from './types'
@@ -53,6 +54,103 @@ export function parseSteamSpyTags(json: unknown): Record<string, number> {
   return out
 }
 
+/* ---------- IStoreBrowseService/GetItems ---------- */
+
+/**
+ * Основной источник метаданных: работает без ключа, берёт до 200 appid за запрос
+ * и в одном ответе отдаёт теги с весами, категории, описание, отзывы и — главное —
+ * настоящие ссылки на арт. Заменяет SteamSpy (он отдаёт 403 с серверных IP)
+ * и поштучный appdetails (1 игра на запрос при лимите ~200 запросов / 5 минут).
+ */
+
+type StoreItem = {
+  id?: number
+  appid?: number
+  name?: string
+  visible?: boolean
+  tags?: Array<{ tagid?: number; weight?: number }>
+  categories?: { supported_player_categoryids?: number[] }
+  basic_info?: {
+    short_description?: string
+    developers?: Array<{ name?: string }>
+    publishers?: Array<{ name?: string }>
+    franchises?: Array<{ name?: string }>
+  }
+  assets?: StoreAssets
+  release?: { steam_release_date?: number }
+  is_free?: boolean
+  best_purchase_option?: { final_price_in_cents?: string }
+}
+
+/** Словарь Steam: числовой tagid -> человеческое имя тега. */
+export function parseTagDictionary(json: unknown): Map<number, string> {
+  const out = new Map<number, string>()
+  if (!Array.isArray(json)) return out
+  for (const row of json) {
+    const tagid = (row as { tagid?: unknown })?.tagid
+    const name = (row as { name?: unknown })?.name
+    if (typeof tagid === 'number' && typeof name === 'string') out.set(tagid, name)
+  }
+  return out
+}
+
+function isoDate(unixSec: number): string {
+  return new Date(unixSec * 1000).toISOString().slice(0, 10)
+}
+
+export function parseStoreItems(json: unknown, tagNames: Map<number, string>): GameMeta[] {
+  const items = (json as { response?: { store_items?: StoreItem[] } })?.response?.store_items
+  if (!Array.isArray(items)) return []
+
+  const out: GameMeta[] = []
+  for (const it of items) {
+    const appid = it.appid ?? it.id
+    // Несуществующий appid приходит как visible:false с пустым именем — это не ошибка батча.
+    if (!appid || !it.visible || !it.name) continue
+
+    const tags: Record<string, number> = {}
+    for (const t of it.tags ?? []) {
+      if (typeof t.tagid !== 'number' || typeof t.weight !== 'number') continue
+      const name = tagNames.get(t.tagid)
+      if (name) tags[name] = t.weight
+    }
+
+    const meta: GameMeta = {
+      appid,
+      name: it.name,
+      tags,
+      genres: [],
+      categories: it.categories?.supported_player_categoryids ?? [],
+    }
+    if (it.basic_info?.short_description) meta.shortDescription = it.basic_info.short_description
+    const art = parseStoreAssets(it.assets)[0]
+    if (art) meta.headerImage = art
+    if (it.is_free !== undefined) meta.isFree = it.is_free
+    const cents = Number(it.best_purchase_option?.final_price_in_cents)
+    if (Number.isFinite(cents)) meta.priceFinal = cents
+    if (it.release?.steam_release_date) meta.releaseDate = isoDate(it.release.steam_release_date)
+    out.push(meta)
+  }
+  return out
+}
+
+/**
+ * Свежие данные побеждают, но накопленное не теряется: GetItems не отдаёт
+ * скриншоты, жанры и медиану наигранного, а `upsertGameMeta` перезаписывает
+ * строку целиком — без слияния лёгкий ответ стёр бы уже загруженное.
+ */
+export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta): GameMeta {
+  if (!existing) return fresh
+  const out: GameMeta = { ...existing, ...fresh }
+  if (!Object.keys(fresh.tags).length) out.tags = existing.tags
+  if (!fresh.genres.length) out.genres = existing.genres
+  if (!fresh.categories.length) out.categories = existing.categories
+  if (!fresh.screenshots?.length && existing.screenshots?.length) {
+    out.screenshots = existing.screenshots
+  }
+  return out
+}
+
 /* ---------- сетевые фетчеры с бережным темпом ---------- */
 
 const STORE_CC = process.env.STEAM_STORE_CC ?? 'us'
@@ -60,6 +158,66 @@ const FETCH_TIMEOUT_MS = 10_000
 // ~200 запросов/5 мин на store.steampowered.com => >=1.7с между запросами
 export const STORE_PACE_MS = 1700
 const STEAMSPY_PACE_MS = 1100
+
+/** GetItems берёт до 200 appid за запрос; замерено 200 штук за ~7 секунд. */
+export const STORE_ITEMS_BATCH = 200
+const STORE_API_PACE_MS = 400
+const TAG_DICT_TTL_SEC = 24 * 3600
+
+let tagDictCache: { at: number; map: Map<number, string> } | null = null
+
+/**
+ * Словарь тегов Steam. Берём английский: ключи тегов используются в скоринге
+ * (VIBE_TAGS, HARDCORE_TAGS в lib/recommend.ts) и в портрете, они английские.
+ */
+export async function fetchTagDictionary(fetchFn: typeof fetch = fetch): Promise<Map<number, string>> {
+  const now = Math.floor(Date.now() / 1000)
+  if (tagDictCache && now - tagDictCache.at < TAG_DICT_TTL_SEC) return tagDictCache.map
+  const res = await fetchFn('https://store.steampowered.com/tagdata/populartags/english', {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
+  if (!res.ok) throw new Error(`populartags: HTTP ${res.status}`)
+  const map = parseTagDictionary(await res.json())
+  if (map.size) tagDictCache = { at: now, map }
+  return map
+}
+
+/**
+ * Метаданные пачки игр одним запросом. Без ключа, до 200 appid за раз.
+ * Несуществующие appid не роняют батч — Valve помечает их visible:false.
+ */
+export async function fetchStoreItems(
+  appids: number[],
+  opts: { fetchFn?: typeof fetch; tagNames?: Map<number, string> } = {},
+): Promise<GameMeta[]> {
+  const positive = appids.filter((id) => id > 0)
+  if (!positive.length) return []
+  const { fetchFn = fetch } = opts
+  const tagNames = opts.tagNames ?? (await fetchTagDictionary(fetchFn))
+
+  const out: GameMeta[] = []
+  for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
+    const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
+    await pace('steam-api', STORE_API_PACE_MS)
+    const input = JSON.stringify({
+      ids: chunk.map((appid) => ({ appid })),
+      context: { language: 'english', country_code: STORE_CC.toUpperCase(), steam_realm: 1 },
+      data_request: {
+        include_assets: true,
+        include_basic_info: true,
+        include_categories: true,
+        include_release: true,
+        include_tag_count: 20,
+      },
+    })
+    const url = `https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(input)}`
+    const res = await fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+    // лимит/сбой — исключение, чтобы вызывающий не закэшировал неудачу как «данных нет»
+    if (!res.ok) throw new Error(`GetItems: HTTP ${res.status}`)
+    out.push(...parseStoreItems(await res.json(), tagNames))
+  }
+  return out
+}
 
 export async function fetchAppDetails(
   appid: number,
@@ -93,6 +251,31 @@ export async function fetchSteamSpyTags(
   }
 }
 
+/** Официальные чарты Steam: appid в порядке пикового онлайна. */
+export function parseMostPlayed(json: unknown): number[] {
+  const ranks = (json as { response?: { ranks?: Array<{ appid?: unknown }> } })?.response?.ranks
+  if (!Array.isArray(ranks)) return []
+  return ranks.map((r) => r.appid).filter((id): id is number => typeof id === 'number')
+}
+
+/**
+ * Топ-100 по онлайну. Работает без ключа и с серверных IP — в отличие от
+ * SteamSpy, который в 2026 отдаёт 403 на запросы из дата-центров.
+ */
+export async function fetchMostPlayed(fetchFn: typeof fetch = fetch): Promise<number[]> {
+  try {
+    await pace('steam-api', STORE_API_PACE_MS)
+    const res = await fetchFn(
+      'https://api.steampowered.com/ISteamChartsService/GetMostPlayedGames/v1/',
+      { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
+    )
+    if (!res.ok) return []
+    return parseMostPlayed(await res.json())
+  } catch {
+    return []
+  }
+}
+
 /** Популярные игры за 2 недели по SteamSpy — пул кандидатов «попробуй новое» */
 export async function fetchSteamSpyTop(
   fetchFn: typeof fetch = fetch,
@@ -123,37 +306,33 @@ const META_MAX_AGE_SEC = 14 * 86_400
 export async function ensureMeta(
   db: Db,
   appids: number[],
-  opts: { maxFetch?: number; withStore?: boolean; names?: Map<number, string>; fetchFn?: typeof fetch } = {},
+  opts: { maxFetch?: number; names?: Map<number, string>; fetchFn?: typeof fetch } = {},
 ): Promise<void> {
-  const { maxFetch = 30, withStore = false, names, fetchFn = fetch } = opts
+  const { maxFetch = STORE_ITEMS_BATCH, names, fetchFn = fetch } = opts
   const now = Math.floor(Date.now() / 1000)
   const stale = (await getStaleAppids(db, appids, META_MAX_AGE_SEC, now)).slice(0, maxFetch)
-  for (const appid of stale) {
-    try {
+  if (!stale.length) return
+
+  try {
+    const fresh = await fetchStoreItems(stale, { fetchFn })
+    const byAppid = new Map(fresh.map((m) => [m.appid, m]))
+    for (const appid of stale) {
       const existing = await getGameMeta(db, appid)
-      let meta: GameMeta | null = existing ? { ...existing } : null
-      if (withStore || !meta) {
-        const fresh = withStore ? await fetchAppDetails(appid, fetchFn) : null
-        if (fresh) {
-          // не терять уже накопленные теги, если store их не отдал
-          if (existing && !Object.keys(fresh.tags).length) fresh.tags = existing.tags
-          meta = fresh
-        } else if (!meta) {
-          meta = {
-            appid,
-            name: names?.get(appid) ?? `App ${appid}`,
-            tags: {},
-            genres: [],
-            categories: [],
-          }
-        }
+      const got = byAppid.get(appid)
+      if (got) {
+        await upsertGameMeta(db, mergeMeta(existing, got), now)
+      } else if (!existing) {
+        // Steam не показывает приложение (снято с продажи, региональное ограничение):
+        // ставим заглушку, чтобы не запрашивать его снова на каждом заходе
+        await upsertGameMeta(
+          db,
+          { appid, name: names?.get(appid) ?? `App ${appid}`, tags: {}, genres: [], categories: [] },
+          now,
+        )
       }
-      const tags = await fetchSteamSpyTags(appid, fetchFn)
-      if (Object.keys(tags).length) meta.tags = tags
-      await upsertGameMeta(db, meta, now)
-    } catch {
-      // сеть/лимиты: пропускаем без записи — updated_at не двигается,
-      // игра останется «протухшей» и догрузится в следующий раз
     }
+  } catch {
+    // сеть/лимиты: пропускаем без записи — updated_at не двигается,
+    // игры останутся «протухшими» и догрузятся в следующий раз
   }
 }

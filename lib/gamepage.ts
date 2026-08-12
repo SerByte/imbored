@@ -1,4 +1,4 @@
-import { fetchAppDetails, fetchSteamSpyTags } from './catalog'
+import { fetchAppDetails, fetchStoreItems, mergeMeta } from './catalog'
 import { getGameJson, getGameMeta, setGameJson, upsertGameMeta } from './db'
 import { claudeProsCons } from './llm'
 import { fetchReviews, heuristicProsCons, type ParsedReviews } from './reviews'
@@ -40,9 +40,10 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   if (!meta) return null
 
   if (!Object.keys(meta.tags).length) {
-    const tags = await fetchSteamSpyTags(appid).catch(() => ({}))
-    if (Object.keys(tags).length) {
-      meta.tags = tags
+    // SteamSpy отдаёт 403 с серверных IP — теги берём из GetItems
+    const [fromStore] = await fetchStoreItems([appid]).catch(() => [])
+    if (fromStore && Object.keys(fromStore.tags).length) {
+      meta = mergeMeta(meta, fromStore)
       await upsertGameMeta(db, meta, now)
     }
   }
