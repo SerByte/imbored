@@ -1,3 +1,4 @@
+import { Analytics } from '@vercel/analytics/next'
 import type { Metadata } from 'next'
 import { JetBrains_Mono, Onest } from 'next/font/google'
 import Link from 'next/link'
@@ -63,6 +64,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         </header>
         <main className="flex-1 flex flex-col">{children}</main>
         <Footer />
+        <Analytics />
       </body>
     </html>
   )
