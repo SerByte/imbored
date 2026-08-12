@@ -1,18 +1,33 @@
 'use client'
 
+import { AnimatePresence, motion } from 'motion/react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { FlapCode } from '@/components/FlapCode'
+import { Spinner } from '@/components/Spinner'
 
 type Listing = { id: string; memberNames: string[]; minutesAgo: number }
 
+type Board = { rooms: Listing[]; fresh: Set<string> }
+
 export default function RoomsBoardPage() {
-  const [rooms, setRooms] = useState<Listing[] | null>(null)
+  // Свежесть держим в состоянии рядом со списком, а не в ref: читать ref во
+  // время рендера нельзя, а знать «эта строка новая» нужно именно при рендере.
+  const [board, setBoard] = useState<Board | null>(null)
+  const rooms = board?.rooms ?? null
 
   useEffect(() => {
     const load = async () => {
       const res = await fetch('/api/rooms/public')
-      if (res.ok) setRooms(((await res.json()) as { rooms: Listing[] }).rooms)
+      if (!res.ok) return
+      const next = ((await res.json()) as { rooms: Listing[] }).rooms
+      setBoard((prev) => {
+        const known = new Set(prev?.rooms.map((r) => r.id) ?? [])
+        // На первой загрузке новыми считаются все — доска «прилетает» целиком.
+        const fresh = new Set(next.filter((r) => !known.has(r.id)).map((r) => r.id))
+        return { rooms: next, fresh }
+      })
     }
     void load()
     const t = setInterval(() => void load(), 5000)
@@ -44,29 +59,42 @@ export default function RoomsBoardPage() {
         </h2>
         {rooms === null ? (
           <div className="flex justify-center py-8">
-            <div className="h-8 w-8 rounded-full border-2 border-white/15 border-t-ember animate-spin" />
+            <Spinner size={32} />
           </div>
         ) : rooms.length === 0 ? (
           <div className="glass rounded-[20px] p-6 text-center text-dim text-sm">
             Сейчас открытых комнат нет. Создай свою и включи «показывать на доске» — сюда придут.
           </div>
         ) : (
-          rooms.map((r) => (
-            <Link
-              key={r.id}
-              href={`/room/${r.id}`}
-              className="glass glass-hover rounded-[20px] p-5 flex items-center justify-between gap-4"
-            >
-              <div>
-                <div className="font-mono font-bold text-ember">{r.id}</div>
-                <div className="text-sm text-dim mt-0.5">
-                  {r.memberNames.join(', ')} ·{' '}
-                  {r.minutesAgo < 1 ? 'только что' : `${r.minutesAgo} мин назад`}
-                </div>
-              </div>
-              <span className="text-sm text-ink shrink-0">Подсесть →</span>
-            </Link>
-          ))
+          <AnimatePresence initial={false} mode="popLayout">
+            {rooms.map((r) => (
+              <motion.div
+                key={r.id}
+                layout
+                initial={{ opacity: 0, y: -8, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: 'auto' }}
+                exit={{ opacity: 0, x: 8, height: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
+              >
+                <Link
+                  href={`/room/${r.id}`}
+                  className="glass glass-hover rounded-[20px] p-5 flex items-center justify-between gap-4"
+                >
+                  <div>
+                    {/* Створки только для строк, появившихся на ЭТОМ тике:
+                        иначе каждые 5 секунд вся доска — игровой автомат. */}
+                    <FlapCode code={r.id} animate={board?.fresh.has(r.id) ?? false} />
+                    <div className="text-sm text-dim mt-0.5">
+                      {r.memberNames.join(', ')} ·{' '}
+                      {r.minutesAgo < 1 ? 'только что' : `${r.minutesAgo} мин назад`}
+                    </div>
+                  </div>
+                  <span className="text-sm text-ink shrink-0">Подсесть →</span>
+                </Link>
+              </motion.div>
+            ))}
+          </AnimatePresence>
         )}
       </div>
       </div>

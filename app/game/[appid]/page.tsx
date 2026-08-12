@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { ProgressRing } from '@/components/ProgressRing'
+import { Screenshots } from '@/components/Screenshots'
 import { loadGamePage } from '@/lib/gamepage'
 import { STORE_LABEL } from '@/lib/stores'
 
@@ -65,16 +67,26 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           <div className="flex flex-col gap-4 anim-rise">
             <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{meta.name}</h1>
             {reviewsSummary && (
-              <div className="flex items-center gap-3 text-sm">
-                <span className="text-ember font-medium">
-                  {SCORE_RU[reviewsSummary.scoreDesc] ?? reviewsSummary.scoreDesc}
-                </span>
+              <div className="flex items-center gap-3.5 text-sm">
+                {/* Процент — это и есть содержание строки, а рисовался обычным
+                    текстом, хотя кольцо у приложения уже есть (на /compat). */}
                 {percent !== null && (
-                  <span className="font-mono text-dim">
-                    {percent}% из {(reviewsSummary.totalPositive + reviewsSummary.totalNegative).toLocaleString('ru-RU')}{' '}
-                    отзывов — за
-                  </span>
+                  <ProgressRing percent={percent} size={56} stroke={4} duration={800} />
                 )}
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-ember font-medium">
+                    {SCORE_RU[reviewsSummary.scoreDesc] ?? reviewsSummary.scoreDesc}
+                  </span>
+                  {percent !== null && (
+                    <span className="font-mono text-dim text-xs">
+                      из{' '}
+                      {(
+                        reviewsSummary.totalPositive + reviewsSummary.totalNegative
+                      ).toLocaleString('ru-RU')}{' '}
+                      отзывов — за
+                    </span>
+                  )}
+                </div>
               </div>
             )}
             {topTags.length > 0 && (
@@ -177,18 +189,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {meta.screenshots && meta.screenshots.length > 0 && (
           <section>
             <h2 className="text-sm font-medium text-dim mb-4">Скриншоты</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {meta.screenshots.slice(0, 6).map((s) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={s}
-                  src={s}
-                  alt=""
-                  loading="lazy"
-                  className="rounded-[14px] border border-edge w-full aspect-video object-cover"
-                />
-              ))}
-            </div>
+            <Screenshots images={meta.screenshots.slice(0, 6)} name={meta.name} />
           </section>
         )}
 

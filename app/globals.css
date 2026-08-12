@@ -10,6 +10,14 @@
   --glass-bg: rgba(18, 20, 26, 0.6);
   --header-fade: rgba(11, 12, 16, 0.85);
   color-scheme: dark;
+
+  /* Токены движения. Вся хореография звучит в одной тональности:
+     новые анимации берут длительности и кривую отсюда, а не из воздуха. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 180ms;
+  --dur-base: 320ms;
+  --dur-slow: 550ms;
+  --blur-reveal: 16px;
 }
 
 :root[data-theme="light"] {
@@ -67,11 +75,115 @@ body {
   border-color: color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
+/* Кнопки с магнитом сами владеют transform — оставляем glass-hover только рамку,
+   иначе два источника transform дерутся за один элемент. */
+.glass-hover.no-lift:hover {
+  transform: none;
+}
+
+/*
+ * Плёночное зерно. Помимо кино-ощущения лечит реальную проблему: у нас огромные
+ * плавные градиенты (скримы героя и коллажа), которые видимо полосят на 8-битных
+ * матрицах — а это большинство телефонов аудитории. Зерно — штатное лекарство.
+ * Ноль JS: работает внутри серверных компонентов.
+ */
+.grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-repeat: repeat;
+  background-size: 128px 128px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* На светлом фоне overlay-зерно грязнит — там оно должно быть почти незаметным. */
+:root[data-theme='light'] .grain {
+  opacity: 0.02;
+  mix-blend-mode: multiply;
+}
+
+/*
+ * Прогрессивная размывка: тот же blur, что в @keyframes reveal, только в
+ * пространстве, а не во времени. Арт остаётся ярким и просто уходит в мягкость
+ * под текстом — так делает настоящая киношная титульная карточка.
+ * Слои идут лесенкой, каждый со своей маской, — один backdrop-filter даёт
+ * равномерное пятно, а не градиент резкости.
+ */
+/*
+ * БЕЗ z-index. Полоса стоит в разметке после арта и скрима, но ПЕРЕД контентом,
+ * поэтому порядок в дереве уже даёт то, что нужно: она размывает арт и не
+ * трогает текст. С z-index: 1 она поднималась над контентом и размывала
+ * заголовок, причину и кнопки — то есть ровно то, ради читаемости чего её
+ * и ставили.
+ */
+.blur-band {
+  position: absolute;
+  inset-inline: 0;
+  pointer-events: none;
+}
+.blur-band > span {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.blur-band[data-dir='up'] > span:nth-child(1) {
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  mask-image: linear-gradient(to top, #000 0%, #000 20%, transparent 40%);
+}
+.blur-band[data-dir='up'] > span:nth-child(2) {
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  mask-image: linear-gradient(to top, transparent 10%, #000 30%, #000 45%, transparent 60%);
+}
+.blur-band[data-dir='up'] > span:nth-child(3) {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  mask-image: linear-gradient(to top, transparent 25%, #000 45%, #000 62%, transparent 78%);
+}
+.blur-band[data-dir='up'] > span:nth-child(4) {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  mask-image: linear-gradient(to top, transparent 42%, #000 62%, #000 80%, transparent 92%);
+}
+.blur-band[data-dir='up'] > span:nth-child(5) {
+  backdrop-filter: blur(var(--blur-reveal));
+  -webkit-backdrop-filter: blur(var(--blur-reveal));
+  mask-image: linear-gradient(to top, transparent 62%, #000 84%, #000 100%);
+}
+.blur-band[data-dir='down'] > span:nth-child(1) {
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
+}
+.blur-band[data-dir='down'] > span:nth-child(2) {
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  mask-image: linear-gradient(to bottom, transparent 10%, #000 30%, #000 45%, transparent 60%);
+}
+.blur-band[data-dir='down'] > span:nth-child(3) {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  mask-image: linear-gradient(to bottom, transparent 25%, #000 45%, #000 62%, transparent 78%);
+}
+.blur-band[data-dir='down'] > span:nth-child(4) {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  mask-image: linear-gradient(to bottom, transparent 42%, #000 62%, #000 80%, transparent 92%);
+}
+.blur-band[data-dir='down'] > span:nth-child(5) {
+  backdrop-filter: blur(var(--blur-reveal));
+  -webkit-backdrop-filter: blur(var(--blur-reveal));
+  mask-image: linear-gradient(to bottom, transparent 62%, #000 84%, #000 100%);
+}
+
 /* единственный оркестрованный момент: reveal выдачи */
 @keyframes reveal {
   from {
     opacity: 0;
-    filter: blur(16px);
+    filter: blur(var(--blur-reveal));
   }
   to {
     opacity: 1;
@@ -156,17 +268,149 @@ body {
   animation: pulse-dot 1.6s ease-in-out infinite;
 }
 
-/* кольцо процента совместимости */
-.ring-progress {
-  transition: stroke-dashoffset 1s ease-out;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .anim-reveal,
   .anim-rise,
   .anim-kenburns,
-  .anim-pulse-dot {
+  .anim-pulse-dot,
+  .anim-page-in {
     animation: none;
+  }
+
+  /* Пробелы, которые раньше не закрывались: карточки подпрыгивали
+     при явно выключенной анимации. */
+  .glass-hover:hover {
+    transform: none;
+  }
+  .anim-breathe {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Очень медленное «дыхание» ambient-фона на экранах ожидания.
+   12 с — на грани заметности: комната дышит, а не мигает. */
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+.anim-breathe {
+  animation: breathe 12s ease-in-out infinite;
+}
+
+/*
+ * Стена библиотеки: сотни обложек разом — это шум, в котором не видно ничего.
+ * Обесцвечиваем в покое и возвращаем цвет тому, на что смотрят. По сути это
+ * цветовое правило дизайна («вся насыщенность — от арта») превращённое во
+ * взаимодействие: цвет достаётся ровно одной игре за раз.
+ *
+ * Ноль JS: /library остаётся серверным компонентом, на сетке в 1000 элементов
+ * не появляется ни одного обработчика.
+ *
+ * Только там, где есть настоящий hover. На тач-устройствах обесцвеченная стена
+ * была бы состоянием, из которого пользователь не может выйти.
+ */
+@media (hover: hover) and (pointer: fine) {
+  .library-tile img {
+    filter: saturate(0.35) contrast(1.04);
+    transition: filter 0.2s ease;
+  }
+  .library-tile:hover img,
+  .library-tile:focus-within img {
+    filter: saturate(1) contrast(1);
+  }
+}
+
+/* Тысяча карточек: не считать раскладку и не растрировать то, что за экраном. */
+.library-tile {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+}
+
+/* Тёплое пятно под курсором — см. components/SpotlightCard.tsx */
+.spotlight {
+  position: relative;
+  --on: 0;
+}
+.spotlight::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: var(--on);
+  transition: opacity 0.25s ease;
+  background: radial-gradient(
+    280px circle at var(--mx, 50%) var(--my, 50%),
+    rgba(255, 158, 100, 0.1),
+    transparent 70%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight::before {
+    transition: none;
+  }
+}
+
+
+/* Шов между экранами — тихий и на CSS, см. комментарий в app/template.tsx */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * Намеренно БЕЗ fill-mode. С `both` элемент до старта анимации держит кадр
+ * `from`, то есть opacity: 0 — и если анимация почему-то не стартует (скрытая
+ * вкладка, приостановленная композиция, сбой), страница остаётся пустой.
+ * Без fill-mode базовое состояние — обычное, видимое: анимация может только
+ * добавить проявление, но не может спрятать контент.
+ */
+.anim-page-in {
+  animation: page-in var(--dur-fast) var(--ease-out);
+}
+
+/*
+ * Единственный загрузчик приложения (раньше эта верстка была скопирована шесть раз).
+ * При выключенной анимации показывает цельное кольцо, а не замерший огрызок дуги:
+ * остановленный спиннер читается как «зависло», а не как «выключено».
+ */
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  border-radius: 9999px;
+  border: 2px solid var(--edge);
+  border-top-color: var(--ember);
+  animation: spinner-rotate 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    border-color: color-mix(in srgb, var(--ember) 50%, var(--edge));
   }
 }
 

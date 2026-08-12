@@ -3,6 +3,8 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useState } from 'react'
 import { CinemaCollage } from '@/components/CinemaCollage'
+import { ClickSpark } from '@/components/ClickSpark'
+import { Magnet } from '@/components/Magnet'
 import { Wordmark } from '@/components/Wordmark'
 
 const ERROR_TEXT: Record<string, string> = {
@@ -104,13 +106,18 @@ function Landing() {
             placeholder="Ссылка на твой Steam-профиль или ник"
             className="w-full rounded-[14px] bg-white/5 border border-edge px-4 py-3 text-ink placeholder:text-dim/70 outline-none focus:border-ember/60 transition-colors"
           />
-          <button
-            onClick={() => connect(false)}
-            disabled={!input || busy !== null}
-            className="w-full rounded-[14px] bg-ember text-bg font-semibold py-3 disabled:opacity-40 hover:brightness-110 transition"
-          >
-            {busy === 'connect' ? 'Читаю библиотеку…' : 'Подобрать игру'}
-          </button>
+          {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
+          <Magnet className="block w-full">
+            <ClickSpark className="block w-full">
+              <button
+                onClick={() => connect(false)}
+                disabled={!input || busy !== null}
+                className="w-full rounded-[14px] bg-ember text-bg font-semibold py-3 disabled:opacity-40 hover:brightness-110 transition cursor-pointer"
+              >
+                {busy === 'connect' ? 'Читаю библиотеку…' : 'Подобрать игру'}
+              </button>
+            </ClickSpark>
+          </Magnet>
           <div className="flex items-center gap-3 text-xs text-dim/70">
             <div className="h-px flex-1 bg-edge" />
             или

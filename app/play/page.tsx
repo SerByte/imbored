@@ -1,11 +1,20 @@
 'use client'
 
+import { AnimatePresence, motion } from 'motion/react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Ambient } from '@/components/Ambient'
+import { BlurBand } from '@/components/BlurBand'
+import { ClickSpark } from '@/components/ClickSpark'
 import { GameArt } from '@/components/GameArt'
+import { Magnet } from '@/components/Magnet'
 import { HeroArt } from '@/components/HeroArt'
 import { LogoMark } from '@/components/Logo'
+import { ProgressRing } from '@/components/ProgressRing'
+import { SpinWheel } from '@/components/SpinWheel'
+import { SplitHeading } from '@/components/SplitHeading'
+import { Spinner } from '@/components/Spinner'
 import { STORE_LABEL } from '@/lib/stores'
 import type { Mood } from '@/lib/types'
 
@@ -46,6 +55,47 @@ const SKIP_REASONS: Array<{ key: string; label: string }> = [
 const COZY_TAGS = ['Casual', 'Relaxing', 'Cozy', 'Wholesome', 'Puzzle', 'Farming Sim']
 const BURNOUT_AFTER_SKIPS = 5
 
+const EASE = [0.22, 1, 0.36, 1] as const
+
+/**
+ * Смена героя. Направление кодирует, ЧТО произошло: «дальше» уводит текущую
+ * игру влево (движение по ленте), выбор из «Ещё вариантов» поднимает новую
+ * снизу — оттуда, где на неё нажали. Раньше оба случая выглядели одинаково.
+ */
+const HERO = {
+  enter: (d: 'next' | 'pick') => ({
+    opacity: 0,
+    x: d === 'next' ? 64 : 0,
+    y: d === 'pick' ? 48 : 0,
+    filter: 'blur(12px)',
+  }),
+  center: {
+    opacity: 1,
+    x: 0,
+    y: 0,
+    filter: 'blur(0px)',
+    transition: { duration: 0.55, ease: EASE },
+  },
+  exit: (d: 'next' | 'pick') => ({
+    opacity: 0,
+    x: d === 'next' ? -64 : 0,
+    y: d === 'pick' ? -32 : 0,
+    filter: 'blur(10px)',
+    transition: { duration: 0.24, ease: 'easeIn' as const },
+  }),
+}
+
+/** Лестница выдачи: бейдж → (заголовок ведёт gsap) → причина → теги → кнопки. */
+const LADDER = {
+  hidden: {},
+  show: { transition: { delayChildren: 0.12, staggerChildren: 0.1 } },
+}
+
+const STEP = {
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: EASE } },
+}
+
 function weightedRandomIndex(length: number, exclude?: number): number {
   // ранние (лучше отранжированные) позиции весят больше
   const weights = Array.from({ length }, (_, i) => length - i)
@@ -69,8 +119,11 @@ function Player() {
     social: (search.get('social') as Mood['social']) ?? 'solo',
   }
 
-  const [phase, setPhase] = useState<'prepare' | 'reveal' | 'burnout' | 'error'>('prepare')
+  const [phase, setPhase] = useState<'prepare' | 'spin' | 'reveal' | 'burnout' | 'error'>('prepare')
   const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
+  const [prep, setPrep] = useState<{ remaining: number; total: number } | null>(null)
+  // Откуда пришла следующая игра — задаёт направление смены героя.
+  const [dir, setDir] = useState<'next' | 'pick'>('next')
   const [picks, setPicks] = useState<Pick[]>([])
   const [index, setIndex] = useState(0)
   const [liked, setLiked] = useState<Set<number>>(new Set())
@@ -98,6 +151,7 @@ function Player() {
     started.current = true
 
     async function run() {
+      let total = 0
       for (let i = 0; i < 80; i++) {
         const res = await fetch('/api/prepare', { method: 'POST' })
         if (res.status === 401 || res.status === 409) {
@@ -106,10 +160,14 @@ function Player() {
         }
         const data = (await res.json()) as { remaining?: number }
         const remaining = data.remaining ?? 0
+        // Первый замер — он же общий объём работы: дальше остаток только убывает.
+        if (remaining > total) total = remaining
+        setPrep({ remaining, total })
         if (remaining <= 0) break
-        setProgress(`Изучаю твою библиотеку… осталось разобрать ${remaining} игр`)
+        setProgress(`Осталось разобрать ${remaining} игр`)
       }
 
+      setPrep({ remaining: 0, total })
       setProgress('Подбираю игру под твоё состояние…')
       const res = await fetch('/api/recommend', {
         method: 'POST',
@@ -128,7 +186,9 @@ function Player() {
       setPicks(data.picks)
       setEngine(data.engine)
       setIndex(roulette ? weightedRandomIndex(data.picks.length) : 0)
-      setPhase('reveal')
+      // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
+      // та самая случайность, которая до сих пор происходила молча.
+      setPhase(roulette ? 'spin' : 'reveal')
     }
 
     void run()
@@ -139,6 +199,7 @@ function Player() {
     (from: number) => {
       setAskReason(false)
       setShowWhy(false)
+      setDir('next')
       const next = skipCount + 1
       setSkipCount(next)
       if (next >= BURNOUT_AFTER_SKIPS) {
@@ -146,15 +207,79 @@ function Player() {
         return
       }
       setIndex(roulette ? weightedRandomIndex(picks.length, from) : (from + 1) % picks.length)
+      // «Крутить ещё» — это тоже бросок, а не просто следующая карточка.
+      if (roulette) setPhase('spin')
     },
     [skipCount, picks.length, roulette],
   )
 
   if (phase === 'prepare') {
+    // Прогресс у этого экрана был всегда — просто висел текстом рядом со спиннером.
+    const pct = prep && prep.total > 0 ? ((prep.total - prep.remaining) / prep.total) * 100 : 0
+    const known = prep !== null && prep.total > 0
+
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-6 px-5">
-        <div className="h-10 w-10 rounded-full border-2 border-white/15 border-t-ember animate-spin" />
-        <p className="text-dim text-sm">{progress}</p>
+      <div className="relative flex-1 flex flex-col items-center justify-center gap-7 px-5 overflow-hidden">
+        <Ambient className="anim-breathe" />
+        <div aria-hidden className="grain" />
+
+        <div className="relative">
+          {known ? (
+            <ProgressRing
+              percent={pct}
+              size={160}
+              stroke={8}
+              duration={600}
+              label={
+                <div className="flex flex-col items-center gap-0.5">
+                  <span
+                    className="font-mono text-3xl font-extrabold text-ink"
+                    style={{ fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {Math.round(pct)}%
+                  </span>
+                  <span className="text-[11px] text-dim/70">разобрано</span>
+                </div>
+              }
+            />
+          ) : (
+            <div className="flex h-40 w-40 items-center justify-center">
+              <Spinner />
+            </div>
+          )}
+        </div>
+
+        {/* Строка статуса меняется по ходу — подменять её встык значит терять
+            единственный сигнал, что что-то вообще происходит. */}
+        <div className="h-5 relative w-full max-w-sm text-center">
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={progress}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute inset-x-0 text-dim text-sm"
+            >
+              {progress}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+      </div>
+    )
+  }
+
+  if (phase === 'spin') {
+    return (
+      <div className="relative flex-1 flex flex-col items-center justify-center gap-8 px-5 overflow-hidden">
+        <Ambient className="anim-breathe" />
+        <div aria-hidden className="grain" />
+        <p className="relative text-sm text-dim">Крутим…</p>
+        <SpinWheel
+          items={picks.map((p) => p.name)}
+          landOn={index}
+          onDone={() => setPhase('reveal')}
+        />
       </div>
     )
   }
@@ -233,61 +358,97 @@ function Player() {
 
   return (
     <div className="flex-1 flex flex-col">
-      <section
-        key={pick.appid}
-        className="media-dark relative min-h-[78vh] flex items-end overflow-hidden anim-reveal"
-      >
-        <HeroArt appid={pick.appid} headerImage={pick.headerImage} name={pick.name} />
-        <div
-          aria-hidden
-          className="absolute inset-0"
-          style={{
-            background:
-              'linear-gradient(to top, #0b0c10 4%, rgba(11,12,16,0.82) 26%, rgba(11,12,16,0.25) 55%, rgba(11,12,16,0.45) 100%)',
-          }}
-        />
+      <AnimatePresence mode="wait" custom={dir}>
+        <motion.section
+          key={pick.appid}
+          custom={dir}
+          variants={HERO}
+          initial="enter"
+          animate="center"
+          exit="exit"
+          className="media-dark relative min-h-[78vh] flex items-end overflow-hidden"
+        >
+          <HeroArt appid={pick.appid} headerImage={pick.headerImage} name={pick.name} />
+          <div
+            aria-hidden
+            className="absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(to top, #0b0c10 4%, rgba(11,12,16,0.82) 26%, rgba(11,12,16,0.25) 55%, rgba(11,12,16,0.45) 100%)',
+            }}
+          />
+          {/* Арт остаётся ярким и просто уходит в мягкость под текстом —
+              жёсткий градиент-стоп гасил его целиком, оставляя резким.
+              tint включён: базовый скрим настроен под тёмный ключ-арт, а сюда
+              попадает любая игра из библиотеки, в том числе светлая. */}
+          <BlurBand height="46vh" dir="up" />
+          <div aria-hidden className="grain" />
 
-        <div className="relative mx-auto w-full max-w-6xl px-5 pb-12 pt-40">
-          <div className="max-w-2xl flex flex-col gap-4">
-            <div className="flex items-center gap-3 text-xs">
-              <span className="rounded-full bg-ember/15 text-ember px-3 py-1 font-medium">
-                {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}
-              </span>
-              {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
-                <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
-              )}
-            </div>
+          <motion.div
+            variants={LADDER}
+            initial="hidden"
+            animate="show"
+            className="relative mx-auto w-full max-w-6xl px-5 pb-12 pt-40"
+          >
+            <div className="max-w-2xl flex flex-col gap-4">
+              <motion.div variants={STEP} className="flex items-center gap-3 text-xs">
+                <span className="rounded-full bg-ember/15 text-ember px-3 py-1 font-medium">
+                  {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}
+                </span>
+                {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
+                  <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
+                )}
+              </motion.div>
 
-            <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight">{pick.name}</h1>
+              <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.18}>
+                {pick.name}
+              </SplitHeading>
 
-            <p className="text-base md:text-lg text-ink/90 leading-relaxed">{pick.reason}</p>
+              <motion.p variants={STEP} className="text-base md:text-lg text-ink/90 leading-relaxed">
+                {pick.reason}
+              </motion.p>
 
             {whyParts.length > 0 && (
-              <div className="text-sm">
+              <motion.div variants={STEP} className="text-sm">
                 <button
                   onClick={() => setShowWhy(!showWhy)}
-                  className="text-dim hover:text-ink transition-colors"
+                  className="text-dim hover:text-ink transition-colors cursor-pointer"
                 >
                   Почему она? {showWhy ? '▴' : '▾'}
                 </button>
-                {showWhy && (
-                  <p className="mt-1.5 text-dim anim-rise">{whyParts.join(' · ')}</p>
-                )}
-              </div>
+                <AnimatePresence initial={false}>
+                  {showWhy && (
+                    <motion.p
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      className="mt-1.5 text-dim overflow-hidden"
+                    >
+                      {whyParts.join(' · ')}
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+              </motion.div>
             )}
 
             {pick.tags.length > 0 && (
-              <div className="flex flex-wrap gap-2">
+              <motion.div variants={STEP} className="flex flex-wrap gap-2">
                 {pick.tags.map((t) => (
                   <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
                     {t}
                   </span>
                 ))}
-              </div>
+              </motion.div>
             )}
 
             {askReason ? (
-              <div className="flex flex-wrap items-center gap-2 mt-2 anim-rise">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className="flex flex-wrap items-center gap-2 mt-2"
+              >
                 <span className="text-sm text-dim mr-1">Почему не то?</span>
                 {SKIP_REASONS.map((r) => (
                   <button
@@ -310,9 +471,9 @@ function Player() {
                 >
                   пропустить
                 </button>
-              </div>
+              </motion.div>
             ) : (
-              <div className="flex flex-wrap items-center gap-3 mt-2">
+              <motion.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2">
                 {pick.storeUrl ? (
                   <a
                     href={pick.storeUrl}
@@ -361,19 +522,29 @@ function Player() {
                 >
                   {liked.has(pick.appid) ? 'Зашло ✓' : 'Зашло'}
                 </button>
-                <button
-                  onClick={() => {
-                    if (roulette) {
-                      sendFeedback(pick.appid, 'skipped')
-                      advance(index)
-                    } else {
-                      setAskReason(true)
-                    }
-                  }}
-                  className="rounded-[14px] glass glass-hover px-4 py-3 text-sm text-dim"
-                >
-                  {roulette ? 'Крутить ещё' : 'Не то — дальше'}
-                </button>
+                {roulette ? (
+                  // Бросок кубика заслуживает физического отклика в точке нажатия
+                  <Magnet>
+                    <ClickSpark>
+                      <button
+                        onClick={() => {
+                          sendFeedback(pick.appid, 'skipped')
+                          advance(index)
+                        }}
+                        className="rounded-[14px] glass glass-hover no-lift px-4 py-3 text-sm text-dim cursor-pointer"
+                      >
+                        Крутить ещё
+                      </button>
+                    </ClickSpark>
+                  </Magnet>
+                ) : (
+                  <button
+                    onClick={() => setAskReason(true)}
+                    className="rounded-[14px] glass glass-hover px-4 py-3 text-sm text-dim cursor-pointer"
+                  >
+                    Не то — дальше
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     sendFeedback(pick.appid, 'banned')
@@ -391,11 +562,12 @@ function Player() {
                 >
                   🚫
                 </button>
-              </div>
+              </motion.div>
             )}
-          </div>
-        </div>
-      </section>
+            </div>
+          </motion.div>
+        </motion.section>
+      </AnimatePresence>
 
       {!roulette && (
         <section className="mx-auto w-full max-w-6xl px-5 py-10">
@@ -407,15 +579,18 @@ function Player() {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {others.map((p, i) => (
-              <button
+              <motion.button
                 key={p.appid}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.45, ease: EASE, delay: i * 0.06 }}
                 onClick={() => {
+                  setDir('pick')
                   setIndex(picks.indexOf(p))
                   setAskReason(false)
                   setShowWhy(false)
                 }}
-                className="glass glass-hover rounded-[14px] overflow-hidden text-left anim-rise cursor-pointer"
-                style={{ animationDelay: `${i * 60}ms` }}
+                className="glass glass-hover rounded-[14px] overflow-hidden text-left cursor-pointer"
               >
                 <GameArt
                   appid={p.appid}
@@ -429,7 +604,7 @@ function Player() {
                     {p.store ? STORE_LABEL[p.store] ?? p.store : SOURCE_BADGE[p.source]}
                   </div>
                 </div>
-              </button>
+              </motion.button>
             ))}
           </div>
           <div className="mt-8 text-center">

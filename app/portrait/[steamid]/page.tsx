@@ -1,5 +1,7 @@
+import * as motion from 'motion/react-client'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { Wordmark } from '@/components/Wordmark'
 import {
@@ -110,13 +112,20 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               <div key={a.tag} className="anim-rise" style={{ animationDelay: `${i * 90}ms` }}>
                 <div className="flex items-baseline justify-between mb-1.5">
                   <span className="text-sm font-semibold">{a.label}</span>
-                  <span className="font-mono text-ember text-sm">{a.percent}%</span>
+                  <span className="font-mono text-ember text-sm">
+                    <CountNumber value={a.percent} delay={i * 90} duration={800} suffix="%" />
+                  </span>
                 </div>
                 <div className="h-2 rounded-full bg-white/8 overflow-hidden">
-                  <div
+                  {/* Полосы наконец заполняются. Раньше ширина ставилась сразу,
+                      анимировался только контейнер — то есть «график» приезжал
+                      уже нарисованным. */}
+                  <motion.div
                     className="h-full rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${a.percent}%` }}
+                    transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1], delay: i * 0.09 }}
                     style={{
-                      width: `${a.percent}%`,
                       background:
                         'linear-gradient(to right, color-mix(in srgb, var(--ember) 50%, transparent), var(--ember))',
                     }}
@@ -129,22 +138,32 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
         <div className="grid grid-cols-2 gap-3 anim-rise" style={{ animationDelay: '300ms' }}>
           <div className="glass rounded-[14px] p-4 text-center">
-            <div className="font-mono text-2xl font-bold">{portrait.facts.gamesCount}</div>
+            <div className="font-mono text-2xl font-bold">
+              <CountNumber value={portrait.facts.gamesCount} delay={300} />
+            </div>
             <div className="text-xs text-dim mt-0.5">игр в библиотеке</div>
           </div>
           <div className="glass rounded-[14px] p-4 text-center">
             <div className="font-mono text-2xl font-bold">
-              {portrait.facts.totalHours.toLocaleString('ru-RU')}
+              {/* Разделитель тысяч в ru-RU — неразрывный пробел; форматируем
+                  целое на каждом кадре, чтобы он не ездил по горизонтали. */}
+              <CountNumber value={portrait.facts.totalHours} delay={340} />
             </div>
             <div className="text-xs text-dim mt-0.5">часов сыграно</div>
           </div>
           <div className="glass rounded-[14px] p-4 text-center">
-            <div className="font-mono text-2xl font-bold">{portrait.facts.unplayedCount}</div>
+            <div className="font-mono text-2xl font-bold">
+              <CountNumber value={portrait.facts.unplayedCount} delay={380} />
+            </div>
             <div className="text-xs text-dim mt-0.5">так и не запущены</div>
           </div>
           <div className="glass rounded-[14px] p-4 text-center">
             <div className="font-mono text-2xl font-bold">
-              {portrait.facts.topGame ? `${portrait.facts.topGame.sharePercent}%` : '—'}
+              {portrait.facts.topGame ? (
+                <CountNumber value={portrait.facts.topGame.sharePercent} delay={420} suffix="%" />
+              ) : (
+                '—'
+              )}
             </div>
             <div className="text-xs text-dim mt-0.5 truncate">
               {portrait.facts.topGame ? `времени — в ${portrait.facts.topGame.name}` : 'нет данных'}

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { Spinner } from '@/components/Spinner'
 
 export default function NewRoomPage() {
   const router = useRouter()
@@ -33,7 +34,7 @@ export default function NewRoomPage() {
         <p className="text-dim">Не получилось создать комнату. Попробуй ещё раз.</p>
       ) : (
         <>
-          <div className="h-10 w-10 rounded-full border-2 border-white/15 border-t-ember animate-spin" />
+          <Spinner />
           <p className="text-dim text-sm">Создаю комнату для пати…</p>
         </>
       )}

@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { ProgressRing } from '@/components/ProgressRing'
+import { Spinner } from '@/components/Spinner'
 import { STORE_LABEL } from '@/lib/stores'
 
 type CompatData = {
@@ -39,57 +41,6 @@ function verdict(percent: number): string {
   return 'Противоположности. Притянетесь?'
 }
 
-const RING_R = 84
-const RING_CIRC = 2 * Math.PI * RING_R
-
-function PercentRing({ percent }: { percent: number }) {
-  const [shown, setShown] = useState(0)
-  const [offset, setOffset] = useState(RING_CIRC)
-
-  useEffect(() => {
-    const target = RING_CIRC * (1 - Math.min(percent, 100) / 100)
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setShown(percent)
-      setOffset(target)
-      return
-    }
-    requestAnimationFrame(() => setOffset(target))
-    const start = performance.now()
-    const dur = 1000
-    let raf = 0
-    const tick = (t: number) => {
-      const p = Math.min((t - start) / dur, 1)
-      setShown(Math.round(percent * p))
-      if (p < 1) raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [percent])
-
-  return (
-    <div className="relative h-[200px] w-[200px]">
-      <svg width="200" height="200" viewBox="0 0 200 200" className="-rotate-90">
-        <circle cx="100" cy="100" r={RING_R} fill="none" stroke="var(--edge)" strokeWidth="10" />
-        <circle
-          cx="100"
-          cy="100"
-          r={RING_R}
-          fill="none"
-          stroke="var(--ember)"
-          strokeWidth="10"
-          strokeLinecap="round"
-          strokeDasharray={RING_CIRC}
-          strokeDashoffset={offset}
-          className="ring-progress"
-        />
-      </svg>
-      <div className="absolute inset-0 flex items-center justify-center">
-        <span className="font-mono text-5xl font-extrabold text-ink">{shown}%</span>
-      </div>
-    </div>
-  )
-}
-
 export default function CompatResultPage() {
   const params = useParams<{ steamid: string }>()
   const other = params.steamid ?? ''
@@ -117,7 +68,7 @@ export default function CompatResultPage() {
   if (status === 'loading') {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="h-10 w-10 rounded-full border-2 border-white/15 border-t-ember animate-spin" />
+        <Spinner />
       </div>
     )
   }
@@ -200,7 +151,7 @@ export default function CompatResultPage() {
           <p className="text-dim text-sm">
             {data.myName} <span className="text-ember">×</span> {data.otherName}
           </p>
-          <PercentRing percent={data.percent} />
+          <ProgressRing percent={data.percent} />
           <p className="text-xl md:text-2xl font-bold tracking-tight">{verdict(data.percent)}</p>
           {data.sharedTags.length > 0 && (
             <div className="flex flex-wrap justify-center gap-2">

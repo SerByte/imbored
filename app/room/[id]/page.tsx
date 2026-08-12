@@ -4,9 +4,9 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
-import { GameArt } from '@/components/GameArt'
-import { LogoMark } from '@/components/Logo'
-import { STORE_LABEL } from '@/lib/stores'
+import { MatchCeremony } from '@/components/MatchCeremony'
+import { Spinner } from '@/components/Spinner'
+import { SwipeDeck } from '@/components/SwipeDeck'
 
 type RoomState = {
   room: { id: string; status: 'open' | 'matched'; matchedAppid: number | null; isPublic: boolean }
@@ -125,61 +125,14 @@ export default function RoomPage() {
   if (!state) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="h-10 w-10 rounded-full border-2 border-white/15 border-t-ember animate-spin" />
+        <Spinner />
       </div>
     )
   }
 
   // ---- МАТЧ ----
   if (state.room.status === 'matched' && state.matchedGame) {
-    const g = state.matchedGame
-    return (
-      <div className="media-dark relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
-        <GameArt
-          appid={g.appid}
-          name=""
-          headerImage={g.headerImage}
-          fallback={null}
-          className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
-        />
-        <div
-          aria-hidden
-          className="absolute inset-0"
-          style={{ background: 'radial-gradient(60% 60% at 50% 45%, transparent, #0b0c10 90%)' }}
-        />
-        <div className="relative max-w-lg w-full text-center flex flex-col items-center gap-5 anim-reveal">
-          <LogoMark size={56} happy />
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">Это матч!</h1>
-          <p className="text-dim">Все в комнате хотят играть в одно и то же:</p>
-          <GameArt
-            appid={g.appid}
-            name={g.name}
-            headerImage={g.headerImage}
-            fallback={null}
-            className="w-full max-w-md rounded-[20px] border border-edge"
-          />
-          <div className="text-2xl font-bold">{g.name}</div>
-          {g.storeUrl ? (
-            <a
-              href={g.storeUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-[14px] bg-ember text-bg font-semibold px-8 py-3 hover:brightness-110 transition"
-            >
-              Открыть в {STORE_LABEL[g.store ?? ''] ?? 'магазине'}
-            </a>
-          ) : (
-            <a
-              href={`steam://run/${g.appid}`}
-              className="rounded-[14px] bg-ember text-bg font-semibold px-8 py-3 hover:brightness-110 transition"
-            >
-              Запустить в Steam
-            </a>
-          )}
-          <p className="text-xs text-dim/60">Зови всех в войс — договорились же.</p>
-        </div>
-      </div>
-    )
+    return <MatchCeremony game={state.matchedGame} memberCount={state.members.length} />
   }
 
   // ---- НЕ УЧАСТНИК ----
@@ -288,70 +241,15 @@ export default function RoomPage() {
 
       {cards === null ? (
         <div className="flex justify-center py-16">
-          <div className="h-10 w-10 rounded-full border-2 border-white/15 border-t-ember animate-spin" />
+          <Spinner />
         </div>
       ) : card ? (
-        <div key={card.appid} className="glass rounded-[20px] overflow-hidden anim-reveal">
-          <GameArt
-            appid={card.appid}
-            name={card.name}
-            headerImage={card.headerImage}
-            className="w-full aspect-[460/215] object-cover"
-          />
-          <div className="p-6 flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <h2 className="text-2xl font-bold tracking-tight">{card.name}</h2>
-              {card.ownedByAll ? (
-                <span className="rounded-full bg-emerald-400/15 text-emerald-300 px-3 py-1 text-xs font-medium">
-                  ✓ Есть у всех
-                </span>
-              ) : (
-                <span className="rounded-full bg-sky-400/10 text-sky-300 px-3 py-1 text-xs">
-                  Нет у: {card.missingFor.join(', ')}
-                  {card.priceFinal !== undefined && card.priceFinal > 0
-                    ? ` · $${(card.priceFinal / 100).toFixed(0)}`
-                    : card.store
-                      ? ' · бесплатно/вне Steam'
-                      : ''}
-                </span>
-              )}
-            </div>
-            {card.tags.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {card.tags.map((t) => (
-                  <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3 mt-2">
-              <button
-                onClick={() => vote(card, false)}
-                className="rounded-[14px] glass glass-hover py-5 text-lg cursor-pointer active:scale-[0.98] transition"
-              >
-                ✖ Не хочу
-              </button>
-              <button
-                onClick={() => vote(card, true)}
-                className="rounded-[14px] bg-ember text-bg font-bold py-5 text-lg hover:brightness-110 active:scale-[0.98] transition cursor-pointer"
-              >
-                Играем!
-              </button>
-            </div>
-            <div className="flex items-center gap-3 mt-1">
-              <div className="h-1 flex-1 rounded-full bg-white/10 overflow-hidden">
-                <div
-                  className="h-full bg-ember rounded-full transition-all duration-300"
-                  style={{ width: `${deckTotal ? Math.round(((votedCount + 1) / deckTotal) * 100) : 0}%` }}
-                />
-              </div>
-              <span className="text-xs text-dim/60 font-mono shrink-0">
-                {votedCount + 1}/{deckTotal}
-              </span>
-            </div>
-          </div>
-        </div>
+        <SwipeDeck
+          cards={cards}
+          onVote={vote}
+          votedCount={votedCount}
+          deckTotal={deckTotal}
+        />
       ) : (
         <div className="glass rounded-[20px] p-8 text-center flex flex-col gap-3 anim-rise">
           <p className="font-semibold">Ты всё отсвайпал</p>

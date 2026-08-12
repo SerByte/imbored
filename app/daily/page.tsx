@@ -3,7 +3,11 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { BlurBand } from '@/components/BlurBand'
 import { HeroArt } from '@/components/HeroArt'
+import { SeasonalSnow } from '@/components/SeasonalSnow'
+import { SplitHeading } from '@/components/SplitHeading'
+import { Spinner } from '@/components/Spinner'
 import { STORE_LABEL } from '@/lib/stores'
 
 type DailyPick = {
@@ -61,7 +65,7 @@ export default function DailyPage() {
   if (phase === 'loading') {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-5">
-        <div className="h-10 w-10 rounded-full border-2 border-white/15 border-t-ember animate-spin" />
+        <Spinner />
         <p className="text-dim text-sm">Выбираю твою игру дня…</p>
       </div>
     )
@@ -90,6 +94,18 @@ export default function DailyPage() {
               'linear-gradient(to top, #0b0c10 4%, rgba(11,12,16,0.82) 26%, rgba(11,12,16,0.25) 55%, rgba(11,12,16,0.45) 100%)',
           }}
         />
+        {/* Снег идёт ПОД стеклом и над артом: хлопья, проходящие под панелями,
+            подмораживаются их backdrop-filter. */}
+        <SeasonalSnow />
+        {/*
+          tint включён намеренно. Базовый скрим страницы настроен под тёмный
+          ключ-арт, а он бывает любой яркости: на светлом (Stardew — небо и
+          трава) бейдж, «N ч наиграно» и нижняя строка теряли контраст.
+          Заливка полосы добавляет var(--bg) снизу вверх ровно там, где лежит
+          текст, и не трогает верх кадра.
+        */}
+        <BlurBand height="46vh" dir="up" />
+        <div aria-hidden className="grain" />
 
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-40">
           <div className="max-w-2xl flex flex-col gap-4">
@@ -105,7 +121,19 @@ export default function DailyPage() {
               )}
             </div>
 
-            <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight">{pick.name}</h1>
+            {/*
+              Здесь был MaskedHeading — арт игры, просвечивающий сквозь буквы.
+              На бумаге это был самый сильный образ плана, на реальных данных —
+              провал: глифы заливаются ТЕМ ЖЕ артом, что лежит за ними, и на
+              светлом ключ-арте (Stardew Valley — небо и трава) название теряет
+              контраст и читается хуже всего остального текста на постере.
+              Приём работает, когда заливка и фон — разные изображения; здесь
+              они по определению одно и то же. Название игры — главный текст
+              этой страницы, рисковать его читаемостью нельзя.
+            */}
+            <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.2}>
+              {pick.name}
+            </SplitHeading>
             <p className="text-base md:text-lg text-ink/90 leading-relaxed">{pick.reason}</p>
 
             {pick.tags.length > 0 && (

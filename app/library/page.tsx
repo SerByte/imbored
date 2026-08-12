@@ -104,7 +104,7 @@ export default async function LibraryPage() {
             <Link
               key={g.appid}
               href={`/game/${g.appid}`}
-              className={`glass glass-hover rounded-[14px] overflow-hidden ${
+              className={`library-tile glass glass-hover rounded-[14px] overflow-hidden ${
                 state === 'comeback' ? 'opacity-75 hover:opacity-100' : ''
               }`}
             >

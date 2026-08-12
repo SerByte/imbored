@@ -1,10 +1,25 @@
 'use client'
 
+import { AnimatePresence, motion } from 'motion/react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { SpotlightCard } from '@/components/SpotlightCard'
 import { VIBE_PRESETS } from '@/lib/presets'
 import type { Mood } from '@/lib/types'
+
+const EASE = [0.22, 1, 0.36, 1] as const
+
+/** Направление задаёт «Назад»: шаг возвращается оттуда, куда ушёл. */
+const STEP_VARIANTS = {
+  enter: (back: boolean) => ({ opacity: 0, x: back ? -24 : 24 }),
+  center: { opacity: 1, x: 0, transition: { duration: 0.28, ease: EASE } },
+  exit: (back: boolean) => ({
+    opacity: 0,
+    x: back ? 24 : -24,
+    transition: { duration: 0.2, ease: 'easeIn' as const },
+  }),
+}
 
 type Step = {
   key: 'time' | 'vibe' | 'social'
@@ -44,6 +59,7 @@ export default function QuizPage() {
   const router = useRouter()
   const [stepIndex, setStepIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [back, setBack] = useState(false)
 
   const step = STEPS[stepIndex]
 
@@ -56,6 +72,7 @@ export default function QuizPage() {
   function pick(value: string) {
     const next = { ...answers, [step.key]: value }
     setAnswers(next)
+    setBack(false)
     if (stepIndex < STEPS.length - 1) {
       setStepIndex(stepIndex + 1)
     } else {
@@ -110,31 +127,46 @@ export default function QuizPage() {
           ))}
         </div>
 
-        <h1 key={step.key} className="text-3xl md:text-4xl font-bold tracking-tight text-center anim-rise">
-          {step.question}
-        </h1>
+        {/* Шаги едут в сторону движения: вперёд — влево, «Назад» — вправо.
+            Раньше шаг просто перемонтировался и появлялся на том же месте. */}
+        <AnimatePresence mode="wait" custom={back}>
+          <motion.div
+            key={step.key}
+            custom={back}
+            variants={STEP_VARIANTS}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            className="w-full flex flex-col items-center gap-10"
+          >
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-center">
+              {step.question}
+            </h1>
 
-        <div
-          key={`${step.key}-options`}
-          className={`grid w-full gap-4 anim-rise ${step.options.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}
-          style={{ animationDelay: '60ms' }}
-        >
-          {step.options.map((o) => (
-            <button
-              key={o.value}
-              onClick={() => pick(o.value)}
-              className="glass glass-hover rounded-[20px] px-6 py-8 text-left cursor-pointer"
+            <div
+              className={`grid w-full gap-4 ${step.options.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}
             >
-              <div className="text-xl font-semibold">{o.label}</div>
-              <div className="text-sm text-dim mt-1.5">{o.hint}</div>
-            </button>
-          ))}
-        </div>
+              {step.options.map((o) => (
+                <SpotlightCard
+                  key={o.value}
+                  onClick={() => pick(o.value)}
+                  className="rounded-[20px] px-6 py-8 text-left"
+                >
+                  <div className="text-xl font-semibold">{o.label}</div>
+                  <div className="text-sm text-dim mt-1.5">{o.hint}</div>
+                </SpotlightCard>
+              ))}
+            </div>
+          </motion.div>
+        </AnimatePresence>
 
         {stepIndex > 0 && (
           <button
-            onClick={() => setStepIndex(stepIndex - 1)}
-            className="text-sm text-dim hover:text-ink transition-colors"
+            onClick={() => {
+              setBack(true)
+              setStepIndex(stepIndex - 1)
+            }}
+            className="text-sm text-dim hover:text-ink transition-colors cursor-pointer"
           >
             ← Назад
           </button>
