@@ -16,6 +16,14 @@ export function getDb(): Promise<Db> {
     if (remote) {
       globalStore.__imboredDb = createDb(remote, process.env.TURSO_AUTH_TOKEN)
     } else {
+      // На serverless файловая база эфемерна: данные исчезали бы между запросами.
+      // Падаем с внятной ошибкой вместо тихой потери данных.
+      if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+        throw new Error(
+          'TURSO_DATABASE_URL не задан. В продакшене файловая база не работает — ' +
+            'укажи переменные TURSO_DATABASE_URL и TURSO_AUTH_TOKEN в настройках проекта.',
+        )
+      }
       const dir = path.join(process.cwd(), 'data')
       fs.mkdirSync(dir, { recursive: true })
       globalStore.__imboredDb = createDb(`file:${path.join(dir, 'imbored.db')}`)
