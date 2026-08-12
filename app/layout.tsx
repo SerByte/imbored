@@ -4,6 +4,7 @@ import { JetBrains_Mono, Onest } from 'next/font/google'
 import Link from 'next/link'
 import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
+import { MobileNav } from '@/components/MobileNav'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import './globals.css'
@@ -27,7 +28,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="ru" className={`${onest.variable} ${jbMono.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col font-sans">
+      <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[52px] md:pb-0">
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,
@@ -43,27 +44,31 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <Wordmark />
             </Link>
             <nav className="flex items-center gap-5 text-sm text-dim">
-              <Link href="/daily" className="hover:text-ink transition-colors">
-                Игра дня
-              </Link>
-              <Link href="/quiz" className="hover:text-ink transition-colors">
-                Подобрать игру
-              </Link>
-              <Link href="/rooms" className="hover:text-ink transition-colors">
-                Пати
-              </Link>
-              <Link href="/compat" className="hover:text-ink transition-colors">
-                Совместимость
-              </Link>
-              <Link href="/library" className="hover:text-ink transition-colors">
-                Библиотека
-              </Link>
+              {/* на телефоне пункты уезжают в нижнюю панель — в шапке остаётся только тема */}
+              <span className="hidden md:flex items-center gap-5">
+                <Link href="/daily" className="hover:text-ink transition-colors">
+                  Игра дня
+                </Link>
+                <Link href="/quiz" className="hover:text-ink transition-colors">
+                  Подобрать игру
+                </Link>
+                <Link href="/rooms" className="hover:text-ink transition-colors">
+                  Пати
+                </Link>
+                <Link href="/compat" className="hover:text-ink transition-colors">
+                  Совместимость
+                </Link>
+                <Link href="/library" className="hover:text-ink transition-colors">
+                  Библиотека
+                </Link>
+              </span>
               <ThemeToggle />
             </nav>
           </div>
         </header>
         <main className="flex-1 flex flex-col">{children}</main>
         <Footer />
+        <MobileNav />
         <Analytics />
       </body>
     </html>

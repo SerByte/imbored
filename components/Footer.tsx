@@ -11,7 +11,7 @@ export function Footer() {
           <Wordmark className="text-sm" />
           <span className="text-xs">· imbored.cc</span>
         </div>
-        <nav className="flex items-center gap-5 text-xs text-dim">
+        <nav className="flex items-center flex-wrap gap-x-5 gap-y-2 text-xs text-dim">
           <Link href="/support" className="hover:text-ink transition-colors">
             Поддержать проект
           </Link>
