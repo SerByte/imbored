@@ -1,0 +1,203 @@
+import Link from 'next/link'
+import { notFound } from 'next/navigation'
+import { loadGamePage } from '@/lib/gamepage'
+import { STORE_LABEL } from '@/lib/stores'
+
+export const dynamic = 'force-dynamic'
+
+function positivePercent(pos: number, neg: number): number | null {
+  const total = pos + neg
+  return total > 0 ? Math.round((pos / total) * 100) : null
+}
+
+const SCORE_RU: Record<string, string> = {
+  'Overwhelmingly Positive': 'Крайне положительные',
+  'Very Positive': 'Очень положительные',
+  Positive: 'Положительные',
+  'Mostly Positive': 'В основном положительные',
+  Mixed: 'Смешанные',
+  'Mostly Negative': 'В основном отрицательные',
+  Negative: 'Отрицательные',
+  'Very Negative': 'Очень отрицательные',
+  'Overwhelmingly Negative': 'Крайне отрицательные',
+}
+
+export default async function GamePage({ params }: { params: Promise<{ appid: string }> }) {
+  const { appid: raw } = await params
+  const appid = Number(raw)
+  // отрицательные appid — кураторский пул других магазинов
+  if (!Number.isInteger(appid) || appid === 0) notFound()
+
+  const data = await loadGamePage(appid)
+  if (!data) notFound()
+
+  const { meta, reviewsSummary, prosCons } = data
+  const percent = reviewsSummary
+    ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
+    : null
+  const topTags = Object.entries(meta.tags)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([t]) => t)
+
+  return (
+    <div className="flex-1">
+      {/* hero */}
+      <section className="relative overflow-hidden">
+        {meta.headerImage && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={meta.headerImage}
+            alt=""
+            aria-hidden
+            className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
+          />
+        )}
+        <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-10 grid md:grid-cols-[380px_1fr] gap-8 items-start">
+          {meta.headerImage && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={meta.headerImage}
+              alt={meta.name}
+              className="w-full rounded-[20px] border border-edge anim-reveal"
+            />
+          )}
+          <div className="flex flex-col gap-4 anim-rise">
+            <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{meta.name}</h1>
+            {reviewsSummary && (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-ember font-medium">
+                  {SCORE_RU[reviewsSummary.scoreDesc] ?? reviewsSummary.scoreDesc}
+                </span>
+                {percent !== null && (
+                  <span className="font-mono text-dim">
+                    {percent}% из {(reviewsSummary.totalPositive + reviewsSummary.totalNegative).toLocaleString('ru-RU')}{' '}
+                    отзывов — за
+                  </span>
+                )}
+              </div>
+            )}
+            {topTags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {topTags.map((t) => (
+                  <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+            {meta.shortDescription && (
+              <p className="text-dim leading-relaxed">{meta.shortDescription}</p>
+            )}
+            <div className="flex flex-wrap gap-3 mt-1">
+              {meta.storeUrl ? (
+                <a
+                  href={meta.storeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-[14px] bg-ember text-bg font-semibold px-5 py-2.5 hover:brightness-110 transition text-sm"
+                >
+                  Открыть в {STORE_LABEL[meta.store ?? ''] ?? 'магазине'}
+                </a>
+              ) : (
+                <>
+                  <a
+                    href={`steam://run/${appid}`}
+                    className="rounded-[14px] bg-ember text-bg font-semibold px-5 py-2.5 hover:brightness-110 transition text-sm"
+                  >
+                    Запустить
+                  </a>
+                  <a
+                    href={`https://store.steampowered.com/app/${appid}/`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-[14px] glass glass-hover px-5 py-2.5 text-sm"
+                  >
+                    Страница в Steam
+                  </a>
+                </>
+              )}
+              <a
+                href={`https://www.youtube.com/results?search_query=${encodeURIComponent(`${meta.name} обзор`)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-[14px] glass glass-hover px-5 py-2.5 text-sm text-dim"
+              >
+                Обзоры на YouTube
+              </a>
+              {meta.priceFinal !== undefined && meta.priceFinal > 0 && (
+                <span className="rounded-[14px] glass px-5 py-2.5 text-sm">
+                  <span className="font-mono text-ember">${(meta.priceFinal / 100).toFixed(2)}</span>
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="mx-auto max-w-5xl px-5 pb-16 flex flex-col gap-10">
+        {/* pros / cons из реальных отзывов */}
+        {prosCons && (prosCons.pros.length > 0 || prosCons.cons.length > 0) && (
+          <section className="grid md:grid-cols-2 gap-4">
+            {prosCons.pros.length > 0 && (
+              <div className="glass rounded-[20px] p-6 anim-rise">
+                <h2 className="text-sm font-semibold text-ember mb-3">За что любят</h2>
+                <ul className="space-y-2 text-sm text-ink/90">
+                  {prosCons.pros.map((p) => (
+                    <li key={p} className="flex gap-2.5">
+                      <span className="text-ember">+</span>
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {prosCons.cons.length > 0 && (
+              <div className="glass rounded-[20px] p-6 anim-rise" style={{ animationDelay: '80ms' }}>
+                <h2 className="text-sm font-semibold text-dim mb-3">За что ругают</h2>
+                <ul className="space-y-2 text-sm text-dim">
+                  {prosCons.cons.map((c) => (
+                    <li key={c} className="flex gap-2.5">
+                      <span>−</span>
+                      {c}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="md:col-span-2 text-[11px] text-dim/60">
+              {prosCons.source === 'claude'
+                ? 'Собрано ИИ из самых полезных отзывов Steam'
+                : 'Цитаты из самых полезных отзывов Steam'}
+            </p>
+          </section>
+        )}
+
+        {/* скриншоты */}
+        {meta.screenshots && meta.screenshots.length > 0 && (
+          <section>
+            <h2 className="text-sm font-medium text-dim mb-4">Скриншоты</h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {meta.screenshots.slice(0, 6).map((s) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={s}
+                  src={s}
+                  alt=""
+                  loading="lazy"
+                  className="rounded-[14px] border border-edge w-full aspect-video object-cover"
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        <div>
+          <Link href="/play" className="text-sm text-dim hover:text-ink transition-colors">
+            ← Назад к подборке
+          </Link>
+        </div>
+      </div>
+    </div>
+  )
+}

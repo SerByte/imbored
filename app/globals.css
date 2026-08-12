@@ -1,26 +1,175 @@
 @import "tailwindcss";
 
+/* Токены темы: тёмная — базовая, светлая — через data-theme. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0b0c10;
+  --ink: #f2f3f5;
+  --dim: #9ba1ab;
+  --ember: #ff9e64;
+  --edge: rgba(255, 255, 255, 0.08);
+  --glass-bg: rgba(18, 20, 26, 0.6);
+  --header-fade: rgba(11, 12, 16, 0.85);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f4f1;
+  --ink: #17181c;
+  --dim: #5b6170;
+  --ember: #e0742f;
+  --edge: rgba(15, 17, 22, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.66);
+  --header-fade: rgba(245, 244, 241, 0.92);
+  color-scheme: light;
+}
+
+/* Кино-зона: экраны с артом игр всегда тёмные (как у стримингов) */
+.media-dark {
+  --bg: #0b0c10;
+  --ink: #f2f3f5;
+  --dim: #9ba1ab;
+  --ember: #ff9e64;
+  --edge: rgba(255, 255, 255, 0.08);
+  --glass-bg: rgba(18, 20, 26, 0.6);
+  background: var(--bg);
+  color: var(--ink);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-bg: var(--bg);
+  --color-ink: var(--ink);
+  --color-dim: var(--dim);
+  --color-ember: var(--ember);
+  --color-edge: var(--edge);
+  --font-sans: var(--font-onest), system-ui, sans-serif;
+  --font-mono: var(--font-jbmono), ui-monospace, monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* стеклянная панель — базовый строительный блок интерфейса */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--edge);
+}
+
+.glass-hover {
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+.glass-hover:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
+/* единственный оркестрованный момент: reveal выдачи */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    filter: blur(16px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes kenburns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.06);
+  }
+}
+
+.anim-reveal {
+  animation: reveal 0.55s ease-out both;
+}
+.anim-rise {
+  animation: rise 0.45s ease-out both;
+}
+.anim-kenburns {
+  animation: kenburns 20s ease-out both;
+}
+
+/* кино-коллаж главной: медленный дрейф колонок с артами */
+@keyframes drift-up {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+@keyframes drift-down {
+  from {
+    transform: translateY(-50%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.anim-drift-up {
+  animation: drift-up 90s linear infinite;
+}
+.anim-drift-down {
+  animation: drift-down 110s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-drift-up,
+  .anim-drift-down {
+    animation: none;
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.anim-pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+/* кольцо процента совместимости */
+.ring-progress {
+  transition: stroke-dashoffset 1s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-reveal,
+  .anim-rise,
+  .anim-kenburns,
+  .anim-pulse-dot {
+    animation: none;
+  }
+}
+
+::selection {
+  background: rgba(255, 158, 100, 0.35);
 }

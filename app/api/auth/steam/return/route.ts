@@ -1,0 +1,56 @@
+import { NextResponse } from 'next/server'
+import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
+import { SESSION_COOKIE, appBaseUrl, getDb, nowSec, sessionSecret, steamApiKey } from '@/lib/server'
+import { signSession } from '@/lib/session'
+import { fetchOwnedGames, fetchPlayerSummary } from '@/lib/steam'
+import { verifyAssertion } from '@/lib/steam-openid'
+
+export async function GET(req: Request) {
+  const base = appBaseUrl()
+  const params = new URL(req.url).searchParams
+
+  const steamid = await verifyAssertion(params).catch(() => null)
+  if (!steamid) return NextResponse.redirect(`${base}/?error=auth`)
+
+  const key = steamApiKey()
+  if (!key) return NextResponse.redirect(`${base}/?error=nokey`)
+
+  try {
+    const db = await getDb()
+    const now = nowSec()
+    const summary = await fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null)
+    const games = await fetchOwnedGames(steamid, { apiKey: key })
+    if (games === 'private') return NextResponse.redirect(`${base}/?error=private`)
+    if (!games.length) return NextResponse.redirect(`${base}/?error=empty`)
+
+    await upsertUser(
+      db,
+      {
+        steamid,
+        ...(summary?.personaName ? { personaName: summary.personaName } : {}),
+        ...(summary?.avatarUrl ? { avatarUrl: summary.avatarUrl } : {}),
+      },
+      now,
+    )
+    await saveLibrarySnapshot(db, steamid, games, now)
+
+    const join = params.get('join')
+    const compat = params.get('compat')
+    const target =
+      join && /^[A-Z0-9]{6}$/.test(join)
+        ? `${base}/room/${join}`
+        : compat && /^\d{17}$/.test(compat)
+          ? `${base}/compat/${compat}`
+          : `${base}/quiz`
+    const res = NextResponse.redirect(target)
+    res.cookies.set(SESSION_COOKIE, signSession(steamid, sessionSecret()), {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 30,
+    })
+    return res
+  } catch {
+    return NextResponse.redirect(`${base}/?error=steam`)
+  }
+}

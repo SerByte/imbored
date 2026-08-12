@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# imbored — во что поиграть
 
-## Getting Started
+Открываешь Steam и ничего не хочется? **imbored** смотрит на твою библиотеку, наигранное время и текущее настроение — и говорит, во что зайти прямо сейчас: допройти из бэклога, вернуться в заброшенное или попробовать новое. С объяснением, почему именно это.
 
-First, run the development server:
+## Запуск
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Открой http://localhost:3000. **Без ключей работает демо-режим** («Попробовать демо без Steam») — встроенная библиотека из 22 игр.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Ключи (для полного режима)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Создай файл `.env.local` по образцу `.env.example`:
 
-## Learn More
+### STEAM_API_KEY — чтобы читать реальные библиотеки
 
-To learn more about Next.js, take a look at the following resources:
+1. Зайди на https://steamcommunity.com/dev/apikey (нужен аккаунт Steam с покупками от $5 и включённым Steam Guard).
+2. В поле «Domain Name» впиши `localhost`.
+3. Скопируй ключ в `.env.local`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Важно: чтобы сервис увидел библиотеку, у профиля должны быть открыты «Детали игр»
+(Steam → Профиль → Редактировать → Приватность → «Доступ к игровой информации» → Открытый).
+Приложение само покажет инструкцию, если библиотека скрыта.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### ANTHROPIC_API_KEY — умные объяснения (опционально)
 
-## Deploy on Vercel
+Ключ с https://platform.claude.com → подбор и pros/cons генерирует Claude (модель `claude-haiku-4-5`,
+~$0.01 за подборку). Без ключа работает эвристический фолбэк с шаблонными объяснениями.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Режим пати (во что играть с друзьями)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+«Пати» в шапке → создаётся комната с кодом → кидаешь ссылку друзьям → каждый подключает свою
+библиотеку (Steam / ссылка на профиль / демо-друг) → всем раздаётся колода: сначала общие
+мультиплеерные игры («✓ Есть у всех»), затем кандидаты «Нет у: Имя · $цена» → каждый свайпает
+«Играем!/Не хочу» → как только одна игра собирает голоса всех — **матч** на весь экран.
+Колода строится из пересечения библиотек и суммарного вкуса пати (движок тот же, что в соло).
+
+Дополнительно:
+- **Совместимость** («Совместимость» в шапке): кидаешь любому свою ссылку `/compat/<steamid>` —
+  оба видят % совпадения вкусов по реальным библиотекам и часам (не по анкете), общие игры
+  и «во что вам зайти вместе». Первая ступень к поиску напарников.
+- **Доска открытых пати** (страница «Пати»): хост может показать комнату на доске —
+  к ней подсядут те, кто ищет +1. LFG без чатов и модерации: общение остаётся в Discord.
+
+## Как это устроено
+
+- **Данные:** Steam Web API (`GetOwnedGames` — библиотека и минуты), метаданные игр — SteamSpy (теги)
+  и store appdetails (описания, скриншоты, co-op категории), отзывы — публичный endpoint `appreviews`.
+  Всё кэшируется в SQLite через `@libsql/client`: локально — файл `data/imbored.db`,
+  в проде — Turso (переменные `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`).
+- **Движок:** тег-профиль игрока (вес = log(1+часы), буст недавней активности) → косинусный скоринг
+  кандидатов (бэклог / заброшенное / новое) с фильтрами и бустами настроения → re-rank топ-25 через
+  Claude со structured outputs (модель выбирает только из переданных кандидатов) → 5 карточек с
+  объяснениями. Фолбэк без ключа — эвристика с разнообразием источников.
+- **Настроение:** мини-опрос (время · вайб · соло/друзья) + `playtime_2weeks` из Steam.
+- **Обучение:** каждый подключённый профиль сохраняется снапшотом (задел под item-item матрицу
+  «у владельцев X часто есть Y»), фидбек «зашло/не то» пишется в БД.
+
+## Команды
+
+```bash
+npm run dev     # dev-сервер
+npm test        # vitest (53 теста)
+npm run build   # продакшен-сборка
+```
+
+## Домен и деплой
+
+Домен: **imbored.cc** (Cloudflare), хостинг — Vercel, база — Turso.
+Пошаговая инструкция со всеми переменными и DNS-записями: **[DEPLOY.md](DEPLOY.md)**.
+
+## Дорожная карта (этап 2)
+
+- Режим «во что играть с друзьями»: пересечение библиотек + co-op фильтры + бюджет (IsThereAnyDeal).
+- Десктопный сканер установленных игр (Steam/Epic/GOG/Ubisoft) — референс Playnite (MIT).
+- Обучение на фидбеке и собственная матрица совместного владения.
