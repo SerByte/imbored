@@ -9,6 +9,7 @@ import { GameArt } from '@/components/GameArt'
 import { LogoMark } from '@/components/Logo'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
+import { SteamLaunch } from '@/components/SteamLaunch'
 import type { GameArtUrls } from '@/lib/art'
 import { STORE_LABEL } from '@/lib/stores'
 
@@ -123,12 +124,10 @@ export function MatchCeremony({
                 Открыть в {STORE_LABEL[game.store ?? ''] ?? 'магазине'}
               </a>
             ) : (
-              <a
-                href={`steam://run/${game.appid}`}
-                className="rounded-[14px] bg-ember text-bg font-semibold px-8 py-3 hover:brightness-110 transition inline-block"
-              >
-                Запустить в Steam
-              </a>
+              <SteamLaunch
+                appid={game.appid}
+                className="rounded-[14px] bg-ember text-bg font-semibold px-8 py-3 hover:brightness-110 transition"
+              />
             )}
           </Magnet>
         </div>

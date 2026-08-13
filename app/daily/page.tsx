@@ -7,6 +7,7 @@ import { BlurBand } from '@/components/BlurBand'
 import { HeroArt } from '@/components/HeroArt'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
+import { SteamLaunch } from '@/components/SteamLaunch'
 import { Spinner } from '@/components/Spinner'
 import type { GameArtUrls } from '@/lib/art'
 import { STORE_LABEL } from '@/lib/stores'
@@ -164,12 +165,10 @@ export default function DailyPage() {
                   Открыть в {STORE_LABEL[pick.store ?? ''] ?? 'магазине'}
                 </a>
               ) : (
-                <a
-                  href={`steam://run/${pick.appid}`}
+                <SteamLaunch
+                  appid={pick.appid}
                   className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
-                >
-                  Запустить в Steam
-                </a>
+                />
               )}
               <Link
                 href={`/game/${pick.appid}`}

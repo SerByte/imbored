@@ -13,6 +13,7 @@ import { HeroArt } from '@/components/HeroArt'
 import { LogoMark } from '@/components/Logo'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SpinWheel } from '@/components/SpinWheel'
+import { SteamLaunch } from '@/components/SteamLaunch'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Spinner } from '@/components/Spinner'
 import type { GameArtUrls } from '@/lib/art'
@@ -498,13 +499,11 @@ function Player() {
                     Открыть в {STORE_LABEL[pick.store ?? ''] ?? 'магазине'}
                   </a>
                 ) : (
-                  <a
-                    href={`steam://run/${pick.appid}`}
+                  <SteamLaunch
+                    appid={pick.appid}
                     onClick={() => sendFeedback(pick.appid, 'liked')}
                     className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
-                  >
-                    Запустить в Steam
-                  </a>
+                  />
                 )}
                 {pick.source === 'new' && !pick.storeUrl && pick.priceFinal !== null && pick.priceFinal > 0 && (
                   <a

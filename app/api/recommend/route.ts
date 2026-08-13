@@ -36,20 +36,21 @@ export async function POST(req: Request) {
   const games = snapshot.games
   const owned = new Set(games.map((g) => g.appid))
 
-  // Метаданные только своей библиотеки: раньше здесь читался весь каталог,
-  // что на сотне тысяч игр сожгло бы лимит прочитанных строк Turso
-  const libMetas = await getGamesMeta(
-    db,
-    games.map((g) => g.appid),
-  )
+  const banned = await bannedAppids(db, steamid)
+  const feedback = await listFeedback(db, steamid, 300)
+
+  // Метаданные своей библиотеки И игр из истории оценок: раньше здесь читался
+  // весь каталог, что на сотне тысяч игр сожгло бы лимит прочитанных строк
+  // Turso. Игры из фидбека нужны здесь же — иначе оценка игры, которой нет
+  // в библиотеке, перестанет влиять на профиль вкуса.
+  const libMetas = await getGamesMeta(db, [
+    ...new Set([...games.map((g) => g.appid), ...feedback.map((f) => f.appid)]),
+  ])
   const poolByAppid = new Map<number, GameMeta>()
   const metaOf = (appid: number): GameMeta | undefined =>
     libMetas.get(appid) ?? poolByAppid.get(appid)
 
-  const banned = await bannedAppids(db, steamid)
-
   // профиль вкуса с поправкой на историю «зашло»/«не то»
-  const feedback = await listFeedback(db, steamid, 300)
   const profile = applyFeedbackToProfile(
     buildTagProfile(games, (id) => libMetas.get(id)),
     feedback,

@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Screenshots } from '@/components/Screenshots'
+import { SteamLaunch } from '@/components/SteamLaunch'
 import { loadGamePage } from '@/lib/gamepage'
 import { STORE_LABEL } from '@/lib/stores'
 
@@ -115,17 +116,18 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </a>
               ) : (
                 <>
-                  <a
-                    href={`steam://run/${appid}`}
+                  <SteamLaunch
+                    appid={appid}
+                    label="Запустить"
+                    mobileLabel="Открыть в Steam"
                     className="rounded-[14px] bg-ember text-bg font-semibold px-5 py-2.5 hover:brightness-110 transition text-sm"
-                  >
-                    Запустить
-                  </a>
+                  />
+                  {/* на телефоне кнопка выше и так ведёт в магазин — дублировать незачем */}
                   <a
                     href={`https://store.steampowered.com/app/${appid}/`}
                     target="_blank"
                     rel="noreferrer"
-                    className="rounded-[14px] glass glass-hover px-5 py-2.5 text-sm"
+                    className="hidden md:inline-block rounded-[14px] glass glass-hover px-5 py-2.5 text-sm"
                   >
                     Страница в Steam
                   </a>
