@@ -1,12 +1,21 @@
 import { NextResponse } from 'next/server'
-import { bannedAppids, getAllGamesMeta, getLatestSnapshot, listFeedback } from '@/lib/db'
+import {
+  bannedAppids,
+  countIngest,
+  getGamesMeta,
+  getLatestSnapshot,
+  listFeedback,
+  loadTagStats,
+} from '@/lib/db'
 import { claudePicks, heuristicPicks } from '@/lib/llm'
 import { parseMood } from '@/lib/mood'
+import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import {
   applyFeedbackToProfile,
   buildTagProfile,
   explainMatch,
   scoreCandidates,
+  splitBySource,
 } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import type { GameMeta } from '@/lib/types'
@@ -26,17 +35,39 @@ export async function POST(req: Request) {
 
   const games = snapshot.games
   const owned = new Set(games.map((g) => g.appid))
-  const metas = await getAllGamesMeta(db)
-  const metaOf = (appid: number): GameMeta | undefined => metas.get(appid)
+
+  // Метаданные только своей библиотеки: раньше здесь читался весь каталог,
+  // что на сотне тысяч игр сожгло бы лимит прочитанных строк Turso
+  const libMetas = await getGamesMeta(
+    db,
+    games.map((g) => g.appid),
+  )
+  const poolByAppid = new Map<number, GameMeta>()
+  const metaOf = (appid: number): GameMeta | undefined =>
+    libMetas.get(appid) ?? poolByAppid.get(appid)
 
   const banned = await bannedAppids(db, steamid)
-  const newPool = [...metas.values()].filter(
-    (m) => !owned.has(m.appid) && !banned.has(m.appid) && Object.keys(m.tags).length > 0,
-  )
 
   // профиль вкуса с поправкой на историю «зашло»/«не то»
   const feedback = await listFeedback(db, steamid, 300)
-  const profile = applyFeedbackToProfile(buildTagProfile(games, metaOf), feedback, metaOf)
+  const profile = applyFeedbackToProfile(
+    buildTagProfile(games, (id) => libMetas.get(id)),
+    feedback,
+    metaOf,
+  )
+
+  // Кандидаты из большого каталога — одним запросом с LIMIT, а не полным сканом
+  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const newPool = (
+    await fetchDiscoveryPool(db, {
+      tags: pickQueryTags(profile, tagStats, catalogSize),
+      bannedAppids: [...banned],
+      requireMultiplayer: mood.social === 'friends',
+      rotation: rotationSlot(steamid, now),
+      limit: 400,
+    })
+  ).filter((m) => !owned.has(m.appid))
+  for (const m of newPool) poolByAppid.set(m.appid, m)
   const candidates = scoreCandidates({
     profile,
     library: games,
@@ -49,11 +80,18 @@ export async function POST(req: Request) {
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
 
-  const fromClaude = await claudePicks({ candidates, metaOf, library: games, mood })
-  const picks = fromClaude ?? heuristicPicks(candidates, metaOf, mood, 5)
+  // Своё и «нет в библиотеке» — разные разговоры, поэтому и разные блоки.
+  // В Claude уходят только свои игры: промпт дешевле, и модель перестаёт
+  // смешивать «купи новое» с «поиграй в то, что уже есть».
+  const { own, discovery } = splitBySource(candidates)
+  const fromClaude = own.length
+    ? await claudePicks({ candidates: own, metaOf, library: games, mood })
+    : null
+  const picks = fromClaude ?? heuristicPicks(own.length ? own : candidates, metaOf, mood, 5)
+  const discoveries = heuristicPicks(discovery, metaOf, mood, 6)
 
   const libByAppid = new Map(games.map((g) => [g.appid, g]))
-  const enriched = picks.map((p) => {
+  const enrich = (p: { appid: number; name: string; reason: string; source: string }) => {
     const meta = metaOf(p.appid)
     const lib = libByAppid.get(p.appid)
     const topTags = Object.entries(meta?.tags ?? {})
@@ -72,10 +110,11 @@ export async function POST(req: Request) {
       priceFinal: meta?.priceFinal ?? null,
       signals: meta ? explainMatch(profile, meta, mood) : null,
     }
-  })
+  }
 
   return NextResponse.json({
-    picks: enriched,
+    picks: picks.map(enrich),
+    discoveries: discoveries.map(enrich),
     engine: fromClaude ? 'claude' : 'heuristic',
     candidateCount: candidates.length,
   })

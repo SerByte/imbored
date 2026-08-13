@@ -88,6 +88,52 @@ CREATE TABLE IF NOT EXISTS room_votes (
 );
 `
 
+/**
+ * Схема каталога. Отделена от SCHEMA, потому что часть её объектов ссылается
+ * на колонки, добавляемые ALTER-циклом, и создаваться должна строго после него.
+ *
+ * Ключевое разделение: catalog_ingest — карта территории (все игры Steam,
+ * ~170 тысяч), games — только то, что реально показываем. Полный каталог
+ * в games не влезает по бюджету прочитанных строк Turso.
+ */
+const SCHEMA_CATALOG = `
+CREATE TABLE IF NOT EXISTS catalog_ingest (
+  appid INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  tagids_json TEXT NOT NULL DEFAULT '[]',
+  release_year INTEGER,
+  reviews_total INTEGER,
+  reviews_percent INTEGER,
+  price_final INTEGER,
+  status TEXT NOT NULL DEFAULT 'seen',
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ingest_rank ON catalog_ingest (reviews_total DESC);
+CREATE INDEX IF NOT EXISTS idx_ingest_status ON catalog_ingest (status, reviews_total DESC);
+
+CREATE TABLE IF NOT EXISTS tags (
+  tagid INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  game_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS game_tags (
+  appid INTEGER NOT NULL,
+  tag TEXT NOT NULL,
+  weight INTEGER NOT NULL,
+  PRIMARY KEY (appid, tag)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_game_tags_tag ON game_tags (tag, weight DESC);
+
+CREATE TABLE IF NOT EXISTS catalog_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_games_pool ON games (reviews_total DESC)
+  WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
+`
+
 function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(',')
 }
@@ -109,6 +155,19 @@ export async function migrateDb(db: Db): Promise<Db> {
     ['feedback', 'reason TEXT'],
     ['rooms', 'is_public INTEGER NOT NULL DEFAULT 0'],
     ['users', 'portrait_json TEXT'],
+    // сигналы актуальности и производные поля для выборки без полного скана
+    ['games', 'release_year INTEGER'],
+    ['games', 'developer TEXT'],
+    ['games', 'publisher TEXT'],
+    ['games', 'reviews_total INTEGER'],
+    ['games', 'reviews_percent INTEGER'],
+    ['games', 'reviews_30d INTEGER'],
+    ['games', 'signals_at INTEGER'],
+    ['games', 'tag_count INTEGER NOT NULL DEFAULT 0'],
+    ['games', 'is_multiplayer INTEGER NOT NULL DEFAULT 0'],
+    ['games', 'alive INTEGER NOT NULL DEFAULT 1'],
+    ['games', 'dead_reason TEXT'],
+    ['games', 'superseded_by INTEGER'],
   ] as const) {
     try {
       await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col}`)
@@ -116,6 +175,9 @@ export async function migrateDb(db: Db): Promise<Db> {
       // колонка уже есть
     }
   }
+
+  // строго после ALTER-цикла: частичный индекс ссылается на новые колонки
+  await db.executeMultiple(SCHEMA_CATALOG)
 
   // старый CHECK у feedback не пускал action='banned' — пересобираем таблицу
   const info = await db.execute(
@@ -421,8 +483,10 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
   await db.execute({
     sql: `INSERT INTO games (appid, name, tags_json, genres_json, categories_json, short_description,
             header_image, screenshots_json, is_free, price_final, release_date, median_forever,
-            store, store_url, art_json, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            store, store_url, art_json,
+            release_year, developer, publisher, reviews_total, reviews_percent, reviews_30d,
+            tag_count, is_multiplayer, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(appid) DO UPDATE SET
             name = excluded.name,
             tags_json = excluded.tags_json,
@@ -438,6 +502,14 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
             store = excluded.store,
             store_url = excluded.store_url,
             art_json = excluded.art_json,
+            release_year = excluded.release_year,
+            developer = excluded.developer,
+            publisher = excluded.publisher,
+            reviews_total = excluded.reviews_total,
+            reviews_percent = excluded.reviews_percent,
+            reviews_30d = excluded.reviews_30d,
+            tag_count = excluded.tag_count,
+            is_multiplayer = excluded.is_multiplayer,
             updated_at = excluded.updated_at`,
     args: [
       meta.appid,
@@ -457,9 +529,30 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
       // Пустой объект — это «арт искали и не нашли», и он отличается от NULL,
       // то есть «ещё не искали». Иначе такие игры перезапрашивались бы вечно.
       meta.art ? JSON.stringify(meta.art) : null,
+      meta.releaseYear ?? null,
+      meta.developer ?? null,
+      meta.publisher ?? null,
+      meta.reviewsTotal ?? null,
+      meta.reviewsPercent ?? null,
+      meta.reviews30d ?? null,
+      // производные: по ним идёт выборка кандидатов, чтобы не парсить JSON в SQL
+      Object.keys(meta.tags).length,
+      isMultiplayerCategories(meta.categories) ? 1 : 0,
       nowSec,
     ],
   })
+}
+
+/**
+ * Категории Steam, означающие совместную игру: 1 Multi-player, 9 Co-op,
+ * 24 Shared/Split Screen, 36 Online PvP, 38 Online Co-op, 39 Split Screen PvP, 49 PvP.
+ * Дублирует isMultiplayerMeta из lib/recommend, но без импорта: db не должна
+ * зависеть от движка рекомендаций. Эквивалентность закреплена тестом.
+ */
+const MULTIPLAYER_CATEGORY_IDS = new Set([1, 9, 24, 36, 38, 39, 49])
+
+export function isMultiplayerCategories(categories: number[]): boolean {
+  return categories.some((c) => MULTIPLAYER_CATEGORY_IDS.has(c))
 }
 
 type GameRow = {
@@ -520,13 +613,14 @@ export async function getGamesMeta(db: Db, appids: number[]): Promise<Map<number
   )
 }
 
-/** Весь каталог одним запросом — для скоринга рекомендаций */
-export async function getAllGamesMeta(db: Db): Promise<Map<number, GameMeta>> {
-  const res = await db.execute('SELECT * FROM games')
-  return new Map(
-    (res.rows as unknown as GameRow[]).map((r) => [r.appid, rowToMeta(r)] as const),
-  )
-}
+/*
+ * Здесь была getAllGamesMeta — «весь каталог одним запросом». Удалена намеренно,
+ * а не помечена устаревшей: на каталоге в сотню тысяч игр это полный скан на
+ * каждый запрос пользователя, и оставленная функция вернулась бы в код при
+ * первом же рефакторинге. Вместо неё — getGamesMeta по списку appid для
+ * библиотечных сценариев и fetchDiscoveryPool из lib/pool для открытий.
+ * Возврат полного скана ловит тест lib/noscan.test.ts.
+ */
 
 export type GameJsonColumn = 'reviews_summary_json' | 'pros_cons_json'
 
@@ -562,6 +656,181 @@ export async function getGameJson(
   })
   const v = res.rows[0]?.v as string | null | undefined
   return v ? JSON.parse(v) : null
+}
+
+/* ---------- большой каталог ---------- */
+
+export type IngestRow = {
+  appid: number
+  name: string
+  tagids: number[]
+  releaseYear?: number
+  reviewsTotal?: number
+  reviewsPercent?: number
+  priceFinal?: number
+}
+
+/** Карта территории: все игры Steam. Батчами, чтобы не упереться в лимиты. */
+export async function upsertIngestRows(db: Db, rows: IngestRow[], nowSec: number): Promise<void> {
+  if (!rows.length) return
+  const CHUNK = 250
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await db.batch(
+      rows.slice(i, i + CHUNK).map((r) => ({
+        sql: `INSERT INTO catalog_ingest
+                (appid, name, tagids_json, release_year, reviews_total, reviews_percent, price_final, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(appid) DO UPDATE SET
+                name = excluded.name,
+                tagids_json = excluded.tagids_json,
+                release_year = excluded.release_year,
+                reviews_total = excluded.reviews_total,
+                reviews_percent = excluded.reviews_percent,
+                price_final = excluded.price_final,
+                updated_at = excluded.updated_at
+              WHERE catalog_ingest.name IS NOT excluded.name
+                 OR catalog_ingest.tagids_json IS NOT excluded.tagids_json
+                 OR catalog_ingest.reviews_total IS NOT excluded.reviews_total`,
+        args: [
+          r.appid,
+          r.name,
+          JSON.stringify(r.tagids),
+          r.releaseYear ?? null,
+          r.reviewsTotal ?? null,
+          r.reviewsPercent ?? null,
+          r.priceFinal ?? null,
+          nowSec,
+        ],
+      })),
+      'write',
+    )
+  }
+}
+
+/** Сколько игр в карте территории */
+export async function countIngest(db: Db): Promise<number> {
+  const res = await db.execute('SELECT COUNT(*) AS n FROM catalog_ingest')
+  return Number(res.rows[0]?.n ?? 0)
+}
+
+/** Кандидаты на глубокую загрузку: самые обсуждаемые из ещё не обработанных */
+export async function nextIngestBatch(
+  db: Db,
+  status: string,
+  limit: number,
+): Promise<IngestRow[]> {
+  const res = await db.execute({
+    sql: `SELECT appid, name, tagids_json, release_year, reviews_total, reviews_percent, price_final
+          FROM catalog_ingest WHERE status = ? ORDER BY reviews_total DESC LIMIT ?`,
+    args: [status, limit],
+  })
+  return (
+    res.rows as unknown as Array<{
+      appid: number
+      name: string
+      tagids_json: string
+      release_year: number | null
+      reviews_total: number | null
+      reviews_percent: number | null
+      price_final: number | null
+    }>
+  ).map((r) => ({
+    appid: r.appid,
+    name: r.name,
+    tagids: JSON.parse(r.tagids_json) as number[],
+    ...(r.release_year !== null ? { releaseYear: r.release_year } : {}),
+    ...(r.reviews_total !== null ? { reviewsTotal: r.reviews_total } : {}),
+    ...(r.reviews_percent !== null ? { reviewsPercent: r.reviews_percent } : {}),
+    ...(r.price_final !== null ? { priceFinal: r.price_final } : {}),
+  }))
+}
+
+export async function setIngestStatus(db: Db, appids: number[], status: string): Promise<void> {
+  if (!appids.length) return
+  const CHUNK = 500
+  for (let i = 0; i < appids.length; i += CHUNK) {
+    const part = appids.slice(i, i + CHUNK)
+    await db.execute({
+      sql: `UPDATE catalog_ingest SET status = ? WHERE appid IN (${placeholders(part.length)})`,
+      args: [status, ...part],
+    })
+  }
+}
+
+/** Курсоры фаз сида: чтобы прогон возобновлялся с места обрыва */
+export async function setCatalogMeta(db: Db, key: string, value: string): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO catalog_meta (key, value) VALUES (?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    args: [key, value],
+  })
+}
+
+export async function getCatalogMeta(db: Db, key: string): Promise<string | null> {
+  const res = await db.execute({ sql: 'SELECT value FROM catalog_meta WHERE key = ?', args: [key] })
+  return (res.rows[0]?.value as string | undefined) ?? null
+}
+
+/** Словарь тегов Steam: tagid -> имя */
+export async function saveTagDictionary(db: Db, tags: Map<number, string>): Promise<void> {
+  const rows = [...tags.entries()]
+  const CHUNK = 250
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await db.batch(
+      rows.slice(i, i + CHUNK).map(([tagid, name]) => ({
+        sql: `INSERT INTO tags (tagid, name) VALUES (?, ?)
+              ON CONFLICT(tagid) DO UPDATE SET name = excluded.name`,
+        args: [tagid, name],
+      })),
+      'write',
+    )
+  }
+}
+
+export async function loadTagDictionary(db: Db): Promise<Map<number, string>> {
+  const res = await db.execute('SELECT tagid, name FROM tags')
+  const out = new Map<number, string>()
+  for (const r of res.rows as unknown as Array<{ tagid: number; name: string }>) {
+    out.set(r.tagid, r.name)
+  }
+  return out
+}
+
+/**
+ * Проекция тегов допустимых игр. Хранится только топ-N тегов на игру, и только
+ * для игр, прошедших фильтры актуальности — так «топ по тегу» не возвращает
+ * мертвецов, которые потом отсеются в JS и оставят пустую выдачу.
+ */
+export async function replaceGameTags(
+  db: Db,
+  appid: number,
+  tags: Array<{ tag: string; weight: number }>,
+): Promise<void> {
+  await db.execute({ sql: 'DELETE FROM game_tags WHERE appid = ?', args: [appid] })
+  if (!tags.length) return
+  await db.batch(
+    tags.map((t) => ({
+      sql: 'INSERT OR REPLACE INTO game_tags (appid, tag, weight) VALUES (?, ?, ?)',
+      args: [appid, t.tag, t.weight],
+    })),
+    'write',
+  )
+}
+
+/** Частотность тега по каталогу — из неё считаются авто-стоп-слова */
+export async function rebuildTagStats(db: Db): Promise<void> {
+  await db.execute(`UPDATE tags SET game_count = (
+    SELECT COUNT(*) FROM game_tags WHERE game_tags.tag = tags.name
+  )`)
+}
+
+export async function loadTagStats(db: Db): Promise<Map<string, number>> {
+  const res = await db.execute('SELECT name, game_count FROM tags WHERE game_count > 0')
+  const out = new Map<string, number>()
+  for (const r of res.rows as unknown as Array<{ name: string; game_count: number }>) {
+    out.set(r.name, r.game_count)
+  }
+  return out
 }
 
 /** appid'ы, которых нет в кэше или чьи метаданные старше maxAgeSec (один запрос) */

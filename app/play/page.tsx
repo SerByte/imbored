@@ -127,6 +127,7 @@ function Player() {
   // Откуда пришла следующая игра — задаёт направление смены героя.
   const [dir, setDir] = useState<'next' | 'pick'>('next')
   const [picks, setPicks] = useState<Pick[]>([])
+  const [discoveries, setDiscoveries] = useState<Pick[]>([])
   const [index, setIndex] = useState(0)
   const [liked, setLiked] = useState<Set<number>>(new Set())
   const [askReason, setAskReason] = useState(false)
@@ -180,12 +181,17 @@ function Player() {
         setPhase('error')
         return
       }
-      const data = (await res.json()) as { picks: Pick[]; engine: string }
+      const data = (await res.json()) as {
+        picks: Pick[]
+        discoveries?: Pick[]
+        engine: string
+      }
       if (!data.picks?.length) {
         setPhase('error')
         return
       }
       setPicks(data.picks)
+      setDiscoveries(data.discoveries ?? [])
       setEngine(data.engine)
       setIndex(roulette ? weightedRandomIndex(data.picks.length) : 0)
       // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
@@ -620,6 +626,59 @@ function Player() {
             <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors">
               Изменить настроение →
             </Link>
+          </div>
+        </section>
+      )}
+
+      {/* Покупки — отдельным разговором: выше только то, за что уже заплачено */}
+      {!roulette && discoveries.length > 0 && (
+        <section className="mx-auto w-full max-w-6xl px-5 pb-16">
+          <div className="border-t border-edge/60 pt-10">
+            <h2 className="text-sm font-medium text-dim mb-1">Нет в твоей библиотеке</h2>
+            <p className="text-xs text-dim/60 mb-4">
+              Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто
+              на будущее.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {discoveries.map((p, i) => (
+                <motion.a
+                  key={p.appid}
+                  href={p.storeUrl ?? `https://store.steampowered.com/app/${p.appid}/`}
+                  target="_blank"
+                  rel="noreferrer"
+                  initial={{ opacity: 0, y: 12 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: '-40px' }}
+                  transition={{ duration: 0.45, ease: EASE, delay: i * 0.05 }}
+                  onClick={() => sendFeedback(p.appid, 'opened')}
+                  className="glass glass-hover rounded-[14px] overflow-hidden text-left"
+                >
+                  <GameArt
+                    appid={p.appid}
+                    name={p.name}
+                    headerImage={p.headerImage}
+                    art={p.art}
+                    sizes="(min-width: 768px) 33vw, 50vw"
+                    className="w-full aspect-[460/215] object-cover"
+                  />
+                  <div className="p-3">
+                    <div className="text-sm font-semibold leading-tight">{p.name}</div>
+                    <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
+                      <span className="text-dim truncate">
+                        {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
+                      </span>
+                      <span className="font-mono text-ember shrink-0">
+                        {p.priceFinal === 0
+                          ? 'бесплатно'
+                          : p.priceFinal
+                            ? `${Math.round(p.priceFinal / 100)} $`
+                            : ''}
+                      </span>
+                    </div>
+                  </div>
+                </motion.a>
+              ))}
+            </div>
           </div>
         </section>
       )}

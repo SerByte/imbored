@@ -7,6 +7,7 @@ import {
   cosine,
   explainMatch,
   scoreCandidates,
+  splitBySource,
 } from './recommend'
 import type { GameMeta, LibraryGame, Mood } from './types'
 
@@ -20,6 +21,31 @@ function game(partial: Partial<LibraryGame> & { appid: number }): LibraryGame {
 function meta(appid: number, tags: Record<string, number>, categories: number[] = [2]): GameMeta {
   return { appid, name: `game-${appid}`, tags, genres: [], categories }
 }
+
+describe('splitBySource', () => {
+  test('своё и «нет в библиотеке» не смешиваются', () => {
+    const { own, discovery } = splitBySource([
+      { appid: 1, source: 'backlog' as const },
+      { appid: 2, source: 'new' as const },
+      { appid: 3, source: 'comeback' as const },
+      { appid: 4, source: 'new' as const },
+    ])
+    expect(own.map((c) => c.appid)).toEqual([1, 3])
+    expect(discovery.map((c) => c.appid)).toEqual([2, 4])
+  })
+
+  test('пустой вход не роняет', () => {
+    expect(splitBySource([])).toEqual({ own: [], discovery: [] })
+  })
+
+  test('порядок внутри блоков сохраняется — ранжирование уже сделано', () => {
+    const { own } = splitBySource([
+      { appid: 9, source: 'comeback' as const },
+      { appid: 1, source: 'backlog' as const },
+    ])
+    expect(own.map((c) => c.appid)).toEqual([9, 1])
+  })
+})
 
 describe('cosine', () => {
   test('одинаковые вектора дают 1', () => {

@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import { compatibility } from '@/lib/compat'
-import { getAllGamesMeta, getLatestSnapshot, getPersonaName } from '@/lib/db'
+import { countIngest, getGamesMeta, getLatestSnapshot, getPersonaName, loadTagStats } from '@/lib/db'
 import { buildGroupDeck } from '@/lib/group'
+import { fetchDiscoveryPool, pickQueryTags } from '@/lib/pool'
+import { buildTagProfile } from '@/lib/recommend'
 import { currentSteamId, getDb } from '@/lib/server'
 
 export async function GET(_req: Request, ctx: { params: Promise<{ steamid: string }> }) {
@@ -25,9 +27,21 @@ export async function GET(_req: Request, ctx: { params: Promise<{ steamid: strin
   const nameOf = (steamid: string, stored: string | null) =>
     stored ?? `Игрок ${steamid.slice(-4)}`
 
-  const metas = await getAllGamesMeta(db)
+  // Совместимость считается по двум библиотекам — весь каталог для этого не нужен
+  const metas = await getGamesMeta(db, [
+    ...new Set([...mySnap.games, ...otherSnap.games].map((g) => g.appid)),
+  ])
   const metaOf = (appid: number) => metas.get(appid)
   const compat = compatibility(mySnap.games, otherSnap.games, metaOf)
+
+  const pairProfile = buildTagProfile([...mySnap.games, ...otherSnap.games], metaOf)
+  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const extraPool = await fetchDiscoveryPool(db, {
+    tags: pickQueryTags(pairProfile, tagStats, catalogSize),
+    requireMultiplayer: true,
+    limit: 80,
+  })
+  for (const m of extraPool) if (!metas.has(m.appid)) metas.set(m.appid, m)
 
   const playTogether = buildGroupDeck({
     members: [
@@ -35,7 +49,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ steamid: strin
       { steamid: otherRaw, name: nameOf(otherRaw, otherName), library: otherSnap.games },
     ],
     metaOf,
-    extraPool: [...metas.values()].filter((m) => Object.keys(m.tags).length > 0),
+    extraPool,
     limit: 3,
   })
 

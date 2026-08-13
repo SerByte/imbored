@@ -1,4 +1,10 @@
-import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
+import type {
+  CandidateSource,
+  GameMeta,
+  LibraryGame,
+  Mood,
+  ScoredCandidate,
+} from './types'
 
 /** id категорий Steam, означающих «можно с друзьями» */
 const MULTIPLAYER_CATEGORIES = new Set([1, 9, 24, 36, 38, 39, 49])
@@ -96,6 +102,20 @@ export function applyFeedbackToProfile(
   return out
 }
 
+/**
+ * Разделяет выдачу на «своё» и «нет в библиотеке». Пользователь просил не
+ * смешивать: основной ответ на «во что поиграть» — это игры, за которые уже
+ * заплачено, а покупки идут отдельной секцией и по своей воле.
+ */
+export function splitBySource<T extends { source: CandidateSource }>(
+  candidates: T[],
+): { own: T[]; discovery: T[] } {
+  const own: T[] = []
+  const discovery: T[] = []
+  for (const c of candidates) (c.source === 'new' ? discovery : own).push(c)
+  return { own, discovery }
+}
+
 export type MatchExplanation = {
   matchPercent: number | null
   sharedTags: string[]
@@ -127,6 +147,15 @@ export function explainMatch(
 }
 
 export type LibraryGameState = 'unplayed' | 'comeback' | 'active' | 'played'
+
+/**
+ * «Так и не запущена»: меньше двух часов и без активности за две недели.
+ * Единое определение для /library и портрета — раньше они расходились и
+ * показывали разные числа для одного и того же игрока.
+ */
+export function isUnplayed(g: LibraryGame): boolean {
+  return g.playtimeForever < UNPLAYED_MAX_MIN && g.playtime2Weeks === 0
+}
 
 export function classifyLibraryGame(g: LibraryGame, nowSec: number): LibraryGameState {
   if (g.playtime2Weeks > 0) return 'active'

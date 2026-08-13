@@ -29,6 +29,15 @@ export type GameMeta = {
   releaseDate?: string
   /** медиана наигранного (минуты), из SteamSpy */
   medianForever?: number
+  /** год выхода — для определения серий; парсится из releaseDate в любой локали */
+  releaseYear?: number
+  developer?: string
+  publisher?: string
+  /** всего отзывов и доля положительных — сигналы актуальности */
+  reviewsTotal?: number
+  reviewsPercent?: number
+  /** отзывов за последние 30 дней — главный сигнал «во что играют сейчас» */
+  reviews30d?: number
   /** магазин вне Steam (epic/battlenet/riot/...); отсутствие = Steam */
   store?: string
   /** страница игры в её магазине */

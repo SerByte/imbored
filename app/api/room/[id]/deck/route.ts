@@ -1,6 +1,16 @@
 import { NextResponse } from 'next/server'
-import { getAllGamesMeta, getLatestSnapshot, getRoom, myVotedAppids, roomMembers } from '@/lib/db'
+import {
+  countIngest,
+  getGamesMeta,
+  getLatestSnapshot,
+  getRoom,
+  loadTagStats,
+  myVotedAppids,
+  roomMembers,
+} from '@/lib/db'
 import { buildGroupDeck } from '@/lib/group'
+import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
+import { buildTagProfile } from '@/lib/recommend'
 import { currentSteamId, getDb } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
@@ -21,7 +31,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: 'notmember' }, { status: 403 })
   }
 
-  const metas = await getAllGamesMeta(db)
   const libraries = await Promise.all(
     members.map(async (m) => ({
       steamid: m.steamid,
@@ -30,10 +39,32 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     })),
   )
 
+  // Метаданные библиотек участников, а не всего каталога
+  const ownedIds = [...new Set(libraries.flatMap((l) => l.library.map((g) => g.appid)))]
+  const metas = await getGamesMeta(db, ownedIds)
+  const metaOf = (appid: number) => metas.get(appid)
+
+  // Общий вкус пати — по нему добираем то, чего нет ни у кого.
+  // requireMultiplayer снимает с JS-фильтра на порядок больший пул.
+  const partyProfile: Record<string, number> = {}
+  for (const l of libraries) {
+    for (const [tag, weight] of Object.entries(buildTagProfile(l.library, metaOf))) {
+      partyProfile[tag] = (partyProfile[tag] ?? 0) + weight
+    }
+  }
+  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const extraPool = await fetchDiscoveryPool(db, {
+    tags: pickQueryTags(partyProfile, tagStats, catalogSize),
+    requireMultiplayer: true,
+    rotation: rotationSlot(id, Math.floor(Date.now() / 1000)),
+    limit: 150,
+  })
+  for (const m of extraPool) if (!metas.has(m.appid)) metas.set(m.appid, m)
+
   const deck = buildGroupDeck({
     members: libraries,
-    metaOf: (appid) => metas.get(appid),
-    extraPool: [...metas.values()].filter((m) => Object.keys(m.tags).length > 0),
+    metaOf,
+    extraPool,
     limit: DECK_SIZE,
   })
 

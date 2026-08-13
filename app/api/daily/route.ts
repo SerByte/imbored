@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { pickDaily } from '@/lib/daily'
-import { bannedAppids, getAllGamesMeta, getLatestSnapshot, listFeedback } from '@/lib/db'
+import { bannedAppids, getGamesMeta, getLatestSnapshot, listFeedback } from '@/lib/db'
 import { heuristicPicks } from '@/lib/llm'
 import {
   applyFeedbackToProfile,
@@ -22,8 +22,12 @@ export async function GET() {
   if (!snapshot) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
 
   const games = snapshot.games
-  const owned = new Set(games.map((g) => g.appid))
-  const metas = await getAllGamesMeta(db)
+  // Игра дня — про разгребание СВОЕГО, поэтому внешний каталог тут не нужен
+  // вовсе: читаем метаданные только своей библиотеки
+  const metas = await getGamesMeta(
+    db,
+    games.map((g) => g.appid),
+  )
   const metaOf = (appid: number): GameMeta | undefined => metas.get(appid)
   const banned = await bannedAppids(db, steamid)
 
@@ -33,9 +37,7 @@ export async function GET() {
     profile,
     library: games,
     metaOf,
-    newPool: [...metas.values()].filter(
-      (m) => !owned.has(m.appid) && !banned.has(m.appid) && Object.keys(m.tags).length > 0,
-    ),
+    newPool: [],
     mood: DAILY_MOOD,
     nowSec: now,
     limit: 25,

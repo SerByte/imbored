@@ -1,13 +1,25 @@
 import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
+import { isMultiplayerMeta } from './recommend'
 import {
   bannedAppids,
   castRoomVote,
+  countIngest,
+  getCatalogMeta,
+  isMultiplayerCategories,
+  loadTagDictionary,
+  loadTagStats,
+  nextIngestBatch,
+  rebuildTagStats,
+  replaceGameTags,
+  saveTagDictionary,
+  setCatalogMeta,
+  setIngestStatus,
+  upsertIngestRows,
   createDb,
   createRoom,
   feedbackStats,
   findRoomMatch,
-  getAllGamesMeta,
   getGameJson,
   getGameMeta,
   getGamesMeta,
@@ -102,14 +114,13 @@ describe('db', () => {
     expect((await getLatestSnapshot(db, 'u2'))?.takenAt).toBe(NOW)
   })
 
-  test('getAllGamesMeta читает весь каталог одним проходом', async () => {
+  test('getGamesMeta читает только запрошенные игры', async () => {
     const db = await freshDb()
     await upsertGameMeta(db, META, NOW)
     await upsertGameMeta(db, { ...META, appid: 730, name: 'CS2' }, NOW)
-    const all = await getAllGamesMeta(db)
-    expect(all.size).toBe(2)
-    expect(all.get(620)?.name).toBe('Portal 2')
-    expect(all.get(730)?.name).toBe('CS2')
+    const some = await getGamesMeta(db, [730])
+    expect(some.size).toBe(1)
+    expect(some.get(730)?.name).toBe('CS2')
   })
 
   test('выборка по списку не упирается в лимит параметров SQLite', async () => {
@@ -154,6 +165,87 @@ describe('db', () => {
     const art = { header: 'https://cdn/h.jpg', hero: 'https://cdn/hero.jpg' }
     await upsertGameMeta(db, { ...META, art }, NOW)
     expect((await getGameMeta(db, 620))?.art).toEqual(art)
+  })
+
+  test('карта территории пишется батчем и отдаёт очередь по обсуждаемости', async () => {
+    const db = await freshDb()
+    await upsertIngestRows(
+      db,
+      [
+        { appid: 10, name: 'Counter-Strike', tagids: [1663], reviewsTotal: 169284 },
+        { appid: 730, name: 'Counter-Strike 2', tagids: [1663, 19], reviewsTotal: 9788173 },
+        { appid: 42, name: 'Мелочь', tagids: [], reviewsTotal: 3 },
+      ],
+      NOW,
+    )
+    expect(await countIngest(db)).toBe(3)
+
+    const batch = await nextIngestBatch(db, 'seen', 2)
+    expect(batch.map((r) => r.appid)).toEqual([730, 10])
+    expect(batch[0].tagids).toEqual([1663, 19])
+
+    await setIngestStatus(db, [730], 'promoted')
+    expect((await nextIngestBatch(db, 'seen', 5)).map((r) => r.appid)).toEqual([10, 42])
+  })
+
+  test('повторный прогон карты территории не меняет данные', async () => {
+    const db = await freshDb()
+    const rows = [{ appid: 10, name: 'CS', tagids: [1], reviewsTotal: 100 }]
+    await upsertIngestRows(db, rows, NOW)
+    await upsertIngestRows(db, rows, NOW + 999)
+    expect(await countIngest(db)).toBe(1)
+    expect((await nextIngestBatch(db, 'seen', 1))[0].name).toBe('CS')
+  })
+
+  test('курсоры фаз переживают перезапуск', async () => {
+    const db = await freshDb()
+    expect(await getCatalogMeta(db, 'search_start')).toBeNull()
+    await setCatalogMeta(db, 'search_start', '1200')
+    await setCatalogMeta(db, 'search_start', '2400')
+    expect(await getCatalogMeta(db, 'search_start')).toBe('2400')
+  })
+
+  test('теги допустимых игр: проекция, частотность и стоп-слова', async () => {
+    const db = await freshDb()
+    await saveTagDictionary(db, new Map([[1, 'Roguelike'], [2, 'Indie']]))
+    expect((await loadTagDictionary(db)).get(1)).toBe('Roguelike')
+
+    await replaceGameTags(db, 620, [
+      { tag: 'Roguelike', weight: 1000 },
+      { tag: 'Indie', weight: 400 },
+    ])
+    await replaceGameTags(db, 730, [{ tag: 'Indie', weight: 900 }])
+    await rebuildTagStats(db)
+
+    const stats = await loadTagStats(db)
+    expect(stats.get('Indie')).toBe(2)
+    expect(stats.get('Roguelike')).toBe(1)
+  })
+
+  test('перезапись тегов игры не оставляет хвостов', async () => {
+    const db = await freshDb()
+    await replaceGameTags(db, 620, [{ tag: 'Puzzle', weight: 1000 }])
+    await replaceGameTags(db, 620, [{ tag: 'Co-op', weight: 800 }])
+    const res = await db.execute('SELECT tag FROM game_tags WHERE appid = 620')
+    expect(res.rows.map((r) => r.tag)).toEqual(['Co-op'])
+  })
+
+  test('производные колонки считаются при записи метаданных', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, categories: [2, 9], tags: { A: 1, B: 2 } }, NOW)
+    const res = await db.execute('SELECT tag_count, is_multiplayer FROM games WHERE appid = 620')
+    expect(Number(res.rows[0].tag_count)).toBe(2)
+    expect(Number(res.rows[0].is_multiplayer)).toBe(1)
+  })
+
+  test('детектор мультиплеера в SQL-слое совпадает с движком рекомендаций', () => {
+    // две реализации одного правила: db не импортирует lib/recommend,
+    // поэтому эквивалентность закрепляем тестом
+    for (const cats of [[2], [1], [2, 9], [38], [49], [], [3, 4]]) {
+      expect(isMultiplayerCategories(cats)).toBe(
+        isMultiplayerMeta({ ...META, categories: cats, tags: {} }),
+      )
+    }
   })
 
   test('setGameJson с невалидной колонкой бросает, а не строит SQL', async () => {

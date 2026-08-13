@@ -151,6 +151,12 @@ describe('parseStoreItems', () => {
     )
   })
 
+  test('издатель и разработчик сохраняются — по ним определяется серия', () => {
+    const m = parseStoreItems(GETITEMS_RESPONSE, TAG_NAMES)[0]
+    expect(m.developer).toBe('Aggro Crab')
+    expect(m.publisher).toBe('Aggro Crab')
+  })
+
   test('сохраняются все размеры, включая широкий арт для героя', () => {
     const m = parseStoreItems(GETITEMS_RESPONSE, TAG_NAMES)[0]
     expect(m.art?.hero).toContain('library_hero.jpg')

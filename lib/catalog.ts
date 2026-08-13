@@ -123,6 +123,13 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
       categories: it.categories?.supported_player_categoryids ?? [],
     }
     if (it.basic_info?.short_description) meta.shortDescription = it.basic_info.short_description
+    // Издатель и разработчик нужны, чтобы не слепить в одну серию чужие игры
+    // с похожим названием: без них «Sniper Elite» и «Sniper Ghost Warrior»
+    // выглядят роднёй
+    const dev = it.basic_info?.developers?.[0]?.name
+    const pub = it.basic_info?.publishers?.[0]?.name
+    if (dev) meta.developer = dev
+    if (pub) meta.publisher = pub
     // Пустой объект тоже пишем: это отметка «арт искали», см. upsertGameMeta
     const art = parseStoreAssets(it.assets)
     meta.art = art
