@@ -231,3 +231,29 @@ describe('runNewsSlice', () => {
     expect(await getGameNews(db, 730)).toHaveLength(1)
   })
 })
+
+describe('нет ключа Claude — не жжём попытки', () => {
+  test('без модели очередь пересказа не трогается вовсе', async () => {
+    // Иначе временно забытый ключ НАВСЕГДА выбивает записи из очереди:
+    // три холостых прогона — и патч уже никогда не получит пересказ
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await enrollNewsPoll(db, [730], 1, NOW)
+    const key = process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+    try {
+      await runNewsSlice(db, {
+        nowSec: NOW + 4000,
+        deadlineAt: Date.now() + 5000,
+        fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
+        // digestFn НЕ передаём: проверяем реальную ветку «модели нет»
+      })
+    } finally {
+      if (key !== undefined) process.env.ANTHROPIC_API_KEY = key
+    }
+    const r = await db.execute('SELECT tldr_tries FROM news_items WHERE appid = 730')
+    expect(Number(r.rows[0].tldr_tries)).toBe(0)
+    // запись осталась в очереди и дождётся ключа
+    expect(await getUnsummarized(db)).toHaveLength(1)
+  })
+})

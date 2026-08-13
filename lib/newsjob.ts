@@ -26,7 +26,7 @@ import {
   type PollStatus,
   type StoredNews,
 } from './db'
-import { claudeNewsDigest } from './llm'
+import { claudeNewsDigest, llmAvailable } from './llm'
 import { bodyHash, detectLang, fetchGameNews, isPatchNote, looksTrivial, newsText } from './news'
 import { blocksToText } from './steamhtml'
 
@@ -190,6 +190,21 @@ export async function runNewsSlice(
 
   // ---- фаза пересказа, свой бюджет ----
   let digested = 0
+
+  // Нет ключа — не ходим в очередь вовсе. Иначе каждая запись впустую тратит
+  // попытку, и после трёх прогонов сотни патчей НАВСЕГДА выпадают из очереди
+  // пересказа: причина-то временная (ключ забыли положить), а отметка вечная.
+  // Попытка должна засчитываться за отказ модели, а не за её отсутствие.
+  if (!opts.digestFn && !llmAvailable()) {
+    return {
+      polled,
+      inserted,
+      digested,
+      hasMore: targets.length === limit && stopped !== 'blocked',
+      stopped,
+    }
+  }
+
   const pending = await getUnsummarized(db, digestLimit)
   if (pending.length) {
     const metas = await getGamesMeta(
