@@ -28,6 +28,14 @@ describe('buildPortrait', () => {
     expect(p.archetypes[0].percent).toBeGreaterThan(p.archetypes[1].percent)
   })
 
+  test('barPercent нормирован к лидеру: у топ-1 всегда полная полоса', () => {
+    const p = buildPortrait([lib(1, 300), lib(2, 100), lib(3, 50)], metaOf)
+    expect(p.archetypes[0].barPercent).toBe(100)
+    expect(p.archetypes.every((a) => a.barPercent > 0 && a.barPercent <= 100)).toBe(true)
+    // порядок один и тот же по обеим шкалам
+    expect(p.archetypes[1].barPercent).toBeGreaterThan(p.archetypes[2].barPercent)
+  })
+
   test('теги с одинаковой подписью схлопываются в один архетип', () => {
     const metas = new Map<number, GameMeta>([
       [10, meta(10, { FPS: 100, Shooter: 90 })], // оба → «стрелок»
@@ -44,9 +52,15 @@ describe('buildPortrait', () => {
     expect(p.archetypes.some((a) => a.tag === 'Indie')).toBe(false)
   })
 
-  test('неизвестный тег получает фолбэк-лейбл', () => {
+  test('неизвестный тег получает фолбэк-лейбл и помечается как ненадёжный', () => {
     const p = buildPortrait([lib(4, 100)], metaOf)
     expect(p.archetypes[0].label).toBe('фанат Zorkovka')
+    expect(p.archetypes[0].known).toBe(false)
+  })
+
+  test('известный тег помечается known — только такой можно вынести в заголовок', () => {
+    const p = buildPortrait([lib(1, 300)], metaOf)
+    expect(p.archetypes[0].known).toBe(true)
   })
 
   test('факты: игры, часы, бэклог, топ-игра с долей', () => {
@@ -54,7 +68,7 @@ describe('buildPortrait', () => {
     expect(p.facts.gamesCount).toBe(3)
     expect(p.facts.totalHours).toBe(400)
     expect(p.facts.unplayedCount).toBe(1)
-    expect(p.facts.topGame).toEqual({ name: 'g1', hours: 300, sharePercent: 75 })
+    expect(p.facts.topGame).toEqual({ appid: 1, name: 'g1', hours: 300, sharePercent: 75 })
   })
 
   test('пустая библиотека не роняет', () => {

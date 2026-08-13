@@ -7,6 +7,7 @@ import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
+import { appBaseUrl } from '@/lib/server'
 import './globals.css'
 
 const onest = Onest({
@@ -20,6 +21,9 @@ const jbMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
+  // без metadataBase Next не может собрать абсолютные ссылки на og-картинки
+  // и при динамическом рендере роняет их в относительные
+  metadataBase: new URL(appBaseUrl()),
   title: 'imbored — во что поиграть',
   description:
     'Подключи Steam — подберём игру под твоё настроение прямо сейчас: из бэклога, заброшенного или нового.',

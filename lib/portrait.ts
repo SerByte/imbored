@@ -1,13 +1,28 @@
-import { buildTagProfile } from './recommend'
+import { buildTagProfile, isUnplayed } from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
+export type Archetype = {
+  tag: string
+  label: string
+  /** доля внутри показанной четвёрки — на ней держатся тексты («ты на 37% стрелок») */
+  percent: number
+  /**
+   * То же самое, но нормированное к лидеру: топ-1 всегда 100%.
+   * Для полосок — при нормировке к сумме лидер получал куцые 37% ширины,
+   * и шкала выглядела произвольной. В текст это значение брать нельзя.
+   */
+  barPercent: number
+  /** есть ли человеческая подпись в словаре; фолбэк «фанат Fantasy» нельзя выносить в заголовок */
+  known: boolean
+}
+
 export type Portrait = {
-  archetypes: Array<{ tag: string; label: string; percent: number }>
+  archetypes: Archetype[]
   facts: {
     gamesCount: number
     totalHours: number
     unplayedCount: number
-    topGame: { name: string; hours: number; sharePercent: number } | null
+    topGame: { appid: number; name: string; hours: number; sharePercent: number } | null
   }
 }
 
@@ -77,31 +92,36 @@ export function buildPortrait(
   const profile = buildTagProfile(library, metaOf)
 
   // синонимы (FPS и Shooter → «стрелок») схлопываем в один архетип
-  const byLabel = new Map<string, { tag: string; weight: number }>()
+  const byLabel = new Map<string, { tag: string; weight: number; known: boolean }>()
   for (const [tag, weight] of Object.entries(profile)) {
     if (STOP_TAGS.has(tag)) continue
+    const known = tag in ARCHETYPE_LABELS
     const label = ARCHETYPE_LABELS[tag] ?? `фанат ${tag}`
     const prev = byLabel.get(label)
     if (prev) prev.weight += weight
-    else byLabel.set(label, { tag, weight })
+    else byLabel.set(label, { tag, weight, known })
   }
 
   const top = [...byLabel.entries()].sort((a, b) => b[1].weight - a[1].weight).slice(0, 4)
   const weightSum = top.reduce((s, [, v]) => s + v.weight, 0)
-  const archetypes = weightSum
+  const maxWeight = top[0]?.[1].weight ?? 0
+  const archetypes: Archetype[] = weightSum
     ? top.map(([label, v]) => ({
         tag: v.tag,
         label,
         percent: Math.round((v.weight / weightSum) * 100),
+        barPercent: Math.round((v.weight / maxWeight) * 100),
+        known: v.known,
       }))
     : []
 
   const totalHours = Math.round(library.reduce((s, g) => s + g.playtimeForever, 0) / 60)
-  const unplayedCount = library.filter((g) => g.playtimeForever < 120).length
+  const unplayedCount = library.filter(isUnplayed).length
   const topLib = [...library].sort((a, b) => b.playtimeForever - a.playtimeForever)[0]
   const topGame =
     topLib && topLib.playtimeForever > 0 && totalHours > 0
       ? {
+          appid: topLib.appid,
           name: topLib.name,
           hours: Math.round(topLib.playtimeForever / 60),
           sharePercent: Math.round((topLib.playtimeForever / 60 / totalHours) * 100),

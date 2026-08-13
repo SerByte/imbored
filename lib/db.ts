@@ -253,9 +253,14 @@ export async function setUserPortrait(
   steamid: string,
   value: PortraitCache,
 ): Promise<void> {
+  // UPSERT, а не UPDATE: без строки в users запись молча терялась, кэш не
+  // сохранялся и Claude дёргался заново на каждый рендер публичной страницы
+  const now = Math.floor(Date.now() / 1000)
   await db.execute({
-    sql: 'UPDATE users SET portrait_json = ? WHERE steamid = ?',
-    args: [JSON.stringify(value), steamid],
+    sql: `INSERT INTO users (steamid, portrait_json, created_at, last_seen_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(steamid) DO UPDATE SET portrait_json = excluded.portrait_json`,
+    args: [steamid, JSON.stringify(value), now, now],
   })
 }
 
