@@ -123,8 +123,10 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
       categories: it.categories?.supported_player_categoryids ?? [],
     }
     if (it.basic_info?.short_description) meta.shortDescription = it.basic_info.short_description
-    const art = parseStoreAssets(it.assets)[0]
-    if (art) meta.headerImage = art
+    // Пустой объект тоже пишем: это отметка «арт искали», см. upsertGameMeta
+    const art = parseStoreAssets(it.assets)
+    meta.art = art
+    if (art.header) meta.headerImage = art.header
     if (it.is_free !== undefined) meta.isFree = it.is_free
     const cents = Number(it.best_purchase_option?.final_price_in_cents)
     if (Number.isFinite(cents)) meta.priceFinal = cents
@@ -147,6 +149,9 @@ export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta
   if (!fresh.categories.length) out.categories = existing.categories
   if (!fresh.screenshots?.length && existing.screenshots?.length) {
     out.screenshots = existing.screenshots
+  }
+  if (!fresh.art || !Object.keys(fresh.art).length) {
+    if (existing.art && Object.keys(existing.art).length) out.art = existing.art
   }
   return out
 }
@@ -321,14 +326,19 @@ export async function ensureMeta(
       const got = byAppid.get(appid)
       if (got) {
         await upsertGameMeta(db, mergeMeta(existing, got), now)
-      } else if (!existing) {
-        // Steam не показывает приложение (снято с продажи, региональное ограничение):
-        // ставим заглушку, чтобы не запрашивать его снова на каждом заходе
-        await upsertGameMeta(
-          db,
-          { appid, name: names?.get(appid) ?? `App ${appid}`, tags: {}, genres: [], categories: [] },
-          now,
-        )
+      } else {
+        // Steam не показывает приложение (снято с продажи, региональное
+        // ограничение) либо это игра вне Steam с отрицательным appid.
+        // Помечаем попытку пустым артом, иначе строка осталась бы «протухшей»
+        // навсегда и прогрев крутился бы вхолостую на каждом заходе.
+        const base: GameMeta = existing ?? {
+          appid,
+          name: names?.get(appid) ?? `App ${appid}`,
+          tags: {},
+          genres: [],
+          categories: [],
+        }
+        await upsertGameMeta(db, { ...base, art: base.art ?? {} }, now)
       }
     }
   } catch {

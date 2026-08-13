@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
 import { getLatestSnapshot, getStaleAppids, upsertGameMeta } from '@/lib/db'
 import { seedOtherStores } from '@/lib/otherstores'
-import { classifyLibraryGame } from '@/lib/recommend'
 import { DEMO_STEAMID, currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const META_MAX_AGE_SEC = 14 * 86_400

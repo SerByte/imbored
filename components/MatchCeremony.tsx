@@ -9,6 +9,7 @@ import { GameArt } from '@/components/GameArt'
 import { LogoMark } from '@/components/Logo'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
+import type { GameArtUrls } from '@/lib/art'
 import { STORE_LABEL } from '@/lib/stores'
 
 gsap.registerPlugin(useGSAP)
@@ -29,6 +30,7 @@ export function MatchCeremony({
     appid: number
     name: string
     headerImage: string | null
+    art?: GameArtUrls | null
     store: string | null
     storeUrl: string | null
   }
@@ -61,6 +63,8 @@ export function MatchCeremony({
           appid={game.appid}
           name={game.name}
           headerImage={game.headerImage}
+          art={game.art}
+          variant="hero"
           eager
           className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
         />
@@ -96,6 +100,8 @@ export function MatchCeremony({
             appid={game.appid}
             name={game.name}
             headerImage={game.headerImage}
+            art={game.art}
+            sizes="(min-width: 768px) 448px, 100vw"
             eager
             className="w-full rounded-[20px] border border-edge aspect-[460/215] object-cover"
           />

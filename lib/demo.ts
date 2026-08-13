@@ -1,4 +1,4 @@
-import { legacyHeaderUrl } from './art'
+import { legacyArtUrl } from './art'
 import { getGameMeta, saveLibrarySnapshot, upsertGameMeta, upsertUser, type Db } from './db'
 import { seedOtherStores } from './otherstores'
 import type { GameMeta, LibraryGame } from './types'
@@ -26,7 +26,9 @@ function meta(
     genres: [],
     categories,
     shortDescription,
-    headerImage: legacyHeaderUrl(appid),
+    headerImage: legacyArtUrl(appid, 'header'),
+    // демо-игры давние, у них живы плоские пути — включая широкий арт героя
+    art: { header: legacyArtUrl(appid, 'header'), hero: legacyArtUrl(appid, 'hero') },
     ...(priceFinal !== undefined ? { priceFinal } : {}),
   }
 }

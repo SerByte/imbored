@@ -62,11 +62,8 @@ export async function POST(req: Request) {
       .map(([t]) => t)
     return {
       ...p,
-      headerImage:
-        meta?.headerImage ??
-        (p.appid > 0
-          ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${p.appid}/header.jpg`
-          : null),
+      headerImage: meta?.headerImage ?? null,
+      art: meta?.art ?? null,
       shortDescription: meta?.shortDescription ?? null,
       tags: topTags,
       hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,

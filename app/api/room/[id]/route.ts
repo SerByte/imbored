@@ -44,11 +44,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       ? {
           appid: matchedMeta.appid,
           name: matchedMeta.name,
-          headerImage:
-            matchedMeta.headerImage ??
-            (matchedMeta.appid > 0
-              ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${matchedMeta.appid}/header.jpg`
-              : null),
+          headerImage: matchedMeta.headerImage ?? null,
+          art: matchedMeta.art ?? null,
           store: matchedMeta.store ?? null,
           storeUrl: matchedMeta.storeUrl ?? null,
         }

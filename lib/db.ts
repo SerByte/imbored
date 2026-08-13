@@ -105,6 +105,7 @@ export async function migrateDb(db: Db): Promise<Db> {
   for (const [table, col] of [
     ['games', 'store TEXT'],
     ['games', 'store_url TEXT'],
+    ['games', 'art_json TEXT'],
     ['feedback', 'reason TEXT'],
     ['rooms', 'is_public INTEGER NOT NULL DEFAULT 0'],
     ['users', 'portrait_json TEXT'],
@@ -420,8 +421,8 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
   await db.execute({
     sql: `INSERT INTO games (appid, name, tags_json, genres_json, categories_json, short_description,
             header_image, screenshots_json, is_free, price_final, release_date, median_forever,
-            store, store_url, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            store, store_url, art_json, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(appid) DO UPDATE SET
             name = excluded.name,
             tags_json = excluded.tags_json,
@@ -436,6 +437,7 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
             median_forever = excluded.median_forever,
             store = excluded.store,
             store_url = excluded.store_url,
+            art_json = excluded.art_json,
             updated_at = excluded.updated_at`,
     args: [
       meta.appid,
@@ -452,6 +454,9 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
       meta.medianForever ?? null,
       meta.store ?? null,
       meta.storeUrl ?? null,
+      // Пустой объект — это «арт искали и не нашли», и он отличается от NULL,
+      // то есть «ещё не искали». Иначе такие игры перезапрашивались бы вечно.
+      meta.art ? JSON.stringify(meta.art) : null,
       nowSec,
     ],
   })
@@ -472,6 +477,7 @@ type GameRow = {
   median_forever: number | null
   store: string | null
   store_url: string | null
+  art_json: string | null
 }
 
 function rowToMeta(row: GameRow): GameMeta {
@@ -491,6 +497,8 @@ function rowToMeta(row: GameRow): GameMeta {
   if (row.median_forever !== null) meta.medianForever = row.median_forever
   if (row.store !== null) meta.store = row.store
   if (row.store_url !== null) meta.storeUrl = row.store_url
+  // колонка появилась позже: у старых строк её может не быть вовсе
+  if (row.art_json) meta.art = JSON.parse(row.art_json)
   return meta
 }
 
@@ -565,12 +573,19 @@ export async function getStaleAppids(
 ): Promise<number[]> {
   if (!appids.length) return []
   const res = await db.execute({
-    sql: `SELECT appid, updated_at FROM games WHERE appid IN (${placeholders(appids.length)})`,
+    sql: `SELECT appid, updated_at, art_json FROM games WHERE appid IN (${placeholders(appids.length)})`,
     args: appids,
   })
   const fresh = new Set<number>()
-  for (const r of res.rows as unknown as Array<{ appid: number; updated_at: number }>) {
-    if (nowSec - r.updated_at <= maxAgeSec) fresh.add(r.appid)
+  for (const r of res.rows as unknown as Array<{
+    appid: number
+    updated_at: number
+    art_json: string | null
+  }>) {
+    // Строка без резолвленного арта считается протухшей независимо от возраста:
+    // иначе игры, прогретые до появления art_json, остались бы с одной мелкой
+    // обложкой до истечения TTL
+    if (nowSec - r.updated_at <= maxAgeSec && r.art_json) fresh.add(r.appid)
   }
   return appids.filter((appid) => !fresh.has(appid))
 }

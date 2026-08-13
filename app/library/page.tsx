@@ -112,6 +112,8 @@ export default async function LibraryPage() {
                 appid={g.appid}
                 name={g.name}
                 headerImage={metas.get(g.appid)?.headerImage ?? null}
+                art={metas.get(g.appid)?.art ?? null}
+                sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
                 className="w-full aspect-[460/215] object-cover"
               />
               <div className="p-3">

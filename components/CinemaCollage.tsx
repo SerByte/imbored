@@ -3,7 +3,7 @@
  * под тёмным скримом. Арт — главный цвет бренда; UI остаётся тихим.
  */
 
-import { legacyHeaderUrl } from '@/lib/art'
+import { legacyArtUrl } from '@/lib/art'
 
 const COLLAGE_APPIDS = [
   [1245620, 1091500, 292030, 1086940, 632470, 753640],
@@ -27,7 +27,7 @@ export function CinemaCollage() {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   key={`${appid}-${j}`}
-                  src={legacyHeaderUrl(appid)}
+                  src={legacyArtUrl(appid, 'header')}
                   alt=""
                   loading={j < 6 ? 'eager' : 'lazy'}
                   className="w-full rounded-[14px] object-cover aspect-[460/215]"

@@ -40,14 +40,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const voted = await myVotedAppids(db, id, steamid)
   const cards = deck
     .filter((c) => !voted.has(c.appid))
-    .map((c) => ({
-      ...c,
-      headerImage:
-        c.headerImage ??
-        (c.appid > 0
-          ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${c.appid}/header.jpg`
-          : null),
-    }))
+    .map((c) => ({ ...c, art: metas.get(c.appid)?.art ?? null }))
 
   return NextResponse.json({
     cards,

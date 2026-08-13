@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { GameArt } from '@/components/GameArt'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Screenshots } from '@/components/Screenshots'
 import { loadGamePage } from '@/lib/gamepage'
@@ -46,24 +47,25 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
     <div className="flex-1">
       {/* hero */}
       <section className="relative overflow-hidden">
-        {meta.headerImage && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={meta.headerImage}
-            alt=""
-            aria-hidden
-            className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
-          />
-        )}
+        <GameArt
+          appid={meta.appid}
+          name=""
+          headerImage={meta.headerImage ?? null}
+          art={meta.art}
+          variant="hero"
+          fallback={null}
+          className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
+        />
         <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-10 grid md:grid-cols-[380px_1fr] gap-8 items-start">
-          {meta.headerImage && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={meta.headerImage}
-              alt={meta.name}
-              className="w-full rounded-[20px] border border-edge anim-reveal"
-            />
-          )}
+          <GameArt
+            appid={meta.appid}
+            name={meta.name}
+            headerImage={meta.headerImage ?? null}
+            art={meta.art}
+            sizes="(min-width: 768px) 380px, 100vw"
+            eager
+            className="w-full aspect-[460/215] object-cover rounded-[20px] border border-edge anim-reveal"
+          />
           <div className="flex flex-col gap-4 anim-rise">
             <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{meta.name}</h1>
             {reviewsSummary && (

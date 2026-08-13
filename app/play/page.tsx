@@ -15,6 +15,7 @@ import { ProgressRing } from '@/components/ProgressRing'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Spinner } from '@/components/Spinner'
+import type { GameArtUrls } from '@/lib/art'
 import { STORE_LABEL } from '@/lib/stores'
 import type { Mood } from '@/lib/types'
 
@@ -30,6 +31,7 @@ type Pick = {
   source: 'backlog' | 'comeback' | 'new'
   reason: string
   headerImage: string | null
+  art: GameArtUrls | null
   shortDescription: string | null
   tags: string[]
   hoursPlayed: number | null
@@ -368,7 +370,12 @@ function Player() {
           exit="exit"
           className="media-dark relative min-h-[78vh] flex items-end overflow-hidden"
         >
-          <HeroArt appid={pick.appid} headerImage={pick.headerImage} name={pick.name} />
+          <HeroArt
+          appid={pick.appid}
+          headerImage={pick.headerImage}
+          art={pick.art}
+          name={pick.name}
+        />
           <div
             aria-hidden
             className="absolute inset-0"
@@ -596,6 +603,8 @@ function Player() {
                   appid={p.appid}
                   name={p.name}
                   headerImage={p.headerImage}
+                  art={p.art}
+                  sizes="(min-width: 768px) 33vw, 100vw"
                   className="w-full aspect-[460/215] object-cover"
                 />
                 <div className="p-3">

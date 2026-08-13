@@ -3,6 +3,7 @@
 import { AnimatePresence, motion, useMotionValue, useTransform } from 'motion/react'
 import { useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import type { GameArtUrls } from '@/lib/art'
 
 export type DeckCard = {
   appid: number
@@ -11,6 +12,7 @@ export type DeckCard = {
   missingFor: string[]
   priceFinal?: number
   headerImage: string | null
+  art?: GameArtUrls | null
   tags: string[]
   store?: string
   storeUrl?: string
@@ -80,6 +82,9 @@ function TopCard({
             appid={card.appid}
             name={card.name}
             headerImage={card.headerImage}
+            art={card.art}
+            sizes="(min-width: 768px) 672px, 100vw"
+            eager
             className="w-full aspect-[460/215] object-cover"
           />
         </motion.div>
@@ -193,6 +198,7 @@ export function SwipeDeck({
               appid={c.appid}
               name={c.name}
               headerImage={c.headerImage}
+              art={c.art}
               className="w-full aspect-[460/215] object-cover"
             />
             <div className="h-24" />

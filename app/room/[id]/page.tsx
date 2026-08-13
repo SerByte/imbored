@@ -7,6 +7,7 @@ import { Ambient } from '@/components/Ambient'
 import { MatchCeremony } from '@/components/MatchCeremony'
 import { Spinner } from '@/components/Spinner'
 import { SwipeDeck } from '@/components/SwipeDeck'
+import type { GameArtUrls } from '@/lib/art'
 
 type RoomState = {
   room: { id: string; status: 'open' | 'matched'; matchedAppid: number | null; isPublic: boolean }
@@ -18,6 +19,7 @@ type RoomState = {
     appid: number
     name: string
     headerImage: string | null
+    art: GameArtUrls | null
     store: string | null
     storeUrl: string | null
   } | null
@@ -30,6 +32,7 @@ type Card = {
   missingFor: string[]
   priceFinal?: number
   headerImage: string | null
+  art?: GameArtUrls | null
   tags: string[]
   store?: string
   storeUrl?: string

@@ -8,6 +8,7 @@ import { HeroArt } from '@/components/HeroArt'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Spinner } from '@/components/Spinner'
+import type { GameArtUrls } from '@/lib/art'
 import { STORE_LABEL } from '@/lib/stores'
 
 type DailyPick = {
@@ -16,6 +17,7 @@ type DailyPick = {
   source: 'backlog' | 'comeback' | 'new'
   reason: string
   headerImage: string | null
+  art: GameArtUrls | null
   tags: string[]
   hoursPlayed: number | null
   store: string | null
@@ -85,7 +87,12 @@ export default function DailyPage() {
   return (
     <div className="flex-1 flex flex-col">
       <section className="media-dark relative flex-1 min-h-[92vh] flex items-end overflow-hidden anim-reveal">
-        <HeroArt appid={pick.appid} headerImage={pick.headerImage} />
+        <HeroArt
+          appid={pick.appid}
+          headerImage={pick.headerImage}
+          art={pick.art}
+          name={pick.name}
+        />
         <div
           aria-hidden
           className="absolute inset-0"

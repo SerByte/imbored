@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Spinner } from '@/components/Spinner'
+import type { GameArtUrls } from '@/lib/art'
 import { STORE_LABEL } from '@/lib/stores'
 
 type CompatData = {
@@ -16,6 +17,7 @@ type CompatData = {
     hoursA: number
     hoursB: number
     headerImage: string | null
+    art: GameArtUrls | null
   }>
   sharedTags: string[]
   playTogether: Array<{
@@ -25,6 +27,7 @@ type CompatData = {
     missingFor: string[]
     priceFinal?: number
     headerImage: string | null
+    art: GameArtUrls | null
     tags: string[]
     store?: string
   }>
@@ -125,6 +128,8 @@ export default function CompatResultPage() {
             appid={artA.appid}
             name=""
             headerImage={artA.headerImage}
+            art={artA.art}
+            variant="hero"
             fallback={null}
             className="absolute -left-10 -top-10 w-2/3 blur-3xl opacity-25 scale-125"
           />
@@ -134,6 +139,8 @@ export default function CompatResultPage() {
             appid={artB.appid}
             name=""
             headerImage={artB.headerImage}
+            art={artB.art}
+            variant="hero"
             fallback={null}
             className="absolute -right-10 top-20 w-2/3 blur-3xl opacity-20 scale-125"
           />
@@ -182,6 +189,7 @@ export default function CompatResultPage() {
                     appid={g.appid}
                     name={g.name}
                     headerImage={g.headerImage}
+                    art={g.art}
                     className="h-12 w-[104px] object-cover rounded-[8px] border border-edge"
                   />
                   <span className="font-semibold text-sm flex-1">{g.name}</span>
@@ -208,6 +216,8 @@ export default function CompatResultPage() {
                     appid={c.appid}
                     name={c.name}
                     headerImage={c.headerImage}
+                    art={c.art}
+                    sizes="(min-width: 768px) 33vw, 100vw"
                     className="w-full aspect-[460/215] object-cover"
                   />
                   <div className="p-3">

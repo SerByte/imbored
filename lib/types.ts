@@ -18,7 +18,10 @@ export type GameMeta = {
   /** id категорий Steam (1 Multi-player, 2 Single-player, 9 Co-op, 38 Online Co-op...) */
   categories: number[]
   shortDescription?: string
+  /** Обложка 460×215; оставлена для совместимости, дублирует art.header */
   headerImage?: string
+  /** Резолвленные ссылки на арт всех размеров */
+  art?: import('./art').GameArtUrls
   screenshots?: string[]
   isFree?: boolean
   /** цена в минимальных единицах валюты (копейки/центы) */

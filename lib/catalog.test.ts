@@ -93,6 +93,7 @@ const GETITEMS_RESPONSE = {
           asset_url_format: 'steam/apps/3527290/${FILENAME}?t=1786470571',
           header: '89f65be18915d2dc5566de1de322379d62c1dcac/header_alt_assets_3.jpg',
           main_capsule: 'b233cb6e95308a74fb8dac2cfc1c1cfcf14a20d5/capsule_616x353_alt_assets_3.jpg',
+          library_hero: 'd75184257596a3d2b402c58db0ef28844804e952/library_hero.jpg',
         },
         release: { steam_release_date: 1750093261 },
         best_purchase_option: {
@@ -148,6 +149,13 @@ describe('parseStoreItems', () => {
     expect(m.headerImage).toBe(
       'https://shared.steamstatic.com/store_item_assets/steam/apps/3527290/89f65be18915d2dc5566de1de322379d62c1dcac/header_alt_assets_3.jpg?t=1786470571',
     )
+  })
+
+  test('сохраняются все размеры, включая широкий арт для героя', () => {
+    const m = parseStoreItems(GETITEMS_RESPONSE, TAG_NAMES)[0]
+    expect(m.art?.hero).toContain('library_hero.jpg')
+    expect(m.art?.capsule).toContain('capsule_616x353')
+    expect(m.art?.header).toBe(m.headerImage)
   })
 
   test('невидимые и несуществующие приложения отбрасываются', () => {

@@ -46,8 +46,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ steamid: strin
     commonGames: compat.commonGames.map((g) => ({
       ...g,
       headerImage: metaOf(g.appid)?.headerImage ?? null,
+      art: metaOf(g.appid)?.art ?? null,
     })),
-    playTogether,
+    playTogether: playTogether.map((c) => ({ ...c, art: metaOf(c.appid)?.art ?? null })),
     myName: nameOf(me, myName),
     otherName: nameOf(otherRaw, otherName),
     mySteamid: me,

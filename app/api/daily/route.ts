@@ -62,11 +62,10 @@ export async function GET() {
     pick: {
       ...pick,
       reason,
-      headerImage:
-        meta?.headerImage ??
-        (pick.appid > 0
-          ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${pick.appid}/header.jpg`
-          : null),
+      // Ссылку не угадываем шаблоном — путь Steam контент-адресуемый.
+      // Клиент соберёт нужный размер сам через GameArt.
+      headerImage: meta?.headerImage ?? null,
+      art: meta?.art ?? null,
       tags: topTags,
       hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,
       store: meta?.store ?? null,

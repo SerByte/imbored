@@ -117,8 +117,9 @@ describe('db', () => {
     // плейсхолдер на игру упирается в потолок переменных SQLite
     const db = await freshDb()
     const appids = Array.from({ length: 2500 }, (_, i) => 1000 + i)
-    await upsertGameMeta(db, { ...META, appid: 1000, name: 'Первая' }, NOW)
-    await upsertGameMeta(db, { ...META, appid: 3499, name: 'Последняя' }, NOW)
+    const art = { header: 'https://cdn/h.jpg' }
+    await upsertGameMeta(db, { ...META, appid: 1000, name: 'Первая', art }, NOW)
+    await upsertGameMeta(db, { ...META, appid: 3499, name: 'Последняя', art }, NOW)
 
     const metas = await getGamesMeta(db, appids)
     expect(metas.get(1000)?.name).toBe('Первая')
@@ -128,6 +129,31 @@ describe('db', () => {
     const stale = await getStaleAppids(db, appids, 14 * 86_400, NOW)
     expect(stale).toHaveLength(2498)
     expect(stale).not.toContain(1000)
+  })
+
+  test('строка без резолвленного арта считается протухшей', async () => {
+    const db = await freshDb()
+    // прогрета недавно, но арт ещё не резолвили — старая мелкая обложка
+    await upsertGameMeta(db, META, NOW)
+    expect(await getStaleAppids(db, [620], 14 * 86_400, NOW)).toEqual([620])
+  })
+
+  test('пустой арт означает «искали и не нашли» и не зацикливает прогрев', async () => {
+    const db = await freshDb()
+    // игры вне Steam и снятые с продажи не получат арт никогда —
+    // без отметки о попытке они перезапрашивались бы на каждом заходе
+    await upsertGameMeta(db, { ...META, appid: -101, art: {} }, NOW)
+    expect(await getStaleAppids(db, [-101], 14 * 86_400, NOW)).toEqual([])
+
+    const back = await getGameMeta(db, -101)
+    expect(back?.art).toEqual({})
+  })
+
+  test('арт всех размеров переживает круг через базу', async () => {
+    const db = await freshDb()
+    const art = { header: 'https://cdn/h.jpg', hero: 'https://cdn/hero.jpg' }
+    await upsertGameMeta(db, { ...META, art }, NOW)
+    expect((await getGameMeta(db, 620))?.art).toEqual(art)
   })
 
   test('setGameJson с невалидной колонкой бросает, а не строит SQL', async () => {
@@ -298,8 +324,13 @@ describe('db', () => {
 
   test('getStaleAppids: отсутствующие и протухшие попадают в список, свежие — нет', async () => {
     const db = await freshDb()
-    await upsertGameMeta(db, META, NOW) // свежая
-    await upsertGameMeta(db, { ...META, appid: 730, name: 'CS2' }, NOW - 100_000) // протухшая
+    // «свежая» — это ещё и с резолвленным артом, иначе строка догружается
+    await upsertGameMeta(db, { ...META, art: { header: 'https://cdn/h.jpg' } }, NOW)
+    await upsertGameMeta(
+      db,
+      { ...META, appid: 730, name: 'CS2', art: { header: 'https://cdn/cs.jpg' } },
+      NOW - 100_000,
+    ) // протухшая
     const stale = await getStaleAppids(db, [620, 730, 111], 86_400, NOW)
     expect(stale.sort()).toEqual([111, 730])
   })
