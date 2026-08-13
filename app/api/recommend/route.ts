@@ -20,7 +20,6 @@ import {
 } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import type { GameMeta } from '@/lib/types'
-import { isVoxelGame } from '@/lib/voxel'
 
 export async function POST(req: Request) {
   const steamid = await currentSteamId()
@@ -116,9 +115,6 @@ export async function POST(req: Request) {
       ccu: meta?.ccu ?? null,
       shortDescription: meta?.shortDescription ?? null,
       tags: topTags,
-      // Считается здесь, а не на клиенте: до него доезжают только topTags,
-      // а Voxel попадает в первую четвёрку далеко не у всех воксельных игр
-      voxel: isVoxelGame(meta),
       hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,

@@ -62,9 +62,6 @@ export const DEMO_METAS: GameMeta[] = [
   meta(1794680, 'Vampire Survivors', { 'Action Roguelike': 5600, Arcade: 4900, Casual: 4400, 'Pixel Graphics': 3800, Relaxing: 3200 }, SP, 'Полчаса — и «ещё одна катка» до утра.'),
   meta(588650, 'Dead Cells', { Roguelike: 5500, Metroidvania: 5000, 'Fast-Paced': 4400, Difficult: 4100, Platformer: 3700 }, SP, 'Мёртвая клетка бежит, умирает и снова бежит.'),
   meta(620, 'Portal 2', { Puzzle: 6200, 'Co-op': 5100, 'Story Rich': 4600, Comedy: 4400, 'Sci-fi': 3900 }, COOP, 'Порталы, GLaDOS и лучший кооп-пазл на свете.'),
-  // Единственная воксельная игра в демо: без неё пасхалку с кубами (lib/voxel.ts)
-  // невозможно увидеть, не имея живого Steam-аккаунта с такой игрой в библиотеке
-  meta(1167630, 'Teardown', { Destruction: 5600, Voxel: 5200, Sandbox: 4700, Physics: 4400, Puzzle: 3600, Building: 3200, Multiplayer: 2800 }, COOP, 'Ограбление в мире, который весь ломается на кубики.', 2999),
   // ---- пул «попробуй новое» (не куплены) ----
   meta(1426210, 'It Takes Two', { 'Co-op': 6500, 'Split Screen': 5200, Adventure: 4800, Platformer: 4200, Story: 3900 }, [1, 9, 38, 39], 'Кооп-приключение строго на двоих.', 3999),
   meta(814380, 'Sekiro: Shadows Die Twice', { 'Souls-like': 6100, Difficult: 5800, Ninja: 4600, Action: 4400, Atmospheric: 4000 }, SP, 'Стальной клинок, одна жизнь, никакой пощады.', 5999),
@@ -115,7 +112,6 @@ export function demoLibrary(nowSec: number): LibraryGame[] {
     lib(1794680, 'Vampire Survivors', 28, 1.5, 3),
     lib(588650, 'Dead Cells', 47, 0, 150),
     lib(620, 'Portal 2', 12, 0, 900),
-    lib(1167630, 'Teardown', 40, 0, 400), // заброшена — попадает в «пора вернуться»
   ]
 }
 
