@@ -230,6 +230,21 @@ describe('db', () => {
     expect(res.rows.map((r) => r.tag)).toEqual(['Co-op'])
   })
 
+  test('миграция дозаполняет производные колонки у старых строк', async () => {
+    // строки, записанные до появления колонок, иначе не пройдут условие
+    // tag_count > 0 и выборка кандидатов вернёт пустоту
+    const db = await freshDb()
+    await db.execute({
+      sql: `INSERT INTO games (appid, name, tags_json, genres_json, categories_json, updated_at)
+            VALUES (?, ?, ?, '[]', ?, ?)`,
+      args: [777, 'Старая запись', JSON.stringify({ Co_op: 5, Action: 3 }), '[1,9]', NOW],
+    })
+    await migrateDb(db)
+    const res = await db.execute('SELECT tag_count, is_multiplayer FROM games WHERE appid = 777')
+    expect(Number(res.rows[0].tag_count)).toBe(2)
+    expect(Number(res.rows[0].is_multiplayer)).toBe(1)
+  })
+
   test('производные колонки считаются при записи метаданных', async () => {
     const db = await freshDb()
     await upsertGameMeta(db, { ...META, categories: [2, 9], tags: { A: 1, B: 2 } }, NOW)

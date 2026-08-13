@@ -179,6 +179,17 @@ export async function migrateDb(db: Db): Promise<Db> {
   // строго после ALTER-цикла: частичный индекс ссылается на новые колонки
   await db.executeMultiple(SCHEMA_CATALOG)
 
+  // Разовый бэкфилл производных колонок для строк, записанных до их появления.
+  // Без него холодный старт выборки кандидатов не увидит ни одной игры:
+  // условие tag_count > 0 не выполнится ни для кого.
+  await db.execute(`UPDATE games SET tag_count = (
+      SELECT COUNT(*) FROM json_each(games.tags_json)
+    ) WHERE tag_count = 0 AND tags_json != '{}'`)
+  await db.execute(`UPDATE games SET is_multiplayer = 1
+    WHERE is_multiplayer = 0 AND EXISTS (
+      SELECT 1 FROM json_each(games.categories_json) WHERE value IN (1,9,24,36,38,39,49)
+    )`)
+
   // старый CHECK у feedback не пускал action='banned' — пересобираем таблицу
   const info = await db.execute(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'",
