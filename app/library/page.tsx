@@ -5,7 +5,7 @@ import { WarmCatalog } from '@/components/WarmCatalog'
 import { feedbackStats, getGamesMeta, getLatestSnapshot } from '@/lib/db'
 import { classifyLibraryGame, type LibraryGameState } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
-import { backlogValue } from '@/lib/stats'
+import { backlogEquivalent, backlogValue } from '@/lib/stats'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,6 +36,14 @@ export default async function LibraryPage() {
     games.map((g) => g.appid),
   )
   const backlog = backlogValue(games, (id) => metas.get(id), now)
+  // Строка разрезается по {n}, чтобы число осталось моноширинным, как все
+  // числа в проекте, а не растворилось в тексте
+  const equivalent = (() => {
+    const eq = backlogEquivalent(backlog.cents, steamid)
+    if (!eq) return null
+    const [before, after] = eq.text.split('{n}')
+    return { count: eq.count, before, after }
+  })()
   const stats = await feedbackStats(db, steamid)
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
@@ -72,6 +80,13 @@ export default async function LibraryPage() {
                 <div className="text-xs text-dim mt-1">
                   {backlog.unplayedCount} нераспакованных игр, у {backlog.pricedCount} известна цена
                 </div>
+                {equivalent && (
+                  <div className="text-xs text-dim mt-2">
+                    {equivalent.before}
+                    <span className="font-mono text-ember">{equivalent.count}</span>
+                    {equivalent.after}
+                  </div>
+                )}
               </div>
               <Link
                 href="/quiz"

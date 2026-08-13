@@ -17,9 +17,10 @@ import {
   setUserPortrait,
 } from '@/lib/db'
 import { claudePortraitText } from '@/lib/llm'
+import { plural } from '@/lib/plural'
 import { buildPortrait } from '@/lib/portrait'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
-import { backlogValue } from '@/lib/stats'
+import { backlogEquivalent, backlogValue } from '@/lib/stats'
 import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from '@/lib/wrapped'
 
 export const dynamic = 'force-dynamic'
@@ -127,6 +128,13 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const portrait = buildPortrait(games, metaOf)
   const wrapped = buildWrapped(games, metaOf)
   const backlog = backlogValue(games, metaOf, nowSec())
+  // Число вынимается из фразы, чтобы остаться моноширинным, как все числа
+  const equivalent = (() => {
+    const eq = backlogEquivalent(backlog.cents, steamid)
+    if (!eq) return null
+    const [before, after] = eq.text.split('{n}')
+    return { count: eq.count, before, after }
+  })()
   const name = (await getPersonaName(db, steamid)) ?? `Игрок ${steamid.slice(-4)}`
 
   // Заголовок-диагноз только со словарной подписью: фолбэк «фанат Fantasy»
@@ -385,6 +393,13 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}.
               </p>
             )}
+            {equivalent && (
+              <p>
+                {equivalent.before}
+                <span className="font-mono text-ember">{equivalent.count}</span>
+                {equivalent.after}
+              </p>
+            )}
             {wrapped.era && (
               <p>
                 Медиана твоей библиотеки —{' '}
@@ -482,13 +497,4 @@ function Fact({ value, caption, delay }: { value: number; caption: string; delay
       <div className="text-xs text-dim mt-0.5">{caption}</div>
     </div>
   )
-}
-
-/** Русские окончания: 1 игра, 2 игры, 5 игр */
-function plural(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10
-  const mod100 = n % 100
-  if (mod10 === 1 && mod100 !== 11) return one
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few
-  return many
 }
