@@ -146,7 +146,12 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
           IMBORED.CC · ПОРТРЕТ ИГРОКА
         </div>
 
-        <div style={{ fontSize: wide ? 76 : 84, lineHeight: 1.05, marginBottom: 14 }}>
+        {/* Отступ большой намеренно: у кириллицы «р», «у», «д» уходят заметно
+            ниже базовой линии и вылезают за границу строки, съедая margin.
+            Замерено по пикселям: при marginBottom 30 живой зазор был 6px против
+            38px ниже. Прибавка через lineHeight тут не помогает — она делится
+            поровну сверху и снизу. */}
+        <div style={{ fontSize: wide ? 76 : 84, lineHeight: 1.15, marginBottom: wide ? 60 : 34 }}>
           {data.name.slice(0, 22)}
         </div>
 

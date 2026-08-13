@@ -43,3 +43,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# создаётся `vercel link`; .env.example остаётся в репозитории как образец
+.env.local
