@@ -1,5 +1,12 @@
 import { fetchAppDetails, fetchStoreItems, mergeMeta } from './catalog'
-import { getGameJson, getGameMeta, setGameJson, upsertGameMeta } from './db'
+import {
+  getGameJson,
+  getGameMeta,
+  getGameNews,
+  setGameJson,
+  upsertGameMeta,
+  type StoredNews,
+} from './db'
 import { claudeProsCons } from './llm'
 import { fetchReviews, heuristicProsCons, type ParsedReviews } from './reviews'
 import { getDb, nowSec } from './server'
@@ -13,6 +20,8 @@ export type GamePageData = {
     totalNegative: number
   } | null
   prosCons: { pros: string[]; cons: string[]; source: 'claude' | 'reviews' } | null
+  /** патчноуты — только чтение из базы, наполняет их крон */
+  news: StoredNews[]
 }
 
 /**
@@ -27,7 +36,7 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
 
   // Отрицательные appid — кураторский пул других магазинов: у Steam про них
   // ничего нет, показываем только собственные данные
-  if (appid < 0) return meta ? { meta, reviewsSummary: null, prosCons: null } : null
+  if (appid < 0) return meta ? { meta, reviewsSummary: null, prosCons: null, news: [] } : null
 
   if (!meta || !meta.screenshots || !meta.shortDescription) {
     const fresh = await fetchAppDetails(appid).catch(() => null)
@@ -74,5 +83,10 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
     }
   }
 
-  return { meta, reviewsSummary, prosCons }
+  // Только чтение: наполняет патчноуты крон. Ходить за ними в сеть прямо
+  // здесь нельзя — страница публичная и обходится краулером по всему
+  // пространству appid, это был бы усилитель запросов к Steam.
+  const news = await getGameNews(db, appid, 8)
+
+  return { meta, reviewsSummary, prosCons, news }
 }

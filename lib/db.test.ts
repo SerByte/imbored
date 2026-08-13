@@ -4,8 +4,20 @@ import { isMultiplayerMeta } from './recommend'
 import {
   bannedAppids,
   castRoomVote,
+  claimNewsPollBatch,
   countIngest,
+  countNewsPollDue,
+  enrollNewsPoll,
+  flushPollResults,
   getCatalogMeta,
+  getFeedForApps,
+  getGameNews,
+  getMajorFeed,
+  getUnsummarized,
+  pruneNewsForApp,
+  setNewsDigest,
+  upsertNewsItems,
+  type StoredNews,
   isMultiplayerCategories,
   loadTagDictionary,
   loadTagStats,
@@ -464,5 +476,190 @@ describe('db', () => {
     await upsertUser(db, { steamid: 'u1', personaName: 'B' }, NOW + 5)
     const res = await db.execute('SELECT COUNT(*) AS n FROM users')
     expect(Number(res.rows[0].n)).toBe(1)
+  })
+})
+
+/* ---------- патчноуты ---------- */
+
+const NEWS_BASE = {
+  url: 'https://store.steampowered.com/news/app/730/view/1',
+  publishedAt: NOW,
+  kind: 'patch' as const,
+  scale: 'major' as const,
+  blocks: [{ kind: 'p' as const, runs: [{ text: 'правки' }] }],
+  bodyHash: 'h1',
+  rank: 5000,
+}
+
+function newsItem(over: Partial<StoredNews> = {}): StoredNews {
+  return { appid: 730, gid: '1', title: 'Обновление', ...NEWS_BASE, ...over }
+}
+
+describe('upsertNewsItems', () => {
+  test('пишет пост и читает его обратно', async () => {
+    const db = await freshDb()
+    expect(await upsertNewsItems(db, [newsItem()], NOW)).toBe(1)
+    const [got] = await getGameNews(db, 730)
+    expect(got.title).toBe('Обновление')
+    expect(got.blocks).toEqual(NEWS_BASE.blocks)
+    expect(got.scale).toBe('major')
+  })
+
+  test('повторная запись без изменений не трогает строк', async () => {
+    // Turso тарифицирует записи, а лента перечитывается на каждом опросе
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    expect(await upsertNewsItems(db, [newsItem()], NOW + 100)).toBe(0)
+  })
+
+  test('пересказ переживает повторный опрос, но не переписанное тело', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    await setNewsDigest(db, 730, '1', { tldr: 'коротко', scale: 'major' }, NOW)
+
+    // тело то же — платить Claude второй раз не за что
+    await upsertNewsItems(db, [newsItem({ rank: 9000 })], NOW + 100)
+    expect((await getGameNews(db, 730))[0].tldr).toBe('коротко')
+
+    // издатель переписал патчноут — пересказ устарел
+    await upsertNewsItems(db, [newsItem({ bodyHash: 'h2' })], NOW + 200)
+    expect((await getGameNews(db, 730))[0].tldr).toBeUndefined()
+  })
+
+  test('rank только растёт: библиотечная запись не обнуляет каталожную', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    await upsertNewsItems(db, [newsItem({ rank: 0, bodyHash: 'h9' })], NOW + 1)
+    expect((await getGameNews(db, 730))[0].rank).toBe(5000)
+  })
+})
+
+describe('ленты', () => {
+  test('общая лента берёт только крупные патчи игр каталога', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: '1', title: 'Крупный' }),
+        newsItem({ gid: '2', title: 'Хотфикс', scale: 'hotfix', bodyHash: 'h2' }),
+        newsItem({ gid: '3', title: 'Не патч', kind: 'news', bodyHash: 'h3' }),
+        newsItem({ gid: '4', title: 'Инди без ранга', rank: 0, bodyHash: 'h4' }),
+      ],
+      NOW,
+    )
+    expect((await getMajorFeed(db)).map((n) => n.title)).toEqual(['Крупный'])
+  })
+
+  test('страница игры показывает и мелкие патчи, но не новости', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: '1', title: 'Крупный' }),
+        newsItem({ gid: '2', title: 'Хотфикс', scale: 'hotfix', bodyHash: 'h2' }),
+        newsItem({ gid: '3', title: 'Распродажа', kind: 'news', bodyHash: 'h3' }),
+      ],
+      NOW,
+    )
+    const titles = (await getGameNews(db, 730)).map((n) => n.title)
+    expect(titles).toEqual(['Крупный', 'Хотфикс'])
+  })
+
+  test('личная лента ограничена играми библиотеки', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [newsItem({ appid: 730 }), newsItem({ appid: 570, rank: 0, bodyHash: 'h5' })],
+      NOW,
+    )
+    expect((await getFeedForApps(db, [570])).map((n) => n.appid)).toEqual([570])
+    expect(await getFeedForApps(db, [])).toEqual([])
+    // кураторские отрицательные appid в ленту не просачиваются
+    expect(await getFeedForApps(db, [-101])).toEqual([])
+  })
+
+  test('очередь пересказа выдыхается после трёх неудач', async () => {
+    const db = await freshDb()
+    // scale: null — масштаб ещё не решён, значит пост ждёт модель
+    await upsertNewsItems(db, [newsItem({ scale: null })], NOW)
+    expect(await getUnsummarized(db)).toHaveLength(1)
+    for (let i = 0; i < 3; i++) await setNewsDigest(db, 730, '1', null, NOW)
+    expect(await getUnsummarized(db)).toHaveLength(0)
+  })
+
+  test('ретенция режет хвост, оставляя свежее', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      Array.from({ length: 8 }, (_, i) =>
+        newsItem({ gid: String(i), publishedAt: NOW + i, bodyHash: `h${i}` }),
+      ),
+      NOW,
+    )
+    await pruneNewsForApp(db, 730, 3)
+    const left = await getGameNews(db, 730, 50)
+    expect(left.map((n) => n.gid)).toEqual(['7', '6', '5'])
+  })
+})
+
+describe('очередь опроса', () => {
+  test('библиотека попадает в очередь при сохранении снапшота', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, 'u1', LIB, NOW)
+    // курсор проставлен сразу, иначе вся библиотека станет доступной одной секундой
+    expect(await countNewsPollDue(db, NOW + 4000)).toBe(2)
+    expect(await countNewsPollDue(db, NOW - 1)).toBe(0)
+  })
+
+  test('аренда двигает курсор до сети — хвост очереди не голодает', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, [1, 2, 3], 0, NOW)
+    const first = await claimNewsPollBatch(db, NOW + 4000, 2)
+    expect(first).toHaveLength(2)
+    // повторный вызов сразу же не должен выдать те же игры
+    const second = await claimNewsPollBatch(db, NOW + 4000, 2)
+    const firstIds = first.map((t) => t.appid)
+    expect(second.some((t) => firstIds.includes(t.appid))).toBe(false)
+  })
+
+  test('повторная постановка не понижает tier', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, [42], 0, NOW)
+    await enrollNewsPoll(db, [42], 1, NOW)
+    const res = await db.execute('SELECT tier FROM news_poll WHERE appid = 42')
+    expect(Number(res.rows[0].tier)).toBe(0)
+  })
+
+  test('отрицательные appid в очередь не берутся', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, [-101, 0, 730], 1, NOW)
+    expect((await claimNewsPollBatch(db, NOW + 4000, 10)).map((t) => t.appid)).toEqual([730])
+  })
+
+  test('gone выпадает из очереди насовсем', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, [730], 1, NOW)
+    await flushPollResults(db, [{ appid: 730, status: 'gone', nextAt: NOW, failCount: 3 }], NOW)
+    expect(await claimNewsPollBatch(db, NOW + 99999, 10)).toEqual([])
+  })
+})
+
+describe('очередь пересказа: экономия на мелочи', () => {
+  test('мелочь до модели не доезжает, крупное — доезжает', async () => {
+    // «обновлена карта из мастерской» эвристика метит hotfix сразу;
+    // отправлять такое в Claude — платить за пересказ трёх слов.
+    // Всё прочее идёт за пересказом, даже если масштаб уже угадан эвристикой:
+    // без этого лента без ANTHROPIC_API_KEY осталась бы вовсе без текстов
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: '1', scale: 'hotfix' }),
+        newsItem({ gid: '2', scale: 'major', bodyHash: 'h2' }),
+        newsItem({ gid: '3', scale: null, bodyHash: 'h3' }),
+      ],
+      NOW,
+    )
+    expect((await getUnsummarized(db)).map((n) => n.gid).sort()).toEqual(['2', '3'])
   })
 })

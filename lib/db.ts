@@ -1,4 +1,5 @@
 import { createClient, type Client } from '@libsql/client'
+import type { NewsBlock } from './steamhtml'
 import type { GameMeta, LibraryGame, Mood } from './types'
 
 /** Соединение с БД: локальный файл в dev, Turso в проде — API одинаковый */
@@ -132,6 +133,71 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
 
 CREATE INDEX IF NOT EXISTS idx_games_pool ON games (reviews_total DESC)
   WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
+
+-- набор игр для опроса новостей по живому онлайну
+CREATE INDEX IF NOT EXISTS idx_games_ccu ON games (ccu DESC)
+  WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
+`
+
+/**
+ * Патчноуты игр и очередь их опроса.
+ *
+ * Отдельные таблицы, а не колонки на games — по трём причинам:
+ *   • лента «Что нового» сортируется по дате ПОПЕРЁК игр, а из пер-геймовых
+ *     блобов такой запрос собирается только полным сканом games (см. noscan);
+ *   • в очередь надо ставить игры из библиотеки пользователя, а строки в games
+ *     для них может ещё не быть — ensureMeta доходит не до всех;
+ *   • ноль новых колонок на games означает, что upsertGameMeta трогать не надо
+ *     вовсе: там ON CONFLICT DO UPDATE SET с перечислением колонок, и всё, чего
+ *     в списке нет, и так не переписывается.
+ *
+ * Ни на одну колонку из ALTER-цикла эти объекты не ссылаются, поэтому схема
+ * применяется сразу после SCHEMA, до ALTER-цикла.
+ */
+const SCHEMA_NEWS = `
+CREATE TABLE IF NOT EXISTS news_items (
+  appid INTEGER NOT NULL,
+  gid TEXT NOT NULL,
+  title TEXT NOT NULL,
+  url TEXT NOT NULL,
+  published_at INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'news',
+  scale TEXT,
+  blocks_json TEXT NOT NULL DEFAULT '[]',
+  body_hash TEXT NOT NULL DEFAULT '',
+  image_url TEXT,
+  rank INTEGER NOT NULL DEFAULT 0,
+  tldr TEXT,
+  tldr_at INTEGER,
+  tldr_tries INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (appid, gid)
+);
+CREATE INDEX IF NOT EXISTS idx_news_app ON news_items (appid, published_at DESC);
+
+-- общая лента: только крупные патчи игр из каталога (rank > 0), а не всё подряд
+CREATE INDEX IF NOT EXISTS idx_news_feed ON news_items (published_at DESC)
+  WHERE kind = 'patch' AND scale = 'major' AND rank > 0;
+
+-- Очередь на пересказ. Мелочь, которой эвристика уже проставила hotfix
+-- (обновления карт из мастерской и подобное), до модели не доезжает вовсе —
+-- пересказывать там нечего. Всё остальное идёт за пересказом и уточнением
+-- масштаба. tldr_tries отсекает вечно падающие записи.
+CREATE INDEX IF NOT EXISTS idx_news_tldr ON news_items (published_at DESC)
+  WHERE kind = 'patch' AND tldr IS NULL AND tldr_tries < 3 AND scale IS NOT 'hotfix';
+
+CREATE TABLE IF NOT EXISTS news_poll (
+  appid INTEGER PRIMARY KEY,
+  tier INTEGER NOT NULL DEFAULT 1,
+  next_at INTEGER NOT NULL,
+  last_at INTEGER,
+  last_pub_at INTEGER,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'new',
+  enrolled_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_news_poll_due ON news_poll (next_at) WHERE status != 'gone';
 `
 
 function placeholders(n: number): string {
@@ -146,6 +212,9 @@ export async function createDb(url: string, authToken?: string): Promise<Db> {
 /** Схема и миграции; идемпотентно, безопасно вызывать на каждом старте */
 export async function migrateDb(db: Db): Promise<Db> {
   await db.executeMultiple(SCHEMA)
+
+  // новостные таблицы самодостаточны и на ALTER-колонки не ссылаются
+  await db.executeMultiple(SCHEMA_NEWS)
 
   // колонки, добавленные после первых версий схемы
   for (const [table, col] of [
@@ -483,6 +552,17 @@ export async function saveLibrarySnapshot(
       },
     ],
     'write',
+  )
+
+  // Игры библиотеки — в очередь опроса новостей (tier 0, самый частый).
+  // Именно отсюда наполняется личная лента «Что нового», и делать это надо
+  // здесь: строки в games для части библиотеки может ещё не быть, а appid уже
+  // в руках — ни одного лишнего чтения.
+  await enrollNewsPoll(
+    db,
+    [...games].sort((a, b) => b.playtimeForever - a.playtimeForever).map((g) => g.appid),
+    0,
+    nowSec,
   )
 }
 
@@ -978,4 +1058,388 @@ export async function bannedAppids(db: Db, steamid: string): Promise<Set<number>
     args: [steamid],
   })
   return new Set((res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid))
+}
+
+/* ---------- патчноуты ---------- */
+
+export type NewsKind = 'patch' | 'news'
+export type NewsScale = 'major' | 'hotfix'
+
+export type StoredNews = {
+  appid: number
+  gid: string
+  title: string
+  url: string
+  publishedAt: number
+  kind: NewsKind
+  scale: NewsScale | null
+  blocks: NewsBlock[]
+  bodyHash: string
+  imageUrl?: string
+  rank: number
+  tldr?: string
+}
+
+/** Статусы опроса: gone — игра без ленты, mismatch — фид отдаёт чужие appid */
+export type PollStatus = 'new' | 'ok' | 'empty' | 'error' | 'gone' | 'mismatch'
+
+type NewsRow = {
+  appid: number
+  gid: string
+  title: string
+  url: string
+  published_at: number
+  kind: string
+  scale: string | null
+  blocks_json: string
+  body_hash: string
+  image_url: string | null
+  rank: number
+  tldr: string | null
+}
+
+function rowToNews(r: NewsRow): StoredNews {
+  let blocks: NewsBlock[] = []
+  try {
+    const parsed = JSON.parse(r.blocks_json)
+    if (Array.isArray(parsed)) blocks = parsed as NewsBlock[]
+  } catch {
+    // битый блоб не должен ронять страницу игры
+  }
+  return {
+    appid: r.appid,
+    gid: r.gid,
+    title: r.title,
+    url: r.url,
+    publishedAt: r.published_at,
+    kind: r.kind === 'patch' ? 'patch' : 'news',
+    scale: r.scale === 'major' || r.scale === 'hotfix' ? r.scale : null,
+    blocks,
+    bodyHash: r.body_hash,
+    ...(r.image_url ? { imageUrl: r.image_url } : {}),
+    rank: r.rank,
+    ...(r.tldr ? { tldr: r.tldr } : {}),
+  }
+}
+
+const NEWS_COLS =
+  'appid, gid, title, url, published_at, kind, scale, blocks_json, body_hash, image_url, rank, tldr'
+
+/**
+ * Записывает посты, не переписывая то, что не изменилось: Turso тарифицирует и
+ * записи тоже, а лента перечитывается целиком на каждом опросе.
+ *
+ * Пересказ Claude сбрасывается ТОЛЬКО когда изменилось тело (body_hash) —
+ * иначе за один и тот же патч платили бы каждые сутки.
+ */
+export async function upsertNewsItems(
+  db: Db,
+  items: StoredNews[],
+  nowSec: number,
+): Promise<number> {
+  if (!items.length) return 0
+  const stmts = items.map((n) => ({
+    sql: `INSERT INTO news_items (${NEWS_COLS}, tldr_at, tldr_tries, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, ?)
+          ON CONFLICT(appid, gid) DO UPDATE SET
+            title = excluded.title,
+            url = excluded.url,
+            published_at = excluded.published_at,
+            kind = excluded.kind,
+            blocks_json = excluded.blocks_json,
+            body_hash = excluded.body_hash,
+            image_url = excluded.image_url,
+            rank = MAX(news_items.rank, excluded.rank),
+            updated_at = excluded.updated_at,
+            scale = CASE WHEN news_items.body_hash IS excluded.body_hash
+                         THEN news_items.scale ELSE excluded.scale END,
+            tldr = CASE WHEN news_items.body_hash IS excluded.body_hash
+                        THEN news_items.tldr ELSE NULL END,
+            tldr_at = CASE WHEN news_items.body_hash IS excluded.body_hash
+                           THEN news_items.tldr_at ELSE NULL END,
+            tldr_tries = CASE WHEN news_items.body_hash IS excluded.body_hash
+                              THEN news_items.tldr_tries ELSE 0 END
+          WHERE news_items.body_hash IS NOT excluded.body_hash
+             OR news_items.title IS NOT excluded.title
+             OR news_items.kind IS NOT excluded.kind
+             OR news_items.rank < excluded.rank`,
+    args: [
+      n.appid,
+      n.gid,
+      n.title,
+      n.url,
+      n.publishedAt,
+      n.kind,
+      n.scale,
+      JSON.stringify(n.blocks),
+      n.bodyHash,
+      n.imageUrl ?? null,
+      n.rank,
+      nowSec,
+      nowSec,
+    ],
+  }))
+  const res = await db.batch(stmts, 'write')
+  return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
+}
+
+/** Страница игры: тут показываем и мелкие патчи тоже */
+export async function getGameNews(db: Db, appid: number, limit = 8): Promise<StoredNews[]> {
+  if (appid <= 0) return []
+  const res = await db.execute({
+    sql: `SELECT ${NEWS_COLS} FROM news_items
+          WHERE appid = ? AND kind = 'patch'
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [appid, limit],
+  })
+  return (res.rows as unknown as NewsRow[]).map(rowToNews)
+}
+
+/**
+ * Общая лента для гостя. Предикат повторяет idx_news_feed ДОСЛОВНО — иначе
+ * SQLite не возьмёт частичный индекс, и это станет сканом всей таблицы,
+ * который noscan не поймает (LIMIT-то на месте).
+ */
+export async function getMajorFeed(db: Db, limit = 30, before?: number): Promise<StoredNews[]> {
+  const res = await db.execute({
+    sql: `SELECT ${NEWS_COLS} FROM news_items
+          WHERE kind = 'patch' AND scale = 'major' AND rank > 0
+            AND published_at < ?
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [before ?? 2_000_000_000, limit],
+  })
+  return (res.rows as unknown as NewsRow[]).map(rowToNews)
+}
+
+/** Личная лента: крупные патчи по играм библиотеки */
+export async function getFeedForApps(
+  db: Db,
+  appids: number[],
+  limit = 30,
+  before?: number,
+): Promise<StoredNews[]> {
+  const ids = appids.filter((a) => a > 0).slice(0, 400)
+  if (!ids.length) return []
+  const res = await db.execute({
+    sql: `SELECT ${NEWS_COLS} FROM news_items
+          WHERE appid IN (${placeholders(ids.length)})
+            AND kind = 'patch' AND scale = 'major' AND published_at < ?
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [...ids, before ?? 2_000_000_000, limit],
+  })
+  return (res.rows as unknown as NewsRow[]).map(rowToNews)
+}
+
+/**
+ * Очередь на пересказ. Предикат дословно повторяет idx_news_tldr.
+ *
+ * scale IS NOT 'hotfix' — ключевое условие: посты, которым эвристика уже
+ * сказала «мелочь», до модели не доезжают, иначе Claude переписывал бы
+ * «обновлена карта из мастерской» обратно в major и это лезло бы в ленту
+ * крупных обновлений.
+ */
+export async function getUnsummarized(db: Db, limit = 12): Promise<StoredNews[]> {
+  const res = await db.execute({
+    sql: `SELECT ${NEWS_COLS} FROM news_items
+          WHERE kind = 'patch' AND tldr IS NULL AND tldr_tries < 3
+            AND scale IS NOT 'hotfix'
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as NewsRow[]).map(rowToNews)
+}
+
+/**
+ * tldr = null засчитывает попытку, но не выжигает запись: три неудачи подряд
+ * (нет ключа, отказ модели, битый JSON) — и запись выпадает из очереди.
+ */
+export async function setNewsDigest(
+  db: Db,
+  appid: number,
+  gid: string,
+  digest: { tldr: string; scale: NewsScale } | null,
+  nowSec: number,
+): Promise<void> {
+  if (digest) {
+    await db.execute({
+      sql: `UPDATE news_items SET tldr = ?, scale = ?, tldr_at = ?, tldr_tries = tldr_tries + 1
+            WHERE appid = ? AND gid = ?`,
+      args: [digest.tldr, digest.scale, nowSec, appid, gid],
+    })
+    return
+  }
+  await db.execute({
+    sql: 'UPDATE news_items SET tldr_tries = tldr_tries + 1 WHERE appid = ? AND gid = ?',
+    args: [appid, gid],
+  })
+}
+
+/** Ретенция на игру. Держим больше, чем берём из фида, иначе вечный цикл
+ *  «выкинули — перекачали — снова выкинули» на каждом опросе. */
+export async function pruneNewsForApp(db: Db, appid: number, keep = 30): Promise<void> {
+  await db.execute({
+    sql: `DELETE FROM news_items WHERE appid = ? AND gid NOT IN (
+            SELECT gid FROM news_items WHERE appid = ? ORDER BY published_at DESC LIMIT ?
+          )`,
+    args: [appid, appid, keep],
+  })
+}
+
+/* ---------- очередь опроса новостей ---------- */
+
+/**
+ * Ставит игры в очередь. next_at задаётся СРАЗУ и с детерминированным
+ * разбросом по appid: иначе вся библиотека станет доступной одной секундой и
+ * первый же срез упрётся в темп, а хвост будет голодать.
+ */
+export async function enrollNewsPoll(
+  db: Db,
+  appids: number[],
+  tier: 0 | 1,
+  nowSec: number,
+  jitterSec = 3600,
+): Promise<void> {
+  const ids = [...new Set(appids.filter((a) => Number.isInteger(a) && a > 0))].slice(0, 1200)
+  if (!ids.length) return
+  const CHUNK = 200
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    await db.batch(
+      ids.slice(i, i + CHUNK).map((appid) => ({
+        sql: `INSERT INTO news_poll (appid, tier, next_at, enrolled_at)
+              VALUES (?, ?, ?, ?)
+              ON CONFLICT(appid) DO UPDATE SET tier = MIN(news_poll.tier, excluded.tier)`,
+        args: [appid, tier, nowSec + (jitterSec ? appid % jitterSec : 0), nowSec],
+      })),
+      'write',
+    )
+  }
+}
+
+/**
+ * Забирает пачку и СРАЗУ продлевает аренду. Без этого срез, убитый по времени
+ * на третьей игре, вечно перевыбирал бы те же три, а хвост очереди никогда бы
+ * не опрашивался — самый простой способ построить неубиваемый цикл запросов
+ * к Steam.
+ */
+export type PollTarget = { appid: number; tier: number; failCount: number; lastPubAt?: number }
+
+export async function claimNewsPollBatch(
+  db: Db,
+  nowSec: number,
+  limit = 20,
+  leaseSec = 900,
+): Promise<PollTarget[]> {
+  const res = await db.execute({
+    sql: `SELECT appid, tier, fail_count, last_pub_at FROM news_poll
+          WHERE next_at <= ? AND status != 'gone'
+          ORDER BY next_at LIMIT ?`,
+    args: [nowSec, limit],
+  })
+  const rows = res.rows as unknown as Array<{
+    appid: number
+    tier: number
+    fail_count: number
+    last_pub_at: number | null
+  }>
+  if (!rows.length) return []
+  await db.batch(
+    rows.map((r) => ({
+      sql: 'UPDATE news_poll SET next_at = ?, last_at = ? WHERE appid = ?',
+      args: [nowSec + leaseSec, nowSec, r.appid],
+    })),
+    'write',
+  )
+  return rows.map((r) => ({
+    appid: r.appid,
+    tier: r.tier,
+    failCount: r.fail_count,
+    ...(r.last_pub_at ? { lastPubAt: r.last_pub_at } : {}),
+  }))
+}
+
+export type PollOutcome = {
+  appid: number
+  status: PollStatus
+  nextAt: number
+  failCount: number
+  lastPubAt?: number
+}
+
+/** Один batch на весь срез вместо двадцати round-trip'ов по 30-80 мс */
+export async function flushPollResults(
+  db: Db,
+  outcomes: PollOutcome[],
+  nowSec: number,
+): Promise<void> {
+  if (!outcomes.length) return
+  await db.batch(
+    outcomes.map((o) => ({
+      sql: `UPDATE news_poll
+            SET status = ?, next_at = ?, fail_count = ?, last_at = ?,
+                last_pub_at = COALESCE(?, last_pub_at)
+            WHERE appid = ?`,
+      args: [o.status, o.nextAt, o.failCount, nowSec, o.lastPubAt ?? null, o.appid],
+    })),
+    'write',
+  )
+}
+
+/**
+ * Набор каталога для общей ленты: топ по живому онлайну плюс топ по числу
+ * отзывов. Онлайн — потому что лента отвечает на «во что играют сейчас»,
+ * отзывы — потому что у половины каталога ccu ещё не замерен.
+ *
+ * Предикаты повторяют idx_games_ccu и idx_games_pool ДОСЛОВНО: иначе SQLite
+ * не возьмёт частичный индекс и это станет полным сканом games. Стабы
+ * «App {appid}» из /api/prepare отсекаются сами — у них tag_count = 0.
+ */
+export async function topCatalogAppids(db: Db, per = 200): Promise<number[]> {
+  const alive = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
+  const [byCcu, byReviews] = await Promise.all([
+    db.execute({
+      sql: `SELECT appid FROM games WHERE ${alive} AND appid > 0
+            ORDER BY ccu DESC LIMIT ?`,
+      args: [per],
+    }),
+    db.execute({
+      sql: `SELECT appid FROM games WHERE ${alive} AND appid > 0
+            ORDER BY reviews_total DESC LIMIT ?`,
+      args: [per],
+    }),
+  ])
+  const ids = [...byCcu.rows, ...byReviews.rows].map(
+    (r) => (r as unknown as { appid: number }).appid,
+  )
+  return [...new Set(ids)]
+}
+
+/**
+ * Вес игры для денормализованного rank у постов: он решает, пускать ли её в
+ * ОБЩУЮ ленту. Личной ленты это не касается — там игры и так свои.
+ *
+ * Берём максимум из числа отзывов и текущего онлайна: у свежих игр отзывов
+ * ещё мало, у старых не замерен ccu, и любой из сигналов по отдельности
+ * оставил бы часть каталога с нулевым весом, то есть невидимой в ленте.
+ */
+export async function getGameRanks(db: Db, appids: number[]): Promise<Map<number, number>> {
+  const ids = appids.filter((a) => a > 0)
+  if (!ids.length) return new Map()
+  const res = await db.execute({
+    sql: `SELECT appid, MAX(COALESCE(reviews_total, 0), COALESCE(ccu, 0)) AS rank
+          FROM games WHERE appid IN (${placeholders(ids.length)})`,
+    args: ids,
+  })
+  return new Map(
+    (res.rows as unknown as Array<{ appid: number; rank: number | null }>).map(
+      (r) => [r.appid, r.rank ?? 0] as const,
+    ),
+  )
+}
+
+export async function countNewsPollDue(db: Db, nowSec: number): Promise<number> {
+  const res = await db.execute({
+    sql: "SELECT COUNT(*) AS n FROM news_poll WHERE next_at <= ? AND status != 'gone'",
+    args: [nowSec],
+  })
+  return Number((res.rows[0] as unknown as { n: number })?.n ?? 0)
 }

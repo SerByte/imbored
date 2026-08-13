@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
+import { GameNews } from '@/components/GameNews'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Screenshots } from '@/components/Screenshots'
 import { SteamLaunch } from '@/components/SteamLaunch'
@@ -186,6 +187,15 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 ? 'Собрано ИИ из самых полезных отзывов Steam'
                 : 'Цитаты из самых полезных отзывов Steam'}
             </p>
+          </section>
+        )}
+
+        {/* что нового — здесь показываем и мелкие патчи тоже,
+            фильтр «только крупные» действует лишь в общей ленте */}
+        {data.news.length > 0 && (
+          <section>
+            <h2 className="text-sm font-medium text-dim mb-4">Что нового</h2>
+            <GameNews items={data.news} />
           </section>
         )}
 

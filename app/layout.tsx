@@ -59,6 +59,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
                 <Link href="/rooms" className="hover:text-ink transition-colors">
                   Пати
                 </Link>
+                <Link href="/whatsnew" className="hover:text-ink transition-colors">
+                  Что нового
+                </Link>
                 <Link href="/compat" className="hover:text-ink transition-colors">
                   Совместимость
                 </Link>

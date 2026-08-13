@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { heuristicPicks, validatePicks } from './llm'
+import { heuristicPicks, validateDigest, validatePicks } from './llm'
 import type { GameMeta, Mood, ScoredCandidate } from './types'
 
 const MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
@@ -73,5 +73,23 @@ describe('heuristicPicks', () => {
 
   test('пустой список кандидатов не роняет', () => {
     expect(heuristicPicks([], metaOf, MOOD, 5)).toEqual([])
+  })
+})
+
+describe('validateDigest', () => {
+  test('принимает корректный ответ и обрезает длину', () => {
+    expect(validateDigest({ tldr: '  Починили вылет.  ', scale: 'hotfix' })).toEqual({
+      tldr: 'Починили вылет.',
+      scale: 'hotfix',
+    })
+    expect(validateDigest({ tldr: 'я'.repeat(400), scale: 'major' })?.tldr).toHaveLength(200)
+  })
+
+  test('отвергает мусор: лента переживёт отказ модели', () => {
+    expect(validateDigest(null)).toBeNull()
+    expect(validateDigest({ tldr: '', scale: 'major' })).toBeNull()
+    expect(validateDigest({ tldr: 'ок', scale: 'huge' })).toBeNull()
+    expect(validateDigest({ tldr: 'ок' })).toBeNull()
+    expect(validateDigest({ scale: 'major' })).toBeNull()
   })
 })

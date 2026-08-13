@@ -4,12 +4,18 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 
-/** Нижняя панель навигации — только на телефоне; на десктопе меню в шапке */
+/**
+ * Нижняя панель навигации — только на телефоне; на десктопе меню в шапке.
+ *
+ * Подписи короче десктопных: в пяти колонках на 360px «Что нового» и
+ * «Подобрать игру» переносятся на две строки и ломают высоту панели.
+ */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
   { href: '/quiz', label: 'Подбор' },
   { href: '/rooms', label: 'Пати' },
-  { href: '/library', label: 'Библиотека' },
+  { href: '/whatsnew', label: 'Новое' },
+  { href: '/library', label: 'Игры' },
 ]
 
 export function MobileNav() {
@@ -61,7 +67,7 @@ export function MobileNav() {
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      <div ref={rowRef} className="grid grid-cols-4 relative">
+      <div ref={rowRef} className="grid grid-cols-5 relative">
         {/*
          * Волосок, а не залитая пилюля: на /play и /daily панель висит над
          * полноэкранным артом, и сплошная фигура пробивает в кадре дыру.
