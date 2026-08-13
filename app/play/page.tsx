@@ -17,6 +17,7 @@ import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Spinner } from '@/components/Spinner'
+import { VoxelRipple } from '@/components/VoxelRipple'
 import type { GameArtUrls } from '@/lib/art'
 import { STORE_LABEL } from '@/lib/stores'
 import type { Mood } from '@/lib/types'
@@ -37,6 +38,9 @@ type Pick = {
   ccu: number | null
   shortDescription: string | null
   tags: string[]
+  /** Кубическая игра — считается на сервере по полной карте тегов, см. lib/voxel.ts.
+   *  Опциональный: ответ, закешированный до деплоя, не должен ломать страницу. */
+  voxel?: boolean
   hoursPlayed: number | null
   store: string | null
   storeUrl: string | null
@@ -399,14 +403,20 @@ function Player() {
               попадает любая игра из библиотеки, в том числе светлая. */}
           <BlurBand height="46vh" dir="up" />
           <div aria-hidden className="grain" />
+          {/* Кубическая игра — по нажатию на арт от точки нажатия идёт волна кубов.
+              Стоит ПОСЛЕ BlurBand: под пятью слоями backdrop-filter анимация
+              заставляла бы пересчитывать размытие каждый кадр больше секунды. */}
+          {pick.voxel && <VoxelRipple />}
 
+          {/* pointer-events-none на обёртке: её pt-40 и w-full иначе съедали бы
+              нажатия по пустому арту. Колонка ниже возвращает себе события. */}
           <motion.div
             variants={LADDER}
             initial="hidden"
             animate="show"
-            className="relative mx-auto w-full max-w-6xl px-5 pb-12 pt-40"
+            className="relative mx-auto w-full max-w-6xl px-5 pb-12 pt-40 pointer-events-none"
           >
-            <div className="max-w-2xl flex flex-col gap-4">
+            <div className="max-w-2xl flex flex-col gap-4 pointer-events-auto">
               <motion.div variants={STEP} className="flex items-center gap-3 text-xs">
                 <span className="rounded-full bg-ember/15 text-ember px-3 py-1 font-medium">
                   {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}

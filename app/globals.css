@@ -435,6 +435,51 @@ body {
 }
 
 
+/*
+ * Кубическая рябь — пасхалка для воксельных игр, см. components/VoxelRipple.tsx
+ *
+ * initial-value: 0 здесь несущий: если таймлайн почему-то не отработает, кубы
+ * останутся полностью прозрачными, а не встанут стеной поверх ключ-арта.
+ * Прозрачность гасит и заливку, и рамку — рамка в покое была бы белой сеткой.
+ */
+@property --voxel-on {
+  syntax: '<number>';
+  /* Обязательно true: переменную анимируем на кубе, а читает её грань — ребёнок.
+     При inherits: false грань видела бы не значение куба, а initial-value. */
+  inherits: true;
+  initial-value: 0;
+}
+
+.voxel-scene {
+  display: grid;
+  pointer-events: none;
+  perspective: 2000px;
+}
+
+.voxel-cube {
+  position: relative;
+  transform-style: preserve-3d;
+}
+
+.voxel-face {
+  position: absolute;
+  inset: 0;
+  opacity: var(--voxel-on);
+  background: color-mix(in srgb, var(--ember) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+}
+
+/* Три грани вместо шести: при наклоне ±28° остальные не видны, а DOM втрое легче */
+.voxel-face-front {
+  transform: translateZ(var(--voxel-half));
+}
+.voxel-face-top {
+  transform: rotateX(90deg) translateZ(var(--voxel-half));
+}
+.voxel-face-right {
+  transform: rotateY(90deg) translateZ(var(--voxel-half));
+}
+
 /* Шов между экранами — тихий и на CSS, см. комментарий в app/template.tsx */
 @keyframes page-in {
   from {
