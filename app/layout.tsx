@@ -40,9 +40,27 @@ export const metadata: Metadata = {
     'Подключи Steam — подберём игру под твоё настроение прямо сейчас: из бэклога, заброшенного или нового.',
 }
 
+/**
+ * suppressHydrationWarning на <html> — про атрибуты самого этого тега, и только
+ * про них: флаг неглубокий и на детей не распространяется, так что настоящие
+ * расхождения в разметке страниц он не спрячет.
+ *
+ * Источников расхождения ровно два, и оба правят <html> до того, как React
+ * успевает гидратировать. Первый наш: скрипт темы ниже ставит data-theme ещё при
+ * разборе документа, и у всех, кто сидит на светлой, сервер такого атрибута не
+ * отдавал. Второй чужой: расширения вроде Dark Reader дописывают свои
+ * data-darkreader-*.
+ *
+ * Ни то, ни другое React починить не может и не должен — атрибут выставлен
+ * намеренно и раньше него.
+ */
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="ru" className={`${onest.variable} ${jbMono.variable} ${unbounded.variable} h-full antialiased`}>
+    <html
+      lang="ru"
+      suppressHydrationWarning
+      className={`${onest.variable} ${jbMono.variable} ${unbounded.variable} h-full antialiased`}
+    >
       <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[52px] md:pb-0">
         <script
           dangerouslySetInnerHTML={{
