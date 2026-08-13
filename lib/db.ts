@@ -261,6 +261,27 @@ export async function migrateDb(db: Db): Promise<Db> {
       SELECT 1 FROM json_each(games.categories_json) WHERE value IN (1,9,24,36,38,39,49)
     )`)
 
+  // Разовая починка веса у уже записанных патчей. До неё вес считался по числу
+  // отзывов для любой опрошенной игры, и в общую ленту налезли Half-Life 2:
+  // Deathmatch с Condition Zero — те самые, что каталог метит alive = 0.
+  // Флаг в catalog_meta, потому что иначе это скан news_items на каждом
+  // холодном старте, а Turso считает прочитанные строки.
+  const rankFixed = await db.execute({
+    sql: 'SELECT value FROM catalog_meta WHERE key = ?',
+    args: ['news_rank_fixed'],
+  })
+  if (!rankFixed.rows.length) {
+    await db.execute(`UPDATE news_items SET rank = 0
+      WHERE rank > 0 AND NOT EXISTS (
+        SELECT 1 FROM games g WHERE g.appid = news_items.appid
+          AND g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0
+      )`)
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: ['news_rank_fixed', '1'],
+    })
+  }
+
   // старый CHECK у feedback не пускал action='banned' — пересобираем таблицу
   const info = await db.execute(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'",
@@ -1126,6 +1147,33 @@ const NEWS_COLS =
   'appid, gid, title, url, published_at, kind, scale, blocks_json, body_hash, image_url, rank, tldr'
 
 /**
+ * Во сколько раз перебираем строк, чтобы после схлопывания по играм осталось
+ * столько, сколько просили. Четырёх хватает: даже Valve, патчащая всю линейку
+ * разом, не занимает больше четверти окна.
+ */
+const OVERFETCH = 4
+
+/**
+ * Не больше одного патча на игру в ленте.
+ *
+ * Без этого лента перестаёт быть лентой: Valve выкатывает движковый апдейт
+ * сразу во все свои старые игры, Warhammer патчится через день — и десяток
+ * верхних карточек оказывается одной и той же игрой. Показываем самый свежий
+ * патч каждой, остальное — на странице игры.
+ */
+function onePerGame(rows: StoredNews[], limit: number): StoredNews[] {
+  const seen = new Set<number>()
+  const out: StoredNews[] = []
+  for (const r of rows) {
+    if (seen.has(r.appid)) continue
+    seen.add(r.appid)
+    out.push(r)
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+/**
  * Записывает посты, не переписывая то, что не изменилось: Turso тарифицирует и
  * записи тоже, а лента перечитывается целиком на каждом опросе.
  *
@@ -1149,7 +1197,10 @@ export async function upsertNewsItems(
             blocks_json = excluded.blocks_json,
             body_hash = excluded.body_hash,
             image_url = excluded.image_url,
-            rank = MAX(news_items.rank, excluded.rank),
+            -- не MAX: вес считается из games одинаково для любого опроса, так
+            -- что свежее значение всегда вернее. Иначе игра, умершая после
+            -- попадания в ленту, застревала бы в ней навсегда
+            rank = excluded.rank,
             updated_at = excluded.updated_at,
             scale = CASE WHEN news_items.body_hash IS excluded.body_hash
                          THEN news_items.scale ELSE excluded.scale END,
@@ -1162,7 +1213,7 @@ export async function upsertNewsItems(
           WHERE news_items.body_hash IS NOT excluded.body_hash
              OR news_items.title IS NOT excluded.title
              OR news_items.kind IS NOT excluded.kind
-             OR news_items.rank < excluded.rank`,
+             OR news_items.rank IS NOT excluded.rank`,
     args: [
       n.appid,
       n.gid,
@@ -1206,9 +1257,9 @@ export async function getMajorFeed(db: Db, limit = 30, before?: number): Promise
           WHERE kind = 'patch' AND scale = 'major' AND rank > 0
             AND published_at < ?
           ORDER BY published_at DESC LIMIT ?`,
-    args: [before ?? 2_000_000_000, limit],
+    args: [before ?? 2_000_000_000, limit * OVERFETCH],
   })
-  return (res.rows as unknown as NewsRow[]).map(rowToNews)
+  return onePerGame((res.rows as unknown as NewsRow[]).map(rowToNews), limit)
 }
 
 /** Личная лента: крупные патчи по играм библиотеки */
@@ -1225,9 +1276,9 @@ export async function getFeedForApps(
           WHERE appid IN (${placeholders(ids.length)})
             AND kind = 'patch' AND scale = 'major' AND published_at < ?
           ORDER BY published_at DESC LIMIT ?`,
-    args: [...ids, before ?? 2_000_000_000, limit],
+    args: [...ids, before ?? 2_000_000_000, limit * OVERFETCH],
   })
-  return (res.rows as unknown as NewsRow[]).map(rowToNews)
+  return onePerGame((res.rows as unknown as NewsRow[]).map(rowToNews), limit)
 }
 
 /**
@@ -1417,15 +1468,24 @@ export async function topCatalogAppids(db: Db, per = 200): Promise<number[]> {
  * Вес игры для денормализованного rank у постов: он решает, пускать ли её в
  * ОБЩУЮ ленту. Личной ленты это не касается — там игры и так свои.
  *
- * Берём максимум из числа отзывов и текущего онлайна: у свежих игр отзывов
- * ещё мало, у старых не замерен ccu, и любой из сигналов по отдельности
- * оставил бы часть каталога с нулевым весом, то есть невидимой в ленте.
+ * Вес получают ТОЛЬКО игры, прошедшие фильтры каталога. Иначе выходит вот что:
+ * Valve выкатывает движковый апдейт разом во всю старую линейку, и общая лента
+ * забивается Half-Life 2: Deathmatch и Condition Zero — теми самыми играми,
+ * которые проект сам метит alive = 0 и не показывает в рекомендациях. В личной
+ * ленте они по-прежнему видны: это твои игры, и патч к ним тебе интересен.
+ *
+ * Внутри — максимум из числа отзывов и онлайна: у свежих игр мало отзывов, у
+ * старых не замерен ccu, и любой сигнал по отдельности обнулял бы часть
+ * каталога.
  */
 export async function getGameRanks(db: Db, appids: number[]): Promise<Map<number, number>> {
   const ids = appids.filter((a) => a > 0)
   if (!ids.length) return new Map()
   const res = await db.execute({
-    sql: `SELECT appid, MAX(COALESCE(reviews_total, 0), COALESCE(ccu, 0)) AS rank
+    sql: `SELECT appid,
+            CASE WHEN alive = 1 AND superseded_by IS NULL AND tag_count > 0
+                 THEN MAX(COALESCE(reviews_total, 0), COALESCE(ccu, 0))
+                 ELSE 0 END AS rank
           FROM games WHERE appid IN (${placeholders(ids.length)})`,
     args: ids,
   })

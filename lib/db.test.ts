@@ -12,6 +12,7 @@ import {
   getCatalogMeta,
   getFeedForApps,
   getGameNews,
+  getGameRanks,
   getMajorFeed,
   getUnsummarized,
   pruneNewsForApp,
@@ -526,11 +527,16 @@ describe('upsertNewsItems', () => {
     expect((await getGameNews(db, 730))[0].tldr).toBeUndefined()
   })
 
-  test('rank только растёт: библиотечная запись не обнуляет каталожную', async () => {
+  test('rank отражает текущее состояние каталога, а не максимум за историю', async () => {
+    // вес считается из games одинаково для любого опроса, поэтому свежее
+    // значение всегда вернее: игра, умершая после попадания в ленту, должна
+    // из неё выпасть, а не застрять навсегда
     const db = await freshDb()
     await upsertNewsItems(db, [newsItem()], NOW)
-    await upsertNewsItems(db, [newsItem({ rank: 0, bodyHash: 'h9' })], NOW + 1)
     expect((await getGameNews(db, 730))[0].rank).toBe(5000)
+    await upsertNewsItems(db, [newsItem({ rank: 0 })], NOW + 1)
+    expect((await getGameNews(db, 730))[0].rank).toBe(0)
+    expect(await getMajorFeed(db)).toEqual([])
   })
 })
 
@@ -661,5 +667,61 @@ describe('очередь пересказа: экономия на мелочи'
       NOW,
     )
     expect((await getUnsummarized(db)).map((n) => n.gid).sort()).toEqual(['2', '3'])
+  })
+})
+
+describe('лента не даёт одной игре себя захватить', () => {
+  test('в общей ленте не больше одного патча на игру', async () => {
+    // Valve выкатывает движковый апдейт разом во всю линейку, Warhammer
+    // патчится через день — без схлопывания лента становится их списком
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        ...Array.from({ length: 6 }, (_, i) =>
+          newsItem({ appid: 70, gid: `hl${i}`, title: `Half-Life ${i}`, publishedAt: NOW + i, bodyHash: `a${i}` }),
+        ),
+        newsItem({ appid: 730, gid: 'cs', title: 'CS2', publishedAt: NOW + 1, bodyHash: 'b' }),
+      ],
+      NOW,
+    )
+    const feed = await getMajorFeed(db, 10)
+    expect(feed).toHaveLength(2)
+    expect(new Set(feed.map((n) => n.appid)).size).toBe(2)
+    // остаётся самый свежий патч игры
+    expect(feed.find((n) => n.appid === 70)?.title).toBe('Half-Life 5')
+  })
+
+  test('на странице игры схлопывания нет — там вся история', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      Array.from({ length: 6 }, (_, i) =>
+        newsItem({ appid: 70, gid: `hl${i}`, publishedAt: NOW + i, bodyHash: `a${i}` }),
+      ),
+      NOW,
+    )
+    expect(await getGameNews(db, 70, 10)).toHaveLength(6)
+  })
+})
+
+describe('мёртвые игры и общая лента', () => {
+  async function seedGame(db: Awaited<ReturnType<typeof freshDb>>, appid: number, alive: number) {
+    await upsertGameMeta(db, { ...META, appid, name: `Игра ${appid}`, reviewsTotal: 50_000 }, NOW)
+    await db.execute({
+      sql: 'UPDATE games SET alive = ?, tag_count = 3, superseded_by = NULL WHERE appid = ?',
+      args: [alive, appid],
+    })
+  }
+
+  test('вес получают только игры, прошедшие фильтры каталога', async () => {
+    // HL2:Deathmatch проект метит alive = 0 и не показывает в рекомендациях —
+    // в общей ленте ему тоже не место, хотя отзывов у него десятки тысяч
+    const db = await freshDb()
+    await seedGame(db, 730, 1)
+    await seedGame(db, 320, 0)
+    const ranks = await getGameRanks(db, [730, 320])
+    expect(ranks.get(730)).toBeGreaterThan(0)
+    expect(ranks.get(320)).toBe(0)
   })
 })
