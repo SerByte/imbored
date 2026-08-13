@@ -1,6 +1,6 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata } from 'next'
-import { JetBrains_Mono, Onest } from 'next/font/google'
+import { JetBrains_Mono, Onest, Unbounded } from 'next/font/google'
 import Link from 'next/link'
 import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
@@ -20,6 +20,17 @@ const jbMono = JetBrains_Mono({
   subsets: ['latin', 'cyrillic'],
 })
 
+/**
+ * Дисплейное начертание — только для «Что нового». Широкий геометрический
+ * гротеск читается как титр, а не как заголовок интерфейса, и держит крупный
+ * кегль поверх арта. Кириллица проверена по манифесту next/font: у Unbounded
+ * есть cyrillic и cyrillic-ext, иначе он был бы здесь бесполезен.
+ */
+const unbounded = Unbounded({
+  variable: '--font-unbounded',
+  subsets: ['latin', 'cyrillic'],
+})
+
 export const metadata: Metadata = {
   // без metadataBase Next не может собрать абсолютные ссылки на og-картинки
   // и при динамическом рендере роняет их в относительные
@@ -31,7 +42,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="ru" className={`${onest.variable} ${jbMono.variable} h-full antialiased`}>
+    <html lang="ru" className={`${onest.variable} ${jbMono.variable} ${unbounded.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[52px] md:pb-0">
         <script
           dangerouslySetInnerHTML={{

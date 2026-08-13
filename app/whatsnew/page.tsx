@@ -1,6 +1,9 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { NewsCard } from '@/components/NewsCard'
+import { Cover } from '@/components/whatsnew/Cover'
+import { PatchRow } from '@/components/whatsnew/PatchRow'
+import { Stage } from '@/components/whatsnew/Stage'
+import { artCandidates } from '@/lib/art'
 import {
   getFeedForApps,
   getGamesMeta,
@@ -8,7 +11,7 @@ import {
   getMajorFeed,
   type StoredNews,
 } from '@/lib/db'
-import { currentSteamId, getDb } from '@/lib/server'
+import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +24,17 @@ export const metadata: Metadata = {
 const LIBRARY_CAP = 300
 const FEED_LIMIT = 30
 
+/**
+ * Лента обновлений.
+ *
+ * Страница остаётся серверной: тянуть на клиент нечего — тела патчей уже
+ * приезжают из базы целиком. Клиентских островков ровно три, и у каждого есть
+ * причина существовать: Cover (параллакс от скролла), Stage (наблюдатель за
+ * активной строкой), PatchRow (раскрытие). Всё остальное — обычная разметка.
+ *
+ * Первый элемент уходит в обложку, а не дублируется в ленте: он и так самый
+ * свежий, и повторять его строкой значило бы показать одно обновление дважды.
+ */
 export default async function WhatsNewPage() {
   const steamid = await currentSteamId()
   const db = await getDb()
@@ -48,44 +62,73 @@ export default async function WhatsNewPage() {
     items.map((i) => i.appid),
   )
 
-  return (
-    <div className="mx-auto max-w-3xl px-5 pt-28 pb-16 flex flex-col gap-8">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">Что нового</h1>
-        <p className="text-sm text-dim leading-relaxed">
-          {personal
-            ? 'Крупные обновления игр из твоей библиотеки. Мелкие правки и хотфиксы — на странице игры.'
-            : 'Крупные обновления популярных игр. Подключи Steam — и здесь останутся только твои игры.'}
-        </p>
-      </header>
+  const now = nowSec()
+  const [hero, ...rest] = items
 
-      {items.length ? (
-        <div className="flex flex-col gap-3">
-          {items.map((item) => (
-            <NewsCard key={`${item.appid}:${item.gid}`} item={item} meta={metas.get(item.appid)} />
+  if (!hero) {
+    return (
+      <div className="whatsnew flex min-h-screen flex-col items-center justify-center gap-4 px-5 text-center">
+        <h1 className="font-display text-3xl font-extrabold tracking-tight">Что нового</h1>
+        <p className="max-w-sm text-sm leading-relaxed text-dim">
+          Пока пусто. Обновления подтягиваются по расписанию — загляни попозже.
+        </p>
+        <Link
+          href="/quiz"
+          className="text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+        >
+          А пока подобрать игру →
+        </Link>
+      </div>
+    )
+  }
+
+  const heroMeta = metas.get(hero.appid)
+
+  return (
+    <div className="whatsnew min-h-screen">
+      <Stage
+        initialWash={
+          artCandidates(
+            { appid: hero.appid, art: heroMeta?.art, headerImage: heroMeta?.headerImage },
+            'hero',
+          )[0]
+        }
+      >
+        <Cover item={hero} meta={heroMeta} nowSec={now} />
+
+        <div className="mx-auto w-full max-w-6xl px-5 pb-24">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b border-rule py-6">
+            <h2 className="font-display text-lg font-bold tracking-tight md:text-xl">
+              {personal ? 'В твоих играх' : 'В популярных играх'}
+            </h2>
+            <p className="text-sm text-dim">
+              {personal ? (
+                'Только крупные патчи. Мелкие правки — на странице игры.'
+              ) : (
+                <>
+                  Только крупные патчи.{' '}
+                  <Link
+                    href="/"
+                    className="font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+                  >
+                    Подключи Steam
+                  </Link>{' '}
+                  — и лента станет про твои игры.
+                </>
+              )}
+            </p>
+          </div>
+
+          {rest.map((item) => (
+            <PatchRow
+              key={`${item.appid}:${item.gid}`}
+              item={item}
+              meta={metas.get(item.appid)}
+              nowSec={now}
+            />
           ))}
         </div>
-      ) : (
-        <div className="glass rounded-[20px] p-8 text-center flex flex-col gap-3">
-          <p className="text-sm text-dim">
-            Пока пусто. Обновления подтягиваются по расписанию — загляни попозже.
-          </p>
-          <Link href="/quiz" className="text-sm text-ember hover:underline underline-offset-2">
-            А пока подобрать игру →
-          </Link>
-        </div>
-      )}
-
-      {!steamid && items.length > 0 && (
-        <div className="glass rounded-[20px] p-5 text-center">
-          <p className="text-sm text-dim">
-            <Link href="/" className="text-ember hover:underline underline-offset-2">
-              Подключи Steam
-            </Link>{' '}
-            — и лента станет про твои игры.
-          </p>
-        </div>
-      )}
+      </Stage>
     </div>
   )
 }

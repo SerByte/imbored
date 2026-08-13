@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useState } from 'react'
 import type { StoredNews } from '@/lib/db'
 import { NewsBody } from './NewsBody'
-import { NewsDate, ScaleBadge } from './NewsCard'
+import { NewsDate, ScaleBadge } from './NewsMeta'
 
 /**
  * Клиентский островок: /game/[appid] остаётся серверным компонентом.

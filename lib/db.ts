@@ -705,6 +705,9 @@ type GameRow = {
   reviews_30d: number | null
   reviews_total: number | null
   reviews_percent: number | null
+  release_year: number | null
+  developer: string | null
+  publisher: string | null
 }
 
 function rowToMeta(row: GameRow): GameMeta {
@@ -736,6 +739,14 @@ function rowToMeta(row: GameRow): GameMeta {
   if (row.reviews_percent !== null && row.reviews_percent !== undefined) {
     meta.reviewsPercent = row.reviews_percent
   }
+  // Эти три колонки пишутся в upsertGameMeta и до сих пор молча терялись при
+  // чтении: в GameRow их не было, в маппинге тоже. Из-за этого подпись вида
+  // «Valve · 2013» была невозможна, хотя данные лежали в базе.
+  if (row.release_year !== null && row.release_year !== undefined) {
+    meta.releaseYear = row.release_year
+  }
+  if (row.developer !== null && row.developer !== undefined) meta.developer = row.developer
+  if (row.publisher !== null && row.publisher !== undefined) meta.publisher = row.publisher
   return meta
 }
 

@@ -262,6 +262,20 @@ export function parseSteamHtml(html: string, maxBlocks = 120): NewsBlock[] {
   return blocks
 }
 
+/**
+ * Сколько в патче отдельных правок.
+ *
+ * Это единственная величина, которой патчи реально отличаются друг от друга:
+ * бейдж «Крупное» в общей ленте — константа (лента фильтрует scale='major'),
+ * а «31 правка» против «3 правок» сразу говорит, насколько заход большой.
+ * Считаем пункты списков: именно ими Valve и остальные оформляют изменения.
+ */
+export function countChanges(blocks: NewsBlock[]): number {
+  let n = 0
+  for (const b of blocks) if (b.kind === 'ul') n += b.items.length
+  return n
+}
+
 /** Плоский текст блоков — для классификатора и промпта Claude */
 export function blocksToText(blocks: NewsBlock[], limit = 4000): string {
   const parts: string[] = []
