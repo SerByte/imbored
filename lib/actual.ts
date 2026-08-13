@@ -1,4 +1,4 @@
-import { filterPlayable, type PlayContext } from './liveness'
+import { filterPlayable, playMode, type PlayContext } from './liveness'
 import { buildSeriesIndex, type SeriesMember } from './series'
 import type { GameMeta } from './types'
 
@@ -27,6 +27,7 @@ export function filterActual<T extends { appid: number }>(
       name: meta.name,
       isMultiplayer: meta.categories.some((c) => [1, 9, 24, 36, 38, 39, 49].includes(c)),
       alive: true,
+      soloCapable: playMode(meta.categories) === 'solo-capable',
       // онлайн точнее показывает, переехала ли аудитория; отзывы — запасной сигнал
       ...((meta.ccu ?? meta.reviews30d) !== undefined
         ? { audience: meta.ccu ?? meta.reviews30d }

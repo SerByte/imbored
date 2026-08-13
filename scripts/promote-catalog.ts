@@ -34,7 +34,7 @@ import {
 } from '../lib/db'
 import { fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
 import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
-import { judgeLiveness } from '../lib/liveness'
+import { judgeLiveness, playMode } from '../lib/liveness'
 import { buildSeriesIndex, type SeriesMember } from '../lib/series'
 import type { GameMeta } from '../lib/types'
 
@@ -182,6 +182,7 @@ async function main() {
     name: m.name,
     isMultiplayer: isMultiplayer(m),
     alive: verdicts.get(m.appid)?.alive ?? true,
+    soloCapable: playMode(m.categories) === 'solo-capable',
     // сигнал «аудитория переехала»: онлайн точнее, отзывы — запасной вариант
     ...((m.ccu ?? m.reviews30d) !== undefined ? { audience: m.ccu ?? m.reviews30d } : {}),
     ...(m.releaseYear !== undefined ? { releaseYear: m.releaseYear } : {}),

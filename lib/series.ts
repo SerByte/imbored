@@ -19,6 +19,8 @@ export type SeriesMember = {
   isMultiplayer: boolean
   alive: boolean
   audience?: number
+  /** есть одиночный режим — значит игра самоценна, а не «версия» */
+  soloCapable?: boolean
   releaseYear?: number
   publisher?: string
   developer?: string
@@ -135,6 +137,15 @@ export function buildSeriesIndex(
       if (m.appid === winner.appid) continue
       if (m.appid in overrides) continue
       if (!sameMaker(m, winner)) continue
+
+      // Если в игру можно играть одному, она не «версия», а самостоятельная
+      // игра со своим содержанием: сиквел её не отменяет. Без этого прогон по
+      // каталогу вытеснял Dark Souls II ради III, GTA IV ради V и Borderlands:
+      // The Pre-Sequel ради четвёртой части — у всех есть сетевые режимы,
+      // и предохранителя «только мультиплеер» не хватало.
+      // Устаревает то, что жило сообществом: CS 1.6 без одиночного режима
+      // играбельна только на серверах, и аудитория переехала в CS2 целиком.
+      if (m.soloCapable) continue
 
       // Пометка в названии сильнее любых метрик: у «GTA V Legacy» онлайн
       // даже выше, чем у Enhanced, но актуальна всё равно вторая

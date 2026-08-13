@@ -49,6 +49,40 @@ describe('buildSeriesIndex', () => {
     expect(index.has(730)).toBe(false)
   })
 
+  test('игру, в которую можно играть одному, сиквел не отменяет', () => {
+    // Настоящие ложные срабатывания с прогона по каталогу: Dark Souls II,
+    // GTA IV и Borderlands: The Pre-Sequel — самостоятельные игры со своим
+    // сюжетом, а не старые версии. Сетевые режимы у них есть, поэтому
+    // предохранителя «только мультиплеер» не хватало
+    const index = buildSeriesIndex([
+      member({
+        appid: 1,
+        name: 'DARK SOULS II',
+        publisher: 'Bandai',
+        soloCapable: true,
+        audience: 900,
+      }),
+      member({
+        appid: 2,
+        name: 'DARK SOULS III',
+        publisher: 'Bandai',
+        soloCapable: true,
+        audience: 20_000,
+      }),
+    ])
+    expect(index.size).toBe(0)
+  })
+
+  test('а игру, которая жила только сообществом, — отменяет', () => {
+    // CS 1.6 без одиночного режима: играть в неё можно было только на серверах,
+    // и аудитория переехала в CS2 целиком
+    const index = buildSeriesIndex([
+      member({ appid: 10, name: 'Counter-Strike', audience: 810 }),
+      member({ appid: 730, name: 'Counter-Strike 2', audience: 76_233 }),
+    ])
+    expect(index.get(10)).toBe(730)
+  })
+
   test('одиночные серии не вытесняются никогда', () => {
     // «Почему мне не показывают Portal?» хуже, чем «показали CS 1.6»
     const index = buildSeriesIndex([
