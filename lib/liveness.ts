@@ -51,8 +51,6 @@ export function playMode(categories: number[]): PlayMode {
 
 /** Публичным серверам и матчмейкингу нужна заметная толпа */
 export const MIN_CCU_ONLINE = 500
-/** Коопу хватает живого матчмейкинга: друзей приводишь своих */
-export const MIN_CCU_COOP = 50
 /** Ниже этого игра — мусорный хвост каталога, а не игра */
 export const MIN_REVIEWS_TAIL = 30
 /** Запасной порог, когда онлайн неизвестен */
@@ -115,13 +113,16 @@ export function judgeLiveness(s: LivenessSignals, context: PlayContext = 'solo')
     return { alive: false, reason: 'solo-only' }
   }
 
+  // Кооп онлайном не гейтим вообще: играть в него садятся со своими друзьями,
+  // а не с незнакомцами из матчмейкинга. У The Jackbox Party Pack 4 пятнадцать
+  // игроков на весь мир — и это ничего не говорит о том, можно ли в неё
+  // сыграть вечером вчетвером в одной комнате.
+  if (mode === 'coop') return alive
+
   // Игру с одиночным режимом в компании судим по здоровью мультиплеера:
   // Condition Zero с её 348 игроками против ботов сойдёт, а компанию не собрать
-  const needsCrowd = mode === 'online' || (context === 'party' && mode === 'solo-capable')
-  const minCcu = needsCrowd ? MIN_CCU_ONLINE : MIN_CCU_COOP
-
   if (s.ccu !== undefined) {
-    return s.ccu >= minCcu ? alive : { alive: false, reason: 'dead-multiplayer' }
+    return s.ccu >= MIN_CCU_ONLINE ? alive : { alive: false, reason: 'dead-multiplayer' }
   }
 
   // Онлайн неизвестен: падение источника не должно опустошать выдачу,

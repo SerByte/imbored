@@ -155,9 +155,12 @@ export function buildSeriesIndex(
       }
 
       if (winner.rank <= m.rank) continue
-      // Серия сменилась не когда вышел сиквел, а когда аудитория переехала
-      const moved = (winner.audience ?? 0) >= (m.audience ?? 0) * SUPERSEDE_RATIO
-      if (!m.alive || moved) out.set(m.appid, winner.appid)
+      // Серия сменилась не когда вышел сиквел, а когда аудитория переехала.
+      // Именно переезд, а не смерть предшественника: мёртвое убирает фильтр
+      // живости, и дублировать его здесь — значит вытеснять по слабому поводу.
+      if ((winner.audience ?? 0) >= (m.audience ?? 0) * SUPERSEDE_RATIO) {
+        out.set(m.appid, winner.appid)
+      }
     }
   }
 

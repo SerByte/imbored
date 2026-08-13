@@ -84,9 +84,13 @@ describe('judgeLiveness: контекст соло или компания', () 
     expect(verdict.reason).toBe('solo-only')
   })
 
-  test('коопу хватает куда меньшего онлайна, чем публичным серверам', () => {
-    // друзей приводишь своих — нужен живой матчмейкинг, а не толпа
-    expect(judgeLiveness({ categories: [1, 9, 38], ccu: 200 }, 'party').alive).toBe(true)
+  test('кооп не гейтится онлайном вовсе — друзей приводишь своих', () => {
+    // The Jackbox Party Pack 4: режимы 1,49,37,9,39, онлайн 15 человек на
+    // весь мир. Это диванная игра: садишься с друзьями в одной комнате,
+    // телефоны вместо джойстиков. Мировой онлайн к ней отношения не имеет
+    expect(judgeLiveness({ categories: [1, 49, 37, 9, 39], ccu: 15 }, 'party').alive).toBe(true)
+    expect(judgeLiveness({ categories: [1, 9, 38], ccu: 3 }, 'solo').alive).toBe(true)
+    // а публичные серверы без людей — по-прежнему приговор
     expect(judgeLiveness({ categories: [1], ccu: 200 }, 'party').alive).toBe(false)
   })
 })

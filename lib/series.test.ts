@@ -108,12 +108,16 @@ describe('buildSeriesIndex', () => {
     expect(index.size).toBe(0)
   })
 
-  test('мёртвый предшественник вытесняется даже без кратного разрыва', () => {
+  test('вытесняет только доказанный переезд аудитории, а не смерть старой', () => {
+    // Так вытеснился The Jackbox Party Pack 4 в пользу шестого: наборы
+    // мини-игр разные, аудитория никуда не переезжала (12 против 13),
+    // но четвёртый был помечен мёртвым — и одного этого хватало.
+    // Мёртвое и так убирает фильтр живости, дублировать его серией незачем.
     const index = buildSeriesIndex([
-      member({ appid: 1, name: 'Battlefield 4', publisher: 'EA', audience: 3, alive: false }),
-      member({ appid: 2, name: 'Battlefield 2042', publisher: 'EA', audience: 900 }),
+      member({ appid: 1, name: 'Набор 4', audience: 12, alive: false }),
+      member({ appid: 2, name: 'Набор 6', audience: 13 }),
     ])
-    expect(index.get(1)).toBe(2)
+    expect(index.size).toBe(0)
   })
 
   test('разные издатели — не одна серия', () => {
