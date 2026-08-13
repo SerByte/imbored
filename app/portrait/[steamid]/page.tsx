@@ -20,7 +20,7 @@ import { claudePortraitText } from '@/lib/llm'
 import { buildPortrait } from '@/lib/portrait'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
-import { archetypeEvidence, buildWrapped, pickStarter } from '@/lib/wrapped'
+import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from '@/lib/wrapped'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,12 +68,19 @@ const inView = (i = 0) => ({
   transition: { duration: 0.45, ease: EASE, delay: i * 0.05 },
 })
 
-/** Мозаика: чем больше часов, тем шире плитка. Аспект 460:215 сохраняется всегда. */
-function tileWidth(rank: number): string {
-  if (rank === 0) return 'w-1/2 md:w-2/5'
-  if (rank < 4) return 'w-1/2 md:w-1/5'
-  return 'w-1/4 md:w-[10%]'
-}
+/**
+ * Мозаика: плитки крупнее у самых наигранных, дальше мельче.
+ *
+ * `step` — сколько плиток заполняет ряд целиком И на телефоне, И на десктопе
+ * (общее кратное числа колонок). Внутри блока ширина одна, поэтому ряд не
+ * может выровняться по самой высокой плитке и оставить под мелкими пустоту.
+ */
+const MOSAIC_PLAN = [
+  { take: 2, step: 2, cols: 'grid-cols-2' },
+  { take: 4, step: 4, cols: 'grid-cols-2 md:grid-cols-4' },
+  { take: 12, step: 6, cols: 'grid-cols-3 md:grid-cols-6' },
+  { take: 24, step: 8, cols: 'grid-cols-4 md:grid-cols-8' },
+]
 
 function fallbackText(
   name: string,
@@ -135,9 +142,10 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
   // Мозаика и стена: только Steam-игры, у не-Steam записей арта нет
   const steamGames = games.filter((g) => g.appid > 0)
-  const mosaic = [...steamGames]
-    .sort((a, b) => b.playtimeForever - a.playtimeForever)
-    .slice(0, 40)
+  const mosaic = mosaicBlocks(
+    [...steamGames].sort((a, b) => b.playtimeForever - a.playtimeForever),
+    MOSAIC_PLAN,
+  )
   const purgatory = wrapped.unplayed.filter((g) => g.appid > 0).slice(0, 36)
 
   // текст: кэш по времени снапшота, Claude при наличии ключа, иначе шаблон
@@ -174,10 +182,12 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         className="media-dark relative flex min-h-screen flex-col justify-end overflow-hidden"
         style={{ minHeight: '100svh' }}
       >
-        <div aria-hidden className="absolute inset-0 flex flex-wrap content-start">
-          {mosaic.map((g, i) => (
-            <div key={g.appid} className={tileWidth(i)}>
-              {cover(g, '', i < 6)}
+        <div aria-hidden className="absolute inset-0 flex flex-col">
+          {mosaic.map((block, bi) => (
+            <div key={MOSAIC_PLAN[bi].cols} className={`grid ${MOSAIC_PLAN[bi].cols}`}>
+              {block.map((g) => (
+                <div key={g.appid}>{cover(g, '', bi === 0)}</div>
+              ))}
             </div>
           ))}
         </div>

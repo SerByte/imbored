@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { GameMeta, LibraryGame } from './types'
-import { archetypeEvidence, buildWrapped, pickStarter } from './wrapped'
+import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from './wrapped'
 
 function lib(appid: number, hours: number, weeks = 0): LibraryGame {
   return {
@@ -181,6 +181,48 @@ describe('buildWrapped — годы выпуска', () => {
   test('дата без года («скоро») не роняет и не считается', () => {
     const w = withYears([[1, 'скоро', 100]])
     expect(w.era).toBeNull()
+  })
+})
+
+describe('mosaicBlocks', () => {
+  const PLAN = [
+    { take: 2, step: 2 },
+    { take: 4, step: 4 },
+    { take: 12, step: 6 },
+  ]
+  const many = (n: number) => Array.from({ length: n }, (_, i) => lib(i + 1, 100 - i))
+
+  test('полная библиотека режется по плану', () => {
+    const blocks = mosaicBlocks(many(30), PLAN)
+    expect(blocks.map((b) => b.length)).toEqual([2, 4, 12])
+  })
+
+  test('каждый блок кратен своему шагу — иначе в ряду будет дыра', () => {
+    for (const n of [1, 3, 5, 7, 9, 11, 13, 17, 23, 29]) {
+      const blocks = mosaicBlocks(many(n), PLAN)
+      blocks.forEach((b, i) => expect(b.length % PLAN[i].step).toBe(0))
+    }
+  })
+
+  test('хвост, не заполняющий ряд, отбрасывается', () => {
+    // 2 + 4 = 6 разложены, седьмая одна ряд из шести не заполнит
+    expect(mosaicBlocks(many(7), PLAN).map((b) => b.length)).toEqual([2, 4])
+  })
+
+  test('маленькая библиотека даёт только первые блоки', () => {
+    expect(mosaicBlocks(many(3), PLAN).map((b) => b.length)).toEqual([2])
+    expect(mosaicBlocks(many(1), PLAN)).toEqual([])
+  })
+
+  test('пустая библиотека не роняет', () => {
+    expect(mosaicBlocks([], PLAN)).toEqual([])
+  })
+
+  test('игры не повторяются между блоками и идут по порядку', () => {
+    const blocks = mosaicBlocks(many(30), PLAN)
+    const ids = blocks.flat().map((g) => g.appid)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toEqual([...ids].sort((a, b) => a - b))
   })
 })
 

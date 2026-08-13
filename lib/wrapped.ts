@@ -122,6 +122,33 @@ export function buildWrapped(library: LibraryGame[], metaOf: MetaOf): Wrapped {
 }
 
 /**
+ * Режет список на блоки мозаики: первый — самые крупные плитки, дальше мельче.
+ *
+ * Каждый блок обрезается до кратного `step` — числа плиток, заполняющего ряд
+ * и на телефоне, и на десктопе. Без этого в мозаике появляются дыры: ряд из
+ * плиток разной ширины выравнивается по самой высокой, и под мелкими остаётся
+ * пустота. Здесь ширина внутри блока всегда одна, а блок кончается ровно на
+ * границе ряда.
+ */
+export function mosaicBlocks(
+  games: LibraryGame[],
+  plan: Array<{ take: number; step: number }>,
+): LibraryGame[][] {
+  const out: LibraryGame[][] = []
+  let from = 0
+  for (const { take, step } of plan) {
+    const slice = games.slice(from, from + take)
+    const fitted = slice.slice(0, Math.floor(slice.length / step) * step)
+    if (!fitted.length) break
+    out.push(fitted)
+    from += fitted.length
+    // блок не набрался целиком — дальше брать нечего
+    if (fitted.length < take) break
+  }
+  return out
+}
+
+/**
  * Медианный год по часам считается только по наигранным играм: непройденные
  * покупки говорят о распродажах, а не о вкусе.
  * `played` уже отсортирован по часам убыв.
