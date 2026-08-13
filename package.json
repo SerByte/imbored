@@ -11,7 +11,8 @@
     "seed:catalog": "tsx scripts/seed-catalog.ts",
     "catalog:promote": "tsx scripts/promote-catalog.ts",
     "catalog:report": "tsx scripts/catalog-report.ts",
-    "news:sync": "tsx scripts/sync-news.ts"
+    "news:sync": "tsx scripts/sync-news.ts",
+    "catalog:publish": "tsx scripts/publish-catalog.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
