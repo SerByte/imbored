@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { heuristicPicks, validateDigest, validatePicks } from './llm'
+import { heuristicPicks, trimTldr, validateDigest, validatePicks } from './llm'
 import type { GameMeta, Mood, ScoredCandidate } from './types'
 
 const MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
@@ -82,7 +82,10 @@ describe('validateDigest', () => {
       tldr: 'Починили вылет.',
       scale: 'hotfix',
     })
-    expect(validateDigest({ tldr: 'я'.repeat(400), scale: 'major' })?.tldr).toHaveLength(200)
+    // многоточие должно поместиться в лимит, а не добавиться сверх него
+    const long = validateDigest({ tldr: 'я'.repeat(400), scale: 'major' })?.tldr ?? ''
+    expect(long.length).toBeLessThanOrEqual(200)
+    expect(long.endsWith('…')).toBe(true)
   })
 
   test('отвергает мусор: лента переживёт отказ модели', () => {
@@ -91,5 +94,50 @@ describe('validateDigest', () => {
     expect(validateDigest({ tldr: 'ок', scale: 'huge' })).toBeNull()
     expect(validateDigest({ tldr: 'ок' })).toBeNull()
     expect(validateDigest({ scale: 'major' })).toBeNull()
+  })
+})
+
+describe('trimTldr', () => {
+  test('короткий текст не трогает', () => {
+    expect(trimTldr('Починили вылет.')).toBe('Починили вылет.')
+  })
+
+  test('режет по концу предложения, а не по счётчику символов', () => {
+    const s = 'Добавлен новый режим на восемь игроков и переработан баланс оружия. ' +
+      'Дополнительно исправлены вылеты на старте и подтянута стабильность сети в дальних регионах.'
+    const got = trimTldr(s, 120)
+    expect(got.endsWith('.')).toBe(true)
+    expect(got.length).toBeLessThanOrEqual(120)
+    expect(got).not.toContain('Дополнительно')
+  })
+
+  test('нет предложения — режет по слову и ставит многоточие', () => {
+    // именно этот случай рвал текст на «…и ещё 8 право»
+    const s = 'Исправлены вылеты, проблемы с кооперативом, поведением врагов и ещё восемь правок баланса'
+    const got = trimTldr(s, 40)
+    expect(got.endsWith('…')).toBe(true)
+    expect(got.length).toBeLessThanOrEqual(41)
+    // последнее слово целое
+    expect(s.startsWith(got.slice(0, -1))).toBe(true)
+  })
+
+  test('висячая пунктуация перед многоточием убирается', () => {
+    expect(trimTldr('Исправлены вылеты, проблемы с сетью', 20)).not.toContain(',…')
+  })
+})
+
+describe('trimTldr: длина не превышается никогда', () => {
+  test('на любых входных данных результат влезает в лимит', () => {
+    const cases = [
+      'я'.repeat(400),
+      'Слово '.repeat(80),
+      'Предложение одно. Предложение два. ' + 'хвост '.repeat(40),
+      'а б в г д е ё ж з и к л м н о п р с т у ф х ц ч ш щ э ю я'.repeat(6),
+    ]
+    for (const c of cases) {
+      for (const max of [20, 60, 200]) {
+        expect(trimTldr(c, max).length).toBeLessThanOrEqual(max)
+      }
+    }
   })
 })
