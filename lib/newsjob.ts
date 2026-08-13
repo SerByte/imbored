@@ -26,7 +26,7 @@ import {
   type PollStatus,
   type StoredNews,
 } from './db'
-import { claudeNewsDigest, llmAvailable } from './llm'
+import { claudeNewsDigest, llmAvailable, LlmUnavailableError } from './llm'
 import { bodyHash, detectLang, fetchGameNews, isPatchNote, looksTrivial, newsText } from './news'
 import { blocksToText } from './steamhtml'
 
@@ -214,12 +214,25 @@ export async function runNewsSlice(
     for (const item of pending) {
       if (Date.now() > opts.deadlineAt) break
       const text = blocksToText(item.blocks)
-      const res = await digest({
-        gameName: metas.get(item.appid)?.name ?? `Игра ${item.appid}`,
-        title: item.title,
-        body: text,
-        lang: detectLang(text),
-      })
+      let res: Awaited<ReturnType<typeof digest>>
+      try {
+        res = await digest({
+          gameName: metas.get(item.appid)?.name ?? `Игра ${item.appid}`,
+          title: item.title,
+          body: text,
+          lang: detectLang(text),
+        })
+      } catch (e) {
+        // Сервис недоступен (пустой баланс, отозванный ключ, квота) — это не
+        // про эту запись. Останавливаем фазу, НЕ засчитывая попытку: иначе
+        // неоплаченный счёт за три прогона крона выбросил бы сотни патчей из
+        // очереди пересказа навсегда.
+        if (e instanceof LlmUnavailableError) {
+          log(`  пересказы недоступны (${e.status ?? '—'}), попытки не засчитаны`)
+          break
+        }
+        throw e
+      }
       await setNewsDigest(db, item.appid, item.gid, res, now)
       if (res) digested++
     }

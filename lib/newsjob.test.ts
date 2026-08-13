@@ -9,6 +9,7 @@ import {
   type Db,
 } from './db'
 import type { RawNewsItem } from './news'
+import { LlmUnavailableError } from './llm'
 import { nextPollAt, runNewsSlice } from './newsjob'
 import type { GameMeta } from './types'
 
@@ -255,5 +256,40 @@ describe('нет ключа Claude — не жжём попытки', () => {
     expect(Number(r.rows[0].tldr_tries)).toBe(0)
     // запись осталась в очереди и дождётся ключа
     expect(await getUnsummarized(db)).toHaveLength(1)
+  })
+})
+describe('сервис пересказов недоступен', () => {
+  test('системный отказ не тратит попытки записей', async () => {
+    // Пустой баланс Anthropic отвечает 400 на КАЖДЫЙ запрос. Без этого три
+    // прогона крона выбросили бы сотни патчей из очереди навсегда — из-за счёта
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await enrollNewsPoll(db, [730], 1, NOW)
+    await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + 5000,
+      fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
+      digestFn: async () => {
+        throw new LlmUnavailableError(400, 'credit balance is too low')
+      },
+    })
+    const r = await db.execute('SELECT tldr_tries FROM news_items WHERE appid = 730')
+    expect(Number(r.rows[0].tldr_tries)).toBe(0)
+    expect(await getUnsummarized(db)).toHaveLength(1)
+  })
+
+  test('а плохой ответ живой модели попытку засчитывает', async () => {
+    // иначе битая запись крутилась бы в очереди вечно
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await enrollNewsPoll(db, [730], 1, NOW)
+    await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + 5000,
+      fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
+      digestFn: noDigest,
+    })
+    const r = await db.execute('SELECT tldr_tries FROM news_items WHERE appid = 730')
+    expect(Number(r.rows[0].tldr_tries)).toBe(1)
   })
 })

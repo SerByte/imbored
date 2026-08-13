@@ -181,6 +181,27 @@ const DIGEST_SCHEMA = {
   },
 } as const
 
+/**
+ * Модель недоступна как сервис: нет денег на балансе, отозван ключ, упёрлись
+ * в квоту. Это НЕ про конкретную запись, поэтому вызывающий обязан отличать
+ * такой отказ от «модель ответила, но ерунду»: иначе неоплаченный счёт
+ * навсегда выбивает записи из очереди пересказа, израсходовав им попытки.
+ */
+export class LlmUnavailableError extends Error {
+  constructor(readonly status: number | null, message: string) {
+    super(message)
+    this.name = 'LlmUnavailableError'
+  }
+}
+
+/** Коды, по которым виноват сервис, а не содержимое запроса */
+function isSystemic(status: number | undefined): boolean {
+  if (status == null) return false
+  // 400 сюда же: именно им отвечает пустой баланс, а наши запросы к схеме
+  // единообразны — «плохой запрос» на одной записи и хорошей на другой не бывает
+  return status === 400 || status === 401 || status === 403 || status === 429 || status >= 500
+}
+
 /** Чистая проверка ответа модели — тестируется без сети, как validatePicks */
 export function validateDigest(raw: unknown): { tldr: string; scale: NewsScale } | null {
   const o = raw as { tldr?: unknown; scale?: unknown }
@@ -235,7 +256,11 @@ scale — "major", если это крупное обновление: новы
     const text = response.content.find((b) => b.type === 'text')?.text
     if (!text) return null
     return validateDigest(JSON.parse(text))
-  } catch {
+  } catch (e) {
+    const status = (e as { status?: number }).status
+    if (isSystemic(status)) {
+      throw new LlmUnavailableError(status ?? null, (e as Error).message?.slice(0, 200) ?? 'нет доступа')
+    }
     return null
   }
 }
