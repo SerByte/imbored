@@ -42,6 +42,7 @@ const STORE_BATCH = 200
 /** Топ-N тегов на игру: хвост на косинус почти не влияет, а строк экономит кратно */
 const TAGS_PER_GAME = 12
 const REVIEW_PACE_MS = 250
+const STORE_PACE_MS = 1500
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
@@ -49,6 +50,20 @@ function arg(name: string): string | undefined {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** Отступаем на таймаутах и лимитах, а не роняем прогон на тысячи игр */
+async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T | null> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      const wait = Math.min(5000 * 2 ** attempt, 60_000)
+      console.warn(`  ${label}: ${(err as Error).message}; жду ${Math.round(wait / 1000)}с`)
+      await sleep(wait)
+    }
+  }
+  return null
+}
 
 async function openDb(): Promise<Db> {
   const remote = process.env.TURSO_DATABASE_URL
@@ -102,15 +117,22 @@ async function main() {
   console.log(`в очереди: ${queue.length}\n`)
 
   const metas: GameMeta[] = []
+  const done: number[] = []
   for (let i = 0; i < queue.length; i += STORE_BATCH) {
     const chunk = queue.slice(i, i + STORE_BATCH)
-    const fetched = await fetchStoreItems(
-      chunk.map((r) => r.appid),
-      { tagNames },
-    ).catch((err) => {
-      console.warn(`  батч ${i}: ${(err as Error).message}`)
-      return [] as GameMeta[]
-    })
+    const fetched = await withRetry(`батч ${i}`, () =>
+      fetchStoreItems(
+        chunk.map((r) => r.appid),
+        { tagNames },
+      ),
+    )
+    if (fetched === null) {
+      // Steam перестал отвечать: останавливаемся, а не крутим вхолостую.
+      // Необработанные игры остаются в очереди и догрузятся следующим прогоном.
+      console.warn('  Steam не отвечает, останавливаюсь — очередь сохранена')
+      break
+    }
+    done.push(...chunk.map((r) => r.appid))
 
     // сигналы из карты территории уже есть, переносим их на метаданные
     const byAppid = new Map(chunk.map((r) => [r.appid, r]))
@@ -123,6 +145,7 @@ async function main() {
     }
     metas.push(...fetched)
     console.log(`глубина: ${metas.length}/${queue.length}`)
+    await sleep(STORE_PACE_MS)
   }
 
   // Отзывы за 30 дней спрашиваем только у совместных игр: живость гейтит
@@ -184,11 +207,9 @@ async function main() {
     else dropped++
   }
 
-  await setIngestStatus(
-    db,
-    queue.map((r) => r.appid),
-    'promoted',
-  )
+  // Помечаем только то, что реально обработали: иначе сорванный прогон
+  // «съел» бы тысячи игр, не записав по ним ничего
+  await setIngestStatus(db, done, 'promoted')
   await rebuildTagStats(db)
 
   const reasons = new Map<string, number>()

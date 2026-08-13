@@ -223,7 +223,10 @@ export async function fetchStoreItems(
       },
     })
     const url = `https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(input)}`
-    const res = await fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+    // Батч на 200 игр отвечает за 7 секунд и более, поэтому общий таймаут в
+    // 10 секунд для него слишком тесный: растим пропорционально размеру пачки
+    const timeout = Math.max(FETCH_TIMEOUT_MS, chunk.length * 200)
+    const res = await fetchFn(url, { signal: AbortSignal.timeout(timeout) })
     // лимит/сбой — исключение, чтобы вызывающий не закэшировал неудачу как «данных нет»
     if (!res.ok) throw new Error(`GetItems: HTTP ${res.status}`)
     out.push(...parseStoreItems(await res.json(), tagNames))
