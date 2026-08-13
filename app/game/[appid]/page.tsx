@@ -2,8 +2,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { GameNews } from '@/components/GameNews'
+import { GameShots } from '@/components/GameShots'
 import { ProgressRing } from '@/components/ProgressRing'
-import { Screenshots } from '@/components/Screenshots'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { loadGamePage } from '@/lib/gamepage'
 import { STORE_LABEL } from '@/lib/stores'
@@ -203,7 +203,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {meta.screenshots && meta.screenshots.length > 0 && (
           <section>
             <h2 className="text-sm font-medium text-dim mb-4">Скриншоты</h2>
-            <Screenshots images={meta.screenshots.slice(0, 6)} name={meta.name} />
+            {/* сколько кадров показывать, решает сам блок: это упирается в
+                бюджет видеопамяти слайдера, а не в вёрстку страницы */}
+            <GameShots images={meta.screenshots} name={meta.name} />
           </section>
         )}
 

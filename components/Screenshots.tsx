@@ -1,43 +1,23 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useState } from 'react'
-
-const EASE = [0.22, 1, 0.36, 1] as const
+import { motion } from 'motion/react'
+import { useState } from 'react'
+import { Lightbox } from '@/components/Lightbox'
 
 /**
- * Шесть скриншотов игры с лайтбоксом.
+ * Сетка скриншотов с лайтбоксом.
  *
- * До этого у них не было вообще ничего: ни увеличения, ни даже glass-hover —
- * единственный блок в приложении без реакции на наведение, хотя это ровно тот
- * контент, который хочется рассмотреть перед покупкой.
+ * Раньше это был единственный вид блока «Скриншоты». Теперь кадры показывает
+ * MorphSlider, а сетка осталась запасным путём: GameShots отдаёт её, когда
+ * браузер не смог выдать WebGL-контекст. Кода это не стоит почти ничего, зато
+ * на старой машине или в браузере с выключенным WebGL скриншоты не исчезают
+ * вовсе — а именно так выглядел бы слайдер без контекста.
  *
  * layoutId — самый честный случай layout-анимации во всём проекте: миниатюра
  * не «открывает модалку», а физически становится полноразмерной картинкой.
- *
- * Клиентский островок: /game/[appid] остаётся серверным компонентом.
  */
 export function Screenshots({ images, name }: { images: string[]; name: string }) {
   const [open, setOpen] = useState<number | null>(null)
-
-  // Escape и стрелки: лайтбокс без клавиатуры — это ловушка
-  useEffect(() => {
-    if (open === null) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(null)
-      if (e.key === 'ArrowRight') setOpen((i) => (i === null ? null : (i + 1) % images.length))
-      if (e.key === 'ArrowLeft')
-        setOpen((i) => (i === null ? null : (i - 1 + images.length) % images.length))
-    }
-    window.addEventListener('keydown', onKey)
-    // фон не должен скроллиться под открытым лайтбоксом
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
-    }
-  }, [open, images.length])
 
   return (
     <>
@@ -56,43 +36,13 @@ export function Screenshots({ images, name }: { images: string[]; name: string }
         ))}
       </div>
 
-      <AnimatePresence>
-        {open !== null && (
-          <motion.div
-            className="fixed inset-0 z-[100] flex items-center justify-center p-5"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={() => setOpen(null)}
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Скриншот ${open + 1} из ${images.length}`}
-          >
-            <div aria-hidden className="absolute inset-0 bg-black/85 backdrop-blur-sm" />
-            <motion.img
-              layoutId={`shot-${open}`}
-              src={images[open]}
-              alt=""
-              className="relative max-h-[85vh] w-auto max-w-full rounded-[20px] border border-edge"
-              transition={{ duration: 0.35, ease: EASE }}
-            />
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                setOpen(null)
-              }}
-              aria-label="Закрыть"
-              className="absolute top-5 right-5 rounded-full glass px-4 py-2 text-sm cursor-pointer"
-            >
-              Закрыть ✕
-            </button>
-            <span className="absolute bottom-5 font-mono text-xs text-dim">
-              {open + 1}/{images.length}
-            </span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <Lightbox
+        images={images}
+        index={open}
+        onIndex={setOpen}
+        onClose={() => setOpen(null)}
+        layoutId={(i) => `shot-${i}`}
+      />
     </>
   )
 }

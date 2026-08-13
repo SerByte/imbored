@@ -1,0 +1,190 @@
+/*
+ * Стили MorphSlider — модулем, а не глобальным листом.
+ *
+ * В исходнике с reactbits это обычный .css с классами вида `.morph-slider-btn`.
+ * У приложения глобальный лист ровно один (app/globals.css), и второй заводить
+ * нельзя: Next не выгружает глобальные стили при переходах между роутами, так
+ * что лист страницы игры остался бы висеть на всех остальных.
+ *
+ * Классы переименованы в camelCase — иначе к ним пришлось бы обращаться через
+ * styles['morph-slider-btn'] в каждой строке разметки.
+ *
+ * Цвета сознательно не берут токены темы. Слайдер — медиа-поверхность поверх
+ * игрового арта, и он тёмный всегда, как .media-dark в globals.css: белые
+ * контролы читаются на скриншоте любой игры, а на светлой теме они бы
+ * растворились вместе с подложкой.
+ */
+
+.slider {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* тот же тёмный, что --bg тёмной темы: слайдер не спорит с фоном страницы */
+  background: #0b0c10;
+  user-select: none;
+  /* горизонтальная протяжка листает кадры, вертикальная скроллит страницу */
+  touch-action: pan-y;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  outline: none;
+}
+
+.stage:active {
+  cursor: grabbing;
+}
+
+.stage:focus-visible {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.7);
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.caption {
+  position: absolute;
+  left: 22px;
+  bottom: 22px;
+  z-index: 2;
+  max-width: 70%;
+  pointer-events: none;
+  display: grid;
+}
+
+.captionText {
+  grid-area: 1 / 1;
+  justify-self: start;
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #fff;
+  background: rgba(10, 10, 12, 0.42);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: translateY(12px);
+  filter: blur(6px);
+  transition:
+    opacity var(--ms-swap) cubic-bezier(0.16, 1, 0.3, 1),
+    transform var(--ms-swap) cubic-bezier(0.16, 1, 0.3, 1),
+    filter var(--ms-swap) cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.captionText.isActive {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+
+.controls {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 16px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(12, 12, 14, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition:
+    transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.btn:hover {
+  background: rgba(24, 24, 28, 0.6);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: scale(1.06);
+}
+
+.btn:active {
+  transform: scale(0.96);
+}
+
+.btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.8);
+  outline-offset: 2px;
+}
+
+.indicators {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18px;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  transition:
+    width var(--ms-dot) cubic-bezier(0.16, 1, 0.3, 1),
+    background var(--ms-dot) ease;
+}
+
+.dot.isActive {
+  width: 22px;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.dot:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.8);
+  outline-offset: 2px;
+}
+
+@media (max-width: 420px) {
+  .btn {
+    width: 34px;
+    height: 34px;
+  }
+
+  .captionText {
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .captionText,
+  .btn,
+  .dot {
+    animation: none;
+    transition: none;
+  }
+}
