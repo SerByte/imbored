@@ -128,6 +128,22 @@ describe('filterPlayable', () => {
     const unknown = [{ appid: 999 }, { appid: 730 }]
     expect(filterPlayable(unknown, metaOf, 'solo').map((c) => c.appid)).toEqual([999, 730])
   })
+
+  test('мусорный хвост отсекается по числу отзывов и из библиотеки тоже', () => {
+    // Раньше filterPlayable не передавал reviewsTotal, и проверка asset-flip
+    // была недостижима из библиотеки — жила только в офлайн-курации каталога
+    const withTail = new Map(metas)
+    withTail.set(1, meta(1, { categories: [2], reviewsTotal: 11 }))
+    const kept = filterPlayable([{ appid: 1 }, { appid: 730 }], (id) => withTail.get(id), 'solo')
+    expect(kept.map((c) => c.appid)).toEqual([730])
+  })
+
+  test('разгромленная игра из библиотеки тоже отсекается', () => {
+    const panned = new Map(metas)
+    panned.set(2, meta(2, { categories: [2], reviewsTotal: 900, reviewsPercent: 24 }))
+    const kept = filterPlayable([{ appid: 2 }, { appid: 730 }], (id) => panned.get(id), 'solo')
+    expect(kept.map((c) => c.appid)).toEqual([730])
+  })
 })
 
 describe('judgeLiveness: страховки', () => {

@@ -1,5 +1,11 @@
 import { parseReleaseYear } from './ingest'
-import { buildTagProfile, cosine, isMultiplayerMeta, isUnplayed, normalizedTags } from './recommend'
+import {
+  buildTagProfile,
+  isMultiplayerMeta,
+  isUnplayed,
+  normalizedTags,
+  rankByTaste,
+} from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
 /**
@@ -220,18 +226,8 @@ export function archetypeEvidence(
 
 /** Непройденная игра, ближайшая по вкусу — «начни с этой» */
 export function pickStarter(library: LibraryGame[], metaOf: MetaOf): LibraryGame | null {
-  const profile = buildTagProfile(library, metaOf)
-  let best: LibraryGame | null = null
-  let bestScore = -1
-  for (const g of library) {
-    if (!isUnplayed(g)) continue
-    const meta = metaOf(g.appid)
-    if (!meta) continue
-    const score = cosine(normalizedTags(meta), profile)
-    if (score > bestScore) {
-      bestScore = score
-      best = g
-    }
-  }
-  return best
+  // Фильтр по metaOf обязателен: rankByTaste игры без меты не выбрасывает, а
+  // лишь опускает в конец, и без фильтра стартовой могла бы стать игра без тегов
+  const candidates = library.filter((g) => isUnplayed(g) && metaOf(g.appid))
+  return rankByTaste(candidates, metaOf, buildTagProfile(library, metaOf))[0] ?? null
 }

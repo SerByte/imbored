@@ -18,8 +18,10 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Spinner } from '@/components/Spinner'
 import type { GameArtUrls } from '@/lib/art'
+import type { Focus } from '@/lib/recommend'
+import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
-import type { Mood } from '@/lib/types'
+import type { CandidateSource, Mood } from '@/lib/types'
 
 type Signals = {
   matchPercent: number | null
@@ -30,7 +32,7 @@ type Signals = {
 type Pick = {
   appid: number
   name: string
-  source: 'backlog' | 'comeback' | 'new'
+  source: CandidateSource
   reason: string
   headerImage: string | null
   art: GameArtUrls | null
@@ -42,12 +44,6 @@ type Pick = {
   storeUrl: string | null
   priceFinal: number | null
   signals: Signals
-}
-
-const SOURCE_BADGE: Record<Pick['source'], string> = {
-  backlog: 'Куплена, но не распакована',
-  comeback: 'Пора вернуться',
-  new: 'Новое для тебя',
 }
 
 const SKIP_REASONS: Array<{ key: string; label: string }> = [
@@ -118,6 +114,7 @@ function Player() {
   const router = useRouter()
   const search = useSearchParams()
   const roulette = search.get('roulette') === '1'
+  const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
   const mood: Mood = {
     time: (search.get('time') as Mood['time']) ?? 'medium',
     vibe: (search.get('vibe') as Mood['vibe']) ?? 'chill',
@@ -174,11 +171,13 @@ function Player() {
       }
 
       setPrep({ remaining: 0, total })
-      setProgress('Подбираю игру под твоё состояние…')
+      setProgress(
+        focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
+      )
       const res = await fetch('/api/recommend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mood }),
+        body: JSON.stringify({ mood, ...(focus ? { focus } : {}) }),
       })
       if (!res.ok) {
         setPhase('error')
@@ -587,7 +586,9 @@ function Player() {
       {!roulette && (
         <section className="mx-auto w-full max-w-6xl px-5 py-10">
           <div className="flex items-baseline justify-between mb-4">
-            <h2 className="text-sm font-medium text-dim">Ещё варианты под это настроение</h2>
+            <h2 className="text-sm font-medium text-dim">
+              {focus ? 'Ещё нераспакованное' : 'Ещё варианты под это настроение'}
+            </h2>
             <span className="text-xs text-dim/60 font-mono">
               {engine === 'claude' ? 'подбор: ИИ' : 'подбор: эвристика'}
             </span>

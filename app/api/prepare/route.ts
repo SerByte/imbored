@@ -1,9 +1,24 @@
 import { NextResponse } from 'next/server'
 import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
 import { fetchCurrentPlayers } from '@/lib/ingest'
-import { getLatestSnapshot, getStaleAppids, upsertGameMeta } from '@/lib/db'
+import {
+  getLatestSnapshot,
+  getStaleAppids,
+  saveLibrarySnapshot,
+  upsertGameMeta,
+} from '@/lib/db'
 import { seedOtherStores } from '@/lib/otherstores'
-import { DEMO_STEAMID, currentSteamId, getDb, nowSec } from '@/lib/server'
+import {
+  DEMO_STEAMID,
+  currentSteamId,
+  getDb,
+  isDemoId,
+  nowSec,
+  steamApiKey,
+} from '@/lib/server'
+import { fetchOwnedGames } from '@/lib/steam'
+import type { LibraryGame } from '@/lib/types'
+import { buildWarmPlan, shouldRefreshSnapshot } from '@/lib/warm'
 
 const META_MAX_AGE_SEC = 14 * 86_400
 // GetItems берёт до 200 игр за один запрос, поэтому прогрев укладывается
@@ -11,8 +26,6 @@ const META_MAX_AGE_SEC = 14 * 86_400
 const BATCH = 200
 const MIN_NEW_POOL = 20
 const POOL_LIMIT = 200
-/** Потолок на очень больших библиотеках, чтобы прогрев оставался конечным */
-const LIBRARY_CAP = 1200
 
 /**
  * Пошагово прогревает каталог метаданных под библиотеку пользователя.
@@ -31,7 +44,7 @@ export async function POST() {
 
   await seedOtherStores(db, now)
 
-  const games = snapshot.games
+  const games = await refreshLibrary(db, steamid, snapshot, now)
   const names = new Map(games.map((g) => [g.appid, g.name]))
   const owned = new Set(games.map((g) => g.appid))
 
@@ -66,11 +79,10 @@ export async function POST() {
 
   // Раньше брали только верхушку по времени: поштучный запрос стоил 1.7 с на игру.
   // GetItems берёт 200 за раз, поэтому греем всю библиотеку — иначе у части игр
-  // не будет обложки на странице библиотеки.
-  const byPlaytime = [...games].sort((a, b) => b.playtimeForever - a.playtimeForever)
-  const wanted = [
-    ...new Set([...byPlaytime.map((g) => g.appid), ...steamPool.slice(0, 60)]),
-  ].slice(0, LIBRARY_CAP)
+  // не будет обложки на странице библиотеки. Порядок внутри набора считает
+  // buildWarmPlan: сортировка по часам вниз оставляла незапущенные игры без
+  // метаданных навсегда (см. докблок там).
+  const wanted = buildWarmPlan(games, steamPool.slice(0, 60))
 
   await ensureMeta(db, wanted, { maxFetch: BATCH, names })
   const remaining = (await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())).length
@@ -81,6 +93,38 @@ export async function POST() {
   if (!remaining) await refreshPlayerCounts(db, wanted)
 
   return NextResponse.json({ remaining, total: wanted.length })
+}
+
+/**
+ * Перезапрашивает библиотеку у Steam, если снапшот протух.
+ *
+ * Живёт здесь, а не в кроне: /api/prepare и так дёргается на каждом заходе в
+ * /play и /library, то есть ровно тогда, когда свежесть кому-то нужна. Решение
+ * «пора ли» — в shouldRefreshSnapshot, оно чистое и покрыто тестами.
+ */
+async function refreshLibrary(
+  db: Awaited<ReturnType<typeof getDb>>,
+  steamid: string,
+  snapshot: { takenAt: number; games: LibraryGame[] },
+  now: number,
+): Promise<LibraryGame[]> {
+  const key = steamApiKey()
+  const due = shouldRefreshSnapshot({
+    isDemo: isDemoId(steamid),
+    takenAt: snapshot.takenAt,
+    nowSec: now,
+    hasApiKey: Boolean(key),
+  })
+  if (!due || !key) return snapshot.games
+
+  // Любая осечка — оставляем старый снапшот. Пустая или приватная выдача тоже
+  // считается осечкой: обнулить человеку библиотеку из-за глюка Steam хуже,
+  // чем показать вчерашние часы.
+  const fresh = await fetchOwnedGames(steamid, { apiKey: key }).catch(() => null)
+  if (!fresh || fresh === 'private' || !fresh.length) return snapshot.games
+
+  await saveLibrarySnapshot(db, steamid, fresh, now)
+  return fresh
 }
 
 /** Один appid за запрос, поэтому ограничиваем и по количеству, и по свежести */

@@ -34,6 +34,17 @@ describe('backlogValue', () => {
     expect(out).toEqual({ cents: 5999, pricedCount: 1, unplayedCount: 2 })
   })
 
+  test('деньги считают ВЕСЬ бэклог: и ноль минут, и «открыл и закрыл»', () => {
+    // Сторож на разделение полос: подписи в UI разъехались намеренно, а цифра
+    // «≥ $X лежит несыгранным» обязана остаться прежней
+    const metas = new Map([
+      [1, meta(1, 1000)], // ноль минут
+      [2, meta(2, 2000)], // 30 минут — тоже бэклог
+    ])
+    const out = backlogValue([game(1, 0), game(2, 30)], (id) => metas.get(id), NOW)
+    expect(out).toEqual({ cents: 3000, pricedCount: 2, unplayedCount: 2 })
+  })
+
   test('пустая библиотека — нули', () => {
     expect(backlogValue([], () => undefined, NOW)).toEqual({
       cents: 0,

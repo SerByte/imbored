@@ -13,8 +13,10 @@ import { parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import {
   applyFeedbackToProfile,
+  applyFocus,
   buildTagProfile,
   explainMatch,
+  parseFocus,
   scoreCandidates,
   splitBySource,
 } from '@/lib/recommend'
@@ -25,9 +27,10 @@ export async function POST(req: Request) {
   const steamid = await currentSteamId()
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
-  const body = (await req.json().catch(() => ({}))) as { mood?: unknown }
+  const body = (await req.json().catch(() => ({}))) as { mood?: unknown; focus?: unknown }
   const mood = parseMood(body.mood)
   if (!mood) return NextResponse.json({ error: 'badmood' }, { status: 400 })
+  const focus = parseFocus(body.focus)
 
   const db = await getDb()
   const now = nowSec()
@@ -94,11 +97,13 @@ export async function POST(req: Request) {
   // В Claude уходят только свои игры: промпт дешевле, и модель перестаёт
   // смешивать «купи новое» с «поиграй в то, что уже есть».
   const { own, discovery } = splitBySource(actual)
-  const fromClaude = own.length
-    ? await claudePicks({ candidates: own, metaOf, library: games, mood })
+  const focused = applyFocus(own, focus)
+  const fromClaude = focused.length
+    ? await claudePicks({ candidates: focused, metaOf, library: games, mood, focus })
     : null
-  const picks = fromClaude ?? heuristicPicks(own.length ? own : actual, metaOf, mood, 5)
-  const discoveries = heuristicPicks(discovery, metaOf, mood, 6)
+  const picks = fromClaude ?? heuristicPicks(focused.length ? focused : actual, metaOf, mood, 5)
+  // В режиме «разгрести своё» список покупок — прямое противоречие запросу
+  const discoveries = focus ? [] : heuristicPicks(discovery, metaOf, mood, 6)
 
   const libByAppid = new Map(games.map((g) => [g.appid, g]))
   const enrich = (p: { appid: number; name: string; reason: string; source: string }) => {

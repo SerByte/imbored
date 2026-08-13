@@ -26,7 +26,10 @@ export function filterActual<T extends { appid: number }>(
       appid: meta.appid,
       name: meta.name,
       isMultiplayer: meta.categories.some((c) => [1, 9, 24, 36, 38, 39, 49].includes(c)),
-      alive: true,
+      // Вердикт офлайн-курации, если он доехал: раньше здесь стояло true
+      // безусловно, потому что rowToMeta терял колонку alive при чтении, и
+      // buildSeriesIndex всегда объявлял канонической первую игру серии.
+      alive: meta.alive ?? true,
       soloCapable: playMode(meta.categories) === 'solo-capable',
       // онлайн точнее показывает, переехала ли аудитория; отзывы — запасной сигнал
       ...((meta.ccu ?? meta.reviews30d) !== undefined

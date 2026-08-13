@@ -58,7 +58,10 @@ export async function fetchOwnedGames(
           playtimeForever: g.playtime_forever ?? 0,
           playtime2Weeks: g.playtime_2weeks ?? 0,
         }
-        if (g.rtime_last_played) item.lastPlayed = g.rtime_last_played
+        // Проверка на тип, а не на truthy: rtime_last_played = 0 — это ответ
+        // Steam «не запускалась ни разу», и он ценнее отсутствия поля. Раньше
+        // ноль отбрасывался и был неотличим от «Steam не отдал дату».
+        if (typeof g.rtime_last_played === 'number') item.lastPlayed = g.rtime_last_played
         return item
       })
     }

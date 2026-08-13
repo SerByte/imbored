@@ -11,12 +11,14 @@ import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { Spinner } from '@/components/Spinner'
 import type { GameArtUrls } from '@/lib/art'
+import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
+import type { CandidateSource } from '@/lib/types'
 
 type DailyPick = {
   appid: number
   name: string
-  source: 'backlog' | 'comeback' | 'new'
+  source: CandidateSource
   reason: string
   headerImage: string | null
   art: GameArtUrls | null
@@ -25,12 +27,6 @@ type DailyPick = {
   ccu: number | null
   store: string | null
   storeUrl: string | null
-}
-
-const SOURCE_BADGE: Record<DailyPick['source'], string> = {
-  backlog: 'Куплена, но не распакована',
-  comeback: 'Пора вернуться',
-  new: 'Новое для тебя',
 }
 
 export default function DailyPage() {

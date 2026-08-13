@@ -70,15 +70,34 @@ export const PANNED_MIN_SAMPLE = 200
  */
 export function filterPlayable<T extends { appid: number }>(
   candidates: T[],
-  metaOf: (appid: number) => { categories: number[]; ccu?: number; reviews30d?: number } | undefined,
+  metaOf: (
+    appid: number,
+  ) =>
+    | {
+        categories: number[]
+        ccu?: number
+        reviews30d?: number
+        reviewsTotal?: number
+        reviewsPercent?: number
+      }
+    | undefined,
   context: PlayContext = 'solo',
 ): T[] {
   const kept = candidates.filter((c) => {
     const meta = metaOf(c.appid)
     // нет метаданных — не выбрасываем: судить не на чем
     if (!meta) return true
+    // Отзывы передаются с недавних пор: без них проверки «мусорный хвост» и
+    // «разгромленная» в judgeLiveness были недостижимы из библиотеки и жили
+    // только в офлайн-курации каталога. Библиотека через тот проход не идёт.
     return judgeLiveness(
-      { categories: meta.categories, ccu: meta.ccu, reviews30d: meta.reviews30d },
+      {
+        categories: meta.categories,
+        ccu: meta.ccu,
+        reviews30d: meta.reviews30d,
+        reviewsTotal: meta.reviewsTotal,
+        reviewsPercent: meta.reviewsPercent,
+      },
       context,
     ).alive
   })

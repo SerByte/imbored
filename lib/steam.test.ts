@@ -103,6 +103,25 @@ describe('fetchOwnedGames', () => {
     expect(calls()).toBeGreaterThanOrEqual(2)
   })
 
+  test('rtime_last_played = 0 сохраняется, а не теряется', async () => {
+    // Ноль — это ответ «не запускалась ни разу», и он ценнее отсутствия поля.
+    // Раньше проверка на truthy выбрасывала его вместе с настоящим отсутствием.
+    const { fn } = fakeFetch([
+      {
+        response: {
+          game_count: 1,
+          games: [
+            { appid: 504230, name: 'Celeste', playtime_forever: 0, rtime_last_played: 0 },
+          ],
+        },
+      },
+    ])
+    const result = await fetchOwnedGames('76561197960287930', { apiKey: 'k', fetchFn: fn })
+    expect(result).toEqual([
+      { appid: 504230, name: 'Celeste', playtimeForever: 0, playtime2Weeks: 0, lastPlayed: 0 },
+    ])
+  })
+
   test('разовый пустой ответ (глюк Steam) лечится ретраем', async () => {
     const { fn } = fakeFetch([{ response: {} }, OWNED_RESPONSE])
     const result = await fetchOwnedGames('76561197960287930', {

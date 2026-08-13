@@ -708,6 +708,9 @@ type GameRow = {
   release_year: number | null
   developer: string | null
   publisher: string | null
+  signals_at: number | null
+  alive: number | null
+  superseded_by: number | null
 }
 
 function rowToMeta(row: GameRow): GameMeta {
@@ -747,6 +750,17 @@ function rowToMeta(row: GameRow): GameMeta {
   }
   if (row.developer !== null && row.developer !== undefined) meta.developer = row.developer
   if (row.publisher !== null && row.publisher !== undefined) meta.publisher = row.publisher
+  // Вердикт офлайн-курации: тот же класс потери, что был у developer выше.
+  // Читается только целиком: alive лежит в колонке с DEFAULT 1, поэтому сам по
+  // себе означает лишь «не помечена мёртвой», а не «проверена». Настоящий
+  // признак проверки — signals_at, и promote-catalog пишет их одним UPDATE.
+  if (row.signals_at !== null && row.signals_at !== undefined) {
+    meta.signalsAt = row.signals_at
+    meta.alive = row.alive === 1
+    if (row.superseded_by !== null && row.superseded_by !== undefined) {
+      meta.supersededBy = row.superseded_by
+    }
+  }
   return meta
 }
 

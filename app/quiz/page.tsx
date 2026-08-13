@@ -1,11 +1,12 @@
 'use client'
 
 import { AnimatePresence, motion } from 'motion/react'
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Suspense, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { SpotlightCard } from '@/components/SpotlightCard'
 import { VIBE_PRESETS } from '@/lib/presets'
+import type { Focus } from '@/lib/recommend'
 import type { Mood } from '@/lib/types'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -55,17 +56,26 @@ const STEPS: Step[] = [
   },
 ]
 
-export default function QuizPage() {
+/** Настроение по умолчанию для входов, где спрашивать про него нечего */
+const NEUTRAL_MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+
+function Quiz() {
   const router = useRouter()
+  const search = useSearchParams()
   const [stepIndex, setStepIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [back, setBack] = useState(false)
 
   const step = STEPS[stepIndex]
+  // Приходит с /library («Разгрести →») и живёт до самого /play. Не настроение,
+  // а отдельная ось — как roulette у «Мне повезёт»
+  const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
 
-  function go(mood: Mood, roulette = false) {
+  function go(mood: Mood, opts: { roulette?: boolean; focus?: Focus } = {}) {
     const q = new URLSearchParams(mood as unknown as Record<string, string>)
-    if (roulette) q.set('roulette', '1')
+    if (opts.roulette) q.set('roulette', '1')
+    const from = opts.focus ?? focus
+    if (from) q.set('from', from)
     router.push(`/play?${q.toString()}`)
   }
 
@@ -76,8 +86,7 @@ export default function QuizPage() {
     if (stepIndex < STEPS.length - 1) {
       setStepIndex(stepIndex + 1)
     } else {
-      const q = new URLSearchParams(next as Record<string, string>)
-      router.push(`/play?${q.toString()}`)
+      go(next as unknown as Mood)
     }
   }
 
@@ -105,15 +114,25 @@ export default function QuizPage() {
                       vibe: (['chill', 'engaged'] as const)[Math.floor(Math.random() * 2)],
                       social: 'solo',
                     },
-                    true,
+                    { roulette: true },
                   )
                 }
                 className="rounded-full bg-ember/15 text-ember px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Мне повезёт
               </button>
+              <button
+                onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
+                className="rounded-full bg-ember/15 text-ember px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+              >
+                Ни разу не запускал
+              </button>
             </div>
-            <span className="text-xs text-dim/60">одним тапом — или ответь на три вопроса:</span>
+            <span className="text-xs text-dim/60">
+              {focus
+                ? 'только то, что ты ни разу не запускал — выбери настроение:'
+                : 'одним тапом — или ответь на три вопроса:'}
+            </span>
           </div>
         )}
         <div className="flex gap-2.5">
@@ -173,5 +192,14 @@ export default function QuizPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// useSearchParams требует границы Suspense, иначе next build падает на пререндере
+export default function QuizPage() {
+  return (
+    <Suspense>
+      <Quiz />
+    </Suspense>
   )
 }

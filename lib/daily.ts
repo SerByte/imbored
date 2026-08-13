@@ -1,7 +1,7 @@
 import type { ScoredCandidate } from './types'
 
 /** FNV-1a — стабильный хеш строки в uint32 */
-function hashString(str: string): number {
+export function hashString(str: string): number {
   let h = 0x811c9dc5
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i)

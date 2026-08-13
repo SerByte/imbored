@@ -269,4 +269,20 @@ describe('pickStarter', () => {
   test('пустая библиотека возвращает null', () => {
     expect(pickStarter([], metaOf)).toBeNull()
   })
+
+  test('игра без метаданных стартовой не становится', () => {
+    // rankByTaste такие не выбрасывает, а лишь опускает — фильтр здесь обязателен
+    const metas = new Map<number, GameMeta>([[1, meta(1, { Automation: 100 })]])
+    expect(pickStarter([lib(1, 300), lib(99, 0)], (id) => metas.get(id))).toBeNull()
+  })
+
+  test('при равном вкусе стартовой остаётся первая по порядку — выдача не скачет', () => {
+    const metas = new Map<number, GameMeta>([
+      [1, meta(1, { Automation: 100 })],
+      [2, meta(2, { Automation: 100 })],
+      [3, meta(3, { Automation: 100 })],
+    ])
+    const games = [lib(1, 300), lib(2, 0), lib(3, 0)]
+    expect(pickStarter(games, (id) => metas.get(id))?.appid).toBe(2)
+  })
 })

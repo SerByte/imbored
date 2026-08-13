@@ -3,20 +3,35 @@ import { redirect } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { feedbackStats, getGamesMeta, getLatestSnapshot } from '@/lib/db'
-import { classifyLibraryGame, type LibraryGameState } from '@/lib/recommend'
+import {
+  buildLibraryView,
+  dayKey,
+  forgottenCandidates,
+  LIBRARY_FILTERS,
+  parseLibraryFilter,
+  pickForgotten,
+} from '@/lib/forgotten'
+import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 
 export const dynamic = 'force-dynamic'
 
-const STATE_LABEL: Record<LibraryGameState, { text: string; cls: string }> = {
+/**
+ * Две полосы бэклога читаются как иерархия: «не распакована» теперь стоит там,
+ * где это правда (ноль минут), а игра, которую открыли и закрыли, получила своё
+ * имя. Раньше обе были «не распакована» — включая ту, где на счётчике 110 минут.
+ * Ember зарезервирован за «играешь сейчас» и в эту пару не отдаётся.
+ */
+const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
   active: { text: 'играешь сейчас', cls: 'text-ember' },
-  unplayed: { text: 'не распакована', cls: 'text-sky-300/80' },
+  untouched: { text: 'не распакована', cls: 'text-sky-300/80' },
+  unplayed: { text: 'открыл и закрыл', cls: 'text-sky-300/50' },
   comeback: { text: 'заброшена', cls: 'text-dim' },
   played: { text: '', cls: 'text-dim' },
 }
 
-export default async function LibraryPage() {
+export default async function LibraryPage(props: PageProps<'/library'>) {
   const steamid = await currentSteamId()
   if (!steamid) redirect('/')
 
@@ -25,9 +40,15 @@ export default async function LibraryPage() {
   if (!snapshot) redirect('/')
 
   const now = nowSec()
-  const games = [...snapshot.games].sort((a, b) => b.playtimeForever - a.playtimeForever)
+  const filter = parseLibraryFilter((await props.searchParams).state)
+  // Сводка, деньги и прогрев считаются по ВСЕЙ библиотеке, а не по выбранной
+  // полке: иначе числа в шапке прыгали бы вслед за фильтром
+  const games = snapshot.games
   const totalHours = Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
-  const unplayed = games.filter((g) => classifyLibraryGame(g, now) === 'unplayed').length
+  // Два разных числа: в строке-сводке — «ни разу не запускал» (ноль минут), в
+  // карточке денег — весь бэклог до двух часов, как и раньше. Деньги считает
+  // backlogValue по своему определению, и оно намеренно не менялось.
+  const untouched = games.filter(isUntouched).length
 
   // Только игры библиотеки, а не весь каталог: нужны обложки для сетки и
   // цена бэклога, и то и другое считается по своим играм
@@ -48,6 +69,15 @@ export default async function LibraryPage() {
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
 
+  const metaOf = (id: number) => metas.get(id)
+  const view = buildLibraryView(games, metaOf, filter, now)
+  const shelf = pickForgotten(
+    forgottenCandidates(games, metaOf),
+    // Соль обязательна: без неё первый слот полки коррелировал бы с выбором
+    // «Игры дня» — там сид тех же двух частей
+    `${steamid}:${dayKey(new Date(now * 1000))}:shelf`,
+  )
+
   return (
     <div className="flex-1 mx-auto w-full max-w-6xl px-5 pt-28 pb-16">
       <WarmCatalog enabled={missingArt > 0} />
@@ -65,7 +95,7 @@ export default async function LibraryPage() {
       <p className="text-dim text-sm mb-6">
         <span className="font-mono">{games.length}</span> игр ·{' '}
         <span className="font-mono">{totalHours.toLocaleString('ru-RU')}</span> часов ·{' '}
-        <span className="font-mono">{unplayed}</span> так и не распакованы
+        <span className="font-mono">{untouched}</span> ни разу не запускал
       </p>
 
       {(backlog.pricedCount > 0 || stats.rate !== null) && (
@@ -78,7 +108,7 @@ export default async function LibraryPage() {
                   лежит несыгранным
                 </div>
                 <div className="text-xs text-dim mt-1">
-                  {backlog.unplayedCount} нераспакованных игр, у {backlog.pricedCount} известна цена
+                  {backlog.unplayedCount} игр в бэклоге, у {backlog.pricedCount} известна цена
                 </div>
                 {equivalent && (
                   <div className="text-xs text-dim mt-2">
@@ -88,8 +118,10 @@ export default async function LibraryPage() {
                   </div>
                 )}
               </div>
+              {/* Не в общий опрос про настроение: карточка про несыгранное —
+                  значит и подбор про несыгранное */}
               <Link
-                href="/quiz"
+                href="/quiz?from=untouched"
                 className="shrink-0 rounded-[14px] bg-ember text-bg font-semibold px-4 py-2.5 text-sm hover:brightness-110 transition"
               >
                 Разгрести →
@@ -110,9 +142,74 @@ export default async function LibraryPage() {
         </div>
       )}
 
+      {shelf.length > 0 && (
+        <section className="mb-12">
+          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ember mb-2">
+            Запечатанное
+          </p>
+          <div className="flex items-baseline justify-between gap-4 flex-wrap">
+            {/* Заголовок намеренно без числа: «пять игр» — ложь при трёх, а
+                согласование «{N} игр, о которых ты забыл» — фабрика багов.
+                Число уже стоит в строке-сводке выше. */}
+            <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+              Ты забыл, что они у тебя есть
+            </h2>
+            <Link href="/quiz?from=untouched" className="text-sm text-ember hover:underline shrink-0">
+              Разгрести →
+            </Link>
+          </div>
+          {/* «По данным Steam», а не «ты никогда в это не играл»: ноль часов
+              бывает и у офлайн-игры, и у аккаунта старше 2009 года */}
+          <p className="text-dim text-sm mt-1.5 mb-4">
+            Ни одну из них ты не запускал — по данным Steam там ноль минут. Завтра на полке будут
+            другие.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {shelf.map((g) => (
+              <Link
+                key={g.appid}
+                href={`/game/${g.appid}`}
+                className="library-tile glass glass-hover rounded-[14px] overflow-hidden"
+              >
+                <GameArt
+                  appid={g.appid}
+                  name={g.name}
+                  headerImage={metas.get(g.appid)?.headerImage ?? null}
+                  art={metas.get(g.appid)?.art ?? null}
+                  sizes="(min-width: 768px) 20vw, 50vw"
+                  className="w-full aspect-[460/215] object-cover"
+                />
+                <div className="p-3 text-sm font-semibold leading-tight truncate">{g.name}</div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Чипсы — обычные ссылки: страница и так force-dynamic, а сетка на
+          тысячу плиток обязана остаться серверной и без обработчиков */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        {LIBRARY_FILTERS.map((f) => (
+          <Link
+            key={f.id}
+            href={f.id === 'all' ? '/library' : `/library?state=${f.id}`}
+            aria-current={f.id === filter ? 'page' : undefined}
+            className={`rounded-full px-3.5 py-1.5 text-xs transition ${
+              f.id === filter ? 'bg-ember text-bg font-semibold' : 'glass glass-hover text-dim'
+            }`}
+          >
+            {f.label} <span className="font-mono">{view.counts[f.id]}</span>
+          </Link>
+        ))}
+      </div>
+
+      {view.games.length === 0 && (
+        <p className="text-dim text-sm">Здесь пусто — и это хорошая новость.</p>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {games.map((g) => {
-          const state = classifyLibraryGame(g, now)
+        {view.games.map((g) => {
+          const state = libraryTileState(g, now)
           const label = STATE_LABEL[state]
           const hours = Math.round(g.playtimeForever / 60)
           return (

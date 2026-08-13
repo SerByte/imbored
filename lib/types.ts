@@ -46,6 +46,21 @@ export type GameMeta = {
   store?: string
   /** страница игры в её магазине */
   storeUrl?: string
+  /**
+   * Вердикт офлайн-курации каталога. Пишется одним UPDATE в promote-catalog,
+   * копируется в прод publish-catalog и до сих пор молча терялся при чтении:
+   * колонки приезжали из `SELECT *` и выбрасывались в JS — та же история, что
+   * была с developer и release_year.
+   *
+   * Три поля читаются как единое целое и появляются только вместе, потому что
+   * вместе и пишутся. Ценность в первую очередь у signalsAt: непустой означает,
+   * что appid прошёл через games-only пайплайн (catalog_ingest наполняется из
+   * раздела «Игры» магазина), то есть это точно игра, а не саундтрек или SDK.
+   * У прогретой в рантайме записи их нет вовсе — судить не по чему.
+   */
+  signalsAt?: number
+  alive?: boolean
+  supersededBy?: number
 }
 
 export type Mood = {
@@ -54,7 +69,19 @@ export type Mood = {
   social: 'solo' | 'friends'
 }
 
-export type CandidateSource = 'backlog' | 'comeback' | 'new'
+/**
+ * Откуда взялся кандидат. Порядок значим: он же порядок приоритета при
+ * наборе разнообразия в heuristicPicks.
+ *
+ * 'untouched' и 'backlog' — обе про непройденное, но это разные разговоры:
+ * первую даже не скачивали, вторую открыли и закрыли. Отдельный источник, а не
+ * флаг рядом с 'backlog', именно потому, что различие ведёт свой бейдж, свой
+ * шаблон причины и свою строку в промпте — Record<CandidateSource, …> не даст
+ * собраться, пока для нового источника не написана вся копия.
+ */
+export const CANDIDATE_SOURCES = ['untouched', 'backlog', 'comeback', 'new'] as const
+
+export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
 
 export type ScoredCandidate = {
   appid: number
