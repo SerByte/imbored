@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { pickDaily } from '@/lib/daily'
+import { filterActual } from '@/lib/actual'
 import { bannedAppids, getGamesMeta, getLatestSnapshot, listFeedback } from '@/lib/db'
 import { heuristicPicks } from '@/lib/llm'
 import {
@@ -45,9 +46,13 @@ export async function GET() {
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
 
+  // Своя библиотека не проходит офлайн-фильтры каталога, поэтому актуальность
+  // считаем здесь: иначе игрой дня становился мёртвый мультиплеер
+  const actual = filterActual(candidates, metas, 'solo')
+
   // игра дня — в первую очередь про разгребание своего: бэклог и заброшенное
-  const own = candidates.filter((c) => c.source !== 'new')
-  const pool = own.length >= 5 ? own : candidates
+  const own = actual.filter((c) => c.source !== 'new')
+  const pool = own.length >= 5 ? own : actual
 
   const dateStr = new Date().toISOString().slice(0, 10)
   const pick = pickDaily(pool, `${steamid}:${dateStr}`)!
@@ -68,6 +73,7 @@ export async function GET() {
       // Клиент соберёт нужный размер сам через GameArt.
       headerImage: meta?.headerImage ?? null,
       art: meta?.art ?? null,
+      ccu: meta?.ccu ?? null,
       tags: topTags,
       hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,
       store: meta?.store ?? null,

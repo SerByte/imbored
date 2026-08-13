@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { HeroArt } from '@/components/HeroArt'
+import { PlayersNow } from '@/components/PlayersNow'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
@@ -21,6 +22,7 @@ type DailyPick = {
   art: GameArtUrls | null
   tags: string[]
   hoursPlayed: number | null
+  ccu: number | null
   store: string | null
   storeUrl: string | null
 }
@@ -127,6 +129,7 @@ export default function DailyPage() {
               {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
                 <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
               )}
+              <PlayersNow ccu={pick.ccu} />
             </div>
 
             {/*

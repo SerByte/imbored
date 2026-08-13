@@ -11,6 +11,7 @@ import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
 import { HeroArt } from '@/components/HeroArt'
 import { LogoMark } from '@/components/Logo'
+import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
@@ -33,6 +34,7 @@ type Pick = {
   reason: string
   headerImage: string | null
   art: GameArtUrls | null
+  ccu: number | null
   shortDescription: string | null
   tags: string[]
   hoursPlayed: number | null
@@ -412,6 +414,7 @@ function Player() {
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
                   <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
                 )}
+                <PlayersNow ccu={pick.ccu} />
               </motion.div>
 
               <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.18}>

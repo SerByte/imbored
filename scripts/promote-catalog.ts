@@ -33,8 +33,8 @@ import {
   type Db,
 } from '../lib/db'
 import { fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
-import { fetchRecentReviews } from '../lib/ingest'
-import { judgeLiveness, needsFullLobby } from '../lib/liveness'
+import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
+import { judgeLiveness } from '../lib/liveness'
 import { buildSeriesIndex, type SeriesMember } from '../lib/series'
 import type { GameMeta } from '../lib/types'
 
@@ -148,11 +148,14 @@ async function main() {
     await sleep(STORE_PACE_MS)
   }
 
-  // Отзывы за 30 дней спрашиваем только у совместных игр: живость гейтит
-  // только их, а поштучный запрос на весь пул стоил бы часы
+  // Сигналы спрашиваем только у совместных игр: живость гейтит только их,
+  // а поштучный запрос на весь пул стоил бы часы. Онлайн важнее отзывов —
+  // он резче отделяет мёртвое, поэтому берём его первым.
   const multiplayer = metas.filter((m) => isMultiplayer(m))
-  console.log(`\nсвежие отзывы для ${multiplayer.length} совместных игр…`)
+  console.log(`\nсигналы для ${multiplayer.length} совместных игр…`)
   for (const [i, m] of multiplayer.entries()) {
+    m.ccu = await fetchCurrentPlayers(m.appid).catch(() => undefined)
+    await sleep(REVIEW_PACE_MS)
     m.reviews30d = await fetchRecentReviews(m.appid, nowSec).catch(() => undefined)
     if ((i + 1) % 50 === 0) console.log(`  ${i + 1}/${multiplayer.length}`)
     await sleep(REVIEW_PACE_MS)
@@ -164,12 +167,11 @@ async function main() {
     verdicts.set(
       m.appid,
       judgeLiveness({
-        isMultiplayer: isMultiplayer(m),
+        categories: m.categories,
+        ccu: m.ccu,
         reviews30d: m.reviews30d,
         reviewsTotal: m.reviewsTotal,
         reviewsPercent: m.reviewsPercent,
-        releaseYear: m.releaseYear,
-        needsLobby: needsFullLobby(m.tags),
       }),
     )
   }
@@ -180,7 +182,8 @@ async function main() {
     name: m.name,
     isMultiplayer: isMultiplayer(m),
     alive: verdicts.get(m.appid)?.alive ?? true,
-    ...(m.reviews30d !== undefined ? { reviews30d: m.reviews30d } : {}),
+    // сигнал «аудитория переехала»: онлайн точнее, отзывы — запасной вариант
+    ...((m.ccu ?? m.reviews30d) !== undefined ? { audience: m.ccu ?? m.reviews30d } : {}),
     ...(m.releaseYear !== undefined ? { releaseYear: m.releaseYear } : {}),
     ...(m.developer ? { developer: m.developer } : {}),
     ...(m.publisher ? { publisher: m.publisher } : {}),

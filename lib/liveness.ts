@@ -4,57 +4,93 @@
  * Работает как ФИЛЬТР, а не как слагаемое в скоринге — ранжирование остаётся
  * за личным вкусом. Иначе всем выпадали бы одни и те же вечные хиты.
  *
- * Главный сигнал — число отзывов за последние 30 дней: Steam отдаёт его
- * бесплатно, без ключа, для любого appid, и он честно отражает, играет ли
- * кто-то сейчас. Онлайн (CCU) официально доступен только по одной игре за
- * запрос, на каталог в сотню тысяч это неприменимо.
+ * Главный сигнал — текущий онлайн: он отличает живое от мёртвого куда резче,
+ * чем отзывы. У Half-Life 2: Deathmatch 86 отзывов за 30 дней (выглядит живой),
+ * но 99 игроков на весь мир — играть не с кем. Отзывы остаются запасным
+ * сигналом там, где онлайн неизвестен.
  */
 
 export type LivenessSignals = {
-  isMultiplayer: boolean
-  /** отзывов за последние 30 дней — «во что играют сейчас» */
+  /** id режимов Steam: 1 сетевая, 2 одиночная, 9/24/38/39 кооп, 36/49 PvP */
+  categories: number[]
+  /** игроков прямо сейчас */
+  ccu?: number
+  /** отзывов за последние 30 дней — запасной сигнал */
   reviews30d?: number
-  /** всего отзывов за всё время — размер аудитории */
   reviewsTotal?: number
   /** доля положительных, 0..100 */
   reviewsPercent?: number
-  releaseYear?: number
-  /** режимам вроде батл-рояля нужна полная катка, коопу на двоих — нет */
-  needsLobby?: boolean
 }
 
-export type DeadReason = 'dead-multiplayer' | 'asset-flip' | 'panned'
-
+export type DeadReason = 'dead-multiplayer' | 'asset-flip' | 'panned' | 'solo-only'
 export type LivenessVerdict = { alive: boolean; reason: DeadReason | null }
 
+/** Во что играем: один, с друзьями или как получится */
+export type PlayContext = 'solo' | 'party'
+
+/** Как в эту игру вообще играют */
+export type PlayMode = 'online' | 'coop' | 'solo-capable'
+
+const SINGLE_PLAYER = 2
+const COOP_IDS = [9, 24, 38, 39]
+const ONLINE_IDS = [1, 36, 49]
+
+/**
+ * Режим важнее тегов. Прежняя проверка угадывала по тегам («Battle Royale»,
+ * «MOBA») и не ловила HL2:DM: у неё теги Action, FPS, Shooter, Competitive —
+ * ни один не выдаёт зависимость от людных серверов. А режимы выдают: там
+ * стоит только «сетевая игра», без одиночной и без коопа.
+ */
+export function playMode(categories: number[]): PlayMode {
+  const has = (ids: number[]) => categories.some((c) => ids.includes(c))
+  if (categories.includes(SINGLE_PLAYER)) return 'solo-capable'
+  if (has(COOP_IDS)) return 'coop'
+  if (has(ONLINE_IDS)) return 'online'
+  return 'solo-capable'
+}
+
+/** Публичным серверам и матчмейкингу нужна заметная толпа */
+export const MIN_CCU_ONLINE = 500
+/** Коопу хватает живого матчмейкинга: друзей приводишь своих */
+export const MIN_CCU_COOP = 50
 /** Ниже этого игра — мусорный хвост каталога, а не игра */
 export const MIN_REVIEWS_TAIL = 30
-/** Мультиплеер без свежих отзывов считается заброшенным */
+/** Запасной порог, когда онлайн неизвестен */
 export const MIN_RECENT_MP = 5
-/** Режимам с полным лобби нужен заметный поток игроков */
-export const MIN_RECENT_LOBBY = 100
 export const PANNED_RATIO = 40
 export const PANNED_MIN_SAMPLE = 200
 
-/** Теги режимов, которым нужна полная катка, а не пара человек */
-const LOBBY_TAGS = new Set([
-  'Battle Royale',
-  'MOBA',
-  'Team-Based',
-  'Arena Shooter',
-  'MMORPG',
-  'Massively Multiplayer',
-])
-
-export function needsFullLobby(tags: Record<string, number>): boolean {
-  return Object.keys(tags).some((t) => LOBBY_TAGS.has(t))
+/**
+ * Убирает из списка то, во что сегодня не поиграть.
+ *
+ * Нужен для игр ИЗ БИБЛИОТЕКИ: у каталога допустимость решается офлайн при
+ * наполнении, а библиотека у каждого своя и через тот проход не идёт — из-за
+ * чего «Игра дня» и предлагала мёртвый мультиплеер.
+ *
+ * Если фильтр не оставил ничего, возвращает исходный список: пустой экран
+ * хуже неудачной рекомендации.
+ */
+export function filterPlayable<T extends { appid: number }>(
+  candidates: T[],
+  metaOf: (appid: number) => { categories: number[]; ccu?: number; reviews30d?: number } | undefined,
+  context: PlayContext = 'solo',
+): T[] {
+  const kept = candidates.filter((c) => {
+    const meta = metaOf(c.appid)
+    // нет метаданных — не выбрасываем: судить не на чем
+    if (!meta) return true
+    return judgeLiveness(
+      { categories: meta.categories, ccu: meta.ccu, reviews30d: meta.reviews30d },
+      context,
+    ).alive
+  })
+  return kept.length ? kept : candidates
 }
 
-export function judgeLiveness(s: LivenessSignals): LivenessVerdict {
+export function judgeLiveness(s: LivenessSignals, context: PlayContext = 'solo'): LivenessVerdict {
   const alive: LivenessVerdict = { alive: true, reason: null }
 
-  // Мусорный хвост: на каталоге в сотню тысяч это самый результативный фильтр.
-  // Порог применяется, только когда число отзывов вообще известно.
+  // Мусорный хвост: на каталоге в сотню тысяч это самый результативный фильтр
   if (s.reviewsTotal !== undefined && s.reviewsTotal < MIN_REVIEWS_TAIL) {
     return { alive: false, reason: 'asset-flip' }
   }
@@ -68,16 +104,28 @@ export function judgeLiveness(s: LivenessSignals): LivenessVerdict {
     return { alive: false, reason: 'panned' }
   }
 
-  // Дальше — только про совместную игру. Одиночная игра 2004 года прекрасна,
-  // и «мало кто играет сейчас» для неё не приговор, а норма.
-  if (!s.isMultiplayer) return alive
+  const mode = playMode(s.categories)
 
-  // Нет сигнала — считаем живой: источник мог не ответить, и опустошать
-  // выдачу из-за этого нельзя
+  // Один играешь — совместная жизнь игры не важна: одиночная игра 2004 года
+  // совершенно валидная рекомендация
+  if (context === 'solo' && mode === 'solo-capable') return alive
+
+  // В компанию не годится то, во что вместе не играют вовсе
+  if (context === 'party' && !s.categories.some((c) => [...ONLINE_IDS, ...COOP_IDS].includes(c))) {
+    return { alive: false, reason: 'solo-only' }
+  }
+
+  // Игру с одиночным режимом в компании судим по здоровью мультиплеера:
+  // Condition Zero с её 348 игроками против ботов сойдёт, а компанию не собрать
+  const needsCrowd = mode === 'online' || (context === 'party' && mode === 'solo-capable')
+  const minCcu = needsCrowd ? MIN_CCU_ONLINE : MIN_CCU_COOP
+
+  if (s.ccu !== undefined) {
+    return s.ccu >= minCcu ? alive : { alive: false, reason: 'dead-multiplayer' }
+  }
+
+  // Онлайн неизвестен: падение источника не должно опустошать выдачу,
+  // поэтому без сигнала игра считается живой
   if (s.reviews30d === undefined) return alive
-
-  const threshold = s.needsLobby ? MIN_RECENT_LOBBY : MIN_RECENT_MP
-  if (s.reviews30d < threshold) return { alive: false, reason: 'dead-multiplayer' }
-
-  return alive
+  return s.reviews30d >= MIN_RECENT_MP ? alive : { alive: false, reason: 'dead-multiplayer' }
 }

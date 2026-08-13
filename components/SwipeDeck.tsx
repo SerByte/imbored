@@ -3,6 +3,7 @@
 import { AnimatePresence, motion, useMotionValue, useTransform } from 'motion/react'
 import { useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { PlayersNow } from '@/components/PlayersNow'
 import type { GameArtUrls } from '@/lib/art'
 
 export type DeckCard = {
@@ -13,6 +14,7 @@ export type DeckCard = {
   priceFinal?: number
   headerImage: string | null
   art?: GameArtUrls | null
+  ccu?: number | null
   tags: string[]
   store?: string
   storeUrl?: string
@@ -127,6 +129,8 @@ function TopCard({
             </span>
           )}
         </div>
+        {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть */}
+        <PlayersNow ccu={card.ccu ?? null} />
         {card.tags.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {card.tags.map((t) => (

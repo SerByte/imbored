@@ -354,6 +354,22 @@ describe('db', () => {
     expect([...(await myVotedAppids(db, 'R00001', 'a'))]).toEqual([570])
   })
 
+  test('матч не срабатывает, пока в комнате один участник', async () => {
+    // Согласие с самим собой согласием не является: условие «проголосовали все»
+    // при единственном участнике выполнялось его же голосом, и человек получал
+    // экран «Это матч!», ни с кем не договорившись
+    const db = await freshDb()
+    await createRoom(db, { id: 'R00002', steamid: 'a' }, NOW)
+    await joinRoom(db, 'R00002', 'a', 'A', NOW)
+    await castRoomVote(db, 'R00002', 'a', 570, 1, NOW)
+    expect(await findRoomMatch(db, 'R00002')).toBeNull()
+
+    // как только подключился второй и согласился — это уже договорённость
+    await joinRoom(db, 'R00002', 'b', 'B', NOW + 1)
+    await castRoomVote(db, 'R00002', 'b', 570, 1, NOW + 2)
+    expect(await findRoomMatch(db, 'R00002')).toBe(570)
+  })
+
   test('скип с причиной и бан сохраняются и читаются', async () => {
     const db = await freshDb()
     await logFeedback(db, { steamid: 'u1', appid: 620, action: 'skipped', reason: 'genre' }, NOW)

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
+import { fetchCurrentPlayers } from '@/lib/ingest'
 import { getLatestSnapshot, getStaleAppids, upsertGameMeta } from '@/lib/db'
 import { seedOtherStores } from '@/lib/otherstores'
 import { DEMO_STEAMID, currentSteamId, getDb, nowSec } from '@/lib/server'
@@ -73,5 +74,38 @@ export async function POST() {
 
   await ensureMeta(db, wanted, { maxFetch: BATCH, names })
   const remaining = (await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())).length
+
+  // Онлайн для совместных игр библиотеки: без него фильтр живости судит вслепую
+  // и в выдачу попадают игры с пустыми серверами. Спрашиваем только у сетевых
+  // и только когда замер протух — у обычного человека это десятки запросов.
+  if (!remaining) await refreshPlayerCounts(db, wanted)
+
   return NextResponse.json({ remaining, total: wanted.length })
+}
+
+/** Один appid за запрос, поэтому ограничиваем и по количеству, и по свежести */
+const CCU_MAX_AGE_SEC = 6 * 3600
+const CCU_PER_CALL = 40
+
+async function refreshPlayerCounts(db: Awaited<ReturnType<typeof getDb>>, appids: number[]) {
+  if (!appids.length) return
+  const now = nowSec()
+  const res = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE appid IN (${appids.map(() => '?').join(',')})
+            AND is_multiplayer = 1
+            AND (ccu_at IS NULL OR ccu_at < ?)
+          ORDER BY ccu_at IS NOT NULL, reviews_total DESC
+          LIMIT ?`,
+    args: [...appids, now - CCU_MAX_AGE_SEC, CCU_PER_CALL],
+  })
+
+  for (const row of res.rows as unknown as Array<{ appid: number }>) {
+    const ccu = await fetchCurrentPlayers(row.appid).catch(() => undefined)
+    if (ccu === undefined) continue
+    await db.execute({
+      sql: 'UPDATE games SET ccu = ?, ccu_at = ? WHERE appid = ?',
+      args: [ccu, now, row.appid],
+    })
+  }
 }

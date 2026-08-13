@@ -18,7 +18,7 @@ export type SeriesMember = {
   name: string
   isMultiplayer: boolean
   alive: boolean
-  reviews30d?: number
+  audience?: number
   releaseYear?: number
   publisher?: string
   developer?: string
@@ -126,7 +126,7 @@ export function buildSeriesIndex(
       (a, b) =>
         Number(a.old) - Number(b.old) ||
         b.rank - a.rank ||
-        (b.reviews30d ?? 0) - (a.reviews30d ?? 0),
+        (b.audience ?? 0) - (a.audience ?? 0),
     )
     const winner = sorted.find((m) => m.alive)
     if (!winner) continue
@@ -145,7 +145,7 @@ export function buildSeriesIndex(
 
       if (winner.rank <= m.rank) continue
       // Серия сменилась не когда вышел сиквел, а когда аудитория переехала
-      const moved = (winner.reviews30d ?? 0) >= (m.reviews30d ?? 0) * SUPERSEDE_RATIO
+      const moved = (winner.audience ?? 0) >= (m.audience ?? 0) * SUPERSEDE_RATIO
       if (!m.alive || moved) out.set(m.appid, winner.appid)
     }
   }

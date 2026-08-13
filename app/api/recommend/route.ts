@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { filterActual } from '@/lib/actual'
 import {
   bannedAppids,
   countIngest,
@@ -81,14 +82,22 @@ export async function POST(req: Request) {
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
 
+  // Игры из библиотеки не проходят офлайн-фильтры каталога — считаем здесь.
+  // «С друзьями» судим строже: в компанию не годится то, во что вместе не сесть.
+  const actual = filterActual(
+    candidates,
+    libMetas,
+    mood.social === 'friends' ? 'party' : 'solo',
+  )
+
   // Своё и «нет в библиотеке» — разные разговоры, поэтому и разные блоки.
   // В Claude уходят только свои игры: промпт дешевле, и модель перестаёт
   // смешивать «купи новое» с «поиграй в то, что уже есть».
-  const { own, discovery } = splitBySource(candidates)
+  const { own, discovery } = splitBySource(actual)
   const fromClaude = own.length
     ? await claudePicks({ candidates: own, metaOf, library: games, mood })
     : null
-  const picks = fromClaude ?? heuristicPicks(own.length ? own : candidates, metaOf, mood, 5)
+  const picks = fromClaude ?? heuristicPicks(own.length ? own : actual, metaOf, mood, 5)
   const discoveries = heuristicPicks(discovery, metaOf, mood, 6)
 
   const libByAppid = new Map(games.map((g) => [g.appid, g]))
@@ -103,6 +112,7 @@ export async function POST(req: Request) {
       ...p,
       headerImage: meta?.headerImage ?? null,
       art: meta?.art ?? null,
+      ccu: meta?.ccu ?? null,
       shortDescription: meta?.shortDescription ?? null,
       tags: topTags,
       hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,

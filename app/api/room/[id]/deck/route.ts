@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { filterActual } from '@/lib/actual'
 import {
   countIngest,
   getGamesMeta,
@@ -68,10 +69,19 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     limit: DECK_SIZE,
   })
 
+  // Колода собирается из библиотек участников, а они офлайн-фильтры каталога
+  // не проходят: без этого в пати всплывали мёртвые сетевые игры и старые
+  // версии вроде Condition Zero при живой CS2
+  const actual = filterActual(deck, metas, 'party')
+
   const voted = await myVotedAppids(db, id, steamid)
-  const cards = deck
+  const cards = actual
     .filter((c) => !voted.has(c.appid))
-    .map((c) => ({ ...c, art: metas.get(c.appid)?.art ?? null }))
+    .map((c) => ({
+      ...c,
+      art: metas.get(c.appid)?.art ?? null,
+      ccu: metas.get(c.appid)?.ccu ?? null,
+    }))
 
   return NextResponse.json({
     cards,

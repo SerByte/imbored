@@ -42,6 +42,27 @@ export async function fetchSearchPage(
 }
 
 /**
+ * Игроков прямо сейчас. Работает без ключа, один appid за запрос.
+ *
+ * Самый резкий сигнал «можно ли в это играть сегодня»: у Half-Life 2:
+ * Deathmatch 86 отзывов за месяц, но 99 игроков на весь мир — по отзывам
+ * игра выглядит живой, а сесть играть не с кем.
+ */
+export async function fetchCurrentPlayers(
+  appid: number,
+  fetchFn: typeof fetch = fetch,
+): Promise<number | undefined> {
+  const res = await fetchFn(
+    `https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=${appid}`,
+    { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
+  )
+  if (!res.ok) throw new Error(`players ${appid}: HTTP ${res.status}`)
+  const json = (await res.json()) as { response?: { result?: number; player_count?: number } }
+  const count = json.response?.player_count
+  return typeof count === 'number' ? count : undefined
+}
+
+/**
  * Отзывов за последние 30 дней — главный сигнал «во что играют сейчас».
  * Работает без ключа для любого appid, ответ ~200 байт. Именно он отличает
  * CS2 (76 179) от CS 1.6 (810): по доле положительных старая версия выигрывает,

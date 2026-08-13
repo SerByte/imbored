@@ -162,6 +162,8 @@ export async function migrateDb(db: Db): Promise<Db> {
     ['games', 'reviews_total INTEGER'],
     ['games', 'reviews_percent INTEGER'],
     ['games', 'reviews_30d INTEGER'],
+    ['games', 'ccu INTEGER'],
+    ['games', 'ccu_at INTEGER'],
     ['games', 'signals_at INTEGER'],
     ['games', 'tag_count INTEGER NOT NULL DEFAULT 0'],
     ['games', 'is_multiplayer INTEGER NOT NULL DEFAULT 0'],
@@ -373,15 +375,19 @@ export async function castRoomVote(
 /** appid, за который проголосовали «да» ВСЕ участники, либо null */
 export async function findRoomMatch(db: Db, roomId: string): Promise<number | null> {
   const res = await db.execute({
+    // Матч — это договорённость, поэтому участников должно быть минимум двое.
+    // Без этого условия человек в комнате один получал «Это матч!» от
+    // собственного голоса: «проголосовали все» формально выполнялось.
     sql: `SELECT v.appid AS appid FROM room_votes v
           WHERE v.room_id = ? AND v.vote = 1
+            AND (SELECT COUNT(*) FROM room_members WHERE room_id = ?) >= 2
           GROUP BY v.appid
           HAVING COUNT(DISTINCT v.steamid) >= (
             SELECT COUNT(*) FROM room_members WHERE room_id = ?
           )
           ORDER BY MAX(v.created_at) ASC
           LIMIT 1`,
-    args: [roomId, roomId],
+    args: [roomId, roomId, roomId],
   })
   return (res.rows[0]?.appid as number | undefined) ?? null
 }
@@ -501,8 +507,8 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
             header_image, screenshots_json, is_free, price_final, release_date, median_forever,
             store, store_url, art_json,
             release_year, developer, publisher, reviews_total, reviews_percent, reviews_30d,
-            tag_count, is_multiplayer, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ccu, ccu_at, tag_count, is_multiplayer, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(appid) DO UPDATE SET
             name = excluded.name,
             tags_json = excluded.tags_json,
@@ -523,7 +529,11 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
             publisher = excluded.publisher,
             reviews_total = excluded.reviews_total,
             reviews_percent = excluded.reviews_percent,
-            reviews_30d = excluded.reviews_30d,
+            -- Сигналы актуальности приходят отдельным проходом, поэтому
+            -- обычная запись метаданных не должна их обнулять
+            reviews_30d = COALESCE(excluded.reviews_30d, games.reviews_30d),
+            ccu = COALESCE(excluded.ccu, games.ccu),
+            ccu_at = COALESCE(excluded.ccu_at, games.ccu_at),
             tag_count = excluded.tag_count,
             is_multiplayer = excluded.is_multiplayer,
             updated_at = excluded.updated_at`,
@@ -551,6 +561,8 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
       meta.reviewsTotal ?? null,
       meta.reviewsPercent ?? null,
       meta.reviews30d ?? null,
+      meta.ccu ?? null,
+      meta.ccuAt ?? null,
       // производные: по ним идёт выборка кандидатов, чтобы не парсить JSON в SQL
       Object.keys(meta.tags).length,
       isMultiplayerCategories(meta.categories) ? 1 : 0,
@@ -587,6 +599,11 @@ type GameRow = {
   store: string | null
   store_url: string | null
   art_json: string | null
+  ccu: number | null
+  ccu_at: number | null
+  reviews_30d: number | null
+  reviews_total: number | null
+  reviews_percent: number | null
 }
 
 function rowToMeta(row: GameRow): GameMeta {
@@ -608,6 +625,16 @@ function rowToMeta(row: GameRow): GameMeta {
   if (row.store_url !== null) meta.storeUrl = row.store_url
   // колонка появилась позже: у старых строк её может не быть вовсе
   if (row.art_json) meta.art = JSON.parse(row.art_json)
+  // сигналы актуальности: без них фильтр живости работает вслепую
+  if (row.ccu !== null && row.ccu !== undefined) meta.ccu = row.ccu
+  if (row.ccu_at !== null && row.ccu_at !== undefined) meta.ccuAt = row.ccu_at
+  if (row.reviews_30d !== null && row.reviews_30d !== undefined) meta.reviews30d = row.reviews_30d
+  if (row.reviews_total !== null && row.reviews_total !== undefined) {
+    meta.reviewsTotal = row.reviews_total
+  }
+  if (row.reviews_percent !== null && row.reviews_percent !== undefined) {
+    meta.reviewsPercent = row.reviews_percent
+  }
   return meta
 }
 

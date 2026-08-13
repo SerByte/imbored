@@ -40,9 +40,9 @@ describe('parseSeries', () => {
 describe('buildSeriesIndex', () => {
   test('CS 1.6 и Source вытесняются CS2 — ровно тот случай, ради которого всё', () => {
     const index = buildSeriesIndex([
-      member({ appid: 10, name: 'Counter-Strike', reviews30d: 781 }),
-      member({ appid: 240, name: 'Counter-Strike: Source', reviews30d: 745 }),
-      member({ appid: 730, name: 'Counter-Strike 2', ordinalHint: 2, reviews30d: 73_725 }),
+      member({ appid: 10, name: 'Counter-Strike', audience: 781 }),
+      member({ appid: 240, name: 'Counter-Strike: Source', audience: 745 }),
+      member({ appid: 730, name: 'Counter-Strike 2', ordinalHint: 2, audience: 73_725 }),
     ])
     expect(index.get(10)).toBe(730)
     expect(index.get(240)).toBe(730)
@@ -52,15 +52,15 @@ describe('buildSeriesIndex', () => {
   test('одиночные серии не вытесняются никогда', () => {
     // «Почему мне не показывают Portal?» хуже, чем «показали CS 1.6»
     const index = buildSeriesIndex([
-      member({ appid: 400, name: 'Portal', isMultiplayer: false, reviews30d: 400 }),
-      member({ appid: 620, name: 'Portal 2', isMultiplayer: false, reviews30d: 9000 }),
+      member({ appid: 400, name: 'Portal', isMultiplayer: false, audience: 400 }),
+      member({ appid: 620, name: 'Portal 2', isMultiplayer: false, audience: 9000 }),
     ])
     expect(index.size).toBe(0)
   })
 
   test('игра без преемника не трогается', () => {
     const index = buildSeriesIndex([
-      member({ appid: 440, name: 'Team Fortress 2', reviews30d: 12_000 }),
+      member({ appid: 440, name: 'Team Fortress 2', audience: 12_000 }),
     ])
     expect(index.size).toBe(0)
   })
@@ -68,24 +68,24 @@ describe('buildSeriesIndex', () => {
   test('живой предшественник переживает сиквел, если разрыв меньше порядка', () => {
     // Battlefield 4 с живыми серверами не должен исчезать из-за выхода 2042
     const index = buildSeriesIndex([
-      member({ appid: 1, name: 'Battlefield 4', publisher: 'EA', reviews30d: 4000 }),
-      member({ appid: 2, name: 'Battlefield 2042', publisher: 'EA', reviews30d: 8000 }),
+      member({ appid: 1, name: 'Battlefield 4', publisher: 'EA', audience: 4000 }),
+      member({ appid: 2, name: 'Battlefield 2042', publisher: 'EA', audience: 8000 }),
     ])
     expect(index.size).toBe(0)
   })
 
   test('мёртвый предшественник вытесняется даже без кратного разрыва', () => {
     const index = buildSeriesIndex([
-      member({ appid: 1, name: 'Battlefield 4', publisher: 'EA', reviews30d: 3, alive: false }),
-      member({ appid: 2, name: 'Battlefield 2042', publisher: 'EA', reviews30d: 900 }),
+      member({ appid: 1, name: 'Battlefield 4', publisher: 'EA', audience: 3, alive: false }),
+      member({ appid: 2, name: 'Battlefield 2042', publisher: 'EA', audience: 900 }),
     ])
     expect(index.get(1)).toBe(2)
   })
 
   test('разные издатели — не одна серия', () => {
     const index = buildSeriesIndex([
-      member({ appid: 1, name: 'Sniper Elite 4', publisher: 'Rebellion', reviews30d: 100 }),
-      member({ appid: 2, name: 'Sniper Ghost Warrior 3', publisher: 'CI Games', reviews30d: 9000 }),
+      member({ appid: 1, name: 'Sniper Elite 4', publisher: 'Rebellion', audience: 100 }),
+      member({ appid: 2, name: 'Sniper Ghost Warrior 3', publisher: 'CI Games', audience: 9000 }),
     ])
     expect(index.size).toBe(0)
   })
@@ -99,14 +99,14 @@ describe('buildSeriesIndex', () => {
         name: 'Grand Theft Auto V Legacy',
         publisher: 'Rockstar',
         isMultiplayer: true,
-        reviews30d: 9000,
+        audience: 9000,
       }),
       member({
         appid: 3240220,
         name: 'Grand Theft Auto V Enhanced',
         publisher: 'Rockstar',
         isMultiplayer: true,
-        reviews30d: 5000,
+        audience: 5000,
       }),
     ])
     expect(index.get(271590)).toBe(3240220)
@@ -115,7 +115,7 @@ describe('buildSeriesIndex', () => {
   test('слишком частая основа не считается серией', () => {
     // «farm», «zombie» и подобные встречаются у десятков несвязанных игр
     const many: SeriesMember[] = Array.from({ length: 20 }, (_, i) =>
-      member({ appid: i + 1, name: `Farm ${i + 1}`, publisher: 'Разные', reviews30d: 100 }),
+      member({ appid: i + 1, name: `Farm ${i + 1}`, publisher: 'Разные', audience: 100 }),
     )
     expect(buildSeriesIndex(many).size).toBe(0)
   })
@@ -123,8 +123,8 @@ describe('buildSeriesIndex', () => {
   test('ручные исключения перекрывают алгоритм', () => {
     const index = buildSeriesIndex(
       [
-        member({ appid: 1, name: 'Ребрендинг 1', reviews30d: 10 }),
-        member({ appid: 2, name: 'Ребрендинг 2', reviews30d: 5000 }),
+        member({ appid: 1, name: 'Ребрендинг 1', audience: 10 }),
+        member({ appid: 2, name: 'Ребрендинг 2', audience: 5000 }),
       ],
       { 1: null },
     )
@@ -133,9 +133,9 @@ describe('buildSeriesIndex', () => {
 
   test('цепочка схлопывается к самой актуальной версии', () => {
     const index = buildSeriesIndex([
-      member({ appid: 1, name: 'Quake', reviews30d: 10 }),
-      member({ appid: 2, name: 'Quake 2', reviews30d: 200 }),
-      member({ appid: 3, name: 'Quake 3', reviews30d: 9000 }),
+      member({ appid: 1, name: 'Quake', audience: 10 }),
+      member({ appid: 2, name: 'Quake 2', audience: 200 }),
+      member({ appid: 3, name: 'Quake 3', audience: 9000 }),
     ])
     expect(index.get(1)).toBe(3)
     expect(index.get(2)).toBe(3)

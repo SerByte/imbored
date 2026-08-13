@@ -33,6 +33,7 @@ type Card = {
   priceFinal?: number
   headerImage: string | null
   art?: GameArtUrls | null
+  ccu?: number | null
   tags: string[]
   store?: string
   storeUrl?: string
