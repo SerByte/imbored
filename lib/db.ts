@@ -34,6 +34,27 @@ CREATE TABLE IF NOT EXISTS library_snapshots (
   games_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_steamid ON library_snapshots (steamid, taken_at DESC);
+/*
+ * Отметка библиотеки на начало года — единственные данные проекта, которые
+ * нельзя получить задним числом.
+ *
+ * GetOwnedGames отдаёт только пожизненные часы и playtime_2weeks. Значит
+ * «сколько наиграно за 2026» считается ровно одним способом: часы сейчас минус
+ * часы на начало года. Обычных снапшотов хранится три штуки скользящим окном
+ * (SNAPSHOTS_KEPT), то есть к декабрю от января не остаётся ничего, и никакой
+ * запрос к Steam этого уже не вернёт.
+ *
+ * Поэтому таблица отдельная, а не «не удалять часть library_snapshots»: у неё
+ * другой жизненный цикл. Строка на игрока и год, пишется один раз и не
+ * удаляется никогда.
+ */
+CREATE TABLE IF NOT EXISTS library_baselines (
+  steamid TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  taken_at INTEGER NOT NULL,
+  games_json TEXT NOT NULL,
+  PRIMARY KEY (steamid, year)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS games (
   appid INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -555,17 +576,53 @@ export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoo
 
 const SNAPSHOTS_KEPT = 3
 
+/**
+ * Год отметки. UTC, а не местное время: год должен считаться одинаково у
+ * человека в Калининграде и у крона на Vercel, иначе в новогоднюю ночь одна и
+ * та же библиотека попадёт в разные годы.
+ */
+export function snapshotYear(nowSec: number): number {
+  return new Date(nowSec * 1000).getUTCFullYear()
+}
+
 export async function saveLibrarySnapshot(
   db: Db,
   steamid: string,
   games: LibraryGame[],
   nowSec: number,
 ): Promise<void> {
+  const payload = JSON.stringify(games)
+  const year = snapshotYear(nowSec)
+
   await db.batch(
     [
+      /*
+       * Отметка года. Обе инструкции идут ДО вставки нового снапшота и обе с
+       * ON CONFLICT DO NOTHING, поэтому после первого раза в году это но-оп.
+       *
+       * Первая берёт предыдущий снапшот, а не текущие игры, и это главное:
+       * человек, заходивший в декабре и вернувшийся в марте, получит отметкой
+       * своё декабрьское состояние, а не мартовское. Иначе три месяца игры
+       * молча потерялись бы из итогов года.
+       *
+       * Вторая — для тех, у кого предыдущего снапшота нет вовсе (первый заход
+       * в жизни): тогда отметкой становится текущая библиотека.
+       */
+      {
+        sql: `INSERT INTO library_baselines (steamid, year, taken_at, games_json)
+              SELECT ?, ?, taken_at, games_json FROM library_snapshots
+              WHERE steamid = ? ORDER BY taken_at DESC, id DESC LIMIT 1
+              ON CONFLICT DO NOTHING`,
+        args: [steamid, year, steamid],
+      },
+      {
+        sql: `INSERT INTO library_baselines (steamid, year, taken_at, games_json)
+              VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+        args: [steamid, year, nowSec, payload],
+      },
       {
         sql: 'INSERT INTO library_snapshots (steamid, taken_at, games_json) VALUES (?, ?, ?)',
-        args: [steamid, nowSec, JSON.stringify(games)],
+        args: [steamid, nowSec, payload],
       },
       {
         sql: `DELETE FROM library_snapshots WHERE steamid = ? AND id NOT IN (
@@ -597,6 +654,28 @@ export async function getLatestSnapshot(
   const res = await db.execute({
     sql: 'SELECT taken_at, games_json FROM library_snapshots WHERE steamid = ? ORDER BY taken_at DESC, id DESC LIMIT 1',
     args: [steamid],
+  })
+  const row = res.rows[0] as unknown as { taken_at: number; games_json: string } | undefined
+  if (!row) return null
+  return { takenAt: row.taken_at, games: JSON.parse(row.games_json) as LibraryGame[] }
+}
+
+/**
+ * Отметка библиотеки на начало года.
+ *
+ * takenAt отдаём наружу не для порядка: отметка ставится при первом за год
+ * заходе, а не первого января. У человека, который пришёл впервые в июне,
+ * «за год» честно означает «с июня», и итоги обязаны это сказать, а не
+ * выдавать полугодовой отрезок за годовой.
+ */
+export async function getLibraryBaseline(
+  db: Db,
+  steamid: string,
+  year: number,
+): Promise<{ takenAt: number; games: LibraryGame[] } | null> {
+  const res = await db.execute({
+    sql: 'SELECT taken_at, games_json FROM library_baselines WHERE steamid = ? AND year = ?',
+    args: [steamid, year],
   })
   const row = res.rows[0] as unknown as { taken_at: number; games_json: string } | undefined
   if (!row) return null
