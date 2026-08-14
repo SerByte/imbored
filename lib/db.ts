@@ -239,6 +239,12 @@ export async function migrateDb(db: Db): Promise<Db> {
     ['games', 'alive INTEGER NOT NULL DEFAULT 1'],
     ['games', 'dead_reason TEXT'],
     ['games', 'superseded_by INTEGER'],
+    // цена без скидки, размер скидки, её конец и время замера — своя ось
+    // свежести у цены, метаданные живут в 30 раз дольше распродажи
+    ['games', 'price_initial INTEGER'],
+    ['games', 'discount_percent INTEGER'],
+    ['games', 'discount_ends_at INTEGER'],
+    ['games', 'price_at INTEGER'],
   ] as const) {
     try {
       await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col}`)
@@ -608,8 +614,9 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
             header_image, screenshots_json, is_free, price_final, release_date, median_forever,
             store, store_url, art_json,
             release_year, developer, publisher, reviews_total, reviews_percent, reviews_30d,
-            ccu, ccu_at, tag_count, is_multiplayer, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ccu, ccu_at, tag_count, is_multiplayer,
+            price_initial, discount_percent, discount_ends_at, price_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(appid) DO UPDATE SET
             name = excluded.name,
             tags_json = excluded.tags_json,
@@ -637,6 +644,13 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
             ccu_at = COALESCE(excluded.ccu_at, games.ccu_at),
             tag_count = excluded.tag_count,
             is_multiplayer = excluded.is_multiplayer,
+            -- Цена и скидка перезаписываются как есть, включая NULL и ноль:
+            -- у кончившейся распродажи нет своего события, есть только ответ
+            -- Steam без полей скидки. COALESCE тут означал бы «−70%» навсегда.
+            price_initial = excluded.price_initial,
+            discount_percent = excluded.discount_percent,
+            discount_ends_at = excluded.discount_ends_at,
+            price_at = excluded.price_at,
             updated_at = excluded.updated_at`,
     args: [
       meta.appid,
@@ -667,6 +681,10 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
       // производные: по ним идёт выборка кандидатов, чтобы не парсить JSON в SQL
       Object.keys(meta.tags).length,
       isMultiplayerCategories(meta.categories) ? 1 : 0,
+      meta.priceInitial ?? null,
+      meta.discountPercent ?? null,
+      meta.discountEndsAt ?? null,
+      meta.priceAt ?? null,
       nowSec,
     ],
   })
@@ -695,6 +713,10 @@ type GameRow = {
   screenshots_json: string | null
   is_free: number | null
   price_final: number | null
+  price_initial: number | null
+  discount_percent: number | null
+  discount_ends_at: number | null
+  price_at: number | null
   release_date: string | null
   median_forever: number | null
   store: string | null
@@ -726,6 +748,19 @@ function rowToMeta(row: GameRow): GameMeta {
   if (row.screenshots_json !== null) meta.screenshots = JSON.parse(row.screenshots_json)
   if (row.is_free !== null) meta.isFree = row.is_free === 1
   if (row.price_final !== null) meta.priceFinal = row.price_final
+  // Скидка читается целиком, включая ноль: «полная цена» — это ответ, а не
+  // отсутствие ответа. Колонки появились позже, у старых строк их нет вовсе,
+  // поэтому проверяем и на undefined — так же, как ccu и developer выше.
+  if (row.price_initial !== null && row.price_initial !== undefined) {
+    meta.priceInitial = row.price_initial
+  }
+  if (row.discount_percent !== null && row.discount_percent !== undefined) {
+    meta.discountPercent = row.discount_percent
+  }
+  if (row.discount_ends_at !== null && row.discount_ends_at !== undefined) {
+    meta.discountEndsAt = row.discount_ends_at
+  }
+  if (row.price_at !== null && row.price_at !== undefined) meta.priceAt = row.price_at
   if (row.release_date !== null) meta.releaseDate = row.release_date
   if (row.median_forever !== null) meta.medianForever = row.median_forever
   if (row.store !== null) meta.store = row.store
@@ -1026,6 +1061,87 @@ export async function getStaleAppids(
     if (nowSec - r.updated_at <= maxAgeSec && r.art_json) fresh.add(r.appid)
   }
   return appids.filter((appid) => !fresh.has(appid))
+}
+
+/**
+ * appid, у которых цену пора перезамерить.
+ *
+ * Отдельно от getStaleAppids и по отдельной колонке: у метаданных TTL две
+ * недели, у скидки — часы. Отрицательные appid (кураторский пул других
+ * магазинов) не берём вовсе — в Steam их нет, и они бы вечно висели в очереди,
+ * съедая бюджет запроса.
+ */
+export async function stalePriceAppids(
+  db: Db,
+  appids: number[],
+  maxAgeSec: number,
+  nowSec: number,
+  limit = 200,
+): Promise<number[]> {
+  const positive = appids.filter((id) => id > 0)
+  if (!positive.length) return []
+  const res = await db.execute({
+    // Сначала те, у кого цены не было никогда, потом самые давние: бюджет
+    // одного вызова конечен, а пустая цена заметнее устаревшей
+    sql: `SELECT appid FROM games
+          WHERE appid IN (${placeholders(positive.length)})
+            AND (price_at IS NULL OR price_at < ?)
+          ORDER BY price_at IS NOT NULL, price_at
+          LIMIT ?`,
+    args: [...positive, nowSec - maxAgeSec, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+}
+
+export type PriceQuote = {
+  appid: number
+  priceFinal?: number
+  priceInitial?: number
+  discountPercent?: number
+  discountEndsAt?: number
+}
+
+/**
+ * Записывает свежие цены, не трогая остальные метаданные.
+ *
+ * Узкий UPDATE, а не upsertGameMeta: тот перезаписывает строку целиком и
+ * двигает updated_at, то есть замер цены отменял бы прогрев метаданных на
+ * две недели вперёд.
+ *
+ * Ответ без блока покупки (free-to-play, снято с продажи, региональное
+ * ограничение) гасит скидку, но НЕ цену: «Steam не назвал цену» и «игра стала
+ * бесплатной» с этой стороны неразличимы, а обнулить цену бэклога из-за
+ * регионального сбоя дороже, чем показать вчерашнюю. price_at ставится в обоих
+ * случаях — иначе такие игры перезапрашивались бы на каждом заходе.
+ */
+export async function updateGamePrices(
+  db: Db,
+  quotes: PriceQuote[],
+  nowSec: number,
+): Promise<void> {
+  if (!quotes.length) return
+  const stmts = quotes.map((q) =>
+    q.priceFinal === undefined
+      ? {
+          sql: `UPDATE games SET discount_percent = NULL, discount_ends_at = NULL, price_at = ?
+                WHERE appid = ?`,
+          args: [nowSec, q.appid],
+        }
+      : {
+          sql: `UPDATE games SET price_final = ?, price_initial = ?, discount_percent = ?,
+                  discount_ends_at = ?, price_at = ?
+                WHERE appid = ?`,
+          args: [
+            q.priceFinal,
+            q.priceInitial ?? q.priceFinal,
+            q.discountPercent ?? 0,
+            q.discountEndsAt ?? null,
+            nowSec,
+            q.appid,
+          ],
+        },
+  )
+  await db.batch(stmts, 'write')
 }
 
 /* ---------- фидбек ---------- */

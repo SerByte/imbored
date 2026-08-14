@@ -3,6 +3,7 @@ import { heuristicPicks, trimTldr, validateDigest, validatePicks } from './llm'
 import type { GameMeta, Mood, ScoredCandidate } from './types'
 
 const MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+const NOW = 1_700_000_000
 
 const CANDS: ScoredCandidate[] = [
   { appid: 1, name: 'Backlog Gem', source: 'backlog', score: 0.9 },
@@ -73,6 +74,50 @@ describe('heuristicPicks', () => {
 
   test('пустой список кандидатов не роняет', () => {
     expect(heuristicPicks([], metaOf, MOOD, 5)).toEqual([])
+  })
+
+  test('не купленная игра честно названа покупкой, с ценой', () => {
+    // Советовать покупку, не назвав цену, нельзя: с выходом каталога в главную
+    // выдачу «просто запусти» стало бы неправдой про половину карточек
+    const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
+    const [pick] = heuristicPicks([CANDS[2]], priced, MOOD, 1, NOW)
+    expect(pick.reason).toContain('нет в библиотеке')
+    expect(pick.reason).toContain('$14.99')
+  })
+
+  test('скидка попадает в объяснение вместе со сроком', () => {
+    const onSale = (appid: number): GameMeta => ({
+      ...metaOf(appid)!,
+      priceFinal: 749,
+      priceInitial: 1499,
+      discountPercent: 50,
+      discountEndsAt: NOW + 10 * 86_400,
+      priceAt: NOW,
+    })
+    const [pick] = heuristicPicks([CANDS[2]], onSale, MOOD, 1, NOW)
+    expect(pick.reason).toContain('−50%')
+    expect(pick.reason).toContain('$7.49')
+    expect(pick.reason).toContain('вместо $14.99')
+    expect(pick.reason).toContain('до 24 ноября')
+  })
+
+  test('своей игре цену не приписываем — за неё уже заплачено', () => {
+    const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
+    const [pick] = heuristicPicks([CANDS[0]], priced, MOOD, 1, NOW)
+    expect(pick.reason).not.toContain('$')
+  })
+
+  test('протухшая скидка в объяснение не попадает', () => {
+    const stale = (appid: number): GameMeta => ({
+      ...metaOf(appid)!,
+      priceFinal: 749,
+      priceInitial: 1499,
+      discountPercent: 50,
+      priceAt: NOW - 30 * 86_400,
+    })
+    const [pick] = heuristicPicks([CANDS[2]], stale, MOOD, 1, NOW)
+    expect(pick.reason).not.toContain('%')
+    expect(pick.reason).toContain('$7.49')
   })
 })
 
