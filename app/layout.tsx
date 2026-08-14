@@ -1,6 +1,6 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata } from 'next'
-import { JetBrains_Mono, Onest, Unbounded } from 'next/font/google'
+import { JetBrains_Mono, Onest } from 'next/font/google'
 import Link from 'next/link'
 import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
@@ -15,20 +15,16 @@ const onest = Onest({
   subsets: ['latin', 'cyrillic'],
 })
 
+/**
+ * Моноширинный нужен почти везде — но только для чисел: проценты, цены, коды
+ * комнат, счётчики. Ни одного такого числа нет на первом экране, поэтому
+ * preload выключен: файл догрузится к моменту, когда до цифр дойдёт дело, и не
+ * будет соревноваться за полосу с основным шрифтом и обложками.
+ */
 const jbMono = JetBrains_Mono({
   variable: '--font-jbmono',
   subsets: ['latin', 'cyrillic'],
-})
-
-/**
- * Дисплейное начертание — только для «Что нового». Широкий геометрический
- * гротеск читается как титр, а не как заголовок интерфейса, и держит крупный
- * кегль поверх арта. Кириллица проверена по манифесту next/font: у Unbounded
- * есть cyrillic и cyrillic-ext, иначе он был бы здесь бесполезен.
- */
-const unbounded = Unbounded({
-  variable: '--font-unbounded',
-  subsets: ['latin', 'cyrillic'],
+  preload: false,
 })
 
 export const metadata: Metadata = {
@@ -65,8 +61,19 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
     <html
       lang="ru"
       suppressHydrationWarning
-      className={`${onest.variable} ${jbMono.variable} ${unbounded.variable} h-full antialiased`}
+      className={`${onest.variable} ${jbMono.variable} h-full antialiased`}
     >
+      <head>
+        {/*
+          Весь игровой арт приложения лежит на CDN Steam, и первое же
+          обращение к нему — это DNS, TLS и рукопожатие, которые начинались
+          только после разбора разметки. Рукопожатие уезжает в самое начало
+          загрузки, картинки приходят раньше на эту величину.
+        */}
+        <link rel="preconnect" href="https://shared.steamstatic.com" />
+        <link rel="preconnect" href="https://shared.akamai.steamstatic.com" />
+        <link rel="dns-prefetch" href="https://clan.fastly.steamstatic.com" />
+      </head>
       <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[52px] md:pb-0">
         <script
           dangerouslySetInnerHTML={{
