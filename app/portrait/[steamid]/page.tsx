@@ -40,12 +40,12 @@ export async function generateMetadata({
 
   const db = await getDb()
   const snapshot = await getLatestSnapshot(db, steamid)
-  if (!snapshot) return { title: 'Портрет игрока — imbored' }
+  if (!snapshot) return { title: 'Портрет игрока', robots: { index: false } }
 
   const name = (await getPersonaName(db, steamid)) ?? `Игрок ${steamid.slice(-4)}`
   const hours = Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   const games = snapshot.games.length
-  const title = `Портрет игрока ${name} — imbored`
+  const title = `Портрет игрока ${name}`
   const description =
     `${games} ${plural(games, 'игра', 'игры', 'игр')}, ` +
     `${hours.toLocaleString('ru-RU')} ${plural(hours, 'час', 'часа', 'часов')}. ` +
@@ -54,6 +54,11 @@ export async function generateMetadata({
   return {
     title,
     description,
+    // Из индекса убираем, из шеринга — нет. Заголовок содержит настоящий ник
+    // Steam, а страница строится по снапшоту без всякой авторизации: место
+    // такому в переписке по прямой ссылке, а не в поисковой выдаче.
+    // На og-превью и card.png флаг не влияет — их читают по ссылке.
+    robots: { index: false, follow: true },
     openGraph: { title, description, type: 'profile' },
     twitter: { card: 'summary_large_image', title, description },
   }

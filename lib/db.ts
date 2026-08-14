@@ -239,6 +239,9 @@ export async function migrateDb(db: Db): Promise<Db> {
     ['games', 'alive INTEGER NOT NULL DEFAULT 1'],
     ['games', 'dead_reason TEXT'],
     ['games', 'superseded_by INTEGER'],
+    // когда карточку игры последний раз обогащали (скриншоты, отзывы, pros/cons).
+    // NULL — ни разу; см. lib/pagejob.ts
+    ['games', 'page_at INTEGER'],
   ] as const) {
     try {
       await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col}`)
@@ -825,6 +828,90 @@ export async function getGameJson(
   })
   const v = res.rows[0]?.v as string | null | undefined
   return v ? JSON.parse(v) : null
+}
+
+/*
+ * Очередь обогащения карточек игр.
+ *
+ * Скриншоты, сводку отзывов и pros/cons раньше догружала сама страница
+ * /game/[appid] прямо на рендере. Страница публичная, кэша у неё не было, а в
+ * каталоге 6000 игр — то есть один проход краулера означал 6000 вызовов Claude
+ * и 12000 запросов к Steam. Правило уже было сформулировано в lib/gamepage.ts
+ * для патчноутов; здесь оно доведено до остальных полей карточки.
+ *
+ * Отдельной таблицы нет намеренно: очередь целиком выражается колонкой page_at
+ * на games. Предикат живой игры повторяет idx_games_pool ДОСЛОВНО — иначе
+ * SQLite не возьмёт частичный индекс и это станет сканом (см. noscan).
+ */
+
+const ALIVE_POOL = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
+
+/**
+ * Игры, которым пора обогатить карточку: сначала ни разу не тронутые, потом
+ * самые давние. Порядок внутри группы — по числу отзывов: витрину имеет смысл
+ * наполнять с тех страниц, на которые вообще придут.
+ */
+export async function claimPageEnrichBatch(
+  db: Db,
+  staleBefore: number,
+  limit: number,
+): Promise<number[]> {
+  const res = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+            AND (page_at IS NULL OR page_at < ?)
+          ORDER BY page_at IS NOT NULL, reviews_total DESC
+          LIMIT ?`,
+    args: [staleBefore, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+}
+
+/**
+ * Игры для карты сайта: живые, с тегами, по убыванию числа отзывов.
+ *
+ * Отдаём и ещё не обогащённые тоже — с тех пор как loadGamePage читает только
+ * базу, заход краулера на такую страницу не стоит ничего, а имя, теги, цена и
+ * патчноуты на ней уже есть. Ждать полного обогащения значило бы держать карту
+ * сайта пустой месяцами.
+ */
+export async function sitemapGames(
+  db: Db,
+  limit: number,
+): Promise<Array<{ appid: number; updatedAt: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, updated_at FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; updated_at: number }>).map((r) => ({
+    appid: r.appid,
+    updatedAt: r.updated_at,
+  }))
+}
+
+/** Сколько карточек ещё ждёт обогащения — для отчёта крона. */
+export async function countPageEnrichDue(db: Db, staleBefore: number): Promise<number> {
+  const res = await db.execute({
+    sql: `SELECT COUNT(*) AS n FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0 AND (page_at IS NULL OR page_at < ?)`,
+    args: [staleBefore],
+  })
+  return Number((res.rows[0] as unknown as { n: number }).n)
+}
+
+/**
+ * Отметка «карточку трогали». Ставится и при неудаче тоже: иначе игра, у
+ * которой Steam не отдаёт отзывов, навсегда осталась бы первой в очереди и
+ * забирала бы весь суточный бюджет на себя.
+ */
+export async function markPageEnriched(db: Db, appid: number, now: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE games SET page_at = ? WHERE appid = ?',
+    args: [now, appid],
+  })
 }
 
 /* ---------- большой каталог ---------- */

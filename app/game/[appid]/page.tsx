@@ -1,14 +1,109 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { sitemapGames } from '@/lib/db'
 import { loadGamePage } from '@/lib/gamepage'
+import { getDb } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 
-export const dynamic = 'force-dynamic'
+/**
+ * Страница кэшируется на сутки вместо force-dynamic.
+ *
+ * Это стало возможным ровно потому, что loadGamePage больше не ходит в сеть:
+ * пока карточка собиралась из appdetails, appreviews и Claude прямо на рендере,
+ * кэшировать было нечего — каждый заход и был той самой работой. Теперь всё
+ * тяжёлое наполняет крон (lib/pagejob.ts), а страница только читает базу,
+ * поэтому сутки жизни кэша ничего не устаревают заметно.
+ */
+export const revalidate = 86_400
+
+/**
+ * Обязателен, и не ради предрендера.
+ *
+ * Без generateStaticParams динамический сегмент не попадает в dynamicRoutes
+ * манифеста вовсе — то есть `revalidate` выше не значит ничего, и каждый заход
+ * рендерится заново (проверено: Cache-Control приходил no-store). Отдаём топ
+ * каталога, остальные appid досоздаются по требованию и кэшируются на те же
+ * сутки: dynamicParams по умолчанию true.
+ *
+ * Сборка не должна падать из-за базы: локально и в превью TURSO_DATABASE_URL
+ * может быть не задан, и тогда предрендерить просто нечего.
+ */
+const PRERENDER_TOP = 500
+
+export async function generateStaticParams(): Promise<Array<{ appid: string }>> {
+  try {
+    const games = await sitemapGames(await getDb(), PRERENDER_TOP)
+    return games.map((g) => ({ appid: String(g.appid) }))
+  } catch {
+    return []
+  }
+}
+
+/** generateMetadata и сам компонент рендерят один запрос — читаем базу однажды. */
+const loadOnce = cache(loadGamePage)
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ appid: string }>
+}): Promise<Metadata> {
+  const { appid: raw } = await params
+  const appid = Number(raw)
+  if (!Number.isInteger(appid) || appid === 0) return {}
+
+  const data = await loadOnce(appid)
+  if (!data) return {}
+  const { meta, reviewsSummary } = data
+
+  // Описание собираем из того, что на странице и так есть, а не из шаблона:
+  // в выдаче должно стоять то, ради чего на неё имеет смысл заходить.
+  const percent = reviewsSummary
+    ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
+    : null
+  const topTags = Object.entries(meta.tags)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([t]) => t)
+
+  const parts = [
+    percent !== null ? `${percent}% положительных отзывов` : null,
+    topTags.length ? topTags.join(', ') : null,
+    meta.shortDescription?.slice(0, 120),
+  ].filter(Boolean)
+
+  const description = parts.length
+    ? `${meta.name}: ${parts.join(' · ')}`
+    : `${meta.name} — отзывы, теги и патчноуты на русском.`
+
+  const image = meta.art?.header2x ?? meta.art?.header ?? meta.headerImage
+  const canonical = `/game/${appid}`
+
+  return {
+    title: `${meta.name} — стоит ли играть`,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title: `${meta.name} — стоит ли играть`,
+      description,
+      url: canonical,
+      type: 'article',
+      ...(image ? { images: [{ url: image, width: 920, height: 430, alt: meta.name }] } : {}),
+    },
+    twitter: {
+      card: image ? 'summary_large_image' : 'summary',
+      title: `${meta.name} — стоит ли играть`,
+      description,
+      ...(image ? { images: [image] } : {}),
+    },
+  }
+}
 
 function positivePercent(pos: number, neg: number): number | null {
   const total = pos + neg
@@ -33,7 +128,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   // отрицательные appid — кураторский пул других магазинов
   if (!Number.isInteger(appid) || appid === 0) notFound()
 
-  const data = await loadGamePage(appid)
+  const data = await loadOnce(appid)
   if (!data) notFound()
 
   const { meta, reviewsSummary, prosCons } = data

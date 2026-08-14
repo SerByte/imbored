@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 import { LogoMark } from '@/components/Logo'
 
-export const metadata = { title: 'Поддержать — imbored' }
+export const metadata = { title: 'Поддержать' }
 
 const PERKS = [
   { title: 'Безлимит ИИ-объяснений', desc: 'Перегенерация подборок и pros/cons без ограничений' },

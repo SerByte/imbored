@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 
 export const metadata = {
-  title: 'Конфиденциальность — imbored',
+  title: 'Конфиденциальность',
   description: 'Какие данные собирает imbored, где они хранятся и как их удалить.',
 }
 
