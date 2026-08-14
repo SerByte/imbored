@@ -60,7 +60,18 @@ export default function RoomPage() {
     setState((await res.json()) as RoomState)
   }, [roomId])
 
+  /**
+   * Опрос состояния комнаты — ровно тот случай, ради которого эффекты и
+   * существуют: подписка на внешнюю систему с записью состояния из колбэка.
+   *
+   * Правило set-state-in-effect читает `void refresh()` в теле как синхронный
+   * setState и не видит, что первое действие внутри — await: к моменту записи
+   * состояния эффект давно завершился, каскада рендеров нет. Отключение здесь
+   * точечное и относится только к первому вызову; тот же refresh внутри
+   * setInterval правило не трогает, потому что это уже явный колбэк.
+   */
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh()
     const t = setInterval(() => void refresh(), 2500)
     return () => clearInterval(t)

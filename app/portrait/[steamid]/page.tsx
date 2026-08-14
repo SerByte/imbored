@@ -417,7 +417,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
           {purgatory.length > 0 && (
             <div className="mt-10 grid grid-cols-3 md:grid-cols-6 gap-2">
-              {purgatory.map((g, i) => (
+              {purgatory.map((g) => (
                 <Link
                   key={g.appid}
                   href={`/game/${g.appid}`}
