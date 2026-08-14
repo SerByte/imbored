@@ -13,7 +13,7 @@ export function ScaleBadge({ scale }: { scale: StoredNews['scale'] }) {
   return (
     <span
       className={`rounded-full px-3 py-1 text-xs shrink-0 ${
-        major ? 'bg-ember/15 text-ember' : 'glass text-dim'
+        major ? 'bg-ember/15 text-ember-text' : 'glass text-dim'
       }`}
     >
       {major ? 'Крупное' : 'Хотфикс'}

@@ -117,18 +117,18 @@ function Quiz() {
                     { roulette: true },
                   )
                 }
-                className="rounded-full bg-ember/15 text-ember px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Мне повезёт
               </button>
               <button
                 onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
-                className="rounded-full bg-ember/15 text-ember px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Ни разу не запускал
               </button>
             </div>
-            <span className="text-xs text-dim/60">
+            <span className="text-xs text-faint">
               {focus
                 ? 'только то, что ты ни разу не запускал — выбери настроение:'
                 : 'одним тапом — или ответь на три вопроса:'}
@@ -140,7 +140,7 @@ function Quiz() {
             <span
               key={s.key}
               className={`h-2 w-2 rounded-full transition-colors ${
-                i <= stepIndex ? 'bg-ember' : 'bg-white/15'
+                i <= stepIndex ? 'bg-ember' : 'bg-track'
               }`}
             />
           ))}

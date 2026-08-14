@@ -116,7 +116,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Этот игрок ещё не подключал библиотеку к imbored.</p>
-        <Link href="/" className="text-ember hover:underline text-sm">
+        <Link href="/" className="text-ember-text hover:underline text-sm">
           Подключить свою →
         </Link>
       </div>
@@ -216,7 +216,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <div aria-hidden className="grain" />
 
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-40">
-          <p className="text-xs font-mono tracking-[0.3em] text-ember uppercase mb-3">
+          <p className="text-xs font-mono tracking-[0.3em] text-ember-text uppercase mb-3">
             Портрет игрока
           </p>
           <SplitHeading
@@ -244,7 +244,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <section className="relative mx-auto w-full max-w-5xl px-5 py-24 md:py-32">
           <motion.p
             {...inView()}
-            className="text-xs font-mono tracking-[0.3em] text-ember uppercase mb-8"
+            className="text-xs font-mono tracking-[0.3em] text-ember-text uppercase mb-8"
           >
             Куда ушло время
           </motion.p>
@@ -261,7 +261,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 </Link>
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold truncate">{g.name}</div>
-                  <div className="mt-1.5 h-1.5 rounded-full bg-white/8 overflow-hidden">
+                  <div className="mt-1.5 h-1.5 rounded-full bg-track overflow-hidden">
                     <motion.div
                       className="h-full rounded-full bg-ember"
                       initial={{ width: 0 }}
@@ -285,7 +285,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <motion.div {...inView(1)} className="text-center md:text-left">
               <p className="text-lg md:text-xl leading-relaxed">
                 80% твоей игровой жизни — это{' '}
-                <span className="font-mono text-ember">{wrapped.pareto80}</span>{' '}
+                <span className="font-mono text-ember-text">{wrapped.pareto80}</span>{' '}
                 {plural(wrapped.pareto80, 'игра', 'игры', 'игр')} из{' '}
                 <span className="font-mono">{wrapped.gamesCount}</span>.
               </p>
@@ -314,7 +314,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <section className="relative mx-auto w-full max-w-5xl px-5 py-24 md:py-32">
           <motion.p
             {...inView()}
-            className="text-xs font-mono tracking-[0.3em] text-ember uppercase mb-3"
+            className="text-xs font-mono tracking-[0.3em] text-ember-text uppercase mb-3"
           >
             Диагноз
           </motion.p>
@@ -348,11 +348,11 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               <motion.div key={a.tag} {...inView(i)}>
                 <div className="flex items-baseline justify-between mb-1.5">
                   <span className="text-sm font-semibold">{a.label}</span>
-                  <span className="font-mono text-ember text-sm">
+                  <span className="font-mono text-ember-text text-sm">
                     <CountNumber value={a.percent} delay={i * 90} duration={800} suffix="%" />
                   </span>
                 </div>
-                <div className="h-2 rounded-full bg-white/8 overflow-hidden">
+                <div className="h-2 rounded-full bg-track overflow-hidden">
                   {/* Ширина — barPercent (лидер = 100%): при нормировке к сумме
                       даже главный архетип получал куцую полосу и шкала читалась
                       как случайная. В тексте остаётся честный percent. */}
@@ -379,7 +379,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <section className="relative mx-auto w-full max-w-6xl px-5 py-24 md:py-32">
           <motion.p
             {...inView()}
-            className="text-xs font-mono tracking-[0.3em] text-ember uppercase mb-3"
+            className="text-xs font-mono tracking-[0.3em] text-ember-text uppercase mb-3"
           >
             Чистилище
           </motion.p>
@@ -392,7 +392,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {backlog.pricedCount > 0 && (
               <p>
                 В них лежит не меньше{' '}
-                <span className="font-mono text-ember">
+                <span className="font-mono text-ember-text">
                   ${(backlog.cents / 100).toFixed(0)}
                 </span>{' '}
                 — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}.
@@ -401,7 +401,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {equivalent && (
               <p>
                 {equivalent.before}
-                <span className="font-mono text-ember">{equivalent.count}</span>
+                <span className="font-mono text-ember-text">{equivalent.count}</span>
                 {equivalent.after}
               </p>
             )}
@@ -475,7 +475,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         {!isMine && (
           <Link
             href={`/compat/${steamid}`}
-            className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+            className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
           >
             Сравнить с ним свои вкусы
           </Link>
@@ -485,7 +485,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             Кинь ссылку на эту страницу — увидят твой портрет и смогут проверить совместимость.
           </p>
         )}
-        <div className="flex items-center gap-2 text-dim/60 text-xs">
+        <div className="flex items-center gap-2 text-faint text-xs">
           <Wordmark className="text-sm" /> · imbored.cc
         </div>
       </section>

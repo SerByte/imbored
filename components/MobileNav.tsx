@@ -90,7 +90,7 @@ export function MobileNav() {
             href={item.href}
             aria-current={i === activeIndex ? 'page' : undefined}
             className={`py-3.5 text-center text-[11px] transition-colors ${
-              i === activeIndex ? 'text-ember font-semibold' : 'text-dim'
+              i === activeIndex ? 'text-ember-text font-semibold' : 'text-dim'
             }`}
           >
             <span data-label>{item.label}</span>

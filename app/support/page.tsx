@@ -39,7 +39,7 @@ export default function SupportPage() {
               href={donateUrl}
               target="_blank"
               rel="noreferrer"
-              className="rounded-[14px] bg-ember text-bg font-semibold py-3 text-center hover:brightness-110 transition"
+              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 text-center hover:brightness-110 transition"
             >
               Поддержать проект
             </a>
@@ -53,7 +53,7 @@ export default function SupportPage() {
         <div className="glass rounded-[20px] p-6 flex flex-col gap-4 anim-rise" style={{ animationDelay: '80ms' }}>
           <div className="flex items-baseline justify-between">
             <h2 className="font-bold">
-              imbored<span className="text-ember">+</span>
+              imbored<span className="text-ember-text">+</span>
             </h2>
             <span className="text-xs text-dim font-mono">скоро · ~$2/мес</span>
           </div>
@@ -63,7 +63,7 @@ export default function SupportPage() {
           <ul className="flex flex-col gap-2.5">
             {PERKS.map((p) => (
               <li key={p.title} className="flex gap-3 text-sm">
-                <span className="text-ember mt-0.5">+</span>
+                <span className="text-ember-text mt-0.5">+</span>
                 <div>
                   <span className="font-semibold">{p.title}</span>
                   <span className="text-dim"> — {p.desc}</span>
@@ -73,7 +73,7 @@ export default function SupportPage() {
           </ul>
         </div>
 
-        <p className="text-xs text-dim/60 text-center">
+        <p className="text-xs text-faint text-center">
           Принцип-табу: мы никогда не продаём места в выдаче. Рекомендация — это доверие,
           а доверие не продаётся.
         </p>

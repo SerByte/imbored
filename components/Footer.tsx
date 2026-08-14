@@ -6,7 +6,7 @@ export function Footer() {
   return (
     <footer className="relative mt-auto border-t border-edge/60">
       <div className="mx-auto max-w-6xl px-5 py-6 flex items-center justify-between gap-4 flex-wrap text-sm">
-        <div className="flex items-center gap-2.5 text-dim/70">
+        <div className="flex items-center gap-2.5 text-faint">
           <LogoMark size={18} />
           <Wordmark className="text-sm" />
           <span className="text-xs">· imbored.cc</span>

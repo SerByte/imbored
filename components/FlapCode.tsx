@@ -62,7 +62,7 @@ export function FlapCode({ code, animate = true }: { code: string; animate?: boo
   }, [code, animate])
 
   return (
-    <div className="font-mono font-bold text-ember">
+    <div className="font-mono font-bold text-ember-text">
       {/*
         Дубль текста нужен скринридеру (створки aria-hidden), но он же попадал
         бы в буфер обмена: выделение строки давало «FCPK8GFCPK8G». Код комнаты —

@@ -24,9 +24,9 @@ export const dynamic = 'force-dynamic'
  * Ember зарезервирован за «играешь сейчас» и в эту пару не отдаётся.
  */
 const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
-  active: { text: 'играешь сейчас', cls: 'text-ember' },
-  untouched: { text: 'не распакована', cls: 'text-sky-300/80' },
-  unplayed: { text: 'открыл и закрыл', cls: 'text-sky-300/50' },
+  active: { text: 'играешь сейчас', cls: 'text-ember-text' },
+  untouched: { text: 'не распакована', cls: 'text-info' },
+  unplayed: { text: 'открыл и закрыл', cls: 'text-info' },
   comeback: { text: 'заброшена', cls: 'text-dim' },
   played: { text: '', cls: 'text-dim' },
 }
@@ -104,7 +104,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             <div className="glass rounded-[20px] p-5 flex items-center justify-between gap-4">
               <div>
                 <div className="text-lg font-bold">
-                  ≥ <span className="font-mono text-ember">${(backlog.cents / 100).toFixed(0)}</span>{' '}
+                  ≥ <span className="font-mono text-ember-text">${(backlog.cents / 100).toFixed(0)}</span>{' '}
                   лежит несыгранным
                 </div>
                 <div className="text-xs text-dim mt-1">
@@ -113,7 +113,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                 {equivalent && (
                   <div className="text-xs text-dim mt-2">
                     {equivalent.before}
-                    <span className="font-mono text-ember">{equivalent.count}</span>
+                    <span className="font-mono text-ember-text">{equivalent.count}</span>
                     {equivalent.after}
                   </div>
                 )}
@@ -122,7 +122,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   значит и подбор про несыгранное */}
               <Link
                 href="/quiz?from=untouched"
-                className="shrink-0 rounded-[14px] bg-ember text-bg font-semibold px-4 py-2.5 text-sm hover:brightness-110 transition"
+                className="shrink-0 rounded-[14px] bg-ember text-on-ember font-semibold px-4 py-2.5 text-sm hover:brightness-110 transition"
               >
                 Разгрести →
               </Link>
@@ -132,7 +132,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             <div className="glass rounded-[20px] p-5">
               <div className="text-lg font-bold">
                 Подбор попадает в{' '}
-                <span className="font-mono text-ember">{Math.round(stats.rate * 100)}%</span>
+                <span className="font-mono text-ember-text">{Math.round(stats.rate * 100)}%</span>
               </div>
               <div className="text-xs text-dim mt-1">
                 {stats.liked} «зашло» против {stats.skipped} «не то»
@@ -144,7 +144,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
 
       {shelf.length > 0 && (
         <section className="mb-12">
-          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ember mb-2">
+          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ember-text mb-2">
             Запечатанное
           </p>
           <div className="flex items-baseline justify-between gap-4 flex-wrap">
@@ -154,7 +154,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
               Ты забыл, что они у тебя есть
             </h2>
-            <Link href="/quiz?from=untouched" className="text-sm text-ember hover:underline shrink-0">
+            <Link href="/quiz?from=untouched" className="text-sm text-ember-text hover:underline shrink-0">
               Разгрести →
             </Link>
           </div>
@@ -195,7 +195,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             href={f.id === 'all' ? '/library' : `/library?state=${f.id}`}
             aria-current={f.id === filter ? 'page' : undefined}
             className={`rounded-full px-3.5 py-1.5 text-xs transition ${
-              f.id === filter ? 'bg-ember text-bg font-semibold' : 'glass glass-hover text-dim'
+              f.id === filter ? 'bg-ember text-on-ember font-semibold' : 'glass glass-hover text-dim'
             }`}
           >
             {f.label} <span className="font-mono">{view.counts[f.id]}</span>

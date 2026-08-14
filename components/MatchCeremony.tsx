@@ -119,20 +119,20 @@ export function MatchCeremony({
                 href={game.storeUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-[14px] bg-ember text-bg font-semibold px-8 py-3 hover:brightness-110 transition inline-block"
+                className="rounded-[14px] bg-ember text-on-ember font-semibold px-8 py-3 hover:brightness-110 transition inline-block"
               >
                 Открыть в {STORE_LABEL[game.store ?? ''] ?? 'магазине'}
               </a>
             ) : (
               <SteamLaunch
                 appid={game.appid}
-                className="rounded-[14px] bg-ember text-bg font-semibold px-8 py-3 hover:brightness-110 transition"
+                className="rounded-[14px] bg-ember text-on-ember font-semibold px-8 py-3 hover:brightness-110 transition"
               />
             )}
           </Magnet>
         </div>
 
-        <p data-beat="foot" className="text-xs text-dim/60">
+        <p data-beat="foot" className="text-xs text-faint">
           Зови всех в войс — договорились же.
         </p>
       </div>

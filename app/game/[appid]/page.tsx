@@ -173,7 +173,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   <ProgressRing percent={percent} size={56} stroke={4} duration={800} />
                 )}
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-ember font-medium">
+                  <span className="text-ember-text font-medium">
                     {SCORE_RU[reviewsSummary.scoreDesc] ?? reviewsSummary.scoreDesc}
                   </span>
                   {percent !== null && (
@@ -206,7 +206,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   href={meta.storeUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-[14px] bg-ember text-bg font-semibold px-5 py-2.5 hover:brightness-110 transition text-sm"
+                  className="rounded-[14px] bg-ember text-on-ember font-semibold px-5 py-2.5 hover:brightness-110 transition text-sm"
                 >
                   Открыть в {STORE_LABEL[meta.store ?? ''] ?? 'магазине'}
                 </a>
@@ -216,7 +216,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     appid={appid}
                     label="Запустить"
                     mobileLabel="Открыть в Steam"
-                    className="rounded-[14px] bg-ember text-bg font-semibold px-5 py-2.5 hover:brightness-110 transition text-sm"
+                    className="rounded-[14px] bg-ember text-on-ember font-semibold px-5 py-2.5 hover:brightness-110 transition text-sm"
                   />
                   {/* на телефоне кнопка выше и так ведёт в магазин — дублировать незачем */}
                   <a
@@ -239,7 +239,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               </a>
               {meta.priceFinal !== undefined && meta.priceFinal > 0 && (
                 <span className="rounded-[14px] glass px-5 py-2.5 text-sm">
-                  <span className="font-mono text-ember">${(meta.priceFinal / 100).toFixed(2)}</span>
+                  <span className="font-mono text-ember-text">${(meta.priceFinal / 100).toFixed(2)}</span>
                 </span>
               )}
             </div>
@@ -253,11 +253,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           <section className="grid md:grid-cols-2 gap-4">
             {prosCons.pros.length > 0 && (
               <div className="glass rounded-[20px] p-6 anim-rise">
-                <h2 className="text-sm font-semibold text-ember mb-3">За что любят</h2>
+                <h2 className="text-sm font-semibold text-ember-text mb-3">За что любят</h2>
                 <ul className="space-y-2 text-sm text-ink/90">
                   {prosCons.pros.map((p) => (
                     <li key={p} className="flex gap-2.5">
-                      <span className="text-ember">+</span>
+                      <span className="text-ember-text">+</span>
                       {p}
                     </li>
                   ))}
@@ -277,7 +277,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </ul>
               </div>
             )}
-            <p className="md:col-span-2 text-[11px] text-dim/60">
+            <p className="md:col-span-2 text-[11px] text-faint">
               {prosCons.source === 'claude'
                 ? 'Собрано ИИ из самых полезных отзывов Steam'
                 : 'Цитаты из самых полезных отзывов Steam'}

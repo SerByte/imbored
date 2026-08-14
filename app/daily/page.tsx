@@ -76,7 +76,7 @@ export default function DailyPage() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Не получилось выбрать игру дня.</p>
-        <Link href="/quiz" className="text-ember hover:underline text-sm">
+        <Link href="/quiz" className="text-ember-text hover:underline text-sm">
           Обычный подбор →
         </Link>
       </div>
@@ -116,10 +116,10 @@ export default function DailyPage() {
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-40">
           <div className="max-w-2xl flex flex-col gap-4">
             <div className="flex items-center gap-3 text-xs">
-              <span className="rounded-full bg-ember text-bg px-3 py-1 font-bold uppercase tracking-wide">
+              <span className="rounded-full bg-ember text-on-ember px-3 py-1 font-bold uppercase tracking-wide">
                 Игра дня · {dateLabel}
               </span>
-              <span className="rounded-full bg-ember/15 text-ember px-3 py-1 font-medium">
+              <span className="rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium">
                 {pick.store ? STORE_LABEL[pick.store] ?? pick.store : SOURCE_BADGE[pick.source]}
               </span>
               {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
@@ -159,14 +159,14 @@ export default function DailyPage() {
                   href={pick.storeUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+                  className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                 >
                   Открыть в {STORE_LABEL[pick.store ?? ''] ?? 'магазине'}
                 </a>
               ) : (
                 <SteamLaunch
                   appid={pick.appid}
-                  className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+                  className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                 />
               )}
               <Link
@@ -180,7 +180,7 @@ export default function DailyPage() {
               </Link>
             </div>
 
-            <p className="text-xs text-dim/60 mt-1">
+            <p className="text-xs text-faint mt-1">
               Одна игра на день — завтра здесь будет другая.
             </p>
           </div>

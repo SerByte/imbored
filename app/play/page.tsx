@@ -248,7 +248,7 @@ function Player() {
                   >
                     {Math.round(pct)}%
                   </span>
-                  <span className="text-[11px] text-dim/70">разобрано</span>
+                  <span className="text-[11px] text-faint">разобрано</span>
                 </div>
               }
             />
@@ -301,7 +301,7 @@ function Player() {
         <p className="text-dim text-sm max-w-md">
           Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.
         </p>
-        <Link href="/quiz" className="text-ember hover:underline text-sm">
+        <Link href="/quiz" className="text-ember-text hover:underline text-sm">
           Попробовать снова
         </Link>
       </div>
@@ -330,7 +330,7 @@ function Player() {
                 setIndex(picks.indexOf(cozy))
                 setPhase('reveal')
               }}
-              className="rounded-[14px] bg-ember text-bg font-semibold py-3 hover:brightness-110 transition"
+              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition"
             >
               Ладно, покажи «{cozy.name}» — она спокойная
             </button>
@@ -407,7 +407,7 @@ function Player() {
           >
             <div className="max-w-2xl flex flex-col gap-4">
               <motion.div variants={STEP} className="flex items-center gap-3 text-xs">
-                <span className="rounded-full bg-ember/15 text-ember px-3 py-1 font-medium">
+                <span className="rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium">
                   {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}
                 </span>
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
@@ -496,7 +496,7 @@ function Player() {
                     target="_blank"
                     rel="noreferrer"
                     onClick={() => sendFeedback(pick.appid, 'liked')}
-                    className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+                    className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   >
                     Открыть в {STORE_LABEL[pick.store ?? ''] ?? 'магазине'}
                   </a>
@@ -504,7 +504,7 @@ function Player() {
                   <SteamLaunch
                     appid={pick.appid}
                     onClick={() => sendFeedback(pick.appid, 'liked')}
-                    className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+                    className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   />
                 )}
                 {pick.source === 'new' && !pick.storeUrl && pick.priceFinal !== null && pick.priceFinal > 0 && (
@@ -514,7 +514,7 @@ function Player() {
                     rel="noreferrer"
                     className="rounded-[14px] glass glass-hover px-5 py-3 text-sm"
                   >
-                    <span className="font-mono text-ember">${(pick.priceFinal / 100).toFixed(2)}</span>
+                    <span className="font-mono text-ember-text">${(pick.priceFinal / 100).toFixed(2)}</span>
                     <span className="text-dim"> · в Steam</span>
                   </a>
                 )}
@@ -531,7 +531,7 @@ function Player() {
                     sendFeedback(pick.appid, 'liked')
                   }}
                   className={`rounded-[14px] px-4 py-3 text-sm transition ${
-                    liked.has(pick.appid) ? 'bg-ember/20 text-ember' : 'glass glass-hover text-dim'
+                    liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
                   }`}
                 >
                   {liked.has(pick.appid) ? 'Зашло ✓' : 'Зашло'}
@@ -572,7 +572,7 @@ function Player() {
                     setShowWhy(false)
                   }}
                   title="Больше не показывать эту игру"
-                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-dim/70"
+                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint"
                 >
                   🚫
                 </button>
@@ -589,7 +589,7 @@ function Player() {
             <h2 className="text-sm font-medium text-dim">
               {focus ? 'Ещё нераспакованное' : 'Ещё варианты под это настроение'}
             </h2>
-            <span className="text-xs text-dim/60 font-mono">
+            <span className="text-xs text-faint font-mono">
               {engine === 'claude' ? 'подбор: ИИ' : 'подбор: эвристика'}
             </span>
           </div>
@@ -638,7 +638,7 @@ function Player() {
         <section className="mx-auto w-full max-w-6xl px-5 pb-16">
           <div className="border-t border-edge/60 pt-10">
             <h2 className="text-sm font-medium text-dim mb-1">Нет в твоей библиотеке</h2>
-            <p className="text-xs text-dim/60 mb-4">
+            <p className="text-xs text-faint mb-4">
               Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто
               на будущее.
             </p>
@@ -670,7 +670,7 @@ function Player() {
                       <span className="text-dim truncate">
                         {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
                       </span>
-                      <span className="font-mono text-ember shrink-0">
+                      <span className="font-mono text-ember-text shrink-0">
                         {p.priceFinal === 0
                           ? 'бесплатно'
                           : p.priceFinal
