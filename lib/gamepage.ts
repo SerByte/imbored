@@ -45,11 +45,29 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   // ничего нет, показываем только собственные данные
   if (appid < 0) return { meta, reviewsSummary: null, prosCons: null, news: [] }
 
-  const [reviewsSummary, prosCons, news] = await Promise.all([
+  const [reviewsSummary, stored, news] = await Promise.all([
     getGameJson(db, appid, 'reviews_summary_json') as Promise<GamePageData['reviewsSummary']>,
     getGameJson(db, appid, 'pros_cons_json') as Promise<GamePageData['prosCons']>,
     getGameNews(db, appid, 8),
   ])
+
+  /*
+   * Наружу отдаём ТОЛЬКО собранное моделью.
+   *
+   * Эвристический вариант — это первые предложения самых залайканных отзывов
+   * Steam, как есть. На витрине это выглядело так: китайский, испанский,
+   * зацензуренный мат и прямая непристойность в блоке «за что любят» — на
+   * русскоязычной странице, лежащей в карте сайта. Отбор по числу голосов
+   * этого не чинит, скорее наоборот: залайкивают как раз шутки.
+   *
+   * Правило стоит здесь, а не в разметке, чтобы его нельзя было обойти новым
+   * потребителем и чтобы оно было покрыто тестом.
+   *
+   * В базе эвристику при этом храним: source: 'reviews' и есть тот маркер, по
+   * которому карточка вернётся в очередь на пересборку моделью (см.
+   * claimPageEnrichBatch, redoHeuristic).
+   */
+  const prosCons = stored?.source === 'claude' ? stored : null
 
   return { meta, reviewsSummary, prosCons, news }
 }

@@ -253,6 +253,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
       <div className="mx-auto max-w-5xl px-5 pb-16 flex flex-col gap-10">
         {/* pros / cons из реальных отзывов */}
+        {/* Сюда доходит только собранное моделью — эвристику отсекает
+            loadGamePage, там же объяснено почему. */}
         {prosCons && (prosCons.pros.length > 0 || prosCons.cons.length > 0) && (
           <section className="grid md:grid-cols-2 gap-4">
             {prosCons.pros.length > 0 && (
@@ -281,10 +283,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </ul>
               </div>
             )}
+            {/* Ветка «Цитаты из отзывов» ушла вместе с показом эвристики:
+                сюда доходит только собранное моделью. */}
             <p className="md:col-span-2 text-[11px] text-faint">
-              {prosCons.source === 'claude'
-                ? 'Собрано ИИ из самых полезных отзывов Steam'
-                : 'Цитаты из самых полезных отзывов Steam'}
+              Собрано ИИ из самых полезных отзывов Steam
             </p>
           </section>
         )}
