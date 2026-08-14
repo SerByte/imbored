@@ -275,6 +275,41 @@ describe('parsePurchaseOption', () => {
     expect(info.discountEndsAt).toBe(200)
   })
 
+  test('вариант-бандл не выдаётся за цену игры', () => {
+    // Срез живого ответа 14.08.2026: «лучшим» предложением для Drug Dealer
+    // Simulator 2 Steam называет набор «Thieves'n'Dealers» за $24.10 вместо
+    // $40.48 — с честным discount_pct: 40. Сама игра при этом стоит полную
+    // цену, и «−40%» на её карточке было бы обещанием чужого ценника.
+    expect(
+      parsePurchaseOption({
+        bundleid: 42237,
+        purchase_option_name: "Thieves'n'Dealers",
+        final_price_in_cents: '2410',
+        original_price_in_cents: '4048',
+        discount_pct: 40,
+      } as Parameters<typeof parsePurchaseOption>[0]),
+    ).toEqual({})
+  })
+
+  test('бандл без скидки тоже не цена игры', () => {
+    // Forever Skies: Deluxe Edition за $16.00 при цене игры $29.99
+    expect(
+      parsePurchaseOption({
+        bundleid: 52538,
+        final_price_in_cents: '1600',
+      } as Parameters<typeof parsePurchaseOption>[0]),
+    ).toEqual({})
+  })
+
+  test('обычная покупка пакетом — цена игры, её берём', () => {
+    expect(
+      parsePurchaseOption({
+        packageid: 82712,
+        final_price_in_cents: '1499',
+      } as Parameters<typeof parsePurchaseOption>[0]),
+    ).toEqual({ priceFinal: 1499, priceInitial: 1499, discountPercent: 0 })
+  })
+
   test('нет блока покупки — нет и цены: free-to-play и снятое с продажи', () => {
     expect(parsePurchaseOption(undefined)).toEqual({})
     expect(parsePurchaseOption({ final_price_in_cents: 'не число' })).toEqual({})
