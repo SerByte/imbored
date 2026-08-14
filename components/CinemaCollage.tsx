@@ -29,7 +29,15 @@ export function CinemaCollage() {
                   key={`${appid}-${j}`}
                   src={legacyArtUrl(appid, 'header')}
                   alt=""
-                  loading={j < 6 ? 'eager' : 'lazy'}
+                  // Раньше здесь стояло j < 6, то есть eager на 18 обложек:
+                  // три колонки по шесть. Все они лежат под скримом, который в
+                  // центре непрозрачен на 94%, и при этом соревновались за
+                  // полосу с тем, ради чего человек пришёл. Сверху колонки
+                  // видно ровно один кадр — он и остаётся eager.
+                  loading={j === 0 ? 'eager' : 'lazy'}
+                  // Фон не должен опережать содержание ни при каких условиях.
+                  fetchPriority="low"
+                  decoding="async"
                   className="w-full rounded-[14px] object-cover aspect-[460/215]"
                 />
               ))}

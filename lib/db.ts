@@ -34,6 +34,27 @@ CREATE TABLE IF NOT EXISTS library_snapshots (
   games_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_steamid ON library_snapshots (steamid, taken_at DESC);
+/*
+ * Отметка библиотеки на начало года — единственные данные проекта, которые
+ * нельзя получить задним числом.
+ *
+ * GetOwnedGames отдаёт только пожизненные часы и playtime_2weeks. Значит
+ * «сколько наиграно за 2026» считается ровно одним способом: часы сейчас минус
+ * часы на начало года. Обычных снапшотов хранится три штуки скользящим окном
+ * (SNAPSHOTS_KEPT), то есть к декабрю от января не остаётся ничего, и никакой
+ * запрос к Steam этого уже не вернёт.
+ *
+ * Поэтому таблица отдельная, а не «не удалять часть library_snapshots»: у неё
+ * другой жизненный цикл. Строка на игрока и год, пишется один раз и не
+ * удаляется никогда.
+ */
+CREATE TABLE IF NOT EXISTS library_baselines (
+  steamid TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  taken_at INTEGER NOT NULL,
+  games_json TEXT NOT NULL,
+  PRIMARY KEY (steamid, year)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS games (
   appid INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -239,6 +260,9 @@ export async function migrateDb(db: Db): Promise<Db> {
     ['games', 'alive INTEGER NOT NULL DEFAULT 1'],
     ['games', 'dead_reason TEXT'],
     ['games', 'superseded_by INTEGER'],
+    // когда карточку игры последний раз обогащали (скриншоты, отзывы, pros/cons).
+    // NULL — ни разу; см. lib/pagejob.ts
+    ['games', 'page_at INTEGER'],
   ] as const) {
     try {
       await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col}`)
@@ -552,17 +576,53 @@ export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoo
 
 const SNAPSHOTS_KEPT = 3
 
+/**
+ * Год отметки. UTC, а не местное время: год должен считаться одинаково у
+ * человека в Калининграде и у крона на Vercel, иначе в новогоднюю ночь одна и
+ * та же библиотека попадёт в разные годы.
+ */
+export function snapshotYear(nowSec: number): number {
+  return new Date(nowSec * 1000).getUTCFullYear()
+}
+
 export async function saveLibrarySnapshot(
   db: Db,
   steamid: string,
   games: LibraryGame[],
   nowSec: number,
 ): Promise<void> {
+  const payload = JSON.stringify(games)
+  const year = snapshotYear(nowSec)
+
   await db.batch(
     [
+      /*
+       * Отметка года. Обе инструкции идут ДО вставки нового снапшота и обе с
+       * ON CONFLICT DO NOTHING, поэтому после первого раза в году это но-оп.
+       *
+       * Первая берёт предыдущий снапшот, а не текущие игры, и это главное:
+       * человек, заходивший в декабре и вернувшийся в марте, получит отметкой
+       * своё декабрьское состояние, а не мартовское. Иначе три месяца игры
+       * молча потерялись бы из итогов года.
+       *
+       * Вторая — для тех, у кого предыдущего снапшота нет вовсе (первый заход
+       * в жизни): тогда отметкой становится текущая библиотека.
+       */
+      {
+        sql: `INSERT INTO library_baselines (steamid, year, taken_at, games_json)
+              SELECT ?, ?, taken_at, games_json FROM library_snapshots
+              WHERE steamid = ? ORDER BY taken_at DESC, id DESC LIMIT 1
+              ON CONFLICT DO NOTHING`,
+        args: [steamid, year, steamid],
+      },
+      {
+        sql: `INSERT INTO library_baselines (steamid, year, taken_at, games_json)
+              VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+        args: [steamid, year, nowSec, payload],
+      },
       {
         sql: 'INSERT INTO library_snapshots (steamid, taken_at, games_json) VALUES (?, ?, ?)',
-        args: [steamid, nowSec, JSON.stringify(games)],
+        args: [steamid, nowSec, payload],
       },
       {
         sql: `DELETE FROM library_snapshots WHERE steamid = ? AND id NOT IN (
@@ -600,10 +660,40 @@ export async function getLatestSnapshot(
   return { takenAt: row.taken_at, games: JSON.parse(row.games_json) as LibraryGame[] }
 }
 
+/**
+ * Отметка библиотеки на начало года.
+ *
+ * takenAt отдаём наружу не для порядка: отметка ставится при первом за год
+ * заходе, а не первого января. У человека, который пришёл впервые в июне,
+ * «за год» честно означает «с июня», и итоги обязаны это сказать, а не
+ * выдавать полугодовой отрезок за годовой.
+ */
+export async function getLibraryBaseline(
+  db: Db,
+  steamid: string,
+  year: number,
+): Promise<{ takenAt: number; games: LibraryGame[] } | null> {
+  const res = await db.execute({
+    sql: 'SELECT taken_at, games_json FROM library_baselines WHERE steamid = ? AND year = ?',
+    args: [steamid, year],
+  })
+  const row = res.rows[0] as unknown as { taken_at: number; games_json: string } | undefined
+  if (!row) return null
+  return { takenAt: row.taken_at, games: JSON.parse(row.games_json) as LibraryGame[] }
+}
+
 /* ---------- каталог игр ---------- */
 
-export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Promise<void> {
-  await db.execute({
+/**
+ * Одна инструкция апсерта, отдельно от её выполнения.
+ *
+ * Вынесена, чтобы ту же самую запись можно было и выполнить поштучно, и
+ * сложить в db.batch. Прогрев библиотеки апсертит до двухсот игр за вызов, и
+ * двести отдельных round-trip'ов в Turso стоили там дороже, чем вся остальная
+ * работа вместе взятая.
+ */
+function gameMetaStatement(meta: GameMeta, nowSec: number) {
+  return {
     sql: `INSERT INTO games (appid, name, tags_json, genres_json, categories_json, short_description,
             header_image, screenshots_json, is_free, price_final, release_date, median_forever,
             store, store_url, art_json,
@@ -669,7 +759,27 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
       isMultiplayerCategories(meta.categories) ? 1 : 0,
       nowSec,
     ],
-  })
+  }
+}
+
+export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Promise<void> {
+  await db.execute(gameMetaStatement(meta, nowSec))
+}
+
+/**
+ * Пачка апсертов одним round-trip'ом вместо N. Порядок внутри пачки сохраняется,
+ * поэтому повторяющийся appid отработает так же, как отработал бы поштучно.
+ */
+export async function upsertGamesMeta(
+  db: Db,
+  metas: GameMeta[],
+  nowSec: number,
+): Promise<void> {
+  if (!metas.length) return
+  await db.batch(
+    metas.map((m) => gameMetaStatement(m, nowSec)),
+    'write',
+  )
 }
 
 /**
@@ -825,6 +935,90 @@ export async function getGameJson(
   })
   const v = res.rows[0]?.v as string | null | undefined
   return v ? JSON.parse(v) : null
+}
+
+/*
+ * Очередь обогащения карточек игр.
+ *
+ * Скриншоты, сводку отзывов и pros/cons раньше догружала сама страница
+ * /game/[appid] прямо на рендере. Страница публичная, кэша у неё не было, а в
+ * каталоге 6000 игр — то есть один проход краулера означал 6000 вызовов Claude
+ * и 12000 запросов к Steam. Правило уже было сформулировано в lib/gamepage.ts
+ * для патчноутов; здесь оно доведено до остальных полей карточки.
+ *
+ * Отдельной таблицы нет намеренно: очередь целиком выражается колонкой page_at
+ * на games. Предикат живой игры повторяет idx_games_pool ДОСЛОВНО — иначе
+ * SQLite не возьмёт частичный индекс и это станет сканом (см. noscan).
+ */
+
+const ALIVE_POOL = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
+
+/**
+ * Игры, которым пора обогатить карточку: сначала ни разу не тронутые, потом
+ * самые давние. Порядок внутри группы — по числу отзывов: витрину имеет смысл
+ * наполнять с тех страниц, на которые вообще придут.
+ */
+export async function claimPageEnrichBatch(
+  db: Db,
+  staleBefore: number,
+  limit: number,
+): Promise<number[]> {
+  const res = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+            AND (page_at IS NULL OR page_at < ?)
+          ORDER BY page_at IS NOT NULL, reviews_total DESC
+          LIMIT ?`,
+    args: [staleBefore, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+}
+
+/**
+ * Игры для карты сайта: живые, с тегами, по убыванию числа отзывов.
+ *
+ * Отдаём и ещё не обогащённые тоже — с тех пор как loadGamePage читает только
+ * базу, заход краулера на такую страницу не стоит ничего, а имя, теги, цена и
+ * патчноуты на ней уже есть. Ждать полного обогащения значило бы держать карту
+ * сайта пустой месяцами.
+ */
+export async function sitemapGames(
+  db: Db,
+  limit: number,
+): Promise<Array<{ appid: number; updatedAt: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, updated_at FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; updated_at: number }>).map((r) => ({
+    appid: r.appid,
+    updatedAt: r.updated_at,
+  }))
+}
+
+/** Сколько карточек ещё ждёт обогащения — для отчёта крона. */
+export async function countPageEnrichDue(db: Db, staleBefore: number): Promise<number> {
+  const res = await db.execute({
+    sql: `SELECT COUNT(*) AS n FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0 AND (page_at IS NULL OR page_at < ?)`,
+    args: [staleBefore],
+  })
+  return Number((res.rows[0] as unknown as { n: number }).n)
+}
+
+/**
+ * Отметка «карточку трогали». Ставится и при неудаче тоже: иначе игра, у
+ * которой Steam не отдаёт отзывов, навсегда осталась бы первой в очереди и
+ * забирала бы весь суточный бюджет на себя.
+ */
+export async function markPageEnriched(db: Db, appid: number, now: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE games SET page_at = ? WHERE appid = ?',
+    args: [now, appid],
+  })
 }
 
 /* ---------- большой каталог ---------- */

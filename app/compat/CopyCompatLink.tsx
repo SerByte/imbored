@@ -13,7 +13,7 @@ export function CopyCompatLink({ steamid }: { steamid: string }) {
         setCopied(true)
         setTimeout(() => setCopied(false), 1500)
       }}
-      className="rounded-[14px] bg-ember text-bg font-semibold py-3 hover:brightness-110 transition cursor-pointer"
+      className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition cursor-pointer"
     >
       {copied ? 'Скопировано ✓' : 'Скопировать мою ссылку'}
     </button>

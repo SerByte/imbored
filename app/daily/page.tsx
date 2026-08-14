@@ -9,11 +9,12 @@ import { PlayersNow } from '@/components/PlayersNow'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
-import { Spinner } from '@/components/Spinner'
+import { WarmupScreen } from '@/components/WarmupScreen'
 import type { GameArtUrls } from '@/lib/art'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
+import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 type DailyPick = {
   appid: number
@@ -34,49 +35,60 @@ export default function DailyPage() {
   const [pick, setPick] = useState<DailyPick | null>(null)
   const [dateLabel, setDateLabel] = useState('')
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
+  const [prep, setPrep] = useState<WarmupProgress | null>(null)
+  const [message, setMessage] = useState('Изучаю твою библиотеку…')
   const started = useRef(false)
 
   useEffect(() => {
     if (started.current) return
     started.current = true
     void (async () => {
-      // прогрев каталога — как в основной выдаче
-      for (let i = 0; i < 80; i++) {
-        const res = await fetch('/api/prepare', { method: 'POST' })
-        if (res.status === 401 || res.status === 409) {
-          router.push('/')
-          return
-        }
-        const data = (await res.json()) as { remaining?: number }
-        if ((data.remaining ?? 0) <= 0) break
+      // Прогрев тот же, что в основной выдаче, и теперь буквально тот же код.
+      // Раньше здесь лежала копия цикла — без прогресса, без проверки ok и без
+      // try/catch, из-за чего экран ошибки ниже был недостижим в принципе:
+      // любой сбой оставлял страницу в вечном спиннере.
+      const warm = await runWarmup({
+        onProgress: (p) => {
+          setPrep(p)
+          if (p.remaining > 0) setMessage(`Осталось разобрать ${p.remaining} игр`)
+        },
+      })
+      if (warm === 'unauthorized') {
+        router.push('/')
+        return
       }
-      const res = await fetch('/api/daily')
-      if (!res.ok) {
+      if (warm === 'error') {
         setPhase('error')
         return
       }
-      const data = (await res.json()) as { pick: DailyPick; dateLabel: string }
-      setPick(data.pick)
-      setDateLabel(data.dateLabel)
-      setPhase('ok')
+
+      setMessage('Выбираю твою игру дня…')
+      try {
+        const res = await fetch('/api/daily')
+        if (!res.ok) {
+          setPhase('error')
+          return
+        }
+        const data = (await res.json()) as { pick: DailyPick; dateLabel: string }
+        setPick(data.pick)
+        setDateLabel(data.dateLabel)
+        setPhase('ok')
+      } catch {
+        setPhase('error')
+      }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   if (phase === 'loading') {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-6 px-5">
-        <Spinner />
-        <p className="text-dim text-sm">Выбираю твою игру дня…</p>
-      </div>
-    )
+    return <WarmupScreen progress={prep} message={message} />
   }
 
   if (phase === 'error' || !pick) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Не получилось выбрать игру дня.</p>
-        <Link href="/quiz" className="text-ember hover:underline text-sm">
+        <Link href="/quiz" className="text-ember-text hover:underline text-sm">
           Обычный подбор →
         </Link>
       </div>
@@ -116,10 +128,10 @@ export default function DailyPage() {
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-40">
           <div className="max-w-2xl flex flex-col gap-4">
             <div className="flex items-center gap-3 text-xs">
-              <span className="rounded-full bg-ember text-bg px-3 py-1 font-bold uppercase tracking-wide">
+              <span className="rounded-full bg-ember text-on-ember px-3 py-1 font-bold uppercase tracking-wide">
                 Игра дня · {dateLabel}
               </span>
-              <span className="rounded-full bg-ember/15 text-ember px-3 py-1 font-medium">
+              <span className="rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium">
                 {pick.store ? STORE_LABEL[pick.store] ?? pick.store : SOURCE_BADGE[pick.source]}
               </span>
               {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
@@ -159,14 +171,14 @@ export default function DailyPage() {
                   href={pick.storeUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+                  className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                 >
                   Открыть в {STORE_LABEL[pick.store ?? ''] ?? 'магазине'}
                 </a>
               ) : (
                 <SteamLaunch
                   appid={pick.appid}
-                  className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+                  className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                 />
               )}
               <Link
@@ -180,7 +192,7 @@ export default function DailyPage() {
               </Link>
             </div>
 
-            <p className="text-xs text-dim/60 mt-1">
+            <p className="text-xs text-faint mt-1">
               Одна игра на день — завтра здесь будет другая.
             </p>
           </div>

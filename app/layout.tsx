@@ -1,10 +1,11 @@
 import { Analytics } from '@vercel/analytics/next'
-import type { Metadata } from 'next'
-import { JetBrains_Mono, Onest, Unbounded } from 'next/font/google'
+import type { Metadata, Viewport } from 'next'
+import { JetBrains_Mono, Onest } from 'next/font/google'
 import Link from 'next/link'
 import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
+import { MotionProvider } from '@/components/MotionProvider'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
@@ -15,27 +16,47 @@ const onest = Onest({
   subsets: ['latin', 'cyrillic'],
 })
 
+/**
+ * Моноширинный нужен почти везде — но только для чисел: проценты, цены, коды
+ * комнат, счётчики. Ни одного такого числа нет на первом экране, поэтому
+ * preload выключен: файл догрузится к моменту, когда до цифр дойдёт дело, и не
+ * будет соревноваться за полосу с основным шрифтом и обложками.
+ */
 const jbMono = JetBrains_Mono({
   variable: '--font-jbmono',
   subsets: ['latin', 'cyrillic'],
+  preload: false,
 })
 
 /**
- * Дисплейное начертание — только для «Что нового». Широкий геометрический
- * гротеск читается как титр, а не как заголовок интерфейса, и держит крупный
- * кегль поверх арта. Кириллица проверена по манифесту next/font: у Unbounded
- * есть cyrillic и cyrillic-ext, иначе он был бы здесь бесполезен.
+ * viewportFit: 'cover' — без него env(safe-area-inset-bottom) на iOS всегда
+ * равен нулю. То есть отступ под нижнюю панель, который в layout уже был
+ * посчитан «с запасом на безопасную зону», по факту не срабатывал ни разу, и
+ * на телефонах с домашней полоской панель уезжала под неё.
+ *
+ * themeColor двумя строками, а не одной: браузерная обвязка (адресная строка
+ * в Chrome, статус-бар в PWA) должна совпадать с фоном страницы, а он у нас
+ * зависит от темы. Одно значение красило бы шов при светлой теме тёмным.
  */
-const unbounded = Unbounded({
-  variable: '--font-unbounded',
-  subsets: ['latin', 'cyrillic'],
-})
+export const viewport: Viewport = {
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0b0c10' },
+    { media: '(prefers-color-scheme: light)', color: '#f5f4f1' },
+  ],
+}
 
 export const metadata: Metadata = {
   // без metadataBase Next не может собрать абсолютные ссылки на og-картинки
   // и при динамическом рендере роняет их в относительные
   metadataBase: new URL(appBaseUrl()),
-  title: 'imbored — во что поиграть',
+  // Шаблон, а не строка: без него страницы, у которых нет своего title,
+  // молча наследовали этот — и пять разделов из восьми выглядели в выдаче
+  // одной и той же страницей.
+  title: {
+    default: 'imbored — во что поиграть',
+    template: '%s · imbored',
+  },
   description:
     'Подключи Steam — подберём игру под твоё настроение прямо сейчас: из бэклога, заброшенного или нового.',
 }
@@ -59,14 +80,40 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
     <html
       lang="ru"
       suppressHydrationWarning
-      className={`${onest.variable} ${jbMono.variable} ${unbounded.variable} h-full antialiased`}
+      className={`${onest.variable} ${jbMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[52px] md:pb-0">
+      <head>
+        {/*
+          Весь игровой арт приложения лежит на CDN Steam, и первое же
+          обращение к нему — это DNS, TLS и рукопожатие, которые начинались
+          только после разбора разметки. Рукопожатие уезжает в самое начало
+          загрузки, картинки приходят раньше на эту величину.
+        */}
+        <link rel="preconnect" href="https://shared.steamstatic.com" />
+        <link rel="preconnect" href="https://shared.akamai.steamstatic.com" />
+        <link rel="dns-prefetch" href="https://clan.fastly.steamstatic.com" />
+      </head>
+      <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,
           }}
         />
+        {/*
+          Первое, что получает фокус на любой странице. Шапка — шесть ссылок
+          подряд, и без этого до содержания страницы с клавиатуры нужно было
+          протабать их все, на каждой странице заново.
+
+          Видна только в фокусе: sr-only снимается на focus-visible.
+          scroll-padding-top в globals.css нужен здесь же — иначе якорь
+          уводит цель под фиксированную шапку.
+        */}
+        <a
+          href="#main"
+          className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-3 focus-visible:left-3 focus-visible:z-[60] focus-visible:rounded-[14px] focus-visible:bg-ember focus-visible:px-4 focus-visible:py-2 focus-visible:text-on-ember focus-visible:font-semibold"
+        >
+          К содержанию
+        </a>
         <header
           className="fixed top-0 inset-x-0 z-50"
           style={{ background: 'linear-gradient(to bottom, var(--header-fade), transparent)' }}
@@ -102,7 +149,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             </nav>
           </div>
         </header>
-        <main className="flex-1 flex flex-col">{children}</main>
+        <main id="main" className="flex-1 flex flex-col">
+          <MotionProvider>{children}</MotionProvider>
+        </main>
         <Footer />
         <MobileNav />
         <Analytics />

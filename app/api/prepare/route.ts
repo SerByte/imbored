@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server'
 import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
 import { fetchCurrentPlayers } from '@/lib/ingest'
 import {
+  getGamesMeta,
   getLatestSnapshot,
   getStaleAppids,
   saveLibrarySnapshot,
-  upsertGameMeta,
+  topCatalogAppids,
+  upsertGamesMeta,
 } from '@/lib/db'
 import { seedOtherStores } from '@/lib/otherstores'
 import {
@@ -49,31 +51,35 @@ export async function POST() {
   const owned = new Set(games.map((g) => g.appid))
 
   // Пул «попробуй новое»: чужие Steam-игры, уже лежащие в каталоге.
-  // LIMIT обязателен — без него это полный скан каталога на каждый вызов,
-  // а клиент дёргает этот маршрут в цикле.
-  const poolRes = await db.execute({
-    sql: 'SELECT appid FROM games WHERE appid > 0 ORDER BY updated_at DESC LIMIT ?',
-    args: [POOL_LIMIT],
-  })
-  const inCatalog = new Set(
-    (poolRes.rows as unknown as Array<{ appid: number }>).map((r) => r.appid),
-  )
+  //
+  // Раньше здесь стоял ORDER BY updated_at DESC с LIMIT. LIMIT спасал от
+  // выдачи, но не от работы: индекса на updated_at в схеме нет, поэтому SQLite
+  // читал все строки games и сортировал их во временном B-дереве — на каждый
+  // вызов, а клиент дёргает этот маршрут в цикле. topCatalogAppids берёт то же
+  // самое по готовым частичным индексам (idx_games_pool и idx_games_ccu) и
+  // останавливается на нужном числе строк. Заодно пул стал осмысленнее:
+  // популярное вместо «того, что наш же прогрев тронул последним».
+  const inCatalog = new Set(await topCatalogAppids(db, POOL_LIMIT))
   const steamPool = [...inCatalog].filter((id) => !owned.has(id))
 
   // Сидируем стабы популярных игр только при бедном пуле и только для НОВЫХ appid,
   // иначе повторный сид затирал бы уже загруженные теги (см. ревью).
   // Источник — официальные чарты Steam: SteamSpy отдаёт 403 с серверных IP.
   if (steamPool.length < MIN_NEW_POOL) {
-    for (const appid of (await fetchMostPlayed()).slice(0, 60)) {
-      if (owned.has(appid) || inCatalog.has(appid)) continue
-      // updated_at = 0 → запись сразу «протухшая», имя и теги подтянет ensureMeta
-      await upsertGameMeta(
-        db,
-        { appid, name: `App ${appid}`, tags: {}, genres: [], categories: [] },
-        0,
-      )
-      steamPool.push(appid)
-      inCatalog.add(appid)
+    const charts = (await fetchMostPlayed()).slice(0, 60)
+    // Проверяем наличие в базе явно, а не по пулу выше: пул — это верхушка
+    // каталога, и игра из чартов вполне может лежать в games за её пределами.
+    // Стаб с пустыми тегами, записанный поверх такой строки, стёр бы ей теги.
+    const known = await getGamesMeta(db, charts)
+    const stubs = charts
+      .filter((appid) => !owned.has(appid) && !inCatalog.has(appid) && !known.has(appid))
+      .map((appid) => ({ appid, name: `App ${appid}`, tags: {}, genres: [], categories: [] }))
+
+    // updated_at = 0 → записи сразу «протухшие», имена и теги подтянет ensureMeta
+    await upsertGamesMeta(db, stubs, 0)
+    for (const s of stubs) {
+      steamPool.push(s.appid)
+      inCatalog.add(s.appid)
     }
   }
 

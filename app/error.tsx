@@ -29,7 +29,7 @@ export default function Error({
         </p>
         <button
           onClick={reset}
-          className="w-full rounded-[14px] bg-ember text-bg font-semibold py-3 hover:brightness-110 transition cursor-pointer"
+          className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition cursor-pointer"
         >
           Попробовать снова
         </button>
@@ -37,7 +37,7 @@ export default function Error({
           На главную
         </Link>
         {error.digest && (
-          <span className="font-mono text-[11px] text-dim/50">код: {error.digest}</span>
+          <span className="font-mono text-[11px] text-faint">код: {error.digest}</span>
         )}
       </div>
     </div>

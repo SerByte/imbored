@@ -4,6 +4,11 @@ import { Ambient } from '@/components/Ambient'
 import { currentSteamId } from '@/lib/server'
 import { CopyCompatLink } from './CopyCompatLink'
 
+export const metadata = {
+  title: 'Совместимость',
+  description: 'Процент совпадения игровых вкусов по реальным библиотекам и часам — и во что вам зайти вместе.',
+}
+
 export const dynamic = 'force-dynamic'
 
 export default async function CompatHubPage() {

@@ -19,7 +19,7 @@ function Runs({ runs }: { runs: Inline[] }) {
               href={r.href}
               target="_blank"
               rel="nofollow noopener noreferrer"
-              className="text-ember hover:underline underline-offset-2"
+              className="text-ember-text hover:underline underline-offset-2"
             >
               {r.text}
             </a>

@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 
 export const metadata = {
-  title: 'Конфиденциальность — imbored',
+  title: 'Конфиденциальность',
   description: 'Какие данные собирает imbored, где они хранятся и как их удалить.',
 }
 
@@ -125,11 +125,11 @@ export default function PrivacyPage() {
         <Section title="Связь">
           <p>
             Вопросы и запросы на удаление данных:{' '}
-            <a href="mailto:hello@imbored.cc" className="text-ember hover:underline">
+            <a href="mailto:hello@imbored.cc" className="text-ember-text hover:underline">
               hello@imbored.cc
             </a>
           </p>
-          <p className="text-xs text-dim/60">
+          <p className="text-xs text-faint">
             imbored — независимый проект, не связанный с Valve Corporation. Steam и логотип Steam —
             товарные знаки Valve Corporation.
           </p>

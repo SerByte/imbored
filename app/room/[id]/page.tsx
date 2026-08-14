@@ -60,7 +60,18 @@ export default function RoomPage() {
     setState((await res.json()) as RoomState)
   }, [roomId])
 
+  /**
+   * Опрос состояния комнаты — ровно тот случай, ради которого эффекты и
+   * существуют: подписка на внешнюю систему с записью состояния из колбэка.
+   *
+   * Правило set-state-in-effect читает `void refresh()` в теле как синхронный
+   * setState и не видит, что первое действие внутри — await: к моменту записи
+   * состояния эффект давно завершился, каскада рендеров нет. Отключение здесь
+   * точечное и относится только к первому вызову; тот же refresh внутри
+   * setInterval правило не трогает, потому что это уже явный колбэк.
+   */
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh()
     const t = setInterval(() => void refresh(), 2500)
     return () => clearInterval(t)
@@ -119,7 +130,7 @@ export default function RoomPage() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Такой комнаты нет.</p>
-        <Link href="/room/new" className="text-ember hover:underline text-sm">
+        <Link href="/room/new" className="text-ember-text hover:underline text-sm">
           Создать свою →
         </Link>
       </div>
@@ -154,7 +165,7 @@ export default function RoomPage() {
             <button
               onClick={join}
               disabled={busy}
-              className="rounded-[14px] bg-ember text-bg font-semibold py-3 hover:brightness-110 transition disabled:opacity-40"
+              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition disabled:opacity-40"
             >
               Войти в комнату
             </button>
@@ -162,7 +173,7 @@ export default function RoomPage() {
             <>
               <a
                 href={`/api/auth/steam?join=${roomId}`}
-                className="rounded-[14px] bg-ember text-bg font-semibold py-3 hover:brightness-110 transition"
+                className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition"
               >
                 Войти через Steam
               </a>
@@ -195,7 +206,7 @@ export default function RoomPage() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-xl font-bold tracking-tight">
-            Пати <span className="font-mono text-ember">{roomId}</span>
+            Пати <span className="font-mono text-ember-text">{roomId}</span>
           </h1>
           <p className="text-xs text-dim mt-0.5">Совпадут голоса всех — будет матч</p>
         </div>
@@ -212,7 +223,7 @@ export default function RoomPage() {
               }}
               className={`rounded-[14px] px-4 py-2 text-sm cursor-pointer transition ${
                 state.room.isPublic
-                  ? 'bg-ember/15 text-ember'
+                  ? 'bg-ember/15 text-ember-text'
                   : 'glass glass-hover text-dim'
               }`}
               title="Открытая комната видна на доске «Пати» — к вам смогут подсесть"
@@ -234,7 +245,7 @@ export default function RoomPage() {
           <span
             key={m.name + String(m.me)}
             className={`rounded-full px-3 py-1.5 text-xs ${
-              m.me ? 'bg-ember/15 text-ember' : 'glass text-dim'
+              m.me ? 'bg-ember/15 text-ember-text' : 'glass text-dim'
             }`}
           >
             {m.name}

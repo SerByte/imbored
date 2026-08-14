@@ -1,5 +1,5 @@
 import { parseStoreAssets, type StoreAssets } from './art'
-import { getGameMeta, getStaleAppids, upsertGameMeta, type Db } from './db'
+import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
 import { pace } from './pace'
 import type { GameMeta } from './types'
 
@@ -331,26 +331,32 @@ export async function ensureMeta(
   try {
     const fresh = await fetchStoreItems(stale, { fetchFn })
     const byAppid = new Map(fresh.map((m) => [m.appid, m]))
-    for (const appid of stale) {
-      const existing = await getGameMeta(db, appid)
+
+    // Один запрос на чтение и одна пачка на запись вместо двух round-trip'ов
+    // на каждую игру. При батче в 200 это было до 400 последовательных
+    // обращений к Turso на КАЖДЫЙ вызов /api/prepare, а клиент дёргает его в
+    // цикле — то есть дороже здесь была не сеть Steam, а собственная база.
+    const existingAll = await getGamesMeta(db, stale)
+
+    const rows = stale.map((appid) => {
+      const existing = existingAll.get(appid) ?? null
       const got = byAppid.get(appid)
-      if (got) {
-        await upsertGameMeta(db, mergeMeta(existing, got), now)
-      } else {
-        // Steam не показывает приложение (снято с продажи, региональное
-        // ограничение) либо это игра вне Steam с отрицательным appid.
-        // Помечаем попытку пустым артом, иначе строка осталась бы «протухшей»
-        // навсегда и прогрев крутился бы вхолостую на каждом заходе.
-        const base: GameMeta = existing ?? {
-          appid,
-          name: names?.get(appid) ?? `App ${appid}`,
-          tags: {},
-          genres: [],
-          categories: [],
-        }
-        await upsertGameMeta(db, { ...base, art: base.art ?? {} }, now)
+      if (got) return mergeMeta(existing, got)
+      // Steam не показывает приложение (снято с продажи, региональное
+      // ограничение) либо это игра вне Steam с отрицательным appid.
+      // Помечаем попытку пустым артом, иначе строка осталась бы «протухшей»
+      // навсегда и прогрев крутился бы вхолостую на каждом заходе.
+      const base: GameMeta = existing ?? {
+        appid,
+        name: names?.get(appid) ?? `App ${appid}`,
+        tags: {},
+        genres: [],
+        categories: [],
       }
-    }
+      return { ...base, art: base.art ?? {} }
+    })
+
+    await upsertGamesMeta(db, rows, now)
   } catch {
     // сеть/лимиты: пропускаем без записи — updated_at не двигается,
     // игры останутся «протухшими» и догрузятся в следующий раз

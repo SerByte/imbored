@@ -16,7 +16,7 @@ import { currentSteamId, getDb, nowSec } from '@/lib/server'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Что нового — imbored',
+  title: 'Что нового',
   description: 'Крупные обновления игр: что изменилось в твоей библиотеке и в популярных играх.',
 }
 

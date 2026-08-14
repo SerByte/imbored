@@ -44,7 +44,7 @@ export function EchoTitle({
           <motion.span
             key={i}
             aria-hidden
-            className={`${className} absolute inset-0 whitespace-nowrap text-ember`}
+            className={`${className} absolute inset-0 whitespace-nowrap text-ember-text`}
             initial={{ x: t * SPREAD, opacity: 0.22 }}
             animate={{ x: 0, opacity: 0 }}
             transition={{ duration: 0.55, ease: EASE, delay }}

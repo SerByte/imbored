@@ -87,7 +87,7 @@ export default function CompatResultPage() {
           </p>
           <a
             href={`/api/auth/steam?compat=${other}`}
-            className="rounded-[14px] bg-ember text-bg font-semibold py-3 hover:brightness-110 transition"
+            className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition"
           >
             Войти через Steam
           </a>
@@ -109,7 +109,7 @@ export default function CompatResultPage() {
               ? 'Этот игрок ещё не подключал библиотеку к imbored.'
               : 'Не получилось посчитать совместимость.'}
         </p>
-        <Link href="/compat" className="text-ember hover:underline text-sm">
+        <Link href="/compat" className="text-ember-text hover:underline text-sm">
           Моя ссылка совместимости →
         </Link>
       </div>
@@ -156,7 +156,7 @@ export default function CompatResultPage() {
 
         <div className="relative mx-auto max-w-2xl px-5 pt-28 pb-10 flex flex-col items-center gap-4 text-center anim-reveal">
           <p className="text-dim text-sm">
-            {data.myName} <span className="text-ember">×</span> {data.otherName}
+            {data.myName} <span className="text-ember-text">×</span> {data.otherName}
           </p>
           <ProgressRing percent={data.percent} />
           <p className="text-xl md:text-2xl font-bold tracking-tight">{verdict(data.percent)}</p>
@@ -243,7 +243,7 @@ export default function CompatResultPage() {
         <div className="flex flex-wrap justify-center gap-3">
           <Link
             href="/room/new"
-            className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+            className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
           >
             Собрать пати вместе
           </Link>

@@ -40,8 +40,45 @@ export function isDemoId(steamid: string): boolean {
   return steamid === DEMO_STEAMID || steamid === DEMO2_STEAMID
 }
 
+/**
+ * Ключ подписи сессий.
+ *
+ * В проде отсутствие переменной — отказ, а не подстановка заглушки, ровно по
+ * той же логике, что двадцатью строками выше у TURSO_DATABASE_URL. Разница
+ * была неоправданной и опасной: со строкой по умолчанию любой, кто читал
+ * исходники, мог подписать себе куку с чужим steamid, и никакого признака
+ * проблемы в логах при этом не возникало.
+ *
+ * Локально заглушка остаётся: иначе разработку нельзя начать без секрета.
+ */
 export function sessionSecret(): string {
-  return process.env.SESSION_SECRET || 'imbored-dev-secret-change-in-prod'
+  const secret = process.env.SESSION_SECRET
+  if (secret) return secret
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'SESSION_SECRET не задан. В продакшене подписывать сессии ключом по умолчанию нельзя — ' +
+        'укажи SESSION_SECRET в настройках проекта.',
+    )
+  }
+  return 'imbored-dev-secret-change-in-prod'
+}
+
+/**
+ * Общие флаги куки сессии. Живут в одном месте, потому что ставится она из
+ * двух разных роутов (/api/connect и возврат Steam OpenID), и раньше набор
+ * флагов приходилось держать в голове дважды.
+ *
+ * secure только вне разработки: на http://localhost браузер такую куку не
+ * примет, и локально сломался бы вход.
+ */
+export function sessionCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30,
+  } as const
 }
 
 export function steamApiKey(): string | null {

@@ -12,16 +12,16 @@ import { Magnet } from '@/components/Magnet'
 import { HeroArt } from '@/components/HeroArt'
 import { LogoMark } from '@/components/Logo'
 import { PlayersNow } from '@/components/PlayersNow'
-import { ProgressRing } from '@/components/ProgressRing'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
-import { Spinner } from '@/components/Spinner'
 import type { GameArtUrls } from '@/lib/art'
 import type { Focus } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
+import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 type Signals = {
   matchPercent: number | null
@@ -123,7 +123,7 @@ function Player() {
 
   const [phase, setPhase] = useState<'prepare' | 'spin' | 'reveal' | 'burnout' | 'error'>('prepare')
   const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
-  const [prep, setPrep] = useState<{ remaining: number; total: number } | null>(null)
+  const [prep, setPrep] = useState<WarmupProgress | null>(null)
   // Откуда пришла следующая игра — задаёт направление смены героя.
   const [dir, setDir] = useState<'next' | 'pick'>('next')
   const [picks, setPicks] = useState<Pick[]>([])
@@ -154,39 +154,42 @@ function Player() {
     started.current = true
 
     async function run() {
-      let total = 0
-      for (let i = 0; i < 80; i++) {
-        const res = await fetch('/api/prepare', { method: 'POST' })
-        if (res.status === 401 || res.status === 409) {
-          router.push('/')
-          return
-        }
-        const data = (await res.json()) as { remaining?: number }
-        const remaining = data.remaining ?? 0
-        // Первый замер — он же общий объём работы: дальше остаток только убывает.
-        if (remaining > total) total = remaining
-        setPrep({ remaining, total })
-        if (remaining <= 0) break
-        setProgress(`Осталось разобрать ${remaining} игр`)
-      }
-
-      setPrep({ remaining: 0, total })
-      setProgress(
-        focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
-      )
-      const res = await fetch('/api/recommend', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mood, ...(focus ? { focus } : {}) }),
+      const warm = await runWarmup({
+        onProgress: (p) => {
+          setPrep(p)
+          if (p.remaining > 0) setProgress(`Осталось разобрать ${p.remaining} игр`)
+        },
       })
-      if (!res.ok) {
+      if (warm === 'unauthorized') {
+        router.push('/')
+        return
+      }
+      if (warm === 'error') {
         setPhase('error')
         return
       }
-      const data = (await res.json()) as {
-        picks: Pick[]
-        discoveries?: Pick[]
-        engine: string
+
+      setPrep((p) => ({ remaining: 0, total: p?.total ?? 0 }))
+      setProgress(
+        focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
+      )
+      // Сюда прогрев доходил и раньше, но без try/catch: оборванная сеть на
+      // этом шаге оставляла экран в вечном «Подбираю…».
+      let data: { picks: Pick[]; discoveries?: Pick[]; engine: string }
+      try {
+        const res = await fetch('/api/recommend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mood, ...(focus ? { focus } : {}) }),
+        })
+        if (!res.ok) {
+          setPhase('error')
+          return
+        }
+        data = (await res.json()) as typeof data
+      } catch {
+        setPhase('error')
+        return
       }
       if (!data.picks?.length) {
         setPhase('error')
@@ -224,59 +227,7 @@ function Player() {
   )
 
   if (phase === 'prepare') {
-    // Прогресс у этого экрана был всегда — просто висел текстом рядом со спиннером.
-    const pct = prep && prep.total > 0 ? ((prep.total - prep.remaining) / prep.total) * 100 : 0
-    const known = prep !== null && prep.total > 0
-
-    return (
-      <div className="relative flex-1 flex flex-col items-center justify-center gap-7 px-5 overflow-hidden">
-        <Ambient className="anim-breathe" />
-        <div aria-hidden className="grain" />
-
-        <div className="relative">
-          {known ? (
-            <ProgressRing
-              percent={pct}
-              size={160}
-              stroke={8}
-              duration={600}
-              label={
-                <div className="flex flex-col items-center gap-0.5">
-                  <span
-                    className="font-mono text-3xl font-extrabold text-ink"
-                    style={{ fontVariantNumeric: 'tabular-nums' }}
-                  >
-                    {Math.round(pct)}%
-                  </span>
-                  <span className="text-[11px] text-dim/70">разобрано</span>
-                </div>
-              }
-            />
-          ) : (
-            <div className="flex h-40 w-40 items-center justify-center">
-              <Spinner />
-            </div>
-          )}
-        </div>
-
-        {/* Строка статуса меняется по ходу — подменять её встык значит терять
-            единственный сигнал, что что-то вообще происходит. */}
-        <div className="h-5 relative w-full max-w-sm text-center">
-          <AnimatePresence mode="wait">
-            <motion.p
-              key={progress}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute inset-x-0 text-dim text-sm"
-            >
-              {progress}
-            </motion.p>
-          </AnimatePresence>
-        </div>
-      </div>
-    )
+    return <WarmupScreen progress={prep} message={progress} />
   }
 
   if (phase === 'spin') {
@@ -301,7 +252,7 @@ function Player() {
         <p className="text-dim text-sm max-w-md">
           Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.
         </p>
-        <Link href="/quiz" className="text-ember hover:underline text-sm">
+        <Link href="/quiz" className="text-ember-text hover:underline text-sm">
           Попробовать снова
         </Link>
       </div>
@@ -330,7 +281,7 @@ function Player() {
                 setIndex(picks.indexOf(cozy))
                 setPhase('reveal')
               }}
-              className="rounded-[14px] bg-ember text-bg font-semibold py-3 hover:brightness-110 transition"
+              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition"
             >
               Ладно, покажи «{cozy.name}» — она спокойная
             </button>
@@ -407,7 +358,7 @@ function Player() {
           >
             <div className="max-w-2xl flex flex-col gap-4">
               <motion.div variants={STEP} className="flex items-center gap-3 text-xs">
-                <span className="rounded-full bg-ember/15 text-ember px-3 py-1 font-medium">
+                <span className="rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium">
                   {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}
                 </span>
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
@@ -496,7 +447,7 @@ function Player() {
                     target="_blank"
                     rel="noreferrer"
                     onClick={() => sendFeedback(pick.appid, 'liked')}
-                    className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+                    className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   >
                     Открыть в {STORE_LABEL[pick.store ?? ''] ?? 'магазине'}
                   </a>
@@ -504,7 +455,7 @@ function Player() {
                   <SteamLaunch
                     appid={pick.appid}
                     onClick={() => sendFeedback(pick.appid, 'liked')}
-                    className="rounded-[14px] bg-ember text-bg font-semibold px-6 py-3 hover:brightness-110 transition"
+                    className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   />
                 )}
                 {pick.source === 'new' && !pick.storeUrl && pick.priceFinal !== null && pick.priceFinal > 0 && (
@@ -514,7 +465,7 @@ function Player() {
                     rel="noreferrer"
                     className="rounded-[14px] glass glass-hover px-5 py-3 text-sm"
                   >
-                    <span className="font-mono text-ember">${(pick.priceFinal / 100).toFixed(2)}</span>
+                    <span className="font-mono text-ember-text">${(pick.priceFinal / 100).toFixed(2)}</span>
                     <span className="text-dim"> · в Steam</span>
                   </a>
                 )}
@@ -531,7 +482,7 @@ function Player() {
                     sendFeedback(pick.appid, 'liked')
                   }}
                   className={`rounded-[14px] px-4 py-3 text-sm transition ${
-                    liked.has(pick.appid) ? 'bg-ember/20 text-ember' : 'glass glass-hover text-dim'
+                    liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
                   }`}
                 >
                   {liked.has(pick.appid) ? 'Зашло ✓' : 'Зашло'}
@@ -572,9 +523,17 @@ function Player() {
                     setShowWhy(false)
                   }}
                   title="Больше не показывать эту игру"
-                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-dim/70"
+                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint cursor-pointer"
                 >
-                  🚫
+                  {/*
+                    Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
+                    не было вовсе (title им не является), а рядом с «Не то —
+                    дальше» её смысл не читался и глазами: обе кнопки убирают
+                    игру с экрана, но одна на сегодня, а другая навсегда.
+                    Эмодзи спрятана от скринридера, текст объясняет разницу.
+                  */}
+                  <span aria-hidden>🚫</span>
+                  <span className="sr-only">Больше никогда не показывать эту игру</span>
                 </button>
               </motion.div>
             )}
@@ -589,7 +548,7 @@ function Player() {
             <h2 className="text-sm font-medium text-dim">
               {focus ? 'Ещё нераспакованное' : 'Ещё варианты под это настроение'}
             </h2>
-            <span className="text-xs text-dim/60 font-mono">
+            <span className="text-xs text-faint font-mono">
               {engine === 'claude' ? 'подбор: ИИ' : 'подбор: эвристика'}
             </span>
           </div>
@@ -638,7 +597,7 @@ function Player() {
         <section className="mx-auto w-full max-w-6xl px-5 pb-16">
           <div className="border-t border-edge/60 pt-10">
             <h2 className="text-sm font-medium text-dim mb-1">Нет в твоей библиотеке</h2>
-            <p className="text-xs text-dim/60 mb-4">
+            <p className="text-xs text-faint mb-4">
               Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто
               на будущее.
             </p>
@@ -670,7 +629,7 @@ function Player() {
                       <span className="text-dim truncate">
                         {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
                       </span>
-                      <span className="font-mono text-ember shrink-0">
+                      <span className="font-mono text-ember-text shrink-0">
                         {p.priceFinal === 0
                           ? 'бесплатно'
                           : p.priceFinal

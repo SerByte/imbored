@@ -2,11 +2,20 @@ import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 import { LogoMark } from '@/components/Logo'
 
-export const metadata = { title: 'Поддержать — imbored' }
+export const metadata = { title: 'Поддержать' }
 
+/**
+ * Отсюда убран перк «Большие пати — комнаты больше чем на 4 человека».
+ * Лимита участников в коде нет вообще: ни в joinRoom, ни в роуте /join, ни в
+ * схеме. То есть перк продавал снятие ограничения, которого не существует, —
+ * на странице, где двумя блоками ниже написано «рекомендация не продаётся».
+ *
+ * Цена оттуда же убрана: называть сумму за то, чего нет и что не начато,
+ * — обещание, которое некому выполнить. Вернуть можно будет тогда, когда
+ * появится что ограничивать.
+ */
 const PERKS = [
   { title: 'Безлимит ИИ-объяснений', desc: 'Перегенерация подборок и pros/cons без ограничений' },
-  { title: 'Большие пати', desc: 'Комнаты больше чем на 4 человека' },
   { title: 'Wrapped раньше всех', desc: 'Итоги года — первым, с эксклюзивной карточкой' },
   { title: 'Свои вайб-пресеты', desc: 'Собери собственные «после работы» и «пятницы»' },
 ]
@@ -39,7 +48,7 @@ export default function SupportPage() {
               href={donateUrl}
               target="_blank"
               rel="noreferrer"
-              className="rounded-[14px] bg-ember text-bg font-semibold py-3 text-center hover:brightness-110 transition"
+              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 text-center hover:brightness-110 transition"
             >
               Поддержать проект
             </a>
@@ -53,9 +62,9 @@ export default function SupportPage() {
         <div className="glass rounded-[20px] p-6 flex flex-col gap-4 anim-rise" style={{ animationDelay: '80ms' }}>
           <div className="flex items-baseline justify-between">
             <h2 className="font-bold">
-              imbored<span className="text-ember">+</span>
+              imbored<span className="text-ember-text">+</span>
             </h2>
-            <span className="text-xs text-dim font-mono">скоро · ~$2/мес</span>
+            <span className="text-xs text-dim font-mono">когда-нибудь</span>
           </div>
           <p className="text-sm text-dim -mt-2">
             Для тех, кто хочет больше удовольствия — база остаётся бесплатной.
@@ -63,7 +72,7 @@ export default function SupportPage() {
           <ul className="flex flex-col gap-2.5">
             {PERKS.map((p) => (
               <li key={p.title} className="flex gap-3 text-sm">
-                <span className="text-ember mt-0.5">+</span>
+                <span className="text-ember-text mt-0.5">+</span>
                 <div>
                   <span className="font-semibold">{p.title}</span>
                   <span className="text-dim"> — {p.desc}</span>
@@ -73,7 +82,7 @@ export default function SupportPage() {
           </ul>
         </div>
 
-        <p className="text-xs text-dim/60 text-center">
+        <p className="text-xs text-faint text-center">
           Принцип-табу: мы никогда не продаём места в выдаче. Рекомендация — это доверие,
           а доверие не продаётся.
         </p>

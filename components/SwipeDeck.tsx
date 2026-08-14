@@ -97,7 +97,7 @@ function TopCard({
         />
         <motion.span
           aria-hidden
-          className="absolute top-4 left-4 rounded-full bg-ember text-bg px-3 py-1 text-sm font-bold"
+          className="absolute top-4 left-4 rounded-full bg-ember text-on-ember px-3 py-1 text-sm font-bold"
           style={{ opacity: yesGlow }}
         >
           Играем!
@@ -115,11 +115,11 @@ function TopCard({
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-2xl font-bold tracking-tight">{card.name}</h2>
           {card.ownedByAll ? (
-            <span className="rounded-full bg-emerald-400/15 text-emerald-300 px-3 py-1 text-xs font-medium">
+            <span className="rounded-full bg-emerald-400/15 text-ok px-3 py-1 text-xs font-medium">
               ✓ Есть у всех
             </span>
           ) : (
-            <span className="rounded-full bg-sky-400/10 text-sky-300 px-3 py-1 text-xs">
+            <span className="rounded-full bg-sky-400/10 text-info px-3 py-1 text-xs">
               Нет у: {card.missingFor.join(', ')}
               {card.priceFinal !== undefined && card.priceFinal > 0
                 ? ` · $${(card.priceFinal / 100).toFixed(0)}`
@@ -149,7 +149,7 @@ function TopCard({
           </button>
           <button
             onClick={() => onCommit(true)}
-            className="rounded-[14px] bg-ember text-bg font-bold py-5 text-lg hover:brightness-110 active:scale-[0.98] transition cursor-pointer"
+            className="rounded-[14px] bg-ember text-on-ember font-bold py-5 text-lg hover:brightness-110 active:scale-[0.98] transition cursor-pointer"
           >
             Играем!
           </button>
@@ -218,7 +218,7 @@ export function SwipeDeck({
       </div>
 
       <div className="flex items-center gap-3">
-        <div className="h-1 flex-1 rounded-full bg-white/10 overflow-hidden">
+        <div className="h-1 flex-1 rounded-full bg-track overflow-hidden">
           <motion.div
             className="h-full bg-ember rounded-full"
             initial={false}
@@ -226,7 +226,7 @@ export function SwipeDeck({
             transition={{ duration: 0.3, ease: EASE }}
           />
         </div>
-        <span className="text-xs text-dim/60 font-mono shrink-0">
+        <span className="text-xs text-faint font-mono shrink-0">
           {votedCount + 1}/{deckTotal}
         </span>
       </div>
