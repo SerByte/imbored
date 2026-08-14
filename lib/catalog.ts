@@ -97,6 +97,9 @@ export type PurchaseOption = {
   original_price_in_cents?: string
   discount_pct?: number
   active_discounts?: Array<{ discount_end_date?: number }>
+  /** есть у варианта-бандла: цена там за НАБОР, а не за эту игру */
+  bundleid?: number
+  packageid?: number
 }
 
 export type PriceInfo = {
@@ -117,9 +120,19 @@ export type PriceInfo = {
  *
  * Срок берём самый ранний из активных: если акций несколько, цена вырастет
  * на первой же истёкшей.
+ *
+ * Вариант-бандл отбрасывается целиком. «Лучшим» Steam называет самое выгодное
+ * предложение, и у части игр это набор из нескольких: у Forever Skies — Deluxe
+ * Edition за $16.00 при цене самой игры $29.99, у Drug Dealer Simulator 2 —
+ * «Thieves'n'Dealers» за $24.10 вместо $40.48 с честным discount_pct: 40.
+ * Взять оттуда цену значит показать ценник другого товара, а взять скидку —
+ * пообещать её на игру, которая в магазине стоит полную. Цена самой игры в
+ * этом ответе не приходит вовсе, поэтому единственный правдивый ответ —
+ * «не знаю»: цену подтянет appdetails при заходе на страницу игры.
  */
 export function parsePurchaseOption(bpo: PurchaseOption | undefined | null): PriceInfo {
   if (!bpo) return {}
+  if (bpo.bundleid !== undefined) return {}
   const final = Number(bpo.final_price_in_cents)
   if (!Number.isFinite(final)) return {}
 
