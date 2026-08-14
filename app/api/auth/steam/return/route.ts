@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server'
 import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
-import { SESSION_COOKIE, appBaseUrl, getDb, nowSec, sessionSecret, steamApiKey } from '@/lib/server'
+import {
+  SESSION_COOKIE,
+  appBaseUrl,
+  getDb,
+  nowSec,
+  sessionCookieOptions,
+  sessionSecret,
+  steamApiKey,
+} from '@/lib/server'
 import { signSession } from '@/lib/session'
 import { fetchOwnedGames, fetchPlayerSummary } from '@/lib/steam'
 import { verifyAssertion } from '@/lib/steam-openid'
@@ -43,12 +51,7 @@ export async function GET(req: Request) {
           ? `${base}/compat/${compat}`
           : `${base}/quiz`
     const res = NextResponse.redirect(target)
-    res.cookies.set(SESSION_COOKIE, signSession(steamid, sessionSecret()), {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 30,
-    })
+    res.cookies.set(SESSION_COOKIE, signSession(steamid, sessionSecret()), sessionCookieOptions())
     return res
   } catch {
     return NextResponse.redirect(`${base}/?error=steam`)

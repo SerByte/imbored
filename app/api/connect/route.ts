@@ -7,6 +7,7 @@ import {
   SESSION_COOKIE,
   getDb,
   nowSec,
+  sessionCookieOptions,
   sessionSecret,
   steamApiKey,
 } from '@/lib/server'
@@ -14,12 +15,7 @@ import { signSession } from '@/lib/session'
 import { fetchOwnedGames, fetchPlayerSummary, parseProfileInput, resolveVanity } from '@/lib/steam'
 
 function withSession(res: NextResponse, steamid: string): NextResponse {
-  res.cookies.set(SESSION_COOKIE, signSession(steamid, sessionSecret()), {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30,
-  })
+  res.cookies.set(SESSION_COOKIE, signSession(steamid, sessionSecret()), sessionCookieOptions())
   return res
 }
 
