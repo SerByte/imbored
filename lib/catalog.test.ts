@@ -1,12 +1,17 @@
+import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
+import { getGameMeta, migrateDb, upsertGameMeta } from './db'
 import {
   mergeMeta,
   parseAppDetails,
   parseMostPlayed,
+  parsePurchaseOption,
   parseSteamSpyTags,
   parseStoreItems,
   parseTagDictionary,
+  ensureMeta,
 } from './catalog'
+import type { GameMeta } from './types'
 
 const APPDETAILS_RESPONSE = {
   '620': {
@@ -47,8 +52,30 @@ describe('parseAppDetails', () => {
       screenshots: ['https://cdn.example/620/s0.jpg', 'https://cdn.example/620/s1.jpg'],
       isFree: false,
       priceFinal: 499,
+      priceInitial: 999,
+      discountPercent: 50,
       releaseDate: '18 Apr, 2011',
     })
+  })
+
+  test('без распродажи скидка равна нулю, а не отсутствует', () => {
+    const meta = parseAppDetails(
+      {
+        '7': {
+          success: true,
+          data: {
+            type: 'game',
+            name: 'Полная цена',
+            price_overview: { currency: 'USD', initial: 1999, final: 1999, discount_percent: 0 },
+          },
+        },
+      },
+      7,
+    )
+    // Явный ноль — это ответ «распродажи нет», и он обязан доехать до записи:
+    // на нём гасится вчерашняя скидка, см. ON CONFLICT в upsertGameMeta
+    expect(meta?.discountPercent).toBe(0)
+    expect(meta?.priceInitial).toBe(1999)
   })
 
   test('success=false или не-игра дают null', () => {
@@ -157,6 +184,13 @@ describe('parseStoreItems', () => {
     expect(m.publisher).toBe('Aggro Crab')
   })
 
+  test('скидка доезжает вместе с ценой, а не теряется по дороге', () => {
+    const m = parseStoreItems(GETITEMS_RESPONSE, TAG_NAMES)[0]
+    expect(m.priceFinal).toBe(399)
+    expect(m.priceInitial).toBe(799)
+    expect(m.discountPercent).toBe(50)
+  })
+
   test('сохраняются все размеры, включая широкий арт для героя', () => {
     const m = parseStoreItems(GETITEMS_RESPONSE, TAG_NAMES)[0]
     expect(m.art?.hero).toContain('library_hero.jpg')
@@ -199,6 +233,98 @@ describe('parseMostPlayed', () => {
   test('битый ответ даёт пустой список, а не падение', () => {
     expect(parseMostPlayed(null)).toEqual([])
     expect(parseMostPlayed({ response: { ranks: [{ rank: 1 }] } })).toEqual([])
+  })
+})
+
+describe('parsePurchaseOption', () => {
+  test('распродажа: цена, старая цена, процент и срок', () => {
+    // Срез живого ответа: цены приходят строками, срок — в active_discounts
+    expect(
+      parsePurchaseOption({
+        final_price_in_cents: '974',
+        original_price_in_cents: '1499',
+        discount_pct: 35,
+        active_discounts: [{ discount_end_date: 1_787_850_009 }],
+      }),
+    ).toEqual({
+      priceFinal: 974,
+      priceInitial: 1499,
+      discountPercent: 35,
+      discountEndsAt: 1_787_850_009,
+    })
+  })
+
+  test('полная цена: скидка приходит явным нулём', () => {
+    // Steam при полной цене не присылает ни discount_pct, ни original_price.
+    // Если так же промолчать при записи, в базе останется вчерашняя скидка —
+    // у кончившейся распродажи нет своего события, есть только этот ответ.
+    expect(parsePurchaseOption({ final_price_in_cents: '1499' })).toEqual({
+      priceFinal: 1499,
+      priceInitial: 1499,
+      discountPercent: 0,
+    })
+  })
+
+  test('из нескольких акций берётся самая ранняя — на ней цена и вырастет', () => {
+    const info = parsePurchaseOption({
+      final_price_in_cents: '100',
+      original_price_in_cents: '200',
+      discount_pct: 50,
+      active_discounts: [{ discount_end_date: 300 }, { discount_end_date: 200 }],
+    })
+    expect(info.discountEndsAt).toBe(200)
+  })
+
+  test('вариант-бандл не выдаётся за цену игры', () => {
+    // Срез живого ответа 14.08.2026: «лучшим» предложением для Drug Dealer
+    // Simulator 2 Steam называет набор «Thieves'n'Dealers» за $24.10 вместо
+    // $40.48 — с честным discount_pct: 40. Сама игра при этом стоит полную
+    // цену, и «−40%» на её карточке было бы обещанием чужого ценника.
+    expect(
+      parsePurchaseOption({
+        bundleid: 42237,
+        purchase_option_name: "Thieves'n'Dealers",
+        final_price_in_cents: '2410',
+        original_price_in_cents: '4048',
+        discount_pct: 40,
+      } as Parameters<typeof parsePurchaseOption>[0]),
+    ).toEqual({})
+  })
+
+  test('бандл без скидки тоже не цена игры', () => {
+    // Forever Skies: Deluxe Edition за $16.00 при цене игры $29.99
+    expect(
+      parsePurchaseOption({
+        bundleid: 52538,
+        final_price_in_cents: '1600',
+      } as Parameters<typeof parsePurchaseOption>[0]),
+    ).toEqual({})
+  })
+
+  test('обычная покупка пакетом — цена игры, её берём', () => {
+    expect(
+      parsePurchaseOption({
+        packageid: 82712,
+        final_price_in_cents: '1499',
+      } as Parameters<typeof parsePurchaseOption>[0]),
+    ).toEqual({ priceFinal: 1499, priceInitial: 1499, discountPercent: 0 })
+  })
+
+  test('нет блока покупки — нет и цены: free-to-play и снятое с продажи', () => {
+    expect(parsePurchaseOption(undefined)).toEqual({})
+    expect(parsePurchaseOption({ final_price_in_cents: 'не число' })).toEqual({})
+  })
+
+  test('процент без реальной разницы в цене игнорируется', () => {
+    // Защита от битой строки: «−50%» при равных ценах — не скидка
+    const info = parsePurchaseOption({
+      final_price_in_cents: '500',
+      original_price_in_cents: '500',
+      discount_pct: 50,
+      active_discounts: [{ discount_end_date: 999 }],
+    })
+    expect(info.discountPercent).toBe(0)
+    expect(info.discountEndsAt).toBeUndefined()
   })
 })
 
@@ -263,5 +389,51 @@ describe('parseSteamSpyTags', () => {
   test('SteamSpy отдаёт [] вместо объекта, когда тегов нет', () => {
     expect(parseSteamSpyTags({ appid: 1, tags: [] })).toEqual({})
     expect(parseSteamSpyTags({})).toEqual({})
+  })
+})
+
+describe('ensureMeta', () => {
+  const NOW = 1_700_000_000
+
+  /** Стаб магазина: словарь тегов и ответ GetItems по одному и тому же fetch */
+  function storeStub(items: unknown[]): typeof fetch {
+    return (async (url: string) => {
+      if (String(url).includes('populartags')) {
+        return new Response(JSON.stringify([{ tagid: 19, name: 'Action' }]), { status: 200 })
+      }
+      return new Response(JSON.stringify({ response: { store_items: items } }), { status: 200 })
+    }) as unknown as typeof fetch
+  }
+
+  test('игра стала бесплатной — вчерашняя скидка гаснет, а не переезжает в новую запись', async () => {
+    // mergeMeta переносит в новую запись всё, чего нет в свежем ответе. Для
+    // скидки это означало «−70%» навсегда: у кончившейся акции нет своего
+    // события, есть только ответ Steam без блока покупки.
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    const stale: GameMeta = {
+      appid: 730,
+      name: 'Counter-Strike 2',
+      tags: { Action: 100 },
+      genres: [],
+      categories: [1],
+      priceFinal: 300,
+      priceInitial: 1000,
+      discountPercent: 70,
+      priceAt: NOW,
+      art: { header: 'https://example/730.jpg' },
+    }
+    await upsertGameMeta(db, stale, NOW - 20 * 86_400)
+
+    await ensureMeta(db, [730], {
+      fetchFn: storeStub([
+        { appid: 730, id: 730, name: 'Counter-Strike 2', visible: true, is_free: true },
+      ]),
+    })
+
+    const stored = await getGameMeta(db, 730)
+    expect(stored?.discountPercent).toBe(0)
+    expect(stored?.isFree).toBe(true)
+    // цена остаётся: «Steam не назвал цену» и «игра подешевела» неразличимы
+    expect(stored?.priceFinal).toBe(300)
   })
 })

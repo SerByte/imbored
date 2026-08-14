@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
+import { refreshDeals } from '@/lib/deals'
 import { fetchCurrentPlayers } from '@/lib/ingest'
 import {
   getGamesMeta,
@@ -27,6 +28,8 @@ const META_MAX_AGE_SEC = 14 * 86_400
 // в один-два вызова вместо восьмидесяти, как было с поштучным SteamSpy
 const BATCH = 200
 const MIN_NEW_POOL = 20
+/** Замеров цены за один вызов прогрева */
+const PRICE_BATCH = 100
 const POOL_LIMIT = 200
 
 /**
@@ -96,7 +99,15 @@ export async function POST() {
   // Онлайн для совместных игр библиотеки: без него фильтр живости судит вслепую
   // и в выдачу попадают игры с пустыми серверами. Спрашиваем только у сетевых
   // и только когда замер протух — у обычного человека это десятки запросов.
-  if (!remaining) await refreshPlayerCounts(db, wanted)
+  if (!remaining) {
+    await refreshPlayerCounts(db, wanted)
+    // Цены и скидки: свой проход, потому что своя скорость протухания —
+    // метаданные живут две недели, распродажа несколько дней. Только для тех,
+    // у кого замер устарел, и сотней за вызов: маршрут и без того делает
+    // тяжёлый прогрев метаданных, а клиент дёргает его в цикле — вся
+    // библиотека доберётся за несколько шагов.
+    await refreshDeals(db, wanted, nowSec(), { maxFetch: PRICE_BATCH })
+  }
 
   return NextResponse.json({ remaining, total: wanted.length })
 }

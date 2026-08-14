@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { compatibility } from '@/lib/compat'
 import { countIngest, getGamesMeta, getLatestSnapshot, getPersonaName, loadTagStats } from '@/lib/db'
+import { discountView } from '@/lib/discount'
 import { buildGroupDeck } from '@/lib/group'
 import { fetchDiscoveryPool, pickQueryTags } from '@/lib/pool'
 import { buildTagProfile } from '@/lib/recommend'
-import { currentSteamId, getDb } from '@/lib/server'
+import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 export async function GET(_req: Request, ctx: { params: Promise<{ steamid: string }> }) {
   const { steamid: otherRaw } = await ctx.params
@@ -62,7 +63,17 @@ export async function GET(_req: Request, ctx: { params: Promise<{ steamid: strin
       headerImage: metaOf(g.appid)?.headerImage ?? null,
       art: metaOf(g.appid)?.art ?? null,
     })),
-    playTogether: playTogether.map((c) => ({ ...c, art: metaOf(c.appid)?.art ?? null })),
+    playTogether: playTogether.map((c) => {
+      const meta = metaOf(c.appid)
+      return {
+        ...c,
+        art: meta?.art ?? null,
+        // Только показываем то, что уже замерено: за свежими ценами сюда не
+        // ходим — страница открывается по ссылке и без входа в подбор.
+        // И только там, где кому-то придётся покупать: у общей игры цены нет.
+        discount: meta && !c.ownedByAll ? discountView(meta, nowSec()) : null,
+      }
+    }),
     myName: nameOf(me, myName),
     otherName: nameOf(otherRaw, otherName),
     mySteamid: me,

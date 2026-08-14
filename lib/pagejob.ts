@@ -103,6 +103,23 @@ export async function runPageSlice(
       const merged = mergeMeta(existing, fresh)
       // теги из GetItems точнее, чем из appdetails: не даём их перетереть
       if (existing && Object.keys(existing.tags).length) merged.tags = existing.tags
+
+      // Цена в этом ответе только что из магазина — датируем замер, иначе
+      // скидка приедет и тут же будет отброшена как «неизвестной свежести».
+      if (fresh.priceFinal !== undefined) merged.priceAt = now
+      // Срок распродажи знает только GetItems, appdetails его не отдаёт вовсе.
+      // Пока процент тот же и срок ещё не вышел — это та же акция, и дату
+      // конца незачем терять из-за того, что данные приехали другой ручкой.
+      // Проверка «не вышел» обязательна: иначе новая распродажа с тем же
+      // процентом унаследовала бы прошлогоднюю дату и погасла бы на месте.
+      if (
+        existing?.discountEndsAt !== undefined &&
+        existing.discountEndsAt > now &&
+        fresh.discountPercent === existing.discountPercent
+      ) {
+        merged.discountEndsAt = existing.discountEndsAt
+      }
+
       await upsertGameMeta(db, merged, now)
       if (merged.screenshots?.length) withShots++
     }

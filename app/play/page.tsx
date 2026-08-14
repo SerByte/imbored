@@ -12,12 +12,14 @@ import { Magnet } from '@/components/Magnet'
 import { HeroArt } from '@/components/HeroArt'
 import { LogoMark } from '@/components/Logo'
 import { PlayersNow } from '@/components/PlayersNow'
+import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
 import type { GameArtUrls } from '@/lib/art'
-import type { Focus } from '@/lib/recommend'
+import type { Discount } from '@/lib/discount'
+import type { Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
@@ -43,7 +45,14 @@ type Pick = {
   store: string | null
   storeUrl: string | null
   priceFinal: number | null
+  isFree: boolean | null
+  discount: Discount | null
   signals: Signals
+}
+
+/** Ссылка на игру в магазине: у не-Steam игр она своя, у Steam собирается */
+function storeHref(p: Pick): string {
+  return p.storeUrl ?? `https://store.steampowered.com/app/${p.appid}/`
 }
 
 const SKIP_REASONS: Array<{ key: string; label: string }> = [
@@ -55,6 +64,17 @@ const SKIP_REASONS: Array<{ key: string; label: string }> = [
 
 const COZY_TAGS = ['Casual', 'Relaxing', 'Cozy', 'Wholesome', 'Puzzle', 'Farming Sim']
 const BURNOUT_AFTER_SKIPS = 5
+
+/**
+ * Две двери в выдачу. «Любые игры» стоит первой и включена по умолчанию:
+ * на «во что поиграть» честный ответ не обязан заканчиваться на том, за что
+ * уже заплачено. Кому нужен старый разговор строго про свою полку — вторая
+ * кнопка возвращает его в один тап.
+ */
+const SCOPES: Array<{ key: Scope; label: string }> = [
+  { key: 'all', label: 'Любые игры' },
+  { key: 'library', label: 'Только моё' },
+]
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -134,6 +154,11 @@ function Player() {
   const [showWhy, setShowWhy] = useState(false)
   const [skipCount, setSkipCount] = useState(0)
   const [engine, setEngine] = useState<string>('')
+  // «Любые игры» против «только моя библиотека». Живёт в состоянии, а не в
+  // адресе: это переключатель уже показанной выдачи, и перезагружать ради
+  // него страницу (а с ней и весь прогрев) незачем.
+  const [scope, setScope] = useState<Scope>('all')
+  const [switching, setSwitching] = useState(false)
   const started = useRef(false)
 
   const sendFeedback = useCallback(
@@ -145,6 +170,43 @@ function Player() {
       })
     },
     // mood собирается из строки запроса и в рамках страницы неизменен
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+
+  /**
+   * Запрос выдачи. Отдельно от прогрева: переключение режима повторяет только
+   * его. Возвращает карточки, а не флаг, — вызывающему нужна длина сразу,
+   * а состояние к следующей строке ещё не обновится.
+   */
+  const fetchPicks = useCallback(
+    async (nextScope: Scope): Promise<Pick[] | null> => {
+      // try/catch, а не голый await: оборванная сеть на этом шаге всплывала из
+      // async-функции и оставляла экран в вечном «Подбираю…» — тот же класс
+      // ошибки, что был в цикле прогрева до переезда в lib/warmup.ts.
+      // Возвращаем null, и вызывающий покажет экран ошибки.
+      try {
+        const res = await fetch('/api/recommend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mood, ...(focus ? { focus } : {}), scope: nextScope }),
+        })
+        if (!res.ok) return null
+        const data = (await res.json()) as {
+          picks: Pick[]
+          discoveries?: Pick[]
+          engine: string
+        }
+        if (!data.picks?.length) return null
+        setPicks(data.picks)
+        setDiscoveries(data.discoveries ?? [])
+        setEngine(data.engine)
+        return data.picks
+      } catch {
+        return null
+      }
+    },
+    // mood и focus собираются из строки запроса и в рамках страницы неизменны
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
@@ -173,32 +235,12 @@ function Player() {
       setProgress(
         focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
       )
-      // Сюда прогрев доходил и раньше, но без try/catch: оборванная сеть на
-      // этом шаге оставляла экран в вечном «Подбираю…».
-      let data: { picks: Pick[]; discoveries?: Pick[]; engine: string }
-      try {
-        const res = await fetch('/api/recommend', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mood, ...(focus ? { focus } : {}) }),
-        })
-        if (!res.ok) {
-          setPhase('error')
-          return
-        }
-        data = (await res.json()) as typeof data
-      } catch {
+      const got = await fetchPicks(scope)
+      if (!got) {
         setPhase('error')
         return
       }
-      if (!data.picks?.length) {
-        setPhase('error')
-        return
-      }
-      setPicks(data.picks)
-      setDiscoveries(data.discoveries ?? [])
-      setEngine(data.engine)
-      setIndex(roulette ? weightedRandomIndex(data.picks.length) : 0)
+      setIndex(roulette ? weightedRandomIndex(got.length) : 0)
       // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
       // та самая случайность, которая до сих пор происходила молча.
       setPhase(roulette ? 'spin' : 'reveal')
@@ -207,6 +249,31 @@ function Player() {
     void run()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  /** Смена режима: тот же прогрев, другой вопрос к движку — и выдача с начала */
+  const switchScope = useCallback(
+    async (next: Scope) => {
+      if (next === scope || switching) return
+      setSwitching(true)
+      try {
+        const got = await fetchPicks(next)
+        if (!got) return
+        setScope(next)
+        setDir('pick')
+        setIndex(0)
+        setAskReason(false)
+        setShowWhy(false)
+        setSkipCount(0)
+      } finally {
+        // finally, а не строка после await: оборванная сеть оставляла бы
+        // переключатель навсегда заблокированным, и починить это можно было бы
+        // только перезагрузкой страницы. Не вышло — остаёмся на прежней
+        // выдаче, она на экране и никуда не делась.
+        setSwitching(false)
+      }
+    },
+    [scope, switching, fetchPicks],
+  )
 
   const advance = useCallback(
     (from: number) => {
@@ -441,15 +508,20 @@ function Player() {
               </motion.div>
             ) : (
               <motion.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2">
-                {pick.storeUrl ? (
+                {pick.source === 'new' || pick.storeUrl ? (
+                  // Игры нет в библиотеке — «Запустить» для неё кнопка-обманка:
+                  // steam://run у не купленной игры не делает ничего. Ведём
+                  // туда, где её действительно можно взять.
                   <a
-                    href={pick.storeUrl}
+                    href={storeHref(pick)}
                     target="_blank"
                     rel="noreferrer"
                     onClick={() => sendFeedback(pick.appid, 'liked')}
                     className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   >
-                    Открыть в {STORE_LABEL[pick.store ?? ''] ?? 'магазине'}
+                    {pick.source === 'new'
+                      ? `Смотреть в ${STORE_LABEL[pick.store ?? ''] ?? 'Steam'}`
+                      : `Открыть в ${STORE_LABEL[pick.store ?? ''] ?? 'магазине'}`}
                   </a>
                 ) : (
                   <SteamLaunch
@@ -458,15 +530,20 @@ function Player() {
                     className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   />
                 )}
-                {pick.source === 'new' && !pick.storeUrl && pick.priceFinal !== null && pick.priceFinal > 0 && (
+                {pick.source === 'new' && (pick.priceFinal !== null || pick.isFree) && (
                   <a
-                    href={`https://store.steampowered.com/app/${pick.appid}/`}
+                    href={storeHref(pick)}
                     target="_blank"
                     rel="noreferrer"
-                    className="rounded-[14px] glass glass-hover px-5 py-3 text-sm"
+                    className="rounded-[14px] glass glass-hover px-5 py-3 text-sm flex items-center gap-2"
                   >
-                    <span className="font-mono text-ember-text">${(pick.priceFinal / 100).toFixed(2)}</span>
-                    <span className="text-dim"> · в Steam</span>
+                    <PriceTag
+                      priceFinal={pick.priceFinal}
+                      discount={pick.discount}
+                      isFree={pick.isFree}
+                      size="hero"
+                    />
+                    <DiscountEnds discount={pick.discount} />
                   </a>
                 )}
                 <Link
@@ -544,12 +621,37 @@ function Player() {
 
       {!roulette && (
         <section className="mx-auto w-full max-w-6xl px-5 py-10">
-          <div className="flex items-baseline justify-between mb-4">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap mb-4">
             <h2 className="text-sm font-medium text-dim">
               {focus ? 'Ещё нераспакованное' : 'Ещё варианты под это настроение'}
             </h2>
+            {/* Откуда брать главную выдачу. При фокусе «нераспакованное»
+                переключателя нет: там вопрос уже задан и ответ на него — своё. */}
+            {!focus && (
+              <div
+                role="group"
+                aria-label="Откуда брать игры"
+                className="flex items-center gap-1 rounded-full glass p-1 text-xs"
+              >
+                {SCOPES.map((s) => (
+                  <button
+                    key={s.key}
+                    onClick={() => switchScope(s.key)}
+                    disabled={switching}
+                    // Выбранное состояние — не только цветом: скринридеру и
+                    // тому, кто не различает ember на стекле, нужен признак
+                    aria-pressed={scope === s.key}
+                    className={`rounded-full px-3 py-1 transition cursor-pointer disabled:opacity-50 ${
+                      scope === s.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <span className="text-xs text-faint font-mono">
-              {engine === 'claude' ? 'подбор: ИИ' : 'подбор: эвристика'}
+              {switching ? 'пересобираю…' : engine === 'claude' ? 'подбор: ИИ' : 'подбор: эвристика'}
             </span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -567,18 +669,34 @@ function Player() {
                 }}
                 className="glass glass-hover rounded-[14px] overflow-hidden text-left cursor-pointer"
               >
-                <GameArt
-                  appid={p.appid}
-                  name={p.name}
-                  headerImage={p.headerImage}
-                  art={p.art}
-                  sizes="(min-width: 768px) 33vw, 100vw"
-                  className="w-full aspect-[460/215] object-cover"
-                />
+                <div className="relative">
+                  <GameArt
+                    appid={p.appid}
+                    name={p.name}
+                    headerImage={p.headerImage}
+                    art={p.art}
+                    sizes="(min-width: 768px) 33vw, 100vw"
+                    className="w-full aspect-[460/215] object-cover"
+                  />
+                  <DiscountCorner discount={p.discount} />
+                </div>
                 <div className="p-3">
                   <div className="text-sm font-semibold leading-tight">{p.name}</div>
-                  <div className="text-[11px] text-dim mt-1">
-                    {p.store ? STORE_LABEL[p.store] ?? p.store : SOURCE_BADGE[p.source]}
+                  <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
+                    <span className="text-dim truncate">
+                      {p.store ? STORE_LABEL[p.store] ?? p.store : SOURCE_BADGE[p.source]}
+                    </span>
+                    {/* Цена — только у не купленного: у своей игры она уже
+                        ничего не решает, а место в строке занимает */}
+                    {p.source === 'new' && (
+                      <PriceTag
+                        priceFinal={p.priceFinal}
+                        discount={p.discount}
+                        isFree={p.isFree}
+                        showPercent={false}
+                        className="shrink-0"
+                      />
+                    )}
                   </div>
                 </div>
               </motion.button>
@@ -592,11 +710,22 @@ function Player() {
         </section>
       )}
 
-      {/* Покупки — отдельным разговором: выше только то, за что уже заплачено */}
+      {/* Каталог отдельным блоком: даже когда он участвует в главной выдаче,
+          у покупок остаётся своя полка — с ценами и скидками на виду */}
       {!roulette && discoveries.length > 0 && (
         <section className="mx-auto w-full max-w-6xl px-5 pb-16">
           <div className="border-t border-edge/60 pt-10">
-            <h2 className="text-sm font-medium text-dim mb-1">Нет в твоей библиотеке</h2>
+            <div className="flex items-baseline justify-between gap-3 mb-1">
+              <h2 className="text-sm font-medium text-dim">Нет в твоей библиотеке</h2>
+              <a
+                href="https://steamdb.info/sales/"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-faint hover:text-ink transition-colors shrink-0"
+              >
+                все скидки Steam →
+              </a>
+            </div>
             <p className="text-xs text-faint mb-4">
               Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто
               на будущее.
@@ -615,28 +744,32 @@ function Player() {
                   onClick={() => sendFeedback(p.appid, 'opened')}
                   className="glass glass-hover rounded-[14px] overflow-hidden text-left"
                 >
-                  <GameArt
-                    appid={p.appid}
-                    name={p.name}
-                    headerImage={p.headerImage}
-                    art={p.art}
-                    sizes="(min-width: 768px) 33vw, 50vw"
-                    className="w-full aspect-[460/215] object-cover"
-                  />
+                  <div className="relative">
+                    <GameArt
+                      appid={p.appid}
+                      name={p.name}
+                      headerImage={p.headerImage}
+                      art={p.art}
+                      sizes="(min-width: 768px) 33vw, 50vw"
+                      className="w-full aspect-[460/215] object-cover"
+                    />
+                    <DiscountCorner discount={p.discount} />
+                  </div>
                   <div className="p-3">
                     <div className="text-sm font-semibold leading-tight">{p.name}</div>
                     <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
                       <span className="text-dim truncate">
                         {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
                       </span>
-                      <span className="font-mono text-ember-text shrink-0">
-                        {p.priceFinal === 0
-                          ? 'бесплатно'
-                          : p.priceFinal
-                            ? `${Math.round(p.priceFinal / 100)} $`
-                            : ''}
-                      </span>
+                      <PriceTag
+                        priceFinal={p.priceFinal}
+                        discount={p.discount}
+                        isFree={p.isFree}
+                        showPercent={false}
+                        className="shrink-0"
+                      />
                     </div>
+                    <DiscountEnds discount={p.discount} className="mt-1 block" />
                   </div>
                 </motion.a>
               ))}

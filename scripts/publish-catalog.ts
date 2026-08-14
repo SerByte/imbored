@@ -32,6 +32,7 @@ const flag = (name: string) => process.argv.includes(`--${name}`)
 const COLS = [
   'appid', 'name', 'tags_json', 'genres_json', 'categories_json', 'short_description',
   'header_image', 'screenshots_json', 'is_free', 'price_final', 'release_date',
+  'price_initial', 'discount_percent', 'discount_ends_at', 'price_at',
   'median_forever', 'store', 'store_url', 'updated_at', 'art_json', 'release_year',
   'developer', 'publisher', 'reviews_total', 'reviews_percent', 'reviews_30d',
   'ccu', 'ccu_at', 'signals_at', 'tag_count', 'is_multiplayer', 'alive',

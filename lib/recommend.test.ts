@@ -6,16 +6,20 @@ import {
   buildTagProfile,
   classifyLibraryGame,
   cosine,
+  dealMultiplier,
   explainMatch,
   isUnplayed,
   isUntouched,
   libraryTileState,
+  MAX_NEW_PICKS,
+  mixHeroPool,
   parseFocus,
+  parseScope,
   rankByTaste,
   scoreCandidates,
   splitBySource,
 } from './recommend'
-import type { GameMeta, LibraryGame, Mood } from './types'
+import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
 
 const NOW = 1_700_000_000
 const DAY = 86_400
@@ -500,6 +504,93 @@ describe('scoreCandidates', () => {
     })
     expect(result).toHaveLength(25)
     expect(result.every((c) => c.source === 'untouched')).toBe(true)
+  })
+})
+
+describe('parseScope', () => {
+  test('по умолчанию каталог участвует — это и есть ответ на «во что поиграть»', () => {
+    expect(parseScope(undefined)).toBe('all')
+    expect(parseScope('all')).toBe('all')
+    expect(parseScope('мусор')).toBe('all')
+  })
+
+  test('«только моё» включается явным словом', () => {
+    expect(parseScope('library')).toBe('library')
+  })
+})
+
+describe('mixHeroPool', () => {
+  const own = (n: number): ScoredCandidate[] =>
+    Array.from({ length: n }, (_, i) => ({
+      appid: i + 1,
+      name: `свой-${i}`,
+      source: 'backlog' as const,
+      score: 1 - i * 0.01,
+    }))
+  const discovery = (n: number): ScoredCandidate[] =>
+    Array.from({ length: n }, (_, i) => ({
+      appid: 100 + i,
+      name: `каталог-${i}`,
+      source: 'new' as const,
+      score: 0.9 - i * 0.01,
+    }))
+
+  test('покупок в пуле не больше потолка — ответ не превращается в витрину', () => {
+    const mixed = mixHeroPool(own(20), discovery(10))
+    expect(mixed.filter((c) => c.source === 'new')).toHaveLength(MAX_NEW_PICKS)
+    expect(mixed).toHaveLength(20 + MAX_NEW_PICKS)
+  })
+
+  test('потолок поднимается, когда играть просто не во что', () => {
+    // У человека с тремя играми пять карточек иначе не набрать, и «нечего
+    // показать» — худший ответ, чем «вот что стоит взять»
+    expect(mixHeroPool(own(1), discovery(10)).filter((c) => c.source === 'new')).toHaveLength(4)
+    expect(mixHeroPool([], discovery(10)).filter((c) => c.source === 'new')).toHaveLength(5)
+  })
+
+  test('порядок общий по скору: каталог не приклеен в конец', () => {
+    const mixed = mixHeroPool(
+      [{ appid: 1, name: 'своя', source: 'backlog', score: 0.5 }] as ScoredCandidate[],
+      [{ appid: 100, name: 'из каталога', source: 'new', score: 0.9 }] as ScoredCandidate[],
+    )
+    expect(mixed.map((c) => c.appid)).toEqual([100, 1])
+  })
+
+  test('пустой каталог ничего не меняет', () => {
+    expect(mixHeroPool(own(3), [])).toHaveLength(3)
+  })
+})
+
+describe('dealMultiplier', () => {
+  const onSale = (percent: number) =>
+    ({
+      ...meta(1, { Action: 100 }),
+      priceFinal: 500,
+      priceInitial: 1000,
+      discountPercent: percent,
+      priceAt: NOW,
+    }) as GameMeta
+
+  test('скидка поднимает каталог, но слабее, чем настроение', () => {
+    // Наклон, а не сортировка по распродаже: moodMultiplier живёт в 0.75…1.40,
+    // то есть настроение решает вчетверо сильнее. Если этот тест упадёт,
+    // значит скидка стала фильтром.
+    expect(dealMultiplier(onSale(90), 'new', NOW)).toBeCloseTo(1.15)
+    expect(dealMultiplier(onSale(45), 'new', NOW)).toBeCloseTo(1.075)
+  })
+
+  test('купленного не касается: за него уже заплачено', () => {
+    expect(dealMultiplier(onSale(90), 'backlog', NOW)).toBe(1)
+    expect(dealMultiplier(onSale(90), 'untouched', NOW)).toBe(1)
+  })
+
+  test('протухшая скидка не поднимает ничего', () => {
+    const stale = { ...onSale(90), priceAt: NOW - 30 * DAY }
+    expect(dealMultiplier(stale, 'new', NOW)).toBe(1)
+  })
+
+  test('без скидки множитель ровно единица', () => {
+    expect(dealMultiplier(meta(1, { Action: 100 }), 'new', NOW)).toBe(1)
   })
 })
 

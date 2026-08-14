@@ -1,3 +1,4 @@
+import { discountOf } from './discount'
 import type {
   CandidateSource,
   GameMeta,
@@ -121,6 +122,54 @@ export type Focus = 'untouched'
 
 export function parseFocus(raw: unknown): Focus | null {
   return raw === 'untouched' ? 'untouched' : null
+}
+
+/**
+ * Откуда вообще берутся главные карточки: только из своей библиотеки или из
+ * всего каталога.
+ *
+ * Ось отдельная от Focus, потому что вопрос другой. Focus сужает СВОЁ («покажи
+ * только нераспакованное»), scope решает, участвует ли в главной выдаче то,
+ * чего у человека нет. По умолчанию 'all': на «во что поиграть» честный ответ
+ * не обязан ограничиваться уже оплаченным — но и не должен превращаться в
+ * витрину, поэтому у покупок есть потолок (MAX_NEW_PICKS) и весь блок
+ * гасится, когда включён Focus.
+ */
+export type Scope = 'library' | 'all'
+
+export function parseScope(raw: unknown): Scope {
+  return raw === 'library' ? 'library' : 'all'
+}
+
+/** Карточек в главной выдаче */
+export const PICK_COUNT = 5
+
+/**
+ * Сколько из них максимум может быть не куплено.
+ *
+ * Двойка — не про баланс жанров, а про то, за чем человек пришёл: ответ на
+ * «во что поиграть сейчас» должен оставаться играбельным сегодня же, без
+ * похода в магазин. Потолок поднимается сам, когда играбельного просто мало:
+ * у человека с тремя играми в библиотеке пять карточек иначе не набрать.
+ */
+export const MAX_NEW_PICKS = 2
+
+/**
+ * Общий пул для главной выдачи: своё плюс дозированное «нет в библиотеке».
+ *
+ * Ограничение стоит ЗДЕСЬ, на входе в подбор, а не на выходе: и Claude, и
+ * эвристика возвращают карточки вместе с объяснением, привязанным к конкретной
+ * игре, и подменять лишнюю покупку после выбора было бы нечем — объяснение
+ * пришлось бы выдумывать заново.
+ */
+export function mixHeroPool<T extends { score: number }>(
+  own: T[],
+  discovery: T[],
+  opts: { maxNew?: number; picks?: number } = {},
+): T[] {
+  const { maxNew = MAX_NEW_PICKS, picks = PICK_COUNT } = opts
+  const allowed = Math.max(maxNew, picks - own.length)
+  return [...own, ...discovery.slice(0, allowed)].sort((a, b) => b.score - a.score)
 }
 
 /** Ниже этого числа режим «только запечатанное» превращается в тупик */
@@ -324,8 +373,36 @@ const SOURCE_WEIGHT: Record<CandidateSource, number> = {
  * отдельный блок «Нет в твоей библиотеке», и без брони усиленный бэклог
  * выбрал бы все слоты — блок просто перестал бы рендериться. Без ошибки,
  * без пустого состояния, молча.
+ *
+ * 0.4, а не прежние 0.3, ровно по этой же причине: у брони появился второй
+ * потребитель. При scope = 'all' главная выдача берёт из тех же кандидатов
+ * (mixHeroPool), и восьми забронированных мест хватало впритык — две уходили
+ * наверх, шесть оставались нижнему блоку, ноль запаса. Десять возвращают
+ * запас, не трогая ни порядок, ни длину результата.
  */
-const DISCOVERY_SHARE = 0.3
+const DISCOVERY_SHARE = 0.4
+
+/**
+ * Насколько скидка поднимает кандидата из каталога.
+ *
+ * Максимум +15% к скору при −90% и больше — меньше, чем стоит один тег в
+ * профиле. Это наклон, а не сортировка по распродаже: витрину скидок человек
+ * и сам откроет, а здесь скидка отвечает лишь на вопрос «раз уж два кандидата
+ * одинаково твои, какой показать сегодня».
+ *
+ * Купленного не касается вовсе: у бэклога цена в прошлом, и скидка на него
+ * не меняет ничего, кроме настроения.
+ */
+const DEAL_BOOST_MAX = 0.15
+const DEAL_BOOST_FULL_PERCENT = 90
+
+export function dealMultiplier(meta: GameMeta, source: CandidateSource, nowSec: number): number {
+  if (source !== 'new') return 1
+  const deal = discountOf(meta, nowSec)
+  if (!deal) return 1
+  const share = Math.min(deal.percent, DEAL_BOOST_FULL_PERCENT) / DEAL_BOOST_FULL_PERCENT
+  return 1 + DEAL_BOOST_MAX * share
+}
 
 export function scoreCandidates(args: {
   profile: Record<string, number>
@@ -347,7 +424,11 @@ export function scoreCandidates(args: {
       appid: meta.appid,
       name: meta.name,
       source,
-      score: base * moodMultiplier(meta, mood) * SOURCE_WEIGHT[source],
+      score:
+        base *
+        moodMultiplier(meta, mood) *
+        SOURCE_WEIGHT[source] *
+        dealMultiplier(meta, source, nowSec),
     })
   }
 

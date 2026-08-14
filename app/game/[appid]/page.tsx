@@ -5,11 +5,13 @@ import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
+import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
+import { discountView } from '@/lib/discount'
 import { loadGamePage } from '@/lib/gamepage'
-import { getDb } from '@/lib/server'
+import { getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 
 /**
@@ -132,6 +134,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   if (!data) notFound()
 
   const { meta, reviewsSummary, prosCons } = data
+  const deal = discountView(meta, nowSec())
   const percent = reviewsSummary
     ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
     : null
@@ -238,8 +241,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 Обзоры на YouTube
               </a>
               {meta.priceFinal !== undefined && meta.priceFinal > 0 && (
-                <span className="rounded-[14px] glass px-5 py-2.5 text-sm">
-                  <span className="font-mono text-ember-text">${(meta.priceFinal / 100).toFixed(2)}</span>
+                <span className="rounded-[14px] glass px-5 py-2.5 text-sm flex items-center gap-2">
+                  <PriceTag priceFinal={meta.priceFinal} discount={deal} size="hero" />
+                  <DiscountEnds discount={deal} />
                 </span>
               )}
             </div>

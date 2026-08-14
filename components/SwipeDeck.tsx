@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { PlayersNow } from '@/components/PlayersNow'
 import type { GameArtUrls } from '@/lib/art'
+import type { Discount } from '@/lib/discount'
 
 export type DeckCard = {
   appid: number
@@ -12,6 +13,7 @@ export type DeckCard = {
   ownedByAll: boolean
   missingFor: string[]
   priceFinal?: number
+  discount?: Discount | null
   headerImage: string | null
   art?: GameArtUrls | null
   ccu?: number | null
@@ -119,13 +121,24 @@ function TopCard({
               ✓ Есть у всех
             </span>
           ) : (
-            <span className="rounded-full bg-sky-400/10 text-info px-3 py-1 text-xs">
-              Нет у: {card.missingFor.join(', ')}
-              {card.priceFinal !== undefined && card.priceFinal > 0
-                ? ` · $${(card.priceFinal / 100).toFixed(0)}`
-                : card.store
-                  ? ' · бесплатно/вне Steam'
-                  : ''}
+            <span className="flex items-center gap-2">
+              {/* text-info вместо sky-300: на светлой теме tailwind-цвет давал
+                  1.52:1, то есть подпись была практически невидима */}
+              <span className="rounded-full bg-sky-400/10 text-info px-3 py-1 text-xs">
+                Нет у: {card.missingFor.join(', ')}
+                {card.priceFinal !== undefined && card.priceFinal > 0
+                  ? ` · $${(card.priceFinal / 100).toFixed(0)}`
+                  : card.store
+                    ? ' · бесплатно/вне Steam'
+                    : ''}
+              </span>
+              {/* Скидка отдельной плашкой, а не внутри синей: там один токен
+                  «кому не хватает», и зачёркнутая цена сломала бы его цельность */}
+              {card.discount && (
+                <span className="rounded-full bg-ember/15 text-ember-text px-2.5 py-1 text-xs font-mono font-semibold tabular-nums">
+                  −{card.discount.percent}%
+                </span>
+              )}
             </span>
           )}
         </div>

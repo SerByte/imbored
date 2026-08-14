@@ -138,6 +138,67 @@ describe('fetchDiscoveryPool', () => {
     const pool = await fetchDiscoveryPool(db, { tags: ['Roguelike'], limit: 10 })
     expect(pool.map((m) => m.appid).sort()).toEqual([2, 3])
   })
+
+  test('цена и скидка доезжают в проекции', async () => {
+    // Без этих колонок карточка открытия знала бы цену, но не знала бы, что
+    // она распродажная, — тот же класс потери, что был у developer
+    const db = await freshDb()
+    await seed(db)
+    await upsertGameMeta(
+      db,
+      meta(1, {
+        name: 'Нишевый рогалик',
+        reviewsTotal: 500,
+        tags: { Roguelike: 1000, Indie: 300 },
+        priceFinal: 500,
+        priceInitial: 1000,
+        discountPercent: 50,
+        discountEndsAt: NOW + 86_400,
+        priceAt: NOW,
+      }),
+      NOW,
+    )
+    const [first] = await fetchDiscoveryPool(db, { tags: ['Roguelike'], limit: 5 })
+    expect(first.priceFinal).toBe(500)
+    expect(first.priceInitial).toBe(1000)
+    expect(first.discountPercent).toBe(50)
+    expect(first.discountEndsAt).toBe(NOW + 86_400)
+    expect(first.priceAt).toBe(NOW)
+  })
+
+  test('wildcard добирает заметное вне тегов профиля', async () => {
+    // Единственная дверь наружу из собственного вкуса: без неё любитель
+    // рогаликов не увидит ни одной большой игры другого жанра
+    const db = await freshDb()
+    await seed(db)
+    const byTaste = await fetchDiscoveryPool(db, { tags: ['Shooter'], limit: 10 })
+    expect(byTaste.map((m) => m.appid)).toEqual([4])
+
+    // Три заметных по отзывам: 3 (900k), 4 (300k), 2 (50k). Четвёртый уже
+    // нашёлся по тегу и не задваивается — добавка идёт хвостом, после вкуса.
+    const widened = await fetchDiscoveryPool(db, { tags: ['Shooter'], limit: 10, wildcard: 3 })
+    expect(widened.map((m) => m.appid)).toEqual([4, 3, 2])
+  })
+
+  test('wildcard не задваивает то, что уже нашлось по вкусу', async () => {
+    const db = await freshDb()
+    await seed(db)
+    const pool = await fetchDiscoveryPool(db, { tags: ['Roguelike'], limit: 10, wildcard: 3 })
+    expect(new Set(pool.map((m) => m.appid)).size).toBe(pool.length)
+  })
+
+  test('wildcard подчиняется общим фильтрам: скрытое и одиночное', async () => {
+    const db = await freshDb()
+    await seed(db)
+    const pool = await fetchDiscoveryPool(db, {
+      tags: ['Roguelike'],
+      requireMultiplayer: true,
+      bannedAppids: [4],
+      wildcard: 5,
+      limit: 10,
+    })
+    expect(pool).toEqual([])
+  })
 })
 
 describe('pickQueryTags', () => {

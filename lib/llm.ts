@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
+import { discountEndsLabel, discountOf, formatPrice } from './discount'
 import type { Focus } from './recommend'
 import { CANDIDATE_SOURCES } from './types'
 import type { CandidateSource, GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
@@ -76,6 +77,20 @@ const SOURCE_RU: Record<CandidateSource, string> = {
 }
 
 /**
+ * Цена уезжает в промпт только для НЕ купленного — и только потому, что она
+ * часть честного ответа: советовать покупку, не назвав цену, нельзя. Для своих
+ * игр цена не значит ничего, за них уже заплачено.
+ */
+function priceNote(meta: GameMeta | undefined, source: CandidateSource, nowSec: number): string {
+  if (source !== 'new' || !meta) return ''
+  if (meta.isFree) return ' бесплатная,'
+  if (meta.priceFinal === undefined) return ''
+  const deal = discountOf(meta, nowSec)
+  const price = formatPrice(meta.priceFinal)
+  return deal ? ` цена ${price} со скидкой −${deal.percent}%,` : ` цена ${price},`
+}
+
+/**
  * Re-rank кандидатов через Claude с объяснениями. null — если ключа нет
  * или запрос не удался (вызывающий падает на heuristicPicks).
  */
@@ -85,9 +100,11 @@ export async function claudePicks(args: {
   library: LibraryGame[]
   mood: Mood
   focus?: Focus | null
+  nowSec?: number
 }): Promise<Pick[] | null> {
   if (!llmAvailable() || !args.candidates.length) return null
   const { candidates, metaOf, library, mood, focus } = args
+  const now = args.nowSec ?? Math.floor(Date.now() / 1000)
 
   // названия и теги — недоверенные данные (издатель/голосующие), режем длину
   const topPlayed = [...library]
@@ -96,14 +113,17 @@ export async function claudePicks(args: {
     .map((g) => `${g.name.slice(0, 100)} — ${Math.round(g.playtimeForever / 60)} ч${g.playtime2Weeks > 0 ? ' (играет сейчас)' : ''}`)
 
   const candidateLines = candidates.slice(0, 25).map((c) => {
-    const tags = Object.entries(metaOf(c.appid)?.tags ?? {})
+    const meta = metaOf(c.appid)
+    const tags = Object.entries(meta?.tags ?? {})
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([t]) => t.slice(0, 40))
       .join(', ')
     const src = SOURCE_RU[c.source]
-    return `appid=${c.appid} «${c.name.slice(0, 100)}» [${src}] теги: ${tags || 'нет данных'}`
+    return `appid=${c.appid} «${c.name.slice(0, 100)}» [${src}]${priceNote(meta, c.source, now)} теги: ${tags || 'нет данных'}`
   })
+
+  const hasNew = candidates.slice(0, 25).some((c) => c.source === 'new')
 
   const prompt = `Игрок открыл Steam и не знает, во что поиграть. Его состояние сейчас: ${MOOD_RU[mood.time]}, ${MOOD_RU[mood.vibe]}, ${MOOD_RU[mood.social]}.
 
@@ -117,6 +137,10 @@ ${candidateLines.join('\n')}
     focus === 'untouched'
       ? 'Все кандидаты — игры, которые он ни разу не запускал: это и есть его запрос. Не советуй ничего покупать и не жалей его за бэклог — просто выбери, с чего начать сегодня.'
       : 'Разнообразь выбор: если есть достойные варианты из разных категорий (ни разу не запускал / открыл и закрыл / заброшена / новая) — смешай их.'
+  }${
+    hasNew && focus !== 'untouched'
+      ? '\n\nЧасть кандидатов помечена «новая, не куплена» — их у него НЕТ, за них придётся заплатить. Такие бери, только если игра действительно лучше подходит, чем то, что уже куплено, и в reason говори об этом прямо: что это покупка, сколько стоит, и если есть скидка — что сейчас дешевле обычного. Не притворяйся, будто он может запустить её прямо сейчас, и не советуй покупку тому, у кого и так есть подходящее.'
+      : ''
   }`
 
   try {
@@ -357,7 +381,23 @@ const SOURCE_TEMPLATES: Record<CandidateSource, (name: string, tags: string) => 
   comeback: (name, tags) =>
     `Ты уже вложил часы в «${name}» и забросил — ${tags} по-прежнему в твоём вкусе, вернись и проверь, как оно теперь.`,
   new: (name, tags) =>
-    `«${name}» ты ещё не пробовал, но её ${tags} совпадают с тем, во что ты играешь больше всего.`,
+    `«${name}» у тебя нет, но её ${tags} совпадают с тем, во что ты играешь больше всего.`,
+}
+
+/**
+ * Хвост причины для не купленной игры: цена, а если идёт распродажа — то и она.
+ *
+ * Без него шаблон советовал бы покупку, умалчивая, что это покупка. У своих
+ * игр такого хвоста нет и быть не может — там платить уже нечего.
+ */
+function priceSentence(meta: GameMeta | undefined, nowSec: number): string {
+  if (!meta) return ''
+  if (meta.isFree) return ' И она бесплатная.'
+  if (meta.priceFinal === undefined || meta.priceFinal <= 0) return ''
+  const deal = discountOf(meta, nowSec)
+  if (!deal) return ` Её нет в библиотеке — ${formatPrice(meta.priceFinal)} в Steam.`
+  const ends = deal.endsAt ? (discountEndsLabel(deal.endsAt, nowSec) ?? '') : ''
+  return ` Её нет в библиотеке, но сейчас −${deal.percent}%: ${formatPrice(deal.finalCents)} вместо ${formatPrice(deal.initialCents)}${ends ? ` — ${ends}` : ''}.`
 }
 
 const VIBE_SUFFIX: Record<Mood['vibe'], string> = {
@@ -383,6 +423,7 @@ export function heuristicPicks(
   metaOf: (appid: number) => GameMeta | undefined,
   mood: Mood,
   count: number,
+  nowSec: number = Math.floor(Date.now() / 1000),
 ): Pick[] {
   if (!candidates.length) return []
   const sorted = [...candidates].sort((a, b) => b.score - a.score)
@@ -405,10 +446,14 @@ export function heuristicPicks(
     }
   }
   chosen.sort((a, b) => b.score - a.score)
-  return chosen.map((c) => ({
-    appid: c.appid,
-    name: c.name,
-    source: c.source,
-    reason: SOURCE_TEMPLATES[c.source](c.name, topTags(metaOf(c.appid))) + VIBE_SUFFIX[mood.vibe],
-  }))
+  return chosen.map((c) => {
+    const meta = metaOf(c.appid)
+    const price = c.source === 'new' ? priceSentence(meta, nowSec) : ''
+    return {
+      appid: c.appid,
+      name: c.name,
+      source: c.source,
+      reason: SOURCE_TEMPLATES[c.source](c.name, topTags(meta)) + VIBE_SUFFIX[mood.vibe] + price,
+    }
+  })
 }
