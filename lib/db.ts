@@ -997,14 +997,30 @@ export async function claimPageEnrichBatch(
   db: Db,
   staleBefore: number,
   limit: number,
+  opts: { redoHeuristic?: boolean } = {},
 ): Promise<number[]> {
+  // Карточка, собранная без модели, не должна замирать на полгода.
+  //
+  // Эвристика тащит в «за что любят» куски чужих языков и обрывки вроде
+  // «693 часов в Steam» — читать это на витрине, которая уходит в индекс,
+  // нельзя. Но и не заполнять карточку вовсе, пока нет ключа, тоже нельзя:
+  // скриншоты и вердикт отзывов от модели не зависят и нужны сразу.
+  //
+  // Поэтому page_at means «в сеть за этой карточкой сходили», а не «карточка
+  // готова». Когда ключ появляется, вызывающий поднимает redoHeuristic, и
+  // эвристические pros/cons возвращаются в очередь на пересборку моделью.
+  const redo = opts.redoHeuristic ? 1 : 0
   const res = await db.execute({
     sql: `SELECT appid FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
-            AND (page_at IS NULL OR page_at < ?)
+            AND (
+              page_at IS NULL
+              OR page_at < ?
+              OR (? = 1 AND json_extract(pros_cons_json, '$.source') = 'reviews')
+            )
           ORDER BY page_at IS NOT NULL, reviews_total DESC
           LIMIT ?`,
-    args: [staleBefore, limit],
+    args: [staleBefore, redo, limit],
   })
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }

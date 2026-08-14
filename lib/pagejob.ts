@@ -74,7 +74,13 @@ export async function runPageSlice(
   // забытый ключ выжигал бы очередь на полгода вперёд.
   const useClaude = Boolean(opts.prosConsFn) || llmAvailable()
 
-  const targets = await claimPageEnrichBatch(db, now - PAGE_MAX_AGE_SEC, limit)
+  // Когда модель есть, в очередь возвращаются и карточки, собранные раньше без
+  // неё: page_at значит «в сеть сходили», а не «карточка готова». Без ключа
+  // такой пересборки нет — иначе очередь бесконечно крутилась бы на одних и
+  // тех же играх, каждый раз переписывая эвристику эвристикой.
+  const targets = await claimPageEnrichBatch(db, now - PAGE_MAX_AGE_SEC, limit, {
+    redoHeuristic: useClaude,
+  })
 
   let enriched = 0
   let withShots = 0

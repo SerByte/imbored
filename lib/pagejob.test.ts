@@ -76,6 +76,26 @@ describe('очередь обогащения карточек', () => {
     expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10)).toEqual([30, 10])
   })
 
+  test('карточка с эвристическими pros/cons возвращается в очередь, когда есть модель', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    // прогон без модели: карточка наполнена, но цитатами из отзывов
+    await runPageSlice(db, stubs({ prosConsFn: async () => null }))
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10)).toEqual([])
+
+    // ключ появился — карточку надо пересобрать, а не ждать полгода
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { redoHeuristic: true })).toEqual([10])
+  })
+
+  test('карточка, собранная моделью, повторно не берётся', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await runPageSlice(db, stubs())
+
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { redoHeuristic: true })).toEqual([])
+  })
+
   test('обогащённая свежая карточка в очередь не попадает, протухшая возвращается', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)
