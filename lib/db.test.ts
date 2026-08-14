@@ -52,6 +52,8 @@ import {
   setRoomMatched,
   setRoomPublic,
   setUserPortrait,
+  stalePriceAppids,
+  updateGamePrices,
   upsertGameMeta,
   upsertUser,
 } from './db'
@@ -104,6 +106,44 @@ describe('db', () => {
     expect(await getGameMeta(db, 999)).toBeNull()
   })
 
+  test('цена и скидка переживают роундтрип — их и теряли в этом месте', async () => {
+    // Тот же класс потери, что был у developer, release_year и signals_at:
+    // колонка пишется, приезжает в SELECT * и выбрасывается в JS, потому что
+    // её нет ни в GameRow, ни в rowToMeta
+    const db = await freshDb()
+    const onSale: GameMeta = {
+      ...META,
+      priceFinal: 499,
+      priceInitial: 999,
+      discountPercent: 50,
+      discountEndsAt: NOW + 86_400,
+      priceAt: NOW,
+    }
+    await upsertGameMeta(db, onSale, NOW)
+    expect(await getGameMeta(db, 620)).toEqual(onSale)
+    expect((await getGamesMeta(db, [620])).get(620)).toEqual(onSale)
+  })
+
+  test('кончившаяся распродажа стирается записью, а не остаётся навсегда', async () => {
+    // У скидки нет своего события: есть только следующий ответ Steam без
+    // полей скидки. COALESCE в ON CONFLICT означал бы «−50%» навсегда.
+    const db = await freshDb()
+    await upsertGameMeta(
+      db,
+      { ...META, priceInitial: 999, discountPercent: 50, discountEndsAt: NOW + 10, priceAt: NOW },
+      NOW,
+    )
+    await upsertGameMeta(
+      db,
+      { ...META, priceFinal: 999, priceInitial: 999, discountPercent: 0, priceAt: NOW + 100 },
+      NOW + 100,
+    )
+    const stored = await getGameMeta(db, 620)
+    expect(stored?.discountPercent).toBe(0)
+    expect(stored?.discountEndsAt).toBeUndefined()
+    expect(stored?.priceAt).toBe(NOW + 100)
+  })
+
   test('игры из других магазинов: store и storeUrl переживают роундтрип', async () => {
     const db = await freshDb()
     const external = {
@@ -153,6 +193,47 @@ describe('db', () => {
     const stale = await getStaleAppids(db, appids, 14 * 86_400, NOW)
     expect(stale).toHaveLength(2498)
     expect(stale).not.toContain(1000)
+  })
+
+  test('stalePriceAppids: сперва те, у кого цены не было никогда', async () => {
+    // Бюджет одного вызова конечен, а пустая цена заметнее устаревшей
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, appid: 1, priceAt: NOW - 100 }, NOW)
+    await upsertGameMeta(db, { ...META, appid: 2 }, NOW)
+    await upsertGameMeta(db, { ...META, appid: 3, priceAt: NOW - 5000 }, NOW)
+
+    expect(await stalePriceAppids(db, [1, 2, 3], 10, NOW)).toEqual([2, 3, 1])
+  })
+
+  test('stalePriceAppids: свежие, чужие магазины и отсутствующие не спрашиваются', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, appid: 620, priceAt: NOW - 10 }, NOW)
+    await upsertGameMeta(db, { ...META, appid: -101, store: 'epic' }, NOW)
+
+    // свежая цена — не спрашиваем; отрицательный appid в Steam не найти вовсе;
+    // 999 нет в базе, и писать результат было бы некуда
+    expect(await stalePriceAppids(db, [620, -101, 999], 3600, NOW)).toEqual([])
+  })
+
+  test('stalePriceAppids: лимит режет очередь замера', async () => {
+    const db = await freshDb()
+    for (let i = 1; i <= 5; i++) await upsertGameMeta(db, { ...META, appid: i }, NOW)
+    expect(await stalePriceAppids(db, [1, 2, 3, 4, 5], 3600, NOW, 2)).toHaveLength(2)
+  })
+
+  test('updateGamePrices пишет цену, не двигая метаданные и updated_at', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await updateGamePrices(db, [{ appid: 620, priceFinal: 499, priceInitial: 999, discountPercent: 50 }], NOW + 500)
+
+    const stored = await getGameMeta(db, 620)
+    expect(stored?.priceFinal).toBe(499)
+    expect(stored?.discountPercent).toBe(50)
+    expect(stored?.priceAt).toBe(NOW + 500)
+    expect(stored?.tags).toEqual(META.tags)
+    // updated_at не двинулся: замер цены не должен отменять прогрев метаданных
+    const res = await db.execute('SELECT updated_at FROM games WHERE appid = 620')
+    expect(Number(res.rows[0].updated_at)).toBe(NOW)
   })
 
   test('строка без резолвленного арта считается протухшей', async () => {

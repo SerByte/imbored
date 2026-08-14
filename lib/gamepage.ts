@@ -42,6 +42,21 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
     const fresh = await fetchAppDetails(appid).catch(() => null)
     if (fresh) {
       if (meta && Object.keys(meta.tags).length) fresh.tags = meta.tags
+      // Цена в этом ответе только что из магазина — датируем замер, иначе
+      // скидка приедет и тут же будет отброшена как «неизвестной свежести»
+      if (fresh.priceFinal !== undefined) fresh.priceAt = now
+      // Срок распродажи знает только GetItems, appdetails его не отдаёт вовсе.
+      // Пока процент тот же и срок ещё не вышел — это та же акция, и дату
+      // конца незачем терять из-за того, что данные приехали другой ручкой.
+      // Проверка «не вышел» обязательна: иначе новая распродажа с тем же
+      // процентом унаследовала бы прошлогоднюю дату и погасла бы на месте.
+      if (
+        meta?.discountEndsAt !== undefined &&
+        meta.discountEndsAt > now &&
+        fresh.discountPercent === meta.discountPercent
+      ) {
+        fresh.discountEndsAt = meta.discountEndsAt
+      }
       await upsertGameMeta(db, fresh, now)
       meta = fresh
     }

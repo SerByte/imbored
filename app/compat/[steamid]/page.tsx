@@ -4,9 +4,11 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { DiscountCorner } from '@/components/PriceTag'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Spinner } from '@/components/Spinner'
 import type { GameArtUrls } from '@/lib/art'
+import type { Discount } from '@/lib/discount'
 import { STORE_LABEL } from '@/lib/stores'
 
 type CompatData = {
@@ -26,6 +28,7 @@ type CompatData = {
     ownedByAll: boolean
     missingFor: string[]
     priceFinal?: number
+    discount?: Discount | null
     headerImage: string | null
     art: GameArtUrls | null
     tags: string[]
@@ -212,14 +215,17 @@ export default function CompatResultPage() {
                   href={`/game/${c.appid}`}
                   className="glass glass-hover rounded-[14px] overflow-hidden"
                 >
-                  <GameArt
-                    appid={c.appid}
-                    name={c.name}
-                    headerImage={c.headerImage}
-                    art={c.art}
-                    sizes="(min-width: 768px) 33vw, 100vw"
-                    className="w-full aspect-[460/215] object-cover"
-                  />
+                  <div className="relative">
+                    <GameArt
+                      appid={c.appid}
+                      name={c.name}
+                      headerImage={c.headerImage}
+                      art={c.art}
+                      sizes="(min-width: 768px) 33vw, 100vw"
+                      className="w-full aspect-[460/215] object-cover"
+                    />
+                    <DiscountCorner discount={c.discount} />
+                  </div>
                   <div className="p-3">
                     <div className="text-sm font-semibold leading-tight">{c.name}</div>
                     <div className="text-[11px] text-dim mt-1">

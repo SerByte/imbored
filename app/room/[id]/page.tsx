@@ -8,6 +8,7 @@ import { MatchCeremony } from '@/components/MatchCeremony'
 import { Spinner } from '@/components/Spinner'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { GameArtUrls } from '@/lib/art'
+import type { Discount } from '@/lib/discount'
 
 type RoomState = {
   room: { id: string; status: 'open' | 'matched'; matchedAppid: number | null; isPublic: boolean }
@@ -31,6 +32,7 @@ type Card = {
   ownedByAll: boolean
   missingFor: string[]
   priceFinal?: number
+  discount?: Discount | null
   headerImage: string | null
   art?: GameArtUrls | null
   ccu?: number | null

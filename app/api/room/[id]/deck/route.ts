@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { filterActual } from '@/lib/actual'
+import { refreshDealsWithin } from '@/lib/deals'
 import {
   countIngest,
   getGamesMeta,
@@ -9,10 +10,11 @@ import {
   myVotedAppids,
   roomMembers,
 } from '@/lib/db'
+import { discountView } from '@/lib/discount'
 import { buildGroupDeck } from '@/lib/group'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { buildTagProfile } from '@/lib/recommend'
-import { currentSteamId, getDb } from '@/lib/server'
+import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const DECK_SIZE = 20
@@ -75,13 +77,30 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const actual = filterActual(deck, metas, 'party')
 
   const voted = await myVotedAppids(db, id, steamid)
-  const cards = actual
-    .filter((c) => !voted.has(c.appid))
-    .map((c) => ({
+  const shown = actual.filter((c) => !voted.has(c.appid))
+
+  // Цены тех карт, что реально уедут в колоду: половина из них не куплена
+  // никем из пати, и «Нет у: Дима · $60» без скидки — устаревший ценник.
+  const now = nowSec()
+  const refreshed = await refreshDealsWithin(db, shown.map((c) => c.appid), now)
+  if (refreshed) {
+    for (const [appid, meta] of await getGamesMeta(db, shown.map((c) => c.appid))) {
+      metas.set(appid, meta)
+    }
+  }
+
+  const cards = shown.map((c) => {
+    const meta = metas.get(c.appid)
+    return {
       ...c,
-      art: metas.get(c.appid)?.art ?? null,
-      ccu: metas.get(c.appid)?.ccu ?? null,
-    }))
+      priceFinal: meta?.priceFinal ?? c.priceFinal,
+      art: meta?.art ?? null,
+      ccu: meta?.ccu ?? null,
+      // Скидка нужна только там, где кому-то придётся покупать: у карточки
+      // «есть у всех» цена вообще не участвует в разговоре
+      discount: meta && !c.ownedByAll ? discountView(meta, now) : null,
+    }
+  })
 
   return NextResponse.json({
     cards,

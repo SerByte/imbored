@@ -13,7 +13,7 @@ type AppDetailsData = {
   screenshots?: Array<{ path_full?: string }>
   genres?: Array<{ description?: string }>
   categories?: Array<{ id?: number }>
-  price_overview?: { final?: number }
+  price_overview?: { final?: number; initial?: number; discount_percent?: number }
   release_date?: { date?: string }
 }
 
@@ -39,7 +39,13 @@ export function parseAppDetails(json: unknown, appid: number): GameMeta | null {
     .slice(0, 8)
   if (shots.length) meta.screenshots = shots
   if (d.is_free !== undefined) meta.isFree = d.is_free
-  if (d.price_overview?.final !== undefined) meta.priceFinal = d.price_overview.final
+  const price = d.price_overview
+  if (price?.final !== undefined) {
+    meta.priceFinal = price.final
+    // initial у Steam есть всегда, когда есть final, и вне распродажи равен ему
+    meta.priceInitial = price.initial ?? price.final
+    meta.discountPercent = price.discount_percent ?? 0
+  }
   if (d.release_date?.date) meta.releaseDate = d.release_date.date
   return meta
 }
@@ -79,7 +85,59 @@ type StoreItem = {
   assets?: StoreAssets
   release?: { steam_release_date?: number }
   is_free?: boolean
-  best_purchase_option?: { final_price_in_cents?: string }
+  best_purchase_option?: PurchaseOption
+}
+
+/**
+ * Блок покупки в ответе GetItems. Цены приходят СТРОКАМИ, а полей скидки при
+ * полной цене нет вовсе — Steam их просто не присылает.
+ */
+export type PurchaseOption = {
+  final_price_in_cents?: string
+  original_price_in_cents?: string
+  discount_pct?: number
+  active_discounts?: Array<{ discount_end_date?: number }>
+}
+
+export type PriceInfo = {
+  priceFinal?: number
+  priceInitial?: number
+  discountPercent?: number
+  discountEndsAt?: number
+}
+
+/**
+ * Цена и скидка из блока покупки.
+ *
+ * Ключевое решение — нормализация «скидки нет» в явный ноль, а не в
+ * отсутствие поля. Со скидкой Steam присылает discount_pct и
+ * original_price_in_cents, без неё не присылает ничего, и если так же
+ * промолчать при записи, то в базе останется вчерашнее «−70%»: у скидки,
+ * которая кончилась, нет своего события — есть только ответ без полей.
+ *
+ * Срок берём самый ранний из активных: если акций несколько, цена вырастет
+ * на первой же истёкшей.
+ */
+export function parsePurchaseOption(bpo: PurchaseOption | undefined | null): PriceInfo {
+  if (!bpo) return {}
+  const final = Number(bpo.final_price_in_cents)
+  if (!Number.isFinite(final)) return {}
+
+  const initialRaw = Number(bpo.original_price_in_cents)
+  const initial = Number.isFinite(initialRaw) ? initialRaw : final
+  const pct = typeof bpo.discount_pct === 'number' ? bpo.discount_pct : 0
+
+  const info: PriceInfo = {
+    priceFinal: final,
+    priceInitial: Math.max(initial, final),
+    discountPercent: initial > final ? pct : 0,
+  }
+
+  const ends = (bpo.active_discounts ?? [])
+    .map((d) => d.discount_end_date)
+    .filter((d): d is number => typeof d === 'number' && d > 0)
+  if (info.discountPercent && ends.length) info.discountEndsAt = Math.min(...ends)
+  return info
 }
 
 /** Словарь Steam: числовой tagid -> человеческое имя тега. */
@@ -135,8 +193,7 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
     meta.art = art
     if (art.header) meta.headerImage = art.header
     if (it.is_free !== undefined) meta.isFree = it.is_free
-    const cents = Number(it.best_purchase_option?.final_price_in_cents)
-    if (Number.isFinite(cents)) meta.priceFinal = cents
+    Object.assign(meta, parsePurchaseOption(it.best_purchase_option))
     if (it.release?.steam_release_date) meta.releaseDate = isoDate(it.release.steam_release_date)
     out.push(meta)
   }
@@ -210,28 +267,63 @@ export async function fetchStoreItems(
   const out: GameMeta[] = []
   for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
     const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
-    await pace('steam-api', STORE_API_PACE_MS)
-    const input = JSON.stringify({
-      ids: chunk.map((appid) => ({ appid })),
-      context: { language: 'english', country_code: STORE_CC.toUpperCase(), steam_realm: 1 },
-      data_request: {
-        include_assets: true,
-        include_basic_info: true,
-        include_categories: true,
-        include_release: true,
-        include_tag_count: 20,
-      },
-    })
-    const url = `https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(input)}`
-    // Батч на 200 игр отвечает за 7 секунд и более, поэтому общий таймаут в
-    // 10 секунд для него слишком тесный: растим пропорционально размеру пачки
-    const timeout = Math.max(FETCH_TIMEOUT_MS, chunk.length * 200)
-    const res = await fetchFn(url, { signal: AbortSignal.timeout(timeout) })
-    // лимит/сбой — исключение, чтобы вызывающий не закэшировал неудачу как «данных нет»
-    if (!res.ok) throw new Error(`GetItems: HTTP ${res.status}`)
-    out.push(...parseStoreItems(await res.json(), tagNames))
+    const json = await callStoreItems(chunk, STORE_ITEMS_DATA_REQUEST, fetchFn)
+    // Отметка свежести цены ставится здесь, а не у вызывающих: «сейчас» знает
+    // только тот, кто сходил в сеть. Разбор (parseStoreItems) остаётся чистым и
+    // без часов, а любой потребитель — прогрев, офлайн-сборка каталога, будущий
+    // третий — получает датированную цену, не помня об этом.
+    const at = Math.floor(Date.now() / 1000)
+    for (const meta of parseStoreItems(json, tagNames)) {
+      // Ответ без блока покупки — это тоже ответ: игра стала бесплатной или
+      // снята с продажи. Промолчать здесь значит оставить в базе вчерашние
+      // «−70%», которые mergeMeta бережно перенесёт в новую запись, а карточка
+      // покажет как действующую скидку. Цену при этом не трогаем — «Steam не
+      // назвал цену» и «игра подешевела до нуля» отсюда неразличимы, и то же
+      // правило действует в updateGamePrices.
+      if (meta.discountPercent === undefined) meta.discountPercent = 0
+      meta.priceAt = at
+      out.push(meta)
+    }
   }
   return out
+}
+
+const STORE_ITEMS_DATA_REQUEST = {
+  include_assets: true,
+  include_basic_info: true,
+  include_categories: true,
+  include_release: true,
+  include_tag_count: 20,
+}
+
+/**
+ * Один вызов GetItems. Вынесен из fetchStoreItems, потому что тем же ручкой
+ * ходит обновление цен (lib/deals) — но с пустым data_request: блок покупки
+ * приезжает и без единого include-флага, а лишние поля на батче в 200 игр
+ * стоят секунд.
+ */
+export async function callStoreItems(
+  appids: number[],
+  dataRequest: Record<string, unknown>,
+  fetchFn: typeof fetch = fetch,
+  msPerApp = 200,
+): Promise<unknown> {
+  await pace('steam-api', STORE_API_PACE_MS)
+  const input = JSON.stringify({
+    ids: appids.map((appid) => ({ appid })),
+    context: { language: 'english', country_code: STORE_CC.toUpperCase(), steam_realm: 1 },
+    data_request: dataRequest,
+  })
+  const url = `https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(input)}`
+  // Батч на 200 игр отвечает за 7 секунд и более, поэтому общий таймаут в
+  // 10 секунд для него слишком тесный: растим пропорционально размеру пачки.
+  // Насколько именно — знает вызывающий: полные метаданные с ассетами и
+  // тегами и голая цена по тем же двум сотням игр весят по-разному.
+  const timeout = Math.max(FETCH_TIMEOUT_MS, appids.length * msPerApp)
+  const res = await fetchFn(url, { signal: AbortSignal.timeout(timeout) })
+  // лимит/сбой — исключение, чтобы вызывающий не закэшировал неудачу как «данных нет»
+  if (!res.ok) throw new Error(`GetItems: HTTP ${res.status}`)
+  return res.json()
 }
 
 export async function fetchAppDetails(

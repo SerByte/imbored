@@ -69,4 +69,19 @@ describe('filterActual', () => {
     const kept = ids(filterActual([{ appid: 548430 }, { appid: 730 }], LIBRARY, 'solo'))
     expect(kept).toEqual([548430, 730])
   })
+
+  test('кандидат из каталога без издателя не отменяет вытеснение в библиотеке', () => {
+    // Регрессия: с выходом каталога в общую выдачу его метаданные попали в тот
+    // же расчёт серий. Проекция пула не отдавала издателя — и «третья часть»
+    // из каталога забирала роль победителя группы, после чего не проходила
+    // sameMaker и НЕ вытесняла старую версию, которую до неё вытесняла CS2.
+    // Мёртвый мультиплеер тихо возвращался в выдачу.
+    const withCatalog = new Map(LIBRARY)
+    withCatalog.set(
+      99_999,
+      meta(99_999, 'Counter-Strike 3', { ccu: 5, developer: undefined, publisher: undefined }),
+    )
+    const kept = ids(filterActual([...all, { appid: 99_999 }], withCatalog, 'party'))
+    expect(kept).not.toContain(10)
+  })
 })
