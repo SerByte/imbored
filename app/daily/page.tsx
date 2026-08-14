@@ -9,11 +9,12 @@ import { PlayersNow } from '@/components/PlayersNow'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
-import { Spinner } from '@/components/Spinner'
+import { WarmupScreen } from '@/components/WarmupScreen'
 import type { GameArtUrls } from '@/lib/art'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
+import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 type DailyPick = {
   appid: number
@@ -34,42 +35,53 @@ export default function DailyPage() {
   const [pick, setPick] = useState<DailyPick | null>(null)
   const [dateLabel, setDateLabel] = useState('')
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
+  const [prep, setPrep] = useState<WarmupProgress | null>(null)
+  const [message, setMessage] = useState('Изучаю твою библиотеку…')
   const started = useRef(false)
 
   useEffect(() => {
     if (started.current) return
     started.current = true
     void (async () => {
-      // прогрев каталога — как в основной выдаче
-      for (let i = 0; i < 80; i++) {
-        const res = await fetch('/api/prepare', { method: 'POST' })
-        if (res.status === 401 || res.status === 409) {
-          router.push('/')
-          return
-        }
-        const data = (await res.json()) as { remaining?: number }
-        if ((data.remaining ?? 0) <= 0) break
+      // Прогрев тот же, что в основной выдаче, и теперь буквально тот же код.
+      // Раньше здесь лежала копия цикла — без прогресса, без проверки ok и без
+      // try/catch, из-за чего экран ошибки ниже был недостижим в принципе:
+      // любой сбой оставлял страницу в вечном спиннере.
+      const warm = await runWarmup({
+        onProgress: (p) => {
+          setPrep(p)
+          if (p.remaining > 0) setMessage(`Осталось разобрать ${p.remaining} игр`)
+        },
+      })
+      if (warm === 'unauthorized') {
+        router.push('/')
+        return
       }
-      const res = await fetch('/api/daily')
-      if (!res.ok) {
+      if (warm === 'error') {
         setPhase('error')
         return
       }
-      const data = (await res.json()) as { pick: DailyPick; dateLabel: string }
-      setPick(data.pick)
-      setDateLabel(data.dateLabel)
-      setPhase('ok')
+
+      setMessage('Выбираю твою игру дня…')
+      try {
+        const res = await fetch('/api/daily')
+        if (!res.ok) {
+          setPhase('error')
+          return
+        }
+        const data = (await res.json()) as { pick: DailyPick; dateLabel: string }
+        setPick(data.pick)
+        setDateLabel(data.dateLabel)
+        setPhase('ok')
+      } catch {
+        setPhase('error')
+      }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   if (phase === 'loading') {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-6 px-5">
-        <Spinner />
-        <p className="text-dim text-sm">Выбираю твою игру дня…</p>
-      </div>
-    )
+    return <WarmupScreen progress={prep} message={message} />
   }
 
   if (phase === 'error' || !pick) {

@@ -12,16 +12,16 @@ import { Magnet } from '@/components/Magnet'
 import { HeroArt } from '@/components/HeroArt'
 import { LogoMark } from '@/components/Logo'
 import { PlayersNow } from '@/components/PlayersNow'
-import { ProgressRing } from '@/components/ProgressRing'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
-import { Spinner } from '@/components/Spinner'
 import type { GameArtUrls } from '@/lib/art'
 import type { Focus } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
+import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 type Signals = {
   matchPercent: number | null
@@ -123,7 +123,7 @@ function Player() {
 
   const [phase, setPhase] = useState<'prepare' | 'spin' | 'reveal' | 'burnout' | 'error'>('prepare')
   const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
-  const [prep, setPrep] = useState<{ remaining: number; total: number } | null>(null)
+  const [prep, setPrep] = useState<WarmupProgress | null>(null)
   // Откуда пришла следующая игра — задаёт направление смены героя.
   const [dir, setDir] = useState<'next' | 'pick'>('next')
   const [picks, setPicks] = useState<Pick[]>([])
@@ -154,39 +154,42 @@ function Player() {
     started.current = true
 
     async function run() {
-      let total = 0
-      for (let i = 0; i < 80; i++) {
-        const res = await fetch('/api/prepare', { method: 'POST' })
-        if (res.status === 401 || res.status === 409) {
-          router.push('/')
-          return
-        }
-        const data = (await res.json()) as { remaining?: number }
-        const remaining = data.remaining ?? 0
-        // Первый замер — он же общий объём работы: дальше остаток только убывает.
-        if (remaining > total) total = remaining
-        setPrep({ remaining, total })
-        if (remaining <= 0) break
-        setProgress(`Осталось разобрать ${remaining} игр`)
-      }
-
-      setPrep({ remaining: 0, total })
-      setProgress(
-        focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
-      )
-      const res = await fetch('/api/recommend', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mood, ...(focus ? { focus } : {}) }),
+      const warm = await runWarmup({
+        onProgress: (p) => {
+          setPrep(p)
+          if (p.remaining > 0) setProgress(`Осталось разобрать ${p.remaining} игр`)
+        },
       })
-      if (!res.ok) {
+      if (warm === 'unauthorized') {
+        router.push('/')
+        return
+      }
+      if (warm === 'error') {
         setPhase('error')
         return
       }
-      const data = (await res.json()) as {
-        picks: Pick[]
-        discoveries?: Pick[]
-        engine: string
+
+      setPrep((p) => ({ remaining: 0, total: p?.total ?? 0 }))
+      setProgress(
+        focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
+      )
+      // Сюда прогрев доходил и раньше, но без try/catch: оборванная сеть на
+      // этом шаге оставляла экран в вечном «Подбираю…».
+      let data: { picks: Pick[]; discoveries?: Pick[]; engine: string }
+      try {
+        const res = await fetch('/api/recommend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mood, ...(focus ? { focus } : {}) }),
+        })
+        if (!res.ok) {
+          setPhase('error')
+          return
+        }
+        data = (await res.json()) as typeof data
+      } catch {
+        setPhase('error')
+        return
       }
       if (!data.picks?.length) {
         setPhase('error')
@@ -224,59 +227,7 @@ function Player() {
   )
 
   if (phase === 'prepare') {
-    // Прогресс у этого экрана был всегда — просто висел текстом рядом со спиннером.
-    const pct = prep && prep.total > 0 ? ((prep.total - prep.remaining) / prep.total) * 100 : 0
-    const known = prep !== null && prep.total > 0
-
-    return (
-      <div className="relative flex-1 flex flex-col items-center justify-center gap-7 px-5 overflow-hidden">
-        <Ambient className="anim-breathe" />
-        <div aria-hidden className="grain" />
-
-        <div className="relative">
-          {known ? (
-            <ProgressRing
-              percent={pct}
-              size={160}
-              stroke={8}
-              duration={600}
-              label={
-                <div className="flex flex-col items-center gap-0.5">
-                  <span
-                    className="font-mono text-3xl font-extrabold text-ink"
-                    style={{ fontVariantNumeric: 'tabular-nums' }}
-                  >
-                    {Math.round(pct)}%
-                  </span>
-                  <span className="text-[11px] text-faint">разобрано</span>
-                </div>
-              }
-            />
-          ) : (
-            <div className="flex h-40 w-40 items-center justify-center">
-              <Spinner />
-            </div>
-          )}
-        </div>
-
-        {/* Строка статуса меняется по ходу — подменять её встык значит терять
-            единственный сигнал, что что-то вообще происходит. */}
-        <div className="h-5 relative w-full max-w-sm text-center">
-          <AnimatePresence mode="wait">
-            <motion.p
-              key={progress}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute inset-x-0 text-dim text-sm"
-            >
-              {progress}
-            </motion.p>
-          </AnimatePresence>
-        </div>
-      </div>
-    )
+    return <WarmupScreen progress={prep} message={progress} />
   }
 
   if (phase === 'spin') {
