@@ -28,7 +28,7 @@ npm run dev
 ### ANTHROPIC_API_KEY — умные объяснения (опционально)
 
 Ключ с https://platform.claude.com → подбор и pros/cons генерирует Claude (модель `claude-haiku-4-5`,
-~$0.01 за подборку). Без ключа работает эвристический фолбэк с шаблонными объяснениями.
+~0,4¢ за подборку). Без ключа работает эвристический фолбэк с шаблонными объяснениями.
 
 ## Режим пати (во что играть с друзьями)
 
@@ -47,8 +47,9 @@ npm run dev
 
 ## Как это устроено
 
-- **Данные:** Steam Web API (`GetOwnedGames` — библиотека и минуты), метаданные игр — SteamSpy (теги)
-  и store appdetails (описания, скриншоты, co-op категории), отзывы — публичный endpoint `appreviews`.
+- **Данные:** Steam Web API (`GetOwnedGames` — библиотека и минуты), метаданные игр — Steam GetItems (теги,
+  описания, арт, категории; SteamSpy отдаёт 403 с серверных IP) и store appdetails
+  (скриншоты — GetItems их не отдаёт), отзывы — публичный endpoint `appreviews`.
   Всё кэшируется в SQLite через `@libsql/client`: локально — файл `data/imbored.db`,
   в проде — Turso (переменные `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`).
 - **Движок:** тег-профиль игрока (вес = log(1+часы), буст недавней активности) → косинусный скоринг
@@ -63,7 +64,7 @@ npm run dev
 
 ```bash
 npm run dev     # dev-сервер
-npm test        # vitest (53 теста)
+npm test        # vitest (518 тестов)
 npm run build   # продакшен-сборка
 ```
 

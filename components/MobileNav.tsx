@@ -10,18 +10,27 @@ import { useEffect, useRef, useState } from 'react'
  * Подписи короче десктопных: в пяти колонках на 360px «Что нового» и
  * «Подобрать игру» переносятся на две строки и ломают высоту панели.
  */
+/**
+ * `also` — адреса, которые пункт обязан подсвечивать, но по которым сам не
+ * ведёт. Без них две страницы, где человек проводит больше всего времени,
+ * не подсвечивали в панели ничего: выдача живёт на /play, а не на /quiz,
+ * и комната на /room/<код>, а не на /rooms. Панель молча гасла ровно там,
+ * где важнее всего понимать, где ты находишься.
+ */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
-  { href: '/quiz', label: 'Подбор' },
-  { href: '/rooms', label: 'Пати' },
+  { href: '/quiz', label: 'Подбор', also: ['/play'] },
+  { href: '/rooms', label: 'Пати', also: ['/room'] },
   { href: '/whatsnew', label: 'Новое' },
   { href: '/library', label: 'Игры' },
-]
+] satisfies Array<{ href: string; label: string; also?: string[] }>
 
 export function MobileNav() {
   const pathname = usePathname() ?? ''
-  const activeIndex = ITEMS.findIndex(
-    (i) => pathname === i.href || pathname.startsWith(`${i.href}/`),
+  const activeIndex = ITEMS.findIndex((i) =>
+    [i.href, ...(('also' in i ? i.also : []) as string[])].some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`),
+    ),
   )
 
   const rowRef = useRef<HTMLDivElement>(null)

@@ -1,5 +1,5 @@
 import { Analytics } from '@vercel/analytics/next'
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono, Onest } from 'next/font/google'
 import Link from 'next/link'
 import { Footer } from '@/components/Footer'
@@ -27,6 +27,24 @@ const jbMono = JetBrains_Mono({
   subsets: ['latin', 'cyrillic'],
   preload: false,
 })
+
+/**
+ * viewportFit: 'cover' — без него env(safe-area-inset-bottom) на iOS всегда
+ * равен нулю. То есть отступ под нижнюю панель, который в layout уже был
+ * посчитан «с запасом на безопасную зону», по факту не срабатывал ни разу, и
+ * на телефонах с домашней полоской панель уезжала под неё.
+ *
+ * themeColor двумя строками, а не одной: браузерная обвязка (адресная строка
+ * в Chrome, статус-бар в PWA) должна совпадать с фоном страницы, а он у нас
+ * зависит от темы. Одно значение красило бы шов при светлой теме тёмным.
+ */
+export const viewport: Viewport = {
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0b0c10' },
+    { media: '(prefers-color-scheme: light)', color: '#f5f4f1' },
+  ],
+}
 
 export const metadata: Metadata = {
   // без metadataBase Next не может собрать абсолютные ссылки на og-картинки
@@ -75,7 +93,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         <link rel="preconnect" href="https://shared.akamai.steamstatic.com" />
         <link rel="dns-prefetch" href="https://clan.fastly.steamstatic.com" />
       </head>
-      <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[52px] md:pb-0">
+      <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,

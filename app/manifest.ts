@@ -1,0 +1,44 @@
+import type { MetadataRoute } from 'next'
+
+/**
+ * Манифест — ради «добавить на домашний экран», а не ради полноценного PWA.
+ *
+ * Сервис-воркера здесь нет и не планируется: офлайн-режим для продукта, вся
+ * ценность которого в свежих данных Steam, показывал бы вчерашнюю библиотеку
+ * и вчерашний онлайн. А вот запуск с домашнего экрана без адресной строки —
+ * ровно тот сценарий, ради которого ссылку и сохраняют.
+ *
+ * display: 'standalone' плюс viewportFit: 'cover' в layout: только вдвоём они
+ * дают нижнюю панель, не уезжающую под домашнюю полоску iOS.
+ */
+export default function manifest(): MetadataRoute.Manifest {
+  return {
+    name: 'imbored — во что поиграть',
+    short_name: 'imbored',
+    description:
+      'Подключи Steam — подберём игру под твоё настроение прямо сейчас: из бэклога, заброшенного или нового.',
+    start_url: '/',
+    display: 'standalone',
+    // Совпадает с --bg тёмной темы: она базовая, и экран запуска не должен
+    // моргать белым перед тем, как приложение отрисуется.
+    background_color: '#0b0c10',
+    theme_color: '#0b0c10',
+    lang: 'ru',
+    categories: ['games', 'entertainment'],
+    icons: [
+      {
+        src: '/icon.svg',
+        sizes: 'any',
+        type: 'image/svg+xml',
+      },
+      {
+        // Именно /apple-icon, без расширения: так называется маршрут, который
+        // Next заводит для app/apple-icon.tsx. С .png будет 404.
+        src: '/apple-icon',
+        sizes: '180x180',
+        type: 'image/png',
+        purpose: 'any',
+      },
+    ],
+  }
+}
