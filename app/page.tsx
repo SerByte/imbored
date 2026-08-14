@@ -99,25 +99,54 @@ function Landing() {
         </div>
 
         <div className="w-full glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise" style={{ animationDelay: '80ms' }}>
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && input && connect(false)}
-            placeholder="Ссылка на твой Steam-профиль или ник"
-            className="w-full rounded-[14px] bg-surface border border-edge px-4 py-3 text-ink placeholder:text-faint outline-none focus:border-ember/60 transition-colors"
-          />
-          {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
-          <Magnet className="block w-full">
-            <ClickSpark className="block w-full">
-              <button
-                onClick={() => connect(false)}
-                disabled={!input || busy !== null}
-                className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 disabled:opacity-40 hover:brightness-110 transition cursor-pointer"
-              >
-                {busy === 'connect' ? 'Читаю библиотеку…' : 'Подобрать игру'}
-              </button>
-            </ClickSpark>
-          </Magnet>
+          {/*
+            Настоящая форма, а не инпут с onKeyDown. Даёт три вещи разом:
+            Enter работает штатно (и на мобильной клавиатуре тоже), браузер
+            понимает поле как поле, а скринридер объявляет его подпись.
+          */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (input && busy === null) void connect(false)
+            }}
+            className="flex flex-col gap-3"
+          >
+            {/* Подпись есть, но не показана: место под ней съело бы первый
+                экран, а placeholder подписью не является — он исчезает при
+                вводе и не читается скринридером как имя поля. */}
+            <label htmlFor="steam-profile" className="sr-only">
+              Ссылка на твой Steam-профиль или ник
+            </label>
+            <input
+              id="steam-profile"
+              name="profile"
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ссылка на твой Steam-профиль или ник"
+              // на телефоне: без автокапитализации и автозамены (это ник или
+              // URL), и с кнопкой «перейти» вместо «ввод»
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="go"
+              autoComplete="off"
+              className="w-full rounded-[14px] bg-surface border border-edge px-4 py-3 text-ink placeholder:text-faint focus:border-ember/60 transition-colors"
+            />
+            {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
+            <Magnet className="block w-full">
+              <ClickSpark className="block w-full">
+                <button
+                  type="submit"
+                  disabled={!input || busy !== null}
+                  className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 disabled:opacity-40 hover:brightness-110 transition cursor-pointer"
+                >
+                  {busy === 'connect' ? 'Читаю библиотеку…' : 'Подобрать игру'}
+                </button>
+              </ClickSpark>
+            </Magnet>
+          </form>
           <div className="flex items-center gap-3 text-xs text-faint">
             <div className="h-px flex-1 bg-edge" />
             или

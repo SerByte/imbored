@@ -164,10 +164,42 @@
   --font-display: var(--font-unbounded), var(--font-onest), system-ui, sans-serif;
 }
 
+/*
+ * Шапка зафиксирована и перекрывает верх страницы, поэтому переход по якорю
+ * (в том числе по skip-link из layout) уводил цель под неё.
+ */
+html {
+  scroll-padding-top: 5rem;
+}
+
 body {
   background: var(--bg);
   color: var(--ink);
   transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/*
+ * Видимый фокус. До этого правила его не было нигде: браузерное кольцо
+ * снималось у инпута через outline-none, а у остальных элементов терялось на
+ * тёмном фоне. Пройти продукт с клавиатуры было можно, но вслепую.
+ *
+ * :focus-visible, а не :focus — иначе кольцо появляется и на обычном клике
+ * мышью, чего никто не ждёт.
+ *
+ * Два слоя: тёмная линия под светлой. Так кольцо остаётся видно и на игровом
+ * арте, где под ним может оказаться что угодно — от чёрного неба до снега.
+ */
+:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 2px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+/* Элемент сам управляет своей рамкой — двойное кольцо там лишнее. */
+input:focus-visible,
+textarea:focus-visible {
+  outline-offset: 0;
 }
 
 /* стеклянная панель — базовый строительный блок интерфейса */

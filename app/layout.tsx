@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
+import { MotionProvider } from '@/components/MotionProvider'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
@@ -80,6 +81,21 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,
           }}
         />
+        {/*
+          Первое, что получает фокус на любой странице. Шапка — шесть ссылок
+          подряд, и без этого до содержания страницы с клавиатуры нужно было
+          протабать их все, на каждой странице заново.
+
+          Видна только в фокусе: sr-only снимается на focus-visible.
+          scroll-padding-top в globals.css нужен здесь же — иначе якорь
+          уводит цель под фиксированную шапку.
+        */}
+        <a
+          href="#main"
+          className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-3 focus-visible:left-3 focus-visible:z-[60] focus-visible:rounded-[14px] focus-visible:bg-ember focus-visible:px-4 focus-visible:py-2 focus-visible:text-on-ember focus-visible:font-semibold"
+        >
+          К содержанию
+        </a>
         <header
           className="fixed top-0 inset-x-0 z-50"
           style={{ background: 'linear-gradient(to bottom, var(--header-fade), transparent)' }}
@@ -115,7 +131,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             </nav>
           </div>
         </header>
-        <main className="flex-1 flex flex-col">{children}</main>
+        <main id="main" className="flex-1 flex flex-col">
+          <MotionProvider>{children}</MotionProvider>
+        </main>
         <Footer />
         <MobileNav />
         <Analytics />

@@ -15,6 +15,11 @@ import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/reco
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 
+export const metadata = {
+  title: 'Библиотека',
+  description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
+}
+
 export const dynamic = 'force-dynamic'
 
 /**

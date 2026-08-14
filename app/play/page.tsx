@@ -523,9 +523,17 @@ function Player() {
                     setShowWhy(false)
                   }}
                   title="Больше не показывать эту игру"
-                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint"
+                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint cursor-pointer"
                 >
-                  🚫
+                  {/*
+                    Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
+                    не было вовсе (title им не является), а рядом с «Не то —
+                    дальше» её смысл не читался и глазами: обе кнопки убирают
+                    игру с экрана, но одна на сегодня, а другая навсегда.
+                    Эмодзи спрятана от скринридера, текст объясняет разницу.
+                  */}
+                  <span aria-hidden>🚫</span>
+                  <span className="sr-only">Больше никогда не показывать эту игру</span>
                 </button>
               </motion.div>
             )}
