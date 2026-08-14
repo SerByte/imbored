@@ -605,8 +605,16 @@ export async function getLatestSnapshot(
 
 /* ---------- каталог игр ---------- */
 
-export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Promise<void> {
-  await db.execute({
+/**
+ * Одна инструкция апсерта, отдельно от её выполнения.
+ *
+ * Вынесена, чтобы ту же самую запись можно было и выполнить поштучно, и
+ * сложить в db.batch. Прогрев библиотеки апсертит до двухсот игр за вызов, и
+ * двести отдельных round-trip'ов в Turso стоили там дороже, чем вся остальная
+ * работа вместе взятая.
+ */
+function gameMetaStatement(meta: GameMeta, nowSec: number) {
+  return {
     sql: `INSERT INTO games (appid, name, tags_json, genres_json, categories_json, short_description,
             header_image, screenshots_json, is_free, price_final, release_date, median_forever,
             store, store_url, art_json,
@@ -672,7 +680,27 @@ export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Pr
       isMultiplayerCategories(meta.categories) ? 1 : 0,
       nowSec,
     ],
-  })
+  }
+}
+
+export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Promise<void> {
+  await db.execute(gameMetaStatement(meta, nowSec))
+}
+
+/**
+ * Пачка апсертов одним round-trip'ом вместо N. Порядок внутри пачки сохраняется,
+ * поэтому повторяющийся appid отработает так же, как отработал бы поштучно.
+ */
+export async function upsertGamesMeta(
+  db: Db,
+  metas: GameMeta[],
+  nowSec: number,
+): Promise<void> {
+  if (!metas.length) return
+  await db.batch(
+    metas.map((m) => gameMetaStatement(m, nowSec)),
+    'write',
+  )
 }
 
 /**

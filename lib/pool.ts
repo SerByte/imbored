@@ -152,10 +152,16 @@ export async function fetchDiscoveryPool(db: Db, q: DiscoveryQuery): Promise<Gam
   args.push(mpOnly, banned, limit)
 
   const res = await db.execute({
+    // Фильтр живости здесь такой же, как в холодном старте выше, и это не
+    // дублирование ради симметрии: без него мёртвые и переехавшие в сиквел
+    // игры попадали в выдачу всем, у кого есть профиль вкуса, — то есть почти
+    // всем. Ветку холодного старта это не задевало, поэтому расхождение и
+    // прожило незамеченным: в ней предикат стоял с самого начала.
     sql: `WITH pool AS (${branches}),
                best AS (SELECT appid, MAX(weight) AS w FROM pool GROUP BY appid)
           SELECT ${COLUMNS} FROM best b JOIN games g ON g.appid = b.appid
-          WHERE (? = 0 OR g.is_multiplayer = 1)
+          WHERE g.alive = 1 AND g.superseded_by IS NULL
+            AND (? = 0 OR g.is_multiplayer = 1)
             AND g.appid NOT IN (SELECT value FROM json_each(?))
           ORDER BY b.w DESC LIMIT ?`,
     args,

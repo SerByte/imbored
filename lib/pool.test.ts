@@ -114,6 +114,30 @@ describe('fetchDiscoveryPool', () => {
     await upsertGameMeta(db, meta(99, { reviewsTotal: 10_000 }), NOW)
     expect(await fetchDiscoveryPool(db, { tags: ['Roguelike'], limit: 5 })).toEqual([])
   })
+
+  /**
+   * Фильтр живости в ветке по тегам держится только на этих двух проверках.
+   * Он там отсутствовал, хотя в холодном старте стоял с самого начала, — то
+   * есть мёртвые игры видели все, у кого есть профиль вкуса, и никто, у кого
+   * его нет. Ровно поэтому расхождение и не бросалось в глаза.
+   */
+  test('мёртвая игра не попадает в выдачу по тегам', async () => {
+    const db = await freshDb()
+    await seed(db)
+    await db.execute({ sql: 'UPDATE games SET alive = 0 WHERE appid = ?', args: [2] })
+
+    const pool = await fetchDiscoveryPool(db, { tags: ['Roguelike'], limit: 10 })
+    expect(pool.map((m) => m.appid).sort()).toEqual([1, 3])
+  })
+
+  test('игра, переехавшая в сиквел, не попадает в выдачу по тегам', async () => {
+    const db = await freshDb()
+    await seed(db)
+    await db.execute({ sql: 'UPDATE games SET superseded_by = ? WHERE appid = ?', args: [3, 1] })
+
+    const pool = await fetchDiscoveryPool(db, { tags: ['Roguelike'], limit: 10 })
+    expect(pool.map((m) => m.appid).sort()).toEqual([2, 3])
+  })
 })
 
 describe('pickQueryTags', () => {
