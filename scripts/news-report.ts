@@ -304,6 +304,31 @@ async function main() {
   console.log(`  ждут пересказа: ${ru(i1.pending)}   (~$${(n(i1.pending) * 0.0028).toFixed(2)} разово)`)
   console.log('  попыток: ' + i2.map((r) => `${r.tldr_tries}→${r.n}`).join('  '))
 
+  // ── I2. Что модель написала ────────────────────────────────────────────
+  // Пересказы уезжают на витрину без ревью, поэтому смотреть на них глазами
+  // надо хотя бы выборочно: пустой tldr, обрубок на полуслове или английский
+  // текст в русской ленте видны сразу, а из счётчиков — никогда.
+  head('I2. Свежие пересказы — выборка')
+  const samples = await rows(
+    `SELECT n.title, n.tldr, length(n.tldr) AS len, g.name
+       FROM news_items n LEFT JOIN games g ON g.appid = n.appid
+      WHERE n.tldr IS NOT NULL AND n.tldr_at IS NOT NULL
+      ORDER BY n.tldr_at DESC LIMIT 6`,
+  )
+  for (const r of samples) {
+    console.log(`  ${String(r.name ?? '—').slice(0, 28).padEnd(30)}${String(r.title).slice(0, 44)}`)
+    console.log(`    → ${String(r.tldr)}\n`)
+  }
+  const shape = await one(
+    `SELECT COUNT(*) AS n, SUM(length(tldr) < 20) AS too_short,
+            SUM(tldr LIKE '%…') AS cut, AVG(length(tldr)) AS avg_len
+       FROM news_items WHERE tldr IS NOT NULL`,
+  )
+  console.log(
+    `  всего пересказов: ${ru(shape.n)}   средняя длина: ${Math.round(n(shape.avg_len))}` +
+      `   короче 20 символов: ${ru(shape.too_short)}   обрублено: ${ru(shape.cut)}`,
+  )
+
   // ── J. Состояние крона ─────────────────────────────────────────────────
   head('J. Что рассказывает про себя крон')
   const j = await rows(
