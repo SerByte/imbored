@@ -15,9 +15,18 @@
  * задайте TURSO_DATABASE_URL — как у seed:catalog и catalog:promote.
  */
 
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { countNewsPollDue, createDb, enrollNewsPoll, topCatalogAppids } from '../lib/db'
+import {
+  acquireLease,
+  countNewsPollDue,
+  createDb,
+  DIGEST_LEASE,
+  enrollNewsPoll,
+  releaseLease,
+  topCatalogAppids,
+} from '../lib/db'
 import { runNewsSlice } from '../lib/newsjob'
 
 /** Игр за один срез. Хост store.steampowered.com держим на 1.7 с между
@@ -69,21 +78,38 @@ async function main() {
   // Выходим по «ничего не пересказали», а не по hasMore: при limit = 0 условие
   // targets.length === limit истинно всегда, и цикл по нему был бы вечным.
   if (digestOnly) {
+    // Аренда та же, что у /api/cron/digest: getUnsummarized не резервирует
+    // строки, поэтому ручной прогон и крон, взявшись за дело одновременно,
+    // разобрали бы одни и те же записи и заплатили за них дважды. Держим
+    // подолгу и продлеваем каждым кругом — аренда реентерабельна по holder.
+    const holder = `local:${randomUUID()}`
+    const LEASE_TTL = 300
+    if (!(await acquireLease(db, DIGEST_LEASE, holder, LEASE_TTL, now))) {
+      console.log('очередь пересказов сейчас разбирает крон — подожди или поставь digest_paused=1')
+      return
+    }
+
     let digested = 0
     const startedAt = Date.now()
-    for (;;) {
-      const res = await runNewsSlice(db, {
-        deadlineAt: Date.now() + 10 * 60_000,
-        nowSec: now,
-        limit: 0,
-        digestLimit: 25,
-        onProgress: (line) => console.log(line),
-      })
-      if (!res.digested) break
-      digested += res.digested
-      const mins = Math.round((Date.now() - startedAt) / 60_000)
-      console.log(`пересказов: ${digested.toLocaleString('ru-RU')}\t${mins} мин`)
+    try {
+      for (;;) {
+        const res = await runNewsSlice(db, {
+          deadlineAt: Date.now() + 10 * 60_000,
+          nowSec: now,
+          limit: 0,
+          digestLimit: 25,
+          onProgress: (line) => console.log(line),
+        })
+        if (!res.digested) break
+        digested += res.digested
+        const mins = Math.round((Date.now() - startedAt) / 60_000)
+        console.log(`пересказов: ${digested.toLocaleString('ru-RU')}\t${mins} мин`)
+        await acquireLease(db, DIGEST_LEASE, holder, LEASE_TTL, Math.floor(Date.now() / 1000))
+      }
+    } finally {
+      await releaseLease(db, DIGEST_LEASE, holder)
     }
+
     console.log(`\nготово. пересказано ${digested.toLocaleString('ru-RU')}`)
     if (!digested) {
       console.log('ноль — либо очередь пуста, либо нет ANTHROPIC_API_KEY в окружении')
