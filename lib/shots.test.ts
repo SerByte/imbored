@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { pickShotSize, shotUrl } from './shots'
+import { pickCoverShotSize, pickShotSize, shotUrl } from './shots'
 
 /**
  * Живые ссылки из appdetails, снятые 13.08.2026 (Cyberpunk 2077, appid 1091500).
@@ -69,5 +69,46 @@ describe('pickShotSize', () => {
 
   test('нулевая ширина до замера не роняет выбор', () => {
     expect(pickShotSize(0, 2)).toBe('small')
+  })
+})
+
+describe('pickCoverShotSize', () => {
+  /**
+   * Ради этого случая функция и появилась. Герой «Игры дня» высотой почти во
+   * весь экран режет кадр 16:9 по высоте: в бокс 375×812 картинка вписывается
+   * шириной под 1400 CSS-пикселей, из которых видно 375. Судить о размере по
+   * ширине бокса здесь нельзя — получится четырёхкратный апскейл на весь экран.
+   */
+  test('портретный телефон во весь экран просит полный кадр', () => {
+    expect(pickCoverShotSize(375, 812, 2)).toBe('full')
+    // а старая функция на той же ширине ответила бы иначе — в этом вся разница
+    expect(pickShotSize(375, 2)).toBe('small')
+  })
+
+  test('десктопный герой просит полный кадр при любой плотности', () => {
+    expect(pickCoverShotSize(1440, 830, 1)).toBe('full')
+    expect(pickCoverShotSize(1440, 830, 2)).toBe('full')
+  })
+
+  /** Функция не выродилась в «всегда full»: низкому широкому окну хватает малого */
+  test('низкое широкое окно обходится маленьким кадром', () => {
+    expect(pickCoverShotSize(800, 360, 1)).toBe('small')
+  })
+
+  /**
+   * Когда бокс шире картинки, cover упирается в ширину, и ответ обязан совпасть
+   * с обычным выбором — иначе на странице игры и на герое разошлись бы пороги.
+   */
+  test('на широком боксе совпадает с обычным выбором', () => {
+    expect(pickCoverShotSize(880, 200, 1)).toBe(pickShotSize(880, 1))
+    expect(pickCoverShotSize(1200, 200, 1)).toBe(pickShotSize(1200, 1))
+  })
+
+  test('плотность выше двух не запрашивает третий размер', () => {
+    expect(pickCoverShotSize(400, 300, 3)).toBe(pickCoverShotSize(400, 300, 2))
+  })
+
+  test('нулевые размеры до первого замера не роняют выбор', () => {
+    expect(pickCoverShotSize(0, 0, 2)).toBe('small')
   })
 })

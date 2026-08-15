@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { BlurBand } from '@/components/BlurBand'
-import { HeroArt } from '@/components/HeroArt'
+import { HeroShots } from '@/components/HeroShots'
 import { PlayersNow } from '@/components/PlayersNow'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
@@ -23,6 +23,7 @@ type DailyPick = {
   reason: string
   headerImage: string | null
   art: GameArtUrls | null
+  screenshots: string[]
   tags: string[]
   hoursPlayed: number | null
   ccu: number | null
@@ -98,11 +99,12 @@ export default function DailyPage() {
   return (
     <div className="flex-1 flex flex-col">
       <section className="media-dark relative flex-1 min-h-[92vh] flex items-end overflow-hidden anim-reveal">
-        <HeroArt
+        <HeroShots
           appid={pick.appid}
           headerImage={pick.headerImage}
           art={pick.art}
           name={pick.name}
+          screenshots={pick.screenshots ?? []}
         />
         <div
           aria-hidden

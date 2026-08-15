@@ -4,6 +4,7 @@ import { useReducedMotion } from 'motion/react'
 import dynamic from 'next/dynamic'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Lightbox } from '@/components/Lightbox'
+import { webglAvailable } from '@/components/morph/gl'
 import { Screenshots } from '@/components/Screenshots'
 import { pickShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
@@ -38,22 +39,6 @@ const MorphSlider = dynamic(() => import('@/components/morph/MorphSlider'), { ss
  * встройке. Шесть — столько же, сколько показывала сетка до слайдера.
  */
 const SLIDES = 6
-
-/** Ответ на всю вкладку один: пробный контекст создаётся ровно раз */
-let webglProbe: boolean | null = null
-
-/** Есть ли вообще WebGL: без контекста слайдер покажет пустоту, а не картинки */
-function webglAvailable(): boolean {
-  if (webglProbe === null) {
-    try {
-      const canvas = document.createElement('canvas')
-      webglProbe = Boolean(canvas.getContext('webgl2') ?? canvas.getContext('webgl'))
-    } catch {
-      webglProbe = false
-    }
-  }
-  return webglProbe
-}
 
 /** Что удалось выяснить про среду; до первого замера — null */
 type Env = { gl: boolean; size: ShotSize }

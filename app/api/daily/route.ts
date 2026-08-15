@@ -73,6 +73,9 @@ export async function GET() {
       // Клиент соберёт нужный размер сам через GameArt.
       headerImage: meta?.headerImage ?? null,
       art: meta?.art ?? null,
+      // Кадры отдаём целиком: сколько из них показать, решает сам герой —
+      // это упирается в бюджет видеопамяти слайдера, а не в состав ответа.
+      screenshots: meta?.screenshots ?? [],
       ccu: meta?.ccu ?? null,
       tags: topTags,
       hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,

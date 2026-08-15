@@ -48,6 +48,12 @@ export interface MorphSliderProps {
   autoplay?: boolean
   autoplayDelay?: number
   loop?: boolean
+  /**
+   * Потолок плотности канваса. Двойка — разумный максимум для блока, который
+   * рассматривают; фону под скримом и зерном хватает меньшего, а пикселей
+   * при этом становится кратно меньше, и шейдер перестаёт греть встройку.
+   */
+  dprCap?: number
   radius?: number
   overlayColor?: string
   showCaptions?: boolean
@@ -605,6 +611,7 @@ export default function MorphSlider({
   autoplay = false,
   autoplayDelay = 4,
   loop = true,
+  dprCap = 2,
   radius = 16,
   overlayColor = '#000000',
   showCaptions = true,
@@ -668,7 +675,7 @@ export default function MorphSlider({
       items,
       startIndex,
       reducedMotion,
-      dprCap: 2,
+      dprCap,
       canvasClass: styles.canvas,
       getOptions: () => optsRef.current,
       onIndexChange: (i) => {
@@ -683,7 +690,7 @@ export default function MorphSlider({
       engine.destroy()
       engineRef.current = null
     }
-  }, [items, startIndex])
+  }, [items, startIndex, dprCap])
 
   const handleNext = useCallback(() => engineRef.current?.next(), [])
   const handlePrev = useCallback(() => engineRef.current?.prev(), [])
