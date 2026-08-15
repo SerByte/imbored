@@ -6,6 +6,7 @@ import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
+import { SessionKeeper } from '@/components/SessionKeeper'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
@@ -177,6 +178,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         </main>
         <Footer />
         <MobileNav />
+        {/* Продлевает вход. Клиентский и без разметки: лэйаут кук не читает,
+            иначе весь сайт стал бы динамическим и ISR у /game/[appid] умер. */}
+        <SessionKeeper />
         <Analytics />
       </body>
     </html>

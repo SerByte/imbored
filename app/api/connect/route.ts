@@ -6,20 +6,24 @@ import {
   currentSteamId,
   demoSteamId,
   getDb,
+  issueSession,
   nowSec,
   sessionCookieOptions,
-  sessionSecret,
   steamApiKey,
 } from '@/lib/server'
-import { signSession } from '@/lib/session'
 import { fetchOwnedGames, fetchPlayerSummary, parseProfileInput, resolveVanity } from '@/lib/steam'
 
-function withSession(res: NextResponse, steamid: string): NextResponse {
-  res.cookies.set(SESSION_COOKIE, signSession(steamid, sessionSecret()), sessionCookieOptions())
+async function withSession(
+  res: NextResponse,
+  steamid: string,
+  userAgent: string | null,
+): Promise<NextResponse> {
+  res.cookies.set(SESSION_COOKIE, await issueSession(steamid, userAgent), sessionCookieOptions())
   return res
 }
 
 export async function POST(req: Request) {
+  const userAgent = req.headers.get('user-agent')
   const body = (await req.json().catch(() => ({}))) as {
     input?: string
     demo?: boolean
@@ -44,6 +48,7 @@ export async function POST(req: Request) {
         demo: true,
       }),
       steamid,
+      userAgent,
     )
   }
 
@@ -86,6 +91,7 @@ export async function POST(req: Request) {
         gameCount: games.length,
       }),
       steamid,
+      userAgent,
     )
   } catch {
     return NextResponse.json({ error: 'steam' }, { status: 502 })

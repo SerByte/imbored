@@ -27,6 +27,29 @@ CREATE TABLE IF NOT EXISTS users (
   created_at INTEGER NOT NULL,
   last_seen_at INTEGER NOT NULL
 );
+/*
+ * Сессии. Строка здесь — НЕ источник истины о том, вошёл ли человек: это
+ * решает подпись куки. Таблица существует ровно ради обратного действия —
+ * погасить вход досрочно.
+ *
+ * Разница принципиальная. Если считать сессию живой только при наличии строки,
+ * то икота Turso, холодный старт с пустой базой или не записавшийся INSERT
+ * означают массовый разлогин — ровно та беда, которую эта задача чинит.
+ * Поэтому «строки нет» и «строка отозвана» обязаны быть разными состояниями:
+ * отзыв — это revoked_at, а не DELETE. Надгробия не убираются.
+ *
+ * Строк накапливается по одной на ВХОД, а не на визит (sid живёт вместе с
+ * кукой и при продлении не меняется), так что чистка не нужна.
+ */
+CREATE TABLE IF NOT EXISTS sessions (
+  sid TEXT PRIMARY KEY,
+  steamid TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  seen_at INTEGER NOT NULL,
+  revoked_at INTEGER,
+  device TEXT
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_sessions_steamid ON sessions (steamid) WHERE revoked_at IS NULL;
 CREATE TABLE IF NOT EXISTS library_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   steamid TEXT NOT NULL,
@@ -245,6 +268,9 @@ export async function migrateDb(db: Db): Promise<Db> {
     ['feedback', 'reason TEXT'],
     ['rooms', 'is_public INTEGER NOT NULL DEFAULT 0'],
     ['users', 'portrait_json TEXT'],
+    // «выйти на всех устройствах»: отсечка по времени выдачи токена.
+    // Страхует случай, когда строки сессии нет вовсе и гасить по sid нечего.
+    ['users', 'sessions_from INTEGER'],
     // сигналы актуальности и производные поля для выборки без полного скана
     ['games', 'release_year INTEGER'],
     ['games', 'developer TEXT'],
@@ -342,6 +368,92 @@ export async function migrateDb(db: Db): Promise<Db> {
   return db
 }
 
+/* ---------- сессии ---------- */
+
+/** Что известно про сессию помимо самой куки; см. комментарий у таблицы */
+export type SessionRow = {
+  revokedAt: number | null
+  /** users.sessions_from — отсечка «выйти везде», общая на все устройства */
+  sessionsFrom: number | null
+}
+
+/**
+ * Состояние сессии одним запросом.
+ *
+ * LEFT JOIN, а не два обращения: строки сессии может не быть (легаси-кука,
+ * не записавшийся INSERT, чужая база), и это НЕ повод отказать — отвечать
+ * должен вызывающий, а не отсутствие строки. Различить «нет строки» и «нет
+ * пользователя» здесь не нужно: оба поля просто окажутся null.
+ */
+export async function getSessionState(
+  db: Db,
+  sid: string,
+  steamid: string,
+): Promise<SessionRow> {
+  const res = await db.execute({
+    sql: `SELECT s.revoked_at AS revoked_at, u.sessions_from AS sessions_from
+            FROM (SELECT ? AS sid, ? AS steamid) q
+            LEFT JOIN sessions s ON s.sid = q.sid AND s.steamid = q.steamid
+            LEFT JOIN users u ON u.steamid = q.steamid`,
+    args: [sid, steamid],
+  })
+  const row = res.rows[0]
+  return {
+    revokedAt: (row?.revoked_at as number | null) ?? null,
+    sessionsFrom: (row?.sessions_from as number | null) ?? null,
+  }
+}
+
+export async function createSession(
+  db: Db,
+  s: { sid: string; steamid: string; device?: string | null },
+  nowSec: number,
+): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO sessions (sid, steamid, created_at, seen_at, device)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(sid) DO UPDATE SET seen_at = excluded.seen_at`,
+    args: [s.sid, s.steamid, nowSec, nowSec, s.device ?? null],
+  })
+}
+
+/** Отметка последнего визита: справка для списка устройств, не авторитет */
+export async function touchSession(db: Db, sid: string, nowSec: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE sessions SET seen_at = ? WHERE sid = ? AND revoked_at IS NULL',
+    args: [nowSec, sid],
+  })
+}
+
+/** Погасить одно устройство */
+export async function revokeSession(db: Db, sid: string, nowSec: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE sessions SET revoked_at = ? WHERE sid = ? AND revoked_at IS NULL',
+    args: [nowSec, sid],
+  })
+}
+
+/**
+ * Погасить все устройства игрока.
+ *
+ * Двумя действиями, и второе обязательно: UPDATE достаёт только те сессии, чьи
+ * строки существуют, а sessions_from накрывает и те, что не записались. Без
+ * него «выйти везде» тихо промахивалось бы мимо ровно тех сессий, из-за
+ * которых его и нажимают.
+ */
+export async function revokeAllSessions(db: Db, steamid: string, nowSec: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE sessions SET revoked_at = ? WHERE steamid = ? AND revoked_at IS NULL',
+    args: [nowSec, steamid],
+  })
+  await db.execute({
+    sql: `INSERT INTO users (steamid, created_at, last_seen_at, sessions_from)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(steamid) DO UPDATE SET sessions_from = excluded.sessions_from`,
+    args: [steamid, nowSec, nowSec, nowSec],
+  })
+}
+
 /* ---------- пользователи ---------- */
 
 export async function upsertUser(
@@ -366,6 +478,22 @@ export async function getPersonaName(db: Db, steamid: string): Promise<string | 
     args: [steamid],
   })
   return (res.rows[0]?.persona_name as string | null) ?? null
+}
+
+/** Ник и аватар одним запросом — для приветствия на главной */
+export async function getUserCard(
+  db: Db,
+  steamid: string,
+): Promise<{ personaName: string | null; avatarUrl: string | null }> {
+  const res = await db.execute({
+    sql: 'SELECT persona_name, avatar_url FROM users WHERE steamid = ?',
+    args: [steamid],
+  })
+  const row = res.rows[0]
+  return {
+    personaName: (row?.persona_name as string | null) ?? null,
+    avatarUrl: (row?.avatar_url as string | null) ?? null,
+  }
 }
 
 export type PortraitCache = { takenAt: number; text: string }

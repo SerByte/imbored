@@ -108,6 +108,18 @@ describe('кука сессии', () => {
 
   test('secure выключен локально: на http://localhost браузер такую куку не примет', () => {
     process.env = { ...ENV, NODE_ENV: 'development' }
+    delete process.env.VERCEL
     expect(sessionCookieOptions().secure).toBe(false)
+  })
+
+  test('secure и на превью-деплое, где NODE_ENV не production', () => {
+    // Регрессия: secure смотрел только на NODE_ENV, в отличие от sessionSecret
+    // и getDb, и превью раздавал куку без Secure.
+    process.env = { ...ENV, VERCEL: '1', NODE_ENV: 'development' }
+    expect(sessionCookieOptions().secure).toBe(true)
+  })
+
+  test('срок — год: вход не должен умирать сам по себе', () => {
+    expect(sessionCookieOptions().maxAge).toBe(60 * 60 * 24 * 365)
   })
 })

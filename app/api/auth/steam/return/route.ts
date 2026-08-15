@@ -4,12 +4,11 @@ import {
   SESSION_COOKIE,
   appBaseUrl,
   getDb,
+  issueSession,
   nowSec,
   sessionCookieOptions,
-  sessionSecret,
   steamApiKey,
 } from '@/lib/server'
-import { signSession } from '@/lib/session'
 import { fetchOwnedGames, fetchPlayerSummary } from '@/lib/steam'
 import { verifyAssertion } from '@/lib/steam-openid'
 
@@ -51,7 +50,11 @@ export async function GET(req: Request) {
           ? `${base}/compat/${compat}`
           : `${base}/quiz`
     const res = NextResponse.redirect(target)
-    res.cookies.set(SESSION_COOKIE, signSession(steamid, sessionSecret()), sessionCookieOptions())
+    res.cookies.set(
+      SESSION_COOKIE,
+      await issueSession(steamid, req.headers.get('user-agent')),
+      sessionCookieOptions(),
+    )
     return res
   } catch {
     return NextResponse.redirect(`${base}/?error=steam`)

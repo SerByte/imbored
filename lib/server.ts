@@ -1,8 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { cookies } from 'next/headers'
-import { createDb, type Db } from './db'
-import { verifySession } from './session'
+import { createDb, createSession, getSessionState, revokeSession, type Db } from './db'
+import {
+  SESSION_TTL_SEC,
+  deviceLabel,
+  forgetSessionCache,
+  mintSession,
+  resolveSession,
+  type Resolved,
+} from './sessions'
 
 const globalStore = globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }
 
@@ -116,10 +123,21 @@ export function sessionCookieOptions() {
   return {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isDeployed(),
     path: '/',
-    maxAge: 60 * 60 * 24 * 30,
+    maxAge: SESSION_TTL_SEC,
   } as const
+}
+
+/**
+ * «Мы не на машине разработчика».
+ *
+ * Отдельная функция, потому что раньше secure смотрел только на NODE_ENV, а
+ * getDb и sessionSecret — на VERCEL тоже. Из-за расхождения превью-деплой,
+ * который собирается не с NODE_ENV=production, ставил куку без Secure.
+ */
+function isDeployed(): boolean {
+  return Boolean(process.env.VERCEL) || process.env.NODE_ENV === 'production'
 }
 
 export function steamApiKey(): string | null {
@@ -130,12 +148,54 @@ export function appBaseUrl(): string {
   return process.env.APP_BASE_URL || 'http://localhost:3000'
 }
 
+/**
+ * Текущая сессия целиком, либо null.
+ *
+ * НИЧЕГО НЕ ПИШЕТ — ни в базу, ни в куки, и это не случайность. Функцию зовут
+ * серверные компоненты (app/library/page.tsx и другие), а они куку переставить
+ * не могут в принципе: HTTP не разрешает Set-Cookie после начала стрима.
+ * Поэтому продление живёт в единственном роуте /api/session/touch, а здесь
+ * только читается флаг stale.
+ */
+export async function currentSession(): Promise<Resolved | null> {
+  const jar = await cookies()
+  return resolveSession({
+    token: jar.get(SESSION_COOKIE)?.value,
+    secret: sessionSecret(),
+    nowSec: nowSec(),
+    lookup: async (sid, steamid) => getSessionState(await getDb(), sid, steamid),
+  })
+}
+
 /** SteamID64 текущего пользователя из подписанной куки, либо null */
 export async function currentSteamId(): Promise<string | null> {
-  const jar = await cookies()
-  const token = jar.get(SESSION_COOKIE)?.value
-  if (!token) return null
-  return verifySession(token, sessionSecret())
+  return (await currentSession())?.steamid ?? null
+}
+
+/**
+ * Выдать новую сессию и вернуть значение для куки.
+ *
+ * Прежняя сессия ЭТОГО устройства гасится — иначе выданный до входа
+ * идентификатор оставался бы действительным и после него (фиксация сессии), а
+ * заодно демо-вход не отпускал бы свою строку при переходе на реальный профиль.
+ * Чужие устройства не трогаются: телефон переживает вход с ноутбука.
+ *
+ * Записи в базу — по возможности: строки нет — сессия всё равно жива, так
+ * устроен resolveSession. Падение Turso не должно ломать вход.
+ */
+export async function issueSession(steamid: string, userAgent: string | null): Promise<string> {
+  const now = nowSec()
+  const prev = await currentSession().catch(() => null)
+  const { sid, token } = mintSession(steamid, sessionSecret(), now)
+  try {
+    const db = await getDb()
+    if (prev?.sid) await revokeSession(db, prev.sid, now)
+    await createSession(db, { sid, steamid, device: deviceLabel(userAgent) }, now)
+  } catch {
+    // молча: кука уже подписана и будет выдана
+  }
+  forgetSessionCache()
+  return token
 }
 
 export function nowSec(): number {
