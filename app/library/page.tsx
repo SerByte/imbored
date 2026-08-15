@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
+import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { feedbackStats, getGamesMeta, getLatestSnapshot } from '@/lib/db'
 import {
@@ -246,6 +247,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           )
         })}
       </div>
+
+      {/* Выход живёт здесь, а не в шапке: шапка общая на весь сайт, и чтобы
+          показать в ней состояние входа, корневому лэйауту пришлось бы читать
+          куки — а это сделало бы динамическими все страницы разом, включая
+          кэшируемые /game/[appid]. Библиотека и так force-dynamic. */}
+      <SignOut />
     </div>
   )
 }

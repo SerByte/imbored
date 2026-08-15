@@ -1,10 +1,11 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { CinemaCollage } from '@/components/CinemaCollage'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
+import { markSessionTouched } from '@/components/SessionKeeper'
 import { Wordmark } from '@/components/Wordmark'
 
 const ERROR_TEXT: Record<string, string> = {
@@ -57,6 +58,49 @@ function Landing() {
   const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
   const [error, setError] = useState<string | null>(search.get('error'))
 
+  /**
+   * Узнаём вошедшего.
+   *
+   * Раньше этого не было вовсе, и в этом была настоящая причина жалобы «заебался
+   * заходить через стим»: вернувшийся человек с ЖИВОЙ кукой видел ровно тот же
+   * экран входа, что и незнакомец, и нажимал «Войти через Steam» — потому что
+   * ничего другого ему тут не предлагали.
+   *
+   * null — ещё не знаем; пока не знаем, не рисуем ни то, ни другое.
+   */
+  const [session, setSession] = useState<{ authed: boolean; personaName: string | null } | null>(null)
+
+  useEffect(() => {
+    const settle = (authed: boolean, personaName: string | null = null) =>
+      setSession({ authed, personaName })
+    // Тот же роут, что продлевает куку: заодно и продлеваем на каждом заходе
+    // на главную. markSessionTouched — чтобы SessionKeeper не сходил повторно.
+    markSessionTouched()
+    fetch('/api/session/touch?card=1', { method: 'POST' })
+      .then(async (r) => {
+        if (!r.ok) return settle(false)
+        const d = (await r.json()) as { authed?: boolean; personaName?: string | null }
+        settle(Boolean(d.authed), d.personaName ?? null)
+      })
+      // Упавший запрос — НЕ доказательство живой сессии. Показываем вход:
+      // соврать кнопкой «Продолжить» тому, кто на самом деле гость, хуже.
+      .catch(() => settle(false))
+
+    // Предохранитель: если ответа нет за полторы секунды, показываем вход.
+    // Без него медленная сеть оставляла бы человека наедине с «Секунду…»,
+    // то есть с экраном, на котором вообще ничего нельзя сделать. Пусть
+    // лучше мигнёт форма входа, чем повиснет заглушка.
+    const fallback = setTimeout(() => setSession((s) => s ?? { authed: false, personaName: null }), 1500)
+    return () => clearTimeout(fallback)
+    // Флага «компонент ещё жив» здесь намеренно нет. Он тут был и ломал ровно
+    // то, ради чего всё писалось: в dev эффект монтируется дважды, ответ
+    // приходил уже после снятия флага первой попытки, и карточка навсегда
+    // застывала на «Секунду…». Поздний ответ у отмонтированного компонента —
+    // безобидный no-op, а вот потерянный ответ виден пользователю.
+  }, [])
+
+  const target = joinTarget ? `/room/${joinTarget}` : compatTarget ? `/compat/${compatTarget}` : '/quiz'
+
   async function connect(demo: boolean) {
     setBusy(demo ? 'demo' : 'connect')
     setError(null)
@@ -68,9 +112,7 @@ function Landing() {
       })
       const data = (await res.json()) as { ok?: boolean; error?: string }
       if (data.ok) {
-        router.push(
-          joinTarget ? `/room/${joinTarget}` : compatTarget ? `/compat/${compatTarget}` : '/quiz',
-        )
+        router.push(target)
         return
       }
       setError(data.error ?? 'steam')
@@ -99,6 +141,48 @@ function Landing() {
         </div>
 
         <div className="w-full glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise" style={{ animationDelay: '80ms' }}>
+          {session === null ? (
+            /* Пока не знаем — не показываем форму входа. Мигнуть ею вошедшему
+               значит снова позвать его нажать «Войти через Steam», то есть
+               ровно то, от чего эта правка избавляет. Высота держится, чтобы
+               карточка не прыгала. */
+            <div className="min-h-[232px] flex items-center justify-center text-sm text-faint">
+              Секунду…
+            </div>
+          ) : session.authed ? (
+            <div className="min-h-[232px] flex flex-col justify-center gap-4">
+              <p className="text-lg text-ink">
+                С возвращением
+                {session.personaName ? (
+                  <>
+                    , <span className="font-semibold">{session.personaName}</span>
+                  </>
+                ) : null}
+                .
+              </p>
+              <Magnet className="block w-full">
+                <ClickSpark className="block w-full">
+                  <button
+                    type="button"
+                    onClick={() => router.push(target)}
+                    className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition cursor-pointer"
+                  >
+                    {joinTarget ? 'Войти в пати' : compatTarget ? 'Посмотреть совместимость' : 'Подобрать игру'}
+                  </button>
+                </ClickSpark>
+              </Magnet>
+              {/* Вход через Steam остаётся на виду и в один клик: сменить
+                  аккаунт должно быть возможно, а спрятанное под раскрывашку
+                  «сменить аккаунт» ищут дольше, чем оно того стоит. */}
+              <a
+                href={joinTarget ? `/api/auth/steam?join=${joinTarget}` : '/api/auth/steam'}
+                className="text-sm text-dim hover:text-ink transition-colors text-center py-1"
+              >
+                Это не я — войти через Steam
+              </a>
+            </div>
+          ) : (
+            <>
           {/*
             Настоящая форма, а не инпут с onKeyDown. Даёт три вещи разом:
             Enter работает штатно (и на мобильной клавиатуре тоже), браузер
@@ -165,6 +249,8 @@ function Landing() {
           >
             {busy === 'demo' ? 'Готовлю демо…' : 'Попробовать демо без Steam'}
           </button>
+            </>
+          )}
         </div>
 
         {error && error !== 'private' && (
