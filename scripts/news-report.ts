@@ -224,6 +224,25 @@ async function main() {
   const f3 = await rows('SELECT fail_count, COUNT(*) AS n FROM news_poll GROUP BY fail_count ORDER BY fail_count')
   console.log('\n  сбоев подряд: ' + f3.map((r) => `${r.fail_count}→${r.n}`).join('  '))
 
+  // Похороненные и когда каждая вернётся: 'gone' больше не вечен, но порог
+  // по last_at намеренно ленивый — см. reviveGoneNewsPoll.
+  const gone = await rows(
+    `SELECT n.appid, n.last_at, g.name FROM news_poll n
+      LEFT JOIN games g ON g.appid = n.appid
+      WHERE n.status = 'gone' ORDER BY n.last_at LIMIT 20`,
+  )
+  if (gone.length) {
+    console.log('\n  похоронены (вернутся через 30 дней после последней попытки):')
+    for (const r of gone) {
+      const due = n(r.last_at) + 30 * DAY
+      const left = Math.ceil((due - now) / DAY)
+      console.log(
+        `    ${String(r.appid).padEnd(8)}${String(r.name ?? '—').slice(0, 30).padEnd(32)}` +
+          (left > 0 ? `через ${left} дн` : 'готова к воскрешению'),
+      )
+    }
+  }
+
   // ── G. Спрос против пропускной способности ─────────────────────────────
   head('G. Спрос очереди против пропускной способности')
   const g = await rows(
