@@ -8,6 +8,7 @@ import { artCandidates } from '@/lib/art'
 import { getFeedForApps, getGamesMeta, getLatestSnapshot, getMajorFeed } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
+import { plural } from '@/lib/plural'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { resolveWhatsNew } from '@/lib/whatsnewfeed'
 
@@ -51,9 +52,11 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   // отсутствия. Ветка живёт в lib/, потому что ровно её же обязан повторить
   // опрос головы ленты из /api/whatsnew/head — своими словами он разошёлся бы
   // с ней в первый же день, когда у человека появится личный патч.
-  const { items, showPopular, hasMine } = await resolveWhatsNew({
+  const now = nowSec()
+  const { items, showPopular, hasMine, mineCount } = await resolveWhatsNew({
     steamid,
     wantsPopular,
+    nowSec: now,
     snapshot: (id) => getLatestSnapshot(db, id),
     forApps: (appids, limit) => getFeedForApps(db, appids, limit),
     major: (limit, minRank) => getMajorFeed(db, limit, { minRank }),
@@ -64,8 +67,12 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
     items.map((i) => i.appid),
   )
 
-  const now = nowSec()
-  const { hero, rest } = splitFeed(items, now, showPopular ? HERO_WINDOW_SEC : 0)
+  // Обложка берётся ТОЛЬКО из личного блока: добивка свежее (0–8 дней против
+  // 15+ у библиотеки), и на вкладке «в твоих играх» она встала бы обложкой,
+  // подсунув чужую игру под заголовок про твои.
+  const heroSource = items.slice(0, mineCount)
+  const topup = items.slice(mineCount)
+  const { hero, rest } = splitFeed(heroSource, now, showPopular ? HERO_WINDOW_SEC : 0)
 
   if (!hero) {
     return (
@@ -195,6 +202,42 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
               />
             )
           })}
+
+          {topup.length ? (
+            <>
+              {/*
+                Граница обязана быть видимой. Ниже неё лежат чужие игры, и
+                выдать их за твои значило бы соврать ровно там, где страница
+                обещает личное. Порядок тут уже не хронологический — добивка
+                свежее того, что над ней, — и подпись это тоже объясняет.
+              */}
+              <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b border-rule pt-10 pb-6">
+                <h2 className="font-display text-lg font-bold tracking-tight md:text-xl">
+                  Ещё в популярных играх
+                </h2>
+                <p className="text-sm text-dim">
+                  В твоих играх за три месяца — {mineCount}{' '}
+                  {plural(mineCount, 'обновление', 'обновления', 'обновлений')}. Дальше — то, что
+                  патчат прямо сейчас.
+                </p>
+              </div>
+
+              {topup.map((item) => {
+                const meta = metas.get(item.appid)
+                return (
+                  <PatchRow
+                    key={`${item.appid}:${item.gid}`}
+                    item={item}
+                    meta={meta}
+                    nowSec={now}
+                    // Это чужие игры — цена и ссылка на страницу тут уместны
+                    discovery
+                    discount={meta ? discountView(meta, now) : null}
+                  />
+                )
+              })}
+            </>
+          ) : null}
         </div>
       </Stage>
     </div>

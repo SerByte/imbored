@@ -25,6 +25,20 @@ export const FEED_LIMIT = 30
  */
 export const FEED_RANK_FLOOR = 10_000
 
+/**
+ * Дальше этого срока патч из твоей библиотеки новостью не считается.
+ *
+ * Без порога личная лента добивает список вглубь, пока не кончатся записи, —
+ * и библиотека, где игры патчатся редко, гарантированно даёт хвост в годы.
+ * Замер на живой библиотеке: 12 карточек возрастом 15, 37, 101, 172, 323, 351,
+ * 394, 487, 625, 1340, 1781 и 1964 дня. Страница называется «Что нового», и
+ * патч пятилетней давности на ней — ложь независимо от причины.
+ *
+ * Три месяца, а не месяц: игра, патчащаяся раз в квартал, всё ещё твоя
+ * новость, а вот прошлогодняя — уже архив.
+ */
+export const MINE_FRESH_SEC = 90 * 86_400
+
 type LibraryLike = { appid: number; playtimeForever: number }
 
 /**
@@ -49,21 +63,38 @@ export type FeedChoice<T> = {
   showPopular: boolean
   /** Есть ли личная лента вообще — от этого зависит, рисовать ли переключатель */
   hasMine: boolean
+  /**
+   * Сколько первых записей — из твоей библиотеки. Остальные добиты из общей.
+   * На общей вкладке равно длине списка.
+   */
+  mineCount: number
 }
 
-export async function resolveWhatsNew<T>(opts: {
+/**
+ * Порядок здесь НЕ хронологический, и это намеренно.
+ *
+ * Слить оба источника и отсортировать по дате — первое, что приходит в голову,
+ * и оно ломает смысл вкладки: популярное свежее (0–8 дней против 15+ у
+ * библиотеки), поэтому оно вытеснило бы твои игры вниз, а обложкой на вкладке
+ * «в твоих играх» встала бы чужая игра. Личный блок идёт первым целиком,
+ * добивка — после него, с видимой границей.
+ */
+export async function resolveWhatsNew<T extends { appid: number; publishedAt: number }>(opts: {
   steamid: string | null
   wantsPopular: boolean
+  nowSec: number
   snapshot: (steamid: string) => Promise<{ games: LibraryLike[] } | null>
   forApps: (appids: number[], limit: number) => Promise<T[]>
   major: (limit: number, minRank: number) => Promise<T[]>
   limit?: number
   libraryCap?: number
   rankFloor?: number
+  freshSec?: number
 }): Promise<FeedChoice<T>> {
   const limit = opts.limit ?? FEED_LIMIT
   const cap = opts.libraryCap ?? LIBRARY_CAP
   const floor = opts.rankFloor ?? FEED_RANK_FLOOR
+  const freshSec = opts.freshSec ?? MINE_FRESH_SEC
 
   let mine: T[] = []
   if (opts.steamid) {
@@ -77,7 +108,26 @@ export async function resolveWhatsNew<T>(opts: {
   }
 
   const hasMine = mine.length > 0
-  const showPopular = opts.wantsPopular || !hasMine
-  const items = showPopular ? await opts.major(limit, floor) : mine
-  return { items, showPopular, hasMine }
+  const fresh = mine.filter((i) => opts.nowSec - i.publishedAt <= freshSec)
+
+  // Вкладка, ведущая в пустоту, хуже её отсутствия: если по твоим играм за
+  // три месяца не набралось ничего, показываем общую целиком — ровно как
+  // гостю, у которого библиотеки нет вовсе.
+  if (opts.wantsPopular || !fresh.length) {
+    const items = await opts.major(limit, floor)
+    return { items, showPopular: true, hasMine, mineCount: items.length }
+  }
+
+  if (fresh.length >= limit) {
+    return { items: fresh.slice(0, limit), showPopular: false, hasMine, mineCount: limit }
+  }
+
+  // Добираем из общей, выбрасывая игры, которые уже показаны выше: одна и та
+  // же игра дважды в одной ленте выглядит поломкой, а не полнотой. Просим с
+  // запасом ровно на возможные пересечения.
+  const seen = new Set(fresh.map((i) => i.appid))
+  const pop = await opts.major(limit + fresh.length, floor)
+  const topup = pop.filter((i) => !seen.has(i.appid)).slice(0, limit - fresh.length)
+
+  return { items: [...fresh, ...topup], showPopular: false, hasMine, mineCount: fresh.length }
 }

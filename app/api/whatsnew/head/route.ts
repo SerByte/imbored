@@ -24,9 +24,11 @@ export async function GET(req: Request) {
   const steamid = await currentSteamId()
   const db = await getDb()
 
+  const now = nowSec()
   const { items, showPopular } = await resolveWhatsNew({
     steamid,
     wantsPopular,
+    nowSec: now,
     snapshot: (id) => getLatestSnapshot(db, id),
     forApps: (appids, limit) => getFeedHeadForApps(db, appids, limit),
     major: (limit, minRank) => getMajorFeedHead(db, limit, { minRank }),
@@ -35,7 +37,7 @@ export async function GET(req: Request) {
   return NextResponse.json(
     {
       showPopular,
-      now: nowSec(),
+      now,
       items: items.map((i) => ({ k: `${i.appid}:${i.gid}`, at: i.publishedAt })),
     },
     {
