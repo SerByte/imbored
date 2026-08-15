@@ -7,6 +7,7 @@ import {
   enrollNewsPoll,
   getCatalogMeta,
   releaseSteamLease,
+  reviveGoneNewsPoll,
   setCatalogMeta,
   topCatalogAppids,
 } from '@/lib/db'
@@ -25,6 +26,9 @@ const LAST_KEY = 'news_last_slice'
 
 /** Чуть больше maxDuration: убитый по таймауту инстанс не держит аренду вечно. */
 const LEASE_TTL_SEC = 75
+
+/** Через сколько давать похороненной игре ещё один шанс */
+const REVIVE_AFTER_SEC = 30 * 86_400
 
 /**
  * Vercel Cron ходит именно GET.
@@ -67,6 +71,10 @@ export async function GET(req: Request) {
       const lastEnroll = Number((await getCatalogMeta(db, ENROLL_KEY)) ?? 0)
       if (now - lastEnroll > 86_400) {
         await enrollNewsPoll(db, await topCatalogAppids(db, 200), 1, now)
+        // Заодно поднимаем похороненных: три отказа подряд чаще означают
+        // закрывшийся Steam, чем мёртвую игру, а отметка 'gone' до сих пор
+        // была вечной. Раз в месяц на игру — цена пренебрежимая.
+        await reviveGoneNewsPoll(db, now - REVIVE_AFTER_SEC, now)
         await setCatalogMeta(db, ENROLL_KEY, String(now))
       }
       result = await runNewsSlice(db, { deadlineAt: Date.now() + SLICE_BUDGET_MS })

@@ -20,6 +20,7 @@ import {
   getUnsummarized,
   pruneNewsForApp,
   releaseSteamLease,
+  reviveGoneNewsPoll,
   setNewsDigest,
   upsertNewsItems,
   type Db,
@@ -774,11 +775,53 @@ describe('очередь опроса', () => {
     expect((await claimNewsPollBatch(db, NOW + 4000, 10)).map((t) => t.appid)).toEqual([730])
   })
 
-  test('gone выпадает из очереди насовсем', async () => {
+  test('gone выпадает из очереди', async () => {
     const db = await freshDb()
     await enrollNewsPoll(db, [730], 1, NOW)
     await flushPollResults(db, [{ appid: 730, status: 'gone', nextAt: NOW, failCount: 3 }], NOW)
     expect(await claimNewsPollBatch(db, NOW + 99999, 10)).toEqual([])
+  })
+
+  test('но не насовсем: через месяц похороненная игра возвращается', async () => {
+    // три отказа подряд чаще означают закрывшийся от нас Steam, чем мёртвую
+    // игру. Причина временная — значит и отметка не может быть вечной
+    const db = await freshDb()
+    await enrollNewsPoll(db, [730], 1, NOW)
+    await flushPollResults(db, [{ appid: 730, status: 'gone', nextAt: NOW, failCount: 3 }], NOW)
+
+    const later = NOW + 31 * 86_400
+    expect(await reviveGoneNewsPoll(db, later - 30 * 86_400, later)).toBe(1)
+
+    const batch = await claimNewsPollBatch(db, later + 99999, 10)
+    expect(batch.map((t) => t.appid)).toEqual([730])
+    // счётчик обнулён, иначе воскресшая игра умрёт с первого же отказа
+    expect(batch[0]!.failCount).toBe(0)
+  })
+
+  test('свежепохороненную не трогаем — порог по last_at', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, [730], 1, NOW)
+    await claimNewsPollBatch(db, NOW + 4000, 10) // проставляет last_at
+    await flushPollResults(db, [{ appid: 730, status: 'gone', nextAt: NOW, failCount: 3 }], NOW)
+
+    const soon = NOW + 5 * 86_400
+    expect(await reviveGoneNewsPoll(db, soon - 30 * 86_400, soon)).toBe(0)
+    expect(await claimNewsPollBatch(db, soon + 99999, 10)).toEqual([])
+  })
+
+  test('живые статусы воскрешение не задевает', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, [730, 570], 1, NOW)
+    await flushPollResults(
+      db,
+      [{ appid: 730, status: 'error', nextAt: NOW, failCount: 2 }],
+      NOW,
+    )
+    const later = NOW + 90 * 86_400
+    expect(await reviveGoneNewsPoll(db, later - 30 * 86_400, later)).toBe(0)
+    // и счётчик отказов у живой игры остался нетронутым
+    const batch = await claimNewsPollBatch(db, later + 99999, 10)
+    expect(batch.find((t) => t.appid === 730)!.failCount).toBe(2)
   })
 
   /** Три игры, у одной два патча: проверяем и порядок, и схлопывание по играм */

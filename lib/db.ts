@@ -1849,6 +1849,39 @@ export async function enrollNewsPoll(
 }
 
 /**
+ * Возвращает в очередь то, что было похоронено давно.
+ *
+ * status = 'gone' ставится после MAX_FAILS отказов подряд, и до сих пор это
+ * был билет в один конец: claimNewsPollBatch фильтрует 'gone', а enrollNewsPoll
+ * при повторной постановке трогает только tier (ON CONFLICT DO UPDATE SET
+ * tier = MIN(...)) и статус не сбрасывает. Между тем главная причина трёх
+ * отказов подряд — не мёртвая игра, а закрывшийся от нашего IP Steam, то есть
+ * причина временная, а отметка вечная. Очередь молча подтекала.
+ *
+ * Порог по last_at, а не безусловное воскрешение: игре, которую Steam правда
+ * не отдаёт, хватит одной попытки в месяц, и на пропускную способность это не
+ * влияет — таких строк единицы. Разброс next_at по appid тот же, что в
+ * enrollNewsPoll: воскресшие не должны становиться доступными одной секундой.
+ *
+ * fail_count обнуляем: иначе воскресшая игра умирала бы с первого же отказа.
+ */
+export async function reviveGoneNewsPoll(
+  db: Db,
+  staleBefore: number,
+  nowSec: number,
+  jitterSec = 3600,
+): Promise<number> {
+  const res = await db.execute({
+    sql: `UPDATE news_poll
+             SET status = 'new', fail_count = 0,
+                 next_at = ? + (appid % ?)
+           WHERE status = 'gone' AND COALESCE(last_at, 0) < ?`,
+    args: [nowSec, Math.max(1, jitterSec), staleBefore],
+  })
+  return Number(res.rowsAffected ?? 0)
+}
+
+/**
  * Забирает пачку и СРАЗУ продлевает аренду. Без этого срез, убитый по времени
  * на третьей игре, вечно перевыбирал бы те же три, а хвост очереди никогда бы
  * не опрашивался — самый простой способ построить неубиваемый цикл запросов
