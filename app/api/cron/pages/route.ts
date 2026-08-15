@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
 import { cronAuthorized } from '@/lib/cron'
 import {
-  acquireSteamLease,
+  acquireLease,
   countPageEnrichDue,
   getCatalogMeta,
-  releaseSteamLease,
+  releaseLease,
   setCatalogMeta,
+  STEAM_LEASE,
 } from '@/lib/db'
 import { PAGE_MAX_AGE_SEC, runPageSlice } from '@/lib/pagejob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
@@ -50,7 +51,7 @@ export async function GET(req: Request) {
   // store.steampowered.com через тот же pace('steam-store') и тратит тот же
   // лимит в ~200 запросов за пять минут. Две цепочки разом его превышают.
   const holder = url.searchParams.get('holder') ?? `pages:${randomUUID()}`
-  if (!(await acquireSteamLease(db, holder, LEASE_TTL_SEC, nowSec()))) {
+  if (!(await acquireLease(db, STEAM_LEASE, holder, LEASE_TTL_SEC, nowSec()))) {
     return NextResponse.json({ skipped: 'locked' }, { status: 202 })
   }
 
@@ -71,7 +72,7 @@ export async function GET(req: Request) {
       )
       // Аренда передаётся следующему звену вместе с holder, а отдаётся только
       // когда цепочка кончилась — см. тот же кусок в /api/cron/news.
-      if (!goesOn) await releaseSteamLease(db, holder)
+      if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
       if (goesOn && secret) {
         await fetch(
           `${appBaseUrl()}/api/cron/pages?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,

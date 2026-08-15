@@ -1186,7 +1186,17 @@ export async function getCatalogMeta(db: Db, key: string): Promise<string | null
 }
 
 /** Ключ аренды ОБЩИЙ для всех задач, ходящих на store.steampowered.com */
-const STEAM_LEASE_KEY = 'steam_lease'
+export const STEAM_LEASE = 'steam_lease'
+
+/**
+ * Аренда пересказов — ключ ОТДЕЛЬНЫЙ, и это принципиально. Пересказ не ходит
+ * в Steam вовсе, только к Claude, поэтому делить с опросом один замок значило
+ * бы запрещать двум задачам работать одновременно без единой общей причины.
+ * Свой замок нужен по другому поводу: getUnsummarized не резервирует строки,
+ * так что две параллельные фазы пересказа возьмут одни и те же записи и
+ * заплатят за них дважды.
+ */
+export const DIGEST_LEASE = 'digest_lease'
 
 /**
  * Аренда права ходить в Steam. Один UPDATE, без транзакции: в SQLite оператор
@@ -1205,8 +1215,9 @@ const STEAM_LEASE_KEY = 'steam_lease'
  * Аренда РЕЕНТЕРАБЕЛЬНА по holder — иначе второе звено цепочки не смогло бы
  * продлить то, что взяло первое, и цепочка резала бы сама себя.
  */
-export async function acquireSteamLease(
+export async function acquireLease(
   db: Db,
+  key: string,
   holder: string,
   ttlSec: number,
   nowSec: number,
@@ -1214,7 +1225,7 @@ export async function acquireSteamLease(
   await db.execute({
     sql: `INSERT INTO catalog_meta (key, value) VALUES (?, '')
           ON CONFLICT(key) DO NOTHING`,
-    args: [STEAM_LEASE_KEY],
+    args: [key],
   })
   const res = await db.execute({
     sql: `UPDATE catalog_meta SET value = ?
@@ -1222,17 +1233,17 @@ export async function acquireSteamLease(
             AND (value = ''
                  OR CAST(json_extract(value, '$.until') AS INTEGER) < ?
                  OR json_extract(value, '$.holder') = ?)`,
-    args: [JSON.stringify({ holder, until: nowSec + ttlSec }), STEAM_LEASE_KEY, nowSec, holder],
+    args: [JSON.stringify({ holder, until: nowSec + ttlSec }), key, nowSec, holder],
   })
   return Number(res.rowsAffected ?? 0) > 0
 }
 
 /** Отдать аренду досрочно. Не отдали — истечёт сама по until. */
-export async function releaseSteamLease(db: Db, holder: string): Promise<void> {
+export async function releaseLease(db: Db, key: string, holder: string): Promise<void> {
   await db.execute({
     sql: `UPDATE catalog_meta SET value = '' WHERE key = ?
             AND json_extract(value, '$.holder') = ?`,
-    args: [STEAM_LEASE_KEY, holder],
+    args: [key, holder],
   })
 }
 

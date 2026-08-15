@@ -2,12 +2,13 @@ import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { isMultiplayerMeta } from './recommend'
 import {
-  acquireSteamLease,
+  acquireLease,
   bannedAppids,
   castRoomVote,
   claimNewsPollBatch,
   countIngest,
   countNewsPollDue,
+  DIGEST_LEASE,
   enrollNewsPoll,
   flushPollResults,
   getCatalogMeta,
@@ -19,9 +20,10 @@ import {
   getMajorFeedHead,
   getUnsummarized,
   pruneNewsForApp,
-  releaseSteamLease,
+  releaseLease,
   reviveGoneNewsPoll,
   setNewsDigest,
+  STEAM_LEASE,
   upsertNewsItems,
   type Db,
   type StoredNews,
@@ -884,35 +886,51 @@ describe('очередь опроса', () => {
 
   test('аренда Steam: второй претендент не входит, пока первый её держит', async () => {
     const db = await freshDb()
-    expect(await acquireSteamLease(db, 'news:a', 75, NOW)).toBe(true)
-    expect(await acquireSteamLease(db, 'pages:b', 75, NOW)).toBe(false)
+    expect(await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)).toBe(true)
+    expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW)).toBe(false)
+  })
+
+  test('пересказы и Steam не мешают друг другу — ключи разные', async () => {
+    // Ради этого крон пересказов и отделён: в Steam он не ходит вовсе, и
+    // запрещать опросу работать одновременно было бы не за что
+    const db = await freshDb()
+    expect(await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)).toBe(true)
+    expect(await acquireLease(db, DIGEST_LEASE, 'digest:b', 75, NOW)).toBe(true)
+  })
+
+  test('но две цепочки пересказов друг друга не пускают — иначе платим дважды', async () => {
+    // getUnsummarized не резервирует строки: параллельные фазы возьмут одни
+    // и те же записи и оплатят их у модели по два раза
+    const db = await freshDb()
+    expect(await acquireLease(db, DIGEST_LEASE, 'digest:a', 75, NOW)).toBe(true)
+    expect(await acquireLease(db, DIGEST_LEASE, 'digest:b', 75, NOW)).toBe(false)
   })
 
   test('аренда реентерабельна: звено цепочки продлевает свою же', async () => {
     const db = await freshDb()
-    await acquireSteamLease(db, 'news:a', 75, NOW)
-    expect(await acquireSteamLease(db, 'news:a', 75, NOW + 40)).toBe(true)
+    await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)
+    expect(await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW + 40)).toBe(true)
   })
 
   test('протухшую аренду забирает следующий — убитый инстанс не держит вечно', async () => {
     const db = await freshDb()
-    await acquireSteamLease(db, 'news:a', 75, NOW)
-    expect(await acquireSteamLease(db, 'pages:b', 75, NOW + 74)).toBe(false)
-    expect(await acquireSteamLease(db, 'pages:b', 75, NOW + 76)).toBe(true)
+    await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)
+    expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW + 74)).toBe(false)
+    expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW + 76)).toBe(true)
   })
 
   test('отданную аренду сразу берёт другой', async () => {
     const db = await freshDb()
-    await acquireSteamLease(db, 'news:a', 75, NOW)
-    await releaseSteamLease(db, 'news:a')
-    expect(await acquireSteamLease(db, 'pages:b', 75, NOW)).toBe(true)
+    await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)
+    await releaseLease(db, STEAM_LEASE, 'news:a')
+    expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW)).toBe(true)
   })
 
   test('чужую аренду отдать нельзя', async () => {
     const db = await freshDb()
-    await acquireSteamLease(db, 'news:a', 75, NOW)
-    await releaseSteamLease(db, 'pages:b')
-    expect(await acquireSteamLease(db, 'pages:b', 75, NOW)).toBe(false)
+    await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)
+    await releaseLease(db, STEAM_LEASE, 'pages:b')
+    expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW)).toBe(false)
   })
 
   test('каталог не голодает за большой библиотекой', async () => {

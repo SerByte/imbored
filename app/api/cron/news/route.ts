@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
 import { cronAuthorized } from '@/lib/cron'
 import {
-  acquireSteamLease,
+  acquireLease,
   countNewsPollDue,
   enrollNewsPoll,
   getCatalogMeta,
-  releaseSteamLease,
+  releaseLease,
   reviveGoneNewsPoll,
   setCatalogMeta,
+  STEAM_LEASE,
   topCatalogAppids,
 } from '@/lib/db'
 import { runNewsSlice } from '@/lib/newsjob'
@@ -59,7 +60,7 @@ export async function GET(req: Request) {
   // Расписание живёт снаружи (GitHub Actions), поэтому триггер вполне может
   // прийти поверх ещё живой цепочки. Тогда это не работа, а второй поток
   // запросов к Steam мимо общего лимитера — молча уходим.
-  if (!(await acquireSteamLease(db, holder, LEASE_TTL_SEC, nowSec()))) {
+  if (!(await acquireLease(db, STEAM_LEASE, holder, LEASE_TTL_SEC, nowSec()))) {
     return NextResponse.json({ skipped: 'locked' }, { status: 202 })
   }
 
@@ -77,7 +78,11 @@ export async function GET(req: Request) {
         await reviveGoneNewsPoll(db, now - REVIVE_AFTER_SEC, now)
         await setCatalogMeta(db, ENROLL_KEY, String(now))
       }
-      result = await runNewsSlice(db, { deadlineAt: Date.now() + SLICE_BUDGET_MS })
+      // digestLimit: 0 — пересказы уехали в /api/cron/digest со своим
+      // бюджетом. Здесь это не только разделение задач, но и прибавка к
+      // опросу: те 35% времени, что придерживались под модель, теперь идут
+      // на игры.
+      result = await runNewsSlice(db, { deadlineAt: Date.now() + SLICE_BUDGET_MS, digestLimit: 0 })
     } catch (err) {
       console.error('news slice', err)
     } finally {
@@ -94,7 +99,7 @@ export async function GET(req: Request) {
       // Аренду отдаём, только если цепочка на этом кончилась. Иначе передаём
       // её следующему звену вместе с holder: пауза между отдал-и-взял пустила
       // бы внутрь чужой триггер ровно в тот момент, когда работа продолжается.
-      if (!goesOn) await releaseSteamLease(db, holder)
+      if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
       if (goesOn && secret) {
         await fetch(
           `${appBaseUrl()}/api/cron/news?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,

@@ -102,13 +102,14 @@ export async function runNewsSlice(
   const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
   const limit = opts.limit ?? 20
   const digestLimit = opts.digestLimit ?? 12
-  const digest = opts.digestFn ?? claudeNewsDigest
   const fetchNews = opts.fetchNews ?? fetchGameNews
   const log = opts.onProgress ?? (() => {})
 
-  // на пересказ оставляем последнюю треть бюджета
+  // Треть бюджета придерживаем под пересказ, только если он тут же и будет.
+  // С отдельным кроном (digestLimit = 0) опрос забирает всё время целиком —
+  // это примерно девять лишних игр на срез, взятых из воздуха.
   const total = Math.max(0, opts.deadlineAt - Date.now())
-  const pollDeadline = Date.now() + Math.floor(total * 0.65)
+  const pollDeadline = digestLimit > 0 ? Date.now() + Math.floor(total * 0.65) : opts.deadlineAt
 
   const targets = await claimNewsPollBatch(db, now, limit)
   const ranks = await getGameRanks(
@@ -202,54 +203,19 @@ export async function runNewsSlice(
 
   await flushPollResults(db, outcomes, now)
 
-  // ---- фаза пересказа, свой бюджет ----
+  // Пересказ теперь живёт отдельным кроном (/api/cron/digest) и своим
+  // бюджетом. Здесь он остаётся только если его явно попросили — так ходит
+  // scripts/sync-news.ts, где дедлайна нет и делить нечего.
   let digested = 0
-
-  // Нет ключа — не ходим в очередь вовсе. Иначе каждая запись впустую тратит
-  // попытку, и после трёх прогонов сотни патчей НАВСЕГДА выпадают из очереди
-  // пересказа: причина-то временная (ключ забыли положить), а отметка вечная.
-  // Попытка должна засчитываться за отказ модели, а не за её отсутствие.
-  if (!opts.digestFn && !llmAvailable()) {
-    return {
-      polled,
-      inserted,
-      digested,
-      hasMore: targets.length === limit && stopped !== 'blocked',
-      stopped,
-    }
-  }
-
-  const pending = await getUnsummarized(db, digestLimit)
-  if (pending.length) {
-    const metas = await getGamesMeta(
-      db,
-      pending.map((p) => p.appid),
-    )
-    for (const item of pending) {
-      if (Date.now() > opts.deadlineAt) break
-      const text = blocksToText(item.blocks)
-      let res: Awaited<ReturnType<typeof digest>>
-      try {
-        res = await digest({
-          gameName: metas.get(item.appid)?.name ?? `Игра ${item.appid}`,
-          title: item.title,
-          body: text,
-          lang: detectLang(text),
-        })
-      } catch (e) {
-        // Сервис недоступен (пустой баланс, отозванный ключ, квота) — это не
-        // про эту запись. Останавливаем фазу, НЕ засчитывая попытку: иначе
-        // неоплаченный счёт за три прогона крона выбросил бы сотни патчей из
-        // очереди пересказа навсегда.
-        if (e instanceof LlmUnavailableError) {
-          log(`  пересказы недоступны (${e.status ?? '—'}), попытки не засчитаны`)
-          break
-        }
-        throw e
-      }
-      await setNewsDigest(db, item.appid, item.gid, res, now)
-      if (res) digested++
-    }
+  if (digestLimit > 0) {
+    const d = await runDigestSlice(db, {
+      deadlineAt: opts.deadlineAt,
+      nowSec: now,
+      limit: digestLimit,
+      ...(opts.digestFn ? { digestFn: opts.digestFn } : {}),
+      onProgress: log,
+    })
+    digested = d.digested
   }
 
   return {
@@ -259,4 +225,88 @@ export async function runNewsSlice(
     hasMore: targets.length === limit && stopped !== 'blocked',
     stopped,
   }
+}
+
+export type DigestResult = {
+  digested: number
+  hasMore: boolean
+  stopped: 'done' | 'budget' | 'unavailable'
+}
+
+/**
+ * Пересказы — отдельно от опроса.
+ *
+ * Раньше обе фазы делили один пятидесятисекундный бюджет в отношении 65/35, и
+ * опрос всегда выигрывал: срез приносил под сотню новых записей и успевал
+ * пересказать десяток. Разрыв рос сам по себе — замер показал 1 499 → 1 644 за
+ * час. Никакая настройка долей это не чинит: фазы просто не должны стоять в
+ * одной очереди за одним таймером. У пересказа своя задача, свой крон, свой
+ * бюджет и своя аренда (DIGEST_LEASE), потому что в Steam он не ходит вовсе.
+ */
+export async function runDigestSlice(
+  db: Db,
+  opts: {
+    deadlineAt: number
+    nowSec?: number
+    limit?: number
+    digestFn?: typeof claudeNewsDigest
+    onProgress?: (line: string) => void
+  },
+): Promise<DigestResult> {
+  const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
+  const limit = opts.limit ?? 12
+  const digest = opts.digestFn ?? claudeNewsDigest
+  const log = opts.onProgress ?? (() => {})
+
+  // Нет ключа — не ходим в очередь вовсе. Иначе каждая запись впустую тратит
+  // попытку, и после трёх прогонов сотни патчей НАВСЕГДА выпадают из очереди
+  // пересказа: причина-то временная (ключ забыли положить), а отметка вечная.
+  // Попытка должна засчитываться за отказ модели, а не за её отсутствие.
+  if (!opts.digestFn && !llmAvailable()) {
+    return { digested: 0, hasMore: false, stopped: 'unavailable' }
+  }
+
+  const pending = await getUnsummarized(db, limit)
+  if (!pending.length) return { digested: 0, hasMore: false, stopped: 'done' }
+
+  const metas = await getGamesMeta(
+    db,
+    pending.map((p) => p.appid),
+  )
+
+  let digested = 0
+  let stopped: DigestResult['stopped'] = 'done'
+
+  for (const item of pending) {
+    if (Date.now() > opts.deadlineAt) {
+      stopped = 'budget'
+      break
+    }
+    const text = blocksToText(item.blocks)
+    let res: Awaited<ReturnType<typeof digest>>
+    try {
+      res = await digest({
+        gameName: metas.get(item.appid)?.name ?? `Игра ${item.appid}`,
+        title: item.title,
+        body: text,
+        lang: detectLang(text),
+      })
+    } catch (e) {
+      // Сервис недоступен (пустой баланс, отозванный ключ, квота) — это не
+      // про эту запись. Останавливаем фазу, НЕ засчитывая попытку: иначе
+      // неоплаченный счёт за три прогона крона выбросил бы сотни патчей из
+      // очереди пересказа навсегда.
+      if (e instanceof LlmUnavailableError) {
+        log(`  пересказы недоступны (${e.status ?? '—'}), попытки не засчитаны`)
+        return { digested, hasMore: false, stopped: 'unavailable' }
+      }
+      throw e
+    }
+    await setNewsDigest(db, item.appid, item.gid, res, now)
+    if (res) digested++
+  }
+
+  // Взяли полную пачку — значит в очереди почти наверняка ещё есть. Случай
+  // «модель отвалилась» сюда не доходит: он возвращается выше по return.
+  return { digested, hasMore: pending.length === limit, stopped }
 }

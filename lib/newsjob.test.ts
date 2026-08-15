@@ -10,7 +10,7 @@ import {
 } from './db'
 import type { RawNewsItem } from './news'
 import { LlmUnavailableError } from './llm'
-import { nextPollAt, runNewsSlice } from './newsjob'
+import { nextPollAt, runDigestSlice, runNewsSlice } from './newsjob'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -92,6 +92,95 @@ describe('nextPollAt: каденция от того, как часто игра
     expect(nextPollAt({ ...base, status: 'error', failCount: 0 }, NOW)).toBe(NOW + 1800)
     expect(nextPollAt({ ...base, status: 'error', failCount: 2 }, NOW)).toBe(NOW + 7200)
     expect(nextPollAt({ ...base, status: 'error', failCount: 20 }, NOW)).toBe(NOW + DAY)
+  })
+})
+
+describe('runDigestSlice: пересказы отдельно от опроса', () => {
+  /** Кладём в базу патч без пересказа — ровно то, что разбирает отдельный крон */
+  async function seedPatch(db: Db, appid: number, gid: string) {
+    await seedGame(db, appid, `Игра ${appid}`, 9_000_000)
+    await enrollNewsPoll(db, [appid], 1, NOW)
+    await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + 5000,
+      fetchNews: feedOf({ [appid]: [post(appid, gid, 'Обновление игры', PATCH)] }),
+      // 0 — записываем патч, но не пересказываем: это работа другого крона
+      digestLimit: 0,
+    })
+  }
+
+  test('разбирает очередь, не трогая Steam', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + 5000,
+      digestFn: okDigest,
+    })
+
+    expect(res.digested).toBe(1)
+    expect(res.stopped).toBe('done')
+    expect((await getMajorFeed(db))[0]?.tldr).toBeTruthy()
+  })
+
+  test('пустая очередь — не работа и не повод продолжать цепочку', async () => {
+    const db = await freshDb()
+    const res = await runDigestSlice(db, { deadlineAt: Date.now() + 5000, digestFn: okDigest })
+    expect(res).toMatchObject({ digested: 0, hasMore: false, stopped: 'done' })
+  })
+
+  test('полная пачка означает, что в очереди почти наверняка есть ещё', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await seedPatch(db, 570, '1')
+
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + 5000,
+      limit: 2,
+      digestFn: okDigest,
+    })
+    expect(res.digested).toBe(2)
+    expect(res.hasMore).toBe(true)
+  })
+
+  test('модель отвалилась — попытки не засчитываем и цепочку не продолжаем', async () => {
+    // тот же закон, что и раньше: неоплаченный счёт не должен за три прогона
+    // выбросить сотни патчей из очереди пересказа навсегда
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+
+    const dead = async () => {
+      throw new LlmUnavailableError(429, 'квота')
+    }
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + 5000,
+      digestFn: dead as unknown as typeof okDigest,
+    })
+
+    expect(res).toMatchObject({ digested: 0, hasMore: false, stopped: 'unavailable' })
+    expect((await getUnsummarized(db, 10)).length).toBe(1)
+  })
+
+  test('опрос без пересказа отдаёт весь бюджет играм', async () => {
+    // digestLimit: 0 — крон новостей больше не придерживает треть времени
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await enrollNewsPoll(db, [730], 1, NOW)
+
+    const res = await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + 5000,
+      fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
+      digestLimit: 0,
+    })
+
+    expect(res.inserted).toBe(1)
+    expect(res.digested).toBe(0)
+    // запись легла в очередь пересказа и ждёт своего крона
+    expect((await getUnsummarized(db, 10)).length).toBe(1)
   })
 })
 
