@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
-import { cronAuthorized } from '@/lib/cron'
+import { cronAuthorized, digestLooksStale } from '@/lib/cron'
 import {
   acquireLease,
   countNewsPollDue,
@@ -100,6 +100,21 @@ export async function GET(req: Request) {
       // её следующему звену вместе с holder: пауза между отдал-и-взял пустила
       // бы внутрь чужой триггер ровно в тот момент, когда работа продолжается.
       if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
+
+      // Цепочка кончилась — заодно проверяем, жив ли крон пересказов. Он
+      // висит на одном GitHub Actions без подстраховки в vercel.json, и
+      // отвалиться может молча. Пинок делается ОДИН раз на цепочку, а не на
+      // каждом звене, и не ждёт ответа: если пересказы на паузе, их роут сам
+      // ответит {paused:true} — килл-свитч остаётся главнее нас.
+      if (!goesOn && secret) {
+        const last = await getCatalogMeta(db, 'digest_last_slice')
+        if (digestLooksStale(last, nowSec())) {
+          await fetch(`${appBaseUrl()}/api/cron/digest`, {
+            headers: { 'x-cron-secret': secret },
+          }).catch(() => {})
+        }
+      }
+
       if (goesOn && secret) {
         await fetch(
           `${appBaseUrl()}/api/cron/news?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,

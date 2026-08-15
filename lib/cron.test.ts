@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cronAuthorized } from './cron'
+import { cronAuthorized, DIGEST_STALE_SEC, digestLooksStale } from './cron'
 
 // Заголовки HTTP это ByteString: секрет обязан быть ASCII.
 // Vercel генерирует hex, так что на практике это не ограничение.
@@ -46,5 +46,38 @@ describe('cronAuthorized', () => {
     vi.stubEnv('VERCEL', '')
     vi.stubEnv('NODE_ENV', 'test')
     expect(cronAuthorized(h())).toBe(true)
+  })
+})
+
+const NOW = 1_700_000_000
+const slice = (at: number) => JSON.stringify({ at, chain: 0, digested: 25 })
+
+describe('digestLooksStale: подстраховка на случай, если GitHub замолчит', () => {
+  test('свежий срез — не трогаем', () => {
+    expect(digestLooksStale(slice(NOW - 600), NOW)).toBe(false)
+  })
+
+  test('молчит дольше порога — пинаем', () => {
+    expect(digestLooksStale(slice(NOW - DIGEST_STALE_SEC + 1), NOW)).toBe(false)
+    expect(digestLooksStale(slice(NOW - DIGEST_STALE_SEC), NOW)).toBe(true)
+  })
+
+  test('ни разу не отрабатывал — пинаем', () => {
+    // первый прогон после деплоя: записи ещё нет
+    expect(digestLooksStale(null, NOW)).toBe(true)
+  })
+
+  test('мусор вместо записи — тоже пинаем', () => {
+    // отсутствие подтверждения, что пересказы живы, и есть повод пнуть:
+    // молчаливая поломка хуже лишнего запроса
+    expect(digestLooksStale('не json', NOW)).toBe(true)
+    expect(digestLooksStale('{}', NOW)).toBe(true)
+    expect(digestLooksStale(JSON.stringify({ at: 'вчера' }), NOW)).toBe(true)
+    expect(digestLooksStale(JSON.stringify({ at: 0 }), NOW)).toBe(true)
+  })
+
+  test('порог можно задать явно', () => {
+    expect(digestLooksStale(slice(NOW - 100), NOW, 50)).toBe(true)
+    expect(digestLooksStale(slice(NOW - 100), NOW, 500)).toBe(false)
   })
 })
