@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { artCandidates } from '@/lib/art'
 import { getGamesMeta, getLatestSnapshot, getPersonaName } from '@/lib/db'
+import { ogFonts, ogNum, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { buildPortrait } from '@/lib/portrait'
 import { getDb } from '@/lib/server'
 import { buildWrapped } from '@/lib/wrapped'
@@ -13,21 +12,11 @@ import { buildWrapped } from '@/lib/wrapped'
  * Почему не canvas на клиенте: steamstatic не отдаёт CORS-заголовков, любая
  * обложка делает canvas tainted и toBlob() падает.
  *
- * Шрифты лежат в assets/ как woff: ImageResponse принимает только ttf/otf/woff
- * (next/font/google отдаёт woff2 и доступа к бинарнику не даёт), а без буфера
- * с кириллицей satori рисует пустоту вместо ника.
+ * Шрифты и палитра переехали в lib/og.ts — со второй карточкой (совместимость)
+ * они перестали быть частной деталью портрета.
  */
 
-const FONT_DIR = join(process.cwd(), 'assets')
-
-/** Ассеты не зависят от запроса — читаем один раз на модуль. */
-export const fonts = Promise.all([
-  readFile(join(FONT_DIR, 'Onest-ExtraBold.woff')),
-  readFile(join(FONT_DIR, 'JetBrainsMono-Bold.woff')),
-]).then(([sans, mono]) => [
-  { name: 'Onest', data: sans, style: 'normal' as const, weight: 800 as const },
-  { name: 'JetBrains Mono', data: mono, style: 'normal' as const, weight: 700 as const },
-])
+export const fonts = ogFonts
 
 export type CardData = {
   name: string
@@ -77,14 +66,11 @@ export async function loadCardData(steamid: string): Promise<CardData | null> {
   }
 }
 
-const BG = '#0b0c10'
-const INK = '#f2f3f5'
-const DIM = '#9ba1ab'
-const EMBER = '#ff9e64'
-
-function num(n: number): string {
-  return n.toLocaleString('ru-RU')
-}
+const BG = OG_BG
+const INK = OG_INK
+const DIM = OG_DIM
+const EMBER = OG_EMBER
+const num = ogNum
 
 /**
  * Раскладка карточки. Ориентация задаёт всё остальное: у широкой OG числа

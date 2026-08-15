@@ -20,6 +20,7 @@ export function ProgressRing({
   duration = 1000,
   showPercent = true,
   label,
+  ariaLabel,
   className = '',
 }: {
   percent: number
@@ -29,14 +30,31 @@ export function ProgressRing({
   showPercent?: boolean
   /** Что показать вместо процента в центре (например, счётчик оставшихся игр). */
   label?: React.ReactNode
+  /**
+   * Что произносит скринридер. Без него слышно голое «48%» — сорок восемь
+   * процентов чего, из разметки не следует: svg помечен aria-hidden.
+   */
+  ariaLabel?: string
   className?: string
 }) {
   const target = Math.max(0, Math.min(100, percent))
-  const [shown, setShown] = useState(0)
-  const shownRef = useRef(0)
+  /*
+   * Стартуем с ГОТОВОГО значения, а не с нуля.
+   *
+   * useState(0) означал, что в серверном HTML стоит «0%» — а это то, что читают
+   * краулер и человек с выключенным JS на самой шаримой странице приложения.
+   * Ровно это правило CountNumber формулирует у себя в докблоке и по той же
+   * причине. Анимацию от нуля запускает первый клиентский эффект: mounted
+   * отличает первый прогон от последующих, поэтому живое обновление на /play
+   * по-прежнему доезжает от текущего значения, а не дёргается с нуля.
+   */
+  const [shown, setShown] = useState(target)
+  const shownRef = useRef(target)
+  const mounted = useRef(false)
 
   useEffect(() => {
-    const from = shownRef.current
+    const from = mounted.current ? shownRef.current : 0
+    mounted.current = true
     if (from === target) return
 
     // Выключенная анимация — не отдельная ветка, а нулевая длительность:
@@ -70,6 +88,7 @@ export function ProgressRing({
       cancelAnimationFrame(raf)
       clearTimeout(backstop)
     }
+    // shownRef читается намеренно без подписки: это «откуда ехать», а не вход
   }, [target, duration])
 
   const r = size / 2 - stroke / 2
@@ -77,7 +96,11 @@ export function ProgressRing({
   const offset = circ * (1 - shown / 100)
 
   return (
-    <div className={`relative ${className}`} style={{ height: size, width: size }}>
+    <div
+      className={`relative ${className}`}
+      style={{ height: size, width: size }}
+      {...(ariaLabel ? { role: 'img' as const, 'aria-label': ariaLabel } : {})}
+    >
       <svg
         width={size}
         height={size}
@@ -102,6 +125,8 @@ export function ProgressRing({
         {label ?? (
           showPercent && (
             <span
+              // Число уже сказано в ariaLabel — второй раз его читать не надо
+              aria-hidden={ariaLabel ? true : undefined}
               className="font-mono font-extrabold text-ink"
               style={{ fontSize: size * 0.24, fontVariantNumeric: 'tabular-nums' }}
             >

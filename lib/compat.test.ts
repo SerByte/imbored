@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { compatibility, tasteCosine } from './compat'
+import { COMMON_SHOWN, compatibility, tasteCosine, verdict } from './compat'
 import { buildTagProfile } from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -77,7 +77,66 @@ describe('compatibility', () => {
     const out = compatibility([], [], metaOf, TAG_STATS)
     expect(out.percent).toBe(0)
     expect(out.commonGames).toEqual([])
+    expect(out.commonTotal).toBe(0)
+    expect(out.commonHours).toBe(0)
     expect(out.sharedTags).toEqual([])
+  })
+
+  /**
+   * Заголовок «Общие игры — N» считал длину уже обрезанного списка и у пары с
+   * тремя сотнями общих игр честно писал «10». Починить это в вёрстке нельзя:
+   * срез делается здесь, до неё.
+   */
+  test('счётчик и часы — по всему пересечению, а не по срезу', () => {
+    const a = Array.from({ length: 12 }, (_, i) => lib(100 + i, (i + 1) * 10))
+    const b = Array.from({ length: 12 }, (_, i) => lib(100 + i, 5))
+    const out = compatibility(a, b, metaOf, TAG_STATS)
+
+    expect(out.commonGames).toHaveLength(COMMON_SHOWN)
+    expect(out.commonTotal).toBe(12)
+    // 10+20+…+120 у первого, 5×12 у второго — включая две игры вне среза
+    expect(out.commonHours).toBe(780 + 60)
+  })
+})
+
+/** Ступени снизу вверх — порядок нужен проверке монотонности */
+const STEPS = [
+  'Противоположности. Притянетесь?',
+  'Разные, но это даже интересно',
+  'Есть о чём поиграть вместе',
+  'Отличная пара для коопа',
+  'Вы буквально один человек',
+]
+
+describe('verdict', () => {
+  /**
+   * Лестница прибита к замерам из докблока verdict(). Проверяется не
+   * «правильные ли пороги» — этого без живых процентов не знает никто, — а «не
+   * уехали ли они молча». То, что 22 (посторонний с большой библиотекой) и 37
+   * (нижний квантиль одной ниши) попадают в одну ступень, — известный недочёт
+   * нижнего порога, описанный в докблоке, а не опечатка здесь.
+   */
+  test('ступени стоят там, где их оставили замеры', () => {
+    expect(verdict(0)).toBe(STEPS[0])
+    expect(verdict(22)).toBe(STEPS[1])
+    expect(verdict(37)).toBe(STEPS[1])
+    expect(verdict(65)).toBe(STEPS[3])
+    expect(verdict(80)).toBe(STEPS[4])
+  })
+
+  test('монотонна и достижимы все пять ступеней', () => {
+    const seen = new Set<string>()
+    let prev = verdict(0)
+    for (let percent = 0; percent <= 100; percent++) {
+      const step = verdict(percent)
+      seen.add(step)
+      if (step !== prev) {
+        // ступень может только подниматься, и только на одну за раз
+        expect(STEPS.indexOf(step)).toBe(STEPS.indexOf(prev) + 1)
+        prev = step
+      }
+    }
+    expect(seen.size).toBe(STEPS.length)
   })
 })
 

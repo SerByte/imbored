@@ -4,9 +4,24 @@ import type { GameMeta, LibraryGame } from './types'
 export type Compatibility = {
   /** 0–100, близость вкусов; см. tasteCosine */
   percent: number
+  /** Самые наигранные из общих, не больше COMMON_SHOWN */
   commonGames: Array<{ appid: number; name: string; hoursA: number; hoursB: number }>
+  /**
+   * Размер ВСЕГО пересечения, а не показанного среза.
+   *
+   * Без него страница не может сказать правду: заголовок «Общие игры — N»
+   * считал длину уже обрезанного списка, то есть у пары с тремя сотнями общих
+   * игр честно писал «10». Число живёт здесь, а не в вёрстке, потому что срез
+   * тоже делается здесь.
+   */
+  commonTotal: number
+  /** Часы обоих по всему пересечению, а не по срезу */
+  commonHours: number
   sharedTags: string[]
 }
+
+/** Сколько общих игр отдаём наружу: список, а не каталог */
+export const COMMON_SHOWN = 10
 
 /*
  * Почему здесь своя метрика, а не голый cosine.
@@ -156,7 +171,7 @@ export function compatibility(
   const top = rarityScale(tagStats)
 
   const byAppidB = new Map(libB.map((g) => [g.appid, g]))
-  const commonGames = libA
+  const allCommon = libA
     .filter((g) => byAppidB.has(g.appid))
     .map((g) => {
       const other = byAppidB.get(g.appid)!
@@ -168,7 +183,11 @@ export function compatibility(
       }
     })
     .sort((a, b) => b.hoursA + b.hoursB - (a.hoursA + a.hoursB))
-    .slice(0, 10)
+
+  // Счётчик и сумма — по всему пересечению, до среза: см. Compatibility.commonTotal
+  const commonTotal = allCommon.length
+  const commonHours = allCommon.reduce((sum, g) => sum + g.hoursA + g.hoursB, 0)
+  const commonGames = allCommon.slice(0, COMMON_SHOWN)
 
   /*
    * Общие теги тоже взвешены редкостью, и это меняет ответ по существу.
@@ -185,5 +204,38 @@ export function compatibility(
     .sort((a, b) => weightOf(b) - weightOf(a))
     .slice(0, 6)
 
-  return { percent, commonGames, sharedTags }
+  return { percent, commonGames, commonTotal, commonHours, sharedTags }
+}
+
+/*
+ * Вердикт — фраза, ради которой страницу и скриншотят. Жил приватной функцией
+ * внутри JSX страницы и ровно поэтому пережил переписывание метрики
+ * незамеченным: правили числа, а слова, которые эти числа объясняют, лежали в
+ * другом файле и в тесты не попадали.
+ *
+ * Замеры после правки метрики (коммит «Совместимость перестала показывать
+ * 85–95% любым двум людям», медиана на 200 парах непересекающихся библиотек):
+ *
+ *   случайные пары, библиотека 8 / 25 / 60 / 150 / 400 игр
+ *     0 / 0 / 4 / 11 / 22
+ *   две библиотеки из одной ниши (557 рогаликов)
+ *     37 / 65 / 80
+ *
+ * Верхние три порога с этими замерами сходятся: потолок посторонних 22, пол
+ * «одной ниши» 37, и 40 стоит ровно в разрыве между ними.
+ *
+ * ЧТО ЗДЕСЬ ЕЩЁ НЕ ЧИНЕНО. Нижний порог 20 делит людей по размеру библиотеки, а
+ * не по вкусу: посторонний с четырьмя сотнями игр набирает 22 и получает
+ * «Разные, но это даже интересно», а посторонний с двадцатью пятью получает 0 и
+ * «Противоположности». Это тот же дефект, ради которого переписывали метрику,
+ * вернувшийся уровнем ниже — в словах. Замеры намекают на 25, но тот же коммит
+ * просил настраивать пороги по ЖИВЫМ процентам, а живого распределения в
+ * репозитории до сих пор нет. Двигать вслепую — менять одну догадку на другую.
+ */
+export function verdict(percent: number): string {
+  if (percent >= 80) return 'Вы буквально один человек'
+  if (percent >= 60) return 'Отличная пара для коопа'
+  if (percent >= 40) return 'Есть о чём поиграть вместе'
+  if (percent >= 20) return 'Разные, но это даже интересно'
+  return 'Противоположности. Притянетесь?'
 }
