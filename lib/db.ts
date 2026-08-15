@@ -1598,17 +1598,35 @@ export async function getGameNews(db: Db, appid: number, limit = 8): Promise<Sto
 }
 
 /**
- * Общая лента для гостя. Предикат повторяет idx_news_feed ДОСЛОВНО — иначе
- * SQLite не возьмёт частичный индекс, и это станет сканом всей таблицы,
- * который noscan не поймает (LIMIT-то на месте).
+ * Общая лента: и для гостя, и для вкладки «в популярных играх». Предикат
+ * повторяет idx_news_feed ДОСЛОВНО — иначе SQLite не возьмёт частичный индекс,
+ * и это станет сканом всей таблицы, который noscan не поймает (LIMIT-то на месте).
+ *
+ * minRank — этаж популярности, и он идёт ВДОБАВОК к rank > 0, а не вместо.
+ * Соблазн схлопнуть два условия в одно проверен планом запроса на живой базе:
+ *
+ *   … rank > 0 AND rank >= ?  →  SEARCH news_items USING INDEX idx_news_feed
+ *   … rank >= ?  (без rank>0) →  SCAN news_items + USE TEMP B-TREE FOR ORDER BY
+ *
+ * Доказать rank > 0 из rank >= ? SQLite не может: значения параметра он не
+ * видит. Лишнее AND-условие индексу при этом не мешает.
+ *
+ * Порог по умолчанию нулевой: «какая игра считается популярной» — решение
+ * страницы, а не слоя данных, и живёт оно рядом с LIBRARY_CAP и FEED_LIMIT.
  */
-export async function getMajorFeed(db: Db, limit = 30, before?: number): Promise<StoredNews[]> {
+export async function getMajorFeed(
+  db: Db,
+  limit = 30,
+  opts: { before?: number; minRank?: number } = {},
+): Promise<StoredNews[]> {
+  const { before, minRank = 0 } = opts
   const res = await db.execute({
     sql: `SELECT ${NEWS_COLS} FROM news_items
           WHERE kind = 'patch' AND scale = 'major' AND rank > 0
+            AND rank >= ?
             AND published_at < ?
           ORDER BY published_at DESC LIMIT ?`,
-    args: [before ?? 2_000_000_000, limit * OVERFETCH],
+    args: [minRank, before ?? 2_000_000_000, limit * OVERFETCH],
   })
   return onePerGame((res.rows as unknown as NewsRow[]).map(rowToNews), limit)
 }

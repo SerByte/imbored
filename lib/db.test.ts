@@ -1,4 +1,4 @@
-import { createClient } from '@libsql/client'
+import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { isMultiplayerMeta } from './recommend'
 import {
@@ -18,6 +18,7 @@ import {
   pruneNewsForApp,
   setNewsDigest,
   upsertNewsItems,
+  type Db,
   type StoredNews,
   isMultiplayerCategories,
   loadTagDictionary,
@@ -635,6 +636,52 @@ describe('ленты', () => {
       NOW,
     )
     expect((await getMajorFeed(db)).map((n) => n.title)).toEqual(['Крупный'])
+  })
+
+  test('порог популярности отсекает мелкие игры, но только когда его просят', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ appid: 730, title: 'Гигант', rank: 50_000 }),
+        newsItem({ appid: 570, title: 'Ровно порог', rank: 10_000, publishedAt: NOW - 10 }),
+        newsItem({ appid: 440, title: 'Мелочь', rank: 9_999, publishedAt: NOW - 20 }),
+      ],
+      NOW,
+    )
+    expect((await getMajorFeed(db, 30, { minRank: 10_000 })).map((n) => n.title)).toEqual([
+      'Гигант',
+      'Ровно порог',
+    ])
+    // Без опций лента прежняя. Это сторож против «а давайте сделаем порог
+    // умолчанием»: гостевая лента и вкладка — одно и то же место, но решение о
+    // том, кто считается популярным, принимает страница.
+    expect(await getMajorFeed(db)).toHaveLength(3)
+  })
+
+  test('порог не отбирает у ленты частичный индекс', async () => {
+    // Схлопнуть `rank > 0 AND rank >= ?` в одно условие — значит превратить
+    // ленту в скан всей таблицы с сортировкой во временном B-дереве: вывести
+    // rank > 0 из параметра SQLite не может. Больше этого не поймает никто —
+    // noscan смотрит только на FROM games, а LIMIT в запросе на месте.
+    const db = await freshDb()
+    let issued = ''
+    const spy = {
+      execute: (q: InStatement) => {
+        issued = typeof q === 'string' ? q : q.sql
+        return db.execute(q)
+      },
+    } as unknown as Db
+
+    await getMajorFeed(spy, 30, { minRank: 10_000 })
+
+    const plan = await db.execute({
+      sql: `EXPLAIN QUERY PLAN ${issued}`,
+      args: [10_000, 2_000_000_000, 120],
+    })
+    const detail = plan.rows.map((r) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_news_feed')
+    expect(detail).not.toContain('SCAN')
   })
 
   test('страница игры показывает и мелкие патчи, но не новости', async () => {

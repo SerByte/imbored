@@ -5,8 +5,10 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { NewsBody } from '@/components/NewsBody'
+import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import type { StoredNews } from '@/lib/db'
 import { artCandidates } from '@/lib/art'
+import type { Discount } from '@/lib/discount'
 import { countChanges } from '@/lib/steamhtml'
 import type { GameMeta } from '@/lib/types'
 import { byline, changesLabel, freshness } from './format'
@@ -23,15 +25,24 @@ const EASE = [0.22, 1, 0.36, 1] as const
  *
  * data-wash отдаёт Stage ссылку на арт для фоновой заливки, data-live он же
  * проставляет обратно, когда строка попадает в центр экрана.
+ *
+ * discovery включается только в общей ленте: там речь о чужих играх, и путь
+ * «интересная обнова → а что это вообще за игра» обязан быть виден сразу, не
+ * из-под раскрытого патча.
  */
 export function PatchRow({
   item,
   meta,
   nowSec,
+  discovery = false,
+  discount = null,
 }: {
   item: StoredNews
   meta?: GameMeta
   nowSec: number
+  discovery?: boolean
+  /** посчитан на сервере: срок распродажи нельзя считать в браузере, см. discountView */
+  discount?: Discount | null
 }) {
   const [open, setOpen] = useState(false)
 
@@ -50,7 +61,12 @@ export function PatchRow({
     <article
       data-wash={wash}
       className="wn-row border-b border-rule"
-      style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 220px' }}
+      style={{
+        contentVisibility: 'auto',
+        // полоска с ценой добавляет строке около сорока пикселей, и без поправки
+        // документ недосчитался бы их тридцать раз — это дёргающийся скроллбар
+        containIntrinsicSize: discovery ? 'auto 260px' : 'auto 220px',
+      }}
     >
       <button
         type="button"
@@ -101,6 +117,27 @@ export function PatchRow({
           ▾
         </span>
       </button>
+
+      {/*
+        Полоска живёт ВНЕ кнопки, и это не вопрос вкуса: ссылку внутрь <button>
+        вложить нельзя. По той же причине вся начинка кнопки выше — только
+        <span>. Отступ повторяет колонку арта: 92 + gap-4 на телефоне,
+        168 + gap-6 на десктопе.
+      */}
+      {discovery ? (
+        <div className="-mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pb-6 pl-[108px] text-sm md:pl-[192px]">
+          <PriceTag priceFinal={meta?.priceFinal ?? null} discount={discount} isFree={meta?.isFree} />
+          <DiscountEnds discount={discount} />
+          <Link
+            href={`/game/${item.appid}`}
+            // -my-1.5 гасит собственную высоту: палец получает свои 44 пикселя,
+            // а ритм строки не меняется
+            className="-my-1.5 py-1.5 font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+          >
+            Открыть игру →
+          </Link>
+        </div>
+      ) : null}
 
       <AnimatePresence initial={false}>
         {open ? (

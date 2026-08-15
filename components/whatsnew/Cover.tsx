@@ -32,10 +32,13 @@ export function Cover({
   item,
   meta,
   nowSec,
+  label,
 }: {
   item: StoredNews
   meta?: GameMeta
   nowSec: number
+  /** «в популярных играх» — какую из лент читает человек; без вкладок не нужна */
+  label?: string
 }) {
   const ref = useRef<HTMLElement>(null)
   const reduced = useReducedMotion()
@@ -104,10 +107,15 @@ export function Cover({
         >
           <motion.div style={reduced ? undefined : { y: textY, opacity: textFade }}>
             {/* Заголовок страницы, а не игры: h1 обязан говорить, где ты, даже
-                когда на весь экран стоит чужое название. Игра идёт следом h2. */}
-            <h1 className="mb-4 flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.42em] text-dim">
+                когда на весь экран стоит чужое название. Игра идёт следом h2.
+                Метка ленты живёт здесь же: переключатель остался экраном ниже,
+                и после перехода это единственное указание, куда ты попал. */}
+            <h1 className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] uppercase tracking-[0.42em] text-dim">
               <span aria-hidden className="h-px w-10 bg-rule" />
               Что нового
+              {label ? (
+                <span className="tracking-[0.2em] text-ink/50">· {label}</span>
+              ) : null}
             </h1>
 
             <p className="mb-4 font-mono text-xs uppercase tracking-[0.28em] text-dim">
