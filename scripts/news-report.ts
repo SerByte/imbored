@@ -333,7 +333,9 @@ async function main() {
   head('J. Что рассказывает про себя крон')
   const j = await rows(
     `SELECT key, value FROM catalog_meta WHERE key IN
-      ('news_last_slice','news_enrolled_at','news_paused','pages_last_slice','pages_paused')`,
+      ('news_last_slice','news_enrolled_at','news_paused',
+       'pages_last_slice','pages_paused',
+       'digest_last_slice','digest_paused')`,
   )
   if (!j.length) console.log('  catalog_meta пуст — крон ни разу не отработал')
   for (const r of j) {
@@ -349,6 +351,13 @@ async function main() {
       }
     } else if (key === 'news_enrolled_at') val = ago(val)
     console.log(`  ${key.padEnd(18)}${val}`)
+  }
+
+  // Килл-свитч выключает работу молча и навсегда — ровно так его и забывают
+  // снять. Строчки в общем списке для этого мало, нужен крик.
+  const paused = j.filter((r) => String(r.value) === '1' && String(r.key).endsWith('_paused'))
+  for (const r of paused) {
+    console.log(`\n  !! ${r.key} = 1 — эта задача СТОИТ. Снять: значение в 0`)
   }
 
   // ── K. Потолок каталога ────────────────────────────────────────────────
