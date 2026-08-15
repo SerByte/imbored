@@ -1185,6 +1185,57 @@ export async function getCatalogMeta(db: Db, key: string): Promise<string | null
   return (res.rows[0]?.value as string | undefined) ?? null
 }
 
+/** Ключ аренды ОБЩИЙ для всех задач, ходящих на store.steampowered.com */
+const STEAM_LEASE_KEY = 'steam_lease'
+
+/**
+ * Аренда права ходить в Steam. Один UPDATE, без транзакции: в SQLite оператор
+ * атомарен сам по себе, и rowsAffected — это и есть ответ «взял / не взял».
+ *
+ * Зачем вообще: lib/pace.ts держит темп в Map уровня модуля, то есть у каждого
+ * инстанса свой лимитер. Пока цепочку запускала только сама себя (ребёнок
+ * порождается в finally, ПОСЛЕ работы), инстанс был один и этого хватало. Как
+ * только расписание переезжает наружу — на GitHub Actions, — внешний триггер
+ * может прийти поверх ещё живой цепочки, и тогда к Steam пойдут два потока по
+ * 1.7 с вместо одного: ~216 запросов за пять минут при потолке в 200.
+ *
+ * Ключ общий с кроном страниц не по экономии, а по существу: он ходит на тот
+ * же хост через тот же pace('steam-store') и тратит тот же лимит.
+ *
+ * Аренда РЕЕНТЕРАБЕЛЬНА по holder — иначе второе звено цепочки не смогло бы
+ * продлить то, что взяло первое, и цепочка резала бы сама себя.
+ */
+export async function acquireSteamLease(
+  db: Db,
+  holder: string,
+  ttlSec: number,
+  nowSec: number,
+): Promise<boolean> {
+  await db.execute({
+    sql: `INSERT INTO catalog_meta (key, value) VALUES (?, '')
+          ON CONFLICT(key) DO NOTHING`,
+    args: [STEAM_LEASE_KEY],
+  })
+  const res = await db.execute({
+    sql: `UPDATE catalog_meta SET value = ?
+          WHERE key = ?
+            AND (value = ''
+                 OR CAST(json_extract(value, '$.until') AS INTEGER) < ?
+                 OR json_extract(value, '$.holder') = ?)`,
+    args: [JSON.stringify({ holder, until: nowSec + ttlSec }), STEAM_LEASE_KEY, nowSec, holder],
+  })
+  return Number(res.rowsAffected ?? 0) > 0
+}
+
+/** Отдать аренду досрочно. Не отдали — истечёт сама по until. */
+export async function releaseSteamLease(db: Db, holder: string): Promise<void> {
+  await db.execute({
+    sql: `UPDATE catalog_meta SET value = '' WHERE key = ?
+            AND json_extract(value, '$.holder') = ?`,
+    args: [STEAM_LEASE_KEY, holder],
+  })
+}
+
 /** Словарь тегов Steam: tagid -> имя */
 export async function saveTagDictionary(db: Db, tags: Map<number, string>): Promise<void> {
   const rows = [...tags.entries()]
@@ -1743,24 +1794,53 @@ export async function enrollNewsPoll(
  */
 export type PollTarget = { appid: number; tier: number; failCount: number; lastPubAt?: number }
 
+type PollRow = {
+  appid: number
+  tier: number
+  fail_count: number
+  last_pub_at: number | null
+}
+
 export async function claimNewsPollBatch(
   db: Db,
   nowSec: number,
   limit = 20,
   leaseSec = 900,
+  tier1Share = 0.6,
 ): Promise<PollTarget[]> {
-  const res = await db.execute({
+  // Каталогу (tier 1) достаётся гарантированная доля пачки.
+  //
+  // Сортировка по одному next_at выглядит честной, но честна она только если
+  // очередь однородна. Она не однородна: saveSnapshot ставит В ОЧЕРЕДЬ ВСЮ
+  // библиотеку каждого подключившегося (tier 0), и таких строк уже вчетверо
+  // больше каталожных. Каталожные при этом единственные, у кого бывает
+  // rank > 0, то есть единственные, кто вообще может попасть в общую ленту.
+  // Без доли достаточно одной большой библиотеки, чтобы «Что нового» у гостей
+  // перестало обновляться — и никакая настройка каденции этого не чинит,
+  // потому что проблема в порядке выборки, а не в частоте.
+  const want1 = Math.min(limit, Math.ceil(limit * tier1Share))
+  const first = await db.execute({
     sql: `SELECT appid, tier, fail_count, last_pub_at FROM news_poll
-          WHERE next_at <= ? AND status != 'gone'
+          WHERE next_at <= ? AND status != 'gone' AND tier = 1
           ORDER BY next_at LIMIT ?`,
-    args: [nowSec, limit],
+    args: [nowSec, want1],
   })
-  const rows = res.rows as unknown as Array<{
-    appid: number
-    tier: number
-    fail_count: number
-    last_pub_at: number | null
-  }>
+  const rows = [...(first.rows as unknown as PollRow[])]
+
+  // Добираем остаток из очереди целиком: если каталог свою долю не выбрал
+  // (все опрошены), пачка не должна приезжать полупустой.
+  if (rows.length < limit) {
+    const taken = rows.map((r) => r.appid)
+    const rest = await db.execute({
+      sql: `SELECT appid, tier, fail_count, last_pub_at FROM news_poll
+            WHERE next_at <= ? AND status != 'gone'
+              ${taken.length ? `AND appid NOT IN (${placeholders(taken.length)})` : ''}
+            ORDER BY next_at LIMIT ?`,
+      args: [nowSec, ...taken, limit - rows.length],
+    })
+    rows.push(...(rest.rows as unknown as PollRow[]))
+  }
+
   if (!rows.length) return []
   await db.batch(
     rows.map((r) => ({

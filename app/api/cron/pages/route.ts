@@ -1,6 +1,13 @@
+import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
 import { cronAuthorized } from '@/lib/cron'
-import { countPageEnrichDue, getCatalogMeta, setCatalogMeta } from '@/lib/db'
+import {
+  acquireSteamLease,
+  countPageEnrichDue,
+  getCatalogMeta,
+  releaseSteamLease,
+  setCatalogMeta,
+} from '@/lib/db'
 import { PAGE_MAX_AGE_SEC, runPageSlice } from '@/lib/pagejob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
@@ -12,6 +19,7 @@ export const maxDuration = 60
 const MAX_CHAIN = 24
 const SLICE_BUDGET_MS = 50_000
 const LAST_KEY = 'pages_last_slice'
+const LEASE_TTL_SEC = 75
 
 /**
  * Обогащение карточек игр: скриншоты, вердикт отзывов, pros/cons.
@@ -38,6 +46,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ paused: true })
   }
 
+  // Аренда на Steam — ОДНА на оба крона: обогащение карточек ходит на тот же
+  // store.steampowered.com через тот же pace('steam-store') и тратит тот же
+  // лимит в ~200 запросов за пять минут. Две цепочки разом его превышают.
+  const holder = url.searchParams.get('holder') ?? `pages:${randomUUID()}`
+  if (!(await acquireSteamLease(db, holder, LEASE_TTL_SEC, nowSec()))) {
+    return NextResponse.json({ skipped: 'locked' }, { status: 202 })
+  }
+
   after(async () => {
     let result: Awaited<ReturnType<typeof runPageSlice>> | null = null
     try {
@@ -50,10 +66,17 @@ export async function GET(req: Request) {
       // а параллельные инвокации сломали бы общий лимитер темпа Steam.
       await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result }))
       const secret = process.env.CRON_SECRET
-      if (result?.hasMore && result.stopped !== 'blocked' && chain < MAX_CHAIN && secret) {
-        await fetch(`${appBaseUrl()}/api/cron/pages?chain=${chain + 1}`, {
-          headers: { 'x-cron-secret': secret },
-        }).catch(() => {})
+      const goesOn = Boolean(
+        result?.hasMore && result.stopped !== 'blocked' && chain < MAX_CHAIN && secret,
+      )
+      // Аренда передаётся следующему звену вместе с holder, а отдаётся только
+      // когда цепочка кончилась — см. тот же кусок в /api/cron/news.
+      if (!goesOn) await releaseSteamLease(db, holder)
+      if (goesOn && secret) {
+        await fetch(
+          `${appBaseUrl()}/api/cron/pages?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
+          { headers: { 'x-cron-secret': secret } },
+        ).catch(() => {})
       }
     }
   })

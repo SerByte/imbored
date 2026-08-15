@@ -5,6 +5,7 @@
  *   npm run news:sync -- --limit=200            прогнать 200 игр
  *   npm run news:sync                           пока очередь не кончится
  *   npm run news:sync -- --enroll-only          только пополнить очередь
+ *   npm run news:sync -- --digest-only          только пересказы, без Steam
  *
  * Крон на Vercel делает ровно то же самое (lib/newsjob.ts), но у него потолок
  * в 60 секунд на вызов. Массовый первый обход дешевле прогнать здесь: та же
@@ -52,10 +53,43 @@ async function openDb() {
 async function main() {
   const dryRun = flag('dry-run')
   const enrollOnly = flag('enroll-only')
+  const digestOnly = flag('digest-only')
   const maxGames = Number(arg('limit') ?? Number.POSITIVE_INFINITY)
 
   const db = await openDb()
   const now = Math.floor(Date.now() / 1000)
+
+  // Разбор накопившейся очереди пересказов, не трогая Steam.
+  //
+  // runNewsSlice с limit = 0 не занимает ни одной игры, поэтому фаза опроса
+  // проходит вхолостую, а фаза пересказа работает как обычно. Иначе на каждые
+  // двенадцать пересказов пришлось бы двадцать запросов к store.steampowered
+  // по 1.7 с — час ожидания ради работы, которой сеть Steam не нужна вовсе.
+  //
+  // Выходим по «ничего не пересказали», а не по hasMore: при limit = 0 условие
+  // targets.length === limit истинно всегда, и цикл по нему был бы вечным.
+  if (digestOnly) {
+    let digested = 0
+    const startedAt = Date.now()
+    for (;;) {
+      const res = await runNewsSlice(db, {
+        deadlineAt: Date.now() + 10 * 60_000,
+        nowSec: now,
+        limit: 0,
+        digestLimit: 25,
+        onProgress: (line) => console.log(line),
+      })
+      if (!res.digested) break
+      digested += res.digested
+      const mins = Math.round((Date.now() - startedAt) / 60_000)
+      console.log(`пересказов: ${digested.toLocaleString('ru-RU')}\t${mins} мин`)
+    }
+    console.log(`\nготово. пересказано ${digested.toLocaleString('ru-RU')}`)
+    if (!digested) {
+      console.log('ноль — либо очередь пуста, либо нет ANTHROPIC_API_KEY в окружении')
+    }
+    return
+  }
   // Ручной прогон смотрит на очередь на час вперёд: разброс next_at нужен
   // крону, чтобы вся очередь не становилась доступной одной секундой, а
   // здесь он только заставил бы ждать. Повторная постановка курсор не

@@ -51,19 +51,33 @@ export type SliceResult = {
   stopped: 'done' | 'budget' | 'blocked'
 }
 
-/** Когда возвращаться к игре. Каденция от того, как часто она реально патчится,
- *  а не от пожизненного числа отзывов. */
+/**
+ * Когда возвращаться к игре. Каденция от того, как часто она реально патчится,
+ * а не от пожизненного числа отзывов и не от tier.
+ *
+ * Раньше здесь стояла ветка `tier === 0 → 72 часа`, и стояла она ВЫШЕ проверки
+ * на протухание — то есть для библиотечных игр ветка `stale` была недостижима.
+ * А библиотеки попадают в очередь целиком (saveSnapshot ставит tier 0 на всю
+ * библиотеку сразу), поэтому игра, не публиковавшая ничего с 2019 года,
+ * опрашивалась раз в трое суток вечно. Замер на живой базе: 409 строк tier 0,
+ * это ~136 опросов в сутки — треть всей пропускной способности крона, и
+ * потрачена она на игры, которые в общую ленту попасть не могут в принципе
+ * (там нужен rank > 0, а он бывает только у каталожных).
+ *
+ * Tier по-прежнему существует, но решает он теперь другое — приоритет в
+ * claimNewsPollBatch, а не частоту. Частота одна для всех и берётся из того,
+ * патчится игра или нет.
+ */
 export function nextPollAt(
   args: { tier: number; status: PollStatus; failCount: number; lastPubAt?: number },
   nowSec: number,
 ): number {
-  const { tier, status, failCount, lastPubAt } = args
+  const { status, failCount, lastPubAt } = args
   if (status === 'error') return nowSec + Math.min(1800 * 2 ** failCount, DAY)
   if (status === 'empty' || status === 'mismatch') return nowSec + 7 * DAY
 
   const hot = lastPubAt != null && nowSec - lastPubAt < HOT_WINDOW
   if (hot) return nowSec + 24 * HOUR
-  if (tier === 0) return nowSec + 72 * HOUR
   const stale = lastPubAt != null && nowSec - lastPubAt > 180 * DAY
   return nowSec + (stale ? 28 : 7) * DAY
 }

@@ -1,6 +1,15 @@
+import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
 import { cronAuthorized } from '@/lib/cron'
-import { countNewsPollDue, enrollNewsPoll, getCatalogMeta, setCatalogMeta, topCatalogAppids } from '@/lib/db'
+import {
+  acquireSteamLease,
+  countNewsPollDue,
+  enrollNewsPoll,
+  getCatalogMeta,
+  releaseSteamLease,
+  setCatalogMeta,
+  topCatalogAppids,
+} from '@/lib/db'
 import { runNewsSlice } from '@/lib/newsjob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
@@ -13,6 +22,9 @@ const MAX_CHAIN = 24
 const SLICE_BUDGET_MS = 50_000
 const ENROLL_KEY = 'news_enrolled_at'
 const LAST_KEY = 'news_last_slice'
+
+/** Чуть больше maxDuration: убитый по таймауту инстанс не держит аренду вечно. */
+const LEASE_TTL_SEC = 75
 
 /**
  * Vercel Cron ходит именно GET.
@@ -33,6 +45,18 @@ export async function GET(req: Request) {
   // килл-свитч без редеплоя
   if ((await getCatalogMeta(db, 'news_paused')) === '1') {
     return NextResponse.json({ paused: true })
+  }
+
+  // Своё имя цепочка получает на первом звене и передаёт дальше: аренда
+  // реентерабельна по holder, поэтому звенья продлевают её, а не отбивают
+  // друг у друга.
+  const holder = url.searchParams.get('holder') ?? `news:${randomUUID()}`
+
+  // Расписание живёт снаружи (GitHub Actions), поэтому триггер вполне может
+  // прийти поверх ещё живой цепочки. Тогда это не работа, а второй поток
+  // запросов к Steam мимо общего лимитера — молча уходим.
+  if (!(await acquireSteamLease(db, holder, LEASE_TTL_SEC, nowSec()))) {
+    return NextResponse.json({ skipped: 'locked' }, { status: 202 })
   }
 
   after(async () => {
@@ -56,10 +80,18 @@ export async function GET(req: Request) {
       // от общего лимита Steam нет вовсе.
       await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result }))
       const secret = process.env.CRON_SECRET
-      if (result?.hasMore && result.stopped !== 'blocked' && chain < MAX_CHAIN && secret) {
-        await fetch(`${appBaseUrl()}/api/cron/news?chain=${chain + 1}`, {
-          headers: { 'x-cron-secret': secret },
-        }).catch(() => {})
+      const goesOn = Boolean(
+        result?.hasMore && result.stopped !== 'blocked' && chain < MAX_CHAIN && secret,
+      )
+      // Аренду отдаём, только если цепочка на этом кончилась. Иначе передаём
+      // её следующему звену вместе с holder: пауза между отдал-и-взял пустила
+      // бы внутрь чужой триггер ровно в тот момент, когда работа продолжается.
+      if (!goesOn) await releaseSteamLease(db, holder)
+      if (goesOn && secret) {
+        await fetch(
+          `${appBaseUrl()}/api/cron/news?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
+          { headers: { 'x-cron-secret': secret } },
+        ).catch(() => {})
       }
     }
   })

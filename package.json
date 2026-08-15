@@ -11,6 +11,7 @@
     "seed:catalog": "tsx scripts/seed-catalog.ts",
     "catalog:promote": "tsx scripts/promote-catalog.ts",
     "catalog:report": "tsx scripts/catalog-report.ts",
+    "news:report": "tsx --env-file-if-exists=.env.turso scripts/news-report.ts",
     "news:sync": "tsx scripts/sync-news.ts",
     "pages:enrich": "tsx scripts/enrich-pages.ts",
     "catalog:publish": "tsx scripts/publish-catalog.ts"

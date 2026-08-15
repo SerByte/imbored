@@ -74,10 +74,18 @@ describe('nextPollAt: каденция от того, как часто игра
     expect(nextPollAt({ ...base, lastPubAt: NOW - 60 * DAY }, NOW)).toBe(NOW + 7 * DAY)
   })
 
-  test('игра из библиотеки опрашивается чаще игры из каталога', () => {
+  test('tier на частоту не влияет: библиотечная и каталожная идут вровень', () => {
     const lib = nextPollAt({ ...base, tier: 0, lastPubAt: NOW - 60 * DAY }, NOW)
     const cat = nextPollAt({ ...base, tier: 1, lastPubAt: NOW - 60 * DAY }, NOW)
-    expect(lib).toBeLessThan(cat)
+    expect(lib).toBe(cat)
+  })
+
+  test('протухшая библиотечная игра уходит в длинный интервал, а не в 72 часа', () => {
+    // Ровно тот случай, ради которого убрана ветка tier === 0: она стояла выше
+    // проверки на протухание, поэтому для библиотечных игр ветка stale была
+    // недостижима, и молчащая с 2019 года игра опрашивалась раз в трое суток
+    // вечно. На живой базе это была треть пропускной способности крона.
+    expect(nextPollAt({ ...base, tier: 0, lastPubAt: NOW - 200 * DAY }, NOW)).toBe(NOW + 28 * DAY)
   })
 
   test('ошибки отступают по экспоненте, но не дальше суток', () => {

@@ -2,6 +2,7 @@ import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { isMultiplayerMeta } from './recommend'
 import {
+  acquireSteamLease,
   bannedAppids,
   castRoomVote,
   claimNewsPollBatch,
@@ -16,6 +17,7 @@ import {
   getMajorFeed,
   getUnsummarized,
   pruneNewsForApp,
+  releaseSteamLease,
   setNewsDigest,
   upsertNewsItems,
   type Db,
@@ -775,6 +777,65 @@ describe('очередь опроса', () => {
     await enrollNewsPoll(db, [730], 1, NOW)
     await flushPollResults(db, [{ appid: 730, status: 'gone', nextAt: NOW, failCount: 3 }], NOW)
     expect(await claimNewsPollBatch(db, NOW + 99999, 10)).toEqual([])
+  })
+
+  test('аренда Steam: второй претендент не входит, пока первый её держит', async () => {
+    const db = await freshDb()
+    expect(await acquireSteamLease(db, 'news:a', 75, NOW)).toBe(true)
+    expect(await acquireSteamLease(db, 'pages:b', 75, NOW)).toBe(false)
+  })
+
+  test('аренда реентерабельна: звено цепочки продлевает свою же', async () => {
+    const db = await freshDb()
+    await acquireSteamLease(db, 'news:a', 75, NOW)
+    expect(await acquireSteamLease(db, 'news:a', 75, NOW + 40)).toBe(true)
+  })
+
+  test('протухшую аренду забирает следующий — убитый инстанс не держит вечно', async () => {
+    const db = await freshDb()
+    await acquireSteamLease(db, 'news:a', 75, NOW)
+    expect(await acquireSteamLease(db, 'pages:b', 75, NOW + 74)).toBe(false)
+    expect(await acquireSteamLease(db, 'pages:b', 75, NOW + 76)).toBe(true)
+  })
+
+  test('отданную аренду сразу берёт другой', async () => {
+    const db = await freshDb()
+    await acquireSteamLease(db, 'news:a', 75, NOW)
+    await releaseSteamLease(db, 'news:a')
+    expect(await acquireSteamLease(db, 'pages:b', 75, NOW)).toBe(true)
+  })
+
+  test('чужую аренду отдать нельзя', async () => {
+    const db = await freshDb()
+    await acquireSteamLease(db, 'news:a', 75, NOW)
+    await releaseSteamLease(db, 'pages:b')
+    expect(await acquireSteamLease(db, 'pages:b', 75, NOW)).toBe(false)
+  })
+
+  test('каталог не голодает за большой библиотекой', async () => {
+    const db = await freshDb()
+    // библиотека приезжает целиком и раньше каталога: enrollNewsPoll разносит
+    // next_at по appid, поэтому мелкие appid встают в очередь первыми
+    await enrollNewsPoll(db, Array.from({ length: 200 }, (_, i) => i + 1), 0, NOW)
+    await enrollNewsPoll(db, [900_001, 900_002, 900_003, 900_004, 900_005, 900_006], 1, NOW)
+
+    const batch = await claimNewsPollBatch(db, NOW + 99999, 10)
+    expect(batch).toHaveLength(10)
+    const fromCatalog = batch.filter((t) => t.tier === 1)
+    // доля 0.6 от десяти — шесть мест, и все шесть каталожных игр их занимают
+    expect(fromCatalog).toHaveLength(6)
+  })
+
+  test('невыбранная доля каталога достаётся библиотеке — пачка не полупустая', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, Array.from({ length: 50 }, (_, i) => i + 1), 0, NOW)
+    await enrollNewsPoll(db, [900_001], 1, NOW)
+
+    const batch = await claimNewsPollBatch(db, NOW + 99999, 10)
+    expect(batch).toHaveLength(10)
+    expect(batch.filter((t) => t.tier === 1)).toHaveLength(1)
+    // и без дублей: добор не должен вернуть то, что уже взято по доле
+    expect(new Set(batch.map((t) => t.appid)).size).toBe(10)
   })
 })
 
