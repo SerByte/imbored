@@ -55,6 +55,29 @@ describe('filterActual', () => {
     expect(ids(filterActual([{ appid: 80 }], noCs2, 'solo'))).toEqual([80])
   })
 
+  test('устаревшая версия не выпадает игрой дня и в одиночном контексте', () => {
+    // Condition Zero выпала в «Игру дня» при живой CS2 в той же библиотеке:
+    // одиночный режим уводил её мимо обеих проверок актуальности
+    expect(ids(filterActual(all, LIBRARY, 'solo'))).not.toContain(80)
+  })
+
+  test('офлайн-вердикт работает и без преемника в библиотеке', () => {
+    // CS2 бесплатна, но «бесплатная» не значит «есть в аккаунте». Индекс серий
+    // строится по тому, что лежит в библиотеке, поэтому без каталожного
+    // вердикта Condition Zero возвращалась тем, кто CS2 не ставил
+    const noCs2 = new Map(LIBRARY)
+    noCs2.delete(730)
+    noCs2.delete(10)
+    noCs2.set(80, meta(80, 'Counter-Strike: Condition Zero', {
+      categories: [2, 1],
+      ccu: 348,
+      supersededBy: 730,
+      signalsAt: 1_700_000_000,
+    }))
+    const kept = ids(filterActual([{ appid: 80 }, { appid: 548430 }], noCs2, 'solo'))
+    expect(kept).toEqual([548430])
+  })
+
   test('если ничего не осталось — возвращает исходный список', () => {
     // пустой экран хуже неудачной рекомендации
     const onlyDead = [{ appid: 320 }]
@@ -68,6 +91,33 @@ describe('filterActual', () => {
   test('порядок сохраняется — ранжирование уже сделано', () => {
     const kept = ids(filterActual([{ appid: 548430 }, { appid: 730 }], LIBRARY, 'solo'))
     expect(kept).toEqual([548430, 730])
+  })
+
+  test('два издания одной игры — одна карточка', () => {
+    // Вытеснение серий сюда не дотягивается: обе Hellblade одиночные, а
+    // buildSeriesIndex пропускает всё немультиплеерное
+    const withEditions = new Map(LIBRARY)
+    withEditions.set(414340, meta(414340, "Hellblade: Senua's Sacrifice", { categories: [2] }))
+    withEditions.set(
+      719950,
+      meta(719950, "Hellblade: Senua's Sacrifice VR Edition", { categories: [2] }),
+    )
+    const kept = ids(
+      filterActual([{ appid: 414340 }, { appid: 719950 }, { appid: 548430 }], withEditions, 'solo'),
+    )
+    expect(kept).toEqual([414340, 548430])
+  })
+
+  test('внутри группы побеждает первый: порядок и есть ранжирование', () => {
+    const withEditions = new Map(LIBRARY)
+    withEditions.set(414340, meta(414340, "Hellblade: Senua's Sacrifice", { categories: [2] }))
+    withEditions.set(
+      719950,
+      meta(719950, "Hellblade: Senua's Sacrifice VR Edition", { categories: [2] }),
+    )
+    expect(ids(filterActual([{ appid: 719950 }, { appid: 414340 }], withEditions, 'solo'))).toEqual([
+      719950,
+    ])
   })
 
   test('кандидат из каталога без издателя не отменяет вытеснение в библиотеке', () => {

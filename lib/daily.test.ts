@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { pickDaily } from './daily'
+import { pickDaily, pickDailyPool, STORE_DAY_EVERY } from './daily'
 import type { ScoredCandidate } from './types'
 
 const CANDS: ScoredCandidate[] = [
@@ -43,5 +43,38 @@ describe('pickDaily', () => {
 
   test('пустые кандидаты — null', () => {
     expect(pickDaily([], 'seed')).toBeNull()
+  })
+})
+
+describe('pickDailyPool', () => {
+  const own = [{ appid: 1 }, { appid: 2 }]
+  const discovery = [{ appid: 3 }, { appid: 4 }]
+
+  test('один сид — всегда один и тот же пул', () => {
+    const first = pickDailyPool(own, discovery, 'user1:2026-08-15')
+    for (let i = 0; i < 10; i++) {
+      expect(pickDailyPool(own, discovery, 'user1:2026-08-15')).toBe(first)
+    }
+  })
+
+  test('магазинных дней примерно каждый третий', () => {
+    let store = 0
+    const days = 90
+    for (let d = 0; d < days; d++) {
+      const seed = `user1:2026-08-${String(d).padStart(2, '0')}`
+      if (pickDailyPool(own, discovery, seed) === discovery) store++
+    }
+    // Разброс у хеша есть, но доля должна держаться около 1/STORE_DAY_EVERY:
+    // «игра дня» не должна превратиться ни в витрину, ни обратно в чистый бэклог
+    expect(store).toBeGreaterThan(days / STORE_DAY_EVERY / 2)
+    expect(store).toBeLessThan((days / STORE_DAY_EVERY) * 2)
+  })
+
+  test('без находок остаётся своё', () => {
+    expect(pickDailyPool(own, [], 'seed')).toBe(own)
+  })
+
+  test('без своего берём находки — пустой экран хуже неудачной рекомендации', () => {
+    expect(pickDailyPool([], discovery, 'seed')).toBe(discovery)
   })
 })

@@ -96,4 +96,37 @@ describe('buildGroupDeck', () => {
     })
     expect(deck).toHaveLength(2)
   })
+
+  test('два издания одной игры — одна карточка колоды', () => {
+    // колода из двадцати карт голосовала бы за одну игру дважды, а матч
+    // срабатывал бы не на том издании
+    const edition = (appid: number, name: string): GameMeta => ({
+      appid,
+      name,
+      tags: { 'Co-op': 100 },
+      genres: [],
+      categories: MP,
+    })
+    const deck = buildGroupDeck({
+      members: MEMBERS,
+      metaOf,
+      extraPool: [edition(10, 'Deep Rock Galactic'), edition(11, 'Deep Rock Galactic VR Edition')],
+      limit: 10,
+    })
+    expect(deck.map((c) => c.appid)).toContain(10)
+    expect(deck.map((c) => c.appid)).not.toContain(11)
+  })
+
+  test('издание из каталога не вытесняет игру, которая есть у всех', () => {
+    const deck = buildGroupDeck({
+      members: MEMBERS,
+      metaOf,
+      extraPool: [
+        { appid: 11, name: 'g1 VR Edition', tags: { 'Co-op': 100 }, genres: [], categories: MP },
+      ],
+      limit: 10,
+    })
+    expect(deck.map((c) => c.appid)).toContain(1)
+    expect(deck.map((c) => c.appid)).not.toContain(11)
+  })
 })

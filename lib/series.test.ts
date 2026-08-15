@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { buildSeriesIndex, normalizeTitle, parseSeries, type SeriesMember } from './series'
+import { buildSeriesIndex, cleanTitle, normalizeTitle, parseSeries, type SeriesMember } from './series'
 
 const valve = { publisher: 'Valve', developer: 'Valve' }
 
@@ -13,6 +13,19 @@ describe('normalizeTitle', () => {
       normalizeTitle('The Witcher 3: Wild Hunt'),
     )
     expect(normalizeTitle('DOOM® Eternal: Deluxe Edition')).toBe(normalizeTitle('Doom Eternal'))
+  })
+})
+
+describe('cleanTitle', () => {
+  test('режет знаки и регистр, но не издания', () => {
+    // Ровно та причина, по которой editionKey не строится на normalizeTitle:
+    // EDITION_RE срезает якорь и оставляет квалификатор висеть в воздухе
+    expect(cleanTitle('The Elder Scrolls V: Skyrim™ Special Edition')).toBe(
+      'the elder scrolls v: skyrim special edition',
+    )
+    expect(normalizeTitle('The Elder Scrolls V: Skyrim™ Special Edition')).toBe(
+      'the elder scrolls v: skyrim special',
+    )
   })
 })
 
@@ -69,6 +82,38 @@ describe('buildSeriesIndex', () => {
         soloCapable: true,
         audience: 20_000,
       }),
+    ])
+    expect(index.size).toBe(0)
+  })
+
+  test('но одиночный режим не спасает, когда аудитория переехала целиком', () => {
+    // Condition Zero: одиночный режим есть, но это матчи с ботами, а не
+    // содержание. 348 человек против миллиона в CS2 — разрыв на три порядка,
+    // и «самостоятельная игра» превращается в архив
+    const index = buildSeriesIndex([
+      member({ appid: 80, name: 'Counter-Strike: Condition Zero', soloCapable: true, audience: 348 }),
+      member({ appid: 730, name: 'Counter-Strike 2', ordinalHint: 2, audience: 913_631 }),
+    ])
+    expect(index.get(80)).toBe(730)
+  })
+
+  test('одиночную игру с неизвестной аудиторией не вытесняем', () => {
+    // Молчание — не доказательство переезда. Без этой проверки условие
+    // «преемник ≥ ноль» истинно всегда, и вытеснялись бы пары, где обе части
+    // одинаково безлюдны
+    const index = buildSeriesIndex([
+      member({ appid: 1, name: 'Beat Hazard', soloCapable: true }),
+      member({ appid: 2, name: 'Beat Hazard 2', audience: 0 }),
+    ])
+    expect(index.size).toBe(0)
+  })
+
+  test('одиночная игра переживает сиквел, если разрыв меньше двух порядков', () => {
+    // Left 4 Dead ко второй части идёт как 1:52 — у неё свои кампании и живые
+    // четыре сотни игроков. Порог для одиночных именно поэтому 500, а не 10
+    const index = buildSeriesIndex([
+      member({ appid: 500, name: 'Left 4 Dead', soloCapable: true, audience: 406 }),
+      member({ appid: 550, name: 'Left 4 Dead 2', soloCapable: true, audience: 21_033 }),
     ])
     expect(index.size).toBe(0)
   })
