@@ -9,7 +9,7 @@ import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
 import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
-import { HeroArt } from '@/components/HeroArt'
+import { HeroShots } from '@/components/HeroShots'
 import { LogoMark } from '@/components/Logo'
 import { PlayersNow } from '@/components/PlayersNow'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
@@ -38,6 +38,9 @@ type Pick = {
   reason: string
   headerImage: string | null
   art: GameArtUrls | null
+  /** Кадры для морфа в герое. Приходят только у picks: карточки открытий
+      героем не становятся, им они не нужны. */
+  screenshots?: string[]
   ccu: number | null
   shortDescription: string | null
   tags: string[]
@@ -396,12 +399,13 @@ function Player() {
           exit="exit"
           className="media-dark relative min-h-[78vh] flex items-end overflow-hidden"
         >
-          <HeroArt
-          appid={pick.appid}
-          headerImage={pick.headerImage}
-          art={pick.art}
-          name={pick.name}
-        />
+          <HeroShots
+            appid={pick.appid}
+            headerImage={pick.headerImage}
+            art={pick.art}
+            name={pick.name}
+            screenshots={pick.screenshots ?? []}
+          />
           <div
             aria-hidden
             className="absolute inset-0"

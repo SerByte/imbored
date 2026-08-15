@@ -6,19 +6,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { HeroArt } from '@/components/HeroArt'
 import { webglAvailable } from '@/components/morph/gl'
 import type { GameArtUrls } from '@/lib/art'
-import { pickCoverShotSize, shotUrl, type ShotSize } from '@/lib/shots'
+import { HERO_SLIDES, pickCoverShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
 const MorphSlider = dynamic(() => import('@/components/morph/MorphSlider'), { ssr: false })
-
-/**
- * Сколько кадров крутит герой.
- *
- * Меньше, чем на странице игры: тут кадры обязательно полноразмерные (герой во
- * весь экран, маленькие мылят), а движок держит все текстуры распакованными —
- * четыре по 1920×1080 это уже около 33 МБ видеопамяти. Полный круг при таком
- * темпе занимает больше половины минуты, а столько на заставку не смотрят.
- */
-const HERO_SLIDES = 4
 
 /** Что удалось выяснить про среду; до первого замера — null */
 type Env = { gl: boolean; size: ShotSize }

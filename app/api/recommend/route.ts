@@ -26,6 +26,7 @@ import {
   splitBySource,
 } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { HERO_SLIDES } from '@/lib/shots'
 import type { GameMeta } from '@/lib/types'
 
 /** Сколько игр из каталога уходит в нижний блок «Нет в твоей библиотеке» */
@@ -207,8 +208,17 @@ export async function POST(req: Request) {
     }
   }
 
+  /**
+   * Кадры для морфа в герое — только у picks, и это не экономия ради экономии.
+   * Карточка «Ещё варианты» по клику становится героем, а «нет в библиотеке»
+   * ведёт в магазин и героем не станет никогда, так что её кадры точно никто
+   * не покажет. Обрезка до HERO_SLIDES по той же причине: в одном ответе пять
+   * игр, а у иных в базе по два десятка скриншотов.
+   */
+  const heroShots = (appid: number) => (metaNow(appid)?.screenshots ?? []).slice(0, HERO_SLIDES)
+
   return NextResponse.json({
-    picks: picks.map(enrich),
+    picks: picks.map((p) => ({ ...enrich(p), screenshots: heroShots(p.appid) })),
     discoveries: discoveries.map(enrich),
     engine: fromClaude ? 'claude' : 'heuristic',
     candidateCount: candidates.length,
