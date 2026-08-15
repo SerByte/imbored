@@ -12,7 +12,6 @@ import {
 } from '@/lib/db'
 import { seedOtherStores } from '@/lib/otherstores'
 import {
-  DEMO_STEAMID,
   currentSteamId,
   getDb,
   isDemoId,
@@ -45,7 +44,8 @@ export async function POST() {
   const snapshot = await getLatestSnapshot(db, steamid)
   if (!snapshot) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
 
-  if (steamid === DEMO_STEAMID) return NextResponse.json({ remaining: 0, total: 0 })
+  // Демо-библиотека статична и уже засеяна — греть в ней нечего.
+  if (isDemoId(steamid)) return NextResponse.json({ remaining: 0, total: 0 })
 
   await seedOtherStores(db, now)
 

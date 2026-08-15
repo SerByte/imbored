@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server'
 import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
 import { seedDemo } from '@/lib/demo'
 import {
-  DEMO2_STEAMID,
-  DEMO_STEAMID,
   SESSION_COOKIE,
+  currentSteamId,
+  demoSteamId,
   getDb,
   nowSec,
   sessionCookieOptions,
@@ -30,7 +30,10 @@ export async function POST(req: Request) {
 
   if (body.demo) {
     const variant = body.variant === 2 ? 2 : 1
-    const steamid = variant === 2 ? DEMO2_STEAMID : DEMO_STEAMID
+    // Личность привязана к посетителю, а не к режиму: см. demoSteamId.
+    // Текущая сессия передаётся, чтобы «демо-друг» встал в пару со своим
+    // демо-игроком, а не с чужим.
+    const steamid = demoSteamId(variant, await currentSteamId())
     await seedDemo(db, steamid, now, variant)
     return withSession(
       NextResponse.json({
