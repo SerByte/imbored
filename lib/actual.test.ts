@@ -55,6 +55,29 @@ describe('filterActual', () => {
     expect(ids(filterActual([{ appid: 80 }], noCs2, 'solo'))).toEqual([80])
   })
 
+  test('устаревшая версия не выпадает игрой дня и в одиночном контексте', () => {
+    // Condition Zero выпала в «Игру дня» при живой CS2 в той же библиотеке:
+    // одиночный режим уводил её мимо обеих проверок актуальности
+    expect(ids(filterActual(all, LIBRARY, 'solo'))).not.toContain(80)
+  })
+
+  test('офлайн-вердикт работает и без преемника в библиотеке', () => {
+    // CS2 бесплатна, но «бесплатная» не значит «есть в аккаунте». Индекс серий
+    // строится по тому, что лежит в библиотеке, поэтому без каталожного
+    // вердикта Condition Zero возвращалась тем, кто CS2 не ставил
+    const noCs2 = new Map(LIBRARY)
+    noCs2.delete(730)
+    noCs2.delete(10)
+    noCs2.set(80, meta(80, 'Counter-Strike: Condition Zero', {
+      categories: [2, 1],
+      ccu: 348,
+      supersededBy: 730,
+      signalsAt: 1_700_000_000,
+    }))
+    const kept = ids(filterActual([{ appid: 80 }, { appid: 548430 }], noCs2, 'solo'))
+    expect(kept).toEqual([548430])
+  })
+
   test('если ничего не осталось — возвращает исходный список', () => {
     // пустой экран хуже неудачной рекомендации
     const onlyDead = [{ appid: 320 }]

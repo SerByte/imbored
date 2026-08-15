@@ -42,7 +42,17 @@ export function filterActual<T extends { appid: number }>(
   }
   const superseded = buildSeriesIndex(members)
 
-  const fresh = candidates.filter((c) => !superseded.has(c.appid))
+  const fresh = candidates.filter((c) => {
+    if (superseded.has(c.appid)) return false
+    // Вердикт офлайн-курации, если он есть. Индекс выше строится по тому, что
+    // лежит в metas, поэтому вытеснение находится, только когда преемник тоже
+    // рядом. У Condition Zero преемник — бесплатная CS2, но «бесплатная» не
+    // значит «есть в аккаунте»: без этой проверки она возвращалась в выдачу
+    // ровно тем, кто CS2 не покупал. rowToMeta отдаёт supersededBy только при
+    // непустом signals_at, так что здесь именно посчитанный вердикт, а не
+    // умолчание пустой колонки.
+    return metas.get(c.appid)?.supersededBy === undefined
+  })
   const playable = filterPlayable(fresh.length ? fresh : candidates, (id) => metas.get(id), context)
   return playable.length ? playable : candidates
 }
