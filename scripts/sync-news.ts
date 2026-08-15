@@ -85,9 +85,24 @@ async function main() {
     const holder = `local:${randomUUID()}`
     const LEASE_TTL = 300
     if (!(await acquireLease(db, DIGEST_LEASE, holder, LEASE_TTL, now))) {
-      console.log('очередь пересказов сейчас разбирает крон — подожди или поставь digest_paused=1')
+      console.log(
+        `очередь пересказов занята: её разбирает крон либо прерванный прогон,\n` +
+          `не успевший отдать аренду. Она истекает сама, ждать не больше ${LEASE_TTL} с.`,
+      )
       return
     }
+
+    // Ctrl+C не выполняет finally: процесс просто умирает, и аренда висит до
+    // истечения TTL — то есть собственный перезапуск упирается в свой же
+    // замок на пять минут. Для ручного инструмента это недопустимо.
+    const onSignal = () => {
+      void releaseLease(db, DIGEST_LEASE, holder).finally(() => {
+        console.log('\nаренда отдана, выходим')
+        process.exit(130)
+      })
+    }
+    process.once('SIGINT', onSignal)
+    process.once('SIGTERM', onSignal)
 
     let digested = 0
     const startedAt = Date.now()
