@@ -11,6 +11,7 @@ import type { StoredNews } from '@/lib/db'
 import { countChanges } from '@/lib/steamhtml'
 import type { GameMeta } from '@/lib/types'
 import { byline, freshness } from './format'
+import { useNow } from './Now'
 
 /**
  * Обложка ленты: главное обновление во весь экран.
@@ -42,6 +43,7 @@ export function Cover({
 }) {
   const ref = useRef<HTMLElement>(null)
   const reduced = useReducedMotion()
+  const now = useNow(nowSec)
 
   // offset вместо абсолютных пикселей: прогресс 0→1 за то время, пока герой
   // уходит вверх, и это одинаково работает на любой высоте экрана
@@ -119,7 +121,7 @@ export function Cover({
             </h1>
 
             <p className="mb-4 font-mono text-xs uppercase tracking-[0.28em] text-dim">
-              {freshness(item.publishedAt, nowSec)}
+              {freshness(item.publishedAt, now)}
               {studio ? <span className="text-ink/50"> · {studio}</span> : null}
             </p>
 

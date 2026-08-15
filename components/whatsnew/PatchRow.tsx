@@ -12,6 +12,7 @@ import type { Discount } from '@/lib/discount'
 import { countChanges } from '@/lib/steamhtml'
 import type { GameMeta } from '@/lib/types'
 import { byline, changesLabel, freshness } from './format'
+import { useNow } from './Now'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -45,6 +46,9 @@ export function PatchRow({
   discount?: Discount | null
 }) {
   const [open, setOpen] = useState(false)
+  // Проп остаётся серверным значением и служит фолбэком: под провайдером
+  // подпись тикает сама, вне его — как раньше
+  const now = useNow(nowSec)
 
   const name = meta?.name ?? `Игра ${item.appid}`
   const changes = countChanges(item.blocks)
@@ -103,7 +107,7 @@ export function PatchRow({
           ) : null}
 
           <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
-            <span>{freshness(item.publishedAt, nowSec)}</span>
+            <span>{freshness(item.publishedAt, now)}</span>
             {changes > 0 ? <span>{changesLabel(changes)}</span> : null}
             {meta?.ccu ? <span>{meta.ccu.toLocaleString('ru-RU')} в игре</span> : null}
           </span>

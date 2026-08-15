@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
+import { NowProvider } from './Now'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -27,6 +28,8 @@ export function Stage({
   children,
   initialWash,
   rowsKey,
+  nowSec,
+  publishedAts,
 }: {
   children: React.ReactNode
   /** Арт обложки: заливка начинается с него, иначе первый экран пустой */
@@ -37,6 +40,13 @@ export function Stage({
    * зависимости они не наблюдались бы никогда.
    */
   rowsKey?: string
+  /**
+   * Часы ленты. Живут здесь, а не отдельным островком, потому что Stage и так
+   * единственный клиентский корень вокруг всей ленты — новой границы подписки
+   * не появляется.
+   */
+  nowSec?: number
+  publishedAts?: number[]
 }) {
   const scope = useRef<HTMLDivElement>(null)
   const [wash, setWash] = useState<string | null>(initialWash ?? null)
@@ -100,7 +110,15 @@ export function Stage({
         <div className="grain" />
       </div>
 
-      <div className="relative">{children}</div>
+      <div className="relative">
+        {nowSec != null && publishedAts ? (
+          <NowProvider nowSec={nowSec} publishedAts={publishedAts}>
+            {children}
+          </NowProvider>
+        ) : (
+          children
+        )}
+      </div>
     </div>
   )
 }

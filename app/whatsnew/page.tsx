@@ -110,6 +110,10 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
         // монтировании. Приехавшие с обновлением строки не получили бы
         // data-live никогда — остались бы обесцвеченными и не двигали заливку.
         rowsKey={keys.join('|')}
+        // Часы: без них вкладка, оставленная на ночь, к утру продолжает
+        // уверять, что патч вышел «сегодня»
+        nowSec={now}
+        publishedAts={items.map((i) => i.publishedAt)}
         initialWash={
           artCandidates(
             { appid: hero.appid, art: heroMeta?.art, headerImage: heroMeta?.headerImage },

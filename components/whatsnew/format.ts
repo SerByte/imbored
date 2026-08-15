@@ -4,27 +4,12 @@
  * Чистые функции без React: их зовут и серверные строки, и клиентские островки.
  */
 
-const DAY = 86_400
-
 /**
- * Свежесть словами. В ленте это несёт больше смысла, чем полная дата: человек
- * листает сверху вниз и хочет понять «это вчера или полгода назад», а не
- * вычитать числа в уме. Точная дата остаётся рядом, в <time>.
+ * freshness переехала в lib/freshness — там она стоит рядом с расчётом момента,
+ * когда подпись меняется, и попадает под vitest (он собирает только lib/).
+ * Здесь остаётся ре-экспорт, чтобы места вызова не переписывать.
  */
-export function freshness(publishedAt: number, nowSec: number): string {
-  const days = Math.floor((nowSec - publishedAt) / DAY)
-  if (days <= 0) return 'сегодня'
-  if (days === 1) return 'вчера'
-  if (days < 7) return `${days} ${plural(days, 'день', 'дня', 'дней')} назад`
-  if (days < 31) {
-    const w = Math.floor(days / 7)
-    return `${w} ${plural(w, 'неделю', 'недели', 'недель')} назад`
-  }
-  const m = Math.floor(days / 30)
-  if (m < 12) return `${m} ${plural(m, 'месяц', 'месяца', 'месяцев')} назад`
-  const y = Math.floor(days / 365)
-  return `${y} ${plural(y, 'год', 'года', 'лет')} назад`
-}
+export { freshness } from '@/lib/freshness'
 
 /** «31 правка» / «3 правки» / «12 правок» */
 export function changesLabel(n: number): string {
