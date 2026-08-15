@@ -113,6 +113,45 @@ describe('контраст палитры', () => {
     }
   })
 
+  /**
+   * Шапка и подвал стоят вне <main> и красятся из :root, а кино-зоны
+   * переопределяют токены внутри страницы. В светлой теме это давало молочную
+   * полосу поверх тёмного экрана и нечитаемую навигацию на пяти экранах из
+   * восьми. Правило держится на :has-блоках в globals.css — вот они.
+   */
+  describe('обвязка наследует зону, над которой стоит', () => {
+    const CHROME = [
+      {
+        name: 'кино-зона',
+        selector: ':root:has(.media-dark) body > header',
+        zoneBg: () => resolve(block('.media-dark {'), '--bg'),
+      },
+      {
+        name: '«Что нового»',
+        selector: ':root:has(.whatsnew) body > header',
+        zoneBg: () => resolve(block('.whatsnew {'), '--bg'),
+      },
+    ]
+
+    for (const chrome of CHROME) {
+      test(`${chrome.name}: навигация читается на фоне зоны`, () => {
+        const t = block(chrome.selector)
+        const bg = chrome.zoneBg()
+        // --dim — цвет пунктов меню, --ink их же в наведении
+        expect(contrast(resolve(t, '--dim'), bg)).toBeGreaterThanOrEqual(AA)
+        expect(contrast(resolve(t, '--ink'), bg)).toBeGreaterThanOrEqual(AA)
+      })
+    }
+
+    test('у «Что нового» подвал тоже перекрашен: там тёмная вся страница', () => {
+      expect(CSS).toContain(':root:has(.whatsnew) body > footer')
+    })
+
+    test('у кино-зоны подвал НЕ трогаем: зона только сверху, ниже обычный контент', () => {
+      expect(CSS).not.toContain(':root:has(.media-dark) body > footer')
+    })
+  })
+
   test('светлая тема определяет все роли, что и тёмная', () => {
     const dark = Object.keys(block(':root {')).filter((k) => !k.startsWith('--dur') && !k.startsWith('--ease') && !k.startsWith('--blur'))
     const light = Object.keys(block(':root[data-theme="light"]'))
