@@ -1,19 +1,15 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { Cover } from '@/components/whatsnew/Cover'
+import { FeedWatch } from '@/components/whatsnew/FeedWatch'
 import { PatchRow } from '@/components/whatsnew/PatchRow'
 import { Stage } from '@/components/whatsnew/Stage'
 import { artCandidates } from '@/lib/art'
-import {
-  getFeedForApps,
-  getGamesMeta,
-  getLatestSnapshot,
-  getMajorFeed,
-  type StoredNews,
-} from '@/lib/db'
+import { getFeedForApps, getGamesMeta, getLatestSnapshot, getMajorFeed } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { resolveWhatsNew } from '@/lib/whatsnewfeed'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,18 +21,11 @@ export const metadata: Metadata = {
   alternates: { canonical: '/whatsnew' },
 }
 
-/** Сколько игр библиотеки берём в личную ленту */
-const LIBRARY_CAP = 300
-const FEED_LIMIT = 30
-
-/**
- * Ниже этого веса игра в общую ленту не попадает. rank — это MAX(отзывы, онлайн),
- * и без порога лента честно ставит рядом PUBG с весом 639 330 и выживалку на
- * триста онлайна: хронология не различает «вышло только что» и «вышло у кого-то,
- * о ком ты слышал». Порог отсекает длинный хвост и оставляет около сотни игр за
- * месяц — на тридцать строк это примерно десять дней ленты.
+/*
+ * LIBRARY_CAP, FEED_LIMIT и FEED_RANK_FLOOR переехали в lib/whatsnewfeed:
+ * теми же числами обязан пользоваться /api/whatsnew/head, иначе плашка
+ * «N новых» считает по одному набору игр, а страница рисует по другому.
  */
-const FEED_RANK_FLOOR = 10_000
 
 /**
  * Лента обновлений.
@@ -57,29 +46,18 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   const steamid = await currentSteamId()
   const db = await getDb()
 
-  let mine: StoredNews[] = []
-
-  if (steamid) {
-    const snapshot = await getLatestSnapshot(db, steamid)
-    if (snapshot?.games.length) {
-      const appids = [...snapshot.games]
-        .sort((a, b) => b.playtimeForever - a.playtimeForever)
-        .slice(0, LIBRARY_CAP)
-        .map((g) => g.appid)
-      // На общей вкладке личная лента нужна ради одного ответа — «есть ли она
-      // вообще»: от него зависит, показывать ли переключатель. Просить под это
-      // тридцать записей значит прочитать сто двадцать строк и выбросить их.
-      mine = await getFeedForApps(db, appids, wantsPopular ? 1 : FEED_LIMIT)
-    }
-  }
-
   // Гость и тот, по чьим играм ничего не приезжало, видят общую ленту без
-  // переключателя: вкладка «в твоих играх», ведущая в пустоту, хуже её отсутствия
-  const hasMine = mine.length > 0
-  const showPopular = wantsPopular || !hasMine
-  const items = showPopular
-    ? await getMajorFeed(db, FEED_LIMIT, { minRank: FEED_RANK_FLOOR })
-    : mine
+  // переключателя: вкладка «в твоих играх», ведущая в пустоту, хуже её
+  // отсутствия. Ветка живёт в lib/, потому что ровно её же обязан повторить
+  // опрос головы ленты из /api/whatsnew/head — своими словами он разошёлся бы
+  // с ней в первый же день, когда у человека появится личный патч.
+  const { items, showPopular, hasMine } = await resolveWhatsNew({
+    steamid,
+    wantsPopular,
+    snapshot: (id) => getLatestSnapshot(db, id),
+    forApps: (appids, limit) => getFeedForApps(db, appids, limit),
+    major: (limit, minRank) => getMajorFeed(db, limit, { minRank }),
+  })
 
   const metas = await getGamesMeta(
     db,
@@ -107,9 +85,14 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   }
 
   const heroMeta = metas.get(hero.appid)
+  // Базовая линия для плашки «N новых»: что именно сейчас нарисовано и докуда
+  // достаёт хвост. Порядок тот же, что у /api/whatsnew/head.
+  const keys = items.map((i) => `${i.appid}:${i.gid}`)
+  const tailAt = items[items.length - 1]!.publishedAt
 
   return (
     <div className="whatsnew min-h-screen">
+      <FeedWatch keys={keys} tailAt={tailAt} showPopular={showPopular} />
       {/*
         key обязателен. Переключение вкладки — это тот же маршрут с другими
         параметрами, и поддерево не перемонтируется: и useState(initialWash), и
@@ -121,6 +104,12 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
       */}
       <Stage
         key={showPopular ? 'popular' : 'mine'}
+        // Смена вкладки лечится ключом выше, а вот router.refresh() ключ не
+        // меняет: поддерево согласуется, Stage не перемонтируется, и его
+        // наблюдатель остаётся висеть на том наборе строк, который был при
+        // монтировании. Приехавшие с обновлением строки не получили бы
+        // data-live никогда — остались бы обесцвеченными и не двигали заливку.
+        rowsKey={keys.join('|')}
         initialWash={
           artCandidates(
             { appid: hero.appid, art: heroMeta?.art, headerImage: heroMeta?.headerImage },

@@ -1563,9 +1563,9 @@ const OVERFETCH = 4
  * верхних карточек оказывается одной и той же игрой. Показываем самый свежий
  * патч каждой, остальное — на странице игры.
  */
-function onePerGame(rows: StoredNews[], limit: number): StoredNews[] {
+function onePerGame<T extends { appid: number }>(rows: T[], limit: number): T[] {
   const seen = new Set<number>()
-  const out: StoredNews[] = []
+  const out: T[] = []
   for (const r of rows) {
     if (seen.has(r.appid)) continue
     seen.add(r.appid)
@@ -1699,6 +1699,68 @@ export async function getFeedForApps(
     args: [...ids, before ?? 2_000_000_000, limit * OVERFETCH],
   })
   return onePerGame((res.rows as unknown as NewsRow[]).map(rowToNews), limit)
+}
+
+/* ---------- голова ленты: то же, но без тел патчей ---------- */
+
+export type FeedHeadItem = { appid: number; gid: string; publishedAt: number }
+
+type HeadRow = { appid: number; gid: string; published_at: number }
+
+const HEAD_COLS = 'appid, gid, published_at'
+
+function rowToHead(r: HeadRow): FeedHeadItem {
+  return { appid: r.appid, gid: r.gid, publishedAt: r.published_at }
+}
+
+/**
+ * Голова общей ленты: те же строки в том же порядке, что у getMajorFeed, но
+ * без blocks_json.
+ *
+ * Строк из базы читается СТОЛЬКО ЖЕ, и Turso тарифицирует строки — экономии в
+ * счёте здесь нет вовсе, и обещать её не надо. Экономия в другом: blocks_json
+ * это тела тридцати патчей, и возить их по проводу вместе с тридцатью вызовами
+ * JSON.parse каждые две минуты на каждую открытую вкладку — только ради ответа
+ * «изменилось или нет» — несоразмерно.
+ *
+ * Предикат и порядок обязаны совпадать с getMajorFeed до последнего слова:
+ * на этом держится честность числа на плашке. За совпадением следит тест
+ * «голова и лента отдают одни и те же ключи» в lib/db.test.ts.
+ */
+export async function getMajorFeedHead(
+  db: Db,
+  limit = 30,
+  opts: { before?: number; minRank?: number } = {},
+): Promise<FeedHeadItem[]> {
+  const { before, minRank = 0 } = opts
+  const res = await db.execute({
+    sql: `SELECT ${HEAD_COLS} FROM news_items
+          WHERE kind = 'patch' AND scale = 'major' AND rank > 0
+            AND rank >= ?
+            AND published_at < ?
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [minRank, before ?? 2_000_000_000, limit * OVERFETCH],
+  })
+  return onePerGame((res.rows as unknown as HeadRow[]).map(rowToHead), limit)
+}
+
+/** Голова личной ленты. Зеркало getFeedForApps — см. докблок выше. */
+export async function getFeedHeadForApps(
+  db: Db,
+  appids: number[],
+  limit = 30,
+  before?: number,
+): Promise<FeedHeadItem[]> {
+  const ids = appids.filter((a) => a > 0).slice(0, 400)
+  if (!ids.length) return []
+  const res = await db.execute({
+    sql: `SELECT ${HEAD_COLS} FROM news_items
+          WHERE appid IN (${placeholders(ids.length)})
+            AND kind = 'patch' AND scale = 'major' AND published_at < ?
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [...ids, before ?? 2_000_000_000, limit * OVERFETCH],
+  })
+  return onePerGame((res.rows as unknown as HeadRow[]).map(rowToHead), limit)
 }
 
 /**

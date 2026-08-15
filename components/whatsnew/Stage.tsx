@@ -26,10 +26,17 @@ const EASE = [0.22, 1, 0.36, 1] as const
 export function Stage({
   children,
   initialWash,
+  rowsKey,
 }: {
   children: React.ReactNode
   /** Арт обложки: заливка начинается с него, иначе первый экран пустой */
   initialWash?: string
+  /**
+   * Отпечаток набора строк. Наблюдатель собирается ОДИН раз на набор, а
+   * router.refresh() приносит новые строки, не перемонтируя Stage — без этой
+   * зависимости они не наблюдались бы никогда.
+   */
+  rowsKey?: string
 }) {
   const scope = useRef<HTMLDivElement>(null)
   const [wash, setWash] = useState<string | null>(initialWash ?? null)
@@ -61,8 +68,14 @@ export function Stage({
     )
 
     for (const row of rows) io.observe(row)
-    return () => io.disconnect()
-  }, [])
+    return () => {
+      io.disconnect()
+      // data-live ставится мимо React, значит и снимать его приходится руками:
+      // без этого после пересборки наблюдателя две строки кадр держатся
+      // «живыми» одновременно, пока не отработает первый колбэк.
+      for (const row of rows) delete row.dataset.live
+    }
+  }, [rowsKey])
 
   return (
     <div ref={scope} className="relative">

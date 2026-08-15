@@ -14,7 +14,9 @@ import {
   getFeedForApps,
   getGameNews,
   getGameRanks,
+  getFeedHeadForApps,
   getMajorFeed,
+  getMajorFeedHead,
   getUnsummarized,
   pruneNewsForApp,
   releaseSteamLease,
@@ -777,6 +779,64 @@ describe('очередь опроса', () => {
     await enrollNewsPoll(db, [730], 1, NOW)
     await flushPollResults(db, [{ appid: 730, status: 'gone', nextAt: NOW, failCount: 3 }], NOW)
     expect(await claimNewsPollBatch(db, NOW + 99999, 10)).toEqual([])
+  })
+
+  /** Три игры, у одной два патча: проверяем и порядок, и схлопывание по играм */
+  async function seedFeed(db: Db) {
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ appid: 730, gid: 'свежий', publishedAt: NOW, rank: 50_000 }),
+        newsItem({ appid: 730, gid: 'старый', publishedAt: NOW - 100, rank: 50_000 }),
+        newsItem({ appid: 570, gid: '1', publishedAt: NOW - 200, rank: 20_000 }),
+        newsItem({ appid: 440, gid: '1', publishedAt: NOW - 300, rank: 5_000 }),
+      ],
+      NOW,
+    )
+  }
+
+  test('голова ленты отдаёт те же ключи в том же порядке, что и лента', async () => {
+    // Краеугольный инвариант всей плашки «N новых»: если голова и лента
+    // расходятся хоть на одну строку, число на плашке — вымысел.
+    const db = await freshDb()
+    await seedFeed(db)
+    const full = await getMajorFeed(db, 30)
+    expect(full.map((f) => f.gid)).toEqual(['свежий', '1', '1'])
+    const head = await getMajorFeedHead(db, 30)
+    expect(head.map((h) => `${h.appid}:${h.gid}`)).toEqual(full.map((f) => `${f.appid}:${f.gid}`))
+    expect(head.map((h) => h.publishedAt)).toEqual(full.map((f) => f.publishedAt))
+  })
+
+  test('голова личной ленты — зеркало getFeedForApps', async () => {
+    const db = await freshDb()
+    await seedFeed(db)
+    const ids = [730, 570, 440]
+    const full = await getFeedForApps(db, ids, 30)
+    const head = await getFeedHeadForApps(db, ids, 30)
+    expect(head.map((h) => `${h.appid}:${h.gid}`)).toEqual(full.map((f) => `${f.appid}:${f.gid}`))
+  })
+
+  test('порог популярности действует на голову так же, как на ленту', async () => {
+    const db = await freshDb()
+    await seedFeed(db)
+    const full = await getMajorFeed(db, 30, { minRank: 10_000 })
+    const head = await getMajorFeedHead(db, 30, { minRank: 10_000 })
+    expect(head.map((h) => h.appid)).toEqual(full.map((f) => f.appid))
+  })
+
+  test('голова не таскает тела патчей', async () => {
+    // страж от «упрощения» головы обратно до NEWS_COLS: тогда каждый опрос
+    // снова начнёт возить тела тридцати патчей на каждую открытую вкладку
+    const db = await freshDb()
+    await seedFeed(db)
+    const head = await getMajorFeedHead(db, 30)
+    expect(Object.keys(head[0]!).sort()).toEqual(['appid', 'gid', 'publishedAt'])
+  })
+
+  test('пустой список игр — пустая голова', async () => {
+    const db = await freshDb()
+    expect(await getFeedHeadForApps(db, [], 30)).toEqual([])
+    expect(await getFeedHeadForApps(db, [-101], 30)).toEqual([])
   })
 
   test('аренда Steam: второй претендент не входит, пока первый её держит', async () => {
