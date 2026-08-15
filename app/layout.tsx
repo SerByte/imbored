@@ -114,11 +114,34 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         >
           К содержанию
         </a>
-        <header
-          className="fixed top-0 inset-x-0 z-50"
-          style={{ background: 'linear-gradient(to bottom, var(--header-fade), transparent)' }}
-        >
-          <div className="mx-auto max-w-6xl px-5 py-4 flex items-center justify-between">
+        <header className="fixed top-0 inset-x-0 z-50">
+          {/*
+            Затемнение — отдельным слоем под содержимым, а не фоном самой шапки.
+
+            Фоном оно и было, и потому наезжало: градиент гас к низу коробки, а
+            логотип с навигацией стоят по её центру — там, где он уже
+            наполовину растворился. Под ними проезжали заголовки строк, и на
+            телефоне логотип ложился прямо на название игры.
+
+            Слой выше коробки (h-[150%]) и гасится маской, поэтому граница не
+            читается полосой, а размытие снимает остатки контраста, не пряча
+            зону под собой: правило «шапка наследует то, над чем стоит»
+            (см. --header-fade в globals.css) остаётся в силе — цвет по-прежнему
+            берётся от зоны, а не назначается здесь.
+
+            pointer-events-none обязателен: слой свисает ниже шапки и иначе
+            перехватывал бы клики по строкам ленты.
+          */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 h-[150%] backdrop-blur-[6px]"
+            style={{
+              background: 'linear-gradient(to bottom, var(--header-fade), transparent)',
+              maskImage: 'linear-gradient(to bottom, #000 55%, transparent)',
+              WebkitMaskImage: 'linear-gradient(to bottom, #000 55%, transparent)',
+            }}
+          />
+          <div className="relative mx-auto max-w-6xl px-5 py-4 flex items-center justify-between">
             <Link href="/" className="text-lg flex items-center gap-2.5">
               <LogoMark size={22} />
               <Wordmark />
