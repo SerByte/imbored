@@ -18,10 +18,127 @@ const VIBE_TAGS: Record<Mood['vibe'], string[]> = {
   engaged: ['Difficult', 'Competitive', 'Souls-like', 'Tactical', 'Strategy', 'Fast-Paced'],
 }
 
+/*
+ * Корзины длины сессии.
+ *
+ * Раньше medium был ПУСТ, то есть самый частый ответ на самый ценный вопрос
+ * квиза не двигал ни скор, ни объяснение на карточке. А он же — дефолт четырёх
+ * входов: NEUTRAL_MOOD, «Игра дня», прямой заход на /play и половина пресетов.
+ * Треть опроса была декорацией.
+ *
+ * В корзины идут теги, говорящие о ДЛИНЕ, а не о жанре. Поэтому из long убраны
+ * 'Adventure' (53% каталога), 'Story Rich' и 'Simulation': тег у половины игр
+ * не может ничего разделить — с ними поправка становилась почти равномерной,
+ * то есть снова no-op. Замерено на 5723 играх: с ними охват long 81%, без них
+ * 62%, и именно во втором случае ответ начинает что-то значить.
+ *
+ * Покрытие по пулу: short 34%, medium 59%, long 62%. У 7% игр не срабатывает
+ * ни одна корзина — про их длину ничего не известно, и это причина не судить,
+ * а не судить плохо.
+ */
 const TIME_TAGS: Record<Mood['time'], string[]> = {
-  short: ['Roguelike', 'Roguelite', 'Arcade', 'Card Game', 'Fast-Paced', 'Short'],
-  medium: [],
-  long: ['Open World', 'RPG', 'Story Rich', 'Adventure', 'Simulation'],
+  short: [
+    'Roguelike',
+    'Roguelite',
+    'Arcade',
+    'Card Game',
+    'Fast-Paced',
+    'Short',
+    'Twin Stick Shooter',
+    'Bullet Hell',
+    'Party Game',
+    'Auto Battler',
+    'Score Attack',
+    'Time Attack',
+    'Board Game',
+    'Word Game',
+    'Runner',
+    'Racing',
+    'Sports',
+    'Rhythm',
+    'Deckbuilding',
+    'Roguelike Deckbuilder',
+    "Shoot 'Em Up",
+    'Idler',
+    'Chess',
+  ],
+  medium: [
+    'Platformer',
+    'Metroidvania',
+    'Puzzle Platformer',
+    'Precision Platformer',
+    'Action-Adventure',
+    'Point & Click',
+    'Detective',
+    'Mystery',
+    'Psychological Horror',
+    'Stealth',
+    'Turn-Based Tactics',
+    'Dungeon Crawler',
+    'Linear',
+    'Walking Simulator',
+    'Visual Novel',
+    'Interactive Fiction',
+    'Choose Your Own Adventure',
+    'Hack and Slash',
+    'Episodic',
+    'Tower Defense',
+  ],
+  long: [
+    'Open World',
+    'RPG',
+    'JRPG',
+    'CRPG',
+    'MMORPG',
+    'Grand Strategy',
+    '4X',
+    'Colony Sim',
+    'City Builder',
+    'Base Building',
+    'Automation',
+    'Survival',
+    'Sandbox',
+    'Life Sim',
+    'Farming Sim',
+    'Crafting',
+    'Management',
+  ],
+}
+
+/*
+ * Насколько игра подходит под заявленное время — и матрица намеренно
+ * НЕСИММЕТРИЧНА.
+ *
+ * Аудит просил «сделать симметрично». На данных выяснилось, что честнее иначе:
+ * «меньше часа» — это ОГРАНИЧЕНИЕ (стосчасовую RPG за сорок минут физически не
+ * начать), а «весь вечер» — ПОЖЕЛАНИЕ (короткую игру никто не мешает включить
+ * на весь вечер). Поэтому штраф за «слишком длинную» больше штрафа за
+ * «слишком короткую».
+ *
+ * До этого штрафа не было вовсе — только буст за совпадение, — и игра на сто
+ * часов при ответе «меньше часа» не получала ничего.
+ */
+const TIME_FIT: Record<Mood['time'], Record<Mood['time'], number>> = {
+  //          длина игры:  short  medium  long
+  short: { short: 0.15, medium: -0.1, long: -0.2 },
+  medium: { short: 0, medium: 0.15, long: -0.1 },
+  long: { short: -0.1, medium: 0, long: 0.15 },
+}
+
+/**
+ * Игра может попасть в несколько корзин сразу (Roguelike + Open World).
+ * Берём самую выгодную для неё: сомнение толкуем в пользу игры, иначе один
+ * случайный тег вычёркивал бы её из выдачи целиком.
+ */
+function timeFit(tags: Set<string>, time: Mood['time']): number {
+  let best: number | null = null
+  for (const [bucket, weight] of Object.entries(TIME_FIT[time]) as Array<
+    [Mood['time'], number]
+  >) {
+    if (!TIME_TAGS[bucket].some((t) => tags.has(t))) continue
+    if (best === null || weight > best) best = weight
+  }
+  return best ?? 0
 }
 
 export function cosine(a: Record<string, number>, b: Record<string, number>): number {
@@ -311,7 +428,7 @@ function moodMultiplier(meta: GameMeta, mood: Mood): number {
   if (hasAny(VIBE_TAGS[mood.vibe])) mult += 0.25
   const oppositeVibe = mood.vibe === 'chill' ? 'engaged' : 'chill'
   if (hasAny(VIBE_TAGS[oppositeVibe])) mult -= 0.25
-  if (hasAny(TIME_TAGS[mood.time])) mult += 0.15
+  mult += timeFit(tags, mood.time)
   return Math.max(mult, 0.1)
 }
 
@@ -351,7 +468,9 @@ function popularityScore(meta: GameMeta): number {
  * человек и приходит («куча игр, которые я даже не скачивал»).
  *
  * 1.25 откалибровано по уже существующему разбросу: moodMultiplier живёт в
- * 0.75…1.40, то есть настроение решает примерно вдвое. Запечатанная игра
+ * 0.55…1.40 (нижнюю границу опустила ось времени: −0.25 за противоположный
+ * вайб плюс −0.20 за слишком длинную игру), то есть настроение решает примерно
+ * в два с половиной раза. Запечатанная игра
  * выигрывает ничью и почти-ничью, но проигрывает тому, что заметно ближе по
  * вкусу. Это наклон, а не фильтр — фильтр отдельно, в applyFocus.
  *

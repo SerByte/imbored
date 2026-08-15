@@ -219,6 +219,106 @@ describe('explainMatch', () => {
 describe('scoreCandidates', () => {
   const baseMood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
 
+  /**
+   * Ось времени. До этих тестов ответ «сколько у меня времени» не двигал
+   * выдачу вообще: корзина medium была пуста, а штрафа за неподходящую длину
+   * не существовало — только буст за совпадение.
+   *
+   * Все три проверки построены на одном приёме: две игры с одинаковым
+   * профильным тегом, но разной длиной, и меняется ТОЛЬКО ответ про время.
+   */
+  describe('ответ про время двигает выдачу', () => {
+    // Roguelike — короткая, Colony Sim — длинная. Оба тега вне вайб-корзин,
+    // поэтому вайб в эксперимент не вмешивается.
+    const shortGame = meta(101, { Action: 100, Roguelike: 90 })
+    const longGame = meta(102, { Action: 100, 'Colony Sim': 90 })
+    const metas = new Map([
+      [101, shortGame],
+      [102, longGame],
+    ])
+
+    const rank = (time: Mood['time']) =>
+      scoreCandidates({
+        profile: { Action: 1 },
+        library: [game({ appid: 101, playtimeForever: 10 }), game({ appid: 102, playtimeForever: 10 })],
+        metaOf: (id) => metas.get(id),
+        newPool: [],
+        mood: { ...baseMood, time },
+        nowSec: NOW,
+      }).map((c) => c.appid)
+
+    test('«меньше часа» поднимает короткую игру', () => {
+      expect(rank('short')[0]).toBe(101)
+    })
+
+    test('«весь вечер» поднимает длинную', () => {
+      expect(rank('long')[0]).toBe(102)
+    })
+
+    test('«пара часов» больше не пустая корзина: ответ меняет порядок', () => {
+      // главное утверждение — что три ответа дают РАЗНЫЕ выдачи, а не одну
+      expect(rank('short')).not.toEqual(rank('long'))
+    })
+
+    /**
+     * Бьёт именно в матрицу, а не в наполненность корзин: раньше был только
+     * буст за совпадение, поэтому длинная игра при ответе «меньше часа»
+     * оказывалась вровень с игрой, про длину которой ничего не известно.
+     * Стосчасовую RPG за сорок минут не начать — она должна проигрывать.
+     */
+    test('слишком длинная игра проигрывает безымянной при ответе «меньше часа»', () => {
+      // Структура тегов у обеих ОДИНАКОВА (профильный + один посторонний с тем
+      // же весом), поэтому косинус у них равный и разницу может дать только
+      // ось времени. Без этого тест проходил бы просто из-за лишнего тега.
+      const withLong = new Map([[105, meta(105, { Action: 100, 'Colony Sim': 90 })]])
+      const noLength = new Map([[105, meta(105, { Action: 100, Colorful: 90 })]])
+      const scoreWith = (m: Map<number, GameMeta>) =>
+        scoreCandidates({
+          profile: { Action: 1 },
+          library: [game({ appid: 105, playtimeForever: 10 })],
+          metaOf: (id) => m.get(id),
+          newPool: [],
+          mood: { ...baseMood, time: 'short' },
+          nowSec: NOW,
+        })[0].score
+
+      expect(scoreWith(withLong)).toBeLessThan(scoreWith(noLength))
+    })
+
+    test('игра без единого тега длины не наказывается ни при каком ответе', () => {
+      const plain = new Map([[103, meta(103, { Action: 100 })]])
+      const scoreAt = (time: Mood['time']) =>
+        scoreCandidates({
+          profile: { Action: 1 },
+          library: [game({ appid: 103, playtimeForever: 10 })],
+          metaOf: (id) => plain.get(id),
+          newPool: [],
+          mood: { ...baseMood, time },
+          nowSec: NOW,
+        })[0].score
+
+      expect(scoreAt('short')).toBeCloseTo(scoreAt('long'), 10)
+    })
+
+    test('игра сразу в двух корзинах берёт лучшую для себя оценку', () => {
+      // Roguelike (short) + Open World (long): при ответе «весь вечер» она
+      // должна получить буст за длину, а не штраф за краткость
+      const both = new Map([[104, meta(104, { Action: 100, Roguelike: 90, 'Open World': 90 })]])
+      const onlyShort = new Map([[104, meta(104, { Action: 100, Roguelike: 90 })]])
+      const scoreWith = (m: Map<number, GameMeta>) =>
+        scoreCandidates({
+          profile: { Action: 1 },
+          library: [game({ appid: 104, playtimeForever: 10 })],
+          metaOf: (id) => m.get(id),
+          newPool: [],
+          mood: { ...baseMood, time: 'long' },
+          nowSec: NOW,
+        })[0].score
+
+      expect(scoreWith(both)).toBeGreaterThan(scoreWith(onlyShort))
+    })
+  })
+
   test('раскладывает источники: unplayed→backlog, comeback→comeback, каталог→new; active исключается', () => {
     const lib = [
       game({ appid: 1, playtimeForever: 10 }), // unplayed
@@ -572,8 +672,8 @@ describe('dealMultiplier', () => {
     }) as GameMeta
 
   test('скидка поднимает каталог, но слабее, чем настроение', () => {
-    // Наклон, а не сортировка по распродаже: moodMultiplier живёт в 0.75…1.40,
-    // то есть настроение решает вчетверо сильнее. Если этот тест упадёт,
+    // Наклон, а не сортировка по распродаже: moodMultiplier живёт в 0.55…1.40,
+    // то есть настроение решает вшестеро сильнее. Если этот тест упадёт,
     // значит скидка стала фильтром.
     expect(dealMultiplier(onSale(90), 'new', NOW)).toBeCloseTo(1.15)
     expect(dealMultiplier(onSale(45), 'new', NOW)).toBeCloseTo(1.075)
