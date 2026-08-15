@@ -129,15 +129,41 @@ export default function DailyPage() {
 
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-40">
           <div className="max-w-2xl flex flex-col gap-4">
-            <div className="flex items-center gap-3 text-xs">
+            {/*
+              На телефоне здесь остаётся только дата.
+
+              Три плашки делили 375 пикселей натрое, и подпись не влезала ни в
+              одну: «ИГРА ДНЯ · 15 / АВГУСТА», «Открыл и / закрыл», «1 ч /
+              наиграно». Текст, разорванный внутри пилюли, читается как поехавшая
+              вёрстка, а не как замысел.
+
+              Прятать выбрано именно поведенческие подписи, потому что абзац
+              ниже пересказывает их словами: «Ты открыл „Hollow Knight“ и закрыл,
+              не разобравшись» — это тот же SOURCE_BADGE, только по-человечески.
+              На узком экране они буквально повторяют соседний текст, и снятие
+              дубля не теряет ничего.
+
+              Магазин — исключение и остаётся: он в том же слоте, но нигде больше
+              не сказан, а «игра не в Steam» это то, что нужно знать до клика.
+
+              flex-wrap — страховка: даже если подписи однажды подрастут, плашки
+              встанут в столбик целиком, а не сломаются внутри себя.
+            */}
+            <div className="flex flex-wrap items-center gap-3 text-xs">
               <span className="rounded-full bg-ember text-on-ember px-3 py-1 font-bold uppercase tracking-wide">
                 Игра дня · {dateLabel}
               </span>
-              <span className="rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium">
+              <span
+                className={`rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium ${
+                  pick.store ? '' : 'hidden md:inline'
+                }`}
+              >
                 {pick.store ? STORE_LABEL[pick.store] ?? pick.store : SOURCE_BADGE[pick.source]}
               </span>
               {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
-                <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
+                <span className="hidden font-mono text-dim md:inline">
+                  {pick.hoursPlayed} ч наиграно
+                </span>
               )}
               <PlayersNow ccu={pick.ccu} />
             </div>
