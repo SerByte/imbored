@@ -27,6 +27,23 @@ export async function verifyAssertion(
   params: URLSearchParams,
   fetchFn: typeof fetch = fetch,
 ): Promise<string | null> {
+  /*
+   * Ни один параметр не должен приходить дважды.
+   *
+   * Иначе получается расхождение: params.get отдаёт ПЕРВОЕ значение, а в теле
+   * запроса к Steam уезжают оба, и какое из них подтвердит Steam — свойство
+   * его разборщика, а не наше решение. Достаточно прислать свой подписанный
+   * ассерт вторым значением, чтобы мы прочитали чужой steamid и получили на
+   * него «is_valid:true». Единственное место, где решается, кто вошёл, не
+   * может зависеть от такой удачи.
+   *
+   * Честные ответы Steam дублей не содержат, так что видимого поведения это
+   * не меняет.
+   */
+  for (const key of new Set(params.keys())) {
+    if (params.getAll(key).length !== 1) return null
+  }
+
   const claimedId = params.get('openid.claimed_id')
   if (!claimedId) return null
   const steamid = extractSteamId(claimedId)

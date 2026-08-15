@@ -44,4 +44,20 @@ describe('verifyAssertion', () => {
     const fn = (async () => new Response('is_valid:false\n')) as typeof fetch
     expect(await verifyAssertion(params, fn)).toBeNull()
   })
+
+  test('дубль claimed_id отклоняется, даже если Steam говорит is_valid:true', async () => {
+    // Мы читаем первое значение, а Steam может подтвердить второе. Тогда чужой
+    // подписанный ассерт удостоверил бы steamid жертвы.
+    const doubled = new URLSearchParams(params)
+    doubled.append('openid.claimed_id', 'https://steamcommunity.com/openid/id/76561197960287931')
+    const fn = (async () => new Response('is_valid:true\n')) as typeof fetch
+    expect(await verifyAssertion(doubled, fn)).toBeNull()
+  })
+
+  test('дубль любого другого параметра тоже отклоняется', async () => {
+    const doubled = new URLSearchParams(params)
+    doubled.append('openid.sig', 'def')
+    const fn = (async () => new Response('is_valid:true\n')) as typeof fetch
+    expect(await verifyAssertion(doubled, fn)).toBeNull()
+  })
 })
