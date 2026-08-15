@@ -110,6 +110,98 @@ describe('forgottenCandidates', () => {
   })
 })
 
+describe('forgottenCandidates: издания одной игры', () => {
+  const BASE = "Hellblade: Senua's Sacrifice"
+  const VR = "Hellblade: Senua's Sacrifice VR Edition"
+
+  /** metaOf с обложками ровно для перечисленных appid */
+  const withMetas = (...ids: number[]) => {
+    const m = new Map(ids.map((id) => [id, meta(id)]))
+    return (id: number) => m.get(id)
+  }
+
+  test('два издания — одна плитка, остаётся базовая игра', () => {
+    // 414340 и 719950 стояли на полке рядом, с одинаковой обложкой
+    const lib = [
+      game({ appid: 414340, name: BASE }),
+      game({ appid: 719950, name: VR }),
+      game({ appid: 620, name: 'Portal 2' }),
+    ]
+    expect(forgottenCandidates(lib, withMetas(414340, 719950, 620)).map((g) => g.appid)).toEqual([
+      414340, 620,
+    ])
+  })
+
+  test('обратный порядок входа канон не меняет', () => {
+    const lib = [
+      game({ appid: 620, name: 'Portal 2' }),
+      game({ appid: 719950, name: VR }),
+      game({ appid: 414340, name: BASE }),
+    ]
+    const out = forgottenCandidates(lib, withMetas(414340, 719950, 620)).map((g) => g.appid)
+    expect(out).toContain(414340)
+    expect(out).not.toContain(719950)
+  })
+
+  test('сыгранное издание убирает запечатанного близнеца с полки', () => {
+    // «Ты забыл, что они у тебя есть» — про VR-издание это неправда,
+    // если в базовую игру наиграно двадцать часов
+    const lib = [
+      game({ appid: 414340, name: BASE, playtimeForever: 1200 }),
+      game({ appid: 719950, name: VR }),
+      game({ appid: 620, name: 'Portal 2' }),
+    ]
+    expect(forgottenCandidates(lib, withMetas(414340, 719950, 620)).map((g) => g.appid)).toEqual([
+      620,
+    ])
+  })
+
+  test('одной минуты в другом издании достаточно', () => {
+    const lib = [
+      game({ appid: 414340, name: BASE, playtimeForever: 1 }),
+      game({ appid: 719950, name: VR }),
+      game({ appid: 620, name: 'Portal 2' }),
+    ]
+    expect(forgottenCandidates(lib, withMetas(719950, 620)).map((g) => g.appid)).toEqual([620])
+  })
+
+  test('сыгранная копия из чужого магазина тоже считается', () => {
+    // записи не-Steam магазинов лежат под отрицательными id и на полку не идут,
+    // но доказательством «ты про неё помнишь» они быть обязаны
+    const lib = [
+      game({ appid: -101, name: BASE, playtimeForever: 600 }),
+      game({ appid: 719950, name: VR }),
+      game({ appid: 620, name: 'Portal 2' }),
+    ]
+    expect(forgottenCandidates(lib, withMetas(719950, 620)).map((g) => g.appid)).toEqual([620])
+  })
+
+  test('схлопывание считается ДО фильтра по обложкам', () => {
+    // Иначе оптовый откат «обложек меньше двух — отдаём всё» вернул бы пару
+    // обратно ровно на маленьких библиотеках, ради которых он и существует
+    const lib = [
+      game({ appid: 414340, name: BASE }),
+      game({ appid: 719950, name: VR }),
+      game({ appid: 620, name: 'Portal 2' }),
+    ]
+    expect(forgottenCandidates(lib, withMetas(414340, 719950)).map((g) => g.appid)).toEqual([
+      414340, 620,
+    ])
+  })
+
+  test('разные части серии обе остаются на полке', () => {
+    const lib = [game({ appid: 400, name: 'Portal' }), game({ appid: 620, name: 'Portal 2' })]
+    expect(forgottenCandidates(lib, withMetas(400, 620)).map((g) => g.appid)).toEqual([400, 620])
+  })
+
+  test('игра без метаданных выигрывает у прогретого издания', () => {
+    // metaOf на /library возвращает undefined постоянно: обложки догреваются
+    // прямо во время рендера. Молчание меты — не доказательство вторичности
+    const lib = [game({ appid: 414340, name: BASE }), game({ appid: 719950, name: VR })]
+    expect(forgottenCandidates(lib, withMetas(719950)).map((g) => g.appid)).toEqual([414340])
+  })
+})
+
 describe('parseLibraryFilter', () => {
   test('known-значения проходят', () => {
     expect(parseLibraryFilter('untouched')).toBe('untouched')

@@ -60,15 +60,26 @@ const NEW_MARKERS = ['enhanced', 'remastered', 'remake', 'definitive', 'reforged
 const EDITION_RE =
   /\s*[-–—:]?\s*\b(game of the year|goty|deluxe|complete|ultimate|anniversary|gold|premium|standard|enhanced|definitive|remastered)?\s*\b(edition|director'?s cut)\b.*$/i
 
-export function normalizeTitle(name: string): string {
+/**
+ * Название без знаков, регистра и мусорной пунктуации — но БЕЗ срезания изданий.
+ *
+ * Выделено из normalizeTitle, чтобы этим же приведением пользовался editionKey
+ * (lib/editions.ts): ему нужна голая строка, потому что EDITION_RE срезает
+ * только якорь и оставляет квалификатор («…Skyrim Special Edition» →
+ * «…skyrim special»), а для ключа издания это ровно то, что мешает.
+ */
+export function cleanTitle(name: string): string {
   return name
     .replace(/[™®©]/g, '')
-    .replace(EDITION_RE, '')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}:.\s-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .replace(/[:\s-]+$/, '')
     .trim()
+}
+
+export function normalizeTitle(name: string): string {
+  return cleanTitle(name.replace(/[™®©]/g, '').replace(EDITION_RE, ''))
 }
 
 const ROMAN: Record<string, number> = {
@@ -100,7 +111,7 @@ export function parseSeries(name: string): { base: string; ordinal: number | nul
   return { base: head.slice(0, m.index).trim(), ordinal }
 }
 
-function hasOldMarker(name: string): boolean {
+export function hasOldMarker(name: string): boolean {
   const lower = name.toLowerCase()
   return OLD_MARKERS.some((w) => new RegExp(`\\b${w}\\b`).test(lower))
 }

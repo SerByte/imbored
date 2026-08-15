@@ -11,6 +11,7 @@ import {
   loadTagStats,
 } from '@/lib/db'
 import { discountView } from '@/lib/discount'
+import { editionKey } from '@/lib/editions'
 import { heuristicPicks } from '@/lib/llm'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import {
@@ -49,6 +50,10 @@ export async function GET() {
 
   const games = snapshot.games
   const owned = new Set(games.map((g) => g.appid))
+  // Второй ключ владения — по названию: у Skyrim и Skyrim Special Edition
+  // разные appid, и по одному только owned находки предлагали бы купить то,
+  // что уже стоит в библиотеке
+  const ownedKeys = new Set(games.map((g) => editionKey(g.name)).filter(Boolean))
 
   const libMetas = await getGamesMeta(
     db,
@@ -79,7 +84,7 @@ export async function GET() {
       limit: 400,
       wildcard: WILDCARD_POOL,
     })
-  ).filter((m) => !owned.has(m.appid))
+  ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
   for (const m of newPool) poolByAppid.set(m.appid, m)
 
   const candidates = scoreCandidates({

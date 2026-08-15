@@ -10,6 +10,7 @@ import {
   loadTagStats,
 } from '@/lib/db'
 import { discountView } from '@/lib/discount'
+import { editionKey } from '@/lib/editions'
 import { claudePicks, heuristicPicks, type Pick } from '@/lib/llm'
 import { parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
@@ -65,6 +66,10 @@ export async function POST(req: Request) {
 
   const games = snapshot.games
   const owned = new Set(games.map((g) => g.appid))
+  // Второй ключ владения — по названию: у Skyrim и Skyrim Special Edition
+  // разные appid, и по одному только owned каталог предлагал бы купить то,
+  // что уже стоит в библиотеке
+  const ownedKeys = new Set(games.map((g) => editionKey(g.name)).filter(Boolean))
 
   const banned = await bannedAppids(db, steamid)
   const feedback = await listFeedback(db, steamid, 300)
@@ -98,7 +103,7 @@ export async function POST(req: Request) {
       limit: 400,
       wildcard: WILDCARD_POOL,
     })
-  ).filter((m) => !owned.has(m.appid))
+  ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
   for (const m of newPool) poolByAppid.set(m.appid, m)
   const candidates = scoreCandidates({
     profile,

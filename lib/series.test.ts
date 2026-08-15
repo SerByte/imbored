@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { buildSeriesIndex, normalizeTitle, parseSeries, type SeriesMember } from './series'
+import { buildSeriesIndex, cleanTitle, normalizeTitle, parseSeries, type SeriesMember } from './series'
 
 const valve = { publisher: 'Valve', developer: 'Valve' }
 
@@ -13,6 +13,19 @@ describe('normalizeTitle', () => {
       normalizeTitle('The Witcher 3: Wild Hunt'),
     )
     expect(normalizeTitle('DOOM® Eternal: Deluxe Edition')).toBe(normalizeTitle('Doom Eternal'))
+  })
+})
+
+describe('cleanTitle', () => {
+  test('режет знаки и регистр, но не издания', () => {
+    // Ровно та причина, по которой editionKey не строится на normalizeTitle:
+    // EDITION_RE срезает якорь и оставляет квалификатор висеть в воздухе
+    expect(cleanTitle('The Elder Scrolls V: Skyrim™ Special Edition')).toBe(
+      'the elder scrolls v: skyrim special edition',
+    )
+    expect(normalizeTitle('The Elder Scrolls V: Skyrim™ Special Edition')).toBe(
+      'the elder scrolls v: skyrim special',
+    )
   })
 })
 

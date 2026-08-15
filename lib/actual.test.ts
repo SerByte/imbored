@@ -93,6 +93,33 @@ describe('filterActual', () => {
     expect(kept).toEqual([548430, 730])
   })
 
+  test('два издания одной игры — одна карточка', () => {
+    // Вытеснение серий сюда не дотягивается: обе Hellblade одиночные, а
+    // buildSeriesIndex пропускает всё немультиплеерное
+    const withEditions = new Map(LIBRARY)
+    withEditions.set(414340, meta(414340, "Hellblade: Senua's Sacrifice", { categories: [2] }))
+    withEditions.set(
+      719950,
+      meta(719950, "Hellblade: Senua's Sacrifice VR Edition", { categories: [2] }),
+    )
+    const kept = ids(
+      filterActual([{ appid: 414340 }, { appid: 719950 }, { appid: 548430 }], withEditions, 'solo'),
+    )
+    expect(kept).toEqual([414340, 548430])
+  })
+
+  test('внутри группы побеждает первый: порядок и есть ранжирование', () => {
+    const withEditions = new Map(LIBRARY)
+    withEditions.set(414340, meta(414340, "Hellblade: Senua's Sacrifice", { categories: [2] }))
+    withEditions.set(
+      719950,
+      meta(719950, "Hellblade: Senua's Sacrifice VR Edition", { categories: [2] }),
+    )
+    expect(ids(filterActual([{ appid: 719950 }, { appid: 414340 }], withEditions, 'solo'))).toEqual([
+      719950,
+    ])
+  })
+
   test('кандидат из каталога без издателя не отменяет вытеснение в библиотеке', () => {
     // Регрессия: с выходом каталога в общую выдачу его метаданные попали в тот
     // же расчёт серий. Проекция пула не отдавала издателя — и «третья часть»

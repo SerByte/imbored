@@ -1,3 +1,4 @@
+import { editionKey } from './editions'
 import { buildTagProfile, cosine, isMultiplayerMeta, normalizedTags } from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -77,15 +78,29 @@ export function buildGroupDeck(args: {
   }
 
   const seen = new Set<number>()
+  // Тот же запрет «не дважды», но на уровень выше appid: два издания одной игры
+  // — это два appid, и колода из двадцати карт голосовала бы за одну игру
+  // дважды, а матч срабатывал бы не на том издании. Порядок циклов ниже сам
+  // решает, кто победит: общие игры разбираются раньше пула, поэтому карточка
+  // из каталога не может вытеснить издание, которым партия владеет.
+  const seenKeys = new Set<string>()
   const cards: GroupCard[] = []
+
+  const take = (meta: GameMeta): boolean => {
+    const key = editionKey(meta.name)
+    if (key && seenKeys.has(key)) return false
+    seen.add(meta.appid)
+    if (key) seenKeys.add(key)
+    cards.push(toCard(meta))
+    return true
+  }
 
   // общие игры всех участников
   for (const [appid, owning] of owners) {
     if (owning.size !== members.length) continue
     const meta = metaOf(appid)
     if (!meta || !isMultiplayerMeta(meta)) continue
-    seen.add(appid)
-    cards.push(toCard(meta))
+    take(meta)
   }
 
   // пул «не у всех»/«ни у кого»
@@ -93,8 +108,7 @@ export function buildGroupDeck(args: {
     if (seen.has(meta.appid) || !isMultiplayerMeta(meta)) continue
     const owning = owners.get(meta.appid) ?? new Set()
     if (owning.size === members.length) continue // уже покрыто выше
-    seen.add(meta.appid)
-    cards.push(toCard(meta))
+    take(meta)
   }
 
   return cards
