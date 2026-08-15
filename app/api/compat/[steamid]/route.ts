@@ -33,10 +33,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ steamid: strin
     ...new Set([...mySnap.games, ...otherSnap.games].map((g) => g.appid)),
   ])
   const metaOf = (appid: number) => metas.get(appid)
-  const compat = compatibility(mySnap.games, otherSnap.games, metaOf)
+
+  // Карта тегов нужна и метрике совместимости, и подбору общих игр ниже —
+  // грузим один раз, до расчёта.
+  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const compat = compatibility(mySnap.games, otherSnap.games, metaOf, tagStats)
 
   const pairProfile = buildTagProfile([...mySnap.games, ...otherSnap.games], metaOf)
-  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
   const extraPool = await fetchDiscoveryPool(db, {
     tags: pickQueryTags(pairProfile, tagStats, catalogSize),
     requireMultiplayer: true,
