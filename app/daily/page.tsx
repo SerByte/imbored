@@ -4,36 +4,50 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { BlurBand } from '@/components/BlurBand'
+import { GameArt } from '@/components/GameArt'
 import { HeroShots } from '@/components/HeroShots'
 import { PlayersNow } from '@/components/PlayersNow'
+import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { GameArtUrls } from '@/lib/art'
+import type { Discount } from '@/lib/discount'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 
-type DailyPick = {
+/** Карточка магазина: и герой в день каталога, и плитки на полке ниже */
+type StoreCard = {
   appid: number
   name: string
-  source: CandidateSource
-  reason: string
   headerImage: string | null
   art: GameArtUrls | null
+  store: string | null
+  storeUrl: string | null
+  priceFinal: number | null
+  isFree: boolean | null
+  discount: Discount | null
+}
+
+type DailyPick = StoreCard & {
+  source: CandidateSource
+  reason: string
   screenshots: string[]
   tags: string[]
   hoursPlayed: number | null
   ccu: number | null
-  store: string | null
-  storeUrl: string | null
 }
+
+const storeHref = (c: StoreCard) =>
+  c.storeUrl ?? `https://store.steampowered.com/app/${c.appid}/`
 
 export default function DailyPage() {
   const router = useRouter()
   const [pick, setPick] = useState<DailyPick | null>(null)
+  const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
   const [dateLabel, setDateLabel] = useState('')
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
@@ -48,6 +62,14 @@ export default function DailyPage() {
       // Раньше здесь лежала копия цикла — без прогресса, без проверки ok и без
       // try/catch, из-за чего экран ошибки ниже был недостижим в принципе:
       // любой сбой оставлял страницу в вечном спиннере.
+      //
+      // onYield здесь НАМЕРЕННО не передаётся, хотя /play его использует и ждёт
+      // теперь только первый круг. Игра дня детерминирована сидом steamid:дата,
+      // но выбирается из пула, который по ходу прогрева растёт: пик по четверти
+      // каталога с хорошей вероятностью окажется не тем, который та же формула
+      // выберет минутой позже. На /play выдача и так своя на каждый заход, а
+      // здесь обещание ровно обратное — одна игра на весь день. Ожидание тут
+      // покупает устойчивость выбора, поэтому его не сокращаем.
       const warm = await runWarmup({
         onProgress: (p) => {
           setPrep(p)
@@ -70,8 +92,13 @@ export default function DailyPage() {
           setPhase('error')
           return
         }
-        const data = (await res.json()) as { pick: DailyPick; dateLabel: string }
+        const data = (await res.json()) as {
+          pick: DailyPick
+          discoveries?: StoreCard[]
+          dateLabel: string
+        }
         setPick(data.pick)
+        setDiscoveries(data.discoveries ?? [])
         setDateLabel(data.dateLabel)
         setPhase('ok')
       } catch {
@@ -194,14 +221,18 @@ export default function DailyPage() {
             )}
 
             <div className="flex flex-wrap items-center gap-3 mt-2">
-              {pick.storeUrl ? (
+              {/* Некупленную игру запускать нечем: steam://run у неё
+                  не делает ровным счётом ничего, поэтому ведём в магазин */}
+              {pick.source === 'new' || pick.storeUrl ? (
                 <a
-                  href={pick.storeUrl}
+                  href={storeHref(pick)}
                   target="_blank"
                   rel="noreferrer"
                   className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                 >
-                  Открыть в {STORE_LABEL[pick.store ?? ''] ?? 'магазине'}
+                  {pick.store
+                    ? `Открыть в ${STORE_LABEL[pick.store] ?? 'магазине'}`
+                    : 'Смотреть в Steam'}
                 </a>
               ) : (
                 <SteamLaunch
@@ -220,12 +251,87 @@ export default function DailyPage() {
               </Link>
             </div>
 
+            {pick.source === 'new' && (
+              <div className="flex flex-wrap items-baseline gap-3">
+                <PriceTag
+                  priceFinal={pick.priceFinal}
+                  discount={pick.discount}
+                  isFree={pick.isFree}
+                  size="hero"
+                />
+                <DiscountEnds discount={pick.discount} />
+              </div>
+            )}
+
             <p className="text-xs text-faint mt-1">
-              Одна игра на день — завтра здесь будет другая.
+              {pick.source === 'new'
+                ? 'Одна игра на день — завтра здесь будет другая. Покупать ничего не нужно.'
+                : 'Одна игра на день — завтра здесь будет другая.'}
             </p>
           </div>
         </div>
       </section>
+
+      {/* Полка каталога живёт отдельно от героя: герой — это «во что сесть
+          сегодня», а здесь про «присмотреться на будущее». Смешивать их в
+          одном блоке значило бы каждый день предлагать что-то купить */}
+      {discoveries.length > 0 && (
+        <section className="mx-auto w-full max-w-6xl px-5 py-16">
+          <div className="flex items-baseline justify-between gap-3 mb-1">
+            <h2 className="text-sm font-medium text-dim">Нет в твоей библиотеке</h2>
+            <a
+              href="https://steamdb.info/sales/"
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-faint hover:text-ink transition-colors shrink-0"
+            >
+              все скидки Steam →
+            </a>
+          </div>
+          <p className="text-xs text-faint mb-4">
+            Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто на
+            будущее.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {discoveries.map((c) => (
+              <a
+                key={c.appid}
+                href={storeHref(c)}
+                target="_blank"
+                rel="noreferrer"
+                className="glass glass-hover rounded-[14px] overflow-hidden text-left"
+              >
+                <div className="relative">
+                  <GameArt
+                    appid={c.appid}
+                    name={c.name}
+                    headerImage={c.headerImage}
+                    art={c.art}
+                    sizes="(min-width: 768px) 33vw, 50vw"
+                    className="w-full aspect-[460/215] object-cover"
+                  />
+                  <DiscountCorner discount={c.discount} />
+                </div>
+                <div className="p-3">
+                  <div className="text-sm font-semibold leading-tight">{c.name}</div>
+                  <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
+                    <span className="text-dim truncate">
+                      {c.store ? (STORE_LABEL[c.store] ?? c.store) : 'Steam'}
+                    </span>
+                    <PriceTag
+                      priceFinal={c.priceFinal}
+                      discount={c.discount}
+                      isFree={c.isFree}
+                      showPercent={false}
+                      className="shrink-0"
+                    />
+                  </div>
+                </div>
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

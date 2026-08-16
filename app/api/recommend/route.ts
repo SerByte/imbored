@@ -3,13 +3,14 @@ import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
   bannedAppids,
-  countIngest,
+  getPoolSize,
   getGamesMeta,
   getLatestSnapshot,
   listFeedback,
   loadTagStats,
 } from '@/lib/db'
 import { discountView } from '@/lib/discount'
+import { editionKey } from '@/lib/editions'
 import { claudePicks, heuristicPicks, type Pick } from '@/lib/llm'
 import { parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
@@ -65,6 +66,10 @@ export async function POST(req: Request) {
 
   const games = snapshot.games
   const owned = new Set(games.map((g) => g.appid))
+  // Второй ключ владения — по названию: у Skyrim и Skyrim Special Edition
+  // разные appid, и по одному только owned каталог предлагал бы купить то,
+  // что уже стоит в библиотеке
+  const ownedKeys = new Set(games.map((g) => editionKey(g.name)).filter(Boolean))
 
   const banned = await bannedAppids(db, steamid)
   const feedback = await listFeedback(db, steamid, 300)
@@ -88,17 +93,17 @@ export async function POST(req: Request) {
   )
 
   // Кандидаты из большого каталога — одним запросом с LIMIT, а не полным сканом
-  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const newPool = (
     await fetchDiscoveryPool(db, {
-      tags: pickQueryTags(profile, tagStats, catalogSize),
+      tags: pickQueryTags(profile, tagStats, poolSize),
       bannedAppids: [...banned],
       requireMultiplayer: mood.social === 'friends',
       rotation: rotationSlot(steamid, now),
       limit: 400,
       wildcard: WILDCARD_POOL,
     })
-  ).filter((m) => !owned.has(m.appid))
+  ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
   for (const m of newPool) poolByAppid.set(m.appid, m)
   const candidates = scoreCandidates({
     profile,

@@ -1,6 +1,8 @@
 import { hashString } from './daily'
+import { collapseEditions, editionKey, isVariantName } from './editions'
 import { isJunk } from './junk'
 import { buildTagProfile, isUntouched, libraryTileState, rankByTaste } from './recommend'
+import { hasOldMarker } from './series'
 import type { GameMeta, LibraryGame } from './types'
 
 type MetaOf = (appid: number) => GameMeta | undefined
@@ -38,6 +40,39 @@ export function dayKey(date: Date): string {
 }
 
 /**
+ * Какое из изданий представляет игру на полке.
+ *
+ * Первые два уровня считаются ПО ИМЕНИ, а не по мете: /library — force-dynamic,
+ * WarmCatalog догревает обложки прямо во время рендера, и metaOf === undefined
+ * здесь норма, а не исключение. Игра без метаданных и без пометки обязана
+ * выигрывать у прогретого VR-издания: молчание меты не доказывает, что запись
+ * вторична.
+ */
+function canonicalFirst(metaOf: MetaOf) {
+  const noArt = (m: GameMeta | undefined) => Number(!(m?.headerImage || m?.art))
+  return (a: LibraryGame, b: LibraryGame): number => {
+    const ma = metaOf(a.appid)
+    const mb = metaOf(b.appid)
+    return (
+      // без пометки издания — это и есть игра, остальные записи её упаковка
+      Number(isVariantName(a.name)) - Number(isVariantName(b.name)) ||
+      // «legacy/classic/original» проигрывает всегда: пометка в названии сильнее
+      // метрик — то же решение, что в buildSeriesIndex
+      Number(hasOldMarker(a.name)) - Number(hasOldMarker(b.name)) ||
+      // полка — стена обложек, запись без арта на ней бесполезна
+      noArt(ma) - noArt(mb) ||
+      // какое издание знает мир. Именно total, а не percent: у нишевого
+      // VR-издания доля положительных выше на трёхстах отзывах
+      (mb?.reviewsTotal ?? 0) - (ma?.reviewsTotal ?? 0) ||
+      (mb?.ccu ?? 0) - (ma?.ccu ?? 0) ||
+      (mb?.releaseYear ?? 0) - (ma?.releaseYear ?? 0) ||
+      // детерминизм обязателен по той же причине, что и в pickForgotten
+      a.appid - b.appid
+    )
+  }
+}
+
+/**
  * Игры для полки: ни разу не запускались, не мусор, и по возможности с
  * обложкой — пять пустых прямоугольников полкой не выглядят.
  *
@@ -48,13 +83,33 @@ export function forgottenCandidates(library: LibraryGame[], metaOf: MetaOf): Lib
   const sealed = library.filter(
     (g) => g.appid > 0 && isUntouched(g) && !isJunk(g, metaOf(g.appid)),
   )
-  const withArt = sealed.filter((g) => {
+
+  // «Ты забыл, что они у тебя есть» — неправда, если в другое издание ты играл.
+  // Двадцать часов в Hellblade и ноль в «Hellblade … VR Edition» — это одна
+  // игра, про которую ты помнишь. Ключи собираем по ВСЕЙ библиотеке, включая
+  // записи чужих магазинов под отрицательными id: наиграл в копию из Epic —
+  // тоже не забыл. Граница ровно та же, что у самой полки (ноль минут), а не
+  // «два часа»: одной минуты хватает, чтобы игру помнить.
+  const played = new Set<string>()
+  for (const g of library) {
+    if (isUntouched(g)) continue
+    const key = editionKey(g.name)
+    if (key) played.add(key)
+  }
+  const forgotten = sealed.filter((g) => !played.has(editionKey(g.name)))
+
+  // Схлопывание СТРОГО до фильтра по обложкам: ниже не фильтр, а презентационный
+  // выбор с оптовым откатом, и после него откат вернул бы дубликат обратно —
+  // ровно на маленьких библиотеках, ради которых откат и существует.
+  const unique = collapseEditions(forgotten, (g) => g.name, canonicalFirst(metaOf))
+
+  const withArt = unique.filter((g) => {
     const meta = metaOf(g.appid)
     return Boolean(meta?.headerImage || meta?.art)
   })
   // Порог в две игры, а не пять: на маленькой библиотеке лучше показать три
   // с обложками, чем пять, из которых две — заглушки
-  return withArt.length >= 2 ? withArt : sealed
+  return withArt.length >= 2 ? withArt : unique
 }
 
 /* ---------- фильтры сетки /library ---------- */

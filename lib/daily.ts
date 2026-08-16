@@ -11,7 +11,7 @@ export function hashString(str: string): number {
 }
 
 /** mulberry32 — детерминированный ГПСЧ */
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let a = seed
   return () => {
     a |= 0
@@ -37,4 +37,25 @@ export function pickDaily(candidates: ScoredCandidate[], seed: string): ScoredCa
     if (r <= 0) return candidates[i]
   }
   return candidates[0]
+}
+
+/** Каждый какой день герой — игра из магазина, а не из библиотеки */
+export const STORE_DAY_EVERY = 3
+
+/**
+ * Из какого пула берём героя дня.
+ *
+ * «Игра дня» задумывалась как разбор своего бэклога, и витрина магазина не
+ * должна его вытеснять: магазинный день — каждый третий, остальные два свои.
+ * Отдельный хеш, а не тот же, что у pickDaily: общий сид дал бы корреляцию
+ * между «сегодня магазинный день» и «какая именно игра», а это две независимые
+ * лотереи.
+ *
+ * Если одна из сторон пуста, берём вторую: пустой экран хуже неудачной
+ * рекомендации — то же правило, что у фильтров актуальности.
+ */
+export function pickDailyPool<T>(own: T[], discovery: T[], seed: string): T[] {
+  if (!discovery.length) return own
+  if (!own.length) return discovery
+  return hashString(`${seed}:store`) % STORE_DAY_EVERY === 0 ? discovery : own
 }

@@ -1,6 +1,17 @@
 import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
-import { migrateDb, replaceGameTags, upsertGameMeta, type Db } from './db'
+import {
+  countIngest,
+  getPoolSize,
+  loadTagStats,
+  migrateDb,
+  rebuildTagStats,
+  replaceGameTags,
+  saveTagDictionary,
+  upsertGameMeta,
+  upsertIngestRows,
+  type Db,
+} from './db'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
 import type { GameMeta } from './types'
 
@@ -224,6 +235,66 @@ describe('pickQueryTags', () => {
 
   test('пустой профиль даёт пустой список, а не мусор', () => {
     expect(pickQueryTags({}, stats, 10_000)).toEqual([])
+  })
+
+  test('нулевой знаменатель выключает фильтр, а не роняет подбор', () => {
+    // Витрина ещё не публиковалась: лучше пропустить всё, чем упасть
+    const tags = pickQueryTags({ Indie: 900, Roguelike: 700 }, stats, 0)
+    expect(tags).toContain('Indie')
+  })
+})
+
+/**
+ * Регрессия на разъехавшиеся популяции.
+ *
+ * game_count считается по game_tags (витрина), а знаменатель раньше брался из
+ * countIngest (карта территории). Пока обе величины не считаются по одному и
+ * тому же множеству, доля тега занижена, порог не срабатывает, и в запрос
+ * уходят Indie с Singleplayer — то есть теги, которые есть у всех.
+ */
+describe('знаменатель стоп-слов', () => {
+  test('считается по витрине, а не по карте территории', async () => {
+    const db = await freshDb()
+    await seed(db)
+    // Карта территории намеренно много больше витрины — как в жизни
+    await upsertIngestRows(
+      db,
+      Array.from({ length: 40 }, (_, i) => ({
+        appid: 1000 + i,
+        name: `Карта ${i}`,
+        tagids: [1],
+        reviewsTotal: 10,
+      })),
+      NOW,
+    )
+    // rebuildTagStats делает UPDATE tags — то есть видит только теги, уже
+    // заведённые в словаре Steam. Без словаря частотность остаётся пустой и
+    // фильтр молча выключается: это отдельный способ потерять стоп-слова.
+    await saveTagDictionary(
+      db,
+      new Map([
+        [1, 'Roguelike'],
+        [2, 'Indie'],
+        [3, 'Shooter'],
+      ]),
+    )
+    await rebuildTagStats(db)
+
+    expect(await countIngest(db)).toBe(40)
+    expect(await getPoolSize(db)).toBe(4)
+
+    const tagStats = await loadTagStats(db)
+    // Indie есть у всех четырёх игр витрины — это стоп-слово по определению
+    expect(tagStats.get('Indie')).toBe(4)
+    const tags = pickQueryTags({ Indie: 900, Roguelike: 700 }, tagStats, await getPoolSize(db))
+    expect(tags).not.toContain('Indie')
+    // ...а с прежним знаменателем 4/40 = 0.1 проходило порог и попадало в запрос
+    expect(pickQueryTags({ Indie: 900 }, tagStats, await countIngest(db))).toContain('Indie')
+  })
+
+  test('на непубликованной базе знаменатель равен нулю', async () => {
+    const db = await freshDb()
+    expect(await getPoolSize(db)).toBe(0)
   })
 })
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { compatibility } from '@/lib/compat'
-import { countIngest, getGamesMeta, getLatestSnapshot, getPersonaName, loadTagStats } from '@/lib/db'
+import { getGamesMeta, getLatestSnapshot, getPersonaName, getPoolSize, loadTagStats } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { buildGroupDeck } from '@/lib/group'
 import { fetchDiscoveryPool, pickQueryTags } from '@/lib/pool'
@@ -36,12 +36,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ steamid: strin
 
   // Карта тегов нужна и метрике совместимости, и подбору общих игр ниже —
   // грузим один раз, до расчёта.
-  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const compat = compatibility(mySnap.games, otherSnap.games, metaOf, tagStats)
 
   const pairProfile = buildTagProfile([...mySnap.games, ...otherSnap.games], metaOf)
   const extraPool = await fetchDiscoveryPool(db, {
-    tags: pickQueryTags(pairProfile, tagStats, catalogSize),
+    tags: pickQueryTags(pairProfile, tagStats, poolSize),
     requireMultiplayer: true,
     limit: 80,
   })

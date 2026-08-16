@@ -3,7 +3,8 @@ import { redirect } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
-import { feedbackStats, getGamesMeta, getLatestSnapshot } from '@/lib/db'
+import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
+import { feedbackStats, getGamesMeta, getLatestSnapshot, listBanned } from '@/lib/db'
 import {
   buildLibraryView,
   dayKey,
@@ -57,11 +58,26 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   const untouched = games.filter(isUntouched).length
 
   // Только игры библиотеки, а не весь каталог: нужны обложки для сетки и
-  // цена бэклога, и то и другое считается по своим играм
-  const metas = await getGamesMeta(
-    db,
-    games.map((g) => g.appid),
-  )
+  // цена бэклога, и то и другое считается по своим играм.
+  //
+  // Забаненное добирается тем же запросом, а не вторым: забанить можно и игру,
+  // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
+  // библиотеке не встретится, но обложка на полку нужна.
+  const banned = await listBanned(db, steamid)
+  const metas = await getGamesMeta(db, [
+    ...new Set([...games.map((g) => g.appid), ...banned.map((b) => b.appid)]),
+  ])
+  const bannedGames: BannedGame[] = banned.map((b) => {
+    const meta = metas.get(b.appid)
+    return {
+      appid: b.appid,
+      // Каталог мог не дойти до этой игры — имя как у ArtPlaceholder, но полка
+      // всё равно обязана показать плитку: иначе бан не снять вообще
+      name: meta?.name ?? `Игра ${b.appid}`,
+      headerImage: meta?.headerImage ?? null,
+      art: meta?.art ?? null,
+    }
+  })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
   // Строка разрезается по {n}, чтобы число осталось моноширинным, как все
   // числа в проекте, а не растворилось в тексте
@@ -246,6 +262,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             </Link>
           )
         })}
+      </div>
+
+      {/* Внизу намеренно: это уборка, а не витрина. Но на странице, а не в
+          настройках, которых в проекте нет — бан ставится в одном клике от
+          выдачи, и сниматься должен так же дёшево. */}
+      <div className="mt-14">
+        <BannedShelf games={bannedGames} />
       </div>
 
       {/* Выход живёт здесь, а не в шапке: шапка общая на весь сайт, и чтобы

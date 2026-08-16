@@ -31,7 +31,8 @@ describe('runWarmup', () => {
     const seen: Array<{ remaining: number; total: number }> = []
     const res = await runWarmup({
       fetchFn: sequence(reply({ remaining: 40 }), reply({ remaining: 12 }), reply({ remaining: 0 })),
-      onProgress: (p) => seen.push({ ...p }),
+      // только про остаток: факты о библиотеке проверяются отдельным блоком
+      onProgress: (p) => seen.push({ remaining: p.remaining, total: p.total }),
     })
 
     expect(res).toBe('done')
@@ -112,5 +113,153 @@ describe('warmupPercent', () => {
 
   test('выход за границы срезается: остаток больше исходного не даёт минуса', () => {
     expect(warmupPercent({ remaining: 50, total: 40 })).toBe(0)
+  })
+})
+
+/**
+ * Факты о библиотеке приезжают из сети, то есть могут быть чем угодно — в том
+ * числе ответом старой версии приложения, если человек держал вкладку открытой
+ * через деплой. Экран ожидания не имеет права показать «NaN игр».
+ */
+describe('факты о библиотеке в прогреве', () => {
+  test('приходят с первого ответа и держатся до конца цикла', async () => {
+    const seen: Array<{ games: number; untouched: number } | null> = []
+    await runWarmup({
+      fetchFn: sequence(
+        reply({ remaining: 40, library: { games: 412, untouched: 178 } }),
+        // второй ответ фактов не несёт — уже известные не должны пропасть
+        reply({ remaining: 0 }),
+      ),
+      onProgress: (p) => seen.push(p.library),
+    })
+    expect(seen).toEqual([
+      { games: 412, untouched: 178 },
+      { games: 412, untouched: 178 },
+    ])
+  })
+
+  test('без фактов цикл работает как раньше', async () => {
+    const seen: Array<unknown> = []
+    const res = await runWarmup({
+      fetchFn: sequence(reply({ remaining: 0 })),
+      onProgress: (p) => seen.push(p.library),
+    })
+    expect(res).toBe('done')
+    expect(seen).toEqual([null])
+  })
+
+  test('мусор вместо чисел отбрасывается целиком', async () => {
+    for (const bad of [
+      { games: '412', untouched: 178 },
+      { games: 412 },
+      { games: Number.NaN, untouched: 0 },
+      { games: -1, untouched: 0 },
+      'библиотека',
+      null,
+    ]) {
+      const seen: Array<unknown> = []
+      await runWarmup({
+        fetchFn: sequence(reply({ remaining: 0, library: bad })),
+        onProgress: (p) => seen.push(p.library),
+      })
+      expect(seen).toEqual([null])
+    }
+  })
+
+  test('ноль игр — валидный ответ, а не отсутствие фактов', async () => {
+    const seen: Array<unknown> = []
+    await runWarmup({
+      fetchFn: sequence(reply({ remaining: 0, library: { games: 0, untouched: 0 } })),
+      onProgress: (p) => seen.push(p.library),
+    })
+    expect(seen).toEqual([{ games: 0, untouched: 0 }])
+  })
+})
+
+/**
+ * Расцепка прогрева и выдачи: страница показывает карточки после первого круга,
+ * а цикл догревает остальное под ней. Тесты закрепляют то, что легко сломать
+ * рефакторингом, — момент сигнала и его единственность.
+ */
+describe('ранняя отдача выдачи', () => {
+  test('сигналит после первого круга и продолжает греть', async () => {
+    const seen: number[] = []
+    let yields = 0
+    const res = await runWarmup({
+      fetchFn: sequence(
+        reply({ remaining: 300 }),
+        reply({ remaining: 120 }),
+        reply({ remaining: 0 }),
+      ),
+      onProgress: (p) => seen.push(p.remaining),
+      onYield: () => yields++,
+    })
+
+    expect(res).toBe('done')
+    expect(yields).toBe(1)
+    // цикл НЕ оборвался на сигнале — он дошёл до нуля
+    expect(seen).toEqual([300, 120, 0])
+  })
+
+  test('всё разобралось за один круг — сигнала нет вовсе', async () => {
+    let yields = 0
+    const res = await runWarmup({
+      fetchFn: sequence(reply({ remaining: 0 })),
+      onYield: () => yields++,
+    })
+    // обещать «догреваю в фоне», когда греть нечего, — врать в интерфейсе
+    expect(res).toBe('done')
+    expect(yields).toBe(0)
+  })
+
+  test('сигнал несёт объём работы на момент отдачи', async () => {
+    const at: Array<{ done: number; total: number }> = []
+    await runWarmup({
+      fetchFn: sequence(reply({ remaining: 300 }), reply({ remaining: 0 })),
+      onYield: (p) => at.push({ done: p.total - p.remaining, total: p.total }),
+    })
+    // на первом круге разобрано ещё ноль из трёхсот — с этим числом страница
+    // потом сравнивает вырос ли каталог
+    expect(at).toEqual([{ done: 0, total: 300 }])
+  })
+
+  test('порог сдвигается, и до него сигнала нет', async () => {
+    const marks: number[] = []
+    await runWarmup({
+      fetchFn: sequence(
+        reply({ remaining: 300 }),
+        reply({ remaining: 200 }),
+        reply({ remaining: 100 }),
+        reply({ remaining: 0 }),
+      ),
+      onYield: (p) => marks.push(p.remaining),
+      yieldAfter: 3,
+    })
+    expect(marks).toEqual([100])
+  })
+
+  test('ошибка после сигнала возвращает error — решает страница, а не цикл', async () => {
+    let yields = 0
+    const res = await runWarmup({
+      fetchFn: sequence(reply({ remaining: 300 }), reply({}, { status: 500 })),
+      onYield: () => yields++,
+    })
+    // цикл честно сообщает о сбое; сохранять ли уже показанную выдачу — не его
+    // ответственность, и он не должен притворяться, что всё хорошо
+    expect(yields).toBe(1)
+    expect(res).toBe('error')
+  })
+
+  test('предел по числу вызовов сигналит, а не молчит', async () => {
+    let yields = 0
+    const fetchFn = vi.fn(async () => reply({ remaining: 999 })) as unknown as typeof fetch
+    const res = await runWarmup({
+      fetchFn,
+      maxCalls: 2,
+      maxMs: Number.POSITIVE_INFINITY,
+      onYield: () => yields++,
+    })
+    expect(res).toBe('done')
+    expect(yields).toBe(1)
   })
 })

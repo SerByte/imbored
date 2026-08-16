@@ -310,9 +310,43 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           </section>
         )}
 
+        {/* Похожие: единственная перелинковка между пятью тысячами карточек.
+            До неё страница была тупиком — из поиска сюда приходили и упирались
+            в ссылку на /play, которая гостя разворачивала на лендинг. */}
+        {data.similar.length > 0 && (
+          <section>
+            <h2 className="text-sm font-medium text-dim mb-4">
+              Похожие{data.similarTag ? <> · {data.similarTag}</> : null}
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {data.similar.map((g) => (
+                <Link
+                  key={g.appid}
+                  href={`/game/${g.appid}`}
+                  className="library-tile glass glass-hover rounded-[14px] overflow-hidden"
+                >
+                  <GameArt
+                    appid={g.appid}
+                    name={g.name}
+                    headerImage={g.headerImage}
+                    art={g.art}
+                    sizes="(min-width: 768px) 33vw, 50vw"
+                    className="w-full aspect-[460/215] object-cover"
+                  />
+                  <div className="p-3 text-sm font-semibold leading-tight truncate">{g.name}</div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* /quiz, а не /play: страница кэшируется на сутки и пререндерится, то
+            есть про сессию тут знать нечего. Гостя /play разворачивал на
+            лендинг через экран прогрева, а квиз работает обоим — участник
+            выбирает настроение и попадает в ту же выдачу. */}
         <div>
-          <Link href="/play" className="text-sm text-dim hover:text-ink transition-colors">
-            ← Назад к подборке
+          <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors">
+            Подобрать игру под настроение →
           </Link>
         </div>
       </div>

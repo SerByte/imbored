@@ -33,6 +33,21 @@ export type SeriesOverrides = Record<number, number | null>
 
 /** Во сколько раз новая версия должна опережать старую, чтобы вытеснить её */
 export const SUPERSEDE_RATIO = 10
+
+/**
+ * Для игр с одиночным режимом планка на два порядка выше.
+ *
+ * Одиночная часть самоценна, пока в неё есть кому играть, поэтому раньше здесь
+ * стоял безусловный пропуск. Но «есть одиночный режим» и «одиночный режим —
+ * это содержание» не одно и то же: у Condition Zero кампания состоит из матчей
+ * с ботами, и против миллиона в CS2 там стоит три сотни человек.
+ *
+ * Порог отделяет её от тех, ради кого пропуск и появился: Dark Souls II идёт
+ * к третьей части как 1:22, Borderlands: The Pre-Sequel к четвёртой — 1:16,
+ * Left 4 Dead ко второй — 1:52. Все они остаются. По каталогу в 5723 игры
+ * порог задевает одну — Hearts of Iron III при живой четвёртой (1:916).
+ */
+export const SUPERSEDE_RATIO_SOLO = 500
 /** Слишком многолюдная основа — это просто частое слово, а не серия */
 const MAX_GROUP = 15
 const MIN_BASE_LENGTH = 4
@@ -45,15 +60,26 @@ const NEW_MARKERS = ['enhanced', 'remastered', 'remake', 'definitive', 'reforged
 const EDITION_RE =
   /\s*[-–—:]?\s*\b(game of the year|goty|deluxe|complete|ultimate|anniversary|gold|premium|standard|enhanced|definitive|remastered)?\s*\b(edition|director'?s cut)\b.*$/i
 
-export function normalizeTitle(name: string): string {
+/**
+ * Название без знаков, регистра и мусорной пунктуации — но БЕЗ срезания изданий.
+ *
+ * Выделено из normalizeTitle, чтобы этим же приведением пользовался editionKey
+ * (lib/editions.ts): ему нужна голая строка, потому что EDITION_RE срезает
+ * только якорь и оставляет квалификатор («…Skyrim Special Edition» →
+ * «…skyrim special»), а для ключа издания это ровно то, что мешает.
+ */
+export function cleanTitle(name: string): string {
   return name
     .replace(/[™®©]/g, '')
-    .replace(EDITION_RE, '')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}:.\s-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .replace(/[:\s-]+$/, '')
     .trim()
+}
+
+export function normalizeTitle(name: string): string {
+  return cleanTitle(name.replace(/[™®©]/g, '').replace(EDITION_RE, ''))
 }
 
 const ROMAN: Record<string, number> = {
@@ -85,7 +111,7 @@ export function parseSeries(name: string): { base: string; ordinal: number | nul
   return { base: head.slice(0, m.index).trim(), ordinal }
 }
 
-function hasOldMarker(name: string): boolean {
+export function hasOldMarker(name: string): boolean {
   const lower = name.toLowerCase()
   return OLD_MARKERS.some((w) => new RegExp(`\\b${w}\\b`).test(lower))
 }
@@ -95,6 +121,19 @@ function sameMaker(a: SeriesMember, b: SeriesMember): boolean {
     (Boolean(a.publisher) && a.publisher === b.publisher) ||
     (Boolean(a.developer) && a.developer === b.developer)
   )
+}
+
+/**
+ * Переехала ли аудитория одиночной игры целиком, с запасом в два порядка.
+ *
+ * Неизвестную аудиторию считаем аргументом ПРОТИВ вытеснения: молчание — не
+ * доказательство переезда. Без этой проверки условие «преемник ≥ ноль» было бы
+ * истинным всегда, и в каталоге вытеснялись бы пары, где обе части одинаково
+ * безлюдны — Beat Hazard ради Beat Hazard 2 и ещё три таких же случая.
+ */
+function soloMovedOn(m: { audience?: number }, winner: { audience?: number }): boolean {
+  if (!m.audience) return false
+  return (winner.audience ?? 0) >= m.audience * SUPERSEDE_RATIO_SOLO
 }
 
 /**
@@ -158,7 +197,10 @@ export function buildSeriesIndex(
       // и предохранителя «только мультиплеер» не хватало.
       // Устаревает то, что жило сообществом: CS 1.6 без одиночного режима
       // играбельна только на серверах, и аудитория переехала в CS2 целиком.
-      if (m.soloCapable) continue
+      //
+      // Но пропуск больше не безусловный: одиночный режим защищает игру, пока
+      // у неё есть своя аудитория, а не сам по себе (см. SUPERSEDE_RATIO_SOLO).
+      if (m.soloCapable && !soloMovedOn(m, winner)) continue
 
       // Пометка в названии сильнее любых метрик: у «GTA V Legacy» онлайн
       // даже выше, чем у Enhanced, но актуальна всё равно вторая

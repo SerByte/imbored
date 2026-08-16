@@ -23,6 +23,7 @@ import type { Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
+import { WarmStrip } from '@/components/WarmStrip'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 type Signals = {
@@ -67,6 +68,15 @@ const SKIP_REASONS: Array<{ key: string; label: string }> = [
 
 const COZY_TAGS = ['Casual', 'Relaxing', 'Cozy', 'Wholesome', 'Puzzle', 'Farming Sim']
 const BURNOUT_AFTER_SKIPS = 5
+/**
+ * На сколько должен вырасти разобранный каталог, чтобы предлагать пересчёт.
+ *
+ * Полсотни — это примерно четверть пачки GetItems, то есть заметный кусок, а
+ * не хвост. Ниже порога предложение обновиться было бы честным по факту и
+ * бессмысленным по сути: выдача из пяти карточек от сорока новых игр в пуле
+ * почти наверняка не изменится, а перебить человеку чтение карточки — изменит.
+ */
+const REWARM_MIN_GROWTH = 50
 
 /**
  * Две двери в выдачу. «Любые игры» стоит первой и включена по умолчанию:
@@ -163,6 +173,17 @@ function Player() {
   const [scope, setScope] = useState<Scope>('all')
   const [switching, setSwitching] = useState(false)
   const started = useRef(false)
+  /**
+   * Догрев после того, как выдача уже на экране.
+   *
+   * 'off' — греть нечего либо всё догрето до первой выдачи (обычный случай для
+   * небольшой библиотеки), 'running' — идёт фоном, 'ready' — закончился и
+   * каталог заметно вырос, значит есть что предложить пересчитать.
+   */
+  const [warming, setWarming] = useState<'off' | 'running' | 'ready'>('off')
+  // Каким был объём разобранного в момент первой выдачи — с ним сравниваем,
+  // чтобы не звать обновляться из-за трёх доехавших игр
+  const warmAtReveal = useRef(0)
 
   const sendFeedback = useCallback(
     (appid: number, action: 'liked' | 'skipped' | 'opened' | 'banned', reason?: string) => {
@@ -218,35 +239,76 @@ function Player() {
     if (started.current) return
     started.current = true
 
-    async function run() {
-      const warm = await runWarmup({
-        onProgress: (p) => {
-          setPrep(p)
-          if (p.remaining > 0) setProgress(`Осталось разобрать ${p.remaining} игр`)
-        },
-      })
-      if (warm === 'unauthorized') {
-        router.push('/')
-        return
-      }
-      if (warm === 'error') {
-        setPhase('error')
-        return
-      }
-
-      setPrep((p) => ({ remaining: 0, total: p?.total ?? 0 }))
+    /** Выдача на экран. Один путь и для догретого каталога, и для частичного. */
+    async function reveal(): Promise<boolean> {
       setProgress(
         focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
       )
       const got = await fetchPicks(scope)
       if (!got) {
         setPhase('error')
-        return
+        return false
       }
       setIndex(roulette ? weightedRandomIndex(got.length) : 0)
       // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
       // та самая случайность, которая до сих пор происходила молча.
       setPhase(roulette ? 'spin' : 'reveal')
+      return true
+    }
+
+    async function run() {
+      // Промис, а не флаг: runWarmup продолжает цикл сразу после onYield и
+      // вполне может завершиться раньше, чем выдача доедет. С флагом это была
+      // бы гонка, а её цена — второй запрос к /api/recommend поверх первого.
+      let revealing: Promise<boolean> | null = null
+      // Последний известный объём работы: нужен после цикла, а состояние React
+      // к этому моменту читать нельзя — оно обновится только к следующему рендеру
+      let lastTotal = 0
+
+      const warm = await runWarmup({
+        onProgress: (p) => {
+          lastTotal = p.total
+          setPrep(p)
+          if (p.remaining > 0) setProgress(`Осталось разобрать ${p.remaining} игр`)
+        },
+        onYield: (p) => {
+          // Данных уже хватает на пять карточек — показываем их, а цикл пусть
+          // догревает остальное под живой страницей
+          warmAtReveal.current = p.total - p.remaining
+          setWarming('running')
+          revealing = reveal()
+        },
+      })
+
+      const revealed = revealing ? await revealing : false
+
+      if (warm === 'unauthorized') {
+        // Сессия отвалилась во время ФОНОВОГО догрева — карточки на экране уже
+        // есть и работают. Выкидывать с них на лендинг незачем: человек упрётся
+        // в это при следующем действии и там же увидит внятную причину.
+        if (!revealed) router.push('/')
+        setWarming('off')
+        return
+      }
+      if (warm === 'error') {
+        // Та же логика: подменять работающую выдачу экраном ошибки — потерять
+        // работающее ради сообщения о неработающем
+        if (!revealed) setPhase('error')
+        setWarming('off')
+        return
+      }
+
+      // library переносим как есть: прогрев закончился, но числа про библиотеку
+      // остаются верными — терять их на последнем кадре незачем
+      setPrep((p) => ({ remaining: 0, total: p?.total ?? lastTotal, library: p?.library ?? null }))
+
+      if (revealed) {
+        // Предлагаем пересчитать, только если каталог вырос заметно: ради
+        // десятка доехавших игр дёргать того, кто уже читает карточку, — шум.
+        setWarming(lastTotal - warmAtReveal.current >= REWARM_MIN_GROWTH ? 'ready' : 'off')
+        return
+      }
+      await reveal()
     }
 
     void run()
@@ -389,6 +451,17 @@ function Player() {
 
   return (
     <div className="flex-1 flex flex-col">
+      <WarmStrip
+        state={warming}
+        remaining={prep?.remaining ?? 0}
+        onRefresh={() => {
+          setWarming('off')
+          void fetchPicks(scope).then((got) => {
+            if (got) setIndex(0)
+          })
+        }}
+        onDismiss={() => setWarming('off')}
+      />
       <AnimatePresence mode="wait" custom={dir}>
         <motion.section
           key={pick.appid}
