@@ -28,11 +28,18 @@ export function ClickSpark({
   children,
   className = 'inline-block',
   fireOnMount = false,
+  fireDelay = 1100,
 }: {
   children?: React.ReactNode
   className?: string
   /** Для программного залпа (экран матча), где клика нет. */
   fireOnMount?: boolean
+  /**
+   * Когда именно бабахнуть при fireOnMount. По умолчанию 1.1 с — кульминация
+   * церемонии матча. Финальный такт квиза вдвое короче всей церемонии, и залп
+   * на общей задержке случился бы уже после ухода со страницы.
+   */
+  fireDelay?: number
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -103,10 +110,10 @@ export function ClickSpark({
 
   useEffect(() => {
     if (fireOnMount) {
-      const t = window.setTimeout(() => fire(), 1100)
+      const t = window.setTimeout(() => fire(), fireDelay)
       return () => window.clearTimeout(t)
     }
-  }, [fireOnMount, fire])
+  }, [fireOnMount, fireDelay, fire])
 
   useEffect(() => () => cancelAnimationFrame(raf.current), [])
 

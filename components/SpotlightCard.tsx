@@ -21,10 +21,24 @@ export function SpotlightCard({
   children,
   onClick,
   className = '',
+  onKeyDown,
+  buttonRef,
+  attrs,
 }: {
   children: React.ReactNode
   onClick?: () => void
   className?: string
+  onKeyDown?: React.KeyboardEventHandler<HTMLButtonElement>
+  /**
+   * Ссылка наружу — для управления фокусом с клавиатуры. Внутренний ref никуда
+   * не девается: он нужен подсветке, и оба ставятся одним callback-ref.
+   */
+  buttonRef?: (el: HTMLButtonElement | null) => void
+  /**
+   * Доп. атрибуты кнопки (data-*, aria-*). Карточка о них ничего не знает и
+   * знать не должна — она отвечает за материал, а не за смысл.
+   */
+  attrs?: React.ButtonHTMLAttributes<HTMLButtonElement>
 }) {
   const ref = useRef<HTMLButtonElement>(null)
 
@@ -41,10 +55,15 @@ export function SpotlightCard({
 
   return (
     <button
-      ref={ref}
+      ref={(el) => {
+        ref.current = el
+        buttonRef?.(el)
+      }}
       onClick={onClick}
+      onKeyDown={onKeyDown}
       onPointerMove={move}
       onPointerLeave={leave}
+      {...attrs}
       className={`spotlight glass glass-hover cursor-pointer ${className}`}
     >
       {/* Обёртка позиционирована, чтобы текст печатался ПОВЕРХ ::before:
