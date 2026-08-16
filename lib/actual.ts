@@ -1,6 +1,6 @@
 import { collapseEditions } from './editions'
 import { filterPlayable, playMode, type PlayContext } from './liveness'
-import { buildSeriesIndex, type SeriesMember } from './series'
+import { buildSeriesIndex, SERIES_OVERRIDES, type SeriesMember } from './series'
 import type { GameMeta } from './types'
 
 /**
@@ -41,7 +41,7 @@ export function filterActual<T extends { appid: number }>(
       ...(meta.publisher ? { publisher: meta.publisher } : {}),
     })
   }
-  const superseded = buildSeriesIndex(members)
+  const superseded = buildSeriesIndex(members, SERIES_OVERRIDES)
 
   const fresh = candidates.filter((c) => {
     if (superseded.has(c.appid)) return false

@@ -55,6 +55,37 @@ describe('filterActual', () => {
     expect(ids(filterActual([{ appid: 80 }], noCs2, 'solo'))).toEqual([80])
   })
 
+  test('ручное исключение переживает порог, который оно проходит с запасом', () => {
+    // Bad Company 2 по метрикам вытесняется шестой частью — 14 игроков против
+    // 51 320, разрыв в 3666 раз. Но серверы это не вся игра: кампания у неё
+    // своя и играется без единого живого человека рядом. Проверяем именно
+    // filterActual, а не buildSeriesIndex: смысл в том, что продакшн-путь
+    // передаёт SERIES_OVERRIDES, а не в самой константе
+    const bf = new Map<number, GameMeta>([
+      [24960, meta(24960, 'Battlefield: Bad Company™ 2', {
+        categories: [2, 1], ccu: 14, developer: 'DICE', publisher: 'Electronic Arts',
+      })],
+      [2807960, meta(2807960, 'Battlefield™ 6', {
+        categories: [2, 1, 49, 36], ccu: 51_320, developer: 'DICE', publisher: 'Electronic Arts',
+      })],
+    ])
+    expect(ids(filterActual([{ appid: 24960 }, { appid: 2807960 }], bf, 'solo'))).toContain(24960)
+  })
+
+  test('исключение точечное — соседей по серии оно не спасает', () => {
+    // Battlefield 3 остаётся по метрикам (разрыв 226 против порога 500), а не
+    // потому, что кто-то занёс всю серию в исключения
+    const bf = new Map<number, GameMeta>([
+      [1238820, meta(1238820, 'Battlefield 3™', {
+        categories: [2, 1, 49, 36], ccu: 227, developer: 'DICE', publisher: 'Electronic Arts',
+      })],
+      [2807960, meta(2807960, 'Battlefield™ 6', {
+        categories: [2, 1, 49, 36], ccu: 51_320, developer: 'DICE', publisher: 'Electronic Arts',
+      })],
+    ])
+    expect(ids(filterActual([{ appid: 1238820 }], bf, 'solo'))).toEqual([1238820])
+  })
+
   test('устаревшая версия не выпадает игрой дня и в одиночном контексте', () => {
     // Condition Zero выпала в «Игру дня» при живой CS2 в той же библиотеке:
     // одиночный режим уводил её мимо обеих проверок актуальности
