@@ -372,13 +372,13 @@ describe('pickQuizShelf', () => {
     expect(shelf.map((c) => c.appid)).toEqual([1])
   })
 
-  test('не больше двенадцати, детерминированно внутри недели, живёт между неделями', () => {
-    const many = Array.from({ length: 15 }, (_, i) => meta(i + 1, ['Open World']))
+  test('не больше восемнадцати, детерминированно внутри недели, живёт между неделями', () => {
+    const many = Array.from({ length: 24 }, (_, i) => meta(i + 1, ['Open World']))
     const lib = many.map((m) => game(m.appid, 0))
     const args = { library: lib, metaOf: metaOfList(many), seed: 's', nowSec: NOW }
 
     const a = pickQuizShelf(args)
-    expect(a).toHaveLength(12)
+    expect(a).toHaveLength(18)
     expect(a).toEqual(pickQuizShelf(args))
 
     const seen = new Set<string>()

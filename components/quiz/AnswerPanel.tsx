@@ -35,12 +35,35 @@ const SHAPE =
 const SCRIM =
   'linear-gradient(to top, var(--bg) 10%, color-mix(in srgb, var(--bg) 92%, transparent) 24%, color-mix(in srgb, var(--bg) 55%, transparent) 48%, transparent 78%)'
 
-/** Классы плиток набора: задняя/передняя в веере из двух, одиночная — своя */
-const TILE_BACK =
-  'left-3.5 top-3 w-[106px] -rotate-3 md:left-[18px] md:top-[22px] md:w-[132px] md:-rotate-[5deg]'
-const TILE_FRONT = 'hidden md:block md:left-[96px] md:top-[58px] md:w-[148px] md:rotate-[3deg]'
-const TILE_SOLO =
-  'left-3.5 top-3 w-[112px] -rotate-3 md:left-[26px] md:top-[30px] md:w-[148px] md:-rotate-[3deg]'
+/**
+ * Классы плиток набора: задняя/передняя в веере из двух, одиночная — своя.
+ *
+ * Ширины и левые — в ПРОЦЕНТАХ карточки: с фикс-пикселями веер вылезал за
+ * карточку шириной 232px (три колонки на 768px) и наезжал на цифру шортката,
+ * а на мобильном лендскейпе замерзал почтовой маркой на панели в полэкрана.
+ * Топы — в px:
+ * высота карточки задана от вьюпорта, и веер обязан якориться к верхней
+ * кромке, а не плавать с ростом окна.
+ *
+ * Три варианта на индекс панели: наклоны и посадка гуляют в полосе
+ * ±1.5°/±2%/±4px — три карточки читаются разложенными руками, а не
+ * проштампованными. Детерминизм: чистая функция от index, без Math.random.
+ */
+const FAN_BACK = [
+  'left-[5.5%] top-3 w-[32%] -rotate-[4deg] md:top-[22px] md:w-[40%] md:-rotate-[5deg]',
+  'left-[5.5%] top-3 w-[32%] -rotate-[2.5deg] md:top-[20px] md:w-[40%] md:-rotate-[3.5deg]',
+  'left-[5.5%] top-3 w-[32%] -rotate-[5deg] md:top-[24px] md:w-[40%] md:-rotate-[6.5deg]',
+]
+const FAN_FRONT = [
+  'hidden md:block md:left-[29%] md:top-[58px] md:w-[45%] md:rotate-[3deg]',
+  'hidden md:block md:left-[31%] md:top-[54px] md:w-[45%] md:rotate-[4.5deg]',
+  'hidden md:block md:left-[27.5%] md:top-[62px] md:w-[45%] md:rotate-[2deg]',
+]
+const FAN_SOLO = [
+  'left-[5.5%] top-3 w-[33%] -rotate-[3deg] md:left-[8%] md:top-[30px] md:w-[45%] md:-rotate-[3deg]',
+  'left-[5.5%] top-3 w-[33%] -rotate-[2deg] md:left-[8%] md:top-[30px] md:w-[45%] md:-rotate-[2deg]',
+  'left-[5.5%] top-3 w-[33%] -rotate-[4.5deg] md:left-[8%] md:top-[30px] md:w-[45%] md:-rotate-[4.5deg]',
+]
 
 const TILE_IMG =
   'w-full aspect-[460/215] rounded-[14px] border border-edge object-cover shadow-[0_12px_28px_rgba(0,0,0,0.45)]'
@@ -162,22 +185,27 @@ export function AnswerPanel({
               фейдом: img[data-art-fade] задаёт transition на opacity и перебил
               бы транзишен фильтра, объяви мы их на одном элементе. */}
           <span
-            className={`quiz-stack-tile absolute ${tiles.length === 1 ? TILE_SOLO : TILE_BACK}`}
+            className={`quiz-stack-tile absolute ${
+              tiles.length === 1 ? FAN_SOLO[index % 3] : FAN_BACK[index % 3]
+            }`}
           >
             <GameArt
               {...art(tiles[0])}
               eager={eager}
               fade
               fallback={null}
-              sizes="(min-width: 768px) 148px, 112px"
+              sizes="(min-width: 768px) 148px, 32vw"
               className={TILE_IMG}
             />
           </span>
           {tiles[1] && (
-            <span className={`quiz-stack-tile absolute ${TILE_FRONT}`}>
+            <span className={`quiz-stack-tile absolute ${FAN_FRONT[index % 3]}`}>
+              {/* Не eager даже на первом шаге: на телефоне плитка скрыта
+                  (hidden md:block), а eager качал бы её вхолостую; на десктопе
+                  ленивая картинка в вьюпорте грузится сразу, и опоздание на
+                  полтакта — часть постановки входа, а не дефект. */}
               <GameArt
                 {...art(tiles[1])}
-                eager={eager}
                 fade
                 fallback={null}
                 sizes="148px"

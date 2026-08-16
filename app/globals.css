@@ -612,13 +612,14 @@ textarea:focus-visible {
 .quiz-art {
   /* Пол размытия — 9px: header Steam почти всегда занят логотипом, и на
      6px крупные литеры ещё угадывались. Композиция и палитра выживают,
-     буквы — нет. */
-  filter: blur(9px) saturate(0.6) brightness(0.66) contrast(1.06);
-  transition: filter 0.45s ease;
+     буквы — нет. Покой чуть глубже (0.62), чем у тача: дельта до заливки
+     наведения шире — награда заметнее, а плиткам набора чище фигура-фон. */
+  filter: blur(9px) saturate(0.6) brightness(0.62) contrast(1.06);
+  transition: filter var(--dur-slow) var(--ease-out);
 }
 .quiz-melt {
   filter: blur(18px) saturate(0.5) brightness(0.55);
-  transition: filter 0.45s ease;
+  transition: filter var(--dur-slow) var(--ease-out);
   mask-image: linear-gradient(to top, #000 32%, transparent 78%);
   -webkit-mask-image: linear-gradient(to top, #000 32%, transparent 78%);
 }
@@ -643,7 +644,7 @@ textarea:focus-visible {
  */
 .quiz-stack-tile {
   filter: saturate(0.35) brightness(0.9) contrast(1.04);
-  transition: filter 0.45s ease, opacity var(--dur-slow) var(--ease-out);
+  transition: filter var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out);
 }
 .quiz-panel[data-live] .quiz-stack-tile,
 .quiz-panel:hover .quiz-stack-tile,
@@ -658,6 +659,23 @@ textarea:focus-visible {
  */
 .quiz-panel[data-chosen] .quiz-stack-tile {
   opacity: 0;
+}
+
+/*
+ * Вход плиток — постановка, а не загрузка: подъём на 6px + фейд, передняя
+ * плитка на полтакта позже задней. Подъём живёт на img отдельным свойством
+ * translate: обёртка владеет rotate веера через transform, и две системы
+ * не должны встречаться. Задержка — производная токена, не новое число.
+ */
+.quiz-stack-tile img[data-art-fade] {
+  translate: 0 6px;
+  transition: opacity var(--dur-base) var(--ease-out), translate var(--dur-base) var(--ease-out);
+}
+.quiz-stack-tile img[data-art-fade][data-loaded] {
+  translate: 0 0;
+}
+.quiz-stack-tile:nth-child(2) img[data-art-fade] {
+  transition-delay: calc(var(--dur-fast) / 2);
 }
 
 /*
@@ -823,6 +841,10 @@ img[data-art-fade][data-loaded] {
   img[data-art-fade] {
     transition: none;
   }
+  /* Без сброса подъём входа стал бы вечным 6px-сдвигом плитки */
+  .quiz-stack-tile img[data-art-fade] {
+    translate: none;
+  }
   /* Проседание — движение и ничего не сообщает сверх волоска и глифа */
   .quiz-panel[data-chosen],
   .quiz-panel:active {
@@ -874,9 +896,46 @@ img[data-art-fade][data-loaded] {
  * Полка бэклога под панелями квиза: полутон навсегда, без transition.
  * Интерактива у полки нет — «выйти из покоя» нечем и незачем; полный цвет
  * остаётся привилегией того, на что смотрят, то есть панелей.
+ *
+ * Края растворяются той же маской, что у ленты чипов: лента, тающая в
+ * прозрачность, читается как срез бесконечности, а не как обрезок. Стекла
+ * внутри полки нет — хромиумная несовместимость маски с backdrop-filter
+ * (см. .chip-rail) не задевается.
+ *
+ * Дрейф — 110s дословно из семьи кино-коллажа главной: ambient-петли живут
+ * вне шкалы --dur-* намеренно, это фон, а не взаимодействие.
  */
 .quiz-shelf img {
   filter: saturate(0.35) brightness(0.85);
+}
+.quiz-shelf {
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent
+  );
+}
+
+@keyframes shelf-drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.quiz-shelf-track[data-drift] {
+  animation: shelf-drift 110s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-shelf-track {
+    animation: none;
+  }
 }
 
 /* Волосок рельса и нижней навигации: переезд между подписями. Класс, а не
