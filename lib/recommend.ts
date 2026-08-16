@@ -13,7 +13,11 @@ const MULTIPLAYER_CATEGORIES = new Set([1, 9, 24, 36, 38, 39, 49])
 const UNPLAYED_MAX_MIN = 120
 const COMEBACK_AFTER_SEC = 180 * 86_400
 
-const VIBE_TAGS: Record<Mood['vibe'], string[]> = {
+/**
+ * Экспортируется ради подбора обложек в квизе (lib/quizart.ts): там надо
+ * оценить игру по ОДНОЙ оси, а scoreCandidates умеет только целое настроение.
+ */
+export const VIBE_TAGS: Record<Mood['vibe'], string[]> = {
   chill: ['Casual', 'Relaxing', 'Cozy', 'Wholesome', 'Puzzle', 'Atmospheric', 'Farming Sim'],
   engaged: ['Difficult', 'Competitive', 'Souls-like', 'Tactical', 'Strategy', 'Fast-Paced'],
 }
@@ -36,7 +40,7 @@ const VIBE_TAGS: Record<Mood['vibe'], string[]> = {
  * ни одна корзина — про их длину ничего не известно, и это причина не судить,
  * а не судить плохо.
  */
-const TIME_TAGS: Record<Mood['time'], string[]> = {
+export const TIME_TAGS: Record<Mood['time'], string[]> = {
   short: [
     'Roguelike',
     'Roguelite',
@@ -130,7 +134,7 @@ const TIME_FIT: Record<Mood['time'], Record<Mood['time'], number>> = {
  * Берём самую выгодную для неё: сомнение толкуем в пользу игры, иначе один
  * случайный тег вычёркивал бы её из выдачи целиком.
  */
-function timeFit(tags: Set<string>, time: Mood['time']): number {
+export function timeFit(tags: Set<string>, time: Mood['time']): number {
   let best: number | null = null
   for (const [bucket, weight] of Object.entries(TIME_FIT[time]) as Array<
     [Mood['time'], number]
