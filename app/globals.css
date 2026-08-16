@@ -210,6 +210,9 @@
   --font-sans: var(--font-onest), system-ui, sans-serif;
   --font-mono: var(--font-jbmono), ui-monospace, monospace;
   --font-display: var(--font-unbounded), var(--font-onest), system-ui, sans-serif;
+  /* Дисплейное начертание квиза; подключается в app/quiz/layout.tsx — см.
+     тамошний докблок о том, почему это не --font-display */
+  --font-quiz: var(--font-oswald), var(--font-onest), system-ui, sans-serif;
 }
 
 /*
@@ -562,6 +565,122 @@ textarea:focus-visible {
   /* Перетекание убираем, различие оставляем: это не украшение, а указание,
      где ты сейчас находишься в ленте. */
   .wn-row img {
+    transition: none;
+  }
+}
+
+/*
+ * Панель ответа в квизе: обложка из библиотеки как фактура.
+ *
+ * Третье применение одного и того же правила приложения — «цвет достаётся
+ * тому, на что смотрят». На стене библиотеки его включает курсор
+ * (.library-tile), в ленте — положение в скролле (.wn-row), здесь — наведение
+ * и фокус. Новый язык не вводится, потому что его и не нужно.
+ *
+ * Размытие НЕ уходит в ноль даже у активной панели: обложка здесь подложка под
+ * текстом, а не содержание. Резкая, она забила бы подпись ответа — ровно то,
+ * ради чего на панель и смотрят. Работают насыщенность и яркость, размытие
+ * лишь слегка отпускает.
+ *
+ * scale обязателен: blur размывает и КРАЙ картинки, и без запаса по периметру
+ * панель обводило бы полупрозрачной каймой. Тот же приём, что у размытого
+ * героя в церемонии матча.
+ *
+ * data-live — для тач-устройств, где наведения не существует: там активную
+ * панель отмечает разметка.
+ */
+.quiz-panel img {
+  filter: blur(18px) saturate(0.2) brightness(0.5);
+  transform: scale(1.4);
+  transition: filter 0.45s ease;
+}
+.quiz-panel[data-live] img,
+.quiz-panel:hover img,
+.quiz-panel:focus-visible img {
+  filter: blur(12px) saturate(1) brightness(0.72);
+}
+
+/*
+ * Там, где наведения не существует, покой не может быть таким же глубоким.
+ *
+ * Ровно та же оговорка, что у стены библиотеки: обесцвеченная панель на
+ * телефоне — состояние, из которого человек не может выйти, потому что выйти
+ * из него нечем. Разница между «в покое» и «смотрю» там всё равно остаётся —
+ * её отмечает data-live, — но дно поднято.
+ */
+@media (hover: none) {
+  .quiz-panel img {
+    filter: blur(16px) saturate(0.55) brightness(0.62);
+  }
+}
+
+.quiz-edge {
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.quiz-panel[data-live] .quiz-edge,
+.quiz-panel:hover .quiz-edge,
+.quiz-panel:focus-visible .quiz-edge {
+  transform: scaleX(1);
+}
+
+/*
+ * Знак ответа. Цветом управляет состояние панели, а не сам глиф: в покое он
+ * приглушён до уровня подписи, у того ответа, на который смотрят, — загорается
+ * акцентом. Тот же переключатель, что у насыщенности арта и у волоска, поэтому
+ * на панели ровно одно состояние «сейчас смотрю», а не три независимых.
+ */
+.quiz-glyph {
+  color: var(--faint);
+  transition: color var(--dur-base) var(--ease-out);
+}
+.quiz-panel[data-live] .quiz-glyph,
+.quiz-panel:hover .quiz-glyph,
+.quiz-panel:focus-visible .quiz-glyph {
+  color: var(--ember-text);
+}
+
+/*
+ * Такт подтверждения: 150 мс между нажатием и сменой шага. Панель едва
+ * проседает — ровно настолько, чтобы нажатие ощущалось принятым, — а волосок и
+ * глиф доводятся до конца независимо от наведения: на тач-устройстве курсора
+ * нет, и без этого подтверждения там не было бы вовсе.
+ */
+.quiz-panel[data-chosen] {
+  transform: scale(0.985);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.quiz-panel[data-chosen] .quiz-edge {
+  transform: scaleX(1);
+}
+.quiz-panel[data-chosen] .quiz-glyph {
+  color: var(--ember-text);
+}
+.quiz-panel[data-chosen] img {
+  filter: blur(12px) saturate(1) brightness(0.72);
+}
+
+/*
+ * Глобальное :focus-visible задаёт border-radius: 4px и написано ВНЕ слоёв —
+ * то есть перебивает утилиту rounded-[20px] из @layer utilities и квадратит
+ * углы панели ровно в момент фокуса с клавиатуры. Возвращаем радиус точечно:
+ * общее правило фокуса трогать незачем, оно верное.
+ */
+.quiz-panel:focus-visible {
+  border-radius: 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Перетекание убираем, различие оставляем: это указание, что выбрано. */
+  .quiz-panel img,
+  .quiz-edge,
+  .quiz-glyph {
+    transition: none;
+  }
+  /* Проседание — движение и ничего не сообщает сверх волоска и глифа */
+  .quiz-panel[data-chosen] {
+    transform: none;
     transition: none;
   }
 }

@@ -20,10 +20,9 @@ import {
   scoreCandidates,
   splitBySource,
 } from '@/lib/recommend'
+import { NEUTRAL_MOOD } from '@/lib/mood'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
-import type { GameMeta, Mood } from '@/lib/types'
-
-const DAILY_MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+import type { GameMeta } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
 const DISCOVERY_CARDS = 3
@@ -92,7 +91,7 @@ export async function GET() {
     library: games,
     metaOf,
     newPool,
-    mood: DAILY_MOOD,
+    mood: NEUTRAL_MOOD,
     nowSec: now,
     limit: CANDIDATE_LIMIT,
   }).filter((c) => !banned.has(c.appid))
@@ -129,7 +128,7 @@ export async function GET() {
   const priced = refreshed ? await getGamesMeta(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
-  const reason = heuristicPicks([pick], metaNow, DAILY_MOOD, 1, now)[0]?.reason ?? ''
+  const reason = heuristicPicks([pick], metaNow, NEUTRAL_MOOD, 1, now)[0]?.reason ?? ''
 
   const meta = metaNow(pick.appid)
   const lib = games.find((g) => g.appid === pick.appid)
