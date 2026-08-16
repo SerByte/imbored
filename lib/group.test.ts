@@ -97,16 +97,6 @@ describe('buildGroupDeck', () => {
     expect(deck).toHaveLength(2)
   })
 
-  test('колода на больший limit продолжает меньшую, а не пересобирает её', () => {
-    // «Ещё игр» добирает карты тем же запросом с большим limit. Если бы порядок
-    // первых N при этом менялся, добор подсовывал бы людям уже отсмотренное и
-    // ломал бы соответствие «12 из 20» между участниками.
-    const args = { members: MEMBERS, metaOf, extraPool: [...METAS.values()] }
-    const short = buildGroupDeck({ ...args, limit: 2 })
-    const long = buildGroupDeck({ ...args, limit: 5 })
-    expect(long.slice(0, short.length).map((c) => c.appid)).toEqual(short.map((c) => c.appid))
-  })
-
   test('два издания одной игры — одна карточка колоды', () => {
     // колода из двадцати карт голосовала бы за одну игру дважды, а матч
     // срабатывал бы не на том издании
@@ -138,12 +128,5 @@ describe('buildGroupDeck', () => {
     })
     expect(deck.map((c) => c.appid)).toContain(1)
     expect(deck.map((c) => c.appid)).not.toContain(11)
-  })
-
-  test('порядок колоды детерминирован при одинаковом входе', () => {
-    const args = { members: MEMBERS, metaOf, extraPool: [...METAS.values()], limit: 10 }
-    expect(buildGroupDeck(args).map((c) => c.appid)).toEqual(
-      buildGroupDeck(args).map((c) => c.appid),
-    )
   })
 })

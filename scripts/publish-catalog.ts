@@ -137,6 +137,52 @@ async function main() {
     }
   }
 
+  /*
+   * Подчистка хвостов.
+   *
+   * Локально replaceGameTags именно ЗАМЕНЯЕТ набор: строки, которых больше нет,
+   * удаляются. Здесь же только upsert, поэтому в облаке оставались теги игр,
+   * ставших неактуальными, и теги, выпавшие из топ-12 при пересчёте. На выдачу
+   * они не влияли — пул фильтрует по alive и superseded_by, — но занимали
+   * места в «топ-60 по тегу» до джойна и копились с каждой заливкой.
+   *
+   * Идём по всем appid каталога, а не по ключам game_tags: у вытесненной игры
+   * локальных строк НЕТ вовсе (replaceGameTags записал ей пустой список), и по
+   * ключам она бы не встретилась — а чистить надо именно её, целиком.
+   *
+   * Удаляем ПОСЛЕ вставки, а не до: заливка идёт по живому проду, и окно между
+   * «удалили» и «вставили» — это окно, в котором у игры нет тегов.
+   */
+  const localTags = new Map<number, string[]>()
+  for (const r of gt.rows) {
+    const appid = r.appid as number
+    const list = localTags.get(appid) ?? []
+    list.push(r.tag as string)
+    localTags.set(appid, list)
+  }
+  const catalogAppids = (await local.execute('SELECT appid FROM games')).rows.map(
+    (r) => r.appid as number,
+  )
+  let pruned = 0
+  for (let i = 0; i < catalogAppids.length; i += CHUNK) {
+    const res = await remote.batch(
+      catalogAppids.slice(i, i + CHUNK).map((appid) => {
+        const keep = localTags.get(appid) ?? []
+        // Чужие appid не трогаем: в проде живут строки, наросшие от библиотек
+        // пользователей, и их в каталоге нет
+        return keep.length
+          ? {
+              sql: `DELETE FROM game_tags WHERE appid = ? AND tag NOT IN (${keep.map(() => '?').join(', ')})`,
+              args: [appid, ...keep],
+            }
+          : { sql: 'DELETE FROM game_tags WHERE appid = ?', args: [appid] }
+      }),
+      'write',
+    )
+    pruned += res.reduce((sum, r) => sum + (r.rowsAffected ?? 0), 0)
+  }
+  console.log(`  подчищено хвостов: ${pruned.toLocaleString('ru-RU')}`)
+
   await rebuildTagStats(remote)
 
   const after = {

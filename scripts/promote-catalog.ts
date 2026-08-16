@@ -35,7 +35,7 @@ import {
 import { fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
 import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
 import { judgeLiveness, playMode } from '../lib/liveness'
-import { buildSeriesIndex, type SeriesMember } from '../lib/series'
+import { buildSeriesIndex, SERIES_OVERRIDES, type SeriesMember } from '../lib/series'
 import type { GameMeta } from '../lib/types'
 
 const STORE_BATCH = 200
@@ -189,7 +189,7 @@ async function main() {
     ...(m.developer ? { developer: m.developer } : {}),
     ...(m.publisher ? { publisher: m.publisher } : {}),
   }))
-  const superseded = buildSeriesIndex(members)
+  const superseded = buildSeriesIndex(members, SERIES_OVERRIDES)
 
   // запись
   let promoted = 0

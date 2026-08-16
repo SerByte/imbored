@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest'
-import { buildSeriesIndex, cleanTitle, normalizeTitle, parseSeries, type SeriesMember } from './series'
+import {
+  buildSeriesIndex,
+  cleanTitle,
+  hasOldMarker,
+  normalizeTitle,
+  parseSeries,
+  type SeriesMember,
+} from './series'
 
 const valve = { publisher: 'Valve', developer: 'Valve' }
 
@@ -26,6 +33,37 @@ describe('cleanTitle', () => {
     expect(normalizeTitle('The Elder Scrolls V: Skyrim™ Special Edition')).toBe(
       'the elder scrolls v: skyrim special',
     )
+  })
+})
+
+describe('hasOldMarker', () => {
+  test('пометка версии — в конце, перед двоеточием или в скобках', () => {
+    for (const name of [
+      'Grand Theft Auto V Legacy',
+      'theHunter Classic',
+      'Pinball FX Classic',
+      'Battlefleet Gothic: Armada (Classic)',
+      'Blood Bowl 2: Legendary Edition (Classic)',
+      'Serious Sam Classic: The Second Encounter',
+    ]) {
+      expect(hasOldMarker(name), name).toBe(true)
+    }
+  })
+
+  test('то же слово внутри названия пометкой не считается', () => {
+    // Настоящие ложные срабатывания с прогона по каталогу: поиск слова где
+    // угодно уносил «Original Sin» ради постороннего однофамильца из той же
+    // студии. Промах был не виден, пока проверка маркера стояла после отсечки
+    // по одиночному режиму — до неё просто не доходили
+    for (const name of [
+      'Divinity: Original Sin 2 - Definitive Edition',
+      'Divinity: Original Sin - Enhanced Edition',
+      'LEGO® Indiana Jones™: The Original Adventures',
+      'LEGO® Batman™: Legacy of the Dark Knight',
+      'Grand Theft Auto V Enhanced',
+    ]) {
+      expect(hasOldMarker(name), name).toBe(false)
+    }
   })
 })
 
@@ -174,25 +212,43 @@ describe('buildSeriesIndex', () => {
   })
 
   test('маркер в названии вытесняет даже вопреки метрикам', () => {
-    // Valve сам переименовал GTA V в Legacy, и по онлайну Legacy ВЫШЕ —
-    // метрики тут бесполезны, спасает только маркер
+    // Rockstar сам переименовал GTA V в Legacy, и по онлайну Legacy ВЫШЕ —
+    // метрики тут бесполезны, спасает только маркер.
+    //
+    // soloCapable здесь обязателен: у настоящей GTA V категория «одиночная»
+    // есть, и без неё тест проверял ситуацию, которой в проде не бывает.
+    // Он был зелёным всё то время, пока «Игра дня» предлагала Legacy человеку
+    // с наигранным Enhanced — отсечка по одиночному режиму стояла раньше
+    // проверки маркера, и до маркера дело не доходило.
     const index = buildSeriesIndex([
       member({
         appid: 271590,
         name: 'Grand Theft Auto V Legacy',
         publisher: 'Rockstar',
         isMultiplayer: true,
-        audience: 9000,
+        soloCapable: true,
+        audience: 31_753,
       }),
       member({
         appid: 3240220,
         name: 'Grand Theft Auto V Enhanced',
         publisher: 'Rockstar',
         isMultiplayer: true,
-        audience: 5000,
+        soloCapable: true,
+        audience: 37_649,
       }),
     ])
     expect(index.get(271590)).toBe(3240220)
+  })
+
+  test('маркер не отменяет защиту одиночных игр без маркера', () => {
+    // Соседняя по коду ветка: без «legacy» в названии одиночная часть
+    // по-прежнему живёт по порогу, а не по номеру версии
+    const index = buildSeriesIndex([
+      member({ appid: 1, name: 'DARK SOULS II', publisher: 'Bandai', soloCapable: true, audience: 173 }),
+      member({ appid: 2, name: 'DARK SOULS III', publisher: 'Bandai', soloCapable: true, audience: 3867 }),
+    ])
+    expect(index.size).toBe(0)
   })
 
   test('слишком частая основа не считается серией', () => {
