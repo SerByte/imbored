@@ -153,7 +153,14 @@ describe('контраст палитры', () => {
   })
 
   test('светлая тема определяет все роли, что и тёмная', () => {
-    const dark = Object.keys(block(':root {')).filter((k) => !k.startsWith('--dur') && !k.startsWith('--ease') && !k.startsWith('--blur'))
+    // Токены движения и геометрии не зависят от темы — сверяются только цвета
+    const dark = Object.keys(block(':root {')).filter(
+      (k) =>
+        !k.startsWith('--dur') &&
+        !k.startsWith('--ease') &&
+        !k.startsWith('--blur') &&
+        !k.startsWith('--radius'),
+    )
     const light = Object.keys(block(':root[data-theme="light"]'))
     for (const token of dark) {
       expect(light, `${token} не переопределён в светлой теме`).toContain(token)

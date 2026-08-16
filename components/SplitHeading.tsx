@@ -16,9 +16,11 @@ gsap.registerPlugin(SplitText, useGSAP)
  *
  * Два обязательных условия, без которых эффект выглядит сломанным:
  *
- * 1. Ждём document.fonts.ready. Onest грузится сабсетом через next/font, и если
- *    разрезать текст до подмены шрифта, слова замеряются по метрикам фолбэка и
- *    после свопа разъезжаются.
+ * 1. Не режем текст до подмены шрифта: слова замерялись бы по метрикам
+ *    фолбэка и после свопа разъезжались. Но и ждать fonts.ready бесконечно
+ *    нельзя — у ожидания есть бюджет (см. ниже): на медленном шрифте текст
+ *    уже виден, и перепрятывать отрисованные слова ради повторного входа —
+ *    это мигание, а не церемония. Анимация может только добавить появление.
  * 2. split.revert() на очистке. Без него в DOM остаются служебные <span>, и
  *    следующий рендер режет уже разрезанное.
  *
@@ -51,8 +53,9 @@ export function SplitHeading({
       let split: SplitText | null = null
       let tween: gsap.core.Tween | null = null
       let cancelled = false
+      let budget = 0
 
-      void document.fonts.ready.then(() => {
+      const run = () => {
         if (cancelled || !ref.current) return
         split = new SplitText(ref.current, { type: 'words', wordsClass: 'split-word' })
         tween = gsap.from(split.words, {
@@ -63,10 +66,29 @@ export function SplitHeading({
           stagger,
           delay,
         })
-      })
+      }
+
+      if (document.fonts.status === 'loaded') {
+        // Тёплый путь (все смены шага, повторные заходы): шрифты уже на месте
+        run()
+      } else {
+        // Холодный путь: даём шрифтам 150 мс. Успели — стаггер как обычно;
+        // нет — стаггер пропускается целиком, текст просто остаётся видимым.
+        // Своп шрифта — сам по себе визуальное событие, второе поверх него
+        // читалось бы как сбой (и до этой развилки так и читалось: контейнер
+        // уже устаканивался, когда слова начинали въезжать заново).
+        budget = window.setTimeout(() => {
+          cancelled = true
+        }, 150)
+        void document.fonts.ready.then(() => {
+          window.clearTimeout(budget)
+          run()
+        })
+      }
 
       return () => {
         cancelled = true
+        window.clearTimeout(budget)
         tween?.kill()
         split?.revert()
       }

@@ -1,18 +1,21 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { answerLabel, STEPS } from '@/lib/quiz'
 import type { Mood } from '@/lib/types'
 
 /**
  * Рельс шагов: три оси, ember-волосок под текущей.
  *
- * Заменяет три одинаковые точки. Точки говорили ровно одно — «шагов три», —
- * и не говорили ни как называются оси, ни что уже выбрано, ни как вернуться:
- * назад вела отдельная текстовая ссылка, и ровно на один шаг.
+ * Набран киккером сайта (моно, верхний регистр, разрядка) — тем же, что
+ * надзаголовки /library, /compat и /portrait: квиз был единственным крупным
+ * экраном без этого регистра. Разделитель «·» между осями — тот же, что в
+ * строке настроения («Пара часов · Расслабиться · Один»): отвеченная ось
+ * показывает выбранное значение, и рельс на глазах СОБИРАЕТ ту строку,
+ * которой квиз закончится и которая встретит человека на экране ожидания.
  *
- * Отвеченная ось показывает ВЫБРАННОЕ ЗНАЧЕНИЕ вместо названия оси и кликается.
- * Так рельс сразу и прогресс, и память, и навигация.
+ * Отвеченная ось кликается — это возврат. Так рельс сразу и прогресс, и
+ * память, и навигация.
  *
  * Волосок ИЗМЕРЯЕТ активную подпись, а не делит ширину на три — ровно та же
  * причина, что в MobileNav: подписи кириллические и сильно разной длины
@@ -44,14 +47,18 @@ export function AxisRail({
     const measure = () => {
       const row = rowRef.current
       if (!row) return setBar(null)
-      // querySelectorAll('button'), а не children[i]: сам волосок лежит в этом
-      // же контейнере и сдвигал бы индексы — та же грабля, что в MobileNav.
+      // querySelectorAll('button'), а не children[i]: волосок и разделители
+      // лежат в этом же контейнере и сдвигали бы индексы — та же грабля, что
+      // в MobileNav.
       const el = row.querySelectorAll('button')[stepIndex] as HTMLElement | undefined
       if (!el) return setBar(null)
       const text = (el.querySelector('[data-label]') as HTMLElement | null) ?? el
       const rowBox = row.getBoundingClientRect()
       const box = text.getBoundingClientRect()
-      setBar({ left: box.left - rowBox.left, width: box.width })
+      // Разрядка добавляет мёртвый хвост ПОСЛЕ последней буквы, и он входит в
+      // ширину бокса — без вычета волосок вылезал бы правее текста.
+      const tail = parseFloat(getComputedStyle(text).letterSpacing) || 0
+      setBar({ left: box.left - rowBox.left, width: Math.max(0, box.width - tail) })
     }
 
     measure()
@@ -66,36 +73,39 @@ export function AxisRail({
   }, [stepIndex, labelKey])
 
   /*
-   * Счётчика «1 / 3» здесь больше нет. Правым якорем страницы стало число
-   * бэклога, и два числа друг под другом соревновались бы за одно и то же
-   * место; а где человек находится, рельс и так показывает волоском.
+   * Счётчика «1 / 3» здесь нет: цифру шага держит правый якорь страницы (он
+   * показывает её, пока не приехало число бэклога, и всегда — гостю), а где
+   * человек находится, рельс и так показывает волоском.
    */
   return (
-    <div className="flex w-full items-baseline gap-4">
-      <div ref={rowRef} className="relative flex items-baseline gap-4 md:gap-6">
-        {bar && (
-          <span
-            aria-hidden
-            className="absolute -bottom-2 h-[2px] rounded-full bg-ember"
-            style={{
-              left: bar.left,
-              width: bar.width,
-              transition:
-                'left var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out)',
-            }}
-          />
-        )}
-        {STEPS.map((step, i) => (
+    <div
+      ref={rowRef}
+      className="relative flex flex-wrap items-baseline gap-3 font-mono text-[11px] uppercase tracking-[0.2em] md:tracking-[0.3em]"
+    >
+      {bar && (
+        <span
+          aria-hidden
+          className="rail-bar absolute -bottom-1 h-[2px] rounded-full bg-ember"
+          style={{ left: bar.left, width: bar.width }}
+        />
+      )}
+      {STEPS.map((step, i) => (
+        <Fragment key={step.key}>
+          {i > 0 && (
+            <span aria-hidden className="text-faint">
+              ·
+            </span>
+          )}
           <button
-            key={step.key}
             type="button"
             // Вперёд по рельсу не прыгают: следующий вопрос ещё не заслужен
             disabled={i > stepIndex}
             onClick={() => onJump(i)}
             aria-current={i === stepIndex ? 'step' : undefined}
-            className={`text-sm transition-colors md:text-base ${
+            // py/-my: у 11px-киккера хит-зона иначе меньше 20px
+            className={`-my-2 py-2 transition-colors ${
               i === stepIndex
-                ? 'font-semibold text-ember-text'
+                ? 'text-ember-text'
                 : i < stepIndex
                   ? 'cursor-pointer text-dim hover:text-ink'
                   : 'text-faint'
@@ -103,8 +113,8 @@ export function AxisRail({
           >
             <span data-label>{labels[i]}</span>
           </button>
-        ))}
-      </div>
+        </Fragment>
+      ))}
     </div>
   )
 }

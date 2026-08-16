@@ -2,6 +2,7 @@
 
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
+import { CustomEase } from 'gsap/CustomEase'
 import { AnimatePresence, motion } from 'motion/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
@@ -14,6 +15,7 @@ import { AxisRail } from '@/components/quiz/AxisRail'
 import { SplitHeading } from '@/components/SplitHeading'
 import { stashQuizCover } from '@/lib/handoff'
 import { NEUTRAL_MOOD } from '@/lib/mood'
+import { BLUR_REVEAL, CONFIRM_MS, DUR, EASE, OUTRO } from '@/lib/motion'
 import { plural } from '@/lib/plural'
 import { VIBE_PRESETS } from '@/lib/presets'
 import { type AnswerValue, countKey, moodCaption, STEPS } from '@/lib/quiz'
@@ -21,40 +23,42 @@ import { type QuizBoard, quizBoard } from '@/lib/quizcovers'
 import type { Focus } from '@/lib/recommend'
 import type { Mood } from '@/lib/types'
 
-gsap.registerPlugin(useGSAP)
-
-const EASE = [0.22, 1, 0.36, 1] as const
+gsap.registerPlugin(useGSAP, CustomEase)
 
 /**
- * Такт подтверждения нажатия перед сменой шага.
- *
- * Чуть меньше --dur-fast: за это время волосок успевает развернуться, а глиф —
- * загореться, и человек видит, что его нажатие принято. Раньше подтверждения не
- * было вовсе: первые два ответа просто подменяли экран, и единственная церемония
- * доставалась третьему.
+ * GSAP-двойник --ease-out: та же кривая, что у CSS-переходов и motion (EASE).
+ * Раньше таймлайны квиза ехали на power3.out — близкой, но другой кривой, и
+ * финальный такт звучал в чужой тональности. Создаётся лениво: CustomEase
+ * трогать на сервере незачем.
  */
-const CONFIRM_MS = 150
-
-/**
- * Сколько длится финальный такт до ухода на /play.
- *
- * Ровно столько же ждёт таймер навигации, и таймер этот СПЕЦИАЛЬНО живёт вне
- * gsap: если анимация не отработает (скрытая вкладка, задушенный rAF, сбой
- * плагина), человек всё равно должен уехать на выдачу, а не остаться на
- * замершем квизе. Та же логика, по которой .anim-page-in оставлен без
- * fill-mode: анимация может только добавить проявление, но не может запереть.
- */
-const OUTRO_MS = 640
+let appOut: gsap.EaseFunction | null = null
+function appOutEase(): gsap.EaseFunction {
+  appOut ??= CustomEase.create('appOut', '0.22, 1, 0.36, 1')
+  return appOut
+}
 
 /** Направление задаёт возврат по рельсу: шаг возвращается оттуда, куда ушёл. */
 const STEP_VARIANTS = {
   enter: (back: boolean) => ({ opacity: 0, x: back ? -24 : 24 }),
-  center: { opacity: 1, x: 0, transition: { duration: 0.28, ease: EASE } },
+  center: { opacity: 1, x: 0, transition: { duration: DUR.base, ease: EASE } },
   exit: (back: boolean) => ({
     opacity: 0,
     x: back ? 24 : -24,
-    transition: { duration: 0.2, ease: 'easeIn' as const },
+    transition: { duration: DUR.fast, ease: 'easeIn' as const },
   }),
+}
+
+/**
+ * Заголовок НЕ ездит по горизонтали вместе с карточками: боковой сдвиг — язык
+ * панелей, он кодирует направление по рельсу, а заголовку направление не нужно.
+ * Его вход — это стаггер слов SplitHeading; обёртке остаётся только фейд,
+ * который заодно прячет кадр до старта стаггера. Раньше обе системы двигали
+ * один элемент с разными кривыми, и на смене шага это читалось как двоение.
+ */
+const HEADING_VARIANTS = {
+  enter: { opacity: 0 },
+  center: { opacity: 1, transition: { duration: DUR.fast, ease: EASE } },
+  exit: { opacity: 0, transition: { duration: DUR.fast, ease: 'easeIn' as const } },
 }
 
 function moodUrl(mood: Mood, opts: { roulette?: boolean; focus?: Focus | null } = {}): string {
@@ -111,33 +115,46 @@ function Quiz() {
     }
   }, [stepIndex, answers, focus, router])
 
-  /** Уход на выдачу. Живёт отдельно от анимации — см. докблок OUTRO_MS. */
+  /**
+   * Уход на выдачу. Таймер СПЕЦИАЛЬНО живёт вне gsap: если анимация не
+   * отработает (скрытая вкладка, задушенный rAF, сбой плагина), человек всё
+   * равно должен уехать на выдачу, а не остаться на замершем квизе. Та же
+   * логика, по которой .anim-page-in оставлен без fill-mode: анимация может
+   * только добавить проявление, но не может запереть.
+   */
   useEffect(() => {
     if (!outro) return
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const t = window.setTimeout(() => router.push(moodUrl(outro, { focus })), reduce ? 0 : OUTRO_MS)
+    const t = window.setTimeout(
+      () => router.push(moodUrl(outro, { focus })),
+      reduce ? 0 : OUTRO.navMs,
+    )
     return () => window.clearTimeout(t)
   }, [outro, focus, router])
 
   /**
-   * Финальный такт: невыбранные панели уходят в размытие, выбранная делает шаг
-   * вперёд, ответы собираются в одну строку. Эта же строка и обложка этого же
-   * ответа встретят человека на экране ожидания — шов между экранами держится
-   * на содержании и на картинке, а не на геометрии: App Router сносит дерево
-   * квиза до монтирования выдачи, и общий layoutId между маршрутами невозможен.
+   * Финальный такт (партитура — OUTRO в lib/motion.ts): невыбранные панели
+   * растворяются размытием раскрытия, выбранная делает шаг вперёд и доезжает
+   * рывок резкости (data-chosen на ней живёт весь такт), свет локапа уходит на
+   * строку настроения, залп искр доигрывает целиком до навигации. Эта же
+   * строка и обложка этого же ответа встретят человека на экране ожидания —
+   * шов между экранами держится на содержании и на картинке, а не на
+   * геометрии: App Router сносит дерево квиза до монтирования выдачи, и общий
+   * layoutId между маршрутами невозможен.
    */
   useGSAP(
     () => {
       if (!outro) return
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-      const tl = gsap.timeline({ defaults: { ease: 'power3.out' } })
+      const tl = gsap.timeline({ defaults: { ease: appOutEase() } })
       tl.to(
         '[data-answer]:not([data-chosen])',
-        { opacity: 0, filter: 'blur(10px)', duration: 0.24 },
-        0,
+        { opacity: 0, filter: `blur(${BLUR_REVEAL}px)`, duration: OUTRO.losersDur },
+        OUTRO.losersAt,
       )
-        .to('[data-answer][data-chosen]', { scale: 1.04, duration: 0.4 }, 0.1)
-        .from('[data-outro]', { opacity: 0, y: 10, duration: 0.3 }, 0.2)
+        .to('[data-answer][data-chosen]', { scale: 1.04, duration: OUTRO.winnerDur }, OUTRO.winnerAt)
+        .to('[data-quiz-lockup]', { opacity: 0.3, duration: OUTRO.captionDur }, OUTRO.captionAt)
+        .from('[data-outro]', { opacity: 0, y: 10, duration: OUTRO.captionDur }, OUTRO.captionAt)
       return () => tl.kill()
     },
     { scope, dependencies: [outro] },
@@ -235,9 +252,17 @@ function Quiz() {
     })
   }
 
-  // Фон держит обложку наведённого ответа, а без наведения — первую доступную
-  // на шаге. На тач-устройствах курсора нет вовсе, и второй случай там основной.
+  /**
+   * Фон держит обложку ВЫБРАННОГО ответа, потом наведённого, потом первую
+   * доступную на шаге. Приоритет не косметика: в финальном такте hovered уже
+   * сброшен, и без первых двух звеньев фон подменялся бы на чужую обложку
+   * ровно в тот момент, когда эта же картинка должна доехать до экрана
+   * ожидания. На тач-устройствах курсора нет вовсе, там основной случай —
+   * последний.
+   */
   const backdrop =
+    (outro && board.covers[outro[step.key] as AnswerValue]) ||
+    (chosen && board.covers[chosen]) ||
     (hovered && board.covers[hovered]) ||
     step.options.map((o) => board.covers[o.value as AnswerValue]).find(Boolean) ||
     null
@@ -257,65 +282,101 @@ function Quiz() {
       <ArtWash cover={backdrop ?? null} />
       <div aria-hidden className="grain" />
 
-      <div className="relative flex w-full max-w-5xl flex-col gap-8">
-        <AxisRail stepIndex={stepIndex} answers={answers} onJump={jump} />
-
+      {/*
+        Страница — афиша из трёх ярусов: локап (рельс + вопрос + якорь), поле
+        (панели ответов), сноска (пресеты, прижаты к низу через mt-auto).
+        Ритм задан швами между ярусами, а не равномерным gap: вдох перед полем
+        шире, чем шаг внутри локапа, и пустота под панелями — пауза афиши,
+        а не недоделанный низ.
+      */}
+      <div className="relative flex w-full max-w-5xl flex-1 flex-col">
         {/* Смена вопроса не была озвучена ничем: таб работал, а куда именно
             попал человек — приходилось угадывать. */}
         <p aria-live="polite" className="sr-only">
           Шаг {stepIndex + 1} из {STEPS.length}. {step.question}
         </p>
 
-        {/*
-          Число живёт СНАРУЖИ AnimatePresence, а вопрос — внутри.
-
-          Не вкусовщина: внутри оно пересоздавалось бы на каждом шаге вместе с
-          ключом, и CountNumber терял бы память о предыдущем значении — то есть
-          вместо сужения 16 → 4 → 2 каждый раз шёл бы разгон с нуля. Заодно это
-          и правильнее по смыслу: число относится ко всему квизу, а не к
-          отдельному вопросу, и уезжать вместе с ним ему незачем.
-
-          Высота под вопрос зарезервирована двумя строками на телефоне и одной
-          на десктопе: без этого «Сколько у тебя времени?» переносится там, где
-          остальные два вопроса — нет, и панели под ним ездили бы вверх-вниз
-          между шагами. Кегль стоит на обёртке, чтобы min-h в em считался от
-          него, а не от базовых 16px.
-        */}
-        <div className="flex w-full flex-col gap-2 md:flex-row md:items-end md:justify-between md:gap-10">
-          <div className="order-last flex min-h-[1.9em] items-end text-[clamp(2rem,6.5vw,4.5rem)] leading-[0.95] md:order-first md:min-h-[0.95em]">
-            <AnimatePresence mode="wait" custom={back}>
-              <motion.div
-                key={step.key}
-                custom={back}
-                variants={STEP_VARIANTS}
-                initial="enter"
-                animate="center"
-                exit="exit"
-              >
-                <SplitHeading as="h1" className="font-quiz font-semibold uppercase tracking-tight">
-                  {step.question}
-                </SplitHeading>
-              </motion.div>
-            </AnimatePresence>
+        {/* Локап. data-quiz-lockup — мишень финального такта: свет уходит
+            отсюда на строку настроения. */}
+        <div data-quiz-lockup>
+          <div className="mb-3">
+            <AxisRail stepIndex={stepIndex} answers={answers} onJump={jump} />
           </div>
 
-          {count !== undefined && (
-            <div className="order-first flex shrink-0 items-baseline gap-2 md:order-last md:flex-col md:items-end md:gap-0.5">
-              <CountNumber
-                value={count}
-                fromPrevious
-                duration={520}
-                className="font-mono text-xl font-extrabold text-ink md:text-4xl"
-              />
-              <span className="text-xs text-faint">
-                {plural(count, 'игра', 'игры', 'игр')} в бэклоге
-                {stepIndex > 0 ? ' под это' : ''}
-              </span>
+          {/*
+            Число живёт СНАРУЖИ AnimatePresence, а вопрос — внутри.
+
+            Не вкусовщина: внутри оно пересоздавалось бы на каждом шаге вместе
+            с ключом, и CountNumber терял бы память о предыдущем значении — то
+            есть вместо сужения 16 → 4 → 2 каждый раз шёл бы разгон с нуля.
+            Заодно это и правильнее по смыслу: число относится ко всему квизу,
+            а не к отдельному вопросу, и уезжать вместе с ним ему незачем.
+
+            Высота под вопрос зарезервирована двумя строками на телефоне и
+            одной на десктопе: без этого «Сколько у тебя времени?» переносится
+            там, где остальные два вопроса — нет, и панели под ним ездили бы
+            вверх-вниз между шагами. Кегль стоит на обёртке, чтобы min-h в em
+            считался от него, а не от базовых 16px.
+          */}
+          <div className="flex w-full flex-col gap-2 md:flex-row md:items-end md:justify-between md:gap-10">
+            <div className="flex min-h-[1.9em] items-end text-[clamp(2.25rem,6.5vw,4.5rem)] leading-[0.95] md:min-h-[0.95em]">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={step.key}
+                  variants={HEADING_VARIANTS}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                >
+                  {/* tracking чуть в плюс, не в минус: конденсированному
+                      Освальду в верхнем регистре кириллицы нужен воздух —
+                      Ш, Ы и Ж на 72px при отрицательной разрядке слипались */}
+                  <SplitHeading
+                    as="h1"
+                    className="font-quiz font-semibold uppercase tracking-[0.015em]"
+                  >
+                    {step.question}
+                  </SplitHeading>
+                </motion.div>
+              </AnimatePresence>
             </div>
-          )}
+
+            {/*
+              Правый якорь: один слот, два состояния, ноль рефлоу.
+
+              Слот рендерится ВСЕГДА. Есть число бэклога — оно и есть якорь:
+              сужение 162 → 47 → 12 отвечает на каждый ответ. Числа нет (гость,
+              холодная библиотека, первые сотни миллисекунд до приезда доски) —
+              то же место держит цифра шага 01/03: воронка строго упорядочена,
+              и для гостя это единственная цифра прогресса. Раньше блок
+              рендерился только с числом: у гостей правый край пустовал, а у
+              остальных число приезжало с рефлоу заголовка.
+            */}
+            <div className="flex shrink-0 items-baseline gap-2 md:min-h-[3.5rem] md:min-w-[7ch] md:flex-col md:items-end md:justify-end md:gap-0.5">
+              {count !== undefined ? (
+                <div className="anim-rise flex items-baseline gap-2 md:flex-col md:items-end md:gap-0.5">
+                  <CountNumber
+                    value={count}
+                    fromPrevious
+                    duration={550}
+                    className="font-mono text-base font-extrabold text-ink md:text-4xl"
+                  />
+                  <span className="text-xs text-faint">
+                    {plural(count, 'игра', 'игры', 'игр')} в бэклоге
+                    {stepIndex > 0 ? ' под это' : ''}
+                  </span>
+                </div>
+              ) : (
+                <span className="font-mono text-base font-extrabold text-ink md:text-4xl">
+                  0{stepIndex + 1}
+                  <span className="text-faint">/0{STEPS.length}</span>
+                </span>
+              )}
+            </div>
+          </div>
         </div>
 
-        <AnimatePresence mode="wait" custom={back}>
+        <AnimatePresence mode="wait" custom={back} initial={false}>
           <motion.div
             key={step.key}
             custom={back}
@@ -325,7 +386,7 @@ function Quiz() {
             exit="exit"
             role="group"
             aria-label={step.question}
-            className={`grid w-full gap-3 md:gap-4 ${
+            className={`quiz-grid mt-6 grid w-full gap-3 md:mt-10 md:gap-4 ${
               wide ? 'md:grid-cols-3' : 'md:max-w-2xl md:grid-cols-2'
             } ${outro ? 'pointer-events-none' : ''}`}
           >
@@ -334,6 +395,9 @@ function Quiz() {
               const marked = chosen === value || (outro && outro[step.key] === value)
               return (
                 <div key={value} data-answer data-chosen={marked ? '' : undefined}>
+                  {/* chosen держится и весь финальный такт (marked, не только
+                      chosen): иначе панель-победитель теряла состояние в
+                      момент собственной церемонии и тускнела под скейлом */}
                   <AnswerPanel
                     value={value}
                     index={i}
@@ -341,7 +405,7 @@ function Quiz() {
                     hint={option.hint}
                     cover={board.covers[value] ?? null}
                     live={hovered === value}
-                    chosen={chosen === value}
+                    chosen={Boolean(marked)}
                     eager={stepIndex === 0}
                     onSelect={() => pick(value)}
                     onPreview={() => setHovered(value)}
@@ -357,36 +421,52 @@ function Quiz() {
         </AnimatePresence>
 
         {outro && (
-          <div data-outro className="relative self-start">
+          <div data-outro className="relative mt-10 self-center text-center">
             {/*
               Единственный залп искр за весь квиз, и он приходится на
               единственный момент, который что-то завершает. Осыпать искрами
               каждый из семи ответов означало бы превратить жест в механизм —
               ровно то, чего избегает докблок самого ClickSpark.
             */}
-            <ClickSpark fireOnMount fireDelay={450}>
-              <p className="font-quiz text-lg uppercase tracking-wide md:text-xl">
-                {moodCaption(outro)}
+            <ClickSpark fireOnMount fireDelay={OUTRO.sparkAt}>
+              {/* Титр по центру пустоты: та строка, которую рельс собирал по
+                  ходу квиза и которая встретит человека на экране ожидания.
+                  Разделители — ember: это шов, пусть он и подсвечен. */}
+              <p className="font-quiz text-2xl uppercase tracking-[0.04em] md:text-4xl">
+                {moodCaption(outro)
+                  .split(' · ')
+                  .map((part, i) => (
+                    <span key={part}>
+                      {i > 0 && <span className="text-ember-text"> · </span>}
+                      {part}
+                    </span>
+                  ))}
               </p>
             </ClickSpark>
           </div>
         )}
 
         {stepIndex === 0 && !outro && (
-          <div className="anim-rise w-full">
+          <div className="anim-rise mt-auto w-full pt-8">
             <div className="h-px w-full bg-edge" />
-            <p className="mt-5 text-xs text-faint">
-              {focus
-                ? 'только то, что ты ни разу не запускал — выбери настроение:'
-                : 'или одним тапом:'}
-            </p>
+            {focus ? (
+              <p className="mt-5 text-xs text-dim">
+                только то, что ты ни разу не запускал — выбери настроение:
+              </p>
+            ) : (
+              /* Киккер, а не шёпот. Нарочно text-faint, не ember: сноска
+                 обязана быть тише рельса и не спорить с локапом. */
+              <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.3em] text-faint">
+                одним тапом
+              </p>
+            )}
 
             {/*
-              Скроллер, а не перенос. Семь чипов во flex-wrap давали рваные три
-              ряда на десктопе и пять на телефоне — блок из ярлыков весил больше
-              самого вопроса, ради которого страница существует.
+              Скроллер на телефоне, перенос на десктопе. Правый край скроллера
+              растворяется маской (.chip-rail): полукарточка, тающая в фейде, —
+              весь аффорданс «дальше есть ещё», стрелок не нужно.
             */}
-            <div className="-mx-5 mt-3 flex snap-x gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none] md:mx-0 md:px-0">
+            <div className="chip-rail -mx-5 mt-3 flex snap-x gap-2 px-5 pb-1 md:mx-0 md:flex-wrap md:px-0">
               {VIBE_PRESETS.map((preset) => (
                 <button
                   key={preset.key}
@@ -398,10 +478,10 @@ function Quiz() {
               ))}
             </div>
 
-            {/* Отдельной строкой: это не ещё два настроения, а другой класс
-                действия — рулетка и срез библиотеки. В общем потоке они
-                вставали случайными местами и читались как случайно раскрашенные. */}
-            <div className="mt-3 flex flex-wrap gap-2">
+            {/* Отдельной строкой и у правого края: это не ещё два настроения,
+                а другой класс действия — рулетка и срез библиотеки. Правая
+                сторона — системная: там же живёт якорь с числом. */}
+            <div className="mt-3 flex flex-wrap gap-2 md:justify-end">
               <button
                 onClick={() =>
                   go(

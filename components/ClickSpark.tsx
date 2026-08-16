@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 const COUNT = 8
-const LIFE = 340
+/**
+ * Жизнь одной искры, мс. Экспортируется ради lib/motion.test.ts: финальный такт
+ * квиза обязан пережить залп целиком, и тест сверяет OUTRO.sparkAt + SPARK_LIFE
+ * с таймером навигации.
+ */
+export const SPARK_LIFE = 340
 const RADIUS = 16
 const PAD = 44 // запас вокруг элемента, чтобы искры не обрезались
 
@@ -76,7 +81,7 @@ export function ClickSpark({
     const step = () => {
       const now = performance.now()
       ctx.clearRect(0, 0, w, h)
-      sparks.current = sparks.current.filter((s) => now - s.born < LIFE)
+      sparks.current = sparks.current.filter((s) => now - s.born < SPARK_LIFE)
 
       // Цвет читаем в рантайме: в светлой теме ember другой (#e0742f)
       const color =
@@ -86,7 +91,7 @@ export function ClickSpark({
       ctx.lineWidth = 1
       ctx.lineCap = 'round'
       for (const s of sparks.current) {
-        const p = (now - s.born) / LIFE
+        const p = (now - s.born) / SPARK_LIFE
         const eased = 1 - Math.pow(1 - p, 3)
         const dist = RADIUS + eased * RADIUS * 1.6
         const tail = 7 * (1 - eased)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { artCandidates, artSrcSet, type ArtVariant, type GameArtUrls } from '@/lib/art'
 
 /**
@@ -24,6 +24,7 @@ export function GameArt({
   sizes,
   fallback,
   eager = false,
+  fade = false,
 }: {
   appid: number
   name: string
@@ -33,20 +34,46 @@ export function GameArt({
   className?: string
   /** Подсказка браузеру о ширине слота; для героя по умолчанию вся ширина окна */
   sizes?: string
-  /** Чем заменить картинку, если ни один источник не отдал арт */
+  /**
+   * Чем заменить картинку, если ни один источник не отдал арт.
+   * null — «ничем», в отличие от undefined, который даёт ArtPlaceholder:
+   * второму слою панели квиза заглушка с названием игры противопоказана.
+   */
   fallback?: React.ReactNode
   eager?: boolean
+  /**
+   * Проявление по факту загрузки (opacity через CSS img[data-art-fade]).
+   * Кэшированная картинка получает data-loaded сразу — уже доступный контент
+   * не прячется ради анимации, правило то же, что у .anim-page-in.
+   */
+  fade?: boolean
 }) {
   const source = { appid, art, headerImage }
   const candidates = artCandidates(source, variant)
   // Состояние сбрасывается при смене игры без useEffect: обновление во время
   // рендера — штатный приём React для «состояния, зависящего от пропсов»
   const [tried, setTried] = useState({ appid, idx: 0 })
-  if (tried.appid !== appid) setTried({ appid, idx: 0 })
+  const [loaded, setLoaded] = useState(false)
+  const imgRef = useRef<HTMLImageElement>(null)
+  if (tried.appid !== appid) {
+    setTried({ appid, idx: 0 })
+    if (loaded) setLoaded(false)
+  }
 
   const idx = tried.appid === appid ? tried.idx : 0
   const src = candidates[idx]
-  if (!src) return <>{fallback ?? <ArtPlaceholder name={name} className={className} />}</>
+
+  // Кэшированная картинка может быть готова до подписки на onLoad
+  useEffect(() => {
+    if (!fade || loaded) return
+    const el = imgRef.current
+    if (el?.complete && el.naturalWidth > 0) setLoaded(true)
+  }, [fade, loaded, src])
+
+  if (!src)
+    return (
+      <>{fallback !== undefined ? fallback : <ArtPlaceholder name={name} className={className} />}</>
+    )
 
   // srcSet имеет смысл только пока показываем самый крупный вариант: на
   // запасных ссылках размеры уже другие
@@ -55,12 +82,16 @@ export function GameArt({
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
+      ref={imgRef}
       src={src}
       srcSet={srcSet}
       sizes={srcSet ? (sizes ?? (variant === 'hero' ? '100vw' : undefined)) : undefined}
       alt=""
       loading={eager ? 'eager' : 'lazy'}
       onError={() => setTried((t) => ({ appid, idx: t.idx + 1 }))}
+      onLoad={fade ? () => setLoaded(true) : undefined}
+      data-art-fade={fade ? '' : undefined}
+      data-loaded={fade && loaded ? '' : undefined}
       className={className}
     />
   )

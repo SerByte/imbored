@@ -2,12 +2,11 @@
 
 import { GameArt } from '@/components/GameArt'
 import { AnswerGlyph } from '@/components/quiz/AnswerGlyph'
-import { SpotlightCard } from '@/components/SpotlightCard'
 import type { AnswerValue } from '@/lib/quiz'
 import type { QuizCover } from '@/lib/quizart'
 
 /**
- * Форма одна на обе ветки — иначе сетка прыгала бы по мере приезда обложек.
+ * Форма одна на обе фактуры — иначе сетка прыгала бы по мере приезда обложек.
  *
  * w-full обязателен: <button> по умолчанию сжимается по содержимому, а панель
  * обязана занять колонку целиком.
@@ -17,24 +16,40 @@ import type { QuizCover } from '@/lib/quizart'
  * вопрос, три панели, ярус пресетов — переставал помещаться на экран. Экран,
  * который спрашивает «сколько у тебя времени», не должен требовать скролла,
  * чтобы увидеть варианты ответа.
+ *
+ * На телефоне 2/1, а не 5/2: при 375 px панель в 134 px не вмещала глиф,
+ * подпись и подсказку без давки — подпись теперь собрана в строку (глиф рядом
+ * с ответом), а панели дан воздух.
  */
 const SHAPE =
-  'w-full rounded-[20px] text-left aspect-[5/2] md:aspect-auto md:h-[clamp(220px,38vh,420px)]'
+  'w-full rounded-[var(--radius-panel)] text-left aspect-[2/1] md:aspect-auto md:h-[clamp(220px,38vh,420px)]'
+
+/**
+ * Скрим читаемости. Именно он, а не глобальное затемнение арта, отвечает за
+ * контраст подписи: у базовой линии подсказки фон уже ≥92% --bg, и text-dim
+ * держит AA на любой обложке, включая снежную и белую. Это освобождает сам
+ * арт от обязанности быть тёмным — см. грамматику материала в .quiz-art
+ * (app/globals.css).
+ */
+const SCRIM =
+  'linear-gradient(to top, var(--bg) 10%, color-mix(in srgb, var(--bg) 92%, transparent) 24%, color-mix(in srgb, var(--bg) 55%, transparent) 48%, transparent 78%)'
 
 /**
  * Ответ квиза — панель с обложкой из библиотеки.
  *
- * Две ветки, и это не дублирование, а два разных материала.
+ * Один материал на все случаи. Раньше веток было две — кино-панель для
+ * обложки и стеклянный SpotlightCard без неё, — и в одном ряду встречались
+ * два разных материала с разной физикой наведения. Теперь панель всегда одна
+ * и та же; меняется только подложка: арт или .quiz-veil («экран до фильма»).
  *
- * С обложкой — кино-панель: арт размыт и обесцвечен, цвет возвращается тому
- * ответу, на который смотрят (правила в .quiz-panel, app/globals.css).
- * Подсветки-пятна здесь нет намеренно: докблок SpotlightCard прямо запрещает
- * её поверх игрового арта, и запрет верный — тёплое пятно на обложке читается
- * как засветка, а не как отклик.
+ * Арт лежит двумя копиями одной картинки: .quiz-art почти в фокусе на весь
+ * слот и .quiz-melt, примаскированная к низу, где текст. Резкость — свойство
+ * места, цвет — свойство внимания; правила в app/globals.css.
  *
- * Без обложки — ровно сегодняшняя стеклянная карточка, тот же SpotlightCard.
- * Это не заглушка: у гостя без библиотеки, у непрогретой библиотеки и у игры
- * без арта экран обязан выглядеть законченным, а не сломанным.
+ * Вейл вместо ArtPlaceholder и в fallback тоже: заглушка печатала НАЗВАНИЕ
+ * игры поверх намеренно анонимной панели, и мёртвый URL ломал контракт
+ * «обложка ничего не утверждает». Теперь смерть арта деградирует в законное
+ * состояние без обложки, а не в третье, сломанное.
  *
  * Порядок слоёв задаётся разметкой, без z-index: арт, скрим, зерно, текст.
  */
@@ -58,7 +73,7 @@ export function AnswerPanel({
   cover: QuizCover | null
   /** активна без курсора — на тач-устройствах наведения не существует */
   live?: boolean
-  /** нажата: короткий такт подтверждения перед сменой шага */
+  /** нажата: такт подтверждения и весь финальный такт до ухода с экрана */
   chosen?: boolean
   eager?: boolean
   index: number
@@ -67,26 +82,11 @@ export function AnswerPanel({
   onKeyDown?: (e: React.KeyboardEvent<HTMLButtonElement>) => void
   buttonRef?: (el: HTMLButtonElement | null) => void
 }) {
-  const attrs = {
-    'data-live': live ? '' : undefined,
-    'data-chosen': chosen ? '' : undefined,
-    // Цифра выбирает ответ с клавиатуры; она же — подсказка в подписи кнопки
-    'aria-keyshortcuts': String(index + 1),
-    'aria-label': `${label} — ${hint}`,
-  }
-
-  if (!cover) {
-    return (
-      <SpotlightCard
-        onClick={onSelect}
-        onKeyDown={onKeyDown}
-        buttonRef={buttonRef}
-        attrs={attrs}
-        className={`quiz-panel flex flex-col justify-end p-5 ${SHAPE}`}
-      >
-        <Caption value={value} label={label} hint={hint} />
-      </SpotlightCard>
-    )
+  const art = {
+    appid: cover?.appid ?? 0,
+    name: cover?.name ?? '',
+    headerImage: cover?.headerImage,
+    art: cover?.art,
   }
 
   return (
@@ -97,30 +97,51 @@ export function AnswerPanel({
       onPointerEnter={onPreview}
       onFocus={onPreview}
       onKeyDown={onKeyDown}
-      {...attrs}
+      data-live={live ? '' : undefined}
+      data-chosen={chosen ? '' : undefined}
+      // Цифра выбирает ответ с клавиатуры; видимая половина — .quiz-key ниже
+      aria-keyshortcuts={String(index + 1)}
+      aria-label={`${label} — ${hint}`}
       className={`quiz-panel relative cursor-pointer overflow-hidden border border-edge ${SHAPE}`}
     >
-      <GameArt
-        appid={cover.appid}
-        name={cover.name}
-        headerImage={cover.headerImage}
-        art={cover.art}
-        eager={eager}
-        sizes="(min-width: 768px) 33vw, 100vw"
-        className="absolute inset-0 h-full w-full object-cover"
-      />
+      {cover ? (
+        <>
+          <GameArt
+            {...art}
+            eager={eager}
+            fade
+            fallback={<span aria-hidden className="quiz-veil" />}
+            className="quiz-art absolute inset-0 h-full w-full object-cover"
+          />
+          {/* Вторая копия того же URL — одна сетевая загрузка на обе */}
+          <GameArt
+            {...art}
+            eager={eager}
+            fade
+            fallback={null}
+            className="quiz-melt absolute inset-0 h-full w-full object-cover"
+          />
+        </>
+      ) : (
+        <span aria-hidden className="quiz-veil" />
+      )}
 
-      {/* Скрим до фона страницы: подпись читается на любой обложке, включая
-          снежную и белую — то же обязательство, что у .blur-band на герое. */}
-      <span
-        aria-hidden
-        className="absolute inset-0"
-        style={{ background: 'linear-gradient(to top, var(--bg) 8%, transparent 65%)' }}
-      />
+      <span aria-hidden className="absolute inset-0" style={{ background: SCRIM }} />
       <span aria-hidden className="grain" />
 
-      <span className="relative flex h-full flex-col justify-end p-5">
-        <Caption value={value} label={label} hint={hint} />
+      <span
+        aria-hidden
+        className="quiz-key absolute right-4 top-4 font-mono text-[11px] text-faint"
+      >
+        {index + 1}
+      </span>
+
+      <span className="relative flex h-full flex-col justify-end p-4 md:p-5">
+        <span className="flex items-center gap-2 md:block">
+          <AnswerGlyph value={value} className="quiz-glyph shrink-0 md:mb-2.5" />
+          <span className="block text-lg font-semibold md:text-2xl">{label}</span>
+        </span>
+        <span className="mt-1 block text-[13px] text-dim md:text-sm">{hint}</span>
       </span>
 
       {/* Волосок, а не заливка: тот же жест, что индикатор нижней панели и
@@ -128,15 +149,5 @@ export function AnswerPanel({
           движение» гасило его там же, где и остальную анимацию панели. */}
       <span aria-hidden className="quiz-edge absolute inset-x-0 bottom-0 h-[2px] bg-ember" />
     </button>
-  )
-}
-
-function Caption({ value, label, hint }: { value: AnswerValue; label: string; hint: string }) {
-  return (
-    <>
-      <AnswerGlyph value={value} className="quiz-glyph mb-2.5" />
-      <span className="block text-lg font-semibold md:text-2xl">{label}</span>
-      <span className="mt-1 block text-sm text-dim">{hint}</span>
-    </>
   )
 }

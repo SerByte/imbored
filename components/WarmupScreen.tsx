@@ -66,7 +66,9 @@ export function WarmupScreen({
       }`}
     >
       <Ambient className="anim-breathe" />
-      {cover && <ArtWash cover={cover} />}
+      {/* immediate: обложка сюда попадает только из квиза, где она уже стояла
+          фоном в момент ухода — проявлять её заново значит моргнуть швом */}
+      {cover && <ArtWash cover={cover} immediate />}
       <div aria-hidden className="grain" />
 
       {/* Первое, что видно на этом экране, — то последнее, что человек здесь

@@ -2,9 +2,8 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { GameArt } from '@/components/GameArt'
+import { DUR, EASE } from '@/lib/motion'
 import type { QuizCover } from '@/lib/quizart'
-
-const EASE = [0.22, 1, 0.36, 1] as const
 
 /**
  * Обложка, размытая до состояния подложки: фон, который знает, о чём экран.
@@ -26,18 +25,24 @@ const EASE = [0.22, 1, 0.36, 1] as const
  *
  * AnimatePresence без mode: обе обложки на мгновение сосуществуют, и это как
  * раз то, что нужно — перетекание, а не подмена встык.
+ *
+ * immediate — для шва между экранами. Экран ожидания монтирует ту же обложку,
+ * которую квиз держал в момент ухода, и проявлять её заново с нуля значило бы
+ * моргнуть фоном в чёрный ровно на склейке маршрутов. С immediate фон
+ * пиксельно стабилен через переход: те же 0.2 непрозрачности, та же виньетка —
+ * бедный родственник shared element, но без единого экспериментального флага.
  */
-export function ArtWash({ cover }: { cover: QuizCover | null }) {
+export function ArtWash({ cover, immediate = false }: { cover: QuizCover | null; immediate?: boolean }) {
   return (
     <div aria-hidden className="absolute inset-0 overflow-hidden">
       <AnimatePresence>
         {cover && (
           <motion.div
             key={cover.appid}
-            initial={{ opacity: 0 }}
+            initial={immediate ? false : { opacity: 0 }}
             animate={{ opacity: 0.2 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.4, ease: EASE }}
+            transition={{ duration: DUR.base, ease: EASE }}
             className="absolute inset-0"
           >
             <GameArt

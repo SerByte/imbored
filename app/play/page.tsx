@@ -20,6 +20,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { takeQuizCover } from '@/lib/handoff'
+import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
 import type { QuizCover } from '@/lib/quizart'
 import type { Focus, Scope } from '@/lib/recommend'
@@ -91,8 +92,6 @@ const SCOPES: Array<{ key: Scope; label: string }> = [
   { key: 'all', label: 'Любые игры' },
   { key: 'library', label: 'Только моё' },
 ]
-
-const EASE = [0.22, 1, 0.36, 1] as const
 
 /**
  * Смена героя. Направление кодирует, ЧТО произошло: «дальше» уводит текущую
@@ -566,7 +565,7 @@ function Player() {
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      transition={{ duration: 0.22, ease: EASE }}
                       className="mt-1.5 text-dim overflow-hidden"
                     >
                       {whyParts.join(' · ')}
@@ -590,7 +589,7 @@ function Player() {
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ duration: 0.22, ease: EASE }}
                 className="flex flex-wrap items-center gap-2 mt-2"
               >
                 <span className="text-sm text-dim mr-1">Почему не то?</span>
