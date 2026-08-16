@@ -2,6 +2,7 @@
 
 import { GameArt } from '@/components/GameArt'
 import { AnswerGlyph } from '@/components/quiz/AnswerGlyph'
+import { plural } from '@/lib/plural'
 import type { AnswerValue } from '@/lib/quiz'
 import type { QuizCover } from '@/lib/quizart'
 
@@ -22,7 +23,7 @@ import type { QuizCover } from '@/lib/quizart'
  * с ответом), а панели дан воздух.
  */
 const SHAPE =
-  'w-full rounded-[var(--radius-panel)] text-left aspect-[2/1] md:aspect-auto md:h-[clamp(220px,38vh,420px)]'
+  'w-full rounded-[var(--radius-panel)] text-left aspect-[2/1] md:aspect-auto md:h-[clamp(220px,40vh,440px)]'
 
 /**
  * Скрим читаемости. Именно он, а не глобальное затемнение арта, отвечает за
@@ -34,30 +35,44 @@ const SHAPE =
 const SCRIM =
   'linear-gradient(to top, var(--bg) 10%, color-mix(in srgb, var(--bg) 92%, transparent) 24%, color-mix(in srgb, var(--bg) 55%, transparent) 48%, transparent 78%)'
 
+/** Классы плиток набора: задняя/передняя в веере из двух, одиночная — своя */
+const TILE_BACK =
+  'left-3.5 top-3 w-[106px] -rotate-3 md:left-[18px] md:top-[22px] md:w-[132px] md:-rotate-[5deg]'
+const TILE_FRONT = 'hidden md:block md:left-[96px] md:top-[58px] md:w-[148px] md:rotate-[3deg]'
+const TILE_SOLO =
+  'left-3.5 top-3 w-[112px] -rotate-3 md:left-[26px] md:top-[30px] md:w-[148px] md:-rotate-[3deg]'
+
+const TILE_IMG =
+  'w-full aspect-[460/215] rounded-[14px] border border-edge object-cover shadow-[0_12px_28px_rgba(0,0,0,0.45)]'
+
 /**
- * Ответ квиза — панель с обложкой из библиотеки.
+ * Ответ квиза — панель со стопкой обложек из библиотеки.
  *
- * Один материал на все случаи. Раньше веток было две — кино-панель для
- * обложки и стеклянный SpotlightCard без неё, — и в одном ряду встречались
- * два разных материала с разной физикой наведения. Теперь панель всегда одна
- * и та же; меняется только подложка: арт или .quiz-veil («экран до фильма»).
+ * «Атмосфера сзади, набор спереди». Примари (covers[0]) — прежний размытый
+ * фон-атмосфера с рывком резкости на выборе; поверх, в верхней зоне, плавают
+ * одна-две РЕЗКИЕ маленькие плитки (идиома LikesStrips: 460/215, rounded-14,
+ * border-edge). Ответ читается как НАБОР игр, а не как одна.
  *
- * Арт лежит двумя копиями одной картинки: .quiz-art почти в фокусе на весь
- * слот и .quiz-melt, примаскированная к низу, где текст. Резкость — свойство
- * места, цвет — свойство внимания; правила в app/globals.css.
+ * Анонимность у слоёв разная и у каждой своя механика: примари анонимен
+ * размытием, плитки — размером и полутонами. Набор маленьких обложек
+ * вполголоса ничего не утверждает — утверждал бы одиночный крупный кадр
+ * (ровно поэтому прецедент резких обложек, CinemaCollage на главной,
+ * законен). Названий нет нигде.
  *
- * Вейл вместо ArtPlaceholder и в fallback тоже: заглушка печатала НАЗВАНИЕ
- * игры поверх намеренно анонимной панели, и мёртвый URL ломал контракт
- * «обложка ничего не утверждает». Теперь смерть арта деградирует в законное
- * состояние без обложки, а не в третье, сломанное.
+ * Одна фактура на все случаи: без обложек панель — .quiz-veil («экран до
+ * фильма»), и мёртвый арт деградирует туда же, а не в третье состояние.
  *
- * Порядок слоёв задаётся разметкой, без z-index: арт, скрим, зерно, текст.
+ * Порядок слоёв задаётся разметкой, без z-index: арт → мелт → скрим → набор →
+ * зерно → текст. Набор стоит НАД скримом намеренно: под ним плитки мутнели бы
+ * в ту самую кашу, которую набор и лечит; в зону подписи он не заходит
+ * геометрией, а зерно сверху сшивает материал.
  */
 export function AnswerPanel({
   value,
   label,
   hint,
-  cover,
+  covers,
+  count,
   live,
   chosen,
   eager,
@@ -71,7 +86,10 @@ export function AnswerPanel({
   value: AnswerValue
   label: string
   hint: string
-  cover: QuizCover | null
+  /** стопка примари-первым; пустая — панель-вейл */
+  covers: QuizCover[]
+  /** игр в бэклоге под этот ответ; undefined — не рисовать (гость), 0 — честно рисуется */
+  count?: number
   /** активна без курсора — на тач-устройствах наведения не существует */
   live?: boolean
   /** нажата: такт подтверждения и весь финальный такт до ухода с экрана */
@@ -86,12 +104,15 @@ export function AnswerPanel({
   onKeyDown?: (e: React.KeyboardEvent<HTMLButtonElement>) => void
   buttonRef?: (el: HTMLButtonElement | null) => void
 }) {
-  const art = {
-    appid: cover?.appid ?? 0,
-    name: cover?.name ?? '',
-    headerImage: cover?.headerImage,
-    art: cover?.art,
-  }
+  const primary = covers[0] ?? null
+  const tiles = covers.slice(1, 3)
+
+  const art = (c: QuizCover) => ({
+    appid: c.appid,
+    name: c.name,
+    headerImage: c.headerImage,
+    art: c.art,
+  })
 
   return (
     <button
@@ -106,13 +127,15 @@ export function AnswerPanel({
       data-chosen={chosen ? '' : undefined}
       // Цифра выбирает ответ с клавиатуры; видимая половина — .quiz-key ниже
       aria-keyshortcuts={String(index + 1)}
-      aria-label={`${label} — ${hint}`}
+      aria-label={`${label} — ${hint}${
+        count !== undefined ? `, ${count} ${plural(count, 'игра', 'игры', 'игр')}` : ''
+      }`}
       className={`quiz-panel relative cursor-pointer overflow-hidden border border-edge ${SHAPE}`}
     >
-      {cover ? (
+      {primary ? (
         <>
           <GameArt
-            {...art}
+            {...art(primary)}
             eager={eager}
             fade
             fallback={<span aria-hidden className="quiz-veil" />}
@@ -120,7 +143,7 @@ export function AnswerPanel({
           />
           {/* Вторая копия того же URL — одна сетевая загрузка на обе */}
           <GameArt
-            {...art}
+            {...art(primary)}
             eager={eager}
             fade
             fallback={null}
@@ -132,6 +155,39 @@ export function AnswerPanel({
       )}
 
       <span aria-hidden className="absolute inset-0" style={{ background: SCRIM }} />
+
+      {tiles.length > 0 && (
+        <span aria-hidden className="quiz-stack pointer-events-none absolute inset-0">
+          {/* Обёртка владеет позицией/поворотом/фильтром, img — радиусом и
+              фейдом: img[data-art-fade] задаёт transition на opacity и перебил
+              бы транзишен фильтра, объяви мы их на одном элементе. */}
+          <span
+            className={`quiz-stack-tile absolute ${tiles.length === 1 ? TILE_SOLO : TILE_BACK}`}
+          >
+            <GameArt
+              {...art(tiles[0])}
+              eager={eager}
+              fade
+              fallback={null}
+              sizes="(min-width: 768px) 148px, 112px"
+              className={TILE_IMG}
+            />
+          </span>
+          {tiles[1] && (
+            <span className={`quiz-stack-tile absolute ${TILE_FRONT}`}>
+              <GameArt
+                {...art(tiles[1])}
+                eager={eager}
+                fade
+                fallback={null}
+                sizes="148px"
+                className={TILE_IMG}
+              />
+            </span>
+          )}
+        </span>
+      )}
+
       <span aria-hidden className="grain" />
 
       <span
@@ -146,7 +202,30 @@ export function AnswerPanel({
           <AnswerGlyph value={value} className="quiz-glyph shrink-0 md:mb-2.5" />
           <span className="block text-lg font-semibold md:text-2xl">{label}</span>
         </span>
-        <span className="mt-1 block text-[13px] text-dim md:text-sm">{hint}</span>
+        {/*
+          Число игр — на базовой линии подсказки, у правого края (система
+          живёт справа, как якорь страницы). Статичное, не CountNumber:
+          сужение якоря — звезда страницы, три соревнующихся одометра
+          превратили бы жест в механизм. Отсутствует — узел не рендерится,
+          рефлоу нет; ноль — честный и произносится шёпотом.
+        */}
+        <span className="mt-1 flex items-baseline justify-between gap-3">
+          <span className="block text-[13px] text-dim md:text-sm">{hint}</span>
+          {count !== undefined && (
+            <span
+              className={`shrink-0 whitespace-nowrap text-[13px] md:text-sm ${
+                count === 0 ? 'text-faint' : 'text-dim'
+              }`}
+            >
+              <span
+                className={`font-mono font-semibold tabular-nums ${count === 0 ? '' : 'text-ink'}`}
+              >
+                {count}
+              </span>{' '}
+              {plural(count, 'игра', 'игры', 'игр')}
+            </span>
+          )}
+        </span>
       </span>
 
       {/* Волосок, а не заливка: тот же жест, что индикатор нижней панели и

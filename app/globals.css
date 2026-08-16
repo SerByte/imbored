@@ -634,6 +634,33 @@ textarea:focus-visible {
 }
 
 /*
+ * Набор поверх атмосферы: одна-две резкие малые обложки (идиома LikesStrips:
+ * 460/215, rounded-14, border-edge). Резкость им разрешена, потому что
+ * анонимность держат размер и полутона, а не блюр: маленькая обложка
+ * вполголоса ничего не утверждает — утверждал бы одиночный крупный кадр.
+ * Цвет — по общему закону: в покое полутона, заливается панель целиком,
+ * теми же селекторами, что и атмосфера.
+ */
+.quiz-stack-tile {
+  filter: saturate(0.35) brightness(0.9) contrast(1.04);
+  transition: filter 0.45s ease, opacity var(--dur-slow) var(--ease-out);
+}
+.quiz-panel[data-live] .quiz-stack-tile,
+.quiz-panel:hover .quiz-stack-tile,
+.quiz-panel:focus-visible .quiz-stack-tile {
+  filter: saturate(1) brightness(1) contrast(1);
+}
+
+/*
+ * Выбор схлопывает набор: плитки тают за --dur-slow — ровно за время рывка
+ * резкости примари, — и финальный такт достаётся одной атмосфере. Набор был
+ * фактурой вопроса; ответ оставляет одно место.
+ */
+.quiz-panel[data-chosen] .quiz-stack-tile {
+  opacity: 0;
+}
+
+/*
  * Там, где наведения не существует, покой не может быть таким же глубоким.
  *
  * Ровно та же оговорка, что у стены библиотеки: обесцвеченная панель на
@@ -649,6 +676,9 @@ textarea:focus-visible {
   }
   .quiz-melt {
     filter: blur(18px) saturate(0.7) brightness(0.58);
+  }
+  .quiz-stack-tile {
+    filter: saturate(0.75) brightness(0.95) contrast(1.04);
   }
   .quiz-panel:active {
     transform: scale(0.985);
@@ -785,6 +815,7 @@ img[data-art-fade][data-loaded] {
   /* Перетекание убираем, различие оставляем: это указание, что выбрано. */
   .quiz-art,
   .quiz-melt,
+  .quiz-stack-tile,
   .quiz-edge,
   .quiz-glyph,
   .quiz-key,
@@ -837,6 +868,15 @@ img[data-art-fade][data-loaded] {
     mask-image: none;
     -webkit-mask-image: none;
   }
+}
+
+/*
+ * Полка бэклога под панелями квиза: полутон навсегда, без transition.
+ * Интерактива у полки нет — «выйти из покоя» нечем и незачем; полный цвет
+ * остаётся привилегией того, на что смотрят, то есть панелей.
+ */
+.quiz-shelf img {
+  filter: saturate(0.35) brightness(0.85);
 }
 
 /* Волосок рельса и нижней навигации: переезд между подписями. Класс, а не

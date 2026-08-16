@@ -12,6 +12,7 @@ import { ClickSpark } from '@/components/ClickSpark'
 import { CountNumber } from '@/components/CountNumber'
 import { AnswerPanel } from '@/components/quiz/AnswerPanel'
 import { AxisRail } from '@/components/quiz/AxisRail'
+import { QuizShelf } from '@/components/quiz/QuizShelf'
 import { SplitHeading } from '@/components/SplitHeading'
 import { stashQuizCover } from '@/lib/handoff'
 import { NEUTRAL_MOOD } from '@/lib/mood'
@@ -154,6 +155,7 @@ function Quiz() {
       )
         .to('[data-answer][data-chosen]', { scale: 1.04, duration: OUTRO.winnerDur }, OUTRO.winnerAt)
         .to('[data-quiz-lockup]', { opacity: 0.3, duration: OUTRO.captionDur }, OUTRO.captionAt)
+        .to('[data-quiz-shelf]', { opacity: 0.2, duration: OUTRO.captionDur }, OUTRO.captionAt)
         .from('[data-outro]', { opacity: 0, y: 10, duration: OUTRO.captionDur }, OUTRO.captionAt)
       return () => tl.kill()
     },
@@ -188,7 +190,9 @@ function Quiz() {
         if (stepIndex < STEPS.length - 1) {
           setStepIndex(stepIndex + 1)
         } else {
-          const cover = board.covers[chosen]
+          // В шов уезжает только примари: takeQuizCover валидирует одиночный
+          // объект, и массив он молча отбросил бы
+          const cover = board.covers[chosen]?.[0]
           if (cover) stashQuizCover(cover)
           setOutro(next as Mood)
         }
@@ -260,21 +264,32 @@ function Quiz() {
    * ожидания. На тач-устройствах курсора нет вовсе, там основной случай —
    * последний.
    */
+  // Фону нужен примари стопки. Последнее звено маппится в [0] ДО find:
+  // пустой массив truthy, и .find(Boolean) по стопкам схватил бы [].
   const backdrop =
-    (outro && board.covers[outro[step.key] as AnswerValue]) ||
-    (chosen && board.covers[chosen]) ||
-    (hovered && board.covers[hovered]) ||
-    step.options.map((o) => board.covers[o.value as AnswerValue]).find(Boolean) ||
+    (outro && board.covers[outro[step.key] as AnswerValue]?.[0]) ||
+    (chosen && board.covers[chosen]?.[0]) ||
+    (hovered && board.covers[hovered]?.[0]) ||
+    step.options.map((o) => board.covers[o.value as AnswerValue]?.[0]).find(Boolean) ||
     null
 
   const count = board.counts?.[countKey(answers)]
+
+  // Полка не повторяет обложки, видимые на экране прямо сейчас: тот же резкий
+  // кадр дважды читался бы как поломка, а совпадение с примари деанонимировало
+  // бы размытую панель. Фильтр по ТЕКУЩЕМУ шагу, а не по всем стопкам: вычет
+  // всех обложек квиза морил полку голодом на небольших библиотеках.
+  const onScreen = new Set(
+    step.options.flatMap((o) => (board.covers[o.value as AnswerValue] ?? []).map((c) => c.appid)),
+  )
+  const shelfCovers = (board.shelf ?? []).filter((c) => !onScreen.has(c.appid))
 
   const wide = step.options.length === 3
 
   return (
     <div
       ref={scope}
-      className="media-dark relative flex flex-1 flex-col items-center overflow-hidden px-5 pb-16 pt-24"
+      className="media-dark relative flex flex-1 flex-col items-center overflow-hidden px-5 pb-10 pt-24"
     >
       {/* Дыхание — та же анимация, что на экране ожидания: 12 с на грани
           заметности. До этого квиз стоял неподвижно до первого касания. */}
@@ -403,7 +418,12 @@ function Quiz() {
                     index={i}
                     label={option.label}
                     hint={option.hint}
-                    cover={board.covers[value] ?? null}
+                    covers={board.covers[value] ?? []}
+                    count={
+                      board.counts
+                        ? board.counts[countKey({ ...answers, [step.key]: value } as Partial<Mood>)]
+                        : undefined
+                    }
                     live={hovered === value}
                     chosen={Boolean(marked)}
                     eager={stepIndex === 0}
@@ -447,8 +467,20 @@ function Quiz() {
           </div>
         )}
 
+        {/*
+          Полка бэклога — только на шагах после первого: там нижнего яруса нет
+          вовсе и пустота была максимальной. Шаг 0 закрыт сноской пресетов,
+          а плотность на нём дают сами стопки. В финальном такте полка
+          притухает (см. таймлайн выше) — титр стоит над ней.
+        */}
+        {stepIndex > 0 && (
+          <div data-quiz-shelf className="-mx-5 mt-10 px-5 md:mx-0 md:mt-auto md:px-0">
+            <QuizShelf covers={shelfCovers} />
+          </div>
+        )}
+
         {stepIndex === 0 && !outro && (
-          <div className="anim-rise mt-auto w-full pt-8">
+          <div className="anim-rise mt-auto w-full pt-6">
             <div className="h-px w-full bg-edge" />
             {focus ? (
               <p className="mt-5 text-xs text-dim">

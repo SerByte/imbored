@@ -1,15 +1,22 @@
 import { hashString } from './daily'
 import { isJunk } from './junk'
 import { type AnswerValue, STEPS } from './quiz'
-import { isMultiplayerMeta, isUntouched, timeFit, VIBE_TAGS } from './recommend'
+import {
+  classifyLibraryGame,
+  isMultiplayerMeta,
+  isUntouched,
+  timeFit,
+  VIBE_TAGS,
+} from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
 /**
- * Какая обложка стоит за каждым ответом квиза.
+ * Какие обложки стоят за каждым ответом квиза.
  *
- * Квиз показывает семь панелей с игровым артом из СВОЕЙ библиотеки. Обложка
- * здесь — фактура, а не обещание: она сильно размыта и обесцвечена, названия
- * нет. Но фактура всё равно должна что-то значить, иначе это просто картинки.
+ * Квиз показывает панели с игровым артом из СВОЕЙ библиотеки. Обложка здесь —
+ * фактура, а не обещание: примари размыт в атмосферу, хвосты стопки маленькие
+ * и полутоновые, названий нет. Но фактура всё равно должна что-то значить,
+ * иначе это просто картинки.
  *
  * Почему не переиспользуется scoreCandidates: она по построению отбирает только
  * 'unplayed' и 'comeback' (см. её тело), то есть игра, в которой человек утонул
@@ -30,14 +37,27 @@ export type QuizCover = {
   art?: { header: string }
 }
 
-export type QuizCovers = Partial<Record<AnswerValue, QuizCover>>
+/**
+ * Стопка панели: [0] — примари (ровно тот же выбор, что давал одиночный
+ * алгоритм: он питает фон и шов до /play), дальше до двух хвостов.
+ * Инвариант: ключ присутствует ⇒ массив непуст.
+ */
+export type QuizCovers = Partial<Record<AnswerValue, QuizCover[]>>
+
+/** Сколько обложек несёт одна панель: примари + до двух хвостов. */
+const STACK_SIZE = 3
+
+/** Сколько обложек несёт полка бэклога под панелями. */
+const SHELF_SIZE = 12
 
 /**
- * Сколько верхних кандидатов участвуют в недельной ротации.
+ * Сколько верхних кандидатов участвуют в недельной ротации ПРИМАРИ.
  *
  * Не весь список: иначе под «Весь вечер» мог бы встать трёхчасовой проходняк
  * вместо той самой игры на триста часов. Три — это «набор оживает раз в
- * неделю», а не «набор случайный».
+ * неделю», а не «набор случайный». Хвосты стопки от окна не зависят: они
+ * сканируют список циклически от позиции примари, поэтому набор недели
+ * меняется даже при ширине окна, равной размеру стопки.
  */
 const ROTATION_WINDOW = 3
 
@@ -128,17 +148,17 @@ function toCover(game: LibraryGame, meta: GameMeta): QuizCover {
   }
 }
 
-/** Первый подходящий кандидат, начиная со сдвига и по кругу */
-function firstFree(
+/** Индекс первого подходящего кандидата, начиная со сдвига и по кругу; -1 если нет */
+function firstFreeIdx(
   ranked: LibraryGame[],
   start: number,
   ok: (g: LibraryGame) => boolean,
-): LibraryGame | null {
+): number {
   for (let i = 0; i < ranked.length; i++) {
-    const g = ranked[(start + i) % ranked.length]
-    if (ok(g)) return g
+    const idx = (start + i) % ranked.length
+    if (ok(ranked[idx])) return idx
   }
-  return null
+  return -1
 }
 
 export function pickQuizCovers(args: {
@@ -159,8 +179,21 @@ export function pickQuizCovers(args: {
     .map(({ game }) => game)
 
   const rot = rotation(seed, nowSec)
-  const covers: QuizCovers = {}
+
+  /*
+   * Две фазы, и порядок — гарантия, а не оптимизация.
+   *
+   * Фаза 1 выбирает СЕМЬ ПРИМАРИ ровно тем алгоритмом, который выбирал
+   * одиночные обложки: те же множества дедупа, тот же порядок мутаций.
+   * Хвосты стопок добираются только после того, как все примари зафиксированы,
+   * поэтому появление стопок не может сдвинуть ни один примари — а на примари
+   * держатся фон, шов до /play и вся ротационная история.
+   */
+  const primary: Partial<Record<AnswerValue, LibraryGame>> = {}
+  const primaryIdx: Partial<Record<AnswerValue, number>> = {}
+  const rankedByValue = new Map<AnswerValue, LibraryGame[]>()
   const usedAnywhere = new Set<number>()
+  const stepPrimaries: Array<Set<number>> = []
 
   for (const step of STEPS) {
     // Строгий запрет на повтор — в пределах шага: две панели с одной обложкой
@@ -183,20 +216,124 @@ export function pickQuizCovers(args: {
             a.g.appid - b.g.appid,
         )
         .map((x) => x.g)
+      rankedByValue.set(value, ranked)
 
       if (!ranked.length) continue
 
       const start = rot % Math.min(ROTATION_WINDOW, ranked.length)
-      const chosen =
-        firstFree(ranked, start, (g) => !usedAnywhere.has(g.appid) && !usedInStep.has(g.appid)) ??
-        firstFree(ranked, start, (g) => !usedInStep.has(g.appid))
-      if (!chosen) continue
+      let idx = firstFreeIdx(
+        ranked,
+        start,
+        (g) => !usedAnywhere.has(g.appid) && !usedInStep.has(g.appid),
+      )
+      if (idx === -1) idx = firstFreeIdx(ranked, start, (g) => !usedInStep.has(g.appid))
+      if (idx === -1) continue
 
-      covers[value] = toCover(chosen, metaOf(chosen.appid) as GameMeta)
+      const chosen = ranked[idx]
+      primary[value] = chosen
+      primaryIdx[value] = idx
       usedAnywhere.add(chosen.appid)
       usedInStep.add(chosen.appid)
     }
+    stepPrimaries.push(usedInStep)
   }
 
+  /*
+   * Фаза 2: хвосты. Дедуп внутри шага остаётся жёстким для ВСЕХ плиток
+   * (шаг «Время» — до девяти различных обложек на экране), между шагами —
+   * двумя ярусами: сначала свежая во всём квизе, потом свежая в пределах
+   * шага. Нет кандидата — стопка деградирует до двух или одной, а не
+   * повторяется: короткая стопка честнее трёх одинаковых.
+   *
+   * Хвосты сканируют ВЕСЬ ранжированный список циклически от позиции примари,
+   * поэтому недельная ротация двигает и набор целиком, а не только лицо.
+   */
+  const covers: QuizCovers = {}
+  const usedEver = new Set(usedAnywhere)
+
+  STEPS.forEach((step, si) => {
+    const stepUsed = new Set(stepPrimaries[si])
+
+    for (const option of step.options) {
+      const value = option.value as AnswerValue
+      const p = primary[value]
+      if (!p) continue
+
+      const ranked = rankedByValue.get(value) ?? []
+      const tailStart = ((primaryIdx[value] ?? 0) + 1) % ranked.length
+      const stack: LibraryGame[] = [p]
+
+      while (stack.length < STACK_SIZE) {
+        const freshIdx = firstFreeIdx(
+          ranked,
+          tailStart,
+          (g) => !stepUsed.has(g.appid) && !usedEver.has(g.appid),
+        )
+        const idx =
+          freshIdx !== -1
+            ? freshIdx
+            : firstFreeIdx(ranked, tailStart, (g) => !stepUsed.has(g.appid))
+        if (idx === -1) break
+        const next = ranked[idx]
+        stack.push(next)
+        stepUsed.add(next.appid)
+        usedEver.add(next.appid)
+      }
+
+      covers[value] = stack.map((g) => toCover(g, metaOf(g.appid) as GameMeta))
+    }
+  })
+
   return covers
+}
+
+/**
+ * Полка бэклога под панелями: «за квизом действительно много игр».
+ *
+ * В отличие от панелей, полка утверждает именно БЭКЛОГ — то же множество
+ * unplayed|comeback, которое считает quizcount: маленькие резкие обложки
+ * читаются буквально, и показывать среди них игру с тремя сотнями часов
+ * значило бы врать про «неразобранное».
+ *
+ * exclude — appid всех обложек панелей: панель анонимна размытием, и её же
+ * обложка на полке в резкости деанонимировала бы ответ совпадением.
+ *
+ * Свой недельный сдвиг с собственной солью: полка ротируется независимо от
+ * панелей, но так же детерминированно — без Math.random.
+ */
+export function pickQuizShelf(args: {
+  library: LibraryGame[]
+  metaOf: MetaOf
+  seed: string
+  nowSec: number
+  untouchedOnly?: boolean
+  exclude?: Set<number>
+}): QuizCover[] {
+  const { library, metaOf, seed, nowSec, untouchedOnly = false, exclude } = args
+
+  const pool = usableLibrary(library, metaOf)
+    .filter(({ meta }) => Boolean(meta.headerImage || meta.art))
+    .filter(({ game }) => !untouchedOnly || isUntouched(game))
+    .filter(({ game }) => {
+      const state = classifyLibraryGame(game, nowSec)
+      return state === 'unplayed' || state === 'comeback'
+    })
+    .filter(({ game }) => !exclude?.has(game.appid))
+    // ненаигранное вперёд: полка — про то, что ждёт, а не про то, что затянуло
+    .sort(
+      (a, b) => a.game.playtimeForever - b.game.playtimeForever || a.game.appid - b.game.appid,
+    )
+
+  if (!pool.length) return []
+
+  const week = Math.floor(nowSec / (7 * 86_400))
+  const off = hashString(`${seed}:shelf:${week}`) % pool.length
+  const take = Math.min(SHELF_SIZE, pool.length)
+
+  const out: QuizCover[] = []
+  for (let i = 0; i < take; i++) {
+    const { game, meta } = pool[(off + i) % pool.length]
+    out.push(toCover(game, meta))
+  }
+  return out
 }

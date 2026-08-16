@@ -1,4 +1,4 @@
-import type { QuizCovers } from './quizart'
+import type { QuizCover, QuizCovers } from './quizart'
 import type { QuizCounts } from './quizcount'
 
 /**
@@ -20,6 +20,8 @@ export type QuizBoard = {
   covers: QuizCovers
   /** Может не приехать вовсе: см. докблок MIN_COVERAGE в lib/quizcount.ts */
   counts?: QuizCounts
+  /** Полка бэклога под панелями; отсутствует, когда показывать нечего */
+  shelf?: QuizCover[]
 }
 
 const EMPTY: QuizBoard = { covers: {} }
