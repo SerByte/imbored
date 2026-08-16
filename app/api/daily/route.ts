@@ -4,7 +4,7 @@ import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
   bannedAppids,
-  countIngest,
+  getPoolSize,
   getGamesMeta,
   getLatestSnapshot,
   listFeedback,
@@ -73,10 +73,10 @@ export async function GET() {
 
   // Каталог тут больше не лишний: «игра дня» перестала быть только разбором
   // купленного. Пул тот же, что в основной выдаче, одним запросом с LIMIT.
-  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const newPool = (
     await fetchDiscoveryPool(db, {
-      tags: pickQueryTags(profile, tagStats, catalogSize),
+      tags: pickQueryTags(profile, tagStats, poolSize),
       bannedAppids: [...banned],
       // на этой странице настроение всегда одиночное
       requireMultiplayer: false,

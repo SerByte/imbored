@@ -2,13 +2,14 @@ import { NextResponse } from 'next/server'
 import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
-  countIngest,
+  getPoolSize,
   getGamesMeta,
   getLatestSnapshot,
   getRoom,
   loadTagStats,
   myVotedAppids,
   roomMembers,
+  setRoomDeckSize,
 } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { buildGroupDeck } from '@/lib/group'
@@ -18,6 +19,8 @@ import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const DECK_SIZE = 20
+const POOL_BASE = 150
+const POOL_STEP = 100
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
@@ -27,7 +30,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
   const db = await getDb()
-  if (!(await getRoom(db, id))) return NextResponse.json({ error: 'notfound' }, { status: 404 })
+  const room = await getRoom(db, id)
+  if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
   const members = await roomMembers(db, id)
   if (!members.some((m) => m.steamid === steamid)) {
@@ -55,20 +59,26 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       partyProfile[tag] = (partyProfile[tag] ?? 0) + weight
     }
   }
-  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const now = nowSec()
+  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const extraPool = await fetchDiscoveryPool(db, {
-    tags: pickQueryTags(partyProfile, tagStats, catalogSize),
+    tags: pickQueryTags(partyProfile, tagStats, poolSize),
     requireMultiplayer: true,
-    rotation: rotationSlot(id, Math.floor(Date.now() / 1000)),
-    limit: 150,
+    // Ротацию НЕ сдвигаем по раунду: она меняет пул, а значит и порядок, и
+    // «следующие двадцать» начали бы дублировать уже показанное
+    rotation: rotationSlot(id, now),
+    limit: POOL_BASE + POOL_STEP * room.deckRound,
   })
   for (const m of extraPool) if (!metas.has(m.appid)) metas.set(m.appid, m)
 
+  // Раунд расширяет ту же колоду, а не выдаёт новую: buildGroupDeck при большем
+  // limit продолжает прежний порядок (см. тест «колода на больший limit
+  // продолжает меньшую»), поэтому уже отсмотренное не перетасовывается
   const deck = buildGroupDeck({
     members: libraries,
     metaOf,
     extraPool,
-    limit: DECK_SIZE,
+    limit: DECK_SIZE * (room.deckRound + 1),
   })
 
   // Колода собирается из библиотек участников, а они офлайн-фильтры каталога
@@ -79,9 +89,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const voted = await myVotedAppids(db, id, steamid)
   const shown = actual.filter((c) => !voted.has(c.appid))
 
+  // Знаменатель прогресса — это то, что человек реально увидит, то есть колода
+  // ПОСЛЕ filterActual. Раньше здесь стоял deck.length, и карты, выброшенные
+  // фильтром актуальности, засчитывались в отсвайпанные: свежий участник с
+  // нулём голосов открывал колоду на «5/20».
+  await setRoomDeckSize(db, id, actual.length)
+
   // Цены тех карт, что реально уедут в колоду: половина из них не куплена
   // никем из пати, и «Нет у: Дима · $60» без скидки — устаревший ценник.
-  const now = nowSec()
   const refreshed = await refreshDealsWithin(db, shown.map((c) => c.appid), now)
   if (refreshed) {
     for (const [appid, meta] of await getGamesMeta(db, shown.map((c) => c.appid))) {
@@ -104,7 +119,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
   return NextResponse.json({
     cards,
-    total: deck.length,
-    votedCount: deck.filter((c) => voted.has(c.appid)).length,
+    total: actual.length,
+    votedCount: actual.length - shown.length,
+    deckRound: room.deckRound,
+    // Полная страница намекает, что за ней что-то есть; вырожденный случай
+    // «ровно кратно двадцати» стоит одного пустого запроса, и это дешевле,
+    // чем отдельный подсчёт пула
+    hasMore: deck.length >= DECK_SIZE * (room.deckRound + 1),
   })
 }

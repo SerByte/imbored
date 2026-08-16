@@ -11,6 +11,7 @@ import {
   upsertGamesMeta,
 } from '@/lib/db'
 import { seedOtherStores } from '@/lib/otherstores'
+import { isUntouched } from '@/lib/recommend'
 import {
   currentSteamId,
   getDb,
@@ -44,8 +45,28 @@ export async function POST() {
   const snapshot = await getLatestSnapshot(db, steamid)
   if (!snapshot) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
 
+  /*
+   * Два факта о человеке для экрана ожидания.
+   *
+   * Считаются по снапшоту, который уже прочитан, — ни одного лишнего запроса и
+   * ни байта метаданных: isUntouched смотрит только на минуты. Поэтому они
+   * доступны в ПЕРВОМ же ответе, когда каталог ещё не тронут, — а именно в
+   * первые секунды человек и смотрит на экран.
+   *
+   * Денег бэклога тут намеренно нет, хотя просились: сумма требует цен, то
+   * есть чтения метаданных всей библиотеки на каждом вызове цикла. Прогрев
+   * дёргается десятками вызовов подряд, и это ровно та статья, за которую
+   * Turso берёт деньги. Сумма живёт на /library, где читается один раз.
+   */
+  const facts = {
+    games: snapshot.games.length,
+    untouched: snapshot.games.filter(isUntouched).length,
+  }
+
   // Демо-библиотека статична и уже засеяна — греть в ней нечего.
-  if (isDemoId(steamid)) return NextResponse.json({ remaining: 0, total: 0 })
+  if (isDemoId(steamid)) {
+    return NextResponse.json({ remaining: 0, total: 0, library: facts })
+  }
 
   await seedOtherStores(db, now)
 
@@ -109,7 +130,7 @@ export async function POST() {
     await refreshDeals(db, wanted, nowSec(), { maxFetch: PRICE_BATCH })
   }
 
-  return NextResponse.json({ remaining, total: wanted.length })
+  return NextResponse.json({ remaining, total: wanted.length, library: facts })
 }
 
 /**

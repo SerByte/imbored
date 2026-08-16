@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 import { isMultiplayerMeta } from './recommend'
 import {
   acquireLease,
+  advanceRoomDeckRound,
   bannedAppids,
   castRoomVote,
   claimNewsPollBatch,
@@ -49,18 +50,23 @@ import {
   getStaleAppids,
   getUserPortrait,
   joinRoom,
+  listBanned,
   listFeedback,
   listPublicRooms,
   logFeedback,
   migrateDb,
   myVotedAppids,
   roomMembers,
+  roomVoteCounts,
+  roomVotes,
   saveLibrarySnapshot,
+  setRoomDeckSize,
   setGameJson,
   setRoomMatched,
   setRoomPublic,
   setUserPortrait,
   stalePriceAppids,
+  unbanGame,
   updateGamePrices,
   upsertGameMeta,
   upsertUser,
@@ -472,6 +478,135 @@ describe('db', () => {
     expect(await findRoomMatch(db, 'R00002')).toBe(570)
   })
 
+  test('roomVoteCounts считает голоса всех участников одним запросом', async () => {
+    // Ростер ожидания показывает прогресс каждого, а опрос идёт раз в 2.5с у
+    // каждого участника: запрос на человека превращал это в N² чтений строк
+    const db = await freshDb()
+    await createRoom(db, { id: 'CNT001', steamid: 'a' }, NOW)
+    await joinRoom(db, 'CNT001', 'a', 'A', NOW)
+    await joinRoom(db, 'CNT001', 'b', 'B', NOW)
+    await castRoomVote(db, 'CNT001', 'a', 570, 1, NOW)
+    await castRoomVote(db, 'CNT001', 'a', 620, 0, NOW + 1)
+    await castRoomVote(db, 'CNT001', 'b', 570, 1, NOW + 2)
+
+    const counts = await roomVoteCounts(db, 'CNT001')
+    expect(counts.get('a')).toBe(2)
+    expect(counts.get('b')).toBe(1)
+  })
+
+  test('roomVoteCounts: переголосование по той же карте не удваивает счёт', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'CNT002', steamid: 'a' }, NOW)
+    await joinRoom(db, 'CNT002', 'a', 'A', NOW)
+    await castRoomVote(db, 'CNT002', 'a', 570, 0, NOW)
+    await castRoomVote(db, 'CNT002', 'a', 570, 1, NOW + 1)
+    expect((await roomVoteCounts(db, 'CNT002')).get('a')).toBe(1)
+  })
+
+  test('roomVoteCounts не смешивает комнаты', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'CNT003', steamid: 'a' }, NOW)
+    await createRoom(db, { id: 'CNT004', steamid: 'a' }, NOW)
+    await joinRoom(db, 'CNT003', 'a', 'A', NOW)
+    await joinRoom(db, 'CNT004', 'a', 'A', NOW)
+    await castRoomVote(db, 'CNT003', 'a', 570, 1, NOW)
+    await castRoomVote(db, 'CNT004', 'a', 620, 1, NOW)
+    await castRoomVote(db, 'CNT004', 'a', 730, 1, NOW)
+
+    expect((await roomVoteCounts(db, 'CNT003')).get('a')).toBe(1)
+    expect((await roomVoteCounts(db, 'CNT004')).get('a')).toBe(2)
+    expect([...(await roomVoteCounts(db, 'NOSUCH')).keys()]).toEqual([])
+  })
+
+  test('roomVotes отдаёт все голоса комнаты одним запросом', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'VOT001', steamid: 'a' }, NOW)
+    await createRoom(db, { id: 'VOT002', steamid: 'a' }, NOW)
+    await joinRoom(db, 'VOT001', 'a', 'A', NOW)
+    await joinRoom(db, 'VOT001', 'b', 'B', NOW)
+    await castRoomVote(db, 'VOT001', 'a', 570, 1, NOW)
+    await castRoomVote(db, 'VOT001', 'b', 570, 0, NOW + 1)
+    await castRoomVote(db, 'VOT002', 'a', 620, 1, NOW + 2)
+
+    const rows = await roomVotes(db, 'VOT001')
+    expect(rows).toHaveLength(2)
+    expect(rows.find((r) => r.steamid === 'a')).toEqual({
+      steamid: 'a',
+      appid: 570,
+      vote: 1,
+      createdAt: NOW,
+    })
+    expect(rows.find((r) => r.steamid === 'b')?.vote).toBe(0)
+    // соседняя комната не подмешивается
+    expect((await roomVotes(db, 'VOT002')).map((r) => r.appid)).toEqual([620])
+  })
+
+  test('размер колоды — свойство комнаты, а не участника', async () => {
+    // rotationSlot берёт id комнаты, а не steamid, поэтому колода у всех
+    // участников одна и та же: знаменатель «12 из 20» принадлежит комнате
+    const db = await freshDb()
+    await createRoom(db, { id: 'DCK001', steamid: 'a' }, NOW)
+    const fresh = await getRoom(db, 'DCK001')
+    expect(fresh?.deckRound).toBe(0)
+    expect(fresh?.deckSize).toBeNull()
+
+    await setRoomDeckSize(db, 'DCK001', 18)
+    expect((await getRoom(db, 'DCK001'))?.deckSize).toBe(18)
+  })
+
+  test('раунд колоды поднимается один раз и работает на всю комнату', async () => {
+    // Добор карт не может быть личным делом: findRoomMatch считает единогласие
+    // по ВСЕМ участникам, и карта, которую видел только я, не даст матча
+    // никогда. Поэтому раунд живёт на комнате.
+    const db = await freshDb()
+    await createRoom(db, { id: 'RND001', steamid: 'a' }, NOW)
+    expect((await getRoom(db, 'RND001'))?.deckRound).toBe(0)
+
+    expect(await advanceRoomDeckRound(db, 'RND001', 1)).toBe(1)
+    expect((await getRoom(db, 'RND001'))?.deckRound).toBe(1)
+  })
+
+  test('двое нажали «ещё» одновременно — раунд не проскакивает', async () => {
+    // Проигравший гонку не поднимает раунд второй раз, а читает ту же партию
+    const db = await freshDb()
+    await createRoom(db, { id: 'RND002', steamid: 'a' }, NOW)
+    await advanceRoomDeckRound(db, 'RND002', 1)
+    expect(await advanceRoomDeckRound(db, 'RND002', 1)).toBe(1)
+    expect((await getRoom(db, 'RND002'))?.deckRound).toBe(1)
+  })
+
+  test('раунд не откатывается назад', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'RND003', steamid: 'a' }, NOW)
+    await advanceRoomDeckRound(db, 'RND003', 2)
+    expect(await advanceRoomDeckRound(db, 'RND003', 1)).toBe(2)
+  })
+
+  test('миграция: старая таблица rooms получает deck_round и deck_size', async () => {
+    // Столбец, добавленный только в SCHEMA, на живой базе не появится:
+    // CREATE TABLE IF NOT EXISTS — no-op. Тесты на свежей :memory: этого не
+    // видят, поэтому проверяем именно старую форму таблицы
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(`CREATE TABLE rooms (
+      id TEXT PRIMARY KEY,
+      created_by TEXT NOT NULL,
+      mood_json TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      matched_appid INTEGER,
+      created_at INTEGER NOT NULL
+    );`)
+    await db.execute(
+      "INSERT INTO rooms (id, created_by, status, created_at) VALUES ('OLD001', 'a', 'open', 1)",
+    )
+    const migrated = await migrateDb(db)
+
+    const room = await getRoom(migrated, 'OLD001')
+    expect(room?.deckRound).toBe(0)
+    expect(room?.deckSize).toBeNull()
+    await setRoomDeckSize(migrated, 'OLD001', 20)
+    expect((await getRoom(migrated, 'OLD001'))?.deckSize).toBe(20)
+  })
+
   test('скип с причиной и бан сохраняются и читаются', async () => {
     const db = await freshDb()
     await logFeedback(db, { steamid: 'u1', appid: 620, action: 'skipped', reason: 'genre' }, NOW)
@@ -526,6 +661,60 @@ describe('db', () => {
     await logFeedback(db, { steamid: 'u1', appid: 570, action: 'banned' }, NOW)
     await logFeedback(db, { steamid: 'u1', appid: 620, action: 'liked' }, NOW)
     expect([...(await bannedAppids(db, 'u1'))]).toEqual([570])
+  })
+
+  test('listBanned отдаёт свежие сверху и по одной строке на игру', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'banned' }, NOW)
+    // тот же бан вторым нажатием — logFeedback только добавляет строки
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'banned' }, NOW + 5)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'banned' }, NOW + 100)
+    await logFeedback(db, { steamid: 'u1', appid: 730, action: 'liked' }, NOW + 200)
+    await logFeedback(db, { steamid: 'u2', appid: 999, action: 'banned' }, NOW + 300)
+
+    expect(await listBanned(db, 'u1')).toEqual([
+      { appid: 620, at: NOW + 100 },
+      { appid: 570, at: NOW + 5 },
+    ])
+    expect(await listBanned(db, 'nobody')).toEqual([])
+  })
+
+  test('listBanned детерминирован, когда баны попали в одну секунду', async () => {
+    // На /play бан в одном клике от выдачи — три игры подряд за секунду это
+    // норма, а created_at секундный. Без тай-брейка полка тасовалась бы на
+    // каждом router.refresh()
+    const db = await freshDb()
+    for (const appid of [900, 100, 500]) {
+      await logFeedback(db, { steamid: 'u1', appid, action: 'banned' }, NOW)
+    }
+    const once = await listBanned(db, 'u1')
+    expect(once.map((b) => b.appid)).toEqual([100, 500, 900])
+    expect(await listBanned(db, 'u1')).toEqual(once)
+  })
+
+  test('unbanGame снимает запрет и не трогает остальную историю', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'banned' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'banned' }, NOW + 5)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 10)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'banned' }, NOW + 20)
+    await logFeedback(db, { steamid: 'u2', appid: 570, action: 'banned' }, NOW + 30)
+
+    await unbanGame(db, 'u1', 570)
+
+    // ушли ОБЕ строки бана, но лайк на месте — иначе снятие бана переписывало бы
+    // вкус, а оно про запрет, а не про вкус
+    expect([...(await bannedAppids(db, 'u1'))]).toEqual([620])
+    expect((await listFeedback(db, 'u1', 50)).some((f) => f.appid === 570 && f.action === 'liked')).toBe(
+      true,
+    )
+    // чужой бан не задет
+    expect([...(await bannedAppids(db, 'u2'))]).toEqual([570])
+  })
+
+  test('unbanGame на несуществующем бане молчит', async () => {
+    const db = await freshDb()
+    await expect(unbanGame(db, 'u1', 12_345)).resolves.toBeUndefined()
   })
 
   test('фидбек логируется и читается по пользователю', async () => {

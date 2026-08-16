@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { createDb, replaceGameTags, setGameJson, upsertGameMeta, type Db } from './db'
-import { loadGamePage } from './gamepage'
+import { loadGamePage, topTagOf } from './gamepage'
 import type { GameMeta } from './types'
 
 /**
@@ -76,5 +76,72 @@ describe('loadGamePage', () => {
     expect(page?.meta.name).toBe('Игра 30')
     expect(page?.reviewsSummary?.scoreDesc).toBe('Very Positive')
     expect(page?.prosCons).toBeNull()
+  })
+})
+
+describe('topTagOf', () => {
+  test('берёт самый характерный тег, а не первый попавшийся', () => {
+    expect(topTagOf(meta(1, { tags: { Indie: 300, Roguelike: 900, Action: 500 } }))).toBe('Roguelike')
+  })
+
+  test('при равных весах порядок не зависит от порядка ключей', () => {
+    // Страница кэшируется на сутки и пререндерится: блок «похожие» не имеет
+    // права меняться от того, как Object.entries вернул ключи после пересборки
+    const a = topTagOf(meta(1, { tags: { Zzz: 500, Aaa: 500 } }))
+    const b = topTagOf(meta(1, { tags: { Aaa: 500, Zzz: 500 } }))
+    expect(a).toBe('Aaa')
+    expect(a).toBe(b)
+  })
+
+  test('игра без тегов не роняет карточку', () => {
+    expect(topTagOf(meta(1, { tags: {} }))).toBeNull()
+  })
+})
+
+describe('похожие на карточке', () => {
+  test('подбираются по характерности тега, а не по популярности', async () => {
+    const db = await withDb()
+    // герой страницы + три соседа с разной характерностью Roguelike
+    for (const [appid, weight, reviews] of [
+      [1, 1000, 100],
+      [2, 900, 5],
+      [3, 200, 900_000],
+      [4, 600, 50],
+    ] as Array<[number, number, number]>) {
+      await upsertGameMeta(
+        db,
+        meta(appid, { tags: { Roguelike: weight }, reviewsTotal: reviews }),
+        NOW,
+      )
+      await replaceGameTags(db, appid, [{ tag: 'Roguelike', weight }])
+    }
+
+    const page = await loadGamePage(1)
+    expect(page?.similarTag).toBe('Roguelike')
+    // блокбастер с 900k отзывов, но слабым тегом, стоит ПОСЛЕДНИМ
+    expect(page?.similar.map((g) => g.appid)).toEqual([2, 4, 3])
+    // сама игра в свои же похожие не попадает
+    expect(page?.similar.map((g) => g.appid)).not.toContain(1)
+  })
+
+  test('игра без тегов отдаёт пустой список, а не падает', async () => {
+    const db = await withDb()
+    await upsertGameMeta(db, meta(50, { tags: {} }), NOW)
+    const page = await loadGamePage(50)
+    expect(page?.similar).toEqual([])
+    expect(page?.similarTag).toBeNull()
+  })
+
+  test('соседи есть и у записей чужих магазинов', async () => {
+    const db = await withDb()
+    await upsertGameMeta(db, meta(-7, { tags: { Roguelike: 800 } }), NOW)
+    await replaceGameTags(db, -7, [{ tag: 'Roguelike', weight: 800 }])
+    await upsertGameMeta(db, meta(9, { tags: { Roguelike: 500 } }), NOW)
+    await replaceGameTags(db, 9, [{ tag: 'Roguelike', weight: 500 }])
+
+    const page = await loadGamePage(-7)
+    // патчей и отзывов Steam у такой записи нет, а похожие — есть
+    expect(page?.news).toEqual([])
+    expect(page?.similar.map((g) => g.appid)).toEqual([9])
   })
 })

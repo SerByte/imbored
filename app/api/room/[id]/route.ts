@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { getGameMeta, getRoom, myVotedAppids, roomMembers } from '@/lib/db'
+import { hashString } from '@/lib/daily'
+import { getGameMeta, getRoom, roomMembers, roomVoteCounts } from '@/lib/db'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
@@ -21,13 +22,26 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       ? await getGameMeta(db, room.matchedAppid)
       : null
 
-  const memberViews = await Promise.all(
-    members.map(async (m) => ({
+  // Один агрегат на комнату вместо запроса на участника: это самый частый
+  // запрос продукта, и он крутится у каждого раз в 2.5 секунды
+  const counts = await roomVoteCounts(db, id)
+
+  const memberViews = members.map((m) => {
+    const votes = counts.get(m.steamid) ?? 0
+    return {
+      // Стабильный ключ для React: имена не уникальны — двое зашедших
+      // «Демо-другом» получают одинаковое, и строки ростера с анимацией
+      // перемешиваются вместе с чужим прогрессом. Хеш, а не сырой steamid:
+      // в открытую комнату с доски подсаживаются незнакомые
+      id: hashString(id + m.steamid).toString(36),
       name: m.personaName ?? `Игрок ${m.steamid.slice(-4)}`,
       me: m.steamid === steamid,
-      votes: (await myVotedAppids(db, id, m.steamid)).size,
-    })),
-  )
+      votes,
+      // deckSize === 0 — вырожденный случай (колода схлопнулась), и отмечать
+      // им всех «готов» бессмысленно: никто ничего не свайпал
+      done: room.deckSize !== null && room.deckSize > 0 && votes >= room.deckSize,
+    }
+  })
 
   return NextResponse.json({
     room: {
@@ -35,6 +49,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       status: room.status,
       matchedAppid: room.matchedAppid ?? null,
       isPublic: room.isPublic,
+      deckRound: room.deckRound,
+      deckSize: room.deckSize,
     },
     isHost: steamid === room.createdBy,
     members: memberViews,

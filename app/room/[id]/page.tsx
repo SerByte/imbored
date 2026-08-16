@@ -5,15 +5,26 @@ import { useParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { MatchCeremony } from '@/components/MatchCeremony'
+import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
 import { SwipeDeck } from '@/components/SwipeDeck'
+import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
+import type { RoomMemberView } from '@/lib/room'
+import type { NearMiss } from '@/lib/roomlikes'
 
 type RoomState = {
-  room: { id: string; status: 'open' | 'matched'; matchedAppid: number | null; isPublic: boolean }
+  room: {
+    id: string
+    status: 'open' | 'matched'
+    matchedAppid: number | null
+    isPublic: boolean
+    deckRound: number
+    deckSize: number | null
+  }
   isHost: boolean
-  members: Array<{ name: string; me: boolean; votes: number }>
+  members: RoomMemberView[]
   hasSession: boolean
   isMember: boolean
   matchedGame: {
@@ -41,6 +52,11 @@ type Card = {
   storeUrl?: string
 }
 
+/** Обычный темп опроса и замедленный — когда в комнате давно ничего не двигается */
+const POLL_FAST_MS = 2500
+const POLL_SLOW_MS = 6000
+const POLL_IDLE_AFTER_MS = 60_000
+
 export default function RoomPage() {
   const params = useParams<{ id: string }>()
   const roomId = (params.id ?? '').toUpperCase()
@@ -49,48 +65,207 @@ export default function RoomPage() {
   const [notFound, setNotFound] = useState(false)
   const [cards, setCards] = useState<Card[] | null>(null)
   const [deckTotal, setDeckTotal] = useState(0)
+  const [deckVoted, setDeckVoted] = useState(0)
+  const [deckFailed, setDeckFailed] = useState(false)
+  const [localVotes, setLocalVotes] = useState(0)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
-  const deckLoaded = useRef(false)
+  const [copyFailed, setCopyFailed] = useState(false)
+  const [likes, setLikes] = useState<{ mine: LikedGame[]; near: NearMiss[] }>({
+    mine: [],
+    near: [],
+  })
+  const [hasMore, setHasMore] = useState(false)
+  const [pulling, setPulling] = useState(false)
+  const deckKey = useRef('')
+  const likesKey = useRef('')
 
-  const refresh = useCallback(async () => {
-    const res = await fetch(`/api/room/${roomId}`)
-    if (res.status === 404) {
-      setNotFound(true)
-      return
-    }
-    setState((await res.json()) as RoomState)
-  }, [roomId])
+  const refresh = useCallback(
+    async (signal?: AbortSignal): Promise<RoomState | null> => {
+      const res = await fetch(`/api/room/${roomId}`, signal ? { signal } : {})
+      if (res.status === 404) {
+        setNotFound(true)
+        return null
+      }
+      if (!res.ok) return null
+      const next = (await res.json()) as RoomState
+      setState(next)
+      return next
+    },
+    [roomId],
+  )
 
   /**
-   * Опрос состояния комнаты — ровно тот случай, ради которого эффекты и
-   * существуют: подписка на внешнюю систему с записью состояния из колбэка.
+   * Опрос состояния комнаты — подписка на внешнюю систему, ровно тот случай,
+   * ради которого эффекты и существуют.
    *
-   * Правило set-state-in-effect читает `void refresh()` в теле как синхронный
-   * setState и не видит, что первое действие внутри — await: к моменту записи
-   * состояния эффект давно завершился, каскада рендеров нет. Отключение здесь
-   * точечное и относится только к первому вызову; тот же refresh внутри
-   * setInterval правило не трогает, потому что это уже явный колбэк.
+   * Четыре вещи, которых тут раньше не было, и каждая стоила денег:
+   * опрос не замолкал в фоновой вкладке, продолжался на экране матча (где
+   * измениться уже нечему), долбился в 404 вечно и не имел защиты от наложения
+   * запросов — на холодной базе ответы приходили не по порядку и счётчики в
+   * ростере ехали назад. Замедление после минуты тишины держит живой ростер
+   * дешёвым: разница между 2.5 и 6 секундами тут никому не видна.
    */
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh()
-    const t = setInterval(() => void refresh(), 2500)
-    return () => clearInterval(t)
+    let stopped = false
+    let timer = 0
+    let inFlight: AbortController | null = null
+    let lastChangeAt = Date.now()
+    let lastKey = ''
+
+    const arm = () => {
+      if (stopped) return
+      window.clearTimeout(timer)
+      const idle = Date.now() - lastChangeAt > POLL_IDLE_AFTER_MS
+      timer = window.setTimeout(() => void tick(), idle ? POLL_SLOW_MS : POLL_FAST_MS)
+    }
+
+    const tick = async (force = false) => {
+      if (stopped) return
+      // В фоне ничего не переспрашиваем: вкладка, забытая на ночь, стоила бы
+      // миллионов прочитанных строк и не показала бы никому ни одной.
+      //
+      // Первый запрос — исключение и делается всегда: ссылку на комнату
+      // открывают из чата в фоновой вкладке, и без него человек, переключившись
+      // на неё, упирался бы в спиннер вместо готовой страницы. Это ровно один
+      // запрос, тот самый, который превращает спиннер в содержимое.
+      if ((!force && document.visibilityState !== 'visible') || inFlight) {
+        arm()
+        return
+      }
+
+      const ac = new AbortController()
+      inFlight = ac
+      try {
+        const next = await refresh(ac.signal)
+        if (!next) {
+          // 404: комнаты нет и не появится
+          stopped = true
+          return
+        }
+        const key = `${next.room.status}:${next.room.deckRound}:${next.members
+          .map((m) => `${m.id}${m.votes}`)
+          .join(',')}`
+        if (key !== lastKey) {
+          lastKey = key
+          lastChangeAt = Date.now()
+        }
+        if (next.room.status === 'matched') {
+          // Церемония терминальна — дальше опрашивать нечего
+          stopped = true
+          return
+        }
+      } catch {
+        // отменённый запрос или сеть моргнула — просто ждём следующего тика
+      } finally {
+        if (inFlight === ac) inFlight = null
+      }
+      arm()
+    }
+
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible' || stopped) return
+      void tick()
+    }
+
+    void tick(true)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+      inFlight?.abort()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [refresh])
 
-  // колода подгружается один раз после членства
-  useEffect(() => {
-    if (!state?.isMember || deckLoaded.current) return
-    deckLoaded.current = true
-    void (async () => {
+  const loadDeck = useCallback(async () => {
+    setDeckFailed(false)
+    try {
       const res = await fetch(`/api/room/${roomId}/deck`)
-      if (!res.ok) return
-      const data = (await res.json()) as { cards: Card[]; total: number }
-      setCards(data.cards)
+      if (!res.ok) {
+        setDeckFailed(true)
+        return
+      }
+      const data = (await res.json()) as {
+        cards: Card[]
+        total: number
+        votedCount: number
+        hasMore: boolean
+      }
+      // Мержим по appid, а не заменяем: замена выдёргивает карточку из-под
+      // пальца, а ownedByAll/missingFor у уже выданных карт после чужого входа
+      // становятся ТОЧНЕЕ — их надо обновить, а не выбросить
+      setCards((prev) => {
+        if (!prev?.length) return data.cards
+        const incoming = new Map(data.cards.map((c) => [c.appid, c]))
+        const kept = prev.map((c) => incoming.get(c.appid) ?? c)
+        const seen = new Set(kept.map((c) => c.appid))
+        return [...kept, ...data.cards.filter((c) => !seen.has(c.appid))]
+      })
       setDeckTotal(data.total)
+      setDeckVoted(data.votedCount)
+      setHasMore(data.hasMore)
+      setLocalVotes(0)
+    } catch {
+      setDeckFailed(true)
+    } finally {
+      setPulling(false)
+    }
+  }, [roomId])
+
+  /*
+   * Ключ, а не флаг «загружено».
+   *
+   * Колода — функция состава комнаты и раунда: вошёл человек — она пересобрана,
+   * подняли раунд — расширена. Прежний boolean-ref означал «загрузили один раз
+   * и больше никогда», из-за чего поздний гость оставлял всех остальных со
+   * стухшей колодой. Плюс он взводился ДО запроса, и одна ошибка сети запирала
+   * участника в вечном спиннере — теперь ключ переписывается только по факту
+   * попытки, а deckFailed даёт кнопку «ещё раз».
+   */
+  const deckWant = state?.isMember
+    ? `${state.members.length}:${state.room.deckRound}`
+    : ''
+
+  useEffect(() => {
+    if (!deckWant || deckKey.current === deckWant || deckFailed) return
+    deckKey.current = deckWant
+    void loadDeck()
+  }, [deckWant, deckFailed, loadDeck])
+
+  async function pullMore() {
+    setPulling(true)
+    const res = await fetch(`/api/room/${roomId}/round`, { method: 'POST' })
+    if (!res.ok) {
+      setPulling(false)
+      return
+    }
+    // Раунд поднялся на комнате — свою колоду забираем сразу, остальные
+    // подхватят её на ближайшем опросе
+    await refresh()
+    await loadDeck()
+  }
+
+  /*
+   * Лайки и почти-совпадения — отдельным разовым запросом, а не частью опроса:
+   * перебор голосов плюс метаданные игр каждые 2.5 секунды у каждого участника
+   * стоил бы ровно столько же, сколько мы только что убрали из самого опроса.
+   *
+   * Триггер производный: опрос и так приносит голоса всех, и пока их сумма не
+   * сдвинулась, пересчитывать нечего. Пати стоит на месте — запросов ноль.
+   */
+  const waiting = Boolean(state?.isMember) && cards !== null && cards.length === 0
+  const votesKey = state ? state.members.map((m) => `${m.id}${m.votes}`).join(',') : ''
+
+  useEffect(() => {
+    if (!waiting || likesKey.current === votesKey) return
+    likesKey.current = votesKey
+    void (async () => {
+      const res = await fetch(`/api/room/${roomId}/likes`)
+      if (!res.ok) return
+      setLikes((await res.json()) as { mine: LikedGame[]; near: NearMiss[] })
     })()
-  }, [state?.isMember, roomId])
+  }, [waiting, votesKey, roomId])
 
   async function joinAsDemoFriend() {
     setBusy(true)
@@ -113,19 +288,40 @@ export default function RoomPage() {
 
   async function vote(card: Card, yes: boolean) {
     setCards((prev) => (prev ? prev.filter((c) => c.appid !== card.appid) : prev))
+    setLocalVotes((v) => v + 1)
     const res = await fetch(`/api/room/${roomId}/vote`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ appid: card.appid, vote: yes }),
     })
+    // Без проверки res.ok любая ошибка давала data.matched === undefined,
+    // а undefined !== null истинно — и каждый сбой дёргал лишний опрос
+    if (!res.ok) return
     const data = (await res.json()) as { matched: number | null }
     if (data.matched !== null) void refresh()
   }
 
-  function copyLink() {
-    void navigator.clipboard.writeText(window.location.href)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
+  async function togglePublic() {
+    await fetch(`/api/room/${roomId}/public`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ public: !state?.room.isPublic }),
+    })
+    void refresh()
+  }
+
+  async function copyLink() {
+    // Промис здесь не декоративный: на небезопасном origin и при отказе в
+    // разрешении копирование не происходит, а галочка «Скопировано ✓»
+    // загоралась всё равно — в режиме «ты один» это главное действие экрана
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setCopyFailed(false)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      setCopyFailed(true)
+    }
   }
 
   if (notFound) {
@@ -201,7 +397,11 @@ export default function RoomPage() {
 
   // ---- ЛОББИ + СВАЙП ----
   const card = cards?.[0]
-  const votedCount = cards ? deckTotal - cards.length : 0
+  // Прогресс приходит с сервера (он один знает, сколько карт осталось после
+  // фильтра актуальности), но свайп обязан двигать полосу мгновенно, а опрос
+  // отстаёт на пару секунд
+  const votedCount = deckVoted + localVotes
+  const alone = state.members.length <= 1
 
   return (
     <div className="flex-1 mx-auto w-full max-w-2xl px-5 pt-24 pb-16 flex flex-col gap-6">
@@ -210,23 +410,17 @@ export default function RoomPage() {
           <h1 className="text-xl font-bold tracking-tight">
             Пати <span className="font-mono text-ember-text">{roomId}</span>
           </h1>
-          <p className="text-xs text-dim mt-0.5">Совпадут голоса всех — будет матч</p>
+          <p className="text-xs text-dim mt-0.5">
+            {alone ? 'Матч нужен минимум вдвоём' : 'Совпадут голоса всех — будет матч'}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {state.isHost && (
             <button
-              onClick={async () => {
-                await fetch(`/api/room/${roomId}/public`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ public: !state.room.isPublic }),
-                })
-                void refresh()
-              }}
+              onClick={togglePublic}
+              aria-pressed={state.room.isPublic}
               className={`rounded-[14px] px-4 py-2 text-sm cursor-pointer transition ${
-                state.room.isPublic
-                  ? 'bg-ember/15 text-ember-text'
-                  : 'glass glass-hover text-dim'
+                state.room.isPublic ? 'bg-ember/15 text-ember-text' : 'glass glass-hover text-dim'
               }`}
               title="Открытая комната видна на доске «Пати» — к вам смогут подсесть"
             >
@@ -242,38 +436,61 @@ export default function RoomPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {state.members.map((m) => (
-          <span
-            key={m.name + String(m.me)}
-            className={`rounded-full px-3 py-1.5 text-xs ${
-              m.me ? 'bg-ember/15 text-ember-text' : 'glass text-dim'
-            }`}
-          >
-            {m.name}
-            {m.me ? ' (ты)' : ''} · <span className="font-mono">{m.votes}</span> голосов
-          </span>
-        ))}
-      </div>
+      {card && (
+        <div className="flex flex-wrap gap-2">
+          {state.members.map((m) => (
+            <span
+              key={m.id}
+              className={`rounded-full px-3 py-1.5 text-xs ${
+                m.me ? 'bg-ember/15 text-ember-text' : 'glass text-dim'
+              }`}
+            >
+              {m.name}
+              {m.me ? ' (ты)' : ''} · <span className="font-mono tabular-nums">{m.votes}</span>{' '}
+              голосов
+            </span>
+          ))}
+        </div>
+      )}
 
-      {cards === null ? (
+      {deckFailed ? (
+        <div className="glass rounded-[20px] p-8 text-center flex flex-col gap-4 anim-rise">
+          <p className="font-semibold">Не получилось загрузить игры</p>
+          <p className="text-dim text-sm">Скорее всего, это на нашей стороне.</p>
+          <button
+            onClick={() => void loadDeck()}
+            className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition cursor-pointer self-center"
+          >
+            Попробовать ещё раз
+          </button>
+        </div>
+      ) : cards === null ? (
         <div className="flex justify-center py-16">
           <Spinner />
         </div>
       ) : card ? (
-        <SwipeDeck
-          cards={cards}
-          onVote={vote}
-          votedCount={votedCount}
-          deckTotal={deckTotal}
-        />
+        <SwipeDeck cards={cards} onVote={vote} votedCount={votedCount} deckTotal={deckTotal} />
       ) : (
-        <div className="glass rounded-[20px] p-8 text-center flex flex-col gap-3 anim-rise">
-          <p className="font-semibold">Ты всё отсвайпал</p>
-          <p className="text-dim text-sm">
-            Ждём остальных. Матч появится сам, как только вкусы совпадут.
-          </p>
-        </div>
+        <RoomWaiting
+          roomId={roomId}
+          isHost={state.isHost}
+          isPublic={state.room.isPublic}
+          members={state.members}
+          deckSize={state.room.deckSize}
+          deckTotal={deckTotal}
+          near={likes.near}
+          myLikes={likes.mine}
+          hasMore={hasMore}
+          pulling={pulling}
+          onPullMore={pullMore}
+          copied={copied}
+          copyFailed={copyFailed}
+          // именно localVotes: колода исчезла из-под пальцев прямо сейчас,
+          // а не «когда-то в прошлый заход» — только тогда фокус стоит забирать
+          cameFromDeck={localVotes > 0}
+          onCopyLink={copyLink}
+          onTogglePublic={togglePublic}
+        />
       )}
     </div>
   )

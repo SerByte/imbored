@@ -3,7 +3,7 @@ import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
   bannedAppids,
-  countIngest,
+  getPoolSize,
   getGamesMeta,
   getLatestSnapshot,
   listFeedback,
@@ -93,10 +93,10 @@ export async function POST(req: Request) {
   )
 
   // Кандидаты из большого каталога — одним запросом с LIMIT, а не полным сканом
-  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const newPool = (
     await fetchDiscoveryPool(db, {
-      tags: pickQueryTags(profile, tagStats, catalogSize),
+      tags: pickQueryTags(profile, tagStats, poolSize),
       bannedAppids: [...banned],
       requireMultiplayer: mood.social === 'friends',
       rotation: rotationSlot(steamid, now),

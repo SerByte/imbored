@@ -2,7 +2,7 @@ import { filterActual } from './actual'
 import type { GameArtUrls } from './art'
 import { COMMON_SHOWN, compatibility } from './compat'
 import {
-  countIngest,
+  getPoolSize,
   getGamesMeta,
   getLatestSnapshot,
   getPersonaName,
@@ -176,12 +176,12 @@ export async function loadCompat(
   const poolByAppid = new Map<number, GameMeta>()
   const metaOf = (appid: number): GameMeta | undefined => metas.get(appid) ?? poolByAppid.get(appid)
 
-  const [tagStats, catalogSize] = await Promise.all([loadTagStats(db), countIngest(db)])
+  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const compat = compatibility(mySnap.games, otherSnap.games, metaOf, tagStats)
 
   const pairProfile = buildTagProfile([...mySnap.games, ...otherSnap.games], metaOf)
   const extraPool = await fetchDiscoveryPool(db, {
-    tags: pickQueryTags(pairProfile, tagStats, catalogSize),
+    tags: pickQueryTags(pairProfile, tagStats, poolSize),
     requireMultiplayer: true,
     /*
      * Сид — ПАРА, отсортированная. У одних и тех же двоих два адреса: /compat/A,

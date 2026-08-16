@@ -1,4 +1,11 @@
-import { getGameJson, getGameMeta, getGameNews, type StoredNews } from './db'
+import {
+  getGameJson,
+  getGameMeta,
+  getGameNews,
+  topGamesByTag,
+  type SimilarGame,
+  type StoredNews,
+} from './db'
 import { getDb } from './server'
 import type { GameMeta } from './types'
 
@@ -11,6 +18,26 @@ export type GamePageData = {
   } | null
   prosCons: { pros: string[]; cons: string[]; source: 'claude' | 'reviews' } | null
   news: StoredNews[]
+  /** соседи по самому характерному тегу; пусто, если тегов нет */
+  similar: SimilarGame[]
+  /** по какому тегу они подобраны — он же стоит в заголовке блока */
+  similarTag: string | null
+}
+
+/**
+ * Самый характерный тег игры.
+ *
+ * Вес в tags_json — это характерность (доля от максимума), а не популярность,
+ * поэтому «первый по весу» и означает «чем эта игра является больше всего».
+ * Тай-брейк по имени обязателен: страница кэшируется на сутки и пререндерится,
+ * и блок «похожие» не должен меняться от того, в каком порядке Object.entries
+ * вернул ключи после очередной пересборки каталога.
+ */
+export function topTagOf(meta: GameMeta): string | null {
+  const entries = Object.entries(meta.tags ?? {})
+  if (!entries.length) return null
+  entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  return entries[0][0]
 }
 
 /**
@@ -43,12 +70,28 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
 
   // Отрицательные appid — кураторский пул других магазинов: у Steam про них
   // ничего нет, показываем только собственные данные
-  if (appid < 0) return { meta, reviewsSummary: null, prosCons: null, news: [] }
+  // Соседей ищем и для чужих магазинов: тег у такой записи есть, а вот патчей
+  // и отзывов Steam про неё нет — поэтому блок «похожие» стоит ДО раннего
+  // возврата, а не после
+  const topTag = topTagOf(meta)
+  const similarOf = async () => (topTag ? topGamesByTag(db, topTag, appid) : [])
 
-  const [reviewsSummary, stored, news] = await Promise.all([
+  if (appid < 0) {
+    return {
+      meta,
+      reviewsSummary: null,
+      prosCons: null,
+      news: [],
+      similar: await similarOf(),
+      similarTag: topTag,
+    }
+  }
+
+  const [reviewsSummary, stored, news, similar] = await Promise.all([
     getGameJson(db, appid, 'reviews_summary_json') as Promise<GamePageData['reviewsSummary']>,
     getGameJson(db, appid, 'pros_cons_json') as Promise<GamePageData['prosCons']>,
     getGameNews(db, appid, 8),
+    similarOf(),
   ])
 
   /*
@@ -69,5 +112,5 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    */
   const prosCons = stored?.source === 'claude' ? stored : null
 
-  return { meta, reviewsSummary, prosCons, news }
+  return { meta, reviewsSummary, prosCons, news, similar, similarTag: topTag }
 }

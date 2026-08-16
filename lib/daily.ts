@@ -11,7 +11,7 @@ export function hashString(str: string): number {
 }
 
 /** mulberry32 — детерминированный ГПСЧ */
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let a = seed
   return () => {
     a |= 0

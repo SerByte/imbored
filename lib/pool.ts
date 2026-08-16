@@ -152,6 +152,11 @@ function rowToMeta(row: PoolRow): GameMeta {
 /**
  * Теги для запроса: самые весомые в профиле, за вычетом слишком частых.
  * Стоп-слова считаются по каталогу, а не задаются руками.
+ *
+ * catalogSize обязан быть размером ТОЙ ЖЕ популяции, по которой посчитан
+ * tagStats, — то есть pool_size из catalog_meta (см. rebuildTagStats), а не
+ * countIngest. Числитель по витрине и знаменатель по карте территории занижают
+ * долю примерно втридцатеро, и фильтр перестаёт срабатывать вообще.
  */
 export function pickQueryTags(
   profile: Record<string, number>,

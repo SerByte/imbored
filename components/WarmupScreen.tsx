@@ -2,8 +2,10 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { Ambient } from '@/components/Ambient'
+import { CountNumber } from '@/components/CountNumber'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Spinner } from '@/components/Spinner'
+import { plural } from '@/lib/plural'
 import { warmupPercent, type WarmupProgress } from '@/lib/warmup'
 
 /**
@@ -74,6 +76,34 @@ export function WarmupScreen({
           </motion.p>
         </AnimatePresence>
       </div>
+
+      {/* Факты о человеке вместо счётчика нашей работы.
+          «Осталось разобрать 812 игр» — это отчёт сервиса о себе. Числа ниже
+          считаются по снапшоту без единого байта метаданных, то есть приходят
+          с первым же ответом прогрева, и говорят про того, кто ждёт. */}
+      {progress?.library && progress.library.games > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="text-center"
+        >
+          <p className="text-sm text-dim">
+            <CountNumber value={progress.library.games} className="font-mono text-ink" />{' '}
+            {plural(progress.library.games, 'игра', 'игры', 'игр')} в библиотеке
+          </p>
+          {progress.library.untouched > 0 && (
+            <p className="text-sm text-dim mt-1">
+              <CountNumber
+                value={progress.library.untouched}
+                delay={260}
+                className="font-mono text-ember-text"
+              />{' '}
+              из них ты не открывал ни разу
+            </p>
+          )}
+        </motion.div>
+      )}
     </div>
   )
 }

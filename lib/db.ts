@@ -1,4 +1,5 @@
 import { createClient, type Client } from '@libsql/client'
+import type { GameArtUrls } from './art'
 import type { NewsBlock } from './steamhtml'
 import type { GameMeta, LibraryGame, Mood } from './types'
 
@@ -107,6 +108,9 @@ CREATE TABLE IF NOT EXISTS feedback (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_steamid ON feedback (steamid, created_at DESC);
+-- deck_round/deck_size — свойства КОМНАТЫ, а не участника: пул кандидатов
+-- крутится по rotationSlot(id комнаты), поэтому колода у всех одна и та же.
+-- Знаменатель «12 из 20» в ростере ожидания берётся отсюда.
 CREATE TABLE IF NOT EXISTS rooms (
   id TEXT PRIMARY KEY,
   created_by TEXT NOT NULL,
@@ -114,6 +118,8 @@ CREATE TABLE IF NOT EXISTS rooms (
   status TEXT NOT NULL DEFAULT 'open',
   matched_appid INTEGER,
   is_public INTEGER NOT NULL DEFAULT 0,
+  deck_round INTEGER NOT NULL DEFAULT 0,
+  deck_size INTEGER,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS room_members (
@@ -267,6 +273,11 @@ export async function migrateDb(db: Db): Promise<Db> {
     ['games', 'art_json TEXT'],
     ['feedback', 'reason TEXT'],
     ['rooms', 'is_public INTEGER NOT NULL DEFAULT 0'],
+    // Обязательно и здесь, и в SCHEMA: на живой базе CREATE TABLE IF NOT
+    // EXISTS — no-op, и колонка «только в SCHEMA» появится лишь на свежей
+    // :memory: из тестов, а в проде каждый запрос комнаты упадёт
+    ['rooms', 'deck_round INTEGER NOT NULL DEFAULT 0'],
+    ['rooms', 'deck_size INTEGER'],
     ['users', 'portrait_json TEXT'],
     // «выйти на всех устройствах»: отсечка по времени выдачи токена.
     // Страхует случай, когда строки сессии нет вовсе и гасить по sid нечего.
@@ -532,6 +543,10 @@ export type Room = {
   status: 'open' | 'matched'
   matchedAppid?: number
   isPublic: boolean
+  /** какой по счёту раунд колоды раздан комнате; поднимается кнопкой «ещё игр» */
+  deckRound: number
+  /** сколько карт в текущей колоде; null — колоду ещё никто не запрашивал */
+  deckSize: number | null
   createdAt: number
 }
 
@@ -558,6 +573,8 @@ export async function getRoom(db: Db, id: string): Promise<Room | null> {
         status: 'open' | 'matched'
         matched_appid: number | null
         is_public: number
+        deck_round: number | null
+        deck_size: number | null
         created_at: number
       }
     | undefined
@@ -569,8 +586,49 @@ export async function getRoom(db: Db, id: string): Promise<Room | null> {
     status: row.status,
     ...(row.matched_appid !== null ? { matchedAppid: row.matched_appid } : {}),
     isPublic: row.is_public === 1,
+    deckRound: row.deck_round ?? 0,
+    deckSize: row.deck_size ?? null,
     createdAt: row.created_at,
   }
+}
+
+/**
+ * «Ещё игр» — действие комнаты, а не участника.
+ *
+ * Единогласие в findRoomMatch считается по всем участникам, поэтому карта,
+ * которую добрал себе один человек, не даст матча никогда: остальные её просто
+ * не увидят. Раунд поднимается один раз, и остальные подхватывают его из
+ * обычного опроса.
+ *
+ * Условие deck_round < ? разрешает гонку без транзакции: если двое нажали
+ * одновременно, второй ничего не меняет и читает ту же партию. Возвращается
+ * актуальный раунд, а не тот, который просили.
+ */
+export async function advanceRoomDeckRound(
+  db: Db,
+  roomId: string,
+  toRound: number,
+): Promise<number> {
+  await db.execute({
+    sql: 'UPDATE rooms SET deck_round = ? WHERE id = ? AND deck_round < ?',
+    args: [toRound, roomId, toRound],
+  })
+  const res = await db.execute({
+    sql: 'SELECT deck_round FROM rooms WHERE id = ?',
+    args: [roomId],
+  })
+  return (res.rows[0]?.deck_round as number | undefined) ?? 0
+}
+
+/**
+ * Размер выданной колоды. Пишет его deck-роут; опрос комнаты читает бесплатно —
+ * строка rooms и так достаётся целиком.
+ */
+export async function setRoomDeckSize(db: Db, roomId: string, size: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE rooms SET deck_size = ? WHERE id = ?',
+    args: [size, roomId],
+  })
 }
 
 export async function joinRoom(
@@ -645,6 +703,56 @@ export async function setRoomMatched(db: Db, roomId: string, appid: number): Pro
     sql: "UPDATE rooms SET status = 'matched', matched_appid = ? WHERE id = ?",
     args: [appid, roomId],
   })
+}
+
+export type RoomVote = { steamid: string; appid: number; vote: 0 | 1; createdAt: number }
+
+/**
+ * Все голоса комнаты. Префикс первичного ключа (room_id, …) — это максимум
+ * несколько сотен строк, поэтому группировка по играм делается в JS, а
+ * отдельный индекс по appid не нужен: он только утяжелил бы запись на
+ * горячем пути свайпа ради выборки, которая случается раз за сессию.
+ */
+export async function roomVotes(db: Db, roomId: string): Promise<RoomVote[]> {
+  const res = await db.execute({
+    sql: 'SELECT steamid, appid, vote, created_at FROM room_votes WHERE room_id = ?',
+    args: [roomId],
+  })
+  return (
+    res.rows as unknown as Array<{
+      steamid: string
+      appid: number
+      vote: number
+      created_at: number
+    }>
+  ).map((r) => ({
+    steamid: r.steamid,
+    appid: r.appid,
+    vote: r.vote === 1 ? 1 : 0,
+    createdAt: r.created_at,
+  }))
+}
+
+/**
+ * Сколько карт отсвайпал каждый участник — одним запросом на комнату.
+ *
+ * Экран ожидания показывает прогресс всех, а опрос идёт раз в 2.5с у каждого
+ * участника. Запрос на человека давал N² чтений строк на комнату, и это самый
+ * горячий цикл продукта: пятеро в комнате — сто с лишним строк на запрос,
+ * двадцать четыре запроса в минуту с каждого. Здесь префикс первичного ключа
+ * (room_id, …), одна выборка вместо N.
+ */
+export async function roomVoteCounts(db: Db, roomId: string): Promise<Map<string, number>> {
+  const res = await db.execute({
+    sql: 'SELECT steamid, COUNT(*) AS n FROM room_votes WHERE room_id = ? GROUP BY steamid',
+    args: [roomId],
+  })
+  return new Map(
+    (res.rows as unknown as Array<{ steamid: string; n: number }>).map((r) => [
+      r.steamid,
+      Number(r.n),
+    ]),
+  )
 }
 
 export async function myVotedAppids(
@@ -1043,6 +1151,60 @@ export async function getGameMeta(db: Db, appid: number): Promise<GameMeta | nul
   return row ? rowToMeta(row) : null
 }
 
+export type SimilarGame = {
+  appid: number
+  name: string
+  headerImage: string | null
+  art: GameArtUrls | null
+}
+
+/**
+ * Соседи по тегу — «похожие» на карточке игры.
+ *
+ * Ровно ОДИН тег, а не тройка самых весомых, и это про деньги. Карточка лежит в
+ * карте сайта пятью тысячами адресов; запрос по трём тегам с GROUP BY читает
+ * все строки game_tags по каждому из них (у широкого тега это тысячи), и один
+ * проход краулера превратился бы в десятки миллионов прочитанных строк. С одним
+ * тегом запрос идёт по idx_game_tags_tag (tag, weight DESC) и обрывается на
+ * LIMIT — тот же приём, которым живёт fetchDiscoveryPool.
+ *
+ * Порядок — по weight, то есть по ХАРАКТЕРНОСТИ, а не по числу отзывов. Похожие
+ * на рогалик — это игры, которые больше всего являются рогаликом, а не самые
+ * продаваемые из тех, кто им помечен. Это же и есть механика обещания «мы
+ * никогда не продаём места в выдаче»: продать позицию тут физически нечем.
+ *
+ * appid > 0 — записи чужих магазинов лежат под отрицательными id, арта у них
+ * нет, а полка из заглушек полкой не выглядит.
+ */
+export async function topGamesByTag(
+  db: Db,
+  tag: string,
+  excludeAppid: number,
+  limit = 6,
+): Promise<SimilarGame[]> {
+  const res = await db.execute({
+    sql: `SELECT g.appid, g.name, g.header_image, g.art_json
+          FROM game_tags gt JOIN games g ON g.appid = gt.appid
+          WHERE gt.tag = ? AND g.appid != ? AND g.appid > 0 AND ${ALIVE_POOL}
+          ORDER BY gt.weight DESC
+          LIMIT ?`,
+    args: [tag, excludeAppid, limit],
+  })
+  return (
+    res.rows as unknown as Array<{
+      appid: number
+      name: string
+      header_image: string | null
+      art_json: string | null
+    }>
+  ).map((r) => ({
+    appid: Number(r.appid),
+    name: r.name,
+    headerImage: r.header_image ?? null,
+    art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
+  }))
+}
+
 /** Метаданные пачки игр одним запросом */
 export async function getGamesMeta(db: Db, appids: number[]): Promise<Map<number, GameMeta>> {
   if (!appids.length) return new Map()
@@ -1421,11 +1583,43 @@ export async function replaceGameTags(
   )
 }
 
-/** Частотность тега по каталогу — из неё считаются авто-стоп-слова */
+/**
+ * Ключ знаменателя для авто-стоп-слов. Пишется рядом с game_count и только тут:
+ * доля тега имеет смысл лишь когда числитель и знаменатель посчитаны по ОДНОЙ
+ * популяции, а разъехаться они могут молча.
+ */
+export const POOL_SIZE_KEY = 'pool_size'
+
+/**
+ * Частотность тега по каталогу — из неё считаются авто-стоп-слова.
+ *
+ * Знаменатель обновляется той же инструкцией, что и числитель, и это не
+ * аккуратность, а починка. game_count считается по game_tags — то есть по
+ * промоутнутой витрине (тысячи игр), — а STOP_TAG_SHARE в lib/pool.ts делил его
+ * на countIngest, то есть на карту территории (сотни тысяч). Деление одной
+ * популяции на другую занижало долю примерно в тридцать раз, порог 0.15 не
+ * достигался никогда, и Singleplayer с Action уходили в запрос как «характерные
+ * теги вкуса». В облаке было ещё хуже: catalog_ingest туда не публикуется
+ * (см. scripts/publish-catalog.ts), знаменатель равен нулю и фильтр пропускал
+ * вообще всё. Тот же класс ошибки уже описан в lib/compat.ts у rarityScale.
+ */
 export async function rebuildTagStats(db: Db): Promise<void> {
   await db.execute(`UPDATE tags SET game_count = (
     SELECT COUNT(*) FROM game_tags WHERE game_tags.tag = tags.name
   )`)
+  const res = await db.execute('SELECT COUNT(DISTINCT appid) AS n FROM game_tags')
+  await setCatalogMeta(db, POOL_SIZE_KEY, String(Number(res.rows[0]?.n ?? 0)))
+}
+
+/**
+ * Знаменатель для pickQueryTags. Ноль означает «витрина ещё не публиковалась» —
+ * в этом случае фильтр стоп-слов сам себя выключает и подбор работает как до
+ * починки, а не падает на непрогретой базе.
+ */
+export async function getPoolSize(db: Db): Promise<number> {
+  const raw = await getCatalogMeta(db, POOL_SIZE_KEY)
+  const n = Number(raw ?? 0)
+  return Number.isFinite(n) && n > 0 ? n : 0
 }
 
 export async function loadTagStats(db: Db): Promise<Map<string, number>> {
@@ -1620,6 +1814,50 @@ export async function bannedAppids(db: Db, steamid: string): Promise<Set<number>
     args: [steamid],
   })
   return new Set((res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid))
+}
+
+/**
+ * Забаненные с датой — для полки на /library.
+ *
+ * Свежие сверху: бан почти всегда снимают с того, что забанили сгоряча минуту
+ * назад, а не с того, что лежит там полгода. MAX(created_at), потому что бан
+ * одной игры может лежать несколькими строками — logFeedback только добавляет.
+ *
+ * Тай-брейк по appid обязателен, а не для красоты. created_at секундный, и
+ * забанить три игры подряд в одну секунду — обычное дело: на /play бан висит в
+ * одном клике от выдачи. При равном at SQLite волен вернуть строки в любом
+ * порядке, а /library — force-dynamic, и WarmCatalog дёргает на ней
+ * router.refresh(). Полка молча перетасовывалась бы сама собой через секунду
+ * после загрузки — та же болезнь, от которой лечится pickForgotten.
+ */
+export async function listBanned(
+  db: Db,
+  steamid: string,
+  limit = 60,
+): Promise<Array<{ appid: number; at: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, MAX(created_at) AS at FROM feedback
+          WHERE steamid = ? AND action = 'banned'
+          GROUP BY appid ORDER BY at DESC, appid LIMIT ?`,
+    args: [steamid, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; at: number }>).map((r) => ({
+    appid: Number(r.appid),
+    at: Number(r.at),
+  }))
+}
+
+/**
+ * Снять бан. Именно DELETE, а не ещё одна строка с action='unbanned':
+ * bannedAppids читает наличие строки, и любой «отменяющий» маркер пришлось бы
+ * учитывать в каждом месте, где бан фильтрует выдачу. Пропадает только запрет —
+ * лайки, скипы и открытия этой игры остаются на месте.
+ */
+export async function unbanGame(db: Db, steamid: string, appid: number): Promise<void> {
+  await db.execute({
+    sql: "DELETE FROM feedback WHERE steamid = ? AND appid = ? AND action = 'banned'",
+    args: [steamid, appid],
+  })
 }
 
 /* ---------- патчноуты ---------- */
