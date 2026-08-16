@@ -409,6 +409,7 @@ function Quiz() {
                     eager={stepIndex === 0}
                     onSelect={() => pick(value)}
                     onPreview={() => setHovered(value)}
+                    onLeave={() => setHovered((h) => (h === value ? null : h))}
                     onKeyDown={(e) => onPanelKey(e, i)}
                     buttonRef={(el) => {
                       panels.current[i] = el

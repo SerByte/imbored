@@ -64,6 +64,7 @@ export function AnswerPanel({
   index,
   onSelect,
   onPreview,
+  onLeave,
   onKeyDown,
   buttonRef,
 }: {
@@ -79,6 +80,9 @@ export function AnswerPanel({
   index: number
   onSelect: () => void
   onPreview?: () => void
+  /** курсор ушёл: без этого data-live залипал на последней панели и карточка
+      выглядела подсвеченной без наведения — то есть как рекомендация */
+  onLeave?: () => void
   onKeyDown?: (e: React.KeyboardEvent<HTMLButtonElement>) => void
   buttonRef?: (el: HTMLButtonElement | null) => void
 }) {
@@ -95,6 +99,7 @@ export function AnswerPanel({
       type="button"
       onClick={onSelect}
       onPointerEnter={onPreview}
+      onPointerLeave={onLeave}
       onFocus={onPreview}
       onKeyDown={onKeyDown}
       data-live={live ? '' : undefined}
