@@ -130,9 +130,23 @@ export function parseSeries(name: string): { base: string; ordinal: number | nul
   return { base: head.slice(0, m.index).trim(), ordinal }
 }
 
+/**
+ * Пометка устаревшей версии — только там, где это пометка, а не часть названия.
+ *
+ * Слово должно стоять в конце имени, перед двоеточием или в скобках: «GTA V
+ * Legacy», «theHunter Classic», «Battlefleet Gothic: Armada (Classic)»,
+ * «Serious Sam Classic: The Second Encounter». Поиск слова где угодно ловил
+ * «Divinity: Original Sin 2», «LEGO Indiana Jones: The Original Adventures» и
+ * «LEGO Batman: Legacy of the Dark Knight» — там это существительное из
+ * названия, и вытеснение уносило целую игру ради постороннего однофамильца.
+ *
+ * Промах был не виден, пока проверка маркера стояла ПОСЛЕ отсечки по
+ * одиночному режиму: до неё просто не доходили. Стоило переставить — вылезли
+ * сразу три ложных срабатывания по каталогу.
+ */
 export function hasOldMarker(name: string): boolean {
   const lower = name.toLowerCase()
-  return OLD_MARKERS.some((w) => new RegExp(`\\b${w}\\b`).test(lower))
+  return OLD_MARKERS.some((w) => new RegExp(`\\b${w}\\b\\s*(?:$|[:)\\]])`).test(lower))
 }
 
 function sameMaker(a: SeriesMember, b: SeriesMember): boolean {
@@ -209,6 +223,24 @@ export function buildSeriesIndex(
       const winner = sorted.find((w) => w.alive && w.appid !== m.appid && sameMaker(m, w))
       if (!winner) continue
 
+      /*
+       * Пометка в названии сильнее любых метрик — и сильнее предохранителя ниже.
+       *
+       * Порядок здесь и есть смысл: раньше проверка стояла ПОСЛЕ отсечки по
+       * одиночному режиму и потому не срабатывала никогда для того самого
+       * случая, ради которого писалась. У GTA V категория «одиночная» есть,
+       * так что до маркера дело не доходило, и «Игра дня» предлагала Legacy
+       * человеку, у которого рядом лежит Enhanced с наигранными часами.
+       *
+       * Метрики тут бессильны по существу: у Legacy онлайн того же порядка,
+       * что у Enhanced (31 753 против 37 649), никакого «переезда аудитории»
+       * не видно. Видно только слово, которое издатель написал сам.
+       */
+      if (m.old && !winner.old) {
+        out.set(m.appid, winner.appid)
+        continue
+      }
+
       // Если в игру можно играть одному, она не «версия», а самостоятельная
       // игра со своим содержанием: сиквел её не отменяет. Без этого прогон по
       // каталогу вытеснял Dark Souls II ради III, GTA IV ради V и Borderlands:
@@ -220,13 +252,6 @@ export function buildSeriesIndex(
       // Но пропуск больше не безусловный: одиночный режим защищает игру, пока
       // у неё есть своя аудитория, а не сам по себе (см. SUPERSEDE_RATIO_SOLO).
       if (m.soloCapable && !soloMovedOn(m, winner)) continue
-
-      // Пометка в названии сильнее любых метрик: у «GTA V Legacy» онлайн
-      // даже выше, чем у Enhanced, но актуальна всё равно вторая
-      if (m.old && !winner.old) {
-        out.set(m.appid, winner.appid)
-        continue
-      }
 
       if (winner.rank <= m.rank) continue
       // Серия сменилась не когда вышел сиквел, а когда аудитория переехала.
