@@ -29,12 +29,25 @@ import type { GameMeta, LibraryGame } from './types'
 
 type MetaOf = (appid: number) => GameMeta | undefined
 
-/** Обложка панели. Только header 460×215 — hero и 2x весят и здесь не нужны. */
+/**
+ * Обложка створки: header 460×215 и его retina-двойник 920×430.
+ *
+ * Прежняя формулировка — «только header, hero и 2x здесь не нужны» — была
+ * верна ровно до тех пор, пока ответ жил в карточке ~330×300. Створка теперь
+ * идёт от потолка до пола, и 460px растягиваются на ней в три с половиной
+ * раза. Второй размер стоит одну строку и впервые ВКЛЮЧАЕТ artSrcSet: до сих
+ * пор он возвращал undefined, а значит все sizes в квизе были мёртвыми
+ * атрибутами.
+ *
+ * hero (1920×620) по-прежнему НЕ берём, и это не про вес: у него пропорция
+ * 3.10:1 против 2.14:1 у header, то есть в вертикальной створке его обрежет
+ * СИЛЬНЕЕ, а не слабее. Портретного ассета в проекте нет вовсе.
+ */
 export type QuizCover = {
   appid: number
   name: string
   headerImage?: string
-  art?: { header: string }
+  art?: { header: string; header2x?: string }
 }
 
 /**
@@ -142,11 +155,14 @@ export function usableLibrary(
 
 function toCover(game: LibraryGame, meta: GameMeta): QuizCover {
   const header = meta.art?.header
+  const header2x = meta.art?.header2x
   return {
     appid: game.appid,
     name: meta.name || game.name,
     ...(meta.headerImage ? { headerImage: meta.headerImage } : {}),
-    ...(header ? { art: { header } } : {}),
+    // 2x кладём только вместе с базовым: artSrcSet строит набор лишь когда
+    // размеров больше одного, а одинокий 2x сломал бы порядок деградации
+    ...(header ? { art: { header, ...(header2x ? { header2x } : {}) } } : {}),
   }
 }
 

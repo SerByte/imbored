@@ -49,6 +49,37 @@
   --dur-slow: 550ms;
   --blur-reveal: 16px;
 
+  /*
+   * Вторая половина словаря движения. До неё вся хореография знала ровно одну
+   * кривую — торможение — и потому умела говорить только «приезжает». Свет
+   * так не включается.
+   *
+   * ВНИМАНИЕ при правке комментариев в этом файле: lib/motion.test.ts регулярит
+   * СЫРОЙ текст, вместе с комментариями, и берёт ПЕРВОЕ совпадение. Никогда не
+   * писать здесь имя токена с двоеточием и значением до точки с запятой —
+   * тест прочитает комментарий вместо объявления. Писать «= --dur-fast / 2».
+   */
+
+  /* Кривая контакта: ~90% пути за первые 12% времени. Свет БЬЁТ, а не
+     приезжает — розжиг лампы, вспышка, приход волоска. */
+  --ease-strike: cubic-bezier(0.05, 0.9, 0.1, 1);
+  /* Уходящее — УСКОРЯЯСЬ. Заменяет голую строку 'easeIn' в вариантах шага,
+     единственную кривую приложения, не выписанную токеном. */
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  /* Мягкий out для крупных кроссфейдов. На --ease-out перекраска комнаты
+     читается как мигание: почти весь путь проходит за первую треть. */
+  --ease-glow: cubic-bezier(0.33, 1, 0.68, 1);
+  /* ~6% перелёта. Единственная кривая здесь по вкусу, а не по физике: рост
+     1.04 на --ease-out читается как ресайз, с перелётом — как шаг вперёд. */
+  --ease-lift: cubic-bezier(0.34, 1.36, 0.64, 1);
+
+  /* Смена геля на лампе в квизе. Вдвое длиннее базовой намеренно: карточки
+     режутся встык, свет перетекает. Разность и есть кино.
+     Такт НЕ удлиняет взаимодействие — он ложится ПОВЕРХ уже существующей
+     сериализации AnimatePresence, а не после неё. */
+  --dur-relight: 720ms;
+
+
   /* Радиус крупных панелей. Токен, а не литерал: то же число обязано стоять
      в .quiz-panel:focus-visible ниже, и как литерал оно уже расходилось. */
   --radius-panel: 20px;
@@ -576,6 +607,34 @@ textarea:focus-visible {
 }
 
 /*
+ * Единственное место в проекте, где живёт will-change.
+ *
+ * Подсказку ставит и снимает lib/gpu.ts через data-warm, а не инлайн-стиль в
+ * компоненте: так весь бюджет слоёв виден в одном месте и проверяем тестом
+ * (lib/quizgpu.test.ts). Разложенный по компонентам will-change остаётся там
+ * навсегда и превращается в утечку текстур.
+ *
+ * Зачем вообще: gsap с force3D:'auto' бесплатно продвигает transform-твины, но
+ * НЕ opacity-твины, а вся хореография света построена на непрозрачности слоёв
+ * размером с экран.
+ *
+ * Потолок — два тёплых элемента одновременно, и cool() обязан вызываться и в
+ * onComplete, и в очистке useGSAP: tl.kill() не зовёт onComplete.
+ */
+[data-warm='opacity'] {
+  will-change: opacity;
+}
+[data-warm='transform'] {
+  will-change: transform;
+}
+[data-warm='opacity,transform'] {
+  will-change: opacity, transform;
+}
+[data-warm='filter'] {
+  will-change: filter;
+}
+
+/*
  * Панель ответа в квизе: обложка из библиотеки как материал.
  *
  * Грамматика материала в двух законах.
@@ -615,7 +674,7 @@ textarea:focus-visible {
      буквы — нет. Покой чуть глубже (0.62), чем у тача: дельта до заливки
      наведения шире — награда заметнее, а плиткам набора чище фигура-фон. */
   filter: blur(9px) saturate(0.6) brightness(0.62) contrast(1.06);
-  transition: filter var(--dur-slow) var(--ease-out);
+  transition: filter var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
 }
 .quiz-melt {
   filter: blur(18px) saturate(0.5) brightness(0.55);
@@ -644,7 +703,9 @@ textarea:focus-visible {
  */
 .quiz-stack-tile {
   filter: saturate(0.35) brightness(0.9) contrast(1.04);
-  transition: filter var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out);
+  transition:
+    filter var(--fx-art-tween, var(--dur-slow)) var(--ease-out),
+    opacity var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
 }
 .quiz-panel[data-live] .quiz-stack-tile,
 .quiz-panel:hover .quiz-stack-tile,
@@ -769,7 +830,11 @@ img[data-art-fade][data-loaded] {
 .quiz-panel[data-live] .quiz-glyph,
 .quiz-panel:hover .quiz-glyph,
 .quiz-panel:focus-visible .quiz-glyph {
-  color: var(--ember-text);
+  /* Глиф переезжает на ключ шага, а волосок .quiz-edge остаётся ember. Это не
+     непоследовательность: ФИКСИРОВАННЫЙ акцент под МЕНЯЮЩИМСЯ светом читается
+     как освещение, а меняющийся вместе со всем — как перекраска темы, то есть
+     как демо палитры. */
+  color: var(--key-ink, var(--ember-text));
 }
 
 /*
@@ -794,16 +859,16 @@ img[data-art-fade][data-loaded] {
   transition-duration: var(--dur-fast);
 }
 .quiz-panel[data-chosen] .quiz-glyph {
-  color: var(--ember-text);
+  color: var(--key-ink, var(--ember-text));
   transition-duration: var(--dur-fast);
 }
 .quiz-panel[data-chosen] .quiz-art {
   filter: blur(5px) saturate(1.05) brightness(0.8) contrast(1);
-  transition: filter var(--dur-slow) var(--ease-out);
+  transition: filter var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
 }
 .quiz-panel[data-chosen] .quiz-melt {
   filter: blur(14px) saturate(1) brightness(0.66);
-  transition: filter var(--dur-slow) var(--ease-out);
+  transition: filter var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
 }
 
 /*
@@ -826,7 +891,11 @@ img[data-art-fade][data-loaded] {
  * общее правило фокуса трогать незачем, оно верное.
  */
 .quiz-panel:focus-visible {
-  border-radius: var(--radius-panel);
+  /* Створка квадратная. Глобальное :focus-visible написано вне слоёв и иначе
+     навесило бы 4px скругление РОВНО сфокусированной створке, пока соседние
+     остаются с прямыми углами. Радиус переопределяем в ноль, а не убираем
+     правило: общее правило фокуса верное, чинить надо только этот угол. */
+  border-radius: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -905,8 +974,24 @@ img[data-art-fade][data-loaded] {
  * Дрейф — 110s дословно из семьи кино-коллажа главной: ambient-петли живут
  * вне шкалы --dur-* намеренно, это фон, а не взаимодействие.
  */
-.quiz-shelf img {
-  filter: saturate(0.35) brightness(0.85);
+/*
+ * Тон полки задан ОДНИМ фильтром на треке, а не тридцатью шестью на картинках.
+ * Разница не косметическая: цепочка из шести звеньев, помноженная на 36
+ * элементов и пересчитываемая на каждом кадре дрейфа, стоила бы как весь
+ * остальной экран.
+ *
+ * Оттенок меняется дискретным свопом по шагу, без интерполяции: полка —
+ * aria-hidden фактура, никто не смотрит, КАК она перетекает, и платить за
+ * перетекание нечем.
+ */
+.quiz-shelf-track {
+  filter: saturate(0.16) sepia(0.62) saturate(1.7) brightness(0.7) contrast(1.08) hue-rotate(146deg);
+}
+.quiz-room[data-key='vibe'] .quiz-shelf-track {
+  filter: saturate(0.16) sepia(0.62) saturate(1.7) brightness(0.7) contrast(1.08) hue-rotate(280deg);
+}
+.quiz-room[data-key='social'] .quiz-shelf-track {
+  filter: saturate(0.16) sepia(0.62) saturate(1.7) brightness(0.7) contrast(1.08) hue-rotate(-12deg);
 }
 .quiz-shelf {
   mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
@@ -938,6 +1023,12 @@ img[data-art-fade][data-loaded] {
   }
 }
 
+/* Активная подпись рельса светит ключом текущего шага. Чернила изолюминантны
+   (9.50 / 9.59 / 9.61:1), поэтому строка меняет тон, но не яркость. */
+.quiz-rail-on {
+  color: var(--key-ink, var(--ember-text));
+}
+
 /* Волосок рельса и нижней навигации: переезд между подписями. Класс, а не
    inline-стиль — иначе «уменьшить движение» не могло его выключить. */
 .rail-bar {
@@ -948,6 +1039,971 @@ img[data-art-fade][data-loaded] {
   .rail-bar {
     transition: none;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * НЕОН-НУАР /quiz: одна лампа, три геля.
+ *
+ * Комната освещена ОДНОЙ практической лампой за кадром слева-сверху
+ * (--lamp-x / --lamp-y). Всё в кадре подчиняется этой точке. Шаг квиза не
+ * перекрашивает интерфейс — он меняет гель на лампе: Время холодный циан,
+ * Вайб магента, Компания янтарь. Ключ третьего шага И ЕСТЬ --ember, поэтому
+ * на финальном вопросе комната и бренд сливаются, а всему финалу не нужно ни
+ * одного нового цвета.
+ *
+ * ТРИ ЗАКОНА, на которых стоит вся конструкция.
+ *
+ * 1. Большие поверхности ПЕРЕТЕКАЮТ КРОССФЕЙДОМ, мелкие — переходом.
+ *    Поверхность размером с экран никогда не интерполирует свой цвет: это две
+ *    статически отрисованные постели, у которых перекрещивается
+ *    непрозрачность. Мелкий элемент переводит свой уже вычисленный color — и
+ *    именно поэтому мгновенная смена ключа читается как поворот выключателя.
+ *    Следствие: ни одно наследуемое зарегистрированное свойство здесь не
+ *    анимируется, и главный аттракцион выходит ДЕШЕВЛЕ того, что уже работало.
+ *
+ * 2. Склейку прячет ТЕМНОТА, никогда не свет. Каждый переход укрыт провалом
+ *    диммера в --void. Это и есть нуар; это не может нарушить порог трёх
+ *    вспышек в секунду; и кадр оказывается самым тёмным ровно там, где
+ *    интерполированная середина была бы уродливее всего.
+ *
+ * 3. Цвет живёт в СЛОЕ СВЕТА; чернила не двигаются по светлоте. Ключи не
+ *    ограничены по цветности, потому что они никогда не текст. Чернила
+ *    изолюминантны (9.50 / 9.59 / 9.61:1 на фоне) — комната меняет тон, не
+ *    меняя яркость ничего читаемого.
+ *
+ * ПОЧЕМУ ПАЛИТРА ЗДЕСЬ, А НЕ В :root. Это не стиль, а следствие теста:
+ * lib/contrast.test.ts требует светлого двойника для каждого цветового токена
+ * из :root. Три неоновых ключа в :root означали бы три бессмысленные строки в
+ * светлой теме на маршруте, который и так форсирует тёмную. Тот же тест режет
+ * блоки поиском ПОДСТРОКИ, поэтому здесь нельзя писать селектор,
+ * оканчивающийся на «:root {», «.media-dark {» или «.whatsnew {».
+ *
+ * ХРУПКОСТЬ ПО ЗАМЫСЛУ: раз чернила изолюминантны, перекраску целиком несёт
+ * слой света. Приглушить .quiz-bed ниже ~0.35 — значит сделать перекраску
+ * почти невидимой. Это механизм, а не «слишком ярко».
+ * ───────────────────────────────────────────────────────────────────────── */
+.quiz-room {
+  /* Второй чёрный. Именно его наличие отличает нуар от «тёмной темы»: без
+     него --bg вынужден играть и освещённый воздух, и пустоту. */
+  --void: #050609;
+
+  --key: var(--key-cyan);
+  --key-ink: #21c7d6;
+  --key-rim: #cff8ff;
+
+  /* Свет. Порог контраста неприменим — эти значения никогда не текст. */
+  --key-cyan: #35e0ff;
+  --key-magenta: #ff4fd8;
+  --key-amber: var(--ember);
+
+  /* Дисковые ручки мощности. Правило пишется ОДИН раз и читает ручку —
+     иначе уровень исполнения означал бы второй комплект правил.
+     Не в :root: префикс --fx не освобождён от зеркала светлой темы. */
+  --fx-bloom: 1;
+  --fx-ab: 1.4px;
+  --fx-gel: 0.42;
+  --fx-art-tween: var(--dur-slow);
+
+  /* Лампа. Одна точка, которой подчиняется весь кадр. */
+  --lamp-x: 22%;
+  --lamp-y: -6%;
+
+  /*
+   * Запирает группу наложения в поддереве квиза. Без этого mix-blend-mode у
+   * .grain смешивается против КОРНЕВОГО контекста, то есть каждый blend-слой
+   * растрирует весь документ как подложку. Порядок слоёв не меняется и
+   * z-index не появляется — но отрисовка зерна слегка меняется, и это
+   * честное изменение уже отгруженных пикселей, а не no-op.
+   */
+  isolation: isolate;
+}
+
+.quiz-room[data-key='vibe'] {
+  --key: var(--key-magenta);
+  --key-ink: #ff8fe4;
+  --key-rim: #ffd9f4;
+}
+.quiz-room[data-key='social'] {
+  --key: var(--key-amber);
+  --key-ink: var(--ember);
+  --key-rim: #ffe3c4;
+}
+
+/* Понижение уровня — это поворот ручек, а не другой дизайн. Каждая сцена
+   на месте; меняется толщина, не содержание. */
+:root[data-tier='lean'] .quiz-room {
+  --fx-bloom: 0;
+  --fx-ab: 0px;
+  --fx-gel: 0.26;
+  --fx-art-tween: 0ms;
+}
+
+/*
+ * Зерна чуть больше: чем темнее комната, тем сильнее 8-битные панели полосят
+ * на широких градиентах — ровно та задача, ради которой .grain существует.
+ * Селектор с двумя классами намеренно: правило светлой темы для .grain имеет
+ * ту же специфичность, а кино-зона всегда тёмная, и «умножение» в ней
+ * читается как грязь.
+ */
+.quiz-room.media-dark .grain {
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+}
+
+/*
+ * ПОСТЕЛЬ СВЕТА. Три статические заливки, между которыми ездит непрозрачность.
+ *
+ * Первый градиент КОНЧАЕТСЯ на 58%, а не растворяется к краю: в нуаре свет
+ * упирается в темноту, а не тает. Второй — отскок от пола; он намеренно НЕ
+ * комплемент ключа (комплемент дал бы рекламный teal&orange), а тот же свет,
+ * ушедший в глубину. Третий — слабая подсветка нижнего левого угла, чтобы
+ * кадр не проваливался в плоскую черноту.
+ *
+ * Значения буквальные, без color-mix(var(--key)): постель, которая читает
+ * переменную, — это постель, которая перерисовывается.
+ */
+/*
+ * ЛАМПА ЕДЕТ ЗА ЖИВОЙ СТВОРКОЙ.
+ *
+ * Двигаем не позиции градиентов, а всю постель целиком: --lamp-x внутри
+ * background-position заставил бы перерисовывать поверхность размером с экран
+ * на каждый кадр переезда. transform уходит на композитор и не стоит ничего.
+ *
+ * Переход объявлен на самом transform, а не на переменной: нерегистрированное
+ * кастомное свойство не интерполируется, а вот вычисленный из него transform —
+ * прекрасно.
+ *
+ * Оверскан по краям обязателен: сдвинутая постель иначе оголила бы полосу у
+ * дальнего края, и свет обрывался бы вертикальной линией.
+ */
+.quiz-bed {
+  inset: -8% -24%;
+  background-repeat: no-repeat;
+  transform: translate3d(var(--lamp-shift, 0px), 0, 0);
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-bed {
+    transition: none;
+  }
+}
+.quiz-bed[data-bed='time'] {
+  background-image:
+    radial-gradient(
+      64% 40% at var(--lamp-x) var(--lamp-y),
+      rgba(120, 240, 255, 0.42),
+      rgba(53, 224, 255, 0) 64%
+    ),
+    radial-gradient(
+      132% 82% at var(--lamp-x) var(--lamp-y),
+      rgba(53, 224, 255, 0.17),
+      rgba(53, 224, 255, 0) 62%
+    ),
+    radial-gradient(62% 50% at 90% 104%, rgba(8, 46, 64, 0.8), rgba(7, 38, 52, 0) 70%),
+    radial-gradient(46% 38% at 2% 78%, rgba(53, 224, 255, 0.1), rgba(53, 224, 255, 0) 72%);
+}
+.quiz-bed[data-bed='vibe'] {
+  background-image:
+    radial-gradient(
+      64% 40% at var(--lamp-x) var(--lamp-y),
+      rgba(255, 138, 232, 0.4),
+      rgba(255, 79, 216, 0) 64%
+    ),
+    radial-gradient(
+      132% 82% at var(--lamp-x) var(--lamp-y),
+      rgba(255, 79, 216, 0.16),
+      rgba(255, 79, 216, 0) 62%
+    ),
+    radial-gradient(62% 50% at 90% 104%, rgba(40, 8, 46, 0.82), rgba(30, 7, 34, 0) 70%),
+    radial-gradient(46% 38% at 2% 78%, rgba(255, 79, 216, 0.1), rgba(255, 79, 216, 0) 72%);
+}
+.quiz-bed[data-bed='social'] {
+  background-image:
+    radial-gradient(
+      64% 40% at var(--lamp-x) var(--lamp-y),
+      rgba(255, 190, 140, 0.4),
+      rgba(255, 158, 100, 0) 64%
+    ),
+    radial-gradient(
+      132% 82% at var(--lamp-x) var(--lamp-y),
+      rgba(255, 158, 100, 0.16),
+      rgba(255, 158, 100, 0) 62%
+    ),
+    radial-gradient(62% 50% at 90% 104%, rgba(54, 20, 8, 0.8), rgba(42, 16, 6, 0) 70%),
+    radial-gradient(46% 38% at 2% 78%, rgba(255, 158, 100, 0.1), rgba(255, 158, 100, 0) 72%);
+}
+
+/*
+ * ОБЪЁМНЫЕ ШАХТЫ.
+ *
+ * НЕТ filter: blur(). Мягкость даёт сам градиент своими стопами; бесконечная
+ * петля на размытом слое пересобирала бы растр каждый кадр — вечно.
+ * НЕТ mix-blend-mode: screen. Над фоном с яркостью 0.0037 «экран» отличается
+ * от обычной композиции меньше чем на 4%: чистое чтение подложки за ничто.
+ * Неравные ширины полос — вот почему это луч, а не сетка.
+ * Угол и центр маски держат ту же лампу, что и постель.
+ */
+.quiz-rays {
+  position: absolute;
+  inset: -20% -14% auto -14%;
+  height: 120%;
+  pointer-events: none;
+  opacity: 0.62;
+  mask-image: radial-gradient(
+    58% 74% at var(--lamp-x) var(--lamp-y),
+    #000 0,
+    rgba(0, 0, 0, 0.5) 34%,
+    transparent 72%
+  );
+  -webkit-mask-image: radial-gradient(
+    58% 74% at var(--lamp-x) var(--lamp-y),
+    #000 0,
+    rgba(0, 0, 0, 0.5) 34%,
+    transparent 72%
+  );
+  animation: ray-drift 29s ease-in-out infinite alternate;
+}
+.quiz-bed[data-bed='time'] .quiz-rays {
+  background-image: repeating-linear-gradient(
+    101deg,
+    rgba(53, 224, 255, 0) 0 26px,
+    rgba(120, 240, 255, 0.17) 34px 40px,
+    rgba(53, 224, 255, 0) 48px 76px,
+    rgba(120, 240, 255, 0.09) 84px 90px,
+    rgba(53, 224, 255, 0) 98px 134px
+  );
+}
+.quiz-bed[data-bed='vibe'] .quiz-rays {
+  background-image: repeating-linear-gradient(
+    101deg,
+    rgba(255, 79, 216, 0) 0 26px,
+    rgba(255, 138, 232, 0.17) 34px 40px,
+    rgba(255, 79, 216, 0) 48px 76px,
+    rgba(255, 138, 232, 0.09) 84px 90px,
+    rgba(255, 79, 216, 0) 98px 134px
+  );
+}
+.quiz-bed[data-bed='social'] .quiz-rays {
+  background-image: repeating-linear-gradient(
+    101deg,
+    rgba(255, 158, 100, 0) 0 26px,
+    rgba(255, 190, 140, 0.17) 34px 40px,
+    rgba(255, 158, 100, 0) 48px 76px,
+    rgba(255, 190, 140, 0.09) 84px 90px,
+    rgba(255, 158, 100, 0) 98px 134px
+  );
+}
+
+@keyframes ray-drift {
+  from {
+    transform: translate3d(-1.4%, 0, 0);
+  }
+  to {
+    transform: translate3d(1.4%, 0, 0);
+  }
+}
+
+/*
+ * ВИНЬЕТКА. Градиенты не твинятся, значит их две: обычная и затянутая, а
+ * переезд между ними — одна непрозрачность. Тот же механизм, что у постели.
+ * Затянутая включается в финале: комнату сжимает вокруг победителя.
+ */
+.quiz-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /*
+   * Виньетка НЕ доходит до сплошного --void. Первая версия доходила, и она
+   * съедала лампу целиком: прозрачное ядро виньетки сидит в 50%/40%, а лампа
+   * висит в 22%/−6%, то есть ровно в самой чёрной её зоне. Кадр получался
+   * равномерно чёрным — весь свет комнаты закрашивался сверху.
+   */
+  background: radial-gradient(
+    82% 76% at 50% 40%,
+    transparent 0,
+    color-mix(in srgb, var(--void) 30%, transparent) 60%,
+    color-mix(in srgb, var(--void) 84%, transparent) 100%
+  );
+}
+.quiz-vignette[data-tight] {
+  opacity: 0;
+  background: radial-gradient(
+    54% 52% at 50% 40%,
+    transparent 0,
+    color-mix(in srgb, var(--void) 62%, transparent) 50%,
+    color-mix(in srgb, var(--void) 96%, transparent) 88%
+  );
+}
+
+/*
+ * ПРОВАЛ ДИММЕРА. Последний ребёнок кадра, поэтому накрывает подмену панелей.
+ * Пик приходится ровно на --dur-fast — момент, когда AnimatePresence меняет
+ * детей. Склейка закопана в самый тёмный кадр.
+ */
+[data-quiz-dip] {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--void);
+  opacity: 0;
+}
+
+/*
+ * УГЛЫ КАДРА. Не леттербокс (полосы невидимы под фиксированной шапкой) и не
+ * рамка — четыре уголка, которые ловят ключевой свет. Приходят один раз, на
+ * титрах, и дальше просто стоят.
+ */
+.quiz-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--key) 34%, transparent);
+}
+.quiz-corner[data-c='tl'] {
+  top: 0;
+  left: 0;
+  border-right: 0;
+  border-bottom: 0;
+}
+.quiz-corner[data-c='tr'] {
+  top: 0;
+  right: 0;
+  border-left: 0;
+  border-bottom: 0;
+}
+.quiz-corner[data-c='br'] {
+  bottom: 0;
+  right: 0;
+  border-left: 0;
+  border-top: 0;
+}
+.quiz-corner[data-c='bl'] {
+  bottom: 0;
+  left: 0;
+  border-right: 0;
+  border-top: 0;
+}
+
+/*
+ * Вес кадра в грейфере. ТОЛЬКО translate3d — субпиксельный поворот на
+ * маскированном элементе с 36 фильтрованными детьми убивает любой быстрый
+ * путь. Живёт на обёртке (она НЕ маскирована), а дрейф остаётся на треке:
+ * две анимации не должны драться за один transform.
+ */
+@keyframes gate-weave {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -0.6px, 0);
+  }
+}
+[data-quiz-shelf] {
+  animation: gate-weave 7.3s ease-in-out infinite;
+}
+
+/*
+ * ЗАКОН ATMOSPHERE-ПЕТЕЛЬ КВИЗА:
+ * 1. Ни один эмбиент-слой не двигает свою непрозрачность больше чем на 15%
+ *    и свой масштаб больше чем на 8%.
+ * 2. Ни один период не короче 7 с.
+ * 3. Периоды взаимно негармоничны: 12 / 29 / 110 / 7.3 не имеют общего
+ *    кратного под десять минут — комната никогда не «бьёт». Именно фазовое
+ *    совпадение превращает атмосферу в стробоскоп.
+ * 4. НИ ОДНА бесконечная петля не трогает размытый или blend-слой.
+ * 5. Все петли встают, когда вкладка не видна.
+ * Итого: четыре петли на полном уровне, две на пониженном.
+ */
+html[data-quiz-hidden] .quiz-rays,
+html[data-quiz-hidden] .quiz-shelf-track,
+html[data-quiz-hidden] [data-quiz-shelf],
+html[data-quiz-hidden] .anim-breathe {
+  animation-play-state: paused;
+}
+
+:root[data-tier='lean'] .quiz-rays {
+  display: none;
+}
+:root[data-tier='lean'] [data-quiz-shelf] {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Перекраска остаётся СОСТОЯНИЕМ: комната другого цвета на каждом шаге,
+     мгновенно. Убирается только перетекание — дрейф, дрожание, провал. */
+  .quiz-rays,
+  [data-quiz-shelf] {
+    animation: none;
+  }
+  .quiz-vignette,
+  [data-quiz-dip] {
+    transition: none;
+  }
+}
+
+/* ─── МАТЕРИАЛ ПАНЕЛИ В НЕОН-НУАРЕ ─────────────────────────────────────────
+ *
+ * ЗАКОНЫ, нарушение любого стоит кадров, а не пикселей:
+ *
+ * 1. НАВЕДЕНИЕ НИКОГДА НЕ МЕНЯЕТ РАДИУС РАЗМЫТИЯ — только цветовую матрицу.
+ *    9px остаётся 9px, 18px остаётся 18px. Смена радиуса требует нового региона
+ *    фильтра, нового размера растра и новой аллокации тайла; смена
+ *    saturate/brightness переиспользует размер. Раньше это соблюдалось по
+ *    вкусу — теперь это правило.
+ * 2. РОВНО ОДНА ПАНЕЛЬ ЗА РАЗ анимирует свой filter. Резкость двигается один
+ *    раз за шаг, в момент выбора.
+ * 3. НИ ОДНОГО backdrop-filter внутри .quiz-* — никогда. Закреплено
+ *    lib/quizgpu.test.ts. BlurBand остаётся отвергнутым навсегда.
+ * 4. Блум на прямоугольнике — box-shadow; блум на волоске — drop-shadow.
+ *    Анимируется НЕПРОЗРАЧНОСТЬ, геометрия тени — никогда.
+ * 5. Ни один фильтр размером с вьюпорт не анимируется. Никогда.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/*
+ * ГЕЛЬ. Тот же закон, что у стены библиотеки и ленты «Что нового», сказанный
+ * на языке света: в покое обложка принадлежит комнате, под взглядом она
+ * возвращает себе собственный цвет.
+ *
+ * mix-blend-mode: soft-light, а НЕ color — сепарабельный режим с быстрым путём
+ * в Skia; несепарабельные требуют поканального RGB→HSL против подложки и
+ * быстрого пути не имеют вовсе. Аргумент «color сохраняет светлоту» здесь и не
+ * нужен: гель под скримом, он не может тронуть контраст подписи никаким
+ * режимом.
+ */
+.quiz-gel {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--key);
+  mix-blend-mode: soft-light;
+  opacity: var(--fx-gel);
+  transition: opacity var(--fx-art-tween) var(--ease-out);
+}
+.quiz-panel[data-live] .quiz-gel,
+.quiz-panel:hover .quiz-gel,
+.quiz-panel:focus-visible .quiz-gel {
+  opacity: calc(var(--fx-gel) * 0.5);
+}
+.quiz-panel[data-chosen] .quiz-gel {
+  opacity: calc(var(--fx-gel) * 0.22);
+}
+
+/*
+ * АНАМОРФНАЯ КОСА. Один нарисованный градиент.
+ *
+ * SVG-фильтр здесь был бы ошибкой втройне: flood-color как презентационный
+ * атрибут не резолвит var() вовсе (косая молча заливается чёрным), анимация
+ * примитива пересчитывает всю цепочку на CPU покадрово на трёх панелях, и
+ * ради него понадобилась бы третья копия картинки — мегабайты текстур.
+ */
+.quiz-bloom {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    112deg,
+    transparent 34%,
+    color-mix(in srgb, var(--key-rim) calc(26% * var(--fx-bloom)), transparent) 50%,
+    transparent 66%
+  );
+  transition: opacity var(--fx-art-tween) var(--ease-out);
+}
+.quiz-panel[data-live] .quiz-bloom,
+.quiz-panel:hover .quiz-bloom,
+.quiz-panel:focus-visible .quiz-bloom,
+.quiz-panel[data-chosen] .quiz-bloom {
+  opacity: 1;
+}
+
+/*
+ * ГАЛО — НА ОБЁРТКЕ, И НИКОГДА НА КНОПКЕ. Три причины, первой достаточно.
+ *
+ * 1. box-shadow — ОДНО свойство, не аддитивное между правилами. Глобальный
+ *    :focus-visible объявляет box-shadow с тёмной подложкой, которая стоит там
+ *    ровно затем, чтобы кольцо фокуса выживало поверх игрового арта. Любое
+ *    правило box-shadow на .quiz-panel её стирает.
+ * 2. Кнопка overflow-hidden — наружное свечение из неё всё равно не выйдет.
+ * 3. ::before обёртки идёт раньше кнопки в порядке дерева, а кнопка
+ *    непрозрачна: внутреннее кольцо скрыто, наружный разлив виден. Ровно та
+ *    геометрия, что нужна, и ноль z-index.
+ *
+ * Три тени — ядро, средний спад, широкий разлив: это и есть кривая блума, и
+ * она бесплатна, потому что тень на прямоугольнике растрируется один раз и
+ * кэшируется.
+ *
+ * Гало ЧИТАЕТ --key, но никогда его не интерполирует: на перекраске панели —
+ * новые узлы DOM (ключ AnimatePresence по оси), и цвет просто верен при
+ * монтировании.
+ */
+[data-answer] {
+  position: relative;
+}
+[data-answer]::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Обводит створку, а створка квадратная */
+  border-radius: 0;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--key) calc(52% * var(--lit)), transparent),
+    0 0 26px -4px color-mix(in srgb, var(--key) calc(38% * var(--lit)), transparent),
+    0 0 96px -10px color-mix(in srgb, var(--key) calc(20% * var(--lit)), transparent);
+}
+[data-answer]:has(.quiz-panel[data-live])::before,
+[data-answer]:has(.quiz-panel:hover)::before,
+[data-answer]:has(.quiz-panel:focus-visible)::before,
+[data-answer][data-chosen]::before {
+  opacity: 1;
+}
+
+/* ─── СТВОРКИ ──────────────────────────────────────────────────────────────
+ *
+ * Ответы делят кадр целиком. Ни зазора, ни полей: между створками идёт
+ * световой шов в один пиксель, и это не разделитель, а щель, из которой бьёт
+ * свет.
+ *
+ * Ширины переезжают ОДНИМ свойством на ОДНОМ элементе — контейнере. Три
+ * анимируемых блока стоили бы три пересчёта раскладки за кадр; здесь он один.
+ * Всё равно это layout, а не композитор: гейт приёмки — ни кадра длиннее 32мс
+ * при четырёхкратном троттлинге. Не прошло — ширины замирают, а роль живой
+ * створки целиком берут на себя свет и расфокус, которые уже написаны и стоят
+ * копейки.
+ */
+.quiz-grid {
+  grid-template-columns: repeat(var(--shutters, 3), 1fr);
+  transition: grid-template-columns var(--dur-base) var(--ease-out);
+}
+.quiz-grid[data-count='2'] {
+  --shutters: 2;
+}
+
+/*
+ * Разъезд — только там, где есть настоящий курсор. На тач-устройствах
+ * расширять створку нечем и незачем: наведения не существует, а расширить одну
+ * без запроса значило бы намекнуть на рекомендацию, которой нет. Тот же гейт,
+ * что у стены библиотеки.
+ */
+@media (hover: hover) and (pointer: fine) {
+  .quiz-grid[data-count='3'][data-lit='0'] {
+    grid-template-columns: 1.5fr 0.75fr 0.75fr;
+  }
+  .quiz-grid[data-count='3'][data-lit='1'] {
+    grid-template-columns: 0.75fr 1.5fr 0.75fr;
+  }
+  .quiz-grid[data-count='3'][data-lit='2'] {
+    grid-template-columns: 0.75fr 0.75fr 1.5fr;
+  }
+  .quiz-grid[data-count='2'][data-lit='0'] {
+    grid-template-columns: 1.34fr 0.66fr;
+  }
+  .quiz-grid[data-count='2'][data-lit='1'] {
+    grid-template-columns: 0.66fr 1.34fr;
+  }
+}
+
+/*
+ * ЗАТВОР ФИНАЛА. Створки проигравших схлопываются в ноль, победитель забирает
+ * кадр целиком. Гейта по курсору здесь НЕТ намеренно: это не наведение, а
+ * ответ — он обязан отработать и на телефоне, и на клавиатуре.
+ */
+.quiz-grid[data-shut] {
+  transition-duration: var(--dur-slow);
+}
+.quiz-grid[data-shut][data-count='3'][data-lit='0'] {
+  grid-template-columns: 1fr 0fr 0fr;
+}
+.quiz-grid[data-shut][data-count='3'][data-lit='1'] {
+  grid-template-columns: 0fr 1fr 0fr;
+}
+.quiz-grid[data-shut][data-count='3'][data-lit='2'] {
+  grid-template-columns: 0fr 0fr 1fr;
+}
+.quiz-grid[data-shut][data-count='2'][data-lit='0'] {
+  grid-template-columns: 1fr 0fr;
+}
+.quiz-grid[data-shut][data-count='2'][data-lit='1'] {
+  grid-template-columns: 0fr 1fr;
+}
+@media (max-width: 767px) {
+  .quiz-grid[data-shut][data-count='3'][data-lit='0'] {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 0fr 0fr;
+  }
+  .quiz-grid[data-shut][data-count='3'][data-lit='1'] {
+    grid-template-columns: 1fr;
+    grid-template-rows: 0fr 1fr 0fr;
+  }
+  .quiz-grid[data-shut][data-count='3'][data-lit='2'] {
+    grid-template-columns: 1fr;
+    grid-template-rows: 0fr 0fr 1fr;
+  }
+  .quiz-grid[data-shut][data-count='2'][data-lit='0'] {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 0fr;
+  }
+  .quiz-grid[data-shut][data-count='2'][data-lit='1'] {
+    grid-template-columns: 1fr;
+    grid-template-rows: 0fr 1fr;
+  }
+}
+
+/*
+ * На телефоне створки ПОВОРАЧИВАЮТСЯ: те же полосы, только горизонтальные.
+ * Карточек нет и здесь. Ширины не ездят — гейт курсора выше их и не включит.
+ */
+@media (max-width: 767px) {
+  .quiz-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(var(--shutters, 3), 1fr);
+  }
+}
+
+/* Щель между створками. ::after свободен — ::before занят гало. */
+.quiz-grid > [data-answer] + [data-answer]::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: -1px;
+  width: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--key) 46%, transparent) 22%,
+    color-mix(in srgb, var(--key) 46%, transparent) 78%,
+    transparent
+  );
+  box-shadow: 0 0 14px -2px var(--key);
+}
+@media (max-width: 767px) {
+  .quiz-grid > [data-answer] + [data-answer]::after {
+    inset-block: auto;
+    inset-inline: 0;
+    top: -1px;
+    left: auto;
+    width: auto;
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      color-mix(in srgb, var(--key) 46%, transparent) 22%,
+      color-mix(in srgb, var(--key) 46%, transparent) 78%,
+      transparent
+    );
+  }
+}
+
+/*
+ * Ящик пресетов: выезжает из-под нижнего края и лежит НА створках, поэтому
+ * обязан иметь собственную подложку — иначе чипы читались бы поверх арта.
+ * --void, а не --bg: ящик это тень в кадре, а не второй фон страницы.
+ */
+.quiz-drawer {
+  background: linear-gradient(
+    to top,
+    var(--void) 0,
+    color-mix(in srgb, var(--void) 92%, transparent) 60%,
+    transparent 100%
+  );
+  border-top: 1px solid color-mix(in srgb, var(--key) 26%, transparent);
+}
+
+/*
+ * Подвал живёт ВНЕ <main> и потому недостижим со страницы. Тот же приём
+ * :has(), которым зоны уже перекрашивают шапку: страница объявляет себя,
+ * корень реагирует. На квизе кадр ровно один и заканчивается краем экрана —
+ * полоса ссылок под ним разрушила бы это одним движением.
+ */
+:root:has(.quiz-room) body > footer {
+  display: none;
+}
+
+/*
+ * СВЕТОВАЯ ЛЕСТНИЦА. Панели не равноудалены от лампы, значит не могут быть
+ * освещены одинаково. Три статических числа, ноль анимации, ноль рантайма — и
+ * это даёт больше ощущения дороговизны, чем весь остальной блум вместе.
+ *
+ * На узком экране лампа уходит по центру (см. --lamp-x в медиазапросе ниже), и
+ * лестница выключается: офф-центровый свет на одной колонке читается как
+ * ошибка вёрстки, а не как постановка.
+ */
+.quiz-grid > * {
+  --lit: 1;
+}
+@media (min-width: 768px) {
+  .quiz-grid > *:nth-child(2) {
+    --lit: 0.78;
+  }
+  .quiz-grid > *:nth-child(3) {
+    --lit: 0.6;
+  }
+}
+@media (max-width: 767px) {
+  .quiz-room {
+    --lamp-x: 50%;
+    --lamp-y: -10%;
+  }
+}
+
+/*
+ * МОКРАЯ КРОМКА И ФРИНЖ.
+ *
+ * ::after, а не ::before: ::before — первый ребёнок и лёг бы ПОД арт.
+ * Блик идёт от лампы слева-сверху. Хроматический фринж — 1px у самых кромок;
+ * текст живёт с отступом 16/20px и его не касается. Диагонального протира по
+ * стеклу здесь нет намеренно: он пересекал подпись.
+ */
+.quiz-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0.42;
+  transition: opacity var(--fx-art-tween) var(--ease-out);
+  background:
+    linear-gradient(
+      126deg,
+      color-mix(in srgb, var(--key-rim) 62%, transparent) 0 1.5px,
+      transparent 1.5px
+    ),
+    linear-gradient(90deg, rgba(255, 58, 78, 0.5) 0 var(--fx-ab), transparent var(--fx-ab)),
+    linear-gradient(270deg, rgba(58, 228, 255, 0.5) 0 var(--fx-ab), transparent var(--fx-ab));
+}
+.quiz-panel[data-live]::after,
+.quiz-panel:hover::after,
+.quiz-panel:focus-visible::after,
+.quiz-panel[data-chosen]::after {
+  opacity: 1;
+}
+
+/* Шов между двумя панелями двухкарточного шага: та же лампа, тот же ключ. */
+[data-quiz-seam] {
+  position: absolute;
+  top: 8%;
+  bottom: 8%;
+  left: 50%;
+  width: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--key) 42%, transparent),
+    transparent
+  );
+  box-shadow: 0 0 12px -2px var(--key);
+}
+
+/*
+ * ХРОМАТИЧЕСКАЯ АБЕРРАЦИЯ — ТОЛЬКО НА ДИСПЛЕЙНОМ ТЕКСТЕ.
+ *
+ * Для арта это было бы три смещённые копии картинки, то есть 12 слоёв, связанных
+ * общим scale(1.15). Для текста это ОДИН элемент, ноль слоёв, ноль blend-режимов
+ * — и при этом настоящий анаморфный вид.
+ *
+ * inherits: false и объявление на самом элементе: наследуемое зарегистрированное
+ * свойство заставило бы пересчитывать стиль всего поддерева каждый кадр.
+ * text-shadow вычисляется на заголовке и наследуется в слова уже готовым, так
+ * что эффект работает и когда SplitText не успел разрезать строку.
+ *
+ * --ab НЕ объявляется в :root: этот префикс не освобождён от зеркала светлой
+ * темы, и тест контраста покраснел бы.
+ */
+@property --ab {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+.quiz-ab {
+  --ab: 0px;
+  text-shadow:
+    calc(var(--ab) * -1) 0 0 color-mix(in srgb, var(--key) 70%, transparent),
+    var(--ab) 0 0 rgba(255, 60, 90, 0.55);
+}
+
+/*
+ * ТИТУЛЬНОСТЬ ДЕЛАЕТСЯ КОНТРАСТОМ ВЕСА ВНУТРИ ОДНОЙ СТРОКИ — так и работают
+ * настоящие титры. Ударное слово падает тяжёлым и плотным, остальное набрано
+ * разрежённым обычным: разница трекингов .05 против .02 сама по себе приём.
+ *
+ * 400, а не 250: волосяной Oswald в кириллическом верхнем регистре рвётся
+ * субпиксельно на 1x-экране (Ш, Щ, Ж), а скачок веса на 300 единиц плюс
+ * скачок трекинга дают тот же титр без этого риска. Кегль НЕ трогаем: под него
+ * откалиброван зарезервированный min-h заголовка.
+ */
+.quiz-title {
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+}
+.quiz-title .split-word[data-stress] {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 28px color-mix(in srgb, var(--key) 34%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Перетекание убрано, РАЗЛИЧИЕ сохранено: у ::after остаются оба значения
+     .42 и 1, у геля — все три ступени. Приколотить их к одному значению
+     значило бы удалить сигнал состояния, а не анимацию. */
+  .quiz-gel,
+  .quiz-bloom,
+  .quiz-panel::after,
+  [data-answer]::before {
+    transition: none;
+  }
+}
+
+/*
+ * АНАМОРФНАЯ КОСАЯ ФИНАЛА. Обычный градиентный слой, БЕЗ mix-blend-mode: над
+ * фоном с яркостью 0.0037 «экран» отличается от обычной композиции меньше чем
+ * на 4%, то есть блендинг купил бы полноэкранное чтение подложки за ничто.
+ * Высоту задаёт --streak-y, замеренный один раз по панели-победителю.
+ */
+[data-quiz-streak] {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  top: var(--streak-y, 45%);
+  height: 2px;
+  pointer-events: none;
+  opacity: 0;
+  transform-origin: 50% 50%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--key-rim) 70%, transparent) 22%,
+    var(--key-rim) 50%,
+    color-mix(in srgb, var(--key-rim) 70%, transparent) 78%,
+    transparent
+  );
+  box-shadow:
+    0 0 18px 1px color-mix(in srgb, var(--key) 60%, transparent),
+    0 0 64px 8px color-mix(in srgb, var(--key) 28%, transparent);
+}
+
+/*
+ * ТИТУЛЬНАЯ КАРТОЧКА ВХОДА.
+ *
+ * Карточка ЛОВИТ указатель намеренно: без этого первый клик, которым человек
+ * её гасит, прошёл бы насквозь и ответил на вопрос, которого он ещё не видел.
+ */
+.quiz-titlecard {
+  pointer-events: auto;
+}
+
+/* Волосок лампы: приходит ударом, расплывается, гаснет. */
+.title-filament {
+  position: absolute;
+  left: 10%;
+  top: 32%;
+  width: 30%;
+  height: 2px;
+  opacity: 0;
+  transform-origin: 0% 50%;
+  background: linear-gradient(90deg, transparent, var(--key-rim), transparent);
+  box-shadow:
+    0 0 24px 2px var(--key),
+    0 0 64px 10px color-mix(in srgb, var(--key) 45%, transparent);
+}
+
+/* Вспышка лампы — из той же точки, что и постель света. */
+.title-flare {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(
+    58% 46% at var(--lamp-x) var(--lamp-y),
+    color-mix(in srgb, var(--key) 55%, transparent),
+    transparent 62%
+  );
+}
+
+/*
+ * ЧИПЫ ПРЕСЕТОВ — бирки маркизы, а не таблетки. Радиус 2px: у маркизы прямые
+ * углы. Волосок ключа выезжает слева на наведении — тот же жест, что у
+ * .quiz-edge на панели, один словарь на весь мир квиза.
+ *
+ * Эмодзи подчиняется общему закону «цвет — свойство внимания»: в покое
+ * приглушено, под курсором оживает. Тот же приём, что у стены библиотеки.
+ *
+ * Стекла здесь больше нет, и это заодно снимает риск хромиумной
+ * несовместимости маски ленты с backdrop-filter — но правило-страховка
+ * .chip-rail .glass остаётся на месте и закреплено тестом.
+ */
+.quiz-chip {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--void) 76%, transparent);
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out);
+}
+.quiz-chip:hover {
+  border-color: color-mix(in srgb, var(--key) 38%, transparent);
+  background: color-mix(in srgb, var(--void) 88%, transparent);
+}
+.quiz-chip::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--key);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.quiz-chip:hover::after,
+.quiz-chip:focus-visible::after {
+  transform: scaleX(1);
+}
+.quiz-chip .chip-emoji {
+  opacity: 0.7;
+  filter: grayscale(0.45);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out);
+}
+.quiz-chip:hover .chip-emoji {
+  opacity: 1;
+  filter: grayscale(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-chip,
+  .quiz-chip::after,
+  .quiz-chip .chip-emoji {
+    transition: none;
+  }
+}
+
+/*
+ * ФИНАЛ ПРИ ВЫКЛЮЧЕННЫХ АНИМАЦИЯХ. GSAP здесь не работает вовсе, поэтому
+ * состояние рисуется статикой: проигравшие приглушены, победитель обведён,
+ * комната стянута. Ноль твинов — но человек ВИДИТ, что его ответ принят.
+ * Раньше он не видел ничего: выдача открывалась в тот же кадр.
+ */
+.quiz-room[data-still] [data-answer]:not([data-chosen]) {
+  opacity: 0.15;
+}
+.quiz-room[data-still] .quiz-vignette[data-tight] {
+  opacity: 1;
+}
+.quiz-room[data-still] [data-quiz-lockup] {
+  opacity: 0.3;
+}
+.quiz-room[data-still] [data-quiz-shelf] {
+  opacity: 0.2;
 }
 
 /* Тёплое пятно под курсором — см. components/SpotlightCard.tsx */

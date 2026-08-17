@@ -24,6 +24,12 @@ type StepFor<K extends AxisKey> = {
    */
   axis: string
   question: string
+  /**
+   * Индекс ударного слова вопроса. Титульность делается контрастом веса внутри
+   * одной строки, и решать, какое слово несёт вопрос, обязано СОДЕРЖАНИЕ, а не
+   * стиль: «времени», «вайб», «один» — это и есть ось, всё остальное служебное.
+   */
+  stress: number
   options: Array<{ value: Mood[K]; label: string; hint: string }>
 }
 
@@ -38,6 +44,7 @@ export const STEPS: readonly [StepFor<'time'>, StepFor<'vibe'>, StepFor<'social'
     key: 'time',
     axis: 'Время',
     question: 'Сколько у тебя времени?',
+    stress: 3,
     options: [
       { value: 'short', label: 'Меньше часа', hint: 'быстрая катка и спать' },
       { value: 'medium', label: 'Пара часов', hint: 'нормально посидеть' },
@@ -48,6 +55,7 @@ export const STEPS: readonly [StepFor<'time'>, StepFor<'vibe'>, StepFor<'social'
     key: 'vibe',
     axis: 'Вайб',
     question: 'Какой вайб?',
+    stress: 1,
     options: [
       { value: 'chill', label: 'Расслабиться', hint: 'без стресса и потных ладоней' },
       { value: 'engaged', label: 'Напрячься', hint: 'думать, потеть, побеждать' },
@@ -57,6 +65,7 @@ export const STEPS: readonly [StepFor<'time'>, StepFor<'vibe'>, StepFor<'social'
     key: 'social',
     axis: 'Компания',
     question: 'Один или с кем-то?',
+    stress: 0,
     options: [
       { value: 'solo', label: 'Один', hint: 'только я и игра' },
       { value: 'friends', label: 'С друзьями', hint: 'нужен мультиплеер или кооп' },

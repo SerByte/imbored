@@ -26,10 +26,17 @@ export function AxisRail({
   stepIndex,
   answers,
   onJump,
+  trailing,
 }: {
   stepIndex: number
   answers: Partial<Mood>
   onJump: (index: number) => void
+  /**
+   * Системный угол строки. Рендерится ПОСЛЕ кнопок шагов, и это несущее:
+   * волосок меряет row.querySelectorAll('button')[stepIndex], поэтому всё, что
+   * встанет раньше третьего индекса, будет измерено вместо подписи.
+   */
+  trailing?: React.ReactNode
 }) {
   const labels = STEPS.map((step) => {
     const chosen = answers[step.key]
@@ -105,7 +112,7 @@ export function AxisRail({
             // py/-my: у 11px-киккера хит-зона иначе меньше 20px
             className={`-my-2 py-2 transition-colors ${
               i === stepIndex
-                ? 'text-ember-text'
+                ? 'quiz-rail-on'
                 : i < stepIndex
                   ? 'cursor-pointer text-dim hover:text-ink'
                   : 'text-faint'
@@ -115,6 +122,7 @@ export function AxisRail({
           </button>
         </Fragment>
       ))}
+      {trailing && <span className="ml-auto flex items-center">{trailing}</span>}
     </div>
   )
 }

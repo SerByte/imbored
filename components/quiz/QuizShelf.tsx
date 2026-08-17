@@ -43,7 +43,7 @@ export function QuizShelf({ covers }: { covers: QuizCover[] }) {
                   fade
                   fallback={null}
                   sizes="96px"
-                  className="aspect-[460/215] w-full rounded-[10px] border border-edge object-cover"
+                  className="aspect-[460/215] w-full rounded-[3px] border border-edge object-cover"
                 />
               </span>
             ))}

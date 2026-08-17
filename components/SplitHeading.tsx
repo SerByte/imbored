@@ -34,6 +34,7 @@ export function SplitHeading({
   delay = 0,
   stagger = 0.045,
   y = 24,
+  stress,
 }: {
   children: string
   className?: string
@@ -41,6 +42,15 @@ export function SplitHeading({
   delay?: number
   stagger?: number
   y?: number
+  /**
+   * Индекс слова, которое несёт фразу: получает data-stress, а вес и трекинг
+   * ему назначает страница. Титульность делается контрастом веса внутри одной
+   * строки — так набраны настоящие титры.
+   *
+   * По умолчанию undefined, то есть поведение остальных экранов не меняется
+   * ни на байт.
+   */
+  stress?: number
 }) {
   const ref = useRef<HTMLElement>(null)
 
@@ -48,7 +58,11 @@ export function SplitHeading({
     () => {
       const el = ref.current
       if (!el) return
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      // Ударение — ТИПОГРАФИКА, а не движение: при выключенных анимациях резать
+      // строку всё равно нужно, иначе вес ударного слова пропадал бы вместе со
+      // стаггером. Экраны без stress ведут себя ровно как раньше.
+      if (reduce && stress === undefined) return
 
       let split: SplitText | null = null
       let tween: gsap.core.Tween | null = null
@@ -58,6 +72,8 @@ export function SplitHeading({
       const run = () => {
         if (cancelled || !ref.current) return
         split = new SplitText(ref.current, { type: 'words', wordsClass: 'split-word' })
+        if (stress !== undefined) split.words[stress]?.setAttribute('data-stress', '')
+        if (reduce) return
         tween = gsap.from(split.words, {
           y,
           opacity: 0,
