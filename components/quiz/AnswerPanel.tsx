@@ -51,14 +51,14 @@ const SCRIM =
  * наведение.
  */
 const TILE_A = [
-  'left-[6%] top-3 w-[30%] -rotate-[4deg] md:left-[9%] md:top-[21%] md:w-[64%] md:-rotate-[3.5deg]',
-  'left-[6%] top-3 w-[30%] -rotate-[2.5deg] md:left-[11%] md:top-[19%] md:w-[64%] md:-rotate-[2deg]',
-  'left-[6%] top-3 w-[30%] -rotate-[5deg] md:left-[7%] md:top-[23%] md:w-[64%] md:-rotate-[5deg]',
+  'left-[6%] top-3 w-[30%] -rotate-[4deg] md:left-[12%] md:top-[30%] md:w-[34%] md:-rotate-[3.5deg]',
+  'left-[6%] top-3 w-[30%] -rotate-[2.5deg] md:left-[14%] md:top-[28%] md:w-[34%] md:-rotate-[2deg]',
+  'left-[6%] top-3 w-[30%] -rotate-[5deg] md:left-[10%] md:top-[32%] md:w-[34%] md:-rotate-[5deg]',
 ]
 const TILE_B = [
-  'left-[31%] top-8 w-[30%] rotate-[3deg] md:left-[25%] md:top-[37%] md:w-[60%] md:rotate-[2.5deg]',
-  'left-[33%] top-7 w-[30%] rotate-[4.5deg] md:left-[27%] md:top-[35%] md:w-[60%] md:rotate-[4deg]',
-  'left-[29%] top-9 w-[30%] rotate-[2deg] md:left-[23%] md:top-[39%] md:w-[60%] md:rotate-[1.5deg]',
+  'left-[31%] top-8 w-[30%] rotate-[3deg] md:left-[30%] md:top-[39%] md:w-[30%] md:rotate-[2.5deg]',
+  'left-[33%] top-7 w-[30%] rotate-[4.5deg] md:left-[32%] md:top-[37%] md:w-[30%] md:rotate-[4deg]',
+  'left-[29%] top-9 w-[30%] rotate-[2deg] md:left-[28%] md:top-[41%] md:w-[30%] md:rotate-[1.5deg]',
 ]
 /**
  * Плиток ДВЕ, а не три, и это предел данных, а не вкуса: стопка ответа несёт
@@ -69,8 +69,10 @@ const TILE_B = [
  * часов. Смешать их на одной поверхности значило бы стереть различие, ради
  * которого эти две выборки и существуют раздельно.
  */
+/* Радиус 6px, а не 10: маленькая обложка с крупным скруглением читается как
+   иконка приложения, а не как кадр. */
 const TILE_IMG =
-  'w-full aspect-[460/215] rounded-[10px] border border-edge object-cover shadow-[0_16px_40px_rgba(0,0,0,0.5)]'
+  'w-full aspect-[460/215] rounded-[6px] border border-edge object-cover shadow-[0_14px_34px_rgba(0,0,0,0.55)]'
 
 /**
  * «Атмосфера сзади, набор спереди».
@@ -159,25 +161,36 @@ export function AnswerPanel({
       className={`quiz-panel relative cursor-pointer overflow-hidden ${SHAPE}`}
     >
       {primary ? (
-        <>
+        /*
+         * Обёртка наезда камеры. Именно она везёт transform, а не сами копии:
+         * те связаны общим scale(1.15), иначе размытая кайма мелта вылезает
+         * из-под арта, и это закреплено тестом.
+         *
+         * sizes намеренно ЗАВЫШЕН. Браузер выбирает вариант по ширине слота, а
+         * слот высокий и режется object-cover — по честным 33vw он взял бы 460w,
+         * и второе разрешение (header2x, 920w) осталось бы неиспользованным на
+         * поверхности, которая растягивает обложку в разы.
+         */
+        <span aria-hidden className="quiz-plate">
+          {/* Атмосфера покоя — видна всегда */}
           <GameArt
             {...art(primary)}
             eager={eager}
             fade
-            sizes="(min-width: 768px) 40vw, 100vw"
+            sizes="(min-width: 768px) 70vw, 100vw"
             fallback={<span aria-hidden className="quiz-veil" />}
-            className="quiz-art absolute inset-0 h-full w-full object-cover"
-          />
-          {/* Вторая копия того же URL — одна сетевая загрузка на обе */}
-          <GameArt
-            {...art(primary)}
-            eager={eager}
-            fade
-            sizes="(min-width: 768px) 40vw, 100vw"
-            fallback={null}
             className="quiz-melt absolute inset-0 h-full w-full object-cover"
           />
-        </>
+          {/* Слой фокуса — тот же URL, одна сетевая загрузка на обе копии */}
+          <GameArt
+            {...art(primary)}
+            eager={eager}
+            fade
+            sizes="(min-width: 768px) 70vw, 100vw"
+            fallback={null}
+            className="quiz-art absolute inset-0 h-full w-full object-cover"
+          />
+        </span>
       ) : (
         <span aria-hidden className="quiz-veil" />
       )}
@@ -189,6 +202,11 @@ export function AnswerPanel({
       */}
       <span aria-hidden className="quiz-bloom" />
       <span aria-hidden className="quiz-gel" />
+
+      {/* Тень соседней створки. ПОД скримом намеренно: в тень уходит КАДР, а
+          подпись остаётся читаемой — гасить ответ, на который человек не
+          смотрит, значило бы прятать от него варианты. */}
+      <span aria-hidden className="quiz-shade" />
 
       <span aria-hidden className="absolute inset-0" style={{ background: SCRIM }} />
 
@@ -221,6 +239,10 @@ export function AnswerPanel({
         </span>
       )}
 
+      {/* Полоса света проходит ПОВЕРХ набора: свет идёт через комнату, а не
+          под обложками. Один прогон на каждый вход указателя. */}
+      <span aria-hidden className="quiz-sweep" />
+
       <span aria-hidden className="grain" />
 
       <span
@@ -235,7 +257,7 @@ export function AnswerPanel({
         нижнему краю кадра поверх створок, и подпись не имеет права под неё
         уехать.
       */}
-      <span className="relative flex h-full flex-col justify-end p-5 pb-16 md:p-8 md:pb-20">
+      <span className="quiz-caption relative flex h-full flex-col justify-end p-5 pb-16 md:p-8 md:pb-20">
         <span className="flex items-center gap-3 md:block">
           <AnswerGlyph value={value} className="quiz-glyph shrink-0 md:mb-4" />
           <span className="block text-2xl font-semibold leading-[1.05] md:text-4xl">{label}</span>

@@ -641,8 +641,9 @@ textarea:focus-visible {
  *
  * РЕЗКОСТЬ — СВОЙСТВО МЕСТА. Верх панели почти читаем и книзу тает в мягкость
  * под подписью — титульная карточка, а не матовое стекло. Градиент резкости
- * дают ДВЕ копии одной картинки (одна сетевая загрузка): резковатая .quiz-art
- * во весь слот и сильно размытая .quiz-melt, примаскированная к низу. Ни
+ * дают ДВЕ копии одной картинки (одна сетевая загрузка): размытая в атмосферу
+ * .quiz-melt всегда видна, а слой фокуса .quiz-art проявляется поверх неё на
+ * живой створке. Резкость переезжает КРОССФЕЙДОМ, а не анимацией блюра. Ни
  * одного backdrop-filter: пять слоёв .blur-band на каждой из трёх панелей
  * стоили бы 15 живых фильтров на экран.
  *
@@ -668,29 +669,132 @@ textarea:focus-visible {
 .quiz-melt {
   transform: scale(1.15);
 }
-.quiz-art {
-  /* Пол размытия — 9px: header Steam почти всегда занят логотипом, и на
-     6px крупные литеры ещё угадывались. Композиция и палитра выживают,
-     буквы — нет. Покой чуть глубже (0.62), чем у тача: дельта до заливки
-     наведения шире — награда заметнее, а плиткам набора чище фигура-фон. */
-  filter: blur(9px) saturate(0.6) brightness(0.62) contrast(1.06);
-  transition: filter var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
-}
+/*
+ * ДВЕ КОПИИ ПОМЕНЯЛИСЬ РОЛЯМИ, И ФИЛЬТР БОЛЬШЕ НЕ АНИМИРУЕТСЯ.
+ *
+ * .quiz-melt — атмосфера покоя, видна всегда. .quiz-art — слой фокуса, лежит
+ * поверх с нулевой непрозрачностью и проявляется на живой створке. Выход из
+ * расфокуса стал КРОССФЕЙДОМ двух статически отфильтрованных слоёв: та же
+ * идиома, что у постелей света и двух виньеток. Фильтр, размером со створку,
+ * не твинится вообще — твинится непрозрачность, то есть композитор.
+ *
+ * Пол размытия атмосферы поднят с 18 до 22px, а у слоя фокуса поставлен 6px —
+ * и это арифметика, не вкус. Прежние 9px подбирались под карточку, где обложка
+ * шла почти один-к-одному. На створке во весь экран она растянута примерно
+ * в 3.5 раза, значит 9px ЭКРАННОГО блюра давали около 2.6px блюра ИСХОДНИКА —
+ * крупные литеры логотипа снова читались, и одновременно кадр выглядел кашей.
+ * Один и тот же промах ломал и анонимность, и красоту.
+ *
+ * Маски у атмосферы больше нет: она теперь несёт весь кадр, а не подпирает низ.
+ */
 .quiz-melt {
-  filter: blur(18px) saturate(0.5) brightness(0.55);
-  transition: filter var(--dur-slow) var(--ease-out);
-  mask-image: linear-gradient(to top, #000 32%, transparent 78%);
-  -webkit-mask-image: linear-gradient(to top, #000 32%, transparent 78%);
+  filter: blur(22px) saturate(0.55) brightness(0.6) contrast(1.04);
+}
+.quiz-art {
+  opacity: 0;
+  filter: blur(6px) saturate(1) brightness(0.72) contrast(1.02);
+  transition: opacity var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
 }
 .quiz-panel[data-live] .quiz-art,
 .quiz-panel:hover .quiz-art,
-.quiz-panel:focus-visible .quiz-art {
-  filter: blur(9px) saturate(1) brightness(0.78) contrast(1);
+.quiz-panel:focus-visible .quiz-art,
+.quiz-panel[data-chosen] .quiz-art {
+  opacity: 1;
 }
-.quiz-panel[data-live] .quiz-melt,
-.quiz-panel:hover .quiz-melt,
-.quiz-panel:focus-visible .quiz-melt {
-  filter: blur(18px) saturate(0.9) brightness(0.62);
+
+/* ─── ОПТИКА ЖИВОЙ СТВОРКИ ─────────────────────────────────────────────────
+ *
+ * Всё, что раньше делал переезд ширин, теперь делает камера. Ни одного
+ * пересчёта раскладки, ни одного анимируемого фильтра: только transform и
+ * opacity, то есть колебаться нечему по построению.
+ *
+ * Гейта (hover: hover) здесь НЕТ, и это осознанно. Он был нужен, пока на
+ * наведении ехала геометрия; оптика геометрию не двигает, а на тач-устройствах
+ * [data-live] ставится разметкой — значит палец получает ту же награду, что
+ * курсор.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/*
+ * НАЕЗД КАМЕРЫ. Обёртка вокруг обеих копий арта, а не сами копии: те связаны
+ * общим scale(1.15) (иначе размытая кайма мелта вылезает из-под арта), и это
+ * закреплено тестом lib/quizgpu.test.ts. Второй transform на них его бы уронил.
+ */
+.quiz-plate {
+  position: absolute;
+  inset: 0;
+  transform: scale(1);
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+.quiz-panel[data-live] .quiz-plate,
+.quiz-panel:hover .quiz-plate,
+.quiz-panel:focus-visible .quiz-plate {
+  transform: scale(1.06);
+}
+
+/*
+ * СОСЕДНИЕ ТОНУТ В ТЕНИ. Заливка --void с нулевой непрозрачностью в покое.
+ * Гейт по [data-lit] на сетке обязателен: без него темнели бы все три створки
+ * ещё до того, как человек к ним потянулся.
+ */
+.quiz-shade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--void);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.quiz-grid[data-lit] [data-answer]:not(:has(.quiz-panel[data-live])) .quiz-shade {
+  opacity: 0.62;
+}
+
+/*
+ * АНАМОРФНАЯ ПОЛОСА СВЕТА. Одноразовый прогон по живой створке — это
+ * взаимодействие, а не эмбиент, поэтому закон о периодах не короче семи секунд
+ * к нему не применяется. Анимация перезапускается сама: [data-live] появляется
+ * заново на каждый вход указателя.
+ */
+.quiz-sweep {
+  position: absolute;
+  inset: -20% -60%;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    104deg,
+    transparent 42%,
+    color-mix(in srgb, var(--key-rim) calc(30% * var(--fx-bloom)), transparent) 50%,
+    transparent 58%
+  );
+}
+@keyframes shutter-sweep {
+  0% {
+    opacity: 0;
+    transform: translate3d(-70%, 0, 0);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(70%, 0, 0);
+  }
+}
+.quiz-panel[data-live] .quiz-sweep,
+.quiz-panel:hover .quiz-sweep,
+.quiz-panel:focus-visible .quiz-sweep {
+  animation: shutter-sweep var(--dur-relight) var(--ease-glow);
+}
+
+/* Швы у живой створки вспыхивают: щель раскрывается тем сильнее, чем ближе
+   к ней смотрят. Обе стороны — своя и соседняя. */
+.quiz-grid > [data-answer] + [data-answer]::after {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.quiz-grid > [data-answer]:has(.quiz-panel[data-live])::after,
+.quiz-grid > [data-answer]:has(.quiz-panel[data-live]) + [data-answer]::after {
+  box-shadow: 0 0 26px 1px var(--key);
 }
 
 /*
@@ -701,9 +805,25 @@ textarea:focus-visible {
  * Цвет — по общему закону: в покое полутона, заливается панель целиком,
  * теми же селекторами, что и атмосфера.
  */
+/*
+ * Набор расходится на живой створке. translate, а не transform: обёртка плитки
+ * владеет поворотом веера через transform, и две системы не должны встречаться
+ * на одном свойстве. Ровно тот же приём, что у подъёма img при загрузке.
+ */
+.quiz-panel[data-live] .quiz-stack-tile:nth-child(1),
+.quiz-panel:hover .quiz-stack-tile:nth-child(1),
+.quiz-panel:focus-visible .quiz-stack-tile:nth-child(1) {
+  translate: -7% -4%;
+}
+.quiz-panel[data-live] .quiz-stack-tile:nth-child(2),
+.quiz-panel:hover .quiz-stack-tile:nth-child(2),
+.quiz-panel:focus-visible .quiz-stack-tile:nth-child(2) {
+  translate: 7% 4%;
+}
 .quiz-stack-tile {
   filter: saturate(0.35) brightness(0.9) contrast(1.04);
   transition:
+    translate var(--dur-slow) var(--ease-out),
     filter var(--fx-art-tween, var(--dur-slow)) var(--ease-out),
     opacity var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
 }
@@ -750,11 +870,10 @@ textarea:focus-visible {
  * :active — отклик на само касание, в первые кадры до прихода data-chosen.
  */
 @media (hover: none) {
+  /* Там, где наведения нет, слой фокуса приоткрыт постоянно: створка не имеет
+     права выглядеть выключенной, но и подсвеченной без запроса — тоже. */
   .quiz-art {
-    filter: blur(9px) saturate(0.8) brightness(0.72);
-  }
-  .quiz-melt {
-    filter: blur(18px) saturate(0.7) brightness(0.58);
+    opacity: 0.45;
   }
   .quiz-stack-tile {
     filter: saturate(0.75) brightness(0.95) contrast(1.04);
@@ -862,13 +981,14 @@ img[data-art-fade][data-loaded] {
   color: var(--key-ink, var(--ember-text));
   transition-duration: var(--dur-fast);
 }
-.quiz-panel[data-chosen] .quiz-art {
-  filter: blur(5px) saturate(1.05) brightness(0.8) contrast(1);
-  transition: filter var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
-}
-.quiz-panel[data-chosen] .quiz-melt {
-  filter: blur(14px) saturate(1) brightness(0.66);
-  transition: filter var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
+/*
+ * Рывок резкости на выборе — тот же кроссфейд, доведённый до конца: слой фокуса
+ * уже на единице от [data-chosen] выше, а сюда остаётся наезд камеры глубже
+ * обычного наведения. Прежние правила меняли здесь filter у обеих копий, и на
+ * створке во весь экран это был бы анимируемый фильтр размером со створку.
+ */
+.quiz-panel[data-chosen] .quiz-plate {
+  transform: scale(1.1);
 }
 
 /*
@@ -907,8 +1027,29 @@ img[data-art-fade][data-loaded] {
   .quiz-glyph,
   .quiz-key,
   .quiz-veil::after,
+  .quiz-plate,
+  .quiz-shade,
   img[data-art-fade] {
     transition: none;
+  }
+  /* Наезд камеры — чистое движение, оно ничего не сообщает сверх слоя фокуса
+     и тени соседей, которые остаются и встают мгновенно. */
+  .quiz-panel[data-live] .quiz-plate,
+  .quiz-panel:hover .quiz-plate,
+  .quiz-panel:focus-visible .quiz-plate,
+  .quiz-panel[data-chosen] .quiz-plate {
+    transform: none;
+  }
+  /* Полоса света — единственный такт оптики, у которого нет статического
+     остатка: он весь про движение, поэтому убирается целиком. */
+  .quiz-sweep {
+    display: none;
+  }
+  /* Расхождение набора тоже движение; полутон и цвет остаются */
+  .quiz-panel[data-live] .quiz-stack-tile,
+  .quiz-panel:hover .quiz-stack-tile,
+  .quiz-panel:focus-visible .quiz-stack-tile {
+    translate: none;
   }
   /* Без сброса подъём входа стал бы вечным 6px-сдвигом плитки */
   .quiz-stack-tile img[data-art-fade] {
@@ -1427,6 +1568,11 @@ html[data-quiz-hidden] .anim-breathe {
 :root[data-tier='lean'] .quiz-rays {
   display: none;
 }
+/* Полоса света — самый дорогой такт оптики: слой шире кадра, который едет
+   через всю створку. Тень соседей и слой фокуса остаются: они и несут смысл. */
+:root[data-tier='lean'] .quiz-sweep {
+  display: none;
+}
 :root[data-tier='lean'] [data-quiz-shelf] {
   animation: none;
 }
@@ -1569,43 +1715,31 @@ html[data-quiz-hidden] .anim-breathe {
  * световой шов в один пиксель, и это не разделитель, а щель, из которой бьёт
  * свет.
  *
- * Ширины переезжают ОДНИМ свойством на ОДНОМ элементе — контейнере. Три
- * анимируемых блока стоили бы три пересчёта раскладки за кадр; здесь он один.
- * Всё равно это layout, а не композитор: гейт приёмки — ни кадра длиннее 32мс
- * при четырёхкратном троттлинге. Не прошло — ширины замирают, а роль живой
- * створки целиком берут на себя свет и расфокус, которые уже написаны и стоят
- * копейки.
+ * ШИРИНЫ НА НАВЕДЕНИИ НЕ ЕЗДЯТ. НИКОГДА.
+ *
+ * Первая версия расширяла живую створку переездом grid-template-columns, и это
+ * дало мерцание — не от нехватки кадров, а АВТОКОЛЕБАНИЕМ. Механизм: переезд
+ * двигает границы створок под неподвижным курсором, браузер честно шлёт
+ * pointerleave элементу, который сам из-под курсора уехал, состояние hovered
+ * переключается, ширины едут обратно — и цикл замкнулся. Ни длительность, ни
+ * гейт по типу указателя этого не лечат: лечит только отказ от идеи.
+ *
+ * Вторая, усугубляющая причина была в записи: база стояла как repeat(3, 1fr),
+ * а цели явными списками треков, и такая пара не интерполируется — переезд шёл
+ * дискретным щелчком. Поэтому база теперь тоже явный список.
+ *
+ * Роль живой створки целиком взяла на себя ОПТИКА ниже: наезд камеры, выход из
+ * расфокуса, соседние в тени, полоса света, вспышка швов. Всё на transform и
+ * opacity, то есть геометрия неподвижна и колебаться нечему по построению.
+ *
+ * Единственный оставшийся переезд ширин — затвор финала: там курсор уже не
+ * участвует. Переход объявлен точечно на [data-shut], а не на базовом классе.
  */
 .quiz-grid {
-  grid-template-columns: repeat(var(--shutters, 3), 1fr);
-  transition: grid-template-columns var(--dur-base) var(--ease-out);
+  grid-template-columns: 1fr 1fr 1fr;
 }
 .quiz-grid[data-count='2'] {
-  --shutters: 2;
-}
-
-/*
- * Разъезд — только там, где есть настоящий курсор. На тач-устройствах
- * расширять створку нечем и незачем: наведения не существует, а расширить одну
- * без запроса значило бы намекнуть на рекомендацию, которой нет. Тот же гейт,
- * что у стены библиотеки.
- */
-@media (hover: hover) and (pointer: fine) {
-  .quiz-grid[data-count='3'][data-lit='0'] {
-    grid-template-columns: 1.5fr 0.75fr 0.75fr;
-  }
-  .quiz-grid[data-count='3'][data-lit='1'] {
-    grid-template-columns: 0.75fr 1.5fr 0.75fr;
-  }
-  .quiz-grid[data-count='3'][data-lit='2'] {
-    grid-template-columns: 0.75fr 0.75fr 1.5fr;
-  }
-  .quiz-grid[data-count='2'][data-lit='0'] {
-    grid-template-columns: 1.34fr 0.66fr;
-  }
-  .quiz-grid[data-count='2'][data-lit='1'] {
-    grid-template-columns: 0.66fr 1.34fr;
-  }
+  grid-template-columns: 1fr 1fr;
 }
 
 /*
@@ -1614,7 +1748,7 @@ html[data-quiz-hidden] .anim-breathe {
  * ответ — он обязан отработать и на телефоне, и на клавиатуре.
  */
 .quiz-grid[data-shut] {
-  transition-duration: var(--dur-slow);
+  transition: grid-template-columns var(--dur-slow) var(--ease-out);
 }
 .quiz-grid[data-shut][data-count='3'][data-lit='0'] {
   grid-template-columns: 1fr 0fr 0fr;
@@ -1705,14 +1839,52 @@ html[data-quiz-hidden] .anim-breathe {
  * обязан иметь собственную подложку — иначе чипы читались бы поверх арта.
  * --void, а не --bg: ящик это тень в кадре, а не второй фон страницы.
  */
+/*
+ * Подложка НЕПРОЗРАЧНАЯ во всю высоту ящика. Первая версия уходила градиентом
+ * в прозрачность — и чипы легли прямо на подписи створок: текст на тексте.
+ * Ящик лежит НА кадре, значит обязан быть плитой, а не дымкой.
+ */
 .quiz-drawer {
+  background: var(--void);
+  border-top: 1px solid color-mix(in srgb, var(--key) 26%, transparent);
+  box-shadow: 0 -18px 40px -12px rgba(0, 0, 0, 0.7);
+}
+
+/*
+ * Пока ящик открыт, подписи створок уезжают из-под него. translate, а не
+ * изменение отступа: сдвиг обязан быть композиторным, иначе открытие ящика
+ * пересчитывало бы раскладку трёх полноэкранных поддеревьев.
+ */
+.quiz-caption {
+  transition: translate var(--dur-base) var(--ease-out);
+}
+.quiz-room[data-drawer] .quiz-caption {
+  translate: 0 -5.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-caption {
+    transition: none;
+  }
+}
+
+/*
+ * Скрим под титром. Заголовок лежит на обложках, и без него читаемость зависела
+ * бы от того, какая игра приехала в створку. Живёт на ::before кадра, то есть
+ * над створками и под накладкой оператора.
+ */
+[data-quiz-frame]::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 42vh;
+  pointer-events: none;
   background: linear-gradient(
-    to top,
-    var(--void) 0,
-    color-mix(in srgb, var(--void) 92%, transparent) 60%,
+    to bottom,
+    color-mix(in srgb, var(--void) 72%, transparent) 0,
+    color-mix(in srgb, var(--void) 34%, transparent) 46%,
     transparent 100%
   );
-  border-top: 1px solid color-mix(in srgb, var(--key) 26%, transparent);
 }
 
 /*

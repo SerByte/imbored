@@ -116,6 +116,24 @@ describe('бюджет композиции квиза', () => {
     expect(CSS).not.toMatch(/mix-blend-mode\s*:\s*(color|hue|saturation|luminosity)\b/)
   })
 
+  test('раскладка анимируется только в затворе финала', () => {
+    /*
+     * Ширины створок, едущие ПОД КУРСОРОМ, дали мерцание — и не от нехватки
+     * кадров, а автоколебанием: переезд двигает границы под неподвижным
+     * указателем, браузер шлёт pointerleave уехавшему элементу, состояние
+     * переключается, ширины едут обратно. Цикл замкнут.
+     *
+     * Единственный законный переезд — затвор финала: там курсор уже не
+     * участвует. Всё остальное обязано быть transform/opacity.
+     */
+    const guilty = ALL.filter(
+      (r) =>
+        /transition[^;]*grid-template-columns|grid-template-columns[^;]*transition/.test(r.body) ||
+        (/transition\s*:/.test(r.body) && /grid-template/.test(r.body)),
+    ).filter((r) => !r.selector.includes('[data-shut]'))
+    expect(guilty.map((r) => r.selector)).toEqual([])
+  })
+
   test('SVG-фильтров нет', () => {
     // filter: url(#…) растрируется на CPU. Анимированный примитив пересчитывает
     // всю цепочку покадрово, а flood-color как презентационный атрибут SVG не
