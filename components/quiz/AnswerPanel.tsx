@@ -181,15 +181,26 @@ export function AnswerPanel({
             fallback={<span aria-hidden className="quiz-veil" />}
             className="quiz-melt absolute inset-0 h-full w-full object-cover"
           />
-          {/* Слой фокуса — тот же URL, одна сетевая загрузка на обе копии */}
-          <GameArt
-            {...art(primary)}
-            eager={eager}
-            fade
-            sizes="(min-width: 768px) 70vw, 100vw"
-            fallback={null}
-            className="quiz-art absolute inset-0 h-full w-full object-cover"
-          />
+          {/*
+            Слой фокуса — тот же URL, одна сетевая загрузка на обе копии.
+            Непрозрачностью управляет ОБЁРТКА, а не сама картинка: глобальное
+            правило проявления img[data-art-fade][data-loaded] { opacity: 1 }
+            имеет специфичность (0,2,1) и молча перебивает любое opacity,
+            поставленное классу на самом <img>. Кроссфейд из-за этого не
+            работал вовсе — слой фокуса был включён всегда. Воевать
+            специфичностью здесь нельзя: правило проявления общее для всего
+            арта в приложении и трогать его ради квиза неверно.
+          */}
+          <span aria-hidden className="quiz-focus">
+            <GameArt
+              {...art(primary)}
+              eager={eager}
+              fade
+              sizes="(min-width: 768px) 70vw, 100vw"
+              fallback={null}
+              className="quiz-art absolute inset-0 h-full w-full object-cover"
+            />
+          </span>
         </span>
       ) : (
         <span aria-hidden className="quiz-veil" />

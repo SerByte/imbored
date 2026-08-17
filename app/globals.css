@@ -691,14 +691,27 @@ textarea:focus-visible {
   filter: blur(22px) saturate(0.55) brightness(0.6) contrast(1.04);
 }
 .quiz-art {
-  opacity: 0;
   filter: blur(6px) saturate(1) brightness(0.72) contrast(1.02);
+}
+/*
+ * Непрозрачностью слоя фокуса владеет ОБЁРТКА, а не сама картинка.
+ * img[data-art-fade][data-loaded] { opacity: 1 } — общее правило проявления
+ * арта во всём приложении, и его специфичность (0,2,1) молча перебивает любое
+ * opacity, поставленное классу на <img>. Первая версия ставила его прямо на
+ * .quiz-art, и кроссфейд не работал ВООБЩЕ: слой фокуса был включён всегда,
+ * то есть в покое вместо атмосферы 22px виднелись резкие 6px, а логотипы на
+ * контрастных обложках читались. Обёртка снимает конфликт целиком.
+ */
+.quiz-focus {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
   transition: opacity var(--fx-art-tween, var(--dur-slow)) var(--ease-out);
 }
-.quiz-panel[data-live] .quiz-art,
-.quiz-panel:hover .quiz-art,
-.quiz-panel:focus-visible .quiz-art,
-.quiz-panel[data-chosen] .quiz-art {
+.quiz-panel[data-live] .quiz-focus,
+.quiz-panel:hover .quiz-focus,
+.quiz-panel:focus-visible .quiz-focus,
+.quiz-panel[data-chosen] .quiz-focus {
   opacity: 1;
 }
 
@@ -872,7 +885,7 @@ textarea:focus-visible {
 @media (hover: none) {
   /* Там, где наведения нет, слой фокуса приоткрыт постоянно: створка не имеет
      права выглядеть выключенной, но и подсвеченной без запроса — тоже. */
-  .quiz-art {
+  .quiz-focus {
     opacity: 0.45;
   }
   .quiz-stack-tile {
@@ -1029,6 +1042,7 @@ img[data-art-fade][data-loaded] {
   .quiz-veil::after,
   .quiz-plate,
   .quiz-shade,
+  .quiz-focus,
   img[data-art-fade] {
     transition: none;
   }
