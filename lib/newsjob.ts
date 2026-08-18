@@ -52,6 +52,60 @@ export type SliceResult = {
 }
 
 /**
+ * Персональный слот игры внутри каденции.
+ *
+ * Без него каденция — это ровное `now + интервал`, а ровное сложение сохраняет
+ * то время суток, в которое игра попала в очередь. Постановка размазывает всего
+ * на час (enrollNewsPoll, appid % 3600), поэтому одна массовая заливка склеивает
+ * набор в одну часовую полосу, и он остаётся в ней навсегда. Замер на живой базе
+ * до этой правки: 184 из 190 горячих игр приходили в срок в 13:00 UTC, пятнадцать
+ * часовых триггеров из двадцати четырёх находили пустую очередь, а лента менялась
+ * одним залпом раз в сутки — при спросе 309 опросов против ёмкости 480.
+ *
+ * Возвращается ближайшая точка сетки `k * интервал + слот`, не раньше половины
+ * каденции. Отсюда три свойства, за каждое из которых держится тест:
+ *   • срок ВСЕГДА лежит на сетке, поэтому опоздание крона не сдвигает слот и
+ *     разложенная очередь не слипается обратно;
+ *   • средний интервал равен каденции — разложить очередь не значит опрашивать
+ *     чаще, ёмкость не тратится;
+ *   • интервал не короче половины каденции, то есть слот не превращается в
+ *     лишний опрос.
+ *
+ * Хэш, а не `appid % интервал`: соседние appid — это один издатель, залитый
+ * одной пачкой (2427420 и 2427430 разошлись бы на десять секунд). Умножение по
+ * Кнуту разносит их по суткам и остаётся детерминированным.
+ */
+export function pollSlot(appid: number, intervalSec: number): number {
+  return (Math.imul(appid, 2_654_435_761) >>> 0) % intervalSec
+}
+
+function slotted(nowSec: number, intervalSec: number, appid: number): number {
+  const slot = pollSlot(appid, intervalSec)
+  const earliest = nowSec + Math.floor(intervalSec / 2)
+  return Math.ceil((earliest - slot) / intervalSec) * intervalSec + slot
+}
+
+/**
+ * Каденция без слота — отдельно, потому что её обязан знать не только крон.
+ * scripts/spread-news-poll.ts раскладывает УЖЕ слипшуюся очередь и для этого
+ * должен ответить на тот же вопрос «как часто эту игру опрашивать». Своими
+ * словами он разошёлся бы с кроном на первом же изменении порога — ровно тот
+ * класс ошибки, ради которого написан докблок lib/whatsnewfeed.ts.
+ *
+ * Отказы сюда не входят: у них не каденция, а экспоненциальный откат.
+ */
+export function pollInterval(
+  args: { status: PollStatus; lastPubAt?: number },
+  nowSec: number,
+): number {
+  if (args.status === 'empty' || args.status === 'mismatch') return 7 * DAY
+  const hot = args.lastPubAt != null && nowSec - args.lastPubAt < HOT_WINDOW
+  if (hot) return 24 * HOUR
+  const stale = args.lastPubAt != null && nowSec - args.lastPubAt > 180 * DAY
+  return (stale ? 28 : 7) * DAY
+}
+
+/**
  * Когда возвращаться к игре. Каденция от того, как часто она реально патчится,
  * а не от пожизненного числа отзывов и не от tier.
  *
@@ -69,17 +123,18 @@ export type SliceResult = {
  * патчится игра или нет.
  */
 export function nextPollAt(
-  args: { tier: number; status: PollStatus; failCount: number; lastPubAt?: number },
+  args: { appid: number; tier: number; status: PollStatus; failCount: number; lastPubAt?: number },
   nowSec: number,
 ): number {
-  const { status, failCount, lastPubAt } = args
+  const { appid, status, failCount, lastPubAt } = args
+  // Отказ — не каденция, а повтор: раскладывать его по суткам значит ждать
+  // полсуток там, где нужно полчаса.
   if (status === 'error') return nowSec + Math.min(1800 * 2 ** failCount, DAY)
-  if (status === 'empty' || status === 'mismatch') return nowSec + 7 * DAY
-
-  const hot = lastPubAt != null && nowSec - lastPubAt < HOT_WINDOW
-  if (hot) return nowSec + 24 * HOUR
-  const stale = lastPubAt != null && nowSec - lastPubAt > 180 * DAY
-  return nowSec + (stale ? 28 : 7) * DAY
+  const interval = pollInterval(
+    { status, ...(lastPubAt != null ? { lastPubAt } : {}) },
+    nowSec,
+  )
+  return slotted(nowSec, interval, appid)
 }
 
 /**
