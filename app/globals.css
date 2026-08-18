@@ -777,6 +777,59 @@ img[data-art-fade][data-loaded] {
   );
 }
 
+/*
+ * Такты ответа в квизе.
+ *
+ * На CSS, а не в motion: обёртка ответа уже анимируется вариантами входа, и
+ * два источника одного transform дрались бы за него покадрово. Здесь же это
+ * ровно то, чем CSS хорош — переход между состояниями, а не таймлайн.
+ *
+ * Состояний четыре, и каждое из них — своя кривая из словаря:
+ *  idle  — покой;
+ *  press — подтверждение нажатия, тот же такт, что CONFIRM_MS;
+ *  won   — победитель финала делает ШАГ ВПЕРЁД: --ease-lift с перелётом ~6%,
+ *          потому что рост на --ease-out читается как ресайз, а не как шаг;
+ *  lost  — проигравшие ПАДАЮТ прочь, ускоряясь: --ease-in.
+ */
+.quiz-answer {
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.quiz-answer[data-answer='press'] {
+  transform: scale(0.985);
+  transition-duration: var(--dur-fast);
+}
+.quiz-answer[data-answer='won'] {
+  transform: scale(1.04);
+  transition-timing-function: var(--ease-lift);
+  transition-duration: 400ms;
+}
+.quiz-answer[data-answer='lost'] {
+  opacity: 0.25;
+  transform: translateY(10px);
+  transition-timing-function: var(--ease-in);
+  transition-duration: 300ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * Различие состояний остаётся, перетекание уходит. Ноль означал бы, что
+   * человек с выключенным движением не видит, что его ответ приняли, — а
+   * приведённая навигация специально держит финал на экране 320 мс.
+   */
+  .quiz-answer {
+    transition: none;
+  }
+  .quiz-answer[data-answer='press'],
+  .quiz-answer[data-answer='won'] {
+    transform: none;
+  }
+  .quiz-answer[data-answer='lost'] {
+    transform: none;
+  }
+}
+
 /* Тёплое пятно под курсором — см. components/SpotlightCard.tsx */
 .spotlight {
   position: relative;
