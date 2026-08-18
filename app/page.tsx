@@ -7,7 +7,6 @@ import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { Wordmark } from '@/components/Wordmark'
-import { primeQuizBoard } from '@/lib/quizcovers'
 
 const ERROR_TEXT: Record<string, string> = {
   auth: 'Steam не подтвердил вход. Попробуй ещё раз.',
@@ -78,10 +77,6 @@ function Landing() {
   useEffect(() => {
     const settle = (authed: boolean, personaName: string | null = null) => {
       setSession({ authed, personaName })
-      // Тихий прогрев доски квиза: почти каждый вошедший идёт отсюда на /quiz,
-      // и обложки должны приехать раньше, чем он туда доберётся. Раньше запрос
-      // уходил только на монтировании квиза, и панели мгновение стояли пустыми.
-      if (authed) primeQuizBoard()
     }
     // Тот же роут, что продлевает куку: заодно и продлеваем на каждом заходе
     // на главную. markSessionTouched — чтобы SessionKeeper не сходил повторно.
