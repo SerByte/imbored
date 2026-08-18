@@ -63,15 +63,27 @@ async function seedGame(db: Db, appid: number, name: string, reviews: number) {
 }
 
 describe('nextPollAt: каденция от того, как часто игра патчится', () => {
-  const base = { tier: 1 as const, status: 'ok' as const, failCount: 0 }
+  const base = { appid: 730, tier: 1 as const, status: 'ok' as const, failCount: 0 }
+
+  /*
+   * Каденция меряется установившимся интервалом, а не первым сроком: первый
+   * сдвинут персональным слотом суток (см. slotted), и сравнивать его с ровным
+   * `NOW + сутки` больше нельзя. Установившийся — это расстояние между двумя
+   * подряд идущими сроками, когда игра уже стоит на своём слоте, то есть ровно
+   * та величина, которой оплачивается ёмкость крона.
+   */
+  const cadenceOf = (mk: (nowSec: number) => Parameters<typeof nextPollAt>[0]): number => {
+    const first = nextPollAt(mk(NOW), NOW)
+    return nextPollAt(mk(first), first) - first
+  }
 
   test('игра, патчившаяся на этой неделе, опрашивается ежедневно', () => {
-    expect(nextPollAt({ ...base, lastPubAt: NOW - 2 * DAY }, NOW)).toBe(NOW + 24 * 3600)
+    expect(cadenceOf((n) => ({ ...base, lastPubAt: n - 2 * DAY }))).toBe(24 * 3600)
   })
 
   test('давно молчащая игра каталога уходит в длинный интервал', () => {
-    expect(nextPollAt({ ...base, lastPubAt: NOW - 200 * DAY }, NOW)).toBe(NOW + 28 * DAY)
-    expect(nextPollAt({ ...base, lastPubAt: NOW - 60 * DAY }, NOW)).toBe(NOW + 7 * DAY)
+    expect(cadenceOf((n) => ({ ...base, lastPubAt: n - 200 * DAY }))).toBe(28 * DAY)
+    expect(cadenceOf((n) => ({ ...base, lastPubAt: n - 60 * DAY }))).toBe(7 * DAY)
   })
 
   test('tier на частоту не влияет: библиотечная и каталожная идут вровень', () => {
@@ -85,10 +97,11 @@ describe('nextPollAt: каденция от того, как часто игра
     // проверки на протухание, поэтому для библиотечных игр ветка stale была
     // недостижима, и молчащая с 2019 года игра опрашивалась раз в трое суток
     // вечно. На живой базе это была треть пропускной способности крона.
-    expect(nextPollAt({ ...base, tier: 0, lastPubAt: NOW - 200 * DAY }, NOW)).toBe(NOW + 28 * DAY)
+    expect(cadenceOf((n) => ({ ...base, tier: 0, lastPubAt: n - 200 * DAY }))).toBe(28 * DAY)
   })
 
   test('ошибки отступают по экспоненте, но не дальше суток', () => {
+    // Отказ слотом не раскладывается: это повтор, а не каденция.
     expect(nextPollAt({ ...base, status: 'error', failCount: 0 }, NOW)).toBe(NOW + 1800)
     expect(nextPollAt({ ...base, status: 'error', failCount: 2 }, NOW)).toBe(NOW + 7200)
     expect(nextPollAt({ ...base, status: 'error', failCount: 20 }, NOW)).toBe(NOW + DAY)
@@ -388,5 +401,45 @@ describe('сервис пересказов недоступен', () => {
     })
     const r = await db.execute('SELECT tldr_tries FROM news_items WHERE appid = 730')
     expect(Number(r.rows[0].tldr_tries)).toBe(1)
+  })
+})
+
+describe('nextPollAt: слот суток, а не ровно +24 часа', () => {
+  const base = { tier: 1 as const, status: 'ok' as const, failCount: 0, appid: 730 }
+
+  test('горячие игры, опрошенные разом, расходятся по всем часам суток', () => {
+    // Ровно тот случай, который заморозил ленту на проде: массовая постановка в
+    // очередь сложила 184 из 190 горячих игр в один час, а ровное +24ч держало
+    // их там вечно. Пятнадцать часовых триггеров из двадцати четырёх находили
+    // пустую очередь, и лента менялась одним залпом раз в сутки.
+    const appids = Array.from({ length: 200 }, (_, i) => 100_000 + i * 37)
+    const hours = new Set(
+      appids.map((appid) =>
+        Math.floor((nextPollAt({ ...base, appid, lastPubAt: NOW - 2 * DAY }, NOW) % DAY) / 3600),
+      ),
+    )
+    expect(hours.size).toBe(24)
+  })
+
+  test('опоздавший опрос возвращает игру на её слот, а не сдвигает расписание', () => {
+    // Иначе слот дрейфует на величину опоздания каждые сутки, и разложенная
+    // очередь через месяц снова слипается.
+    const onSlot = nextPollAt({ ...base, lastPubAt: NOW - 2 * DAY }, NOW)
+    const late = nextPollAt({ ...base, lastPubAt: onSlot - 2 * DAY }, onSlot + 40 * 60)
+    expect(late).toBe(onSlot + DAY)
+  })
+
+  test('длинные каденции тоже разложены по слотам', () => {
+    const appids = Array.from({ length: 100 }, (_, i) => 500_000 + i * 911)
+    const at = appids.map((appid) => nextPollAt({ ...base, appid, lastPubAt: NOW - 60 * DAY }, NOW))
+    expect(new Set(at).size).toBeGreaterThan(50)
+  })
+
+  test('каденция сохраняется: слот сдвигает срок, но не отменяет его', () => {
+    for (const appid of [1, 2, 999, 730, 1_000_003]) {
+      const hot = nextPollAt({ ...base, appid, lastPubAt: NOW - 2 * DAY }, NOW) - NOW
+      expect(hot).toBeGreaterThanOrEqual(DAY / 2)
+      expect(hot).toBeLessThan(1.5 * DAY)
+    }
   })
 })
