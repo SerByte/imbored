@@ -10,21 +10,38 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
   const db = await getDb()
-  const room = await getRoom(db, id)
+
+  /*
+   * Четыре независимых чтения — одним заходом.
+   *
+   * Это самый частый запрос продукта: он крутится у КАЖДОГО открытого таба
+   * раз в 2.5 секунды, то есть на комнате из пятерых это две пары глаз в
+   * секунду. Ровно поэтому голоса тут уже сведены в один агрегат вместо
+   * запроса на участника — но сами четыре чтения всё равно шли по очереди.
+   *
+   * Ни одно из них не зависит от результата другого: комнате, составу и
+   * агрегату нужен только id, сессии — только кука. Каждый поход в Turso из
+   * функции стоит десятки-сотни миллисекунд (замер: маршрут отвечал за 0,6 с
+   * при том, что ни один запрос не тяжёлый), и складывались именно они.
+   *
+   * Цена промаха — три лишних чтения у несуществующей комнаты. В опросе
+   * такого не бывает по определению: клиент уже стоит на её странице.
+   */
+  const [room, steamid, members, counts] = await Promise.all([
+    getRoom(db, id),
+    currentSteamId(),
+    roomMembers(db, id),
+    roomVoteCounts(db, id),
+  ])
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  const members = await roomMembers(db, id)
   const isMember = steamid ? members.some((m) => m.steamid === steamid) : false
 
+  // Зависит от room.matchedAppid, поэтому остаётся после — и случается редко.
   const matchedMeta =
     room.status === 'matched' && room.matchedAppid !== undefined
       ? await getGameMeta(db, room.matchedAppid)
       : null
-
-  // Один агрегат на комнату вместо запроса на участника: это самый частый
-  // запрос продукта, и он крутится у каждого раз в 2.5 секунды
-  const counts = await roomVoteCounts(db, id)
 
   const memberViews = members.map((m) => {
     const votes = counts.get(m.steamid) ?? 0
