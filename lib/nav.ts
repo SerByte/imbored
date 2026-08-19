@@ -57,6 +57,50 @@ function hasForbiddenChar(s: string): boolean {
   return false
 }
 
+/**
+ * С чем человек пришёл на главную.
+ *
+ * Отдельно от компонента, потому что главная перестала читать параметры
+ * через useSearchParams. Причина замерена: этот хук в статически
+ * пререндеренном маршруте роняет ВЕСЬ маршрут в клиентский рендер
+ * (BAILOUT_TO_CLIENT_SIDE_RENDERING), и прод отдавал по адресу imbored.cc
+ * 20 879 байт разметки, в которых 232 символа видимого текста — шапка и
+ * подвал. Ни заголовка, ни формы, ни кнопки «Войти через Steam»: до
+ * разбора ~186 КБ сжатого JS на главной странице сайта не было НИЧЕГО.
+ *
+ * Теперь разметка пререндерится с вариантом «человек пришёл сам», а
+ * параметры прибытия применяются сразу после гидратации. Это осознанный
+ * размен: подзаголовок и подпись кнопки у пришедшего по приглашению
+ * меняются на кадр позже, зато страница существует до того, как приедет JS.
+ */
+export type Arrival = {
+  /** код пати из приглашения, в верхнем регистре */
+  join: string | null
+  /** steamid, с кем сравниваться */
+  compat: string | null
+  /** куда вернуть после подключения; уже пропущен через safeNext */
+  next: string | null
+  /** код ошибки предыдущего шага; смысл кодов знает app/page.tsx */
+  error: string | null
+}
+
+/** Пришёл сам, ниоткуда. Он же — вариант, который уходит в пререндер. */
+export const NO_ARRIVAL: Arrival = { join: null, compat: null, next: null, error: null }
+
+export function parseArrival(search: string | URLSearchParams): Arrival {
+  const q = typeof search === 'string' ? new URLSearchParams(search) : search
+  const join = q.get('join')
+  const compat = q.get('compat')
+  // Форма join и compat не оставляет места для адреса, поэтому им хватает
+  // проверки формы; свободному next нужен белый список, см. safeNext.
+  return {
+    join: join && /^[A-Za-z0-9]{6}$/.test(join) ? join.toUpperCase() : null,
+    compat: compat && /^\d{17}$/.test(compat) ? compat : null,
+    next: safeNext(q.get('next')),
+    error: q.get('error'),
+  }
+}
+
 export function safeNext(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string') return null
   if (!raw.length || raw.length > MAX_LEN) return null

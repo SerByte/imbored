@@ -1,13 +1,13 @@
 'use client'
 
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { CinemaCollage } from '@/components/CinemaCollage'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { Wordmark } from '@/components/Wordmark'
-import { safeNext } from '@/lib/nav'
+import { parseArrival, type Arrival } from '@/lib/nav'
 
 const ERROR_TEXT: Record<string, string> = {
   auth: 'Steam не подтвердил вход. Попробуй ещё раз.',
@@ -20,10 +20,19 @@ const ERROR_TEXT: Record<string, string> = {
   // Без строки человек, пришедший по приглашению в пати, получал безликое
   // «Что-то пошло не так» вместо объяснения, что делать дальше.
   nosession: 'Сессия истекла — подключи библиотеку заново, и вернём тебя в пати.',
-  // Возврат из Steam упёрся в ограничитель частоты. Формулировка без слова
-  // «лимит»: с этим кодом сюда приходит не бот (бот текста не читает), а живой
-  // человек за общим адресом — кафе, общежитие, мобильный оператор.
+  // Ограничитель частоты. Формулировка без слова «лимит»: с этим кодом сюда
+  // приходит не бот (бот текста не читает), а живой человек за общим адресом
+  // — кафе, общежитие, мобильный оператор.
+  //
+  // Два ключа на один текст, и это не дубль. busy присылает редирект из
+  // /api/auth/steam/return, а ratelimited — тело ответа rateLimitedResponse,
+  // то есть путь ввода ника и кнопка демо. Второго ключа тут не было, и
+  // упёршийся в лимит на форме получал вместо этого объяснения безликое
+  // «Что-то пошло не так» — при том, что нужная формулировка лежала строкой
+  // выше. Потолок в /api/connect задран как раз под общий NAT, так что
+  // упирается в него именно живой человек.
   busy: 'Слишком много попыток входа с твоего адреса. Подожди пару минут и попробуй снова.',
+  ratelimited: 'Слишком много попыток входа с твоего адреса. Подожди пару минут и попробуй снова.',
   // Сессия жива, а снапшота библиотеки нет: /play и /daily присылают сюда
   // именно с этим кодом. Демо тут не предлагаем — человек уже подключал свою
   // библиотеку, ему нужно её перечитать, а не увидеть чужую.
@@ -60,13 +69,61 @@ function PrivacyHelp() {
   )
 }
 
+/**
+ * Строка запроса как внешний источник.
+ *
+ * useSyncExternalStore, а не useState с эффектом, и не useSearchParams.
+ *
+ * useSearchParams в статически пререндеренном маршруте роняет ВЕСЬ маршрут
+ * в клиентский рендер. Замер по проду: главная отдавала 20 879 байт
+ * разметки, в которых 232 символа видимого текста — шапка и подвал. Ни
+ * заголовка, ни формы, ни кнопки «Войти через Steam»: до разбора ~186 КБ
+ * сжатого JS на imbored.cc не было ничего — ни для поисковика, ни для
+ * человека на медленной сети.
+ *
+ * Отдельный серверный снимок — ровно то, ради чего у этого хука три
+ * аргумента: в пререндер уходит пустая строка (то есть «пришёл сам»,
+ * полностью рабочая страница), а после гидратации React перерисовывает с
+ * настоящим адресом. Расхождения разметки при этом не возникает — в
+ * отличие от чтения window.location прямо в рендере.
+ *
+ * popstate нужен, потому что «назад» из /quiz на /?error=… адрес меняет,
+ * а компонент не перемонтирует.
+ */
+function subscribeToSearch(onChange: () => void): () => void {
+  window.addEventListener('popstate', onChange)
+  return () => window.removeEventListener('popstate', onChange)
+}
+
+function useArrival(): Arrival {
+  const search = useSyncExternalStore(
+    subscribeToSearch,
+    () => window.location.search,
+    () => '',
+  )
+  return useMemo(() => parseArrival(search), [search])
+}
+
 function Landing() {
   const router = useRouter()
-  const search = useSearchParams()
-  const join = search.get('join')
-  const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
-  const compat = search.get('compat')
-  const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
+
+  /*
+   * Параметры прибытия читаются ПОСЛЕ гидратации, а не через
+   * useSearchParams, и это не стилистика.
+   *
+   * Хук в статически пререндеренном маршруте роняет весь маршрут в
+   * клиентский рендер: прод отдавал по адресу imbored.cc 20 879 байт
+   * разметки, в которых 232 символа видимого текста — шапка и подвал.
+   * Ни заголовка, ни формы, ни кнопки «Войти через Steam». На главной
+   * странице сайта до разбора ~186 КБ сжатого JS не было ничего: ни для
+   * поисковика, ни для человека на медленной сети.
+   *
+   * Теперь в пререндер уходит вариант «пришёл сам» — полностью рабочая
+   * страница, — а приглашение и код ошибки применяются кадром позже.
+   */
+  const arrival = useArrival()
+  const joinTarget = arrival.join
+  const compatTarget = arrival.compat
   /*
    * Куда вернуть после подключения, если человек пришёл сюда не сам.
    *
@@ -77,10 +134,21 @@ function Landing() {
    * join и compat остаются главнее: приглашение в конкретную пати или на
    * конкретное сравнение — более сильное намерение, чем «вернись, где стоял».
    */
-  const nextTarget = safeNext(search.get('next'))
+  const nextTarget = arrival.next
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
-  const [error, setError] = useState<string | null>(search.get('error'))
+
+  /*
+   * Ошибка приезжает из двух мест: из адреса (предыдущий шаг увёл сюда с
+   * кодом) и из ответа /api/connect. undefined означает «своей ошибки ещё
+   * не было» — тогда показываем ту, что в адресе.
+   *
+   * Через состояние с начальным значением из адреса это не выразить:
+   * начальное значение зафиксировалось бы на пререндере, когда адреса
+   * ещё нет, и код ошибки не показался бы никогда.
+   */
+  const [ownError, setOwnError] = useState<string | null | undefined>(undefined)
+  const error = ownError === undefined ? arrival.error : ownError
 
   /**
    * Узнаём вошедшего.
@@ -90,7 +158,9 @@ function Landing() {
    * экран входа, что и незнакомец, и нажимал «Войти через Steam» — потому что
    * ничего другого ему тут не предлагали.
    *
-   * null — ещё не знаем; пока не знаем, не рисуем ни то, ни другое.
+   * null — ещё не знаем. Пока не знаем, рисуем ФОРМУ ВХОДА, а не заглушку,
+   * и это изменение относительно первоначального замысла — см. ниже, у
+   * самой развилки.
    */
   const [session, setSession] = useState<{ authed: boolean; personaName: string | null } | null>(null)
 
@@ -111,12 +181,9 @@ function Landing() {
       // соврать кнопкой «Продолжить» тому, кто на самом деле гость, хуже.
       .catch(() => settle(false))
 
-    // Предохранитель: если ответа нет за полторы секунды, показываем вход.
-    // Без него медленная сеть оставляла бы человека наедине с «Секунду…»,
-    // то есть с экраном, на котором вообще ничего нельзя сделать. Пусть
-    // лучше мигнёт форма входа, чем повиснет заглушка.
-    const fallback = setTimeout(() => setSession((s) => s ?? { authed: false, personaName: null }), 1500)
-    return () => clearTimeout(fallback)
+    // Предохранителя на полторы секунды здесь больше нет: он существовал
+    // ровно затем, чтобы вывести человека из состояния «Секунду…», а этого
+    // состояния теперь нет вовсе — до ответа рисуется форма входа.
     // Флага «компонент ещё жив» здесь намеренно нет. Он тут был и ломал ровно
     // то, ради чего всё писалось: в dev эффект монтируется дважды, ответ
     // приходил уже после снятия флага первой попытки, и карточка навсегда
@@ -140,7 +207,7 @@ function Landing() {
 
   async function connect(demo: boolean) {
     setBusy(demo ? 'demo' : 'connect')
-    setError(null)
+    setOwnError(null)
     try {
       const res = await fetch('/api/connect', {
         method: 'POST',
@@ -152,9 +219,9 @@ function Landing() {
         router.push(target)
         return
       }
-      setError(data.error ?? 'steam')
+      setOwnError(data.error ?? 'steam')
     } catch {
-      setError('steam')
+      setOwnError('steam')
     }
     setBusy(null)
   }
@@ -178,15 +245,28 @@ function Landing() {
         </div>
 
         <div className="w-full glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise" style={{ animationDelay: '80ms' }}>
-          {session === null ? (
-            /* Пока не знаем — не показываем форму входа. Мигнуть ею вошедшему
-               значит снова позвать его нажать «Войти через Steam», то есть
-               ровно то, от чего эта правка избавляет. Высота держится, чтобы
-               карточка не прыгала. */
-            <div className="min-h-[232px] flex items-center justify-center text-sm text-faint">
-              Секунду…
-            </div>
-          ) : session.authed ? (
+          {/*
+            Пока сессия неизвестна — форма входа, а не заглушка «Секунду…».
+
+            Это разворот прежнего решения, и вот чем он оплачен. Замысел был
+            в том, чтобы не мигать формой вошедшему: он уже нажимал «Войти
+            через Steam» и звать его туда снова — ровно та жалоба, ради
+            которой карточка «С возвращением» и появилась. Но цена лежала на
+            другом человеке. Страница пререндерится, ответа /api/session/touch
+            на пререндере нет по определению, поэтому в разметке главной
+            стояло «Секунду…» — и гость, то есть тот, кого сайт пытается
+            превратить в пользователя, встречал парадную дверь заглушкой.
+            Ссылка «Войти через Steam» — обычный <a href>, она работает и без
+            JS; за заглушкой её не было.
+
+            Мигание вошедшему при этом почти не выросло: предохранитель на
+            полторы секунды и раньше показывал ему форму на медленной сети,
+            то есть ровно в тех случаях, когда ответ и задерживается.
+
+            Развилка без промежуточного состояния: authed — карточка
+            «С возвращением», всё остальное — форма.
+          */}
+          {session?.authed ? (
             <div className="min-h-[232px] flex flex-col justify-center gap-4">
               <p className="text-lg text-ink">
                 С возвращением
@@ -299,10 +379,11 @@ function Landing() {
   )
 }
 
+/*
+ * Границы Suspense здесь больше нет, и это весь смысл правки: она стояла
+ * ради useSearchParams внутри Landing, а пустой фолбэк вместе с бэйлаутом
+ * этого хука и означал пустую разметку на проде.
+ */
 export default function Home() {
-  return (
-    <Suspense>
-      <Landing />
-    </Suspense>
-  )
+  return <Landing />
 }
