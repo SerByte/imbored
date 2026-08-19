@@ -301,6 +301,71 @@ export async function fetchStoreItems(
   return out
 }
 
+/**
+ * Язык метаданных каталога — АНГЛИЙСКИЙ, и это не недосмотр.
+ *
+ * Из этого ответа берутся названия игр, а на них стоят эвристики: junk.ts
+ * отсеивает по словам soundtrack/demo/playtest, editions.ts склеивает издания
+ * по «Edition»/«Deluxe». На русских названиях («Издание», «Саундтрек») обе
+ * промахнутся по всему каталогу разом.
+ *
+ * Теги языком запроса не затрагиваются вовсе: GetItems отдаёт их числовыми
+ * tagid, а имена берутся из отдельного словаря, который тоже английский и
+ * тоже намеренно (см. fetchTagDictionary).
+ */
+const STORE_LANGUAGE = 'english'
+
+/**
+ * А вот описание — единственное, что человек ЧИТАЕТ, и оно обязано быть на
+ * языке сайта.
+ *
+ * Замер по проду: из 5000 карточек в карте сайта у 4723 описание английское
+ * и лишь у 93 русское. То есть «THE CRITICALLY ACCLAIMED FANTASY ACTION RPG»
+ * стоит абзацем под заголовком «ELDEN RING — стоит ли играть», и он же
+ * уезжает в meta description и в микроразметку.
+ *
+ * Русское описание кладёт и обогащение карточек (fetchAppDetails ходит с
+ * l=russian), но оно доходит по очереди — на весь каталог это месяцы. Этот
+ * проход чинит всё сразу и стоит дёшево: один include-флаг вместо шести.
+ */
+export const DESCRIPTION_LANGUAGE = 'russian'
+
+const STORE_DESCRIPTION_DATA_REQUEST = { include_basic_info: true }
+
+/** appid -> короткое описание на языке сайта. Пустые и отсутствующие пропускаем. */
+export function parseStoreDescriptions(json: unknown): Map<number, string> {
+  const items = (json as { response?: { store_items?: StoreItem[] } })?.response?.store_items
+  const out = new Map<number, string>()
+  if (!Array.isArray(items)) return out
+  for (const it of items) {
+    const appid = it.appid ?? it.id
+    const text = it.basic_info?.short_description
+    if (appid && typeof text === 'string' && text.trim()) out.set(appid, text)
+  }
+  return out
+}
+
+/**
+ * Описания на языке сайта для пачки игр. Отдельный проход, а не поле в общем:
+ * общий обязан оставаться английским ради названий (см. STORE_LANGUAGE).
+ */
+export async function fetchStoreDescriptions(
+  appids: number[],
+  opts: { fetchFn?: typeof fetch; language?: string } = {},
+): Promise<Map<number, string>> {
+  const positive = appids.filter((id) => id > 0)
+  const out = new Map<number, string>()
+  if (!positive.length) return out
+  const { fetchFn = fetch, language = DESCRIPTION_LANGUAGE } = opts
+  for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
+    const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
+    // msPerApp меньше общего: в ответе одно поле, а не ассеты с тегами
+    const json = await callStoreItems(chunk, STORE_DESCRIPTION_DATA_REQUEST, fetchFn, 60, language)
+    for (const [appid, text] of parseStoreDescriptions(json)) out.set(appid, text)
+  }
+  return out
+}
+
 const STORE_ITEMS_DATA_REQUEST = {
   include_assets: true,
   include_basic_info: true,
@@ -320,11 +385,12 @@ export async function callStoreItems(
   dataRequest: Record<string, unknown>,
   fetchFn: typeof fetch = fetch,
   msPerApp = 200,
+  language = STORE_LANGUAGE,
 ): Promise<unknown> {
   await pace('steam-api', STORE_API_PACE_MS)
   const input = JSON.stringify({
     ids: appids.map((appid) => ({ appid })),
-    context: { language: 'english', country_code: STORE_CC.toUpperCase(), steam_realm: 1 },
+    context: { language, country_code: STORE_CC.toUpperCase(), steam_realm: 1 },
     data_request: dataRequest,
   })
   const url = `https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(input)}`
