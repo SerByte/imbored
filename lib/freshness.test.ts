@@ -15,11 +15,23 @@ describe('freshness', () => {
   test('дни, недели, месяцы, годы — со склонением', () => {
     expect(freshness(ago(2), NOW)).toBe('2 дня назад')
     expect(freshness(ago(5), NOW)).toBe('5 дней назад')
-    expect(freshness(ago(7), NOW)).toBe('1 неделю назад')
+    expect(freshness(ago(7), NOW)).toBe('неделю назад')
     expect(freshness(ago(21), NOW)).toBe('3 недели назад')
+    expect(freshness(ago(35), NOW)).toBe('месяц назад')
     expect(freshness(ago(60), NOW)).toBe('2 месяца назад')
-    expect(freshness(ago(400), NOW)).toBe('1 год назад')
+    expect(freshness(ago(400), NOW)).toBe('год назад')
     expect(freshness(ago(1900), NOW)).toBe('5 лет назад')
+  })
+
+  test('на подходе к году подпись не проваливается в «0 лет назад»', () => {
+    // Границы считались по производным: m = days/30 при 360 днях уже 12, а
+    // y = days/365 ещё 0. Пять дней в году подпись врала нулём.
+    expect(freshness(ago(359), NOW)).toBe('11 месяцев назад')
+    expect(freshness(ago(360), NOW)).toBe('12 месяцев назад')
+    expect(freshness(ago(364), NOW)).toBe('12 месяцев назад')
+    expect(freshness(ago(365), NOW)).toBe('год назад')
+    // «10 месяцев назад» ноль содержит законно — врёт только ведущий
+    for (let d = 2; d < 4000; d++) expect(freshness(ago(d), NOW).startsWith('0')).toBe(false)
   })
 
   test('запись из будущего не срывается в отрицательные сутки', () => {
