@@ -39,6 +39,8 @@ export function RoomWaiting({
   cameFromDeck,
   onCopyLink,
   onTogglePublic,
+  onRemoveMember,
+  onLeave,
 }: {
   roomId: string
   isHost: boolean
@@ -57,6 +59,9 @@ export function RoomWaiting({
   cameFromDeck: boolean
   onCopyLink: () => void
   onTogglePublic: () => void
+  /** убрать участника (хост) или выйти самому — см. app/api/room/[id]/leave */
+  onRemoveMember: (memberId: string) => void
+  onLeave: () => void
 }) {
   const headRef = useRef<HTMLDivElement>(null)
   const me = members.find((m) => m.me)
@@ -147,7 +152,12 @@ export function RoomWaiting({
                 </p>
               )}
             </div>
-            <MemberRoster members={members} deckSize={deckSize} />
+            <MemberRoster
+              members={members}
+              deckSize={deckSize}
+              isHost={isHost}
+              onRemove={onRemoveMember}
+            />
             <NearMissList near={near} />
             <MyLikesRail games={myLikes} />
           </>
@@ -205,6 +215,22 @@ export function RoomWaiting({
           </span>
         )}
         <RoomEscapeHatch />
+        {/*
+          Выход из пати. Раньше уйти было нельзя вовсе: DELETE из room_members
+          не существовало, и человек, зашедший «посмотреть», навсегда
+          оставался в знаменателе единогласия — то есть запирал матч для
+          остальных.
+
+          Рядом с «подсесть к другим» намеренно: это одно и то же движение —
+          «мне тут не сюда».
+        */}
+        <button
+          type="button"
+          onClick={onLeave}
+          className="text-sm text-faint hover:text-danger transition-colors cursor-pointer"
+        >
+          Выйти из пати
+        </button>
       </div>
     </section>
   )

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { MatchCeremony } from '@/components/MatchCeremony'
@@ -60,6 +60,7 @@ const POLL_IDLE_AFTER_MS = 60_000
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>()
+  const router = useRouter()
   const roomId = (params.id ?? '').toUpperCase()
 
   const [state, setState] = useState<RoomState | null>(null)
@@ -334,6 +335,30 @@ export default function RoomPage() {
     }
   }
 
+  /**
+   * Убрать участника — или уйти самому, если memberId не назван.
+   *
+   * Знаменатель единогласия это число участников (findRoomMatch), а DELETE
+   * из room_members до сих пор не существовало нигде. Один вошедший и
+   * закрывший вкладку запирал комнату навсегда, и остальные вечно читали
+   * «сошлись на N играх, ждём третьего». Сам он кнопку уже не нажмёт —
+   * поэтому рука хоста тут не украшение, а единственный выход.
+   *
+   * Наружу уходит ХЕШ участника, не steamid: см. шапку lib/room.ts.
+   */
+  async function removeMember(memberId?: string) {
+    const res = await fetch(`/api/room/${roomId}/leave`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(memberId ? { memberId } : {}),
+    }).catch(() => null)
+    if (!res?.ok) return
+    // Ушёл сам — на доску, там есть куда подсесть. Убрал другого — остаёмся
+    // и перечитываем: матч мог стать достижим прямо этим действием.
+    if (memberId) void refresh()
+    else router.push('/rooms')
+  }
+
   async function togglePublic() {
     await fetch(`/api/room/${roomId}/public`, {
       method: 'POST',
@@ -528,6 +553,8 @@ export default function RoomPage() {
           deckTotal={deckTotal}
           near={likes.near}
           myLikes={likes.mine}
+          onRemoveMember={(memberId) => void removeMember(memberId)}
+          onLeave={() => void removeMember()}
           hasMore={hasMore}
           pulling={pulling}
           onPullMore={pullMore}

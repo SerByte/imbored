@@ -776,6 +776,41 @@ export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]>
   }))
 }
 
+/**
+ * Убрать участника из комнаты — вместе с его голосами.
+ *
+ * Голоса удаляются ОБЯЗАТЕЛЬНО, и это не уборка, а корректность.
+ * findRoomMatch считает знаменатель как COUNT(*) FROM room_members, а
+ * числитель как COUNT(DISTINCT v.steamid) среди положительных голосов. Если
+ * ушедший оставит свои голоса, числитель продолжит их считать при
+ * уменьшившемся знаменателе — и комната получит матч, за который никто из
+ * оставшихся не голосовал.
+ *
+ * Зачем это вообще понадобилось: DELETE из room_members не было во всём
+ * репозитории, а знаменатель — это число участников. Один человек, нажавший
+ * «Войти» и закрывший вкладку, делал матч недостижимым навсегда, и экран
+ * ожидания вечно обещал «сошлись на N играх, ждём третьего».
+ *
+ * Возвращает false, если такого участника в комнате нет: повторный вызов
+ * обязан быть безобидным.
+ */
+export async function removeRoomMember(
+  db: Db,
+  roomId: string,
+  steamid: string,
+): Promise<boolean> {
+  const res = await db.execute({
+    sql: 'DELETE FROM room_members WHERE room_id = ? AND steamid = ?',
+    args: [roomId, steamid],
+  })
+  if (!res.rowsAffected) return false
+  await db.execute({
+    sql: 'DELETE FROM room_votes WHERE room_id = ? AND steamid = ?',
+    args: [roomId, steamid],
+  })
+  return true
+}
+
 export async function castRoomVote(
   db: Db,
   roomId: string,

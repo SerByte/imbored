@@ -23,6 +23,7 @@ import {
   getUnsummarized,
   pruneNewsForApp,
   releaseLease,
+  removeRoomMember,
   reviveGoneNewsPoll,
   setNewsDigest,
   STEAM_LEASE,
@@ -893,6 +894,58 @@ describe('getNewsBlocks', () => {
   })
 })
 
+describe('removeRoomMember', () => {
+  /** Комната с уже вошедшими участниками: createRoom только заводит строку. */
+  async function room(db: Db, id: string, members: string[]) {
+    await createRoom(db, { id, steamid: members[0]! }, NOW)
+    for (const m of members) await joinRoom(db, id, m, m.toUpperCase(), NOW)
+  }
+
+  test('участник уходит вместе со своими голосами', async () => {
+    // Голоса обязаны уйти: findRoomMatch считает знаменатель по участникам, а
+    // числитель по разным steamid среди голосов. Оставленный голос ушедшего
+    // дал бы матч, за который никто из оставшихся не голосовал.
+    const db = await freshDb()
+    await room(db, 'ROOM01', ['a', 'b'])
+    await castRoomVote(db, 'ROOM01', 'a', 10, 1, NOW)
+    await castRoomVote(db, 'ROOM01', 'b', 10, 1, NOW)
+
+    expect(await removeRoomMember(db, 'ROOM01', 'b')).toBe(true)
+    expect((await roomMembers(db, 'ROOM01')).map((m) => m.steamid)).toEqual(['a'])
+    expect((await roomVotes(db, 'ROOM01')).map((v) => v.steamid)).toEqual(['a'])
+  })
+
+  test('повторный вызов безобиден', async () => {
+    const db = await freshDb()
+    await room(db, 'ROOM02', ['a'])
+    expect(await removeRoomMember(db, 'ROOM02', 'a')).toBe(true)
+    expect(await removeRoomMember(db, 'ROOM02', 'a')).toBe(false)
+  })
+
+  test('ушедший перестаёт держать единогласие', async () => {
+    // Тот самый случай: третий вошёл, закрыл вкладку и запер комнату.
+    const db = await freshDb()
+    await room(db, 'ROOM03', ['a', 'b', 'c'])
+    await castRoomVote(db, 'ROOM03', 'a', 10, 1, NOW)
+    await castRoomVote(db, 'ROOM03', 'b', 10, 1, NOW)
+
+    expect(await findRoomMatch(db, 'ROOM03')).toBeNull()
+    await removeRoomMember(db, 'ROOM03', 'c')
+    expect(await findRoomMatch(db, 'ROOM03')).toBe(10)
+  })
+
+  test('матч не собирается из голосов ушедшего', async () => {
+    const db = await freshDb()
+    await room(db, 'ROOM04', ['a', 'b', 'c'])
+    await castRoomVote(db, 'ROOM04', 'a', 10, 1, NOW)
+    await castRoomVote(db, 'ROOM04', 'c', 10, 1, NOW)
+
+    // Уходит «c», чей голос и составлял пару с «a». Оставшиеся a и b за эту
+    // игру вдвоём не голосовали — матча быть не должно.
+    await removeRoomMember(db, 'ROOM04', 'c')
+    expect(await findRoomMatch(db, 'ROOM04')).toBeNull()
+  })
+})
 describe('upsertNewsItems', () => {
   test('пишет пост и читает его обратно', async () => {
     const db = await freshDb()
