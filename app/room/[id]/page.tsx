@@ -13,6 +13,7 @@ import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import type { RoomMemberView } from '@/lib/room'
+import { plural } from '@/lib/plural'
 import type { NearMiss } from '@/lib/roomlikes'
 import { nextPollStep } from '@/lib/roompoll'
 
@@ -777,7 +778,8 @@ export default function RoomPage() {
             >
               {m.name}
               {m.me ? ' (ты)' : ''} · <span className="font-mono tabular-nums">{m.votes}</span>{' '}
-              голосов
+              {/* было прибито строкой: «1 голосов», «2 голосов» */}
+              {plural(m.votes, 'голос', 'голоса', 'голосов')}
             </span>
           ))}
         </div>
