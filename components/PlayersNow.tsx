@@ -8,12 +8,24 @@
 export function PlayersNow({ ccu, className = '' }: { ccu: number | null; className?: string }) {
   if (ccu === null || ccu === undefined) return null
 
+  /*
+   * Пульсирующая точка — только при живом онлайне.
+   *
+   * Ноль показывать НУЖНО: докблок выше объясняет, зачем — он делает отсев
+   * мёртвого мультиплеера проверяемым. А вот зелёная пульсирующая точка рядом
+   * с нулём утверждает ровно обратное числу, которое стоит в сантиметре от неё:
+   * значок говорит «живо», число говорит «никого». Из двух сигналов один лишний,
+   * и убирать надо тот, что врёт.
+   *
+   * bg-ok вместо bg-emerald-400: сырой цвет Tailwind мимо темы был единственным
+   * в этом файле и в светлой теме жил своей жизнью, тогда как токен --ok там
+   * подобран под контраст (4.86:1 — записано при его введении).
+   */
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs text-dim ${className}`}>
-      <span
-        aria-hidden
-        className="h-1.5 w-1.5 rounded-full bg-emerald-400 anim-pulse-dot"
-      />
+      {ccu > 0 ? (
+        <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok anim-pulse-dot" />
+      ) : null}
       <span className="font-mono">{ccu.toLocaleString('ru-RU')}</span> сейчас играют
     </span>
   )
