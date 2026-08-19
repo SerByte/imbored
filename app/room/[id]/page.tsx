@@ -409,7 +409,7 @@ export default function RoomPage() {
             <button
               onClick={join}
               disabled={busy}
-              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition disabled:opacity-40"
+              className="btn-fill rounded-[14px] font-semibold py-3"
             >
               Войти в комнату
             </button>

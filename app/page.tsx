@@ -329,7 +329,7 @@ function Landing() {
                 <button
                   type="submit"
                   disabled={!input || busy !== null}
-                  className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 disabled:opacity-40 hover:brightness-110 transition cursor-pointer"
+                  className="btn-fill w-full rounded-[14px] font-semibold py-3 cursor-pointer"
                 >
                   {busy === 'connect' ? 'Читаю библиотеку…' : 'Подобрать игру'}
                 </button>
