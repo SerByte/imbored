@@ -100,10 +100,32 @@ function Quiz() {
   const [back, setBack] = useState(false)
   /** Ответ, который сейчас подтверждается; в финале он же победитель. */
   const [chosen, setChosen] = useState<string | null>(null)
+  /**
+   * Перенос фокуса между шагами.
+   *
+   * AnimatePresence mode="wait" размонтирует кнопку, в которой был фокус, и
+   * он падает в body: клавиатурного человека молча выкидывает в начало
+   * документа посреди анкеты. Задача та же, что решена в
+   * components/room/RoomWaiting при уходе колоды.
+   *
+   * Но эффектом на stepIndex это не чинится, и проверено, что не чинится:
+   * mode="wait" монтирует новый шаг ТОЛЬКО после того, как доиграет уход
+   * старого, а эффект срабатывает сразу — узла ещё нет, фокусировать нечего.
+   * Поэтому фокус забирает ref-колбэк, то есть сам момент появления узла, а
+   * флаг отличает смену шага от первого захода: воровать фокус у человека,
+   * который только открыл страницу, не за чем.
+   */
+  const wantStepFocus = useRef(false)
+  const stepHeadRef = useCallback((el: HTMLHeadingElement | null) => {
+    if (!el || !wantStepFocus.current) return
+    wantStepFocus.current = false
+    el.focus()
+  }, [])
   const [outro, setOutro] = useState(false)
 
   const step = STEPS[stepIndex]
   const last = stepIndex === STEPS.length - 1
+
   // Приходит с /library («Разгрести →») и живёт до самого /play. Не настроение,
   // а отдельная ось — как roulette у «Мне повезёт».
   //
@@ -196,6 +218,7 @@ function Quiz() {
         setAnswers(next)
         setBack(false)
         setChosen(null)
+        wantStepFocus.current = true
         setStepIndex((i) => i + 1)
       }, CONFIRM_MS)
       return
@@ -319,12 +342,25 @@ function Quiz() {
             exit="exit"
             className="w-full flex flex-col items-center gap-10"
           >
+            {/*
+              tabIndex={-1} — чтобы заголовок мог принять фокус программно, не
+              появляясь при этом в обходе по Tab. role="status" на нём же
+              лишний: заголовок и так объявляется при получении фокуса, а
+              «какой это вопрос из скольких» несёт подпись ниже.
+            */}
             <motion.h1
+              ref={stepHeadRef}
+              tabIndex={-1}
               variants={ITEM_VARIANTS}
-              className="text-3xl md:text-4xl font-bold tracking-tight text-center"
+              className="text-3xl md:text-4xl font-bold tracking-tight text-center outline-none"
             >
               {step.question}
             </motion.h1>
+            {/* Точки прогресса выше — голые span, для скринридера их нет.
+                Одна строка вместо них, и меняется она раз в шаг, а не в кадр. */}
+            <p role="status" className="sr-only">
+              Вопрос {stepIndex + 1} из {STEPS.length}
+            </p>
 
             {/* Залп искр ровно один раз за прохождение — в финале и программно,
                 на sparkAt из партитуры, а не по клику. lib/motion.test.ts
@@ -343,6 +379,7 @@ function Quiz() {
           <button
             onClick={() => {
               setBack(true)
+              wantStepFocus.current = true
               setStepIndex(stepIndex - 1)
             }}
             className="text-sm text-dim hover:text-ink transition-colors cursor-pointer"
