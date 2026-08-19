@@ -190,7 +190,23 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           fallback={null}
           className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
         />
-        <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-10 grid md:grid-cols-[380px_1fr] gap-8 items-start">
+        {/*
+          Разрез на две колонки с lg, а не с md: раньше он включался там, где
+          ещё вредил.
+
+          Замер на 768px: контейнер 728, из него 380 забирает арт и 32 зазор —
+          правой колонке остаётся 316. Это УЖЕ, чем одна колонка на телефоне
+          (335 на 375px). В неё восемь тегов ложились в три ряда, описание в
+          шесть строк, четыре кнопки в три ряда, а слева под коротким артом
+          зияла пустота почти на 470×400.
+
+          Одной колонкой на той же ширине: арт баннером 727×340, все восемь
+          тегов в ряд, описание в три строки, все кнопки в ряд, пустоты нет.
+
+          Десктоп не тронут: max-w-5xl держит контейнер на 984, и с 1024 разрез
+          даёт те же 380 и 572, что и до правки.
+        */}
+        <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-10 grid lg:grid-cols-[380px_1fr] gap-8 items-start">
           <GameArt
             appid={meta.appid}
             name={meta.name}
