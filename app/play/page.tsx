@@ -589,14 +589,7 @@ function Player() {
             name={pick.name}
             screenshots={pick.screenshots ?? []}
           />
-          <div
-            aria-hidden
-            className="absolute inset-0"
-            style={{
-              background:
-                'linear-gradient(to top, #0b0c10 4%, rgba(11,12,16,0.82) 26%, rgba(11,12,16,0.25) 55%, rgba(11,12,16,0.45) 100%)',
-            }}
-          />
+          <div aria-hidden className="absolute inset-0 hero-scrim" />
           {/* Арт остаётся ярким и просто уходит в мягкость под текстом —
               жёсткий градиент-стоп гасил его целиком, оставляя резким.
               tint включён: базовый скрим настроен под тёмный ключ-арт, а сюда
