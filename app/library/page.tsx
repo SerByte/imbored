@@ -4,6 +4,7 @@ import { GameArt } from '@/components/GameArt'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
+import { trimArt } from '@/lib/art'
 import { feedbackStats, getGamesMeta, getLatestSnapshot, listBanned } from '@/lib/db'
 import {
   buildLibraryView,
@@ -75,7 +76,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       // всё равно обязана показать плитку: иначе бан не снять вообще
       name: meta?.name ?? `Игра ${b.appid}`,
       headerImage: meta?.headerImage ?? null,
-      art: meta?.art ?? null,
+      art: trimArt(meta?.art),
     }
   })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
@@ -197,7 +198,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   appid={g.appid}
                   name={g.name}
                   headerImage={metas.get(g.appid)?.headerImage ?? null}
-                  art={metas.get(g.appid)?.art ?? null}
+                  art={trimArt(metas.get(g.appid)?.art)}
                   sizes="(min-width: 768px) 20vw, 50vw"
                   className="w-full aspect-[460/215] object-cover"
                 />
@@ -246,7 +247,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                 appid={g.appid}
                 name={g.name}
                 headerImage={metas.get(g.appid)?.headerImage ?? null}
-                art={metas.get(g.appid)?.art ?? null}
+                art={trimArt(metas.get(g.appid)?.art)}
                 sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
                 className="w-full aspect-[460/215] object-cover"
               />

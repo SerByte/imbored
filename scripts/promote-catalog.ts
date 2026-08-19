@@ -155,6 +155,23 @@ async function main() {
   console.log(`\nсигналы для ${multiplayer.length} совместных игр…`)
   for (const [i, m] of multiplayer.entries()) {
     m.ccu = await fetchCurrentPlayers(m.appid).catch(() => undefined)
+    /*
+     * Отметка времени замера — обязательна, и её тут не было.
+     *
+     * ccu показывается на витрине словами «N сейчас играют», то есть это
+     * утверждение про НАСТОЯЩИЙ момент. Без ccu_at проверить его нечем:
+     * замер этого скрипта ручной, следующий прогон может случиться через
+     * месяц, а подпись всё это время будет говорить «сейчас».
+     *
+     * Ровно та же ось свежести, что у цены (priceAt) и по той же причине,
+     * записанной в lib/discount: «неточная цена — полбеды, неправда про
+     * скидку — повод больше сюда не возвращаться».
+     *
+     * Ставим только вместе с самим числом: отметка без замера означала бы
+     * «свежо» там, где данных нет вовсе, и вывела бы игру из очереди на
+     * догрев в /api/prepare (там условие ccu_at IS NULL OR ccu_at < …).
+     */
+    if (m.ccu !== undefined) m.ccuAt = nowSec
     await sleep(REVIEW_PACE_MS)
     m.reviews30d = await fetchRecentReviews(m.appid, nowSec).catch(() => undefined)
     if ((i + 1) % 50 === 0) console.log(`  ${i + 1}/${multiplayer.length}`)
