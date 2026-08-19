@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { FlapCode } from '@/components/FlapCode'
 import { Spinner } from '@/components/Spinner'
+import { minutesAgoLabel } from '@/lib/freshness'
 
 type Listing = { id: string; memberNames: string[]; minutesAgo: number }
 
@@ -145,7 +146,7 @@ export default function RoomsBoardPage() {
                     <FlapCode code={r.id} animate={board?.fresh.has(r.id) ?? false} />
                     <div className="text-sm text-dim mt-0.5">
                       {r.memberNames.join(', ')} ·{' '}
-                      {r.minutesAgo < 1 ? 'только что' : `${r.minutesAgo} мин назад`}
+                      {minutesAgoLabel(r.minutesAgo)}
                     </div>
                   </div>
                   <span className="text-sm text-ink shrink-0">Подсесть →</span>
