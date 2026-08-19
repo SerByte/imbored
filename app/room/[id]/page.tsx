@@ -97,7 +97,10 @@ export default function RoomPage() {
   const [voteFailed, setVoteFailed] = useState(false)
   const [localVotes, setLocalVotes] = useState(0)
   const [busy, setBusy] = useState(false)
-  /** Отказ входа демо-другом. Появился вместе с потолком на /api/connect. */
+  /**
+   * Отказ входа. Появился вместе с потолком на /api/connect ради демо-друга,
+   * теперь им же говорит и обычный вход: комнаты нет, сессия истекла, сеть.
+   */
   const [joinError, setJoinError] = useState<string | null>(null)
   const [likes, setLikes] = useState<{ mine: LikedGame[]; near: NearMiss[] }>({
     mine: [],
@@ -105,6 +108,8 @@ export default function RoomPage() {
   })
   const [hasMore, setHasMore] = useState(false)
   const [pulling, setPulling] = useState(false)
+  /** Добор раунда не удался — кнопка обязана вернуться нажимаемой */
+  const [pullFailed, setPullFailed] = useState(false)
   const deckKey = useRef('')
   const likesKey = useRef('')
 
@@ -304,17 +309,37 @@ export default function RoomPage() {
     void loadDeck()
   }, [deckWant, deckFailed, loadDeck])
 
+  /*
+   * Добор раунда. finally обязателен, и вот чем он оплачен.
+   *
+   * Было: setPulling(true), голый await fetch и снятие флага только на !res.ok.
+   * Любой обрыв сети — а докблок vote ниже прямо называет лифт и метро
+   * обычным делом — отклонял промис в пустоту, и pulling оставался true до
+   * перезагрузки страницы. Кнопка при этом disabled={pulling} и подписана
+   * «Добираю…», то есть врала, что работа идёт, и одновременно не давала
+   * нажать ещё раз. А это единственный способ расшевелить застрявшую пати:
+   * раунд общий и приходит всем сразу.
+   *
+   * refresh тоже внутри try: успешный POST с обрывом на следующем запросе
+   * оставлял ровно ту же залипшую кнопку. loadDeck свои отказы ловит сам
+   * (deckFailed) и флаг снимает сам, но finally здесь страхует и его.
+   */
   async function pullMore() {
+    if (pulling) return
     setPulling(true)
-    const res = await fetch(`/api/room/${roomId}/round`, { method: 'POST' })
-    if (!res.ok) {
+    setPullFailed(false)
+    try {
+      const res = await fetch(`/api/room/${roomId}/round`, { method: 'POST' })
+      if (!res.ok) throw new Error(`round: HTTP ${res.status}`)
+      // Раунд поднялся на комнате — свою колоду забираем сразу, остальные
+      // подхватят её на ближайшем опросе
+      await refresh()
+      await loadDeck()
+    } catch {
+      setPullFailed(true)
+    } finally {
       setPulling(false)
-      return
     }
-    // Раунд поднялся на комнате — свою колоду забираем сразу, остальные
-    // подхватят её на ближайшем опросе
-    await refresh()
-    await loadDeck()
   }
 
   /*
@@ -338,40 +363,89 @@ export default function RoomPage() {
     })()
   }, [waiting, votesKey, roomId])
 
-  async function joinAsDemoFriend() {
-    setBusy(true)
-    /*
-     * Ответ проверяется, а не выбрасывается. Раньше он игнорировался, и это
-     * сходило с рук, пока /api/connect не умел отказывать: теперь на нём стоит
-     * потолок, и отказ приходит кодом 429. Без проверки сессия не заводилась,
-     * следующий join уходил в пустоту, кнопка гасла — и человек не узнавал
-     * ничего. Отказ по потолку обязан выглядеть отказом.
-     */
-    const res = await fetch('/api/connect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ demo: true, variant: 2 }),
-    })
-    if (!res.ok) {
-      setJoinError(
-        res.status === 429
-          ? 'Слишком много попыток подряд. Подожди немного и попробуй снова.'
-          : 'Не получилось завести демо-друга. Попробуй ещё раз.',
-      )
-      setBusy(false)
-      return
-    }
-    setJoinError(null)
-    await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
-    setBusy(false)
-    void refresh()
+  /*
+   * Ответ на вход — своими словами для каждой причины.
+   *
+   * Роут входа отвечает 404 (комнаты нет) и 401 (сессия протухла), а клиент
+   * res.ok не проверял вовсе: снимал busy и делал refresh, и на экране
+   * оставался ровно тот же экран приглашения. Нажатие внешне не делало
+   * НИЧЕГО и ни строчки о причине.
+   */
+  function joinFailure(status: number): string {
+    if (status === 404) return 'Такой комнаты уже нет — попроси новую ссылку.'
+    if (status === 401) return 'Сессия истекла — подключи библиотеку заново, и вернём тебя сюда.'
+    return 'Не получилось войти. Проверь связь и попробуй ещё раз.'
   }
 
-  async function join() {
+  /*
+   * То же, что join, плюс демо-библиотека первым шагом.
+   *
+   * Ответ /api/connect проверяется, а не выбрасывается. Раньше он
+   * игнорировался, и это сходило с рук, пока /api/connect не умел отказывать:
+   * теперь на нём стоит потолок, и отказ приходит кодом 429. Без проверки
+   * сессия не заводилась, следующий join уходил в пустоту, кнопка гасла — и
+   * человек не узнавал ничего. Отказ по потолку обязан выглядеть отказом. Тот
+   * же порядок не пускает заявку на вход без библиотеки: иначе участник
+   * попадал бы в комнату, из которой ему нечего предложить в колоду.
+   *
+   * try/finally — по той же причине, что у join ниже: обрыв сети оставлял
+   * busy навсегда, и «Демо-друг» застывал на «Подключаю…».
+   */
+  async function joinAsDemoFriend() {
+    if (busy) return
     setBusy(true)
-    await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
-    setBusy(false)
-    void refresh()
+    setJoinError(null)
+    try {
+      const seed = await fetch('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ demo: true, variant: 2 }),
+      })
+      if (!seed.ok) {
+        setJoinError(
+          seed.status === 429
+            ? 'Слишком много попыток подряд. Подожди немного и попробуй снова.'
+            : 'Не получилось завести демо-друга. Попробуй ещё раз.',
+        )
+        return
+      }
+      const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
+      if (!res.ok) {
+        setJoinError(joinFailure(res.status))
+        return
+      }
+      void refresh()
+    } catch {
+      setJoinError(joinFailure(0))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /*
+   * Вход в комнату по приглашению.
+   *
+   * Было: setBusy(true), голый await, снятие флага без try. Обрыв сети
+   * оставлял busy=true навсегда, а кнопки экрана стоят под disabled={busy} —
+   * то есть единственное действие страницы-приглашения умирало от одного
+   * моргнувшего вайфая. Отказы роута теперь названы — см. joinFailure.
+   */
+  async function join() {
+    if (busy) return
+    setBusy(true)
+    setJoinError(null)
+    try {
+      const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
+      if (!res.ok) {
+        setJoinError(joinFailure(res.status))
+        return
+      }
+      void refresh()
+    } catch {
+      setJoinError(joinFailure(0))
+    } finally {
+      setBusy(false)
+    }
   }
 
   /**
@@ -563,12 +637,16 @@ export default function RoomPage() {
               >
                 {busy ? 'Подключаю…' : 'Демо-друг (без Steam)'}
               </button>
-              {joinError && (
-                <p role="status" className="anim-rise text-sm text-danger">
-                  {joinError}
-                </p>
-              )}
             </>
+          )}
+          {/*
+            Под обеими ветками, а не только под демо-другом: обычный вход тоже
+            умеет отказывать, и прежде экран молчал на все его отказы одинаково.
+          */}
+          {joinError && (
+            <p role="status" className="anim-rise text-sm text-danger">
+              {joinError}
+            </p>
           )}
         </div>
       </div>
@@ -727,6 +805,7 @@ export default function RoomPage() {
           onLeave={() => void removeMember()}
           hasMore={hasMore}
           pulling={pulling}
+          pullFailed={pullFailed}
           onPullMore={pullMore}
           copied={copied}
           copyFailed={copyFailed}
