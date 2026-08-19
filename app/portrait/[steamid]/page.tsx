@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import * as motion from 'motion/react-client'
+import { headers } from 'next/headers'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { BlurBand } from '@/components/BlurBand'
@@ -19,6 +20,7 @@ import {
 import { claudePortraitText } from '@/lib/llm'
 import { plural } from '@/lib/plural'
 import { buildPortrait } from '@/lib/portrait'
+import { checkRate, clientIp } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from '@/lib/wrapped'
@@ -111,6 +113,37 @@ function fallbackText(
   return parts.join(' ')
 }
 
+/**
+ * Сколько раз с одного адреса можно заставить страницу сходить к модели.
+ *
+ * Страница публичная, сессии не требует и force-dynamic. Промах кэша тут
+ * добывается тривиально: POST /api/connect {demo:true} чеканит новый steamid
+ * со свежим снапшотом, а значит и гарантированный промах — и каждый такой
+ * GET был вызовом модели без потолка.
+ */
+const PORTRAIT_LLM_IP_LIMIT = 10
+
+/**
+ * Сколько раз можно сходить к модели за ОДИН портрет.
+ *
+ * Работает сразу тремя способами, и потому отдельной осью.
+ *
+ * Во-первых, это отрицательный кэш. claudePortraitText отдаёт null на любой
+ * осечке, а шаблон в portrait_json не пишется намеренно (ключ кэша — время
+ * снапшота, и один промах заморозил бы шаблон на шеринговой карточке до
+ * следующего входа игрока). Без счётчика это значило, что при просадке
+ * Anthropic КАЖДЫЙ зритель разосланной ссылки платит новым вызовом и
+ * секундами ожидания.
+ *
+ * Во-вторых, это защита от лавины: ссылку на портрет рассылают, и десяток
+ * человек открывает её одновременно, пока в кэше пусто.
+ *
+ * В-третьих, она не даёт обойти лимит по адресу, раздав одну ссылку многим.
+ */
+const PORTRAIT_LLM_SID_LIMIT = 3
+
+const PORTRAIT_LLM_WINDOW_SEC = 3600
+
 export default async function PortraitPage({ params }: { params: Promise<{ steamid: string }> }) {
   const { steamid } = await params
   if (!/^\d{17}$/.test(steamid)) notFound()
@@ -172,11 +205,41 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   if (cached && cached.takenAt === snapshot.takenAt) {
     text = cached.text
   } else {
-    const generated = await claudePortraitText({
-      name,
-      archetypes: portrait.archetypes,
-      facts: portrait.facts,
-    })
+    /*
+     * К модели — только через два счётчика, и отказ здесь НЕ ошибка: сюда
+     * пришёл браузер, ему нужна страница. Не пустили — рисуем шаблон, тот
+     * самый, что и так стоит запасным вариантом строкой ниже.
+     *
+     * Обе оси fail-open, как lib/sessions.ts и весь lib/ratelimit: сбой
+     * Turso не должен превращаться в «сайт закрыт».
+     */
+    const now = nowSec()
+    const ip = clientIp(await headers())
+    const [byIp, bySid] = await Promise.all([
+      checkRate(db, {
+        bucket: 'portrait-llm-ip',
+        id: ip,
+        limit: PORTRAIT_LLM_IP_LIMIT,
+        windowSec: PORTRAIT_LLM_WINDOW_SEC,
+        nowSec: now,
+      }),
+      checkRate(db, {
+        bucket: 'portrait-llm-sid',
+        id: steamid,
+        limit: PORTRAIT_LLM_SID_LIMIT,
+        windowSec: PORTRAIT_LLM_WINDOW_SEC,
+        nowSec: now,
+      }),
+    ])
+
+    const generated =
+      byIp.ok && bySid.ok
+        ? await claudePortraitText({
+            name,
+            archetypes: portrait.archetypes,
+            facts: portrait.facts,
+          })
+        : null
     text = generated ?? fallbackText(name, portrait.archetypes, portrait.facts)
     // Шаблон в кэш не кладём. claudePortraitText отдаёт null на ЛЮБОЙ осечке —
     // таймаут, 429, ключа ещё нет, — а ключ кэша тут время снапшота: один такой
