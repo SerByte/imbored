@@ -651,11 +651,18 @@ function Player() {
 
             {whyParts.length > 0 && (
               <motion.div variants={STEP} className="text-sm">
+                {/*
+                  aria-expanded — единственный способ сказать скринридеру, что
+                  блок раскрыт: до этого признаком состояния был ТОЛЬКО глиф, а
+                  он вдобавок зачитывался вслух как «чёрный маленький треугольник
+                  вниз». Теперь глиф чисто для глаза.
+                */}
                 <button
                   onClick={() => setShowWhy(!showWhy)}
+                  aria-expanded={showWhy}
                   className="text-dim hover:text-ink transition-colors cursor-pointer"
                 >
-                  Почему она? {showWhy ? '▴' : '▾'}
+                  Почему она? <span aria-hidden>{showWhy ? '▴' : '▾'}</span>
                 </button>
                 <AnimatePresence initial={false}>
                   {showWhy && (
