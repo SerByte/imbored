@@ -1,11 +1,12 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CinemaCollage } from '@/components/CinemaCollage'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
 import { markSessionTouched } from '@/components/SessionKeeper'
+import { useSearch } from '@/components/useSearch'
 import { Wordmark } from '@/components/Wordmark'
 import { parseArrival, type Arrival } from '@/lib/nav'
 
@@ -69,38 +70,9 @@ function PrivacyHelp() {
   )
 }
 
-/**
- * Строка запроса как внешний источник.
- *
- * useSyncExternalStore, а не useState с эффектом, и не useSearchParams.
- *
- * useSearchParams в статически пререндеренном маршруте роняет ВЕСЬ маршрут
- * в клиентский рендер. Замер по проду: главная отдавала 20 879 байт
- * разметки, в которых 232 символа видимого текста — шапка и подвал. Ни
- * заголовка, ни формы, ни кнопки «Войти через Steam»: до разбора ~186 КБ
- * сжатого JS на imbored.cc не было ничего — ни для поисковика, ни для
- * человека на медленной сети.
- *
- * Отдельный серверный снимок — ровно то, ради чего у этого хука три
- * аргумента: в пререндер уходит пустая строка (то есть «пришёл сам»,
- * полностью рабочая страница), а после гидратации React перерисовывает с
- * настоящим адресом. Расхождения разметки при этом не возникает — в
- * отличие от чтения window.location прямо в рендере.
- *
- * popstate нужен, потому что «назад» из /quiz на /?error=… адрес меняет,
- * а компонент не перемонтирует.
- */
-function subscribeToSearch(onChange: () => void): () => void {
-  window.addEventListener('popstate', onChange)
-  return () => window.removeEventListener('popstate', onChange)
-}
-
+/** Параметры прибытия. Снимок адреса — через общий useSearch, там же объяснено зачем. */
 function useArrival(): Arrival {
-  const search = useSyncExternalStore(
-    subscribeToSearch,
-    () => window.location.search,
-    () => '',
-  )
+  const search = useSearch()
   return useMemo(() => parseArrival(search), [search])
 }
 

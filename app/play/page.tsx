@@ -2,8 +2,8 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
@@ -29,6 +29,7 @@ import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
 import { DemoNotice } from '@/components/DemoNotice'
 import { WarmStrip } from '@/components/WarmStrip'
+import { useSearch } from '@/components/useSearch'
 import { connectDemo, runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 type Signals = {
@@ -148,20 +149,32 @@ function weightedRandomIndex(length: number, exclude?: number): number {
 
 function Player() {
   const router = useRouter()
-  const search = useSearchParams()
-  const roulette = search.get('roulette') === '1'
-  const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
+  /*
+   * Через useSearch, а не useSearchParams: второй роняет весь маршрут в
+   * клиентский рендер, и /play отдавал 232 символа видимого текста — шапку и
+   * подвал. Экран ожидания с подписью «Изучаю твою библиотеку…» существовал
+   * только после разбора ~186 КБ сжатого JS, то есть человек, пришедший с
+   * квиза, ровно это время смотрел в пустоту. См. components/useSearch.
+   *
+   * Отрисовке параметры не нужны вовсе — весь их смысл в том, ЧТО запросить,
+   * а запрос уходит из эффекта, то есть уже после гидратации. Единственное
+   * исключение, askedMood, меняет одну подпись на экране ожидания.
+   */
+  const search = useSearch()
+  const q = useMemo(() => new URLSearchParams(search), [search])
+  const roulette = q.get('roulette') === '1'
+  const focus: Focus | null = q.get('from') === 'untouched' ? 'untouched' : null
   const mood: Mood = {
-    time: (search.get('time') as Mood['time']) ?? 'medium',
-    vibe: (search.get('vibe') as Mood['vibe']) ?? 'chill',
-    social: (search.get('social') as Mood['social']) ?? 'solo',
+    time: (q.get('time') as Mood['time']) ?? 'medium',
+    vibe: (q.get('vibe') as Mood['vibe']) ?? 'chill',
+    social: (q.get('social') as Mood['social']) ?? 'solo',
   }
   /**
    * Спрашивали ли настроение вообще. Все три оси, а не любая из них: значения
    * выше подставляются дефолтами, и на прямом заходе на /play подпись экрана
    * ожидания процитировала бы человеку слова, которых он не говорил.
    */
-  const askedMood = (['time', 'vibe', 'social'] as const).every((k) => search.has(k))
+  const askedMood = (['time', 'vibe', 'social'] as const).every((k) => q.has(k))
 
   const [phase, setPhase] = useState<'prepare' | 'spin' | 'reveal' | 'burnout' | 'error'>('prepare')
   const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
@@ -963,10 +976,10 @@ function Player() {
   )
 }
 
+/*
+ * Границы Suspense здесь больше нет: она стояла ради useSearchParams, а
+ * вместе с пустым фолбэком означала пустую разметку маршрута.
+ */
 export default function PlayPage() {
-  return (
-    <Suspense>
-      <Player />
-    </Suspense>
-  )
+  return <Player />
 }

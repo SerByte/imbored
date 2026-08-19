@@ -1,12 +1,13 @@
 'use client'
 
 import { AnimatePresence, motion } from 'motion/react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { ClickSpark } from '@/components/ClickSpark'
 import { SoundToggle } from '@/components/SoundToggle'
 import { SpotlightCard } from '@/components/SpotlightCard'
+import { useSearch } from '@/components/useSearch'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { VIBE_PRESETS } from '@/lib/presets'
 import { isSoundOn } from '@/lib/quizsound'
@@ -93,7 +94,7 @@ function prefersReducedMotion(): boolean {
 
 function Quiz() {
   const router = useRouter()
-  const search = useSearchParams()
+  const search = useSearch()
   const [stepIndex, setStepIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [back, setBack] = useState(false)
@@ -104,8 +105,16 @@ function Quiz() {
   const step = STEPS[stepIndex]
   const last = stepIndex === STEPS.length - 1
   // Приходит с /library («Разгрести →») и живёт до самого /play. Не настроение,
-  // а отдельная ось — как roulette у «Мне повезёт»
-  const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
+  // а отдельная ось — как roulette у «Мне повезёт».
+  //
+  // Читается через useSearch, а не useSearchParams: второй ронял весь
+  // маршрут в клиентский рендер, и /quiz отдавал ту же пустую разметку, что
+  // и главная. Подпись под кнопками меняется кадром позже — единственное,
+  // на что этот параметр влияет в отрисовке.
+  const focus: Focus | null = useMemo(
+    () => (new URLSearchParams(search).get('from') === 'untouched' ? 'untouched' : null),
+    [search],
+  )
 
   /** Заведён ли аудиоконтекст. Общий на оба пути — иначе снос пропускает тот,
    *  что подняли не тем путём, и контекст переживает уход на выдачу. */
@@ -346,11 +355,11 @@ function Quiz() {
   )
 }
 
-// useSearchParams требует границы Suspense, иначе next build падает на пререндере
+/*
+ * Границы Suspense здесь больше нет: она стояла ради useSearchParams, а
+ * вместе с пустым фолбэком означала пустую разметку маршрута. См.
+ * components/useSearch.
+ */
 export default function QuizPage() {
-  return (
-    <Suspense>
-      <Quiz />
-    </Suspense>
-  )
+  return <Quiz />
 }
