@@ -14,11 +14,31 @@ import {
 import { discountView } from '@/lib/discount'
 import { buildGroupDeck } from '@/lib/group'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
+import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildTagProfile } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const DECK_SIZE = 20
+
+/**
+ * Потолок на сборку колоды — самой дорогой операции приложения.
+ *
+ * Один вызов это: loadTagStats по всей таблице тегов, fetchDiscoveryPool на
+ * дюжину тегов, снапшот библиотеки каждого участника, getGamesMeta по
+ * объединению этих библиотек и запись setRoomDeckSize. Для сравнения,
+ * /api/daily с сопоставимой ценой ограничен десятью вызовами в час — а
+ * здесь не было ничего.
+ *
+ * Тридцать на пять минут, и считаем по участнику, а не по комнате. Разница
+ * существенная: при входе очередного человека колоду перезапрашивают ВСЕ
+ * уже вошедшие (deckWant склеен из числа участников), то есть на комнате из
+ * восьми это под четыре десятка вызовов в окне — но распределённых по
+ * восьми разным steamid, по пять на каждого. Ось по комнате при таком же
+ * потолке рубила бы нормальный сценарий.
+ */
+const DECK_LIMIT = 30
+const DECK_WINDOW_SEC = 300
 const POOL_BASE = 150
 const POOL_STEP = 100
 
@@ -37,6 +57,18 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!members.some((m) => m.steamid === steamid)) {
     return NextResponse.json({ error: 'notmember' }, { status: 403 })
   }
+
+  // После проверки членства: до неё маршрут и так закрыт сессией и
+  // существованием комнаты, а тратить строки ограничителя на чужие попытки
+  // незачем — их отсекает 403 выше.
+  const gate = await checkRate(db, {
+    bucket: 'room-deck',
+    id: steamid,
+    limit: DECK_LIMIT,
+    windowSec: DECK_WINDOW_SEC,
+    nowSec: nowSec(),
+  })
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const libraries = await Promise.all(
     members.map(async (m) => ({
