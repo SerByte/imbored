@@ -251,6 +251,13 @@ const FAIL_UNKNOWN = {
   retry: true,
 }
 
+/**
+ * Первая строка экрана ожидания. Одна на два места — начальное состояние
+ * Player и фолбэк границы Suspense внизу файла: пререндер обязан показать то
+ * же, с чего клиент продолжит, иначе на гидратации подпись моргнёт.
+ */
+const PREPARE_MESSAGE = 'Изучаю твою библиотеку…'
+
 function Player() {
   const router = useRouter()
   const search = useSearchParams()
@@ -280,7 +287,7 @@ function Player() {
   const [limitedFor, setLimitedFor] = useState<number | null>(null)
   /** Код отказа из тела ответа: nocandidates, nolibrary, badmood или null. */
   const [reason, setReason] = useState<string | null>(null)
-  const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
+  const [progress, setProgress] = useState<string>(PREPARE_MESSAGE)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   /** Обложка последнего ответа квиза, если человек пришёл оттуда */
   // Откуда пришла следующая игра — задаёт направление смены героя.
@@ -1413,9 +1420,23 @@ function Player() {
   )
 }
 
+/*
+ * Фолбэк — тот же экран ожидания, с которого Player и начинает.
+ *
+ * Без него граница была пустой, а useSearchParams внутри неё роняет маршрут в
+ * клиентский рендер: /play отдавал в разметке шапку и подвал, и человек,
+ * пришедший с квиза по прямой ссылке, смотрел в пустоту, пока не разберётся
+ * весь бандл. Теперь в пререндер уходит экран ожидания.
+ *
+ * Сам Player на useSearch (components/useSearch) при этом НЕ переведён, и это
+ * осознанно: кадр гидратации видел бы пустую строку запроса, эффект первого
+ * захода успевал бы уйти за выдачей с настроением по умолчанию, а начальное
+ * значение оси lean замерло бы пустым. Параметры здесь не подпись, а сам
+ * запрос — поэтому они читаются уже в клиентском рендере, как и раньше.
+ */
 export default function PlayPage() {
   return (
-    <Suspense>
+    <Suspense fallback={<WarmupScreen progress={null} message={PREPARE_MESSAGE} />}>
       <Player />
     </Suspense>
   )
