@@ -69,8 +69,8 @@
   letter-spacing: 0.01em;
   color: #fff;
   background: rgba(10, 10, 12, 0.42);
-  backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   opacity: 0;
   transform: translateY(12px);
   filter: blur(6px);
@@ -110,8 +110,8 @@
   border-radius: 50%;
   color: #fff;
   background: rgba(12, 12, 14, 0.4);
-  backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   cursor: pointer;
   transition:
     transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
