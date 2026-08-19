@@ -25,6 +25,7 @@ export function GameArt({
   fallback,
   eager = false,
   fade = false,
+  decorative = false,
 }: {
   appid: number
   name: string
@@ -47,6 +48,23 @@ export function GameArt({
    * не прячется ради анимации, правило то же, что у .anim-page-in.
    */
   fade?: boolean
+  /**
+   * Картинка ничего не сообщает: рядом уже есть видимая подпись с тем же
+   * названием, либо это фоновая заливка. Тогда alt пустой — иначе скринридер
+   * читает название дважды.
+   *
+   * По умолчанию false, и это осознанная смена поведения. Раньше alt был
+   * жёстко пустым У ВСЕХ двадцати трёх мест применения — включая плитку
+   * библиотеки, где картинка является ЕДИНСТВЕННЫМ содержимым ссылки. Такая
+   * ссылка не имеет доступного имени вовсе: с клавиатуры по ней можно
+   * перейти, но узнать куда — нельзя.
+   *
+   * Из двух зол выбран меньший. Лишнее повторение названия там, где подпись
+   * уже есть, — это шум; ссылка без имени — это отказ. Поэтому безопасное
+   * значение стоит по умолчанию, а исключения помечаются явно и потому
+   * видны в коде.
+   */
+  decorative?: boolean
 }) {
   const source = { appid, art, headerImage }
   const candidates = artCandidates(source, variant)
@@ -86,7 +104,7 @@ export function GameArt({
       src={src}
       srcSet={srcSet}
       sizes={srcSet ? (sizes ?? (variant === 'hero' ? '100vw' : undefined)) : undefined}
-      alt=""
+      alt={decorative ? '' : name}
       loading={eager ? 'eager' : 'lazy'}
       onError={() => setTried((t) => ({ appid, idx: t.idx + 1 }))}
       onLoad={fade ? () => setLoaded(true) : undefined}
