@@ -19,10 +19,7 @@
  * актуальность физически не может протечь в скоринг и перебить личный вкус.
  */
 
-import fs from 'node:fs'
-import path from 'node:path'
 import {
-  createDb,
   loadTagDictionary,
   nextIngestBatch,
   rebuildTagStats,
@@ -30,9 +27,9 @@ import {
   saveTagDictionary,
   setIngestStatus,
   upsertGameMeta,
-  type Db,
 } from '../lib/db'
 import { fetchStoreDescriptions, fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
+import { openDb } from './opendb'
 import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
 import { judgeLiveness, playMode } from '../lib/liveness'
 import { buildSeriesIndex, SERIES_OVERRIDES, type SeriesMember } from '../lib/series'
@@ -63,19 +60,6 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T | nu
     }
   }
   return null
-}
-
-async function openDb(): Promise<Db> {
-  const remote = process.env.TURSO_DATABASE_URL
-  if (remote) {
-    console.log('база: Turso (облако)')
-    return createDb(remote, process.env.TURSO_AUTH_TOKEN)
-  }
-  const dir = path.join(process.cwd(), 'data')
-  fs.mkdirSync(dir, { recursive: true })
-  const file = path.join(dir, 'catalog.db')
-  console.log(`база: ${file}`)
-  return createDb(`file:${file}`)
 }
 
 /** Топ-N тегов по весу — в проекцию, из которой идёт выборка кандидатов */
