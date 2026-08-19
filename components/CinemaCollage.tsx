@@ -17,11 +17,28 @@ export function CinemaCollage() {
   return (
     <div aria-hidden className="absolute inset-0 overflow-hidden pointer-events-none select-none">
       <div
-        className="absolute -inset-x-16 -inset-y-24 grid grid-cols-3 gap-4 opacity-40"
+        className="absolute -inset-x-16 -inset-y-24 grid grid-cols-1 md:grid-cols-3 gap-4 opacity-40"
         style={{ transform: 'rotate(-6deg) scale(1.18)' }}
       >
+        {/*
+          На телефоне остаётся одна колонка, и это про трафик, а не про вёрстку.
+
+          Восемнадцать обложек — 945 КБ. Ленивыми из них было пятнадцать, и
+          на десктопе это работает: нижние кадры лежат за экраном. На узком
+          же экране колонка целиком помещается в видимую область, а дрейф
+          дополнительно прогоняет через неё каждую плитку — то есть ленивая
+          загрузка отменяется сама собой и приезжают все восемнадцать.
+
+          Две скрытые колонки уходят в display:none, и их ЛЕНИВЫЕ картинки не
+          грузятся никогда: в кадр они не попадают по определению. Поэтому у
+          них не остаётся ни одной eager — иначе display:none загрузку бы не
+          отменил.
+        */}
         {COLLAGE_APPIDS.map((column, i) => (
-          <div key={i} className={i % 2 === 0 ? 'anim-drift-up' : 'anim-drift-down'}>
+          <div
+            key={i}
+            className={`${i % 2 === 0 ? 'anim-drift-up' : 'anim-drift-down'}${i > 0 ? ' hidden md:block' : ''}`}
+          >
             <div className="flex flex-col gap-4">
               {[...column, ...column].map((appid, j) => (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -34,7 +51,10 @@ export function CinemaCollage() {
                   // центре непрозрачен на 94%, и при этом соревновались за
                   // полосу с тем, ради чего человек пришёл. Сверху колонки
                   // видно ровно один кадр — он и остаётся eager.
-                  loading={j === 0 ? 'eager' : 'lazy'}
+                  //
+                  // Только в первой колонке: остальные две скрыты на телефоне,
+                  // и eager внутри display:none — это загрузка ради ничего.
+                  loading={i === 0 && j === 0 ? 'eager' : 'lazy'}
                   // Фон не должен опережать содержание ни при каких условиях.
                   fetchPriority="low"
                   decoding="async"
