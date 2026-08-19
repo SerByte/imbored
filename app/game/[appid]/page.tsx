@@ -174,7 +174,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           __html: ldScript(
             gameJsonLd({
               meta,
-              reviewsSummary,
+              // Та же оценка, что рисует кольцо ниже: у сводки она есть не у
+              // всех карточек, и без запасного источника (reviewFacts)
+              // aggregateRating доставался лишь малой доле страниц
+              rating: facts,
               baseUrl: appBaseUrl(),
               currency: currencyOf(process.env.STEAM_STORE_CC),
               now,
