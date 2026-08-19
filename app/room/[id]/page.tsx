@@ -68,6 +68,8 @@ export default function RoomPage() {
   const [deckTotal, setDeckTotal] = useState(0)
   const [deckVoted, setDeckVoted] = useState(0)
   const [deckFailed, setDeckFailed] = useState(false)
+  /** Последний голос не доехал: карта возвращена, счётчик отмотан назад. */
+  const [voteFailed, setVoteFailed] = useState(false)
   const [localVotes, setLocalVotes] = useState(0)
   const [busy, setBusy] = useState(false)
   // Копирование живёт в общем хуке: у него было две реализации, и они уже
@@ -288,19 +290,48 @@ export default function RoomPage() {
     void refresh()
   }
 
+  /**
+   * Голос за карточку.
+   *
+   * Оптимистично: карта улетает и счётчик растёт до ответа — иначе свайп
+   * ощущается как залипание. Но оптимизм обязан УМЕТЬ ОТКАТЫВАТЬСЯ, и
+   * раньше не умел: `if (!res.ok) return` и отсутствие catch съедали и
+   * отказ сервера, и обрыв сети молча. Карта при этом уже выброшена, а
+   * счётчик увеличен.
+   *
+   * Цена той тишины считается на троих. У проголосовавшего колода пустеет и
+   * экран говорит «все отсвайпали — и ни разу не совпали». У остальных
+   * ростер навсегда стоит на 9 из 10, потому что его голоса в базе нет.
+   * А сама игра матчем уже не станет никогда: второй раз её никто не
+   * увидит. Обрыв связи на телефоне — не исключительная ситуация, это
+   * лифт и метро.
+   *
+   * Поэтому отказ возвращает карту на место и отматывает счётчик, а строка
+   * под колодой честно говорит, что голос не ушёл.
+   */
   async function vote(card: Card, yes: boolean) {
     setCards((prev) => (prev ? prev.filter((c) => c.appid !== card.appid) : prev))
     setLocalVotes((v) => v + 1)
-    const res = await fetch(`/api/room/${roomId}/vote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ appid: card.appid, vote: yes }),
-    })
-    // Без проверки res.ok любая ошибка давала data.matched === undefined,
-    // а undefined !== null истинно — и каждый сбой дёргал лишний опрос
-    if (!res.ok) return
-    const data = (await res.json()) as { matched: number | null }
-    if (data.matched !== null) void refresh()
+    try {
+      const res = await fetch(`/api/room/${roomId}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appid: card.appid, vote: yes }),
+      })
+      // Проверка res.ok нужна и сама по себе: без неё любая ошибка давала
+      // data.matched === undefined, а undefined !== null истинно — и каждый
+      // сбой дёргал лишний опрос.
+      if (!res.ok) throw new Error(`vote: HTTP ${res.status}`)
+      const data = (await res.json()) as { matched: number | null }
+      setVoteFailed(false)
+      if (data.matched !== null) void refresh()
+    } catch {
+      // В голову колоды, а не в хвост: карточка возвращается туда, где её
+      // только что видели, и повтор — это тот же жест ещё раз.
+      setCards((prev) => (prev ? [card, ...prev.filter((c) => c.appid !== card.appid)] : prev))
+      setLocalVotes((v) => Math.max(0, v - 1))
+      setVoteFailed(true)
+    }
   }
 
   async function togglePublic() {
@@ -459,7 +490,14 @@ export default function RoomPage() {
           <Spinner />
         </div>
       ) : card ? (
-        <SwipeDeck cards={cards} onVote={vote} votedCount={votedCount} deckTotal={deckTotal} />
+        <>
+          <SwipeDeck cards={cards} onVote={vote} votedCount={votedCount} deckTotal={deckTotal} />
+          {voteFailed ? (
+            <p role="status" className="mt-3 text-center text-sm text-danger">
+              Голос не ушёл — карточка вернулась, свайпни ещё раз.
+            </p>
+          ) : null}
+        </>
       ) : (
         <RoomWaiting
           roomId={roomId}
