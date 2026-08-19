@@ -5,10 +5,10 @@ import { JetBrains_Mono, Onest, Sofia_Sans_Condensed } from 'next/font/google'
 import Link from 'next/link'
 import { ChromeZone } from '@/components/ChromeZone'
 import { Footer } from '@/components/Footer'
+import { HeaderNav } from '@/components/HeaderNav'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
-import { PickLink } from '@/components/PickLink'
 import { SessionKeeper } from '@/components/SessionKeeper'
 import { SmoothScroll } from '@/components/SmoothScroll'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -270,30 +270,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <LogoMark size={24} />
               <Wordmark />
             </Link>
-            <nav className="flex items-center gap-5 text-sm text-dim">
+            <nav aria-label="Разделы" className="flex items-center gap-5 text-sm text-dim">
               {/* на телефоне пункты уезжают в нижнюю панель — в шапке остаётся только тема */}
-              <span className="hidden md:flex items-center gap-5">
-                <Link href="/daily" className="tap hover:text-ink transition-colors">
-                  Игра дня
-                </Link>
-                {/* Ведёт сразу к выдаче под прошлое настроение, если оно есть на
-                    устройстве (lib/lastmood.ts); на сервере — всегда /quiz */}
-                <PickLink className="tap hover:text-ink transition-colors">
-                  Подобрать игру
-                </PickLink>
-                <Link href="/rooms" className="tap hover:text-ink transition-colors">
-                  Пати
-                </Link>
-                <Link href="/whatsnew" className="tap hover:text-ink transition-colors">
-                  Что нового
-                </Link>
-                <Link href="/compat" className="tap hover:text-ink transition-colors">
-                  Совместимость
-                </Link>
-                <Link href="/library" className="tap hover:text-ink transition-colors">
-                  Библиотека
-                </Link>
-              </span>
+              <HeaderNav />
               <ThemeToggle />
             </nav>
           </div>

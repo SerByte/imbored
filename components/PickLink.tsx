@@ -25,7 +25,8 @@ const hrefServer = () => QUIZ_HREF
  * Внутри самого подбора (/quiz и /play) ссылка остаётся квизом: на /play
  * прошлое настроение — это и есть открытая страница, и пункт меню вёл бы
  * туда же, где человек уже стоит, то есть не делал бы ничего. Подсветка
- * активного пункта от адреса не зависит — её считает MobileNav по своему списку.
+ * активного пункта от адреса не зависит — её считают шапка и нижняя панель по
+ * своим спискам, через lib/nav (isNavActive).
  */
 export function PickLink(props: Omit<ComponentProps<typeof Link>, 'href'>) {
   const remembered = useSyncExternalStore(lastMoodStore.subscribe, hrefNow, hrefServer)
