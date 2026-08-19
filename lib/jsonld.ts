@@ -1,4 +1,5 @@
 import { discountOf } from './discount'
+import type { Rating } from './rating'
 import { STORE_LABEL } from './stores'
 import type { GameMeta } from './types'
 
@@ -70,7 +71,8 @@ const TAGS_AS_GENRE = 8
 
 export type GameLdInput = {
   meta: GameMeta
-  reviewsSummary: { scoreDesc: string; totalPositive: number; totalNegative: number } | null
+  /** уже сведённая оценка — та же, что рисует кольцо на странице; см. lib/rating */
+  rating: Rating | null
   /** абсолютный адрес сайта — schema.org требует полных ссылок */
   baseUrl: string
   /** ISO 4217 региона цен; см. currencyOf */
@@ -113,7 +115,7 @@ export function currencyOf(cc: string | undefined): string {
 
 export function gameJsonLd({
   meta,
-  reviewsSummary,
+  rating,
   baseUrl,
   currency,
   now,
@@ -160,19 +162,16 @@ export function gameJsonLd({
   if (meta.developer) ld.author = { '@type': 'Organization', name: meta.developer }
   if (meta.publisher) ld.publisher = { '@type': 'Organization', name: meta.publisher }
 
-  if (reviewsSummary) {
-    const total = reviewsSummary.totalPositive + reviewsSummary.totalNegative
-    if (total > 0) {
-      ld.aggregateRating = {
-        '@type': 'AggregateRating',
-        // Шкала 0–100, а не пересчёт в пять звёзд: у нас доля положительных
-        // отзывов, а не средний балл. Google нормирует сам по bestRating и
-        // worstRating, и честная шкала ему для этого достаточна.
-        ratingValue: Math.round((reviewsSummary.totalPositive / total) * 100),
-        bestRating: 100,
-        worstRating: 0,
-        ratingCount: total,
-      }
+  if (rating) {
+    ld.aggregateRating = {
+      '@type': 'AggregateRating',
+      // Шкала 0–100, а не пересчёт в пять звёзд: у нас доля положительных
+      // отзывов, а не средний балл. Google нормирует сам по bestRating и
+      // worstRating, и честная шкала ему для этого достаточна.
+      ratingValue: rating.percent,
+      bestRating: 100,
+      worstRating: 0,
+      ratingCount: rating.total,
     }
   }
 

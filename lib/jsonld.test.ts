@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { gameJsonLd, ldScript } from './jsonld'
+import type { Rating } from './rating'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -21,12 +22,12 @@ function game(over: Partial<GameMeta> = {}): GameMeta {
   }
 }
 
-const REVIEWS = { scoreDesc: 'Very Positive', totalPositive: 86, totalNegative: 14 }
+const RATING: Rating = { percent: 86, total: 100, label: 'Very Positive', source: 'summary' }
 
-function ld(over: Partial<GameMeta> = {}, reviews = REVIEWS as typeof REVIEWS | null) {
+function ld(over: Partial<GameMeta> = {}, rating: Rating | null = RATING) {
   return gameJsonLd({
     meta: game(over),
-    reviewsSummary: reviews,
+    rating,
     baseUrl: BASE,
     currency: 'USD',
     now: NOW,
@@ -71,9 +72,15 @@ describe('gameJsonLd', () => {
     expect(ld({}, null).aggregateRating).toBeUndefined()
   })
 
-  test('нулевая сумма отзывов не превращается в деление на ноль', () => {
-    expect(ld({}, { scoreDesc: 'Mixed', totalPositive: 0, totalNegative: 0 }).aggregateRating)
-      .toBeUndefined()
+  test('оценка из каталога размечается так же, как из сводки', () => {
+    // 85,5 % карточек живут именно на этом источнике — см. lib/rating.
+    expect(ld({}, { percent: 64, total: 5_000, source: 'catalog' }).aggregateRating).toEqual({
+      '@type': 'AggregateRating',
+      ratingValue: 64,
+      bestRating: 100,
+      worstRating: 0,
+      ratingCount: 5_000,
+    })
   })
 
   test('цена без скидки едет как есть, в долларах', () => {

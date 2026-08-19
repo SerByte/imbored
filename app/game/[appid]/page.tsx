@@ -12,6 +12,7 @@ import { sitemapGames } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { loadGamePage } from '@/lib/gamepage'
 import { currencyOf, gameJsonLd, ldScript } from '@/lib/jsonld'
+import { ratingOf } from '@/lib/rating'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 
@@ -67,9 +68,11 @@ export async function generateMetadata({
 
   // Описание собираем из того, что на странице и так есть, а не из шаблона:
   // в выдаче должно стоять то, ради чего на неё имеет смысл заходить.
-  const percent = reviewsSummary
-    ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
-    : null
+  //
+  // Процент — через ratingOf, а не напрямую из сводки: она есть у 14,5 %
+  // карточек, и без запасного источника четыре тысячи описаний в выдаче
+  // начинались не с оценки, а сразу с тегов.
+  const percent = ratingOf(meta, reviewsSummary)?.percent ?? null
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
@@ -108,10 +111,6 @@ export async function generateMetadata({
   }
 }
 
-function positivePercent(pos: number, neg: number): number | null {
-  const total = pos + neg
-  return total > 0 ? Math.round((pos / total) * 100) : null
-}
 
 const SCORE_RU: Record<string, string> = {
   'Overwhelmingly Positive': 'Крайне положительные',
@@ -137,9 +136,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   const { meta, reviewsSummary, prosCons } = data
   const now = nowSec()
   const deal = discountView(meta, now)
-  const percent = reviewsSummary
-    ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
-    : null
+  const rating = ratingOf(meta, reviewsSummary)
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
@@ -162,7 +159,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           __html: ldScript(
             gameJsonLd({
               meta,
-              reviewsSummary,
+              rating,
               baseUrl: appBaseUrl(),
               currency: currencyOf(process.env.STEAM_STORE_CC),
               now,
@@ -193,26 +190,36 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           />
           <div className="flex flex-col gap-4 anim-rise">
             <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{meta.name}</h1>
-            {reviewsSummary && (
+            {/*
+              Оценка приходит из ratingOf, а не из сводки напрямую.
+
+              Замер по проду: reviews_summary_json есть у 726 карточек из 5000,
+              а reviews_percent с reviews_total — у всех 5000, в той же строке
+              и тем же запросом. То есть кольцо не рисовалось на 85 % страниц
+              не потому, что оценки нет, а потому что её искали в одном месте
+              из двух.
+
+              Словесная подпись остаётся привязанной к сводке и появляется
+              только с ней: пороги Steam зависят ещё и от числа отзывов, и
+              вычислять их за него значило бы показать оценку, которой на
+              странице игры в самом магазине может не быть. Без подписи строка
+              читается ничуть не хуже — кольцо и есть её подлежащее:
+              «86 % · из 2 593 099 отзывов — за».
+            */}
+            {rating && (
               <div className="flex items-center gap-3.5 text-sm">
                 {/* Процент — это и есть содержание строки, а рисовался обычным
                     текстом, хотя кольцо у приложения уже есть (на /compat). */}
-                {percent !== null && (
-                  <ProgressRing percent={percent} size={56} stroke={4} duration={800} />
-                )}
+                <ProgressRing percent={rating.percent} size={56} stroke={4} duration={800} />
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-ember-text font-medium">
-                    {SCORE_RU[reviewsSummary.scoreDesc] ?? reviewsSummary.scoreDesc}
-                  </span>
-                  {percent !== null && (
-                    <span className="font-mono text-dim text-xs">
-                      из{' '}
-                      {(
-                        reviewsSummary.totalPositive + reviewsSummary.totalNegative
-                      ).toLocaleString('ru-RU')}{' '}
-                      отзывов — за
+                  {rating.label && (
+                    <span className="text-ember-text font-medium">
+                      {SCORE_RU[rating.label] ?? rating.label}
                     </span>
                   )}
+                  <span className="font-mono text-dim text-xs">
+                    из {rating.total.toLocaleString('ru-RU')} отзывов — за
+                  </span>
                 </div>
               </div>
             )}
