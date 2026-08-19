@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CinemaCollage } from '@/components/CinemaCollage'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
@@ -124,6 +124,7 @@ function Landing() {
    */
   const nextTarget = arrival.next
   const [input, setInput] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
 
   /*
@@ -296,7 +297,31 @@ function Landing() {
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              if (input && busy === null) void connect(false)
+              if (busy !== null) return
+              /*
+               * Пустое поле отправляет курсор в поле, а не гасит кнопку.
+               *
+               * disabled={!input} стоял тут с самого начала и делал ровно
+               * одну вещь: на ПЕРВОМ кадре главной самым тяжёлым элементом
+               * страницы (16px/600 против 14px/400 у соседей) оказывался
+               * единственный контрол, который не нажимается. Вес говорил
+               * «начни отсюда», состояние отвечало «не сюда».
+               *
+               * Заодно это возвращало ember на парадную дверь: залитая
+               * кнопка — единственное место, где фирменный цвет вообще есть
+               * у гостя, и погашенная она забирала его со всей страницы.
+               * По остальным двадцати семи экранам ember расставлен, и
+               * главная была единственной, приходившей серой.
+               *
+               * Ответ на пустое нажатие видимый: фокус переезжает в поле, а
+               * у поля рамка на фокусе ember-овая. Что писать — сказано в
+               * placeholder, второй раз повторять текстом ошибки нечего.
+               */
+              if (!input) {
+                inputRef.current?.focus()
+                return
+              }
+              void connect(false)
             }}
             className="flex flex-col gap-3"
           >
@@ -307,6 +332,7 @@ function Landing() {
               Ссылка на твой Steam-профиль или ник
             </label>
             <input
+              ref={inputRef}
               id="steam-profile"
               name="profile"
               type="text"
@@ -328,7 +354,7 @@ function Landing() {
               <ClickSpark className="block w-full">
                 <button
                   type="submit"
-                  disabled={!input || busy !== null}
+                  disabled={busy !== null}
                   className="btn-fill w-full rounded-[14px] font-semibold py-3 cursor-pointer"
                 >
                   {busy === 'connect' ? 'Читаю библиотеку…' : 'Подобрать игру'}
