@@ -15,9 +15,10 @@ import { sitemapGames } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { byline } from '@/lib/byline'
 import { loadGamePage, reviewFacts } from '@/lib/gamepage'
+import { currencyOf, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { OG_SITE } from '@/lib/og'
 import { refundEligible } from '@/lib/refund'
-import { getDb, nowSec } from '@/lib/server'
+import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { SectionLabel } from '@/components/Labels'
 
@@ -144,10 +145,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   if (!data) notFound()
 
   const { meta, reviewsSummary, prosCons } = data
-  const deal = discountView(meta, nowSec())
+  const now = nowSec()
+  const deal = discountView(meta, now)
   // Страница публичная и не знает, куплена ли игра у читающего, — поэтому
   // строка про возврат здесь нейтральная, без «не зайдёт»
-  const refund = refundEligible(meta, nowSec())
+  const refund = refundEligible(meta, now)
   const studio = byline(meta.developer, meta.releaseYear)
   const facts = reviewFacts(meta, reviewsSummary)
   const topTags = Object.entries(meta.tags)
@@ -157,6 +159,29 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
   return (
     <div className="flex-1">
+      {/*
+        Микроразметка карточки — в разметке страницы, а не в generateMetadata:
+        Metadata API умеет только те теги, которые знает сам, а ld+json — это
+        произвольный <script>. Рекомендация Next ровно такая, см.
+        node_modules/next/dist/docs/01-app/02-guides/json-ld.md.
+
+        Собирается из тех же data, что и всё ниже: loadOnce кэширован на запрос,
+        второго чтения базы здесь нет.
+      */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: ldScript(
+            gameJsonLd({
+              meta,
+              reviewsSummary,
+              baseUrl: appBaseUrl(),
+              currency: currencyOf(process.env.STEAM_STORE_CC),
+              now,
+            }),
+          ),
+        }}
+      />
       {/* hero */}
       <section className="relative overflow-hidden">
         <GameArt
@@ -287,9 +312,21 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               >
                 Обзоры на YouTube
               </a>
-              {meta.priceFinal !== undefined && meta.priceFinal > 0 && (
+              {/* Бесплатная игра тоже получает плашку. Условие было «цена больше
+                  нуля», и у free-to-play — а это Dota, CS2, Warframe, то есть
+                  верх каталога по онлайну — в герое не оказывалось ни цены, ни
+                  слова «бесплатно». Читалось это не как «платить не надо», а
+                  как «про цену мы ничего не знаем» — то есть ровно тот вопрос,
+                  на который страница с заголовком «стоит ли играть» и должна
+                  отвечать. PriceTag такой случай умел с самого начала. */}
+              {(meta.isFree || (meta.priceFinal !== undefined && meta.priceFinal > 0)) && (
                 <span className="rounded-[14px] glass px-5 py-3 text-sm flex items-center gap-2">
-                  <PriceTag priceFinal={meta.priceFinal} discount={deal} size="hero" />
+                  <PriceTag
+                    priceFinal={meta.priceFinal ?? null}
+                    isFree={meta.isFree}
+                    discount={deal}
+                    size="hero"
+                  />
                   <DiscountEnds discount={deal} />
                 </span>
               )}
