@@ -14,6 +14,7 @@ import {
   flushPollResults,
   getCatalogMeta,
   getFeedForApps,
+  gameDescriptions,
   getGameNews,
   getGameRanks,
   getNewsBlocks,
@@ -25,6 +26,7 @@ import {
   releaseLease,
   removeRoomMember,
   reviveGoneNewsPoll,
+  setGameDescriptions,
   setNewsDigest,
   STEAM_LEASE,
   upsertNewsItems,
@@ -113,6 +115,38 @@ describe('db', () => {
     expect(snap?.takenAt).toBe(NOW)
     expect(snap?.games).toEqual([LIB[0]])
     expect(await getLatestSnapshot(db, 'unknown')).toBeNull()
+  })
+
+  test('описания: отдаются с текстом, переписываются поштучно, остальное не трогают', async () => {
+    const db = await freshDb()
+    // reviews_total задаёт порядок выдачи и попадание в ALIVE_POOL
+    await upsertGameMeta(db, { ...META, appid: 620, reviewsTotal: 500 }, NOW)
+    await upsertGameMeta(
+      db,
+      { ...META, appid: 570, name: 'Dota 2', shortDescription: 'A MOBA game', reviewsTotal: 900 },
+      NOW,
+    )
+
+    const all = await gameDescriptions(db, 10)
+    expect(all.map((g) => g.appid)).toEqual([570, 620])
+    expect(all[0].description).toBe('A MOBA game')
+
+    const n = await setGameDescriptions(db, [{ appid: 570, description: 'Игра про героев' }])
+    expect(n).toBe(1)
+    const after = await getGameMeta(db, 570)
+    expect(after?.shortDescription).toBe('Игра про героев')
+    // и ничего кроме описания: доливка перевода не имеет права стереть цену и теги
+    expect(after?.name).toBe('Dota 2')
+    expect(after?.priceFinal).toBe(META.priceFinal)
+    expect(after?.tags).toEqual(META.tags)
+    // соседа не трогали
+    expect((await getGameMeta(db, 620))?.shortDescription).toBe('Головоломка с порталами')
+  })
+
+  test('пустой список описаний не идёт в базу вовсе', async () => {
+    const db = await freshDb()
+    // db.batch([]) в libsql — ошибка, и вызывающему пришлось бы помнить об этом
+    expect(await setGameDescriptions(db, [])).toBe(0)
   })
 
   test('метаданные игры: upsert + чтение эквивалентны, повторный upsert обновляет', async () => {

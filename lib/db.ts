@@ -1610,6 +1610,63 @@ export async function sitemapGames(
 }
 
 /**
+ * Описания витрины — для разовой доливки на язык сайта.
+ *
+ * Отдаём текст вместе с appid, потому что отбор «что доливать» делается по
+ * САМОМУ ТЕКСТУ: русское описание от английского отличает наличие кириллицы, а
+ * выразить это в SQLite нечем — REGEXP там не встроен, а гонять LIKE по
+ * тридцати трём буквам ради разовой задачи нелепо.
+ *
+ * Только appid > 0: отрицательные — это кураторские карточки других магазинов,
+ * и Steam про них ничего не знает.
+ */
+export async function gameDescriptions(
+  db: Db,
+  limit: number,
+): Promise<Array<{ appid: number; description: string | null }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, short_description FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; short_description: string | null }>).map(
+    (r) => ({ appid: r.appid, description: r.short_description }),
+  )
+}
+
+/**
+ * Переписать ТОЛЬКО описание, не трогая остального.
+ *
+ * Через upsertGameMeta это не сделать: он пишет строку целиком, и доливка
+ * описаний затёрла бы цены, арт и сигналы теми значениями, что оказались в
+ * объекте у вызывающего. Здесь же меняется одна колонка.
+ *
+ * updated_at НЕ трогаем намеренно. Он стоит в карте сайта как lastmod, а
+ * доливка перевода — не изменение содержания страницы в том смысле, ради
+ * которого краулер сверяет дату. Подняв его на пяти тысячах строк разом, мы
+ * сказали бы поисковику, что весь каталог обновился в одну секунду.
+ *
+ * Батчем, а не поштучно: Turso берёт деньги за строки, но время — за
+ * round-trip, и пять тысяч отдельных UPDATE стоили бы часы.
+ */
+export async function setGameDescriptions(
+  db: Db,
+  rows: ReadonlyArray<{ appid: number; description: string }>,
+): Promise<number> {
+  if (!rows.length) return 0
+  const res = await db.batch(
+    rows.map((r) => ({
+      sql: 'UPDATE games SET short_description = ? WHERE appid = ?',
+      args: [r.description, r.appid],
+    })),
+    'write',
+  )
+  return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
+}
+
+/**
  * Сколько карточек ещё ждёт обогащения — для отчёта крона.
  *
  * Условие обязано повторять claimPageEnrichBatch, иначе отчёт говорит одно,
