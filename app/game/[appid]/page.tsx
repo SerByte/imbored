@@ -9,7 +9,7 @@ import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
-import { discountView } from '@/lib/discount'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { loadGamePage } from '@/lib/gamepage'
 import { currencyOf, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { ratingOf } from '@/lib/rating'
@@ -297,7 +297,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               {(meta.isFree || (meta.priceFinal !== undefined && meta.priceFinal > 0)) && (
                 <span className="rounded-[14px] glass px-5 py-2.5 text-sm flex items-center gap-2">
                   <PriceTag
-                    priceFinal={meta.priceFinal ?? null}
+                    priceFinal={trustedPrice(meta, now)}
                     isFree={meta.isFree}
                     discount={deal}
                     size="hero"

@@ -110,21 +110,43 @@ describe('gameJsonLd', () => {
     })
   })
 
-  test('протухшая скидка не обещает выдаче срок годности цены', () => {
-    // Тот же порог доверия, что и у витрины: замер старше PRICE_TRUST_SEC без
-    // названного Steam срока скидке не верят. Цена при этом остаётся последней
-    // замеренной — ровно её и рисует страница, — а вот priceValidUntil исчезает:
-    // это обещание, и подкреплено оно было бы только нашей догадкой.
+  test('живая скидка без названного срока не обещает выдаче priceValidUntil', () => {
+    // Срок ставим только названный самим Steam: без него discountOf держит
+    // скидку на доверии к возрасту замера, а такому сроку в выдаче не место —
+    // priceValidUntil это обещание, а не оценка.
+    const out = ld({
+      priceFinal: 999,
+      priceInitial: 1999,
+      discountPercent: 50,
+      priceAt: NOW,
+    })
+    expect(out.offers).toMatchObject({ price: '9.99' })
+    expect(out.offers).not.toHaveProperty('priceValidUntil')
+  })
+
+  test('сгоревшая скидка убирает оффер целиком, а не только процент', () => {
+    // price_final при заявленной скидке — акционное число. У Heavy Rain в
+    // проде стояло $0.99 при настоящих $19.99; отдать такое в выдачу хуже,
+    // чем показать на странице: Offer живёт в индексе дольше страницы.
+    const out = ld({
+      priceFinal: 99,
+      priceInitial: 1999,
+      discountPercent: 95,
+      discountEndsAt: NOW - 1,
+      priceAt: NOW,
+    })
+    expect(out.offers).toBeUndefined()
+  })
+
+  test('протухший замер скидки тоже убирает оффер', () => {
     const out = ld({
       priceFinal: 999,
       priceInitial: 1999,
       discountPercent: 50,
       priceAt: NOW - 4 * 86_400,
     })
-    expect(out.offers).toMatchObject({ price: '9.99' })
-    expect(out.offers).not.toHaveProperty('priceValidUntil')
+    expect(out.offers).toBeUndefined()
   })
-
   test('бесплатная игра — это оффер с нулём, а не отсутствие цены', () => {
     expect(ld({ isFree: true, priceFinal: 0 }).offers).toMatchObject({ price: '0.00' })
   })

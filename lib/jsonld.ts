@@ -1,4 +1,4 @@
-import { discountOf } from './discount'
+import { discountOf, trustedPrice } from './discount'
 import type { Rating } from './rating'
 import { STORE_LABEL } from './stores'
 import type { GameMeta } from './types'
@@ -187,6 +187,17 @@ function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers
   // «бесплатно», и разметка обязана говорить то же самое.
   if (meta.priceFinal === undefined && !meta.isFree) return undefined
 
+  /*
+   * Цене, которой не верит витрина, не место и в выдаче — тем более там.
+   *
+   * При протухшей скидке price_final это акционное число без акции: у Heavy
+   * Rain в базе стояло $0.99 при настоящих $19.99. Показать такое человеку
+   * плохо, а отдать поисковику — хуже: Offer живёт в индексе дольше страницы
+   * и попадает в сниппет, по которому кликают.
+   */
+  const trusted = meta.isFree ? 0 : trustedPrice(meta, now)
+  if (trusted === null) return undefined
+
   const deal = discountOf(meta, now)
   /*
    * isFree СИЛЬНЕЕ цены, и порядок тут не вкусовой — он повторяет PriceTag,
@@ -199,7 +210,7 @@ function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers
    * «$14.99», и получалось ровно то расхождение видимого и размеченного, за
    * которое Google снимает расширенный сниппет целиком.
    */
-  const cents = meta.isFree ? 0 : deal ? deal.finalCents : (meta.priceFinal ?? 0)
+  const cents = meta.isFree ? 0 : deal ? deal.finalCents : trusted
 
   const url =
     meta.storeUrl ?? (meta.appid > 0 ? `https://store.steampowered.com/app/${meta.appid}/` : undefined)

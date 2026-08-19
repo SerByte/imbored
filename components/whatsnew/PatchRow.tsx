@@ -56,6 +56,7 @@ export function PatchRow({
   changes,
   discovery = false,
   discount = null,
+  price = null,
 }: {
   item: FeedItem
   meta?: GameMeta
@@ -65,6 +66,12 @@ export function PatchRow({
   discovery?: boolean
   /** посчитан на сервере: срок распродажи нельзя считать в браузере, см. discountView */
   discount?: Discount | null
+  /**
+   * Тоже с сервера и по той же причине. Отдельно от meta.priceFinal, потому
+   * что при протухшей скидке цены НЕТ: price_final там акционное число без
+   * акции. См. trustedPrice.
+   */
+  price?: number | null
 }) {
   const [open, setOpen] = useState(false)
   const [blocks, setBlocks] = useState<NewsBlock[] | null>(null)
@@ -207,7 +214,7 @@ export function PatchRow({
       */}
       {discovery ? (
         <div className="-mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pb-6 pl-[108px] text-sm md:pl-[192px]">
-          <PriceTag priceFinal={meta?.priceFinal ?? null} discount={discount} isFree={meta?.isFree} />
+          <PriceTag priceFinal={price} discount={discount} isFree={meta?.isFree} />
           <DiscountEnds discount={discount} />
           <Link
             href={`/game/${item.appid}`}

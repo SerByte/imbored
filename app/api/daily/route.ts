@@ -13,7 +13,7 @@ import {
   saveDailyPick,
 } from '@/lib/db'
 import { dayLabel } from '@/lib/freshness'
-import { discountView } from '@/lib/discount'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
 import { heuristicPicks } from '@/lib/llm'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
@@ -174,7 +174,7 @@ export async function GET() {
       hoursPlayed,
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,
-      priceFinal: meta?.priceFinal ?? null,
+      priceFinal: meta ? trustedPrice(meta, now) : null,
       isFree: meta?.isFree ?? null,
       // Скидка — разговор про покупку: у своей игры «−40%» сообщает только то,
       // что ты купил её дороже. Считается на сервере вместе с подписью срока —
@@ -190,7 +190,7 @@ export async function GET() {
         art: m?.art ?? null,
         store: m?.store ?? null,
         storeUrl: m?.storeUrl ?? null,
-        priceFinal: m?.priceFinal ?? null,
+        priceFinal: m ? trustedPrice(m, now) : null,
         isFree: m?.isFree ?? null,
         discount: m ? discountView(m, now) : null,
       }
