@@ -6,6 +6,7 @@ import {
   buildAssetUrl,
   legacyArtUrl,
   parseStoreAssets,
+  trimArt,
 } from './art'
 
 /**
@@ -145,5 +146,31 @@ describe('artSrcSet', () => {
     expect(artSrcSet(metro, 'hero')).toBeUndefined()
     expect(artSrcSet(metro, 'card')).toBeUndefined()
     expect(artSrcSet({ appid: 1 }, 'hero')).toBeUndefined()
+  })
+})
+
+describe('trimArt', () => {
+  test('вариант card не тащит hero — их не читает ни один потребитель', () => {
+    // ORDER.card = [header, capsule]; artSrcSet берёт header/header2x.
+    // hero и hero2x уезжали в клиентский компонент и не запрашивались никогда.
+    expect(
+      trimArt({ header: 'h', header2x: 'h2', capsule: 'c', hero: 'x', hero2x: 'x2' }),
+    ).toEqual({ header: 'h', header2x: 'h2', capsule: 'c' })
+  })
+
+  test('вариант hero оставляет широкий арт и деградацию к узкому', () => {
+    expect(trimArt({ header: 'h', capsule: 'c', hero: 'x', hero2x: 'x2' }, 'hero')).toEqual({
+      hero: 'x',
+      hero2x: 'x2',
+      capsule: 'c',
+      header: 'h',
+    })
+  })
+
+  test('пустой результат — это null, а не пустой объект', () => {
+    // Пустой объект в пропсах весит больше, чем null.
+    expect(trimArt({ hero: 'x' })).toBeNull()
+    expect(trimArt(null)).toBeNull()
+    expect(trimArt(undefined)).toBeNull()
   })
 })
