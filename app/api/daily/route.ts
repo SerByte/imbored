@@ -12,6 +12,7 @@ import {
   loadTagStats,
   saveDailyPick,
 } from '@/lib/db'
+import { dayLabel } from '@/lib/freshness'
 import { discountView } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
 import { heuristicPicks } from '@/lib/llm'
@@ -194,7 +195,8 @@ export async function GET() {
         discount: m ? discountView(m, now) : null,
       }
     }),
-    dateLabel: new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }),
+    // Из того же dateStr, что и ключ записи — см. dayLabel.
+    dateLabel: dayLabel(dateStr),
   })
 }
 
