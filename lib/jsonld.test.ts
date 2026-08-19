@@ -129,6 +129,27 @@ describe('gameJsonLd', () => {
     expect(ld({ isFree: true, priceFinal: 0 }).offers).toMatchObject({ price: '0.00' })
   })
 
+  test('«бесплатно» сильнее цены: у free-to-play в базе бывает и то и другое', () => {
+    // Найдено на живом деплое: у CS2 одновременно is_free = 1 и
+    // price_final = 1499 — это цена Prime. Страница рисует «бесплатно»
+    // (PriceTag проверяет isFree первым), значит и оффер обязан быть нулевым:
+    // расхождение видимого и размеченного стоит расширенного сниппета.
+    expect(ld({ isFree: true, priceFinal: 1499, priceInitial: 1499 }).offers).toMatchObject({
+      price: '0.00',
+    })
+  })
+
+  test('скидка не перебивает «бесплатно»', () => {
+    const out = ld({
+      isFree: true,
+      priceFinal: 999,
+      priceInitial: 1999,
+      discountPercent: 50,
+      priceAt: NOW,
+    })
+    expect(out.offers).toMatchObject({ price: '0.00' })
+  })
+
   test('free-to-play без price_final всё равно получает нулевой оффер', () => {
     // Steam для таких игр price_overview не присылает: в базе NULL, а игра
     // при этом бесплатная. Именно так лежат CS2, Dota 2 и Warframe — верх

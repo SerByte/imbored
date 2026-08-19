@@ -188,7 +188,18 @@ function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers
   if (meta.priceFinal === undefined && !meta.isFree) return undefined
 
   const deal = discountOf(meta, now)
-  const cents = deal ? deal.finalCents : (meta.priceFinal ?? 0)
+  /*
+   * isFree СИЛЬНЕЕ цены, и порядок тут не вкусовой — он повторяет PriceTag,
+   * который решает то же самое для страницы: `if (isFree || priceFinal === 0)`
+   * стоит у него первой строкой.
+   *
+   * Случай не выдуманный, он найден на живом деплое: у Counter-Strike 2 в
+   * базе одновременно is_free = 1 и price_final = 1499 — это цена Prime, а
+   * не игры. Страница показывала «бесплатно», разметка успевала сказать
+   * «$14.99», и получалось ровно то расхождение видимого и размеченного, за
+   * которое Google снимает расширенный сниппет целиком.
+   */
+  const cents = meta.isFree ? 0 : deal ? deal.finalCents : (meta.priceFinal ?? 0)
 
   const url =
     meta.storeUrl ?? (meta.appid > 0 ? `https://store.steampowered.com/app/${meta.appid}/` : undefined)
