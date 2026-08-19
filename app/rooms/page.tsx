@@ -122,7 +122,7 @@ export default function RoomsBoardPage() {
           </div>
         ) : rooms.length === 0 ? (
           <div className="glass rounded-[20px] p-6 text-center text-dim text-sm">
-            Сейчас открытых комнат нет. Создай свою и включи «показывать на доске» — сюда придут.
+            Сейчас открытых комнат нет. Создай свою и нажми «Показать на доске» — сюда придут.
           </div>
         ) : (
           <AnimatePresence initial={false} mode="popLayout">
