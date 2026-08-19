@@ -37,7 +37,7 @@ import { NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
 import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, OwnAnchor, Scope } from '@/lib/recommend'
-import { SOURCE_BADGE } from '@/lib/sources'
+import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import { bounceTo } from '@/lib/destination'
 import type { CandidateSource, Mood } from '@/lib/types'
@@ -1300,7 +1300,7 @@ function Player() {
                             ? EDGE_BADGE[p.edge]
                             : p.store
                               ? (STORE_LABEL[p.store] ?? p.store)
-                              : SOURCE_BADGE[p.source]}
+                              : SOURCE_BADGE_SHORT[p.source]}
                         </span>
                         {/* Цена — только у не купленного: у своей игры она уже
                             ничего не решает, а место в строке занимает */}
