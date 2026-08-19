@@ -50,10 +50,20 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
   const db = await getDb()
-  const room = await getRoom(db, id)
+  /*
+   * Комната и состав — одним заходом, а не двумя.
+   *
+   * roomMembers не зависит от результата getRoom: обоим нужен только id.
+   * Каждый поход в Turso из функции стоит десятки-сотни миллисекунд, и на
+   * этом маршруте их около десяти подряд — при том что сами запросы быстрые
+   * (замер по проду: 53–319 мс каждый, а маршрут отвечает за 1,6–2,8 с).
+   * Складывается именно из round-trip, а не из тяжести SQL.
+   *
+   * Цена промаха — один лишний запрос состава у несуществующей комнаты. Id
+   * приходит из адреса, по которому участник уже стоит, так что это редкость.
+   */
+  const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
-
-  const members = await roomMembers(db, id)
   if (!members.some((m) => m.steamid === steamid)) {
     return NextResponse.json({ error: 'notmember' }, { status: 403 })
   }
@@ -93,14 +103,18 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   }
   const now = nowSec()
   const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
-  const extraPool = await fetchDiscoveryPool(db, {
-    tags: pickQueryTags(partyProfile, tagStats, poolSize),
-    requireMultiplayer: true,
-    // Ротацию НЕ сдвигаем по раунду: она меняет пул, а значит и порядок, и
-    // «следующие двадцать» начали бы дублировать уже показанное
-    rotation: rotationSlot(id, now),
-    limit: POOL_BASE + POOL_STEP * room.deckRound,
-  })
+  // Свои голоса не зависят от пула — тянем их тем же заходом, а не после.
+  const [extraPool, voted] = await Promise.all([
+    fetchDiscoveryPool(db, {
+      tags: pickQueryTags(partyProfile, tagStats, poolSize),
+      requireMultiplayer: true,
+      // Ротацию НЕ сдвигаем по раунду: она меняет пул, а значит и порядок, и
+      // «следующие двадцать» начали бы дублировать уже показанное
+      rotation: rotationSlot(id, now),
+      limit: POOL_BASE + POOL_STEP * room.deckRound,
+    }),
+    myVotedAppids(db, id, steamid),
+  ])
   for (const m of extraPool) if (!metas.has(m.appid)) metas.set(m.appid, m)
 
   // Раунд расширяет ту же колоду, а не выдаёт новую: buildGroupDeck при большем
@@ -118,7 +132,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   // версии вроде Condition Zero при живой CS2
   const actual = filterActual(deck, metas, 'party')
 
-  const voted = await myVotedAppids(db, id, steamid)
   const shown = actual.filter((c) => !voted.has(c.appid))
 
   // Знаменатель прогресса — это то, что человек реально увидит, то есть колода
