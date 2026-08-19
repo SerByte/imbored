@@ -15,8 +15,6 @@ import {
   EASE_LIFT_CSS,
   EASE_STRIKE_CSS,
   OUTRO,
-  RELIGHT,
-  TITLE,
 } from './motion'
 
 /**
@@ -55,10 +53,6 @@ describe('lib/motion.ts зеркалит токены globals.css', () => {
 
   test('такт подтверждения равен --dur-fast', () => {
     expect(`${CONFIRM_MS}ms`).toBe(cssToken('--dur-fast'))
-  })
-
-  test('--dur-relight совпадает с DUR.relight', () => {
-    expect(cssToken('--dur-relight')).toBe(`${DUR.relight * 1000}ms`)
   })
 
   test('вторая половина словаря кривых зеркалится', () => {
@@ -107,45 +101,5 @@ describe('партитура финального такта', () => {
     // видит, что его ответ принят. Твинов нет, состояние обязано побыть.
     expect(OUTRO.reducedNavMs).toBeGreaterThan(0)
     expect(OUTRO.reducedNavMs).toBeLessThan(OUTRO.navMs)
-  })
-})
-
-describe('перекраска комнаты и титульная карточка', () => {
-  test('провал диммера достигает пика ровно в момент подмены DOM', () => {
-    // AnimatePresence mode="wait" меняет детей через exit, а он идёт --dur-fast.
-    // Пик темноты обязан совпасть с этим кадром — там закапывается склейка.
-    expect(RELIGHT.dipInDur).toBe(DUR.fast)
-  })
-
-  test('провал заканчивается раньше, чем устаканится вход', () => {
-    expect((RELIGHT.dipAt + RELIGHT.dipInDur + RELIGHT.dipOutDur) * 1000).toBeLessThan(
-      (DUR.fast + DUR.base) * 1000,
-    )
-  })
-
-  test('перекраска не удлиняет взаимодействие', () => {
-    // Она ложится ПОВЕРХ существующей сериализации exit→enter, а не после неё.
-    // Стоит перекраске стать длиннее навигации финала — и квиз начнёт ждать.
-    expect(DUR.relight * 1000).toBeLessThan(OUTRO.navMs)
-  })
-
-  test('все такты карточки заканчиваются до размонтирования', () => {
-    const beats = [
-      TITLE.strikeAt + TITLE.strikeDur,
-      TITLE.flareAt + TITLE.flareDur,
-      // последняя створка стартует позже всех на два шага стаггера
-      TITLE.openAt + TITLE.openDur + TITLE.openStagger * 2,
-    ]
-    for (const end of beats) expect(end * 1000).toBeLessThanOrEqual(TITLE.unmountMs)
-  })
-
-  test('жёсткий бэкстоп срабатывает позже штатного размонтирования', () => {
-    // Иначе страховка гасила бы карточку раньше, чем она доиграет.
-    expect(TITLE.unmountMs).toBeLessThan(TITLE.hardMs)
-  })
-
-  test('чёрный держится дольше кадра, но короче розжига', () => {
-    expect(TITLE.blackMs).toBeGreaterThan(16)
-    expect(TITLE.blackMs).toBeLessThanOrEqual(TITLE.strikeAt * 1000)
   })
 })

@@ -73,16 +73,8 @@
      1.04 на --ease-out читается как ресайз, с перелётом — как шаг вперёд. */
   --ease-lift: cubic-bezier(0.34, 1.36, 0.64, 1);
 
-  /* Смена геля на лампе в квизе. Вдвое длиннее базовой намеренно: карточки
-     режутся встык, свет перетекает. Разность и есть кино.
-     Такт НЕ удлиняет взаимодействие — он ложится ПОВЕРХ уже существующей
-     сериализации AnimatePresence, а не после неё. */
-  --dur-relight: 720ms;
 
 
-  /* Радиус крупных панелей. Токен, а не литерал: то же число обязано стоять
-     в .quiz-panel:focus-visible ниже, и как литерал оно уже расходилось. */
-  --radius-panel: 20px;
 }
 
 :root[data-theme="light"] {
@@ -247,9 +239,6 @@
   --font-sans: var(--font-onest), system-ui, sans-serif;
   --font-mono: var(--font-jbmono), ui-monospace, monospace;
   --font-display: var(--font-unbounded), var(--font-onest), system-ui, sans-serif;
-  /* Дисплейное начертание квиза; подключается в app/quiz/layout.tsx — см.
-     тамошний докблок о том, почему это не --font-display */
-  --font-quiz: var(--font-oswald), var(--font-onest), system-ui, sans-serif;
 }
 
 /*
@@ -650,19 +639,7 @@ textarea:focus-visible {
   }
 }
 
-@keyframes shutter-sweep {
-  0% {
-    opacity: 0;
-    transform: translate3d(-70%, 0, 0);
-  }
-  35% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate3d(70%, 0, 0);
-  }
-}
+
 /*
  * Там, где наведения не существует, покой не может быть таким же глубоким.
  *
@@ -769,14 +746,6 @@ img[data-art-fade][data-loaded] {
   }
 }
 
-@keyframes shelf-drift {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
-  }
-}
 
 /* Волосок рельса и нижней навигации: переезд между подписями. Класс, а не
    inline-стиль — иначе «уменьшить движение» не могло его выключить. */
@@ -790,80 +759,6 @@ img[data-art-fade][data-loaded] {
   }
 }
 
-@keyframes ray-drift {
-  from {
-    transform: translate3d(-1.4%, 0, 0);
-  }
-  to {
-    transform: translate3d(1.4%, 0, 0);
-  }
-}
-
-/*
- * Вес кадра в грейфере. ТОЛЬКО translate3d — субпиксельный поворот на
- * маскированном элементе с 36 фильтрованными детьми убивает любой быстрый
- * путь. Живёт на обёртке (она НЕ маскирована), а дрейф остаётся на треке:
- * две анимации не должны драться за один transform.
- */
-@keyframes gate-weave {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-  50% {
-    transform: translate3d(0, -0.6px, 0);
-  }
-}
-/*
- * На телефоне створки ПОВОРАЧИВАЮТСЯ: те же полосы, только горизонтальные.
- * Карточек нет и здесь. Ширины не ездят — гейт курсора выше их и не включит.
- */
-/*
- * ХРОМАТИЧЕСКАЯ АБЕРРАЦИЯ — ТОЛЬКО НА ДИСПЛЕЙНОМ ТЕКСТЕ.
- *
- * Для арта это было бы три смещённые копии картинки, то есть 12 слоёв, связанных
- * общим scale(1.15). Для текста это ОДИН элемент, ноль слоёв, ноль blend-режимов
- * — и при этом настоящий анаморфный вид.
- *
- * inherits: false и объявление на самом элементе: наследуемое зарегистрированное
- * свойство заставило бы пересчитывать стиль всего поддерева каждый кадр.
- * text-shadow вычисляется на заголовке и наследуется в слова уже готовым, так
- * что эффект работает и когда SplitText не успел разрезать строку.
- *
- * --ab НЕ объявляется в :root: этот префикс не освобождён от зеркала светлой
- * темы, и тест контраста покраснел бы.
- */
-@property --ab {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-/* Волосок лампы: приходит ударом, расплывается, гаснет. */
-.title-filament {
-  position: absolute;
-  left: 10%;
-  top: 32%;
-  width: 30%;
-  height: 2px;
-  opacity: 0;
-  transform-origin: 0% 50%;
-  background: linear-gradient(90deg, transparent, var(--key-rim), transparent);
-  box-shadow:
-    0 0 24px 2px var(--key),
-    0 0 64px 10px color-mix(in srgb, var(--key) 45%, transparent);
-}
-
-/* Вспышка лампы — из той же точки, что и постель света. */
-.title-flare {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  background: radial-gradient(
-    58% 46% at var(--lamp-x) var(--lamp-y),
-    color-mix(in srgb, var(--key) 55%, transparent),
-    transparent 62%
-  );
-}
 
 /*
  * Такты ответа в квизе.
