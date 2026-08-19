@@ -16,6 +16,7 @@ import {
   getFeedForApps,
   getGameNews,
   getGameRanks,
+  getNewsBlocks,
   getFeedHeadForApps,
   getMajorFeed,
   getMajorFeedHead,
@@ -865,6 +866,32 @@ const NEWS_BASE = {
 function newsItem(over: Partial<StoredNews> = {}): StoredNews {
   return { appid: 730, gid: '1', title: 'Обновление', ...NEWS_BASE, ...over }
 }
+
+describe('getNewsBlocks', () => {
+  test('отдаёт тело по паре appid+gid', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    expect(await getNewsBlocks(db, 730, '1')).toEqual(NEWS_BASE.blocks)
+  })
+
+  test('чужой gid и чужая игра — это null, а не тело соседа', async () => {
+    // Маршрут /api/news публичный, и пара приезжает из адресной строки.
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    expect(await getNewsBlocks(db, 730, '2')).toBeNull()
+    expect(await getNewsBlocks(db, 570, '1')).toBeNull()
+  })
+
+  test('битый блоб читается как «нечего показать», а не роняет ответ', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    await db.execute({
+      sql: 'UPDATE news_items SET blocks_json = ? WHERE appid = 730 AND gid = ?',
+      args: ['{не json', '1'],
+    })
+    expect(await getNewsBlocks(db, 730, '1')).toBeNull()
+  })
+})
 
 describe('upsertNewsItems', () => {
   test('пишет пост и читает его обратно', async () => {

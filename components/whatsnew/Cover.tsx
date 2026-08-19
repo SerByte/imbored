@@ -7,8 +7,7 @@ import { BlurBand } from '@/components/BlurBand'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { SplitHeading } from '@/components/SplitHeading'
-import type { StoredNews } from '@/lib/db'
-import { countChanges } from '@/lib/steamhtml'
+import type { FeedItem } from '@/lib/db'
 import type { GameMeta } from '@/lib/types'
 import { byline, freshness } from './format'
 import { useNow } from './Now'
@@ -33,11 +32,14 @@ export function Cover({
   item,
   meta,
   nowSec,
+  changes,
   label,
 }: {
-  item: StoredNews
+  item: FeedItem
   meta?: GameMeta
   nowSec: number
+  /** правок в патче; считается на сервере — тело сюда больше не едет */
+  changes: number
   /** «в популярных играх» — какую из лент читает человек; без вкладок не нужна */
   label?: string
 }) {
@@ -57,7 +59,7 @@ export function Cover({
   const textFade = useTransform(scrollYProgress, [0, 0.75], [1, 0])
 
   const name = meta?.name ?? `Игра ${item.appid}`
-  const changes = countChanges(item.blocks)
+
   const studio = byline(meta?.developer, meta?.releaseYear)
   const published = new Date(item.publishedAt * 1000)
 

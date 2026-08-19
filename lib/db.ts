@@ -2015,6 +2015,15 @@ export type StoredNews = {
   tldr?: string
 }
 
+/**
+ * Строка ленты без тела патча.
+ *
+ * Ровно то, что уезжает в клиентские островки «Что нового». Тело приходит
+ * отдельно (см. getNewsBlocks и app/api/news): в разметке страницы оно
+ * занимало больше половины веса, а раскрывают одну строку из тридцати.
+ */
+export type FeedItem = Omit<StoredNews, 'blocks'>
+
 /** Статусы опроса: gone — игра без ленты, mismatch — фид отдаёт чужие appid */
 export type PollStatus = 'new' | 'ok' | 'empty' | 'error' | 'gone' | 'mismatch'
 
@@ -2146,6 +2155,33 @@ export async function upsertNewsItems(
   }))
   const res = await db.batch(stmts, 'write')
   return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
+}
+
+/**
+ * Тело одного патча — для ленты, которая раскрывает строку по требованию.
+ *
+ * Отдельный запрос вместо колонки в ленте: в общей выборке тридцати строк
+ * blocks_json занимал больше половины веса страницы, а прочитан бывает
+ * один из тридцати. Возвращает null и на «нет такой записи», и на битый
+ * блоб — вызывающему в обоих случаях нечего показать.
+ */
+export async function getNewsBlocks(
+  db: Db,
+  appid: number,
+  gid: string,
+): Promise<NewsBlock[] | null> {
+  const res = await db.execute({
+    sql: 'SELECT blocks_json FROM news_items WHERE appid = ? AND gid = ?',
+    args: [appid, gid],
+  })
+  const raw = res.rows[0]?.blocks_json
+  if (typeof raw !== 'string') return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as NewsBlock[]) : null
+  } catch {
+    return null
+  }
 }
 
 /** Страница игры: тут показываем и мелкие патчи тоже */

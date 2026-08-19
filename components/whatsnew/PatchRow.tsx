@@ -2,14 +2,14 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { NewsBody } from '@/components/NewsBody'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
-import type { StoredNews } from '@/lib/db'
+import type { FeedItem } from '@/lib/db'
 import { artCandidates } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
-import { countChanges } from '@/lib/steamhtml'
+import type { NewsBlock } from '@/lib/steamhtml'
 import type { GameMeta } from '@/lib/types'
 import { byline, changesLabel, freshness } from './format'
 import { useNow } from './Now'
@@ -17,12 +17,30 @@ import { useNow } from './Now'
 const EASE = [0.22, 1, 0.36, 1] as const
 
 /**
+ * Сколько курсор должен постоять на строке, прежде чем считать это намерением.
+ *
+ * Без задержки прокрутка мышью по ленте — это запрос на каждую строку, мимо
+ * которой проехал курсор: тридцать тел вместо одного, то есть ровно то, от
+ * чего страница и уходила. Сто двадцать миллисекунд отсекают проезд и при этом
+ * незаметны для того, кто действительно целится в строку: пока палец идёт к
+ * кнопке мыши, тело уже едет.
+ */
+const HOVER_INTENT_MS = 120
+
+/**
  * Строка ленты. Раскрывается на месте, а не уводит на другую страницу.
  *
- * Это бесплатно: getMajorFeed и getFeedForApps уже привозят blocks целиком, а
- * прежняя карточка выбрасывала всё после первых двух блоков и отправляла
- * читателя на /game/[appid]. Ноль дополнительных запросов — просто перестаём
- * выкидывать то, что и так загружено.
+ * Тело приезжает по требованию, а не вместе со страницей, и это единственное,
+ * что здесь стоило дорого. Тридцать тел в разметке — это 277 КБ из 476 на
+ * проде: 58 % веса страницы уходило на текст, который раскрывают у одной
+ * строки из тридцати. Считать это бесплатным можно было только по запросам к
+ * базе: getMajorFeed действительно привозил blocks одним запросом — и он же
+ * тащил их дальше, через RSC-пейлоад, в браузер каждого посетителя.
+ *
+ * «По требованию» не значит «по клику»: запрос уходит на наведение курсора и
+ * на касание, то есть за сотню-другую миллисекунд до самого клика. Ответ общий
+ * для всех (пара appid+gid определяет патч однозначно) и кэшируется на грани,
+ * так что после первого читателя он не доходит даже до функции.
  *
  * data-wash отдаёт Stage ссылку на арт для фоновой заливки, data-live он же
  * проставляет обратно, когда строка попадает в центр экрана.
@@ -35,23 +53,68 @@ export function PatchRow({
   item,
   meta,
   nowSec,
+  changes,
   discovery = false,
   discount = null,
 }: {
-  item: StoredNews
+  item: FeedItem
   meta?: GameMeta
   nowSec: number
+  /** правок в патче; считается на сервере — тело сюда больше не едет */
+  changes: number
   discovery?: boolean
   /** посчитан на сервере: срок распродажи нельзя считать в браузере, см. discountView */
   discount?: Discount | null
 }) {
   const [open, setOpen] = useState(false)
+  const [blocks, setBlocks] = useState<NewsBlock[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  /*
+   * Ref, а не состояние: «запрос уже ушёл» не влияет на разметку, зато
+   * проверяется из обработчика наведения, который срабатывает раньше любого
+   * перерисовывания. Состояние здесь означало бы второй запрос на каждое
+   * движение мышью по строке.
+   */
+  const asked = useRef(false)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const loadBody = useCallback(() => {
+    if (asked.current) return
+    asked.current = true
+    setFailed(false)
+    fetch(`/api/news?appid=${item.appid}&gid=${encodeURIComponent(item.gid)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: { blocks?: unknown }) => {
+        if (!Array.isArray(d.blocks)) throw new Error('shape')
+        setBlocks(d.blocks as NewsBlock[])
+      })
+      .catch(() => {
+        // Снимаем отметку: следующее раскрытие обязано попробовать снова.
+        // Отказ здесь — это чаще всего сеть телефона в лифте, а не пустой патч.
+        asked.current = false
+        setFailed(true)
+      })
+  }, [item.appid, item.gid])
+
+  const cancelHover = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = null
+  }, [])
+
+  const hoverIntent = useCallback(() => {
+    if (asked.current || hoverTimer.current) return
+    hoverTimer.current = setTimeout(loadBody, HOVER_INTENT_MS)
+  }, [loadBody])
+
+  // Строка может уехать из разметки вместе со сменой вкладки ленты, пока
+  // таймер ждёт: висящий setTimeout дёрнул бы setState у размонтированного.
+  useEffect(() => cancelHover, [cancelHover])
+
   // Проп остаётся серверным значением и служит фолбэком: под провайдером
   // подпись тикает сама, вне его — как раньше
   const now = useNow(nowSec)
 
   const name = meta?.name ?? `Игра ${item.appid}`
-  const changes = countChanges(item.blocks)
   const studio = byline(meta?.developer, meta?.releaseYear)
   // Ровно тот же файл, что грузит GameArt строкой ниже: заливка размывается в
   // кашу, разрешение ей не нужно, а вот второй загрузки hero-арта на каждую
@@ -74,7 +137,21 @@ export function PatchRow({
     >
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          loadBody()
+          setOpen((v) => !v)
+        }}
+        // Предзагрузка. Курсор доезжает до строки за сотни миллисекунд до
+        // нажатия, touchstart опережает click примерно на сто — этого хватает,
+        // чтобы тело успело приехать и раскрытие выглядело мгновенным, как
+        // когда оно ехало вместе со страницей.
+        //
+        // Наведение — через задержку намерения, остальные три — сразу: касание
+        // и фокус с клавиатуры проездом не бывают.
+        onPointerEnter={hoverIntent}
+        onPointerLeave={cancelHover}
+        onFocus={loadBody}
+        onTouchStart={loadBody}
         aria-expanded={open}
         className="group flex w-full items-start gap-4 py-6 text-left transition-opacity md:gap-6"
       >
@@ -162,7 +239,25 @@ export function PatchRow({
                   className="mb-5 w-full rounded-[14px] border border-edge object-cover"
                 />
               ) : null}
-              <NewsBody blocks={item.blocks} />
+              {blocks ? (
+                <NewsBody blocks={blocks} />
+              ) : failed ? (
+                <p className="text-sm leading-relaxed text-dim">
+                  Не удалось загрузить патч. Он открывается по ссылке ниже.
+                </p>
+              ) : (
+                /* Скелет ровно на высоту абзаца: без него панель раскрывается
+                   в пустоту и тут же дёргается, когда тело приезжает. */
+                <div aria-hidden className="flex flex-col gap-2.5">
+                  {[92, 100, 78].map((w, i) => (
+                    <span
+                      key={i}
+                      className="h-3.5 animate-pulse rounded-full bg-ink/10"
+                      style={{ width: `${w}%` }}
+                    />
+                  ))}
+                </div>
+              )}
               <div className="mt-6 flex flex-wrap items-center gap-5 text-sm">
                 <Link
                   href={`/game/${item.appid}`}
