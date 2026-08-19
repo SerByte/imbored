@@ -84,6 +84,27 @@ describe('превью в мессенджерах', () => {
     expect(offenders, 'images здесь мёртв — картинку даёт opengraph-image.tsx').toEqual([])
   })
 
+  /**
+   * revalidate у карточки в динамическом сегменте без generateStaticParams —
+   * мёртвая строка: сегмент не попадает в dynamicRoutes манифеста, маршрут
+   * остаётся ƒ, и картинка рисуется заново на каждый заход краулера. Так было
+   * у четырёх карточек, а потом у карточки игры — самой пересылаемой из всех.
+   * Функция у page.tsx того же сегмента картинку не спасает: это отдельный
+   * маршрут.
+   */
+  test('карточка с revalidate в динамическом сегменте регистрирует сегмент', () => {
+    const offenders: string[] = []
+    for (const [file, src] of appFiles()) {
+      if (!['opengraph-image.tsx', 'twitter-image.tsx'].includes(path.basename(file))) continue
+      if (!path.relative(ROOT, file).includes('[')) continue
+      if (!/export const revalidate\b/.test(src)) continue
+      if (!/export (async )?function generateStaticParams\b/.test(src)) {
+        offenders.push(path.relative(ROOT, file).split(path.sep).join('/'))
+      }
+    }
+    expect(offenders, 'без generateStaticParams revalidate не значит ничего').toEqual([])
+  })
+
   test('все карточки рисуются в 1200×630 — это то, что показывают Telegram и Discord', () => {
     const cards = appFiles().filter(([f]) => path.basename(f) === 'opengraph-image.tsx')
     expect(cards.length, 'карточек не найдено').toBeGreaterThanOrEqual(3)

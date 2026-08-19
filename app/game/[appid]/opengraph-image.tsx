@@ -27,6 +27,26 @@ export const contentType = 'image/png'
  */
 export const revalidate = 86_400
 
+/**
+ * Регистрирует сегмент в манифесте — без этого revalidate выше мёртв.
+ *
+ * То же правило, что у карточек совместимости, портрета и комнаты, и у самой
+ * страницы игры рядом: без generateStaticParams динамический сегмент не
+ * попадает в dynamicRoutes манифеста, маршрут остаётся ƒ и перерисовывает одну
+ * и ту же картинку на каждый заход краулера. generateStaticParams у page.tsx
+ * сюда не распространяется: картинка — отдельный маршрут, и регистрировать его
+ * нужно отдельно.
+ *
+ * Пустой список намеренно, в отличие от страницы, которая предрендерит топ-500.
+ * Здесь каждый элемент списка — это отрисованный на сборке PNG с тянущимся по
+ * сети артом; пятьсот таких заняли бы сборку целиком ради картинок, которые
+ * краулер и так прогреет при первой пересылке. dynamicParams по умолчанию true,
+ * поэтому досоздание по требованию работает, а сутки кэша те же.
+ */
+export async function generateStaticParams(): Promise<Array<Record<string, string>>> {
+  return []
+}
+
 export default async function Image({ params }: { params: Promise<{ appid: string }> }) {
   const { appid: raw } = await params
   const appid = Number(raw)
