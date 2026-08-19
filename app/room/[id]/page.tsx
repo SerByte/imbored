@@ -474,6 +474,23 @@ export default function RoomPage() {
             (роут отвечает nothost остальным), и кнопка, отвечающая отказом,
             хуже её отсутствия.
           */}
+          {/*
+            Ссылка ПЕРЕД доской, а не после.
+
+            Порядок был обратный: сначала тумблер «показывать на доске», потом
+            кнопка «скопировать ссылку». То есть настройка стояла впереди
+            действия — притом что подзаголовок этой же страницы говорит «матч
+            нужен минимум вдвоём», а /rooms формулирует порядок прямым текстом:
+            «собери свою комнату и скинь ссылку друзьям — ИЛИ подсядь к
+            открытой». Позвать своих — основной путь, доска — запасной, и
+            вёрстка обязана читаться так же.
+          */}
+          <button
+            onClick={copyLink}
+            className="rounded-[14px] glass glass-hover px-4 py-2 text-sm cursor-pointer"
+          >
+            {copied ? 'Скопировано ✓' : 'Скопировать ссылку для друзей'}
+          </button>
           {state.isHost ? (
             <button
               onClick={togglePublic}
@@ -493,12 +510,6 @@ export default function RoomPage() {
               На доске
             </span>
           ) : null}
-          <button
-            onClick={copyLink}
-            className="rounded-[14px] glass glass-hover px-4 py-2 text-sm cursor-pointer"
-          >
-            {copied ? 'Скопировано ✓' : 'Скопировать ссылку для друзей'}
-          </button>
         </div>
       </div>
 
