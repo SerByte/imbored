@@ -169,12 +169,27 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
       />
       {/* hero */}
       <section className="relative overflow-hidden">
+        {/*
+          Подложка берёт ТУ ЖЕ картинку, что и обложка ниже, и это не
+          небрежность, а расчёт.
+
+          Здесь стоял variant="hero", то есть library_hero: 231 КБ у Dota 2
+          против 38 КБ у header. Изображение при этом проходит blur-3xl
+          (радиус 64 пикселя) и opacity-30 — разрешение в нём не значит
+          ничего. Правило уже было записано в components/ArtWash.tsx
+          («растянутая на весь экран и размытая в кисель»), просто не
+          применено здесь.
+
+          sizes повторяет обложку дословно, чтобы браузер выбрал тот же
+          файл и взял его из кэша. Не «поменьше», а «тот же самый»: любой
+          другой размер — это вторая загрузка вместо нуля байт.
+        */}
         <GameArt
           appid={meta.appid}
           name=""
           headerImage={meta.headerImage ?? null}
           art={meta.art}
-          variant="hero"
+          sizes="(min-width: 768px) 380px, 100vw"
           fallback={null}
           className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
         />

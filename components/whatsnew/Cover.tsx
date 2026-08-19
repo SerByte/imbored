@@ -182,11 +182,25 @@ export function Cover({
               className="hidden md:block"
               style={reduced ? undefined : { y: stillY }}
             >
+              {/*
+                lazy, а не eager, и это про телефон.
+
+                Обёртка выше — hidden md:block, то есть на мобильной ширине
+                кадр не показывается никогда. Но display:none не отменяет
+                загрузку <img src>, а eager снимает и ту отсрочку, которую
+                браузер дал бы сам: на телефоне качалось 201 КБ (замер по
+                текущему ведущему патчу) ради картинки, которой не будет.
+
+                Ленивая картинка внутри невидимого контейнера в кадр не
+                попадает никогда — значит и не грузится.
+              */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={item.imageUrl}
                 alt=""
-                loading="eager"
+                loading="lazy"
+                decoding="async"
+                fetchPriority="low"
                 className="w-full rounded-[20px] border border-edge object-cover shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)]"
               />
               <figcaption className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-dim">

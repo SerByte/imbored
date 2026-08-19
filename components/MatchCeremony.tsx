@@ -60,12 +60,15 @@ export function MatchCeremony({
       className="media-dark relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden"
     >
       <div data-beat="art" className="absolute inset-0">
+        {/* Размыто в кисель под opacity-30: library_hero здесь стоил бы
+            лишние ~200 КБ за разрешение, которого не видно. Тот же расчёт,
+            что в ArtWash и в подложке карточки игры. */}
         <GameArt
           appid={game.appid}
           name={game.name}
           headerImage={game.headerImage}
           art={game.art}
-          variant="hero"
+          sizes="100vw"
           eager
           className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
         />
