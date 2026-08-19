@@ -124,7 +124,21 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {(backlog.pricedCount > 0 || stats.rate !== null) && (
         <div className="grid md:grid-cols-2 gap-4 mb-10">
           {backlog.pricedCount > 0 && (
-            <div className="glass rounded-[20px] p-5 flex items-center justify-between gap-4">
+            /*
+              Ниже 640px карточка встаёт столбиком, и это не вкусовщина.
+
+              Строкой она собрана под ДЕСКТОП, где рядом стоит вторая карточка
+              и на текст остаётся 369px при кнопке 121px — всё ложится в одну-
+              две строки. На 375px карточка становится во всю ширину, но кнопка
+              shrink-0 держит свои 130px, и тексту достаётся 156px из 335: и
+              заголовок, и подпись переносятся вдвое, а фраза про Game Pass
+              растягивается на четыре строки рядом с пустым местом под кнопкой.
+
+              sm, а не md: между 640 и 768 карточка уже во всю ширину, и там на
+              текст остаётся 423px и больше — строкой она в этом промежутке
+              работает как задумано.
+            */
+            <div className="glass rounded-[20px] p-5 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="text-lg font-bold">
                   ≥ <span className="font-mono text-ember-text">${(backlog.cents / 100).toFixed(0)}</span>{' '}
