@@ -132,9 +132,13 @@ export function WarmupScreen({
           transition={{ duration: 0.45, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
           className="text-center"
         >
+          {/* «в демо-библиотеке», а не «в библиотеке»: с автодемо на /play и
+              /daily сюда попадает гость, который свою библиотеку не подключал,
+              и цифра 22 без уточнения читалась бы как утверждение о нём. */}
           <p className="text-sm text-dim">
             <CountNumber value={progress.library.games} className="font-mono text-ink" />{' '}
-            {plural(progress.library.games, 'игра', 'игры', 'игр')} в библиотеке
+            {plural(progress.library.games, 'игра', 'игры', 'игр')}{' '}
+            {progress.library.demo ? 'в демо-библиотеке' : 'в библиотеке'}
           </p>
           {progress.library.untouched > 0 && (
             <p className="text-sm text-dim mt-1">

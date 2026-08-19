@@ -7,6 +7,7 @@ import { Ambient } from '@/components/Ambient'
 import { MatchCeremony } from '@/components/MatchCeremony'
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
+import { useCopy } from '@/components/useCopy'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
@@ -69,8 +70,9 @@ export default function RoomPage() {
   const [deckFailed, setDeckFailed] = useState(false)
   const [localVotes, setLocalVotes] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [copyFailed, setCopyFailed] = useState(false)
+  // Копирование живёт в общем хуке: у него было две реализации, и они уже
+  // разошлись — на хабе «Совместимость» отказ буфера не обрабатывался вовсе.
+  const { copied, failed: copyFailed, copy } = useCopy()
   const [likes, setLikes] = useState<{ mine: LikedGame[]; near: NearMiss[] }>({
     mine: [],
     near: [],
@@ -310,19 +312,7 @@ export default function RoomPage() {
     void refresh()
   }
 
-  async function copyLink() {
-    // Промис здесь не декоративный: на небезопасном origin и при отказе в
-    // разрешении копирование не происходит, а галочка «Скопировано ✓»
-    // загоралась всё равно — в режиме «ты один» это главное действие экрана
-    try {
-      await navigator.clipboard.writeText(window.location.href)
-      setCopyFailed(false)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      setCopyFailed(true)
-    }
-  }
+  const copyLink = () => void copy(window.location.href)
 
   if (notFound) {
     return (

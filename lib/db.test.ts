@@ -70,6 +70,9 @@ import {
   updateGamePrices,
   upsertGameMeta,
   upsertUser,
+  getDailyPick,
+  saveDailyPick,
+  sweepDailyPicks,
 } from './db'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -338,19 +341,108 @@ describe('db', () => {
     expect(res.rows.map((r) => r.tag)).toEqual(['Co-op'])
   })
 
-  test('миграция дозаполняет производные колонки у старых строк', async () => {
-    // строки, записанные до появления колонок, иначе не пройдут условие
-    // tag_count > 0 и выборка кандидатов вернёт пустоту
-    const db = await freshDb()
+  /**
+   * Ключ разового бэкфилла из migrateDb. freshDb() уже прогнала миграцию и
+   * тем самым его поставила, так что тесту, который проверяет САМ бэкфилл,
+   * приходится вернуть базу в состояние «ещё не бэкфилленной».
+   */
+  const DERIVED_KEY = 'derived_backfilled_v1'
+
+  async function insertLegacyGame(db: Awaited<ReturnType<typeof freshDb>>) {
     await db.execute({
       sql: `INSERT INTO games (appid, name, tags_json, genres_json, categories_json, updated_at)
             VALUES (?, ?, ?, '[]', ?, ?)`,
       args: [777, 'Старая запись', JSON.stringify({ Co_op: 5, Action: 3 }), '[1,9]', NOW],
     })
+  }
+
+  test('миграция дозаполняет производные колонки у старых строк', async () => {
+    // строки, записанные до появления колонок, иначе не пройдут условие
+    // tag_count > 0 и выборка кандидатов вернёт пустоту
+    const db = await freshDb()
+    await insertLegacyGame(db)
+    await db.execute({ sql: 'DELETE FROM catalog_meta WHERE key = ?', args: [DERIVED_KEY] })
     await migrateDb(db)
     const res = await db.execute('SELECT tag_count, is_multiplayer FROM games WHERE appid = 777')
     expect(Number(res.rows[0].tag_count)).toBe(2)
     expect(Number(res.rows[0].is_multiplayer)).toBe(1)
+  })
+
+  test('повторная миграция не пересчитывает производные колонки', async () => {
+    // Это и есть смысл флага: без него два полнотабличных UPDATE по games
+    // выполнялись бы на каждом холодном старте, а Turso считает прочитанные
+    // строки. Проверяем именно короткое замыкание, а не результат.
+    const db = await freshDb()
+    await insertLegacyGame(db)
+    await migrateDb(db)
+    const res = await db.execute('SELECT tag_count, is_multiplayer FROM games WHERE appid = 777')
+    expect(Number(res.rows[0].tag_count)).toBe(0)
+    expect(Number(res.rows[0].is_multiplayer)).toBe(0)
+  })
+
+  test('миграция ставит флаг бэкфилла', async () => {
+    const db = await freshDb()
+    const res = await db.execute({
+      sql: 'SELECT value FROM catalog_meta WHERE key = ?',
+      args: [DERIVED_KEY],
+    })
+    expect(res.rows.length).toBe(1)
+  })
+
+  test('игра дня: запись и чтение переживают сериализацию', async () => {
+    const db = await freshDb()
+    const payload = {
+      pick: { appid: 620, name: 'Portal 2', source: 'backlog', score: 1.5 },
+      shelf: [{ appid: 570, name: 'Dota 2', source: 'new', score: 0.9 }],
+      hoursPlayed: 42,
+    }
+    await saveDailyPick(db, 'S1', '2026-08-19', payload, NOW)
+    expect(await getDailyPick(db, 'S1', '2026-08-19')).toEqual(payload)
+  })
+
+  test('игра дня: чужой день и чужой steamid не читаются', async () => {
+    const db = await freshDb()
+    await saveDailyPick(db, 'S1', '2026-08-19', { pick: 1 }, NOW)
+    expect(await getDailyPick(db, 'S1', '2026-08-20')).toBeNull()
+    expect(await getDailyPick(db, 'S2', '2026-08-19')).toBeNull()
+  })
+
+  test('игра дня: повторная запись за тот же день перезаписывает', async () => {
+    const db = await freshDb()
+    await saveDailyPick(db, 'S1', '2026-08-19', { v: 1 }, NOW)
+    await saveDailyPick(db, 'S1', '2026-08-19', { v: 2 }, NOW + 10)
+    expect(await getDailyPick(db, 'S1', '2026-08-19')).toEqual({ v: 2 })
+  })
+
+  test('игра дня: недоступная таблица читается как «записи нет», а не роняет', async () => {
+    // Поймано живьём: инстанс, поднятый до появления таблицы, ронял /api/daily
+    // пятисоткой — кэш ломал страницу, которую должен был ускорять.
+    const broken = {
+      execute: () => Promise.reject(new Error('no such table: daily_picks')),
+    } as unknown as Awaited<ReturnType<typeof freshDb>>
+    expect(await getDailyPick(broken, 'S1', '2026-08-19')).toBeNull()
+    // запись тоже не должна бросать наружу
+    await expect(saveDailyPick(broken, 'S1', '2026-08-19', { v: 1 }, NOW)).resolves.toBeUndefined()
+  })
+
+  test('игра дня: битый JSON читается как «записи нет», а не роняет', async () => {
+    const db = await freshDb()
+    await db.execute({
+      sql: 'INSERT INTO daily_picks (steamid, day, payload_json, created_at) VALUES (?, ?, ?, ?)',
+      args: ['S1', '2026-08-19', '{не json', NOW],
+    })
+    expect(await getDailyPick(db, 'S1', '2026-08-19')).toBeNull()
+  })
+
+  test('подметание игр дня убирает прошлые дни и не трогает текущий', async () => {
+    const db = await freshDb()
+    await saveDailyPick(db, 'S1', '2026-08-17', { v: 'старое' }, NOW)
+    await saveDailyPick(db, 'S1', '2026-08-18', { v: 'вчера' }, NOW)
+    await saveDailyPick(db, 'S1', '2026-08-19', { v: 'сегодня' }, NOW)
+    await sweepDailyPicks(db, '2026-08-18')
+    expect(await getDailyPick(db, 'S1', '2026-08-17')).toBeNull()
+    expect(await getDailyPick(db, 'S1', '2026-08-18')).toEqual({ v: 'вчера' })
+    expect(await getDailyPick(db, 'S1', '2026-08-19')).toEqual({ v: 'сегодня' })
   })
 
   test('производные колонки считаются при записи метаданных', async () => {

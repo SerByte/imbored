@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { cronAuthorized, digestLooksStale } from '@/lib/cron'
 import {
@@ -10,9 +11,12 @@ import {
   reviveGoneNewsPoll,
   setCatalogMeta,
   STEAM_LEASE,
+  sweepDailyPicks,
   topCatalogAppids,
 } from '@/lib/db'
 import { runNewsSlice } from '@/lib/newsjob'
+import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
+import { sweepRateLimits } from '@/lib/ratelimit'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
@@ -92,6 +96,26 @@ export async function GET(req: Request) {
       // инвокации, а lib/pace — состояние модуля: на разных инстансах защиты
       // от общего лимита Steam нет вовсе.
       await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result }))
+
+      /*
+       * Лента перестала быть свежей — сообщаем кэшу.
+       *
+       * Общая лента лежит в unstable_cache с десятиминутным потолком, но
+       * потолок здесь страховка, а не механизм: обновления приезжают срезами
+       * по расписанию, и ждать до десяти минут после того, как патч уже в
+       * базе, незачем. Инвалидация по тегу делает ленту событийной.
+       *
+       * profile 'max' — это stale-while-revalidate: следующий посетитель
+       * получает старую ленту мгновенно, а свежая подтягивается фоном. Без
+       * второго аргумента (устаревшая форма) он же получил бы блокирующий
+       * промах ровно в тот момент, когда крон только что отработал.
+       *
+       * Условие по inserted: срез, не принёсший ни одной записи, ленту не
+       * менял, и сбрасывать кэш из-за него значит платить за холодный рендер
+       * на пустом месте.
+       */
+      if ((result?.inserted ?? 0) > 0) revalidateTag(NEWS_MAJOR_TAG, 'max')
+
       const secret = process.env.CRON_SECRET
       const goesOn = Boolean(
         result?.hasMore && result.stopped !== 'blocked' && chain < MAX_CHAIN && secret,
@@ -100,6 +124,18 @@ export async function GET(req: Request) {
       // её следующему звену вместе с holder: пауза между отдал-и-взял пустила
       // бы внутрь чужой триггер ровно в тот момент, когда работа продолжается.
       if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
+
+      // Подметание окон ограничителя и вчерашних игр дня — раз в цепочку, а не
+      // на запрос: обе таблицы самокорректирующиеся (ключ содержит номер окна,
+      // ключ выбора содержит дату), поэтому чистка нужна только чтобы они не
+      // росли вечно. В пользовательском пути ей делать нечего — это лишняя
+      // запись на каждой проверке лимита и на каждом заходе на /daily.
+      if (!goesOn) {
+        await sweepRateLimits(db, nowSec())
+        // Вчерашние оставляем: на границе суток по UTC у части людей ещё идёт
+        // «сегодня», и удалять их выбор из-под них незачем.
+        await sweepDailyPicks(db, new Date((nowSec() - 86_400) * 1000).toISOString().slice(0, 10))
+      }
 
       // Цепочка кончилась — заодно проверяем, жив ли крон пересказов. Он
       // висит на одном GitHub Actions без подстраховки в vercel.json, и

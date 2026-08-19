@@ -137,6 +137,41 @@ CREATE TABLE IF NOT EXISTS room_votes (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (room_id, steamid, appid)
 );
+/*
+ * Окна ограничителя частоты (lib/ratelimit.ts). Ключ уже содержит номер окна,
+ * поэтому индекс не нужен: любое чтение — точное попадание по первичному
+ * ключу. expires_at существует только ради подметания из крона.
+ */
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+) WITHOUT ROWID;
+/*
+ * Выбранная игра дня.
+ *
+ * Обещание страницы — «одна игра на весь день», и до этой таблицы оно
+ * держалось на честном слове: pickDaily детерминирован при ФИКСИРОВАННОМ пуле,
+ * а пул растёт по мере прогрева каталога. Именно поэтому /daily отказывалась
+ * отдавать результат до полного прогрева (см. докблок в app/daily/page.tsx) —
+ * ожидание покупало устойчивость выбора. Запись делает обещание истинным по
+ * построению, а не ожиданием.
+ *
+ * Второй эффект — цена. Один вызов /api/daily стоил около восьмисот
+ * прочитанных строк (снапшот, метаданные библиотеки, фидбек, статистика тегов,
+ * пул на четыре сотни) ради ответа, который не меняется до полуночи.
+ *
+ * Хранится результат ОТБОРА, а не готовый ответ: цены и скидки обязаны
+ * оставаться свежими, поэтому они пересчитываются на каждом заходе по
+ * четырём appid.
+ */
+CREATE TABLE IF NOT EXISTS daily_picks (
+  steamid TEXT NOT NULL,
+  day TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (steamid, day)
+) WITHOUT ROWID;
 `
 
 /**
@@ -181,12 +216,21 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
   value TEXT NOT NULL
 );
 
+
 CREATE INDEX IF NOT EXISTS idx_games_pool ON games (reviews_total DESC)
   WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
 
 -- набор игр для опроса новостей по живому онлайну
 CREATE INDEX IF NOT EXISTS idx_games_ccu ON games (ccu DESC)
   WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
+
+-- Доска «ищут игроков». Единственный индекс на rooms, и он нужен: страница
+-- /rooms опрашивает listPublicRooms раз в несколько секунд из КАЖДОЙ открытой
+-- вкладки, а без индекса это полный скан таблицы плюс сортировка во временной
+-- структуре. Предикат повторяет условие listPublicRooms ДОСЛОВНО — иначе
+-- SQLite частичный индекс не выберет (та же причина, что у idx_games_pool).
+CREATE INDEX IF NOT EXISTS idx_rooms_public ON rooms (created_at DESC)
+  WHERE is_public = 1 AND status = 'open';
 `
 
 /**
@@ -260,6 +304,12 @@ export async function createDb(url: string, authToken?: string): Promise<Db> {
 }
 
 /** Схема и миграции; идемпотентно, безопасно вызывать на каждом старте */
+/**
+ * Ключ разового бэкфилла производных колонок games. Версия в имени —
+ * чтобы следующий бэкфилл можно было прогнать, не трогая этот.
+ */
+const DERIVED_BACKFILL_KEY = 'derived_backfilled_v1'
+
 export async function migrateDb(db: Db): Promise<Db> {
   await db.executeMultiple(SCHEMA)
 
@@ -309,8 +359,14 @@ export async function migrateDb(db: Db): Promise<Db> {
   ] as const) {
     try {
       await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col}`)
-    } catch {
-      // колонка уже есть
+    } catch (e) {
+      // «Колонка уже есть» — ожидаемо, и это единственная причина молчать.
+      // Всё остальное (недоступная Turso, кончившееся место, битая схема) —
+      // настоящий сбой, а раньше он был неотличим от дубликата: миграция
+      // «успешно» доходила до конца на половине добавленных колонок, и
+      // падало уже не здесь, а на первом же запросе к отсутствующему полю.
+      const msg = e instanceof Error ? e.message : String(e)
+      if (!/duplicate column name/i.test(msg)) throw e
     }
   }
 
@@ -320,13 +376,29 @@ export async function migrateDb(db: Db): Promise<Db> {
   // Разовый бэкфилл производных колонок для строк, записанных до их появления.
   // Без него холодный старт выборки кандидатов не увидит ни одной игры:
   // условие tag_count > 0 не выполнится ни для кого.
-  await db.execute(`UPDATE games SET tag_count = (
-      SELECT COUNT(*) FROM json_each(games.tags_json)
-    ) WHERE tag_count = 0 AND tags_json != '{}'`)
-  await db.execute(`UPDATE games SET is_multiplayer = 1
-    WHERE is_multiplayer = 0 AND EXISTS (
-      SELECT 1 FROM json_each(games.categories_json) WHERE value IN (1,9,24,36,38,39,49)
-    )`)
+  //
+  // Под флагом ровно по той же причине, что и починка rank двадцатью строками
+  // ниже: без него это два полнотабличных UPDATE по games на КАЖДОМ холодном
+  // старте, ни один из них не опирается на индекс, а Turso считает
+  // прочитанные строки. Соседний фикс был закрыт флагом, эти два — нет, и
+  // разница обходилась в каталог целиком на каждый новый инстанс.
+  const derivedDone = await db.execute({
+    sql: 'SELECT value FROM catalog_meta WHERE key = ?',
+    args: [DERIVED_BACKFILL_KEY],
+  })
+  if (!derivedDone.rows.length) {
+    await db.execute(`UPDATE games SET tag_count = (
+        SELECT COUNT(*) FROM json_each(games.tags_json)
+      ) WHERE tag_count = 0 AND tags_json != '{}'`)
+    await db.execute(`UPDATE games SET is_multiplayer = 1
+      WHERE is_multiplayer = 0 AND EXISTS (
+        SELECT 1 FROM json_each(games.categories_json) WHERE value IN (1,9,24,36,38,39,49)
+      )`)
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [DERIVED_BACKFILL_KEY, '1'],
+    })
+  }
 
   // Разовая починка веса у уже записанных патчей. До неё вес считался по числу
   // отзывов для любой опрошенной игры, и в общую ленту налезли Half-Life 2:
@@ -782,6 +854,69 @@ export type PublicRoomListing = {
 
 const PUBLIC_ROOM_MAX_AGE_SEC = 86_400
 const PUBLIC_ROOM_LIMIT = 20
+
+/**
+ * Игра дня: чтение и запись отобранного.
+ *
+ * payload — это результат ОТБОРА (герой, полка, текст причины, часы), а не
+ * готовый ответ маршрута: цены и скидки живут своей осью свежести и на каждом
+ * заходе пересчитываются заново. Смысл записи в том, чтобы не пересобирать
+ * четырёхсотигровый пул ради ответа, который до полуночи не меняется.
+ *
+ * Типизировано как unknown: слой БД не должен знать состав кандидата — это
+ * дело маршрута и движка рекомендаций. Разбор с проверкой формы там же.
+ */
+export async function getDailyPick(db: Db, steamid: string, day: string): Promise<unknown | null> {
+  try {
+    const res = await db.execute({
+      sql: 'SELECT payload_json FROM daily_picks WHERE steamid = ? AND day = ?',
+      args: [steamid, day],
+    })
+    const raw = res.rows[0]?.payload_json
+    if (typeof raw !== 'string') return null
+    return JSON.parse(raw)
+  } catch {
+    /*
+     * Fail open — та же логика, что у resolveSession и checkRate.
+     *
+     * Это ускорение, а не источник истины: и битый JSON, и недоступная таблица
+     * означают ровно одно — «готового ответа нет, посчитай». Поймано живьём:
+     * инстанс, поднятый до появления таблицы, ронял /api/daily пятисоткой,
+     * то есть кэш ломал страницу, которую должен был ускорять.
+     */
+    return null
+  }
+}
+
+export async function saveDailyPick(
+  db: Db,
+  steamid: string,
+  day: string,
+  payload: unknown,
+  nowSec: number,
+): Promise<void> {
+  try {
+    await db.execute({
+      // OR REPLACE, а не OR IGNORE: две вкладки, открытые одновременно, могут
+      // досчитать выбор параллельно. Оба результата верны (сид один и тот же),
+      // и спорить о том, чей записать, не за что.
+      sql: `INSERT OR REPLACE INTO daily_picks (steamid, day, payload_json, created_at)
+            VALUES (?, ?, ?, ?)`,
+      args: [steamid, day, JSON.stringify(payload), nowSec],
+    })
+  } catch (e) {
+    // Не записалось — человек получит свою игру дня как раньше, просто дороже.
+    // Но в лог это идёт, в отличие от чтения: молчаливо неработающая запись
+    // означает, что выбор пересчитывается на каждом заходе, а снаружи это
+    // выглядит как «страница почему-то медленная».
+    console.warn('daily pick не записан', e)
+  }
+}
+
+/** Подметание вчерашних выборов. Зовётся из крона, никогда — из запроса */
+export async function sweepDailyPicks(db: Db, keepFromDay: string): Promise<void> {
+  await db.execute({ sql: 'DELETE FROM daily_picks WHERE day < ?', args: [keepFromDay] })
+}
 
 /** Доска «ищут игроков»: открытые публичные комнаты за последние сутки (один запрос) */
 export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoomListing[]> {

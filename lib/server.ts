@@ -14,6 +14,29 @@ import {
 const globalStore = globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }
 
 /**
+ * Снимает промис с кэша, если он отклонился.
+ *
+ * Кэшируется именно ПРОМИС, а не соединение, — иначе миграции пошли бы на
+ * каждый запрос. Плата за это была несоразмерной: одна неудача createDb на
+ * холодном старте (а внутри неё migrateDb с двумя десятками ALTER) оставляла
+ * в globalThis навсегда отклонённый промис, и инстанс до самой переработки
+ * Vercel'ом отвечал ошибкой на КАЖДЫЙ запрос, хотя Turso уже поднялась.
+ *
+ * Сверка по идентичности обязательна: пока первый промис отклонялся, вызов
+ * рядом мог положить в слот новый, и безусловный сброс затёр бы живой.
+ *
+ * catch навешивается на копию и намеренно ничего не возвращает: исходный
+ * промис остаётся отклонённым для тех, кто его уже ждёт, а этот обработчик
+ * нужен лишь для того, чтобы Node не считал отказ необработанным.
+ */
+function forgetOnFailure(p: Promise<Db>): Promise<Db> {
+  p.catch(() => {
+    if (globalStore.__imboredDb === p) globalStore.__imboredDb = undefined
+  })
+  return p
+}
+
+/**
  * Соединение с БД. В проде — Turso (TURSO_DATABASE_URL), локально — файл.
  * Промис кэшируется на процесс: миграции выполняются один раз за холодный старт.
  */
@@ -21,7 +44,7 @@ export function getDb(): Promise<Db> {
   if (!globalStore.__imboredDb) {
     const remote = process.env.TURSO_DATABASE_URL
     if (remote) {
-      globalStore.__imboredDb = createDb(remote, process.env.TURSO_AUTH_TOKEN)
+      globalStore.__imboredDb = forgetOnFailure(createDb(remote, process.env.TURSO_AUTH_TOKEN))
     } else {
       // На serverless файловая база эфемерна: данные исчезали бы между запросами.
       // Падаем с внятной ошибкой вместо тихой потери данных.
@@ -33,7 +56,7 @@ export function getDb(): Promise<Db> {
       }
       const dir = path.join(process.cwd(), 'data')
       fs.mkdirSync(dir, { recursive: true })
-      globalStore.__imboredDb = createDb(`file:${path.join(dir, 'imbored.db')}`)
+      globalStore.__imboredDb = forgetOnFailure(createDb(`file:${path.join(dir, 'imbored.db')}`))
     }
   }
   return globalStore.__imboredDb
@@ -144,8 +167,37 @@ export function steamApiKey(): string | null {
   return process.env.STEAM_API_KEY || null
 }
 
+/**
+ * Базовый адрес приложения.
+ *
+ * От него зависит куда больше, чем кажется: return_to у Steam OpenID, ссылки
+ * self-chaining'а кронов, watchdog дайджеста и metadataBase для всех
+ * og-картинок. Незаданная переменная роняла всё это разом на localhost:3000 —
+ * без исключения, без записи в лог, с виду работающим сайтом и битыми
+ * каноническими ссылками.
+ *
+ * Поэтому здесь лестница, а не одна заглушка: сначала APP_BASE_URL, потом то,
+ * что Vercel проставляет сам (домен продакшена, затем адрес конкретного
+ * деплоя — он же покрывает превью), и только потом localhost.
+ *
+ * Отказ — по VERCEL, а НЕ по isDeployed(). Разница принципиальная: isDeployed
+ * включает NODE_ENV === 'production', а его выставляет обычный next build, и
+ * бросок здесь ломал бы локальную сборку — appBaseUrl зовётся на уровне модуля
+ * в app/layout.tsx, то есть прямо на сборе данных страниц. На самом Vercel обе
+ * VERCEL_*_URL стоят всегда, так что ветка отказа — это страховка от чужого
+ * рантайма, а не ожидаемый путь.
+ */
 export function appBaseUrl(): string {
-  return process.env.APP_BASE_URL || 'http://localhost:3000'
+  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL
+  if (vercel) return `https://${vercel}`
+  if (process.env.VERCEL) {
+    throw new Error(
+      'APP_BASE_URL не задан, и Vercel не сообщил адрес деплоя. ' +
+        'Укажи APP_BASE_URL в настройках проекта.',
+    )
+  }
+  return 'http://localhost:3000'
 }
 
 /**

@@ -1,5 +1,5 @@
 import { legacyArtUrl } from './art'
-import { getGameMeta, saveLibrarySnapshot, upsertGameMeta, upsertUser, type Db } from './db'
+import { getGamesMeta, saveLibrarySnapshot, upsertGamesMeta, upsertUser, type Db } from './db'
 import { seedOtherStores } from './otherstores'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -145,10 +145,18 @@ export function demoLibrary2(nowSec: number): LibraryGame[] {
   ]
 }
 
+const DEMO_APPIDS = DEMO_METAS.map((m) => m.appid)
+
 /**
  * Полная инициализация демо-режима: метаданные, снапшот, пользователь.
  * Метаданные пишутся только для отсутствующих appid — демо не должно
  * затирать реальный кэш (у DEMO_METAS настоящие Steam appid).
+ *
+ * Проверка «чего не хватает» — одним getGamesMeta, а не двадцатью двумя
+ * getGameMeta подряд. Раньше цена анонимного демо-коннекта была 22 обхода
+ * Turso плюс ещё 11 в seedOtherStores; после автодемо на /play этот путь
+ * проходит каждый гость, дошедший до конца квиза, и поштучный цикл стал бы
+ * самой дорогой строкой в воронке.
  */
 export async function seedDemo(
   db: Db,
@@ -156,9 +164,9 @@ export async function seedDemo(
   nowSec: number,
   variant: 1 | 2 = 1,
 ): Promise<void> {
-  for (const m of DEMO_METAS) {
-    if (!(await getGameMeta(db, m.appid))) await upsertGameMeta(db, m, nowSec)
-  }
+  const known = await getGamesMeta(db, DEMO_APPIDS)
+  const missing = DEMO_METAS.filter((m) => !known.has(m.appid))
+  if (missing.length) await upsertGamesMeta(db, missing, nowSec)
   await seedOtherStores(db, nowSec)
   await upsertUser(db, { steamid, personaName: variant === 2 ? 'Демо-друг' : 'Демо-игрок' }, nowSec)
   await saveLibrarySnapshot(

@@ -7,6 +7,7 @@ import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { Wordmark } from '@/components/Wordmark'
+import { safeNext } from '@/lib/nav'
 
 const ERROR_TEXT: Record<string, string> = {
   auth: 'Steam не подтвердил вход. Попробуй ещё раз.',
@@ -19,6 +20,14 @@ const ERROR_TEXT: Record<string, string> = {
   // Без строки человек, пришедший по приглашению в пати, получал безликое
   // «Что-то пошло не так» вместо объяснения, что делать дальше.
   nosession: 'Сессия истекла — подключи библиотеку заново, и вернём тебя в пати.',
+  // Возврат из Steam упёрся в ограничитель частоты. Формулировка без слова
+  // «лимит»: с этим кодом сюда приходит не бот (бот текста не читает), а живой
+  // человек за общим адресом — кафе, общежитие, мобильный оператор.
+  busy: 'Слишком много попыток входа с твоего адреса. Подожди пару минут и попробуй снова.',
+  // Сессия жива, а снапшота библиотеки нет: /play и /daily присылают сюда
+  // именно с этим кодом. Демо тут не предлагаем — человек уже подключал свою
+  // библиотеку, ему нужно её перечитать, а не увидеть чужую.
+  nolibrary: 'Библиотека не прочиталась. Подключи её заново — займёт секунду.',
 }
 
 function PrivacyHelp() {
@@ -58,6 +67,17 @@ function Landing() {
   const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
   const compat = search.get('compat')
   const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
+  /*
+   * Куда вернуть после подключения, если человек пришёл сюда не сам.
+   *
+   * Сценарий: он смотрел выдачу на демо-библиотеке и нажал «подключить свою».
+   * Возврат на /quiz означал бы переспросить три вопроса, на которые он уже
+   * ответил, — настроение лежит в next вместе со строкой запроса.
+   *
+   * join и compat остаются главнее: приглашение в конкретную пати или на
+   * конкретное сравнение — более сильное намерение, чем «вернись, где стоял».
+   */
+  const nextTarget = safeNext(search.get('next'))
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
   const [error, setError] = useState<string | null>(search.get('error'))
@@ -104,7 +124,19 @@ function Landing() {
     // безобидный no-op, а вот потерянный ответ виден пользователю.
   }, [])
 
-  const target = joinTarget ? `/room/${joinTarget}` : compatTarget ? `/compat/${compatTarget}` : '/quiz'
+  const target = joinTarget
+    ? `/room/${joinTarget}`
+    : compatTarget
+      ? `/compat/${compatTarget}`
+      : (nextTarget ?? '/quiz')
+
+  // Тот же порядок приоритетов, что у target: сначала приглашение, потом
+  // «вернись, где стоял», потом ничего.
+  const steamHref = joinTarget
+    ? `/api/auth/steam?join=${joinTarget}`
+    : nextTarget
+      ? `/api/auth/steam?next=${encodeURIComponent(nextTarget)}`
+      : '/api/auth/steam'
 
   async function connect(demo: boolean) {
     setBusy(demo ? 'demo' : 'connect')
@@ -180,7 +212,7 @@ function Landing() {
                   аккаунт должно быть возможно, а спрятанное под раскрывашку
                   «сменить аккаунт» ищут дольше, чем оно того стоит. */}
               <a
-                href={joinTarget ? `/api/auth/steam?join=${joinTarget}` : '/api/auth/steam'}
+                href={steamHref}
                 className="text-sm text-dim hover:text-ink transition-colors text-center py-1"
               >
                 Это не я — войти через Steam
@@ -242,7 +274,7 @@ function Landing() {
             <div className="h-px flex-1 bg-edge" />
           </div>
           <a
-            href={joinTarget ? `/api/auth/steam?join=${joinTarget}` : '/api/auth/steam'}
+            href={steamHref}
             className="w-full rounded-[14px] glass glass-hover py-3 text-sm text-ink text-center"
           >
             Войти через Steam
