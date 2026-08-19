@@ -243,7 +243,7 @@ const STEAMSPY_PACE_MS = 1100
 
 /** GetItems берёт до 200 appid за запрос; замерено 200 штук за ~7 секунд. */
 export const STORE_ITEMS_BATCH = 200
-const STORE_API_PACE_MS = 400
+export const STORE_API_PACE_MS = 400
 const TAG_DICT_TTL_SEC = 24 * 3600
 
 let tagDictCache: { at: number; map: Map<number, string> } | null = null

@@ -11,6 +11,7 @@ import {
   upsertGamesMeta,
 } from '@/lib/db'
 import { seedOtherStores } from '@/lib/otherstores'
+import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { isUntouched } from '@/lib/recommend'
 import {
   currentSteamId,
@@ -36,12 +37,33 @@ const POOL_LIMIT = 200
  * Пошагово прогревает каталог метаданных под библиотеку пользователя.
  * Клиент вызывает в цикле, пока remaining > 0 (каждый вызов ~10 сек).
  */
+/**
+ * Потолок здесь не про злоупотребление, а про зацикливание.
+ *
+ * Прогрев ЗАКОННО зовёт эту ручку до восьмидесяти раз подряд (см.
+ * WARMUP_MAX_CALLS в lib/warmup.ts), поэтому лимит обязан этот сценарий
+ * пропускать целиком и с запасом. Ловит он другое: второй параллельный прогрев
+ * из соседней вкладки и клиента, который из-за ошибки крутит цикл без конца.
+ */
+const PREPARE_LIMIT = 200
+const PREPARE_WINDOW_SEC = 300
+
 export async function POST() {
   const steamid = await currentSteamId()
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
   const db = await getDb()
   const now = nowSec()
+
+  const gate = await checkRate(db, {
+    bucket: 'prepare',
+    id: steamid,
+    limit: PREPARE_LIMIT,
+    windowSec: PREPARE_WINDOW_SEC,
+    nowSec: now,
+  })
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
+
   const snapshot = await getLatestSnapshot(db, steamid)
   if (!snapshot) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
 
@@ -58,13 +80,18 @@ export async function POST() {
    * дёргается десятками вызовов подряд, и это ровно та статья, за которую
    * Turso берёт деньги. Сумма живёт на /library, где читается один раз.
    */
+  const demo = isDemoId(steamid)
   const facts = {
     games: snapshot.games.length,
     untouched: snapshot.games.filter(isUntouched).length,
+    // Едет вместе с фактами, а не отдельным полем ответа, потому что нужен там
+    // же, где они: подпись «22 игры в библиотеке» и подпись «библиотека не
+    // твоя» — это одна и та же фраза, и разъезжаться им нельзя.
+    demo,
   }
 
   // Демо-библиотека статична и уже засеяна — греть в ней нечего.
-  if (isDemoId(steamid)) {
+  if (demo) {
     return NextResponse.json({ remaining: 0, total: 0, library: facts })
   }
 
@@ -182,12 +209,19 @@ async function refreshPlayerCounts(db: Awaited<ReturnType<typeof getDb>>, appids
     args: [...appids, now - CCU_MAX_AGE_SEC, CCU_PER_CALL],
   })
 
+  // Запросы к Steam остаются последовательными — их темп держит pace() внутри
+  // fetchCurrentPlayers, и параллелить их значит просто выстроить ту же очередь
+  // на секунду позже. А вот записи собираем в одну пачку: сорок отдельных
+  // UPDATE'ов давали сорок обходов Turso поверх сорока сетевых, и всё это внутри
+  // запроса, который ждёт человек.
+  const updates: Array<{ sql: string; args: (number | string)[] }> = []
   for (const row of res.rows as unknown as Array<{ appid: number }>) {
     const ccu = await fetchCurrentPlayers(row.appid).catch(() => undefined)
     if (ccu === undefined) continue
-    await db.execute({
+    updates.push({
       sql: 'UPDATE games SET ccu = ?, ccu_at = ? WHERE appid = ?',
       args: [ccu, now, row.appid],
     })
   }
+  if (updates.length) await db.batch(updates, 'write')
 }

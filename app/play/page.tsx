@@ -27,8 +27,9 @@ import type { Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
+import { DemoNotice } from '@/components/DemoNotice'
 import { WarmStrip } from '@/components/WarmStrip'
-import { runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { connectDemo, runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 type Signals = {
   matchPercent: number | null
@@ -184,6 +185,8 @@ function Player() {
   const [switching, setSwitching] = useState(false)
   const started = useRef(false)
   const tookCover = useRef(false)
+  /** Демо-подключение пробуем ровно один раз за жизнь страницы — см. start() */
+  const demoTried = useRef(false)
 
   /**
    * Обложку забираем В ЭФФЕКТЕ и ровно один раз.
@@ -260,10 +263,12 @@ function Player() {
     [],
   )
 
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-
+  /**
+   * Весь путь от прогрева до выдачи. В useCallback, а не внутри эффекта,
+   * потому что перезапускать его нужно из трёх мест: первый заход, кнопка
+   * «Попробовать снова» на экране ошибки и возврат после автодемо.
+   */
+  const start = useCallback(async () => {
     /** Выдача на экран. Один путь и для догретого каталога, и для частичного. */
     async function reveal(): Promise<boolean> {
       setProgress(
@@ -308,11 +313,43 @@ function Player() {
       const revealed = revealing ? await revealing : false
 
       if (warm === 'unauthorized') {
+        setWarming('off')
         // Сессия отвалилась во время ФОНОВОГО догрева — карточки на экране уже
         // есть и работают. Выкидывать с них на лендинг незачем: человек упрётся
         // в это при следующем действии и там же увидит внятную причину.
-        if (!revealed) router.push('/')
+        if (revealed) return
+
+        /*
+         * Гость дошёл до конца квиза, и сессии у него нет.
+         *
+         * Раньше здесь был router.push('/') — молча, без параметра ошибки и без
+         * сохранения ответов. Три вопроса, на которые человек только что
+         * ответил, выбрасывались, а /quiz — самый залинкованный маршрут
+         * приложения (шапка, нижняя панель и единственный CTA на всех игровых
+         * страницах). То есть основной вход в продукт заканчивался пустым
+         * лендингом.
+         *
+         * Теперь вместо этого — демо-библиотека прямо на месте. Настроение уже
+         * лежит в адресе (/play?time=…&vibe=…&social=…), поэтому «сохранять
+         * ответы» не требуется вовсе: мы просто не уходим со страницы.
+         *
+         * Ровно один раз за жизнь страницы: если демо-подключение не помогло,
+         * второй заход упрётся в то же самое, а цикл «прогрев → 401 → демо»
+         * крутился бы вечно.
+         */
+        if (!demoTried.current) {
+          demoTried.current = true
+          setProgress('Собираю демо-библиотеку…')
+          if (await connectDemo()) return run()
+        }
+        router.push('/')
+        return
+      }
+      if (warm === 'nolibrary') {
+        // Сессия жива, а снапшота нет. Демо тут не поможет и будет враньём:
+        // человек уже подключал свою библиотеку, её надо перечитать.
         setWarming('off')
+        if (!revealed) router.push('/?error=nolibrary')
         return
       }
       if (warm === 'error') {
@@ -336,9 +373,17 @@ function Player() {
       await reveal()
     }
 
-    void run()
+    await run()
+    // Всё, что здесь читается, либо стабильно (сеттеры, ref'ы), либо собрано из
+    // строки запроса и в рамках страницы неизменно — как и у fetchPicks выше.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    void start()
+  }, [start])
 
   /** Смена режима: тот же прогрев, другой вопрос к движку — и выдача с начала */
   const switchScope = useCallback(
@@ -416,8 +461,27 @@ function Player() {
         <p className="text-dim text-sm max-w-md">
           Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.
         </p>
-        <Link href="/quiz" className="text-ember-text hover:underline text-sm">
+        {/*
+          Кнопка, а не ссылка на /quiz.
+
+          Ссылка называлась «Попробовать снова», но вела на анкету — то есть
+          переспрашивала три вопроса, на которые человек уже ответил, вместо
+          того чтобы повторить упавшее действие. Настроение лежит в адресе и
+          никуда не делось, поэтому повтор — это ровно перезапуск start().
+        */}
+        <button
+          type="button"
+          onClick={() => {
+            setPhase('prepare')
+            setProgress('Изучаю твою библиотеку…')
+            void start()
+          }}
+          className="rounded-[14px] bg-ember text-on-ember font-semibold px-8 py-3 hover:brightness-110 transition cursor-pointer"
+        >
           Попробовать снова
+        </button>
+        <Link href="/quiz" className="text-dim hover:text-ink transition-colors text-sm">
+          Изменить настроение →
         </Link>
       </div>
     )
@@ -483,6 +547,7 @@ function Player() {
 
   return (
     <div className="flex-1 flex flex-col">
+      {prep?.library?.demo && <DemoNotice />}
       <WarmStrip
         state={warming}
         remaining={prep?.remaining ?? 0}

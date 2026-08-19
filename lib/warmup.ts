@@ -27,6 +27,16 @@
 export type LibraryFacts = {
   games: number
   untouched: number
+  /**
+   * Библиотека не своя, а демонстрационная.
+   *
+   * Флаг обязателен ровно с того момента, как гость стал попадать в выдачу
+   * автоматически: показать чужие 22 игры под заголовком «твоя библиотека»
+   * значит соврать. Ровно от этой сделки уже отказались однажды — см. докблок
+   * app/api/quiz/covers/route.ts про чужие обложки, — и подпись здесь дешевле
+   * и честнее, чем отдельный экран-заглушка вместо результата.
+   */
+  demo: boolean
 }
 
 export type WarmupProgress = {
@@ -45,13 +55,30 @@ export type WarmupProgress = {
  */
 function parseFacts(raw: unknown): LibraryFacts | null {
   if (!raw || typeof raw !== 'object') return null
-  const { games, untouched } = raw as { games?: unknown; untouched?: unknown }
+  const { games, untouched, demo } = raw as {
+    games?: unknown
+    untouched?: unknown
+    demo?: unknown
+  }
   if (typeof games !== 'number' || !Number.isFinite(games) || games < 0) return null
   if (typeof untouched !== 'number' || !Number.isFinite(untouched) || untouched < 0) return null
-  return { games, untouched }
+  // demo приводим, а не валидируем: ответ старой версии приложения (человек
+  // держал вкладку открытой через деплой) поля не содержит, и это не повод
+  // выбрасывать остальные факты. Отсутствие флага читается как «не демо» —
+  // ошибка в безопасную сторону: лишней подписи не будет, ложной тоже.
+  return { games, untouched, demo: demo === true }
 }
 
-export type WarmupResult = 'done' | 'unauthorized' | 'error'
+/**
+ * 'unauthorized' — сессии нет вовсе (401). Лечится подключением: своим Steam
+ * либо демо-режимом, и решает это страница, а не прогрев.
+ *
+ * 'nolibrary' — сессия есть, а снапшота библиотеки нет (409). Это другой
+ * случай и другой текст: подключаться заново незачем, надо перечитать
+ * библиотеку. Раньше оба схлопывались в 'unauthorized', и человека с живой
+ * сессией отправляли логиниться повторно — то есть чинить не то, что сломано.
+ */
+export type WarmupResult = 'done' | 'unauthorized' | 'nolibrary' | 'error'
 
 /** Потолок вызовов. Дальше почти наверняка что-то зациклилось. */
 export const WARMUP_MAX_CALLS = 80
@@ -79,6 +106,32 @@ export const WARMUP_MAX_MS = 3 * 60_000
  * не молчит: полоса внизу и предложение обновить выдачу, когда он закончится.
  */
 export const WARMUP_YIELD_AFTER = 1
+
+/**
+ * Молча выдать посетителю демо-личность.
+ *
+ * Живёт здесь по той же причине, по которой здесь живёт runWarmup: зовут это
+ * ДВЕ страницы (/play и /daily) на одной и той же развилке, а прошлый опыт с
+ * двумя копиями цикла прогрева описан в докблоке файла — копии разошлись, и на
+ * /daily тихо не оказалось ни прогресса, ни обработки ошибок.
+ *
+ * Ответ не разбираем: страницу интересует только «получилось ли», а личность и
+ * имя приедут со следующим /api/prepare вместе с фактами о библиотеке.
+ */
+export async function connectDemo(fetchFn: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const res = await fetchFn('/api/connect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ demo: true }),
+    })
+    return res.ok
+  } catch {
+    // Сеть отвалилась. Страница отправит человека на лендинг — там те же три
+    // двери, только выбирать он будет сам.
+    return false
+  }
+}
 
 export async function runWarmup(
   opts: {
@@ -117,9 +170,8 @@ export async function runWarmup(
       return 'error'
     }
 
-    // 401 без сессии, 409 без снапшота библиотеки: обоим лечение одно —
-    // отправить человека подключаться заново, а не показывать ошибку
-    if (res.status === 401 || res.status === 409) return 'unauthorized'
+    if (res.status === 401) return 'unauthorized'
+    if (res.status === 409) return 'nolibrary'
     if (!res.ok) return 'error'
 
     let remaining: number

@@ -25,6 +25,11 @@ import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from '@/li
 
 export const dynamic = 'force-dynamic'
 
+// Страница рендерится синхронно и по дороге зовёт модель. Предел объявляем
+// явно, как в кроновых маршрутах: иначе он неявный, а зависший вызов способен
+// съесть его целиком вместо того, чтобы упасть на шаблон.
+export const maxDuration = 60
+
 /**
  * Без этого ссылка на портрет разворачивалась в мессенджерах общим заголовком
  * сайта и вообще без картинки. Саму картинку рисует opengraph-image.tsx —
@@ -167,10 +172,19 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   if (cached && cached.takenAt === snapshot.takenAt) {
     text = cached.text
   } else {
-    text =
-      (await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })) ??
-      fallbackText(name, portrait.archetypes, portrait.facts)
-    await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text })
+    const generated = await claudePortraitText({
+      name,
+      archetypes: portrait.archetypes,
+      facts: portrait.facts,
+    })
+    text = generated ?? fallbackText(name, portrait.archetypes, portrait.facts)
+    // Шаблон в кэш не кладём. claudePortraitText отдаёт null на ЛЮБОЙ осечке —
+    // таймаут, 429, ключа ещё нет, — а ключ кэша тут время снапшота: один такой
+    // промах замораживал шаблонный текст на шеринговой карточке до следующей
+    // синхронизации библиотеки, то есть до следующего входа игрока.
+    if (generated) {
+      await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text: generated })
+    }
   }
 
   const me = await currentSteamId()

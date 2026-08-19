@@ -38,12 +38,25 @@ export default function SupportPage() {
           </p>
         </div>
 
-        <div className="glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise">
-          <h2 className="font-bold">Поддержать рублём</h2>
-          <p className="text-sm text-dim">
-            Донат — это спасибо, а не подписка. Ничего не блокируется.
-          </p>
-          {donateUrl ? (
+        {/*
+          Карточки нет вовсе, пока не задан NEXT_PUBLIC_DONATE_URL.
+
+          Раньше на её месте показывалась заглушка «Ссылка на донат появится
+          после запуска imbored.cc» — и текст этот читался НА imbored.cc, то
+          есть после запуска. Незаполненная кнопка на живом сайте выглядит не
+          как «ещё не готово», а как сломанное: страница называется
+          «Поддержать» и при этом поддержать не даёт.
+
+          Манифест выше и блок imbored+ ниже осмысленны сами по себе — ради
+          них страница и стоит. Так что убираем именно нерабочее действие, а
+          не раздел целиком.
+        */}
+        {donateUrl && (
+          <div className="glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise">
+            <h2 className="font-bold">Поддержать рублём</h2>
+            <p className="text-sm text-dim">
+              Донат — это спасибо, а не подписка. Ничего не блокируется.
+            </p>
             <a
               href={donateUrl}
               target="_blank"
@@ -52,12 +65,8 @@ export default function SupportPage() {
             >
               Поддержать проект
             </a>
-          ) : (
-            <div className="rounded-[14px] glass py-3 text-center text-sm text-dim">
-              Ссылка на донат появится после запуска imbored.cc
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="glass rounded-[20px] p-6 flex flex-col gap-4 anim-rise" style={{ animationDelay: '80ms' }}>
           <div className="flex items-baseline justify-between">

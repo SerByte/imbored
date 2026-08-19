@@ -44,11 +44,19 @@ describe('runWarmup', () => {
     ])
   })
 
-  test('401 и 409 — это «иди подключайся», а не ошибка', async () => {
-    for (const status of [401, 409]) {
-      const res = await runWarmup({ fetchFn: sequence(reply({}, { status })) })
-      expect(res, `статус ${status}`).toBe('unauthorized')
-    }
+  /**
+   * 401 и 409 разведены намеренно: это разные поломки с разным лечением.
+   * Нет сессии — подключайся (своим Steam или демо). Есть сессия, но нет
+   * снапшота — перечитывай библиотеку, логиниться заново незачем.
+   */
+  test('401 — это «сессии нет», а не ошибка', async () => {
+    const res = await runWarmup({ fetchFn: sequence(reply({}, { status: 401 })) })
+    expect(res).toBe('unauthorized')
+  })
+
+  test('409 — это «библиотека не прочитана», а не отсутствие сессии', async () => {
+    const res = await runWarmup({ fetchFn: sequence(reply({}, { status: 409 })) })
+    expect(res).toBe('nolibrary')
   })
 
   /** Ровно этого не было в копии на /daily: 500 читался как «прогрев закончен». */
@@ -123,7 +131,7 @@ describe('warmupPercent', () => {
  */
 describe('факты о библиотеке в прогреве', () => {
   test('приходят с первого ответа и держатся до конца цикла', async () => {
-    const seen: Array<{ games: number; untouched: number } | null> = []
+    const seen: Array<{ games: number; untouched: number; demo: boolean } | null> = []
     await runWarmup({
       fetchFn: sequence(
         reply({ remaining: 40, library: { games: 412, untouched: 178 } }),
@@ -133,9 +141,29 @@ describe('факты о библиотеке в прогреве', () => {
       onProgress: (p) => seen.push(p.library),
     })
     expect(seen).toEqual([
-      { games: 412, untouched: 178 },
-      { games: 412, untouched: 178 },
+      { games: 412, untouched: 178, demo: false },
+      { games: 412, untouched: 178, demo: false },
     ])
+  })
+
+  test('demo приходит из ответа и не теряется', async () => {
+    const seen: Array<{ demo: boolean } | null> = []
+    await runWarmup({
+      fetchFn: sequence(reply({ remaining: 0, library: { games: 22, untouched: 4, demo: true } })),
+      onProgress: (p) => seen.push(p.library),
+    })
+    expect(seen[0]?.demo).toBe(true)
+  })
+
+  test('ответ старой версии без demo читается как «не демо»', async () => {
+    // человек держал вкладку открытой через деплой: поля в ответе нет, но
+    // остальные факты выбрасывать не за что
+    const seen: Array<{ games: number; demo: boolean } | null> = []
+    await runWarmup({
+      fetchFn: sequence(reply({ remaining: 0, library: { games: 412, untouched: 178 } })),
+      onProgress: (p) => seen.push(p.library),
+    })
+    expect(seen[0]).toEqual({ games: 412, untouched: 178, demo: false })
   })
 
   test('без фактов цикл работает как раньше', async () => {
@@ -172,7 +200,7 @@ describe('факты о библиотеке в прогреве', () => {
       fetchFn: sequence(reply({ remaining: 0, library: { games: 0, untouched: 0 } })),
       onProgress: (p) => seen.push(p.library),
     })
-    expect(seen).toEqual([{ games: 0, untouched: 0 }])
+    expect(seen).toEqual([{ games: 0, untouched: 0, demo: false }])
   })
 })
 

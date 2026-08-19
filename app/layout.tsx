@@ -1,4 +1,5 @@
 import { Analytics } from '@vercel/analytics/next'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono, Onest } from 'next/font/google'
 import Link from 'next/link'
@@ -60,6 +61,26 @@ export const metadata: Metadata = {
   },
   description:
     'Подключи Steam — подберём игру под твоё настроение прямо сейчас: из бэклога, заброшенного или нового.',
+  /*
+   * Общая карточка ссылки. Картинку подставляет app/opengraph-image.tsx и
+   * наследуют все маршруты, у которых нет своей.
+   *
+   * До этого блока og-теги были ровно у трёх маршрутов, а у главной, /daily,
+   * /whatsnew, /rooms и /quiz не было ни одного: ссылка на imbored.cc
+   * разворачивалась в мессенджере голым адресом. Для сервиса, который
+   * распространяется пересылкой ссылок, это было заметнее всего.
+   *
+   * title тут строкой, а не шаблоном: шаблон '%s · imbored' применяется к
+   * title.default сам, а в openGraph Next подставит его же — дублировать
+   * незачем.
+   */
+  openGraph: {
+    type: 'website',
+    siteName: 'imbored',
+    locale: 'ru_RU',
+    url: '/',
+  },
+  twitter: { card: 'summary_large_image' },
 }
 
 /**
@@ -182,6 +203,10 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             иначе весь сайт стал бы динамическим и ISR у /game/[appid] умер. */}
         <SessionKeeper />
         <Analytics />
+        {/* Полевые Web Vitals. На сайте, где LCP — это всегда чужая обложка со
+            steamstatic, синтетика меряет не то: реальный разброс дают чужой CDN
+            и чужая сеть, а не наш рендер. */}
+        <SpeedInsights />
       </body>
     </html>
   )

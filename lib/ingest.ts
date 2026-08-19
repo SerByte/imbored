@@ -1,4 +1,6 @@
+import { STORE_API_PACE_MS } from './catalog'
 import type { IngestRow } from './db'
+import { pace } from './pace'
 
 /**
  * Разбор источников большого каталога.
@@ -52,6 +54,11 @@ export async function fetchCurrentPlayers(
   appid: number,
   fetchFn: typeof fetch = fetch,
 ): Promise<number | undefined> {
+  // Единственный вызов Steam, который жил без pace(), — и при этом он ходит в
+  // цикле до сорока раз подряд из пользовательского запроса (refreshPlayerCounts
+  // в /api/prepare). Ключ тот же, что у остальных вызовов api.steampowered.com:
+  // лимит там общий на хост, и отдельная очередь просто обходила бы его.
+  await pace('steam-api', STORE_API_PACE_MS)
   const res = await fetchFn(
     `https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=${appid}`,
     { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },

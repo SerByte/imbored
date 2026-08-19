@@ -16,23 +16,70 @@ export default function RoomsBoardPage() {
   // время рендера нельзя, а знать «эта строка новая» нужно именно при рендере.
   const [board, setBoard] = useState<Board | null>(null)
   const rooms = board?.rooms ?? null
+  // Отдельно от board: провал запроса не должен стирать уже показанную доску,
+  // а показанная доска не должна прятать сообщение о том, что она устарела.
+  const [failed, setFailed] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
+    let alive = true
+
     const load = async () => {
-      const res = await fetch('/api/rooms/public')
-      if (!res.ok) return
-      const next = ((await res.json()) as { rooms: Listing[] }).rooms
-      setBoard((prev) => {
-        const known = new Set(prev?.rooms.map((r) => r.id) ?? [])
-        // На первой загрузке новыми считаются все — доска «прилетает» целиком.
-        const fresh = new Set(next.filter((r) => !known.has(r.id)).map((r) => r.id))
-        return { rooms: next, fresh }
-      })
+      try {
+        const res = await fetch('/api/rooms/public')
+        if (!res.ok) throw new Error(String(res.status))
+        const next = ((await res.json()) as { rooms: Listing[] }).rooms
+        if (!alive) return
+        setFailed(false)
+        setBoard((prev) => {
+          const known = new Set(prev?.rooms.map((r) => r.id) ?? [])
+          // На первой загрузке новыми считаются все — доска «прилетает» целиком.
+          const fresh = new Set(next.filter((r) => !known.has(r.id)).map((r) => r.id))
+          return { rooms: next, fresh }
+        })
+      } catch {
+        // Раньше здесь был ранний return без try: любой сетевой сбой отклонял
+        // промис внутри void load(), board навсегда оставался null, и человек
+        // смотрел на спиннер до перезагрузки страницы.
+        if (alive) setFailed(true)
+      }
     }
+
     void load()
-    const t = setInterval(() => void load(), 5000)
-    return () => clearInterval(t)
-  }, [])
+
+    /*
+     * Опрос только при видимой вкладке — та же дисциплина, что уже принята в
+     * FeedWatch и на странице комнаты. Фоновая вкладка опрашивала доску вечно,
+     * а доска — это «кто ищет прямо сейчас»: смотреть её из свёрнутого окна
+     * некому.
+     *
+     * Восемь секунд вместо пяти: ответ теперь кэшируется на краю пятью
+     * секундами, и более частый опрос всё равно попадал бы в тот же кэш.
+     * Створки FlapCode задержку маскируют.
+     */
+    let timer: ReturnType<typeof setInterval> | null = null
+    const stop = () => {
+      if (timer !== null) clearInterval(timer)
+      timer = null
+    }
+    const start = () => {
+      if (timer === null) timer = setInterval(() => void load(), 8000)
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void load()
+        start()
+      } else stop()
+    }
+
+    if (document.visibilityState === 'visible') start()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      alive = false
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [reloadKey])
 
   return (
     <div className="relative flex-1 overflow-hidden">
@@ -57,7 +104,18 @@ export default function RoomsBoardPage() {
           <span className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
           Открытые пати — ищут игроков
         </h2>
-        {rooms === null ? (
+        {rooms === null && failed ? (
+          <div className="glass rounded-[20px] p-6 text-center text-dim text-sm flex flex-col items-center gap-3">
+            Не получилось загрузить доску.
+            <button
+              type="button"
+              onClick={() => setReloadKey((n) => n + 1)}
+              className="rounded-[14px] bg-ember/15 text-ember-text font-medium px-5 py-2 cursor-pointer hover:bg-ember/25 transition"
+            >
+              Попробовать снова
+            </button>
+          </div>
+        ) : rooms === null ? (
           <div className="flex justify-center py-8">
             <Spinner size={32} />
           </div>
