@@ -73,6 +73,10 @@ export default function RoomPage() {
   const [voteFailed, setVoteFailed] = useState(false)
   const [localVotes, setLocalVotes] = useState(0)
   const [busy, setBusy] = useState(false)
+  /** Вход не удался: сеть моргнула, комнаты нет или сессия протухла */
+  const [joinFailed, setJoinFailed] = useState<null | 'net' | 'gone' | 'session'>(null)
+  /** Добор раунда не удался — кнопка обязана вернуться нажимаемой */
+  const [pullFailed, setPullFailed] = useState(false)
   // Копирование живёт в общем хуке: у него было две реализации, и они уже
   // разошлись — на хабе «Совместимость» отказ буфера не обрабатывался вовсе.
   const { copied, failed: copyFailed, copy } = useCopy()
@@ -238,17 +242,36 @@ export default function RoomPage() {
     void loadDeck()
   }, [deckWant, deckFailed, loadDeck])
 
+  /*
+   * Добор раунда. finally обязателен, и вот чем он оплачен.
+   *
+   * Было: setPulling(true), голый await fetch и снятие флага только на !res.ok.
+   * Любой обрыв сети — а докблок vote десятью строками ниже прямо называет
+   * лифт и метро обычным делом — отклонял промис в пустоту, и pulling оставался
+   * true до перезагрузки страницы. Кнопка при этом disabled={pulling} и
+   * подписана «Добираю…», то есть врала, что работа идёт, и одновременно не
+   * давала нажать ещё раз. А это единственный способ расшевелить застрявшую
+   * пати: раунд общий и приходит всем сразу.
+   *
+   * refresh и loadDeck тоже внутри try: успешный POST с обрывом на следующем
+   * запросе оставлял ровно ту же залипшую кнопку.
+   */
   async function pullMore() {
+    if (pulling) return
     setPulling(true)
-    const res = await fetch(`/api/room/${roomId}/round`, { method: 'POST' })
-    if (!res.ok) {
+    setPullFailed(false)
+    try {
+      const res = await fetch(`/api/room/${roomId}/round`, { method: 'POST' })
+      if (!res.ok) throw new Error(`round: HTTP ${res.status}`)
+      // Раунд поднялся на комнате — свою колоду забираем сразу, остальные
+      // подхватят её на ближайшем опросе
+      await refresh()
+      await loadDeck()
+    } catch {
+      setPullFailed(true)
+    } finally {
       setPulling(false)
-      return
     }
-    // Раунд поднялся на комнате — свою колоду забираем сразу, остальные
-    // подхватят её на ближайшем опросе
-    await refresh()
-    await loadDeck()
   }
 
   /*
@@ -272,23 +295,64 @@ export default function RoomPage() {
     })()
   }, [waiting, votesKey, roomId])
 
+  /*
+   * То же, что join, плюс демо-библиотека первым шагом.
+   *
+   * Порядок здесь несущий: провал /api/connect раньше НЕ мешал второму запросу
+   * уйти, и заявка на вход отправлялась без библиотеки — участник попадал в
+   * комнату, из которой ему нечего предложить в колоду. Теперь второй шаг
+   * делается только после успеха первого.
+   */
   async function joinAsDemoFriend() {
+    if (busy) return
     setBusy(true)
-    await fetch('/api/connect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ demo: true, variant: 2 }),
-    })
-    await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
-    setBusy(false)
-    void refresh()
+    setJoinFailed(null)
+    try {
+      const seed = await fetch('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ demo: true, variant: 2 }),
+      })
+      if (!seed.ok) throw new Error(`connect: HTTP ${seed.status}`)
+      const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
+      if (res.status === 404) return setJoinFailed('gone')
+      if (!res.ok) throw new Error(`join: HTTP ${res.status}`)
+      void refresh()
+    } catch {
+      setJoinFailed('net')
+    } finally {
+      setBusy(false)
+    }
   }
 
+  /*
+   * Вход в комнату по приглашению.
+   *
+   * Было: setBusy(true), голый await, снятие флага без try. Обрыв сети оставлял
+   * busy=true навсегда, а обе кнопки экрана стоят под disabled={busy} — то есть
+   * единственное действие страницы-приглашения умирало от одного моргнувшего
+   * вайфая, и «Демо-друг» ещё и застывал на подписи «Подключаю…».
+   *
+   * res.ok не проверялся вовсе, хотя роут отвечает 404 (комнаты нет) и 401
+   * (сессия протухла). В обоих случаях клиент снимал busy и делал refresh, а на
+   * экране оставался ровно тот же экран приглашения: нажатие внешне не делало
+   * НИЧЕГО и ни строчки о причине. Теперь причина названа своими словами.
+   */
   async function join() {
+    if (busy) return
     setBusy(true)
-    await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
-    setBusy(false)
-    void refresh()
+    setJoinFailed(null)
+    try {
+      const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
+      if (res.status === 404) return setJoinFailed('gone')
+      if (res.status === 401) return setJoinFailed('session')
+      if (!res.ok) return setJoinFailed('net')
+      void refresh()
+    } catch {
+      setJoinFailed('net')
+    } finally {
+      setBusy(false)
+    }
   }
 
   /**
@@ -436,6 +500,20 @@ export default function RoomPage() {
               </button>
             </>
           )}
+          {/*
+            Причина названа своими словами, и у каждой свой следующий шаг.
+            Прежде экран молчал на все три случая одинаково: нажатие внешне не
+            делало ничего.
+          */}
+          {joinFailed ? (
+            <p role="status" className="text-sm text-danger">
+              {joinFailed === 'gone'
+                ? 'Такой комнаты уже нет — попроси новую ссылку.'
+                : joinFailed === 'session'
+                  ? 'Сессия истекла — подключи библиотеку заново, и вернём тебя сюда.'
+                  : 'Не получилось войти. Проверь связь и попробуй ещё раз.'}
+            </p>
+          ) : null}
         </div>
       </div>
     )
@@ -485,11 +563,32 @@ export default function RoomPage() {
             открытой». Позвать своих — основной путь, доска — запасной, и
             вёрстка обязана читаться так же.
           */}
+          {/*
+            Отказ буфера виден и здесь, а не только в AloneInvite.
+
+            Страница брала из useCopy оба состояния, но в эту кнопку пробрасывала
+            только copied: failed уходил вниз, в RoomWaiting, который рендерится
+            ТОЛЬКО когда колода уже пуста. Пока карточки есть — то есть всё время
+            свайпа, — отказ буфера не давал вообще ничего: ни галочки, ни строки,
+            ни запасного поля. Человек жал снова и снова, а ссылка, ради которой
+            всё, в руки не попадала.
+
+            Случаи отказа перечислены в докблоке самого хука: небезопасный
+            origin, отказ в разрешении, часть мобильных браузеров.
+
+            Запасной ход тут короче, чем в AloneInvite с его полем: copyLink
+            копирует window.location.href, то есть адрес ЭТОЙ ЖЕ страницы — он и
+            так на виду.
+          */}
           <button
             onClick={copyLink}
             className="rounded-[14px] glass glass-hover px-4 py-2 text-sm cursor-pointer"
           >
-            {copied ? 'Скопировано ✓' : 'Скопировать ссылку для друзей'}
+            {copied
+              ? 'Скопировано ✓'
+              : copyFailed
+                ? 'Не вышло — ссылка в адресной строке'
+                : 'Скопировать ссылку для друзей'}
           </button>
           {state.isHost ? (
             <button
@@ -568,6 +667,7 @@ export default function RoomPage() {
           onLeave={() => void removeMember()}
           hasMore={hasMore}
           pulling={pulling}
+          pullFailed={pullFailed}
           onPullMore={pullMore}
           copied={copied}
           copyFailed={copyFailed}

@@ -33,6 +33,7 @@ export function RoomWaiting({
   myLikes,
   hasMore,
   pulling,
+  pullFailed,
   onPullMore,
   copied,
   copyFailed,
@@ -52,6 +53,8 @@ export function RoomWaiting({
   myLikes: LikedGame[]
   hasMore: boolean
   pulling: boolean
+  /** добор раунда не дошёл — см. pullMore в app/room/[id]/page */
+  pullFailed: boolean
   onPullMore: () => void
   copied: boolean
   copyFailed: boolean
@@ -206,7 +209,9 @@ export function RoomWaiting({
               отсюда убрали. Плюс раунд общий: жмёт один, приходит всем.
             */}
             <span className="block text-xs text-faint mt-0.5">
-              Дальше пойдёт то, что мы отложили. И придёт всем сразу
+              {pullFailed
+                ? 'Не дошло — проверь связь и нажми ещё раз'
+                : 'Дальше пойдёт то, что мы отложили. И придёт всем сразу'}
             </span>
           </button>
         ) : (

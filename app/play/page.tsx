@@ -226,18 +226,45 @@ function Player() {
   // чтобы не звать обновляться из-за трёх доехавших игр
   const warmAtReveal = useRef(0)
 
+  /**
+   * Отзыв о карточке. Отдаёт УСПЕХ, а не void, и это не косметика.
+   *
+   * Стояло `void fetch(...)` без .catch и без проверки res.ok. Для обучающих
+   * сигналов (liked, opened, skipped) молчание допустимо — их теряют по одному,
+   * и человеку об этом сообщать не за чем, — но молчать надо ОСОЗНАННО, как в
+   * components/SessionKeeper, а не потому что обработчик забыли: непойманный
+   * отказ вдобавок падал в консоль на каждый клик.
+   *
+   * А для 'banned' молчание недопустимо. Докблок components/BannedShelf
+   * называет бан «единственным необратимым действием во всём продукте» и
+   * требует «показывать, что именно он услышал, и уметь это отменить». При
+   * обрыве сети карточка исчезала с экрана, человек считал, что высказался, а
+   * в базе бана не было — и отменить нечего: полка «Чистилище» строится из
+   * сохранённых банов, а незасчитанного там нет. Вернётся завтра в подборе.
+   */
   const sendFeedback = useCallback(
-    (appid: number, action: 'liked' | 'skipped' | 'opened' | 'banned', reason?: string) => {
-      void fetch('/api/feedback', {
+    (
+      appid: number,
+      action: 'liked' | 'skipped' | 'opened' | 'banned',
+      reason?: string,
+    ): Promise<boolean> =>
+      fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ appid, action, ...(reason ? { reason } : {}), mood }),
       })
-    },
+        .then((r) => r.ok)
+        // Промис намеренно не отклоняется: вызывающий, которому исход не важен,
+        // пишет void sendFeedback(...) и не оставляет непойманного отказа.
+        .catch(() => false),
     // mood собирается из строки запроса и в рамках страницы неизменен
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
+
+  /** Бан ждёт подтверждения сервера — см. докблок sendFeedback выше. */
+  const [banning, setBanning] = useState(false)
+  const [banFailed, setBanFailed] = useState(false)
 
   /**
    * Запрос выдачи. Отдельно от прогрева: переключение режима повторяет только
@@ -668,7 +695,7 @@ function Player() {
                   <button
                     key={r.key}
                     onClick={() => {
-                      sendFeedback(pick.appid, 'skipped', r.key)
+                      void sendFeedback(pick.appid, 'skipped', r.key)
                       advance(index)
                     }}
                     className="rounded-full glass glass-hover px-4 py-2 text-sm"
@@ -678,7 +705,7 @@ function Player() {
                 ))}
                 <button
                   onClick={() => {
-                    sendFeedback(pick.appid, 'skipped')
+                    void sendFeedback(pick.appid, 'skipped')
                     advance(index)
                   }}
                   className="text-sm text-dim hover:text-ink px-2 transition-colors"
@@ -696,7 +723,7 @@ function Player() {
                     href={storeHref(pick)}
                     target="_blank"
                     rel="noreferrer"
-                    onClick={() => sendFeedback(pick.appid, 'liked')}
+                    onClick={() => void sendFeedback(pick.appid, 'liked')}
                     className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   >
                     {pick.source === 'new'
@@ -706,7 +733,7 @@ function Player() {
                 ) : (
                   <SteamLaunch
                     appid={pick.appid}
-                    onClick={() => sendFeedback(pick.appid, 'liked')}
+                    onClick={() => void sendFeedback(pick.appid, 'liked')}
                     className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   />
                 )}
@@ -728,7 +755,7 @@ function Player() {
                 )}
                 <Link
                   href={`/game/${pick.appid}`}
-                  onClick={() => sendFeedback(pick.appid, 'opened')}
+                  onClick={() => void sendFeedback(pick.appid, 'opened')}
                   className="rounded-[14px] glass glass-hover px-6 py-3 text-sm"
                 >
                   Подробнее
@@ -736,7 +763,7 @@ function Player() {
                 <button
                   onClick={() => {
                     setLiked(new Set(liked).add(pick.appid))
-                    sendFeedback(pick.appid, 'liked')
+                    void sendFeedback(pick.appid, 'liked')
                   }}
                   className={`rounded-[14px] px-4 py-3 text-sm transition ${
                     liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
@@ -750,7 +777,7 @@ function Player() {
                     <ClickSpark>
                       <button
                         onClick={() => {
-                          sendFeedback(pick.appid, 'skipped')
+                          void sendFeedback(pick.appid, 'skipped')
                           advance(index)
                         }}
                         className="rounded-[14px] glass glass-hover no-lift px-4 py-3 text-sm text-dim cursor-pointer"
@@ -768,8 +795,31 @@ function Player() {
                   </button>
                 )}
                 <button
-                  onClick={() => {
-                    sendFeedback(pick.appid, 'banned')
+                  onClick={async () => {
+                    /*
+                      Бан ЖДЁТ ответа сервера, в отличие от соседей.
+
+                      Остальные кнопки убирают карточку сразу и правы: пропуск и
+                      «зашло» — обучающие сигналы, их потеря стоит одного числа в
+                      статистике. Бан же необратим и обязан быть записан: раньше
+                      карточка исчезала мгновенно, а при обрыве сети в базе не
+                      оставалось ничего — ни бана, ни следа в «Чистилище», откуда
+                      его можно было бы отменить. Человек считал, что высказался
+                      навсегда, и встречал ту же игру завтра.
+
+                      Ждать здесь дёшево: нажимают редко и осознанно, а короткое
+                      «Убираю…» на кнопке — это ровно то подтверждение, которого
+                      докблок BannedShelf и требует.
+                    */
+                    if (banning) return
+                    setBanning(true)
+                    setBanFailed(false)
+                    const ok = await sendFeedback(pick.appid, 'banned')
+                    setBanning(false)
+                    if (!ok) {
+                      setBanFailed(true)
+                      return
+                    }
                     const rest = picks.filter((p) => p.appid !== pick.appid)
                     if (!rest.length) {
                       router.push('/quiz')
@@ -779,8 +829,9 @@ function Player() {
                     setIndex(Math.min(index, rest.length - 1))
                     setShowWhy(false)
                   }}
+                  disabled={banning}
                   title="Больше не показывать эту игру"
-                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint cursor-pointer"
+                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint cursor-pointer disabled:opacity-60"
                 >
                   {/*
                     Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
@@ -790,9 +841,21 @@ function Player() {
                     Эмодзи спрятана от скринридера, текст объясняет разницу.
                   */}
                   <span aria-hidden>🚫</span>
-                  <span className="sr-only">Больше никогда не показывать эту игру</span>
+                  <span className="sr-only">
+                    {banning ? 'Убираю навсегда…' : 'Больше никогда не показывать эту игру'}
+                  </span>
                 </button>
               </motion.div>
+            )}
+            {/*
+              Отказ бана виден, потому что бан необратим. Формулировка ведёт
+              к следующему шагу, а не констатирует поломку: карточка на месте,
+              жест повторяется тем же нажатием.
+            */}
+            {banFailed && (
+              <p role="status" className="mt-3 text-sm text-danger">
+                Не получилось убрать игру насовсем — нажми ещё раз.
+              </p>
             )}
             </div>
           </motion.div>
