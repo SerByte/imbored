@@ -59,6 +59,13 @@ export async function runPageSlice(
     fetchDetails?: typeof fetchAppDetails
     fetchReviewsFn?: typeof fetchReviews
     prosConsFn?: typeof claudeProsCons
+    /**
+     * Явное «модель не зовём» для --no-llm. Без него флаг работал наоборот:
+     * заглушка приезжала как prosConsFn, Boolean(prosConsFn) включал useClaude,
+     * тот включал redoHeuristic — и прогон вечно перезабирал те же карточки,
+     * переписывая эвристику эвристикой по два запроса в Steam на каждую.
+     */
+    useClaude?: boolean
     onProgress?: (line: string) => void
   },
 ): Promise<PageSliceResult> {
@@ -72,7 +79,7 @@ export async function runPageSlice(
   // Модель зовём, только если ключ есть. Без этой проверки каждая карточка
   // впустую тратила бы попытку, а page_at всё равно проставлялся бы — то есть
   // забытый ключ выжигал бы очередь на полгода вперёд.
-  const useClaude = Boolean(opts.prosConsFn) || llmAvailable()
+  const useClaude = opts.useClaude ?? (Boolean(opts.prosConsFn) || llmAvailable())
 
   // Когда модель есть, в очередь возвращаются и карточки, собранные раньше без
   // неё: page_at значит «в сеть сходили», а не «карточка готова». Без ключа

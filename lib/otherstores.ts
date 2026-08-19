@@ -1,4 +1,4 @@
-import { getGameMeta, upsertGameMeta, type Db } from './db'
+import { getGamesMeta, upsertGamesMeta, type Db } from './db'
 import type { GameMeta } from './types'
 
 /**
@@ -39,9 +39,34 @@ export const OTHER_STORE_GAMES: GameMeta[] = [
   ext(-111, 'Minecraft', 'mojang', 'https://www.minecraft.net/ru-ru', { Sandbox: 5400, Crafting: 4800, Survival: 4400, Multiplayer: 4200, Building: 4000 }, COOP, 'Кубики, из которых сделано детство интернета.'),
 ]
 
+const OTHER_STORE_APPIDS = OTHER_STORE_GAMES.map((m) => m.appid)
+
+/**
+ * Кураторский пул сеется один раз и живёт вечно — но зовут эту функцию с
+ * каждого POST /api/prepare, а прогрев дёргает prepare до восьмидесяти раз
+ * (lib/warmup: WARMUP_MAX_CALLS). Поштучный getGameMeta в цикле давал до
+ * 880 последовательных обходов Turso на один прогрев, и все, кроме первых
+ * одиннадцати, — вхолостую.
+ *
+ * Отсюда два уровня. Защёлка на процесс гасит повторные вызовы внутри
+ * инстанса, не сходив в базу вообще. Когда сходить всё же надо — один
+ * getGamesMeta вместо N и одна пачка апсертов вместо N.
+ *
+ * Час, а не «навсегда»: инстансы живут долго, а запись из пула может уехать
+ * из games (чистка каталога, ручной прогон скриптов), и вечная защёлка
+ * оставила бы пул недосеянным до следующего холодного старта.
+ *
+ * Защёлка ставится ПОСЛЕ успеха: упавший сид должен повториться, а не
+ * замолчать на час.
+ */
+const SEED_TTL_SEC = 3600
+let seededAt = 0
+
 /** Досеивает кураторский пул, не затирая уже существующие записи */
 export async function seedOtherStores(db: Db, nowSec: number): Promise<void> {
-  for (const m of OTHER_STORE_GAMES) {
-    if (!(await getGameMeta(db, m.appid))) await upsertGameMeta(db, m, nowSec)
-  }
+  if (nowSec - seededAt < SEED_TTL_SEC) return
+  const known = await getGamesMeta(db, OTHER_STORE_APPIDS)
+  const missing = OTHER_STORE_GAMES.filter((m) => !known.has(m.appid))
+  if (missing.length) await upsertGamesMeta(db, missing, nowSec)
+  seededAt = nowSec
 }

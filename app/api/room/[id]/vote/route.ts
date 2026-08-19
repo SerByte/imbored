@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { castRoomVote, findRoomMatch, getRoom, roomMembers, setRoomMatched } from '@/lib/db'
+import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
@@ -17,6 +18,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!(await roomMembers(db, id)).some((m) => m.steamid === steamid)) {
     return NextResponse.json({ error: 'notmember' }, { status: 403 })
   }
+
+  // Свайп — самая частая запись в приложении, и голоса накапливаются на
+  // комнату навсегда (room_votes без подметания). Сто двадцать в минуту это
+  // вдвое быстрее самого быстрого живого свайпа.
+  const gate = await checkRate(db, {
+    bucket: 'room-vote',
+    id: steamid,
+    limit: 120,
+    windowSec: 60,
+    nowSec: nowSec(),
+  })
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const body = (await req.json().catch(() => ({}))) as { appid?: number; vote?: boolean }
   const appid = Number(body.appid)

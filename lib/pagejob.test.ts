@@ -88,6 +88,34 @@ describe('очередь обогащения карточек', () => {
     expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { redoHeuristic: true })).toEqual([10])
   })
 
+  test('--no-llm модель не зовёт, карточку наполняет эвристикой', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    // заглушка prosConsFn тут есть и вернула бы pros/cons — но флаг сильнее
+    const res = await runPageSlice(db, stubs({ useClaude: false }))
+
+    expect(res.viaClaude).toBe(0)
+    expect(res.withProsCons).toBe(1)
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
+  })
+
+  test('--no-llm не тащит обратно карточку, собранную эвристикой', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    // карточку однажды собрали без модели — pros/cons процитированы из отзывов
+    await runPageSlice(db, stubs({ prosConsFn: async () => null }))
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
+
+    // прогон с --no-llm её брать не должен: переписывать эвристику эвристикой
+    // не за чем. Раньше флаг приезжал заглушкой prosConsFn, Boolean(prosConsFn)
+    // включал «модель есть», тот включал redoHeuristic — и прогон крутился
+    // вечно, по два запроса в Steam на каждую карточку.
+    const again = await runPageSlice(db, stubs({ useClaude: false }))
+    expect(again.enriched).toBe(0)
+  })
+
   test('карточка, собранная моделью, повторно не берётся', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)

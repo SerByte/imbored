@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { logFeedback, type FeedbackAction, type SkipReason } from '@/lib/db'
+import { forgetDailyPick, logFeedback, type FeedbackAction, type SkipReason } from '@/lib/db'
 import { parseMood } from '@/lib/mood'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
@@ -62,5 +62,8 @@ export async function POST(req: Request) {
     },
     now,
   )
+  // Игра дня записана на сутки, но бан и «надоела» отбор обязан учесть сразу:
+  // иначе убранная игра стояла бы героем до полуночи (см. forgetDailyPick)
+  if (action === 'banned' || reason === 'tired') await forgetDailyPick(db, steamid)
   return NextResponse.json({ ok: true })
 }

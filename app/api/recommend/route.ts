@@ -41,6 +41,11 @@ import { HERO_SLIDES } from '@/lib/shots'
 import { tagWeightFrom } from '@/lib/tagweight'
 import { CANDIDATE_SOURCES, type GameMeta } from '@/lib/types'
 
+// Маршрут по дороге зовёт модель. Предел объявляем явно, как в кроновых
+// маршрутах: иначе он неявный, а зависший вызов способен съесть его целиком
+// вместо того, чтобы упасть на эвристику.
+export const maxDuration = 60
+
 /** Сколько игр из каталога уходит в нижний блок «Нет в твоей библиотеке» */
 const DISCOVERY_CARDS = 6
 

@@ -1,6 +1,7 @@
 const OPENID_NS = 'http://specs.openid.net/auth/2.0'
 const OPENID_IDENTIFIER = 'http://specs.openid.net/auth/2.0/identifier_select'
 const LOGIN_URL = 'https://steamcommunity.com/openid/login'
+const VERIFY_TIMEOUT_MS = 10_000
 const CLAIMED_ID_RE = /^https:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/
 
 export function buildSteamLoginUrl(returnTo: string): string {
@@ -51,10 +52,15 @@ export async function verifyAssertion(
 
   const body = new URLSearchParams(params)
   body.set('openid.mode', 'check_authentication')
+  // Единственный исходящий запрос в проекте, который жил без таймаута, — и он
+  // же стоял на пути входа: зависший steamcommunity.com держал бы роут до
+  // платформенного потолка, съев всю инвокацию и не оставив пользователю
+  // ничего, кроме белого экрана. Десять секунд — как у всех остальных вызовов.
   const res = await fetchFn(LOGIN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
+    signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
   })
   if (!res.ok) return null
   const text = await res.text()

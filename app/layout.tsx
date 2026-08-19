@@ -1,4 +1,5 @@
 import { Analytics } from '@vercel/analytics/next'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono, Onest, Sofia_Sans_Condensed } from 'next/font/google'
 import Link from 'next/link'
@@ -326,6 +327,10 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         <SmoothScroll />
         <SessionKeeper />
         <Analytics />
+        {/* Полевые Web Vitals. На сайте, где LCP — это всегда чужая обложка со
+            steamstatic, синтетика меряет не то: реальный разброс дают чужой CDN
+            и чужая сеть, а не наш рендер. */}
+        <SpeedInsights />
       </body>
     </html>
   )

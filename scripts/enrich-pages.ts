@@ -78,7 +78,7 @@ async function main() {
       // без дедлайна: локальный прогон никто не убивает по таймеру
       deadlineAt: Date.now() + 10 * 60_000,
       limit,
-      ...(noLlm ? { prosConsFn: async () => null } : {}),
+      ...(noLlm ? { useClaude: false } : {}),
       onProgress: (line) => console.log(line),
     })
     done += res.enriched

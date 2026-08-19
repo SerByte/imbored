@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
+import { checkRate, clientIp } from '@/lib/ratelimit'
 import {
   SESSION_COOKIE,
   appBaseUrl,
@@ -13,9 +14,31 @@ import { fetchOwnedGames, fetchPlayerSummary } from '@/lib/steam'
 import { verifyAssertion } from '@/lib/steam-openid'
 import { destinationPath } from '@/lib/destination'
 
+/**
+ * Каждый вызов этой ручки — исходящий POST на steamcommunity.com
+ * (check_authentication), то есть чужой ресурс, который мы тратим от своего
+ * имени. Плюс за проверкой идут ещё два запроса в Steam Web API по нашему
+ * ключу. Ключ по IP: steamid до проверки ассерта доверия не заслуживает, а
+ * после проверки ограничивать уже поздно — деньги потрачены.
+ */
+const RETURN_LIMIT = 20
+const RETURN_WINDOW_SEC = 600
+
 export async function GET(req: Request) {
   const base = appBaseUrl()
   const params = new URL(req.url).searchParams
+
+  // Отказ — редиректом, а не 429 JSON'ом: сюда человека приводит браузер после
+  // Steam, и увидеть он должен страницу, а не тело ответа. Код тот же, что у
+  // потолка на /api/connect, — у карточки входа для него уже есть своя строка.
+  const gate = await checkRate(await getDb(), {
+    bucket: 'steam-return',
+    id: clientIp(req.headers),
+    limit: RETURN_LIMIT,
+    windowSec: RETURN_WINDOW_SEC,
+    nowSec: nowSec(),
+  })
+  if (!gate.ok) return NextResponse.redirect(`${base}/?error=ratelimited`)
 
   const steamid = await verifyAssertion(params).catch(() => null)
   if (!steamid) return NextResponse.redirect(`${base}/?error=auth`)
