@@ -310,6 +310,9 @@ export async function createDb(url: string, authToken?: string): Promise<Db> {
  */
 const DERIVED_BACKFILL_KEY = 'derived_backfilled_v1'
 
+/** Ключ разовой пометки карточек, помеченных обогащёнными без данных. */
+const PAGE_TRIES_BACKFILL_KEY = 'page_tries_backfilled_v1'
+
 export async function migrateDb(db: Db): Promise<Db> {
   await db.executeMultiple(SCHEMA)
 
@@ -350,6 +353,11 @@ export async function migrateDb(db: Db): Promise<Db> {
     // когда карточку игры последний раз обогащали (скриншоты, отзывы, pros/cons).
     // NULL — ни разу; см. lib/pagejob.ts
     ['games', 'page_at INTEGER'],
+    // Сколько раз подряд поход за карточкой возвращался пустым. Ноль — данные
+    // приехали (или ещё не ходили). Отличает «сходили и привезли» от «сходили
+    // и не привезли», которые до появления колонки были одним и тем же
+    // page_at; см. markPageMissed и lib/pagejob.ts.
+    ['games', 'page_tries INTEGER NOT NULL DEFAULT 0'],
     // цена без скидки, размер скидки, её конец и время замера — своя ось
     // свежести у цены, метаданные живут в 30 раз дольше распродажи
     ['games', 'price_initial INTEGER'],
@@ -397,6 +405,38 @@ export async function migrateDb(db: Db): Promise<Db> {
     await db.execute({
       sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
       args: [DERIVED_BACKFILL_KEY, '1'],
+    })
+  }
+
+  /*
+   * Разовая пометка карточек, которые помечены обогащёнными, а данных с ними
+   * не приехало.
+   *
+   * Признак — пустые скриншоты: их источник только appdetails, и если поход
+   * туда удался, они есть почти у любой игры Steam. На проде под это условие
+   * попадает 596 карточек из 721 обогащённой, и это верх каталога по числу
+   * отзывов: CS2, Dota 2, Rainbow Six, Team Fortress 2, Terraria.
+   *
+   * Ставим единицу, а не ноль: с page_tries = 1 карточка возвращается в
+   * очередь (см. claimPageEnrichBatch) и попадает в первую группу, но остаётся
+   * под потолком PAGE_MAX_TRIES. Игра, у которой скриншотов действительно нет,
+   * потратит на это один поход, после чего удачная отметка сбросит счётчик и
+   * уберёт её из повторов.
+   *
+   * Под флагом по той же причине, что и бэкфилл выше: это полнотабличный
+   * UPDATE по games, а Turso считает прочитанные строки.
+   */
+  const pageTriesDone = await db.execute({
+    sql: 'SELECT value FROM catalog_meta WHERE key = ?',
+    args: [PAGE_TRIES_BACKFILL_KEY],
+  })
+  if (!pageTriesDone.rows.length) {
+    await db.execute(`UPDATE games SET page_tries = 1
+      WHERE page_at IS NOT NULL AND page_tries = 0
+        AND (screenshots_json IS NULL OR screenshots_json = '[]')`)
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [PAGE_TRIES_BACKFILL_KEY, '1'],
     })
   }
 
@@ -1414,15 +1454,23 @@ export async function getGameJson(
 const ALIVE_POOL = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
 
 /**
- * Игры, которым пора обогатить карточку: сначала ни разу не тронутые, потом
- * самые давние. Порядок внутри группы — по числу отзывов: витрину имеет смысл
- * наполнять с тех страниц, на которые вообще придут.
+ * Игры, которым пора обогатить карточку.
+ *
+ * Сначала те, за которыми в сеть ещё не ходили ИЛИ ходили впустую, потом
+ * самые давние. Порядок внутри группы — по числу отзывов: витрину имеет
+ * смысл наполнять с тех страниц, на которые вообще придут.
+ *
+ * «Ходили впустую» стоит в первой группе намеренно. Пустые походы достались
+ * верху каталога — очередь выгребается по убыванию reviews_total, и первый
+ * прогон уткнулся в лимит Steam именно на самых заметных играх. Оставить их
+ * во второй группе значило бы чинить CS2 после пяти тысяч игр, которых никто
+ * не ищет.
  */
 export async function claimPageEnrichBatch(
   db: Db,
   staleBefore: number,
   limit: number,
-  opts: { redoHeuristic?: boolean } = {},
+  opts: { redoHeuristic?: boolean; maxTries?: number } = {},
 ): Promise<number[]> {
   // Карточка, собранная без модели, не должна замирать на полгода.
   //
@@ -1434,18 +1482,31 @@ export async function claimPageEnrichBatch(
   // Поэтому page_at means «в сеть за этой карточкой сходили», а не «карточка
   // готова». Когда ключ появляется, вызывающий поднимает redoHeuristic, и
   // эвристические pros/cons возвращаются в очередь на пересборку моделью.
+  /*
+   * Пустой поход тоже не должен замирать на полгода — по той же логике, что
+   * и эвристические pros/cons абзацем выше, только причина другая: там данные
+   * приехали и оказались хуже нужного, здесь не приехали вовсе.
+   *
+   * Счётчик обязателен, и ограничение сверху тоже. Без счётчика игра, у
+   * которой Steam молчит всегда, возвращалась бы в очередь каждый прогон и
+   * съедала бы бюджет — тот самый head-of-line, ради которого отметка и
+   * ставится при неудаче. maxTries закрывает эту дверь: после нескольких
+   * пустых походов карточка уходит ждать общего срока устаревания.
+   */
   const redo = opts.redoHeuristic ? 1 : 0
+  const maxTries = opts.maxTries ?? 0
   const res = await db.execute({
     sql: `SELECT appid FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
             AND (
               page_at IS NULL
               OR page_at < ?
+              OR (page_tries > 0 AND page_tries < ?)
               OR (? = 1 AND json_extract(pros_cons_json, '$.source') = 'reviews')
             )
-          ORDER BY page_at IS NOT NULL, reviews_total DESC
+          ORDER BY (page_at IS NOT NULL AND page_tries = 0), reviews_total DESC
           LIMIT ?`,
-    args: [staleBefore, redo, limit],
+    args: [staleBefore, maxTries, redo, limit],
   })
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }
@@ -1475,24 +1536,58 @@ export async function sitemapGames(
   }))
 }
 
-/** Сколько карточек ещё ждёт обогащения — для отчёта крона. */
-export async function countPageEnrichDue(db: Db, staleBefore: number): Promise<number> {
+/**
+ * Сколько карточек ещё ждёт обогащения — для отчёта крона.
+ *
+ * Условие обязано повторять claimPageEnrichBatch, иначе отчёт говорит одно,
+ * а очередь делает другое: с maxTries по умолчанию 0 повторные попытки в
+ * счёт не идут — ровно как и в выборке.
+ */
+export async function countPageEnrichDue(
+  db: Db,
+  staleBefore: number,
+  maxTries = 0,
+): Promise<number> {
   const res = await db.execute({
     sql: `SELECT COUNT(*) AS n FROM games
-          WHERE ${ALIVE_POOL} AND appid > 0 AND (page_at IS NULL OR page_at < ?)`,
-    args: [staleBefore],
+          WHERE ${ALIVE_POOL} AND appid > 0
+            AND (page_at IS NULL OR page_at < ? OR (page_tries > 0 AND page_tries < ?))`,
+    args: [staleBefore, maxTries],
   })
   return Number((res.rows[0] as unknown as { n: number }).n)
 }
 
 /**
- * Отметка «карточку трогали». Ставится и при неудаче тоже: иначе игра, у
- * которой Steam не отдаёт отзывов, навсегда осталась бы первой в очереди и
- * забирала бы весь суточный бюджет на себя.
+ * Карточка обогащена: в сеть сходили и данные привезли.
+ *
+ * Счётчик неудач сбрасывается — он считает подряд идущие пустые походы,
+ * а не их сумму за историю.
  */
 export async function markPageEnriched(db: Db, appid: number, now: number): Promise<void> {
   await db.execute({
-    sql: 'UPDATE games SET page_at = ? WHERE appid = ?',
+    sql: 'UPDATE games SET page_at = ?, page_tries = 0 WHERE appid = ?',
+    args: [now, appid],
+  })
+}
+
+/**
+ * В сеть сходили, а данных не привезли.
+ *
+ * page_at ставится всё равно, и это не изменилось: иначе игра, у которой
+ * Steam молчит, навсегда осталась бы первой в очереди и забирала бы весь
+ * суточный бюджет на себя. Изменилось другое — раньше такой поход был
+ * НЕОТЛИЧИМ от удачного, и карточка выпадала из очереди на полгода.
+ *
+ * Цена этой неразличимости замерена на проде: из 721 обогащённой карточки
+ * скриншоты и жанры приехали к 125. Остальные 596 — это верх каталога по
+ * числу отзывов (CS2, Dota 2, Rainbow Six, Team Fortress 2, Terraria), то
+ * есть ровно те страницы, на которые приходят. Обогащение выгребает очередь
+ * по убыванию reviews_total, так что первый же прогон уткнулся в лимит
+ * appdetails на самых заметных играх — и пометил их сделанными.
+ */
+export async function markPageMissed(db: Db, appid: number, now: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE games SET page_at = ?, page_tries = page_tries + 1 WHERE appid = ?',
     args: [now, appid],
   })
 }
