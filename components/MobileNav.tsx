@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { isNavActive } from '@/lib/nav'
 
 /**
  * Нижняя панель навигации — только на телефоне; на десктопе меню в шапке.
@@ -12,10 +13,12 @@ import { useEffect, useRef, useState } from 'react'
  */
 /**
  * `also` — адреса, которые пункт обязан подсвечивать, но по которым сам не
- * ведёт. Без них две страницы, где человек проводит больше всего времени,
- * не подсвечивали в панели ничего: выдача живёт на /play, а не на /quiz,
- * и комната на /room/<код>, а не на /rooms. Панель молча гасла ровно там,
- * где важнее всего понимать, где ты находишься.
+ * ведёт: выдача живёт на /play, а не на /quiz, и комната на /room/<код>, а не
+ * на /rooms. Панель молча гасла ровно там, где важнее всего понимать, где ты
+ * находишься.
+ *
+ * Само сравнение живёт в lib/nav (isNavActive) — им же пользуется шапка, и
+ * разъехаться в том, где ты сейчас, две навигации не имеют права.
  */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
@@ -27,11 +30,7 @@ const ITEMS = [
 
 export function MobileNav() {
   const pathname = usePathname() ?? ''
-  const activeIndex = ITEMS.findIndex((i) =>
-    [i.href, ...(('also' in i ? i.also : []) as string[])].some(
-      (p) => pathname === p || pathname.startsWith(`${p}/`),
-    ),
-  )
+  const activeIndex = ITEMS.findIndex((i) => isNavActive(pathname, i.href, 'also' in i ? i.also : []))
 
   const rowRef = useRef<HTMLDivElement>(null)
   const [bar, setBar] = useState<{ left: number; width: number } | null>(null)
