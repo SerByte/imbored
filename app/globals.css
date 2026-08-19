@@ -368,6 +368,23 @@ textarea:focus-visible {
  * под текстом — так делает настоящая киношная титульная карточка.
  * Слои идут лесенкой, каждый со своей маской, — один backdrop-filter даёт
  * равномерное пятно, а не градиент резкости.
+ *
+ * ЛЕСЕНКА БЫЛА СОБРАНА ВВЕРХ НОГАМИ, и поймать это удалось только глазами.
+ * В linear-gradient(to top, …) ноль процентов — это НИЗ, поэтому маска
+ * первого слоя лежит у нижней кромки, а маска пятого — у верхней. Силу же
+ * раздали по возрастанию: 1px первому, 16px пятому. Выходило, что максимум
+ * размытия стоял у ВЕРХНЕЙ кромки, где полоса обрывается: резкий арт
+ * переходил в шестнадцать пикселей блюра одной чертой, а книзу, под самим
+ * текстом, резкость наоборот ВОЗВРАЩАЛАСЬ. Ровно наоборот тому, что
+ * обещано абзацем выше.
+ *
+ * Видно этого не было, потому что не рисовалось вообще: сборщик выбрасывал
+ * стандартный backdrop-filter и оставлял один -webkit-, которого Chrome не
+ * знает. Починили одно — вылезло второе.
+ *
+ * Маски не тронуты, переставлена СИЛА: максимум ушёл к той кромке, у которой
+ * лежит текст, у противоположной остался 1px. Заодно исчез шов — один
+ * пиксель на обрыве полосы глазу неразличим.
  */
 /*
  * БЕЗ z-index. Полоса стоит в разметке после арта и скрима, но ПЕРЕД контентом,
@@ -387,13 +404,13 @@ textarea:focus-visible {
   display: block;
 }
 .blur-band[data-dir='up'] > span:nth-child(1) {
-  -webkit-backdrop-filter: blur(1px);
-  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(var(--blur-reveal));
+  backdrop-filter: blur(var(--blur-reveal));
   mask-image: linear-gradient(to top, #000 0%, #000 20%, transparent 40%);
 }
 .blur-band[data-dir='up'] > span:nth-child(2) {
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   mask-image: linear-gradient(to top, transparent 10%, #000 30%, #000 45%, transparent 60%);
 }
 .blur-band[data-dir='up'] > span:nth-child(3) {
@@ -402,23 +419,23 @@ textarea:focus-visible {
   mask-image: linear-gradient(to top, transparent 25%, #000 45%, #000 62%, transparent 78%);
 }
 .blur-band[data-dir='up'] > span:nth-child(4) {
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   mask-image: linear-gradient(to top, transparent 42%, #000 62%, #000 80%, transparent 92%);
 }
 .blur-band[data-dir='up'] > span:nth-child(5) {
-  -webkit-backdrop-filter: blur(var(--blur-reveal));
-  backdrop-filter: blur(var(--blur-reveal));
+  -webkit-backdrop-filter: blur(1px);
+  backdrop-filter: blur(1px);
   mask-image: linear-gradient(to top, transparent 62%, #000 84%, #000 100%);
 }
 .blur-band[data-dir='down'] > span:nth-child(1) {
-  -webkit-backdrop-filter: blur(1px);
-  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(var(--blur-reveal));
+  backdrop-filter: blur(var(--blur-reveal));
   mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
 }
 .blur-band[data-dir='down'] > span:nth-child(2) {
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   mask-image: linear-gradient(to bottom, transparent 10%, #000 30%, #000 45%, transparent 60%);
 }
 .blur-band[data-dir='down'] > span:nth-child(3) {
@@ -427,13 +444,13 @@ textarea:focus-visible {
   mask-image: linear-gradient(to bottom, transparent 25%, #000 45%, #000 62%, transparent 78%);
 }
 .blur-band[data-dir='down'] > span:nth-child(4) {
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   mask-image: linear-gradient(to bottom, transparent 42%, #000 62%, #000 80%, transparent 92%);
 }
 .blur-band[data-dir='down'] > span:nth-child(5) {
-  -webkit-backdrop-filter: blur(var(--blur-reveal));
-  backdrop-filter: blur(var(--blur-reveal));
+  -webkit-backdrop-filter: blur(1px);
+  backdrop-filter: blur(1px);
   mask-image: linear-gradient(to bottom, transparent 62%, #000 84%, #000 100%);
 }
 
