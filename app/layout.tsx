@@ -154,12 +154,30 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
 
             pointer-events-none обязателен: слой свисает ниже шапки и иначе
             перехватывал бы клики по строкам ленты.
+
+            Средний стоп на 45% — не украшение, а порог читаемости. Градиент шёл
+            от --header-fade сразу в ноль по всей высоте слоя (96px), а строка
+            ссылок стоит на 22–42px, то есть на трети пути: замер на /portrait дал
+            там альфу 0.567. Ссылки цветом --dim (#9ba1ab) при такой подложке
+            берут против светлого арта 1.77:1 — и проходят AA только если арт под
+            ними темнее rgb(114). На той же странице под шапкой лежит мозаика
+            обложек, среди которых есть и яркие.
+
+            Поднимать было нечего: при 0.567 порог 4.5 не берёт ни один цвет,
+            кроме почти чистого белого (--ink даёт 4.13). Зато на полной силе
+            фейда --dim даёт 5.15 — то есть достаточно ДОНЕСТИ затемнение до
+            строки, не меняя ни цвет ссылок, ни вес, ни признак активного пункта.
+
+            Ниже 45% всё как было: слой растворяется, маска добирает остаток. На
+            страницах без арт-зоны разницы не видно вовсе — там под фейдом тот же
+            --bg, что и в нём самом.
           */}
           <div
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 h-[150%] backdrop-blur-[6px]"
             style={{
-              background: 'linear-gradient(to bottom, var(--header-fade), transparent)',
+              background:
+                'linear-gradient(to bottom, var(--header-fade) 0%, var(--header-fade) 45%, transparent 100%)',
               maskImage: 'linear-gradient(to bottom, #000 55%, transparent)',
               WebkitMaskImage: 'linear-gradient(to bottom, #000 55%, transparent)',
             }}
