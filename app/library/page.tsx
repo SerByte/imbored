@@ -14,6 +14,7 @@ import {
   parseLibraryFilter,
   pickForgotten,
 } from '@/lib/forgotten'
+import { plural } from '@/lib/plural'
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
@@ -115,9 +116,18 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           Мой портрет игрока →
         </Link>
       </div>
+      {/*
+        Окончания считаются, а не прибиты. Было «игр» и «часов» строкой: на
+        демо-профиле это давало «22 игр» вместо «22 игры» и «4 404 часов»
+        вместо «4 404 часа» — обе формы неверны сразу, в первой же строке
+        страницы. plural в проекте есть и работает в восемнадцати местах, сюда
+        его просто не донесли.
+      */}
       <p className="text-dim text-sm mb-6">
-        <span className="font-mono">{games.length}</span> игр ·{' '}
-        <span className="font-mono">{totalHours.toLocaleString('ru-RU')}</span> часов ·{' '}
+        <span className="font-mono">{games.length}</span>{' '}
+        {plural(games.length, 'игра', 'игры', 'игр')} ·{' '}
+        <span className="font-mono">{totalHours.toLocaleString('ru-RU')}</span>{' '}
+        {plural(totalHours, 'час', 'часа', 'часов')} ·{' '}
         <span className="font-mono">{untouched}</span> ни разу не запускал
       </p>
 

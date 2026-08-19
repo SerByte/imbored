@@ -144,8 +144,15 @@ export default function RoomsBoardPage() {
                     {/* Створки только для строк, появившихся на ЭТОМ тике:
                         иначе каждые 5 секунд вся доска — игровой автомат. */}
                     <FlapCode code={r.id} animate={board?.fresh.has(r.id) ?? false} />
+                    {/*
+                      Разделитель только при именах. Комната без участников на
+                      доске возможна — она висит там до суток, — и строка
+                      начиналась с висячего « · », будто имя не дорисовалось.
+                      Пустой состав называем словами: это ответ на вопрос «к
+                      кому я подсяду».
+                    */}
                     <div className="text-sm text-dim mt-0.5">
-                      {r.memberNames.join(', ')} ·{' '}
+                      {r.memberNames.length ? `${r.memberNames.join(', ')} · ` : 'пока никого · '}
                       {minutesAgoLabel(r.minutesAgo)}
                     </div>
                   </div>

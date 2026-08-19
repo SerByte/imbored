@@ -8,6 +8,7 @@ import { MatchCeremony } from '@/components/MatchCeremony'
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
 import { useCopy } from '@/components/useCopy'
+import { plural } from '@/lib/plural'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
@@ -639,7 +640,8 @@ export default function RoomPage() {
             >
               {m.name}
               {m.me ? ' (ты)' : ''} · <span className="font-mono tabular-nums">{m.votes}</span>{' '}
-              голосов
+              {/* было прибито строкой: «1 голосов», «2 голосов» */}
+              {plural(m.votes, 'голос', 'голоса', 'голосов')}
             </span>
           ))}
         </div>
