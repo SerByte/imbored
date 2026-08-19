@@ -9,7 +9,7 @@ import { HeroShots } from '@/components/HeroShots'
 import { PlayersNow } from '@/components/PlayersNow'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
-import { SplitHeading } from '@/components/SplitHeading'
+import { SplitHeadingLazy } from '@/components/SplitHeadingLazy'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { DemoNotice } from '@/components/DemoNotice'
 import { WarmupScreen } from '@/components/WarmupScreen'
@@ -226,9 +226,9 @@ export default function DailyPage() {
               они по определению одно и то же. Название игры — главный текст
               этой страницы, рисковать его читаемостью нельзя.
             */}
-            <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.2}>
+            <SplitHeadingLazy className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.2}>
               {pick.name}
-            </SplitHeading>
+            </SplitHeadingLazy>
             <p className="text-base md:text-lg text-ink/90 leading-relaxed">{pick.reason}</p>
 
             {pick.tags.length > 0 && (

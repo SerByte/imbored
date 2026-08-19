@@ -16,7 +16,7 @@ import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
-import { SplitHeading } from '@/components/SplitHeading'
+import { SplitHeadingLazy } from '@/components/SplitHeadingLazy'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { takeQuizCover } from '@/lib/handoff'
@@ -621,9 +621,9 @@ function Player() {
                 <PlayersNow ccu={pick.ccu} />
               </motion.div>
 
-              <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.18}>
+              <SplitHeadingLazy className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.18}>
                 {pick.name}
-              </SplitHeading>
+              </SplitHeadingLazy>
 
               <motion.p variants={STEP} className="text-base md:text-lg text-ink/90 leading-relaxed">
                 {pick.reason}
