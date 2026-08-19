@@ -571,7 +571,20 @@ export default function RoomPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {state.isHost && (
+          {/*
+            Индикатор отделён от переключателя.
+
+            Раньше всё это было под state.isHost, то есть гость не знал, что
+            комната открыта на доске и его ник виден на /rooms. Сервер отдаёт
+            isPublic всем (app/api/room/[id]/route.ts) — скрыта была только
+            отрисовка. Хост включает публичность в любой момент, в том числе
+            уже после того, как гость вошёл.
+
+            Управление остаётся хосту: снять комнату с доски может только он
+            (роут отвечает nothost остальным), и кнопка, отвечающая отказом,
+            хуже её отсутствия.
+          */}
+          {state.isHost ? (
             <button
               onClick={togglePublic}
               aria-pressed={state.room.isPublic}
@@ -587,7 +600,14 @@ export default function RoomPage() {
             >
               {state.room.isPublic ? 'На доске ✓' : 'Показать на доске'}
             </button>
-          )}
+          ) : state.room.isPublic ? (
+            <span
+              className="rounded-[14px] bg-ember/15 text-ember-text px-4 py-3 text-sm"
+              title="Комната открыта на доске «Пати» — твой ник виден на /rooms"
+            >
+              На доске
+            </span>
+          ) : null}
           {/*
             У этой кнопки нет соседнего поля со ссылкой — она стоит в ряду
             действий шапки. Поэтому когда буфер закрыт наглухо, она отсылает к тому,

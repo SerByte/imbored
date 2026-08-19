@@ -28,6 +28,24 @@ export function freshness(publishedAt: number, nowSec: number): string {
   return `${y} ${plural(y, 'год', 'года', 'лет')} назад`
 }
 
+/**
+ * Давность в минутах — словами. Для доски пати, где счёт идёт на минуты и
+ * часы, а не на дни: freshness() выше начинается с суток и всё, что моложе,
+ * называет «сегодня».
+ *
+ * Часы обязательны. Комната живёт на доске до суток (PUBLIC_ROOM_MAX_AGE_SEC),
+ * а подпись собиралась как `${minutes} мин назад` — то есть комната
+ * двадцатитрёхчасовой давности честно писала «1380 мин назад».
+ */
+export function minutesAgoLabel(minutes: number): string {
+  if (minutes < 1) return 'только что'
+  if (minutes < 60) return `${minutes} мин назад`
+  const h = Math.floor(minutes / 60)
+  if (h < 24) return `${h} ${plural(h, 'час', 'часа', 'часов')} назад`
+  const d = Math.floor(h / 24)
+  return `${d} ${plural(d, 'день', 'дня', 'дней')} назад`
+}
+
 /** Запись из будущего (кривая дата в фиде) не должна давать нулевую задержку */
 const MIN_TICK_MS = 1_000
 

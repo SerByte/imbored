@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { freshness, nextFreshnessTickMs } from './freshness'
+import { freshness, minutesAgoLabel, nextFreshnessTickMs } from './freshness'
 
 const NOW = 1_700_000_000
 const DAY = 86_400
@@ -58,5 +58,23 @@ describe('nextFreshnessTickMs', () => {
 
   test('никогда не реже шести часов: ноутбук просыпается и пересчитывает', () => {
     expect(nextFreshnessTickMs([NOW - 1], NOW)).toBeLessThanOrEqual(6 * 3_600_000)
+  })
+})
+
+describe('minutesAgoLabel', () => {
+  test('минуты, часы и дни — каждый в своих словах', () => {
+    expect(minutesAgoLabel(0)).toBe('только что')
+    expect(minutesAgoLabel(1)).toBe('1 мин назад')
+    expect(minutesAgoLabel(59)).toBe('59 мин назад')
+    expect(minutesAgoLabel(60)).toBe('1 час назад')
+    expect(minutesAgoLabel(125)).toBe('2 часа назад')
+    expect(minutesAgoLabel(300)).toBe('5 часов назад')
+  })
+
+  test('комната суточной давности не пишет «1380 мин назад»', () => {
+    // Доска держит комнату до суток (PUBLIC_ROOM_MAX_AGE_SEC), и ровно это
+    // подпись и показывала до появления часов.
+    expect(minutesAgoLabel(1380)).toBe('23 часа назад')
+    expect(minutesAgoLabel(1440)).toBe('1 день назад')
   })
 })
