@@ -35,7 +35,8 @@ import { describe, expect, test } from 'vitest'
  * пристойно — заливка, рамка, тень на месте. Поэтому сторож, а не комментарий.
  */
 
-const RAW = fs.readFileSync(path.join(__dirname, '..', 'app', 'globals.css'), 'utf8')
+const ROOT = path.join(__dirname, '..')
+const RAW = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
 
 /**
  * Без комментариев — иначе сторож ловит объяснение, зачем его завели: докблок
@@ -45,14 +46,38 @@ const RAW = fs.readFileSync(path.join(__dirname, '..', 'app', 'globals.css'), 'u
  * Комментарии заменяются пробелами той же длины, чтобы номера строк в жалобе
  * остались настоящими.
  */
-const CSS = RAW.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+const stripComments = (css: string) =>
+  css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+const CSS = stripComments(RAW)
+
+/**
+ * Не только globals.css: тот же минификатор проходит и по CSS-модулям. У
+ * MorphSlider.module.css префикс стоял после стандартного свойства, и в
+ * собранном листе у подписи и кнопок слайдера оставался один
+ * `-webkit-backdrop-filter` — тот же дефект, найденный сравнением исходника с
+ * собранным CSS уже после того, как globals.css был вычищен.
+ */
+function cssFiles(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const full = path.join(dir, e.name)
+    if (e.isDirectory()) return cssFiles(full)
+    return e.name.endsWith('.css') ? [full] : []
+  })
+}
+const SHEETS = [...cssFiles(path.join(ROOT, 'app')), ...cssFiles(path.join(ROOT, 'components'))]
 
 describe('размытие подложки', () => {
   test('вендорный префикс не пишется руками — его ставит минификатор', () => {
+    expect(SHEETS.length, 'листы стилей не найдены').toBeGreaterThan(1)
     const offenders: string[] = []
-    CSS.split('\n').forEach((line, i) => {
-      if (line.includes('-webkit-backdrop-filter')) offenders.push(`globals.css:${i + 1}`)
-    })
+    for (const file of SHEETS) {
+      const rel = path.relative(ROOT, file).split(path.sep).join('/')
+      stripComments(fs.readFileSync(file, 'utf8'))
+        .split('\n')
+        .forEach((line, i) => {
+          if (line.includes('-webkit-backdrop-filter')) offenders.push(`${rel}:${i + 1}`)
+        })
+    }
     expect(
       offenders,
       'рукописный -webkit-префикс заставляет минификатор выбросить стандартное свойство, и размытие умирает в Chrome',
