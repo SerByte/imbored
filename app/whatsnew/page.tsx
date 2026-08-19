@@ -5,11 +5,12 @@ import { FeedWatch } from '@/components/whatsnew/FeedWatch'
 import { PatchRow } from '@/components/whatsnew/PatchRow'
 import { Stage } from '@/components/whatsnew/Stage'
 import { artCandidates } from '@/lib/art'
-import { getFeedForApps, getGamesMeta, getLatestSnapshot, getMajorFeed } from '@/lib/db'
+import { getFeedForApps, getGamesMeta, getLatestSnapshot } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
 import { plural } from '@/lib/plural'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { cachedMajorFeed } from '@/lib/whatsnewcache'
 import { resolveWhatsNew } from '@/lib/whatsnewfeed'
 
 export const dynamic = 'force-dynamic'
@@ -59,7 +60,9 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
     nowSec: now,
     snapshot: (id) => getLatestSnapshot(db, id),
     forApps: (appids, limit) => getFeedForApps(db, appids, limit),
-    major: (limit, minRank) => getMajorFeed(db, limit, { minRank }),
+    // Общая лента — из кэша: она одна на всех и переживает посетителя.
+    // Личная ветка выше остаётся живой, разрез идёт ровно по этому шву.
+    major: (limit, minRank) => cachedMajorFeed(limit, minRank),
   })
 
   const metas = await getGamesMeta(

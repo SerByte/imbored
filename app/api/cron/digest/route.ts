@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { cronAuthorized } from '@/lib/cron'
 import { acquireLease, DIGEST_LEASE, getCatalogMeta, releaseLease, setCatalogMeta } from '@/lib/db'
 import { runDigestSlice } from '@/lib/newsjob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
+import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -25,7 +27,8 @@ export const maxDuration = 60
  *
  * В vercel.json этот крон намеренно НЕ добавлен: на Hobby лимит — два
  * расписания на проект, и они уже заняты новостями и карточками. Расписание
- * живёт в .github/workflows/digest-cron.yml, как и часовой триггер новостей.
+ * живёт в .github/workflows/cron.yml — там же, где триггер новостей: два
+ * воркфлоу стоили вдвое больше минут GitHub при одинаковой работе.
  */
 const MAX_CHAIN = 8
 const SLICE_BUDGET_MS = 50_000
@@ -65,6 +68,12 @@ export async function GET(req: Request) {
       console.error('digest slice', err)
     } finally {
       await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result }))
+
+      // Пересказ переписывает tldr, а его рисует PatchRow — значит лента после
+      // среза выглядит иначе, даже если ни одной новой записи не появилось.
+      // Тот же тег и та же логика, что в /api/cron/news.
+      if ((result?.digested ?? 0) > 0) revalidateTag(NEWS_MAJOR_TAG, 'max')
+
       const secret = process.env.CRON_SECRET
       const goesOn = Boolean(result?.hasMore && chain < MAX_CHAIN && secret)
       // Аренду передаём следующему звену вместе с holder, отдаём — только

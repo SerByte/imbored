@@ -11,13 +11,14 @@ import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { DemoNotice } from '@/components/DemoNotice'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
-import { runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { connectDemo, runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 /** Карточка магазина: и герой в день каталога, и плитки на полке ниже */
 type StoreCard = {
@@ -54,10 +55,13 @@ export default function DailyPage() {
   const [message, setMessage] = useState('Изучаю твою библиотеку…')
   const started = useRef(false)
 
+  /** Демо-подключение пробуем ровно один раз — та же дисциплина, что на /play */
+  const demoTried = useRef(false)
+
   useEffect(() => {
     if (started.current) return
     started.current = true
-    void (async () => {
+    void (async function run(): Promise<void> {
       // Прогрев тот же, что в основной выдаче, и теперь буквально тот же код.
       // Раньше здесь лежала копия цикла — без прогресса, без проверки ok и без
       // try/catch, из-за чего экран ошибки ниже был недостижим в принципе:
@@ -77,7 +81,21 @@ export default function DailyPage() {
         },
       })
       if (warm === 'unauthorized') {
+        // Гость зашёл на «Игру дня» из шапки или нижней панели. Раньше его
+        // молча уносило на лендинг — то же, что было на /play. Показываем
+        // настоящую игру дня на демо-библиотеке; подпись «демо» едет вместе с
+        // фактами и стоит прямо на карточке.
+        if (!demoTried.current) {
+          demoTried.current = true
+          setMessage('Собираю демо-библиотеку…')
+          if (await connectDemo()) return run()
+        }
         router.push('/')
+        return
+      }
+      if (warm === 'nolibrary') {
+        // Сессия есть, библиотеки нет: демо было бы подменой, а не помощью.
+        router.push('/?error=nolibrary')
         return
       }
       if (warm === 'error') {
@@ -126,6 +144,9 @@ export default function DailyPage() {
   return (
     <div className="flex-1 flex flex-col">
       <section className="media-dark relative flex-1 min-h-[92vh] flex items-end overflow-hidden anim-reveal">
+        {/* Внутри media-dark, а не над ним: плашка обязана быть в той же
+            цветовой зоне, что и герой, иначе она читается как чужой элемент. */}
+        {prep?.library?.demo && <DemoNotice variant="overlay" />}
         <HeroShots
           appid={pick.appid}
           headerImage={pick.headerImage}
