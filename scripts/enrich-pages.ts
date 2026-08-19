@@ -18,7 +18,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { countPageEnrichDue, createDb } from '../lib/db'
-import { PAGE_MAX_AGE_SEC, runPageSlice } from '../lib/pagejob'
+import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '../lib/pagejob'
 
 /** Карточек за срез. Каждая — два запроса к store.steampowered.com,
  *  а лимитер держит 1.7 с между ними: срез это примерно минута. */
@@ -51,7 +51,7 @@ async function main() {
   const db = await openDb()
   const now = Math.floor(Date.now() / 1000)
 
-  const due = await countPageEnrichDue(db, now - PAGE_MAX_AGE_SEC)
+  const due = await countPageEnrichDue(db, now - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES)
   console.log(`к обогащению готово: ${due.toLocaleString('ru-RU')}`)
 
   if (dryRun) {
@@ -98,7 +98,7 @@ async function main() {
     if (!res.hasMore) break
   }
 
-  const left = await countPageEnrichDue(db, Math.floor(Date.now() / 1000) - PAGE_MAX_AGE_SEC)
+  const left = await countPageEnrichDue(db, Math.floor(Date.now() / 1000) - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES)
   console.log(
     `\nготово. обогащено ${done.toLocaleString('ru-RU')}, ` +
       `со скриншотами ${shots.toLocaleString('ru-RU')}, с pros/cons ${prosCons.toLocaleString('ru-RU')}`,

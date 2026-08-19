@@ -9,7 +9,7 @@ import {
   setCatalogMeta,
   STEAM_LEASE,
 } from '@/lib/db'
-import { PAGE_MAX_AGE_SEC, runPageSlice } from '@/lib/pagejob'
+import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '@/lib/pagejob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
@@ -83,7 +83,7 @@ export async function GET(req: Request) {
   })
 
   return NextResponse.json(
-    { started: true, chain, due: await countPageEnrichDue(db, nowSec() - PAGE_MAX_AGE_SEC) },
+    { started: true, chain, due: await countPageEnrichDue(db, nowSec() - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES) },
     { status: 202 },
   )
 }
