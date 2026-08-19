@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { freshness, minutesAgoLabel, nextFreshnessTickMs } from './freshness'
+import { dayLabel, freshness, minutesAgoLabel, nextFreshnessTickMs } from './freshness'
 
 const NOW = 1_700_000_000
 const DAY = 86_400
@@ -76,5 +76,29 @@ describe('minutesAgoLabel', () => {
     // подпись и показывала до появления часов.
     expect(minutesAgoLabel(1380)).toBe('23 часа назад')
     expect(minutesAgoLabel(1440)).toBe('1 день назад')
+  })
+})
+
+describe('dayLabel', () => {
+  test('ключ суток превращается в подпись', () => {
+    expect(dayLabel('2026-08-19')).toBe('19 августа')
+    expect(dayLabel('2026-01-01')).toBe('1 января')
+    expect(dayLabel('2026-12-31')).toBe('31 декабря')
+  })
+
+  test('зона зафиксирована: подпись не зависит от TZ рантайма', () => {
+    // toLocaleDateString без timeZone берёт зону процесса. На Vercel это UTC,
+    // но зависимость подразумеваемая — достаточно кому-нибудь задать TZ, и
+    // подпись разъедется с ключом записи навсегда.
+    const tz = process.env.TZ
+    try {
+      process.env.TZ = 'Pacific/Kiritimati' // UTC+14
+      expect(dayLabel('2026-08-19')).toBe('19 августа')
+      process.env.TZ = 'Pacific/Niue' // UTC-11
+      expect(dayLabel('2026-08-19')).toBe('19 августа')
+    } finally {
+      if (tz === undefined) delete process.env.TZ
+      else process.env.TZ = tz
+    }
   })
 })
