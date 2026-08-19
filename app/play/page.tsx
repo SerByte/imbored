@@ -24,7 +24,7 @@ import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
 import type { QuizCover } from '@/lib/quizart'
 import type { Focus, Scope } from '@/lib/recommend'
-import { SOURCE_BADGE } from '@/lib/sources'
+import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
 import { DemoNotice } from '@/components/DemoNotice'
@@ -864,7 +864,7 @@ function Player() {
                   <div className="text-sm font-semibold leading-tight">{p.name}</div>
                   <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
                     <span className="text-dim truncate">
-                      {p.store ? STORE_LABEL[p.store] ?? p.store : SOURCE_BADGE[p.source]}
+                      {p.store ? STORE_LABEL[p.store] ?? p.store : SOURCE_BADGE_SHORT[p.source]}
                     </span>
                     {/* Цена — только у не купленного: у своей игры она уже
                         ничего не решает, а место в строке занимает */}
