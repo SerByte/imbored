@@ -12,7 +12,7 @@ import {
   type FeedItem,
   type StoredNews,
 } from '@/lib/db'
-import { discountView } from '@/lib/discount'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
 import { plural } from '@/lib/plural'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
@@ -211,6 +211,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                 // библиотеке покупать нечего
                 discovery={showPopular}
                 discount={showPopular && meta ? discountView(meta, now) : null}
+                price={showPopular && meta ? trustedPrice(meta, now) : null}
               />
             )
           })}
@@ -246,6 +247,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                     // Это чужие игры — цена и ссылка на страницу тут уместны
                     discovery
                     discount={meta ? discountView(meta, now) : null}
+                    price={meta ? trustedPrice(meta, now) : null}
                   />
                 )
               })}

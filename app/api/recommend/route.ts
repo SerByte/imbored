@@ -10,7 +10,7 @@ import {
   listFeedback,
   loadTagStats,
 } from '@/lib/db'
-import { discountView } from '@/lib/discount'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
 import { claudePicks, heuristicPicks, type Pick } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -375,7 +375,7 @@ export async function POST(req: Request) {
       hoursPlayed: hoursOf(p.appid),
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,
-      priceFinal: meta?.priceFinal ?? null,
+      priceFinal: meta ? trustedPrice(meta, now) : null,
       isFree: meta?.isFree ?? null,
       // Скидка — разговор про покупку, поэтому только у не купленного: на
       // своей игре «−40%» сообщает ровно ничего, кроме того, что ты купил

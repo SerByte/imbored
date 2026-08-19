@@ -11,7 +11,7 @@ import {
   roomMembers,
   setRoomDeckSize,
 } from '@/lib/db'
-import { discountView } from '@/lib/discount'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { buildGroupDeck } from '@/lib/group'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
@@ -153,7 +153,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const meta = metas.get(c.appid)
     return {
       ...c,
-      priceFinal: meta?.priceFinal ?? c.priceFinal,
+      priceFinal: meta ? trustedPrice(meta, now) : c.priceFinal,
       art: meta?.art ?? null,
       ccu: meta?.ccu ?? null,
       // Скидка нужна только там, где кому-то придётся покупать: у карточки

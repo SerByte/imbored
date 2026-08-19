@@ -12,7 +12,7 @@ import { ProgressRing } from '@/components/ProgressRing'
 import { RefundNote } from '@/components/RefundNote'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
-import { discountView } from '@/lib/discount'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { byline } from '@/lib/byline'
 import { loadGamePage, reviewFacts } from '@/lib/gamepage'
 import { currencyOf, gameJsonLd, ldScript } from '@/lib/jsonld'
@@ -147,6 +147,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   const { meta, reviewsSummary, prosCons } = data
   const now = nowSec()
   const deal = discountView(meta, now)
+  // null — цене верить нечему (сгоревшая распродажа), см. trustedPrice. Плашку
+  // тогда не рисуем вовсе: пустое стекло в герое хуже отсутствия цены.
+  const price = trustedPrice(meta, now)
   // Страница публичная и не знает, куплена ли игра у читающего, — поэтому
   // строка про возврат здесь нейтральная, без «не зайдёт»
   const refund = refundEligible(meta, now)
@@ -337,10 +340,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   как «про цену мы ничего не знаем» — то есть ровно тот вопрос,
                   на который страница с заголовком «стоит ли играть» и должна
                   отвечать. PriceTag такой случай умел с самого начала. */}
-              {(meta.isFree || (meta.priceFinal !== undefined && meta.priceFinal > 0)) && (
+              {(meta.isFree || (price !== null && price > 0)) && (
                 <span className="rounded-[14px] glass px-5 py-3 text-sm flex items-center gap-2">
                   <PriceTag
-                    priceFinal={meta.priceFinal ?? null}
+                    priceFinal={price}
                     isFree={meta.isFree}
                     discount={deal}
                     size="hero"
