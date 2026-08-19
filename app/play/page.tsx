@@ -1200,10 +1200,11 @@ function Player() {
               {/* Правило остановки — выход, названный заранее: попробовать не
                   страшно, если известно, когда можно бросить. Только у своего
                   (не купленную не запустить, у неё выше строка про возврат) и
-                  только на десктопе: на телефоне кнопка ведёт в магазин, и
-                  двадцати минут игры там не наступает. */}
+                  только там, где кнопка запускает: под пальцем она ведёт в
+                  магазин, и двадцати минут игры там не наступает. Признак тот
+                  же, что у развилки SteamLaunch, — pointer, а не ширина. */}
               {pick.source !== 'new' && (
-                <motion.p variants={STEP} className="hidden md:block -mt-1 text-xs text-faint">
+                <motion.p variants={STEP} className="hidden pointer-fine:block -mt-1 text-xs text-faint">
                   {stopRuleLine(mood.time)}
                 </motion.p>
               )}

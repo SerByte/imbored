@@ -334,12 +334,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     mobileLabel="Открыть в Steam"
                     className="btn-ember px-5 py-3 text-sm"
                   />
-                  {/* на телефоне кнопка выше и так ведёт в магазин — дублировать незачем */}
+                  {/* под пальцем кнопка выше и так ведёт в магазин — дублировать
+                      незачем; признак тот же, что у развилки SteamLaunch */}
                   <a
                     href={`https://store.steampowered.com/app/${appid}/`}
                     target="_blank"
                     rel="noreferrer"
-                    className="hidden md:inline-block rounded-[14px] glass glass-hover px-5 py-3 text-sm"
+                    className="hidden pointer-fine:inline-block rounded-[14px] glass glass-hover px-5 py-3 text-sm"
                   >
                     Страница в Steam
                   </a>
