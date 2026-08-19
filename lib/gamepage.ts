@@ -3,8 +3,9 @@ import {
   getGameMeta,
   getGameNews,
   topGamesByTag,
+  withoutBody,
+  type FeedItem,
   type SimilarGame,
-  type StoredNews,
 } from './db'
 import { getDb } from './server'
 import type { GameMeta } from './types'
@@ -17,7 +18,8 @@ export type GamePageData = {
     totalNegative: number
   } | null
   prosCons: { pros: string[]; cons: string[]; source: 'claude' | 'reviews' } | null
-  news: StoredNews[]
+  /** без тел патчей — их отдаёт app/api/news по раскрытию, см. withoutBody */
+  news: FeedItem[]
   /** соседи по самому характерному тегу; пусто, если тегов нет */
   similar: SimilarGame[]
   /** по какому тегу они подобраны — он же стоит в заголовке блока */
@@ -90,7 +92,7 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   const [reviewsSummary, stored, news, similar] = await Promise.all([
     getGameJson(db, appid, 'reviews_summary_json') as Promise<GamePageData['reviewsSummary']>,
     getGameJson(db, appid, 'pros_cons_json') as Promise<GamePageData['prosCons']>,
-    getGameNews(db, appid, 8),
+    getGameNews(db, appid, 8).then((rows) => rows.map(withoutBody)),
     similarOf(),
   ])
 

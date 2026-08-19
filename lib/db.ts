@@ -2192,6 +2192,24 @@ export type StoredNews = {
  */
 export type FeedItem = Omit<StoredNews, 'blocks'>
 
+/**
+ * Строка ленты без тела патча.
+ *
+ * Всё, что передано клиентскому островку, уезжает в браузер
+ * сериализованным. На /whatsnew тела тридцати патчей были 277 КБ из 476 на
+ * проде — 58% веса страницы на текст, который раскрывают у одной строки из
+ * тридцати. На карточке игры то же самое: 69 КБ инлайновых скриптов при 6.5
+ * КБ видимого текста. Тело отдаёт app/api/news по требованию.
+ *
+ * Живёт рядом с FeedItem, а не в разметке: потребителей теперь два, и
+ * разъехаться им нельзя.
+ */
+export function withoutBody(item: StoredNews): FeedItem {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { blocks, ...row } = item
+  return row
+}
+
 /** Статусы опроса: gone — игра без ленты, mismatch — фид отдаёт чужие appid */
 export type PollStatus = 'new' | 'ok' | 'empty' | 'error' | 'gone' | 'mismatch'
 
