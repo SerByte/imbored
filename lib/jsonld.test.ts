@@ -162,7 +162,36 @@ describe('gameJsonLd', () => {
 
   test('незнакомые категории не рождают пустой playMode', () => {
     expect(ld({ categories: [27, 36] }).playMode).toBeUndefined()
-    expect(ld({ genres: [] }).genre).toBeUndefined()
+  })
+
+  test('без жанров genre собирается из тегов — тех же, что чипсами в герое', () => {
+    // В проде genres_json пуст почти везде: каталог собран из поиска магазина,
+    // а тот жанров не отдаёт. Теги при этом есть у всех.
+    expect(ld({ genres: [], tags: { 'Souls-like': 100, RPG: 90, Difficult: 80 } }).genre).toEqual([
+      'Souls-like',
+      'RPG',
+      'Difficult',
+    ])
+  })
+
+  test('genre из тегов упорядочен устойчиво: вес, потом имя', () => {
+    // Страница пререндерится и кэшируется на сутки — порядок ключей после
+    // пересборки каталога не гарантирован, а разметка меняться не должна.
+    expect(ld({ genres: [], tags: { Roguelike: 50, Action: 50, Indie: 90 } }).genre).toEqual([
+      'Indie',
+      'Action',
+      'Roguelike',
+    ])
+  })
+
+  test('больше восьми тегов в genre не едет — их и на странице восемь', () => {
+    const tags: Record<string, number> = {}
+    for (let i = 0; i < 20; i++) tags['t' + String(i).padStart(2, '0')] = 100 - i
+    expect(ld({ genres: [], tags }).genre).toHaveLength(8)
+  })
+
+  test('ни жанров, ни тегов — ключа genre нет вовсе', () => {
+    expect(ld({ genres: [], tags: {} }).genre).toBeUndefined()
   })
 
   test('год выхода — это datePublished, потому что точной даты в базе нет', () => {
