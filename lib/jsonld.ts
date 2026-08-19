@@ -59,6 +59,15 @@ export type GameLd = {
   }
 }
 
+/**
+ * Сколько тегов уходит в genre, если своих жанров у игры нет.
+ *
+ * Восемь — не круглое число, а ровно столько чипсов рисует герой карточки
+ * (см. topTags в app/game/[appid]/page.tsx). Разметка обязана совпадать с
+ * видимым, поэтому и список, и его длина берутся оттуда.
+ */
+const TAGS_AS_GENRE = 8
+
 export type GameLdInput = {
   meta: GameMeta
   reviewsSummary: { scoreDesc: string; totalPositive: number; totalNegative: number } | null
@@ -121,7 +130,23 @@ export function gameJsonLd({
   if (meta.shortDescription) ld.description = meta.shortDescription
   const image = meta.art?.header2x ?? meta.art?.header ?? meta.headerImage
   if (image) ld.image = image
-  if (meta.genres.length) ld.genre = meta.genres
+  // Жанры Steam, а если их нет — те же теги, что нарисованы чипсами в герое.
+  //
+  // Ветка не теоретическая: в проде genres_json пуст почти везде (каталог
+  // собирается из поиска магазина, а тот жанров не отдаёт), зато теги есть у
+  // всех — «Souls-like», «Open World», «Dark Fantasy». Без запасного варианта
+  // genre не появлялся бы вовсе там, где на странице стоит восемь чипсов.
+  //
+  // Тай-брейк по имени обязателен по той же причине, что и в topTagOf:
+  // страница пререндерится и кэшируется на сутки, а порядок ключей после
+  // очередной пересборки каталога не гарантирован.
+  const genre = meta.genres.length
+    ? meta.genres
+    : Object.entries(meta.tags ?? {})
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, TAGS_AS_GENRE)
+        .map(([t]) => t)
+  if (genre.length) ld.genre = genre
 
   const modes = PLAY_MODES.filter(([ids]) => ids.some((id) => meta.categories.includes(id))).map(
     ([, mode]) => mode,
