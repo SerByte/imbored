@@ -800,14 +800,28 @@ export async function removeRoomMember(
   steamid: string,
 ): Promise<boolean> {
   const res = await db.execute({
-    sql: 'DELETE FROM room_members WHERE room_id = ? AND steamid = ?',
+    sql: 'SELECT 1 AS hit FROM room_members WHERE room_id = ? AND steamid = ?',
     args: [roomId, steamid],
   })
-  if (!res.rowsAffected) return false
-  await db.execute({
-    sql: 'DELETE FROM room_votes WHERE room_id = ? AND steamid = ?',
-    args: [roomId, steamid],
-  })
+  if (!res.rows.length) return false
+
+  // Одной пачкой, а не двумя вызовами: раздельные удаления оставляли голоса
+  // ушедшего навсегда, если второе не проходило. Голоса без участника
+  // findRoomMatch теперь и так не считает, но плодить мусор в таблице,
+  // которая не подметается, всё равно незачем.
+  await db.batch(
+    [
+      {
+        sql: 'DELETE FROM room_members WHERE room_id = ? AND steamid = ?',
+        args: [roomId, steamid],
+      },
+      {
+        sql: 'DELETE FROM room_votes WHERE room_id = ? AND steamid = ?',
+        args: [roomId, steamid],
+      },
+    ],
+    'write',
+  )
   return true
 }
 
@@ -831,7 +845,23 @@ export async function findRoomMatch(db: Db, roomId: string): Promise<number | nu
     // Матч — это договорённость, поэтому участников должно быть минимум двое.
     // Без этого условия человек в комнате один получал «Это матч!» от
     // собственного голоса: «проголосовали все» формально выполнялось.
+    //
+    // JOIN с room_members — не украшение, а то, что делает дробь честной.
+    // Знаменатель всегда считался по составу, а числитель — по голосам, и
+    // при расхождении этих множеств голос человека, которого в комнате уже
+    // нет, ПОДМЕНЯЕТ СОБОЙ живого. Комната получает «Это матч!» на игре,
+    // которую оставшийся отклонил или вовсе не видел, а экран матча
+    // терминальный: опрос на нём останавливается, отменить нечем.
+    //
+    // Разойтись множества могут двумя путями, и оба открыты. Первый: между
+    // проверкой членства в /api/room/[id]/vote и самой вставкой лежит обход
+    // Turso, и уборка участника успевает вклиниться. Второй: removeRoomMember
+    // делает два удаления, и отказ второго оставляет голоса навсегда.
+    // Затыкать каждый путь по отдельности — значит помнить о них при каждой
+    // следующей правке; JOIN закрывает их все разом, независимо от того, как
+    // осиротевший голос там оказался.
     sql: `SELECT v.appid AS appid FROM room_votes v
+          JOIN room_members m ON m.room_id = v.room_id AND m.steamid = v.steamid
           WHERE v.room_id = ? AND v.vote = 1
             AND (SELECT COUNT(*) FROM room_members WHERE room_id = ?) >= 2
           GROUP BY v.appid
@@ -845,9 +875,17 @@ export async function findRoomMatch(db: Db, roomId: string): Promise<number | nu
   return (res.rows[0]?.appid as number | undefined) ?? null
 }
 
+/**
+ * Условие status = 'open' — страховка от второго матча.
+ *
+ * Матч терминален: обратного перехода в open в репозитории нет, а экран
+ * матча останавливает опрос. Значит переписать уже назначенную игру другой
+ * — это подменить людям результат под руками, и никакой запрос не должен
+ * иметь такой возможности, даже опоздавший.
+ */
 export async function setRoomMatched(db: Db, roomId: string, appid: number): Promise<void> {
   await db.execute({
-    sql: "UPDATE rooms SET status = 'matched', matched_appid = ? WHERE id = ?",
+    sql: "UPDATE rooms SET status = 'matched', matched_appid = ? WHERE id = ? AND status = 'open'",
     args: [appid, roomId],
   })
 }

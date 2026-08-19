@@ -934,6 +934,58 @@ describe('removeRoomMember', () => {
     expect(await findRoomMatch(db, 'ROOM03')).toBe(10)
   })
 
+  test('голос, опоздавший к уходу, не подменяет собой живого участника', async () => {
+    // Гонка: между проверкой членства в /api/room/[id]/vote и самой вставкой
+    // лежит обход Turso, и уборка успевает вклиниться. Голос вставляется уже
+    // после неё — в room_votes остаётся строка того, кого в комнате нет.
+    //
+    // Знаменатель считается по составу, числитель — по голосам. Без JOIN
+    // призрак ПОДМЕНЯЕТ живого: комната из двоих получает матч на игре,
+    // которую второй отклонил.
+    const db = await freshDb()
+    await room(db, 'ROOM05', ['a', 'b', 'c'])
+    await castRoomVote(db, 'ROOM05', 'a', 100, 1, NOW)
+    await castRoomVote(db, 'ROOM05', 'b', 100, 0, NOW) // b против
+
+    await removeRoomMember(db, 'ROOM05', 'c')
+    expect(await findRoomMatch(db, 'ROOM05')).toBeNull()
+
+    // Опоздавший голос c уже после уборки
+    await castRoomVote(db, 'ROOM05', 'c', 100, 1, NOW + 1)
+    expect(await findRoomMatch(db, 'ROOM05')).toBeNull()
+  })
+
+  test('осиротевший голос не даёт матча и на карте, которую живой не видел', async () => {
+    // Числитель смотрит только на vote = 1, строк «против» не существует для
+    // него вовсе. Значит призрак плюс один живой «да» дают матч и там, где
+    // второй просто не дошёл до карточки.
+    const db = await freshDb()
+    await room(db, 'ROOM06', ['a', 'b', 'c'])
+    await castRoomVote(db, 'ROOM06', 'a', 200, 1, NOW)
+    await removeRoomMember(db, 'ROOM06', 'c')
+    await castRoomVote(db, 'ROOM06', 'c', 200, 1, NOW + 1) // опоздавший
+
+    expect(await findRoomMatch(db, 'ROOM06')).toBeNull()
+  })
+
+  test('уборка участника идёт одной пачкой — половины не остаётся', async () => {
+    const db = await freshDb()
+    await room(db, 'ROOM07', ['a', 'b'])
+    await castRoomVote(db, 'ROOM07', 'b', 300, 1, NOW)
+    expect(await removeRoomMember(db, 'ROOM07', 'b')).toBe(true)
+    expect((await roomVotes(db, 'ROOM07')).length).toBe(0)
+    expect((await roomMembers(db, 'ROOM07')).length).toBe(1)
+  })
+
+  test('матч не переписывается вторым запросом', async () => {
+    // Матч терминален: обратного перехода в open нет, а экран останавливает
+    // опрос. Подменять людям результат под руками нельзя даже опоздавшему.
+    const db = await freshDb()
+    await room(db, 'ROOM08', ['a', 'b'])
+    await setRoomMatched(db, 'ROOM08', 111)
+    await setRoomMatched(db, 'ROOM08', 222)
+    expect((await getRoom(db, 'ROOM08'))?.matchedAppid).toBe(111)
+  })
   test('матч не собирается из голосов ушедшего', async () => {
     const db = await freshDb()
     await room(db, 'ROOM04', ['a', 'b', 'c'])
