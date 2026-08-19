@@ -9,8 +9,7 @@ import {
   getFeedForApps,
   getGamesMeta,
   getLatestSnapshot,
-  type FeedItem,
-  type StoredNews,
+  withoutBody,
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
@@ -257,23 +256,6 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
       </Stage>
     </div>
   )
-}
-
-/**
- * Строка ленты без тела патча.
- *
- * Cover и PatchRow — клиентские островки, а значит всё, что им передано,
- * уезжает в браузер сериализованным. Тела тридцати патчей — это было 277 КБ
- * из 476 на проде, то есть 58 % веса страницы на текст, который раскрывают у
- * одной строки из тридцати. Теперь его отдаёт app/api/news по требованию.
- *
- * Единственное, ради чего тело было нужно в свёрнутом виде, — счётчик правок;
- * он и остаётся здесь, посчитанным на сервере.
- */
-function withoutBody(item: StoredNews): FeedItem {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { blocks, ...row } = item
-  return row
 }
 
 /**
