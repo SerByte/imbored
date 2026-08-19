@@ -10,6 +10,7 @@ import {
   parseStoreItems,
   parseTagDictionary,
   ensureMeta,
+  parseStoreDescriptions,
 } from './catalog'
 import type { GameMeta } from './types'
 
@@ -435,5 +436,33 @@ describe('ensureMeta', () => {
     expect(stored?.isFree).toBe(true)
     // цена остаётся: «Steam не назвал цену» и «игра подешевела» неразличимы
     expect(stored?.priceFinal).toBe(300)
+  })
+})
+
+describe('parseStoreDescriptions', () => {
+  test('берёт описания по appid и пропускает пустые', () => {
+    const json = {
+      response: {
+        store_items: [
+          { appid: 10, basic_info: { short_description: 'Соревновательный шутер.' } },
+          { id: 20, basic_info: { short_description: 'Кооперативное выживание.' } },
+          { appid: 30, basic_info: { short_description: '   ' } },
+          { appid: 40, basic_info: {} },
+          { appid: 50 },
+        ],
+      },
+    }
+    const m = parseStoreDescriptions(json)
+    expect(m.size).toBe(2)
+    expect(m.get(10)).toBe('Соревновательный шутер.')
+    expect(m.get(20)).toBe('Кооперативное выживание.')
+  })
+
+  test('мусор на входе — пустая карта, а не исключение', () => {
+    // Ответ Steam без ожидаемой формы не должен ронять сборку каталога.
+    expect(parseStoreDescriptions(null).size).toBe(0)
+    expect(parseStoreDescriptions({}).size).toBe(0)
+    expect(parseStoreDescriptions({ response: {} }).size).toBe(0)
+    expect(parseStoreDescriptions({ response: { store_items: 'нет' } }).size).toBe(0)
   })
 })

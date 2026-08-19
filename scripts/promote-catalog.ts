@@ -32,7 +32,7 @@ import {
   upsertGameMeta,
   type Db,
 } from '../lib/db'
-import { fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
+import { fetchStoreDescriptions, fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
 import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
 import { judgeLiveness, playMode } from '../lib/liveness'
 import { buildSeriesIndex, SERIES_OVERRIDES, type SeriesMember } from '../lib/series'
@@ -146,6 +146,43 @@ async function main() {
     metas.push(...fetched)
     console.log(`глубина: ${metas.length}/${queue.length}`)
     await sleep(STORE_PACE_MS)
+  }
+
+  /*
+   * Описания — вторым проходом и на языке сайта.
+   *
+   * Основной проход обязан оставаться английским: из него приходят НАЗВАНИЯ,
+   * а на них стоят эвристики (junk.ts отсеивает по soundtrack/demo/playtest,
+   * editions.ts склеивает по «Edition»). На русских названиях обе промахнутся
+   * по всему каталогу разом. Теги языком запроса не затрагиваются вовсе —
+   * они приходят числовыми tagid.
+   *
+   * А описание человек читает, и оно было английским у 4723 карточек из 5000
+   * в карте сайта против 93 русских. Оно же уезжает в meta description и в
+   * микроразметку, то есть в выдачу поисковика.
+   *
+   * Проход дешёвый: один include-флаг вместо шести. Осечка не фатальна —
+   * остаётся английское описание, то есть ровно то, что было до правки.
+   */
+  if (metas.length) {
+    console.log(`
+описания на языке сайта для ${metas.length} игр…`)
+    const ru = await withRetry('описания', () =>
+      fetchStoreDescriptions(metas.map((m) => m.appid)),
+    )
+    if (ru) {
+      let n = 0
+      for (const m of metas) {
+        const text = ru.get(m.appid)
+        if (text) {
+          m.shortDescription = text
+          n++
+        }
+      }
+      console.log(`  описаний обновлено: ${n}`)
+    } else {
+      console.warn('  не получилось — остаются описания основного прохода')
+    }
   }
 
   // Сигналы спрашиваем только у совместных игр: живость гейтит только их,
