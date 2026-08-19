@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { dayLabel, freshness, minutesAgoLabel, nextFreshnessTickMs } from './freshness'
+import { dateLabel, dayLabel, freshness, minutesAgoLabel, nextFreshnessTickMs } from './freshness'
 
 const NOW = 1_700_000_000
 const DAY = 86_400
@@ -96,6 +96,34 @@ describe('dayLabel', () => {
       expect(dayLabel('2026-08-19')).toBe('19 августа')
       process.env.TZ = 'Pacific/Niue' // UTC-11
       expect(dayLabel('2026-08-19')).toBe('19 августа')
+    } finally {
+      if (tz === undefined) delete process.env.TZ
+      else process.env.TZ = tz
+    }
+  })
+})
+
+describe('dateLabel', () => {
+  test('дата события словами, с годом и без', () => {
+    // 2026-08-12T22:50:00Z — вечер по UTC
+    const at = Math.floor(Date.UTC(2026, 7, 12, 22, 50) / 1000)
+    expect(dateLabel(at)).toBe('12 августа')
+    expect(dateLabel(at, { year: true })).toBe('12 августа 2026 г.')
+  })
+
+  test('зона зафиксирована — сервер и браузер печатают один день', () => {
+    // Ровно тот разрыв, который ломал гидратацию: событие после 21:00 UTC.
+    // На /game/730 так расходились четыре подписи из шести.
+    const at = Math.floor(Date.UTC(2026, 7, 12, 22, 50) / 1000)
+    const tz = process.env.TZ
+    try {
+      const seen = new Set<string>()
+      for (const zone of ['UTC', 'Europe/Moscow', 'Asia/Vladivostok', 'America/Los_Angeles']) {
+        process.env.TZ = zone
+        seen.add(dateLabel(at, { year: true }))
+      }
+      expect(seen.size).toBe(1)
+      expect([...seen][0]).toBe('12 августа 2026 г.')
     } finally {
       if (tz === undefined) delete process.env.TZ
       else process.env.TZ = tz

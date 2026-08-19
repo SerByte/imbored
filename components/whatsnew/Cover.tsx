@@ -8,6 +8,7 @@ import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { SplitHeading } from '@/components/SplitHeading'
 import type { FeedItem } from '@/lib/db'
+import { dateLabel } from '@/lib/freshness'
 import type { GameMeta } from '@/lib/types'
 import { byline, freshness } from './format'
 import { useNow } from './Now'
@@ -204,9 +205,8 @@ export function Cover({
                 className="w-full rounded-[20px] border border-edge object-cover shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)]"
               />
               <figcaption className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-dim">
-                <time dateTime={published.toISOString()}>
-                  {published.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
-                </time>
+                {/* Зона зафиксирована в dateLabel — см. lib/freshness. */}
+                <time dateTime={published.toISOString()}>{dateLabel(item.publishedAt)}</time>
               </figcaption>
             </motion.figure>
           ) : null}
