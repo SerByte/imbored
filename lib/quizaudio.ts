@@ -17,14 +17,12 @@
  * пока человек сам не попросит.
  */
 
-export type Voice = 'select' | 'relight' | 'outro'
+export type Voice = 'select' | 'outro'
 
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
 let onVisible: (() => void) | null = null
 
-/** Корни трёх шагов складываются в каденцию, а не в три одинаковых бипа. */
-const ROOT_HZ = [220, 261.6, 174.6] as const
 
 /**
  * Зовётся ТОЛЬКО из обработчика жеста. Идемпотентна.
@@ -74,7 +72,7 @@ function envelope(node: AudioNode, peak: number, attack: number, hold: number, r
   return g
 }
 
-export function play(voice: Voice, step: 0 | 1 | 2 = 0): void {
+export function play(voice: Voice): void {
   if (!ctx || ctx.state !== 'running') return
   const t = ctx.currentTime
 
@@ -99,33 +97,6 @@ export function play(voice: Voice, step: 0 | 1 | 2 = 0): void {
     a.stop(t + 0.2)
     b.stop(t + 0.2)
     a.onended = () => lp.disconnect()
-    return
-  }
-
-  if (voice === 'relight') {
-    // Развёртка фильтра — звуковой аналог перекраски комнаты.
-    const root = ROOT_HZ[step]
-    const lo = ctx.createOscillator()
-    const hi = ctx.createOscillator()
-    const lp = ctx.createBiquadFilter()
-    lp.type = 'lowpass'
-    lp.Q.value = 1.2
-    lp.frequency.setValueAtTime(300, t)
-    lp.frequency.exponentialRampToValueAtTime(2600, t + 0.72)
-    lo.type = 'sawtooth'
-    hi.type = 'sawtooth'
-    lo.frequency.value = root
-    hi.frequency.value = root * 2
-    lo.detune.value = -9
-    hi.detune.value = 9
-    lo.connect(lp)
-    hi.connect(lp)
-    envelope(lp, 0.035, 0.12, 0.3, 0.3)
-    lo.start(t)
-    hi.start(t)
-    lo.stop(t + 0.74)
-    hi.stop(t + 0.74)
-    lo.onended = () => lp.disconnect()
     return
   }
 
