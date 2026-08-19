@@ -691,20 +691,32 @@ img[data-art-fade][data-loaded] {
 .chip-rail::-webkit-scrollbar {
   display: none;
 }
+@media (min-width: 768px) {
+  .chip-rail {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+}
 /*
  * Маска на предке и backdrop-filter на потомке несовместимы в Chromium:
  * стеклянные чипы внутри маскированной ленты не отрисовывались ВОВСЕ.
  * Гасим у них блюр подложки — на плоском тёмном фоне он неотличим от
  * простой заливки glass-bg, а лента возвращает себе содержимое.
+ *
+ * Ровно до 768px, потому что ровно до 768px существует маска. Правило
+ * стояло без границы и на десктопе снимало блюр без всякой причины — до
+ * первого живого пользователя ленты это ничего не стоило, потому что
+ * пользователя не было вовсе.
+ *
+ * В Chrome 148 сама несовместимость уже НЕ ВОСПРОИЗВОДИТСЯ: чипы рисуются и
+ * с блюром внутри маски. Правило оставлено страховкой для движков, где её
+ * видели, и стоит оно ничего — на плоском тёмном фоне блюра там не видно.
+ * Если будешь его трогать, проверь на старом Chromium, а не на текущем.
  */
-.chip-rail .glass {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-@media (min-width: 768px) {
-  .chip-rail {
-    mask-image: none;
-    -webkit-mask-image: none;
+@media (max-width: 767px) {
+  .chip-rail .glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 

@@ -274,12 +274,34 @@ function Quiz() {
       <div className="relative w-full max-w-2xl flex flex-col items-center gap-10">
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
-            <div className="flex flex-wrap justify-center gap-2">
+            {/*
+              На телефоне пилюли едут одной лентой, а не переносятся.
+
+              Замер на 375×812: семь пилюль вставали в ШЕСТЬ рядов, из них
+              пять — по одной штуке, потому что «🕳️ Залипнуть на выходные»
+              шире половины экрана. Облако занимало 262px, то есть треть
+              экрана, и уводило вопрос «Сколько у тебя времени?» на y=478, а
+              первую карточку ответа — на y=590. До того, ради чего страница
+              существует, нужно было доскроллить.
+
+              chip-rail уже лежал в globals.css и не использовался никем: он
+              пережил откат кино-квиза, вместе с которым ушло 1409 строк
+              соседних стилей. Написан он ровно под этот случай — правый фейд
+              вместо стрелок, спрятанный скроллбар в обоих движках и снятый
+              backdrop-filter у стеклянных чипов, без которого Chromium не
+              рисует их внутри маски ВООБЩЕ.
+
+              justify-start, а не center: в ленте с переполнением центрирование
+              прячет первый элемент за левым краем без возможности доскроллить.
+              На десктопе оба возвращаются — там перенос строками и уместен,
+              и маска сама гаснет на 768px.
+            */}
+            <div className="chip-rail self-stretch flex flex-nowrap md:flex-wrap justify-start md:justify-center gap-2 -mx-5 px-5 md:mx-0 md:px-0 pb-1">
               {VIBE_PRESETS.map((p) => (
                 <button
                   key={p.key}
                   onClick={() => go(p.mood)}
-                  className="glass glass-hover rounded-full px-4 py-2 text-sm cursor-pointer"
+                  className="glass glass-hover shrink-0 rounded-full px-4 py-2 text-sm cursor-pointer"
                 >
                   {p.emoji} {p.label}
                 </button>
@@ -295,13 +317,13 @@ function Quiz() {
                     { roulette: true },
                   )
                 }
-                className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                className="shrink-0 rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Мне повезёт
               </button>
               <button
                 onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
-                className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                className="shrink-0 rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Ни разу не запускал
               </button>
