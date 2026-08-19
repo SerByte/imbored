@@ -88,11 +88,20 @@ const inView = (i = 0) => ({
  * (общее кратное числа колонок). Внутри блока ширина одна, поэтому ряд не
  * может выровняться по самой высокой плитке и оставить под мелкими пустоту.
  */
+/*
+ * У каждого ряда мозаики СВОЯ подсказка ширины, и это не педантизм.
+ *
+ * Рядов четыре, и колонок в них 2, 2→4, 3→6 и 4→8 — то есть плитка занимает от
+ * половины экрана до одной восьмой. Одна подсказка на всех давала верхнему,
+ * самому крупному ряду «20vw» при настоящих 50vw: он грузился ВДВОЕ С
+ * ПОЛОВИНОЙ мельче нужного и заметно мылил, а нижний наоборот приезжал
+ * тяжелее необходимого.
+ */
 const MOSAIC_PLAN = [
-  { take: 2, step: 2, cols: 'grid-cols-2' },
-  { take: 4, step: 4, cols: 'grid-cols-2 md:grid-cols-4' },
-  { take: 12, step: 6, cols: 'grid-cols-3 md:grid-cols-6' },
-  { take: 24, step: 8, cols: 'grid-cols-4 md:grid-cols-8' },
+  { take: 2, step: 2, cols: 'grid-cols-2', sizes: '50vw' },
+  { take: 4, step: 4, cols: 'grid-cols-2 md:grid-cols-4', sizes: '(min-width: 768px) 25vw, 50vw' },
+  { take: 12, step: 6, cols: 'grid-cols-3 md:grid-cols-6', sizes: '(min-width: 768px) 17vw, 33vw' },
+  { take: 24, step: 8, cols: 'grid-cols-4 md:grid-cols-8', sizes: '(min-width: 768px) 13vw, 25vw' },
 ]
 
 function fallbackText(
@@ -253,14 +262,29 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const me = await currentSteamId()
   const isMine = me === steamid
 
-  const cover = (g: { appid: number; name: string }, extra = '', eager = false) => (
+  /*
+   * sizes — ОБЯЗАТЕЛЬНЫЙ довод, а не значение по умолчанию.
+   *
+   * Помощник зовут из пяти мест с пятью разными раскладками: четыре ряда
+   * мозаики, строка топа с шириной w-28/md:w-44, сетка в три колонки, сетка
+   * 3→6 и коробка в фиксированные w-40. Общая подсказка «20vw, 50vw» не
+   * подходила НИ ОДНОМУ из них: где-то просила вдвое мельче нужного (и мылила),
+   * где-то вдвое крупнее (и грузила лишнее). Обязательный довод заставляет
+   * каждое место назвать свою ширину — забыть его нельзя, сборка не даст.
+   */
+  const cover = (
+    g: { appid: number; name: string },
+    sizes: string,
+    extra = '',
+    eager = false,
+  ) => (
     <GameArt
       appid={g.appid}
       name={g.name}
       headerImage={metaOf(g.appid)?.headerImage ?? null}
       art={metaOf(g.appid)?.art ?? null}
       eager={eager}
-      sizes="(min-width: 768px) 20vw, 50vw"
+      sizes={sizes}
       className={`w-full aspect-[460/215] object-cover ${extra}`}
     />
   )
@@ -276,7 +300,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           {mosaic.map((block, bi) => (
             <div key={MOSAIC_PLAN[bi].cols} className={`grid ${MOSAIC_PLAN[bi].cols}`}>
               {block.map((g) => (
-                <div key={g.appid}>{cover(g, '', bi === 0)}</div>
+                <div key={g.appid}>{cover(g, MOSAIC_PLAN[bi].sizes, '', bi === 0)}</div>
               ))}
             </div>
           ))}
@@ -334,7 +358,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   href={`/game/${g.appid}`}
                   className="glass glass-hover rounded-[14px] overflow-hidden w-28 md:w-44 shrink-0"
                 >
-                  {cover(g)}
+                  {cover(g, '(min-width: 768px) 176px, 112px')}
                 </Link>
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold truncate">{g.name}</div>
@@ -412,7 +436,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                     href={`/game/${g.appid}`}
                     className="glass glass-hover rounded-[14px] overflow-hidden block"
                   >
-                    {cover(g)}
+                    {/* grid-cols-3 без порогов — треть экрана на любой ширине */}
+                    {cover(g, '33vw')}
                     <div className="p-2.5 text-xs font-semibold truncate">{g.name}</div>
                   </Link>
                 </motion.div>
@@ -502,7 +527,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   // ровно то, что здесь нужно по смыслу
                   className="library-tile glass glass-hover rounded-[14px] overflow-hidden"
                 >
-                  {cover(g)}
+                  {/* grid-cols-3 md:grid-cols-6 */}
+                  {cover(g, '(min-width: 768px) 17vw, 33vw')}
                 </Link>
               ))}
             </div>
@@ -516,7 +542,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   href={`/game/${starter.appid}`}
                   className="glass glass-hover no-lift rounded-[14px] overflow-hidden flex items-center gap-4 pr-5"
                 >
-                  <div className="w-40 shrink-0">{cover(starter)}</div>
+                  <div className="w-40 shrink-0">{cover(starter, '160px')}</div>
                   <span className="font-semibold">{starter.name}</span>
                 </Link>
               </Magnet>

@@ -925,7 +925,9 @@ function Player() {
                     name={p.name}
                     headerImage={p.headerImage}
                     art={p.art}
-                    sizes="(min-width: 768px) 33vw, 100vw"
+                    /* сетка тут grid-cols-2 md:grid-cols-4, то есть 50vw и 25vw;
+                       стояло «33vw, 100vw» — вдвое шире нужного на телефоне */
+                    sizes="(min-width: 768px) 25vw, 50vw"
                     className="w-full aspect-[460/215] object-cover"
                   />
                   <DiscountCorner discount={p.discount} />

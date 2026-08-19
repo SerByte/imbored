@@ -281,7 +281,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                 name={g.name}
                 headerImage={metas.get(g.appid)?.headerImage ?? null}
                 art={trimArt(metas.get(g.appid)?.art)}
-                sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+                /* Пороги подсказки обязаны совпадать с сеткой, а она тут
+                   grid-cols-2 md:grid-cols-4 — то есть ровно 50vw и 25vw.
+                   Стояли пороги 1024 и 640: в полосе 640–767 подсказка просила
+                   33vw при настоящих 50vw, и плитки грузились ПОЛТОРА раза
+                   мельче нужного, то есть мылом. */
+                sizes="(min-width: 768px) 25vw, 50vw"
                 className="w-full aspect-[460/215] object-cover"
               />
               <div className="p-3">
