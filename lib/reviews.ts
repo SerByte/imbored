@@ -87,6 +87,21 @@ export function heuristicProsCons(
   return { pros: top(true), cons: top(false) }
 }
 
+/**
+ * Отказ хоста — ИСКЛЮЧЕНИЕ, а не null, и это ровно то же правило, которое
+ * сформулировано у соседнего fetchAppDetails: «лимит/сбой — исключение, чтобы
+ * вызывающий не закэшировал неудачу как „данных нет"».
+ *
+ * Здесь оно было записано у соседа и нарушено тут, и цена оказалась высокой.
+ * lib/pagejob взводит счётчик подряд идущих отказов только в .catch(), то есть
+ * при 429 на appreviews страж «Steam закрылся от нашего IP» не срабатывал
+ * НИКОГДА: срез доходил до конца, помечал карточки тронутыми и уводил их из
+ * очереди на полгода — без вердикта отзывов и без pros/cons.
+ *
+ * null остаётся ответом на «Steam ответил, но разобрать нечего»: битое тело —
+ * это про одну игру, а не про наш адрес, и весь срез из-за неё останавливать
+ * не за что.
+ */
 export async function fetchReviews(
   appid: number,
   fetchFn: typeof fetch = fetch,
@@ -95,7 +110,7 @@ export async function fetchReviews(
   await pace('steam-store', STORE_PACE_MS)
   const url = `https://store.steampowered.com/appreviews/${appid}?json=1&filter=all&purchase_type=all&language=all&num_per_page=100&cursor=*`
   const res = await fetchFn(url, { signal: AbortSignal.timeout(10_000) })
-  if (!res.ok) return null
+  if (!res.ok) throw new Error(`appreviews ${appid}: HTTP ${res.status}`)
   try {
     return parseReviews(await res.json())
   } catch {

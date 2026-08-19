@@ -339,6 +339,25 @@ describe('срез останавливается, когда закрылась
     expect(res.enriched).toBe(MAX_BLOCKED_RUN)
   })
 
+  test('душимые отзывы тоже останавливают срез, хотя appdetails отвечает', async () => {
+    // Вторая ось стража. Пока fetchReviews возвращал null вместо исключения,
+    // 429 на appreviews не взводил счётчик вовсе: срез доходил до конца и
+    // уводил карточки из очереди на полгода без вердикта отзывов и pros/cons.
+    const db = await freshDb()
+    for (let i = 1; i <= 8; i++) await addGame(db, i * 10, 1000 - i)
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchReviewsFn: async () => {
+          throw new Error('appreviews 10: HTTP 429')
+        },
+      }),
+    )
+
+    expect(res.stopped).toBe('blocked')
+    expect(res.enriched).toBe(MAX_BLOCKED_RUN)
+  })
   test('«игры нет в ответе» — не отказ сети и срез не останавливает', async () => {
     // fetchAppDetails возвращает null, когда ответ пришёл, но игры в нём нет
     // (снятая с продажи, не game). Это про игру, а не про наш IP.
