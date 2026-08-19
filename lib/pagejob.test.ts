@@ -12,7 +12,7 @@ import {
   type Db,
 } from './db'
 import { LlmUnavailableError } from './llm'
-import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from './pagejob'
+import { MAX_BLOCKED_RUN, PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from './pagejob'
 import type { ParsedReviews } from './reviews'
 import type { GameMeta } from './types'
 
@@ -318,6 +318,39 @@ describe('runPageSlice', () => {
   })
 })
 
+describe('срез останавливается, когда закрылась любая из двух ручек', () => {
+  test('душимый appdetails тоже останавливает срез, а не жжёт весь набор', async () => {
+    // Ровно тот механизм, из-за которого 596 карточек остались без скриншотов:
+    // отзывы отвечают, appdetails душат, а страж смотрел только на отзывы и
+    // обнулялся на каждом их успехе. Срез доходил до конца и помечал всё.
+    const db = await freshDb()
+    for (let i = 1; i <= 8; i++) await addGame(db, i * 10, 1000 - i)
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchDetails: async () => {
+          throw new Error('HTTP 429')
+        },
+      }),
+    )
+
+    expect(res.stopped).toBe('blocked')
+    expect(res.enriched).toBe(MAX_BLOCKED_RUN)
+  })
+
+  test('«игры нет в ответе» — не отказ сети и срез не останавливает', async () => {
+    // fetchAppDetails возвращает null, когда ответ пришёл, но игры в нём нет
+    // (снятая с продажи, не game). Это про игру, а не про наш IP.
+    const db = await freshDb()
+    for (let i = 1; i <= 6; i++) await addGame(db, i * 10, 1000 - i)
+
+    const res = await runPageSlice(db, stubs({ fetchDetails: async () => null }))
+
+    expect(res.stopped).toBe('done')
+    expect(res.enriched).toBe(6)
+  })
+})
 describe('карта сайта', () => {
   test('отдаёт живые игры по убыванию отзывов и не ждёт обогащения', async () => {
     const db = await freshDb()

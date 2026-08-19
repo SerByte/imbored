@@ -48,8 +48,17 @@ const PROS_CONS_COUNT = 4
 /**
  * Подряд идущие отказы на РАЗНЫХ играх означают, что Steam закрылся от нашего
  * IP, а не что игры плохие. Останавливаемся, не штампуя весь набор.
+ *
+ * Считается ОТДЕЛЬНО по двум ручкам, и это не педантизм. Отзывы и appdetails
+ * живут на разных лимитах, и закрыться может любая из них поодиночке. Пока
+ * страж смотрел только на отзывы, душимый appdetails его не трогал вовсе:
+ * счётчик обнулялся на каждом удачном ответе отзывов, срез доходил до конца
+ * и помечал ВЕСЬ набор как «сходили, не привезли». Это и есть механизм, из-за
+ * которого 596 карточек из 721 остались без скриншотов на полгода, — и без
+ * отдельного счётчика повторные попытки просто сгорели бы тем же способом за
+ * четыре прогона.
  */
-const MAX_BLOCKED_RUN = 3
+export const MAX_BLOCKED_RUN = 3
 
 export type PageSliceResult = {
   claimed: number
@@ -107,6 +116,8 @@ export async function runPageSlice(
   let withProsCons = 0
   let viaClaude = 0
   let blockedRun = 0
+  /** Отказы appdetails подряд — своя ось, см. MAX_BLOCKED_RUN. */
+  let detailsBlocked = 0
   let stopped: PageSliceResult['stopped'] = 'done'
   let claudeDown = false
 
@@ -120,10 +131,18 @@ export async function runPageSlice(
     // GetItems их не отдаёт (см. mergeMeta), поэтому единственный источник —
     // appdetails, и ходить туда можно только отсюда.
     let sawNetworkFailure = false
+    // Отказ СЕТИ отличается от «Steam про эту игру ничего не знает»:
+    // fetchAppDetails бросает на не-2xx и таймауте, а null возвращает, когда
+    // ответ пришёл, но игры в нём нет. Штрафовать очередь стоит только за
+    // второе.
+    let sawDetailsFailure = false
     const fresh = await details(appid).catch(() => {
       sawNetworkFailure = true
+      sawDetailsFailure = true
       return null
     })
+    if (fresh) detailsBlocked = 0
+    else if (sawDetailsFailure) detailsBlocked++
     if (fresh) {
       const existing = await getGameMeta(db, appid)
       const merged = mergeMeta(existing, fresh)
@@ -220,7 +239,7 @@ export async function runPageSlice(
     else await markPageMissed(db, appid, now)
     enriched++
 
-    if (blockedRun >= MAX_BLOCKED_RUN) {
+    if (blockedRun >= MAX_BLOCKED_RUN || detailsBlocked >= MAX_BLOCKED_RUN) {
       stopped = 'blocked'
       break
     }
