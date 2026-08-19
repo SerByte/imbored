@@ -67,3 +67,29 @@ export function ratingOf(
   if (reviewsPercent === undefined || !reviewsTotal || reviewsTotal <= 0) return null
   return { percent: reviewsPercent, total: reviewsTotal, source: 'catalog' }
 }
+
+/**
+ * Словесная оценка Steam по-русски.
+ *
+ * Steam отдаёт scoreDesc только по-английски — язык запроса на него не влияет.
+ * Жило локальной константой в app/game/[appid]/page.tsx, пока потребитель был
+ * один; со вторым (карточка ссылки) переехало сюда, к ratingOf, который эту
+ * метку и достаёт. Незнакомую строку возвращаем как есть: список Steam может
+ * пополниться, и лучше английское слово, чем пустое место.
+ */
+const SCORE_RU: Record<string, string> = {
+  'Overwhelmingly Positive': 'Крайне положительные',
+  'Very Positive': 'Очень положительные',
+  Positive: 'Положительные',
+  'Mostly Positive': 'В основном положительные',
+  Mixed: 'Смешанные',
+  'Mostly Negative': 'В основном отрицательные',
+  Negative: 'Отрицательные',
+  'Very Negative': 'Очень отрицательные',
+  'Overwhelmingly Negative': 'Крайне отрицательные',
+}
+
+export function scoreRu(label: string | undefined): string | null {
+  if (!label) return null
+  return SCORE_RU[label] ?? label
+}

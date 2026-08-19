@@ -12,7 +12,7 @@ import { sitemapGames } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { loadGamePage } from '@/lib/gamepage'
 import { currencyOf, gameJsonLd, ldScript } from '@/lib/jsonld'
-import { ratingOf } from '@/lib/rating'
+import { ratingOf, scoreRu } from '@/lib/rating'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 
@@ -88,9 +88,21 @@ export async function generateMetadata({
     ? `${meta.name}: ${parts.join(' · ')}`
     : `${meta.name} — отзывы, теги и патчноуты на русском.`
 
-  const image = meta.art?.header2x ?? meta.art?.header ?? meta.headerImage
   const canonical = `/game/${appid}`
 
+  /*
+   * images здесь НЕТ намеренно, и это не забывчивость.
+   *
+   * Стоял header из Steam, отданный напрямую. Пересланная ссылка на imbored
+   * разворачивалась превью, неотличимым от ссылки на магазин: тот же файл, что
+   * у самого Steam, без имени сервиса и без единственного, что сервис знает, —
+   * оценки. Теперь картинку рисует соседний opengraph-image.tsx: тот же арт
+   * фоном плюс то, чего в нём нет.
+   *
+   * Пустое место обязательно: файловая конвенция Next применяется ТОЛЬКО когда
+   * openGraph.images не задан в метаданных. Вернёшь строку сюда — соседний файл
+   * перестанет использоваться молча, без ошибки сборки.
+   */
   return {
     title: `${meta.name} — стоит ли играть`,
     description,
@@ -100,28 +112,13 @@ export async function generateMetadata({
       description,
       url: canonical,
       type: 'article',
-      ...(image ? { images: [{ url: image, width: 920, height: 430, alt: meta.name }] } : {}),
     },
     twitter: {
-      card: image ? 'summary_large_image' : 'summary',
+      card: 'summary_large_image',
       title: `${meta.name} — стоит ли играть`,
       description,
-      ...(image ? { images: [image] } : {}),
     },
   }
-}
-
-
-const SCORE_RU: Record<string, string> = {
-  'Overwhelmingly Positive': 'Крайне положительные',
-  'Very Positive': 'Очень положительные',
-  Positive: 'Положительные',
-  'Mostly Positive': 'В основном положительные',
-  Mixed: 'Смешанные',
-  'Mostly Negative': 'В основном отрицательные',
-  Negative: 'Отрицательные',
-  'Very Negative': 'Очень отрицательные',
-  'Overwhelmingly Negative': 'Крайне отрицательные',
 }
 
 export default async function GamePage({ params }: { params: Promise<{ appid: string }> }) {
@@ -229,7 +226,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 <div className="flex flex-col gap-0.5">
                   {rating.label && (
                     <span className="text-ember-text font-medium">
-                      {SCORE_RU[rating.label] ?? rating.label}
+                      {scoreRu(rating.label)}
                     </span>
                   )}
                   <span className="font-mono text-dim text-xs">
