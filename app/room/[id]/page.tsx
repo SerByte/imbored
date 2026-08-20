@@ -354,7 +354,7 @@ export default function RoomPage() {
       <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
         <Ambient />
         <div className="relative max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col gap-4 anim-rise">
-          <h1 className="text-2xl font-bold tracking-tight">Тебя зовут выбрать игру на вечер</h1>
+          <h1 className="font-display text-display-sm">Тебя зовут выбрать игру на вечер</h1>
           <p className="text-dim text-sm">
             Комната <span className="font-mono text-ink">{roomId}</span>. Подключи свою библиотеку —
             и свайпай, во что готов играть. Совпадёте — будет матч.
@@ -407,7 +407,7 @@ export default function RoomPage() {
     <div className="flex-1 mx-auto w-full max-w-2xl px-5 pt-24 pb-16 flex flex-col gap-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">
+          <h1 className="font-display text-display-xs">
             Пати <span className="font-mono text-ember-text">{roomId}</span>
           </h1>
           <p className="text-xs text-dim mt-0.5">

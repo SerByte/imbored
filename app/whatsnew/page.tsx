@@ -77,7 +77,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   if (!hero) {
     return (
       <div className="whatsnew flex min-h-screen flex-col items-center justify-center gap-4 px-5 text-center">
-        <h1 className="font-display text-3xl font-extrabold tracking-tight">Что нового</h1>
+        <h1 className="font-display text-display-md">Что нового</h1>
         <p className="max-w-sm text-sm leading-relaxed text-dim">
           Пока пусто. Обновления подтягиваются по расписанию — загляни попозже.
         </p>
@@ -160,7 +160,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                 </FeedTab>
               </nav>
             ) : (
-              <h2 className="font-display text-lg font-bold tracking-tight md:text-xl">
+              <h2 className="font-display text-display-xs">
                 В популярных играх
               </h2>
             )}
@@ -212,7 +212,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                 свежее того, что над ней, — и подпись это тоже объясняет.
               */}
               <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b border-rule pt-10 pb-6">
-                <h2 className="font-display text-lg font-bold tracking-tight md:text-xl">
+                <h2 className="font-display text-display-xs">
                   Ещё в популярных играх
                 </h2>
                 <p className="text-sm text-dim">
@@ -262,7 +262,7 @@ function FeedTab({
     <Link
       href={href}
       aria-current={active ? 'page' : undefined}
-      className={`font-display text-lg tracking-tight transition-opacity md:text-xl ${
+      className={`font-display text-display-xs transition-opacity ${
         active
           ? 'font-bold text-ink underline decoration-2 underline-offset-8'
           : 'font-semibold text-dim hover:text-ink'

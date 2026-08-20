@@ -39,7 +39,7 @@ export default function RoomsBoardPage() {
       <Ambient />
       <div className="relative mx-auto w-full max-w-2xl px-5 pt-28 pb-16 flex flex-col gap-8">
       <div className="text-center flex flex-col items-center gap-4 anim-rise">
-        <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">Пати</h1>
+        <h1 className="font-display text-display-md">Пати</h1>
         <p className="text-dim text-sm max-w-md">
           Собери свою комнату и скинь ссылку друзьям — или подсядь к открытой пати, которая ищет
           игроков.

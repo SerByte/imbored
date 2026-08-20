@@ -129,7 +129,7 @@ export function RoomWaiting({
                 падеж от «xX_Sniper_Xx» не существует. Кто именно держит комнату,
                 видно строчкой ниже, в ростере, вместе с его прогрессом.
               */}
-              <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
+              <h2 className="font-display text-display-sm">
                 {pending.length === 0
                   ? 'Все отсвайпали — и ни разу не совпали'
                   : pending.length === 1
@@ -156,7 +156,7 @@ export function RoomWaiting({
         {mode === 'empty' && (
           <>
             <div className="relative glass rounded-[20px] p-6 sm:p-8 flex flex-col gap-3 text-center">
-              <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
+              <h2 className="font-display text-display-sm">
                 Выбирать не из чего
               </h2>
               <p className="text-dim text-sm leading-relaxed max-w-md mx-auto">

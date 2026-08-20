@@ -23,7 +23,7 @@ export default function Error({
     <div className="flex-1 flex items-center justify-center px-5 py-24">
       <div className="max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col items-center gap-5 anim-reveal">
         <LogoMark size={48} />
-        <h1 className="text-2xl font-bold tracking-tight">Что-то сломалось</h1>
+        <h1 className="font-display text-display-sm">Что-то сломалось</h1>
         <p className="text-dim text-sm leading-relaxed">
           Скорее всего, это на нашей стороне. Можно попробовать ещё раз — обычно помогает.
         </p>

@@ -127,7 +127,7 @@ export function Cover({
 
             <SplitHeading
               as="h2"
-              className="font-display text-[clamp(2.4rem,7vw,5.5rem)] font-extrabold leading-[0.92] tracking-tight"
+              className="font-display text-display-xl"
               delay={0.18}
             >
               {name}

@@ -12,7 +12,7 @@ export default function NotFound() {
       <Ambient />
       <div className="relative max-w-md w-full text-center flex flex-col items-center gap-5 anim-reveal">
         <LogoMark size={48} />
-        <h1 className="text-3xl font-extrabold tracking-tight">Такой страницы нет</h1>
+        <h1 className="font-display text-display-md">Такой страницы нет</h1>
         <p className="text-dim leading-relaxed">
           Ссылка битая или игру убрали из каталога. Бывает — зато есть, во что поиграть.
         </p>

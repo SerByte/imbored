@@ -25,7 +25,7 @@ export function CompatNotice({
     <div className="relative flex-1 flex items-center justify-center overflow-hidden px-5 py-24">
       <Ambient />
       <div className="anim-rise glass relative flex w-full max-w-md flex-col gap-4 rounded-[20px] p-8 text-center">
-        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+        <h1 className="font-display text-display-sm">{title}</h1>
         <p className="text-sm leading-relaxed text-dim">{body}</p>
         {children}
       </div>

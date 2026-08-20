@@ -167,7 +167,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             className="w-full aspect-[460/215] object-cover rounded-[20px] border border-edge anim-reveal"
           />
           <div className="flex flex-col gap-4 anim-rise">
-            <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{meta.name}</h1>
+            <h1 className="font-display text-display-lg">{meta.name}</h1>
             {reviewsSummary && (
               <div className="flex items-center gap-3.5 text-sm">
                 {/* Процент — это и есть содержание строки, а рисовался обычным

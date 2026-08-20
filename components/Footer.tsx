@@ -8,7 +8,7 @@ export function Footer() {
       <div className="mx-auto max-w-6xl px-5 py-6 flex items-center justify-between gap-4 flex-wrap text-sm">
         <div className="flex items-center gap-2.5 text-faint">
           <LogoMark size={18} />
-          <Wordmark className="text-sm" />
+          <Wordmark className="text-base" />
           <span className="text-xs">· imbored.cc</span>
         </div>
         <nav className="flex items-center flex-wrap gap-x-5 gap-y-2 text-xs text-dim">

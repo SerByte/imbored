@@ -29,7 +29,7 @@ export function MemberRoster({
   return (
     <div className="relative glass rounded-[20px] p-5 sm:p-6 flex flex-col gap-4">
       <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-lg font-bold tracking-tight">Кто где</h2>
+        <h2 className="font-display text-display-xs">Кто где</h2>
         <span aria-hidden className="text-xs text-faint font-mono tabular-nums shrink-0">
           {doneCount}/{members.length}
         </span>

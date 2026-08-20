@@ -1,6 +1,6 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { JetBrains_Mono, Onest } from 'next/font/google'
+import { JetBrains_Mono, Onest, Sofia_Sans_Condensed } from 'next/font/google'
 import Link from 'next/link'
 import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
@@ -27,6 +27,43 @@ const jbMono = JetBrains_Mono({
   variable: '--font-jbmono',
   subsets: ['latin', 'cyrillic'],
   preload: false,
+})
+
+/**
+ * Дисплейный голос продукта.
+ *
+ * До этого его не было: заголовки набирались тем же Onest, что и текст, только
+ * жирнее. Так набран черновик, а не продукт — у логотипа, титула экрана и
+ * абзаца под ним был один и тот же голос, и разницу между ними приходилось
+ * доказывать одним лишь весом.
+ *
+ * Почему именно узкий гротеск, а не второй широкий:
+ *
+ * 1. Функция, а не вкус. Интерфейс русский, а русская строка длиннее
+ *    английской. Замерено в браузере на живых заголовках продукта
+ *    («Сколько у тебя времени?», «Проверка совместимости», «Такой страницы
+ *    нет»): при одном кегле Sofia Sans Condensed занимает 73% ширины Onest.
+ *    Меньшая высота строчных компенсируется кеглем (x-height 45 против 53 при
+ *    кегле 100), и даже с этой поправкой заголовок остаётся примерно на
+ *    пятую часть уже. На телефоне это разница между двумя строками и тремя.
+ *
+ * 2. Пара, а не близнецы. Onest — широкий геометрический гротеск. Узкий рядом
+ *    с ним читается как ДРУГОЙ голос с первого взгляда; ещё один широкий
+ *    читался бы как сбой шрифта.
+ *
+ * 3. Кириллица здесь родная, а не досыпанная. Sofia Sans спроектирован
+ *    lettersoup сразу под латиницу, греческий и кириллицу — это шрифт
+ *    городской навигации Софии, отсюда узкие пропорции и большая высота
+ *    строчных.
+ *
+ * preload включён (в отличие от моноширинного): начертание стоит в логотипе,
+ * то есть в фиксированной шапке на КАЖДОЙ странице и всегда выше сгиба.
+ * Раньше дисплейное начертание грузилось только в /whatsnew — см. историю
+ * app/whatsnew/layout.tsx, откуда оно сюда и переехало.
+ */
+const sofia = Sofia_Sans_Condensed({
+  variable: '--font-sofia',
+  subsets: ['latin', 'cyrillic'],
 })
 
 /**
@@ -81,7 +118,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
     <html
       lang="ru"
       suppressHydrationWarning
-      className={`${onest.variable} ${jbMono.variable} h-full antialiased`}
+      className={`${onest.variable} ${jbMono.variable} ${sofia.variable} h-full antialiased`}
     >
       <head>
         {/*
@@ -143,8 +180,8 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             }}
           />
           <div className="relative mx-auto max-w-6xl px-5 py-4 flex items-center justify-between">
-            <Link href="/" className="text-lg flex items-center gap-2.5">
-              <LogoMark size={22} />
+            <Link href="/" className="text-xl flex items-center gap-2.5">
+              <LogoMark size={24} />
               <Wordmark />
             </Link>
             <nav className="flex items-center gap-5 text-sm text-dim">

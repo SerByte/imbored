@@ -334,12 +334,12 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
               Совместимость
             </p>
             <SplitHeading
-              className="text-4xl font-extrabold leading-[0.95] tracking-tight md:text-6xl"
+              className="font-display text-display-lg"
               delay={0.18}
             >
               {`${d.myName} × ${d.otherName}`}
             </SplitHeading>
-            <p className="mt-5 max-w-xl text-2xl font-extrabold tracking-tight md:text-4xl">
+            <p className="mt-5 max-w-xl font-display text-display-md">
               {verdict(d.percent)}
             </p>
             <p className="mt-3 text-sm text-dim md:text-base">
@@ -470,7 +470,7 @@ function InviteHero({ invite }: { invite: { name: string; gamesCount: number; to
         <p className="mb-3 font-mono text-xs uppercase tracking-[0.3em] text-ember-text">
           Совместимость
         </p>
-        <h1 className="text-3xl font-extrabold leading-tight tracking-tight md:text-5xl">
+        <h1 className="font-display text-display-lg">
           {invite.name} зовёт сравнить библиотеки
         </h1>
         <p className="mt-4 text-sm text-dim">

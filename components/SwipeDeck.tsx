@@ -115,7 +115,7 @@ function TopCard({
 
       <div className="p-6 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="text-2xl font-bold tracking-tight">{card.name}</h2>
+          <h2 className="font-display text-display-sm">{card.name}</h2>
           {card.ownedByAll ? (
             <span className="rounded-full bg-emerald-400/15 text-ok px-3 py-1 text-xs font-medium">
               ✓ Есть у всех

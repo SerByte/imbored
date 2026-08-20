@@ -29,7 +29,7 @@ export default function SupportPage() {
       <div className="relative mx-auto w-full max-w-xl px-5 pt-28 pb-16 flex flex-col gap-8">
         <div className="text-center flex flex-col items-center gap-4 anim-reveal">
           <LogoMark size={48} happy />
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
+          <h1 className="font-display text-display-md">
             imbored бесплатен. И останется таким.
           </h1>
           <p className="text-dim leading-relaxed max-w-md">
@@ -39,7 +39,7 @@ export default function SupportPage() {
         </div>
 
         <div className="glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise">
-          <h2 className="font-bold">Поддержать рублём</h2>
+          <h2 className="font-display text-display-xs">Поддержать рублём</h2>
           <p className="text-sm text-dim">
             Донат — это спасибо, а не подписка. Ничего не блокируется.
           </p>
@@ -61,7 +61,7 @@ export default function SupportPage() {
 
         <div className="glass rounded-[20px] p-6 flex flex-col gap-4 anim-rise" style={{ animationDelay: '80ms' }}>
           <div className="flex items-baseline justify-between">
-            <h2 className="font-bold">
+            <h2 className="font-display text-display-xs">
               imbored<span className="text-ember-text">+</span>
             </h2>
             <span className="text-xs text-dim font-mono">когда-нибудь</span>
