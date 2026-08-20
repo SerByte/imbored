@@ -10,7 +10,7 @@ import type { FeedItem } from '@/lib/db'
 import { artCandidates } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import type { NewsBlock } from '@/lib/steamhtml'
-import type { GameMeta } from '@/lib/types'
+import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline, changesLabel, freshness } from './format'
 import { useNow } from './Now'
 
@@ -59,7 +59,7 @@ export function PatchRow({
   price = null,
 }: {
   item: FeedItem
-  meta?: GameMeta
+  meta?: FeedMeta
   nowSec: number
   /** правок в патче; считается на сервере — тело сюда больше не едет */
   changes: number

@@ -17,7 +17,7 @@ import { plural } from '@/lib/plural'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { countChanges } from '@/lib/steamhtml'
 import { cachedMajorFeed } from '@/lib/whatsnewcache'
-import { resolveWhatsNew } from '@/lib/whatsnewfeed'
+import { feedMeta, resolveWhatsNew } from '@/lib/whatsnewfeed'
 
 export const dynamic = 'force-dynamic'
 
@@ -139,7 +139,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
       >
         <Cover
           item={withoutBody(hero)}
-          meta={heroMeta}
+          meta={feedMeta(heroMeta)}
           nowSec={now}
           changes={countChanges(hero.blocks)}
           // Переключатель лежит экраном ниже, а после клика человек оказывается
@@ -203,7 +203,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
               <PatchRow
                 key={`${item.appid}:${item.gid}`}
                 item={withoutBody(item)}
-                meta={meta}
+                meta={feedMeta(meta)}
                 nowSec={now}
                 changes={countChanges(item.blocks)}
                 // Цена и ссылка на игру — только в общей ленте: в своей
@@ -240,7 +240,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                   <PatchRow
                     key={`${item.appid}:${item.gid}`}
                     item={withoutBody(item)}
-                    meta={meta}
+                    meta={feedMeta(meta)}
                     nowSec={now}
                     changes={countChanges(item.blocks)}
                     // Это чужие игры — цена и ссылка на страницу тут уместны

@@ -1,3 +1,5 @@
+import { trimArt, type GameArtUrls } from './art'
+import type { GameMeta } from './types'
 /**
  * Какую ленту показывать — личную или общую. ОДНА ветка на два вызова:
  * серверный рендер /whatsnew и опрос головы ленты из /api/whatsnew/head.
@@ -146,4 +148,38 @@ export async function resolveWhatsNew<T extends { appid: number; publishedAt: nu
   const topup = pop.filter((i) => !seen.has(i.appid)).slice(0, limit - fresh.length)
 
   return { items: [...fresh, ...topup], showPopular: false, hasMine, mineCount: fresh.length }
+}
+
+/**
+ * Метаданные игры В ТОМ ОБЪЁМЕ, который лента правда читает.
+ *
+ * Cover и PatchRow — клиентские островки, а значит всё, что им передано,
+ * уезжает в разметку сериализованным. Им отдавали GameMeta целиком, хотя из
+ * него открывают СЕМЬ полей: имя, студию, год, арт, запасную ссылку на арт,
+ * онлайн и признак бесплатности. Остальное — теги, категории, жанры,
+ * скриншоты, описание, вся ценовая пятёрка, три поля отзывов, магазин,
+ * издатель, признаки живости — ехало мёртвым грузом.
+ *
+ * Тип узкий НАМЕРЕННО, а не «то же самое, только поменьше»: попытка прочитать
+ * выброшенное поле теперь не собирается, и никто не вернёт его случайно.
+ *
+ * Арт режется trimArt под вариант card: hero и hero2x в ленте не открывает
+ * никто, а весят они столько же строкой, сколько и остальные.
+ */
+export type FeedMeta = Pick<
+  GameMeta,
+  'name' | 'developer' | 'releaseYear' | 'headerImage' | 'ccu' | 'isFree'
+> & { art?: GameArtUrls | null }
+
+export function feedMeta(meta: GameMeta | undefined): FeedMeta | undefined {
+  if (!meta) return undefined
+  return {
+    name: meta.name,
+    developer: meta.developer,
+    releaseYear: meta.releaseYear,
+    headerImage: meta.headerImage,
+    ccu: meta.ccu,
+    isFree: meta.isFree,
+    art: trimArt(meta.art),
+  }
 }
