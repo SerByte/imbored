@@ -68,6 +68,7 @@ import {
   stalePriceAppids,
   unbanGame,
   updateGamePrices,
+  topCatalogGames,
   upsertGameMeta,
   upsertUser,
 } from './db'
@@ -1222,5 +1223,48 @@ describe('мёртвые игры и общая лента', () => {
     const ranks = await getGameRanks(db, [730, 320])
     expect(ranks.get(730)).toBeGreaterThan(0)
     expect(ranks.get(320)).toBe(0)
+  })
+
+  /**
+   * Полка на 404 — единственное место в продукте, где каталог показывается
+   * человеку без всякого входа. Значит попасть туда не должно ничто из того,
+   * что каталог уже отбраковал: умершие записи, чужие магазины с
+   * отрицательными id и карточки без арта — полка из заглушек полкой не выглядит.
+   */
+  test('верх каталога: только живые, со своим артом и по числу отзывов', async () => {
+    const db = await freshDb()
+    const put = async (appid: number, reviews: number, alive: number, header: string | null) => {
+      await upsertGameMeta(
+        db,
+        { ...META, appid, name: `Игра ${appid}`, reviewsTotal: reviews, headerImage: header ?? undefined },
+        NOW,
+      )
+      await db.execute({
+        sql: 'UPDATE games SET alive = ?, tag_count = 3, superseded_by = NULL, header_image = ? WHERE appid = ?',
+        args: [alive, header, appid],
+      })
+    }
+    await put(10, 100, 1, 'https://example/10.jpg')
+    await put(20, 900, 1, 'https://example/20.jpg')
+    await put(30, 5000, 0, 'https://example/30.jpg') // мёртвая
+    await put(40, 4000, 1, null) // без арта
+    await put(-50, 8000, 1, 'https://example/50.jpg') // чужой магазин
+
+    const top = await topCatalogGames(db, 10)
+    expect(top.map((g) => g.appid)).toEqual([20, 10])
+    expect(top[0].name).toBe('Игра 20')
+    expect(top[0].headerImage).toBe('https://example/20.jpg')
+  })
+
+  test('верх каталога уважает лимит', async () => {
+    const db = await freshDb()
+    for (const appid of [1, 2, 3, 4]) {
+      await upsertGameMeta(db, { ...META, appid, reviewsTotal: appid * 100 }, NOW)
+      await db.execute({
+        sql: "UPDATE games SET alive = 1, tag_count = 3, header_image = 'x' WHERE appid = ?",
+        args: [appid],
+      })
+    }
+    expect(await topCatalogGames(db, 2)).toHaveLength(2)
   })
 })

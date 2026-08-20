@@ -1340,6 +1340,40 @@ export async function sitemapGames(
   }))
 }
 
+/**
+ * Верх каталога сразу плитками — для 404.
+ *
+ * Тот же порядок, что у sitemapGames (по числу отзывов), но с именем и
+ * артом: на битой ссылке человеку нужны игры, которые он УЗНАЕТ, а не список
+ * идентификаторов. Форма совпадает с SimilarGame, чтобы плитка была той же, что и
+ * на полке «Похожие».
+ *
+ * appid > 0 — записи чужих магазинов лежат под отрицательными id, арта у них
+ * нет, а полка из заглушек полкой не выглядит (тот же довод, что в topGamesByTag).
+ */
+export async function topCatalogGames(db: Db, limit: number): Promise<SimilarGame[]> {
+  const res = await db.execute({
+    sql: `SELECT appid, name, header_image, art_json FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0 AND header_image IS NOT NULL
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (
+    res.rows as unknown as Array<{
+      appid: number
+      name: string
+      header_image: string | null
+      art_json: string | null
+    }>
+  ).map((r) => ({
+    appid: Number(r.appid),
+    name: r.name,
+    headerImage: r.header_image ?? null,
+    art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
+  }))
+}
+
 /** Сколько карточек ещё ждёт обогащения — для отчёта крона. */
 export async function countPageEnrichDue(db: Db, staleBefore: number): Promise<number> {
   const res = await db.execute({
