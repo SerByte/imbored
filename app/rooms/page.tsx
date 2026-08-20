@@ -8,6 +8,31 @@ import { FlapCode } from '@/components/FlapCode'
 import { Spinner } from '@/components/Spinner'
 import { SectionLabel } from '@/components/Labels'
 
+/**
+ * Как устроено пати — тремя шагами.
+ *
+ * Страница была входом в целую половину продукта и при этом не показывала,
+ * что там происходит: заголовок, одна фраза, кнопка и доска, которая почти
+ * всегда пуста. Человеку, который про пати ещё не знает, предлагалось
+ * вообразить механику по описанию — а механика тут и есть самое интересное:
+ * каждый подключает СВОЮ библиотеку, колода собирается из общих игр, матч
+ * случается, когда совпали голоса всех.
+ *
+ * Нумерация здесь не украшение и не «01/02/03 для вида». Это настоящая
+ * последовательность: без кода нечего кидать, без вошедших не из чего
+ * собрать колоду, без колоды не из чего совпасть. Порядок несёт смысл —
+ * значит номер имеет право стоять.
+ *
+ * Прежний абзац убран, а не оставлен рядом: он говорил ровно то же самое,
+ * только одной строкой и без подробностей. Два объяснения одного и того же
+ * рядом — это не вдвое понятнее.
+ */
+const STEPS = [
+  { title: 'Создай комнату', hint: 'Получишь код из шести букв и ссылку на неё' },
+  { title: 'Кинь ссылку своим', hint: 'Каждый подключает свою библиотеку Steam' },
+  { title: 'Свайпайте вместе', hint: 'Колода из общих игр; совпадут все голоса — матч' },
+]
+
 type Listing = { id: string; memberNames: string[]; minutesAgo: number }
 
 type Board = { rooms: Listing[]; fresh: Set<string> }
@@ -38,13 +63,9 @@ export default function RoomsBoardPage() {
   return (
     <div className="relative flex-1 overflow-hidden">
       <Ambient />
-      <div className="relative mx-auto w-full max-w-2xl px-5 pt-28 pb-16 flex flex-col gap-8">
-      <div className="text-center flex flex-col items-center gap-4 anim-rise">
+      <div className="relative mx-auto w-full max-w-3xl px-5 pt-28 pb-16 flex flex-col gap-8">
+      <div className="text-center flex flex-col items-center gap-5 anim-rise">
         <h1 className="font-display text-display-md">Пати</h1>
-        <p className="text-dim text-sm max-w-md">
-          Собери свою комнату и скинь ссылку друзьям — или подсядь к открытой пати, которая ищет
-          игроков.
-        </p>
         <Link
           href="/room/new"
           className="rounded-[14px] bg-ember text-on-ember font-semibold px-8 py-3 hover:brightness-110 transition"
@@ -52,6 +73,18 @@ export default function RoomsBoardPage() {
           Создать комнату
         </Link>
       </div>
+
+      {/* Номер — моноширинным: это цифра, а в этом интерфейсе цифры набраны
+          моноширинным везде, от кода комнаты до процента совместимости. */}
+      <ol className="grid gap-4 sm:grid-cols-3 anim-rise" style={{ animationDelay: '80ms' }}>
+        {STEPS.map((step, i) => (
+          <li key={step.title} className="glass rounded-[20px] p-5 flex flex-col gap-1.5">
+            <span className="font-mono text-xs text-ember-text">{`0${i + 1}`}</span>
+            <span className="font-semibold leading-tight">{step.title}</span>
+            <span className="text-sm text-dim leading-relaxed">{step.hint}</span>
+          </li>
+        ))}
+      </ol>
 
       <div className="flex flex-col gap-3">
         <SectionLabel className="flex items-center gap-2">
