@@ -230,7 +230,9 @@ describe('heuristicPicks', () => {
     })
     const [pick] = heuristicPicks([CANDS[2]], stale, 1, NOW)
     expect(pick.reason).not.toContain('%')
-    expect(pick.reason).toContain('$7.49')
+    // И цены тоже нет: $7.49 здесь акционное число без акции (см. trustedPrice),
+    // а полная $14.99 была бы такой же выдумкой в другую сторону
+    expect(pick.reason).not.toContain('$')
   })
 })
 

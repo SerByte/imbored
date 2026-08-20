@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
-import { discountEndsLabel, discountOf, formatPrice } from './discount'
+import { discountEndsLabel, discountOf, formatPrice, trustedPrice } from './discount'
 import type { Lean } from './mood'
 import { sharedTasteTags, type Focus, type OwnAnchor } from './recommend'
 import type { TagWeight } from './tagweight'
@@ -160,10 +160,25 @@ const SOURCE_RU: Record<CandidateSource, string> = {
 function priceNote(meta: GameMeta | undefined, source: CandidateSource, nowSec: number): string {
   if (source !== 'new' || !meta) return ''
   if (meta.isFree) return ' бесплатная,'
-  if (meta.priceFinal === undefined) return ''
+  /*
+   * trustedPrice, а не meta.priceFinal напрямую, и это та же оговорка, что у
+   * витрины — только цена дороже.
+   *
+   * При сгоревшей скидке price_final это акционное число без акции: по замеру
+   * из докблока trustedPrice таких карточек в проде 262, у Heavy Rain там
+   * $0.99 при настоящих $19.99. Фраза модели стоит на /play и /daily ПРЯМО ПОД
+   * ценником — и выходило, что ценник молчит (он-то через trustedPrice), а
+   * текст рядом называет двадцатую часть правды.
+   *
+   * Хуже того, число уезжает в промпт, и модель строит на нём рассуждение:
+   * «всего доллар, можно взять не глядя». Нет цены — нет и упоминания: пусть
+   * модель пишет про игру, а не про выдуманную сумму.
+   */
+  const price = trustedPrice(meta, nowSec)
+  if (price === null) return ''
   const deal = discountOf(meta, nowSec)
-  const price = formatPrice(meta.priceFinal)
-  return deal ? ` цена ${price} со скидкой −${deal.percent}%,` : ` цена ${price},`
+  const текст = formatPrice(price)
+  return deal ? ` цена ${текст} со скидкой −${deal.percent}%,` : ` цена ${текст},`
 }
 
 /**
@@ -634,11 +649,16 @@ const SOURCE_TEMPLATES: Record<
 function priceSentence(meta: GameMeta | undefined, nowSec: number, hideUrgency = false): string {
   if (!meta) return ''
   if (meta.isFree) return ' Она бесплатная.'
-  if (meta.priceFinal === undefined || meta.priceFinal <= 0) return ''
+  // trustedPrice по той же причине, что у priceNote: этот хвост — запасной
+  // текст той же причины, и стоит он там же, под ценником. При сгоревшей
+  // скидке price_final — акционное число без акции, и назвать его обычной
+  // ценой значило бы соврать рядом с молчащим ценником.
+  const price = trustedPrice(meta, nowSec)
+  if (price === null || price <= 0) return ''
   const deal = discountOf(meta, nowSec)
   // «Нет в библиотеке» здесь больше не повторяется: это уже сказано шаблоном
   // источника new, и вместе получалось «у тебя нет … Её нет в библиотеке».
-  if (!deal) return ` В Steam — ${formatPrice(meta.priceFinal)}.`
+  if (!deal) return ` В Steam — ${formatPrice(price)}.`
   // Срок — только когда он не давит: см. HeuristicOptions.hideUrgency
   const ends =
     deal.endsAt && !hideUrgency ? (discountEndsLabel(deal.endsAt, nowSec) ?? '') : ''
