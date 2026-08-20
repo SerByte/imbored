@@ -29,8 +29,3 @@ export function plural(n: number, one: string, few: string, many: string): strin
   return many
 }
 
-/** Подпись студии: «Valve · 2013». Любая половина может отсутствовать. */
-export function byline(developer?: string, releaseYear?: number): string | null {
-  const parts = [developer, releaseYear ? String(releaseYear) : undefined].filter(Boolean)
-  return parts.length ? parts.join(' · ') : null
-}

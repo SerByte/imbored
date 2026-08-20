@@ -6,10 +6,12 @@ import { GameArt } from '@/components/GameArt'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { MetaLine } from '@/components/Labels'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
 import { discountView } from '@/lib/discount'
+import { byline } from '@/lib/byline'
 import { loadGamePage, reviewFacts } from '@/lib/gamepage'
 import { OG_SITE } from '@/lib/og'
 import { getDb, nowSec } from '@/lib/server'
@@ -140,6 +142,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
   const { meta, reviewsSummary, prosCons } = data
   const deal = discountView(meta, nowSec())
+  const studio = byline(meta.developer, meta.releaseYear)
   const facts = reviewFacts(meta, reviewsSummary)
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
@@ -171,6 +174,21 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           />
           <div className="flex flex-col gap-4 anim-rise">
             <h1 className="font-display text-display-lg">{meta.name}</h1>
+            {/*
+              Студия и год. Оба поля заполнены у ВСЕХ игр каталога (1000 из
+              1000, проверено запросом), а страница не показывала ни одного из
+              них — при том что лента «Что нового» показывает эту же подпись
+              под каждым патчем. То есть продукт знал, как это сказать, и
+              говорил везде, кроме главной публичной страницы.
+
+              Для вопроса «стоит ли играть» это самый быстрый опознавательный
+              знак: «Gearbox Software · 1999» сразу говорит, что за вещь перед
+              тобой, — быстрее тегов и раньше процента.
+
+              MetaLine, а не свои классы: роль ровно её — строка фактов через
+              разделитель.
+            */}
+            {studio && <MetaLine as="p">{studio}</MetaLine>}
             {/*
               Оценка собирается из того, что есть: сводка точнее, но её нет у
               278 игр из тысячи — там числа берутся из колонок, заполненных у
