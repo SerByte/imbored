@@ -1,10 +1,23 @@
 import { NextResponse } from 'next/server'
 import { memberLabel } from '@/lib/room'
 import { getGamesMeta, getRoom, roomMembers, roomVotes } from '@/lib/db'
+import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildLikes } from '@/lib/roomlikes'
-import { currentSteamId, getDb } from '@/lib/server'
+import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
+
+/**
+ * Сорок на пять минут — вдвое выше того, что может выдать честный клиент.
+ *
+ * Клиент дёргает этот роут не чаще раза в LIKES_MIN_GAP_MS (12 секунд, см.
+ * докблок в app/room/[id]/page.tsx), то есть максимум двадцать пять раз за
+ * окно. Потолок стоит выше с запасом: он тут не чтобы формировать поведение
+ * страницы, а чтобы у роута вообще был край — до этого его не было ни одного,
+ * при стоимости захода в roomVotes по всей комнате плюс getGamesMeta.
+ */
+const LIKES_LIMIT = 40
+const LIKES_WINDOW_SEC = 300
 
 /**
  * Что ты уже навыбирал и насколько вы близки.
@@ -29,6 +42,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!members.some((m) => m.steamid === steamid)) {
     return NextResponse.json({ error: 'notmember' }, { status: 403 })
   }
+
+  const gate = await checkRate(db, {
+    bucket: 'room-likes',
+    id: steamid,
+    limit: LIKES_LIMIT,
+    windowSec: LIKES_WINDOW_SEC,
+    nowSec: nowSec(),
+  })
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const votes = await roomVotes(db, id)
   const { mineAppids, near } = buildLikes({
