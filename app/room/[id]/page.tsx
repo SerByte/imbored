@@ -114,6 +114,7 @@ export default function RoomPage() {
   /** Комната на экране устарела: опрос идёт, но ответов нет. */
   const [stale, setStale] = useState(false)
   const [cards, setCards] = useState<Card[] | null>(null)
+  const [nowSec, setNowSec] = useState(0)
   const [deckTotal, setDeckTotal] = useState(0)
   const [deckVoted, setDeckVoted] = useState(0)
   const [deckFailed, setDeckFailed] = useState(false)
@@ -315,7 +316,11 @@ export default function RoomPage() {
         total: number
         votedCount: number
         hasMore: boolean
+        nowSec: number
       }
+      // Часы берём серверные, из того же ответа: по ним подпись онлайна решает,
+      // имеет ли право сказать «сейчас». См. докблок в components/PlayersNow.
+      setNowSec(data.nowSec)
       // Мержим по appid, а не заменяем: замена выдёргивает карточку из-под
       // пальца, а ownedByAll/missingFor у уже выданных карт после чужого входа
       // становятся ТОЧНЕЕ — их надо обновить, а не выбросить
@@ -905,6 +910,7 @@ export default function RoomPage() {
             votedCount={votedCount}
             deckTotal={deckTotal}
             alone={state.members.length < 2}
+            nowSec={nowSec}
           />
           {voteFailed ? (
             <p role="status" className="mt-3 text-center text-sm text-danger">

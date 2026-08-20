@@ -370,6 +370,7 @@ export async function POST(req: Request) {
       headerImage: meta?.headerImage ?? null,
       art: meta?.art ?? null,
       ccu: meta?.ccu ?? null,
+      ccuAt: meta?.ccuAt ?? null,
       shortDescription: meta?.shortDescription ?? null,
       tags: topTags,
       hoursPlayed: hoursOf(p.appid),
@@ -407,6 +408,10 @@ export async function POST(req: Request) {
   const heroShots = (appid: number) => (metaNow(appid)?.screenshots ?? []).slice(0, HERO_SLIDES)
 
   return NextResponse.json({
+    // Серверные часы к ответу: по ним PlayersNow решает, имеет ли право
+    // подписать онлайн словом «сейчас». Клиентский Date.now() в рендере и
+    // нечист, и расходится с SSR — тот же довод, что в components/whatsnew/Now
+    nowSec: nowSec(),
     picks: picks.map((p) => ({ ...enrich(p), screenshots: heroShots(p.appid) })),
     discoveries: discoveries.map(enrich),
     engine: fromClaude ? 'claude' : 'heuristic',

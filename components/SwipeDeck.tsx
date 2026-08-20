@@ -17,6 +17,7 @@ export type DeckCard = {
   headerImage: string | null
   art?: GameArtUrls | null
   ccu?: number | null
+  ccuAt?: number | null
   tags: string[]
   store?: string
   storeUrl?: string
@@ -43,11 +44,14 @@ const DEPTH = 3 // сколько карточек видно в стопке
  *    матовых панелей читается дороже, чем веер игральных карт.
  */
 function TopCard({
+  nowSec,
   card,
   alone,
   flyOut,
   onCommit,
 }: {
+  /** серверные часы ответа /deck — см. PlayersNow */
+  nowSec: number
   card: DeckCard
   alone: boolean
   flyOut: 'left' | 'right' | null
@@ -163,7 +167,7 @@ function TopCard({
           )}
         </div>
         {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть */}
-        <PlayersNow ccu={card.ccu ?? null} />
+        <PlayersNow ccu={card.ccu ?? null} ccuAt={card.ccuAt} nowSec={nowSec} />
         {card.tags.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {card.tags.map((t) => (
@@ -198,6 +202,7 @@ export function SwipeDeck({
   votedCount,
   deckTotal,
   alone = false,
+  nowSec,
 }: {
   cards: DeckCard[]
   onVote: (card: DeckCard, yes: boolean) => void
@@ -205,6 +210,8 @@ export function SwipeDeck({
   deckTotal: number
   /** В комнате пока один человек — см. плашку владения в TopCard. */
   alone?: boolean
+  /** серверные часы ответа /deck — см. PlayersNow */
+  nowSec: number
 }) {
   // Куда улетает верхняя карточка, когда голосуют кнопкой, а не жестом.
   const [flyOut, setFlyOut] = useState<'left' | 'right' | null>(null)
@@ -249,7 +256,14 @@ export function SwipeDeck({
           {/* key по appid: каждая карточка получает СВОИ motion-значения.
               Общий x на всю колоду оставлял бы следующей карте смещение
               предыдущей и дрался бы с exit-анимацией улетающей. */}
-          <TopCard key={top.appid} card={top} alone={alone} flyOut={flyOut} onCommit={commit} />
+          <TopCard
+            key={top.appid}
+            card={top}
+            alone={alone}
+            flyOut={flyOut}
+            onCommit={commit}
+            nowSec={nowSec}
+          />
         </AnimatePresence>
       </div>
 

@@ -64,6 +64,7 @@ type Pick = {
       героем не становятся, им они не нужны. */
   screenshots?: string[]
   ccu: number | null
+  ccuAt: number | null
   shortDescription: string | null
   tags: string[]
   hoursPlayed: number | null
@@ -301,6 +302,7 @@ function Player() {
   const [askReason, setAskReason] = useState(false)
   const [showWhy, setShowWhy] = useState(false)
   const [skipCount, setSkipCount] = useState(0)
+  const [nowSec, setNowSec] = useState(0)
   const [engine, setEngine] = useState<string>('')
   // «Любые игры» против «только моя библиотека». Живёт в состоянии, а не в
   // адресе: это переключатель уже показанной выдачи, и перезагружать ради
@@ -433,8 +435,12 @@ function Player() {
           engine: string
           lean?: unknown
           continue?: ContinueGame | null
+          nowSec: number
         }
         if (!data.picks?.length) return null
+        // Серверные часы — по ним подпись онлайна решает, имеет ли право
+        // сказать «сейчас». См. докблок в components/PlayersNow.
+        setNowSec(data.nowSec)
         setPicks(data.picks)
         setDiscoveries(data.discoveries ?? [])
         setContinueGame(data.continue ?? null)
@@ -927,7 +933,7 @@ function Player() {
                   <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
                 )}
                 {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo)}</span>}
-                <PlayersNow ccu={pick.ccu} />
+                <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
               </motion.div>
 
               <SplitHeading className="font-display text-display-lg" delay={0.18}>
