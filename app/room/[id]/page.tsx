@@ -1,11 +1,11 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { useShareLink } from '@/components/ShareLink'
-import { MatchCeremony } from '@/components/MatchCeremony'
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
 import { SwipeDeck } from '@/components/SwipeDeck'
@@ -16,6 +16,27 @@ import type { RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import type { NearMiss } from '@/lib/roomlikes'
 import { nextPollStep } from '@/lib/roompoll'
+
+/*
+ * Церемония матча догружается отдельно.
+ *
+ * Ядро gsap тут ни при чём: его и так везёт корневой лэйаут через
+ * SmoothScroll. Но MatchCeremony тянет за собой SplitHeading с плагином
+ * SplitText, а на этой странице ни то ни другое больше не нужно никому.
+ * Статический импорт клал этот вес в начальный набор скриптов комнаты — то
+ * есть его качал и разбирал КАЖДЫЙ участник пати до первого свайпа, при том
+ * что экран матча терминальный: случается один раз на комнату и только если
+ * она вообще сошлась.
+ *
+ * ssr: false ничего не стоит: страница целиком клиентская (опрос каждые 2.5 с),
+ * а церемония рисуется только при status === 'matched', то есть заведомо
+ * после первого ответа сервера. Заголовок здесь не серверный и не LCP, так
+ * что, отдав его клиенту, мы ничем не рискуем.
+ */
+const MatchCeremony = dynamic(
+  () => import('@/components/MatchCeremony').then((m) => m.MatchCeremony),
+  { ssr: false },
+)
 
 type RoomState = {
   room: {
