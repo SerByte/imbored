@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
+import { passChain } from '@/lib/chain'
 import { cronAuthorized, digestLooksStale } from '@/lib/cron'
 import {
   acquireLease,
@@ -151,11 +152,18 @@ export async function GET(req: Request) {
         }
       }
 
+      // Обрыв записывается, а не проглатывается — см. докблок lib/chain.
+      // У новостей цепочка обычно кончается на первом же звене (работы мало),
+      // но передача устроена так же, и молчать о её отказе не за чем.
       if (goesOn && secret) {
-        await fetch(
+        const обрыв = await passChain(
           `${appBaseUrl()}/api/cron/news?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
-          { headers: { 'x-cron-secret': secret } },
-        ).catch(() => {})
+          secret,
+        )
+        if (обрыв) {
+          await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result, обрыв }))
+          await releaseLease(db, STEAM_LEASE, holder)
+        }
       }
     }
   })

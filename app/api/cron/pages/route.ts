@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
+import { passChain } from '@/lib/chain'
 import { cronAuthorized } from '@/lib/cron'
 import {
   acquireLease,
@@ -73,11 +74,30 @@ export async function GET(req: Request) {
       // Аренда передаётся следующему звену вместе с holder, а отдаётся только
       // когда цепочка кончилась — см. тот же кусок в /api/cron/news.
       if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
+      /*
+       * Обрыв цепочки записывается, а не проглатывается.
+       *
+       * Здесь стояло `.catch(() => {})` без проверки res.ok, и это стоило
+       * ровно того, ради чего роут существует. Замер по проду 19 августа:
+       * пять звеньев по 52 секунды, 49 карточек, все удачные, — и остановка
+       * при hasMore: true и stopped: "budget". То есть очередь не кончилась,
+       * Steam не блокировал, а шестое звено просто не состоялось, и узнать
+       * почему было НЕЧЕМ: ребёнок ничего не записал, родитель отказ съел.
+       *
+       * Причина ложится ПОВЕРХ записи этого звена. Ребёнка не будет — значит
+       * перезаписывать её некому, и до следующих суток она останется
+       * единственным следом обрыва.
+       */
       if (goesOn && secret) {
-        await fetch(
+        const обрыв = await passChain(
           `${appBaseUrl()}/api/cron/pages?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
-          { headers: { 'x-cron-secret': secret } },
-        ).catch(() => {})
+          secret,
+        )
+        if (обрыв) {
+          await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result, обрыв }))
+          // Ребёнка не будет — держать аренду до истечения TTL незачем.
+          await releaseLease(db, STEAM_LEASE, holder)
+        }
       }
     }
   })
