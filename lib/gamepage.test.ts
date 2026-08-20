@@ -1,3 +1,4 @@
+import type { InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { createDb, replaceGameTags, setGameJson, upsertGameMeta, type Db } from './db'
 import { loadGamePage, reviewFacts, topTagOf } from './gamepage'
@@ -76,6 +77,36 @@ describe('loadGamePage', () => {
     expect(page?.meta.name).toBe('Игра 30')
     expect(page?.reviewsSummary?.scoreDesc).toBe('Very Positive')
     expect(page?.prosCons).toBeNull()
+  })
+
+  test('строка игры читается один раз, битый блоб страницу не роняет', async () => {
+    // getGamePageRow привозит строку вместе с обоими блобами: раньше страница
+    // ходила за ней трижды (getGameMeta и дважды getGameJson)
+    const db = await withDb()
+    await addGame(db, 40)
+    await db.execute({
+      sql: `UPDATE games SET reviews_summary_json = '{оборвано', pros_cons_json = ? WHERE appid = 40`,
+      args: [JSON.stringify({ pros: ['красиво'], cons: [], source: 'claude' })],
+    })
+    let чтенийИгры = 0
+    const spy = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== 'execute') return Reflect.get(target, prop, receiver)
+        return (q: InStatement) => {
+          const sql = typeof q === 'string' ? q : q.sql
+          if (/FROM games WHERE appid = \?/.test(sql)) чтенийИгры++
+          return target.execute(q)
+        }
+      },
+    })
+    const g = globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }
+    g.__imboredDb = Promise.resolve(spy)
+
+    const page = await loadGamePage(40)
+    expect(page?.meta.name).toBe('Игра 40')
+    expect(page?.reviewsSummary).toBeNull()
+    expect(page?.prosCons?.pros).toEqual(['красиво'])
+    expect(чтенийИгры).toBe(1)
   })
 })
 
