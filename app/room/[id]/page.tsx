@@ -70,6 +70,26 @@ export default function RoomPage() {
   const [deckTotal, setDeckTotal] = useState(0)
   const [deckVoted, setDeckVoted] = useState(0)
   const [deckFailed, setDeckFailed] = useState(false)
+  /*
+   * Запрос колоды уже в полёте.
+   *
+   * Один клик «Ещё 20 игр» слал ДВА GET /deck: pullMore зовёт loadDeck явно
+   * («свою колоду забираем сразу»), а эффект ниже видит поднятый раунд после
+   * refresh и зовёт его же. Оба нужны по отдельности — эффект ловит чужой
+   * вход, явный вызов даёт немедленность нажавшему, — поэтому убирать надо не
+   * один из них, а дубль: второй заход становится пустышкой.
+   */
+  const deckInFlight = useRef(false)
+  /*
+   * Что отсвайпано на этом устройстве и ещё может не доехать до сервера.
+   *
+   * Слияние в loadDeck добавляет всё, чего нет на руках. Карта, только что
+   * убранная свайпом, на руках уже отсутствует — и если ответ /deck собран
+   * ДО того, как доехал голос, она возвращается в колоду и человек свайпает
+   * её второй раз. Отказавший голос вычёркивает appid обратно: там карта
+   * возвращается намеренно, и прятать её нельзя.
+   */
+  const votedLocally = useRef<Set<number>>(new Set())
   /** Последний голос не доехал: карта возвращена, счётчик отмотан назад. */
   const [voteFailed, setVoteFailed] = useState(false)
   const [localVotes, setLocalVotes] = useState(0)
@@ -189,6 +209,8 @@ export default function RoomPage() {
   }, [refresh])
 
   const loadDeck = useCallback(async () => {
+    if (deckInFlight.current) return
+    deckInFlight.current = true
     setDeckFailed(false)
     try {
       const res = await fetch(`/api/room/${roomId}/deck`)
@@ -205,12 +227,14 @@ export default function RoomPage() {
       // Мержим по appid, а не заменяем: замена выдёргивает карточку из-под
       // пальца, а ownedByAll/missingFor у уже выданных карт после чужого входа
       // становятся ТОЧНЕЕ — их надо обновить, а не выбросить
+      // Свои неподтверждённые голоса вычёркиваем из ответа: см. votedLocally
+      const пришло = data.cards.filter((c) => !votedLocally.current.has(c.appid))
       setCards((prev) => {
-        if (!prev?.length) return data.cards
-        const incoming = new Map(data.cards.map((c) => [c.appid, c]))
+        if (!prev?.length) return пришло
+        const incoming = new Map(пришло.map((c) => [c.appid, c]))
         const kept = prev.map((c) => incoming.get(c.appid) ?? c)
         const seen = new Set(kept.map((c) => c.appid))
-        return [...kept, ...data.cards.filter((c) => !seen.has(c.appid))]
+        return [...kept, ...пришло.filter((c) => !seen.has(c.appid))]
       })
       setDeckTotal(data.total)
       setDeckVoted(data.votedCount)
@@ -219,6 +243,7 @@ export default function RoomPage() {
     } catch {
       setDeckFailed(true)
     } finally {
+      deckInFlight.current = false
       setPulling(false)
     }
   }, [roomId])
@@ -377,6 +402,7 @@ export default function RoomPage() {
    */
   async function vote(card: Card, yes: boolean) {
     setCards((prev) => (prev ? prev.filter((c) => c.appid !== card.appid) : prev))
+    votedLocally.current.add(card.appid)
     setLocalVotes((v) => v + 1)
     try {
       const res = await fetch(`/api/room/${roomId}/vote`, {
@@ -395,6 +421,8 @@ export default function RoomPage() {
       // В голову колоды, а не в хвост: карточка возвращается туда, где её
       // только что видели, и повтор — это тот же жест ещё раз.
       setCards((prev) => (prev ? [card, ...prev.filter((c) => c.appid !== card.appid)] : prev))
+      // Карта вернулась намеренно — прятать её от следующего /deck нельзя
+      votedLocally.current.delete(card.appid)
       setLocalVotes((v) => Math.max(0, v - 1))
       setVoteFailed(true)
     }
