@@ -23,8 +23,9 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { countPageEnrichDue, createDb } from '../lib/db'
+import { countPageEnrichDue, createDb, STEAM_LEASE } from '../lib/db'
 import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '../lib/pagejob'
+import { withLease } from './lease'
 
 /** Карточек за срез. Каждая — два запроса к store.steampowered.com,
  *  а лимитер держит 1.7 с между ними: срез это примерно минута. */
@@ -78,31 +79,57 @@ async function main() {
   let viaClaude = 0
   const startedAt = Date.now()
 
-  while (done < maxGames) {
-    const limit = Math.min(SLICE, maxGames - done)
-    const res = await runPageSlice(db, {
-      // без дедлайна: локальный прогон никто не убивает по таймеру
-      deadlineAt: Date.now() + 10 * 60_000,
-      limit,
-      ...(noLlm ? { useClaude: false } : {}),
-      onProgress: (line) => console.log(line),
-    })
-    done += res.enriched
-    shots += res.withShots
-    prosCons += res.withProsCons
-    viaClaude += res.viaClaude
+  /*
+   * Аренда та же, что у /api/cron/pages, и раньше её тут не было вовсе.
+   *
+   * Очередь не резервируется — claimPageEnrichBatch только читает, ничего не
+   * помечая, — поэтому ручной прогон и крон, взявшись одновременно, разобрали
+   * бы одни и те же карточки и заплатили за них дважды: два запроса в Steam на
+   * карточку плюс вызов модели. Лимиты Steam при этом ни при чём, они по IP, а
+   * прогон идёт с машины оператора; разводим двойную работу, а не темп.
+   *
+   * Предупреждение ниже про «аренду» при этом стояло с самого начала — фраза
+   * приехала из крона вместе с кодом, но без самой аренды.
+   */
+  const прошло = await withLease(
+    db,
+    STEAM_LEASE,
+    {
+      busyNote:
+        'очередь карточек занята: её разбирает крон либо прерванный прогон, не успевший отдать аренду.',
+    },
+    async ({ renew }) => {
+      while (done < maxGames) {
+        const limit = Math.min(SLICE, maxGames - done)
+        // Держим коротким TTL и продлеваем каждым кругом: срез это около минуты
+        await renew()
+        const res = await runPageSlice(db, {
+          // без дедлайна: локальный прогон никто не убивает по таймеру
+          deadlineAt: Date.now() + 10 * 60_000,
+          limit,
+          ...(noLlm ? { useClaude: false } : {}),
+          onProgress: (line) => console.log(line),
+        })
+        done += res.enriched
+        shots += res.withShots
+        prosCons += res.withProsCons
+        viaClaude += res.viaClaude
 
-    if (!res.enriched) break
-    if (res.stopped === 'blocked') {
-      console.warn('\nSteam закрылся от этого IP — прерываю, аренда истечёт сама')
-      break
-    }
-    const mins = Math.round((Date.now() - startedAt) / 60_000)
-    console.log(
-      `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tpros/cons: ${prosCons} (модель: ${viaClaude})\t${mins} мин`,
-    )
-    if (!res.hasMore) break
-  }
+        if (!res.enriched) break
+        if (res.stopped === 'blocked') {
+          console.warn('\nSteam закрылся от этого IP — прерываю, аренда отдаётся сама')
+          break
+        }
+        const mins = Math.round((Date.now() - startedAt) / 60_000)
+        console.log(
+          `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tpros/cons: ${prosCons} (модель: ${viaClaude})\t${mins} мин`,
+        )
+        if (!res.hasMore) break
+      }
+      return true
+    },
+  )
+  if (прошло === null) return
 
   const left = await countPageEnrichDue(db, Math.floor(Date.now() / 1000) - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES)
   console.log(
