@@ -202,7 +202,7 @@ describe('контраст палитры', () => {
     const CHROME = [
       {
         name: 'кино-зона',
-        selector: ':root:has(.media-dark) body > header',
+        selector: ":root:not([data-chrome='page']):has(.media-dark) body > header",
         zoneBg: () => resolve(block('.media-dark {'), '--bg'),
       },
       {
@@ -228,6 +228,28 @@ describe('контраст палитры', () => {
 
     test('у кино-зоны подвал НЕ трогаем: зона только сверху, ниже обычный контент', () => {
       expect(CSS).not.toContain(':root:has(.media-dark) body > footer')
+    })
+
+    /**
+     * Продолжение той же мысли, что и про подвал, только про шапку: зона
+     * стоит героем сверху, а шапка фиксированная и уезжает с неё на обычный
+     * контент. Пока правило смотрело только на разметку, навигация на /play
+     * после прокрутки давала 1.81:1 на светлой теме.
+     *
+     * Здесь проверяется не контраст (в состоянии «уехали» шапка берёт токены
+     * :root, а они уже проверены выше), а наличие самого выхода из тёмного
+     * состояния — иначе правило снова станет «тёмная всегда».
+     */
+    test('шапка кино-зоны умеет перестать быть тёмной, когда с зоны уехали', () => {
+      expect(CSS).toContain(":root:not([data-chrome='page']):has(.media-dark) body > header")
+      expect(CSS, 'полка со швом для состояния «над контентом»').toContain(
+        ":root[data-chrome='page'] .site-chrome-bar",
+      )
+    })
+
+    test('у «Что нового» состояния прокрутки НЕТ: там тёмная вся страница', () => {
+      expect(CSS).toContain(':root:has(.whatsnew) body > header')
+      expect(CSS).not.toContain(":root:not([data-chrome='page']):has(.whatsnew)")
     })
   })
 

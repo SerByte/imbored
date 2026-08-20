@@ -214,7 +214,26 @@
  * фоне и тёмным быть не должен. У .whatsnew страница тёмная целиком
  * (min-h-screen), поэтому там и подвал тоже.
  */
-:root:has(.media-dark) body > header {
+/*
+ * :not([data-chrome='page']) — про прокрутку, и это добавка к правилу, а не
+ * его замена.
+ *
+ * Правило знало только разметку: есть на странице .media-dark — значит шапка
+ * тёмная, вся и всегда. Для главной и церемонии этого хватало: там зона на
+ * весь экран и ниже ничего нет. Но на выдаче, игре дня, совместимости и
+ * портрете зона стоит ГЕРОЕМ сверху, а ниже начинается обычный контент — и
+ * фиксированная шапка со светлым текстом уезжала на молочный фон светлой
+ * темы. Замерено на /play: навигация в этот момент даёт 1.81:1 при пороге
+ * 4.5, то есть её физически не видно.
+ *
+ * Сторож палитры поймать этого не мог: он считает токены, а вопрос здесь в
+ * том, что оказалось ПОД шапкой после прокрутки. Отвечает на него
+ * components/ChromeZone.tsx — маячок у низа зоны и IntersectionObserver.
+ *
+ * Атрибут ставится только в состоянии «уехали с зоны», поэтому без JS
+ * поведение ровно прежнее: скрипт может улучшить картинку, но не сломать.
+ */
+:root:not([data-chrome='page']):has(.media-dark) body > header {
   --header-fade: rgba(11, 12, 16, 0.85);
   --ink: #f2f3f5;
   --dim: #9ba1ab;
@@ -374,6 +393,68 @@ body {
 input:focus-visible,
 textarea:focus-visible {
   outline-offset: 0;
+}
+
+/*
+ * ОБВЯЗКА ШАПКИ: два состояния вместо одного.
+ *
+ * Растворяющийся градиент верен ровно там, где под шапкой стоит герой: он
+ * снимает контраст с арта и не режет кадр полосой. Но стоит уехать с героя
+ * на текст — растворяться уже не над чем, зато нужен шов: без него строки
+ * контента просто выныривают из-под парящей шапки.
+ *
+ * Слои кроссфейдятся по прозрачности, а не переключаются подменой фона и
+ * маски: перекраска и смена маски в переходе не участвуют и дали бы скачок.
+ *
+ * .site-chrome выше самой шапки в полтора раза (градиенту нужен запас, чтобы
+ * гаснуть), поэтому полка занимает две трети слоя — то есть ровно высоту
+ * шапки. pointer-events-none обязателен: слой свисает ниже шапки и иначе
+ * перехватывал бы клики по строкам ленты.
+ */
+.site-chrome {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 150%;
+  pointer-events: none;
+}
+.site-chrome > span {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  display: block;
+  transition: opacity var(--dur-base) var(--ease-glow);
+}
+.site-chrome-fade {
+  height: 100%;
+  opacity: 1;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  background: linear-gradient(to bottom, var(--header-fade), transparent);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+.site-chrome-bar {
+  height: 66.6667%;
+  opacity: 0;
+  background: var(--glass-bg);
+  border-bottom: 1px solid var(--edge);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+}
+:root[data-chrome='page'] .site-chrome-fade {
+  opacity: 0;
+}
+:root[data-chrome='page'] .site-chrome-bar {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Различие состояний остаётся, перетекание уходит: это не украшение, а
+     ответ на вопрос «шапка сейчас над героем или над текстом». */
+  .site-chrome > span {
+    transition: none;
+  }
 }
 
 /* стеклянная панель — базовый строительный блок интерфейса */
