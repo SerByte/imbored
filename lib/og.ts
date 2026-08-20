@@ -37,7 +37,51 @@ export const OG_BG = '#0b0c10'
 export const OG_INK = '#f2f3f5'
 export const OG_DIM = '#9ba1ab'
 export const OG_EMBER = '#ff9e64'
+/** Подложка знака — то же число, что в components/Logo.tsx. */
+export const OG_PLATE = '#16171d'
 
 export function ogNum(n: number): string {
   return n.toLocaleString('ru-RU')
 }
+
+/** Полупрозрачная версия цвета карточки: satori не понимает ни color-mix, ни #rrggbbaa. */
+function alpha(hex: string, a: number): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  return `rgba(${r},${g},${b},${a})`
+}
+
+/**
+ * Скрим кино-героя для карточек с артом — тот же жест, что и на страницах:
+ * арт гаснет к низу, текст ложится на погашенное. Здесь функцией, а не
+ * строкой, чтобы числа фона не появлялись литералом в самих карточках: цвет
+ * бренда в чате обязан меняться там же, где цвет бренда на сайте.
+ */
+export function ogScrim(): string {
+  return (
+    `linear-gradient(to top, ${OG_BG} 16%, ${alpha(OG_BG, 0.88)} 42%, ` +
+    `${alpha(OG_BG, 0.35)} 72%, ${alpha(OG_BG, 0.55)} 100%)`
+  )
+}
+
+/** Тёплое пятно из нижнего левого угла — тот же ember, что и во всём приложении. */
+export function ogGlow(): string {
+  return `radial-gradient(900px 520px at 8% 118%, ${alpha(OG_EMBER, 0.16)}, ${alpha(OG_BG, 0)} 70%)`
+}
+
+/**
+ * Общая часть openGraph для страниц, у которых он свой.
+ *
+ * Объект metadata сливается ПОЛЕМ, а не насквозь: страница, объявившая свой
+ * openGraph, заменяет корневой целиком, а не дополняет его. Именно так три
+ * самые пересылаемые страницы — игра, совместимость и портрет — молча
+ * теряли siteName и locale, то есть в чате вместо «imbored» показывался голый
+ * домен. Ровно там, где имя продукта и нужно.
+ *
+ * Держится здесь, а не копией в трёх generateMetadata: копия и была бы тем
+ * механизмом, которым это разъедется в следующий раз. Наличие спреда во всех
+ * openGraph сторожит lib/social.test.ts.
+ */
+export const OG_SITE = {
+  siteName: 'imbored',
+  locale: 'ru_RU',
+} as const
