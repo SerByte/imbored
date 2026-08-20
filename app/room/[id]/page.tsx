@@ -77,6 +77,8 @@ type Card = {
 const POLL_FAST_MS = 2500
 const POLL_SLOW_MS = 6000
 const POLL_IDLE_AFTER_MS = 60_000
+/** Пол по частоте для догрузки лайков — см. докблок у эффекта */
+const LIKES_MIN_GAP_MS = 12_000
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>()
@@ -128,6 +130,8 @@ export default function RoomPage() {
   const [pulling, setPulling] = useState(false)
   const deckKey = useRef('')
   const likesKey = useRef('')
+  const likesAt = useRef(0)
+  const likesTimer = useRef<number | null>(null)
 
   const refresh = useCallback(
     async (signal?: AbortSignal): Promise<RoomState | null> => {
@@ -320,12 +324,34 @@ export default function RoomPage() {
   }
 
   /*
-   * Лайки и почти-совпадения — отдельным разовым запросом, а не частью опроса:
-   * перебор голосов плюс метаданные игр каждые 2.5 секунды у каждого участника
-   * стоил бы ровно столько же, сколько мы только что убрали из самого опроса.
+   * Лайки и почти-совпадения — отдельным запросом, а не частью опроса: перебор
+   * голосов плюс метаданные игр внутри каждого тика стоили бы ровно столько же,
+   * сколько мы из самого опроса убрали.
    *
    * Триггер производный: опрос и так приносит голоса всех, и пока их сумма не
    * сдвинулась, пересчитывать нечего. Пати стоит на месте — запросов ноль.
+   *
+   * Но это только половина правды, и вторая половина сводила первую на нет.
+   * votesKey меняется РОВНО ТОГДА, когда опрос принёс новые голоса, то есть на
+   * движущейся пати — каждый тик. А тик это POLL_FAST_MS, те самые 2.5 секунды.
+   * Иными словами, ожидающий получал второй опрос той же частоты и с более
+   * тяжёлым запросом: roomVotes по всей комнате плюс getGamesMeta. Комната из
+   * восьми, где семеро дождались последнего, — это семь таких потоков разом.
+   *
+   * Замерено на живой комнате, счётчиком поверх window.fetch, при непрерывном
+   * голосовании соседа шестьдесят с лишним секунд: 24 запроса к /likes за 63
+   * секунды, промежутки — РОВНО 2.5с каждый. С полом на той же нагрузке 7
+   * запросов за 78 секунд, промежутки ровно 12.0с. В пересчёте на минуту
+   * 22.9 против 5.4, и это на одного ожидающего.
+   *
+   * Отсюда пол по частоте. Блок «вы близки» — фоновая подсказка, ей не нужна
+   * секундная точность; матч приезжает опросом, а не отсюда. Первый заход
+   * мгновенный (likesAt нулевой), дальше не чаще чем раз в LIKES_MIN_GAP_MS.
+   *
+   * Таймер хвостовой, а не гасящий: пропущенные тики схлопываются в один
+   * отложенный запрос, и последнее состояние доезжает всегда. Ставится он
+   * только если не стоит — иначе каждый тик отодвигал бы срок, и на непрерывно
+   * свайпающей пати запрос не ушёл бы вообще ни разу.
    */
   const waiting = Boolean(state?.isMember) && cards !== null && cards.length === 0
   const votesKey = state ? state.members.map((m) => `${m.id}${m.votes}`).join(',') : ''
@@ -333,12 +359,34 @@ export default function RoomPage() {
   useEffect(() => {
     if (!waiting || likesKey.current === votesKey) return
     likesKey.current = votesKey
-    void (async () => {
-      const res = await fetch(`/api/room/${roomId}/likes`)
-      if (!res.ok) return
-      setLikes((await res.json()) as { mine: LikedGame[]; near: NearMiss[] })
-    })()
+
+    const fire = () => {
+      likesAt.current = Date.now()
+      likesTimer.current = null
+      void (async () => {
+        const res = await fetch(`/api/room/${roomId}/likes`)
+        if (!res.ok) return
+        setLikes((await res.json()) as { mine: LikedGame[]; near: NearMiss[] })
+      })()
+    }
+
+    const left = LIKES_MIN_GAP_MS - (Date.now() - likesAt.current)
+    if (left <= 0) {
+      fire()
+      return
+    }
+    if (likesTimer.current === null) likesTimer.current = window.setTimeout(fire, left)
   }, [waiting, votesKey, roomId])
+
+  // Снятие таймера — отдельным эффектом с пустыми зависимостями. Верни мы
+  // уборку из эффекта выше, она срабатывала бы на КАЖДОЙ смене votesKey и
+  // снимала хвост ровно в тот момент, ради которого он и заводится.
+  useEffect(
+    () => () => {
+      if (likesTimer.current !== null) window.clearTimeout(likesTimer.current)
+    },
+    [],
+  )
 
   /*
    * То же, что join, плюс демо-библиотека первым шагом.
