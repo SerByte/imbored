@@ -157,6 +157,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       priceFinal: meta ? trustedPrice(meta, now) : c.priceFinal,
       art: meta?.art ?? null,
       ccu: meta?.ccu ?? null,
+      ccuAt: meta?.ccuAt ?? null,
       // Скидка нужна только там, где кому-то придётся покупать: у карточки
       // «есть у всех» цена вообще не участвует в разговоре
       discount: meta && !c.ownedByAll ? discountView(meta, now) : null,
@@ -164,6 +165,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   })
 
   return NextResponse.json({
+    // см. докблок в PlayersNow: подпись «сейчас» требует серверных часов
+    nowSec: nowSec(),
     cards,
     total: actual.length,
     votedCount: actual.length - shown.length,

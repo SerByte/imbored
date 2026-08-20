@@ -40,6 +40,7 @@ type DailyPick = StoreCard & {
   tags: string[]
   hoursPlayed: number | null
   ccu: number | null
+  ccuAt: number | null
 }
 
 const storeHref = (c: StoreCard) =>
@@ -49,6 +50,7 @@ export default function DailyPage() {
   const router = useRouter()
   const [pick, setPick] = useState<DailyPick | null>(null)
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
+  const [nowSec, setNowSec] = useState(0)
   const [dateLabel, setDateLabel] = useState('')
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
@@ -114,7 +116,11 @@ export default function DailyPage() {
           pick: DailyPick
           discoveries?: StoreCard[]
           dateLabel: string
+          nowSec: number
         }
+        // Серверные часы — по ним подпись онлайна решает, имеет ли право
+        // сказать «сейчас». См. докблок в components/PlayersNow.
+        setNowSec(data.nowSec)
         setPick(data.pick)
         setDiscoveries(data.discoveries ?? [])
         setDateLabel(data.dateLabel)
@@ -206,7 +212,7 @@ export default function DailyPage() {
                   {pick.hoursPlayed} ч наиграно
                 </span>
               )}
-              <PlayersNow ccu={pick.ccu} />
+              <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
             </div>
 
             {/*

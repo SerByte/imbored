@@ -159,6 +159,8 @@ export async function GET() {
     .map(([t]) => t)
 
   return NextResponse.json({
+    // см. докблок в PlayersNow: подпись «сейчас» требует серверных часов
+    nowSec: now,
     pick: {
       ...pick,
       reason,
@@ -170,6 +172,8 @@ export async function GET() {
       // это упирается в бюджет видеопамяти слайдера, а не в состав ответа.
       screenshots: meta?.screenshots ?? [],
       ccu: meta?.ccu ?? null,
+      // без отметки подпись не имеет права говорить «сейчас» — см. PlayersNow
+      ccuAt: meta?.ccuAt ?? null,
       tags: topTags,
       hoursPlayed,
       store: meta?.store ?? null,

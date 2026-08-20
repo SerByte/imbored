@@ -49,6 +49,7 @@ type Pick = {
       героем не становятся, им они не нужны. */
   screenshots?: string[]
   ccu: number | null
+  ccuAt: number | null
   shortDescription: string | null
   tags: string[]
   hoursPlayed: number | null
@@ -190,6 +191,7 @@ function Player() {
   const [askReason, setAskReason] = useState(false)
   const [showWhy, setShowWhy] = useState(false)
   const [skipCount, setSkipCount] = useState(0)
+  const [nowSec, setNowSec] = useState(0)
   const [engine, setEngine] = useState<string>('')
   // «Любые игры» против «только моя библиотека». Живёт в состоянии, а не в
   // адресе: это переключатель уже показанной выдачи, и перезагружать ради
@@ -288,8 +290,12 @@ function Player() {
           picks: Pick[]
           discoveries?: Pick[]
           engine: string
+          nowSec: number
         }
         if (!data.picks?.length) return null
+        // Серверные часы — по ним подпись онлайна решает, имеет ли право
+        // сказать «сейчас». См. докблок в components/PlayersNow.
+        setNowSec(data.nowSec)
         setPicks(data.picks)
         setDiscoveries(data.discoveries ?? [])
         setEngine(data.engine)
@@ -638,7 +644,7 @@ function Player() {
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
                   <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
                 )}
-                <PlayersNow ccu={pick.ccu} />
+                <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
               </motion.div>
 
               <SplitHeadingLazy className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.18}>
