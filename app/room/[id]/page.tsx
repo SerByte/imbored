@@ -1,10 +1,29 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
-import { MatchCeremony } from '@/components/MatchCeremony'
+/*
+ * Церемония матча догружается отдельно, и это тот же приём, что у
+ * SplitHeadingLazy, с той же причиной и на этаж выше.
+ *
+ * MatchCeremony тянет gsap ДВАЖДЫ: сам, ради таймлайна тактов, и через
+ * SplitHeading с плагином SplitText. Статический импорт клал этот вес в
+ * начальный набор скриптов комнаты — то есть его качал и разбирал КАЖДЫЙ
+ * участник пати до первого свайпа, при том что экран матча терминальный:
+ * случается один раз на комнату и только если она вообще сошлась.
+ *
+ * ssr: false ничего не стоит: страница целиком клиентская (опрос каждые 2.5 с),
+ * а ceremony рисуется только при status === 'matched', то есть заведомо после
+ * первого ответа сервера. Оговорка из докблока SplitHeadingLazy про /whatsnew
+ * и /portrait сюда не относится — здесь заголовок не серверный и не LCP.
+ */
+const MatchCeremony = dynamic(
+  () => import('@/components/MatchCeremony').then((m) => m.MatchCeremony),
+  { ssr: false },
+)
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
 import { useCopy } from '@/components/useCopy'
