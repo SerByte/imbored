@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { memberLabel } from '@/lib/room'
 import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
@@ -83,7 +84,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const libraries = await Promise.all(
     members.map(async (m) => ({
       steamid: m.steamid,
-      name: m.personaName ?? `Игрок ${m.steamid.slice(-4)}`,
+      name: memberLabel(id, m.steamid, m.personaName),
       library: (await getLatestSnapshot(db, m.steamid))?.games ?? [],
     })),
   )

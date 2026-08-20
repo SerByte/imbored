@@ -1,3 +1,5 @@
+import { hashString } from './daily'
+
 /**
  * Общие типы комнаты для API-роутов и компонентов ожидания.
  *
@@ -51,4 +53,29 @@ export function waitingMode(args: {
 }): WaitingMode {
   if (args.memberCount <= 1) return 'alone'
   return args.deckTotal === 0 && args.myVotes === 0 ? 'empty' : 'others'
+}
+
+/**
+ * Как назвать участника, у которого нет persona_name.
+ *
+ * Шапка этого файла объявляет инвариант: «steamid наружу не уходит вовсе». Он
+ * нарушался ровно здесь — запасное имя строилось как `Игрок ${steamid.slice(-4)}`
+ * и раздавалось всем в комнате, а через доску «Пати» и вовсе анонимам. То есть
+ * идентификатор, ради сокрытия которого строкой выше считается хеш, уезжал
+ * наружу четырьмя младшими цифрами в поле рядом.
+ *
+ * Пусто persona_name бывает штатно: первый вход до того, как приедет профиль
+ * Steam, осечка Steam Web API, вход по вставленной ссылке.
+ *
+ * Метка берётся из ТОГО ЖЕ хеша, что и id: она стабильна в пределах комнаты,
+ * различает участников и ничего о них не говорит. Соль — код комнаты, поэтому
+ * один человек в двух комнатах получает разные метки, и сшить их нельзя.
+ */
+export function memberLabel(
+  roomId: string,
+  steamid: string,
+  personaName: string | null | undefined,
+): string {
+  if (personaName) return personaName
+  return `Игрок ${hashString(roomId + steamid).toString(36).slice(0, 4)}`
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { waitingMode } from './room'
+import { memberLabel, waitingMode } from './room'
 
 describe('waitingMode', () => {
   test('один в комнате — «ты тут один», а не «ждём остальных»', () => {
@@ -36,5 +36,39 @@ describe('waitingMode', () => {
 
   test('нулевой состав не ломает выбор режима', () => {
     expect(waitingMode({ memberCount: 0, deckTotal: 0, myVotes: 0 })).toBe('alone')
+  })
+})
+
+describe('memberLabel', () => {
+  const SID = '76561198012345678'
+
+  test('настоящее имя возвращается как есть', () => {
+    expect(memberLabel('ABC123', SID, 'Дима')).toBe('Дима')
+  })
+
+  test('без имени steamid НАРУЖУ НЕ УХОДИТ — ни куском, ни целиком', () => {
+    // Шапка lib/room объявляет это инвариантом, а запасное имя строилось как
+    // `Игрок ${steamid.slice(-4)}` и раздавалось всем в комнате, а через доску
+    // «Пати» — анонимам.
+    const метка = memberLabel('ABC123', SID, null)
+    for (let n = 3; n <= SID.length; n++) {
+      for (let i = 0; i + n <= SID.length; i++) {
+        expect(метка).not.toContain(SID.slice(i, i + n))
+      }
+    }
+  })
+
+  test('метка стабильна в пределах комнаты', () => {
+    expect(memberLabel('ABC123', SID, null)).toBe(memberLabel('ABC123', SID, null))
+  })
+
+  test('в разных комнатах метки разные — сшить человека нельзя', () => {
+    expect(memberLabel('ABC123', SID, undefined)).not.toBe(memberLabel('XYZ789', SID, undefined))
+  })
+
+  test('разных участников одной комнаты метка различает', () => {
+    const a = memberLabel('ABC123', SID, null)
+    const b = memberLabel('ABC123', '76561198087654321', null)
+    expect(a).not.toBe(b)
   })
 })
