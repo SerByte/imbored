@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
-import { discountEndsLabel, discountOf, formatPrice } from './discount'
+import { discountEndsLabel, discountOf, formatPrice, trustedPrice } from './discount'
 import type { Focus } from './recommend'
 import { CANDIDATE_SOURCES } from './types'
 import type { CandidateSource, GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
@@ -48,7 +48,41 @@ export function llmAvailable(): boolean {
  * Кроновые вызовы (pros/cons, пересказ) не ждёт никто, им нужен запас.
  */
 const interactiveClient = () => new Anthropic({ timeout: 8_000, maxRetries: 0 })
-const cronClient = () => new Anthropic({ timeout: 30_000, maxRetries: 1 })
+
+const CRON_TIMEOUT_MS = 30_000
+
+/**
+ * Ниже этого модель заведомо не успеет — звать её незачем.
+ *
+ * Это не оценка скорости ответа, а порог здравого смысла: запрос с гарантированно
+ * недостижимым таймаутом всё равно стоит денег и строки в квоте, а вернёт null.
+ */
+export const LLM_MIN_BUDGET_MS = 6_000
+
+/**
+ * Кроновый клиент, при желании — вписанный в остаток бюджета среза.
+ *
+ * Без budgetMs (ручные скрипты, где никто не торопится) остаётся как было:
+ * 30 секунд, одна повторная попытка.
+ *
+ * С budgetMs — арифметика, которой не хватало. Срез крона живёт SLICE_BUDGET_MS
+ * = 50с при maxDuration = 60, а срок проверялся ТОЛЬКО на входе в карточку:
+ * зашли на 49.9с — и внутри уже ничто не мешало вызову тянуться 30с × 2 = 60с
+ * своих. Сто с лишним секунд против шестидесяти — инстанс гарантированно
+ * снимают по таймауту, а значит finally не отрабатывает: цепочка не передаётся
+ * следующему звену и аренда не снимается. Сама модель тут ни при чём — таймаут
+ * гасится в null и эвристика уцелевает; ущерб ровно в настенных часах.
+ *
+ * Повтор оставляем только если на две полные попытки время есть. Иначе одна
+ * попытка на весь остаток: лучше один шанс успеть, чем два заведомо
+ * оборванных.
+ */
+function cronClient(budgetMs?: number): Anthropic {
+  if (budgetMs === undefined) return new Anthropic({ timeout: CRON_TIMEOUT_MS, maxRetries: 1 })
+  const maxRetries = budgetMs >= CRON_TIMEOUT_MS * 2 ? 1 : 0
+  const timeout = Math.min(CRON_TIMEOUT_MS, Math.floor(budgetMs / (maxRetries + 1)))
+  return new Anthropic({ timeout, maxRetries })
+}
 
 /**
  * Недоверенный текст заходит в промпт только через это: обрезка по длине плюс
@@ -114,7 +148,22 @@ const PICKS_SCHEMA = {
   },
 } as const
 
-/** Как источник называется внутри промпта — теми же словами, что и в UI */
+/*
+ * Как источник ОПИСЫВАЕТСЯ модели. Это не подписи из интерфейса, и путать
+ * одно с другим нельзя.
+ *
+ * Комментарий тут раньше обещал «теми же словами, что и в UI», и это было
+ * неправдой: в SOURCE_BADGE стоят «Куплена, но не распакована», «Пора
+ * вернуться», «Новое для тебя» — совпадает один пункт из четырёх. Обещание
+ * опасное: следующий читатель мог «починить» карту под подписи, и модель стала
+ * бы вставлять ярлык в предложение — «Куплена, но не распакована — эта игра…»
+ * вместо живой фразы.
+ *
+ * Разделение намеренное. Бейдж НАЗЫВАЕТ состояние одним словом, а сюда едет
+ * ФАКТ, из которого модель пишет предложение лично игроку. Поэтому здесь
+ * «ни разу не запускал», а не название категории, и поэтому же у backlog
+ * добавлено «меньше двух часов» — числа в подписи нет, а модели оно нужно.
+ */
 const SOURCE_RU: Record<CandidateSource, string> = {
   untouched: 'ни разу не запускал',
   backlog: 'открыл и закрыл, меньше двух часов',
@@ -130,10 +179,25 @@ const SOURCE_RU: Record<CandidateSource, string> = {
 function priceNote(meta: GameMeta | undefined, source: CandidateSource, nowSec: number): string {
   if (source !== 'new' || !meta) return ''
   if (meta.isFree) return ' бесплатная,'
-  if (meta.priceFinal === undefined) return ''
+  /*
+   * trustedPrice, а не meta.priceFinal напрямую, и это та же оговорка, что у
+   * витрины — только цена дороже.
+   *
+   * При сгоревшей скидке price_final это акционное число без акции: по замеру
+   * из докблока trustedPrice таких карточек в проде 262, у Heavy Rain там
+   * $0.99 при настоящих $19.99. Фраза модели стоит на /play и /daily ПРЯМО ПОД
+   * ценником — и выходило, что ценник молчит (он-то через trustedPrice), а
+   * текст рядом называет двадцатую часть правды.
+   *
+   * Хуже того, число уезжает в промпт, и модель строит на нём рассуждение:
+   * «всего доллар, можно взять не глядя». Нет цены — нет и упоминания: пусть
+   * модель пишет про игру, а не про выдуманную сумму.
+   */
+  const price = trustedPrice(meta, nowSec)
+  if (price === null) return ''
   const deal = discountOf(meta, nowSec)
-  const price = formatPrice(meta.priceFinal)
-  return deal ? ` цена ${price} со скидкой −${deal.percent}%,` : ` цена ${price},`
+  const текст = formatPrice(price)
+  return deal ? ` цена ${текст} со скидкой −${deal.percent}%,` : ` цена ${текст},`
 }
 
 /**
@@ -234,6 +298,8 @@ const PROS_CONS_SCHEMA = {
 export async function claudeProsCons(
   gameName: string,
   reviews: Array<{ text: string; votedUp: boolean; playtimeAtReview: number }>,
+  /** Остаток бюджета среза; без него — обычные 30с с повтором, см. cronClient */
+  budgetMs?: number,
 ): Promise<{ pros: string[]; cons: string[] } | null> {
   if (!llmAvailable() || !reviews.length) return null
   const lines = reviews
@@ -241,7 +307,7 @@ export async function claudeProsCons(
     .map((r) => `[${r.votedUp ? '+' : '-'}] (${Math.round(r.playtimeAtReview / 60)} ч) ${fenceData(r.text, 400)}`)
 
   try {
-    const response = await cronClient().messages.create({
+    const response = await cronClient(budgetMs).messages.create({
       model: LLM_MODEL,
       max_tokens: 1200,
       messages: [
@@ -398,9 +464,11 @@ export async function claudeNewsDigest(args: {
   title: string
   body: string
   lang: 'ru' | 'en'
+  /** Остаток бюджета среза; без него — обычные 30с с повтором, см. cronClient */
+  budgetMs?: number
 }): Promise<{ tldr: string; scale: NewsScale } | null> {
   if (!llmAvailable()) return null
-  const { gameName, title, body, lang } = args
+  const { gameName, title, body, lang, budgetMs } = args
   if (!title.trim() && !body.trim()) return null
 
   const prompt = `Это официальная запись об обновлении игры «${fenceData(gameName, 100)}» из Steam.
@@ -419,7 +487,7 @@ scale — "major", если это крупное обновление: новы
 Ничего не выдумывай сверх текста.`
 
   try {
-    const response = await cronClient().messages.create({
+    const response = await cronClient(budgetMs).messages.create({
       model: LLM_MODEL,
       // Запас, а не бюджет: длину держит инструкция про 180 символов, платим мы
       // за написанное. Упереться в лимит тут дороже — при output_config.format

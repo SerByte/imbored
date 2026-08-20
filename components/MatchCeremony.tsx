@@ -60,12 +60,15 @@ export function MatchCeremony({
       className="media-dark relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden"
     >
       <div data-beat="art" className="absolute inset-0">
+        {/* Размыто в кисель под opacity-30: library_hero здесь стоил бы
+            лишние ~200 КБ за разрешение, которого не видно. Тот же расчёт,
+            что в ArtWash и в подложке карточки игры. */}
         <GameArt
           appid={game.appid}
           name={game.name}
           headerImage={game.headerImage}
           art={game.art}
-          variant="hero"
+          sizes="100vw"
           eager
           className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
         />
@@ -108,7 +111,24 @@ export function MatchCeremony({
           />
         </div>
 
-        <SplitHeading as="div" className="text-2xl font-bold" delay={0.9} stagger={0.05}>
+        {/*
+          h2, а не div, и это не про семантику ради семантики.
+
+          SplitHeading отдаёт имя скринридеру через aria-label на самом теге —
+          иначе его не будет вовсе: GSAP SplitText вешает aria-hidden на КАЖДОЕ
+          нарезанное слово. А на голом div (role=generic) aria-label запрещён
+          спецификацией ARIA и браузерами игнорируется. Выходило, что главный
+          факт экрана — во что именно вы играете — из дерева доступности
+          пропадал: «Это матч!», «все хотят одного и того же», тишина, и кнопка
+          «Открыть в Steam» без названия игры.
+
+          Это был ЕДИНСТВЕННЫЙ вызов SplitHeading с as="div" во всём проекте,
+          остальные пять — h1/h2, поэтому больше нигде не проявлялось.
+
+          Заголовком имя и является: выше стоит h1 «Это матч!» (EchoTitle), и
+          уровень h2 заодно чинит структуру, где после h1 не было ничего.
+        */}
+        <SplitHeading as="h2" className="text-2xl font-bold" delay={0.9} stagger={0.05}>
           {game.name}
         </SplitHeading>
 

@@ -7,9 +7,9 @@ import { BlurBand } from '@/components/BlurBand'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { SplitHeading } from '@/components/SplitHeading'
-import type { StoredNews } from '@/lib/db'
-import { countChanges } from '@/lib/steamhtml'
-import type { GameMeta } from '@/lib/types'
+import type { FeedItem } from '@/lib/db'
+import { dateLabel } from '@/lib/freshness'
+import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline, freshness } from './format'
 import { useNow } from './Now'
 
@@ -33,11 +33,14 @@ export function Cover({
   item,
   meta,
   nowSec,
+  changes,
   label,
 }: {
-  item: StoredNews
-  meta?: GameMeta
+  item: FeedItem
+  meta?: FeedMeta
   nowSec: number
+  /** правок в патче; считается на сервере — тело сюда больше не едет */
+  changes: number
   /** «в популярных играх» — какую из лент читает человек; без вкладок не нужна */
   label?: string
 }) {
@@ -57,7 +60,7 @@ export function Cover({
   const textFade = useTransform(scrollYProgress, [0, 0.75], [1, 0])
 
   const name = meta?.name ?? `Игра ${item.appid}`
-  const changes = countChanges(item.blocks)
+
   const studio = byline(meta?.developer, meta?.releaseYear)
   const published = new Date(item.publishedAt * 1000)
 
@@ -99,11 +102,21 @@ export function Cover({
       <div className="relative mx-auto w-full max-w-6xl px-5 pb-20 pt-40 md:pb-28">
         {/* Вторая колонка появляется только под реальный кадр патча: у 550 из
             1163 обновлений своей картинки нет, и пустые 300px просто ужимали бы
-            заголовок ни за чем. */}
+            заголовок ни за чем.
+
+            Разрез с lg, а не с md, и это продолжение той же мысли. Колонка
+            фиксирована на 300px, а кегль заголовка считается от вьюпорта
+            (clamp с 7vw), поэтому чем уже экран, тем большую долю кадр
+            отъедает: на 768 это 45% контейнера, на 1440 — 27%. Замер строки
+            при кадре: на 768 колонка 373px при кегле 53.8 — четырнадцать
+            знаков, на 1440 колонка 812 при кегле 88 — восемнадцать с
+            половиной. С порогом lg доля выравнивается: на 1024 те же
+            восемнадцать. Ниже — одна колонка, кадр идёт баннером под
+            заголовком. */}
         <div
           className={
             item.imageUrl
-              ? 'grid gap-10 md:grid-cols-[minmax(0,1fr)_300px] md:items-end'
+              ? 'grid gap-10 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-end'
               : 'grid gap-10'
           }
         >
@@ -180,17 +193,30 @@ export function Cover({
               className="hidden md:block"
               style={reduced ? undefined : { y: stillY }}
             >
+              {/*
+                lazy, а не eager, и это про телефон.
+
+                Обёртка выше — hidden md:block, то есть на мобильной ширине
+                кадр не показывается никогда. Но display:none не отменяет
+                загрузку <img src>, а eager снимает и ту отсрочку, которую
+                браузер дал бы сам: на телефоне качалось 201 КБ (замер по
+                текущему ведущему патчу) ради картинки, которой не будет.
+
+                Ленивая картинка внутри невидимого контейнера в кадр не
+                попадает никогда — значит и не грузится.
+              */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={item.imageUrl}
                 alt=""
-                loading="eager"
+                loading="lazy"
+                decoding="async"
+                fetchPriority="low"
                 className="w-full rounded-[20px] border border-edge object-cover shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)]"
               />
               <figcaption className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-dim">
-                <time dateTime={published.toISOString()}>
-                  {published.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
-                </time>
+                {/* Зона зафиксирована в dateLabel — см. lib/freshness. */}
+                <time dateTime={published.toISOString()}>{dateLabel(item.publishedAt)}</time>
               </figcaption>
             </motion.figure>
           ) : null}

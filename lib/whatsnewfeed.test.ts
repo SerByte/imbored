@@ -117,13 +117,33 @@ describe('resolveWhatsNew: добивка из общей', () => {
     expect(res.items.map((i) => i.appid)).toEqual([90])
   })
 
-  test('за три месяца по своим играм пусто — показываем общую целиком', async () => {
-    // вкладка, ведущая в пустоту, хуже её отсутствия
+  test('за три месяца по своим играм пусто — показываем общую целиком и БЕЗ вкладок', async () => {
+    // Вкладка, ведущая в пустоту, хуже её отсутствия — и это касается самого
+    // переключателя тоже. Пока hasMine считался по mine.length, страница
+    // рисовала две вкладки, помечала активной «В популярных играх», находясь
+    // по адресу /whatsnew без параметра, и переключить ленту было нельзя ни
+    // с одного из двух адресов.
     const s = stubs({ mine: [item(10, 500), item(11, 900)], major: [item(90, 0), item(91, 1)] })
     const res = await resolveWhatsNew({ steamid: '765', wantsPopular: false, ...s, limit: 2 })
 
-    expect(res).toMatchObject({ showPopular: true, hasMine: true })
+    expect(res).toMatchObject({ showPopular: true, hasMine: false })
     expect(res.items.map((i) => i.appid)).toEqual([90, 91])
+  })
+
+  test('на общей вкладке переключатель держится на свежести, а не на факте патчей', async () => {
+    // Тот же разрез с другой стороны: сюда приходят по ?feed=popular, и
+    // вернуться на личную вкладку можно только если ей есть что показать.
+    const stale = stubs({ mine: [item(10, 500)], major: [item(90, 0)] })
+    expect(await resolveWhatsNew({ steamid: '765', wantsPopular: true, ...stale })).toMatchObject({
+      showPopular: true,
+      hasMine: false,
+    })
+
+    const freshOne = stubs({ mine: [item(10, 1)], major: [item(90, 0)] })
+    expect(await resolveWhatsNew({ steamid: '765', wantsPopular: true, ...freshOne })).toMatchObject({
+      showPopular: true,
+      hasMine: true,
+    })
   })
 
   test('порог свежести настраивается', async () => {

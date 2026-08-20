@@ -2,8 +2,8 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
@@ -16,7 +16,7 @@ import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
-import { SplitHeading } from '@/components/SplitHeading'
+import { SplitHeadingLazy } from '@/components/SplitHeadingLazy'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { takeQuizCover } from '@/lib/handoff'
@@ -24,11 +24,12 @@ import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
 import type { QuizCover } from '@/lib/quizart'
 import type { Focus, Scope } from '@/lib/recommend'
-import { SOURCE_BADGE } from '@/lib/sources'
+import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
 import { DemoNotice } from '@/components/DemoNotice'
 import { WarmStrip } from '@/components/WarmStrip'
+import { useSearch } from '@/components/useSearch'
 import { connectDemo, runWarmup, type WarmupProgress } from '@/lib/warmup'
 
 type Signals = {
@@ -48,6 +49,7 @@ type Pick = {
       героем не становятся, им они не нужны. */
   screenshots?: string[]
   ccu: number | null
+  ccuAt: number | null
   shortDescription: string | null
   tags: string[]
   hoursPlayed: number | null
@@ -148,20 +150,32 @@ function weightedRandomIndex(length: number, exclude?: number): number {
 
 function Player() {
   const router = useRouter()
-  const search = useSearchParams()
-  const roulette = search.get('roulette') === '1'
-  const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
+  /*
+   * Через useSearch, а не useSearchParams: второй роняет весь маршрут в
+   * клиентский рендер, и /play отдавал 232 символа видимого текста — шапку и
+   * подвал. Экран ожидания с подписью «Изучаю твою библиотеку…» существовал
+   * только после разбора ~186 КБ сжатого JS, то есть человек, пришедший с
+   * квиза, ровно это время смотрел в пустоту. См. components/useSearch.
+   *
+   * Отрисовке параметры не нужны вовсе — весь их смысл в том, ЧТО запросить,
+   * а запрос уходит из эффекта, то есть уже после гидратации. Единственное
+   * исключение, askedMood, меняет одну подпись на экране ожидания.
+   */
+  const search = useSearch()
+  const q = useMemo(() => new URLSearchParams(search), [search])
+  const roulette = q.get('roulette') === '1'
+  const focus: Focus | null = q.get('from') === 'untouched' ? 'untouched' : null
   const mood: Mood = {
-    time: (search.get('time') as Mood['time']) ?? 'medium',
-    vibe: (search.get('vibe') as Mood['vibe']) ?? 'chill',
-    social: (search.get('social') as Mood['social']) ?? 'solo',
+    time: (q.get('time') as Mood['time']) ?? 'medium',
+    vibe: (q.get('vibe') as Mood['vibe']) ?? 'chill',
+    social: (q.get('social') as Mood['social']) ?? 'solo',
   }
   /**
    * Спрашивали ли настроение вообще. Все три оси, а не любая из них: значения
    * выше подставляются дефолтами, и на прямом заходе на /play подпись экрана
    * ожидания процитировала бы человеку слова, которых он не говорил.
    */
-  const askedMood = (['time', 'vibe', 'social'] as const).every((k) => search.has(k))
+  const askedMood = (['time', 'vibe', 'social'] as const).every((k) => q.has(k))
 
   const [phase, setPhase] = useState<'prepare' | 'spin' | 'reveal' | 'burnout' | 'error'>('prepare')
   const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
@@ -177,6 +191,7 @@ function Player() {
   const [askReason, setAskReason] = useState(false)
   const [showWhy, setShowWhy] = useState(false)
   const [skipCount, setSkipCount] = useState(0)
+  const [nowSec, setNowSec] = useState(0)
   const [engine, setEngine] = useState<string>('')
   // «Любые игры» против «только моя библиотека». Живёт в состоянии, а не в
   // адресе: это переключатель уже показанной выдачи, и перезагружать ради
@@ -213,18 +228,45 @@ function Player() {
   // чтобы не звать обновляться из-за трёх доехавших игр
   const warmAtReveal = useRef(0)
 
+  /**
+   * Отзыв о карточке. Отдаёт УСПЕХ, а не void, и это не косметика.
+   *
+   * Стояло `void fetch(...)` без .catch и без проверки res.ok. Для обучающих
+   * сигналов (liked, opened, skipped) молчание допустимо — их теряют по одному,
+   * и человеку об этом сообщать не за чем, — но молчать надо ОСОЗНАННО, как в
+   * components/SessionKeeper, а не потому что обработчик забыли: непойманный
+   * отказ вдобавок падал в консоль на каждый клик.
+   *
+   * А для 'banned' молчание недопустимо. Докблок components/BannedShelf
+   * называет бан «единственным необратимым действием во всём продукте» и
+   * требует «показывать, что именно он услышал, и уметь это отменить». При
+   * обрыве сети карточка исчезала с экрана, человек считал, что высказался, а
+   * в базе бана не было — и отменить нечего: полка «Чистилище» строится из
+   * сохранённых банов, а незасчитанного там нет. Вернётся завтра в подборе.
+   */
   const sendFeedback = useCallback(
-    (appid: number, action: 'liked' | 'skipped' | 'opened' | 'banned', reason?: string) => {
-      void fetch('/api/feedback', {
+    (
+      appid: number,
+      action: 'liked' | 'skipped' | 'opened' | 'banned',
+      reason?: string,
+    ): Promise<boolean> =>
+      fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ appid, action, ...(reason ? { reason } : {}), mood }),
       })
-    },
+        .then((r) => r.ok)
+        // Промис намеренно не отклоняется: вызывающий, которому исход не важен,
+        // пишет void sendFeedback(...) и не оставляет непойманного отказа.
+        .catch(() => false),
     // mood собирается из строки запроса и в рамках страницы неизменен
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
+
+  /** Бан ждёт подтверждения сервера — см. докблок sendFeedback выше. */
+  const [banning, setBanning] = useState(false)
+  const [banFailed, setBanFailed] = useState(false)
 
   /**
    * Запрос выдачи. Отдельно от прогрева: переключение режима повторяет только
@@ -248,8 +290,12 @@ function Player() {
           picks: Pick[]
           discoveries?: Pick[]
           engine: string
+          nowSec: number
         }
         if (!data.picks?.length) return null
+        // Серверные часы — по ним подпись онлайна решает, имеет ли право
+        // сказать «сейчас». См. докблок в components/PlayersNow.
+        setNowSec(data.nowSec)
         setPicks(data.picks)
         setDiscoveries(data.discoveries ?? [])
         setEngine(data.engine)
@@ -576,14 +622,7 @@ function Player() {
             name={pick.name}
             screenshots={pick.screenshots ?? []}
           />
-          <div
-            aria-hidden
-            className="absolute inset-0"
-            style={{
-              background:
-                'linear-gradient(to top, #0b0c10 4%, rgba(11,12,16,0.82) 26%, rgba(11,12,16,0.25) 55%, rgba(11,12,16,0.45) 100%)',
-            }}
-          />
+          <div aria-hidden className="absolute inset-0 hero-scrim" />
           {/* Арт остаётся ярким и просто уходит в мягкость под текстом —
               жёсткий градиент-стоп гасил его целиком, оставляя резким.
               tint включён: базовый скрим настроен под тёмный ключ-арт, а сюда
@@ -605,12 +644,12 @@ function Player() {
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
                   <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
                 )}
-                <PlayersNow ccu={pick.ccu} />
+                <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
               </motion.div>
 
-              <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.18}>
+              <SplitHeadingLazy className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.18}>
                 {pick.name}
-              </SplitHeading>
+              </SplitHeadingLazy>
 
               <motion.p variants={STEP} className="text-base md:text-lg text-ink/90 leading-relaxed">
                 {pick.reason}
@@ -618,11 +657,18 @@ function Player() {
 
             {whyParts.length > 0 && (
               <motion.div variants={STEP} className="text-sm">
+                {/*
+                  aria-expanded — единственный способ сказать скринридеру, что
+                  блок раскрыт: до этого признаком состояния был ТОЛЬКО глиф, а
+                  он вдобавок зачитывался вслух как «чёрный маленький треугольник
+                  вниз». Теперь глиф чисто для глаза.
+                */}
                 <button
                   onClick={() => setShowWhy(!showWhy)}
+                  aria-expanded={showWhy}
                   className="text-dim hover:text-ink transition-colors cursor-pointer"
                 >
-                  Почему она? {showWhy ? '▴' : '▾'}
+                  Почему она? <span aria-hidden>{showWhy ? '▴' : '▾'}</span>
                 </button>
                 <AnimatePresence initial={false}>
                   {showWhy && (
@@ -662,7 +708,7 @@ function Player() {
                   <button
                     key={r.key}
                     onClick={() => {
-                      sendFeedback(pick.appid, 'skipped', r.key)
+                      void sendFeedback(pick.appid, 'skipped', r.key)
                       advance(index)
                     }}
                     className="rounded-full glass glass-hover px-4 py-2 text-sm"
@@ -672,7 +718,7 @@ function Player() {
                 ))}
                 <button
                   onClick={() => {
-                    sendFeedback(pick.appid, 'skipped')
+                    void sendFeedback(pick.appid, 'skipped')
                     advance(index)
                   }}
                   className="text-sm text-dim hover:text-ink px-2 transition-colors"
@@ -690,7 +736,7 @@ function Player() {
                     href={storeHref(pick)}
                     target="_blank"
                     rel="noreferrer"
-                    onClick={() => sendFeedback(pick.appid, 'liked')}
+                    onClick={() => void sendFeedback(pick.appid, 'liked')}
                     className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   >
                     {pick.source === 'new'
@@ -700,7 +746,7 @@ function Player() {
                 ) : (
                   <SteamLaunch
                     appid={pick.appid}
-                    onClick={() => sendFeedback(pick.appid, 'liked')}
+                    onClick={() => void sendFeedback(pick.appid, 'liked')}
                     className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
                   />
                 )}
@@ -722,7 +768,7 @@ function Player() {
                 )}
                 <Link
                   href={`/game/${pick.appid}`}
-                  onClick={() => sendFeedback(pick.appid, 'opened')}
+                  onClick={() => void sendFeedback(pick.appid, 'opened')}
                   className="rounded-[14px] glass glass-hover px-6 py-3 text-sm"
                 >
                   Подробнее
@@ -730,7 +776,7 @@ function Player() {
                 <button
                   onClick={() => {
                     setLiked(new Set(liked).add(pick.appid))
-                    sendFeedback(pick.appid, 'liked')
+                    void sendFeedback(pick.appid, 'liked')
                   }}
                   className={`rounded-[14px] px-4 py-3 text-sm transition ${
                     liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
@@ -744,7 +790,7 @@ function Player() {
                     <ClickSpark>
                       <button
                         onClick={() => {
-                          sendFeedback(pick.appid, 'skipped')
+                          void sendFeedback(pick.appid, 'skipped')
                           advance(index)
                         }}
                         className="rounded-[14px] glass glass-hover no-lift px-4 py-3 text-sm text-dim cursor-pointer"
@@ -762,8 +808,31 @@ function Player() {
                   </button>
                 )}
                 <button
-                  onClick={() => {
-                    sendFeedback(pick.appid, 'banned')
+                  onClick={async () => {
+                    /*
+                      Бан ЖДЁТ ответа сервера, в отличие от соседей.
+
+                      Остальные кнопки убирают карточку сразу и правы: пропуск и
+                      «зашло» — обучающие сигналы, их потеря стоит одного числа в
+                      статистике. Бан же необратим и обязан быть записан: раньше
+                      карточка исчезала мгновенно, а при обрыве сети в базе не
+                      оставалось ничего — ни бана, ни следа в «Чистилище», откуда
+                      его можно было бы отменить. Человек считал, что высказался
+                      навсегда, и встречал ту же игру завтра.
+
+                      Ждать здесь дёшево: нажимают редко и осознанно, а короткое
+                      «Убираю…» на кнопке — это ровно то подтверждение, которого
+                      докблок BannedShelf и требует.
+                    */
+                    if (banning) return
+                    setBanning(true)
+                    setBanFailed(false)
+                    const ok = await sendFeedback(pick.appid, 'banned')
+                    setBanning(false)
+                    if (!ok) {
+                      setBanFailed(true)
+                      return
+                    }
                     const rest = picks.filter((p) => p.appid !== pick.appid)
                     if (!rest.length) {
                       router.push('/quiz')
@@ -773,8 +842,9 @@ function Player() {
                     setIndex(Math.min(index, rest.length - 1))
                     setShowWhy(false)
                   }}
+                  disabled={banning}
                   title="Больше не показывать эту игру"
-                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint cursor-pointer"
+                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint cursor-pointer disabled:opacity-60"
                 >
                   {/*
                     Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
@@ -784,9 +854,21 @@ function Player() {
                     Эмодзи спрятана от скринридера, текст объясняет разницу.
                   */}
                   <span aria-hidden>🚫</span>
-                  <span className="sr-only">Больше никогда не показывать эту игру</span>
+                  <span className="sr-only">
+                    {banning ? 'Убираю навсегда…' : 'Больше никогда не показывать эту игру'}
+                  </span>
                 </button>
               </motion.div>
+            )}
+            {/*
+              Отказ бана виден, потому что бан необратим. Формулировка ведёт
+              к следующему шагу, а не констатирует поломку: карточка на месте,
+              жест повторяется тем же нажатием.
+            */}
+            {banFailed && (
+              <p role="status" className="mt-3 text-sm text-danger">
+                Не получилось убрать игру насовсем — нажми ещё раз.
+              </p>
             )}
             </div>
           </motion.div>
@@ -849,7 +931,9 @@ function Player() {
                     name={p.name}
                     headerImage={p.headerImage}
                     art={p.art}
-                    sizes="(min-width: 768px) 33vw, 100vw"
+                    /* сетка тут grid-cols-2 md:grid-cols-4, то есть 50vw и 25vw;
+                       стояло «33vw, 100vw» — вдвое шире нужного на телефоне */
+                    sizes="(min-width: 768px) 25vw, 50vw"
                     className="w-full aspect-[460/215] object-cover"
                   />
                   <DiscountCorner discount={p.discount} />
@@ -858,7 +942,7 @@ function Player() {
                   <div className="text-sm font-semibold leading-tight">{p.name}</div>
                   <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
                     <span className="text-dim truncate">
-                      {p.store ? STORE_LABEL[p.store] ?? p.store : SOURCE_BADGE[p.source]}
+                      {p.store ? STORE_LABEL[p.store] ?? p.store : SOURCE_BADGE_SHORT[p.source]}
                     </span>
                     {/* Цена — только у не купленного: у своей игры она уже
                         ничего не решает, а место в строке занимает */}
@@ -963,10 +1047,10 @@ function Player() {
   )
 }
 
+/*
+ * Границы Suspense здесь больше нет: она стояла ради useSearchParams, а
+ * вместе с пустым фолбэком означала пустую разметку маршрута.
+ */
 export default function PlayPage() {
-  return (
-    <Suspense>
-      <Player />
-    </Suspense>
-  )
+  return <Player />
 }

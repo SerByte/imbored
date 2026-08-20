@@ -5,13 +5,16 @@ import {
   createDb,
   getGameJson,
   markPageEnriched,
+  markPageMissed,
+  migrateDb,
   replaceGameTags,
+  setGameJson,
   sitemapGames,
   upsertGameMeta,
   type Db,
 } from './db'
 import { LlmUnavailableError } from './llm'
-import { PAGE_MAX_AGE_SEC, runPageSlice } from './pagejob'
+import { MAX_BLOCKED_RUN, PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from './pagejob'
 import type { ParsedReviews } from './reviews'
 import type { GameMeta } from './types'
 
@@ -76,6 +79,94 @@ describe('очередь обогащения карточек', () => {
     expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10)).toEqual([30, 10])
   })
 
+  test('пустой поход не выдаёт себя за удачный: карточка возвращается в очередь', async () => {
+    // Ровно тот случай, что стоил проду 596 карточек из 721: appdetails молчит
+    // (лимит), карточка помечается сделанной и выпадает из очереди на полгода.
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    await runPageSlice(db, stubs({ fetchDetails: async () => null }))
+
+    const opts = { maxTries: PAGE_MAX_TRIES }
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([10])
+  })
+
+  test('удачный поход убирает карточку из повторов', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const opts = { maxTries: PAGE_MAX_TRIES }
+
+    await runPageSlice(db, stubs({ fetchDetails: async () => null }))
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([10])
+
+    // данные приехали — счётчик сброшен
+    await runPageSlice(db, stubs())
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
+  })
+
+  test('после потолка попыток карточка перестаёт занимать бюджет', async () => {
+    // Дверь, ради которой отметка и ставилась при неудаче: игра, у которой
+    // Steam молчит всегда, не должна возвращаться в очередь бесконечно.
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const opts = { maxTries: PAGE_MAX_TRIES }
+
+    for (let i = 0; i < PAGE_MAX_TRIES; i++) {
+      await runPageSlice(db, stubs({ fetchDetails: async () => null }))
+    }
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
+    expect(await countPageEnrichDue(db, NOW - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES)).toBe(0)
+  })
+
+  test('повтор идёт в первой группе, а не в хвосте за пятью тысячами нетронутых', async () => {
+    // Пустые походы достались верху каталога: очередь выгребается по убыванию
+    // reviews_total. Чинить CS2 после всех, кого никто не ищет, — не починка.
+    const db = await freshDb()
+    await addGame(db, 10, 900) // популярная, поход был пустым
+    await addGame(db, 20, 50) // непопулярная, ни разу не тронутая
+    await runPageSlice(db, stubs({ fetchDetails: async () => null, nowSec: NOW }))
+
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { maxTries: PAGE_MAX_TRIES })).toEqual([
+      10, 20,
+    ])
+  })
+
+  test('без maxTries поведение прежнее: повторов нет', async () => {
+    // Значение по умолчанию — ноль, и вызывающий, который про повторы не
+    // просил, получает ровно то же, что получал до их появления.
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await runPageSlice(db, stubs({ fetchDetails: async () => null }))
+
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10)).toEqual([])
+  })
+
+  test('разовый бэкфилл возвращает в очередь карточки, помеченные без данных', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    // так выглядит наследство: отметка стоит, скриншотов нет, счётчик нулевой
+    await markPageEnriched(db, 10, NOW)
+
+    // миграция уже прошла при createDb — снимаем флаг и прогоняем ещё раз
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'page_tries_backfilled_v1'")
+    await migrateDb(db)
+
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { maxTries: PAGE_MAX_TRIES })).toEqual([
+      10,
+    ])
+  })
+
+  test('бэкфилл не трогает карточки, у которых скриншоты есть', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await runPageSlice(db, stubs()) // приехали и скриншоты, и pros/cons
+
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'page_tries_backfilled_v1'")
+    await migrateDb(db)
+
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { maxTries: PAGE_MAX_TRIES })).toEqual([])
+  })
+
   test('карточка с эвристическими pros/cons возвращается в очередь, когда есть модель', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)
@@ -100,6 +191,55 @@ describe('очередь обогащения карточек', () => {
     expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
   })
 
+  test('на исходе бюджета модель не зовём, но карточку наполняем', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    let звали = 0
+    // Срок ещё не прошёл — цикл в карточку зайдёт и сходит в Steam, — но
+    // остатка заведомо мало: у вызова свои 30с × 2, и они утащили бы инстанс
+    // за maxDuration вместе с finally, где передача цепочки и снятие аренды.
+    const res = await runPageSlice(
+      db,
+      stubs({
+        deadlineAt: Date.now() + 2_000,
+        prosConsFn: async () => {
+          звали++
+          return { pros: ['красиво'], cons: ['дорого'] }
+        },
+      }),
+    )
+
+    expect(звали).toBe(0)
+    expect(res.viaClaude).toBe(0)
+    // но карточка не пустая: эвристика считается и пишется до модели
+    expect(res.withProsCons).toBe(1)
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
+    // и она вернётся за пересказом сама — ровно этой веткой
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { redoHeuristic: true })).toEqual([10])
+  })
+
+  test('запаса хватает — модель зовём и остаток бюджета отдаём ей', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    const бюджеты: Array<number | undefined> = []
+    await runPageSlice(
+      db,
+      stubs({
+        deadlineAt: Date.now() + 40_000,
+        prosConsFn: async (_n: string, _r: unknown, budgetMs?: number) => {
+          бюджеты.push(budgetMs)
+          return { pros: ['красиво'], cons: ['дорого'] }
+        },
+      }),
+    )
+
+    expect(бюджеты).toHaveLength(1)
+    expect(бюджеты[0]).toBeGreaterThan(30_000)
+    expect(бюджеты[0]).toBeLessThanOrEqual(40_000)
+  })
+
   test('--no-llm не тащит обратно карточку, собранную эвристикой', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)
@@ -114,6 +254,32 @@ describe('очередь обогащения карточек', () => {
     // вечно, по два запроса в Steam на каждую карточку.
     const again = await runPageSlice(db, stubs({ useClaude: false }))
     expect(again.enriched).toBe(0)
+  })
+
+  test('исчерпавшая попытки карточка не возвращается и через пересборку эвристики', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    // эвристические pros/cons — то есть кандидат на пересборку моделью
+    await setGameJson(db, 10, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
+    // и при этом счётчик пустых походов уже упёрся в потолок
+    for (let i = 0; i < PAGE_MAX_TRIES; i++) await markPageMissed(db, 10, NOW)
+
+    const opts = { redoHeuristic: true, maxTries: PAGE_MAX_TRIES }
+    // Ветка пересборки стояла без оглядки на счётчик: карточка, у которой
+    // appdetails молчит, а эвристика записана, возвращалась бы в очередь
+    // вечно — тот самый head-of-line, ради которого потолок и заводили.
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
+  })
+
+  test('без политики повторов пересборка эвристики работает как прежде', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await setGameJson(db, 10, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
+    await markPageEnriched(db, 10, NOW)
+
+    // maxTries по умолчанию 0 означает «повторов нет», и голое сравнение
+    // page_tries < maxTries убило бы ветку целиком: у карточки счётчик ноль.
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { redoHeuristic: true })).toEqual([10])
   })
 
   test('карточка, собранная моделью, повторно не берётся', async () => {
@@ -229,6 +395,58 @@ describe('runPageSlice', () => {
   })
 })
 
+describe('срез останавливается, когда закрылась любая из двух ручек', () => {
+  test('душимый appdetails тоже останавливает срез, а не жжёт весь набор', async () => {
+    // Ровно тот механизм, из-за которого 596 карточек остались без скриншотов:
+    // отзывы отвечают, appdetails душат, а страж смотрел только на отзывы и
+    // обнулялся на каждом их успехе. Срез доходил до конца и помечал всё.
+    const db = await freshDb()
+    for (let i = 1; i <= 8; i++) await addGame(db, i * 10, 1000 - i)
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchDetails: async () => {
+          throw new Error('HTTP 429')
+        },
+      }),
+    )
+
+    expect(res.stopped).toBe('blocked')
+    expect(res.enriched).toBe(MAX_BLOCKED_RUN)
+  })
+
+  test('душимые отзывы тоже останавливают срез, хотя appdetails отвечает', async () => {
+    // Вторая ось стража. Пока fetchReviews возвращал null вместо исключения,
+    // 429 на appreviews не взводил счётчик вовсе: срез доходил до конца и
+    // уводил карточки из очереди на полгода без вердикта отзывов и pros/cons.
+    const db = await freshDb()
+    for (let i = 1; i <= 8; i++) await addGame(db, i * 10, 1000 - i)
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchReviewsFn: async () => {
+          throw new Error('appreviews 10: HTTP 429')
+        },
+      }),
+    )
+
+    expect(res.stopped).toBe('blocked')
+    expect(res.enriched).toBe(MAX_BLOCKED_RUN)
+  })
+  test('«игры нет в ответе» — не отказ сети и срез не останавливает', async () => {
+    // fetchAppDetails возвращает null, когда ответ пришёл, но игры в нём нет
+    // (снятая с продажи, не game). Это про игру, а не про наш IP.
+    const db = await freshDb()
+    for (let i = 1; i <= 6; i++) await addGame(db, i * 10, 1000 - i)
+
+    const res = await runPageSlice(db, stubs({ fetchDetails: async () => null }))
+
+    expect(res.stopped).toBe('done')
+    expect(res.enriched).toBe(6)
+  })
+})
 describe('карта сайта', () => {
   test('отдаёт живые игры по убыванию отзывов и не ждёт обогащения', async () => {
     const db = await freshDb()

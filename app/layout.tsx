@@ -4,6 +4,7 @@ import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono, Onest } from 'next/font/google'
 import Link from 'next/link'
 import { Footer } from '@/components/Footer'
+import { HeaderNav } from '@/components/HeaderNav'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
@@ -19,10 +20,28 @@ const onest = Onest({
 })
 
 /**
- * Моноширинный нужен почти везде — но только для чисел: проценты, цены, коды
- * комнат, счётчики. Ни одного такого числа нет на первом экране, поэтому
- * preload выключен: файл догрузится к моменту, когда до цифр дойдёт дело, и не
- * будет соревноваться за полосу с основным шрифтом и обложками.
+ * Моноширинный — для чисел и для всего, что рядом с ними: проценты, цены, коды
+ * комнат, счётчики, даты, подписи свежести.
+ *
+ * preload выключен, и обоснование к нему приписано неверное: «ни одного такого
+ * числа нет на первом экране». На карточке игры это не так, и она же — самая
+ * посещаемая поверхность сайта (5919 адресов в карте против дюжины остальных).
+ * Замер на развёрнутой ветке при окне в 675 пикселей: моноширинных узлов на
+ * первом экране три, и верхний из них — «86%» на 194-м пикселе, то есть
+ * главное число страницы. Ниже него «из 9 792 695 отзывов» и «бесплатно».
+ *
+ * Настройку при этом оставляю как есть, и это осознанно. Довод про полосу
+ * никуда не делся: preload у next/font глобальный, включить его для одной
+ * карточки нельзя, а на главной и в квизе моноширинного над сгибом нет — там
+ * это чистые 46 КБ поверх основного шрифта и обложек. Сколько длится подмена
+ * начертания на холодной сети, я замерить не смог: в браузере всё пришло из
+ * кэша за 45 мс. Менять настройку по догадке хуже, чем оставить её с честно
+ * записанной ценой.
+ *
+ * Кириллица у моноширинного НУЖНА, хотя из формулировки «только для чисел»
+ * следовало обратное: ей набраны «12 августа 2026 г.», «бесплатно» и «2 недели
+ * назад». Проверено обходом узлов на четырёх страницах — соблазн выкинуть
+ * поддиапазон и сэкономить сломал бы их.
  */
 const jbMono = JetBrains_Mono({
   variable: '--font-jbmono',
@@ -153,12 +172,30 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
 
             pointer-events-none обязателен: слой свисает ниже шапки и иначе
             перехватывал бы клики по строкам ленты.
+
+            Средний стоп на 45% — не украшение, а порог читаемости. Градиент шёл
+            от --header-fade сразу в ноль по всей высоте слоя (96px), а строка
+            ссылок стоит на 22–42px, то есть на трети пути: замер на /portrait дал
+            там альфу 0.567. Ссылки цветом --dim (#9ba1ab) при такой подложке
+            берут против светлого арта 1.77:1 — и проходят AA только если арт под
+            ними темнее rgb(114). На той же странице под шапкой лежит мозаика
+            обложек, среди которых есть и яркие.
+
+            Поднимать было нечего: при 0.567 порог 4.5 не берёт ни один цвет,
+            кроме почти чистого белого (--ink даёт 4.13). Зато на полной силе
+            фейда --dim даёт 5.15 — то есть достаточно ДОНЕСТИ затемнение до
+            строки, не меняя ни цвет ссылок, ни вес, ни признак активного пункта.
+
+            Ниже 45% всё как было: слой растворяется, маска добирает остаток. На
+            страницах без арт-зоны разницы не видно вовсе — там под фейдом тот же
+            --bg, что и в нём самом.
           */}
           <div
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 h-[150%] backdrop-blur-[6px]"
             style={{
-              background: 'linear-gradient(to bottom, var(--header-fade), transparent)',
+              background:
+                'linear-gradient(to bottom, var(--header-fade) 0%, var(--header-fade) 45%, transparent 100%)',
               maskImage: 'linear-gradient(to bottom, #000 55%, transparent)',
               WebkitMaskImage: 'linear-gradient(to bottom, #000 55%, transparent)',
             }}
@@ -168,28 +205,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <LogoMark size={22} />
               <Wordmark />
             </Link>
-            <nav className="flex items-center gap-5 text-sm text-dim">
+            <nav aria-label="Разделы" className="flex items-center gap-5 text-sm text-dim">
               {/* на телефоне пункты уезжают в нижнюю панель — в шапке остаётся только тема */}
-              <span className="hidden md:flex items-center gap-5">
-                <Link href="/daily" className="hover:text-ink transition-colors">
-                  Игра дня
-                </Link>
-                <Link href="/quiz" className="hover:text-ink transition-colors">
-                  Подобрать игру
-                </Link>
-                <Link href="/rooms" className="hover:text-ink transition-colors">
-                  Пати
-                </Link>
-                <Link href="/whatsnew" className="hover:text-ink transition-colors">
-                  Что нового
-                </Link>
-                <Link href="/compat" className="hover:text-ink transition-colors">
-                  Совместимость
-                </Link>
-                <Link href="/library" className="hover:text-ink transition-colors">
-                  Библиотека
-                </Link>
-              </span>
+              <HeaderNav />
               <ThemeToggle />
             </nav>
           </div>

@@ -25,9 +25,11 @@ import {
   DIGEST_LEASE,
   enrollNewsPoll,
   releaseLease,
+  STEAM_LEASE,
   topCatalogAppids,
 } from '../lib/db'
 import { runNewsSlice } from '../lib/newsjob'
+import { withLease } from './lease'
 
 /** Игр за один срез. Хост store.steampowered.com держим на 1.7 с между
  *  запросами — тот же лимитер, что у appreviews и appdetails. */
@@ -160,31 +162,55 @@ async function main() {
   let digested = 0
   const startedAt = Date.now()
 
-  while (polled < maxGames) {
-    const limit = Math.min(SLICE, maxGames - polled)
-    const res = await runNewsSlice(db, {
-      // без дедлайна: локальный прогон никто не убивает по таймеру
-      deadlineAt: Date.now() + 10 * 60_000,
-      nowSec: claimAt,
-      limit,
-      digestLimit: 12,
-      onProgress: (line) => console.log(line),
-    })
-    polled += res.polled
-    inserted += res.inserted
-    digested += res.digested
+  /*
+   * Два ключа, а не один. Опрос ходит в Steam (значит, спорит с /api/cron/news
+   * за очередь опроса) и попутно пересказывает по двенадцать записей за срез
+   * (значит, спорит с /api/cron/digest за очередь пересказов). Ни одна из
+   * очередей строки не резервирует, так что одновременный прогон — это не
+   * гонка, а просто двойная оплата одной и той же работы.
+   *
+   * Ветка --digest-only выше берёт только DIGEST_LEASE: в Steam она не ходит
+   * вовсе, и запирать ей опрос не за что.
+   */
+  const прошло = await withLease(
+    db,
+    [STEAM_LEASE, DIGEST_LEASE],
+    {
+      busyNote:
+        'очередь новостей занята: её разбирает крон либо прерванный прогон, не успевший отдать аренду.',
+    },
+    async ({ renew }) => {
+      while (polled < maxGames) {
+        const limit = Math.min(SLICE, maxGames - polled)
+        // Держим коротким TTL и продлеваем каждым кругом: срез это около минуты
+        await renew()
+        const res = await runNewsSlice(db, {
+          // без дедлайна: локальный прогон никто не убивает по таймеру
+          deadlineAt: Date.now() + 10 * 60_000,
+          nowSec: claimAt,
+          limit,
+          digestLimit: 12,
+          onProgress: (line) => console.log(line),
+        })
+        polled += res.polled
+        inserted += res.inserted
+        digested += res.digested
 
-    if (!res.polled) break
-    if (res.stopped === 'blocked') {
-      console.warn('\nSteam закрылся от этого IP — прерываю, аренда истечёт сама')
-      break
-    }
-    const mins = Math.round((Date.now() - startedAt) / 60_000)
-    console.log(
-      `${polled.toLocaleString('ru-RU')} игр\tзаписей: ${inserted}\tпересказов: ${digested}\t${mins} мин`,
-    )
-    if (!res.hasMore) break
-  }
+        if (!res.polled) break
+        if (res.stopped === 'blocked') {
+          console.warn('\nSteam закрылся от этого IP — прерываю, аренда отдаётся сама')
+          break
+        }
+        const mins = Math.round((Date.now() - startedAt) / 60_000)
+        console.log(
+          `${polled.toLocaleString('ru-RU')} игр\tзаписей: ${inserted}\tпересказов: ${digested}\t${mins} мин`,
+        )
+        if (!res.hasMore) break
+      }
+      return true
+    },
+  )
+  if (прошло === null) return
 
   const left = await countNewsPollDue(db, Math.floor(Date.now() / 1000))
   console.log(

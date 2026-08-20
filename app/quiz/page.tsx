@@ -1,12 +1,13 @@
 'use client'
 
 import { AnimatePresence, motion } from 'motion/react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { ClickSpark } from '@/components/ClickSpark'
 import { SoundToggle } from '@/components/SoundToggle'
 import { SpotlightCard } from '@/components/SpotlightCard'
+import { useSearch } from '@/components/useSearch'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { VIBE_PRESETS } from '@/lib/presets'
 import { isSoundOn } from '@/lib/quizsound'
@@ -93,19 +94,49 @@ function prefersReducedMotion(): boolean {
 
 function Quiz() {
   const router = useRouter()
-  const search = useSearchParams()
+  const search = useSearch()
   const [stepIndex, setStepIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [back, setBack] = useState(false)
   /** Ответ, который сейчас подтверждается; в финале он же победитель. */
   const [chosen, setChosen] = useState<string | null>(null)
+  /**
+   * Перенос фокуса между шагами.
+   *
+   * AnimatePresence mode="wait" размонтирует кнопку, в которой был фокус, и
+   * он падает в body: клавиатурного человека молча выкидывает в начало
+   * документа посреди анкеты. Задача та же, что решена в
+   * components/room/RoomWaiting при уходе колоды.
+   *
+   * Но эффектом на stepIndex это не чинится, и проверено, что не чинится:
+   * mode="wait" монтирует новый шаг ТОЛЬКО после того, как доиграет уход
+   * старого, а эффект срабатывает сразу — узла ещё нет, фокусировать нечего.
+   * Поэтому фокус забирает ref-колбэк, то есть сам момент появления узла, а
+   * флаг отличает смену шага от первого захода: воровать фокус у человека,
+   * который только открыл страницу, не за чем.
+   */
+  const wantStepFocus = useRef(false)
+  const stepHeadRef = useCallback((el: HTMLHeadingElement | null) => {
+    if (!el || !wantStepFocus.current) return
+    wantStepFocus.current = false
+    el.focus()
+  }, [])
   const [outro, setOutro] = useState(false)
 
   const step = STEPS[stepIndex]
   const last = stepIndex === STEPS.length - 1
+
   // Приходит с /library («Разгрести →») и живёт до самого /play. Не настроение,
-  // а отдельная ось — как roulette у «Мне повезёт»
-  const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
+  // а отдельная ось — как roulette у «Мне повезёт».
+  //
+  // Читается через useSearch, а не useSearchParams: второй ронял весь
+  // маршрут в клиентский рендер, и /quiz отдавал ту же пустую разметку, что
+  // и главная. Подпись под кнопками меняется кадром позже — единственное,
+  // на что этот параметр влияет в отрисовке.
+  const focus: Focus | null = useMemo(
+    () => (new URLSearchParams(search).get('from') === 'untouched' ? 'untouched' : null),
+    [search],
+  )
 
   /** Заведён ли аудиоконтекст. Общий на оба пути — иначе снос пропускает тот,
    *  что подняли не тем путём, и контекст переживает уход на выдачу. */
@@ -187,6 +218,7 @@ function Quiz() {
         setAnswers(next)
         setBack(false)
         setChosen(null)
+        wantStepFocus.current = true
         setStepIndex((i) => i + 1)
       }, CONFIRM_MS)
       return
@@ -242,12 +274,34 @@ function Quiz() {
       <div className="relative w-full max-w-2xl flex flex-col items-center gap-10">
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
-            <div className="flex flex-wrap justify-center gap-2">
+            {/*
+              На телефоне пилюли едут одной лентой, а не переносятся.
+
+              Замер на 375×812: семь пилюль вставали в ШЕСТЬ рядов, из них
+              пять — по одной штуке, потому что «🕳️ Залипнуть на выходные»
+              шире половины экрана. Облако занимало 262px, то есть треть
+              экрана, и уводило вопрос «Сколько у тебя времени?» на y=478, а
+              первую карточку ответа — на y=590. До того, ради чего страница
+              существует, нужно было доскроллить.
+
+              chip-rail уже лежал в globals.css и не использовался никем: он
+              пережил откат кино-квиза, вместе с которым ушло 1409 строк
+              соседних стилей. Написан он ровно под этот случай — правый фейд
+              вместо стрелок, спрятанный скроллбар в обоих движках и снятый
+              backdrop-filter у стеклянных чипов, без которого Chromium не
+              рисует их внутри маски ВООБЩЕ.
+
+              justify-start, а не center: в ленте с переполнением центрирование
+              прячет первый элемент за левым краем без возможности доскроллить.
+              На десктопе оба возвращаются — там перенос строками и уместен,
+              и маска сама гаснет на 768px.
+            */}
+            <div className="chip-rail self-stretch flex flex-nowrap md:flex-wrap justify-start md:justify-center gap-2 -mx-5 px-5 md:mx-0 md:px-0 pb-1">
               {VIBE_PRESETS.map((p) => (
                 <button
                   key={p.key}
                   onClick={() => go(p.mood)}
-                  className="glass glass-hover rounded-full px-4 py-2 text-sm cursor-pointer"
+                  className="glass glass-hover shrink-0 rounded-full px-4 py-2 text-sm cursor-pointer"
                 >
                   {p.emoji} {p.label}
                 </button>
@@ -263,13 +317,13 @@ function Quiz() {
                     { roulette: true },
                   )
                 }
-                className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                className="shrink-0 rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Мне повезёт
               </button>
               <button
                 onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
-                className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                className="shrink-0 rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Ни разу не запускал
               </button>
@@ -310,12 +364,25 @@ function Quiz() {
             exit="exit"
             className="w-full flex flex-col items-center gap-10"
           >
+            {/*
+              tabIndex={-1} — чтобы заголовок мог принять фокус программно, не
+              появляясь при этом в обходе по Tab. role="status" на нём же
+              лишний: заголовок и так объявляется при получении фокуса, а
+              «какой это вопрос из скольких» несёт подпись ниже.
+            */}
             <motion.h1
+              ref={stepHeadRef}
+              tabIndex={-1}
               variants={ITEM_VARIANTS}
-              className="text-3xl md:text-4xl font-bold tracking-tight text-center"
+              className="text-3xl md:text-4xl font-bold tracking-tight text-center outline-none"
             >
               {step.question}
             </motion.h1>
+            {/* Точки прогресса выше — голые span, для скринридера их нет.
+                Одна строка вместо них, и меняется она раз в шаг, а не в кадр. */}
+            <p role="status" className="sr-only">
+              Вопрос {stepIndex + 1} из {STEPS.length}
+            </p>
 
             {/* Залп искр ровно один раз за прохождение — в финале и программно,
                 на sparkAt из партитуры, а не по клику. lib/motion.test.ts
@@ -334,6 +401,7 @@ function Quiz() {
           <button
             onClick={() => {
               setBack(true)
+              wantStepFocus.current = true
               setStepIndex(stepIndex - 1)
             }}
             className="text-sm text-dim hover:text-ink transition-colors cursor-pointer"
@@ -346,11 +414,11 @@ function Quiz() {
   )
 }
 
-// useSearchParams требует границы Suspense, иначе next build падает на пререндере
+/*
+ * Границы Suspense здесь больше нет: она стояла ради useSearchParams, а
+ * вместе с пустым фолбэком означала пустую разметку маршрута. См.
+ * components/useSearch.
+ */
 export default function QuizPage() {
-  return (
-    <Suspense>
-      <Quiz />
-    </Suspense>
-  )
+  return <Quiz />
 }

@@ -90,7 +90,10 @@ export async function GET(req: Request) {
     const res = NextResponse.redirect(target)
     res.cookies.set(
       SESSION_COOKIE,
-      await issueSession(steamid, req.headers.get('user-agent')),
+      // Единственное место, где владение профилем ДОКАЗАНО: выше отработал
+      // verifyAssertion. Признак разрешает разрушительное — см. докблок
+      // Resolved.verified в lib/sessions.
+      await issueSession(steamid, req.headers.get('user-agent'), { verified: true }),
       sessionCookieOptions(),
     )
     return res

@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 
 /**
@@ -45,12 +44,28 @@ export function DemoNotice({ variant = 'flow' }: { variant?: 'flow' | 'overlay' 
         <span className="text-dim">
           Это <span className="text-ink">демо-библиотека</span> — игры не твои, подбор настоящий.
         </span>
-        <Link
+        {/*
+          Обычный <a>, а не <Link>, и это не мелочь.
+
+          /api/auth/steam — не страница, а роут, который отвечает 302 на
+          steamcommunity.com. Link его ПРЕФЕТЧИТ, как только баннер попадает в
+          кадр: браузер дёргает нашу функцию, получает редирект на чужой
+          домен и упирается в CORS. В консоли у каждого посетителя /play и
+          /daily висели две красные строки, а на каждый показ баннера уходил
+          вызов функции ради ответа, который выбрасывается.
+
+          Замечено на превью-деплое по адресу в ошибке: _rsc в query — это
+          и есть префетч роутера.
+
+          Остальные четыре ссылки на этот же адрес (главная, /compat/[steamid],
+          /room/[id], сама форма) всегда были обычными <a>.
+        */}
+        <a
           href={`/api/auth/steam?next=${next}`}
           className="text-ember-text hover:underline shrink-0"
         >
           Подключить свою →
-        </Link>
+        </a>
       </div>
     </div>
   )

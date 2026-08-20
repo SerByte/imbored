@@ -1,4 +1,5 @@
 import { createClient, type Client } from '@libsql/client'
+import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
 import type { NewsBlock } from './steamhtml'
 import type { GameMeta, LibraryGame, Mood } from './types'
@@ -48,7 +49,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   seen_at INTEGER NOT NULL,
   revoked_at INTEGER,
-  device TEXT
+  device TEXT,
+  verified INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_sessions_steamid ON sessions (steamid) WHERE revoked_at IS NULL;
 CREATE TABLE IF NOT EXISTS library_snapshots (
@@ -310,6 +312,9 @@ export async function createDb(url: string, authToken?: string): Promise<Db> {
  */
 const DERIVED_BACKFILL_KEY = 'derived_backfilled_v1'
 
+/** Ключ разовой пометки карточек, помеченных обогащёнными без данных. */
+const PAGE_TRIES_BACKFILL_KEY = 'page_tries_backfilled_v1'
+
 export async function migrateDb(db: Db): Promise<Db> {
   await db.executeMultiple(SCHEMA)
 
@@ -350,12 +355,18 @@ export async function migrateDb(db: Db): Promise<Db> {
     // когда карточку игры последний раз обогащали (скриншоты, отзывы, pros/cons).
     // NULL — ни разу; см. lib/pagejob.ts
     ['games', 'page_at INTEGER'],
+    // Сколько раз подряд поход за карточкой возвращался пустым. Ноль — данные
+    // приехали (или ещё не ходили). Отличает «сходили и привезли» от «сходили
+    // и не привезли», которые до появления колонки были одним и тем же
+    // page_at; см. markPageMissed и lib/pagejob.ts.
+    ['games', 'page_tries INTEGER NOT NULL DEFAULT 0'],
     // цена без скидки, размер скидки, её конец и время замера — своя ось
     // свежести у цены, метаданные живут в 30 раз дольше распродажи
     ['games', 'price_initial INTEGER'],
     ['games', 'discount_percent INTEGER'],
     ['games', 'discount_ends_at INTEGER'],
     ['games', 'price_at INTEGER'],
+    ['sessions', 'verified INTEGER NOT NULL DEFAULT 0'],
   ] as const) {
     try {
       await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col}`)
@@ -397,6 +408,38 @@ export async function migrateDb(db: Db): Promise<Db> {
     await db.execute({
       sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
       args: [DERIVED_BACKFILL_KEY, '1'],
+    })
+  }
+
+  /*
+   * Разовая пометка карточек, которые помечены обогащёнными, а данных с ними
+   * не приехало.
+   *
+   * Признак — пустые скриншоты: их источник только appdetails, и если поход
+   * туда удался, они есть почти у любой игры Steam. На проде под это условие
+   * попадает 596 карточек из 721 обогащённой, и это верх каталога по числу
+   * отзывов: CS2, Dota 2, Rainbow Six, Team Fortress 2, Terraria.
+   *
+   * Ставим единицу, а не ноль: с page_tries = 1 карточка возвращается в
+   * очередь (см. claimPageEnrichBatch) и попадает в первую группу, но остаётся
+   * под потолком PAGE_MAX_TRIES. Игра, у которой скриншотов действительно нет,
+   * потратит на это один поход, после чего удачная отметка сбросит счётчик и
+   * уберёт её из повторов.
+   *
+   * Под флагом по той же причине, что и бэкфилл выше: это полнотабличный
+   * UPDATE по games, а Turso считает прочитанные строки.
+   */
+  const pageTriesDone = await db.execute({
+    sql: 'SELECT value FROM catalog_meta WHERE key = ?',
+    args: [PAGE_TRIES_BACKFILL_KEY],
+  })
+  if (!pageTriesDone.rows.length) {
+    await db.execute(`UPDATE games SET page_tries = 1
+      WHERE page_at IS NOT NULL AND page_tries = 0
+        AND (screenshots_json IS NULL OR screenshots_json = '[]')`)
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [PAGE_TRIES_BACKFILL_KEY, '1'],
     })
   }
 
@@ -455,6 +498,14 @@ export async function migrateDb(db: Db): Promise<Db> {
 
 /** Что известно про сессию помимо самой куки; см. комментарий у таблицы */
 export type SessionRow = {
+  /**
+   * Владение профилем ДОКАЗАНО через Steam OpenID.
+   *
+   * Ноль по умолчанию — и для старых строк, и когда строки нет вовсе (сессия
+   * переживает недоступную Turso, см. issueSession). Наименьшие права: неизвестное
+   * происхождение считаем неподтверждённым.
+   */
+  verified: boolean
   revokedAt: number | null
   /** users.sessions_from — отсечка «выйти везде», общая на все устройства */
   sessionsFrom: number | null
@@ -474,7 +525,7 @@ export async function getSessionState(
   steamid: string,
 ): Promise<SessionRow> {
   const res = await db.execute({
-    sql: `SELECT s.revoked_at AS revoked_at, u.sessions_from AS sessions_from
+    sql: `SELECT s.revoked_at AS revoked_at, s.verified AS verified, u.sessions_from AS sessions_from
             FROM (SELECT ? AS sid, ? AS steamid) q
             LEFT JOIN sessions s ON s.sid = q.sid AND s.steamid = q.steamid
             LEFT JOIN users u ON u.steamid = q.steamid`,
@@ -484,19 +535,20 @@ export async function getSessionState(
   return {
     revokedAt: (row?.revoked_at as number | null) ?? null,
     sessionsFrom: (row?.sessions_from as number | null) ?? null,
+    verified: Number(row?.verified ?? 0) === 1,
   }
 }
 
 export async function createSession(
   db: Db,
-  s: { sid: string; steamid: string; device?: string | null },
+  s: { sid: string; steamid: string; device?: string | null; verified?: boolean },
   nowSec: number,
 ): Promise<void> {
   await db.execute({
-    sql: `INSERT INTO sessions (sid, steamid, created_at, seen_at, device)
-          VALUES (?, ?, ?, ?, ?)
+    sql: `INSERT INTO sessions (sid, steamid, created_at, seen_at, device, verified)
+          VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(sid) DO UPDATE SET seen_at = excluded.seen_at`,
-    args: [s.sid, s.steamid, nowSec, nowSec, s.device ?? null],
+    args: [s.sid, s.steamid, nowSec, nowSec, s.device ?? null, s.verified ? 1 : 0],
   })
 }
 
@@ -720,7 +772,31 @@ export async function joinRoom(
 
 export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]> {
   const res = await db.execute({
-    sql: 'SELECT steamid, persona_name, joined_at FROM room_members WHERE room_id = ? ORDER BY joined_at ASC',
+    /*
+     * Добивка по steamid — не исправление симптома, а запись контракта.
+     *
+     * joined_at секундный, и двое, вошедшие в одну секунду (обычное дело:
+     * ссылку кидают в чат разом), по нему неразличимы. Порядок при этом СЕЙЧАС
+     * определён, но не нами: EXPLAIN QUERY PLAN на этом запросе даёт «SEARCH
+     * USING INDEX sqlite_autoindex_room_members_1 (room_id=?)» и следом «USE
+     * TEMP B-TREE FOR ORDER BY» — то есть строки приходят из автоиндекса по
+     * (room_id, steamid), уже отсортированные по steamid, а сортировка по
+     * joined_at этот порядок для равных ключей сохраняет. Замер подтверждает:
+     * без добивки трое, вошедшие одной секундой, выходят по steamid.
+     *
+     * Держаться этого нельзя. Порядок — следствие плана и формы первичного
+     * ключа, а прод ходит в libsql, а не в тот же sqlite; смена плана,
+     * появление подходящего индекса или переезд ключа молча его меняют.
+     *
+     * Что на нём висит: ростер рисуется с layout-анимациями (перестановка —
+     * видимый обмен строк местами на экране ожидания), ключ догрузки лайков
+     * склеен из участников по порядку (дрожание ключа гнало бы запрос каждый
+     * тик даже на стоящей пати), и суммарный вкус в buildGroupDeck
+     * складывается обходом участников. Ни одно из трёх сегодня не сломано —
+     * добивка стоит ноль и снимает зависимость от того, что нам не обещали.
+     */
+    sql: `SELECT steamid, persona_name, joined_at FROM room_members
+          WHERE room_id = ? ORDER BY joined_at ASC, steamid ASC`,
     args: [roomId],
   })
   return (
@@ -734,6 +810,55 @@ export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]>
     ...(r.persona_name ? { personaName: r.persona_name } : {}),
     joinedAt: r.joined_at,
   }))
+}
+
+/**
+ * Убрать участника из комнаты — вместе с его голосами.
+ *
+ * Голоса удаляются ОБЯЗАТЕЛЬНО, и это не уборка, а корректность.
+ * findRoomMatch считает знаменатель как COUNT(*) FROM room_members, а
+ * числитель как COUNT(DISTINCT v.steamid) среди положительных голосов. Если
+ * ушедший оставит свои голоса, числитель продолжит их считать при
+ * уменьшившемся знаменателе — и комната получит матч, за который никто из
+ * оставшихся не голосовал.
+ *
+ * Зачем это вообще понадобилось: DELETE из room_members не было во всём
+ * репозитории, а знаменатель — это число участников. Один человек, нажавший
+ * «Войти» и закрывший вкладку, делал матч недостижимым навсегда, и экран
+ * ожидания вечно обещал «сошлись на N играх, ждём третьего».
+ *
+ * Возвращает false, если такого участника в комнате нет: повторный вызов
+ * обязан быть безобидным.
+ */
+export async function removeRoomMember(
+  db: Db,
+  roomId: string,
+  steamid: string,
+): Promise<boolean> {
+  const res = await db.execute({
+    sql: 'SELECT 1 AS hit FROM room_members WHERE room_id = ? AND steamid = ?',
+    args: [roomId, steamid],
+  })
+  if (!res.rows.length) return false
+
+  // Одной пачкой, а не двумя вызовами: раздельные удаления оставляли голоса
+  // ушедшего навсегда, если второе не проходило. Голоса без участника
+  // findRoomMatch теперь и так не считает, но плодить мусор в таблице,
+  // которая не подметается, всё равно незачем.
+  await db.batch(
+    [
+      {
+        sql: 'DELETE FROM room_members WHERE room_id = ? AND steamid = ?',
+        args: [roomId, steamid],
+      },
+      {
+        sql: 'DELETE FROM room_votes WHERE room_id = ? AND steamid = ?',
+        args: [roomId, steamid],
+      },
+    ],
+    'write',
+  )
+  return true
 }
 
 export async function castRoomVote(
@@ -756,7 +881,23 @@ export async function findRoomMatch(db: Db, roomId: string): Promise<number | nu
     // Матч — это договорённость, поэтому участников должно быть минимум двое.
     // Без этого условия человек в комнате один получал «Это матч!» от
     // собственного голоса: «проголосовали все» формально выполнялось.
+    //
+    // JOIN с room_members — не украшение, а то, что делает дробь честной.
+    // Знаменатель всегда считался по составу, а числитель — по голосам, и
+    // при расхождении этих множеств голос человека, которого в комнате уже
+    // нет, ПОДМЕНЯЕТ СОБОЙ живого. Комната получает «Это матч!» на игре,
+    // которую оставшийся отклонил или вовсе не видел, а экран матча
+    // терминальный: опрос на нём останавливается, отменить нечем.
+    //
+    // Разойтись множества могут двумя путями, и оба открыты. Первый: между
+    // проверкой членства в /api/room/[id]/vote и самой вставкой лежит обход
+    // Turso, и уборка участника успевает вклиниться. Второй: removeRoomMember
+    // делает два удаления, и отказ второго оставляет голоса навсегда.
+    // Затыкать каждый путь по отдельности — значит помнить о них при каждой
+    // следующей правке; JOIN закрывает их все разом, независимо от того, как
+    // осиротевший голос там оказался.
     sql: `SELECT v.appid AS appid FROM room_votes v
+          JOIN room_members m ON m.room_id = v.room_id AND m.steamid = v.steamid
           WHERE v.room_id = ? AND v.vote = 1
             AND (SELECT COUNT(*) FROM room_members WHERE room_id = ?) >= 2
           GROUP BY v.appid
@@ -770,9 +911,17 @@ export async function findRoomMatch(db: Db, roomId: string): Promise<number | nu
   return (res.rows[0]?.appid as number | undefined) ?? null
 }
 
+/**
+ * Условие status = 'open' — страховка от второго матча.
+ *
+ * Матч терминален: обратного перехода в open в репозитории нет, а экран
+ * матча останавливает опрос. Значит переписать уже назначенную игру другой
+ * — это подменить людям результат под руками, и никакой запрос не должен
+ * иметь такой возможности, даже опоздавший.
+ */
 export async function setRoomMatched(db: Db, roomId: string, appid: number): Promise<void> {
   await db.execute({
-    sql: "UPDATE rooms SET status = 'matched', matched_appid = ? WHERE id = ?",
+    sql: "UPDATE rooms SET status = 'matched', matched_appid = ? WHERE id = ? AND status = 'open'",
     args: [appid, roomId],
   })
 }
@@ -943,7 +1092,8 @@ export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoo
       byRoom.set(raw.id, room)
     }
     if (raw.steamid) {
-      room.memberNames.push(raw.persona_name ?? `Игрок ${raw.steamid.slice(-4)}`)
+      // steamid наружу не уходит вовсе — см. memberLabel в lib/room
+      room.memberNames.push(memberLabel(room.id, raw.steamid, raw.persona_name))
     }
   }
   return [...byRoom.values()]
@@ -1286,6 +1436,42 @@ export async function getGameMeta(db: Db, appid: number): Promise<GameMeta | nul
   return row ? rowToMeta(row) : null
 }
 
+/**
+ * Строка игры вместе с двумя её блобами — ОДНИМ чтением.
+ *
+ * Страница игры собирала это тремя: getGameMeta делает SELECT *, а следом
+ * getGameJson дважды спрашивал колонки из ТОЙ ЖЕ строки, которую SELECT * уже
+ * привёз и выбросил (rowToMeta их не переносит — они не часть GameMeta).
+ *
+ * Turso тарифицирует строки: три чтения вместо одного на каждый рендер, а
+ * рендерится это по адресам из карты сайта, то есть тысячами. Плюс лишний
+ * обход к базе в TTFB страницы, которую собирают для краулера.
+ *
+ * Блобы отдаются сырыми unknown, как и getGameJson: разбирать их форму —
+ * дело вызывающего, он один знает, что там лежит.
+ */
+export async function getGamePageRow(
+  db: Db,
+  appid: number,
+): Promise<{ meta: GameMeta; reviewsSummary: unknown; prosCons: unknown } | null> {
+  const res = await db.execute({ sql: 'SELECT * FROM games WHERE appid = ?', args: [appid] })
+  const row = res.rows[0] as unknown as (GameRow & Record<string, unknown>) | undefined
+  if (!row) return null
+  const разобрать = (v: unknown): unknown => {
+    if (typeof v !== 'string' || !v) return null
+    try {
+      return JSON.parse(v)
+    } catch {
+      return null
+    }
+  }
+  return {
+    meta: rowToMeta(row),
+    reviewsSummary: разобрать(row.reviews_summary_json),
+    prosCons: разобрать(row.pros_cons_json),
+  }
+}
+
 export type SimilarGame = {
   appid: number
   name: string
@@ -1414,15 +1600,23 @@ export async function getGameJson(
 const ALIVE_POOL = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
 
 /**
- * Игры, которым пора обогатить карточку: сначала ни разу не тронутые, потом
- * самые давние. Порядок внутри группы — по числу отзывов: витрину имеет смысл
- * наполнять с тех страниц, на которые вообще придут.
+ * Игры, которым пора обогатить карточку.
+ *
+ * Сначала те, за которыми в сеть ещё не ходили ИЛИ ходили впустую, потом
+ * самые давние. Порядок внутри группы — по числу отзывов: витрину имеет
+ * смысл наполнять с тех страниц, на которые вообще придут.
+ *
+ * «Ходили впустую» стоит в первой группе намеренно. Пустые походы достались
+ * верху каталога — очередь выгребается по убыванию reviews_total, и первый
+ * прогон уткнулся в лимит Steam именно на самых заметных играх. Оставить их
+ * во второй группе значило бы чинить CS2 после пяти тысяч игр, которых никто
+ * не ищет.
  */
 export async function claimPageEnrichBatch(
   db: Db,
   staleBefore: number,
   limit: number,
-  opts: { redoHeuristic?: boolean } = {},
+  opts: { redoHeuristic?: boolean; maxTries?: number } = {},
 ): Promise<number[]> {
   // Карточка, собранная без модели, не должна замирать на полгода.
   //
@@ -1434,20 +1628,84 @@ export async function claimPageEnrichBatch(
   // Поэтому page_at means «в сеть за этой карточкой сходили», а не «карточка
   // готова». Когда ключ появляется, вызывающий поднимает redoHeuristic, и
   // эвристические pros/cons возвращаются в очередь на пересборку моделью.
+  /*
+   * Пустой поход тоже не должен замирать на полгода — по той же логике, что
+   * и эвристические pros/cons абзацем выше, только причина другая: там данные
+   * приехали и оказались хуже нужного, здесь не приехали вовсе.
+   *
+   * Счётчик обязателен, и ограничение сверху тоже. Без счётчика игра, у
+   * которой Steam молчит всегда, возвращалась бы в очередь каждый прогон и
+   * съедала бы бюджет — тот самый head-of-line, ради которого отметка и
+   * ставится при неудаче. maxTries закрывает эту дверь: после нескольких
+   * пустых походов карточка уходит ждать общего срока устаревания.
+   */
+  /*
+   * Ветка пересборки эвристики тоже уважает потолок попыток.
+   *
+   * Её предикат стоял голым: `redo = 1 AND source = 'reviews'`, без оглядки на
+   * page_tries. Карточка, у которой appdetails отдаёт данные (значит попытки не
+   * растут), а модель раз за разом не даёт годного ответа, оставалась бы в
+   * очереди ВЕЧНО и возвращалась каждый прогон — тот самый head-of-line, ради
+   * которого потолок и заводили двумя условиями выше.
+   *
+   * Сейчас это латентно: по проду таких карточек 498, но сортировка ставит их
+   * в хвост (page_at есть, page_tries ноль), а впереди 5198 непройденных.
+   * Дверь закрывается ДО того, как очередь до них доберётся.
+   *
+   * Условие написано как «политика есть И исчерпана», а не просто
+   * `page_tries < maxTries`: при maxTries = 0 политики повторов нет вовсе (так
+   * же выключена и ветка выше), и голое сравнение убило бы пересборку целиком
+   * — у неисчерпанной карточки page_tries как раз ноль.
+   */
+  /*
+   * ДВА ЗАПРОСА, А НЕ ВЫРАЖЕНИЕ В ORDER BY, и это про цену.
+   *
+   * Приоритет прежний: сперва те, за кем не ходили или ходили впустую, потом
+   * протухшие и кандидаты на пересборку. Но выражался он вычислением в ORDER BY
+   * — `(page_at IS NOT NULL AND page_tries = 0), reviews_total DESC`, — и такой
+   * порядок частичному индексу не соответствует. План на живой базе:
+   *
+   *   было:  SEARCH games USING INTEGER PRIMARY KEY + USE TEMP B-TREE FOR ORDER BY
+   *   стало: SCAN games USING INDEX idx_games_pool  (обе половины)
+   *
+   * То есть ради двадцати appid читался и сортировался ВЕСЬ каталог: около
+   * шести тысяч строк, которые Turso тарифицирует, на каждое звено цепочки.
+   *
+   * Разбиение точное, а не приблизительное: объединение двух условий равно
+   * прежнему одному. Проверено разбором по веткам — «нет page_at», «есть, но
+   * попытки не исчерпаны», «протухло», «пересобрать эвристику» — и тестами,
+   * которые на этот порядок уже опирались.
+   */
   const redo = opts.redoHeuristic ? 1 : 0
-  const res = await db.execute({
+  const maxTries = opts.maxTries ?? 0
+
+  // Группа 1: не ходили ни разу ИЛИ ходили впустую. Именно она забирает бюджет
+  // первой — см. абзац про верх каталога выше.
+  const первые = await db.execute({
     sql: `SELECT appid FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
-            AND (
-              page_at IS NULL
-              OR page_at < ?
-              OR (? = 1 AND json_extract(pros_cons_json, '$.source') = 'reviews')
-            )
-          ORDER BY page_at IS NOT NULL, reviews_total DESC
+            AND (page_at IS NULL OR (page_tries > 0 AND (page_tries < ? OR page_at < ?)))
+          ORDER BY reviews_total DESC
           LIMIT ?`,
-    args: [staleBefore, redo, limit],
+    args: [maxTries, staleBefore, limit],
   })
-  return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+  const appids = (первые.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+  if (appids.length >= limit) return appids
+
+  // Группа 2: сходили удачно, но карточка протухла или собрана без модели.
+  const вторые = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+            AND page_at IS NOT NULL AND page_tries = 0
+            AND (
+              page_at < ?
+              OR (? = 1 AND (? = 0 OR page_tries < ?) AND json_extract(pros_cons_json, '$.source') = 'reviews')
+            )
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [staleBefore, redo, maxTries, maxTries, limit - appids.length],
+  })
+  return [...appids, ...(вторые.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)]
 }
 
 /**
@@ -1457,15 +1715,41 @@ export async function claimPageEnrichBatch(
  * базу, заход краулера на такую страницу не стоит ничего, а имя, теги, цена и
  * патчноуты на ней уже есть. Ждать полного обогащения значило бы держать карту
  * сайта пустой месяцами.
+ *
+ * lastmod считается по ТРЁМ отметкам, а не по одному updated_at, и это не
+ * педантизм. Замер по проду 20 августа: из 5919 живых игр 5691 имеет ОДИН И ТОТ
+ * ЖЕ updated_at — след массовой заливки каталога; разных значений на весь
+ * каталог девятнадцать. То есть поле не несло сигнала вовсе, а следующая
+ * заливка подняла бы пять с половиной тысяч адресов в одну секунду, после чего
+ * Google перестаёт учитывать его совсем.
+ *
+ * Настоящее изменение содержания приносят два других события, и оба
+ * размазаны по времени: обогащение карточки (page_at — появляются скриншоты,
+ * вердикт отзывов и pros/cons) и новый патчноут (published_at). Их и берём.
+ *
+ * ПРЕДЕЛ, честно: разных значений стало 88 вместо 19, но крупнейшая группа
+ * по-прежнему 5586 адресов. Иначе и быть не может — у этих карточек с прошлой
+ * заливки правда ничего не менялось, ни обогащения, ни патчей. Настоящая
+ * причина одинаковости лежит не здесь, а в scripts/publish-catalog: он ставит
+ * updated_at = now всем строкам подряд, включая те, у которых ни одно видимое
+ * поле не изменилось. Чинить надо там, и это отдельная работа.
  */
 export async function sitemapGames(
   db: Db,
   limit: number,
 ): Promise<Array<{ appid: number; updatedAt: number }>> {
   const res = await db.execute({
-    sql: `SELECT appid, updated_at FROM games
-          WHERE ${ALIVE_POOL} AND appid > 0
-          ORDER BY reviews_total DESC
+    sql: `SELECT g.appid AS appid,
+                 MAX(
+                   g.updated_at,
+                   COALESCE(g.page_at, 0),
+                   COALESCE((SELECT MAX(n.published_at) FROM news_items n WHERE n.appid = g.appid), 0)
+                 ) AS updated_at
+          FROM games g
+          -- предикат живой игры, тот же что в ALIVE_POOL, но с алиасом таблицы:
+          -- подзапрос по news_items требует различать g.appid и n.appid
+          WHERE g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0 AND g.appid > 0
+          ORDER BY g.reviews_total DESC
           LIMIT ?`,
     args: [limit],
   })
@@ -1475,24 +1759,132 @@ export async function sitemapGames(
   }))
 }
 
-/** Сколько карточек ещё ждёт обогащения — для отчёта крона. */
-export async function countPageEnrichDue(db: Db, staleBefore: number): Promise<number> {
+/**
+ * Описания витрины — для разовой доливки на язык сайта.
+ *
+ * Отдаём текст вместе с appid, потому что отбор «что доливать» делается по
+ * САМОМУ ТЕКСТУ: русское описание от английского отличает наличие кириллицы, а
+ * выразить это в SQLite нечем — REGEXP там не встроен, а гонять LIKE по
+ * тридцати трём буквам ради разовой задачи нелепо.
+ *
+ * Только appid > 0: отрицательные — это кураторские карточки других магазинов,
+ * и Steam про них ничего не знает.
+ */
+export async function gameDescriptions(
+  db: Db,
+  limit: number,
+): Promise<Array<{ appid: number; description: string | null }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, short_description FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; short_description: string | null }>).map(
+    (r) => ({ appid: r.appid, description: r.short_description }),
+  )
+}
+
+/**
+ * Переписать ТОЛЬКО описание, не трогая остального.
+ *
+ * Через upsertGameMeta это не сделать: он пишет строку целиком, и доливка
+ * описаний затёрла бы цены, арт и сигналы теми значениями, что оказались в
+ * объекте у вызывающего. Здесь же меняется одна колонка.
+ *
+ * updated_at НЕ трогаем намеренно. Он стоит в карте сайта как lastmod, а
+ * доливка перевода — не изменение содержания страницы в том смысле, ради
+ * которого краулер сверяет дату. Подняв его на пяти тысячах строк разом, мы
+ * сказали бы поисковику, что весь каталог обновился в одну секунду.
+ *
+ * Батчем, а не поштучно: Turso берёт деньги за строки, но время — за
+ * round-trip, и пять тысяч отдельных UPDATE стоили бы часы.
+ */
+export async function setGameDescriptions(
+  db: Db,
+  rows: ReadonlyArray<{ appid: number; description: string }>,
+): Promise<number> {
+  if (!rows.length) return 0
+  const res = await db.batch(
+    rows.map((r) => ({
+      sql: 'UPDATE games SET short_description = ? WHERE appid = ?',
+      args: [r.description, r.appid],
+    })),
+    'write',
+  )
+  return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
+}
+
+/**
+ * Сколько карточек ещё ждёт обогащения — для отчёта крона.
+ *
+ * Условие обязано повторять claimPageEnrichBatch, иначе отчёт говорит одно,
+ * а очередь делает другое: с maxTries по умолчанию 0 повторные попытки в
+ * счёт не идут — ровно как и в выборке.
+ *
+ * И оно РАСХОДИЛОСЬ. У выборки четыре ветки OR, у счётчика было три: ветка
+ * пересборки эвристики моделью сюда не доехала. А в проде она включена всегда
+ * (redoHeuristic = llmAvailable), и карточек с source = 'reviews' там 498 —
+ * то есть отчёт мог показывать «к обогащению готово: 0», пока крон продолжал
+ * забирать по двадцать карточек на звено и платить за каждую двумя запросами
+ * к Steam и вызовом модели. Ровно то, от чего докблок и предостерегал.
+ *
+ * Четвёртый аргумент назван так же, как у выборки, и по той же причине: два
+ * запроса об одном и том же обязаны читаться рядом как один.
+ */
+export async function countPageEnrichDue(
+  db: Db,
+  staleBefore: number,
+  maxTries = 0,
+  opts: { redoHeuristic?: boolean } = {},
+): Promise<number> {
+  const redo = opts.redoHeuristic ? 1 : 0
   const res = await db.execute({
     sql: `SELECT COUNT(*) AS n FROM games
-          WHERE ${ALIVE_POOL} AND appid > 0 AND (page_at IS NULL OR page_at < ?)`,
-    args: [staleBefore],
+          WHERE ${ALIVE_POOL} AND appid > 0
+            AND (
+              page_at IS NULL
+              OR page_at < ?
+              OR (page_tries > 0 AND page_tries < ?)
+              OR (? = 1 AND (? = 0 OR page_tries < ?) AND json_extract(pros_cons_json, '$.source') = 'reviews')
+            )`,
+    args: [staleBefore, maxTries, redo, maxTries, maxTries],
   })
   return Number((res.rows[0] as unknown as { n: number }).n)
 }
 
 /**
- * Отметка «карточку трогали». Ставится и при неудаче тоже: иначе игра, у
- * которой Steam не отдаёт отзывов, навсегда осталась бы первой в очереди и
- * забирала бы весь суточный бюджет на себя.
+ * Карточка обогащена: в сеть сходили и данные привезли.
+ *
+ * Счётчик неудач сбрасывается — он считает подряд идущие пустые походы,
+ * а не их сумму за историю.
  */
 export async function markPageEnriched(db: Db, appid: number, now: number): Promise<void> {
   await db.execute({
-    sql: 'UPDATE games SET page_at = ? WHERE appid = ?',
+    sql: 'UPDATE games SET page_at = ?, page_tries = 0 WHERE appid = ?',
+    args: [now, appid],
+  })
+}
+
+/**
+ * В сеть сходили, а данных не привезли.
+ *
+ * page_at ставится всё равно, и это не изменилось: иначе игра, у которой
+ * Steam молчит, навсегда осталась бы первой в очереди и забирала бы весь
+ * суточный бюджет на себя. Изменилось другое — раньше такой поход был
+ * НЕОТЛИЧИМ от удачного, и карточка выпадала из очереди на полгода.
+ *
+ * Цена этой неразличимости замерена на проде: из 721 обогащённой карточки
+ * скриншоты и жанры приехали к 125. Остальные 596 — это верх каталога по
+ * числу отзывов (CS2, Dota 2, Rainbow Six, Team Fortress 2, Terraria), то
+ * есть ровно те страницы, на которые приходят. Обогащение выгребает очередь
+ * по убыванию reviews_total, так что первый же прогон уткнулся в лимит
+ * appdetails на самых заметных играх — и пометил их сделанными.
+ */
+export async function markPageMissed(db: Db, appid: number, now: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE games SET page_at = ?, page_tries = page_tries + 1 WHERE appid = ?',
     args: [now, appid],
   })
 }
@@ -1655,19 +2047,43 @@ export async function acquireLease(
   const res = await db.execute({
     sql: `UPDATE catalog_meta SET value = ?
           WHERE key = ?
-            AND (value = ''
-                 OR CAST(json_extract(value, '$.until') AS INTEGER) < ?
-                 OR json_extract(value, '$.holder') = ?)`,
+            AND CASE
+                  WHEN json_valid(value)
+                  THEN CAST(json_extract(value, '$.until') AS INTEGER) < ?
+                       OR json_extract(value, '$.holder') = ?
+                  ELSE 1
+                END`,
     args: [JSON.stringify({ holder, until: nowSec + ttlSec }), key, nowSec, holder],
   })
   return Number(res.rowsAffected ?? 0) > 0
 }
 
-/** Отдать аренду досрочно. Не отдали — истечёт сама по until. */
+/**
+ * Отдать аренду досрочно. Не отдали — истечёт сама по until.
+ *
+ * Разбор JSON спрятан под CASE, и это не педантизм: отданная аренда хранится
+ * ПУСТОЙ СТРОКОЙ, а json_extract('', …) в SQLite бросает «malformed JSON», а не
+ * возвращает NULL. То есть повторная отдача — или отдача ключа, которого никто
+ * не брал, — падала с исключением.
+ *
+ * Цена ошибки не в самом исключении, а в том, откуда оно летело: все пять
+ * вызовов releaseLease в кронах стоят внутри finally. Исключение там обрывает
+ * блок, то есть цепочка не передаётся следующему звену, аренда не снимается и
+ * маркер прогона не пишется. Отказ выглядел бы как молчание — ровно тот случай,
+ * который дороже всего искать.
+ *
+ * CASE, а не `value <> '' AND json_extract(...)`: порядок вычисления операндов
+ * AND и OR в SQLite не оговорён, а CASE вычисляет ветви строго по условию.
+ * Соседний acquireLease переписан так же и по той же причине — он держался на
+ * подразумеваемом коротком замыкании OR.
+ */
 export async function releaseLease(db: Db, key: string, holder: string): Promise<void> {
   await db.execute({
     sql: `UPDATE catalog_meta SET value = '' WHERE key = ?
-            AND json_extract(value, '$.holder') = ?`,
+            AND CASE
+                  WHEN json_valid(value) THEN json_extract(value, '$.holder') = ?
+                  ELSE 0
+                END`,
     args: [key, holder],
   })
 }
@@ -2015,6 +2431,33 @@ export type StoredNews = {
   tldr?: string
 }
 
+/**
+ * Строка ленты без тела патча.
+ *
+ * Ровно то, что уезжает в клиентские островки «Что нового». Тело приходит
+ * отдельно (см. getNewsBlocks и app/api/news): в разметке страницы оно
+ * занимало больше половины веса, а раскрывают одну строку из тридцати.
+ */
+export type FeedItem = Omit<StoredNews, 'blocks'>
+
+/**
+ * Строка ленты без тела патча.
+ *
+ * Всё, что передано клиентскому островку, уезжает в браузер
+ * сериализованным. На /whatsnew тела тридцати патчей были 277 КБ из 476 на
+ * проде — 58% веса страницы на текст, который раскрывают у одной строки из
+ * тридцати. На карточке игры то же самое: 69 КБ инлайновых скриптов при 6.5
+ * КБ видимого текста. Тело отдаёт app/api/news по требованию.
+ *
+ * Живёт рядом с FeedItem, а не в разметке: потребителей теперь два, и
+ * разъехаться им нельзя.
+ */
+export function withoutBody(item: StoredNews): FeedItem {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { blocks, ...row } = item
+  return row
+}
+
 /** Статусы опроса: gone — игра без ленты, mismatch — фид отдаёт чужие appid */
 export type PollStatus = 'new' | 'ok' | 'empty' | 'error' | 'gone' | 'mismatch'
 
@@ -2146,6 +2589,33 @@ export async function upsertNewsItems(
   }))
   const res = await db.batch(stmts, 'write')
   return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
+}
+
+/**
+ * Тело одного патча — для ленты, которая раскрывает строку по требованию.
+ *
+ * Отдельный запрос вместо колонки в ленте: в общей выборке тридцати строк
+ * blocks_json занимал больше половины веса страницы, а прочитан бывает
+ * один из тридцати. Возвращает null и на «нет такой записи», и на битый
+ * блоб — вызывающему в обоих случаях нечего показать.
+ */
+export async function getNewsBlocks(
+  db: Db,
+  appid: number,
+  gid: string,
+): Promise<NewsBlock[] | null> {
+  const res = await db.execute({
+    sql: 'SELECT blocks_json FROM news_items WHERE appid = ? AND gid = ?',
+    args: [appid, gid],
+  })
+  const raw = res.rows[0]?.blocks_json
+  if (typeof raw !== 'string') return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as NewsBlock[]) : null
+  } catch {
+    return null
+  }
 }
 
 /** Страница игры: тут показываем и мелкие патчи тоже */
@@ -2492,6 +2962,31 @@ export async function flushPollResults(
 }
 
 /**
+ * Топ каталога меняется от силы раз в сутки, а спрашивают его сотнями раз.
+ *
+ * Прогрев библиотеки законно зовёт /api/prepare до восьмидесяти раз подряд
+ * (WARMUP_MAX_CALLS), и каждый вызов брал этот список заново. Замер на проде:
+ * 34мс на вызов и 400 прочитанных строк — то есть 2.7 секунды и 32 000 строк
+ * за один прогрев одного человека, ради списка, который между вызовами не
+ * меняется вовсе. Turso считает деньги по прочитанным строкам.
+ *
+ * Ключ — сама база, а не глобальная переменная: тесты открывают свежую базу в
+ * памяти на каждый случай, и общий кэш склеил бы их между собой. WeakMap
+ * заодно снимает вопрос о времени жизни.
+ *
+ * per в записи хранится и сверяется: три вызывающих сегодня просят по 200, но
+ * молча отдать двести там, где попросили пятьсот, — это баг, который проявится
+ * не сразу.
+ *
+ * Десять минут — с запасом внутри одного прогрева и много меньше суток, за
+ * которые каталог переиздаётся. Устаревший на десять минут список популярного
+ * не значит ничего: из него собирают пул «попробуй новое» и очередь опроса
+ * новостей.
+ */
+const TOP_CATALOG_TTL_MS = 10 * 60_000
+const topCatalogCache = new WeakMap<Db, { at: number; per: number; ids: number[] }>()
+
+/**
  * Набор каталога для общей ленты: топ по живому онлайну плюс топ по числу
  * отзывов. Онлайн — потому что лента отвечает на «во что играют сейчас»,
  * отзывы — потому что у половины каталога ccu ещё не замерен.
@@ -2501,6 +2996,9 @@ export async function flushPollResults(
  * «App {appid}» из /api/prepare отсекаются сами — у них tag_count = 0.
  */
 export async function topCatalogAppids(db: Db, per = 200): Promise<number[]> {
+  const кэш = topCatalogCache.get(db)
+  if (кэш && кэш.per === per && Date.now() - кэш.at < TOP_CATALOG_TTL_MS) return кэш.ids
+
   const alive = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
   const [byCcu, byReviews] = await Promise.all([
     db.execute({
@@ -2517,7 +3015,9 @@ export async function topCatalogAppids(db: Db, per = 200): Promise<number[]> {
   const ids = [...byCcu.rows, ...byReviews.rows].map(
     (r) => (r as unknown as { appid: number }).appid,
   )
-  return [...new Set(ids)]
+  const итог = [...new Set(ids)]
+  topCatalogCache.set(db, { at: Date.now(), per, ids: итог })
+  return итог
 }
 
 /**

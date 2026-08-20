@@ -9,9 +9,11 @@ import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
-import { discountView } from '@/lib/discount'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { loadGamePage } from '@/lib/gamepage'
-import { getDb, nowSec } from '@/lib/server'
+import { currencyOf, gameJsonLd, ldScript } from '@/lib/jsonld'
+import { ratingOf, scoreRu } from '@/lib/rating'
+import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 
 /**
@@ -66,9 +68,11 @@ export async function generateMetadata({
 
   // Описание собираем из того, что на странице и так есть, а не из шаблона:
   // в выдаче должно стоять то, ради чего на неё имеет смысл заходить.
-  const percent = reviewsSummary
-    ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
-    : null
+  //
+  // Процент — через ratingOf, а не напрямую из сводки: она есть у 14,5 %
+  // карточек, и без запасного источника четыре тысячи описаний в выдаче
+  // начинались не с оценки, а сразу с тегов.
+  const percent = ratingOf(meta, reviewsSummary)?.percent ?? null
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
@@ -84,44 +88,68 @@ export async function generateMetadata({
     ? `${meta.name}: ${parts.join(' · ')}`
     : `${meta.name} — отзывы, теги и патчноуты на русском.`
 
-  const image = meta.art?.header2x ?? meta.art?.header ?? meta.headerImage
   const canonical = `/game/${appid}`
+
+  /*
+   * images здесь НЕТ намеренно, и это не забывчивость.
+   *
+   * Стоял header из Steam, отданный напрямую. Пересланная ссылка на imbored
+   * разворачивалась превью, неотличимым от ссылки на магазин: тот же файл, что
+   * у самого Steam, без имени сервиса и без единственного, что сервис знает, —
+   * оценки. Теперь картинку рисует соседний opengraph-image.tsx: тот же арт
+   * фоном плюс то, чего в нём нет.
+   *
+   * Пустое место обязательно: файловая конвенция Next применяется ТОЛЬКО когда
+   * openGraph.images не задан в метаданных. Вернёшь строку сюда — соседний файл
+   * перестанет использоваться молча, без ошибки сборки.
+   */
+  /*
+   * Записи, которые каталог сам считает мёртвыми, не идут в индекс.
+   *
+   * Замер по проду 20 августа: 181 карточка с alive = 0, шесть с
+   * superseded_by и четыре без тегов — 191 адрес, отдающий 200. В карте сайта
+   * их нет (ALIVE_POOL), в блоке «Похожие» тоже (тот же предикат) — то есть
+   * это страницы-сироты, живущие только по прямой ссылке. Соседний lib/junk
+   * прячет ровно эти записи от выдачи, а поиск про них ничего не знал.
+   *
+   * Шесть замещённых опаснее прочих: это дубликаты страницы-преемника
+   * (/game/10 против /game/730) с self-canonical. Им canonical переставляется
+   * на преемника — тогда вес ссылки достаётся живой странице, а не близнецу.
+   *
+   * Безтеговые сюда же, и раньше их не было: докблок считал их частью тех же
+   * 191, а условие ловило 187. Разница видна на самой странице. Замер на
+   * развёрнутой ветке: /game/43160 и /game/623990 отдают 397 и 427 видимых
+   * символов при 2342 у обычной карточки, ноль разделов, ноль похожих — а в
+   * сниппете при этом стоит «отзывы, теги и патчноуты», то есть страница
+   * обещает поиску ровно то, чего у неё нет. Тег — это то, из чего собраны и
+   * похожие, и половина текста; без него карточки нет.
+   *
+   * Условие пересчитывается на каждый рендер, а страница живёт на ISR: игра,
+   * у которой теги появятся, вернётся в индекс сама.
+   */
+  const мёртвая =
+    meta.alive === false ||
+    meta.supersededBy !== undefined ||
+    Object.keys(meta.tags).length === 0
+  const canonicalUrl = meta.supersededBy !== undefined ? `/game/${meta.supersededBy}` : canonical
 
   return {
     title: `${meta.name} — стоит ли играть`,
     description,
-    alternates: { canonical },
+    alternates: { canonical: canonicalUrl },
+    ...(мёртвая ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
       title: `${meta.name} — стоит ли играть`,
       description,
-      url: canonical,
+      url: canonicalUrl,
       type: 'article',
-      ...(image ? { images: [{ url: image, width: 920, height: 430, alt: meta.name }] } : {}),
     },
     twitter: {
-      card: image ? 'summary_large_image' : 'summary',
+      card: 'summary_large_image',
       title: `${meta.name} — стоит ли играть`,
       description,
-      ...(image ? { images: [image] } : {}),
     },
   }
-}
-
-function positivePercent(pos: number, neg: number): number | null {
-  const total = pos + neg
-  return total > 0 ? Math.round((pos / total) * 100) : null
-}
-
-const SCORE_RU: Record<string, string> = {
-  'Overwhelmingly Positive': 'Крайне положительные',
-  'Very Positive': 'Очень положительные',
-  Positive: 'Положительные',
-  'Mostly Positive': 'В основном положительные',
-  Mixed: 'Смешанные',
-  'Mostly Negative': 'В основном отрицательные',
-  Negative: 'Отрицательные',
-  'Very Negative': 'Очень отрицательные',
-  'Overwhelmingly Negative': 'Крайне отрицательные',
 }
 
 export default async function GamePage({ params }: { params: Promise<{ appid: string }> }) {
@@ -134,10 +162,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   if (!data) notFound()
 
   const { meta, reviewsSummary, prosCons } = data
-  const deal = discountView(meta, nowSec())
-  const percent = reviewsSummary
-    ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
-    : null
+  const now = nowSec()
+  const deal = discountView(meta, now)
+  const rating = ratingOf(meta, reviewsSummary)
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
@@ -145,18 +172,72 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
   return (
     <div className="flex-1">
+      {/*
+        Микроразметка карточки — в разметке страницы, а не в generateMetadata:
+        Metadata API умеет только те теги, которые знает сам, а ld+json — это
+        произвольный <script>. Рекомендация Next ровно такая, см.
+        node_modules/next/dist/docs/01-app/02-guides/json-ld.md.
+
+        Собирается из тех же data, что и всё ниже: loadOnce кэширован на запрос,
+        второго чтения базы здесь нет.
+      */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: ldScript(
+            gameJsonLd({
+              meta,
+              rating,
+              baseUrl: appBaseUrl(),
+              currency: currencyOf(process.env.STEAM_STORE_CC),
+              now,
+            }),
+          ),
+        }}
+      />
       {/* hero */}
       <section className="relative overflow-hidden">
+        {/*
+          Подложка берёт ТУ ЖЕ картинку, что и обложка ниже, и это не
+          небрежность, а расчёт.
+
+          Здесь стоял variant="hero", то есть library_hero: 231 КБ у Dota 2
+          против 38 КБ у header. Изображение при этом проходит blur-3xl
+          (радиус 64 пикселя) и opacity-30 — разрешение в нём не значит
+          ничего. Правило уже было записано в components/ArtWash.tsx
+          («растянутая на весь экран и размытая в кисель»), просто не
+          применено здесь.
+
+          sizes повторяет обложку дословно, чтобы браузер выбрал тот же
+          файл и взял его из кэша. Не «поменьше», а «тот же самый»: любой
+          другой размер — это вторая загрузка вместо нуля байт.
+        */}
         <GameArt
           appid={meta.appid}
           name=""
           headerImage={meta.headerImage ?? null}
           art={meta.art}
-          variant="hero"
+          sizes="(min-width: 768px) 380px, 100vw"
           fallback={null}
           className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
         />
-        <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-10 grid md:grid-cols-[380px_1fr] gap-8 items-start">
+        {/*
+          Разрез на две колонки с lg, а не с md: раньше он включался там, где
+          ещё вредил.
+
+          Замер на 768px: контейнер 728, из него 380 забирает арт и 32 зазор —
+          правой колонке остаётся 316. Это УЖЕ, чем одна колонка на телефоне
+          (335 на 375px). В неё восемь тегов ложились в три ряда, описание в
+          шесть строк, четыре кнопки в три ряда, а слева под коротким артом
+          зияла пустота почти на 470×400.
+
+          Одной колонкой на той же ширине: арт баннером 727×340, все восемь
+          тегов в ряд, описание в три строки, все кнопки в ряд, пустоты нет.
+
+          Десктоп не тронут: max-w-5xl держит контейнер на 984, и с 1024 разрез
+          даёт те же 380 и 572, что и до правки.
+        */}
+        <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-10 grid lg:grid-cols-[380px_1fr] gap-8 items-start">
           <GameArt
             appid={meta.appid}
             name={meta.name}
@@ -168,26 +249,36 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           />
           <div className="flex flex-col gap-4 anim-rise">
             <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{meta.name}</h1>
-            {reviewsSummary && (
+            {/*
+              Оценка приходит из ratingOf, а не из сводки напрямую.
+
+              Замер по проду: reviews_summary_json есть у 726 карточек из 5000,
+              а reviews_percent с reviews_total — у всех 5000, в той же строке
+              и тем же запросом. То есть кольцо не рисовалось на 85 % страниц
+              не потому, что оценки нет, а потому что её искали в одном месте
+              из двух.
+
+              Словесная подпись остаётся привязанной к сводке и появляется
+              только с ней: пороги Steam зависят ещё и от числа отзывов, и
+              вычислять их за него значило бы показать оценку, которой на
+              странице игры в самом магазине может не быть. Без подписи строка
+              читается ничуть не хуже — кольцо и есть её подлежащее:
+              «86 % · из 2 593 099 отзывов — за».
+            */}
+            {rating && (
               <div className="flex items-center gap-3.5 text-sm">
                 {/* Процент — это и есть содержание строки, а рисовался обычным
                     текстом, хотя кольцо у приложения уже есть (на /compat). */}
-                {percent !== null && (
-                  <ProgressRing percent={percent} size={56} stroke={4} duration={800} />
-                )}
+                <ProgressRing percent={rating.percent} size={56} stroke={4} duration={800} />
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-ember-text font-medium">
-                    {SCORE_RU[reviewsSummary.scoreDesc] ?? reviewsSummary.scoreDesc}
-                  </span>
-                  {percent !== null && (
-                    <span className="font-mono text-dim text-xs">
-                      из{' '}
-                      {(
-                        reviewsSummary.totalPositive + reviewsSummary.totalNegative
-                      ).toLocaleString('ru-RU')}{' '}
-                      отзывов — за
+                  {rating.label && (
+                    <span className="text-ember-text font-medium">
+                      {scoreRu(rating.label)}
                     </span>
                   )}
+                  <span className="font-mono text-dim text-xs">
+                    из {rating.total.toLocaleString('ru-RU')} отзывов — за
+                  </span>
                 </div>
               </div>
             )}
@@ -240,9 +331,21 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               >
                 Обзоры на YouTube
               </a>
-              {meta.priceFinal !== undefined && meta.priceFinal > 0 && (
+              {/* Бесплатная игра тоже получает плашку. Условие было «цена больше
+                  нуля», и у free-to-play — а это Dota, CS2, Warframe, то есть
+                  верх каталога по онлайну — в герое не оказывалось ни цены, ни
+                  слова «бесплатно». Читалось это не как «платить не надо», а
+                  как «про цену мы ничего не знаем» — то есть ровно тот вопрос,
+                  на который страница с заголовком «стоит ли играть» и должна
+                  отвечать. PriceTag такой случай умел с самого начала. */}
+              {(meta.isFree || (meta.priceFinal !== undefined && meta.priceFinal > 0)) && (
                 <span className="rounded-[14px] glass px-5 py-2.5 text-sm flex items-center gap-2">
-                  <PriceTag priceFinal={meta.priceFinal} discount={deal} size="hero" />
+                  <PriceTag
+                    priceFinal={trustedPrice(meta, now)}
+                    isFree={meta.isFree}
+                    discount={deal}
+                    size="hero"
+                  />
                   <DiscountEnds discount={deal} />
                 </span>
               )}
@@ -344,8 +447,30 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             есть про сессию тут знать нечего. Гостя /play разворачивал на
             лендинг через экран прогрева, а квиз работает обоим — участник
             выбирает настроение и попадает в ту же выдачу. */}
+        {/*
+          Настоящая кнопка, а не подпись.
+
+          Замер на проде, Cyberpunk 2077: из двенадцати ссылок страницы пять
+          уводят наружу — в Steam и на YouTube, — шесть ведут на соседние
+          карточки, и РОВНО ОДНА ведёт в продукт. Она же была единственной без
+          подложки, цветом --dim и высотой 18px, то есть самой тихой на
+          странице. Две заметные кнопки уводили со страницы, самая тихая —
+          внутрь.
+
+          Это точка конверсии всей поисковой воронки: пять тысяч карточек
+          существуют затем, чтобы человек, спросивший «стоит ли играть»,
+          получил ответ и остался. Соседняя правка (свёрнутые патчи) подняла
+          её с 96% глубины страницы примерно до половины; вес — вторая
+          половина того же вопроса.
+
+          Ember тут не спорит с «Открыть в Steam»: та кнопка лежит пятью
+          экранами выше, и на своём месте каждая единственная.
+        */}
         <div>
-          <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors">
+          <Link
+            href="/quiz"
+            className="inline-flex rounded-[14px] bg-ember text-on-ember font-semibold px-5 py-3 text-sm hover:brightness-110 transition"
+          >
             Подобрать игру под настроение →
           </Link>
         </div>

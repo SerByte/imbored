@@ -103,20 +103,34 @@ export function FeedWatch({
   // Steam подключили в соседней вкладке: лента меняется целиком, и разность
   // множеств посчитала бы «новым» весь новый набор. Числу здесь верить нельзя.
   const flipped = head ? head.showPopular !== showPopular : false
-
-  if (!n && !flipped) return null
+  const есть = Boolean(n) || flipped
 
   const label = flipped
     ? 'Лента обновилась'
     : `${n} ${plural(n, 'новое обновление', 'новых обновления', 'новых обновлений')}`
 
+  /*
+   * Живая область стоит ВСЕГДА, а внутрь неё приезжает плашка.
+   *
+   * Было `if (!n && !flipped) return null` перед разметкой, то есть контейнер
+   * с aria-live рождался вместе со своим текстом. Скринридер объявляет только
+   * ИЗМЕНЕНИЯ в области, которая уже была в дереве на момент изменения, —
+   * область, появившаяся сразу с содержимым, не объявляется. Единственный
+   * сигнал, что лента пополнилась, до слепого читателя не доходил вовсе: он
+   * продолжал читать устаревшую ленту и не знал, что есть кнопка «покажи
+   * новые».
+   *
+   * Пустой контейнер ничего не стоит: pointer-events-none, нулевая высота.
+   */
   return (
     <div
       aria-live="polite"
       className="pointer-events-none fixed inset-x-0 top-20 z-40 flex justify-center px-5"
     >
       <AnimatePresence initial={false}>
+        {есть ? (
         <motion.button
+          key="feedwatch"
           type="button"
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -135,6 +149,7 @@ export function FeedWatch({
           <span aria-hidden className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
           {pending ? 'Обновляю…' : label}
         </motion.button>
+        ) : null}
       </AnimatePresence>
     </div>
   )

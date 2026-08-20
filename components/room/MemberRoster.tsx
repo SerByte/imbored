@@ -19,9 +19,14 @@ const EASE = [0.22, 1, 0.36, 1] as const
 export function MemberRoster({
   members,
   deckSize,
+  isHost = false,
+  onRemove,
 }: {
   members: RoomMemberView[]
   deckSize: number | null
+  /** хост может убрать застрявшего — см. app/api/room/[id]/leave */
+  isHost?: boolean
+  onRemove?: (memberId: string) => void
 }) {
   const reduce = useReducedMotion()
   const doneCount = members.filter((m) => m.done).length
@@ -63,7 +68,18 @@ export function MemberRoster({
                   )}
                 </span>
 
+                {/*
+                  aria-hidden, потому что полную фразу про этого участника
+                  говорит sr-only ниже. Без этого каждая строка звучала дважды:
+                  «Дима (ты)» и следом «Дима (ты): 5 из 20, ещё свайпает» — в
+                  комнате на четверых четыре сдвоенных имени подряд, ровно на
+                  экране, который слушают в ожидании матча. Все остальные
+                  видимые части строки уже скрыты по той же причине.
+
+                  title остаётся: он для глаза, когда имя обрезано.
+                */}
                 <span
+                  aria-hidden
                   title={m.name}
                   className={`w-[5.5rem] sm:w-40 shrink-0 truncate text-sm ${
                     m.me ? 'text-ink font-semibold' : 'text-dim'
@@ -99,6 +115,26 @@ export function MemberRoster({
                 <span aria-hidden className="text-xs text-faint font-mono tabular-nums shrink-0">
                   {deckSize ? `${shown}/${deckSize}` : shown}
                 </span>
+
+                {/*
+                  Рука хоста. Знаменатель единогласия — число участников, и
+                  вошедший, который закрыл вкладку, запирал комнату навсегда:
+                  сам он уже ничего не нажмёт.
+
+                  Только у чужих строк и только у хоста. Себя он убирает
+                  общей ссылкой ниже — там же, где все.
+                */}
+                {isHost && !m.me && onRemove ? (
+                  <button
+                    type="button"
+                    onClick={() => onRemove(m.id)}
+                    title={`Убрать ${m.name} из пати`}
+                    aria-label={`Убрать ${m.name} из пати`}
+                    className="shrink-0 -my-1.5 px-1.5 py-1.5 text-xs text-faint hover:text-danger transition-colors cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                ) : null}
 
                 <span className="sr-only">
                   {m.name}

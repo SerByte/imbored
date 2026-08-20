@@ -89,6 +89,31 @@ type ArtSource = { appid: number; art?: GameArtUrls | null; headerImage?: string
  * header_image (строки, прогретые до появления art_json), затем запасные шаблоны
  * Steam. У игр вне Steam appid отрицательный, и шаблоны к ним неприменимы.
  */
+/**
+ * Только те ссылки, которые вариант реально читает.
+ *
+ * Нужна на границе с клиентом. Сетки библиотеки рисуют плитки вариантом
+ * `card`, а ORDER для него — [header, capsule]; hero и hero2x не читает ни
+ * artCandidates, ни artSrcSet. Но объект арта уезжает в клиентский компонент
+ * целиком, и эти две ссылки едут вместе с ним — по сто девяносто символов на
+ * игру, которые никто никогда не запросит. На стене из полутора сотен игр
+ * это десятки килобайт разметки ради нуля.
+ *
+ * null на выходе, когда после отбора не осталось ничего: пустой объект в
+ * пропсах весит больше, чем null.
+ */
+export function trimArt(
+  art: GameArtUrls | null | undefined,
+  variant: ArtVariant = 'card',
+): GameArtUrls | null {
+  if (!art) return null
+  const keep: Array<keyof GameArtUrls> =
+    variant === 'hero' ? ['hero', 'hero2x', 'capsule', 'header'] : ['header', 'header2x', 'capsule']
+  const out: GameArtUrls = {}
+  for (const k of keep) if (art[k]) out[k] = art[k]
+  return Object.keys(out).length ? out : null
+}
+
 export function artCandidates(game: ArtSource, variant: ArtVariant = 'card'): string[] {
   const out: string[] = []
   const push = (url: string | undefined | null) => {

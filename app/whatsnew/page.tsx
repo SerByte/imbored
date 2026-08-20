@@ -5,13 +5,19 @@ import { FeedWatch } from '@/components/whatsnew/FeedWatch'
 import { PatchRow } from '@/components/whatsnew/PatchRow'
 import { Stage } from '@/components/whatsnew/Stage'
 import { artCandidates } from '@/lib/art'
-import { getFeedForApps, getGamesMeta, getLatestSnapshot } from '@/lib/db'
-import { discountView } from '@/lib/discount'
+import {
+  getFeedForApps,
+  getGamesMeta,
+  getLatestSnapshot,
+  withoutBody,
+} from '@/lib/db'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
 import { plural } from '@/lib/plural'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { countChanges } from '@/lib/steamhtml'
 import { cachedMajorFeed } from '@/lib/whatsnewcache'
-import { resolveWhatsNew } from '@/lib/whatsnewfeed'
+import { feedMeta, resolveWhatsNew } from '@/lib/whatsnewfeed'
 
 export const dynamic = 'force-dynamic'
 
@@ -132,9 +138,10 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
         }
       >
         <Cover
-          item={hero}
-          meta={heroMeta}
+          item={withoutBody(hero)}
+          meta={feedMeta(heroMeta)}
           nowSec={now}
+          changes={countChanges(hero.blocks)}
           // Переключатель лежит экраном ниже, а после клика человек оказывается
           // наверху новой обложки — подпись здесь единственное, что говорит ему,
           // куда он попал
@@ -195,13 +202,15 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
             return (
               <PatchRow
                 key={`${item.appid}:${item.gid}`}
-                item={item}
-                meta={meta}
+                item={withoutBody(item)}
+                meta={feedMeta(meta)}
                 nowSec={now}
+                changes={countChanges(item.blocks)}
                 // Цена и ссылка на игру — только в общей ленте: в своей
                 // библиотеке покупать нечего
                 discovery={showPopular}
                 discount={showPopular && meta ? discountView(meta, now) : null}
+                price={showPopular && meta ? trustedPrice(meta, now) : null}
               />
             )
           })}
@@ -230,12 +239,14 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                 return (
                   <PatchRow
                     key={`${item.appid}:${item.gid}`}
-                    item={item}
-                    meta={meta}
+                    item={withoutBody(item)}
+                    meta={feedMeta(meta)}
                     nowSec={now}
+                    changes={countChanges(item.blocks)}
                     // Это чужие игры — цена и ссылка на страницу тут уместны
                     discovery
                     discount={meta ? discountView(meta, now) : null}
+                    price={meta ? trustedPrice(meta, now) : null}
                   />
                 )
               })}
@@ -246,6 +257,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
     </div>
   )
 }
+
 
 /**
  * Активная вкладка держится на весе и подчёркивании, а не на цвете: акцента в

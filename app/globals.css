@@ -73,16 +73,8 @@
      1.04 на --ease-out читается как ресайз, с перелётом — как шаг вперёд. */
   --ease-lift: cubic-bezier(0.34, 1.36, 0.64, 1);
 
-  /* Смена геля на лампе в квизе. Вдвое длиннее базовой намеренно: карточки
-     режутся встык, свет перетекает. Разность и есть кино.
-     Такт НЕ удлиняет взаимодействие — он ложится ПОВЕРХ уже существующей
-     сериализации AnimatePresence, а не после неё. */
-  --dur-relight: 720ms;
 
 
-  /* Радиус крупных панелей. Токен, а не литерал: то же число обязано стоять
-     в .quiz-panel:focus-visible ниже, и как литерал оно уже расходилось. */
-  --radius-panel: 20px;
 }
 
 :root[data-theme="light"] {
@@ -247,9 +239,6 @@
   --font-sans: var(--font-onest), system-ui, sans-serif;
   --font-mono: var(--font-jbmono), ui-monospace, monospace;
   --font-display: var(--font-unbounded), var(--font-onest), system-ui, sans-serif;
-  /* Дисплейное начертание квиза; подключается в app/quiz/layout.tsx — см.
-     тамошний докблок о том, почему это не --font-display */
-  --font-quiz: var(--font-oswald), var(--font-onest), system-ui, sans-serif;
 }
 
 /*
@@ -290,11 +279,38 @@ textarea:focus-visible {
   outline-offset: 0;
 }
 
+/*
+ * Кнопка, залитая брендовым цветом. Утилита ради ОДНОГО — состояния «нельзя».
+ *
+ * Раньше оно делалось через disabled:opacity-40, и для стеклянных кнопок это
+ * работает: приглушённое стекло читается как приглушённое стекло. А сплошная
+ * заливка ember при сорока процентах над тёмным фоном превращается в бурое
+ * пятно — не «пока нельзя», а «кнопка сломана». Хуже всего это на парадной
+ * странице: главный элемент экрана встречает гостя мутным.
+ *
+ * Поэтому «нельзя» снимает заливку целиком и уходит в нейтраль. Оба токена
+ * уже проверены по контрасту (--faint это 4.65:1), в отличие от произвольной
+ * прозрачности, которая контраст меняет на глаз.
+ */
+.btn-fill {
+  background: var(--ember);
+  color: var(--on-ember);
+  transition: filter var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.btn-fill:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.btn-fill:disabled {
+  background: var(--surface);
+  color: var(--faint);
+  cursor: default;
+}
+
 /* стеклянная панель — базовый строительный блок интерфейса */
 .glass {
   background: var(--glass-bg);
-  backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border: 1px solid var(--edge);
 }
 
@@ -341,6 +357,23 @@ textarea:focus-visible {
  * под текстом — так делает настоящая киношная титульная карточка.
  * Слои идут лесенкой, каждый со своей маской, — один backdrop-filter даёт
  * равномерное пятно, а не градиент резкости.
+ *
+ * ЛЕСЕНКА БЫЛА СОБРАНА ВВЕРХ НОГАМИ, и поймать это удалось только глазами.
+ * В linear-gradient(to top, …) ноль процентов — это НИЗ, поэтому маска
+ * первого слоя лежит у нижней кромки, а маска пятого — у верхней. Силу же
+ * раздали по возрастанию: 1px первому, 16px пятому. Выходило, что максимум
+ * размытия стоял у ВЕРХНЕЙ кромки, где полоса обрывается: резкий арт
+ * переходил в шестнадцать пикселей блюра одной чертой, а книзу, под самим
+ * текстом, резкость наоборот ВОЗВРАЩАЛАСЬ. Ровно наоборот тому, что
+ * обещано абзацем выше.
+ *
+ * Видно этого не было, потому что не рисовалось вообще: сборщик выбрасывал
+ * стандартный backdrop-filter и оставлял один -webkit-, которого Chrome не
+ * знает. Починили одно — вылезло второе.
+ *
+ * Маски не тронуты, переставлена СИЛА: максимум ушёл к той кромке, у которой
+ * лежит текст, у противоположной остался 1px. Заодно исчез шов — один
+ * пиксель на обрыве полосы глазу неразличим.
  */
 /*
  * БЕЗ z-index. Полоса стоит в разметке после арта и скрима, но ПЕРЕД контентом,
@@ -360,53 +393,53 @@ textarea:focus-visible {
   display: block;
 }
 .blur-band[data-dir='up'] > span:nth-child(1) {
-  backdrop-filter: blur(1px);
-  -webkit-backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(var(--blur-reveal));
+  backdrop-filter: blur(var(--blur-reveal));
   mask-image: linear-gradient(to top, #000 0%, #000 20%, transparent 40%);
 }
 .blur-band[data-dir='up'] > span:nth-child(2) {
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   mask-image: linear-gradient(to top, transparent 10%, #000 30%, #000 45%, transparent 60%);
 }
 .blur-band[data-dir='up'] > span:nth-child(3) {
-  backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   mask-image: linear-gradient(to top, transparent 25%, #000 45%, #000 62%, transparent 78%);
 }
 .blur-band[data-dir='up'] > span:nth-child(4) {
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   mask-image: linear-gradient(to top, transparent 42%, #000 62%, #000 80%, transparent 92%);
 }
 .blur-band[data-dir='up'] > span:nth-child(5) {
-  backdrop-filter: blur(var(--blur-reveal));
-  -webkit-backdrop-filter: blur(var(--blur-reveal));
+  -webkit-backdrop-filter: blur(1px);
+  backdrop-filter: blur(1px);
   mask-image: linear-gradient(to top, transparent 62%, #000 84%, #000 100%);
 }
 .blur-band[data-dir='down'] > span:nth-child(1) {
-  backdrop-filter: blur(1px);
-  -webkit-backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(var(--blur-reveal));
+  backdrop-filter: blur(var(--blur-reveal));
   mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
 }
 .blur-band[data-dir='down'] > span:nth-child(2) {
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   mask-image: linear-gradient(to bottom, transparent 10%, #000 30%, #000 45%, transparent 60%);
 }
 .blur-band[data-dir='down'] > span:nth-child(3) {
-  backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   mask-image: linear-gradient(to bottom, transparent 25%, #000 45%, #000 62%, transparent 78%);
 }
 .blur-band[data-dir='down'] > span:nth-child(4) {
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   mask-image: linear-gradient(to bottom, transparent 42%, #000 62%, #000 80%, transparent 92%);
 }
 .blur-band[data-dir='down'] > span:nth-child(5) {
-  backdrop-filter: blur(var(--blur-reveal));
-  -webkit-backdrop-filter: blur(var(--blur-reveal));
+  -webkit-backdrop-filter: blur(1px);
+  backdrop-filter: blur(1px);
   mask-image: linear-gradient(to bottom, transparent 62%, #000 84%, #000 100%);
 }
 
@@ -606,19 +639,7 @@ textarea:focus-visible {
   }
 }
 
-@keyframes shutter-sweep {
-  0% {
-    opacity: 0;
-    transform: translate3d(-70%, 0, 0);
-  }
-  35% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate3d(70%, 0, 0);
-  }
-}
+
 /*
  * Там, где наведения не существует, покой не может быть таким же глубоким.
  *
@@ -643,6 +664,38 @@ img[data-art-fade][data-loaded] {
 }
 
 /*
+ * Скрим героя на /play и /daily.
+ *
+ * Жил дословной копией в двух файлах и держал на 55% высоты провал до 0.25 —
+ * ровно там, где стоит текст. Замер на 375×812: блок текста занимает 6.7–77.7%
+ * высоты скрима, скрим в этой полосе даёт 0.28–0.32, и абзац на светлом арте
+ * выходит 1.65:1, заголовок 1.91:1 при норме AA 4.5 и 3.
+ *
+ * Это не край случая. Скрим настроен под тёмный ключ-арт, а сюда попадает
+ * ЛЮБАЯ игра из библиотеки — комментарий рядом с BlurBand это признаёт прямо.
+ * Смягчить взялись тинтом полосы, и он не достаёт: полоса в 46vh короче
+ * текста, который прикрывает, а на её верхней кромке тинт равен нулю по
+ * построению градиента. Даже на реальном небе Terraria абзац выходит ~3:1.
+ *
+ * 0.63 выбрано не на глаз: это порог, при котором абзац #f2f3f5/90% берёт
+ * 4.5:1 против ЧИСТО БЕЛОГО арта, то есть против любого. Соседний 0.6 даёт
+ * 4.11 и держится только до яркости ~215 — разница между гарантией и
+ * догадкой стоит три процента темноты.
+ *
+ * Держим 0.63 до 80% высоты — по верхнюю кромку текста с запасом, — а выше
+ * отпускаем: там ключевой кадр арта, и прикрывать там нечего.
+ */
+.hero-scrim {
+  background: linear-gradient(
+    to top,
+    #0b0c10 4%,
+    rgba(11, 12, 16, 0.88) 26%,
+    rgba(11, 12, 16, 0.68) 58%,
+    rgba(11, 12, 16, 0.63) 80%,
+    rgba(11, 12, 16, 0.42) 100%
+  );
+}
+/*
  * Лента чипов с растворяющимся краем. Правый фейд шире левого: полукарточка,
  * тающая в нём, и есть аффорданс прокрутки — «дальше есть ещё» без стрелок.
  * Скроллбар прячется в обоих движках (scrollbar-width — Firefox,
@@ -664,31 +717,35 @@ img[data-art-fade][data-loaded] {
 .chip-rail::-webkit-scrollbar {
   display: none;
 }
-/*
- * Маска на предке и backdrop-filter на потомке несовместимы в Chromium:
- * стеклянные чипы внутри маскированной ленты не отрисовывались ВОВСЕ.
- * Гасим у них блюр подложки — на плоском тёмном фоне он неотличим от
- * простой заливки glass-bg, а лента возвращает себе содержимое.
- */
-.chip-rail .glass {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
 @media (min-width: 768px) {
   .chip-rail {
     mask-image: none;
     -webkit-mask-image: none;
   }
 }
-
-@keyframes shelf-drift {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
+/*
+ * Маска на предке и backdrop-filter на потомке несовместимы в Chromium:
+ * стеклянные чипы внутри маскированной ленты не отрисовывались ВОВСЕ.
+ * Гасим у них блюр подложки — на плоском тёмном фоне он неотличим от
+ * простой заливки glass-bg, а лента возвращает себе содержимое.
+ *
+ * Ровно до 768px, потому что ровно до 768px существует маска. Правило
+ * стояло без границы и на десктопе снимало блюр без всякой причины — до
+ * первого живого пользователя ленты это ничего не стоило, потому что
+ * пользователя не было вовсе.
+ *
+ * В Chrome 148 сама несовместимость уже НЕ ВОСПРОИЗВОДИТСЯ: чипы рисуются и
+ * с блюром внутри маски. Правило оставлено страховкой для движков, где её
+ * видели, и стоит оно ничего — на плоском тёмном фоне блюра там не видно.
+ * Если будешь его трогать, проверь на старом Chromium, а не на текущем.
+ */
+@media (max-width: 767px) {
+  .chip-rail .glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
+
 
 /* Волосок рельса и нижней навигации: переезд между подписями. Класс, а не
    inline-стиль — иначе «уменьшить движение» не могло его выключить. */
@@ -702,80 +759,6 @@ img[data-art-fade][data-loaded] {
   }
 }
 
-@keyframes ray-drift {
-  from {
-    transform: translate3d(-1.4%, 0, 0);
-  }
-  to {
-    transform: translate3d(1.4%, 0, 0);
-  }
-}
-
-/*
- * Вес кадра в грейфере. ТОЛЬКО translate3d — субпиксельный поворот на
- * маскированном элементе с 36 фильтрованными детьми убивает любой быстрый
- * путь. Живёт на обёртке (она НЕ маскирована), а дрейф остаётся на треке:
- * две анимации не должны драться за один transform.
- */
-@keyframes gate-weave {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-  50% {
-    transform: translate3d(0, -0.6px, 0);
-  }
-}
-/*
- * На телефоне створки ПОВОРАЧИВАЮТСЯ: те же полосы, только горизонтальные.
- * Карточек нет и здесь. Ширины не ездят — гейт курсора выше их и не включит.
- */
-/*
- * ХРОМАТИЧЕСКАЯ АБЕРРАЦИЯ — ТОЛЬКО НА ДИСПЛЕЙНОМ ТЕКСТЕ.
- *
- * Для арта это было бы три смещённые копии картинки, то есть 12 слоёв, связанных
- * общим scale(1.15). Для текста это ОДИН элемент, ноль слоёв, ноль blend-режимов
- * — и при этом настоящий анаморфный вид.
- *
- * inherits: false и объявление на самом элементе: наследуемое зарегистрированное
- * свойство заставило бы пересчитывать стиль всего поддерева каждый кадр.
- * text-shadow вычисляется на заголовке и наследуется в слова уже готовым, так
- * что эффект работает и когда SplitText не успел разрезать строку.
- *
- * --ab НЕ объявляется в :root: этот префикс не освобождён от зеркала светлой
- * темы, и тест контраста покраснел бы.
- */
-@property --ab {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-/* Волосок лампы: приходит ударом, расплывается, гаснет. */
-.title-filament {
-  position: absolute;
-  left: 10%;
-  top: 32%;
-  width: 30%;
-  height: 2px;
-  opacity: 0;
-  transform-origin: 0% 50%;
-  background: linear-gradient(90deg, transparent, var(--key-rim), transparent);
-  box-shadow:
-    0 0 24px 2px var(--key),
-    0 0 64px 10px color-mix(in srgb, var(--key) 45%, transparent);
-}
-
-/* Вспышка лампы — из той же точки, что и постель света. */
-.title-flare {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  background: radial-gradient(
-    58% 46% at var(--lamp-x) var(--lamp-y),
-    color-mix(in srgb, var(--key) 55%, transparent),
-    transparent 62%
-  );
-}
 
 /*
  * Такты ответа в квизе.

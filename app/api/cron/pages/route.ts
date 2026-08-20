@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
+import { passChain } from '@/lib/chain'
 import { cronAuthorized } from '@/lib/cron'
 import {
   acquireLease,
@@ -9,14 +10,37 @@ import {
   setCatalogMeta,
   STEAM_LEASE,
 } from '@/lib/db'
-import { PAGE_MAX_AGE_SEC, runPageSlice } from '@/lib/pagejob'
+import { llmAvailable } from '@/lib/llm'
+import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '@/lib/pagejob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
 /** Потолок Hobby. */
 export const maxDuration = 60
 
-/** Сколько звеньев цепочки максимум. 24 × 20 карточек = 480 в сутки. */
+/**
+ * Сколько звеньев цепочки максимум.
+ *
+ * Стояло «24 × 20 карточек = 480 в сутки». Двадцать — это limit пачки, то есть
+ * сколько карточек СПРАШИВАЮТ из очереди, а не сколько успевает срез.
+ *
+ * Каждая карточка это ДВА запроса в Steam: appdetails и appreviews. Оба идут
+ * через один пейсер на ключе steam-store (lib/pace.ts — цепочка промисов на
+ * ключ, шаг STORE_PACE_MS = 1700мс), то есть строго по очереди. Сорок запросов
+ * это 39 промежутков по 1.7с = 66 секунд одного лишь ожидания — при бюджете
+ * среза в 50. Двадцать карточек за срез недостижимы структурно, а не иногда.
+ *
+ * Что помещается: 1 + floor(50000 / 1700) = 30 запросов, то есть 15 карточек.
+ * Отсюда предел 24 × 15 = 360 в сутки — и это ещё без времени самих ответов,
+ * записей в базу и вызова модели.
+ *
+ * Замер на проде: пять звеньев, 49 карточек, около 9.8 за срез. Почему звеньев
+ * пять, а не 24, пока не установлено — ровно поэтому передача цепочки и
+ * сделана наблюдаемой, см. passChain ниже.
+ *
+ * Лишние пять карточек в пачке при этом ничего не стоят: claimPageEnrichBatch
+ * только читает, ничего не помечает, и неотработанный хвост попыток не теряет.
+ */
 const MAX_CHAIN = 24
 const SLICE_BUDGET_MS = 50_000
 const LAST_KEY = 'pages_last_slice'
@@ -57,33 +81,110 @@ export async function GET(req: Request) {
 
   after(async () => {
     let result: Awaited<ReturnType<typeof runPageSlice>> | null = null
+    /*
+     * Упало ли звено — отдельно от результата, и это несущая разница.
+     *
+     * Комментарий ниже обещает, что «исключение не должно убивать сутки», но
+     * обещание не выполнялось: при броске result оставался null, goesOn читал
+     * result?.hasMore и получал false, и цепочка обрывалась молча. finally
+     * защищал только запись отметки и отдачу аренды, а не продолжение.
+     *
+     * Бросить может любой db.execute внутри среза — это сетевой вызов к
+     * Turso, и один моргнувший запрос стоил целых суток: расписание у этого роута одно и суточное.
+     *
+     * Поэтому упавшее звено передаёт эстафету дальше: следующее заново
+     * выберет очередь и, скорее всего, отработает. Долбёжки не будет — цепочку
+     * ограничивает MAX_CHAIN, ровно как и в удачном случае.
+     */
+    let упало: string | null = null
     try {
       result = await runPageSlice(db, { deadlineAt: Date.now() + SLICE_BUDGET_MS })
     } catch (err) {
       console.error('page slice', err)
+      упало = err instanceof Error ? err.message.slice(0, 120) : 'исключение'
     } finally {
       // Звено цепочки — в finally и ПОСЛЕ работы, ровно по тем же причинам,
       // что расписаны в /api/cron/news: исключение не должно убивать сутки,
       // а параллельные инвокации сломали бы общий лимитер темпа Steam.
-      await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result }))
+      // Отметка — диагностика, а не работа. Её отказ не имеет права обрывать
+      // цепочку: иначе одно моргнувшее соединение к Turso стоит того же, что и
+      // исключение в самом срезе, ради которого всё это и написано.
+      try {
+        await setCatalogMeta(
+          db,
+          LAST_KEY,
+          JSON.stringify({ at: nowSec(), chain, ...result, ...(упало ? { упало } : {}) }),
+        )
+      } catch (err) {
+        console.error('cron meta', err)
+      }
       const secret = process.env.CRON_SECRET
       const goesOn = Boolean(
-        result?.hasMore && result.stopped !== 'blocked' && chain < MAX_CHAIN && secret,
+        (упало ? true : result?.hasMore && result.stopped !== 'blocked') &&
+          chain < MAX_CHAIN &&
+          secret,
       )
       // Аренда передаётся следующему звену вместе с holder, а отдаётся только
       // когда цепочка кончилась — см. тот же кусок в /api/cron/news.
       if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
+      /*
+       * Обрыв цепочки записывается, а не проглатывается.
+       *
+       * Здесь стояло `.catch(() => {})` без проверки res.ok, и это стоило
+       * ровно того, ради чего роут существует. Замер по проду 19 августа:
+       * пять звеньев по 52 секунды, 49 карточек, все удачные, — и остановка
+       * при hasMore: true и stopped: "budget". То есть очередь не кончилась,
+       * Steam не блокировал, а шестое звено просто не состоялось, и узнать
+       * почему было НЕЧЕМ: ребёнок ничего не записал, родитель отказ съел.
+       *
+       * Причина ложится ПОВЕРХ записи этого звена. Ребёнка не будет — значит
+       * перезаписывать её некому, и до следующих суток она останется
+       * единственным следом обрыва.
+       */
       if (goesOn && secret) {
-        await fetch(
+        const передача = await passChain(
           `${appBaseUrl()}/api/cron/pages?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
-          { headers: { 'x-cron-secret': secret } },
-        ).catch(() => {})
+          secret,
+        )
+        if (!передача.ok) {
+          await setCatalogMeta(
+            db,
+            LAST_KEY,
+            JSON.stringify({ at: nowSec(), chain, ...result, обрыв: передача.reason }),
+          )
+          // Аренду отдаём, ТОЛЬКО когда ребёнка точно нет. При отказе сети он
+          // мог принять звено и работать прямо сейчас — тогда пусть аренда
+          // истечёт сама, а не откроет дверь третьему потоку к Steam.
+          if (!передача.childMayRun) await releaseLease(db, STEAM_LEASE, holder)
+        }
       }
     }
   })
 
+  /*
+   * due считается ТОЛЬКО на первом звене.
+   *
+   * Это диагностика для человека с curl: родитель ответ ребёнка не читает
+   * вовсе. А COUNT(*) идёт по всему каталогу — шесть тысяч прочитанных строк,
+   * которые Turso тарифицирует, на КАЖДОЕ звено цепочки. За сутки это 144 000
+   * строк выброшенных в никуда при полной цепочке.
+   *
+   * redoHeuristic передаётся тем же значением, что и в выборку: иначе счётчик
+   * говорит одно, а очередь делает другое — ровно то, от чего предостерегает
+   * докблок countPageEnrichDue.
+   */
   return NextResponse.json(
-    { started: true, chain, due: await countPageEnrichDue(db, nowSec() - PAGE_MAX_AGE_SEC) },
+    {
+      started: true,
+      chain,
+      ...(chain === 0
+        ? {
+            due: await countPageEnrichDue(db, nowSec() - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, {
+              redoHeuristic: llmAvailable(),
+            }),
+          }
+        : {}),
+    },
     { status: 202 },
   )
 }

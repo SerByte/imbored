@@ -17,6 +17,7 @@ export type DeckCard = {
   headerImage: string | null
   art?: GameArtUrls | null
   ccu?: number | null
+  ccuAt?: number | null
   tags: string[]
   store?: string
   storeUrl?: string
@@ -43,10 +44,13 @@ const DEPTH = 3 // сколько карточек видно в стопке
  *    матовых панелей читается дороже, чем веер игральных карт.
  */
 function TopCard({
+  nowSec,
   card,
   flyOut,
   onCommit,
 }: {
+  /** серверные часы ответа /deck — см. PlayersNow */
+  nowSec: number
   card: DeckCard
   flyOut: 'left' | 'right' | null
   onCommit: (yes: boolean) => void
@@ -143,7 +147,7 @@ function TopCard({
           )}
         </div>
         {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть */}
-        <PlayersNow ccu={card.ccu ?? null} />
+        <PlayersNow ccu={card.ccu ?? null} ccuAt={card.ccuAt} nowSec={nowSec} />
         {card.tags.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {card.tags.map((t) => (
@@ -177,11 +181,14 @@ export function SwipeDeck({
   onVote,
   votedCount,
   deckTotal,
+  nowSec,
 }: {
   cards: DeckCard[]
   onVote: (card: DeckCard, yes: boolean) => void
   votedCount: number
   deckTotal: number
+  /** серверные часы ответа /deck — см. PlayersNow */
+  nowSec: number
 }) {
   // Куда улетает верхняя карточка, когда голосуют кнопкой, а не жестом.
   const [flyOut, setFlyOut] = useState<'left' | 'right' | null>(null)
@@ -226,21 +233,39 @@ export function SwipeDeck({
           {/* key по appid: каждая карточка получает СВОИ motion-значения.
               Общий x на всю колоду оставлял бы следующей карте смещение
               предыдущей и дрался бы с exit-анимацией улетающей. */}
-          <TopCard key={top.appid} card={top} flyOut={flyOut} onCommit={commit} />
+          <TopCard key={top.appid} card={top} flyOut={flyOut} onCommit={commit} nowSec={nowSec} />
         </AnimatePresence>
       </div>
 
+      {/*
+        Числитель зажат знаменателем — ровно как в components/room/MemberRoster,
+        где та же оговорка записана: «голосов может оказаться больше, чем карт».
+
+        Случай штатный, а не выдуманный: loadDeck МЕРЖИТ колоду, а не заменяет
+        («Мержим по appid, а не заменяем» — app/room/[id]/page), поэтому старые
+        неотсвайпанные карты остаются на руках, а deckTotal приезжает уже от
+        НОВОЙ колоды. Вошёл человек с маленькой библиотекой — новая колода
+        схлопнулась, старые карты остались, и каждый следующий свайп уводил
+        числитель за знаменатель: «16/12». Полоса при этом считалась тем же
+        выражением и уходила за сто процентов.
+
+        Вырожденный край — новая колода пустая при непустых картах на руках:
+        строка читалась «1/0». Поэтому при нулевом знаменателе показываем одну
+        позицию без дроби, как это делает роcтер.
+      */}
       <div className="flex items-center gap-3">
         <div className="h-1 flex-1 rounded-full bg-track overflow-hidden">
           <motion.div
             className="h-full bg-ember rounded-full"
             initial={false}
-            animate={{ width: `${deckTotal ? ((votedCount + 1) / deckTotal) * 100 : 0}%` }}
+            animate={{
+              width: `${deckTotal ? Math.min(100, ((votedCount + 1) / deckTotal) * 100) : 0}%`,
+            }}
             transition={{ duration: 0.3, ease: EASE }}
           />
         </div>
         <span className="text-xs text-faint font-mono shrink-0">
-          {votedCount + 1}/{deckTotal}
+          {deckTotal ? `${Math.min(votedCount + 1, deckTotal)}/${deckTotal}` : votedCount + 1}
         </span>
       </div>
     </div>

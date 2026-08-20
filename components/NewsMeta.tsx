@@ -5,6 +5,7 @@
  * карточек — осталось ровно то, что нужно странице игры.
  */
 import type { StoredNews } from '@/lib/db'
+import { dateLabel } from '@/lib/freshness'
 
 /** Метка масштаба. Крупное подсвечиваем, мелкое — приглушаем. */
 export function ScaleBadge({ scale }: { scale: StoredNews['scale'] }) {
@@ -21,11 +22,18 @@ export function ScaleBadge({ scale }: { scale: StoredNews['scale'] }) {
   )
 }
 
+/**
+ * Дата через lib/freshness, а не через свой toLocaleDateString: зона обязана
+ * быть зафиксирована, иначе сервер и браузер печатают разные дни и React
+ * перерисовывает всё тело страницы. Подробности там же.
+ */
 export function NewsDate({ at, className = '' }: { at: number; className?: string }) {
-  const d = new Date(at * 1000)
   return (
-    <time dateTime={d.toISOString()} className={`font-mono tabular-nums text-xs text-dim ${className}`}>
-      {d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
+    <time
+      dateTime={new Date(at * 1000).toISOString()}
+      className={`font-mono tabular-nums text-xs text-dim ${className}`}
+    >
+      {dateLabel(at, { year: true })}
     </time>
   )
 }

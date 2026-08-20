@@ -4,7 +4,7 @@ import {
   discountEndsLabel,
   discountOf,
   discountView,
-  formatPrice,
+  formatPrice,  trustedPrice,
 } from './discount'
 import type { GameMeta } from './types'
 
@@ -118,5 +118,37 @@ describe('formatPrice', () => {
     expect(formatPrice(999)).toBe('$9.99')
     expect(formatPrice(0)).toBe('$0.00')
     expect(formatPrice(5999)).toBe('$59.99')
+  })
+})
+
+describe('trustedPrice', () => {
+  test('цена без скидки отдаётся как есть, даже если замер старый', () => {
+    // Неточная цена — полбеды; правило модуля.
+    expect(trustedPrice({ priceFinal: 1999 }, NOW)).toBe(1999)
+    expect(trustedPrice({ priceFinal: 1999, discountPercent: 0, priceAt: NOW - 10 * DAY }, NOW)).toBe(1999)
+  })
+
+  test('живая скидка — цена акционная и её показывать можно', () => {
+    expect(trustedPrice(onSale(), NOW)).toBe(999)
+  })
+
+  test('срок скидки вышел — цены нет вовсе', () => {
+    // Ровно случай Heavy Rain: $0.99 при настоящих $19.99. Показывать
+    // price_final как обычную цену — не неточность, а двадцатая часть правды.
+    expect(trustedPrice(onSale({ discountEndsAt: NOW - 1 }), NOW)).toBeNull()
+  })
+
+  test('замер скидки протух — цены тоже нет', () => {
+    expect(trustedPrice(onSale({ priceAt: NOW - PRICE_TRUST_SEC - 1 }), NOW)).toBeNull()
+  })
+
+  test('price_initial не подставляется: «продлили» и «кончилась» неразличимы', () => {
+    const dead = onSale({ discountEndsAt: NOW - 1 })
+    expect(trustedPrice(dead, NOW)).not.toBe(dead.priceInitial)
+    expect(trustedPrice(dead, NOW)).toBeNull()
+  })
+
+  test('про цену ничего не известно — тоже null', () => {
+    expect(trustedPrice({}, NOW)).toBeNull()
   })
 })

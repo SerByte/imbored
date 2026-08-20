@@ -7,9 +7,15 @@
  *   npm run pages:enrich -- --no-llm               только эвристика, без Claude
  *
  * Крон на Vercel делает ровно то же самое (lib/pagejob.ts), но у него потолок
- * 60 секунд на вызов и 480 карточек в сутки — первичный обход шести тысяч игр
- * растянулся бы почти на две недели. Массовый первый проход дешевле прогнать
- * здесь: та же логика, без дедлайна и без цепочки вызовов.
+ * 60 секунд на вызов, а внутри — пейсер Steam с шагом 1.7с на каждый из двух
+ * запросов карточки. В предел это даёт 15 карточек за срез и 360 в сутки при
+ * полной цепочке; на проде замерено меньше — пять звеньев, 49 карточек в
+ * сутки (арифметика целиком в докблоке MAX_CHAIN). Пять тысяч ненаполненных
+ * карточек при таком темпе это не две недели, а сотня дней.
+ *
+ * Массовый первый проход дешевле прогнать здесь: та же логика, без дедлайна и
+ * без цепочки вызовов. Пейсер остаётся и тут — он про лимиты Steam, а не про
+ * Vercel, — но время не ограничено ничем.
  *
  * По умолчанию пишет в локальный data/imbored.db. Чтобы залить в облако,
  * задайте TURSO_DATABASE_URL — как у seed:catalog и catalog:promote.
@@ -17,8 +23,9 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { countPageEnrichDue, createDb } from '../lib/db'
-import { PAGE_MAX_AGE_SEC, runPageSlice } from '../lib/pagejob'
+import { countPageEnrichDue, createDb, STEAM_LEASE } from '../lib/db'
+import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '../lib/pagejob'
+import { withLease } from './lease'
 
 /** Карточек за срез. Каждая — два запроса к store.steampowered.com,
  *  а лимитер держит 1.7 с между ними: срез это примерно минута. */
@@ -51,7 +58,7 @@ async function main() {
   const db = await openDb()
   const now = Math.floor(Date.now() / 1000)
 
-  const due = await countPageEnrichDue(db, now - PAGE_MAX_AGE_SEC)
+  const due = await countPageEnrichDue(db, now - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES)
   console.log(`к обогащению готово: ${due.toLocaleString('ru-RU')}`)
 
   if (dryRun) {
@@ -72,33 +79,59 @@ async function main() {
   let viaClaude = 0
   const startedAt = Date.now()
 
-  while (done < maxGames) {
-    const limit = Math.min(SLICE, maxGames - done)
-    const res = await runPageSlice(db, {
-      // без дедлайна: локальный прогон никто не убивает по таймеру
-      deadlineAt: Date.now() + 10 * 60_000,
-      limit,
-      ...(noLlm ? { useClaude: false } : {}),
-      onProgress: (line) => console.log(line),
-    })
-    done += res.enriched
-    shots += res.withShots
-    prosCons += res.withProsCons
-    viaClaude += res.viaClaude
+  /*
+   * Аренда та же, что у /api/cron/pages, и раньше её тут не было вовсе.
+   *
+   * Очередь не резервируется — claimPageEnrichBatch только читает, ничего не
+   * помечая, — поэтому ручной прогон и крон, взявшись одновременно, разобрали
+   * бы одни и те же карточки и заплатили за них дважды: два запроса в Steam на
+   * карточку плюс вызов модели. Лимиты Steam при этом ни при чём, они по IP, а
+   * прогон идёт с машины оператора; разводим двойную работу, а не темп.
+   *
+   * Предупреждение ниже про «аренду» при этом стояло с самого начала — фраза
+   * приехала из крона вместе с кодом, но без самой аренды.
+   */
+  const прошло = await withLease(
+    db,
+    STEAM_LEASE,
+    {
+      busyNote:
+        'очередь карточек занята: её разбирает крон либо прерванный прогон, не успевший отдать аренду.',
+    },
+    async ({ renew }) => {
+      while (done < maxGames) {
+        const limit = Math.min(SLICE, maxGames - done)
+        // Держим коротким TTL и продлеваем каждым кругом: срез это около минуты
+        await renew()
+        const res = await runPageSlice(db, {
+          // без дедлайна: локальный прогон никто не убивает по таймеру
+          deadlineAt: Date.now() + 10 * 60_000,
+          limit,
+          ...(noLlm ? { useClaude: false } : {}),
+          onProgress: (line) => console.log(line),
+        })
+        done += res.enriched
+        shots += res.withShots
+        prosCons += res.withProsCons
+        viaClaude += res.viaClaude
 
-    if (!res.enriched) break
-    if (res.stopped === 'blocked') {
-      console.warn('\nSteam закрылся от этого IP — прерываю, аренда истечёт сама')
-      break
-    }
-    const mins = Math.round((Date.now() - startedAt) / 60_000)
-    console.log(
-      `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tpros/cons: ${prosCons} (модель: ${viaClaude})\t${mins} мин`,
-    )
-    if (!res.hasMore) break
-  }
+        if (!res.enriched) break
+        if (res.stopped === 'blocked') {
+          console.warn('\nSteam закрылся от этого IP — прерываю, аренда отдаётся сама')
+          break
+        }
+        const mins = Math.round((Date.now() - startedAt) / 60_000)
+        console.log(
+          `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tpros/cons: ${prosCons} (модель: ${viaClaude})\t${mins} мин`,
+        )
+        if (!res.hasMore) break
+      }
+      return true
+    },
+  )
+  if (прошло === null) return
 
-  const left = await countPageEnrichDue(db, Math.floor(Date.now() / 1000) - PAGE_MAX_AGE_SEC)
+  const left = await countPageEnrichDue(db, Math.floor(Date.now() / 1000) - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES)
   console.log(
     `\nготово. обогащено ${done.toLocaleString('ru-RU')}, ` +
       `со скриншотами ${shots.toLocaleString('ru-RU')}, с pros/cons ${prosCons.toLocaleString('ru-RU')}`,

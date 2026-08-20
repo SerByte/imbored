@@ -18,6 +18,28 @@ export const contentType = 'image/png'
  */
 export const revalidate = 3600
 
+/**
+ * Регистрирует сегмент в манифесте — без этого revalidate выше мёртв.
+ *
+ * Пустой список намеренно: предрендерить тут нечего — адреса персональные.
+ * Смысл функции не в предрендере, а в РЕГИСТРАЦИИ. Без неё динамический
+ * сегмент не попадает в dynamicRoutes манифеста, и revalidate выше не значит
+ * ничего: маршрут остаётся ƒ и рендерится заново на каждый запрос.
+ *
+ * Это уже было выяснено в app/game/[appid]/page.tsx — там та же функция
+ * стоит с той же оговоркой «обязателен, и не ради предрендера». Здесь просто
+ * не применили, и картинки платили за это полностью: три запроса подряд к
+ * /compat/[steamid]/opengraph-image на проде дали три x-vercel-cache: MISS,
+ * Age: 0, по 366–577 КБ и 1–2,6 секунды на каждый. Проверено сборкой: с этой
+ * функцией маршрут в листинге меняется с ƒ на ●.
+ *
+ * Картинку тянет краулер мессенджера — у одной разосланной ссылки таких
+ * заходов столько, скольким её переслали.
+ */
+export async function generateStaticParams(): Promise<Array<Record<string, string>>> {
+  return []
+}
+
 export default async function Image({ params }: { params: Promise<{ steamid: string }> }) {
   const { steamid } = await params
   const invite = /^\d{17}$/.test(steamid) ? await loadCompatInvite(await getDb(), steamid) : null

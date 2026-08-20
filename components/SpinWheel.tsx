@@ -36,6 +36,8 @@ export function SpinWheel({
   const n = items.length
   const [pos, setPos] = useState(0)
   const done = useRef(false)
+  /** Только для объявления скринридеру: барабан ещё крутится или уже встал. */
+  const [landed, setLanded] = useState(false)
 
   // onDone приходит новой функцией на каждый рендер родителя. Если положить её
   // в зависимости эффекта, барабан будет перезапускаться посреди прокрутки.
@@ -67,6 +69,7 @@ export function SpinWheel({
         done.current = true
         // Короткая пауза на «щелчок»: результат должен успеть прочитаться
         // как результат, а не проскочить в следующий экран.
+        setLanded(true)
         setTimeout(() => onDoneRef.current(), 260)
       }
     }
@@ -83,10 +86,23 @@ export function SpinWheel({
     <div
       className="relative w-full max-w-lg select-none"
       style={{ height: ROW_H * (VISIBLE * 2 + 1), perspective: 700 }}
-      aria-live="polite"
-      aria-label="Выбираем игру"
     >
-      <div className="absolute inset-0 overflow-hidden">
+      {/*
+        Живая область — отдельной строкой, а не на самом барабане.
+
+        aria-live="polite" стоял на контейнере, внутри которого за 1,6
+        секунды меняется текст семи строк на каждом кадре: это порядка ста
+        двадцати замен, то есть очередь объявлений наполняется во много раз
+        быстрее, чем произносится. Скринридер получал поток названий вместо
+        сообщения, а сам результат выбора не объявлялся вообще нигде.
+
+        Барабан теперь aria-hidden — это чистая анимация, — а говорят о нём
+        ровно два сообщения.
+      */}
+      <p role="status" className="sr-only">
+        {landed ? `Выбрана игра: ${items[mod(landOn, n)]}` : 'Выбираем игру…'}
+      </p>
+      <div aria-hidden className="absolute inset-0 overflow-hidden">
         {Array.from({ length: VISIBLE * 2 + 1 }, (_, k) => {
           const slot = k - VISIBLE
           const d = slot - frac

@@ -14,15 +14,19 @@ import {
   flushPollResults,
   getCatalogMeta,
   getFeedForApps,
+  gameDescriptions,
   getGameNews,
   getGameRanks,
+  getNewsBlocks,
   getFeedHeadForApps,
   getMajorFeed,
   getMajorFeedHead,
   getUnsummarized,
   pruneNewsForApp,
   releaseLease,
+  removeRoomMember,
   reviveGoneNewsPoll,
+  setGameDescriptions,
   setNewsDigest,
   STEAM_LEASE,
   upsertNewsItems,
@@ -73,6 +77,7 @@ import {
   getDailyPick,
   saveDailyPick,
   sweepDailyPicks,
+  topCatalogAppids,
 } from './db'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -111,6 +116,38 @@ describe('db', () => {
     expect(snap?.takenAt).toBe(NOW)
     expect(snap?.games).toEqual([LIB[0]])
     expect(await getLatestSnapshot(db, 'unknown')).toBeNull()
+  })
+
+  test('описания: отдаются с текстом, переписываются поштучно, остальное не трогают', async () => {
+    const db = await freshDb()
+    // reviews_total задаёт порядок выдачи и попадание в ALIVE_POOL
+    await upsertGameMeta(db, { ...META, appid: 620, reviewsTotal: 500 }, NOW)
+    await upsertGameMeta(
+      db,
+      { ...META, appid: 570, name: 'Dota 2', shortDescription: 'A MOBA game', reviewsTotal: 900 },
+      NOW,
+    )
+
+    const all = await gameDescriptions(db, 10)
+    expect(all.map((g) => g.appid)).toEqual([570, 620])
+    expect(all[0].description).toBe('A MOBA game')
+
+    const n = await setGameDescriptions(db, [{ appid: 570, description: 'Игра про героев' }])
+    expect(n).toBe(1)
+    const after = await getGameMeta(db, 570)
+    expect(after?.shortDescription).toBe('Игра про героев')
+    // и ничего кроме описания: доливка перевода не имеет права стереть цену и теги
+    expect(after?.name).toBe('Dota 2')
+    expect(after?.priceFinal).toBe(META.priceFinal)
+    expect(after?.tags).toEqual(META.tags)
+    // соседа не трогали
+    expect((await getGameMeta(db, 620))?.shortDescription).toBe('Головоломка с порталами')
+  })
+
+  test('пустой список описаний не идёт в базу вовсе', async () => {
+    const db = await freshDb()
+    // db.batch([]) в libsql — ошибка, и вызывающему пришлось бы помнить об этом
+    expect(await setGameDescriptions(db, [])).toBe(0)
   })
 
   test('метаданные игры: upsert + чтение эквивалентны, повторный upsert обновляет', async () => {
@@ -513,6 +550,31 @@ describe('db', () => {
     expect(await roomMembers(db, 'ABC123')).toHaveLength(2)
   })
 
+  test('порядок участников определён даже при совпавшей секунде входа', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'TIE001', steamid: 'zzz' }, NOW)
+    // Ссылку прислали в чат разом — все трое вошли в одну и ту же секунду,
+    // joined_at их не различает. Тест сторожит КОНТРАКТ, а не регрессию: он
+    // проходит и без добивки в ORDER BY, потому что автоиндекс по
+    // (room_id, steamid) сегодня отдаёт этот порядок сам (см. докблок
+    // roomMembers). Проходить он обязан и после смены плана или ключа.
+    for (const id of ['zzz', 'aaa', 'mmm']) await joinRoom(db, 'TIE001', id, undefined, NOW)
+
+    const first = (await roomMembers(db, 'TIE001')).map((m) => m.steamid)
+    expect(first).toEqual(['aaa', 'mmm', 'zzz'])
+    // и он же при повторном чтении — порядок обязан быть воспроизводимым
+    expect((await roomMembers(db, 'TIE001')).map((m) => m.steamid)).toEqual(first)
+
+    // при разных секундах решает по-прежнему время входа, а не steamid
+    await joinRoom(db, 'TIE001', 'aab', undefined, NOW + 5)
+    expect((await roomMembers(db, 'TIE001')).map((m) => m.steamid)).toEqual([
+      'aaa',
+      'mmm',
+      'zzz',
+      'aab',
+    ])
+  })
+
   test('открытые комнаты: тумблер и доска, закрытые/старые/сматченные не видны', async () => {
     const db = await freshDb()
     await createRoom(db, { id: 'PUB001', steamid: 'a' }, NOW)
@@ -866,6 +928,136 @@ function newsItem(over: Partial<StoredNews> = {}): StoredNews {
   return { appid: 730, gid: '1', title: 'Обновление', ...NEWS_BASE, ...over }
 }
 
+describe('getNewsBlocks', () => {
+  test('отдаёт тело по паре appid+gid', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    expect(await getNewsBlocks(db, 730, '1')).toEqual(NEWS_BASE.blocks)
+  })
+
+  test('чужой gid и чужая игра — это null, а не тело соседа', async () => {
+    // Маршрут /api/news публичный, и пара приезжает из адресной строки.
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    expect(await getNewsBlocks(db, 730, '2')).toBeNull()
+    expect(await getNewsBlocks(db, 570, '1')).toBeNull()
+  })
+
+  test('битый блоб читается как «нечего показать», а не роняет ответ', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    await db.execute({
+      sql: 'UPDATE news_items SET blocks_json = ? WHERE appid = 730 AND gid = ?',
+      args: ['{не json', '1'],
+    })
+    expect(await getNewsBlocks(db, 730, '1')).toBeNull()
+  })
+})
+
+describe('removeRoomMember', () => {
+  /** Комната с уже вошедшими участниками: createRoom только заводит строку. */
+  async function room(db: Db, id: string, members: string[]) {
+    await createRoom(db, { id, steamid: members[0]! }, NOW)
+    for (const m of members) await joinRoom(db, id, m, m.toUpperCase(), NOW)
+  }
+
+  test('участник уходит вместе со своими голосами', async () => {
+    // Голоса обязаны уйти: findRoomMatch считает знаменатель по участникам, а
+    // числитель по разным steamid среди голосов. Оставленный голос ушедшего
+    // дал бы матч, за который никто из оставшихся не голосовал.
+    const db = await freshDb()
+    await room(db, 'ROOM01', ['a', 'b'])
+    await castRoomVote(db, 'ROOM01', 'a', 10, 1, NOW)
+    await castRoomVote(db, 'ROOM01', 'b', 10, 1, NOW)
+
+    expect(await removeRoomMember(db, 'ROOM01', 'b')).toBe(true)
+    expect((await roomMembers(db, 'ROOM01')).map((m) => m.steamid)).toEqual(['a'])
+    expect((await roomVotes(db, 'ROOM01')).map((v) => v.steamid)).toEqual(['a'])
+  })
+
+  test('повторный вызов безобиден', async () => {
+    const db = await freshDb()
+    await room(db, 'ROOM02', ['a'])
+    expect(await removeRoomMember(db, 'ROOM02', 'a')).toBe(true)
+    expect(await removeRoomMember(db, 'ROOM02', 'a')).toBe(false)
+  })
+
+  test('ушедший перестаёт держать единогласие', async () => {
+    // Тот самый случай: третий вошёл, закрыл вкладку и запер комнату.
+    const db = await freshDb()
+    await room(db, 'ROOM03', ['a', 'b', 'c'])
+    await castRoomVote(db, 'ROOM03', 'a', 10, 1, NOW)
+    await castRoomVote(db, 'ROOM03', 'b', 10, 1, NOW)
+
+    expect(await findRoomMatch(db, 'ROOM03')).toBeNull()
+    await removeRoomMember(db, 'ROOM03', 'c')
+    expect(await findRoomMatch(db, 'ROOM03')).toBe(10)
+  })
+
+  test('голос, опоздавший к уходу, не подменяет собой живого участника', async () => {
+    // Гонка: между проверкой членства в /api/room/[id]/vote и самой вставкой
+    // лежит обход Turso, и уборка успевает вклиниться. Голос вставляется уже
+    // после неё — в room_votes остаётся строка того, кого в комнате нет.
+    //
+    // Знаменатель считается по составу, числитель — по голосам. Без JOIN
+    // призрак ПОДМЕНЯЕТ живого: комната из двоих получает матч на игре,
+    // которую второй отклонил.
+    const db = await freshDb()
+    await room(db, 'ROOM05', ['a', 'b', 'c'])
+    await castRoomVote(db, 'ROOM05', 'a', 100, 1, NOW)
+    await castRoomVote(db, 'ROOM05', 'b', 100, 0, NOW) // b против
+
+    await removeRoomMember(db, 'ROOM05', 'c')
+    expect(await findRoomMatch(db, 'ROOM05')).toBeNull()
+
+    // Опоздавший голос c уже после уборки
+    await castRoomVote(db, 'ROOM05', 'c', 100, 1, NOW + 1)
+    expect(await findRoomMatch(db, 'ROOM05')).toBeNull()
+  })
+
+  test('осиротевший голос не даёт матча и на карте, которую живой не видел', async () => {
+    // Числитель смотрит только на vote = 1, строк «против» не существует для
+    // него вовсе. Значит призрак плюс один живой «да» дают матч и там, где
+    // второй просто не дошёл до карточки.
+    const db = await freshDb()
+    await room(db, 'ROOM06', ['a', 'b', 'c'])
+    await castRoomVote(db, 'ROOM06', 'a', 200, 1, NOW)
+    await removeRoomMember(db, 'ROOM06', 'c')
+    await castRoomVote(db, 'ROOM06', 'c', 200, 1, NOW + 1) // опоздавший
+
+    expect(await findRoomMatch(db, 'ROOM06')).toBeNull()
+  })
+
+  test('уборка участника идёт одной пачкой — половины не остаётся', async () => {
+    const db = await freshDb()
+    await room(db, 'ROOM07', ['a', 'b'])
+    await castRoomVote(db, 'ROOM07', 'b', 300, 1, NOW)
+    expect(await removeRoomMember(db, 'ROOM07', 'b')).toBe(true)
+    expect((await roomVotes(db, 'ROOM07')).length).toBe(0)
+    expect((await roomMembers(db, 'ROOM07')).length).toBe(1)
+  })
+
+  test('матч не переписывается вторым запросом', async () => {
+    // Матч терминален: обратного перехода в open нет, а экран останавливает
+    // опрос. Подменять людям результат под руками нельзя даже опоздавшему.
+    const db = await freshDb()
+    await room(db, 'ROOM08', ['a', 'b'])
+    await setRoomMatched(db, 'ROOM08', 111)
+    await setRoomMatched(db, 'ROOM08', 222)
+    expect((await getRoom(db, 'ROOM08'))?.matchedAppid).toBe(111)
+  })
+  test('матч не собирается из голосов ушедшего', async () => {
+    const db = await freshDb()
+    await room(db, 'ROOM04', ['a', 'b', 'c'])
+    await castRoomVote(db, 'ROOM04', 'a', 10, 1, NOW)
+    await castRoomVote(db, 'ROOM04', 'c', 10, 1, NOW)
+
+    // Уходит «c», чей голос и составлял пару с «a». Оставшиеся a и b за эту
+    // игру вдвоём не голосовали — матча быть не должно.
+    await removeRoomMember(db, 'ROOM04', 'c')
+    expect(await findRoomMatch(db, 'ROOM04')).toBeNull()
+  })
+})
 describe('upsertNewsItems', () => {
   test('пишет пост и читает его обратно', async () => {
     const db = await freshDb()
@@ -1207,6 +1399,31 @@ describe('очередь опроса', () => {
     expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW)).toBe(true)
   })
 
+  test('повторная отдача не бросает — иначе она рвёт finally у крона', async () => {
+    const db = await freshDb()
+    await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)
+    await releaseLease(db, STEAM_LEASE, 'news:a')
+
+    /*
+     * Отданная аренда хранится пустой строкой, а фильтр отдачи разбирает
+     * значение как JSON. json_extract('', ...) в SQLite это ИСКЛЮЧЕНИЕ, а не
+     * ложь — соседний acquireLease от этого защищён проверкой value = '' перед
+     * разбором, отдача не была.
+     *
+     * Цена ошибки не в самом исключении, а в том, откуда оно летит: все пять
+     * вызовов releaseLease в кронах стоят внутри finally. Исключение там
+     * обрывает блок — то есть цепочка не передаётся следующему звену и маркер
+     * прогона не пишется. Отказ выглядел бы как молчание.
+     */
+    await expect(releaseLease(db, STEAM_LEASE, 'news:a')).resolves.toBeUndefined()
+
+    // и отдача ключа, которого не существует вовсе, тоже
+    await expect(releaseLease(db, 'нет-такого', 'news:a')).resolves.toBeUndefined()
+
+    // при этом ключ остался свободным, а не залип
+    expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW)).toBe(true)
+  })
+
   test('чужую аренду отдать нельзя', async () => {
     const db = await freshDb()
     await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)
@@ -1314,5 +1531,35 @@ describe('мёртвые игры и общая лента', () => {
     const ranks = await getGameRanks(db, [730, 320])
     expect(ranks.get(730)).toBeGreaterThan(0)
     expect(ranks.get(320)).toBe(0)
+  })
+})
+
+
+describe('топ каталога: кэш на десять минут', () => {
+  async function игра(db: Awaited<ReturnType<typeof createDb>>, appid: number, ccu: number) {
+    await db.execute({
+      sql: `INSERT INTO games (appid, name, tag_count, alive, ccu, reviews_total, updated_at)
+            VALUES (?, ?, 3, 1, ?, ?, 0)`,
+      args: [appid, `Игра ${appid}`, ccu, ccu],
+    })
+  }
+
+  test('повторный вызов не ходит в базу, но новая база кэш не наследует', async () => {
+    const первая = await createDb(':memory:')
+    await игра(первая, 10, 100)
+    expect(await topCatalogAppids(первая, 5)).toEqual([10])
+
+    // добавили строку — и не увидели её: ровно этого мы и хотим десять минут
+    await игра(первая, 20, 999)
+    expect(await topCatalogAppids(первая, 5)).toEqual([10])
+
+    // другой per — другой вопрос, отвечать на него старым ответом нельзя
+    expect(await topCatalogAppids(первая, 50)).toEqual([20, 10])
+
+    // Ключ кэша — сама база. Иначе тесты, открывающие свежую базу в памяти на
+    // каждый случай, склеились бы между собой через один общий кэш.
+    const вторая = await createDb(':memory:')
+    await игра(вторая, 77, 5)
+    expect(await topCatalogAppids(вторая, 5)).toEqual([77])
   })
 })

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { FlapCode } from '@/components/FlapCode'
 import { Spinner } from '@/components/Spinner'
+import { minutesAgoLabel } from '@/lib/freshness'
 
 type Listing = { id: string; memberNames: string[]; minutesAgo: number }
 
@@ -121,7 +122,7 @@ export default function RoomsBoardPage() {
           </div>
         ) : rooms.length === 0 ? (
           <div className="glass rounded-[20px] p-6 text-center text-dim text-sm">
-            Сейчас открытых комнат нет. Создай свою и включи «показывать на доске» — сюда придут.
+            Сейчас открытых комнат нет. Создай свою и нажми «Показать на доске» — сюда придут.
           </div>
         ) : (
           <AnimatePresence initial={false} mode="popLayout">
@@ -143,9 +144,16 @@ export default function RoomsBoardPage() {
                     {/* Створки только для строк, появившихся на ЭТОМ тике:
                         иначе каждые 5 секунд вся доска — игровой автомат. */}
                     <FlapCode code={r.id} animate={board?.fresh.has(r.id) ?? false} />
+                    {/*
+                      Разделитель только при именах. Комната без участников на
+                      доске возможна — она висит там до суток, — и строка
+                      начиналась с висячего « · », будто имя не дорисовалось.
+                      Пустой состав называем словами: это ответ на вопрос «к
+                      кому я подсяду».
+                    */}
                     <div className="text-sm text-dim mt-0.5">
-                      {r.memberNames.join(', ')} ·{' '}
-                      {r.minutesAgo < 1 ? 'только что' : `${r.minutesAgo} мин назад`}
+                      {r.memberNames.length ? `${r.memberNames.join(', ')} · ` : 'пока никого · '}
+                      {minutesAgoLabel(r.minutesAgo)}
                     </div>
                   </div>
                   <span className="text-sm text-ink shrink-0">Подсесть →</span>

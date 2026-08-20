@@ -9,7 +9,7 @@ import { HeroShots } from '@/components/HeroShots'
 import { PlayersNow } from '@/components/PlayersNow'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
-import { SplitHeading } from '@/components/SplitHeading'
+import { SplitHeadingLazy } from '@/components/SplitHeadingLazy'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { DemoNotice } from '@/components/DemoNotice'
 import { WarmupScreen } from '@/components/WarmupScreen'
@@ -40,6 +40,7 @@ type DailyPick = StoreCard & {
   tags: string[]
   hoursPlayed: number | null
   ccu: number | null
+  ccuAt: number | null
 }
 
 const storeHref = (c: StoreCard) =>
@@ -49,6 +50,7 @@ export default function DailyPage() {
   const router = useRouter()
   const [pick, setPick] = useState<DailyPick | null>(null)
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
+  const [nowSec, setNowSec] = useState(0)
   const [dateLabel, setDateLabel] = useState('')
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
@@ -114,7 +116,11 @@ export default function DailyPage() {
           pick: DailyPick
           discoveries?: StoreCard[]
           dateLabel: string
+          nowSec: number
         }
+        // Серверные часы — по ним подпись онлайна решает, имеет ли право
+        // сказать «сейчас». См. докблок в components/PlayersNow.
+        setNowSec(data.nowSec)
         setPick(data.pick)
         setDiscoveries(data.discoveries ?? [])
         setDateLabel(data.dateLabel)
@@ -154,14 +160,7 @@ export default function DailyPage() {
           name={pick.name}
           screenshots={pick.screenshots ?? []}
         />
-        <div
-          aria-hidden
-          className="absolute inset-0"
-          style={{
-            background:
-              'linear-gradient(to top, #0b0c10 4%, rgba(11,12,16,0.82) 26%, rgba(11,12,16,0.25) 55%, rgba(11,12,16,0.45) 100%)',
-          }}
-        />
+        <div aria-hidden className="absolute inset-0 hero-scrim" />
         {/* Снег идёт ПОД стеклом и над артом: хлопья, проходящие под панелями,
             подмораживаются их backdrop-filter. */}
         <SeasonalSnow />
@@ -213,7 +212,7 @@ export default function DailyPage() {
                   {pick.hoursPlayed} ч наиграно
                 </span>
               )}
-              <PlayersNow ccu={pick.ccu} />
+              <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
             </div>
 
             {/*
@@ -226,9 +225,9 @@ export default function DailyPage() {
               они по определению одно и то же. Название игры — главный текст
               этой страницы, рисковать его читаемостью нельзя.
             */}
-            <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.2}>
+            <SplitHeadingLazy className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.2}>
               {pick.name}
-            </SplitHeading>
+            </SplitHeadingLazy>
             <p className="text-base md:text-lg text-ink/90 leading-relaxed">{pick.reason}</p>
 
             {pick.tags.length > 0 && (

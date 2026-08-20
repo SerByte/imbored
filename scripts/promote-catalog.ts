@@ -19,10 +19,7 @@
  * актуальность физически не может протечь в скоринг и перебить личный вкус.
  */
 
-import fs from 'node:fs'
-import path from 'node:path'
 import {
-  createDb,
   loadTagDictionary,
   nextIngestBatch,
   rebuildTagStats,
@@ -30,9 +27,9 @@ import {
   saveTagDictionary,
   setIngestStatus,
   upsertGameMeta,
-  type Db,
 } from '../lib/db'
-import { fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
+import { fetchStoreDescriptions, fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
+import { openDb } from './opendb'
 import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
 import { judgeLiveness, playMode } from '../lib/liveness'
 import { buildSeriesIndex, SERIES_OVERRIDES, type SeriesMember } from '../lib/series'
@@ -63,19 +60,6 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T | nu
     }
   }
   return null
-}
-
-async function openDb(): Promise<Db> {
-  const remote = process.env.TURSO_DATABASE_URL
-  if (remote) {
-    console.log('база: Turso (облако)')
-    return createDb(remote, process.env.TURSO_AUTH_TOKEN)
-  }
-  const dir = path.join(process.cwd(), 'data')
-  fs.mkdirSync(dir, { recursive: true })
-  const file = path.join(dir, 'catalog.db')
-  console.log(`база: ${file}`)
-  return createDb(`file:${file}`)
 }
 
 /** Топ-N тегов по весу — в проекцию, из которой идёт выборка кандидатов */
@@ -148,6 +132,43 @@ async function main() {
     await sleep(STORE_PACE_MS)
   }
 
+  /*
+   * Описания — вторым проходом и на языке сайта.
+   *
+   * Основной проход обязан оставаться английским: из него приходят НАЗВАНИЯ,
+   * а на них стоят эвристики (junk.ts отсеивает по soundtrack/demo/playtest,
+   * editions.ts склеивает по «Edition»). На русских названиях обе промахнутся
+   * по всему каталогу разом. Теги языком запроса не затрагиваются вовсе —
+   * они приходят числовыми tagid.
+   *
+   * А описание человек читает, и оно было английским у 4723 карточек из 5000
+   * в карте сайта против 93 русских. Оно же уезжает в meta description и в
+   * микроразметку, то есть в выдачу поисковика.
+   *
+   * Проход дешёвый: один include-флаг вместо шести. Осечка не фатальна —
+   * остаётся английское описание, то есть ровно то, что было до правки.
+   */
+  if (metas.length) {
+    console.log(`
+описания на языке сайта для ${metas.length} игр…`)
+    const ru = await withRetry('описания', () =>
+      fetchStoreDescriptions(metas.map((m) => m.appid)),
+    )
+    if (ru) {
+      let n = 0
+      for (const m of metas) {
+        const text = ru.get(m.appid)
+        if (text) {
+          m.shortDescription = text
+          n++
+        }
+      }
+      console.log(`  описаний обновлено: ${n}`)
+    } else {
+      console.warn('  не получилось — остаются описания основного прохода')
+    }
+  }
+
   // Сигналы спрашиваем только у совместных игр: живость гейтит только их,
   // а поштучный запрос на весь пул стоил бы часы. Онлайн важнее отзывов —
   // он резче отделяет мёртвое, поэтому берём его первым.
@@ -155,6 +176,23 @@ async function main() {
   console.log(`\nсигналы для ${multiplayer.length} совместных игр…`)
   for (const [i, m] of multiplayer.entries()) {
     m.ccu = await fetchCurrentPlayers(m.appid).catch(() => undefined)
+    /*
+     * Отметка времени замера — обязательна, и её тут не было.
+     *
+     * ccu показывается на витрине словами «N сейчас играют», то есть это
+     * утверждение про НАСТОЯЩИЙ момент. Без ccu_at проверить его нечем:
+     * замер этого скрипта ручной, следующий прогон может случиться через
+     * месяц, а подпись всё это время будет говорить «сейчас».
+     *
+     * Ровно та же ось свежести, что у цены (priceAt) и по той же причине,
+     * записанной в lib/discount: «неточная цена — полбеды, неправда про
+     * скидку — повод больше сюда не возвращаться».
+     *
+     * Ставим только вместе с самим числом: отметка без замера означала бы
+     * «свежо» там, где данных нет вовсе, и вывела бы игру из очереди на
+     * догрев в /api/prepare (там условие ccu_at IS NULL OR ccu_at < …).
+     */
+    if (m.ccu !== undefined) m.ccuAt = nowSec
     await sleep(REVIEW_PACE_MS)
     m.reviews30d = await fetchRecentReviews(m.appid, nowSec).catch(() => undefined)
     if ((i + 1) % 50 === 0) console.log(`  ${i + 1}/${multiplayer.length}`)

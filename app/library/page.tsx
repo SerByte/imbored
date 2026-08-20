@@ -4,6 +4,7 @@ import { GameArt } from '@/components/GameArt'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
+import { trimArt } from '@/lib/art'
 import { feedbackStats, getGamesMeta, getLatestSnapshot, listBanned } from '@/lib/db'
 import {
   buildLibraryView,
@@ -13,8 +14,9 @@ import {
   parseLibraryFilter,
   pickForgotten,
 } from '@/lib/forgotten'
+import { plural } from '@/lib/plural'
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 
 export const metadata = {
@@ -39,11 +41,35 @@ const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
 }
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
-  const steamid = await currentSteamId()
+  // Сессия целиком, а не только steamid: SignOut ниже спрашивает, доказано ли
+  // владение профилем — от этого зависит, предлагать ли «выйти везде».
+  const session = await currentSession()
+  const steamid = session?.steamid ?? null
   if (!steamid) redirect('/')
 
   const db = await getDb()
-  const snapshot = await getLatestSnapshot(db, steamid)
+  /*
+   * Три независимых чтения — одним заходом, а не лесенкой.
+   *
+   * Снапшот, забаненное и статистика отзывов друг от друга не зависят вовсе, а
+   * шли по очереди: три обхода к Turso подряд там, где хватает одного. Страница
+   * объявлена force-dynamic (строка ниже), кэша у неё нет, и эта лесенка
+   * ложится в TTFB КАЖДОГО захода. По замеру из соседнего роута комнаты один
+   * обход стоит около полутора сотен миллисекунд.
+   *
+   * Цена размена: у человека с сессией, но без снапшота (редирект строкой
+   * ниже) два запроса уходят впустую. Это редкий случай — снапшот пишется тем
+   * же действием, что заводит сессию, — и он молчаливый, в отличие от
+   * задержки, которую видят все.
+   *
+   * getGamesMeta остаётся отдельно: ему нужны appid И из библиотеки, И из
+   * забаненного, то есть он честно зависит от обоих.
+   */
+  const [snapshot, banned, stats] = await Promise.all([
+    getLatestSnapshot(db, steamid),
+    listBanned(db, steamid),
+    feedbackStats(db, steamid),
+  ])
   if (!snapshot) redirect('/')
 
   const now = nowSec()
@@ -63,7 +89,6 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Забаненное добирается тем же запросом, а не вторым: забанить можно и игру,
   // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
   // библиотеке не встретится, но обложка на полку нужна.
-  const banned = await listBanned(db, steamid)
   const metas = await getGamesMeta(db, [
     ...new Set([...games.map((g) => g.appid), ...banned.map((b) => b.appid)]),
   ])
@@ -75,7 +100,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       // всё равно обязана показать плитку: иначе бан не снять вообще
       name: meta?.name ?? `Игра ${b.appid}`,
       headerImage: meta?.headerImage ?? null,
-      art: meta?.art ?? null,
+      art: trimArt(meta?.art),
     }
   })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
@@ -87,7 +112,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     const [before, after] = eq.text.split('{n}')
     return { count: eq.count, before, after }
   })()
-  const stats = await feedbackStats(db, steamid)
+
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
 
@@ -114,16 +139,48 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           Мой портрет игрока →
         </Link>
       </div>
+      {/*
+        Окончания считаются, а не прибиты. Было «игр» и «часов» строкой: на
+        демо-профиле это давало «22 игр» вместо «22 игры» и «4 404 часов»
+        вместо «4 404 часа» — обе формы неверны сразу, в первой же строке
+        страницы. plural в проекте есть и работает в восемнадцати местах, сюда
+        его просто не донесли.
+      */}
       <p className="text-dim text-sm mb-6">
-        <span className="font-mono">{games.length}</span> игр ·{' '}
-        <span className="font-mono">{totalHours.toLocaleString('ru-RU')}</span> часов ·{' '}
+        <span className="font-mono">{games.length}</span>{' '}
+        {plural(games.length, 'игра', 'игры', 'игр')} ·{' '}
+        <span className="font-mono">{totalHours.toLocaleString('ru-RU')}</span>{' '}
+        {plural(totalHours, 'час', 'часа', 'часов')} ·{' '}
         <span className="font-mono">{untouched}</span> ни разу не запускал
       </p>
 
       {(backlog.pricedCount > 0 || stats.rate !== null) && (
         <div className="grid md:grid-cols-2 gap-4 mb-10">
           {backlog.pricedCount > 0 && (
-            <div className="glass rounded-[20px] p-5 flex items-center justify-between gap-4">
+            /*
+              Ниже 640px карточка встаёт столбиком, и это не вкусовщина.
+
+              Строкой она собрана под ДЕСКТОП, где рядом стоит вторая карточка
+              и на текст остаётся 369px при кнопке 121px — всё ложится в одну-
+              две строки. На 375px карточка становится во всю ширину, но кнопка
+              shrink-0 держит свои 130px, и тексту достаётся 156px из 335: и
+              заголовок, и подпись переносятся вдвое, а фраза про Game Pass
+              растягивается на четыре строки рядом с пустым местом под кнопкой.
+
+              Порог lg, и это ИСПРАВЛЕНИЕ прежней правки, где стоял sm. Тогда я
+              рассуждал «выше 640 карточка во всю ширину» — верно ровно до 768,
+              где включается md:grid-cols-2 и карточка снова становится узкой.
+              Замер на 768: карточка 349px, текст 170px, строки 2/2/3 — почти то
+              же самое, что чинили на телефоне. На 1024 карточка 484px, тексту
+              достаётся 307px, и этого хватает на 1/1/2.
+
+              Между 640 и 1024 карточка стоит столбиком, хотя строкой там местами
+              влезла бы: это плата за один порог вместо контейнерного запроса.
+              Контейнерные запросы в Tailwind 4.3 есть, но требуют лишней
+              обёртки — элемент не может опрашивать сам себя, — и заводить новый
+              паттерн ради одной карточки не стоит.
+            */
+            <div className="glass rounded-[20px] p-5 flex flex-col items-start gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div className="text-lg font-bold">
                   ≥ <span className="font-mono text-ember-text">${(backlog.cents / 100).toFixed(0)}</span>{' '}
@@ -197,7 +254,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   appid={g.appid}
                   name={g.name}
                   headerImage={metas.get(g.appid)?.headerImage ?? null}
-                  art={metas.get(g.appid)?.art ?? null}
+                  art={trimArt(metas.get(g.appid)?.art)}
                   sizes="(min-width: 768px) 20vw, 50vw"
                   className="w-full aspect-[460/215] object-cover"
                 />
@@ -246,8 +303,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                 appid={g.appid}
                 name={g.name}
                 headerImage={metas.get(g.appid)?.headerImage ?? null}
-                art={metas.get(g.appid)?.art ?? null}
-                sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+                art={trimArt(metas.get(g.appid)?.art)}
+                /* Пороги подсказки обязаны совпадать с сеткой, а она тут
+                   grid-cols-2 md:grid-cols-4 — то есть ровно 50vw и 25vw.
+                   Стояли пороги 1024 и 640: в полосе 640–767 подсказка просила
+                   33vw при настоящих 50vw, и плитки грузились ПОЛТОРА раза
+                   мельче нужного, то есть мылом. */
+                sizes="(min-width: 768px) 25vw, 50vw"
                 className="w-full aspect-[460/215] object-cover"
               />
               <div className="p-3">
@@ -275,7 +337,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           показать в ней состояние входа, корневому лэйауту пришлось бы читать
           куки — а это сделало бы динамическими все страницы разом, включая
           кэшируемые /game/[appid]. Библиотека и так force-dynamic. */}
-      <SignOut />
+      <SignOut verified={Boolean(session?.verified)} />
     </div>
   )
 }

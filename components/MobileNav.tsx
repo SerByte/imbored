@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { isNavActive } from '@/lib/nav'
 
 /**
  * Нижняя панель навигации — только на телефоне; на десктопе меню в шапке.
@@ -12,10 +13,12 @@ import { useEffect, useRef, useState } from 'react'
  */
 /**
  * `also` — адреса, которые пункт обязан подсвечивать, но по которым сам не
- * ведёт. Без них две страницы, где человек проводит больше всего времени,
- * не подсвечивали в панели ничего: выдача живёт на /play, а не на /quiz,
- * и комната на /room/<код>, а не на /rooms. Панель молча гасла ровно там,
- * где важнее всего понимать, где ты находишься.
+ * ведёт: выдача живёт на /play, а не на /quiz, и комната на /room/<код>, а не
+ * на /rooms. Панель молча гасла ровно там, где важнее всего понимать, где ты
+ * находишься.
+ *
+ * Само сравнение живёт в lib/nav (isNavActive) — им же пользуется шапка, и
+ * разъехаться в том, где ты сейчас, две навигации не имеют права.
  */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
@@ -27,11 +30,7 @@ const ITEMS = [
 
 export function MobileNav() {
   const pathname = usePathname() ?? ''
-  const activeIndex = ITEMS.findIndex((i) =>
-    [i.href, ...(('also' in i ? i.also : []) as string[])].some(
-      (p) => pathname === p || pathname.startsWith(`${p}/`),
-    ),
-  )
+  const activeIndex = ITEMS.findIndex((i) => isNavActive(pathname, i.href, 'also' in i ? i.also : []))
 
   const rowRef = useRef<HTMLDivElement>(null)
   const [bar, setBar] = useState<{ left: number; width: number } | null>(null)
@@ -69,10 +68,38 @@ export function MobileNav() {
   }, [activeIndex])
 
   return (
+    /*
+      Панель — ПОВЕРХНОСТЬ, а не стекло, и это следствие замера, а не вкуса.
+
+      Стояло var(--glass-bg): 0.6 в тёмной теме, 0.66 в светлой. Под панелью
+      при этом постоянно едет арт — на /library он оказывается там на 35%
+      позиций прокрутки (замерено проходом по 31 позиции), — и подписи в 11px
+      цветом --dim берут:
+
+        тёмная тема, светлый арт  — 1.85:1
+        светлая тема, тёмный арт  — 2.62:1
+        активный пункт, ember     — 2.37 и 2.43
+
+      при норме AA 4.5. Обе темы проваливаются на противоположных крайностях,
+      что и понятно: подложка полупрозрачна, а цвет текста у них разный.
+
+      Цветом это не чинится. Даже ember, самый яркий токен, не дотягивает, а в
+      светлой теме --ember-text (#a84a12) уже выбран как самый тёмный читаемый
+      оранжевый — темнее делать нечего.
+
+      0.94 — порог, на котором проходят ОБА худших случая обеих тем (тёмная:
+      6.65 dim / 8.50 ember; светлая: 4.94 / 4.58). На 0.9 светлый активный
+      пункт даёт 4.18 и не проходит.
+
+      backdrop-blur снят вместе с прозрачностью: размывать шесть процентов
+      просвета нечего, а слой композиции он занимал на каждом кадре прокрутки.
+      Ровно сегодня выяснилось, что вся размывка сайта не рисовалась вовсе, —
+      тем более не стоит держать ту, которой нечего делать.
+    */
     <nav
-      className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-edge backdrop-blur-xl"
+      className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-edge"
       style={{
-        background: 'var(--glass-bg)',
+        background: 'color-mix(in srgb, var(--bg) 94%, transparent)',
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
@@ -85,12 +112,24 @@ export function MobileNav() {
         {bar && (
           <span
             aria-hidden
-            className="absolute top-0 h-[2px] rounded-full bg-ember"
-            style={{
-              left: bar.left,
-              width: bar.width,
-              transition: 'left 240ms cubic-bezier(.22,1,.36,1), width 240ms cubic-bezier(.22,1,.36,1)',
-            }}
+            /*
+              rail-bar, а не inline-переход, и класс для этого уже лежал в
+              globals.css — с докблоком «Класс, а не inline-стиль — иначе
+              „уменьшить движение“ не могло его выключить» и НУЛЁМ
+              пользователей. Второй такой сирота после chip-rail: оба пережили
+              откат кино-квиза, вместе с которым ушли их вызывающие.
+
+              Пока переход стоял инлайном, медиазапрос до него не дотягивался:
+              человек с включённым «уменьшить движение» всё равно видел, как
+              волосок ЕЗДИТ между вкладками на каждом переходе — при том, что
+              все девять остальных анимаций приложения там погашены.
+
+              Инлайн заодно зашивал 240ms, длительности вне словаря движения
+              (--dur-fast 180, --dur-base 320): волосок был единственным в
+              приложении, кто ехал вне тональности. Класс берёт --dur-base.
+            */
+            className="rail-bar absolute top-0 h-[2px] rounded-full bg-ember"
+            style={{ left: bar.left, width: bar.width }}
           />
         )}
         {ITEMS.map((item, i) => (

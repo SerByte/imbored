@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import * as motion from 'motion/react-client'
+import { headers } from 'next/headers'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { BlurBand } from '@/components/BlurBand'
@@ -19,6 +20,7 @@ import {
 import { claudePortraitText } from '@/lib/llm'
 import { plural } from '@/lib/plural'
 import { buildPortrait } from '@/lib/portrait'
+import { checkRate, clientIp } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from '@/lib/wrapped'
@@ -86,11 +88,20 @@ const inView = (i = 0) => ({
  * (общее кратное числа колонок). Внутри блока ширина одна, поэтому ряд не
  * может выровняться по самой высокой плитке и оставить под мелкими пустоту.
  */
+/*
+ * У каждого ряда мозаики СВОЯ подсказка ширины, и это не педантизм.
+ *
+ * Рядов четыре, и колонок в них 2, 2→4, 3→6 и 4→8 — то есть плитка занимает от
+ * половины экрана до одной восьмой. Одна подсказка на всех давала верхнему,
+ * самому крупному ряду «20vw» при настоящих 50vw: он грузился ВДВОЕ С
+ * ПОЛОВИНОЙ мельче нужного и заметно мылил, а нижний наоборот приезжал
+ * тяжелее необходимого.
+ */
 const MOSAIC_PLAN = [
-  { take: 2, step: 2, cols: 'grid-cols-2' },
-  { take: 4, step: 4, cols: 'grid-cols-2 md:grid-cols-4' },
-  { take: 12, step: 6, cols: 'grid-cols-3 md:grid-cols-6' },
-  { take: 24, step: 8, cols: 'grid-cols-4 md:grid-cols-8' },
+  { take: 2, step: 2, cols: 'grid-cols-2', sizes: '50vw' },
+  { take: 4, step: 4, cols: 'grid-cols-2 md:grid-cols-4', sizes: '(min-width: 768px) 25vw, 50vw' },
+  { take: 12, step: 6, cols: 'grid-cols-3 md:grid-cols-6', sizes: '(min-width: 768px) 17vw, 33vw' },
+  { take: 24, step: 8, cols: 'grid-cols-4 md:grid-cols-8', sizes: '(min-width: 768px) 13vw, 25vw' },
 ]
 
 function fallbackText(
@@ -110,6 +121,37 @@ function fallbackText(
   }
   return parts.join(' ')
 }
+
+/**
+ * Сколько раз с одного адреса можно заставить страницу сходить к модели.
+ *
+ * Страница публичная, сессии не требует и force-dynamic. Промах кэша тут
+ * добывается тривиально: POST /api/connect {demo:true} чеканит новый steamid
+ * со свежим снапшотом, а значит и гарантированный промах — и каждый такой
+ * GET был вызовом модели без потолка.
+ */
+const PORTRAIT_LLM_IP_LIMIT = 10
+
+/**
+ * Сколько раз можно сходить к модели за ОДИН портрет.
+ *
+ * Работает сразу тремя способами, и потому отдельной осью.
+ *
+ * Во-первых, это отрицательный кэш. claudePortraitText отдаёт null на любой
+ * осечке, а шаблон в portrait_json не пишется намеренно (ключ кэша — время
+ * снапшота, и один промах заморозил бы шаблон на шеринговой карточке до
+ * следующего входа игрока). Без счётчика это значило, что при просадке
+ * Anthropic КАЖДЫЙ зритель разосланной ссылки платит новым вызовом и
+ * секундами ожидания.
+ *
+ * Во-вторых, это защита от лавины: ссылку на портрет рассылают, и десяток
+ * человек открывает её одновременно, пока в кэше пусто.
+ *
+ * В-третьих, она не даёт обойти лимит по адресу, раздав одну ссылку многим.
+ */
+const PORTRAIT_LLM_SID_LIMIT = 3
+
+const PORTRAIT_LLM_WINDOW_SEC = 3600
 
 export default async function PortraitPage({ params }: { params: Promise<{ steamid: string }> }) {
   const { steamid } = await params
@@ -172,11 +214,41 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   if (cached && cached.takenAt === snapshot.takenAt) {
     text = cached.text
   } else {
-    const generated = await claudePortraitText({
-      name,
-      archetypes: portrait.archetypes,
-      facts: portrait.facts,
-    })
+    /*
+     * К модели — только через два счётчика, и отказ здесь НЕ ошибка: сюда
+     * пришёл браузер, ему нужна страница. Не пустили — рисуем шаблон, тот
+     * самый, что и так стоит запасным вариантом строкой ниже.
+     *
+     * Обе оси fail-open, как lib/sessions.ts и весь lib/ratelimit: сбой
+     * Turso не должен превращаться в «сайт закрыт».
+     */
+    const now = nowSec()
+    const ip = clientIp(await headers())
+    const [byIp, bySid] = await Promise.all([
+      checkRate(db, {
+        bucket: 'portrait-llm-ip',
+        id: ip,
+        limit: PORTRAIT_LLM_IP_LIMIT,
+        windowSec: PORTRAIT_LLM_WINDOW_SEC,
+        nowSec: now,
+      }),
+      checkRate(db, {
+        bucket: 'portrait-llm-sid',
+        id: steamid,
+        limit: PORTRAIT_LLM_SID_LIMIT,
+        windowSec: PORTRAIT_LLM_WINDOW_SEC,
+        nowSec: now,
+      }),
+    ])
+
+    const generated =
+      byIp.ok && bySid.ok
+        ? await claudePortraitText({
+            name,
+            archetypes: portrait.archetypes,
+            facts: portrait.facts,
+          })
+        : null
     text = generated ?? fallbackText(name, portrait.archetypes, portrait.facts)
     // Шаблон в кэш не кладём. claudePortraitText отдаёт null на ЛЮБОЙ осечке —
     // таймаут, 429, ключа ещё нет, — а ключ кэша тут время снапшота: один такой
@@ -190,14 +262,29 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const me = await currentSteamId()
   const isMine = me === steamid
 
-  const cover = (g: { appid: number; name: string }, extra = '', eager = false) => (
+  /*
+   * sizes — ОБЯЗАТЕЛЬНЫЙ довод, а не значение по умолчанию.
+   *
+   * Помощник зовут из пяти мест с пятью разными раскладками: четыре ряда
+   * мозаики, строка топа с шириной w-28/md:w-44, сетка в три колонки, сетка
+   * 3→6 и коробка в фиксированные w-40. Общая подсказка «20vw, 50vw» не
+   * подходила НИ ОДНОМУ из них: где-то просила вдвое мельче нужного (и мылила),
+   * где-то вдвое крупнее (и грузила лишнее). Обязательный довод заставляет
+   * каждое место назвать свою ширину — забыть его нельзя, сборка не даст.
+   */
+  const cover = (
+    g: { appid: number; name: string },
+    sizes: string,
+    extra = '',
+    eager = false,
+  ) => (
     <GameArt
       appid={g.appid}
       name={g.name}
       headerImage={metaOf(g.appid)?.headerImage ?? null}
       art={metaOf(g.appid)?.art ?? null}
       eager={eager}
-      sizes="(min-width: 768px) 20vw, 50vw"
+      sizes={sizes}
       className={`w-full aspect-[460/215] object-cover ${extra}`}
     />
   )
@@ -213,7 +300,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           {mosaic.map((block, bi) => (
             <div key={MOSAIC_PLAN[bi].cols} className={`grid ${MOSAIC_PLAN[bi].cols}`}>
               {block.map((g) => (
-                <div key={g.appid}>{cover(g, '', bi === 0)}</div>
+                <div key={g.appid}>{cover(g, MOSAIC_PLAN[bi].sizes, '', bi === 0)}</div>
               ))}
             </div>
           ))}
@@ -271,7 +358,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   href={`/game/${g.appid}`}
                   className="glass glass-hover rounded-[14px] overflow-hidden w-28 md:w-44 shrink-0"
                 >
-                  {cover(g)}
+                  {cover(g, '(min-width: 768px) 176px, 112px')}
                 </Link>
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold truncate">{g.name}</div>
@@ -349,7 +436,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                     href={`/game/${g.appid}`}
                     className="glass glass-hover rounded-[14px] overflow-hidden block"
                   >
-                    {cover(g)}
+                    {/* grid-cols-3 без порогов — треть экрана на любой ширине */}
+                    {cover(g, '33vw')}
                     <div className="p-2.5 text-xs font-semibold truncate">{g.name}</div>
                   </Link>
                 </motion.div>
@@ -439,7 +527,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   // ровно то, что здесь нужно по смыслу
                   className="library-tile glass glass-hover rounded-[14px] overflow-hidden"
                 >
-                  {cover(g)}
+                  {/* grid-cols-3 md:grid-cols-6 */}
+                  {cover(g, '(min-width: 768px) 17vw, 33vw')}
                 </Link>
               ))}
             </div>
@@ -453,7 +542,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   href={`/game/${starter.appid}`}
                   className="glass glass-hover no-lift rounded-[14px] overflow-hidden flex items-center gap-4 pr-5"
                 >
-                  <div className="w-40 shrink-0">{cover(starter)}</div>
+                  <div className="w-40 shrink-0">{cover(starter, '160px')}</div>
                   <span className="font-semibold">{starter.name}</span>
                 </Link>
               </Magnet>

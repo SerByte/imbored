@@ -1,3 +1,5 @@
+import { trimArt, type GameArtUrls } from './art'
+import type { GameMeta } from './types'
 /**
  * Какую ленту показывать — личную или общую. ОДНА ветка на два вызова:
  * серверный рендер /whatsnew и опрос головы ленты из /api/whatsnew/head.
@@ -107,8 +109,24 @@ export async function resolveWhatsNew<T extends { appid: number; publishedAt: nu
     }
   }
 
-  const hasMine = mine.length > 0
   const fresh = mine.filter((i) => opts.nowSec - i.publishedAt <= freshSec)
+
+  /*
+   * Переключатель показываем ровно тогда, когда есть ЧТО показать на второй
+   * вкладке, — то есть по свежим, а не по всем найденным.
+   *
+   * Через mine.length это давало тупик. Библиотека, где все крупные патчи
+   * старше трёх месяцев: hasMine истинно, значит страница рисует две вкладки;
+   * showPopular тоже истинно, значит «В популярных играх» помечается
+   * aria-current="page" — находясь при этом по адресу /whatsnew без
+   * параметра. Вкладка «В твоих играх» ведёт на текущий адрес, вторая — на
+   * тот же набор строк. Переключить ленту нельзя ни с одного из двух адресов,
+   * и подсветка врёт про то, где ты стоишь.
+   *
+   * Правило «вкладка, ведущая в пустоту, хуже её отсутствия» было записано
+   * абзацем ниже с самого начала — просто hasMine считался по другой мерке.
+   */
+  const hasMine = fresh.length > 0
 
   // Вкладка, ведущая в пустоту, хуже её отсутствия: если по твоим играм за
   // три месяца не набралось ничего, показываем общую целиком — ровно как
@@ -130,4 +148,38 @@ export async function resolveWhatsNew<T extends { appid: number; publishedAt: nu
   const topup = pop.filter((i) => !seen.has(i.appid)).slice(0, limit - fresh.length)
 
   return { items: [...fresh, ...topup], showPopular: false, hasMine, mineCount: fresh.length }
+}
+
+/**
+ * Метаданные игры В ТОМ ОБЪЁМЕ, который лента правда читает.
+ *
+ * Cover и PatchRow — клиентские островки, а значит всё, что им передано,
+ * уезжает в разметку сериализованным. Им отдавали GameMeta целиком, хотя из
+ * него открывают СЕМЬ полей: имя, студию, год, арт, запасную ссылку на арт,
+ * онлайн и признак бесплатности. Остальное — теги, категории, жанры,
+ * скриншоты, описание, вся ценовая пятёрка, три поля отзывов, магазин,
+ * издатель, признаки живости — ехало мёртвым грузом.
+ *
+ * Тип узкий НАМЕРЕННО, а не «то же самое, только поменьше»: попытка прочитать
+ * выброшенное поле теперь не собирается, и никто не вернёт его случайно.
+ *
+ * Арт режется trimArt под вариант card: hero и hero2x в ленте не открывает
+ * никто, а весят они столько же строкой, сколько и остальные.
+ */
+export type FeedMeta = Pick<
+  GameMeta,
+  'name' | 'developer' | 'releaseYear' | 'headerImage' | 'ccu' | 'isFree'
+> & { art?: GameArtUrls | null }
+
+export function feedMeta(meta: GameMeta | undefined): FeedMeta | undefined {
+  if (!meta) return undefined
+  return {
+    name: meta.name,
+    developer: meta.developer,
+    releaseYear: meta.releaseYear,
+    headerImage: meta.headerImage,
+    ccu: meta.ccu,
+    isFree: meta.isFree,
+    art: trimArt(meta.art),
+  }
 }

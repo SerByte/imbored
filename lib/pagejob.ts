@@ -20,15 +20,27 @@ import {
   claimPageEnrichBatch,
   getGameMeta,
   markPageEnriched,
+  markPageMissed,
   setGameJson,
   upsertGameMeta,
   type Db,
 } from './db'
-import { claudeProsCons, llmAvailable, LlmUnavailableError } from './llm'
+import { claudeProsCons, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { fetchReviews, heuristicProsCons, type ParsedReviews } from './reviews'
 
 /** Раз в полгода карточку стоит перечитать: отзывы и цена уезжают. */
 export const PAGE_MAX_AGE_SEC = 180 * 86_400
+
+/**
+ * Сколько раз подряд возвращаться за карточкой, из-за которой поход вернулся
+ * пустым.
+ *
+ * Четыре, потому что типичная причина пустого похода — лимит appdetails, а он
+ * снимается за минуты: следующий же прогон обычно и привозит данные. Больше
+ * четырёх — это уже игра, которой у Steam нет, и держать её в очереди не за
+ * чем: дождётся общего срока устаревания вместе со всеми.
+ */
+export const PAGE_MAX_TRIES = 4
 
 /** Сколько цитат берём в эвристический фолбэк. */
 const PROS_CONS_COUNT = 4
@@ -36,8 +48,17 @@ const PROS_CONS_COUNT = 4
 /**
  * Подряд идущие отказы на РАЗНЫХ играх означают, что Steam закрылся от нашего
  * IP, а не что игры плохие. Останавливаемся, не штампуя весь набор.
+ *
+ * Считается ОТДЕЛЬНО по двум ручкам, и это не педантизм. Отзывы и appdetails
+ * живут на разных лимитах, и закрыться может любая из них поодиночке. Пока
+ * страж смотрел только на отзывы, душимый appdetails его не трогал вовсе:
+ * счётчик обнулялся на каждом удачном ответе отзывов, срез доходил до конца
+ * и помечал ВЕСЬ набор как «сходили, не привезли». Это и есть механизм, из-за
+ * которого 596 карточек из 721 остались без скриншотов на полгода, — и без
+ * отдельного счётчика повторные попытки просто сгорели бы тем же способом за
+ * четыре прогона.
  */
-const MAX_BLOCKED_RUN = 3
+export const MAX_BLOCKED_RUN = 3
 
 export type PageSliceResult = {
   claimed: number
@@ -86,6 +107,7 @@ export async function runPageSlice(
   // такой пересборки нет — иначе очередь бесконечно крутилась бы на одних и
   // тех же играх, каждый раз переписывая эвристику эвристикой.
   const targets = await claimPageEnrichBatch(db, now - PAGE_MAX_AGE_SEC, limit, {
+    maxTries: PAGE_MAX_TRIES,
     redoHeuristic: useClaude,
   })
 
@@ -94,6 +116,8 @@ export async function runPageSlice(
   let withProsCons = 0
   let viaClaude = 0
   let blockedRun = 0
+  /** Отказы appdetails подряд — своя ось, см. MAX_BLOCKED_RUN. */
+  let detailsBlocked = 0
   let stopped: PageSliceResult['stopped'] = 'done'
   let claudeDown = false
 
@@ -107,10 +131,18 @@ export async function runPageSlice(
     // GetItems их не отдаёт (см. mergeMeta), поэтому единственный источник —
     // appdetails, и ходить туда можно только отсюда.
     let sawNetworkFailure = false
+    // Отказ СЕТИ отличается от «Steam про эту игру ничего не знает»:
+    // fetchAppDetails бросает на не-2xx и таймауте, а null возвращает, когда
+    // ответ пришёл, но игры в нём нет. Штрафовать очередь стоит только за
+    // второе.
+    let sawDetailsFailure = false
     const fresh = await details(appid).catch(() => {
       sawNetworkFailure = true
+      sawDetailsFailure = true
       return null
     })
+    if (fresh) detailsBlocked = 0
+    else if (sawDetailsFailure) detailsBlocked++
     if (fresh) {
       const existing = await getGameMeta(db, appid)
       const merged = mergeMeta(existing, fresh)
@@ -158,9 +190,24 @@ export async function runPageSlice(
       let prosCons: { pros: string[]; cons: string[]; source: 'claude' | 'reviews' } | null =
         h.pros.length || h.cons.length ? { ...h, source: 'reviews' } : null
 
-      if (useClaude && !claudeDown && parsed.reviews.length) {
+      /*
+       * Остаток бюджета — внутрь вызова, а не только на вход в карточку.
+       *
+       * Срок проверяется в начале цикла; между той проверкой и этой строкой
+       * лежат два похода в Steam с шагом пейсера. Зашли на 45с — и вызов, у
+       * которого своих 30с × 2, доводит инстанс до maxDuration. Дальше
+       * снимают весь срез: finally не отрабатывает, цепочка не передаётся,
+       * аренда не снимается. Ради одной карточки из полусотни.
+       *
+       * Если остатка мало — не зовём вовсе. Эвристика уже посчитана и записана
+       * выше, карточка не пустая, а к Клоду она вернётся сама: ветка
+       * redoHeuristic в claimPageEnrichBatch как раз и выбирает те, у кого
+       * source === 'reviews'.
+       */
+      const бюджет = opts.deadlineAt - Date.now()
+      if (useClaude && !claudeDown && parsed.reviews.length && бюджет >= LLM_MIN_BUDGET_MS) {
         try {
-          const fromClaude = await prosConsOf(fresh?.name ?? `Игра ${appid}`, parsed.reviews)
+          const fromClaude = await prosConsOf(fresh?.name ?? `Игра ${appid}`, parsed.reviews, бюджет)
           if (fromClaude && (fromClaude.pros.length || fromClaude.cons.length)) {
             prosCons = { ...fromClaude, source: 'claude' }
             viaClaude++
@@ -186,13 +233,28 @@ export async function runPageSlice(
       blockedRun++
     }
 
-    // Отметку ставим в любом случае — даже когда Steam ничего не отдал. Иначе
-    // одна проблемная игра навсегда осталась бы первой в очереди и забирала
-    // весь суточный бюджет на себя.
-    await markPageEnriched(db, appid, now)
+    /*
+     * Отметку ставим в любом случае — даже когда Steam ничего не отдал: иначе
+     * одна проблемная игра навсегда осталась бы первой в очереди и забирала
+     * весь суточный бюджет на себя. Но отметки теперь ДВЕ, и это весь смысл
+     * правки.
+     *
+     * Раньше пустой поход был неотличим от удачного, и карточка выпадала из
+     * очереди на полгода. На проде это стоило так: из 721 обогащённой карточки
+     * скриншоты и жанры приехали к 125. Недостающие 596 — верх каталога по
+     * числу отзывов, то есть ровно те страницы, ради которых всё и делается.
+     * Проверено вручную: appdetails отдаёт по этим играм и скриншоты, и жанры
+     * прямо сейчас — данные были доступны всё это время.
+     *
+     * Признак удачи — appdetails: скриншоты, жанры и описание есть только
+     * там (см. комментарий про GetItems выше). Отзывы живут своей ручкой,
+     * своим лимитом и, судя по тому же замеру, почти не отказывают.
+     */
+    if (fresh) await markPageEnriched(db, appid, now)
+    else await markPageMissed(db, appid, now)
     enriched++
 
-    if (blockedRun >= MAX_BLOCKED_RUN) {
+    if (blockedRun >= MAX_BLOCKED_RUN || detailsBlocked >= MAX_BLOCKED_RUN) {
       stopped = 'blocked'
       break
     }

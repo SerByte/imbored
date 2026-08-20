@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
+import { passChain } from '@/lib/chain'
 import { cronAuthorized, digestLooksStale } from '@/lib/cron'
 import {
   acquireLease,
@@ -70,6 +71,18 @@ export async function GET(req: Request) {
 
   after(async () => {
     let result: Awaited<ReturnType<typeof runNewsSlice>> | null = null
+    /*
+     * Упало ли звено — отдельно от результата. Комментарий ниже обещает, что
+     * «одно исключение на кривом фиде тихо убивает всю суточную работу» больше
+     * не случится, но обещание не выполнялось: при броске result оставался
+     * null, goesOn читал result?.hasMore и получал false, и цепочка обрывалась.
+     * finally защищал запись отметки и аренду, а не продолжение.
+     *
+     * Здесь цена ниже, чем у страниц (снаружи ходит ежечасный воркфлоу), но
+     * причина та же и решается так же: упавшее звено передаёт эстафету дальше,
+     * следующее заново выберет очередь. Долбёжку ограничивает MAX_CHAIN.
+     */
+    let упало: string | null = null
     try {
       const now = nowSec()
       // раз в сутки пополняем очередь топом каталога
@@ -89,13 +102,25 @@ export async function GET(req: Request) {
       result = await runNewsSlice(db, { deadlineAt: Date.now() + SLICE_BUDGET_MS, digestLimit: 0 })
     } catch (err) {
       console.error('news slice', err)
+      упало = err instanceof Error ? err.message.slice(0, 120) : 'исключение'
     } finally {
       // Звено цепочки — в finally и ПОСЛЕ работы. В finally, потому что иначе
       // одно исключение на кривом фиде тихо убивает всю суточную работу.
       // После работы, потому что запуск ребёнка первым дал бы параллельные
       // инвокации, а lib/pace — состояние модуля: на разных инстансах защиты
       // от общего лимита Steam нет вовсе.
-      await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result }))
+      // Отметка — диагностика, а не работа. Её отказ не имеет права обрывать
+      // цепочку: иначе одно моргнувшее соединение к Turso стоит того же, что и
+      // исключение в самом срезе, ради которого всё это и написано.
+      try {
+        await setCatalogMeta(
+          db,
+          LAST_KEY,
+          JSON.stringify({ at: nowSec(), chain, ...result, ...(упало ? { упало } : {}) }),
+        )
+      } catch (err) {
+        console.error('cron meta', err)
+      }
 
       /*
        * Лента перестала быть свежей — сообщаем кэшу.
@@ -118,7 +143,9 @@ export async function GET(req: Request) {
 
       const secret = process.env.CRON_SECRET
       const goesOn = Boolean(
-        result?.hasMore && result.stopped !== 'blocked' && chain < MAX_CHAIN && secret,
+        (упало ? true : result?.hasMore && result.stopped !== 'blocked') &&
+          chain < MAX_CHAIN &&
+          secret,
       )
       // Аренду отдаём, только если цепочка на этом кончилась. Иначе передаём
       // её следующему звену вместе с holder: пауза между отдал-и-взял пустила
@@ -151,11 +178,23 @@ export async function GET(req: Request) {
         }
       }
 
+      // Обрыв записывается, а не проглатывается — см. докблок lib/chain.
+      // У новостей цепочка обычно кончается на первом же звене (работы мало),
+      // но передача устроена так же, и молчать о её отказе не за чем.
       if (goesOn && secret) {
-        await fetch(
+        const передача = await passChain(
           `${appBaseUrl()}/api/cron/news?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
-          { headers: { 'x-cron-secret': secret } },
-        ).catch(() => {})
+          secret,
+        )
+        if (!передача.ok) {
+          await setCatalogMeta(
+            db,
+            LAST_KEY,
+            JSON.stringify({ at: nowSec(), chain, ...result, обрыв: передача.reason }),
+          )
+          // Аренду отдаём, ТОЛЬКО когда ребёнка точно нет — см. lib/chain.
+          if (!передача.childMayRun) await releaseLease(db, STEAM_LEASE, holder)
+        }
       }
     }
   })

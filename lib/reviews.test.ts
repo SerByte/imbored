@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { heuristicProsCons, parseReviews } from './reviews'
+import { fetchReviews, heuristicProsCons, parseReviews } from './reviews'
 
 const RESPONSE = {
   success: 1,
@@ -76,5 +76,28 @@ describe('heuristicProsCons', () => {
 
   test('пустой вход не роняет', () => {
     expect(heuristicProsCons([], 3)).toEqual({ pros: [], cons: [] })
+  })
+})
+
+describe('fetchReviews: отказ хоста против пустого ответа', () => {
+  const okResponse = (body: unknown) =>
+    (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
+
+  test('отказ Steam — исключение, а не null', async () => {
+    // Правило записано у соседнего fetchAppDetails: «лимит/сбой — исключение,
+    // чтобы вызывающий не закэшировал неудачу как „данных нет"». Пока здесь
+    // возвращался null, страж «Steam закрылся от нашего IP» в lib/pagejob не
+    // срабатывал при 429 никогда.
+    const deny = (async () => new Response('', { status: 429 })) as unknown as typeof fetch
+    await expect(fetchReviews(730, deny)).rejects.toThrow(/429/)
+  })
+
+  test('битое тело — это null: беда одной игры, а не адреса', async () => {
+    const junk = (async () => new Response('не json', { status: 200 })) as unknown as typeof fetch
+    expect(await fetchReviews(730, junk)).toBeNull()
+  })
+
+  test('ответ без разбираемой сводки тоже null, без исключения', async () => {
+    expect(await fetchReviews(730, okResponse({ success: 0 }))).toBeNull()
   })
 })

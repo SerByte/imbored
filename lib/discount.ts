@@ -99,6 +99,35 @@ export function discountEndsLabel(endsAt: number, nowSec: number): string | null
 }
 
 /** Скидка вместе с подписью срока — то, что уезжает клиенту одним куском */
+/**
+ * Цена, которую не стыдно показать. null — верить нечему, лучше промолчать.
+ *
+ * discountOf честно отказывается показывать протухшую СКИДКУ. Но price_final
+ * при заявленной скидке — это АКЦИОННОЕ число, и отбросив скидку, мы рисовали
+ * его как обычную цену. Замер по проду: 262 карточки в таком состоянии, у
+ * Heavy Rain стояло $0.99 при настоящих $19.99 — не неточность, а двадцатая
+ * часть правды. То же число уезжало в Offer микроразметки, то есть в выдачу
+ * поисковика.
+ *
+ * Подставлять price_initial НЕЛЬЗЯ: «срок вышел» и «акция продлена с новой
+ * датой» отсюда неразличимы, и полная цена оказалась бы такой же выдумкой,
+ * только в другую сторону.
+ *
+ * Цена без заявленной скидки под это правило не попадает: старый замер делает
+ * её неточной, но не ложной. Это та же граница, что проведена в докблоке
+ * модуля: «неточная цена — полбеды, неправда про скидку — повод больше сюда
+ * не возвращаться».
+ */
+export function trustedPrice(
+  meta: Parameters<typeof discountOf>[0],
+  nowSec: number,
+): number | null {
+  const price = meta.priceFinal
+  if (price === undefined) return null
+  if (!meta.discountPercent) return price
+  return discountOf(meta, nowSec) ? price : null
+}
+
 export function discountView(
   meta: Parameters<typeof discountOf>[0],
   nowSec: number,
