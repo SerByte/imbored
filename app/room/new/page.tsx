@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { bounceTo } from '@/lib/destination'
 import { Spinner } from '@/components/Spinner'
 
 export default function NewRoomPage() {
@@ -19,7 +20,7 @@ export default function NewRoomPage() {
         body: JSON.stringify({ mood: { time: 'long', vibe: 'engaged', social: 'friends' } }),
       })
       if (res.status === 401) {
-        router.push('/?error=nosession')
+        router.push(bounceTo('/room/new'))
         return
       }
       const data = (await res.json()) as { roomId?: string }

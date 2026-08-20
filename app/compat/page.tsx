@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Ambient } from '@/components/Ambient'
 import { ShareLinkField } from '@/components/ShareLink'
+import { bounceTo } from '@/lib/destination'
 import { appBaseUrl, currentSteamId } from '@/lib/server'
 import { Eyebrow } from '@/components/Labels'
 
@@ -31,7 +32,7 @@ export const dynamic = 'force-dynamic'
  */
 export default async function CompatHubPage() {
   const steamid = await currentSteamId()
-  if (!steamid) redirect('/')
+  if (!steamid) redirect(bounceTo('/compat'))
 
   // Адрес собирается на сервере: поле обязано приехать заполненным с первым
   // кадром, а не мигнуть пустым в ожидании гидратации.

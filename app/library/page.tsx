@@ -16,6 +16,7 @@ import {
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
+import { bounceTo } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 
 export const metadata = {
@@ -41,11 +42,11 @@ const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
   const steamid = await currentSteamId()
-  if (!steamid) redirect('/')
+  if (!steamid) redirect(bounceTo('/library'))
 
   const db = await getDb()
   const snapshot = await getLatestSnapshot(db, steamid)
-  if (!snapshot) redirect('/')
+  if (!snapshot) redirect(bounceTo('/library'))
 
   const now = nowSec()
   const filter = parseLibraryFilter((await props.searchParams).state)
