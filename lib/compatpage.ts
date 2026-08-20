@@ -9,7 +9,7 @@ import {
   loadTagStats,
   type Db,
 } from './db'
-import { type Discount, discountView } from './discount'
+import { type Discount, discountView, trustedPrice } from './discount'
 import { buildGroupDeck } from './group'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
 import { buildTagProfile } from './recommend'
@@ -254,11 +254,16 @@ export async function loadCompat(
 
   const toPick = (c: (typeof actual)[number]): CompatPick => {
     const meta = metaOf(c.appid)
+    const цена = meta ? trustedPrice(meta, now) : (c.priceFinal ?? null)
     return {
       ...artRef(c.appid, c.name, meta),
       ownedByAll: c.ownedByAll,
       missingFor: c.missingFor,
-      ...(c.priceFinal !== undefined ? { priceFinal: c.priceFinal } : {}),
+      // Цена — только та, которой верит витрина: при сгоревшей скидке
+      // priceFinal это акционное число без акции (см. trustedPrice). Полка «на
+      // будущее» показывала его как обычную цену, расходясь с карточкой той же
+      // игры на /game и со строкой выдачи на /play.
+      ...(цена !== null ? { priceFinal: цена } : {}),
       // Скидка нужна только там, где кому-то придётся покупать: у общей игры
       // цена в разговоре не участвует
       discount: meta && !c.ownedByAll ? discountView(meta, now) : null,
