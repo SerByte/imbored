@@ -9,6 +9,7 @@ import { DiscountCorner, PriceTag } from '@/components/PriceTag'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SplitHeading } from '@/components/SplitHeading'
 import { verdict } from '@/lib/compat'
+import { OG_SITE } from '@/lib/og'
 import {
   COMMON_SHOWN,
   type CompatGame,
@@ -66,7 +67,7 @@ export async function generateMetadata({
     // Из индекса убираем, из шеринга — нет: страница личная и строится по
     // чужому снапшоту. На превью по прямой ссылке флаг не влияет.
     robots: { index: false, follow: true },
-    openGraph: { title, description, type: 'website' },
+    openGraph: { ...OG_SITE, title, description, type: 'website' },
     twitter: { card: 'summary_large_image', title, description },
   }
 }

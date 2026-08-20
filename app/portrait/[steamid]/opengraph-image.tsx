@@ -1,4 +1,5 @@
 import { ImageResponse } from 'next/og'
+import { OG_BG, OG_INK } from '@/lib/og'
 import { CardImage, fonts, loadCardData } from './share-card'
 
 export const alt = 'Портрет игрока — imbored'
@@ -25,8 +26,8 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: '#0b0c10',
-            color: '#f2f3f5',
+            background: OG_BG,
+            color: OG_INK,
             fontFamily: 'Onest',
             fontSize: 56,
           }}

@@ -11,6 +11,7 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { loadGamePage } from '@/lib/gamepage'
+import { OG_SITE } from '@/lib/og'
 import { getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 
@@ -84,25 +85,34 @@ export async function generateMetadata({
     ? `${meta.name}: ${parts.join(' · ')}`
     : `${meta.name} — отзывы, теги и патчноуты на русском.`
 
-  const image = meta.art?.header2x ?? meta.art?.header ?? meta.headerImage
   const canonical = `/game/${appid}`
 
+  /*
+   * Картинки здесь больше нет, и это не потеря, а переезд. Раньше в openGraph
+   * подставлялся сырой header-файл из Steam 920×430: чужая пропорция, которую
+   * мессенджеры режут по краям, без названия поверх и без единого следа
+   * imbored. Теперь карточку рисует opengraph-image.tsx рядом — арт во всю
+   * карточку, скрим и текст, как на самой странице.
+   *
+   * Оставлять здесь images было нельзя даже «на всякий случай»: файловая
+   * метадата приоритетнее объекта metadata, так что эти строки всё равно
+   * никогда бы не применились — они бы только врали читающему код.
+   */
   return {
     title: `${meta.name} — стоит ли играть`,
     description,
     alternates: { canonical },
     openGraph: {
+      ...OG_SITE,
       title: `${meta.name} — стоит ли играть`,
       description,
       url: canonical,
       type: 'article',
-      ...(image ? { images: [{ url: image, width: 920, height: 430, alt: meta.name }] } : {}),
     },
     twitter: {
-      card: image ? 'summary_large_image' : 'summary',
+      card: 'summary_large_image',
       title: `${meta.name} — стоит ли играть`,
       description,
-      ...(image ? { images: [image] } : {}),
     },
   }
 }

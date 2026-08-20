@@ -17,6 +17,7 @@ import {
   setUserPortrait,
 } from '@/lib/db'
 import { claudePortraitText } from '@/lib/llm'
+import { OG_SITE } from '@/lib/og'
 import { plural } from '@/lib/plural'
 import { buildPortrait } from '@/lib/portrait'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
@@ -59,7 +60,7 @@ export async function generateMetadata({
     // такому в переписке по прямой ссылке, а не в поисковой выдаче.
     // На og-превью и card.png флаг не влияет — их читают по ссылке.
     robots: { index: false, follow: true },
-    openGraph: { title, description, type: 'profile' },
+    openGraph: { ...OG_SITE, title, description, type: 'profile' },
     twitter: { card: 'summary_large_image', title, description },
   }
 }
