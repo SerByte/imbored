@@ -89,14 +89,20 @@ export async function GET(req: Request) {
        * единственным следом обрыва.
        */
       if (goesOn && secret) {
-        const обрыв = await passChain(
+        const передача = await passChain(
           `${appBaseUrl()}/api/cron/pages?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
           secret,
         )
-        if (обрыв) {
-          await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result, обрыв }))
-          // Ребёнка не будет — держать аренду до истечения TTL незачем.
-          await releaseLease(db, STEAM_LEASE, holder)
+        if (!передача.ok) {
+          await setCatalogMeta(
+            db,
+            LAST_KEY,
+            JSON.stringify({ at: nowSec(), chain, ...result, обрыв: передача.reason }),
+          )
+          // Аренду отдаём, ТОЛЬКО когда ребёнка точно нет. При отказе сети он
+          // мог принять звено и работать прямо сейчас — тогда пусть аренда
+          // истечёт сама, а не откроет дверь третьему потоку к Steam.
+          if (!передача.childMayRun) await releaseLease(db, STEAM_LEASE, holder)
         }
       }
     }

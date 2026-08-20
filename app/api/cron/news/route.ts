@@ -156,13 +156,18 @@ export async function GET(req: Request) {
       // У новостей цепочка обычно кончается на первом же звене (работы мало),
       // но передача устроена так же, и молчать о её отказе не за чем.
       if (goesOn && secret) {
-        const обрыв = await passChain(
+        const передача = await passChain(
           `${appBaseUrl()}/api/cron/news?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
           secret,
         )
-        if (обрыв) {
-          await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result, обрыв }))
-          await releaseLease(db, STEAM_LEASE, holder)
+        if (!передача.ok) {
+          await setCatalogMeta(
+            db,
+            LAST_KEY,
+            JSON.stringify({ at: nowSec(), chain, ...result, обрыв: передача.reason }),
+          )
+          // Аренду отдаём, ТОЛЬКО когда ребёнка точно нет — см. lib/chain.
+          if (!передача.childMayRun) await releaseLease(db, STEAM_LEASE, holder)
         }
       }
     }
