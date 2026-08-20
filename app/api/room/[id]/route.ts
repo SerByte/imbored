@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { memberLabel } from '@/lib/room'
 import { hashString } from '@/lib/daily'
 import { getGameMeta, getRoom, roomMembers, roomVoteCounts } from '@/lib/db'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
@@ -51,7 +52,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       // перемешиваются вместе с чужим прогрессом. Хеш, а не сырой steamid:
       // в открытую комнату с доски подсаживаются незнакомые
       id: hashString(id + m.steamid).toString(36),
-      name: m.personaName ?? `Игрок ${m.steamid.slice(-4)}`,
+      name: memberLabel(id, m.steamid, m.personaName),
       me: m.steamid === steamid,
       votes,
       // deckSize === 0 — вырожденный случай (колода схлопнулась), и отмечать

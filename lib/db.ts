@@ -1,4 +1,5 @@
 import { createClient, type Client } from '@libsql/client'
+import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
 import type { NewsBlock } from './steamhtml'
 import type { GameMeta, LibraryGame, Mood } from './types'
@@ -1067,7 +1068,8 @@ export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoo
       byRoom.set(raw.id, room)
     }
     if (raw.steamid) {
-      room.memberNames.push(raw.persona_name ?? `Игрок ${raw.steamid.slice(-4)}`)
+      // steamid наружу не уходит вовсе — см. memberLabel в lib/room
+      room.memberNames.push(memberLabel(room.id, raw.steamid, raw.persona_name))
     }
   }
   return [...byRoom.values()]

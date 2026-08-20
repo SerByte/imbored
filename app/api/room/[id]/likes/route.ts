@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { memberLabel } from '@/lib/room'
 import { getGamesMeta, getRoom, roomMembers, roomVotes } from '@/lib/db'
 import { buildLikes } from '@/lib/roomlikes'
 import { currentSteamId, getDb } from '@/lib/server'
@@ -34,7 +35,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     votes,
     members: members.map((m) => ({
       steamid: m.steamid,
-      name: m.personaName ?? `Игрок ${m.steamid.slice(-4)}`,
+      name: memberLabel(id, m.steamid, m.personaName),
     })),
     me: steamid,
   })
