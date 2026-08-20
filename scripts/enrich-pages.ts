@@ -18,6 +18,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { countPageEnrichDue, createDb } from '../lib/db'
+import { llmAvailable } from '../lib/llm'
 import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '../lib/pagejob'
 
 /** Карточек за срез. Каждая — два запроса к store.steampowered.com,
@@ -51,7 +52,11 @@ async function main() {
   const db = await openDb()
   const now = Math.floor(Date.now() / 1000)
 
-  const due = await countPageEnrichDue(db, now - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES)
+  // Счётчик обязан видеть ту же очередь, что и выборка в runPageSlice: там
+  // пересборка эвристики включена, когда модель доступна и не выключена
+  // флагом. Иначе --dry-run обещал бы меньше работы, чем прогон сделает.
+  const redoHeuristic = !noLlm && llmAvailable()
+  const due = await countPageEnrichDue(db, now - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, { redoHeuristic })
   console.log(`к обогащению готово: ${due.toLocaleString('ru-RU')}`)
 
   if (dryRun) {
@@ -98,7 +103,12 @@ async function main() {
     if (!res.hasMore) break
   }
 
-  const left = await countPageEnrichDue(db, Math.floor(Date.now() / 1000) - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES)
+  const left = await countPageEnrichDue(
+    db,
+    Math.floor(Date.now() / 1000) - PAGE_MAX_AGE_SEC,
+    PAGE_MAX_TRIES,
+    { redoHeuristic },
+  )
   console.log(
     `\nготово. обогащено ${done.toLocaleString('ru-RU')}, ` +
       `со скриншотами ${shots.toLocaleString('ru-RU')}, с pros/cons ${prosCons.toLocaleString('ru-RU')}`,

@@ -10,6 +10,7 @@ import {
   setCatalogMeta,
   STEAM_LEASE,
 } from '@/lib/db'
+import { llmAvailable } from '@/lib/llm'
 import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '@/lib/pagejob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
@@ -108,8 +109,30 @@ export async function GET(req: Request) {
     }
   })
 
+  /*
+   * due считается ТОЛЬКО на первом звене.
+   *
+   * Это диагностика для человека с curl: родитель ответ ребёнка не читает
+   * вовсе. А COUNT(*) идёт по всему каталогу — шесть тысяч прочитанных строк,
+   * которые Turso тарифицирует, на КАЖДОЕ звено цепочки. За сутки это 144 000
+   * строк выброшенных в никуда при полной цепочке.
+   *
+   * redoHeuristic передаётся тем же значением, что и в выборку: иначе счётчик
+   * говорит одно, а очередь делает другое — ровно то, от чего предостерегает
+   * докблок countPageEnrichDue.
+   */
   return NextResponse.json(
-    { started: true, chain, due: await countPageEnrichDue(db, nowSec() - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES) },
+    {
+      started: true,
+      chain,
+      ...(chain === 0
+        ? {
+            due: await countPageEnrichDue(db, nowSec() - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, {
+              redoHeuristic: llmAvailable(),
+            }),
+          }
+        : {}),
+    },
     { status: 202 },
   )
 }
