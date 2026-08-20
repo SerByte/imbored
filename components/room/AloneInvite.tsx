@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { FlapCode } from '@/components/FlapCode'
+import { Eyebrow } from '@/components/Labels'
 
 /**
  * «Ты тут один».
@@ -46,7 +47,9 @@ export function AloneInvite({
         </p>
 
         <div className="flex flex-col items-center gap-2">
-          <span className="text-[11px] uppercase tracking-[0.18em] text-faint">код комнаты</span>
+          <Eyebrow as="span" tone="faint">
+            код комнаты
+          </Eyebrow>
           <div className="text-5xl sm:text-6xl tracking-[0.06em]">
             <FlapCode code={roomId} />
           </div>

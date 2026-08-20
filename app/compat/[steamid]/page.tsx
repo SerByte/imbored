@@ -23,6 +23,7 @@ import { STORE_LABEL } from '@/lib/stores'
 import { CopyCompatLink } from '../CopyCompatLink'
 import { CompatNotice } from './CompatNotice'
 import { CoverStrip } from './CoverStrip'
+import { Eyebrow } from '@/components/Labels'
 
 export const dynamic = 'force-dynamic'
 
@@ -86,7 +87,9 @@ const ru = (n: number) => n.toLocaleString('ru-RU')
 
 function Kicker({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="mb-1 font-mono text-xs uppercase tracking-[0.3em] text-ember-text">{children}</h2>
+    <Eyebrow as="h2" className="mb-1">
+      {children}
+    </Eyebrow>
   )
 }
 
@@ -331,9 +334,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             className="origin-left shrink-0 scale-[0.8] md:scale-100"
           />
           <div className="min-w-0">
-            <p className="mb-3 font-mono text-xs uppercase tracking-[0.3em] text-ember-text">
-              Совместимость
-            </p>
+            <Eyebrow className="mb-3">Совместимость</Eyebrow>
             <SplitHeading
               className="font-display text-display-lg"
               delay={0.18}
@@ -468,9 +469,7 @@ function InviteHero({ invite }: { invite: { name: string; gamesCount: number; to
       />
       <div aria-hidden className="grain" />
       <div className="relative mx-auto w-full max-w-2xl px-5 pb-10 pt-32 text-center">
-        <p className="mb-3 font-mono text-xs uppercase tracking-[0.3em] text-ember-text">
-          Совместимость
-        </p>
+        <Eyebrow className="mb-3">Совместимость</Eyebrow>
         <h1 className="font-display text-display-lg">
           {invite.name} зовёт сравнить библиотеки
         </h1>

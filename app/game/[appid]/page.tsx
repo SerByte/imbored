@@ -14,6 +14,7 @@ import { loadGamePage } from '@/lib/gamepage'
 import { OG_SITE } from '@/lib/og'
 import { getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
+import { SectionLabel } from '@/components/Labels'
 
 /**
  * Страница кэшируется на сутки вместо force-dynamic.
@@ -269,7 +270,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           <section className="grid md:grid-cols-2 gap-4">
             {prosCons.pros.length > 0 && (
               <div className="glass rounded-[20px] p-6 anim-rise">
-                <h2 className="text-sm font-semibold text-ember-text mb-3">За что любят</h2>
+                <SectionLabel tone="ember" className="mb-3">
+                  За что любят
+                </SectionLabel>
                 <ul className="space-y-2 text-sm text-ink/90">
                   {prosCons.pros.map((p) => (
                     <li key={p} className="flex gap-2.5">
@@ -282,7 +285,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             )}
             {prosCons.cons.length > 0 && (
               <div className="glass rounded-[20px] p-6 anim-rise" style={{ animationDelay: '80ms' }}>
-                <h2 className="text-sm font-semibold text-dim mb-3">За что ругают</h2>
+                <SectionLabel className="mb-3">За что ругают</SectionLabel>
                 <ul className="space-y-2 text-sm text-dim">
                   {prosCons.cons.map((c) => (
                     <li key={c} className="flex gap-2.5">
@@ -305,7 +308,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             фильтр «только крупные» действует лишь в общей ленте */}
         {data.news.length > 0 && (
           <section>
-            <h2 className="text-sm font-medium text-dim mb-4">Что нового</h2>
+            <SectionLabel className="mb-4">Что нового</SectionLabel>
             <GameNews items={data.news} />
           </section>
         )}
@@ -313,7 +316,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {/* скриншоты */}
         {meta.screenshots && meta.screenshots.length > 0 && (
           <section>
-            <h2 className="text-sm font-medium text-dim mb-4">Скриншоты</h2>
+            <SectionLabel className="mb-4">Скриншоты</SectionLabel>
             {/* сколько кадров показывать, решает сам блок: это упирается в
                 бюджет видеопамяти слайдера, а не в вёрстку страницы */}
             <GameShots images={meta.screenshots} name={meta.name} />
@@ -325,9 +328,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             в ссылку на /play, которая гостя разворачивала на лендинг. */}
         {data.similar.length > 0 && (
           <section>
-            <h2 className="text-sm font-medium text-dim mb-4">
+            <SectionLabel className="mb-4">
               Похожие{data.similarTag ? <> · {data.similarTag}</> : null}
-            </h2>
+            </SectionLabel>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {data.similar.map((g) => (
                 <Link

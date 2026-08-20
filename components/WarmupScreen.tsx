@@ -9,6 +9,7 @@ import { Spinner } from '@/components/Spinner'
 import { plural } from '@/lib/plural'
 import type { QuizCover } from '@/lib/quizart'
 import { warmupPercent, type WarmupProgress } from '@/lib/warmup'
+import { Eyebrow } from '@/components/Labels'
 
 /**
  * Экран ожидания прогрева.
@@ -75,7 +76,9 @@ export function WarmupScreen({
           сказал. Раньше на его месте не было ничего: последний ответ квиза
           вызывал переход в том же тике, и вопрос сменялся спиннером. */}
       {caption && (
-        <p className="relative text-xs uppercase tracking-[0.12em] text-faint">{caption}</p>
+        <Eyebrow tone="faint" className="relative">
+          {caption}
+        </Eyebrow>
       )}
 
       <div className="relative">

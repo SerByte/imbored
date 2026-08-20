@@ -27,6 +27,7 @@ import type { Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource, Mood } from '@/lib/types'
+import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 
@@ -731,9 +732,9 @@ function Player() {
       {!roulette && (
         <section className="mx-auto w-full max-w-6xl px-5 py-10">
           <div className="flex items-baseline justify-between gap-3 flex-wrap mb-4">
-            <h2 className="text-sm font-medium text-dim">
+            <SectionLabel>
               {focus ? 'Ещё нераспакованное' : 'Ещё варианты под это настроение'}
-            </h2>
+            </SectionLabel>
             {/* Откуда брать главную выдачу. При фокусе «нераспакованное»
                 переключателя нет: там вопрос уже задан и ответ на него — своё. */}
             {!focus && (
@@ -825,7 +826,7 @@ function Player() {
         <section className="mx-auto w-full max-w-6xl px-5 pb-16">
           <div className="border-t border-edge/60 pt-10">
             <div className="flex items-baseline justify-between gap-3 mb-1">
-              <h2 className="text-sm font-medium text-dim">Нет в твоей библиотеке</h2>
+              <SectionLabel>Нет в твоей библиотеке</SectionLabel>
               <a
                 href="https://steamdb.info/sales/"
                 target="_blank"

@@ -8,6 +8,7 @@ import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SplitHeading } from '@/components/SplitHeading'
+import { Eyebrow, eyebrow } from '@/components/Labels'
 import { Wordmark } from '@/components/Wordmark'
 import {
   getGamesMeta,
@@ -217,9 +218,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <div aria-hidden className="grain" />
 
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-40">
-          <p className="text-xs font-mono tracking-[0.3em] text-ember-text uppercase mb-3">
-            Портрет игрока
-          </p>
+          <Eyebrow className="mb-3">Портрет игрока</Eyebrow>
           <SplitHeading
             className="font-display text-display-xl"
             delay={0.18}
@@ -245,7 +244,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <section className="relative mx-auto w-full max-w-5xl px-5 py-24 md:py-32">
           <motion.p
             {...inView()}
-            className="text-xs font-mono tracking-[0.3em] text-ember-text uppercase mb-8"
+            className={`${eyebrow()} mb-8`}
           >
             Куда ушло время
           </motion.p>
@@ -315,7 +314,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <section className="relative mx-auto w-full max-w-5xl px-5 py-24 md:py-32">
           <motion.p
             {...inView()}
-            className="text-xs font-mono tracking-[0.3em] text-ember-text uppercase mb-3"
+            className={`${eyebrow()} mb-3`}
           >
             Диагноз
           </motion.p>
@@ -380,7 +379,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <section className="relative mx-auto w-full max-w-6xl px-5 py-24 md:py-32">
           <motion.p
             {...inView()}
-            className="text-xs font-mono tracking-[0.3em] text-ember-text uppercase mb-3"
+            className={`${eyebrow()} mb-3`}
           >
             Чистилище
           </motion.p>

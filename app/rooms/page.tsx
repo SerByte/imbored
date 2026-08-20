@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { FlapCode } from '@/components/FlapCode'
 import { Spinner } from '@/components/Spinner'
+import { SectionLabel } from '@/components/Labels'
 
 type Listing = { id: string; memberNames: string[]; minutesAgo: number }
 
@@ -53,10 +54,10 @@ export default function RoomsBoardPage() {
       </div>
 
       <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-dim flex items-center gap-2">
+        <SectionLabel className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
           Открытые пати — ищут игроков
-        </h2>
+        </SectionLabel>
         {rooms === null ? (
           <div className="flex justify-center py-8">
             <Spinner size={32} />
