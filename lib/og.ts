@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { BG, DIM, EMBER, INK, PLATE } from './palette'
 
 /**
  * Общая начинка картинок, которые рисует next/og: шрифты и палитра.
@@ -32,13 +33,16 @@ export const ogFonts = Promise.all([
 /**
  * Цвета заданы литералами, а не токенами из globals.css: satori не исполняет
  * CSS-переменные, и var(--bg) там превращается в пустую строку.
+ *
+ * Сами числа живут в lib/palette.ts: кроме карточек их ждёт ещё
+ * app/global-error.tsx, а туда этот модуль не импортируется — он читает
+ * файлы шрифтов через node:fs прямо при загрузке.
  */
-export const OG_BG = '#0b0c10'
-export const OG_INK = '#f2f3f5'
-export const OG_DIM = '#9ba1ab'
-export const OG_EMBER = '#ff9e64'
-/** Подложка знака — то же число, что в components/Logo.tsx. */
-export const OG_PLATE = '#16171d'
+export const OG_BG = BG
+export const OG_INK = INK
+export const OG_DIM = DIM
+export const OG_EMBER = EMBER
+export const OG_PLATE = PLATE
 
 export function ogNum(n: number): string {
   return n.toLocaleString('ru-RU')

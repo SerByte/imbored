@@ -7,13 +7,23 @@ import { LogoMark } from '@/components/Logo'
 /**
  * Граница ошибок приложения. До этого любое исключение в серверном компоненте
  * показывало стоковый экран Next — без шапки, без языка продукта, без выхода.
+ *
+ * Самого корневого layout и template эта граница НЕ касается — там работает
+ * app/global-error.tsx, заведённый рядом.
+ *
+ * retry, а НЕ reset, и это починка, а не переименование. reset чистит
+ * состояние границы и перерисовывает детей БЕЗ повторного запроса — то есть из
+ * того же payload, который только что упал. А этот экран заводился именно под
+ * исключения в СЕРВЕРНЫХ компонентах: единственная кнопка экрана
+ * выглядела нажатой и не делала ничего. retry запрашивает содержимое заново
+ * (docs/error.md: «will try to re-fetch and re-render») и стабилен с Next 16.3.
  */
 export default function Error({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string }
-  reset: () => void
+  retry: () => void
 }) {
   useEffect(() => {
     console.error(error)
@@ -28,7 +38,7 @@ export default function Error({
           Скорее всего, это на нашей стороне. Можно попробовать ещё раз — обычно помогает.
         </p>
         <button
-          onClick={reset}
+          onClick={() => retry()}
           className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition cursor-pointer"
         >
           Попробовать снова
