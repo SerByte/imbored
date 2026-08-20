@@ -77,6 +77,7 @@ import {
   getDailyPick,
   saveDailyPick,
   sweepDailyPicks,
+  topCatalogAppids,
 } from './db'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -1505,5 +1506,35 @@ describe('мёртвые игры и общая лента', () => {
     const ranks = await getGameRanks(db, [730, 320])
     expect(ranks.get(730)).toBeGreaterThan(0)
     expect(ranks.get(320)).toBe(0)
+  })
+})
+
+
+describe('топ каталога: кэш на десять минут', () => {
+  async function игра(db: Awaited<ReturnType<typeof createDb>>, appid: number, ccu: number) {
+    await db.execute({
+      sql: `INSERT INTO games (appid, name, tag_count, alive, ccu, reviews_total, updated_at)
+            VALUES (?, ?, 3, 1, ?, ?, 0)`,
+      args: [appid, `Игра ${appid}`, ccu, ccu],
+    })
+  }
+
+  test('повторный вызов не ходит в базу, но новая база кэш не наследует', async () => {
+    const первая = await createDb(':memory:')
+    await игра(первая, 10, 100)
+    expect(await topCatalogAppids(первая, 5)).toEqual([10])
+
+    // добавили строку — и не увидели её: ровно этого мы и хотим десять минут
+    await игра(первая, 20, 999)
+    expect(await topCatalogAppids(первая, 5)).toEqual([10])
+
+    // другой per — другой вопрос, отвечать на него старым ответом нельзя
+    expect(await topCatalogAppids(первая, 50)).toEqual([20, 10])
+
+    // Ключ кэша — сама база. Иначе тесты, открывающие свежую базу в памяти на
+    // каждый случай, склеились бы между собой через один общий кэш.
+    const вторая = await createDb(':memory:')
+    await игра(вторая, 77, 5)
+    expect(await topCatalogAppids(вторая, 5)).toEqual([77])
   })
 })

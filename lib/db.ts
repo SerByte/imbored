@@ -2938,6 +2938,31 @@ export async function flushPollResults(
 }
 
 /**
+ * Топ каталога меняется от силы раз в сутки, а спрашивают его сотнями раз.
+ *
+ * Прогрев библиотеки законно зовёт /api/prepare до восьмидесяти раз подряд
+ * (WARMUP_MAX_CALLS), и каждый вызов брал этот список заново. Замер на проде:
+ * 34мс на вызов и 400 прочитанных строк — то есть 2.7 секунды и 32 000 строк
+ * за один прогрев одного человека, ради списка, который между вызовами не
+ * меняется вовсе. Turso считает деньги по прочитанным строкам.
+ *
+ * Ключ — сама база, а не глобальная переменная: тесты открывают свежую базу в
+ * памяти на каждый случай, и общий кэш склеил бы их между собой. WeakMap
+ * заодно снимает вопрос о времени жизни.
+ *
+ * per в записи хранится и сверяется: три вызывающих сегодня просят по 200, но
+ * молча отдать двести там, где попросили пятьсот, — это баг, который проявится
+ * не сразу.
+ *
+ * Десять минут — с запасом внутри одного прогрева и много меньше суток, за
+ * которые каталог переиздаётся. Устаревший на десять минут список популярного
+ * не значит ничего: из него собирают пул «попробуй новое» и очередь опроса
+ * новостей.
+ */
+const TOP_CATALOG_TTL_MS = 10 * 60_000
+const topCatalogCache = new WeakMap<Db, { at: number; per: number; ids: number[] }>()
+
+/**
  * Набор каталога для общей ленты: топ по живому онлайну плюс топ по числу
  * отзывов. Онлайн — потому что лента отвечает на «во что играют сейчас»,
  * отзывы — потому что у половины каталога ccu ещё не замерен.
@@ -2947,6 +2972,9 @@ export async function flushPollResults(
  * «App {appid}» из /api/prepare отсекаются сами — у них tag_count = 0.
  */
 export async function topCatalogAppids(db: Db, per = 200): Promise<number[]> {
+  const кэш = topCatalogCache.get(db)
+  if (кэш && кэш.per === per && Date.now() - кэш.at < TOP_CATALOG_TTL_MS) return кэш.ids
+
   const alive = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
   const [byCcu, byReviews] = await Promise.all([
     db.execute({
@@ -2963,7 +2991,9 @@ export async function topCatalogAppids(db: Db, per = 200): Promise<number[]> {
   const ids = [...byCcu.rows, ...byReviews.rows].map(
     (r) => (r as unknown as { appid: number }).appid,
   )
-  return [...new Set(ids)]
+  const итог = [...new Set(ids)]
+  topCatalogCache.set(db, { at: Date.now(), per, ids: итог })
+  return итог
 }
 
 /**
