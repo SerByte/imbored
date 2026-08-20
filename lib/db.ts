@@ -1701,17 +1701,34 @@ export async function setGameDescriptions(
  * Условие обязано повторять claimPageEnrichBatch, иначе отчёт говорит одно,
  * а очередь делает другое: с maxTries по умолчанию 0 повторные попытки в
  * счёт не идут — ровно как и в выборке.
+ *
+ * И оно РАСХОДИЛОСЬ. У выборки четыре ветки OR, у счётчика было три: ветка
+ * пересборки эвристики моделью сюда не доехала. А в проде она включена всегда
+ * (redoHeuristic = llmAvailable), и карточек с source = 'reviews' там 498 —
+ * то есть отчёт мог показывать «к обогащению готово: 0», пока крон продолжал
+ * забирать по двадцать карточек на звено и платить за каждую двумя запросами
+ * к Steam и вызовом модели. Ровно то, от чего докблок и предостерегал.
+ *
+ * Четвёртый аргумент назван так же, как у выборки, и по той же причине: два
+ * запроса об одном и том же обязаны читаться рядом как один.
  */
 export async function countPageEnrichDue(
   db: Db,
   staleBefore: number,
   maxTries = 0,
+  opts: { redoHeuristic?: boolean } = {},
 ): Promise<number> {
+  const redo = opts.redoHeuristic ? 1 : 0
   const res = await db.execute({
     sql: `SELECT COUNT(*) AS n FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
-            AND (page_at IS NULL OR page_at < ? OR (page_tries > 0 AND page_tries < ?))`,
-    args: [staleBefore, maxTries],
+            AND (
+              page_at IS NULL
+              OR page_at < ?
+              OR (page_tries > 0 AND page_tries < ?)
+              OR (? = 1 AND (? = 0 OR page_tries < ?) AND json_extract(pros_cons_json, '$.source') = 'reviews')
+            )`,
+    args: [staleBefore, maxTries, redo, maxTries, maxTries],
   })
   return Number((res.rows[0] as unknown as { n: number }).n)
 }
