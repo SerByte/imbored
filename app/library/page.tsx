@@ -176,7 +176,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             <h2 className="font-display text-display-sm">
               Ты забыл, что они у тебя есть
             </h2>
-            <Link href="/quiz?from=untouched" className="text-sm text-ember-text hover:underline shrink-0">
+            <Link href="/quiz?from=untouched" className="tap text-sm text-ember-text hover:underline shrink-0">
               Разгрести →
             </Link>
           </div>

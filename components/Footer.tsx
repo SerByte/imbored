@@ -12,16 +12,16 @@ export function Footer() {
           <span className="text-xs">· imbored.cc</span>
         </div>
         <nav className="flex items-center flex-wrap gap-x-5 gap-y-2 text-xs text-dim">
-          <Link href="/support" className="hover:text-ink transition-colors">
+          <Link href="/support" className="tap tap-tight hover:text-ink transition-colors">
             Поддержать проект
           </Link>
-          <Link href="/portrait" className="hover:text-ink transition-colors">
+          <Link href="/portrait" className="tap tap-tight hover:text-ink transition-colors">
             Портрет игрока
           </Link>
-          <Link href="/compat" className="hover:text-ink transition-colors">
+          <Link href="/compat" className="tap tap-tight hover:text-ink transition-colors">
             Совместимость
           </Link>
-          <Link href="/privacy" className="hover:text-ink transition-colors">
+          <Link href="/privacy" className="tap tap-tight hover:text-ink transition-colors">
             Конфиденциальность
           </Link>
         </nav>
