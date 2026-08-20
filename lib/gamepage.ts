@@ -24,6 +24,57 @@ export type GamePageData = {
   similarTag: string | null
 }
 
+export type ReviewFacts = {
+  /** Доля положительных отзывов, 0…100. */
+  percent: number
+  /** Сколько отзывов учтено. */
+  total: number
+  /**
+   * Словесная оценка Steam («Very Positive»). Есть ТОЛЬКО когда пришла
+   * сводка: выводить её из процента мы намеренно не будем — это была бы наша
+   * догадка, выданная за оценку площадки.
+   */
+  label: string | null
+}
+
+/**
+ * Оценка игры из того, что есть.
+ *
+ * Страница называется «стоит ли играть», а кольцо с процентом рисовалось
+ * только из reviews_summary_json — отдельной сводки, которую наполняет крон.
+ * В каталоге на тысячу игр её нет у 278. То есть 28% страниц не отвечали на
+ * вопрос из собственного заголовка — при том что reviews_percent и
+ * reviews_total лежат в той же строке базы и заполнены у ВСЕХ до одной.
+ * Half-Life: Opposing Force — 95% из 13 440 отзывов — показывал пустое место
+ * там, где должно стоять число.
+ *
+ * Порядок источников: сводка точнее (в ней сырые количества, из которых
+ * процент считается на месте), поэтому она первая. Колонки — запасной путь.
+ *
+ * Слово при этом берётся только из сводки. Числа — факт площадки, и мы их
+ * пересказываем; словесная шкала — её суждение, и придумывать его за неё
+ * нельзя. Без сводки рядом с кольцом остаётся «из N отзывов — за», и этого
+ * достаточно: процент уже стоит внутри кольца.
+ */
+export function reviewFacts(
+  meta: Pick<GameMeta, 'reviewsPercent' | 'reviewsTotal'>,
+  summary: GamePageData['reviewsSummary'],
+): ReviewFacts | null {
+  const counted = summary ? summary.totalPositive + summary.totalNegative : 0
+  if (summary && counted > 0) {
+    return {
+      percent: Math.round((summary.totalPositive / counted) * 100),
+      total: counted,
+      label: summary.scoreDesc,
+    }
+  }
+  const { reviewsPercent, reviewsTotal } = meta
+  if (typeof reviewsPercent === 'number' && typeof reviewsTotal === 'number' && reviewsTotal > 0) {
+    return { percent: Math.max(0, Math.min(100, Math.round(reviewsPercent))), total: reviewsTotal, label: null }
+  }
+  return null
+}
+
 /**
  * Самый характерный тег игры.
  *

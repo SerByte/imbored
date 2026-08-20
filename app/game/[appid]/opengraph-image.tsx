@@ -1,6 +1,6 @@
 import { ImageResponse } from 'next/og'
 import { artCandidates } from '@/lib/art'
-import { loadGamePage } from '@/lib/gamepage'
+import { loadGamePage, reviewFacts } from '@/lib/gamepage'
 import { ogFonts, ogNum, ogScrim, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 
 export const alt = 'Стоит ли играть — imbored'
@@ -62,17 +62,16 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
     artCandidates({ appid: meta.appid, art: meta.art, headerImage: meta.headerImage })[0] ??
     null
 
-  const total = reviewsSummary
-    ? reviewsSummary.totalPositive + reviewsSummary.totalNegative
-    : 0
-  const percent = total > 0 ? Math.round((reviewsSummary!.totalPositive / total) * 100) : null
+  // Тот же запасной источник, что и на самой странице: без него карточка 278
+  // игр из тысячи уезжала в чат вообще без оценки.
+  const facts = reviewFacts(meta, reviewsSummary)
   const tags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
     .map(([t]) => t)
 
-  const facts = [
-    percent !== null ? `${percent}% из ${ogNum(total)} отзывов — за` : null,
+  const lines = [
+    facts ? `${facts.percent}% из ${ogNum(facts.total)} отзывов — за` : null,
     tags.length ? tags.join(' · ') : null,
   ].filter(Boolean) as string[]
 
@@ -136,12 +135,12 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
           </div>
 
           {/* Отступ снизу большой намеренно — см. lib/og про кириллические выносные */}
-          <div style={{ display: 'flex', fontSize: 76, lineHeight: 1.15, marginBottom: facts.length ? 26 : 0 }}>
+          <div style={{ display: 'flex', fontSize: 76, lineHeight: 1.15, marginBottom: lines.length ? 26 : 0 }}>
             {meta.name.slice(0, 42)}
           </div>
 
-          {facts.length > 0 && (
-            <div style={{ display: 'flex', fontSize: 28, color: OG_DIM }}>{facts.join('  ·  ')}</div>
+          {lines.length > 0 && (
+            <div style={{ display: 'flex', fontSize: 28, color: OG_DIM }}>{lines.join('  ·  ')}</div>
           )}
         </div>
 
