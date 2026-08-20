@@ -54,6 +54,47 @@ function contrast(a: string, b: string): number {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
 }
 
+/** Цвет поверх фона с прозрачностью — то, что реально видит глаз. */
+function composite(fg: string, bg: string, alpha: number): string {
+  const [f, b] = [rgb(fg), rgb(bg)]
+  return (
+    '#' +
+    f
+      .map((v, i) => Math.round(v * alpha + b[i] * (1 - alpha)))
+      .map((v) => v.toString(16).padStart(2, '0'))
+      .join('')
+  )
+}
+
+/**
+ * Прозрачности плашек акцента — вычитаны из разметки, а не выписаны сюда.
+ *
+ * Иначе тест сторожил бы список, а не продукт: плашка с новой прозрачностью
+ * появилась бы в коде и прошла бы мимо. Здесь же новая `bg-ember/40` обязана
+ * либо пройти по контрасту, либо уронить прогон.
+ */
+function emberTintAlphas(): number[] {
+  const found = new Set<number>()
+  for (const [, src] of markup()) {
+    for (const m of src.matchAll(/bg-ember\/(\d+)/g)) found.add(Number(m[1]) / 100)
+  }
+  return [...found].sort((a, b) => a - b)
+}
+
+/** Все .tsx приложения — [путь, содержимое]. */
+function markup(): [string, string][] {
+  const out: [string, string][] = []
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith('.tsx')) out.push([p, fs.readFileSync(p, 'utf8')])
+    }
+  }
+  for (const dir of ['app', 'components']) walk(path.join(__dirname, '..', dir))
+  return out
+}
+
 /** WCAG 2.2 AA для обычного текста. */
 const AA = 4.5
 
@@ -98,8 +139,46 @@ describe('контраст палитры', () => {
       test('основной текст держит запас втрое выше порога', () => {
         expect(contrast(resolve(t, '--ink'), resolve(t, '--bg'))).toBeGreaterThanOrEqual(7)
       })
+
+      /**
+       * Акцентный текст почти нигде не стоит на голом фоне — он стоит на
+       * плашке из того же акцента. Плашка подмешивает --ember в подложку и
+       * съедает контраст: на светлой теме 5.23:1 на фоне превращались в
+       * 4.07:1 на плашке при наведении. Токен этого не видел, потому что
+       * композиция происходит в браузере.
+       */
+      test('акцентный текст читается и НА ПЛАШКЕ акцента, а не только на фоне', () => {
+        const alphas = emberTintAlphas()
+        expect(alphas.length, 'плашки акцента не найдены в разметке').toBeGreaterThan(0)
+        for (const a of alphas) {
+          const tint = composite(resolve(t, '--ember'), resolve(t, '--bg'), a)
+          expect(
+            contrast(resolve(t, '--ember-text'), tint),
+            `bg-ember/${Math.round(a * 100)} в теме «${theme.name}» (подложка ${tint})`,
+          ).toBeGreaterThanOrEqual(AA)
+        }
+      })
     })
   }
+
+  /**
+   * Токен --on-ember существует ровно затем, чтобы поверх заливки акцента
+   * никогда не оказался --bg: на светлой теме эта пара даёт 2.85:1. Тест
+   * выше проверяет сам токен — а этот проверяет, что им действительно
+   * пользуются. Разница не теоретическая: уголок скидки на обложке
+   * (DiscountCorner) пережил всю разводку ролей с `text-bg` и оставался
+   * нечитаемым, пока пару считали «уже починенной».
+   */
+  test('поверх заливки акцента стоит --on-ember, а не --bg', () => {
+    const offenders: string[] = []
+    for (const [file, src] of markup()) {
+      for (const m of src.matchAll(/className=[^\n]*\bbg-ember\b(?!\/)[^\n]*/g)) {
+        const line = m[0]
+        if (/\btext-bg\b/.test(line)) offenders.push(path.basename(file) + ': ' + line.trim().slice(0, 90))
+      }
+    }
+    expect(offenders, 'text-bg поверх bg-ember даёт 2.85:1 на светлой теме').toEqual([])
+  })
 
   test('зоны переопределяют ВСЕ ролевые токены, а не только базовые', () => {
     // Иначе у человека на светлой теме внутри тёмной зоны роли остаются

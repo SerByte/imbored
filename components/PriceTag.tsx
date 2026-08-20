@@ -80,11 +80,18 @@ export function PriceTag({
  * Плашка ember, а не зелёная, как в Steam: зелёный в этой палитре занят
  * («есть у всех» в колоде пати, живой онлайн), и скидка, покрашенная так же,
  * означала бы в соседних блоках разные вещи одним цветом.
+ *
+ * text-on-ember, а НЕ text-bg. Это последнее место, куда не дошла разводка
+ * ролевых токенов: --bg поверх заливки --ember даёт на светлой теме 2.85:1 —
+ * ровно то число, из-за которого главная кнопка продукта когда-то была
+ * нечитаемой. Уголок мельче кнопки (11 px) и стоит на обложке, то есть был
+ * самым нечитаемым элементом продукта, а не просто одним из. Теперь эту
+ * пару сторожит contrast.test.ts.
  */
 export function DiscountCorner({ discount }: { discount: Discount | null | undefined }) {
   if (!discount) return null
   return (
-    <span className="absolute left-2 top-2 rounded-full bg-ember px-2 py-0.5 font-mono text-[11px] font-bold tabular-nums text-bg shadow-lg">
+    <span className="absolute left-2 top-2 rounded-full bg-ember px-2 py-0.5 font-mono text-[11px] font-bold tabular-nums text-on-ember shadow-lg">
       −{discount.percent}%
     </span>
   )
