@@ -38,11 +38,30 @@ export type Resolved = {
   sid: string | null
   /** куку пора переставить (или выдать заново в новом формате) */
   stale: boolean
+  /**
+   * Владение профилем доказано через Steam OpenID.
+   *
+   * У сессии, выданной по вставленной ссылке (/api/connect), это false — и это
+   * не изъян, а сам продукт: библиотека публична, а вход через Steam ради
+   * «во что поиграть» — та самая пошлина, от которой сервис и избавляет.
+   *
+   * Но РАЗРУШИТЕЛЬНОЕ такой сессии не положено. Иначе выходит перевёртыш прав:
+   * кука, полученная без доказательства, гасит куки, полученные С
+   * доказательством. Ровно это и было возможно: POST /api/connect с чужим
+   * steamid, затем POST /api/auth/logout?scope=all — и revokeAllSessions
+   * ставит users.sessions_from = now, после чего resolveSession отвергает ВСЕ
+   * настоящие токены владельца, потому что у них iat < sessions_from. Два
+   * запроса, никаких секретов, достаточно открытого профиля.
+   *
+   * Неизвестное происхождение считаем неподтверждённым: у легаси-куки признака
+   * нет, у сессии без строки в базе (Turso моргнула на выдаче) тоже.
+   */
+  verified: boolean
 }
 
 export type Lookup = (sid: string, steamid: string) => Promise<SessionRow>
 
-const LIVE: SessionRow = { revokedAt: null, sessionsFrom: null }
+const LIVE: SessionRow = { revokedAt: null, sessionsFrom: null, verified: false }
 
 const cache = new Map<string, { at: number; state: SessionRow }>()
 
@@ -92,7 +111,12 @@ export async function resolveSession(opts: {
     if (state.revokedAt !== null) return null
     // «выйти везде» бьёт по времени выдачи: накрывает и те сессии, чьих строк нет
     if (state.sessionsFrom !== null && v2.iat < state.sessionsFrom) return null
-    return { steamid: v2.steamid, sid: v2.sid, stale: nowSec - v2.iat > SESSION_TOUCH_AFTER_SEC }
+    return {
+      steamid: v2.steamid,
+      sid: v2.sid,
+      stale: nowSec - v2.iat > SESSION_TOUCH_AFTER_SEC,
+      verified: state.verified,
+    }
   }
 
   // Легаси-кука: пускаем и помечаем на апгрейд. Живёт она максимум 30 суток
@@ -105,7 +129,8 @@ export async function resolveSession(opts: {
     // выдаёт, поэтому ЛЮБАЯ легаси-кука заведомо старше любой отсечки.
     const state = await stateOf(lookup, `legacy:${legacy}`, legacy, nowSec)
     if (state.sessionsFrom !== null) return null
-    return { steamid: legacy, sid: null, stale: true }
+    // Легаси-формат выдавали до появления признака — считаем неподтверждённой.
+    return { steamid: legacy, sid: null, stale: true, verified: false }
   }
 
   return null

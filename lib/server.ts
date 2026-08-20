@@ -235,14 +235,23 @@ export async function currentSteamId(): Promise<string | null> {
  * Записи в базу — по возможности: строки нет — сессия всё равно жива, так
  * устроен resolveSession. Падение Turso не должно ломать вход.
  */
-export async function issueSession(steamid: string, userAgent: string | null): Promise<string> {
+export async function issueSession(
+  steamid: string,
+  userAgent: string | null,
+  opts: { verified?: boolean } = {},
+): Promise<string> {
   const now = nowSec()
   const prev = await currentSession().catch(() => null)
   const { sid, token } = mintSession(steamid, sessionSecret(), now)
   try {
     const db = await getDb()
     if (prev?.sid) await revokeSession(db, prev.sid, now)
-    await createSession(db, { sid, steamid, device: deviceLabel(userAgent) }, now)
+    // verified ставит ТОЛЬКО путь Steam OpenID — см. докблок Resolved.verified
+    await createSession(
+      db,
+      { sid, steamid, device: deviceLabel(userAgent), verified: opts.verified },
+      now,
+    )
   } catch {
     // молча: кука уже подписана и будет выдана
   }
