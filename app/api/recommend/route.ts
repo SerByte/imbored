@@ -109,7 +109,28 @@ export async function POST(req: Request) {
     if (!verdict.ok) return rateLimitedResponse(verdict.retryAfterSec)
   }
 
-  const snapshot = await getLatestSnapshot(db, steamid)
+  /*
+   * Пять чтений — двумя заходами, а не лесенкой из пяти.
+   *
+   * Зависимость тут ровно одна: getGamesMeta ниже нужны appid и из библиотеки,
+   * и из истории оценок, поэтому он остаётся вторым заходом. Всё остальное друг
+   * от друга не зависит вовсе — забаненное и оценки ключуются одним steamid, а
+   * статистика тегов и размер пула вообще не про человека, — и всё равно шло по
+   * очереди. Один обход к Turso стоит около тридцати пяти миллисекунд по замеру
+   * на проде; лесенка из пяти ложится в главное действие продукта целиком.
+   *
+   * Цена размена записана: у человека с сессией, но без снапшота (ответ 409
+   * строкой ниже) четыре запроса уходят впустую. Случай редкий — снапшот
+   * заводит /api/prepare, через который проходит весь путь с квиза, — и
+   * молчаливый, в отличие от задержки, которую видят все.
+   */
+  const [snapshot, banned, feedback, tagStats, poolSize] = await Promise.all([
+    getLatestSnapshot(db, steamid),
+    bannedAppids(db, steamid),
+    listFeedback(db, steamid, 300),
+    loadTagStats(db),
+    getPoolSize(db),
+  ])
   if (!snapshot) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
 
   const games = snapshot.games
@@ -118,9 +139,6 @@ export async function POST(req: Request) {
   // разные appid, и по одному только owned каталог предлагал бы купить то,
   // что уже стоит в библиотеке
   const ownedKeys = new Set(games.map((g) => editionKey(g.name)).filter(Boolean))
-
-  const banned = await bannedAppids(db, steamid)
-  const feedback = await listFeedback(db, steamid, 300)
 
   // Метаданные своей библиотеки И игр из истории оценок: раньше здесь читался
   // весь каталог, что на сотне тысяч игр сожгло бы лимит прочитанных строк
@@ -141,7 +159,6 @@ export async function POST(req: Request) {
   )
 
   // Кандидаты из большого каталога — одним запросом с LIMIT, а не полным сканом
-  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const newPool = (
     await fetchDiscoveryPool(db, {
       tags: pickQueryTags(profile, tagStats, poolSize),
