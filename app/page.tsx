@@ -7,6 +7,7 @@ import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { Wordmark } from '@/components/Wordmark'
+import { DESTINATIONS, destinationPath } from '@/lib/destination'
 
 const ERROR_TEXT: Record<string, string> = {
   auth: 'Steam не подтвердил вход. Попробуй ещё раз.',
@@ -58,6 +59,19 @@ function Landing() {
   const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
   const compat = search.get('compat')
   const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
+  /*
+   * Куда человек шёл, когда его сюда развернуло.
+   *
+   * Пять экранов из шести разворачивали гостя МОЛЧА: нажал «Игра дня» —
+   * страница подменилась лендингом, и ни слова о том, почему. Теперь
+   * лендинг говорит про ТО САМОЕ место и туда же возвращает после
+   * подключения.
+   *
+   * Адрес берётся из закрытого списка, а не из строки запроса как есть:
+   * произвольный ?next= — это открытый редирект (см. lib/destination.ts).
+   */
+  const next = destinationPath(search.get('next'))
+  const dest = next ? DESTINATIONS[next] : null
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
   const [error, setError] = useState<string | null>(search.get('error'))
@@ -104,7 +118,24 @@ function Landing() {
     // безобидный no-op, а вот потерянный ответ виден пользователю.
   }, [])
 
-  const target = joinTarget ? `/room/${joinTarget}` : compatTarget ? `/compat/${compatTarget}` : '/quiz'
+  /*
+   * Ссылка на Steam несёт назначение тоже: без этого человек, шедший в
+   * библиотеку и выбравший вход через Steam, всё равно оказывался бы на
+   * /quiz — то есть обещание держала бы только одна из двух дорог.
+   */
+  const steamHref = joinTarget
+    ? `/api/auth/steam?join=${joinTarget}`
+    : compatTarget
+      ? `/api/auth/steam?compat=${compatTarget}`
+      : next
+        ? `/api/auth/steam?next=${encodeURIComponent(next)}`
+        : '/api/auth/steam'
+
+  const target = joinTarget
+    ? `/room/${joinTarget}`
+    : compatTarget
+      ? `/compat/${compatTarget}`
+      : (next ?? '/quiz')
 
   async function connect(demo: boolean) {
     setBusy(demo ? 'demo' : 'connect')
@@ -141,7 +172,8 @@ function Landing() {
               ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
               : compatTarget
                 ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
-                : 'Скажи, сколько у тебя времени, — подберём, во что зайти прямо сейчас.'}
+                : (dest?.promise ??
+                  'Скажи, сколько у тебя времени, — подберём, во что зайти прямо сейчас.')}
           </p>
         </div>
 
@@ -172,7 +204,11 @@ function Landing() {
                     onClick={() => router.push(target)}
                     className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition cursor-pointer"
                   >
-                    {joinTarget ? 'Войти в пати' : compatTarget ? 'Посмотреть совместимость' : 'Подобрать игру'}
+                    {joinTarget
+                      ? 'Войти в пати'
+                      : compatTarget
+                        ? 'Посмотреть совместимость'
+                        : (dest?.action ?? 'Подобрать игру')}
                   </button>
                 </ClickSpark>
               </Magnet>
@@ -180,7 +216,7 @@ function Landing() {
                   аккаунт должно быть возможно, а спрятанное под раскрывашку
                   «сменить аккаунт» ищут дольше, чем оно того стоит. */}
               <a
-                href={joinTarget ? `/api/auth/steam?join=${joinTarget}` : '/api/auth/steam'}
+                href={steamHref}
                 className="text-sm text-dim hover:text-ink transition-colors text-center py-1"
               >
                 Это не я — войти через Steam
@@ -231,7 +267,7 @@ function Landing() {
                   disabled={!input || busy !== null}
                   className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 disabled:opacity-40 hover:brightness-110 transition cursor-pointer"
                 >
-                  {busy === 'connect' ? 'Читаю библиотеку…' : 'Подобрать игру'}
+                  {busy === 'connect' ? 'Читаю библиотеку…' : (dest?.action ?? 'Подобрать игру')}
                 </button>
               </ClickSpark>
             </Magnet>
@@ -242,7 +278,7 @@ function Landing() {
             <div className="h-px flex-1 bg-edge" />
           </div>
           <a
-            href={joinTarget ? `/api/auth/steam?join=${joinTarget}` : '/api/auth/steam'}
+            href={steamHref}
             className="w-full rounded-[14px] glass glass-hover py-3 text-sm text-ink text-center"
           >
             Войти через Steam

@@ -26,6 +26,7 @@ import type { QuizCover } from '@/lib/quizart'
 import type { Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
+import { bounceTo } from '@/lib/destination'
 import type { CandidateSource, Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
@@ -312,7 +313,7 @@ function Player() {
         // Сессия отвалилась во время ФОНОВОГО догрева — карточки на экране уже
         // есть и работают. Выкидывать с них на лендинг незачем: человек упрётся
         // в это при следующем действии и там же увидит внятную причину.
-        if (!revealed) router.push('/')
+        if (!revealed) router.push(bounceTo('/play'))
         setWarming('off')
         return
       }
