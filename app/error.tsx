@@ -33,7 +33,7 @@ export default function Error({
         >
           Попробовать снова
         </button>
-        <Link href="/" className="text-sm text-dim hover:text-ink transition-colors">
+        <Link href="/" className="tap text-sm text-dim hover:text-ink transition-colors">
           На главную
         </Link>
         {error.digest && (

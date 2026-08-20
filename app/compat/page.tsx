@@ -25,7 +25,7 @@ export default async function CompatHubPage() {
           а не по анкете: % совпадения вкусов, общие игры и во что вам зайти вместе.
         </p>
         <CopyCompatLink steamid={steamid} />
-        <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors">
+        <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
           ← К подбору игры
         </Link>
       </div>

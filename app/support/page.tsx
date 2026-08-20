@@ -88,7 +88,7 @@ export default function SupportPage() {
         </p>
 
         <div className="text-center">
-          <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors">
+          <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
             ← К подбору игры
           </Link>
         </div>

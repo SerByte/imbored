@@ -23,7 +23,7 @@ export function SoundToggle() {
       type="button"
       onClick={() => setSoundOn(!on)}
       aria-pressed={on}
-      className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-faint transition-colors hover:text-ink"
+      className="tap inline-flex cursor-pointer items-center gap-1.5 text-xs text-faint transition-colors hover:text-ink"
     >
       <svg
         aria-hidden

@@ -166,7 +166,7 @@ export function Cover({
               ) : null}
               <Link
                 href={`/game/${item.appid}`}
-                className="text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+                className="tap text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
               >
                 Что ещё меняли
               </Link>

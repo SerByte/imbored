@@ -52,7 +52,7 @@ export function ThemeToggle() {
       onClick={toggle}
       title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
       aria-label="Переключить тему"
-      className="rounded-full glass glass-hover p-2 cursor-pointer text-dim hover:text-ink"
+      className="tap rounded-full glass glass-hover p-2 cursor-pointer text-dim hover:text-ink"
     >
       {theme === 'dark' ? (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

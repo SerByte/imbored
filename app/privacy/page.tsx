@@ -136,7 +136,7 @@ export default function PrivacyPage() {
         </Section>
 
         <div className="text-center pt-2">
-          <Link href="/" className="text-sm text-dim hover:text-ink transition-colors">
+          <Link href="/" className="tap text-sm text-dim hover:text-ink transition-colors">
             ← На главную
           </Link>
         </div>

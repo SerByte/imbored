@@ -262,7 +262,7 @@ function FeedTab({
     <Link
       href={href}
       aria-current={active ? 'page' : undefined}
-      className={`font-display text-display-xs transition-opacity ${
+      className={`tap tap-tight font-display text-display-xs transition-opacity ${
         active
           ? 'font-bold text-ink underline decoration-2 underline-offset-8'
           : 'font-semibold text-dim hover:text-ink'

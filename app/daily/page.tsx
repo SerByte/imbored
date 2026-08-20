@@ -246,7 +246,7 @@ export default function DailyPage() {
               >
                 Подробнее
               </Link>
-              <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors px-2">
+              <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors px-2">
                 Хочу выбрать сам →
               </Link>
             </div>
@@ -283,7 +283,7 @@ export default function DailyPage() {
               href="https://steamdb.info/sales/"
               target="_blank"
               rel="noreferrer"
-              className="text-xs text-faint hover:text-ink transition-colors shrink-0"
+              className="tap text-xs text-faint hover:text-ink transition-colors shrink-0"
             >
               все скидки Steam →
             </a>

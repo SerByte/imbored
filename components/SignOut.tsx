@@ -39,7 +39,7 @@ export function SignOut() {
         type="button"
         onClick={() => void out(false)}
         disabled={busy !== null}
-        className="text-dim hover:text-ink transition-colors disabled:opacity-40 cursor-pointer"
+        className="tap tap-tight text-dim hover:text-ink transition-colors disabled:opacity-40 cursor-pointer"
       >
         {busy === 'one' ? 'Выхожу…' : 'Выйти'}
       </button>
@@ -50,7 +50,7 @@ export function SignOut() {
             type="button"
             onClick={() => void out(true)}
             disabled={busy !== null}
-            className="text-danger hover:brightness-110 transition disabled:opacity-40 cursor-pointer"
+            className="tap tap-tight text-danger hover:brightness-110 transition disabled:opacity-40 cursor-pointer"
           >
             {busy === 'all' ? 'Выхожу…' : 'Да, везде'}
           </button>
@@ -58,7 +58,7 @@ export function SignOut() {
             type="button"
             onClick={() => setConfirmAll(false)}
             disabled={busy !== null}
-            className="hover:text-ink transition-colors cursor-pointer"
+            className="tap tap-tight hover:text-ink transition-colors cursor-pointer"
           >
             Отмена
           </button>
@@ -68,7 +68,7 @@ export function SignOut() {
           type="button"
           onClick={() => setConfirmAll(true)}
           disabled={busy !== null}
-          className="text-faint hover:text-ink transition-colors disabled:opacity-40 cursor-pointer"
+          className="tap tap-tight text-faint hover:text-ink transition-colors disabled:opacity-40 cursor-pointer"
         >
           Выйти на всех устройствах
         </button>

@@ -555,7 +555,7 @@ function Player() {
               <motion.div variants={STEP} className="text-sm">
                 <button
                   onClick={() => setShowWhy(!showWhy)}
-                  className="text-dim hover:text-ink transition-colors cursor-pointer"
+                  className="tap text-dim hover:text-ink transition-colors cursor-pointer"
                 >
                   Почему она? {showWhy ? '▴' : '▾'}
                 </button>
@@ -812,7 +812,7 @@ function Player() {
             ))}
           </div>
           <div className="mt-8 text-center">
-            <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors">
+            <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
               Изменить настроение →
             </Link>
           </div>
@@ -830,7 +830,7 @@ function Player() {
                 href="https://steamdb.info/sales/"
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs text-faint hover:text-ink transition-colors shrink-0"
+                className="tap text-xs text-faint hover:text-ink transition-colors shrink-0"
               >
                 все скидки Steam →
               </a>
@@ -889,7 +889,7 @@ function Player() {
 
       {roulette && (
         <div className="mx-auto w-full max-w-6xl px-5 py-8 text-center">
-          <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors">
+          <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
             Изменить настроение →
           </Link>
         </div>
