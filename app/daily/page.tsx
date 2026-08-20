@@ -18,6 +18,7 @@ import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { SectionLabel } from '@/components/Labels'
 
 /** Карточка магазина: и герой в день каталога, и плитки на полке ниже */
 type StoreCard = {
@@ -278,7 +279,7 @@ export default function DailyPage() {
       {discoveries.length > 0 && (
         <section className="mx-auto w-full max-w-6xl px-5 py-16">
           <div className="flex items-baseline justify-between gap-3 mb-1">
-            <h2 className="text-sm font-medium text-dim">Нет в твоей библиотеке</h2>
+            <SectionLabel>Нет в твоей библиотеке</SectionLabel>
             <a
               href="https://steamdb.info/sales/"
               target="_blank"

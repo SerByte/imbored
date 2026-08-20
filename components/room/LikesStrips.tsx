@@ -3,6 +3,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { plural } from '@/lib/plural'
 import type { NearMiss } from '@/lib/roomlikes'
 import { ScrollRail } from './ScrollRail'
+import { SectionLabel } from '@/components/Labels'
 
 export type LikedGame = {
   appid: number
@@ -23,7 +24,7 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
 
   return (
     <section className="relative flex flex-col gap-2.5">
-      <h3 className="text-sm font-medium text-dim">Вы почти совпали</h3>
+      <SectionLabel as="h3">Вы почти совпали</SectionLabel>
       <ul className="flex flex-col gap-2">
         {near.map((n, i) => (
           <li

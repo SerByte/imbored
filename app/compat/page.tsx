@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { Ambient } from '@/components/Ambient'
 import { ShareLinkField } from '@/components/ShareLink'
 import { appBaseUrl, currentSteamId } from '@/lib/server'
+import { Eyebrow } from '@/components/Labels'
 
 export const metadata = {
   title: 'Совместимость',
@@ -41,9 +42,7 @@ export default async function CompatHubPage() {
       <Ambient />
       <div className="relative mx-auto flex w-full max-w-2xl flex-col gap-8 px-5 pt-28 pb-16">
         <div className="flex flex-col gap-3 anim-rise">
-          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ember-text">
-            Совместимость
-          </p>
+          <Eyebrow>Совместимость</Eyebrow>
           <h1 className="font-display text-display-md">Твоя ссылка на сравнение</h1>
           <p className="text-dim leading-relaxed">
             Кинь её любому — сервис сравнит ваши библиотеки и наигранное время по-настоящему, а не
@@ -61,9 +60,7 @@ export default async function CompatHubPage() {
         </div>
 
         <div className="flex flex-col gap-3 anim-rise" style={{ animationDelay: '160ms' }}>
-          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-faint">
-            Так она развернётся в чате
-          </p>
+          <Eyebrow tone="faint">Так она развернётся в чате</Eyebrow>
           {/*
             Настоящий файл карточки, а не картинка-заглушка: тот же адрес
             заберёт краулер мессенджера. Пропорция задана атрибутами, чтобы

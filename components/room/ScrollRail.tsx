@@ -1,3 +1,5 @@
+import { SectionLabel } from '@/components/Labels'
+
 /**
  * Горизонтальный рельс с выносом за колонку.
  *
@@ -14,7 +16,7 @@ export function ScrollRail({
 }) {
   return (
     <section className="relative flex flex-col gap-2.5">
-      <h3 className="text-sm font-medium text-dim">{label}</h3>
+      <SectionLabel as="h3">{label}</SectionLabel>
       <ul className="flex gap-3 overflow-x-auto -mx-5 px-5 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {children}
         {/*

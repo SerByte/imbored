@@ -12,6 +12,7 @@ import { countChanges } from '@/lib/steamhtml'
 import type { GameMeta } from '@/lib/types'
 import { byline, freshness } from './format'
 import { useNow } from './Now'
+import { Eyebrow, MetaLine } from '@/components/Labels'
 
 /**
  * Обложка ленты: главное обновление во весь экран.
@@ -112,18 +113,20 @@ export function Cover({
                 когда на весь экран стоит чужое название. Игра идёт следом h2.
                 Метка ленты живёт здесь же: переключатель остался экраном ниже,
                 и после перехода это единственное указание, куда ты попал. */}
-            <h1 className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] uppercase tracking-[0.42em] text-dim">
+            <Eyebrow as="h1" tone="dim" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
               <span aria-hidden className="h-px w-10 bg-rule" />
               Что нового
+              {/* Метка ленты — вторая ступень того же надзаголовка: трекинг
+                  уже, чтобы она читалась приложением к нему, а не вторым равным. */}
               {label ? (
-                <span className="tracking-[0.2em] text-ink/50">· {label}</span>
+                <span className="tracking-[0.16em] text-ink/50">· {label}</span>
               ) : null}
-            </h1>
+            </Eyebrow>
 
-            <p className="mb-4 font-mono text-xs uppercase tracking-[0.28em] text-dim">
+            <MetaLine as="p" className="mb-4">
               {freshness(item.publishedAt, now)}
               {studio ? <span className="text-ink/50"> · {studio}</span> : null}
-            </p>
+            </MetaLine>
 
             <SplitHeading
               as="h2"
@@ -187,11 +190,11 @@ export function Cover({
                 loading="eager"
                 className="w-full rounded-[20px] border border-edge object-cover shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)]"
               />
-              <figcaption className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em] text-dim">
+              <MetaLine as="figcaption" className="mt-2">
                 <time dateTime={published.toISOString()}>
                   {published.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
                 </time>
-              </figcaption>
+              </MetaLine>
             </motion.figure>
           ) : null}
         </div>

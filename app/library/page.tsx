@@ -16,6 +16,7 @@ import {
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
+import { Eyebrow } from '@/components/Labels'
 
 export const metadata = {
   title: 'Библиотека',
@@ -166,9 +167,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
 
       {shelf.length > 0 && (
         <section className="mb-12">
-          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ember-text mb-2">
-            Запечатанное
-          </p>
+          <Eyebrow className="mb-2">Запечатанное</Eyebrow>
           <div className="flex items-baseline justify-between gap-4 flex-wrap">
             {/* Заголовок намеренно без числа: «пять игр» — ложь при трёх, а
                 согласование «{N} игр, о которых ты забыл» — фабрика багов.

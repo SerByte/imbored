@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import { GameArt } from '@/components/GameArt'
 import type { GameArtUrls } from '@/lib/art'
+import { Eyebrow } from '@/components/Labels'
 
 export type BannedGame = {
   appid: number
@@ -56,9 +57,7 @@ export function BannedShelf({ games }: { games: BannedGame[] }) {
 
   return (
     <section className="mb-12">
-      <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ember-text mb-2">
-        Чистилище
-      </p>
+      <Eyebrow className="mb-2">Чистилище</Eyebrow>
       <h2 className="font-display text-display-sm">
         Ты выгнал <span className="font-mono text-ember-text">{items.length}</span>
       </h2>

@@ -13,6 +13,7 @@ import { countChanges } from '@/lib/steamhtml'
 import type { GameMeta } from '@/lib/types'
 import { byline, changesLabel, freshness } from './format'
 import { useNow } from './Now'
+import { MetaLine } from '@/components/Labels'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -106,11 +107,11 @@ export function PatchRow({
             <span className="line-clamp-2 text-sm leading-relaxed text-dim">{item.tldr}</span>
           ) : null}
 
-          <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
+          <MetaLine className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
             <span>{freshness(item.publishedAt, now)}</span>
             {changes > 0 ? <span>{changesLabel(changes)}</span> : null}
             {meta?.ccu ? <span>{meta.ccu.toLocaleString('ru-RU')} в игре</span> : null}
-          </span>
+          </MetaLine>
         </span>
 
         <span
