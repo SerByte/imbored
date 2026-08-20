@@ -33,7 +33,38 @@ function appFiles(): [string, string][] {
   return out
 }
 
+/** Исходник без комментариев: иначе сторож ловит объяснение, зачем его завели. */
+function withoutComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+}
+
 describe('подписи разделов', () => {
+  /**
+   * Верхний регистр с разрядкой — голос САМОГО сервиса. Проверка ниже искала
+   * только произвольную разрядку `tracking-[Nem]` и пропускала шкальную
+   * `tracking-wide`. Через эту щель заголовки чужих патчноутов говорили нашим
+   * голосом: «ОРУЖИЕ» от Valve выглядело ровно как наши «ЗАПЕЧАТАННОЕ» и
+   * «ЧИСТИЛИЩЕ».
+   *
+   * Исключение одно и осознанное: заливная плашка «ИГРА ДНЯ». Пилюля с
+   * заливкой акцента — другое устройство (печать, а не подпись), и верхний
+   * регистр там часть печати.
+   */
+  test('шкальная разрядка с верхним регистром — только у заливной плашки', () => {
+    const offenders: string[] = []
+    for (const [file, src] of appFiles()) {
+      if (file === LABELS) continue
+      for (const m of withoutComments(src).matchAll(/className="([^"]*)"/g)) {
+        const cls = m[1]
+        if (!cls.includes('uppercase')) continue
+        if (!/tracking-(?:wide|wider|widest)/.test(cls)) continue
+        if (cls.includes('bg-ember')) continue
+        offenders.push(`${file}: ${cls.slice(0, 70)}`)
+      }
+    }
+    expect(offenders, 'верхний регистр с разрядкой — голос сервиса, используй Eyebrow').toEqual([])
+  })
+
   test('надзаголовок нигде не набран руками — только компонентом', () => {
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {

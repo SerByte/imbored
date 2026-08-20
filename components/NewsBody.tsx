@@ -44,8 +44,23 @@ export function NewsBody({ blocks, className = '' }: { blocks: NewsBlock[]; clas
     <div className={`text-sm text-dim leading-relaxed flex flex-col gap-3 ${className}`}>
       {blocks.map((b, i) => {
         if (b.kind === 'h') {
+          /*
+           * Заголовок ВНУТРИ чужого текста, а не подпись раздела продукта.
+           *
+           * Стоял он в верхнем регистре с разрядкой — то есть ровно в той
+           * форме, которой в этом интерфейсе говорит сам сервис (Eyebrow,
+           * см. components/Labels.tsx). Получалось, что «ОРУЖИЕ» из
+           * патчноута Valve выглядит так же, как «ЗАПЕЧАТАННОЕ» и
+           * «ЧИСТИЛИЩЕ», которые пишем мы. Голос издателя не должен быть
+           * неотличим от нашего.
+           *
+           * Поэтому обычный подзаголовок: тот же кегль, что у тела, но
+           * основным цветом и полужирным. Внутри приглушённого текста этого
+           * достаточно, чтобы читаться заголовком, и ничего не занимает у
+           * словаря продукта.
+           */
           return (
-            <h3 key={i} className="text-xs font-semibold text-ink tracking-wide uppercase mt-1">
+            <h3 key={i} className="mt-2 text-sm font-semibold text-ink">
               {b.text}
             </h3>
           )
