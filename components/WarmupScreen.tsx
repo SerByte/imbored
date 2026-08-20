@@ -110,7 +110,11 @@ export function WarmupScreen({
       {/* Строка статуса меняется по ходу — подменять её встык значит терять
           единственный сигнал, что что-то вообще происходит. */}
       <div className="h-5 relative w-full max-w-sm text-center">
-        <AnimatePresence mode="wait">
+        {/* initial={false}: это самый первый экран после ответов, и его подпись
+            приезжала в HTML с opacity:0. Пока не гидратируется — человек смотрит на
+            крутящуюся дугу без единого слова о том, что происходит. Смена подписей
+            по ходу прогрева продолжает перетекать как раньше. */}
+        <AnimatePresence mode="wait" initial={false}>
           <motion.p
             key={message}
             initial={{ opacity: 0, y: 6 }}
