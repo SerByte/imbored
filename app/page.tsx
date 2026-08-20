@@ -2,13 +2,19 @@
 
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useState, useSyncExternalStore } from 'react'
 import { CinemaCollage } from '@/components/CinemaCollage'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { Wordmark } from '@/components/Wordmark'
 import { DESTINATIONS, destinationPath } from '@/lib/destination'
+import {
+  getServerSessionHint,
+  getSessionHint,
+  rememberSession,
+  subscribeSessionHint,
+} from '@/lib/sessionhint'
 
 const ERROR_TEXT: Record<string, string> = {
   auth: 'Steam не подтвердил вход. Попробуй ещё раз.',
@@ -89,9 +95,25 @@ function Landing() {
    */
   const [session, setSession] = useState<{ authed: boolean; personaName: string | null } | null>(null)
 
+  /*
+   * Догадка с прошлого визита — чтобы не показывать пустое место, пока едет
+   * ответ. Раньше здесь стояло «Секунду…»: первое, что видел человек на
+   * сайте, было место, где ничего нельзя сделать, и держалось оно целый круг
+   * до сервера.
+   *
+   * Порядок старшинства ровно такой: ответ сервера, потом подсказка, потом
+   * гость. Гость последним не случайно — это единственное состояние, которое
+   * годится в статическую разметку: незнакомцу оно верно, а вошедшему хотя бы
+   * даёт что-то нажать, пока не приедет приветствие.
+   */
+  const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
+  const view = session ?? hint ?? { authed: false, personaName: null }
+
   useEffect(() => {
     const settle = (authed: boolean, personaName: string | null = null) => {
       setSession({ authed, personaName })
+      // Ответ сервера — он же и подсказка на следующий визит.
+      rememberSession(authed ? { authed, personaName } : null)
     }
     // Тот же роут, что продлевает куку: заодно и продлеваем на каждом заходе
     // на главную. markSessionTouched — чтобы SessionKeeper не сходил повторно.
@@ -106,12 +128,10 @@ function Landing() {
       // соврать кнопкой «Продолжить» тому, кто на самом деле гость, хуже.
       .catch(() => settle(false))
 
-    // Предохранитель: если ответа нет за полторы секунды, показываем вход.
-    // Без него медленная сеть оставляла бы человека наедине с «Секунду…»,
-    // то есть с экраном, на котором вообще ничего нельзя сделать. Пусть
-    // лучше мигнёт форма входа, чем повиснет заглушка.
-    const fallback = setTimeout(() => setSession((s) => s ?? { authed: false, personaName: null }), 1500)
-    return () => clearTimeout(fallback)
+    // Предохранителя на полторы секунды здесь больше нет, и он не нужен: он
+    // существовал ровно затем, чтобы вытащить человека из «Секунду…». Теперь
+    // из него нечего вытаскивать — до ответа уже показано либо приветствие по
+    // подсказке, либо вход.
     // Флага «компонент ещё жив» здесь намеренно нет. Он тут был и ломал ровно
     // то, ради чего всё писалось: в dev эффект монтируется дважды, ответ
     // приходил уже после снятия флага первой попытки, и карточка навсегда
@@ -179,21 +199,13 @@ function Landing() {
         </div>
 
         <div className="w-full glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise" style={{ animationDelay: '80ms' }}>
-          {session === null ? (
-            /* Пока не знаем — не показываем форму входа. Мигнуть ею вошедшему
-               значит снова позвать его нажать «Войти через Steam», то есть
-               ровно то, от чего эта правка избавляет. Высота держится, чтобы
-               карточка не прыгала. */
-            <div className="min-h-[232px] flex items-center justify-center text-sm text-faint">
-              Секунду…
-            </div>
-          ) : session.authed ? (
+          {view.authed ? (
             <div className="min-h-[232px] flex flex-col justify-center gap-4">
               <p className="text-lg text-ink">
                 С возвращением
-                {session.personaName ? (
+                {view.personaName ? (
                   <>
-                    , <span className="font-semibold">{session.personaName}</span>
+                    , <span className="font-semibold">{view.personaName}</span>
                   </>
                 ) : null}
                 .
