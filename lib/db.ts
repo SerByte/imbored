@@ -1620,15 +1620,41 @@ export async function claimPageEnrichBatch(
  * базу, заход краулера на такую страницу не стоит ничего, а имя, теги, цена и
  * патчноуты на ней уже есть. Ждать полного обогащения значило бы держать карту
  * сайта пустой месяцами.
+ *
+ * lastmod считается по ТРЁМ отметкам, а не по одному updated_at, и это не
+ * педантизм. Замер по проду 20 августа: из 5919 живых игр 5691 имеет ОДИН И ТОТ
+ * ЖЕ updated_at — след массовой заливки каталога; разных значений на весь
+ * каталог девятнадцать. То есть поле не несло сигнала вовсе, а следующая
+ * заливка подняла бы пять с половиной тысяч адресов в одну секунду, после чего
+ * Google перестаёт учитывать его совсем.
+ *
+ * Настоящее изменение содержания приносят два других события, и оба
+ * размазаны по времени: обогащение карточки (page_at — появляются скриншоты,
+ * вердикт отзывов и pros/cons) и новый патчноут (published_at). Их и берём.
+ *
+ * ПРЕДЕЛ, честно: разных значений стало 88 вместо 19, но крупнейшая группа
+ * по-прежнему 5586 адресов. Иначе и быть не может — у этих карточек с прошлой
+ * заливки правда ничего не менялось, ни обогащения, ни патчей. Настоящая
+ * причина одинаковости лежит не здесь, а в scripts/publish-catalog: он ставит
+ * updated_at = now всем строкам подряд, включая те, у которых ни одно видимое
+ * поле не изменилось. Чинить надо там, и это отдельная работа.
  */
 export async function sitemapGames(
   db: Db,
   limit: number,
 ): Promise<Array<{ appid: number; updatedAt: number }>> {
   const res = await db.execute({
-    sql: `SELECT appid, updated_at FROM games
-          WHERE ${ALIVE_POOL} AND appid > 0
-          ORDER BY reviews_total DESC
+    sql: `SELECT g.appid AS appid,
+                 MAX(
+                   g.updated_at,
+                   COALESCE(g.page_at, 0),
+                   COALESCE((SELECT MAX(n.published_at) FROM news_items n WHERE n.appid = g.appid), 0)
+                 ) AS updated_at
+          FROM games g
+          -- предикат живой игры, тот же что в ALIVE_POOL, но с алиасом таблицы:
+          -- подзапрос по news_items требует различать g.appid и n.appid
+          WHERE g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0 AND g.appid > 0
+          ORDER BY g.reviews_total DESC
           LIMIT ?`,
     args: [limit],
   })
