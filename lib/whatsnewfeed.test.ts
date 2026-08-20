@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
-import { LIBRARY_CAP, MINE_FRESH_SEC, resolveWhatsNew, topLibraryAppids } from './whatsnewfeed'
+import { feedMeta, LIBRARY_CAP, MINE_FRESH_SEC, resolveWhatsNew, topLibraryAppids } from './whatsnewfeed'
+import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
 const DAY = 86_400
@@ -164,5 +165,44 @@ describe('resolveWhatsNew: добивка из общей', () => {
     await resolveWhatsNew({ steamid: '765', wantsPopular: false, ...s, limit: 5 })
     // 5 мест минус 2 своих = 3 нужных, но пересечения могут съесть часть
     expect(s.major.mock.calls[0]![0]).toBeGreaterThan(3)
+  })
+})
+
+describe('feedMeta', () => {
+  const meta: GameMeta = {
+    appid: 730,
+    name: 'Counter-Strike 2',
+    tags: { Shooter: 100 },
+    genres: ['Action'],
+    categories: [1],
+    screenshots: ['s1.jpg'],
+    developer: 'Valve',
+    releaseYear: 2012,
+    headerImage: 'h.jpg',
+    ccu: 1000,
+    isFree: true,
+    art: { header: 'h.jpg', header2x: 'h2.jpg', capsule: 'c.jpg', hero: 'hero.jpg', hero2x: 'hero2.jpg' },
+  }
+
+  test('строке ленты уезжают только читаемые поля и арт под card', () => {
+    const out = feedMeta(meta)
+    expect(Object.keys(out ?? {}).sort()).toEqual(
+      ['art', 'ccu', 'developer', 'headerImage', 'isFree', 'name', 'releaseYear'],
+    )
+    expect(out?.art).toEqual({ header: 'h.jpg', header2x: 'h2.jpg', capsule: 'c.jpg' })
+  })
+
+  test('обложке арт режется под hero, а не под card', () => {
+    // Срежь обложке арт под card — и фон уедет с library_hero на растянутый header
+    expect(feedMeta(meta, 'hero')?.art).toEqual({
+      hero: 'hero.jpg',
+      hero2x: 'hero2.jpg',
+      capsule: 'c.jpg',
+      header: 'h.jpg',
+    })
+  })
+
+  test('нет метаданных — нет и объекта', () => {
+    expect(feedMeta(undefined)).toBeUndefined()
   })
 })

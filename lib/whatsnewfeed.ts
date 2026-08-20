@@ -14,6 +14,9 @@
  * ради которого написан докблок lib/warmup.ts.
  */
 
+import { trimArt, type ArtVariant, type GameArtUrls } from './art'
+import type { GameMeta } from './types'
+
 /** Сколько игр библиотеки берём в личную ленту */
 export const LIBRARY_CAP = 300
 export const FEED_LIMIT = 30
@@ -146,4 +149,44 @@ export async function resolveWhatsNew<T extends { appid: number; publishedAt: nu
   const topup = pop.filter((i) => !seen.has(i.appid)).slice(0, limit - fresh.length)
 
   return { items: [...fresh, ...topup], showPopular: false, hasMine, mineCount: fresh.length }
+}
+
+/**
+ * Метаданные игры В ТОМ ОБЪЁМЕ, который лента правда читает.
+ *
+ * Cover и PatchRow — клиентские островки, а значит всё, что им передано,
+ * уезжает в разметку сериализованным. Им отдавали GameMeta целиком, хотя из
+ * него открывают СЕМЬ полей: имя, студию, год, арт, запасную ссылку на арт,
+ * онлайн и признак бесплатности. Остальное — теги, категории, жанры,
+ * скриншоты, описание, вся ценовая пятёрка, три поля отзывов, магазин,
+ * издатель, признаки живости — ехало мёртвым грузом.
+ *
+ * Тип узкий НАМЕРЕННО, а не «то же самое, только поменьше»: попытка прочитать
+ * выброшенное поле теперь не собирается, и никто не вернёт его случайно.
+ *
+ * Арт режется trimArt под тот вариант, которым его нарисуют. Строки ленты —
+ * card: hero и hero2x там не открывает никто, а весят они столько же строкой,
+ * сколько и остальные. Обложка — hero, во весь экран: срежь ей арт под card,
+ * и фон уехал бы на плоский library_hero.jpg, которого у новых игр нет, а
+ * оттуда на растянутый header.
+ */
+export type FeedMeta = Pick<
+  GameMeta,
+  'name' | 'developer' | 'releaseYear' | 'headerImage' | 'ccu' | 'isFree'
+> & { art?: GameArtUrls | null }
+
+export function feedMeta(
+  meta: GameMeta | undefined,
+  variant: ArtVariant = 'card',
+): FeedMeta | undefined {
+  if (!meta) return undefined
+  return {
+    name: meta.name,
+    developer: meta.developer,
+    releaseYear: meta.releaseYear,
+    headerImage: meta.headerImage,
+    ccu: meta.ccu,
+    isFree: meta.isFree,
+    art: trimArt(meta.art, variant),
+  }
 }

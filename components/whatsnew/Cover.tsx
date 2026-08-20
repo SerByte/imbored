@@ -9,7 +9,7 @@ import { GameArt } from '@/components/GameArt'
 import { SplitHeading } from '@/components/SplitHeading'
 import type { FeedItem } from '@/lib/db'
 import { dateLabel } from '@/lib/freshness'
-import type { GameMeta } from '@/lib/types'
+import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline } from '@/lib/byline'
 import { plural } from '@/lib/plural'
 import { freshness } from './format'
@@ -40,7 +40,7 @@ export function Cover({
   label,
 }: {
   item: FeedItem
-  meta?: GameMeta
+  meta?: FeedMeta
   nowSec: number
   /** правок в патче; считается на сервере — тело сюда больше не едет */
   changes: number
