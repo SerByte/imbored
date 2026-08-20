@@ -7,6 +7,7 @@ import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { MetaLine } from '@/components/Labels'
+import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
@@ -188,7 +189,18 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               MetaLine, а не свои классы: роль ровно её — строка фактов через
               разделитель.
             */}
-            {studio && <MetaLine as="p">{studio}</MetaLine>}
+            {(studio || meta.ccu) && (
+              <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                {studio && <MetaLine>{studio}</MetaLine>}
+                {/*
+                  Живой онлайн есть у 563 игр из тысячи, и показывали его четыре
+                  экрана — выдача, игра дня, колода пати и лента, — но не эта
+                  страница. А «стоит ли играть» для мультиплеера решается именно
+                  им: у игры 2011 года бывает и двести тысяч человек, и двести.
+                */}
+                <PlayersNow ccu={meta.ccu ?? null} />
+              </p>
+            )}
             {/*
               Оценка собирается из того, что есть: сводка точнее, но её нет у
               278 игр из тысячи — там числа берутся из колонок, заполненных у

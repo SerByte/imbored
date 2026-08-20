@@ -117,14 +117,14 @@ function TopCard({
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="font-display text-display-sm">{card.name}</h2>
           {card.ownedByAll ? (
-            <span className="rounded-full bg-emerald-400/15 text-ok px-3 py-1 text-xs font-medium">
+            <span className="rounded-full bg-ok/15 text-ok px-3 py-1 text-xs font-medium">
               ✓ Есть у всех
             </span>
           ) : (
             <span className="flex items-center gap-2">
               {/* text-info вместо sky-300: на светлой теме tailwind-цвет давал
                   1.52:1, то есть подпись была практически невидима */}
-              <span className="rounded-full bg-sky-400/10 text-info px-3 py-1 text-xs">
+              <span className="rounded-full bg-info/10 text-info px-3 py-1 text-xs">
                 Нет у: {card.missingFor.join(', ')}
                 {card.priceFinal !== undefined && card.priceFinal > 0
                   ? ` · $${(card.priceFinal / 100).toFixed(0)}`

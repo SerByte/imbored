@@ -73,10 +73,11 @@ function composite(fg: string, bg: string, alpha: number): string {
  * появилась бы в коде и прошла бы мимо. Здесь же новая `bg-ember/40` обязана
  * либо пройти по контрасту, либо уронить прогон.
  */
-function emberTintAlphas(): number[] {
+function tintAlphas(role: 'ember' | 'ok' | 'info' | 'danger'): number[] {
   const found = new Set<number>()
+  const re = new RegExp(`bg-${role}\\/(\\d+)`, 'g')
   for (const [, src] of markup()) {
-    for (const m of src.matchAll(/bg-ember\/(\d+)/g)) found.add(Number(m[1]) / 100)
+    for (const m of src.matchAll(re)) found.add(Number(m[1]) / 100)
   }
   return [...found].sort((a, b) => a - b)
 }
@@ -148,7 +149,7 @@ describe('контраст палитры', () => {
        * композиция происходит в браузере.
        */
       test('акцентный текст читается и НА ПЛАШКЕ акцента, а не только на фоне', () => {
-        const alphas = emberTintAlphas()
+        const alphas = tintAlphas('ember')
         expect(alphas.length, 'плашки акцента не найдены в разметке').toBeGreaterThan(0)
         for (const a of alphas) {
           const tint = composite(resolve(t, '--ember'), resolve(t, '--bg'), a)
@@ -160,6 +161,53 @@ describe('контраст палитры', () => {
       })
     })
   }
+
+  /**
+   * Ровно та же проверка, что у акцента, но для статусных ролей. Они тоже
+   * стоят на плашке из самого себя: «✓ есть у обоих» на странице
+   * совместимости — это bg-ok/15 с text-ok. Прежний светлый --ok давал на ней
+   * 3.97:1, то есть отметка, которая обязана бросаться в глаза, была самой
+   * нечитаемой в строке.
+   */
+  for (const theme of THEMES) {
+    describe(`${theme.name}: статусные цвета`, () => {
+      const t = block(theme.selector)
+      for (const role of ['ok', 'info', 'danger'] as const) {
+        test(`--${role} читается на собственной плашке`, () => {
+          for (const a of tintAlphas(role)) {
+            const tint = composite(resolve(t, `--${role}`), resolve(t, '--bg'), a)
+            expect(
+              contrast(resolve(t, `--${role}`), tint),
+              `bg-${role}/${Math.round(a * 100)} в теме «${theme.name}» (подложка ${tint})`,
+            ).toBeGreaterThanOrEqual(AA)
+          }
+        })
+      }
+    })
+  }
+
+  /**
+   * Палитра Tailwind мимо токенов — это цвет, который не знает про светлую
+   * тему. Так и было: живая точка «сейчас играют» красилась bg-emerald-400, а
+   * в самом globals.css записано, что emerald-300 давал на светлой 1.39:1.
+   * Признак, который не виден в одной из тем, не признак.
+   */
+  test('цвета берутся из токенов, а не из палитры Tailwind', () => {
+    const PALETTE =
+      'slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose'
+    const re = new RegExp(
+      `\\b(?:bg|text|border|from|to|via|stroke|fill|decoration|ring|shadow|outline)-(?:${PALETTE})-\\d{2,3}\\b`,
+      'g',
+    )
+    const offenders: string[] = []
+    for (const [file, src] of markup()) {
+      // Комментарии вырезаются: именно в них объясняется, почему сырой
+      // цвет был заменён, и без этого тест ловит собственное объяснение.
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+      for (const m of code.matchAll(re)) offenders.push(`${path.basename(file)}: ${m[0]}`)
+    }
+    expect(offenders, 'у каждой роли есть токен — см. блок :root в globals.css').toEqual([])
+  })
 
   /**
    * Токен --on-ember существует ровно затем, чтобы поверх заливки акцента
