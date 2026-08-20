@@ -1597,22 +1597,55 @@ export async function claimPageEnrichBatch(
    * же выключена и ветка выше), и голое сравнение убило бы пересборку целиком
    * — у неисчерпанной карточки page_tries как раз ноль.
    */
+  /*
+   * ДВА ЗАПРОСА, А НЕ ВЫРАЖЕНИЕ В ORDER BY, и это про цену.
+   *
+   * Приоритет прежний: сперва те, за кем не ходили или ходили впустую, потом
+   * протухшие и кандидаты на пересборку. Но выражался он вычислением в ORDER BY
+   * — `(page_at IS NOT NULL AND page_tries = 0), reviews_total DESC`, — и такой
+   * порядок частичному индексу не соответствует. План на живой базе:
+   *
+   *   было:  SEARCH games USING INTEGER PRIMARY KEY + USE TEMP B-TREE FOR ORDER BY
+   *   стало: SCAN games USING INDEX idx_games_pool  (обе половины)
+   *
+   * То есть ради двадцати appid читался и сортировался ВЕСЬ каталог: около
+   * шести тысяч строк, которые Turso тарифицирует, на каждое звено цепочки.
+   *
+   * Разбиение точное, а не приблизительное: объединение двух условий равно
+   * прежнему одному. Проверено разбором по веткам — «нет page_at», «есть, но
+   * попытки не исчерпаны», «протухло», «пересобрать эвристику» — и тестами,
+   * которые на этот порядок уже опирались.
+   */
   const redo = opts.redoHeuristic ? 1 : 0
   const maxTries = opts.maxTries ?? 0
-  const res = await db.execute({
+
+  // Группа 1: не ходили ни разу ИЛИ ходили впустую. Именно она забирает бюджет
+  // первой — см. абзац про верх каталога выше.
+  const первые = await db.execute({
     sql: `SELECT appid FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
+            AND (page_at IS NULL OR (page_tries > 0 AND (page_tries < ? OR page_at < ?)))
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [maxTries, staleBefore, limit],
+  })
+  const appids = (первые.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+  if (appids.length >= limit) return appids
+
+  // Группа 2: сходили удачно, но карточка протухла или собрана без модели.
+  const вторые = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+            AND page_at IS NOT NULL AND page_tries = 0
             AND (
-              page_at IS NULL
-              OR page_at < ?
-              OR (page_tries > 0 AND page_tries < ?)
+              page_at < ?
               OR (? = 1 AND (? = 0 OR page_tries < ?) AND json_extract(pros_cons_json, '$.source') = 'reviews')
             )
-          ORDER BY (page_at IS NOT NULL AND page_tries = 0), reviews_total DESC
+          ORDER BY reviews_total DESC
           LIMIT ?`,
-    args: [staleBefore, maxTries, redo, maxTries, maxTries, limit],
+    args: [staleBefore, redo, maxTries, maxTries, limit - appids.length],
   })
-  return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+  return [...appids, ...(вторые.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)]
 }
 
 /**
