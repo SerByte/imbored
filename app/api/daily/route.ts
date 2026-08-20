@@ -128,7 +128,7 @@ export async function GET() {
   const priced = refreshed ? await getGamesMeta(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
-  const reason = heuristicPicks([pick], metaNow, NEUTRAL_MOOD, 1, now)[0]?.reason ?? ''
+  const reason = heuristicPicks([pick], metaNow, 1, now)[0]?.reason ?? ''
 
   const meta = metaNow(pick.appid)
   const lib = games.find((g) => g.appid === pick.appid)

@@ -168,7 +168,7 @@ export async function POST(req: Request) {
     ? await claudePicks({ candidates: heroPool, metaOf: metaNow, library: games, mood, focus, nowSec: now })
     : null
   const picks =
-    fromClaude ?? heuristicPicks(heroPool.length ? heroPool : actual, metaNow, mood, PICK_COUNT, now)
+    fromClaude ?? heuristicPicks(heroPool.length ? heroPool : actual, metaNow, PICK_COUNT, now)
 
   // В режиме «разгрести своё» список покупок — прямое противоречие запросу.
   // Уехавшее наверх из нижнего блока убираем: одна и та же игра дважды на
@@ -179,7 +179,6 @@ export async function POST(req: Request) {
     : heuristicPicks(
         discovery.filter((c) => !inPicks.has(c.appid)),
         metaNow,
-        mood,
         DISCOVERY_CARDS,
         now,
       )
