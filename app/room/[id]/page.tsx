@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { useShareLink } from '@/components/ShareLink'
 import { MatchCeremony } from '@/components/MatchCeremony'
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
@@ -61,6 +62,27 @@ export default function RoomPage() {
   const params = useParams<{ id: string }>()
   const roomId = (params.id ?? '').toUpperCase()
 
+  /**
+   * Позвать своих — главное действие комнаты на одного.
+   *
+   * Логика общая с полем на /compat: на телефоне системная панель
+   * «Поделиться», на десктопе буфер, а при отказе буфера — запасной путь
+   * через execCommand. Здесь было своё копирование с одним только
+   * асинхронным API: в мессенджерном webview он отказывает, и ссылку на пати
+   * приходилось выделять руками там, где второй путь сработал бы.
+   *
+   * Поле со ссылкой в AloneInvite остаётся последним рубежом — теперь оно
+   * показывается только когда отказали ОБА пути, а не первый.
+   */
+  const share = useShareLink(
+    () => window.location.href,
+    `Пати ${roomId} — imbored`,
+    'Выберем игру на вечер вместе',
+  )
+  const copied = share.state === 'done'
+  const copyFailed = share.state === 'manual'
+  const copyLink = () => void share.run()
+
   const [state, setState] = useState<RoomState | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [cards, setCards] = useState<Card[] | null>(null)
@@ -69,8 +91,6 @@ export default function RoomPage() {
   const [deckFailed, setDeckFailed] = useState(false)
   const [localVotes, setLocalVotes] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [copyFailed, setCopyFailed] = useState(false)
   const [likes, setLikes] = useState<{ mine: LikedGame[]; near: NearMiss[] }>({
     mine: [],
     near: [],
@@ -310,19 +330,6 @@ export default function RoomPage() {
     void refresh()
   }
 
-  async function copyLink() {
-    // Промис здесь не декоративный: на небезопасном origin и при отказе в
-    // разрешении копирование не происходит, а галочка «Скопировано ✓»
-    // загоралась всё равно — в режиме «ты один» это главное действие экрана
-    try {
-      await navigator.clipboard.writeText(window.location.href)
-      setCopyFailed(false)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      setCopyFailed(true)
-    }
-  }
 
   if (notFound) {
     return (
@@ -427,11 +434,24 @@ export default function RoomPage() {
               {state.room.isPublic ? 'На доске ✓' : 'Показать на доске'}
             </button>
           )}
+          {/*
+            У этой кнопки нет соседнего поля со ссылкой — она стоит в ряду
+            действий шапки. Поэтому когда буфер закрыт наглухо, она отсылает к тому,
+            что на экране и так есть: код комнаты стоит слева в заголовке, и по нему
+            заходят так же, как по ссылке. Молчаливое нажатие читалось бы как
+            сломанная кнопка.
+          */}
           <button
             onClick={copyLink}
             className="rounded-[14px] glass glass-hover px-4 py-2 text-sm cursor-pointer"
           >
-            {copied ? 'Скопировано ✓' : 'Скопировать ссылку для друзей'}
+            {copied
+              ? 'Скопировано ✓'
+              : copyFailed
+                ? 'Не вышло — продиктуй код'
+                : share.native
+                  ? 'Отправить ссылку друзьям'
+                  : 'Скопировать ссылку для друзей'}
           </button>
         </div>
       </div>
@@ -485,6 +505,7 @@ export default function RoomPage() {
           onPullMore={pullMore}
           copied={copied}
           copyFailed={copyFailed}
+          native={share.native}
           // именно localVotes: колода исчезла из-под пальцев прямо сейчас,
           // а не «когда-то в прошлый заход» — только тогда фокус стоит забирать
           cameFromDeck={localVotes > 0}

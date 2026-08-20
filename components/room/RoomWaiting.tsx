@@ -36,6 +36,7 @@ export function RoomWaiting({
   onPullMore,
   copied,
   copyFailed,
+  native,
   cameFromDeck,
   onCopyLink,
   onTogglePublic,
@@ -53,6 +54,7 @@ export function RoomWaiting({
   onPullMore: () => void
   copied: boolean
   copyFailed: boolean
+  native?: boolean
   /** пришли сюда, домахав колоду, — тогда переносим фокус */
   cameFromDeck: boolean
   onCopyLink: () => void
@@ -111,6 +113,7 @@ export function RoomWaiting({
             isPublic={isPublic}
             copied={copied}
             copyFailed={copyFailed}
+            native={native}
             onCopyLink={onCopyLink}
             onTogglePublic={onTogglePublic}
           />

@@ -20,6 +20,7 @@ export function AloneInvite({
   isPublic,
   copied,
   copyFailed,
+  native = false,
   onCopyLink,
   onTogglePublic,
 }: {
@@ -28,6 +29,8 @@ export function AloneInvite({
   isPublic: boolean
   copied: boolean
   copyFailed: boolean
+  /** на телефоне откроется системная панель, а не буфер */
+  native?: boolean
   onCopyLink: () => void
   onTogglePublic: () => void
 }) {
@@ -56,7 +59,10 @@ export function AloneInvite({
           className="rounded-[20px] bg-ember text-on-ember px-5 py-4 text-left hover:brightness-110 active:scale-[0.98] transition cursor-pointer"
         >
           <span className="block font-semibold">{copied ? 'Скопировано ✓' : 'Позвать своих'}</span>
-          <span className="block text-xs opacity-80 mt-0.5">Ссылка в буфер — кидай в чат</span>
+          {/* Подпись обязана называть то, что произойдёт: на телефоне это не буфер */}
+          <span className="block text-xs opacity-80 mt-0.5">
+            {native ? 'Откроется «Поделиться»' : 'Ссылка в буфер — кидай в чат'}
+          </span>
         </button>
 
         {isHost ? (
