@@ -411,6 +411,28 @@ describe('карта сайта', () => {
     expect(rows[0].updatedAt).toBe(NOW)
   })
 
+  test('lastmod — самая поздняя из трёх отметок: заливка, обогащение, патчноут', async () => {
+    // updated_at после массовой заливки у всех один и тот же, сигнал несут
+    // обогащение и свежий патчноут — см. докблок sitemapGames
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await addGame(db, 20, 500)
+    await addGame(db, 30, 100)
+    await markPageEnriched(db, 20, NOW + 500)
+    await db.execute({
+      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, created_at, updated_at)
+            VALUES (30, 'g1', 't', 'u', ?, ?, ?)`,
+      args: [NOW + 900, NOW, NOW],
+    })
+
+    const rows = await sitemapGames(db, 10)
+    expect(rows).toEqual([
+      { appid: 10, updatedAt: NOW },
+      { appid: 20, updatedAt: NOW + 500 },
+      { appid: 30, updatedAt: NOW + 900 },
+    ])
+  })
+
   test('игры без тегов в карту не попадают: страница была бы пустой', async () => {
     const db = await freshDb()
     await upsertGameMeta(db, { ...meta(10), tags: {} }, NOW)
