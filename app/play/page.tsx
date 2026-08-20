@@ -430,7 +430,7 @@ function Player() {
       <div className="flex-1 flex items-center justify-center px-5 py-24">
         <div className="max-w-lg w-full glass rounded-[20px] p-8 text-center flex flex-col gap-5 anim-reveal">
           <LogoMark size={48} className="mx-auto" />
-          <h1 className="text-2xl font-bold tracking-tight">
+          <h1 className="font-display text-display-sm">
             Похоже, сегодня не игровой вечер
           </h1>
           <p className="text-dim leading-relaxed">
@@ -543,7 +543,7 @@ function Player() {
                 <PlayersNow ccu={pick.ccu} />
               </motion.div>
 
-              <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.18}>
+              <SplitHeading className="font-display text-display-lg" delay={0.18}>
                 {pick.name}
               </SplitHeading>
 

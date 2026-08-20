@@ -1,8 +1,27 @@
+/**
+ * Логотип-надпись.
+ *
+ * Набран дисплейным начертанием, а не тем же Onest, что и текст под ним. Пока
+ * различие между логотипом и обычным жирным словом держалось на одном весе,
+ * логотип и не читался логотипом: в шапке рядом с шестью ссылками он выглядел
+ * седьмой, просто пожирнее.
+ *
+ * Толщина зачёркивания задана в em, а не двумя пикселями. Зачёркивание — это
+ * весь знак: «bored» перечёркнуто, значит скучно больше не будет. Фиксированные
+ * 2px честно работали в шапке (18px) и превращались в случайный волосок на
+ * первом экране, где то же слово набрано 72-м кеглем. Теперь линия растёт
+ * вместе с надписью и остаётся жестом на любом размере; max() удерживает её от
+ * ухода в субпиксель на мелком кегле подвала.
+ */
 export function Wordmark({ className = '' }: { className?: string }) {
   return (
-    <span className={`font-extrabold tracking-tight select-none ${className}`}>
+    <span
+      className={`font-display font-extrabold tracking-[-0.015em] select-none ${className}`}
+    >
       <span className="text-ink">im</span>
-      <span className="text-dim line-through decoration-ember/70 decoration-2">bored</span>
+      <span className="text-dim line-through decoration-ember/70 decoration-[max(2px,0.07em)]">
+        bored
+      </span>
     </span>
   )
 }

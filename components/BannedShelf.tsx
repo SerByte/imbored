@@ -59,7 +59,7 @@ export function BannedShelf({ games }: { games: BannedGame[] }) {
       <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ember-text mb-2">
         Чистилище
       </p>
-      <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+      <h2 className="font-display text-display-sm">
         Ты выгнал <span className="font-mono text-ember-text">{items.length}</span>
       </h2>
       <p className="text-dim text-sm mt-1.5 mb-4">

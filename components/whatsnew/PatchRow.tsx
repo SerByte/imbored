@@ -92,7 +92,7 @@ export function PatchRow({
 
         <span className="flex min-w-0 flex-1 flex-col gap-1.5">
           <span className="flex flex-wrap items-baseline gap-x-3">
-            <span className="font-display text-base font-bold tracking-tight md:text-xl">
+            <span className="font-display text-display-xs">
               {name}
             </span>
             {studio ? <span className="text-xs text-dim">{studio}</span> : null}

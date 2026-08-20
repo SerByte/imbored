@@ -104,7 +104,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     <div className="flex-1 mx-auto w-full max-w-6xl px-5 pt-28 pb-16">
       <WarmCatalog enabled={missingArt > 0} />
       <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
-        <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
+        <h1 className="font-display text-display-md">
           Твоя библиотека глазами сервиса
         </h1>
         <Link
@@ -173,7 +173,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             {/* Заголовок намеренно без числа: «пять игр» — ложь при трёх, а
                 согласование «{N} игр, о которых ты забыл» — фабрика багов.
                 Число уже стоит в строке-сводке выше. */}
-            <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+            <h2 className="font-display text-display-sm">
               Ты забыл, что они у тебя есть
             </h2>
             <Link href="/quiz?from=untouched" className="text-sm text-ember-text hover:underline shrink-0">

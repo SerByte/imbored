@@ -205,7 +205,7 @@ export default function DailyPage() {
               они по определению одно и то же. Название игры — главный текст
               этой страницы, рисковать его читаемостью нельзя.
             */}
-            <SplitHeading className="text-4xl md:text-6xl font-extrabold tracking-tight" delay={0.2}>
+            <SplitHeading className="font-display text-display-lg" delay={0.2}>
               {pick.name}
             </SplitHeading>
             <p className="text-base md:text-lg text-ink/90 leading-relaxed">{pick.reason}</p>

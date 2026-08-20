@@ -133,7 +133,7 @@ function Landing() {
 
       <div className="relative w-full max-w-xl flex flex-col items-center text-center gap-8">
         <div className="anim-rise">
-          <h1 className="text-6xl md:text-7xl leading-none">
+          <h1 className="text-display-xl leading-none">
             <Wordmark />
           </h1>
           <p className="mt-5 text-lg text-dim max-w-md mx-auto">

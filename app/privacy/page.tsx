@@ -9,7 +9,7 @@ export const metadata = {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="font-bold text-lg">{title}</h2>
+      <h2 className="font-display text-display-xs">{title}</h2>
       <div className="text-dim leading-relaxed flex flex-col gap-2">{children}</div>
     </section>
   )
@@ -21,7 +21,7 @@ export default function PrivacyPage() {
       <Ambient />
       <div className="relative mx-auto w-full max-w-2xl px-5 pt-28 pb-16 flex flex-col gap-8">
         <div className="flex flex-col gap-2 anim-rise">
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
+          <h1 className="font-display text-display-md">
             Конфиденциальность
           </h1>
           <p className="text-dim">

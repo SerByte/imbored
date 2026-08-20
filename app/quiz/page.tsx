@@ -312,7 +312,7 @@ function Quiz() {
           >
             <motion.h1
               variants={ITEM_VARIANTS}
-              className="text-3xl md:text-4xl font-bold tracking-tight text-center"
+              className="font-display text-display-md text-center"
             >
               {step.question}
             </motion.h1>

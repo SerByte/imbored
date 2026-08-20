@@ -91,7 +91,7 @@ export function MatchCeremony({
         <EchoTitle
           text="Это матч!"
           ghosts={memberCount}
-          className="text-3xl md:text-4xl font-extrabold tracking-tight"
+          className="font-display text-display-md"
         />
 
         <p className="text-dim">Все в комнате хотят играть в одно и то же:</p>

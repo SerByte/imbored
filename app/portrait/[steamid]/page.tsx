@@ -220,7 +220,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             Портрет игрока
           </p>
           <SplitHeading
-            className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[0.95]"
+            className="font-display text-display-xl"
             delay={0.18}
           >
             {name}
@@ -321,7 +321,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           {headline && (
             <motion.h2
               {...inView(1)}
-              className="text-4xl md:text-6xl font-extrabold tracking-tight mb-10"
+              className="font-display text-display-lg mb-10"
             >
               {headline.label}
             </motion.h2>
@@ -383,7 +383,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           >
             Чистилище
           </motion.p>
-          <motion.h2 {...inView(1)} className="text-4xl md:text-6xl font-extrabold tracking-tight">
+          <motion.h2 {...inView(1)} className="font-display text-display-lg">
             <CountNumber value={wrapped.unplayedCount} />{' '}
             {plural(wrapped.unplayedCount, 'игра', 'игры', 'игр')} ты так и не запустил
           </motion.h2>

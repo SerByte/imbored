@@ -34,7 +34,7 @@ export function AloneInvite({
   return (
     <>
       <div className="relative glass rounded-[20px] p-6 sm:p-8 flex flex-col items-center gap-5 text-center">
-        <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
+        <h2 className="font-display text-display-sm">
           Ты тут один — матчиться не с кем
         </h2>
         <p className="text-dim text-sm leading-relaxed max-w-sm">
