@@ -10,8 +10,17 @@ import { useState } from 'react'
  * Две кнопки, потому что случаи разные. «Выйти» гасит эту куку и эту сессию —
  * телефон при этом остаётся внутри. «На всех устройствах» нужен, когда доступ
  * мог утечь, и тогда он обязан достать даже те входы, о которых мы не знаем.
+ *
+ * Второй кнопки НЕТ у сессии, полученной по вставленной ссылке на профиль.
+ * Она подписана, но владение ею не доказано (см. докблок Resolved.verified), а
+ * «выйти везде» ставит users.sessions_from и гасит в том числе входы, сделанные
+ * через Steam OpenID. Сервер это и так не выполнит — но предлагать кнопку,
+ * которая сделает меньше обещанного, значит врать той же монетой.
+ *
+ * Вместо кнопки — строка о том, что для этого нужно. Она действенная: вход
+ * через Steam доступен в один клик и даёт право сразу.
  */
-export function SignOut() {
+export function SignOut({ verified }: { verified: boolean }) {
   const router = useRouter()
   const [busy, setBusy] = useState<'one' | 'all' | null>(null)
   const [confirmAll, setConfirmAll] = useState(false)
@@ -43,7 +52,7 @@ export function SignOut() {
       >
         {busy === 'one' ? 'Выхожу…' : 'Выйти'}
       </button>
-      {confirmAll ? (
+      {confirmAll && verified ? (
         <span className="flex items-center gap-3 text-dim">
           Выйти на всех устройствах?
           <button
@@ -63,7 +72,7 @@ export function SignOut() {
             Отмена
           </button>
         </span>
-      ) : (
+      ) : verified ? (
         <button
           type="button"
           onClick={() => setConfirmAll(true)}
@@ -72,6 +81,13 @@ export function SignOut() {
         >
           Выйти на всех устройствах
         </button>
+      ) : (
+        <span className="text-faint">
+          Выход на всех устройствах — после{' '}
+          <a href="/api/auth/steam" className="text-ember-text hover:underline">
+            входа через Steam
+          </a>
+        </span>
       )}
     </div>
   )

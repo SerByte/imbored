@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   seen_at INTEGER NOT NULL,
   revoked_at INTEGER,
-  device TEXT
+  device TEXT,
+  verified INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_sessions_steamid ON sessions (steamid) WHERE revoked_at IS NULL;
 CREATE TABLE IF NOT EXISTS library_snapshots (
@@ -364,6 +365,7 @@ export async function migrateDb(db: Db): Promise<Db> {
     ['games', 'discount_percent INTEGER'],
     ['games', 'discount_ends_at INTEGER'],
     ['games', 'price_at INTEGER'],
+    ['sessions', 'verified INTEGER NOT NULL DEFAULT 0'],
   ] as const) {
     try {
       await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col}`)
@@ -495,6 +497,14 @@ export async function migrateDb(db: Db): Promise<Db> {
 
 /** Что известно про сессию помимо самой куки; см. комментарий у таблицы */
 export type SessionRow = {
+  /**
+   * Владение профилем ДОКАЗАНО через Steam OpenID.
+   *
+   * Ноль по умолчанию — и для старых строк, и когда строки нет вовсе (сессия
+   * переживает недоступную Turso, см. issueSession). Наименьшие права: неизвестное
+   * происхождение считаем неподтверждённым.
+   */
+  verified: boolean
   revokedAt: number | null
   /** users.sessions_from — отсечка «выйти везде», общая на все устройства */
   sessionsFrom: number | null
@@ -514,7 +524,7 @@ export async function getSessionState(
   steamid: string,
 ): Promise<SessionRow> {
   const res = await db.execute({
-    sql: `SELECT s.revoked_at AS revoked_at, u.sessions_from AS sessions_from
+    sql: `SELECT s.revoked_at AS revoked_at, s.verified AS verified, u.sessions_from AS sessions_from
             FROM (SELECT ? AS sid, ? AS steamid) q
             LEFT JOIN sessions s ON s.sid = q.sid AND s.steamid = q.steamid
             LEFT JOIN users u ON u.steamid = q.steamid`,
@@ -524,19 +534,20 @@ export async function getSessionState(
   return {
     revokedAt: (row?.revoked_at as number | null) ?? null,
     sessionsFrom: (row?.sessions_from as number | null) ?? null,
+    verified: Number(row?.verified ?? 0) === 1,
   }
 }
 
 export async function createSession(
   db: Db,
-  s: { sid: string; steamid: string; device?: string | null },
+  s: { sid: string; steamid: string; device?: string | null; verified?: boolean },
   nowSec: number,
 ): Promise<void> {
   await db.execute({
-    sql: `INSERT INTO sessions (sid, steamid, created_at, seen_at, device)
-          VALUES (?, ?, ?, ?, ?)
+    sql: `INSERT INTO sessions (sid, steamid, created_at, seen_at, device, verified)
+          VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(sid) DO UPDATE SET seen_at = excluded.seen_at`,
-    args: [s.sid, s.steamid, nowSec, nowSec, s.device ?? null],
+    args: [s.sid, s.steamid, nowSec, nowSec, s.device ?? null, s.verified ? 1 : 0],
   })
 }
 

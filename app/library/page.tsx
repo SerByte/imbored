@@ -16,7 +16,7 @@ import {
 } from '@/lib/forgotten'
 import { plural } from '@/lib/plural'
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 
 export const metadata = {
@@ -41,7 +41,10 @@ const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
 }
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
-  const steamid = await currentSteamId()
+  // Сессия целиком, а не только steamid: SignOut ниже спрашивает, доказано ли
+  // владение профилем — от этого зависит, предлагать ли «выйти везде».
+  const session = await currentSession()
+  const steamid = session?.steamid ?? null
   if (!steamid) redirect('/')
 
   const db = await getDb()
@@ -314,7 +317,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           показать в ней состояние входа, корневому лэйауту пришлось бы читать
           куки — а это сделало бы динамическими все страницы разом, включая
           кэшируемые /game/[appid]. Библиотека и так force-dynamic. */}
-      <SignOut />
+      <SignOut verified={Boolean(session?.verified)} />
     </div>
   )
 }

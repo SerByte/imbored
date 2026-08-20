@@ -15,7 +15,7 @@ const SECRET = 'secret'
 const STEAMID = '76561197960287930'
 const NOW = 1_700_000_000
 
-const live: SessionRow = { revokedAt: null, sessionsFrom: null }
+const live: SessionRow = { revokedAt: null, sessionsFrom: null, verified: false }
 const lookupLive = async () => live
 const lookupThrows = async () => {
   throw new Error('turso прилегла')
@@ -39,7 +39,7 @@ describe('resolveSession', () => {
       nowSec: NOW,
       lookup: lookupLive,
     })
-    expect(r).toEqual({ steamid: STEAMID, sid: 'a'.repeat(32), stale: false })
+    expect(r).toEqual({ steamid: STEAMID, sid: 'a'.repeat(32), stale: false, verified: false })
   })
 
   test('через неделю с лишним просит продлить', async () => {
@@ -93,7 +93,7 @@ describe('resolveSession', () => {
       token: tokenAt(NOW),
       secret: SECRET,
       nowSec: NOW,
-      lookup: async () => ({ revokedAt: NOW - 1, sessionsFrom: null }),
+      lookup: async () => ({ revokedAt: NOW - 1, sessionsFrom: null, verified: false }),
     })
     expect(r).toBeNull()
   })
@@ -104,7 +104,7 @@ describe('resolveSession', () => {
       token: tokenAt(NOW),
       secret: SECRET,
       nowSec: NOW,
-      lookup: async () => ({ revokedAt: null, sessionsFrom: null }),
+      lookup: async () => ({ revokedAt: null, sessionsFrom: null, verified: false }),
     })
     expect(r?.steamid).toBe(STEAMID)
   })
@@ -120,7 +120,7 @@ describe('resolveSession', () => {
   })
 
   test('«выйти везде» гасит токены, выданные до отсечки, и не трогает выданные после', async () => {
-    const lookup = async () => ({ revokedAt: null, sessionsFrom: NOW })
+    const lookup = async () => ({ revokedAt: null, sessionsFrom: NOW, verified: false })
     const before = await resolveSession({ token: tokenAt(NOW - 1), secret: SECRET, nowSec: NOW, lookup })
     expect(before).toBeNull()
 
@@ -140,9 +140,36 @@ describe('resolveSession', () => {
       token: tokenAt(NOW - 1),
       secret: SECRET,
       nowSec: NOW,
-      lookup: async () => ({ revokedAt: null, sessionsFrom: NOW }),
+      lookup: async () => ({ revokedAt: null, sessionsFrom: NOW, verified: false }),
     })
     expect(r).toBeNull()
+  })
+
+  test('признак подтверждения приезжает из строки сессии, а не из токена', async () => {
+    // Формат токена не трогали: он строго пятиполевой, и добавлять туда поле
+    // значило бы v3 со всей миграцией. Происхождение живёт в базе.
+    const r = await resolveSession({
+      token: tokenAt(NOW),
+      secret: SECRET,
+      nowSec: NOW,
+      lookup: async () => ({ revokedAt: null, sessionsFrom: null, verified: true }),
+    })
+    expect(r?.verified).toBe(true)
+  })
+
+  test('без строки в базе сессия считается НЕподтверждённой', async () => {
+    // Сессия переживает недоступную Turso (см. issueSession), и тогда о её
+    // происхождении неизвестно ничего. Наименьшие права: не подтверждена.
+    const r = await resolveSession({
+      token: tokenAt(NOW),
+      secret: SECRET,
+      nowSec: NOW,
+      lookup: async () => {
+        throw new Error('Turso недоступна')
+      },
+    })
+    expect(r?.steamid).toBe(STEAMID)
+    expect(r?.verified).toBe(false)
   })
 
   test('легаси-кука пускает и помечается на апгрейд', async () => {
@@ -152,7 +179,7 @@ describe('resolveSession', () => {
       nowSec: NOW,
       lookup: lookupLive,
     })
-    expect(r).toEqual({ steamid: STEAMID, sid: null, stale: true })
+    expect(r).toEqual({ steamid: STEAMID, sid: null, stale: true, verified: false })
   })
 
   test('«выйти везде» достаёт и легаси-куку, у которой нет ни sid, ни времени выдачи', async () => {
@@ -160,7 +187,7 @@ describe('resolveSession', () => {
       token: signSession(STEAMID, SECRET),
       secret: SECRET,
       nowSec: NOW,
-      lookup: async () => ({ revokedAt: null, sessionsFrom: NOW }),
+      lookup: async () => ({ revokedAt: null, sessionsFrom: NOW, verified: false }),
     })
     expect(r).toBeNull()
   })
@@ -184,7 +211,7 @@ describe('resolveSession', () => {
     const lookup = async () => {
       calls += 1
       if (calls === 1) throw new Error('икота')
-      return { revokedAt: NOW, sessionsFrom: null }
+      return { revokedAt: NOW, sessionsFrom: null, verified: false }
     }
     const token = tokenAt(NOW)
     expect((await resolveSession({ token, secret: SECRET, nowSec: NOW, lookup }))?.steamid).toBe(STEAMID)
