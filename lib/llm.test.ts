@@ -56,7 +56,7 @@ describe('validatePicks', () => {
 
 describe('heuristicPicks', () => {
   test('в топ-5 попадает хотя бы по одному из каждого доступного источника', () => {
-    const picks = heuristicPicks(CANDS, metaOf, MOOD, 5)
+    const picks = heuristicPicks(CANDS, metaOf, 5)
     const sources = new Set(picks.map((p) => p.source))
     expect(sources.has('backlog')).toBe(true)
     expect(sources.has('comeback')).toBe(true)
@@ -65,7 +65,7 @@ describe('heuristicPicks', () => {
   })
 
   test('объяснения непустые и человеческие', () => {
-    const picks = heuristicPicks(CANDS, metaOf, MOOD, 3)
+    const picks = heuristicPicks(CANDS, metaOf, 3)
     expect(picks).toHaveLength(3)
     for (const p of picks) {
       expect(p.reason.length).toBeGreaterThan(10)
@@ -73,16 +73,70 @@ describe('heuristicPicks', () => {
   })
 
   test('пустой список кандидатов не роняет', () => {
-    expect(heuristicPicks([], metaOf, MOOD, 5)).toEqual([])
+    expect(heuristicPicks([], metaOf, 5)).toEqual([])
   })
 
   test('не купленная игра честно названа покупкой, с ценой', () => {
     // Советовать покупку, не назвав цену, нельзя: с выходом каталога в главную
     // выдачу «просто запусти» стало бы неправдой про половину карточек
     const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
-    const [pick] = heuristicPicks([CANDS[2]], priced, MOOD, 1, NOW)
-    expect(pick.reason).toContain('нет в библиотеке')
+    const [pick] = heuristicPicks([CANDS[2]], priced, 1, NOW)
+    expect(pick.reason).toContain('в твоей библиотеке нет')
     expect(pick.reason).toContain('$14.99')
+  })
+
+  /**
+   * Факт «её у тебя нет» называется РОВНО один раз.
+   *
+   * Раньше его говорили дважды: шаблон источника писал «у тебя нет», а следом
+   * предложение про цену — «Её нет в библиотеке». Между ними вклинивался хвост
+   * про настроение, так что две связанные половины одной мысли ещё и стояли
+   * порознь.
+   */
+  test('«нет в библиотеке» сказано один раз, а не дважды', () => {
+    const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
+    const [pick] = heuristicPicks([CANDS[2]], priced, 1, NOW)
+    expect(pick.reason.match(/библиотек/g) ?? []).toHaveLength(1)
+  })
+
+  /**
+   * Каталог мог не дойти до игры — тогда тегов нет.
+   *
+   * Прежде дырку затыкали словом «жанрам», и причина ломалась: «По тегам
+   * (жанрам) это очень твоё», «её жанрам совпадают», «жанрам по-прежнему в
+   * твоём вкусе». Затычка была видна человеку во всех четырёх шаблонах.
+   *
+   * Теперь предложение про вкус просто не пишется, а причина остаётся при том,
+   * что мы знаем и без каталога.
+   */
+  test('без тегов причина не подставляет слово-затычку', () => {
+    const noMeta = () => undefined
+    for (const cand of CANDS.slice(0, 3)) {
+      const [pick] = heuristicPicks([cand], noMeta, 1, NOW)
+      expect(pick.reason, `источник ${cand.source}`).not.toContain('жанрам')
+      expect(pick.reason).toContain(cand.name)
+      expect(pick.reason.trim().length, 'причина не должна опустеть').toBeGreaterThan(20)
+    }
+  })
+
+  /**
+   * Ни одно предложение не повторяется во ВСЕХ причинах колоды.
+   *
+   * Проверка сформулирована именно так, а не «все концовки разные»: две
+   * карточки одного источника законно кончаются одинаково — шаблон-то один.
+   * Дефект был в другом: хвост про настроение приклеивался к каждой причине
+   * независимо от источника, и человек читал одну и ту же фразу пять раз
+   * подряд. Обещание экрана — личное объяснение; повторяющаяся концовка
+   * читается как заполнитель, которым она и была.
+   */
+  test('общей для всех карточек фразы в причинах нет', () => {
+    const picks = heuristicPicks(CANDS, metaOf, 5)
+    expect(new Set(picks.map((p) => p.source)).size, 'нужны разные источники').toBeGreaterThan(2)
+    const sentences = picks.map(
+      (p) => new Set(p.reason.split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter(Boolean)),
+    )
+    const common = [...sentences[0]].filter((sent) => sentences.every((set) => set.has(sent)))
+    expect(common, 'одна и та же фраза во всех причинах — это заполнитель').toEqual([])
   })
 
   test('скидка попадает в объяснение вместе со сроком', () => {
@@ -94,7 +148,7 @@ describe('heuristicPicks', () => {
       discountEndsAt: NOW + 10 * 86_400,
       priceAt: NOW,
     })
-    const [pick] = heuristicPicks([CANDS[2]], onSale, MOOD, 1, NOW)
+    const [pick] = heuristicPicks([CANDS[2]], onSale, 1, NOW)
     expect(pick.reason).toContain('−50%')
     expect(pick.reason).toContain('$7.49')
     expect(pick.reason).toContain('вместо $14.99')
@@ -103,7 +157,7 @@ describe('heuristicPicks', () => {
 
   test('своей игре цену не приписываем — за неё уже заплачено', () => {
     const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
-    const [pick] = heuristicPicks([CANDS[0]], priced, MOOD, 1, NOW)
+    const [pick] = heuristicPicks([CANDS[0]], priced, 1, NOW)
     expect(pick.reason).not.toContain('$')
   })
 
@@ -115,7 +169,7 @@ describe('heuristicPicks', () => {
       discountPercent: 50,
       priceAt: NOW - 30 * 86_400,
     })
-    const [pick] = heuristicPicks([CANDS[2]], stale, MOOD, 1, NOW)
+    const [pick] = heuristicPicks([CANDS[2]], stale, 1, NOW)
     expect(pick.reason).not.toContain('%')
     expect(pick.reason).toContain('$7.49')
   })

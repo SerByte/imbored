@@ -373,15 +373,37 @@ export async function claudePortraitText(args: {
   }
 }
 
-const SOURCE_TEMPLATES: Record<CandidateSource, (name: string, tags: string) => string> = {
+/**
+ * Причина для запасного пути — когда модель недоступна.
+ *
+ * Теги приходят необязательными, и это главное отличие от прежней версии.
+ * Раньше при отсутствии каталога в шаблон подставлялось слово «жанрам», и
+ * причина превращалась в поломанный русский: «По тегам (жанрам) это очень
+ * твоё», «её жанрам совпадают», «жанрам по-прежнему в твоём вкусе». Подстановка
+ * существовала только чтобы дырка чем-то заполнилась.
+ *
+ * Теперь без тегов предложение про вкус просто не пишется. Остаётся то, что мы
+ * про игру ЗНАЕМ и без каталога: как человек с ней обошёлся — не запускал,
+ * открыл и закрыл, забросил, не покупал. Это и есть повод, а тег был лишь
+ * подтверждением.
+ */
+const SOURCE_TEMPLATES: Record<CandidateSource, (name: string, tags: string | null) => string> = {
   untouched: (name, tags) =>
-    `«${name}» ты не запускал ни разу — ноль минут. По тегам (${tags}) это очень твоё, сегодня хороший день это исправить.`,
+    tags
+      ? `«${name}» ты не запускал ни разу — ноль минут. По тегам (${tags}) это очень твоё; сегодня хороший день это исправить.`
+      : `«${name}» ты не запускал ни разу — ноль минут. Сегодня хороший день это исправить.`,
   backlog: (name, tags) =>
-    `Ты открыл «${name}» и закрыл, не разобравшись, — а теги (${tags}) твои. Дай ей второй заход.`,
+    tags
+      ? `Ты открыл «${name}» и закрыл, не разобравшись, — а теги (${tags}) твои. Дай ей второй заход.`
+      : `Ты открыл «${name}» и закрыл, не разобравшись. Дай ей второй заход.`,
   comeback: (name, tags) =>
-    `Ты уже вложил часы в «${name}» и забросил — ${tags} по-прежнему в твоём вкусе, вернись и проверь, как оно теперь.`,
+    tags
+      ? `Ты уже вложил часы в «${name}» и забросил. Теги (${tags}) по-прежнему в твоём вкусе — вернись и проверь, как оно теперь.`
+      : `Ты уже вложил часы в «${name}» и забросил — вернись и проверь, как оно теперь.`,
   new: (name, tags) =>
-    `«${name}» у тебя нет, но её ${tags} совпадают с тем, во что ты играешь больше всего.`,
+    tags
+      ? `«${name}» в твоей библиотеке нет, но её теги (${tags}) совпадают с тем, во что ты играешь больше всего.`
+      : `«${name}» в твоей библиотеке нет.`,
 }
 
 /**
@@ -392,26 +414,24 @@ const SOURCE_TEMPLATES: Record<CandidateSource, (name: string, tags: string) => 
  */
 function priceSentence(meta: GameMeta | undefined, nowSec: number): string {
   if (!meta) return ''
-  if (meta.isFree) return ' И она бесплатная.'
+  if (meta.isFree) return ' Она бесплатная.'
   if (meta.priceFinal === undefined || meta.priceFinal <= 0) return ''
   const deal = discountOf(meta, nowSec)
-  if (!deal) return ` Её нет в библиотеке — ${formatPrice(meta.priceFinal)} в Steam.`
+  // «Нет в библиотеке» здесь больше не повторяется: это уже сказано шаблоном
+  // источника new, и вместе получалось «у тебя нет … Её нет в библиотеке».
+  if (!deal) return ` В Steam — ${formatPrice(meta.priceFinal)}.`
   const ends = deal.endsAt ? (discountEndsLabel(deal.endsAt, nowSec) ?? '') : ''
-  return ` Её нет в библиотеке, но сейчас −${deal.percent}%: ${formatPrice(deal.finalCents)} вместо ${formatPrice(deal.initialCents)}${ends ? ` — ${ends}` : ''}.`
+  return ` Сейчас −${deal.percent}%: ${formatPrice(deal.finalCents)} вместо ${formatPrice(deal.initialCents)}${ends ? ` — ${ends}` : ''}.`
 }
 
-const VIBE_SUFFIX: Record<Mood['vibe'], string> = {
-  chill: ' Подходит, чтобы расслабиться без напряга.',
-  engaged: ' Есть где напрячь голову и руки — как ты и хотел.',
-}
-
-function topTags(meta: GameMeta | undefined): string {
-  if (!meta) return 'жанрам'
+/** null, а не слово-затычка: см. комментарий к SOURCE_TEMPLATES. */
+function topTags(meta: GameMeta | undefined): string | null {
+  if (!meta) return null
   const tags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 2)
     .map(([t]) => t)
-  return tags.length ? tags.join(', ') : 'жанрам'
+  return tags.length ? tags.join(', ') : null
 }
 
 /**
@@ -421,7 +441,6 @@ function topTags(meta: GameMeta | undefined): string {
 export function heuristicPicks(
   candidates: ScoredCandidate[],
   metaOf: (appid: number) => GameMeta | undefined,
-  mood: Mood,
   count: number,
   nowSec: number = Math.floor(Date.now() / 1000),
 ): Pick[] {
@@ -453,7 +472,23 @@ export function heuristicPicks(
       appid: c.appid,
       name: c.name,
       source: c.source,
-      reason: SOURCE_TEMPLATES[c.source](c.name, topTags(meta)) + VIBE_SUFFIX[mood.vibe] + price,
+      /*
+       * Хвоста про настроение здесь больше нет, и это осознанное удаление.
+       *
+       * Он приклеивался к КАЖДОЙ причине, поэтому все пять карточек колоды
+       * заканчивались одной и той же фразой — «Подходит, чтобы расслабиться
+       * без напряга» пять раз подряд. Обещание экрана — личное объяснение,
+       * а повторяющаяся концовка читается как заполнитель, которым она и была.
+       *
+       * Хуже того, он бывал прямо неверен: та же фраза приклеивалась к игре с
+       * тегами «Платформер, Сложная». Утверждение, которое спорит с соседней
+       * строкой, хуже отсутствия утверждения.
+       *
+       * Связь с настроением никуда не делась — оно решает, какие игры вообще
+       * попадут в кандидаты. Причина объясняет игру, а не пересказывает ответ
+       * человека ему же обратно.
+       */
+      reason: SOURCE_TEMPLATES[c.source](c.name, topTags(meta)) + price,
     }
   })
 }
