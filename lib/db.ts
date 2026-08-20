@@ -772,7 +772,31 @@ export async function joinRoom(
 
 export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]> {
   const res = await db.execute({
-    sql: 'SELECT steamid, persona_name, joined_at FROM room_members WHERE room_id = ? ORDER BY joined_at ASC',
+    /*
+     * Добивка по steamid — не исправление симптома, а запись контракта.
+     *
+     * joined_at секундный, и двое, вошедшие в одну секунду (обычное дело:
+     * ссылку кидают в чат разом), по нему неразличимы. Порядок при этом СЕЙЧАС
+     * определён, но не нами: EXPLAIN QUERY PLAN на этом запросе даёт «SEARCH
+     * USING INDEX sqlite_autoindex_room_members_1 (room_id=?)» и следом «USE
+     * TEMP B-TREE FOR ORDER BY» — то есть строки приходят из автоиндекса по
+     * (room_id, steamid), уже отсортированные по steamid, а сортировка по
+     * joined_at этот порядок для равных ключей сохраняет. Замер подтверждает:
+     * без добивки трое, вошедшие одной секундой, выходят по steamid.
+     *
+     * Держаться этого нельзя. Порядок — следствие плана и формы первичного
+     * ключа, а прод ходит в libsql, а не в тот же sqlite; смена плана,
+     * появление подходящего индекса или переезд ключа молча его меняют.
+     *
+     * Что на нём висит: ростер рисуется с layout-анимациями (перестановка —
+     * видимый обмен строк местами на экране ожидания), ключ догрузки лайков
+     * склеен из участников по порядку (дрожание ключа гнало бы запрос каждый
+     * тик даже на стоящей пати), и суммарный вкус в buildGroupDeck
+     * складывается обходом участников. Ни одно из трёх сегодня не сломано —
+     * добивка стоит ноль и снимает зависимость от того, что нам не обещали.
+     */
+    sql: `SELECT steamid, persona_name, joined_at FROM room_members
+          WHERE room_id = ? ORDER BY joined_at ASC, steamid ASC`,
     args: [roomId],
   })
   return (

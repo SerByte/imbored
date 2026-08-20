@@ -549,6 +549,31 @@ describe('db', () => {
     expect(await roomMembers(db, 'ABC123')).toHaveLength(2)
   })
 
+  test('порядок участников определён даже при совпавшей секунде входа', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'TIE001', steamid: 'zzz' }, NOW)
+    // Ссылку прислали в чат разом — все трое вошли в одну и ту же секунду,
+    // joined_at их не различает. Тест сторожит КОНТРАКТ, а не регрессию: он
+    // проходит и без добивки в ORDER BY, потому что автоиндекс по
+    // (room_id, steamid) сегодня отдаёт этот порядок сам (см. докблок
+    // roomMembers). Проходить он обязан и после смены плана или ключа.
+    for (const id of ['zzz', 'aaa', 'mmm']) await joinRoom(db, 'TIE001', id, undefined, NOW)
+
+    const first = (await roomMembers(db, 'TIE001')).map((m) => m.steamid)
+    expect(first).toEqual(['aaa', 'mmm', 'zzz'])
+    // и он же при повторном чтении — порядок обязан быть воспроизводимым
+    expect((await roomMembers(db, 'TIE001')).map((m) => m.steamid)).toEqual(first)
+
+    // при разных секундах решает по-прежнему время входа, а не steamid
+    await joinRoom(db, 'TIE001', 'aab', undefined, NOW + 5)
+    expect((await roomMembers(db, 'TIE001')).map((m) => m.steamid)).toEqual([
+      'aaa',
+      'mmm',
+      'zzz',
+      'aab',
+    ])
+  })
+
   test('открытые комнаты: тумблер и доска, закрытые/старые/сматченные не видны', async () => {
     const db = await freshDb()
     await createRoom(db, { id: 'PUB001', steamid: 'a' }, NOW)
