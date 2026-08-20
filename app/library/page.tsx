@@ -18,6 +18,7 @@ import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 import { bounceTo } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
+import { plural } from '@/lib/plural'
 
 export const metadata = {
   title: 'Библиотека',
@@ -117,8 +118,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         </Link>
       </div>
       <p className="text-dim text-sm mb-6">
-        <span className="font-mono">{games.length}</span> игр ·{' '}
-        <span className="font-mono">{totalHours.toLocaleString('ru-RU')}</span> часов ·{' '}
+        <span className="font-mono">{games.length}</span>{' '}
+        {plural(games.length, 'игра', 'игры', 'игр')} ·{' '}
+        <span className="font-mono">{totalHours.toLocaleString('ru-RU')}</span>{' '}
+        {plural(totalHours, 'час', 'часа', 'часов')} ·{' '}
         <span className="font-mono">{untouched}</span> ни разу не запускал
       </p>
 
@@ -132,7 +135,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   лежит несыгранным
                 </div>
                 <div className="text-xs text-dim mt-1">
-                  {backlog.unplayedCount} игр в бэклоге, у {backlog.pricedCount} известна цена
+                  {backlog.unplayedCount} {plural(backlog.unplayedCount, 'игра', 'игры', 'игр')} в бэклоге, у {backlog.pricedCount} известна цена
                 </div>
                 {equivalent && (
                   <div className="text-xs text-dim mt-2">

@@ -19,6 +19,7 @@ import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { plural } from '@/lib/plural'
 import { SectionLabel } from '@/components/Labels'
 
 /** Карточка магазина: и герой в день каталога, и плитки на полке ниже */
@@ -75,7 +76,7 @@ export default function DailyPage() {
       const warm = await runWarmup({
         onProgress: (p) => {
           setPrep(p)
-          if (p.remaining > 0) setMessage(`Осталось разобрать ${p.remaining} игр`)
+          if (p.remaining > 0) setMessage(`Осталось разобрать ${p.remaining} ${plural(p.remaining, 'игру', 'игры', 'игр')}`)
         },
       })
       if (warm === 'unauthorized') {
