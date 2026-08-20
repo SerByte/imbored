@@ -59,18 +59,48 @@ export async function GET(req: Request) {
 
   after(async () => {
     let result: Awaited<ReturnType<typeof runPageSlice>> | null = null
+    /*
+     * Упало ли звено — отдельно от результата, и это несущая разница.
+     *
+     * Комментарий ниже обещает, что «исключение не должно убивать сутки», но
+     * обещание не выполнялось: при броске result оставался null, goesOn читал
+     * result?.hasMore и получал false, и цепочка обрывалась молча. finally
+     * защищал только запись отметки и отдачу аренды, а не продолжение.
+     *
+     * Бросить может любой db.execute внутри среза — это сетевой вызов к
+     * Turso, и один моргнувший запрос стоил целых суток: расписание у этого роута одно и суточное.
+     *
+     * Поэтому упавшее звено передаёт эстафету дальше: следующее заново
+     * выберет очередь и, скорее всего, отработает. Долбёжки не будет — цепочку
+     * ограничивает MAX_CHAIN, ровно как и в удачном случае.
+     */
+    let упало: string | null = null
     try {
       result = await runPageSlice(db, { deadlineAt: Date.now() + SLICE_BUDGET_MS })
     } catch (err) {
       console.error('page slice', err)
+      упало = err instanceof Error ? err.message.slice(0, 120) : 'исключение'
     } finally {
       // Звено цепочки — в finally и ПОСЛЕ работы, ровно по тем же причинам,
       // что расписаны в /api/cron/news: исключение не должно убивать сутки,
       // а параллельные инвокации сломали бы общий лимитер темпа Steam.
-      await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result }))
+      // Отметка — диагностика, а не работа. Её отказ не имеет права обрывать
+      // цепочку: иначе одно моргнувшее соединение к Turso стоит того же, что и
+      // исключение в самом срезе, ради которого всё это и написано.
+      try {
+        await setCatalogMeta(
+          db,
+          LAST_KEY,
+          JSON.stringify({ at: nowSec(), chain, ...result, ...(упало ? { упало } : {}) }),
+        )
+      } catch (err) {
+        console.error('cron meta', err)
+      }
       const secret = process.env.CRON_SECRET
       const goesOn = Boolean(
-        result?.hasMore && result.stopped !== 'blocked' && chain < MAX_CHAIN && secret,
+        (упало ? true : result?.hasMore && result.stopped !== 'blocked') &&
+          chain < MAX_CHAIN &&
+          secret,
       )
       // Аренда передаётся следующему звену вместе с holder, а отдаётся только
       // когда цепочка кончилась — см. тот же кусок в /api/cron/news.
