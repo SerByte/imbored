@@ -220,7 +220,26 @@ async function selectDaily(
   dateStr: string,
   now: number,
 ): Promise<DailySelection | null | typeof NO_LIBRARY> {
-  const snapshot = await getLatestSnapshot(db, steamid)
+  /*
+   * Пять чтений — двумя заходами, как в /api/recommend, и по той же причине.
+   *
+   * Зависимость среди них ровно одна: getGamesMeta нужны appid из библиотеки,
+   * поэтому он остаётся вторым заходом. Забаненное и оценки ключуются одним
+   * steamid, статистика тегов и размер пула вообще не про человека — все
+   * четверо ждали снапшот без всякой на то причины. Докблок выше честно
+   * оценивает отбор в полторы секунды; часть из них была именно эта лесенка.
+   *
+   * Цена размена: у человека без снапшота (возврат NO_LIBRARY строкой ниже)
+   * четыре запроса уходят впустую. Случай редкий и молчаливый, в отличие от
+   * задержки, которую видят все.
+   */
+  const [snapshot, banned, feedback, tagStats, poolSize] = await Promise.all([
+    getLatestSnapshot(db, steamid),
+    bannedAppids(db, steamid),
+    listFeedback(db, steamid, 300),
+    loadTagStats(db),
+    getPoolSize(db),
+  ])
   if (!snapshot) return NO_LIBRARY
 
   const games = snapshot.games
@@ -237,9 +256,6 @@ async function selectDaily(
   const poolByAppid = new Map<number, GameMeta>()
   const metaOf = (appid: number): GameMeta | undefined =>
     libMetas.get(appid) ?? poolByAppid.get(appid)
-  const banned = await bannedAppids(db, steamid)
-
-  const feedback = await listFeedback(db, steamid, 300)
   const profile = applyFeedbackToProfile(
     buildTagProfile(games, (id) => libMetas.get(id)),
     feedback,
@@ -248,7 +264,6 @@ async function selectDaily(
 
   // Каталог тут больше не лишний: «игра дня» перестала быть только разбором
   // купленного. Пул тот же, что в основной выдаче, одним запросом с LIMIT.
-  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const newPool = (
     await fetchDiscoveryPool(db, {
       tags: pickQueryTags(profile, tagStats, poolSize),
