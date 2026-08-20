@@ -120,8 +120,29 @@ function nameOf(steamid: string, stored: string | null): string {
  * разворачивалась бы в каждом чате по-разному, а превью показывало бы того, чья
  * сессия случайно оказалась у краулера.
  */
-export async function loadCompatInvite(db: Db, steamid: string): Promise<CompatInvite | null> {
-  const snapshot = await getLatestSnapshot(db, steamid)
+/*
+ * Снапшот можно передать снаружи, и это не украшение.
+ *
+ * loadCompat читает снапшот того, кто зовёт, СВОИМ запросом — ему нужно решить,
+ * есть ли профиль вообще, — а потом звал сюда, и здесь читался тот же снапшот
+ * второй раз. Это не лишняя строка, а лишний games_json: у человека с большой
+ * библиотекой это блоб на тысячу игр, прочитанный дважды за один рендер
+ * страницы, которая объявлена force-dynamic и кэша не имеет.
+ *
+ * Тип выведен из самой getLatestSnapshot, а не выписан рядом: разъехаться
+ * этим двум нельзя, а отдельного экспортируемого имени у него нет.
+ *
+ * undefined означает «не передавали, читай сам» — этим и живут два других
+ * вызывающих, generateMetadata и og-картинка, у которых своего снапшота нет.
+ * Явный null отличается от него намеренно: он означает «читали, нет его», и
+ * повторять запрос ради того же ответа незачем.
+ */
+export async function loadCompatInvite(
+  db: Db,
+  steamid: string,
+  known?: Awaited<ReturnType<typeof getLatestSnapshot>>,
+): Promise<CompatInvite | null> {
+  const snapshot = known === undefined ? await getLatestSnapshot(db, steamid) : known
   if (!snapshot) return null
 
   const top = [...snapshot.games]
@@ -156,7 +177,8 @@ export async function loadCompat(
   // Приглашение нужно обоим экранам без результата, поэтому считается до
   // проверки сессии: и гостю, и тому, у кого нет своей библиотеки, показываем
   // одно и то же — кто зовёт и во что он играет
-  const invite = await loadCompatInvite(db, other)
+  // Снапшот уже прочитан строкой выше — второй раз за ним не ходим
+  const invite = await loadCompatInvite(db, other, otherSnap)
   if (!invite) return { kind: 'noprofile', otherName: null }
   if (!me) return { kind: 'noauth', invite }
 
