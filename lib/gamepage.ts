@@ -1,6 +1,5 @@
 import {
-  getGameJson,
-  getGameMeta,
+  getGamePageRow,
   getGameNews,
   topGamesByTag,
   withoutBody,
@@ -64,11 +63,13 @@ export function topTagOf(meta: GameMeta): string | null {
 export async function loadGamePage(appid: number): Promise<GamePageData | null> {
   const db = await getDb()
 
-  const meta = await getGameMeta(db, appid)
+  // Строка и оба её блоба — одним чтением: см. докблок getGamePageRow.
+  const строка = await getGamePageRow(db, appid)
   // Незнакомый appid — это и есть тот случай, ради которого всё написано:
   // краулер, перебирающий пространство идентификаторов, должен получать 404
   // после одного чтения из базы, а не запускать наполнение каталога.
-  if (!meta) return null
+  if (!строка) return null
+  const meta = строка.meta
 
   // Отрицательные appid — кураторский пул других магазинов: у Steam про них
   // ничего нет, показываем только собственные данные
@@ -89,9 +90,9 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
     }
   }
 
-  const [reviewsSummary, stored, news, similar] = await Promise.all([
-    getGameJson(db, appid, 'reviews_summary_json') as Promise<GamePageData['reviewsSummary']>,
-    getGameJson(db, appid, 'pros_cons_json') as Promise<GamePageData['prosCons']>,
+  const reviewsSummary = строка.reviewsSummary as GamePageData['reviewsSummary']
+  const stored = строка.prosCons as GamePageData['prosCons']
+  const [news, similar] = await Promise.all([
     getGameNews(db, appid, 8).then((rows) => rows.map(withoutBody)),
     similarOf(),
   ])

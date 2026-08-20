@@ -1412,6 +1412,42 @@ export async function getGameMeta(db: Db, appid: number): Promise<GameMeta | nul
   return row ? rowToMeta(row) : null
 }
 
+/**
+ * Строка игры вместе с двумя её блобами — ОДНИМ чтением.
+ *
+ * Страница игры собирала это тремя: getGameMeta делает SELECT *, а следом
+ * getGameJson дважды спрашивал колонки из ТОЙ ЖЕ строки, которую SELECT * уже
+ * привёз и выбросил (rowToMeta их не переносит — они не часть GameMeta).
+ *
+ * Turso тарифицирует строки: три чтения вместо одного на каждый рендер, а
+ * рендерится это по адресам из карты сайта, то есть тысячами. Плюс лишний
+ * обход к базе в TTFB страницы, которую собирают для краулера.
+ *
+ * Блобы отдаются сырыми unknown, как и getGameJson: разбирать их форму —
+ * дело вызывающего, он один знает, что там лежит.
+ */
+export async function getGamePageRow(
+  db: Db,
+  appid: number,
+): Promise<{ meta: GameMeta; reviewsSummary: unknown; prosCons: unknown } | null> {
+  const res = await db.execute({ sql: 'SELECT * FROM games WHERE appid = ?', args: [appid] })
+  const row = res.rows[0] as unknown as (GameRow & Record<string, unknown>) | undefined
+  if (!row) return null
+  const разобрать = (v: unknown): unknown => {
+    if (typeof v !== 'string' || !v) return null
+    try {
+      return JSON.parse(v)
+    } catch {
+      return null
+    }
+  }
+  return {
+    meta: rowToMeta(row),
+    reviewsSummary: разобрать(row.reviews_summary_json),
+    prosCons: разобрать(row.pros_cons_json),
+  }
+}
+
 export type SimilarGame = {
   appid: number
   name: string
