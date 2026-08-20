@@ -1566,6 +1566,24 @@ export async function claimPageEnrichBatch(
    * ставится при неудаче. maxTries закрывает эту дверь: после нескольких
    * пустых походов карточка уходит ждать общего срока устаревания.
    */
+  /*
+   * Ветка пересборки эвристики тоже уважает потолок попыток.
+   *
+   * Её предикат стоял голым: `redo = 1 AND source = 'reviews'`, без оглядки на
+   * page_tries. Карточка, у которой appdetails отдаёт данные (значит попытки не
+   * растут), а модель раз за разом не даёт годного ответа, оставалась бы в
+   * очереди ВЕЧНО и возвращалась каждый прогон — тот самый head-of-line, ради
+   * которого потолок и заводили двумя условиями выше.
+   *
+   * Сейчас это латентно: по проду таких карточек 498, но сортировка ставит их
+   * в хвост (page_at есть, page_tries ноль), а впереди 5198 непройденных.
+   * Дверь закрывается ДО того, как очередь до них доберётся.
+   *
+   * Условие написано как «политика есть И исчерпана», а не просто
+   * `page_tries < maxTries`: при maxTries = 0 политики повторов нет вовсе (так
+   * же выключена и ветка выше), и голое сравнение убило бы пересборку целиком
+   * — у неисчерпанной карточки page_tries как раз ноль.
+   */
   const redo = opts.redoHeuristic ? 1 : 0
   const maxTries = opts.maxTries ?? 0
   const res = await db.execute({
@@ -1575,11 +1593,11 @@ export async function claimPageEnrichBatch(
               page_at IS NULL
               OR page_at < ?
               OR (page_tries > 0 AND page_tries < ?)
-              OR (? = 1 AND json_extract(pros_cons_json, '$.source') = 'reviews')
+              OR (? = 1 AND (? = 0 OR page_tries < ?) AND json_extract(pros_cons_json, '$.source') = 'reviews')
             )
           ORDER BY (page_at IS NOT NULL AND page_tries = 0), reviews_total DESC
           LIMIT ?`,
-    args: [staleBefore, maxTries, redo, limit],
+    args: [staleBefore, maxTries, redo, maxTries, maxTries, limit],
   })
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }

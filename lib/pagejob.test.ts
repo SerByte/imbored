@@ -5,8 +5,10 @@ import {
   createDb,
   getGameJson,
   markPageEnriched,
+  markPageMissed,
   migrateDb,
   replaceGameTags,
+  setGameJson,
   sitemapGames,
   upsertGameMeta,
   type Db,
@@ -203,6 +205,32 @@ describe('очередь обогащения карточек', () => {
     // вечно, по два запроса в Steam на каждую карточку.
     const again = await runPageSlice(db, stubs({ useClaude: false }))
     expect(again.enriched).toBe(0)
+  })
+
+  test('исчерпавшая попытки карточка не возвращается и через пересборку эвристики', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    // эвристические pros/cons — то есть кандидат на пересборку моделью
+    await setGameJson(db, 10, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
+    // и при этом счётчик пустых походов уже упёрся в потолок
+    for (let i = 0; i < PAGE_MAX_TRIES; i++) await markPageMissed(db, 10, NOW)
+
+    const opts = { redoHeuristic: true, maxTries: PAGE_MAX_TRIES }
+    // Ветка пересборки стояла без оглядки на счётчик: карточка, у которой
+    // appdetails молчит, а эвристика записана, возвращалась бы в очередь
+    // вечно — тот самый head-of-line, ради которого потолок и заводили.
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
+  })
+
+  test('без политики повторов пересборка эвристики работает как прежде', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await setGameJson(db, 10, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
+    await markPageEnriched(db, 10, NOW)
+
+    // maxTries по умолчанию 0 означает «повторов нет», и голое сравнение
+    // page_tries < maxTries убило бы ветку целиком: у карточки счётчик ноль.
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { redoHeuristic: true })).toEqual([10])
   })
 
   test('карточка, собранная моделью, повторно не берётся', async () => {
