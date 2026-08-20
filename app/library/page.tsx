@@ -48,7 +48,28 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   if (!steamid) redirect('/')
 
   const db = await getDb()
-  const snapshot = await getLatestSnapshot(db, steamid)
+  /*
+   * Три независимых чтения — одним заходом, а не лесенкой.
+   *
+   * Снапшот, забаненное и статистика отзывов друг от друга не зависят вовсе, а
+   * шли по очереди: три обхода к Turso подряд там, где хватает одного. Страница
+   * объявлена force-dynamic (строка ниже), кэша у неё нет, и эта лесенка
+   * ложится в TTFB КАЖДОГО захода. По замеру из соседнего роута комнаты один
+   * обход стоит около полутора сотен миллисекунд.
+   *
+   * Цена размена: у человека с сессией, но без снапшота (редирект строкой
+   * ниже) два запроса уходят впустую. Это редкий случай — снапшот пишется тем
+   * же действием, что заводит сессию, — и он молчаливый, в отличие от
+   * задержки, которую видят все.
+   *
+   * getGamesMeta остаётся отдельно: ему нужны appid И из библиотеки, И из
+   * забаненного, то есть он честно зависит от обоих.
+   */
+  const [snapshot, banned, stats] = await Promise.all([
+    getLatestSnapshot(db, steamid),
+    listBanned(db, steamid),
+    feedbackStats(db, steamid),
+  ])
   if (!snapshot) redirect('/')
 
   const now = nowSec()
@@ -68,7 +89,6 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Забаненное добирается тем же запросом, а не вторым: забанить можно и игру,
   // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
   // библиотеке не встретится, но обложка на полку нужна.
-  const banned = await listBanned(db, steamid)
   const metas = await getGamesMeta(db, [
     ...new Set([...games.map((g) => g.appid), ...banned.map((b) => b.appid)]),
   ])
@@ -92,7 +112,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     const [before, after] = eq.text.split('{n}')
     return { count: eq.count, before, after }
   })()
-  const stats = await feedbackStats(db, steamid)
+
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
 
