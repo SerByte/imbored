@@ -38,11 +38,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { migrateDb, rebuildTagStats } from '../lib/db'
+import { buildSetList } from './publishsql'
 
 /** Строк в одном батче. Больше — риск упереться в лимит запроса libsql. */
 const CHUNK = 200
 
 const flag = (name: string) => process.argv.includes(`--${name}`)
+
 
 /** Колонки games, которые копируем. Кэш отзывов и pros/cons сознательно вне списка. */
 const COLS = [
@@ -105,14 +107,7 @@ async function main() {
    * значение не имеет права затереть непустое облачное. Пустым считаем и NULL,
    * и пустую строку, и '[]' — промоут пишет именно их, когда данных нет.
    */
-  const ОТ_ОБОГАЩЕНИЯ = new Set(['screenshots_json', 'genres_json'])
-  const setList = COLS.filter((c) => c !== 'appid')
-    .map((c) =>
-      ОТ_ОБОГАЩЕНИЯ.has(c)
-        ? `${c} = CASE WHEN excluded.${c} IS NULL OR excluded.${c} IN ('', '[]') THEN games.${c} ELSE excluded.${c} END`
-        : `${c} = excluded.${c}`,
-    )
-    .join(', ')
+  const setList = buildSetList(COLS)
   const games = await local.execute(`SELECT ${COLS.join(', ')} FROM games`)
   let done = 0
   for (let i = 0; i < games.rows.length; i += CHUNK) {
