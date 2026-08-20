@@ -1399,6 +1399,31 @@ describe('очередь опроса', () => {
     expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW)).toBe(true)
   })
 
+  test('повторная отдача не бросает — иначе она рвёт finally у крона', async () => {
+    const db = await freshDb()
+    await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)
+    await releaseLease(db, STEAM_LEASE, 'news:a')
+
+    /*
+     * Отданная аренда хранится пустой строкой, а фильтр отдачи разбирает
+     * значение как JSON. json_extract('', ...) в SQLite это ИСКЛЮЧЕНИЕ, а не
+     * ложь — соседний acquireLease от этого защищён проверкой value = '' перед
+     * разбором, отдача не была.
+     *
+     * Цена ошибки не в самом исключении, а в том, откуда оно летит: все пять
+     * вызовов releaseLease в кронах стоят внутри finally. Исключение там
+     * обрывает блок — то есть цепочка не передаётся следующему звену и маркер
+     * прогона не пишется. Отказ выглядел бы как молчание.
+     */
+    await expect(releaseLease(db, STEAM_LEASE, 'news:a')).resolves.toBeUndefined()
+
+    // и отдача ключа, которого не существует вовсе, тоже
+    await expect(releaseLease(db, 'нет-такого', 'news:a')).resolves.toBeUndefined()
+
+    // при этом ключ остался свободным, а не залип
+    expect(await acquireLease(db, STEAM_LEASE, 'pages:b', 75, NOW)).toBe(true)
+  })
+
   test('чужую аренду отдать нельзя', async () => {
     const db = await freshDb()
     await acquireLease(db, STEAM_LEASE, 'news:a', 75, NOW)

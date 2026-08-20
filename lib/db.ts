@@ -2047,19 +2047,43 @@ export async function acquireLease(
   const res = await db.execute({
     sql: `UPDATE catalog_meta SET value = ?
           WHERE key = ?
-            AND (value = ''
-                 OR CAST(json_extract(value, '$.until') AS INTEGER) < ?
-                 OR json_extract(value, '$.holder') = ?)`,
+            AND CASE
+                  WHEN json_valid(value)
+                  THEN CAST(json_extract(value, '$.until') AS INTEGER) < ?
+                       OR json_extract(value, '$.holder') = ?
+                  ELSE 1
+                END`,
     args: [JSON.stringify({ holder, until: nowSec + ttlSec }), key, nowSec, holder],
   })
   return Number(res.rowsAffected ?? 0) > 0
 }
 
-/** Отдать аренду досрочно. Не отдали — истечёт сама по until. */
+/**
+ * Отдать аренду досрочно. Не отдали — истечёт сама по until.
+ *
+ * Разбор JSON спрятан под CASE, и это не педантизм: отданная аренда хранится
+ * ПУСТОЙ СТРОКОЙ, а json_extract('', …) в SQLite бросает «malformed JSON», а не
+ * возвращает NULL. То есть повторная отдача — или отдача ключа, которого никто
+ * не брал, — падала с исключением.
+ *
+ * Цена ошибки не в самом исключении, а в том, откуда оно летело: все пять
+ * вызовов releaseLease в кронах стоят внутри finally. Исключение там обрывает
+ * блок, то есть цепочка не передаётся следующему звену, аренда не снимается и
+ * маркер прогона не пишется. Отказ выглядел бы как молчание — ровно тот случай,
+ * который дороже всего искать.
+ *
+ * CASE, а не `value <> '' AND json_extract(...)`: порядок вычисления операндов
+ * AND и OR в SQLite не оговорён, а CASE вычисляет ветви строго по условию.
+ * Соседний acquireLease переписан так же и по той же причине — он держался на
+ * подразумеваемом коротком замыкании OR.
+ */
 export async function releaseLease(db: Db, key: string, holder: string): Promise<void> {
   await db.execute({
     sql: `UPDATE catalog_meta SET value = '' WHERE key = ?
-            AND json_extract(value, '$.holder') = ?`,
+            AND CASE
+                  WHEN json_valid(value) THEN json_extract(value, '$.holder') = ?
+                  ELSE 0
+                END`,
     args: [key, holder],
   })
 }
