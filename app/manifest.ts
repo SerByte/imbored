@@ -39,6 +39,18 @@ export default function manifest(): MetadataRoute.Manifest {
         type: 'image/png',
         purpose: 'any',
       },
+      {
+        /*
+         * Без этой строки Android рисует под иконку СВОЮ подложку и
+         * вписывает картинку внутрь: знак с собственным тёмным квадратом
+         * оказывается в белом круге и уменьшенным вдвое. То есть единственный
+         * сценарий, ради которого этот файл существует, выглядел хуже всего.
+         */
+        src: '/maskable-icon.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'maskable',
+      },
     ],
   }
 }
