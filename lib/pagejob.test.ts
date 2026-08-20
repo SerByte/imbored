@@ -191,6 +191,55 @@ describe('очередь обогащения карточек', () => {
     expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
   })
 
+  test('на исходе бюджета модель не зовём, но карточку наполняем', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    let звали = 0
+    // Срок ещё не прошёл — цикл в карточку зайдёт и сходит в Steam, — но
+    // остатка заведомо мало: у вызова свои 30с × 2, и они утащили бы инстанс
+    // за maxDuration вместе с finally, где передача цепочки и снятие аренды.
+    const res = await runPageSlice(
+      db,
+      stubs({
+        deadlineAt: Date.now() + 2_000,
+        prosConsFn: async () => {
+          звали++
+          return { pros: ['красиво'], cons: ['дорого'] }
+        },
+      }),
+    )
+
+    expect(звали).toBe(0)
+    expect(res.viaClaude).toBe(0)
+    // но карточка не пустая: эвристика считается и пишется до модели
+    expect(res.withProsCons).toBe(1)
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
+    // и она вернётся за пересказом сама — ровно этой веткой
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { redoHeuristic: true })).toEqual([10])
+  })
+
+  test('запаса хватает — модель зовём и остаток бюджета отдаём ей', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    const бюджеты: Array<number | undefined> = []
+    await runPageSlice(
+      db,
+      stubs({
+        deadlineAt: Date.now() + 40_000,
+        prosConsFn: async (_n: string, _r: unknown, budgetMs?: number) => {
+          бюджеты.push(budgetMs)
+          return { pros: ['красиво'], cons: ['дорого'] }
+        },
+      }),
+    )
+
+    expect(бюджеты).toHaveLength(1)
+    expect(бюджеты[0]).toBeGreaterThan(30_000)
+    expect(бюджеты[0]).toBeLessThanOrEqual(40_000)
+  })
+
   test('--no-llm не тащит обратно карточку, собранную эвристикой', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)

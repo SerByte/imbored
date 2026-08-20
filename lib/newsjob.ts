@@ -26,7 +26,7 @@ import {
   type PollStatus,
   type StoredNews,
 } from './db'
-import { claudeNewsDigest, llmAvailable, LlmUnavailableError } from './llm'
+import { claudeNewsDigest, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { bodyHash, detectLang, fetchGameNews, isPatchNote, looksTrivial, newsText } from './news'
 import { blocksToText } from './steamhtml'
 
@@ -333,7 +333,14 @@ export async function runDigestSlice(
   let stopped: DigestResult['stopped'] = 'done'
 
   for (const item of pending) {
-    if (Date.now() > opts.deadlineAt) {
+    /*
+     * Не «есть ли ещё время», а «хватит ли его на вызов». Раньше стояло первое,
+     * и запись, начатая за секунду до срока, тянула свои 30с × 2 сверху — мимо
+     * maxDuration, то есть со снятием инстанса и потерей finally. Остаток
+     * уходит и внутрь вызова: см. cronClient в lib/llm.ts.
+     */
+    const бюджет = opts.deadlineAt - Date.now()
+    if (бюджет < LLM_MIN_BUDGET_MS) {
       stopped = 'budget'
       break
     }
@@ -345,6 +352,7 @@ export async function runDigestSlice(
         title: item.title,
         body: text,
         lang: detectLang(text),
+        budgetMs: бюджет,
       })
     } catch (e) {
       // Сервис недоступен (пустой баланс, отозванный ключ, квота) — это не
