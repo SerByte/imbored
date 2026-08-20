@@ -1,6 +1,7 @@
 import { artCandidates } from '@/lib/art'
 import type { CompatInvite } from '@/lib/compatpage'
 import { ogNum, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
+import { plural } from '@/lib/plural'
 
 /**
  * Карточка для мессенджера. Рисуется на сервере через next/og.
@@ -82,7 +83,7 @@ export function CompatCardImage({ invite }: { invite: CompatInvite }) {
         </div>
 
         <div style={{ fontSize: 28, color: OG_DIM }}>
-          {`${ogNum(invite.gamesCount)} игр · ${ogNum(invite.totalHours)} часов в библиотеке`}
+          {`${ogNum(invite.gamesCount)} ${plural(invite.gamesCount, 'игра', 'игры', 'игр')} · ${ogNum(invite.totalHours)} ${plural(invite.totalHours, 'час', 'часа', 'часов')} в библиотеке`}
         </div>
       </div>
 

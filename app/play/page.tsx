@@ -31,6 +31,7 @@ import type { CandidateSource, Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { plural } from '@/lib/plural'
 
 type Signals = {
   matchPercent: number | null
@@ -296,7 +297,7 @@ function Player() {
         onProgress: (p) => {
           lastTotal = p.total
           setPrep(p)
-          if (p.remaining > 0) setProgress(`Осталось разобрать ${p.remaining} игр`)
+          if (p.remaining > 0) setProgress(`Осталось разобрать ${p.remaining} ${plural(p.remaining, 'игру', 'игры', 'игр')}`)
         },
         onYield: (p) => {
           // Данных уже хватает на пять карточек — показываем их, а цикл пусть
@@ -436,7 +437,8 @@ function Player() {
             Похоже, сегодня не игровой вечер
           </h1>
           <p className="text-dim leading-relaxed">
-            Ты пролистал уже {BURNOUT_AFTER_SKIPS} игр — дело, скорее всего, не в играх. Это
+            Ты пролистал уже {BURNOUT_AFTER_SKIPS}{' '}
+            {plural(BURNOUT_AFTER_SKIPS, 'игру', 'игры', 'игр')} — дело, скорее всего, не в играх. Это
             нормально. Можно зайти на 20 минут во что-то уютное… а можно просто закрыть Steam, и
             это тоже победа.
           </p>

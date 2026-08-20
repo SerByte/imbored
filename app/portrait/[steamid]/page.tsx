@@ -101,7 +101,13 @@ function fallbackText(
       `${name}, ты на ${archetypes[0].percent}% ${archetypes[0].label} и на ${archetypes[1].percent}% ${archetypes[1].label}.`,
     )
   }
-  parts.push(`За плечами ${facts.totalHours.toLocaleString('ru-RU')} часов в ${facts.gamesCount} играх${facts.unplayedCount ? `, а ${facts.unplayedCount} так и лежат нераспакованными` : ''}.`)
+  parts.push(
+    `За плечами ${facts.totalHours.toLocaleString('ru-RU')} ${plural(facts.totalHours, 'час', 'часа', 'часов')} в ${facts.gamesCount} ${plural(facts.gamesCount, 'игре', 'играх', 'играх')}${
+      facts.unplayedCount
+        ? `, а ${facts.unplayedCount} ${plural(facts.unplayedCount, 'игру', 'игры', 'игр')} ты так и не распаковал`
+        : ''
+    }.`,
+  )
   if (facts.topGame && facts.topGame.sharePercent >= 30) {
     parts.push(`«${facts.topGame.name}» забрала ${facts.topGame.sharePercent}% всей твоей игровой жизни — и, кажется, не собирается отдавать.`)
   }
