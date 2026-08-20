@@ -103,14 +103,31 @@ export async function generateMetadata({
    * openGraph.images не задан в метаданных. Вернёшь строку сюда — соседний файл
    * перестанет использоваться молча, без ошибки сборки.
    */
+  /*
+   * Записи, которые каталог сам считает мёртвыми, не идут в индекс.
+   *
+   * Замер по проду 20 августа: 181 карточка с alive = 0, шесть с
+   * superseded_by и четыре без тегов — 191 адрес, отдающий 200. В карте сайта
+   * их нет (ALIVE_POOL), в блоке «Похожие» тоже (тот же предикат) — то есть
+   * это страницы-сироты, живущие только по прямой ссылке. Соседний lib/junk
+   * прячет ровно эти записи от выдачи, а поиск про них ничего не знал.
+   *
+   * Шесть замещённых опаснее прочих: это дубликаты страницы-преемника
+   * (/game/10 против /game/730) с self-canonical. Им canonical переставляется
+   * на преемника — тогда вес ссылки достаётся живой странице, а не близнецу.
+   */
+  const мёртвая = meta.alive === false || meta.supersededBy !== undefined
+  const canonicalUrl = meta.supersededBy !== undefined ? `/game/${meta.supersededBy}` : canonical
+
   return {
     title: `${meta.name} — стоит ли играть`,
     description,
-    alternates: { canonical },
+    alternates: { canonical: canonicalUrl },
+    ...(мёртвая ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
       title: `${meta.name} — стоит ли играть`,
       description,
-      url: canonical,
+      url: canonicalUrl,
       type: 'article',
     },
     twitter: {
