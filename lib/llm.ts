@@ -58,6 +58,43 @@ const INTERACTIVE_CLIENT = { timeout: 8_000, maxRetries: 0 } as const
 const CRON_CLIENT = { timeout: 30_000, maxRetries: 1 } as const
 
 /**
+ * Ниже этого модель заведомо не успеет — звать её незачем.
+ *
+ * Это не оценка скорости ответа, а порог здравого смысла: запрос с гарантированно
+ * недостижимым таймаутом всё равно стоит денег и строки в квоте, а вернёт null.
+ */
+export const LLM_MIN_BUDGET_MS = 6_000
+
+/**
+ * Настройки кронового клиента, при желании — вписанные в остаток бюджета среза.
+ *
+ * Без budgetMs (ручные скрипты, где никто не торопится) остаётся как было:
+ * CRON_CLIENT, 30 секунд и одна повторная попытка.
+ *
+ * С budgetMs — арифметика, которой не хватало. Срез крона живёт SLICE_BUDGET_MS
+ * = 50с при maxDuration = 60, а срок проверялся ТОЛЬКО на входе в карточку:
+ * зашли на 49.9с — и внутри уже ничто не мешало вызову тянуться 30с × 2 = 60с
+ * своих. Сто с лишним секунд против шестидесяти — инстанс гарантированно
+ * снимают по таймауту, а значит finally не отрабатывает: цепочка не передаётся
+ * следующему звену и аренда не снимается. Сама модель тут ни при чём — таймаут
+ * гасится в null и эвристика уцелевает; ущерб ровно в настенных часах.
+ *
+ * Повтор оставляем только если на две полные попытки время есть. Иначе одна
+ * попытка на весь остаток: лучше один шанс успеть, чем два заведомо
+ * оборванных.
+ *
+ * Отдаёт настройки, а не клиент, по той же причине, что и константы выше:
+ * `new Anthropic` обязан стоять внутри claude*, иначе сторож дверей его не
+ * увидит.
+ */
+export function cronClientOptions(budgetMs?: number): { timeout: number; maxRetries: number } {
+  if (budgetMs === undefined) return CRON_CLIENT
+  const maxRetries = budgetMs >= CRON_CLIENT.timeout * 2 ? 1 : 0
+  const timeout = Math.min(CRON_CLIENT.timeout, Math.floor(budgetMs / (maxRetries + 1)))
+  return { timeout, maxRetries }
+}
+
+/**
  * Недоверенный текст заходит в промпт только через это: обрезка по длине плюс
  * гашение тегоподобных последовательностей.
  *
@@ -310,6 +347,8 @@ const PROS_CONS_SCHEMA = {
 export async function claudeProsCons(
   gameName: string,
   reviews: Array<{ text: string; votedUp: boolean; playtimeAtReview: number }>,
+  /** Остаток бюджета среза; без него — обычные 30с с повтором, см. cronClientOptions */
+  budgetMs?: number,
 ): Promise<{ pros: string[]; cons: string[] } | null> {
   if (!llmAvailable() || !reviews.length) return null
   const lines = reviews
@@ -317,7 +356,7 @@ export async function claudeProsCons(
     .map((r) => `[${r.votedUp ? '+' : '-'}] (${Math.round(r.playtimeAtReview / 60)} ч) ${fenceData(r.text, 400)}`)
 
   try {
-    const response = await new Anthropic(CRON_CLIENT).messages.create({
+    const response = await new Anthropic(cronClientOptions(budgetMs)).messages.create({
       model: LLM_MODEL,
       max_tokens: 1200,
       messages: [
@@ -474,9 +513,11 @@ export async function claudeNewsDigest(args: {
   title: string
   body: string
   lang: 'ru' | 'en'
+  /** Остаток бюджета среза; без него — обычные 30с с повтором, см. cronClientOptions */
+  budgetMs?: number
 }): Promise<{ tldr: string; scale: NewsScale } | null> {
   if (!llmAvailable()) return null
-  const { gameName, title, body, lang } = args
+  const { gameName, title, body, lang, budgetMs } = args
   if (!title.trim() && !body.trim()) return null
 
   const prompt = `Это официальная запись об обновлении игры «${fenceData(gameName, 100)}» из Steam.
@@ -495,7 +536,7 @@ scale — "major", если это крупное обновление: новы
 Ничего не выдумывай сверх текста.`
 
   try {
-    const response = await new Anthropic(CRON_CLIENT).messages.create({
+    const response = await new Anthropic(cronClientOptions(budgetMs)).messages.create({
       model: LLM_MODEL,
       // Запас, а не бюджет: длину держит инструкция про 180 символов, платим мы
       // за написанное. Упереться в лимит тут дороже — при output_config.format

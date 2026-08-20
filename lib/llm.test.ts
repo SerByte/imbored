@@ -13,6 +13,7 @@ import {
   claudePortraitText,
   claudeProsCons,
   cleanProsCons,
+  cronClientOptions,
   fenceData,
   heuristicPicks,
   isSystemic,
@@ -233,6 +234,27 @@ describe('heuristicPicks', () => {
     // И цены тоже нет: $7.49 здесь акционное число без акции (см. trustedPrice),
     // а полная $14.99 была бы такой же выдумкой в другую сторону
     expect(pick.reason).not.toContain('$')
+  })
+})
+
+describe('cronClientOptions', () => {
+  // Кроновый вызов обязан уложиться в остаток среза: иначе инстанс снимают по
+  // maxDuration, и finally с передачей цепочки и снятием аренды не отрабатывает
+  test('без бюджета — прежние 30с и один повтор', () => {
+    expect(cronClientOptions()).toEqual({ timeout: 30_000, maxRetries: 1 })
+  })
+
+  test('повтор остаётся, только если на две полные попытки хватает', () => {
+    expect(cronClientOptions(60_000)).toEqual({ timeout: 30_000, maxRetries: 1 })
+    expect(cronClientOptions(59_999)).toEqual({ timeout: 30_000, maxRetries: 0 })
+  })
+
+  test('короткий остаток — одна попытка на весь остаток, и не дольше него', () => {
+    expect(cronClientOptions(10_000)).toEqual({ timeout: 10_000, maxRetries: 0 })
+    for (const budget of [6_000, 12_345, 45_000, 90_000]) {
+      const { timeout, maxRetries } = cronClientOptions(budget)
+      expect(timeout * (maxRetries + 1)).toBeLessThanOrEqual(budget)
+    }
   })
 })
 

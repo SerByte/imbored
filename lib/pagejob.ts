@@ -25,7 +25,7 @@ import {
   upsertGameMeta,
   type Db,
 } from './db'
-import { claudeProsCons, llmAvailable, LlmUnavailableError } from './llm'
+import { claudeProsCons, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { fetchReviews, heuristicProsCons, type ParsedReviews } from './reviews'
 
 /** Раз в полгода карточку стоит перечитать: отзывы и цена уезжают. */
@@ -190,9 +190,24 @@ export async function runPageSlice(
       let prosCons: { pros: string[]; cons: string[]; source: 'claude' | 'reviews' } | null =
         h.pros.length || h.cons.length ? { ...h, source: 'reviews' } : null
 
-      if (useClaude && !claudeDown && parsed.reviews.length) {
+      /*
+       * Остаток бюджета — внутрь вызова, а не только на вход в карточку.
+       *
+       * Срок проверяется в начале цикла; между той проверкой и этой строкой
+       * лежат два похода в Steam с шагом пейсера. Зашли на 45с — и вызов, у
+       * которого своих 30с × 2, доводит инстанс до maxDuration. Дальше
+       * снимают весь срез: finally не отрабатывает, цепочка не передаётся,
+       * аренда не снимается. Ради одной карточки из полусотни.
+       *
+       * Если остатка мало — не зовём вовсе. Эвристика уже посчитана и записана
+       * выше, карточка не пустая, а к Клоду она вернётся сама: ветка
+       * redoHeuristic в claimPageEnrichBatch как раз и выбирает те, у кого
+       * source === 'reviews'.
+       */
+      const бюджет = opts.deadlineAt - Date.now()
+      if (useClaude && !claudeDown && parsed.reviews.length && бюджет >= LLM_MIN_BUDGET_MS) {
         try {
-          const fromClaude = await prosConsOf(fresh?.name ?? `Игра ${appid}`, parsed.reviews)
+          const fromClaude = await prosConsOf(fresh?.name ?? `Игра ${appid}`, parsed.reviews, бюджет)
           if (fromClaude && (fromClaude.pros.length || fromClaude.cons.length)) {
             prosCons = { ...fromClaude, source: 'claude' }
             viaClaude++

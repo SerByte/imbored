@@ -50,6 +50,16 @@ const okDigest = async () => ({
 })
 const noDigest = async () => null
 
+/**
+ * «Времени вдоволь» — одним именем вместо семнадцати магических пятёрок.
+ *
+ * Стояло 5000, и это значило «столько, что точно не кончится». С появлением
+ * LLM_MIN_BUDGET_MS (срез сознательно не зовёт модель на исходе бюджета — см.
+ * lib/llm.ts) та же пятёрка стала значить ровно обратное: ни один пересказ
+ * больше не начинался. Держать это число выше порога обязательно.
+ */
+const ЗАПАС_MS = 30_000
+
 async function seedGame(db: Db, appid: number, name: string, reviews: number) {
   const meta: GameMeta = {
     appid,
@@ -115,7 +125,7 @@ describe('runDigestSlice: пересказы отдельно от опроса'
     await enrollNewsPoll(db, [appid], 1, NOW)
     await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({ [appid]: [post(appid, gid, 'Обновление игры', PATCH)] }),
       // 0 — записываем патч, но не пересказываем: это работа другого крона
       digestLimit: 0,
@@ -128,7 +138,7 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
     const res = await runDigestSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       digestFn: okDigest,
     })
 
@@ -139,8 +149,45 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
   test('пустая очередь — не работа и не повод продолжать цепочку', async () => {
     const db = await freshDb()
-    const res = await runDigestSlice(db, { deadlineAt: Date.now() + 5000, digestFn: okDigest })
+    const res = await runDigestSlice(db, { deadlineAt: Date.now() + ЗАПАС_MS, digestFn: okDigest })
     expect(res).toMatchObject({ digested: 0, hasMore: false, stopped: 'done' })
+  })
+
+  test('на исходе бюджета пересказ не начинаем, а останавливаем фазу', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+
+    let звали = 0
+    const счётчик = async () => {
+      звали++
+      return { tldr: 'коротко', scale: 'hotfix' as const }
+    }
+
+    // Срок формально не прошёл — раньше этого хватало, чтобы зайти в запись, —
+    // но у вызова свои 30с × 2 сверху, мимо maxDuration. Попытка при этом НЕ
+    // засчитывается: запись просто ждёт следующего звена цепочки.
+    const res = await runDigestSlice(db, { deadlineAt: Date.now() + 2_000, digestFn: счётчик })
+
+    expect(звали).toBe(0)
+    expect(res).toMatchObject({ digested: 0, stopped: 'budget' })
+  })
+
+  test('остаток бюджета уходит в сам вызов модели', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+
+    const бюджеты: Array<number | undefined> = []
+    await runDigestSlice(db, {
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (args) => {
+        бюджеты.push(args.budgetMs)
+        return { tldr: 'коротко', scale: 'hotfix' as const }
+      },
+    })
+
+    expect(бюджеты).toHaveLength(1)
+    expect(бюджеты[0]).toBeGreaterThan(ЗАПАС_MS - 5_000)
+    expect(бюджеты[0]).toBeLessThanOrEqual(ЗАПАС_MS)
   })
 
   test('полная пачка означает, что в очереди почти наверняка есть ещё', async () => {
@@ -150,7 +197,7 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
     const res = await runDigestSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       limit: 2,
       digestFn: okDigest,
     })
@@ -169,7 +216,7 @@ describe('runDigestSlice: пересказы отдельно от опроса'
     }
     const res = await runDigestSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       digestFn: dead as unknown as typeof okDigest,
     })
 
@@ -185,7 +232,7 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
     const res = await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
       digestLimit: 0,
     })
@@ -205,7 +252,7 @@ describe('runNewsSlice', () => {
 
     const res = await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({
         730: [
           post(730, '1', 'Обновление Counter-Strike 2', PATCH),
@@ -228,7 +275,7 @@ describe('runNewsSlice', () => {
 
     const res = await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
       digestFn: okDigest,
     })
@@ -251,7 +298,7 @@ describe('runNewsSlice', () => {
       void a
       return okDigest()
     }
-    const opts = { deadlineAt: Date.now() + 5000, fetchNews: feed, digestFn: counting }
+    const opts = { deadlineAt: Date.now() + ЗАПАС_MS, fetchNews: feed, digestFn: counting }
 
     await runNewsSlice(db, { ...opts, nowSec: NOW + 4000 })
     // курсор аренды двигается, поэтому вторую выборку надо звать позже
@@ -264,7 +311,7 @@ describe('runNewsSlice', () => {
     await enrollNewsPoll(db, [999], 1, NOW)
     const res = await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({ 999: [] }),
       digestFn: noDigest,
     })
@@ -281,7 +328,7 @@ describe('runNewsSlice', () => {
     await enrollNewsPoll(db, [1, 2, 3, 4, 5], 1, NOW)
     const res = await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: async () => null,
       digestFn: noDigest,
     })
@@ -297,7 +344,7 @@ describe('runNewsSlice', () => {
     await enrollNewsPoll(db, [730], 1, NOW)
     const res = await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
       digestFn: noDigest,
     })
@@ -311,7 +358,7 @@ describe('runNewsSlice', () => {
     await seedGame(db, 730, 'CS2', 9_000_000)
     await enrollNewsPoll(db, [730], 1, NOW)
     const opts = {
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
       digestFn: noDigest,
     }
@@ -327,7 +374,7 @@ describe('runNewsSlice', () => {
     await enrollNewsPoll(db, [730], 1, NOW)
     await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({
         730: [
           {
@@ -355,7 +402,7 @@ describe('нет ключа Claude — не жжём попытки', () => {
     try {
       await runNewsSlice(db, {
         nowSec: NOW + 4000,
-        deadlineAt: Date.now() + 5000,
+        deadlineAt: Date.now() + ЗАПАС_MS,
         fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
         // digestFn НЕ передаём: проверяем реальную ветку «модели нет»
       })
@@ -377,7 +424,7 @@ describe('сервис пересказов недоступен', () => {
     await enrollNewsPoll(db, [730], 1, NOW)
     await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
       digestFn: async () => {
         throw new LlmUnavailableError(400, 'credit balance is too low')
@@ -395,7 +442,7 @@ describe('сервис пересказов недоступен', () => {
     await enrollNewsPoll(db, [730], 1, NOW)
     await runNewsSlice(db, {
       nowSec: NOW + 4000,
-      deadlineAt: Date.now() + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
       fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
       digestFn: noDigest,
     })
