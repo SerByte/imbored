@@ -10,7 +10,7 @@ import { ProgressRing } from '@/components/ProgressRing'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
 import { discountView } from '@/lib/discount'
-import { loadGamePage } from '@/lib/gamepage'
+import { loadGamePage, reviewFacts } from '@/lib/gamepage'
 import { OG_SITE } from '@/lib/og'
 import { getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
@@ -68,9 +68,8 @@ export async function generateMetadata({
 
   // Описание собираем из того, что на странице и так есть, а не из шаблона:
   // в выдаче должно стоять то, ради чего на неё имеет смысл заходить.
-  const percent = reviewsSummary
-    ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
-    : null
+  const facts = reviewFacts(meta, reviewsSummary)
+  const percent = facts?.percent ?? null
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
@@ -118,11 +117,6 @@ export async function generateMetadata({
   }
 }
 
-function positivePercent(pos: number, neg: number): number | null {
-  const total = pos + neg
-  return total > 0 ? Math.round((pos / total) * 100) : null
-}
-
 const SCORE_RU: Record<string, string> = {
   'Overwhelmingly Positive': 'Крайне положительные',
   'Very Positive': 'Очень положительные',
@@ -146,9 +140,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
   const { meta, reviewsSummary, prosCons } = data
   const deal = discountView(meta, nowSec())
-  const percent = reviewsSummary
-    ? positivePercent(reviewsSummary.totalPositive, reviewsSummary.totalNegative)
-    : null
+  const facts = reviewFacts(meta, reviewsSummary)
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
@@ -179,26 +171,35 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           />
           <div className="flex flex-col gap-4 anim-rise">
             <h1 className="font-display text-display-lg">{meta.name}</h1>
-            {reviewsSummary && (
+            {/*
+              Оценка собирается из того, что есть: сводка точнее, но её нет у
+              278 игр из тысячи — там числа берутся из колонок, заполненных у
+              всех. Раньше блок целиком висел на сводке, и почти треть страниц
+              не отвечала на вопрос из собственного заголовка.
+
+              Слово — только из сводки. Проценты и количество мы пересказываем,
+              а словесную шкалу Steam придумывать за неё нельзя; без сводки
+              рядом с кольцом остаётся «из N отзывов — за», и этого хватает —
+              процент уже стоит внутри кольца.
+            */}
+            {facts && (
               <div className="flex items-center gap-3.5 text-sm">
-                {/* Процент — это и есть содержание строки, а рисовался обычным
-                    текстом, хотя кольцо у приложения уже есть (на /compat). */}
-                {percent !== null && (
-                  <ProgressRing percent={percent} size={56} stroke={4} duration={800} />
-                )}
+                <ProgressRing
+                  percent={facts.percent}
+                  size={56}
+                  stroke={4}
+                  duration={800}
+                  ariaLabel={`${facts.percent}% из ${facts.total.toLocaleString('ru-RU')} отзывов — положительные`}
+                />
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-ember-text font-medium">
-                    {SCORE_RU[reviewsSummary.scoreDesc] ?? reviewsSummary.scoreDesc}
-                  </span>
-                  {percent !== null && (
-                    <span className="font-mono text-dim text-xs">
-                      из{' '}
-                      {(
-                        reviewsSummary.totalPositive + reviewsSummary.totalNegative
-                      ).toLocaleString('ru-RU')}{' '}
-                      отзывов — за
+                  {facts.label && (
+                    <span className="text-ember-text font-medium">
+                      {SCORE_RU[facts.label] ?? facts.label}
                     </span>
                   )}
+                  <span className="font-mono text-dim text-xs">
+                    из {facts.total.toLocaleString('ru-RU')} отзывов — за
+                  </span>
                 </div>
               </div>
             )}

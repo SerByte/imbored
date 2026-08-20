@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { createDb, replaceGameTags, setGameJson, upsertGameMeta, type Db } from './db'
-import { loadGamePage, topTagOf } from './gamepage'
+import { loadGamePage, reviewFacts, topTagOf } from './gamepage'
 import type { GameMeta } from './types'
 
 /**
@@ -143,5 +143,62 @@ describe('похожие на карточке', () => {
     // патчей и отзывов Steam у такой записи нет, а похожие — есть
     expect(page?.news).toEqual([])
     expect(page?.similar.map((g) => g.appid)).toEqual([9])
+  })
+})
+
+/**
+ * Страница игры называется «стоит ли играть», а кольцо с процентом рисовалось
+ * только из сводки отзывов, которую наполняет крон. В каталоге на тысячу игр
+ * её нет у 278 — то есть 28% страниц не отвечали на вопрос из собственного
+ * заголовка, при том что процент и количество лежат в той же строке базы и
+ * заполнены у всех до одной.
+ */
+describe('reviewFacts', () => {
+  const summary = { scoreDesc: 'Very Positive', totalPositive: 90, totalNegative: 10 }
+
+  test('сводка точнее: процент считается из сырых количеств', () => {
+    expect(reviewFacts({ reviewsPercent: 50, reviewsTotal: 2 }, summary)).toEqual({
+      percent: 90,
+      total: 100,
+      label: 'Very Positive',
+    })
+  })
+
+  test('без сводки берутся колонки — ровно тот случай, ради которого всё и делалось', () => {
+    expect(reviewFacts({ reviewsPercent: 95, reviewsTotal: 13_440 }, null)).toEqual({
+      percent: 95,
+      total: 13_440,
+      label: null,
+    })
+  })
+
+  /**
+   * Числа — факт площадки, и мы их пересказываем. Словесная шкала — её
+   * суждение, и придумывать его за неё нельзя, как бы ни хотелось заполнить
+   * пустое место словом.
+   */
+  test('слово без сводки не выдумывается', () => {
+    expect(reviewFacts({ reviewsPercent: 97, reviewsTotal: 60_000 }, null)?.label).toBeNull()
+  })
+
+  test('пустая сводка не считается сводкой', () => {
+    const empty = { scoreDesc: 'No user reviews', totalPositive: 0, totalNegative: 0 }
+    expect(reviewFacts({ reviewsPercent: 80, reviewsTotal: 10 }, empty)).toEqual({
+      percent: 80,
+      total: 10,
+      label: null,
+    })
+  })
+
+  test('когда нечего показать — null, а не ноль процентов', () => {
+    expect(reviewFacts({}, null)).toBeNull()
+    expect(reviewFacts({ reviewsPercent: 90 }, null)).toBeNull()
+    expect(reviewFacts({ reviewsTotal: 100 }, null)).toBeNull()
+    expect(reviewFacts({ reviewsPercent: 90, reviewsTotal: 0 }, null)).toBeNull()
+  })
+
+  test('процент из колонок зажимается в 0…100', () => {
+    expect(reviewFacts({ reviewsPercent: 140, reviewsTotal: 5 }, null)?.percent).toBe(100)
+    expect(reviewFacts({ reviewsPercent: -3, reviewsTotal: 5 }, null)?.percent).toBe(0)
   })
 })
