@@ -1,3 +1,4 @@
+import type { InArgs, InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import {
   claimPageEnrichBatch,
@@ -89,6 +90,64 @@ describe('очередь обогащения карточек', () => {
 
     const opts = { maxTries: PAGE_MAX_TRIES }
     expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([10])
+  })
+
+  test('две группы выборки в сумме — ровно то, что считает countPageEnrichDue', async () => {
+    // Выборка разбита на два запроса ради индекса (см. claimPageEnrichBatch),
+    // и разбиение обязано быть точным: иначе отчёт крона говорит одно, а
+    // очередь делает другое. Перебираем все сочетания, которые различает
+    // предикат, при обеих политиках повторов и с пересборкой и без.
+    const db = await freshDb()
+    const stale = NOW - PAGE_MAX_AGE_SEC
+    const cases: Array<{ pageAt: number | null; tries: number; heuristic: boolean }> = []
+    for (const pageAt of [null, stale - 1, NOW])
+      for (const tries of [0, 1, PAGE_MAX_TRIES])
+        for (const heuristic of [false, true]) cases.push({ pageAt, tries, heuristic })
+    let appid = 10
+    for (const c of cases) {
+      await addGame(db, appid, 1000 - appid)
+      if (c.heuristic) await setGameJson(db, appid, 'pros_cons_json', { pros: [], cons: [], source: 'reviews' })
+      await db.execute({
+        sql: 'UPDATE games SET page_at = ?, page_tries = ? WHERE appid = ?',
+        args: [c.pageAt, c.tries, appid],
+      })
+      appid += 10
+    }
+
+    for (const maxTries of [0, PAGE_MAX_TRIES])
+      for (const redoHeuristic of [false, true]) {
+        const claimed = await claimPageEnrichBatch(db, stale, 1000, { maxTries, redoHeuristic })
+        const due = await countPageEnrichDue(db, stale, maxTries, { redoHeuristic })
+        expect(claimed.length, `maxTries=${maxTries} redo=${redoHeuristic}`).toBe(due)
+        expect(new Set(claimed).size).toBe(claimed.length)
+      }
+  })
+
+  test('обе группы выборки идут по частичному индексу, а не сортируют каталог', async () => {
+    // Ради этого выборка и разбита на два запроса: выражение в ORDER BY
+    // частичному индексу не соответствовало, и SQLite читал и сортировал весь
+    // каталог ради двадцати appid (USE TEMP B-TREE FOR ORDER BY).
+    const db = await freshDb()
+    const issued: Array<{ sql: string; args: unknown[] }> = []
+    const spy = {
+      execute: (q: InStatement) => {
+        if (typeof q !== 'string') issued.push({ sql: q.sql, args: (q.args ?? []) as unknown[] })
+        return db.execute(q)
+      },
+    } as unknown as Db
+
+    await claimPageEnrichBatch(spy, NOW - PAGE_MAX_AGE_SEC, 20, {
+      maxTries: PAGE_MAX_TRIES,
+      redoHeuristic: true,
+    })
+
+    expect(issued).toHaveLength(2)
+    for (const q of issued) {
+      const plan = await db.execute({ sql: `EXPLAIN QUERY PLAN ${q.sql}`, args: q.args as InArgs })
+      const detail = plan.rows.map((r) => String(r.detail)).join(' | ')
+      expect(detail).toContain('idx_games_pool')
+      expect(detail).not.toContain('TEMP B-TREE')
+    }
   })
 
   test('удачный поход убирает карточку из повторов', async () => {
