@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono, Onest, Sofia_Sans_Condensed } from 'next/font/google'
 import Link from 'next/link'
+import { ChromeZone } from '@/components/ChromeZone'
 import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
@@ -169,16 +170,21 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
 
             pointer-events-none обязателен: слой свисает ниже шапки и иначе
             перехватывал бы клики по строкам ленты.
+
+            Слоя два, и они кроссфейдятся. Растворяющийся градиент верен ровно
+            там, где под шапкой стоит герой: он не режет кадр полосой. Но
+            стоит уехать с героя на контент — и растворяться уже не над чем,
+            а шов между фиксированной шапкой и текстом под ней нужен. Второй
+            слой и есть этот шов: настоящая полка со стеклом и волоском.
+            Переключением заведует components/ChromeZone.tsx.
+
+            Стили классами, а не инлайном: инлайн нельзя перебить состоянием
+            из CSS, а именно это здесь и требуется.
           */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-[150%] backdrop-blur-[6px]"
-            style={{
-              background: 'linear-gradient(to bottom, var(--header-fade), transparent)',
-              maskImage: 'linear-gradient(to bottom, #000 55%, transparent)',
-              WebkitMaskImage: 'linear-gradient(to bottom, #000 55%, transparent)',
-            }}
-          />
+          <div aria-hidden className="site-chrome">
+            <span className="site-chrome-fade" />
+            <span className="site-chrome-bar" />
+          </div>
           <div className="relative mx-auto max-w-6xl px-5 py-4 flex items-center justify-between">
             <Link href="/" className="text-xl flex items-center gap-2.5">
               <LogoMark size={24} />
@@ -217,6 +223,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         <MobileNav />
         {/* Продлевает вход. Клиентский и без разметки: лэйаут кук не читает,
             иначе весь сайт стал бы динамическим и ISR у /game/[appid] умер. */}
+        {/* Ставит data-chrome на <html>, когда шапка уезжает с кино-зоны на
+            контент. Клиентский и без разметки — как SessionKeeper. */}
+        <ChromeZone />
         <SessionKeeper />
         <Analytics />
       </body>
