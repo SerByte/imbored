@@ -444,7 +444,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           <CopyOwn steamid={d.me} inline />
           <Link
             href={`/portrait/${d.other}`}
-            className="px-2 text-sm text-dim transition-colors hover:text-ink"
+            className="p-2 text-sm text-dim transition-colors hover:text-ink"
           >
             Портрет {d.otherName} →
           </Link>

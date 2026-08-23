@@ -611,7 +611,7 @@ function Player() {
                     sendFeedback(pick.appid, 'skipped')
                     advance(index)
                   }}
-                  className="text-sm text-dim hover:text-ink px-2 transition-colors"
+                  className="text-sm text-dim hover:text-ink p-2 transition-colors"
                 >
                   пропустить
                 </button>
