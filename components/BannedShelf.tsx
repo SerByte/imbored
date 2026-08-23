@@ -65,7 +65,9 @@ export function BannedShelf({ games }: { games: BannedGame[] }) {
         Мы их правда больше не показываем — ни в подборе, ни в игре дня, ни в пати. Если передумал,
         верни обратно.
       </p>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      {/* Та же лестница, что у полки «запечатанного»: пять колонок с 768 px
+          давали обложку мельче, чем на телефоне. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <AnimatePresence mode="popLayout" initial={false}>
           {items.map((g) => (
             <motion.div

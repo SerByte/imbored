@@ -49,7 +49,9 @@ export default function LibraryLoading() {
         <Skel className="h-[17px] w-[9rem] rounded-[4px] mb-2" delay={350} />
         <Skel className="h-[33px] w-[min(100%,22rem)] mb-1.5" delay={420} />
         <Skel className="h-5 w-[min(100%,32rem)] rounded-[4px] mb-4" delay={490} />
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        {/* Сетка обязана совпадать с полкой в page.tsx — иначе каркас врёт
+            ровно тем сдвигом, ради которого он и поставлен. */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {[0, 1, 2, 3, 4].map((i) => (
             <SkelTile key={i} delay={560 + i * 60} />
           ))}
