@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
 import { discountEndsLabel, discountOf, formatPrice } from './discount'
-import type { Focus } from './recommend'
+import { sharedTasteTags, type Focus } from './recommend'
 import { CANDIDATE_SOURCES } from './types'
 import type { CandidateSource, GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
 
@@ -425,12 +425,34 @@ function priceSentence(meta: GameMeta | undefined, nowSec: number): string {
 }
 
 /** null, а не слово-затычка: см. комментарий к SOURCE_TEMPLATES. */
-function topTags(meta: GameMeta | undefined): string | null {
+/** Сколько тегов называть в причине: два — предел, за которым фраза перестаёт читаться. */
+const REASON_TAGS = 2
+
+/**
+ * Теги для причины — только те, что УЖЕ ЕСТЬ во вкусе игрока.
+ *
+ * Здесь стояло «два самых частых тега игры по голосам Steam» — то есть число,
+ * которое про конкретного человека не знает ничего. А фраза вокруг него
+ * утверждает именно про человека: «её теги (MOBA, Competitive) совпадают с
+ * тем, во что ты играешь больше всего». Совпадение было совпадением
+ * буквально: популярный тег игры чаще всего и правда есть во вкусе — но
+ * «чаще всего» и «утверждение» это разные вещи.
+ *
+ * Поймано глазами, когда чипсы тегов начали помечать совпавшие
+ * (components/TagChips.tsx): причина называла «MOBA, Competitive», а отметку
+ * получали «Competitive, Multiplayer». MOBA во вкусе игрока не было вовсе —
+ * и продукт про неё утверждал обратное на главном своём экране.
+ *
+ * Пустой список теперь честно даёт null, и шаблон снимает предложение про
+ * вкус целиком — ровно тот же приём, что уже описан абзацем выше про
+ * отсутствующий каталог: нечем подтвердить — не утверждаем.
+ */
+function matchedTags(
+  meta: GameMeta | undefined,
+  profile: Record<string, number>,
+): string | null {
   if (!meta) return null
-  const tags = Object.entries(meta.tags)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 2)
-    .map(([t]) => t)
+  const tags = sharedTasteTags(profile, meta).slice(0, REASON_TAGS)
   return tags.length ? tags.join(', ') : null
 }
 
@@ -443,6 +465,8 @@ export function heuristicPicks(
   metaOf: (appid: number) => GameMeta | undefined,
   count: number,
   nowSec: number = Math.floor(Date.now() / 1000),
+  /** Профиль вкуса — без него причина не утверждает про вкус ничего. */
+  profile: Record<string, number> = {},
 ): Pick[] {
   if (!candidates.length) return []
   const sorted = [...candidates].sort((a, b) => b.score - a.score)
@@ -488,7 +512,7 @@ export function heuristicPicks(
        * попадут в кандидаты. Причина объясняет игру, а не пересказывает ответ
        * человека ему же обратно.
        */
-      reason: SOURCE_TEMPLATES[c.source](c.name, topTags(meta)) + price,
+      reason: SOURCE_TEMPLATES[c.source](c.name, matchedTags(meta, profile)) + price,
     }
   })
 }

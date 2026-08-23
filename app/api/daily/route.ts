@@ -17,6 +17,7 @@ import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import {
   applyFeedbackToProfile,
   buildTagProfile,
+  sharedTasteTags,
   scoreCandidates,
   splitBySource,
 } from '@/lib/recommend'
@@ -128,7 +129,7 @@ export async function GET() {
   const priced = refreshed ? await getGamesMeta(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
-  const reason = heuristicPicks([pick], metaNow, 1, now)[0]?.reason ?? ''
+  const reason = heuristicPicks([pick], metaNow, 1, now, profile)[0]?.reason ?? ''
 
   const meta = metaNow(pick.appid)
   const lib = games.find((g) => g.appid === pick.appid)
@@ -150,6 +151,10 @@ export async function GET() {
       screenshots: meta?.screenshots ?? [],
       ccu: meta?.ccu ?? null,
       tags: topTags,
+      // Чипсы совпавших тегов помечаются на экране, и метка обязана считаться
+      // здесь же, где лежит профиль вкуса. Настроения у «Игры дня» нет —
+      // поэтому sharedTasteTags, а не explainMatch: процент и вайб тут не о чем.
+      sharedTags: meta ? sharedTasteTags(profile, meta) : [],
       hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,
