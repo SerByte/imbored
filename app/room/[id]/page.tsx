@@ -489,7 +489,13 @@ export default function RoomPage() {
           <Spinner />
         </div>
       ) : card ? (
-        <SwipeDeck cards={cards} onVote={vote} votedCount={votedCount} deckTotal={deckTotal} />
+        <SwipeDeck
+          cards={cards}
+          onVote={vote}
+          votedCount={votedCount}
+          deckTotal={deckTotal}
+          alone={state.members.length < 2}
+        />
       ) : (
         <RoomWaiting
           roomId={roomId}
