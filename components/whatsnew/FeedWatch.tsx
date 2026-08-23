@@ -13,6 +13,7 @@ import {
   probeFeedHead,
   shouldProbe,
 } from '@/lib/feedpoll'
+import { Portal } from '@/components/Portal'
 import { plural } from '@/lib/plural'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -110,32 +111,37 @@ export function FeedWatch({
     ? 'Лента обновилась'
     : `${n} ${plural(n, 'новое обновление', 'новых обновления', 'новых обновлений')}`
 
+  /* Тост висит под шапкой и обязан остаться на экране при прокрутке. Под
+     плавной прокруткой fixed внутри содержимого уезжает вместе с ним —
+     см. components/Portal.tsx. */
   return (
-    <div
-      aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 top-20 z-40 flex justify-center px-5"
-    >
-      <AnimatePresence initial={false}>
-        <motion.button
-          type="button"
-          initial={{ opacity: 0, y: -12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -12 }}
-          transition={{ duration: reduced ? 0 : 0.28, ease: EASE }}
-          disabled={pending}
-          onClick={() => {
-            // Прокрутка наверх — не украшение. Новые строки встают ВЫШЕ места
-            // чтения, а высота непрорисованных строк — оценка (см. докблок).
-            // Человек нажал «покажи новые» — везём его к ним.
-            window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' })
-            startTransition(() => router.refresh())
-          }}
-          className="pointer-events-auto flex items-center gap-2 rounded-full border border-rule bg-bg/90 px-4 py-2 text-sm font-semibold text-ink shadow-lg backdrop-blur transition-opacity hover:opacity-80 disabled:opacity-60"
-        >
-          <span aria-hidden className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
-          {pending ? 'Обновляю…' : label}
-        </motion.button>
-      </AnimatePresence>
-    </div>
+    <Portal>
+      <div
+        aria-live="polite"
+        className="pointer-events-none fixed inset-x-0 top-20 z-40 flex justify-center px-5"
+      >
+        <AnimatePresence initial={false}>
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: reduced ? 0 : 0.28, ease: EASE }}
+            disabled={pending}
+            onClick={() => {
+              // Прокрутка наверх — не украшение. Новые строки встают ВЫШЕ места
+              // чтения, а высота непрорисованных строк — оценка (см. докблок).
+              // Человек нажал «покажи новые» — везём его к ним.
+              window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' })
+              startTransition(() => router.refresh())
+            }}
+            className="pointer-events-auto flex items-center gap-2 rounded-full border border-rule bg-bg/90 px-4 py-2 text-sm font-semibold text-ink shadow-lg backdrop-blur transition-opacity hover:opacity-80 disabled:opacity-60"
+          >
+            <span aria-hidden className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
+            {pending ? 'Обновляю…' : label}
+          </motion.button>
+        </AnimatePresence>
+      </div>
+    </Portal>
   )
 }

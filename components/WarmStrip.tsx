@@ -1,6 +1,7 @@
 'use client'
 
 import { AnimatePresence, motion } from 'motion/react'
+import { Portal } from '@/components/Portal'
 
 /**
  * Состояние догрева поверх уже показанной выдачи.
@@ -30,9 +31,12 @@ export function WarmStrip({
   onRefresh: () => void
   onDismiss: () => void
 }) {
+  /* Плашка висит над выдачей и обязана остаться на экране при прокрутке —
+     значит портал, см. Portal.tsx. */
   return (
-    <AnimatePresence>
-      {state !== 'off' && (
+    <Portal>
+      <AnimatePresence>
+        {state !== 'off' && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -83,8 +87,9 @@ export function WarmStrip({
               ✕
             </button>
           </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Portal>
   )
 }

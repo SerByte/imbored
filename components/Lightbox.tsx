@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect } from 'react'
+import { Portal } from '@/components/Portal'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -53,9 +54,12 @@ export function Lightbox({
     }
   }, [index, images.length, onClose, onIndex])
 
+  /* Портал обязателен: оверлей на весь экран, а под плавной прокруткой
+     fixed внутри содержимого цепляется к содержимому. См. Portal.tsx. */
   return (
-    <AnimatePresence>
-      {index !== null && (
+    <Portal>
+      <AnimatePresence>
+        {index !== null && (
         <motion.div
           className="fixed inset-0 z-[100] flex items-center justify-center p-5"
           initial={{ opacity: 0 }}
@@ -90,8 +94,9 @@ export function Lightbox({
           <span className="absolute bottom-5 font-mono text-xs text-dim">
             {index + 1}/{images.length}
           </span>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Portal>
   )
 }
