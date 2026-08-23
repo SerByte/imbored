@@ -1,350 +1,331 @@
-'use client'
-
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useEffect, useState, useSyncExternalStore } from 'react'
+import { Suspense } from 'react'
+import { BlurBand } from '@/components/BlurBand'
 import { CinemaCollage } from '@/components/CinemaCollage'
-import { ClickSpark } from '@/components/ClickSpark'
-import { Magnet } from '@/components/Magnet'
-import { markSessionTouched } from '@/components/SessionKeeper'
-import { Wordmark } from '@/components/Wordmark'
-import { DESTINATIONS, destinationPath } from '@/lib/destination'
-import {
-  getServerSessionHint,
-  getSessionHint,
-  rememberSession,
-  subscribeSessionHint,
-} from '@/lib/sessionhint'
+import { HeroArt } from '@/components/HeroArt'
+import { ConnectCard } from '@/components/landing/ConnectCard'
+import { HeroNotice } from '@/components/landing/HeroNotice'
+import { Primer } from '@/components/landing/Primer'
+import { Eyebrow, MetaLine, SectionLabel } from '@/components/Labels'
+import { SplitHeading } from '@/components/SplitHeading'
+import { landingDemo } from '@/lib/landing'
+import { plural } from '@/lib/plural'
+import { topCatalogGames } from '@/lib/db'
+import { getDb, nowSec } from '@/lib/server'
 
-const ERROR_TEXT: Record<string, string> = {
-  auth: 'Steam не подтвердил вход. Попробуй ещё раз.',
-  nokey: 'На сервере не настроен STEAM_API_KEY — попробуй демо-режим.',
-  steam: 'Steam сейчас не отвечает. Подожди минуту и попробуй снова.',
-  empty: 'Steam вернул пустую библиотеку для этого профиля.',
-  notfound: 'Не нашли такой профиль. Проверь ссылку или ник.',
-  badinput: 'Это не похоже на ссылку на Steam-профиль.',
-  // /room/new редиректит сюда именно с этим кодом, когда куки не оказалось.
-  // Без строки человек, пришедший по приглашению в пати, получал безликое
-  // «Что-то пошло не так» вместо объяснения, что делать дальше.
-  nosession: 'Сессия истекла — подключи библиотеку заново, и вернём тебя в пати.',
-}
+/**
+ * ГЛАВНАЯ, КОТОРАЯ СНАЧАЛА ПОКАЗЫВАЕТ, А ПОТОМ ПРОСИТ.
+ *
+ * Прежняя главная была одним экраном: логотип, одна фраза и форма входа в
+ * Steam. Человек, пришедший впервые, отдавал доступ к библиотеке, не увидев ни
+ * одной карточки, — решение он принимал вслепую. Внутри при этом восемь
+ * проработанных экранов, которых он не видел.
+ *
+ * Теперь порядок обратный. Сначала работа продукта на настоящем конвейере
+ * (секция «Так это выглядит»), потом то, что он ещё умеет, и только в конце
+ * касса. Кнопка входа никуда не делась и доступна с первого экрана якорем —
+ * но она больше не единственное, что можно сделать.
+ *
+ * СТРАНИЦА СЕРВЕРНАЯ И СТАТИЧЕСКАЯ. Ни cookies(), ни currentSteamId(), ни
+ * пропа searchParams: любое из трёх сделало бы её динамической и перечеркнуло
+ * весь смысл lib/sessionhint.ts, который существует ровно затем, чтобы
+ * узнавать вошедшего без чтения кук на сервере. Всё, что зависит от адреса и
+ * сессии, живёт в двух островках за границами Suspense — и только там, потому
+ * что на предрендеренном маршруте всё дерево до ближайшей границы уходит в
+ * клиентский рендер. Заголовок, стена, пятёрка и таблица обязаны лежать в
+ * статическом HTML, поэтому островков ровно два и оба маленькие.
+ *
+ * ISR на час: постер героя берётся из каталога, а он меняется медленно.
+ */
+export const revalidate = 3600
 
-function PrivacyHelp() {
-  return (
-    <div className="glass rounded-[20px] p-5 text-sm leading-relaxed anim-rise">
-      <p className="font-semibold text-ink mb-2">Библиотека скрыта настройками Steam</p>
-      <p className="text-dim">
-        Steam по умолчанию прячет список игр даже при публичном профиле. Открой его — это меняется
-        одной настройкой:
-      </p>
-      <ol className="list-decimal list-inside text-dim mt-3 space-y-1.5">
-        <li>
-          Зайди в{' '}
-          <a
-            href="https://steamcommunity.com/my/edit/settings"
-            target="_blank"
-            rel="noreferrer"
-            className="tap tap-tight text-ember-text hover:underline"
-          >
-            настройки приватности Steam
-          </a>
-        </li>
-        <li>
-          «Доступ к игровой информации» → <span className="text-ink">Открытый</span>
-        </li>
-        <li>Сними галочку «Всегда скрывать общее время игры»</li>
-        <li>Вернись сюда и попробуй снова</li>
-      </ol>
-    </div>
-  )
-}
-
-function Landing() {
-  const router = useRouter()
-  const search = useSearchParams()
-  const join = search.get('join')
-  const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
-  const compat = search.get('compat')
-  const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
-  /*
-   * Куда человек шёл, когда его сюда развернуло.
-   *
-   * Пять экранов из шести разворачивали гостя МОЛЧА: нажал «Игра дня» —
-   * страница подменилась лендингом, и ни слова о том, почему. Теперь
-   * лендинг говорит про ТО САМОЕ место и туда же возвращает после
-   * подключения.
-   *
-   * Адрес берётся из закрытого списка, а не из строки запроса как есть:
-   * произвольный ?next= — это открытый редирект (см. lib/destination.ts).
-   */
-  const next = destinationPath(search.get('next'))
-  const dest = next ? DESTINATIONS[next] : null
-  const [input, setInput] = useState('')
-  const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
-  const [error, setError] = useState<string | null>(search.get('error'))
-
-  /**
-   * Узнаём вошедшего.
-   *
-   * Раньше этого не было вовсе, и в этом была настоящая причина жалобы «заебался
-   * заходить через стим»: вернувшийся человек с ЖИВОЙ кукой видел ровно тот же
-   * экран входа, что и незнакомец, и нажимал «Войти через Steam» — потому что
-   * ничего другого ему тут не предлагали.
-   *
-   * null — ещё не знаем; пока не знаем, не рисуем ни то, ни другое.
-   */
-  const [session, setSession] = useState<{ authed: boolean; personaName: string | null } | null>(null)
-
-  /*
-   * Догадка с прошлого визита — чтобы не показывать пустое место, пока едет
-   * ответ. Раньше здесь стояло «Секунду…»: первое, что видел человек на
-   * сайте, было место, где ничего нельзя сделать, и держалось оно целый круг
-   * до сервера.
-   *
-   * Порядок старшинства ровно такой: ответ сервера, потом подсказка, потом
-   * гость. Гость последним не случайно — это единственное состояние, которое
-   * годится в статическую разметку: незнакомцу оно верно, а вошедшему хотя бы
-   * даёт что-то нажать, пока не приедет приветствие.
-   */
-  const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
-  const view = session ?? hint ?? { authed: false, personaName: null }
-
-  useEffect(() => {
-    const settle = (authed: boolean, personaName: string | null = null) => {
-      setSession({ authed, personaName })
-      // Ответ сервера — он же и подсказка на следующий визит.
-      rememberSession(authed ? { authed, personaName } : null)
-    }
-    // Тот же роут, что продлевает куку: заодно и продлеваем на каждом заходе
-    // на главную. markSessionTouched — чтобы SessionKeeper не сходил повторно.
-    markSessionTouched()
-    fetch('/api/session/touch?card=1', { method: 'POST' })
-      .then(async (r) => {
-        if (!r.ok) return settle(false)
-        const d = (await r.json()) as { authed?: boolean; personaName?: string | null }
-        settle(Boolean(d.authed), d.personaName ?? null)
-      })
-      // Упавший запрос — НЕ доказательство живой сессии. Показываем вход:
-      // соврать кнопкой «Продолжить» тому, кто на самом деле гость, хуже.
-      .catch(() => settle(false))
-
-    // Предохранителя на полторы секунды здесь больше нет, и он не нужен: он
-    // существовал ровно затем, чтобы вытащить человека из «Секунду…». Теперь
-    // из него нечего вытаскивать — до ответа уже показано либо приветствие по
-    // подсказке, либо вход.
-    // Флага «компонент ещё жив» здесь намеренно нет. Он тут был и ломал ровно
-    // то, ради чего всё писалось: в dev эффект монтируется дважды, ответ
-    // приходил уже после снятия флага первой попытки, и карточка навсегда
-    // застывала на «Секунду…». Поздний ответ у отмонтированного компонента —
-    // безобидный no-op, а вот потерянный ответ виден пользователю.
-  }, [])
-
-  /*
-   * Ссылка на Steam несёт назначение тоже: без этого человек, шедший в
-   * библиотеку и выбравший вход через Steam, всё равно оказывался бы на
-   * /quiz — то есть обещание держала бы только одна из двух дорог.
-   */
-  const steamHref = joinTarget
-    ? `/api/auth/steam?join=${joinTarget}`
-    : compatTarget
-      ? `/api/auth/steam?compat=${compatTarget}`
-      : next
-        ? `/api/auth/steam?next=${encodeURIComponent(next)}`
-        : '/api/auth/steam'
-
-  const target = joinTarget
-    ? `/room/${joinTarget}`
-    : compatTarget
-      ? `/compat/${compatTarget}`
-      : (next ?? '/quiz')
-
-  async function connect(demo: boolean) {
-    setBusy(demo ? 'demo' : 'connect')
-    setError(null)
-    try {
-      const res = await fetch('/api/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(demo ? { demo: true } : { input }),
-      })
-      const data = (await res.json()) as { ok?: boolean; error?: string }
-      if (data.ok) {
-        router.push(target)
-        return
-      }
-      setError(data.error ?? 'steam')
-    } catch {
-      setError('steam')
-    }
-    setBusy(null)
+/**
+ * Постер героя — настоящая игра из каталога.
+ *
+ * База может молчать: локально и в превью TURSO_DATABASE_URL не задан, и это
+ * нормальное состояние, а не поломка (образец обработки — shelf() в
+ * app/not-found.tsx). Тогда за героем стоит коллаж, а кредит кадра не
+ * печатается вовсе: строка-заглушка «КАДР · —» хуже её отсутствия.
+ *
+ * Постер ИЛИ коллаж, никогда оба: коллаж грузит восемнадцать обложек, постер —
+ * одну широкую. Два источника фона разом удвоили бы первый экран ради того,
+ * что лежит под скримом.
+ */
+async function heroPoster() {
+  try {
+    const [game] = await topCatalogGames(await getDb(), 1)
+    return game ?? null
+  } catch {
+    return null
   }
+}
 
+/** Что ещё умеет продукт — расписанием, а не плиткой «фич». */
+const REPERTOIRE = [
+  {
+    href: '/rooms',
+    name: 'Пати',
+    line: 'Создай комнату, кинь ссылку своим, свайпайте вместе: колода из общих игр, совпадут все голоса — матч.',
+  },
+  {
+    href: '/compat',
+    name: 'Совместимость',
+    line: 'Кинь ссылку любому — сравним ваши библиотеки и часы по-настоящему, а не по анкете.',
+  },
+  {
+    href: '/daily',
+    name: 'Игра дня',
+    line: 'Одна игра на день — завтра здесь будет другая. Покупать ничего не нужно.',
+  },
+  {
+    href: '/library',
+    name: 'Библиотека',
+    line: 'Твоя библиотека глазами сервиса: заброшенное, нераспакованное, «открыл и закрыл» — одной стеной.',
+  },
+  {
+    href: '/portrait',
+    name: 'Портрет игрока',
+    line: 'Куда ушло время, диагноз и чистилище — страницей, которой можно поделиться.',
+  },
+  {
+    href: '/whatsnew',
+    name: 'Что нового',
+    line: 'Только крупные патчи по твоим играм. Мелкие правки — на странице игры.',
+  },
+]
+
+/** Дверь, которая работает без JS. См. комментарий у Suspense ниже. */
+function ConnectFallback() {
   return (
-    <div className="media-dark media-full relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
-      <CinemaCollage />
-
-      <div className="relative w-full max-w-xl flex flex-col items-center text-center gap-8">
-        <div className="anim-rise">
-          <h1 className="text-display-xl leading-none">
-            <Wordmark />
-          </h1>
-          <p className="mt-5 text-lg text-dim max-w-md mx-auto">
-            {joinTarget
-              ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
-              : compatTarget
-                ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
-                : (dest?.promise ??
-                  'Скажи, сколько у тебя времени, — подберём, во что зайти прямо сейчас.')}
-          </p>
-        </div>
-
-        <div className="w-full glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise" style={{ animationDelay: '80ms' }}>
-          {view.authed ? (
-            <div className="min-h-[232px] flex flex-col justify-center gap-4">
-              <p className="text-lg text-ink">
-                С возвращением
-                {view.personaName ? (
-                  <>
-                    , <span className="font-semibold">{view.personaName}</span>
-                  </>
-                ) : null}
-                .
-              </p>
-              <Magnet className="block w-full">
-                <ClickSpark className="block w-full">
-                  <button
-                    type="button"
-                    onClick={() => router.push(target)}
-                    className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition cursor-pointer"
-                  >
-                    {joinTarget
-                      ? 'Войти в пати'
-                      : compatTarget
-                        ? 'Посмотреть совместимость'
-                        : (dest?.action ?? 'Подобрать игру')}
-                  </button>
-                </ClickSpark>
-              </Magnet>
-              {/* Вход через Steam остаётся на виду и в один клик: сменить
-                  аккаунт должно быть возможно, а спрятанное под раскрывашку
-                  «сменить аккаунт» ищут дольше, чем оно того стоит. */}
-              <a
-                href={steamHref}
-                className="text-sm text-dim hover:text-ink transition-colors text-center py-1"
-              >
-                Это не я — войти через Steam
-              </a>
-            </div>
-          ) : (
-            <>
-          {/*
-            Настоящая форма, а не инпут с onKeyDown. Даёт три вещи разом:
-            Enter работает штатно (и на мобильной клавиатуре тоже), браузер
-            понимает поле как поле, а скринридер объявляет его подпись.
-          */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (input && busy === null) void connect(false)
-            }}
-            className="flex flex-col gap-3"
-          >
-            {/* Подпись есть, но не показана: место под ней съело бы первый
-                экран, а placeholder подписью не является — он исчезает при
-                вводе и не читается скринридером как имя поля. */}
-            <label htmlFor="steam-profile" className="sr-only">
-              Ссылка на твой Steam-профиль или ник
-            </label>
-            <input
-              id="steam-profile"
-              name="profile"
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ссылка на твой Steam-профиль или ник"
-              // на телефоне: без автокапитализации и автозамены (это ник или
-              // URL), и с кнопкой «перейти» вместо «ввод»
-              inputMode="url"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              enterKeyHint="go"
-              autoComplete="off"
-              className="w-full rounded-[14px] bg-surface border border-edge px-4 py-3 text-ink placeholder:text-faint focus:border-ember/60 transition-colors"
-            />
-            {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
-            <Magnet className="block w-full">
-              <ClickSpark className="block w-full">
-                <button
-                  type="submit"
-                  disabled={!input || busy !== null}
-                  className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 disabled:opacity-40 hover:brightness-110 transition cursor-pointer"
-                >
-                  {busy === 'connect' ? 'Читаю библиотеку…' : (dest?.action ?? 'Подобрать игру')}
-                </button>
-              </ClickSpark>
-            </Magnet>
-          </form>
-          <div className="flex items-center gap-3 text-xs text-faint">
-            <div className="h-px flex-1 bg-edge" />
-            или
-            <div className="h-px flex-1 bg-edge" />
-          </div>
-          <a
-            href={steamHref}
-            className="w-full rounded-[14px] glass glass-hover py-3 text-sm text-ink text-center"
-          >
-            Войти через Steam
-          </a>
-          <button
-            onClick={() => connect(true)}
-            disabled={busy !== null}
-            className="text-sm text-dim hover:text-ink transition-colors py-1"
-          >
-            {busy === 'demo' ? 'Готовлю демо…' : 'Попробовать демо без Steam'}
-          </button>
-          {/*
-            Первый экран просит чужой профиль и до этой строки не говорил НИ
-            СЛОВА о том, что с ним будет. Продукт эту фразу знает — она есть на
-            странице совместимости для гостей и развёрнуто в /privacy, — но не говорил там,
-            где доверие собственно и запрашивают.
-
-            Стоит ПОСЛЕ действий, а не перед ними: это сноска, которую читают
-            колеблясь, а не условие, которое надо прочесть перед входом. И только гостю:
-            вошедшему объяснять уже нечего.
-          */}
-          {/*
-            text-dim и 12 px, а не text-faint и 11. Замерено: faint на стекле
-            карточки даёт ровно 4.50:1 — порог без единого запаса, любая
-            будущая правка --glass-bg уводит его под. Но главное даже не это:
-            faint — роль «едва заметного», а эту строку читает тот, кто как раз
-            колеблется, отдавать ли свой профиль. Прятать ответ на этот вопрос
-            в самый тихий токен было бы странно.
-          */}
-          <p className="text-xs leading-relaxed text-dim">
-            Пароль не спрашиваем — вход идёт на стороне Steam. Читаем только список игр
-            и наигранные часы, ничего не публикуем.{' '}
-            <Link href="/privacy" className="tap tap-tight underline decoration-edge hover:text-ink">
-              Подробнее
-            </Link>
-          </p>
-            </>
-          )}
-        </div>
-
-        {error && error !== 'private' && (
-          <p className="text-sm text-danger anim-rise">{ERROR_TEXT[error] ?? 'Что-то пошло не так.'}</p>
-        )}
-        {error === 'private' && <PrivacyHelp />}
+    <div className="w-full max-w-md">
+      <div className="glass flex min-h-[232px] flex-col justify-center gap-3 rounded-[20px] p-6">
+        <a
+          href="/api/auth/steam"
+          className="rounded-[14px] bg-ember py-3 text-center font-semibold text-on-ember transition hover:brightness-110"
+        >
+          Войти через Steam
+        </a>
+        <p className="text-xs leading-relaxed text-dim">
+          Пароль не спрашиваем — вход идёт на стороне Steam. Читаем только список игр и наигранные
+          часы, ничего не публикуем.{' '}
+          <Link href="/privacy" className="tap tap-tight underline decoration-edge hover:text-ink">
+            Подробнее
+          </Link>
+        </p>
       </div>
     </div>
   )
 }
 
-export default function Home() {
+export default async function Home() {
+  const demo = landingDemo(nowSec())
+  const poster = await heroPoster()
+
   return (
-    <Suspense>
-      <Landing />
-    </Suspense>
+    <>
+      {/*
+        Кино-зона, но НЕ media-full: ниже начинается обычный контент, и подвал
+        под ним обязан слушаться темы. Раньше главная была одним тёмным
+        экраном на всю страницу — отсюда и класс, и он теперь неверен.
+      */}
+      <section className="media-dark relative flex min-h-[100svh] items-center overflow-hidden md:items-end">
+        {poster ? (
+          <HeroArt
+            appid={poster.appid}
+            name={poster.name}
+            headerImage={poster.headerImage}
+            art={poster.art}
+          />
+        ) : (
+          <CinemaCollage />
+        )}
+
+        {/* Скрим: титр читается, арт дышит по краям */}
+        <div
+          aria-hidden
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(to bottom, color-mix(in srgb, var(--bg) 72%, transparent), color-mix(in srgb, var(--bg) 40%, transparent) 45%, var(--bg) 100%)',
+          }}
+        />
+        <BlurBand height="46vh" dir="up" />
+        <div aria-hidden className="grain" />
+
+        <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-32 md:pb-24">
+          <div className="max-w-2xl">
+            <Suspense fallback={null}>
+              <HeroNotice />
+            </Suspense>
+
+            <Eyebrow tone="faint" className="mb-4">
+              imbored — подбор игр по твоей библиотеке Steam
+            </Eyebrow>
+
+            {/* Ударное слово — третье: на нём фраза и заканчивается */}
+            <SplitHeading as="h1" className="font-display text-display-lg" stress={2}>
+              Открыл Steam. Полистал. Закрыл.
+            </SplitHeading>
+
+            <p className="mt-5 max-w-md text-lg leading-relaxed text-dim">
+              Знакомо. Игр много, а зайти не во что. imbored смотрит на твою библиотеку и называет
+              пять игр — с причиной, почему именно эти.
+            </p>
+
+            {/*
+              Две двери, и обе — якоря. Формы в герое нет ни в одном состоянии:
+              второй <input id="steam-profile"> сломал бы и label for, и
+              уникальность id, а два «Подобрать игру» на экране — это два
+              разных обещания.
+            */}
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a
+                href="#primer"
+                className="rounded-[14px] bg-ember px-6 py-3 font-semibold text-on-ember transition hover:brightness-110"
+              >
+                Посмотреть, как это работает
+              </a>
+              <a href="#connect" className="glass glass-hover rounded-[14px] px-6 py-3 text-sm">
+                Подключить Steam
+              </a>
+            </div>
+          </div>
+        </div>
+
+        {poster && (
+          <Link
+            href={`/game/${poster.appid}`}
+            className="tap tap-tight absolute bottom-4 right-5 z-10"
+          >
+            <MetaLine tone="faint">Кадр · {poster.name}</MetaLine>
+          </Link>
+        )}
+      </section>
+
+      <Primer
+        picks={demo.picks}
+        wall={demo.wall}
+        libraryCount={demo.libraryCount}
+        libraryHours={demo.libraryHours}
+      />
+
+      {/* СОВМЕСТИМОСТЬ: то же самое — числами, а не обещанием */}
+      <section className="mx-auto w-full max-w-6xl px-5 pb-20 md:pb-28">
+        <Eyebrow className="mb-3">Совместимость и пати</Eyebrow>
+        <h2 className="font-display text-display-md">
+          Сравним библиотеки по-настоящему, а не по анкете
+        </h2>
+        <p className="mt-3 max-w-xl text-sm leading-relaxed text-dim">
+          Демо-игрок и демо-друг: {demo.compat.rows.length}{' '}
+          {plural(demo.compat.rows.length, 'общая игра', 'общие игры', 'общих игр')},{' '}
+          {demo.compat.hours.toLocaleString('ru-RU')}{' '}
+          {plural(demo.compat.hours, 'час', 'часа', 'часов')} на двоих. Часы настоящие — с
+          обеих сторон.
+        </p>
+
+        <ul className="mt-8 flex max-w-2xl flex-col gap-1.5">
+          {demo.compat.rows.map((r) => (
+            <li key={r.name} className="glass flex items-baseline gap-4 rounded-[14px] px-4 py-2.5">
+              <span className="min-w-0 flex-1 truncate text-sm">{r.name}</span>
+              <span className="shrink-0 font-mono text-sm tabular-nums text-ember-text">
+                {r.a.toLocaleString('ru-RU')}
+              </span>
+              <span className="shrink-0 text-xs text-faint">/</span>
+              <span className="shrink-0 font-mono text-sm tabular-nums text-dim">
+                {r.b.toLocaleString('ru-RU')}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        {/*
+          Отказ от процента — самое убедительное, что здесь можно сказать.
+          Он считается по редкости тегов во всём каталоге, а у гостя каталога
+          нет: посчитанный на демо, он был бы красивым и неправдивым.
+        */}
+        <p className="mt-6 max-w-xl text-sm leading-relaxed text-dim">
+          Процент совпадения вкусов мы тут не показываем. Он считается по редкости тегов во всём
+          каталоге, а не по этой паре, — на демо он был бы красивым и неправдой. Появится, когда
+          обе библиотеки настоящие.
+        </p>
+      </section>
+
+      {/* РЕПЕРТУАР */}
+      <section className="mx-auto w-full max-w-6xl px-5 pb-20 md:pb-28">
+        <SectionLabel as="h2" className="mb-6">
+          Что здесь ещё есть
+        </SectionLabel>
+        <ul className="flex flex-col">
+          {REPERTOIRE.map((item, i) => (
+            <li key={item.href} className="border-t border-edge last:border-b">
+              <Link
+                href={item.href}
+                className="group flex flex-wrap items-baseline gap-x-4 gap-y-1 py-4 transition-colors hover:text-ink"
+              >
+                <MetaLine tone="faint" className="w-6 shrink-0 tabular-nums">
+                  {String(i + 1).padStart(2, '0')}
+                </MetaLine>
+                <span className="font-display text-display-xs">{item.name}</span>
+                {/* max-w-md — мера набора: без потолка строка расписания
+                    растягивалась на 135 символов при комфортных 45–75. */}
+                <span className="min-w-0 max-w-md flex-1 text-sm leading-relaxed text-dim">
+                  {item.line}
+                </span>
+                <span
+                  aria-hidden
+                  className="ml-auto shrink-0 text-dim transition-transform group-hover:translate-x-1"
+                >
+                  →
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {/* О ДЕНЬГАХ */}
+      <section className="mx-auto w-full max-w-6xl px-5 pb-20 md:pb-28">
+        <Eyebrow className="mb-3">О деньгах</Eyebrow>
+        <p className="max-w-2xl font-display text-display-sm">
+          Мы никогда не продаём места в выдаче. Рекомендация — это доверие, а доверие не продаётся.
+        </p>
+        <ul className="mt-6 flex max-w-xl flex-col gap-2 text-sm text-dim">
+          <li>Рекламы в подборе нет.</li>
+          <li>imbored бесплатен. И останется таким.</li>
+          <li>Скидка — наклон, а не сортировка: витрину скидок ты и сам откроешь.</li>
+        </ul>
+        <p className="mt-6 text-xs text-faint">
+          imbored — независимый проект, не связанный с Valve Corporation. Steam и логотип Steam —
+          товарные знаки Valve Corporation.
+        </p>
+      </section>
+
+      {/* КАССА: единственная форма страницы */}
+      <section id="connect" className="mx-auto w-full max-w-6xl px-5 pb-24">
+        <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
+          <div className="max-w-md">
+            <h2 className="font-display text-display-md">Подключим твою?</h2>
+            <p className="mt-3 text-sm leading-relaxed text-dim">
+              Дальше — три вопроса и пять карточек. Библиотека нужна затем же, зачем она нужна была
+              выше: без неё подбирать не из чего.
+            </p>
+          </div>
+          {/*
+            ФОЛБЭК ЗДЕСЬ — НЕ ЗАГЛУШКА, А РАБОЧАЯ ДВЕРЬ.
+            ConnectCard читает адрес через useSearchParams, а на
+            предрендеренном маршруте всё дерево до ближайшей границы Suspense
+            уходит в клиентский рендер: в статический HTML попадает именно
+            фолбэк. Проверено на собранной странице — с пустой коробкой в
+            .next/server/app/index.html не было формы вовсе, то есть без JS
+            подключиться было негде, а якорь «Подключить Steam» из героя вёл в
+            пустоту. Поэтому здесь лежит то, что работает без единой строчки
+            скрипта: обычная ссылка в Steam и та же сноска про доступ.
+          */}
+          <Suspense fallback={<ConnectFallback />}>
+            <ConnectCard />
+          </Suspense>
+        </div>
+      </section>
+    </>
   )
 }
