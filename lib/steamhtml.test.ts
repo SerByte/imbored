@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { blocksToText, decodeEntities, parseSteamHtml } from './steamhtml'
+import { blocksToText, decodeEntities, parseSteamHtml, stripBbcode } from './steamhtml'
 
 /**
  * Тело новости — недоверенный HTML от издателя игры. Проверяем не только то,
@@ -187,5 +187,65 @@ describe('blocksToText', () => {
   test('длина ограничена', () => {
     const blocks = parseSteamHtml('<p>' + 'я'.repeat(5000) + '</p>')
     expect(blocksToText(blocks, 100)).toHaveLength(100)
+  })
+})
+
+/**
+ * BBCode, доехавший до текста, — это неразобранная разметка, а правило файла
+ * говорит: что не разобрали, то и не показываем. Для HTML оно соблюдалось, а
+ * для BBCode нет: часть новостей Steam приходит с ним внутри, и он проходил
+ * мимо правила текстом.
+ */
+describe('остатки BBCode', () => {
+  test('структурные теги вырезаются из текста', () => {
+    expect(stripBbcode('было [/url] стало')).toBe('было   стало')
+    expect(stripBbcode('[h3]1.15 FAQs[/h3]')).toBe(' 1.15 FAQs ')
+    expect(stripBbcode('[b]How much is 1.15?[/b]')).toBe(' How much is 1.15? ')
+    expect(stripBbcode('[url=https://example.com]тут[/url]')).toBe(' тут ')
+  })
+
+  /** В скобках бывает и настоящий текст — патчноут Factorio про rich text. */
+  test('незнакомые скобки не трогаем', () => {
+    expect(stripBbcode('Fixed [sprite] rich text tag being accessible')).toBe(
+      'Fixed [sprite] rich text tag being accessible',
+    )
+    expect(stripBbcode('урон [12-18] в секунду')).toBe('урон [12-18] в секунду')
+  })
+
+  test('замена пробелом, а не склейкой слов', () => {
+    expect(stripBbcode('слово[/url]слово').replace(/\s+/g, ' ')).toBe('слово слово')
+  })
+
+  test('в разобранном дереве тегов не остаётся', () => {
+    const blocks = parseSteamHtml(
+      '<p>Смотри <a href="https://example.com">анонс</a>[/url] [h3]FAQ[/h3] [b]сколько?[/b] бесплатно.</p>',
+    )
+    const text = JSON.stringify(blocks)
+    expect(text).not.toContain('[/url]')
+    expect(text).not.toContain('[h3]')
+    expect(text).not.toContain('[b]')
+    expect(text).toContain('FAQ')
+    expect(text).toContain('бесплатно')
+  })
+
+  /**
+   * Потолок длины куска проверялся ДО склейки и после неё не применялся: в
+   * базе нашёлся кусок в 5865 символов при потолке в 2000 — подпись одной
+   * ссылки, сплошной строкой на экране.
+   */
+  test('потолок длины куска держится и при склейке', () => {
+    /*
+     * Куски обязаны прийти РАЗНЫМИ вызовами add() с одинаковым состоянием —
+     * иначе срабатывает ветка создания, которая обрезала и до правки. Их
+     * разделяют <span>: тег не меняет ни href, ни жирность, поэтому куски
+     * склеиваются, а это и есть проверяемый путь.
+     */
+    const chunk = 'а'.repeat(900)
+    const html = `<p>${chunk}<span>${chunk}</span>${chunk}<span>${chunk}</span></p>`
+    const blocks = parseSteamHtml(html)
+    for (const b of blocks) {
+      if (b.kind !== 'p') continue
+      for (const run of b.runs) expect(run.text.length).toBeLessThanOrEqual(2000)
+    }
   })
 })
