@@ -4,6 +4,7 @@ import { BlurBand } from '@/components/BlurBand'
 import { CinemaCollage } from '@/components/CinemaCollage'
 import { HeroArt } from '@/components/HeroArt'
 import { ConnectCard } from '@/components/landing/ConnectCard'
+import { ConnectFallback } from '@/components/landing/ConnectFallback'
 import { HeroNotice } from '@/components/landing/HeroNotice'
 import { Primer } from '@/components/landing/Primer'
 import { Eyebrow, MetaLine, SectionLabel } from '@/components/Labels'
@@ -14,17 +15,34 @@ import { topCatalogGames } from '@/lib/db'
 import { getDb, nowSec } from '@/lib/server'
 
 /**
- * ГЛАВНАЯ, КОТОРАЯ СНАЧАЛА ПОКАЗЫВАЕТ, А ПОТОМ ПРОСИТ.
+ * ГЛАВНАЯ: ДОСТУП СРАЗУ, РАССКАЗ — НИЖЕ.
  *
- * Прежняя главная была одним экраном: логотип, одна фраза и форма входа в
- * Steam. Человек, пришедший впервые, отдавал доступ к библиотеке, не увидев ни
- * одной карточки, — решение он принимал вслепую. Внутри при этом восемь
+ * Здесь сошлись две главные, и каждая была права наполовину.
+ *
+ * Первая была одним экраном: логотип, одна фраза и форма входа в Steam.
+ * Человек, пришедший впервые, отдавал доступ к библиотеке, не увидев ни одной
+ * карточки, — решение он принимал вслепую. Внутри при этом восемь
  * проработанных экранов, которых он не видел.
  *
- * Теперь порядок обратный. Сначала работа продукта на настоящем конвейере
- * (секция «Так это выглядит»), потом то, что он ещё умеет, и только в конце
- * касса. Кнопка входа никуда не делась и доступна с первого экрана якорем —
- * но она больше не единственное, что можно сделать.
+ * Вторая перевернула порядок: сначала работа продукта на настоящем конвейере
+ * («Так это выглядит»), потом то, что он ещё умеет, и только в конце касса с
+ * формой. Незнакомцу стало честно — а всем остальным стало дальше. Вошедшему,
+ * приглашённому в пати и вернувшемуся из Steam с ?error= единственное
+ * действие сайта отъехало на четыре секции вниз; строку ошибки под формой при
+ * этом не было видно вовсе, потому что Steam возвращает человека на верх
+ * страницы.
+ *
+ * Теперь оба порядка стоят одновременно, и спорить им не о чем: карточка
+ * подключения лежит в самом герое (доступ с первого кадра, включая демо без
+ * Steam), а рассказ о продукте — ниже по прокрутке, для тех, кто ещё не
+ * решил. Кнопка героя ведёт вниз, к рассказу; кнопка внизу — обратно к
+ * карточке якорем #connect, а не второй её копией.
+ *
+ * ПРОКРУТКА НИЧЕГО НЕ АНИМИРУЕТ. Ни одна секция ниже не появляется, не едет и
+ * не масштабируется от положения скролла: страница — это документ, который
+ * читают, а не аттракцион. Единственное, что вообще следит здесь за
+ * прокруткой, — components/ChromeZone.tsx, и он не двигает контент, а красит
+ * шапку, чтобы её было видно над светлым фоном.
  *
  * СТРАНИЦА СЕРВЕРНАЯ И СТАТИЧЕСКАЯ. Ни cookies(), ни currentSteamId(), ни
  * пропа searchParams: любое из трёх сделало бы её динамической и перечеркнуло
@@ -94,29 +112,6 @@ const REPERTOIRE = [
   },
 ]
 
-/** Дверь, которая работает без JS. См. комментарий у Suspense ниже. */
-function ConnectFallback() {
-  return (
-    <div className="w-full max-w-md">
-      <div className="glass flex min-h-[232px] flex-col justify-center gap-3 rounded-[20px] p-6">
-        <a
-          href="/api/auth/steam"
-          className="rounded-[14px] bg-ember py-3 text-center font-semibold text-on-ember transition hover:brightness-110"
-        >
-          Войти через Steam
-        </a>
-        <p className="text-xs leading-relaxed text-dim">
-          Пароль не спрашиваем — вход идёт на стороне Steam. Читаем только список игр и наигранные
-          часы, ничего не публикуем.{' '}
-          <Link href="/privacy" className="tap tap-tight underline decoration-edge hover:text-ink">
-            Подробнее
-          </Link>
-        </p>
-      </div>
-    </div>
-  )
-}
-
 export default async function Home() {
   const demo = landingDemo(nowSec())
   const poster = await heroPoster()
@@ -127,8 +122,19 @@ export default async function Home() {
         Кино-зона, но НЕ media-full: ниже начинается обычный контент, и подвал
         под ним обязан слушаться темы. Раньше главная была одним тёмным
         экраном на всю страницу — отсюда и класс, и он теперь неверен.
+
+        id стоит на секции, а не на карточке: якорь снизу должен возвращать
+        человека к ПЕРВОМУ ЭКРАНУ целиком — с заголовком и обещанием, — а не
+        подрезать его так, чтобы над карточкой торчал обрубок кадра.
+
+        items-center, а не md:items-end: прижимать содержимое к низу было верно,
+        пока в герое стояли две строки текста и кино дышало сверху. С карточкой
+        в 357 px содержимое встало бы в подвал кадра и упёрлось в кредит.
       */}
-      <section className="media-dark relative flex min-h-[100svh] items-center overflow-hidden md:items-end">
+      <section
+        id="connect"
+        className="media-dark relative flex min-h-[100svh] items-center overflow-hidden"
+      >
         {poster ? (
           <HeroArt
             appid={poster.appid}
@@ -152,42 +158,86 @@ export default async function Home() {
         <BlurBand height="46vh" dir="up" />
         <div aria-hidden className="grain" />
 
-        <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-32 md:pb-24">
-          <div className="max-w-2xl">
-            <Suspense fallback={null}>
-              <HeroNotice />
-            </Suspense>
+        {/*
+          Титр и карточка — рядом, а не одно под другим через четыре секции.
+          На телефоне колонки складываются, и порядок в разметке становится
+          порядком на экране: сначала «во что ты вообще попал», сразу за ним —
+          поле и кнопка.
 
-            <Eyebrow tone="faint" className="mb-4">
-              imbored — подбор игр по твоей библиотеке Steam
-            </Eyebrow>
-
-            {/* Ударное слово — третье: на нём фраза и заканчивается */}
-            <SplitHeading as="h1" className="font-display text-display-lg" stress={2}>
-              Открыл Steam. Полистал. Закрыл.
-            </SplitHeading>
-
-            <p className="mt-5 max-w-md text-lg leading-relaxed text-dim">
-              Знакомо. Игр много, а зайти не во что. imbored смотрит на твою библиотеку и называет
-              пять игр — с причиной, почему именно эти.
-            </p>
-
+          Замерено на 375×667 — самом маленьком экране, который стоит считать:
+          подводка, заголовок и абзац занимают 316 px, карточка начинается на
+          460, поле — на 484, парадная кнопка кончается на 594. То есть главное
+          действие помещается в первый экран целиком, но с запасом всего в
+          73 px — поэтому отступ сверху на мобильном на 16 px меньше
+          десктопного (pt-28 против pt-32), и поэтому же абзац под заголовком
+          не должен расти: пятая строка съест почти половину запаса.
+        */}
+        <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-28 md:pb-24 md:pt-32">
+          <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:gap-14">
             {/*
-              Две двери, и обе — якоря. Формы в герое нет ни в одном состоянии:
-              второй <input id="steam-profile"> сломал бы и label for, и
-              уникальность id, а два «Подобрать игру» на экране — это два
-              разных обещания.
+              Две колонки с lg, а не с md, и это замер, а не вкус. На 768 px
+              правая колонка забирает свои 26rem, гэп — ещё 56, и титру
+              остаётся 256: строка-подводка ломается на три строки, а заголовок
+              в 48 px переносится по слогам. До 1024 px колонки складываются, и
+              экран читается сверху вниз — как на телефоне.
             */}
-            <div className="mt-8 flex flex-wrap gap-3">
+            <div className="min-w-0 max-w-2xl">
+              <Suspense fallback={null}>
+                <HeroNotice />
+              </Suspense>
+
+              <Eyebrow tone="faint" className="mb-4">
+                imbored — подбор игр по твоей библиотеке Steam
+              </Eyebrow>
+
+              {/* Ударное слово — третье: на нём фраза и заканчивается */}
+              <SplitHeading as="h1" className="font-display text-display-lg" stress={2}>
+                Открыл Steam. Полистал. Закрыл.
+              </SplitHeading>
+
+              <p className="mt-5 max-w-md text-lg leading-relaxed text-dim">
+                Знакомо. Игр много, а зайти не во что. imbored смотрит на твою библиотеку и
+                называет пять игр — с причиной, почему именно эти.
+              </p>
+
+              {/*
+                Тихая строка, а не вторая парадная кнопка. Парадная на экране
+                ровно одна, и она в карточке справа: две кнопки одного веса
+                рядом — это два разных обещания и лишняя развилка там, где
+                человек уже может просто начать.
+              */}
               <a
                 href="#primer"
-                className="rounded-[14px] bg-ember px-6 py-3 font-semibold text-on-ember transition hover:brightness-110"
+                className="tap mt-6 inline-block text-sm text-dim underline decoration-edge underline-offset-4 transition-colors hover:text-ink"
               >
-                Посмотреть, как это работает
+                Сначала посмотреть, как это работает ↓
               </a>
-              <a href="#connect" className="glass glass-hover rounded-[14px] px-6 py-3 text-sm">
-                Подключить Steam
-              </a>
+            </div>
+
+            {/*
+              ОСТРОВОК ПЕРВЫЙ ИЗ ДВУХ. ConnectCard читает адрес через
+              useSearchParams, а на предрендеренном маршруте всё дерево до
+              ближайшей границы Suspense уходит в клиентский рендер: в
+              статический HTML попадает фолбэк. Поэтому граница обнимает
+              карточку и только её — заголовок, стена и пятёрка обязаны лежать
+              в статической разметке.
+
+              Фолбэк здесь — не заглушка, а рабочая дверь: см. докблок
+              components/landing/ConnectFallback.tsx. Он же держит высоту
+              коробки, чтобы подмена не двигала первый экран.
+            */}
+            {/*
+              justify-self здесь стоять НЕ ДОЛЖЕН, и это стоило одного дефекта.
+              С md:justify-self-end элемент сетки перестаёт растягиваться и
+              берёт ширину по содержимому: фолбэк с абзацем сноски занимал все
+              416 px колонки, а карточка вошедшего — «С возвращением» и две
+              строки — схлопывалась до 252. То есть коробку, высоту которой
+              мы так старательно удержали, вместо этого дёргало по ширине.
+            */}
+            <div className="min-w-0">
+              <Suspense fallback={<ConnectFallback />}>
+                <ConnectCard />
+              </Suspense>
             </div>
           </div>
         </div>
@@ -300,30 +350,37 @@ export default async function Home() {
         </p>
       </section>
 
-      {/* КАССА: единственная форма страницы */}
-      <section id="connect" className="mx-auto w-full max-w-6xl px-5 pb-24">
-        <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
+      {/*
+        ВОЗВРАТ, А НЕ ВТОРАЯ КАССА.
+
+        Здесь стоял второй экземпляр карточки — и это было верно, пока
+        карточка была единственной и лежала внизу. Теперь она в герое, а
+        копия сломала бы ровно то, что карточка обещает: два
+        <input id="steam-profile"> в одном документе — это сломанный label
+        for и неуникальный id, а две парадные кнопки «Подобрать игру» — два
+        разных обещания на одной странице.
+
+        Поэтому внизу якорь. Он же единственный способ не соврать
+        приглашённому: адрес входа собирается из ?join / ?compat / ?next, и
+        голая ссылка «Войти через Steam» тут увела бы человека из пати ABC123
+        на общий подбор. Логика назначения живёт в одном месте — в карточке.
+      */}
+      <section className="mx-auto w-full max-w-6xl px-5 pb-24">
+        <div className="glass flex flex-col gap-6 rounded-[20px] p-8 md:flex-row md:items-center md:justify-between md:p-10">
           <div className="max-w-md">
             <h2 className="font-display text-display-md">Подключим твою?</h2>
             <p className="mt-3 text-sm leading-relaxed text-dim">
-              Дальше — три вопроса и пять карточек. Библиотека нужна затем же, зачем она нужна была
-              выше: без неё подбирать не из чего.
+              Дальше — три вопроса и пять карточек. Библиотека нужна затем же, зачем она нужна
+              была выше: без неё подбирать не из чего. Не хочешь отдавать свою — на первом экране
+              есть демо без Steam.
             </p>
           </div>
-          {/*
-            ФОЛБЭК ЗДЕСЬ — НЕ ЗАГЛУШКА, А РАБОЧАЯ ДВЕРЬ.
-            ConnectCard читает адрес через useSearchParams, а на
-            предрендеренном маршруте всё дерево до ближайшей границы Suspense
-            уходит в клиентский рендер: в статический HTML попадает именно
-            фолбэк. Проверено на собранной странице — с пустой коробкой в
-            .next/server/app/index.html не было формы вовсе, то есть без JS
-            подключиться было негде, а якорь «Подключить Steam» из героя вёл в
-            пустоту. Поэтому здесь лежит то, что работает без единой строчки
-            скрипта: обычная ссылка в Steam и та же сноска про доступ.
-          */}
-          <Suspense fallback={<ConnectFallback />}>
-            <ConnectCard />
-          </Suspense>
+          <a
+            href="#connect"
+            className="shrink-0 rounded-[14px] bg-ember px-6 py-3 text-center font-semibold text-on-ember transition hover:brightness-110"
+          >
+            Наверх, к подключению ↑
+          </a>
         </div>
       </section>
     </>
