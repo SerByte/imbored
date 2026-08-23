@@ -43,6 +43,27 @@ const GAP = 14
 const SCENE_KEYS = ['pain', 'engine', 'compat', 'more', 'money'] as const
 
 export function GameRibbon({ games }: { games: RibbonGame[] }) {
+  if (games.length === 0) return null
+  return (
+    <Portal>
+      <RibbonLayer games={games} />
+    </Portal>
+  )
+}
+
+/**
+ * Слой отдельным компонентом, а не телом портала.
+ *
+ * Портал отдаёт null до монтирования (document.body на сервере нет), и его
+ * содержимое появляется на СЛЕДУЮЩЕМ рендере. Эффект, живущий снаружи,
+ * отрабатывает раньше — ссылка на узел ещё пуста, лента строится в никуда и
+ * больше не пересобирается. Проверено: колонок ноль, обложек ноль, коробка
+ * на месте.
+ *
+ * Отдельный компонент внутри портала монтируется вместе с разметкой, и его
+ * эффект видит узел.
+ */
+function RibbonLayer({ games }: { games: RibbonGame[] }) {
   const gridRef = useRef<HTMLDivElement>(null)
 
   useGSAP(
@@ -196,19 +217,15 @@ export function GameRibbon({ games }: { games: RibbonGame[] }) {
     { dependencies: [games] },
   )
 
-  if (games.length === 0) return null
-
   return (
-    <Portal>
-      <div aria-hidden className="ribbon">
-        <div
-          ref={gridRef}
-          className="ribbon-grid"
-          style={{ opacity: RIBBON_REST.opacity, filter: `saturate(${RIBBON_REST.sat})` }}
-        />
-        <div className="ribbon-scrim" />
-        <div className="ribbon-vignette" />
-      </div>
-    </Portal>
+    <div aria-hidden className="ribbon">
+      <div
+        ref={gridRef}
+        className="ribbon-grid"
+        style={{ opacity: RIBBON_REST.opacity, filter: `saturate(${RIBBON_REST.sat})` }}
+      />
+      <div className="ribbon-scrim" />
+      <div className="ribbon-vignette" />
+    </div>
   )
 }
