@@ -345,6 +345,35 @@ function Player() {
   }, [])
 
   /** Смена режима: тот же прогрев, другой вопрос к движку — и выдача с начала */
+  /*
+   * «Попробовать снова» пробует снова.
+   *
+   * Кнопка вела на /quiz, то есть отправляла заново отвечать на три вопроса.
+   * Настроение при этом было ни при чём: экран показывается, когда подбор не
+   * собрался, и абзац над кнопкой прямо говорит «попробуй ещё раз через
+   * минуту» — то есть обещает повтор запроса, а не новую анкету.
+   *
+   * Тот же разбор уже записан в app/error.tsx про пару reset/retry: «единственная
+   * кнопка экрана выглядела нажатой и не делала ничего». Здесь она делала —
+   * но не то, что написано.
+   *
+   * Неудача оставляет экран как есть: он и так про неудачу, а мигать с него
+   * некуда. Поэтому никакого setPhase в ветке !got.
+   */
+  const [retrying, setRetrying] = useState(false)
+  const retry = useCallback(async () => {
+    if (retrying) return
+    setRetrying(true)
+    try {
+      const got = await fetchPicks(scope)
+      if (!got) return
+      setIndex(roulette ? weightedRandomIndex(got.length) : 0)
+      setPhase(roulette ? 'spin' : 'reveal')
+    } finally {
+      setRetrying(false)
+    }
+  }, [retrying, fetchPicks, scope, roulette])
+
   const switchScope = useCallback(
     async (next: Scope) => {
       if (next === scope || switching) return
@@ -420,8 +449,16 @@ function Player() {
         <p className="text-dim text-sm max-w-md">
           Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.
         </p>
-        <Link href="/quiz" className="tap text-ember-text hover:underline text-sm">
-          Попробовать снова
+        <button
+          onClick={() => void retry()}
+          disabled={retrying}
+          className="tap cursor-pointer text-sm text-ember-text hover:underline disabled:opacity-50"
+        >
+          {retrying ? 'Пробую…' : 'Попробовать снова'}
+        </button>
+        {/* Прежний адрес кнопки остаётся доступен — но под своим именем. */}
+        <Link href="/quiz" className="tap text-sm text-dim transition-colors hover:text-ink">
+          Изменить настроение →
         </Link>
       </div>
     )
@@ -476,12 +513,28 @@ function Player() {
 
   const pick = picks[Math.min(index, picks.length - 1)]
   const others = picks.filter((p) => p.appid !== pick.appid)
+  /*
+   * «Почему она?» — то, чего НЕ ВИДНО выше, и только это.
+   *
+   * Здесь была третья строка, `общие теги: …`. С тех пор как совпавшие теги
+   * помечаются прямо в чипсах (components/TagChips.tsx), один и тот же факт
+   * оказался на экране трижды в полутора сотнях пикселей: фразой причины
+   * («её теги (Multiplayer, Competitive) совпадают…»), точкой на чипсе и
+   * списком в этой панели.
+   *
+   * И третья копия была не просто лишней — она СПОРИЛА с двумя первыми.
+   * Замерено на живом ответе: панель перечисляла «Multiplayer, Competitive,
+   * Strategy», а чипсов с отметкой два. Strategy — настоящий общий тег, но в
+   * четвёрку самых частых тегов игры он не попал, поэтому чипса у него нет
+   * вовсе: панель называла то, чего на странице не найти.
+   *
+   * Осталось ровно дополняющее: насколько сильно совпало и что попало в
+   * выбранный вайб. Ни того, ни другого ни фраза, ни чипсы не говорят.
+   */
   const whyParts: string[] = []
   if (pick.signals) {
     if (pick.signals.matchPercent !== null)
       whyParts.push(`совпадение со вкусом ${pick.signals.matchPercent}%`)
-    if (pick.signals.sharedTags.length)
-      whyParts.push(`общие теги: ${pick.signals.sharedTags.join(', ')}`)
     if (pick.signals.moodTags.length)
       whyParts.push(`под вайб: ${pick.signals.moodTags.join(', ')}`)
   }
