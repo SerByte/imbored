@@ -95,7 +95,8 @@ export async function checkRate(db: Db, o: RateOptions): Promise<RateVerdict> {
       sql: `INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 1, ?)
             ON CONFLICT(key) DO UPDATE SET count = count + 1
             RETURNING count`,
-      // Живём вдвое дольше окна: подметание идёт из крона раз в час, и строка,
+      // Живём вдвое дольше окна: подметание идёт из суточного блока крона
+      //  новостей (app/api/cron/news), и строка,
       // умершая ровно в конце окна, всё равно дождалась бы его.
       args: [key, o.nowSec + o.windowSec * 2],
     })
