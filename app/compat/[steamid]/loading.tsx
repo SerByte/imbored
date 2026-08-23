@@ -16,7 +16,7 @@ export default function CompatLoading() {
   return (
     <SkelPage className="flex-1">
       <section
-        className="media-dark relative flex flex-col justify-end overflow-hidden"
+        className="media-dark media-full relative flex flex-col justify-end overflow-hidden"
         style={{ minHeight: '88svh' }}
       >
         <div aria-hidden className="grain" />

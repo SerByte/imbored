@@ -180,7 +180,7 @@ function Landing() {
   }
 
   return (
-    <div className="media-dark relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
+    <div className="media-dark media-full relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
       <CinemaCollage />
 
       <div className="relative w-full max-w-xl flex flex-col items-center text-center gap-8">
