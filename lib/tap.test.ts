@@ -76,11 +76,28 @@ const TEXTY = /\btext-(?:xs|sm|base|dim|ink|faint|ember-text)\b/
  * Ссылки внутри предложения — исключение 2.5.8 «Inline». У каждой строки
  * причина: без неё через полгода не отличить исключение от пропуска.
  */
-const INLINE: Record<string, string> = {
-  'components/NewsBody.tsx:17': 'ссылки в теле чужого патчноута — их там сколько угодно и подряд',
-}
-
 type Hit = { at: string; cls: string }
+
+const INLINE: Array<{ file: string; cls: string; why: string }> = [
+  {
+    file: 'components/NewsBody.tsx',
+    cls: 'text-ember-text hover:underline underline-offset-2',
+    why: 'ссылки в теле чужого патчноута — их там сколько угодно и подряд',
+  },
+]
+
+/**
+ * Исключение опознаётся по файлу и НАБОРУ КЛАССОВ, а не по номеру строки.
+ *
+ * Ключом был `файл:строка`, и это оказалось хрупко ровно так, как и звучит:
+ * добавление одного импорта в NewsBody.tsx сдвинуло ссылку с 17-й строки на
+ * 21-ю, и сторож разом сообщил и о непокрытой цели, и о протухшем
+ * исключении — хотя разметка не менялась вовсе. Классы переживают правки,
+ * не относящиеся к самой ссылке.
+ */
+function exempt(hit: Hit): boolean {
+  return INLINE.some((x) => hit.at.startsWith(`${x.file}:`) && hit.cls === x.cls)
+}
 
 function scan(): Hit[] {
   const files: string[] = []
@@ -116,7 +133,7 @@ describe('зона попадания', () => {
   const hits = scan()
 
   test('у текстовых ссылок-строк есть .tap', () => {
-    const missing = hits.filter((h) => !(h.at in INLINE)).map((h) => `${h.at} — ${h.cls}`)
+    const missing = hits.filter((h) => !exempt(h)).map((h) => `${h.at} — ${h.cls}`)
     expect(
       missing,
       'высота такой ссылки равна высоте строки (16–20 px) — допиши tap, см. блок про зону попадания в globals.css',
@@ -129,8 +146,9 @@ describe('зона попадания', () => {
    * с разметкой.
    */
   test('в списке исключений нет протухших строк', () => {
-    const live = new Set(hits.map((h) => h.at))
-    const stale = Object.keys(INLINE).filter((at) => !live.has(at))
+    const stale = INLINE.filter(
+      (x) => !hits.some((h) => h.at.startsWith(`${x.file}:`) && h.cls === x.cls),
+    ).map((x) => `${x.file} — ${x.cls}`)
     expect(stale, 'эти ссылки уже не подходят под правило — вычеркни их из INLINE').toEqual([])
   })
 

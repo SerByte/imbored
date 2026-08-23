@@ -138,6 +138,34 @@ const HEADING = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
 const LIST = new Set(['ul', 'ol'])
 const BOLD = new Set(['b', 'strong'])
 
+/**
+ * ОСТАТКИ BBCODE В ТЕКСТЕ.
+ *
+ * Правило файла — «что не разобрали, то и не покажем». Для HTML оно работает,
+ * но часть новостей Steam приезжает не HTML-ом: автор пишет патчноут в BBCode,
+ * лента Valve превращает в теги только часть, а остальное отдаёт как есть.
+ * Тогда неразобранная разметка проходит мимо правила — не блоком, а ТЕКСТОМ,
+ * и мы её честно печатаем.
+ *
+ * Замерено на 283 патчах локальной базы: так испорчены 4. Немного, но вид у
+ * поломки крупный — у Vampire Survivors в тело уезжает «[/url] [h3]1.15
+ * FAQs[/h3] [b]How much is 1.15?[/b]», а у Risk of Rain 2 подпись одной
+ * ссылки разрастается до 5865 символов сплошной разметки.
+ *
+ * Список тегов закрытый и намеренно узкий. Вырезать всё в квадратных скобках
+ * нельзя: в патчноуте Factorio есть строка «Fixed [sprite] rich text tag being
+ * accessible», где скобки — это текст, а не разметка.
+ *
+ * Заменяем пробелом, а не пустой строкой: иначе «слово[/url]слово» слипается.
+ * Пробелы схлопывает takeRuns сразу следом.
+ */
+const BBCODE_RESIDUE =
+  /\[\/?(?:url|h[1-6]|b|i|u|list|olist|\*|img|quote|code|strike|spoiler|previewyoutube|table|tr|th|td|noparse)(?:=[^\]]*)?\]/gi
+
+export function stripBbcode(text: string): string {
+  return text.includes('[') ? text.replace(BBCODE_RESIDUE, ' ') : text
+}
+
 const MAX_RUN_CHARS = 2000
 
 export function parseSteamHtml(html: string, maxBlocks = 120): NewsBlock[] {
@@ -160,7 +188,15 @@ export function parseSteamHtml(html: string, maxBlocks = 120): NewsBlock[] {
     if (!text) return
     const prev = runs[runs.length - 1]
     if (prev && prev.href === href && Boolean(prev.bold) === bold > 0) {
-      if (prev.text.length < MAX_RUN_CHARS) prev.text += text
+      /*
+       * Обрезка ПОСЛЕ склейки, а не только при создании куска. Условие
+       * проверяло длину до добавления и ничего не отрезало после: один кусок
+       * при потолке в 2000 вырастал в базе до 5865 символов — вся подпись
+       * ссылки целиком, сплошной строкой на экране.
+       */
+      if (prev.text.length < MAX_RUN_CHARS) {
+        prev.text = (prev.text + text).slice(0, MAX_RUN_CHARS)
+      }
       return
     }
     runs.push({
@@ -174,7 +210,7 @@ export function parseSteamHtml(html: string, maxBlocks = 120): NewsBlock[] {
   function takeRuns(): Inline[] {
     const out: Inline[] = []
     for (const r of runs) {
-      const text = r.text.replace(/\s+/g, ' ')
+      const text = stripBbcode(r.text).replace(/\s+/g, ' ')
       if (!text.trim()) continue
       out.push({ ...r, text })
     }

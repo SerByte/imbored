@@ -1,4 +1,4 @@
-import type { Inline, NewsBlock } from '@/lib/steamhtml'
+import { stripBbcode, type Inline, type NewsBlock } from '@/lib/steamhtml'
 
 /**
  * Рендер тела патчноута. Серверный, без единой строчки JS на клиенте.
@@ -6,6 +6,10 @@ import type { Inline, NewsBlock } from '@/lib/steamhtml'
  * На вход идёт уже разобранное дерево блоков, а не HTML: разметку издателя мы
  * не вставляем в страницу ни в каком виде, поэтому dangerouslySetInnerHTML тут
  * нет и не должно появиться. Текст экранирует React сам.
+ *
+ * stripBbcode здесь — не дубль защиты из парсера, а покрытие УЖЕ ЗАПИСАННЫХ
+ * блоков: дерево лежит в базе разобранным, и правка парсера дойдёт до старых
+ * записей только со следующим опросом ленты. До тех пор чистит показ.
  */
 
 function Runs({ runs }: { runs: Inline[] }) {
@@ -21,18 +25,18 @@ function Runs({ runs }: { runs: Inline[] }) {
               rel="nofollow noopener noreferrer"
               className="text-ember-text hover:underline underline-offset-2"
             >
-              {r.text}
+              {stripBbcode(r.text)}
             </a>
           )
         }
         if (r.bold) {
           return (
             <strong key={i} className="text-ink font-semibold">
-              {r.text}
+              {stripBbcode(r.text)}
             </strong>
           )
         }
-        return <span key={i}>{r.text}</span>
+        return <span key={i}>{stripBbcode(r.text)}</span>
       })}
     </>
   )
@@ -61,7 +65,7 @@ export function NewsBody({ blocks, className = '' }: { blocks: NewsBlock[]; clas
            */
           return (
             <h3 key={i} className="mt-2 text-sm font-semibold text-ink">
-              {b.text}
+              {stripBbcode(b.text)}
             </h3>
           )
         }
