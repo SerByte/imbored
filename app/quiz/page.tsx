@@ -242,6 +242,9 @@ function Quiz() {
       <div className="relative w-full max-w-2xl flex flex-col items-center gap-10">
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
+            <span className="text-xs text-faint">
+              {focus ? 'Только нераспакованное — одним тапом:' : 'Одним тапом:'}
+            </span>
             <div className="flex flex-wrap justify-center gap-2">
               {VIBE_PRESETS.map((p) => (
                 <button
@@ -267,21 +270,45 @@ function Quiz() {
               >
                 Мне повезёт
               </button>
-              <button
-                onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
-                className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
-              >
-                Ни разу не запускал
-              </button>
+              {/*
+                Кнопки нет, когда фокус УЖЕ включён — то есть когда сюда
+                пришли с /library по «Все нераспакованные →». Там она не
+                просто лишняя: подпись рядом в этот момент просит выбрать
+                настроение, а кнопка ставит NEUTRAL_MOOD и уезжает, то есть
+                отменяет ровно то, о чём её сосед только что попросил.
+              */}
+              {!focus && (
+                <button
+                  onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
+                  className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                >
+                  Ни разу не запускал
+                </button>
+              )}
             </div>
-            <span className="text-xs text-faint">
-              {focus
-                ? 'только то, что ты ни разу не запускал — выбери настроение:'
-                : 'одним тапом — или ответь на три вопроса:'}
-            </span>
           </div>
         )}
-        <div className="flex gap-2.5">
+
+        {/*
+          Подпись стоит ПЕРЕД тем, что объясняет, и это единственная правка
+          порядка на экране.
+
+          Раньше она была одна на оба пути и стояла ПОСЛЕ чипсов: «одним
+          тапом — или ответь на три вопроса:». Человек встречал семь
+          неподписанных кнопок и только под ними узнавал, что это ярлыки, —
+          а двоеточие в конце той же строки указывало вперёд, на вопросы.
+          Одна строка тянула в две стороны сразу и не помогала ни одной.
+
+          Теперь половин две, и каждая стоит над своим: «Одним тапом:» над
+          рядом ярлыков, «Или ответь на три вопроса:» — в одной группе с
+          точками шага, а не в одной с чипсами. Слова те же, переехало
+          только место.
+        */}
+        <div className="flex flex-col items-center gap-3">
+          {stepIndex === 0 && (
+            <span className="text-xs text-faint anim-rise">Или ответь на три вопроса:</span>
+          )}
+          <div className="flex gap-2.5">
           {STEPS.map((s, i) => (
             <span
               key={s.key}
@@ -294,8 +321,9 @@ function Quiz() {
               className={`h-2 w-2 rounded-full transition-[background-color,scale] duration-[320ms] ease-[cubic-bezier(.22,1,.36,1)] ${
                 i <= stepIndex ? 'bg-ember' : 'bg-track'
               } ${i === stepIndex ? 'scale-125' : ''}`}
-            />
-          ))}
+              />
+            ))}
+          </div>
         </div>
 
         {/* Шаги едут в сторону движения: вперёд — влево, «Назад» — вправо.
