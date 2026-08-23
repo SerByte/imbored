@@ -179,9 +179,26 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             <h2 className="font-display text-display-sm">
               Ты забыл, что они у тебя есть
             </h2>
-            <Link href="/quiz?from=untouched" className="tap text-sm text-ember-text hover:underline shrink-0">
-              Разгрести →
-            </Link>
+            {/*
+              Ссылка ведёт к ФИЛЬТРУ, а не к подбору, и это не мелочь.
+              Раньше здесь стояло второе «Разгрести →» на тот же адрес, что и
+              кнопка в карточке денег двумя блоками выше: одно действие в двух
+              весах — залитой кнопкой и тихой строкой, — то есть оформление
+              обещало разницу, которой нет.
+              Полка — дневная выборка из пяти, о чём прямо сказано ниже
+              («завтра на полке будут другие»). Естественный вопрос к такой
+              строке — «а какие ещё?», и до сих пор ответом было прокрутить
+              страницу и найти нужный чипс. Показываем только когда за полкой
+              действительно кто-то есть.
+            */}
+            {untouched > shelf.length && (
+              <Link
+                href="/library?state=untouched#wall"
+                className="tap text-sm text-ember-text hover:underline shrink-0"
+              >
+                Все нераспакованные →
+              </Link>
+            )}
           </div>
           {/* «По данным Steam», а не «ты никогда в это не играл»: ноль часов
               бывает и у офлайн-игры, и у аккаунта старше 2009 года */}
@@ -212,8 +229,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       )}
 
       {/* Чипсы — обычные ссылки: страница и так force-dynamic, а сетка на
-          тысячу плиток обязана остаться серверной и без обработчиков */}
-      <div className="flex flex-wrap gap-2 mb-6">
+          тысячу плиток обязана остаться серверной и без обработчиков.
+          id — цель ссылки с полки «запечатанного»: приводить к фильтру,
+          не показав самих чипсов, значит приводить в никуда. */}
+      <div id="wall" className="flex flex-wrap gap-2 mb-6">
         {LIBRARY_FILTERS.map((f) => (
           <Link
             key={f.id}
