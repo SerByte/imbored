@@ -31,12 +31,23 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
             key={`${n.forNames.join()}|${n.pendingNames.join()}`}
             className="glass rounded-[14px] px-4 py-3 text-sm flex flex-wrap items-baseline gap-x-1.5 gap-y-1"
           >
+            {/*
+              БЕЗ РОДА У ГЛАГОЛА. Здесь стояло «{имя} сошёлся» — мужской род,
+              выбранный за человека, которого мы не знаем: в комнате чужой ник
+              из Steam, и «Аня сошёлся на трёх играх» это не стилистика, а
+              ошибка рядом с именем.
+              Тот же довод уже записан двумя файлами выше, в RoomWaiting, где
+              имя намеренно не подставляется в «ждём»: произвольный ник нельзя
+              ни склонять, ни согласовывать с ним глагол. Двоеточие снимает и
+              то и другое — имя остаётся в именительном, а глагол согласуется
+              с числом игр, которое мы как раз знаем.
+            */}
             <span className={i === 0 ? 'text-ink' : 'text-dim'}>
-              {n.forNames.join(' и ')} {n.forNames.length > 1 ? 'сошлись' : 'сошёлся'} на
+              {n.forNames.join(' и ')}: {plural(n.games, 'совпала', 'совпало', 'совпало')}
             </span>
             <span className="font-mono tabular-nums text-ember-text">{n.games}</span>
             <span className={i === 0 ? 'text-ink' : 'text-dim'}>
-              {plural(n.games, 'игре', 'играх', 'играх')}.
+              {plural(n.games, 'игра', 'игры', 'игр')}.
             </span>
             <span className="text-faint">
               {n.mePending
