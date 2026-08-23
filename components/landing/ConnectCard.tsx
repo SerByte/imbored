@@ -7,6 +7,7 @@ import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { DESTINATIONS, destinationPath } from '@/lib/destination'
+import { plural } from '@/lib/plural'
 import {
   getServerSessionHint,
   getSessionHint,
@@ -39,6 +40,7 @@ const ERROR_TEXT: Record<string, string> = {
   notfound: 'Не нашли такой профиль. Проверь ссылку или ник.',
   badinput: 'Это не похоже на ссылку на Steam-профиль.',
   nosession: 'Сессия истекла — подключи библиотеку заново, и вернём тебя в пати.',
+  ratelimited: 'Слишком много попыток подряд. Подожди немного и попробуй снова.',
 }
 
 function PrivacyHelp() {
@@ -84,6 +86,8 @@ export function ConnectCard() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
   const [error, setError] = useState<string | null>(search.get('error'))
+  /** Минуты до снятия потолка: срок называет только заголовок Retry-After */
+  const [retryIn, setRetryIn] = useState<number | null>(null)
   const [session, setSession] = useState<{ authed: boolean; personaName: string | null } | null>(
     null,
   )
@@ -138,6 +142,14 @@ export function ConnectCard() {
       const data = (await res.json()) as { ok?: boolean; error?: string }
       if (data.ok) {
         router.push(target)
+        return
+      }
+      if (res.status === 429) {
+        const wait = Number(res.headers.get('Retry-After') ?? 0)
+        const min = Number.isFinite(wait) && wait > 0 ? Math.ceil(wait / 60) : 0
+        setError('ratelimited')
+        setRetryIn(min || null)
+        setBusy(null)
         return
       }
       setError(data.error ?? 'steam')
@@ -271,7 +283,9 @@ export function ConnectCard() {
 
       {error && error !== 'private' && (
         <p role="status" className="anim-rise text-sm text-danger">
-          {ERROR_TEXT[error] ?? 'Что-то пошло не так.'}
+          {error === 'ratelimited' && retryIn
+            ? `Слишком много попыток подряд. Попробуй снова через ${retryIn} ${plural(retryIn, 'минуту', 'минуты', 'минут')}.`
+            : (ERROR_TEXT[error] ?? 'Что-то пошло не так.')}
         </p>
       )}
       {error === 'private' && <PrivacyHelp />}

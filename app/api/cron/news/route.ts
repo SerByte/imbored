@@ -13,6 +13,7 @@ import {
   topCatalogAppids,
 } from '@/lib/db'
 import { runNewsSlice } from '@/lib/newsjob'
+import { sweepRateLimits } from '@/lib/ratelimit'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
@@ -76,6 +77,12 @@ export async function GET(req: Request) {
         // закрывшийся Steam, чем мёртвую игру, а отметка 'gone' до сих пор
         // была вечной. Раз в месяц на игру — цена пренебрежимая.
         await reviveGoneNewsPoll(db, now - REVIVE_AFTER_SEC, now)
+        // Заодно подметаем истёкшие окна ограничителя частоты. Из запроса это
+        // делать нельзя — лишняя запись на каждом обращении к дорогой ручке
+        // ровно там, где мы экономим, — а суточного прохода хватает: ключи
+        // содержат номер окна, поэтому старые строки не влияют на счёт и
+        // только занимают место.
+        await sweepRateLimits(db, now)
         await setCatalogMeta(db, ENROLL_KEY, String(now))
       }
       // digestLimit: 0 — пересказы уехали в /api/cron/digest со своим
