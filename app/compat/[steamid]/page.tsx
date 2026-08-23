@@ -244,7 +244,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         body="Кинь её кому-нибудь другому — сервис сравнит ваши библиотеки и покажет, во что вам зайти вместе."
       >
         <CopyOwn steamid={other} />
-        <Link href={`/portrait/${other}`} className="text-sm text-dim transition-colors hover:text-ink">
+        <Link href={`/portrait/${other}`} className="tap text-sm text-dim transition-colors hover:text-ink">
           Посмотреть свой портрет →
         </Link>
       </CompatNotice>
@@ -258,7 +258,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         body="Сравнивать пока не с чем. Можно кинуть ему свою ссылку — тогда сравнение соберётся с его стороны."
       >
         {me && <CopyOwn steamid={me} />}
-        <Link href="/compat" className="text-sm text-dim transition-colors hover:text-ink">
+        <Link href="/compat" className="tap text-sm text-dim transition-colors hover:text-ink">
           ← К своей ссылке
         </Link>
       </CompatNotice>

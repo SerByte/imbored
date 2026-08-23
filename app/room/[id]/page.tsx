@@ -335,7 +335,7 @@ export default function RoomPage() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Такой комнаты нет.</p>
-        <Link href="/room/new" className="text-ember-text hover:underline text-sm">
+        <Link href="/room/new" className="tap text-ember-text hover:underline text-sm">
           Создать свою →
         </Link>
       </div>
@@ -391,7 +391,7 @@ export default function RoomPage() {
               <button
                 onClick={joinAsDemoFriend}
                 disabled={busy}
-                className="text-sm text-dim hover:text-ink transition-colors"
+                className="tap text-sm text-dim hover:text-ink transition-colors"
               >
                 {busy ? 'Подключаю…' : 'Демо-друг (без Steam)'}
               </button>

@@ -124,7 +124,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Этот игрок ещё не подключал библиотеку к imbored.</p>
-        <Link href="/" className="text-ember-text hover:underline text-sm">
+        <Link href="/" className="tap text-ember-text hover:underline text-sm">
           Подключить свою →
         </Link>
       </div>

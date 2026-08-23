@@ -70,7 +70,7 @@ export function GameNews({ items }: { items: StoredNews[] }) {
                       href={item.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-dim hover:text-ink transition-colors self-start"
+                      className="tap text-xs text-dim hover:text-ink transition-colors self-start"
                     >
                       Оригинал в Steam
                     </a>

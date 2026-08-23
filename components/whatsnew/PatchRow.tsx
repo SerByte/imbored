@@ -168,7 +168,7 @@ export function PatchRow({
               <div className="mt-6 flex flex-wrap items-center gap-5 text-sm">
                 <Link
                   href={`/game/${item.appid}`}
-                  className="font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+                  className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                 >
                   Все патчи игры
                 </Link>
@@ -176,7 +176,7 @@ export function PatchRow({
                   href={item.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-dim underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+                  className="tap tap-tight text-dim underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                 >
                   Оригинал в Steam
                 </a>

@@ -297,7 +297,7 @@ export default function PrivacyPage() {
             answer={
               <>
                 Вопросы и запросы на удаление данных —{' '}
-                <a href="mailto:hello@imbored.cc" className="text-ember-text hover:underline">
+                <a href="mailto:hello@imbored.cc" className="tap text-ember-text hover:underline">
                   hello@imbored.cc
                 </a>
               </>

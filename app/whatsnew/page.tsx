@@ -83,7 +83,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
         </p>
         <Link
           href="/quiz"
-          className="text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+          className="tap text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
         >
           А пока подобрать игру →
         </Link>
@@ -177,7 +177,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                   Только крупные патчи.{' '}
                   <Link
                     href="/"
-                    className="font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+                    className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                   >
                     Подключи Steam
                   </Link>{' '}

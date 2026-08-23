@@ -389,7 +389,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             лендинг через экран прогрева, а квиз работает обоим — участник
             выбирает настроение и попадает в ту же выдачу. */}
         <div>
-          <Link href="/quiz" className="text-sm text-dim hover:text-ink transition-colors">
+          <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
             Подобрать игру под настроение →
           </Link>
         </div>

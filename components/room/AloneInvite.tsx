@@ -122,7 +122,7 @@ export function AloneInvite({
 /** Тихая строка «а можно и не тут» — одинаковая во всех режимах ожидания */
 export function RoomEscapeHatch({ className = '' }: { className?: string }) {
   return (
-    <Link href="/rooms" className={`text-sm text-dim hover:text-ink transition-colors ${className}`}>
+    <Link href="/rooms" className={`tap text-sm text-dim hover:text-ink transition-colors ${className}`}>
       Подсесть к другим →
     </Link>
   )
