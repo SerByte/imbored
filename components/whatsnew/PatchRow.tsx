@@ -15,6 +15,7 @@ import { byline } from '@/lib/byline'
 import { changesLabel, freshness } from './format'
 import { useNow } from './Now'
 import { MetaLine } from '@/components/Labels'
+import { stripGameName } from '@/lib/patchtitle'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -100,8 +101,10 @@ export function PatchRow({
             {studio ? <span className="text-xs text-dim">{studio}</span> : null}
           </span>
 
+          {/* Название игры уже стоит строкой выше — в заголовке патча оно лишнее.
+              Каждый пятый заголовок из Steam начинается именно с него. */}
           <span className="text-sm font-medium leading-snug text-ink/90 md:text-base">
-            {item.title}
+            {stripGameName(item.title, name)}
           </span>
 
           {item.tldr ? (
