@@ -653,6 +653,83 @@ textarea:focus-visible {
   }
 }
 
+/*
+ * ЛЕНТА ИГР ЗА ГЛАВНОЙ.
+ *
+ * Слой фиксированный и лежит в портале у <body>: под плавной прокруткой fixed
+ * внутри содержимого цепляется к содержимому. Разметку колонок строит JS —
+ * ширина колонки считается от ширины экрана, потому что 1fr на треть кадра
+ * даёт на широком мониторе обложку больше тысячи пикселей, и лента перестаёт
+ * быть лентой. См. components/landing/GameRibbon.tsx.
+ *
+ * Прозрачность и насыщенность здесь только начальные: дальше их ведёт шкала
+ * света от позиции прокрутки (lib/ribbonlight.ts).
+ */
+.ribbon {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ribbon-grid {
+  position: absolute;
+  inset: -12vh -12vw;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  transform: rotate(-6deg) scale(1.16);
+}
+
+.ribbon-col {
+  flex: 0 0 auto;
+  width: var(--ribbon-col, 300px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  will-change: transform;
+}
+
+.ribbon-col img {
+  width: 100%;
+  aspect-ratio: 460 / 215;
+  object-fit: cover;
+  border-radius: 10px;
+  /* Лёгкое размытие: титры поверх остаются резкими, а лента читается потоком,
+     а не набором картинок, каждую из которых хочется рассмотреть. */
+  filter: blur(1.4px);
+}
+
+/*
+ * Скрим и виньетка. Числа замерены на живой странице: глухое ядро под титром,
+ * живые края. Прежняя кино-подложка была темнее (0.94 в центре) — там за ней
+ * стоял постер игры, а здесь лента и есть кадр.
+ */
+.ribbon-scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    86% 82% at 50% 46%,
+    rgba(11, 12, 16, 0.9) 0%,
+    rgba(11, 12, 16, 0.87) 30%,
+    rgba(11, 12, 16, 0.62) 68%,
+    rgba(11, 12, 16, 0.34) 100%
+  );
+}
+
+.ribbon-vignette {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(11, 12, 16, 0.82),
+    transparent 15%,
+    transparent 85%,
+    rgba(11, 12, 16, 0.9) 100%
+  );
+}
+
 /* стеклянная панель — базовый строительный блок интерфейса */
 .glass {
   background: var(--glass-bg);

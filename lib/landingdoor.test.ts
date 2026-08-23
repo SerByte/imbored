@@ -50,6 +50,20 @@ function allTsx(): string[] {
   return out
 }
 
+/** Всё, из чего собрана главная: components/landing и вложенные сцены. */
+function landingFiles(): string[] {
+  const out: string[] = []
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith('.tsx')) out.push(p)
+    }
+  }
+  walk(LANDING)
+  return out
+}
+
 describe('дверь на главной', () => {
   const page = code(fs.readFileSync(PAGE, 'utf8'))
 
@@ -103,16 +117,32 @@ describe('дверь на главной', () => {
     expect(bareSteam, 'вход без параметров назначения на главной не место').toBe(0)
   })
 
-  test('прокрутка на главной ничего не двигает', () => {
-    const files = [PAGE, ...fs.readdirSync(LANDING).map((f) => path.join(LANDING, f))]
-    const banned = /\bwhileInView\b|\buseScroll\b|\bscrollYProgress\b|\bScrollTrigger\b|\bIntersectionObserver\b|\bonScroll\b/
-    const hits = files.flatMap((file) => {
-      const m = code(fs.readFileSync(file, 'utf8')).match(banned)
-      return m ? [`${path.relative(ROOT, file).split(path.sep).join('/')} — ${m[0]}`] : []
+  /**
+   * ЭТОТ СТОРОЖ ПЕРЕВЁРНУТ, И ЭТО НЕ ОШИБКА.
+   *
+   * Он появился с требованием «прокрутка ничего не двигает» и охранял главную,
+   * которая была документом. Требование к продукту сменилось на прямо
+   * противоположное: главная стала кино, и хореография на прокрутке — её
+   * замысел, а не украшение.
+   *
+   * Сторож остался на том же месте, но охраняет теперь вторую половину сделки:
+   * у любого движения обязан быть путь покоя. Иначе «уменьшить движение»
+   * превращается из настройки доступности в сломанную страницу — и ловится это
+   * только у того человека, у которого настройка включена, то есть никогда у
+   * нас.
+   */
+  test('у хореографии главной есть путь покоя', () => {
+    const files = [PAGE, ...landingFiles()]
+    const offenders = files.flatMap((file) => {
+      const src = code(fs.readFileSync(file, 'utf8'))
+      const moves = /\bScrollTrigger\b|\bScrollSmoother\b|\bwhileInView\b|\buseScroll\b/.test(src)
+      if (!moves) return []
+      const rests = /prefers-reduced-motion|useReducedMotion/.test(src)
+      return rests ? [] : [path.relative(ROOT, file).split(path.sep).join('/')]
     })
     expect(
-      hits,
-      'блоки, выезжающие на прокрутке, на главной не нужны — см. докблок app/page.tsx',
+      offenders,
+      'этот файл двигает страницу на прокрутке и не спрашивает «уменьшить движение»',
     ).toEqual([])
   })
 
