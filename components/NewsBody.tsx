@@ -1,4 +1,5 @@
 import { stripBbcode, type Inline, type NewsBlock } from '@/lib/steamhtml'
+import { linkLabel } from '@/lib/linklabel'
 
 /**
  * Рендер тела патчноута. Серверный, без единой строчки JS на клиенте.
@@ -10,6 +11,10 @@ import { stripBbcode, type Inline, type NewsBlock } from '@/lib/steamhtml'
  * stripBbcode здесь — не дубль защиты из парсера, а покрытие УЖЕ ЗАПИСАННЫХ
  * блоков: дерево лежит в базе разобранным, и правка парсера дойдёт до старых
  * записей только со следующим опросом ленты. До тех пор чистит показ.
+ *
+ * linkLabel правит только ВИДИМЫЙ текст ссылки; href не трогается никогда.
+ * У четверти ссылок в патчнотах подписью стоит сам адрес со схемой и хвостом
+ * параметров — см. докблок там же.
  */
 
 function Runs({ runs }: { runs: Inline[] }) {
@@ -25,7 +30,7 @@ function Runs({ runs }: { runs: Inline[] }) {
               rel="nofollow noopener noreferrer"
               className="text-ember-text hover:underline underline-offset-2"
             >
-              {stripBbcode(r.text)}
+              {linkLabel(stripBbcode(r.text), r.href)}
             </a>
           )
         }
@@ -45,7 +50,16 @@ function Runs({ runs }: { runs: Inline[] }) {
 export function NewsBody({ blocks, className = '' }: { blocks: NewsBlock[]; className?: string }) {
   if (!blocks.length) return null
   return (
-    <div className={`text-sm text-dim leading-relaxed flex flex-col gap-3 ${className}`}>
+    /*
+      break-words на корне блока, а не на ссылке. В чужом тексте попадаются
+      неразрывные куски длиннее колонки — адреса, версии, идентификаторы, — и
+      при overflow-wrap: normal такой кусок просто уезжает за край. Замерено
+      на 375 px: подпись ссылки шириной 365 px в колонке 293 вылезала на 72 px
+      и обрезалась предком, то есть хвост адреса было не прочитать.
+    */
+    <div
+      className={`flex flex-col gap-3 text-sm leading-relaxed break-words text-dim ${className}`}
+    >
       {blocks.map((b, i) => {
         if (b.kind === 'h') {
           /*
