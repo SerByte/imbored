@@ -11,21 +11,17 @@
  */
 export { freshness } from '@/lib/freshness'
 
+/*
+ * Склонение берётся из lib/plural — той же копии, что и во всём остальном
+ * продукте. Своя жила здесь и делала ровно то же самое: две реализации одной
+ * функции расходятся молча, а на склонениях в этом проекте уже обжигались
+ * (см. lib/pluraluse.test.ts).
+ */
+import { plural } from '@/lib/plural'
+
 /** «31 правка» / «3 правки» / «12 правок» */
 export function changesLabel(n: number): string {
   return `${n.toLocaleString('ru-RU')} ${plural(n, 'правка', 'правки', 'правок')}`
 }
 
-/**
- * Русское склонение по числу. Без него подписи выглядят машинно: «1 правок»
- * читается как баг, а не как цифра.
- */
-export function plural(n: number, one: string, few: string, many: string): string {
-  const abs = Math.abs(n) % 100
-  const last = abs % 10
-  if (abs > 10 && abs < 20) return many
-  if (last > 1 && last < 5) return few
-  if (last === 1) return one
-  return many
-}
 

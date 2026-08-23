@@ -14,7 +14,7 @@ const UNPLAYED_MAX_MIN = 120
 const COMEBACK_AFTER_SEC = 180 * 86_400
 
 /**
- * Экспортируется ради подбора обложек в квизе (lib/quizart.ts): там надо
+ * Экспортируется ради отбора кандидатов: там надо
  * оценить игру по ОДНОЙ оси, а scoreCandidates умеет только целое настроение.
  */
 export const VIBE_TAGS: Record<Mood['vibe'], string[]> = {

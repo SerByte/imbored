@@ -73,21 +73,13 @@ export const STEPS: readonly [StepFor<'time'>, StepFor<'vibe'>, StepFor<'social'
   },
 ] as const
 
-/** Все семь ответов одним списком — по ним подбираются обложки в lib/quizart.ts */
+/**
+ * Все семь ответов одним списком. Нужен сторожу в lib/quiz.test.ts: у каждого
+ * ответа обязана быть подпись, иначе answerLabel молча вернёт пустоту.
+ */
 export const ANSWER_VALUES: readonly AnswerValue[] = STEPS.flatMap((s) =>
   s.options.map((o) => o.value as AnswerValue),
 )
-
-/**
- * Ключ набора ответов для карты чисел в lib/quizcount.ts: `short:chill:solo`.
- *
- * Живёт здесь, а не рядом со счётом, намеренно: этот модуль ничего не тянет за
- * собой, а quizcount тянет отбор кандидатов и классификацию библиотеки —
- * клиенту, которому нужен только ключ, всё это ни к чему.
- */
-export function countKey(answers: Partial<Mood>): string {
-  return [answers.time, answers.vibe, answers.social].filter(Boolean).join(':')
-}
 
 const LABELS = new Map<string, string>(
   STEPS.flatMap((s) => s.options.map((o) => [o.value as string, o.label] as const)),

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { headers } from 'next/headers'
 import * as motion from 'motion/react-client'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -21,12 +22,26 @@ import { claudePortraitText } from '@/lib/llm'
 import { OG_SITE } from '@/lib/og'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
 import { plural } from '@/lib/plural'
+import { checkRate, clientIp } from '@/lib/ratelimit'
 import { buildPortrait } from '@/lib/portrait'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from '@/lib/wrapped'
 
 export const dynamic = 'force-dynamic'
+
+/*
+ * Потолки на пересборку текста портрета. Считаем ХОЛОДНЫЕ пути, не заходы:
+ * прогретый портрет отдаётся из кэша и сюда не доходит вовсе.
+ *
+ * По steamid — три: столько холодных пересборок подряд по одному портрету
+ * бывает только при параллельных заходах, а человек за это окно снапшот не
+ * меняет. По адресу — десять: за одним IP бывает общий NAT, но перебор чужих
+ * steamid упирается уже в него.
+ */
+const PORTRAIT_LIMIT = 3
+const PORTRAIT_IP_LIMIT = 10
+const PORTRAIT_WINDOW_SEC = 600
 
 /**
  * Без этого ссылка на портрет разворачивалась в мессенджерах общим заголовком
@@ -119,6 +134,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const { steamid } = await params
   if (!/^\d{17}$/.test(steamid)) notFound()
 
+  const now = nowSec()
   const db = await getDb()
   const snapshot = await getLatestSnapshot(db, steamid)
   if (!snapshot) {
@@ -141,7 +157,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const metaOf = (id: number) => metas.get(id)
   const portrait = buildPortrait(games, metaOf)
   const wrapped = buildWrapped(games, metaOf)
-  const backlog = backlogValue(games, metaOf, nowSec())
+  const backlog = backlogValue(games, metaOf, now)
   // Число вынимается из фразы, чтобы остаться моноширинным, как все числа
   const equivalent = (() => {
     const eq = backlogEquivalent(backlog.cents, steamid)
@@ -170,16 +186,57 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   )
   const purgatory = wrapped.unplayed.filter((g) => g.appid > 0).slice(0, 36)
 
-  // текст: кэш по времени снапшота, Claude при наличии ключа, иначе шаблон
+  /*
+   * Текст портрета: кэш по времени снапшота, Claude при наличии ключа, иначе шаблон.
+   *
+   * ПОТОЛОК НА ХОЛОДНЫЙ ПУТЬ ОБЯЗАТЕЛЕН, и это не перестраховка. Страница
+   * публичная по замыслу — портретом делятся ссылкой, поэтому требовать сессию
+   * нельзя, — но steamid в адресе выбирает кто угодно, а демо-личность выдаётся
+   * даром через POST /api/connect {demo:true}. Без потолка публичный GET
+   * оказывался прямой дверью к нашему ключу Anthropic: замерено на подменённом
+   * эндпоинте — цепочка «получить демо-сессию → открыть /portrait/<id>» шла
+   * в модель на каждом холодном рендере, без единой куки в запросе.
+   *
+   * Кэш дырой не закрывает: холодный портрет чеканится бесплатно, а параллельные
+   * рендеры одного и того же холодного адреса замка не имеют — десять
+   * одновременных заходов дали десять вызовов, потому что запись в кэш случается
+   * только ПОСЛЕ ответа модели. Поэтому считаем обе оси: адрес (от скрипта,
+   * перебирающего steamid) и сам steamid (от параллельных заходов по одному).
+   *
+   * Отказ не ломает страницу и НЕ ПИШЕТСЯ В КЭШ: человек видит шаблонный текст,
+   * а следующий заход после снятия потолка получит настоящий. Записать шаблон
+   * значило бы заморозить его до смены снапшота.
+   */
+  const ip = clientIp(await headers())
   let text: string
   const cached = await getUserPortrait(db, steamid)
   if (cached && cached.takenAt === snapshot.takenAt) {
     text = cached.text
   } else {
-    text =
-      (await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })) ??
-      fallbackText(name, portrait.archetypes, portrait.facts)
-    await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text })
+    const allowed = (
+      await Promise.all([
+        checkRate(db, {
+          bucket: 'portrait-ip',
+          id: ip,
+          limit: PORTRAIT_IP_LIMIT,
+          windowSec: PORTRAIT_WINDOW_SEC,
+          nowSec: now,
+        }),
+        checkRate(db, {
+          bucket: 'portrait',
+          id: steamid,
+          limit: PORTRAIT_LIMIT,
+          windowSec: PORTRAIT_WINDOW_SEC,
+          nowSec: now,
+        }),
+      ])
+    ).every((v) => v.ok)
+
+    const written = allowed
+      ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
+      : null
+    text = written ?? fallbackText(name, portrait.archetypes, portrait.facts)
+    if (written) await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text })
   }
 
   const me = await currentSteamId()

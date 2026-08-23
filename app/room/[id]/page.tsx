@@ -91,6 +91,8 @@ export default function RoomPage() {
   const [deckFailed, setDeckFailed] = useState(false)
   const [localVotes, setLocalVotes] = useState(0)
   const [busy, setBusy] = useState(false)
+  /** Отказ входа демо-другом. Появился вместе с потолком на /api/connect. */
+  const [joinError, setJoinError] = useState<string | null>(null)
   const [likes, setLikes] = useState<{ mine: LikedGame[]; near: NearMiss[] }>({
     mine: [],
     near: [],
@@ -289,11 +291,28 @@ export default function RoomPage() {
 
   async function joinAsDemoFriend() {
     setBusy(true)
-    await fetch('/api/connect', {
+    /*
+     * Ответ проверяется, а не выбрасывается. Раньше он игнорировался, и это
+     * сходило с рук, пока /api/connect не умел отказывать: теперь на нём стоит
+     * потолок, и отказ приходит кодом 429. Без проверки сессия не заводилась,
+     * следующий join уходил в пустоту, кнопка гасла — и человек не узнавал
+     * ничего. Отказ по потолку обязан выглядеть отказом.
+     */
+    const res = await fetch('/api/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ demo: true, variant: 2 }),
     })
+    if (!res.ok) {
+      setJoinError(
+        res.status === 429
+          ? 'Слишком много попыток подряд. Подожди немного и попробуй снова.'
+          : 'Не получилось завести демо-друга. Попробуй ещё раз.',
+      )
+      setBusy(false)
+      return
+    }
+    setJoinError(null)
     await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
     setBusy(false)
     void refresh()
@@ -395,6 +414,11 @@ export default function RoomPage() {
               >
                 {busy ? 'Подключаю…' : 'Демо-друг (без Steam)'}
               </button>
+              {joinError && (
+                <p role="status" className="anim-rise text-sm text-danger">
+                  {joinError}
+                </p>
+              )}
             </>
           )}
         </div>
