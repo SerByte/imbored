@@ -9,6 +9,7 @@ import { SoundToggle } from '@/components/SoundToggle'
 import { SpotlightCard } from '@/components/SpotlightCard'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { VIBE_PRESETS } from '@/lib/presets'
+import { STEPS } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
 import type { Focus } from '@/lib/recommend'
 import type { Mood } from '@/lib/types'
@@ -50,39 +51,16 @@ const ITEM_VARIANTS = {
   exit: { opacity: 0, transition: { duration: DUR.fast, ease: EASE_IN } },
 }
 
-type Step = {
-  key: 'time' | 'vibe' | 'social'
-  question: string
-  options: Array<{ value: string; label: string; hint: string }>
-}
-
-const STEPS: Step[] = [
-  {
-    key: 'time',
-    question: 'Сколько у тебя времени?',
-    options: [
-      { value: 'short', label: 'Меньше часа', hint: 'быстрая катка и спать' },
-      { value: 'medium', label: 'Пара часов', hint: 'нормально посидеть' },
-      { value: 'long', label: 'Весь вечер', hint: 'можно и утонуть' },
-    ],
-  },
-  {
-    key: 'vibe',
-    question: 'Какой вайб?',
-    options: [
-      { value: 'chill', label: 'Расслабиться', hint: 'без стресса и потных ладоней' },
-      { value: 'engaged', label: 'Напрячься', hint: 'думать, потеть, побеждать' },
-    ],
-  },
-  {
-    key: 'social',
-    question: 'Один или с кем-то?',
-    options: [
-      { value: 'solo', label: 'Один', hint: 'только я и игра' },
-      { value: 'friends', label: 'С друзьями', hint: 'нужен мультиплеер или кооп' },
-    ],
-  },
-]
+/*
+ * Вопросы приезжают из lib/quiz.ts, а не лежат здесь копией.
+ *
+ * Копия была, и слово в слово совпадала с оригиналом — ровно до первой правки
+ * одного из двух мест. Разойтись они могли молча: тип у местной версии был
+ * шире (key: string, value: string), поэтому переименованный ответ не сломал бы
+ * ни сборку, ни тест, а просто перестал бы совпадать с тем, что читает разбор
+ * настроения. Канон один, и он же кортеж из трёх — длина «1 / 3» в рельсе
+ * берётся оттуда же.
+ */
 
 /** Настроение по умолчанию для входов, где спрашивать про него нечего */
 const NEUTRAL_MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }

@@ -8,6 +8,7 @@ import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { SplitHeading } from '@/components/SplitHeading'
 import type { StoredNews } from '@/lib/db'
+import { plural } from '@/lib/plural'
 import { countChanges } from '@/lib/steamhtml'
 import type { GameMeta } from '@/lib/types'
 import { byline } from '@/lib/byline'
@@ -164,7 +165,7 @@ export function Cover({
                     className="font-mono text-2xl font-bold tabular-nums md:text-3xl"
                   />
                   <span className="mt-0.5 text-xs text-dim">
-                    {changes === 1 ? 'правка в патче' : 'правок в патче'}
+                    {plural(changes, 'правка', 'правки', 'правок')} в патче
                   </span>
                 </span>
               ) : null}
