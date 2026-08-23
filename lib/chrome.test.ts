@@ -27,7 +27,9 @@ import { describe, expect, test } from 'vitest'
  * смысл градиента.
  */
 
-const CSS = fs.readFileSync(path.join(__dirname, '..', 'app', 'globals.css'), 'utf8')
+const ROOT = path.join(__dirname, '..')
+
+const CSS = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
 
 /** Убираем комментарии: в них те же селекторы разбираются словами. */
 const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, '')
@@ -109,4 +111,38 @@ describe('обвязка над зонами', () => {
     const found = all.filter((r) => chromeTargets(r.selector).length > 0)
     expect(found.length, 'разбор globals.css сломался — селекторы обвязки не найдены').toBeGreaterThanOrEqual(2)
   })
+
+  /**
+   * Метка .media-full говорит одно: «эта кино-зона — вся страница, подвалу
+   * под ней светлым быть нельзя». Она осмысленна только вместе с .media-dark,
+   * потому что подвал под ней красится тёмными токенами зоны. Метка без зоны —
+   * тёмный подвал под светлой страницей, то есть та же ошибка наизнанку.
+   */
+  test('.media-full не ходит без .media-dark', () => {
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (e.name.endsWith('.tsx')) {
+          const src = fs.readFileSync(p, 'utf8')
+          for (const m of src.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
+            const cls = m[1] ?? m[2] ?? ''
+            if (!/\bmedia-full\b/.test(cls)) continue
+            if (/\bmedia-dark\b/.test(cls)) continue
+            const line = src.slice(0, m.index).split('\n').length
+            offenders.push(`${path.relative(ROOT, p).split(path.sep).join('/')}:${line}`)
+          }
+        }
+      }
+    }
+    for (const dir of ['app', 'components']) walk(path.join(ROOT, dir))
+    expect(offenders, 'подвал станет тёмным под светлой страницей').toEqual([])
+  })
+
+  /** Метка, на которую никто не реагирует, — мусор в разметке. */
+  test('на .media-full есть правило подвала', () => {
+    expect(CODE).toMatch(/:root:has\(\.media-full\)\s+body\s*>\s*footer/)
+  })
+
 })

@@ -57,7 +57,7 @@ export function MatchCeremony({
   return (
     <div
       ref={scope}
-      className="media-dark relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden"
+      className="media-dark media-full relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden"
     >
       <div data-beat="art" className="absolute inset-0">
         <GameArt

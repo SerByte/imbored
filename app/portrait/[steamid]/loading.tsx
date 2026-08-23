@@ -16,7 +16,7 @@ export default function PortraitLoading() {
   return (
     <SkelPage className="flex-1">
       <section
-        className="media-dark relative flex flex-col justify-end overflow-hidden"
+        className="media-dark media-full relative flex flex-col justify-end overflow-hidden"
         style={{ minHeight: '100svh' }}
       >
         {/* мозаика обложек за текстом — тремя рядами, как в самой странице */}
