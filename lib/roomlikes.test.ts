@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { plural } from './plural'
 import { describe, expect, test } from 'vitest'
 import { buildLikes, LIKES_MINE_MAX, type MemberRef } from './roomlikes'
 import type { RoomVote } from './db'
@@ -114,5 +117,39 @@ describe('buildLikes: почти совпали', () => {
     const solo: MemberRef[] = [{ steamid: 'me', name: 'Ты' }]
     const votes = [vote('me', 570, 1)]
     expect(buildLikes({ votes, members: solo, me: 'me' }).near).toEqual([])
+  })
+})
+
+/**
+ * Строка «почти совпали» не выбирает род за чужого человека.
+ *
+ * В комнате произвольный ник из Steam, и «Аня сошёлся на трёх играх» —
+ * ошибка рядом с именем, а не стилистика. Тот же довод уже записан в
+ * RoomWaiting, где имя намеренно не подставляется в «ждём». Согласовываться
+ * глагол может только с тем, что мы знаем, — с числом игр.
+ */
+describe('почти совпали: род и число', () => {
+  const line = (games: number) =>
+    `${plural(games, 'совпала', 'совпало', 'совпало')} ${games} ${plural(games, 'игра', 'игры', 'игр')}`
+
+  test('глагол согласован с числом, а не с человеком', () => {
+    expect(line(1)).toBe('совпала 1 игра')
+    expect(line(2)).toBe('совпало 2 игры')
+    expect(line(4)).toBe('совпало 4 игры')
+    expect(line(5)).toBe('совпало 5 игр')
+    expect(line(11)).toBe('совпало 11 игр')
+    expect(line(21)).toBe('совпала 21 игра')
+  })
+
+  /** Мужского рода в строке не остаётся ни при каком числе. */
+  test('в разметке нет глагола, выбирающего род за игрока', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'components', 'room', 'LikesStrips.tsx'),
+      'utf8',
+    )
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const bad of ['сошёлся', 'сошлись', 'выбрала']) {
+      expect(code, `«${bad}» выбирает род за человека с чужим ником`).not.toContain(bad)
+    }
   })
 })
