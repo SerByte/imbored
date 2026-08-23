@@ -19,10 +19,8 @@ import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
-import { takeQuizCover } from '@/lib/handoff'
 import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
-import type { QuizCover } from '@/lib/quizart'
 import type { Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
@@ -177,7 +175,6 @@ function Player() {
   const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   /** Обложка последнего ответа квиза, если человек пришёл оттуда */
-  const [cover, setCover] = useState<QuizCover | null>(null)
   // Откуда пришла следующая игра — задаёт направление смены героя.
   const [dir, setDir] = useState<'next' | 'pick'>('next')
   const [picks, setPicks] = useState<Pick[]>([])
@@ -194,21 +191,7 @@ function Player() {
   const [scope, setScope] = useState<Scope>('all')
   const [switching, setSwitching] = useState(false)
   const started = useRef(false)
-  const tookCover = useRef(false)
 
-  /**
-   * Обложку забираем В ЭФФЕКТЕ и ровно один раз.
-   *
-   * В эффекте — потому что sessionStorage существует только в браузере, а
-   * чтение при рендере разошлось бы с серверной разметкой. Один раз — потому
-   * что takeQuizCover СТИРАЕТ ключ: в dev React монтирует эффекты дважды, и без
-   * охраны второй проход получил бы уже пусто и стёр бы обложку из состояния.
-   */
-  useEffect(() => {
-    if (tookCover.current) return
-    tookCover.current = true
-    setCover(takeQuizCover())
-  }, [])
   /**
    * Догрев после того, как выдача уже на экране.
    *
@@ -435,7 +418,6 @@ function Player() {
         progress={prep}
         message={progress}
         caption={askedMood ? moodCaption(mood) : undefined}
-        cover={cover}
       />
     )
   }

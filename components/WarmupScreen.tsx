@@ -2,12 +2,10 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { Ambient } from '@/components/Ambient'
-import { ArtWash } from '@/components/ArtWash'
 import { CountNumber } from '@/components/CountNumber'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Spinner } from '@/components/Spinner'
 import { plural } from '@/lib/plural'
-import type { QuizCover } from '@/lib/quizart'
 import { warmupPercent, type WarmupProgress } from '@/lib/warmup'
 import { Eyebrow } from '@/components/Labels'
 
@@ -26,7 +24,6 @@ export function WarmupScreen({
   progress,
   message,
   caption,
-  cover,
 }: {
   progress: WarmupProgress | null
   message: string
@@ -43,33 +40,13 @@ export function WarmupScreen({
    * было, и подпись была бы взята из воздуха.
    */
   caption?: string
-  /**
-   * Обложка последнего ответа квиза — та самая, которую человек разглядывал
-   * секунду назад. Доезжает сюда через sessionStorage (см. lib/handoff.ts),
-   * а не адресом: настроение — контракт между экранами, картинка — украшение.
-   */
-  cover?: QuizCover | null
 }) {
   const pct = warmupPercent(progress)
   const known = progress !== null && progress.total > 0
 
   return (
-    /*
-     * С обложкой экран становится кино-зоной — по общему правилу «экраны с
-     * игровым артом всегда тёмные»: контраст текста поверх произвольной обложки
-     * иначе не гарантируется. Побочно это достраивает тёмный коридор
-     * квиз → ожидание → выдача. Без обложки (на /daily и при прямом заходе на
-     * /play) всё остаётся как было, на цветах темы.
-     */
-    <div
-      className={`relative flex-1 flex flex-col items-center justify-center gap-7 px-5 overflow-hidden ${
-        cover ? 'media-dark' : ''
-      }`}
-    >
+    <div className="relative flex-1 flex flex-col items-center justify-center gap-7 px-5 overflow-hidden">
       <Ambient className="anim-breathe" />
-      {/* immediate: обложка сюда попадает только из квиза, где она уже стояла
-          фоном в момент ухода — проявлять её заново значит моргнуть швом */}
-      {cover && <ArtWash cover={cover} immediate />}
       <div aria-hidden className="grain" />
 
       {/* Первое, что видно на этом экране, — то последнее, что человек здесь
