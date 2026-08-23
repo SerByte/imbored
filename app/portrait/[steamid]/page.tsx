@@ -19,6 +19,7 @@ import {
 } from '@/lib/db'
 import { claudePortraitText } from '@/lib/llm'
 import { OG_SITE } from '@/lib/og'
+import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
 import { plural } from '@/lib/plural'
 import { buildPortrait } from '@/lib/portrait'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
@@ -232,9 +233,13 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {name}
           </SplitHeading>
           <div className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
-            <Fact value={wrapped.gamesCount} caption="игр в библиотеке" delay={300} />
-            <Fact value={wrapped.totalHours} caption="часов сыграно" delay={360} />
-            <Fact value={wrapped.unplayedCount} caption="так и не запущены" delay={420} />
+            <Fact value={wrapped.gamesCount} caption={gamesCaption(wrapped.gamesCount)} delay={300} />
+            <Fact value={wrapped.totalHours} caption={hoursCaption(wrapped.totalHours)} delay={360} />
+            <Fact
+              value={wrapped.unplayedCount}
+              caption={unplayedCaption(wrapped.unplayedCount)}
+              delay={420}
+            />
           </div>
           {wrapped.days > 0 && (
             <p className="mt-6 text-dim text-sm md:text-base">
@@ -286,7 +291,22 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
           <div className="mt-12 flex flex-col md:flex-row items-center gap-8 md:gap-12">
             <motion.div {...inView()} className="shrink-0">
-              <ProgressRing percent={wrapped.concentration} size={140} stroke={8} />
+              {/*
+                suffix="" — число в центре не процент, а индекс: 0 «размазан
+                ровно», 100 «всё в одной игре». С «%» кольцо противоречило
+                подписи прямо под собой, и подпись брала на себя работу
+                поправлять картинку словами.
+                ariaLabel — по той же причине, что расписана в самом кольце:
+                без него диктор произносит голое число, а чего именно это
+                число, из разметки не следует.
+              */}
+              <ProgressRing
+                percent={wrapped.concentration}
+                size={140}
+                stroke={8}
+                suffix=""
+                ariaLabel={`Концентрация ${wrapped.concentration} из 100`}
+              />
             </motion.div>
             <motion.div {...inView(1)} className="text-center md:text-left">
               <p className="text-lg md:text-xl leading-relaxed">

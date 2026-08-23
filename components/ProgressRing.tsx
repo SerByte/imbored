@@ -19,6 +19,7 @@ export function ProgressRing({
   stroke = 10,
   duration = 1000,
   showPercent = true,
+  suffix = '%',
   label,
   ariaLabel,
   className = '',
@@ -28,6 +29,13 @@ export function ProgressRing({
   stroke?: number
   duration?: number
   showPercent?: boolean
+  /**
+   * Что стоит после числа в центре. Дуга всегда рисует шкалу 0–100, но само
+   * число не всегда процент: концентрация на портрете — это индекс HHI, и
+   * знак «%» рядом с ним просто врёт. Там подпись под кольцом вынуждена была
+   * поправлять картинку словами — «Концентрация 34 из 100».
+   */
+  suffix?: string
   /** Что показать вместо процента в центре (например, счётчик оставшихся игр). */
   label?: React.ReactNode
   /**
@@ -130,7 +138,8 @@ export function ProgressRing({
               className="font-mono font-extrabold text-ink"
               style={{ fontSize: size * 0.24, fontVariantNumeric: 'tabular-nums' }}
             >
-              {Math.round(shown)}%
+              {Math.round(shown)}
+              {suffix}
             </span>
           )
         )}
