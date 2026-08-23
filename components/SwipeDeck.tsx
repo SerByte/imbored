@@ -44,10 +44,12 @@ const DEPTH = 3 // сколько карточек видно в стопке
  */
 function TopCard({
   card,
+  alone,
   flyOut,
   onCommit,
 }: {
   card: DeckCard
+  alone: boolean
   flyOut: 'left' | 'right' | null
   onCommit: (yes: boolean) => void
 }) {
@@ -116,16 +118,30 @@ function TopCard({
       <div className="p-6 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="font-display text-display-sm">{card.name}</h2>
+          {/*
+            ФАКТ ПРО «ВСЕХ» — НЕ ФАКТ, ПОКА ЧЕЛОВЕК ОДИН.
+            Колода открыта и в одиночку: голоса копятся заранее, чтобы к
+            приходу друга уже было что сводить. Но ownedByAll в комнате из
+            одного участника истинно по определению, и каждая карта получала
+            зелёное «✓ Есть у всех» — самым громким токеном палитры, в ответ
+            на вопрос, которого никто не задавал. Хуже того, плашка приучала
+            к неверному: десять карт подряд зелёные, входит друг — и та же
+            карта вдруг «Нет у: …». Смысл менялся под рукой, молча.
+            В одиночку у своей игры плашки нет вовсе, а у чужой остаётся то,
+            что и правда полезно одному: цена и скидка.
+          */}
           {card.ownedByAll ? (
-            <span className="rounded-full bg-ok/15 text-ok px-3 py-1 text-xs font-medium">
-              ✓ Есть у всех
-            </span>
+            alone ? null : (
+              <span className="rounded-full bg-ok/15 text-ok px-3 py-1 text-xs font-medium">
+                ✓ Есть у всех
+              </span>
+            )
           ) : (
             <span className="flex items-center gap-2">
               {/* text-info вместо sky-300: на светлой теме tailwind-цвет давал
                   1.52:1, то есть подпись была практически невидима */}
               <span className="rounded-full bg-info/10 text-info px-3 py-1 text-xs">
-                Нет у: {card.missingFor.join(', ')}
+                {alone ? 'Нет в твоей библиотеке' : `Нет у: ${card.missingFor.join(', ')}`}
                 {card.priceFinal !== undefined && card.priceFinal > 0
                   ? ` · $${(card.priceFinal / 100).toFixed(0)}`
                   : card.store
@@ -177,11 +193,14 @@ export function SwipeDeck({
   onVote,
   votedCount,
   deckTotal,
+  alone = false,
 }: {
   cards: DeckCard[]
   onVote: (card: DeckCard, yes: boolean) => void
   votedCount: number
   deckTotal: number
+  /** В комнате пока один человек — см. плашку владения в TopCard. */
+  alone?: boolean
 }) {
   // Куда улетает верхняя карточка, когда голосуют кнопкой, а не жестом.
   const [flyOut, setFlyOut] = useState<'left' | 'right' | null>(null)
@@ -226,7 +245,7 @@ export function SwipeDeck({
           {/* key по appid: каждая карточка получает СВОИ motion-значения.
               Общий x на всю колоду оставлял бы следующей карте смещение
               предыдущей и дрался бы с exit-анимацией улетающей. */}
-          <TopCard key={top.appid} card={top} flyOut={flyOut} onCommit={commit} />
+          <TopCard key={top.appid} card={top} alone={alone} flyOut={flyOut} onCommit={commit} />
         </AnimatePresence>
       </div>
 

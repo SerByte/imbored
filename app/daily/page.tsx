@@ -261,7 +261,7 @@ export default function DailyPage() {
               </div>
             )}
 
-            <p className="text-xs text-faint mt-1">
+            <p className="text-xs text-faint mt-1 max-w-md">
               {pick.source === 'new'
                 ? 'Одна игра на день — завтра здесь будет другая. Покупать ничего не нужно.'
                 : 'Одна игра на день — завтра здесь будет другая.'}
@@ -286,7 +286,7 @@ export default function DailyPage() {
               все скидки Steam →
             </a>
           </div>
-          <p className="text-xs text-faint mb-4">
+          <p className="text-xs text-faint mb-4 max-w-md">
             Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто на
             будущее.
           </p>
