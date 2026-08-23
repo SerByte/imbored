@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
+import { Portal } from '@/components/Portal'
 import { NowProvider } from './Now'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -89,6 +90,10 @@ export function Stage({
 
   return (
     <div ref={scope} className="relative">
+      {/* Заливка кадра — в портал: под плавной прокруткой fixed внутри
+          содержимого цепляется к содержимому, и фон уезжал бы вместе с
+          лентой. См. components/Portal.tsx. */}
+      <Portal>
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
         <AnimatePresence initial={false}>
           {wash ? (
@@ -109,6 +114,7 @@ export function Stage({
         <div className="absolute inset-0 bg-bg/55" />
         <div className="grain" />
       </div>
+      </Portal>
 
       <div className="relative">
         {nowSec != null && publishedAts ? (

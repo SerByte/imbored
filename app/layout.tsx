@@ -8,6 +8,7 @@ import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
 import { SessionKeeper } from '@/components/SessionKeeper'
+import { SmoothScroll } from '@/components/SmoothScroll'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
@@ -152,11 +153,33 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
           только после разбора разметки. Рукопожатие уезжает в самое начало
           загрузки, картинки приходят раньше на эту величину.
         */}
+        {/*
+          ЗАМОК ОТ ПЕРЕКРАШИВАНИЯ.
+          У продукта две собственные темы, посчитанные по контрасту и закрытые
+          сторожем lib/contrast.test.ts, и переключатель между ними в шапке.
+          Расширения-«тёмные читалки» поверх этого не добавляют ничего — они
+          подменяют результат. Замерено в браузере: заливка --ember приходила
+          как rgb(24,26,27), то есть парадная кнопка продукта становилась
+          серой, стеклянные панели теряли прозрачность, а лента игр за главной
+          пропадала целиком, потому что фон каждого элемента становился
+          непрозрачным.
+          Этот тег — штатный способ сказать «спасибо, у нас есть своя тёмная».
+        */}
+        <meta name="darkreader-lock" />
         <link rel="preconnect" href="https://shared.steamstatic.com" />
         <link rel="preconnect" href="https://shared.akamai.steamstatic.com" />
         <link rel="dns-prefetch" href="https://clan.fastly.steamstatic.com" />
       </head>
-      <body className="min-h-full flex flex-col font-sans overflow-x-hidden pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
+      {/*
+        Классы раскладки уехали с <body> на #smooth-content: между ними
+        встала обёртка смузера, и без переноса подвал перестал прижиматься к
+        низу — flex-контейнером остался бы <body>, а его прямым потомком
+        стала обёртка, а не main.
+
+        На <body> остаётся только то, что обязано быть на самом внешнем
+        элементе: отступ под нижнюю панель и запрет горизонтальной прокрутки.
+      */}
+      <body className="min-h-full font-sans overflow-x-hidden pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,
@@ -240,16 +263,33 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             </nav>
           </div>
         </header>
-        <main id="main" className="flex-1 flex flex-col">
-          <MotionProvider>{children}</MotionProvider>
-        </main>
-        <Footer />
+        {/*
+          ОБЁРТКА ПЛАВНОЙ ПРОКРУТКИ. Стоит всегда, даже когда смузер не
+          создаётся: условная разметка означала бы разные деревья на сервере и
+          клиенте, а без смузера пара вложенных div ничего не делает.
+
+          Шапка, нижняя панель и ссылка «к содержанию» остаются СНАРУЖИ и это
+          не стилистика: смузер двигает содержимое трансформом, а трансформ
+          создаёт новый containing block — position: fixed внутри него
+          цепляется к содержимому вместо экрана. Правило сторожит
+          lib/smoothfixed.test.ts.
+        */}
+        <div id="smooth-wrapper">
+          <div id="smooth-content" className="min-h-full flex flex-col">
+            <main id="main" className="flex-1 flex flex-col">
+              <MotionProvider>{children}</MotionProvider>
+            </main>
+            <Footer />
+          </div>
+        </div>
         <MobileNav />
         {/* Продлевает вход. Клиентский и без разметки: лэйаут кук не читает,
             иначе весь сайт стал бы динамическим и ISR у /game/[appid] умер. */}
         {/* Ставит data-chrome на <html>, когда шапка уезжает с кино-зоны на
             контент. Клиентский и без разметки — как SessionKeeper. */}
         <ChromeZone />
+        {/* Плавная прокрутка на весь сайт. Клиентский и без разметки. */}
+        <SmoothScroll />
         <SessionKeeper />
         <Analytics />
       </body>

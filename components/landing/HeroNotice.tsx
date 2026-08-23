@@ -1,14 +1,7 @@
 'use client'
 
 import { useSearchParams } from 'next/navigation'
-import { useSyncExternalStore } from 'react'
-import { MetaLine } from '@/components/Labels'
 import { DESTINATIONS, destinationPath } from '@/lib/destination'
-import {
-  getServerSessionHint,
-  getSessionHint,
-  subscribeSessionHint,
-} from '@/lib/sessionhint'
 
 /**
  * Строка намерения над заголовком: почему ты здесь, если пришёл не сам.
@@ -28,10 +21,15 @@ import {
  *
  * Тексты обещаний берутся ТОЛЬКО из lib/destination.ts. Второй копии этих
  * фраз в проекте быть не должно: они уже разъезжались с адресами один раз.
+ *
+ * ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ — и то, и другое ушло вместе с переездом карточки в
+ * герой. Ссылки «Подключить →» на якорь #connect: карточка теперь стоит
+ * рядом, в том же экране, и отправлять к ней прокруткой стало нечестно.
+ * Строки «С возвращением, N» для вошедшего: её печатает сама карточка, и две
+ * копии приветствия в одном экране читались бы как сбой, а не как забота.
  */
 export function HeroNotice() {
   const search = useSearchParams()
-  const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
 
   const join = search.get('join')
   const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
@@ -46,26 +44,11 @@ export function HeroNotice() {
       ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
       : (dest?.promise ?? null)
 
-  if (promise) {
-    return (
-      <p className="glass mb-6 rounded-[14px] px-4 py-3 text-sm leading-relaxed text-ink">
-        {promise}{' '}
-        <a href="#connect" className="tap tap-tight text-ember-text underline decoration-edge">
-          Подключить →
-        </a>
-      </p>
-    )
-  }
+  if (!promise) return null
 
-  // Вошедшему — тихая строка возврата. Кнопка у него в кассе, дублировать её
-  // здесь незачем: парадная кнопка на странице одна.
-  if (hint?.authed) {
-    return (
-      <MetaLine tone="faint" as="p" className="mb-6">
-        {hint.personaName ? `С возвращением, ${hint.personaName}` : 'С возвращением'}
-      </MetaLine>
-    )
-  }
-
-  return null
+  return (
+    <p className="glass mb-6 max-w-md rounded-[14px] px-4 py-3 text-sm leading-relaxed text-ink">
+      {promise}
+    </p>
+  )
 }

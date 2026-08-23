@@ -45,12 +45,22 @@ function rules(): Rule[] {
   return out
 }
 
-/** Селекторы, целящие в обвязку — то есть в `body > header` / `body > footer`. */
+/**
+ * Селекторы, целящие в обвязку — в шапку и подвал.
+ *
+ * Знак `>` необязателен, и это не послабление. Шапка осталась прямым потомком
+ * `<body>`, а подвал переехал внутрь обёртки плавной прокрутки
+ * (`#smooth-wrapper > #smooth-content`), потому что двигаться вместе со
+ * страницей он обязан. Комбинатор `>` для него после этого перестал совпадать,
+ * и правила пишутся как `body footer`. Обе формы означают одно и то же место,
+ * и сторож обязан видеть обе — иначе он тихо перестанет проверять половину
+ * обвязки, а молчащий сторож хуже отсутствующего.
+ */
 function chromeTargets(selector: string): string[] {
   return selector
     .split(',')
     .map((s) => s.trim())
-    .filter((s) => /body\s*>\s*(header|footer)\b/.test(s))
+    .filter((s) => /body\s*>?\s*(header|footer)\b/.test(s))
 }
 
 describe('обвязка над зонами', () => {
@@ -60,7 +70,7 @@ describe('обвязка над зонами', () => {
    * Шапка красится градиентом .site-chrome-fade, у которого свой токен.
    * Всё остальное обязано иметь заливку.
    */
-  const HAS_OWN_LAYER = /body\s*>\s*header\b/
+  const HAS_OWN_LAYER = /body\s*>?\s*header\b/
 
   test('перекрашенная обвязка получает и подложку, а не только --ink', () => {
     const offenders: string[] = []
@@ -142,7 +152,7 @@ describe('обвязка над зонами', () => {
 
   /** Метка, на которую никто не реагирует, — мусор в разметке. */
   test('на .media-full есть правило подвала', () => {
-    expect(CODE).toMatch(/:root:has\(\.media-full\)\s+body\s*>\s*footer/)
+    expect(CODE).toMatch(/:root:has\(\.media-full\)\s+body\s*>?\s*footer/)
   })
 
 })

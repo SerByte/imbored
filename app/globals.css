@@ -288,7 +288,7 @@
  * полностраничные зоны. Отсюда отдельная метка: разметка заявляет «эта зона —
  * вся страница», CSS реагирует. Сторож — lib/chrome.test.ts.
  */
-:root:has(.media-full) body > footer {
+:root:has(.media-full) body footer {
   --bg: #0b0c10;
   --ink: #f2f3f5;
   --dim: #9ba1ab;
@@ -302,7 +302,7 @@
 }
 
 :root:has(.whatsnew) body > header,
-:root:has(.whatsnew) body > footer {
+:root:has(.whatsnew) body footer {
   --bg: #07080c;
   --header-fade: rgba(7, 8, 12, 0.85);
   --ink: #f4f6fb;
@@ -315,6 +315,17 @@
   --glass-bg: rgba(12, 14, 20, 0.55);
   color: var(--ink);
 }
+
+/*
+ * ПОЧЕМУ У ПОДВАЛА НЕТ ЗНАКА `>`, А У ШАПКИ ЕСТЬ.
+ *
+ * Шапка — прямой потомок <body> и им остаётся. Подвал переехал внутрь обёртки
+ * плавной прокрутки (#smooth-wrapper > #smooth-content), потому что двигаться
+ * вместе со страницей он обязан, а фиксированные слои — нет. Комбинатор `>`
+ * после этого перестал совпадать, и три правила ниже молча перестали красить
+ * подвал. Потомковый селектор переживает эту перестройку; сторож
+ * lib/chrome.test.ts знает про обе формы.
+ */
 
 /*
  * ПОДВАЛУ НУЖЕН НЕ ТОЛЬКО ЦВЕТ ТЕКСТА, НО И ФОН.
@@ -339,7 +350,7 @@
  * — она обязана оставаться прозрачной, иначе поверх героя ляжет полоса и
  * весь смысл растворяющегося градиента пропадёт.
  */
-:root:has(.whatsnew) body > footer {
+:root:has(.whatsnew) body footer {
   background: var(--bg);
 }
 
@@ -640,6 +651,656 @@ textarea:focus-visible {
   .site-chrome > span {
     transition: none;
   }
+}
+
+/*
+ * ЛЕНТА ИГР ЗА ГЛАВНОЙ.
+ *
+ * Слой фиксированный и лежит в портале у <body>: под плавной прокруткой fixed
+ * внутри содержимого цепляется к содержимому. Разметку колонок строит JS —
+ * ширина колонки считается от ширины экрана, потому что 1fr на треть кадра
+ * даёт на широком мониторе обложку больше тысячи пикселей, и лента перестаёт
+ * быть лентой. См. components/landing/GameRibbon.tsx.
+ *
+ * Прозрачность и насыщенность здесь только начальные: дальше их ведёт шкала
+ * света от позиции прокрутки (lib/ribbonlight.ts).
+ */
+.ribbon {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/*
+ * ТРИ СЛОЯ СТРАНИЦЫ С ЛЕНТОЙ, СНИЗУ ВВЕРХ: фон, лента, содержимое.
+ *
+ * Каждый уровень пришлось назначить явно, и каждый стоил отдельного дефекта.
+ *
+ * 1. Содержимое выше ленты. Одного z-index у ленты мало: портал добавляет её в
+ *    КОНЕЦ <body>, то есть после обёртки прокрутки, оба элемента
+ *    позиционированы, и при равном порядке наложения побеждает тот, кто ниже
+ *    по документу. Замерено: лента накрывала первый экран целиком, и страница
+ *    читалась как чёрный прямоугольник.
+ *
+ * 2. Обёртка кино-зоны прозрачна. .media-dark задаёт токены И красит фон — а
+ *    крашеный фон внутри содержимого закрывает ленту снизу так же надёжно,
+ *    как лента закрывала содержимое сверху. Токены нужны, заливка нет.
+ *
+ * 3. Ground красит <body>. Раз заливки нет ни у зоны, ни под лентой, тёмный
+ *    фон обязан прийти от страницы — иначе на светлой теме между обложками
+ *    просвечивало бы молоко.
+ */
+#smooth-content {
+  position: relative;
+  z-index: 1;
+}
+
+.landing {
+  background: transparent;
+}
+
+:root:has(.media-full) body {
+  background: #0b0c10;
+}
+
+.ribbon-grid {
+  position: absolute;
+  inset: -12vh -12vw;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  transform: rotate(-6deg) scale(1.16);
+}
+
+.ribbon-col {
+  flex: 0 0 auto;
+  width: var(--ribbon-col, 300px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  will-change: transform;
+}
+
+.ribbon-col img {
+  width: 100%;
+  aspect-ratio: 460 / 215;
+  object-fit: cover;
+  border-radius: 10px;
+  /* Лёгкое размытие: титры поверх остаются резкими, а лента читается потоком,
+     а не набором картинок, каждую из которых хочется рассмотреть. */
+  filter: blur(1.4px);
+}
+
+/*
+ * Скрим и виньетка. Числа замерены на живой странице: глухое ядро под титром,
+ * живые края. Прежняя кино-подложка была темнее (0.94 в центре) — там за ней
+ * стоял постер игры, а здесь лента и есть кадр.
+ */
+.ribbon-scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    86% 82% at 50% 46%,
+    rgba(11, 12, 16, 0.9) 0%,
+    rgba(11, 12, 16, 0.87) 30%,
+    rgba(11, 12, 16, 0.62) 68%,
+    rgba(11, 12, 16, 0.34) 100%
+  );
+}
+
+.ribbon-vignette {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(11, 12, 16, 0.82),
+    transparent 15%,
+    transparent 85%,
+    rgba(11, 12, 16, 0.9) 100%
+  );
+}
+
+/*
+ * СЦЕНА ГЛАВНОЙ.
+ *
+ * Экран целиком, содержимое по центру. Закрепление вешает JS
+ * (components/landing/Stage.tsx) — в стилях его нет намеренно: страница без
+ * скрипта и при «уменьшить движение» обязана остаться обычным документом, где
+ * секции просто идут одна за другой.
+ *
+ * min-height, а не height: если содержимое сцены выше экрана (телефон,
+ * крупный системный шрифт), оно обязано растянуть секцию, а не уехать под
+ * обрез.
+ */
+.scene {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  padding: clamp(72px, 10vh, 120px) clamp(20px, 4vw, 40px) clamp(48px, 8vh, 96px);
+}
+
+.scene-inner {
+  width: 100%;
+  max-width: 82rem;
+  margin-inline: auto;
+}
+
+/* Номер и имя сцены — как на хлопушке: сцена такая-то, про то-то. */
+.slate {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: clamp(16px, 3vh, 28px);
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.slate b {
+  color: var(--ember-text);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+}
+.slate span {
+  color: var(--faint);
+}
+
+/*
+ * ГЕРОЙ ГЛАВНОЙ.
+ *
+ * 92svh, а не 100: из-под нижнего края видно верхушку следующей сцены — это
+ * половина подсказки «здесь есть ещё», вторая половина строка со стрелкой.
+ * Лента идёт за кадром непрерывно, поэтому экран читается полноэкранным.
+ */
+.hero {
+  position: relative;
+  min-height: 92svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(96px, 12vh, 140px) clamp(20px, 4vw, 40px) clamp(72px, 10vh, 120px);
+  text-align: center;
+}
+
+.hero-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(16px, 2.4vh, 24px);
+  width: 100%;
+  max-width: 34rem;
+}
+
+/*
+ * Собственная тень под титром. Скрим ленты отвечает за кадр целиком, а эта —
+ * только за то, чтобы белое по обложке читалось на ЛЮБОЙ обложке: лента живая,
+ * и что окажется за логотипом, заранее неизвестно.
+ */
+.hero-body::before {
+  content: '';
+  position: absolute;
+  inset: -14% -34%;
+  background: radial-gradient(58% 52% at 50% 42%, rgba(11, 12, 16, 0.72), rgba(11, 12, 16, 0) 72%);
+  pointer-events: none;
+}
+.hero-body > * {
+  position: relative;
+}
+
+.hero-wordmark {
+  margin: 0;
+  font-size: var(--text-display-xl);
+  line-height: 0.92;
+  letter-spacing: -0.03em;
+}
+
+.hero-lede {
+  max-width: 26rem;
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--dim);
+}
+
+.hero-cue {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(18px, 4vh, 34px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  text-decoration: none;
+  transition: color var(--dur-base) var(--ease-out);
+}
+.hero-cue:hover {
+  color: var(--ink);
+}
+.hero-cue-arrow {
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* Титр сцены «Зачем всё это»: по фразе на строку. */
+.pain-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.04em;
+  max-width: 18ch;
+}
+.pain-title span {
+  display: block;
+}
+
+/* ── Сцена «Как это работает» ─────────────────────────────────────────── */
+.engine-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(18px, 3vh, 30px);
+  align-items: start;
+}
+@media (min-width: 900px) {
+  .engine-grid {
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: 44px;
+  }
+}
+
+.wall {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+@media (min-width: 900px) {
+  .wall {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: clamp(6px, 0.6vw, 11px);
+  }
+}
+.wall img {
+  width: 100%;
+  aspect-ratio: 460 / 215;
+  object-fit: cover;
+  border-radius: 6px;
+  opacity: 0.35;
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.wall li.is-on img {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--ember);
+}
+
+.switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.switch {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.switch-row {
+  display: flex;
+  gap: 8px;
+}
+
+/*
+ * .tap здесь не нужен и вреден: кнопка и так 56 px в высоту, а невидимая зона
+ * в 44 px добавляет по 6 px с боков и съедает зазор — замерено, соседние
+ * кнопки перекрывались на 4 px и воровали друг у друга нажатия.
+ *
+ * Курсор — только когда сцена отпустила: пока прокрутка сама щёлкает
+ * состояния, кнопка обещает нажатие, которого не будет.
+ */
+.chip {
+  border: 1px solid var(--edge);
+  background: var(--glass-bg);
+  color: var(--dim);
+  border-radius: 14px;
+  padding: 9px 14px;
+  text-align: left;
+  cursor: default;
+  transition:
+    background var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
+}
+.chip b {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.chip i {
+  display: block;
+  font-style: normal;
+  font-size: 0.6875rem;
+  color: var(--faint);
+}
+.chip[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--ember) 20%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  color: var(--ember-text);
+}
+[data-live='1'] .chip {
+  cursor: pointer;
+}
+[data-live='1'] .chip:hover {
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+}
+
+/*
+ * ПОДМЕНА ПЯТЁРКИ — НА ПЕРЕХОДАХ, А НЕ НА GSAP.
+ *
+ * Через gsap это уже ломалось: fromTo с задержкой, убитый следующим
+ * переключением, оставлял карточки на opacity 0 навсегда, и колонка стояла
+ * пустой. Переход прервать на полпути нельзя — он просто едет к новому
+ * значению.
+ *
+ * Первый набор остаётся в потоке и задаёт высоту колонки даже скрытым: иначе
+ * при переключении блок прыгал бы по высоте.
+ */
+.picks {
+  position: relative;
+}
+.pickset {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(8px, 1vh, 14px);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.28s var(--ease-out),
+    visibility 0s linear 0.28s;
+}
+.pickset:not(:first-child) {
+  position: absolute;
+  inset: 0;
+}
+.pickset.is-on {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 0.28s var(--ease-out),
+    visibility 0s;
+}
+.pickset .pick {
+  transform: translateY(16px);
+  transition: transform 0.32s var(--ease-out);
+}
+.pickset.is-on .pick {
+  transform: none;
+}
+.pickset.is-on .pick:nth-child(1) {
+  transition-delay: 0.02s;
+}
+.pickset.is-on .pick:nth-child(2) {
+  transition-delay: 0.06s;
+}
+.pickset.is-on .pick:nth-child(3) {
+  transition-delay: 0.1s;
+}
+.pickset.is-on .pick:nth-child(4) {
+  transition-delay: 0.14s;
+}
+.pickset.is-on .pick:nth-child(5) {
+  transition-delay: 0.18s;
+}
+
+.pick {
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 1.1vw, 18px);
+  background: var(--glass-bg);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: clamp(9px, 0.9vh, 14px);
+  overflow: hidden;
+}
+.pick img {
+  width: clamp(92px, 9vw, 152px);
+  flex: none;
+  aspect-ratio: 460 / 215;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.pick-name {
+  font-family: var(--font-sofia), sans-serif;
+  font-weight: 700;
+  font-size: clamp(1.0625rem, 0.9rem + 0.42vw, 1.4rem);
+  line-height: 1.2;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pick-tags {
+  font-size: 0.6875rem;
+  color: var(--faint);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Сцена «Совместимость» ────────────────────────────────────────────── */
+.compat-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(20px, 4vh, 36px);
+  align-items: center;
+}
+@media (min-width: 900px) {
+  .compat-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 48px;
+  }
+}
+
+.stacks {
+  display: flex;
+  justify-content: flex-start;
+  gap: clamp(10px, 1.4vw, 22px);
+  margin: clamp(18px, 2.5vh, 30px) 0;
+}
+.stack {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  width: min(48%, 300px);
+}
+.stack img {
+  width: 100%;
+  aspect-ratio: 460 / 215;
+  object-fit: cover;
+  border-radius: 4px;
+  opacity: 0.5;
+}
+
+.tally {
+  display: flex;
+  gap: clamp(24px, 5vw, 48px);
+  flex-wrap: wrap;
+}
+.tally-n {
+  font-family: var(--font-sofia), sans-serif;
+  font-weight: 800;
+  font-size: clamp(2.5rem, 1.8rem + 3vw, 4rem);
+  line-height: 1;
+  color: var(--ember-text);
+  font-variant-numeric: tabular-nums;
+}
+.tally-l {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--faint);
+  margin-top: 6px;
+}
+
+.compat-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.compat-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  background: var(--glass-bg);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: clamp(10px, 1.1vh, 17px) clamp(16px, 1.1vw, 22px);
+}
+.compat-name {
+  flex: 1;
+  min-width: 0;
+  font-size: clamp(0.875rem, 0.79rem + 0.24vw, 1.0625rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compat-a,
+.compat-b {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(0.875rem, 0.79rem + 0.24vw, 1.0625rem);
+}
+.compat-a {
+  color: var(--ember-text);
+}
+.compat-b {
+  color: var(--dim);
+}
+.compat-slash {
+  color: var(--faint);
+  font-size: 0.75rem;
+}
+
+/* ── Сцена «Что здесь ещё есть» ───────────────────────────────────────── */
+.rep {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rep li {
+  border-top: 1px solid var(--edge);
+}
+.rep li:last-child {
+  border-bottom: 1px solid var(--edge);
+}
+.rep a {
+  display: flex;
+  align-items: baseline;
+  gap: clamp(12px, 2vw, 22px);
+  padding: clamp(12px, 2vh, 18px) 0;
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--dur-base) var(--ease-out);
+}
+.rep a:hover {
+  color: var(--ember-text);
+}
+.rep-no {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--faint);
+  width: 24px;
+  flex: none;
+}
+.rep-name {
+  font-family: var(--font-sofia), sans-serif;
+  font-weight: 700;
+  font-size: clamp(1.125rem, 1rem + 0.6vw, 1.5rem);
+  flex: none;
+  min-width: clamp(120px, 16vw, 200px);
+}
+/* max-w — мера набора: без потолка строка расписания растягивалась на 135
+   символов при комфортных 45–75. */
+.rep-line {
+  flex: 1;
+  min-width: 0;
+  max-width: 34rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--dim);
+}
+.rep-arrow {
+  margin-left: auto;
+  flex: none;
+  color: var(--dim);
+}
+@media (max-width: 719px) {
+  .rep a {
+    flex-wrap: wrap;
+  }
+  .rep-line {
+    flex-basis: 100%;
+  }
+}
+
+/* ── Сцена «О деньгах» ────────────────────────────────────────────────── */
+.money-list {
+  list-style: none;
+  margin: clamp(18px, 3vh, 28px) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 0.9375rem;
+}
+.money-list li {
+  display: flex;
+  gap: 10px;
+}
+.money-list li::before {
+  content: '—';
+  color: var(--ember-text);
+}
+
+.back-block {
+  margin-top: clamp(24px, 4vh, 44px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  justify-content: space-between;
+  background: var(--glass-bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-panel);
+  padding: clamp(22px, 4vw, 36px);
+}
+.back-btn {
+  border-radius: 14px;
+  background: var(--ember);
+  color: var(--on-ember);
+  font-weight: 600;
+  padding: 13px 22px;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: filter var(--dur-base) var(--ease-out);
+}
+.back-btn:hover {
+  filter: brightness(1.1);
 }
 
 /* стеклянная панель — базовый строительный блок интерфейса */
