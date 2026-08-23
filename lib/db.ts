@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS room_votes (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (room_id, steamid, appid)
 );
+/*
+ * Окна ограничителя частоты (lib/ratelimit.ts). Ключ уже содержит номер окна,
+ * поэтому индекс не нужен: любое чтение — точное попадание по первичному
+ * ключу. expires_at существует только ради подметания из крона.
+ */
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+) WITHOUT ROWID;
 `
 
 /**

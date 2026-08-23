@@ -14,6 +14,7 @@ import { editionKey } from '@/lib/editions'
 import { claudePicks, heuristicPicks, type Pick } from '@/lib/llm'
 import { parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
+import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
   applyFeedbackToProfile,
   applyFocus,
@@ -26,7 +27,7 @@ import {
   scoreCandidates,
   splitBySource,
 } from '@/lib/recommend'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
 import type { GameMeta } from '@/lib/types'
 
@@ -42,6 +43,37 @@ const CANDIDATE_LIMIT = 30
  * жанра появился шанс, а не чтобы выдача перестала быть твоей.
  */
 const WILDCARD_POOL = 30
+
+/*
+ * Потолки на самую дорогую ручку продукта.
+ *
+ * Сессия здесь не барьер: её бесплатно выдаёт POST /api/connect {demo:true}
+ * без всякой аутентификации, а каждый вызов этой ручки идёт в Claude. Без
+ * ограничителя цикл «получить демо-сессию → запросить подборку» превращается
+ * в чужой счёт за токены, и заметить это можно было бы только по биллингу.
+ *
+ * Считаем по обеим осям сразу. Один steamid — про человека, который завис на
+ * кнопке «ещё»; один IP — про скрипт, который чеканит новые демо-личности
+ * (они одноразовые, см. demoSteamId, и лимит по steamid ему не преграда).
+ *
+ * Отказ здесь именно 429, а не тихий откат на эвристику. Эвристика существует
+ * для СБОЯ модели, и подменять ею отказ по лимиту значит скрыть от честного
+ * человека, что он упёрся в потолок.
+ */
+const RECOMMEND_LIMIT = 20
+const RECOMMEND_WINDOW_SEC = 600
+const RECOMMEND_IP_LIMIT = 60
+
+/*
+ * Отдельный, куда более жёсткий потолок именно на вызовы модели у демо-личностей.
+ *
+ * Демо-выдача обязана быть настоящей: гость приходит с лендинга ровно за тем,
+ * чтобы увидеть, как это работает, и шаблонное объяснение на первом же экране
+ * обесценивает весь путь. Но и бесконечно крутить чужую библиотеку за наши
+ * токены незачем — после пары подборок «вау» уже случилось.
+ */
+const DEMO_LLM_LIMIT = 2
+const DEMO_LLM_WINDOW_SEC = 86_400
 
 export async function POST(req: Request) {
   const steamid = await currentSteamId()
@@ -61,6 +93,16 @@ export async function POST(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
+
+  const ip = clientIp(req.headers)
+  for (const gate of [
+    { bucket: 'recommend', id: steamid, limit: RECOMMEND_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
+    { bucket: 'recommend-ip', id: ip, limit: RECOMMEND_IP_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
+  ]) {
+    const verdict = await checkRate(db, { ...gate, nowSec: now })
+    if (!verdict.ok) return rateLimitedResponse(verdict.retryAfterSec)
+  }
+
   const snapshot = await getLatestSnapshot(db, steamid)
   if (!snapshot) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
 
@@ -164,9 +206,33 @@ export async function POST(req: Request) {
   const priced = refreshed ? await getGamesMeta(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
-  const fromClaude = heroPool.length
-    ? await claudePicks({ candidates: heroPool, metaOf: metaNow, library: games, mood, focus, nowSec: now })
-    : null
+  // Демо-личность получает настоящую подборку, но считанное число раз в сутки —
+  // дальше та же выдача собирается эвристикой. Проверка идёт последней, уже
+  // после того как пул собран: она должна тратить квоту только тогда, когда
+  // вызов модели реально состоялся бы.
+  const llmAllowed =
+    !isDemoId(steamid) ||
+    (
+      await checkRate(db, {
+        bucket: 'llm-demo',
+        id: steamid,
+        limit: DEMO_LLM_LIMIT,
+        windowSec: DEMO_LLM_WINDOW_SEC,
+        nowSec: now,
+      })
+    ).ok
+
+  const fromClaude =
+    heroPool.length && llmAllowed
+      ? await claudePicks({
+          candidates: heroPool,
+          metaOf: metaNow,
+          library: games,
+          mood,
+          focus,
+          nowSec: now,
+        })
+      : null
   const picks =
     fromClaude ?? heuristicPicks(heroPool.length ? heroPool : actual, metaNow, PICK_COUNT, now, profile)
 

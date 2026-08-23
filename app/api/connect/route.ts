@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
 import { seedDemo } from '@/lib/demo'
+import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
   SESSION_COOKIE,
   currentSteamId,
@@ -22,6 +23,23 @@ async function withSession(
   return res
 }
 
+/*
+ * Лимит на выдачу сессии.
+ *
+ * Это единственная ручка приложения, которая создаёт подписанную сессию без
+ * какой-либо аутентификации, — и потому вход для всего остального. Она же
+ * тратит квоту Steam на resolveVanity и GetOwnedGames.
+ *
+ * Ключ — IP: steamid'а на входе ещё нет, а демо-личность у каждого вызова
+ * новая, так что считать по ней нечего.
+ *
+ * Потолок высокий относительно нормального поведения (человек подключается
+ * один раз, ну два, если ошибся в нике) именно потому, что за одним адресом
+ * может сидеть общий NAT — кафе, общежитие, мобильный оператор.
+ */
+const CONNECT_LIMIT = 12
+const CONNECT_WINDOW_SEC = 900
+
 export async function POST(req: Request) {
   const userAgent = req.headers.get('user-agent')
   const body = (await req.json().catch(() => ({}))) as {
@@ -31,6 +49,15 @@ export async function POST(req: Request) {
   }
   const db = await getDb()
   const now = nowSec()
+
+  const gate = await checkRate(db, {
+    bucket: 'connect',
+    id: clientIp(req.headers),
+    limit: CONNECT_LIMIT,
+    windowSec: CONNECT_WINDOW_SEC,
+    nowSec: now,
+  })
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   if (body.demo) {
     const variant = body.variant === 2 ? 2 : 1

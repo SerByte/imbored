@@ -167,6 +167,13 @@ function Player() {
   const askedMood = (['time', 'vibe', 'social'] as const).every((k) => search.has(k))
 
   const [phase, setPhase] = useState<'prepare' | 'spin' | 'reveal' | 'burnout' | 'error'>('prepare')
+  /*
+   * Сколько ждать, если выдача отказала по потолку частоты, а не по сбою.
+   * Экран ошибки говорит «каталог прогревается» — для 429 это прямая неправда:
+   * каталог в порядке, упёрся человек. Держим секунды из Retry-After, чтобы
+   * назвать срок, а не отправить «попробуй через минуту» при окне в десять.
+   */
+  const [limitedFor, setLimitedFor] = useState<number | null>(null)
   const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   /** Обложка последнего ответа квиза, если человек пришёл оттуда */
@@ -244,6 +251,12 @@ function Player() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ mood, ...(focus ? { focus } : {}), scope: nextScope }),
         })
+        if (res.status === 429) {
+          const wait = Number(res.headers.get('Retry-After') ?? 0)
+          setLimitedFor(Number.isFinite(wait) && wait > 0 ? wait : null)
+          return null
+        }
+        setLimitedFor(null)
         if (!res.ok) return null
         const data = (await res.json()) as {
           picks: Pick[]
@@ -445,9 +458,13 @@ function Player() {
   if (phase === 'error') {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
-        <p className="text-lg">Не получилось собрать рекомендации.</p>
+        <p className="text-lg">
+          {limitedFor === null ? 'Не получилось собрать рекомендации.' : 'Слишком часто.'}
+        </p>
         <p className="text-dim text-sm max-w-md">
-          Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.
+          {limitedFor === null
+            ? 'Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.'
+            : `Подбор — дорогая операция, и на неё стоит потолок. Вернись через ${Math.ceil(limitedFor / 60)} ${plural(Math.ceil(limitedFor / 60), 'минуту', 'минуты', 'минут')}.`}
         </p>
         <button
           onClick={() => void retry()}
