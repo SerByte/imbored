@@ -21,6 +21,7 @@ import type { CandidateSource } from '@/lib/types'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { plural } from '@/lib/plural'
 import { SectionLabel } from '@/components/Labels'
+import { TagChips } from '@/components/TagChips'
 
 /** Карточка магазина: и герой в день каталога, и плитки на полке ниже */
 type StoreCard = {
@@ -40,6 +41,8 @@ type DailyPick = StoreCard & {
   reason: string
   screenshots: string[]
   tags: string[]
+  /** теги, уже присутствующие во вкусе игрока — их чипсы помечены */
+  sharedTags?: string[]
   hoursPlayed: number | null
   ccu: number | null
 }
@@ -213,15 +216,7 @@ export default function DailyPage() {
             </SplitHeading>
             <p className="text-base md:text-lg text-ink/90 leading-relaxed">{pick.reason}</p>
 
-            {pick.tags.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {pick.tags.map((t) => (
-                  <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            )}
+            <TagChips tags={pick.tags} matched={pick.sharedTags ?? []} />
 
             <div className="flex flex-wrap items-center gap-3 mt-2">
               {/* Некупленную игру запускать нечем: steam://run у неё

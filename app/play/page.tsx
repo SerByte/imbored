@@ -32,6 +32,7 @@ import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { plural } from '@/lib/plural'
+import { TagChips } from '@/components/TagChips'
 
 type Signals = {
   matchPercent: number | null
@@ -580,12 +581,8 @@ function Player() {
             )}
 
             {pick.tags.length > 0 && (
-              <motion.div variants={STEP} className="flex flex-wrap gap-2">
-                {pick.tags.map((t) => (
-                  <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-                    {t}
-                  </span>
-                ))}
+              <motion.div variants={STEP}>
+                <TagChips tags={pick.tags} matched={pick.signals?.sharedTags ?? []} />
               </motion.div>
             )}
 
@@ -764,7 +761,15 @@ function Player() {
               </div>
             )}
             <span className="text-xs text-faint font-mono">
-              {switching ? 'пересобираю…' : engine === 'claude' ? 'подбор: ИИ' : 'подбор: эвристика'}
+              {/*
+                «по тегам», а не «эвристика». Раскрытие тут по делу — продукт
+                обещает, что рекомендация себя объясняет, — но «эвристика» было
+                единственным словом из машинного словаря во всём интерфейсе, и
+                рядом с «ИИ» оно читалось как «версия похуже», без единого
+                способа что-то с этим сделать. По тегам подбор и идёт, а сами
+                теги человек видит чипсами строкой выше.
+              */}
+              {switching ? 'пересобираю…' : engine === 'claude' ? 'подбор: ИИ' : 'подбор: по тегам'}
             </span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

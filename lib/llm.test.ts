@@ -240,3 +240,54 @@ describe('trimTldr: длина не превышается никогда', () =
     }
   })
 })
+
+/**
+ * Причина не имеет права называть тег, которого нет во вкусе игрока.
+ *
+ * До этой проверки в шаблон подставлялись два самых частых тега игры по
+ * голосам Steam — число, не знающее про конкретного человека, — а фраза
+ * вокруг него утверждала именно про человека: «её теги (…) совпадают с тем,
+ * во что ты играешь больше всего». Совпадало оно только статистически.
+ */
+describe('причина называет теги игрока, а не популярные', () => {
+  const shooter: GameMeta = {
+    appid: 42,
+    name: 'Loud Shooter',
+    // MOBA — самый частый тег игры, но во вкусе игрока его нет
+    tags: { MOBA: 1000, Competitive: 300, Atmospheric: 20 },
+    genres: [],
+    categories: [2],
+  }
+  const metaShooter = () => shooter
+  const cand: ScoredCandidate[] = [{ appid: 42, name: 'Loud Shooter', source: 'new', score: 0.9 }]
+
+  test('самый популярный тег игры в причину не попадает, если его нет во вкусе', () => {
+    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Competitive: 1, Atmospheric: 0.4 })
+    expect(pick.reason).toContain('Competitive')
+    expect(pick.reason).not.toContain('MOBA')
+  })
+
+  test('без профиля предложение про вкус не пишется вовсе', () => {
+    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW)
+    expect(pick.reason).not.toContain('совпадают с тем')
+    expect(pick.reason).not.toContain('MOBA')
+    expect(pick.reason.length).toBeGreaterThan(10)
+  })
+
+  /*
+   * Порядок — произведение двух величин, и обе обязательны. Только вкус
+   * поставил бы вперёд тег, который у игрока в топе, но к самой игре имеет
+   * отношение по касательной: «Atmospheric» с двадцатью голосами из тысячи
+   * трёхсот — не то, за что эту игру выбирают. Только голоса Steam — это
+   * ровно то, что здесь чинилось.
+   */
+  test('вес во вкусе двигает тег вперёд', () => {
+    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Atmospheric: 100, Competitive: 1 })
+    expect(pick.reason.indexOf('Atmospheric')).toBeLessThan(pick.reason.indexOf('Competitive'))
+  })
+
+  test('но краевой для игры тег не обгоняет центральный на малой разнице', () => {
+    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Atmospheric: 10, Competitive: 1 })
+    expect(pick.reason.indexOf('Competitive')).toBeLessThan(pick.reason.indexOf('Atmospheric'))
+  })
+})

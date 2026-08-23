@@ -323,6 +323,30 @@ export type MatchExplanation = {
   moodTags: string[]
 }
 
+/** Сколько совпавших тегов вообще имеет смысл называть. */
+const SHARED_TAGS = 3
+
+/**
+ * Теги игры, которые уже есть во вкусе игрока, — по убыванию вклада в
+ * совпадение.
+ *
+ * Отдельной функцией, а не строкой внутри explainMatch, потому что спрашивают
+ * об этом ДВА экрана, и оба показывают ответ человеку. Выдача берёт список
+ * через explainMatch (там же процент и вайб), «Игре дня» нужны только теги:
+ * настроения у неё нет вообще — игра одна на сутки и ни под какой вайб не
+ * подбиралась. Дублировать эти четыре строки во второй роут значило бы
+ * завести второй источник правды ровно для того, что на обоих экранах
+ * подсвечивается одинаково.
+ */
+export function sharedTasteTags(profile: Record<string, number>, meta: GameMeta): string[] {
+  const norm = normalizedTags(meta)
+  return Object.entries(norm)
+    .filter(([tag]) => (profile[tag] ?? 0) > 0)
+    .sort((a, b) => (profile[b[0]] ?? 0) * b[1] - (profile[a[0]] ?? 0) * a[1])
+    .slice(0, SHARED_TAGS)
+    .map(([tag]) => tag)
+}
+
 /** Прозрачность выдачи: из чего сложился скоринг этой игры */
 export function explainMatch(
   profile: Record<string, number>,
@@ -333,11 +357,7 @@ export function explainMatch(
   const norm = normalizedTags(meta)
   const matchPercent = profileEmpty ? null : Math.round(cosine(profile, norm) * 100)
 
-  const sharedTags = Object.entries(norm)
-    .filter(([tag]) => (profile[tag] ?? 0) > 0)
-    .sort((a, b) => (profile[b[0]] ?? 0) * b[1] - (profile[a[0]] ?? 0) * a[1])
-    .slice(0, 3)
-    .map(([tag]) => tag)
+  const sharedTags = sharedTasteTags(profile, meta)
 
   const moodWanted = new Set([...VIBE_TAGS[mood.vibe], ...TIME_TAGS[mood.time]])
   const moodTags = Object.keys(meta.tags)
