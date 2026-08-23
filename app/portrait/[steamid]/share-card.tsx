@@ -4,6 +4,7 @@ import { ogFonts, ogNum, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { buildPortrait } from '@/lib/portrait'
 import { getDb } from '@/lib/server'
 import { buildWrapped } from '@/lib/wrapped'
+import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
 
 /**
  * Общая начинка для двух картинок: OG-превью 1200×630 и скачиваемой карточки
@@ -154,9 +155,13 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
             marginTop: wide ? 8 : 0,
           }}
         >
-          <Stat value={num(data.totalHours)} caption="часов сыграно" wide={wide} />
-          <Stat value={num(data.gamesCount)} caption="игр в библиотеке" wide={wide} />
-          <Stat value={num(data.unplayedCount)} caption="так и не запущены" wide={wide} />
+          <Stat value={num(data.totalHours)} caption={hoursCaption(data.totalHours)} wide={wide} />
+          <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount)} wide={wide} />
+          <Stat
+            value={num(data.unplayedCount)}
+            caption={unplayedCaption(data.unplayedCount)}
+            wide={wide}
+          />
         </div>
 
         {/* Одной строкой, а не склейкой из выражений: satori требует явный
