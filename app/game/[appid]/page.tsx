@@ -353,7 +353,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {data.news.length > 0 && (
           <section>
             <SectionLabel className="mb-4">Что нового</SectionLabel>
-            <GameNews items={data.news} />
+            <GameNews items={data.news} name={meta.name} />
           </section>
         )}
 

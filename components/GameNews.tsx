@@ -5,6 +5,7 @@ import { useState } from 'react'
 import type { StoredNews } from '@/lib/db'
 import { NewsBody } from './NewsBody'
 import { NewsDate, ScaleBadge } from './NewsMeta'
+import { stripGameName } from '@/lib/patchtitle'
 
 /**
  * Клиентский островок: /game/[appid] остаётся серверным компонентом.
@@ -13,7 +14,7 @@ import { NewsDate, ScaleBadge } from './NewsMeta'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
-export function GameNews({ items }: { items: StoredNews[] }) {
+export function GameNews({ items, name }: { items: StoredNews[]; name: string }) {
   // свежий патч раскрыт сразу: ради него сюда и приходят
   const [open, setOpen] = useState<string | null>(items[0]?.gid ?? null)
 
@@ -32,7 +33,10 @@ export function GameNews({ items }: { items: StoredNews[] }) {
               className="w-full text-left p-5 flex items-start gap-3 hover:bg-ink/[0.03] transition-colors"
             >
               <div className="min-w-0 flex-1 flex flex-col gap-1.5">
-                <span className="text-base font-medium text-ink leading-snug">{item.title}</span>
+                {/* Название игры — заголовок всей страницы; в заголовке патча оно лишнее. */}
+                <span className="text-base font-medium text-ink leading-snug">
+                  {stripGameName(item.title, name)}
+                </span>
                 <span className="flex items-center gap-3">
                   <NewsDate at={item.publishedAt} />
                   {item.tldr && !isOpen && (
