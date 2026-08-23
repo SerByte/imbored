@@ -297,17 +297,30 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {/* pros / cons из реальных отзывов */}
         {/* Сюда доходит только собранное моделью — эвристику отсекает
             loadGamePage, там же объяснено почему. */}
+        {/*
+          ХВАЛА И КРИТИКА ОДНОГО ВЕСА.
+          Панели стояли парой, а набраны были по-разному: у «любят»
+          надзаголовок акцентом, текст --ink/90 и плюс акцентом, у «ругают» —
+          всё в --dim. Замерено в браузере: 16.73:1 против 6.00:1, то есть
+          критика читалась втрое тише похвалы. На странице, которая называется
+          «стоит ли играть» и рядом с кнопкой покупки и скидкой −67%.
+          Это оформление, спорящее с обещанием продукта: «рекомендация — это
+          доверие, а доверие не продаётся».
+          Различают панели теперь заголовок и знак, а не громкость. Цветовой
+          валентности нет ни у одной: зелёного и красного в палитре нет
+          намеренно — то же правило записано в колоде пати. Заодно ember у
+          «любят» был единственным акцентным надзаголовком на странице, где
+          все остальные разделы набраны обычным SectionLabel.
+        */}
         {prosCons && (prosCons.pros.length > 0 || prosCons.cons.length > 0) && (
           <section className="grid md:grid-cols-2 gap-4">
             {prosCons.pros.length > 0 && (
               <div className="glass rounded-[20px] p-6 anim-rise">
-                <SectionLabel tone="ember" className="mb-3">
-                  За что любят
-                </SectionLabel>
+                <SectionLabel className="mb-3">За что любят</SectionLabel>
                 <ul className="space-y-2 text-sm text-ink/90">
                   {prosCons.pros.map((p) => (
                     <li key={p} className="flex gap-2.5">
-                      <span className="text-ember-text">+</span>
+                      <span className="text-faint">+</span>
                       {p}
                     </li>
                   ))}
@@ -317,10 +330,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             {prosCons.cons.length > 0 && (
               <div className="glass rounded-[20px] p-6 anim-rise" style={{ animationDelay: '80ms' }}>
                 <SectionLabel className="mb-3">За что ругают</SectionLabel>
-                <ul className="space-y-2 text-sm text-dim">
+                <ul className="space-y-2 text-sm text-ink/90">
                   {prosCons.cons.map((c) => (
                     <li key={c} className="flex gap-2.5">
-                      <span>−</span>
+                      <span className="text-faint">−</span>
                       {c}
                     </li>
                   ))}
