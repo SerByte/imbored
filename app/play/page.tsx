@@ -419,7 +419,7 @@ function Player() {
         <p className="text-dim text-sm max-w-md">
           Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.
         </p>
-        <Link href="/quiz" className="text-ember-text hover:underline text-sm">
+        <Link href="/quiz" className="tap text-ember-text hover:underline text-sm">
           Попробовать снова
         </Link>
       </div>
@@ -460,11 +460,11 @@ function Player() {
                 setSkipCount(0)
                 setPhase('reveal')
               }}
-              className="text-dim hover:text-ink transition-colors"
+              className="tap text-dim hover:text-ink transition-colors"
             >
               Всё равно листать
             </button>
-            <Link href="/" className="text-dim hover:text-ink transition-colors">
+            <Link href="/" className="tap text-dim hover:text-ink transition-colors">
               На сегодня всё
             </Link>
           </div>

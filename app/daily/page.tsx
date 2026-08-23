@@ -119,7 +119,7 @@ export default function DailyPage() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Не получилось выбрать игру дня.</p>
-        <Link href="/quiz" className="text-ember-text hover:underline text-sm">
+        <Link href="/quiz" className="tap text-ember-text hover:underline text-sm">
           Обычный подбор →
         </Link>
       </div>

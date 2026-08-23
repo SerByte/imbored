@@ -217,22 +217,22 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             <nav className="flex items-center gap-5 text-sm text-dim">
               {/* на телефоне пункты уезжают в нижнюю панель — в шапке остаётся только тема */}
               <span className="hidden md:flex items-center gap-5">
-                <Link href="/daily" className="hover:text-ink transition-colors">
+                <Link href="/daily" className="tap hover:text-ink transition-colors">
                   Игра дня
                 </Link>
-                <Link href="/quiz" className="hover:text-ink transition-colors">
+                <Link href="/quiz" className="tap hover:text-ink transition-colors">
                   Подобрать игру
                 </Link>
-                <Link href="/rooms" className="hover:text-ink transition-colors">
+                <Link href="/rooms" className="tap hover:text-ink transition-colors">
                   Пати
                 </Link>
-                <Link href="/whatsnew" className="hover:text-ink transition-colors">
+                <Link href="/whatsnew" className="tap hover:text-ink transition-colors">
                   Что нового
                 </Link>
-                <Link href="/compat" className="hover:text-ink transition-colors">
+                <Link href="/compat" className="tap hover:text-ink transition-colors">
                   Совместимость
                 </Link>
-                <Link href="/library" className="hover:text-ink transition-colors">
+                <Link href="/library" className="tap hover:text-ink transition-colors">
                   Библиотека
                 </Link>
               </span>

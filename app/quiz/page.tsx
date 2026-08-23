@@ -348,7 +348,7 @@ function Quiz() {
               setBack(true)
               setStepIndex(stepIndex - 1)
             }}
-            className="text-sm text-dim hover:text-ink transition-colors cursor-pointer"
+            className="tap text-sm text-dim hover:text-ink transition-colors cursor-pointer"
           >
             ← Назад
           </button>

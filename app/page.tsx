@@ -44,7 +44,7 @@ function PrivacyHelp() {
             href="https://steamcommunity.com/my/edit/settings"
             target="_blank"
             rel="noreferrer"
-            className="text-ember-text hover:underline"
+            className="tap tap-tight text-ember-text hover:underline"
           >
             настройки приватности Steam
           </a>
@@ -324,7 +324,7 @@ function Landing() {
           <p className="text-xs leading-relaxed text-dim">
             Пароль не спрашиваем — вход идёт на стороне Steam. Читаем только список игр
             и наигранные часы, ничего не публикуем.{' '}
-            <Link href="/privacy" className="underline decoration-edge hover:text-ink">
+            <Link href="/privacy" className="tap tap-tight underline decoration-edge hover:text-ink">
               Подробнее
             </Link>
           </p>
