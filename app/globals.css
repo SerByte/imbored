@@ -1621,38 +1621,118 @@ textarea:focus-visible {
   }
 }
 
+/*
+ * ДВЕ БИБЛИОТЕКИ СХОДЯТСЯ, И МЕЖДУ НИМИ ЗАГОРАЕТСЯ ШОВ.
+ *
+ * Смысл сцены — встреча двух библиотек. Раньше он был написан словами, а
+ * показан двумя одинаковыми сетками три-на-два по 0.5 прозрачности: рядом,
+ * никак не связаны, читаются шумом. Съезд к центру в партитуре был, но приезжать
+ * было НЕ К ЧЕМУ — стопки просто вставали бок о бок.
+ *
+ * Теперь это столкновение. Половины наклонены навстречу друг другу, слегка
+ * заходят одна на другую, и на линии стыка стоит шов света — то самое «общее»,
+ * ради которого сцена существует. Наклон в разные стороны обязателен: два
+ * одинаково стоящих блока читаются списком, встречный разворот — встречей.
+ */
 .stacks {
+  position: relative;
   display: flex;
-  justify-content: flex-start;
-  gap: clamp(10px, 1.4vw, 22px);
-  margin: clamp(18px, 2.5vh, 30px) 0;
+  justify-content: center;
+  align-items: center;
+  gap: clamp(14px, 2vw, 30px);
+  margin: clamp(20px, 3vh, 34px) 0 clamp(24px, 3.5vh, 40px);
+  padding-inline: clamp(4px, 1vw, 18px);
 }
 .stack {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 5px;
-  width: min(48%, 300px);
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  width: min(48%, 292px);
+  will-change: transform;
+}
+/*
+ * Встречный разворот. Точка вращения — у шва: половины разворачиваются вокруг
+ * места встречи, а не вокруг себя, и наружные края расходятся сильнее
+ * внутренних.
+ *
+ * ТОЛЬКО ПОВОРОТ, без сдвига в том же объявлении. Партитура въезда доводит эти
+ * же градусы твином (см. enter в Compat.tsx), а gsap владеет transform
+ * целиком — любое второе слагаемое здесь он бы стёр, и оно жило бы только в
+ * режиме уменьшенного движения. Один элемент — одно значение.
+ */
+.stack[data-stack='a'] {
+  transform: rotate(-7deg);
+  transform-origin: right center;
+}
+.stack[data-stack='b'] {
+  transform: rotate(7deg);
+  transform-origin: left center;
 }
 .stack img {
   width: 100%;
   aspect-ratio: 460 / 215;
   object-fit: cover;
-  border-radius: 4px;
-  opacity: 0.5;
+  border-radius: 6px;
+  opacity: 0.82;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 10px 22px -12px rgba(0, 0, 0, 0.9);
 }
 
+/*
+ * ШОВ. Это кульминация сцены, и он один на всю её высоту.
+ *
+ * Три слоя в одном элементе: ядро-волосок, его разлив и широкое тёплое гало.
+ * Ядро тонкое намеренно — свет читается светом, только когда у него есть
+ * пережжённая сердцевина; один размытый градиент даёт пятно, а не луч.
+ */
+.compat-seam {
+  position: absolute;
+  left: 50%;
+  top: -6%;
+  bottom: -6%;
+  width: 3px;
+  margin-left: -1.5px;
+  pointer-events: none;
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--ember) 92%, #fff) 22%,
+    color-mix(in srgb, var(--ember) 92%, #fff) 78%,
+    transparent
+  );
+  box-shadow:
+    0 0 14px 1px color-mix(in srgb, var(--ember) 80%, transparent),
+    0 0 60px 12px color-mix(in srgb, var(--ember) 40%, transparent);
+  will-change: transform, opacity;
+}
+
+/* Итог стоит ПОД ШВОМ, а не под левым краем колонки: два числа — это то,
+   что дало столкновение, и они обязаны читаться его следствием. */
 .tally {
   display: flex;
-  gap: clamp(24px, 5vw, 48px);
+  justify-content: center;
+  gap: clamp(28px, 6vw, 64px);
   flex-wrap: wrap;
+  text-align: center;
 }
+/*
+ * Итог встречи. Два числа — единственное, что человек унесёт из сцены, поэтому
+ * они набраны дисплейно и СВЕТЯТСЯ: тёплое гало вокруг цифр — тот же источник,
+ * что и шов между библиотеками, только досюда доехавший.
+ */
 .tally-n {
   font-family: var(--font-sofia), sans-serif;
   font-weight: 800;
-  font-size: clamp(2.5rem, 1.8rem + 3vw, 4rem);
-  line-height: 1;
+  font-size: clamp(2.75rem, 1.9rem + 3.6vw, 4.75rem);
+  line-height: 0.94;
+  letter-spacing: -0.03em;
   color: var(--ember-text);
   font-variant-numeric: tabular-nums;
+  text-shadow:
+    0 0 26px color-mix(in srgb, var(--ember) 46%, transparent),
+    0 2px 3px rgba(11, 12, 16, 0.6);
 }
 .tally-l {
   font-family: var(--font-jbmono), ui-monospace, monospace;
@@ -1671,14 +1751,31 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 6px;
 }
+/*
+ * СТРОКА ОБЩЕЙ ИГРЫ — ЭТО ВЕСЫ, А НЕ ПОДПИСЬ «150 / 20».
+ *
+ * Аргумент сцены — часы с обеих сторон: «по-настоящему, а не по анкете».
+ * Напечатанные через косую черту, они этого не показывали — два числа рядом
+ * читаются одинаково, кто бы там ни наиграл вдесятеро больше. Строку надо было
+ * ПОСМОТРЕТЬ, а не прочитать.
+ *
+ * Теперь у каждой игры шкала от центра: влево тёплое (первый), вправо холодное
+ * (второй), обе доли считаются от самого большого числа во всей таблице. Dota
+ * с 2400 против 50 разваливается в стороны с одного взгляда, Portal 2 с 12
+ * против 15 стоит ровно — и это ровно тот вывод, ради которого таблица здесь.
+ *
+ * Тёплое против холодного, а не два оттенка одного: две стороны обязаны
+ * различаться температурой, как различаются половины самой сцены.
+ */
 .compat-row {
   display: flex;
-  align-items: baseline;
-  gap: 14px;
+  align-items: center;
+  gap: clamp(8px, 0.9vw, 14px);
   background: var(--glass-bg);
   border: 1px solid var(--edge);
   border-radius: 14px;
-  padding: clamp(10px, 1.1vh, 17px) clamp(16px, 1.1vw, 22px);
+  padding: clamp(8px, 0.9vh, 13px) clamp(14px, 1vw, 20px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 .compat-name {
   flex: 1;
@@ -1690,19 +1787,80 @@ textarea:focus-visible {
 }
 .compat-a,
 .compat-b {
+  flex: none;
   font-family: var(--font-jbmono), ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
-  font-size: clamp(0.875rem, 0.79rem + 0.24vw, 1.0625rem);
+  font-size: clamp(0.75rem, 0.7rem + 0.2vw, 0.9375rem);
+  /* Ширина под самое длинное значение: без неё шкалы соседних строк съезжают
+     по горизонтали и весы перестают быть весами. */
+  width: 4.4em;
 }
 .compat-a {
   color: var(--ember-text);
+  text-align: right;
 }
 .compat-b {
-  color: var(--dim);
+  color: rgb(146, 178, 232);
+  text-align: left;
 }
-.compat-slash {
-  color: var(--faint);
-  font-size: 0.75rem;
+
+/* Шкала: два жёлоба от общей середины. */
+.compat-bar {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  width: clamp(88px, 13.5vw, 196px);
+}
+.compat-track {
+  height: 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  overflow: hidden;
+}
+/*
+ * Заливка ЕДЕТ МАСШТАБОМ, а не шириной: доля живёт в --k, и покой — это уже
+ * верное значение. Партитура тянет её из нуля, но при «уменьшить движение»
+ * build не вызывается, и шкала просто нарисована правильной.
+ */
+.compat-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transform: scaleX(var(--k, 1));
+  will-change: transform;
+}
+.compat-track-a .compat-fill {
+  transform-origin: right center;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--ember) 45%, transparent),
+    var(--ember)
+  );
+}
+.compat-track-b .compat-fill {
+  transform-origin: left center;
+  background: linear-gradient(90deg, rgb(146, 178, 232), rgba(146, 178, 232, 0.4));
+}
+
+/*
+ * На телефоне шкала и числа уступают место названию. Замерено: с настольными
+ * ширинами «Counter-Strike 2» и «Deep Rock Galactic» обрывались многоточием на
+ * 375 px — а название игры здесь важнее лишних двадцати пикселей шкалы, оно
+ * единственное, по чему строку вообще узнают.
+ */
+@media (max-width: 560px) {
+  .compat-row {
+    gap: 7px;
+    padding-inline: 12px;
+  }
+  .compat-bar {
+    width: 66px;
+  }
+  .compat-a,
+  .compat-b {
+    width: 3.4em;
+  }
 }
 
 /* ── Сцена «Что здесь ещё есть» ───────────────────────────────────────── */
