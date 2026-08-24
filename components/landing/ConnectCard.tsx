@@ -262,7 +262,7 @@ export function ConnectCard() {
                 «сменить аккаунт» ищут дольше, чем оно того стоит. */}
             <a
               href={steamHref}
-              className="tap py-1 text-center text-sm text-dim transition-colors hover:text-ink"
+              className="tap py-1 text-center text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
             >
               Это не я — войти через Steam
             </a>
@@ -320,7 +320,18 @@ export function ConnectCard() {
               {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
               <Magnet className="block w-full">
                 <ClickSpark className="block w-full">
-                  <button type="submit" disabled={!input || busy !== null} className="btn-ember is-block">
+                  {/*
+                    data-busy отдельно от disabled: форма выключает кнопку и
+                    когда поле пустое, и когда идёт запрос, а это два разных
+                    состояния. Выключенная ЖДЁТ ввода, занятая РАБОТАЕТ — и
+                    выглядеть они обязаны по-разному (см. .btn-ember[data-busy]).
+                  */}
+                  <button
+                    type="submit"
+                    disabled={!input || busy !== null}
+                    data-busy={busy === 'connect' ? '' : undefined}
+                    className="btn-ember is-block"
+                  >
                     {busy === 'connect' ? 'Читаю библиотеку…' : action}
                   </button>
                 </ClickSpark>
@@ -336,7 +347,7 @@ export function ConnectCard() {
             <button
               onClick={() => connect(true)}
               disabled={busy !== null}
-              className="tap py-1 text-sm text-dim transition-colors hover:text-ink"
+              className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
             >
               {busy === 'demo' ? 'Готовлю демо…' : 'Попробовать демо без Steam'}
             </button>

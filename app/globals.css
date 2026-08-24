@@ -478,6 +478,19 @@
   --text-label: 11px;
 
   /*
+   * ХОД НАЖАТИЯ. Одно число на все нажимаемые элементы страницы.
+   *
+   * До него отвечала на нажатие ровно ОДНА кнопка из одиннадцати — парадная.
+   * Всё остальное (вход через Steam, демо, чипы подбора, строки расписания,
+   * пресеты) под пальцем не двигалось вовсе: наведение меняло цвет, а нажатие
+   * не давало никакого отклика. На мыши это незаметно, на телефоне — это
+   * ощущение, что кнопка не сработала, и человек жмёт второй раз.
+   *
+   * Пиксель, а не два: это подтверждение касания, а не анимация.
+   */
+  --press-shift: 1px;
+
+  /*
    * Строка под титром сцены. Одна на все сцены: у героя она была 20.8/1.5, у
    * сцены боли 18/1.625 — одна и та же роль, набранная по-разному в двух
    * местах.
@@ -1118,8 +1131,17 @@ textarea:focus-visible {
   text-decoration: none;
   transition: color var(--dur-base) var(--ease-out);
 }
+/*
+ * Наведение и нажатие — ЦВЕТОМ, а не ходом, и это вынужденное исключение из
+ * общего языка: transform у этой строки занят центровкой (translateX(-50%)), и
+ * добавить к нему ход нажатия значило бы переписывать центровку в каждом
+ * состоянии. Отклик всё равно есть, просто другим свойством.
+ */
 .hero-cue:hover {
   color: var(--ink);
+}
+.hero-cue:active {
+  color: var(--ember-text);
 }
 .hero-cue-arrow {
   font-size: 15px;
@@ -1317,6 +1339,56 @@ textarea:focus-visible {
   color: var(--ember-text);
   background: color-mix(in srgb, var(--ember) 11%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+/*
+ * ЗАНЯТА — ЭТО НЕ ОТКЛЮЧЕНА, И ВЫГЛЯДЕТЬ ОНИ ОБЯЗАНЫ ПО-РАЗНОМУ.
+ *
+ * Дефект был заведён вместе с обведённым видом выключенной кнопки: форма
+ * ставит `disabled` и на «поле пустое», и на «идёт запрос», а вид у обоих
+ * состояний оказался один. То есть в момент, когда продукт РАБОТАЕТ — читает
+ * библиотеку из Steam, и это единственная секунда ожидания на всём сайте, —
+ * кнопка показывала ровно то же, что показывала до ввода. Подпись менялась
+ * («Читаю библиотеку…»), вид нет.
+ *
+ * Занятая остаётся ЗАЛИТОЙ: работа идёт, кнопка жива. По ней проходит блик —
+ * единственное движение на странице, которое говорит «ждём ответа».
+ */
+.btn-ember[data-busy] {
+  overflow: hidden;
+  color: var(--on-ember);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 88%, #fff), var(--ember));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 8px 20px -12px color-mix(in srgb, var(--ember) 70%, transparent);
+  filter: saturate(0.86);
+}
+.btn-ember[data-busy]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 34%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 66%
+  );
+  transform: translateX(-100%);
+  animation: btn-busy-sweep 1.15s var(--ease-glow) infinite;
+}
+@keyframes btn-busy-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Блик убираем, различие оставляем: занятая всё равно залита и приглушена,
+     а отключённая по-прежнему обведена. */
+  .btn-ember[data-busy]::after {
+    animation: none;
+    opacity: 0;
+  }
 }
 /* Растяжка на всю ширину — там, где кнопка стоит одна в колонке формы. */
 .btn-ember.is-block {
@@ -1608,6 +1680,7 @@ textarea:focus-visible {
     background var(--dur-base) var(--ease-out),
     box-shadow var(--dur-base) var(--ease-out),
     color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out),
     border-color var(--dur-base) var(--ease-out);
 }
 .chip b {
@@ -1637,6 +1710,20 @@ textarea:focus-visible {
 }
 [data-live='1'] .chip:hover {
   border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+}
+/*
+ * Нажатие — ТОЛЬКО у отпущенной сцены, ровно как курсор. Пока прокрутка сама
+ * щёлкает состояния, чип не обещает нажатия ни курсором, ни ходом: обещание
+ * отклика, за которым ничего не следует, хуже отсутствия отклика.
+ */
+[data-live='1'] .chip:active {
+  transform: translateY(var(--press-shift));
+  transition-duration: var(--dur-fast);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-live='1'] .chip:active {
+    transform: none;
+  }
 }
 
 /*
@@ -2083,7 +2170,9 @@ textarea:focus-visible {
   border-radius: 12px;
   color: inherit;
   text-decoration: none;
-  transition: color var(--dur-base) var(--ease-out);
+  transition:
+    color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 
 /*
@@ -2121,6 +2210,27 @@ textarea:focus-visible {
 .rep a:hover,
 .rep a:focus-visible {
   color: var(--ember-text);
+}
+/*
+ * Нажатие: строка идёт вниз, а заливка на мгновение садится обратно к левому
+ * краю — жест «взял», обратный тому, которым она открывалась. Переход при этом
+ * укорачивается, иначе отклик приходит уже после того, как палец ушёл.
+ */
+.rep a:active {
+  transform: translateY(var(--press-shift));
+  transition-duration: var(--dur-fast);
+}
+.rep a:active::before {
+  transform: scaleX(0.985);
+  transition-duration: var(--dur-fast);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rep a:active {
+    transform: none;
+  }
+  .rep a:active::before {
+    transform: scaleX(1);
+  }
 }
 
 .rep-no {
@@ -2398,18 +2508,48 @@ textarea:focus-visible {
   border: 1px solid var(--edge);
 }
 
+/*
+ * Такт и кривая — из токенов, а не литеральные 0.2s ease. Число здесь было
+ * единственным на всю страницу, которое не совпадало ни с --dur-base, ни с
+ * --dur-fast: вторичные кнопки отвечали чуть иначе, чем всё остальное, и
+ * заметить это можно было только рядом.
+ */
 .glass-hover {
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
 }
 .glass-hover:hover {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
+/*
+ * Нажатие. Кнопка идёт ВНИЗ из поднятого положения — то есть отыгрывает назад
+ * ровно тот подъём, который дала на наведении, и палец получает подтверждение
+ * касания, а не новую анимацию. Такт --dur-fast: отклик обязан быть быстрее,
+ * чем наведение, иначе он читается задержкой.
+ */
+.glass-hover:active {
+  transform: translateY(var(--press-shift));
+  transition-duration: var(--dur-fast);
+}
+
 /* Кнопки с магнитом сами владеют transform — оставляем glass-hover только рамку,
    иначе два источника transform дерутся за один элемент. */
-.glass-hover.no-lift:hover {
+.glass-hover.no-lift:hover,
+.glass-hover.no-lift:active {
   transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Различие состояний остаётся, ход убирается: рамка и цвет по-прежнему
+     отвечают, двигаться перестаёт только сам элемент. */
+  .glass-hover,
+  .glass-hover:hover,
+  .glass-hover:active {
+    transform: none;
+  }
 }
 
 /*
