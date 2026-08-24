@@ -29,7 +29,7 @@ const TEXT = 'Сравним библиотеки Steam по-настоящем�
  */
 export function CopyCompatLink({
   steamid,
-  className = 'rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition cursor-pointer',
+  className = 'btn-ember is-block py-3',
   label = 'Скопировать мою ссылку',
 }: {
   steamid: string

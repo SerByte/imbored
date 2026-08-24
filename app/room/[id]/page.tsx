@@ -389,7 +389,7 @@ export default function RoomPage() {
             <button
               onClick={join}
               disabled={busy}
-              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition disabled:opacity-40"
+              className="btn-ember is-block py-3"
             >
               Войти в комнату
             </button>
@@ -397,7 +397,7 @@ export default function RoomPage() {
             <>
               <a
                 href={`/api/auth/steam?join=${roomId}`}
-                className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition"
+                className="btn-ember is-block py-3"
               >
                 Войти через Steam
               </a>
@@ -503,7 +503,7 @@ export default function RoomPage() {
           <p className="text-dim text-sm">Скорее всего, это на нашей стороне.</p>
           <button
             onClick={() => void loadDeck()}
-            className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition cursor-pointer self-center"
+            className="btn-ember px-6 py-3 self-center"
           >
             Попробовать ещё раз
           </button>

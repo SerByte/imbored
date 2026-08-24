@@ -178,7 +178,7 @@ function TopCard({
           </button>
           <button
             onClick={() => onCommit(true)}
-            className="rounded-[14px] bg-ember text-on-ember font-bold py-5 text-lg hover:brightness-110 active:scale-[0.98] transition cursor-pointer"
+            className="btn-ember is-block font-bold py-5 text-lg"
           >
             Играем!
           </button>

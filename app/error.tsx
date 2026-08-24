@@ -39,7 +39,7 @@ export default function Error({
         </p>
         <button
           onClick={() => retry()}
-          className="w-full rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition cursor-pointer"
+          className="btn-ember is-block py-3"
         >
           Попробовать снова
         </button>

@@ -77,7 +77,7 @@ export default async function NotFound() {
         <div className="flex flex-wrap justify-center gap-3 anim-rise">
           <Link
             href="/quiz"
-            className="rounded-[14px] bg-ember px-6 py-3 font-semibold text-on-ember transition hover:brightness-110"
+            className="btn-ember px-6 py-3"
           >
             Подобрать игру
           </Link>

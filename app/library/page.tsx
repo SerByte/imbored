@@ -149,7 +149,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   значит и подбор про несыгранное */}
               <Link
                 href="/quiz?from=untouched"
-                className="shrink-0 rounded-[14px] bg-ember text-on-ember font-semibold px-4 py-2.5 text-sm hover:brightness-110 transition"
+                className="btn-ember shrink-0 px-4 py-2.5 text-sm"
               >
                 Разгрести →
               </Link>

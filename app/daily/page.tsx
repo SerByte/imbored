@@ -226,7 +226,7 @@ export default function DailyPage() {
                   href={storeHref(pick)}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
+                  className="btn-ember px-6 py-3"
                 >
                   {pick.store
                     ? `Открыть в ${STORE_LABEL[pick.store] ?? 'магазине'}`
@@ -235,7 +235,7 @@ export default function DailyPage() {
               ) : (
                 <SteamLaunch
                   appid={pick.appid}
-                  className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
+                  className="btn-ember px-6 py-3"
                 />
               )}
               <Link

@@ -167,7 +167,7 @@ export function ShareLinkField({
       <button
         type="button"
         onClick={() => void run()}
-        className="shrink-0 rounded-[14px] bg-ember px-5 py-3 font-semibold text-on-ember transition hover:brightness-110 cursor-pointer"
+        className="btn-ember shrink-0 px-5 py-3"
       >
         {state === 'done'
           ? 'Скопировано ✓'

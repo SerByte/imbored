@@ -486,7 +486,7 @@ function Player() {
                 setIndex(picks.indexOf(cozy))
                 setPhase('reveal')
               }}
-              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 hover:brightness-110 transition"
+              className="btn-ember is-block py-3"
             >
               Ладно, покажи «{cozy.name}» — она спокойная
             </button>
@@ -679,7 +679,7 @@ function Player() {
                     target="_blank"
                     rel="noreferrer"
                     onClick={() => sendFeedback(pick.appid, 'liked')}
-                    className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
+                    className="btn-ember px-6 py-3"
                   >
                     {pick.source === 'new'
                       ? `Смотреть в ${STORE_LABEL[pick.store ?? ''] ?? 'Steam'}`
@@ -689,7 +689,7 @@ function Player() {
                   <SteamLaunch
                     appid={pick.appid}
                     onClick={() => sendFeedback(pick.appid, 'liked')}
-                    className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
+                    className="btn-ember px-6 py-3"
                   />
                 )}
                 {pick.source === 'new' && (pick.priceFinal !== null || pick.isFree) && (

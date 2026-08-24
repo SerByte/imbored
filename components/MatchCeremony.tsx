@@ -119,14 +119,14 @@ export function MatchCeremony({
                 href={game.storeUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-[14px] bg-ember text-on-ember font-semibold px-8 py-3 hover:brightness-110 transition inline-block"
+                className="btn-ember px-8 py-3"
               >
                 Открыть в {STORE_LABEL[game.store ?? ''] ?? 'магазине'}
               </a>
             ) : (
               <SteamLaunch
                 appid={game.appid}
-                className="rounded-[14px] bg-ember text-on-ember font-semibold px-8 py-3 hover:brightness-110 transition"
+                className="btn-ember px-8 py-3"
               />
             )}
           </Magnet>

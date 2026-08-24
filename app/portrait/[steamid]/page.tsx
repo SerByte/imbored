@@ -558,7 +558,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         {!isMine && (
           <Link
             href={`/compat/${steamid}`}
-            className="rounded-[14px] bg-ember text-on-ember font-semibold px-6 py-3 hover:brightness-110 transition"
+            className="btn-ember px-6 py-3"
           >
             Сравнить с ним свои вкусы
           </Link>

@@ -281,7 +281,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
               </p>
               <a
                 href={`/api/auth/steam?compat=${other}`}
-                className="rounded-[14px] bg-ember py-3 font-semibold text-on-ember transition hover:brightness-110"
+                className="btn-ember is-block py-3"
               >
                 Войти через Steam
               </a>
@@ -299,7 +299,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
               </p>
               <Link
                 href="/"
-                className="rounded-[14px] bg-ember py-3 font-semibold text-on-ember transition hover:brightness-110"
+                className="btn-ember is-block py-3"
               >
                 Подключить библиотеку
               </Link>
@@ -436,7 +436,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           <Magnet>
             <Link
               href="/room/new"
-              className="inline-block rounded-[14px] bg-ember px-6 py-3 font-semibold text-on-ember transition hover:brightness-110"
+              className="btn-ember px-6 py-3"
             >
               Собрать пати вместе
             </Link>
@@ -494,7 +494,7 @@ function CopyOwn({ steamid, inline = false }: { steamid: string; inline?: boolea
       className={
         inline
           ? 'glass glass-hover cursor-pointer rounded-[14px] px-6 py-3 text-sm'
-          : 'rounded-[14px] bg-ember py-3 font-semibold text-on-ember transition hover:brightness-110 cursor-pointer'
+          : 'btn-ember is-block py-3'
       }
       label="Моя ссылка совместимости"
     />

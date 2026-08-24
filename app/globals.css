@@ -1278,130 +1278,145 @@ textarea:focus-visible {
 }
 
 /*
- * ПАРАДНАЯ КНОПКА.
+ * ВЕСЬ ВИД ПАРАДНОЙ КНОПКИ ЖИВЁТ В @layer components, И ЭТО НЕ ОФОРМЛЕНИЕ.
  *
- * Главное здесь — состояние ПОКОЯ, а не наведения. Раньше выключенная кнопка
- * была той же заливкой под opacity: 0.4, и первый кадр страницы показывал
- * мутную коричневую плашку: единственное действие продукта выглядело сломанным
- * ровно в ту секунду, когда на него смотрят впервые. Теперь выключенная кнопка
- * — обведённая, с тем же ember в рамке и подписи: она не «сломана», она ЖДЁТ
- * ввода, и это ровно то, что происходит.
+ * Класс задаёт отступы и насыщенность начертания — то есть ровно то, что на
+ * местах применения обычно доопределяют утилитами: `py-5 text-lg` у большой
+ * кнопки колоды, `px-5 py-2.5 text-sm` у компактной на странице игры.
+ * Незалоенное правило выигрывает у утилиты при равной специфичности, и все
+ * размеры схлопнулись бы в один. Замерено ровно это: `py-3` давал 13 px вместо
+ * 12, `font-bold` — 600 вместо 700.
  *
- * Включённая светит: тёплая тень под ней — продолжение ключевого света героя.
- * Нажатие тень СЖИМАЕТ и опускает кнопку на пиксель — вес отдаётся под палец.
- *
- * transform у самой кнопки, а не у обёртки: обёрткой владеет Magnet, и второй
- * источник transform на одном элементе в этом проекте уже стоил мигания.
+ * В слое утилиты идут позже и перебивают. Тот же приём и по той же причине уже
+ * применён к .skel выше.
  */
-.btn-ember {
-  position: relative;
+@layer components {
   /*
-   * Ширину класс НЕ задаёт: этот же вид носит и парадная кнопка первого
-   * экрана во всю карточку, и призыв в финале страницы, который обязан быть
-   * по содержимому. Растяжка — модификатор .is-block ниже.
+   * ПАРАДНАЯ КНОПКА.
    *
-   * Свести их в один класс пришлось не ради красоты кода: до этого финальная
-   * кнопка была плоским прямоугольником с одним brightness на наведении, то
-   * есть ПОСЛЕДНИЙ призыв страницы выглядел дешевле первого. Две копии одной
-   * заливки в двух правилах разъехались бы снова на первой же правке.
+   * Главное здесь — состояние ПОКОЯ, а не наведения. Раньше выключенная кнопка
+   * была той же заливкой под opacity: 0.4, и первый кадр страницы показывал
+   * мутную коричневую плашку: единственное действие продукта выглядело сломанным
+   * ровно в ту секунду, когда на него смотрят впервые. Теперь выключенная кнопка
+   * — обведённая, с тем же ember в рамке и подписи: она не «сломана», она ЖДЁТ
+   * ввода, и это ровно то, что происходит.
+   *
+   * Включённая светит: тёплая тень под ней — продолжение ключевого света героя.
+   * Нажатие тень СЖИМАЕТ и опускает кнопку на пиксель — вес отдаётся под палец.
+   *
+   * transform у самой кнопки, а не у обёртки: обёрткой владеет Magnet, и второй
+   * источник transform на одном элементе в этом проекте уже стоил мигания.
    */
-  display: inline-block;
-  border-radius: 14px;
-  padding-block: 0.8125rem;
-  text-align: center;
-  text-decoration: none;
-  font-weight: 600;
-  color: var(--on-ember);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 88%, #fff), var(--ember));
-  cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    0 10px 26px -12px color-mix(in srgb, var(--ember) 80%, transparent);
-  transition:
-    box-shadow var(--dur-base) var(--ease-out),
-    filter var(--dur-base) var(--ease-out),
-    transform var(--dur-fast) var(--ease-out);
-}
-.btn-ember:hover:not(:disabled) {
-  filter: brightness(1.07);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.36),
-    0 16px 36px -14px color-mix(in srgb, var(--ember) 92%, transparent);
-}
-.btn-ember:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 4px 12px -8px color-mix(in srgb, var(--ember) 70%, transparent);
-}
-.btn-ember:disabled {
-  cursor: default;
-  color: var(--ember-text);
-  background: color-mix(in srgb, var(--ember) 11%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ember) 30%, transparent);
-}
-
-/*
- * ЗАНЯТА — ЭТО НЕ ОТКЛЮЧЕНА, И ВЫГЛЯДЕТЬ ОНИ ОБЯЗАНЫ ПО-РАЗНОМУ.
- *
- * Дефект был заведён вместе с обведённым видом выключенной кнопки: форма
- * ставит `disabled` и на «поле пустое», и на «идёт запрос», а вид у обоих
- * состояний оказался один. То есть в момент, когда продукт РАБОТАЕТ — читает
- * библиотеку из Steam, и это единственная секунда ожидания на всём сайте, —
- * кнопка показывала ровно то же, что показывала до ввода. Подпись менялась
- * («Читаю библиотеку…»), вид нет.
- *
- * Занятая остаётся ЗАЛИТОЙ: работа идёт, кнопка жива. По ней проходит блик —
- * единственное движение на странице, которое говорит «ждём ответа».
- */
-.btn-ember[data-busy] {
-  overflow: hidden;
-  color: var(--on-ember);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 88%, #fff), var(--ember));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    0 8px 20px -12px color-mix(in srgb, var(--ember) 70%, transparent);
-  filter: saturate(0.86);
-}
-.btn-ember[data-busy]::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    100deg,
-    transparent 34%,
-    rgba(255, 255, 255, 0.28) 50%,
-    transparent 66%
-  );
-  transform: translateX(-100%);
-  animation: btn-busy-sweep 1.15s var(--ease-glow) infinite;
-}
-@keyframes btn-busy-sweep {
-  to {
-    transform: translateX(100%);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  /* Блик убираем, различие оставляем: занятая всё равно залита и приглушена,
-     а отключённая по-прежнему обведена. */
-  .btn-ember[data-busy]::after {
-    animation: none;
-    opacity: 0;
-  }
-}
-/* Растяжка на всю ширину — там, где кнопка стоит одна в колонке формы. */
-.btn-ember.is-block {
-  display: block;
-  width: 100%;
-}
-
-@media (prefers-reduced-motion: reduce) {
   .btn-ember {
-    transition: none;
+    position: relative;
+    /*
+     * Ширину класс НЕ задаёт: этот же вид носит и парадная кнопка первого
+     * экрана во всю карточку, и призыв в финале страницы, который обязан быть
+     * по содержимому. Растяжка — модификатор .is-block ниже.
+     *
+     * Свести их в один класс пришлось не ради красоты кода: до этого финальная
+     * кнопка была плоским прямоугольником с одним brightness на наведении, то
+     * есть ПОСЛЕДНИЙ призыв страницы выглядел дешевле первого. Две копии одной
+     * заливки в двух правилах разъехались бы снова на первой же правке.
+     */
+    display: inline-block;
+    border-radius: 14px;
+    padding-block: 0.8125rem;
+    text-align: center;
+    text-decoration: none;
+    font-weight: 600;
+    color: var(--on-ember);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 88%, #fff), var(--ember));
+    cursor: pointer;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 10px 26px -12px color-mix(in srgb, var(--ember) 80%, transparent);
+    transition:
+      box-shadow var(--dur-base) var(--ease-out),
+      filter var(--dur-base) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+  .btn-ember:hover:not(:disabled) {
+    filter: brightness(1.07);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.36),
+      0 16px 36px -14px color-mix(in srgb, var(--ember) 92%, transparent);
   }
   .btn-ember:active:not(:disabled) {
-    transform: none;
+    transform: translateY(1px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.2),
+      0 4px 12px -8px color-mix(in srgb, var(--ember) 70%, transparent);
+  }
+  .btn-ember:disabled {
+    cursor: default;
+    color: var(--ember-text);
+    background: color-mix(in srgb, var(--ember) 11%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ember) 30%, transparent);
+  }
+
+  /*
+   * ЗАНЯТА — ЭТО НЕ ОТКЛЮЧЕНА, И ВЫГЛЯДЕТЬ ОНИ ОБЯЗАНЫ ПО-РАЗНОМУ.
+   *
+   * Дефект был заведён вместе с обведённым видом выключенной кнопки: форма
+   * ставит `disabled` и на «поле пустое», и на «идёт запрос», а вид у обоих
+   * состояний оказался один. То есть в момент, когда продукт РАБОТАЕТ — читает
+   * библиотеку из Steam, и это единственная секунда ожидания на всём сайте, —
+   * кнопка показывала ровно то же, что показывала до ввода. Подпись менялась
+   * («Читаю библиотеку…»), вид нет.
+   *
+   * Занятая остаётся ЗАЛИТОЙ: работа идёт, кнопка жива. По ней проходит блик —
+   * единственное движение на странице, которое говорит «ждём ответа».
+   */
+  .btn-ember[data-busy] {
+    overflow: hidden;
+    color: var(--on-ember);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 88%, #fff), var(--ember));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.24),
+      0 8px 20px -12px color-mix(in srgb, var(--ember) 70%, transparent);
+    filter: saturate(0.86);
+  }
+  .btn-ember[data-busy]::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      100deg,
+      transparent 34%,
+      rgba(255, 255, 255, 0.28) 50%,
+      transparent 66%
+    );
+    transform: translateX(-100%);
+    animation: btn-busy-sweep 1.15s var(--ease-glow) infinite;
+  }
+  @keyframes btn-busy-sweep {
+    to {
+      transform: translateX(100%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Блик убираем, различие оставляем: занятая всё равно залита и приглушена,
+       а отключённая по-прежнему обведена. */
+    .btn-ember[data-busy]::after {
+      animation: none;
+      opacity: 0;
+    }
+  }
+  /* Растяжка на всю ширину — там, где кнопка стоит одна в колонке формы. */
+  .btn-ember.is-block {
+    display: block;
+    width: 100%;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn-ember {
+      transition: none;
+    }
+    .btn-ember:active:not(:disabled) {
+      transform: none;
+    }
   }
 }
 

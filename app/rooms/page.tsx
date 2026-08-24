@@ -68,7 +68,7 @@ export default function RoomsBoardPage() {
         <h1 className="font-display text-display-md">Пати</h1>
         <Link
           href="/room/new"
-          className="rounded-[14px] bg-ember text-on-ember font-semibold px-8 py-3 hover:brightness-110 transition"
+          className="btn-ember px-8 py-3"
         >
           Создать комнату
         </Link>

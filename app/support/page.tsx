@@ -48,7 +48,7 @@ export default function SupportPage() {
               href={donateUrl}
               target="_blank"
               rel="noreferrer"
-              className="rounded-[14px] bg-ember text-on-ember font-semibold py-3 text-center hover:brightness-110 transition"
+              className="btn-ember is-block py-3 text-center"
             >
               Поддержать проект
             </a>
