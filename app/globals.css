@@ -676,8 +676,30 @@ textarea:focus-visible {
 .site-chrome-fade {
   height: 100%;
   opacity: 1;
+/*
+ * ПРЕФИКС -webkit-backdrop-filter РУКАМИ НЕ ПИШЕТСЯ. НИКОГДА.
+ *
+ * Здесь он стоял у всех шестнадцати объявлений — и ровно из-за этого размытие
+ * подложки НЕ РАБОТАЛО НИ В ОДНОМ Chromium-браузере, то есть у большинства
+ * аудитории, всё время существования проекта.
+ *
+ * Механика такая. Минификатор (Lightning CSS в составе Tailwind v4) сам
+ * расставляет префиксы по browserslist. Увидев рядом стандартное свойство и
+ * рукописный префикс, он счёл их дубликатом и оставил ОДИН — префиксный.
+ * А Chrome префиксную форму не поддерживает вовсе: CSS.supports(
+ * '-webkit-backdrop-filter', 'blur(1px)') отдаёт false. В проде у .glass
+ * оставалось `-webkit-backdrop-filter:blur(20px)` и ничего больше, и
+ * getComputedStyle честно возвращал none.
+ *
+ * Замер, которым это поймано и проверено:
+ *   в проде   .glass{background:…;-webkit-backdrop-filter:blur(20px);border:…}
+ *   без него  .glass{background:…;-webkit-backdrop-filter:blur(20px);
+ *                    backdrop-filter:blur(20px);border:…}
+ *
+ * То есть достаточно НЕ писать префикс — и минификатор выдаёт обе формы:
+ * префиксную для Safari и стандартную для всех остальных.
+ */
   backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   background: linear-gradient(to bottom, var(--header-fade), transparent);
   mask-image: linear-gradient(to bottom, #000 55%, transparent);
   -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
@@ -688,7 +710,6 @@ textarea:focus-visible {
   background: var(--glass-bg);
   border-bottom: 1px solid var(--edge);
   backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
 }
 :root[data-chrome='page'] .site-chrome-fade {
   opacity: 0;
@@ -1190,7 +1211,6 @@ textarea:focus-visible {
 .connect-card {
   position: relative;
   backdrop-filter: blur(26px) saturate(118%);
-  -webkit-backdrop-filter: blur(26px) saturate(118%);
 }
 
 /* Блик по верхней кромке — тот же ключевой свет, что стоит за титром, только
@@ -2449,7 +2469,6 @@ textarea:focus-visible {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 44%), var(--glass-bg);
   backdrop-filter: blur(26px) saturate(118%);
-  -webkit-backdrop-filter: blur(26px) saturate(118%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.1),
     inset 0 -1px 0 rgba(0, 0, 0, 0.4),
@@ -2513,7 +2532,6 @@ textarea:focus-visible {
 .glass {
   background: var(--glass-bg);
   backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--edge);
 }
 
@@ -2641,52 +2659,42 @@ textarea:focus-visible {
 }
 .blur-band[data-dir='up'] > span:nth-child(1) {
   backdrop-filter: blur(1px);
-  -webkit-backdrop-filter: blur(1px);
   mask-image: linear-gradient(to top, #000 0%, #000 20%, transparent 40%);
 }
 .blur-band[data-dir='up'] > span:nth-child(2) {
   backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
   mask-image: linear-gradient(to top, transparent 10%, #000 30%, #000 45%, transparent 60%);
 }
 .blur-band[data-dir='up'] > span:nth-child(3) {
   backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
   mask-image: linear-gradient(to top, transparent 25%, #000 45%, #000 62%, transparent 78%);
 }
 .blur-band[data-dir='up'] > span:nth-child(4) {
   backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   mask-image: linear-gradient(to top, transparent 42%, #000 62%, #000 80%, transparent 92%);
 }
 .blur-band[data-dir='up'] > span:nth-child(5) {
   backdrop-filter: blur(var(--blur-reveal));
-  -webkit-backdrop-filter: blur(var(--blur-reveal));
   mask-image: linear-gradient(to top, transparent 62%, #000 84%, #000 100%);
 }
 .blur-band[data-dir='down'] > span:nth-child(1) {
   backdrop-filter: blur(1px);
-  -webkit-backdrop-filter: blur(1px);
   mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
 }
 .blur-band[data-dir='down'] > span:nth-child(2) {
   backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
   mask-image: linear-gradient(to bottom, transparent 10%, #000 30%, #000 45%, transparent 60%);
 }
 .blur-band[data-dir='down'] > span:nth-child(3) {
   backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
   mask-image: linear-gradient(to bottom, transparent 25%, #000 45%, #000 62%, transparent 78%);
 }
 .blur-band[data-dir='down'] > span:nth-child(4) {
   backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   mask-image: linear-gradient(to bottom, transparent 42%, #000 62%, #000 80%, transparent 92%);
 }
 .blur-band[data-dir='down'] > span:nth-child(5) {
   backdrop-filter: blur(var(--blur-reveal));
-  -webkit-backdrop-filter: blur(var(--blur-reveal));
   mask-image: linear-gradient(to bottom, transparent 62%, #000 84%, #000 100%);
 }
 
@@ -2952,7 +2960,6 @@ img[data-art-fade][data-loaded] {
  */
 .chip-rail .glass {
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 @media (min-width: 768px) {
   .chip-rail {
