@@ -111,12 +111,26 @@ export function Engine({ demo }: { demo: LandingDemo }) {
       build={(tl, root) => {
         const switches = root.querySelector('[data-switches]')
         const picks = root.querySelector('[data-picks]')
+        const glow = root.querySelector('[data-engine-glow]')
 
         gsap.set(switches, { opacity: 0, y: 18 })
         gsap.set(picks, { opacity: 0, x: 40 })
+        /*
+         * СВЕТ ОТВЕТА ЗАЖИГАЕТСЯ ВМЕСТЕ С ОТВЕТОМ.
+         *
+         * Пока справа пусто, греть там нечего: сцена начинается складом в
+         * холодном, и тёплая половина приходит ровно с пятёркой. Это и есть
+         * кульминация такта — до неё сцена собирается, на ней включается.
+         *
+         * Слой декоративный, поэтому прятать его можно: при «уменьшить
+         * движение» build не вызывается вовсе, и свет остаётся на значении из
+         * стилей, то есть в полную силу.
+         */
+        gsap.set(glow, { opacity: 0.3 })
 
         tl.to(switches, { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' }, 0.05)
           .to(picks, { opacity: 1, x: 0, duration: 0.4, ease: 'power3.out' }, 0.25)
+          .to(glow, { opacity: 1, duration: 0.55, ease: 'power2.out' }, 0.3)
           // Хвост таймлайна — это время, за которое прокрутка проходит такты
           // переключения. Двигать в нём нечего: состояние меняет счёт ниже.
           .to({}, { duration: 1.9 })
@@ -148,6 +162,10 @@ export function Engine({ demo }: { demo: LandingDemo }) {
         })
       }}
     >
+      {/* Свет сцены: холодное над складом, тёплое над ответом. Лежит под
+          содержимым — см. .scene-inner и isolation в globals.css. */}
+      <div className="engine-glow" aria-hidden data-engine-glow />
+
       <p className="slate">
         <b>03</b>
         <span>Как это работает</span>
@@ -227,8 +245,17 @@ export function Engine({ demo }: { demo: LandingDemo }) {
           <div className="picks" data-picks>
             {ALL_KEYS.map((k) => (
               <div key={k} className={`pickset${k === key ? ' is-on' : ''}`}>
-                {demo.picks[k].map((c) => (
+                {demo.picks[k].map((c, i) => (
                   <div key={c.appid} className="pick">
+                    {/*
+                      Номер, а не маркер списка: порядок в пятёрке
+                      содержательный (своё идёт первым, покупок не больше
+                      двух), и он обязан читаться числом. aria-hidden —
+                      скринридеру порядок уже сообщает сам список.
+                    */}
+                    <span aria-hidden className="pick-rank">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
                     <GameArt
                       appid={c.appid}
                       name={c.name}

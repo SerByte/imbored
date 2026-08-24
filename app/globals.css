@@ -874,7 +874,18 @@ textarea:focus-visible {
   padding: clamp(72px, 10vh, 120px) clamp(20px, 4vw, 40px) clamp(48px, 8vh, 96px);
 }
 
+/*
+ * position + isolation — ради света сцены, и оба нужны вместе.
+ *
+ * Свет сцены — абсолютный слой, и без стакающего контекста он лёг бы ПОВЕРХ
+ * содержимого: позиционированный элемент рисуется выше обычного потока, каким
+ * бы ранним в разметке он ни был. isolation делает .scene-inner контекстом, и
+ * тогда z-index: -1 у слоя света означает «под содержимым этой сцены», а не
+ * «под всей страницей вместе с лентой».
+ */
 .scene-inner {
+  position: relative;
+  isolation: isolate;
   width: 100%;
   max-width: 82rem;
   margin-inline: auto;
@@ -1285,6 +1296,32 @@ textarea:focus-visible {
 }
 
 /* ── Сцена «Как это работает» ─────────────────────────────────────────── */
+
+/*
+ * СВЕТ СЦЕНЫ, И ОН РАССКАЗЫВАЕТ ЕЁ СМЫСЛ.
+ *
+ * Сцена делится ровно надвое: слева сырьё (чужая библиотека, двадцать две
+ * коробки), справа ответ (пятёрка). До этого слоя обе половины стояли в одном
+ * ровном сумраке, и различить их можно было только прочитав надзаголовки.
+ *
+ * Теперь у половин разная температура: ответ греется, сырьё лежит в холодном.
+ * Это тот же приём, что и на первом экране, и он здесь не для красоты — свет
+ * говорит то же, что текст, и раньше зрителя.
+ */
+.engine-glow {
+  position: absolute;
+  inset: -18% -10%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      44% 44% at 74% 48%,
+      color-mix(in srgb, var(--ember) 20%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(42% 46% at 14% 44%, rgba(72, 116, 198, 0.18), transparent 74%);
+}
+
 .engine-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1312,19 +1349,41 @@ textarea:focus-visible {
     gap: clamp(6px, 0.6vw, 11px);
   }
 }
+/*
+ * ОТБОР ПОКАЗАН СТЕНОЙ, А НЕ ТОЛЬКО РАМКОЙ.
+ *
+ * Вся сцена про одно: из двадцати двух коробок берутся пять. Раньше это
+ * говорила одна деталь — двухпиксельное кольцо на выбранных, — а невыбранные
+ * просто стояли на 0.35 в полном цвете. Разница читалась как «у четырёх есть
+ * обводка», а не как «эти живые, остальные лежат».
+ *
+ * Теперь у невыбранных уходит и цвет: обесцвеченные коробки читаются складом,
+ * а выбранные — единственным, что в этом складе включено. Обесцвечивание в
+ * переходе, а не мгновенно, потому что переключатель щёлкает прямо на глазах и
+ * скачок цвета на двадцати двух картинках разом выглядит сбоем отрисовки.
+ *
+ * Тень с радиусом здесь допустима, в отличие от ленты: картинок двадцать две,
+ * они не двигаются, и переход случается на нажатии, а не на каждом кадре
+ * прокрутки (замер и правила — в докблоке components/landing/GameRibbon.tsx).
+ */
 .wall img {
   width: 100%;
   aspect-ratio: 460 / 215;
   object-fit: cover;
   border-radius: 6px;
-  opacity: 0.35;
+  opacity: 0.3;
+  filter: saturate(0.3);
   transition:
     opacity var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out),
     box-shadow var(--dur-base) var(--ease-out);
 }
 .wall li.is-on img {
   opacity: 1;
-  box-shadow: 0 0 0 2px var(--ember);
+  filter: saturate(1);
+  box-shadow:
+    0 0 0 2px var(--ember),
+    0 0 24px -6px color-mix(in srgb, var(--ember) 75%, transparent);
 }
 
 .switches {
@@ -1352,7 +1411,12 @@ textarea:focus-visible {
  */
 .chip {
   border: 1px solid var(--edge);
-  background: var(--glass-bg);
+  /* Верхний блик — тот же приём, что у карточки подключения: без него кнопка
+     в покое была ровным тёмным прямоугольником и терялась на фоне сцены. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 52%),
+    var(--glass-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
   color: var(--dim);
   border-radius: 14px;
   padding: 9px 14px;
@@ -1360,6 +1424,7 @@ textarea:focus-visible {
   cursor: default;
   transition:
     background var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
     color var(--dur-base) var(--ease-out),
     border-color var(--dur-base) var(--ease-out);
 }
@@ -1374,10 +1439,16 @@ textarea:focus-visible {
   font-size: 0.6875rem;
   color: var(--faint);
 }
+/* Нажатая не просто перекрашивается — она ПОДСВЕЧЕНА: тёплая тень под ней та
+   же, что под парадной кнопкой первого экрана. Выбор обязан быть виден с того
+   же расстояния, с какого видна пятёрка справа. */
 .chip[aria-pressed='true'] {
   background: color-mix(in srgb, var(--ember) 20%, transparent);
-  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 45%, transparent);
   color: var(--ember-text);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 10px 26px -14px color-mix(in srgb, var(--ember) 85%, transparent);
 }
 [data-live='1'] .chip {
   cursor: pointer;
@@ -1444,22 +1515,78 @@ textarea:focus-visible {
   transition-delay: 0.18s;
 }
 
+/*
+ * ПЯТЁРКА — ЭТО СПИСОК ПО РАНГУ, А НЕ ПЯТЬ ОДИНАКОВЫХ СТРОК.
+ *
+ * Главный дефект сцены был именно здесь. Порядок в пятёрке содержательный:
+ * первым идёт своё, дальше по убыванию уверенности — а выглядели все пять
+ * одинаково. Человек видел не ответ, а перечень: пятая строка весила ровно
+ * столько же, сколько первая, и глазу не за что было зацепиться.
+ *
+ * Теперь у списка есть верх: первая карточка крупнее, обведена тёплым и стоит
+ * на собственной тени, остальные ужаты. Номера слева — левый рельс: пять
+ * моноширинных чисел, по которым список читается списком с одного взгляда.
+ *
+ * Ужатие вторых четырёх окупается и по высоте, хотя первая карточка выросла:
+ * замерено на 1280×800 — пятёрка 436 → 423 px, правая колонка 616 → 604. Это
+ * не выравнивание половин (левая как была 446, так и осталась), а лишь то, что
+ * иерархия досталась бесплатно.
+ */
 .pick {
   display: flex;
   align-items: center;
-  gap: clamp(12px, 1.1vw, 18px);
+  gap: clamp(10px, 0.9vw, 15px);
   background: var(--glass-bg);
   border: 1px solid var(--edge);
   border-radius: 14px;
-  padding: clamp(9px, 0.9vh, 14px);
+  padding: clamp(7px, 0.7vh, 11px);
   overflow: hidden;
 }
 .pick img {
-  width: clamp(92px, 9vw, 152px);
+  width: clamp(78px, 7.4vw, 124px);
   flex: none;
   aspect-ratio: 460 / 215;
   object-fit: cover;
   border-radius: 8px;
+}
+
+/* Левый рельс номеров. tabular-nums обязателен: без него «1» уже остальных
+   цифр, и рельс перестаёт быть прямым. */
+.pick-rank {
+  flex: none;
+  width: 1.6em;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  text-align: right;
+}
+
+/* Первая карточка — ответ. Остальные четыре — что ещё подошло. */
+.pickset .pick:first-child {
+  gap: clamp(12px, 1.1vw, 18px);
+  padding: clamp(9px, 0.9vh, 14px);
+  border-color: color-mix(in srgb, var(--ember) 34%, transparent);
+  background:
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--ember) 11%, transparent),
+      transparent 58%
+    ),
+    var(--glass-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 16px 38px -22px rgba(0, 0, 0, 0.9);
+}
+.pickset .pick:first-child img {
+  width: clamp(102px, 9.6vw, 162px);
+}
+.pickset .pick:first-child .pick-rank {
+  color: var(--ember-text);
+}
+.pickset .pick:first-child .pick-name {
+  font-size: clamp(1.1875rem, 0.98rem + 0.56vw, 1.625rem);
 }
 .pick-name {
   font-family: var(--font-sofia), sans-serif;
