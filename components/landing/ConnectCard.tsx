@@ -9,6 +9,7 @@ import { CONNECT_CARD_MIN_H } from '@/components/landing/ConnectFallback'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { DESTINATIONS, destinationPath } from '@/lib/destination'
 import { plural } from '@/lib/plural'
+import { VIBE_PRESETS } from '@/lib/presets'
 import {
   getServerSessionHint,
   getSessionHint,
@@ -41,6 +42,23 @@ import {
  * label for, и уникальность id, а два «Подобрать игру» на одной странице — это
  * два разных обещания. Поэтому внизу не копия карточки, а якорь на неё.
  */
+
+/**
+ * Три пресета из пяти. Не «первые попавшиеся»: вечер после работы, полчаса
+ * перед сном и пятница с друзьями — три самых разных состояния, какие вообще
+ * бывают у человека, открывшего Steam. Остальные два ближе к этим трём, чем
+ * они друг к другу, и в карточке были бы шумом.
+ *
+ * Тексты берутся из lib/presets.ts, а не переписываются здесь: второй копии
+ * этих фраз в проекте быть не должно — они уже разъезжались с адресами один
+ * раз (см. lib/destination.ts).
+ */
+const QUICK_PRESETS = VIBE_PRESETS.slice(0, 3)
+
+/** Пресет — это обычный адрес выдачи, ровно тот же, что строит /quiz. */
+function presetHref(preset: (typeof VIBE_PRESETS)[number]): string {
+  return `/play?${new URLSearchParams(preset.mood as unknown as Record<string, string>).toString()}`
+}
 
 const ERROR_TEXT: Record<string, string> = {
   auth: 'Steam не подтвердил вход. Попробуй ещё раз.',
@@ -134,6 +152,19 @@ export function ConnectCard() {
       ? `/compat/${compatTarget}`
       : (next ?? '/quiz')
 
+  /*
+   * ПРЕСЕТЫ ПОКАЗЫВАЮТСЯ НЕ ВСЕГДА, И ОБА УСЛОВИЯ НЕ ФОРМАЛЬНЫЕ.
+   *
+   * Только вошедшему: пресет ведёт прямо на выдачу, а гостю подбирать не из
+   * чего — он получил бы кнопку, которая разворачивает его обратно сюда же.
+   *
+   * И только когда человек пришёл САМ. Если в адресе ?join= / ?compat= /
+   * ?next=, у карточки уже есть обещанное назначение, и оно напечатано строкой
+   * над заголовком. Пресет рядом с ним — это вторая дверь, которая уводит
+   * приглашённого в пати мимо пати.
+   */
+  const showPresets = !joinTarget && !compatTarget && !next
+
   const action = joinTarget
     ? 'Войти в пати'
     : compatTarget
@@ -199,6 +230,37 @@ export function ConnectCard() {
                 </button>
               </ClickSpark>
             </Magnet>
+
+            {/*
+              ПРЕСЕТЫ: ВЕРНУВШЕМУСЯ — ОДИН ТАП ДО ВЫДАЧИ.
+
+              До них карточка вошедшего была полой: коробка держит высоту под
+              гостевую форму (см. CONNECT_CARD_MIN_H), а внутри стояли три
+              элемента и двести пикселей пустоты. Лечить надо было не потолок —
+              он нужен, чтобы первый экран не дёргался при гидратации, — а
+              содержимое.
+
+              Ссылки, а не кнопки: адрес настоящий, и средняя кнопка мыши
+              обязана открывать выдачу в новой вкладке. Логика та же, что в
+              /quiz: пресет — это заранее известное состояние трёх вопросов.
+            */}
+            {showPresets && (
+              <div className="flex flex-col gap-2">
+                <p className="text-center text-xs text-faint">Или сразу:</p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {QUICK_PRESETS.map((p) => (
+                    <Link
+                      key={p.key}
+                      href={presetHref(p)}
+                      className="glass glass-hover rounded-full px-4 py-2 text-sm"
+                    >
+                      {p.emoji} {p.label}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Вход через Steam остаётся на виду и в один клик: сменить
                 аккаунт должно быть возможно, а спрятанное под раскрывашку
                 «сменить аккаунт» ищут дольше, чем оно того стоит. */}

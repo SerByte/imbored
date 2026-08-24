@@ -12,16 +12,43 @@
  * первом экране, где то же слово набрано 72-м кеглем. Теперь линия растёт
  * вместе с надписью и остаётся жестом на любом размере; max() удерживает её от
  * ухода в субпиксель на мелком кегле подвала.
+ *
+ * DRAWABLE — ЛИНИЯ ЭЛЕМЕНТОМ ВМЕСТО text-decoration.
+ *
+ * Нужен ровно затем, что text-decoration анимировать нельзя, а на первом экране
+ * зачёркивание обязано ПРОЧЕРЧИВАТЬСЯ: это единственный жест, в котором обещание
+ * продукта показано, а не написано. Вариант необязательный и по умолчанию
+ * выключен — в шапке и подвале разметка остаётся прежней, потому что там нечего
+ * анимировать, а лишний слой ради ничего не нужен.
+ *
+ * СОСТОЯНИЕ ПОКОЯ — ЛИНИЯ НАРИСОВАНА. Из нуля её тянет только gsap, и только
+ * когда движение разрешено. Зачёркивание несёт смысл знака: без JS, при
+ * «уменьшить движение» и в сбойной вкладке оно обязано быть на месте — иначе
+ * логотип читается как «im bored», то есть ровно наоборот.
  */
-export function Wordmark({ className = '' }: { className?: string }) {
+export function Wordmark({
+  className = '',
+  drawable = false,
+}: {
+  className?: string
+  /** Зачёркивание отдельным элементом — его можно прочертить анимацией. */
+  drawable?: boolean
+}) {
   return (
     <span
       className={`font-display font-extrabold tracking-[-0.015em] select-none ${className}`}
     >
       <span className="text-ink">im</span>
-      <span className="text-dim line-through decoration-ember/70 decoration-[max(2px,0.07em)]">
-        bored
-      </span>
+      {drawable ? (
+        <span className="relative text-dim">
+          bored
+          <span aria-hidden className="wordmark-strike" data-wordmark-strike />
+        </span>
+      ) : (
+        <span className="text-dim line-through decoration-ember/70 decoration-[max(2px,0.07em)]">
+          bored
+        </span>
+      )}
     </span>
   )
 }

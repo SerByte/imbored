@@ -164,6 +164,124 @@ describe('главная', () => {
     ).toEqual([])
   })
 
+  /**
+   * Герой прячет содержимое по тому же правилу, что и сцены: только внутри
+   * useGSAP, куда при «уменьшить движение» вообще не заходят. Голый gsap.set в
+   * теле компонента отработал бы и там — и первый экран остался бы пустым у
+   * того единственного человека, который никогда об этом не напишет.
+   */
+  test('герой прячет содержимое только внутри useGSAP', () => {
+    const src = code(fs.readFileSync(path.join(SCENES, 'Hero.tsx'), 'utf8'))
+    const at = src.indexOf('useGSAP(')
+    const before = at === -1 ? src : src.slice(0, at)
+    expect(
+      /gsap\.(set|from)\s*\(/.test(before),
+      'начальное состояние героя обязано ставиться внутри useGSAP, а не в теле компонента',
+    ).toBe(false)
+    expect(src, 'герой обязан спрашивать «уменьшить движение»').toMatch(/prefers-reduced-motion/)
+  })
+
+  /**
+   * ВХОД НЕ НАЧИНАЕТСЯ В СКРЫТОЙ ВКЛАДКЕ.
+   *
+   * `gsap.from` ставит начальное состояние немедленно и снимает его только
+   * когда твин пошёл. В фоновой вкладке requestAnimationFrame не идёт, твин не
+   * стартует — и первый экран остаётся пустым до тех пор, пока на него не
+   * посмотрят. Поймано на живой странице: стоял один логотип, а зачёркивание,
+   * обещание, карточка и подсказка не появились вовсе.
+   *
+   * Это тот же класс ошибки, из-за которого в проекте запрещён
+   * `fill-mode: both` (докблок .anim-page-in, сторож lib/firstpaint.test.ts).
+   * Правило одно на оба случая: анимация может добавить появление, но не может
+   * стать условием того, что контент вообще виден.
+   */
+  test('анимации на монтировании не запускаются в скрытой вкладке', () => {
+    /*
+     * Список с причинами, а не «все файлы подряд»: анимации, привязанные к
+     * прокрутке, этой болезнью не болеют — их положение задаёт позиция
+     * прокрутки, а не тикер, и в скрытой вкладке прокручивать нечего.
+     * Опасны ровно те, что стартуют сами при монтировании.
+     */
+    const ON_MOUNT: Array<{ file: string; why: string }> = [
+      {
+        file: 'components/landing/scenes/Hero.tsx',
+        why: 'вход первого экрана: без проверки стоял один логотип, а карточка и подсказка не появлялись вовсе',
+      },
+      {
+        file: 'components/landing/GameRibbon.tsx',
+        why: 'открытие кадра: без проверки лента навсегда оставалась на scale 1.24 вместо 1.16',
+      },
+    ]
+
+    for (const { file, why } of ON_MOUNT) {
+      const src = code(fs.readFileSync(path.join(ROOT, file), 'utf8'))
+      const at = src.indexOf('.from(')
+      expect(at, `${file}: анимация на монтировании не найдена — вычеркни файл из списка`).toBeGreaterThan(-1)
+      expect(
+        src.slice(0, at),
+        `${file}: перед gsap.from обязана стоять проверка visibilityState. ${why}`,
+      ).toMatch(/visibilityState/)
+    }
+  })
+
+  /**
+   * Пресеты ведут прямо на выдачу. Гостю подбирать не из чего, а человеку с
+   * назначением в адресе (?join= / ?compat= / ?next=) они предлагают вторую
+   * дверь мимо той, которую ему уже пообещали строкой над заголовком.
+   */
+  test('пресеты показываются только вошедшему и только без назначения', () => {
+    const src = code(fs.readFileSync(path.join(LANDING, 'ConnectCard.tsx'), 'utf8'))
+
+    const authedAt = src.indexOf('view.authed ?')
+    const guestAt = src.indexOf(') : (', authedAt)
+    const presetsAt = src.indexOf('showPresets &&')
+    expect(presetsAt, 'блок пресетов в карточке не найден').toBeGreaterThan(-1)
+    expect(
+      presetsAt > authedAt && presetsAt < guestAt,
+      'пресеты вышли из ветки вошедшего — гость получит кнопку, которая вернёт его сюда же',
+    ).toBe(true)
+
+    const cond = src.match(/const showPresets = ([^\n]+)/)
+    expect(cond, 'условие показа пресетов не найдено').not.toBeNull()
+    for (const guard of ['joinTarget', 'compatTarget', 'next']) {
+      expect(
+        (cond as RegExpMatchArray)[1],
+        `условие не учитывает ${guard} — приглашённого уведёт мимо назначения`,
+      ).toContain(guard)
+    }
+  })
+
+  /**
+   * Тексты пресетов живут в lib/presets.ts. Вторая копия этих фраз разъедется
+   * с адресами — это уже случалось с обещаниями назначений (lib/destination.ts).
+   */
+  test('тексты пресетов не продублированы в разметке главной', () => {
+    const labels = ['После работы, нет сил', '30 минут до сна', 'Пятница с друзьями']
+    const offenders = [PAGE, ...landing].flatMap((file) => {
+      const src = fs.readFileSync(file, 'utf8')
+      return labels.some((l) => src.includes(l)) ? [rel(file)] : []
+    })
+    expect(offenders, 'фразы пресетов обязаны браться из lib/presets.ts, а не переписываться').toEqual(
+      [],
+    )
+  })
+
+  /**
+   * Зачёркивание знака несёт смысл: «bored» перечёркнуто, значит скучно больше
+   * не будет. Если поставить начальное состояние в CSS, без JS логотип
+   * прочитается как «im bored» — ровно наоборот.
+   */
+  test('зачёркивание знака в покое нарисовано', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+    const at = css.indexOf('.wordmark-strike {')
+    expect(at, 'класс .wordmark-strike не найден').toBeGreaterThan(-1)
+    const block = css.slice(at, css.indexOf('}', at))
+    expect(
+      block,
+      'scaleX(0) в стилях означает, что без JS знак читается наоборот — из нуля линию тянет только gsap',
+    ).not.toMatch(/scaleX\(\s*0/)
+  })
+
   test('идентификаторы сцен совпадают с партитурой света ленты', () => {
     const inMarkup = new Set<string>()
     for (const file of walk(SCENES)) {
