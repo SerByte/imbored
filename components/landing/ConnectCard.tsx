@@ -221,7 +221,7 @@ export function ConnectCard() {
             </p>
             <Magnet className="block w-full">
               <ClickSpark className="block w-full">
-                <button type="button" onClick={() => router.push(target)} className="btn-ember">
+                <button type="button" onClick={() => router.push(target)} className="btn-ember is-block">
                   {action}
                 </button>
               </ClickSpark>
@@ -320,7 +320,7 @@ export function ConnectCard() {
               {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
               <Magnet className="block w-full">
                 <ClickSpark className="block w-full">
-                  <button type="submit" disabled={!input || busy !== null} className="btn-ember">
+                  <button type="submit" disabled={!input || busy !== null} className="btn-ember is-block">
                     {busy === 'connect' ? 'Читаю библиотеку…' : action}
                   </button>
                 </ClickSpark>

@@ -46,7 +46,7 @@ export function ConnectFallback() {
             другим на первом экране читается как моргание, а фолбэк — это
             буквально то, что человек видит до гидратации. */}
         <p className="card-eyebrow">Доступ к библиотеке</p>
-        <a href="/api/auth/steam" className="btn-ember">
+        <a href="/api/auth/steam" className="btn-ember is-block">
           Войти через Steam
         </a>
         <p className="text-xs leading-relaxed text-dim">

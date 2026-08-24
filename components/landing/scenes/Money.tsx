@@ -48,13 +48,23 @@ export function Money() {
           .to({}, { duration: 0.3 })
       }}
     >
+      {/* Сиденье под текстом и тёплый разлив под возвратом: лента здесь на
+          полной яркости, и белое по обложке иначе читается через раз. */}
+      <div className="money-glow" aria-hidden />
+
       <p className="slate">
         <b>06</b>
         <span>О деньгах</span>
       </p>
 
+      {/*
+        Ударение на тезисе, а не на всей фразе. Заголовок держал четыре строки
+        ровным белым, и главное в нём — «доверие не продаётся» — весило столько
+        же, сколько служебное «Мы не продаём места в выдаче».
+      */}
       <h2 className="font-display text-display-md" style={{ maxWidth: '20ch' }} data-money-line>
-        Мы не продаём места в выдаче. Рекомендация — это доверие, а доверие не продаётся.
+        Мы не продаём места в выдаче. Рекомендация — это доверие,{' '}
+        <span className="text-ember-text">а доверие не продаётся</span>.
       </h2>
 
       <ul className="money-list">
@@ -71,7 +81,7 @@ export function Money() {
             демо без Steam.
           </p>
         </div>
-        <a className="back-btn" href="#main">
+        <a className="btn-ember back-btn" href="#main">
           Наверх, к подключению ↑
         </a>
       </div>
