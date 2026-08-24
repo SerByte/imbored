@@ -130,4 +130,50 @@ describe('фиксированные слои под плавной прокру
     expect(layout, 'без #smooth-wrapper ScrollSmoother не заводится').toContain('id="smooth-wrapper"')
     expect(layout, 'без #smooth-content двигать нечего').toContain('id="smooth-content"')
   })
+
+  /**
+   * Уровень наложения стоит на ОБЁРТКЕ, а не на её содержимом.
+   *
+   * Это стоило дефекта, который трудно увидеть и легко вернуть. ScrollSmoother
+   * делает обёртку `position: fixed`, а fixed создаёт КОНТЕКСТ НАЛОЖЕНИЯ со
+   * своим уровнем auto. Любой z-index, поставленный внутри — например на
+   * #smooth-content, — заперт в этом контексте и с соседями обёртки не
+   * соревнуется. Лента же лежит прямым соседом обёртки в <body>, потому что
+   * портал добавляет её в конец документа.
+   *
+   * Пока уровень стоял внутри, лента лежала ПОВЕРХ всей страницы. Заметить это
+   * было трудно ровно потому, что её слои полупрозрачные: страница не
+   * пропадала, а выцветала — жалоба звучала как «всё какое-то полупрозрачное».
+   */
+  test('обёртка поднята над лентой, а не её содержимое', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+
+    const block = (selector: string): string => {
+      const at = css.indexOf(`${selector} {`)
+      if (at === -1) return ''
+      return css.slice(at, css.indexOf('}', at))
+    }
+    const zOf = (selector: string): number | null => {
+      const m = block(selector).match(/z-index:\s*(-?\d+)/)
+      return m ? Number(m[1]) : null
+    }
+
+    const wrapper = zOf('#smooth-wrapper')
+    const ribbon = zOf('.ribbon')
+
+    expect(
+      wrapper,
+      'у #smooth-wrapper нет своего z-index — единственного места, где сравнение с лентой вообще происходит',
+    ).not.toBeNull()
+    expect(ribbon, 'у .ribbon нет z-index — уровень станет случайным').not.toBeNull()
+    expect(
+      wrapper as number,
+      'лента снова окажется поверх содержимого, и страница выцветет вместо того, чтобы сломаться заметно',
+    ).toBeGreaterThan(ribbon as number)
+
+    expect(
+      zOf('#smooth-content'),
+      'z-index на #smooth-content бесполезен: он заперт внутри контекста наложения обёртки. Поднимать надо обёртку',
+    ).toBeNull()
+  })
 })
