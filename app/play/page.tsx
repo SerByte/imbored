@@ -793,7 +793,12 @@ function Player() {
               <div
                 role="group"
                 aria-label="Откуда брать игры"
-                className="flex items-center gap-1 rounded-full glass p-1 text-xs"
+                /* gap-3, а не gap-1, и это не про воздух. Зона .tap на кнопках
+                   ниже вылезает на 6 px вбок с каждой стороны; при зазоре в
+                   4 px соседние зоны перекрылись бы на 8 px и воровали бы друг
+                   у друга нажатия. 12 px — ровно столько, сколько зона
+                   занимает, и ни пикселем больше. */
+                className="flex items-center gap-3 rounded-full glass p-1 text-xs"
               >
                 {SCOPES.map((s) => (
                   <button
@@ -803,7 +808,12 @@ function Player() {
                     // Выбранное состояние — не только цветом: скринридеру и
                     // тому, кто не различает ember на стекле, нужен признак
                     aria-pressed={scope === s.key}
-                    className={`rounded-full px-3 py-1 transition cursor-pointer disabled:opacity-50 ${
+                    /* py-2.5, а не py-1: замерено — переключатель выдавал
+                       24 px, ровно порог WCAG 2.5.8 без единого запаса, и это
+                       основной фильтр экрана выдачи. Зону наращивать нечем:
+                       кнопки стоят внутри одной пилюли в 4 px друг от друга, и
+                       псевдозона .tap перекрыла бы соседа. */
+                    className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer disabled:opacity-50 ${
                       scope === s.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
                     }`}
                   >

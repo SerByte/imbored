@@ -228,7 +228,13 @@ function Quiz() {
                 <button
                   key={p.key}
                   onClick={() => go(p.mood)}
-                  className="glass glass-hover rounded-full px-4 py-2 text-sm cursor-pointer"
+                  /* py-3, а не py-2: замерено на 375 px — пилюля выходила 38 px
+                     при стандарте продукта в 44 (докблок .tap). Утилитой .tap
+                     это не чинится: её зона вылезает на 6 px вбок, а пилюли
+                     стоят с зазором 8, и соседи начали бы воровать нажатия —
+                     ровно тот дефект, что уже описан у .chip. Растёт сама
+                     кнопка, зазор остаётся настоящим. */
+                  className="glass glass-hover rounded-full px-4 py-3 text-sm cursor-pointer"
                 >
                   {p.emoji} {p.label}
                 </button>
@@ -244,7 +250,7 @@ function Quiz() {
                     { roulette: true },
                   )
                 }
-                className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                className="rounded-full bg-ember/15 text-ember-text px-4 py-3 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Мне повезёт
               </button>
@@ -258,7 +264,7 @@ function Quiz() {
               {!focus && (
                 <button
                   onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
-                  className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm hover:bg-ember/25 transition cursor-pointer"
+                  className="rounded-full bg-ember/15 text-ember-text px-4 py-3 text-sm hover:bg-ember/25 transition cursor-pointer"
                 >
                   Ни разу не запускал
                 </button>
