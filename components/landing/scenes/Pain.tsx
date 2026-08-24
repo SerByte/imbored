@@ -100,7 +100,7 @@ export function Pain() {
         </span>
       </h2>
 
-      <p className="mt-8 max-w-md text-lg leading-relaxed text-dim" data-pain-after>
+      <p className="scene-lede mt-8" data-pain-after>
         Знакомо. Игр много, а зайти не во что.
       </p>
     </Stage>

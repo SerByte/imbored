@@ -43,8 +43,16 @@ const TONE: Record<Tone, string> = {
   faint: 'text-faint',
 }
 
-/** Общая часть моноширинных подписей: кегль, регистр, начертание. */
-const MONO = 'font-mono text-[11px] uppercase'
+/**
+ * Общая часть моноширинных подписей: кегль, регистр, начертание.
+ *
+ * Кегль и разрядка берутся ТОКЕНАМИ из app/globals.css, а не литералами. Это
+ * не педантизм: форму подписей закрепили здесь, но кино-главная писала свои
+ * надзаголовки прямо в CSS, мимо компонента, и разнобой завёлся заново — пять
+ * значений разрядки при трёх кеглях. Пока число живёт в двух файлах, оно
+ * разъедется в третий раз. Сторож — lib/tracking.test.ts.
+ */
+const MONO = 'font-mono [font-size:var(--text-label)] uppercase'
 
 /**
  * Те же классы строкой — для чужих тегов, на которые компонент не натянуть:
@@ -53,7 +61,7 @@ const MONO = 'font-mono text-[11px] uppercase'
  * Источник у формы всё равно один — вот этот файл.
  */
 export function eyebrow(tone: Tone = 'ember'): string {
-  return `${MONO} tracking-[0.3em] ${TONE[tone]}`
+  return `${MONO} [letter-spacing:var(--track-eyebrow)] ${TONE[tone]}`
 }
 
 export function Eyebrow({
@@ -81,7 +89,7 @@ export function MetaLine({
   as?: Tag
   className?: string
 }) {
-  return <Tag className={`${MONO} tracking-[0.16em] ${TONE[tone]} ${className}`}>{children}</Tag>
+  return <Tag className={`${MONO} [letter-spacing:var(--track-meta)] ${TONE[tone]} ${className}`}>{children}</Tag>
 }
 
 export function SectionLabel({

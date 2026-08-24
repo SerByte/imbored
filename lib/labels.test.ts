@@ -99,11 +99,34 @@ describe('подписи разделов', () => {
    * пропадёт и различие между двумя ролями — тест это заметит.
    */
   test('у надзаголовка и строки фактов разный трекинг, и оба заданы один раз', () => {
+    /*
+     * Числа переехали из этого компонента в токены app/globals.css, и сторож
+     * поехал за ними. Причина переезда — в докблоке lib/tracking.test.ts:
+     * форма подписей была закреплена только в TSX, а кино-главная писала свои
+     * надзаголовки прямо в CSS, мимо компонента, и разнобой завёлся заново.
+     *
+     * Смысл проверки не изменился ни на слово: ролей две, значения обязаны
+     * различаться, и надзаголовок обязан быть заметно шире строки фактов.
+     * Изменилось только то, ГДЕ лежит единственный источник этих чисел.
+     */
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+    const value = (token: string): number => {
+      const m = css.match(new RegExp(`${token}:\\s*([\\d.]+)em;`))
+      expect(m, `токен ${token} не найден в globals.css`).toBeTruthy()
+      return Number(m![1])
+    }
+    const eyebrow = value('--track-eyebrow')
+    const meta = value('--track-meta')
+    expect(new Set([eyebrow, meta]).size, 'разрядки обязаны различаться').toBe(2)
+    expect(eyebrow, 'надзаголовок обязан быть заметно шире строки фактов').toBeGreaterThan(
+      meta * 1.5,
+    )
+
     const src = fs.readFileSync(path.join(ROOT, LABELS), 'utf8')
-    const tracks = [...src.matchAll(/tracking-\[([\d.]+)em\]/g)].map((m) => Number(m[1]))
-    expect(tracks, 'ожидались ровно две разрядки: надзаголовок и строка фактов').toHaveLength(2)
-    expect(new Set(tracks).size, 'разрядки обязаны различаться').toBe(2)
-    expect(Math.max(...tracks)).toBeGreaterThan(Math.min(...tracks) * 1.5)
+    expect(
+      [...src.matchAll(/tracking-\[[\d.]+em\]/g)],
+      'литеральный трекинг вернулся в компонент — источник снова стал вторым',
+    ).toHaveLength(0)
   })
 
   test('тон называется по токену палитры, а не по настроению', () => {

@@ -445,6 +445,45 @@
   --text-display-lg--letter-spacing: -0.02em;
   --text-display-lg--font-weight: 800;
 
+  /*
+   * РАЗРЯДКА НАРУЖУ — ТРИ ЗНАЧЕНИЯ НА ВЕСЬ ПРОДУКТ, И БОЛЬШЕ НИ ОДНОГО.
+   *
+   * Это второй заход на ту же беду. Первый описан в докблоке
+   * components/Labels.tsx: у надзаголовков нашлось семь значений трекинга и
+   * два кегля, роли свели к трём и форму закрепили в компоненте. Но закрепили
+   * её только в TSX — а кино-главная писала свои подписи прямо в CSS, мимо
+   * компонента, и завела заново пять значений: замерено на живой странице
+   * 0.06 / 0.08 / 0.16 / 0.18 / 0.3 em при кеглях 10, 11 и 12.
+   *
+   * Заметить это глазом почти нельзя — надзаголовки стоят в разных сценах и
+   * рядом не встречаются. Но именно из такого разнобоя складывается ощущение
+   * «собрано из кусков», и оно у страницы было.
+   *
+   * Теперь значений три, они названы по РОЛИ, и на них ссылаются обе стороны —
+   * и CSS, и Labels.tsx. Сторож lib/tracking.test.ts не даст завести четвёртое.
+   *
+   *   eyebrow — категория того, что идёт ниже: «02 ЗАЧЕМ ВСЁ ЭТО»,
+   *             «ДОСТУП К БИБЛИОТЕКЕ». Самая широкая: одно-два слова, которым
+   *             разрядка идёт на пользу.
+   *   meta    — подпись при значении и служебные слова: «ОБЩИХ ИГР», «ИЛИ».
+   *             Уже, потому что стоит вплотную к тому, что подписывает.
+   *   rail    — ЧИСЛА, а не подписи: рельсы 01…05 и часы в таблице. Цифрам
+   *             широкая разрядка вредит — рельс перестаёт читаться колонкой.
+   *             Роль здесь не четвёртая: это не подпись вообще.
+   */
+  --track-eyebrow: 0.3em;
+  --track-meta: 0.16em;
+  --track-rail: 0.06em;
+  /* Кегль всех моноширинных подписей и рельсов. */
+  --text-label: 11px;
+
+  /*
+   * Строка под титром сцены. Одна на все сцены: у героя она была 20.8/1.5, у
+   * сцены боли 18/1.625 — одна и та же роль, набранная по-разному в двух
+   * местах.
+   */
+  --text-lede: clamp(1.0625rem, 0.98rem + 0.4vw, 1.3125rem);
+
   /* событие: матч, процент совместимости, первый экран */
   --text-display-xl: clamp(3.5rem, 2.022rem + 6.222vw, 7rem);
   --text-display-xl--line-height: 0.94;
@@ -898,14 +937,17 @@ textarea:focus-visible {
   gap: 10px;
   margin-bottom: clamp(16px, 3vh, 28px);
   font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: 11px;
-  letter-spacing: 0.18em;
+  font-size: var(--text-label);
+  letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
 }
+/* Номер сцены — ЧИСЛО, и разрядка у него своя: на 0.3em «02» рассыпается на
+   две отдельные цифры и перестаёт читаться номером. */
 .slate b {
   color: var(--ember-text);
   font-weight: 500;
-  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--track-rail);
 }
 .slate span {
   color: var(--faint);
@@ -1027,7 +1069,7 @@ textarea:focus-visible {
  */
 .hero-lede {
   max-width: 27rem;
-  font-size: clamp(1.0625rem, 0.98rem + 0.4vw, 1.3125rem);
+  font-size: var(--text-lede);
   line-height: 1.5;
   letter-spacing: -0.005em;
   color: var(--dim);
@@ -1054,8 +1096,8 @@ textarea:focus-visible {
   align-items: center;
   gap: 6px;
   font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: 11px;
-  letter-spacing: 0.14em;
+  font-size: var(--text-label);
+  letter-spacing: var(--track-meta);
   text-transform: uppercase;
   color: var(--faint);
   text-decoration: none;
@@ -1150,8 +1192,8 @@ textarea:focus-visible {
   gap: 10px;
   margin-bottom: 2px;
   font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: 10px;
-  letter-spacing: 0.18em;
+  font-size: var(--text-label);
+  letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
   color: var(--faint);
   white-space: nowrap;
@@ -1286,8 +1328,8 @@ textarea:focus-visible {
   align-items: center;
   gap: 12px;
   font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: 10px;
-  letter-spacing: 0.18em;
+  font-size: var(--text-label);
+  letter-spacing: var(--track-meta);
   text-transform: uppercase;
   color: var(--faint);
 }
@@ -1312,6 +1354,18 @@ textarea:focus-visible {
  * первой строки. Кегли в em: базу задаёт класс дисплейного размера на самом
  * заголовке, и шкала едет вместе с ним на всех ширинах.
  */
+/*
+ * Строка под титром сцены. Класс, а не набор утилит по месту: у героя эта роль
+ * набиралась одним способом, у сцены боли — другим, и это была одна и та же
+ * строка «одно предложение под заголовком».
+ */
+.scene-lede {
+  max-width: 30rem;
+  font-size: var(--text-lede);
+  line-height: 1.5;
+  color: var(--dim);
+}
+
 .pain-title {
   display: flex;
   flex-direction: column;
@@ -1669,9 +1723,9 @@ textarea:focus-visible {
   flex: none;
   width: 1.6em;
   font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track-rail);
   color: var(--faint);
   text-align: right;
 }
@@ -1849,9 +1903,9 @@ textarea:focus-visible {
 }
 .tally-l {
   font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: 10px;
+  font-size: var(--text-label);
   text-transform: uppercase;
-  letter-spacing: 0.16em;
+  letter-spacing: var(--track-meta);
   color: var(--faint);
   margin-top: 6px;
 }
@@ -1903,6 +1957,7 @@ textarea:focus-visible {
   flex: none;
   font-family: var(--font-jbmono), ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
+  letter-spacing: var(--track-rail);
   font-size: clamp(0.75rem, 0.7rem + 0.2vw, 0.9375rem);
   /* Ширина под самое длинное значение: без неё шкалы соседних строк съезжают
      по горизонтали и весы перестают быть весами. */
@@ -2055,9 +2110,9 @@ textarea:focus-visible {
 
 .rep-no {
   font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: 12px;
+  font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track-rail);
   color: var(--faint);
   width: 26px;
   flex: none;
