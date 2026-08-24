@@ -76,6 +76,24 @@ export function parseStoreAssets(assets: StoreAssets | undefined | null): GameAr
   return out
 }
 
+/**
+ * Лёгкая витрина 231×87 по плоскому пути.
+ *
+ * Существует ради ленты главной: там обложка размыта, движется и занимает
+ * колонку около ста пикселей, а `header.jpg` тянет по 70–130 КБ штука.
+ * Замер тех же игр: 128 → 18.6 КБ, 114 → 15.4, 69 → 16.5, 38 → 4.4.
+ *
+ * Соотношение сторон другое (231/87 против 460/215), и это учтено: плитки
+ * ленты стоят с `object-fit: cover`, то есть кадр подрезается по бокам, а не
+ * растягивается.
+ *
+ * Гарантий существования нет — у новых ассетов имя содержит хэш. Тот, кто
+ * пользуется этой ссылкой, обязан уметь откатиться.
+ */
+export function legacyCapsuleUrl(appid: number): string {
+  return `${ASSET_BASE}steam/apps/${appid}/capsule_231x87.jpg`
+}
+
 /** Плоский путь без хэша: работает у игр, вышедших до перехода Valve. */
 export function legacyArtUrl(appid: number, kind: 'header' | 'hero'): string {
   const file = kind === 'hero' ? 'library_hero.jpg' : 'header.jpg'

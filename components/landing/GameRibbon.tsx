@@ -163,7 +163,20 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
          * раз на сборку, а не на каждую плитку, — иначе на каждом перестроении
          * ленты пересоздавался бы массив на сотню элементов.
          */
-        const pool = window.innerWidth < NARROW_WIDTH ? games.slice(0, NARROW_COVERS) : games
+        const narrow = window.innerWidth < NARROW_WIDTH
+        const pool = narrow ? games.slice(0, NARROW_COVERS) : games
+
+        /*
+         * ЛЁГКАЯ ВИТРИНА — ТОЛЬКО НА УЗКОМ ЭКРАНЕ, и это замер, а не осторожность.
+         *
+         * Витрина 231 px шириной. На телефоне колонка выходит около ста, то есть
+         * запас двойной и картинка честно уменьшается. На широком мониторе
+         * колонка около 250, и та же витрина уже РАСТЯГИВАЕТСЯ, да ещё
+         * подрезается по бокам под соотношение плитки: снятый кадр показал
+         * ленту заметно мутнее прежней. Там полосу экономить не на чем, и
+         * правильный источник — обычная обложка 460.
+         */
+        const useLight = narrow
 
         for (let c = 0; c < cols; c++) {
           const col = document.createElement('div')
@@ -193,7 +206,24 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
           for (let pass = 0; pass < 2; pass++) {
             for (const g of block) {
               const img = document.createElement('img')
-              img.src = g.src
+              /*
+               * Сначала лёгкая витрина, полноразмерная обложка — только если
+               * лёгкой не оказалось (см. RibbonGame.light). Плоский путь без
+               * хэша работает не у всех игр, поэтому откат по ошибке
+               * обязателен: без него плитка осталась бы битой иконкой.
+               *
+               * onerror снимается сразу после подмены — иначе на втором сбое
+               * (нет и полной обложки) он зациклился бы на самом себе.
+               */
+              if (useLight && g.light) {
+                img.src = g.light
+                img.onerror = () => {
+                  img.onerror = null
+                  img.src = g.src
+                }
+              } else {
+                img.src = g.src
+              }
               img.alt = ''
               img.loading = 'lazy'
               img.decoding = 'async'

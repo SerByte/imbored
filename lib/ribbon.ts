@@ -1,4 +1,4 @@
-import { legacyArtUrl } from './art'
+import { legacyArtUrl, legacyCapsuleUrl } from './art'
 import type { GameArtUrls } from './art'
 
 /**
@@ -25,8 +25,22 @@ export type RibbonSource = {
 export type RibbonGame = {
   appid: number
   name: string
-  /** Готовая ссылка на обложку 460×215 — лента другого размера не показывает. */
+  /** Запасная ссылка: та же обложка 460×215, если лёгкой не оказалось. */
   src: string
+  /**
+   * Лёгкая обложка 231×87 — то, что лента показывает на самом деле.
+   *
+   * Замерено на живых адресах Steam: `header.jpg` у одних и тех же игр весит
+   * 128, 114, 69 и 38 КБ, а `capsule_231x87.jpg` — 18.6, 15.4, 16.5 и 4.4.
+   * Разница в семь раз, и платится она ни за что: лента размыта на 0.6…3.0 px,
+   * непрерывно движется, лежит под скримом и показывает колонку шириной около
+   * ста пикселей. Разрешения 231 хватает с двойным запасом.
+   *
+   * Может отсутствовать: плоский путь без хэша работает не у всех игр, а у
+   * новых ассетов имя содержит хэш и вывести его нельзя. Поэтому поле
+   * необязательное, а лента умеет откатиться на `src` по ошибке загрузки.
+   */
+  light: string | null
 }
 
 /**
@@ -75,6 +89,14 @@ function coverUrl(g: RibbonSource): string | null {
 }
 
 /**
+ * Лёгкая обложка по плоскому пути Steam. Только для игр с положительным
+ * appid: у игр вне Steam шаблоны неприменимы, у отрицательных id — тем более.
+ */
+function lightCoverUrl(appid: number): string | null {
+  return appid > 0 ? legacyCapsuleUrl(appid) : null
+}
+
+/**
  * Что показывает лента: каталог, добитый до минимума запасным списком.
  *
  * Чистая функция от строк каталога — базу в тесте поднимать не нужно, а
@@ -90,7 +112,7 @@ export function ribbonGames(catalog: readonly RibbonSource[]): RibbonGame[] {
     const src = coverUrl(g)
     if (!src) continue
     seen.add(g.appid)
-    out.push({ appid: g.appid, name: g.name, src })
+    out.push({ appid: g.appid, name: g.name, src, light: lightCoverUrl(g.appid) })
   }
 
   // Добор, а не подмена: если каталог отдал десять живых строк, десять живых и
@@ -99,7 +121,12 @@ export function ribbonGames(catalog: readonly RibbonSource[]): RibbonGame[] {
     if (out.length >= RIBBON_MIN) break
     if (seen.has(g.appid)) continue
     seen.add(g.appid)
-    out.push({ appid: g.appid, name: g.name, src: legacyArtUrl(g.appid, 'header') })
+    out.push({
+      appid: g.appid,
+      name: g.name,
+      src: legacyArtUrl(g.appid, 'header'),
+      light: lightCoverUrl(g.appid),
+    })
   }
 
   return out
