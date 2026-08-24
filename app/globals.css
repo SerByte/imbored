@@ -1962,6 +1962,21 @@ textarea:focus-visible {
 }
 
 /* ── Сцена «Что здесь ещё есть» ───────────────────────────────────────── */
+
+/*
+ * РАСПИСАНИЕ, КОТОРОЕ ЗАЖИГАЕТСЯ ПОД РУКОЙ.
+ *
+ * Была таблица: шесть строк, разделённых волосками, и между описанием и
+ * стрелкой три сотни пикселей пустоты — стрелка стояла у правого края одна,
+ * ничем со своей строкой не связанная. Наведение меняло только цвет текста, то
+ * есть единственная сцена страницы, которая одновременно и рассказ, и
+ * НАВИГАЦИЯ, никак не показывала, что по ней можно идти.
+ *
+ * Теперь строка — предмет: у неё есть тёплая заливка, которая выезжает слева
+ * под курсором, ведущая линия вместо пустоты и стрелка, которая на эту линию
+ * отвечает. Пустота между описанием и стрелкой стала связью между ними — тем
+ * же приёмом, что в оглавлении книги.
+ */
 .rep {
   list-style: none;
   margin: 0;
@@ -1974,53 +1989,170 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--edge);
 }
 .rep a {
+  position: relative;
+  isolation: isolate;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: clamp(12px, 2vw, 22px);
-  padding: clamp(12px, 2vh, 18px) 0;
+  padding: clamp(14px, 2.3vh, 22px) clamp(10px, 1.2vw, 18px);
+  border-radius: 12px;
   color: inherit;
   text-decoration: none;
   transition: color var(--dur-base) var(--ease-out);
 }
-.rep a:hover {
+
+/*
+ * Заливка выезжает слева, а не проявляется на месте: движение из-под номера
+ * наружу читается «строка открывается», проявление на месте — «строка
+ * подсветилась». Первое обещает переход, а переход здесь и произойдёт.
+ *
+ * Отдельным слоем под содержимым (isolation + z-index: -1), а не фоном ссылки:
+ * фон нельзя двигать, а этот слой едет масштабом, то есть даром.
+ */
+.rep a::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--ember) 15%, transparent),
+    color-mix(in srgb, var(--ember) 4%, transparent) 46%,
+    transparent 76%
+  );
+  opacity: 0;
+  transform: scaleX(0.92);
+  transform-origin: left center;
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.rep a:hover::before,
+.rep a:focus-visible::before {
+  opacity: 1;
+  transform: scaleX(1);
+}
+.rep a:hover,
+.rep a:focus-visible {
   color: var(--ember-text);
 }
+
 .rep-no {
   font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: 11px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
   color: var(--faint);
-  width: 24px;
+  width: 26px;
   flex: none;
+  transition: color var(--dur-base) var(--ease-out);
+}
+.rep a:hover .rep-no,
+.rep a:focus-visible .rep-no {
+  color: var(--ember-text);
 }
 .rep-name {
   font-family: var(--font-sofia), sans-serif;
   font-weight: 700;
-  font-size: clamp(1.125rem, 1rem + 0.6vw, 1.5rem);
+  font-size: clamp(1.1875rem, 1rem + 0.72vw, 1.625rem);
+  letter-spacing: -0.015em;
   flex: none;
-  min-width: clamp(120px, 16vw, 200px);
+  min-width: clamp(120px, 16vw, 210px);
 }
 /* max-w — мера набора: без потолка строка расписания растягивалась на 135
    символов при комфортных 45–75. */
 .rep-line {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 34rem;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.5;
   color: var(--dim);
 }
+
+/*
+ * ВЕДУЩАЯ ЛИНИЯ. Она и есть ответ на пустоту между описанием и стрелкой: в
+ * оглавлении книги это место занимает точечный пунктир, и по той же причине —
+ * глазу нужно, чем дойти от названия до номера страницы.
+ *
+ * Едет масштабом от левого края: под курсором линия ДОТЯГИВАЕТСЯ до стрелки, а
+ * не перекрашивается.
+ */
+.rep-lead {
+  flex: 1;
+  min-width: 20px;
+  height: 1px;
+  align-self: center;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ink) 14%, transparent) 30%,
+    color-mix(in srgb, var(--ink) 20%, transparent)
+  );
+  transform-origin: left center;
+  transition: background var(--dur-base) var(--ease-out);
+}
+.rep a:hover .rep-lead,
+.rep a:focus-visible .rep-lead {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ember) 34%, transparent) 24%,
+    color-mix(in srgb, var(--ember) 82%, transparent)
+  );
+}
+
 .rep-arrow {
-  margin-left: auto;
   flex: none;
   color: var(--dim);
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out);
 }
+.rep a:hover .rep-arrow,
+.rep a:focus-visible .rep-arrow {
+  color: var(--ember-text);
+  transform: translateX(5px);
+}
+
 @media (max-width: 719px) {
   .rep a {
     flex-wrap: wrap;
+    row-gap: 4px;
   }
   .rep-line {
     flex-basis: 100%;
+    order: 3;
   }
+  /* На телефоне ведущей линии вести некуда: имя и стрелка стоят в одной
+     строке вплотную, а описание уходит на следующую. Линия там была бы
+     украшением без работы. */
+  .rep-lead {
+    display: none;
+  }
+  .rep-arrow {
+    margin-left: auto;
+  }
+}
+
+/*
+ * Свет расписания: тёплая полоса вдоль верхних строк. Сцена шла ровным чёрным
+ * прямоугольником между двумя освещёнными — сквозная температура страницы на
+ * ней обрывалась.
+ */
+.rep-glow {
+  position: absolute;
+  inset: -26% -16% -10%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      52% 40% at 32% 24%,
+      color-mix(in srgb, var(--ember) 15%, transparent),
+      transparent 74%
+    ),
+    radial-gradient(46% 44% at 88% 86%, rgba(72, 116, 198, 0.14), transparent 74%);
 }
 
 /* ── Сцена «О деньгах» ────────────────────────────────────────────────── */

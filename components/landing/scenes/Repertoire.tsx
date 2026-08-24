@@ -31,11 +31,24 @@ export function Repertoire() {
       label="Что здесь ещё есть"
       end="+=120%"
       enter={(intro, root) => {
-        // Строки выезжают, пока сцена поднимается: к моменту закрепления
-        // расписание уже стоит, и закрепление просто даёт его прочитать.
+        /*
+         * РАСПИСАНИЕ ПЕЧАТАЕТСЯ, А НЕ ВЫЕЗЖАЕТ ЦЕЛИКОМ.
+         *
+         * Строки по-прежнему приходят слева, пока сцена поднимается, — но
+         * теперь у каждой сначала ПРОЧЕРЧИВАЕТСЯ ведущая линия, и только следом
+         * подтягивается её текст. Раньше шесть одинаковых строк выезжали одним
+         * шагом, и сцена читалась списком, который подвинули; линия, идущая
+         * впереди текста, читается строкой, которую печатают.
+         *
+         * Линия и строка — разные элементы, у каждого один твин.
+         */
         const rows = root.querySelectorAll('[data-rep-row]')
+        const leads = root.querySelectorAll('.rep-lead')
         gsap.set(rows, { opacity: 0, x: -40 })
-        intro.to(rows, { opacity: 1, x: 0, stagger: 0.12, duration: 0.4, ease: 'power2.out' }, 0)
+        gsap.set(leads, { scaleX: 0 })
+        intro
+          .to(leads, { scaleX: 1, stagger: 0.12, duration: 0.45, ease: 'power2.out' }, 0)
+          .to(rows, { opacity: 1, x: 0, stagger: 0.12, duration: 0.4, ease: 'power2.out' }, 0.08)
       }}
       build={(tl, root) => {
         // Стрелки приходят последними — на них взгляд и уходит к ссылке.
@@ -47,6 +60,8 @@ export function Repertoire() {
         )
       }}
     >
+      <div className="rep-glow" aria-hidden />
+
       <p className="slate">
         <b>05</b>
         <span>Что здесь ещё есть</span>
@@ -59,6 +74,9 @@ export function Repertoire() {
               <span className="rep-no">{String(i + 1).padStart(2, '0')}</span>
               <span className="rep-name">{item.name}</span>
               <span className="rep-line">{item.line}</span>
+              {/* Ведущая линия: она занимает пустоту между описанием и
+                  стрелкой и связывает их — как пунктир в оглавлении. */}
+              <span aria-hidden className="rep-lead" />
               <span aria-hidden className="rep-arrow">
                 →
               </span>
