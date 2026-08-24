@@ -450,7 +450,12 @@ export default function RoomPage() {
             <button
               onClick={togglePublic}
               aria-pressed={state.room.isPublic}
-              className={`rounded-[14px] px-4 py-2 text-sm cursor-pointer transition ${
+              /* py-3, а не py-2: замерено — 38 px при стандарте продукта в 44
+                 (докблок .tap). Утилитой .tap не чинится: её зона вылезает на
+                 6 px вбок, а соседняя кнопка стоит в 8 — зоны перекрылись бы и
+                 воровали друг у друга нажатия. Это единственные два контрола,
+                 которыми в пати вообще зовут людей. */
+              className={`rounded-[14px] px-4 py-3 text-sm cursor-pointer transition ${
                 state.room.isPublic ? 'bg-ember/15 text-ember-text' : 'glass glass-hover text-dim'
               }`}
               title="Открытая комната видна на доске «Пати» — к вам смогут подсесть"
@@ -467,7 +472,7 @@ export default function RoomPage() {
           */}
           <button
             onClick={copyLink}
-            className="rounded-[14px] glass glass-hover px-4 py-2 text-sm cursor-pointer"
+            className="rounded-[14px] glass glass-hover px-4 py-3 text-sm cursor-pointer"
           >
             {copied
               ? 'Скопировано ✓'

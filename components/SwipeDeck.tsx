@@ -62,7 +62,11 @@ function TopCard({
 
   return (
     <motion.div
-      className="glass rounded-[20px] overflow-hidden relative touch-pan-y"
+      /* panel-lift — общий материал панелей продукта: замерено, у колоды был
+         box-shadow ровно none, то есть плоское стекло. Карточка, которую
+         листают и по которой голосуют, — тот же предмет, что карточка ответа в
+         квизе и карточка подключения на первом экране. */
+      className="panel-lift glass overflow-hidden relative touch-pan-y"
       style={{ x, rotate }}
       drag="x"
       dragConstraints={{ left: 0, right: 0 }}
@@ -221,7 +225,7 @@ export function SwipeDeck({
           <motion.div
             key={c.appid}
             aria-hidden
-            className="glass rounded-[20px] overflow-hidden absolute inset-x-0 top-0"
+            className="panel-lift glass overflow-hidden absolute inset-x-0 top-0"
             initial={false}
             animate={{
               scale: 1 - (i + 1) * 0.04,
