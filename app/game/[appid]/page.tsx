@@ -251,7 +251,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   href={meta.storeUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="btn-ember px-5 py-2.5 text-sm"
+                  className="btn-ember px-5 py-3 text-sm"
                 >
                   Открыть в {STORE_LABEL[meta.store ?? ''] ?? 'магазине'}
                 </a>
@@ -261,14 +261,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     appid={appid}
                     label="Запустить"
                     mobileLabel="Открыть в Steam"
-                    className="btn-ember px-5 py-2.5 text-sm"
+                    className="btn-ember px-5 py-3 text-sm"
                   />
                   {/* на телефоне кнопка выше и так ведёт в магазин — дублировать незачем */}
                   <a
                     href={`https://store.steampowered.com/app/${appid}/`}
                     target="_blank"
                     rel="noreferrer"
-                    className="hidden md:inline-block rounded-[14px] glass glass-hover px-5 py-2.5 text-sm"
+                    className="hidden md:inline-block rounded-[14px] glass glass-hover px-5 py-3 text-sm"
                   >
                     Страница в Steam
                   </a>
@@ -278,12 +278,12 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 href={`https://www.youtube.com/results?search_query=${encodeURIComponent(`${meta.name} обзор`)}`}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-[14px] glass glass-hover px-5 py-2.5 text-sm text-dim"
+                className="rounded-[14px] glass glass-hover px-5 py-3 text-sm text-dim"
               >
                 Обзоры на YouTube
               </a>
               {meta.priceFinal !== undefined && meta.priceFinal > 0 && (
-                <span className="rounded-[14px] glass px-5 py-2.5 text-sm flex items-center gap-2">
+                <span className="rounded-[14px] glass px-5 py-3 text-sm flex items-center gap-2">
                   <PriceTag priceFinal={meta.priceFinal} discount={deal} size="hero" />
                   <DiscountEnds discount={deal} />
                 </span>

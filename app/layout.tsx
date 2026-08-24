@@ -233,7 +233,10 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             <span className="site-chrome-bar" />
           </div>
           <div className="relative mx-auto max-w-6xl px-5 py-4 flex items-center justify-between">
-            <Link href="/" className="text-xl flex items-center gap-2.5">
+            {/* .tap: логотип — ссылка «домой» на КАЖДОЙ странице продукта, и он
+                единственный остался высотой 28 px. Зона безопасна с запасом —
+                замерено, ближайший сосед по шапке в 408 px. */}
+            <Link href="/" className="tap text-xl flex items-center gap-2.5">
               <LogoMark size={24} />
               <Wordmark />
             </Link>
