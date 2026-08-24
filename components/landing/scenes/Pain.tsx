@@ -35,18 +35,58 @@ export function Pain() {
          * первого экрана: человек видит начало мысли до того, как сцена
          * возьмёт управление, а прокрутка её договаривает.
          */
-        const words = [...root.querySelectorAll('[data-pain-word]')]
-        const rest = words.slice(1)
+        const words = [...root.querySelectorAll<HTMLElement>('[data-pain-word]')]
+        const [, second, third] = words
         const after = root.querySelector('[data-pain-after]')
-        gsap.set(rest, { opacity: 0, y: 40 })
+        const key = root.querySelector('[data-pain-key]')
+        const shutter = root.querySelector('[data-pain-shutter]')
+        const thumb = root.querySelector('[data-pain-thumb]')
+
+        gsap.set([second, third], { opacity: 0, y: 40 })
         gsap.set(after, { opacity: 0, y: 20 })
-        tl.to(rest, { opacity: 1, y: 0, stagger: 0.28, duration: 0.34, ease: 'power2.out' })
-          .to(after, { opacity: 1, y: 0, duration: 0.25, ease: 'power2.out' }, '>-0.05')
+        gsap.set(key, { opacity: 0 })
+        gsap.set(shutter, { opacity: 0, scale: 1.75 })
+        gsap.set(thumb, { yPercent: 0 })
+
+        /*
+         * У КАЖДОЙ ФРАЗЫ СВОЙ ЖЕСТ, А НЕ ОБЩИЙ STAGGER.
+         *
+         * Раньше все три прилетали одинаково, с одним шагом и одной кривой, —
+         * то есть сцена произносила ритуал ровным голосом. Здесь три разных
+         * события, и они обязаны звучать по-разному:
+         *
+         *   «Полистал.» приезжает ВЯЛО и коротко — это скучная середина,
+         *      её задача не запомниться;
+         *   «Закрыл.» БЬЁТ: expo.out, вдвое быстрее, и вместе с ним начинает
+         *      сходиться темнота;
+         *   свет приходит с первой фразой и УМИРАЕТ на третьей — сцена
+         *      начинается освещённой и заканчивается погасшей.
+         *
+         * Бегунок едет ровно, пока идут первые две фразы, и ОСТАНАВЛИВАЕТСЯ на
+         * третьей. Останов — это и есть «закрыл».
+         */
+        tl.to(key, { opacity: 1, duration: 0.3, ease: 'power2.out' }, 0)
+          .to(thumb, { yPercent: 372, duration: 0.62, ease: 'none' }, 0)
+          .to(second, { opacity: 1, y: 0, duration: 0.3, ease: 'power1.out' }, 0.24)
+          .to(third, { opacity: 1, y: 0, duration: 0.16, ease: 'expo.out' }, 0.62)
+          .to(shutter, { opacity: 1, scale: 1, duration: 0.5, ease: 'power2.inOut' }, 0.62)
+          .to(key, { opacity: 0.12, duration: 0.45, ease: 'power2.in' }, 0.66)
+          .to(after, { opacity: 1, y: 0, duration: 0.25, ease: 'power2.out' }, 0.86)
           // Пустой такт в конце: последняя фраза обязана постоять прочитанной,
           // а не смениться следующей сценой в тот же кадр.
-          .to({}, { duration: 0.35 })
+          .to({}, { duration: 0.35 }, 1.15)
       }}
     >
+      {/* Свет комнаты и темнота, которая его съедает. Оба слоя — под текстом:
+          гаснуть обязана комната, а не человек в ней. */}
+      <div className="pain-key" aria-hidden data-pain-key />
+      <div className="pain-shutter" aria-hidden data-pain-shutter />
+
+      {/* Жёлоб с бегунком: он и есть «полистал». Замирает на «Закрыл.». */}
+      <div className="pain-scroll" aria-hidden>
+        <span className="pain-scroll-thumb" data-pain-thumb />
+      </div>
+
       <p className="slate">
         <b>02</b>
         <span>Зачем всё это</span>
