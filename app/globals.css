@@ -862,24 +862,100 @@ textarea:focus-visible {
   position: relative;
 }
 
+/*
+ * КЛЮЧЕВОЙ СВЕТ ПЕРВОГО ЭКРАНА.
+ *
+ * До него герой был серым, и это не вкусовщина, а следствие устройства кадра:
+ * лента цветная, скрим её гасит, и всё, что лежит поверх, — белый текст на
+ * чёрном пятне. Единственным цветом первого экрана оставалась заливка кнопки.
+ *
+ * Порядок двух слоёв обязателен и обратный привычному. ::before выше — ЧЁРНОЕ
+ * СИДЕНЬЕ: оно забирает свет у случайной обложки, чтобы белое читалось на
+ * любой. .hero-glow ложится ПОВЕРХ сиденья и возвращает свет — но уже нашим
+ * цветом. Тёплое ядро под титром, холодный добор ниже: без второго ядро на
+ * рыжей обложке (а половина ленты рыжая) сливается с ней и перестаёт быть
+ * светом.
+ *
+ * Без blur и без blend-mode намеренно. Слой большой, а .hero-body едет по
+ * прокрутке — фильтр на нём пересчитывался бы каждый кадр. Радиальные
+ * градиенты и так мягкие, композитору они ничего не стоят.
+ *
+ * Селектор с родителем, а не голый класс: `.hero-body > *` ставит детям
+ * position: relative и при равной силе перебил бы absolute по порядку в файле.
+ */
+.hero-body > .hero-glow {
+  position: absolute;
+  inset: -30% -52% -34%;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      42% 34% at 50% 30%,
+      color-mix(in srgb, var(--ember) 30%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      72% 58% at 50% 36%,
+      color-mix(in srgb, var(--ember) 11%, transparent),
+      transparent 74%
+    ),
+    radial-gradient(46% 40% at 50% 86%, rgba(104, 148, 226, 0.16), transparent 72%);
+  will-change: transform, opacity;
+}
+
+/* Слой титра: тот же зазор, что был у знака и строки как у соседей по
+   .hero-body, — обёртка не имеет права изменить ритм первого экрана. */
+.hero-type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(16px, 2.4vh, 24px);
+  width: 100%;
+  will-change: transform;
+}
+
 .hero-wordmark {
   margin: 0;
   font-size: var(--text-display-xl);
   line-height: 0.92;
   letter-spacing: -0.03em;
+  /* Тёплый ореол вплотную к литерам: продолжение ключевого света, а не
+     обводка. Тень читается только там, где под знаком светлая обложка. */
+  text-shadow:
+    0 2px 30px color-mix(in srgb, var(--ember) 26%, transparent),
+    0 1px 2px rgba(11, 12, 16, 0.55);
 }
 
+/*
+ * ОБЕЩАНИЕ.
+ *
+ * Было 18 px сплошным --dim: ровная серая полоса без единого ударения, из-за
+ * чего взгляд проскакивал её от знака сразу к кнопке. Теперь у фразы есть
+ * ударный конец — <b> набран цветом текста, — и строка ломается по смыслу
+ * (balance), а не по остатку ширины.
+ */
 .hero-lede {
-  max-width: 26rem;
-  font-size: 1.125rem;
-  line-height: 1.6;
+  max-width: 27rem;
+  font-size: clamp(1.0625rem, 0.98rem + 0.4vw, 1.3125rem);
+  line-height: 1.5;
+  letter-spacing: -0.005em;
   color: var(--dim);
+  text-wrap: balance;
+}
+.hero-lede b {
+  color: var(--ink);
+  font-weight: 600;
 }
 
+/*
+ * Подсказка «здесь есть ещё». Прижата ближе к нижней кромке, чем раньше:
+ * карточка выросла на надзаголовок, и на 800 px высоты между ней и строкой
+ * оставалось пятнадцать пикселей — читалось как слипшийся низ, а не как
+ * отдельная подпись у края кадра.
+ */
 .hero-cue {
   position: absolute;
   left: 50%;
-  bottom: clamp(18px, 4vh, 34px);
+  bottom: clamp(12px, 2.4vh, 26px);
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -899,6 +975,221 @@ textarea:focus-visible {
 .hero-cue-arrow {
   font-size: 15px;
   line-height: 1;
+  /* Качается только стрелка, не вся строка: у .hero-cue уже есть свой
+     transform (translateX(-50%) центрует её), и второй ключевой кадр на том же
+     элементе сбил бы центровку в первом же кадре. */
+  animation: hero-cue-bob 2.6s var(--ease-glow) infinite;
+}
+@keyframes hero-cue-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(5px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-cue-arrow {
+    animation: none;
+  }
+}
+
+/*
+ * КАРТОЧКА ПОДКЛЮЧЕНИЯ: ЕДИНСТВЕННАЯ ФОРМА СТРАНИЦЫ, И ОНА ОБЯЗАНА СТОЯТЬ.
+ *
+ * Одного .glass ей не хватало. Заливка, размытие и волосок по периметру дают
+ * плоский прямоугольник — на ленте он читался выцветшим пятном: карточка
+ * лежала В кадре, а не стояла в нём. Здесь три слоя объёма, и каждый отвечает
+ * за своё:
+ *   — верхний внутренний блик отделяет крышку от корпуса;
+ *   — нижняя внутренняя линия сажает карточку на плоскость;
+ *   — дальняя мягкая тень уводит из-под неё ленту и делает зазор.
+ *
+ * Тень статическая: на прокрутке она не анимируется ни здесь, ни в наведении
+ * карточки — меняется только у кнопки, у одной и маленькой.
+ *
+ * Класс общий у настоящей карточки и у фолбэка. Их обязано быть невозможно
+ * различить глазом: фолбэк — это то, что видит человек до гидратации, и
+ * подмена одного вида другим на первом экране читается как моргание.
+ */
+.connect-card {
+  position: relative;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--edge);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 44%), var(--glass-bg);
+  backdrop-filter: blur(26px) saturate(118%);
+  -webkit-backdrop-filter: blur(26px) saturate(118%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    0 2px 6px rgba(0, 0, 0, 0.34),
+    0 34px 74px -30px rgba(0, 0, 0, 0.92);
+}
+
+/* Блик по верхней кромке — тот же ключевой свет, что стоит за титром, только
+   пойманный ребром карточки. Не по всей ширине: свет точечный, и кромка
+   обязана гаснуть к углам, иначе это уже не блик, а вторая рамка. */
+.connect-card::before {
+  content: '';
+  position: absolute;
+  inset-inline: 14%;
+  top: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ember) 55%, transparent),
+    transparent
+  );
+}
+
+/*
+ * Надзаголовок карточки. До него карточка начиналась прямо с поля ввода —
+ * шесть элементов равного веса стопкой и ни одного слова о том, что вообще
+ * происходит. Набран тем же моноширинным языком, что хлопушки сцен (.slate):
+ * первый экран и рассказ под ним обязаны говорить одним шрифтом.
+ */
+.card-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.card-eyebrow::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--edge), transparent);
+}
+
+/*
+ * ПОЛЕ ПРОФИЛЯ.
+ *
+ * Утоплено, а не наклеено: внутренняя тень сверху даёт борозду, и поле
+ * перестаёт быть таким же прямоугольником, как кнопка под ним. Фокус
+ * подсвечивает рамку — кольцо :focus-visible приходит из общего правила выше и
+ * здесь не переопределяется, иначе клавиатурный обход остался бы без него.
+ */
+.field {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--edge);
+  /* Через --bg, а не литеральным чёрным: борозда обязана быть темнее подложки
+     в тёмной теме и светлее в светлой, иначе класс живёт ровно на одной
+     странице и ломается на первой же попытке переиспользовать. */
+  background: color-mix(in srgb, var(--bg) 58%, transparent);
+  padding: 0.8125rem 1rem;
+  color: var(--ink);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.42);
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    background var(--dur-base) var(--ease-out);
+}
+.field::placeholder {
+  color: var(--faint);
+}
+.field:hover {
+  border-color: color-mix(in srgb, var(--ink) 18%, transparent);
+}
+.field:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ember) 65%, transparent);
+  background: color-mix(in srgb, var(--bg) 74%, transparent);
+}
+
+/*
+ * ПАРАДНАЯ КНОПКА.
+ *
+ * Главное здесь — состояние ПОКОЯ, а не наведения. Раньше выключенная кнопка
+ * была той же заливкой под opacity: 0.4, и первый кадр страницы показывал
+ * мутную коричневую плашку: единственное действие продукта выглядело сломанным
+ * ровно в ту секунду, когда на него смотрят впервые. Теперь выключенная кнопка
+ * — обведённая, с тем же ember в рамке и подписи: она не «сломана», она ЖДЁТ
+ * ввода, и это ровно то, что происходит.
+ *
+ * Включённая светит: тёплая тень под ней — продолжение ключевого света героя.
+ * Нажатие тень СЖИМАЕТ и опускает кнопку на пиксель — вес отдаётся под палец.
+ *
+ * transform у самой кнопки, а не у обёртки: обёрткой владеет Magnet, и второй
+ * источник transform на одном элементе в этом проекте уже стоил мигания.
+ */
+.btn-ember {
+  position: relative;
+  display: block;
+  width: 100%;
+  border-radius: 14px;
+  padding-block: 0.8125rem;
+  text-align: center;
+  text-decoration: none;
+  font-weight: 600;
+  color: var(--on-ember);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 88%, #fff), var(--ember));
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 10px 26px -12px color-mix(in srgb, var(--ember) 80%, transparent);
+  transition:
+    box-shadow var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.btn-ember:hover:not(:disabled) {
+  filter: brightness(1.07);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    0 16px 36px -14px color-mix(in srgb, var(--ember) 92%, transparent);
+}
+.btn-ember:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 4px 12px -8px color-mix(in srgb, var(--ember) 70%, transparent);
+}
+.btn-ember:disabled {
+  cursor: default;
+  color: var(--ember-text);
+  background: color-mix(in srgb, var(--ember) 11%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ember) 30%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-ember {
+    transition: none;
+  }
+  .btn-ember:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/*
+ * Разделитель «или». Тем же моноширинным языком, что надзаголовок и хлопушки
+ * сцен: до этого он был единственной строчной надписью в карточке и читался
+ * забытой.
+ */
+.rule-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.rule-or::before,
+.rule-or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--edge);
 }
 
 /* Титр сцены «Зачем всё это»: по фразе на строку. */

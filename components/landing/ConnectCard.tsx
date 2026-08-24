@@ -207,7 +207,7 @@ export function ConnectCard() {
         одного размера в обоих состояниях и до гидратации, иначе первый экран
         дёргается ровно в тот момент, когда в него целятся пальцем.
       */}
-      <div className={`glass flex ${CONNECT_CARD_MIN_H} flex-col gap-3 rounded-[20px] p-6`}>
+      <div className={`connect-card flex ${CONNECT_CARD_MIN_H} flex-col gap-3 p-6`}>
         {view.authed ? (
           <div className="flex flex-1 flex-col justify-center gap-4">
             <p className="text-lg text-ink">
@@ -221,11 +221,7 @@ export function ConnectCard() {
             </p>
             <Magnet className="block w-full">
               <ClickSpark className="block w-full">
-                <button
-                  type="button"
-                  onClick={() => router.push(target)}
-                  className="w-full cursor-pointer rounded-[14px] bg-ember py-3 font-semibold text-on-ember transition hover:brightness-110"
-                >
+                <button type="button" onClick={() => router.push(target)} className="btn-ember">
                   {action}
                 </button>
               </ClickSpark>
@@ -285,45 +281,52 @@ export function ConnectCard() {
               }}
               className="flex flex-col gap-3"
             >
+              {/*
+                Надзаголовок: карточка начиналась прямо с поля ввода, шестью
+                элементами равного веса, и ни одна строка не говорила, что тут
+                вообще происходит. Тот же моноширинный язык, что у хлопушек
+                сцен ниже — первый экран и рассказ под ним говорят одним
+                шрифтом.
+              */}
+              <p className="card-eyebrow">Доступ к библиотеке</p>
+
               {/* Подпись есть, но не показана: место под ней съело бы карточку,
                   а placeholder подписью не является — он исчезает при вводе и
                   не читается скринридером как имя поля. */}
               <label htmlFor="steam-profile" className="sr-only">
                 Ссылка на твой Steam-профиль или ник
               </label>
+              {/*
+                Подсказка в поле КОРОЧЕ подписи, и это не небрежность: полная
+                фраза не помещалась в поле на телефоне и обрывалась на «Steam-
+                профиль и…». Обрезанная подсказка хуже короткой — она выглядит
+                сломанной вёрсткой. Скринридер и label читают полный вариант.
+              */}
               <input
                 id="steam-profile"
                 name="profile"
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ссылка на твой Steam-профиль или ник"
+                placeholder="Ссылка на профиль или ник"
                 inputMode="url"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
                 enterKeyHint="go"
                 autoComplete="off"
-                className="w-full rounded-[14px] border border-edge bg-surface px-4 py-3 text-ink transition-colors placeholder:text-faint focus:border-ember/60"
+                className="field"
               />
               {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
               <Magnet className="block w-full">
                 <ClickSpark className="block w-full">
-                  <button
-                    type="submit"
-                    disabled={!input || busy !== null}
-                    className="w-full cursor-pointer rounded-[14px] bg-ember py-3 font-semibold text-on-ember transition hover:brightness-110 disabled:opacity-40"
-                  >
+                  <button type="submit" disabled={!input || busy !== null} className="btn-ember">
                     {busy === 'connect' ? 'Читаю библиотеку…' : action}
                   </button>
                 </ClickSpark>
               </Magnet>
             </form>
-            <div className="flex items-center gap-3 text-xs text-faint">
-              <div className="h-px flex-1 bg-edge" />
-              или
-              <div className="h-px flex-1 bg-edge" />
-            </div>
+            <div className="rule-or">или</div>
             <a
               href={steamHref}
               className="glass glass-hover w-full rounded-[14px] py-3 text-center text-sm text-ink"
