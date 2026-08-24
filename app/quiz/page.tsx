@@ -195,7 +195,7 @@ function Quiz() {
           <div data-answer={cardState(o.value)} className="quiz-answer h-full">
             <SpotlightCard
               onClick={() => pick(o.value)}
-              className="h-full rounded-[20px] px-6 py-8 text-left"
+              className="panel-lift h-full px-6 py-8 text-left"
             >
               <div className="text-xl font-semibold">{o.label}</div>
               <div className="text-sm text-dim mt-1.5">{o.hint}</div>

@@ -44,7 +44,7 @@ export const CONNECT_CARD_MIN_H = 'min-h-[392px]'
 export function ConnectFallback() {
   return (
     <div className="flex w-full max-w-md flex-col gap-4">
-      <div className={`connect-card flex ${CONNECT_CARD_MIN_H} flex-col justify-center gap-3 p-6`}>
+      <div className={`panel-lift connect-card flex ${CONNECT_CARD_MIN_H} flex-col justify-center gap-3 p-6`}>
         {/* Надзаголовок тот же, что у настоящей карточки: подмена одного вида
             другим на первом экране читается как моргание, а фолбэк — это
             буквально то, что человек видит до гидратации. */}

@@ -207,7 +207,7 @@ export function ConnectCard() {
         одного размера в обоих состояниях и до гидратации, иначе первый экран
         дёргается ровно в тот момент, когда в него целятся пальцем.
       */}
-      <div className={`connect-card flex ${CONNECT_CARD_MIN_H} flex-col gap-3 p-6`}>
+      <div className={`panel-lift connect-card flex ${CONNECT_CARD_MIN_H} flex-col gap-3 p-6`}>
         {view.authed ? (
           <div className="flex flex-1 flex-col justify-center gap-4">
             <p className="text-lg text-ink">
