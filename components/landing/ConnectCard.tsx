@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Magnet } from '@/components/Magnet'
+import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { CONNECT_CARD_MIN_H } from '@/components/landing/ConnectFallback'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { DESTINATIONS, destinationPath } from '@/lib/destination'
@@ -75,36 +76,6 @@ const ERROR_TEXT: Record<string, string> = {
     «что теперь делать», строка — на «почему ничего не произошло».
   */
   private: 'Steam прячет твою библиотеку. Это меняется одной настройкой — как, написано ниже.',
-}
-
-function PrivacyHelp() {
-  return (
-    <div className="glass rounded-[20px] p-5 text-sm leading-relaxed anim-rise">
-      <p className="font-semibold text-ink mb-2">Библиотека скрыта настройками Steam</p>
-      <p className="text-dim">
-        Steam по умолчанию прячет список игр даже при публичном профиле. Открой его — это меняется
-        одной настройкой:
-      </p>
-      <ol className="list-decimal list-inside text-dim mt-3 space-y-1.5">
-        <li>
-          Зайди в{' '}
-          <a
-            href="https://steamcommunity.com/my/edit/settings"
-            target="_blank"
-            rel="noreferrer"
-            className="tap tap-tight text-ember-text hover:underline"
-          >
-            настройки приватности Steam
-          </a>
-        </li>
-        <li>
-          «Доступ к игровой информации» → <span className="text-ink">Открытый</span>
-        </li>
-        <li>Сними галочку «Всегда скрывать общее время игры»</li>
-        <li>Вернись сюда и попробуй снова</li>
-      </ol>
-    </div>
-  )
 }
 
 export function ConnectCard() {

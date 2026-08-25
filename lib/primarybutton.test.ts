@@ -95,6 +95,51 @@ describe('парадная кнопка', () => {
     expect(inside, '.btn-ember обязан объявляться внутри @layer components').toBe(true)
   })
 
+  /**
+   * БОКОВЫЕ ПОЛЯ КЛАСС НЕ ЗАДАЁТ, И ЗАБЫТЬ ОБ ЭТОМ ЛЕГКО.
+   *
+   * `.btn-ember` объявляет только `padding-block` — ширина остаётся за местом
+   * применения, потому что тот же вид носит и кнопка во всю карточку, и призыв
+   * по содержимому. У растянутой (`is-block`) нулевые боковые поля незаметны:
+   * кнопка и так шире текста. У кнопки по содержимому текст упирается прямо в
+   * край заливки.
+   *
+   * Замерено на живой странице: `padding: 13px 0px`, ширина 156 при надписи
+   * «Подключить заново». Докблок в стилях об этом предупреждает прямым текстом
+   * — и не помог: ошибку допустил тот же, кто этот докблок читал.
+   *
+   * ТРЕТИЙ ВАРИАНТ РАЗРЕШЕНИЯ — НЕ ПОБЛАЖКА, А НАХОДКА СТОРОЖА. Первая версия
+   * проверяла только `is-block` и `px-`-утилиту и объявила нарушителем
+   * `btn-ember back-btn` на сцене денег. Проверка по стилям показала, что
+   * `.back-btn` задаёт `padding-inline: clamp(20px, 2vw, 28px)`, то есть
+   * нарушения нет. Поэтому разрешение читается из самих стилей, а не из списка
+   * исключений: список бы сгнил, стили — нет.
+   */
+  test('кнопка по содержимому обязана нести боковые поля', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+    /** Классы, которым боковые поля дают сами стили. */
+    const padded = new Set<string>()
+    for (const m of css.matchAll(/\.([a-z][a-z0-9-]*)\s*\{([^}]*)\}/g)) {
+      if (/padding-inline|padding-left|padding-right|padding:/.test(m[2])) padded.add(m[1])
+    }
+
+    const offenders: string[] = []
+    for (const [file, src] of tsxFiles()) {
+      for (const m of src.matchAll(/className="([^"]*btn-ember[^"]*)"/g)) {
+        const names = m[1].split(/\s+/).filter(Boolean)
+        if (names.includes('is-block')) continue
+        if (names.some((n) => /^p[xse]?-\d/.test(n))) continue
+        if (names.some((n) => n !== 'btn-ember' && padded.has(n))) continue
+        offenders.push(`${file}: className="${m[1]}"`)
+      }
+    }
+    expect(
+      offenders,
+      '.btn-ember задаёт только padding-block: без is-block, без px-утилиты и без класса ' +
+        'с собственным padding-inline текст упрётся в край заливки',
+    ).toEqual([])
+  })
+
   test('растяжка во всю ширину — модификатором, а не второй заливкой', () => {
     const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
     expect(css, 'нет модификатора .btn-ember.is-block').toMatch(/\.btn-ember\.is-block/)

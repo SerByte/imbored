@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
+import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
@@ -12,6 +13,7 @@ import {
   LIBRARY_FILTERS,
   parseLibraryFilter,
   pickForgotten,
+  SHELF_EMPTY,
 } from '@/lib/forgotten'
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
@@ -124,6 +126,39 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         {plural(totalHours, 'час', 'часа', 'часов')} ·{' '}
         <span className="font-mono">{untouched}</span> ни разу не запускал
       </p>
+
+      {/*
+        ПУСТАЯ БИБЛИОТЕКА — НЕ ПУСТАЯ ПОЛКА.
+        
+        До этой правки страница показывала здесь пять чипсов с нулями и строку
+        «Здесь пусто — и это хорошая новость». Замерено снимком: весь экран
+        человека, у которого ничего не загрузилось, состоял из заголовка, трёх
+        нулей, пяти нулевых чипсов, этой строки — и двух ссылок «Выйти».
+        Единственным заметным действием на странице был выход.
+        
+        Причина почти всегда одна и та же, и она чинится за минуту: Steam по
+        умолчанию прячет список игр даже при публичном профиле. Сюда доезжают
+        только те, у кого сессия и снимок ЕСТЬ, — то есть отказ случился уже
+        после подключения, и на карточке подключения этот текст человек не
+        увидит никогда.
+        
+        Чипсы и сетка ниже при пустой библиотеке не рисуются вовсе: пять нулей
+        не сообщают ничего, а якорь #wall на них ведёт только с полки
+        «запечатанного», которой здесь тоже нет.
+      */}
+      {games.length === 0 && (
+        <section className="max-w-2xl">
+          <p className="font-semibold text-ink mb-2">Steam не отдал ни одной игры</p>
+          <p className="text-dim text-sm leading-relaxed mb-5">
+            Причин ровно две: игровые данные закрыты настройками профиля — или библиотека правда
+            пуста. Первая встречается намного чаще.
+          </p>
+          <PrivacyHelp />
+          <Link href="/" className="btn-ember mt-5 px-6 py-3">
+            Подключить заново
+          </Link>
+        </section>
+      )}
 
       {(backlog.pricedCount > 0 || stats.rate !== null) && (
         <div className="grid md:grid-cols-2 gap-4 mb-10">
@@ -247,6 +282,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           тысячу плиток обязана остаться серверной и без обработчиков.
           id — цель ссылки с полки «запечатанного»: приводить к фильтру,
           не показав самих чипсов, значит приводить в никуда. */}
+      {games.length > 0 && (
       <div id="wall" className="flex flex-wrap gap-2 mb-6">
         {LIBRARY_FILTERS.map((f) => (
           <Link
@@ -261,9 +297,14 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           </Link>
         ))}
       </div>
+      )}
 
-      {view.games.length === 0 && (
-        <p className="text-dim text-sm">Здесь пусто — и это хорошая новость.</p>
+      {/* games.length в условии обязателен: у пустой библиотеки пуста и любая
+          полка, и без него человек с ?state=active получил бы два сообщения
+          сразу — «за две недели ты не запускал ничего» поверх «Steam не отдал
+          ни одной игры». */}
+      {games.length > 0 && view.games.length === 0 && filter !== 'all' && (
+        <p className="text-dim text-sm">{SHELF_EMPTY[filter]}</p>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
