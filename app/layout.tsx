@@ -191,10 +191,23 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         низу — flex-контейнером остался бы <body>, а его прямым потомком
         стала обёртка, а не main.
 
-        На <body> остаётся только то, что обязано быть на самом внешнем
-        элементе: отступ под нижнюю панель и запрет горизонтальной прокрутки.
+        ОТСТУП ПОД НИЖНЮЮ ПАНЕЛЬ УЕХАЛ ТУДА ЖЕ, И ПО ТОЙ ЖЕ ПРИЧИНЕ, ПРОСТО
+        ЗАМЕЧЕННОЙ ПОЗЖЕ. Здесь он стоял на <body> с пометкой «то, что обязано
+        быть на самом внешнем элементе» — и не работал: смузер прокручивает
+        #smooth-content трансформом, и padding внешнего элемента в эту
+        прокрутку не входит вовсе.
+
+        Замерено на телефоне 375×812, документ прокручен до самого низа:
+        подвал упирался в 812, панель занимала 767–812, а ВТОРОЙ РЯД ССЫЛОК
+        ПОДВАЛА лежал на 772–788, то есть под панелью целиком. Проверено
+        попаданием: нажатие в центр «Совместимость» активировало «Игра дня»,
+        в центр «Конфиденциальность» — «Пати». Прокрутить их из-под панели
+        было нельзя ни на одной странице: /rooms и /quiz показали то же самое.
+
+        На <body> остаётся только запрет горизонтальной прокрутки — он и
+        правда обязан быть на самом внешнем элементе.
       */}
-      <body className="min-h-full font-sans overflow-x-hidden pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
+      <body className="min-h-full font-sans overflow-x-hidden">
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,
@@ -293,7 +306,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
           lib/smoothfixed.test.ts.
         */}
         <div id="smooth-wrapper">
-          <div id="smooth-content" className="min-h-full flex flex-col">
+          <div id="smooth-content" className="min-h-full flex flex-col pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
             <main id="main" className="flex-1 flex flex-col">
               <MotionProvider>{children}</MotionProvider>
             </main>
