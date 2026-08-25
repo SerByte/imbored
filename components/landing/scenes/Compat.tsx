@@ -172,7 +172,8 @@ export function Compat({ demo }: { demo: LandingDemo }) {
                   name={g.name}
                   headerImage={g.headerImage}
                   art={g.art}
-                  sizes="120px"
+                  /* Замерено: обложка в стопке — 76 px на телефоне. */
+                  sizes="(max-width: 899px) 80px, 120px"
                 />
               ))}
             </div>
@@ -184,7 +185,8 @@ export function Compat({ demo }: { demo: LandingDemo }) {
                   name={g.name}
                   headerImage={g.headerImage}
                   art={g.art}
-                  sizes="120px"
+                  /* Замерено: обложка в стопке — 76 px на телефоне. */
+                  sizes="(max-width: 899px) 80px, 120px"
                 />
               ))}
             </div>

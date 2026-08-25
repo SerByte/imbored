@@ -126,12 +126,51 @@ export function artCandidates(game: ArtSource, variant: ArtVariant = 'card'): st
 }
 
 /**
+ * Лёгкая витрина, выведенная ИЗ РАБОТАЮЩЕГО адреса обложки.
+ *
+ * Правило вывода намеренно узкое: только если сама обложка лежит по плоскому
+ * пути и кончается на `/header.jpg`. У новых ассетов имя содержит хэш, вывести
+ * из него ничего нельзя, и гадать мы не будем — вернём null.
+ *
+ * Там, где плоский путь работает, витрина рядом с ним есть: проверено на
+ * выборке из пятнадцати игр, отдали 200 все пятнадцать.
+ */
+export function lightCapsuleFrom(url: string | null | undefined): string | null {
+  if (!url) return null
+  return url.endsWith('/header.jpg') ? url.replace(/\/header\.jpg$/, '/capsule_231x87.jpg') : null
+}
+
+/**
  * Дескрипторы ширины, а не `2x`: тогда браузер выбирает по ширине вьюпорта и не
  * тянет 1.7 МБ на обычный монитор. Без второго размера srcSet бессмысленен.
+ *
+ * САМЫЙ МЕЛКИЙ КАНДИДАТ — 231 px, И ЭТО НЕ УКРАШЕНИЕ СПИСКА.
+ *
+ * Замерено на живом проде, телефон 375 px: стена сцены подбора показывает
+ * плитки шириной 37 px, стопки совместимости — 76, карточки пятёрки — 83. А
+ * самым мелким кандидатом был `header` в 460, то есть браузеру физически не из
+ * чего было выбрать: переплата доходила до двенадцати раз. Витрина в 231 px
+ * закрывает все три случая с запасом, а на экране с двойной плотностью браузер
+ * сам возьмёт 460 — за то дескрипторы ширины и нужны.
+ *
+ * Риск 404 закрыт не здесь: у GameArt есть onError, который переводит картинку
+ * на следующего кандидата уже БЕЗ srcSet. То есть даже если витрины у игры не
+ * окажется, плитка покажет обычную обложку, а не битую иконку.
  */
 export function artSrcSet(game: ArtSource, variant: ArtVariant = 'card'): string | undefined {
   const art = game.art ?? {}
   const pair: Array<keyof GameArtUrls> = variant === 'hero' ? ['hero', 'hero2x'] : ['header', 'header2x']
   const parts = pair.filter((k) => art[k]).map((k) => `${art[k]} ${WIDTH[k]}w`)
+
+  if (variant !== 'hero') {
+    const light = lightCapsuleFrom(art.header ?? game.headerImage ?? candidateHeader(game))
+    if (light) parts.unshift(`${light} 231w`)
+  }
+
   return parts.length > 1 ? parts.join(', ') : undefined
+}
+
+/** Плоский путь как последний источник — тот же, что в конце artCandidates. */
+function candidateHeader(game: ArtSource): string | null {
+  return game.appid > 0 ? legacyArtUrl(game.appid, 'header') : null
 }

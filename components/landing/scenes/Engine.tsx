@@ -184,7 +184,11 @@ export function Engine({ demo }: { demo: LandingDemo }) {
                   name={g.name}
                   headerImage={g.headerImage}
                   art={g.art}
-                  sizes="120px"
+                  /* Замерено: плитка стены — 37 px на телефоне и около 114 на
+                     десктопе. Прежние «120px» завышали запрос втрое, и на
+                     экране с двойной плотностью браузер брал 460 там, где
+                     хватало витрины в 231. */
+                  sizes="(max-width: 899px) 44px, 120px"
                 />
               </li>
             ))}
