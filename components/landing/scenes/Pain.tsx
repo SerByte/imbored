@@ -42,10 +42,10 @@ export function Pain() {
         const shutter = root.querySelector('[data-pain-shutter]')
         const thumb = root.querySelector('[data-pain-thumb]')
 
-        gsap.set([second, third], { opacity: 0, y: 40 })
-        gsap.set(after, { opacity: 0, y: 20 })
-        gsap.set(key, { opacity: 0 })
-        gsap.set(shutter, { opacity: 0, scale: 1.75 })
+        gsap.set([second, third], { autoAlpha: 0, y: 40 })
+        gsap.set(after, { autoAlpha: 0, y: 20 })
+        gsap.set(key, { autoAlpha: 0 })
+        gsap.set(shutter, { autoAlpha: 0, scale: 1.75 })
         gsap.set(thumb, { yPercent: 0 })
 
         /*
@@ -65,13 +65,13 @@ export function Pain() {
          * Бегунок едет ровно, пока идут первые две фразы, и ОСТАНАВЛИВАЕТСЯ на
          * третьей. Останов — это и есть «закрыл».
          */
-        tl.to(key, { opacity: 1, duration: 0.3, ease: 'power2.out' }, 0)
+        tl.to(key, { autoAlpha: 1, duration: 0.3, ease: 'power2.out' }, 0)
           .to(thumb, { yPercent: 372, duration: 0.62, ease: 'none' }, 0)
-          .to(second, { opacity: 1, y: 0, duration: 0.3, ease: 'power1.out' }, 0.24)
-          .to(third, { opacity: 1, y: 0, duration: 0.16, ease: 'expo.out' }, 0.62)
-          .to(shutter, { opacity: 1, scale: 1, duration: 0.5, ease: 'power2.inOut' }, 0.62)
+          .to(second, { autoAlpha: 1, y: 0, duration: 0.3, ease: 'power1.out' }, 0.24)
+          .to(third, { autoAlpha: 1, y: 0, duration: 0.16, ease: 'expo.out' }, 0.62)
+          .to(shutter, { autoAlpha: 1, scale: 1, duration: 0.5, ease: 'power2.inOut' }, 0.62)
           .to(key, { opacity: 0.12, duration: 0.45, ease: 'power2.in' }, 0.66)
-          .to(after, { opacity: 1, y: 0, duration: 0.25, ease: 'power2.out' }, 0.86)
+          .to(after, { autoAlpha: 1, y: 0, duration: 0.25, ease: 'power2.out' }, 0.86)
           // Пустой такт в конце: последняя фраза обязана постоять прочитанной,
           // а не смениться следующей сценой в тот же кадр.
           .to({}, { duration: 0.35 }, 1.15)

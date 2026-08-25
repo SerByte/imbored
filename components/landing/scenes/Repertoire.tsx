@@ -44,17 +44,17 @@ export function Repertoire() {
          */
         const rows = root.querySelectorAll('[data-rep-row]')
         const leads = root.querySelectorAll('.rep-lead')
-        gsap.set(rows, { opacity: 0, x: -40 })
+        gsap.set(rows, { autoAlpha: 0, x: -40 })
         gsap.set(leads, { scaleX: 0 })
         intro
           .to(leads, { scaleX: 1, stagger: 0.12, duration: 0.45, ease: 'power2.out' }, 0)
-          .to(rows, { opacity: 1, x: 0, stagger: 0.12, duration: 0.4, ease: 'power2.out' }, 0.08)
+          .to(rows, { autoAlpha: 1, x: 0, stagger: 0.12, duration: 0.4, ease: 'power2.out' }, 0.08)
       }}
       build={(tl, root) => {
         // Стрелки приходят последними — на них взгляд и уходит к ссылке.
         const arrows = root.querySelectorAll('.rep-arrow')
-        gsap.set(arrows, { opacity: 0, x: -8 })
-        tl.to(arrows, { opacity: 1, x: 0, stagger: 0.08, duration: 0.25, ease: 'power2.out' }, 0).to(
+        gsap.set(arrows, { autoAlpha: 0, x: -8 })
+        tl.to(arrows, { autoAlpha: 1, x: 0, stagger: 0.08, duration: 0.25, ease: 'power2.out' }, 0).to(
           {},
           { duration: 0.5 },
         )

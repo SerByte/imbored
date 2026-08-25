@@ -2,7 +2,7 @@
 
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Eyebrow } from '@/components/Labels'
 import { Stage } from '@/components/landing/Stage'
@@ -62,10 +62,69 @@ const ALL_KEYS: readonly MoodKey[] = [
   'engaged:friends',
 ]
 
+/**
+ * «УМЕНЬШИТЬ ДВИЖЕНИЕ» — ЧЕРЕЗ useSyncExternalStore, И ОБА ОТКАЗА ОТ АЛЬТЕРНАТИВ
+ * СТОИЛИ ПО ОШИБКЕ.
+ *
+ * Хук useReducedMotion из motion отдаёт настоящее значение уже на первом
+ * клиентском рендере. Подставленный прямо в выражение, он разошёлся с
+ * разметкой сервера: сервер печатал `data-live="0"`, клиент хотел `"1"`.
+ * Атрибуты React при гидратации не чинит — так и говорит в консоли, «this
+ * won't be patched up», — и в DOM оставался ноль при живой сцене, то есть
+ * курсор и отклик из стилей не включались. Поймано в логе dev-сервера.
+ *
+ * Перенос в useEffect расхождение снимает, но упирается в правило проекта:
+ * синхронный setState внутри эффекта — ошибка линтера, а не предупреждение.
+ *
+ * useSyncExternalStore — ровно тот примитив, который React для этого и завёл.
+ * При гидратации берётся серверный снимок (движение не уменьшено, как и в
+ * разметке), сразу после — настоящий, и перерисовка проходит штатно.
+ */
+const REDUCED = '(prefers-reduced-motion: reduce)'
+const subscribeReduced = (onChange: () => void) => {
+  const mq = window.matchMedia(REDUCED)
+  mq.addEventListener('change', onChange)
+  return () => mq.removeEventListener('change', onChange)
+}
+const readReduced = () => window.matchMedia(REDUCED).matches
+/** На сервере медиазапроса нет — и разметка обязана совпасть с этим. */
+const readReducedOnServer = () => false
+
 export function Engine({ demo }: { demo: LandingDemo }) {
   const [key, setKey] = useState<MoodKey>('chill:solo')
-  /** Сцена отпустила — переключатели отвечают на нажатия. */
-  const [live, setLive] = useState(false)
+  /** Прокрутка довела партитуру до конца — сцена отпустила сама. */
+  const [past, setPast] = useState(false)
+  /**
+   * Клавиатурный фокус внутри переключателей — сцена отпускает досрочно.
+   *
+   * Причина замерена, а не придумана. В закреплённой сцене положение элемента
+   * на странице соответствует НАЧАЛУ закрепления, то есть прогрессу около
+   * нуля. Значит браузер, доводящий сфокусированный элемент до кадра, всегда
+   * приводит сцену туда, где партитура ещё не сыграна, — и до состояния
+   * «отпущено» табуляцией не доехать в принципе. Замерено: прокрутка стоит на
+   * одном и том же числе на всех четырёх чипах.
+   *
+   * Для мыши отказ до конца партитуры честен: курсор приезжает вместе с
+   * прокруткой, и она же его дождётся. Для клавиатуры «пока рано» означало бы
+   * «никогда» — четыре видимые кнопки с кольцом фокуса, не делающие ничего.
+   * Ровно то обещание отклика без отклика, которое запрещено в стилях
+   * (см. [data-live='1'] .chip:active в globals.css).
+   */
+  const [held, setHeld] = useState(false)
+  /**
+   * «УМЕНЬШИТЬ ДВИЖЕНИЕ» ОТПУСКАЕТ СЦЕНУ СРАЗУ.
+   *
+   * `past` считается внутри `build`, а `build` в этом режиме не вызывается
+   * вовсе — значит без этой строки он оставался бы `false` навсегда.
+   * Замерено: переключатели видны, читаются, отвечают на наведение и НЕ
+   * работают ни от мыши, ни от клавиатуры. Дефект давний, обнаружен по
+   * дороге: партитуры в этом режиме нет, ждать ей нечего, и «сцена ещё не
+   * доехала» здесь не значит ничего.
+   *
+   * Как режим читается и почему именно так — в докблоке над subscribeReduced.
+   */
+  const reduced = useSyncExternalStore(subscribeReduced, readReduced, readReducedOnServer)
+  const live = past || held || reduced
 
   const [vibe, social] = key.split(':') as ['chill' | 'engaged', 'solo' | 'friends']
   const chosen = new Set(demo.picks[key].map((c) => c.appid))
@@ -91,13 +150,13 @@ export function Engine({ demo }: { demo: LandingDemo }) {
          */
         const wall = root.querySelectorAll('[data-wall] li')
         const note = root.querySelector('[data-wall-note]')
-        gsap.set(wall, { opacity: 0, scale: 0.72, y: 26 })
-        gsap.set(note, { opacity: 0 })
+        gsap.set(wall, { autoAlpha: 0, scale: 0.72, y: 26 })
+        gsap.set(note, { autoAlpha: 0 })
         intro
           .to(
             wall,
             {
-              opacity: 1,
+              autoAlpha: 1,
               scale: 1,
               y: 0,
               stagger: { amount: 0.5, from: 'random' },
@@ -106,15 +165,15 @@ export function Engine({ demo }: { demo: LandingDemo }) {
             },
             0,
           )
-          .to(note, { opacity: 1, duration: 0.2 }, 0.5)
+          .to(note, { autoAlpha: 1, duration: 0.2 }, 0.5)
       }}
       build={(tl, root) => {
         const switches = root.querySelector('[data-switches]')
         const picks = root.querySelector('[data-picks]')
         const glow = root.querySelector('[data-engine-glow]')
 
-        gsap.set(switches, { opacity: 0, y: 18 })
-        gsap.set(picks, { opacity: 0, x: 40 })
+        gsap.set(switches, { autoAlpha: 0, y: 18 })
+        gsap.set(picks, { autoAlpha: 0, x: 40 })
         /*
          * СВЕТ ОТВЕТА ЗАЖИГАЕТСЯ ВМЕСТЕ С ОТВЕТОМ.
          *
@@ -128,8 +187,8 @@ export function Engine({ demo }: { demo: LandingDemo }) {
          */
         gsap.set(glow, { opacity: 0.3 })
 
-        tl.to(switches, { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' }, 0.05)
-          .to(picks, { opacity: 1, x: 0, duration: 0.4, ease: 'power3.out' }, 0.25)
+        tl.to(switches, { autoAlpha: 1, y: 0, duration: 0.3, ease: 'power2.out' }, 0.05)
+          .to(picks, { autoAlpha: 1, x: 0, duration: 0.4, ease: 'power3.out' }, 0.25)
           .to(glow, { opacity: 1, duration: 0.55, ease: 'power2.out' }, 0.3)
           // Хвост таймлайна — это время, за которое прокрутка проходит такты
           // переключения. Двигать в нём нечего: состояние меняет счёт ниже.
@@ -157,7 +216,7 @@ export function Engine({ demo }: { demo: LandingDemo }) {
              * вперёд, а событий «сцена дошла до 82%» при прокрутке вверх не
              * бывает вовсе.
              */
-            setLive(self.progress >= LIVE_AT)
+            setPast(self.progress >= LIVE_AT)
           },
         })
       }}
@@ -208,7 +267,22 @@ export function Engine({ demo }: { demo: LandingDemo }) {
         </div>
 
         <div className="min-w-0">
-          <div className="switches" data-switches>
+          <div
+            className="switches"
+            data-switches
+            /*
+             * :focus-visible, а не просто :focus, — тот же разделитель, что у
+             * кольца в globals.css. Клик мышью по кнопке ему не отвечает, и
+             * поведение сцены под курсором остаётся ровно прежним: до конца
+             * партитуры чип не обещает нажатия ни курсором, ни ходом.
+             */
+            onFocus={(e) => {
+              if (e.target instanceof HTMLElement && e.target.matches(':focus-visible')) setHeld(true)
+            }}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHeld(false)
+            }}
+          >
             <div className="switch">
               <Eyebrow tone="faint">Вайб</Eyebrow>
               <div className="switch-row">

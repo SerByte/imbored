@@ -33,18 +33,18 @@ export function Money() {
       enter={(intro, root) => {
         // Кадр сцены: позиция продукта встаёт на подъёме, а не после него.
         const line = root.querySelector('[data-money-line]')
-        gsap.set(line, { opacity: 0, y: 30 })
-        intro.to(line, { opacity: 1, y: 0, duration: 0.6, ease: 'power2.out' }, 0)
+        gsap.set(line, { autoAlpha: 0, y: 30 })
+        intro.to(line, { autoAlpha: 1, y: 0, duration: 0.6, ease: 'power2.out' }, 0)
       }}
       build={(tl, root) => {
         const items = root.querySelectorAll('[data-money-item]')
         const back = root.querySelector('[data-money-back]')
 
-        gsap.set(items, { opacity: 0, y: 16 })
-        gsap.set(back, { opacity: 0, y: 26 })
+        gsap.set(items, { autoAlpha: 0, y: 16 })
+        gsap.set(back, { autoAlpha: 0, y: 26 })
 
-        tl.to(items, { opacity: 1, y: 0, stagger: 0.1, duration: 0.3, ease: 'power2.out' }, 0.1)
-          .to(back, { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }, 0.55)
+        tl.to(items, { autoAlpha: 1, y: 0, stagger: 0.1, duration: 0.3, ease: 'power2.out' }, 0.1)
+          .to(back, { autoAlpha: 1, y: 0, duration: 0.35, ease: 'power2.out' }, 0.55)
           .to({}, { duration: 0.3 })
       }}
     >

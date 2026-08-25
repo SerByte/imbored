@@ -78,12 +78,12 @@ export function Compat({ demo }: { demo: LandingDemo }) {
         const a = root.querySelector('[data-stack="a"]')
         const b = root.querySelector('[data-stack="b"]')
         const seam = root.querySelector('[data-compat-seam]')
-        gsap.set(a, { xPercent: -46, opacity: 0, rotate: -1 })
-        gsap.set(b, { xPercent: 46, opacity: 0, rotate: 1 })
-        gsap.set(seam, { opacity: 0, scaleY: 0.55 })
+        gsap.set(a, { xPercent: -46, autoAlpha: 0, rotate: -1 })
+        gsap.set(b, { xPercent: 46, autoAlpha: 0, rotate: 1 })
+        gsap.set(seam, { autoAlpha: 0, scaleY: 0.55 })
         intro
-          .to(a, { xPercent: 0, opacity: 1, rotate: -7, duration: 0.7, ease: 'power3.out' }, 0)
-          .to(b, { xPercent: 0, opacity: 1, rotate: 7, duration: 0.7, ease: 'power3.out' }, 0.04)
+          .to(a, { xPercent: 0, autoAlpha: 1, rotate: -7, duration: 0.7, ease: 'power3.out' }, 0)
+          .to(b, { xPercent: 0, autoAlpha: 1, rotate: 7, duration: 0.7, ease: 'power3.out' }, 0.04)
       }}
       build={(tl, root) => {
         const rows = root.querySelectorAll('[data-compat-row]')
@@ -92,9 +92,9 @@ export function Compat({ demo }: { demo: LandingDemo }) {
         const seam = root.querySelector('[data-compat-seam]')
         const tally = root.querySelectorAll('[data-tally]')
 
-        gsap.set(rows, { opacity: 0, y: 18 })
+        gsap.set(rows, { autoAlpha: 0, y: 18 })
         gsap.set(fills, { scaleX: 0 })
-        gsap.set(tally, { opacity: 0, y: 14 })
+        gsap.set(tally, { autoAlpha: 0, y: 14 })
 
         /**
          * Куда доехать шкале — берётся у неё самой.
@@ -146,9 +146,9 @@ export function Compat({ demo }: { demo: LandingDemo }) {
           )
         })
 
-        tl.to(seam, { opacity: 1, scaleY: 1, duration: 0.35, ease: 'power2.out' }, 0)
-          .to(tally, { opacity: 1, y: 0, stagger: 0.07, duration: 0.3, ease: 'power2.out' }, 0.12)
-          .to(rows, { opacity: 1, y: 0, stagger: 0.045, duration: 0.28, ease: 'power2.out' }, 0.2)
+        tl.to(seam, { autoAlpha: 1, scaleY: 1, duration: 0.35, ease: 'power2.out' }, 0)
+          .to(tally, { autoAlpha: 1, y: 0, stagger: 0.07, duration: 0.3, ease: 'power2.out' }, 0.12)
+          .to(rows, { autoAlpha: 1, y: 0, stagger: 0.045, duration: 0.28, ease: 'power2.out' }, 0.2)
           .to(fills, { scaleX: goal, stagger: 0.035, duration: 0.5, ease: 'power2.out' }, 0.34)
       }}
     >
