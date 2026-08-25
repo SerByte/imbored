@@ -3,7 +3,7 @@
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import { useRef } from 'react'
+import { useRef, useSyncExternalStore } from 'react'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
 
@@ -52,6 +52,38 @@ gsap.registerPlugin(ScrollTrigger, useGSAP)
 
 export type SceneBuild = (tl: gsap.core.Timeline, root: HTMLElement) => void
 
+/**
+ * ОРИЕНТАЦИЯ ЭКРАНА КАК КЛЮЧ ПЕРЕСБОРКИ СЦЕНЫ.
+ *
+ * Решение «закреплять или нет» (`fits` ниже) считается один раз, при
+ * монтировании. ScrollTrigger сам пересчитывает ГРАНИЦЫ на изменении размера,
+ * но флаг `pin` задаётся при создании и остаётся прежним навсегда.
+ *
+ * Чем это кончается, замерено поворотом телефона 390×844 → 844×390:
+ *
+ *   сцена «more» после поворота: нужно 526 px, экран 390 — а закрепление
+ *   осталось. Низ сцены входил в кадр ТОЛЬКО пока сцена гасла: видимость 0.26,
+ *   затем 0.05, затем 0. На снимке — пустой тёмный экран.
+ *
+ * КОНТРОЛЬ, без которого это была бы догадка: та же страница, загруженная
+ * СРАЗУ в ландшафте. Там `fits` считается для короткого экрана, сцена не
+ * закрепляется, и низ входит в кадр при видимости 1. То есть виновато именно
+ * устаревшее решение, а не короткий экран сам по себе.
+ *
+ * ПОЧЕМУ ОРИЕНТАЦИЯ, А НЕ ВЫСОТА ОКНА. Высота на телефоне меняется от каждой
+ * прокрутки — адресная строка то прячется, то возвращается, и это сотня
+ * пикселей. Пересборка сцен на каждое такое движение стоила бы дороже любого
+ * дефекта, который она лечит. Поворот — событие редкое и однозначное.
+ */
+const subscribeOrientation = (onChange: () => void) => {
+  const mq = window.matchMedia('(orientation: landscape)')
+  mq.addEventListener('change', onChange)
+  return () => mq.removeEventListener('change', onChange)
+}
+const readOrientation = () => (window.matchMedia('(orientation: landscape)').matches ? 'л' : 'п')
+/** На сервере ориентации нет, и разметка обязана совпасть с первым рендером. */
+const readOrientationOnServer = () => 'п'
+
 export function Stage({
   id,
   label,
@@ -77,6 +109,12 @@ export function Stage({
   build?: SceneBuild
 }) {
   const ref = useRef<HTMLElement>(null)
+
+  const orientation = useSyncExternalStore(
+    subscribeOrientation,
+    readOrientation,
+    readOrientationOnServer,
+  )
 
   useGSAP(
     () => {
@@ -219,7 +257,9 @@ export function Stage({
         )
       }
     },
-    { scope: ref },
+    // revertOnUpdate: перед пересборкой прежнее закрепление обязано быть
+    // снято целиком, иначе pin-spacer от старой ориентации останется в потоке.
+    { scope: ref, dependencies: [orientation], revertOnUpdate: true },
   )
 
   return (
