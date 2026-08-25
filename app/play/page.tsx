@@ -12,6 +12,7 @@ import { Magnet } from '@/components/Magnet'
 import { HeroShots } from '@/components/HeroShots'
 import { LogoMark } from '@/components/Logo'
 import { PlayersNow } from '@/components/PlayersNow'
+import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
@@ -147,6 +148,51 @@ function weightedRandomIndex(length: number, exclude?: number): number {
   return 0
 }
 
+/**
+ * ПОЧЕМУ ВЫДАЧА НЕ СОБРАЛАСЬ — РАЗНЫМИ СЛОВАМИ, А НЕ ОДНИМИ.
+ *
+ * /api/recommend отвечает четырьмя разными отказами: нет сессии, не разобрать
+ * настроение, нет снимка библиотеки, кандидатов не осталось. Клиент до этой
+ * правки различал ровно один случай — потолок частоты (429), — а все прочие
+ * сводил к `!res.ok` и показывал одну и ту же строку:
+ *
+ *     «Возможно, каталог ещё прогревается — попробуй ещё раз через минуту».
+ *
+ * Замерено сквозным прогоном с включённой веткой `nocandidates`: человек
+ * получает именно её, а кнопка «Попробовать снова» под ней будет отдавать тот
+ * же 409 сколько угодно раз. Каталог при этом в полном порядке.
+ *
+ * Тот же разбор уже был сделан для 429 — см. докблок над limitedFor. Здесь он
+ * просто доведён до остальных кодов.
+ *
+ * `retry` — не оформление: кнопка повтора показывается там, где повтор может
+ * помочь, и не показывается там, где он гарантированно вернёт тот же ответ.
+ */
+const FAIL: Record<string, { title: string; text: string; retry: boolean }> = {
+  nocandidates: {
+    title: 'Подбирать не из чего',
+    text: 'Под это настроение не прошла ни одна игра: часть могла уехать в бан, часть не годится под запрос. Смени настроение или верни что-нибудь из бана.',
+    retry: false,
+  },
+  nolibrary: {
+    title: 'Библиотека не доехала',
+    text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
+    retry: false,
+  },
+  badmood: {
+    title: 'Настроение не разобрать',
+    text: 'Адрес пришёл с непонятными параметрами — собери запрос заново.',
+    retry: false,
+  },
+}
+
+/** Сеть, пятисотка, оборванный ответ: здесь повтор осмыслен. */
+const FAIL_UNKNOWN = {
+  title: 'Не получилось собрать рекомендации',
+  text: 'Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.',
+  retry: true,
+}
+
 function Player() {
   const router = useRouter()
   const search = useSearchParams()
@@ -172,6 +218,8 @@ function Player() {
    * назвать срок, а не отправить «попробуй через минуту» при окне в десять.
    */
   const [limitedFor, setLimitedFor] = useState<number | null>(null)
+  /** Код отказа из тела ответа: nocandidates, nolibrary, badmood или null. */
+  const [reason, setReason] = useState<string | null>(null)
   const [progress, setProgress] = useState<string>('Изучаю твою библиотеку…')
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   /** Обложка последнего ответа квиза, если человек пришёл оттуда */
@@ -240,7 +288,26 @@ function Player() {
           return null
         }
         setLimitedFor(null)
-        if (!res.ok) return null
+        if (!res.ok) {
+          /*
+           * Код причины читается ИЗ ТЕЛА, а не выводится из статуса: под 409
+           * живут два разных отказа — «нет снимка библиотеки» и «кандидатов не
+           * осталось», — и советы у них противоположные.
+           */
+          const code = await res
+            .json()
+            .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
+            .catch(() => null)
+          // Сессия отвалилась — экран с текстом здесь не нужен вовсе: человеку
+          // нужен вход, а не объяснение. Тот же приём, что при обрыве сессии в
+          // фоновом прогреве несколькими строками ниже.
+          if (res.status === 401) {
+            router.push(bounceTo('/play'))
+            return null
+          }
+          setReason(code)
+          return null
+        }
         const data = (await res.json()) as {
           picks: Pick[]
           discoveries?: Pick[]
@@ -252,6 +319,11 @@ function Player() {
         setEngine(data.engine)
         return data.picks
       } catch {
+        // Причину обязательно СБРАСЫВАЕМ, а не оставляем как есть: сюда
+        // приходит оборванная сеть, и без сброса повтор после отказа
+        // «кандидатов нет» показал бы ту же карточку с тем же советом, хотя
+        // на этот раз не доехал запрос.
+        setReason(null)
         return null
       }
     },
@@ -438,30 +510,71 @@ function Player() {
   }
 
   if (phase === 'error') {
+    /*
+     * Потолок частоты остаётся отдельной веткой: у него есть СРОК, и назвать
+     * его точнее, чем «через минуту», может только Retry-After.
+     */
+    const fail =
+      limitedFor !== null
+        ? {
+            title: 'Слишком часто',
+            text: `Подбор — дорогая операция, и на неё стоит потолок. Вернись через ${Math.ceil(limitedFor / 60)} ${plural(Math.ceil(limitedFor / 60), 'минуту', 'минуты', 'минут')}.`,
+            // Повтор остаётся: окно бывает и десятисекундным, и тогда
+            // единственной дорогой назад была бы перезагрузка страницы.
+            retry: true,
+          }
+        : (FAIL[reason ?? ''] ?? FAIL_UNKNOWN)
+
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
-        <p className="text-lg">
-          {limitedFor === null ? 'Не получилось собрать рекомендации.' : 'Слишком часто.'}
-        </p>
-        <p className="text-dim text-sm max-w-md">
-          {limitedFor === null
-            ? 'Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.'
-            : `Подбор — дорогая операция, и на неё стоит потолок. Вернись через ${Math.ceil(limitedFor / 60)} ${plural(Math.ceil(limitedFor / 60), 'минуту', 'минуты', 'минут')}.`}
-        </p>
-        <button
-          onClick={() => void retry()}
-          disabled={retrying}
-          className="tap cursor-pointer text-sm text-ember-text hover:underline disabled:opacity-50"
-        >
-          {retrying ? 'Пробую…' : 'Попробовать снова'}
-        </button>
-        {/* Прежний адрес кнопки остаётся доступен — но под своим именем. */}
-        <Link href="/quiz" className="tap text-sm text-dim transition-colors hover:text-ink">
-          Изменить настроение →
-        </Link>
+        <p className="text-lg">{fail.title}</p>
+        <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
+
+        {/* Шаги про настройки Steam — только там, где библиотека и правда не
+            доехала. Панель общая с карточкой подключения и с пустой
+            библиотекой: три копии одной инструкции про чужой интерфейс
+            разъехались бы на первой же правке. */}
+        {reason === 'nolibrary' && limitedFor === null && (
+          <div className="max-w-md text-left">
+            <PrivacyHelp />
+          </div>
+        )}
+
+        {fail.retry && (
+          <button
+            onClick={() => void retry()}
+            disabled={retrying}
+            className="tap cursor-pointer text-sm text-ember-text hover:underline disabled:opacity-50"
+          >
+            {retrying ? 'Пробую…' : 'Попробовать снова'}
+          </button>
+        )}
+
+        {/* Прежний адрес кнопки остаётся доступен — но под своим именем.
+            Кроме случая, когда библиотеки нет вовсе: менять там настроение
+            нечему, и ссылка была бы предложением заняться ерундой. */}
+        {reason !== 'nolibrary' && (
+          <Link href="/quiz" className="tap text-sm text-dim transition-colors hover:text-ink">
+            Изменить настроение →
+          </Link>
+        )}
+
+        {/* Вернуть игры из бана можно только в библиотеке, и это единственный
+            выход, когда кандидатов не осталось из-за банов. */}
+        {reason === 'nocandidates' && (
+          <Link href="/library" className="tap text-sm text-dim transition-colors hover:text-ink">
+            Посмотреть библиотеку →
+          </Link>
+        )}
+        {reason === 'nolibrary' && (
+          <Link href="/" className="btn-ember px-6 py-3">
+            Подключить заново
+          </Link>
+        )}
       </div>
     )
   }
+
 
   if (phase === 'burnout') {
     const cozy =
