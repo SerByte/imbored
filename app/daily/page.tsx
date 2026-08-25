@@ -7,6 +7,7 @@ import { BlurBand } from '@/components/BlurBand'
 import { GameArt } from '@/components/GameArt'
 import { HeroShots } from '@/components/HeroShots'
 import { PlayersNow } from '@/components/PlayersNow'
+import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
@@ -22,6 +23,39 @@ import { runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { plural } from '@/lib/plural'
 import { SectionLabel } from '@/components/Labels'
 import { TagChips } from '@/components/TagChips'
+
+/**
+ * ПОЧЕМУ ИГРА ДНЯ НЕ ВЫБРАЛАСЬ — РАЗНЫМИ СЛОВАМИ, А НЕ ОДНИМИ.
+ *
+ * /api/daily отвечает тремя разными отказами: нет сессии, нет снимка
+ * библиотеки, кандидатов не осталось. Страница сводила их все к одной строке:
+ *
+ *     «Не получилось выбрать игру дня.»  [Обычный подбор →]
+ *
+ * Замерено сквозным прогоном с включённой веткой `nolibrary`: человек получает
+ * именно её. А совет ведёт в тупик — обычный подбор упрётся в ровно ту же
+ * причину, потому что библиотеки нет и там.
+ *
+ * Тот же разбор сделан для /play проходом раньше; здесь он повторён по
+ * коду, но не по тексту: у страниц разные действия, и предлагать им одно и то
+ * же значило бы вернуться к одной строке на все случаи, только длиннее.
+ */
+const FAIL: Record<string, { title: string; text: string }> = {
+  nolibrary: {
+    title: 'Библиотека не доехала',
+    text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
+  },
+  nocandidates: {
+    title: 'Выбирать не из чего',
+    text: 'В библиотеке не осталось игр, из которых можно собрать игру дня: возможно, всё подходящее уехало в бан.',
+  },
+}
+
+/** Сеть, пятисотка, оборванный ответ. */
+const FAIL_UNKNOWN = {
+  title: 'Не получилось выбрать игру дня',
+  text: 'Похоже, что-то сломалось по дороге. Попробуй зайти чуть позже.',
+}
 
 /** Карточка магазина: и герой в день каталога, и плитки на полке ниже */
 type StoreCard = {
@@ -56,6 +90,8 @@ export default function DailyPage() {
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
   const [dateLabel, setDateLabel] = useState('')
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
+  /** Код отказа из тела ответа: nolibrary, nocandidates или null. */
+  const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')
   const started = useRef(false)
@@ -95,6 +131,21 @@ export default function DailyPage() {
       try {
         const res = await fetch('/api/daily')
         if (!res.ok) {
+          /*
+           * Код читается ИЗ ТЕЛА, а не выводится из статуса: под 409 живут два
+           * разных отказа — «нет снимка библиотеки» и «кандидатов нет», — и
+           * советы у них разные.
+           */
+          const code = await res
+            .json()
+            .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
+            .catch(() => null)
+          // Сессия отвалилась: человеку нужен вход, а не объяснение.
+          if (res.status === 401) {
+            router.push(bounceTo('/daily'))
+            return
+          }
+          setReason(code)
           setPhase('error')
           return
         }
@@ -119,12 +170,42 @@ export default function DailyPage() {
   }
 
   if (phase === 'error' || !pick) {
+    const fail = FAIL[reason ?? ''] ?? FAIL_UNKNOWN
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-        <p className="text-lg">Не получилось выбрать игру дня.</p>
-        <Link href="/quiz" className="tap text-ember-text hover:underline text-sm">
-          Обычный подбор →
-        </Link>
+      <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
+        <p className="text-lg">{fail.title}</p>
+        <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
+
+        {/* Шаги про настройки Steam — только там, где библиотека и правда не
+            доехала. Панель общая с карточкой подключения, пустой библиотекой и
+            отказом подбора: четыре копии инструкции по чужому интерфейсу
+            разъехались бы на первой же правке. */}
+        {reason === 'nolibrary' && (
+          <div className="max-w-md text-left">
+            <PrivacyHelp />
+          </div>
+        )}
+
+        {/* Кандидатов нет — вернуть игры из бана можно только в библиотеке. */}
+        {reason === 'nocandidates' && (
+          <Link href="/library" className="tap text-sm text-dim transition-colors hover:text-ink">
+            Посмотреть библиотеку →
+          </Link>
+        )}
+
+        {/* Обычный подбор предлагается везде, КРОМЕ случая без библиотеки: там
+            он упрётся ровно в ту же причину, и совет был бы тупиком. */}
+        {reason !== 'nolibrary' && (
+          <Link href="/quiz" className="tap text-sm text-dim transition-colors hover:text-ink">
+            Обычный подбор →
+          </Link>
+        )}
+
+        {reason === 'nolibrary' && (
+          <Link href="/" className="btn-ember px-6 py-3">
+            Подключить заново
+          </Link>
+        )}
       </div>
     )
   }
