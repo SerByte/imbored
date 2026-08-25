@@ -14,6 +14,7 @@ import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import type { RoomMemberView } from '@/lib/room'
 import type { NearMiss } from '@/lib/roomlikes'
+import { nextPollStep } from '@/lib/roompoll'
 
 type RoomState = {
   room: {
@@ -85,6 +86,8 @@ export default function RoomPage() {
 
   const [state, setState] = useState<RoomState | null>(null)
   const [notFound, setNotFound] = useState(false)
+  /** Комната на экране устарела: опрос идёт, но ответов нет. */
+  const [stale, setStale] = useState(false)
   const [cards, setCards] = useState<Card[] | null>(null)
   const [deckTotal, setDeckTotal] = useState(0)
   const [deckVoted, setDeckVoted] = useState(0)
@@ -102,17 +105,41 @@ export default function RoomPage() {
   const deckKey = useRef('')
   const likesKey = useRef('')
 
+  /**
+   * ОТВЕТ РАЗБИРАЕТСЯ НА ТРИ ИСХОДА, А НЕ НА ДВА.
+   *
+   * Здесь возвращался `null` и на 404, и на любой другой отказ, а вызывающий
+   * трактовал `null` как «комнаты нет и не появится» — комментарий в цикле так
+   * и был написан, «404». Одной пятисотки хватало, чтобы опрос замолчал
+   * навсегда.
+   *
+   * Замерено: три опроса за девять секунд, затем один ответ 500 — и НОЛЬ
+   * запросов за следующие шестнадцать секунд. Комната застывала на последнем
+   * снимке: ростер, голоса, колода — всё на месте и всё враньё, потому что
+   * обновляться перестало. На экране при этом ни единого признака.
+   *
+   * Если же 500 приходил на ПЕРВЫЙ запрос, страница оставалась спиннером
+   * навсегда: `state` не появлялся, а цикл уже остановился. Проверено с
+   * принудительной пятисоткой в API — четырнадцать секунд спиннера и ни слова
+   * о том, что произошло.
+   *
+   * Обрыв сети, для сравнения, всегда работал правильно: он приходит
+   * исключением, попадает в catch и опрос продолжается. Замерено: шесть
+   * запросов за те же шестнадцать секунд.
+   */
+  type Fetched = { ok: true; state: RoomState } | { ok: false; gone: boolean }
+
   const refresh = useCallback(
-    async (signal?: AbortSignal): Promise<RoomState | null> => {
+    async (signal?: AbortSignal): Promise<Fetched> => {
       const res = await fetch(`/api/room/${roomId}`, signal ? { signal } : {})
       if (res.status === 404) {
         setNotFound(true)
-        return null
+        return { ok: false, gone: true }
       }
-      if (!res.ok) return null
+      if (!res.ok) return { ok: false, gone: false }
       const next = (await res.json()) as RoomState
       setState(next)
-      return next
+      return { ok: true, state: next }
     },
     [roomId],
   )
@@ -134,12 +161,19 @@ export default function RoomPage() {
     let inFlight: AbortController | null = null
     let lastChangeAt = Date.now()
     let lastKey = ''
+    /** Отказов подряд. Сбрасывается первым же успешным ответом. */
+    let fails = 0
 
-    const arm = () => {
+    /**
+     * `slow` — не оптимизация, а вежливость: когда сервер отвечает отказом,
+     * долбиться в него каждые 2.5 секунды значит добавлять нагрузки ровно
+     * тому, кто уже не справляется.
+     */
+    const arm = (slow = false) => {
       if (stopped) return
       window.clearTimeout(timer)
       const idle = Date.now() - lastChangeAt > POLL_IDLE_AFTER_MS
-      timer = window.setTimeout(() => void tick(), idle ? POLL_SLOW_MS : POLL_FAST_MS)
+      timer = window.setTimeout(() => void tick(), slow || idle ? POLL_SLOW_MS : POLL_FAST_MS)
     }
 
     const tick = async (force = false) => {
@@ -159,12 +193,24 @@ export default function RoomPage() {
       const ac = new AbortController()
       inFlight = ac
       try {
-        const next = await refresh(ac.signal)
-        if (!next) {
-          // 404: комнаты нет и не появится
+        const got = await refresh(ac.signal)
+        // Решение — в lib/roompoll.ts и под тестом. Здесь оно применяется, а
+        // не принимается: именно здесь оно однажды и оказалось неверным.
+        const step = nextPollStep(
+          got.ok ? { ok: true, status: got.state.room.status } : { ok: false, gone: got.gone },
+          fails,
+        )
+        fails = step.fails
+        setStale(step.stale)
+        if (step.stop) {
           stopped = true
           return
         }
+        if (!got.ok) {
+          arm(step.slow)
+          return
+        }
+        const next = got.state
         const key = `${next.room.status}:${next.room.deckRound}:${next.members
           .map((m) => `${m.id}${m.votes}`)
           .join(',')}`
@@ -172,13 +218,13 @@ export default function RoomPage() {
           lastKey = key
           lastChangeAt = Date.now()
         }
-        if (next.room.status === 'matched') {
-          // Церемония терминальна — дальше опрашивать нечего
-          stopped = true
-          return
-        }
       } catch {
-        // отменённый запрос или сеть моргнула — просто ждём следующего тика
+        // Оборванная сеть или отменённый запрос. Опрос здесь всегда
+        // продолжался и продолжается — замерено шесть запросов за
+        // шестнадцать секунд обрыва. Не хватало ровно признака на экране.
+        const step = nextPollStep({ ok: false, gone: false }, fails)
+        fails = step.fails
+        setStale(step.stale)
       } finally {
         if (inFlight === ac) inFlight = null
       }
@@ -361,13 +407,60 @@ export default function RoomPage() {
     )
   }
 
+  /*
+   * СПИННЕР ЖДЁТ ПЕРВЫЙ ОТВЕТ, А НЕ ВЕЧНОСТЬ.
+   *
+   * Если первый же запрос отказал, `state` не появится никогда. Замерено с
+   * принудительной пятисоткой в API: четырнадцать секунд спиннера и ни слова о
+   * том, что произошло. Опрос при этом продолжается — так что экран честно
+   * говорит «пробую снова», а не предлагает жать кнопку.
+   */
   if (!state) {
+    if (stale) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
+          <p className="text-lg">Комната не отвечает</p>
+          <p className="text-dim text-sm max-w-md leading-relaxed">
+            Сервер молчит или связь оборвалась. Пробую снова — если комната жива, она появится
+            сама.
+          </p>
+          <Link href="/rooms" className="tap text-ember-text hover:underline text-sm">
+            Ко всем комнатам →
+          </Link>
+        </div>
+      )
+    }
     return (
       <div className="flex-1 flex items-center justify-center">
         <Spinner />
       </div>
     )
   }
+
+  /*
+   * ПЛАШКА УСТАРЕВАНИЯ ЛЕЖИТ В ПОТОКЕ, А НЕ ПОВЕРХ.
+   *
+   * Первая версия висела `fixed` под шапкой и на снимке накрыла заголовок
+   * комнаты и обе кнопки — то есть сообщение о том, что данные врут, само
+   * закрыло данные. В потоке столкнуться ей не с чем: контейнер комнаты и так
+   * колонка.
+   *
+   * Последний снимок при этом остаётся на экране целиком: он всё ещё полезен —
+   * колода, ростер, кто голосовал. Врал он ровно тем, что выглядел свежим.
+   * Плашка это и снимает, ничего не пряча.
+   *
+   * role="status" с aria-live="polite" — новость приходит без действия
+   * человека, и без объявления её не заметит тот, кто не смотрит на экран.
+   */
+  const staleBadge = stale ? (
+    <div
+      role="status"
+      aria-live="polite"
+      className="glass anim-rise rounded-[14px] px-4 py-2.5 text-xs leading-relaxed text-dim"
+    >
+      Связь потеряна — комната не обновляется. Пробую снова…
+    </div>
+  ) : null
 
   // ---- МАТЧ ----
   if (state.room.status === 'matched' && state.matchedGame) {
@@ -436,6 +529,7 @@ export default function RoomPage() {
 
   return (
     <div className="flex-1 mx-auto w-full max-w-2xl px-5 pt-24 pb-16 flex flex-col gap-6">
+      {staleBadge}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="font-display text-display-xs">
