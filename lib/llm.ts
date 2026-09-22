@@ -489,7 +489,7 @@ const SOURCE_TEMPLATES: Record<
  * Без него шаблон советовал бы покупку, умалчивая, что это покупка. У своих
  * игр такого хвоста нет и быть не может — там платить уже нечего.
  */
-function priceSentence(meta: GameMeta | undefined, nowSec: number): string {
+function priceSentence(meta: GameMeta | undefined, nowSec: number, hideUrgency = false): string {
   if (!meta) return ''
   if (meta.isFree) return ' Она бесплатная.'
   if (meta.priceFinal === undefined || meta.priceFinal <= 0) return ''
@@ -497,7 +497,9 @@ function priceSentence(meta: GameMeta | undefined, nowSec: number): string {
   // «Нет в библиотеке» здесь больше не повторяется: это уже сказано шаблоном
   // источника new, и вместе получалось «у тебя нет … Её нет в библиотеке».
   if (!deal) return ` В Steam — ${formatPrice(meta.priceFinal)}.`
-  const ends = deal.endsAt ? (discountEndsLabel(deal.endsAt, nowSec) ?? '') : ''
+  // Срок — только когда он не давит: см. HeuristicOptions.hideUrgency
+  const ends =
+    deal.endsAt && !hideUrgency ? (discountEndsLabel(deal.endsAt, nowSec) ?? '') : ''
   return ` Сейчас −${deal.percent}%: ${formatPrice(deal.finalCents)} вместо ${formatPrice(deal.initialCents)}${ends ? ` — ${ends}` : ''}.`
 }
 
@@ -557,6 +559,14 @@ export type HeuristicOptions = {
    * под «расслабиться» передаёт CANDIDATE_SOURCES целиком.
    */
   guaranteed?: readonly CandidateSource[]
+  /**
+   * Не называть срок распродажи («— до 24 ноября»): цена и процент остаются,
+   * обратный отсчёт уходит. Роут включает это тому, у кого нераспакованного
+   * больше тридцати игр (hideUrgencyFor): «успей купить» подталкивает его к
+   * ещё одной покупке, которую он тоже не распакует. Промпт Claude срока и так
+   * не знает (priceNote) — ему прятать нечего.
+   */
+  hideUrgency?: boolean
 }
 
 const DEFAULT_GUARANTEED: readonly CandidateSource[] = CANDIDATE_SOURCES.filter(
@@ -603,7 +613,7 @@ export function heuristicPicks(
   chosen.sort((a, b) => b.score - a.score)
   return chosen.map((c) => {
     const meta = metaOf(c.appid)
-    const price = c.source === 'new' ? priceSentence(meta, nowSec) : ''
+    const price = c.source === 'new' ? priceSentence(meta, nowSec, opts.hideUrgency) : ''
     return {
       appid: c.appid,
       name: c.name,

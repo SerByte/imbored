@@ -20,6 +20,7 @@ import {
   buildAnchorFinder,
   buildTagProfile,
   cooldownOf,
+  hideUrgencyFor,
   sharedTasteTags,
   scoreCandidates,
   splitBySource,
@@ -143,6 +144,9 @@ export async function GET() {
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
   const lib = games.find((g) => g.appid === pick.appid)
+  // Срок распродажи — тем, у кого нераспакованного немного: см. тот же флаг
+  // в /api/recommend
+  const hideUrgency = hideUrgencyFor(games, (id) => libMetas.get(id))
 
   // Тот же контекст причины, что в основной выдаче: своя игра, на которую эта
   // похожа, вместо тегов, и свои часы у заброшенной. Баны якорем не бывают.
@@ -155,6 +159,7 @@ export async function GET() {
         return m ? findAnchor(m) : null
       },
       hoursOf: (appid) => (lib && appid === lib.appid ? Math.round(lib.playtimeForever / 60) : null),
+      hideUrgency,
     })[0]?.reason ?? ''
 
   const meta = metaNow(pick.appid)
@@ -188,7 +193,8 @@ export async function GET() {
       // Скидка — разговор про покупку: у своей игры «−40%» сообщает только то,
       // что ты купил её дороже. Считается на сервере вместе с подписью срока —
       // у клиента свой часовой пояс, и «до 17 августа» разъехалось бы.
-      discount: pick.source === 'new' && meta ? discountView(meta, now) : null,
+      discount:
+        pick.source === 'new' && meta ? discountView(meta, now, { urgency: !hideUrgency }) : null,
       // Страховка покупки — там же, где цена: только у не купленного
       refund: pick.source === 'new' && meta ? refundEligible(meta, now) : false,
     },
@@ -203,7 +209,7 @@ export async function GET() {
         storeUrl: m?.storeUrl ?? null,
         priceFinal: m?.priceFinal ?? null,
         isFree: m?.isFree ?? null,
-        discount: m ? discountView(m, now) : null,
+        discount: m ? discountView(m, now, { urgency: !hideUrgency }) : null,
       }
     }),
     dateLabel: new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }),

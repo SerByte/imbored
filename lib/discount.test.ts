@@ -111,6 +111,17 @@ describe('discountView', () => {
     expect(view?.percent).toBe(50)
     expect(view?.endsLabel).toBeUndefined()
   })
+
+  test('без срочности — та же скидка, но без обратного отсчёта', () => {
+    const view = discountView(onSale({ discountEndsAt: NOW + 2 * DAY }), NOW, { urgency: false })
+    expect(view?.percent).toBe(50)
+    expect(view?.finalCents).toBe(999)
+    expect(view?.endsLabel).toBeUndefined()
+    // По умолчанию срок на месте: страница игры и всё прежнее не меняются
+    expect(discountView(onSale({ discountEndsAt: NOW + 2 * DAY }), NOW)?.endsLabel).toBe(
+      'осталось 2 дня',
+    )
+  })
 })
 
 describe('formatPrice', () => {

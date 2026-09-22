@@ -156,6 +156,21 @@ describe('heuristicPicks', () => {
     expect(pick.reason).toContain('до 24 ноября')
   })
 
+  test('без срочности причина называет скидку, но не срок', () => {
+    const onSale = (appid: number): GameMeta => ({
+      ...metaOf(appid)!,
+      priceFinal: 749,
+      priceInitial: 1499,
+      discountPercent: 50,
+      discountEndsAt: NOW + 10 * 86_400,
+      priceAt: NOW,
+    })
+    const [pick] = heuristicPicks([CANDS[2]], onSale, 1, NOW, {}, { hideUrgency: true })
+    expect(pick.reason).toContain('−50%')
+    expect(pick.reason).toContain('$7.49 вместо $14.99.')
+    expect(pick.reason).not.toContain('до 24 ноября')
+  })
+
   test('своей игре цену не приписываем — за неё уже заплачено', () => {
     const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
     const [pick] = heuristicPicks([CANDS[0]], priced, 1, NOW)

@@ -15,6 +15,7 @@ import {
   deferredOf,
   explainMatch,
   familiarWeight,
+  hideUrgencyFor,
   isReplayable,
   isUnplayed,
   isUntouched,
@@ -32,6 +33,7 @@ import {
   scoreOfParts,
   sharedTasteTags,
   splitBySource,
+  URGENCY_UNTOUCHED_MAX,
   type Cooldown,
 } from './recommend'
 import { DEMO_METAS, demoLibrary } from './demo'
@@ -1692,5 +1694,37 @@ describe('pickContinue', () => {
   test('continueView округляет минуты до часов', () => {
     expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 20 })).recentHours).toBe(0)
     expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 95 })).recentHours).toBe(2)
+  })
+})
+
+describe('hideUrgencyFor', () => {
+  const metaOf = (appid: number) => meta(appid, { Action: 10 })
+  const untouched = (n: number, from = 1) =>
+    Array.from({ length: n }, (_, i) => game({ appid: from + i }))
+
+  test('больше тридцати нераспакованных — срок распродажи прячем', () => {
+    expect(hideUrgencyFor(untouched(URGENCY_UNTOUCHED_MAX + 1), metaOf)).toBe(true)
+  })
+
+  test('ровно тридцать и меньше — срок на месте', () => {
+    expect(hideUrgencyFor(untouched(URGENCY_UNTOUCHED_MAX), metaOf)).toBe(false)
+    expect(hideUrgencyFor([], metaOf)).toBe(false)
+  })
+
+  test('считаются только ни разу не запущенные и не мусор', () => {
+    const lib = [
+      ...untouched(URGENCY_UNTOUCHED_MAX),
+      // запускал десять минут — уже не «ни разу»
+      game({ appid: 100, playtimeForever: 10 }),
+      // саундтрек с нулём минут — не бэклог
+      game({ appid: 101, name: 'Foo — Original Soundtrack' }),
+    ]
+    expect(hideUrgencyFor(lib, metaOf)).toBe(false)
+    expect(hideUrgencyFor([...lib, game({ appid: 102 })], metaOf)).toBe(true)
+  })
+
+  test('демо-библиотека срок не прячет: там нераспакованного немного', () => {
+    const metas = new Map(DEMO_METAS.map((m) => [m.appid, m]))
+    expect(hideUrgencyFor(demoLibrary(NOW), (id) => metas.get(id))).toBe(false)
   })
 })

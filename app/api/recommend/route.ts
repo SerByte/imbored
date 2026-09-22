@@ -26,6 +26,7 @@ import {
   cooldownOf,
   deferredOf,
   explainMatch,
+  hideUrgencyFor,
   mixHeroPool,
   parseFocus,
   parseScope,
@@ -260,6 +261,9 @@ export async function POST(req: Request) {
     const lib = libByAppid.get(appid)
     return lib ? Math.round(lib.playtimeForever / 60) : null
   }
+  // Больше тридцати нераспакованных — срок распродажи не называем ни в
+  // причине, ни под ценой: «успей купить» ему не помощь, а ещё одна покупка
+  const hideUrgency = hideUrgencyFor(games, (id) => libMetas.get(id))
 
   // Демо-личность получает настоящую подборку, но считанное число раз в сутки —
   // дальше та же выдача собирается эвристикой. Проверка идёт последней, уже
@@ -299,6 +303,7 @@ export async function POST(req: Request) {
       // «Расслабиться» и прямая просьба о знакомом — те случаи, когда оно
       // заслуживает места и без лучшего скора; в остальных — только по скору
       guaranteed: mood.vibe === 'chill' || lean === 'familiar' ? CANDIDATE_SOURCES : undefined,
+      hideUrgency,
     })
 
   // В режиме «разгрести своё» список покупок — прямое противоречие запросу.
@@ -313,7 +318,7 @@ export async function POST(req: Request) {
         DISCOVERY_CARDS,
         now,
         profile,
-        { tagWeight, anchorOf },
+        { tagWeight, anchorOf, hideUrgency },
       )
 
   // «Продолжить «X»» — то, во что он играет сейчас: строкой под героем, а не
@@ -368,7 +373,8 @@ export async function POST(req: Request) {
       // своей игре «−40%» сообщает ровно ничего, кроме того, что ты купил
       // её дороже. Считается на сервере вместе с подписью срока: у клиента
       // свой часовой пояс, и «до 17 августа» разъехалось бы при гидратации.
-      discount: meta && p.source === 'new' ? discountView(meta, now) : null,
+      discount:
+        meta && p.source === 'new' ? discountView(meta, now, { urgency: !hideUrgency }) : null,
       // «Не зайдёт — Steam вернёт деньги» — тоже разговор про покупку, поэтому
       // только у не купленного. Решение здесь, текст в lib/refund.ts
       refund: meta && p.source === 'new' ? refundEligible(meta, now) : false,

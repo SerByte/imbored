@@ -98,14 +98,22 @@ export function discountEndsLabel(endsAt: number, nowSec: number): string | null
   return `до ${d.getUTCDate()} ${MONTHS_GEN[d.getUTCMonth()]}`
 }
 
-/** Скидка вместе с подписью срока — то, что уезжает клиенту одним куском */
+/**
+ * Скидка вместе с подписью срока — то, что уезжает клиенту одним куском.
+ *
+ * urgency: false — скидка без «до 17 августа». Срок распродажи — давление
+ * «успей купить», и у человека, у которого нераспакованного больше, чем он
+ * успеет пройти за год, оно работает против него же: цена и процент остаются
+ * фактом, а обратный отсчёт убираем (см. hideUrgencyFor в lib/recommend.ts).
+ */
 export function discountView(
   meta: Parameters<typeof discountOf>[0],
   nowSec: number,
+  opts: { urgency?: boolean } = {},
 ): Discount | null {
   const d = discountOf(meta, nowSec)
   if (!d) return null
-  if (d.endsAt === undefined) return d
+  if (d.endsAt === undefined || opts.urgency === false) return d
   const label = discountEndsLabel(d.endsAt, nowSec)
   return label ? { ...d, endsLabel: label } : d
 }

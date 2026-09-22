@@ -603,6 +603,35 @@ export function libraryTileState(g: LibraryGame, nowSec: number): LibraryTileSta
   return state === 'unplayed' && isUntouched(g) ? 'untouched' : state
 }
 
+/**
+ * Сколько нераспакованного должно лежать в библиотеке, чтобы срок распродажи
+ * пропал с экрана.
+ *
+ * Тридцать игр, которые ни разу не запускались, — это год вечеров без единой
+ * покупки. «Скидка кончится через два дня» такому человеку говорит «купи ещё
+ * одну, которую тоже не распакуешь», и продукт, обещавший разгрести выбор, сам
+ * подкидывал бы в него. Цена и процент остаются — это факт; уходит только
+ * обратный отсчёт, то есть давление.
+ */
+export const URGENCY_UNTOUCHED_MAX = 30
+
+/**
+ * Прятать ли срок распродажи (discountView {urgency}, heuristicPicks
+ * hideUrgency). Считается нераспакованное без мусора: саундтреки и демо с
+ * нулём минут в бэклог не входят — их и не собирались «проходить».
+ */
+export function hideUrgencyFor(
+  library: readonly LibraryGame[],
+  metaOf: (appid: number) => GameMeta | undefined,
+): boolean {
+  let untouched = 0
+  for (const g of library) {
+    if (!isUntouched(g) || isJunk(g, metaOf(g.appid))) continue
+    if (++untouched > URGENCY_UNTOUCHED_MAX) return true
+  }
+  return false
+}
+
 /*
  * Знакомое любимое — источник 'familiar'.
  *

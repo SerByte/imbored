@@ -17,12 +17,20 @@ import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { StopAsk } from '@/components/StopAsk'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
 import type { GameArtUrls } from '@/lib/art'
 import { EDGE_BADGE, EDGE_LINE, type PickEdge } from '@/lib/badges'
 import type { Discount } from '@/lib/discount'
 import { rememberMood } from '@/lib/lastmood'
+import {
+  dueLaunchNow,
+  launchMemoStore,
+  rememberLaunch,
+  stopRuleLine,
+  subscribeDueLaunch,
+} from '@/lib/launchmemo'
 import { createLocalStore, parseFlag } from '@/lib/localstore'
 import { NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
 import { EASE } from '@/lib/motion'
@@ -300,6 +308,12 @@ function Player() {
     useSyncExternalStore(moreStore.subscribe, moreStore.get, moreStore.server) === true
   const shelfOpen =
     useSyncExternalStore(shelfStore.subscribe, shelfStore.get, shelfStore.server) === true
+  /**
+   * Запуск с этой вкладки, про который пора спросить «не зацепило?» — от
+   * десяти минут до двух часов назад (lib/launchmemo.ts). Перечитывается при
+   * возвращении на вкладку; снимок сервера — «не спрашивать».
+   */
+  const stopDue = useSyncExternalStore(subscribeDueLaunch, dueLaunchNow, launchMemoStore.server)
 
   /**
    * Догрев после того, как выдача уже на экране.
@@ -805,8 +819,30 @@ function Player() {
 
   return (
     <div className="flex-1 flex flex-col">
+      {/* Вопрос после запуска важнее фоновой плашки прогрева: они стоят в одном
+          месте экрана, и прогрев подождёт, пока человек не ответит */}
+      <StopAsk
+        game={stopDue}
+        reasons={SKIP_REASONS}
+        onReason={(key) => {
+          if (!stopDue) return
+          sendFeedback(stopDue.appid, 'skipped', key)
+          launchMemoStore.set(null)
+          // «Дадим другую» — буквально: если на экране та самая игра, листаем
+          if (pick.appid === stopDue.appid) advance(index)
+        }}
+        onHooked={() => {
+          if (!stopDue) return
+          if (!liked.has(stopDue.appid)) {
+            setLiked(new Set(liked).add(stopDue.appid))
+            sendFeedback(stopDue.appid, 'liked')
+          }
+          launchMemoStore.set(null)
+        }}
+        onClose={() => launchMemoStore.set(null)}
+      />
       <WarmStrip
-        state={warming}
+        state={stopDue ? 'off' : warming}
         remaining={prep?.remaining ?? 0}
         onRefresh={() => {
           setWarming('off')
@@ -972,6 +1008,9 @@ function Player() {
                     // Запуск — не «Зашло»: раньше он писался как liked, и точность
                     // подбора на /library росла от любого клика
                     onClick={() => sendFeedback(pick.appid, 'launched')}
+                    // Засекаем только настоящий запуск: через десять минут
+                    // вернувшегося спросим, зацепило ли (см. StopAsk)
+                    onLaunch={() => rememberLaunch(pick.appid, pick.name, Math.floor(Date.now() / 1000))}
                     className="btn-ember px-6 py-3"
                   />
                 )}
@@ -1076,6 +1115,16 @@ function Player() {
                 <motion.div variants={STEP}>
                   <RefundNote />
                 </motion.div>
+              )}
+              {/* Правило остановки — выход, названный заранее: попробовать не
+                  страшно, если известно, когда можно бросить. Только у своего
+                  (не купленную не запустить, у неё выше строка про возврат) и
+                  только на десктопе: на телефоне кнопка ведёт в магазин, и
+                  двадцати минут игры там не наступает. */}
+              {pick.source !== 'new' && (
+                <motion.p variants={STEP} className="hidden md:block -mt-1 text-xs text-faint">
+                  {stopRuleLine(mood.time)}
+                </motion.p>
               )}
               </>
             )}
