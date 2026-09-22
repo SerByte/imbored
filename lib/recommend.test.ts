@@ -13,6 +13,7 @@ import {
   libraryTileState,
   MAX_NEW_PICKS,
   mixHeroPool,
+  normalizedTags,
   parseFocus,
   parseScope,
   rankByTaste,
@@ -511,6 +512,62 @@ describe('scoreCandidates', () => {
 
     test('без exclude выдача та же, что с пустым множеством', () => {
       expect(run(new Set())).toEqual(run())
+    })
+  })
+
+  /**
+   * Вкус с весом редкости. Профиль собран так, как выглядит настоящий: частотный
+   * костяк (Singleplayer, Indie) весит больше всего просто потому, что он есть
+   * в каждой второй игре. Сырой косинус поэтому отдаёт первое место игре, у
+   * которой нет ничего, кроме костяка.
+   */
+  describe('вес редкости во вкусе', () => {
+    const stats = new Map<string, number>([
+      ['Indie', 4000],
+      ['Singleplayer', 3025],
+      ['Action', 2335],
+      ['Automation', 100],
+    ])
+    const profile = { Singleplayer: 10, Indie: 8, Automation: 2 }
+    const lib = [game({ appid: 1, playtimeForever: 10 }), game({ appid: 2, playtimeForever: 10 })]
+    const metas = new Map([
+      [1, meta(1, { Automation: 100 })],
+      [2, meta(2, { Singleplayer: 100 })],
+    ])
+    const run = (tagWeight?: ReturnType<typeof tagWeightFrom>) =>
+      scoreCandidates({
+        profile,
+        library: lib,
+        metaOf: (id) => metas.get(id),
+        newPool: [meta(3, { Automation: 80, Action: 40 })],
+        mood: baseMood,
+        nowSec: NOW,
+        ...(tagWeight !== undefined ? { tagWeight } : {}),
+      })
+
+    test('совпадение по Automation обходит совпадение по Singleplayer с картой и проигрывает без неё', () => {
+      const order = (list: ScoredCandidate[]) =>
+        list.map((c) => c.appid).filter((id) => id === 1 || id === 2)
+      expect(order(run())).toEqual([2, 1])
+      expect(order(run(tagWeightFrom(stats)))).toEqual([1, 2])
+    })
+
+    test('tagWeight: null — скоры ровно прежние, до бита', () => {
+      const plain = run()
+      expect(run(null)).toEqual(plain)
+      for (const c of plain) {
+        const m = c.appid === 3 ? meta(3, { Automation: 80, Action: 40 }) : metas.get(c.appid)!
+        expect(c.parts!.taste).toBe(cosine(profile, normalizedTags(m)))
+      }
+    })
+
+    test('процент совпадения на карточке считается тем же весом', () => {
+      const mood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+      const common = metas.get(2)!
+      const raw = explainMatch(profile, common, mood).matchPercent!
+      const weighted = explainMatch(profile, common, mood, tagWeightFrom(stats)).matchPercent!
+      expect(weighted).toBeLessThan(raw)
+      expect(explainMatch(profile, common, mood, null).matchPercent).toBe(raw)
     })
   })
 

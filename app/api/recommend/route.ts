@@ -166,6 +166,8 @@ export async function POST(req: Request) {
     // Баны — внутри скоринга, до отсечки: фильтр после неё отдавал тридцатку
     // минус забаненные, и места, которые они занимали, не доставались никому
     exclude: banned,
+    // Вкус с весом редкости: совпадение по частотному костяку больше не решает
+    tagWeight,
   })
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })

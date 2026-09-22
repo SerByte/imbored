@@ -101,6 +101,7 @@ export async function GET() {
     limit: CANDIDATE_LIMIT,
     // баны до отсечки, а не после — см. тот же параметр в /api/recommend
     exclude: banned,
+    tagWeight,
   })
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })

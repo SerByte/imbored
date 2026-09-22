@@ -1,6 +1,6 @@
 import { discountOf } from './discount'
 import { isJunk } from './junk'
-import { cosine, type TagWeight } from './tagweight'
+import { cosine, weightedCosine, weightedCosineTo, type TagWeight } from './tagweight'
 import type {
   CandidateSource,
   GameMeta,
@@ -416,7 +416,9 @@ export function explainMatch(
 ): MatchExplanation {
   const profileEmpty = Object.keys(profile).length === 0
   const norm = normalizedTags(meta)
-  const matchPercent = profileEmpty ? null : Math.round(cosine(profile, norm) * 100)
+  // Процент — тем же взвешенным косинусом, что и порядок выдачи: число,
+  // расходящееся с настоящим порядком, объясняло бы чужую выдачу
+  const matchPercent = profileEmpty ? null : Math.round(weightedCosine(profile, norm, tagWeight) * 100)
 
   const sharedTags = sharedTasteTags(profile, meta, tagWeight)
 
@@ -632,16 +634,25 @@ export function scoreCandidates(args: {
    * уже за отсечкой, и у человека с десятком банов выдача молча худела.
    */
   exclude?: ReadonlySet<number>
+  /**
+   * Вес редкости тегов (lib/tagweight.ts). Без него вкус — сырой косинус, и
+   * совпадение по Indie с Action решало выдачу наравне с совпадением по
+   * Automation: частотный костяк есть в любом профиле и в любой игре. null и
+   * отсутствие дают ровно прежние скоры — демо-пятёрки главной на этом стоят.
+   */
+  tagWeight?: TagWeight | null
 }): ScoredCandidate[] {
   const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude } = args
   const out: ScoredCandidate[] = []
   const profileEmpty = Object.keys(profile).length === 0
+  // Профиль взвешивается один раз на весь запрос, а не на каждого кандидата
+  const tasteOf = weightedCosineTo(profile, args.tagWeight ?? null)
 
   const push = (meta: GameMeta, source: ScoredCandidate['source']) => {
     if (exclude?.has(meta.appid)) return
     if (!fitsSocial(meta, mood)) return
     const parts: ScoreParts = {
-      taste: profileEmpty ? popularityScore(meta) : cosine(profile, normalizedTags(meta)),
+      taste: profileEmpty ? popularityScore(meta) : tasteOf(normalizedTags(meta)),
       mood: moodMultiplier(meta, mood),
       source: SOURCE_WEIGHT[source],
       deal: dealMultiplier(meta, source, nowSec),
