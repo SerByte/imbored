@@ -6,12 +6,15 @@ import {
   applyFocus,
   buildAnchorFinder,
   buildTagProfile,
+  capSource,
   classifyLibraryGame,
   cooldownOf,
   cosine,
   dealMultiplier,
   deferredOf,
   explainMatch,
+  familiarWeight,
+  isReplayable,
   isUnplayed,
   isUntouched,
   libraryTileState,
@@ -1402,5 +1405,132 @@ describe('parseFocus', () => {
     expect(parseFocus(undefined)).toBeNull()
     expect(parseFocus(['untouched'])).toBeNull()
     expect(parseFocus(1)).toBeNull()
+  })
+})
+
+/**
+ * Знакомое любимое. Порог входа у своей игры с десятками часов нулевой — но
+ * только у той, где нечего «проходить»: пройденную сюжетную игру мы от
+ * брошенной не отличим, и совет вернуться в неё был бы промахом.
+ */
+describe('знакомое любимое (familiar)', () => {
+  const baseMood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+  const played = (appid: number, daysAgo: number, minutes = 900): LibraryGame =>
+    game({ appid, playtimeForever: minutes, lastPlayed: NOW - daysAgo * DAY })
+  const sandbox = (appid: number) => meta(appid, { Sandbox: 100, Crafting: 60 })
+  const weightOf = (g: LibraryGame, m: GameMeta) =>
+    familiarWeight(g, m, classifyLibraryGame(g, NOW), NOW)
+
+  describe('isReplayable', () => {
+    test('песочница, рогалик и MOBA — без финала, сюжетная RPG — с финалом', () => {
+      expect(isReplayable(meta(1, { Sandbox: 100 }))).toBe(true)
+      expect(isReplayable(meta(2, { Roguelike: 100 }))).toBe(true)
+      expect(isReplayable(meta(3, { MOBA: 100 }))).toBe(true)
+      expect(isReplayable(meta(4, { RPG: 100, 'Story Rich': 80 }))).toBe(false)
+    })
+
+    test('соревновательный мультиплеер — да, кооп с титрами — нет', () => {
+      expect(isReplayable(meta(5, { FPS: 100 }, [1, 36, 49]))).toBe(true)
+      expect(isReplayable(meta(6, { Puzzle: 100 }, [2, 1, 9, 38]))).toBe(false)
+    })
+
+    test('без categories судит по тегам PvP — как isMultiplayerMeta', () => {
+      expect(isReplayable(meta(7, { Shooter: 100, PvP: 50 }, []))).toBe(true)
+      expect(isReplayable(meta(8, { Shooter: 100, 'Co-op': 50 }, []))).toBe(false)
+    })
+  })
+
+  describe('familiarWeight', () => {
+    test('жанровый шлюз: игра с финалом знакомой не становится', () => {
+      expect(weightOf(played(1, 90), meta(1, { RPG: 100, 'Story Rich': 80 }))).toBeNull()
+      expect(weightOf(played(1, 90), sandbox(1))).toBe(1)
+    })
+
+    test('пауза меньше месяца — не совет: в это он играл только что', () => {
+      expect(weightOf(played(1, 20), sandbox(1))).toBeNull()
+      expect(weightOf(played(1, 30), sandbox(1))).toBeCloseTo(0.5)
+    })
+
+    test('насыщение: вес растёт с паузой и доходит до единицы за два месяца', () => {
+      const w45 = weightOf(played(1, 45), sandbox(1))!
+      const w90 = weightOf(played(1, 90), sandbox(1))!
+      expect(w45).toBeCloseTo(0.75)
+      expect(w45).toBeLessThan(w90)
+      expect(w90).toBe(1)
+    })
+
+    test('меньше десяти часов — ещё не знакомая', () => {
+      expect(weightOf(played(1, 90, 500), sandbox(1))).toBeNull()
+    })
+
+    test('active и comeback — не familiar: у них свои разговоры', () => {
+      const active = game({ appid: 1, playtimeForever: 900, playtime2Weeks: 60, lastPlayed: NOW - DAY })
+      expect(weightOf(active, sandbox(1))).toBeNull()
+      expect(weightOf(played(1, 300), sandbox(1))).toBeNull()
+    })
+  })
+
+  describe('в scoreCandidates', () => {
+    const lib = [
+      played(1, 90), // знакомая песочница
+      game({ appid: 2, playtimeForever: 900, playtime2Weeks: 60, lastPlayed: NOW - DAY }), // active
+      game({ appid: 3, playtimeForever: 10 }), // бэклог
+    ]
+    const metas = new Map([
+      [1, sandbox(1)],
+      [2, sandbox(2)],
+      [3, meta(3, { Sandbox: 100 })],
+    ])
+    const run = (allowFamiliar?: boolean) =>
+      scoreCandidates({
+        profile: { Sandbox: 1 },
+        library: lib,
+        metaOf: (id) => metas.get(id),
+        newPool: [meta(100, { Sandbox: 100 })],
+        mood: baseMood,
+        nowSec: NOW,
+        ...(allowFamiliar !== undefined ? { allowFamiliar } : {}),
+      })
+
+    test('по умолчанию выключено: «Игра дня» и главная не меняются', () => {
+      expect(run().some((c) => c.source === 'familiar')).toBe(false)
+      expect(run(false)).toEqual(run())
+    })
+
+    test('включённое — источник familiar с весом 0.9 и насыщением', () => {
+      const fam = run(true).find((c) => c.appid === 1)!
+      expect(fam.source).toBe('familiar')
+      expect(fam.parts!.source).toBeCloseTo(0.9)
+      expect(scoreOfParts(fam.parts!)).toBe(fam.score)
+    })
+
+    test('active в знакомое не попадает: во что играет сейчас, он и так помнит', () => {
+      expect(run(true).some((c) => c.appid === 2)).toBe(false)
+    })
+
+    test('остальным кандидатам знакомое скоров не меняет', () => {
+      const without = run().map((c) => [c.appid, c.score])
+      const withIt = new Map(run(true).map((c) => [c.appid, c.score]))
+      for (const [appid, score] of without) expect(withIt.get(appid)).toBe(score)
+    })
+  })
+
+  describe('capSource', () => {
+    const list = [
+      { appid: 1, source: 'familiar' as const },
+      { appid: 2, source: 'backlog' as const },
+      { appid: 3, source: 'familiar' as const },
+      { appid: 4, source: 'new' as const },
+      { appid: 5, source: 'familiar' as const },
+    ]
+
+    test('оставляет первых max одного источника, остальных не трогает', () => {
+      expect(capSource(list, 'familiar', 1).map((c) => c.appid)).toEqual([1, 2, 4])
+      expect(capSource(list, 'familiar', 2).map((c) => c.appid)).toEqual([1, 2, 3, 4])
+    })
+
+    test('источника нет — список тот же', () => {
+      expect(capSource(list, 'comeback', 1)).toEqual(list)
+    })
   })
 })

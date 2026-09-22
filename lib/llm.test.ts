@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { heuristicPicks, trimTldr, validateDigest, validatePicks } from './llm'
 import { tagWeightFrom } from './tagweight'
-import type { GameMeta, Mood, ScoredCandidate } from './types'
+import { CANDIDATE_SOURCES, type GameMeta, type Mood, type ScoredCandidate } from './types'
 
 const MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
 const NOW = 1_700_000_000
@@ -384,5 +384,41 @@ describe('причина называет свою игру-якорь', () => {
   test('без часов заброшенная говорит как раньше', () => {
     const [pick] = heuristicPicks(one('comeback'), metaOf, 1, NOW, profile)
     expect(pick.reason).toContain('вложил часы в «Shapez»')
+  })
+})
+
+/**
+ * Знакомое любимое. Гарантированного слота по умолчанию у него нет: иначе
+ * каждая выдача звала бы человека в то, во что он и так играл.
+ */
+describe('знакомое в эвристике', () => {
+  const withFamiliar: ScoredCandidate[] = [
+    ...CANDS,
+    { appid: 7, name: 'Terraria', source: 'familiar', score: 0.1 },
+  ]
+  const nameOf = (appid: number): GameMeta | undefined =>
+    appid === 7 ? { ...metaOf(appid)!, name: 'Terraria' } : metaOf(appid)
+
+  test('по умолчанию слота нет: слабое знакомое в пятёрку не попадает', () => {
+    const picks = heuristicPicks(withFamiliar, nameOf, 5)
+    expect(picks.some((p) => p.source === 'familiar')).toBe(false)
+    // И остальная пятёрка та же, что без него
+    expect(picks.map((p) => p.appid)).toEqual(heuristicPicks(CANDS, metaOf, 5).map((p) => p.appid))
+  })
+
+  test('со списком гарантий целиком знакомое получает слот', () => {
+    const picks = heuristicPicks(withFamiliar, nameOf, 5, NOW, {}, { guaranteed: CANDIDATE_SOURCES })
+    expect(picks.some((p) => p.appid === 7)).toBe(true)
+    expect(picks).toHaveLength(5)
+  })
+
+  test('причина называет свои часы: «управление ты знаешь»', () => {
+    const one: ScoredCandidate[] = [{ appid: 7, name: 'Terraria', source: 'familiar', score: 0.9 }]
+    const [pick] = heuristicPicks(one, nameOf, 1, NOW, { Puzzle: 1 }, { hoursOf: () => 130 })
+    expect(pick.reason).toContain('управление ты знаешь — у тебя там 130 ч')
+    expect(pick.reason).toContain('«Terraria»')
+    const [noHours] = heuristicPicks(one, nameOf, 1, NOW, { Puzzle: 1 })
+    expect(noHours.reason).toContain('управление ты знаешь')
+    expect(noHours.reason).not.toMatch(/\d+ ч/)
   })
 })

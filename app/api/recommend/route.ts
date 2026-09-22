@@ -20,6 +20,7 @@ import {
   applyFocus,
   buildAnchorFinder,
   buildTagProfile,
+  capSource,
   cooldownOf,
   deferredOf,
   explainMatch,
@@ -33,7 +34,7 @@ import {
 import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
 import { tagWeightFrom } from '@/lib/tagweight'
-import type { GameMeta } from '@/lib/types'
+import { CANDIDATE_SOURCES, type GameMeta } from '@/lib/types'
 
 /** Сколько игр из каталога уходит в нижний блок «Нет в твоей библиотеке» */
 const DISCOVERY_CARDS = 6
@@ -175,6 +176,8 @@ export async function POST(req: Request) {
     // Вкус с весом редкости: совпадение по частотному костяку больше не решает
     tagWeight,
     cooldown,
+    // Знакомое любимое — только здесь: «Игре дня» и демо главной оно не нужно
+    allowFamiliar: true,
   })
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
@@ -206,7 +209,10 @@ export async function POST(req: Request) {
   // главной выдаче: «во что поиграть» — это вопрос про игры, а не про чеки.
   // Потолок держит mixHeroPool, чтобы ответ не превратился в витрину.
   const { own, discovery } = splitBySource(actual)
-  const focused = applyFocus(own, focus)
+  // Знакомого в пятёрке не больше одного — и потолок ставится ДО смешивания с
+  // каталогом: mixHeroPool считает, сколько мест отдать покупкам, по числу
+  // своих, и срезанное после него знакомое оставило бы выдачу короче пяти
+  const focused = capSource(applyFocus(own, focus), 'familiar', 1)
   const heroPool = scope === 'all' ? mixHeroPool(focused, discovery) : focused
 
   // Цены обновляются ДО подбора, а не перед самой отдачей.
@@ -271,6 +277,9 @@ export async function POST(req: Request) {
       tagWeight,
       anchorOf,
       hoursOf,
+      // «Расслабиться» — ровно тот случай, когда знакомое заслуживает места
+      // и без лучшего скора; в остальных оно проходит только по скору
+      guaranteed: mood.vibe === 'chill' ? CANDIDATE_SOURCES : undefined,
     })
 
   // В режиме «разгрести своё» список покупок — прямое противоречие запросу.

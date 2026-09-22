@@ -459,6 +459,22 @@ export function applyFocus<T extends { source: CandidateSource }>(
   return widened.length ? widened : candidates
 }
 
+/**
+ * Не больше max кандидатов одного источника; порядок сохраняется, лишние —
+ * хвост этого источника — выпадают.
+ *
+ * Нужен знакомому: у человека с сотней наигранных песочниц оно заняло бы всю
+ * пятёрку, и сервис превратился бы в «играй в то же, что всегда».
+ */
+export function capSource<T extends { source: CandidateSource }>(
+  list: T[],
+  source: CandidateSource,
+  max: number,
+): T[] {
+  let seen = 0
+  return list.filter((c) => c.source !== source || ++seen <= max)
+}
+
 export type MatchExplanation = {
   matchPercent: number | null
   sharedTags: string[]
@@ -584,6 +600,42 @@ export type LibraryTileState = 'untouched' | LibraryGameState
 export function libraryTileState(g: LibraryGame, nowSec: number): LibraryTileState {
   const state = classifyLibraryGame(g, nowSec)
   return state === 'unplayed' && isUntouched(g) ? 'untouched' : state
+}
+
+/*
+ * Знакомое любимое — источник 'familiar'.
+ *
+ * Выбор между незнакомыми играми — самый дорогой: каждую надо осваивать. У
+ * игры с десятками своих часов этот порог нулевой — управление в руках,
+ * правила в голове. Раньше такие игры в кандидаты не попадали вовсе: 'played'
+ * и 'active' выпадали из scoreCandidates, и на «нет сил разбираться» продукт
+ * отвечал только новым.
+ *
+ *   — не меньше десяти часов: знакомой игру делают не два вечера;
+ *   — только без финала (isReplayable);
+ *   — пауза не меньше месяца: то, во что играл на прошлой неделе, человек и
+ *     без нас помнит, совет «поиграй в него» ничего не добавляет;
+ *   — насыщение: вес растёт с паузой и доходит до единицы за два месяца.
+ *     Через полгода игра уже 'comeback' — там свой разговор.
+ */
+const FAMILIAR_MIN_MIN = 600
+const FAMILIAR_PAUSE_SEC = 30 * 86_400
+const FAMILIAR_FULL_SEC = 60 * 86_400
+
+/** Вес знакомой игры (0.5…1) или null — знакомым её не считаем. */
+export function familiarWeight(
+  g: LibraryGame,
+  meta: GameMeta,
+  state: LibraryGameState,
+  nowSec: number,
+): number | null {
+  if (state !== 'played') return null
+  if (g.playtimeForever < FAMILIAR_MIN_MIN) return null
+  if (!isReplayable(meta)) return null
+  // У 'played' lastPlayed есть всегда: без даты classifyLibraryGame даёт 'comeback'
+  const paused = nowSec - (g.lastPlayed ?? nowSec)
+  if (paused < FAMILIAR_PAUSE_SEC) return null
+  return Math.min(1, paused / FAMILIAR_FULL_SEC)
 }
 
 /**
@@ -733,6 +785,45 @@ export function isMultiplayerMeta(meta: GameMeta): boolean {
   return MULTIPLAYER_TAGS.some((t) => t in meta.tags)
 }
 
+/**
+ * Игры без финала: песочницы, выживание, фабрики, фермы, рогалики, MOBA.
+ * К ним возвращаются не «доиграть», а поиграть ещё — потому их и можно
+ * советовать как знакомое.
+ *
+ * Достижений мы не спрашиваем, и отличить «прошёл» от «бросил» у сюжетной
+ * игры нечем: вернуть человека в пройденную Disco Elysium — не совет, а
+ * промах. Поэтому знакомым становится только то, где проходить нечего.
+ */
+const REPLAYABLE_TAGS = [
+  'Sandbox',
+  'Survival',
+  'Automation',
+  'Life Sim',
+  'Colony Sim',
+  'Farming Sim',
+  'City Builder',
+  'Base Building',
+  'Roguelike',
+  'Roguelite',
+  'MOBA',
+  'Massively Multiplayer',
+]
+
+/**
+ * Соревновательный мультиплеер (36 Online PvP, 49 PvP) — тоже без финала.
+ * Кооп (1, 9, 38) сюда НЕ идёт, хотя isMultiplayerMeta его считает: у
+ * It Takes Two и Portal 2 есть титры, и после них возвращаться некуда.
+ */
+const PVP_CATEGORIES = new Set([36, 49])
+/** Фолбэк, когда categories не загружены, — тот же приём, что в isMultiplayerMeta */
+const PVP_TAGS = ['PvP', 'Online PvP']
+
+export function isReplayable(meta: GameMeta): boolean {
+  if (REPLAYABLE_TAGS.some((t) => t in meta.tags)) return true
+  if (meta.categories.length) return meta.categories.some((c) => PVP_CATEGORIES.has(c))
+  return PVP_TAGS.some((t) => t in meta.tags)
+}
+
 function fitsSocial(meta: GameMeta, mood: Mood): boolean {
   if (mood.social !== 'friends') return true
   return isMultiplayerMeta(meta)
@@ -757,11 +848,16 @@ function popularityScore(meta: GameMeta): number {
  *
  * У 'new' вес намеренно единичный: равномерный множитель не переупорядочил бы
  * блок открытий, но изменил бы, кто из каталога переживёт отсечку limit.
+ *
+ * У 'familiar' — 0.9, ступенька вниз: знакомое — хороший ответ, когда на новое
+ * нет сил, но не повод оттеснять то, ради чего человек пришёл. Сверху на неё
+ * ложится насыщение (familiarWeight).
  */
 const SOURCE_WEIGHT: Record<CandidateSource, number> = {
   untouched: 1.25,
   backlog: 1,
   comeback: 1,
+  familiar: 0.9,
   new: 1,
 }
 
@@ -841,6 +937,11 @@ export function scoreCandidates(args: {
    * ровно прежние скоры.
    */
   cooldown?: ReadonlyMap<number, Cooldown>
+  /**
+   * Пускать ли знакомое любимое (familiarWeight). По умолчанию нет: «Игра
+   * дня» и демо главной собираются без него, и их выдача не меняется.
+   */
+  allowFamiliar?: boolean
 }): ScoredCandidate[] {
   const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
   const out: ScoredCandidate[] = []
@@ -850,14 +951,15 @@ export function scoreCandidates(args: {
   // Профиль взвешивается один раз на весь запрос, а не на каждого кандидата
   const tasteOf = weightedCosineTo(profile, args.tagWeight ?? null)
 
-  const push = (meta: GameMeta, source: ScoredCandidate['source']) => {
+  /** sourceMult — насыщение знакомого; у прочих источников ровно 1 */
+  const push = (meta: GameMeta, source: ScoredCandidate['source'], sourceMult = 1) => {
     if (exclude?.has(meta.appid)) return
     if (!fitsSocial(meta, mood)) return
     const pause = cooldown?.get(meta.appid)
     const parts: ScoreParts = {
       taste: profileEmpty ? popularityScore(meta) : tasteOf(normalizedTags(meta)),
       mood: moodMultiplier(meta, mood),
-      source: SOURCE_WEIGHT[source],
+      source: SOURCE_WEIGHT[source] * sourceMult,
       deal: dealMultiplier(meta, source, nowSec),
       lean: 1,
       cooldown: pause && pause.mult > 0 ? pause.mult : 1,
@@ -878,6 +980,10 @@ export function scoreCandidates(args: {
     const state = classifyLibraryGame(g, nowSec)
     if (state === 'unplayed') push(meta, isUntouched(g) ? 'untouched' : 'backlog')
     else if (state === 'comeback') push(meta, 'comeback')
+    else if (args.allowFamiliar) {
+      const weight = familiarWeight(g, meta, state, nowSec)
+      if (weight !== null) push(meta, 'familiar', weight)
+    }
   }
 
   const owned = new Set(library.map((g) => g.appid))

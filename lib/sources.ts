@@ -15,5 +15,6 @@ export const SOURCE_BADGE: Record<CandidateSource, string> = {
   untouched: 'Куплена, но не распакована',
   backlog: 'Открыл и закрыл',
   comeback: 'Пора вернуться',
+  familiar: 'Любимое',
   new: 'Новое для тебя',
 }

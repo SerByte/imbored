@@ -96,8 +96,13 @@ export type Mood = {
  * флаг рядом с 'backlog', именно потому, что различие ведёт свой бейдж, свой
  * шаблон причины и свою строку в промпте — Record<CandidateSource, …> не даст
  * собраться, пока для нового источника не написана вся копия.
+ *
+ * 'familiar' — любимое без финала, в которое давно не заходил: «управление ты
+ * знаешь». Стоит после 'comeback', но гарантированного слота по умолчанию не
+ * получает (см. heuristicPicks): знакомое — ответ, когда нет сил на новое, а
+ * не обязательная часть каждой выдачи.
  */
-export const CANDIDATE_SOURCES = ['untouched', 'backlog', 'comeback', 'new'] as const
+export const CANDIDATE_SOURCES = ['untouched', 'backlog', 'comeback', 'familiar', 'new'] as const
 
 export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
 
