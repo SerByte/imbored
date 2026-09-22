@@ -23,6 +23,7 @@ import {
 } from '@/lib/recommend'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { tagWeightFrom } from '@/lib/tagweight'
 import type { GameMeta } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
@@ -74,6 +75,9 @@ export async function GET() {
   // Каталог тут больше не лишний: «игра дня» перестала быть только разбором
   // купленного. Пул тот же, что в основной выдаче, одним запросом с LIMIT.
   const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
+  // Вес редкости — тот же, что в основной выдаче: и причина, и отметки на
+  // чипсах называют характерные теги, а не Indie с Action
+  const tagWeight = tagWeightFrom(tagStats)
   const newPool = (
     await fetchDiscoveryPool(db, {
       tags: pickQueryTags(profile, tagStats, poolSize),
@@ -131,7 +135,7 @@ export async function GET() {
   const priced = refreshed ? await getGamesMeta(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
-  const reason = heuristicPicks([pick], metaNow, 1, now, profile)[0]?.reason ?? ''
+  const reason = heuristicPicks([pick], metaNow, 1, now, profile, { tagWeight })[0]?.reason ?? ''
 
   const meta = metaNow(pick.appid)
   const lib = games.find((g) => g.appid === pick.appid)
@@ -156,7 +160,7 @@ export async function GET() {
       // Чипсы совпавших тегов помечаются на экране, и метка обязана считаться
       // здесь же, где лежит профиль вкуса. Настроения у «Игры дня» нет —
       // поэтому sharedTasteTags, а не explainMatch: процент и вайб тут не о чем.
-      sharedTags: meta ? sharedTasteTags(profile, meta) : [],
+      sharedTags: meta ? sharedTasteTags(profile, meta, tagWeight) : [],
       hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,

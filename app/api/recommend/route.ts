@@ -29,6 +29,7 @@ import {
 } from '@/lib/recommend'
 import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
+import { tagWeightFrom } from '@/lib/tagweight'
 import type { GameMeta } from '@/lib/types'
 
 /** Сколько игр из каталога уходит в нижний блок «Нет в твоей библиотеке» */
@@ -136,6 +137,9 @@ export async function POST(req: Request) {
 
   // Кандидаты из большого каталога — одним запросом с LIMIT, а не полным сканом
   const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
+  // Вес редкости тегов: объяснение называет характерное («Automation»), а не
+  // то, что есть у половины каталога. null на непрогретой базе — тогда как раньше.
+  const tagWeight = tagWeightFrom(tagStats)
   const newPool = (
     await fetchDiscoveryPool(db, {
       tags: pickQueryTags(profile, tagStats, poolSize),
@@ -237,7 +241,10 @@ export async function POST(req: Request) {
         })
       : null
   const picks =
-    fromClaude ?? heuristicPicks(heroPool.length ? heroPool : actual, metaNow, PICK_COUNT, now, profile)
+    fromClaude ??
+    heuristicPicks(heroPool.length ? heroPool : actual, metaNow, PICK_COUNT, now, profile, {
+      tagWeight,
+    })
 
   // В режиме «разгрести своё» список покупок — прямое противоречие запросу.
   // Уехавшее наверх из нижнего блока убираем: одна и та же игра дважды на
@@ -251,6 +258,7 @@ export async function POST(req: Request) {
         DISCOVERY_CARDS,
         now,
         profile,
+        { tagWeight },
       )
 
   const libByAppid = new Map(games.map((g) => [g.appid, g]))
@@ -278,7 +286,7 @@ export async function POST(req: Request) {
       // её дороже. Считается на сервере вместе с подписью срока: у клиента
       // свой часовой пояс, и «до 17 августа» разъехалось бы при гидратации.
       discount: meta && p.source === 'new' ? discountView(meta, now) : null,
-      signals: meta ? explainMatch(profile, meta, mood) : null,
+      signals: meta ? explainMatch(profile, meta, mood, tagWeight) : null,
     }
   }
 

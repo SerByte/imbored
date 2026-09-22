@@ -1,4 +1,5 @@
-import { buildTagProfile, cosine } from './recommend'
+import { buildTagProfile } from './recommend'
+import { cosine, rarityOf, rarityScale } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
 
 export type Compatibility = {
@@ -52,38 +53,11 @@ export const COMMON_SHOWN = 10
  * подальше от горячего пути, чтобы нельзя было вкрутить туда по невнимательности.
  */
 
-/** Ниже этого карта тегов не считается пригодной — работаем как раньше. */
-const MIN_TAG_STATS = 20
-
-/**
- * Знаменатель редкости берём как максимум по самой карте, а не как настоящее
- * число игр с тегами.
- *
- * Истинное N потребовало бы либо COUNT(DISTINCT appid) по всей game_tags на
- * каждый запрос (а Turso берёт деньги за прочитанные строки), либо счётчика в
- * catalog_meta, который до ближайшего publish-catalog возвращал бы ноль — и
- * правка молча не работала бы. Разница между истинным N и максимумом — общий
- * сдвиг всех редкостей на константу; на медианах это меняет не больше трёх
- * пунктов (проверено: 0/3/27 против 0/3/25).
- *
- * Чего делать НЕЛЬЗЯ — брать сюда countIngest: это другая популяция (все игры
- * Steam, 138 тысяч), и доля любого тега выходит около двух процентов. На этой
- * ошибке уже был мёртв STOP_TAG_SHARE в lib/pool.ts; там её починили честным
- * счётчиком pool_size, который пишется в catalog_meta рядом с game_count (см.
- * rebuildTagStats). Здесь тот же путь не нужен: редкость терпит сдвиг на
- * константу, а стоп-слова — нет.
+/*
+ * Порог пригодности карты тегов, её знаменатель и сам вес редкости живут в
+ * lib/tagweight.ts: тот же вес нужен подбору и объяснениям, а две копии одной
+ * формулы разошлись бы молча.
  */
-function rarityScale(tagStats: Map<string, number>): number {
-  let top = 0
-  for (const count of tagStats.values()) if (count > top) top = count
-  return top >= MIN_TAG_STATS ? top : 0
-}
-
-/** Тег у половины каталога не разделяет людей — его вес около нуля. */
-function rarityOf(tag: string, tagStats: Map<string, number>, top: number): number {
-  const df = tagStats.get(tag)
-  return !df || df >= top ? 0 : Math.log(top / df)
-}
 
 function unit(v: Record<string, number>): { vec: Record<string, number>; norm: number } {
   let n = 0

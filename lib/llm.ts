@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
 import { discountEndsLabel, discountOf, formatPrice } from './discount'
 import { sharedTasteTags, type Focus } from './recommend'
+import type { TagWeight } from './tagweight'
 import { CANDIDATE_SOURCES } from './types'
 import type { CandidateSource, GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
 
@@ -450,10 +451,25 @@ const REASON_TAGS = 2
 function matchedTags(
   meta: GameMeta | undefined,
   profile: Record<string, number>,
+  tagWeight: TagWeight | null,
 ): string | null {
   if (!meta) return null
-  const tags = sharedTasteTags(profile, meta).slice(0, REASON_TAGS)
+  const tags = sharedTasteTags(profile, meta, tagWeight).slice(0, REASON_TAGS)
   return tags.length ? tags.join(', ') : null
+}
+
+/**
+ * Необязательное к heuristicPicks. Отдельным объектом, а не хвостом
+ * позиционных параметров: их и так пять, и каждый новый добавлялся бы в конец
+ * с undefined-заглушками у всех вызовов. Пустой объект — ровно прежнее
+ * поведение, на этом держатся демо-пятёрки главной (lib/landing.test.ts).
+ */
+export type HeuristicOptions = {
+  /**
+   * Вес редкости тегов (lib/tagweight.ts): причина называет характерные теги,
+   * а не те, что есть у половины каталога. Без него — прежний порядок.
+   */
+  tagWeight?: TagWeight | null
 }
 
 /**
@@ -467,7 +483,9 @@ export function heuristicPicks(
   nowSec: number = Math.floor(Date.now() / 1000),
   /** Профиль вкуса — без него причина не утверждает про вкус ничего. */
   profile: Record<string, number> = {},
+  opts: HeuristicOptions = {},
 ): Pick[] {
+  const tagWeight = opts.tagWeight ?? null
   if (!candidates.length) return []
   const sorted = [...candidates].sort((a, b) => b.score - a.score)
   const chosen: ScoredCandidate[] = []
@@ -512,7 +530,7 @@ export function heuristicPicks(
        * попадут в кандидаты. Причина объясняет игру, а не пересказывает ответ
        * человека ему же обратно.
        */
-      reason: SOURCE_TEMPLATES[c.source](c.name, matchedTags(meta, profile)) + price,
+      reason: SOURCE_TEMPLATES[c.source](c.name, matchedTags(meta, profile, tagWeight)) + price,
     }
   })
 }

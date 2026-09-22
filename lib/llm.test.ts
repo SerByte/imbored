@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { heuristicPicks, trimTldr, validateDigest, validatePicks } from './llm'
+import { tagWeightFrom } from './tagweight'
 import type { GameMeta, Mood, ScoredCandidate } from './types'
 
 const MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
@@ -289,5 +290,43 @@ describe('причина называет теги игрока, а не поп�
   test('но краевой для игры тег не обгоняет центральный на малой разнице', () => {
     const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Atmospheric: 10, Competitive: 1 })
     expect(pick.reason.indexOf('Competitive')).toBeLessThan(pick.reason.indexOf('Atmospheric'))
+  })
+})
+
+/**
+ * С картой редкости причина называет то, что человека отличает.
+ *
+ * Без неё наверх всегда выходили Indie и Action: они есть в каждой второй
+ * игре, поэтому в любом профиле весят больше всего, и фраза «по тегам (Indie,
+ * Action) это очень твоё» описывала каталог, а не игрока.
+ */
+describe('причина называет характерный тег, а не частотный', () => {
+  const factory: GameMeta = {
+    appid: 77,
+    name: 'Factory Thing',
+    tags: { Indie: 100, Action: 90, Automation: 60 },
+    genres: [],
+    categories: [2],
+  }
+  const cand: ScoredCandidate[] = [{ appid: 77, name: 'Factory Thing', source: 'untouched', score: 0.9 }]
+  const profile = { Indie: 20, Action: 15, Automation: 2 }
+  const stats = new Map<string, number>([
+    ['Singleplayer', 3025],
+    ['Indie', 2800],
+    ['Action', 2335],
+    ['Automation', 100],
+  ])
+
+  test('без карты — прежние два частотных тега', () => {
+    const [pick] = heuristicPicks(cand, () => factory, 1, NOW, profile)
+    expect(pick.reason).toContain('(Indie, Action)')
+  })
+
+  test('с картой редкий тег назван первым', () => {
+    const [pick] = heuristicPicks(cand, () => factory, 1, NOW, profile, {
+      tagWeight: tagWeightFrom(stats),
+    })
+    expect(pick.reason).toContain('(Automation')
+    expect(pick.reason).not.toContain('Indie')
   })
 })

@@ -18,8 +18,10 @@ import {
   rankByTaste,
   scoreCandidates,
   scoreOfParts,
+  sharedTasteTags,
   splitBySource,
 } from './recommend'
+import { tagWeightFrom } from './tagweight'
 import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
 
 const NOW = 1_700_000_000
@@ -244,6 +246,39 @@ describe('applyFeedbackToProfile', () => {
     expect(
       applyFeedbackToProfile(before, [fb(1, 'skipped', 'spin'), fb(2, 'skipped', 'spin')], metaOf),
     ).toEqual(before)
+  })
+})
+
+describe('sharedTasteTags и вес редкости', () => {
+  // Singleplayer у половины каталога, Automation — у сотни игр
+  const stats = new Map<string, number>([
+    ['Singleplayer', 3025],
+    ['Indie', 2800],
+    ['Action', 2335],
+    ['Automation', 100],
+  ])
+  // Профиль как у всех: частотный костяк весит больше всего
+  const profile = { Indie: 20, Action: 15, Automation: 2 }
+  const factory = meta(1, { Indie: 100, Action: 90, Automation: 60 })
+
+  test('без карты тегов порядок прежний: по сырому вкладу', () => {
+    expect(sharedTasteTags(profile, factory)).toEqual(['Indie', 'Action', 'Automation'])
+    expect(sharedTasteTags(profile, factory, null)).toEqual(['Indie', 'Action', 'Automation'])
+  })
+
+  test('с картой характерный тег выходит вперёд частотных', () => {
+    expect(sharedTasteTags(profile, factory, tagWeightFrom(stats))[0]).toBe('Automation')
+  })
+
+  test('тег, которого нет во вкусе, не появляется и с весом', () => {
+    const tags = sharedTasteTags({ Indie: 5 }, factory, tagWeightFrom(stats))
+    expect(tags).toEqual(['Indie'])
+  })
+
+  test('explainMatch передаёт вес в список общих тегов', () => {
+    const mood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+    expect(explainMatch(profile, factory, mood).sharedTags[0]).toBe('Indie')
+    expect(explainMatch(profile, factory, mood, tagWeightFrom(stats)).sharedTags[0]).toBe('Automation')
   })
 })
 

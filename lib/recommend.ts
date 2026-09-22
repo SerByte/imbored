@@ -1,5 +1,6 @@
 import { discountOf } from './discount'
 import { isJunk } from './junk'
+import { cosine, type TagWeight } from './tagweight'
 import type {
   CandidateSource,
   GameMeta,
@@ -147,19 +148,11 @@ export function timeFit(tags: Set<string>, time: Mood['time']): number {
   return best ?? 0
 }
 
-export function cosine(a: Record<string, number>, b: Record<string, number>): number {
-  let dot = 0
-  let normA = 0
-  let normB = 0
-  for (const v of Object.values(a)) normA += v * v
-  for (const v of Object.values(b)) normB += v * v
-  if (normA === 0 || normB === 0) return 0
-  for (const [k, v] of Object.entries(a)) {
-    const bv = b[k]
-    if (bv !== undefined) dot += v * bv
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
-}
+/**
+ * Косинус переехал в lib/tagweight.ts вместе с весом редкости; реэкспорт —
+ * ради compat, group и тестов, которые берут его отсюда.
+ */
+export { cosine }
 
 /** Тег-вектор игры, нормированный к максимуму голосов (0..1) */
 export function normalizedTags(meta: GameMeta): Record<string, number> {
@@ -388,13 +381,30 @@ const SHARED_TAGS = 3
  * завести второй источник правды ровно для того, что на обоих экранах
  * подсвечивается одинаково.
  */
-export function sharedTasteTags(profile: Record<string, number>, meta: GameMeta): string[] {
+export function sharedTasteTags(
+  profile: Record<string, number>,
+  meta: GameMeta,
+  /**
+   * Вес редкости (lib/tagweight.ts). Без него порядок прежний — по сырому
+   * вкладу, и тогда наверх почти всегда выходят Indie и Action: они есть в
+   * каждой второй игре, поэтому в профиле весят больше всего. С весом вклад
+   * считается так же, как во взвешенном косинусе, — (профиль·вес)·(игра·вес),
+   * и называется то, что человека отличает: «Automation», а не «Indie».
+   */
+  tagWeight: TagWeight | null = null,
+): string[] {
   const norm = normalizedTags(meta)
   return Object.entries(norm)
     .filter(([tag]) => (profile[tag] ?? 0) > 0)
-    .sort((a, b) => (profile[b[0]] ?? 0) * b[1] - (profile[a[0]] ?? 0) * a[1])
+    .map(([tag, v]) => {
+      const raw = (profile[tag] ?? 0) * v
+      return { tag, raw, weighted: tagWeight ? raw * tagWeight(tag) ** 2 : raw }
+    })
+    // Равный взвешенный вклад (например, у двух тегов, которых нет в карте
+    // редкости) решает сырой: иначе порядок зависел бы от порядка ключей
+    .sort((a, b) => b.weighted - a.weighted || b.raw - a.raw)
     .slice(0, SHARED_TAGS)
-    .map(([tag]) => tag)
+    .map((x) => x.tag)
 }
 
 /** Прозрачность выдачи: из чего сложился скоринг этой игры */
@@ -402,12 +412,13 @@ export function explainMatch(
   profile: Record<string, number>,
   meta: GameMeta,
   mood: Mood,
+  tagWeight: TagWeight | null = null,
 ): MatchExplanation {
   const profileEmpty = Object.keys(profile).length === 0
   const norm = normalizedTags(meta)
   const matchPercent = profileEmpty ? null : Math.round(cosine(profile, norm) * 100)
 
-  const sharedTags = sharedTasteTags(profile, meta)
+  const sharedTags = sharedTasteTags(profile, meta, tagWeight)
 
   const moodWanted = new Set([...VIBE_TAGS[mood.vibe], ...TIME_TAGS[mood.time]])
   const moodTags = Object.keys(meta.tags)
