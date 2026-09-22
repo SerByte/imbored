@@ -22,7 +22,7 @@ import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
-import type { Focus, Scope } from '@/lib/recommend'
+import type { Focus, OwnAnchor, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import { bounceTo } from '@/lib/destination'
@@ -59,6 +59,8 @@ type Pick = {
   isFree: boolean | null
   discount: Discount | null
   signals: Signals
+  /** Своя игра, на которую эта похожа сильнее всего (buildAnchorFinder) */
+  via: OwnAnchor | null
 }
 
 /** Ссылка на игру в магазине: у не-Steam игр она своя, у Steam собирается */
@@ -648,6 +650,13 @@ function Player() {
    * выбранный вайб. Ни того, ни другого ни фраза, ни чипсы не говорят.
    */
   const whyParts: string[] = []
+  // Якорь — только если причина сама его не назвала: шаблон эвристики говорит
+  // о нём словами, а Claude может выбрать другой довод. Дважды одно и то же
+  // на одном экране — заполнитель, а не объяснение.
+  if (pick.via && !pick.reason.includes(pick.via.name)) {
+    const h = pick.via.hours
+    whyParts.push(`ближе всего к «${pick.via.name}» (${h} ${plural(h, 'час', 'часа', 'часов')})`)
+  }
   if (pick.signals) {
     if (pick.signals.matchPercent !== null)
       whyParts.push(`совпадение со вкусом ${pick.signals.matchPercent}%`)

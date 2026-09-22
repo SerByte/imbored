@@ -16,6 +16,7 @@ import { heuristicPicks } from '@/lib/llm'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import {
   applyFeedbackToProfile,
+  buildAnchorFinder,
   buildTagProfile,
   sharedTasteTags,
   scoreCandidates,
@@ -136,10 +137,22 @@ export async function GET() {
   const priced = refreshed ? await getGamesMeta(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
-  const reason = heuristicPicks([pick], metaNow, 1, now, profile, { tagWeight })[0]?.reason ?? ''
+  const lib = games.find((g) => g.appid === pick.appid)
+
+  // Тот же контекст причины, что в основной выдаче: своя игра, на которую эта
+  // похожа, вместо тегов, и свои часы у заброшенной. Баны якорем не бывают.
+  const findAnchor = buildAnchorFinder(games, (id) => libMetas.get(id), tagWeight, banned)
+  const reason =
+    heuristicPicks([pick], metaNow, 1, now, profile, {
+      tagWeight,
+      anchorOf: (appid) => {
+        const m = metaNow(appid)
+        return m ? findAnchor(m) : null
+      },
+      hoursOf: (appid) => (lib && appid === lib.appid ? Math.round(lib.playtimeForever / 60) : null),
+    })[0]?.reason ?? ''
 
   const meta = metaNow(pick.appid)
-  const lib = games.find((g) => g.appid === pick.appid)
   const topTags = Object.entries(meta?.tags ?? {})
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)

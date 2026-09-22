@@ -18,6 +18,7 @@ import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
   applyFeedbackToProfile,
   applyFocus,
+  buildAnchorFinder,
   buildTagProfile,
   explainMatch,
   mixHeroPool,
@@ -215,6 +216,21 @@ export async function POST(req: Request) {
   const priced = refreshed ? await getGamesMeta(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
+  // «Ближе всего к X, где у тебя N ч»: своя игра вместо тегов — и в причине
+  // шаблона, и в строке промпта, и в поле via карточки. Одна и та же для всех
+  // трёх, поэтому считается один раз и из одного места. Баны якорем не бывают:
+  // ссылаться на игру, которую человек попросил не показывать, — издёвка.
+  const findAnchor = buildAnchorFinder(games, (id) => libMetas.get(id), tagWeight, banned)
+  const anchorOf = (appid: number) => {
+    const meta = metaNow(appid)
+    return meta ? findAnchor(meta) : null
+  }
+  const libByAppid = new Map(games.map((g) => [g.appid, g]))
+  const hoursOf = (appid: number) => {
+    const lib = libByAppid.get(appid)
+    return lib ? Math.round(lib.playtimeForever / 60) : null
+  }
+
   // Демо-личность получает настоящую подборку, но считанное число раз в сутки —
   // дальше та же выдача собирается эвристикой. Проверка идёт последней, уже
   // после того как пул собран: она должна тратить квоту только тогда, когда
@@ -240,12 +256,15 @@ export async function POST(req: Request) {
           mood,
           focus,
           nowSec: now,
+          anchorOf,
         })
       : null
   const picks =
     fromClaude ??
     heuristicPicks(heroPool.length ? heroPool : actual, metaNow, PICK_COUNT, now, profile, {
       tagWeight,
+      anchorOf,
+      hoursOf,
     })
 
   // В режиме «разгрести своё» список покупок — прямое противоречие запросу.
@@ -260,13 +279,11 @@ export async function POST(req: Request) {
         DISCOVERY_CARDS,
         now,
         profile,
-        { tagWeight },
+        { tagWeight, anchorOf },
       )
 
-  const libByAppid = new Map(games.map((g) => [g.appid, g]))
   const enrich = (p: Pick) => {
     const meta = metaNow(p.appid)
-    const lib = libByAppid.get(p.appid)
     const topTags = Object.entries(meta?.tags ?? {})
       .sort((a, b) => b[1] - a[1])
       .slice(0, 4)
@@ -278,7 +295,7 @@ export async function POST(req: Request) {
       ccu: meta?.ccu ?? null,
       shortDescription: meta?.shortDescription ?? null,
       tags: topTags,
-      hoursPlayed: lib ? Math.round(lib.playtimeForever / 60) : null,
+      hoursPlayed: hoursOf(p.appid),
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,
       priceFinal: meta?.priceFinal ?? null,
@@ -289,6 +306,9 @@ export async function POST(req: Request) {
       // свой часовой пояс, и «до 17 августа» разъехалось бы при гидратации.
       discount: meta && p.source === 'new' ? discountView(meta, now) : null,
       signals: meta ? explainMatch(profile, meta, mood, tagWeight) : null,
+      // Своя игра, на которую эта похожа. Причина от Claude может её не
+      // назвать — тогда /play добавляет строку сам, в «Почему она?»
+      via: anchorOf(p.appid),
     }
   }
 

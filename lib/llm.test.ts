@@ -330,3 +330,59 @@ describe('причина называет характерный тег, а не
     expect(pick.reason).not.toContain('Indie')
   })
 })
+
+/**
+ * Своя игра вместо тегов. «Ближе всего к Factorio, где у тебя 300 ч» человек
+ * узнаёт сразу; «по тегам (Automation)» ему пришлось бы переводить в свой опыт.
+ */
+describe('причина называет свою игру-якорь', () => {
+  const factorio = { appid: 1, name: 'Factorio', hours: 300 }
+  const anchorOf = () => factorio
+  const profile = { Puzzle: 1 }
+  const one = (source: ScoredCandidate['source']): ScoredCandidate[] => [
+    { appid: 7, name: 'Shapez', source, score: 0.9 },
+  ]
+  const OWN_AND_NEW = ['untouched', 'backlog', 'new'] as const
+
+  test('нетронутая, бэклог и покупка говорят о якоре вместо тегов', () => {
+    for (const source of OWN_AND_NEW) {
+      const [pick] = heuristicPicks(one(source), metaOf, 1, NOW, profile, { anchorOf })
+      expect(pick.reason, source).toContain('ближе всего она к «Factorio», где у тебя 300 ч')
+      expect(pick.reason, source).not.toContain('Puzzle')
+      expect(pick.reason, source).toContain('Shapez')
+    }
+  })
+
+  test('без якоря — прежние шаблоны с тегами', () => {
+    for (const source of OWN_AND_NEW) {
+      const plain = heuristicPicks(one(source), metaOf, 1, NOW, profile)[0].reason
+      const nullAnchor = heuristicPicks(one(source), metaOf, 1, NOW, profile, {
+        anchorOf: () => null,
+      })[0].reason
+      expect(nullAnchor, source).toBe(plain)
+      expect(plain, source).toContain('Puzzle')
+      expect(plain, source).not.toContain('ближе всего')
+    }
+  })
+
+  test('у покупки «нет в библиотеке» по-прежнему сказано один раз', () => {
+    const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
+    const [pick] = heuristicPicks(one('new'), priced, 1, NOW, profile, { anchorOf })
+    expect(pick.reason.match(/библиотек/g) ?? []).toHaveLength(1)
+    expect(pick.reason).toContain('$14.99')
+  })
+
+  test('заброшенная называет свои часы, а не якорь', () => {
+    const [pick] = heuristicPicks(one('comeback'), metaOf, 1, NOW, profile, {
+      anchorOf,
+      hoursOf: () => 42,
+    })
+    expect(pick.reason).toContain('вложил 42 ч в «Shapez»')
+    expect(pick.reason).not.toContain('Factorio')
+  })
+
+  test('без часов заброшенная говорит как раньше', () => {
+    const [pick] = heuristicPicks(one('comeback'), metaOf, 1, NOW, profile)
+    expect(pick.reason).toContain('вложил часы в «Shapez»')
+  })
+})

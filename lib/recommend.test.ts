@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { FeedbackRow } from './db'
 import {
+  ANCHOR_MIN_SIM,
   applyFeedbackToProfile,
   applyFocus,
+  buildAnchorFinder,
   buildTagProfile,
   classifyLibraryGame,
   cosine,
@@ -861,6 +863,111 @@ describe('scoreCandidates', () => {
     })
     expect(result).toHaveLength(25)
     expect(result.every((c) => c.source === 'untouched')).toBe(true)
+  })
+})
+
+describe('buildAnchorFinder', () => {
+  const HOUR = 60
+  // Медиана сыгранного: 90, 150, 6000, 18000 минут → (150 + 6000) / 2 = 3075
+  const lib = [
+    game({ appid: 1, name: 'Factorio', playtimeForever: 300 * HOUR }),
+    game({ appid: 2, name: 'Stardew Valley', playtimeForever: 100 * HOUR }),
+    game({ appid: 3, name: 'Short Fling', playtimeForever: 90 }),
+    game({ appid: 4, name: 'Tiny Racer', playtimeForever: 150 }),
+    game({ appid: 5, name: 'Sealed', playtimeForever: 0 }),
+  ]
+  const metas = new Map<number, GameMeta>([
+    [1, meta(1, { Automation: 100, Building: 60 })],
+    [2, meta(2, { 'Farming Sim': 100, Relaxing: 60 })],
+    [3, meta(3, { Horror: 100 })],
+    [4, meta(4, { Racing: 100 })],
+    [5, meta(5, { Puzzle: 100 })],
+  ])
+  const metaOf = (id: number) => metas.get(id)
+  const cand = (appid: number, name: string, tags: Record<string, number>): GameMeta => ({
+    ...meta(appid, tags),
+    name,
+  })
+
+  test('находит свою игру с часами, на которую кандидат похож сильнее всего', () => {
+    const find = buildAnchorFinder(lib, metaOf, null)
+    expect(find(cand(100, 'Shapez', { Automation: 100, Puzzle: 30 }))).toEqual({
+      appid: 1,
+      name: 'Factorio',
+      hours: 300,
+    })
+    expect(find(cand(101, 'Farm Life', { 'Farming Sim': 100, Relaxing: 80 }))?.name).toBe(
+      'Stardew Valley',
+    )
+  })
+
+  test('ниже порога сходства — null, а не натяжка', () => {
+    // С Factorio совпадает один тег из четырёх: косинус ≈ 0.43
+    const loose = cand(102, 'Loose', { Automation: 100, Horror: 100, Puzzle: 100, Sports: 100 })
+    const find = buildAnchorFinder(lib, metaOf, null)
+    expect(cosine(normalizedTags(metas.get(1)!), normalizedTags(loose))).toBeLessThan(ANCHOR_MIN_SIM)
+    expect(find(loose)).toBeNull()
+    expect(find(cand(103, 'Nothing', { Sports: 100 }))).toBeNull()
+  })
+
+  test('игра ниже медианы библиотеки якорем не бывает, даже при полном совпадении', () => {
+    // Tiny Racer — 150 минут: больше двух часов, но ниже медианы 3075
+    const find = buildAnchorFinder(lib, metaOf, null)
+    expect(find(cand(104, 'Kart', { Racing: 100 }))).toBeNull()
+  })
+
+  test('меньше двух часов не якорь, даже если это вся библиотека', () => {
+    const small = [game({ appid: 3, playtimeForever: 90 }), game({ appid: 4, playtimeForever: 100 })]
+    const find = buildAnchorFinder(small, metaOf, null)
+    expect(find(cand(105, 'Scary', { Horror: 100 }))).toBeNull()
+  })
+
+  test('ни сама игра, ни её издание себе не якорь', () => {
+    const find = buildAnchorFinder(lib, metaOf, null)
+    // Заброшенная Factorio — кандидат «вернуться», а не «похожа на себя»
+    expect(find({ ...metas.get(1)!, name: 'Factorio' })).toBeNull()
+    expect(find(cand(106, 'Factorio Deluxe Edition', { Automation: 100, Building: 60 }))).toBeNull()
+  })
+
+  test('бан и мусор якорем не бывают', () => {
+    const shapez = cand(107, 'Shapez', { Automation: 100 })
+    expect(buildAnchorFinder(lib, metaOf, null)(shapez)?.name).toBe('Factorio')
+    expect(buildAnchorFinder(lib, metaOf, null, new Set([1]))(shapez)).toBeNull()
+
+    const withOst = [
+      game({ appid: 9, name: 'Factorio — Original Soundtrack', playtimeForever: 900 * HOUR }),
+      ...lib.filter((g) => g.appid !== 1),
+    ]
+    const ostMetas = new Map(metas)
+    ostMetas.set(9, meta(9, { Automation: 100 }))
+    expect(buildAnchorFinder(withOst, (id) => ostMetas.get(id), null)(shapez)).toBeNull()
+  })
+
+  test('с весом редкости якорь выбирается по характерному тегу, а не по костяку', () => {
+    const stats = new Map<string, number>([
+      ['Indie', 4000],
+      ['Action', 2335],
+      ['Farming Sim', 150],
+      ['Automation', 100],
+    ])
+    const both = [
+      // Часы равные: оба выше медианы, спорит только сходство
+      game({ appid: 20, name: 'Brawler', playtimeForever: 300 * HOUR }),
+      game({ appid: 21, name: 'Factorio', playtimeForever: 300 * HOUR }),
+    ]
+    const bothMetas = new Map([
+      [20, meta(20, { Indie: 100, Action: 100 })],
+      [21, meta(21, { Automation: 100, Indie: 50 })],
+    ])
+    const factoryish = cand(108, 'Factory Brawl', { Indie: 100, Action: 80, Automation: 60 })
+    const find = (w: ReturnType<typeof tagWeightFrom>) =>
+      buildAnchorFinder(both, (id) => bothMetas.get(id), w)(factoryish)?.name
+    expect(find(null)).toBe('Brawler')
+    expect(find(tagWeightFrom(stats))).toBe('Factorio')
+  })
+
+  test('пустая библиотека — null без падений', () => {
+    expect(buildAnchorFinder([], () => undefined, null)(cand(1, 'X', { A: 1 }))).toBeNull()
   })
 })
 

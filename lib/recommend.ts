@@ -1,4 +1,5 @@
 import { discountOf } from './discount'
+import { editionKey } from './editions'
 import { isJunk } from './junk'
 import { cosine, weightedCosine, weightedCosineTo, type TagWeight } from './tagweight'
 import type {
@@ -506,6 +507,101 @@ export function rankByTaste(
     })
     .sort((a, b) => b.score - a.score)
     .map((x) => x.g)
+}
+
+/**
+ * Своя игра, на которую кандидат похож сильнее всего: «ближе всего к «X», где
+ * у тебя N ч».
+ *
+ * Теги — это язык каталога, а человек помнит игры. «По тегам (Automation) это
+ * твоё» он должен перевести в опыт сам; «ближе всего к Factorio, где у тебя
+ * 300 ч» — уже его опыт. Путь Claude частично делал это словами, но кого
+ * модель назовёт, было неизвестно, а у эвристики не было и этого.
+ */
+export type OwnAnchor = { appid: number; name: string; hours: number }
+
+/**
+ * Не ниже этого сходства. Замерено на демо-библиотеке (22 игры, карты тегов
+ * нет — сырой косинус): при 0.5 якорь находится у 5 из 23 кандидатов, и все
+ * пары осмысленные — Satisfactory → Factorio, Balatro → Slay the Spire,
+ * Sekiro → Elden Ring. Сразу под порогом начинается натяжка: Lethal Company →
+ * Portal 2 (0.43), Baldur's Gate 3 → Portal 2 (0.35). Лучше промолчать, чем
+ * назвать чужую игру «твоей».
+ */
+export const ANCHOR_MIN_SIM = 0.5
+
+function medianOf(sorted: number[]): number {
+  if (!sorted.length) return 0
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+/**
+ * Строит поиск якоря один раз на запрос: вектора своих игр взвешиваются здесь,
+ * а спрашивают потом для пяти карточек, полки находок и строк промпта.
+ *
+ * Якорем может быть только игра, в которую человек действительно играл:
+ *   — не меньше двух часов (меньше — это проба, см. isUnplayed);
+ *   — не ниже медианы по сыгранным играм его же библиотеки: у того, кто
+ *     наигрывает по сотне часов, игра на три часа — брошенная, а не любимая;
+ *   — не бан и не мусор (саундтрек с часами «ближе всего» ни к чему);
+ *   — не сам кандидат и не его издание (editionKey): «ближе всего к Skyrim» у
+ *     Skyrim Special Edition — тавтология, а не объяснение.
+ *
+ * Сходство — взвешенный косинус (lib/tagweight.ts). Без веса редкости якорем
+ * становилась бы «любая инди»: частотный костяк похож у всех. Карты тегов нет —
+ * работает сырой косинус с тем же порогом.
+ */
+export function buildAnchorFinder(
+  library: LibraryGame[],
+  metaOf: (appid: number) => GameMeta | undefined,
+  tagWeight: TagWeight | null,
+  exclude?: ReadonlySet<number>,
+): (meta: GameMeta) => OwnAnchor | null {
+  const median = medianOf(
+    library
+      .map((g) => g.playtimeForever)
+      .filter((m) => m > 0)
+      .sort((a, b) => a - b),
+  )
+
+  const anchors: Array<OwnAnchor & { key: string; simTo: (v: Record<string, number>) => number }> = []
+  for (const g of library) {
+    if (g.playtimeForever < UNPLAYED_MAX_MIN || g.playtimeForever < median) continue
+    if (exclude?.has(g.appid)) continue
+    const meta = metaOf(g.appid)
+    if (!meta || isJunk(g, meta)) continue
+    anchors.push({
+      appid: g.appid,
+      name: g.name,
+      hours: Math.round(g.playtimeForever / 60),
+      key: editionKey(g.name),
+      simTo: weightedCosineTo(normalizedTags(meta), tagWeight),
+    })
+  }
+
+  // Одну и ту же игру спрашивают дважды: для строки промпта и для карточки
+  const memo = new Map<number, OwnAnchor | null>()
+  return (meta) => {
+    const cached = memo.get(meta.appid)
+    if (cached !== undefined) return cached
+    const key = editionKey(meta.name)
+    const norm = normalizedTags(meta)
+    let best: OwnAnchor | null = null
+    let bestSim = 0
+    for (const a of anchors) {
+      if (a.appid === meta.appid || (key && a.key === key)) continue
+      const sim = a.simTo(norm)
+      if (sim < ANCHOR_MIN_SIM) continue
+      // При равном сходстве — та, где больше часов: её человек помнит лучше
+      if (!best || sim > bestSim || (sim === bestSim && a.hours > best.hours)) {
+        best = { appid: a.appid, name: a.name, hours: a.hours }
+        bestSim = sim
+      }
+    }
+    memo.set(meta.appid, best)
+    return best
+  }
 }
 
 function moodMultiplier(meta: GameMeta, mood: Mood): number {
