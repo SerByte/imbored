@@ -17,6 +17,7 @@ import {
   isReplayable,
   isUnplayed,
   isUntouched,
+  leanMultiplier,
   libraryTileState,
   MAX_NEW_PICKS,
   mixHeroPool,
@@ -32,6 +33,7 @@ import {
   type Cooldown,
 } from './recommend'
 import { DEMO_METAS, demoLibrary } from './demo'
+import { LEANS, type Lean } from './mood'
 import { tagWeightFrom } from './tagweight'
 import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
 
@@ -1532,5 +1534,110 @@ describe('знакомое любимое (familiar)', () => {
     test('источника нет — список тот же', () => {
       expect(capSource(list, 'comeback', 1)).toEqual(list)
     })
+  })
+})
+
+/**
+ * Ось состояния рядом с настроением. Главное утверждение — что без неё не
+ * меняется ничего: демо-пятёрки главной и «Игра дня» собираются без lean.
+ */
+describe('ось состояния (lean)', () => {
+  const baseMood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+  // Одинаковый вкус у всех: различает только наклон источника и ось
+  const lib = [
+    game({ appid: 1, playtimeForever: 0 }), // untouched
+    game({ appid: 2, playtimeForever: 30 }), // backlog
+    game({ appid: 3, playtimeForever: 900, lastPlayed: NOW - 300 * DAY }), // comeback
+    game({ appid: 4, playtimeForever: 900, lastPlayed: NOW - 90 * DAY }), // familiar (песочница)
+    game({ appid: 5, playtimeForever: 900, playtime2Weeks: 60, lastPlayed: NOW - DAY }), // active
+    game({ appid: 6, playtimeForever: 900, lastPlayed: NOW - 10 * DAY }), // played, сюжетная
+  ]
+  const metas = new Map<number, GameMeta>([
+    [1, meta(1, { Sandbox: 100 })],
+    [2, meta(2, { Sandbox: 100 })],
+    [3, meta(3, { Sandbox: 100 })],
+    [4, meta(4, { Sandbox: 100 })],
+    [5, meta(5, { Sandbox: 100 })],
+    [6, meta(6, { Sandbox: 100, 'Story Rich': 1 })],
+  ])
+  const run = (lean?: Lean | null, allowFamiliar = true) =>
+    scoreCandidates({
+      profile: { Sandbox: 1 },
+      library: lib,
+      metaOf: (id) => metas.get(id),
+      newPool: [meta(100, { Sandbox: 100 })],
+      mood: baseMood,
+      nowSec: NOW,
+      allowFamiliar,
+      ...(lean !== undefined ? { lean } : {}),
+    })
+  const partsOf = (list: ScoredCandidate[]) => new Map(list.map((c) => [c.appid, c.parts!]))
+  const sourceOf = (list: ScoredCandidate[]) => new Map(list.map((c) => [c.appid, c.source]))
+
+  test('без оси скоры ровно прежние, до бита', () => {
+    expect(run(null)).toEqual(run())
+    expect(run().every((c) => c.parts!.lean === 1)).toBe(true)
+  })
+
+  test('«знакомое»: своё знакомое и заброшенное вперёд, нетронутое и покупки назад', () => {
+    const lean = new Map([...partsOf(run('familiar'))].map(([id, p]) => [id, p.lean]))
+    expect(lean.get(4)).toBe(1.4) // familiar
+    expect(lean.get(3)).toBe(1.3) // comeback
+    expect(lean.get(1)).toBe(0.8) // untouched
+    expect(lean.get(100)).toBe(0.7) // new
+    expect(lean.get(2)).toBe(1) // backlog не трогается
+  })
+
+  test('«знакомое» разворачивает ничью нетронутого с заброшенным', () => {
+    const order = (list: ScoredCandidate[]) => list.map((c) => c.appid).filter((id) => id === 1 || id === 3)
+    expect(order(run())).toEqual([1, 3]) // наклон нетронутого 1.25
+    expect(order(run('familiar'))).toEqual([3, 1])
+  })
+
+  test('«знакомое» снимает шлюзы: играемое сейчас и сюжетное — тоже знакомые, с полом веса', () => {
+    const plain = sourceOf(run())
+    expect(plain.has(5)).toBe(false)
+    expect(plain.has(6)).toBe(false)
+    const asked = run('familiar')
+    const src = sourceOf(asked)
+    expect(src.get(5)).toBe('familiar')
+    expect(src.get(6)).toBe('familiar')
+    // Пауза в день — насыщение держит пол 0.5, а не ноль
+    expect(partsOf(asked).get(5)!.source).toBeCloseTo(0.9 * 0.5)
+  })
+
+  test('меньше десяти часов знакомым не становится и по просьбе', () => {
+    const short = game({ appid: 7, playtimeForever: 500, playtime2Weeks: 30, lastPlayed: NOW - DAY })
+    expect(familiarWeight(short, meta(7, { Sandbox: 100 }), 'active', NOW, { relaxed: true })).toBeNull()
+  })
+
+  test('без allowFamiliar просьба о знакомом источник не включает', () => {
+    expect(run('familiar', false).some((c) => c.source === 'familiar')).toBe(false)
+  })
+
+  test('«новое»: нетронутое, покупки и бэклог вперёд, заброшенное назад, знакомого нет', () => {
+    const fresh = run('fresh')
+    const lean = new Map([...partsOf(fresh)].map(([id, p]) => [id, p.lean]))
+    expect(lean.get(1)).toBe(1.2)
+    expect(lean.get(100)).toBe(1.2)
+    expect(lean.get(2)).toBe(1.1)
+    expect(lean.get(3)).toBe(0.8)
+    expect(fresh.some((c) => c.source === 'familiar')).toBe(false)
+  })
+
+  test('«сил мало»: хардкор ×0.7, остальное и источники как были', () => {
+    const hard = meta(8, { Sandbox: 100, 'Souls-like': 50 })
+    const easy = meta(9, { Sandbox: 100, Cozy: 50 })
+    expect(leanMultiplier(hard, 'untouched', 'lowenergy')).toBeCloseTo(0.7)
+    expect(leanMultiplier(easy, 'untouched', 'lowenergy')).toBe(1)
+    expect(leanMultiplier(easy, 'new', 'lowenergy')).toBe(1)
+    // Та же игра без оси — единица
+    expect(leanMultiplier(hard, 'untouched', null)).toBe(1)
+  })
+
+  test('часть lean входит в произведение', () => {
+    for (const lean of LEANS) {
+      for (const c of run(lean)) expect(scoreOfParts(c.parts!), `${lean} ${c.appid}`).toBe(c.score)
+    }
   })
 })

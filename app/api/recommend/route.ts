@@ -12,7 +12,7 @@ import {
 import { discountView } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
 import { claudePicks, heuristicPicks, type Pick } from '@/lib/llm'
-import { parseMood } from '@/lib/mood'
+import { parseLean, parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
@@ -41,6 +41,14 @@ const DISCOVERY_CARDS = 6
 
 /** Кандидатов на ранжирование. Из них Claude выбирает пятёрку. */
 const CANDIDATE_LIMIT = 30
+
+/**
+ * Сколько знакомого пускать в пятёрку. Одно — по умолчанию: иначе у человека
+ * с сотней наигранных песочниц выдача стала бы «играй в то, что всегда». Три —
+ * когда он сам попросил знакомого: это его запрос, но и тогда не вся пятёрка.
+ */
+const FAMILIAR_CAP = 1
+const FAMILIAR_CAP_ASKED = 3
 
 /**
  * Пул каталога, добираемый вне тегов профиля. Тридцать штук на четыре сотни —
@@ -88,6 +96,7 @@ export async function POST(req: Request) {
     mood?: unknown
     focus?: unknown
     scope?: unknown
+    lean?: unknown
   }
   const mood = parseMood(body.mood)
   if (!mood) return NextResponse.json({ error: 'badmood' }, { status: 400 })
@@ -95,6 +104,9 @@ export async function POST(req: Request) {
   // «Разгрести своё» и «покажи что угодно» — противоположные запросы:
   // при явном фокусе каталог в главную выдачу не пускаем вовсе
   const scope = focus ? 'library' : parseScope(body.scope)
+  // Неверное значение не ошибка, а «ось не выбрана»: у каждого кода ошибки
+  // здесь должен быть свой экран на /play, а опечатка в адресе его не стоит
+  const lean = parseLean(body.lean)
 
   const db = await getDb()
   const now = nowSec()
@@ -178,6 +190,7 @@ export async function POST(req: Request) {
     cooldown,
     // Знакомое любимое — только здесь: «Игре дня» и демо главной оно не нужно
     allowFamiliar: true,
+    lean,
   })
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
@@ -209,10 +222,11 @@ export async function POST(req: Request) {
   // главной выдаче: «во что поиграть» — это вопрос про игры, а не про чеки.
   // Потолок держит mixHeroPool, чтобы ответ не превратился в витрину.
   const { own, discovery } = splitBySource(actual)
-  // Знакомого в пятёрке не больше одного — и потолок ставится ДО смешивания с
-  // каталогом: mixHeroPool считает, сколько мест отдать покупкам, по числу
-  // своих, и срезанное после него знакомое оставило бы выдачу короче пяти
-  const focused = capSource(applyFocus(own, focus), 'familiar', 1)
+  // Потолок знакомого ставится ДО смешивания с каталогом: mixHeroPool считает,
+  // сколько мест отдать покупкам, по числу своих, и срезанное после него
+  // знакомое оставило бы выдачу короче пяти
+  const familiarCap = lean === 'familiar' ? FAMILIAR_CAP_ASKED : FAMILIAR_CAP
+  const focused = capSource(applyFocus(own, focus), 'familiar', familiarCap)
   const heroPool = scope === 'all' ? mixHeroPool(focused, discovery) : focused
 
   // Цены обновляются ДО подбора, а не перед самой отдачей.
@@ -269,6 +283,7 @@ export async function POST(req: Request) {
           focus,
           nowSec: now,
           anchorOf,
+          lean,
         })
       : null
   const picks =
@@ -277,9 +292,9 @@ export async function POST(req: Request) {
       tagWeight,
       anchorOf,
       hoursOf,
-      // «Расслабиться» — ровно тот случай, когда знакомое заслуживает места
-      // и без лучшего скора; в остальных оно проходит только по скору
-      guaranteed: mood.vibe === 'chill' ? CANDIDATE_SOURCES : undefined,
+      // «Расслабиться» и прямая просьба о знакомом — те случаи, когда оно
+      // заслуживает места и без лучшего скора; в остальных — только по скору
+      guaranteed: mood.vibe === 'chill' || lean === 'familiar' ? CANDIDATE_SOURCES : undefined,
     })
 
   // В режиме «разгрести своё» список покупок — прямое противоречие запросу.
@@ -344,5 +359,8 @@ export async function POST(req: Request) {
     engine: fromClaude ? 'claude' : 'heuristic',
     candidateCount: candidates.length,
     scope,
+    // Эхо оси: под какое состояние собрана выдача. null — без оси, в том
+    // числе когда в адресе была опечатка: её мы молча не применили
+    lean,
   })
 }

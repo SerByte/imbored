@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
 import { discountEndsLabel, discountOf, formatPrice } from './discount'
+import type { Lean } from './mood'
 import { sharedTasteTags, type Focus, type OwnAnchor } from './recommend'
 import type { TagWeight } from './tagweight'
 import { CANDIDATE_SOURCES } from './types'
@@ -47,6 +48,13 @@ const MOOD_RU: Record<string, string> = {
   engaged: 'хочет включить голову и попотеть',
   solo: 'играет один',
   friends: 'хочет играть с друзьями',
+}
+
+/** Ось состояния (lib/mood.ts) — продолжение той же строки «его состояние сейчас» */
+const LEAN_RU: Record<Lean, string> = {
+  familiar: 'хочет знакомого — туда, где не надо ничего осваивать',
+  fresh: 'хочет нового — того, во что ещё не играл',
+  lowenergy: 'сил мало — без хардкора и сложного',
 }
 
 const PICKS_SCHEMA = {
@@ -108,9 +116,12 @@ export async function claudePicks(args: {
    * связывала кандидата с топом по часам сама — и кого назовёт, было неизвестно.
    */
   anchorOf?: (appid: number) => OwnAnchor | null
+  /** Ось состояния: без неё строка состояния та же, что была */
+  lean?: Lean | null
 }): Promise<Pick[] | null> {
   if (!llmAvailable() || !args.candidates.length) return null
   const { candidates, metaOf, library, mood, focus, anchorOf } = args
+  const lean = args.lean ?? null
   const now = args.nowSec ?? Math.floor(Date.now() / 1000)
 
   // названия и теги — недоверенные данные (издатель/голосующие), режем длину
@@ -141,8 +152,17 @@ export async function claudePicks(args: {
   const categories = hasFamiliar
     ? 'ни разу не запускал / открыл и закрыл / заброшена / любимая / новая'
     : 'ни разу не запускал / открыл и закрыл / заброшена / новая'
+  // Попросил знакомого сам — потолок в одну игру спорил бы с его же просьбой;
+  // сколько их всего, держит пул (не больше трёх)
+  const familiarLimit =
+    lean === 'familiar'
+      ? ' Он сам просит знакомого: «любимых» можно взять несколько.'
+      : ' «Любимую» бери не больше одной: это ответ на «нет сил разбираться в новом», а не вся выдача.'
+  const familiarRule = hasFamiliar
+    ? `${familiarLimit} В reason к «любимой» скажи, что управление он знает и осваивать ничего не придётся.`
+    : ''
 
-  const prompt = `Игрок открыл Steam и не знает, во что поиграть. Его состояние сейчас: ${MOOD_RU[mood.time]}, ${MOOD_RU[mood.vibe]}, ${MOOD_RU[mood.social]}.
+  const prompt = `Игрок открыл Steam и не знает, во что поиграть. Его состояние сейчас: ${MOOD_RU[mood.time]}, ${MOOD_RU[mood.vibe]}, ${MOOD_RU[mood.social]}${lean ? `, ${LEAN_RU[lean]}` : ''}.
 
 Во что он играет больше всего:
 ${topPlayed.join('\n') || '(библиотека пуста)'}
@@ -157,11 +177,7 @@ ${candidateLines.join('\n')}
   } ${
     focus === 'untouched'
       ? 'Все кандидаты — игры, которые он ни разу не запускал: это и есть его запрос. Не советуй ничего покупать и не жалей его за бэклог — просто выбери, с чего начать сегодня.'
-      : `Разнообразь выбор: если есть достойные варианты из разных категорий (${categories}) — смешай их.${
-          hasFamiliar
-            ? ' «Любимую» бери не больше одной: это ответ на «нет сил разбираться в новом», а не вся выдача. В reason скажи, что управление он знает и осваивать ничего не придётся.'
-            : ''
-        }`
+      : `Разнообразь выбор: если есть достойные варианты из разных категорий (${categories}) — смешай их.${familiarRule}`
   }${
     hasNew && focus !== 'untouched'
       ? '\n\nЧасть кандидатов помечена «новая, не куплена» — их у него НЕТ, за них придётся заплатить. Такие бери, только если игра действительно лучше подходит, чем то, что уже куплено, и в reason говори об этом прямо: что это покупка, сколько стоит, и если есть скидка — что сейчас дешевле обычного. Не притворяйся, будто он может запустить её прямо сейчас, и не советуй покупку тому, у кого и так есть подходящее.'

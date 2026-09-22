@@ -1,6 +1,7 @@
 import { discountOf } from './discount'
 import { editionKey } from './editions'
 import { isJunk } from './junk'
+import type { Lean } from './mood'
 import { cosine, weightedCosine, weightedCosineTo, type TagWeight } from './tagweight'
 import type {
   CandidateSource,
@@ -617,10 +618,17 @@ export function libraryTileState(g: LibraryGame, nowSec: number): LibraryTileSta
  *     без нас помнит, совет «поиграй в него» ничего не добавляет;
  *   — насыщение: вес растёт с паузой и доходит до единицы за два месяца.
  *     Через полгода игра уже 'comeback' — там свой разговор.
+ *
+ * relaxed — когда человек сам попросил знакомого (lean 'familiar'). Тогда
+ * шлюзы жанра и паузы снимаются, и в знакомое пускается даже то, во что он
+ * играет сейчас: «хочу то, что знаю» — прямой ответ на вопрос, а не наш
+ * догадливый совет. Десять часов остаются — меньше это ещё не знакомая игра.
+ * Насыщение не обнуляет вес, а держит пол в 0.5.
  */
 const FAMILIAR_MIN_MIN = 600
 const FAMILIAR_PAUSE_SEC = 30 * 86_400
 const FAMILIAR_FULL_SEC = 60 * 86_400
+const FAMILIAR_RELAXED_FLOOR = 0.5
 
 /** Вес знакомой игры (0.5…1) или null — знакомым её не считаем. */
 export function familiarWeight(
@@ -628,9 +636,15 @@ export function familiarWeight(
   meta: GameMeta,
   state: LibraryGameState,
   nowSec: number,
+  opts: { relaxed?: boolean } = {},
 ): number | null {
-  if (state !== 'played') return null
   if (g.playtimeForever < FAMILIAR_MIN_MIN) return null
+  if (opts.relaxed) {
+    if (state !== 'played' && state !== 'active') return null
+    const paused = g.lastPlayed ? Math.max(0, nowSec - g.lastPlayed) : 0
+    return Math.max(FAMILIAR_RELAXED_FLOOR, Math.min(1, paused / FAMILIAR_FULL_SEC))
+  }
+  if (state !== 'played') return null
   if (!isReplayable(meta)) return null
   // У 'played' lastPlayed есть всегда: без даты classifyLibraryGame даёт 'comeback'
   const paused = nowSec - (g.lastPlayed ?? nowSec)
@@ -861,6 +875,36 @@ const SOURCE_WEIGHT: Record<CandidateSource, number> = {
   new: 1,
 }
 
+/*
+ * Ось состояния (lib/mood.ts) — наклоны источников под «чего хочется».
+ *
+ *   familiar — своё знакомое вперёд, заброшенное почти вровень с ним: и там,
+ *              и там руки помнят управление. Нетронутое и покупки — назад:
+ *              их пришлось бы осваивать;
+ *   fresh    — нетронутое и новое вперёд, открытое-и-закрытое чуть вперёд,
+ *              заброшенное назад. Знакомое не пускается вовсе (см.
+ *              scoreCandidates): просьба о новом — прямое «не то, что знаю»;
+ *   lowenergy — источники не трогает: мало сил — это не про новизну, а про
+ *              сложность. Хардкорные теги ×0.7.
+ *
+ * Множители — того же порядка, что наклон нетронутого (1.25): ось двигает
+ * выдачу, но вкус и настроение остаются главными.
+ */
+const LEAN_SOURCE_WEIGHT: Record<Lean, Partial<Record<CandidateSource, number>>> = {
+  familiar: { familiar: 1.4, comeback: 1.3, untouched: 0.8, new: 0.7 },
+  fresh: { untouched: 1.2, new: 1.2, backlog: 1.1, comeback: 0.8 },
+  lowenergy: {},
+}
+const LOWENERGY_HARDCORE = 0.7
+
+/** Часть lean скора: наклон источника под ось и штраф хардкору при «сил мало» */
+export function leanMultiplier(meta: GameMeta, source: CandidateSource, lean: Lean | null): number {
+  if (!lean) return 1
+  const mult = LEAN_SOURCE_WEIGHT[lean][source] ?? 1
+  if (lean === 'lowenergy' && HARDCORE_TAGS.some((t) => t in meta.tags)) return mult * LOWENERGY_HARDCORE
+  return mult
+}
+
 /**
  * Доля лимита, забронированная за каталогом.
  *
@@ -942,6 +986,11 @@ export function scoreCandidates(args: {
    * дня» и демо главной собираются без него, и их выдача не меняется.
    */
   allowFamiliar?: boolean
+  /**
+   * Ось состояния (lib/mood.ts): знакомое, новое, без сил. null и отсутствие —
+   * часть lean ровно 1, скоры прежние.
+   */
+  lean?: Lean | null
 }): ScoredCandidate[] {
   const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
   const out: ScoredCandidate[] = []
@@ -950,6 +999,11 @@ export function scoreCandidates(args: {
   const profileEmpty = Object.keys(profile).length === 0
   // Профиль взвешивается один раз на весь запрос, а не на каждого кандидата
   const tasteOf = weightedCosineTo(profile, args.tagWeight ?? null)
+  const lean = args.lean ?? null
+  // «Хочу нового» знакомое не пускает вовсе, «хочу знакомого» снимает с него
+  // шлюзы жанра и паузы
+  const familiarOn = Boolean(args.allowFamiliar) && lean !== 'fresh'
+  const relaxed = lean === 'familiar'
 
   /** sourceMult — насыщение знакомого; у прочих источников ровно 1 */
   const push = (meta: GameMeta, source: ScoredCandidate['source'], sourceMult = 1) => {
@@ -961,7 +1015,7 @@ export function scoreCandidates(args: {
       mood: moodMultiplier(meta, mood),
       source: SOURCE_WEIGHT[source] * sourceMult,
       deal: dealMultiplier(meta, source, nowSec),
-      lean: 1,
+      lean: leanMultiplier(meta, source, lean),
       cooldown: pause && pause.mult > 0 ? pause.mult : 1,
     }
     const c = { appid: meta.appid, name: meta.name, source, score: scoreOfParts(parts), parts }
@@ -980,8 +1034,8 @@ export function scoreCandidates(args: {
     const state = classifyLibraryGame(g, nowSec)
     if (state === 'unplayed') push(meta, isUntouched(g) ? 'untouched' : 'backlog')
     else if (state === 'comeback') push(meta, 'comeback')
-    else if (args.allowFamiliar) {
-      const weight = familiarWeight(g, meta, state, nowSec)
+    else if (familiarOn) {
+      const weight = familiarWeight(g, meta, state, nowSec, { relaxed })
       if (weight !== null) push(meta, 'familiar', weight)
     }
   }
