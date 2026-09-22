@@ -10,7 +10,7 @@ import { CONNECT_CARD_MIN_H } from '@/components/landing/ConnectFallback'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { DESTINATIONS, destinationPath } from '@/lib/destination'
 import { plural } from '@/lib/plural'
-import { VIBE_PRESETS } from '@/lib/presets'
+import { presetHref, VIBE_PRESETS } from '@/lib/presets'
 import {
   getServerSessionHint,
   getSessionHint,
@@ -50,16 +50,12 @@ import {
  * бывают у человека, открывшего Steam. Остальные два ближе к этим трём, чем
  * они друг к другу, и в карточке были бы шумом.
  *
- * Тексты берутся из lib/presets.ts, а не переписываются здесь: второй копии
- * этих фраз в проекте быть не должно — они уже разъезжались с адресами один
- * раз (см. lib/destination.ts).
+ * Тексты и адреса берутся из lib/presets.ts, а не переписываются здесь: второй
+ * копии этих фраз в проекте быть не должно — они уже разъезжались с адресами
+ * один раз (см. lib/destination.ts). Адрес — presetHref, тот же, что строит
+ * /quiz: своя сборка строки здесь потеряла бы у «нет сил» ось lean.
  */
 const QUICK_PRESETS = VIBE_PRESETS.slice(0, 3)
-
-/** Пресет — это обычный адрес выдачи, ровно тот же, что строит /quiz. */
-function presetHref(preset: (typeof VIBE_PRESETS)[number]): string {
-  return `/play?${new URLSearchParams(preset.mood as unknown as Record<string, string>).toString()}`
-}
 
 const ERROR_TEXT: Record<string, string> = {
   auth: 'Steam не подтвердил вход. Попробуй ещё раз.',

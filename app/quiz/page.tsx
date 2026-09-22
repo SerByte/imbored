@@ -8,7 +8,8 @@ import { ClickSpark } from '@/components/ClickSpark'
 import { SoundToggle } from '@/components/SoundToggle'
 import { SpotlightCard } from '@/components/SpotlightCard'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
-import { VIBE_PRESETS } from '@/lib/presets'
+import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
+import { playHref, VIBE_PRESETS } from '@/lib/presets'
 import { STEPS } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
 import type { Focus } from '@/lib/recommend'
@@ -61,9 +62,6 @@ const ITEM_VARIANTS = {
  * настроения. Канон один, и он же кортеж из трёх — по его длине рисуется
  * рельса точек внизу экрана.
  */
-
-/** Настроение по умолчанию для входов, где спрашивать про него нечего */
-const NEUTRAL_MOOD: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -136,13 +134,13 @@ function Quiz() {
     }
   }, [])
 
+  // Адрес собирает playHref (lib/presets.ts), а не строка здесь: копий было
+  // три, и ось lean добавилась бы в одну из них
   const go = useCallback(
-    (mood: Mood, opts: { roulette?: boolean; focus?: Focus } = {}) => {
-      const q = new URLSearchParams(mood as unknown as Record<string, string>)
-      if (opts.roulette) q.set('roulette', '1')
-      const from = opts.focus ?? focus
-      if (from) q.set('from', from)
-      router.push(`/play?${q.toString()}`)
+    (mood: Mood, opts: { roulette?: boolean; focus?: Focus; lean?: Lean } = {}) => {
+      router.push(
+        playHref(mood, { roulette: opts.roulette, focus: opts.focus ?? focus, lean: opts.lean }),
+      )
     },
     [focus, router],
   )
@@ -227,7 +225,7 @@ function Quiz() {
               {VIBE_PRESETS.map((p) => (
                 <button
                   key={p.key}
-                  onClick={() => go(p.mood)}
+                  onClick={() => go(p.mood, { lean: p.lean })}
                   /* py-3, а не py-2: замерено на 375 px — пилюля выходила 38 px
                      при стандарте продукта в 44 (докблок .tap). Утилитой .tap
                      это не чинится: её зона вылезает на 6 px вбок, а пилюли

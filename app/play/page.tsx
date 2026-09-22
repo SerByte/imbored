@@ -22,6 +22,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { EDGE_BADGE, EDGE_LINE, type PickEdge } from '@/lib/badges'
 import type { Discount } from '@/lib/discount'
 import { createLocalStore, parseFlag } from '@/lib/localstore'
+import { NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
 import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
 import type { Focus, OwnAnchor, Scope } from '@/lib/recommend'
@@ -111,6 +112,17 @@ const REWARM_MIN_GROWTH = 50
 const SCOPES: Array<{ key: Scope; label: string }> = [
   { key: 'all', label: 'Любые игры' },
   { key: 'library', label: 'Только моё' },
+]
+
+/**
+ * Ось состояния на самой выдаче: «хочется знакомого / нового». Два из трёх
+ * значений, и это не недосмотр: «без сил» — это пресет «После работы», а
+ * здесь человек уже смотрит на игру и понимает, чего ему НЕ хватило в ней —
+ * узнавания или новизны. Нажатая кнопка отжимается обратно в «без оси».
+ */
+const LEAN_CHIPS: Array<{ key: Lean; label: string }> = [
+  { key: 'familiar', label: 'знакомого' },
+  { key: 'fresh', label: 'нового' },
 ]
 
 /*
@@ -231,10 +243,12 @@ function Player() {
   const search = useSearchParams()
   const roulette = search.get('roulette') === '1'
   const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
+  // Дефолты — из NEUTRAL_MOOD, а не выписаны здесь: третья копия того же
+  // настроения разошлась бы с квизом и «Игрой дня» при первой правке
   const mood: Mood = {
-    time: (search.get('time') as Mood['time']) ?? 'medium',
-    vibe: (search.get('vibe') as Mood['vibe']) ?? 'chill',
-    social: (search.get('social') as Mood['social']) ?? 'solo',
+    time: (search.get('time') as Mood['time']) ?? NEUTRAL_MOOD.time,
+    vibe: (search.get('vibe') as Mood['vibe']) ?? NEUTRAL_MOOD.vibe,
+    social: (search.get('social') as Mood['social']) ?? NEUTRAL_MOOD.social,
   }
   /**
    * Спрашивали ли настроение вообще. Все три оси, а не любая из них: значения
@@ -270,6 +284,10 @@ function Player() {
   // адресе: это переключатель уже показанной выдачи, и перезагружать ради
   // него страницу (а с ней и весь прогрев) незачем.
   const [scope, setScope] = useState<Scope>('all')
+  // Ось состояния приходит адресом (пресет «После работы» кладёт туда «без
+  // сил»), а дальше живёт в состоянии — как и scope: переключается на уже
+  // показанной выдаче, без перезагрузки и прогрева. Мусор в адресе — «без оси».
+  const [lean, setLean] = useState<Lean | null>(() => parseLean(search.get('lean')))
   const [switching, setSwitching] = useState(false)
   const started = useRef(false)
   const moreOpen =
@@ -312,7 +330,7 @@ function Player() {
    * а состояние к следующей строке ещё не обновится.
    */
   const fetchPicks = useCallback(
-    async (nextScope: Scope): Promise<Pick[] | null> => {
+    async (next: { scope: Scope; lean: Lean | null }): Promise<Pick[] | null> => {
       // try/catch, а не голый await: оборванная сеть на этом шаге всплывала из
       // async-функции и оставляла экран в вечном «Подбираю…» — тот же класс
       // ошибки, что был в цикле прогрева до переезда в lib/warmup.ts.
@@ -321,7 +339,12 @@ function Player() {
         const res = await fetch('/api/recommend', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mood, ...(focus ? { focus } : {}), scope: nextScope }),
+          body: JSON.stringify({
+            mood,
+            ...(focus ? { focus } : {}),
+            scope: next.scope,
+            ...(next.lean ? { lean: next.lean } : {}),
+          }),
         })
         if (res.status === 429) {
           const wait = Number(res.headers.get('Retry-After') ?? 0)
@@ -353,11 +376,15 @@ function Player() {
           picks: Pick[]
           discoveries?: Pick[]
           engine: string
+          lean?: unknown
         }
         if (!data.picks?.length) return null
         setPicks(data.picks)
         setDiscoveries(data.discoveries ?? [])
         setEngine(data.engine)
+        // Ось — из эха сервера, а не из запроса: кнопки обязаны показывать,
+        // под что собрана выдача на экране, а не что мы просили
+        setLean(parseLean(data.lean))
         return data.picks
       } catch {
         // Причину обязательно СБРАСЫВАЕМ, а не оставляем как есть: сюда
@@ -382,7 +409,7 @@ function Player() {
       setProgress(
         focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
       )
-      const got = await fetchPicks(scope)
+      const got = await fetchPicks({ scope, lean })
       if (!got) {
         setPhase('error')
         return false
@@ -474,23 +501,27 @@ function Player() {
     if (retrying) return
     setRetrying(true)
     try {
-      const got = await fetchPicks(scope)
+      const got = await fetchPicks({ scope, lean })
       if (!got) return
       setIndex(roulette ? weightedRandomIndex(got.length) : 0)
       setPhase(roulette ? 'spin' : 'reveal')
     } finally {
       setRetrying(false)
     }
-  }, [retrying, fetchPicks, scope, roulette])
+  }, [retrying, fetchPicks, scope, lean, roulette])
 
-  const switchScope = useCallback(
-    async (next: Scope) => {
-      if (next === scope || switching) return
+  /*
+   * Переключатели уже показанной выдачи: источник и ось состояния. Один путь на
+   * оба — тот же прогрев, другой вопрос к движку, и выдача с начала.
+   */
+  const reshape = useCallback(
+    async (next: { scope: Scope; lean: Lean | null }) => {
+      if ((next.scope === scope && next.lean === lean) || switching) return
       setSwitching(true)
       try {
         const got = await fetchPicks(next)
         if (!got) return
-        setScope(next)
+        setScope(next.scope)
         setDir('pick')
         setIndex(0)
         setAskReason(false)
@@ -504,7 +535,7 @@ function Player() {
         setSwitching(false)
       }
     },
-    [scope, switching, fetchPicks],
+    [scope, lean, switching, fetchPicks],
   )
 
   const advance = useCallback(
@@ -723,7 +754,7 @@ function Player() {
         remaining={prep?.remaining ?? 0}
         onRefresh={() => {
           setWarming('off')
-          void fetchPicks(scope).then((got) => {
+          void fetchPicks({ scope, lean }).then((got) => {
             if (got) setIndex(0)
           })
         }}
@@ -1007,38 +1038,66 @@ function Player() {
             <div id="play-more" className="mt-4">
               <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
                 {/* Откуда брать главную выдачу. При фокусе «нераспакованное»
-                    переключателя нет: там вопрос уже задан и ответ на него — своё. */}
+                    переключателей нет: там вопрос уже задан и ответ на него — своё. */}
                 {!focus && (
-                  <div
-                    role="group"
-                    aria-label="Откуда брать игры"
-                    /* gap-3, а не gap-1, и это не про воздух. Зона .tap на кнопках
-                       ниже вылезает на 6 px вбок с каждой стороны; при зазоре в
-                       4 px соседние зоны перекрылись бы на 8 px и воровали бы друг
-                       у друга нажатия. 12 px — ровно столько, сколько зона
-                       занимает, и ни пикселем больше. */
-                    className="flex items-center gap-3 rounded-full glass p-1 text-xs"
-                  >
-                    {SCOPES.map((s) => (
-                      <button
-                        key={s.key}
-                        onClick={() => switchScope(s.key)}
-                        disabled={switching}
-                        // Выбранное состояние — не только цветом: скринридеру и
-                        // тому, кто не различает ember на стекле, нужен признак
-                        aria-pressed={scope === s.key}
-                        /* py-2.5, а не py-1: замерено — переключатель выдавал
-                           24 px, ровно порог WCAG 2.5.8 без единого запаса, и это
-                           основной фильтр экрана выдачи. Зону наращивать нечем:
-                           кнопки стоят внутри одной пилюли в 4 px друг от друга, и
-                           псевдозона .tap перекрыла бы соседа. */
-                        className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer disabled:opacity-50 ${
-                          scope === s.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div
+                      role="group"
+                      aria-label="Откуда брать игры"
+                      /* gap-3, а не gap-1, и это не про воздух. Зона .tap на кнопках
+                         ниже вылезает на 6 px вбок с каждой стороны; при зазоре в
+                         4 px соседние зоны перекрылись бы на 8 px и воровали бы друг
+                         у друга нажатия. 12 px — ровно столько, сколько зона
+                         занимает, и ни пикселем больше. */
+                      className="flex items-center gap-3 rounded-full glass p-1 text-xs"
+                    >
+                      {SCOPES.map((s) => (
+                        <button
+                          key={s.key}
+                          onClick={() => reshape({ scope: s.key, lean })}
+                          disabled={switching}
+                          // Выбранное состояние — не только цветом: скринридеру и
+                          // тому, кто не различает ember на стекле, нужен признак
+                          aria-pressed={scope === s.key}
+                          /* py-2.5, а не py-1: замерено — переключатель выдавал
+                             24 px, ровно порог WCAG 2.5.8 без единого запаса, и это
+                             основной фильтр экрана выдачи. Зону наращивать нечем:
+                             кнопки стоят внутри одной пилюли в 4 px друг от друга, и
+                             псевдозона .tap перекрыла бы соседа. */
+                          className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer disabled:opacity-50 ${
+                            scope === s.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
+                          }`}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Ось состояния — теми же пилюлями и тем же путём, что
+                        источник: нажал — выдача пересобралась. Зазор gap-3 по
+                        той же причине, что у соседа: зоны .tap не должны
+                        перекрываться. */}
+                    <div
+                      role="group"
+                      aria-label="Чего хочется"
+                      className="flex items-center gap-3 rounded-full glass p-1 text-xs"
+                    >
+                      <span aria-hidden className="pl-2.5 text-faint">
+                        хочется
+                      </span>
+                      {LEAN_CHIPS.map((l) => (
+                        <button
+                          key={l.key}
+                          onClick={() => reshape({ scope, lean: lean === l.key ? null : l.key })}
+                          disabled={switching}
+                          aria-pressed={lean === l.key}
+                          className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer disabled:opacity-50 ${
+                            lean === l.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
+                          }`}
+                        >
+                          {l.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
                 <span className="text-xs text-faint font-mono">
