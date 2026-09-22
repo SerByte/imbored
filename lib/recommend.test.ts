@@ -8,6 +8,7 @@ import {
   buildTagProfile,
   capSource,
   classifyLibraryGame,
+  continueView,
   cooldownOf,
   cosine,
   dealMultiplier,
@@ -25,6 +26,7 @@ import {
   parseFocus,
   parseScope,
   PICK_COUNT,
+  pickContinue,
   rankByTaste,
   scoreCandidates,
   scoreOfParts,
@@ -1639,5 +1641,56 @@ describe('ось состояния (lean)', () => {
     for (const lean of LEANS) {
       for (const c of run(lean)) expect(scoreOfParts(c.parts!), `${lean} ${c.appid}`).toBe(c.score)
     }
+  })
+})
+
+describe('pickContinue', () => {
+  const metaOf = (appid: number) => meta(appid, { Action: 10 })
+  const none = new Set<number>()
+
+  test('самая наигранная за две недели, а не за всё время', () => {
+    const lib = [
+      game({ appid: 1, playtimeForever: 50_000, playtime2Weeks: 30 }),
+      game({ appid: 2, playtimeForever: 900, playtime2Weeks: 400 }),
+      game({ appid: 3, playtimeForever: 0 }),
+    ]
+    expect(pickContinue(lib, metaOf, none, none)?.appid).toBe(2)
+  })
+
+  test('без активности за две недели — null: продолжать нечего', () => {
+    const lib = [game({ appid: 1, playtimeForever: 50_000 }), game({ appid: 2 })]
+    expect(pickContinue(lib, metaOf, none, none)).toBeNull()
+    expect(pickContinue([], metaOf, none, none)).toBeNull()
+  })
+
+  test('мусор, игра без меты, бан и то, что уже в выдаче, — мимо', () => {
+    const lib = [
+      // саундтрек «наигрывается», пока играет фоном
+      game({ appid: 1, name: 'Foo — Original Soundtrack', playtime2Weeks: 900 }),
+      game({ appid: 2, playtime2Weeks: 800 }), // меты нет
+      game({ appid: 3, playtime2Weeks: 700 }), // бан
+      game({ appid: 4, playtime2Weeks: 600 }), // уже в выдаче
+      game({ appid: 5, playtime2Weeks: 60 }),
+    ]
+    const withMeta = (appid: number) => (appid === 2 ? undefined : metaOf(appid))
+    expect(pickContinue(lib, withMeta, new Set([3]), new Set([4]))?.appid).toBe(5)
+    expect(pickContinue(lib, withMeta, new Set([3, 5]), new Set([4]))).toBeNull()
+  })
+
+  test('при равных минутах — первая по списку', () => {
+    const lib = [game({ appid: 7, playtime2Weeks: 120 }), game({ appid: 8, playtime2Weeks: 120 })]
+    expect(pickContinue(lib, metaOf, none, none)?.appid).toBe(7)
+  })
+
+  test('на демо-библиотеке — Dota 2: шесть часов за две недели', () => {
+    const metas = new Map(DEMO_METAS.map((m) => [m.appid, m]))
+    const got = pickContinue(demoLibrary(NOW), (id) => metas.get(id), none, none)
+    expect(got?.name).toBe('Dota 2')
+    expect(continueView(got!)).toEqual({ appid: 570, name: 'Dota 2', recentHours: 6 })
+  })
+
+  test('continueView округляет минуты до часов', () => {
+    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 20 })).recentHours).toBe(0)
+    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 95 })).recentHours).toBe(2)
   })
 })

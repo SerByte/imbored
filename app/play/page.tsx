@@ -25,7 +25,7 @@ import { createLocalStore, parseFlag } from '@/lib/localstore'
 import { NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
 import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
-import type { Focus, OwnAnchor, Scope } from '@/lib/recommend'
+import type { ContinueGame, Focus, OwnAnchor, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import { bounceTo } from '@/lib/destination'
@@ -274,6 +274,8 @@ function Player() {
   const [dir, setDir] = useState<'next' | 'pick'>('next')
   const [picks, setPicks] = useState<Pick[]>([])
   const [discoveries, setDiscoveries] = useState<Pick[]>([])
+  /** То, во что он играет сейчас (pickContinue): строка под героем, не карточка */
+  const [continueGame, setContinueGame] = useState<ContinueGame | null>(null)
   const [index, setIndex] = useState(0)
   const [liked, setLiked] = useState<Set<number>>(new Set())
   const [askReason, setAskReason] = useState(false)
@@ -377,10 +379,12 @@ function Player() {
           discoveries?: Pick[]
           engine: string
           lean?: unknown
+          continue?: ContinueGame | null
         }
         if (!data.picks?.length) return null
         setPicks(data.picks)
         setDiscoveries(data.discoveries ?? [])
+        setContinueGame(data.continue ?? null)
         setEngine(data.engine)
         // Ось — из эха сервера, а не из запроса: кнопки обязаны показывать,
         // под что собрана выдача на экране, а не что мы просили
@@ -556,6 +560,14 @@ function Player() {
     [skipCount, picks.length, roulette],
   )
 
+  /*
+   * «Продолжить» не предлагаем там, где он прямо попросил другого: в
+   * «нераспакованном» и при «хочется нового». Одно правило и для строки под
+   * героем, и для экрана выгорания — иначе второй предложил бы то, что первый
+   * честно спрятал.
+   */
+  const cont = focus || lean === 'fresh' ? null : continueGame
+
   if (phase === 'prepare') {
     return (
       <WarmupScreen
@@ -649,8 +661,21 @@ function Player() {
 
 
   if (phase === 'burnout') {
+    /*
+     * Чем ответить на «не игровой вечер» — по убыванию того, сколько сил это
+     * стоит. Сначала знакомое любимое: там нечего осваивать. Потом то, во что
+     * он и так играет сейчас, — сразу запуском, а не ещё одной карточкой. И
+     * только потом «уютное» по тегам: Casual на обложке ещё не значит, что в
+     * игру легко войти.
+     */
+    const familiar = picks.find((p) => p.source === 'familiar')
     const cozy =
       picks.find((p) => p.tags.some((t) => COZY_TAGS.includes(t))) ?? picks[picks.length - 1]
+    const showPick = (p: Pick) => {
+      setSkipCount(0)
+      setIndex(picks.indexOf(p))
+      setPhase('reveal')
+    }
     return (
       <div className="flex-1 flex items-center justify-center px-5 py-24">
         <div className="max-w-lg w-full glass rounded-[20px] p-8 text-center flex flex-col gap-5 anim-reveal">
@@ -664,17 +689,24 @@ function Player() {
             нормально. Можно зайти на 20 минут во что-то уютное… а можно просто закрыть Steam, и
             это тоже победа.
           </p>
-          {cozy && (
-            <button
-              onClick={() => {
-                setSkipCount(0)
-                setIndex(picks.indexOf(cozy))
-                setPhase('reveal')
-              }}
-              className="btn-ember is-block py-3"
-            >
-              Ладно, покажи «{cozy.name}» — она спокойная
+          {familiar ? (
+            <button onClick={() => showPick(familiar)} className="btn-ember is-block py-3">
+              Ладно, покажи «{familiar.name}» — там всё знакомо
             </button>
+          ) : cont ? (
+            <SteamLaunch
+              appid={cont.appid}
+              label={`Просто продолжить «${cont.name}»`}
+              mobileLabel={`Открыть «${cont.name}» в Steam`}
+              onClick={() => sendFeedback(cont.appid, 'launched')}
+              className="btn-ember is-block py-3"
+            />
+          ) : (
+            cozy && (
+              <button onClick={() => showPick(cozy)} className="btn-ember is-block py-3">
+                Ладно, покажи «{cozy.name}» — она спокойная
+              </button>
+            )
           )}
           <div className="flex justify-center gap-5 text-sm">
             <button
@@ -697,6 +729,13 @@ function Player() {
 
   const pick = picks[Math.min(index, picks.length - 1)]
   const others = picks.filter((p) => p.appid !== pick.appid)
+  /*
+   * «Уже прошёл» вместо безымянного бана — у заброшенного и знакомого, то
+   * есть у того, во что он уже играл. Без достижений не отличить «прошёл» от
+   * «бросил», и спросить честнее, чем гадать. Это тот же бан, но с причиной
+   * 'done': игра не разонравилась — она кончилась, и вкус о ней не спорит.
+   */
+  const finished = pick.source === 'comeback' || pick.source === 'familiar'
   /*
    * «Почему она?» — то, чего НЕ ВИДНО выше, и только это.
    *
@@ -981,7 +1020,7 @@ function Player() {
                 )}
                 <button
                   onClick={() => {
-                    sendFeedback(pick.appid, 'banned')
+                    sendFeedback(pick.appid, 'banned', finished ? 'done' : undefined)
                     const rest = picks.filter((p) => p.appid !== pick.appid)
                     if (!rest.length) {
                       router.push('/quiz')
@@ -991,8 +1030,10 @@ function Player() {
                     setIndex(Math.min(index, rest.length - 1))
                     setShowWhy(false)
                   }}
-                  title="Больше не показывать эту игру"
-                  className="rounded-[14px] glass glass-hover px-3 py-3 text-sm text-faint cursor-pointer"
+                  title={finished ? 'Прошёл — больше не предлагать' : 'Больше не показывать эту игру'}
+                  className={`rounded-[14px] glass glass-hover py-3 text-sm cursor-pointer ${
+                    finished ? 'px-4 text-dim' : 'px-3 text-faint'
+                  }`}
                 >
                   {/*
                     Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
@@ -1001,8 +1042,14 @@ function Player() {
                     игру с экрана, но одна на сегодня, а другая навсегда.
                     Эмодзи спрятана от скринридера, текст объясняет разницу.
                   */}
-                  <span aria-hidden>🚫</span>
-                  <span className="sr-only">Больше никогда не показывать эту игру</span>
+                  {finished ? (
+                    'Уже прошёл'
+                  ) : (
+                    <>
+                      <span aria-hidden>🚫</span>
+                      <span className="sr-only">Больше никогда не показывать эту игру</span>
+                    </>
+                  )}
                 </button>
               </motion.div>
             )}
@@ -1010,6 +1057,28 @@ function Player() {
           </motion.div>
         </motion.section>
       </AnimatePresence>
+
+      {/* «Продолжить» — то, во что он играет сейчас. Строкой, а не карточкой:
+          это не рекомендация, и спорить с героем за место ей незачем. В
+          рулетке её нет — там весь смысл в броске. */}
+      {cont && !roulette && (
+        <div className="mx-auto w-full max-w-6xl px-5 pt-8">
+          <div className="glass rounded-[14px] px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+            <span className="text-dim">
+              Или продолжи <span className="text-ink">«{cont.name}»</span>
+              {cont.recentHours > 0 && (
+                <span className="font-mono text-faint"> · {cont.recentHours} ч за две недели</span>
+              )}
+            </span>
+            <SteamLaunch
+              appid={cont.appid}
+              label="Продолжить"
+              onClick={() => sendFeedback(cont.appid, 'launched')}
+              className="tap text-ember-text hover:underline"
+            />
+          </div>
+        </div>
+      )}
 
       {!roulette && (
         <section className="mx-auto w-full max-w-6xl px-5 py-10">

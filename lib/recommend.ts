@@ -653,6 +653,45 @@ export function familiarWeight(
 }
 
 /**
+ * «Продолжить «X»» — то, во что человек играет сейчас.
+ *
+ * Активная игра (playtime2Weeks > 0) в кандидаты не попадает, и правильно:
+ * совет «поиграй в то, что ты запускал вчера» ничего не добавляет. Но вечер,
+ * когда выбирать не хочется, чаще всего кончается ровно ею, и молчать о ней —
+ * делать вид, что её нет. Поэтому не карточкой в пятёрке, где она спорила бы
+ * с рекомендацией, а отдельной строкой под героем: один тап, без спора.
+ *
+ * Самая наигранная за две недели. Мимо — мусор (саундтрек тоже «наигрывается»,
+ * пока играет фоном), игры без меты, exclude (баны и паузы) и skip — то, что
+ * уже лежит в выдаче: lean 'familiar' пускает активное в пятёрку, и одна игра
+ * дважды на экране выглядела бы сбоем. При равных минутах — первая по списку.
+ */
+export function pickContinue(
+  library: readonly LibraryGame[],
+  metaOf: (appid: number) => GameMeta | undefined,
+  exclude: ReadonlySet<number>,
+  skip: ReadonlySet<number>,
+): LibraryGame | null {
+  let best: LibraryGame | null = null
+  for (const g of library) {
+    if (g.playtime2Weeks <= 0) continue
+    if (best && g.playtime2Weeks <= best.playtime2Weeks) continue
+    if (exclude.has(g.appid) || skip.has(g.appid)) continue
+    const meta = metaOf(g.appid)
+    if (!meta || isJunk(g, meta)) continue
+    best = g
+  }
+  return best
+}
+
+/** Что уходит на клиент для строки «Продолжить»: часы за две недели, а не минуты */
+export type ContinueGame = { appid: number; name: string; recentHours: number }
+
+export function continueView(g: LibraryGame): ContinueGame {
+  return { appid: g.appid, name: g.name, recentHours: Math.round(g.playtime2Weeks / 60) }
+}
+
+/**
  * Порядок по вкусу: косинус между тег-профилем и тегами игры.
  *
  * Игры без метаданных уезжают в конец, а не выбрасываются: мета приезжает

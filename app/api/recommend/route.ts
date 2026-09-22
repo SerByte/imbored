@@ -22,6 +22,7 @@ import {
   buildAnchorFinder,
   buildTagProfile,
   capSource,
+  continueView,
   cooldownOf,
   deferredOf,
   explainMatch,
@@ -29,6 +30,7 @@ import {
   parseFocus,
   parseScope,
   PICK_COUNT,
+  pickContinue,
   scoreCandidates,
   splitBySource,
 } from '@/lib/recommend'
@@ -313,6 +315,17 @@ export async function POST(req: Request) {
         { tagWeight, anchorOf },
       )
 
+  // «Продолжить «X»» — то, во что он играет сейчас: строкой под героем, а не
+  // шестой карточкой. Отложенное и надоевшее не предлагаем — пауза, взятая
+  // минуту назад, тоже ответ, и «продолжи то, что надоело» его бы не услышало.
+  const paused = [...cooldown].filter(([, c]) => c.mult < 1).map(([appid]) => appid)
+  const cont = pickContinue(
+    games,
+    (id) => libMetas.get(id),
+    new Set([...banned, ...paused]),
+    inPicks,
+  )
+
   // Чем каждая карточка лучше соседних. Части скора живут только здесь, на
   // сервере: Pick из llm.ts их теряет, поэтому ищем по appid среди кандидатов.
   // Только у picks: полка покупок — отдельный разговор, и второе «ближе всего
@@ -384,5 +397,7 @@ export async function POST(req: Request) {
     // Эхо оси: под какое состояние собрана выдача. null — без оси, в том
     // числе когда в адресе была опечатка: её мы молча не применили
     lean,
+    // Строка «Продолжить» или null — /play сам решает, где её не показывать
+    continue: cont ? continueView(cont) : null,
   })
 }
