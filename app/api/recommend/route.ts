@@ -20,6 +20,8 @@ import {
   applyFocus,
   buildAnchorFinder,
   buildTagProfile,
+  cooldownOf,
+  deferredOf,
   explainMatch,
   mixHeroPool,
   parseFocus,
@@ -117,6 +119,9 @@ export async function POST(req: Request) {
 
   const banned = await bannedAppids(db, steamid)
   const feedback = await listFeedback(db, steamid, 300)
+  // «Не сейчас» прячет игру на трое суток, «надоела» — на месяц: без паузы
+  // отложенное возвращалось на следующей же перезагрузке
+  const cooldown = cooldownOf(feedback, now)
 
   // Метаданные своей библиотеки И игр из истории оценок: раньше здесь читался
   // весь каталог, что на сотне тысяч игр сожгло бы лимит прочитанных строк
@@ -169,6 +174,7 @@ export async function POST(req: Request) {
     exclude: banned,
     // Вкус с весом редкости: совпадение по частотному костяку больше не решает
     tagWeight,
+    cooldown,
   })
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
@@ -309,6 +315,8 @@ export async function POST(req: Request) {
       // Своя игра, на которую эта похожа. Причина от Claude может её не
       // назвать — тогда /play добавляет строку сам, в «Почему она?»
       via: anchorOf(p.appid),
+      // «Откладывал N дней назад» — только у вернувшегося «не сейчас»
+      deferred: deferredOf(cooldown.get(p.appid), now),
     }
   }
 

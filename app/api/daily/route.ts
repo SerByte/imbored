@@ -18,6 +18,7 @@ import {
   applyFeedbackToProfile,
   buildAnchorFinder,
   buildTagProfile,
+  cooldownOf,
   sharedTasteTags,
   scoreCandidates,
   splitBySource,
@@ -103,6 +104,9 @@ export async function GET() {
     // баны до отсечки, а не после — см. тот же параметр в /api/recommend
     exclude: banned,
     tagWeight,
+    // Только «надоела»: «не сейчас» на /play посреди дня иначе сменило бы
+    // игру, выбранную на сутки
+    cooldown: cooldownOf(feedback, now, ['tired']),
   })
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })

@@ -7,8 +7,10 @@ import {
   buildAnchorFinder,
   buildTagProfile,
   classifyLibraryGame,
+  cooldownOf,
   cosine,
   dealMultiplier,
+  deferredOf,
   explainMatch,
   isUnplayed,
   isUntouched,
@@ -18,12 +20,15 @@ import {
   normalizedTags,
   parseFocus,
   parseScope,
+  PICK_COUNT,
   rankByTaste,
   scoreCandidates,
   scoreOfParts,
   sharedTasteTags,
   splitBySource,
+  type Cooldown,
 } from './recommend'
+import { DEMO_METAS, demoLibrary } from './demo'
 import { tagWeightFrom } from './tagweight'
 import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
 
@@ -248,6 +253,13 @@ describe('applyFeedbackToProfile', () => {
     const before = { Roguelike: 1, Difficult: 0.5, Farming: 0.2 }
     expect(
       applyFeedbackToProfile(before, [fb(1, 'skipped', 'spin'), fb(2, 'skipped', 'spin')], metaOf),
+    ).toEqual(before)
+  })
+
+  test('«надоела» вкус не трогает: надоела игра, а не жанр — это пауза', () => {
+    const before = { Roguelike: 1, Difficult: 0.5, Farming: 0.2 }
+    expect(
+      applyFeedbackToProfile(before, [fb(1, 'skipped', 'tired'), fb(2, 'skipped', 'tired')], metaOf),
     ).toEqual(before)
   })
 })
@@ -968,6 +980,204 @@ describe('buildAnchorFinder', () => {
 
   test('пустая библиотека — null без падений', () => {
     expect(buildAnchorFinder([], () => undefined, null)(cand(1, 'X', { A: 1 }))).toBeNull()
+  })
+})
+
+describe('cooldownOf', () => {
+  const HOUR = 3600
+  const skip = (appid: number, ago: number, reason?: FeedbackRow['reason']): FeedbackRow => ({
+    steamid: 'u',
+    appid,
+    action: 'skipped',
+    ...(reason ? { reason } : {}),
+    createdAt: NOW - ago,
+  })
+  const at = (appid: number, action: FeedbackRow['action'], ago: number): FeedbackRow => ({
+    steamid: 'u',
+    appid,
+    action,
+    createdAt: NOW - ago,
+  })
+
+  test('«не сейчас»: трое суток скрыта, потом до двух недель чуть выше обычного', () => {
+    expect(cooldownOf([skip(1, 71 * HOUR, 'notnow')], NOW).get(1)).toEqual({
+      mult: 0,
+      kind: 'notnow',
+      at: NOW - 71 * HOUR,
+    })
+    expect(cooldownOf([skip(1, 73 * HOUR, 'notnow')], NOW).get(1)?.mult).toBe(1.1)
+    expect(cooldownOf([skip(1, 13 * DAY, 'notnow')], NOW).get(1)?.mult).toBe(1.1)
+    expect(cooldownOf([skip(1, 15 * DAY, 'notnow')], NOW).has(1)).toBe(false)
+  })
+
+  test('скип без причины, «не тот жанр» и «сложная» прячут на сутки', () => {
+    for (const reason of [undefined, 'genre', 'hard'] as const) {
+      expect(cooldownOf([skip(1, 23 * HOUR, reason)], NOW).get(1), reason).toMatchObject({
+        mult: 0,
+        kind: 'skip',
+      })
+      expect(cooldownOf([skip(1, 25 * HOUR, reason)], NOW).has(1), reason).toBe(false)
+    }
+  })
+
+  test('«надоела»: месяц с линейным возвратом от нуля', () => {
+    expect(cooldownOf([skip(1, 0, 'tired')], NOW).get(1)?.mult).toBe(0)
+    expect(cooldownOf([skip(1, 15 * DAY, 'tired')], NOW).get(1)?.mult).toBeCloseTo(0.5)
+    expect(cooldownOf([skip(1, 27 * DAY, 'tired')], NOW).get(1)?.mult).toBeCloseTo(0.9)
+    expect(cooldownOf([skip(1, 31 * DAY, 'tired')], NOW).has(1)).toBe(false)
+  })
+
+  test('«Крутить ещё» паузы не даёт и не перебивает настоящий скип', () => {
+    expect(cooldownOf([skip(1, 0, 'spin')], NOW).size).toBe(0)
+    const out = cooldownOf([skip(1, HOUR, 'spin'), skip(1, 2 * HOUR, 'notnow')], NOW)
+    expect(out.get(1)?.kind).toBe('notnow')
+  })
+
+  test('«зашло», запуск или открытие после скипа снимают паузу, до скипа — нет', () => {
+    for (const action of ['liked', 'launched', 'opened'] as const) {
+      const after = cooldownOf([at(1, action, HOUR), skip(1, 2 * HOUR, 'notnow')], NOW)
+      expect(after.has(1), action).toBe(false)
+      const before = cooldownOf([skip(1, HOUR, 'notnow'), at(1, action, 2 * HOUR)], NOW)
+      expect(before.has(1), action).toBe(true)
+    }
+  })
+
+  test('решает самый свежий скип: сказанное позже заменяет сказанное раньше', () => {
+    // «надоела» три недели назад не держит паузу поверх сегодняшнего «не сейчас»
+    const out = cooldownOf([skip(1, 20 * DAY, 'tired'), skip(1, HOUR, 'notnow')], NOW)
+    expect(out.get(1)?.kind).toBe('notnow')
+  })
+
+  test('only оставляет только названные паузы — «Игре дня» нужна одна «надоела»', () => {
+    const feedback = [skip(1, HOUR, 'notnow'), skip(2, HOUR), skip(3, DAY, 'tired')]
+    expect([...cooldownOf(feedback, NOW).keys()].sort()).toEqual([1, 2, 3])
+    expect([...cooldownOf(feedback, NOW, ['tired']).keys()]).toEqual([3])
+  })
+
+  test('бан — не пауза: его отсекает exclude, а не cooldownOf', () => {
+    expect(cooldownOf([at(1, 'banned', HOUR)], NOW).size).toBe(0)
+  })
+
+  test('пометка «Откладывал» — только у «не сейчас», в целых днях', () => {
+    const notnow = { mult: 1.1, kind: 'notnow' as const, at: NOW - 4 * DAY - HOUR }
+    expect(deferredOf(notnow, NOW)).toEqual({ daysAgo: 4 })
+    expect(deferredOf({ mult: 0, kind: 'notnow', at: NOW - HOUR }, NOW)).toEqual({ daysAgo: 0 })
+    expect(deferredOf({ mult: 0.5, kind: 'tired', at: NOW - 15 * DAY }, NOW)).toBeNull()
+    expect(deferredOf(undefined, NOW)).toBeNull()
+  })
+})
+
+describe('scoreCandidates и паузы', () => {
+  const baseMood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+  type Pauses = Map<number, Cooldown>
+  // Шесть своих с убывающим вкусом, без ничьих: 1 > 2 > … > 6
+  const lib = [1, 2, 3, 4, 5, 6].map((appid) => game({ appid, playtimeForever: 10 }))
+  const metas = new Map(
+    lib.map((g) => [g.appid, meta(g.appid, { Action: 100, Other: (g.appid - 1) * 30 })]),
+  )
+  const run = (cooldown?: Pauses) =>
+    scoreCandidates({
+      profile: { Action: 1 },
+      library: lib,
+      metaOf: (id) => metas.get(id),
+      newPool: [],
+      mood: baseMood,
+      nowSec: NOW,
+      ...(cooldown ? { cooldown } : {}),
+    })
+  const hideAll = (ids: number[]): Pauses =>
+    new Map(ids.map((id) => [id, { mult: 0, kind: 'notnow', at: NOW - 3600 }]))
+
+  test('без карты пауз — ровно прежние скоры', () => {
+    expect(run(new Map())).toEqual(run())
+    expect(run().every((c) => c.parts!.cooldown === 1)).toBe(true)
+  })
+
+  test('множитель паузы входит в скор частью cooldown', () => {
+    const plain = new Map(run().map((c) => [c.appid, c.score]))
+    const two = run(new Map([[2, { mult: 1.1, kind: 'notnow', at: NOW - 4 * DAY }]])).find(
+      (c) => c.appid === 2,
+    )!
+    expect(two.parts!.cooldown).toBe(1.1)
+    expect(two.score).toBeCloseTo(plain.get(2)! * 1.1, 12)
+    expect(scoreOfParts(two.parts!)).toBe(two.score)
+  })
+
+  test('скрытая уходит, пока своих хватает на выдачу', () => {
+    // Шесть своих, одна скрыта — остаётся пять, это ровно PICK_COUNT
+    const ids = run(hideAll([1])).map((c) => c.appid)
+    expect(ids).not.toContain(1)
+    expect(ids).toHaveLength(PICK_COUNT)
+  })
+
+  test('когда своих не хватает, лучшие скрытые возвращаются вполсилы', () => {
+    const out = run(hideAll(lib.map((g) => g.appid)))
+    expect(out).toHaveLength(PICK_COUNT)
+    // Вернулись лучшие по вкусу, а не первые по порядку библиотеки
+    expect(out.map((c) => c.appid)).toEqual([1, 2, 3, 4, 5])
+    expect(out.every((c) => c.parts!.cooldown === 0.5)).toBe(true)
+  })
+
+  test('каталог из-под паузы не возвращается', () => {
+    const out = scoreCandidates({
+      profile: { Action: 1 },
+      library: [],
+      metaOf: () => undefined,
+      newPool: [meta(100, { Action: 100 }), meta(101, { Action: 100 })],
+      mood: baseMood,
+      nowSec: NOW,
+      cooldown: new Map([[100, { mult: 0, kind: 'skip', at: NOW }]]),
+    })
+    expect(out.map((c) => c.appid)).toEqual([101])
+  })
+
+  /**
+   * Демо-библиотека на 22 игры — ровно тот размер, на котором несколько
+   * «не сейчас» подряд съели бы выдачу, не будь пола.
+   */
+  describe('пол на демо-библиотеке', () => {
+    const metasById = new Map(DEMO_METAS.map((m) => [m.appid, m]))
+    const library = demoLibrary(NOW)
+    const owned = new Set(library.map((g) => g.appid))
+    const demoRun = (cooldown?: Pauses, exclude?: Set<number>) =>
+      scoreCandidates({
+        profile: buildTagProfile(library, (id) => metasById.get(id)),
+        library,
+        metaOf: (id) => metasById.get(id),
+        newPool: DEMO_METAS.filter((m) => !owned.has(m.appid)),
+        mood: baseMood,
+        nowSec: NOW,
+        limit: 30,
+        ...(cooldown ? { cooldown } : {}),
+        ...(exclude ? { exclude } : {}),
+      })
+    const own = (list: ScoredCandidate[]) => list.filter((c) => c.source !== 'new')
+    const plainOwn = own(demoRun())
+    const allOwn = plainOwn.map((c) => c.appid)
+
+    test('«не сейчас» на всё своё не оставляет пустую выдачу', () => {
+      expect(plainOwn.length).toBeGreaterThan(PICK_COUNT)
+      const back = own(demoRun(hideAll(allOwn)))
+      expect(back).toHaveLength(PICK_COUNT)
+      expect(back.map((c) => c.appid)).toEqual(allOwn.slice(0, PICK_COUNT))
+      expect(back.every((c) => c.parts!.cooldown === 0.5)).toBe(true)
+    })
+
+    test('частичная пауза добирает ровно до пяти', () => {
+      // Скрыто всё, кроме двух худших: вернуться должны три лучших из скрытых
+      const back = own(demoRun(hideAll(allOwn.slice(0, -2))))
+      expect(back).toHaveLength(PICK_COUNT)
+      expect(back.filter((c) => c.parts!.cooldown === 0.5).map((c) => c.appid)).toEqual(
+        allOwn.slice(0, PICK_COUNT - 2),
+      )
+    })
+
+    test('бан не возвращается никогда, даже когда своих не хватает', () => {
+      const banned = new Set(allOwn.slice(0, 2))
+      const back = own(demoRun(hideAll(allOwn), banned))
+      expect(back).toHaveLength(PICK_COUNT)
+      expect(back.some((c) => banned.has(c.appid))).toBe(false)
+    })
   })
 })
 

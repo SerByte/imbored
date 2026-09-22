@@ -61,6 +61,17 @@ type Pick = {
   signals: Signals
   /** Своя игра, на которую эта похожа сильнее всего (buildAnchorFinder) */
   via: OwnAnchor | null
+  /** Вернувшееся «Просто не сейчас» (deferredOf): сколько дней назад отложил */
+  deferred: { daysAgo: number } | null
+}
+
+/**
+ * «Откладывал 3 дня назад». Сегодняшнее «не сейчас» сюда попадает, только
+ * когда без него не набралась выдача, — и «0 дней назад» читалось бы сбоем.
+ */
+function deferredLabel(days: number): string {
+  if (days < 1) return 'Откладывал сегодня'
+  return `Откладывал ${days} ${plural(days, 'день', 'дня', 'дней')} назад`
 }
 
 /** Ссылка на игру в магазине: у не-Steam игр она своя, у Steam собирается */
@@ -723,6 +734,7 @@ function Player() {
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
                   <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
                 )}
+                {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo)}</span>}
                 <PlayersNow ccu={pick.ccu} />
               </motion.div>
 

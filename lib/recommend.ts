@@ -234,10 +234,15 @@ function latestPerKind(feedback: FeedbackRow[]): FeedbackRow[] {
 
 /**
  * Корректирует тег-профиль по истории фидбека: «зашло» усиливает вкус,
- * запуск и открытие карточки — слабее, скипы с причиной «не тот
- * жанр»/«надоела» ослабляют, «слишком сложная» бьёт только по хардкорным
- * тегам. «Не сейчас», «Крутить ещё» и скип без причины — это состояние или
- * случай, а не вкус: профиль не трогают.
+ * запуск и открытие карточки — слабее, скип с причиной «не тот жанр»
+ * ослабляет, «слишком сложная» бьёт только по хардкорным тегам. «Не сейчас»,
+ * «Крутить ещё» и скип без причины — это состояние или случай, а не вкус:
+ * профиль не трогают.
+ *
+ * «Надоела» тоже больше не штрафует вкус. Раньше она била по всем тегам
+ * игры тем же штрафом, что и «не тот жанр», — и человек, наигравший в
+ * Factorio триста часов, одним нажатием терял вкус к Automation. Надоела
+ * игра, а не жанр: это пауза на месяц (cooldownOf), а не приговор тегам.
  */
 export function applyFeedbackToProfile(
   profile: Record<string, number>,
@@ -255,7 +260,7 @@ export function applyFeedbackToProfile(
       const boost =
         step * (f.action === 'liked' ? LIKE_BOOST : f.action === 'launched' ? LAUNCH_BOOST : OPEN_BOOST)
       for (const [tag, v] of Object.entries(norm)) out[tag] = (out[tag] ?? 0) + boost * v
-    } else if (f.action === 'skipped' && (f.reason === 'genre' || f.reason === 'tired')) {
+    } else if (f.action === 'skipped' && f.reason === 'genre') {
       for (const [tag, v] of Object.entries(norm)) {
         out[tag] = Math.max((out[tag] ?? 0) - step * GENRE_PENALTY * v, 0)
       }
@@ -266,6 +271,99 @@ export function applyFeedbackToProfile(
     }
   }
   return out
+}
+
+/*
+ * Паузы после скипа.
+ *
+ * До них «Просто не сейчас» не значило ничего: вкус оно намеренно не трогает,
+ * а исключения из кандидатов не было — и отложенная игра возвращалась на
+ * следующей же перезагрузке, как будто человека не услышали.
+ *
+ *   notnow — скрыта трое суток, потом до двух недель чуть выше обычного (×1.1)
+ *            с пометкой «Откладывал N дней назад»: отложил — значит, хотел
+ *            вернуться, и напомнить об этом честнее, чем забыть;
+ *   skip   — скип без причины, «не тот жанр», «слишком сложная»: сутки. Не
+ *            трое: скип без причины — самое частое нажатие, и длинная пауза
+ *            выжгла бы кандидатов маленькой библиотеки за вечер;
+ *   tired  — «надоела»: месяц с линейным возвратом, от нуля до единицы.
+ *            Надоедает на время, а не навсегда — для навсегда есть бан.
+ *
+ * «Крутить ещё» (spin) паузы не даёт: это бросок кубика, а не ответ про игру.
+ */
+const HOUR = 3600
+const NOTNOW_HIDE_SEC = 72 * HOUR
+const NOTNOW_MARK_SEC = 14 * 86_400
+const NOTNOW_RETURN_MULT = 1.1
+const SKIP_HIDE_SEC = 24 * HOUR
+const TIRED_SEC = 30 * 86_400
+/** С каким множителем отложенная своя возвращается, когда без неё не набрать выдачу */
+const RESTORED_MULT = 0.5
+
+export type CooldownKind = 'skip' | 'notnow' | 'tired'
+
+/** mult — множитель скора; 0 — игра скрыта. at — когда был скип (unix-секунды). */
+export type Cooldown = { mult: number; kind: CooldownKind; at: number }
+
+function cooldownMult(kind: CooldownKind, elapsed: number): number | null {
+  if (kind === 'notnow') {
+    if (elapsed < NOTNOW_HIDE_SEC) return 0
+    return elapsed < NOTNOW_MARK_SEC ? NOTNOW_RETURN_MULT : null
+  }
+  if (kind === 'skip') return elapsed < SKIP_HIDE_SEC ? 0 : null
+  return elapsed < TIRED_SEC ? elapsed / TIRED_SEC : null
+}
+
+/**
+ * Паузы по истории фидбека: appid → пауза. Игры без паузы в карте нет.
+ *
+ * Решает самый свежий скип игры: сказанное позже заменяет сказанное раньше.
+ * «Зашло», запуск или открытие карточки ПОСЛЕ скипа снимают паузу — человек
+ * передумал сам, и прятать от него игру дальше было бы упрямством.
+ *
+ * only — какие паузы вообще учитывать. «Игре дня» нужна только «надоела»:
+ * пропуск на /play посреди дня иначе сменил бы игру, выбранную на сутки.
+ */
+export function cooldownOf(
+  feedback: readonly FeedbackRow[],
+  nowSec: number,
+  only?: readonly CooldownKind[],
+): Map<number, Cooldown> {
+  const lastSkip = new Map<number, FeedbackRow>()
+  const lastWarm = new Map<number, number>()
+  for (const f of feedback) {
+    if (f.action === 'skipped') {
+      if (f.reason === 'spin') continue
+      const cur = lastSkip.get(f.appid)
+      // Равное время — первая по входу: listFeedback отдаёт свежие первыми
+      if (!cur || f.createdAt > cur.createdAt) lastSkip.set(f.appid, f)
+    } else if (f.action === 'liked' || f.action === 'launched' || f.action === 'opened') {
+      lastWarm.set(f.appid, Math.max(lastWarm.get(f.appid) ?? -Infinity, f.createdAt))
+    }
+  }
+
+  const out = new Map<number, Cooldown>()
+  for (const [appid, f] of lastSkip) {
+    if ((lastWarm.get(appid) ?? -Infinity) > f.createdAt) continue
+    const kind: CooldownKind = f.reason === 'notnow' ? 'notnow' : f.reason === 'tired' ? 'tired' : 'skip'
+    if (only && !only.includes(kind)) continue
+    // Скип «из будущего» (часы разъехались) — считаем, что он только что
+    const mult = cooldownMult(kind, Math.max(0, nowSec - f.createdAt))
+    if (mult !== null) out.set(appid, { mult, kind, at: f.createdAt })
+  }
+  return out
+}
+
+/**
+ * Пометка «Откладывал N дней назад» — только у «не сейчас»: у прочих пауз
+ * напоминать не о чем, человек не обещал вернуться.
+ */
+export function deferredOf(
+  cd: Cooldown | undefined,
+  nowSec: number,
+): { daysAgo: number } | null {
+  if (!cd || cd.kind !== 'notnow') return null
+  return { daysAgo: Math.floor(Math.max(0, nowSec - cd.at) / 86_400) }
 }
 
 /**
@@ -737,9 +835,17 @@ export function scoreCandidates(args: {
    * отсутствие дают ровно прежние скоры — демо-пятёрки главной на этом стоят.
    */
   tagWeight?: TagWeight | null
+  /**
+   * Паузы после скипа (cooldownOf). mult 0 — игра уходит в сторону и
+   * возвращается, только если своих без неё не набрать на выдачу. Без карты —
+   * ровно прежние скоры.
+   */
+  cooldown?: ReadonlyMap<number, Cooldown>
 }): ScoredCandidate[] {
-  const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude } = args
+  const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
   const out: ScoredCandidate[] = []
+  // Скрытые паузой — отдельно: они нужны только полу ниже
+  const hidden: Array<ScoredCandidate & { parts: ScoreParts }> = []
   const profileEmpty = Object.keys(profile).length === 0
   // Профиль взвешивается один раз на весь запрос, а не на каждого кандидата
   const tasteOf = weightedCosineTo(profile, args.tagWeight ?? null)
@@ -747,15 +853,18 @@ export function scoreCandidates(args: {
   const push = (meta: GameMeta, source: ScoredCandidate['source']) => {
     if (exclude?.has(meta.appid)) return
     if (!fitsSocial(meta, mood)) return
+    const pause = cooldown?.get(meta.appid)
     const parts: ScoreParts = {
       taste: profileEmpty ? popularityScore(meta) : tasteOf(normalizedTags(meta)),
       mood: moodMultiplier(meta, mood),
       source: SOURCE_WEIGHT[source],
       deal: dealMultiplier(meta, source, nowSec),
       lean: 1,
-      cooldown: 1,
+      cooldown: pause && pause.mult > 0 ? pause.mult : 1,
     }
-    out.push({ appid: meta.appid, name: meta.name, source, score: scoreOfParts(parts), parts })
+    const c = { appid: meta.appid, name: meta.name, source, score: scoreOfParts(parts), parts }
+    if (pause?.mult === 0) hidden.push(c)
+    else out.push(c)
   }
 
   for (const g of library) {
@@ -774,6 +883,24 @@ export function scoreCandidates(args: {
   const owned = new Set(library.map((g) => g.appid))
   for (const meta of newPool) {
     if (!owned.has(meta.appid)) push(meta, 'new')
+  }
+
+  // Пол паузы — то же правило, что у applyFocus: фильтр, выкинувший всё, — не
+  // фильтр. У маленькой библиотеки несколько «не сейчас» подряд съели бы
+  // выдачу целиком, поэтому лучшие из отложенных своих возвращаются — но
+  // вполсилы, чтобы стоять за всем, что не откладывали. Каталог не
+  // возвращается: его и без того хватает. Баны сюда не попадают вовсе —
+  // exclude отсекает их раньше паузы.
+  const ownLeft = out.filter((c) => c.source !== 'new').length
+  if (ownLeft < PICK_COUNT) {
+    const back = hidden
+      .filter((c) => c.source !== 'new')
+      .sort((a, b) => b.score - a.score)
+      .slice(0, PICK_COUNT - ownLeft)
+    for (const c of back) {
+      const parts = { ...c.parts, cooldown: RESTORED_MULT }
+      out.push({ ...c, parts, score: scoreOfParts(parts) })
+    }
   }
 
   const ranked = out.sort((a, b) => b.score - a.score)
