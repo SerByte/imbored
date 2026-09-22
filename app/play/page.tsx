@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
@@ -21,6 +21,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import type { GameArtUrls } from '@/lib/art'
 import { EDGE_BADGE, EDGE_LINE, type PickEdge } from '@/lib/badges'
 import type { Discount } from '@/lib/discount'
+import { createLocalStore, parseFlag } from '@/lib/localstore'
 import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
 import type { Focus, OwnAnchor, Scope } from '@/lib/recommend'
@@ -111,6 +112,22 @@ const SCOPES: Array<{ key: Scope; label: string }> = [
   { key: 'all', label: 'Любые игры' },
   { key: 'library', label: 'Только моё' },
 ]
+
+/*
+ * ОДНА ИГРА ПО УМОЛЧАНИЮ.
+ *
+ * Выдача обещает ответ человеку, который не знает, чего хочет, а показывала
+ * одиннадцать вариантов сразу: героя, четыре «ещё» и до шести покупок. Это
+ * снова тот самый список, от которого он пришёл сюда уйти. Теперь на экране
+ * одна игра, а остальное — по нажатию: кому нужен весь список, тот раскроет
+ * его в один тап.
+ *
+ * Раскрытие запоминается на устройстве: кто раскрыл однажды, тот из тех, кому
+ * список нужен, и прятать его заново на каждой выдаче — наказывать за это.
+ * Снимок сервера — «свёрнуто»: разметка до гидратации обязана совпасть.
+ */
+const moreStore = createLocalStore('imbored.play.more-open', parseFlag)
+const shelfStore = createLocalStore('imbored.play.shelf-open', parseFlag)
 
 /**
  * Смена героя. Направление кодирует, ЧТО произошло: «дальше» уводит текущую
@@ -255,6 +272,10 @@ function Player() {
   const [scope, setScope] = useState<Scope>('all')
   const [switching, setSwitching] = useState(false)
   const started = useRef(false)
+  const moreOpen =
+    useSyncExternalStore(moreStore.subscribe, moreStore.get, moreStore.server) === true
+  const shelfOpen =
+    useSyncExternalStore(shelfStore.subscribe, shelfStore.get, shelfStore.server) === true
 
   /**
    * Догрев после того, как выдача уже на экране.
@@ -678,6 +699,23 @@ function Player() {
       whyParts.push(`под вайб: ${pick.signals.moodTags.join(', ')}`)
   }
 
+  /*
+   * «Изменить настроение» — рядом с тем, КАКОЕ оно сейчас. Одна игра без
+   * подписи выглядит ответом на вопрос, которого человек не помнит, а
+   * пришедший по пресету и не видел трёх вопросов. Подпись — только если
+   * настроение и правда спрашивали (askedMood): цитировать дефолты как его
+   * слова нельзя.
+   */
+  const caption = askedMood ? moodCaption(mood) : ''
+  const changeMood = (
+    <div className="mt-8 flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1 text-sm">
+      {caption && <span className="text-faint">{caption}</span>}
+      <Link href="/quiz" className="tap text-dim hover:text-ink transition-colors">
+        Изменить настроение →
+      </Link>
+    </div>
+  )
+
   return (
     <div className="flex-1 flex flex-col">
       <WarmStrip
@@ -944,194 +982,222 @@ function Player() {
 
       {!roulette && (
         <section className="mx-auto w-full max-w-6xl px-5 py-10">
-          <div className="flex items-baseline justify-between gap-3 flex-wrap mb-4">
+          {others.length > 0 && (
+            // Кнопка внутри заголовка, а не вместо него: скринридер по-прежнему
+            // находит раздел по h2 и тут же слышит, свёрнут он или раскрыт
             <SectionLabel>
-              {focus ? 'Ещё нераспакованное' : 'Ещё варианты под это настроение'}
-            </SectionLabel>
-            {/* Откуда брать главную выдачу. При фокусе «нераспакованное»
-                переключателя нет: там вопрос уже задан и ответ на него — своё. */}
-            {!focus && (
-              <div
-                role="group"
-                aria-label="Откуда брать игры"
-                /* gap-3, а не gap-1, и это не про воздух. Зона .tap на кнопках
-                   ниже вылезает на 6 px вбок с каждой стороны; при зазоре в
-                   4 px соседние зоны перекрылись бы на 8 px и воровали бы друг
-                   у друга нажатия. 12 px — ровно столько, сколько зона
-                   занимает, и ни пикселем больше. */
-                className="flex items-center gap-3 rounded-full glass p-1 text-xs"
+              <button
+                onClick={() => moreStore.set(!moreOpen)}
+                aria-expanded={moreOpen}
+                aria-controls="play-more"
+                className="tap hover:text-ink transition-colors cursor-pointer text-left"
               >
-                {SCOPES.map((s) => (
-                  <button
-                    key={s.key}
-                    onClick={() => switchScope(s.key)}
-                    disabled={switching}
-                    // Выбранное состояние — не только цветом: скринридеру и
-                    // тому, кто не различает ember на стекле, нужен признак
-                    aria-pressed={scope === s.key}
-                    /* py-2.5, а не py-1: замерено — переключатель выдавал
-                       24 px, ровно порог WCAG 2.5.8 без единого запаса, и это
-                       основной фильтр экрана выдачи. Зону наращивать нечем:
-                       кнопки стоят внутри одной пилюли в 4 px друг от друга, и
-                       псевдозона .tap перекрыла бы соседа. */
-                    className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer disabled:opacity-50 ${
-                      scope === s.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
-                    }`}
+                {focus
+                  ? `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} из нераспакованного`
+                  : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}
+                {moreOpen ? '▴' : '▾'}
+              </button>
+            </SectionLabel>
+          )}
+          {/* Переключатель источника и подпись движка — внутри раскрытого: они
+              про список, а не про одну игру. Когда списка нет вовсе (выдача
+              из одной карточки), ряд стоит открыто — иначе «Любые игры» было
+              бы не вернуть. */}
+          {(moreOpen || others.length === 0) && (
+            <div id="play-more" className="mt-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+                {/* Откуда брать главную выдачу. При фокусе «нераспакованное»
+                    переключателя нет: там вопрос уже задан и ответ на него — своё. */}
+                {!focus && (
+                  <div
+                    role="group"
+                    aria-label="Откуда брать игры"
+                    /* gap-3, а не gap-1, и это не про воздух. Зона .tap на кнопках
+                       ниже вылезает на 6 px вбок с каждой стороны; при зазоре в
+                       4 px соседние зоны перекрылись бы на 8 px и воровали бы друг
+                       у друга нажатия. 12 px — ровно столько, сколько зона
+                       занимает, и ни пикселем больше. */
+                    className="flex items-center gap-3 rounded-full glass p-1 text-xs"
                   >
-                    {s.label}
-                  </button>
+                    {SCOPES.map((s) => (
+                      <button
+                        key={s.key}
+                        onClick={() => switchScope(s.key)}
+                        disabled={switching}
+                        // Выбранное состояние — не только цветом: скринридеру и
+                        // тому, кто не различает ember на стекле, нужен признак
+                        aria-pressed={scope === s.key}
+                        /* py-2.5, а не py-1: замерено — переключатель выдавал
+                           24 px, ровно порог WCAG 2.5.8 без единого запаса, и это
+                           основной фильтр экрана выдачи. Зону наращивать нечем:
+                           кнопки стоят внутри одной пилюли в 4 px друг от друга, и
+                           псевдозона .tap перекрыла бы соседа. */
+                        className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer disabled:opacity-50 ${
+                          scope === s.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <span className="text-xs text-faint font-mono">
+                  {/*
+                    «по тегам», а не «эвристика». Раскрытие тут по делу — продукт
+                    обещает, что рекомендация себя объясняет, — но «эвристика» было
+                    единственным словом из машинного словаря во всём интерфейсе, и
+                    рядом с «ИИ» оно читалось как «версия похуже», без единого
+                    способа что-то с этим сделать. По тегам подбор и идёт, а сами
+                    теги человек видит чипсами строкой выше.
+                  */}
+                  {switching ? 'пересобираю…' : engine === 'claude' ? 'подбор: ИИ' : 'подбор: по тегам'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {others.map((p, i) => (
+                  <motion.button
+                    key={p.appid}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.45, ease: EASE, delay: i * 0.06 }}
+                    onClick={() => {
+                      setDir('pick')
+                      setIndex(picks.indexOf(p))
+                      setAskReason(false)
+                      setShowWhy(false)
+                    }}
+                    className="glass glass-hover rounded-[14px] overflow-hidden text-left cursor-pointer"
+                  >
+                    <div className="relative">
+                      <GameArt
+                        appid={p.appid}
+                        name={p.name}
+                        headerImage={p.headerImage}
+                        art={p.art}
+                        sizes="(min-width: 768px) 33vw, 100vw"
+                        className="w-full aspect-[460/215] object-cover"
+                      />
+                      <DiscountCorner discount={p.discount} />
+                    </div>
+                    <div className="p-3">
+                      <div className="text-sm font-semibold leading-tight">{p.name}</div>
+                      <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
+                        {/* Преимущество важнее источника: «откуда» видно и по
+                            герою, а «чем лучше соседних» — только здесь */}
+                        <span className={`truncate ${p.edge ? 'text-ember-text' : 'text-dim'}`}>
+                          {p.edge
+                            ? EDGE_BADGE[p.edge]
+                            : p.store
+                              ? (STORE_LABEL[p.store] ?? p.store)
+                              : SOURCE_BADGE[p.source]}
+                        </span>
+                        {/* Цена — только у не купленного: у своей игры она уже
+                            ничего не решает, а место в строке занимает */}
+                        {p.source === 'new' && (
+                          <PriceTag
+                            priceFinal={p.priceFinal}
+                            discount={p.discount}
+                            isFree={p.isFree}
+                            showPercent={false}
+                            className="shrink-0"
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </motion.button>
                 ))}
               </div>
-            )}
-            <span className="text-xs text-faint font-mono">
-              {/*
-                «по тегам», а не «эвристика». Раскрытие тут по делу — продукт
-                обещает, что рекомендация себя объясняет, — но «эвристика» было
-                единственным словом из машинного словаря во всём интерфейсе, и
-                рядом с «ИИ» оно читалось как «версия похуже», без единого
-                способа что-то с этим сделать. По тегам подбор и идёт, а сами
-                теги человек видит чипсами строкой выше.
-              */}
-              {switching ? 'пересобираю…' : engine === 'claude' ? 'подбор: ИИ' : 'подбор: по тегам'}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {others.map((p, i) => (
-              <motion.button
-                key={p.appid}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.45, ease: EASE, delay: i * 0.06 }}
-                onClick={() => {
-                  setDir('pick')
-                  setIndex(picks.indexOf(p))
-                  setAskReason(false)
-                  setShowWhy(false)
-                }}
-                className="glass glass-hover rounded-[14px] overflow-hidden text-left cursor-pointer"
-              >
-                <div className="relative">
-                  <GameArt
-                    appid={p.appid}
-                    name={p.name}
-                    headerImage={p.headerImage}
-                    art={p.art}
-                    sizes="(min-width: 768px) 33vw, 100vw"
-                    className="w-full aspect-[460/215] object-cover"
-                  />
-                  <DiscountCorner discount={p.discount} />
-                </div>
-                <div className="p-3">
-                  <div className="text-sm font-semibold leading-tight">{p.name}</div>
-                  <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
-                    {/* Преимущество важнее источника: «откуда» видно и по
-                        герою, а «чем лучше соседних» — только здесь */}
-                    <span className={`truncate ${p.edge ? 'text-ember-text' : 'text-dim'}`}>
-                      {p.edge
-                        ? EDGE_BADGE[p.edge]
-                        : p.store
-                          ? (STORE_LABEL[p.store] ?? p.store)
-                          : SOURCE_BADGE[p.source]}
-                    </span>
-                    {/* Цена — только у не купленного: у своей игры она уже
-                        ничего не решает, а место в строке занимает */}
-                    {p.source === 'new' && (
-                      <PriceTag
-                        priceFinal={p.priceFinal}
-                        discount={p.discount}
-                        isFree={p.isFree}
-                        showPercent={false}
-                        className="shrink-0"
-                      />
-                    )}
-                  </div>
-                </div>
-              </motion.button>
-            ))}
-          </div>
-          <div className="mt-8 text-center">
-            <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
-              Изменить настроение →
-            </Link>
-          </div>
+            </div>
+          )}
+          {changeMood}
         </section>
       )}
 
       {/* Каталог отдельным блоком: даже когда он участвует в главной выдаче,
-          у покупок остаётся своя полка — с ценами и скидками на виду */}
+          у покупок остаётся своя полка — с ценами и скидками на виду. Свёрнута
+          по умолчанию: «во что поиграть» не должно начинаться с «что купить» */}
       {!roulette && discoveries.length > 0 && (
         <section className="mx-auto w-full max-w-6xl px-5 pb-16">
           <div className="border-t border-edge/60 pt-10">
-            <div className="flex items-baseline justify-between gap-3 mb-1">
-              <SectionLabel>Нет в твоей библиотеке</SectionLabel>
-              <a
-                href="https://steamdb.info/sales/"
-                target="_blank"
-                rel="noreferrer"
-                className="tap text-xs text-faint hover:text-ink transition-colors shrink-0"
-              >
-                все скидки Steam →
-              </a>
-            </div>
-            <p className="text-xs text-faint mb-4 max-w-md">
-              Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто
-              на будущее.
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {discoveries.map((p, i) => (
-                <motion.a
-                  key={p.appid}
-                  href={p.storeUrl ?? `https://store.steampowered.com/app/${p.appid}/`}
+            <div className="flex items-baseline justify-between gap-3">
+              <SectionLabel>
+                <button
+                  onClick={() => shelfStore.set(!shelfOpen)}
+                  aria-expanded={shelfOpen}
+                  aria-controls="play-shelf"
+                  className="tap hover:text-ink transition-colors cursor-pointer text-left"
+                >
+                  Нет в библиотеке · {discoveries.length} {shelfOpen ? '▴' : '▾'}
+                </button>
+              </SectionLabel>
+              {shelfOpen && (
+                <a
+                  href="https://steamdb.info/sales/"
                   target="_blank"
                   rel="noreferrer"
-                  initial={{ opacity: 0, y: 12 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: '-40px' }}
-                  transition={{ duration: 0.45, ease: EASE, delay: i * 0.05 }}
-                  onClick={() => sendFeedback(p.appid, 'opened')}
-                  className="glass glass-hover rounded-[14px] overflow-hidden text-left"
+                  className="tap text-xs text-faint hover:text-ink transition-colors shrink-0"
                 >
-                  <div className="relative">
-                    <GameArt
-                      appid={p.appid}
-                      name={p.name}
-                      headerImage={p.headerImage}
-                      art={p.art}
-                      sizes="(min-width: 768px) 33vw, 50vw"
-                      className="w-full aspect-[460/215] object-cover"
-                    />
-                    <DiscountCorner discount={p.discount} />
-                  </div>
-                  <div className="p-3">
-                    <div className="text-sm font-semibold leading-tight">{p.name}</div>
-                    <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
-                      <span className="text-dim truncate">
-                        {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
-                      </span>
-                      <PriceTag
-                        priceFinal={p.priceFinal}
-                        discount={p.discount}
-                        isFree={p.isFree}
-                        showPercent={false}
-                        className="shrink-0"
-                      />
-                    </div>
-                    <DiscountEnds discount={p.discount} className="mt-1 block" />
-                  </div>
-                </motion.a>
-              ))}
+                  все скидки Steam →
+                </a>
+              )}
             </div>
+            {shelfOpen && (
+              <div id="play-shelf" className="mt-1">
+                <p className="text-xs text-faint mb-4 max-w-md">
+                  Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто
+                  на будущее.
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {discoveries.map((p, i) => (
+                    <motion.a
+                      key={p.appid}
+                      href={p.storeUrl ?? `https://store.steampowered.com/app/${p.appid}/`}
+                      target="_blank"
+                      rel="noreferrer"
+                      initial={{ opacity: 0, y: 12 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true, margin: '-40px' }}
+                      transition={{ duration: 0.45, ease: EASE, delay: i * 0.05 }}
+                      onClick={() => sendFeedback(p.appid, 'opened')}
+                      className="glass glass-hover rounded-[14px] overflow-hidden text-left"
+                    >
+                      <div className="relative">
+                        <GameArt
+                          appid={p.appid}
+                          name={p.name}
+                          headerImage={p.headerImage}
+                          art={p.art}
+                          sizes="(min-width: 768px) 33vw, 50vw"
+                          className="w-full aspect-[460/215] object-cover"
+                        />
+                        <DiscountCorner discount={p.discount} />
+                      </div>
+                      <div className="p-3">
+                        <div className="text-sm font-semibold leading-tight">{p.name}</div>
+                        <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
+                          <span className="text-dim truncate">
+                            {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
+                          </span>
+                          <PriceTag
+                            priceFinal={p.priceFinal}
+                            discount={p.discount}
+                            isFree={p.isFree}
+                            showPercent={false}
+                            className="shrink-0"
+                          />
+                        </div>
+                        <DiscountEnds discount={p.discount} className="mt-1 block" />
+                      </div>
+                    </motion.a>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </section>
       )}
 
-      {roulette && (
-        <div className="mx-auto w-full max-w-6xl px-5 py-8 text-center">
-          <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
-            Изменить настроение →
-          </Link>
-        </div>
-      )}
+      {roulette && <div className="mx-auto w-full max-w-6xl px-5 py-8">{changeMood}</div>}
     </div>
   )
 }
