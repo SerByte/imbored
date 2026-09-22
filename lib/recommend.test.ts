@@ -345,6 +345,44 @@ describe('scoreCandidates', () => {
     expect(byId.has(3)).toBe(false)
   })
 
+  describe('мусор библиотеки не становится «ни разу не запускал»', () => {
+    const run = (lib: LibraryGame[], metas: Map<number, GameMeta>) =>
+      scoreCandidates({
+        profile: { Action: 1 },
+        library: lib,
+        metaOf: (id) => metas.get(id),
+        newPool: [],
+        mood: baseMood,
+        nowSec: NOW,
+      })
+
+    test('саундтрек и демо с нулём минут выпадают, обычная игра остаётся запечатанной', () => {
+      const lib = [
+        game({ appid: 1, name: 'Foo — Original Soundtrack' }),
+        game({ appid: 2, name: 'Bar Demo' }),
+        game({ appid: 3, name: 'Baz' }),
+      ]
+      const metas = new Map(lib.map((g) => [g.appid, { ...meta(g.appid, { Action: 100 }), name: g.name }]))
+      const result = run(lib, metas)
+      expect(result.map((c) => c.appid)).toEqual([3])
+      expect(result[0].source).toBe('untouched')
+    })
+
+    test('прогретая запись без тегов и категорий — мусор', () => {
+      const metas = new Map([[4, meta(4, {}, [])]])
+      expect(run([game({ appid: 4 })], metas)).toEqual([])
+    })
+
+    test('вердикт курации сильнее имени: мёртвая выпадает, живая «Demo» остаётся', () => {
+      const lib = [game({ appid: 5, name: 'Normal Game' }), game({ appid: 6, name: 'Real Game Demo' })]
+      const metas = new Map<number, GameMeta>([
+        [5, { ...meta(5, { Action: 100 }), signalsAt: NOW, alive: false }],
+        [6, { ...meta(6, { Action: 100 }), signalsAt: NOW, alive: true }],
+      ])
+      expect(run(lib, metas).map((c) => c.appid)).toEqual([6])
+    })
+  })
+
   test('«с друзьями» при пустых categories (реальный режим без appdetails) падает на теги', () => {
     const result = scoreCandidates({
       profile: { Action: 1 },

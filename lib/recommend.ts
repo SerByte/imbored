@@ -1,4 +1,5 @@
 import { discountOf } from './discount'
+import { isJunk } from './junk'
 import type {
   CandidateSource,
   GameMeta,
@@ -578,6 +579,11 @@ export function scoreCandidates(args: {
   for (const g of library) {
     const meta = metaOf(g.appid)
     if (!meta) continue
+    // Саундтрек, демка или SDK с нулём минут иначе становятся «ни разу не
+    // запускал» с наклоном 1.25 — и в режиме одной игры занимают единственное
+    // место. Тот же отсев, что у полки забытого на /library: одно определение
+    // мусора на весь продукт.
+    if (isJunk(g, meta)) continue
     const state = classifyLibraryGame(g, nowSec)
     if (state === 'unplayed') push(meta, isUntouched(g) ? 'untouched' : 'backlog')
     else if (state === 'comeback') push(meta, 'comeback')
