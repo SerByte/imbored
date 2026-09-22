@@ -21,6 +21,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import type { GameArtUrls } from '@/lib/art'
 import { EDGE_BADGE, EDGE_LINE, type PickEdge } from '@/lib/badges'
 import type { Discount } from '@/lib/discount'
+import { rememberMood } from '@/lib/lastmood'
 import { createLocalStore, parseFlag } from '@/lib/localstore'
 import { NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
 import { EASE } from '@/lib/motion'
@@ -389,6 +390,18 @@ function Player() {
         // Ось — из эха сервера, а не из запроса: кнопки обязаны показывать,
         // под что собрана выдача на экране, а не что мы просили
         setLean(parseLean(data.lean))
+        /*
+         * Прошлое настроение для «Подобрать» в шапке (lib/lastmood.ts) — только
+         * после выдачи, которая собралась, и только сказанное им самим:
+         *   — askedMood: дефолты — не его слова;
+         *   — не рулетка: время там случайное, и бросок кубика — не настроение;
+         *   — не «нераспакованное»: туда ведёт и кнопка с нейтральным
+         *     настроением, которого он тоже не выбирал.
+         * Ось — та, под которую собрана выдача, как и у кнопок выше.
+         */
+        if (askedMood && !roulette && !focus) {
+          rememberMood(mood, parseLean(data.lean), Math.floor(Date.now() / 1000))
+        }
         return data.picks
       } catch {
         // Причину обязательно СБРАСЫВАЕМ, а не оставляем как есть: сюда
@@ -399,7 +412,8 @@ function Player() {
         return null
       }
     },
-    // mood и focus собираются из строки запроса и в рамках страницы неизменны
+    // mood, focus, askedMood и roulette собираются из строки запроса и в рамках
+    // страницы неизменны
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )

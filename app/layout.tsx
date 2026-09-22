@@ -7,6 +7,7 @@ import { Footer } from '@/components/Footer'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
+import { PickLink } from '@/components/PickLink'
 import { SessionKeeper } from '@/components/SessionKeeper'
 import { SmoothScroll } from '@/components/SmoothScroll'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -274,9 +275,11 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
                 <Link href="/daily" className="tap hover:text-ink transition-colors">
                   Игра дня
                 </Link>
-                <Link href="/quiz" className="tap hover:text-ink transition-colors">
+                {/* Ведёт сразу к выдаче под прошлое настроение, если оно есть на
+                    устройстве (lib/lastmood.ts); на сервере — всегда /quiz */}
+                <PickLink className="tap hover:text-ink transition-colors">
                   Подобрать игру
-                </Link>
+                </PickLink>
                 <Link href="/rooms" className="tap hover:text-ink transition-colors">
                   Пати
                 </Link>

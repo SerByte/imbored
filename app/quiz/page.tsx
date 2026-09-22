@@ -7,6 +7,7 @@ import { Ambient } from '@/components/Ambient'
 import { ClickSpark } from '@/components/ClickSpark'
 import { SoundToggle } from '@/components/SoundToggle'
 import { SpotlightCard } from '@/components/SpotlightCard'
+import { freshLastMood, lastMoodStore } from '@/lib/lastmood'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
 import { playHref, VIBE_PRESETS } from '@/lib/presets'
@@ -238,16 +239,22 @@ function Quiz() {
                 </button>
               ))}
               <button
-                onClick={() =>
+                onClick={() => {
+                  // Время — из прошлого настроения, если оно свежее: сколько у
+                  // человека есть минут, — не то, что стоит отдавать на волю
+                  // случая. Бросок — во всём остальном.
+                  const last = freshLastMood(lastMoodStore.get(), Math.floor(Date.now() / 1000))
                   go(
                     {
-                      time: (['short', 'medium', 'long'] as const)[Math.floor(Math.random() * 3)],
+                      time:
+                        last?.mood.time ??
+                        (['short', 'medium', 'long'] as const)[Math.floor(Math.random() * 3)],
                       vibe: (['chill', 'engaged'] as const)[Math.floor(Math.random() * 2)],
                       social: 'solo',
                     },
                     { roulette: true },
                   )
-                }
+                }}
                 className="rounded-full bg-ember/15 text-ember-text px-4 py-3 text-sm hover:bg-ember/25 transition cursor-pointer"
               >
                 Мне повезёт

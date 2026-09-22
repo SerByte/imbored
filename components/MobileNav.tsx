@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { PickLink } from '@/components/PickLink'
 
 /**
  * Нижняя панель навигации — только на телефоне; на десктопе меню в шапке.
@@ -16,14 +17,19 @@ import { useEffect, useRef, useState } from 'react'
  * не подсвечивали в панели ничего: выдача живёт на /play, а не на /quiz,
  * и комната на /room/<код>, а не на /rooms. Панель молча гасла ровно там,
  * где важнее всего понимать, где ты находишься.
+ *
+ * `pick` — пункт ведёт не по своему href, а туда же, куда «Подобрать» в шапке:
+ * к выдаче под прошлое настроение (components/PickLink.tsx). href остаётся
+ * /quiz и по-прежнему решает подсветку: адрес ссылки зависит от устройства,
+ * а то, где человек находится, — нет.
  */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
-  { href: '/quiz', label: 'Подбор', also: ['/play'] },
+  { href: '/quiz', label: 'Подбор', also: ['/play'], pick: true },
   { href: '/rooms', label: 'Пати', also: ['/room'] },
   { href: '/whatsnew', label: 'Новое' },
   { href: '/library', label: 'Игры' },
-] satisfies Array<{ href: string; label: string; also?: string[] }>
+] satisfies Array<{ href: string; label: string; also?: string[]; pick?: boolean }>
 
 export function MobileNav() {
   const pathname = usePathname() ?? ''
@@ -93,18 +99,20 @@ export function MobileNav() {
             }}
           />
         )}
-        {ITEMS.map((item, i) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={i === activeIndex ? 'page' : undefined}
-            className={`py-3.5 text-center text-[11px] transition-colors ${
+        {ITEMS.map((item, i) => {
+          const props = {
+            'aria-current': i === activeIndex ? ('page' as const) : undefined,
+            className: `py-3.5 text-center text-[11px] transition-colors ${
               i === activeIndex ? 'text-ember-text font-semibold' : 'text-dim'
-            }`}
-          >
-            <span data-label>{item.label}</span>
-          </Link>
-        ))}
+            }`,
+            children: <span data-label>{item.label}</span>,
+          }
+          return 'pick' in item ? (
+            <PickLink key={item.href} {...props} />
+          ) : (
+            <Link key={item.href} href={item.href} {...props} />
+          )
+        })}
       </div>
     </nav>
   )
