@@ -9,6 +9,7 @@ import { HeroShots } from '@/components/HeroShots'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { RefundNote } from '@/components/RefundNote'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
@@ -79,6 +80,8 @@ type DailyPick = StoreCard & {
   sharedTags?: string[]
   hoursPlayed: number | null
   ccu: number | null
+  /** Можно ли обещать возврат Steam (refundEligible) — только у не купленного */
+  refund?: boolean
 }
 
 const storeHref = (c: StoreCard) =>
@@ -341,6 +344,7 @@ export default function DailyPage() {
                 <DiscountEnds discount={pick.discount} />
               </div>
             )}
+            {pick.refund && <RefundNote />}
 
             <p className="text-xs text-faint mt-1 max-w-md">
               {pick.source === 'new'

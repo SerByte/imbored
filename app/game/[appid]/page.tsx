@@ -9,12 +9,14 @@ import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { MetaLine } from '@/components/Labels'
 import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
+import { RefundNote } from '@/components/RefundNote'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
 import { discountView } from '@/lib/discount'
 import { byline } from '@/lib/byline'
 import { loadGamePage, reviewFacts } from '@/lib/gamepage'
 import { OG_SITE } from '@/lib/og'
+import { refundEligible } from '@/lib/refund'
 import { getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { SectionLabel } from '@/components/Labels'
@@ -143,6 +145,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
   const { meta, reviewsSummary, prosCons } = data
   const deal = discountView(meta, nowSec())
+  // Страница публичная и не знает, куплена ли игра у читающего, — поэтому
+  // строка про возврат здесь нейтральная, без «не зайдёт»
+  const refund = refundEligible(meta, nowSec())
   const studio = byline(meta.developer, meta.releaseYear)
   const facts = reviewFacts(meta, reviewsSummary)
   const topTags = Object.entries(meta.tags)
@@ -289,6 +294,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </span>
               )}
             </div>
+            {refund && <RefundNote tone="neutral" />}
           </div>
         </div>
       </section>

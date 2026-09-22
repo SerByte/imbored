@@ -14,6 +14,7 @@ import { discountView } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
 import { heuristicPicks } from '@/lib/llm'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
+import { refundEligible } from '@/lib/refund'
 import {
   applyFeedbackToProfile,
   buildAnchorFinder,
@@ -188,6 +189,8 @@ export async function GET() {
       // что ты купил её дороже. Считается на сервере вместе с подписью срока —
       // у клиента свой часовой пояс, и «до 17 августа» разъехалось бы.
       discount: pick.source === 'new' && meta ? discountView(meta, now) : null,
+      // Страховка покупки — там же, где цена: только у не купленного
+      refund: pick.source === 'new' && meta ? refundEligible(meta, now) : false,
     },
     discoveries: shelf.map((c) => {
       const m = metaNow(c.appid)

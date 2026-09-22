@@ -14,6 +14,7 @@ import { LogoMark } from '@/components/Logo'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
@@ -69,6 +70,8 @@ type Pick = {
   deferred: { daysAgo: number } | null
   /** Чем она лучше соседних по выдаче (assignEdges) — у героя фразой, у плитки бейджем */
   edge: PickEdge | null
+  /** Можно ли обещать возврат Steam (refundEligible) — только у не купленного */
+  refund: boolean
 }
 
 /**
@@ -941,6 +944,7 @@ function Player() {
                 </button>
               </motion.div>
             ) : (
+              <>
               <motion.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2">
                 {pick.source === 'new' || pick.storeUrl ? (
                   // Игры нет в библиотеке — «Запустить» для неё кнопка-обманка:
@@ -1066,6 +1070,14 @@ function Player() {
                   )}
                 </button>
               </motion.div>
+              {/* Под ценой — «а если не зайдёт»: покупка перестаёт быть ставкой.
+                  Только у платного, вышедшего и из Steam — решает сервер. */}
+              {pick.refund && (
+                <motion.div variants={STEP}>
+                  <RefundNote />
+                </motion.div>
+              )}
+              </>
             )}
             </div>
           </motion.div>

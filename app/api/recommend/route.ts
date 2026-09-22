@@ -34,6 +34,7 @@ import {
   scoreCandidates,
   splitBySource,
 } from '@/lib/recommend'
+import { refundEligible } from '@/lib/refund'
 import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
 import { tagWeightFrom } from '@/lib/tagweight'
@@ -368,6 +369,9 @@ export async function POST(req: Request) {
       // её дороже. Считается на сервере вместе с подписью срока: у клиента
       // свой часовой пояс, и «до 17 августа» разъехалось бы при гидратации.
       discount: meta && p.source === 'new' ? discountView(meta, now) : null,
+      // «Не зайдёт — Steam вернёт деньги» — тоже разговор про покупку, поэтому
+      // только у не купленного. Решение здесь, текст в lib/refund.ts
+      refund: meta && p.source === 'new' ? refundEligible(meta, now) : false,
       signals: meta ? explainMatch(profile, meta, mood, tagWeight) : null,
       // Своя игра, на которую эта похожа. Причина от Claude может её не
       // назвать — тогда /play добавляет строку сам, в «Почему она?»
