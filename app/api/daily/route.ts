@@ -95,7 +95,9 @@ export async function GET() {
     mood: NEUTRAL_MOOD,
     nowSec: now,
     limit: CANDIDATE_LIMIT,
-  }).filter((c) => !banned.has(c.appid))
+    // баны до отсечки, а не после — см. тот же параметр в /api/recommend
+    exclude: banned,
+  })
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
 

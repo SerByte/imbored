@@ -159,7 +159,10 @@ export async function POST(req: Request) {
     // чем было до появления каталога в главной выдаче. Режим «только моё»
     // просел бы вместе со всеми, ничего для этого не сделав.
     limit: CANDIDATE_LIMIT,
-  }).filter((c) => !banned.has(c.appid))
+    // Баны — внутри скоринга, до отсечки: фильтр после неё отдавал тридцатку
+    // минус забаненные, и места, которые они занимали, не доставались никому
+    exclude: banned,
+  })
 
   if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
 

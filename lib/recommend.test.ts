@@ -17,6 +17,7 @@ import {
   parseScope,
   rankByTaste,
   scoreCandidates,
+  scoreOfParts,
   splitBySource,
 } from './recommend'
 import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
@@ -381,6 +382,73 @@ describe('scoreCandidates', () => {
       ])
       expect(run(lib, metas).map((c) => c.appid)).toEqual([6])
     })
+  })
+
+  describe('exclude — баны до отсечки limit', () => {
+    // Пять своих с убывающим вкусом: у 1 профильный тег чистый, дальше всё
+    // больше постороннего, поэтому порядок 1 > 2 > 3 > 4 > 5 без ничьих
+    const lib = [1, 2, 3, 4, 5].map((appid) => game({ appid, playtimeForever: 10 }))
+    const metas = new Map(
+      lib.map((g) => [g.appid, meta(g.appid, { Action: 100, Other: (g.appid - 1) * 30 })]),
+    )
+    const run = (exclude?: ReadonlySet<number>, newPool: GameMeta[] = []) =>
+      scoreCandidates({
+        profile: { Action: 1 },
+        library: lib,
+        metaOf: (id) => metas.get(id),
+        newPool,
+        mood: baseMood,
+        nowSec: NOW,
+        limit: 3,
+        ...(exclude ? { exclude } : {}),
+      })
+
+    test('бан двух лучших не укорачивает выдачу: их места достаются следующим', () => {
+      expect(run().map((c) => c.appid)).toEqual([1, 2, 3])
+      expect(run(new Set([1, 2])).map((c) => c.appid)).toEqual([3, 4, 5])
+    })
+
+    test('бан убирает и игру из каталога', () => {
+      const pool = [meta(100, { Action: 100 }), meta(101, { Action: 100 })]
+      const ids = run(new Set([100]), pool).map((c) => c.appid)
+      expect(ids).not.toContain(100)
+      expect(ids).toContain(101)
+    })
+
+    test('без exclude выдача та же, что с пустым множеством', () => {
+      expect(run(new Set())).toEqual(run())
+    })
+  })
+
+  test('score — ровно произведение частей', () => {
+    const onSale: GameMeta = {
+      ...meta(200, { Action: 100, Relaxing: 40, Roguelike: 30 }),
+      priceFinal: 500,
+      priceInitial: 1000,
+      discountPercent: 50,
+      priceAt: NOW,
+    }
+    const result = scoreCandidates({
+      profile: { Action: 1, Puzzle: 0.5 },
+      library: [
+        game({ appid: 1, playtimeForever: 0 }),
+        game({ appid: 2, playtimeForever: 900, lastPlayed: NOW - 300 * DAY }),
+      ],
+      metaOf: (id) => (id === 1 ? meta(1, { Action: 100, Competitive: 20 }) : meta(2, { Puzzle: 100 })),
+      newPool: [onSale],
+      mood: baseMood,
+      nowSec: NOW,
+    })
+    expect(result).toHaveLength(3)
+    for (const c of result) {
+      const p = c.parts!
+      expect(c.score).toBe(p.taste * p.mood * p.source * p.deal * p.lean * p.cooldown)
+      expect(scoreOfParts(p)).toBe(c.score)
+    }
+    const byId = new Map(result.map((c) => [c.appid, c.parts!]))
+    expect(byId.get(1)?.source).toBe(1.25)
+    expect(byId.get(200)?.deal).toBeGreaterThan(1)
+    expect(byId.get(2)?.deal).toBe(1)
   })
 
   test('«с друзьями» при пустых categories (реальный режим без appdetails) падает на теги', () => {

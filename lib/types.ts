@@ -101,9 +101,35 @@ export const CANDIDATE_SOURCES = ['untouched', 'backlog', 'comeback', 'new'] as 
 
 export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
 
+/**
+ * Из чего сложился скор кандидата. score — ровно произведение этих чисел, и
+ * это инвариант: части нужны, чтобы объяснять выдачу («лучше всех под
+ * настроение»), а объяснение, расходящееся с настоящим порядком, хуже никакого.
+ *
+ *   taste    — косинус с профилем вкуса (или популярность при пустом профиле);
+ *   mood     — вайб и длина сессии;
+ *   source   — наклон источника (нераспакованное вперёд);
+ *   deal     — скидка, только у не купленного;
+ *   lean     — ось состояния рядом с настроением, пока всегда 1;
+ *   cooldown — пауза после «не сейчас» и «надоела», пока всегда 1.
+ */
+export type ScoreParts = {
+  taste: number
+  mood: number
+  source: number
+  deal: number
+  lean: number
+  cooldown: number
+}
+
 export type ScoredCandidate = {
   appid: number
   name: string
   source: CandidateSource
   score: number
+  /**
+   * Необязательно ради литералов в тестах и промежуточных списков, которые
+   * собираются руками. На клиент не уходит: это изнанка скоринга.
+   */
+  parts?: ScoreParts
 }

@@ -5,6 +5,7 @@ import type {
   GameMeta,
   LibraryGame,
   Mood,
+  ScoreParts,
   ScoredCandidate,
 } from './types'
 
@@ -548,6 +549,16 @@ export function dealMultiplier(meta: GameMeta, source: CandidateSource, nowSec: 
   return 1 + DEAL_BOOST_MAX * share
 }
 
+/**
+ * Скор из частей. Порядок умножения тот же, что был до появления частей
+ * (вкус × настроение × источник × скидка), и это не педантизм: плавающая
+ * точка не ассоциативна, а демо-пятёрки главной зафиксированы тестом до бита.
+ * Новые множители идут в хвост — пока они единичные, результат не меняется.
+ */
+export function scoreOfParts(p: ScoreParts): number {
+  return p.taste * p.mood * p.source * p.deal * p.lean * p.cooldown
+}
+
 export function scoreCandidates(args: {
   profile: Record<string, number>
   library: LibraryGame[]
@@ -556,24 +567,29 @@ export function scoreCandidates(args: {
   mood: Mood
   nowSec: number
   limit?: number
+  /**
+   * Кого не показывать вовсе — баны. Отсекаются ЗДЕСЬ, до среза limit, а не
+   * фильтром после: иначе забаненные занимали места в тридцатке и выпадали
+   * уже за отсечкой, и у человека с десятком банов выдача молча худела.
+   */
+  exclude?: ReadonlySet<number>
 }): ScoredCandidate[] {
-  const { profile, library, metaOf, newPool, mood, nowSec, limit = 25 } = args
+  const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude } = args
   const out: ScoredCandidate[] = []
   const profileEmpty = Object.keys(profile).length === 0
 
   const push = (meta: GameMeta, source: ScoredCandidate['source']) => {
+    if (exclude?.has(meta.appid)) return
     if (!fitsSocial(meta, mood)) return
-    const base = profileEmpty ? popularityScore(meta) : cosine(profile, normalizedTags(meta))
-    out.push({
-      appid: meta.appid,
-      name: meta.name,
-      source,
-      score:
-        base *
-        moodMultiplier(meta, mood) *
-        SOURCE_WEIGHT[source] *
-        dealMultiplier(meta, source, nowSec),
-    })
+    const parts: ScoreParts = {
+      taste: profileEmpty ? popularityScore(meta) : cosine(profile, normalizedTags(meta)),
+      mood: moodMultiplier(meta, mood),
+      source: SOURCE_WEIGHT[source],
+      deal: dealMultiplier(meta, source, nowSec),
+      lean: 1,
+      cooldown: 1,
+    }
+    out.push({ appid: meta.appid, name: meta.name, source, score: scoreOfParts(parts), parts })
   }
 
   for (const g of library) {
