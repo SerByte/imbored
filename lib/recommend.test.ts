@@ -186,6 +186,65 @@ describe('applyFeedbackToProfile', () => {
     const before = { Roguelike: 1 }
     expect(applyFeedbackToProfile(before, [fb(999, 'liked')], metaOf)).toEqual(before)
   })
+
+  test('запуск усиливает слабее «зашло», но сильнее открытой карточки', () => {
+    const after = (action: FeedbackRow['action']) =>
+      applyFeedbackToProfile({ Roguelike: 1 }, [fb(1, action)], metaOf)['Roguelike']
+    expect(after('liked')).toBeGreaterThan(after('launched'))
+    expect(after('launched')).toBeGreaterThan(after('opened'))
+    expect(after('opened')).toBeGreaterThan(1)
+  })
+
+  test('повторные «зашло» по одной игре — один сигнал, а не пять', () => {
+    const once = applyFeedbackToProfile({ Roguelike: 1 }, [fb(1, 'liked')], metaOf)
+    const repeated = applyFeedbackToProfile(
+      { Roguelike: 1 },
+      [
+        fb(1, 'liked'),
+        { ...fb(1, 'liked'), createdAt: NOW - 3 * DAY },
+        { ...fb(1, 'liked'), createdAt: NOW - 10 * DAY },
+      ],
+      metaOf,
+    )
+    expect(repeated).toEqual(once)
+  })
+
+  test('разные причины одной игры — разные сигналы, они не схлопываются', () => {
+    const both = applyFeedbackToProfile(
+      { Roguelike: 1, Difficult: 1 },
+      [fb(1, 'skipped', 'hard'), fb(1, 'skipped', 'genre')],
+      metaOf,
+    )
+    const genreOnly = applyFeedbackToProfile(
+      { Roguelike: 1, Difficult: 1 },
+      [fb(1, 'skipped', 'genre')],
+      metaOf,
+    )
+    expect(both['Difficult']).toBeLessThan(genreOnly['Difficult'])
+  })
+
+  test('шаг растёт с профилем: на тысяче часов «зашло» не тонет в шуме', () => {
+    // Маленький профиль — шаг прежний, единица
+    const small = applyFeedbackToProfile({ Roguelike: 1 }, [fb(1, 'liked')], metaOf)
+    expect(small['Roguelike']).toBeCloseTo(2)
+    // У большого шаг — десятая доля максимума профиля
+    const big = applyFeedbackToProfile({ Roguelike: 100 }, [fb(1, 'liked')], metaOf)
+    expect(big['Roguelike'] - 100).toBeCloseTo(10)
+    // Штраф масштабируется так же
+    const penalized = applyFeedbackToProfile(
+      { Roguelike: 100, Farming: 50 },
+      [fb(2, 'skipped', 'genre')],
+      metaOf,
+    )
+    expect(50 - penalized['Farming']).toBeCloseTo(8)
+  })
+
+  test('«Крутить ещё» (spin) вкус не трогает — это бросок кубика, а не оценка', () => {
+    const before = { Roguelike: 1, Difficult: 0.5, Farming: 0.2 }
+    expect(
+      applyFeedbackToProfile(before, [fb(1, 'skipped', 'spin'), fb(2, 'skipped', 'spin')], metaOf),
+    ).toEqual(before)
+  })
 })
 
 describe('explainMatch', () => {

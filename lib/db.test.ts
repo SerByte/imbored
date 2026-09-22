@@ -637,6 +637,144 @@ describe('db', () => {
     expect(rows.map((r) => r.action).sort()).toEqual(['banned', 'liked'])
   })
 
+  test('миграция: CHECK без launched пересобирается, id сохраняются, launched принимается', async () => {
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(`CREATE TABLE feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      steamid TEXT NOT NULL,
+      appid INTEGER NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned')),
+      reason TEXT,
+      mood_json TEXT,
+      created_at INTEGER NOT NULL
+    );`)
+    await db.execute(
+      "INSERT INTO feedback (id, steamid, appid, action, reason, created_at) VALUES (7, 'u1', 620, 'skipped', 'notnow', 1)",
+    )
+    await db.execute(
+      "INSERT INTO feedback (id, steamid, appid, action, created_at) VALUES (42, 'u1', 570, 'banned', 2)",
+    )
+    const migrated = await migrateDb(db)
+    await logFeedback(migrated, { steamid: 'u1', appid: 730, action: 'launched' }, NOW)
+
+    const ids = await migrated.execute('SELECT id, action, reason FROM feedback ORDER BY id')
+    expect(ids.rows.map((r) => [Number(r.id), r.action, r.reason])).toEqual([
+      [7, 'skipped', 'notnow'],
+      [42, 'banned', null],
+      // AUTOINCREMENT продолжает с максимума, а не с единицы
+      [43, 'launched', null],
+    ])
+    const index = await migrated.execute(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_feedback_steamid'",
+    )
+    expect(index.rows).toHaveLength(1)
+  })
+
+  test('миграция: совсем старая схема без banned тоже принимает launched', async () => {
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(`CREATE TABLE feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      steamid TEXT NOT NULL,
+      appid INTEGER NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened')),
+      mood_json TEXT,
+      created_at INTEGER NOT NULL
+    );`)
+    const migrated = await migrateDb(db)
+    await logFeedback(migrated, { steamid: 'u1', appid: 570, action: 'launched' }, NOW)
+    await logFeedback(migrated, { steamid: 'u1', appid: 620, action: 'banned' }, NOW)
+    expect((await listFeedback(migrated, 'u1')).map((r) => r.action).sort()).toEqual([
+      'banned',
+      'launched',
+    ])
+  })
+
+  test('миграция фидбека идемпотентна: второй migrateDb ничего не пересобирает', async () => {
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(`CREATE TABLE feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      steamid TEXT NOT NULL,
+      appid INTEGER NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned')),
+      reason TEXT,
+      mood_json TEXT,
+      created_at INTEGER NOT NULL
+    );`)
+    await db.execute(
+      "INSERT INTO feedback (id, steamid, appid, action, created_at) VALUES (5, 'u1', 620, 'liked', 1)",
+    )
+    const once = await migrateDb(db)
+    const sqlOf = async () =>
+      (await once.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'"))
+        .rows[0]?.sql
+    const firstSql = await sqlOf()
+    expect(String(firstSql)).toContain("'launched'")
+
+    // Пересборка создаёт таблицу заново, и её строка в sqlite_master получает
+    // новый rowid. Совпавший rowid — доказательство, что второй старт таблицу
+    // не трогал, даже если текст схемы вышел бы тем же самым
+    const before = await once.execute(
+      "SELECT rowid FROM sqlite_master WHERE type='table' AND name='feedback'",
+    )
+    await migrateDb(once)
+    const after = await once.execute(
+      "SELECT rowid FROM sqlite_master WHERE type='table' AND name='feedback'",
+    )
+    expect(await sqlOf()).toBe(firstSql)
+    expect(after.rows[0]?.rowid).toBe(before.rows[0]?.rowid)
+    expect((await listFeedback(once, 'u1')).map((r) => r.appid)).toEqual([620])
+  })
+
+  test('свежая база сразу принимает launched и не пересобирается', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW)
+    expect((await listFeedback(db, 'u1'))[0]?.action).toBe('launched')
+  })
+
+  test('«зашло» и запуск за сутки схлопываются в одну строку, за разные дни — нет', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 60)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 86_000)
+    // запуск — отдельное действие, свой дедуп
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW + 10)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW + 20)
+    // чужой лайк той же игры не мешает
+    await logFeedback(db, { steamid: 'u2', appid: 570, action: 'liked' }, NOW + 30)
+    const count = async (steamid: string, action: string) =>
+      (await listFeedback(db, steamid, 50)).filter((r) => r.action === action).length
+    expect(await count('u1', 'liked')).toBe(1)
+    expect(await count('u1', 'launched')).toBe(1)
+    expect(await count('u2', 'liked')).toBe(1)
+
+    // через сутки после ПОСЛЕДНЕЙ записанной строки — уже новое событие
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 86_401)
+    expect(await count('u1', 'liked')).toBe(2)
+  })
+
+  test('скипы и баны не схлопываются: у них своя история', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'notnow' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'notnow' }, NOW + 5)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'opened' }, NOW + 6)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'opened' }, NOW + 7)
+    expect(await listFeedback(db, 'u1')).toHaveLength(4)
+  })
+
+  test('feedbackStats: запуски и «Крутить ещё» не в счёт, «зашло» — по играм', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 1, action: 'liked' }, NOW)
+    // та же игра на следующей неделе — всё ещё одно попадание
+    await logFeedback(db, { steamid: 'u1', appid: 1, action: 'liked' }, NOW + 7 * 86_400)
+    await logFeedback(db, { steamid: 'u1', appid: 2, action: 'liked' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 3, action: 'launched' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 4, action: 'skipped', reason: 'spin' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 5, action: 'skipped', reason: 'spin' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 6, action: 'skipped', reason: 'notnow' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 7, action: 'skipped' }, NOW)
+    expect(await feedbackStats(db, 'u1')).toEqual({ liked: 2, skipped: 2, rate: 0.5 })
+  })
+
   test('listFeedback отдаёт свежие первыми и уважает limit', async () => {
     const db = await freshDb()
     for (let i = 0; i < 5; i++) {

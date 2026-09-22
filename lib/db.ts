@@ -6,9 +6,21 @@ import type { GameMeta, LibraryGame, Mood } from './types'
 /** Соединение с БД: локальный файл в dev, Turso в проде — API одинаковый */
 export type Db = Client
 
-export type FeedbackAction = 'liked' | 'skipped' | 'opened' | 'banned'
+/**
+ * 'launched' — нажал «Запустить». Раньше это писалось как 'liked', и точность
+ * подбора на /library росла от любого клика: запуск — ещё не «зашло», а
+ * человек, запустивший игру и тут же закрывший её, выглядел довольным.
+ */
+export type FeedbackAction = 'liked' | 'skipped' | 'opened' | 'banned' | 'launched'
 
-export type SkipReason = 'genre' | 'hard' | 'tired' | 'notnow'
+/**
+ * 'spin' — «Крутить ещё» в рулетке: не оценка игры, а бросок кубика. Ни вкуса,
+ * ни точности подбора не трогает. 'done' — «Уже прошёл» рядом с баном: бан, но
+ * по другой причине, чем «не нравится».
+ *
+ * У reason в таблице нет CHECK, поэтому новые значения не требуют миграции.
+ */
+export type SkipReason = 'genre' | 'hard' | 'tired' | 'notnow' | 'spin' | 'done'
 
 export type FeedbackRow = {
   steamid: string
@@ -102,7 +114,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   steamid TEXT NOT NULL,
   appid INTEGER NOT NULL,
-  action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned')),
+  action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned','launched')),
   reason TEXT,
   mood_json TEXT,
   created_at INTEGER NOT NULL
@@ -359,19 +371,26 @@ export async function migrateDb(db: Db): Promise<Db> {
     })
   }
 
-  // старый CHECK у feedback не пускал action='banned' — пересобираем таблицу
+  // Старый CHECK у feedback не пускает новые action — сначала 'banned', теперь
+  // 'launched'. SQLite не умеет менять CHECK на месте, поэтому таблица
+  // пересобирается целиком. Условие проверяет именно последнее добавленное
+  // значение в кавычках: после пересборки оно в SQL таблицы есть, и второй
+  // старт ничего не делает. Одна ветка покрывает и совсем старую схему без
+  // 'banned' — в неё тоже нет 'launched'.
   const info = await db.execute(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'",
   )
   const createSql = info.rows[0]?.sql as string | undefined
-  if (createSql?.includes('CHECK') && !createSql.includes('banned')) {
+  if (createSql?.includes('CHECK') && !createSql.includes("'launched'")) {
     await db.batch(
       [
+        // Хвост прерванной попытки: без него CREATE упал бы на каждом старте
+        'DROP TABLE IF EXISTS feedback_new',
         `CREATE TABLE feedback_new (
            id INTEGER PRIMARY KEY AUTOINCREMENT,
            steamid TEXT NOT NULL,
            appid INTEGER NOT NULL,
-           action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned')),
+           action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned','launched')),
            reason TEXT,
            mood_json TEXT,
            created_at INTEGER NOT NULL
@@ -1784,6 +1803,14 @@ export async function updateGamePrices(
 
 /* ---------- фидбек ---------- */
 
+/**
+ * Окно, в котором повторное «зашло» или «запустил» той же игры — одно событие.
+ * Двойной клик, «Зашло» после «Запустить», перезагрузка выдачи — всё это один
+ * и тот же сигнал, а не пять. Сутки, а не навсегда: запустить любимую игру
+ * через неделю снова — уже новое событие.
+ */
+const FEEDBACK_DEDUP_SEC = 86_400
+
 export async function logFeedback(
   db: Db,
   entry: {
@@ -1795,16 +1822,33 @@ export async function logFeedback(
   },
   nowSec: number,
 ): Promise<void> {
+  const args = [
+    entry.steamid,
+    entry.appid,
+    entry.action,
+    entry.reason ?? null,
+    entry.mood ? JSON.stringify(entry.mood) : null,
+    nowSec,
+  ]
+  // Скипы, открытия и баны пишутся как есть: у них своя история (причина,
+  // время, снятие бана), и схлопывать её незачем. Дедуп — только для положительных сигналов,
+  // которые копятся от повторных нажатий. Одним условным INSERT, а не SELECT
+  // и INSERT: между ними успел бы проскочить второй клик.
+  if (entry.action === 'liked' || entry.action === 'launched') {
+    await db.execute({
+      sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at)
+            SELECT ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (
+              SELECT 1 FROM feedback
+              WHERE steamid = ? AND appid = ? AND action = ? AND created_at > ?
+            )`,
+      args: [...args, entry.steamid, entry.appid, entry.action, nowSec - FEEDBACK_DEDUP_SEC],
+    })
+    return
+  }
   await db.execute({
     sql: 'INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    args: [
-      entry.steamid,
-      entry.appid,
-      entry.action,
-      entry.reason ?? null,
-      entry.mood ? JSON.stringify(entry.mood) : null,
-      nowSec,
-    ],
+    args,
   })
 }
 
@@ -1833,15 +1877,22 @@ export async function listFeedback(db: Db, steamid: string, limit = 500): Promis
   }))
 }
 
-/** Доля «зашло» среди оценённых показов (liked против skipped) */
+/**
+ * Доля «зашло» среди оценённых показов (liked против skipped).
+ *
+ * «Зашло» считается по играм, а не по нажатиям: одна игра, отмеченная трижды
+ * за месяц, — одно попадание. Запуски ('launched') сюда не входят вовсе:
+ * запуск — ещё не оценка. «Крутить ещё» в рулетке (reason 'spin') — тоже не
+ * промах подбора, а бросок кубика, поэтому из знаменателя исключён.
+ */
 export async function feedbackStats(
   db: Db,
   steamid: string,
 ): Promise<{ liked: number; skipped: number; rate: number | null }> {
   const res = await db.execute({
     sql: `SELECT
-            SUM(CASE WHEN action = 'liked' THEN 1 ELSE 0 END) AS liked,
-            SUM(CASE WHEN action = 'skipped' THEN 1 ELSE 0 END) AS skipped
+            COUNT(DISTINCT CASE WHEN action = 'liked' THEN appid END) AS liked,
+            SUM(CASE WHEN action = 'skipped' AND reason IS NOT 'spin' THEN 1 ELSE 0 END) AS skipped
           FROM feedback WHERE steamid = ?`,
     args: [steamid],
   })

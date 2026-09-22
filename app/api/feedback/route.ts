@@ -1,7 +1,25 @@
 import { NextResponse } from 'next/server'
 import { logFeedback, type FeedbackAction, type SkipReason } from '@/lib/db'
 import { parseMood } from '@/lib/mood'
+import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+
+const ACTIONS: readonly FeedbackAction[] = ['liked', 'skipped', 'opened', 'banned', 'launched']
+const REASONS: readonly SkipReason[] = ['genre', 'hard', 'tired', 'notnow', 'spin', 'done']
+
+/*
+ * Потолок на запись фидбека.
+ *
+ * Каждый вызов — строка в Turso, а сессию бесплатно выдаёт демо-вход, так что
+ * без лимита ручка превращается в чужой счёт за записи. Сто двадцать за десять
+ * минут — это клик каждые пять секунд без остановки: живой человек на /play
+ * столько не нажимает даже в рулетке, а скрипт упирается быстро.
+ *
+ * Клиент шлёт фидбек fire-and-forget и 429 не показывает: потерянная оценка
+ * под флудом — не беда, в отличие от сорванной выдачи.
+ */
+const FEEDBACK_LIMIT = 120
+const FEEDBACK_WINDOW_SEC = 600
 
 export async function POST(req: Request) {
   const steamid = await currentSteamId()
@@ -14,29 +32,35 @@ export async function POST(req: Request) {
     mood?: unknown
   }
   const appid = Number(body.appid)
-  const action = body.action
-  if (
-    !Number.isInteger(appid) ||
-    !['liked', 'skipped', 'opened', 'banned'].includes(action ?? '')
-  ) {
+  const action = body.action as FeedbackAction | undefined
+  if (!Number.isInteger(appid) || !action || !ACTIONS.includes(action)) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }
 
+  const db = await getDb()
+  const now = nowSec()
+  const gate = await checkRate(db, {
+    bucket: 'feedback',
+    id: steamid,
+    limit: FEEDBACK_LIMIT,
+    windowSec: FEEDBACK_WINDOW_SEC,
+    nowSec: now,
+  })
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
+
   // невалидные mood/reason не роняют фидбек — просто не сохраняются
   const mood = parseMood(body.mood)
-  const reason = ['genre', 'hard', 'tired', 'notnow'].includes(body.reason ?? '')
-    ? (body.reason as SkipReason)
-    : null
+  const reason = REASONS.includes(body.reason as SkipReason) ? (body.reason as SkipReason) : null
   await logFeedback(
-    await getDb(),
+    db,
     {
       steamid,
       appid,
-      action: action as FeedbackAction,
+      action,
       ...(reason ? { reason } : {}),
       ...(mood ? { mood } : {}),
     },
-    nowSec(),
+    now,
   )
   return NextResponse.json({ ok: true })
 }

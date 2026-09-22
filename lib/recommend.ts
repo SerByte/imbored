@@ -187,39 +187,87 @@ export function buildTagProfile(
   return profile
 }
 
+/** Только тип: сама база этому модулю не нужна, он чистый */
+type FeedbackRow = import('./db').FeedbackRow
+
+/*
+ * Шаги фидбека: «зашло» > «запустил» > «открыл карточку». Запуск — сильнее
+ * любопытства, но слабее оценки: человек мог запустить и закрыть через минуту.
+ */
 const LIKE_BOOST = 1.0
+const LAUNCH_BOOST = 0.5
 const OPEN_BOOST = 0.3
 const GENRE_PENALTY = 0.8
 const HARD_PENALTY = 1.0
 const HARDCORE_TAGS = ['Difficult', 'Souls-like', 'Competitive', 'Tactical', 'Hardcore']
 
 /**
+ * Шаг фидбека на большом профиле — эта доля от максимума профиля.
+ *
+ * Профиль копит часы: у человека с тысячей часов вес любимого тега — десятки,
+ * и прежний шаг в единицу был шумом — «зашло» не двигало ничего. Десятая
+ * доля от максимума профиля держит шаг соразмерным библиотеке, а пол в
+ * единицу оставляет маленькие профили (и тесты) как были.
+ */
+const FEEDBACK_STEP_SHARE = 0.1
+
+function feedbackStep(profile: Record<string, number>): number {
+  let max = 0
+  for (const v of Object.values(profile)) if (v > max) max = v
+  return Math.max(1, FEEDBACK_STEP_SHARE * max)
+}
+
+/**
+ * Одна строка на (игру, действие, причину) — самая свежая.
+ *
+ * Пять нажатий «Зашло» — один сигнал, а не пять: иначе вкус уезжал бы к игре,
+ * по которой человек просто кликал, пока грузилась страница. Дедуп в
+ * logFeedback держит только сутки, и строки за разные дни здесь тоже
+ * схлопываются: для вкуса важно, ЧТО сказано про игру, а не сколько раз.
+ *
+ * Порядок входа сохраняется: штрафы упираются в ноль, и от порядка шагов
+ * зависит результат.
+ */
+function latestPerKind(feedback: FeedbackRow[]): FeedbackRow[] {
+  const keyOf = (f: FeedbackRow) => `${f.appid}:${f.action}:${f.reason ?? ''}`
+  const newest = new Map<string, FeedbackRow>()
+  for (const f of feedback) {
+    const cur = newest.get(keyOf(f))
+    if (!cur || f.createdAt > cur.createdAt) newest.set(keyOf(f), f)
+  }
+  return feedback.filter((f) => newest.get(keyOf(f)) === f)
+}
+
+/**
  * Корректирует тег-профиль по истории фидбека: «зашло» усиливает вкус,
- * скипы с причиной «не тот жанр»/«надоела» ослабляют, «слишком сложная»
- * бьёт только по хардкорным тегам. «Не сейчас» и скип без причины — это
- * состояние, а не вкус: профиль не трогают.
+ * запуск и открытие карточки — слабее, скипы с причиной «не тот
+ * жанр»/«надоела» ослабляют, «слишком сложная» бьёт только по хардкорным
+ * тегам. «Не сейчас», «Крутить ещё» и скип без причины — это состояние или
+ * случай, а не вкус: профиль не трогают.
  */
 export function applyFeedbackToProfile(
   profile: Record<string, number>,
-  feedback: import('./db').FeedbackRow[],
+  feedback: FeedbackRow[],
   metaOf: (appid: number) => GameMeta | undefined,
 ): Record<string, number> {
   const out = { ...profile }
-  for (const f of feedback) {
+  const step = feedbackStep(profile)
+  for (const f of latestPerKind(feedback)) {
     const meta = metaOf(f.appid)
     if (!meta) continue
     const norm = normalizedTags(meta)
 
-    if (f.action === 'liked' || f.action === 'opened') {
-      const boost = f.action === 'liked' ? LIKE_BOOST : OPEN_BOOST
+    if (f.action === 'liked' || f.action === 'launched' || f.action === 'opened') {
+      const boost =
+        step * (f.action === 'liked' ? LIKE_BOOST : f.action === 'launched' ? LAUNCH_BOOST : OPEN_BOOST)
       for (const [tag, v] of Object.entries(norm)) out[tag] = (out[tag] ?? 0) + boost * v
     } else if (f.action === 'skipped' && (f.reason === 'genre' || f.reason === 'tired')) {
       for (const [tag, v] of Object.entries(norm)) {
-        out[tag] = Math.max((out[tag] ?? 0) - GENRE_PENALTY * v, 0)
+        out[tag] = Math.max((out[tag] ?? 0) - step * GENRE_PENALTY * v, 0)
       }
     } else if (f.action === 'skipped' && f.reason === 'hard') {
       for (const tag of HARDCORE_TAGS) {
-        if (tag in norm) out[tag] = Math.max((out[tag] ?? 0) - HARD_PENALTY * norm[tag], 0)
+        if (tag in norm) out[tag] = Math.max((out[tag] ?? 0) - step * HARD_PENALTY * norm[tag], 0)
       }
     }
   }

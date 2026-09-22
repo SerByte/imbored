@@ -253,7 +253,11 @@ function Player() {
   const warmAtReveal = useRef(0)
 
   const sendFeedback = useCallback(
-    (appid: number, action: 'liked' | 'skipped' | 'opened' | 'banned', reason?: string) => {
+    (
+      appid: number,
+      action: 'liked' | 'skipped' | 'opened' | 'banned' | 'launched',
+      reason?: string,
+    ) => {
       void fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -791,7 +795,12 @@ function Player() {
                     href={storeHref(pick)}
                     target="_blank"
                     rel="noreferrer"
-                    onClick={() => sendFeedback(pick.appid, 'liked')}
+                    // Не купленную игру смотрят в магазине — это любопытство, а
+                    // не запуск. Своя игра из другого магазина открывается там
+                    // же, где и запускается, поэтому для неё это запуск.
+                    onClick={() =>
+                      sendFeedback(pick.appid, pick.source === 'new' ? 'opened' : 'launched')
+                    }
                     className="btn-ember px-6 py-3"
                   >
                     {pick.source === 'new'
@@ -801,7 +810,9 @@ function Player() {
                 ) : (
                   <SteamLaunch
                     appid={pick.appid}
-                    onClick={() => sendFeedback(pick.appid, 'liked')}
+                    // Запуск — не «Зашло»: раньше он писался как liked, и точность
+                    // подбора на /library росла от любого клика
+                    onClick={() => sendFeedback(pick.appid, 'launched')}
                     className="btn-ember px-6 py-3"
                   />
                 )}
@@ -830,6 +841,8 @@ function Player() {
                 </Link>
                 <button
                   onClick={() => {
+                    // Повторное нажатие — не второе «зашло»: кнопка уже горит
+                    if (liked.has(pick.appid)) return
                     setLiked(new Set(liked).add(pick.appid))
                     sendFeedback(pick.appid, 'liked')
                   }}
@@ -845,7 +858,9 @@ function Player() {
                     <ClickSpark>
                       <button
                         onClick={() => {
-                          sendFeedback(pick.appid, 'skipped')
+                          // Бросок кубика, а не оценка: 'spin' не трогает ни
+                          // вкус, ни точность подбора
+                          sendFeedback(pick.appid, 'skipped', 'spin')
                           advance(index)
                         }}
                         className="rounded-[14px] glass glass-hover no-lift px-4 py-3 text-sm text-dim cursor-pointer"
