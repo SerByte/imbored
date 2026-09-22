@@ -19,6 +19,7 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
 import type { GameArtUrls } from '@/lib/art'
+import { EDGE_BADGE, EDGE_LINE, type PickEdge } from '@/lib/badges'
 import type { Discount } from '@/lib/discount'
 import { EASE } from '@/lib/motion'
 import { moodCaption } from '@/lib/quiz'
@@ -63,6 +64,8 @@ type Pick = {
   via: OwnAnchor | null
   /** Вернувшееся «Просто не сейчас» (deferredOf): сколько дней назад отложил */
   deferred: { daysAgo: number } | null
+  /** Чем она лучше соседних по выдаче (assignEdges) — у героя фразой, у плитки бейджем */
+  edge: PickEdge | null
 }
 
 /**
@@ -746,6 +749,15 @@ function Player() {
                 {pick.reason}
               </motion.p>
 
+              {/* Одна фраза о том, чем она лучше остальных четырёх. Причина
+                  отвечает «почему она тебе», эта строка — «почему она, а не
+                  соседняя»: без неё пять подходящих карточек снова выбор с нуля. */}
+              {pick.edge && (
+                <motion.p variants={STEP} className="-mt-2 text-sm text-dim">
+                  {EDGE_LINE[pick.edge]}
+                </motion.p>
+              )}
+
             {whyParts.length > 0 && (
               <motion.div variants={STEP} className="text-sm">
                 <button
@@ -1012,8 +1024,14 @@ function Player() {
                 <div className="p-3">
                   <div className="text-sm font-semibold leading-tight">{p.name}</div>
                   <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
-                    <span className="text-dim truncate">
-                      {p.store ? STORE_LABEL[p.store] ?? p.store : SOURCE_BADGE[p.source]}
+                    {/* Преимущество важнее источника: «откуда» видно и по
+                        герою, а «чем лучше соседних» — только здесь */}
+                    <span className={`truncate ${p.edge ? 'text-ember-text' : 'text-dim'}`}>
+                      {p.edge
+                        ? EDGE_BADGE[p.edge]
+                        : p.store
+                          ? (STORE_LABEL[p.store] ?? p.store)
+                          : SOURCE_BADGE[p.source]}
                     </span>
                     {/* Цена — только у не купленного: у своей игры она уже
                         ничего не решает, а место в строке занимает */}

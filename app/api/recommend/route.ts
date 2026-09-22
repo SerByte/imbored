@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { filterActual } from '@/lib/actual'
+import { assignEdges } from '@/lib/badges'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
   bannedAppids,
@@ -312,6 +313,25 @@ export async function POST(req: Request) {
         { tagWeight, anchorOf },
       )
 
+  // Чем каждая карточка лучше соседних. Части скора живут только здесь, на
+  // сервере: Pick из llm.ts их теряет, поэтому ищем по appid среди кандидатов.
+  // Только у picks: полка покупок — отдельный разговор, и второе «ближе всего
+  // к вкусу» на ней спорило бы с первым в главной выдаче.
+  const partsOf = new Map(candidates.map((c) => [c.appid, c.parts]))
+  const edges = assignEdges(
+    picks.map((p) => {
+      const meta = metaNow(p.appid)
+      return {
+        appid: p.appid,
+        parts: partsOf.get(p.appid),
+        reviewsTotal: meta?.reviewsTotal,
+        reviewsPercent: meta?.reviewsPercent,
+      }
+    }),
+    // Пустой профиль — вкус посчитан популярностью, хвалить им нечестно
+    { taste: Object.keys(profile).length > 0 },
+  )
+
   const enrich = (p: Pick) => {
     const meta = metaNow(p.appid)
     const topTags = Object.entries(meta?.tags ?? {})
@@ -341,6 +361,8 @@ export async function POST(req: Request) {
       via: anchorOf(p.appid),
       // «Откладывал N дней назад» — только у вернувшегося «не сейчас»
       deferred: deferredOf(cooldown.get(p.appid), now),
+      // Одно преимущество перед соседними (lib/badges.ts) или null
+      edge: edges.get(p.appid) ?? null,
     }
   }
 
