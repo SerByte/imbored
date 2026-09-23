@@ -19,6 +19,7 @@ import {
   isSystemic,
   LlmUnavailableError,
   reasonPrice,
+  topUpPicks,
   trimTldr,
   validateDigest,
   validatePicks,
@@ -103,6 +104,57 @@ describe('validatePicks', () => {
   test('reason обрезается до 300 символов', () => {
     const picks = validatePicks({ picks: [{ appid: 1, reason: 'х'.repeat(1000) }] }, CANDS)
     expect(picks[0].reason).toHaveLength(300)
+  })
+
+  test('карточка без причины не проходит — её место добирает эвристика', () => {
+    const picks = validatePicks(
+      {
+        picks: [
+          { appid: 1, reason: '' },
+          { appid: 2, reason: '   ' },
+          { appid: 3 },
+          { appid: 4, reason: 'ок' },
+          // та же игра уже с причиной: пустая первая попытка её не заняла
+          { appid: 1, reason: 'со второго раза' },
+        ],
+      },
+      CANDS,
+    )
+    expect(picks.map((p) => [p.appid, p.reason])).toEqual([
+      [4, 'ок'],
+      [1, 'со второго раза'],
+    ])
+  })
+})
+
+describe('topUpPicks', () => {
+  const fill = (rest: ScoredCandidate[], count: number) => heuristicPicks(rest, metaOf, count, NOW)
+  const fromModel = (ids: number[]) =>
+    validatePicks({ picks: ids.map((appid) => ({ appid, reason: 'от модели' })) }, CANDS)
+
+  test('недобор модели добирается до пятёрки из того, что она не взяла', () => {
+    const got = topUpPicks(fromModel([5, 2]), CANDS, 5, fill)
+    expect(got).toHaveLength(5)
+    // герой и порядок модели сохранены — добор идёт в хвост
+    expect(got.slice(0, 2).map((p) => [p.appid, p.reason])).toEqual([
+      [5, 'от модели'],
+      [2, 'от модели'],
+    ])
+    expect(new Set(got.map((p) => p.appid)).size).toBe(5)
+    for (const p of got.slice(2)) expect(p.reason).not.toBe('от модели')
+  })
+
+  test('полная пятёрка от модели не трогается, эвристику не зовём', () => {
+    const five = fromModel([1, 2, 3, 4, 5])
+    const spy = vi.fn(fill)
+    expect(topUpPicks(five, CANDS, 5, spy)).toBe(five)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('кандидатов меньше пятёрки — хотим не больше, чем есть', () => {
+    const three = CANDS.slice(0, 3)
+    const got = topUpPicks(fromModel([1]), three, 5, fill)
+    expect(got.map((p) => p.appid).sort()).toEqual([1, 2, 3])
   })
 })
 

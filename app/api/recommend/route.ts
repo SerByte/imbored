@@ -12,7 +12,7 @@ import {
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
-import { claudePicks, heuristicPicks, type Pick } from '@/lib/llm'
+import { claudePicks, heuristicPicks, topUpPicks, type Pick } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
@@ -39,7 +39,7 @@ import { refundEligible } from '@/lib/refund'
 import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
 import { tagWeightFrom } from '@/lib/tagweight'
-import { CANDIDATE_SOURCES, type GameMeta } from '@/lib/types'
+import { CANDIDATE_SOURCES, type GameMeta, type ScoredCandidate } from '@/lib/types'
 
 // Маршрут по дороге зовёт модель. Предел объявляем явно, как в кроновых
 // маршрутах: иначе он неявный, а зависший вызов способен съесть его целиком
@@ -321,9 +321,8 @@ export async function POST(req: Request) {
           lean,
         })
       : null
-  const picks =
-    fromClaude ??
-    heuristicPicks(heroPool.length ? heroPool : actual, metaNow, PICK_COUNT, now, profile, {
+  const byHeuristic = (pool: ScoredCandidate[], count: number) =>
+    heuristicPicks(pool, metaNow, count, now, profile, {
       tagWeight,
       anchorOf,
       hoursOf,
@@ -332,6 +331,11 @@ export async function POST(req: Request) {
       guaranteed: mood.vibe === 'chill' || lean === 'familiar' ? CANDIDATE_SOURCES : undefined,
       hideUrgency,
     })
+  // Модель могла вернуть меньше пятёрки (отсеяла validatePicks) — недостающее
+  // добирает та же эвристика из кандидатов, которых модель не взяла
+  const picks = fromClaude
+    ? topUpPicks(fromClaude, heroPool, PICK_COUNT, byHeuristic)
+    : byHeuristic(heroPool.length ? heroPool : actual, PICK_COUNT)
 
   // В режиме «разгрести своё» список покупок — прямое противоречие запросу.
   // Уехавшее наверх из нижнего блока убираем: одна и та же игра дважды на

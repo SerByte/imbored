@@ -247,6 +247,12 @@ const FAIL: Record<string, { title: string; text: string; retry: boolean }> = {
   },
 }
 
+/**
+ * Сколько ждать /api/recommend. С запасом над худшим живым ответом: восемь
+ * секунд модели, две с половиной на цены, чтения базы и холодный старт.
+ */
+const RECOMMEND_WAIT_MS = 25_000
+
 /** Сеть, пятисотка, оборванный ответ: здесь повтор осмыслен. */
 const FAIL_UNKNOWN = {
   title: 'Не получилось собрать рекомендации',
@@ -428,6 +434,13 @@ function Player() {
             scope: next.scope,
             ...(next.lean ? { lean: next.lean } : {}),
           }),
+          // Свой срок ожидания, а не браузерный. Сервер модель ждёт не дольше
+          // восьми секунд (INTERACTIVE_CLIENT) и дальше отдаёт эвристику, так
+          // что ответа дольше RECOMMEND_WAIT_MS не бывает у живого сервера —
+          // зависла сеть или инстанс. Без срока экран висел в «Подбираю…»
+          // столько, сколько браузер держит соединение; со сроком обрыв
+          // уходит в catch ниже и показывает экран с кнопкой повтора.
+          signal: AbortSignal.timeout(RECOMMEND_WAIT_MS),
         })
         if (res.status === 429) {
           const wait = Number(res.headers.get('Retry-After') ?? 0)

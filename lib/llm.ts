@@ -27,6 +27,11 @@ export function validatePicks(raw: unknown, candidates: ScoredCandidate[]): Pick
     if (!cand) continue
     const reasonRaw = (item as { reason?: unknown }).reason
     const reason = typeof reasonRaw === 'string' ? reasonRaw.trim() : ''
+    // Карточка без причины — не ответ: обещание экрана и есть объяснение «почему
+    // она», а пустая строка под героем выглядит сбоем. Такую пропускаем, и её
+    // место добирает эвристика (topUpPicks) — со своим шаблоном причины.
+    // До seen.add: если модель повторит ту же игру уже с причиной, её возьмём.
+    if (!reason) continue
     seen.add(appid)
     out.push({ appid, name: cand.name, source: cand.source, reason: reason.slice(0, 300) })
     if (out.length >= 5) break
@@ -824,6 +829,35 @@ export type HeuristicOptions = {
 const DEFAULT_GUARANTEED: readonly CandidateSource[] = CANDIDATE_SOURCES.filter(
   (s) => s !== 'familiar',
 )
+
+/**
+ * Ответ модели, добранный эвристикой до полной выдачи.
+ *
+ * claudePicks считает успехом и одну валидную карточку из пяти: остальные
+ * могли отсеяться в validatePicks — appid не из кандидатов, повтор, пустая
+ * причина. Роут брал такой ответ как есть, и /play показывал героя и «Ещё 1»
+ * при тридцати кандидатах в пуле. Эвристика существует ровно для сбоя модели,
+ * а недобор — тот же сбой, только частичный.
+ *
+ * Порядок сохраняется: сперва выбранное моделью (её первая карточка — герой),
+ * затем добор из тех кандидатов, которых она не взяла. Хотим не больше, чем
+ * вообще есть кандидатов: из трёх пятёрку не собрать никому.
+ *
+ * fill получает остаток пула и сколько не хватает — роут передаёт туда
+ * heuristicPicks с теми же опциями, что у полного фолбэка, чтобы причины
+ * добора не отличались от причин обычной эвристической выдачи.
+ */
+export function topUpPicks(
+  picks: Pick[],
+  pool: ScoredCandidate[],
+  want: number,
+  fill: (rest: ScoredCandidate[], count: number) => Pick[],
+): Pick[] {
+  const missing = Math.min(want, pool.length) - picks.length
+  if (missing <= 0) return picks
+  const taken = new Set(picks.map((p) => p.appid))
+  return [...picks, ...fill(pool.filter((c) => !taken.has(c.appid)), missing).slice(0, missing)]
+}
 
 /**
  * Фолбэк без LLM: топ по скорингу с разнообразием источников
