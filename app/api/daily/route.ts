@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { pickDaily, pickDailyPool } from '@/lib/daily'
+import { pickDaily, pickDailyPool, publicPick } from '@/lib/daily'
 import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
@@ -170,7 +170,8 @@ export async function GET() {
 
   return NextResponse.json({
     pick: {
-      ...pick,
+      // Не спред кандидата: скор и его части остаются на сервере
+      ...publicPick(pick),
       reason,
       // Ссылку не угадываем шаблоном — путь Steam контент-адресуемый.
       // Клиент соберёт нужный размер сам через GameArt.

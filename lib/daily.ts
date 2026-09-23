@@ -59,3 +59,14 @@ export function pickDailyPool<T>(own: T[], discovery: T[], seed: string): T[] {
   if (!own.length) return discovery
   return hashString(`${seed}:store`) % STORE_DAY_EVERY === 0 ? discovery : own
 }
+
+/**
+ * Что из кандидата уходит клиенту: кто он и откуда. Скор и его части — это
+ * ранжирование, и живут они только на сервере: по части cooldown видно, что
+ * человек откладывал и что ему надоело. /api/recommend получает это даром —
+ * Pick из llm.ts частей не несёт, — а здесь герой и есть сам кандидат, и
+ * спред отдал бы всё.
+ */
+export function publicPick(c: ScoredCandidate): Pick<ScoredCandidate, 'appid' | 'name' | 'source'> {
+  return { appid: c.appid, name: c.name, source: c.source }
+}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { pickDaily, pickDailyPool, STORE_DAY_EVERY } from './daily'
+import { pickDaily, pickDailyPool, publicPick, STORE_DAY_EVERY } from './daily'
 import type { ScoredCandidate } from './types'
 
 const CANDS: ScoredCandidate[] = [
@@ -76,5 +76,18 @@ describe('pickDailyPool', () => {
 
   test('без своего берём находки — пустой экран хуже неудачной рекомендации', () => {
     expect(pickDailyPool([], discovery, 'seed')).toBe(discovery)
+  })
+})
+
+describe('publicPick', () => {
+  test('скор и его части на клиент не уходят: в них видно, что человек откладывал', () => {
+    const c: ScoredCandidate = {
+      appid: 1,
+      name: 'A',
+      source: 'backlog',
+      score: 0.35,
+      parts: { taste: 0.7, mood: 1, source: 1, deal: 1, lean: 1, cooldown: 0.5 },
+    }
+    expect(publicPick(c)).toEqual({ appid: 1, name: 'A', source: 'backlog' })
   })
 })
