@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect } from 'react'
+import { clientErrorCode, reportClientError } from '@/lib/clienterr'
 import {
   BG,
   DIM,
@@ -38,6 +40,10 @@ import {
  * retry, а не reset: на серверной ошибке reset перерисовывает детей БЕЗ
  * повторного запроса, то есть из того же payload, который только что упал.
  * Кнопка выглядела бы нажатой и не сделала бы ничего.
+ *
+ * Код и отчёт — как в app/error.tsx: у клиентской ошибки digest нет, код
+ * считается из неё самой и уходит в /api/clienterr. lib/clienterr — чистый
+ * модуль без стилей и без React, упасть второй раз ему не на чем.
  */
 export default function GlobalError({
   error,
@@ -46,6 +52,14 @@ export default function GlobalError({
   error: Error & { digest?: string }
   retry: () => void
 }) {
+  const code = error.digest ?? clientErrorCode(error)
+
+  useEffect(() => {
+    if (!error.digest) {
+      reportClientError({ kind: 'boundary', error, href: window.location.href, code })
+    }
+  }, [error, code])
+
   return (
     <html lang="ru">
       <body
@@ -146,14 +160,12 @@ export default function GlobalError({
 
           {/* Код нужен не человеку, а нам: по нему ошибка находится в логах.
               Поэтому он тихий и стоит последним. */}
-          {error.digest && (
-            <span
-              className="ge-dim"
-              style={{ color: DIM, fontFamily: 'ui-monospace, monospace', fontSize: '11px' }}
-            >
-              код: {error.digest}
-            </span>
-          )}
+          <span
+            className="ge-dim"
+            style={{ color: DIM, fontFamily: 'ui-monospace, monospace', fontSize: '11px' }}
+          >
+            код: {code}
+          </span>
         </main>
       </body>
     </html>

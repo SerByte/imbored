@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect } from 'react'
 import { LogoMark } from '@/components/Logo'
+import { clientErrorCode, reportClientError } from '@/lib/clienterr'
 
 /**
  * Граница ошибок приложения. До этого любое исключение в серверном компоненте
@@ -17,6 +18,11 @@ import { LogoMark } from '@/components/Logo'
  * исключения в СЕРВЕРНЫХ компонентах: единственная кнопка экрана
  * выглядела нажатой и не делала ничего. retry запрашивает содержимое заново
  * (docs/error.md: «will try to re-fetch and re-render») и стабилен с Next 16.3.
+ *
+ * Код на экране — всегда. У серверной ошибки это digest, и её уже записал
+ * onRequestError. У клиентской digest нет: код считается из самой ошибки
+ * (clientErrorCode), и тот же код уходит в отчёт на /api/clienterr — иначе
+ * падение в компоненте /play или /room не видел бы никто, кроме человека.
  */
 export default function Error({
   error,
@@ -25,9 +31,14 @@ export default function Error({
   error: Error & { digest?: string }
   retry: () => void
 }) {
+  const code = error.digest ?? clientErrorCode(error)
+
   useEffect(() => {
     console.error(error)
-  }, [error])
+    if (!error.digest) {
+      reportClientError({ kind: 'boundary', error, href: window.location.href, code })
+    }
+  }, [error, code])
 
   return (
     <div className="flex-1 flex items-center justify-center px-5 py-24">
@@ -46,9 +57,7 @@ export default function Error({
         <Link href="/" className="tap text-sm text-dim hover:text-ink transition-colors">
           На главную
         </Link>
-        {error.digest && (
-          <span className="font-mono text-[11px] text-faint">код: {error.digest}</span>
-        )}
+        <span className="font-mono text-[11px] text-faint">код: {code}</span>
       </div>
     </div>
   )
