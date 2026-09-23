@@ -7,6 +7,7 @@ import {
   dealFrom,
   landingIndex,
   nextStep,
+  switchLine,
   weightedRandomIndex,
 } from './playflow'
 
@@ -129,6 +130,36 @@ describe('nextStep', () => {
   })
 })
 
+describe('switchLine', () => {
+  test('потолок частоты называет срок — в минутах и с верным склонением', () => {
+    expect(switchLine({ miss: 'limited', waitSec: 60 })).toBe('Слишком часто — попробуй через 1 минуту')
+    expect(switchLine({ miss: 'limited', waitSec: 150 })).toBe('Слишком часто — попробуй через 3 минуты')
+    expect(switchLine({ miss: 'limited', waitSec: 600 })).toBe('Слишком часто — попробуй через 10 минут')
+  })
+
+  test('окно в секунды — «через 1 минуту», а не «через 0 минут»', () => {
+    expect(switchLine({ miss: 'limited', waitSec: 7 })).toBe('Слишком часто — попробуй через 1 минуту')
+  })
+
+  test('без Retry-After срок не выдумывается', () => {
+    expect(switchLine({ miss: 'limited', waitSec: null })).toBe('Слишком часто — попробуй чуть позже')
+  })
+
+  test('прочий отказ говорит, что выдача на экране прежняя', () => {
+    expect(switchLine({ miss: 'failed', code: null })).toBe('Не получилось переключить, выдача прежняя')
+    expect(switchLine({ miss: 'failed', code: 'nolibrary' })).toBe('Не получилось переключить, выдача прежняя')
+  })
+
+  test('кандидатов нет — не сбой, и повтор не обещается', () => {
+    const line = switchLine({ miss: 'failed', code: 'nocandidates' })
+    expect(line).toBe('Под это ничего не нашлось, выдача прежняя')
+  })
+
+  test('сессия кончилась — молчим: страница уже уходит на вход', () => {
+    expect(switchLine({ miss: 'gone' })).toBeNull()
+  })
+})
+
 /**
  * Сторож одной двери. Новую выдачу на экран кладёт только applyDeal: если
  * какой-то путь снова начнёт раскладывать ответ сам, он снова забудет сбросить
@@ -152,7 +183,7 @@ describe('/play применяет новую выдачу одной функц
     // первая выдача, «Попробовать снова», переключатели, «Обновить выдачу»
     expect(calls.length).toBeGreaterThanOrEqual(4)
     for (const { i } of calls) {
-      expect(lines.slice(i, i + 6).join('\n'), `app/play/page.tsx:${i + 1}`).toContain('applyDeal(deal')
+      expect(lines.slice(i, i + 10).join('\n'), `app/play/page.tsx:${i + 1}`).toContain('applyDeal(')
     }
   })
 

@@ -22,6 +22,7 @@ import type { GameArtUrls } from './art'
 import type { PickEdge } from './badges'
 import type { Discount } from './discount'
 import { parseLean, type Lean } from './mood'
+import { plural } from './plural'
 import type { ContinueGame, OwnAnchor, Scope } from './recommend'
 import type { CandidateSource } from './types'
 
@@ -113,6 +114,44 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     scope,
     nowSec: typeof d.nowSec === 'number' && Number.isFinite(d.nowSec) ? d.nowSec : 0,
     viewer: typeof d.viewer === 'string' && d.viewer ? d.viewer : null,
+  }
+}
+
+/**
+ * Почему выдача не пришла. Раньше вызывающий получал голый null и на экране
+ * выдачи не мог сказать ничего: 429 и оборванная сеть выглядели одинаково.
+ */
+export type Miss =
+  /** 429 — потолок частоты; waitSec — из Retry-After, если он был */
+  | { miss: 'limited'; waitSec: number | null }
+  /** 401 — сессии нет, страница уже уходит на вход, и говорить нечего */
+  | { miss: 'gone' }
+  /** Отказ с кодом из тела, сеть, пустой ответ — выдача на экране прежняя */
+  | { miss: 'failed'; code: string | null }
+
+/**
+ * Строка под переключателями «Любые игры / Только моё» и «хочется …», когда
+ * пересобрать не вышло.
+ *
+ * Раньше в этом случае не было ничего: кнопка отжималась, выдача стояла
+ * прежней, и продукт выглядел сломанным. Чаще всего это потолок частоты —
+ * двадцать подборов за десять минут, а каждое нажатие переключателя и есть
+ * подбор, — и тогда честнее всего назвать срок.
+ */
+export function switchLine(m: Miss): string | null {
+  switch (m.miss) {
+    case 'limited': {
+      if (m.waitSec === null) return 'Слишком часто — попробуй чуть позже'
+      const min = Math.max(1, Math.ceil(m.waitSec / 60))
+      return `Слишком часто — попробуй через ${min} ${plural(min, 'минуту', 'минуты', 'минут')}`
+    }
+    case 'gone':
+      return null
+    case 'failed':
+      // Кандидатов не осталось — не сбой, и «попробуй ещё» тут не поможет
+      return m.code === 'nocandidates'
+        ? 'Под это ничего не нашлось, выдача прежняя'
+        : 'Не получилось переключить, выдача прежняя'
   }
 }
 

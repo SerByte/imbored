@@ -41,7 +41,9 @@ import {
   dealFrom,
   landingIndex,
   nextStep,
+  switchLine,
   type Deal,
+  type Miss,
   type PlayPick,
 } from '@/lib/playflow'
 import {
@@ -294,6 +296,11 @@ function Player({ say }: { say: (line: string) => void }) {
   // показанной выдаче, без перезагрузки и прогрева. Мусор в адресе — «без оси».
   const [lean, setLean] = useState<Lean | null>(() => parseLean(search.get('lean')))
   const [switching, setSwitching] = useState(false)
+  /**
+   * Почему переключатель не пересобрал выдачу (switchLine) — строкой под ним.
+   * null — сказать нечего. Гаснет с любой следующей выдачей (applyDeal).
+   */
+  const [switchMiss, setSwitchMiss] = useState<string | null>(null)
   /*
    * ВЫДАЧА МЕЖДУ ЗАХОДАМИ (lib/playcache.ts).
    *
@@ -452,13 +459,17 @@ function Player({ say }: { say: (line: string) => void }) {
    * Запрос выдачи. Отдельно от прогрева: переключение режима повторяет только
    * его. Возвращает выдачу, а не кладёт её в состояние: на экран она попадает
    * одной дверью — applyDeal ниже, — чтобы каждый путь сбрасывал одно и то же.
+   *
+   * Отказ — не голый null, а причина (Miss): экрану ошибки хватает limitedFor
+   * и reason ниже, а переключателю на живой выдаче их не прочитать — к строке
+   * после await состояние ещё не обновится.
    */
   const fetchPicks = useCallback(
-    async (next: { scope: Scope; lean: Lean | null }): Promise<Deal | null> => {
+    async (next: { scope: Scope; lean: Lean | null }): Promise<Deal | Miss> => {
       // try/catch, а не голый await: оборванная сеть на этом шаге всплывала из
       // async-функции и оставляла экран в вечном «Подбираю…» — тот же класс
       // ошибки, что был в цикле прогрева до переезда в lib/warmup.ts.
-      // Возвращаем null, и вызывающий покажет экран ошибки.
+      // Возвращаем отказ, и вызывающий покажет экран ошибки.
       try {
         const res = await fetch('/api/recommend', {
           method: 'POST',
@@ -479,8 +490,9 @@ function Player({ say }: { say: (line: string) => void }) {
         })
         if (res.status === 429) {
           const wait = Number(res.headers.get('Retry-After') ?? 0)
-          setLimitedFor(Number.isFinite(wait) && wait > 0 ? wait : null)
-          return null
+          const waitSec = Number.isFinite(wait) && wait > 0 ? wait : null
+          setLimitedFor(waitSec)
+          return { miss: 'limited', waitSec }
         }
         setLimitedFor(null)
         if (!res.ok) {
@@ -500,13 +512,13 @@ function Player({ say }: { say: (line: string) => void }) {
           // выдачу по дефолтному настроению (см. destinationUrl).
           if (res.status === 401) {
             router.push(bounceTo('/play', search))
-            return null
+            return { miss: 'gone' }
           }
           setReason(code)
-          return null
+          return { miss: 'failed', code }
         }
         const deal = dealFrom(await res.json(), next.scope)
-        if (!deal) return null
+        if (!deal) return { miss: 'failed', code: null }
         /*
          * Прошлое настроение для «Подобрать» в шапке (lib/lastmood.ts) — только
          * после выдачи, которая собралась, и только сказанное им самим:
@@ -526,7 +538,7 @@ function Player({ say }: { say: (line: string) => void }) {
         // «кандидатов нет» показал бы ту же карточку с тем же советом, хотя
         // на этот раз не доехал запрос.
         setReason(null)
-        return null
+        return { miss: 'failed', code: null }
       }
     },
     // mood, focus, askedMood и roulette собираются из строки запроса и в рамках
@@ -574,6 +586,8 @@ function Player({ say }: { say: (line: string) => void }) {
       setSkipCount(FRESH_TURN.skipCount)
       setRestored(!!back)
       if (back) setLiked(new Set(back.liked))
+      // Выдача пришла — прежний отказ переключателя больше не про неё
+      setSwitchMiss(null)
       return hero
     },
     [roulette],
@@ -626,17 +640,17 @@ function Player({ say }: { say: (line: string) => void }) {
       setProgress(
         focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
       )
-      const deal = await fetchPicks({ scope, lean })
-      if (!deal) {
+      const got = await fetchPicks({ scope, lean })
+      if ('miss' in got) {
         setPhase('error')
         return false
       }
-      applyDeal(deal)
+      applyDeal(got)
       // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
       // та самая случайность, которая до сих пор происходила молча.
       setPhase(roulette ? 'spin' : 'reveal')
       // Выпавшее в рулетке называет сам барабан (SpinWheel)
-      if (!roulette) say(playLine({ kind: 'reveal', name: deal.picks[0].name }))
+      if (!roulette) say(playLine({ kind: 'reveal', name: got.picks[0].name }))
       return true
     }
 
@@ -796,11 +810,11 @@ function Player({ say }: { say: (line: string) => void }) {
     if (retrying) return
     setRetrying(true)
     try {
-      const deal = await fetchPicks({ scope, lean })
-      if (!deal) return
-      applyDeal(deal)
+      const got = await fetchPicks({ scope, lean })
+      if ('miss' in got) return
+      applyDeal(got)
       setPhase(roulette ? 'spin' : 'reveal')
-      if (!roulette) say(playLine({ kind: 'reveal', name: deal.picks[0].name }))
+      if (!roulette) say(playLine({ kind: 'reveal', name: got.picks[0].name }))
     } finally {
       setRetrying(false)
     }
@@ -815,13 +829,18 @@ function Player({ say }: { say: (line: string) => void }) {
       if ((next.scope === scope && next.lean === lean) || switching) return
       setSwitching(true)
       try {
-        const deal = await fetchPicks(next)
-        if (!deal) return
-        const hero = applyDeal(deal)
+        const got = await fetchPicks(next)
+        if ('miss' in got) {
+          // Выдача прежняя — и об этом надо сказать, а не просто отжать кнопку:
+          // чаще всего это потолок частоты, и у него есть срок (switchLine)
+          setSwitchMiss(switchLine(got))
+          return
+        }
+        const hero = applyDeal(got)
         // Фокус не трогаем: нажатый переключатель остаётся на месте, и
         // человек, может быть, нажмёт соседний. Сказать надо только, что
         // герой наверху сменился.
-        say(playLine({ kind: 'reshape', name: deal.picks[hero].name }))
+        say(playLine({ kind: 'reshape', name: got.picks[hero].name }))
       } finally {
         // finally, а не строка после await: оборванная сеть оставляла бы
         // переключатель навсегда заблокированным, и починить это можно было бы
@@ -1144,9 +1163,9 @@ function Player({ say }: { say: (line: string) => void }) {
           // пересчёт его сменит — на нового, когда тот смонтируется
           focusHero(true)
           const was = pick.appid
-          void fetchPicks({ scope, lean }).then((deal) => {
-            if (!deal) return
-            const now = deal.picks[applyDeal(deal)]
+          void fetchPicks({ scope, lean }).then((got) => {
+            if ('miss' in got) return
+            const now = got.picks[applyDeal(got)]
             say(playLine({ kind: 'refresh', name: now.name }))
             if (now.appid !== was) focusHero(false)
           })
@@ -1649,6 +1668,12 @@ function Player({ say }: { say: (line: string) => void }) {
                   {switching ? 'пересобираю…' : engine === 'claude' ? 'подбор: ИИ' : 'подбор: по тегам'}
                 </span>
               </div>
+              {/* Отказ переключателя — под ним же, где смотрят после нажатия.
+                  Живая область стоит всегда, а не появляется вместе с текстом:
+                  такую скринридер не объявляет. Пустая — нулевой высоты. */}
+              <p role="status" className="text-xs text-danger">
+                {switchMiss && <span className="block -mt-2 mb-4">{switchMiss}</span>}
+              </p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {others.map((p, i) => (
                   <motion.button
