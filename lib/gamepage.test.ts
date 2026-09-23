@@ -1,19 +1,31 @@
 import type { InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
-import { createDb, replaceGameTags, setGameJson, upsertGameMeta, type Db } from './db'
+import {
+  createDb,
+  replaceGameTags,
+  setGameJson,
+  upsertGameMeta,
+  upsertSemantics,
+  type Db,
+} from './db'
 import {
   DESCRIPTION_MAX,
   deadVerdict,
   gameDescription,
+  gameTraits,
+  hookTrait,
   isRussianText,
   loadGamePage,
   pickSimilar,
   reviewFacts,
+  SESSION_MIN_CONFIDENCE,
+  sessionTrait,
   SIMILAR_CANDIDATES,
   SIMILAR_SHOWN,
   topTagOf,
 } from './gamepage'
-import type { GameMeta } from './types'
+import { tagRu } from './tagsru'
+import type { GameMeta, GameSemantics } from './types'
 
 /**
  * Карточка игры — единственная публичная страница проекта, и правил у неё
@@ -105,7 +117,7 @@ describe('loadGamePage', () => {
         if (prop !== 'execute') return Reflect.get(target, prop, receiver)
         return (q: InStatement) => {
           const sql = typeof q === 'string' ? q : q.sql
-          if (/FROM games WHERE appid = \?/.test(sql)) чтенийИгры++
+          if (/FROM games g\b[\s\S]*WHERE g\.appid = \?/.test(sql)) чтенийИгры++
           return target.execute(q)
         }
       },
@@ -598,5 +610,136 @@ describe('причина смерти из базы', () => {
       args: [NOW],
     })
     expect((await loadGamePage(62))?.meta).not.toHaveProperty('deadReason')
+  })
+})
+
+/** Семантика с нужной длиной захода и уверенностью; остальное — нейтральное */
+function semantics(over: {
+  minutes?: number
+  bucket?: GameSemantics['session']['bucket']
+  canStopAnytime?: boolean
+  confidence?: number
+}): GameSemantics {
+  const minutes = over.minutes ?? 40
+  return {
+    v: 1,
+    axes: { challenge: 50, complexity: 50, pace: 50 },
+    session: {
+      bucket: over.bucket ?? (minutes <= 25 ? 'short' : minutes >= 75 ? 'long' : 'medium'),
+      minutes,
+      canStopAnytime: over.canStopAnytime ?? false,
+    },
+    timeToFun: { bucket: null, hours: null },
+    confidence: over.confidence ?? 0.7,
+    n: 40,
+    basis: 'tags+reviews',
+  }
+}
+
+describe('«Чем выделяется» и длина сессии', () => {
+  const SOLO = [2]
+  // Multi-player и Online PvP, без Single-player — как у Dota 2 и CS2
+  const ONLINE_ONLY = [1, 49]
+
+  test('без семантики строки о сессии нет', () => {
+    expect(sessionTrait({ categories: SOLO })).toBeNull()
+    expect(gameTraits({ categories: SOLO }, null)).toEqual([])
+  })
+
+  test('семантика по одним тегам недостаточно уверена для карточки', () => {
+    // приор по тегам не поднимается выше 0.4 — это не факт, а догадка
+    const s = semantics({ confidence: SESSION_MIN_CONFIDENCE - 0.01 })
+    expect(sessionTrait({ categories: SOLO, semantics: s })).toBeNull()
+    expect(
+      sessionTrait({ categories: SOLO, semantics: semantics({ confidence: SESSION_MIN_CONFIDENCE }) }),
+    ).not.toBeNull()
+  })
+
+  test('минуты — четырьмя корзинами, а не числом', () => {
+    const value = (minutes: number) =>
+      sessionTrait({ categories: SOLO, semantics: semantics({ minutes }) })?.value
+    expect(value(10)).toBe('~20 мин')
+    expect(value(25)).toBe('~20 мин')
+    expect(value(40)).toBe('~40 мин')
+    expect(value(55)).toBe('~40 мин')
+    expect(value(90)).toBe('~1,5 ч')
+    expect(value(160)).toBe('на вечер')
+    expect(sessionTrait({ categories: SOLO, semantics: semantics({}) })?.label).toBe('Сессия')
+  })
+
+  test('у сетевой игры без одиночного режима — матч с минутами', () => {
+    expect(sessionTrait({ categories: ONLINE_ONLY, semantics: semantics({ minutes: 45 }) })).toEqual({
+      label: 'Матч',
+      value: '~45 мин',
+    })
+  })
+
+  test('не матч: заход на вечер или партию можно бросить в любой момент', () => {
+    // Rust: одиночного режима нет, но вайп длится неделями
+    const evening = sessionTrait({ categories: ONLINE_ONLY, semantics: semantics({ minutes: 160 }) })
+    expect(evening).toEqual({ label: 'Сессия', value: 'на вечер' })
+    // асинхронная партия — выходишь когда хочешь
+    const async = sessionTrait({
+      categories: ONLINE_ONLY,
+      semantics: semantics({ minutes: 20, canStopAnytime: true }),
+    })
+    expect(async?.label).toBe('Сессия')
+    // одиночный режим есть — это не матч, даже если по сети тоже играют
+    expect(sessionTrait({ categories: [1, 2], semantics: semantics({})})?.label).toBe('Сессия')
+  })
+
+  test('«Чем выделяется» — русскими подписями, по порядку характерности', () => {
+    expect(hookTrait(['Automation', 'Base Building'])).toEqual({
+      label: 'Чем выделяется',
+      value: `${tagRu('Automation')}, ${tagRu('Base Building')}`,
+    })
+    expect(hookTrait(null)).toBeNull()
+    expect(hookTrait([])).toBeNull()
+  })
+
+  test('обе строки вместе: сначала чем выделяется, потом сессия', () => {
+    const traits = gameTraits({ categories: SOLO, semantics: semantics({}) }, ['Automation'])
+    expect(traits.map((t) => t.label)).toEqual(['Чем выделяется', 'Сессия'])
+  })
+
+  test('карточка читает семантику и характерные теги тем же чтением строки', async () => {
+    const db = await withDb()
+    await upsertGameMeta(
+      db,
+      meta(70, { tags: { Action: 1000, Automation: 800, 'Base Building': 500 }, categories: SOLO }),
+      NOW,
+    )
+    await replaceGameTags(db, 70, [{ tag: 'Automation', weight: 800 }])
+    await db.batch(
+      [
+        [1, 'Singleplayer', 3031],
+        [2, 'Action', 2383],
+        [3, 'Automation', 60],
+        [4, 'Base Building', 90],
+      ].map(([tagid, name, count]) => ({
+        sql: 'INSERT INTO tags (tagid, name, game_count) VALUES (?, ?, ?)',
+        args: [tagid, name, count],
+      })),
+      'write',
+    )
+    await upsertSemantics(db, [{ appid: 70, semantics: semantics({ minutes: 160 }), computedAt: NOW }])
+
+    const page = await loadGamePage(70)
+    // Action — жанр Steam, «выделяться» им нельзя; остальные два — редкие
+    expect(page?.hook).toEqual(['Automation', 'Base Building'])
+    expect(page?.meta.semantics?.session.minutes).toBe(160)
+    expect(gameTraits(page!.meta, page!.hook)).toEqual([
+      { label: 'Чем выделяется', value: `${tagRu('Automation')}, ${tagRu('Base Building')}` },
+      { label: 'Сессия', value: 'на вечер' },
+    ])
+  })
+
+  test('без карты тегов «Чем выделяется» молчит, а не называет самые частые', async () => {
+    const db = await withDb()
+    await upsertGameMeta(db, meta(71, { tags: { Automation: 800 } }), NOW)
+    const page = await loadGamePage(71)
+    expect(page?.hook).toBeNull()
+    expect(page?.meta.semantics).toBeUndefined()
+    expect(gameTraits(page!.meta, page!.hook)).toEqual([])
   })
 })

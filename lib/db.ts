@@ -2281,12 +2281,19 @@ export async function getGameMeta(db: Db, appid: number): Promise<GameMeta | nul
  *
  * Блобы отдаются сырыми unknown, как и getGameJson: разбирать их форму —
  * дело вызывающего, он один знает, что там лежит.
+ *
+ * Семантика игры (длина сессии на карточке) приезжает тем же чтением —
+ * SEMANTICS_JOIN по первичному ключу, одна строка game_semantics, а не
+ * второй поход в базу на каждый рендер.
  */
 export async function getGamePageRow(
   db: Db,
   appid: number,
 ): Promise<{ meta: GameMeta; reviewsSummary: unknown; prosCons: unknown } | null> {
-  const res = await db.execute({ sql: 'SELECT * FROM games WHERE appid = ?', args: [appid] })
+  const res = await db.execute({
+    sql: `SELECT g.*, s.json AS semantics_json FROM games g ${SEMANTICS_JOIN} WHERE g.appid = ?`,
+    args: [appid],
+  })
   const row = res.rows[0] as unknown as (GameRow & Record<string, unknown>) | undefined
   if (!row) return null
   const разобрать = (v: unknown): unknown => {

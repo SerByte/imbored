@@ -90,8 +90,9 @@ export type GameMeta = {
    * Что игра требует от человека: оси, длина сессии, время до веселья.
    * Живёт в своей таблице game_semantics, а не в колонке games: заливка
    * каталога (publish-catalog) и апсерт меты её не трогают. Приезжает только
-   * из выборок пачкой (getGamesMeta, getGamesMetaLite, пул открытий);
-   * undefined — не посчитана или записана в чужой версии формата.
+   * из выборок пачкой (getGamesMeta, getGamesMetaLite, пул открытий) и со
+   * строкой карточки игры (getGamePageRow); undefined — не посчитана или
+   * записана в чужой версии формата.
    */
   semantics?: GameSemantics
 }

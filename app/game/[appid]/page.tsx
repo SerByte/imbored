@@ -17,6 +17,7 @@ import { byline } from '@/lib/byline'
 import {
   deadVerdict,
   gameDescription,
+  gameTraits,
   isRussianText,
   loadGamePage,
   reviewFacts,
@@ -198,6 +199,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
     .map(([t]) => t)
+  const traits = gameTraits(meta, data.hook)
 
   return (
     <div className="flex-1">
@@ -394,6 +396,27 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   </span>
                 ))}
               </div>
+            )}
+            {/*
+              Чем игра выделяется и сколько длится заход — без модели: первое
+              из редких тегов Steam (lib/hook), второе из семантики по тегам и
+              отзывам (lib/semantics). Под тегами, потому что первая строка их
+              и объясняет: из восьми чипсов — вот эти два про неё.
+
+              Строки нет, когда сказать честно нечего: общие теги, непрогретая
+              карта тегов, семантика по одним тегам (см. SESSION_MIN_CONFIDENCE).
+              dl, а не абзацы: это пары «подпись — значение», и скринридер
+              читает их парами.
+            */}
+            {traits.length > 0 && (
+              <dl className="flex flex-col gap-1 text-sm">
+                {traits.map((t) => (
+                  <div key={t.label} className="flex flex-wrap gap-x-2">
+                    <dt className="text-dim">{t.label}:</dt>
+                    <dd>{t.value}</dd>
+                  </div>
+                ))}
+              </dl>
             )}
             {/* Описание у трёх карточек из четырёх английское (каталог берёт
                 его у магазина по-английски, см. isRussianText). Без lang его

@@ -10,11 +10,13 @@ import {
   type SimilarGame,
 } from './db'
 import { logSwallowed } from './errlog'
-import { judgeLiveness, type DeadReason } from './liveness'
+import { distinctiveTags } from './hook'
+import { judgeLiveness, playMode, type DeadReason } from './liveness'
 import { plural } from './plural'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
-import { rarityOf, rarityScale } from './tagweight'
+import { tagRu } from './tagsru'
+import { rarityOf, rarityScale, tagWeightFrom } from './tagweight'
 import type { GameMeta } from './types'
 
 export type GamePageData = {
@@ -31,6 +33,12 @@ export type GamePageData = {
   similar: SimilarGame[]
   /** по какому тегу они подобраны — он же стоит в заголовке блока */
   similarTag: string | null
+  /**
+   * «Чем выделяется»: до двух характерных тегов (lib/hook, английскими
+   * ключами). null — сказать честно нечего: нет карты тегов или ни один тег
+   * не прошёл порог. Строку из него собирает gameTraits.
+   */
+  hook: string[] | null
 }
 
 export type ReviewFacts = {
@@ -369,6 +377,75 @@ export function gameDescription({
   return clip(out, DESCRIPTION_MAX) ?? out.slice(0, DESCRIPTION_MAX)
 }
 
+/** Строка фактов под тегами героя: подпись и значение */
+export type GameTrait = { label: string; value: string }
+
+/**
+ * С какой уверенности семантики карточка называет длину сессии.
+ *
+ * По одним тегам уверенность не выше 0.4 (TAGS_MAX_CONFIDENCE в
+ * lib/semantics), поэтому строку получают только игры, у которых оси
+ * уточнили отзывы. Приор по тегам годится подбору — там он один голос из
+ * многих, — а на публичной карточке это было бы утверждение, выданное за
+ * факт: «Сессия: ~40 мин» у игры, про которую мы знаем только теги.
+ */
+export const SESSION_MIN_CONFIDENCE = 0.5
+
+/**
+ * Минуты захода словами. Четыре корзины, а не число: минуты — оценка по
+ * тегам и отзывам, и «~35 мин» обещало бы точность, которой нет. Границы —
+ * между соседними подписями по середине в разах (20 и 40 → 30, 40 и 90 →
+ * 60), тильда у каждой: заход в 10 и в 25 минут одинаково «~20».
+ */
+function sessionWords(minutes: number): string {
+  if (minutes < 30) return '~20 мин'
+  if (minutes < 60) return '~40 мин'
+  if (minutes < 120) return '~1,5 ч'
+  return 'на вечер'
+}
+
+/**
+ * «Сессия» или «Матч» — из семантики игры (lib/semantics), без модели.
+ *
+ * Матч — у сетевой игры без одиночного режима (playMode не solo-capable),
+ * которую посреди не бросить (canStopAnytime false) и у которой заход не на
+ * вечер. Все три условия нужны: у Rust нет одиночного режима, но «матча» там
+ * нет — вайп на недели, и строка остаётся «Сессия: на вечер»; у асинхронной
+ * партии можно выйти в любой момент — это тоже не матч. У матча минуты
+ * называются числом: для него длина и есть главный вопрос («успею до ужина?»),
+ * а оценка по отзывам про матчи обычно и говорит конкретно.
+ *
+ * null — семантики нет или она недостаточно уверена (SESSION_MIN_CONFIDENCE).
+ */
+export function sessionTrait(meta: Pick<GameMeta, 'semantics' | 'categories'>): GameTrait | null {
+  const s = meta.semantics
+  if (!s || s.confidence < SESSION_MIN_CONFIDENCE) return null
+  const { minutes, bucket, canStopAnytime } = s.session
+  const match =
+    playMode(meta.categories ?? []) !== 'solo-capable' && !canStopAnytime && bucket !== 'long'
+  return match
+    ? { label: 'Матч', value: `~${minutes} мин` }
+    : { label: 'Сессия', value: sessionWords(minutes) }
+}
+
+/**
+ * «Чем выделяется» — характерные теги игры (distinctiveTags в lib/hook)
+ * русскими подписями. Подпись честная: это теги, которые проставили игроки,
+ * а не пересказ. null — строки нет.
+ */
+export function hookTrait(hook: readonly string[] | null): GameTrait | null {
+  if (!hook?.length) return null
+  return { label: 'Чем выделяется', value: hook.map(tagRu).join(', ') }
+}
+
+/** Строки фактов карточки по порядку; пустой список — блока нет вовсе */
+export function gameTraits(
+  meta: Pick<GameMeta, 'semantics' | 'categories'>,
+  hook: readonly string[] | null,
+): GameTrait[] {
+  return [hookTrait(hook), sessionTrait(meta)].filter((t): t is GameTrait => t !== null)
+}
+
 /**
  * Собирает данные карточки игры. ТОЛЬКО ЧТЕНИЕ ИЗ БАЗЫ — ни одного сетевого
  * вызова и ни одного обращения к модели.
@@ -405,15 +482,22 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   // и отзывов Steam про неё нет — поэтому блок «похожие» стоит ДО раннего
   // возврата, а не после
   //
-  // Карта тегов — только когда теги есть: игре без них полку не собрать всё
-  // равно, и читать ради неё нечего
-  const similarOf = async (): Promise<Pick<GamePageData, 'similar' | 'similarTag'>> => {
-    const hasTags = Object.keys(meta.tags ?? {}).length > 0
-    const stats = hasTags ? await tagStatsFor(db, Math.floor(Date.now() / 1000)) : null
+  // Карта тегов — только когда теги есть: игре без них ни полку, ни «Чем
+  // выделяется» не собрать всё равно, и читать ради неё нечего. Одна на оба
+  // потребителя; tagStatsFor не бросает — сбой чтения даёт null
+  const hasTags = Object.keys(meta.tags ?? {}).length > 0
+  const statsOf = hasTags
+    ? tagStatsFor(db, Math.floor(Date.now() / 1000))
+    : Promise.resolve(null)
+  const similarOf = async (): Promise<Pick<GamePageData, 'similar' | 'similarTag' | 'hook'>> => {
+    const stats = await statsOf
+    // Редкость — по той же карте, что у полки: тег, которым игра выделяется,
+    // должен быть редким по каталогу, а не просто первым по голосам
+    const hook = distinctiveTags(meta, stats ? tagWeightFrom(stats) : null)
     const tag = topTagOf(meta, stats)
-    if (!tag) return { similar: [], similarTag: null }
+    if (!tag) return { similar: [], similarTag: null, hook }
     const candidates = await topGamesByTag(db, tag, appid, SIMILAR_CANDIDATES)
-    return { similar: pickSimilar(candidates, appid), similarTag: tag }
+    return { similar: pickSimilar(candidates, appid), similarTag: tag, hook }
   }
 
   if (appid < 0) {
