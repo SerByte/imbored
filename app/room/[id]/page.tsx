@@ -60,6 +60,11 @@ type RoomState = {
     art: GameArtUrls | null
     store: string | null
     storeUrl: string | null
+    /** есть ли игра у смотрящего; null — не знаем */
+    ownedByMe: boolean | null
+    isFree: boolean
+    priceFinal: number | null
+    discount: Discount | null
   } | null
 }
 

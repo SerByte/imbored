@@ -36,6 +36,10 @@
  * десктопная steam://run. Разница нужна правилу остановки (lib/launchmemo.ts):
  * спрашивать «не зацепило?» того, кто на телефоне всего лишь открыл страницу
  * магазина, — спрашивать про игру, в которую он не играл.
+ *
+ * mobileLabel={null} — на тач-устройстве кнопки нет вовсе. Это для мест, где
+ * ссылка на магазин уже стоит рядом (страница игры): там мобильная ветка
+ * была бы её точной копией.
  */
 export function SteamLaunch({
   appid,
@@ -48,7 +52,7 @@ export function SteamLaunch({
   appid: number
   className?: string
   label?: string
-  mobileLabel?: string
+  mobileLabel?: string | null
   onClick?: () => void
   onLaunch?: () => void
 }) {
@@ -64,15 +68,17 @@ export function SteamLaunch({
       >
         {label}
       </a>
-      <a
-        href={`https://store.steampowered.com/app/${appid}/`}
-        target="_blank"
-        rel="noreferrer"
-        onClick={onClick}
-        className={`inline-block pointer-fine:hidden ${className}`}
-      >
-        {mobileLabel}
-      </a>
+      {mobileLabel !== null && (
+        <a
+          href={`https://store.steampowered.com/app/${appid}/`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={onClick}
+          className={`inline-block pointer-fine:hidden ${className}`}
+        >
+          {mobileLabel}
+        </a>
+      )}
     </>
   )
 }

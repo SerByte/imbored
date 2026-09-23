@@ -1610,6 +1610,37 @@ export async function getLatestSnapshot(
 }
 
 /**
+ * Есть ли игра в последнем снапшоте библиотеки. null — снапшота нет вовсе.
+ *
+ * Отвечает база, а не JS, и это ради веса: вопрос задаёт каждая страница игры
+ * у вошедшего (кнопка «Запустить», см. app/api/session/owns) и каждый опрос
+ * сматченной комнаты, а games_json у большой библиотеки — блоб на сотни
+ * килобайт. getLatestSnapshot вёз бы его целиком в функцию ради одного бита.
+ *
+ * instr — дешёвый отсев до разбора JSON: у игры, которой нет, в тексте нет и
+ * `"appid":<id>`, и json_each не зовётся вовсе (CASE в SQLite ленивый).
+ * Подстрока не отличает 730 от 7300, поэтому совпадение подтверждается уже
+ * json_each — отсев может только сэкономить, но не соврать.
+ */
+export async function snapshotOwns(db: Db, steamid: string, appid: number): Promise<boolean | null> {
+  const res = await db.execute({
+    sql: `SELECT CASE
+              WHEN instr(games_json, '"appid":' || ?) = 0 THEN 0
+              ELSE EXISTS (
+                SELECT 1 FROM json_each(games_json) WHERE json_extract(value, '$.appid') = ?
+              )
+            END AS owned
+          FROM library_snapshots WHERE steamid = ?
+          ORDER BY taken_at DESC, id DESC LIMIT 1`,
+    // Для подстроки — строкой: число клиент привязывает как REAL, и склейка
+    // давала бы `"appid":730.0`, которого в JSON нет никогда
+    args: [String(appid), appid, steamid],
+  })
+  const row = res.rows[0] as unknown as { owned: number } | undefined
+  return row ? Number(row.owned) === 1 : null
+}
+
+/**
  * Отметка библиотеки на начало года.
  *
  * takenAt отдаём наружу не для порядка: отметка ставится при первом за год

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { memberLabel } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
-import { getGameMeta, getRoom, roomMembers, roomVoteCounts } from '@/lib/db'
+import { getGameMeta, getRoom, roomMembers, roomVoteCounts, snapshotOwns } from '@/lib/db'
+import { discountView, trustedPrice } from '@/lib/discount'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
 
@@ -73,10 +74,22 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
   // Зависит от room.matchedAppid, поэтому остаётся после — и случается редко.
-  const matchedMeta =
-    room.status === 'matched' && room.matchedAppid !== undefined
-      ? await getGameMeta(db, room.matchedAppid)
-      : null
+  //
+  // Владение — вместе с метой, одним заходом. Матч бывает и на игре, которой
+  // у кого-то нет (колода сознательно берёт «не у всех»), а церемония всем
+  // показывала «Запустить»: steam://run у не-владельца открывал окно покупки
+  // без цены и без объяснения. null — «не знаем»: не участник, нет снапшота
+  // или игра другого магазина (отрицательный appid), которой в библиотеке
+  // Steam не бывает по определению.
+  const matchedAppid = room.status === 'matched' ? room.matchedAppid : undefined
+  const [matchedMeta, ownedByMe] =
+    matchedAppid !== undefined
+      ? await Promise.all([
+          getGameMeta(db, matchedAppid),
+          steamid && isMember && matchedAppid > 0 ? snapshotOwns(db, steamid, matchedAppid) : null,
+        ])
+      : [null, null]
+  const now = nowSec()
 
   const secret = sessionSecret()
   const memberViews = members.map((m) => {
@@ -119,8 +132,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           art: matchedMeta.art ?? null,
           store: matchedMeta.store ?? null,
           storeUrl: matchedMeta.storeUrl ?? null,
+          ownedByMe,
+          // Цена — тому, кому покупать: те же правила, что у колоды (trustedPrice,
+          // «бесплатно» сильнее цены)
+          isFree: matchedMeta.isFree === true,
+          priceFinal: matchedMeta.isFree ? null : trustedPrice(matchedMeta, now),
+          discount: matchedMeta.isFree ? null : discountView(matchedMeta, now),
         }
       : null,
-    now: nowSec(),
+    now,
   })
 }

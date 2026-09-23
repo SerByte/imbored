@@ -10,7 +10,7 @@ import { Eyebrow, MetaLine } from '@/components/Labels'
 import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
 import { RefundNote } from '@/components/RefundNote'
-import { SteamLaunch } from '@/components/SteamLaunch'
+import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { sitemapGames } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { byline } from '@/lib/byline'
@@ -414,35 +414,40 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 >
                   Открыть в {STORE_LABEL[meta.store ?? ''] ?? 'магазине'}
                 </a>
-              ) : verdict ? (
-                /* Мёртвой игре — справка, а не призыв: страница магазина
-                   остаётся, но без заливки и без запуска */
-                <a
-                  href={`https://store.steampowered.com/app/${appid}/`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-[14px] glass glass-hover px-5 py-3 text-sm"
-                >
-                  Страница в Steam
-                </a>
               ) : (
                 <>
-                  <SteamLaunch
-                    appid={appid}
-                    label="Запустить"
-                    mobileLabel="Открыть в Steam"
-                    className="btn-ember px-5 py-3 text-sm"
-                  />
-                  {/* под пальцем кнопка выше и так ведёт в магазин — дублировать
-                      незачем; признак тот же, что у развилки SteamLaunch */}
+                  {/*
+                    Главная кнопка — страница магазина, а не запуск.
+
+                    «Запустить» (steam://run) стояла здесь у каждого: у гостя из
+                    поиска и у вошедшего, у которого игры нет. Страница общая и
+                    живёт на ISR, про сессию не знает — вот и предлагала запуск
+                    всем. Теперь запуск дорисовывает OwnedLaunch и только
+                    владельцу, а общая часть разметки говорит то, что верно для
+                    любого читателя.
+
+                    Мёртвой игре и магазин — справка, а не призыв: без заливки
+                    и без запуска, спорить с собственным вердиктом кнопкой
+                    незачем.
+                  */}
                   <a
                     href={`https://store.steampowered.com/app/${appid}/`}
                     target="_blank"
                     rel="noreferrer"
-                    className="hidden pointer-fine:inline-block rounded-[14px] glass glass-hover px-5 py-3 text-sm"
+                    className={
+                      verdict
+                        ? 'rounded-[14px] glass glass-hover px-5 py-3 text-sm'
+                        : 'btn-ember px-5 py-3 text-sm'
+                    }
                   >
                     Страница в Steam
                   </a>
+                  {!verdict && (
+                    <OwnedLaunch
+                      appid={appid}
+                      className="rounded-[14px] glass glass-hover px-5 py-3 text-sm"
+                    />
+                  )}
                 </>
               )}
               <a
@@ -601,11 +606,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           её с 96% глубины страницы примерно до половины; вес — вторая
           половина того же вопроса.
 
-          Ember тут не спорит с «Открыть в Steam»: та кнопка лежит пятью
+          Ember тут не спорит с «Страница в Steam»: та кнопка лежит пятью
           экранами выше, и на своём месте каждая единственная.
         */}
         <div>
-          {/* btn-ember — тот же класс и размер, что у «Открыть в Steam» выше:
+          {/* btn-ember — тот же класс и размер, что у «Страница в Steam» выше:
               вид парадной кнопки на сайте один, и своя заливка здесь
               разъехалась бы с ним на первой же правке. */}
           <Link href="/quiz" className="btn-ember px-5 py-3 text-sm">

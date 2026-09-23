@@ -9,8 +9,10 @@ import { GameArt } from '@/components/GameArt'
 import { LogoMark } from '@/components/Logo'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
+import { PriceTag } from '@/components/PriceTag'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import type { GameArtUrls } from '@/lib/art'
+import type { Discount } from '@/lib/discount'
 import { STORE_LABEL } from '@/lib/stores'
 
 gsap.registerPlugin(useGSAP)
@@ -34,6 +36,11 @@ export function MatchCeremony({
     art?: GameArtUrls | null
     store: string | null
     storeUrl: string | null
+    /** есть ли игра у смотрящего; null — не знаем (снапшота нет) */
+    ownedByMe?: boolean | null
+    isFree?: boolean
+    priceFinal?: number | null
+    discount?: Discount | null
   }
   memberCount: number
 }) {
@@ -132,7 +139,17 @@ export function MatchCeremony({
           {game.name}
         </SplitHeading>
 
-        <div data-beat="cta">
+        {/*
+          «Запустить» — только владельцу.
+
+          Колода сознательно берёт и игры «не у всех», поэтому матч бывает на
+          игре, которой у смотрящего нет. Раньше кнопка была одна на всех, и
+          steam://run у не-владельца открывал окно покупки без цены и без
+          объяснения — посреди главной эмоции продукта. Теперь ему страница
+          магазина и честная строка с ценой; «не знаем» (снапшота нет)
+          решается туда же: ссылка на магазин работает у всех, запуск — нет.
+        */}
+        <div data-beat="cta" className="flex flex-col items-center gap-3">
           <Magnet>
             {game.storeUrl ? (
               <a
@@ -143,13 +160,38 @@ export function MatchCeremony({
               >
                 Открыть в {STORE_LABEL[game.store ?? ''] ?? 'магазине'}
               </a>
-            ) : (
+            ) : game.ownedByMe === true ? (
               <SteamLaunch
                 appid={game.appid}
                 className="btn-ember px-8 py-3"
               />
+            ) : (
+              <a
+                href={`https://store.steampowered.com/app/${game.appid}/`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-ember px-8 py-3"
+              >
+                Открыть в Steam
+              </a>
             )}
           </Magnet>
+          {/* Разделитель — только при цене: без неё « · » повис бы в конце */}
+          {game.ownedByMe === false && (
+            <p className="text-sm text-dim">
+              У тебя её пока нет
+              {(game.isFree || (game.priceFinal ?? null) !== null) && (
+                <>
+                  {' · '}
+                  <PriceTag
+                    priceFinal={game.priceFinal ?? null}
+                    isFree={game.isFree}
+                    discount={game.discount}
+                  />
+                </>
+              )}
+            </p>
+          )}
         </div>
 
         <p data-beat="foot" className="text-xs text-faint">
