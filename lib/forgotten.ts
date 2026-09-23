@@ -158,6 +158,64 @@ export function parseLibraryFilter(raw: string | string[] | undefined): LibraryF
   return typeof raw === 'string' && FILTER_IDS.has(raw) ? (raw as LibraryFilter) : 'all'
 }
 
+/**
+ * СЕТКА ОТДАЁТСЯ ПОРЦИЯМИ, А НЕ ЦЕЛИКОМ.
+ *
+ * Страница рисовала всю полку разом. Замер на синтетической библиотеке в
+ * тысячу игр: 2.3 МБ HTML, из них 1.4 МБ RSC, и тысяча клиентских плиток с
+ * обложками — у коллекционера на три тысячи игр, ровно того, кому бэклог и
+ * адресован, это под семь мегабайт на телефон.
+ *
+ * 48 — делится и на две колонки телефона, и на четыре десктопа, так что
+ * последний ряд порции всегда полный. «Показать ещё» добавляет следующую
+ * порцию к уже показанным (?page=N — сколько порций на экране), а не листает:
+ * человек, долистав до кнопки, ищет глазами дальше, а не заново сверху.
+ *
+ * Счётчики на чипсах, деньги бэклога и сводка по-прежнему считаются по всей
+ * библиотеке — порция касается только плиток.
+ */
+export const LIBRARY_PAGE_SIZE = 48
+
+/**
+ * ?page= приходит из URL: мусор, массив, ноль, минус — всё это первая
+ * порция. Сверху номер ограничивает libraryPage, когда полка уже известна.
+ */
+export function parseLibraryPage(raw: string | string[] | undefined): number {
+  if (typeof raw !== 'string' || !/^\d{1,6}$/.test(raw)) return 1
+  return Math.max(1, Number(raw))
+}
+
+export type LibraryPage<T> = {
+  /** Плитки на экране: первые page × size. */
+  shown: T[]
+  /** Сколько ещё за кнопкой. */
+  rest: number
+  /** Номер для ссылки «Показать ещё»; null — показано всё. */
+  nextPage: number | null
+}
+
+export function libraryPage<T>(games: T[], page: number, size = LIBRARY_PAGE_SIZE): LibraryPage<T> {
+  // Номер больше, чем порций, — это всё, а не пустая сетка: ссылку с ?page=99
+  // могли сохранить до того, как библиотека похудела
+  const pages = Math.max(1, Math.ceil(games.length / size))
+  const p = Math.min(Math.max(1, Math.floor(page)), pages)
+  const shown = games.slice(0, p * size)
+  const rest = games.length - shown.length
+  return { shown, rest, nextPage: rest > 0 ? p + 1 : null }
+}
+
+/**
+ * Адрес полки. Смена фильтра сбрасывает порцию: у новой полки своя длина, и
+ * «третья порция заброшенных» ничего не значит для нераспакованных.
+ */
+export function libraryHref(filter: LibraryFilter, page = 1): string {
+  const qs = new URLSearchParams()
+  if (filter !== 'all') qs.set('state', filter)
+  if (page > 1) qs.set('page', String(page))
+  const s = qs.toString()
+  return s ? `/library?${s}` : '/library'
+}
+
 export type LibraryView = {
   games: LibraryGame[]
   /** по ВСЕЙ библиотеке, а не по выбранной полке — это подписи на чипсах */

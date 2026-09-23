@@ -12,7 +12,11 @@ import {
   dayKey,
   forgottenCandidates,
   LIBRARY_FILTERS,
+  LIBRARY_PAGE_SIZE,
+  libraryHref,
+  libraryPage,
   parseLibraryFilter,
+  parseLibraryPage,
   pickForgotten,
   SHELF_EMPTY,
 } from '@/lib/forgotten'
@@ -21,6 +25,7 @@ import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 import { bounceTo } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
+import { LinkPending } from '@/components/LinkPending'
 import { plural } from '@/lib/plural'
 
 export const metadata = {
@@ -80,7 +85,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   if (!snapshot) redirect(bounceTo('/library'))
 
   const now = nowSec()
-  const filter = parseLibraryFilter((await props.searchParams).state)
+  const query = await props.searchParams
+  const filter = parseLibraryFilter(query.state)
   // Сводка, деньги и прогрев считаются по ВСЕЙ библиотеке, а не по выбранной
   // полке: иначе числа в шапке прыгали бы вслед за фильтром
   const games = snapshot.games
@@ -126,6 +132,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
 
   const metaOf = (id: number) => metas.get(id)
   const view = buildLibraryView(games, metaOf, filter, now)
+  // Порция полки, а не вся полка: см. LIBRARY_PAGE_SIZE в lib/forgotten.ts
+  const wall = libraryPage(view.games, parseLibraryPage(query.page))
   const shelf = pickForgotten(
     forgottenCandidates(games, metaOf),
     // Соль обязательна: без неё первый слот полки коррелировал бы с выбором
@@ -142,6 +150,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         </h1>
         <Link
           href="/portrait"
+          prefetch={false}
           className="rounded-[14px] glass glass-hover px-4 py-2 text-sm shrink-0"
         >
           Мой портрет игрока →
@@ -280,6 +289,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             {untouched > shelf.length && (
               <Link
                 href="/library?state=untouched#wall"
+                prefetch={false}
                 className="tap text-sm text-ember-text hover:underline shrink-0"
               >
                 Все нераспакованные →
@@ -312,6 +322,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               <Link
                 key={g.appid}
                 href={`/game/${g.appid}`}
+                prefetch={false}
                 className="library-tile glass glass-hover rounded-[14px] overflow-hidden"
               >
                 <GameArt
@@ -333,8 +344,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         </section>
       )}
 
-      {/* Чипсы — обычные ссылки: страница и так force-dynamic, а сетка на
-          тысячу плиток обязана остаться серверной и без обработчиков.
+      {/* Чипсы — обычные ссылки: страница и так force-dynamic, а сетка
+          обязана остаться серверной и без обработчиков. Префетча у них нет:
+          каждый чипс — эта же динамическая страница, то есть пять вызовов
+          функции на один просмотр ради фильтров, которые откроют один раз.
           id — цель ссылки с полки «запечатанного»: приводить к фильтру,
           не показав самих чипсов, значит приводить в никуда. */}
       {games.length > 0 && (
@@ -342,7 +355,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         {LIBRARY_FILTERS.map((f) => (
           <Link
             key={f.id}
-            href={f.id === 'all' ? '/library' : `/library?state=${f.id}`}
+            href={libraryHref(f.id)}
+            prefetch={false}
             aria-current={f.id === filter ? 'page' : undefined}
             className={`rounded-full px-3.5 py-1.5 text-xs transition ${
               f.id === filter ? 'bg-ember text-on-ember font-semibold' : 'glass glass-hover text-dim'
@@ -363,14 +377,22 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {view.games.map((g) => {
+        {wall.shown.map((g) => {
           const state = libraryTileState(g, now)
           const label = STATE_LABEL[state]
           const hours = Math.round(g.playtimeForever / 60)
           return (
+            /*
+              Без префетча: плитка попадает в экран при прокрутке, и каждая
+              префетчила бы /game/<appid>. Игры вне заранее собранных страниц
+              рендерятся по требованию, то есть порция из 48 плиток — это до
+              48 рендеров с походами в базу ради страниц, куда человек
+              откроет одну.
+            */
             <Link
               key={g.appid}
               href={`/game/${g.appid}`}
+              prefetch={false}
               className={`library-tile glass glass-hover rounded-[14px] overflow-hidden ${
                 state === 'comeback' ? 'opacity-75 hover:opacity-100' : ''
               }`}
@@ -401,6 +423,31 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           )
         })}
       </div>
+
+      {/*
+        «ПОКАЗАТЬ ЕЩЁ» — ССЫЛКА, А НЕ КНОПКА С КЛИЕНТСКОЙ ПОДГРУЗКОЙ.
+        Следующая порция — тот же серверный рендер с ?page=N: сетка остаётся
+        без клиентского состояния, работает без JS, и адрес можно отправить.
+        scroll={false} — человек остаётся там, где нажал, и новые плитки встают
+        прямо под прочитанными; без него Next прокрутил бы к верху страницы,
+        раз её начало уже уехало из экрана. Префетча нет по той же причине,
+        что у чипсов: это та же динамическая страница.
+      */}
+      {wall.nextPage !== null && (
+        <div className="mt-8 flex justify-center">
+          <Link
+            href={libraryHref(filter, wall.nextPage)}
+            scroll={false}
+            prefetch={false}
+            className="rounded-[14px] glass glass-hover px-5 py-2.5 text-sm"
+          >
+            <LinkPending>
+              Показать ещё <span className="font-mono">{Math.min(wall.rest, LIBRARY_PAGE_SIZE)}</span>{' '}
+              из <span className="font-mono">{wall.rest}</span>
+            </LinkPending>
+          </Link>
+        </div>
+      )}
 
       {/* Внизу намеренно: это уборка, а не витрина. Но на странице, а не в
           настройках, которых в проекте нет — бан ставится в одном клике от

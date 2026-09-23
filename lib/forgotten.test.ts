@@ -3,7 +3,11 @@ import {
   buildLibraryView,
   dayKey,
   forgottenCandidates,
+  LIBRARY_PAGE_SIZE,
+  libraryHref,
+  libraryPage,
   parseLibraryFilter,
+  parseLibraryPage,
   pickForgotten,
 } from './forgotten'
 import type { GameMeta, LibraryGame } from './types'
@@ -213,6 +217,64 @@ describe('parseLibraryFilter', () => {
     expect(parseLibraryFilter(undefined)).toBe('all')
     // ?state=a&state=b приезжает массивом — раньше такое было бы приведением типа
     expect(parseLibraryFilter(['untouched'])).toBe('all')
+  })
+})
+
+describe('порции сетки библиотеки', () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
+
+  test('?page= из URL: мусор, массив, ноль и минус — первая порция', () => {
+    expect(parseLibraryPage('3')).toBe(3)
+    expect(parseLibraryPage(undefined)).toBe(1)
+    expect(parseLibraryPage('0')).toBe(1)
+    expect(parseLibraryPage('-2')).toBe(1)
+    expect(parseLibraryPage('2.5')).toBe(1)
+    expect(parseLibraryPage('lol')).toBe(1)
+    expect(parseLibraryPage(['2'])).toBe(1)
+    // Длинный номер не превращается в Infinity и не роняет slice
+    expect(parseLibraryPage('9'.repeat(40))).toBe(1)
+  })
+
+  test('первая порция — первые 48, остальное за кнопкой', () => {
+    const p = libraryPage(ids(1000), 1)
+    expect(p.shown).toHaveLength(LIBRARY_PAGE_SIZE)
+    expect(p.shown[0]).toBe(1)
+    expect(p.rest).toBe(1000 - LIBRARY_PAGE_SIZE)
+    expect(p.nextPage).toBe(2)
+  })
+
+  test('«Показать ещё» добавляет порцию к показанным, а не листает', () => {
+    const p = libraryPage(ids(1000), 3)
+    expect(p.shown).toHaveLength(3 * LIBRARY_PAGE_SIZE)
+    // Начало полки на месте: человек дочитывает дальше, а не заново
+    expect(p.shown[0]).toBe(1)
+    expect(p.nextPage).toBe(4)
+  })
+
+  test('последняя порция — без кнопки, лишний номер — вся полка, а не пустота', () => {
+    const last = libraryPage(ids(100), 3)
+    expect(last.shown).toHaveLength(100)
+    expect(last.rest).toBe(0)
+    expect(last.nextPage).toBeNull()
+    // Ссылку с ?page=99 сохранили, пока игр было больше
+    expect(libraryPage(ids(100), 99).shown).toHaveLength(100)
+  })
+
+  test('полка короче порции и пустая полка — без кнопки', () => {
+    expect(libraryPage(ids(5), 1)).toEqual({ shown: ids(5), rest: 0, nextPage: null })
+    expect(libraryPage([], 4)).toEqual({ shown: [], rest: 0, nextPage: null })
+  })
+
+  test('ровно полная порция — без кнопки «ещё ноль»', () => {
+    expect(libraryPage(ids(LIBRARY_PAGE_SIZE), 1).nextPage).toBeNull()
+  })
+
+  test('адрес полки: фильтр и порция, первая порция без хвоста', () => {
+    expect(libraryHref('all')).toBe('/library')
+    expect(libraryHref('all', 1)).toBe('/library')
+    expect(libraryHref('all', 2)).toBe('/library?page=2')
+    expect(libraryHref('untouched')).toBe('/library?state=untouched')
+    expect(libraryHref('comeback', 3)).toBe('/library?state=comeback&page=3')
   })
 })
 
