@@ -67,8 +67,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   let matched = room.status === 'matched' ? (room.matchedAppid ?? null) : null
   if (removed && room.status === 'open') {
-    matched = await findRoomMatch(db, id)
-    if (matched !== null) await setRoomMatched(db, id, matched)
+    // Как и в голосовании: наружу — записанный матч, а не свой кандидат.
+    const candidate = await findRoomMatch(db, id)
+    if (candidate !== null) matched = await setRoomMatched(db, id, candidate)
   }
 
   return NextResponse.json({

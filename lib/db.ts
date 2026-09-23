@@ -916,6 +916,12 @@ export async function findRoomMatch(db: Db, roomId: string): Promise<number | nu
     // Затыкать каждый путь по отдельности — значит помнить о них при каждой
     // следующей правке; JOIN закрывает их все разом, независимо от того, как
     // осиротевший голос там оказался.
+    //
+    // Второй ключ сортировки не косметика. created_at хранится в секундах, и
+    // две игры, добравшие единогласие в одну и ту же секунду, без него шли
+    // бы в неопределённом порядке: два параллельных запроса могли выбрать
+    // разные игры. Спор всё равно решает setRoomMatched: он пишет только в
+    // открытую комнату и возвращает то, что в ней в итоге оказалось.
     sql: `SELECT v.appid AS appid FROM room_votes v
           JOIN room_members m ON m.room_id = v.room_id AND m.steamid = v.steamid
           WHERE v.room_id = ? AND v.vote = 1
@@ -924,7 +930,7 @@ export async function findRoomMatch(db: Db, roomId: string): Promise<number | nu
           HAVING COUNT(DISTINCT v.steamid) >= (
             SELECT COUNT(*) FROM room_members WHERE room_id = ?
           )
-          ORDER BY MAX(v.created_at) ASC
+          ORDER BY MAX(v.created_at) ASC, v.appid ASC
           LIMIT 1`,
     args: [roomId, roomId, roomId],
   })
@@ -938,12 +944,33 @@ export async function findRoomMatch(db: Db, roomId: string): Promise<number | nu
  * матча останавливает опрос. Значит переписать уже назначенную игру другой
  * — это подменить людям результат под руками, и никакой запрос не должен
  * иметь такой возможности, даже опоздавший.
+ *
+ * Возвращает appid, который в комнате ЗАПИСАН, а не свой кандидат. Два
+ * завершающих голоса в одну секунду могут прийти с разными кандидатами:
+ * запрос A видит полной только X, запрос B — ещё и Y. Условие выше не даёт
+ * B переписать X, но если B вернёт клиенту свой Y, его экран покажет
+ * церемонию с Y и остановит опрос, а база и остальные увидят X — друзья
+ * «договорились» о разных играх, и исправить это уже нечем. Поэтому наружу
+ * уходит только то, что прочитано после записи.
+ *
+ * Запись и чтение идут одной пачкой: один обход до Turso, и между ними никто
+ * не вклинится. null — комнаты нет или матч так и не записан.
  */
-export async function setRoomMatched(db: Db, roomId: string, appid: number): Promise<void> {
-  await db.execute({
-    sql: "UPDATE rooms SET status = 'matched', matched_appid = ? WHERE id = ? AND status = 'open'",
-    args: [appid, roomId],
-  })
+export async function setRoomMatched(db: Db, roomId: string, appid: number): Promise<number | null> {
+  const [, stored] = await db.batch(
+    [
+      {
+        sql: "UPDATE rooms SET status = 'matched', matched_appid = ? WHERE id = ? AND status = 'open'",
+        args: [appid, roomId],
+      },
+      {
+        sql: "SELECT matched_appid FROM rooms WHERE id = ? AND status = 'matched'",
+        args: [roomId],
+      },
+    ],
+    'write',
+  )
+  return (stored?.rows[0]?.matched_appid as number | null | undefined) ?? null
 }
 
 export type RoomVote = { steamid: string; appid: number; vote: 0 | 1; createdAt: number }

@@ -1217,9 +1217,28 @@ describe('removeRoomMember', () => {
     // опрос. Подменять людям результат под руками нельзя даже опоздавшему.
     const db = await freshDb()
     await room(db, 'ROOM08', ['a', 'b'])
-    await setRoomMatched(db, 'ROOM08', 111)
-    await setRoomMatched(db, 'ROOM08', 222)
+    // Оба запроса обязаны вернуть ЗАПИСАННЫЙ матч, а не свой кандидат:
+    // опоздавший, отдав клиенту 222, показал бы ему не ту игру навсегда.
+    expect(await setRoomMatched(db, 'ROOM08', 111)).toBe(111)
+    expect(await setRoomMatched(db, 'ROOM08', 222)).toBe(111)
     expect((await getRoom(db, 'ROOM08'))?.matchedAppid).toBe(111)
+  })
+
+  test('матч несуществующей комнаты — null, а не свой кандидат', async () => {
+    const db = await freshDb()
+    expect(await setRoomMatched(db, 'NOROOM', 111)).toBeNull()
+  })
+
+  test('две игры с единогласием в одну секунду: выбор не зависит от порядка строк', async () => {
+    // created_at хранится в секундах, и без второго ключа сортировки два
+    // параллельных запроса могли выбрать разные игры из одной и той же пары.
+    const db = await freshDb()
+    await room(db, 'ROOM09', ['a', 'b'])
+    await castRoomVote(db, 'ROOM09', 'a', 900, 1, NOW)
+    await castRoomVote(db, 'ROOM09', 'b', 900, 1, NOW)
+    await castRoomVote(db, 'ROOM09', 'a', 800, 1, NOW)
+    await castRoomVote(db, 'ROOM09', 'b', 800, 1, NOW)
+    expect(await findRoomMatch(db, 'ROOM09')).toBe(800)
   })
 
   test('матч не собирается из голосов ушедшего', async () => {

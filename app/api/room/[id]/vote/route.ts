@@ -39,10 +39,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   await castRoomVote(db, id, steamid, appid, body.vote ? 1 : 0, nowSec())
 
+  // Клиенту уходит то, что записано в комнате, а не свой кандидат: при двух
+  // завершающих голосах в одну секунду кандидаты у запросов разные, и экран,
+  // получивший проигравший, показал бы не ту игру и остановил опрос.
   let matched = room.status === 'matched' ? (room.matchedAppid ?? null) : null
   if (room.status === 'open') {
-    matched = await findRoomMatch(db, id)
-    if (matched !== null) await setRoomMatched(db, id, matched)
+    const candidate = await findRoomMatch(db, id)
+    if (candidate !== null) matched = await setRoomMatched(db, id, candidate)
   }
 
   return NextResponse.json({ matched })
