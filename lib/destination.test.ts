@@ -5,10 +5,12 @@ import {
   bounceTo,
   DESTINATIONS,
   destinationPath,
+  destinationUrl,
   loginCarry,
   loginTarget,
   steamLoginFor,
 } from './destination'
+import { playHref, presetHref, VIBE_PRESETS } from './presets'
 
 /**
  * Сторож разворота гостя.
@@ -31,8 +33,10 @@ describe('разворот гостя на лендинг', () => {
       'http://evil.example',
       '/library/../../etc',
       '/LIBRARY',
-      '/library?x=1',
       '/library#a',
+      '/play#x?time=short',
+      '/play/?time=short',
+      '//evil.example?next=/play',
       '\\\\evil.example',
       '/api/auth/logout',
       '/room/ABCDEF',
@@ -43,6 +47,7 @@ describe('разворот гостя на лендинг', () => {
     ]
     for (const raw of attempts) {
       expect(destinationPath(raw), `пропущен ${JSON.stringify(raw)}`).toBeNull()
+      expect(destinationUrl(raw), `destinationUrl пропустил ${JSON.stringify(raw)}`).toBeNull()
       expect(bounceTo(raw as string), `bounceTo пропустил ${JSON.stringify(raw)}`).toBe('/')
     }
   })
@@ -166,5 +171,66 @@ describe('вход через Steam из подсказки возвращает
     for (const where of ['/rooms', '//evil.example', '/room/abc234', '/room/ABC234/x', '']) {
       expect(steamLoginFor(where), where).toBe('/api/auth/steam')
     }
+  })
+})
+
+/**
+ * Настроение квиза через вход.
+ *
+ * Гость отвечал на три вопроса, /play разворачивал его на лендинг голым
+ * next=/play — и после входа выдача собиралась по дефолтному настроению.
+ * Проверяем круг целиком: разворот → лендинг → вход в Steam → возврат, и
+ * отдельно — что по дороге не пролезает ничего, кроме проверенного.
+ */
+describe('ответы квиза переживают вход', () => {
+  const QUIZ = playHref(
+    { time: 'short', vibe: 'engaged', social: 'friends' },
+    { lean: 'fresh', roulette: true, focus: 'untouched' },
+  )
+  const query = (href: string) => new URLSearchParams(href.split('?')[1] ?? '')
+
+  test('адрес квиза и пресетов проходит без изменений', () => {
+    expect(destinationUrl(QUIZ)).toBe(QUIZ)
+    for (const p of VIBE_PRESETS) expect(destinationUrl(presetHref(p)), p.label).toBe(presetHref(p))
+  })
+
+  test('разворот с /play → лендинг → Steam → та же выдача', () => {
+    const landing = bounceTo('/play', query(QUIZ))
+    const next = query(landing).get('next')
+    expect(destinationPath(next), 'лендинг должен узнать место и показать его обещание').toBe('/play')
+    // Карточка входа кладёт next как есть, старт входа пропускает его через loginCarry
+    const start = loginCarry(new URLSearchParams({ next: next ?? '' }))
+    // Steam возвращает тот же query плюс state и openid.*
+    const back = new URLSearchParams(start)
+    back.set('state', 'x')
+    back.set('openid.mode', 'id_res')
+    expect(loginTarget(back)).toBe(QUIZ)
+  })
+
+  test('мусор в параметрах отбрасывается, проверенное остаётся', () => {
+    expect(destinationUrl('/play?time=short&vibe=chill&social=solo&x=%3Cscript%3E')).toBe(
+      '/play?time=short&vibe=chill&social=solo',
+    )
+    // половина настроения — не настроение: дефолты подставит сама выдача
+    expect(destinationUrl('/play?time=short&vibe=chill')).toBe('/play')
+    expect(destinationUrl('/play?time=forever&vibe=chill&social=solo&lean=fresh')).toBe(
+      '/play?lean=fresh',
+    )
+    expect(destinationUrl('/play?roulette=yes&from=elsewhere&lean=rage')).toBe('/play')
+    expect(destinationUrl('/play?next=%2F%2Fevil.example')).toBe('/play')
+    expect(destinationUrl('/play?time=short#&vibe=chill&social=solo')).toBe('/play')
+    // хвост бывает только у выдачи: у остальных мест он отбрасывается, место остаётся
+    expect(destinationUrl('/library?x=1')).toBe('/library')
+    expect(destinationUrl('/daily?time=short&vibe=chill&social=solo')).toBe('/daily')
+  })
+
+  test('подсказка «войди через Steam» на выдаче везёт настроение', () => {
+    expect(loginTarget(query(steamLoginFor(QUIZ)))).toBe(QUIZ)
+  })
+
+  test('/play без строки запроса — как раньше', () => {
+    expect(bounceTo('/play', new URLSearchParams())).toBe('/?next=%2Fplay')
+    expect(bounceTo('/play', null)).toBe('/?next=%2Fplay')
+    expect(steamLoginFor('/play?')).toBe('/api/auth/steam?next=%2Fplay')
   })
 })

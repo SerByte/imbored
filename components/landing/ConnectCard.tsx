@@ -8,7 +8,7 @@ import { Magnet } from '@/components/Magnet'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { CONNECT_CARD_MIN_H } from '@/components/landing/ConnectFallback'
 import { markSessionTouched } from '@/components/SessionKeeper'
-import { DESTINATIONS, destinationPath } from '@/lib/destination'
+import { DESTINATIONS, destinationPath, destinationUrl } from '@/lib/destination'
 import { plural } from '@/lib/plural'
 import { presetHref, VIBE_PRESETS } from '@/lib/presets'
 import {
@@ -98,8 +98,11 @@ export function ConnectCard() {
   const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
   const compat = search.get('compat')
   const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
-  const next = destinationPath(search.get('next'))
-  const dest = next ? DESTINATIONS[next] : null
+  // Адрес целиком, с настроением квиза у выдачи (destinationUrl), — его везёт
+  // вход и в него же ведёт кнопка. Тексты карточки — по месту назначения.
+  const next = destinationUrl(search.get('next'))
+  const nextPath = destinationPath(next)
+  const dest = nextPath ? DESTINATIONS[nextPath] : null
 
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
