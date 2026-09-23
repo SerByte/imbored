@@ -1799,6 +1799,29 @@ describe('очередь опроса', () => {
     expect(Number(res.rows[0].tier)).toBe(0)
   })
 
+  test('повтор снапшота ничего не переписывает, а рост приоритета — применяется', async () => {
+    // Turso считает записанные строки, и холостой апсерт на каждое обновление
+    // снапшота — это до 1200 оплаченных записей при нуле изменений
+    const db = await freshDb()
+    const ids = Array.from({ length: 250 }, (_, i) => i + 1)
+    expect(await enrollNewsPoll(db, ids, 1, NOW)).toBe(250)
+    expect(await enrollNewsPoll(db, ids, 1, NOW + 60)).toBe(0)
+    // понижение приоритета (0 → 1) — тоже не запись
+    expect(await enrollNewsPoll(db, [7], 0, NOW)).toBe(1)
+    expect(await enrollNewsPoll(db, [7], 1, NOW)).toBe(0)
+    // а повышение (1 → 0) доходит до базы, и только для тех, кому оно нужно
+    expect(await enrollNewsPoll(db, [7, 8, 9], 0, NOW)).toBe(2)
+    const res = await db.execute(
+      'SELECT appid, tier FROM news_poll WHERE appid IN (7, 8, 9, 10) ORDER BY appid',
+    )
+    expect(res.rows.map((r) => [Number(r.appid), Number(r.tier)])).toEqual([
+      [7, 0],
+      [8, 0],
+      [9, 0],
+      [10, 1],
+    ])
+  })
+
   test('отрицательные appid в очередь не берутся', async () => {
     const db = await freshDb()
     await enrollNewsPoll(db, [-101, 0, 730], 1, NOW)

@@ -4017,6 +4017,14 @@ export async function pruneNewsForApp(db: Db, appid: number, keep = 30): Promise
  * Ставит игры в очередь. next_at задаётся СРАЗУ и с детерминированным
  * разбросом по appid: иначе вся библиотека станет доступной одной секундой и
  * первый же срез упрётся в темп, а хвост будет голодать.
+ *
+ * Уже стоящую игру трогаем, только когда её приоритет правда растёт (tier
+ * меньше — чаще). Раньше было `SET tier = MIN(...)` без WHERE, и SQLite
+ * переписывал строку, даже когда MIN возвращал то же самое: каждое обновление
+ * снапшота (раз в 6 ч в /api/prepare, каждый демо-вход) — до 1200 записей
+ * строк в Turso при нуле изменений. С WHERE совпавший tier — не запись вовсе.
+ *
+ * Возвращает число реально записанных строк: новые плюс повышенные.
  */
 export async function enrollNewsPoll(
   db: Db,
@@ -4024,21 +4032,25 @@ export async function enrollNewsPoll(
   tier: 0 | 1,
   nowSec: number,
   jitterSec = 3600,
-): Promise<void> {
+): Promise<number> {
   const ids = [...new Set(appids.filter((a) => Number.isInteger(a) && a > 0))].slice(0, 1200)
-  if (!ids.length) return
+  if (!ids.length) return 0
   const CHUNK = 200
+  let written = 0
   for (let i = 0; i < ids.length; i += CHUNK) {
-    await db.batch(
+    const res = await db.batch(
       ids.slice(i, i + CHUNK).map((appid) => ({
         sql: `INSERT INTO news_poll (appid, tier, next_at, enrolled_at)
               VALUES (?, ?, ?, ?)
-              ON CONFLICT(appid) DO UPDATE SET tier = MIN(news_poll.tier, excluded.tier)`,
+              ON CONFLICT(appid) DO UPDATE SET tier = excluded.tier
+              WHERE news_poll.tier > excluded.tier`,
         args: [appid, tier, nowSec + (jitterSec ? appid % jitterSec : 0), nowSec],
       })),
       'write',
     )
+    written += res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
   }
+  return written
 }
 
 /**
@@ -4047,9 +4059,10 @@ export async function enrollNewsPoll(
  * status = 'gone' ставится после MAX_FAILS отказов подряд, и до сих пор это
  * был билет в один конец: claimNewsPollBatch фильтрует 'gone', а enrollNewsPoll
  * при повторной постановке трогает только tier (ON CONFLICT DO UPDATE SET
- * tier = MIN(...)) и статус не сбрасывает. Между тем главная причина трёх
- * отказов подряд — не мёртвая игра, а закрывшийся от нашего IP Steam, то есть
- * причина временная, а отметка вечная. Очередь молча подтекала.
+ * tier, и то лишь при росте приоритета) и статус не сбрасывает. Между тем
+ * главная причина трёх отказов подряд — не мёртвая игра, а закрывшийся от
+ * нашего IP Steam, то есть причина временная, а отметка вечная. Очередь молча
+ * подтекала.
  *
  * Порог по last_at, а не безусловное воскрешение: игре, которую Steam правда
  * не отдаёт, хватит одной попытки в месяц, и на пропускную способность это не
