@@ -58,6 +58,7 @@ import {
   getRoom,
   getStaleAppids,
   getUserPortrait,
+  insertMissingGamesMeta,
   joinRoom,
   listBanned,
   listFeedback,
@@ -96,6 +97,8 @@ import {
   revokeSession,
   DEMO_TTL_SEC,
 } from './db'
+import { seedDemo } from './demo'
+import { OTHER_STORE_GAMES } from './otherstores'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -2322,6 +2325,61 @@ describe('версия схемы', () => {
       version: 1,
       columns: 30,
     })
+  })
+})
+
+/**
+ * Досев заготовленных карточек: кураторский пул других магазинов и демо.
+ *
+ * Пул досевал POST /api/prepare на каждом вызове прогрева; теперь это делают
+ * migrateDb базы приложения (раз на базу, под флагом) и демо-вход. В обоих
+ * случаях уже лежащая строка неприкосновенна: у демо настоящие Steam appid.
+ */
+describe('досев заготовок', () => {
+  const otherIds = OTHER_STORE_GAMES.map((m) => m.appid)
+
+  test('insertMissingGamesMeta пишет только отсутствующие, прогретую строку не трогает', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await insertMissingGamesMeta(
+      db,
+      [{ ...META, name: 'Заготовка', tags: { Puzzle: 1 } }, { ...META, appid: 730, name: 'CS2' }],
+      NOW + 100,
+    )
+    const got = await getGamesMeta(db, [620, 730])
+    expect(got.get(620)).toEqual(META)
+    expect(got.get(730)?.name).toBe('CS2')
+  })
+
+  test('база приложения досевает пул один раз: дальше решает флаг', async () => {
+    const client = createClient({ url: ':memory:' })
+    await migrateDb(client, {}, { seedContent: true })
+    expect([...(await getGamesMeta(client, otherIds)).keys()].sort()).toEqual([...otherIds].sort())
+
+    // Флаг читается тем же запросом, что и остальные флаги миграций, поэтому
+    // следующий старт за досев не платит — и удалённую руками строку не
+    // воскрешает (для этого флаг снимают, см. migrateDb)
+    await client.execute('DELETE FROM games WHERE appid = -101')
+    await migrateDb(client, {}, { seedContent: true })
+    expect((await getGamesMeta(client, [-101])).size).toBe(0)
+  })
+
+  test('без seedContent пул не сеется: скрипты и тесты получают пустую базу', async () => {
+    const db = await freshDb()
+    expect((await getGamesMeta(db, otherIds)).size).toBe(0)
+  })
+
+  test('демо-вход досевает и свои карточки, и пул — не затирая прогретое', async () => {
+    const db = await freshDb()
+    // Portal 2 есть и в демо-библиотеке: прогретая строка должна пережить вход
+    await upsertGameMeta(db, META, NOW)
+    await seedDemo(db, '00012345678901231', NOW + 100)
+
+    expect((await getGamesMeta(db, [620])).get(620)).toEqual(META)
+    expect((await getGamesMeta(db, otherIds)).size).toBe(otherIds.length)
+    const snap = await getLatestSnapshot(db, '00012345678901231')
+    const demoIds = snap!.games.map((g) => g.appid)
+    expect((await getGamesMeta(db, demoIds)).size).toBe(demoIds.length)
   })
 })
 

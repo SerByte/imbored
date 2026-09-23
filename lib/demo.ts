@@ -1,6 +1,6 @@
 import { legacyArtUrl } from './art'
-import { getGamesMeta, saveLibrarySnapshot, upsertGamesMeta, upsertUser, type Db } from './db'
-import { seedOtherStores } from './otherstores'
+import { insertMissingGamesMeta, saveLibrarySnapshot, upsertUser, type Db } from './db'
+import { OTHER_STORE_GAMES } from './otherstores'
 import type { GameMeta, LibraryGame } from './types'
 
 /**
@@ -145,18 +145,19 @@ export function demoLibrary2(nowSec: number): LibraryGame[] {
   ]
 }
 
-const DEMO_APPIDS = DEMO_METAS.map((m) => m.appid)
-
 /**
  * Полная инициализация демо-режима: метаданные, снапшот, пользователь.
  * Метаданные пишутся только для отсутствующих appid — демо не должно
  * затирать реальный кэш (у DEMO_METAS настоящие Steam appid).
  *
- * Проверка «чего не хватает» — одним getGamesMeta, а не двадцатью двумя
- * getGameMeta подряд. Раньше цена анонимного демо-коннекта была 22 обхода
- * Turso плюс ещё 11 в seedOtherStores; после автодемо на /play этот путь
- * проходит каждый гость, дошедший до конца квиза, и поштучный цикл стал бы
- * самой дорогой строкой в воронке.
+ * Демо-карточки и кураторский пул других магазинов — одной пачкой досева
+ * (insertMissingGamesMeta). Было два чтения SELECT * и до двух пачек записи:
+ * getGamesMeta по демо, затем seedOtherStores со своим getGamesMeta. После
+ * автодемо на /play этот путь проходит каждый гость, дошедший до конца квиза,
+ * и каждый лишний обход здесь — самая дорогая строка в воронке.
+ *
+ * Пул сеется и в migrateDb, раз на базу; здесь он повторён, чтобы демо не
+ * зависело от того, дожил ли тот флаг до сегодняшних строк.
  */
 export async function seedDemo(
   db: Db,
@@ -164,10 +165,7 @@ export async function seedDemo(
   nowSec: number,
   variant: 1 | 2 = 1,
 ): Promise<void> {
-  const known = await getGamesMeta(db, DEMO_APPIDS)
-  const missing = DEMO_METAS.filter((m) => !known.has(m.appid))
-  if (missing.length) await upsertGamesMeta(db, missing, nowSec)
-  await seedOtherStores(db, nowSec)
+  await insertMissingGamesMeta(db, [...DEMO_METAS, ...OTHER_STORE_GAMES], nowSec)
   await upsertUser(db, { steamid, personaName: variant === 2 ? 'Демо-друг' : 'Демо-игрок' }, nowSec)
   await saveLibrarySnapshot(
     db,

@@ -1,5 +1,11 @@
-import { describe, expect, test } from 'vitest'
-import { parseReleaseYear, parseReviewTooltip, parseSearchRows } from './ingest'
+import { describe, expect, test, vi } from 'vitest'
+import {
+  CCU_FAIL_STREAK,
+  parseReleaseYear,
+  parseReviewTooltip,
+  parseSearchRows,
+  pollPlayerCounts,
+} from './ingest'
 
 /**
  * Настоящая разметка store.steampowered.com/search/results/?infinite=1,
@@ -95,5 +101,94 @@ describe('parseReleaseYear', () => {
     expect(parseReleaseYear('Coming soon')).toBeUndefined()
     expect(parseReleaseYear('')).toBeUndefined()
     expect(parseReleaseYear('Q4')).toBeUndefined()
+  })
+})
+
+describe('pollPlayerCounts', () => {
+  const ids = [10, 20, 30, 40, 50, 60, 70, 80]
+
+  test('здоровый Steam: онлайн каждой игры, ответ без числа — не отказ', async () => {
+    const { counts, stopped } = await pollPlayerCounts(ids, {
+      // у игры 30 статистики нет: Steam отвечает, но без player_count
+      fetchOne: async (appid) => (appid === 30 ? undefined : appid * 10),
+    })
+    expect(stopped).toBe(false)
+    expect(counts.map((c) => c.appid).sort((a, b) => a - b)).toEqual(ids.filter((id) => id !== 30))
+    expect(counts.find((c) => c.appid === 20)?.ccu).toBe(200)
+  })
+
+  test(`${CCU_FAIL_STREAK} отказа подряд — новые запросы не начинаются`, async () => {
+    const asked: number[] = []
+    const { counts, stopped } = await pollPlayerCounts(ids, {
+      concurrency: 1,
+      fetchOne: async (appid) => {
+        asked.push(appid)
+        throw new Error('HTTP 429')
+      },
+    })
+    expect(stopped).toBe(true)
+    expect(counts).toEqual([])
+    // Раньше отказ глотался, и все восемь уходили в Steam, который просит перестать
+    expect(asked).toEqual([10, 20])
+  })
+
+  test('отказ, за которым удача, серию обнуляет', async () => {
+    const flaky = new Set([10, 30, 50])
+    const { counts, stopped } = await pollPlayerCounts(ids, {
+      concurrency: 1,
+      fetchOne: async (appid) => {
+        if (flaky.has(appid)) throw new Error('обрыв')
+        return 1
+      },
+    })
+    expect(stopped).toBe(false)
+    expect(counts.length).toBe(ids.length - flaky.size)
+  })
+
+  test('зависший ответ не держит остальных: параллельные опросы идут дальше', async () => {
+    let release: () => void = () => {}
+    const hung = new Promise<number>((r) => {
+      release = () => r(1)
+    })
+    const done: number[] = []
+    const run = pollPlayerCounts(ids, {
+      concurrency: 4,
+      fetchOne: async (appid) => {
+        if (appid === 10) return hung
+        done.push(appid)
+        return 2
+      },
+    })
+    // Первый воркер висит на игре 10, три других разбирают всё остальное
+    await vi.waitFor(() => expect(done.length).toBe(ids.length - 1))
+    release()
+    const { counts } = await run
+    expect(counts.length).toBe(ids.length)
+  })
+
+  test('после срока новые запросы не начинаются', async () => {
+    let clock = 0
+    const asked: number[] = []
+    const { stopped } = await pollPlayerCounts(ids, {
+      concurrency: 1,
+      deadlineAt: 3,
+      now: () => clock,
+      fetchOne: async (appid) => {
+        asked.push(appid)
+        clock++
+        return 1
+      },
+    })
+    expect(stopped).toBe(true)
+    expect(asked).toEqual([10, 20, 30])
+  })
+
+  test('пустой список — ни одного запроса', async () => {
+    const { counts, stopped } = await pollPlayerCounts([], {
+      fetchOne: async () => {
+        throw new Error('не должен вызываться')
+      },
+    })
+    expect({ counts, stopped }).toEqual({ counts: [], stopped: false })
   })
 })

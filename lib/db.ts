@@ -1,6 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
+import { OTHER_STORE_GAMES } from './otherstores'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import type { NewsBlock } from './steamhtml'
 import type { GameMeta, LibraryGame, Mood } from './types'
@@ -375,14 +376,31 @@ function placeholders(n: number): string {
  */
 const FILE_BUSY_TIMEOUT_MS = 10_000
 
-export async function createDb(url: string, authToken?: string): Promise<Db> {
+export async function createDb(
+  url: string,
+  authToken?: string,
+  opts: MigrateOptions = {},
+): Promise<Db> {
   const client = createClient({
     url,
     ...(authToken ? { authToken } : {}),
     // Turso эту опцию не читает, но и передавать её туда незачем
     ...(url.startsWith('file:') ? { timeout: FILE_BUSY_TIMEOUT_MS } : {}),
   })
-  return migrateDb(client)
+  return migrateDb(client, process.env, opts)
+}
+
+export type MigrateOptions = {
+  /**
+   * Досеять заготовленное содержимое — кураторский пул других магазинов
+   * (lib/otherstores). Только для базы приложения: getDb в lib/server.
+   *
+   * Не по умолчанию, потому что migrateDb зовут не только для неё. Скрипты
+   * открывают ею и data/catalog.db, откуда publish-catalog везёт строки в
+   * прод, а тестам нужна пустая база — одиннадцать чужих игр в каждой
+   * :memory: меняли бы пул кандидатов под десятками проверок.
+   */
+  seedContent?: boolean
 }
 
 /**
@@ -399,6 +417,9 @@ const NEWS_RANK_FIX_KEY = 'news_rank_fixed'
 
 /** Ключ в catalog_meta: до какой версии схемы доведена база. */
 const SCHEMA_V_KEY = 'schema_v'
+
+/** Ключ разового досева кураторского пула других магазинов (см. migrateDb). */
+const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
 
 /**
  * Версия схемы: набор колонок из ADDED_COLUMNS плюс форма таблиц, которые
@@ -481,7 +502,13 @@ export const ADDED_COLUMNS = [
  * на каждом старте ради ответа, который почти всегда «уже сделано».
  */
 async function readMigrationFlags(db: Db): Promise<Map<string, string>> {
-  const keys = [SCHEMA_V_KEY, DERIVED_BACKFILL_KEY, PAGE_TRIES_BACKFILL_KEY, NEWS_RANK_FIX_KEY]
+  const keys = [
+    SCHEMA_V_KEY,
+    DERIVED_BACKFILL_KEY,
+    PAGE_TRIES_BACKFILL_KEY,
+    NEWS_RANK_FIX_KEY,
+    OTHER_STORES_SEED_KEY,
+  ]
   const res = await db.execute({
     sql: `SELECT key, value FROM catalog_meta WHERE key IN (${placeholders(keys.length)})`,
     args: keys,
@@ -616,6 +643,7 @@ export function destructiveMigrationsAllowed(env: Record<string, string | undefi
 export async function migrateDb(
   db: Db,
   env: Record<string, string | undefined> = process.env,
+  opts: MigrateOptions = {},
 ): Promise<Db> {
   await db.executeMultiple(SCHEMA)
 
@@ -651,6 +679,28 @@ export async function migrateDb(
     await db.execute({
       sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
       args: [DERIVED_BACKFILL_KEY, '1'],
+    })
+  }
+
+  /*
+   * Кураторский пул других магазинов (lib/otherstores) — раз на базу.
+   *
+   * Раньше его досевал POST /api/prepare на каждом вызове, то есть на пути
+   * прогрева, который человек ждёт. Защёлка на процесс гасила повторы внутри
+   * инстанса, но каждый новый инстанс начинал прогрев с лишнего чтения.
+   * Здесь цена — одно обращение за всю жизнь базы: флаг читается тем же
+   * запросом, что и остальные.
+   *
+   * Досев, а не апсерт: если строка уже есть, её не трогаем. Строки пропали
+   * (ручная чистка games) — сними флаг, и следующий холодный старт досеет.
+   * Демо-вход досевает пул и сам, вместе со своими карточками (seedDemo).
+   * Почему только по opts.seedContent — см. MigrateOptions.
+   */
+  if (opts.seedContent && !flags.has(OTHER_STORES_SEED_KEY)) {
+    await insertMissingGamesMeta(db, OTHER_STORE_GAMES, Math.floor(Date.now() / 1000))
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [OTHER_STORES_SEED_KEY, '1'],
     })
   }
 
@@ -1590,15 +1640,27 @@ export async function getLibraryBaseline(
  * двести отдельных round-trip'ов в Turso стоили там дороже, чем вся остальная
  * работа вместе взятая.
  */
-function gameMetaStatement(meta: GameMeta, nowSec: number) {
-  return {
-    sql: `INSERT INTO games (appid, name, tags_json, genres_json, categories_json, short_description,
+const GAME_INSERT = `INSERT INTO games (appid, name, tags_json, genres_json, categories_json, short_description,
             header_image, screenshots_json, is_free, price_final, release_date, median_forever,
             store, store_url, art_json,
             release_year, developer, publisher, reviews_total, reviews_percent, reviews_30d,
             ccu, ccu_at, tag_count, is_multiplayer,
             price_initial, discount_percent, discount_ends_at, price_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+/**
+ * Что делать с уже лежащей строкой: 'update' — переписать (обычный апсерт),
+ * 'keep' — не трогать (досев, см. insertMissingGamesMeta).
+ */
+type OnConflict = 'update' | 'keep'
+
+function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflict = 'update') {
+  return {
+    sql:
+      onConflict === 'keep'
+        ? `${GAME_INSERT}
+          ON CONFLICT(appid) DO NOTHING`
+        : `${GAME_INSERT}
           ON CONFLICT(appid) DO UPDATE SET
             name = excluded.name,
             tags_json = excluded.tags_json,
@@ -1688,6 +1750,28 @@ export async function upsertGamesMeta(
   if (!metas.length) return
   await db.batch(
     metas.map((m) => gameMetaStatement(m, nowSec)),
+    'write',
+  )
+}
+
+/**
+ * Досев: записать только те игры, которых в базе ещё нет, — одним заходом.
+ *
+ * Для заготовленных карточек (демо-библиотека, кураторский пул других
+ * магазинов). У демо настоящие Steam appid, и апсерт поверх прогретой строки
+ * стёр бы ей теги, арт и цены значениями из заготовки. Раньше «чего нет»
+ * выяснялось чтением всех строк целиком (getGamesMeta, SELECT *) и только
+ * потом писалось; ON CONFLICT DO NOTHING решает то же одной пачкой и без
+ * гонки между чтением и записью.
+ */
+export async function insertMissingGamesMeta(
+  db: Db,
+  metas: readonly GameMeta[],
+  nowSec: number,
+): Promise<void> {
+  if (!metas.length) return
+  await db.batch(
+    metas.map((m) => gameMetaStatement(m, nowSec, 'keep')),
     'write',
   )
 }

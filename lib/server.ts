@@ -49,11 +49,16 @@ function forgetOnFailure(p: Promise<Db>): Promise<Db> {
  * Соединение с БД. В проде — Turso (TURSO_DATABASE_URL), локально — файл.
  * Промис кэшируется на процесс: миграции выполняются один раз за холодный старт.
  */
+/** База приложения досевает своё заготовленное содержимое — см. MigrateOptions */
+const APP_DB = { seedContent: true } as const
+
 export function getDb(): Promise<Db> {
   if (!globalStore.__imboredDb) {
     const remote = process.env.TURSO_DATABASE_URL
     if (remote) {
-      globalStore.__imboredDb = forgetOnFailure(createDb(remote, process.env.TURSO_AUTH_TOKEN))
+      globalStore.__imboredDb = forgetOnFailure(
+        createDb(remote, process.env.TURSO_AUTH_TOKEN, APP_DB),
+      )
     } else {
       // На serverless файловая база эфемерна: данные исчезали бы между запросами.
       // Падаем с внятной ошибкой вместо тихой потери данных.
@@ -65,7 +70,9 @@ export function getDb(): Promise<Db> {
       }
       const dir = path.join(process.cwd(), 'data')
       fs.mkdirSync(dir, { recursive: true })
-      globalStore.__imboredDb = forgetOnFailure(createDb(`file:${path.join(dir, 'imbored.db')}`))
+      globalStore.__imboredDb = forgetOnFailure(
+        createDb(`file:${path.join(dir, 'imbored.db')}`, undefined, APP_DB),
+      )
     }
   }
   return globalStore.__imboredDb

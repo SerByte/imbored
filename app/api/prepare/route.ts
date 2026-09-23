@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { after, NextResponse } from 'next/server'
 import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
+import { sliceDeadline } from '@/lib/cron'
 import { refreshDeals } from '@/lib/deals'
-import { fetchCurrentPlayers } from '@/lib/ingest'
+import { pollPlayerCounts } from '@/lib/ingest'
 import {
   getGamesMeta,
   getLatestSnapshot,
@@ -10,7 +11,6 @@ import {
   topCatalogAppids,
   upsertGamesMeta,
 } from '@/lib/db'
-import { seedOtherStores } from '@/lib/otherstores'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { isUntouched } from '@/lib/recommend'
 import {
@@ -23,6 +23,13 @@ import {
 import { fetchOwnedGames } from '@/lib/steam'
 import type { LibraryGame } from '@/lib/types'
 import { buildWarmPlan, shouldRefreshSnapshot } from '@/lib/warm'
+
+/**
+ * Предел объявлен явно, потому что после ответа идёт работа в after() — онлайн
+ * и цены. after живёт не дольше maxDuration маршрута (docs Next, after.md,
+ * Duration), и её бюджет считается от него — см. refreshAfterWarm ниже.
+ */
+export const maxDuration = 60
 
 const META_MAX_AGE_SEC = 14 * 86_400
 // GetItems берёт до 200 игр за один запрос, поэтому прогрев укладывается
@@ -49,6 +56,8 @@ const PREPARE_WINDOW_SEC = 300
  * Клиент вызывает в цикле, пока remaining > 0 (каждый вызов ~10 сек).
  */
 export async function POST() {
+  // Первой строкой: бюджет работы после ответа считается от начала вызова
+  const startedAt = Date.now()
   const steamid = await currentSteamId()
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
@@ -89,8 +98,6 @@ export async function POST() {
   if (isDemoId(steamid)) {
     return NextResponse.json({ remaining: 0, total: 0, library: facts })
   }
-
-  await seedOtherStores(db, now)
 
   const games = await refreshLibrary(db, steamid, snapshot, now)
   const names = new Map(games.map((g) => [g.appid, g.name]))
@@ -139,17 +146,28 @@ export async function POST() {
   const fetched = await ensureMeta(db, wanted, { maxFetch: BATCH, names })
   const remaining = (await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())).length
 
-  // Онлайн для совместных игр библиотеки: без него фильтр живости судит вслепую
-  // и в выдачу попадают игры с пустыми серверами. Спрашиваем только у сетевых
-  // и только когда замер протух — у обычного человека это десятки запросов.
+  /*
+   * Онлайн и цены — ПОСЛЕ ответа.
+   *
+   * Раньше ответ с remaining: 0 ждал обоих, а ровно его ждёт клиент, чтобы
+   * начать подбор (lib/warmup), и /daily — чтобы показать игру дня. У
+   * вернувшегося человека замер онлайна протухает через шесть часов, и первый
+   * же прогрев стоял на сорока запросах к Steam подряд: 10–14 секунд до
+   * выдачи, а при 429 и зависаниях — дольше.
+   *
+   * Подбор, начатый сразу, увидит прошлый замер онлайна — у него есть срок
+   * годности, и PlayersNow без свежей отметки «сейчас» не говорит. Цены для
+   * пятёрки выдача освежает сама (refreshDealsWithin в /api/recommend).
+   */
   if (!remaining) {
-    await refreshPlayerCounts(db, wanted)
-    // Цены и скидки: свой проход, потому что своя скорость протухания —
-    // метаданные живут две недели, распродажа несколько дней. Только для тех,
-    // у кого замер устарел, и сотней за вызов: маршрут и без того делает
-    // тяжёлый прогрев метаданных, а клиент дёргает его в цикле — вся
-    // библиотека доберётся за несколько шагов.
-    await refreshDeals(db, wanted, nowSec(), { maxFetch: PRICE_BATCH })
+    const work = refreshAfterWarm(db, wanted, sliceDeadline(startedAt, maxDuration))
+    try {
+      after(work)
+    } catch {
+      // Вне запроса (тест, скрипт) after недоступен: работа идёт и так, а
+      // её отказ не должен стать необработанным.
+      work.catch(() => undefined)
+    }
   }
 
   /*
@@ -203,7 +221,34 @@ async function refreshLibrary(
 const CCU_MAX_AGE_SEC = 6 * 3600
 const CCU_PER_CALL = 40
 
-async function refreshPlayerCounts(db: Awaited<ReturnType<typeof getDb>>, appids: number[]) {
+/**
+ * Работа последнего круга прогрева, которую ответ не ждёт.
+ *
+ * Онлайн для совместных игр библиотеки: без него фильтр живости судит вслепую
+ * и в выдачу попадают игры с пустыми серверами. Цены и скидки — свой проход,
+ * потому что своя скорость протухания: метаданные живут две недели,
+ * распродажа несколько дней. Сотней за вызов — вся библиотека доберётся за
+ * несколько заходов.
+ *
+ * Оба прохода разом: оба идут в Steam через один pace('steam-api'), так что
+ * темп общий, а ждать второму окончания первого незачем.
+ */
+async function refreshAfterWarm(
+  db: Awaited<ReturnType<typeof getDb>>,
+  wanted: number[],
+  deadlineAt: number,
+): Promise<void> {
+  await Promise.all([
+    refreshPlayerCounts(db, wanted, deadlineAt),
+    refreshDeals(db, wanted, nowSec(), { maxFetch: PRICE_BATCH }),
+  ])
+}
+
+async function refreshPlayerCounts(
+  db: Awaited<ReturnType<typeof getDb>>,
+  appids: number[],
+  deadlineAt: number,
+) {
   if (!appids.length) return
   const now = nowSec()
   const res = await db.execute({
@@ -216,19 +261,19 @@ async function refreshPlayerCounts(db: Awaited<ReturnType<typeof getDb>>, appids
     args: [...appids, now - CCU_MAX_AGE_SEC, CCU_PER_CALL],
   })
 
-  // Запросы к Steam остаются последовательными — их темп держит pace() внутри
-  // fetchCurrentPlayers, и параллелить их значит просто выстроить ту же очередь
-  // на секунду позже. А вот записи собираем в одну пачку: сорок отдельных
-  // UPDATE'ов давали сорок обходов Turso поверх сорока сетевых, и всё это внутри
-  // запроса, который ждёт человек.
-  const updates: Array<{ sql: string; args: (number | string)[] }> = []
-  for (const row of res.rows as unknown as Array<{ appid: number }>) {
-    const ccu = await fetchCurrentPlayers(row.appid).catch(() => undefined)
-    if (ccu === undefined) continue
-    updates.push({
+  // Темп, параллельность и выход после серии отказов — в pollPlayerCounts.
+  // Записи — одной пачкой: сорок отдельных UPDATE'ов давали сорок обходов
+  // Turso поверх сорока сетевых.
+  const { counts } = await pollPlayerCounts(
+    (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid),
+    { deadlineAt },
+  )
+  if (!counts.length) return
+  await db.batch(
+    counts.map(({ appid, ccu }) => ({
       sql: 'UPDATE games SET ccu = ?, ccu_at = ? WHERE appid = ?',
-      args: [ccu, now, row.appid],
-    })
-  }
-  if (updates.length) await db.batch(updates, 'write')
+      args: [ccu, now, appid],
+    })),
+    'write',
+  )
 }

@@ -53,20 +53,94 @@ export async function fetchSearchPage(
 export async function fetchCurrentPlayers(
   appid: number,
   fetchFn: typeof fetch = fetch,
+  timeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<number | undefined> {
   // Единственный вызов Steam, который жил без pace(), — и при этом он ходит в
-  // цикле до сорока раз подряд из пользовательского запроса (refreshPlayerCounts
-  // в /api/prepare). Ключ тот же, что у остальных вызовов api.steampowered.com:
-  // лимит там общий на хост, и отдельная очередь просто обходила бы его.
+  // цикле до сорока раз подряд (refreshPlayerCounts в /api/prepare). Ключ тот
+  // же, что у остальных вызовов api.steampowered.com: лимит там общий на хост,
+  // и отдельная очередь просто обходила бы его.
   await pace('steam-api', STORE_API_PACE_MS)
   const res = await fetchFn(
     `https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=${appid}`,
-    { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
+    { signal: AbortSignal.timeout(timeoutMs) },
   )
   if (!res.ok) throw new Error(`players ${appid}: HTTP ${res.status}`)
   const json = (await res.json()) as { response?: { result?: number; player_count?: number } }
   const count = json.response?.player_count
   return typeof count === 'number' ? count : undefined
+}
+
+/** Сколько опросов онлайна идёт одновременно */
+export const CCU_CONCURRENCY = 4
+/** Потолок ожидания одного ответа: у живого Steam это доли секунды */
+export const CCU_TIMEOUT_MS = 5_000
+/** Столько отказов подряд — и опрос прекращается */
+export const CCU_FAIL_STREAK = 2
+
+export type PlayerCount = { appid: number; ccu: number }
+
+/**
+ * Онлайн пачки игр: несколько запросов разом, с выходом после серии отказов.
+ *
+ * Был цикл: по одному запросу, каждый с таймаутом в двадцать секунд, и отказ
+ * глотался молча. Когда ISteamUserStats отвечал 429 или висел, сорок игр
+ * давали сорок бесполезных запросов подряд, а при зависаниях — минуты.
+ *
+ * Параллельность не ускоряет здоровый случай: темп держит pace() внутри
+ * fetchCurrentPlayers, и старты всё равно идут через STORE_API_PACE_MS. Она
+ * спасает от ОДНОГО зависшего ответа: пока он ждёт свои пять секунд,
+ * остальные продолжают.
+ *
+ * Отказ — только исключение: HTTP-ошибка, таймаут, обрыв. Ответ без
+ * player_count отказом не считается: так Steam отвечает про игру без
+ * статистики, и сервис при этом здоров. Два отказа подряд значат, что нас
+ * ограничивают, и продолжать — значит долбить того, кто просит перестать.
+ * Уже начатые запросы доживают, новые не начинаются.
+ *
+ * deadlineAt — позже него новый запрос не начинается: опрос идёт в after()
+ * и живёт не дольше maxDuration маршрута.
+ */
+export async function pollPlayerCounts(
+  appids: readonly number[],
+  opts: {
+    fetchOne?: (appid: number) => Promise<number | undefined>
+    concurrency?: number
+    failStreak?: number
+    deadlineAt?: number
+    now?: () => number
+  } = {},
+): Promise<{ counts: PlayerCount[]; stopped: boolean }> {
+  const {
+    fetchOne = (appid: number) => fetchCurrentPlayers(appid, fetch, CCU_TIMEOUT_MS),
+    concurrency = CCU_CONCURRENCY,
+    failStreak = CCU_FAIL_STREAK,
+    deadlineAt = Infinity,
+    now = Date.now,
+  } = opts
+  const counts: PlayerCount[] = []
+  let next = 0
+  let streak = 0
+  let stopped = false
+
+  const worker = async () => {
+    while (!stopped && next < appids.length) {
+      if (now() >= deadlineAt) {
+        stopped = true
+        break
+      }
+      const appid = appids[next++]
+      try {
+        const ccu = await fetchOne(appid)
+        streak = 0
+        if (ccu !== undefined) counts.push({ appid, ccu })
+      } catch {
+        if (++streak >= failStreak) stopped = true
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, appids.length) }, worker))
+  return { counts, stopped }
 }
 
 /**
