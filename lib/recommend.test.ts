@@ -294,6 +294,49 @@ describe('applyFeedbackToProfile', () => {
       applyFeedbackToProfile(before, [fb(1, 'skipped', 'tired'), fb(2, 'skipped', 'tired')], metaOf),
     ).toEqual(before)
   })
+
+  /*
+   * Смена мнения об игре. Вход — как из listFeedback: от новых к старым. Шаг
+   * на маленьком профиле — единица, «Зашло» +1, «не мой жанр» −0.8 с полом в
+   * ноль, база рогалика 0.5.
+   */
+  const at = (row: FeedbackRow, createdAt: number): FeedbackRow => ({ ...row, createdAt })
+
+  test('«Зашло», потом «не мой жанр» — в силе последнее: 0.5 + 1 − 0.8', () => {
+    const newestFirst = [at(fb(1, 'skipped', 'genre'), 200), at(fb(1, 'liked'), 100)]
+    expect(applyFeedbackToProfile({ Roguelike: 0.5 }, newestFirst, metaOf)['Roguelike']).toBeCloseTo(
+      0.7,
+    )
+  })
+
+  test('«не мой жанр», потом «Зашло» — штраф в ноль, и лайк поднимает с нуля', () => {
+    const newestFirst = [at(fb(1, 'liked'), 200), at(fb(1, 'skipped', 'genre'), 100)]
+    expect(applyFeedbackToProfile({ Roguelike: 0.5 }, newestFirst, metaOf)['Roguelike']).toBeCloseTo(
+      1,
+    )
+  })
+
+  test('результат не зависит от того, в каком порядке пришли строки', () => {
+    const rows = [
+      at(fb(1, 'liked'), 100),
+      at(fb(1, 'skipped', 'genre'), 200),
+      at(fb(2, 'opened'), 150),
+      at(fb(1, 'skipped', 'hard'), 300),
+    ]
+    const base = { Roguelike: 0.5, Difficult: 0.4, Farming: 0.1 }
+    expect(applyFeedbackToProfile(base, [...rows].reverse(), metaOf)).toEqual(
+      applyFeedbackToProfile(base, rows, metaOf),
+    )
+  })
+
+  test('при равном времени позже записана та строка, что во входе стоит выше', () => {
+    // listFeedback при равном created_at отдаёт по id вниз: «не мой жанр»
+    // записан вторым, и в силе остаётся он
+    const sameSecond = [at(fb(1, 'skipped', 'genre'), 100), at(fb(1, 'liked'), 100)]
+    expect(applyFeedbackToProfile({ Roguelike: 0.5 }, sameSecond, metaOf)['Roguelike']).toBeCloseTo(
+      0.7,
+    )
+  })
 })
 
 describe('sharedTasteTags и вес редкости', () => {

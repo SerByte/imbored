@@ -239,8 +239,17 @@ function feedbackStep(profile: Record<string, number>): number {
  * logFeedback держит только сутки, и строки за разные дни здесь тоже
  * схлопываются: для вкуса важно, ЧТО сказано про игру, а не сколько раз.
  *
- * Порядок входа сохраняется: штрафы упираются в ноль, и от порядка шагов
- * зависит результат.
+ * Отдаёт строки ОТ СТАРЫХ К НОВЫМ, а не в порядке входа. Штрафы упираются в
+ * ноль, поэтому от порядка шагов зависит результат, а вход — listFeedback —
+ * идёт от новых к старым. Применённые по нему, последние слова звучали
+ * первыми: «Зашло» неделю назад и «не мой жанр» сегодня давали рогалику 1.0
+ * вместо 0.7 — свежий штраф упирался в ноль, а старый лайк потом добавлял
+ * своё, и жанр оказывался выше, чем без всякого фидбека. Хронология —
+ * это «передумал»: что сказано позже, то и остаётся в силе.
+ *
+ * Равные createdAt (секундная точность, два нажатия подряд) идут в обратном
+ * порядке входа: listFeedback при равном времени сортирует по id вниз, и
+ * разворот возвращает им порядок записи. Сортировка стабильная.
  */
 function latestPerKind(feedback: FeedbackRow[]): FeedbackRow[] {
   const keyOf = (f: FeedbackRow) => `${f.appid}:${f.action}:${f.reason ?? ''}`
@@ -249,7 +258,10 @@ function latestPerKind(feedback: FeedbackRow[]): FeedbackRow[] {
     const cur = newest.get(keyOf(f))
     if (!cur || f.createdAt > cur.createdAt) newest.set(keyOf(f), f)
   }
-  return feedback.filter((f) => newest.get(keyOf(f)) === f)
+  return feedback
+    .filter((f) => newest.get(keyOf(f)) === f)
+    .reverse()
+    .sort((a, b) => a.createdAt - b.createdAt)
 }
 
 /**
@@ -263,6 +275,9 @@ function latestPerKind(feedback: FeedbackRow[]): FeedbackRow[] {
  * игры тем же штрафом, что и «не тот жанр», — и человек, наигравший в
  * Factorio триста часов, одним нажатием терял вкус к Automation. Надоела
  * игра, а не жанр: это пауза на месяц (cooldownOf), а не приговор тегам.
+ *
+ * Шаги идут в порядке времени (latestPerKind), от какого бы порядка ни пришёл
+ * вход: сменивший мнение об игре должен получить последнее мнение, а не первое.
  */
 export function applyFeedbackToProfile(
   profile: Record<string, number>,
