@@ -125,7 +125,8 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_steamid ON feedback (steamid, created_at DESC);
 -- deck_round/deck_size — свойства КОМНАТЫ, а не участника: пул кандидатов
--- крутится по rotationSlot(id комнаты), поэтому колода у всех одна и та же.
+-- крутится по rotationSlot(id комнаты, created_at), поэтому колода у всех одна
+-- и та же и не меняется со сменой недели.
 -- Знаменатель «12 из 20» в ростере ожидания берётся отсюда.
 CREATE TABLE IF NOT EXISTS rooms (
   id TEXT PRIMARY KEY,

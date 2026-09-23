@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createRoom, joinRoom, roomVotes, saveLibrarySnapshot, upsertGameMeta, type Db } from '@/lib/db'
+import { rotationSlot } from '@/lib/pool'
 import { nowSec } from '@/lib/server'
 import { freshDb, params, post, signInAs } from '@/lib/testing/route'
 import type { GameMeta, LibraryGame } from '@/lib/types'
@@ -13,6 +14,19 @@ vi.mock('@/lib/deals', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/deals')>()),
   refreshDealsWithin: async () => 0,
 }))
+
+// С какой ротацией роут просил пул. Сам пул настоящий — только подслушан
+const poolAsks = vi.hoisted(() => [] as Array<number | undefined>)
+vi.mock('@/lib/pool', async (importOriginal) => {
+  const pool = await importOriginal<typeof import('@/lib/pool')>()
+  return {
+    ...pool,
+    fetchDiscoveryPool: (...args: Parameters<typeof pool.fetchDiscoveryPool>) => {
+      poolAsks.push(args[1].rotation)
+      return pool.fetchDiscoveryPool(...args)
+    },
+  }
+})
 
 /**
  * Колода и голос — один контракт: голос принимается только за карту, которую
@@ -38,11 +52,16 @@ let db: Db
 
 beforeEach(async () => {
   db = await freshDb()
+  poolAsks.length = 0
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 /** Комната на двоих с общими сетевыми играми; вошедший — участник */
-async function party(): Promise<string> {
-  const now = nowSec()
+async function party(createdAt = nowSec()): Promise<string> {
+  const now = createdAt
   const me = await signInAs(db, 'openid')
   for (const g of [DOTA, PORTAL]) await upsertGameMeta(db, g, now)
   await createRoom(db, { id: ROOM, steamid: me }, now)
@@ -71,5 +90,37 @@ describe('/api/room/[id]/deck → /vote', () => {
     expect(stray.status).toBe(409)
     expect(await stray.json()).toEqual({ error: 'notindeck' })
     expect((await roomVotes(db, ROOM)).map((v) => [v.steamid, v.appid])).toEqual([[me, 570]])
+  })
+})
+
+/**
+ * Пул колоды крутится по rotationSlot, а тот меняет слот раз в неделю —
+ * в четверг в 00:00 UTC. Слот считался от «сейчас», и пати, начатая в среду
+ * в 23:40 по UTC (02:40 по Москве), после полуночи получала другой пул:
+ * ещё не проголосовавшие видели другие карты, часть уже показанных не могла
+ * дать единогласия, а знаменатель «12 из 20» прыгал.
+ */
+describe('/api/room/[id]/deck: ротация', () => {
+  /** Граница недели: четверг, 24 сентября 2026, 00:00 UTC */
+  const THURSDAY = 1_790_208_000
+
+  test('пул не меняется, когда комната переживает границу недели', async () => {
+    // Иначе проверка ниже прошла бы и со старым кодом — по совпадению слотов
+    expect(rotationSlot(ROOM, THURSDAY - 600)).not.toBe(rotationSlot(ROOM, THURSDAY + 600))
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime((THURSDAY - 1200) * 1000)
+    await party(THURSDAY - 1200)
+
+    vi.setSystemTime((THURSDAY - 600) * 1000)
+    const before = (await (await get()).json()) as { cards: Array<{ appid: number }> }
+    vi.setSystemTime((THURSDAY + 600) * 1000)
+    const after = (await (await get()).json()) as { cards: Array<{ appid: number }> }
+
+    expect(poolAsks).toHaveLength(2)
+    expect(poolAsks[1]).toBe(poolAsks[0])
+    // слот комнаты — от её рождения, а не от часов
+    expect(poolAsks[0]).toBe(rotationSlot(ROOM, THURSDAY - 1200))
+    expect(after.cards.map((c) => c.appid)).toEqual(before.cards.map((c) => c.appid))
   })
 })

@@ -110,8 +110,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       tags: pickQueryTags(partyProfile, tagStats, poolSize),
       requireMultiplayer: true,
       // Ротацию НЕ сдвигаем по раунду: она меняет пул, а значит и порядок, и
-      // «следующие двадцать» начали бы дублировать уже показанное
-      rotation: rotationSlot(id, now),
+      // «следующие двадцать» начали бы дублировать уже показанное. По той же
+      // причине слот считается от рождения комнаты, а не от часов: неделя
+      // rotationSlot сменяется в четверг в 00:00 UTC, и пати, начатая в среду
+      // вечером, после полуночи получала бы другой пул посреди свайпа
+      rotation: rotationSlot(id, room.createdAt),
       limit: POOL_BASE + POOL_STEP * room.deckRound,
     }),
     myVotedAppids(db, id, steamid),
