@@ -71,6 +71,9 @@ function withoutComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, '')
 }
 
+/** Объявление функции верхнего уровня lib/llm.ts — экспортированной или нет. */
+const FUNCTION_DECL = /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/
+
 describe('двери к модели', () => {
   const files = sourceFiles()
 
@@ -130,6 +133,10 @@ describe('двери к модели', () => {
    * Всё правило выше держится на имени claude*. Значит, имя обязано быть
    * правдой: новая функция с клиентом Anthropic внутри и нейтральным именем
    * прошла бы мимо сторожа незамеченной.
+   *
+   * Объявления ловятся и неэкспортированные: клиент создаёт внутренняя
+   * claudeStructured, и прежний поиск только по `export function` приписал бы
+   * её `new Anthropic` соседу сверху — то есть проверял бы не ту функцию.
    */
   test('всё, что создаёт клиент Anthropic, называется claude*', () => {
     const src = fs.readFileSync(path.join(ROOT, 'lib/llm.ts'), 'utf8')
@@ -137,7 +144,7 @@ describe('двери к модели', () => {
     let current = ''
     const offenders: string[] = []
     lines.forEach((ln) => {
-      const decl = /export\s+(?:async\s+)?function\s+(\w+)/.exec(ln)
+      const decl = FUNCTION_DECL.exec(ln)
       if (decl) current = decl[1]
       if (ln.includes('new Anthropic') && !/^claude[A-Z]/.test(current)) {
         offenders.push(current || '<вне функции>')
@@ -147,6 +154,81 @@ describe('двери к модели', () => {
       offenders,
       'функция ходит в Anthropic, но не названа claude* — сторож дверей её не увидит',
     ).toEqual([])
+  })
+
+  /**
+   * Одна дверь внутри модуля. Клиент создаётся ровно в claudeStructured —
+   * там же проверка stop_reason и разбор ответа. Вторая копия `new Anthropic`
+   * означала бы, что кто-то снова списал вызов с соседа, а с ним и его
+   * обработку ошибок: так уже было, и одна из четырёх копий глотала отказ
+   * баланса молча.
+   */
+  test('клиент Anthropic создаётся в одном месте — в claudeStructured', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'lib/llm.ts'), 'utf8')
+    const lines = withoutComments(src).split('\n')
+    let current = ''
+    const owners: string[] = []
+    lines.forEach((ln) => {
+      const decl = FUNCTION_DECL.exec(ln)
+      if (decl) current = decl[1]
+      for (let i = 0; i < ln.split('new Anthropic').length - 1; i++) owners.push(current)
+    })
+    expect(owners, 'new Anthropic вне claudeStructured — второй копии вызова быть не должно').toEqual([
+      'claudeStructured',
+    ])
+  })
+
+  /**
+   * Правило владельца: новых вызовов модели нет. Ключ живёт в четырёх
+   * существующих местах — подборка, портрет, pros/cons, пересказ патчей, — и
+   * пятая дверь появиться не может без правки этого списка. Правка списка —
+   * это и есть вопрос владельцу, а не деталь реализации.
+   */
+  test('наружу смотрят ровно четыре двери к модели', () => {
+    const src = withoutComments(fs.readFileSync(path.join(ROOT, 'lib/llm.ts'), 'utf8'))
+    const exported = [...src.matchAll(/export\s+(?:async\s+)?function\s+(claude[A-Z]\w*)/g)]
+      .map((m) => m[1])
+      .sort()
+    // И без обходных путей: экспорт переменной или переэкспорт той же функции
+    // под другим именем тоже дверь
+    expect(src, 'claude* экспортирована не как функция').not.toMatch(
+      /export\s+(?:const|let|var)\s+claude[A-Z]|export\s*\{[^}]*\bclaude[A-Z]/,
+    )
+    expect(exported, 'новая дверь к модели — правило владельца: новых вызовов LLM нет').toEqual([
+      'claudeNewsDigest',
+      'claudePicks',
+      'claudePortraitText',
+      'claudeProsCons',
+    ])
+  })
+
+  /**
+   * Мимо lib/llm.ts к модели не пройти вовсе: SDK импортирует только он, а
+   * адреса API нет больше нигде — ни в маршрутах, ни в ручных скриптах, ни
+   * голым fetch. Иначе все проверки выше сторожили бы одну дверь из двух.
+   */
+  test('SDK Anthropic и адрес API есть только в lib/llm.ts', () => {
+    const offenders: string[] = []
+    const scan = (file: string) => {
+      const code = withoutComments(fs.readFileSync(path.join(ROOT, file), 'utf8'))
+      if (/@anthropic-ai\/sdk|api\.anthropic\.com/.test(code)) offenders.push(file)
+    }
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${e.name}`
+        if (e.isDirectory()) {
+          if (e.name === 'node_modules' || e.name.startsWith('.')) continue
+          walk(rel)
+        } else if (/\.(?:tsx?|[cm]?js)$/.test(e.name) && !/\.test\./.test(e.name)) {
+          scan(rel)
+        }
+      }
+    }
+    for (const dir of ['app', 'lib', 'components', 'scripts']) walk(dir)
+    for (const e of fs.readdirSync(ROOT, { withFileTypes: true })) {
+      if (e.isFile() && /\.(?:tsx?|[cm]?js)$/.test(e.name)) scan(e.name)
+    }
+    expect(offenders, 'в модель ходят мимо lib/llm.ts').toEqual(['lib/llm.ts'])
   })
 
   test('докблок про потолок за потолок не считается', () => {

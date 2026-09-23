@@ -31,11 +31,18 @@ import { CANDIDATE_SOURCES, type GameMeta, type Mood, type ScoredCandidate } fro
  * отказов ловит их через instanceof, и подделка молча превратила бы аварию
  * сервиса в «модель ответила ерундой» — ровно тот случай, который тут и стерегут.
  */
-const { create } = vi.hoisted(() => ({ create: vi.fn() }))
+const { create, clientOpts } = vi.hoisted(() => ({
+  create: vi.fn(),
+  /** С какими настройками создавался клиент — бюджет времени каждой двери */
+  clientOpts: [] as unknown[],
+}))
 
 vi.mock('@anthropic-ai/sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@anthropic-ai/sdk')>()
   class MockAnthropic {
+    constructor(opts: unknown) {
+      clientOpts.push(opts)
+    }
     messages = { create }
   }
   Object.assign(MockAnthropic, {
@@ -635,6 +642,44 @@ describe('отказ сервиса против отказа по записи'
       tldr: 'Починили вылет.',
       scale: 'hotfix',
     })
+  })
+
+  /*
+   * Все четыре двери идут через claudeStructured, поэтому обрезку по лимиту
+   * узнают одинаково. Раньше ветка max_tokens была в каждой копии своя, и
+   * проверялась она только у пересказа.
+   */
+  test('обрезанный по лимиту ответ — null у всех четырёх дверей, и в логе причина', async () => {
+    create.mockResolvedValue({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"pi' }] })
+    const warn = vi.mocked(console.warn)
+    await expect(claudePicks({ candidates: CANDS, metaOf, library: [], mood: MOOD })).resolves.toBeNull()
+    await expect(claudePortraitText(PORTRAIT)).resolves.toBeNull()
+    await expect(claudeProsCons('Игра', REVIEWS)).resolves.toBeNull()
+    await expect(claudeNewsDigest(DIGEST)).resolves.toBeNull()
+    const logged = warn.mock.calls.map((c) => String(c[0]))
+    for (const where of ['claudePicks', 'claudePortraitText', 'claudeProsCons', 'claudeNewsDigest']) {
+      expect(logged, where).toContain(`${where}: ответ не годится (stop_reason=max_tokens)`)
+    }
+  })
+
+  test('у каждой двери свой бюджет времени: рендер ждёт секунды, крон — остаток среза', async () => {
+    create.mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] })
+    clientOpts.length = 0
+    await claudePicks({ candidates: CANDS, metaOf, library: [], mood: MOOD })
+    await claudePortraitText(PORTRAIT)
+    await claudeProsCons('Игра', REVIEWS, 10_000)
+    await claudeNewsDigest({ ...DIGEST, budgetMs: 10_000 })
+    expect(clientOpts).toEqual([
+      { timeout: 8_000, maxRetries: 0 },
+      { timeout: 8_000, maxRetries: 0 },
+      { timeout: 10_000, maxRetries: 0 },
+      { timeout: 10_000, maxRetries: 0 },
+    ])
+    // и запрос у всех один по форме: структурированный ответ по схеме
+    for (const [body] of create.mock.calls) {
+      expect(body).toMatchObject({ output_config: { format: { type: 'json_schema' } } })
+      expect(body.max_tokens).toBeGreaterThan(0)
+    }
   })
 })
 
