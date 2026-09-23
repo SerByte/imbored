@@ -198,37 +198,11 @@ export function steamApiKey(): string | null {
 }
 
 /**
- * Базовый адрес приложения.
- *
- * От него зависит куда больше, чем кажется: return_to у Steam OpenID, ссылки
- * self-chaining'а кронов, watchdog дайджеста и metadataBase для всех
- * og-картинок. Незаданная переменная роняла всё это разом на localhost:3000 —
- * без исключения, без записи в лог, с виду работающим сайтом и битыми
- * каноническими ссылками.
- *
- * Поэтому здесь лестница, а не одна заглушка: сначала APP_BASE_URL, потом то,
- * что Vercel проставляет сам (домен продакшена, затем адрес конкретного
- * деплоя — он же покрывает превью), и только потом localhost.
- *
- * Отказ — по VERCEL, а НЕ по isDeployed(). Разница принципиальная: isDeployed
- * включает NODE_ENV === 'production', а его выставляет обычный next build, и
- * бросок здесь ломал бы локальную сборку — appBaseUrl зовётся на уровне модуля
- * в app/layout.tsx, то есть прямо на сборе данных страниц. На самом Vercel обе
- * VERCEL_*_URL стоят всегда, так что ветка отказа — это страховка от чужого
- * рантайма, а не ожидаемый путь.
+ * Базовый адрес приложения живёт в lib/origin: его читает и proxy.ts, а тому
+ * нельзя тянуть за собой базу и next/headers. Реэкспорт — чтобы роуты и
+ * страницы по-прежнему брали всё серверное из одного места.
  */
-export function appBaseUrl(): string {
-  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL
-  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL
-  if (vercel) return `https://${vercel}`
-  if (process.env.VERCEL) {
-    throw new Error(
-      'APP_BASE_URL не задан, и Vercel не сообщил адрес деплоя. ' +
-        'Укажи APP_BASE_URL в настройках проекта.',
-    )
-  }
-  return 'http://localhost:3000'
-}
+export { appBaseUrl } from './origin'
 
 /**
  * Текущая сессия целиком, либо null.
