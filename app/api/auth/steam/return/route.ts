@@ -82,8 +82,12 @@ export async function GET(req: NextRequest) {
   try {
     const db = await getDb()
     const now = nowSec()
-    const summary = await fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null)
-    const games = await fetchOwnedGames(steamid, { apiKey: key })
+    // Параллельно: запросы друг от друга не зависят, а человек ждёт на белом
+    // экране возврата — с повтором на сбой Steam каждая секунда на счету.
+    const [summary, games] = await Promise.all([
+      fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null),
+      fetchOwnedGames(steamid, { apiKey: key }),
+    ])
     if (games === 'private') return fail('private')
     if (!games.length) return fail('empty')
 

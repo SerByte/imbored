@@ -145,3 +145,61 @@ describe('resolveVanity', () => {
     expect(await resolveVanity('nope', { apiKey: 'k', fetchFn: fn })).toBeNull()
   })
 })
+
+/**
+ * Разовый сбой Steam лечится одним повтором.
+ *
+ * Дороже всего он стоил на входе: человек только что ввёл пароль на сайте
+ * Valve, а разовая 503 выбрасывала его на ?error=steam, и вход приходилось
+ * проходить заново — ассерт одноразовый.
+ */
+describe('повтор на разовый сбой', () => {
+  const GAMES = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
+
+  /** Отвечает по очереди: число — статус без тела, Error — бросок, остальное — 200 с JSON. */
+  function script(steps: Array<number | Error | object>) {
+    let i = 0
+    const fn = (async () => {
+      const step = steps[Math.min(i, steps.length - 1)]
+      i += 1
+      if (step instanceof Error) throw step
+      if (typeof step === 'number') return new Response('сбой', { status: step })
+      return new Response(JSON.stringify(step), { status: 200 })
+    }) as FetchLike
+    return { fn, calls: () => i }
+  }
+  const opts = (fn: FetchLike) => ({ apiKey: 'k', fetchFn: fn, retryDelayMs: 0 })
+  const timeout = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
+
+  test('503, затем 200 — игры возвращаются', async () => {
+    const { fn, calls } = script([503, GAMES])
+    const result = await fetchOwnedGames('76561197960287930', opts(fn))
+    expect(Array.isArray(result) && result.map((g) => g.appid)).toEqual([620])
+    expect(calls()).toBe(2)
+  })
+
+  test('429 и таймаут тоже повторяются', async () => {
+    for (const first of [429, 500, timeout()]) {
+      const { fn, calls } = script([first, GAMES])
+      const result = await fetchOwnedGames('76561197960287930', opts(fn))
+      expect(Array.isArray(result), String(first)).toBe(true)
+      expect(calls()).toBe(2)
+    }
+  })
+
+  test('повтор ровно один: два сбоя подряд — отказ', async () => {
+    const { fn, calls } = script([503, 503, GAMES])
+    await expect(fetchOwnedGames('76561197960287930', opts(fn))).rejects.toThrow(/HTTP 503/)
+    expect(calls()).toBe(2)
+  })
+
+  test('4xx и чужие ошибки не повторяются: повтор вернул бы то же', async () => {
+    const forbidden = script([403, GAMES])
+    await expect(fetchOwnedGames('76561197960287930', opts(forbidden.fn))).rejects.toThrow(/HTTP 403/)
+    expect(forbidden.calls()).toBe(1)
+
+    const broken = script([new TypeError('bad url'), GAMES])
+    await expect(resolveVanity('gaben', opts(broken.fn))).rejects.toThrow(/bad url/)
+    expect(broken.calls()).toBe(1)
+  })
+})

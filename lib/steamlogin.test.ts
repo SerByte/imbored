@@ -38,12 +38,15 @@ const ENV = { ...process.env }
 /** Что спрашивали у Steam: check_authentication и Web API. */
 let asked: string[] = []
 let ownedStatus = 200
+/** Сколько первых ответов GetOwnedGames будут 503 — разовый сбой Steam. */
+let ownedHiccups = 0
 let owned: unknown = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
 
 beforeEach(() => {
   process.env = { ...ENV, APP_BASE_URL: BASE, STEAM_API_KEY: 'k' }
   asked = []
   ownedStatus = 200
+  ownedHiccups = 0
   owned = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
   vi.stubGlobal('fetch', async (input: string | URL) => {
     const url = String(input)
@@ -54,7 +57,13 @@ beforeEach(() => {
     if (url.includes('GetPlayerSummaries')) {
       return Response.json({ response: { players: [{ steamid: STEAMID, personaname: 'Гейб' }] } })
     }
-    if (url.includes('GetOwnedGames')) return Response.json(owned, { status: ownedStatus })
+    if (url.includes('GetOwnedGames')) {
+      if (ownedHiccups > 0) {
+        ownedHiccups -= 1
+        return new Response('Service Unavailable', { status: 503 })
+      }
+      return Response.json(owned, { status: ownedStatus })
+    }
     return new Response('нет такого', { status: 404 })
   })
 })
@@ -195,6 +204,14 @@ describe('отказ входа помнит пати и ?next', () => {
     const res = await settle(fromSteam(returnTo, cookie?.value ?? ''))
     expect(landing(res).searchParams.get('error')).toBe('steam')
     expect(landing(res).searchParams.get('compat')).toBe('76561197960287931')
+  })
+
+  test('разовая 503 от Steam больше не выбрасывает из входа', async () => {
+    ownedHiccups = 1
+    const { returnTo, cookie } = await start('?join=ABC123')
+    const res = await settle(fromSteam(returnTo, cookie?.value ?? ''))
+    expect(res.headers.get('location')).toBe(`${BASE}/room/ABC123`)
+    expect(res.cookies.get('imbored_session')?.value).toBe('подписанная-сессия')
   })
 
   test('потолок попыток — error=ratelimited, а ?next на месте', async () => {

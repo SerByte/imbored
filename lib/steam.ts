@@ -10,6 +10,19 @@ export type SteamClientOpts = {
 
 const API_BASE = 'https://api.steampowered.com'
 
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** 5xx и 429 у Steam проходят сами, 4xx — нет: повтор вернёт то же. */
+function transientStatus(status: number): boolean {
+  return status >= 500 || status === 429
+}
+
+/** Таймаут (наш AbortSignal.timeout) или обрыв — тоже из тех, что проходят сами. */
+function transientError(err: unknown): boolean {
+  const name = (err as { name?: unknown } | null)?.name
+  return name === 'TimeoutError' || name === 'AbortError'
+}
+
 async function steamApiGet(
   path: string,
   params: Record<string, string>,
@@ -20,9 +33,36 @@ async function steamApiGet(
   url.searchParams.set('key', opts.apiKey)
   url.searchParams.set('format', 'json')
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
-  const res = await fetchFn(url.toString(), { signal: AbortSignal.timeout(15_000) })
-  if (!res.ok) throw new Error(`Steam API ${path}: HTTP ${res.status}`)
-  return res.json()
+  /*
+   * Один повтор на разовый сбой Steam.
+   *
+   * Самое дорогое место — вход через Steam: человек только что ввёл пароль на
+   * сайте Valve, а разовая 503 (частая картина во вторничное обслуживание)
+   * выбрасывала его на ?error=steam, и весь вход приходилось проходить заново —
+   * ассерт одноразовый. Повтор ровно один: второй отказ подряд — это уже не
+   * мигание, и держать человека дольше незачем.
+   */
+  for (let attempt = 0; ; attempt++) {
+    const retry = attempt === 0
+    let res: Response
+    try {
+      res = await fetchFn(url.toString(), { signal: AbortSignal.timeout(15_000) })
+    } catch (err) {
+      if (retry && transientError(err)) {
+        await pause(opts.retryDelayMs ?? 1000)
+        continue
+      }
+      throw err
+    }
+    if (res.ok) return res.json()
+    if (retry && transientStatus(res.status)) {
+      // Непрочитанное тело держит соединение до сборки мусора
+      await res.body?.cancel().catch(() => {})
+      await pause(opts.retryDelayMs ?? 1000)
+      continue
+    }
+    throw new Error(`Steam API ${path}: HTTP ${res.status}`)
+  }
 }
 
 type OwnedGamesResponse = {
@@ -66,9 +106,7 @@ export async function fetchOwnedGames(
       })
     }
     // Пустой ответ бывает и у публичных профилей (глюки Steam) — один ретрай
-    if (i < attempts - 1) {
-      await new Promise((r) => setTimeout(r, opts.retryDelayMs ?? 1000))
-    }
+    if (i < attempts - 1) await pause(opts.retryDelayMs ?? 1000)
   }
   return 'private'
 }

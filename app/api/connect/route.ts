@@ -90,8 +90,11 @@ export async function POST(req: Request) {
       parsed.kind === 'steamid64' ? parsed.value : await resolveVanity(parsed.value, { apiKey: key })
     if (!steamid) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
-    const summary = await fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null)
-    const games = await fetchOwnedGames(steamid, { apiKey: key })
+    // Параллельно, как на возврате из Steam: запросы друг от друга не зависят.
+    const [summary, games] = await Promise.all([
+      fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null),
+      fetchOwnedGames(steamid, { apiKey: key }),
+    ])
     if (games === 'private') {
       return NextResponse.json(
         { error: 'private', personaName: summary?.personaName ?? null },
