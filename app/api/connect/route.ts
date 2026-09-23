@@ -14,7 +14,7 @@ import {
   sessionCookieOptions,
   steamApiKey,
 } from '@/lib/server'
-import { fetchOwnedGames, fetchPlayerSummary, parseProfileInput, resolveVanity } from '@/lib/steam'
+import { fetchOwnedGames, fetchPlayerSummary, parseProfileInput, resolveProfile } from '@/lib/steam'
 
 async function withSession(
   res: NextResponse,
@@ -93,16 +93,18 @@ export async function POST(req: Request) {
   // Какой шаг упал — Steam или база: отвечаем одинаково, а в лог пишем разное
   let stage: 'steam' | 'db' = 'steam'
   try {
-    const steamid =
-      parsed.kind === 'steamid64' ? parsed.value : await resolveVanity(parsed.value, { apiKey: key })
-    if (!steamid) return NextResponse.json({ error: 'notfound' }, { status: 404 })
+    const resolved = await resolveProfile(parsed, { apiKey: key })
+    if (!resolved) return NextResponse.json({ error: 'notfound' }, { status: 404 })
+    const { steamid } = resolved
 
     // Параллельно, как на возврате из Steam: запросы друг от друга не зависят.
+    // Код друга сводку уже прочёл — второй раз за ней не ходим.
     const [summary, games] = await Promise.all([
-      fetchPlayerSummary(steamid, { apiKey: key }).catch((err: unknown) => {
-        logSwallowed('connect:summary', err)
-        return null
-      }),
+      resolved.summary ??
+        fetchPlayerSummary(steamid, { apiKey: key }).catch((err: unknown) => {
+          logSwallowed('connect:summary', err)
+          return null
+        }),
       fetchOwnedGames(steamid, { apiKey: key }),
     ])
     if (games === 'private') {

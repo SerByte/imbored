@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { fetchOwnedGames, parseProfileInput, resolveVanity } from './steam'
+import {
+  fetchOwnedGames,
+  friendCodeToSteamId,
+  parseProfileInput,
+  resolveProfile,
+  resolveVanity,
+} from './steam'
 
 type FetchLike = typeof fetch
 
@@ -51,6 +57,25 @@ describe('parseProfileInput', () => {
 
   test('голое vanity-имя принимается', () => {
     expect(parseProfileInput('gaben_2-ok')).toEqual({ kind: 'vanity', value: 'gaben_2-ok' })
+  })
+
+  test('голые цифры до десяти знаков — код друга', () => {
+    expect(parseProfileInput('22202')).toEqual({ kind: 'friendcode', value: '22202' })
+    expect(parseProfileInput(' 123456789 ')).toEqual({ kind: 'friendcode', value: '123456789' })
+    expect(parseProfileInput('7')).toEqual({ kind: 'friendcode', value: '7' })
+    // Цифровое имя ссылкой целиком — по-прежнему имя, а не код
+    expect(parseProfileInput('https://steamcommunity.com/id/12345/')).toEqual({
+      kind: 'vanity',
+      value: '12345',
+    })
+  })
+
+  test('вне 32 бит кода не бывает — это уже не код', () => {
+    // 4294967296 — одиннадцатый знак не нужен, но в 32 бита не влезает
+    expect(parseProfileInput('4294967296')).toEqual({ kind: 'vanity', value: '4294967296' })
+    expect(parseProfileInput('0')).toBeNull()
+    // Больше десяти цифр, но не семнадцать — имя, как и раньше
+    expect(parseProfileInput('123456789012')).toEqual({ kind: 'vanity', value: '123456789012' })
   })
 
   test('мусор и пустая строка отклоняются', () => {
@@ -131,6 +156,96 @@ describe('fetchOwnedGames', () => {
     })
     expect(Array.isArray(result)).toBe(true)
     expect((result as unknown[]).length).toBe(2)
+  })
+})
+
+describe('friendCodeToSteamId', () => {
+  test('код — младшие 32 бита SteamID64', () => {
+    // Пара из документации Valve: STEAM_0:0:11101 — это 22202 и 76561197960287930
+    expect(friendCodeToSteamId('22202')).toBe('76561197960287930')
+    expect(friendCodeToSteamId('1')).toBe('76561197960265729')
+    expect(friendCodeToSteamId('4294967295')).toBe('76561202255233023')
+  })
+
+  test('ноль, больше 32 бит и не цифры — не код', () => {
+    for (const bad of ['0', '4294967296', '99999999999', '', '12a', '-5', '1.5']) {
+      expect(friendCodeToSteamId(bad), bad).toBeNull()
+    }
+  })
+
+  test('результат всегда семнадцать цифр — его пропустит любой маршрут', () => {
+    for (const code of ['1', '22202', '123456789', '4294967295']) {
+      expect(friendCodeToSteamId(code), code).toMatch(/^\d{17}$/)
+    }
+  })
+})
+
+/**
+ * Код друга проверяется существованием аккаунта: номер из диапазона
+ * складывается в SteamID64 всегда, а GetOwnedGames на пустой аккаунт ответил
+ * бы так же, как на закрытый профиль.
+ */
+describe('resolveProfile', () => {
+  /** Отвечает по методу API; считает, какие методы звали */
+  function steam(routes: Record<string, unknown>) {
+    const called: string[] = []
+    const fn = (async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      const method = url.pathname.split('/')[2]
+      called.push(method)
+      return new Response(JSON.stringify(routes[method] ?? {}), { status: 200 })
+    }) as FetchLike
+    return { opts: { apiKey: 'k', fetchFn: fn, retryDelayMs: 0 }, called }
+  }
+  const PLAYER = {
+    response: { players: [{ steamid: '76561197960287930', personaname: 'Гоша', communityvisibilitystate: 3 }] },
+  }
+
+  test('код друга с живым аккаунтом — steamid и уже прочитанная сводка', async () => {
+    const { opts, called } = steam({ GetPlayerSummaries: PLAYER })
+    const got = await resolveProfile({ kind: 'friendcode', value: '22202' }, opts)
+    expect(got?.steamid).toBe('76561197960287930')
+    expect(got?.summary?.personaName).toBe('Гоша')
+    // Имя не спрашивали: код нашёлся
+    expect(called).toEqual(['GetPlayerSummaries'])
+  })
+
+  test('аккаунта нет — пробуем то же как цифровое имя', async () => {
+    const { opts, called } = steam({
+      GetPlayerSummaries: { response: { players: [] } },
+      ResolveVanityURL: { response: { success: 1, steamid: '76561198000000001' } },
+    })
+    const got = await resolveProfile({ kind: 'friendcode', value: '31337' }, opts)
+    expect(got).toEqual({ steamid: '76561198000000001' })
+    expect(called).toEqual(['GetPlayerSummaries', 'ResolveVanityURL'])
+  })
+
+  test('ни аккаунта, ни имени — не найдено', async () => {
+    const { opts } = steam({
+      GetPlayerSummaries: { response: { players: [] } },
+      ResolveVanityURL: { response: { success: 42 } },
+    })
+    expect(await resolveProfile({ kind: 'friendcode', value: '31337' }, opts)).toBeNull()
+  })
+
+  test('однозначный код не уходит в имена: имя короче двух знаков не бывает', async () => {
+    const { opts, called } = steam({ GetPlayerSummaries: { response: { players: [] } } })
+    expect(await resolveProfile({ kind: 'friendcode', value: '7' }, opts)).toBeNull()
+    expect(called).toEqual(['GetPlayerSummaries'])
+  })
+
+  test('steamid64 — без сети, имя — через ResolveVanityURL', async () => {
+    const direct = steam({})
+    expect(
+      await resolveProfile({ kind: 'steamid64', value: '76561197960287930' }, direct.opts),
+    ).toEqual({ steamid: '76561197960287930' })
+    expect(direct.called).toEqual([])
+
+    const named = steam({ ResolveVanityURL: { response: { success: 1, steamid: '76561197960287930' } } })
+    expect(await resolveProfile({ kind: 'vanity', value: 'gaben' }, named.opts)).toEqual({
+      steamid: '76561197960287930',
+    })
+    expect(named.called).toEqual(['ResolveVanityURL'])
   })
 })
 

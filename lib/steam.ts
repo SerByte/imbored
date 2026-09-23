@@ -1,6 +1,11 @@
 import type { LibraryGame } from './types'
 
-export type ProfileInput = { kind: 'steamid64' | 'vanity'; value: string }
+/**
+ * friendcode — «код для друзей» из Steam: 32-битный номер аккаунта, который
+ * Steam показывает на странице добавления друзей. Люди знают его лучше
+ * ссылки на профиль, а ResolveVanityURL его не находит — это не имя.
+ */
+export type ProfileInput = { kind: 'steamid64' | 'vanity' | 'friendcode'; value: string }
 
 export type SteamClientOpts = {
   apiKey: string
@@ -160,6 +165,26 @@ export async function fetchPlayerSummary(
 
 const STEAMID64_RE = /^\d{17}$/
 const VANITY_RE = /^[A-Za-z0-9_-]{2,32}$/
+const FRIEND_CODE_RE = /^\d{1,10}$/
+
+/** SteamID64 индивидуального аккаунта публичной вселенной с номером 0 */
+const STEAMID64_BASE = BigInt('76561197960265728')
+/** Номер аккаунта — 32 бита без знака; ноль Steam не выдаёт */
+const ACCOUNT_ID_MAX = BigInt(4_294_967_295)
+
+/**
+ * Код друга → SteamID64, либо null, если это не код.
+ *
+ * Код — младшие 32 бита SteamID64, старшие у всех обычных аккаунтов одни и
+ * те же, поэтому перевод — сложение. Вне диапазона 1…4294967295 кода не
+ * бывает: ноль не выдаётся, а больше не помещается в 32 бита.
+ */
+export function friendCodeToSteamId(code: string): string | null {
+  if (!FRIEND_CODE_RE.test(code)) return null
+  const n = BigInt(code)
+  if (n < BigInt(1) || n > ACCOUNT_ID_MAX) return null
+  return (STEAMID64_BASE + n).toString()
+}
 
 export function parseProfileInput(raw: string): ProfileInput | null {
   const input = raw.trim()
@@ -180,6 +205,44 @@ export function parseProfileInput(raw: string): ProfileInput | null {
   if (input.includes('/') || input.includes('.')) return null
 
   if (STEAMID64_RE.test(input)) return { kind: 'steamid64', value: input }
+  /*
+   * Одни цифры до десяти знаков — код друга, а не имя из ссылки. Раньше они
+   * проходили VANITY_RE и уходили в ResolveVanityURL, который цифр не знает:
+   * человек вводил свой код и читал «Не нашли такой профиль», хотя профиль
+   * открыт. Цифровое имя в ссылке по-прежнему понимается ссылкой целиком
+   * (/id/12345), а голое — если кода с таким номером нет (resolveProfile).
+   */
+  if (friendCodeToSteamId(input)) return { kind: 'friendcode', value: input }
   if (VANITY_RE.test(input)) return { kind: 'vanity', value: input }
   return null
+}
+
+/**
+ * SteamID64 по разобранному вводу — и сводка профиля, если её уже пришлось
+ * прочесть по дороге. null — такого профиля нет.
+ *
+ * Код друга проверяется сводкой, а не принимается на слово: номер из
+ * диапазона складывается в SteamID64 всегда, но аккаунта за ним может не
+ * быть, и GetOwnedGames на несуществующий ответил бы тем же пустым телом,
+ * что и на закрытый профиль, — человек прочёл бы «Steam прячет твою
+ * библиотеку» про чужую опечатку. Сводку вызывающий не запрашивает второй раз.
+ *
+ * Аккаунта с таким номером нет — пробуем то же как имя из ссылки: цифровые
+ * имена у Steam встречаются, и до кодов друга они находились. Номера
+ * аккаунтов выданы плотно, так что это страховка для редкого случая, а не
+ * второй обычный путь.
+ */
+export async function resolveProfile(
+  parsed: ProfileInput,
+  opts: SteamClientOpts,
+): Promise<{ steamid: string; summary?: PlayerSummary } | null> {
+  if (parsed.kind === 'steamid64') return { steamid: parsed.value }
+  if (parsed.kind === 'friendcode') {
+    const id = friendCodeToSteamId(parsed.value)
+    const summary = id ? await fetchPlayerSummary(id, opts) : null
+    if (summary) return { steamid: summary.steamid, summary }
+    if (!VANITY_RE.test(parsed.value)) return null
+  }
+  const steamid = await resolveVanity(parsed.value, opts)
+  return steamid ? { steamid } : null
 }
