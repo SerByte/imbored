@@ -1,5 +1,5 @@
 import type { InArgs, InStatement } from '@libsql/client'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   claimPageEnrichBatch,
   countPageEnrichDue,
@@ -457,6 +457,61 @@ describe('runPageSlice', () => {
     expect(res.stopped).toBe('blocked')
     expect(res.enriched).toBe(3)
     expect(res.hasMore).toBe(false)
+  })
+})
+
+describe('срез не начинает карточку, которая не уложится до срока', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('самая долгая из пройденных карточек задаёт запас: следующая не начинается', async () => {
+    // Срок проверялся только «прошёл ли он». Карточка, начатая за пять секунд
+    // до срока, доезжала до конца за ним — ровно в хвост, отведённый под
+    // finally с передачей звена, а на проде это значило снятие по maxDuration.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW * 1000)
+    const db = await freshDb()
+    for (let i = 1; i <= 5; i++) await addGame(db, i * 10, 1000 - i)
+
+    const deadlineAt = Date.now() + 25_000
+    const res = await runPageSlice(
+      db,
+      stubs({
+        limit: 5,
+        deadlineAt,
+        useClaude: false,
+        // каждая карточка идёт десять секунд по настенным часам: два похода в
+        // Steam с шагом пейсера и медленным ответом
+        fetchDetails: async (appid: number) => {
+          vi.setSystemTime(Date.now() + 10_000)
+          return meta(appid, { screenshots: ['a.jpg'] })
+        },
+      }),
+    )
+
+    // на 20-й секунде до срока пять — а карточка идёт десять: не начинаем
+    expect(res.stopped).toBe('budget')
+    expect(res.enriched).toBe(2)
+    expect(Date.now()).toBeLessThanOrEqual(deadlineAt)
+    // и хвост очереди не потерян: цепочка продолжит с него
+    expect(res.hasMore).toBe(true)
+  })
+
+  test('первая карточка идёт по одному сроку: сравнить её ещё не с чем', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW * 1000)
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 50)
+
+    const one = { limit: 1, useClaude: false }
+    const res = await runPageSlice(db, stubs({ ...one, deadlineAt: Date.now() + 1 }))
+    expect(res.enriched).toBe(1)
+
+    const late = await runPageSlice(db, stubs({ ...one, deadlineAt: Date.now() - 1 }))
+    expect(late.stopped).toBe('budget')
+    expect(late.enriched).toBe(0)
   })
 })
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
-import { cronAuthorized } from '@/lib/cron'
+import { cronAuthorized, sliceDeadline } from '@/lib/cron'
 import { acquireLease, DIGEST_LEASE, getCatalogMeta, releaseLease, setCatalogMeta } from '@/lib/db'
 import { runDigestSlice } from '@/lib/newsjob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
@@ -31,14 +31,15 @@ export const maxDuration = 60
  * воркфлоу стоили вдвое больше минут GitHub при одинаковой работе.
  */
 const MAX_CHAIN = 8
-const SLICE_BUDGET_MS = 50_000
 const LEASE_TTL_SEC = 75
 const LAST_KEY = 'digest_last_slice'
 
-/** За срез: пересказ занимает 1–3 с, в пятьдесят секунд укладывается около 25 */
+/** За срез: пересказ занимает 1–3 с, в сорок восемь секунд укладывается около 25 */
 const DIGEST_LIMIT = 25
 
 export async function GET(req: Request) {
+  // Первой строкой: срок среза считается от начала вызова — см. sliceDeadline.
+  const startedAt = Date.now()
   if (!cronAuthorized(req.headers)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 401 })
   }
@@ -61,7 +62,7 @@ export async function GET(req: Request) {
     let result: Awaited<ReturnType<typeof runDigestSlice>> | null = null
     try {
       result = await runDigestSlice(db, {
-        deadlineAt: Date.now() + SLICE_BUDGET_MS,
+        deadlineAt: sliceDeadline(startedAt, maxDuration),
         limit: DIGEST_LIMIT,
       })
     } catch (err) {

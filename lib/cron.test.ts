@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cronAuthorized, DIGEST_STALE_SEC, digestLooksStale } from './cron'
+import {
+  CRON_TAIL_MS,
+  cronAuthorized,
+  DIGEST_STALE_SEC,
+  digestLooksStale,
+  sliceClock,
+  sliceDeadline,
+} from './cron'
 
 // Заголовки HTTP это ByteString: секрет обязан быть ASCII.
 // Vercel генерирует hex, так что на практике это не ограничение.
@@ -7,6 +14,7 @@ const h = (init: Record<string, string> = {}) => new Headers(init)
 
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.useRealTimers()
 })
 
 describe('cronAuthorized', () => {
@@ -79,5 +87,39 @@ describe('digestLooksStale: подстраховка на случай, если
   test('порог можно задать явно', () => {
     expect(digestLooksStale(slice(NOW - 100), NOW, 50)).toBe(true)
     expect(digestLooksStale(slice(NOW - 100), NOW, 500)).toBe(false)
+  })
+})
+
+describe('срок среза крона', () => {
+  test('считается от начала вызова и оставляет хвост под finally', () => {
+    // Раньше срок брался внутри after(), то есть после ответа: холодный старт,
+    // миграции и аренда в бюджет не входили, а maxDuration их считает.
+    const startedAt = 1_000_000
+    expect(sliceDeadline(startedAt, 60)).toBe(startedAt + 60_000 - CRON_TAIL_MS)
+    expect(sliceDeadline(startedAt, 60)).toBeLessThan(startedAt + 50_000)
+  })
+})
+
+describe('sliceClock: уложится ли ещё одна итерация', () => {
+  test('первая итерация идёт по одному сроку', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(10_000)
+    expect(sliceClock(10_000).next()).toBe(true)
+    expect(sliceClock(9_999).next()).toBe(false)
+  })
+
+  test('самая долгая итерация становится запасом для следующих', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(0)
+    const часы = sliceClock(30_000)
+    expect(часы.next()).toBe(true) // t=0
+    vi.setSystemTime(8_000)
+    expect(часы.next()).toBe(true) // t=8, запас 8 → 16 ≤ 30
+    vi.setSystemTime(10_000)
+    expect(часы.longestMs).toBe(8_000)
+    expect(часы.next()).toBe(true) // короткая итерация максимум не снижает: 18 ≤ 30
+    expect(часы.longestMs).toBe(8_000)
+    vi.setSystemTime(23_000)
+    expect(часы.next()).toBe(false) // 23 + 13 > 30
   })
 })

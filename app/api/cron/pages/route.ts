@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
 import { passChain } from '@/lib/chain'
-import { cronAuthorized } from '@/lib/cron'
+import { cronAuthorized, sliceDeadline } from '@/lib/cron'
 import {
   acquireLease,
   countPageEnrichDue,
@@ -28,10 +28,11 @@ export const maxDuration = 60
  * через один пейсер на ключе steam-store (lib/pace.ts — цепочка промисов на
  * ключ, шаг STORE_PACE_MS = 1700мс), то есть строго по очереди. Сорок запросов
  * это 39 промежутков по 1.7с = 66 секунд одного лишь ожидания — при бюджете
- * среза в 50. Двадцать карточек за срез недостижимы структурно, а не иногда.
+ * среза в 48 (sliceDeadline: 60 минус хвост в 12, и считая от начала вызова).
+ * Двадцать карточек за срез недостижимы структурно, а не иногда.
  *
- * Что помещается: 1 + floor(50000 / 1700) = 30 запросов, то есть 15 карточек.
- * Отсюда предел 24 × 15 = 360 в сутки — и это ещё без времени самих ответов,
+ * Что помещается: 1 + floor(48000 / 1700) = 29 запросов, то есть 14 карточек.
+ * Отсюда предел 24 × 14 = 336 в сутки — и это ещё без времени самих ответов,
  * записей в базу и вызова модели.
  *
  * Замер на проде: пять звеньев, 49 карточек, около 9.8 за срез. Почему звеньев
@@ -42,7 +43,6 @@ export const maxDuration = 60
  * только читает, ничего не помечает, и неотработанный хвост попыток не теряет.
  */
 const MAX_CHAIN = 24
-const SLICE_BUDGET_MS = 50_000
 const LAST_KEY = 'pages_last_slice'
 const LEASE_TTL_SEC = 75
 
@@ -58,6 +58,8 @@ const LEASE_TTL_SEC = 75
  * /game/[appid] прямо на рендере — публичная, без кэша и без ограничений.
  */
 export async function GET(req: Request) {
+  // Первой строкой: срок среза считается от начала вызова — см. sliceDeadline.
+  const startedAt = Date.now()
   if (!cronAuthorized(req.headers)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 401 })
   }
@@ -99,7 +101,7 @@ export async function GET(req: Request) {
      */
     let упало: string | null = null
     try {
-      result = await runPageSlice(db, { deadlineAt: Date.now() + SLICE_BUDGET_MS })
+      result = await runPageSlice(db, { deadlineAt: sliceDeadline(startedAt, maxDuration) })
     } catch (err) {
       console.error('page slice', err)
       упало = err instanceof Error ? err.message.slice(0, 120) : 'исключение'

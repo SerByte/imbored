@@ -16,6 +16,7 @@
  */
 
 import { fetchAppDetails, mergeMeta } from './catalog'
+import { sliceClock } from './cron'
 import {
   claimPageEnrichBatch,
   getGameMeta,
@@ -134,8 +135,13 @@ export async function runPageSlice(
   let stopped: PageSliceResult['stopped'] = 'done'
   let claudeDown = false
 
+  // Не «прошёл ли срок», а «уложится ли ещё одна карточка» — см. sliceClock.
+  // Карточка, начатая на 48-й секунде бюджета, раньше доезжала до конца уже
+  // за maxDuration: снимали весь вызов вместе с finally, где передача звена.
+  const часы = sliceClock(opts.deadlineAt)
+
   for (const appid of targets) {
-    if (Date.now() > opts.deadlineAt) {
+    if (!часы.next()) {
       stopped = 'budget'
       break
     }

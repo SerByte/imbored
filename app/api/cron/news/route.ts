@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { passChain } from '@/lib/chain'
-import { cronAuthorized, digestLooksStale } from '@/lib/cron'
+import { cronAuthorized, digestLooksStale, sliceDeadline } from '@/lib/cron'
 import {
   acquireLease,
   countNewsPollDue,
@@ -27,7 +27,6 @@ export const maxDuration = 60
 
 /** Сколько звеньев цепочки максимум. 24 × 20 игр = 480 опросов в сутки. */
 const MAX_CHAIN = 24
-const SLICE_BUDGET_MS = 50_000
 const ENROLL_KEY = 'news_enrolled_at'
 const LAST_KEY = 'news_last_slice'
 /** Итог суточной уборки (sweepStale) — чтобы её работу было видно не только по счёту */
@@ -47,6 +46,8 @@ const REVIVE_AFTER_SEC = 30 * 86_400
  * способность берётся из цепочки вызовов, а не из частоты расписания.
  */
 export async function GET(req: Request) {
+  // Первой строкой: срок среза считается от начала вызова — см. sliceDeadline.
+  const startedAt = Date.now()
   if (!cronAuthorized(req.headers)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 401 })
   }
@@ -121,7 +122,10 @@ export async function GET(req: Request) {
       // бюджетом. Здесь это не только разделение задач, но и прибавка к
       // опросу: те 35% времени, что придерживались под модель, теперь идут
       // на игры.
-      result = await runNewsSlice(db, { deadlineAt: Date.now() + SLICE_BUDGET_MS, digestLimit: 0 })
+      result = await runNewsSlice(db, {
+        deadlineAt: sliceDeadline(startedAt, maxDuration),
+        digestLimit: 0,
+      })
     } catch (err) {
       console.error('news slice', err)
       упало = err instanceof Error ? err.message.slice(0, 120) : 'исключение'

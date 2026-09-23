@@ -26,6 +26,7 @@ import {
   type PollStatus,
   type StoredNews,
 } from './db'
+import { sliceClock } from './cron'
 import { claudeNewsDigest, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { bodyHash, detectLang, fetchGameNews, isPatchNote, looksTrivial, newsText } from './news'
 import { blocksToText } from './steamhtml'
@@ -177,9 +178,11 @@ export async function runNewsSlice(
   let polled = 0
   let blockedRun = 0
   let stopped: SliceResult['stopped'] = 'done'
+  // «Уложится ли ещё одна игра», а не «прошёл ли срок» — см. sliceClock.
+  const часы = sliceClock(pollDeadline)
 
   for (const t of targets) {
-    if (Date.now() > pollDeadline) {
+    if (!часы.next()) {
       stopped = 'budget'
       break
     }

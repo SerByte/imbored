@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   createDb,
   enrollNewsPoll,
@@ -59,6 +59,10 @@ const noDigest = async () => null
  * больше не начинался. Держать это число выше порога обязательно.
  */
 const ЗАПАС_MS = 30_000
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 async function seedGame(db: Db, appid: number, name: string, reviews: number) {
   const meta: GameMeta = {
@@ -336,6 +340,31 @@ describe('runNewsSlice', () => {
     expect(res.polled).toBe(3)
     const left = await db.execute("SELECT COUNT(*) AS n FROM news_poll WHERE status = 'new'")
     expect(Number(left.rows[0].n)).toBe(2)
+  })
+
+  test('игру, которая не уложится до срока, не начинает', async () => {
+    // Срок проверялся только «прошёл ли он»: игра, начатая за секунду до
+    // срока, съедала хвост, отведённый под finally с передачей звена.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW * 1000)
+    const db = await freshDb()
+    await enrollNewsPoll(db, [1, 2, 3, 4], 1, NOW)
+
+    const deadlineAt = Date.now() + 12_000
+    const res = await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt,
+      digestLimit: 0,
+      // каждая игра идёт пять секунд: шаг пейсера плюс медленный ответ
+      fetchNews: async () => {
+        vi.setSystemTime(Date.now() + 5_000)
+        return []
+      },
+    })
+
+    expect(res.stopped).toBe('budget')
+    expect(res.polled).toBe(2)
+    expect(Date.now()).toBeLessThanOrEqual(deadlineAt)
   })
 
   test('без ключа Claude лента живёт, просто без пересказов', async () => {
