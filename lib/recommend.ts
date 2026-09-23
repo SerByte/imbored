@@ -1055,6 +1055,12 @@ export function scoreCandidates(args: {
    */
   allowFamiliar?: boolean
   /**
+   * Сколько знакомого вызывающий оставит после capSource. Пол паузы считает
+   * своими только столько знакомых: срезанное потолком выдачу не наберёт.
+   * Без него — всё знакомое, как прежде.
+   */
+  familiarCap?: number
+  /**
    * Ось состояния (lib/mood.ts): знакомое, новое, без сил. null и отсутствие —
    * часть lean ровно 1, скоры прежние.
    */
@@ -1119,11 +1125,21 @@ export function scoreCandidates(args: {
   // вполсилы, чтобы стоять за всем, что не откладывали. Каталог не
   // возвращается: его и без того хватает. Баны сюда не попадают вовсе —
   // exclude отсекает их раньше паузы.
-  const ownLeft = out.filter((c) => c.source !== 'new').length
+  //
+  // Знакомое считается не всё, а сколько пропустит потолок маршрута: четыре
+  // песочницы, из которых до выдачи дойдёт одна, пятёрку не набирают. По той
+  // же причине знакомое сверх потолка не возвращается и из-под паузы.
+  const familiarCap = args.familiarCap ?? Infinity
+  const familiarLeft = out.filter((c) => c.source === 'familiar').length
+  const ownLeft =
+    out.filter((c) => c.source !== 'new' && c.source !== 'familiar').length +
+    Math.min(familiarLeft, familiarCap)
   if (ownLeft < PICK_COUNT) {
+    let familiarRoom = Math.max(0, familiarCap - familiarLeft)
     const back = hidden
       .filter((c) => c.source !== 'new')
       .sort((a, b) => b.score - a.score)
+      .filter((c) => c.source !== 'familiar' || familiarRoom-- > 0)
       .slice(0, PICK_COUNT - ownLeft)
     for (const c of back) {
       const parts = { ...c.parts, cooldown: RESTORED_MULT }

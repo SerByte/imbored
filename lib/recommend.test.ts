@@ -1188,6 +1188,62 @@ describe('scoreCandidates и паузы', () => {
       expect(back.some((c) => banned.has(c.appid))).toBe(false)
     })
   })
+
+  /**
+   * Знакомое маршрут режет до одного (capSource) уже после скоринга. Пол,
+   * считавший своим всё знакомое, решал, что пятёрка набрана, — и после среза
+   * у маленькой библиотеки оставались две карточки при трёх отложенных.
+   */
+  describe('пол и потолок знакомого', () => {
+    const famLib = [
+      // Нетронутые, отложены «не сейчас» час назад; по вкусу хуже знакомых
+      ...[1, 2, 3].map((appid) => game({ appid })),
+      // Заброшенная: наиграно, даты нет — comeback
+      game({ appid: 4, playtimeForever: 900 }),
+      // Знакомые песочницы: полсотни часов, пауза полтора месяца
+      ...[5, 6, 7, 8].map((appid) =>
+        game({ appid, playtimeForever: 3000, lastPlayed: NOW - 45 * DAY }),
+      ),
+    ]
+    const famMetas = new Map(
+      famLib.map((g) => [
+        g.appid,
+        meta(g.appid, g.appid <= 3 ? { Sandbox: 20, Other: 100 } : { Sandbox: 100 }),
+      ]),
+    )
+    const famRun = (hide: number[], familiarCap?: number) =>
+      scoreCandidates({
+        profile: { Sandbox: 1 },
+        library: famLib,
+        metaOf: (id) => famMetas.get(id),
+        newPool: [],
+        mood: baseMood,
+        nowSec: NOW,
+        cooldown: hideAll(hide),
+        allowFamiliar: true,
+        ...(familiarCap !== undefined ? { familiarCap } : {}),
+      })
+    const restored = (list: ScoredCandidate[]) =>
+      list.filter((c) => c.parts!.cooldown === 0.5).map((c) => c.appid)
+
+    test('знакомое сверх потолка своим не считается: отложенные добирают до пяти', () => {
+      const own = capSource(famRun([1, 2, 3], 1), 'familiar', 1)
+      expect(own).toHaveLength(PICK_COUNT)
+      expect(restored(own)).toEqual([1, 2, 3])
+    })
+
+    test('отложенное знакомое сверх потолка не возвращается вместо нетронутого', () => {
+      // Скрытая песочница 8 по вкусу выше скрытых нетронутых, но места под
+      // знакомое уже нет: вернись она — capSource срезал бы её тут же
+      const own = capSource(famRun([1, 2, 3, 8], 1), 'familiar', 1)
+      expect(own).toHaveLength(PICK_COUNT)
+      expect(restored(own)).toEqual([1, 2, 3])
+    })
+
+    test('без потолка — прежний счёт: знакомых хватает, отложенные ждут', () => {
+      expect(restored(famRun([1, 2, 3]))).toEqual([])
+    })
+  })
 })
 
 describe('parseScope', () => {

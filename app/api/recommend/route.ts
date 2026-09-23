@@ -175,6 +175,7 @@ export async function POST(req: Request) {
     })
   ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
   for (const m of newPool) poolByAppid.set(m.appid, m)
+  const familiarCap = lean === 'familiar' ? FAMILIAR_CAP_ASKED : FAMILIAR_CAP
   const candidates = scoreCandidates({
     profile,
     library: games,
@@ -195,6 +196,9 @@ export async function POST(req: Request) {
     cooldown,
     // Знакомое любимое — только здесь: «Игре дня» и демо главной оно не нужно
     allowFamiliar: true,
+    // Тот же потолок, что срежет знакомое ниже: без него пол паузы считал бы
+    // своими все песочницы и не возвращал отложенное, хотя до выдачи дойдёт одна
+    familiarCap,
     lean,
   })
 
@@ -230,7 +234,6 @@ export async function POST(req: Request) {
   // Потолок знакомого ставится ДО смешивания с каталогом: mixHeroPool считает,
   // сколько мест отдать покупкам, по числу своих, и срезанное после него
   // знакомое оставило бы выдачу короче пяти
-  const familiarCap = lean === 'familiar' ? FAMILIAR_CAP_ASKED : FAMILIAR_CAP
   const focused = capSource(applyFocus(own, focus), 'familiar', familiarCap)
   const heroPool = scope === 'all' ? mixHeroPool(focused, discovery) : focused
 
