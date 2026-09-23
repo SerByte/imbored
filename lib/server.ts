@@ -28,10 +28,18 @@ const globalStore = globalThis as typeof globalThis & { __imboredDb?: Promise<Db
  * catch навешивается на копию и намеренно ничего не возвращает: исходный
  * промис остаётся отклонённым для тех, кто его уже ждёт, а этот обработчик
  * нужен лишь для того, чтобы Node не считал отказ необработанным.
+ *
+ * Строка в логе — ради того, чтобы сбой был виден хоть где-то. Запрос, который
+ * ждал этот промис, упадёт со своей ошибкой, но по ней не понять, что умерла
+ * именно инициализация, а не его собственный SQL. А те, кто ошибку getDb
+ * глотает (issueSession, sitemap), не оставили бы следа вовсе: следующий
+ * запрос тихо подключится заново. Строка одна на попытку подключения, то есть
+ * не чаще, чем падают сами запросы, — троттлить здесь нечего.
  */
 function forgetOnFailure(p: Promise<Db>): Promise<Db> {
-  p.catch(() => {
+  p.catch((err) => {
     if (globalStore.__imboredDb === p) globalStore.__imboredDb = undefined
+    console.error(JSON.stringify({ event: 'db-init-failed', message: String(err).slice(0, 200) }))
   })
   return p
 }

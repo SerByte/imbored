@@ -1,5 +1,13 @@
-import { afterEach, describe, expect, test } from 'vitest'
-import { demoSteamId, isDemoId, sessionCookieOptions, sessionSecret } from './server'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { createDb, type Db } from './db'
+import { demoSteamId, getDb, isDemoId, sessionCookieOptions, sessionSecret } from './server'
+
+// Настоящий createDb ходил бы в сеть или в файл data/imbored.db. Остальные
+// экспорты модуля — настоящие: подменяется ровно фабрика соединения.
+vi.mock('./db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./db')>()),
+  createDb: vi.fn(),
+}))
 
 /**
  * Два предохранителя окружения. Оба про один и тот же класс ошибки: молчаливую
@@ -121,5 +129,81 @@ describe('кука сессии', () => {
 
   test('срок — год: вход не должен умирать сам по себе', () => {
     expect(sessionCookieOptions().maxAge).toBe(60 * 60 * 24 * 365)
+  })
+})
+
+/**
+ * Кэш соединения хранит ПРОМИС, и раньше хранил его и отклонённым: одна
+ * неудача миграции на холодном старте (обрыв до Turso, SQLITE_BUSY у файла)
+ * отвечала ошибкой на каждый следующий запрос этого инстанса, хотя база уже
+ * поднялась, — до самой его переработки.
+ */
+describe('getDb', () => {
+  const store = globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }
+  const create = vi.mocked(createDb)
+
+  function remote() {
+    // удалённая ветка: локальная полезла бы создавать data/ в рабочей папке
+    process.env = { ...ENV, TURSO_DATABASE_URL: 'libsql://test.invalid' }
+  }
+
+  afterEach(() => {
+    store.__imboredDb = undefined
+    create.mockReset()
+    vi.restoreAllMocks()
+  })
+
+  test('после сбоя на старте следующий запрос подключается заново', async () => {
+    remote()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const db = {} as Db
+    create
+      .mockRejectedValueOnce(new Error('SQLITE_BUSY: database is locked'))
+      .mockResolvedValueOnce(db)
+
+    await expect(getDb()).rejects.toThrow(/SQLITE_BUSY/)
+    expect(await getDb()).toBe(db)
+    expect(create).toHaveBeenCalledTimes(2)
+  })
+
+  test('сбой оставляет в логе одну строку с причиной', async () => {
+    remote()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    create.mockRejectedValueOnce(new Error('обрыв до Turso '.repeat(40)))
+
+    await expect(getDb()).rejects.toThrow()
+    expect(log).toHaveBeenCalledTimes(1)
+    const line = JSON.parse(String(log.mock.calls[0][0]))
+    expect(line.event).toBe('db-init-failed')
+    expect(line.message).toContain('обрыв до Turso')
+    // сообщение драйвера бывает простынёй — в строку лога идёт начало
+    expect(line.message.length).toBeLessThanOrEqual(200)
+  })
+
+  test('удачное подключение живёт на процесс: миграции один раз за холодный старт', async () => {
+    remote()
+    create.mockResolvedValue({} as Db)
+
+    const [a, b] = await Promise.all([getDb(), getDb()])
+    await getDb()
+    expect(a).toBe(b)
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  test('отказ старого промиса не стирает занявший слот новый', async () => {
+    remote()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    let fail!: (e: Error) => void
+    create.mockReturnValueOnce(new Promise<Db>((_, reject) => (fail = reject)))
+
+    const first = getDb()
+    // слот уже занят другим промисом — так кладут подменную базу тесты
+    // страниц игр, и так же выглядит гонка с параллельным подключением
+    const fresh = Promise.resolve({} as Db)
+    store.__imboredDb = fresh
+    fail(new Error('поздний отказ'))
+
+    await expect(first).rejects.toThrow('поздний отказ')
+    expect(store.__imboredDb).toBe(fresh)
   })
 })
