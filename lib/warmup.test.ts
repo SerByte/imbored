@@ -1,7 +1,10 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  COUNTING_STAGE,
+  remainingLine,
   runWarmup,
   warmupPercent,
+  warmupStage,
   WARMUP_CALL_TIMEOUT_MS,
   WARMUP_MAX_CALLS,
   WARMUP_STALL_LIMIT,
@@ -130,6 +133,38 @@ describe('warmupPercent', () => {
 
   test('выход за границы срезается: остаток больше исходного не даёт минуса', () => {
     expect(warmupPercent({ remaining: 50, total: 40 })).toBe(0)
+  })
+})
+
+/**
+ * Живая область экрана ожидания. Счётчик в ней звучал бы на каждом ответе
+ * прогрева — очередь чисел вместо «начался подбор».
+ */
+describe('warmupStage', () => {
+  test('счётчик сворачивается в один этап, сколько бы раз он ни сменился', () => {
+    const said = new Set(
+      [812, 790, 765, 1].map((n) => warmupStage(remainingLine(n), { remaining: n })),
+    )
+    expect([...said]).toEqual([COUNTING_STAGE])
+  })
+
+  test('подписи этапов проходят как есть', () => {
+    expect(warmupStage('Изучаю твою библиотеку…', null)).toBe('Изучаю твою библиотеку…')
+    expect(warmupStage('Подбираю игру под твоё состояние…', { remaining: 40 })).toBe(
+      'Подбираю игру под твоё состояние…',
+    )
+    expect(warmupStage('Выбираю твою игру дня…', { remaining: 0 })).toBe('Выбираю твою игру дня…')
+  })
+
+  test('счётчик опознаётся по текущему остатку, а не по началу строки', () => {
+    // строка от прошлого ответа при новом остатке — уже не «тот самый» счётчик
+    expect(warmupStage(remainingLine(40), { remaining: 39 })).toBe(remainingLine(40))
+  })
+
+  test('строка счётчика склоняет число', () => {
+    expect(remainingLine(1)).toBe('Осталось разобрать 1 игру')
+    expect(remainingLine(3)).toBe('Осталось разобрать 3 игры')
+    expect(remainingLine(812)).toBe('Осталось разобрать 812 игр')
   })
 })
 

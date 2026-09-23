@@ -6,7 +6,7 @@ import { CountNumber } from '@/components/CountNumber'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Spinner } from '@/components/Spinner'
 import { plural } from '@/lib/plural'
-import { warmupPercent, type WarmupProgress } from '@/lib/warmup'
+import { warmupPercent, warmupStage, type WarmupProgress } from '@/lib/warmup'
 import { Eyebrow } from '@/components/Labels'
 
 /**
@@ -65,6 +65,10 @@ export function WarmupScreen({
             size={160}
             stroke={8}
             duration={600}
+            // Без имени кольцо звучало голым «48%»: сорок восемь процентов
+            // чего, из разметки не следует. Число здесь — по запросу, а не
+            // вслух: в живую область уходит только этап (см. ниже)
+            ariaLabel={`Разобрано ${Math.round(pct)}%`}
             label={
               <div className="flex flex-col items-center gap-0.5">
                 <span
@@ -84,9 +88,26 @@ export function WarmupScreen({
         )}
       </div>
 
+      {/*
+        Живая область — этап, а не строка статуса.
+
+        Видимая строка ниже была обычным <p>: скринридер слышал «Загрузка» от
+        спиннера и дальше до минуты тишины. Отдать её в живую область как есть
+        — хуже тишины: счётчик меняется на каждом ответе прогрева, и очередь
+        из «осталось 812… 790… 765…» заглушила бы смену этапа, ради которой
+        область и заводится. Поэтому здесь warmupStage: счётчик сворачивается
+        в «Разбираю библиотеку…», остальные подписи идут как есть. Живёт всё
+        время экрана — область, появившаяся вместе с текстом, не звучит.
+      */}
+      <p role="status" className="sr-only">
+        {warmupStage(message, progress)}
+      </p>
+
       {/* Строка статуса меняется по ходу — подменять её встык значит терять
-          единственный сигнал, что что-то вообще происходит. */}
-      <div className="h-5 relative w-full max-w-sm text-center">
+          единственный сигнал, что что-то вообще происходит. Для скринридера
+          она спрятана: этап сказан выше, число — именем кольца, а третий
+          пересказ того же читался бы при каждом проходе по экрану. */}
+      <div aria-hidden className="h-5 relative w-full max-w-sm text-center">
         {/* initial={false}: это самый первый экран после ответов, и его подпись
             приезжала в HTML с opacity:0. Пока не гидратируется — человек смотрит на
             крутящуюся дугу без единого слова о том, что происходит. Смена подписей

@@ -20,8 +20,7 @@ import type { Discount } from '@/lib/discount'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
-import { runWarmup, type WarmupProgress } from '@/lib/warmup'
-import { plural } from '@/lib/plural'
+import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { SectionLabel } from '@/components/Labels'
 import { TagChips } from '@/components/TagChips'
 
@@ -186,7 +185,7 @@ export default function DailyPage() {
         signal,
         onProgress: (p) => {
           setPrep(p)
-          if (p.remaining > 0) setMessage(`Осталось разобрать ${p.remaining} ${plural(p.remaining, 'игру', 'игры', 'игр')}`)
+          if (p.remaining > 0) setMessage(remainingLine(p.remaining))
         },
       })
       if (warm === 'aborted') return

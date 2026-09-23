@@ -21,6 +21,8 @@
  *     уходит вместе со страницей (opts.signal).
  */
 
+import { plural } from './plural'
+
 /**
  * Два факта о библиотеке, которые /api/prepare отдаёт с первого же ответа.
  * Считаются по снапшоту без метаданных, поэтому доступны раньше, чем каталог
@@ -267,4 +269,35 @@ export function warmupPercent(p: Pick<WarmupProgress, 'remaining' | 'total'> | n
   if (!p || p.total <= 0) return 0
   const done = p.total - p.remaining
   return Math.max(0, Math.min(100, (done / p.total) * 100))
+}
+
+/**
+ * Строка статуса, пока идёт разбор. Одна на /play и /daily: по ней экран
+ * ожидания узнаёт счётчик и не отдаёт его скринридеру (см. warmupStage).
+ */
+export function remainingLine(remaining: number): string {
+  return `Осталось разобрать ${remaining} ${plural(remaining, 'игру', 'игры', 'игр')}`
+}
+
+/** Этап разбора для скринридера — вместо счётчика, который меняется на каждом ответе */
+export const COUNTING_STAGE = 'Разбираю библиотеку…'
+
+/**
+ * Что экран ожидания отдаёт в живую область: этап, а не счётчик.
+ *
+ * Видимая строка меняется с каждым ответом /api/prepare — «Осталось разобрать
+ * 812 игр», «…790…», «…765…», — и в живой области это была бы очередь чисел
+ * на минуту, из которой не услышать, когда начался подбор. Скринридеру
+ * достаётся только смена этапа: «Изучаю библиотеку», «Разбираю», «Подбираю».
+ * Сколько разобрано, говорит кольцо — своим именем, по запросу, а не вслух.
+ *
+ * Счётчик опознаётся точным совпадением с remainingLine, а не по началу
+ * строки: подпись, которой нет в этом модуле, проходит как есть.
+ */
+export function warmupStage(
+  message: string,
+  p: Pick<WarmupProgress, 'remaining'> | null,
+): string {
+  if (p && p.remaining > 0 && message === remainingLine(p.remaining)) return COUNTING_STAGE
+  return message
 }

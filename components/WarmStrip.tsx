@@ -35,6 +35,12 @@ export function WarmStrip({
      значит портал, см. Portal.tsx. */
   return (
     <Portal>
+      {/* Кнопка «Обновить выдачу» появляется сама, в конце <body> — без этой
+          строки о ней узнал бы только тот, кто её видит. Фоновый догрев не
+          объявляется: он ничего не просит. */}
+      <p role="status" className="sr-only">
+        {state === 'ready' ? 'Каталог дочитан — выдачу можно обновить' : ''}
+      </p>
       <AnimatePresence>
         {state !== 'off' && (
         <motion.div

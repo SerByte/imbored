@@ -21,6 +21,7 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
+import { freshLine, playLine } from '@/lib/announce'
 import type { GameArtUrls } from '@/lib/art'
 import { EDGE_BADGE, EDGE_LINE, type PickEdge } from '@/lib/badges'
 import type { Discount } from '@/lib/discount'
@@ -44,7 +45,7 @@ import { bounceTo } from '@/lib/destination'
 import type { CandidateSource, Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
-import { runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
 import { TagChips } from '@/components/TagChips'
@@ -267,7 +268,7 @@ const FAIL_UNKNOWN = {
  */
 const PREPARE_MESSAGE = 'Изучаю твою библиотеку…'
 
-function Player() {
+function Player({ say }: { say: (line: string) => void }) {
   const router = useRouter()
   const search = useSearchParams()
   const roulette = search.get('roulette') === '1'
@@ -354,6 +355,49 @@ function Player() {
   // Каким был объём разобранного в момент первой выдачи — с ним сравниваем,
   // чтобы не звать обновляться из-за трёх доехавших игр
   const warmAtReveal = useRef(0)
+
+  /*
+   * ФОКУС ТУДА, ГДЕ ИДЁТ ДЕЙСТВИЕ.
+   *
+   * Почти каждое действие выдачи убирает ту самую кнопку, которую нажали:
+   * «Не то — дальше» сменяется рядом причин, причина — новым героем, карточка
+   * из «Ещё вариантов» сама становится героем и уходит из списка, «Обновить
+   * выдачу» пропадает вместе с плашкой. Замер клавиатурой: после каждого из
+   * этих нажатий activeElement — BODY. NVDA и VoiceOver в режиме просмотра
+   * теряли позицию, а следующий Tab в Safari начинался с начала документа.
+   *
+   * Поэтому фокус переезжает на заголовок героя — название новой игры и есть
+   * результат нажатия. Эффектом это не сделать: при AnimatePresence
+   * mode="wait" новый герой монтируется только после того, как доиграет уход
+   * старого, а эффект срабатывает сразу, и фокусировать ещё нечего. Узел
+   * забирает ref-колбэк, а флаг отличает смену по действию от первой выдачи:
+   * воровать фокус у того, кто только открыл страницу, незачем. Тот же приём
+   * — у шага квиза (app/quiz/page.tsx, wantStepFocus).
+   *
+   * Если герой не сменился (выдача из одной карточки, закрытый вопрос «не
+   * зацепило?»), нового узла не будет, и фокус ставится на нынешний сразу.
+   *
+   * preventScroll: заголовок стоит наверху героя, и дёргать страницу к нему
+   * незачем; под плавной прокруткой нативный скролл к фокусу вдобавок двигал
+   * бы обёртку мимо трансформа (см. lib/skiplink.ts).
+   */
+  const heroEl = useRef<HTMLElement | null>(null)
+  const wantHeroFocus = useRef(false)
+  const heroRef = useCallback((el: HTMLElement | null) => {
+    heroEl.current = el
+    if (!el || !wantHeroFocus.current) return
+    wantHeroFocus.current = false
+    el.focus({ preventScroll: true })
+  }, [])
+  const focusHero = useCallback((sameHero: boolean) => {
+    const el = heroEl.current
+    if (sameHero && el) el.focus({ preventScroll: true })
+    else wantHeroFocus.current = true
+  }, [])
+  /** Узел, появившийся по нажатию, сразу забирает фокус: ряд причин, экран выгорания */
+  const focusOnMount = useCallback((el: HTMLElement | null) => {
+    el?.focus({ preventScroll: true })
+  }, [])
 
   /**
    * Отзыв о карточке. Отдаёт УСПЕХ, а не void, и это не косметика.
@@ -542,6 +586,8 @@ function Player() {
       // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
       // та самая случайность, которая до сих пор происходила молча.
       setPhase(roulette ? 'spin' : 'reveal')
+      // Выпавшее в рулетке называет сам барабан (SpinWheel)
+      if (!roulette) say(playLine({ kind: 'reveal', name: got[0].name }))
       return true
     }
 
@@ -559,7 +605,7 @@ function Player() {
         onProgress: (p) => {
           lastTotal = p.total
           setPrep(p)
-          if (p.remaining > 0) setProgress(`Осталось разобрать ${p.remaining} ${plural(p.remaining, 'игру', 'игры', 'игр')}`)
+          if (p.remaining > 0) setProgress(remainingLine(p.remaining))
         },
         onYield: (p) => {
           // Данных уже хватает на пять карточек — показываем их, а цикл пусть
@@ -634,10 +680,11 @@ function Player() {
       if (!got) return
       setIndex(roulette ? weightedRandomIndex(got.length) : 0)
       setPhase(roulette ? 'spin' : 'reveal')
+      if (!roulette) say(playLine({ kind: 'reveal', name: got[0].name }))
     } finally {
       setRetrying(false)
     }
-  }, [retrying, fetchPicks, scope, lean, roulette])
+  }, [retrying, fetchPicks, scope, lean, roulette, say])
 
   /*
    * Переключатели уже показанной выдачи: источник и ось состояния. Один путь на
@@ -656,6 +703,10 @@ function Player() {
         setAskReason(false)
         setShowWhy(false)
         setSkipCount(0)
+        // Фокус не трогаем: нажатый переключатель остаётся на месте, и
+        // человек, может быть, нажмёт соседний. Сказать надо только, что
+        // герой наверху сменился.
+        say(playLine({ kind: 'reshape', name: got[0].name }))
       } finally {
         // finally, а не строка после await: оборванная сеть оставляла бы
         // переключатель навсегда заблокированным, и починить это можно было бы
@@ -664,7 +715,7 @@ function Player() {
         setSwitching(false)
       }
     },
-    [scope, lean, switching, fetchPicks],
+    [scope, lean, switching, fetchPicks, say],
   )
 
   const advance = useCallback(
@@ -678,11 +729,19 @@ function Player() {
         setPhase('burnout')
         return
       }
-      setIndex(roulette ? weightedRandomIndex(picks.length, from) : (from + 1) % picks.length)
+      const to = roulette ? weightedRandomIndex(picks.length, from) : (from + 1) % picks.length
+      setIndex(to)
       // «Крутить ещё» — это тоже бросок, а не просто следующая карточка.
-      if (roulette) setPhase('spin')
+      // Выпавшее назовёт барабан, а фокус заберёт заголовок, когда появится.
+      if (roulette) {
+        setPhase('spin')
+        focusHero(false)
+        return
+      }
+      say(playLine({ kind: 'next', name: picks[to].name }))
+      focusHero(to === from)
     },
-    [skipCount, picks.length, roulette],
+    [skipCount, picks, roulette, say, focusHero],
   )
 
   /*
@@ -796,16 +855,22 @@ function Player() {
     const familiar = picks.find((p) => p.source === 'familiar')
     const cozy =
       picks.find((p) => p.tags.some((t) => COZY_TAGS.includes(t))) ?? picks[picks.length - 1]
+    // Экран выгорания уходит целиком вместе с нажатой кнопкой — фокус едет
+    // на заголовок героя, когда тот смонтируется
     const showPick = (p: Pick) => {
       setSkipCount(0)
       setIndex(picks.indexOf(p))
       setPhase('reveal')
+      say(playLine({ kind: 'pick', name: p.name }))
+      focusHero(false)
     }
     return (
       <div className="flex-1 flex items-center justify-center px-5 py-24">
         <div className="max-w-lg w-full glass rounded-[20px] p-8 text-center flex flex-col gap-5 anim-reveal">
           <LogoMark size={48} className="mx-auto" />
-          <h1 className="font-display text-display-sm">
+          {/* Сюда приходят только нажатием («Не то — дальше» в пятый раз), и
+              нажатая кнопка при этом исчезает — фокус забирает заголовок */}
+          <h1 ref={focusOnMount} tabIndex={-1} className="font-display text-display-sm outline-none">
             Похоже, сегодня не игровой вечер
           </h1>
           <p className="text-dim leading-relaxed">
@@ -838,6 +903,8 @@ function Player() {
               onClick={() => {
                 setSkipCount(0)
                 setPhase('reveal')
+                say(playLine({ kind: 'pick', name: picks[Math.min(index, picks.length - 1)].name }))
+                focusHero(false)
               }}
               className="tap text-dim hover:text-ink transition-colors"
             >
@@ -918,12 +985,15 @@ function Player() {
       <StopAsk
         game={stopDue}
         reasons={SKIP_REASONS}
+        // Плашка исчезает вместе с нажатой кнопкой, и фокус без присмотра
+        // упал бы в body — отдаём его герою, как после любого ответа
         onReason={(key) => {
           if (!stopDue) return
           void sendFeedback(stopDue.appid, 'skipped', key)
           launchMemoStore.set(null)
           // «Дадим другую» — буквально: если на экране та самая игра, листаем
           if (pick.appid === stopDue.appid) advance(index)
+          else focusHero(true)
         }}
         onHooked={() => {
           if (!stopDue) return
@@ -932,16 +1002,27 @@ function Player() {
             void sendFeedback(stopDue.appid, 'liked')
           }
           launchMemoStore.set(null)
+          focusHero(true)
         }}
-        onClose={() => launchMemoStore.set(null)}
+        onClose={() => {
+          launchMemoStore.set(null)
+          focusHero(true)
+        }}
       />
       <WarmStrip
         state={stopDue ? 'off' : warming}
         remaining={prep?.remaining ?? 0}
         onRefresh={() => {
           setWarming('off')
+          // Плашка уходит вместе с кнопкой: фокус сразу на героя, а если
+          // пересчёт его сменит — на нового, когда тот смонтируется
+          focusHero(true)
+          const was = pick.appid
           void fetchPicks({ scope, lean }).then((got) => {
-            if (got) setIndex(0)
+            if (!got) return
+            setIndex(0)
+            say(playLine({ kind: 'refresh', name: got[0].name }))
+            if (got[0].appid !== was) focusHero(false)
           })
         }}
         onDismiss={() => setWarming('off')}
@@ -989,7 +1070,12 @@ function Player() {
                 <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
               </motion.div>
 
-              <SplitHeading className="font-display text-display-lg" delay={0.18}>
+              <SplitHeading
+                headingRef={heroRef}
+                tabIndex={-1}
+                className="font-display text-display-lg outline-none"
+                delay={0.18}
+              >
                 {pick.name}
               </SplitHeading>
 
@@ -1017,6 +1103,7 @@ function Player() {
                 <button
                   onClick={() => setShowWhy(!showWhy)}
                   aria-expanded={showWhy}
+                  aria-controls="play-why"
                   className="tap text-dim hover:text-ink transition-colors cursor-pointer"
                 >
                   Почему она? <span aria-hidden>{showWhy ? '▴' : '▾'}</span>
@@ -1024,6 +1111,7 @@ function Player() {
                 <AnimatePresence initial={false}>
                   {showWhy && (
                     <motion.p
+                      id="play-why"
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
@@ -1044,16 +1132,24 @@ function Player() {
             )}
 
             {askReason ? (
+              /* Ряд встаёт на место кнопок, которые только что нажали, —
+                 фокус на первую причину, а вопрос звучит именем группы:
+                 фокус на кнопке без него читался бы голым «Не тот жанр». */
               <motion.div
+                role="group"
+                aria-labelledby="play-ask"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.22, ease: EASE }}
                 className="flex flex-wrap items-center gap-2 mt-2"
               >
-                <span className="text-sm text-dim mr-1">Почему не то?</span>
-                {SKIP_REASONS.map((r) => (
+                <span id="play-ask" className="text-sm text-dim mr-1">
+                  Почему не то?
+                </span>
+                {SKIP_REASONS.map((r, i) => (
                   <button
                     key={r.key}
+                    ref={i === 0 ? focusOnMount : undefined}
                     onClick={() => {
                       void sendFeedback(pick.appid, 'skipped', r.key)
                       // Ответил сам — «не зацепило?» про неё уже не спрашиваем
@@ -1172,7 +1268,14 @@ function Player() {
                 ) : (
                   <button
                     // Причину спрашивать не у кого записать — просто листаем
-                    onClick={() => (readOnly ? advance(index) : setAskReason(true))}
+                    onClick={() => {
+                      if (readOnly) {
+                        advance(index)
+                        return
+                      }
+                      setAskReason(true)
+                      say(playLine({ kind: 'ask' }))
+                    }}
                     className="rounded-[14px] glass glass-hover px-4 py-3 text-sm text-dim cursor-pointer"
                   >
                     Не то — дальше
@@ -1214,9 +1317,14 @@ function Player() {
                         router.push('/quiz')
                         return
                       }
+                      const to = Math.min(index, rest.length - 1)
                       setPicks(rest)
-                      setIndex(Math.min(index, rest.length - 1))
+                      setIndex(to)
                       setShowWhy(false)
+                      say(
+                        playLine({ kind: 'ban', name: pick.name, done: finished, next: rest[to].name }),
+                      )
+                      focusHero(false)
                     }}
                     disabled={banning}
                     title={finished ? 'Прошёл — больше не предлагать' : 'Больше не показывать эту игру'}
@@ -1320,7 +1428,9 @@ function Player() {
                 {focus
                   ? `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} из нераспакованного`
                   : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}
-                {moreOpen ? '▴' : '▾'}
+                {/* Глиф — для глаза: состояние уже в aria-expanded, а вслух
+                    он читался «чёрный треугольник вниз» */}
+                <span aria-hidden>{moreOpen ? '▴' : '▾'}</span>
               </button>
             </SectionLabel>
           )}
@@ -1349,7 +1459,11 @@ function Player() {
                         <button
                           key={s.key}
                           onClick={() => reshape({ scope: s.key, lean })}
-                          disabled={switching}
+                          /* aria-disabled, а не disabled: пока выдача
+                             пересобирается, нажатая кнопка обязана удержать
+                             фокус. disabled выбрасывал его в body на всё время
+                             запроса; повтор нажатия и так гасит reshape. */
+                          aria-disabled={switching}
                           // Выбранное состояние — не только цветом: скринридеру и
                           // тому, кто не различает ember на стекле, нужен признак
                           aria-pressed={scope === s.key}
@@ -1358,7 +1472,7 @@ function Player() {
                              основной фильтр экрана выдачи. Зону наращивать нечем:
                              кнопки стоят внутри одной пилюли в 4 px друг от друга, и
                              псевдозона .tap перекрыла бы соседа. */
-                          className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer disabled:opacity-50 ${
+                          className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer aria-disabled:opacity-50 ${
                             scope === s.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
                           }`}
                         >
@@ -1382,9 +1496,9 @@ function Player() {
                         <button
                           key={l.key}
                           onClick={() => reshape({ scope, lean: lean === l.key ? null : l.key })}
-                          disabled={switching}
+                          aria-disabled={switching}
                           aria-pressed={lean === l.key}
-                          className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer disabled:opacity-50 ${
+                          className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer aria-disabled:opacity-50 ${
                             lean === l.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
                           }`}
                         >
@@ -1418,6 +1532,9 @@ function Player() {
                       setIndex(picks.indexOf(p))
                       setAskReason(false)
                       setShowWhy(false)
+                      // Карточка сама становится героем и уходит из списка
+                      say(playLine({ kind: 'pick', name: p.name }))
+                      focusHero(false)
                     }}
                     className="glass glass-hover rounded-[14px] overflow-hidden text-left cursor-pointer"
                   >
@@ -1482,7 +1599,8 @@ function Player() {
                   aria-controls="play-shelf"
                   className="tap hover:text-ink transition-colors cursor-pointer text-left"
                 >
-                  Нет в библиотеке · {discoveries.length} {shelfOpen ? '▴' : '▾'}
+                  Нет в библиотеке · {discoveries.length}{' '}
+                  <span aria-hidden>{shelfOpen ? '▴' : '▾'}</span>
                 </button>
               </SectionLabel>
               {shelfOpen && (
@@ -1572,9 +1690,24 @@ function Player() {
  * запрос — поэтому они читаются уже в клиентском рендере, как и раньше.
  */
 export default function PlayPage() {
+  /*
+   * Живая область выдачи — здесь, над границей Suspense, а не внутри Player.
+   *
+   * Player отдаёт на каждую фазу своё дерево (прогрев, барабан, выдача,
+   * выгорание), и область внутри любого из них появлялась бы вместе со своим
+   * первым текстом — а такую скринридер не объявляет. Эта же живёт с
+   * первого кадра страницы, пустой, и звучит на каждой смене героя.
+   */
+  const [said, setSaid] = useState('')
+  const say = useCallback((line: string) => setSaid((prev) => freshLine(prev, line)), [])
   return (
-    <Suspense fallback={<WarmupScreen progress={null} message={PREPARE_MESSAGE} />}>
-      <Player />
-    </Suspense>
+    <>
+      <p role="status" className="sr-only">
+        {said}
+      </p>
+      <Suspense fallback={<WarmupScreen progress={null} message={PREPARE_MESSAGE} />}>
+        <Player say={say} />
+      </Suspense>
+    </>
   )
 }

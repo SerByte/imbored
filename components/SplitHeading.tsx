@@ -3,7 +3,7 @@
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { SplitText } from 'gsap/SplitText'
-import { useRef } from 'react'
+import { useCallback, useRef } from 'react'
 
 gsap.registerPlugin(SplitText, useGSAP)
 
@@ -35,6 +35,8 @@ export function SplitHeading({
   stagger = 0.045,
   y = 24,
   stress,
+  headingRef,
+  tabIndex,
 }: {
   children: string
   className?: string
@@ -51,8 +53,24 @@ export function SplitHeading({
    * ни на байт.
    */
   stress?: number
+  /**
+   * Сам узел заголовка — для тех, кто переносит на него фокус (герой /play
+   * после смены игры). Колбэк, а не объект: узел нужен в момент появления,
+   * а при AnimatePresence mode="wait" он появляется позже, чем срабатывает
+   * эффект страницы.
+   */
+  headingRef?: (el: HTMLElement | null) => void
+  /** -1 — фокус принимается программно, но в обход по Tab заголовок не встаёт */
+  tabIndex?: number
 }) {
   const ref = useRef<HTMLElement>(null)
+  const setRef = useCallback(
+    (el: HTMLElement | null) => {
+      ref.current = el
+      headingRef?.(el)
+    },
+    [headingRef],
+  )
 
   useGSAP(
     () => {
@@ -112,9 +130,10 @@ export function SplitHeading({
     { scope: ref, dependencies: [children] },
   )
 
+  // Колбэк с общим HTMLElement подходит любому из тегов — объектный ref
+  // динамического тега раньше приходилось глушить @ts-expect-error
   return (
-    // @ts-expect-error — динамический тег: ref типизируется через общий HTMLElement
-    <Tag ref={ref} className={className} aria-label={children}>
+    <Tag ref={setRef} className={className} aria-label={children} tabIndex={tabIndex}>
       {children}
     </Tag>
   )
