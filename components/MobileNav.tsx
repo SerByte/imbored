@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { LinkPending } from '@/components/LinkPending'
 import { PickLink } from '@/components/PickLink'
 import { isNavActive } from '@/lib/nav'
 
@@ -145,7 +146,13 @@ export function MobileNav() {
             className: `py-3.5 text-center text-[11px] transition-colors ${
               i === activeIndex ? 'text-ember-text font-semibold' : 'text-dim'
             }`,
-            children: <span data-label>{item.label}</span>,
+            // LinkPending: переход на динамическую страницу без каркаса ждёт
+            // сервер, и нажатый пункт мерцает до ответа (как в HeaderNav)
+            children: (
+              <span data-label>
+                <LinkPending>{item.label}</LinkPending>
+              </span>
+            ),
           }
           return 'pick' in item ? (
             <PickLink key={item.href} {...props} />

@@ -128,6 +128,17 @@ describe('граница загрузки не прячет страницу', (
     expect(css, 'класс .link-pending пропал из globals.css').toMatch(/\.link-pending\s*\{/)
   })
 
+  /**
+   * Корневой каркас закрывал паузу перехода на любую динамическую страницу.
+   * Без него эту паузу из меню закрывает только мерцание нажатого пункта.
+   */
+  test('пункты обоих меню показывают, что нажаты', () => {
+    for (const f of ['HeaderNav.tsx', 'MobileNav.tsx']) {
+      const src = fs.readFileSync(path.join(ROOT, 'components', f), 'utf8')
+      expect(src, f).toMatch(/<LinkPending>\{item\.label\}<\/LinkPending>/)
+    }
+  })
+
   test('каждый loading.tsx — из списка и с причиной', () => {
     const found = loadingFiles('app')
     expect(found.length, 'loading.tsx не найдены вовсе — сторож ослеп или список устарел').toBeGreaterThan(0)

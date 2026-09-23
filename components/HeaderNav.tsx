@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { LinkPending } from '@/components/LinkPending'
 import { PickLink } from '@/components/PickLink'
 import { isNavActive } from '@/lib/nav'
 
@@ -34,6 +35,12 @@ import { isNavActive } from '@/lib/nav'
  * даёт 30 px, и зоны .tap по 6 px вбок ещё не сходятся), а не переездом
  * планшета на нижнюю панель: в ней пять пунктов против шести, и
  * «Совместимость» просто пропала бы.
+ *
+ * Подписи — в LinkPending. /whatsnew и /compat динамические и без
+ * loading.tsx (каркас прятал страницу в первом ответе, см.
+ * lib/firstpaint.test.ts), так что переход на них ждёт сервер, и до ответа
+ * нажатый пункт обязан сам показать, что нажат. Ширину подписи мерцание не
+ * меняет — запас в 23 px выше не трогается.
  */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
@@ -54,7 +61,7 @@ export function HeaderNav() {
         const props = {
           'aria-current': active ? ('page' as const) : undefined,
           className: `tap transition-colors ${active ? 'text-ink font-medium' : 'hover:text-ink'}`,
-          children: item.label,
+          children: <LinkPending>{item.label}</LinkPending>,
         }
         return 'pick' in item ? (
           <PickLink key={item.href} {...props} />
