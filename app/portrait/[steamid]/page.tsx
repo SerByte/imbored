@@ -10,6 +10,7 @@ import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
 import { ProgressRing } from '@/components/ProgressRing'
+import { ShareLinkField } from '@/components/ShareLink'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Eyebrow, eyebrow } from '@/components/Labels'
 import { Wordmark } from '@/components/Wordmark'
@@ -27,7 +28,16 @@ import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
 import { plural } from '@/lib/plural'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { buildPortraitModel, type PortraitModel } from '@/lib/portraitmodel'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import {
+  concentrationVerdict,
+  eraLead,
+  paretoLead,
+  portraitFallbackText,
+  socialTail,
+  unplayedHeading,
+  type PortraitVoice,
+} from '@/lib/portraitvoice'
+import { appBaseUrl, currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent } from '@/lib/stats'
 import type { LibraryGame } from '@/lib/types'
 
@@ -217,30 +227,6 @@ async function loadModel(
   }
 }
 
-function fallbackText(
-  name: string,
-  archetypes: Array<{ label: string; percent: number }>,
-  facts: { gamesCount: number; totalHours: number; unplayedCount: number; topGame: { name: string; sharePercent: number } | null },
-): string {
-  const parts: string[] = []
-  if (archetypes.length >= 2) {
-    parts.push(
-      `${name}, ты на ${archetypes[0].percent}% ${archetypes[0].label} и на ${archetypes[1].percent}% ${archetypes[1].label}.`,
-    )
-  }
-  parts.push(
-    `За плечами ${facts.totalHours.toLocaleString('ru-RU')} ${plural(facts.totalHours, 'час', 'часа', 'часов')} в ${facts.gamesCount} ${plural(facts.gamesCount, 'игре', 'играх', 'играх')}${
-      facts.unplayedCount
-        ? `, а ${facts.unplayedCount} ${plural(facts.unplayedCount, 'игру', 'игры', 'игр')} ты так и не распаковал`
-        : ''
-    }.`,
-  )
-  if (facts.topGame && facts.topGame.sharePercent >= 30) {
-    parts.push(`«${facts.topGame.name}» забрала ${facts.topGame.sharePercent}% всей твоей игровой жизни — и, кажется, не собирается отдавать.`)
-  }
-  return parts.join(' ')
-}
-
 export default async function PortraitPage({ params }: { params: Promise<{ steamid: string }> }) {
   const { steamid } = await params
   if (!/^\d{17}$/.test(steamid)) notFound()
@@ -269,6 +255,16 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     return { count: eq.count, before, after }
   })()
   const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
+
+  /*
+   * Свой портрет или чужой — от этого зависит голос страницы (lib/portraitvoice).
+   * Владельцу она говорит «ты», гостю по ссылке — о владельце. Раньше «ты»
+   * слышали все, и друг над ником «Аня» читал «80% твоей игровой жизни».
+   */
+  const me = await currentSteamId()
+  const isMine = me === steamid
+  const voice: PortraitVoice = isMine ? 'you' : 'them'
+  const fallbackText = () => portraitFallbackText(name, portrait.archetypes, portrait.facts, voice)
 
   /*
    * Текст портрета: кэш по времени снапшота, Claude при наличии ключа, иначе шаблон.
@@ -300,7 +296,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   if (cached && cached.takenAt === snapshot.takenAt) {
     text = cached.text
   } else if (!complete) {
-    text = fallbackText(name, portrait.archetypes, portrait.facts)
+    text = fallbackText()
   } else {
     const allowed = (
       await Promise.all([
@@ -324,12 +320,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     const written = allowed
       ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
       : null
-    text = written ?? fallbackText(name, portrait.archetypes, portrait.facts)
+    text = written ?? fallbackText()
     if (written) await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text })
   }
-
-  const me = await currentSteamId()
-  const isMine = me === steamid
 
   /*
    * sizes — ОБЯЗАТЕЛЬНЫЙ довод, а не значение по умолчанию.
@@ -477,24 +470,19 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             </motion.div>
             <motion.div {...inView(1)} className="text-center md:text-left">
               <p className="text-lg md:text-xl leading-relaxed">
-                80% твоей игровой жизни — это{' '}
+                {paretoLead(voice)}{' '}
                 <span className="font-mono text-ember-text">{wrapped.pareto80}</span>{' '}
                 {plural(wrapped.pareto80, 'игра', 'игры', 'игр')} из{' '}
                 <span className="font-mono">{wrapped.gamesCount}</span>.
               </p>
               <p className="mt-2 text-dim text-sm">
                 Концентрация {wrapped.concentration} из 100:{' '}
-                {wrapped.concentration >= 50
-                  ? 'ты однолюб и не скрываешь этого'
-                  : wrapped.concentration >= 20
-                    ? 'есть любимцы, но ты не заперт в одной игре'
-                    : 'ты размазан ровным слоем по всей библиотеке'}
-                .
+                {concentrationVerdict(wrapped.concentration, voice)}.
               </p>
               {wrapped.social && (
                 <p className="mt-2 text-dim text-sm">
-                  <span className="font-mono text-ink">{wrapped.social.percent}%</span> часов ты
-                  провёл не один.
+                  <span className="font-mono text-ink">{wrapped.social.percent}%</span>{' '}
+                  {socialTail(voice)}
                 </p>
               )}
             </motion.div>
@@ -579,7 +567,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           </motion.p>
           <motion.h2 {...inView(1)} className="font-display text-display-lg">
             <CountNumber value={wrapped.unplayedCount} />{' '}
-            {plural(wrapped.unplayedCount, 'игра', 'игры', 'игр')} ты так и не запустил
+            {unplayedHeading(wrapped.unplayedCount, voice)}
           </motion.h2>
 
           <motion.div {...inView(2)} className="mt-4 flex flex-wrap gap-x-8 gap-y-2 text-dim text-sm">
@@ -592,7 +580,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}.
               </p>
             )}
-            {equivalent && (
+            {/* Шутки про бургеры обращаются к владельцу («их бы ты доел») —
+                гостю они адресованы не были */}
+            {isMine && equivalent && (
               <p>
                 {equivalent.before}
                 <span className="font-mono text-ember-text">{equivalent.count}</span>
@@ -601,7 +591,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             )}
             {wrapped.era && (
               <p>
-                Медиана твоей библиотеки —{' '}
+                {eraLead(voice)}{' '}
                 <span className="font-mono text-ink">{wrapped.era.medianYear}</span>, а самая старая
                 игра с наигранным временем — «{wrapped.era.oldest.name}»{' '}
                 <span className="font-mono">{wrapped.era.oldest.year}</span> года.
@@ -626,7 +616,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             </div>
           )}
 
-          {starter && (
+          {/* Совет, с чего начать, — владельцу: у гостя этой игры может не быть вовсе */}
+          {isMine && starter && (
             <motion.div {...inView()} className="mt-12 flex flex-col items-start gap-3">
               <p className="text-dim text-sm">Если решишься — начни с этой:</p>
               <Magnet>
@@ -645,9 +636,23 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
       {/* ——— 5. Финал ——— */}
       <section className="relative mx-auto w-full max-w-xl px-5 pb-24 pt-8 flex flex-col items-center gap-8 text-center">
-        <motion.p {...inView()} className="glass rounded-[20px] p-6 leading-relaxed text-ink/90">
-          {text}
-        </motion.p>
+        {/*
+          Гостю текст — цитатой с подписью. Текст модели пишется владельцу, на
+          «ты», и кэшируется на снапшот: переписать его под гостя нельзя без
+          ещё одного вызова, а без подписи он читается как обращение к тому,
+          кто открыл ссылку. «Об игроке», а не «о {name}»: ник не склоняется,
+          а «о Аня» и «о Игорь» — ошибка там, где «об» требует гласная.
+        */}
+        {isMine ? (
+          <motion.p {...inView()} className="glass rounded-[20px] p-6 leading-relaxed text-ink/90">
+            {text}
+          </motion.p>
+        ) : (
+          <motion.figure {...inView()} className="glass rounded-[20px] p-6 text-left">
+            <blockquote className="leading-relaxed text-ink/90">{text}</blockquote>
+            <figcaption className="mt-3 text-xs text-dim">— imbored об игроке {name}</figcaption>
+          </motion.figure>
+        )}
 
         {/* Превью — обычная картинка на тот же роут, что и скачивание: каждый
             лишний рендер satori заново тянет обложки со Steam. */}
@@ -675,10 +680,25 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             Сравнить с ним свои вкусы
           </Link>
         )}
+        {/*
+          Страницей делятся — значит, отправить её должно быть чем. Раньше
+          здесь был только совет «кинь ссылку», а в установленном приложении
+          адресной строки нет вовсе: в чат уходила картинка без ссылки, и
+          проверить по ней совместимость было нельзя. Адрес собирается на
+          сервере: полю он нужен в разметке, а не после гидратации.
+        */}
         {isMine && (
-          <p className="text-xs text-dim max-w-sm">
-            Кинь ссылку на эту страницу — увидят твой портрет и смогут проверить совместимость.
-          </p>
+          <motion.div {...inView(2)} className="flex w-full flex-col gap-2.5 text-left">
+            <p className="text-xs text-dim">
+              По этой ссылке увидят твой портрет и смогут проверить совместимость.
+            </p>
+            <ShareLinkField
+              url={`${appBaseUrl()}/portrait/${steamid}`}
+              label="Ссылка на твой портрет игрока"
+              title={`Портрет игрока ${name} — imbored`}
+              text="Мой портрет игрока по библиотеке Steam — проверь, совпадаем ли мы"
+            />
+          </motion.div>
         )}
         <div className="flex items-center gap-2 text-faint text-xs">
           <Wordmark className="text-sm" /> · imbored.cc
