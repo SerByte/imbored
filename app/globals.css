@@ -505,6 +505,24 @@ html {
   scroll-padding-top: 5rem;
 }
 
+/*
+ * То же снизу, и только там, где внизу стоит панель навигации (MobileNav —
+ * md:hidden, то есть до 767 px). Правило читают нативная прокрутка к фокусу и
+ * scrollIntoView — режим без смузера, «уменьшить движение». Без него Tab на
+ * телефоне с клавиатурой ставил фокус на ссылку под панелью: замер на /play,
+ * 390×844, «Открыть в Steam» на 824–844, в её центре — сама панель.
+ *
+ * 52 px — высота панели, то же число, что в отступе под неё у
+ * #smooth-content (app/layout.tsx); 8 px — кольцо фокуса. Смузер это правило
+ * не читает: его досмотр живёт в components/SmoothScrollImpl.tsx
+ * (lib/skiplink.ts) и меряет панель сам.
+ */
+@media (max-width: 767px) {
+  html {
+    scroll-padding-bottom: calc(52px + env(safe-area-inset-bottom) + 8px);
+  }
+}
+
 body {
   background: var(--bg);
   color: var(--ink);
@@ -533,6 +551,24 @@ body {
 input:focus-visible,
 textarea:focus-visible {
   outline-offset: 0;
+}
+
+/*
+ * Исключение ровно одно — <main>, цель «К содержанию» (tabIndex={-1} в
+ * app/layout.tsx). Это не элемент управления, а весь экран: кольцо вокруг
+ * него уходит за края окна и видно только ember-полосой над подвалом, которую
+ * читают как сбой вёрстки. Где фокус, и так видно — страница уехала к
+ * содержанию, а следующий Tab встаёт на первую ссылку в нём.
+ *
+ * Здесь, а не утилитой outline-none в разметке: Tailwind кладёт утилиты в слой
+ * utilities, а правило выше стоит вне слоёв и выигрывает у любого слоя
+ * независимо от веса. Замер после «К содержанию»: у <main class="outline-none">
+ * outline-style — solid. Сторож lib/focusring.test.ts пускает это снятие
+ * кольца только для #main.
+ */
+#main:focus-visible {
+  outline-style: none;
+  box-shadow: none;
 }
 
 /*

@@ -245,7 +245,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
 
           Видна только в фокусе: sr-only снимается на focus-visible.
           scroll-padding-top в globals.css нужен здесь же — иначе якорь
-          уводит цель под фиксированную шапку.
+          уводит цель под фиксированную шапку. Фокус переезжает на <main>
+          вместе с прокруткой — см. tabIndex у него; сторож
+          lib/skiplink.test.ts.
         */}
         <a
           href="#main"
@@ -313,7 +315,16 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         */}
         <div id="smooth-wrapper">
           <div id="smooth-content" className="min-h-full flex flex-col pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
-            <main id="main" className="flex-1 flex flex-col">
+            {/*
+              tabIndex={-1}: <main> — цель «К содержанию», и фокус обязан
+              переехать сюда, а не остаться на ссылке, иначе следующий Tab
+              снова идёт по шапке. Без атрибута элемент фокус не принимает;
+              с -1 принимает, но в обход по Tab не встаёт. Под смузером фокус
+              переносит его обработчик якорей (lib/skiplink.ts, takeFocus).
+              Кольца у него нет — почему и почему не классом, см. #main в
+              globals.css.
+            */}
+            <main id="main" tabIndex={-1} className="flex-1 flex flex-col">
               <MotionProvider>{children}</MotionProvider>
             </main>
             <Footer />

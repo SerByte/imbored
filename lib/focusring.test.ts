@@ -67,4 +67,30 @@ describe('видимый фокус', () => {
     )
     expect(block, 'подложка под кольцом держит его видимым на игровом арте').toMatch(/box-shadow:/)
   })
+
+  /**
+   * Кольцо снимается и не только словом `outline: none`: outline-style: none
+   * и прозрачный цвет гасят его так же. Такое снятие разрешено ровно одному
+   * элементу — <main>, цели «К содержанию»: он не элемент управления, а весь
+   * экран, и кольцо вокруг него видно лишь полосой над подвалом. Утилита
+   * outline-none в разметке для этого не годится: она в слое utilities и
+   * проигрывает общему правилу, стоящему вне слоёв (замерено: solid).
+   */
+  test('снять кольцо иначе можно только у цели «К содержанию»', () => {
+    const offenders: string[] = []
+    const re = /outline-style:\s*none|outline-color:\s*transparent|outline-width:\s*0\b/g
+    for (const m of CSS.matchAll(re)) {
+      const at = m.index ?? 0
+      const open = CSS.lastIndexOf('{', at)
+      const selector = CSS.slice(CSS.lastIndexOf('}', open) + 1, open).trim()
+      if (selector !== '#main:focus-visible') {
+        const line = CSS.slice(0, at).split('\n').length
+        offenders.push(`globals.css:${line} — ${selector} { ${m[0]} }`)
+      }
+    }
+    expect(offenders, 'кольцо фокуса снимается только у #main — см. докблок правила в globals.css').toEqual([])
+    expect(CSS, 'исключение для #main пропало — кольцо снова рисуется вокруг всей страницы').toMatch(
+      /#main:focus-visible\s*\{[^}]*outline-style:\s*none/,
+    )
+  })
 })

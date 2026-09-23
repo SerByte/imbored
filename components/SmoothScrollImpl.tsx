@@ -5,7 +5,8 @@ import gsap from 'gsap'
 import { ScrollSmoother } from 'gsap/ScrollSmoother'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { usePathname } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import { focusBand, HEADER_CLEARANCE, needsReveal, takeFocus } from '@/lib/skiplink'
 
 gsap.registerPlugin(ScrollTrigger, ScrollSmoother, useGSAP)
 
@@ -39,12 +40,61 @@ gsap.registerPlugin(ScrollTrigger, ScrollSmoother, useGSAP)
  * перехватываются и уводятся в `smoother.scrollTo`. Перехват стоит на
  * документе в фазе всплытия: разметку якорей это не трогает, и без JS они
  * работают ровно как работали — как и до того, как этот чанк приехал.
+ *
+ * ФОКУС. Перехваченный якорь переносит не только прокрутку, но и фокус —
+ * иначе «К содержанию» оставляла следующий Tab в шапке. А элемент, получивший
+ * фокус с клавиатуры, досматривается, если его закрывает шапка или нижняя
+ * панель: своё правило смузера считает видимым всё, что задело экран хоть
+ * пикселем. Решения живут в lib/skiplink.ts, сторож — lib/skiplink.test.ts.
  */
 export function SmoothScrollImpl() {
   const pathname = usePathname()
+  /*
+   * Фокус переносит сам обработчик якоря, и досматривать его цель не нужно:
+   * прокрутка к ней уже едет. Без флага onFocusIn успел бы поставить свою —
+   * к центру, поверх 'top 80px', — или правило смузера рвануло бы страницу к
+   * цели мгновенно, и плавный переход по якорю стал бы прыжком.
+   */
+  const steering = useRef(false)
 
   useGSAP(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    /*
+     * onFocusIn: false — «сам разобрался, своё правило не применяй»; undefined —
+     * пусть решает смузер (он прокручивает к центру то, что целиком за экраном).
+     *
+     * Досматриваем только то, что лежит в прокручиваемом содержимом: шапка,
+     * нижняя панель и слои в портале (лайтбокс, плашки) стоят на экране, а не
+     * на странице, и прокрутка к ним увела бы страницу в никуда.
+     *
+     * И только фокус с клавиатуры (:focus-visible). Клик мышью тоже даёт
+     * focusin, и кнопка, чуть задевшая шапку, дёргала бы страницу к центру
+     * прямо под курсором. Поле ввода :focus-visible и от клика — его и надо
+     * показать, над ним откроется клавиатура.
+     */
+    const content = document.getElementById('smooth-content')
+    let lastRevealed: EventTarget | null = null
+    const onFocusIn = (self: ScrollSmoother, e: Event) => {
+      const el = e.target
+      if (steering.current) {
+        lastRevealed = el
+        return false
+      }
+      if (!(el instanceof HTMLElement) || !content?.contains(el)) return undefined
+      // Вернулись в окно, и браузер вернул фокус тому же элементу — человек
+      // его не переводил, и страницу, которую он с тех пор прокрутил, не трогаем.
+      // То же правило у самого смузера (lastFocusElement).
+      if (el === lastRevealed) return false
+      lastRevealed = el
+      if (!el.matches(':focus-visible')) return undefined
+      const nav = document.querySelector('body > nav')?.getBoundingClientRect() ?? null
+      if (!needsReveal(el.getBoundingClientRect(), focusBand(window.innerHeight, nav))) {
+        return undefined
+      }
+      self.scrollTo(el, true, 'center center')
+      return false
+    }
 
     /*
      * smoothTouch включён намеренно. Обычно его выключают, потому что у тача
@@ -69,6 +119,7 @@ export function SmoothScrollImpl() {
         normalizeScroll: true,
         ignoreMobileResize: true,
         effects: false,
+        onFocusIn,
       })
     } catch {
       // Смузер не завёлся — не повод ронять страницу. Прокрутка останется
@@ -119,10 +170,22 @@ export function SmoothScrollImpl() {
        * 'top 80px', а не 'top top': в globals.css у документа стоит
        * scroll-padding-top: 5rem ровно затем, чтобы якорь не уводил цель под
        * фиксированную шапку. Нативная прокрутка это правило читает сама,
-       * smoother.scrollTo — нет, и число приходится повторить здесь.
+       * smoother.scrollTo — нет, и число приходится повторить здесь
+       * (HEADER_CLEARANCE, сверяется с CSS сторожем lib/skiplink.test.ts).
        */
-      smoother.scrollTo(target, true, 'top 80px')
+      smoother.scrollTo(target, true, `top ${HEADER_CLEARANCE}px`)
       history.replaceState(null, '', `#${id}`)
+      /*
+       * Фокус — вслед за прокруткой, как при нативном переходе по якорю.
+       * Перехват клика отнимал у ссылки и эту половину: «К содержанию»
+       * прокручивала к <main>, а следующий Tab уходил в шапку.
+       */
+      steering.current = true
+      try {
+        takeFocus(target)
+      } finally {
+        steering.current = false
+      }
     }
     document.addEventListener('click', onClick)
     return () => document.removeEventListener('click', onClick)
