@@ -2104,3 +2104,14 @@ describe('версия схемы', () => {
     })
   })
 })
+
+describe('файловая база', () => {
+  test('ждёт чужую блокировку, а не падает сразу на SQLITE_BUSY', async () => {
+    // Сборка на копии базы в файле гоняет migrateDb в каждом воркере разом.
+    // Без ожидания первый же воркер, попавший на чужую запись, ронял сборку.
+    // file::memory: — тот же путь через file:, но без файла на диске.
+    const db = await createDb('file::memory:')
+    const res = await db.execute('PRAGMA busy_timeout')
+    expect(Number(res.rows[0].timeout)).toBe(10_000)
+  })
+})

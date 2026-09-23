@@ -319,8 +319,26 @@ function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(',')
 }
 
+/**
+ * Сколько файловая база ждёт чужую блокировку, прежде чем ответить SQLITE_BUSY.
+ *
+ * По умолчанию libsql не ждёт вовсе. Продакшен-сборка на копии базы в файле
+ * запускает migrateDb в каждом воркере разом, и первый же воркер, попавший
+ * на чужую запись, ронял сборку на случайной /game/… — уже при трёх воркерах.
+ *
+ * Именно опция клиента, а не PRAGMA busy_timeout после подключения: клиент
+ * открывает новое соединение после каждой transaction(), и PRAGMA на нём уже
+ * не действует, а опция ставится на каждое.
+ */
+const FILE_BUSY_TIMEOUT_MS = 10_000
+
 export async function createDb(url: string, authToken?: string): Promise<Db> {
-  const client = createClient({ url, ...(authToken ? { authToken } : {}) })
+  const client = createClient({
+    url,
+    ...(authToken ? { authToken } : {}),
+    // Turso эту опцию не читает, но и передавать её туда незачем
+    ...(url.startsWith('file:') ? { timeout: FILE_BUSY_TIMEOUT_MS } : {}),
+  })
   return migrateDb(client)
 }
 
