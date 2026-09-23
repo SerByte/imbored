@@ -80,6 +80,12 @@ export type Deal = {
   scope: Scope
   /** Серверные часы ответа — по ним PlayersNow решает, можно ли сказать «сейчас» */
   nowSec: number
+  /**
+   * Чья выдача — steamid сессии, для которой её собрали. Нужен записи на
+   * устройстве (lib/playcache.ts): вкладка переживает смену входа, и выдачу
+   * по чужой библиотеке показывать нельзя. null — сервер старой версии.
+   */
+  viewer: string | null
 }
 
 /**
@@ -95,6 +101,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     lean?: unknown
     continue?: unknown
     nowSec?: unknown
+    viewer?: unknown
   }
   if (!Array.isArray(d.picks) || d.picks.length === 0) return null
   return {
@@ -105,6 +112,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     lean: parseLean(d.lean),
     scope,
     nowSec: typeof d.nowSec === 'number' && Number.isFinite(d.nowSec) ? d.nowSec : 0,
+    viewer: typeof d.viewer === 'string' && d.viewer ? d.viewer : null,
   }
 }
 

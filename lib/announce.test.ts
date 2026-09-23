@@ -5,6 +5,7 @@ describe('playLine', () => {
   test('каждая смена героя называет игру, которая теперь на экране', () => {
     const events: PlayEvent[] = [
       { kind: 'reveal', name: 'Balatro' },
+      { kind: 'restore', name: 'Balatro' },
       { kind: 'next', name: 'Balatro' },
       { kind: 'pick', name: 'Balatro' },
       { kind: 'reshape', name: 'Balatro' },

@@ -458,5 +458,9 @@ export async function POST(req: Request) {
     lean,
     // Строка «Продолжить» или null — /play сам решает, где её не показывать
     continue: cont ? continueView(cont) : null,
+    // Чья выдача. /play держит её на устройстве пятнадцать минут и обязан не
+    // показать её другому входу в той же вкладке (lib/playcache.ts). Свой же
+    // steamid своему же человеку — то, что и так отдаёт /api/session/touch.
+    viewer: steamid,
   })
 }

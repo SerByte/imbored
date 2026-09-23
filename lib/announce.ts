@@ -15,6 +15,8 @@
 export type PlayEvent =
   /** Первая выдача после прогрева (в рулетке молчим — барабан скажет сам) */
   | { kind: 'reveal'; name: string }
+  /** Возврат на /play: выдача с прошлого захода, без прогрева (lib/playcache.ts) */
+  | { kind: 'restore'; name: string }
   /** «Не то — дальше», причина пропуска, «не зацепило» у игры на экране */
   | { kind: 'next'; name: string }
   /** Выбор из «Ещё вариантов», экран выгорания */
@@ -32,6 +34,8 @@ export function playLine(e: PlayEvent): string {
   switch (e.kind) {
     case 'reveal':
       return `Подобрал игру: «${e.name}»`
+    case 'restore':
+      return `Выдача с прошлого захода. На экране «${e.name}»`
     case 'next':
       return `Следующая игра: «${e.name}»`
     case 'pick':

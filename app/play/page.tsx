@@ -44,6 +44,20 @@ import {
   type Deal,
   type PlayPick,
 } from '@/lib/playflow'
+import {
+  PLAY_CACHE_VERSION,
+  hasFreshDeal,
+  hasFreshWarm,
+  playCacheKey,
+  playCacheStore,
+  recentBansStore,
+  recentlyBanned,
+  restoreDeal,
+  warmIsFresh,
+  warmMarkStore,
+  whoAmI,
+  withBan,
+} from '@/lib/playcache'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from '@/lib/sources'
@@ -280,6 +294,26 @@ function Player({ say }: { say: (line: string) => void }) {
   // показанной выдаче, без перезагрузки и прогрева. Мусор в адресе — «без оси».
   const [lean, setLean] = useState<Lean | null>(() => parseLean(search.get('lean')))
   const [switching, setSwitching] = useState(false)
+  /*
+   * ВЫДАЧА МЕЖДУ ЗАХОДАМИ (lib/playcache.ts).
+   *
+   * Ключ запроса снят с первого рендера и дальше не меняется — ровно как
+   * настроение, с которым fetchPicks ходит за выдачей (его колбэк тоже собран
+   * один раз). Иначе смена адреса без перемонтирования записала бы прежнюю
+   * выдачу под ключом нового настроения.
+   */
+  const [cacheKey] = useState(() =>
+    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')) }),
+  )
+  /** На экране выдача с прошлого захода — рядом «Подобрать заново» */
+  const [restored, setRestored] = useState(false)
+  /** Номер захода за выдачей: «Подобрать заново» запускает путь первого захода снова */
+  const [round, setRound] = useState(0)
+  /**
+   * Откуда выдача на экране: когда пришла (часы клиента), по каким серверным
+   * часам и для кого. Нужна только записи на устройстве, в разметку не идёт.
+   */
+  const dealMeta = useRef<{ at: number; nowSec: number; viewer: string | null } | null>(null)
   const moreOpen =
     useSyncExternalStore(moreStore.subscribe, moreStore.get, moreStore.server) === true
   const shelfOpen =
@@ -514,10 +548,15 @@ function Player({ say }: { say: (line: string) => void }) {
    * Фазу и объявление ставит вызывающий: у первой выдачи рулетка крутит
    * барабан, у переключателя фокус остаётся на нажатой кнопке. Отдаёт индекс
    * героя — вызывающему он нужен сразу, а состояние обновится к рендеру.
+   *
+   * Пятая дверь — выдача с прошлого захода (back): та же функция, только герой,
+   * время и «Зашло» — сохранённые, а не новые.
    */
   const applyDeal = useCallback(
-    (deal: Deal): number => {
-      const hero = landingIndex(deal.picks.length, roulette)
+    (deal: Deal, back?: { index: number; at: number; liked: number[] }): number => {
+      const hero = back ? back.index : landingIndex(deal.picks.length, roulette)
+      const at = back ? back.at : Date.now()
+      dealMeta.current = { at, nowSec: deal.nowSec, viewer: deal.viewer }
       setPicks(deal.picks)
       setDiscoveries(deal.discoveries)
       setContinueGame(deal.continueGame)
@@ -525,17 +564,50 @@ function Player({ say }: { say: (line: string) => void }) {
       setScope(deal.scope)
       setLean(deal.lean)
       // Серверные часы — по ним подпись онлайна решает, имеет ли право
-      // сказать «сейчас». См. докблок в components/PlayersNow.
-      setNowSec(deal.nowSec)
+      // сказать «сейчас». См. докблок в components/PlayersNow. У выдачи с
+      // прошлого захода они ушли вперёд на столько, сколько она пролежала.
+      setNowSec(deal.nowSec + Math.max(0, Math.floor((Date.now() - at) / 1000)))
       setIndex(hero)
       setDir(FRESH_TURN.dir)
       setAskReason(FRESH_TURN.askReason)
       setShowWhy(FRESH_TURN.showWhy)
       setSkipCount(FRESH_TURN.skipCount)
+      setRestored(!!back)
+      if (back) setLiked(new Set(back.liked))
       return hero
     },
     [roulette],
   )
+
+  /*
+   * Выдача на экране → запись на устройстве. Эффектом, а не строкой в каждом
+   * обработчике: выдачу меняют новая выдача, «дальше», выбор из «Ещё
+   * вариантов», экран выгорания, бан, «Зашло» и ответ «зацепило», и восьмой
+   * путь однажды забыл бы записать. Пока выдачи нет или на экране отказ —
+   * писать нечего; без viewer — не к кому её привязать, и она не пишется вовсе.
+   */
+  useEffect(() => {
+    const meta = dealMeta.current
+    if (!meta?.viewer || !picks.length || phase === 'prepare' || phase === 'error') return
+    playCacheStore.set({
+      v: PLAY_CACHE_VERSION,
+      key: cacheKey,
+      viewer: meta.viewer,
+      at: meta.at,
+      deal: {
+        picks,
+        discoveries,
+        continueGame,
+        engine,
+        lean,
+        scope,
+        nowSec: meta.nowSec,
+        viewer: meta.viewer,
+      },
+      hero: picks[Math.min(index, picks.length - 1)].appid,
+      liked: [...liked],
+    })
+  }, [phase, picks, discoveries, continueGame, engine, lean, scope, index, liked, cacheKey])
 
   useEffect(() => {
     /*
@@ -569,6 +641,52 @@ function Player({ say }: { say: (line: string) => void }) {
     }
 
     async function run() {
+      /*
+       * ВОЗВРАТ — БЕЗ ПРОГРЕВА И БЕЗ НОВОГО ПОДБОРА (lib/playcache.ts).
+       *
+       * «Подробнее» → «Назад» раньше начинало всё с нуля: экран ожидания, цикл
+       * /api/prepare, новый запрос выдачи из двадцати на десять минут — и,
+       * вполне возможно, другая пятёрка вместо той, что он читал. Теперь
+       * выдача моложе пятнадцати минут возвращается как была, с тем же героем.
+       *
+       * Кто вошёл, спрашиваем только тогда, когда есть что восстановить или
+       * что пропустить: первому заходу лишний круг до сервера ни к чему. Ответ
+       * «не знаю» ведёт обычным путём — лишний прогрев лучше чужой выдачи.
+       */
+      warmAtReveal.current = 0
+      const entry = playCacheStore.get()
+      const mark = warmMarkStore.get()
+      const viewer =
+        hasFreshDeal(entry, cacheKey, Date.now()) || hasFreshWarm(mark, Date.now())
+          ? await whoAmI(ac.signal)
+          : null
+      if (ac.signal.aborted) return
+      const back = restoreDeal(entry, {
+        key: cacheKey,
+        viewer,
+        nowMs: Date.now(),
+        // Бан из соседней вкладки этой записи не видел
+        banned: recentlyBanned(recentBansStore.get(), Date.now()),
+      })
+      if (back) {
+        applyDeal(back.deal, back)
+        setPhase('reveal')
+        say(playLine({ kind: 'restore', name: back.deal.picks[back.index].name }))
+      }
+
+      // Каталог разобран минуты назад: прогрев ответил бы «нечего» первым же
+      // вызовом, а экран ожидания простоял бы ради этого лишний круг
+      if (warmIsFresh(mark, viewer, Date.now())) {
+        if (!back) await reveal()
+        return
+      }
+
+      /** Разобрано всё — прогрев можно пропускать десять минут */
+      const markWarm = () => {
+        const who = dealMeta.current?.viewer
+        if (who) warmMarkStore.set({ viewer: who, at: Date.now() })
+      }
+
       // Промис, а не флаг: runWarmup продолжает цикл сразу после onYield и
       // вполне может завершиться раньше, чем выдача доедет. С флагом это была
       // бы гонка, а её цена — второй запрос к /api/recommend поверх первого.
@@ -576,11 +694,15 @@ function Player({ say }: { say: (line: string) => void }) {
       // Последний известный объём работы: нужен после цикла, а состояние React
       // к этому моменту читать нельзя — оно обновится только к следующему рендеру
       let lastTotal = 0
+      // Дошёл ли прогрев до нуля. 'done' этого не говорит: так же кончаются
+      // и потолок по времени, и остановка, когда Steam не отдаёт метаданные
+      let warmedAll = false
 
       const warm = await runWarmup({
         signal: ac.signal,
         onProgress: (p) => {
           lastTotal = p.total
+          warmedAll = p.remaining <= 0
           setPrep(p)
           if (p.remaining > 0) setProgress(remainingLine(p.remaining))
         },
@@ -589,14 +711,15 @@ function Player({ say }: { say: (line: string) => void }) {
           // догревает остальное под живой страницей
           warmAtReveal.current = p.total - p.remaining
           setWarming('running')
-          revealing = reveal()
+          // Выдача с прошлого захода уже на экране — догрев идёт под ней
+          if (!back) revealing = reveal()
         },
       })
 
       // Страница ушла: ни выдачу, ни разворот на вход показывать уже некому
       if (warm === 'aborted') return
 
-      const revealed = revealing ? await revealing : false
+      const revealed = back !== null || (revealing ? await revealing : false)
 
       if (warm === 'unauthorized') {
         // Сессия отвалилась во время ФОНОВОГО догрева — карточки на экране уже
@@ -622,15 +745,35 @@ function Player({ say }: { say: (line: string) => void }) {
         // Предлагаем пересчитать, только если каталог вырос заметно: ради
         // десятка доехавших игр дёргать того, кто уже читает карточку, — шум.
         setWarming(lastTotal - warmAtReveal.current >= REWARM_MIN_GROWTH ? 'ready' : 'off')
+        if (warm === 'done' && warmedAll) markWarm()
         return
       }
-      await reveal()
+      if ((await reveal()) && warm === 'done' && warmedAll) markWarm()
     }
 
     void run()
     return () => ac.abort()
+    // round — «Подобрать заново»; остальное из строки запроса и в рамках
+    // страницы неизменно
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [round])
+
+  /*
+   * «Подобрать заново» у выдачи с прошлого захода: забыть её и пройти путь
+   * первого захода — прогрев, если метка не свежая, и новый запрос выдачи.
+   */
+  const redeal = useCallback(() => {
+    playCacheStore.set(null)
+    dealMeta.current = null
+    setRestored(false)
+    setWarming('off')
+    setPrep(null)
+    setProgress(PREPARE_MESSAGE)
+    setPhase('prepare')
+    // Кнопка уходит вместе с выдачей — фокус заберёт заголовок нового героя
+    focusHero(false)
+    setRound((r) => r + 1)
+  }, [focusHero])
 
   /** Смена режима: тот же прогрев, другой вопрос к движку — и выдача с начала */
   /*
@@ -944,6 +1087,17 @@ function Player({ say }: { say: (line: string) => void }) {
   const changeMood = (
     <div className="mt-8 flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1 text-sm">
       {caption && <span className="text-faint">{caption}</span>}
+      {/* Выдача с прошлого захода вернулась сама — а кто хотел новую, берёт её
+          здесь, одним нажатием и без смены настроения */}
+      {restored && (
+        <button
+          type="button"
+          onClick={redeal}
+          className="tap text-dim hover:text-ink transition-colors cursor-pointer"
+        >
+          Подобрать заново
+        </button>
+      )}
       <Link href="/quiz" className="tap text-dim hover:text-ink transition-colors">
         Изменить настроение →
       </Link>
@@ -1284,6 +1438,9 @@ function Player({ say }: { say: (line: string) => void }) {
                         if (writerStore.get() !== false) setBanFailed(pick.appid)
                         return
                       }
+                      // Соседняя вкладка держит свою запись выдачи и про этот
+                      // бан не знает — список недавних банов общий на все
+                      recentBansStore.set(withBan(recentBansStore.get(), pick.appid, Date.now()))
                       const rest = picks.filter((p) => p.appid !== pick.appid)
                       if (!rest.length) {
                         router.push('/quiz')

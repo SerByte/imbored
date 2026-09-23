@@ -52,6 +52,14 @@ describe('dealFrom', () => {
   test('без серверных часов — ноль, а не NaN в подписи онлайна', () => {
     expect(dealFrom({ picks: [pick], nowSec: 'soon' }, 'all')?.nowSec).toBe(0)
   })
+
+  test('чья выдача — из ответа; без неё null, и запись на устройстве не заведётся', () => {
+    expect(dealFrom({ picks: [pick], nowSec: 1, viewer: '76561197960287930' }, 'all')?.viewer).toBe(
+      '76561197960287930',
+    )
+    expect(dealFrom({ picks: [pick], nowSec: 1 }, 'all')?.viewer).toBeNull()
+    expect(dealFrom({ picks: [pick], nowSec: 1, viewer: '' }, 'all')?.viewer).toBeNull()
+  })
 })
 
 describe('FRESH_TURN', () => {

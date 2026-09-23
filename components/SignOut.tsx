@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { forgetPlay } from '@/lib/playcache'
 import { forgetSessionHint } from '@/lib/sessionhint'
 
 /**
@@ -40,6 +41,9 @@ export function SignOut({ verified }: { verified: boolean }) {
     // а главная встречает вышедшего «С возвращением» — по подсказке, которую
     // никто не погасил.
     forgetSessionHint()
+    // И выдачу /play, которую вкладка держит пятнадцать минут (lib/playcache):
+    // чужому входу её и так не покажут, но хранить подборку вышедшего незачем
+    forgetPlay()
     // refresh обязателен и идёт после перехода: страницы уже отрендерены с
     // прежней сессией, и без сброса роутерного кэша клиент показал бы их
     // из памяти — с библиотекой человека, который только что вышел.
