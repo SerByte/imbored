@@ -15,6 +15,7 @@
  * та же причина, что описана в lib/warmup.ts:8-12.
  */
 import type { SessionRow } from './db'
+import { logSwallowed } from './errlog'
 import { newSid, signSessionV2, verifySessionV2 } from './session'
 
 /** Год. Браузеры режут куки примерно на 400 сутках, сюда укладываемся. */
@@ -86,8 +87,10 @@ async function stateOf(lookup: Lookup, sid: string, steamid: string, nowSec: num
     const state = await lookup(sid, steamid)
     cache.set(sid, { at: nowSec, state })
     return state
-  } catch {
-    // fail-open, и намеренно без записи в кэш
+  } catch (err) {
+    // fail-open, и намеренно без записи в кэш. Но со строкой лога: пока база
+    // лежит, отзыв сессий не работает, и об этом надо знать не из жалобы
+    logSwallowed('sessions:lookup', err)
     return LIVE
   }
 }

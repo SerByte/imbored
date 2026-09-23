@@ -1,5 +1,15 @@
-import { describe, expect, test } from 'vitest'
-import { formatServerError, serverErrorLine } from './errlog'
+import fs from 'node:fs'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from 'vitest'
+import {
+  SWALLOW_WINDOW_MS,
+  formatServerError,
+  formatSwallowed,
+  logSwallowed,
+  resetSwallowed,
+  scrubText,
+  serverErrorLine,
+} from './errlog'
 
 const REQ = {
   path: '/game/730?from=quiz',
@@ -206,5 +216,185 @@ describe('serverErrorLine', () => {
     const line = serverErrorLine(log)
     expect(() => JSON.parse(line)).not.toThrow()
     expect(JSON.parse(line).message).toBe('boom')
+  })
+})
+
+describe('scrubText', () => {
+  test('у адреса в тексте срезается строка запроса: там ключ Steam API и ?compat=', () => {
+    const s = scrubText(
+      'request to https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=SECRETKEY&steamid=76561198000000000 failed',
+    )
+    expect(s).toBe('request to https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/ failed')
+    expect(scrubText('see https://imbored.cc/play?join=ABC123#top')).toBe('see https://imbored.cc/play')
+    // у относительного адреса схемы нет — значения опасных параметров всё равно уходят
+    expect(scrubText('шли с /play?join=ABC123&mood=chill&key=K')).toBe('шли с /play?join=…&mood=chill&key=…')
+  })
+
+  test('steamid и коды пати — под масками и в свободном тексте', () => {
+    expect(scrubText('нет снимка для 76561198000000000')).toBe('нет снимка для :steamid')
+    expect(scrubText('id76561198000000000,76561198000000001')).toBe('id:steamid,:steamid')
+    expect(scrubText('GET /api/room/K7Q2PX/vote')).toBe('GET /api/room/:id/vote')
+    // 18 цифр — не steamid, и число покороче тоже не трогаем
+    expect(scrubText('123456789012345678 и 730')).toBe('123456789012345678 и 730')
+  })
+})
+
+describe('logSwallowed', () => {
+  let warn: MockInstance<typeof console.warn>
+  beforeEach(() => {
+    resetSwallowed()
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+  afterEach(() => warn.mockRestore())
+  const lines = () => warn.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
+
+  /*
+   * Ради этого всё и затевалось: отозванный ключ Steam и кончившаяся квота
+   * Turso заканчивались одним и тем же ?error=steam, а в Runtime Logs было
+   * пусто — onRequestError проглоченного не видит.
+   */
+  test('одна строка JSON с местом, причиной и статусом', () => {
+    expect(logSwallowed('auth/return:steam', new Error('Steam API /IPlayerService/GetOwnedGames/v1/: HTTP 403'))).toBe(true)
+    expect(warn).toHaveBeenCalledTimes(1)
+    const line = String(warn.mock.calls[0][0])
+    expect(line.includes('\n')).toBe(false)
+    expect(JSON.parse(line)).toEqual({
+      event: 'swallowed',
+      where: 'auth/return:steam',
+      name: 'Error',
+      message: 'Steam API /IPlayerService/GetOwnedGames/v1/: HTTP 403',
+      status: 403,
+    })
+  })
+
+  test('код базы и причина под обёрткой fetch доезжают — по ним сеть отличают от базы', () => {
+    const db = Object.assign(new Error('SQLITE_BUSY: database is locked'), { code: 'SQLITE_BUSY' })
+    logSwallowed('ratelimit:check', db, { bucket: 'connect' })
+    const net = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.steampowered.com'), { code: 'ENOTFOUND' }),
+    })
+    logSwallowed('connect:steam', net)
+    const [a, b] = lines()
+    expect(a).toMatchObject({ where: 'ratelimit:check', code: 'SQLITE_BUSY', bucket: 'connect' })
+    expect(b).toMatchObject({
+      where: 'connect:steam',
+      message: 'fetch failed',
+      code: 'ENOTFOUND',
+      cause: 'Error: getaddrinfo ENOTFOUND api.steampowered.com',
+    })
+  })
+
+  test('статус берётся и из поля ошибки', () => {
+    logSwallowed('pagejob:pros-cons', Object.assign(new Error('нет денег'), { status: 402 }))
+    expect(lines()[0].status).toBe(402)
+  })
+
+  test('без стека, без steamid, без строки запроса, сообщение не длиннее 200', () => {
+    const err = new Error(
+      `upsert 76561198000000000 failed at https://x.turso.io/v2/pipeline?authToken=SECRET ${'x'.repeat(400)}`,
+    )
+    logSwallowed('auth/return:db', err, { note: 'шли с /compat/76561198000000001?join=ABC123' })
+    const line = String(warn.mock.calls[0][0])
+    expect(line).not.toContain('76561198000000000')
+    expect(line).not.toContain('76561198000000001')
+    expect(line).not.toContain('SECRET')
+    expect(line).not.toContain('ABC123')
+    expect(line).not.toContain('"stack"')
+    expect((lines()[0].message as string).length).toBeLessThanOrEqual(200)
+  })
+
+  test('доп. поля не перетирают событие и место', () => {
+    logSwallowed('news:feed', new Error('b'), { event: 'подделка', where: 'чужое', appid: 730 })
+    expect(lines()[0]).toMatchObject({ event: 'swallowed', where: 'news:feed', appid: 730 })
+  })
+
+  /*
+   * Лежащий Steam — это один и тот же сбой от каждого посетителя. Лог на
+   * Hobby не резиновый, а тысяча одинаковых строк не читается.
+   */
+  test('одно место — не чаще раза в минуту, а промолчавшие считаются', () => {
+    const t0 = 1_000_000
+    expect(logSwallowed('sessions:lookup', new Error('a'), undefined, t0)).toBe(true)
+    expect(logSwallowed('sessions:lookup', new Error('b'), undefined, t0 + 1000)).toBe(false)
+    expect(logSwallowed('sessions:lookup', new Error('c'), undefined, t0 + 59_000)).toBe(false)
+    // другое место прореживается отдельно
+    expect(logSwallowed('deals:refresh', new Error('d'), undefined, t0 + 2000)).toBe(true)
+    expect(logSwallowed('sessions:lookup', new Error('e'), undefined, t0 + SWALLOW_WINDOW_MS)).toBe(true)
+    expect(lines().map((l) => [l.where, l.message, l.repeats])).toEqual([
+      ['sessions:lookup', 'a', undefined],
+      ['deals:refresh', 'd', undefined],
+      ['sessions:lookup', 'e', 2],
+    ])
+  })
+
+  test('логгер внутри catch не бросает никогда', () => {
+    /*
+     * Исключение отсюда превратило бы аккуратный фолбэк в 500 — ровно то,
+     * от чего catch и спасал.
+     */
+    warn.mockImplementation(() => {
+      throw new Error('stderr закрыт')
+    })
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    expect(() => logSwallowed('catalog:ensure-meta', cyclic)).not.toThrow()
+    expect(() => logSwallowed('catalog:most-played', undefined)).not.toThrow()
+    expect(formatSwallowed('x', cyclic).message).toBe('[object Object]')
+  })
+})
+
+/**
+ * Сторож мест.
+ *
+ * where — ключ прореживания. Два разных catch с одним и тем же where делили
+ * бы одну минуту на двоих, и второй сбой молчал бы за первым; по строке лога
+ * их было бы и не различить. Плюс места, где сбой раньше глотался молча:
+ * если catch там снова станет немым, сторож это заметит.
+ */
+describe('места logSwallowed', () => {
+  const ROOT = path.join(__dirname, '..')
+  const calls: Array<{ file: string; where: string }> = []
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`
+      if (e.isDirectory()) walk(rel)
+      else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && rel !== 'lib/errlog.ts') {
+        const src = fs.readFileSync(path.join(ROOT, rel), 'utf8')
+        for (const m of src.matchAll(/logSwallowed\(\s*['`]([^'`]+)['`]/g)) {
+          calls.push({ file: rel, where: m[1] })
+        }
+      }
+    }
+  }
+  for (const dir of ['app', 'lib', 'components']) walk(dir)
+
+  test('у каждого места своё имя', () => {
+    expect(calls.length, 'вызовы logSwallowed не найдены — сторож ослеп').toBeGreaterThan(10)
+    const seen = new Map<string, string>()
+    const dup: string[] = []
+    for (const c of calls) {
+      const prev = seen.get(c.where)
+      if (prev) dup.push(`${c.where}: ${prev} и ${c.file}`)
+      seen.set(c.where, c.file)
+    }
+    expect(dup, 'одно where на два места — они делят прореживание и неразличимы в логе').toEqual([])
+    for (const c of calls) expect(c.where, c.file).toMatch(/^[a-z/-]+:[a-z${}-]+$/)
+  })
+
+  test('сбои Steam и базы, которые раньше глотались молча, оставляют строку', () => {
+    const files = new Set(calls.map((c) => c.file))
+    for (const f of [
+      'app/api/auth/steam/return/route.ts',
+      'app/api/connect/route.ts',
+      'app/api/prepare/route.ts',
+      'lib/catalog.ts',
+      'lib/deals.ts',
+      'lib/news.ts',
+      'lib/pagejob.ts',
+      'lib/ratelimit.ts',
+      'lib/sessions.ts',
+    ]) {
+      expect(files.has(f), f).toBe(true)
+    }
   })
 })

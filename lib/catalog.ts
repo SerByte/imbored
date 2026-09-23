@@ -1,5 +1,6 @@
 import { parseStoreAssets, type StoreAssets } from './art'
 import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
+import { logSwallowed } from './errlog'
 import { pace } from './pace'
 import type { GameMeta } from './types'
 
@@ -416,7 +417,9 @@ export async function fetchAppDetails(
   if (!res.ok) throw new Error(`appdetails ${appid}: HTTP ${res.status}`)
   try {
     return parseAppDetails(await res.json(), appid)
-  } catch {
+  } catch (err) {
+    // Ответ 200, а тело не разобралось: Steam сменил формат или отдал заглушку
+    logSwallowed('catalog:appdetails-parse', err, { appid })
     return null
   }
 }
@@ -432,7 +435,8 @@ export async function fetchSteamSpyTags(
   if (!res.ok) throw new Error(`steamspy ${appid}: HTTP ${res.status}`)
   try {
     return parseSteamSpyTags(await res.json())
-  } catch {
+  } catch (err) {
+    logSwallowed('catalog:steamspy-parse', err, { appid })
     return {}
   }
 }
@@ -457,7 +461,8 @@ export async function fetchMostPlayed(fetchFn: typeof fetch = fetch): Promise<nu
     )
     if (!res.ok) return []
     return parseMostPlayed(await res.json())
-  } catch {
+  } catch (err) {
+    logSwallowed('catalog:most-played', err)
     return []
   }
 }
@@ -477,7 +482,8 @@ export async function fetchSteamSpyTop(
     return Object.values(json)
       .filter((g) => g && typeof g.appid === 'number' && typeof g.name === 'string')
       .map((g) => ({ appid: g.appid as number, name: g.name as string }))
-  } catch {
+  } catch (err) {
+    logSwallowed('catalog:steamspy-top', err)
     return []
   }
 }
@@ -534,9 +540,12 @@ export async function ensureMeta(
 
     await upsertGamesMeta(db, rows, now)
     return true
-  } catch {
+  } catch (err) {
     // сеть/лимиты: пропускаем без записи — updated_at не двигается,
-    // игры останутся «протухшими» и догрузятся в следующий раз
+    // игры останутся «протухшими» и догрузятся в следующий раз. Но строку
+    // оставляем: прогрев отдаёт по этому stalled, и без неё «Steam ответил
+    // 429» не отличить от «база не приняла запись».
+    logSwallowed('catalog:ensure-meta', err, { batch: stale.length })
     return false
   }
 }

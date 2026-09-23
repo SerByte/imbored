@@ -1,4 +1,5 @@
 import type { Db } from './db'
+import { logSwallowed } from './errlog'
 
 /**
  * Ограничение частоты для дорогих ручек.
@@ -102,7 +103,10 @@ export async function checkRate(db: Db, o: RateOptions): Promise<RateVerdict> {
     })
     const count = Number(res.rows[0]?.count ?? 0)
     return count > o.limit ? { ok: false, retryAfterSec } : { ok: true }
-  } catch {
+  } catch (err) {
+    // Ворота открыты, и это решение — но не тайна: пока база лежит, защита
+    // от чужого счёта за Steam и Claude держится на одном префильтре в памяти
+    logSwallowed('ratelimit:check', err, { bucket: o.bucket })
     return { ok: true }
   }
 }
@@ -115,7 +119,8 @@ export async function rateUsage(db: Db, o: RateOptions): Promise<number> {
       args: [keyFor(o)],
     })
     return Number(res.rows[0]?.count ?? 0)
-  } catch {
+  } catch (err) {
+    logSwallowed('ratelimit:usage', err, { bucket: o.bucket })
     return 0
   }
 }
@@ -124,7 +129,8 @@ export async function rateUsage(db: Db, o: RateOptions): Promise<number> {
 export async function sweepRateLimits(db: Db, nowSec: number): Promise<void> {
   try {
     await db.execute({ sql: 'DELETE FROM rate_limits WHERE expires_at < ?', args: [nowSec] })
-  } catch {
+  } catch (err) {
+    logSwallowed('ratelimit:sweep', err)
     // Мусор в таблице лимитов ничего не ломает: ключи содержат номер окна,
     // поэтому старые строки не влияют на счёт, а лишь занимают место.
   }

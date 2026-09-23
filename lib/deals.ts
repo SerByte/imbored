@@ -1,6 +1,7 @@
 import { after } from 'next/server'
 import { STORE_ITEMS_BATCH, callStoreItems, parsePurchaseOption, type PurchaseOption } from './catalog'
 import { stalePriceAppids, updateGamePrices, type Db, type PriceQuote } from './db'
+import { logSwallowed } from './errlog'
 
 /**
  * Свежие цены и скидки.
@@ -117,7 +118,8 @@ export async function refreshDeals(
     const quotes = await fetchStorePrices(stale, ...(fetchFn ? [{ fetchFn }] : []))
     await updateGamePrices(db, quotes, nowSec)
     return quotes.length
-  } catch {
+  } catch (err) {
+    logSwallowed('deals:refresh', err, { batch: stale.length })
     // Осечка ничего не записывает, а значит те же игры останутся «протухшими»
     // и следующий заход пойдёт за ними снова. При обычном сбое это правильно,
     // при 429 — способ долбить Steam ровно с той же частотой, с какой к нам

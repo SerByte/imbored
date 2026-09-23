@@ -26,6 +26,7 @@ import {
   upsertGameMeta,
   type Db,
 } from './db'
+import { logSwallowed } from './errlog'
 import { claudeProsCons, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { fetchReviews, heuristicProsCons, type ParsedReviews, type ProsCons } from './reviews'
 
@@ -193,7 +194,8 @@ export async function runPageSlice(
     // ответ пришёл, но игры в нём нет. Останавливать срез стоит только за
     // первое: второе — про игру, а не про наш IP.
     let sawDetailsFailure = false
-    const fresh = await details(appid).catch(() => {
+    const fresh = await details(appid).catch((err: unknown) => {
+      logSwallowed('pagejob:appdetails', err, { appid })
       sawNetworkFailure = true
       sawDetailsFailure = true
       return null
@@ -227,7 +229,8 @@ export async function runPageSlice(
     }
 
     // ---- отзывы, вердикт и pros/cons ----
-    const parsed: ParsedReviews | null = await reviewsOf(appid).catch(() => {
+    const parsed: ParsedReviews | null = await reviewsOf(appid).catch((err: unknown) => {
+      logSwallowed('pagejob:reviews', err, { appid })
       sawNetworkFailure = true
       return null
     })
@@ -295,6 +298,8 @@ export async function runPageSlice(
           // про эту игру. Дальше в этом срезе модель не зовём, но работу не
           // бросаем: эвристика уже посчитана и карточка будет наполнена.
           if (e instanceof LlmUnavailableError) {
+            // onProgress слышит только ручной прогон; в кроне это единственный след
+            logSwallowed('pagejob:pros-cons', e)
             claudeDown = true
             log(`  pros/cons недоступны (${e.status ?? '—'}), дальше только эвристика`)
           } else {

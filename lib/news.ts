@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto'
 import { STORE_PACE_MS } from './catalog'
+import { logSwallowed } from './errlog'
 import { pace } from './pace'
 import { blocksToText, decodeEntities, parseSteamHtml, type NewsBlock } from './steamhtml'
 
@@ -176,7 +177,8 @@ export async function fetchGameNews(
     })
     if (!res.ok) return null
     return parseNewsRss(await res.text(), appid, nowSec)
-  } catch {
+  } catch (err) {
+    logSwallowed('news:feed', err, { appid })
     return null
   }
 }

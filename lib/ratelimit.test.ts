@@ -1,5 +1,6 @@
-import { beforeEach, expect, test } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { createDb } from './db'
+import { resetSwallowed } from './errlog'
 import {
   checkRate,
   clientIp,
@@ -70,6 +71,22 @@ test('fail open: недоступная база пропускает, а не �
     execute: () => Promise.reject(new Error('turso down')),
   } as unknown as Awaited<ReturnType<typeof freshDb>>
   expect((await checkRate(broken, base)).ok).toBe(true)
+})
+
+test('открытые ворота оставляют строку лога: иначе защита выключается молча', async () => {
+  // Пока база лежит, от чужого счёта за Steam и Claude спасает только
+  // префильтр в памяти. Владелец должен узнать об этом из лога, а не из счёта.
+  resetSwallowed()
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const broken = {
+    execute: () => Promise.reject(new Error('turso down')),
+  } as unknown as Awaited<ReturnType<typeof freshDb>>
+  await checkRate(broken, base)
+  await rateUsage(broken, base)
+  await sweepRateLimits(broken, NOW)
+  const where = warn.mock.calls.map((c) => JSON.parse(String(c[0])).where)
+  warn.mockRestore()
+  expect(where).toEqual(['ratelimit:check', 'ratelimit:usage', 'ratelimit:sweep'])
 })
 
 test('префильтр отсекает флуд по одному ключу, не сходив в базу', async () => {

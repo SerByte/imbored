@@ -392,6 +392,33 @@ curl -sI "https://imbored.cc/portrait/<твой steamid>/card.png" | grep -i x-r
 
 ---
 
+## 6.10. Логи ошибок: что искать (делаешь ты, когда что-то не так)
+
+Отдельного хранилища ошибок нет — всё в Vercel → Logs, одной строкой JSON на
+событие. Ищи по полю `event`:
+
+- `"event":"server-error"` — исключение долетело до Next (`instrumentation.ts`).
+  `digest` — тот же код, что человек видит на экране ошибки: жалоба «показало
+  код a1b2c3» ищется по `a1b2c3`. `path` и `referer` — под масками
+  (`/compat/:steamid`, `/room/:id`), строки запроса нет.
+- `"event":"swallowed"` — сбой, который код поймал сам и отдал человеку фолбэк
+  (`logSwallowed` в `lib/errlog.ts`). Поле `where` — место, `status` — ответ
+  чужого сервиса, `code` — код ошибки сети или базы, `repeats` — сколько таких
+  же промолчали с прошлой строки (одно место пишет не чаще раза в минуту).
+
+Как читать `where`:
+
+| `where` | что значит |
+| --- | --- |
+| `auth/return:steam`, `connect:steam` | Steam Web API не отдал библиотеку. `status: 403` — ключ отозван или неверен (Steam → Web API Key), `429`/`5xx` — лимит или обслуживание (по вторникам) |
+| `auth/return:openid` | steamcommunity.com не ответил на проверку входа — человек видит «Steam сейчас не отвечает» |
+| `auth/return:db`, `connect:db` | Steam ответил, а база не приняла запись. `code: BLOCKED` или ошибки квоты — Turso → Usage |
+| `ratelimit:check`, `sessions:lookup` | база недоступна, и лимиты с отзывом сессий работают вслепую (fail-open). Разовая строка — моргание, строки подряд с `repeats` — чинить |
+| `catalog:ensure-meta`, `deals:refresh` | прогрев или цены не получили ответ Steam; `status: 429` — нас ограничивают |
+| `pagejob:*`, `news:feed` | кроны карточек и новостей; `pagejob:pros-cons` — модель недоступна (баланс, ключ) |
+
+---
+
 ## 7. Проверка после деплоя (делаем вместе)
 
 По порядку на живом `https://imbored.cc`:

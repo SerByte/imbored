@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from 'vitest'
 import { NextRequest } from 'next/server'
 import { GET as startLogin } from '../app/api/auth/steam/route'
 import { GET as steamReturn } from '../app/api/auth/steam/return/route'
+import { upsertUser } from './db'
+import { resetSwallowed } from './errlog'
 import { checkRate } from './ratelimit'
 
 /**
@@ -41,17 +43,21 @@ let ownedStatus = 200
 /** Сколько первых ответов GetOwnedGames будут 503 — разовый сбой Steam. */
 let ownedHiccups = 0
 let owned: unknown = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
+/** steamcommunity.com не отвечает вовсе: check_authentication бросает, а не отказывает. */
+let openidDown = false
 
 beforeEach(() => {
   process.env = { ...ENV, APP_BASE_URL: BASE, STEAM_API_KEY: 'k' }
   asked = []
   ownedStatus = 200
   ownedHiccups = 0
+  openidDown = false
   owned = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
   vi.stubGlobal('fetch', async (input: string | URL) => {
     const url = String(input)
     asked.push(url)
     if (url.startsWith('https://steamcommunity.com/openid/login')) {
+      if (openidDown) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
       return new Response('ns:http://specs.openid.net/auth/2.0\nis_valid:true\n')
     }
     if (url.includes('GetPlayerSummaries')) {
@@ -269,5 +275,83 @@ describe('отказ входа помнит пати и ?next', () => {
     const { returnTo, cookie } = await start('?next=%2Fdaily')
     const res = await fromSteam(returnTo, cookie?.value ?? '')
     expect(res.headers.get('location')).toBe(`${BASE}/daily`)
+  })
+})
+
+/**
+ * Проглоченное — не значит невидимое.
+ *
+ * Все отказы ниже человек видит как ?error=steam, и для него это правильно.
+ * Но onRequestError их не видит: исключение поймано и превращено в
+ * редирект. Отозванный ключ Steam API, лежащий OpenID и кончившаяся квота
+ * Turso выглядели в Runtime Logs одинаково — никак.
+ */
+describe('сбой на входе оставляет строку лога', () => {
+  async function settle<T>(res: Promise<T>): Promise<T> {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    await vi.advanceTimersByTimeAsync(10_000)
+    return res
+  }
+  const landing = (res: Response) => new URL(res.headers.get('location') ?? '')
+  let warn: MockInstance<typeof console.warn>
+  beforeEach(() => {
+    resetSwallowed()
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+  afterEach(() => warn.mockRestore())
+  const logged = () =>
+    warn.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
+
+  test('Steam Web API отказал — место steam и статус ответа', async () => {
+    ownedStatus = 403
+    const { returnTo, cookie } = await start('?join=ABC123')
+    const res = await settle(fromSteam(returnTo, cookie?.value ?? ''))
+    expect(landing(res).searchParams.get('error')).toBe('steam')
+    expect(logged()).toEqual([
+      expect.objectContaining({ event: 'swallowed', where: 'auth/return:steam', status: 403 }),
+    ])
+    // ни steamid, ни ключа, ни кода пати в строке нет
+    const line = String(warn.mock.calls[0][0])
+    expect(line).not.toContain(STEAMID)
+    expect(line).not.toContain('ABC123')
+    expect(line).not.toContain('key=')
+  })
+
+  test('база не приняла запись — место db, а не steam', async () => {
+    vi.mocked(upsertUser).mockRejectedValueOnce(
+      Object.assign(new Error('Operation was blocked'), { code: 'BLOCKED' }),
+    )
+    const { returnTo, cookie } = await start('')
+    const res = await fromSteam(returnTo, cookie?.value ?? '')
+    expect(landing(res).searchParams.get('error')).toBe('steam')
+    expect(logged()).toEqual([
+      expect.objectContaining({ where: 'auth/return:db', code: 'BLOCKED' }),
+    ])
+    expect(res.cookies.get('imbored_session')).toBeUndefined()
+  })
+
+  /*
+   * Раньше бросок check_authentication кончался ?error=auth — «Steam не
+   * подтвердил вход», то есть недоступный Steam выглядел подделкой.
+   */
+  test('OpenID не отвечает — error=steam, а не auth, и место openid', async () => {
+    openidDown = true
+    const { returnTo, cookie } = await start('?next=%2Fdaily')
+    const res = await fromSteam(returnTo, cookie?.value ?? '')
+    expect(landing(res).searchParams.get('error')).toBe('steam')
+    expect(landing(res).searchParams.get('next')).toBe('/daily')
+    expect(logged()).toEqual([
+      expect.objectContaining({ where: 'auth/return:openid', name: 'TimeoutError' }),
+    ])
+    expect(asked.some((u) => u.includes('GetOwnedGames'))).toBe(false)
+  })
+
+  test('подделка по-прежнему error=auth и в лог не пишется: это не сбой', async () => {
+    const { returnTo, cookie } = await start('')
+    const res = await fromSteam(returnTo, cookie?.value ?? '', {
+      'openid.return_to': returnTo.replace(BASE, 'https://other-site.example'),
+    })
+    expect(landing(res).searchParams.get('error')).toBe('auth')
+    expect(warn).not.toHaveBeenCalled()
   })
 })

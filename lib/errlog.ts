@@ -56,8 +56,12 @@ export type ServerErrorLog = {
 /**
  * steamid64 — ровно 17 цифр. Границы — «не цифра», а не \b: в адресе
  * steamid стоит и после «/», и после «=», и после буквы (id7656…).
+ *
+ * Левая граница — захватом, а не lookbehind: модуль едет и в браузер
+ * (instrumentation-client.ts), а регулярка, которую движок не понял, роняет
+ * весь модуль ещё на разборе — вместе с отчётом об ошибках.
  */
-const STEAMID_RE = /(?<!\d)\d{17}(?!\d)/g
+const STEAMID_RE = /(^|\D)\d{17}(?!\d)/g
 
 /**
  * Сегмент после /room/ — код пати, а код пати — это доступ: по нему входят в
@@ -75,7 +79,46 @@ const ROOM_RE = /\/room\/(?!(?:new|create)(?:[/?#]|$))[^/?#]+/g
  * приватности обещает одно и то же про оба лога.
  */
 export function maskPath(raw: string): string {
-  return raw.split(/[?#]/)[0].replace(STEAMID_RE, ':steamid').replace(ROOM_RE, '/room/:id')
+  return raw.split(/[?#]/)[0].replace(STEAMID_RE, '$1:steamid').replace(ROOM_RE, '/room/:id')
+}
+
+/**
+ * Адрес целиком внутри текста: схема, хост, путь — до строки запроса.
+ * Строка запроса нужна отдельно, потому что срезается она, а не адрес.
+ */
+const URL_QUERY_RE = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#"'<>]*)[?#][^\s"'<>]*/gi
+
+/**
+ * У относительного адреса («/compat/…?join=…») схемы нет, и правило выше его
+ * не видит. Здесь — значения тех параметров, что несут доступ или личность:
+ * код пати, чужой steamid, ключи и токены.
+ */
+const SECRET_PARAM_RE = /\b(join|compat|key|token|authToken|access_token)=[^&\s"'<>#]+/gi
+
+/**
+ * Текст ошибки, который можно положить в лог.
+ *
+ * Сообщения пишет не только наш код, но и fetch, libsql, Next. В них бывает
+ * полный адрес запроса — а у Steam Web API в строке запроса лежит наш ключ,
+ * у страниц сайта — ?compat= и ?join=. Поэтому у любого адреса в тексте
+ * срезается строка запроса, а steamid и коды пати уходят под те же маски,
+ * что в пути.
+ */
+export function scrubText(raw: string): string {
+  return raw
+    .replace(URL_QUERY_RE, '$1')
+    .replace(SECRET_PARAM_RE, '$1=…')
+    .replace(STEAMID_RE, '$1:steamid')
+    .replace(ROOM_RE, '/room/:id')
+}
+
+/** JSON.stringify, который не бросает: цикл в объекте не должен уронить логгер. */
+function stringifySafe(v: unknown): string {
+  try {
+    return JSON.stringify(v) ?? String(v)
+  } catch {
+    return Object.prototype.toString.call(v)
+  }
 }
 
 /**
@@ -129,20 +172,22 @@ function describe(err: unknown): Pick<ServerErrorLog, 'message' | 'digest' | 'na
     // расширенный тип один раз, а не приводим на месте использования.
     const digest = (err as Error & { digest?: unknown }).digest
     return {
-      message: err.message || err.name,
+      message: scrubText(err.message || err.name),
       name: err.name,
       ...(typeof digest === 'string' ? { digest } : {}),
-      ...(err.stack ? { stack: err.stack.split('\n').slice(0, STACK_LINES).join('\n') } : {}),
+      ...(err.stack
+        ? { stack: scrubText(err.stack.split('\n').slice(0, STACK_LINES).join('\n')) }
+        : {}),
     }
   }
   if (err && typeof err === 'object') {
     const o = err as Record<string, unknown>
     return {
-      message: typeof o.message === 'string' ? o.message : JSON.stringify(err).slice(0, 300),
+      message: scrubText(typeof o.message === 'string' ? o.message : stringifySafe(err).slice(0, 300)),
       ...(typeof o.digest === 'string' ? { digest: o.digest } : {}),
     }
   }
-  return { message: String(err) }
+  return { message: scrubText(String(err)) }
 }
 
 export function formatServerError(
@@ -181,5 +226,133 @@ export function serverErrorLine(log: ServerErrorLog): string {
     return JSON.stringify(log)
   } catch {
     return JSON.stringify({ event: 'server-error', message: String(log.message ?? 'unserializable') })
+  }
+}
+
+/*
+ * ---- Проглоченные сбои ----
+ *
+ * onRequestError видит только то, что долетело до Next. А самые важные сбои
+ * до него не долетают: их ловят намеренно, чтобы отдать фолбэк. Вход через
+ * Steam отдаёт ?error=steam, лимитер при сбое базы открывает ворота, отзыв
+ * сессий молча не работает, прогрев отдаёт stalled. Для человека это
+ * правильно, для владельца — тишина: отозванный ключ Steam API и кончившаяся
+ * квота Turso выглядели в Runtime Logs одинаково — никак.
+ *
+ * Поэтому каждый такой catch оставляет одну строку. Без стека (место —
+ * причине, а не кадрам), без steamid и строки запроса (scrubText), и не чаще
+ * раза в минуту на каждое место: при лежащем Steam один и тот же сбой идёт
+ * от каждого посетителя, а лог на Hobby не резиновый. Сколько раз за минуту
+ * промолчали — пишет поле repeats следующей строки.
+ */
+
+export type SwallowedLog = {
+  event: 'swallowed'
+  /** Место в коде: 'auth/return:steam', 'ratelimit:check'. Набор конечный — это ключ прореживания. */
+  where: string
+  name?: string
+  message: string
+  /** HTTP-статус, если сбой — чужой ответ: 403 у Steam значит одно, 429 — другое */
+  status?: number
+  /** Код ошибки библиотеки: ECONNRESET, SQLITE_BUSY, BLOCKED — по нему отличают сеть от базы */
+  code?: string
+  /** Причина под обёрткой: у fetch сообщение всегда «fetch failed», а суть — здесь */
+  cause?: string
+  /** Сколько таких же сбоев здесь промолчали с прошлой строки */
+  repeats?: number
+} & Record<string, string | number | boolean | undefined>
+
+/** Сообщение — до двухсот символов: причина, а не дамп ответа */
+const SWALLOW_MESSAGE_MAX = 200
+const SWALLOW_EXTRA_MAX = 80
+
+/** Не чаще раза в минуту на место */
+export const SWALLOW_WINDOW_MS = 60_000
+
+const CODE_RE = /^[A-Z][A-Z0-9_]{1,40}$/
+
+function codeOf(v: unknown): string | undefined {
+  const code = (v as { code?: unknown } | null)?.code
+  return typeof code === 'string' && CODE_RE.test(code) ? code : undefined
+}
+
+function statusOf(err: unknown, message: string): number | undefined {
+  const s = (err as { status?: unknown } | null)?.status
+  if (typeof s === 'number' && Number.isInteger(s) && s >= 100 && s < 600) return s
+  // Наши обёртки сети пишут статус в текст: «Steam API …: HTTP 403»
+  const m = /\bHTTP (\d{3})\b/.exec(message)
+  return m ? Number(m[1]) : undefined
+}
+
+export function formatSwallowed(
+  where: string,
+  err: unknown,
+  extra: Record<string, string | number | boolean | undefined> = {},
+): SwallowedLog {
+  const { message, name } = describe(err)
+  const cause = (err as { cause?: unknown } | null)?.cause
+  const causeText =
+    cause instanceof Error
+      ? scrubText(`${cause.name}: ${cause.message}`).slice(0, SWALLOW_EXTRA_MAX * 2)
+      : undefined
+  const status = statusOf(err, message)
+  const code = codeOf(err) ?? codeOf(cause)
+
+  // Доп. поля пишет наш код, но строки всё равно через маски: туда легко
+  // положить адрес «для контекста» и забыть, что в нём ?compat=.
+  const safeExtra: Record<string, string | number | boolean> = {}
+  for (const [k, v] of Object.entries(extra)) {
+    if (v === undefined) continue
+    safeExtra[k] = typeof v === 'string' ? scrubText(v).slice(0, SWALLOW_EXTRA_MAX) : v
+  }
+
+  return {
+    ...safeExtra,
+    event: 'swallowed',
+    where,
+    ...(name ? { name } : {}),
+    message: message.slice(0, SWALLOW_MESSAGE_MAX),
+    ...(status !== undefined ? { status } : {}),
+    ...(code ? { code } : {}),
+    ...(causeText ? { cause: causeText } : {}),
+  }
+}
+
+/** Когда место писало в последний раз и сколько с тех пор промолчало */
+const swallowed = new Map<string, { at: number; quiet: number }>()
+
+/** Только для тестов: прореживание живёт на модуле и иначе течёт между случаями */
+export function resetSwallowed(): void {
+  swallowed.clear()
+}
+
+/**
+ * Записать проглоченный сбой. Возвращает, ушла ли строка в лог.
+ *
+ * console.warn, а не error: запрос при этом обслужен, фолбэком. Одна строка
+ * JSON — по "event":"swallowed" и полю where она ищется в Runtime Logs.
+ *
+ * Сам логгер не бросает никогда: он стоит внутри catch, и исключение отсюда
+ * превратило бы аккуратный фолбэк в 500.
+ */
+export function logSwallowed(
+  where: string,
+  err: unknown,
+  extra?: Record<string, string | number | boolean | undefined>,
+  nowMs: number = Date.now(),
+): boolean {
+  try {
+    const seen = swallowed.get(where)
+    if (seen && nowMs - seen.at < SWALLOW_WINDOW_MS) {
+      seen.quiet++
+      return false
+    }
+    const log = formatSwallowed(where, err, extra)
+    if (seen?.quiet) log.repeats = seen.quiet
+    swallowed.set(where, { at: nowMs, quiet: 0 })
+    console.warn(stringifySafe(log))
+    return true
+  } catch {
+    return false
   }
 }

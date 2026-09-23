@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
+import { logSwallowed } from '@/lib/errlog'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import {
   OIDC_COOKIE,
@@ -73,24 +74,45 @@ export async function GET(req: NextRequest) {
   })
   if (!gate.ok) return fail('ratelimited')
 
-  const steamid = await verifyAssertion(params, `${base}${RETURN_PATH}`).catch(() => null)
+  /*
+   * Бросок и отказ — разные вещи. null значит «Steam ассерт не подтвердил»,
+   * а бросок — что до Steam не достучались (таймаут, сеть). Раньше оба
+   * кончались ?error=auth: недоступный OpenID выглядел подделкой, и человеку
+   * советовали попробовать ещё раз, когда стоило подождать.
+   */
+  const steamid = await verifyAssertion(params, `${base}${RETURN_PATH}`).catch((err: unknown) => {
+    logSwallowed('auth/return:openid', err)
+    return 'down' as const
+  })
+  if (steamid === 'down') return fail('steam')
   if (!steamid) return fail('auth')
 
   const key = steamApiKey()
   if (!key) return fail('nokey')
 
+  /*
+   * Какой шаг упал — Steam или своя база. Человеку по-прежнему ?error=steam,
+   * а в лог — разные места: отозванный ключ Steam API и кончившаяся квота
+   * Turso иначе выглядят одинаково.
+   */
+  let stage: 'steam' | 'db' = 'steam'
   try {
-    const db = await getDb()
     const now = nowSec()
     // Параллельно: запросы друг от друга не зависят, а человек ждёт на белом
     // экране возврата — с повтором на сбой Steam каждая секунда на счету.
     const [summary, games] = await Promise.all([
-      fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null),
+      // Без имени и аватара вход всё равно состоится, но молча терять их не будем
+      fetchPlayerSummary(steamid, { apiKey: key }).catch((err: unknown) => {
+        logSwallowed('auth/return:summary', err)
+        return null
+      }),
       fetchOwnedGames(steamid, { apiKey: key }),
     ])
     if (games === 'private') return fail('private')
     if (!games.length) return fail('empty')
 
+    stage = 'db'
+    const db = await getDb()
     await upsertUser(
       db,
       {
@@ -114,7 +136,8 @@ export async function GET(req: NextRequest) {
       sessionCookieOptions(),
     )
     return res
-  } catch {
+  } catch (err) {
+    logSwallowed(`auth/return:${stage}`, err)
     return fail('steam')
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
 import { seedDemo } from '@/lib/demo'
+import { logSwallowed } from '@/lib/errlog'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
   SESSION_COOKIE,
@@ -89,6 +90,8 @@ export async function POST(req: Request) {
   const parsed = parseProfileInput(String(body.input ?? ''))
   if (!parsed) return NextResponse.json({ error: 'badinput' }, { status: 400 })
 
+  // Какой шаг упал — Steam или база: отвечаем одинаково, а в лог пишем разное
+  let stage: 'steam' | 'db' = 'steam'
   try {
     const steamid =
       parsed.kind === 'steamid64' ? parsed.value : await resolveVanity(parsed.value, { apiKey: key })
@@ -96,7 +99,10 @@ export async function POST(req: Request) {
 
     // Параллельно, как на возврате из Steam: запросы друг от друга не зависят.
     const [summary, games] = await Promise.all([
-      fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null),
+      fetchPlayerSummary(steamid, { apiKey: key }).catch((err: unknown) => {
+        logSwallowed('connect:summary', err)
+        return null
+      }),
       fetchOwnedGames(steamid, { apiKey: key }),
     ])
     if (games === 'private') {
@@ -107,6 +113,7 @@ export async function POST(req: Request) {
     }
     if (!games.length) return NextResponse.json({ error: 'empty' }, { status: 404 })
 
+    stage = 'db'
     await upsertUser(
       db,
       {
@@ -130,7 +137,8 @@ export async function POST(req: Request) {
       steamid,
       userAgent,
     )
-  } catch {
+  } catch (err) {
+    logSwallowed(`connect:${stage}`, err)
     return NextResponse.json({ error: 'steam' }, { status: 502 })
   }
 }

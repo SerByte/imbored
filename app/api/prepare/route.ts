@@ -2,6 +2,7 @@ import { after, NextResponse } from 'next/server'
 import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
 import { sliceDeadline } from '@/lib/cron'
 import { refreshDeals } from '@/lib/deals'
+import { logSwallowed } from '@/lib/errlog'
 import { pollPlayerCounts } from '@/lib/ingest'
 import {
   getGamesMetaLite,
@@ -160,13 +161,18 @@ export async function POST() {
    * пятёрки выдача освежает сама (refreshDealsWithin в /api/recommend).
    */
   if (!remaining) {
-    const work = refreshAfterWarm(db, wanted, sliceDeadline(startedAt, maxDuration))
+    // Отказ ловится здесь, а не в after: ответ уже ушёл, и без этой строки
+    // сбой онлайна и цен не оставил бы следа ни в ответе, ни в логе
+    const work = refreshAfterWarm(db, wanted, sliceDeadline(startedAt, maxDuration)).catch(
+      (err: unknown) => {
+        logSwallowed('prepare:after-warm', err)
+      },
+    )
     try {
       after(work)
     } catch {
       // Вне запроса (тест, скрипт) after недоступен: работа идёт и так, а
-      // её отказ не должен стать необработанным.
-      work.catch(() => undefined)
+      // отказ уже пойман выше.
     }
   }
 
@@ -210,7 +216,10 @@ async function refreshLibrary(
   // Любая осечка — оставляем старый снапшот. Пустая или приватная выдача тоже
   // считается осечкой: обнулить человеку библиотеку из-за глюка Steam хуже,
   // чем показать вчерашние часы.
-  const fresh = await fetchOwnedGames(steamid, { apiKey: key }).catch(() => null)
+  const fresh = await fetchOwnedGames(steamid, { apiKey: key }).catch((err: unknown) => {
+    logSwallowed('prepare:library-refresh', err)
+    return null
+  })
   if (!fresh || fresh === 'private' || !fresh.length) return snapshot.games
 
   await saveLibrarySnapshot(db, steamid, fresh, now)

@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SessionRow } from './db'
+import { resetSwallowed } from './errlog'
 import { signSessionV2, verifySessionV2 } from './session'
 import {
   SESSION_TOUCH_AFTER_SEC,
@@ -110,14 +111,22 @@ describe('resolveSession', () => {
     expect(r?.steamid).toBe(STEAMID)
   })
 
-  test('база упала — вход остаётся в силе (fail-open)', async () => {
+  test('база упала — вход остаётся в силе (fail-open), а в логе остаётся строка', async () => {
+    // Пока база лежит, отзыв сессий не работает. Молча — нельзя.
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const r = await resolveSession({
       token: tokenAt(NOW),
       secret: SECRET,
       nowSec: NOW,
       lookup: lookupThrows,
     })
+    const lines = warn.mock.calls.map((c) => JSON.parse(String(c[0])))
+    warn.mockRestore()
     expect(r?.steamid).toBe(STEAMID)
+    expect(lines).toEqual([
+      expect.objectContaining({ event: 'swallowed', where: 'sessions:lookup', message: 'turso прилегла' }),
+    ])
   })
 
   test('«выйти везде» гасит токены, выданные до отсечки, и не трогает выданные после', async () => {

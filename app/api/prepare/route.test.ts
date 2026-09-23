@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { getGamesMeta, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
+import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
 import { freshDb, signIn } from '@/lib/testing/route'
 import { POST } from './route'
@@ -68,6 +69,18 @@ describe('/api/prepare: stalled', () => {
     const body = (await res.json()) as { remaining: number; stalled: boolean }
     expect(body.remaining).toBeGreaterThan(0)
     expect(body.stalled).toBe(true)
+  })
+
+  test('stalled оставляет в логе причину: 429 от Steam не спутать со сбоем базы', async () => {
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', steamLimited)
+    await POST()
+    const lines = warn.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
+    warn.mockRestore()
+    expect(lines).toContainEqual(
+      expect.objectContaining({ event: 'swallowed', where: 'catalog:ensure-meta', status: 429 }),
+    )
   })
 
   test('Steam отвечает — работа движется и stalled: false', async () => {
