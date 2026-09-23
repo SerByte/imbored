@@ -26,7 +26,7 @@ import {
   type Db,
 } from './db'
 import { claudeProsCons, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
-import { fetchReviews, heuristicProsCons, type ParsedReviews } from './reviews'
+import { fetchReviews, heuristicProsCons, type ParsedReviews, type ProsCons } from './reviews'
 
 /** Раз в полгода карточку стоит перечитать: отзывы и цена уезжают. */
 export const PAGE_MAX_AGE_SEC = 180 * 86_400
@@ -44,6 +44,19 @@ export const PAGE_MAX_TRIES = 4
 
 /** Сколько цитат берём в эвристический фолбэк. */
 const PROS_CONS_COUNT = 4
+
+/**
+ * Сколько отзывов с хотя бы одним «полезно» нужно, чтобы звать модель.
+ *
+ * Pros/cons уходят на публичную /game/[appid], которая лежит в карте сайта, а
+ * собираются из текста посторонних людей. У малоизвестной игры в выборку
+ * попадает любой отзыв — в том числе написанный под модель: реклама, домен,
+ * «игнорируй инструкции». Отметка «полезно» от другого игрока — дешёвый, но
+ * настоящий фильтр: такой отзыв хоть кто-то прочёл и не счёл мусором. Если
+ * таких меньше пяти, повторяющегося в отзывах просто нет — модели не из чего
+ * выделять «то, что реально повторяется», и её не зовём вовсе.
+ */
+export const PROS_CONS_MIN_REVIEWS = 5
 
 /**
  * Подряд идущие отказы на РАЗНЫХ играх означают, что Steam закрылся от нашего
@@ -187,8 +200,29 @@ export async function runPageSlice(
       // содержание даже если модели нет, а Claude потом только улучшает —
       // тот же порядок, что у масштаба патчей в runNewsSlice.
       const h = heuristicProsCons(parsed.reviews, PROS_CONS_COUNT)
-      let prosCons: { pros: string[]; cons: string[]; source: 'claude' | 'reviews' } | null =
-        h.pros.length || h.cons.length ? { ...h, source: 'reviews' } : null
+      // В модель — только отзывы, которые кто-то отметил полезными: см.
+      // PROS_CONS_MIN_REVIEWS
+      const useful = parsed.reviews.filter((r) => r.votesUp >= 1)
+      /*
+       * Мало полезных отзывов — модель не зовём, и маркер у эвристики другой.
+       *
+       * 'reviews' значит «собрано без модели, пересобрать, когда она будет»:
+       * по нему claimPageEnrichBatch возвращает карточку в очередь на каждом
+       * прогоне. Здесь пересобирать нечем — модель не позовём и в следующий
+       * раз, — и с тем же маркером карточка крутилась бы в очереди вечно, по
+       * два запроса в Steam за круг. 'thin' очередь не трогает: карточка
+       * дождётся общего срока устаревания, а там, глядишь, отзывов прибавится.
+       * На странице не показывается ни то ни другое (lib/gamepage.ts).
+       *
+       * Пишется и с пустыми списками: иначе старый маркер 'reviews' от
+       * прошлого прогона остался бы на месте и держал ту же петлю.
+       */
+      const thin = useful.length < PROS_CONS_MIN_REVIEWS
+      let prosCons: ProsCons | null = thin
+        ? { ...h, source: 'thin' }
+        : h.pros.length || h.cons.length
+          ? { ...h, source: 'reviews' }
+          : null
 
       /*
        * Остаток бюджета — внутрь вызова, а не только на вход в карточку.
@@ -205,9 +239,9 @@ export async function runPageSlice(
        * source === 'reviews'.
        */
       const бюджет = opts.deadlineAt - Date.now()
-      if (useClaude && !claudeDown && parsed.reviews.length && бюджет >= LLM_MIN_BUDGET_MS) {
+      if (useClaude && !claudeDown && !thin && бюджет >= LLM_MIN_BUDGET_MS) {
         try {
-          const fromClaude = await prosConsOf(fresh?.name ?? `Игра ${appid}`, parsed.reviews, бюджет)
+          const fromClaude = await prosConsOf(fresh?.name ?? `Игра ${appid}`, useful, бюджет)
           if (fromClaude && (fromClaude.pros.length || fromClaude.cons.length)) {
             prosCons = { ...fromClaude, source: 'claude' }
             viaClaude++
@@ -227,7 +261,7 @@ export async function runPageSlice(
 
       if (prosCons) {
         await setGameJson(db, appid, 'pros_cons_json', prosCons)
-        withProsCons++
+        if (prosCons.pros.length || prosCons.cons.length) withProsCons++
       }
     } else if (sawNetworkFailure) {
       blockedRun++

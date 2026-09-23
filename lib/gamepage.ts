@@ -6,6 +6,7 @@ import {
   type FeedItem,
   type SimilarGame,
 } from './db'
+import type { ProsCons } from './reviews'
 import { getDb } from './server'
 import type { GameMeta } from './types'
 
@@ -16,7 +17,7 @@ export type GamePageData = {
     totalPositive: number
     totalNegative: number
   } | null
-  prosCons: { pros: string[]; cons: string[]; source: 'claude' | 'reviews' } | null
+  prosCons: ProsCons | null
   /** без тел патчей — их отдаёт app/api/news по раскрытию, см. withoutBody */
   news: FeedItem[]
   /** соседи по самому характерному тегу; пусто, если тегов нет */
@@ -162,7 +163,9 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    *
    * В базе эвристику при этом храним: source: 'reviews' и есть тот маркер, по
    * которому карточка вернётся в очередь на пересборку моделью (см.
-   * claimPageEnrichBatch, redoHeuristic).
+   * claimPageEnrichBatch, redoHeuristic). 'thin' — та же эвристика у игры,
+   * где полезных отзывов слишком мало, чтобы звать модель (lib/pagejob.ts);
+   * её не показываем тем более.
    */
   const prosCons = stored?.source === 'claude' ? stored : null
 

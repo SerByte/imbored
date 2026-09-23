@@ -15,6 +15,18 @@ export type ParsedReviews = {
   }>
 }
 
+/**
+ * Что лежит в games.pros_cons_json. source — не украшение, а маркер очереди:
+ *   'claude'  — собрано моделью; ничего другого страница игры не показывает
+ *               (lib/gamepage.ts);
+ *   'reviews' — эвристика без модели: карточка вернётся на пересборку, когда
+ *               модель появится (claimPageEnrichBatch, redoHeuristic);
+ *   'thin'    — полезных отзывов слишком мало, модель не зовём и пересобирать
+ *               нечем: карточка ждёт общего срока устаревания
+ *               (PROS_CONS_MIN_REVIEWS в lib/pagejob.ts).
+ */
+export type ProsCons = { pros: string[]; cons: string[]; source: 'claude' | 'reviews' | 'thin' }
+
 const MIN_PLAYTIME_MIN = 120
 const MAX_REVIEWS = 50
 

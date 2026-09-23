@@ -15,7 +15,13 @@ import {
   type Db,
 } from './db'
 import { LlmUnavailableError } from './llm'
-import { MAX_BLOCKED_RUN, PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from './pagejob'
+import {
+  MAX_BLOCKED_RUN,
+  PAGE_MAX_AGE_SEC,
+  PAGE_MAX_TRIES,
+  PROS_CONS_MIN_REVIEWS,
+  runPageSlice,
+} from './pagejob'
 import type { ParsedReviews } from './reviews'
 import type { GameMeta } from './types'
 
@@ -505,6 +511,88 @@ describe('срез останавливается, когда закрылась
 
     expect(res.stopped).toBe('done')
     expect(res.enriched).toBe(6)
+  })
+})
+
+/**
+ * В модель — только отзывы, которые кто-то счёл полезными.
+ *
+ * Pros/cons уходят на публичную страницу из текста посторонних людей. У
+ * малоизвестной игры выборка берёт любой отзыв, в том числе написанный под
+ * модель, — «полезно» от другого игрока отсекает хотя бы безымянный вброс.
+ */
+describe('pros/cons только из полезных отзывов', () => {
+  /** n отзывов, из них useful с голосами «полезно», остальные без единого */
+  function mixed(n: number, useful: number): ParsedReviews {
+    const r = reviews(n)
+    r.reviews.forEach((x, i) => {
+      x.votesUp = i < useful ? 5 : 0
+    })
+    return r
+  }
+
+  test('модель видит только отзывы с хотя бы одним «полезно»', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    const видела: Array<Array<{ text: string }>> = []
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchReviewsFn: async () => mixed(12, PROS_CONS_MIN_REVIEWS),
+        prosConsFn: async (_n: string, r: Array<{ text: string }>) => {
+          видела.push(r)
+          return { pros: ['красиво'], cons: ['дорого'] }
+        },
+      }),
+    )
+
+    expect(res.viaClaude).toBe(1)
+    expect(видела).toHaveLength(1)
+    expect(видела[0]).toHaveLength(PROS_CONS_MIN_REVIEWS)
+  })
+
+  test('полезных меньше пяти — модель не зовём, и в очередь карточка не возвращается', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    let звали = 0
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchReviewsFn: async () => mixed(40, PROS_CONS_MIN_REVIEWS - 1),
+        prosConsFn: async () => {
+          звали++
+          return { pros: ['реклама'], cons: [] }
+        },
+      }),
+    )
+
+    expect(звали).toBe(0)
+    expect(res.viaClaude).toBe(0)
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'thin' })
+    // С маркером 'reviews' ветка пересборки брала бы её на каждом прогоне:
+    // пересобрать нечем — модель не позовём и в следующий раз
+    const opts = { redoHeuristic: true, maxTries: PAGE_MAX_TRIES }
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
+    expect(await countPageEnrichDue(db, NOW - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, opts)).toBe(0)
+  })
+
+  test('старый маркер пересборки снимается, даже когда эвристике нечего сказать', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    // прошлый прогон без модели оставил маркер «пересобрать моделью»
+    await setGameJson(db, 10, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
+    await markPageEnriched(db, 10, NOW)
+
+    // голосов «полезно» нет ни у кого — эвристика (votesUp >= 3) тоже пуста
+    const res = await runPageSlice(db, stubs({ fetchReviewsFn: async () => mixed(10, 0) }))
+
+    expect(res.enriched).toBe(1)
+    expect(res.withProsCons, 'пустой список — не наполненная карточка').toBe(0)
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toEqual({ pros: [], cons: [], source: 'thin' })
+    const opts = { redoHeuristic: true, maxTries: PAGE_MAX_TRIES }
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
   })
 })
 
