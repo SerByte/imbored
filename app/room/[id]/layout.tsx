@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { plural } from '@/lib/plural'
-import { OG_SITE } from '@/lib/og'
+import { OG_SITE } from '@/lib/site'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
 
 /**
@@ -38,11 +38,15 @@ export async function generateMetadata({
       'Подключи свою библиотеку Steam и свайпай, во что готов играть: совпадут голоса всех — будет матч.'
     : 'Подключи свою библиотеку Steam и свайпай, во что готов играть: совпадут голоса всех — будет матч.'
 
+  // Код — в верхнем регистре: /room/abc234 и /room/ABC234 — одна комната
+  const url = `/room/${code}`
+
   return {
     title,
     description,
+    alternates: { canonical: url },
     robots,
-    openGraph: { ...OG_SITE, title, description, type: 'website' },
+    openGraph: { ...OG_SITE, title, description, type: 'website', url },
     twitter: { card: 'summary_large_image', title, description },
   }
 }

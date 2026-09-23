@@ -21,7 +21,7 @@ import {
   setUserPortrait,
 } from '@/lib/db'
 import { claudePortraitText } from '@/lib/llm'
-import { OG_SITE } from '@/lib/og'
+import { OG_SITE } from '@/lib/site'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
 import { plural } from '@/lib/plural'
 import { checkRate, clientIp } from '@/lib/ratelimit'
@@ -109,15 +109,19 @@ export async function generateMetadata({
     `${hours.toLocaleString('ru-RU')} ${plural(hours, 'час', 'часа', 'часов')}. ` +
     'Посмотри портрет и проверь совместимость вкусов.'
 
+  // Свой адрес, а не корневой '/': см. ownAddress в lib/site.ts
+  const url = `/portrait/${steamid}`
+
   return {
     title,
     description,
+    alternates: { canonical: url },
     // Из индекса убираем, из шеринга — нет. Заголовок содержит настоящий ник
     // Steam, а страница строится по снапшоту без всякой авторизации: место
     // такому в переписке по прямой ссылке, а не в поисковой выдаче.
     // На og-превью и card.png флаг не влияет — их читают по ссылке.
     robots: { index: false, follow: true },
-    openGraph: { ...OG_SITE, title, description, type: 'profile' },
+    openGraph: { ...OG_SITE, title, description, type: 'profile', url },
     twitter: { card: 'summary_large_image', title, description },
   }
 }

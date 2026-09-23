@@ -143,12 +143,18 @@ export const metadata: Metadata = {
    * title/description намеренно не дублируются: Next подставляет в openGraph
    * те же значения, что и в обычные теги, когда они не заданы отдельно, — и
    * шаблон «%s · imbored» при этом работает и там.
+   *
+   * url здесь тоже нет, и это уже не упущение. Стоял '/', и его наследовали
+   * все страницы без своего openGraph: /privacy, /whatsnew и /support
+   * говорили VK и Facebook, что они — главная, и карточка ссылки склеивалась
+   * с лендингом. Свой адрес каждая страница объявляет сама через ownAddress
+   * из lib/site.ts; кто не объявил, остаётся без og:url, и краулер берёт тот
+   * адрес, по которому пришёл. Сторожит lib/social.test.ts.
    */
   openGraph: {
     type: 'website',
     siteName: 'imbored',
     locale: 'ru_RU',
-    url: '/',
   },
   twitter: {
     card: 'summary_large_image',

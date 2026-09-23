@@ -34,6 +34,20 @@ function appFiles(): [string, string][] {
   return out
 }
 
+/**
+ * Объект, открытый первой «{» после позиции at, — по балансу скобок. Ленивая
+ * регулярка до первой «}» спотыкалась о `${meta.name}` в заголовке игры.
+ */
+function objectAt(src: string, at: number): string {
+  const open = src.indexOf('{', at)
+  let depth = 0
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1)
+  }
+  return src.slice(open)
+}
+
 describe('превью в мессенджерах', () => {
   test('у корня есть своя карточка — она достаётся всем, у кого нет своей', () => {
     expect(fs.existsSync(path.join(ROOT, 'app', 'opengraph-image.tsx'))).toBe(true)
@@ -61,6 +75,49 @@ describe('превью в мессенджерах', () => {
       }
     }
     expect([...new Set(offenders)], 'openGraph без ...OG_SITE теряет siteName и locale').toEqual([])
+  })
+
+  /**
+   * og:url — адрес самой страницы. В корне стоял '/', его наследовали все,
+   * у кого не было своего openGraph, и VK с Facebook склеивали ссылку на
+   * /privacy или /whatsnew с главной.
+   */
+  test('корень не раздаёт свой og:url всем подряд', () => {
+    const layout = read('app/layout.tsx')
+    const at = layout.search(/\bopenGraph:\s*\{/)
+    expect(at, 'openGraph в корне не найден').toBeGreaterThan(-1)
+    expect(objectAt(layout, at)).not.toMatch(/\burl\b/)
+  })
+
+  /**
+   * Страницы без своей карточки получают адрес через ownAddress — он же
+   * переносит корневую картинку, которую свой openGraph иначе стёр бы.
+   */
+  test('страницы без своей карточки объявляют свой адрес', () => {
+    const own: Record<string, string> = {
+      'app/page.tsx': '/',
+      'app/whatsnew/page.tsx': '/whatsnew',
+      'app/privacy/page.tsx': '/privacy',
+      'app/support/page.tsx': '/support',
+      'app/daily/layout.tsx': '/daily',
+    }
+    for (const [file, url] of Object.entries(own)) {
+      expect(read(file), file).toMatch(new RegExp(`export const generateMetadata = ownAddress\\('${url}'`))
+    }
+  })
+
+  test('у каждого своего openGraph есть свой url и canonical', () => {
+    const offenders: string[] = []
+    for (const [file, src] of appFiles()) {
+      if (file.endsWith(path.join('app', 'layout.tsx'))) continue
+      for (const m of src.matchAll(/\bopenGraph:\s*\{/g)) {
+        if (!/\burl\b/.test(objectAt(src, m.index))) offenders.push(path.relative(ROOT, file))
+      }
+      if (/\bopenGraph:\s*\{/.test(src) && !/alternates:\s*\{\s*canonical\b/.test(src)) {
+        offenders.push(path.relative(ROOT, file))
+      }
+    }
+    expect([...new Set(offenders)], 'без своего url страница делится адресом главной').toEqual([])
   })
 
   /**

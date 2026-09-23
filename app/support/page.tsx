@@ -1,8 +1,9 @@
 import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 import { LogoMark } from '@/components/Logo'
+import { ownAddress } from '@/lib/site'
 
-export const metadata = { title: 'Поддержать' }
+export const generateMetadata = ownAddress('/support', { title: 'Поддержать' })
 
 /**
  * Отсюда убран перк «Большие пати — комнаты больше чем на 4 человека».

@@ -9,6 +9,7 @@ import { landingDemo } from '@/lib/landing'
 import { ribbonGames, RIBBON_MAX, type RibbonSource } from '@/lib/ribbon'
 import { topCatalogGames } from '@/lib/db'
 import { getDb, nowSec } from '@/lib/server'
+import { ownAddress } from '@/lib/site'
 
 /**
  * ГЛАВНАЯ КАК ФИЛЬМ: ДОСТУП СРАЗУ, РАССКАЗ ПО ПРОКРУТКЕ.
@@ -49,6 +50,22 @@ import { getDb, nowSec } from '@/lib/server'
  * ISR на час: лента берёт обложки из каталога, а он меняется медленно.
  */
 export const revalidate = 3600
+
+/**
+ * Canonical у главной — '/', без строки запроса.
+ *
+ * Сайт сам ссылается на варианты главной: bounceTo разворачивает гостя на
+ * /?next=/library, совместимость зовёт на /?compat=<steamid>, комната — на
+ * /?join=<код>. Страница статическая, запрос сервер не читает, содержимое у
+ * всех вариантов одно — а без canonical каждый из них поисковик волен считать
+ * отдельной страницей, в том числе адрес с чужим SteamID. Яндекс без
+ * canonical склеивает такие дубли медленно.
+ *
+ * Заодно здесь живёт og:url главной: из корневого layout он ушёл, потому что
+ * его наследовали все страницы подряд (см. ownAddress в lib/site.ts).
+ * Статичности это не ломает: ownAddress читает только родительскую метадату.
+ */
+export const generateMetadata = ownAddress('/')
 
 /**
  * Обложки для ленты.

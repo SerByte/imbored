@@ -71,21 +71,3 @@ export function ogScrim(): string {
 export function ogGlow(): string {
   return `radial-gradient(900px 520px at 8% 118%, ${alpha(OG_EMBER, 0.16)}, ${alpha(OG_BG, 0)} 70%)`
 }
-
-/**
- * Общая часть openGraph для страниц, у которых он свой.
- *
- * Объект metadata сливается ПОЛЕМ, а не насквозь: страница, объявившая свой
- * openGraph, заменяет корневой целиком, а не дополняет его. Именно так три
- * самые пересылаемые страницы — игра, совместимость и портрет — молча
- * теряли siteName и locale, то есть в чате вместо «imbored» показывался голый
- * домен. Ровно там, где имя продукта и нужно.
- *
- * Держится здесь, а не копией в трёх generateMetadata: копия и была бы тем
- * механизмом, которым это разъедется в следующий раз. Наличие спреда во всех
- * openGraph сторожит lib/social.test.ts.
- */
-export const OG_SITE = {
-  siteName: 'imbored',
-  locale: 'ru_RU',
-} as const

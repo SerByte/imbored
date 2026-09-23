@@ -1,4 +1,3 @@
-import type { Metadata } from 'next'
 import Link from 'next/link'
 import { LinkPending } from '@/components/LinkPending'
 import { Cover } from '@/components/whatsnew/Cover'
@@ -16,19 +15,19 @@ import { discountView, trustedPrice } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
 import { plural } from '@/lib/plural'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { ownAddress } from '@/lib/site'
 import { countChanges } from '@/lib/steamhtml'
 import { cachedMajorFeed } from '@/lib/whatsnewcache'
 import { feedMeta, resolveWhatsNew } from '@/lib/whatsnewfeed'
 
 export const dynamic = 'force-dynamic'
 
-export const metadata: Metadata = {
+// ?feed=popular — та же лента, что видит гость на /whatsnew, и отдельной
+// страницей она не является: canonical у обеих один
+export const generateMetadata = ownAddress('/whatsnew', {
   title: 'Что нового',
   description: 'Крупные обновления игр: что изменилось в твоей библиотеке и в популярных играх.',
-  // ?feed=popular — та же лента, что видит гость на /whatsnew, и отдельной
-  // страницей она не является
-  alternates: { canonical: '/whatsnew' },
-}
+})
 
 /*
  * LIBRARY_CAP, FEED_LIMIT и FEED_RANK_FLOOR переехали в lib/whatsnewfeed:

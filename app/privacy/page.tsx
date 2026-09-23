@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 import { Eyebrow, MetaLine } from '@/components/Labels'
+import { ownAddress } from '@/lib/site'
 
-export const metadata = {
+export const generateMetadata = ownAddress('/privacy', {
   title: 'Конфиденциальность',
   description: 'Какие данные собирает imbored, где они хранятся и как их удалить.',
-}
+})
 
 /**
  * Дата последней правки СУЩЕСТВА политики — не оформления.
