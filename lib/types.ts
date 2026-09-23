@@ -88,6 +88,33 @@ export type GameMeta = {
   deadReason?: import('./liveness').DeadReason
 }
 
+/**
+ * Семантика игры без модели: что игра требует от человека. Выводится
+ * lib/semantics.ts из тегов Steam (приор) и уточняется разбором отзывов
+ * (lib/reviewmine.ts), когда их набралось достаточно.
+ *
+ *   axes       — 0..100, 50 — «ничего особенного»: challenge — сложность,
+ *                complexity — сколько надо освоить, pace — темп (0 — медленно);
+ *   session    — сколько минут нужно на заход; canStopAnytime — можно ли
+ *                бросить посреди, не потеряв прогресс (пошаговое, новелла);
+ *   timeToFun  — когда игра раскрывается: fast — с первых минут, slow — после
+ *                пары часов; hours — число, названное в отзывах;
+ *   confidence — 0..1: по одним тегам не выше 0.4;
+ *   n          — сколько отзывов на русском и английском разобрано;
+ *   basis      — 'tags+reviews', только если отзывы сдвигали оси.
+ *
+ * v — версия формата: хранимая семантика с другой v читается как отсутствующая.
+ */
+export type GameSemantics = {
+  v: 1
+  axes: { challenge: number; complexity: number; pace: number }
+  session: { bucket: 'short' | 'medium' | 'long'; minutes: number; canStopAnytime: boolean }
+  timeToFun: { bucket: 'fast' | 'slow' | null; hours: number | null }
+  confidence: number
+  n: number
+  basis: 'tags' | 'tags+reviews'
+}
+
 export type Mood = {
   time: 'short' | 'medium' | 'long'
   vibe: 'chill' | 'engaged'
