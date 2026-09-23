@@ -21,6 +21,7 @@ import {
   setUserPortrait,
 } from '@/lib/db'
 import { claudePortraitText } from '@/lib/llm'
+import { reconnectHref } from '@/lib/destination'
 import { OG_SITE } from '@/lib/site'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
 import { plural } from '@/lib/plural'
@@ -250,7 +251,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Этот игрок ещё не подключал библиотеку к imbored.</p>
-        <Link href="/" className="tap text-ember-text hover:underline text-sm">
+        <Link href={reconnectHref()} className="tap text-ember-text hover:underline text-sm">
           Подключить свою →
         </Link>
       </div>

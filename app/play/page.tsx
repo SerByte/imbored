@@ -63,7 +63,7 @@ import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
-import { bounceTo } from '@/lib/destination'
+import { bounceTo, reconnectHref } from '@/lib/destination'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
@@ -968,7 +968,7 @@ function Player({ say }: { say: (line: string) => void }) {
           </Link>
         )}
         {reason === 'nolibrary' && (
-          <Link href="/" className="btn-ember px-6 py-3">
+          <Link href={reconnectHref()} className="btn-ember px-6 py-3">
             Подключить заново
           </Link>
         )}

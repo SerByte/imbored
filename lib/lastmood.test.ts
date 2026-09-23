@@ -2,9 +2,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   freshLastMood,
   LAST_MOOD_TTL_SEC,
+  lastMoodCaption,
+  lastMoodCaptionServer,
   lastMoodStore,
   parseLastMood,
   pickHref,
+  pickHrefServer,
   QUIZ_HREF,
   type LastMood,
 } from './lastmood'
@@ -146,5 +149,32 @@ describe('pickHref', () => {
       expect(got.lean, lean).toBe(lean)
       expect(got.mood, lean).toEqual(MOOD)
     }
+  })
+})
+
+/**
+ * Подпись стоит рядом с кнопкой главной, которая ведёт в выдачу мимо квиза.
+ * Поэтому она обязана появляться ровно тогда, когда кнопка ведёт в выдачу, и
+ * говорить то же настроение, что уедет в адрес.
+ */
+describe('lastMoodCaption', () => {
+  test('свежее — та же строка, которой кончается квиз', () => {
+    expect(lastMoodCaption({ mood: MOOD, lean: null, at: NOW - 60 }, NOW)).toBe(
+      'Меньше часа · Расслабиться · Один',
+    )
+  })
+
+  test('подпись есть ровно тогда, когда кнопка ведёт в выдачу', () => {
+    for (const at of [NOW, NOW - 3600, NOW - LAST_MOOD_TTL_SEC, NOW + 60]) {
+      const last: LastMood = { mood: MOOD, lean: 'fresh', at }
+      const toPlay = pickHref(last, NOW) !== QUIZ_HREF
+      expect(lastMoodCaption(last, NOW) !== '', String(at)).toBe(toPlay)
+    }
+    expect(lastMoodCaption(null, NOW)).toBe('')
+  })
+
+  test('до гидратации — квиз и пустая подпись, как на сервере', () => {
+    expect(pickHrefServer()).toBe(QUIZ_HREF)
+    expect(lastMoodCaptionServer()).toBe('')
   })
 })

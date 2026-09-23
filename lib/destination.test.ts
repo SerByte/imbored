@@ -10,6 +10,7 @@ import {
   guestBounce,
   loginCarry,
   loginTarget,
+  reconnectHref,
   steamLoginFor,
 } from './destination'
 import { playHref, presetHref, VIBE_PRESETS } from './presets'
@@ -286,5 +287,46 @@ describe('ответы квиза переживают вход', () => {
     expect(bounceTo('/play', new URLSearchParams())).toBe('/?next=%2Fplay')
     expect(bounceTo('/play', null)).toBe('/?next=%2Fplay')
     expect(steamLoginFor('/play?')).toBe('/api/auth/steam?next=%2Fplay')
+  })
+})
+
+/**
+ * «Подключить заново» вёл на голую главную, а она вошедшему поля не давала:
+ * «С возвращением» и кнопка в подбор — туда же, откуда развернуло.
+ */
+describe('«Подключить заново» ведёт к полю, а не по кругу', () => {
+  /** Кнопка «Подключить…», чей адрес — голая главная */
+  const BARE = /<Link\s[^>]*href=(?:"\/"|\{'\/'\})[^>]*>\s*Подключить/g
+
+  test('адрес раскрывает поле и везёт совместимость', () => {
+    expect(reconnectHref()).toBe('/?reconnect=1')
+    expect(reconnectHref({ compat: '76561197960287930' })).toBe(
+      '/?compat=76561197960287930&reconnect=1',
+    )
+    // Чужое в адрес не едет: карточка читает compat как назначение
+    expect(reconnectHref({ compat: '../evil' })).toBe('/?reconnect=1')
+  })
+
+  test('ни одна кнопка «Подключить…» не ведёт на голую главную', () => {
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (e.name.endsWith('.tsx')) {
+          const src = fs.readFileSync(p, 'utf8')
+          for (const m of src.matchAll(BARE)) {
+            offenders.push(`${path.relative(ROOT, p)}:${src.slice(0, m.index).split('\n').length}`)
+          }
+        }
+      }
+    }
+    for (const dir of ['app', 'components']) walk(path.join(ROOT, dir))
+    expect(offenders, 'вместо href="/" — reconnectHref() из lib/destination').toEqual([])
+  })
+
+  test('сторож видит ту самую кнопку', () => {
+    const bad = '<Link href="/" className="btn-ember px-6 py-3">\n            Подключить заново\n'
+    expect([...bad.matchAll(BARE)]).toHaveLength(1)
   })
 })

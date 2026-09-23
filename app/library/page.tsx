@@ -23,7 +23,7 @@ import {
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
-import { bounceTo } from '@/lib/destination'
+import { bounceTo, reconnectHref } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
 import { plural } from '@/lib/plural'
@@ -191,7 +191,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             пуста. Первая встречается намного чаще.
           </p>
           <PrivacyHelp />
-          <Link href="/" className="btn-ember mt-5 px-6 py-3">
+          <Link href={reconnectHref()} className="btn-ember mt-5 px-6 py-3">
             Подключить заново
           </Link>
         </section>

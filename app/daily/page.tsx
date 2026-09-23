@@ -15,7 +15,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { GameArtUrls } from '@/lib/art'
-import { bounceTo } from '@/lib/destination'
+import { bounceTo, reconnectHref } from '@/lib/destination'
 import type { Discount } from '@/lib/discount'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
@@ -246,7 +246,7 @@ export default function DailyPage() {
         )}
 
         {reason === 'nolibrary' && (
-          <Link href="/" className="btn-ember px-6 py-3">
+          <Link href={reconnectHref()} className="btn-ember px-6 py-3">
             Подключить заново
           </Link>
         )}

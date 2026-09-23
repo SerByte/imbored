@@ -1,6 +1,7 @@
 import { createLocalStore } from './localstore'
 import { parseLean, parseMood, type Lean } from './mood'
 import { playHref } from './presets'
+import { moodCaption } from './quiz'
 import type { Mood } from './types'
 
 /**
@@ -59,6 +60,35 @@ export function pickHref(last: LastMood | null, nowSec: number): string {
   const fresh = freshLastMood(last, nowSec)
   return fresh ? playHref(fresh.mood, { lean: fresh.lean }) : QUIZ_HREF
 }
+
+/**
+ * Подпись прошлого настроения — та же строка, которой кончается квиз:
+ * «Пара часов · Расслабиться · Один». Пустая, когда помнить нечего или оно
+ * протухло: кнопка тогда ведёт в квиз, и подписывать её нечем.
+ *
+ * Нужна главной. Кнопка вошедшего ведёт сразу в выдачу под прошлое
+ * настроение, и молча подменять квиз нельзя — см. докблок модуля: «30 минут
+ * до сна» в субботу днём должно быть видно до нажатия, а не после.
+ */
+export function lastMoodCaption(last: LastMood | null, nowSec: number): string {
+  const fresh = freshLastMood(last, nowSec)
+  return fresh ? moodCaption(fresh.mood) : ''
+}
+
+/*
+ * Снимки для useSyncExternalStore — готовые строки, а не запись хранилища:
+ * две одинаковые строки равны по значению, и React не уходит в повторный
+ * рендер. Часы читаются здесь, в снимке, а не в теле компонента: рендер
+ * обязан быть чистым, а срок годности настроения зависит от «сейчас».
+ *
+ * Серверный снимок — квиз и пустая подпись: на сервере устройства нет, и
+ * разметка до гидратации обязана совпасть с первым рендером клиента.
+ */
+const nowSecond = () => Math.floor(Date.now() / 1000)
+export const pickHrefNow = (): string => pickHref(lastMoodStore.get(), nowSecond())
+export const pickHrefServer = (): string => QUIZ_HREF
+export const lastMoodCaptionNow = (): string => lastMoodCaption(lastMoodStore.get(), nowSecond())
+export const lastMoodCaptionServer = (): string => ''
 
 export function rememberMood(mood: Mood, lean: Lean | null, nowSec: number): void {
   lastMoodStore.set({ mood, lean, at: nowSec })

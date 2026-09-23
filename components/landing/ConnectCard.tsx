@@ -9,6 +9,14 @@ import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { CONNECT_CARD_MIN_H } from '@/components/landing/ConnectFallback'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { DESTINATIONS, destinationPath, destinationUrl } from '@/lib/destination'
+import {
+  lastMoodCaptionNow,
+  lastMoodCaptionServer,
+  lastMoodStore,
+  pickHrefNow,
+  pickHrefServer,
+  QUIZ_HREF,
+} from '@/lib/lastmood'
 import { plural } from '@/lib/plural'
 import { presetHref, VIBE_PRESETS } from '@/lib/presets'
 import {
@@ -16,6 +24,7 @@ import {
   getSessionHint,
   rememberSession,
   subscribeSessionHint,
+  type SessionHint,
 } from '@/lib/sessionhint'
 import { writerFrom, writerStore } from '@/lib/writer'
 
@@ -105,7 +114,8 @@ export function ConnectCard() {
   const dest = nextPath ? DESTINATIONS[nextPath] : null
 
   const [input, setInput] = useState('')
-  const [busy, setBusy] = useState<'connect' | 'demo' | null>(null)
+  /** go — уходит главная кнопка вошедшего; connect и demo — запрос в /api/connect */
+  const [busy, setBusy] = useState<Busy>(null)
   const [error, setError] = useState<string | null>(search.get('error'))
   /** Минуты до снятия потолка: срок называет только заголовок Retry-After */
   const [retryIn, setRetryIn] = useState<number | null>(null)
@@ -115,28 +125,74 @@ export function ConnectCard() {
    * «неверное значение» там увела бы человека править правильную ссылку.
    */
   const inputError = error === 'badinput' || error === 'notfound'
-  const [session, setSession] = useState<{ authed: boolean; personaName: string | null } | null>(
-    null,
-  )
+  const [session, setSession] = useState<SessionHint | null>(null)
 
   const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
-  const view = session ?? hint ?? { authed: false, personaName: null }
+  const view: SessionHint = session ?? hint ?? { authed: false, personaName: null }
+  const demo = view.authed && view.demo === true
+
+  /*
+   * ПОЛЕ ДЛЯ ССЫЛКИ ЕСТЬ И У ВОШЕДШЕГО.
+   *
+   * Раньше вошедший его не получал вовсе, и из этого выросли две петли. Демо:
+   * человеку понравилось, он хочет свою библиотеку, на этом устройстве Steam
+   * не открыт — а главная говорит «С возвращением, Демо-игрок» и ведёт в
+   * подбор по демо. Поле «ссылка или ник» существует ровно для такого случая,
+   * и спрятано оно было ровно от него. И «Подключить заново» с экранов без
+   * библиотеки: главная отвечала тем же приветствием, кнопка вела в подбор,
+   * подбор — к тому же отказу.
+   *
+   * Демо видит поле сразу: это не его библиотека, и сказать об этом надо
+   * прямо. Обычному вошедшему оно за строкой «Сменить библиотеку» — сменить
+   * профиль бывает нужно, но не каждый визит. Адрес ?reconnect=1
+   * (reconnectHref в lib/destination) раскрывает строку сразу: по нему
+   * приходят как раз за этим.
+   *
+   * Поле в разметке по-прежнему одно — ProfileForm внизу файла, — а ветки
+   * вошедшего и гостя взаимоисключающие, так что id="steam-profile" в
+   * документе не задваивается (сторож lib/landingdoor.test.ts).
+   */
+  const [formOpen, setFormOpen] = useState(search.get('reconnect') === '1')
+  /**
+   * Раскрыли нажатием — поле получает фокус. Раскрытое адресом — нет: фокус
+   * без действия человека уводит скринридер посреди чтения страницы.
+   */
+  const [focusField, setFocusField] = useState(false)
+  const formShown = demo || formOpen
+
+  /*
+   * Куда ведёт главная кнопка, когда назначения в адресе нет: туда же, куда
+   * «Подобрать» в шапке (components/PickLink), — в выдачу под прошлое
+   * настроение, если оно свежее, иначе в квиз. Раньше здесь стоял /quiz, и
+   * две одинаково названные двери одного экрана вели по-разному: шапка сразу
+   * давала игру, парадная кнопка — снова три вопроса.
+   *
+   * Подпись настроения стоит рядом с кнопкой по той же причине, по какой /play
+   * показывает её рядом с «Изменить настроение»: выдача мимо квиза не должна
+   * быть молчаливой подменой.
+   */
+  const remembered = useSyncExternalStore(lastMoodStore.subscribe, pickHrefNow, pickHrefServer)
+  const moodLine = useSyncExternalStore(
+    lastMoodStore.subscribe,
+    lastMoodCaptionNow,
+    lastMoodCaptionServer,
+  )
 
   useEffect(() => {
-    const settle = (authed: boolean, personaName: string | null = null) => {
-      setSession({ authed, personaName })
-      rememberSession(authed ? { authed, personaName } : null)
+    const settle = (next: SessionHint | null) => {
+      setSession(next ?? { authed: false, personaName: null })
+      rememberSession(next)
     }
     markSessionTouched()
     fetch('/api/session/touch?card=1', { method: 'POST' })
       .then(async (r) => {
-        if (!r.ok) return settle(false)
-        const d = (await r.json()) as { authed?: boolean; personaName?: string | null }
-        settle(Boolean(d.authed), d.personaName ?? null)
+        if (!r.ok) return settle(null)
+        const d = (await r.json()) as { authed?: boolean; personaName?: string | null; demo?: boolean }
+        settle(d.authed ? hintFrom(d) : null)
         // SessionKeeper на главной молчит, так что признак записи берём здесь
         writerStore.set(writerFrom(d))
       })
-      .catch(() => settle(false))
+      .catch(() => settle(null))
   }, [])
 
   const steamHref = joinTarget
@@ -151,7 +207,7 @@ export function ConnectCard() {
     ? `/room/${joinTarget}`
     : compatTarget
       ? `/compat/${compatTarget}`
-      : (next ?? '/quiz')
+      : (next ?? remembered)
 
   /*
    * ПРЕСЕТЫ ПОКАЗЫВАЮТСЯ НЕ ВСЕГДА, И ОБА УСЛОВИЯ НЕ ФОРМАЛЬНЫЕ.
@@ -193,20 +249,28 @@ export function ConnectCard() {
     router.push(target)
   }
 
-  async function connect(demo: boolean) {
-    setBusy(demo ? 'demo' : 'connect')
+  async function connect(asDemo: boolean) {
+    setBusy(asDemo ? 'demo' : 'connect')
     setError(null)
     try {
       const res = await fetch('/api/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(demo ? { demo: true } : { input }),
+        body: JSON.stringify(asDemo ? { demo: true } : { input }),
       })
-      const data = (await res.json()) as { ok?: boolean; error?: string }
+      const data = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        personaName?: string | null
+        demo?: boolean
+      }
       if (data.ok) {
         // Переход клиентский, документ тот же: признак записи прежней сессии
         // остался бы в памяти и соврал бы на следующей странице (lib/writer)
         writerStore.set(writerFrom(data))
+        // И подсказка о входе — новая: из демо ушли в свою библиотеку, и
+        // «Ты в демо-режиме» на следующем заходе было бы уже неправдой
+        rememberSession(hintFrom(data))
         await go()
         return
       }
@@ -225,6 +289,11 @@ export function ConnectCard() {
     setBusy(null)
   }
 
+  /** Отправка поля — одна на обе ветки: пустое поле и идущий запрос не шлют ничего */
+  function submitProfile() {
+    if (input && busy === null) void connect(false)
+  }
+
   return (
     <div className="flex w-full max-w-md flex-col gap-4">
       {/*
@@ -235,15 +304,31 @@ export function ConnectCard() {
       <div className={`panel-lift connect-card flex ${CONNECT_CARD_MIN_H} flex-col gap-3 p-6`}>
         {view.authed ? (
           <div className="flex flex-1 flex-col justify-center gap-4">
-            <p className="text-lg text-ink">
-              С возвращением
-              {view.personaName ? (
-                <>
-                  , <span className="font-semibold">{view.personaName}</span>
-                </>
-              ) : null}
-              .
-            </p>
+            {/*
+              Демо называет себя прямо. Прежнее «С возвращением, Демо-игрок»
+              читалось как вход в свою библиотеку — и человек не понимал,
+              почему подбор предлагает чужие игры и куда вставить свою ссылку.
+            */}
+            {demo && (
+              <div>
+                <p className="text-lg text-ink">Ты в демо-режиме.</p>
+                <p className="mt-1 text-sm leading-relaxed text-dim">
+                  Подбор идёт по чужой витрине. Вставь ссылку на свой профиль — и он пойдёт по
+                  твоей библиотеке.
+                </p>
+              </div>
+            )}
+            {!demo && (
+              <p className="text-lg text-ink">
+                С возвращением
+                {view.personaName ? (
+                  <>
+                    , <span className="font-semibold">{view.personaName}</span>
+                  </>
+                ) : null}
+                .
+              </p>
+            )}
             <Magnet className="block w-full">
               <ClickSpark className="block w-full">
                 {/* busy — пока уходит вход в комнату: второй клик слал бы его дважды */}
@@ -251,17 +336,34 @@ export function ConnectCard() {
                   type="button"
                   onClick={() => {
                     if (busy !== null) return
-                    setBusy('connect')
+                    setBusy('go')
                     void go()
                   }}
                   disabled={busy !== null}
-                  data-busy={busy === 'connect' ? '' : undefined}
+                  data-busy={busy === 'go' ? '' : undefined}
                   className="btn-ember is-block"
                 >
                   {action}
                 </button>
               </ClickSpark>
             </Magnet>
+
+            {/*
+              Подпись прошлого настроения — только когда кнопка ведёт в
+              выдачу мимо квиза. С назначением в адресе кнопка ведёт туда, и
+              настроение к ней отношения не имеет.
+            */}
+            {showPresets && moodLine && (
+              <p className="-mt-2 text-center text-xs text-dim">
+                {moodLine} ·{' '}
+                <Link
+                  href={QUIZ_HREF}
+                  className="tap tap-tight underline decoration-edge hover:text-ink"
+                >
+                  Изменить
+                </Link>
+              </p>
+            )}
 
             {/*
               ПРЕСЕТЫ: ВЕРНУВШЕМУСЯ — ОДИН ТАП ДО ВЫДАЧИ.
@@ -275,8 +377,12 @@ export function ConnectCard() {
               Ссылки, а не кнопки: адрес настоящий, и средняя кнопка мыши
               обязана открывать выдачу в новой вкладке. Логика та же, что в
               /quiz: пресет — это заранее известное состояние трёх вопросов.
+
+              Раскрытое поле пресеты убирает: человек пришёл сменить
+              библиотеку, и три двери в подбор по старой рядом с ним — шум,
+              который к тому же вытолкнул бы карточку за её потолок.
             */}
-            {showPresets && (
+            {showPresets && !formShown && (
               <div className="flex flex-col gap-2">
                 <p className="text-center text-xs text-faint">Или сразу:</p>
                 <div className="flex flex-wrap justify-center gap-2">
@@ -293,88 +399,73 @@ export function ConnectCard() {
               </div>
             )}
 
-            {/* Вход через Steam остаётся на виду и в один клик: сменить
-                аккаунт должно быть возможно, а спрятанное под раскрывашку
-                «сменить аккаунт» ищут дольше, чем оно того стоит. */}
-            <a
-              href={steamHref}
-              className="tap py-1 text-center text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
-            >
-              Это не я — войти через Steam
-            </a>
+            {formShown && (
+              <ProfileForm
+                value={input}
+                onChange={setInput}
+                invalid={inputError}
+                busy={busy}
+                autoFocus={focusField}
+                submit="Подключить"
+                primary={false}
+                onSubmit={submitProfile}
+              />
+            )}
+
+            {/*
+              Две тихие двери одной строкой: сменить библиотеку ссылкой и войти
+              через Steam. Столбиком они выталкивали карточку за её потолок
+              (CONNECT_CARD_MIN_H): на телефоне пресеты и так встают в три
+              ряда, и замер дал 402 px против 392, а с подписью настроения —
+              426. Карточка вошедшего появляется уже после гидратации, и
+              каждый лишний пиксель в ней сдвигает первый экран под пальцем.
+
+              Вход через Steam остаётся на виду и в один клик: сменить аккаунт
+              должно быть возможно, а спрятанное под раскрывашку «сменить
+              аккаунт» ищут дольше, чем оно того стоит.
+            */}
+            <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+              {!demo && (
+                <button
+                  type="button"
+                  aria-expanded={formOpen}
+                  onClick={() => {
+                    setFocusField(!formOpen)
+                    setFormOpen(!formOpen)
+                  }}
+                  className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
+                >
+                  Сменить библиотеку
+                </button>
+              )}
+              <a
+                href={steamHref}
+                className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
+              >
+                Войти через Steam
+              </a>
+            </div>
           </div>
         ) : (
           <>
             {/*
-              Настоящая форма, а не инпут с onKeyDown. Даёт три вещи разом:
-              Enter работает штатно (и на мобильной клавиатуре тоже), браузер
-              понимает поле как поле, а скринридер объявляет его подпись.
+              Надзаголовок: карточка начиналась прямо с поля ввода, шестью
+              элементами равного веса, и ни одна строка не говорила, что тут
+              вообще происходит. Тот же моноширинный язык, что у хлопушек
+              сцен ниже — первый экран и рассказ под ним говорят одним
+              шрифтом.
             */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (input && busy === null) void connect(false)
-              }}
-              className="flex flex-col gap-3"
-            >
-              {/*
-                Надзаголовок: карточка начиналась прямо с поля ввода, шестью
-                элементами равного веса, и ни одна строка не говорила, что тут
-                вообще происходит. Тот же моноширинный язык, что у хлопушек
-                сцен ниже — первый экран и рассказ под ним говорят одним
-                шрифтом.
-              */}
-              <p className="card-eyebrow">Доступ к библиотеке</p>
-
-              {/* Подпись есть, но не показана: место под ней съело бы карточку,
-                  а placeholder подписью не является — он исчезает при вводе и
-                  не читается скринридером как имя поля. */}
-              <label htmlFor="steam-profile" className="sr-only">
-                Ссылка на твой Steam-профиль или ник
-              </label>
-              {/*
-                Подсказка в поле КОРОЧЕ подписи, и это не небрежность: полная
-                фраза не помещалась в поле на телефоне и обрывалась на «Steam-
-                профиль и…». Обрезанная подсказка хуже короткой — она выглядит
-                сломанной вёрсткой. Скринридер и label читают полный вариант.
-              */}
-              <input
-                id="steam-profile"
-                name="profile"
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ссылка на профиль или ник"
-                inputMode="url"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                enterKeyHint="go"
-                autoComplete="off"
-                aria-invalid={inputError}
-                aria-describedby="connect-error"
-                className="field"
-              />
-              {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
-              <Magnet className="block w-full">
-                <ClickSpark className="block w-full">
-                  {/*
-                    data-busy отдельно от disabled: форма выключает кнопку и
-                    когда поле пустое, и когда идёт запрос, а это два разных
-                    состояния. Выключенная ЖДЁТ ввода, занятая РАБОТАЕТ — и
-                    выглядеть они обязаны по-разному (см. .btn-ember[data-busy]).
-                  */}
-                  <button
-                    type="submit"
-                    disabled={!input || busy !== null}
-                    data-busy={busy === 'connect' ? '' : undefined}
-                    className="btn-ember is-block"
-                  >
-                    {busy === 'connect' ? 'Читаю библиотеку…' : action}
-                  </button>
-                </ClickSpark>
-              </Magnet>
-            </form>
+            <p className="card-eyebrow">Доступ к библиотеке</p>
+            <ProfileForm
+              value={input}
+              onChange={setInput}
+              invalid={inputError}
+              busy={busy}
+              autoFocus={false}
+              submit={action}
+              primary
+              onSubmit={submitProfile}
+            />
             <div className="rule-or">или</div>
             <a
               href={steamHref}
@@ -443,5 +534,124 @@ export function ConnectCard() {
       </p>
       {error === 'private' && <PrivacyHelp />}
     </div>
+  )
+}
+
+type Busy = 'go' | 'connect' | 'demo' | null
+
+/** Подсказка о входе из ответа touch или connect: демо помнится только настоящим true. */
+function hintFrom(d: { personaName?: string | null; demo?: boolean }): SessionHint {
+  return {
+    authed: true,
+    personaName: d.personaName ?? null,
+    ...(d.demo === true ? { demo: true as const } : {}),
+  }
+}
+
+/**
+ * Поле для ссылки на профиль — одно на карточку.
+ *
+ * Им пользуются обе ветки: гость подключается, вошедший (демо или «Подключить
+ * другую библиотеку») меняет библиотеку. Разметка общая, чтобы id и подпись
+ * поля существовали в исходнике ровно один раз, — сторож lib/landingdoor
+ * считает именно исходник.
+ *
+ * primary — у гостя кнопка формы и есть парадная кнопка карточки. У
+ * вошедшего парадная уже стоит выше (его назначение), и вторая залитая рядом
+ * читалась бы как второе обещание — поэтому стеклянная.
+ */
+function ProfileForm({
+  value,
+  onChange,
+  invalid,
+  busy,
+  autoFocus,
+  submit,
+  primary,
+  onSubmit,
+}: {
+  value: string
+  onChange: (v: string) => void
+  invalid: boolean
+  busy: Busy
+  autoFocus: boolean
+  submit: string
+  primary: boolean
+  onSubmit: () => void
+}) {
+  const label = busy === 'connect' ? 'Читаю библиотеку…' : submit
+  return (
+    /*
+      Настоящая форма, а не инпут с onKeyDown. Даёт три вещи разом: Enter
+      работает штатно (и на мобильной клавиатуре тоже), браузер понимает поле
+      как поле, а скринридер объявляет его подпись.
+    */
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        onSubmit()
+      }}
+      className="flex flex-col gap-3"
+    >
+      {/* Подпись есть, но не показана: место под ней съело бы карточку,
+          а placeholder подписью не является — он исчезает при вводе и
+          не читается скринридером как имя поля. */}
+      <label htmlFor="steam-profile" className="sr-only">
+        Ссылка на твой Steam-профиль или ник
+      </label>
+      {/*
+        Подсказка в поле КОРОЧЕ подписи, и это не небрежность: полная
+        фраза не помещалась в поле на телефоне и обрывалась на «Steam-
+        профиль и…». Обрезанная подсказка хуже короткой — она выглядит
+        сломанной вёрсткой. Скринридер и label читают полный вариант.
+      */}
+      <input
+        id="steam-profile"
+        name="profile"
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Ссылка на профиль или ник"
+        inputMode="url"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        enterKeyHint="go"
+        autoComplete="off"
+        autoFocus={autoFocus}
+        aria-invalid={invalid}
+        aria-describedby="connect-error"
+        className="field"
+      />
+      {primary ? (
+        /* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */
+        <Magnet className="block w-full">
+          <ClickSpark className="block w-full">
+            {/*
+              data-busy отдельно от disabled: форма выключает кнопку и
+              когда поле пустое, и когда идёт запрос, а это два разных
+              состояния. Выключенная ЖДЁТ ввода, занятая РАБОТАЕТ — и
+              выглядеть они обязаны по-разному (см. .btn-ember[data-busy]).
+            */}
+            <button
+              type="submit"
+              disabled={!value || busy !== null}
+              data-busy={busy === 'connect' ? '' : undefined}
+              className="btn-ember is-block"
+            >
+              {label}
+            </button>
+          </ClickSpark>
+        </Magnet>
+      ) : (
+        <button
+          type="submit"
+          disabled={!value || busy !== null}
+          className="glass glass-hover w-full rounded-[14px] py-3 text-center text-sm text-ink disabled:opacity-60"
+        >
+          {label}
+        </button>
+      )}
+    </form>
   )
 }

@@ -4,6 +4,7 @@ import {
   SESSION_COOKIE,
   currentSession,
   getDb,
+  isDemoId,
   isWriter,
   nowSec,
   sessionCookieOptions,
@@ -42,9 +43,16 @@ export async function POST(req: Request) {
   // Ник и аватар читаются только когда их просят. Спрашивает одна главная —
   // ради приветствия; SessionKeeper на остальных страницах берёт из ответа
   // один writer, и лишний запрос в базу на каждую загрузку был бы даром.
+  //
+  // demo — туда же: демо-личность главная встречает не «С возвращением,
+  // Демо-игрок», а полем для своей ссылки. Признак считается по самому
+  // steamid, в базу за ним не ходят.
   const card =
     new URL(req.url).searchParams.get('card') === '1'
-      ? await getUserCard(db, steamid).catch(() => ({ personaName: null, avatarUrl: null }))
+      ? {
+          ...(await getUserCard(db, steamid).catch(() => ({ personaName: null, avatarUrl: null }))),
+          demo: isDemoId(steamid),
+        }
       : null
   const res = NextResponse.json({ authed: true, steamid, writer: isWriter(session), ...(card ?? {}) })
 

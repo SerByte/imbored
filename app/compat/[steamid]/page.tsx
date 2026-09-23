@@ -17,6 +17,7 @@ import {
   loadCompat,
   loadCompatInvite,
 } from '@/lib/compatpage'
+import { reconnectHref } from '@/lib/destination'
 import { plural } from '@/lib/plural'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
@@ -306,7 +307,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                 Твоя библиотека ещё не подключена — сравнивать пока не с чем.
               </p>
               <Link
-                href="/"
+                href={reconnectHref({ compat: other })}
                 className="btn-ember is-block py-3"
               >
                 Подключить библиотеку

@@ -3,16 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useSyncExternalStore, type ComponentProps } from 'react'
-import { lastMoodStore, pickHref, QUIZ_HREF } from '@/lib/lastmood'
-
-/*
- * Снимок — готовая строка адреса, а не запись из хранилища: две одинаковые
- * строки равны по значению, и useSyncExternalStore не уходит в повторный
- * рендер. Часы читаются здесь, в снимке, а не в теле компонента: рендер
- * обязан быть чистым, а срок годности прошлого настроения зависит от «сейчас».
- */
-const hrefNow = () => pickHref(lastMoodStore.get(), Math.floor(Date.now() / 1000))
-const hrefServer = () => QUIZ_HREF
+import { lastMoodStore, pickHrefNow, pickHrefServer, QUIZ_HREF } from '@/lib/lastmood'
 
 /**
  * «Подобрать игру» — сразу к выдаче под прошлое настроение (lib/lastmood.ts).
@@ -29,7 +20,7 @@ const hrefServer = () => QUIZ_HREF
  * своим спискам, через lib/nav (isNavActive).
  */
 export function PickLink(props: Omit<ComponentProps<typeof Link>, 'href'>) {
-  const remembered = useSyncExternalStore(lastMoodStore.subscribe, hrefNow, hrefServer)
+  const remembered = useSyncExternalStore(lastMoodStore.subscribe, pickHrefNow, pickHrefServer)
   const pathname = usePathname() ?? ''
   const inFlow = pathname === '/quiz' || pathname === '/play'
   return <Link {...props} href={inFlow ? QUIZ_HREF : remembered} />

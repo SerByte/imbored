@@ -18,7 +18,14 @@
  * читал «С возвращением».
  */
 
-export type SessionHint = { authed: boolean; personaName: string | null }
+/**
+ * demo — вошёл демо-личностью. Поле есть только когда это правда: карточка
+ * главной говорит демо «Ты в демо-режиме» и сразу даёт поле для своей
+ * ссылки, а не «С возвращением, Демо-игрок». Без признака в подсказке
+ * вернувшийся в демо видел бы приветствие, которое через круг до сервера
+ * сменялось бы другой карточкой, — прыжок первого экрана под пальцем.
+ */
+export type SessionHint = { authed: boolean; personaName: string | null; demo?: true }
 
 const KEY = 'imbored.session-hint'
 
@@ -37,7 +44,11 @@ function parse(raw: string): SessionHint | null {
     if (typeof v !== 'object' || v === null) return null
     const o = v as Record<string, unknown>
     if (o.authed !== true) return null
-    return { authed: true, personaName: typeof o.personaName === 'string' ? o.personaName : null }
+    return {
+      authed: true,
+      personaName: typeof o.personaName === 'string' ? o.personaName : null,
+      ...(o.demo === true ? { demo: true as const } : {}),
+    }
   } catch {
     return null
   }

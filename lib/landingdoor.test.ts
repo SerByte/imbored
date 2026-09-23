@@ -252,6 +252,23 @@ describe('главная', () => {
   })
 
   /**
+   * Вошедшему было некуда вставить ссылку: поле жило только в ветке гостя.
+   * Из демо не уйти в свою библиотеку без входа в Steam, а «Подключить
+   * заново» с экранов без библиотеки возвращал на ту же кнопку в подбор.
+   */
+  test('поле для ссылки есть и у вошедшего, а ?reconnect=1 раскрывает его', () => {
+    const src = code(fs.readFileSync(path.join(LANDING, 'ConnectCard.tsx'), 'utf8'))
+    const authedAt = src.indexOf('view.authed ?')
+    const guestAt = src.indexOf(') : (', authedAt)
+    expect(authedAt, 'ветка вошедшего не найдена').toBeGreaterThan(-1)
+    expect(src.slice(authedAt, guestAt), 'у вошедшего нет поля').toMatch(/<ProfileForm\b/)
+    expect(src.slice(guestAt), 'у гостя нет поля').toMatch(/<ProfileForm\b/)
+    expect(src, 'адрес «Подключить заново» ничего не раскрывает').toMatch(
+      /search\.get\('reconnect'\) === '1'/,
+    )
+  })
+
+  /**
    * Тексты пресетов живут в lib/presets.ts. Вторая копия этих фраз разъедется
    * с адресами — это уже случалось с обещаниями назначений (lib/destination.ts).
    */

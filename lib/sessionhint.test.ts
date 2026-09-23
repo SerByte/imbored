@@ -80,6 +80,18 @@ describe('подсказка о прошлом входе', () => {
     expect(m.getSessionHint()).toBeNull()
   })
 
+  test('демо помнится, но только настоящим true', async () => {
+    install({ [KEY]: JSON.stringify({ authed: true, personaName: 'Демо-игрок', demo: true }) })
+    let m = await fresh()
+    expect(m.getSessionHint()).toEqual({ authed: true, personaName: 'Демо-игрок', demo: true })
+
+    for (const demo of ['true', 1, false, null]) {
+      install({ [KEY]: JSON.stringify({ authed: true, personaName: 'Гоша', demo }) })
+      m = await fresh()
+      expect(m.getSessionHint(), String(demo)).toEqual({ authed: true, personaName: 'Гоша' })
+    }
+  })
+
   test('ник не строкой — вход признаём, ник отбрасываем', async () => {
     install({ [KEY]: JSON.stringify({ authed: true, personaName: { toString: 'ой' } }) })
     const m = await fresh()

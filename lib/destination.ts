@@ -214,3 +214,22 @@ export function loginTarget(search: URLSearchParams): string {
   if (compat) return `/compat/${compat}`
   return carry.get('next') ?? '/quiz'
 }
+
+/**
+ * «Подключить заново» — главная с раскрытым полем для ссылки.
+ *
+ * Голый переход на / вёл по кругу: вошедшему главная говорила «С
+ * возвращением» и давала кнопку в подбор — то есть ровно туда, откуда
+ * человека только что развернуло без библиотеки. Поля для другой ссылки у
+ * вошедшего не было вовсе. reconnect=1 раскрывает его сразу (ConnectCard).
+ *
+ * carry — то, что карточка и так читает из адреса (loginCarry): совместимость,
+ * которую человек шёл смотреть, едет с ним, и после подключения карточка
+ * уведёт туда же, а не в квиз.
+ */
+export function reconnectHref(carry?: { compat?: string }): string {
+  const q = new URLSearchParams()
+  if (carry?.compat && COMPAT_RE.test(carry.compat)) q.set('compat', carry.compat)
+  q.set('reconnect', '1')
+  return `/?${q}`
+}

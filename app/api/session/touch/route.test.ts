@@ -120,4 +120,19 @@ describe('/api/session/touch', () => {
       expect(await res.json(), kind).toMatchObject({ authed: true, writer })
     }
   })
+
+  test('card=1 говорит главной, демо ли это; без card признака нет', async () => {
+    for (const [kind, demo] of [
+      ['openid', false],
+      ['claimed', false],
+      ['demo', true],
+    ] as const) {
+      await signInAs(db, kind)
+      const card = await (await POST(post('/api/session/touch?card=1'))).json()
+      expect(card, kind).toMatchObject({ authed: true, demo })
+      // Остальные страницы спрашивают только writer — ник и демо им не нужны
+      const plain = await (await POST(post('/api/session/touch'))).json()
+      expect(plain, kind).not.toHaveProperty('demo')
+    }
+  })
 })
