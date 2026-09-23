@@ -22,7 +22,7 @@ import {
 } from '@/lib/forgotten'
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
-import { backlogEquivalent, backlogValue } from '@/lib/stats'
+import { backlogValue } from '@/lib/stats'
 import { bounceTo, reconnectHref } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
@@ -119,14 +119,6 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     }
   })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
-  // Строка разрезается по {n}, чтобы число осталось моноширинным, как все
-  // числа в проекте, а не растворилось в тексте
-  const equivalent = (() => {
-    const eq = backlogEquivalent(backlog.cents, steamid)
-    if (!eq) return null
-    const [before, after] = eq.text.split('{n}')
-    return { count: eq.count, before, after }
-  })()
 
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
@@ -224,22 +216,34 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               обёртки — элемент не может опрашивать сам себя, — и заводить новый
               паттерн ради одной карточки не стоит.
             */
+            /*
+              БЭКЛОГ — ЭТО ТО, ВО ЧТО МОЖНО ИГРАТЬ ПРЯМО СЕЙЧАС, А НЕ ДОЛГ.
+
+              Карточка начиналась с «≥ $4150 лежит несыгранным» и переводила
+              сумму в бургеры, «которые ты бы доел». Это счёт за невыполненное:
+              деньги уже потрачены, вернуть их нельзя, и напоминание о них
+              давит ровно на то, от чего человек сюда пришёл, — на чувство,
+              что играть надо «правильно». Невозвратные затраты — плохой повод
+              выбирать игру, и сервис, который помогает выбрать, не должен на
+              них давить.
+
+              Теперь главное — число игр, которые уже твои, и что попробовать
+              их можно сегодня. Сумма осталась второй строкой, справкой, без
+              шуток про еду. Шутки живут на портрете: там это самоирония
+              владельца, а не укор от сервиса посреди его библиотеки.
+            */
             <div className="glass rounded-[20px] p-5 flex flex-col items-start gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div className="text-lg font-bold">
-                  ≥ <span className="font-mono text-ember-text">${(backlog.cents / 100).toFixed(0)}</span>{' '}
-                  лежит несыгранным
+                  <span className="font-mono text-ember-text">{backlog.unplayedCount}</span>{' '}
+                  {plural(backlog.unplayedCount, 'игра уже твоя', 'игры уже твои', 'игр уже твои')} —
+                  попробовать можно прямо сейчас
                 </div>
                 <div className="text-xs text-dim mt-1">
-                  {backlog.unplayedCount} {plural(backlog.unplayedCount, 'игра', 'игры', 'игр')} в бэклоге, у {backlog.pricedCount} известна цена
+                  Вместе не меньше{' '}
+                  <span className="font-mono">${(backlog.cents / 100).toFixed(0)}</span> — цена
+                  известна у {backlog.pricedCount} из {backlog.unplayedCount}
                 </div>
-                {equivalent && (
-                  <div className="text-xs text-dim mt-2">
-                    {equivalent.before}
-                    <span className="font-mono text-ember-text">{equivalent.count}</span>
-                    {equivalent.after}
-                  </div>
-                )}
               </div>
               {/* Не в общий опрос про настроение: карточка про несыгранное —
                   значит и подбор про несыгранное */}
@@ -247,7 +251,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                 href="/quiz?from=untouched"
                 className="btn-ember shrink-0 px-4 py-2.5 text-sm"
               >
-                Разгрести →
+                Выбрать одну →
               </Link>
             </div>
           )}

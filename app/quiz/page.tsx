@@ -102,7 +102,7 @@ function Quiz() {
 
   const step = STEPS[stepIndex]
   const last = stepIndex === STEPS.length - 1
-  // Приходит с /library («Разгрести →») и живёт до самого /play. Не настроение,
+  // Приходит с /library («Выбрать одну →») и живёт до самого /play. Не настроение,
   // а отдельная ось — как roulette у «Мне повезёт».
   //
   // Читается через useSearch, а не useSearchParams: второй ронял весь

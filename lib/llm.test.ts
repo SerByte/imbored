@@ -518,13 +518,24 @@ describe('причина называет свою игру-якорь', () => {
       anchorOf,
       hoursOf: () => 42,
     })
-    expect(pick.reason).toContain('вложил 42 ч в «Shapez»')
+    expect(pick.reason).toContain('У тебя в «Shapez» уже 42 ч')
     expect(pick.reason).not.toContain('Factorio')
   })
 
-  test('без часов заброшенная говорит как раньше', () => {
+  test('без часов заброшенная говорит, что игру уже начинали', () => {
     const [pick] = heuristicPicks(one('comeback'), metaOf, 1, NOW, profile)
-    expect(pick.reason).toContain('вложил часы в «Shapez»')
+    expect(pick.reason).toContain('«Shapez» ты уже начинал')
+  })
+
+  /*
+   * Бэклог — не долг. «Вложил и забросил» звало вернуться ради потраченного,
+   * то есть давило невозвратными затратами, а не приглашало.
+   */
+  test('заброшенная не попрекает вложенным', () => {
+    for (const hoursOf of [() => 42, () => null]) {
+      const [pick] = heuristicPicks(one('comeback'), metaOf, 1, NOW, profile, { hoursOf })
+      expect(pick.reason).not.toMatch(/вложил|забросил/)
+    }
   })
 })
 

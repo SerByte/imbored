@@ -1062,6 +1062,13 @@ function Player({ say }: { say: (line: string) => void }) {
    */
   const finished = pick.source === 'comeback' || pick.source === 'familiar'
   /*
+   * Своя игра, которую не проходил, — бан убирает её «с полки», и подпись
+   * говорит прямо: бросать игры нормально. Купленное и недопройденное
+   * тянет вернуться «раз уж заплачено», а это довод невозвратных затрат, не
+   * вкуса. Не купленной полки нет — у неё прежняя подпись.
+   */
+  const owned = pick.source !== 'new'
+  /*
    * «Почему она?» — то, чего НЕ ВИДНО выше, и только это.
    *
    * Здесь была третья строка, `общие теги: …`. С тех пор как совпавшие теги
@@ -1474,7 +1481,13 @@ function Player({ say }: { say: (line: string) => void }) {
                       focusHero(false)
                     }}
                     disabled={banning}
-                    title={finished ? 'Прошёл — больше не предлагать' : 'Больше не показывать эту игру'}
+                    title={
+                      finished
+                        ? 'Прошёл — больше не предлагать'
+                        : owned
+                          ? 'Убрать с полки. Бросать игры — нормально'
+                          : 'Больше не показывать эту игру'
+                    }
                     className={`rounded-[14px] glass glass-hover py-3 text-sm cursor-pointer disabled:opacity-60 ${
                       finished ? 'px-4 text-dim' : 'px-3 text-faint'
                     }`}
@@ -1492,7 +1505,11 @@ function Player({ say }: { say: (line: string) => void }) {
                       <>
                         <span aria-hidden>🚫</span>
                         <span className="sr-only">
-                          {banning ? 'Убираю навсегда…' : 'Больше никогда не показывать эту игру'}
+                          {banning
+                            ? 'Убираю навсегда…'
+                            : owned
+                              ? 'Убрать с полки насовсем. Бросать игры — нормально'
+                              : 'Больше никогда не показывать эту игру'}
                         </span>
                       </>
                     )}
