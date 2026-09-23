@@ -12,7 +12,11 @@ export default defineConfig({
     // Помощник аренды (scripts/lease.ts) разводит ручной прогон с кроном по
     // времени — ошибиться в нём значит либо запереть крон, либо оплатить одну
     // и ту же работу дважды.
-    include: ['lib/**/*.test.ts', 'scripts/**/*.test.ts'],
+    //
+    // app/ — ради тестов роутов рядом с самими роутами (app/api/*/route.test.ts,
+    // обвязка в lib/testing/route.ts). Next такой файл маршрутом не считает:
+    // маршрут — только route.ts и page.tsx.
+    include: ['lib/**/*.test.ts', 'scripts/**/*.test.ts', 'app/**/*.test.ts'],
     environment: 'node',
   },
 })
