@@ -206,6 +206,17 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
  * Ключевое разделение: catalog_ingest — карта территории (все игры Steam,
  * ~170 тысяч), games — только то, что реально показываем. Полный каталог
  * в games не влезает по бюджету прочитанных строк Turso.
+ *
+ * ПРАВИЛО ДЛЯ ИНДЕКСОВ (здесь, в SCHEMA_NEWS и в SCHEMA). CREATE INDEX IF NOT
+ * EXISTS смотрит только на имя: если индекс с таким именем в базе уже есть,
+ * новое определение молча пропускается. Правка предиката или колонок доезжает
+ * до свежих баз, то есть до всех тестов, а живая база остаётся со старым
+ * индексом, и запрос, повторяющий НОВЫЙ предикат, идёт полным сканом — видно
+ * это только по счёту Turso. Так случилось с idx_news_tldr. Поэтому: поменял
+ * определение — дай индексу новое имя (…_v2, …_v3) и положи DROP INDEX IF
+ * EXISTS старого имени в тот же блок, перед созданием нового. Версия схемы
+ * для этого не нужна: блок выполняется на каждом старте. Планы запросов к
+ * частичным индексам проверяет lib/queryplan.test.ts.
  */
 const SCHEMA_CATALOG = `
 CREATE TABLE IF NOT EXISTS catalog_ingest (
@@ -268,6 +279,9 @@ CREATE INDEX IF NOT EXISTS idx_rooms_public ON rooms (created_at DESC)
  *
  * Ни на одну колонку из ALTER-цикла эти объекты не ссылаются, поэтому схема
  * применяется сразу после SCHEMA, до ALTER-цикла.
+ *
+ * Сменил предикат индекса — переименуй его, а старое имя сними через
+ * DROP INDEX IF EXISTS; подробно — ПРАВИЛО ДЛЯ ИНДЕКСОВ у SCHEMA_CATALOG.
  */
 const SCHEMA_NEWS = `
 CREATE TABLE IF NOT EXISTS news_items (
@@ -299,7 +313,13 @@ CREATE INDEX IF NOT EXISTS idx_news_feed ON news_items (published_at DESC)
 -- (обновления карт из мастерской и подобное), до модели не доезжает вовсе —
 -- пересказывать там нечего. Всё остальное идёт за пересказом и уточнением
 -- масштаба. tldr_tries отсекает вечно падающие записи.
-CREATE INDEX IF NOT EXISTS idx_news_tldr ON news_items (published_at DESC)
+--
+-- _v2, потому что у прежнего idx_news_tldr был предикат «scale IS NULL».
+-- Когда его сменили, живые базы остались со старым определением (CREATE INDEX
+-- IF NOT EXISTS смотрит только на имя), и очередь пересказа, повторяющая
+-- новый предикат, читала news_items полным сканом на каждом прогоне крона.
+DROP INDEX IF EXISTS idx_news_tldr;
+CREATE INDEX IF NOT EXISTS idx_news_tldr_v2 ON news_items (published_at DESC)
   WHERE kind = 'patch' AND tldr IS NULL AND tldr_tries < 3 AND scale IS NOT 'hotfix';
 
 CREATE TABLE IF NOT EXISTS news_poll (
@@ -3112,7 +3132,7 @@ export async function getFeedHeadForApps(
 }
 
 /**
- * Очередь на пересказ. Предикат дословно повторяет idx_news_tldr.
+ * Очередь на пересказ. Предикат дословно повторяет idx_news_tldr_v2.
  *
  * scale IS NOT 'hotfix' — ключевое условие: посты, которым эвристика уже
  * сказала «мелочь», до модели не доезжают, иначе Claude переписывал бы
