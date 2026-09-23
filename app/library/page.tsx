@@ -49,6 +49,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // владение профилем — от этого зависит, предлагать ли «выйти везде».
   const session = await currentSession()
   const steamid = session?.steamid ?? null
+  // Гостя без куки разворачивает proxy.ts настоящим 307 ещё до рендера:
+  // отсюда редирект ушёл бы статусом 200 — каркас loading.tsx к этому моменту
+  // уже отдан. Здесь остаются протухшая и поддельная кука.
   if (!steamid) redirect(bounceTo('/library'))
 
   const db = await getDb()

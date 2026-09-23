@@ -21,7 +21,7 @@
  *
  * Единственный импорт — разбор настроения из lib/mood, у которого самого
  * зависимостей нет: модуль читают и серверные страницы, и клиентский лендинг,
- * и роут возврата из Steam.
+ * и роут возврата из Steam, и proxy.ts.
  */
 
 import { parseLean, parseMood } from './mood'
@@ -128,6 +128,36 @@ export function bounceTo(
   const query = search?.toString() ?? ''
   const url = destinationUrl(query ? `${path}?${query}` : path)
   return url ? `/?next=${encodeURIComponent(url)}` : '/'
+}
+
+/**
+ * Серверные страницы, которые без сессии разворачивают гостя на лендинг.
+ *
+ * Сами страницы делают это redirect()'ом, но у /library свой loading.tsx: он
+ * успевает отдать каркас раньше, чем страница прочла куку, и статус 200 уже
+ * ушёл. Вместо 307 гость получал страницу с мета-обновлением, а краулер —
+ * «страницу» из шапки и каркаса. Поэтому разворот стоит в proxy.ts, ДО
+ * рендера, где статус ещё можно выбрать.
+ *
+ * Ровно адреса хабов: /compat/<steamid> и /portrait/<steamid> — публичные
+ * страницы, по ним приходят из чужого чата без всякой сессии.
+ *
+ * /daily, /play и /room/new здесь нет: это клиентские страницы, они
+ * разворачивают сами, после ответа сервера про библиотеку.
+ */
+export const GUEST_BOUNCE: readonly string[] = ['/library', '/compat', '/portrait']
+
+/**
+ * Куда развернуть гостя до рендера, либо null — пропустить к странице.
+ *
+ * Решает только НАЛИЧИЕ куки, подпись здесь не проверяется: прокси не тянет
+ * базу и секрет (см. lib/origin.ts). Протухшую или поддельную куку ловит
+ * сама страница тем же redirect(bounceTo(…)) — это редкий случай, и платит
+ * за него только он.
+ */
+export function guestBounce(pathname: string, hasSession: boolean): string | null {
+  if (hasSession || !GUEST_BOUNCE.includes(pathname)) return null
+  return bounceTo(pathname)
 }
 
 const JOIN_RE = /^[A-Z0-9]{6}$/

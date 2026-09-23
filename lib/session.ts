@@ -1,5 +1,15 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
+/**
+ * Имя куки, в которой лежит токен этого формата.
+ *
+ * Здесь, а не в lib/server: его читает и proxy.ts, а тому нельзя тянуть за
+ * собой базу и next/headers (см. докблок lib/origin.ts). У этого модуля
+ * единственная зависимость — node:crypto. lib/server реэкспортирует имя, так
+ * что роуты по-прежнему берут всё серверное из одного места.
+ */
+export const SESSION_COOKIE = 'imbored_session'
+
 function hmac(value: string, secret: string): string {
   return createHmac('sha256', secret).update(value).digest('hex')
 }

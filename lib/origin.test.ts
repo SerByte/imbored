@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { NextRequest } from 'next/server'
 import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server'
 import { config, proxy } from '../proxy'
+import { GUEST_BOUNCE } from './destination'
 import { browserHost, isSafeMethod, sameOrigin } from './origin'
+import { SESSION_COOKIE } from './session'
 
 /**
  * Сторож межсайтовых запросов.
@@ -120,14 +122,48 @@ describe('proxy.ts', () => {
     expect(passed(call('GET', `${BASE}/api/news`, { 'sec-fetch-site': 'cross-site' }))).toBe(true)
   })
 
-  test('прокси стоит на всём /api и не трогает страницы', () => {
-    expect(config.matcher).toBe('/api/:path*')
-    for (const url of ['/api/connect', '/api/auth/logout', '/api/room/ABC123/vote']) {
+  test('прокси стоит на всём /api и на хабах, остальные страницы не трогает', () => {
+    expect(config.matcher).toEqual(['/api/:path*', ...GUEST_BOUNCE])
+    for (const url of ['/api/connect', '/api/auth/logout', '/api/room/ABC123/vote', ...GUEST_BOUNCE]) {
       expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(true)
     }
-    for (const url of ['/', '/play', '/room/ABC123']) {
+    // личные страницы по ссылке из чата прокси не будят вовсе
+    for (const url of ['/', '/play', '/room/ABC123', '/game/730', '/compat/76561197960287930', '/portrait/76561197960287930']) {
       expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(false)
     }
+  })
+
+  /**
+   * Гость без куки на хабе. У /library свой loading.tsx, и redirect() из
+   * страницы уходил статусом 200 с мета-обновлением: заголовки к тому
+   * моменту уже отправлены вместе с каркасом.
+   */
+  test('гость на хабе получает настоящий 307 на лендинг', () => {
+    for (const method of ['GET', 'HEAD']) {
+      const res = call(method, `${BASE}/library?state=untouched`)
+      expect(res.status, method).toBe(307)
+      expect(res.headers.get('location'), method).toBe(`${BASE}/?next=%2Flibrary`)
+    }
+    expect(call('GET', `${BASE}/compat`).headers.get('location')).toBe(`${BASE}/?next=%2Fcompat`)
+    expect(call('GET', `${BASE}/portrait`).headers.get('location')).toBe(`${BASE}/?next=%2Fportrait`)
+  })
+
+  test('разворот остаётся на адресе запроса: превью не улетает на прод', () => {
+    const preview = 'https://imbored-git-branch.vercel.app'
+    expect(call('GET', `${preview}/library`).headers.get('location')).toBe(`${preview}/?next=%2Flibrary`)
+  })
+
+  test('с кукой сессии хаб открывается — подпись проверит страница', () => {
+    const res = call('GET', `${BASE}/library`, { cookie: `${SESSION_COOKIE}=token` })
+    expect(passed(res)).toBe(true)
+  })
+
+  test('погашенная выходом кука — всё равно гость', () => {
+    expect(call('GET', `${BASE}/library`, { cookie: `${SESSION_COOKIE}=` }).status).toBe(307)
+  })
+
+  test('на /api разворота нет: чтение гостя отвечает само', () => {
+    expect(passed(call('GET', `${BASE}/api/whatsnew/head`))).toBe(true)
   })
 
   /**

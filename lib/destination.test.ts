@@ -6,6 +6,8 @@ import {
   DESTINATIONS,
   destinationPath,
   destinationUrl,
+  GUEST_BOUNCE,
+  guestBounce,
   loginCarry,
   loginTarget,
   steamLoginFor,
@@ -108,6 +110,58 @@ describe('разворот гостя на лендинг', () => {
     }
     for (const dir of ['app', 'components']) walk(path.join(ROOT, dir))
     expect(offenders, 'вместо этого bounceTo(<куда шёл человек>)').toEqual([])
+  })
+})
+
+/**
+ * Разворот до рендера — в proxy.ts. Страница с loading.tsx успевала отдать
+ * каркас со статусом 200 раньше, чем её redirect() прочёл куку.
+ */
+describe('гость разворачивается до рендера', () => {
+  test('без сессии хабы уводят на лендинг и помнят, куда человек шёл', () => {
+    expect(guestBounce('/library', false)).toBe('/?next=%2Flibrary')
+    expect(guestBounce('/compat', false)).toBe('/?next=%2Fcompat')
+    expect(guestBounce('/portrait', false)).toBe('/?next=%2Fportrait')
+  })
+
+  test('с сессией пропускает — подпись проверит сама страница', () => {
+    for (const p of GUEST_BOUNCE) expect(guestBounce(p, true), p).toBeNull()
+  })
+
+  test('личные страницы по ссылке из чата открываются без сессии', () => {
+    expect(guestBounce('/compat/76561197960287930', false)).toBeNull()
+    expect(guestBounce('/portrait/76561197960287930', false)).toBeNull()
+    expect(guestBounce('/', false)).toBeNull()
+    expect(guestBounce('/game/730', false)).toBeNull()
+    // похожее на хаб — не хаб
+    expect(guestBounce('/libraryx', false)).toBeNull()
+    expect(guestBounce('/compat/', false)).toBeNull()
+  })
+
+  /**
+   * Прокси разворачивает только туда, где лендинг знает, что сказать: адрес без
+   * записи в DESTINATIONS bounceTo свёл бы к голому «/» — ровно то молчание,
+   * ради которого всё затевалось.
+   */
+  test('каждый хаб — место назначения лендинга', () => {
+    for (const p of GUEST_BOUNCE) expect(Object.hasOwn(DESTINATIONS, p), p).toBe(true)
+  })
+
+  /**
+   * Сама страница по-прежнему разворачивает: без неё протухшая кука (прокси
+   * видит только её наличие) оставила бы человека на пустой странице.
+   */
+  test('страницы-хабы сохраняют свой redirect(bounceTo) на случай мёртвой куки', () => {
+    const pages: Record<string, string> = {
+      '/library': path.join('app', 'library', 'page.tsx'),
+      '/compat': path.join('app', 'compat', 'page.tsx'),
+      '/portrait': path.join('app', 'portrait', 'page.tsx'),
+    }
+    expect(Object.keys(pages).sort()).toEqual([...GUEST_BOUNCE].sort())
+    for (const [p, file] of Object.entries(pages)) {
+      const src = fs.readFileSync(path.join(ROOT, file), 'utf8')
+      expect(src, file).toContain(`bounceTo('${p}')`)
+    }
   })
 })
 

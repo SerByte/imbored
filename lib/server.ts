@@ -11,6 +11,7 @@ import {
   resolveSession,
   type Resolved,
 } from './sessions'
+import { SESSION_COOKIE } from './session'
 
 const globalStore = globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }
 
@@ -78,7 +79,8 @@ export function getDb(): Promise<Db> {
   return globalStore.__imboredDb
 }
 
-export const SESSION_COOKIE = 'imbored_session'
+// Имя живёт в lib/session: его читает и proxy.ts, которому этот модуль не по весу
+export { SESSION_COOKIE }
 
 /*
  * Демо-режим: свой steamid каждому посетителю.

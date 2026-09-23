@@ -81,7 +81,8 @@ describe('первая отрисовка не спрятана анимацие
  */
 const LOADING_ALLOWED: Record<string, string> = {
   'app/library/loading.tsx':
-    'force-dynamic за входом, в robots закрыта: индексировать нечего, а ждать библиотеку из сотен игр долго',
+    'force-dynamic за входом, в robots закрыта: индексировать нечего, а ждать библиотеку из сотен игр долго. ' +
+    'Гостя разворачивает proxy.ts до рендера, так что его 307 остаётся честным',
   'app/compat/[steamid]/loading.tsx':
     'force-dynamic, закрыта в robots и noindex: две библиотеки и расчёт совпадения, каркас держит кадр пришедшему из чата',
   'app/portrait/[steamid]/loading.tsx':
