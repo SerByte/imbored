@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { bounceTo, DESTINATIONS, destinationPath } from './destination'
+import { bounceTo, DESTINATIONS, destinationPath, loginCarry, loginTarget } from './destination'
 
 /**
  * Сторож разворота гостя.
@@ -96,5 +96,41 @@ describe('разворот гостя на лендинг', () => {
     }
     for (const dir of ['app', 'components']) walk(path.join(ROOT, dir))
     expect(offenders, 'вместо этого bounceTo(<куда шёл человек>)').toEqual([])
+  })
+})
+
+/**
+ * Что едет через вход в Steam. Одна функция на старт, успех и каждый отказ:
+ * раньше отказы теряли код пати, и приглашённый со скрытой библиотекой после
+ * второй попытки попадал на /quiz вместо комнаты.
+ */
+describe('вход через Steam помнит, куда человек шёл', () => {
+  const q = (s: string) => new URLSearchParams(s)
+
+  test('пати важнее совместимости, совместимость важнее next', () => {
+    expect(loginCarry(q('join=ABC123&compat=76561197960287930&next=%2Fdaily')).toString()).toBe('join=ABC123')
+    expect(loginCarry(q('compat=76561197960287930&next=%2Fdaily')).toString()).toBe(
+      'compat=76561197960287930',
+    )
+    expect(loginCarry(q('next=%2Fdaily')).toString()).toBe('next=%2Fdaily')
+    expect(loginCarry(q('')).toString()).toBe('')
+  })
+
+  test('едет только проверенное', () => {
+    // кривой код пати не перебивает честный next
+    expect(loginCarry(q('join=abc123&next=%2Fdaily')).toString()).toBe('next=%2Fdaily')
+    expect(loginCarry(q('join=ABC12')).toString()).toBe('')
+    expect(loginCarry(q('compat=123')).toString()).toBe('')
+    expect(loginCarry(q('next=%2F%2Fevil.example')).toString()).toBe('')
+    // служебное — state, openid.*, error — не едет никогда
+    expect(loginCarry(q('state=abc&error=auth&openid.mode=id_res')).toString()).toBe('')
+  })
+
+  test('после входа — туда же', () => {
+    expect(loginTarget(q('join=ABC123&state=x'))).toBe('/room/ABC123')
+    expect(loginTarget(q('compat=76561197960287930'))).toBe('/compat/76561197960287930')
+    expect(loginTarget(q('next=%2Fdaily'))).toBe('/daily')
+    expect(loginTarget(q('next=https%3A%2F%2Fevil.example'))).toBe('/quiz')
+    expect(loginTarget(q(''))).toBe('/quiz')
   })
 })

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { GET as startLogin } from '../app/api/auth/steam/route'
 import { GET as steamReturn } from '../app/api/auth/steam/return/route'
+import { checkRate } from './ratelimit'
 
 /**
  * Вход через Steam целиком: старт → Steam → возврат, настоящими роутами.
@@ -36,11 +37,13 @@ const ENV = { ...process.env }
 
 /** Что спрашивали у Steam: check_authentication и Web API. */
 let asked: string[] = []
+let ownedStatus = 200
 let owned: unknown = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
 
 beforeEach(() => {
   process.env = { ...ENV, APP_BASE_URL: BASE, STEAM_API_KEY: 'k' }
   asked = []
+  ownedStatus = 200
   owned = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
   vi.stubGlobal('fetch', async (input: string | URL) => {
     const url = String(input)
@@ -51,7 +54,7 @@ beforeEach(() => {
     if (url.includes('GetPlayerSummaries')) {
       return Response.json({ response: { players: [{ steamid: STEAMID, personaname: 'Гейб' }] } })
     }
-    if (url.includes('GetOwnedGames')) return Response.json(owned)
+    if (url.includes('GetOwnedGames')) return Response.json(owned, { status: ownedStatus })
     return new Response('нет такого', { status: 404 })
   })
 })
@@ -59,6 +62,7 @@ beforeEach(() => {
 afterEach(() => {
   process.env = { ...ENV }
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 /** Старт входа: куда отправили в Steam и какой state положили в куку. */
@@ -140,5 +144,76 @@ describe('вход через Steam', () => {
     expect(res.cookies.get('imbored_session')).toBeUndefined()
     expect(res.cookies.get('imbored_oidc')?.maxAge).toBe(0)
     expect(asked).toEqual([])
+  })
+})
+
+/**
+ * Отказ входа не теряет, куда человек шёл.
+ *
+ * Друга зовут в пати, у него скрыта библиотека — частый случай. Раньше он
+ * получал голый /?error=private, открывал доступ по инструкции, снова жал
+ * «Войти через Steam» и попадал на /quiz: код комнаты остался только в чате.
+ */
+describe('отказ входа помнит пати и ?next', () => {
+  /** Ответ роута с прокруткой таймеров: у Steam-клиента паузы между повторами. */
+  async function settle<T>(res: Promise<T>): Promise<T> {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    await vi.advanceTimersByTimeAsync(10_000)
+    return res
+  }
+  const landing = (res: Response) => new URL(res.headers.get('location') ?? '')
+
+  test('ассерт не подтвердился — error=auth, а join на месте', async () => {
+    const { returnTo, cookie } = await start('?join=ABC123')
+    const res = await fromSteam(returnTo, cookie?.value ?? '', {
+      'openid.return_to': returnTo.replace(BASE, 'https://other-site.example'),
+    })
+    expect(landing(res).pathname).toBe('/')
+    expect(landing(res).searchParams.get('error')).toBe('auth')
+    expect(landing(res).searchParams.get('join')).toBe('ABC123')
+  })
+
+  test('кука state потерялась — join тоже на месте', async () => {
+    const { returnTo } = await start('?join=ABC123')
+    const res = await fromSteam(returnTo, null)
+    expect(landing(res).searchParams.get('error')).toBe('auth')
+    expect(landing(res).searchParams.get('join')).toBe('ABC123')
+  })
+
+  test('скрытая библиотека — error=private, а join на месте', async () => {
+    owned = { response: {} }
+    const { returnTo, cookie } = await start('?join=ABC123')
+    const res = await settle(fromSteam(returnTo, cookie?.value ?? ''))
+    expect(landing(res).searchParams.get('error')).toBe('private')
+    expect(landing(res).searchParams.get('join')).toBe('ABC123')
+    expect(res.cookies.get('imbored_session')).toBeUndefined()
+  })
+
+  test('Steam упал — error=steam, а совместимость на месте', async () => {
+    ownedStatus = 500
+    const { returnTo, cookie } = await start('?compat=76561197960287931')
+    const res = await settle(fromSteam(returnTo, cookie?.value ?? ''))
+    expect(landing(res).searchParams.get('error')).toBe('steam')
+    expect(landing(res).searchParams.get('compat')).toBe('76561197960287931')
+  })
+
+  test('потолок попыток — error=ratelimited, а ?next на месте', async () => {
+    vi.mocked(checkRate).mockResolvedValueOnce({ ok: false, retryAfterSec: 60 })
+    const { returnTo, cookie } = await start('?next=%2Fdaily')
+    const res = await fromSteam(returnTo, cookie?.value ?? '')
+    expect(landing(res).searchParams.get('error')).toBe('ratelimited')
+    expect(landing(res).searchParams.get('next')).toBe('/daily')
+  })
+
+  test('без назначения отказ остаётся голым', async () => {
+    const { returnTo } = await start('')
+    const res = await fromSteam(returnTo, null)
+    expect(res.headers.get('location')).toBe(`${BASE}/?error=auth`)
+  })
+
+  test('успех по ?next ведёт туда же', async () => {
+    const { returnTo, cookie } = await start('?next=%2Fdaily')
+    const res = await fromSteam(returnTo, cookie?.value ?? '')
+    expect(res.headers.get('location')).toBe(`${BASE}/daily`)
   })
 })

@@ -14,7 +14,7 @@ import {
 } from '@/lib/server'
 import { fetchOwnedGames, fetchPlayerSummary } from '@/lib/steam'
 import { RETURN_PATH, stateMatches, verifyAssertion } from '@/lib/steam-openid'
-import { destinationPath } from '@/lib/destination'
+import { loginCarry, loginTarget } from '@/lib/destination'
 
 /**
  * Каждый вызов этой ручки — исходящий POST на steamcommunity.com
@@ -43,11 +43,22 @@ export async function GET(req: NextRequest) {
   }
 
   /*
+   * Отказ везёт с собой join, compat или next — ровно то, с чем человек
+   * пришёл. Иначе приглашённый в пати со скрытой библиотекой получал
+   * ?error=private, открывал доступ по инструкции, входил снова — и попадал
+   * на /quiz: код комнаты оставался только в чате. До проверки ассерта query
+   * ещё ничем не подтверждён, но loginCarry пропускает лишь проверенные
+   * форматы и закрытый список адресов, так что везти его безопасно.
+   */
+  const carry = loginCarry(params).toString()
+  const fail = (code: string) => redirect(`${base}/?error=${code}${carry ? `&${carry}` : ''}`)
+
+  /*
    * Сначала state — он проверяется локально и бесплатно, так что чужой или
    * подсунутый ссылкой ассерт не тратит ни строку лимита, ни запрос к Steam.
    */
   if (!stateMatches(req.cookies.get(OIDC_COOKIE)?.value, params.get('state'))) {
-    return redirect(`${base}/?error=auth`)
+    return fail('auth')
   }
 
   // Отказ — редиректом, а не 429 JSON'ом: сюда человека приводит браузер после
@@ -60,21 +71,21 @@ export async function GET(req: NextRequest) {
     windowSec: RETURN_WINDOW_SEC,
     nowSec: nowSec(),
   })
-  if (!gate.ok) return redirect(`${base}/?error=ratelimited`)
+  if (!gate.ok) return fail('ratelimited')
 
   const steamid = await verifyAssertion(params, `${base}${RETURN_PATH}`).catch(() => null)
-  if (!steamid) return redirect(`${base}/?error=auth`)
+  if (!steamid) return fail('auth')
 
   const key = steamApiKey()
-  if (!key) return redirect(`${base}/?error=nokey`)
+  if (!key) return fail('nokey')
 
   try {
     const db = await getDb()
     const now = nowSec()
     const summary = await fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null)
     const games = await fetchOwnedGames(steamid, { apiKey: key })
-    if (games === 'private') return redirect(`${base}/?error=private`)
-    if (!games.length) return redirect(`${base}/?error=empty`)
+    if (games === 'private') return fail('private')
+    if (!games.length) return fail('empty')
 
     await upsertUser(
       db,
@@ -87,18 +98,9 @@ export async function GET(req: NextRequest) {
     )
     await saveLibrarySnapshot(db, steamid, games, now)
 
-    const join = params.get('join')
-    const compat = params.get('compat')
     // Куда человек шёл до разворота на лендинг; список закрытый —
     // произвольный адрес сюда не попадёт (см. lib/destination.ts).
-    const next = destinationPath(params.get('next'))
-    const target =
-      join && /^[A-Z0-9]{6}$/.test(join)
-        ? `${base}/room/${join}`
-        : compat && /^\d{17}$/.test(compat)
-          ? `${base}/compat/${compat}`
-          : `${base}${next ?? '/quiz'}`
-    const res = redirect(target)
+    const res = redirect(`${base}${loginTarget(params)}`)
     res.cookies.set(
       SESSION_COOKIE,
       // Единственное место, где владение профилем ДОКАЗАНО: выше отработал
@@ -109,6 +111,6 @@ export async function GET(req: NextRequest) {
     )
     return res
   } catch {
-    return redirect(`${base}/?error=steam`)
+    return fail('steam')
   }
 }

@@ -64,3 +64,37 @@ export function destinationPath(raw: string | null | undefined): string | null {
 export function bounceTo(path: keyof typeof DESTINATIONS | string): string {
   return destinationPath(path) ? `/?next=${encodeURIComponent(path)}` : '/'
 }
+
+const JOIN_RE = /^[A-Z0-9]{6}$/
+const COMPAT_RE = /^\d{17}$/
+
+/**
+ * Что везти через вход в Steam: код пати, чью совместимость смотреть или
+ * куда человек шёл. Ровно одно — в этом порядке, — и только проверенное.
+ *
+ * Одна функция на старт входа, успешный возврат и КАЖДЫЙ отказ. Раньше
+ * отказы разворачивали на голый /?error=…: друга со скрытой библиотекой звали
+ * в пати, он получал ?error=private, открывал доступ по инструкции, жал
+ * «Войти через Steam» ещё раз — и попадал на /quiz, потому что код комнаты
+ * остался только в чате. Возвращается query без «?», пустой — если нечего.
+ */
+export function loginCarry(search: URLSearchParams): URLSearchParams {
+  const out = new URLSearchParams()
+  const join = search.get('join')
+  const compat = search.get('compat')
+  const next = destinationPath(search.get('next'))
+  if (join && JOIN_RE.test(join)) out.set('join', join)
+  else if (compat && COMPAT_RE.test(compat)) out.set('compat', compat)
+  else if (next) out.set('next', next)
+  return out
+}
+
+/** Куда вести после удачного входа: пати, совместимость, место назначения или квиз. */
+export function loginTarget(search: URLSearchParams): string {
+  const carry = loginCarry(search)
+  const join = carry.get('join')
+  if (join) return `/room/${join}`
+  const compat = carry.get('compat')
+  if (compat) return `/compat/${compat}`
+  return carry.get('next') ?? '/quiz'
+}
