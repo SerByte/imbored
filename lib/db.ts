@@ -416,6 +416,9 @@ const PAGE_TRIES_BACKFILL_KEY = 'page_tries_backfilled_v1'
 /** Ключ разовой починки веса у уже записанных патчей (см. migrateDb). */
 const NEWS_RANK_FIX_KEY = 'news_rank_fixed'
 
+/** Ключ разовой починки дважды закодированных JSON-колонок games (см. migrateDb). */
+const REPAIR_TAGS_KEY = 'repair_tags_v1'
+
 /** Ключ в catalog_meta: до какой версии схемы доведена база. */
 const SCHEMA_V_KEY = 'schema_v'
 
@@ -509,6 +512,7 @@ async function readMigrationFlags(db: Db): Promise<Map<string, string>> {
     PAGE_TRIES_BACKFILL_KEY,
     NEWS_RANK_FIX_KEY,
     OTHER_STORES_SEED_KEY,
+    REPAIR_TAGS_KEY,
   ]
   const res = await db.execute({
     sql: `SELECT key, value FROM catalog_meta WHERE key IN (${placeholders(keys.length)})`,
@@ -730,6 +734,38 @@ export async function migrateDb(
     await db.execute({
       sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
       args: [PAGE_TRIES_BACKFILL_KEY, '1'],
+    })
+  }
+
+  /*
+   * Разовая починка JSON-колонок games (repairGameJson): у Dota 2 tags_json
+   * лежал JSON-строкой с объектом внутри. Читать такое уже умеет parseTagMap,
+   * но tag_count у битых строк врёт, а publish-catalog и отчёты смотрят в
+   * саму колонку.
+   *
+   * Под destructiveMigrationsAllowed: это перезапись исходных данных. Превью
+   * на продовой базе молча пропускает шаг и флаг не пишет — починку сделает
+   * первый старт прода после мержа, когда владелец уже снял бэкап (DEPLOY.md).
+   * Молча — потому что узнать, есть ли что чинить, стоит того же скана.
+   *
+   * Под флагом по той же причине, что и бэкфиллы выше: это полнотабличный
+   * проход по games, а Turso считает прочитанные строки.
+   */
+  if (!flags.has(REPAIR_TAGS_KEY) && destructiveMigrationsAllowed(env)) {
+    const repaired = await repairGameJson(db)
+    if (repaired.length) {
+      console.warn(
+        JSON.stringify({
+          event: 'migrate-repaired',
+          step: 'game-json',
+          rows: repaired.length,
+          appids: repaired.slice(0, 20).map((r) => r.appid),
+        }),
+      )
+    }
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [REPAIR_TAGS_KEY, '1'],
     })
   }
 
@@ -1877,6 +1913,84 @@ export function parseIdList(raw: unknown): number[] {
   return Array.isArray(v)
     ? v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x))
     : []
+}
+
+/**
+ * Строки games, у которых JSON-колонка не своей формы: теги — не объект,
+ * жанры или категории — не массив. Сюда же попадает битый JSON.
+ *
+ * CASE, а не AND: json_type на невалидном JSON бросает «malformed JSON», а
+ * AND в SQLite вычисляет обе стороны, и одна испорченная строка роняла бы
+ * весь запрос. CASE на невалидном JSON до json_type не доходит.
+ */
+export const BROKEN_GAME_JSON = `(
+  CASE WHEN json_valid(tags_json) THEN json_type(tags_json) != 'object' ELSE 1 END
+  OR CASE WHEN json_valid(genres_json) THEN json_type(genres_json) != 'array' ELSE 1 END
+  OR CASE WHEN json_valid(categories_json) THEN json_type(categories_json) != 'array' ELSE 1 END
+)`
+
+/** Одна починенная строка: сколько тегов у неё осталось после разбора */
+export type GameJsonRepair = { appid: number; name: string; tags: number }
+
+/**
+ * Починка JSON-колонок games: теги, жанры и категории переписываются ровно
+ * тем, что из них читает rowToMeta, — через parseTagMap и списки. Дважды
+ * закодированное разворачивается без потерь; то, что не разбирается вовсе,
+ * становится пустым — приложение и так видело там пустоту, а tag_count теперь
+ * говорит то же самое, и такая игра не лезет в пул без тегов.
+ *
+ * Проход полнотабличный: зовётся разово — из migrateDb под флагом и руками
+ * из scripts/repair-tags.ts. dryRun только считает.
+ */
+export async function repairGameJson(
+  db: Db,
+  opts: { dryRun?: boolean } = {},
+): Promise<GameJsonRepair[]> {
+  const res = await db.execute(
+    `SELECT appid, name, tags_json, genres_json, categories_json FROM games WHERE ${BROKEN_GAME_JSON}`,
+  )
+  const rows = (
+    res.rows as unknown as Array<{
+      appid: number
+      name: string
+      tags_json: unknown
+      genres_json: unknown
+      categories_json: unknown
+    }>
+  ).map((r) => {
+    const tags = parseTagMap(r.tags_json)
+    const categories = parseIdList(r.categories_json)
+    return {
+      appid: Number(r.appid),
+      name: String(r.name),
+      tags,
+      genres: parseStrList(r.genres_json),
+      categories,
+    }
+  })
+
+  if (!opts.dryRun) {
+    const CHUNK = 200
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      await db.batch(
+        rows.slice(i, i + CHUNK).map((r) => ({
+          sql: `UPDATE games SET tags_json = ?, genres_json = ?, categories_json = ?,
+                  tag_count = ?, is_multiplayer = ?
+                WHERE appid = ?`,
+          args: [
+            JSON.stringify(r.tags),
+            JSON.stringify(r.genres),
+            JSON.stringify(r.categories),
+            Object.keys(r.tags).length,
+            isMultiplayerCategories(r.categories) ? 1 : 0,
+            r.appid,
+          ],
+        })),
+        'write',
+      )
+    }
+  }
+  return rows.map((r) => ({ appid: r.appid, name: r.name, tags: Object.keys(r.tags).length }))
 }
 
 type GameRow = {

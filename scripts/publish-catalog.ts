@@ -33,13 +33,17 @@
  * значение не затирает непустое — CASE в setList ниже. Направление
  * одностороннее: данные из облака переживают заливку, данные из локальной
  * базы доезжают.
+ *
+ * И правило про форму. Строку, где теги не объект (закодированы дважды или
+ * битые), а жанры или категории не массив, скрипт не везёт: отказывается ещё
+ * до подключения к облаку и называет команду починки — catalog:repair-tags.
  */
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { migrateDb, rebuildTagStats } from '../lib/db'
-import { buildSetList } from './publishsql'
+import { migrateDb, rebuildTagStats, repairGameJson } from '../lib/db'
+import { buildSetList, publishRefusal } from './publishsql'
 
 /** Строк в одном батче. Больше — риск упереться в лимит запроса libsql. */
 const CHUNK = 200
@@ -77,6 +81,11 @@ async function openRemote(): Promise<Client> {
 async function main() {
   const dryRun = flag('dry-run')
   const local = openLocal()
+
+  // До облака: с битыми строками туда не подключаемся вовсе (см. publishRefusal)
+  const refusal = publishRefusal(await repairGameJson(local, { dryRun: true }))
+  if (refusal) throw new Error(refusal)
+
   const remote = await openRemote()
 
   const count = async (db: Client, t: string) =>

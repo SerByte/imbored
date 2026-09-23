@@ -29,6 +29,7 @@ import {
   getUnsummarized,
   pruneNewsForApp,
   releaseLease,
+  repairGameJson,
   removeRoomMember,
   reviveGoneNewsPoll,
   setGameDescriptions,
@@ -548,6 +549,107 @@ describe('db', () => {
     const res = await db.execute('SELECT tag_count, is_multiplayer FROM games WHERE appid = 777')
     expect(Number(res.rows[0].tag_count)).toBe(0)
     expect(Number(res.rows[0].is_multiplayer)).toBe(0)
+  })
+
+  /** Строки, какими их находили в живой базе и какими они могут стать */
+  async function insertBrokenJson(db: Db) {
+    await upsertGameMeta(db, { ...META, appid: 570, name: 'Dota 2', tags: { MOBA: 3, Strategy: 2 } }, NOW)
+    await upsertGameMeta(db, { ...META, appid: 3, name: 'Мусор', categories: [] }, NOW)
+    await db.batch(
+      [
+        {
+          // Дважды закодированные теги и жанры; tag_count врёт нарочно —
+          // починка обязана пересчитать его, а не поверить
+          sql: `UPDATE games SET tags_json = ?, genres_json = ?, tag_count = 99 WHERE appid = 570`,
+          args: [
+            JSON.stringify(JSON.stringify({ MOBA: 3, Strategy: 2 })),
+            JSON.stringify(JSON.stringify(['Strategy'])),
+          ],
+        },
+        {
+          // Битый JSON и категории строкой: совместная игра, о которой SQL не знал
+          sql: `UPDATE games SET tags_json = 'не json', categories_json = ?, is_multiplayer = 0
+                WHERE appid = 3`,
+          args: [JSON.stringify('[1,9]')],
+        },
+      ],
+      'write',
+    )
+  }
+
+  test('починка JSON-колонок: двойное разворачивается, мусор пустеет, производные пересчитаны', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await insertBrokenJson(db)
+    const byAppid = (r: { appid: number }[]) => [...r].sort((a, b) => a.appid - b.appid)
+
+    // dryRun только считает: колонка остаётся строкой
+    expect(byAppid(await repairGameJson(db, { dryRun: true }))).toEqual([
+      { appid: 3, name: 'Мусор', tags: 0 },
+      { appid: 570, name: 'Dota 2', tags: 2 },
+    ])
+    const still = await db.execute(`SELECT json_type(tags_json) t FROM games WHERE appid = 570`)
+    expect(still.rows[0].t).toBe('text')
+
+    expect(await repairGameJson(db)).toHaveLength(2)
+    const rows = await db.execute(
+      `SELECT appid, tags_json, genres_json, categories_json, tag_count, is_multiplayer
+         FROM games ORDER BY appid`,
+    )
+    expect(rows.rows.map((r) => ({ ...r }))).toEqual([
+      {
+        appid: 3,
+        tags_json: '{}',
+        genres_json: '["Puzzle"]',
+        categories_json: '[1,9]',
+        tag_count: 0,
+        is_multiplayer: 1,
+      },
+      {
+        appid: 570,
+        tags_json: '{"MOBA":3,"Strategy":2}',
+        genres_json: '["Strategy"]',
+        categories_json: '[2,9,38]',
+        tag_count: 2,
+        is_multiplayer: 1,
+      },
+      // Целая строка не тронута вовсе
+      {
+        appid: 620,
+        tags_json: JSON.stringify(META.tags),
+        genres_json: JSON.stringify(META.genres),
+        categories_json: JSON.stringify(META.categories),
+        tag_count: 2,
+        is_multiplayer: 1,
+      },
+    ])
+    // Второй проход чинить уже нечего
+    expect(await repairGameJson(db)).toEqual([])
+  })
+
+  test('миграция чинит JSON-колонки один раз и ставит флаг', async () => {
+    const db = await freshDb()
+    await insertBrokenJson(db)
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'repair_tags_v1'")
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await migrateDb(db)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+        event: 'migrate-repaired',
+        step: 'game-json',
+        rows: 2,
+      })
+    } finally {
+      warn.mockRestore()
+    }
+    expect(await getCatalogMeta(db, 'repair_tags_v1')).toBe('1')
+    expect(await repairGameJson(db, { dryRun: true })).toEqual([])
+
+    // Флаг стоит — следующий старт полнотабличный проход не повторяет
+    await db.execute(`UPDATE games SET tags_json = '"{}"' WHERE appid = 570`)
+    await migrateDb(db)
+    expect(await repairGameJson(db, { dryRun: true })).toHaveLength(1)
   })
 
   test('миграция ставит флаг бэкфилла', async () => {
@@ -2665,6 +2767,38 @@ describe('превью и продовая база', () => {
     expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
     await logFeedback(db, { steamid: 'u1', appid: 730, action: 'launched' }, NOW)
     expect((await listFeedback(db, 'u1')).map((r) => r.action).sort()).toEqual(['banned', 'launched'])
+  })
+
+  test('превью без своей базы JSON-колонки не чинит и флаг не пишет', async () => {
+    // Починка переписывает исходные данные, а владелец снимает бэкап перед
+    // деплоем прода, не перед пушем ветки
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, appid: 570 }, NOW)
+    await db.execute({
+      sql: 'UPDATE games SET tags_json = ? WHERE appid = 570',
+      args: [JSON.stringify(JSON.stringify(META.tags))],
+    })
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'repair_tags_v1'")
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await migrateDb(db, PREVIEW)
+      // Молча: узнать, есть ли что чинить, стоит того же полного скана
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+    expect(await getCatalogMeta(db, 'repair_tags_v1')).toBeNull()
+    expect(await repairGameJson(db, { dryRun: true })).toHaveLength(1)
+
+    // Первый старт прода после мержа
+    const quiet = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await migrateDb(db, { VERCEL_ENV: 'production' })
+    } finally {
+      quiet.mockRestore()
+    }
+    expect(await getCatalogMeta(db, 'repair_tags_v1')).toBe('1')
+    expect(await repairGameJson(db, { dryRun: true })).toEqual([])
   })
 
   test('превью со своей базой мигрирует целиком', async () => {

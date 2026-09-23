@@ -1,3 +1,6 @@
+import type { GameJsonRepair } from '../lib/db'
+import { plural } from '../lib/plural'
+
 /**
  * SET-часть upsert'а публикации. Экспортируется РАДИ ТЕСТА: правило про язык
  * описаний легко потерять при следующей правке списка колонок, а потеря эта
@@ -42,4 +45,26 @@ export function buildSetList(cols: readonly string[]): string {
       return `${c} = excluded.${c}`
     })
     .join(', ')
+}
+
+/**
+ * Отказ заливки: текст, если в локальном каталоге есть строки с битыми
+ * JSON-колонками (repairGameJson в режиме dryRun), и null, если везти можно.
+ *
+ * Отказ целиком, а не пропуск битых строк: заливка идёт по живому проду, и
+ * «половина каталога приехала, половина нет» хуже, чем одна команда починки
+ * перед повтором. А привезённую битую строку облако само уже не починит:
+ * миграция repair_tags_v1 там разовая и к этому времени отработала.
+ */
+export function publishRefusal(broken: readonly GameJsonRepair[], show = 10): string | null {
+  const n = broken.length
+  if (!n) return null
+  const lines = broken.slice(0, show).map((r) => `  ${r.appid}  ${r.name}`)
+  if (n > show) lines.push(`  … и ещё ${n - show}`)
+  return [
+    `в локальном каталоге ${n} ${plural(n, 'строка', 'строки', 'строк')} с битыми JSON-колонками`,
+    '(теги не объект, жанры или категории не массив) — в облако такое не везём:',
+    ...lines,
+    'почини и повтори: npm run catalog:repair-tags',
+  ].join('\n')
 }

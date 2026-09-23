@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
-import { createDb } from '../lib/db'
-import { buildSetList } from './publishsql'
+import { createDb, repairGameJson, upsertGameMeta } from '../lib/db'
+import { buildSetList, publishRefusal } from './publishsql'
 
 const COLS = ['appid', 'name', 'short_description', 'screenshots_json', 'updated_at'] as const
 
@@ -62,5 +63,42 @@ describe('публикация каталога: что имеет право з
       { short_description: АНГ, screenshots_json: '[]' },
     )
     expect(r.s).toBe('["a.jpg"]')
+  })
+})
+
+describe('публикация каталога: битые JSON-колонки не едут', () => {
+  test('дважды закодированные теги в локальной базе — отказ с командой починки', async () => {
+    // createDb прогоняет миграцию, и она сама чинит то, что лежало до неё;
+    // поэтому ломаем строку уже после — как ломал бы её скрипт наполнения
+    const db = await createDb(':memory:')
+    const tags = { MOBA: 1019 }
+    await upsertGameMeta(db, { appid: 570, name: 'Dota 2', tags, genres: [], categories: [1] }, 0)
+    expect(publishRefusal(await repairGameJson(db, { dryRun: true }))).toBeNull()
+
+    await db.execute({
+      sql: 'UPDATE games SET tags_json = ? WHERE appid = 570',
+      args: [JSON.stringify(JSON.stringify(tags))],
+    })
+    const refusal = publishRefusal(await repairGameJson(db, { dryRun: true }))
+    expect(refusal).toContain('1 строка с битыми')
+    expect(refusal).toContain('570  Dota 2')
+    expect(refusal).toContain('npm run catalog:repair-tags')
+  })
+
+  test('длинный список обрезается, но число битых называется целиком', () => {
+    const broken = Array.from({ length: 12 }, (_, i) => ({ appid: i + 1, name: `Игра ${i + 1}`, tags: 0 }))
+    const refusal = publishRefusal(broken, 10)!
+    expect(refusal).toContain('12 строк')
+    expect(refusal).toContain('10  Игра 10')
+    expect(refusal).not.toContain('11  Игра 11')
+    expect(refusal).toContain('… и ещё 2')
+  })
+
+  test('проверка стоит до подключения к облаку и не пишет в локальную базу', () => {
+    const src = readFileSync('scripts/publish-catalog.ts', 'utf8')
+    const main = src.slice(src.indexOf('async function main'))
+    const guard = main.indexOf('repairGameJson(local, { dryRun: true })')
+    expect(guard, 'publish-catalog больше не проверяет форму JSON').toBeGreaterThan(-1)
+    expect(guard).toBeLessThan(main.indexOf('await openRemote()'))
   })
 })
