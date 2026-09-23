@@ -104,19 +104,79 @@ export default function DailyPage() {
   useEffect(() => {
     if (started.current) return
     started.current = true
+
+    /**
+     * Ответ /api/daily — на экран. Один разбор на оба запроса ниже: у ответа
+     * «только записанное» и обычного одна и та же форма.
+     */
+    async function show(res: Response): Promise<void> {
+      if (!res.ok) {
+        /*
+         * Код читается ИЗ ТЕЛА, а не выводится из статуса: под 409 живут два
+         * разных отказа — «нет снимка библиотеки» и «кандидатов нет», — и
+         * советы у них разные.
+         */
+        const code = await res
+          .json()
+          .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
+          .catch(() => null)
+        // Сессия отвалилась: человеку нужен вход, а не объяснение.
+        if (res.status === 401) {
+          router.push(bounceTo('/daily'))
+          return
+        }
+        setReason(code)
+        setPhase('error')
+        return
+      }
+      const data = (await res.json()) as {
+        pick: DailyPick
+        discoveries?: StoreCard[]
+        dateLabel: string
+        nowSec: number
+      }
+      // Серверные часы — по ним подпись онлайна решает, имеет ли право
+      // сказать «сейчас». См. докблок в components/PlayersNow.
+      setNowSec(data.nowSec)
+      setPick(data.pick)
+      setDiscoveries(data.discoveries ?? [])
+      setDateLabel(data.dateLabel)
+      setPhase('ok')
+    }
+
     void (async () => {
+      /*
+       * Сначала — уже выбранная сегодня игра (daily_picks), без прогрева.
+       *
+       * Прогрев каталога нужен ОТБОРУ, а отбор случается раз в сутки. Раньше
+       * его ждал каждый заход: до трёх минут у большой библиотеки ради игры,
+       * которая с утра лежит в записи. 204 — выбора ещё нет, тогда прогрев и
+       * обычный запрос, как раньше. Сеть моргнула на этом шаге — тоже идём
+       * обычной дорогой: прогрев сам скажет, если сети нет совсем.
+       */
+      try {
+        const res = await fetch('/api/daily?cached=1')
+        if (res.status !== 204) {
+          await show(res)
+          return
+        }
+      } catch {
+        // см. выше: обычная дорога
+      }
+
       // Прогрев тот же, что в основной выдаче, и теперь буквально тот же код.
       // Раньше здесь лежала копия цикла — без прогресса, без проверки ok и без
       // try/catch, из-за чего экран ошибки ниже был недостижим в принципе:
       // любой сбой оставлял страницу в вечном спиннере.
       //
       // onYield здесь НАМЕРЕННО не передаётся, хотя /play его использует и ждёт
-      // теперь только первый круг. Игра дня детерминирована сидом steamid:дата,
-      // но выбирается из пула, который по ходу прогрева растёт: пик по четверти
-      // каталога с хорошей вероятностью окажется не тем, который та же формула
-      // выберет минутой позже. На /play выдача и так своя на каждый заход, а
-      // здесь обещание ровно обратное — одна игра на весь день. Ожидание тут
-      // покупает устойчивость выбора, поэтому его не сокращаем.
+      // теперь только первый круг. Первый отбор дня записывается и держится до
+      // полуночи (daily_picks), а пул по ходу прогрева растёт: пик по четверти
+      // каталога застыл бы на весь день, хотя минутой позже та же формула
+      // выбрала бы из полного. На /play выдача и так своя на каждый заход, а
+      // здесь обещание ровно обратное — одна игра на весь день. Ожидание
+      // покупает качество выбора, и платится оно раз в сутки, а не на каждом
+      // заходе: следующие попадают в запись выше.
       const warm = await runWarmup({
         onProgress: (p) => {
           setPrep(p)
@@ -134,39 +194,7 @@ export default function DailyPage() {
 
       setMessage('Выбираю твою игру дня…')
       try {
-        const res = await fetch('/api/daily')
-        if (!res.ok) {
-          /*
-           * Код читается ИЗ ТЕЛА, а не выводится из статуса: под 409 живут два
-           * разных отказа — «нет снимка библиотеки» и «кандидатов нет», — и
-           * советы у них разные.
-           */
-          const code = await res
-            .json()
-            .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
-            .catch(() => null)
-          // Сессия отвалилась: человеку нужен вход, а не объяснение.
-          if (res.status === 401) {
-            router.push(bounceTo('/daily'))
-            return
-          }
-          setReason(code)
-          setPhase('error')
-          return
-        }
-        const data = (await res.json()) as {
-          pick: DailyPick
-          discoveries?: StoreCard[]
-          dateLabel: string
-          nowSec: number
-        }
-        // Серверные часы — по ним подпись онлайна решает, имеет ли право
-        // сказать «сейчас». См. докблок в components/PlayersNow.
-        setNowSec(data.nowSec)
-        setPick(data.pick)
-        setDiscoveries(data.discoveries ?? [])
-        setDateLabel(data.dateLabel)
-        setPhase('ok')
+        await show(await fetch('/api/daily'))
       } catch {
         setPhase('error')
       }

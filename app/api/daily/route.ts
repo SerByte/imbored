@@ -134,21 +134,12 @@ function parseSelection(raw: unknown): DailySelection | null {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const steamid = await currentSteamId()
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
   const db = await getDb()
   const now = nowSec()
-
-  const gate = await checkRate(db, {
-    bucket: 'daily',
-    id: steamid,
-    limit: DAILY_LIMIT,
-    windowSec: DAILY_WINDOW_SEC,
-    nowSec: now,
-  })
-  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   /*
    * Выбор дня — из записи, если она уже есть.
@@ -163,6 +154,32 @@ export async function GET() {
    */
   const dateStr = dayKey(now)
   const stored = parseSelection(await getDailyPick(db, steamid, dateStr))
+
+  /*
+   * ?cached=1 — «только если уже выбрано».
+   *
+   * Страница спрашивает так ДО прогрева каталога. Прогрев нужен отбору, а не
+   * записанному выбору, и раньше каждый заход на /daily ждал его целиком —
+   * до трёх минут у большой библиотеки — ради игры, которая с утра уже лежит
+   * в daily_picks. Промах — 204 без отбора: страница прогреет каталог и
+   * спросит обычным запросом.
+   *
+   * Промах не тратит лимит частоты: он стоит одного чтения по первичному
+   * ключу, как сама проверка лимита, а следующий за ним обычный запрос своё
+   * отметит. Иначе каждый первый заход дня списывал бы два обращения из десяти.
+   */
+  if (!stored && new URL(req.url).searchParams.get('cached') === '1') {
+    return new NextResponse(null, { status: 204 })
+  }
+
+  const gate = await checkRate(db, {
+    bucket: 'daily',
+    id: steamid,
+    limit: DAILY_LIMIT,
+    windowSec: DAILY_WINDOW_SEC,
+    nowSec: now,
+  })
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const selection = stored ?? (await selectDaily(db, steamid, dateStr, now))
   if (selection === NO_LIBRARY) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
