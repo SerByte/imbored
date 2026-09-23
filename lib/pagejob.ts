@@ -1,6 +1,7 @@
 /**
- * Один срез работы по карточкам игр: догрузить скриншоты и описание, посчитать
- * вердикт отзывов, собрать pros/cons и семантику игры (lib/semantics).
+ * Один срез работы по карточкам игр: догрузить скриншоты, трейлер и описание,
+ * посчитать вердикт отзывов, собрать pros/cons и семантику игры
+ * (lib/semantics).
  *
  * Раньше всё это делала сама страница /game/[appid] на рендере. Страница
  * публичная, кэша у неё не было, а в каталоге 6000 живых игр — то есть один
@@ -15,7 +16,7 @@
  * одно и то же.
  */
 
-import { fetchAppDetails, mergeMeta } from './catalog'
+import { fetchAppDetails, fetchStoreMedia, mergeMeta } from './catalog'
 import { sliceClock } from './cron'
 import {
   claimPageEnrichBatch,
@@ -23,6 +24,7 @@ import {
   markPageEnriched,
   markPageMissed,
   setGameJson,
+  setGamesMedia,
   upsertGameMeta,
   upsertSemantics,
   type Db,
@@ -88,6 +90,8 @@ export type PageSliceResult = {
    */
   deferred: number
   withShots: number
+  /** Карточек среза, которым пачка GetItems привезла трейлер */
+  withTrailers: number
   withProsCons: number
   viaClaude: number
   /** Карточек, получивших запись в game_semantics (по тегам или с отзывами) */
@@ -104,6 +108,8 @@ export async function runPageSlice(
     limit?: number
     /** подменяются в тестах: иначе прогон уходит и в сеть, и в лимитер темпа */
     fetchDetails?: typeof fetchAppDetails
+    /** кадры и трейлеры всего среза одним GetItems */
+    fetchMediaFn?: typeof fetchStoreMedia
     /** сырой ответ appreviews — один на вердикт, pros/cons и семантику */
     fetchReviewsRawFn?: typeof fetchReviewsRaw
     prosConsFn?: typeof claudeProsCons
@@ -122,6 +128,7 @@ export async function runPageSlice(
   const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
   const limit = opts.limit ?? 20
   const details = opts.fetchDetails ?? fetchAppDetails
+  const mediaOf = opts.fetchMediaFn ?? fetchStoreMedia
   const reviewsOf = opts.fetchReviewsRawFn ?? fetchReviewsRaw
   const prosConsOf = opts.prosConsFn ?? claudeProsCons
   const semanticsOf = opts.semanticsFn ?? deriveSemantics
@@ -143,6 +150,7 @@ export async function runPageSlice(
 
   let enriched = 0
   let withShots = 0
+  let withTrailers = 0
   let withProsCons = 0
   let viaClaude = 0
   let withSemantics = 0
@@ -184,6 +192,37 @@ export async function runPageSlice(
   }
   let deferred = 0
 
+  /*
+   * Кадры и трейлеры — одной пачкой GetItems на весь срез, до карточек.
+   *
+   * Не по запросу на карточку: GetItems берёт до двухсот appid за раз, и
+   * двадцать игр среза — это один поход на ~130 КБ. Не в прогреве библиотеки:
+   * там тот же ответ втрое тяжелее обычного на каждой пачке (см.
+   * STORE_MEDIA_DATA_REQUEST в lib/catalog).
+   *
+   * Пишется узким UPDATE (setGamesMedia) раньше карточек, и порядок важен:
+   * карточка ниже читает строку (getGameMeta) и сливает с ответом appdetails
+   * через mergeMeta — трейлер переезжает в её запись нетронутым, а кадры
+   * appdetails, если приехали, ложатся поверх тех же самых кадров. Если же
+   * appdetails отказал — а именно так 596 карточек верха каталога полгода
+   * стояли без скриншотов, — кадры у игры всё равно будут.
+   *
+   * Отказ здесь — не повод останавливать срез и не отказ «про игру»: это
+   * другая ручка (api.steampowered.com) со своим лимитом, и стражи блока
+   * ниже её не считают. Без медиа карточка наполняется как раньше.
+   */
+  try {
+    const media = await mediaOf(targets)
+    withTrailers = [...media.values()].filter((m) => m.trailer).length
+    await setGamesMedia(
+      db,
+      [...media].map(([appid, m]) => ({ appid, ...m })),
+    )
+  } catch (err) {
+    withTrailers = 0
+    logSwallowed('pagejob:media', err, { batch: targets.length })
+  }
+
   // Не «прошёл ли срок», а «уложится ли ещё одна карточка» — см. sliceClock.
   // Карточка, начатая на 48-й секунде бюджета, раньше доезжала до конца уже
   // за maxDuration: снимали весь вызов вместе с finally, где передача звена.
@@ -196,8 +235,9 @@ export async function runPageSlice(
     }
 
     // ---- скриншоты и описание ----
-    // GetItems их не отдаёт (см. mergeMeta), поэтому единственный источник —
-    // appdetails, и ходить туда можно только отсюда.
+    // Описание на языке сайта, жанры и полные кадры — у appdetails, и ходить
+    // туда можно только отсюда. Кадры из пачки GetItems выше — страховка на
+    // случай его отказа.
     let sawNetworkFailure = false
     // Отказ СЕТИ отличается от «Steam про эту игру ничего не знает»:
     // fetchAppDetails бросает на не-2xx и таймауте, а null возвращает, когда
@@ -409,6 +449,7 @@ export async function runPageSlice(
     enriched,
     deferred,
     withShots,
+    withTrailers,
     withProsCons,
     viaClaude,
     withSemantics,

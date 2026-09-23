@@ -5,6 +5,7 @@ import {
   countPageEnrichDue,
   createDb,
   getGameJson,
+  getGamesMeta,
   getGamesMetaLite,
   markPageEnriched,
   markPageMissed,
@@ -78,6 +79,7 @@ const stubs = (over: Partial<Parameters<typeof runPageSlice>[1]> = {}) => ({
   deadlineAt: Date.now() + 60_000,
   nowSec: NOW,
   fetchDetails: async (appid: number) => meta(appid, { screenshots: ['a.jpg', 'b.jpg'] }),
+  fetchMediaFn: async () => new Map(),
   fetchReviewsRawFn: async () => reviews(6),
   prosConsFn: async () => ({ pros: ['красиво'], cons: ['дорого'] }),
   ...over,
@@ -550,6 +552,72 @@ describe('runPageSlice', () => {
     expect(res.stopped).toBe('done')
     expect(res.enriched).toBe(2)
     expect(await queueState(db, 10)).toEqual({ pageAt: NOW, tries: 1 })
+  })
+})
+
+describe('кадры и трейлер — одной пачкой GetItems на срез', () => {
+  const TRAILER = {
+    mp4: 'https://video.akamai.steamstatic.com/store_trailers/10/1/h/2/microtrailer.mp4',
+    poster: 'https://shared.steamstatic.com/store_item_assets/steam/apps/9/movie_full.jpg?t=1',
+  }
+  const SHOTS = ['https://shared.steamstatic.com/store_item_assets/steam/apps/10/ss_a.1920x1080.jpg?t=1']
+
+  test('один запрос на весь срез; трейлер переживает запись карточки из appdetails', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 90)
+    const asked: number[][] = []
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchMediaFn: async (appids: number[]) => {
+          asked.push([...appids])
+          return new Map([[10, { screenshots: SHOTS, trailer: TRAILER }]])
+        },
+      }),
+    )
+
+    expect(asked).toEqual([[10, 20]])
+    expect(res.withTrailers).toBe(1)
+    const m = (await getGamesMeta(db, [10])).get(10)
+    expect(m?.trailer).toEqual(TRAILER)
+    // appdetails приехал позже и положил свои кадры — трейлер остался
+    expect(m?.screenshots).toEqual(['a.jpg', 'b.jpg'])
+  })
+
+  test('appdetails отказал — кадры из GetItems у карточки всё равно есть', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+
+    await runPageSlice(
+      db,
+      stubs({
+        fetchDetails: async () => null,
+        fetchMediaFn: async () => new Map([[10, { screenshots: SHOTS }]]),
+      }),
+    )
+
+    expect((await getGamesMeta(db, [10])).get(10)?.screenshots).toEqual(SHOTS)
+  })
+
+  test('отказ GetItems — не блок Steam: срез идёт дальше и наполняет карточки', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 90)
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchMediaFn: async () => {
+          throw new Error('GetItems: HTTP 429')
+        },
+      }),
+    )
+
+    expect(res.stopped).toBe('done')
+    expect(res.enriched).toBe(2)
+    expect(res.withShots).toBe(2)
+    expect(res.withTrailers).toBe(0)
   })
 })
 

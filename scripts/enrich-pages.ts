@@ -80,6 +80,7 @@ async function main() {
 
   let done = 0
   let shots = 0
+  let trailers = 0
   let prosCons = 0
   let viaClaude = 0
   let semantics = 0
@@ -118,6 +119,7 @@ async function main() {
         })
         done += res.enriched
         shots += res.withShots
+        trailers += res.withTrailers
         prosCons += res.withProsCons
         viaClaude += res.viaClaude
         semantics += res.withSemantics
@@ -131,7 +133,7 @@ async function main() {
         if (!res.enriched) break
         const mins = Math.round((Date.now() - startedAt) / 60_000)
         console.log(
-          `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tpros/cons: ${prosCons} (модель: ${viaClaude})\tсемантика: ${semantics}\t${mins} мин`,
+          `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tтрейлеры: ${trailers}\tpros/cons: ${prosCons} (модель: ${viaClaude})\tсемантика: ${semantics}\t${mins} мин`,
         )
         if (!res.hasMore) break
       }
@@ -148,7 +150,8 @@ async function main() {
   )
   console.log(
     `\nготово. обогащено ${done.toLocaleString('ru-RU')}, ` +
-      `со скриншотами ${shots.toLocaleString('ru-RU')}, с pros/cons ${prosCons.toLocaleString('ru-RU')}, ` +
+      `со скриншотами ${shots.toLocaleString('ru-RU')}, с трейлером ${trailers.toLocaleString('ru-RU')}, ` +
+      `с pros/cons ${prosCons.toLocaleString('ru-RU')}, ` +
       `с семантикой ${semantics.toLocaleString('ru-RU')}`,
   )
   if (left) {
