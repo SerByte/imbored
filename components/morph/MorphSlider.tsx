@@ -20,6 +20,14 @@
  * 4. Выброшены DEFAULT_ITEMS с ссылками на Unsplash: items приходят всегда, а
  *    четыре внешние ссылки в проде не нужны.
  * 5. Подписи для скринридера — по-русски, как всё остальное приложение.
+ * 6. Автолистание останавливается. В исходнике его прерывал только курсор
+ *    над слайдером: фокус с клавиатуры, палец и ручное листание не значили
+ *    ничего, и кадр сменялся раз в 4,5 с у человека под рукой — провал WCAG
+ *    2.2.2 (Pause, Stop, Hide, уровень A). Теперь пауза — пока фокус внутри,
+ *    стоп навсегда — после любого ручного перехода, и видимая кнопка «Пауза».
+ * 7. Точки — обычные кнопки «Кадр N из M» с aria-current, а не tablist/tab:
+ *    вкладок без панелей и без стрелочной навигации здесь нет, и скринридер
+ *    обещал то, чего не было. Зона попадания — 24×24 (см. .dot::before).
  */
 
 import { gsap } from 'gsap'
@@ -626,6 +634,15 @@ export default function MorphSlider({
   const engineRef = useRef<MorphEngine | null>(null)
   const [index, setIndex] = useState(startIndex)
   const [hovering, setHovering] = useState(false)
+  /** Фокус где-то внутри слайдера: рассматривают с клавиатуры — не листаем */
+  const [focused, setFocused] = useState(false)
+  /**
+   * Человек взялся листать сам или нажал «Пауза». Навсегда, а не до ухода
+   * курсора: кто перешёл к нужному кадру, тот хочет его видеть, и автоплей,
+   * утаскивающий кадр через четыре секунды, спорил бы с его же нажатием.
+   * Вернуть автолистание можно той же кнопкой.
+   */
+  const [stopped, setStopped] = useState(false)
 
   // Настройки и колбэки живут в ref: эффекты движка и указателя ставятся один
   // раз, и новый объект пропсов не должен их пересоздавать.
@@ -692,17 +709,24 @@ export default function MorphSlider({
     }
   }, [items, startIndex, dprCap])
 
-  const handleNext = useCallback(() => engineRef.current?.next(), [])
-  const handlePrev = useCallback(() => engineRef.current?.prev(), [])
+  // Ручной переход — это и есть «хватит листать за меня» (см. stopped)
+  const handleNext = useCallback(() => {
+    setStopped(true)
+    engineRef.current?.next()
+  }, [])
+  const handlePrev = useCallback(() => {
+    setStopped(true)
+    engineRef.current?.prev()
+  }, [])
 
   useEffect(() => {
-    if (!autoplay || hovering) return undefined
+    if (!autoplay || hovering || focused || stopped) return undefined
     const id = window.setTimeout(
       () => engineRef.current?.next(),
       Math.max(autoplayDelay, 1) * 1000,
     )
     return () => window.clearTimeout(id)
-  }, [autoplay, autoplayDelay, hovering, index])
+  }, [autoplay, autoplayDelay, hovering, focused, stopped, index])
 
   useEffect(() => {
     const el = containerRef.current
@@ -741,6 +765,8 @@ export default function MorphSlider({
         moved = true
       }
       if (!active) return
+      // Потянул кадр рукой — дальше листает он сам
+      if (moved) setStopped(true)
       engineRef.current?.drag((e.clientX - startX) / width)
     }
     const onUp = (e: PointerEvent) => {
@@ -751,7 +777,12 @@ export default function MorphSlider({
         active = false
         engineRef.current?.endDrag()
       }
-      if (tap) onActivateRef.current?.()
+      if (tap && onActivateRef.current) {
+        // Открыл кадр крупно — рассматривает, и слайдер под лайтбоксом
+        // не должен уехать на другой
+        setStopped(true)
+        onActivateRef.current()
+      }
     }
     const onCancel = () => {
       if (!pressed) return
@@ -787,6 +818,7 @@ export default function MorphSlider({
         // клавиатурный эквивалент клика по кадру — иначе лайтбокс доступен
         // только мышью, а фокус на сцену мы уже отдаём
         e.preventDefault()
+        setStopped(true)
         onActivateRef.current()
       }
     },
@@ -807,6 +839,13 @@ export default function MorphSlider({
       }
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
+      // focus/blur в React всплывают: фокус на сцене, стрелке или точке —
+      // всё «внутри». Переход между ними — не уход: relatedTarget остаётся
+      // в слайдере, и пауза не мигает на каждом Tab.
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false)
+      }}
     >
       <div
         ref={containerRef}
@@ -873,17 +912,43 @@ export default function MorphSlider({
         </div>
       )}
 
+      {/* Кнопка есть, пока есть что останавливать: при выключенной
+          анимации автоплея нет вовсе, и пауза была бы кнопкой ни о чём.
+          Имя постоянное, состояние — в aria-pressed: «Пауза, нажата». */}
+      {showControls && (autoplay || stopped) && (
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.toggle}`}
+          aria-label="Пауза"
+          aria-pressed={stopped}
+          title={stopped ? 'Листать самому' : 'Остановить автолистание'}
+          onClick={() => setStopped((v) => !v)}
+        >
+          {stopped ? (
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path d="M8 5.5v13l10-6.5z" fill="currentColor" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" />
+            </svg>
+          )}
+        </button>
+      )}
+
       {showIndicators && (
-        <div className={styles.indicators} role="tablist" aria-label="Кадры">
+        <div className={styles.indicators} role="group" aria-label="Кадры">
           {items.map((_, i) => (
             <button
               key={i}
               type="button"
-              role="tab"
-              aria-selected={i === index}
+              aria-current={i === index ? 'true' : undefined}
               aria-label={`Кадр ${i + 1} из ${items.length}`}
               className={`${styles.dot} ${i === index ? styles.isActive : ''}`}
-              onClick={() => engineRef.current?.goToIndex(i)}
+              onClick={() => {
+                setStopped(true)
+                engineRef.current?.goToIndex(i)
+              }}
             />
           ))}
         </div>

@@ -69,6 +69,18 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
   const [env, setEnv] = useState<Env | null>(null)
   const [visible, setVisible] = useState(false)
   const [ready, setReady] = useState(false)
+  /**
+   * Сколько раз сменился кадр. Один круг — и морф встаёт на первом кадре.
+   *
+   * Фон под заголовком /play и /daily листался раз в семь секунд бесконечно,
+   * а остановить его было нечем: слайдер здесь inert, без кнопок, и держит
+   * его только prefers-reduced-motion. Движение дольше пяти секунд без
+   * механизма паузы — провал WCAG 2.2.2 (Pause, Stop, Hide, уровень A), и
+   * кнопка «Пауза» на фоне — лишний элемент в самом загруженном месте
+   * экрана. Один круг показывает игру в движении, а дальше под текстом
+   * лежит неподвижная картинка.
+   */
+  const [turns, setTurns] = useState(0)
 
   /*
    * Замер одноразовый: наблюдатель снимает размер и тут же отключается.
@@ -168,7 +180,8 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
           scale={3}
           aberration={0.1}
           drift={0}
-          autoplay={visible}
+          autoplay={visible && turns < shots.length}
+          onChange={() => setTurns((t) => t + 1)}
           autoplayDelay={7}
           loop
           /* под зерном, блюр-полосой и скримом разница в плотности не читается,

@@ -158,3 +158,117 @@ describe('зона попадания', () => {
     expect(css).toMatch(/\.tap-tight\s*\{[^}]*--tap:\s*24px/)
   })
 })
+
+/**
+ * Кнопки со стилями из CSS-модуля.
+ *
+ * Скан выше читает классы Tailwind в разметке, а размер кнопки с классом из
+ * модуля задаёт CSS — и такие кнопки сторож не видел вовсе. Так прожили точки
+ * MorphSlider: 8×8 px с зазором 8, шаг 16 (замер на /game/730), промах по
+ * точке на телефоне попадал в сцену и открывал лайтбокс.
+ *
+ * Правило то же, что у .tap: цель меньше 24 px получает невидимую зону —
+ * псевдоэлемент с отрицательным inset, и зона не меньше 24×24.
+ */
+
+type Rule = { selector: string; body: string }
+
+/** Правила модуля плоским списком; вложенные в @media тоже попадают сюда. */
+function cssRules(src: string): Rule[] {
+  const css = src.replace(/\/\*[\s\S]*?\*\//g, '')
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selector: m[1].trim(),
+    body: m[2],
+  }))
+}
+
+function px(body: string, prop: string): number | null {
+  const m = body.match(new RegExp(String.raw`(?:^|[;\s])${prop}:\s*(-?\d+(?:\.\d+)?)px`))
+  return m ? Number(m[1]) : null
+}
+
+/** inset: a | a b — вертикаль и горизонталь, в px */
+function inset(body: string): { y: number; x: number } | null {
+  const m = body.match(/(?:^|[;\s])inset:\s*(-?\d+)px(?:\s+(-?\d+)px)?\s*;/)
+  if (!m) return null
+  const y = Number(m[1])
+  return { y, x: m[2] === undefined ? y : Number(m[2]) }
+}
+
+function moduleButtons(): Array<{ module: string; cls: string; rules: Rule[] }> {
+  const found: Array<{ module: string; cls: string; rules: Rule[] }> = []
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith('.module.css')) {
+        const rules = cssRules(fs.readFileSync(p, 'utf8'))
+        const rel = path.relative(ROOT, p).split(path.sep).join('/')
+        // Разметка, которая этот модуль подключает, — в той же папке
+        const classes = new Set<string>()
+        for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.tsx'))) {
+          const src = fs.readFileSync(path.join(dir, f), 'utf8')
+          if (!src.includes(`./${e.name}'`)) continue
+          for (const m of src.matchAll(/<button\s/g)) {
+            const end = tagEnd(src, m.index)
+            const attrs = src.slice(m.index, end)
+            for (const c of attrs.matchAll(/styles\.(\w+)/g)) classes.add(c[1])
+          }
+        }
+        for (const cls of classes) found.push({ module: rel, cls, rules })
+      }
+    }
+  }
+  for (const dir of ['app', 'components']) walk(path.join(ROOT, dir))
+  return found
+}
+
+describe('зона попадания в CSS-модулях', () => {
+  const buttons = moduleButtons()
+
+  test('скан видит кнопки модулей', () => {
+    // без этого тест ниже зеленел бы и тогда, когда поиск сломался
+    expect(buttons.map((b) => `${b.module} .${b.cls}`)).toContain(
+      'components/morph/MorphSlider.module.css .dot',
+    )
+  })
+
+  test('кнопка меньше 24 px получает невидимую зону не меньше 24×24', () => {
+    const offenders: string[] = []
+    for (const b of buttons) {
+      const base = b.rules.find((r) => r.selector === `.${b.cls}`)
+      if (!base) continue
+      const w = px(base.body, 'width')
+      const h = px(base.body, 'height')
+      if ((w === null || w >= 24) && (h === null || h >= 24)) continue
+      const zone = b.rules.find((r) => r.selector === `.${b.cls}::before` || r.selector === `.${b.cls}::after`)
+      const ins = zone && inset(zone.body)
+      const ok =
+        zone &&
+        /content:/.test(zone.body) &&
+        /position:\s*absolute/.test(zone.body) &&
+        /position:\s*relative/.test(base.body) &&
+        ins &&
+        (w ?? 24) - 2 * ins.x >= 24 &&
+        (h ?? 24) - 2 * ins.y >= 24
+      if (!ok) offenders.push(`${b.module} .${b.cls} — ${w ?? '?'}×${h ?? '?'} px без зоны 24×24`)
+    }
+    expect(offenders, 'допиши ::before { content: ""; position: absolute; inset: -Npx } — как у .dot').toEqual([])
+  })
+
+  /**
+   * Зоны соседних точек не перекрываются: зазор между точками не меньше двух
+   * боковых добавок. Иначе зона одной точки ловила бы нажатия, нацеленные в
+   * соседнюю, — ровно то, от чего зона и заводилась.
+   */
+  test('зоны соседних точек слайдера стыкуются, а не перекрываются', () => {
+    const rules = cssRules(
+      fs.readFileSync(path.join(ROOT, 'components', 'morph', 'MorphSlider.module.css'), 'utf8'),
+    )
+    const gap = px(rules.find((r) => r.selector === '.indicators')?.body ?? '', 'gap')
+    const zone = inset(rules.find((r) => r.selector === '.dot::before')?.body ?? '')
+    expect(gap).not.toBeNull()
+    expect(zone).not.toBeNull()
+    expect(gap!).toBeGreaterThanOrEqual(-2 * zone!.x)
+  })
+})
