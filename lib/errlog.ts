@@ -27,7 +27,7 @@
  *
  * Адреса тут НЕТ намеренно. Он не нужен, чтобы воспроизвести падение, зато это
  * персональные данные — а у продукта есть страница приватности, обещающая
- * обратное.
+ * обратное. referer проходит не как есть, а через safeReferer.
  */
 const HEADER_ALLOW = ['user-agent', 'referer'] as const
 
@@ -44,6 +44,7 @@ export type ServerErrorLog = {
   digest?: string
   name?: string
   stack?: string
+  /** Адрес без строки запроса и с масками: /compat/:steamid, /room/:id */
   path?: string
   method?: string
   /** Файл маршрута, а не адрес: /app/game/[appid] вместо /game/730 */
@@ -52,15 +53,65 @@ export type ServerErrorLog = {
   headers?: Record<string, string>
 }
 
+/**
+ * steamid64 — ровно 17 цифр. Границы — «не цифра», а не \b: в адресе
+ * steamid стоит и после «/», и после «=», и после буквы (id7656…).
+ */
+const STEAMID_RE = /(?<!\d)\d{17}(?!\d)/g
+
+/**
+ * Сегмент после /room/ — код пати, а код пати — это доступ: по нему входят в
+ * комнату. Маскируется любой сегмент, а не только [A-Z0-9]{6}: адрес,
+ * набранный руками строчными, ведёт в ту же комнату. Исключения — два
+ * настоящих адреса, которые кодом не являются.
+ */
+const ROOM_RE = /\/room\/(?!(?:new|create)(?:[/?#]|$))[^/?#]+/g
+
+/**
+ * Путь, который можно положить в лог: без строки запроса и фрагмента, с
+ * чужими steamid и кодами пати под масками.
+ *
+ * Одна функция на сервер и на браузер (instrumentation-client.ts): страница
+ * приватности обещает одно и то же про оба лога.
+ */
+export function maskPath(raw: string): string {
+  return raw.split(/[?#]/)[0].replace(STEAMID_RE, ':steamid').replace(ROOM_RE, '/room/:id')
+}
+
+/**
+ * Откуда пришли, без того, кто пришёл.
+ *
+ * В полном referer ездит всё то же, что в path, плюс строка запроса
+ * (?compat=…&join=ABC123). Со своего сайта оставляем origin и путь под
+ * масками — по нему видно, с какой страницы шли. С чужого — только origin:
+ * путь чужого сайта маскам не обучен, а в нём бывает что угодно, вплоть до
+ * имени профиля в Steam (/id/<ник>). host неизвестен — считаем сайт чужим.
+ */
+function safeReferer(raw: string, host: string | undefined): string | undefined {
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined
+    return host && u.host === host ? `${u.origin}${maskPath(u.pathname)}` : u.origin
+  } catch {
+    return undefined
+  }
+}
+
+/** Заголовок может прийти массивом: берём первое значение, а не «a,b». */
+function first(v: unknown): string | undefined {
+  const s = Array.isArray(v) ? v[0] : v
+  return typeof s === 'string' && s ? s : undefined
+}
+
 function safeHeaders(raw: unknown): Record<string, string> | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const src = raw as Record<string, unknown>
+  const host = first(src['x-forwarded-host']) ?? first(src.host)
   const out: Record<string, string> = {}
   for (const key of HEADER_ALLOW) {
-    const v = src[key]
-    // Заголовок может прийти массивом: берём первое значение, а не «a,b».
-    const s = Array.isArray(v) ? v[0] : v
-    if (typeof s === 'string' && s) out[key] = s.slice(0, HEADER_MAX)
+    let s = first(src[key])
+    if (s && key === 'referer') s = safeReferer(s, host)
+    if (s) out[key] = s.slice(0, HEADER_MAX)
   }
   return Object.keys(out).length ? out : undefined
 }
@@ -103,10 +154,11 @@ export function formatServerError(
   return {
     event: 'server-error',
     ...describe(err),
-    // Путь без строки запроса. В ней ездят чужие steamid (?compat=765611…)
-    // и коды пати — ровно те персональные данные, которых по обещанию выше
-    // здесь быть не должно; для воспроизведения падения хватает маршрута.
-    ...(request?.path ? { path: request.path.split('?')[0] } : {}),
+    // Путь без строки запроса и под масками. Чужие steamid и коды пати ездят
+    // не только в ?compat= и ?join=, но и в самом пути: /compat/<steamid>,
+    // /portrait/<steamid>, /room/<код>. Для воспроизведения падения хватает
+    // маршрута и маски; кто именно это был, логу знать незачем.
+    ...(request?.path ? { path: maskPath(request.path) } : {}),
     ...(request?.method ? { method: request.method } : {}),
     ...(context?.routePath ? { route: context.routePath } : {}),
     ...(context?.routeType ? { routeType: context.routeType } : {}),

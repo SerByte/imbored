@@ -31,13 +31,31 @@ describe('formatServerError', () => {
    * чужие steamid (?compat=765611…) и коды пати. Страница приватности обещает,
    * что мы такого не храним, — лог не исключение.
    */
-  test('строка запроса в лог не попадает', () => {
+  test('строка запроса в лог не попадает, а steamid из пути — под маской', () => {
     const log = formatServerError(new Error('boom'), {
       ...REQ,
       path: '/compat/76561198000000000?next=%2Fplay&join=ABC123',
     })
-    expect(log.path).toBe('/compat/76561198000000000')
+    expect(log.path).toBe('/compat/:steamid')
     expect(JSON.stringify(log)).not.toContain('ABC123')
+    expect(JSON.stringify(log)).not.toContain('76561198000000000')
+  })
+
+  test('код пати в пути — тоже доступ, и тоже под маской', () => {
+    // По коду входят в комнату: в логе он был бы ключом от чужой пати.
+    expect(formatServerError(new Error('b'), { path: '/room/K7Q2PX' }).path).toBe('/room/:id')
+    expect(formatServerError(new Error('b'), { path: '/api/room/K7Q2PX/vote' }).path).toBe(
+      '/api/room/:id/vote',
+    )
+    // набранный руками строчными ведёт туда же
+    expect(formatServerError(new Error('b'), { path: '/room/k7q2px' }).path).toBe('/room/:id')
+    // а настоящие адреса без кода остаются как есть
+    expect(formatServerError(new Error('b'), { path: '/room/new' }).path).toBe('/room/new')
+    expect(formatServerError(new Error('b'), { path: '/api/room/create' }).path).toBe('/api/room/create')
+    expect(formatServerError(new Error('b'), { path: '/rooms' }).path).toBe('/rooms')
+    expect(formatServerError(new Error('b'), { path: '/portrait/76561198000000000/opengraph-image' }).path).toBe(
+      '/portrait/:steamid/opengraph-image',
+    )
   })
 
   test('digest доезжает — это тот же код, что человек видит на экране', () => {
@@ -80,6 +98,50 @@ describe('formatServerError', () => {
     })
     expect(JSON.stringify(log)).not.toContain('LEAK')
     expect(Object.keys(log.headers ?? {}).sort()).toEqual(['referer', 'user-agent'])
+  })
+
+  /*
+   * referer — тот же адрес, только чужой страницы: человек пришёл из пати на
+   * /game/730, и её код оказывался в логе падения игры.
+   */
+  test('referer со своего сайта — origin и путь под масками, без строки запроса', () => {
+    const log = formatServerError(new Error('b'), {
+      headers: {
+        host: 'imbored.cc',
+        referer: 'https://imbored.cc/room/K7Q2PX?compat=76561198000000001#x',
+      },
+    })
+    expect(log.headers?.referer).toBe('https://imbored.cc/room/:id')
+    const withSteamid = formatServerError(new Error('b'), {
+      headers: { host: 'imbored.cc', referer: 'https://imbored.cc/portrait/76561198000000000?join=ABC123' },
+    })
+    expect(withSteamid.headers?.referer).toBe('https://imbored.cc/portrait/:steamid')
+  })
+
+  test('referer с чужого сайта — только origin: его путь маскам не обучен', () => {
+    // Профиль Steam в пути — это ник человека, а ник маска на steamid не ловит.
+    const log = formatServerError(new Error('b'), {
+      headers: { host: 'imbored.cc', referer: 'https://steamcommunity.com/id/some-nick/?x=1' },
+    })
+    expect(log.headers?.referer).toBe('https://steamcommunity.com')
+    // host неизвестен — свой сайт не отличить от чужого, значит только origin
+    const noHost = formatServerError(new Error('b'), {
+      headers: { referer: 'https://imbored.cc/compat/76561198000000000' },
+    })
+    expect(noHost.headers?.referer).toBe('https://imbored.cc')
+    // за прокси Vercel свой хост — в x-forwarded-host
+    const forwarded = formatServerError(new Error('b'), {
+      headers: { 'x-forwarded-host': 'imbored.cc', host: 'internal', referer: 'https://imbored.cc/play?x=1' },
+    })
+    expect(forwarded.headers?.referer).toBe('https://imbored.cc/play')
+  })
+
+  test('referer, который не адрес, в лог не попадает вовсе', () => {
+    const log = formatServerError(new Error('b'), {
+      headers: { 'user-agent': 'ua', referer: 'android-app://com.example/76561198000000000' },
+    })
+    expect(log.headers).toEqual({ 'user-agent': 'ua' })
+    expect(formatServerError(new Error('b'), { headers: { referer: 'не адрес' } }).headers).toBeUndefined()
   })
 
   test('заголовок-массив не превращается в «a,b»', () => {
