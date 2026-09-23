@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { pickDaily, pickDailyPool, publicPick, STORE_DAY_EVERY } from './daily'
+import { DAILY_TZ, dayKey, pickDaily, pickDailyPool, publicPick, STORE_DAY_EVERY } from './daily'
+import { dayLabel } from './freshness'
 import type { ScoredCandidate } from './types'
 
 const CANDS: ScoredCandidate[] = [
@@ -89,5 +90,39 @@ describe('publicPick', () => {
       parts: { taste: 0.7, mood: 1, source: 1, deal: 1, lean: 1, cooldown: 0.5 },
     }
     expect(publicPick(c)).toEqual({ appid: 1, name: 'A', source: 'backlog' })
+  })
+})
+
+/**
+ * Сутки «Игры дня» — московские. По UTC игра менялась в 03:00 МСК посреди
+ * ночной сессии, а с полуночи до трёх подпись показывала вчерашнее число.
+ */
+describe('dayKey', () => {
+  const at = (iso: string) => Date.parse(iso) / 1000
+
+  test('по умолчанию — Москва', () => {
+    expect(DAILY_TZ).toBe('Europe/Moscow')
+    // 01:30 по Москве 24-го — уже 24-е, хотя в UTC ещё 23-е
+    expect(dayKey(at('2026-09-23T22:30:00Z'))).toBe('2026-09-24')
+  })
+
+  test('граница суток — ровно полночь по Москве', () => {
+    expect(dayKey(at('2026-09-23T20:59:59Z'))).toBe('2026-09-23')
+    expect(dayKey(at('2026-09-23T21:00:00Z'))).toBe('2026-09-24')
+  })
+
+  test('через год и с нулями в месяце и дне', () => {
+    expect(dayKey(at('2026-12-31T21:00:00Z'))).toBe('2027-01-01')
+    expect(dayKey(at('2026-01-04T21:00:00Z'))).toBe('2026-01-05')
+  })
+
+  test('в поясе UTC совпадает с прежним ключом', () => {
+    for (const iso of ['2026-09-23T22:30:00Z', '2026-01-01T00:00:00Z', '2026-06-30T23:59:59Z']) {
+      expect(dayKey(at(iso), 'UTC')).toBe(new Date(iso).toISOString().slice(0, 10))
+    }
+  })
+
+  test('подпись даты сходится с ключом и после полуночи по Москве', () => {
+    expect(dayLabel(dayKey(at('2026-09-23T22:30:00Z')))).toBe('24 сентября')
   })
 })

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { pickDaily, pickDailyPool, publicPick } from '@/lib/daily'
+import { dayKey, pickDaily, pickDailyPool, publicPick } from '@/lib/daily'
 import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
@@ -154,13 +154,14 @@ export async function GET() {
    * Выбор дня — из записи, если она уже есть.
    *
    * Отбор ниже стоит около восьмисот прочитанных строк Turso ради ответа,
-   * который по определению страницы не меняется до полуночи. Дата берётся в
-   * UTC — тем же способом, что и сид в selectDaily: сид и ключ записи обязаны
-   * сходиться, иначе на границе суток они разъедутся и «одна игра на день»
-   * перестанет быть правдой. Бан и «надоела» запись сбрасывают сразу (см.
-   * forgetDailyPick в /api/feedback) — их отбор обязан учесть в тот же день.
+   * который по определению страницы не меняется до полуночи — московской
+   * (dayKey в lib/daily). Одна дата и для ключа записи, и для сида в
+   * selectDaily, и для подписи: разойдись они — на границе суток «одна игра
+   * на день» перестала бы быть правдой. Бан и «надоела» запись сбрасывают
+   * сразу (см. forgetDailyPick в /api/feedback) — их отбор обязан учесть в
+   * тот же день.
    */
-  const dateStr = new Date().toISOString().slice(0, 10)
+  const dateStr = dayKey(now)
   const stored = parseSelection(await getDailyPick(db, steamid, dateStr))
 
   const selection = stored ?? (await selectDaily(db, steamid, dateStr, now))

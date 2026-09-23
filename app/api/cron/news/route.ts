@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { chainBreakLine, passChain } from '@/lib/chain'
+import { dayKey } from '@/lib/daily'
 import {
   CRON_JOBS,
   cronAuthorized,
@@ -110,10 +111,11 @@ export async function GET(req: Request) {
         // содержат номер окна, поэтому старые строки не влияют на счёт и
         // только занимают место.
         await sweepRateLimits(db, now)
-        // Вчерашние игры дня оставляем: на границе суток по UTC у части людей
-        // ещё идёт «сегодня», и удалять их выбор из-под них незачем. Ключ
-        // записи содержит дату, так что лишние строки на выбор не влияют.
-        await sweepDailyPicks(db, new Date((now - 86_400) * 1000).toISOString().slice(0, 10))
+        // Граница — сутки игры дня (dayKey, московские), а не UTC: иначе
+        // уборка и ключ записи жили бы в разных календарях. Вчерашние
+        // оставляем с запасом: запрос, начатый до полуночи, ещё дописывает
+        // вчерашний ключ, а лишние строки на выбор не влияют — ключ содержит дату.
+        await sweepDailyPicks(db, dayKey(now - 86_400))
         // Демо-личности, истёкшие сессии и старые комнаты — см. sweepStale.
         // Своим try: мусор спокойно подождёт до завтра, а суточное пополнение
         // очереди и сам срез из-за него пропадать не должны.

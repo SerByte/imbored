@@ -39,6 +39,51 @@ export function pickDaily(candidates: ScoredCandidate[], seed: string): ScoredCa
   return candidates[0]
 }
 
+/**
+ * Чьи сутки у «Игры дня».
+ *
+ * Сутки считались по UTC (toISOString), и игра менялась в 03:00 по Москве —
+ * посреди ночной сессии, а с полуночи до трёх подпись показывала вчерашнее
+ * число. Аудитория русскоязычная, и полночь продукта — московская.
+ *
+ * Пояс клиента сюда не берётся сознательно: запись дня (daily_picks) и сид
+ * отбора ключуются этой датой, и у одного человека с двух устройств в разных
+ * поясах «сегодня» разошлось бы на две разные игры. Граница одна на всех.
+ */
+export const DAILY_TZ = 'Europe/Moscow'
+
+const DAY_FORMATS = new Map<string, Intl.DateTimeFormat>()
+
+/**
+ * Ключ суток вида 2026-09-24 в поясе tz.
+ *
+ * Один ключ на всё, что зовётся «сегодня» у игры дня: сид отбора, запись в
+ * daily_picks, подпись даты (dayLabel в lib/freshness строит её из ключа) и
+ * уборка вчерашних записей в кроне.
+ *
+ * Дата собирается по частям (formatToParts), а не строкой формата en-CA:
+ * вид «ГГГГ-ММ-ДД» у en-CA — договорённость данных ICU, а не стандарт, и
+ * от неё зависел бы первичный ключ таблицы.
+ *
+ * Не путать с dayKey из lib/forgotten: тот — сид полки «запечатанного» в
+ * /library и считается по UTC.
+ */
+export function dayKey(nowSec: number, tz: string = DAILY_TZ): string {
+  let fmt = DAY_FORMATS.get(tz)
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    DAY_FORMATS.set(tz, fmt)
+  }
+  const parts = fmt.formatToParts(new Date(nowSec * 1000))
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? ''
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
+
 /** Каждый какой день герой — игра из магазина, а не из библиотеки */
 export const STORE_DAY_EVERY = 3
 
