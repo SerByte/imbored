@@ -812,6 +812,15 @@ describe('семантика из уже полученных отзывов', (
     expect(await semanticsRow(db, 10)).toEqual({ basis: 'tags', computedAt: NOW, reviewsAt: NOW })
   })
 
+  test('Steam ответил, но отзывов нет — отметка разбора стоит, перезапрашивать нечего', async () => {
+    const db = await freshDb()
+    await addRoguelite(db, 10)
+
+    await runPageSlice(db, stubs({ fetchReviewsRawFn: async () => ({ success: 0 }) }))
+
+    expect(await semanticsRow(db, 10)).toEqual({ basis: 'tags', computedAt: NOW, reviewsAt: NOW })
+  })
+
   test('appdetails молчит — теги берутся из базы, семантика всё равно пишется', async () => {
     const db = await freshDb()
     await addRoguelite(db, 10)

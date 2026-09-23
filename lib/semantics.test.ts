@@ -3,6 +3,7 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { LANES, mineReviews, parseReviewsRaw, type Lane, type MinedReviews } from './reviewmine'
 import {
+  axisBucket,
   deriveSemantics,
   MIN_REVIEWS,
   TAG_PRIOR,
@@ -223,6 +224,16 @@ describe('deriveSemantics с отзывами', () => {
     // в рукописной выборке половина отзывов про сложность — уютная ферма от этого сложнее
     expect(s.axes.challenge).toBeGreaterThan(deriveSemantics(STARDEW, null).axes.challenge)
     expect(s.timeToFun).toEqual({ bucket: 'slow', hours: 5 })
+  })
+})
+
+describe('корзины осей', () => {
+  test('те же пороги, что решают медленный старт по оси', () => {
+    expect([0, 35, 36, 64, 65, 100].map(axisBucket)).toEqual(['low', 'low', 'mid', 'mid', 'high', 'high'])
+    // приор без тегов — ровно середина
+    const blank = deriveSemantics({}, null)
+    expect(axisBucket(blank.axes.challenge)).toBe('mid')
+    expect(blank.timeToFun.bucket).toBeNull()
   })
 })
 

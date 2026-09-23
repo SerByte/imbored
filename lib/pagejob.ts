@@ -244,9 +244,11 @@ export async function runPageSlice(
     // ---- отзывы, вердикт и pros/cons ----
     // Один запрос на всё: вердикт и pros/cons разбирают ответ здесь, семантика
     // — ниже, из того же ответа
+    let reviewsAnswered = true
     const raw: unknown = await reviewsOf(appid).catch((err: unknown) => {
       logSwallowed('pagejob:reviews', err, { appid })
       sawNetworkFailure = true
+      reviewsAnswered = false
       return null
     })
     const parsed = parseReviews(raw)
@@ -340,9 +342,9 @@ export async function runPageSlice(
      *
      * Отзывов нет, их мало или сеть отказала — пишется приор по тегам. Он
      * ничего не стоит и не затрёт посчитанного раньше по отзывам: это решает
-     * сама upsertSemantics. Отметка reviews_at ставится, только если ответ
-     * пришёл, — даже пустой: тонкую игру незачем перезапрашивать
-     * semantics:build --with-reviews.
+     * сама upsertSemantics. Отметка reviews_at ставится, если Steam ответил,
+     * — даже пустым или битым ответом: такую игру незачем перезапрашивать
+     * semantics:build --with-reviews, ответ был бы тем же.
      *
      * Сбой здесь — не Steam, а код или база, и карточку он не роняет:
      * скриншоты и pros/cons уже записаны, отметка очереди — ниже. Семантика
@@ -353,7 +355,7 @@ export async function runPageSlice(
       const all = parseReviewsRaw(raw)
       const semantics = semanticsOf(known, all ? mineReviews(all) : null)
       await upsertSemantics(db, [
-        { appid, semantics, computedAt: now, reviewsAt: all ? now : null },
+        { appid, semantics, computedAt: now, reviewsAt: reviewsAnswered ? now : null },
       ])
       withSemantics++
     } catch (err) {

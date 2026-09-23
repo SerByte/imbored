@@ -2472,8 +2472,9 @@ export type SemanticsRow = {
   /** когда посчитана (unix-секунды) */
   computedAt: number
   /**
-   * Когда разобраны отзывы, даже если их не хватило сдвинуть оси. undefined
-   * или null — отзывов в этот раз не было, и прежняя отметка сохраняется.
+   * Когда Steam ответил на запрос отзывов — даже если их не хватило сдвинуть
+   * оси или не было вовсе. undefined или null — в этот раз не спрашивали или
+   * сеть отказала, и прежняя отметка сохраняется.
    */
   reviewsAt?: number | null
 }
@@ -2496,7 +2497,9 @@ export type SemanticsRow = {
  *   • при равном basis побеждает свежий computed_at (≥, чтобы повтор с той же
  *     отметкой не был молчаливым отказом).
  *
- * Отметка reviews_at не стирается записью без отзывов (COALESCE).
+ * Отметка reviews_at не стирается записью без отзывов (COALESCE) — кроме
+ * смены версии: отзывы, разобранные под старый формат, новому не засчитаны, и
+ * semantics:build --with-reviews должен прийти за ними снова.
  */
 export async function upsertSemantics(db: Db, rows: readonly SemanticsRow[]): Promise<void> {
   const CHUNK = 200
@@ -2508,7 +2511,8 @@ export async function upsertSemantics(db: Db, rows: readonly SemanticsRow[]): Pr
               ON CONFLICT(appid) DO UPDATE SET
                 v = excluded.v, json = excluded.json, basis = excluded.basis,
                 computed_at = excluded.computed_at,
-                reviews_at = COALESCE(excluded.reviews_at, game_semantics.reviews_at)
+                reviews_at = CASE WHEN excluded.v > game_semantics.v THEN excluded.reviews_at
+                                  ELSE COALESCE(excluded.reviews_at, game_semantics.reviews_at) END
               WHERE excluded.v > game_semantics.v
                  OR (excluded.v = game_semantics.v AND (
                       (excluded.basis = 'tags+reviews' AND game_semantics.basis != 'tags+reviews')

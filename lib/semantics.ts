@@ -383,3 +383,14 @@ export function deriveSemantics(
     basis: useReviews ? 'tags+reviews' : 'tags',
   }
 }
+
+export type AxisBucket = 'low' | 'mid' | 'high'
+
+/**
+ * Корзина оси 0..100 — те же пороги, по которым deriveSemantics решает
+ * «медленный старт» по оси ttf. Одна функция на отчёт (semantics:report) и
+ * на всех, кто будет говорить об осях словами: пороги не должны разъехаться.
+ */
+export function axisBucket(x: number): AxisBucket {
+  return x >= HIGH_AT ? 'high' : x <= LOW_AT ? 'low' : 'mid'
+}

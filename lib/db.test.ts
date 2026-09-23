@@ -3008,6 +3008,15 @@ describe('семантика игр', () => {
     expect((await stored(db, 620))?.v).toBe(2)
   })
 
+  test('новая версия сбрасывает отметку разбора отзывов: под новый формат их разберут снова', async () => {
+    const db = await freshDb()
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_REVIEWS, computedAt: NOW, reviewsAt: NOW }])
+    const v2 = { ...BY_TAGS, v: 2 } as unknown as GameSemantics
+    await upsertSemantics(db, [{ appid: 620, semantics: v2, computedAt: NOW + 10 }])
+
+    expect(await stored(db, 620)).toMatchObject({ v: 2, reviewsAt: null })
+  })
+
   test('запись без отзывов не стирает отметку их разбора', async () => {
     const db = await freshDb()
     await upsertSemantics(db, [{ appid: 620, semantics: BY_TAGS, computedAt: NOW, reviewsAt: NOW }])
