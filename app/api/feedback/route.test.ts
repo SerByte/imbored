@@ -5,6 +5,15 @@ import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
+// Сброс кэша портрета: настоящий revalidateTag вне сервера Next бросает, а
+// здесь важно только, что и какой тег роут сбросил
+const revalidated = vi.hoisted(() => [] as Array<[string, unknown]>)
+vi.mock('next/cache', () => ({
+  revalidateTag: (tag: string, profile: unknown) => {
+    revalidated.push([tag, profile])
+  },
+}))
+
 /**
  * /api/feedback — настоящим роутом, на базе в памяти.
  *
@@ -20,6 +29,7 @@ let db: Db
 
 beforeEach(async () => {
   db = await freshDb()
+  revalidated.length = 0
 })
 
 afterEach(() => {
@@ -118,5 +128,30 @@ describe('/api/feedback', () => {
       expect(res.status, kind).toBe(200)
       expect(await listFeedback(db, steamid), kind).toHaveLength(1)
     }
+  })
+})
+
+/**
+ * Модель портрета кэшируется по снапшоту, а бан снапшот не меняет. Без сброса
+ * «начни с этой» на портрете указывала бы на скрытую игру до следующего
+ * снапшота — сутки и дольше.
+ */
+describe('/api/feedback: портрет после бана', () => {
+  test('бан сбрасывает кэш портрета владельца, остальные действия — нет', async () => {
+    const steamid = await signInAs(db, 'openid')
+    for (const action of ['liked', 'skipped', 'opened', 'launched']) {
+      await POST(post('/api/feedback', { appid: 620, action }))
+    }
+    expect(revalidated).toEqual([])
+
+    const res = await POST(post('/api/feedback', { appid: 620, action: 'banned' }))
+    expect(res.status).toBe(200)
+    expect(revalidated).toEqual([[`portrait:${steamid}`, 'max']])
+  })
+
+  test('отказ в правах до сброса не доходит', async () => {
+    await signInAs(db, 'claimed')
+    await POST(post('/api/feedback', { appid: 620, action: 'banned' }))
+    expect(revalidated).toEqual([])
   })
 })

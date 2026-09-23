@@ -149,4 +149,45 @@ describe('buildGroupDeck', () => {
     expect(deck.map((c) => c.appid)).toContain(1)
     expect(deck.map((c) => c.appid)).not.toContain(11)
   })
+
+  describe('«Больше не показывать» участников', () => {
+    test('забаненная общая игра и забаненная из пула в колоду не попадают', () => {
+      const deck = buildGroupDeck({
+        members: MEMBERS,
+        metaOf,
+        extraPool: [METAS.get(4)!],
+        limit: 10,
+        banned: new Set([1, 4]),
+      })
+      const ids = deck.map((c) => c.appid)
+      expect(ids).not.toContain(1)
+      expect(ids).not.toContain(4)
+      expect(ids).toContain(5)
+    })
+
+    test('забаненное издание не занимает место живого издания той же игры', () => {
+      const edition = (appid: number, name: string): GameMeta => ({
+        appid,
+        name,
+        tags: { 'Co-op': 100 },
+        genres: [],
+        categories: MP,
+      })
+      const deck = buildGroupDeck({
+        members: MEMBERS,
+        metaOf,
+        extraPool: [edition(10, 'Deep Rock Galactic'), edition(11, 'Deep Rock Galactic VR Edition')],
+        limit: 10,
+        banned: new Set([10]),
+      })
+      const ids = deck.map((c) => c.appid)
+      expect(ids).not.toContain(10)
+      expect(ids).toContain(11)
+    })
+
+    test('без банов колода та же, что и раньше', () => {
+      const args = { members: MEMBERS, metaOf, extraPool: [METAS.get(4)!], limit: 10 }
+      expect(buildGroupDeck({ ...args, banned: new Set() })).toEqual(buildGroupDeck(args))
+    })
+  })
 })

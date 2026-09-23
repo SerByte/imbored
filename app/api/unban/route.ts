@@ -1,5 +1,7 @@
+import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
 import { unbanGame } from '@/lib/db'
+import { portraitTag } from '@/lib/portraitmodel'
 import { getDb, requireWriter } from '@/lib/server'
 
 /**
@@ -20,5 +22,7 @@ export async function POST(req: Request) {
   }
 
   await unbanGame(await getDb(), steamid, appid)
+  // Вернувшаяся игра снова может стать стартовой на портрете (см. /api/feedback)
+  revalidateTag(portraitTag(steamid), 'max')
   return NextResponse.json({ ok: true })
 }

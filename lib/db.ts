@@ -3373,6 +3373,26 @@ export async function bannedAppids(db: Db, steamid: string): Promise<Set<number>
 }
 
 /**
+ * Забаненное хоть кем-то из участников — одним запросом, для колоды пати.
+ *
+ * Колода — свойство комнаты, а не зрителя: одна на всех, её размер лежит в
+ * rooms.deck_size, а карты — в room_deck. Баны одного смотрящего сделали бы
+ * колоду у каждого своей, и счёт «12 из 20» у соседей перестал бы сходиться.
+ * Объединение же ничего не отнимает: матч — это «да» от всех, и игра, которую
+ * кто-то попросил больше не показывать, совпасть не может — свайпать её
+ * остальным незачем.
+ */
+export async function bannedAppidsOf(db: Db, steamids: string[]): Promise<Set<number>> {
+  if (!steamids.length) return new Set()
+  const res = await db.execute({
+    sql: `SELECT DISTINCT appid FROM feedback
+          WHERE steamid IN (SELECT value FROM json_each(?)) AND action = 'banned'`,
+    args: [JSON.stringify(steamids)],
+  })
+  return new Set((res.rows as unknown as Array<{ appid: number }>).map((r) => Number(r.appid)))
+}
+
+/**
  * Забаненные с датой — для полки на /library.
  *
  * Свежие сверху: бан почти всегда снимают с того, что забанили сгоряча минуту

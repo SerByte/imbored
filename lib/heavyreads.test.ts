@@ -36,6 +36,18 @@ describe('публичный портрет', () => {
     expect(gate, 'потолок — до чтения, иначе он ничего не бережёт').toBeLessThan(reads[0])
   })
 
+  test('баны владельца — тоже только внутри кэша модели и после потолка', () => {
+    // Страница публичная: чтение банов на каждый заход — это вся история
+    // фидбека владельца на каждый просмотр чужой ссылки
+    const cacheAt = src.indexOf('unstable_cache(')
+    const cacheEnd = src.indexOf('revalidate:', cacheAt)
+    const gate = src.indexOf("bucket: 'portrait-build-ip'", cacheAt)
+    const reads = [...src.matchAll(/bannedAppids\(/g)].map((m) => m.index ?? -1)
+    expect(reads, 'баны читаются в одном месте').toHaveLength(1)
+    expect(reads[0]).toBeGreaterThan(gate)
+    expect(reads[0]).toBeLessThan(cacheEnd)
+  })
+
   test('ключ кэша — снапшот: новый снапшот не отдаёт старую модель', () => {
     expect(src).toMatch(/\['portrait-model:v\d+', steamid, String\(snapshot\.takenAt\)\]/)
   })

@@ -1,6 +1,7 @@
 import { createClient, type InArgs, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import {
+  bannedAppidsOf,
   catalogSignalsQueue,
   claimNewsPollBatch,
   countNewsPollDue,
@@ -192,6 +193,14 @@ const CASES: Case[] = [
     run: (db) => catalogSignalsQueue(db, 200),
     indexes: ['idx_games_reviews_at'],
     sortFree: true,
+  },
+  // Баны участников пати: по диапазону индекса на каждого участника. DISTINCT
+  // сортирует только найденные строки этих людей, а не таблицу.
+  {
+    name: 'баны участников пати',
+    run: (db) => bannedAppidsOf(db, ['76561198000000001', '76561198000000002']),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
   },
   {
     name: 'выйти на всех устройствах',

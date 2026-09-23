@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { buildPortraitModel, PURGATORY_MAX } from './portraitmodel'
+import { buildPortraitModel, portraitTag, PURGATORY_MAX } from './portraitmodel'
 import type { GameMeta, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
@@ -110,6 +110,26 @@ describe('buildPortraitModel', () => {
     expect(model.portrait.facts.unplayedCount).toBe(40_001)
     expect(model.backlog.unplayedCount).toBe(40_001)
     expect(model.purgatory.some((g) => g.appid > 50_000)).toBe(false)
+  })
+
+  test('стартовая обходит скрытое владельцем, а счётчики и стена — нет: игра куплена', () => {
+    const { games, metas } = collector()
+    const open = buildPortraitModel(games, (id) => metas.get(id), NOW, PLAN)
+    expect(open.starter).not.toBeNull()
+    const hidden = open.starter!.appid
+    const model = buildPortraitModel(games, (id) => metas.get(id), NOW, PLAN, {
+      banned: new Set([hidden]),
+    })
+    expect(model.starter).not.toBeNull()
+    expect(model.starter!.appid).not.toBe(hidden)
+    // Обложка новой стартовой в модели есть: страница рисует её из covers
+    expect(model.covers[model.starter!.appid]).toBeDefined()
+    expect(model.wrapped.unplayedCount).toBe(open.wrapped.unplayedCount)
+    expect(model.backlog).toEqual(open.backlog)
+  })
+
+  test('тег кэша один на страницу и на роуты, которые его сбрасывают', () => {
+    expect(portraitTag('76561197960287930')).toBe('portrait:76561197960287930')
   })
 
   test('без метаданных — страница-шаблон: числа и мозаика есть, диагноза и денег нет', () => {

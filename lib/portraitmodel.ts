@@ -43,15 +43,29 @@ export type PortraitModel = {
 export const PURGATORY_MAX = 36
 
 /**
+ * Тег кэша модели портрета. Одно место на страницу и на роуты, которые
+ * меняют то, из чего модель собрана без нового снапшота: бан и его снятие
+ * (стартовая «начни с этой» обходит скрытое). Модуль без серверных импортов —
+ * сам сброс (revalidateTag) делают роуты.
+ */
+export function portraitTag(steamid: string): string {
+  return `portrait:${steamid}`
+}
+
+/**
  * Собрать модель. metaOf без метаданных (() => undefined) даёт страницу-шаблон:
  * числа, топ и мозаика — из одного снапшота, без архетипов, улик и денег.
  * Обложки у неё всё равно будут: GameArt строит запасную ссылку по appid.
+ *
+ * banned — «Больше не показывать» владельца: стартовая их обходит. Счётчики и
+ * «Чистилище» — нет: скрытая игра всё равно куплена и лежит.
  */
 export function buildPortraitModel(
   games: LibraryGame[],
   metaOf: (appid: number) => GameMeta | undefined,
   nowSec: number,
   mosaicPlan: Array<{ take: number; step: number }>,
+  opts: { banned?: ReadonlySet<number> } = {},
 ): PortraitModel {
   const portrait = buildPortrait(games, metaOf)
   const { unplayed, ...wrapped } = buildWrapped(games, metaOf)
@@ -64,7 +78,7 @@ export function buildPortraitModel(
   // часами, поэтому без исключения это были бы те же самые обложки
   const shownOnPodium = new Set(wrapped.top.map((g) => g.appid))
   const evidence = headline ? archetypeEvidence(games, metaOf, headline.tag, shownOnPodium, 3) : []
-  const starter = pickStarter(games, metaOf)
+  const starter = pickStarter(games, metaOf, { banned: opts.banned })
 
   // Мозаика и стена: только Steam-игры, у не-Steam записей арта нет
   const steamGames = games.filter((g) => g.appid > 0)

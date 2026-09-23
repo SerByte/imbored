@@ -10,6 +10,7 @@ import {
   PREVIEW_OWN_DB_ENV,
   advanceRoomDeckRound,
   bannedAppids,
+  bannedAppidsOf,
   castRoomVote,
   claimNewsPollBatch,
   countIngest,
@@ -1351,6 +1352,17 @@ describe('db', () => {
     await logFeedback(db, { steamid: 'u1', appid: 570, action: 'banned' }, NOW)
     await logFeedback(db, { steamid: 'u1', appid: 620, action: 'liked' }, NOW)
     expect([...(await bannedAppids(db, 'u1'))]).toEqual([570])
+  })
+
+  test('bannedAppidsOf объединяет баны всех из списка, и только их', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'banned' }, NOW)
+    await logFeedback(db, { steamid: 'u2', appid: 620, action: 'banned' }, NOW)
+    await logFeedback(db, { steamid: 'u2', appid: 570, action: 'banned' }, NOW)
+    await logFeedback(db, { steamid: 'u2', appid: 730, action: 'liked' }, NOW)
+    await logFeedback(db, { steamid: 'u3', appid: 440, action: 'banned' }, NOW)
+    expect([...(await bannedAppidsOf(db, ['u1', 'u2']))].sort()).toEqual([570, 620])
+    expect(await bannedAppidsOf(db, [])).toEqual(new Set())
   })
 
   test('listBanned отдаёт свежие сверху и по одной строке на игру', async () => {

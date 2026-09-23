@@ -84,10 +84,19 @@ function canonicalFirst(metaOf: MetaOf) {
  *
  * Гард appid > 0 — записи не-Steam магазинов лежат под отрицательными id, и
  * арта у них нет (тот же гард стоит на портрете).
+ *
+ * banned — «Больше не показывать» (bannedAppids). Полка — тоже совет, и игра,
+ * которую человек попросил не предлагать, не должна возвращаться сюда под
+ * видом «ты забыл, что она у тебя есть»: он помнит, он её и убрал.
  */
-export function forgottenCandidates(library: LibraryGame[], metaOf: MetaOf): LibraryGame[] {
+export function forgottenCandidates(
+  library: LibraryGame[],
+  metaOf: MetaOf,
+  banned: ReadonlySet<number> = new Set(),
+): LibraryGame[] {
   const sealed = library.filter(
-    (g) => g.appid > 0 && isUntouched(g) && !isJunk(g, metaOf(g.appid)),
+    (g) =>
+      g.appid > 0 && isUntouched(g) && !banned.has(g.appid) && !isJunk(g, metaOf(g.appid)),
   )
 
   // «Ты забыл, что они у тебя есть» — неправда, если в другое издание ты играл.

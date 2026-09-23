@@ -6,6 +6,14 @@ import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
+// Настоящий revalidateTag вне сервера Next бросает; здесь важен только тег
+const revalidated = vi.hoisted(() => [] as Array<[string, unknown]>)
+vi.mock('next/cache', () => ({
+  revalidateTag: (tag: string, profile: unknown) => {
+    revalidated.push([tag, profile])
+  },
+}))
+
 /**
  * Снятие бана — единственный роут, который удаляет пользовательские строки.
  * По вставленной ссылке на чужой профиль это было бы «вернуть человеку всё,
@@ -16,6 +24,7 @@ let db: Db
 
 beforeEach(async () => {
   db = await freshDb()
+  revalidated.length = 0
 })
 
 async function ban(steamid: string) {
@@ -45,5 +54,19 @@ describe('/api/unban', () => {
       expect(res.status, kind).toBe(200)
       expect(await listBanned(db, steamid), kind).toEqual([])
     }
+  })
+
+  test('снятый бан сбрасывает кэш портрета: игра снова может стать стартовой', async () => {
+    const steamid = await signInAs(db, 'openid')
+    await ban(steamid)
+    await POST(post('/api/unban', { appid: 620 }))
+    expect(revalidated).toEqual([[`portrait:${steamid}`, 'max']])
+  })
+
+  test('отказ в правах до сброса не доходит', async () => {
+    const steamid = await signInAs(db, 'claimed')
+    await ban(steamid)
+    await POST(post('/api/unban', { appid: 620 }))
+    expect(revalidated).toEqual([])
   })
 })

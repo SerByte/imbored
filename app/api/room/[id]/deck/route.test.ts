@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createRoom, joinRoom, roomVotes, saveLibrarySnapshot, upsertGameMeta, type Db } from '@/lib/db'
+import {
+  createRoom,
+  joinRoom,
+  logFeedback,
+  roomVotes,
+  saveLibrarySnapshot,
+  upsertGameMeta,
+  type Db,
+} from '@/lib/db'
 import { rotationSlot } from '@/lib/pool'
 import { nowSec } from '@/lib/server'
 import { freshDb, params, post, signInAs } from '@/lib/testing/route'
@@ -15,14 +23,17 @@ vi.mock('@/lib/deals', async (importOriginal) => ({
   refreshDealsWithin: async () => 0,
 }))
 
-// С какой ротацией роут просил пул. Сам пул настоящий — только подслушан
+// С какой ротацией и какими банами роут просил пул. Сам пул настоящий —
+// только подслушан
 const poolAsks = vi.hoisted(() => [] as Array<number | undefined>)
+const poolBans = vi.hoisted(() => [] as Array<number[] | undefined>)
 vi.mock('@/lib/pool', async (importOriginal) => {
   const pool = await importOriginal<typeof import('@/lib/pool')>()
   return {
     ...pool,
     fetchDiscoveryPool: (...args: Parameters<typeof pool.fetchDiscoveryPool>) => {
       poolAsks.push(args[1].rotation)
+      poolBans.push(args[1].bannedAppids)
       return pool.fetchDiscoveryPool(...args)
     },
   }
@@ -53,6 +64,7 @@ let db: Db
 beforeEach(async () => {
   db = await freshDb()
   poolAsks.length = 0
+  poolBans.length = 0
 })
 
 afterEach(() => {
@@ -122,5 +134,40 @@ describe('/api/room/[id]/deck: ротация', () => {
     // слот комнаты — от её рождения, а не от часов
     expect(poolAsks[0]).toBe(rotationSlot(ROOM, THURSDAY - 1200))
     expect(after.cards.map((c) => c.appid)).toEqual(before.cards.map((c) => c.appid))
+  })
+})
+
+/**
+ * «Больше не показывать» работало на /play и в «Игре дня», а колода пати его
+ * не знала: скрытая игра приезжала в свайп. Колода одна на комнату, поэтому
+ * баны всех участников объединяются — своя колода у каждого развалила бы
+ * счёт «12 из 20» у соседей.
+ */
+describe('/api/room/[id]/deck: «Больше не показывать»', () => {
+  test('игру, скрытую кем-то из участников, не раздают никому, и голос за неё не принимается', async () => {
+    await party()
+    await logFeedback(db, { steamid: FRIEND, appid: 620, action: 'banned' }, nowSec())
+
+    const body = (await (await get()).json()) as { cards: Array<{ appid: number }>; total: number }
+    expect(body.cards.map((c) => c.appid)).toEqual([570])
+    expect(body.total).toBe(1)
+    // Пул тоже не тратит места под скрытое
+    expect(poolBans[0]).toEqual([620])
+
+    expect((await swipe(620)).status).toBe(409)
+  })
+
+  test('свой бан смотрящего работает так же', async () => {
+    const me = await party()
+    await logFeedback(db, { steamid: me, appid: 570, action: 'banned' }, nowSec())
+    const body = (await (await get()).json()) as { cards: Array<{ appid: number }> }
+    expect(body.cards.map((c) => c.appid)).toEqual([620])
+  })
+
+  test('бан человека не из комнаты колоду не трогает', async () => {
+    await party()
+    await logFeedback(db, { steamid: '76561197960280000', appid: 620, action: 'banned' }, nowSec())
+    const body = (await (await get()).json()) as { cards: Array<{ appid: number }> }
+    expect(body.cards.map((c) => c.appid).sort()).toEqual([570, 620])
   })
 })

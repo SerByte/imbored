@@ -1,6 +1,8 @@
+import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
 import { forgetDailyPick, logFeedback, type FeedbackAction, type SkipReason } from '@/lib/db'
 import { parseMood } from '@/lib/mood'
+import { portraitTag } from '@/lib/portraitmodel'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, nowSec, requireWriter } from '@/lib/server'
 
@@ -68,5 +70,10 @@ export async function POST(req: Request) {
   // Игра дня записана на сутки, но бан и «надоела» отбор обязан учесть сразу:
   // иначе убранная игра стояла бы героем до полуночи (см. forgetDailyPick)
   if (action === 'banned' || reason === 'tired') await forgetDailyPick(db, steamid)
+  // Модель портрета кэшируется по снапшоту, а бан снапшот не меняет: без
+  // сброса «начни с этой» на портрете указывала бы на скрытую игру до
+  // следующего снапшота. 'max' — следующий заход получит старую модель, пока
+  // собирается новая: стартовая — не то, ради чего ждать сборку
+  if (action === 'banned') revalidateTag(portraitTag(steamid), 'max')
   return NextResponse.json({ ok: true })
 }

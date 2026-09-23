@@ -15,6 +15,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import { Eyebrow, eyebrow } from '@/components/Labels'
 import { Wordmark } from '@/components/Wordmark'
 import {
+  bannedAppids,
   getGamesMetaLite,
   getLatestSnapshot,
   getPersonaName,
@@ -27,7 +28,7 @@ import { OG_SITE } from '@/lib/site'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
 import { plural } from '@/lib/plural'
 import { checkRate, clientIp } from '@/lib/ratelimit'
-import { buildPortraitModel, type PortraitModel } from '@/lib/portraitmodel'
+import { buildPortraitModel, portraitTag, type PortraitModel } from '@/lib/portraitmodel'
 import {
   concentrationVerdict,
   eraLead,
@@ -179,9 +180,11 @@ class ColdBuildLimited extends Error {}
  * Модель страницы — из кэша по снапшоту, холодная сборка — под потолком.
  *
  * Ключ [steamid, takenAt]: новый снапшот — новый ключ, и старую модель не
- * надо сбрасывать. Тег portrait:<steamid> — ручка на случай, когда сбросить
- * всё же понадобится. После удаления данных по запросу (forget-user) запись
- * недостижима: страница сначала читает снапшот, а без него до кэша не доходит.
+ * надо сбрасывать. Тег portrait:<steamid> (portraitTag) — ручка на то, что
+ * меняется без снапшота: бан и его снятие сбрасывают модель из /api/feedback
+ * и /api/unban, иначе «начни с этой» сутки указывала бы на скрытую игру.
+ * После удаления данных по запросу (forget-user) запись недостижима:
+ * страница сначала читает снапшот, а без него до кэша не доходит.
  *
  * Обёртка собирается на каждый запрос, потому что в замыкании адрес и
  * снапшот: они нужны холодной сборке, но в ключ попадать не должны — ключ
@@ -206,15 +209,19 @@ async function loadModel(
       })
       if (!gate.ok) throw new ColdBuildLimited()
       // Портрет строится по библиотеке игрока — весь каталог для этого не
-      // нужен, и блобы тоже: скриншотов на странице нет
-      const metas = await getGamesMetaLite(
-        db,
-        snapshot.games.map((g) => g.appid),
-      )
-      return buildPortraitModel(snapshot.games, (id) => metas.get(id), now, MOSAIC_PLAN)
+      // нужен, и блобы тоже: скриншотов на странице нет. Баны владельца —
+      // здесь же, внутри кэша: страница публичная, и читать их на каждый
+      // заход значило бы платить всей его историей фидбека за каждый просмотр
+      const [metas, banned] = await Promise.all([
+        getGamesMetaLite(db, snapshot.games.map((g) => g.appid)),
+        bannedAppids(db, steamid),
+      ])
+      return buildPortraitModel(snapshot.games, (id) => metas.get(id), now, MOSAIC_PLAN, {
+        banned,
+      })
     },
-    ['portrait-model:v1', steamid, String(snapshot.takenAt)],
-    { tags: [`portrait:${steamid}`], revalidate: MODEL_TTL_SEC },
+    ['portrait-model:v2', steamid, String(snapshot.takenAt)],
+    { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
   try {
     return { model: await build(), complete: true }

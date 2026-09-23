@@ -319,6 +319,17 @@ describe('pickStarter', () => {
     expect(pickStarter([lib(1, 300), lib(2, 0), lib(3, 0)], (id) => metas.get(id))?.appid).toBe(3)
   })
 
+  test('скрытая владельцем игра стартовой не становится — берётся следующая', () => {
+    const metas = new Map<number, GameMeta>([
+      [1, meta(1, { Automation: 100 })],
+      [2, meta(2, { Automation: 100 })],
+      [3, meta(3, { Automation: 50, Horror: 100 })],
+    ])
+    const games = [lib(1, 300), lib(2, 0), lib(3, 0)]
+    expect(pickStarter(games, (id) => metas.get(id), { banned: new Set([2]) })?.appid).toBe(3)
+    expect(pickStarter(games, (id) => metas.get(id), { banned: new Set([2, 3]) })).toBeNull()
+  })
+
   test('при равном вкусе стартовой остаётся первая по порядку — выдача не скачет', () => {
     const metas = new Map<number, GameMeta>([
       [1, meta(1, { Automation: 100 })],

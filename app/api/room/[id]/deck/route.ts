@@ -3,6 +3,7 @@ import { memberLabel } from '@/lib/room'
 import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
+  bannedAppidsOf,
   getPoolSize,
   getGamesMetaLite,
   getLatestSnapshot,
@@ -81,13 +82,19 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   })
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
-  const libraries = await Promise.all(
-    members.map(async (m) => ({
-      steamid: m.steamid,
-      name: memberLabel(id, m.steamid, m.personaName),
-      library: (await getLatestSnapshot(db, m.steamid))?.games ?? [],
-    })),
-  )
+  // Баны — тем же заходом, что и библиотеки: обоим нужен только состав.
+  // Объединение по всем участникам, а не баны смотрящего: колода одна на
+  // комнату (см. bannedAppidsOf), и своя у каждого развалила бы счёт голосов.
+  const [libraries, banned] = await Promise.all([
+    Promise.all(
+      members.map(async (m) => ({
+        steamid: m.steamid,
+        name: memberLabel(id, m.steamid, m.personaName),
+        library: (await getLatestSnapshot(db, m.steamid))?.games ?? [],
+      })),
+    ),
+    bannedAppidsOf(db, members.map((m) => m.steamid)),
+  ])
 
   // Метаданные библиотек участников, а не всего каталога
   const ownedIds = [...new Set(libraries.flatMap((l) => l.library.map((g) => g.appid)))]
@@ -108,6 +115,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const [extraPool, voted] = await Promise.all([
     fetchDiscoveryPool(db, {
       tags: pickQueryTags(partyProfile, tagStats, poolSize),
+      // Не только отсев: без этого забаненное занимало бы места в LIMIT пула
+      bannedAppids: [...banned],
       requireMultiplayer: true,
       // Ротацию НЕ сдвигаем по раунду: она меняет пул, а значит и порядок, и
       // «следующие двадцать» начали бы дублировать уже показанное. По той же
@@ -129,6 +138,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     metaOf,
     extraPool,
     limit: DECK_SIZE * (room.deckRound + 1),
+    // Общие игры участников идут не из пула, а из библиотек — их баны
+    // отсеиваются уже здесь
+    banned,
   })
 
   // Колода собирается из библиотек участников, а они офлайн-фильтры каталога

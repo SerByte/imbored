@@ -113,6 +113,15 @@ describe('forgottenCandidates', () => {
     const lib = [game({ appid: 99 }), game({ appid: 98 })]
     expect(forgottenCandidates(lib, metaOf).map((g) => g.appid)).toEqual([99, 98])
   })
+
+  test('«Больше не показывать» на полку не возвращается', () => {
+    const lib = [game({ appid: 1 }), game({ appid: 2 }), game({ appid: 3 })]
+    expect(forgottenCandidates(lib, metaOf, new Set([2])).map((g) => g.appid)).toEqual([1, 3])
+  })
+
+  test('без банов полка та же, что и раньше', () => {
+    expect(forgottenCandidates(sealed, metaOf, new Set())).toEqual(forgottenCandidates(sealed, metaOf))
+  })
 })
 
 describe('forgottenCandidates: издания одной игры', () => {

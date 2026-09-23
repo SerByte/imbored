@@ -235,14 +235,20 @@ export function archetypeEvidence(
  *
  * Это совет, а не счётчик, поэтому отсев строже, чем у бэклога: isJunk, а не
  * looksLikeNonGame. Саундтрек стартовой быть не может, и мёртвая сетевая игра
- * тоже — в бэклоге она лежит честно, но начинать с неё не с кем.
+ * тоже — в бэклоге она лежит честно, но начинать с неё не с кем. И то, что
+ * владелец попросил больше не показывать (banned), тоже: совет «начни с этой»
+ * про скрытую игру — тот же совет, от которого он уже отказался на /play.
  */
-export function pickStarter(library: LibraryGame[], metaOf: MetaOf): LibraryGame | null {
+export function pickStarter(
+  library: LibraryGame[],
+  metaOf: MetaOf,
+  opts: { banned?: ReadonlySet<number> } = {},
+): LibraryGame | null {
   // Фильтр по metaOf обязателен: rankByTaste игры без меты не выбрасывает, а
   // лишь опускает в конец, и без фильтра стартовой могла бы стать игра без тегов
   const candidates = library.filter((g) => {
     const meta = metaOf(g.appid)
-    return isUnplayed(g) && meta !== undefined && !isJunk(g, meta)
+    return isUnplayed(g) && meta !== undefined && !opts.banned?.has(g.appid) && !isJunk(g, meta)
   })
   return rankByTaste(candidates, metaOf, buildTagProfile(library, metaOf))[0] ?? null
 }

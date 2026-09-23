@@ -32,14 +32,19 @@ export type GroupCard = {
  * Колода для свайп-матча пати: сначала общие мультиплеерные игры,
  * затем кандидаты «не у всех» с пометкой, кому не хватает, и ценой.
  * Скоринг — близость к суммарному вкусу всех участников.
+ *
+ * banned — «Больше не показывать» хоть кого-то из участников (bannedAppidsOf).
+ * Отсев до выбора изданий, а не после: иначе забаненное издание занимало бы
+ * ключ, и живое второе издание той же игры в колоду уже не попадало бы.
  */
 export function buildGroupDeck(args: {
   members: GroupMember[]
   metaOf: (appid: number) => GameMeta | undefined
   extraPool: GameMeta[]
   limit: number
+  banned?: ReadonlySet<number>
 }): GroupCard[] {
-  const { members, metaOf, extraPool, limit } = args
+  const { members, metaOf, extraPool, limit, banned } = args
   if (!members.length) return []
 
   // суммарный вкус пати
@@ -100,6 +105,7 @@ export function buildGroupDeck(args: {
   const cards: GroupCard[] = []
 
   const take = (meta: GameMeta): boolean => {
+    if (banned?.has(meta.appid)) return false
     const key = editionKey(meta.name)
     if (key && seenKeys.has(key)) return false
     seen.add(meta.appid)

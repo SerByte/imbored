@@ -6,7 +6,13 @@ import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
 import { trimArt } from '@/lib/art'
-import { feedbackStats, getGamesMetaLite, getLatestSnapshot, listBanned } from '@/lib/db'
+import {
+  bannedAppids,
+  feedbackStats,
+  getGamesMetaLite,
+  getLatestSnapshot,
+  listBanned,
+} from '@/lib/db'
 import {
   buildLibraryView,
   dayKey,
@@ -62,25 +68,31 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
 
   const db = await getDb()
   /*
-   * Три независимых чтения — одним заходом, а не лесенкой.
+   * Независимые чтения — одним заходом, а не лесенкой.
    *
    * Снапшот, забаненное и статистика отзывов друг от друга не зависят вовсе, а
-   * шли по очереди: три обхода к Turso подряд там, где хватает одного. Страница
+   * шли по очереди: обход к Turso за обходом там, где хватает одного. Страница
    * объявлена force-dynamic (export dynamic выше), кэша у неё нет, и эта
    * лесенка ложится в TTFB КАЖДОГО захода. По замеру из соседнего роута комнаты один
    * обход стоит около полутора сотен миллисекунд.
    *
    * Цена размена: у человека с сессией, но без снапшота (редирект строкой
-   * ниже) два запроса уходят впустую. Это редкий случай — снапшот пишется тем
+   * ниже) три запроса уходят впустую. Это редкий случай — снапшот пишется тем
    * же действием, что заводит сессию, — и он молчаливый, в отличие от
    * задержки, которую видят все.
    *
    * getGamesMetaLite остаётся отдельно: ему нужны appid И из библиотеки, И из
    * забаненного, то есть он честно зависит от обоих.
+   *
+   * Баны дважды, и это не повтор: listBanned — полка с датами и потолком в
+   * шестьдесят плиток, bannedAppids — все до одного, для отсева полки
+   * забытого. Шестьдесят первая скрытая игра иначе вернулась бы туда под
+   * видом «ты забыл, что она у тебя есть».
    */
-  const [snapshot, banned, stats] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats] = await Promise.all([
     getLatestSnapshot(db, steamid),
     listBanned(db, steamid),
+    bannedAppids(db, steamid),
     feedbackStats(db, steamid),
   ])
   if (!snapshot) redirect(bounceTo('/library'))
@@ -132,7 +144,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Порция полки, а не вся полка: см. LIBRARY_PAGE_SIZE в lib/forgotten.ts
   const wall = libraryPage(view.games, parseLibraryPage(query.page))
   const shelf = pickForgotten(
-    forgottenCandidates(games, metaOf),
+    // «Больше не показывать» — и здесь: полка тоже совет
+    forgottenCandidates(games, metaOf, bannedAll),
     // Соль обязательна: без неё первый слот полки коррелировал бы с выбором
     // «Игры дня» — там сид тех же двух частей
     `${steamid}:${dayKey(new Date(now * 1000))}:shelf`,
