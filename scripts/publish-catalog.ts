@@ -11,7 +11,8 @@
  * ему нечего читать.
  *
  * Здесь копируется РЕЗУЛЬТАТ отбора: games с вердиктами, game_tags и словарь
- * тегов. Обход Steam повторять не надо — ответ уже посчитан локально.
+ * тегов (с русскими именами, если промоут их привёз). Обход Steam повторять не
+ * надо — ответ уже посчитан локально.
  *
  * Что НЕ трогаем: reviews_summary_json и pros_cons_json. Это кэш отзывов и
  * pros/cons от Claude, накопленный в проде по живым запросам пользователей;
@@ -50,7 +51,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { migrateDb, rebuildTagStats, repairGameJson } from '../lib/db'
-import { buildSetList, publishRefusal } from './publishsql'
+import { buildSetList, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
 
 /** Строк в одном батче. Больше — риск упереться в лимит запроса libsql. */
 const CHUNK = 200
@@ -144,13 +145,22 @@ async function main() {
   }
 
   // ---- словарь тегов ----
-  const tags = await local.execute('SELECT tagid, name, game_count FROM tags')
+  // Вместе с русскими именами (tags.name_ru), если локальный каталог их уже
+  // знает; правила — у tagsSelectSql и TAGS_UPSERT_SQL
+  const hasRu =
+    (await local.execute("SELECT 1 FROM pragma_table_info('tags') WHERE name = 'name_ru'")).rows
+      .length > 0
+  const tags = await local.execute(tagsSelectSql(hasRu))
   for (let i = 0; i < tags.rows.length; i += CHUNK) {
     await remote.batch(
       tags.rows.slice(i, i + CHUNK).map((r) => ({
-        sql: `INSERT INTO tags (tagid, name, game_count) VALUES (?, ?, ?)
-              ON CONFLICT(tagid) DO UPDATE SET name = excluded.name, game_count = excluded.game_count`,
-        args: [r.tagid as number, r.name as string, r.game_count as number],
+        sql: TAGS_UPSERT_SQL,
+        args: [
+          r.tagid as number,
+          r.name as string,
+          r.game_count as number,
+          (r.name_ru as string | null) ?? null,
+        ],
       })),
       'write',
     )

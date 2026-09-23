@@ -22,6 +22,7 @@
 import {
   getGamesMeta,
   loadTagDictionary,
+  loadTagNamesRu,
   nextIngestBatch,
   rebuildTagStats,
   replaceGameTags,
@@ -81,11 +82,23 @@ async function main() {
   const db = await openDb()
   const nowSec = Math.floor(Date.now() / 1000)
 
+  /*
+   * Словарь — английский (ключи всех таблиц подбора) и русский (подписи),
+   * склеенные по tagid. Русский докачивается и к уже заполненному словарю:
+   * базы, собранные до колонки name_ru, иначе так и остались бы без подписей.
+   * Перевод — не условие промоута: не пришёл — игры переносятся всё равно, а
+   * подписи останутся английскими до следующего прогона.
+   */
   let tagNames = await loadTagDictionary(db)
-  if (!tagNames.size) {
-    tagNames = await fetchTagDictionary()
-    await saveTagDictionary(db, tagNames)
-    console.log(`словарь тегов: ${tagNames.size}`)
+  const hasRu = (await loadTagNamesRu(db)).size > 0
+  if (!tagNames.size || !hasRu) {
+    if (!tagNames.size) tagNames = await fetchTagDictionary()
+    const ru = await fetchTagDictionary(fetch, 'russian').catch((err: Error) => {
+      console.warn(`  русский словарь тегов: ${err.message} — подписи останутся английскими`)
+      return null
+    })
+    await saveTagDictionary(db, tagNames, ru)
+    console.log(`словарь тегов: ${tagNames.size}, по-русски: ${ru?.size ?? 0}`)
   }
 
   // Перенос идёт по игре за раз, но серии определяются по группе целиком:

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { createDb, repairGameJson, upsertGameMeta } from '../lib/db'
-import { buildSetList, publishRefusal } from './publishsql'
+import { buildSetList, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
 
 const COLS = ['appid', 'name', 'short_description', 'screenshots_json', 'updated_at'] as const
 
@@ -205,5 +205,40 @@ describe('публикация каталога: битые JSON-колонки 
     const guard = main.indexOf('repairGameJson(local, { dryRun: true })')
     expect(guard, 'publish-catalog больше не проверяет форму JSON').toBeGreaterThan(-1)
     expect(guard).toBeLessThan(main.indexOf('await openRemote()'))
+  })
+})
+
+describe('публикация каталога: словарь тегов', () => {
+  /** Облако с русской подписью у Roguelike и заливка поверх него */
+  async function заливаем(ru: string | null): Promise<string | null> {
+    const db = await createDb(':memory:')
+    await db.execute({ sql: TAGS_UPSERT_SQL, args: [1716, 'Roguelike', 10, 'Рогалик'] })
+    await db.execute({ sql: TAGS_UPSERT_SQL, args: [1716, 'Roguelike', 12, ru] })
+    const r = await db.execute('SELECT name_ru, game_count FROM tags WHERE tagid = 1716')
+    expect(r.rows[0].game_count).toBe(12)
+    return r.rows[0].name_ru as string | null
+  }
+
+  test('каталог без перевода подписи в облаке не стирает', async () => {
+    expect(await заливаем(null)).toBe('Рогалик')
+    expect(await заливаем('')).toBe('Рогалик')
+  })
+
+  test('новый перевод едет — Steam правит свои подписи', async () => {
+    expect(await заливаем('Рогалик (классический)')).toBe('Рогалик (классический)')
+  })
+
+  test('локальный каталог до колонки name_ru читается без «no such column»', async () => {
+    // Локальную базу заливка не мигрирует: так выглядит каталог, собранный
+    // до появления колонки
+    const { createClient } = await import('@libsql/client')
+    const local = createClient({ url: ':memory:' })
+    await local.execute(
+      'CREATE TABLE tags (tagid INTEGER PRIMARY KEY, name TEXT NOT NULL, game_count INTEGER NOT NULL DEFAULT 0)',
+    )
+    await local.execute("INSERT INTO tags VALUES (1716, 'Roguelike', 10)")
+    const r = await local.execute(tagsSelectSql(false))
+    expect(r.rows[0].name_ru).toBeNull()
+    await expect(local.execute(tagsSelectSql(true))).rejects.toThrow(/name_ru/)
   })
 })

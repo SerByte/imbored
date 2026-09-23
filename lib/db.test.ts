@@ -41,6 +41,7 @@ import {
   type StoredNews,
   isMultiplayerCategories,
   loadTagDictionary,
+  loadTagNamesRu,
   loadTagStats,
   nextIngestBatch,
   rebuildTagStats,
@@ -552,6 +553,25 @@ describe('db', () => {
     const stats = await loadTagStats(db)
     expect(stats.get('Indie')).toBe(2)
     expect(stats.get('Roguelike')).toBe(1)
+  })
+
+  test('русские имена склеиваются по tagid и не стираются английским словарём', async () => {
+    const db = await freshDb()
+    await saveTagDictionary(
+      db,
+      new Map([[1, 'Roguelike'], [2, 'Indie'], [3, 'Dystopian ']]),
+      // пробел в хвосте у Steam бывает и в русском имени — подпись без него
+      new Map([[1, 'Рогалик'], [3, 'Антиутопия ']]),
+    )
+    expect(await loadTagNamesRu(db)).toEqual(
+      new Map([['Roguelike', 'Рогалик'], ['Dystopian ', 'Антиутопия']]),
+    )
+    // ключ — английское имя как есть, с тем же пробелом, что в tags_json
+    expect((await loadTagDictionary(db)).get(3)).toBe('Dystopian ')
+
+    // промоут перезаписал один английский словарь — подписи остались
+    await saveTagDictionary(db, new Map([[1, 'Roguelike'], [2, 'Indie']]))
+    expect((await loadTagNamesRu(db)).get('Roguelike')).toBe('Рогалик')
   })
 
   test('перезапись тегов игры не оставляет хвостов', async () => {
@@ -2715,6 +2735,25 @@ describe('версия схемы', () => {
     expect(alters.some((c) => /ALTER TABLE rooms ADD COLUMN deck_round/.test(c.sql))).toBe(true)
   })
 
+  test('старый словарь тегов получает name_ru и не теряет строк', async () => {
+    // Таблица tags живёт на проде с первой версии схемы — без name_ru. На
+    // свежей :memory: колонка есть сразу, и отсутствие ALTER там не видно
+    const db = await legacyDb()
+    await db.executeMultiple(`
+      CREATE TABLE tags (
+        tagid INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        game_count INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO tags (tagid, name, game_count) VALUES (1716, 'Roguelike', 40);`)
+    await migrateDb(db)
+
+    expect((await columnsOf(db)).has('tags.name_ru')).toBe(true)
+    expect((await loadTagDictionary(db)).get(1716)).toBe('Roguelike')
+    await saveTagDictionary(db, new Map([[1716, 'Roguelike']]), new Map([[1716, 'Рогалик']]))
+    expect((await loadTagNamesRu(db)).get('Roguelike')).toBe('Рогалик')
+  })
+
   test('без pragma_table_info миграция откатывается к перебору всех колонок', async () => {
     // Табличную функцию может не пустить сервер. Тогда платим прежнюю цену —
     // один раз, потому что версия после этого всё равно записывается.
@@ -2748,8 +2787,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 2,
-      columns: 31,
+      version: 3,
+      columns: 32,
     })
   })
 })

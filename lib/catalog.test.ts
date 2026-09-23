@@ -9,6 +9,7 @@ import {
   parseSteamSpyTags,
   parseStoreItems,
   parseTagDictionary,
+  fetchTagDictionary,
   ensureMeta,
   parseStoreDescriptions,
 } from './catalog'
@@ -155,6 +156,33 @@ describe('parseTagDictionary', () => {
   test('мусор не роняет разбор', () => {
     expect(parseTagDictionary(null).size).toBe(0)
     expect(parseTagDictionary([{ tagid: 1 }, { name: 'X' }]).size).toBe(0)
+  })
+})
+
+describe('fetchTagDictionary', () => {
+  /*
+   * Кэш общий на процесс. Когда он был один на все языки, русский словарь,
+   * спрошенный первым, возвращался и прогреву — а тот пишет имена тегов в
+   * tags_json ключами, и Roguelike в базе становился «Рогаликом».
+   */
+  test('у каждого языка свой запрос и свой кэш', async () => {
+    const urls: string[] = []
+    const fake = (async (url: string) => {
+      urls.push(url)
+      const name = url.endsWith('/russian') ? 'Рогалик' : 'Roguelike'
+      return new Response(JSON.stringify([{ tagid: 1716, name }]))
+    }) as unknown as typeof fetch
+
+    const ru = await fetchTagDictionary(fake, 'russian')
+    const en = await fetchTagDictionary(fake)
+    expect(ru.get(1716)).toBe('Рогалик')
+    expect(en.get(1716)).toBe('Roguelike')
+    // второй заход за тем же языком — из кэша
+    expect((await fetchTagDictionary(fake, 'russian')).get(1716)).toBe('Рогалик')
+    expect(urls).toEqual([
+      'https://store.steampowered.com/tagdata/populartags/russian',
+      'https://store.steampowered.com/tagdata/populartags/english',
+    ])
   })
 })
 

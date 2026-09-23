@@ -265,21 +265,35 @@ export const STORE_ITEMS_BATCH = 200
 export const STORE_API_PACE_MS = 400
 const TAG_DICT_TTL_SEC = 24 * 3600
 
-let tagDictCache: { at: number; map: Map<number, string> } | null = null
+/** Язык словаря тегов: английский — ключи, русский — только подписи */
+export type TagLang = 'english' | 'russian'
+
+const tagDictCache = new Map<TagLang, { at: number; map: Map<number, string> }>()
 
 /**
- * Словарь тегов Steam. Берём английский: ключи тегов используются в скоринге
- * (VIBE_TAGS, HARDCORE_TAGS в lib/recommend.ts) и в портрете, они английские.
+ * Словарь тегов Steam. По умолчанию английский: ключи тегов используются в
+ * скоринге (VIBE_TAGS, HARDCORE_TAGS в lib/recommend.ts) и в портрете, они
+ * английские.
+ *
+ * Русский — тот же список с теми же tagid, только имена переведены. Им ничего
+ * не сравнивается: он склеивается с английским по tagid и нужен для вывода
+ * (tags.name_ru, lib/tagsru.ts). Кэш у каждого языка свой: общий отдал бы
+ * русские имена тому, кто просил ключи, и прогрев записал бы в tags_json
+ * «Рогалик» вместо Roguelike — мимо всех таблиц подбора разом.
  */
-export async function fetchTagDictionary(fetchFn: typeof fetch = fetch): Promise<Map<number, string>> {
+export async function fetchTagDictionary(
+  fetchFn: typeof fetch = fetch,
+  lang: TagLang = 'english',
+): Promise<Map<number, string>> {
   const now = Math.floor(Date.now() / 1000)
-  if (tagDictCache && now - tagDictCache.at < TAG_DICT_TTL_SEC) return tagDictCache.map
-  const res = await fetchFn('https://store.steampowered.com/tagdata/populartags/english', {
+  const hit = tagDictCache.get(lang)
+  if (hit && now - hit.at < TAG_DICT_TTL_SEC) return hit.map
+  const res = await fetchFn(`https://store.steampowered.com/tagdata/populartags/${lang}`, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   })
-  if (!res.ok) throw new Error(`populartags: HTTP ${res.status}`)
+  if (!res.ok) throw new Error(`populartags/${lang}: HTTP ${res.status}`)
   const map = parseTagDictionary(await res.json())
-  if (map.size) tagDictCache = { at: now, map }
+  if (map.size) tagDictCache.set(lang, { at: now, map })
   return map
 }
 

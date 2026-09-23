@@ -224,6 +224,20 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+/*
+ * Словарь тегов Steam: tagid → английское имя (ключ всех таблиц подбора) и
+ * русское — только для вывода, сравнивается всегда name.
+ *
+ * Здесь, а не в SCHEMA_CATALOG, по той же причине, что catalog_meta: name_ru
+ * приезжает на старые базы ALTER-циклом, а он идёт ДО SCHEMA_CATALOG. На
+ * свежей базе ALTER упал бы на «no such table», будь таблица создана позже.
+ */
+CREATE TABLE IF NOT EXISTS tags (
+  tagid INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  game_count INTEGER NOT NULL DEFAULT 0,
+  name_ru TEXT
+);
 `
 
 /**
@@ -260,11 +274,7 @@ CREATE TABLE IF NOT EXISTS catalog_ingest (
 CREATE INDEX IF NOT EXISTS idx_ingest_rank ON catalog_ingest (reviews_total DESC);
 CREATE INDEX IF NOT EXISTS idx_ingest_status ON catalog_ingest (status, reviews_total DESC);
 
-CREATE TABLE IF NOT EXISTS tags (
-  tagid INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  game_count INTEGER NOT NULL DEFAULT 0
-);
+-- словарь тегов (tags) — в SCHEMA: у него есть колонка из ALTER-цикла
 
 CREATE TABLE IF NOT EXISTS game_tags (
   appid INTEGER NOT NULL,
@@ -475,7 +485,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 2
+export const CURRENT_SCHEMA_V = 3
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -531,6 +541,9 @@ export const ADDED_COLUMNS = [
   // Steam (lib/catalogsignals). NULL — ни разу: значения из посева каталога,
   // возраст которых неизвестен. Своя ось свежести, как price_at и ccu_at.
   ['games', 'reviews_at INTEGER'],
+  // Русское имя тега из того же словаря Steam, склеенное по tagid. Только
+  // подпись: ключи и все сравнения — по name (см. lib/tagsru.ts).
+  ['tags', 'name_ru TEXT'],
 ] as const
 
 /**
@@ -3129,16 +3142,28 @@ export async function releaseLease(db: Db, key: string, holder: string): Promise
   })
 }
 
-/** Словарь тегов Steam: tagid -> имя */
-export async function saveTagDictionary(db: Db, tags: Map<number, string>): Promise<void> {
+/**
+ * Словарь тегов Steam: tagid -> имя, и, если передан, русский словарь того же
+ * списка — склеивается с английским по tagid.
+ *
+ * Русское имя, которого нет (не передан словарь, в нём нет этого tagid),
+ * уже записанное не стирает: запись одного английского словаря — обычное дело
+ * промоута, и без COALESCE она обнуляла бы подписи, привезённые раньше.
+ */
+export async function saveTagDictionary(
+  db: Db,
+  tags: Map<number, string>,
+  ru: Map<number, string> | null = null,
+): Promise<void> {
   const rows = [...tags.entries()]
   const CHUNK = 250
   for (let i = 0; i < rows.length; i += CHUNK) {
     await db.batch(
       rows.slice(i, i + CHUNK).map(([tagid, name]) => ({
-        sql: `INSERT INTO tags (tagid, name) VALUES (?, ?)
-              ON CONFLICT(tagid) DO UPDATE SET name = excluded.name`,
-        args: [tagid, name],
+        sql: `INSERT INTO tags (tagid, name, name_ru) VALUES (?, ?, ?)
+              ON CONFLICT(tagid) DO UPDATE SET name = excluded.name,
+                name_ru = COALESCE(excluded.name_ru, tags.name_ru)`,
+        args: [tagid, name, ru?.get(tagid)?.trim() || null],
       })),
       'write',
     )
@@ -3150,6 +3175,22 @@ export async function loadTagDictionary(db: Db): Promise<Map<number, string>> {
   const out = new Map<number, string>()
   for (const r of res.rows as unknown as Array<{ tagid: number; name: string }>) {
     out.set(r.tagid, r.name)
+  }
+  return out
+}
+
+/**
+ * Русские имена тегов, ключом — английское имя (ровно как в tags_json).
+ * Тег без перевода в карту не попадает. Читает генератор lib/tagsru.ts
+ * (scripts/gen-tagsru.ts --db) и промоут, чтобы понять, есть ли что докачать.
+ */
+export async function loadTagNamesRu(db: Db): Promise<Map<string, string>> {
+  const res = await db.execute(
+    "SELECT name, name_ru FROM tags WHERE name_ru IS NOT NULL AND name_ru != ''",
+  )
+  const out = new Map<string, string>()
+  for (const r of res.rows as unknown as Array<{ name: string; name_ru: string }>) {
+    out.set(r.name, r.name_ru)
   }
   return out
 }

@@ -92,3 +92,23 @@ export function publishRefusal(broken: readonly GameJsonRepair[], show = 10): st
     'почини и повтори: npm run catalog:repair-tags',
   ].join('\n')
 }
+
+/**
+ * Чтение словаря тегов из локального каталога.
+ *
+ * Локальную базу заливка не мигрирует, и каталог, собранный до колонки
+ * name_ru, ответил бы на неё «no such column» — поэтому колонку спрашивают, а
+ * не предполагают: hasRu — есть ли она в локальной tags.
+ */
+export function tagsSelectSql(hasRu: boolean): string {
+  return `SELECT tagid, name, game_count, ${hasRu ? 'name_ru' : 'NULL AS name_ru'} FROM tags`
+}
+
+/**
+ * Upsert словаря в облако. Русское имя — по правилу полей обогащения: пустое
+ * локальное облачное не затирает (каталог без перевода не стирает подписи,
+ * привезённые раньше), а непустое едет — Steam правит переводы.
+ */
+export const TAGS_UPSERT_SQL = `INSERT INTO tags (tagid, name, game_count, name_ru) VALUES (?, ?, ?, ?)
+  ON CONFLICT(tagid) DO UPDATE SET name = excluded.name, game_count = excluded.game_count,
+    name_ru = COALESCE(NULLIF(excluded.name_ru, ''), tags.name_ru)`
