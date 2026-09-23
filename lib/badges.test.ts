@@ -126,6 +126,61 @@ describe('assignEdges', () => {
     expect(new Set(edges.values()).size).toBe(edges.size)
   })
 
+  /*
+   * Своя наигранная ближе всех к вкусу по построению: вкус посчитан из её
+   * часов. «Ближе всего к вкусу» у CS2 на восьмистах часах — тавтология, а не
+   * преимущество перед соседями.
+   */
+  test('своя наигранная бейдж вкуса не получает — его получает лучшая из остальных', () => {
+    const edges = assignEdges([
+      item(1, { taste: 0.95 }, { source: 'familiar' }),
+      item(2, { taste: 0.8 }, { source: 'untouched' }),
+      item(3, { taste: 0.5 }, { source: 'new' }),
+      item(4, { taste: 0.4 }, { source: 'backlog' }),
+    ])
+    expect(edges.get(1)).not.toBe('taste')
+    expect(edges.get(2)).toBe('taste')
+  })
+
+  test('«Давно не заходил» тоже своя: за вкус не соревнуется', () => {
+    const edges = assignEdges([
+      item(1, { taste: 0.9 }, { source: 'comeback' }),
+      item(2, { taste: 0.7 }, { source: 'backlog' }),
+      item(3, { taste: 0.3 }, { source: 'new' }),
+    ])
+    expect(edges.get(2)).toBe('taste')
+    expect(edges.has(1)).toBe(false)
+  })
+
+  test('своя наигранная не мешает и порогу: лидер обгоняет только соперников', () => {
+    // Без исключения вторым стоял бы comeback на 0.79, и отрыва в пять
+    // процентов у 0.8 не было бы
+    const edges = assignEdges([
+      item(1, { taste: 0.8 }, { source: 'untouched' }),
+      item(2, { taste: 0.79 }, { source: 'comeback' }),
+      item(3, { taste: 0.5 }, { source: 'new' }),
+    ])
+    expect(edges.get(1)).toBe('taste')
+  })
+
+  test('лидер среди соперников по-прежнему обязан оторваться на пять процентов', () => {
+    const edges = assignEdges([
+      item(1, { taste: 0.95 }, { source: 'familiar' }),
+      item(2, { taste: 0.8 }, { source: 'untouched' }),
+      item(3, { taste: 0.79 }, { source: 'new' }),
+    ])
+    expect([...edges.values()]).not.toContain('taste')
+  })
+
+  test('если соперников нет — бейджа вкуса нет ни у кого', () => {
+    const edges = assignEdges([
+      item(1, { taste: 0.9 }, { source: 'familiar' }),
+      item(2, { taste: 0.4 }, { source: 'comeback' }),
+      item(3, { taste: 0.2 }, { source: 'familiar' }),
+    ])
+    expect([...edges.values()]).not.toContain('taste')
+  })
+
   test('карточка без частей скора сравнивается только по отзывам', () => {
     const edges = assignEdges([
       { appid: 1, reviewsTotal: 120, reviewsPercent: 94 },

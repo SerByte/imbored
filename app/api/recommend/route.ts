@@ -382,6 +382,8 @@ export async function POST(req: Request) {
       return {
         appid: p.appid,
         parts: partsOf.get(p.appid),
+        // Своя наигранная за вкус не соревнуется: вкус из неё и посчитан
+        source: p.source,
         reviewsTotal: meta?.reviewsTotal,
         reviewsPercent: meta?.reviewsPercent,
       }
