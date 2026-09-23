@@ -482,6 +482,7 @@ export default function RoomPage() {
    */
   function joinFailure(status: number): string {
     if (status === 404) return 'Такой комнаты уже нет — попроси новую ссылку.'
+    if (status === 409) return 'Эта пати уже договорилась об игре — попроси новую ссылку.'
     if (status === 401) return 'Сессия истекла — подключи библиотеку заново, и вернём тебя сюда.'
     return 'Не получилось войти. Проверь связь и попробуй ещё раз.'
   }

@@ -116,6 +116,26 @@ describe('buildTrivia', () => {
     }
   })
 
+  test('SteamID64 участников в ответ не попадает ни в одном поле', () => {
+    // /api/room/[id]/trivia отдаёт вопросы как есть каждому в комнате, а в
+    // открытую комнату подсаживаются незнакомые с доски «Пати». id вопроса
+    // «чей это топ-3» был `toptrio:<steamid>` — рядом с ником в вариантах
+    const real: TriviaParty[] = [
+      { ...PARTY[0], steamid: '76561198000000001' },
+      { ...PARTY[1], steamid: '76561198000000002' },
+    ]
+    let toptrio = 0
+    for (let round = 0; round < 10; round++) {
+      const qs = buildTrivia({ seed: `ABC123:${real[0].steamid}:${round}`, catalog: CATALOG, party: real })
+      toptrio += qs.filter((q) => q.kind === 'toptrio').length
+      const json = JSON.stringify(qs)
+      expect(json).not.toMatch(/\d{17}/)
+      for (const p of real) expect(json).not.toContain(p.steamid)
+    }
+    // иначе проверка выше прошла бы вхолостую
+    expect(toptrio).toBeGreaterThan(0)
+  })
+
   test('дословный предикат частичного индекса не потерян', () => {
     // Без него SQLite не возьмёт idx_games_ccu, и выборка для викторины
     // превратится в полный скан каталога — см. lib/noscan.test.ts

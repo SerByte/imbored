@@ -184,7 +184,12 @@ export function buildTrivia(args: {
     const correct = party.findIndex((p) => p.steamid === chosen.p.steamid)
     const s = shuffled(opts, correct, rnd)
     return {
-      id: `toptrio:${chosen.p.steamid}`,
+      // Ключ — по самим играм, а не по человеку. Здесь стоял steamid, и
+      // ответ /api/room/[id]/trivia отдавал SteamID64 участника рядом с его
+      // ником каждому в комнате, включая незнакомцев с доски «Пати»; по нему
+      // открываются профиль Steam и /portrait со всей библиотекой. Для
+      // дедупа внутри батча топ-3 различает людей не хуже.
+      id: `toptrio:${hashString(chosen.top.map((g) => g.appid).join(',')).toString(36)}`,
       kind: 'toptrio',
       prompt: `Чей это топ-3: ${chosen.top.map((g) => g.name).join(', ')}?`,
       options: s.items,

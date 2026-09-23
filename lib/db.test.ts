@@ -559,9 +559,9 @@ describe('db', () => {
       { id: 'ABC123', steamid: 'host', mood: { time: 'long', vibe: 'engaged', social: 'friends' } },
       NOW,
     )
-    expect(await joinRoom(db, 'ABC123', 'host', 'Хост', NOW)).toBe(true)
-    expect(await joinRoom(db, 'ABC123', 'friend', 'Друг', NOW + 1)).toBe(true)
-    expect(await joinRoom(db, 'NOPE00', 'x', 'X', NOW)).toBe(false)
+    expect(await joinRoom(db, 'ABC123', 'host', 'Хост', NOW)).toBe('joined')
+    expect(await joinRoom(db, 'ABC123', 'friend', 'Друг', NOW + 1)).toBe('joined')
+    expect(await joinRoom(db, 'NOPE00', 'x', 'X', NOW)).toBe('notfound')
     const room = await getRoom(db, 'ABC123')
     expect(room?.status).toBe('open')
     expect(room?.mood?.social).toBe('friends')
@@ -570,6 +570,18 @@ describe('db', () => {
     // повторный вход не дублирует
     await joinRoom(db, 'ABC123', 'host', 'Хост', NOW + 2)
     expect(await roomMembers(db, 'ABC123')).toHaveLength(2)
+  })
+
+  test('в сматченную комнату новых не пускают, своих — пускают', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'MTC001', steamid: 'a' }, NOW)
+    await joinRoom(db, 'MTC001', 'a', 'A', NOW)
+    await joinRoom(db, 'MTC001', 'b', 'B', NOW)
+    await setRoomMatched(db, 'MTC001', 570)
+
+    expect(await joinRoom(db, 'MTC001', 'stranger', 'С доски', NOW + 1)).toBe('closed')
+    expect(await joinRoom(db, 'MTC001', 'b', 'B', NOW + 1)).toBe('joined')
+    expect((await roomMembers(db, 'MTC001')).map((m) => m.steamid)).toEqual(['a', 'b'])
   })
 
   test('порядок участников определён даже при совпавшей секунде входа', async () => {

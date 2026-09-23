@@ -956,19 +956,38 @@ export async function issueRoomDeck(db: Db, roomId: string, appids: number[]): P
   )
 }
 
+/**
+ * 'closed' — комната уже договорилась, а просится НОВЫЙ человек.
+ *
+ * Матч терминален, и новому участнику в такой комнате делать нечего: ни
+ * колоды, ни голосов, только ростер с никами и голосами тех, кто
+ * договорился, — ровно то, что незнакомцу с доски «Пати» знать незачем.
+ * Свой же участник, зашедший повторно, получает 'joined' и остаётся на
+ * месте: для него это та же страница церемонии.
+ */
+export type JoinResult = 'joined' | 'notfound' | 'closed'
+
 export async function joinRoom(
   db: Db,
   roomId: string,
   steamid: string,
   personaName: string | undefined,
   nowSec: number,
-): Promise<boolean> {
-  if (!(await getRoom(db, roomId))) return false
+): Promise<JoinResult> {
+  const room = await getRoom(db, roomId)
+  if (!room) return 'notfound'
+  if (room.status !== 'open') {
+    const res = await db.execute({
+      sql: 'SELECT 1 AS hit FROM room_members WHERE room_id = ? AND steamid = ?',
+      args: [roomId, steamid],
+    })
+    return res.rows.length ? 'joined' : 'closed'
+  }
   await db.execute({
     sql: 'INSERT OR REPLACE INTO room_members (room_id, steamid, persona_name, joined_at) VALUES (?, ?, ?, ?)',
     args: [roomId, steamid, personaName ?? null, nowSec],
   })
-  return true
+  return 'joined'
 }
 
 export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]> {

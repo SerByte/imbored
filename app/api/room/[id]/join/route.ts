@@ -14,7 +14,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   const db = await getDb()
   const name = await getPersonaName(db, steamid)
 
-  const ok = await joinRoom(db, id, steamid, name ?? undefined, nowSec())
-  if (!ok) return NextResponse.json({ error: 'notfound' }, { status: 404 })
+  const joined = await joinRoom(db, id, steamid, name ?? undefined, nowSec())
+  if (joined === 'notfound') return NextResponse.json({ error: 'notfound' }, { status: 404 })
+  // Новому человеку в сматченную комнату нельзя — см. JoinResult в lib/db
+  if (joined === 'closed') return NextResponse.json({ error: 'matched' }, { status: 409 })
   return NextResponse.json({ ok: true })
 }

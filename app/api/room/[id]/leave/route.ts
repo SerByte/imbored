@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
-import { hashString } from '@/lib/daily'
 import { findRoomMatch, getRoom, removeRoomMember, roomMembers, setRoomMatched } from '@/lib/db'
-import { currentSteamId, getDb } from '@/lib/server'
+import { memberKey } from '@/lib/roomkey'
+import { currentSteamId, getDb, sessionSecret } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -33,22 +33,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
   /*
-   * Кого убрать, называют ХЕШЕМ, а не steamid.
+   * Кого убрать, называют КЛЮЧОМ, а не steamid.
    *
    * Наружу steamid не уходит вовсе — это записано в шапке lib/room.ts и
    * держится ради открытых комнат с доски, куда подсаживаются незнакомые.
-   * Ростер знает только hashString(roomId + steamid), значит и удаление обязано
+   * Ростер знает только memberKey (lib/roomkey), значит и удаление обязано
    * принимать его же, а сопоставление делать здесь.
    *
-   * Заодно это сужает вход: подобранный хеш бесполезен — он сверяется со
+   * Заодно это сужает вход: подобранный ключ бесполезен — он сверяется со
    * списком участников ЭТОЙ комнаты, и ничем, кроме удаления из неё, не станет.
    */
   const body = (await req.json().catch(() => ({}))) as { memberId?: unknown }
   const memberId = typeof body.memberId === 'string' ? body.memberId : null
 
   const members = await roomMembers(db, id)
+  const secret = sessionSecret()
   const target = memberId
-    ? (members.find((m) => hashString(id + m.steamid).toString(36) === memberId)?.steamid ?? null)
+    ? (members.find((m) => memberKey(secret, id, m.steamid) === memberId)?.steamid ?? null)
     : steamid
 
   // Такого участника в комнате нет — убирать нечего, и это не ошибка.
