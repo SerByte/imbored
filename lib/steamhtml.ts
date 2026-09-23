@@ -27,9 +27,22 @@ export type NewsBlock =
  * Сверка идёт по разобранному hostname, а не по подстроке: `includes` обходится
  * и через `https://evil.example/?x=steamstatic.com`, и через
  * `https://steamstatic.com.evil.example/`.
+ *
+ * Список один на весь сайт: из него же собирается img-src в политике
+ * содержимого (lib/csp.ts). Картинка, которую пропустил разбор, не должна
+ * упереться в CSP, а в CSP не должен появиться хост, которого нет здесь.
  */
-const IMG_HOSTS =
-  /(^|\.)(steamstatic\.com|akamaihd\.net|steamusercontent\.com|steampowered\.com)$/i
+export const STEAM_IMG_DOMAINS = [
+  'steamstatic.com',
+  'akamaihd.net',
+  'steamusercontent.com',
+  'steampowered.com',
+] as const
+
+const IMG_HOSTS = new RegExp(
+  `(^|\\.)(${STEAM_IMG_DOMAINS.map((d) => d.replace(/\./g, '\\.')).join('|')})$`,
+  'i',
+)
 
 /** Вырезаются вместе с содержимым: их текст не нужен даже как текст */
 const DROP_PAIRED =

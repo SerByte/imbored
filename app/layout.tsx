@@ -223,6 +223,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         правда обязан быть на самом внешнем элементе.
       */}
       <body className="min-h-full font-sans overflow-x-hidden">
+        {/* Хэша в CSP у скрипта темы нет и не будет: он выключил бы
+            'unsafe-inline', на котором живут инлайн-скрипты самого Next.
+            Подробно — в lib/csp.ts. */}
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,

@@ -270,6 +270,40 @@ Steam API и требует `STEAM_API_KEY` в окружении; без нег
 
 ---
 
+## 6.7. Заголовки безопасности и CSP (делаешь ты, неделю по разу в день)
+
+Все заголовки задаёт `next.config.ts`, а собирает `lib/csp.ts`: `nosniff`,
+`X-Frame-Options: DENY` (сайт нельзя встроить во фрейм), `Referrer-Policy`,
+`Permissions-Policy` без камеры, микрофона и геолокации. `x-powered-by` больше
+не отдаётся. Проверить после деплоя:
+
+```bash
+curl -sI https://imbored.cc/ | grep -i -E 'content-security|x-frame|x-content-type|x-powered-by'
+```
+
+Политика содержимого пока стоит как `Content-Security-Policy-Report-Only`: она
+ничего не блокирует, только сообщает, что заблокировала бы. Каждое нарушение
+браузер шлёт на `/api/csp-report`, а тот пишет в Runtime Logs одну строку JSON с
+`"event":"csp-report"` (одинаковые схлопываются, так что строк немного).
+
+Неделю смотри Vercel → Logs по `csp-report`, или консоль браузера на `/`, `/play`,
+`/game/730` и `/whatsnew`:
+
+- `blocked` со схемой `chrome-extension`, `moz-extension`, `safari-web-extension`
+  — это расширения посетителей, их не чиним;
+- любой другой хост — пропуск в политике. Хост картинок Steam добавляется в
+  `STEAM_IMG_DOMAINS` в `lib/steamhtml.ts`, остальное — в `cspDirectives` в
+  `lib/csp.ts`.
+
+Если за неделю ничего, кроме расширений, не пришло, запрет включается отдельным
+коммитом: `CSP_ENFORCE = true` в `lib/csp.ts` и соседний тест в
+`lib/csp.test.ts`, который нарочно держит `false`. После деплоя пройди чек-лист
+из раздела 7: пропущенный хост в режиме запрета молча пропадает у всех.
+
+Хэша и nonce у скриптов нет, и это не упущение: почему — в шапке `lib/csp.ts`.
+
+---
+
 ## 7. Проверка после деплоя (делаем вместе)
 
 По порядку на живом `https://imbored.cc`:
