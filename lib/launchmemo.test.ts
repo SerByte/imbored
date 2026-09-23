@@ -1,9 +1,12 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   ASK_AFTER_SEC,
   ASK_UNTIL_SEC,
   dueLaunch,
   dueLaunchNow,
+  forgetLaunch,
   launchMemoStore,
   parseLaunchMemo,
   rememberLaunch,
@@ -118,6 +121,18 @@ describe('хранилище', () => {
     expect(dueLaunchNow()).toBeNull()
   })
 
+  test('forgetLaunch забывает только запуск той же игры', () => {
+    const session = fakeSession()
+    rememberLaunch(MEMO.appid, MEMO.name, NOW)
+    forgetLaunch(570)
+    expect(launchMemoStore.get()).toEqual(MEMO)
+    forgetLaunch(MEMO.appid)
+    expect(launchMemoStore.get()).toBeNull()
+    expect('imbored.play.launch' in session).toBe(false)
+    // Забывать нечего — не бросает
+    expect(() => forgetLaunch(MEMO.appid)).not.toThrow()
+  })
+
   test('без браузера (сервер, node) — null и никаких исключений', () => {
     vi.stubGlobal('sessionStorage', undefined)
     expect(launchMemoStore.server()).toBeNull()
@@ -180,5 +195,30 @@ describe('строка правила', () => {
 
   test('мусор вместо длины вечера — средний срок, а не «undefined минут»', () => {
     expect(stopRuleLine('forever' as never)).toContain('за 20 минут')
+  })
+})
+
+/**
+ * Вопрос «не зацепило?» задаётся по запомненному запуску, а ответить на героя
+ * можно и мимо него. Каждая кнопка оценки героя обязана забыть запуск той же
+ * игры — иначе вопрос переспросит отвеченное, а «Зацепило» в нём снимет только
+ * что взятую паузу. Бросок кубика («Крутить ещё») — не ответ про игру.
+ */
+describe('/play забывает запуск, когда на героя ответили', () => {
+  test('каждая оценка героя, кроме броска кубика, зовёт forgetLaunch', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'play', 'page.tsx'), 'utf8')
+    const lines = src.split('\n')
+    const rated = lines
+      .map((line, i) => ({ line, i }))
+      .filter(
+        ({ line }) =>
+          /sendFeedback\(pick\.appid, '(liked|skipped|banned)'/.test(line) && !line.includes("'spin'"),
+      )
+    // Причины скипа, «пропустить», «Зашло», бан
+    expect(rated.length).toBeGreaterThanOrEqual(4)
+    for (const { i } of rated) {
+      const handler = lines.slice(Math.max(0, i - 6), i + 3).join('\n')
+      expect(handler, `app/play/page.tsx:${i + 1}`).toContain('forgetLaunch(pick.appid)')
+    }
   })
 })

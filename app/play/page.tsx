@@ -26,6 +26,7 @@ import type { Discount } from '@/lib/discount'
 import { rememberMood } from '@/lib/lastmood'
 import {
   dueLaunchNow,
+  forgetLaunch,
   launchMemoStore,
   rememberLaunch,
   stopRuleLine,
@@ -962,6 +963,8 @@ function Player() {
                     key={r.key}
                     onClick={() => {
                       sendFeedback(pick.appid, 'skipped', r.key)
+                      // Ответил сам — «не зацепило?» про неё уже не спрашиваем
+                      forgetLaunch(pick.appid)
                       advance(index)
                     }}
                     className="rounded-full glass glass-hover px-4 py-2 text-sm"
@@ -972,6 +975,7 @@ function Player() {
                 <button
                   onClick={() => {
                     sendFeedback(pick.appid, 'skipped')
+                    forgetLaunch(pick.appid)
                     advance(index)
                   }}
                   className="text-sm text-dim hover:text-ink p-2 transition-colors"
@@ -1039,6 +1043,9 @@ function Player() {
                 </Link>
                 <button
                   onClick={() => {
+                    // «Зашло» после запуска — уже ответ на «не зацепило?», даже
+                    // повторное: спрашивать про неё больше незачем
+                    forgetLaunch(pick.appid)
                     // Повторное нажатие — не второе «зашло»: кнопка уже горит
                     if (liked.has(pick.appid)) return
                     setLiked(new Set(liked).add(pick.appid))
@@ -1078,6 +1085,7 @@ function Player() {
                 <button
                   onClick={() => {
                     sendFeedback(pick.appid, 'banned', finished ? 'done' : undefined)
+                    forgetLaunch(pick.appid)
                     const rest = picks.filter((p) => p.appid !== pick.appid)
                     if (!rest.length) {
                       router.push('/quiz')

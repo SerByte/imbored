@@ -49,6 +49,19 @@ export function rememberLaunch(appid: number, name: string, nowSec: number): voi
   launchMemoStore.set({ appid, name, at: nowSec })
 }
 
+/**
+ * Забыть запуск, если он про эту игру: человек ответил про неё сам, мимо
+ * вопроса, — «Не то — дальше», «Зашло» или бан на герое. Иначе через десять
+ * минут «Не зацепило?» переспросило бы уже отвеченное, а «Зацепило» там
+ * записало бы «зашло» новее скипа и сняло только что взятую паузу.
+ *
+ * Запуск другой игры не трогаем: ответ про соседнюю карточку — не ответ про ту,
+ * что запущена.
+ */
+export function forgetLaunch(appid: number): void {
+  if (launchMemoStore.get()?.appid === appid) launchMemoStore.set(null)
+}
+
 /** Пора ли спросить: запуск был от десяти минут до двух часов назад */
 export function dueLaunch(memo: LaunchMemo | null, nowSec: number): LaunchMemo | null {
   if (!memo) return null
