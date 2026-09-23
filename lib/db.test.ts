@@ -1,6 +1,6 @@
 import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
-import { isMultiplayerMeta } from './recommend'
+import { cooldownOf, isMultiplayerMeta } from './recommend'
 import {
   acquireLease,
   advanceRoomDeckRound,
@@ -750,6 +750,30 @@ describe('db', () => {
     // через сутки после ПОСЛЕДНЕЙ записанной строки — уже новое событие
     await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 86_401)
     expect(await count('u1', 'liked')).toBe(2)
+  })
+
+  test('запуск после скипа пишется, даже если за сутки уже был: он снимает паузу', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW)
+    // «Не зацепило?» → «Не сейчас» через двадцать минут
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'notnow' }, NOW + 1200)
+    // Передумал и запустил снова — это новый ответ, а не повтор первого
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW + 3600)
+    const rows = await listFeedback(db, 'u1', 50)
+    expect(rows.filter((r) => r.action === 'launched')).toHaveLength(2)
+    expect(cooldownOf(rows, NOW + 3800).has(570)).toBe(false)
+
+    // Повтор уже ПОСЛЕ ответа снова схлопывается
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW + 3900)
+    expect((await listFeedback(db, 'u1', 50)).filter((r) => r.action === 'launched')).toHaveLength(2)
+  })
+
+  test('«Крутить ещё» между запусками дедуп не ломает: это не ответ про игру', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'spin' }, NOW + 60)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW + 120)
+    expect((await listFeedback(db, 'u1', 50)).filter((r) => r.action === 'launched')).toHaveLength(1)
   })
 
   test('скипы и баны не схлопываются: у них своя история', async () => {

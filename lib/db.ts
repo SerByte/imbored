@@ -1834,13 +1834,25 @@ export async function logFeedback(
   // время, снятие бана), и схлопывать её незачем. Дедуп — только для положительных сигналов,
   // которые копятся от повторных нажатий. Одним условным INSERT, а не SELECT
   // и INSERT: между ними успел бы проскочить второй клик.
+  //
+  // Повтор — только если между ним и прежней строкой не было скипа. Запуск
+  // после «не сейчас» — уже не повтор, а новый ответ: cooldownOf снимает паузу
+  // лишь тёплой строкой НОВЕЕ скипа, и молча проглоченный запуск оставил бы
+  // игру отложенной на трое суток, пока человек в неё играет. «Крутить ещё»
+  // ответом про игру не считается — как и в cooldownOf.
   if (entry.action === 'liked' || entry.action === 'launched') {
     await db.execute({
       sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at)
             SELECT ?, ?, ?, ?, ?, ?
             WHERE NOT EXISTS (
-              SELECT 1 FROM feedback
-              WHERE steamid = ? AND appid = ? AND action = ? AND created_at > ?
+              SELECT 1 FROM feedback f
+              WHERE f.steamid = ? AND f.appid = ? AND f.action = ? AND f.created_at > ?
+                AND NOT EXISTS (
+                  SELECT 1 FROM feedback s
+                  WHERE s.steamid = f.steamid AND s.appid = f.appid
+                    AND s.action = 'skipped' AND s.reason IS NOT 'spin'
+                    AND s.created_at >= f.created_at
+                )
             )`,
       args: [...args, entry.steamid, entry.appid, entry.action, nowSec - FEEDBACK_DEDUP_SEC],
     })
