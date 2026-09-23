@@ -2,7 +2,16 @@ import { discountOf } from './discount'
 import { editionKey } from './editions'
 import { isJunk } from './junk'
 import type { Lean } from './mood'
-import { cosine, weightedCosine, weightedCosineTo, weighsSomething, type TagWeight } from './tagweight'
+import {
+  cosine,
+  cosineOf,
+  weightedCosine,
+  weightedCosineTo,
+  weightedSide,
+  weighsSomething,
+  type CosineSide,
+  type TagWeight,
+} from './tagweight'
 import type {
   CandidateSource,
   GameMeta,
@@ -797,7 +806,10 @@ export function buildAnchorFinder(
       .sort((a, b) => a - b),
   )
 
-  const anchors: Array<OwnAnchor & { key: string; simTo: (v: Record<string, number>) => number }> = []
+  // Сторона якоря — взвешенный вектор с готовой длиной. Раньше у якоря было
+  // замыкание simTo, и кандидат взвешивался заново внутри него — для КАЖДОГО
+  // якоря; теперь он взвешивается один раз на вызов (ниже).
+  const anchors: Array<OwnAnchor & { key: string; side: CosineSide }> = []
   for (const g of library) {
     if (g.playtimeForever < UNPLAYED_MAX_MIN || g.playtimeForever < median) continue
     if (exclude?.has(g.appid)) continue
@@ -813,7 +825,9 @@ export function buildAnchorFinder(
       name: g.name,
       hours: Math.round(g.playtimeForever / 60),
       key: editionKey(g.name),
-      simTo: weightedCosineTo(tags, tagWeight),
+      // weighsSomething выше гарантирует, что weightedCosineTo не откатился бы
+      // на сырой косинус, — значит, готовая взвешенная сторона даёт то же самое
+      side: weightedSide(tags, tagWeight),
     })
   }
 
@@ -823,12 +837,12 @@ export function buildAnchorFinder(
     const cached = memo.get(meta.appid)
     if (cached !== undefined) return cached
     const key = editionKey(meta.name)
-    const norm = normalizedTags(meta)
+    const side = weightedSide(normalizedTags(meta), tagWeight)
     let best: OwnAnchor | null = null
     let bestSim = 0
     for (const a of anchors) {
       if (a.appid === meta.appid || (key && a.key === key)) continue
-      const sim = a.simTo(norm)
+      const sim = cosineOf(a.side, side)
       // Не «sim < порога»: NaN (битые теги в базе) это сравнение проходит, и
       // первая же такая игра становилась якорем для любого кандидата
       if (!(sim >= ANCHOR_MIN_SIM)) continue

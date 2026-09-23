@@ -15,18 +15,46 @@
 /** Ниже этого карта тегов не считается пригодной — работаем как раньше. */
 const MIN_TAG_STATS = 20
 
-export function cosine(a: Record<string, number>, b: Record<string, number>): number {
+/**
+ * Сторона косинуса, приготовленная заранее: вектор и его длина.
+ *
+ * Косинус считал обе нормы на каждой паре, а в подборе одна сторона — профиль
+ * человека в четыре сотни тегов — одна и та же для всех кандидатов подряд.
+ * Норма профиля и обход всех его ключей повторялись на каждом кандидате:
+ * замер на шести тысячах игр каталога в роли библиотеки — 0.6 с CPU на один
+ * скоринг, и столько же ещё на якоря. После — десятки миллисекунд.
+ */
+export type CosineSide = { v: Record<string, number>; len: number }
+
+export function cosineSide(v: Record<string, number>): CosineSide {
+  let sq = 0
+  for (const x of Object.values(v)) sq += x * x
+  return { v, len: Math.sqrt(sq) }
+}
+
+/**
+ * Косинус двух приготовленных сторон. Обход — по b, и это соглашение: b —
+ * короткая сторона (кандидат, два десятка тегов), a — длинная (профиль).
+ * Произведение берётся в прежнем порядке, a × b, — сумма та же, что и раньше,
+ * с точностью до порядка слагаемых.
+ */
+export function cosineOf(a: CosineSide, b: CosineSide): number {
+  if (a.len === 0 || b.len === 0) return 0
   let dot = 0
-  let normA = 0
-  let normB = 0
-  for (const v of Object.values(a)) normA += v * v
-  for (const v of Object.values(b)) normB += v * v
-  if (normA === 0 || normB === 0) return 0
-  for (const [k, v] of Object.entries(a)) {
-    const bv = b[k]
-    if (bv !== undefined) dot += v * bv
+  for (const [k, bv] of Object.entries(b.v)) {
+    const av = a.v[k]
+    if (av !== undefined) dot += av * bv
   }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
+  return dot / (a.len * b.len)
+}
+
+/**
+ * Разовый косинус. Через ту же пару функций, что и подбор: «tagWeight: null —
+ * скоры ровно прежние, до бита» (lib/recommend.test.ts) сравнивает их между
+ * собой, и один алгоритм на оба пути держит это равенство точным.
+ */
+export function cosine(a: Record<string, number>, b: Record<string, number>): number {
+  return cosineOf(cosineSide(a), cosineSide(b))
 }
 
 /**
@@ -100,6 +128,17 @@ export function weighsSomething(v: Record<string, number>, w: TagWeight | null):
 }
 
 /**
+ * Взвешенная сторона косинуса, приготовленная один раз. Без веса — сырая.
+ *
+ * Для стороны, которая прошла weighsSomething: у неё weightedCosineTo не
+ * откатывается на сырой косинус, и сравнение двух таких сторон через cosineOf
+ * даёт ровно то же, что дал бы он. Так живут якоря в buildAnchorFinder.
+ */
+export function weightedSide(v: Record<string, number>, w: TagWeight | null): CosineSide {
+  return cosineSide(weighTags(v, w))
+}
+
+/**
  * Косинус с весом редкости против ОДНОГО вектора, который взвешивается один
  * раз: в подборе это профиль человека против сотен кандидатов подряд.
  *
@@ -118,10 +157,17 @@ export function weightedCosineTo(
   a: Record<string, number>,
   w: TagWeight | null,
 ): (b: Record<string, number>) => number {
-  if (!w) return (b) => cosine(a, b)
-  const wa = weighTags(a, w)
-  if (isEmpty(wa)) return (b) => cosine(a, b)
-  return (b) => cosine(wa, weighTags(b, w))
+  // Сторона профиля готовится здесь, один раз: норма и вес — не на каждого
+  // кандидата. Кандидат взвешивается и меряется сам, обход идёт по его тегам.
+  if (w) {
+    const wa = weighTags(a, w)
+    if (!isEmpty(wa)) {
+      const side = cosineSide(wa)
+      return (b) => cosineOf(side, weightedSide(b, w))
+    }
+  }
+  const side = cosineSide(a)
+  return (b) => cosineOf(side, cosineSide(b))
 }
 
 export function weightedCosine(

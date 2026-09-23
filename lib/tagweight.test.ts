@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'vitest'
 import {
   cosine,
+  cosineOf,
+  cosineSide,
   rarityOf,
   rarityScale,
   tagWeightFrom,
   weightedCosine,
   weightedCosineTo,
+  weightedSide,
   weighsSomething,
   weighTags,
 } from './tagweight'
@@ -129,5 +132,68 @@ describe('weightedCosine', () => {
   test('пустые вектора не роняют', () => {
     expect(weightedCosine({}, { Automation: 1 }, w)).toBe(0)
     expect(weightedCosine({}, {}, w)).toBe(0)
+  })
+})
+
+/**
+ * Приготовленная сторона: норма профиля считается один раз, обход идёт по
+ * кандидату. Проверка — против прежней формулы, написанной здесь дословно:
+ * обе нормы на каждой паре и обход по первому вектору.
+ */
+describe('cosineOf: приготовленная сторона', () => {
+  function oldCosine(a: Record<string, number>, b: Record<string, number>): number {
+    let dot = 0
+    let normA = 0
+    let normB = 0
+    for (const v of Object.values(a)) normA += v * v
+    for (const v of Object.values(b)) normB += v * v
+    if (normA === 0 || normB === 0) return 0
+    for (const [k, v] of Object.entries(a)) {
+      const bv = b[k]
+      if (bv !== undefined) dot += v * bv
+    }
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB))
+  }
+
+  /** Детерминированный «случайный» вектор: профиль — сотни тегов, игра — десятки */
+  function vector(seed: number, size: number): Record<string, number> {
+    const out: Record<string, number> = {}
+    let x = seed
+    for (let i = 0; i < size; i++) {
+      x = (x * 1_103_515_245 + 12_345) % 2_147_483_648
+      out[`tag${x % 500}`] = (x % 1000) / 37
+    }
+    return out
+  }
+
+  test('тот же косинус, что прежняя формула, на профиле в сотни тегов', () => {
+    const profile = vector(7, 420)
+    const side = cosineSide(profile)
+    for (let seed = 1; seed <= 50; seed++) {
+      const game = vector(seed * 31, 20)
+      expect(cosineOf(side, cosineSide(game))).toBeCloseTo(oldCosine(profile, game), 12)
+      expect(cosine(profile, game)).toBe(cosineOf(side, cosineSide(game)))
+    }
+  })
+
+  test('взвешенная сторона даёт то же, что weightedCosineTo, — так живут якоря', () => {
+    const w = tagWeightFrom(TAG_STATS)
+    const anchor = { Automation: 1, 'Colony Sim': 0.5, Indie: 1 }
+    const toAnchor = weightedCosineTo(anchor, w)
+    const side = weightedSide(anchor, w)
+    const games: Array<Record<string, number>> = [
+      { Automation: 1 },
+      { 'Colony Sim': 1, Singleplayer: 1 },
+      { Indie: 1 },
+      {},
+    ]
+    for (const game of games) {
+      expect(cosineOf(side, weightedSide(game, w))).toBe(toAnchor(game))
+    }
+  })
+
+  test('нулевая или пустая сторона — ноль, а не NaN', () => {
+    expect(cosineOf(cosineSide({}), cosineSide({ a: 1 }))).toBe(0)
+    expect(cosineOf(cosineSide({ a: 1 }), cosineSide({ a: 0 }))).toBe(0)
   })
 })
