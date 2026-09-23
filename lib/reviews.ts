@@ -30,7 +30,12 @@ export type ProsCons = { pros: string[]; cons: string[]; source: 'claude' | 'rev
 const MIN_PLAYTIME_MIN = 120
 const MAX_REVIEWS = 50
 
-type ReviewsResponse = {
+/**
+ * Ответ appreviews в том виде, в каком его отдаёт Steam. Один на два разбора:
+ * parseReviews берёт из него отзывы для pros/cons, parseReviewsRaw в
+ * lib/reviewmine — все подряд, для полос и статистики наигранного.
+ */
+export type ReviewsResponse = {
   success?: number
   query_summary?: {
     review_score?: number
@@ -40,10 +45,12 @@ type ReviewsResponse = {
   }
   reviews?: Array<{
     recommendationid?: string
+    /** язык, который выбрал автор: 'english', 'russian', 'schinese'… */
+    language?: string
     review?: string
     voted_up?: boolean
     votes_up?: number
-    author?: { playtime_at_review?: number }
+    author?: { playtime_at_review?: number; playtime_forever?: number }
   }>
 }
 
@@ -100,6 +107,15 @@ export function heuristicProsCons(
 }
 
 /**
+ * Адрес appreviews — один на крон и на фикстуры (scripts/review-fixtures.ts):
+ * тесты разбора отзывов должны видеть ровно тот ответ, который видит крон, —
+ * те же языки, тот же порядок, та же сотня.
+ */
+export function reviewsUrl(appid: number): string {
+  return `https://store.steampowered.com/appreviews/${appid}?json=1&filter=all&purchase_type=all&language=all&num_per_page=100&cursor=*`
+}
+
+/**
  * Отказ хоста — ИСКЛЮЧЕНИЕ, а не null, и это ровно то же правило, которое
  * сформулировано у соседнего fetchAppDetails: «лимит/сбой — исключение, чтобы
  * вызывающий не закэшировал неудачу как „данных нет"».
@@ -120,8 +136,7 @@ export async function fetchReviews(
 ): Promise<ParsedReviews | null> {
   // общий лимитер хоста store.steampowered.com с appdetails
   await pace('steam-store', STORE_PACE_MS)
-  const url = `https://store.steampowered.com/appreviews/${appid}?json=1&filter=all&purchase_type=all&language=all&num_per_page=100&cursor=*`
-  const res = await fetchFn(url, { signal: AbortSignal.timeout(10_000) })
+  const res = await fetchFn(reviewsUrl(appid), { signal: AbortSignal.timeout(10_000) })
   if (!res.ok) throw new Error(`appreviews ${appid}: HTTP ${res.status}`)
   try {
     return parseReviews(await res.json())

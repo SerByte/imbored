@@ -1,0 +1,103 @@
+{
+  "_synthetic": "Написано руками в форме ответа appreviews, а не скачано: держит проверки фикстур зелёными, пока настоящие ответы не лежат рядом. Настоящие кладёт npm run reviews:fixtures.",
+  "success": 1,
+  "query_summary": {
+    "num_reviews": 10,
+    "review_score": 8,
+    "review_score_desc": "Very Positive",
+    "total_positive": 900,
+    "total_negative": 100,
+    "total_reviews": 1000
+  },
+  "reviews": [
+    {
+      "recommendationid": "s1",
+      "language": "english",
+      "review": "[h1]Punishing but fair[/h1]\nVery hard game, you will die a lot. Slow start, but it gets good after 10 hours.",
+      "voted_up": true,
+      "votes_up": 120,
+      "author": { "playtime_at_review": 3100, "playtime_forever": 5200 }
+    },
+    {
+      "recommendationid": "s2",
+      "language": "russian",
+      "review": "Очень сложная, но честная. Через 5 часов становится интересно, а потом не оторваться.",
+      "voted_up": true,
+      "votes_up": 14,
+      "author": { "playtime_at_review": 1500, "playtime_forever": 1800 }
+    },
+    {
+      "recommendationid": "s3",
+      "language": "english",
+      "review": "Not relaxing at all. Crashes every hour, buggy mess. Refunded.",
+      "voted_up": false,
+      "votes_up": 3,
+      "author": { "playtime_at_review": 45, "playtime_forever": 45 }
+    },
+    {
+      "recommendationid": "s4",
+      "language": "russian",
+      "review": "Первые 3 часа скучные, дальше не пробовал — вернул деньги.",
+      "voted_up": false,
+      "votes_up": 0,
+      "author": { "playtime_at_review": 110, "playtime_forever": 110 }
+    },
+    {
+      "recommendationid": "s5",
+      "language": "english",
+      "review": "Great story and characters. One more turn every night, hours fly by. https://example.com/guide",
+      "voted_up": true,
+      "votes_up": 0,
+      "author": { "playtime_at_review": 900, "playtime_forever": 2400 }
+    },
+    {
+      "recommendationid": "s6",
+      "language": "schinese",
+      "review": "很难但是很好玩",
+      "voted_up": true,
+      "votes_up": 40,
+      "author": { "playtime_at_review": 600, "playtime_forever": 700 }
+    },
+    {
+      "recommendationid": "s7",
+      "language": "english",
+      "review": "Steep learning curve, lots of mechanics, keep the wiki open. Grindy late game.",
+      "voted_up": true,
+      "votes_up": 7,
+      "author": { "playtime_at_review": 4200, "playtime_forever": 9000 }
+    },
+    {
+      "recommendationid": "s8",
+      "language": "russian",
+      "review": "Уютная и расслабляющая, пару каток после работы — и спать. Багов нет, без багов вообще.",
+      "voted_up": true,
+      "votes_up": 2,
+      "author": { "playtime_at_review": 300, "playtime_forever": 1200 }
+    },
+    {
+      "recommendationid": "s8",
+      "language": "russian",
+      "review": "дубль того же отзыва",
+      "voted_up": true,
+      "votes_up": 2,
+      "author": { "playtime_at_review": 300, "playtime_forever": 1200 }
+    },
+    {
+      "recommendationid": "s9",
+      "language": "english",
+      "review": "Gets boring after 10 hours. Repetitive.",
+      "voted_up": false,
+      "votes_up": 1,
+      "author": { "playtime_at_review": 700, "playtime_forever": 700 }
+    },
+    {
+      "recommendationid": "s10",
+      "language": "english",
+      "review": "",
+      "voted_up": true,
+      "votes_up": 0,
+      "author": { "playtime_at_review": 20, "playtime_forever": 20 }
+    }
+  ],
+  "cursor": "AoJ4synthetic"
+}

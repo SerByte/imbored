@@ -18,6 +18,7 @@
     "news:spread": "tsx --env-file-if-exists=.env.turso scripts/spread-news-poll.ts",
     "news:sync": "tsx scripts/sync-news.ts",
     "pages:enrich": "tsx scripts/enrich-pages.ts",
+    "reviews:fixtures": "tsx scripts/review-fixtures.ts",
     "catalog:publish": "tsx --env-file-if-exists=.env.turso scripts/publish-catalog.ts",
     "user:forget": "tsx --env-file-if-exists=.env.turso scripts/forget-user.ts"
   },
