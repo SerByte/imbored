@@ -3030,21 +3030,37 @@ export async function bannedAppids(db: Db, steamid: string): Promise<Set<number>
  * router.refresh(). Полка молча перетасовывалась бы сама собой через секунду
  * после загрузки — та же болезнь, от которой лечится pickForgotten.
  */
+/**
+ * Забаненное одной строкой на игру — и почему.
+ *
+ * done — последний бан поставлен кнопкой «Уже прошёл» (reason 'done'). Это
+ * тот же бан, но игра не разонравилась, а кончилась, и на /library она
+ * лежит на своей полке: раньше пройденное стояло в общей куче под «Ты
+ * выгнал N» обесцвеченным, то есть завершение подавалось как изгнание.
+ *
+ * reason берётся из той же строки, что и MAX(created_at): у SQLite голая
+ * колонка в запросе с одним MAX приходит из строки с максимумом — это
+ * документированное поведение, а не случайность. Бан, переставленный
+ * другой кнопкой, берёт причину последнего нажатия.
+ */
 export async function listBanned(
   db: Db,
   steamid: string,
   limit = 60,
-): Promise<Array<{ appid: number; at: number }>> {
+): Promise<Array<{ appid: number; at: number; done: boolean }>> {
   const res = await db.execute({
-    sql: `SELECT appid, MAX(created_at) AS at FROM feedback
+    sql: `SELECT appid, MAX(created_at) AS at, reason FROM feedback
           WHERE steamid = ? AND action = 'banned'
           GROUP BY appid ORDER BY at DESC, appid LIMIT ?`,
     args: [steamid, limit],
   })
-  return (res.rows as unknown as Array<{ appid: number; at: number }>).map((r) => ({
-    appid: Number(r.appid),
-    at: Number(r.at),
-  }))
+  return (res.rows as unknown as Array<{ appid: number; at: number; reason: string | null }>).map(
+    (r) => ({
+      appid: Number(r.appid),
+      at: Number(r.at),
+      done: r.reason === 'done',
+    }),
+  )
 }
 
 /**

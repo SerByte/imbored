@@ -115,6 +115,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       name: meta?.name ?? `Игра ${b.appid}`,
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
+      done: b.done,
     }
   })
   const backlog = backlogValue(games, (id) => metas.get(id), now)

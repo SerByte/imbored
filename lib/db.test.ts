@@ -1112,10 +1112,27 @@ describe('db', () => {
     await logFeedback(db, { steamid: 'u2', appid: 999, action: 'banned' }, NOW + 300)
 
     expect(await listBanned(db, 'u1')).toEqual([
-      { appid: 620, at: NOW + 100 },
-      { appid: 570, at: NOW + 5 },
+      { appid: 620, at: NOW + 100, done: false },
+      { appid: 570, at: NOW + 5, done: false },
     ])
     expect(await listBanned(db, 'nobody')).toEqual([])
+  })
+
+  test('listBanned отличает пройденное от скрытого по последнему нажатию', async () => {
+    // «Уже прошёл» — тот же бан с причиной 'done'. На /library пройденное
+    // лежит на своей полке, а не среди выгнанного
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'banned', reason: 'done' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'banned' }, NOW + 1)
+    // Сначала «прошёл», потом бан без причины — верит последнему
+    await logFeedback(db, { steamid: 'u1', appid: 730, action: 'banned', reason: 'done' }, NOW + 2)
+    await logFeedback(db, { steamid: 'u1', appid: 730, action: 'banned' }, NOW + 3)
+    // И наоборот
+    await logFeedback(db, { steamid: 'u1', appid: 440, action: 'banned' }, NOW + 4)
+    await logFeedback(db, { steamid: 'u1', appid: 440, action: 'banned', reason: 'done' }, NOW + 5)
+
+    const got = new Map((await listBanned(db, 'u1')).map((b) => [b.appid, b.done]))
+    expect(Object.fromEntries(got)).toEqual({ 570: true, 620: false, 730: false, 440: true })
   })
 
   test('listBanned детерминирован, когда баны попали в одну секунду', async () => {
