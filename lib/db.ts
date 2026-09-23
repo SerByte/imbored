@@ -1796,7 +1796,8 @@ type GameRow = {
   categories_json: string
   short_description: string | null
   header_image: string | null
-  screenshots_json: string | null
+  /** В узкой выборке (GAME_LITE_COLUMNS) колонки нет, и поле приходит undefined */
+  screenshots_json?: string | null
   is_free: number | null
   price_final: number | null
   price_initial: number | null
@@ -1831,7 +1832,8 @@ function rowToMeta(row: GameRow): GameMeta {
   }
   if (row.short_description !== null) meta.shortDescription = row.short_description
   if (row.header_image !== null) meta.headerImage = row.header_image
-  if (row.screenshots_json !== null) meta.screenshots = JSON.parse(row.screenshots_json)
+  // Узкая выборка (getGamesMetaLite) колонку не читает вовсе — отсюда undefined
+  if (row.screenshots_json) meta.screenshots = JSON.parse(row.screenshots_json)
   if (row.is_free !== null) meta.isFree = row.is_free === 1
   if (row.price_final !== null) meta.priceFinal = row.price_final
   // Скидка читается целиком, включая ноль: «полная цена» — это ответ, а не
@@ -1981,16 +1983,82 @@ export async function topGamesByTag(
   }))
 }
 
-/** Метаданные пачки игр одним запросом */
+/**
+ * Список appid одним параметром: `appid IN (SELECT value FROM json_each(?))`.
+ *
+ * IN (?, ?, …) с плейсхолдером на каждый appid упирается в лимит переменных
+ * SQLite: на 32 767 запрос падает с «too many SQL variables». Эти функции
+ * получают библиотеку ЦЕЛИКОМ, и у коллекционера Steam сорок тысяч игр —
+ * подбор, /library и портрет отвечали бы ему 500 на каждый заход. Приём тот же,
+ * что в lib/pool.ts; план — поиск по первичному ключу на каждый элемент
+ * (сторож в lib/queryplan.test.ts).
+ */
+const APPIDS_IN = 'appid IN (SELECT value FROM json_each(?))'
+
+/** Метаданные пачки игр одним запросом — строка целиком, со скриншотами */
 export async function getGamesMeta(db: Db, appids: number[]): Promise<Map<number, GameMeta>> {
   if (!appids.length) return new Map()
   const res = await db.execute({
-    sql: `SELECT * FROM games WHERE appid IN (${placeholders(appids.length)})`,
-    args: appids,
+    sql: `SELECT * FROM games WHERE ${APPIDS_IN}`,
+    args: [JSON.stringify(appids)],
   })
   return new Map(
     (res.rows as unknown as GameRow[]).map((r) => [r.appid, rowToMeta(r)] as const),
   )
+}
+
+/**
+ * Колонки узкой выборки — всё, что читает rowToMeta, кроме скриншотов.
+ *
+ * SELECT * тащил с каждой строкой три JSON-блоба: сводку отзывов и pros/cons
+ * (в GameMeta их нет вовсе — rowToMeta их просто выбрасывал) и скриншоты,
+ * которые разбирались на каждой строке библиотеки, хотя показываются максимум
+ * у пятерки героев. У библиотеки на полторы тысячи игр это мегабайт-полтора
+ * JSON через сеть на каждый подбор.
+ */
+const GAME_LITE_COLUMNS = `appid, name, tags_json, genres_json, categories_json,
+  short_description, header_image, is_free, price_final, price_initial, discount_percent,
+  discount_ends_at, price_at, release_date, median_forever, store, store_url, art_json,
+  ccu, ccu_at, reviews_30d, reviews_total, reviews_percent, release_year, developer,
+  publisher, signals_at, alive, superseded_by`
+
+/**
+ * Метаданные пачки игр без блобов: всё то же, что getGamesMeta, но без
+ * screenshots. Для библиотечных сценариев — подбор, игра дня, /library,
+ * портрет, лента, комнаты. Кадры героям — отдельно, getGameShots.
+ */
+export async function getGamesMetaLite(
+  db: Db,
+  appids: number[],
+): Promise<Map<number, GameMeta>> {
+  if (!appids.length) return new Map()
+  const res = await db.execute({
+    sql: `SELECT ${GAME_LITE_COLUMNS} FROM games WHERE ${APPIDS_IN}`,
+    args: [JSON.stringify(appids)],
+  })
+  return new Map(
+    (res.rows as unknown as GameRow[]).map((r) => [r.appid, rowToMeta(r)] as const),
+  )
+}
+
+/** Скриншоты пачки игр — для тех немногих, кто станет героем выдачи */
+export async function getGameShots(db: Db, appids: number[]): Promise<Map<number, string[]>> {
+  if (!appids.length) return new Map()
+  const res = await db.execute({
+    sql: `SELECT appid, screenshots_json FROM games
+          WHERE ${APPIDS_IN} AND screenshots_json IS NOT NULL`,
+    args: [JSON.stringify(appids)],
+  })
+  const out = new Map<number, string[]>()
+  for (const r of res.rows as unknown as Array<{ appid: number; screenshots_json: string }>) {
+    try {
+      const shots: unknown = JSON.parse(r.screenshots_json)
+      if (Array.isArray(shots)) out.set(r.appid, shots.filter((x) => typeof x === 'string'))
+    } catch {
+      // битая строка — у героя просто не будет кадров, как у игры без них
+    }
+  }
+  return out
 }
 
 /*
@@ -2693,8 +2761,8 @@ export async function getStaleAppids(
 ): Promise<number[]> {
   if (!appids.length) return []
   const res = await db.execute({
-    sql: `SELECT appid, updated_at, art_json FROM games WHERE appid IN (${placeholders(appids.length)})`,
-    args: appids,
+    sql: `SELECT appid, updated_at, art_json FROM games WHERE ${APPIDS_IN}`,
+    args: [JSON.stringify(appids)],
   })
   const fresh = new Set<number>()
   for (const r of res.rows as unknown as Array<{
@@ -2731,11 +2799,11 @@ export async function stalePriceAppids(
     // Сначала те, у кого цены не было никогда, потом самые давние: бюджет
     // одного вызова конечен, а пустая цена заметнее устаревшей
     sql: `SELECT appid FROM games
-          WHERE appid IN (${placeholders(positive.length)})
+          WHERE ${APPIDS_IN}
             AND (price_at IS NULL OR price_at < ?)
           ORDER BY price_at IS NOT NULL, price_at
           LIMIT ?`,
-    args: [...positive, nowSec - maxAgeSec, limit],
+    args: [JSON.stringify(positive), nowSec - maxAgeSec, limit],
   })
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }

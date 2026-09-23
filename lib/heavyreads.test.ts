@@ -26,7 +26,7 @@ describe('публичный портрет', () => {
     const cacheEnd = src.indexOf('revalidate:', cacheAt)
     expect(cacheEnd, 'у кэша модели нет revalidate').toBeGreaterThan(cacheAt)
 
-    const reads = [...src.matchAll(/getGamesMeta\(/g)].map((m) => m.index ?? -1)
+    const reads = [...src.matchAll(/getGamesMeta(Lite)?\(/g)].map((m) => m.index ?? -1)
     expect(reads, 'второе чтение мимо кэша вернуло бы тысячи строк на каждый заход').toHaveLength(1)
     expect(reads[0]).toBeGreaterThan(cacheAt)
     expect(reads[0]).toBeLessThan(cacheEnd)

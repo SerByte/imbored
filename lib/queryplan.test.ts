@@ -6,12 +6,17 @@ import {
   createDb,
   getFeedForApps,
   getFeedHeadForApps,
+  getGameShots,
+  getGamesMeta,
+  getGamesMetaLite,
   getMajorFeed,
   getMajorFeedHead,
   getUnsummarized,
   listPublicRooms,
   migrateDb,
   revokeAllSessions,
+  getStaleAppids,
+  stalePriceAppids,
   sweepStale,
   topCatalogAppids,
   type Db,
@@ -208,6 +213,39 @@ describe('планы запросов', () => {
     const covered = new Set(CASES.flatMap((c) => c.indexes))
     expect(partial.filter((name) => !covered.has(name))).toEqual([])
   })
+})
+
+/**
+ * Выборки по списку appid: библиотека целиком одним JSON-параметром.
+ *
+ * `appid IN (SELECT value FROM json_each(?))` — не IN (?, …), потому что тот
+ * упирается в лимит переменных SQLite на 32 767 играх (lib/db.test.ts). Цена
+ * замены могла бы быть скрытой: SQLite вправе прочитать games целиком и
+ * сверять каждую строку со списком. Здесь проверяется, что он идёт от списка
+ * к строкам — поиском по первичному ключу на каждый appid.
+ */
+describe('выборки по списку appid', () => {
+  const IDS = [730, 570, 620]
+  const LIST_READS: Array<[string, (db: Db) => Promise<unknown>]> = [
+    ['getGamesMeta', (db) => getGamesMeta(db, IDS)],
+    ['getGamesMetaLite', (db) => getGamesMetaLite(db, IDS)],
+    ['getGameShots', (db) => getGameShots(db, IDS)],
+    ['getStaleAppids', (db) => getStaleAppids(db, IDS, 86_400, NOW)],
+    ['stalePriceAppids', (db) => stalePriceAppids(db, IDS, 3600, NOW)],
+  ]
+
+  for (const [name, run] of LIST_READS) {
+    test(`${name}: по первичному ключу, без прохода по games`, async () => {
+      const db = await createDb(':memory:')
+      const issued = await statementsOf(db, run)
+      expect(issued.length).toBe(1)
+      const plan = await planOf(db, issued[0])
+      const where = plan.join(' | ')
+      expect(bareScans(plan).filter((step) => step === 'SCAN games'), where).toEqual([])
+      expect(where).toContain('SEARCH games USING INTEGER PRIMARY KEY')
+      expect(issued[0].sql).toContain('json_each(?)')
+    })
+  }
 })
 
 describe('смена определения индекса', () => {

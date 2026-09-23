@@ -7,6 +7,7 @@ import {
   getDailyPick,
   getPoolSize,
   getGamesMeta,
+  getGamesMetaLite,
   getLatestSnapshot,
   listFeedback,
   loadTagStats,
@@ -193,7 +194,8 @@ export async function GET(req: Request) {
   //
   // Читаются они на КАЖДОМ заходе, включая попадание в запись: цена и скидка —
   // это ровно то, что за сутки успевает измениться, и замораживать их вместе
-  // с выбором было бы худшим из двух миров. Четыре appid, один запрос.
+  // с выбором было бы худшим из двух миров. Четыре appid, один запрос —
+  // строкой целиком: у героя дня показываются кадры.
   const pricedIds = [...new Set([pick, ...shelf].map((c) => c.appid))]
   await refreshDealsWithin(db, pricedIds, now)
   const priced = await getGamesMeta(db, pricedIds)
@@ -279,7 +281,7 @@ async function selectDaily(
   /*
    * Пять чтений — двумя заходами, как в /api/recommend, и по той же причине.
    *
-   * Зависимость среди них ровно одна: getGamesMeta нужны appid из библиотеки,
+   * Зависимость среди них ровно одна: getGamesMetaLite нужны appid из библиотеки,
    * поэтому он остаётся вторым заходом. Забаненное и оценки ключуются одним
    * steamid, статистика тегов и размер пула вообще не про человека — все
    * четверо ждали снапшот без всякой на то причины, а каждая ступень — это
@@ -305,7 +307,9 @@ async function selectDaily(
   // что уже стоит в библиотеке
   const ownedKeys = new Set(games.map((g) => editionKey(g.name)).filter(Boolean))
 
-  const libMetas = await getGamesMeta(
+  // Узкой выборкой: кадры нужны одному герою, и их читает сам GET по четырём
+  // appid, а не отбор по всей библиотеке
+  const libMetas = await getGamesMetaLite(
     db,
     games.map((g) => g.appid),
   )

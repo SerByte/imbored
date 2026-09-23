@@ -6,7 +6,7 @@ import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
 import { trimArt } from '@/lib/art'
-import { feedbackStats, getGamesMeta, getLatestSnapshot, listBanned } from '@/lib/db'
+import { feedbackStats, getGamesMetaLite, getLatestSnapshot, listBanned } from '@/lib/db'
 import {
   buildLibraryView,
   dayKey,
@@ -66,7 +66,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * же действием, что заводит сессию, — и он молчаливый, в отличие от
    * задержки, которую видят все.
    *
-   * getGamesMeta остаётся отдельно: ему нужны appid И из библиотеки, И из
+   * getGamesMetaLite остаётся отдельно: ему нужны appid И из библиотеки, И из
    * забаненного, то есть он честно зависит от обоих.
    */
   const [snapshot, banned, stats] = await Promise.all([
@@ -93,7 +93,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Забаненное добирается тем же запросом, а не вторым: забанить можно и игру,
   // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
   // библиотеке не встретится, но обложка на полку нужна.
-  const metas = await getGamesMeta(db, [
+  // Узкой выборкой: скриншоты на этой странице не показываются нигде
+  const metas = await getGamesMetaLite(db, [
     ...new Set([...games.map((g) => g.appid), ...banned.map((b) => b.appid)]),
   ])
   const bannedGames: BannedGame[] = banned.map((b) => {

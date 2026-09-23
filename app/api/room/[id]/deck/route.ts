@@ -4,7 +4,7 @@ import { filterActual } from '@/lib/actual'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
   getPoolSize,
-  getGamesMeta,
+  getGamesMetaLite,
   getLatestSnapshot,
   getRoom,
   issueRoomDeck,
@@ -91,7 +91,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
   // Метаданные библиотек участников, а не всего каталога
   const ownedIds = [...new Set(libraries.flatMap((l) => l.library.map((g) => g.appid)))]
-  const metas = await getGamesMeta(db, ownedIds)
+  const metas = await getGamesMetaLite(db, ownedIds)
   const metaOf = (appid: number) => metas.get(appid)
 
   // Общий вкус пати — по нему добираем то, чего нет ни у кого.
@@ -151,7 +151,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   // никем из пати, и «Нет у: Дима · $60» без скидки — устаревший ценник.
   const refreshed = await refreshDealsWithin(db, shown.map((c) => c.appid), now)
   if (refreshed) {
-    for (const [appid, meta] of await getGamesMeta(db, shown.map((c) => c.appid))) {
+    for (const [appid, meta] of await getGamesMetaLite(db, shown.map((c) => c.appid))) {
       metas.set(appid, meta)
     }
   }

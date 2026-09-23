@@ -4,7 +4,7 @@ import { sliceDeadline } from '@/lib/cron'
 import { refreshDeals } from '@/lib/deals'
 import { pollPlayerCounts } from '@/lib/ingest'
 import {
-  getGamesMeta,
+  getGamesMetaLite,
   getLatestSnapshot,
   getStaleAppids,
   saveLibrarySnapshot,
@@ -123,7 +123,7 @@ export async function POST() {
     // Проверяем наличие в базе явно, а не по пулу выше: пул — это верхушка
     // каталога, и игра из чартов вполне может лежать в games за её пределами.
     // Стаб с пустыми тегами, записанный поверх такой строки, стёр бы ей теги.
-    const known = await getGamesMeta(db, charts)
+    const known = await getGamesMetaLite(db, charts)
     const stubs = charts
       .filter((appid) => !owned.has(appid) && !inCatalog.has(appid) && !known.has(appid))
       .map((appid) => ({ appid, name: `App ${appid}`, tags: {}, genres: [], categories: [] }))
@@ -252,13 +252,15 @@ async function refreshPlayerCounts(
   if (!appids.length) return
   const now = nowSec()
   const res = await db.execute({
+    // Список — одним JSON-параметром: библиотека приходит целиком, а IN (?, …)
+    // на ней упирался в лимит переменных SQLite (см. APPIDS_IN в lib/db)
     sql: `SELECT appid FROM games
-          WHERE appid IN (${appids.map(() => '?').join(',')})
+          WHERE appid IN (SELECT value FROM json_each(?))
             AND is_multiplayer = 1
             AND (ccu_at IS NULL OR ccu_at < ?)
           ORDER BY ccu_at IS NOT NULL, reviews_total DESC
           LIMIT ?`,
-    args: [...appids, now - CCU_MAX_AGE_SEC, CCU_PER_CALL],
+    args: [JSON.stringify(appids), now - CCU_MAX_AGE_SEC, CCU_PER_CALL],
   })
 
   // Темп, параллельность и выход после серии отказов — в pollPlayerCounts.

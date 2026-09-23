@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { memberLabel } from '@/lib/room'
-import { getGamesMeta, getRoom, roomMembers, roomVotes } from '@/lib/db'
+import { getGamesMetaLite, getRoom, roomMembers, roomVotes } from '@/lib/db'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildLikes } from '@/lib/roomlikes'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
@@ -62,7 +62,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     me: steamid,
   })
 
-  const metas = await getGamesMeta(db, mineAppids)
+  const metas = await getGamesMetaLite(db, mineAppids)
   const mine = mineAppids.map((appid) => {
     const meta = metas.get(appid)
     return {

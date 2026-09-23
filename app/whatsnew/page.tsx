@@ -7,7 +7,7 @@ import { Stage } from '@/components/whatsnew/Stage'
 import { artCandidates } from '@/lib/art'
 import {
   getFeedForApps,
-  getGamesMeta,
+  getGamesMetaLite,
   getLatestSnapshot,
   withoutBody,
 } from '@/lib/db'
@@ -71,7 +71,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
     major: (limit, minRank) => cachedMajorFeed(limit, minRank),
   })
 
-  const metas = await getGamesMeta(
+  const metas = await getGamesMetaLite(
     db,
     items.map((i) => i.appid),
   )

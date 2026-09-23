@@ -14,7 +14,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import { Eyebrow, eyebrow } from '@/components/Labels'
 import { Wordmark } from '@/components/Wordmark'
 import {
-  getGamesMeta,
+  getGamesMetaLite,
   getLatestSnapshot,
   getPersonaName,
   getUserPortrait,
@@ -188,8 +188,9 @@ async function loadModel(
         nowSec: now,
       })
       if (!gate.ok) throw new ColdBuildLimited()
-      // Портрет строится по библиотеке игрока — весь каталог для этого не нужен
-      const metas = await getGamesMeta(
+      // Портрет строится по библиотеке игрока — весь каталог для этого не
+      // нужен, и блобы тоже: скриншотов на странице нет
+      const metas = await getGamesMetaLite(
         db,
         snapshot.games.map((g) => g.appid),
       )

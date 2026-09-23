@@ -4,8 +4,9 @@ import { assignEdges } from '@/lib/badges'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
   bannedAppids,
+  getGameShots,
   getPoolSize,
-  getGamesMeta,
+  getGamesMetaLite,
   getLatestSnapshot,
   listFeedback,
   loadTagStats,
@@ -133,7 +134,7 @@ export async function POST(req: Request) {
   /*
    * Пять чтений — двумя заходами, а не лесенкой из пяти.
    *
-   * Зависимость тут ровно одна: getGamesMeta ниже нужны appid и из библиотеки,
+   * Зависимость тут ровно одна: getGamesMetaLite ниже нужны appid и из библиотеки,
    * и из истории оценок, поэтому он остаётся вторым заходом. Всё остальное друг
    * от друга не зависит вовсе — забаненное и оценки ключуются одним steamid, а
    * статистика тегов и размер пула вообще не про человека, — и всё равно шло по
@@ -169,7 +170,11 @@ export async function POST(req: Request) {
   // весь каталог, что на сотне тысяч игр сожгло бы лимит прочитанных строк
   // Turso. Игры из фидбека нужны здесь же — иначе оценка игры, которой нет
   // в библиотеке, перестанет влиять на профиль вкуса.
-  const libMetas = await getGamesMeta(db, [
+  //
+  // Узкой выборкой, без блобов: скриншоты всей библиотеки разбирались ради
+  // пяти героев, а сводка отзывов и pros/cons не читались вовсе. Кадры героям
+  // — отдельным запросом по пятёрке, ниже.
+  const libMetas = await getGamesMetaLite(db, [
     ...new Set([...games.map((g) => g.appid), ...feedback.map((f) => f.appid)]),
   ])
   const poolByAppid = new Map<number, GameMeta>()
@@ -271,7 +276,7 @@ export async function POST(req: Request) {
   // GetItems берёт до двухсот игр за раз.
   const pricedIds = [...new Set([...heroPool, ...discovery].map((c) => c.appid))]
   const refreshed = await refreshDealsWithin(db, pricedIds, now)
-  const priced = refreshed ? await getGamesMeta(db, pricedIds) : new Map<number, GameMeta>()
+  const priced = refreshed ? await getGamesMetaLite(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 
   // «Ближе всего к X, где у тебя N ч»: своя игра вместо тегов — и в причине
@@ -427,8 +432,16 @@ export async function POST(req: Request) {
    * ведёт в магазин и героем не станет никогда, так что её кадры точно никто
    * не покажет. Обрезка до HERO_SLIDES по той же причине: в одном ответе пять
    * игр, а у иных в базе по два десятка скриншотов.
+   *
+   * Читаются отдельно, по пятёрке: метаданные выше узкие, без блобов. Заодно
+   * кадры получил и герой из каталога — строки пула скриншотов не несут, и
+   * раньше они доезжали до него, только если в этом же запросе освежались цены.
    */
-  const heroShots = (appid: number) => (metaNow(appid)?.screenshots ?? []).slice(0, HERO_SLIDES)
+  const shots = await getGameShots(
+    db,
+    picks.map((p) => p.appid),
+  )
+  const heroShots = (appid: number) => (shots.get(appid) ?? []).slice(0, HERO_SLIDES)
 
   return NextResponse.json({
     // Серверные часы к ответу: по ним PlayersNow решает, имеет ли право

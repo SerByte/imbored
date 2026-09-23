@@ -3,7 +3,7 @@ import type { GameArtUrls } from './art'
 import { COMMON_SHOWN, compatibility } from './compat'
 import {
   getPoolSize,
-  getGamesMeta,
+  getGamesMetaLite,
   getLatestSnapshot,
   getPersonaName,
   loadTagStats,
@@ -149,7 +149,7 @@ export async function loadCompatInvite(
     .filter((g) => g.appid > 0)
     .sort((a, b) => b.playtimeForever - a.playtimeForever)
     .slice(0, HERO_ART)
-  const metas = await getGamesMeta(db, top.map((g) => g.appid))
+  const metas = await getGamesMetaLite(db, top.map((g) => g.appid))
 
   return {
     steamid,
@@ -189,7 +189,7 @@ export async function loadCompat(
   const otherName = invite.name
 
   // Совместимость считается по двум библиотекам — весь каталог для этого не нужен
-  const metas = await getGamesMeta(db, [
+  const metas = await getGamesMetaLite(db, [
     ...new Set([...mySnap.games, ...otherSnap.games].map((g) => g.appid)),
   ])
   // Каталог держим ОТДЕЛЬНО от библиотек. metaOf он нужен весь — для арта, цены

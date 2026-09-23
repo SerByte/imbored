@@ -53,7 +53,9 @@ import {
   findRoomMatch,
   getGameJson,
   getGameMeta,
+  getGameShots,
   getGamesMeta,
+  getGamesMetaLite,
   getLatestSnapshot,
   getRoom,
   getStaleAppids,
@@ -251,23 +253,50 @@ describe('db', () => {
     expect(some.get(730)?.name).toBe('CS2')
   })
 
-  test('выборка по списку не упирается в лимит параметров SQLite', async () => {
-    // Библиотека на несколько тысяч игр — обычное дело в Steam, а один
-    // плейсхолдер на игру упирается в потолок переменных SQLite
+  test('выборка по списку переживает библиотеку больше 32 766 игр', async () => {
+    // Один плейсхолдер на игру упирался в потолок переменных SQLite: на 32 767
+    // запрос падал с «too many SQL variables». У коллекционера Steam сорок
+    // тысяч игр, и подбор, /library и портрет отвечали бы ему 500.
     const db = await freshDb()
-    const appids = Array.from({ length: 2500 }, (_, i) => 1000 + i)
+    const appids = Array.from({ length: 40_000 }, (_, i) => 1000 + i)
     const art = { header: 'https://cdn/h.jpg' }
     await upsertGameMeta(db, { ...META, appid: 1000, name: 'Первая', art }, NOW)
-    await upsertGameMeta(db, { ...META, appid: 3499, name: 'Последняя', art }, NOW)
+    await upsertGameMeta(db, { ...META, appid: 40_999, name: 'Последняя', art }, NOW)
 
-    const metas = await getGamesMeta(db, appids)
-    expect(metas.get(1000)?.name).toBe('Первая')
-    expect(metas.get(3499)?.name).toBe('Последняя')
-    expect(metas.size).toBe(2)
+    for (const read of [getGamesMeta, getGamesMetaLite]) {
+      const metas = await read(db, appids)
+      expect(metas.get(1000)?.name, read.name).toBe('Первая')
+      expect(metas.get(40_999)?.name, read.name).toBe('Последняя')
+      expect(metas.size, read.name).toBe(2)
+    }
 
     const stale = await getStaleAppids(db, appids, 14 * 86_400, NOW)
-    expect(stale).toHaveLength(2498)
+    expect(stale).toHaveLength(39_998)
     expect(stale).not.toContain(1000)
+
+    // Цены обеих игр ни разу не мерились: обе в очереди, остальных в базе нет
+    expect((await stalePriceAppids(db, appids, 3600, NOW)).sort((a, b) => a - b)).toEqual([
+      1000, 40_999,
+    ])
+    expect((await getGameShots(db, appids)).size).toBe(2)
+  })
+
+  test('узкая выборка — та же игра без скриншотов, кадры читаются отдельно', async () => {
+    const db = await freshDb()
+    const full = { ...META, art: { header: 'https://cdn/h.jpg' }, ccu: 1200, ccuAt: NOW }
+    await upsertGameMeta(db, full, NOW)
+    await upsertGameMeta(db, { ...META, appid: 730, name: 'CS2', screenshots: undefined }, NOW)
+
+    const { screenshots, ...withoutShots } = full
+    expect((await getGamesMetaLite(db, [620])).get(620)).toEqual(withoutShots)
+    // полная выборка по-прежнему несёт кадры — ими живёт герой игры дня
+    expect((await getGamesMeta(db, [620])).get(620)?.screenshots).toEqual(screenshots)
+
+    const shots = await getGameShots(db, [620, 730, 999])
+    expect(shots.get(620)).toEqual(screenshots)
+    // У игры без кадров и у отсутствующей — просто нет записи
+    expect(shots.has(730)).toBe(false)
+    expect(shots.has(999)).toBe(false)
   })
 
   test('stalePriceAppids: сперва те, у кого цены не было никогда', async () => {

@@ -1,5 +1,5 @@
 import { artCandidates } from '@/lib/art'
-import { getGamesMeta, getLatestSnapshot, getPersonaName } from '@/lib/db'
+import { getGamesMetaLite, getLatestSnapshot, getPersonaName } from '@/lib/db'
 import { ogFonts, ogNum, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { buildPortrait } from '@/lib/portrait'
 import { getDb } from '@/lib/server'
@@ -39,7 +39,7 @@ export async function loadCardData(steamid: string): Promise<CardData | null> {
   if (!snapshot) return null
 
   const games = snapshot.games
-  const metas = await getGamesMeta(
+  const metas = await getGamesMetaLite(
     db,
     games.map((g) => g.appid),
   )
