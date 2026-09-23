@@ -1,0 +1,80 @@
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { saveLibrarySnapshot, type Db } from '@/lib/db'
+import { nowSec } from '@/lib/server'
+import { freshDb, signIn } from '@/lib/testing/route'
+import { POST } from './route'
+
+vi.mock('next/headers', () => import('@/lib/testing/headers'))
+
+/**
+ * /api/prepare — признак «Steam не ответил», настоящим роутом.
+ *
+ * Без него ответ при 429 от Steam был неотличим от обычного: тот же остаток,
+ * и клиент три минуты спрашивал его по кругу, каждый раз отправляя пачку
+ * GetItems туда, где нас как раз ограничивают. Клиентская половина — в
+ * lib/warmup.test.ts («прогрев без продвижения»).
+ */
+
+const STEAMID = '76561197960287930'
+const LIBRARY = [
+  { appid: 620, name: 'Portal 2', playtimeForever: 600, playtime2Weeks: 0 },
+  { appid: 413150, name: 'Stardew Valley', playtimeForever: 0, playtime2Weeks: 0 },
+]
+
+/** Steam, который отвечает: словарь тегов и пачка GetItems по запрошенным appid. */
+const steamUp = vi.fn(async (url: string) => {
+  const u = String(url)
+  if (u.includes('populartags')) {
+    return new Response(JSON.stringify([{ tagid: 19, name: 'Action' }]), { status: 200 })
+  }
+  if (u.includes('GetItems')) {
+    const input = JSON.parse(new URL(u).searchParams.get('input_json') ?? '{}') as {
+      ids?: Array<{ appid: number }>
+    }
+    const items = (input.ids ?? []).map(({ appid }) => ({
+      appid,
+      id: appid,
+      name: `Игра ${appid}`,
+      visible: true,
+    }))
+    return new Response(JSON.stringify({ response: { store_items: items } }), { status: 200 })
+  }
+  return new Response('', { status: 404 })
+})
+
+/** Steam, который нас ограничивает. */
+const steamLimited = vi.fn(async () => new Response('', { status: 429 }))
+
+let db: Db
+
+beforeEach(async () => {
+  // Без ключа роут не пойдёт освежать библиотеку — в тесте нечего и некуда
+  vi.stubEnv('STEAM_API_KEY', '')
+  db = await freshDb()
+  await signIn(db, STEAMID, { verified: true })
+  await saveLibrarySnapshot(db, STEAMID, LIBRARY, nowSec())
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
+
+describe('/api/prepare: stalled', () => {
+  test('Steam ограничивает — остаток прежний и stalled: true', async () => {
+    vi.stubGlobal('fetch', steamLimited)
+    const res = await POST()
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { remaining: number; stalled: boolean }
+    expect(body.remaining).toBeGreaterThan(0)
+    expect(body.stalled).toBe(true)
+  })
+
+  test('Steam отвечает — работа движется и stalled: false', async () => {
+    vi.stubGlobal('fetch', steamUp)
+    const res = await POST()
+    const body = (await res.json()) as { remaining: number; stalled: boolean }
+    expect(body.stalled).toBe(false)
+    expect(body.remaining).toBe(0)
+  })
+})

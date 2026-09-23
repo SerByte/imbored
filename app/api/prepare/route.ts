@@ -136,7 +136,7 @@ export async function POST() {
   // метаданных навсегда (см. докблок там).
   const wanted = buildWarmPlan(games, steamPool.slice(0, 60))
 
-  await ensureMeta(db, wanted, { maxFetch: BATCH, names })
+  const fetched = await ensureMeta(db, wanted, { maxFetch: BATCH, names })
   const remaining = (await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())).length
 
   // Онлайн для совместных игр библиотеки: без него фильтр живости судит вслепую
@@ -152,7 +152,19 @@ export async function POST() {
     await refreshDeals(db, wanted, nowSec(), { maxFetch: PRICE_BATCH })
   }
 
-  return NextResponse.json({ remaining, total: wanted.length, library: facts })
+  /*
+   * stalled — Steam не отдал метаданные, и остаток не сдвинулся не потому, что
+   * работа кончилась. Раньше ответ был неотличим от обычного, и клиент три
+   * минуты спрашивал тот же остаток, каждый раз отправляя пачку GetItems в
+   * Steam, который как раз ограничивает нас. Теперь прогрев на этом
+   * останавливается (lib/warmup), а выдача идёт по тому, что уже разобрано.
+   */
+  return NextResponse.json({
+    remaining,
+    total: wanted.length,
+    library: facts,
+    stalled: !fetched && remaining > 0,
+  })
 }
 
 /**

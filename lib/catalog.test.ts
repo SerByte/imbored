@@ -437,6 +437,27 @@ describe('ensureMeta', () => {
     // цена остаётся: «Steam не назвал цену» и «игра подешевела» неразличимы
     expect(stored?.priceFinal).toBe(300)
   })
+
+  /**
+   * Сбой Steam не роняет запрос, но и не молчит: по false /api/prepare отдаёт
+   * stalled, и прогрев перестаёт спрашивать тот же остаток по кругу.
+   */
+  test('Steam не отдал пачку — false и ни одной записи; разобрали или нечего — true', async () => {
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    const old = NOW - 20 * 86_400
+    await upsertGameMeta(db, { appid: 730, name: 'App 730', tags: {}, genres: [], categories: [] }, old)
+    const limited = (async () => new Response('', { status: 429 })) as unknown as typeof fetch
+
+    expect(await ensureMeta(db, [730], { fetchFn: limited })).toBe(false)
+    expect((await getGameMeta(db, 730))?.name).toBe('App 730')
+
+    const ok = storeStub([{ appid: 730, id: 730, name: 'Counter-Strike 2', visible: true }])
+    expect(await ensureMeta(db, [730], { fetchFn: ok })).toBe(true)
+    expect((await getGameMeta(db, 730))?.name).toBe('Counter-Strike 2')
+
+    // догружать нечего — это не сбой, даже если Steam сейчас лежит
+    expect(await ensureMeta(db, [730], { fetchFn: limited })).toBe(true)
+  })
 })
 
 describe('parseStoreDescriptions', () => {

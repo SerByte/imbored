@@ -488,16 +488,21 @@ const META_MAX_AGE_SEC = 14 * 86_400
  * Догружает метаданные (SteamSpy теги + при необходимости appdetails) для appid'ов,
  * которых нет в кэше или которые протухли. Ограничен по количеству за один вызов,
  * чтобы не подвешивать запрос пользователя.
+ *
+ * Возвращает false, если было что догружать, а записать не вышло: Steam не
+ * отдал пачку или словарь тегов (429, сеть). Сбой по-прежнему не роняет
+ * запрос, но и не молчит: /api/prepare отдаёт по нему stalled, и прогрев
+ * перестаёт спрашивать тот же остаток по кругу (см. WARMUP_STALL_LIMIT).
  */
 export async function ensureMeta(
   db: Db,
   appids: number[],
   opts: { maxFetch?: number; names?: Map<number, string>; fetchFn?: typeof fetch } = {},
-): Promise<void> {
+): Promise<boolean> {
   const { maxFetch = STORE_ITEMS_BATCH, names, fetchFn = fetch } = opts
   const now = Math.floor(Date.now() / 1000)
   const stale = (await getStaleAppids(db, appids, META_MAX_AGE_SEC, now)).slice(0, maxFetch)
-  if (!stale.length) return
+  if (!stale.length) return true
 
   try {
     const fresh = await fetchStoreItems(stale, { fetchFn })
@@ -528,8 +533,10 @@ export async function ensureMeta(
     })
 
     await upsertGamesMeta(db, rows, now)
+    return true
   } catch {
     // сеть/лимиты: пропускаем без записи — updated_at не двигается,
     // игры останутся «протухшими» и догрузятся в следующий раз
+    return false
   }
 }

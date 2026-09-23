@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { GameArt } from '@/components/GameArt'
 import { HeroShots } from '@/components/HeroShots'
@@ -99,11 +99,14 @@ export default function DailyPage() {
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')
-  const started = useRef(false)
 
   useEffect(() => {
-    if (started.current) return
-    started.current = true
+    /*
+     * Уход со страницы останавливает и прогрев, и запросы — тот же приём, что
+     * на /play (см. там): отмена в cleanup вместо флага «уже запущено».
+     */
+    const ac = new AbortController()
+    const { signal } = ac
 
     /**
      * Ответ /api/daily — на экран. Один разбор на оба запроса ниже: у ответа
@@ -120,9 +123,10 @@ export default function DailyPage() {
           .json()
           .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
           .catch(() => null)
-        // Сессия отвалилась: человеку нужен вход, а не объяснение.
+        // Сессия отвалилась: человеку нужен вход, а не объяснение. Если
+        // человек уже ушёл сам, уводить его с новой страницы нельзя.
         if (res.status === 401) {
-          router.push(bounceTo('/daily'))
+          if (!signal.aborted) router.push(bounceTo('/daily'))
           return
         }
         setReason(code)
@@ -155,13 +159,14 @@ export default function DailyPage() {
        * обычной дорогой: прогрев сам скажет, если сети нет совсем.
        */
       try {
-        const res = await fetch('/api/daily?cached=1')
+        const res = await fetch('/api/daily?cached=1', { signal })
         if (res.status !== 204) {
           await show(res)
           return
         }
       } catch {
-        // см. выше: обычная дорога
+        // см. выше: обычная дорога — если страница ещё здесь
+        if (signal.aborted) return
       }
 
       // Прогрев тот же, что в основной выдаче, и теперь буквально тот же код.
@@ -178,11 +183,13 @@ export default function DailyPage() {
       // покупает качество выбора, и платится оно раз в сутки, а не на каждом
       // заходе: следующие попадают в запись выше.
       const warm = await runWarmup({
+        signal,
         onProgress: (p) => {
           setPrep(p)
           if (p.remaining > 0) setMessage(`Осталось разобрать ${p.remaining} ${plural(p.remaining, 'игру', 'игры', 'игр')}`)
         },
       })
+      if (warm === 'aborted') return
       if (warm === 'unauthorized') {
         router.push(bounceTo('/daily'))
         return
@@ -194,11 +201,12 @@ export default function DailyPage() {
 
       setMessage('Выбираю твою игру дня…')
       try {
-        await show(await fetch('/api/daily'))
+        await show(await fetch('/api/daily', { signal }))
       } catch {
-        setPhase('error')
+        if (!signal.aborted) setPhase('error')
       }
     })()
+    return () => ac.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

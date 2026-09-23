@@ -321,7 +321,6 @@ function Player() {
   // показанной выдаче, без перезагрузки и прогрева. Мусор в адресе — «без оси».
   const [lean, setLean] = useState<Lean | null>(() => parseLean(search.get('lean')))
   const [switching, setSwitching] = useState(false)
-  const started = useRef(false)
   const moreOpen =
     useSyncExternalStore(moreStore.subscribe, moreStore.get, moreStore.server) === true
   const shelfOpen =
@@ -518,8 +517,16 @@ function Player() {
   )
 
   useEffect(() => {
-    if (started.current) return
-    started.current = true
+    /*
+     * Уход со страницы останавливает прогрев (lib/warmup, opts.signal).
+     *
+     * Раньше здесь стоял флаг «уже запущено», а цикл жил дольше страницы: после
+     * «Назад» он ещё минутами ходил в /api/prepare, а новый заход на /play
+     * запускал второй такой же параллельно. Отмена в cleanup заменяет флаг, а
+     * не дополняет его: в разработке React монтирует эффект дважды, и с флагом
+     * отменённый первый запуск оставил бы страницу без второго.
+     */
+    const ac = new AbortController()
 
     /** Выдача на экран. Один путь и для догретого каталога, и для частичного. */
     async function reveal(): Promise<boolean> {
@@ -548,6 +555,7 @@ function Player() {
       let lastTotal = 0
 
       const warm = await runWarmup({
+        signal: ac.signal,
         onProgress: (p) => {
           lastTotal = p.total
           setPrep(p)
@@ -561,6 +569,9 @@ function Player() {
           revealing = reveal()
         },
       })
+
+      // Страница ушла: ни выдачу, ни разворот на вход показывать уже некому
+      if (warm === 'aborted') return
 
       const revealed = revealing ? await revealing : false
 
@@ -594,6 +605,7 @@ function Player() {
     }
 
     void run()
+    return () => ac.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

@@ -21,10 +21,14 @@ export function WarmCatalog({ enabled }: { enabled: boolean }) {
       for (let step = 0; step < 6 && !cancelled; step++) {
         const res = await fetch('/api/prepare', { method: 'POST' }).catch(() => null)
         if (!res?.ok) return
-        const { remaining } = (await res.json().catch(() => ({ remaining: 0 }))) as {
+        const { remaining, stalled } = (await res.json().catch(() => ({ remaining: 0 }))) as {
           remaining?: number
+          stalled?: boolean
         }
-        if (!remaining) break
+        // stalled — Steam не отдал метаданные: следующий шаг упрётся в тот же
+        // отказ (см. WARMUP_STALL_LIMIT в lib/warmup), а то, что успело
+        // доехать, покажет обновление страницы ниже
+        if (!remaining || stalled) break
       }
       if (!cancelled) router.refresh()
     })()

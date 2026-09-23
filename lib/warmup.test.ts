@@ -1,5 +1,12 @@
 import { describe, expect, test, vi } from 'vitest'
-import { runWarmup, warmupPercent, WARMUP_MAX_CALLS } from './warmup'
+import {
+  runWarmup,
+  warmupPercent,
+  WARMUP_CALL_TIMEOUT_MS,
+  WARMUP_MAX_CALLS,
+  WARMUP_STALL_LIMIT,
+  WARMUP_STALL_PAUSE_MS,
+} from './warmup'
 
 /**
  * Цикл прогрева ходит в сеть по несколько минут и до этих тестов существовал
@@ -14,6 +21,16 @@ function reply(body: unknown, init: { status?: number } = {}): Response {
     status: init.status ?? 200,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+/**
+ * Остаток, который честно убывает с каждым вызовом. Для тестов пределов: при
+ * неподвижном остатке цикл теперь сдаётся раньше любого из них (см. блок
+ * «прогрев без продвижения» ниже), и проверялся бы не тот предел.
+ */
+function shrinking(from = 999) {
+  let left = from
+  return vi.fn(async () => reply({ remaining: left-- })) as unknown as typeof fetch
 }
 
 /** Последовательность ответов; лишние вызовы — ошибка теста. */
@@ -87,7 +104,7 @@ describe('runWarmup', () => {
   })
 
   test('предел по числу вызовов тоже есть — и это не ошибка', async () => {
-    const fetchFn = vi.fn(async () => reply({ remaining: 999 })) as unknown as typeof fetch
+    const fetchFn = shrinking()
     const res = await runWarmup({ fetchFn, maxCalls: 3, maxMs: Number.POSITIVE_INFINITY })
 
     expect(res).toBe('done')
@@ -252,7 +269,7 @@ describe('ранняя отдача выдачи', () => {
 
   test('предел по числу вызовов сигналит, а не молчит', async () => {
     let yields = 0
-    const fetchFn = vi.fn(async () => reply({ remaining: 999 })) as unknown as typeof fetch
+    const fetchFn = shrinking()
     const res = await runWarmup({
       fetchFn,
       maxCalls: 2,
@@ -261,5 +278,147 @@ describe('ранняя отдача выдачи', () => {
     })
     expect(res).toBe('done')
     expect(yields).toBe(1)
+  })
+})
+
+/**
+ * Работа стоит на месте.
+ *
+ * Steam отвечает 429 на GetItems — ensureMeta глотает сбой, и /api/prepare
+ * отдаёт тот же остаток. Раньше цикл этого не замечал: три минуты неподвижной
+ * цифры на экране и до восьмидесяти пачек в Steam ровно пока нас ограничивают.
+ */
+describe('прогрев без продвижения', () => {
+  /** Паузы записываются, а не выжидаются: тест не должен спать по-настоящему. */
+  function pauses() {
+    const seen: number[] = []
+    return { seen, sleep: async (ms: number) => void seen.push(ms) }
+  }
+
+  test('остаток не убывает — не больше трёх вызовов, с паузой между ними', async () => {
+    const p = pauses()
+    const fetchFn = sequence(
+      reply({ remaining: 300 }),
+      reply({ remaining: 300 }),
+      reply({ remaining: 300 }),
+    )
+    const res = await runWarmup({ fetchFn, sleep: p.sleep })
+    // 'done', а не 'error': выдача по неполному каталогу лучше экрана ошибки
+    expect(res).toBe('done')
+    expect((fetchFn as unknown as { mock: { calls: unknown[] } }).mock.calls).toHaveLength(3)
+    expect(p.seen).toEqual([WARMUP_STALL_PAUSE_MS])
+    expect(WARMUP_STALL_LIMIT).toBe(2)
+  })
+
+  test('остаток растёт — это тоже не продвижение', async () => {
+    const p = pauses()
+    const res = await runWarmup({
+      fetchFn: sequence(reply({ remaining: 300 }), reply({ remaining: 310 }), reply({ remaining: 320 })),
+      sleep: p.sleep,
+    })
+    expect(res).toBe('done')
+    expect(p.seen).toHaveLength(1)
+  })
+
+  test('продвижение сбрасывает счёт: одна заминка — не повод сдаваться', async () => {
+    const p = pauses()
+    const seen: number[] = []
+    const res = await runWarmup({
+      fetchFn: sequence(
+        reply({ remaining: 300 }),
+        reply({ remaining: 300 }),
+        reply({ remaining: 200 }),
+        reply({ remaining: 200 }),
+        reply({ remaining: 100 }),
+        reply({ remaining: 0 }),
+      ),
+      onProgress: (x) => seen.push(x.remaining),
+      sleep: p.sleep,
+    })
+    expect(res).toBe('done')
+    expect(seen).toEqual([300, 300, 200, 200, 100, 0])
+    expect(p.seen).toEqual([WARMUP_STALL_PAUSE_MS, WARMUP_STALL_PAUSE_MS])
+  })
+
+  test('сервер сказал stalled — выходим сразу, без второго захода в Steam', async () => {
+    const p = pauses()
+    const seen: number[] = []
+    let yields = 0
+    const res = await runWarmup({
+      fetchFn: sequence(reply({ remaining: 300, stalled: true })),
+      onProgress: (x) => seen.push(x.remaining),
+      onYield: () => yields++,
+      sleep: p.sleep,
+    })
+    expect(res).toBe('done')
+    // человек увидел, до какого места дошло, и /play успел показать выдачу
+    expect(seen).toEqual([300])
+    expect(yields).toBe(1)
+    expect(p.seen).toEqual([])
+  })
+
+  test('stalled не мешает закончить, если разбирать уже нечего', async () => {
+    const res = await runWarmup({ fetchFn: sequence(reply({ remaining: 0, stalled: true })) })
+    expect(res).toBe('done')
+  })
+})
+
+/**
+ * Уход со страницы. Без сигнала цикл переживал уход с /play и ходил в
+ * /api/prepare дальше, а новый заход запускал второй параллельно.
+ */
+describe('прогрев уходит вместе со страницей', () => {
+  test('уже ушедшая страница — ни одного вызова', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const fetchFn = vi.fn() as unknown as typeof fetch
+    expect(await runWarmup({ fetchFn, signal: ac.signal })).toBe('aborted')
+    expect((fetchFn as unknown as { mock: { calls: unknown[] } }).mock.calls).toHaveLength(0)
+  })
+
+  test('уход посреди вызова — aborted, а не error', async () => {
+    const ac = new AbortController()
+    // Как настоящий fetch: отказывает, когда отменили его сигнал
+    const fetchFn = vi.fn(
+      (_: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError')),
+          )
+        }),
+    ) as unknown as typeof fetch
+    const run = runWarmup({ fetchFn, signal: ac.signal })
+    ac.abort()
+    expect(await run).toBe('aborted')
+  })
+
+  test('уход во время паузы не ждёт её конца', async () => {
+    const ac = new AbortController()
+    let calls = 0
+    const fetchFn = vi.fn(async () => {
+      calls++
+      // второй ответ без продвижения — за ним пауза; страница уходит посреди неё
+      if (calls === 2) setTimeout(() => ac.abort(), 20)
+      return reply({ remaining: 300 })
+    }) as unknown as typeof fetch
+    const startedAt = Date.now()
+    // пауза настоящая: проверяется именно то, что её прерывает уход
+    const res = await runWarmup({ fetchFn, signal: ac.signal })
+    expect(res).toBe('aborted')
+    expect(calls).toBe(2)
+    expect(Date.now() - startedAt).toBeLessThan(WARMUP_STALL_PAUSE_MS / 2)
+  })
+
+  test('каждый вызов уходит с сигналом, даже без сигнала страницы', async () => {
+    const signals: Array<AbortSignal | null | undefined> = []
+    const fetchFn = vi.fn(async (_: unknown, init?: RequestInit) => {
+      signals.push(init?.signal)
+      return reply({ remaining: 0 })
+    }) as unknown as typeof fetch
+    await runWarmup({ fetchFn })
+    // потолок одного вызова — WARMUP_CALL_TIMEOUT_MS: зависшее соединение
+    // больше не держит экран ожидания сколько угодно
+    expect(signals[0]).toBeInstanceOf(AbortSignal)
+    expect(WARMUP_CALL_TIMEOUT_MS).toBe(30_000)
   })
 })
