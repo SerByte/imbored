@@ -7,7 +7,10 @@ import {
   gameDescription,
   isRussianText,
   loadGamePage,
+  pickSimilar,
   reviewFacts,
+  SIMILAR_CANDIDATES,
+  SIMILAR_SHOWN,
   topTagOf,
 } from './gamepage'
 import type { GameMeta } from './types'
@@ -135,6 +138,94 @@ describe('topTagOf', () => {
   test('игра без тегов не роняет карточку', () => {
     expect(topTagOf(meta(1, { tags: {} }))).toBeNull()
   })
+
+  /** Доли тегов из копии каталога: Singleplayer — самый частый, он же шкала. */
+  const STATS = new Map([
+    ['Singleplayer', 3031],
+    ['Action', 2383],
+    ['Adventure', 2130],
+    ['Story Rich', 1237],
+    ['Open World', 981],
+    ['Mythology', 60],
+    ['Nudity', 176],
+    ['MOBA', 30],
+    ['Free to Play', 658],
+    ['Unique', 3],
+  ])
+
+  test('с картой тегов берёт характерный, а не самый широкий', () => {
+    // God of War: по весу первым стоит Action, у которого 2383 игры
+    const gow = { Action: 911, Singleplayer: 840, 'Story Rich': 808, Mythology: 759, Adventure: 755 }
+    expect(topTagOf(meta(1, { tags: gow }))).toBe('Action')
+    expect(topTagOf(meta(1, { tags: gow }), STATS)).toBe('Mythology')
+    // Dota 2 — MOBA, а не Free to Play
+    expect(topTagOf(meta(2, { tags: { 'Free to Play': 3010, MOBA: 1019 } }), STATS)).toBe('MOBA')
+  })
+
+  test('редкость ищется только среди первых пяти тегов', () => {
+    // иначе у The Witcher 3 полка стала бы «Похожие · Nudity»
+    const witcher = {
+      'Open World': 1158,
+      Singleplayer: 975,
+      'Story Rich': 905,
+      Action: 617,
+      Adventure: 598,
+      Nudity: 566,
+    }
+    expect(topTagOf(meta(3, { tags: witcher }), STATS)).toBe('Open World')
+  })
+
+  test('тег, которым помечено меньше семи игр, полку не наполнит', () => {
+    expect(topTagOf(meta(4, { tags: { Unique: 1000, Action: 900 } }), STATS)).toBe('Action')
+  })
+
+  test('без пригодной карты или когда все теги частотные — прежний порядок', () => {
+    const tags = { Action: 900, Singleplayer: 950 }
+    expect(topTagOf(meta(5, { tags }), new Map())).toBe('Singleplayer')
+    // карта из пары тегов — непрогретая база, rarityScale её не принимает
+    expect(topTagOf(meta(5, { tags }), new Map([['Action', 3]]))).toBe('Singleplayer')
+    // Singleplayer — сама шкала, его редкость ноль; Action выигрывает честно
+    expect(topTagOf(meta(5, { tags }), STATS)).toBe('Action')
+    // а когда редкость у всех ноль — первый по весу
+    expect(topTagOf(meta(5, { tags: { Singleplayer: 10, Zzz: 5 } }), STATS)).toBe('Singleplayer')
+  })
+
+  test('битый вес не роняет выбор', () => {
+    expect(topTagOf(meta(6, { tags: { Action: Number.NaN, MOBA: 10 } }), STATS)).toBe('MOBA')
+    expect(topTagOf(meta(6, { tags: { Action: Number.NaN } }))).toBeNull()
+  })
+})
+
+describe('pickSimilar', () => {
+  const ranked = Array.from({ length: SIMILAR_CANDIDATES }, (_, i) => i)
+
+  test('кандидатов не больше полки — отдаются все, в том же порядке', () => {
+    expect(pickSimilar([3, 1, 2], 730)).toEqual([3, 1, 2])
+  })
+
+  test('шесть из тридцати, в исходном порядке и одинаково на каждой пересборке', () => {
+    const a = pickSimilar(ranked, 1_593_500)
+    expect(a).toHaveLength(SIMILAR_SHOWN)
+    expect(new Set(a).size).toBe(SIMILAR_SHOWN)
+    expect([...a].sort((x, y) => x - y)).toEqual(a)
+    // страница кэшируется на сутки: полка не должна прыгать между пересборками
+    expect(pickSimilar(ranked, 1_593_500)).toEqual(a)
+  })
+
+  test('у разных страниц разные шестёрки, а верхние кандидаты попадают чаще', () => {
+    // раньше у всех 339 карточек с тегом Action стояли одни и те же шесть игр
+    const shelves = new Set<string>()
+    const hits = new Array<number>(SIMILAR_CANDIDATES).fill(0)
+    for (let appid = 1; appid <= 2000; appid++) {
+      const shelf = pickSimilar(ranked, appid)
+      shelves.add(shelf.join(','))
+      for (const i of shelf) hits[i]++
+    }
+    expect(shelves.size).toBeGreaterThan(1500)
+    // каждый кандидат хоть где-то стоит — ссылки расходятся по всем тридцати
+    expect(hits.every((n) => n > 0)).toBe(true)
+    expect(hits[0]).toBeGreaterThan(hits[SIMILAR_CANDIDATES - 1] * 3)
+  })
 })
 
 describe('похожие на карточке', () => {
@@ -161,6 +252,75 @@ describe('похожие на карточке', () => {
     expect(page?.similar.map((g) => g.appid)).toEqual([2, 4, 3])
     // сама игра в свои же похожие не попадает
     expect(page?.similar.map((g) => g.appid)).not.toContain(1)
+  })
+
+  test('при равной характерности первым идёт тот, у кого больше отзывов', async () => {
+    // Главный тег КАЖДОЙ игры весит 1000, и у широкого тега ничьих сотни. Без
+    // второго ключа их порядок решал индекс — appid по возрастанию, — и у God
+    // of War стоял Sniper Elite 2005 года
+    const db = await withDb()
+    for (const [appid, reviews] of [
+      [1, 100],
+      [3700, 5_000],
+      [6020, 40],
+      [2_000_000, 900_000],
+      [1_500_000, 70_000],
+    ] as Array<[number, number]>) {
+      await upsertGameMeta(db, meta(appid, { tags: { Action: 1000 }, reviewsTotal: reviews }), NOW)
+      await replaceGameTags(db, appid, [{ tag: 'Action', weight: 1000 }])
+    }
+    const page = await loadGamePage(1)
+    expect(page?.similar.map((g) => g.appid)).toEqual([2_000_000, 1_500_000, 3700, 6020])
+  })
+
+  test('полка — шесть из тридцати первых кандидатов, свои у каждой страницы', async () => {
+    const db = await withDb()
+    // сорок равно характерных соседей: отзывы решают, кто в первой тридцатке
+    for (let i = 1; i <= 40; i++) {
+      await upsertGameMeta(db, meta(i, { tags: { Roguelike: 1000 }, reviewsTotal: i * 100 }), NOW)
+      await replaceGameTags(db, i, [{ tag: 'Roguelike', weight: 1000 }])
+    }
+    const shelves = new Set<string>()
+    for (const appid of [1, 2, 3, 4, 5]) {
+      const page = await loadGamePage(appid)
+      const ids = page?.similar.map((g) => g.appid) ?? []
+      expect(ids).toHaveLength(SIMILAR_SHOWN)
+      expect(ids).not.toContain(appid)
+      // кандидаты — тридцать самых обсуждаемых (40…11), самые тихие в полку не идут
+      expect(ids.every((id) => id > 10)).toBe(true)
+      // и показаны по порядку: больше отзывов — левее
+      expect([...ids].sort((a, b) => b - a)).toEqual(ids)
+      shelves.add(ids.join(','))
+    }
+    expect(shelves.size).toBeGreaterThan(1)
+  })
+
+  test('тег полки выбирается по редкости из карты тегов каталога', async () => {
+    const db = await withDb()
+    const tags = { Action: 911, Mythology: 759 }
+    await upsertGameMeta(db, meta(1, { tags }), NOW)
+    await replaceGameTags(db, 1, [
+      { tag: 'Action', weight: 1000 },
+      { tag: 'Mythology', weight: 833 },
+    ])
+    await upsertGameMeta(db, meta(2, { tags: { Mythology: 900 } }), NOW)
+    await replaceGameTags(db, 2, [{ tag: 'Mythology', weight: 1000 }])
+    await upsertGameMeta(db, meta(3, { tags: { Action: 900 } }), NOW)
+    await replaceGameTags(db, 3, [{ tag: 'Action', weight: 1000 }])
+    await db.batch(
+      [
+        [1, 'Singleplayer', 3031],
+        [2, 'Action', 2383],
+        [3, 'Mythology', 60],
+      ].map(([tagid, name, count]) => ({
+        sql: 'INSERT INTO tags (tagid, name, game_count) VALUES (?, ?, ?)',
+        args: [tagid, name, count],
+      })),
+      'write',
+    )
+    const page = await loadGamePage(1)
+    expect(page?.similarTag).toBe('Mythology')
+    expect(page?.similar.map((g) => g.appid)).toEqual([2])
   })
 
   test('игра без тегов отдаёт пустой список, а не падает', async () => {

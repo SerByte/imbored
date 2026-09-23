@@ -2227,6 +2227,19 @@ export type SimilarGame = {
  * продаваемые из тех, кто им помечен. Это же и есть механика обещания «мы
  * никогда не продаём места в выдаче»: продать позицию тут физически нечем.
  *
+ * Но weight нормирован так, что главный тег КАЖДОЙ игры весит 1000, и у
+ * широкого тега ничьих сотни: у Action их 408. Без второго ключа порядок внутри
+ * ничьей решал индекс, то есть appid по возрастанию, — и God of War показывал
+ * Sniper Elite 2005 года, а CS2 — дополнения Half-Life. Среди равно
+ * характерных первым теперь идёт тот, у кого больше отзывов. Индекс (tag,
+ * weight DESC) остаётся префиксом: досортировываются только строки одного
+ * веса («RIGHT PART OF ORDER BY», сторож в lib/queryplan.test.ts), и чтение
+ * обрывается на блоке ничьих, в который попал LIMIT, — у Action это около
+ * четырёхсот строк индекса, а не весь тег.
+ *
+ * limit — кандидаты, а не полка: шесть из них выбирает pickSimilar в
+ * lib/gamepage.ts, по-разному для разных страниц.
+ *
  * appid > 0 — записи чужих магазинов лежат под отрицательными id, арта у них
  * нет, а полка из заглушек полкой не выглядит.
  */
@@ -2234,13 +2247,13 @@ export async function topGamesByTag(
   db: Db,
   tag: string,
   excludeAppid: number,
-  limit = 6,
+  limit = 30,
 ): Promise<SimilarGame[]> {
   const res = await db.execute({
     sql: `SELECT g.appid, g.name, g.header_image, g.art_json
           FROM game_tags gt JOIN games g ON g.appid = gt.appid
           WHERE gt.tag = ? AND g.appid != ? AND g.appid > 0 AND ${ALIVE_POOL}
-          ORDER BY gt.weight DESC
+          ORDER BY gt.weight DESC, g.reviews_total DESC
           LIMIT ?`,
     args: [tag, excludeAppid, limit],
   })

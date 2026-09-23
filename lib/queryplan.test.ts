@@ -20,6 +20,7 @@ import {
   stalePriceAppids,
   sweepStale,
   topCatalogAppids,
+  topGamesByTag,
   upsertNewsItems,
   type Db,
 } from './db'
@@ -244,6 +245,27 @@ describe('планы запросов', () => {
       ).toEqual([])
       expect(where).toContain('sqlite_autoindex_users_1 (steamid>? AND steamid<?)')
     }
+  })
+
+  /*
+   * Полка «Похожие» досортировывает ничьи по отзывам, и это законно, пока
+   * сортировка касается только правой части ORDER BY: вес приходит из индекса
+   * (tag, weight DESC), а по отзывам упорядочивается один блок равных весов, в
+   * который попал LIMIT. Полная сортировка читала бы весь тег — у Action это
+   * две с половиной тысячи строк на каждую карточку из карты сайта.
+   */
+  test('полка «Похожие»: по индексу тега, досортировка только внутри ничьих', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) => topGamesByTag(spy, 'Action', 730))
+    expect(issued).toHaveLength(1)
+    const plan = await planOf(db, issued[0]!)
+    const where = plan.join(' | ')
+    expect(bareScans(plan), where).toEqual([])
+    expect(where).toContain('INDEX idx_game_tags_tag (tag=?)')
+    expect(
+      plan.filter((step) => step.includes('TEMP B-TREE')),
+      where,
+    ).toEqual(['USE TEMP B-TREE FOR RIGHT PART OF ORDER BY'])
   })
 
   test('у каждого частичного индекса схемы есть запрос, который это проверяет', async () => {

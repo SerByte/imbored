@@ -1,15 +1,20 @@
+import { hashString, mulberry32 } from './daily'
 import {
   getGamePageRow,
   getGameNews,
+  loadTagStats,
   topGamesByTag,
   withoutBody,
+  type Db,
   type FeedItem,
   type SimilarGame,
 } from './db'
+import { logSwallowed } from './errlog'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { plural } from './plural'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
+import { rarityOf, rarityScale } from './tagweight'
 import type { GameMeta } from './types'
 
 export type GamePageData = {
@@ -22,7 +27,7 @@ export type GamePageData = {
   prosCons: ProsCons | null
   /** без тел патчей — их отдаёт app/api/news по раскрытию, см. withoutBody */
   news: FeedItem[]
-  /** соседи по самому характерному тегу; пусто, если тегов нет */
+  /** соседи по тегу полки (topTagOf, pickSimilar); пусто, если тегов нет */
   similar: SimilarGame[]
   /** по какому тегу они подобраны — он же стоит в заголовке блока */
   similarTag: string | null
@@ -79,20 +84,129 @@ export function reviewFacts(
   return null
 }
 
+/** Сколько игр стоит на полке «Похожие». */
+export const SIMILAR_SHOWN = 6
+
 /**
- * Самый характерный тег игры.
+ * Из скольких кандидатов полка выбирает свои шесть. Больше — ссылки разойдутся
+ * по большему числу карточек, но в полку чаще попадут менее характерные
+ * соседи. Тридцать — по замеру на каталоге, см. pickSimilar.
+ */
+export const SIMILAR_CANDIDATES = 30
+
+/**
+ * Среди скольких первых по весу тегов ищется тег полки. Без потолка редкость
+ * вытаскивала хвост: у The Witcher 3 полка стала бы «Похожие · Nudity», у DayZ
+ * с его ровными весами — «Choose Your Own Adventure». Пять — примерно столько
+ * тегов Steam показывает у игры сразу, без раскрытия списка.
+ */
+const SHELF_TAG_POOL = 5
+
+/** Тег, который в каталоге есть меньше чем у семи игр, полку не наполнит. */
+const SHELF_MIN_GAMES = SIMILAR_SHOWN + 1
+
+/**
+ * Тег, по которому подбирается полка «Похожие».
  *
- * Вес в tags_json — это характерность (доля от максимума), а не популярность,
- * поэтому «первый по весу» и означает «чем эта игра является больше всего».
+ * Вес в tags_json — это характерность, а не популярность, поэтому «первый по
+ * весу» означает «чем эта игра является больше всего». Но первым почти всегда
+ * стоит широкий тег — Action, Free to Play, RPG, — и полка превращалась в
+ * случайную выборку из тысяч игр: у God of War «Похожие · Action», у Dota 2 —
+ * «Похожие · Free to Play». С картой тегов каталога (loadTagStats) из первых
+ * пяти по весу берётся тот, у которого вес × редкость больше, — тем же
+ * rarityOf, что у подбора и совместимости: God of War получает Mythology,
+ * Dota 2 — MOBA, Baldur's Gate 3 — Turn-Based Combat.
+ *
+ * Без карты (непрогретая база, сбой чтения) или когда все пять тегов
+ * частотные — прежний порядок, первый по весу.
+ *
  * Тай-брейк по имени обязателен: страница кэшируется на сутки и пререндерится,
  * и блок «похожие» не должен меняться от того, в каком порядке Object.entries
  * вернул ключи после очередной пересборки каталога.
  */
-export function topTagOf(meta: GameMeta): string | null {
-  const entries = Object.entries(meta.tags ?? {})
+export function topTagOf(meta: GameMeta, tagStats?: Map<string, number> | null): string | null {
+  const entries = Object.entries(meta.tags ?? {}).filter(([, w]) => Number.isFinite(w))
   if (!entries.length) return null
   entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  return entries[0][0]
+  const top = tagStats ? rarityScale(tagStats) : 0
+  if (!tagStats || !top) return entries[0][0]
+  let best = entries[0][0]
+  let bestScore = 0
+  // Обход — по весу, затем по имени, и сравнение строгое: при равном счёте
+  // побеждает более весомый тег, а при равном весе — первый по алфавиту
+  for (const [tag, weight] of entries.slice(0, SHELF_TAG_POOL)) {
+    if ((tagStats.get(tag) ?? 0) < SHELF_MIN_GAMES) continue
+    const score = weight * rarityOf(tag, tagStats, top)
+    if (score > bestScore) {
+      best = tag
+      bestScore = score
+    }
+  }
+  return best
+}
+
+/**
+ * Шесть соседей из кандидатов — детерминированно по appid страницы.
+ *
+ * Кандидаты приходят упорядоченными (topGamesByTag: характерность, затем
+ * отзывы), и раньше полка была просто первой шестёркой. Тогда у всех 339
+ * карточек с главным тегом Action стояли одни и те же шесть игр: каждая из них
+ * получала по 338 внутренних ссылок, а 3443 из 5000 страниц карты сайта — ни
+ * одной. Полка — единственная перелинковка между карточками.
+ *
+ * Теперь шестёрка — взвешенная выборка без возвращения (ключ u^(1/w),
+ * Efraimidis–Spirakis), где вес — место с конца: верхние кандидаты попадают
+ * чаще, но не всегда. Замер на копии каталога, 5000 страниц карты сайта
+ * вместе с выбором тега по редкости (topTagOf): страниц со входящей ссылкой с
+ * полки — 3580 вместо 1535, самая «популярная» карточка — 45 входящих вместо
+ * 339. Равномерная выборка разносит чуть шире (3718 и 39), но чаще выкидывает
+ * самых похожих.
+ *
+ * Сид — appid страницы, а не время: страница кэшируется на сутки, и полка не
+ * должна меняться от пересборки к пересборке, пока не поменялись кандидаты.
+ * Показываются выбранные в исходном порядке — самые характерные первыми.
+ */
+export function pickSimilar<T>(ranked: readonly T[], pageAppid: number, shown = SIMILAR_SHOWN): T[] {
+  if (ranked.length <= shown) return [...ranked]
+  const rnd = mulberry32(hashString(`similar:${pageAppid}`))
+  const n = ranked.length
+  return ranked
+    .map((_, i) => ({ i, key: rnd() ** (1 / (n - i)) }))
+    .sort((a, b) => b.key - a.key || a.i - b.i)
+    .slice(0, shown)
+    .map((k) => k.i)
+    .sort((a, b) => a - b)
+    .map((i) => ranked[i])
+}
+
+/**
+ * Карта тегов каталога для выбора тега полки — с памятью на процесс.
+ *
+ * loadTagStats читает всю таблицу tags, около 430 строк, а карточка — самая
+ * массовая страница: пять тысяч адресов в карте сайта, у каждой ещё и
+ * OG-картинка. Без памяти один проход краулера стоил бы больше двух миллионов
+ * прочитанных строк Turso ради карты, которая меняется только с заливкой
+ * каталога. Шесть часов — с запасом короче суток, на которые кэшируется сама
+ * страница.
+ *
+ * Ключ — сам клиент базы: в проде он один на процесс (lib/server), а тесты с
+ * базой в памяти не видят чужих карт. Сбой чтения не кэшируется и страницу не
+ * роняет — полка просто подбирается по-старому.
+ */
+const TAG_STATS_TTL_SEC = 6 * 3600
+const tagStatsMemo = new WeakMap<Db, { at: number; stats: Map<string, number> }>()
+
+async function tagStatsFor(db: Db, nowSec: number): Promise<Map<string, number> | null> {
+  const hit = tagStatsMemo.get(db)
+  if (hit && nowSec - hit.at < TAG_STATS_TTL_SEC) return hit.stats
+  try {
+    const stats = await loadTagStats(db)
+    tagStatsMemo.set(db, { at: nowSec, stats })
+    return stats
+  } catch (err) {
+    logSwallowed('gamepage:tagstats', err)
+    return hit?.stats ?? null
+  }
 }
 
 /**
@@ -290,8 +404,17 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   // Соседей ищем и для чужих магазинов: тег у такой записи есть, а вот патчей
   // и отзывов Steam про неё нет — поэтому блок «похожие» стоит ДО раннего
   // возврата, а не после
-  const topTag = topTagOf(meta)
-  const similarOf = async () => (topTag ? topGamesByTag(db, topTag, appid) : [])
+  //
+  // Карта тегов — только когда теги есть: игре без них полку не собрать всё
+  // равно, и читать ради неё нечего
+  const similarOf = async (): Promise<Pick<GamePageData, 'similar' | 'similarTag'>> => {
+    const hasTags = Object.keys(meta.tags ?? {}).length > 0
+    const stats = hasTags ? await tagStatsFor(db, Math.floor(Date.now() / 1000)) : null
+    const tag = topTagOf(meta, stats)
+    if (!tag) return { similar: [], similarTag: null }
+    const candidates = await topGamesByTag(db, tag, appid, SIMILAR_CANDIDATES)
+    return { similar: pickSimilar(candidates, appid), similarTag: tag }
+  }
 
   if (appid < 0) {
     return {
@@ -299,14 +422,13 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
       reviewsSummary: null,
       prosCons: null,
       news: [],
-      similar: await similarOf(),
-      similarTag: topTag,
+      ...(await similarOf()),
     }
   }
 
   const reviewsSummary = строка.reviewsSummary as GamePageData['reviewsSummary']
   const stored = строка.prosCons as GamePageData['prosCons']
-  const [news, similar] = await Promise.all([
+  const [news, shelf] = await Promise.all([
     getGameNews(db, appid, 8).then((rows) => rows.map(withoutBody)),
     similarOf(),
   ])
@@ -331,5 +453,5 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    */
   const prosCons = stored?.source === 'claude' ? stored : null
 
-  return { meta, reviewsSummary, prosCons, news, similar, similarTag: topTag }
+  return { meta, reviewsSummary, prosCons, news, ...shelf }
 }
