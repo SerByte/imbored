@@ -1,8 +1,15 @@
+import { looksLikeNonGame } from './junk'
 import { plural } from './plural'
 import { classifyLibraryGame } from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
-/** «Цена бэклога»: сколько денег лежит в несыгранных играх (по известным ценам) */
+/**
+ * «Цена бэклога»: сколько денег лежит в несыгранных играх (по известным ценам).
+ *
+ * Не-игры (looksLikeNonGame) в бэклог не входят: саундтрек за $9.99 с нулём
+ * минут добавлял себя и к счётчику, и к «сгоревшим» деньгам, хотя /play тот же
+ * саундтрек бэклогом не считает. Мёртвая сетевая игра входит — она куплена.
+ */
 export function backlogValue(
   library: LibraryGame[],
   metaOf: (appid: number) => GameMeta | undefined,
@@ -13,8 +20,10 @@ export function backlogValue(
   let unplayedCount = 0
   for (const g of library) {
     if (classifyLibraryGame(g, nowSec) !== 'unplayed') continue
+    const meta = metaOf(g.appid)
+    if (looksLikeNonGame(g, meta)) continue
     unplayedCount++
-    const price = metaOf(g.appid)?.priceFinal
+    const price = meta?.priceFinal
     if (price !== undefined && price > 0) {
       cents += price
       pricedCount++

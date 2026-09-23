@@ -100,6 +100,18 @@ describe('buildPortraitModel', () => {
     expect(model.backlog.pricedCount).toBeGreaterThan(0)
   })
 
+  test('саундтреки не бэклог нигде на странице: три счётчика называют одно число', () => {
+    const { games, metas } = collector()
+    games.push({ appid: 50_001, name: 'g1 - Soundtrack', playtimeForever: 0, playtime2Weeks: 0 })
+    metas.set(50_001, meta(50_001, {}, 999))
+    games.push({ appid: 50_002, name: 'g2 Dedicated Server', playtimeForever: 0, playtime2Weeks: 0 })
+    const model = buildPortraitModel(games, (id) => metas.get(id), NOW, PLAN)
+    expect(model.wrapped.unplayedCount).toBe(40_001)
+    expect(model.portrait.facts.unplayedCount).toBe(40_001)
+    expect(model.backlog.unplayedCount).toBe(40_001)
+    expect(model.purgatory.some((g) => g.appid > 50_000)).toBe(false)
+  })
+
   test('без метаданных — страница-шаблон: числа и мозаика есть, диагноза и денег нет', () => {
     const { games } = collector()
     const model = buildPortraitModel(games, () => undefined, NOW, PLAN)

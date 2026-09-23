@@ -38,7 +38,7 @@ export function looksLikeJunkName(name: string): boolean {
 }
 
 /**
- * Стоит ли прятать эту запись библиотеки от игрока.
+ * Не игра вовсе: саундтрек, SDK, сервер, демо, пустая запись.
  *
  * Слои по убыванию надёжности:
  *  3. вердикт офлайн-курации (signalsAt непустой — appid прошёл через
@@ -46,12 +46,16 @@ export function looksLikeJunkName(name: string): boolean {
  *  2. прогретая запись без единого тега и без категорий — так выглядят
  *     саундтреки и инструменты после GetItems;
  *  1. название.
+ *
+ * Это граница для СЧЁТЧИКОВ бэклога: «N лежат нераспакованными», цена
+ * бэклога, «Чистилище» на портрете, «ни разу не запускал» на /library.
+ * Саундтрек никто не собирался проходить, и в бэклоге ему не место. Мёртвая
+ * сетевая игра — другое дело: её купили, и она лежит, поэтому здесь нет
+ * проверки alive, в отличие от isJunk.
  */
-export function isJunk(game: LibraryGame, meta: GameMeta | undefined): boolean {
+export function looksLikeNonGame(game: LibraryGame, meta: GameMeta | undefined): boolean {
   // Слой 3: каталог уже вынес вердикт — он сильнее любой эвристики по имени
-  if (meta?.signalsAt !== undefined) {
-    return meta.alive === false || meta.supersededBy !== undefined
-  }
+  if (meta?.signalsAt !== undefined) return false
 
   if (looksLikeJunkName(game.name)) return true
 
@@ -60,4 +64,20 @@ export function isJunk(game: LibraryGame, meta: GameMeta | undefined): boolean {
   if (meta && !Object.keys(meta.tags).length && !meta.categories.length) return true
 
   return false
+}
+
+/**
+ * Стоит ли прятать эту запись библиотеки от игрока — там, где ей что-то
+ * СОВЕТУЮТ: подбор, полка забытого, «начни с этой».
+ *
+ * Строже looksLikeNonGame на один шаг: при вердикте каталога прячется и
+ * мёртвая, и заменённая новым изданием игра. Посоветовать сетевую игру с
+ * пустыми серверами — это совет, который не сработает, а посчитать её в
+ * бэклоге — просто правда.
+ */
+export function isJunk(game: LibraryGame, meta: GameMeta | undefined): boolean {
+  if (meta?.signalsAt !== undefined) {
+    return meta.alive === false || meta.supersededBy !== undefined
+  }
+  return looksLikeNonGame(game, meta)
 }

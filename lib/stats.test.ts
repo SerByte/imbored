@@ -8,13 +8,17 @@ function game(appid: number, playtimeForever: number): LibraryGame {
   return { appid, name: `g${appid}`, playtimeForever, playtime2Weeks: 0 }
 }
 
+/**
+ * Прогретая игра с ценой. Теги и категория обязательны: запись без обоих —
+ * так выглядят саундтреки после прогрева, и в бэклог она не входит.
+ */
 function meta(appid: number, priceFinal?: number): GameMeta {
   return {
     appid,
     name: `g${appid}`,
-    tags: {},
+    tags: { Action: 100 },
     genres: [],
-    categories: [],
+    categories: [2],
     ...(priceFinal !== undefined ? { priceFinal } : {}),
   }
 }
@@ -43,6 +47,29 @@ describe('backlogValue', () => {
     ])
     const out = backlogValue([game(1, 0), game(2, 30)], (id) => metas.get(id), NOW)
     expect(out).toEqual({ cents: 3000, pricedCount: 2, unplayedCount: 2 })
+  })
+
+  test('саундтрек и SDK — не бэклог: ни в счётчике, ни в деньгах', () => {
+    const metas = new Map([
+      [1, meta(1, 1999)],
+      [2, meta(2, 999)], // саундтрек по названию
+      [3, { ...meta(3, 4999), tags: {}, categories: [] }], // прогретая пустая запись
+    ])
+    const out = backlogValue(
+      [game(1, 0), { ...game(2, 0), name: 'Foo — Original Soundtrack' }, game(3, 0)],
+      (id) => metas.get(id),
+      NOW,
+    )
+    expect(out).toEqual({ cents: 1999, pricedCount: 1, unplayedCount: 1 })
+  })
+
+  test('мёртвая сетевая игра — бэклог: деньги за неё правда потрачены', () => {
+    const metas = new Map([[1, { ...meta(1, 1499), signalsAt: NOW, alive: false }]])
+    expect(backlogValue([game(1, 0)], (id) => metas.get(id), NOW)).toEqual({
+      cents: 1499,
+      pricedCount: 1,
+      unplayedCount: 1,
+    })
   })
 
   test('пустая библиотека — нули', () => {

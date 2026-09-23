@@ -19,8 +19,9 @@ import {
   parseLibraryPage,
   pickForgotten,
   SHELF_EMPTY,
+  wallState,
 } from '@/lib/forgotten'
-import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
+import type { LibraryTileState } from '@/lib/recommend'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
 import { bounceTo, reconnectHref } from '@/lib/destination'
@@ -91,10 +92,6 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // полке: иначе числа в шапке прыгали бы вслед за фильтром
   const games = snapshot.games
   const totalHours = Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
-  // Два разных числа: в строке-сводке — «ни разу не запускал» (ноль минут), в
-  // карточке денег — весь бэклог до двух часов, как и раньше. Деньги считает
-  // backlogValue по своему определению, и оно намеренно не менялось.
-  const untouched = games.filter(isUntouched).length
 
   // Только игры библиотеки, а не весь каталог: нужны обложки для сетки и
   // цена бэклога, и то и другое считается по своим играм.
@@ -125,6 +122,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
 
   const metaOf = (id: number) => metas.get(id)
   const view = buildLibraryView(games, metaOf, filter, now)
+  // Два разных числа: в строке-сводке — «ни разу не запускал» (ноль минут), в
+  // карточке денег — весь бэклог до двух часов, как и раньше. Деньги считает
+  // backlogValue по своему определению. Сводка берётся из счётчиков чипсов, а
+  // не считается рядом: саундтреки и SDK бэклогом не считаются ни там, ни там
+  // (looksLikeNonGame), и строка, чипс «Не распакованы» и ссылка «Все
+  // нераспакованные» обязаны назвать одно и то же число.
+  const untouched = view.counts.untouched
   // Порция полки, а не вся полка: см. LIBRARY_PAGE_SIZE в lib/forgotten.ts
   const wall = libraryPage(view.games, parseLibraryPage(query.page))
   const shelf = pickForgotten(
@@ -383,7 +387,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {wall.shown.map((g) => {
-          const state = libraryTileState(g, now)
+          const state = wallState(g, metas.get(g.appid), now)
           const label = STATE_LABEL[state]
           const hours = Math.round(g.playtimeForever / 60)
           return (

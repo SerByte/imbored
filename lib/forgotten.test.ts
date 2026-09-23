@@ -9,6 +9,7 @@ import {
   parseLibraryFilter,
   parseLibraryPage,
   pickForgotten,
+  wallState,
 } from './forgotten'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -335,5 +336,44 @@ describe('buildLibraryView', () => {
     const input = [...lib]
     buildLibraryView(input, metaOf, 'all', NOW)
     expect(input).toEqual(lib)
+  })
+
+  test('саундтрек и SDK — не бэклог: вне чипсов и полок бэклога, но на стене «Все»', () => {
+    const withJunk = [
+      ...lib,
+      game({ appid: 10, name: 'Foo — Original Soundtrack' }),
+      game({ appid: 11, name: 'Bar SDK', playtimeForever: 20 }),
+    ]
+    const view = buildLibraryView(withJunk, metaOf, 'untouched', NOW)
+    expect(view.counts).toEqual({ all: 7, untouched: 1, unplayed: 1, comeback: 1, active: 1 })
+    expect(view.games.map((g) => g.appid)).toEqual([1])
+    expect(buildLibraryView(withJunk, metaOf, 'unplayed', NOW).games.map((g) => g.appid)).toEqual([2])
+    expect(buildLibraryView(withJunk, metaOf, 'all', NOW).games.map((g) => g.appid)).toContain(10)
+  })
+})
+
+describe('wallState', () => {
+  test('у игры — то же, что libraryTileState', () => {
+    expect(wallState(game({ appid: 1 }), meta(1), NOW)).toBe('untouched')
+    expect(wallState(game({ appid: 2, playtimeForever: 30 }), meta(2), NOW)).toBe('unplayed')
+    expect(wallState(game({ appid: 4, playtimeForever: 900, playtime2Weeks: 60 }), meta(4), NOW)).toBe(
+      'active',
+    )
+  })
+
+  test('не-игра в бэклоге стоит нейтральной плиткой, без подписи', () => {
+    expect(wallState(game({ appid: 10, name: 'Foo - Soundtrack' }), undefined, NOW)).toBe('played')
+    // Прогретая пустая запись: ни тегов, ни категорий
+    expect(wallState(game({ appid: 12 }), meta(12, { tags: {}, categories: [] }), NOW)).toBe('played')
+  })
+
+  test('мёртвая сетевая игра в бэклоге остаётся нераспакованной: её купили', () => {
+    const dead = meta(13, { signalsAt: NOW, alive: false })
+    expect(wallState(game({ appid: 13 }), dead, NOW)).toBe('untouched')
+  })
+
+  test('не-игра, которую запускали недавно, остаётся «играешь сейчас»: это не бэклог', () => {
+    const server = game({ appid: 14, name: 'Foo Dedicated Server', playtimeForever: 900, playtime2Weeks: 60 })
+    expect(wallState(server, undefined, NOW)).toBe('active')
   })
 })

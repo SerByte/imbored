@@ -1,4 +1,5 @@
 import { parseReleaseYear } from './ingest'
+import { isJunk, looksLikeNonGame } from './junk'
 import {
   buildTagProfile,
   isMultiplayerMeta,
@@ -97,7 +98,12 @@ export function buildWrapped(library: LibraryGame[], metaOf: MetaOf): Wrapped {
     concentration = Math.round(hhi * 100)
   }
 
-  const unplayed = library.filter(isUnplayed)
+  // Саундтрек, SDK и демо — не бэклог: их никто не собирался проходить, а
+  // портрет считал их в «N лежат нераспакованными» и ставил их обложки в
+  // «Чистилище». Та же граница, что у backlogValue и /library.
+  const unplayed = library.filter(
+    (g) => isUnplayed(g) && !looksLikeNonGame(g, metaOf(g.appid)),
+  )
 
   let socialMinutes = 0
   let coveredMinutes = 0
@@ -224,10 +230,19 @@ export function archetypeEvidence(
     .map((s) => s.game)
 }
 
-/** Непройденная игра, ближайшая по вкусу — «начни с этой» */
+/**
+ * Непройденная игра, ближайшая по вкусу — «начни с этой».
+ *
+ * Это совет, а не счётчик, поэтому отсев строже, чем у бэклога: isJunk, а не
+ * looksLikeNonGame. Саундтрек стартовой быть не может, и мёртвая сетевая игра
+ * тоже — в бэклоге она лежит честно, но начинать с неё не с кем.
+ */
 export function pickStarter(library: LibraryGame[], metaOf: MetaOf): LibraryGame | null {
   // Фильтр по metaOf обязателен: rankByTaste игры без меты не выбрасывает, а
   // лишь опускает в конец, и без фильтра стартовой могла бы стать игра без тегов
-  const candidates = library.filter((g) => isUnplayed(g) && metaOf(g.appid))
+  const candidates = library.filter((g) => {
+    const meta = metaOf(g.appid)
+    return isUnplayed(g) && meta !== undefined && !isJunk(g, meta)
+  })
   return rankByTaste(candidates, metaOf, buildTagProfile(library, metaOf))[0] ?? null
 }

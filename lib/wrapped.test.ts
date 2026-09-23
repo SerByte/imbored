@@ -66,6 +66,30 @@ describe('buildWrapped — числа', () => {
     const w = buildWrapped([lib(1, 300), lib(2, 1, 1)], metaOf)
     expect(w.unplayedCount).toBe(0)
   })
+
+  test('саундтрек и сервер — не бэклог: ни в счётчике, ни в «Чистилище»', () => {
+    const ost = { ...lib(10, 0), name: 'Foo — Original Soundtrack' }
+    const server = { ...lib(11, 0), name: 'Bar Dedicated Server' }
+    const w = buildWrapped([lib(1, 300), lib(2, 0), ost, server], metaOf)
+    expect(w.unplayedCount).toBe(1)
+    expect(w.unplayed.map((g) => g.appid)).toEqual([2])
+    // В библиотеке они остаются: это счёт игр, а не бэклога
+    expect(w.gamesCount).toBe(4)
+  })
+
+  test('прогретая запись без тегов и категорий — не бэклог', () => {
+    const metas = new Map<number, GameMeta>([[20, meta(20, {}, [])]])
+    const w = buildWrapped([lib(1, 300), lib(20, 0)], (id) => metas.get(id) ?? metaOf(id))
+    expect(w.unplayedCount).toBe(0)
+  })
+
+  test('мёртвая сетевая игра — бэклог: её купили, и она лежит', () => {
+    const metas = new Map<number, GameMeta>([
+      [30, { ...meta(30, { Shooter: 100 }), signalsAt: 1_700_000_000, alive: false }],
+    ])
+    const w = buildWrapped([lib(1, 300), lib(30, 0)], (id) => metas.get(id) ?? metaOf(id))
+    expect(w.unplayedCount).toBe(1)
+  })
 })
 
 describe('buildWrapped — деградация', () => {
@@ -274,6 +298,25 @@ describe('pickStarter', () => {
     // rankByTaste такие не выбрасывает, а лишь опускает — фильтр здесь обязателен
     const metas = new Map<number, GameMeta>([[1, meta(1, { Automation: 100 })]])
     expect(pickStarter([lib(1, 300), lib(99, 0)], (id) => metas.get(id))).toBeNull()
+  })
+
+  test('саундтрек стартовой не становится, даже если по тегам он ближе всех', () => {
+    const metas = new Map<number, GameMeta>([
+      [1, meta(1, { Automation: 100 })],
+      [2, meta(2, { Automation: 100 })], // саундтрек с тегами игры
+      [3, meta(3, { Automation: 50, Horror: 100 })],
+    ])
+    const games = [lib(1, 300), { ...lib(2, 0), name: 'Factorio - Soundtrack' }, lib(3, 0)]
+    expect(pickStarter(games, (id) => metas.get(id))?.appid).toBe(3)
+  })
+
+  test('мёртвая сетевая игра стартовой не становится: начинать её не с кем', () => {
+    const metas = new Map<number, GameMeta>([
+      [1, meta(1, { Automation: 100 })],
+      [2, { ...meta(2, { Automation: 100 }), signalsAt: 1_700_000_000, alive: false }],
+      [3, meta(3, { Automation: 50, Horror: 100 })],
+    ])
+    expect(pickStarter([lib(1, 300), lib(2, 0), lib(3, 0)], (id) => metas.get(id))?.appid).toBe(3)
   })
 
   test('при равном вкусе стартовой остаётся первая по порядку — выдача не скачет', () => {

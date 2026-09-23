@@ -71,6 +71,13 @@ describe('buildPortrait', () => {
     expect(p.facts.topGame).toEqual({ appid: 1, name: 'g1', hours: 300, sharePercent: 75 })
   })
 
+  test('саундтрек в бэклог портрета не входит — число то же, что у buildWrapped', () => {
+    const ost = { ...lib(9, 0), name: 'g1 - Original Soundtrack' }
+    const p = buildPortrait([lib(1, 300), lib(3, 0), ost], metaOf)
+    expect(p.facts.unplayedCount).toBe(1)
+    expect(p.facts.gamesCount).toBe(3)
+  })
+
   test('пустая библиотека не роняет', () => {
     const p = buildPortrait([], metaOf)
     expect(p.archetypes).toEqual([])

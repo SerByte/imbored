@@ -1,3 +1,4 @@
+import { looksLikeNonGame } from './junk'
 import { buildTagProfile, isUnplayed } from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -116,7 +117,10 @@ export function buildPortrait(
     : []
 
   const totalHours = Math.round(library.reduce((s, g) => s + g.playtimeForever, 0) / 60)
-  const unplayedCount = library.filter(isUnplayed).length
+  // Та же граница, что у buildWrapped и backlogValue: саундтрек не бэклог
+  const unplayedCount = library.filter(
+    (g) => isUnplayed(g) && !looksLikeNonGame(g, metaOf(g.appid)),
+  ).length
   const topLib = [...library].sort((a, b) => b.playtimeForever - a.playtimeForever)[0]
   const topGame =
     topLib && topLib.playtimeForever > 0 && totalHours > 0

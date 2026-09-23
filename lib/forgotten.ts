@@ -1,7 +1,13 @@
 import { hashString } from './daily'
 import { collapseEditions, editionKey, isVariantName } from './editions'
-import { isJunk } from './junk'
-import { buildTagProfile, isUntouched, libraryTileState, rankByTaste } from './recommend'
+import { isJunk, looksLikeNonGame } from './junk'
+import {
+  buildTagProfile,
+  isUntouched,
+  libraryTileState,
+  rankByTaste,
+  type LibraryTileState,
+} from './recommend'
 import { hasOldMarker } from './series'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -216,6 +222,27 @@ export function libraryHref(filter: LibraryFilter, page = 1): string {
   return s ? `/library?${s}` : '/library'
 }
 
+/**
+ * Состояние плитки на стене /library — с поправкой на не-игры.
+ *
+ * libraryTileState знает только часы, и саундтрек с нулём минут для него «не
+ * распакован». Счётчики бэклога не-игры не считают (looksLikeNonGame в
+ * backlogValue и на портрете), и чипс «Не распакованы» обязан показать то же
+ * число, что строка-сводка над ним, а ссылка «Все нераспакованные» — привести
+ * ровно к ним. Поэтому не-игра в бэклоговых состояниях стоит нейтральной
+ * плиткой: без подписи и вне полок бэклога, как пройденная. На полке «Все»
+ * она остаётся — это библиотека, и саундтрек в ней правда есть.
+ */
+export function wallState(
+  g: LibraryGame,
+  meta: GameMeta | undefined,
+  nowSec: number,
+): LibraryTileState {
+  const state = libraryTileState(g, nowSec)
+  if ((state === 'untouched' || state === 'unplayed') && looksLikeNonGame(g, meta)) return 'played'
+  return state
+}
+
 export type LibraryView = {
   games: LibraryGame[]
   /** по ВСЕЙ библиотеке, а не по выбранной полке — это подписи на чипсах */
@@ -236,12 +263,14 @@ export function buildLibraryView(
     active: 0,
   }
   for (const g of library) {
-    const state = libraryTileState(g, nowSec)
+    const state = wallState(g, metaOf(g.appid), nowSec)
     if (state !== 'played') counts[state]++
   }
 
   const picked =
-    filter === 'all' ? library : library.filter((g) => libraryTileState(g, nowSec) === filter)
+    filter === 'all'
+      ? library
+      : library.filter((g) => wallState(g, metaOf(g.appid), nowSec) === filter)
 
   // «Ни разу не запускал» ранжируется по вкусу: часов у этих игр нет вовсе, а
   // даты покупки Steam не отдаёт — вкус здесь единственный осмысленный порядок.
