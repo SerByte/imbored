@@ -62,6 +62,15 @@ describe('weighTags', () => {
     expect(out).not.toHaveProperty('Singleplayer')
     expect(out.Automation).toBeCloseTo(0.5 * w('Automation'), 10)
   })
+
+  test('не-числа выпадают и с весом, и без: NaN не доходит до длины стороны', () => {
+    const w = tagWeightFrom(TAG_STATS)!
+    expect(weighTags({ Indie: 1, Automation: Number.NaN }, null)).toEqual({ Indie: 1 })
+    expect(weighTags({ 'Colony Sim': 0.5, Automation: Infinity }, w)).toEqual({
+      'Colony Sim': 0.5 * w('Colony Sim'),
+    })
+    expect(Number.isFinite(cosineSide(weighTags({ Indie: 1, X: Number.NaN }, null)).len)).toBe(true)
+  })
 })
 
 describe('weightedCosine', () => {

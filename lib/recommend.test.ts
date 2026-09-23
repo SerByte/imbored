@@ -126,6 +126,29 @@ describe('buildTagProfile', () => {
     const profile = buildTagProfile([game({ appid: 1, playtimeForever: 600 })], () => undefined)
     expect(profile).toEqual({})
   })
+
+  test('мусор в тегах пропускается, и профиль не становится NaN', () => {
+    // Строка вместо объекта — ровно то, что отдавал голый JSON.parse на дважды
+    // закодированной колонке: Object.entries давал символы, деление — NaN
+    const asString = {
+      ...meta(1, {}),
+      tags: JSON.stringify({ MOBA: 1019 }) as unknown as Record<string, number>,
+    }
+    const mixed = meta(2, { Puzzle: 100, Broken: Number.NaN, Neg: -5, Inf: Infinity })
+    expect(normalizedTags(asString)).toEqual({})
+    expect(normalizedTags(mixed)).toEqual({ Puzzle: 1 })
+
+    const metas = new Map([
+      [1, asString],
+      [2, mixed],
+    ])
+    const profile = buildTagProfile(
+      [game({ appid: 1, playtimeForever: 600 }), game({ appid: 2, playtimeForever: 600 })],
+      (id) => metas.get(id),
+    )
+    expect(Object.keys(profile)).toEqual(['Puzzle'])
+    expect(Number.isFinite(profile.Puzzle)).toBe(true)
+  })
 })
 
 describe('classifyLibraryGame', () => {

@@ -103,12 +103,25 @@ export function tagWeightFrom(tagStats: Map<string, number>): TagWeight | null {
   return (tag) => rarityOf(tag, tagStats, top)
 }
 
-/** Вектор тегов, взвешенный редкостью. Теги с нулевым весом выпадают. */
+/** Все ли значения вектора — конечные числа */
+function allFinite(v: Record<string, number>): boolean {
+  for (const x of Object.values(v)) if (!Number.isFinite(x)) return false
+  return true
+}
+
+/**
+ * Вектор тегов, взвешенный редкостью. Теги с нулевым весом выпадают.
+ *
+ * Не-числа выпадают тоже: одно NaN в стороне косинуса делает NaN её длину, а
+ * с ней и скор против любого кандидата. Без веса чистый вектор отдаётся тем же
+ * объектом — «tagWeight: null — скоры ровно прежние, до бита» держится и на этом.
+ */
 export function weighTags(v: Record<string, number>, w: TagWeight | null): Record<string, number> {
-  if (!w) return v
+  if (!w && allFinite(v)) return v
   const out: Record<string, number> = {}
   for (const [tag, value] of Object.entries(v)) {
-    const r = w(tag)
+    if (!Number.isFinite(value)) continue
+    const r = w ? w(tag) : 1
     if (r > 0) out[tag] = value * r
   }
   return out

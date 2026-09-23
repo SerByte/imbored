@@ -1,6 +1,6 @@
 import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test, vi } from 'vitest'
-import { cooldownOf, isMultiplayerMeta } from './recommend'
+import { buildTagProfile, cooldownOf, isMultiplayerMeta, normalizedTags } from './recommend'
 import { checkRate } from './ratelimit'
 import {
   acquireLease,
@@ -54,6 +54,9 @@ import {
   getGameJson,
   getGameMeta,
   getGameShots,
+  parseIdList,
+  parseStrList,
+  parseTagMap,
   getGamesMeta,
   getGamesMetaLite,
   getLatestSnapshot,
@@ -171,6 +174,86 @@ describe('db', () => {
     const db = await freshDb()
     // db.batch([]) в libsql — ошибка, и вызывающему пришлось бы помнить об этом
     expect(await setGameDescriptions(db, [])).toBe(0)
+  })
+
+  test('дважды закодированные теги читаются объектом, а не строкой', async () => {
+    // Так лежит Dota 2 в живой базе: в tags_json JSON-строка, а в ней объект.
+    // Голый JSON.parse отдавал строку, и профиль вкуса каждого владельца игры
+    // становился NaN целиком
+    const db = await freshDb()
+    const tags = { 'Free to Play': 3010, MOBA: 1019 }
+    await upsertGameMeta(db, { ...META, appid: 570, name: 'Dota 2', tags }, NOW)
+    await db.execute({
+      sql: `UPDATE games SET tags_json = ?, genres_json = ?, categories_json = ?
+            WHERE appid = 570`,
+      args: [
+        JSON.stringify(JSON.stringify(tags)),
+        JSON.stringify(JSON.stringify(['Strategy'])),
+        JSON.stringify('[1,9]'),
+      ],
+    })
+
+    for (const read of [getGamesMeta, getGamesMetaLite]) {
+      const m = (await read(db, [570])).get(570)
+      expect(m?.tags, read.name).toEqual(tags)
+      expect(m?.genres, read.name).toEqual(['Strategy'])
+      expect(m?.categories, read.name).toEqual([1, 9])
+    }
+    expect((await getGameMeta(db, 570))?.tags).toEqual(tags)
+  })
+
+  test('мусор в JSON-колонках читается пустотой: чтение не падает, профиль не NaN', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, appid: 1 }, NOW)
+    await upsertGameMeta(db, { ...META, appid: 2 }, NOW)
+    await db.batch(
+      [
+        {
+          sql: `UPDATE games SET tags_json = 'не json', genres_json = '{"a":1}',
+                  categories_json = 'null', screenshots_json = '"x"' WHERE appid = 1`,
+          args: [],
+        },
+        {
+          // 1e400 разбирается в Infinity, строка и минус — не голоса
+          sql: `UPDATE games SET tags_json = '{"Puzzle":100,"Str":"5","Neg":-1,"Inf":1e400,"Nil":null}',
+                  categories_json = '[2,"9",null,38]' WHERE appid = 2`,
+          args: [],
+        },
+      ],
+      'write',
+    )
+
+    const metas = await getGamesMeta(db, [1, 2])
+    expect(metas.get(1)).toMatchObject({ tags: {}, genres: [], categories: [], screenshots: [] })
+    expect(metas.get(2)?.tags).toEqual({ Puzzle: 100 })
+    expect(metas.get(2)?.categories).toEqual([2, 38])
+
+    const profile = buildTagProfile(
+      [
+        { appid: 1, name: 'a', playtimeForever: 600, playtime2Weeks: 0 },
+        { appid: 2, name: 'b', playtimeForever: 600, playtime2Weeks: 0 },
+      ],
+      (id) => metas.get(id),
+    )
+    expect(profile).toEqual({ Puzzle: normalizedTags(metas.get(2)!).Puzzle * Math.log1p(10) })
+  })
+
+  test('parseTagMap и списки: развернуть до объекта, оставить только годное', () => {
+    const tags = { Roguelike: 900, Indie: 0 }
+    expect(parseTagMap(JSON.stringify(tags))).toEqual(tags)
+    expect(parseTagMap(JSON.stringify(JSON.stringify(tags)))).toEqual(tags)
+    // тройная упаковка — тоже упаковка
+    expect(parseTagMap(JSON.stringify(JSON.stringify(JSON.stringify(tags))))).toEqual(tags)
+    for (const junk of ['', 'null', '[1,2]', '42', '"строка"', '{', null, undefined]) {
+      expect(parseTagMap(junk), String(junk)).toEqual({})
+    }
+
+    expect(parseStrList('["Action",1,null,"RPG"]')).toEqual(['Action', 'RPG'])
+    expect(parseStrList(JSON.stringify('["Action"]'))).toEqual(['Action'])
+    expect(parseStrList('{"a":1}')).toEqual([])
+    expect(parseIdList('[1,"9",9,1e400]')).toEqual([1, 9])
+    expect(parseIdList(JSON.stringify('[1,9]'))).toEqual([1, 9])
+    expect(parseIdList('битое')).toEqual([])
   })
 
   test('метаданные игры: upsert + чтение эквивалентны, повторный upsert обновляет', async () => {

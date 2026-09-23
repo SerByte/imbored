@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
-import { buildTrivia, TRIVIA_COUNT, type TriviaCatalogGame, type TriviaParty } from './trivia'
+import { createDb, upsertGameMeta } from './db'
+import {
+  buildTrivia,
+  loadTriviaCatalog,
+  TRIVIA_COUNT,
+  type TriviaCatalogGame,
+  type TriviaParty,
+} from './trivia'
 import type { LibraryGame } from './types'
 
 function game(appid: number, name: string, over: Partial<TriviaCatalogGame> = {}): TriviaCatalogGame {
@@ -144,5 +151,26 @@ describe('buildTrivia', () => {
     // Комментарии выкидываем: в них про запрет RANDOM() как раз и написано
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     expect(code).not.toMatch(/ORDER BY\s+RANDOM\(\)/i)
+  })
+})
+
+describe('loadTriviaCatalog', () => {
+  test('дважды закодированные теги приезжают объектом, а не строкой', async () => {
+    // «Какого тега нет у игры» берёт варианты из Object.keys(tags) — у строки
+    // это номера символов, — а проверка `t in target.tags` по строке бросает
+    // TypeError, и викторина всей комнаты отвечала 500
+    const db = await createDb(':memory:')
+    const tags = { MOBA: 1019, Strategy: 723 }
+    await upsertGameMeta(
+      db,
+      { appid: 570, name: 'Dota 2', tags, genres: [], categories: [1], ccu: 600_000 },
+      1_700_000_000,
+    )
+    await db.execute({
+      sql: 'UPDATE games SET tags_json = ? WHERE appid = 570',
+      args: [JSON.stringify(JSON.stringify(tags))],
+    })
+    const [dota] = await loadTriviaCatalog(db, 'seed')
+    expect(dota.tags).toEqual(tags)
   })
 })

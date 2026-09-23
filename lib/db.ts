@@ -1820,6 +1820,65 @@ export function isMultiplayerCategories(categories: number[]): boolean {
   return categories.some((c) => MULTIPLAYER_CATEGORY_IDS.has(c))
 }
 
+/**
+ * JSON-колонка, которую кто-то однажды закодировал дважды.
+ *
+ * В базе такое уже лежит: у Dota 2 tags_json — не объект, а JSON-строка с
+ * объектом внутри. Голый JSON.parse отдавал строку, Object.entries по ней
+ * давал пары «номер символа → символ», и normalizedTags делил символы на
+ * символы. Профиль вкуса КАЖДОГО владельца игры становился NaN целиком, и
+ * подбор молча превращался в случайный. А крон страниц это ещё и
+ * консервировал: брал «теги» из getGameMeta строкой и той же строкой их
+ * записывал обратно.
+ * Разворачиваем до трёх слоёв: в жизни встречалось два, а бесконечно
+ * разворачивать незачем.
+ *
+ * Битый JSON — null, а не исключение: одна испорченная строка не должна
+ * ронять чтение всей библиотеки.
+ */
+function parseJsonLoose(raw: unknown): unknown {
+  let v = raw
+  for (let depth = 0; depth < 3 && typeof v === 'string'; depth++) {
+    try {
+      v = JSON.parse(v)
+    } catch {
+      return null
+    }
+  }
+  return v
+}
+
+/**
+ * Теги игры из tags_json: тег → голоса. Всё, что не конечное неотрицательное
+ * число, выпадает, а не-объект целиком читается как «тегов нет».
+ *
+ * Через неё теги читают все, кто достаёт их из базы: rowToMeta, пул
+ * открытий и викторина. Новое чтение tags_json — тоже только через неё.
+ */
+export function parseTagMap(raw: unknown): Record<string, number> {
+  const v = parseJsonLoose(raw)
+  const out: Record<string, number> = {}
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out
+  for (const [tag, votes] of Object.entries(v)) {
+    if (typeof votes === 'number' && Number.isFinite(votes) && votes >= 0) out[tag] = votes
+  }
+  return out
+}
+
+/** Список строк (жанры, скриншоты): не массив — пусто, не строки — выпадают */
+export function parseStrList(raw: unknown): string[] {
+  const v = parseJsonLoose(raw)
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+}
+
+/** Список id (категории Steam): не массив — пусто, не числа — выпадают */
+export function parseIdList(raw: unknown): number[] {
+  const v = parseJsonLoose(raw)
+  return Array.isArray(v)
+    ? v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x))
+    : []
+}
+
 type GameRow = {
   appid: number
   name: string
@@ -1860,14 +1919,14 @@ function rowToMeta(row: GameRow): GameMeta {
   const meta: GameMeta = {
     appid: row.appid,
     name: row.name,
-    tags: JSON.parse(row.tags_json),
-    genres: JSON.parse(row.genres_json),
-    categories: JSON.parse(row.categories_json),
+    tags: parseTagMap(row.tags_json),
+    genres: parseStrList(row.genres_json),
+    categories: parseIdList(row.categories_json),
   }
   if (row.short_description !== null) meta.shortDescription = row.short_description
   if (row.header_image !== null) meta.headerImage = row.header_image
   // Узкая выборка (getGamesMetaLite) колонку не читает вовсе — отсюда undefined
-  if (row.screenshots_json) meta.screenshots = JSON.parse(row.screenshots_json)
+  if (row.screenshots_json) meta.screenshots = parseStrList(row.screenshots_json)
   if (row.is_free !== null) meta.isFree = row.is_free === 1
   if (row.price_final !== null) meta.priceFinal = row.price_final
   // Скидка читается целиком, включая ноль: «полная цена» — это ответ, а не

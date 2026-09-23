@@ -1,6 +1,6 @@
 import type { GameArtUrls } from './art'
 import { hashString, mulberry32 } from './daily'
-import type { Db } from './db'
+import { parseTagMap, type Db } from './db'
 import type { LibraryGame } from './types'
 
 /**
@@ -98,7 +98,9 @@ export async function loadTriviaCatalog(
     ccu: r.ccu,
     art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
     headerImage: r.header_image,
-    tags: JSON.parse(r.tags_json) as Record<string, number>,
+    // Через ту же дверь, что и вся мета: дважды закодированные теги иначе
+    // приезжали бы сюда строкой
+    tags: parseTagMap(r.tags_json),
   }))
 }
 

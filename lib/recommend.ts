@@ -165,11 +165,21 @@ export function timeFit(tags: Set<string>, time: Mood['time']): number {
  */
 export { cosine }
 
-/** Тег-вектор игры, нормированный к максимуму голосов (0..1) */
+/**
+ * Тег-вектор игры, нормированный к максимуму голосов (0..1).
+ *
+ * Не-числа пропускаются, а не делятся. Одно NaN здесь — и NaN становится весь
+ * профиль вкуса: максимум, косинус, скор каждого кандидата. Базу от этого
+ * бережёт parseTagMap в lib/db, но мета приходит и не из базы — демо,
+ * заготовки, ответы Steam, — и вектор обязан пережить её мусор сам.
+ */
 export function normalizedTags(meta: GameMeta): Record<string, number> {
-  const max = Math.max(...Object.values(meta.tags), 1)
+  const votes = Object.entries(meta.tags).filter(
+    ([, v]) => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+  )
+  const max = Math.max(...votes.map(([, v]) => v), 1)
   const out: Record<string, number> = {}
-  for (const [tag, votes] of Object.entries(meta.tags)) out[tag] = votes / max
+  for (const [tag, v] of votes) out[tag] = v / max
   return out
 }
 

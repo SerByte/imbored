@@ -1,4 +1,4 @@
-import type { Db } from './db'
+import { parseIdList, parseStrList, parseTagMap, type Db } from './db'
 import type { GameMeta } from './types'
 
 /**
@@ -83,9 +83,9 @@ function rowToMeta(row: PoolRow): GameMeta {
   const meta: GameMeta = {
     appid: row.appid,
     name: row.name,
-    tags: JSON.parse(row.tags_json),
-    genres: JSON.parse(row.genres_json),
-    categories: JSON.parse(row.categories_json),
+    tags: parseTagMap(row.tags_json),
+    genres: parseStrList(row.genres_json),
+    categories: parseIdList(row.categories_json),
   }
   if (row.short_description) meta.shortDescription = row.short_description
   if (row.header_image) meta.headerImage = row.header_image
