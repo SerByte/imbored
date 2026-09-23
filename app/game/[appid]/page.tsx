@@ -169,6 +169,12 @@ const SCORE_RU: Record<string, string> = {
 export default async function GamePage({ params }: { params: Promise<{ appid: string }> }) {
   const { appid: raw } = await params
   const appid = Number(raw)
+  /*
+   * Оба notFound() дают настоящий 404 только потому, что над страницей нет
+   * границы Suspense: ни корневого loading.tsx, ни своего. С ними сервер
+   * успевал отдать каркас со статусом 200, и /game/abc уходил в поиск мягким
+   * 404. Каркас сюда не возвращать — см. lib/firstpaint.test.ts.
+   */
   // отрицательные appid — кураторский пул других магазинов
   if (!Number.isInteger(appid) || appid === 0) notFound()
 
