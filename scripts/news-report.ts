@@ -330,6 +330,10 @@ async function main() {
   )
 
   // ── J. Состояние крона ─────────────────────────────────────────────────
+  const SLICE_FIELDS = [
+    'chain', 'polled', 'inserted', 'digested', 'enriched', 'withShots', 'withProsCons',
+    'viaClaude', 'hasMore', 'stopped', 'упало', 'обрыв',
+  ]
   head('J. Что рассказывает про себя крон')
   const j = await rows(
     `SELECT key, value FROM catalog_meta WHERE key IN
@@ -344,8 +348,11 @@ async function main() {
     if (key.endsWith('_last_slice')) {
       try {
         const p = JSON.parse(val) as Record<string, unknown>
-        val = `${ago(p.at)}  chain=${p.chain}  polled=${p.polled}  inserted=${p.inserted}` +
-          `  digested=${p.digested}  hasMore=${p.hasMore}  stopped=${p.stopped}`
+        // Только поля, которые этот крон пишет: у карточек нет polled, у
+        // новостей нет enriched. упало и обрыв — последним, чтобы бросались в
+        // глаза: это ровно тот след, которого раньше не оставалось вовсе.
+        const parts = SLICE_FIELDS.filter((f) => p[f] !== undefined).map((f) => `${f}=${String(p[f])}`)
+        val = `${ago(p.at)}  ${parts.join('  ')}`
       } catch {
         /* оставляем как есть */
       }

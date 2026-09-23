@@ -95,3 +95,23 @@ export async function passChain(
   // сюда не доходим: цикл возвращает на обеих итерациях
   return { ok: false, reason: 'неизвестно', childMayRun: true }
 }
+
+/**
+ * Строка для stderr, когда звено или пинок не передались.
+ *
+ * Отметка в catalog_meta живёт до следующего звена и отвечает на вопрос «что
+ * сейчас», а Runtime Logs — «что было и когда». Одна строка JSON, потому что
+ * многострочное в сборщике логов разъезжается на отдельные записи и перестаёт
+ * искаться (тот же довод, что у serverErrorLine в lib/errlog). Троттлинг не
+ * нужен: обрыв случается раз на цепочку, а цепочек — единицы в час.
+ */
+export function chainBreakLine(e: {
+  cron: string
+  /** Звено, которое не смогло передать эстафету; у пинка — 0 */
+  chain: number
+  reason: string
+  /** Не звено своей цепочки, а пинок чужого крона из /api/cron/news */
+  kick?: boolean
+}): string {
+  return JSON.stringify({ event: 'cron-chain-break', ...e })
+}

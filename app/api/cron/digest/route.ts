@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
-import { cronAuthorized, sliceDeadline } from '@/lib/cron'
+import { chainBreakLine, passChain } from '@/lib/chain'
+import { CRON_JOBS, cronAuthorized, sliceDeadline } from '@/lib/cron'
 import { acquireLease, DIGEST_LEASE, getCatalogMeta, releaseLease, setCatalogMeta } from '@/lib/db'
 import { runDigestSlice } from '@/lib/newsjob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
@@ -32,7 +33,7 @@ export const maxDuration = 60
  */
 const MAX_CHAIN = 8
 const LEASE_TTL_SEC = 75
-const LAST_KEY = 'digest_last_slice'
+const LAST_KEY = CRON_JOBS.digest.lastKey
 
 /** За срез: пересказ занимает 1–3 с, в сорок восемь секунд укладывается около 25 */
 const DIGEST_LIMIT = 25
@@ -49,7 +50,7 @@ export async function GET(req: Request) {
   const db = await getDb()
 
   // килл-свитч без редеплоя — тот же приём, что у новостей и карточек
-  if ((await getCatalogMeta(db, 'digest_paused')) === '1') {
+  if ((await getCatalogMeta(db, CRON_JOBS.digest.pausedKey)) === '1') {
     return NextResponse.json({ paused: true })
   }
 
@@ -60,6 +61,21 @@ export async function GET(req: Request) {
 
   after(async () => {
     let result: Awaited<ReturnType<typeof runDigestSlice>> | null = null
+    /*
+     * Упало ли звено — отдельно от результата, как у /api/cron/pages. Без
+     * этого исключение ложилось в отметку как `{at, chain}` — неотличимо от
+     * пустого среза, и снаружи о падении было не узнать ничем.
+     *
+     * А вот эстафету упавшее звено здесь НЕ передаёт, в отличие от карточек и
+     * новостей, и это про деньги. Из runDigestSlice наружу летят только
+     * ошибки базы (отказ модели он гасит сам), и одна из них — запись
+     * пересказа, которая идёт уже ПОСЛЕ оплаченного вызова. Если база
+     * перестала принимать записи, следующее звено взяло бы ту же запись и
+     * заплатило бы за неё ещё раз, и так до MAX_CHAIN на каждый часовой
+     * триггер. Цена остановки мала: через час придёт воркфлоу, а
+     * /api/cron/health покажет «упало».
+     */
+    let упало: string | null = null
     try {
       result = await runDigestSlice(db, {
         deadlineAt: sliceDeadline(startedAt, maxDuration),
@@ -67,8 +83,19 @@ export async function GET(req: Request) {
       })
     } catch (err) {
       console.error('digest slice', err)
+      упало = err instanceof Error ? err.message.slice(0, 120) : 'исключение'
     } finally {
-      await setCatalogMeta(db, LAST_KEY, JSON.stringify({ at: nowSec(), chain, ...result }))
+      // Отметка — диагностика, а не работа: её отказ не должен ронять
+      // передачу звена и снятие аренды ниже.
+      try {
+        await setCatalogMeta(
+          db,
+          LAST_KEY,
+          JSON.stringify({ at: nowSec(), chain, ...result, ...(упало ? { упало } : {}) }),
+        )
+      } catch (err) {
+        console.error('cron meta', err)
+      }
 
       // Пересказ переписывает tldr, а его рисует PatchRow — значит лента после
       // среза выглядит иначе, даже если ни одной новой записи не появилось.
@@ -80,11 +107,23 @@ export async function GET(req: Request) {
       // Аренду передаём следующему звену вместе с holder, отдаём — только
       // когда цепочка кончилась. См. тот же кусок в /api/cron/news.
       if (!goesOn) await releaseLease(db, DIGEST_LEASE, holder)
+      // Обрыв записывается, а не проглатывается — см. докблок lib/chain. Здесь
+      // стоял тот же `.catch(() => {})`, что уже стоил карточкам суток.
       if (goesOn && secret) {
-        await fetch(
+        const передача = await passChain(
           `${appBaseUrl()}/api/cron/digest?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
-          { headers: { 'x-cron-secret': secret } },
-        ).catch(() => {})
+          secret,
+        )
+        if (!передача.ok) {
+          console.error(chainBreakLine({ cron: 'digest', chain, reason: передача.reason }))
+          await setCatalogMeta(
+            db,
+            LAST_KEY,
+            JSON.stringify({ at: nowSec(), chain, ...result, обрыв: передача.reason }),
+          )
+          // Аренду отдаём, ТОЛЬКО когда ребёнка точно нет — см. lib/chain.
+          if (!передача.childMayRun) await releaseLease(db, DIGEST_LEASE, holder)
+        }
       }
     }
   })

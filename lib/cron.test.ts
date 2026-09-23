@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  CRON_JOBS,
   CRON_TAIL_MS,
   cronAuthorized,
   DIGEST_STALE_SEC,
-  digestLooksStale,
+  PAGES_STALE_SEC,
+  pagesNeedKick,
   sliceClock,
   sliceDeadline,
+  sliceHealth,
+  sliceLooksStale,
 } from './cron'
 
 // Заголовки HTTP это ByteString: секрет обязан быть ASCII.
@@ -60,33 +64,97 @@ describe('cronAuthorized', () => {
 const NOW = 1_700_000_000
 const slice = (at: number) => JSON.stringify({ at, chain: 0, digested: 25 })
 
-describe('digestLooksStale: подстраховка на случай, если GitHub замолчит', () => {
+describe('sliceLooksStale: подстраховка на случай, если расписание замолчит', () => {
+  const stale = (raw: string | null, max = DIGEST_STALE_SEC) => sliceLooksStale(raw, NOW, max)
+
   test('свежий срез — не трогаем', () => {
-    expect(digestLooksStale(slice(NOW - 600), NOW)).toBe(false)
+    expect(stale(slice(NOW - 600))).toBe(false)
   })
 
   test('молчит дольше порога — пинаем', () => {
-    expect(digestLooksStale(slice(NOW - DIGEST_STALE_SEC + 1), NOW)).toBe(false)
-    expect(digestLooksStale(slice(NOW - DIGEST_STALE_SEC), NOW)).toBe(true)
+    expect(stale(slice(NOW - DIGEST_STALE_SEC + 1))).toBe(false)
+    expect(stale(slice(NOW - DIGEST_STALE_SEC))).toBe(true)
   })
 
   test('ни разу не отрабатывал — пинаем', () => {
     // первый прогон после деплоя: записи ещё нет
-    expect(digestLooksStale(null, NOW)).toBe(true)
+    expect(stale(null)).toBe(true)
   })
 
   test('мусор вместо записи — тоже пинаем', () => {
-    // отсутствие подтверждения, что пересказы живы, и есть повод пнуть:
+    // отсутствие подтверждения, что крон жив, и есть повод пнуть:
     // молчаливая поломка хуже лишнего запроса
-    expect(digestLooksStale('не json', NOW)).toBe(true)
-    expect(digestLooksStale('{}', NOW)).toBe(true)
-    expect(digestLooksStale(JSON.stringify({ at: 'вчера' }), NOW)).toBe(true)
-    expect(digestLooksStale(JSON.stringify({ at: 0 }), NOW)).toBe(true)
+    expect(stale('не json')).toBe(true)
+    expect(stale('{}')).toBe(true)
+    expect(stale(JSON.stringify({ at: 'вчера' }))).toBe(true)
+    expect(stale(JSON.stringify({ at: 0 }))).toBe(true)
+    expect(stale('null')).toBe(true)
   })
 
-  test('порог можно задать явно', () => {
-    expect(digestLooksStale(slice(NOW - 100), NOW, 50)).toBe(true)
-    expect(digestLooksStale(slice(NOW - 100), NOW, 500)).toBe(false)
+  test('порог у каждого свой', () => {
+    expect(stale(slice(NOW - 100), 50)).toBe(true)
+    expect(stale(slice(NOW - 100), 500)).toBe(false)
+  })
+})
+
+describe('pagesNeedKick: у карточек одно суточное расписание и не было повтора', () => {
+  const pages = (at: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ at, chain: 3, enriched: 14, hasMore: true, stopped: 'budget', ...extra })
+
+  test('вчерашний срез в пределах суток с запасом — не трогаем', () => {
+    expect(pagesNeedKick(pages(NOW - 24 * 3600), NOW)).toBe(false)
+  })
+
+  test('вызова из vercel.json не было больше суток — пинаем', () => {
+    // пропущенный вызов, skipped: locked под арендой новостей — сутки без повтора
+    expect(pagesNeedKick(pages(NOW - PAGES_STALE_SEC), NOW)).toBe(true)
+    expect(pagesNeedKick(null, NOW)).toBe(true)
+  })
+
+  test('цепочка оборвалась на передаче звена — пинаем, не дожидаясь завтра', () => {
+    expect(pagesNeedKick(pages(NOW - 3600, { обрыв: 'HTTP 503' }), NOW)).toBe(true)
+  })
+
+  test('упавшее последнее звено — не повод: суточная норма звеньев уже выбрана', () => {
+    // упавшее звено само передаёт эстафету, и последней «упало» остаётся
+    // только на MAX_CHAIN
+    const last = JSON.stringify({ at: NOW - 3600, chain: 24, упало: 'fetch failed' })
+    expect(pagesNeedKick(last, NOW)).toBe(false)
+  })
+})
+
+describe('sliceHealth: что видит /api/cron/health', () => {
+  const H = 3600
+
+  test('свежая спокойная отметка — здоров', () => {
+    expect(sliceHealth(slice(NOW - 60), NOW, H)).toEqual({ ok: true, ageSec: 60 })
+  })
+
+  test('нет записи, протух, упало, обрыв — нездоров, и видно почему', () => {
+    expect(sliceHealth(null, NOW, H)).toEqual({ ok: false, problem: 'нет записи' })
+    expect(sliceHealth('мусор', NOW, H)).toMatchObject({ ok: false, problem: 'нет записи' })
+    expect(sliceHealth(slice(NOW - H), NOW, H)).toEqual({ ok: false, problem: 'протух', ageSec: H })
+    expect(
+      sliceHealth(JSON.stringify({ at: NOW - 60, chain: 0, упало: 'SQLITE_BUSY' }), NOW, H),
+    ).toEqual({ ok: false, problem: 'упало', ageSec: 60, detail: 'SQLITE_BUSY' })
+    expect(
+      sliceHealth(JSON.stringify({ at: NOW - 60, chain: 5, обрыв: 'HTTP 401' }), NOW, H),
+    ).toEqual({ ok: false, problem: 'обрыв', ageSec: 60, detail: 'HTTP 401' })
+  })
+
+  test('пауза — здорова, но видна: её ставят руками, и письмо каждый час — шум', () => {
+    expect(sliceHealth(slice(NOW - 10 * H), NOW, H, true)).toEqual({
+      ok: true,
+      paused: true,
+      ageSec: 10 * H,
+    })
+    expect(sliceHealth(null, NOW, H, true)).toEqual({ ok: true, paused: true })
+  })
+
+  test('у каждого крона свой ключ, и ключи не пересекаются', () => {
+    const keys = Object.values(CRON_JOBS).flatMap((j) => [j.lastKey, j.pausedKey])
+    expect(new Set(keys).size).toBe(keys.length)
+    expect(CRON_JOBS.pages.staleSec).toBe(PAGES_STALE_SEC)
   })
 })
 

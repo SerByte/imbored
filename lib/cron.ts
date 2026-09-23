@@ -99,32 +99,148 @@ export function sliceClock(deadlineAt: number): SliceClock {
 export const DIGEST_STALE_SEC = 3 * 3600
 
 /**
- * Пора ли пнуть крон пересказов вручную.
+ * Сколько может молчать крон новостей. Ходит ежечасно из GitHub (и раз в сутки
+ * из vercel.json), так что три часа — это два пропущенных слота подряд.
+ */
+export const NEWS_STALE_SEC = 3 * 3600
+
+/**
+ * Сколько может молчать крон карточек.
  *
- * У новостей есть подстраховка — суточный крон в vercel.json, — а у пересказов
- * нет: на Hobby лимит два расписания на проект, и оба заняты. Значит пересказы
- * висят на одном GitHub Actions, а он глушит расписания после шестидесяти дней
- * тишины в репозитории и вообще ничего не обещает по срокам. Отвалиться это
- * может молча.
+ * Расписание у него одно — суточное в vercel.json, 05:00 с разбросом внутри
+ * часа на Hobby, — и ни одного внешнего. Сутки плюс два часа: на этот разброс и
+ * на то, что последнее звено цепочки пишет отметку минут через двадцать после
+ * первого.
+ */
+export const PAGES_STALE_SEC = 26 * 3600
+
+export type CronJob = 'news' | 'digest' | 'pages'
+
+type CronJobMeta = {
+  /** Ключ catalog_meta, куда каждое звено пишет отметку о себе */
+  lastKey: string
+  /** Килл-свитч: '1' — крон стоит */
+  pausedKey: string
+  /** Сколько крону можно молчать, секунд */
+  staleSec: number
+}
+
+/**
+ * Где каждый крон оставляет след и сколько ему можно молчать.
  *
- * Поэтому крон новостей, закончив цепочку, смотрит на возраст последнего среза
- * пересказов и при нужде пинает их сам. Три часа — с запасом на обычные
- * опоздания GitHub (10–15 минут) и на пропущенный слот-другой.
+ * Одно место и для роутов, которые пишут отметку, и для тех, кто её читает
+ * (пинок из /api/cron/news, /api/cron/health). Ключ, записанный одной
+ * строкой, а прочитанный другой, — тот самый молчаливый обрыв, от которого
+ * всё это и строится.
+ */
+export const CRON_JOBS: Record<CronJob, CronJobMeta> = {
+  news: { lastKey: 'news_last_slice', pausedKey: 'news_paused', staleSec: NEWS_STALE_SEC },
+  digest: { lastKey: 'digest_last_slice', pausedKey: 'digest_paused', staleSec: DIGEST_STALE_SEC },
+  pages: { lastKey: 'pages_last_slice', pausedKey: 'pages_paused', staleSec: PAGES_STALE_SEC },
+}
+
+/** То, что крон пишет о себе в *_last_slice. Поля среза сверх этих не нужны. */
+type SliceMark = { at: number; упало?: string; обрыв?: string }
+
+/** null — записи нет или в ней мусор: подтверждения, что крон жив, нет. */
+function readMark(raw: string | null): SliceMark | null {
+  if (!raw) return null
+  try {
+    const o = JSON.parse(raw) as { at?: unknown; упало?: unknown; обрыв?: unknown }
+    const at = Number(o?.at ?? 0)
+    if (!Number.isFinite(at) || at <= 0) return null
+    return {
+      at,
+      ...(typeof o.упало === 'string' ? { упало: o.упало } : {}),
+      ...(typeof o.обрыв === 'string' ? { обрыв: o.обрыв } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Пора ли пнуть крон вручную: последний срез старше maxAgeSec.
+ *
+ * Началось с пересказов. У новостей есть подстраховка — суточный крон в
+ * vercel.json, — а у пересказов нет: на Hobby лимит два расписания на проект,
+ * и оба заняты. Значит пересказы висят на одном GitHub Actions, а он глушит
+ * расписания после шестидесяти дней тишины в репозитории и вообще ничего не
+ * обещает по срокам. Отвалиться это может молча. Три часа (DIGEST_STALE_SEC) —
+ * с запасом на обычные опоздания GitHub (10–15 минут) и на пропущенный
+ * слот-другой.
  *
  * Неразобранный JSON, отсутствующая запись и мусор в поле означают одно и то
- * же: подтверждения, что пересказы живы, у нас нет. Значит пинаем.
+ * же: подтверждения, что крон жив, у нас нет. Значит пинаем.
  */
-export function digestLooksStale(
+export function sliceLooksStale(raw: string | null, nowSec: number, maxAgeSec: number): boolean {
+  const mark = readMark(raw)
+  return !mark || nowSec - mark.at >= maxAgeSec
+}
+
+/**
+ * Пора ли крону новостей пнуть крон карточек.
+ *
+ * У карточек расписание одно, суточное, и повтора не было вовсе: не пришёл
+ * вызов из vercel.json, пришёл в момент, когда аренду Steam держали новости
+ * (ответ skipped: locked), или цепочка оборвалась на передаче звена — и сутки
+ * потеряны. Так и выглядело «с 25.08 нет записей».
+ *
+ * Поводов два:
+ *   • отметка старше PAGES_STALE_SEC — вызова не было вовсе;
+ *   • последняя отметка — обрыв. Значит очередь не кончилась (звено передают
+ *     только при hasMore), а продолжать некому до завтра. Пинок начинает
+ *     цепочку заново — работа та же, что сделал бы следующий день, только
+ *     раньше.
+ * «упало» поводом не считается: упавшее звено само передаёт эстафету дальше,
+ * и последней такая отметка остаётся, только когда цепочка дошла до MAX_CHAIN —
+ * суточная норма выбрана, торопить нечего.
+ *
+ * Долбёжки нет: пинает только конец цепочки новостей (раз в час), а сам крон
+ * карточек берёт ту же аренду Steam, что и новости.
+ */
+export function pagesNeedKick(raw: string | null, nowSec: number): boolean {
+  if (sliceLooksStale(raw, nowSec, PAGES_STALE_SEC)) return true
+  return Boolean(readMark(raw)?.обрыв)
+}
+
+export type SliceHealth =
+  | { ok: true; ageSec?: number; paused?: true }
+  | {
+      ok: false
+      problem: 'нет записи' | 'протух' | 'упало' | 'обрыв'
+      ageSec?: number
+      /** Причина из самой отметки: текст исключения или отказ передачи */
+      detail?: string
+    }
+
+/**
+ * Здоров ли крон по его последней отметке — для /api/cron/health.
+ *
+ * Отказ крона не оставлял следов снаружи: воркфлоу проверял только код
+ * первого ответа, а это 202 ДО after(), то есть до всякой работы. Узнавали по
+ * пустым карточкам неделями позже.
+ *
+ * Нездоров, если отметки нет, она старше staleSec, либо последнее, что крон о
+ * себе записал, — «упало» или «обрыв».
+ *
+ * Пауза (килл-свитч *_paused) — здорова, но видна. Паузу ставят руками и во
+ * время разбора аварии, и ежечасное письмо «воркфлоу упал» в это время —
+ * шум, а не сигнал. Забытую паузу показывает отчёт (scripts/news-report.ts,
+ * раздел J) и поле paused в ответе.
+ */
+export function sliceHealth(
   raw: string | null,
   nowSec: number,
-  maxAgeSec = DIGEST_STALE_SEC,
-): boolean {
-  if (!raw) return true
-  try {
-    const at = Number((JSON.parse(raw) as { at?: unknown }).at ?? 0)
-    if (!Number.isFinite(at) || at <= 0) return true
-    return nowSec - at >= maxAgeSec
-  } catch {
-    return true
-  }
+  staleSec: number,
+  paused = false,
+): SliceHealth {
+  const mark = readMark(raw)
+  const ageSec = mark ? nowSec - mark.at : undefined
+  if (paused) return { ok: true, paused: true, ...(ageSec !== undefined ? { ageSec } : {}) }
+  if (!mark || ageSec === undefined) return { ok: false, problem: 'нет записи' }
+  if (mark.обрыв) return { ok: false, problem: 'обрыв', ageSec, detail: mark.обрыв }
+  if (mark.упало) return { ok: false, problem: 'упало', ageSec, detail: mark.упало }
+  if (ageSec >= staleSec) return { ok: false, problem: 'протух', ageSec }
+  return { ok: true, ageSec }
 }

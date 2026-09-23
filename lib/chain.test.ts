@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { passChain } from './chain'
+import { chainBreakLine, passChain } from './chain'
 
 const ОТВЕТ = (status: number) => ({ ok: status >= 200 && status < 300, status }) as Response
 
@@ -86,5 +86,18 @@ describe('передача звена цепочки', () => {
     await expect(
       passChain('http://x/next', 's', { delayMs: 0, fetchFn: async () => { throw 'строка, не Error' } }),
     ).resolves.toMatchObject({ ok: false })
+  })
+})
+
+describe('строка об обрыве для логов', () => {
+  test('одна строка JSON с меткой события — по ней ищут в Runtime Logs', () => {
+    const line = chainBreakLine({ cron: 'pages', chain: 5, reason: 'HTTP 503\nот Cloudflare' })
+    expect(line).not.toContain('\n')
+    expect(JSON.parse(line)).toEqual({
+      event: 'cron-chain-break',
+      cron: 'pages',
+      chain: 5,
+      reason: 'HTTP 503\nот Cloudflare',
+    })
   })
 })

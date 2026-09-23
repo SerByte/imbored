@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
-import { passChain } from '@/lib/chain'
-import { cronAuthorized, sliceDeadline } from '@/lib/cron'
+import { chainBreakLine, passChain } from '@/lib/chain'
+import { CRON_JOBS, cronAuthorized, sliceDeadline } from '@/lib/cron'
 import {
   acquireLease,
   countPageEnrichDue,
@@ -43,7 +43,7 @@ export const maxDuration = 60
  * только читает, ничего не помечает, и неотработанный хвост попыток не теряет.
  */
 const MAX_CHAIN = 24
-const LAST_KEY = 'pages_last_slice'
+const LAST_KEY = CRON_JOBS.pages.lastKey
 const LEASE_TTL_SEC = 75
 
 /**
@@ -69,7 +69,7 @@ export async function GET(req: Request) {
   const db = await getDb()
 
   // килл-свитч без редеплоя — тот же приём, что у новостей
-  if ((await getCatalogMeta(db, 'pages_paused')) === '1') {
+  if ((await getCatalogMeta(db, CRON_JOBS.pages.pausedKey)) === '1') {
     return NextResponse.json({ paused: true })
   }
 
@@ -150,6 +150,7 @@ export async function GET(req: Request) {
           secret,
         )
         if (!передача.ok) {
+          console.error(chainBreakLine({ cron: 'pages', chain, reason: передача.reason }))
           await setCatalogMeta(
             db,
             LAST_KEY,

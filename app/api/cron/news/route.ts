@@ -1,8 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
-import { passChain } from '@/lib/chain'
-import { cronAuthorized, digestLooksStale, sliceDeadline } from '@/lib/cron'
+import { chainBreakLine, passChain } from '@/lib/chain'
+import {
+  CRON_JOBS,
+  cronAuthorized,
+  DIGEST_STALE_SEC,
+  pagesNeedKick,
+  sliceDeadline,
+  sliceLooksStale,
+} from '@/lib/cron'
 import {
   acquireLease,
   countNewsPollDue,
@@ -28,7 +35,7 @@ export const maxDuration = 60
 /** Сколько звеньев цепочки максимум. 24 × 20 игр = 480 опросов в сутки. */
 const MAX_CHAIN = 24
 const ENROLL_KEY = 'news_enrolled_at'
-const LAST_KEY = 'news_last_slice'
+const LAST_KEY = CRON_JOBS.news.lastKey
 /** Итог суточной уборки (sweepStale) — чтобы её работу было видно не только по счёту */
 const SWEEP_KEY = 'sweep_last'
 
@@ -57,7 +64,7 @@ export async function GET(req: Request) {
   const db = await getDb()
 
   // килл-свитч без редеплоя
-  if ((await getCatalogMeta(db, 'news_paused')) === '1') {
+  if ((await getCatalogMeta(db, CRON_JOBS.news.pausedKey)) === '1') {
     return NextResponse.json({ paused: true })
   }
 
@@ -178,17 +185,43 @@ export async function GET(req: Request) {
       // бы внутрь чужой триггер ровно в тот момент, когда работа продолжается.
       if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
 
-      // Цепочка кончилась — заодно проверяем, жив ли крон пересказов. Он
-      // висит на одном GitHub Actions без подстраховки в vercel.json, и
-      // отвалиться может молча. Пинок делается ОДИН раз на цепочку, а не на
-      // каждом звене, и не ждёт ответа: если пересказы на паузе, их роут сам
-      // ответит {paused:true} — килл-свитч остаётся главнее нас.
+      /*
+       * Цепочка кончилась — заодно проверяем, живы ли кроны пересказов и
+       * карточек.
+       *
+       * Пересказы висят на одном GitHub Actions без подстраховки в
+       * vercel.json. У карточек наоборот — одно суточное расписание и ни
+       * одного внешнего, так что пропущенный вызов или оборванная цепочка
+       * стоили суток без повтора (см. pagesNeedKick). Ежечасная цепочка
+       * новостей — единственное, что ходит часто, ей и подстраховывать.
+       *
+       * Пинок делается ОДИН раз на цепочку, а не на каждом звене. Аренда
+       * Steam к этому моменту уже отдана строкой выше, так что карточки её
+       * возьмут. Если крон на паузе, его роут сам ответит {paused:true} —
+       * килл-свитч остаётся главнее нас. Отказ пинка больше не глотается
+       * молча: строка в лог, тем же форматом, что обрыв звена.
+       *
+       * Своим try: чтение отметки — сетевой вызов к Turso, а исключение в
+       * finally внутри after() уходит в никуда вместе с остатком блока.
+       */
       if (!goesOn && secret) {
-        const last = await getCatalogMeta(db, 'digest_last_slice')
-        if (digestLooksStale(last, nowSec())) {
-          await fetch(`${appBaseUrl()}/api/cron/digest`, {
-            headers: { 'x-cron-secret': secret },
-          }).catch(() => {})
+        try {
+          const now = nowSec()
+          const digestLast = await getCatalogMeta(db, CRON_JOBS.digest.lastKey)
+          const pagesLast = await getCatalogMeta(db, CRON_JOBS.pages.lastKey)
+          const пинки = [
+            { cron: 'digest', надо: sliceLooksStale(digestLast, now, DIGEST_STALE_SEC) },
+            { cron: 'pages', надо: pagesNeedKick(pagesLast, now) },
+          ]
+          for (const { cron, надо } of пинки) {
+            if (!надо) continue
+            const пинок = await passChain(`${appBaseUrl()}/api/cron/${cron}`, secret)
+            if (!пинок.ok) {
+              console.error(chainBreakLine({ cron, chain: 0, reason: пинок.reason, kick: true }))
+            }
+          }
+        } catch (err) {
+          console.error('cron kick', err)
         }
       }
 
@@ -201,6 +234,7 @@ export async function GET(req: Request) {
           secret,
         )
         if (!передача.ok) {
+          console.error(chainBreakLine({ cron: 'news', chain, reason: передача.reason }))
           await setCatalogMeta(
             db,
             LAST_KEY,
