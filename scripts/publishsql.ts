@@ -1,3 +1,4 @@
+import { CYRILLIC_GLOB } from '../lib/cyrillic'
 import type { GameJsonRepair } from '../lib/db'
 import { plural } from '../lib/plural'
 
@@ -24,11 +25,10 @@ export function buildSetList(cols: readonly string[]): string {
    * английское английским, английское русским. Пустое локальное тоже не
    * затирает: оно нерусское по этой проверке.
    *
-   * GLOB, а не сравнение диапазонов: LIKE в SQLite регистронезависим только
-   * для ASCII, и '%[а-я]%' не сработал бы вовсе — квадратные скобки для LIKE
-   * не метасимволы. Тот же класс букв, что в самом скрипте доливки.
+   * Класс букв и GLOB вместо LIKE — в lib/cyrillic: то же правило стоит в
+   * mergeMeta и в SQL апсерта, и копий у него быть не должно.
    */
-  const КИРИЛЛИЦА = "'*[абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ]*'"
+  const КИРИЛЛИЦА = CYRILLIC_GLOB
   return cols
     .filter((c) => c !== 'appid')
     .map((c) => {

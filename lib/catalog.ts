@@ -1,4 +1,5 @@
 import { parseStoreAssets, type StoreAssets } from './art'
+import { hasCyrillic } from './cyrillic'
 import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
 import { logSwallowed } from './errlog'
 import { pace } from './pace'
@@ -230,6 +231,23 @@ export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta
   }
   if (!fresh.art || !Object.keys(fresh.art).length) {
     if (existing.art && Object.keys(existing.art).length) out.art = existing.art
+  }
+  /*
+   * Описание — не про пустоту, а про ЯЗЫК.
+   *
+   * Прогрев ходит в GetItems по-английски (STORE_LANGUAGE ниже) и раз в
+   * META_MAX_AGE_SEC приносит английский short_description. Русский кладёт
+   * только обогащение карточки, и следующий его проход — через полгода
+   * (PAGE_MAX_AGE_SEC). Без этой строки CS2, открытая в /play через две
+   * недели после обогащения, снова становилась английской и на /game/730, и в
+   * её meta description — и чем популярнее игра, тем вернее: она чаще других
+   * попадает в чьи-то библиотеки.
+   *
+   * Правило то же, что у заливки и у SQL апсерта (lib/cyrillic): русское не
+   * заменяется нерусским, в том числе пустым. Всё остальное едет как прежде.
+   */
+  if (hasCyrillic(existing.shortDescription) && !hasCyrillic(fresh.shortDescription)) {
+    out.shortDescription = existing.shortDescription
   }
   return out
 }

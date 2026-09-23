@@ -22,6 +22,7 @@
 
 import { gameDescriptions, setGameDescriptions } from '../lib/db'
 import { fetchStoreDescriptions } from '../lib/catalog'
+import { hasCyrillic } from '../lib/cyrillic'
 import { openDb } from './opendb'
 
 const STORE_BATCH = 200
@@ -34,16 +35,16 @@ function arg(name: string): string | undefined {
 const has = (name: string) => process.argv.includes(`--${name}`)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/** Хоть одна кириллическая буква — значит описание уже на языке сайта. */
-const CYRILLIC = /[\u0400-\u04FF]/
-
 async function main() {
   const limit = Number(arg('limit') ?? 6000)
   const dry = has('dry')
   const db = await openDb()
 
   const all = await gameDescriptions(db, limit)
-  const target = all.filter((g) => !g.description || !CYRILLIC.test(g.description))
+  // Хоть одна русская буква — описание уже на языке сайта. Класс букв общий с
+  // заливкой и прогревом (lib/cyrillic): что здесь считается русским, то там
+  // и берегут от перезаписи.
+  const target = all.filter((g) => !hasCyrillic(g.description))
   console.log(
     `в пуле: ${all.length}, уже на русском: ${all.length - target.length}, доливаем: ${target.length}`,
   )

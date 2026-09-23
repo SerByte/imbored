@@ -377,6 +377,37 @@ describe('mergeMeta', () => {
     const fresh = { appid: 1, name: 'X', tags: {}, genres: [], categories: [] }
     expect(mergeMeta(null, fresh)).toEqual(fresh)
   })
+
+  describe('описание: русское не заменяется нерусским', () => {
+    const РУС = 'Более двух десятилетий Counter-Strike служит примером'
+    const АНГ = 'For over two decades, Counter-Strike has offered'
+    const с = (shortDescription?: string) => ({
+      appid: 730,
+      name: 'Counter-Strike 2',
+      tags: { FPS: 100 },
+      genres: [],
+      categories: [1],
+      ...(shortDescription === undefined ? {} : { shortDescription }),
+    })
+
+    test('прогрев с английским не откатывает обогащённое русское', () => {
+      expect(mergeMeta(с(РУС), с(АНГ)).shortDescription).toBe(РУС)
+    })
+
+    test('пустое и отсутствующее тоже не стирают русское', () => {
+      expect(mergeMeta(с(РУС), с('')).shortDescription).toBe(РУС)
+      expect(mergeMeta(с(РУС), с()).shortDescription).toBe(РУС)
+    })
+
+    test('английское английским и английское русским едут как прежде', () => {
+      expect(mergeMeta(с(АНГ), с('Another English text')).shortDescription).toBe('Another English text')
+      expect(mergeMeta(с(АНГ), с(РУС)).shortDescription).toBe(РУС)
+    })
+
+    test('русское русским едет — переводы в Steam правят', () => {
+      expect(mergeMeta(с(РУС), с('Новый перевод')).shortDescription).toBe('Новый перевод')
+    })
+  })
 })
 
 describe('parseSteamSpyTags', () => {
@@ -436,6 +467,44 @@ describe('ensureMeta', () => {
     expect(stored?.isFree).toBe(true)
     // цена остаётся: «Steam не назвал цену» и «игра подешевела» неразличимы
     expect(stored?.priceFinal).toBe(300)
+  })
+
+  test('прогрев раз в две недели не кладёт английское описание поверх русского', async () => {
+    // Русское кладёт обогащение карточки (appdetails с l=russian) и вернётся
+    // к нему через полгода; прогрев ходит в GetItems по-английски
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    const РУС = 'Более двух десятилетий Counter-Strike служит примером'
+    await upsertGameMeta(
+      db,
+      {
+        appid: 730,
+        name: 'Counter-Strike 2',
+        tags: { Action: 100 },
+        genres: ['Экшены'],
+        categories: [1],
+        shortDescription: РУС,
+        screenshots: ['https://cdn.example/730-0.jpg'],
+        art: { header: 'https://example/730.jpg' },
+      },
+      NOW - 20 * 86_400,
+    )
+
+    await ensureMeta(db, [730], {
+      fetchFn: storeStub([
+        {
+          appid: 730,
+          id: 730,
+          name: 'Counter-Strike 2',
+          visible: true,
+          basic_info: { short_description: 'For over two decades, Counter-Strike has offered' },
+        },
+      ]),
+    })
+
+    const stored = await getGameMeta(db, 730)
+    expect(stored?.shortDescription).toBe(РУС)
+    expect(stored?.screenshots).toEqual(['https://cdn.example/730-0.jpg'])
+    expect(stored?.genres).toEqual(['Экшены'])
   })
 
   /**
