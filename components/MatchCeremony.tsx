@@ -2,6 +2,7 @@
 
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
+import Link from 'next/link'
 import { useRef } from 'react'
 import { ClickSpark } from '@/components/ClickSpark'
 import { EchoTitle } from '@/components/EchoTitle'
@@ -194,9 +195,25 @@ export function MatchCeremony({
           )}
         </div>
 
-        <p data-beat="foot" className="text-xs text-faint">
-          Зови всех в войс — договорились же.
-        </p>
+        {/*
+          Выходы — тихими ссылками под CTA, а не второй кнопкой рядом с ней.
+
+          Экран был тупиком: единственное действие — запуск или магазин. Тому,
+          у кого игра не пошла, или пати, которая доиграла и хочет ещё,
+          возвращаться было некуда, кроме шапки сайта. Громкость — на ступень
+          ниже CTA: главное здесь по-прежнему «играть в то, о чём договорились».
+        */}
+        <div data-beat="foot" className="flex flex-col items-center gap-3">
+          <p className="text-xs text-faint">Зови всех в войс — договорились же.</p>
+          <div className="flex flex-wrap justify-center gap-x-6">
+            <Link href="/room/new" className="tap text-sm text-dim hover:text-ink transition-colors">
+              Новая комната
+            </Link>
+            <Link href="/rooms" className="tap text-sm text-dim hover:text-ink transition-colors">
+              К списку пати
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   )

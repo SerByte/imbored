@@ -58,7 +58,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const raw = Number(new URL(req.url).searchParams.get('round') ?? 0)
-  const round = Math.min(MAX_ROUND, Math.max(0, Number.isFinite(raw) ? Math.floor(raw) : 0))
+  const asked = Number.isFinite(raw) ? Math.floor(raw) : 0
+
+  /*
+   * Раунды кончились — пустой список, а не последний раунд по кругу.
+   *
+   * Номер раньше зажимался в MAX_ROUND, и seed `комната:человек:раунд` с
+   * десятого раунда был одним и тем же: друг долго не приходит, и каждое
+   * «Ещё раунд» давало те же десять вопросов с теми же ответами — да ещё
+   * поднимало ради них библиотеки всех заново. Пустой список клиент уже
+   * умеет сказать словами (PartyTrivia), и снапшоты для него не читаются.
+   */
+  if (asked > MAX_ROUND) return NextResponse.json({ round: asked, questions: [] })
+
+  const round = Math.max(0, asked)
   const seed = `${id}:${steamid}:${round}`
 
   const party = await Promise.all(

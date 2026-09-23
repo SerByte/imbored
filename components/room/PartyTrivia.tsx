@@ -42,6 +42,8 @@ export function PartyTrivia({
   const [score, setScore] = useState(0)
   const [seenKey, setSeenKey] = useState(interruptKey)
   const [interrupted, setInterrupted] = useState(false)
+  /** Вопросы не пришли — не «кончились»: отказ или сеть, а не край викторины */
+  const [failed, setFailed] = useState(false)
 
   // Состояние, производное от пропсов, — во время рендера, как в GameArt:
   // эффект здесь дал бы лишний кадр с раскрытой панелью поверх новости
@@ -53,24 +55,32 @@ export function PartyTrivia({
     }
   }
 
+  /*
+   * try, а не голый await: обрыв сети отклонял промис в пустоту, и панель
+   * навсегда оставалась на «Придумываю вопросы…».
+   */
   const load = useCallback(
     async (r: number) => {
-      const res = await fetch(`/api/room/${roomId}/trivia?round=${r}`)
-      if (!res.ok) {
+      setFailed(false)
+      try {
+        const res = await fetch(`/api/room/${roomId}/trivia?round=${r}`)
+        if (!res.ok) throw new Error(`trivia: HTTP ${res.status}`)
+        const data = (await res.json()) as { round: number; questions: TriviaQuestion[] }
+        setQuestions(data.questions)
+        setAt(0)
+        setChosen(null)
+        setScore(0)
+      } catch {
+        setFailed(true)
         setQuestions([])
-        return
       }
-      const data = (await res.json()) as { round: number; questions: TriviaQuestion[] }
-      setQuestions(data.questions)
-      setAt(0)
-      setChosen(null)
-      setScore(0)
     },
     [roomId],
   )
 
-  // Нечего показать — блока нет вовсе. Пустая викторина хуже её отсутствия
-  if (questions !== null && questions.length === 0 && !open) return null
+  // Нечего показать — блока нет вовсе. Пустая викторина хуже её отсутствия.
+  // Не пришедшие вопросы — не пустота: блок остаётся, раскрытие спросит снова
+  if (questions !== null && questions.length === 0 && !open && !failed) return null
 
   const q = questions?.[at]
   const done = questions !== null && at >= questions.length && questions.length > 0
@@ -81,7 +91,10 @@ export function PartyTrivia({
         onClick={() => {
           // Загрузка висит на клике, а не на эффекте: вопросы нужны ровно
           // тогда, когда панель раскрыли, и это событие, а не синхронизация
-          if (!open && questions === null) void load(round)
+          if (!open && (questions === null || failed)) {
+            setQuestions(null)
+            void load(round)
+          }
           setOpen(!open)
           setInterrupted(false)
         }}
@@ -111,9 +124,19 @@ export function PartyTrivia({
             <div className="glass rounded-[20px] mt-3 p-5 flex flex-col gap-4">
               {questions === null && <p className="text-sm text-faint">Придумываю вопросы…</p>}
 
+              {/*
+                Три разных пустоты — три разные строки. «Зато свайпать можно
+                дальше» здесь не годится: викторина живёт на экране ожидания,
+                куда попадают, как раз всё отсвайпав. А после последнего раунда
+                роут отдаёт пустой список намеренно — вопросы не повторяются.
+              */}
               {questions !== null && questions.length === 0 && (
                 <p className="text-sm text-faint">
-                  Вопросы кончились — каталог у нас пока небогатый. Зато свайпать можно дальше.
+                  {failed
+                    ? 'Вопросы не загрузились — попробуй чуть позже.'
+                    : round > 0
+                      ? 'Вопросы кончились — все раунды сыграны, а повторяться мы не станем.'
+                      : 'Вопросов не набралось — каталог у нас пока небогатый.'}
                 </p>
               )}
 

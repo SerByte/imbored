@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { plural } from '@/lib/plural'
-import { type RoomMemberView, waitingMode } from '@/lib/room'
+import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
 import type { NearMiss } from '@/lib/roomlikes'
 import { AloneInvite, RoomEscapeHatch } from './AloneInvite'
 import { type LikedGame, MyLikesRail, NearMissList } from './LikesStrips'
@@ -161,6 +161,10 @@ export function RoomWaiting({
             <MemberRoster
               members={members}
               deckSize={deckSize}
+              hint={rosterHint({
+                swiping: members.filter((m) => !m.done).length,
+                hasMore,
+              })}
               isHost={isHost}
               onRemove={onRemoveMember}
             />
@@ -180,6 +184,7 @@ export function RoomWaiting({
                 тебе: подключи библиотеку или позови кого-то, у кого есть во что играть вместе.
               </p>
             </div>
+            {/* Без строки под списком: колоды не было, и матчу неоткуда взяться */}
             <MemberRoster members={members} deckSize={deckSize} />
           </>
         )}

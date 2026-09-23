@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { memberLabel, parseRoomCode, waitingMode } from './room'
+import { memberLabel, parseRoomCode, rosterHint, waitingMode } from './room'
 
 describe('waitingMode', () => {
   test('один в комнате — «ты тут один», а не «ждём остальных»', () => {
@@ -95,5 +95,22 @@ describe('parseRoomCode', () => {
     expect(parseRoomCode('FCPK8GG')).toBeNull()
     expect(parseRoomCode('FCPK8Ж')).toBeNull()
     expect(parseRoomCode('../api')).toBeNull()
+  })
+})
+
+describe('rosterHint', () => {
+  test('кто-то ещё свайпает — матч правда может прийти сам', () => {
+    expect(rosterHint({ swiping: 1, hasMore: true })).toBe('Матч появится сам — обновлять не надо.')
+    expect(rosterHint({ swiping: 2, hasMore: false })).toBe('Матч появится сам — обновлять не надо.')
+  })
+
+  test('все закончили — «появится сам» под «ни разу не совпали» было враньём', () => {
+    const hint = rosterHint({ swiping: 0, hasMore: true })
+    expect(hint).not.toMatch(/появится сам/)
+    expect(hint).toBe('Совпадения нет — возьмите ещё игр кнопкой ниже.')
+  })
+
+  test('все закончили и карт больше нет — совет взять ещё был бы тупиком', () => {
+    expect(rosterHint({ swiping: 0, hasMore: false })).toBeNull()
   })
 })

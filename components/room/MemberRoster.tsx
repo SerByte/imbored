@@ -19,11 +19,14 @@ const EASE = [0.22, 1, 0.36, 1] as const
 export function MemberRoster({
   members,
   deckSize,
+  hint = null,
   isHost = false,
   onRemove,
 }: {
   members: RoomMemberView[]
   deckSize: number | null
+  /** строка под списком — rosterHint из lib/room; null — без строки */
+  hint?: string | null
   /** хост может убрать застрявшего — см. app/api/room/[id]/leave */
   isHost?: boolean
   onRemove?: (memberId: string) => void
@@ -147,7 +150,9 @@ export function MemberRoster({
         </AnimatePresence>
       </ul>
 
-      <p className="text-xs text-faint">Матч появится сам — обновлять не надо.</p>
+      {/* Строка приходит снаружи: безусловное «Матч появится сам» стояло и под
+          «ни разу не совпали», и при пустой колоде — см. rosterHint */}
+      {hint && <p className="text-xs text-faint">{hint}</p>}
     </div>
   )
 }

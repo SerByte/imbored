@@ -804,6 +804,37 @@ export default function RoomPage() {
   ) : null
 
   // ---- МАТЧ ----
+  /*
+   * Церемония — только своим.
+   *
+   * Она рисовалась до проверки членства, и друг, открывший приглашение через
+   * час после того, как двое договорились, видел «Это матч! Все в комнате
+   * хотят играть в одно и то же» и «Зови всех в войс — договорились же» —
+   * чужой праздник на игре, которой у него может и не быть. Войти он уже не
+   * может (join отвечает 409), поэтому ему — что случилось и куда дальше.
+   */
+  if (state.room.status === 'matched' && state.matchedGame && !state.isMember) {
+    return (
+      <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
+        <Ambient />
+        <div className="relative max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col gap-4 anim-rise">
+          <h1 className="font-display text-display-sm">
+            Эта пати уже договорилась: «{state.matchedGame.name}»
+          </h1>
+          <p className="text-dim text-sm">
+            Комната <span className="font-mono text-ink">{roomId}</span> сошлась, и новых людей в
+            неё уже не пускают. Собери свою — или подсядь к тем, кто ещё выбирает.
+          </p>
+          <Link href="/room/new" className="btn-ember is-block py-3">
+            Создать свою комнату
+          </Link>
+          <Link href="/rooms" className="tap text-sm text-dim hover:text-ink transition-colors">
+            Открытые пати →
+          </Link>
+        </div>
+      </div>
+    )
+  }
   if (state.room.status === 'matched' && state.matchedGame) {
     return <MatchCeremony game={state.matchedGame} memberCount={state.members.length} />
   }
