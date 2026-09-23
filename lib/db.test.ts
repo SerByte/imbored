@@ -2083,6 +2083,20 @@ describe('sweepStale: суточная уборка', () => {
     }
   })
 
+  test('кука убранного демо узнаёт, что личности больше нет; настоящий человек без строк — нет', async () => {
+    const db = await freshDb()
+    await demo(db, OLD_DEMO, NOW - DEMO_TTL_SEC - SESSION_TOUCH_AFTER_SEC - DAY)
+    expect((await getSessionState(db, `sid-${OLD_DEMO}`, OLD_DEMO)).gone).toBe(false)
+    await sweepStale(db, NOW)
+    expect(await getSessionState(db, `sid-${OLD_DEMO}`, OLD_DEMO)).toMatchObject({
+      revokedAt: null,
+      gone: true,
+    })
+    // «Строки нет» у настоящего человека по-прежнему ничего не решает:
+    // пересозданная база или не записавшийся INSERT не разлогинивают
+    expect((await getSessionState(db, 'sid-nobody', REAL)).gone).toBe(false)
+  })
+
   test('демо, в которое заходят каждый день без оценок, уборка не трогает', async () => {
     // Кука и seen_at продлеваются раз в SESSION_TOUCH_AFTER_SEC: всю неделю
     // после входа отметка стоит на месте, хотя человек заходил и вчера.

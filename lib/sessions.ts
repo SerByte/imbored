@@ -64,7 +64,7 @@ export type Resolved = {
 
 export type Lookup = (sid: string, steamid: string) => Promise<SessionRow>
 
-const LIVE: SessionRow = { revokedAt: null, sessionsFrom: null, verified: false }
+const LIVE: SessionRow = { revokedAt: null, sessionsFrom: null, verified: false, gone: false }
 
 const cache = new Map<string, { at: number; state: SessionRow }>()
 
@@ -112,6 +112,8 @@ export async function resolveSession(opts: {
     if (v2.exp <= nowSec) return null
     const state = await stateOf(lookup, v2.sid, v2.steamid, nowSec)
     if (state.revokedAt !== null) return null
+    // демо-личность убрана, а кука живёт год — см. SessionRow.gone
+    if (state.gone) return null
     // «выйти везде» бьёт по времени выдачи: накрывает и те сессии, чьих строк нет
     if (state.sessionsFrom !== null && v2.iat < state.sessionsFrom) return null
     return {

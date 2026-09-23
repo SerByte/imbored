@@ -1,5 +1,5 @@
 import * as nextHeaders from 'next/headers'
-import { createDb, createSession, type Db } from '../db'
+import { createDb, createSession, upsertUser, type Db } from '../db'
 import { resetRateMemory } from '../ratelimit'
 import { SESSION_COOKIE, nowSec, sessionSecret } from '../server'
 import { forgetSessionCache, mintSession } from '../sessions'
@@ -86,9 +86,16 @@ export const STEAMID_OF: Record<SessionKind, string> = {
   demo: '00012345678901231',
 }
 
-/** Войти так, как вошёл бы человек этим путём. Возвращает его steamid. */
+/**
+ * Войти так, как вошёл бы человек этим путём. Возвращает его steamid.
+ *
+ * Демо-вход, как и настоящий (seedDemo в /api/connect), заводит строку users:
+ * демо без неё — это убранная уборкой личность, и её кука не пускает (см.
+ * SessionRow.gone в lib/db).
+ */
 export async function signInAs(db: Db, kind: SessionKind): Promise<string> {
   const steamid = STEAMID_OF[kind]
+  if (kind === 'demo') await upsertUser(db, { steamid, personaName: 'Демо-игрок' }, nowSec())
   await signIn(db, steamid, { verified: kind === 'openid' })
   return steamid
 }

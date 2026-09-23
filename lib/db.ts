@@ -689,6 +689,23 @@ export type SessionRow = {
   revokedAt: number | null
   /** users.sessions_from — отсечка «выйти везде», общая на все устройства */
   sessionsFrom: number | null
+  /**
+   * Личности за сессией больше нет: это демо, а его строки в users нет.
+   *
+   * Единственное место, где «строки нет» значит «не пускать», и только для
+   * демо. Демо-личность — это и есть её строки: без снимка библиотеки ей
+   * нечего показать, а строку users демо-вход пишет ДО выдачи куки (seedDemo
+   * в /api/connect; не записалась — роут падает, куки нет). Значит, пропасть
+   * строка может лишь уборкой (sweepStale) или удалением по запросу — а кука
+   * живёт год. Пускать её дальше значило держать человека «вошедшим» без
+   * библиотеки: лендинг здоровался «С возвращением», /library и /play
+   * разворачивали обратно, а выйти из петли можно было только входом через
+   * Steam или чисткой кук.
+   *
+   * Настоящих людей это не касается: для них отсутствие строки по-прежнему
+   * ничего не решает (см. шапку sessions).
+   */
+  gone: boolean
 }
 
 /**
@@ -697,7 +714,8 @@ export type SessionRow = {
  * LEFT JOIN, а не два обращения: строки сессии может не быть (не записавшийся
  * INSERT, чужая база), и это НЕ повод отказать — отвечать должен вызывающий,
  * а не отсутствие строки. Различить «нет строки» и «нет пользователя» здесь
- * не нужно: оба поля просто окажутся null.
+ * не нужно: оба поля просто окажутся null. Исключение — демо без строки
+ * users, см. SessionRow.gone; префикс '000' тот же, что у уборки (STALE_DEMO).
  */
 export async function getSessionState(
   db: Db,
@@ -705,7 +723,8 @@ export async function getSessionState(
   steamid: string,
 ): Promise<SessionRow> {
   const res = await db.execute({
-    sql: `SELECT s.revoked_at AS revoked_at, s.verified AS verified, u.sessions_from AS sessions_from
+    sql: `SELECT s.revoked_at AS revoked_at, s.verified AS verified, u.sessions_from AS sessions_from,
+                 (q.steamid GLOB '000*' AND u.steamid IS NULL) AS gone
             FROM (SELECT ? AS sid, ? AS steamid) q
             LEFT JOIN sessions s ON s.sid = q.sid AND s.steamid = q.steamid
             LEFT JOIN users u ON u.steamid = q.steamid`,
@@ -716,6 +735,7 @@ export async function getSessionState(
     revokedAt: (row?.revoked_at as number | null) ?? null,
     sessionsFrom: (row?.sessions_from as number | null) ?? null,
     verified: Number(row?.verified ?? 0) === 1,
+    gone: Number(row?.gone ?? 0) === 1,
   }
 }
 

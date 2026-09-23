@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { sweepStale, upsertUser, type Db } from '@/lib/db'
+import { sweepStale, type Db } from '@/lib/db'
 import { SESSION_COOKIE, sessionSecret } from '@/lib/server'
 import { verifySessionV2 } from '@/lib/session'
 import { SESSION_TOUCH_AFTER_SEC } from '@/lib/sessions'
@@ -72,9 +72,7 @@ describe('/api/session/touch', () => {
     // считала неделю без отметки молчанием: демо без оценок сносило на
     // седьмой день посреди пользования.
     const DAY = 86_400
-    const steamid = STEAMID_OF.demo
-    await upsertUser(db, { steamid, personaName: 'Демо-игрок' }, T0)
-    await signIn(db, steamid)
+    const steamid = await signInAs(db, 'demo')
     for (let day = 1; day <= 40; day++) {
       vi.setSystemTime((T0 + day * DAY) * 1000)
       const res = await POST(post('/api/session/touch'))
@@ -89,6 +87,26 @@ describe('/api/session/touch', () => {
       })
       expect(Number(left.rows[0]?.n), `день ${day}`).toBe(1)
     }
+  })
+
+  test('кука демо, убранного уборкой, — гость, а не вход без библиотеки', async () => {
+    // Кука живёт год, а демо — неделю тишины. Раньше после уборки touch
+    // отвечал authed: true, лендинг звал «Продолжить», а /library и /play без
+    // снимка разворачивали обратно: из петли выводил только вход через Steam.
+    const steamid = await signInAs(db, 'demo')
+    const later = T0 + 30 * 86_400
+    vi.setSystemTime(later * 1000)
+    expect((await sweepStale(db, later)).demos).toBe(1)
+
+    const res = await POST(post('/api/session/touch'))
+    expect(await res.json()).toEqual({ authed: false })
+    // и продлевать нечего — годовой куки взамен не выдаётся
+    expect(newCookie(res)).toBeNull()
+    const users = await db.execute({
+      sql: 'SELECT COUNT(*) AS n FROM users WHERE steamid = ?',
+      args: [steamid],
+    })
+    expect(Number(users.rows[0]?.n)).toBe(0)
   })
 
   test('writer: пишут вход через Steam и демо, сессия по ссылке — только читает', async () => {
