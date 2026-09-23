@@ -6,7 +6,7 @@ import { GameArt } from '@/components/GameArt'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
-import { MetaLine } from '@/components/Labels'
+import { Eyebrow, MetaLine } from '@/components/Labels'
 import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
 import { RefundNote } from '@/components/RefundNote'
@@ -14,8 +14,14 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import { sitemapGames } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { byline } from '@/lib/byline'
-import { loadGamePage, reviewFacts } from '@/lib/gamepage'
-import { currencyOf, gameJsonLd, ldScript } from '@/lib/jsonld'
+import {
+  deadVerdict,
+  gameDescription,
+  isRussianText,
+  loadGamePage,
+  reviewFacts,
+} from '@/lib/gamepage'
+import { currencyOf, gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { OG_SITE } from '@/lib/site'
 import { refundEligible } from '@/lib/refund'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
@@ -70,26 +76,17 @@ export async function generateMetadata({
 
   const data = await loadOnce(appid)
   if (!data) return {}
-  const { meta, reviewsSummary } = data
+  const { meta, reviewsSummary, prosCons } = data
 
   // Описание собираем из того, что на странице и так есть, а не из шаблона:
   // в выдаче должно стоять то, ради чего на неё имеет смысл заходить.
-  const facts = reviewFacts(meta, reviewsSummary)
-  const percent = facts?.percent ?? null
-  const topTags = Object.entries(meta.tags)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([t]) => t)
-
-  const parts = [
-    percent !== null ? `${percent}% положительных отзывов` : null,
-    topTags.length ? topTags.join(', ') : null,
-    meta.shortDescription?.slice(0, 120),
-  ].filter(Boolean)
-
-  const description = parts.length
-    ? `${meta.name}: ${parts.join(' · ')}`
-    : `${meta.name} — отзывы, теги и патчноуты на русском.`
+  // Правила длины и языка — в gameDescription, там же почему.
+  const description = gameDescription({
+    meta,
+    facts: reviewFacts(meta, reviewsSummary),
+    prosCons,
+    verdict: deadVerdict(meta),
+  })
 
   const canonical = `/game/${appid}`
 
@@ -192,6 +189,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   const refund = refundEligible(meta, now)
   const studio = byline(meta.developer, meta.releaseYear)
   const facts = reviewFacts(meta, reviewsSummary)
+  // Ответ мёртвой игре — он же прячет «Запустить»: звать в пустой матчмейкинг
+  // кнопкой запуска значит спорить с собственным вердиктом
+  const verdict = deadVerdict(meta)
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
@@ -207,11 +207,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
         Собирается из тех же data, что и всё ниже: loadOnce кэширован на запрос,
         второго чтения базы здесь нет.
+
+        Массив в одном теге, а не два тега: у каждой сущности свой @context,
+        и JSON-LD такой список разбирает так же, как два отдельных скрипта.
       */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: ldScript(
+          __html: ldScript([
             gameJsonLd({
               meta,
               // Та же оценка, что рисует кольцо ниже: у сводки она есть не у
@@ -222,7 +225,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               currency: currencyOf(process.env.STEAM_STORE_CC),
               now,
             }),
-          ),
+            gameBreadcrumbLd({ meta, baseUrl: appBaseUrl() }),
+          ]),
         }}
       />
       {/* hero */}
@@ -368,6 +372,18 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </div>
               </div>
             )}
+            {/*
+              Вердикт мёртвой игре — сразу под оценкой, выше тегов: это и есть
+              ответ на вопрос из заголовка, а теги и описание — справка к нему.
+              role="note": скринридер объявит его как примечание к карточке, а
+              не как очередной абзац описания.
+            */}
+            {verdict && (
+              <div role="note" className="glass rounded-[14px] px-4 py-3 flex flex-col gap-1">
+                <Eyebrow>Сейчас не советуем</Eyebrow>
+                <p className="text-sm leading-relaxed">{verdict}</p>
+              </div>
+            )}
             {topTags.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {topTags.map((t) => (
@@ -377,8 +393,16 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 ))}
               </div>
             )}
+            {/* Описание у трёх карточек из четырёх английское (каталог берёт
+                его у магазина по-английски, см. isRussianText). Без lang его
+                читали русским голосом — латиницу по-русски. */}
             {meta.shortDescription && (
-              <p className="text-dim leading-relaxed">{meta.shortDescription}</p>
+              <p
+                lang={isRussianText(meta.shortDescription) ? undefined : 'en'}
+                className="text-dim leading-relaxed"
+              >
+                {meta.shortDescription}
+              </p>
             )}
             <div className="flex flex-wrap gap-3 mt-1">
               {meta.storeUrl ? (
@@ -389,6 +413,17 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   className="btn-ember px-5 py-3 text-sm"
                 >
                   Открыть в {STORE_LABEL[meta.store ?? ''] ?? 'магазине'}
+                </a>
+              ) : verdict ? (
+                /* Мёртвой игре — справка, а не призыв: страница магазина
+                   остаётся, но без заливки и без запуска */
+                <a
+                  href={`https://store.steampowered.com/app/${appid}/`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-[14px] glass glass-hover px-5 py-3 text-sm"
+                >
+                  Страница в Steam
                 </a>
               ) : (
                 <>

@@ -1,5 +1,6 @@
 import { discountOf, trustedPrice } from './discount'
 import type { ReviewFacts } from './gamepage'
+import { OG_SITE, SITE_DESCRIPTION } from './site'
 import { STORE_LABEL } from './stores'
 import type { GameMeta } from './types'
 
@@ -231,6 +232,58 @@ function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers
     ...(deal?.endsAt !== undefined
       ? { priceValidUntil: new Date(deal.endsAt * 1000).toISOString().slice(0, 10) }
       : {}),
+  }
+}
+
+export type BreadcrumbLd = {
+  '@context': 'https://schema.org'
+  '@type': 'BreadcrumbList'
+  itemListElement: Array<{ '@type': 'ListItem'; position: number; name: string; item: string }>
+}
+
+/**
+ * Хлебные крошки карточки: главная → игра.
+ *
+ * Два уровня, а не три, и это правило модуля, а не бедность: промежуточного
+ * «Каталога» на сайте нет, а разметка не говорит больше, чем страница. Путь
+ * на страницу есть ровно такой — логотип в шапке ведёт на главную.
+ */
+export function gameBreadcrumbLd({ meta, baseUrl }: { meta: GameMeta; baseUrl: string }): BreadcrumbLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'imbored', item: `${baseUrl}/` },
+      { '@type': 'ListItem', position: 2, name: meta.name, item: `${baseUrl}/game/${meta.appid}` },
+    ],
+  }
+}
+
+export type WebSiteLd = {
+  '@context': 'https://schema.org'
+  '@type': 'WebSite'
+  name: string
+  url: string
+  inLanguage: string
+  description: string
+}
+
+/**
+ * Сайт как сущность — только на главной.
+ *
+ * Без него имя сайта в выдаче Google берёт откуда придётся — из og:site_name
+ * строчными или из домена. Описание — то же, что в метаданных корня
+ * (SITE_DESCRIPTION), а не своя формулировка: две копии обещания уже однажды
+ * разъехались, см. lib/site.ts.
+ */
+export function websiteJsonLd(baseUrl: string): WebSiteLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: OG_SITE.siteName,
+    url: `${baseUrl}/`,
+    inLanguage: 'ru',
+    description: SITE_DESCRIPTION,
   }
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { gameJsonLd, ldScript } from './jsonld'
+import { gameBreadcrumbLd, gameJsonLd, ldScript, websiteJsonLd } from './jsonld'
+import { SITE_DESCRIPTION } from './site'
 import type { ReviewFacts } from './gamepage'
 import type { GameMeta } from './types'
 
@@ -284,5 +285,38 @@ describe('ldScript', () => {
 
   test('обычный текст переживает экранирование без потерь', () => {
     expect(JSON.parse(ldScript({ name: 'Counter-Strike 2' })).name).toBe('Counter-Strike 2')
+  })
+})
+
+describe('gameBreadcrumbLd', () => {
+  test('главная → игра, полными адресами, и игра — тот же адрес, что у VideoGame', () => {
+    const out = gameBreadcrumbLd({ meta: game(), baseUrl: BASE })
+    expect(out['@type']).toBe('BreadcrumbList')
+    expect(out.itemListElement).toEqual([
+      { '@type': 'ListItem', position: 1, name: 'imbored', item: 'https://imbored.cc/' },
+      { '@type': 'ListItem', position: 2, name: 'Counter-Strike 2', item: ld().url },
+    ])
+  })
+})
+
+describe('websiteJsonLd', () => {
+  test('сайт — WebSite с именем, адресом главной и тем же описанием, что в метаданных', () => {
+    expect(websiteJsonLd(BASE)).toEqual({
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: 'imbored',
+      url: 'https://imbored.cc/',
+      inLanguage: 'ru',
+      description: SITE_DESCRIPTION,
+    })
+  })
+})
+
+describe('ldScript со списком сущностей', () => {
+  test('массив переживает экранирование и остаётся валидным JSON', () => {
+    const out = ldScript([ld({ name: '</script>' }), gameBreadcrumbLd({ meta: game({ name: '</script>' }), baseUrl: BASE })])
+    expect(out).not.toContain('</script>')
+    const parsed = JSON.parse(out) as Array<{ '@type': string }>
+    expect(parsed.map((e) => e['@type'])).toEqual(['VideoGame', 'BreadcrumbList'])
   })
 })

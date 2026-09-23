@@ -6,6 +6,8 @@ import {
   type FeedItem,
   type SimilarGame,
 } from './db'
+import { judgeLiveness, type DeadReason } from './liveness'
+import { plural } from './plural'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
 import type { GameMeta } from './types'
@@ -91,6 +93,166 @@ export function topTagOf(meta: GameMeta): string | null {
   if (!entries.length) return null
   entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   return entries[0][0]
+}
+
+/**
+ * Вердикт мёртвой игре — одной фразой, словами, а не кодом причины.
+ *
+ * Курация каталога знает про 181 карточку, что играть в неё сегодня не выйдет:
+ * у Dirty Bomb и Team Fortress Classic пустые серверы, у Kerbal Space Program 2
+ * разгромные отзывы. Из подбора, карты сайта и «Похожих» они убраны, но по
+ * прямой ссылке и из старого индекса страница отвечала на «стоит ли играть»
+ * кнопкой «Запустить» и молчала о том, что продукт уже решил.
+ *
+ * Фраза без чисел: число рядом уже нарисовано — онлайн строкой PlayersNow,
+ * доля отзывов в кольце. Повторять его здесь значило бы завести второе число,
+ * которое разойдётся с первым после очередного замера.
+ */
+const DEAD_VERDICT: Record<DeadReason, string> = {
+  'dead-multiplayer': 'Сетевая игра, в которой почти не осталось людей, — матч, скорее всего, не соберётся.',
+  panned: 'Большинство отзывов отрицательные — игроки её не советуют.',
+  'asset-flip': 'Отзывов почти нет — судить о ней пока не по чему.',
+  'solo-only': 'В неё играют только в одиночку — компанию здесь не собрать.',
+}
+
+/** Причина неизвестна, а курация всё равно сняла игру с подбора */
+const DEAD_VERDICT_UNKNOWN = 'Из подбора она снята: по нашим данным, сегодня это не лучший выбор.'
+
+/**
+ * Есть ли у страницы свежее число, которым проверяется эта причина. Без него
+ * спорить с курацией нечем, и верим ей; с ним — верим ему.
+ */
+const SIGNAL_OF: Record<DeadReason, (m: GameMeta) => boolean> = {
+  'dead-multiplayer': (m) => m.ccu !== undefined || m.reviews30d !== undefined,
+  panned: (m) => m.reviewsPercent !== undefined && m.reviewsTotal !== undefined,
+  'asset-flip': (m) => m.reviewsTotal !== undefined,
+  'solo-only': () => true,
+}
+
+/**
+ * Фраза-вердикт для мёртвой игры, либо null.
+ *
+ * Курация пишет alive раз в прогон, а онлайн и отзывы обновляются чаще —
+ * поэтому вердикт сверяется с теми числами, что стоят на странице сейчас.
+ * У игры, в которую вернулись люди, строка «2 400 сейчас играют» рядом с
+ * «почти не осталось людей» была бы ровно той ложью, против которой вердикт и
+ * заведён. Если свежие числа с курацией спорят — молчим; если согласны, но по
+ * другой причине, — называем ту, что видно на странице.
+ */
+export function deadVerdict(meta: GameMeta): string | null {
+  if (meta.alive !== false) return null
+  const now = judgeLiveness({
+    categories: meta.categories,
+    ccu: meta.ccu,
+    reviews30d: meta.reviews30d,
+    reviewsTotal: meta.reviewsTotal,
+    reviewsPercent: meta.reviewsPercent,
+  })
+  if (!now.alive && now.reason) return DEAD_VERDICT[now.reason]
+  const stored = meta.deadReason
+  if (!stored) return DEAD_VERDICT_UNKNOWN
+  return SIGNAL_OF[stored](meta) ? null : DEAD_VERDICT[stored]
+}
+
+/**
+ * Сколько описания показывает выдача. Дальше Google и Яндекс режут сами — и
+ * режут посреди слова: «…brandish the power of the Elden» стояло в сниппете
+ * Elden Ring.
+ */
+export const DESCRIPTION_MAX = 155
+
+/**
+ * Написан ли текст по-русски.
+ *
+ * short_description каталог берёт у магазина с language=english, и русский
+ * есть только у тех карточек, до которых дошёл крон страниц. Выборка из 25
+ * адресов карты сайта: английский хвост у 19. Кириллицы больше, чем латиницы, —
+ * а не «есть хоть одна буква»: названия и аббревиатуры в русском тексте
+ * латиницей («Станьте вором в VR!») его русским быть не мешают.
+ */
+export function isRussianText(text: string | null | undefined): boolean {
+  if (!text) return false
+  const cyr = text.match(/[А-Яа-яЁё]/g)?.length ?? 0
+  const lat = text.match(/[A-Za-z]/g)?.length ?? 0
+  return cyr > 0 && cyr >= lat
+}
+
+/**
+ * Обрезка по слову с многоточием. null — когда в место не влезает и одного
+ * слова: обрубок хуже отсутствия.
+ *
+ * Целое предложение лучше начала следующего: «ролевая игра.» читается как
+ * законченная мысль, «ролевая игра. Восстань…» — как оборванная. Но только если
+ * предложение занимает хотя бы половину места: иначе отдали бы полстроки ради
+ * точки.
+ */
+function clip(text: string, max: number): string | null {
+  if (text.length <= max) return text
+  if (max < 2) return null
+  const whole = text.slice(0, max + 1).match(/^[\s\S]*[.!?](?=\s)/)?.[0]
+  if (whole && whole.length >= max / 2) return whole
+  const cut = text.slice(0, max - 1)
+  const space = cut.lastIndexOf(' ')
+  if (space <= 0) return null
+  return `${cut.slice(0, space).replace(/[\s.,;:!?…—–-]+$/, '')}…`
+}
+
+/** Пункт из pros/cons как предложение: без своей точки в конце, одной строкой */
+function point(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().replace(/[.,;:!?…]+$/, '')
+}
+
+/**
+ * meta description карточки игры.
+ *
+ * Было `имя: 93% положительных отзывов · Action, FPS, Shooter · <первые 120
+ * символов short_description>` — 190–207 символов, английские теги и у
+ * трёх карточек из четырёх английский хвост, оборванный посреди слова. А
+ * главное, что есть у страницы своего — «за что любят» и «за что ругают» по-
+ * русски, — в сниппет не попадало вовсе.
+ *
+ * Теперь фразы идут по важности и берутся целиком, пока влезают:
+ *   вердикт мёртвой игре — он и есть ответ на «стоит ли играть»;
+ *   доля положительных и число отзывов — те же, что в кольце на странице;
+ *   первый пункт «любят» и первый «ругают»;
+ *   описание магазина — только русское и одно оно обрезается по слову.
+ */
+export function gameDescription({
+  meta,
+  facts,
+  prosCons,
+  verdict,
+}: {
+  meta: GameMeta
+  facts: ReviewFacts | null
+  prosCons: ProsCons | null
+  verdict: string | null
+}): string {
+  const phrases: Array<{ text: string; clip?: boolean }> = []
+  if (verdict) phrases.push({ text: verdict })
+  if (facts) {
+    const total = facts.total.toLocaleString('ru-RU')
+    const noun = plural(facts.total, 'отзыва', 'отзывов', 'отзывов')
+    phrases.push({ text: `${facts.percent}% из ${total} ${noun} — положительные.` })
+  }
+  const pro = prosCons?.pros[0]
+  const con = prosCons?.cons[0]
+  if (pro) phrases.push({ text: `Любят: ${point(pro)}.` })
+  if (con) phrases.push({ text: `Ругают: ${point(con)}.` })
+  if (meta.shortDescription && isRussianText(meta.shortDescription)) {
+    phrases.push({ text: meta.shortDescription.replace(/\s+/g, ' ').trim(), clip: true })
+  }
+
+  const head = `${meta.name}:`
+  let out = head
+  for (const p of phrases) {
+    const room = DESCRIPTION_MAX - out.length - 1
+    const text = p.clip ? clip(p.text, room) : p.text.length <= room ? p.text : null
+    if (text) out += ` ${text}`
+  }
+  if (out === head) out = `${meta.name} — отзывы, теги и патчноуты на русском.`
+  // Длинное название само по себе может не влезть — режем и его, по слову
+  return clip(out, DESCRIPTION_MAX) ?? out.slice(0, DESCRIPTION_MAX)
 }
 
 /**

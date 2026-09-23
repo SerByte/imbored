@@ -79,6 +79,13 @@ export type GameMeta = {
   signalsAt?: number
   alive?: boolean
   supersededBy?: number
+  /**
+   * Почему курация сочла запись мёртвой — только при alive === false. Колонка
+   * dead_reason пишется тем же UPDATE, что и три поля выше, и терялась при
+   * чтении точно так же: страница мёртвой игры предлагала «Запустить» там,
+   * где каталог уже знал, что матч не соберётся. См. deadVerdict.
+   */
+  deadReason?: import('./liveness').DeadReason
 }
 
 export type Mood = {

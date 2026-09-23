@@ -8,7 +8,8 @@ import { Repertoire } from '@/components/landing/scenes/Repertoire'
 import { landingDemo } from '@/lib/landing'
 import { ribbonGames, RIBBON_MAX, type RibbonSource } from '@/lib/ribbon'
 import { topCatalogGames } from '@/lib/db'
-import { getDb, nowSec } from '@/lib/server'
+import { ldScript, websiteJsonLd } from '@/lib/jsonld'
+import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { ownAddress } from '@/lib/site'
 
 /**
@@ -91,6 +92,14 @@ export default async function Home() {
 
   return (
     <div className="media-dark media-full landing">
+      {/*
+        Сайт как сущность для поисковика: имя, адрес, язык. Статичности не
+        мешает — appBaseUrl читает только окружение, как metadataBase корня.
+      */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: ldScript(websiteJsonLd(appBaseUrl())) }}
+      />
       {/*
         Лента уходит в портал у <body>: слой обязан быть fixed, а под плавной
         прокруткой fixed внутри содержимого цепляется к содержимому. Заодно

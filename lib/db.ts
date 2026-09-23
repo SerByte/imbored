@@ -1,6 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
+import { isDeadReason } from './liveness'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import type { NewsBlock } from './steamhtml'
@@ -1820,6 +1821,8 @@ type GameRow = {
   signals_at: number | null
   alive: number | null
   superseded_by: number | null
+  /** В узкой выборке (GAME_LITE_COLUMNS) колонки нет: причина нужна только /game */
+  dead_reason?: string | null
 }
 
 function rowToMeta(row: GameRow): GameMeta {
@@ -1883,6 +1886,7 @@ function rowToMeta(row: GameRow): GameMeta {
     if (row.superseded_by !== null && row.superseded_by !== undefined) {
       meta.supersededBy = row.superseded_by
     }
+    if (!meta.alive && isDeadReason(row.dead_reason)) meta.deadReason = row.dead_reason
   }
   return meta
 }

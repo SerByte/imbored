@@ -25,6 +25,22 @@ export type LivenessSignals = {
 export type DeadReason = 'dead-multiplayer' | 'asset-flip' | 'panned' | 'solo-only'
 export type LivenessVerdict = { alive: boolean; reason: DeadReason | null }
 
+const DEAD_REASONS: ReadonlySet<string> = new Set<DeadReason>([
+  'dead-multiplayer',
+  'asset-flip',
+  'panned',
+  'solo-only',
+])
+
+/**
+ * Причина из колонки dead_reason — строка из базы, а не из этого модуля.
+ * Незнакомое значение (руками поправленная строка, причина из будущей версии
+ * курации) не должно стать вердиктом, для которого у страницы нет слов.
+ */
+export function isDeadReason(v: unknown): v is DeadReason {
+  return typeof v === 'string' && DEAD_REASONS.has(v)
+}
+
 /** Во что играем: один, с друзьями или как получится */
 export type PlayContext = 'solo' | 'party'
 
