@@ -342,6 +342,67 @@ describe('runNewsSlice', () => {
     expect(Number(left.rows[0].n)).toBe(2)
   })
 
+  test('блок IP не штрафует игры: счётчик отказов прежний, вернёмся через полчаса', async () => {
+    // Часовой триггер штрафовал по три игры из головы очереди, и за три часа
+    // блока верх каталога уходил в 'gone' на тридцать дней.
+    const db = await freshDb()
+    await enrollNewsPoll(db, [1, 2, 3, 4, 5], 1, NOW)
+    // у первой уже два честных отказа: с прежним штрафом третий её похоронил бы
+    await db.execute('UPDATE news_poll SET fail_count = 2 WHERE appid = 1')
+
+    const at = NOW + 4000
+    await runNewsSlice(db, {
+      nowSec: at,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      fetchNews: async () => null,
+      digestFn: noDigest,
+    })
+
+    const rows = await db.execute(
+      'SELECT appid, status, fail_count, next_at FROM news_poll WHERE appid <= 3 ORDER BY appid',
+    )
+    expect(rows.rows.map((r) => [r.appid, r.status, r.fail_count])).toEqual([
+      [1, 'error', 2],
+      [2, 'error', 0],
+      [3, 'error', 0],
+    ])
+    for (const r of rows.rows) expect(Number(r.next_at)).toBe(at + 1800)
+  })
+
+  test('отказ, за которым удачный опрос, — про игру, и штраф прежний', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, [1, 2], 1, NOW)
+    await db.execute('UPDATE news_poll SET fail_count = 2 WHERE appid = 1')
+
+    const res = await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      // feedOf здесь не годится: null в нём значит «ленты нет», а нужен отказ
+      fetchNews: async (appid: number) => (appid === 1 ? null : []),
+      digestFn: noDigest,
+    })
+
+    expect(res.stopped).toBe('done')
+    const row = await db.execute('SELECT status, fail_count FROM news_poll WHERE appid = 1')
+    expect(row.rows[0]).toMatchObject({ status: 'gone', fail_count: 3 })
+  })
+
+  test('серия, оборванная сроком, блоком не доказана — штраф прежний', async () => {
+    const db = await freshDb()
+    await enrollNewsPoll(db, [1, 2, 3], 1, NOW)
+
+    await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      limit: 2,
+      fetchNews: async () => null,
+      digestFn: noDigest,
+    })
+
+    const rows = await db.execute("SELECT COUNT(*) AS n FROM news_poll WHERE fail_count = 1")
+    expect(Number(rows.rows[0].n)).toBe(2)
+  })
+
   test('игру, которая не уложится до срока, не начинает', async () => {
     // Срок проверялся только «прошёл ли он»: игра, начатая за секунду до
     // срока, съедала хвост, отведённый под finally с передачей звена.

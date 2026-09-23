@@ -74,6 +74,16 @@ const stubs = (over: Partial<Parameters<typeof runPageSlice>[1]> = {}) => ({
   ...over,
 })
 
+/** Где карточка стоит в очереди: ровно то, что блок Steam не должен трогать. */
+async function queueState(db: Db, appid: number) {
+  const res = await db.execute({
+    sql: 'SELECT page_at, page_tries FROM games WHERE appid = ?',
+    args: [appid],
+  })
+  const r = res.rows[0] as unknown as { page_at: number | null; page_tries: number }
+  return { pageAt: r.page_at, tries: Number(r.page_tries) }
+}
+
 describe('очередь обогащения карточек', () => {
   test('сначала ни разу не тронутые, потом по числу отзывов', async () => {
     const db = await freshDb()
@@ -455,8 +465,82 @@ describe('runPageSlice', () => {
     )
 
     expect(res.stopped).toBe('blocked')
-    expect(res.enriched).toBe(3)
+    // серия отказов — это Steam, а не игры: отметок нет, попытки не тратятся
+    expect(res.enriched).toBe(0)
+    expect(res.deferred).toBe(3)
     expect(res.hasMore).toBe(false)
+    for (const appid of [10, 20, 30]) {
+      expect(await queueState(db, appid)).toEqual({ pageAt: null, tries: 0 })
+    }
+    // и после блока те же карточки идут первыми, а не в хвост за нетронутыми
+    const opts = { maxTries: PAGE_MAX_TRIES }
+    expect((await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 3, opts)).sort()).toEqual([
+      10, 20, 30,
+    ])
+  })
+
+  test('блок не списывает попытку и с карточки, у которой они уже шли', async () => {
+    // Четыре дня блока раньше хоронили верх каталога на полгода: каждый день
+    // по попытке из PAGE_MAX_TRIES на те же три карточки.
+    const db = await freshDb()
+    for (let i = 1; i <= 3; i++) await addGame(db, i * 10, 100 - i)
+    await db.execute({
+      sql: 'UPDATE games SET page_at = ?, page_tries = ? WHERE appid = 10',
+      args: [NOW - 86_400, PAGE_MAX_TRIES - 1],
+    })
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchDetails: async () => {
+          throw new Error('HTTP 429')
+        },
+      }),
+    )
+
+    expect(res.stopped).toBe('blocked')
+    expect(await queueState(db, 10)).toEqual({ pageAt: NOW - 86_400, tries: PAGE_MAX_TRIES - 1 })
+  })
+
+  test('отказ, за которым чистый поход, — про игру: попытка списывается как раньше', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 50)
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchDetails: async (appid: number) => {
+          if (appid === 10) throw new Error('HTTP 500')
+          return meta(appid, { screenshots: ['a.jpg'] })
+        },
+      }),
+    )
+
+    expect(res.stopped).toBe('done')
+    expect(res.enriched).toBe(2)
+    expect(res.deferred).toBe(0)
+    expect(await queueState(db, 10)).toEqual({ pageAt: NOW, tries: 1 })
+    expect(await queueState(db, 20)).toEqual({ pageAt: NOW, tries: 0 })
+  })
+
+  test('серия, не дошедшая до стража к концу пачки, блоком не считается', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 50)
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchDetails: async () => {
+          throw new Error('HTTP 429')
+        },
+      }),
+    )
+
+    expect(res.stopped).toBe('done')
+    expect(res.enriched).toBe(2)
+    expect(await queueState(db, 10)).toEqual({ pageAt: NOW, tries: 1 })
   })
 })
 
@@ -533,7 +617,8 @@ describe('срез останавливается, когда закрылась
     )
 
     expect(res.stopped).toBe('blocked')
-    expect(res.enriched).toBe(MAX_BLOCKED_RUN)
+    expect(res.deferred).toBe(MAX_BLOCKED_RUN)
+    expect(res.enriched).toBe(0)
   })
 
   test('душимые отзывы тоже останавливают срез, хотя appdetails отвечает', async () => {
@@ -553,7 +638,11 @@ describe('срез останавливается, когда закрылась
     )
 
     expect(res.stopped).toBe('blocked')
-    expect(res.enriched).toBe(MAX_BLOCKED_RUN)
+    expect(res.deferred).toBe(MAX_BLOCKED_RUN)
+    // appdetails приехал и записан, но «обогащена» карточка не помечена: иначе
+    // она полгода стояла бы без вердикта отзывов и pros/cons
+    expect(await queueState(db, 10)).toEqual({ pageAt: null, tries: 0 })
+    expect(await getGameJson(db, 10, 'reviews_summary_json')).toBeNull()
   })
 
   test('«игры нет в ответе» — не отказ сети и срез не останавливает', async () => {

@@ -24,6 +24,7 @@ import {
   type Db,
   type PollOutcome,
   type PollStatus,
+  type PollTarget,
   type StoredNews,
 } from './db'
 import { sliceClock } from './cron'
@@ -40,6 +41,16 @@ export const NEWS_KEEP = 30
 
 /** Три неудачи подряд — и игру больше не трогаем */
 const MAX_FAILS = 3
+
+/** Столько отказов подряд на РАЗНЫХ играх — уже блок IP, а не игры */
+const MAX_BLOCKED_RUN = 3
+
+/**
+ * Когда вернуться к игре, на которой срез наткнулся на блок IP. Полчаса — это
+ * первая ступень обычного отката (nextPollAt при failCount = 0): блок снимается
+ * часами, и следующий часовой триггер как раз проверит, снят ли.
+ */
+const BLOCK_RETRY_SEC = 1800
 
 /** Игра активно патчится, если постила за последние две недели */
 const HOT_WINDOW = 14 * DAY
@@ -176,8 +187,43 @@ export async function runNewsSlice(
   const outcomes: PollOutcome[] = []
   let inserted = 0
   let polled = 0
-  let blockedRun = 0
   let stopped: SliceResult['stopped'] = 'done'
+
+  /*
+   * Отказы подряд ждут приговора, а не получают штраф сразу.
+   *
+   * Раньше каждая игра из серии отказов получала failCount + 1 на месте, а
+   * при третьем — 'gone' на тридцать дней (reviveGoneNewsPoll). Но серия из
+   * трёх отказов на разных играх — это Steam, закрывшийся от IP Vercel на
+   * несколько часов, а не три мёртвые игры, и об этом писал ещё комментарий
+   * у стража. Часовой триггер штрафовал по три игры из головы очереди, а
+   * голова — это tier 1, верх каталога: за три часа блока топовые игры
+   * уходили из «Что нового» на месяц.
+   *
+   * Теперь виноватость ясна только по концу серии: оборвал её удачный опрос —
+   * это были невезучие игры, и штраф прежний; дошла она до MAX_BLOCKED_RUN —
+   * это блок, и игры не виноваты вовсе.
+   */
+  let серия: PollTarget[] = []
+  const штраф = (t: PollTarget): PollOutcome => {
+    const failCount = t.failCount + 1
+    const status: PollStatus = failCount >= MAX_FAILS ? 'gone' : 'error'
+    return {
+      appid: t.appid,
+      status,
+      failCount,
+      nextAt: nextPollAt({ ...t, status: 'error', failCount }, now),
+      ...(t.lastPubAt ? { lastPubAt: t.lastPubAt } : {}),
+    }
+  }
+  /** Блок IP: счётчик отказов прежний, вернуться — как только блок могли снять */
+  const помилование = (t: PollTarget): PollOutcome => ({
+    appid: t.appid,
+    status: 'error',
+    failCount: t.failCount,
+    nextAt: now + BLOCK_RETRY_SEC,
+    ...(t.lastPubAt ? { lastPubAt: t.lastPubAt } : {}),
+  })
   // «Уложится ли ещё одна игра», а не «прошёл ли срок» — см. sliceClock.
   const часы = sliceClock(pollDeadline)
 
@@ -193,23 +239,18 @@ export async function runNewsSlice(
       // Подряд идущие отказы на РАЗНЫХ играх означают, что Steam закрылся от
       // нашего IP (он это делает — см. lib/gamepage.ts:43). Штамповать в этот
       // момент весь набор как «мёртвый» нельзя: аренда истечёт сама.
-      blockedRun++
-      const failCount = t.failCount + 1
-      const status: PollStatus = failCount >= MAX_FAILS ? 'gone' : 'error'
-      outcomes.push({
-        appid: t.appid,
-        status,
-        failCount,
-        nextAt: nextPollAt({ ...t, status: 'error', failCount }, now),
-        ...(t.lastPubAt ? { lastPubAt: t.lastPubAt } : {}),
-      })
-      if (blockedRun >= 3) {
+      серия.push(t)
+      if (серия.length >= MAX_BLOCKED_RUN) {
+        outcomes.push(...серия.map(помилование))
+        серия = []
         stopped = 'blocked'
         break
       }
       continue
     }
-    blockedRun = 0
+    // Удачный опрос оборвал серию: отказы перед ним — про сами игры.
+    outcomes.push(...серия.map(штраф))
+    серия = []
 
     if (!items.length) {
       outcomes.push({
@@ -259,6 +300,9 @@ export async function runNewsSlice(
     if (n > 0) log(`  ${t.appid}: +${n}`)
   }
 
+  // Срез кончился не блоком (срок или конец пачки), а серия не дошла до
+  // порога: блоком её не доказать, и отказы штрафуются по-старому.
+  outcomes.push(...серия.map(штраф))
   await flushPollResults(db, outcomes, now)
 
   // Пересказ теперь живёт отдельным кроном (/api/cron/digest) и своим

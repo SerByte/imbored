@@ -120,11 +120,13 @@ async function main() {
         prosCons += res.withProsCons
         viaClaude += res.viaClaude
 
-        if (!res.enriched) break
+        // Блок — раньше «ничего не отмечено»: карточки, отложенные блоком, отметок
+        // не получают (см. deferred), и срез из одних таких ушёл бы молча.
         if (res.stopped === 'blocked') {
           console.warn('\nSteam закрылся от этого IP — прерываю, аренда отдаётся сама')
           break
         }
+        if (!res.enriched) break
         const mins = Math.round((Date.now() - startedAt) / 60_000)
         console.log(
           `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tpros/cons: ${prosCons} (модель: ${viaClaude})\t${mins} мин`,
