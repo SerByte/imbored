@@ -12,6 +12,7 @@ import { Spinner } from '@/components/Spinner'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
+import { claimVote, deckStuck, voteMiss, voteSignal } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
@@ -89,6 +90,19 @@ type Card = {
 const POLL_FAST_MS = 2500
 const POLL_SLOW_MS = 6000
 const POLL_IDLE_AFTER_MS = 60_000
+/**
+ * Потолок ожидания одного опроса.
+ *
+ * Пока запрос в полёте, тик только перевзводит таймер и отказа не считает, а
+ * своего срока у fetch нет. Телефон сменил Wi-Fi на LTE, соединение HTTP/2
+ * повисло на минуты — и ростер, голоса и старт матча замерзали без плашки
+ * «связь потеряна»: человек думал, что друзья ещё свайпают. По потолку запрос
+ * отменяется, попадает в catch и считается отказом, как обрыв.
+ *
+ * Своим таймером на тот же AbortController, а не AbortSignal.any: того нет в
+ * Safari до 17.4, и на нём опрос падал бы в catch на каждом тике.
+ */
+const POLL_TIMEOUT_MS = 8_000
 /** Пол по частоте для догрузки лайков — см. докблок у эффекта */
 const LIKES_MIN_GAP_MS = 12_000
 
@@ -145,6 +159,9 @@ export default function RoomPage() {
    * ДО того, как доехал голос, она возвращается в колоду и человек свайпает
    * её второй раз. Отказавший голос вычёркивает appid обратно: там карта
    * возвращается намеренно, и прятать её нельзя.
+   *
+   * Он же — пропуск для голоса: второй жест по карте, которая уже здесь,
+   * не уходит (claimVote в lib/deckvote).
    */
   const votedLocally = useRef<Set<number>>(new Set())
   /** Последний голос не доехал: карта возвращена, счётчик отмотан назад. */
@@ -263,6 +280,7 @@ export default function RoomPage() {
 
       const ac = new AbortController()
       inFlight = ac
+      const cap = window.setTimeout(() => ac.abort(), POLL_TIMEOUT_MS)
       try {
         const got = await refresh(ac.signal)
         // Решение — в lib/roompoll.ts и под тестом. Здесь оно применяется, а
@@ -290,13 +308,15 @@ export default function RoomPage() {
           lastChangeAt = Date.now()
         }
       } catch {
-        // Оборванная сеть или отменённый запрос. Опрос здесь всегда
-        // продолжался и продолжается — замерено шесть запросов за
-        // шестнадцать секунд обрыва. Не хватало ровно признака на экране.
+        // Оборванная сеть, отменённый запрос или истёкший POLL_TIMEOUT_MS.
+        // Опрос здесь всегда продолжался и продолжается — замерено шесть
+        // запросов за шестнадцать секунд обрыва. Не хватало ровно признака
+        // на экране.
         const step = nextPollStep({ ok: false, gone: false }, fails)
         fails = step.fails
         setStale(step.stale)
       } finally {
+        window.clearTimeout(cap)
         if (inFlight === ac) inFlight = null
       }
       arm()
@@ -380,6 +400,32 @@ export default function RoomPage() {
     deckKey.current = deckWant
     void loadDeck()
   }, [deckWant, deckFailed, loadDeck])
+
+  /*
+   * Самолечение колоды: на руках пусто, а сервер говорит, что человек не
+   * дошёл до конца (deckStuck в lib/deckvote).
+   *
+   * Откат в vote ловит отказы, которые пришли. Этот эффект — страховка от
+   * тех, что прошли мимо: колоду иначе перечитывают только при смене состава
+   * или раунда, и потерянный голос держал комнату навсегда — остальные
+   * видели человека «ещё свайпает», а он сам — «ждём ещё одного».
+   *
+   * Один раз на ключ колоды, как и сама загрузка: если сервер и после
+   * перечитывания ничего не отдаст (свои голоса в пути вычёркиваются из
+   * ответа — см. votedLocally), второй круг вернёт то же самое.
+   */
+  const healKey = useRef('')
+  const stuck = deckStuck({
+    left: cards?.length ?? null,
+    meDone: state?.members.find((m) => m.me)?.done,
+    deckSize: state?.room.deckSize ?? null,
+  })
+
+  useEffect(() => {
+    if (!stuck || !deckWant || healKey.current === deckWant) return
+    healKey.current = deckWant
+    void loadDeck()
+  }, [stuck, deckWant, loadDeck])
 
   /*
    * Добор раунда. finally обязателен, и вот чем он оплачен.
@@ -582,43 +628,73 @@ export default function RoomPage() {
    * лифт и метро.
    *
    * Поэтому отказ возвращает карту на место и отматывает счётчик, а строка
-   * под колодой честно говорит, что голос не ушёл.
+   * под колодой честно говорит, что голос не ушёл. Но только тот отказ,
+   * который повтор может исправить, — разбор кодов в voteMiss (lib/deckvote).
    */
   async function vote(card: Card, yes: boolean) {
+    // Второй жест по той же карте — пустышка: двойной Enter по улетающей
+    // карте голосовал дважды, см. claimVote. Отказ ниже вычёркивает карту
+    // обратно, и повтор после сбоя проходит.
+    if (!claimVote(votedLocally.current, card.appid)) return
     setCards((prev) => (prev ? prev.filter((c) => c.appid !== card.appid) : prev))
-    votedLocally.current.add(card.appid)
     setLocalVotes((v) => v + 1)
+    // 0 — ответа нет: обрыв сети, VOTE_TIMEOUT_MS или неразборчивое тело
+    let status = 0
     try {
       const res = await fetch(`/api/room/${roomId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ appid: card.appid, vote: yes }),
+        signal: voteSignal(),
       })
-      // 409 — голос не примут и со второй попытки: комната уже договорилась
-      // (matched) или карты нет среди розданных (notindeck). Возвращать такую
-      // карточку в колоду значит предложить жест, который снова откажет.
-      // Карта уходит, а опрос сразу же узнаёт, что в комнате: при матче это
-      // и есть церемония.
-      if (res.status === 409) {
-        setVoteFailed(false)
-        void refresh()
-        return
-      }
       // Проверка res.ok нужна и сама по себе: без неё любая ошибка давала
       // data.matched === undefined, а undefined !== null истинно — и каждый
       // сбой дёргал лишний опрос.
-      if (!res.ok) throw new Error(`vote: HTTP ${res.status}`)
-      const data = (await res.json()) as { matched: number | null }
-      setVoteFailed(false)
-      if (data.matched !== null) void refresh()
+      if (res.ok) {
+        const data = (await res.json()) as { matched: number | null }
+        setVoteFailed(false)
+        if (data.matched !== null) void refresh()
+        return
+      }
+      status = res.status
     } catch {
-      // В голову колоды, а не в хвост: карточка возвращается туда, где её
-      // только что видели, и повтор — это тот же жест ещё раз.
-      setCards((prev) => (prev ? [card, ...prev.filter((c) => c.appid !== card.appid)] : prev))
-      // Карта вернулась намеренно — прятать её от следующего /deck нельзя
-      votedLocally.current.delete(card.appid)
-      setLocalVotes((v) => Math.max(0, v - 1))
-      setVoteFailed(true)
+      // разбор ниже, со статусом 0
+    }
+
+    switch (voteMiss(status)) {
+      case 'gone':
+        // 409 — голос не примут и со второй попытки: комната уже договорилась
+        // (matched) или карты нет среди розданных (notindeck). Возвращать такую
+        // карточку в колоду значит предложить жест, который снова откажет.
+        // Карта уходит, а опрос сразу же узнаёт, что в комнате: при матче это
+        // и есть церемония.
+        setVoteFailed(false)
+        void refresh()
+        return
+      case 'bounce':
+        // 401 — сессия истекла, и «свайпни ещё раз» откажет так же. Карточка
+        // входа знает и этот код, и комнату: после входа вернёт сюда же.
+        votedLocally.current.delete(card.appid)
+        router.push(`/?join=${roomId}&error=nosession`)
+        return
+      case 'removed':
+        // 403 — хост убрал из комнаты. Карта не возвращается: голосовать
+        // здесь больше нельзя, а опрос покажет экран приглашения. Из набора
+        // вычёркиваем — голоса нет, и после повторного входа карта обязана
+        // прийти снова.
+        votedLocally.current.delete(card.appid)
+        setLocalVotes((v) => Math.max(0, v - 1))
+        setVoteFailed(false)
+        void refresh()
+        return
+      case 'retry':
+        // В голову колоды, а не в хвост: карточка возвращается туда, где её
+        // только что видели, и повтор — это тот же жест ещё раз.
+        setCards((prev) => (prev ? [card, ...prev.filter((c) => c.appid !== card.appid)] : prev))
+        // Карта вернулась намеренно — прятать её от следующего /deck нельзя
+        votedLocally.current.delete(card.appid)
+        setLocalVotes((v) => Math.max(0, v - 1))
+        setVoteFailed(true)
     }
   }
 

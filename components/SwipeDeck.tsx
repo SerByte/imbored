@@ -1,10 +1,18 @@
 'use client'
 
-import { AnimatePresence, motion, useMotionValue, useTransform } from 'motion/react'
-import { useState } from 'react'
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  useMotionValue,
+  useTransform,
+  type Variants,
+} from 'motion/react'
+import { useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { PlayersNow } from '@/components/PlayersNow'
 import type { GameArtUrls } from '@/lib/art'
+import { deckCardLine, deckPosition } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 
 export type DeckCard = {
@@ -28,6 +36,28 @@ export type DeckCard = {
 const EASE = [0.22, 1, 0.36, 1] as const
 const DEPTH = 3 // сколько карточек видно в стопке
 
+type Fly = 'left' | 'right' | null
+
+/*
+ * Вылет — вариантом с аргументом, а не объектом в exit.
+ *
+ * Объект читал flyOut из пропсов карты, а у улетающей карты пропсы
+ * заморожены: AnimatePresence держит её последний элемент, отрисованный ДО
+ * голоса. Направление и удаление карты из колоды приходят одним рендером
+ * (commit ставит flyOut, onVote в том же обработчике убирает карту), так что
+ * карта уходила с flyOut === null — растворялась на месте, а после жеста
+ * возвращалась к центру. Аргумент AnimatePresence (custom) доезжает до
+ * уходящих детей свежим — ровно для этого он и существует.
+ */
+const FLY: Variants = {
+  gone: (dir: Fly) => ({
+    x: dir === 'left' ? -520 : dir === 'right' ? 520 : 0,
+    opacity: 0,
+    rotate: dir === 'left' ? -10 : dir === 'right' ? 10 : 0,
+    transition: { duration: 0.22, ease: 'easeIn' },
+  }),
+}
+
 /**
  * Колода пати.
  *
@@ -49,16 +79,56 @@ function TopCard({
   nowSec,
   card,
   alone,
-  flyOut,
+  focusOn,
   onCommit,
 }: {
   /** серверные часы ответа /deck — см. PlayersNow */
   nowSec: number
   card: DeckCard
   alone: boolean
-  flyOut: 'left' | 'right' | null
-  onCommit: (yes: boolean) => void
+  /** прошлый голос был с клавиатуры — фокус встаёт на ту же кнопку этой карты */
+  focusOn: 'yes' | 'no' | null
+  /** keyboard — голос кнопкой с клавиатуры или скринридера, а не пальцем */
+  onCommit: (yes: boolean, keyboard: boolean) => void
 }) {
+  /*
+   * УЛЕТАЮЩАЯ КАРТА БОЛЬШЕ НЕ ГОЛОСУЕТ.
+   *
+   * Она живёт в DOM ещё 220 мс анимации вместе с кнопками и обработчиком,
+   * который помнит её саму. Замерено: Enter на «✖ Не хочу», через 60 мс фокус
+   * всё ещё на её кнопке, второй Enter — ещё один голос за ту же игру, и
+   * прогресс прыгал через карту. Страница второй голос теперь отбрасывает
+   * (claimVote в lib/deckvote), а здесь уходящая карта перестаёт быть целью
+   * вовсе: inert снимает с неё фокус и клики.
+   *
+   * inert, а не disabled на кнопках: выключенная .btn-ember перекрашивается в
+   * обводку, и «Играем!» мигало бы другим видом ровно на вылете.
+   *
+   * Признак — присутствие в AnimatePresence, а не flyOut колоды: карта,
+   * вернувшаяся после отказа голоса, снова присутствует, и её кнопки обязаны
+   * работать сразу, не дожидаясь конца чужой анимации.
+   */
+  const present = useIsPresent()
+  const noRef = useRef<HTMLButtonElement>(null)
+  const yesRef = useRef<HTMLButtonElement>(null)
+
+  /*
+   * Кнопка, в которой был фокус, уехала вместе с картой, и фокус падал в
+   * body — человека с клавиатурой выкидывало в начало документа после
+   * КАЖДОГО голоса. Новая карта забирает его на ту же кнопку: следующий
+   * Enter — следующий голос тем же жестом. Голос пальцем фокус не двигает:
+   * там его и не было.
+   */
+  useEffect(() => {
+    if (focusOn === 'yes') yesRef.current?.focus({ preventScroll: true })
+    else if (focusOn === 'no') noRef.current?.focus({ preventScroll: true })
+  }, [focusOn])
+
+  const send = (yes: boolean, keyboard: boolean) => {
+    if (!present) return
+    onCommit(yes, keyboard)
+  }
+
   const x = useMotionValue(0)
   const rotate = useTransform(x, [-260, 0, 260], [-8, 0, 8])
   const yesGlow = useTransform(x, [0, 160], [0, 1])
@@ -74,22 +144,19 @@ function TopCard({
          квизе и карточка подключения на первом экране. */
       className="panel-lift glass overflow-hidden relative touch-pan-y"
       style={{ x, rotate }}
+      inert={!present}
       drag="x"
       dragConstraints={{ left: 0, right: 0 }}
       dragElastic={0.6}
       initial={{ opacity: 0, scale: 0.96, y: 12 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{
-        x: flyOut === 'left' ? -520 : flyOut === 'right' ? 520 : 0,
-        opacity: 0,
-        rotate: flyOut === 'left' ? -10 : flyOut === 'right' ? 10 : 0,
-        transition: { duration: 0.22, ease: 'easeIn' },
-      }}
+      variants={FLY}
+      exit="gone"
       transition={{ duration: 0.35, ease: EASE }}
       onDragEnd={(_, info) => {
         const passed = Math.abs(info.offset.x) > 110 || Math.abs(info.velocity.x) > 500
         if (!passed) return
-        onCommit(info.offset.x > 0)
+        send(info.offset.x > 0, false)
       }}
     >
       <div className="relative">
@@ -184,14 +251,19 @@ function TopCard({
           </div>
         )}
         <div className="grid grid-cols-2 gap-3 mt-2">
+          {/* detail === 0 — щелчок без мыши: Enter, пробел или скринридер */}
           <button
-            onClick={() => onCommit(false)}
+            ref={noRef}
+            type="button"
+            onClick={(e) => send(false, e.detail === 0)}
             className="rounded-[14px] glass glass-hover py-5 text-lg cursor-pointer active:scale-[0.98] transition"
           >
             ✖ Не хочу
           </button>
           <button
-            onClick={() => onCommit(true)}
+            ref={yesRef}
+            type="button"
+            onClick={(e) => send(true, e.detail === 0)}
             className="btn-ember is-block font-bold py-5 text-lg"
           >
             Играем!
@@ -219,16 +291,20 @@ export function SwipeDeck({
   /** серверные часы ответа /deck — см. PlayersNow */
   nowSec: number
 }) {
-  // Куда улетает верхняя карточка, когда голосуют кнопкой, а не жестом.
-  const [flyOut, setFlyOut] = useState<'left' | 'right' | null>(null)
+  // Куда улетает верхняя карточка — и кнопкой, и жестом.
+  const [flyOut, setFlyOut] = useState<Fly>(null)
+  const [focusOn, setFocusOn] = useState<'yes' | 'no' | null>(null)
 
   const top = cards[0]
   if (!top) return null
 
-  const commit = (yes: boolean) => {
+  const commit = (yes: boolean, keyboard: boolean) => {
     setFlyOut(yes ? 'right' : 'left')
+    setFocusOn(keyboard ? (yes ? 'yes' : 'no') : null)
     onVote(top, yes)
   }
+
+  const pos = deckPosition(votedCount, deckTotal)
 
   return (
     <div className="flex flex-col gap-4">
@@ -258,7 +334,7 @@ export function SwipeDeck({
           </motion.div>
         ))}
 
-        <AnimatePresence mode="popLayout" onExitComplete={() => setFlyOut(null)}>
+        <AnimatePresence mode="popLayout" custom={flyOut} onExitComplete={() => setFlyOut(null)}>
           {/* key по appid: каждая карточка получает СВОИ motion-значения.
               Общий x на всю колоду оставлял бы следующей карте смещение
               предыдущей и дрался бы с exit-анимацией улетающей. */}
@@ -266,7 +342,7 @@ export function SwipeDeck({
             key={top.appid}
             card={top}
             alone={alone}
-            flyOut={flyOut}
+            focusOn={focusOn}
             onCommit={commit}
             nowSec={nowSec}
           />
@@ -274,34 +350,27 @@ export function SwipeDeck({
       </div>
 
       {/*
-        Числитель зажат знаменателем — ровно как в components/room/MemberRoster,
-        где та же оговорка записана: «голосов может оказаться больше, чем карт».
-
-        Случай штатный, а не выдуманный: loadDeck МЕРЖИТ колоду, а не заменяет
-        («Мержим по appid, а не заменяем» — app/room/[id]/page), поэтому старые
-        неотсвайпанные карты остаются на руках, а deckTotal приезжает уже от
-        НОВОЙ колоды. Вошёл человек с маленькой библиотекой — новая колода
-        схлопнулась, старые карты остались, и каждый следующий свайп уводил
-        числитель за знаменатель: «16/12». Полоса при этом считалась тем же
-        выражением и уходила за сто процентов.
-
-        Вырожденный край — новая колода пустая при непустых картах на руках:
-        строка читалась «1/0». Поэтому при нулевом знаменателе показываем одну
-        позицию без дроби, как это делает ростер.
+        Новая карта сверху — новость для того, кто не смотрит на экран: см.
+        deckCardLine. Регион вне AnimatePresence и живёт всё время колоды —
+        живая область, вставленная вместе с текстом, звучит не везде.
       */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {deckCardLine(pos, top.name)}
+      </p>
+
+      {/* Числитель зажат знаменателем — почему, см. deckPosition в lib/deckvote */}
       <div className="flex items-center gap-3">
         <div className="h-1 flex-1 rounded-full bg-track overflow-hidden">
           <motion.div
             className="h-full bg-ember rounded-full"
             initial={false}
-            animate={{
-              width: `${deckTotal ? Math.min(100, ((votedCount + 1) / deckTotal) * 100) : 0}%`,
-            }}
+            animate={{ width: `${pos.pct}%` }}
             transition={{ duration: 0.3, ease: EASE }}
           />
         </div>
-        <span className="text-xs text-faint font-mono shrink-0">
-          {deckTotal ? `${Math.min(votedCount + 1, deckTotal)}/${deckTotal}` : votedCount + 1}
+        {/* aria-hidden: номер карты скринридер слышит в строке выше, вместе с игрой */}
+        <span aria-hidden className="text-xs text-faint font-mono shrink-0">
+          {pos.label}
         </span>
       </div>
     </div>
