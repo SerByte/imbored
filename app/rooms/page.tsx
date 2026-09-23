@@ -8,6 +8,14 @@ import { FlapCode } from '@/components/FlapCode'
 import { NeedSteam } from '@/components/NeedSteam'
 import { Spinner } from '@/components/Spinner'
 import { SectionLabel } from '@/components/Labels'
+import {
+  afterBoardAnswer,
+  boardDelayMs,
+  boardKey,
+  boardStale,
+  initialBoardPoll,
+  onBoardVisible,
+} from '@/lib/boardpoll'
 import { minutesAgoLabel } from '@/lib/freshness'
 import { writerStore } from '@/lib/writer'
 
@@ -47,7 +55,10 @@ export default function RoomsBoardPage() {
   const rooms = board?.rooms ?? null
   // Отдельно от board: провал запроса не должен стирать уже показанную доску,
   // а показанная доска не должна прятать сообщение о том, что она устарела.
-  const [failed, setFailed] = useState(false)
+  // Число, а не флаг: пустой доске хватает одного отказа, чтобы сказать о нём
+  // вместо спиннера, а показанную объявляем устаревшей со второго подряд
+  // (lib/boardpoll, boardStale) — один оборванный запрос не новость.
+  const [fails, setFails] = useState(0)
   const [reloadKey, setReloadKey] = useState(0)
   /*
    * Сессия по вставленной ссылке комнату не создаст — /api/room/create ответит
@@ -57,16 +68,54 @@ export default function RoomsBoardPage() {
   const readOnly =
     useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
 
+  /**
+   * Опрос доски — цикл на setTimeout, по образцу страницы комнаты, а не
+   * setInterval. Ритм — сколько ждать, когда замедлиться, когда признать доску
+   * устаревшей — решает lib/boardpoll.ts и сторожит его тест; здесь он только
+   * применяется.
+   *
+   * Следующий запрос планируется, когда вернулся предыдущий, и inFlight не
+   * даёт им наложиться: интервал не ждал ответа, и медленный ответ означал два
+   * запроса в полёте.
+   *
+   * Опрос только при видимой вкладке — та же дисциплина, что в FeedWatch и на
+   * странице комнаты: доска — это «кто ищет прямо сейчас», смотреть её из
+   * свёрнутого окна некому. В скрытой вкладке таймер не взводится вовсе, а
+   * возвращение во вкладку сразу спрашивает свежую доску.
+   *
+   * Первый запрос — исключение и делается всегда, даже в фоне: ссылку на
+   * /rooms открывают и фоновой вкладкой, и без него человек, переключившись,
+   * упирался бы в спиннер.
+   */
   useEffect(() => {
-    let alive = true
+    let stopped = false
+    let timer = 0
+    let inFlight: AbortController | null = null
+    let poll = initialBoardPoll()
 
-    const load = async () => {
+    const arm = () => {
+      if (stopped) return
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => void tick(), boardDelayMs(poll))
+    }
+
+    const tick = async (force = false) => {
+      if (stopped) return
+      if (inFlight) {
+        arm()
+        return
+      }
+      // Скрытая вкладка: не спрашиваем и не взводим — разбудит visibilitychange
+      if (!force && document.visibilityState !== 'visible') return
+
+      const ac = new AbortController()
+      inFlight = ac
       try {
-        const res = await fetch('/api/rooms/public')
+        const res = await fetch('/api/rooms/public', { signal: ac.signal })
         if (!res.ok) throw new Error(String(res.status))
         const next = ((await res.json()) as { rooms: Listing[] }).rooms
-        if (!alive) return
-        setFailed(false)
+        if (stopped) return
+        poll = afterBoardAnswer(poll, { ok: true, key: boardKey(next) })
         setBoard((prev) => {
           const known = new Set(prev?.rooms.map((r) => r.id) ?? [])
           // На первой загрузке новыми считаются все — доска «прилетает» целиком.
@@ -76,43 +125,33 @@ export default function RoomsBoardPage() {
       } catch {
         // Раньше здесь был ранний return без try: любой сетевой сбой отклонял
         // промис внутри void load(), board навсегда оставался null, и человек
-        // смотрел на спиннер до перезагрузки страницы.
-        if (alive) setFailed(true)
+        // смотрел на спиннер до перезагрузки страницы. Отменённый при уходе
+        // со страницы запрос попадает сюда же и молча выходит по stopped.
+        if (stopped) return
+        poll = afterBoardAnswer(poll, { ok: false })
+      } finally {
+        if (inFlight === ac) inFlight = null
       }
+      setFails(poll.fails)
+      arm()
     }
 
-    void load()
-
-    /*
-     * Опрос только при видимой вкладке — та же дисциплина, что уже принята в
-     * FeedWatch и на странице комнаты. Фоновая вкладка опрашивала доску вечно,
-     * а доска — это «кто ищет прямо сейчас»: смотреть её из свёрнутого окна
-     * некому.
-     *
-     * Восемь секунд вместо пяти: ответ теперь кэшируется на краю пятью
-     * секундами, и более частый опрос всё равно попадал бы в тот же кэш.
-     * Створки FlapCode задержку маскируют.
-     */
-    let timer: ReturnType<typeof setInterval> | null = null
-    const stop = () => {
-      if (timer !== null) clearInterval(timer)
-      timer = null
-    }
-    const start = () => {
-      if (timer === null) timer = setInterval(() => void load(), 8000)
-    }
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        void load()
-        start()
-      } else stop()
+      if (stopped) return
+      if (document.visibilityState !== 'visible') {
+        window.clearTimeout(timer)
+        return
+      }
+      poll = onBoardVisible(poll)
+      void tick()
     }
 
-    if (document.visibilityState === 'visible') start()
+    void tick(true)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      alive = false
-      stop()
+      stopped = true
+      window.clearTimeout(timer)
+      inFlight?.abort()
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [reloadKey])
@@ -153,15 +192,30 @@ export default function RoomsBoardPage() {
           <span className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
           Открытые пати — ищут игроков
         </SectionLabel>
-        {rooms === null && failed ? (
+        {/*
+          Доска уже на экране, а сервер молчит: последний снимок остаётся —
+          он всё ещё полезен, — но выглядеть свежим не имеет права. Та же
+          плашка в потоке, что у комнаты (room/[id], staleBadge): role="status"
+          объявляет новость тому, кто не смотрит на экран.
+        */}
+        {rooms !== null && boardStale({ fails }) && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="glass anim-rise rounded-[14px] px-4 py-2.5 text-xs leading-relaxed text-dim"
+          >
+            Доска не отвечает — пробую снова…
+          </div>
+        )}
+        {rooms === null && fails > 0 ? (
           <div className="glass rounded-[20px] p-6 text-center text-dim text-sm flex flex-col items-center gap-3">
             Не получилось загрузить доску.
-            {/* Сброс failed здесь же: пока идёт повтор, на месте ошибки
+            {/* Сброс отказов здесь же: пока идёт повтор, на месте ошибки
                 крутится спиннер, а не висит та же строка без ответа. */}
             <button
               type="button"
               onClick={() => {
-                setFailed(false)
+                setFails(0)
                 setReloadKey((n) => n + 1)
               }}
               className="tap cursor-pointer text-sm text-ember-text hover:underline"
