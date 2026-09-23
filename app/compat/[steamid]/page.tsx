@@ -71,7 +71,9 @@ export async function generateMetadata({
     description,
     alternates: { canonical: url },
     // Из индекса убираем, из шеринга — нет: страница личная и строится по
-    // чужому снапшоту. На превью по прямой ссылке флаг не влияет.
+    // чужому снапшоту. На превью по прямой ссылке флаг не влияет. В robots.txt
+    // страница открыта намеренно — иначе краулер этого флага не увидит
+    // (lib/robots.ts).
     robots: { index: false, follow: true },
     openGraph: { ...OG_SITE, title, description, type: 'website', url },
     twitter: { card: 'summary_large_image', title, description },

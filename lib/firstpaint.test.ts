@@ -84,9 +84,9 @@ const LOADING_ALLOWED: Record<string, string> = {
     'force-dynamic за входом, в robots закрыта: индексировать нечего, а ждать библиотеку из сотен игр долго. ' +
     'Гостя разворачивает proxy.ts до рендера, так что его 307 остаётся честным',
   'app/compat/[steamid]/loading.tsx':
-    'force-dynamic, закрыта в robots и noindex: две библиотеки и расчёт совпадения, каркас держит кадр пришедшему из чата',
+    'force-dynamic и noindex (метатег и X-Robots-Tag): две библиотеки и расчёт совпадения, каркас держит кадр пришедшему из чата',
   'app/portrait/[steamid]/loading.tsx':
-    'force-dynamic, закрыта в robots и noindex: самая тяжёлая страница, экран ожидания живёт дольше всего',
+    'force-dynamic и noindex (метатег и X-Robots-Tag): самая тяжёлая страница, экран ожидания живёт дольше всего',
 }
 
 function loadingFiles(dir: string): string[] {

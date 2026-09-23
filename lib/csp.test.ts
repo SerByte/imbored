@@ -34,9 +34,10 @@ describe('заголовки безопасности', () => {
   test('next.config: x-powered-by выключен, заголовки стоят на всех путях', async () => {
     expect(nextConfig.poweredByHeader).toBe(false)
     const rules = await nextConfig.headers!()
-    expect(rules).toHaveLength(1)
-    expect(rules[0].source).toBe('/:path*')
-    const keys = rules[0].headers.map((h) => h.key)
+    // Правило на всё одно; остальные — noindex личных страниц из lib/robots.ts
+    const all = rules.filter((r) => r.source === '/:path*')
+    expect(all).toHaveLength(1)
+    const keys = all[0].headers.map((h) => h.key)
     for (const k of ['X-Content-Type-Options', 'X-Frame-Options', 'Referrer-Policy', 'Permissions-Policy']) {
       expect(keys, k).toContain(k)
     }

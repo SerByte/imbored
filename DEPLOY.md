@@ -358,6 +358,40 @@ curl -s https://imbored.cc/whatsnew | grep -c 'hidden id="S:'         # 0
 
 ---
 
+## 6.9. Превью ссылок и поиск (делаешь ты, один раз после деплоя)
+
+Каждая страница объявляет свой `og:url` и `canonical` (раньше все наследовали
+`og:url` главной). `/portrait/`, `/compat/` и `/room/` больше не закрыты в
+`robots.txt`: закрытыми они не показывали поисковику свой `noindex`, а X не
+разворачивал их карточки. Из поиска их теперь убирает заголовок
+`X-Robots-Tag: noindex` — правила в `lib/robots.ts`. Проверить (только GET и
+HEAD):
+
+```bash
+curl -s https://imbored.cc/robots.txt                                   # нет Disallow: /portrait/ и /compat/ без $
+curl -s https://imbored.cc/privacy | grep -o '<meta property="og:url"[^>]*>'   # .../privacy, не корень
+curl -s https://imbored.cc/ | grep -o '<link rel="canonical"[^>]*>'     # https://imbored.cc
+curl -sI https://imbored.cc/portrait/<твой steamid> | grep -i x-robots-tag     # noindex
+curl -sI "https://imbored.cc/portrait/<твой steamid>/card.png" | grep -i x-robots-tag   # noindex
+```
+
+Что сделать руками:
+
+- **Google Search Console → Индексирование → Страницы.** Если там есть адреса
+  `/portrait/…`, `/compat/…` или `/room/…` со статусом «Проиндексировано,
+  несмотря на блокировку в robots.txt», — теперь краулер увидит `noindex` и
+  уберёт их сам при следующем обходе. Быстрее — «Удаления» → временно скрыть
+  префикс `https://imbored.cc/portrait/`.
+- **Яндекс Вебмастер → Индексирование → Страницы в поиске** — то же самое.
+- **Кэш превью.** VK и Facebook помнят старый `og:url` главной. Если ссылки на
+  `/privacy`, `/whatsnew` или `/support` уже где-то разворачивались, обнови их
+  карточки: Facebook — Sharing Debugger → «Scrape Again», VK — метод
+  `pages.clearCache` из VK API (он сбрасывает кэш превью внешней ссылки).
+- **X.** Вставь ссылку на свой портрет в окно нового поста (публиковать не
+  нужно): карточка с картинкой должна развернуться.
+
+---
+
 ## 7. Проверка после деплоя (делаем вместе)
 
 По порядку на живом `https://imbored.cc`:

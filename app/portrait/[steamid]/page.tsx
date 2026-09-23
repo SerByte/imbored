@@ -119,7 +119,9 @@ export async function generateMetadata({
     // Из индекса убираем, из шеринга — нет. Заголовок содержит настоящий ник
     // Steam, а страница строится по снапшоту без всякой авторизации: место
     // такому в переписке по прямой ссылке, а не в поисковой выдаче.
-    // На og-превью и card.png флаг не влияет — их читают по ссылке.
+    // На og-превью и card.png флаг не влияет — их читают по ссылке, а из
+    // поиска по картинкам их убирает X-Robots-Tag (lib/robots.ts): метатега
+    // у PNG нет.
     robots: { index: false, follow: true },
     openGraph: { ...OG_SITE, title, description, type: 'profile', url },
     twitter: { card: 'summary_large_image', title, description },
