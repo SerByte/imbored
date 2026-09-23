@@ -14,6 +14,7 @@ import { PlayersNow } from '@/components/PlayersNow'
 import type { GameArtUrls } from '@/lib/art'
 import { deckCardLine, deckPosition } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
+import { tagRu } from '@/lib/tagsru'
 
 export type DeckCard = {
   appid: number
@@ -243,9 +244,10 @@ function TopCard({
         <PlayersNow ccu={card.ccu ?? null} ccuAt={card.ccuAt} nowSec={nowSec} />
         {card.tags.length > 0 && (
           <div className="flex flex-wrap gap-2">
+            {/* ключи английские, подпись русская — см. lib/tagsru.ts */}
             {card.tags.map((t) => (
               <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-                {t}
+                {tagRu(t)}
               </span>
             ))}
           </div>

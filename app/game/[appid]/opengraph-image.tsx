@@ -3,6 +3,7 @@ import { artCandidates } from '@/lib/art'
 import { loadGamePage, reviewFacts } from '@/lib/gamepage'
 import { ogFonts, ogNum, ogScrim, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { plural } from '@/lib/plural'
+import { tagRu } from '@/lib/tagsru'
 
 export const alt = 'Стоит ли играть — imbored'
 export const size = { width: 1200, height: 630 }
@@ -99,10 +100,11 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
   // Тот же запасной источник, что и на самой странице: без него карточка 278
   // игр из тысячи уезжала в чат вообще без оценки.
   const facts = reviewFacts(meta, reviewsSummary)
+  // Подписи тегов по-русски — те же, что чипсами на самой странице
   const tags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
-    .map(([t]) => t)
+    .map(([t]) => tagRu(t))
 
   const lines = [
     facts ? `${facts.percent}% из ${ogNum(facts.total)} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за` : null,

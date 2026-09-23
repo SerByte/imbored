@@ -1,3 +1,5 @@
+import { tagRu } from '@/lib/tagsru'
+
 /**
  * РЯД ТЕГОВ ПОД НАЗВАНИЕМ ИГРЫ — И ОТМЕТКА НА ТЕХ, КОТОРЫЕ И РЕШИЛИ ДЕЛО.
  *
@@ -23,6 +25,11 @@
  * Плашка — bg-ember/20, то есть ровно та прозрачность, которую сторож
  * контраста уже считает по разметке (lib/contrast.test.ts): пара
  * «--ember-text на bg-ember/20» проверена в обеих темах.
+ *
+ * Теги приходят английскими ключами, и совпадение сверяется по ним же —
+ * по-русски только подпись (tagRu, lib/tagsru.ts). Переведи ключ раньше, и
+ * отметка «совпадает с твоим вкусом» не нашла бы ни одного тега: профиль
+ * вкуса собран из английских.
  */
 export function TagChips({
   tags,
@@ -46,12 +53,12 @@ export function TagChips({
             className="flex items-center gap-1.5 rounded-full bg-ember/20 px-3 py-1 text-xs text-ember-text"
           >
             <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-ember" />
-            {t}
+            {tagRu(t)}
             <span className="sr-only"> — совпадает с твоим вкусом</span>
           </span>
         ) : (
           <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-            {t}
+            {tagRu(t)}
           </span>
         ),
       )}

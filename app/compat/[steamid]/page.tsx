@@ -9,6 +9,7 @@ import { DiscountCorner, PriceTag } from '@/components/PriceTag'
 import { ProgressRing } from '@/components/ProgressRing'
 import { SplitHeading } from '@/components/SplitHeading'
 import { verdict } from '@/lib/compat'
+import { tagRu } from '@/lib/tagsru'
 import { OG_SITE } from '@/lib/site'
 import {
   COMMON_SHOWN,
@@ -380,7 +381,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                       : 'glass rounded-full px-3 py-1 text-xs text-dim'
                   }
                 >
-                  {tag}
+                  {tagRu(tag)}
                 </li>
               ))}
             </ul>

@@ -3,6 +3,7 @@ import type { NewsScale } from './db'
 import { discountEndsLabel, discountOf, formatPrice, trustedPrice } from './discount'
 import type { Lean } from './mood'
 import { sharedTasteTags, type Focus, type OwnAnchor } from './recommend'
+import { tagRu } from './tagsru'
 import type { TagWeight } from './tagweight'
 import { CANDIDATE_SOURCES } from './types'
 import type { CandidateSource, GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
@@ -830,7 +831,11 @@ function matchedTags(
 ): string | null {
   if (!meta) return null
   const tags = sharedTasteTags(profile, meta, tagWeight).slice(0, REASON_TAGS)
-  return tags.length ? tags.join(', ') : null
+  // Отбор — по английским ключам (профиль вкуса собран из них), а в причину
+  // идут русские подписи: фраза русская, и «По тегам (Roguelike, Deckbuilding)»
+  // посреди неё читалось как недопереведённое. Чипсы под причиной переводятся
+  // тем же tagRu — одно и то же слово в обоих местах.
+  return tags.length ? tags.map(tagRu).join(', ') : null
 }
 
 /**

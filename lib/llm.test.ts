@@ -24,6 +24,7 @@ import {
   validateDigest,
   validatePicks,
 } from './llm'
+import { tagRu } from './tagsru'
 import { tagWeightFrom } from './tagweight'
 import { CANDIDATE_SOURCES, type GameMeta, type Mood, type ScoredCandidate } from './types'
 
@@ -405,14 +406,22 @@ describe('причина называет теги игрока, а не поп�
 
   test('самый популярный тег игры в причину не попадает, если его нет во вкусе', () => {
     const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Competitive: 1, Atmospheric: 0.4 })
-    expect(pick.reason).toContain('Competitive')
-    expect(pick.reason).not.toContain('MOBA')
+    expect(pick.reason).toContain(tagRu('Competitive'))
+    expect(pick.reason).not.toContain(tagRu('MOBA'))
+  })
+
+  test('теги в причине — русскими подписями, а отбор по английским ключам', () => {
+    // Профиль вкуса собран из английских ключей: перевод до отбора не нашёл
+    // бы ни одного совпадения. В самой фразе ключей быть не должно
+    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Competitive: 1 })
+    expect(pick.reason).toContain(`(${tagRu('Competitive')})`)
+    expect(pick.reason).not.toContain('Competitive')
   })
 
   test('без профиля предложение про вкус не пишется вовсе', () => {
     const [pick] = heuristicPicks(cand, metaShooter, 1, NOW)
     expect(pick.reason).not.toContain('совпадают с тем')
-    expect(pick.reason).not.toContain('MOBA')
+    expect(pick.reason).not.toContain(tagRu('MOBA'))
     expect(pick.reason.length).toBeGreaterThan(10)
   })
 
@@ -425,12 +434,18 @@ describe('причина называет теги игрока, а не поп�
    */
   test('вес во вкусе двигает тег вперёд', () => {
     const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Atmospheric: 100, Competitive: 1 })
-    expect(pick.reason.indexOf('Atmospheric')).toBeLessThan(pick.reason.indexOf('Competitive'))
+    expect(pick.reason.indexOf(tagRu('Atmospheric'))).toBeGreaterThan(-1)
+    expect(pick.reason.indexOf(tagRu('Atmospheric'))).toBeLessThan(
+      pick.reason.indexOf(tagRu('Competitive')),
+    )
   })
 
   test('но краевой для игры тег не обгоняет центральный на малой разнице', () => {
     const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Atmospheric: 10, Competitive: 1 })
-    expect(pick.reason.indexOf('Competitive')).toBeLessThan(pick.reason.indexOf('Atmospheric'))
+    expect(pick.reason.indexOf(tagRu('Competitive'))).toBeGreaterThan(-1)
+    expect(pick.reason.indexOf(tagRu('Competitive'))).toBeLessThan(
+      pick.reason.indexOf(tagRu('Atmospheric')),
+    )
   })
 })
 
@@ -460,15 +475,15 @@ describe('причина называет характерный тег, а не
 
   test('без карты — прежние два частотных тега', () => {
     const [pick] = heuristicPicks(cand, () => factory, 1, NOW, profile)
-    expect(pick.reason).toContain('(Indie, Action)')
+    expect(pick.reason).toContain(`(${tagRu('Indie')}, ${tagRu('Action')})`)
   })
 
   test('с картой редкий тег назван первым', () => {
     const [pick] = heuristicPicks(cand, () => factory, 1, NOW, profile, {
       tagWeight: tagWeightFrom(stats),
     })
-    expect(pick.reason).toContain('(Automation')
-    expect(pick.reason).not.toContain('Indie')
+    expect(pick.reason).toContain(`(${tagRu('Automation')}`)
+    expect(pick.reason).not.toContain(tagRu('Indie'))
   })
 })
 
@@ -489,7 +504,7 @@ describe('причина называет свою игру-якорь', () => {
     for (const source of OWN_AND_NEW) {
       const [pick] = heuristicPicks(one(source), metaOf, 1, NOW, profile, { anchorOf })
       expect(pick.reason, source).toContain('ближе всего она к «Factorio», где у тебя 300 ч')
-      expect(pick.reason, source).not.toContain('Puzzle')
+      expect(pick.reason, source).not.toContain(tagRu('Puzzle'))
       expect(pick.reason, source).toContain('Shapez')
     }
   })
@@ -501,7 +516,7 @@ describe('причина называет свою игру-якорь', () => {
         anchorOf: () => null,
       })[0].reason
       expect(nullAnchor, source).toBe(plain)
-      expect(plain, source).toContain('Puzzle')
+      expect(plain, source).toContain(tagRu('Puzzle'))
       expect(plain, source).not.toContain('ближе всего')
     }
   })

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { gameBreadcrumbLd, gameJsonLd, ldScript, websiteJsonLd } from './jsonld'
 import { SITE_DESCRIPTION } from './site'
+import { tagRu } from './tagsru'
 import type { ReviewFacts } from './gamepage'
 import type { GameMeta } from './types'
 
@@ -218,22 +219,20 @@ describe('gameJsonLd', () => {
 
   test('без жанров genre собирается из тегов — тех же, что чипсами в герое', () => {
     // В проде genres_json пуст почти везде: каталог собран из поиска магазина,
-    // а тот жанров не отдаёт. Теги при этом есть у всех.
-    expect(ld({ genres: [], tags: { 'Souls-like': 100, RPG: 90, Difficult: 80 } }).genre).toEqual([
-      'Souls-like',
-      'RPG',
-      'Difficult',
-    ])
+    // а тот жанров не отдаёт. Теги при этом есть у всех — и на чипсах они
+    // русскими подписями, значит, и в разметке тоже
+    expect(ld({ genres: [], tags: { 'Souls-like': 100, RPG: 90, Difficult: 80 } }).genre).toEqual(
+      ['Souls-like', 'RPG', 'Difficult'].map(tagRu),
+    )
   })
 
   test('genre из тегов упорядочен устойчиво: вес, потом имя', () => {
     // Страница пререндерится и кэшируется на сутки — порядок ключей после
     // пересборки каталога не гарантирован, а разметка меняться не должна.
-    expect(ld({ genres: [], tags: { Roguelike: 50, Action: 50, Indie: 90 } }).genre).toEqual([
-      'Indie',
-      'Action',
-      'Roguelike',
-    ])
+    // Имя — английский ключ: порядок решается до перевода
+    expect(ld({ genres: [], tags: { Roguelike: 50, Action: 50, Indie: 90 } }).genre).toEqual(
+      ['Indie', 'Action', 'Roguelike'].map(tagRu),
+    )
   })
 
   test('больше восьми тегов в genre не едет — их и на странице восемь', () => {

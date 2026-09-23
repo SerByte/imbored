@@ -63,6 +63,7 @@ import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
+import { tagRu } from '@/lib/tagsru'
 import { bounceTo, reconnectHref } from '@/lib/destination'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
@@ -1098,7 +1099,7 @@ function Player({ say }: { say: (line: string) => void }) {
     if (pick.signals.matchPercent !== null)
       whyParts.push(`совпадение со вкусом ${pick.signals.matchPercent}%`)
     if (pick.signals.moodTags.length)
-      whyParts.push(`под вайб: ${pick.signals.moodTags.join(', ')}`)
+      whyParts.push(`под вайб: ${pick.signals.moodTags.map(tagRu).join(', ')}`)
   }
 
   /*

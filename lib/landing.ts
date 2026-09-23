@@ -9,6 +9,7 @@ import {
   splitBySource,
 } from './recommend'
 import { SOURCE_BADGE } from './sources'
+import { tagRu } from './tagsru'
 import type { GameArtUrls } from './art'
 import type { Mood } from './types'
 
@@ -64,6 +65,7 @@ export type LandingCard = {
   name: string
   /** Подпись источника продукта: «Пора вернуться», «Открыл и закрыл»… */
   badge: string
+  /** Подписи тегов, уже по-русски (см. topTags ниже) */
   tags: string[]
   headerImage: string | null
   art: GameArtUrls | null
@@ -93,12 +95,19 @@ function moodOf(key: MoodKey): Mood {
   return { time: FIXED_TIME, vibe, social }
 }
 
-/** Топ-4 тега игры по голосам — тот же отбор, что у выдачи и карточки игры. */
+/**
+ * Топ-4 тега игры по голосам — тот же отбор, что у выдачи и карточки игры.
+ *
+ * Сразу русскими подписями (tagRu), и это исключение из правила «переводить
+ * на месте вывода»: главная рисует их клиентским компонентом, и перевод там
+ * положил бы словарь тегов в бандл самой лёгкой страницы сайта. Здесь теги —
+ * уже только подпись: ни с чем их дальше не сравнивают.
+ */
 function topTags(appid: number, metaOf: (id: number) => (typeof DEMO_METAS)[number] | undefined): string[] {
   return Object.entries(metaOf(appid)?.tags ?? {})
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
-    .map(([t]) => t)
+    .map(([t]) => tagRu(t))
 }
 
 /**

@@ -27,6 +27,7 @@ import { plural } from '@/lib/plural'
 import { refundEligible } from '@/lib/refund'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
+import { tagRu } from '@/lib/tagsru'
 import { SectionLabel } from '@/components/Labels'
 
 /**
@@ -389,7 +390,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               <div className="flex flex-wrap gap-2">
                 {topTags.map((t) => (
                   <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-                    {t}
+                    {tagRu(t)}
                   </span>
                 ))}
               </div>
@@ -563,7 +564,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {data.similar.length > 0 && (
           <section>
             <SectionLabel className="mb-4">
-              Похожие{data.similarTag ? <> · {data.similarTag}</> : null}
+              Похожие{data.similarTag ? <> · {tagRu(data.similarTag)}</> : null}
             </SectionLabel>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {data.similar.map((g) => (

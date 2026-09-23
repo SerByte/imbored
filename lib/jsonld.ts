@@ -2,6 +2,7 @@ import { discountOf, trustedPrice } from './discount'
 import type { ReviewFacts } from './gamepage'
 import { OG_SITE, SITE_DESCRIPTION } from './site'
 import { STORE_LABEL } from './stores'
+import { tagRu } from './tagsru'
 import type { GameMeta } from './types'
 
 /**
@@ -143,12 +144,16 @@ export function gameJsonLd({
   // Тай-брейк по имени обязателен по той же причине, что и в topTagOf:
   // страница пререндерится и кэшируется на сутки, а порядок ключей после
   // очередной пересборки каталога не гарантирован.
+  //
+  // Теги — русскими подписями (tagRu), как на чипсах: разметка обязана
+  // совпадать с видимым, а жанры Steam у игры и так русские (appdetails с
+  // l=russian). Порядок — по английским ключам, до перевода, как у страницы.
   const genre = meta.genres.length
     ? meta.genres
     : Object.entries(meta.tags ?? {})
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .slice(0, TAGS_AS_GENRE)
-        .map(([t]) => t)
+        .map(([t]) => tagRu(t))
   if (genre.length) ld.genre = genre
 
   const modes = PLAY_MODES.filter(([ids]) => ids.some((id) => meta.categories.includes(id))).map(
