@@ -1,6 +1,28 @@
-import { CYRILLIC_GLOB } from '../lib/cyrillic'
-import type { GameJsonRepair } from '../lib/db'
+import { keepFilledSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
 import { plural } from '../lib/plural'
+
+/**
+ * Колонки-замеры и их отметки времени.
+ *
+ * Локальный каталог — снимок на момент промоута, а облако с тех пор живёт:
+ * цены перемеряет refreshDeals (прогрев и игра дня, срок двенадцать часов),
+ * онлайн — догрев в /api/prepare. Заливка клала поверх них локальные значения
+ * безусловно, то есть откатывала цену на недели назад — вместе со скидкой,
+ * которая уже кончилась, а карточка показывала бы её как действующую:
+ * «неточная цена — полбеды, неправда про скидку — повод больше сюда не
+ * возвращаться» (lib/discount).
+ *
+ * Правило — newerMeasureSql: замер едет, только если он не старше облачного.
+ */
+const ПО_ОТМЕТКЕ: Readonly<Record<string, string>> = {
+  price_final: 'price_at',
+  price_initial: 'price_at',
+  discount_percent: 'price_at',
+  discount_ends_at: 'price_at',
+  price_at: 'price_at',
+  ccu: 'ccu_at',
+  ccu_at: 'ccu_at',
+}
 
 /**
  * SET-часть upsert'а публикации. Экспортируется РАДИ ТЕСТА: правило про язык
@@ -25,23 +47,18 @@ export function buildSetList(cols: readonly string[]): string {
    * английское английским, английское русским. Пустое локальное тоже не
    * затирает: оно нерусское по этой проверке.
    *
-   * Класс букв и GLOB вместо LIKE — в lib/cyrillic: то же правило стоит в
-   * mergeMeta и в SQL апсерта, и копий у него быть не должно.
+   * Сами SQL-правила — в lib/db рядом с апсертом games: та же защита стоит и
+   * на прогреве, и на промоуте, и копий у неё быть не должно.
    */
-  const КИРИЛЛИЦА = CYRILLIC_GLOB
   return cols
     .filter((c) => c !== 'appid')
     .map((c) => {
-      if (ОТ_ОБОГАЩЕНИЯ.has(c)) {
-        return `${c} = CASE WHEN excluded.${c} IS NULL OR excluded.${c} IN ('', '[]') THEN games.${c} ELSE excluded.${c} END`
-      }
-      if (c === 'short_description') {
-        return (
-          `${c} = CASE WHEN games.${c} GLOB ${КИРИЛЛИЦА}` +
-          ` AND NOT (COALESCE(excluded.${c}, '') GLOB ${КИРИЛЛИЦА})` +
-          ` THEN games.${c} ELSE excluded.${c} END`
-        )
-      }
+      if (ОТ_ОБОГАЩЕНИЯ.has(c)) return `${c} = ${keepFilledSql(c)}`
+      if (c === 'short_description') return `${c} = ${keepRussianSql(c)}`
+      // Отметка обязана ехать в той же заливке: без неё сравнивать не с чем,
+      // и безотметочный замер считался бы старше любого облачного навсегда
+      const stamp = ПО_ОТМЕТКЕ[c]
+      if (stamp && cols.includes(stamp)) return `${c} = ${newerMeasureSql(c, stamp)}`
       return `${c} = excluded.${c}`
     })
     .join(', ')

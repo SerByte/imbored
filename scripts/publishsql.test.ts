@@ -66,6 +66,94 @@ describe('публикация каталога: что имеет право з
   })
 })
 
+describe('публикация каталога: замеры не откатываются к старым', () => {
+  const ЗАМЕРЫ = [
+    'appid', 'name', 'price_final', 'price_initial', 'discount_percent', 'discount_ends_at',
+    'price_at', 'ccu', 'ccu_at', 'updated_at',
+  ] as const
+  type Замер = {
+    price_final: number | null
+    discount_percent: number | null
+    discount_ends_at: number | null
+    price_at: number | null
+    ccu: number | null
+    ccu_at: number | null
+  }
+  const строка = (z: Замер) => [
+    1, 'Игра', z.price_final, z.price_final, z.discount_percent, z.discount_ends_at,
+    z.price_at, z.ccu, z.ccu_at, 0,
+  ]
+
+  async function заливаем(облако: Замер, локально: Замер) {
+    const db = await createDb(':memory:')
+    const cols = ЗАМЕРЫ.join(', ')
+    const marks = ЗАМЕРЫ.map(() => '?').join(', ')
+    await db.execute({ sql: `INSERT INTO games (${cols}) VALUES (${marks})`, args: строка(облако) })
+    await db.execute({
+      sql: `INSERT INTO games (${cols}) VALUES (${marks})
+            ON CONFLICT(appid) DO UPDATE SET ${buildSetList(ЗАМЕРЫ)}`,
+      args: строка(локально),
+    })
+    const r = await db.execute(
+      'SELECT price_final, discount_percent, discount_ends_at, price_at, ccu, ccu_at FROM games',
+    )
+    return r.rows[0] as unknown as Замер
+  }
+
+  // Облако перемерило цену вчера: распродажа кончилась. Локальный снимок —
+  // с промоута месячной давности, когда скидка ещё шла.
+  const ВЧЕРА = 1_790_000_000
+  const МЕСЯЦ_НАЗАД = ВЧЕРА - 30 * 86_400
+  const облако: Замер = {
+    price_final: 1999, discount_percent: 0, discount_ends_at: null, price_at: ВЧЕРА,
+    ccu: 900, ccu_at: ВЧЕРА,
+  }
+  const старое: Замер = {
+    price_final: 599, discount_percent: 70, discount_ends_at: МЕСЯЦ_НАЗАД + 86_400,
+    price_at: МЕСЯЦ_НАЗАД, ccu: 5000, ccu_at: МЕСЯЦ_НАЗАД,
+  }
+
+  test('старая цена со скидкой не ложится поверх свежей — кончившаяся акция не воскресает', async () => {
+    const r = await заливаем(облако, старое)
+    expect(r.price_final).toBe(1999)
+    expect(r.discount_percent).toBe(0)
+    expect(r.discount_ends_at).toBeNull()
+    expect(r.price_at).toBe(ВЧЕРА)
+  })
+
+  test('старый онлайн не ложится поверх свежего', async () => {
+    const r = await заливаем(облако, старое)
+    expect(r.ccu).toBe(900)
+    expect(r.ccu_at).toBe(ВЧЕРА)
+  })
+
+  test('замер без отметки старше любого датированного', async () => {
+    const r = await заливаем(облако, { ...старое, price_at: null, ccu_at: null })
+    expect(r.price_final).toBe(1999)
+    expect(r.ccu).toBe(900)
+  })
+
+  test('свежий локальный замер едет целиком, включая погашенную скидку', async () => {
+    const свежее: Замер = {
+      price_final: 2499, discount_percent: 0, discount_ends_at: null, price_at: ВЧЕРА + 3600,
+      ccu: 1200, ccu_at: ВЧЕРА + 3600,
+    }
+    expect(await заливаем({ ...облако, discount_percent: 50, discount_ends_at: ВЧЕРА + 86_400 }, свежее)).toEqual(свежее)
+  })
+
+  test('в облаке замера не было — едет любой локальный, как раньше', async () => {
+    const пусто: Замер = {
+      price_final: null, discount_percent: null, discount_ends_at: null, price_at: null,
+      ccu: null, ccu_at: null,
+    }
+    expect(await заливаем(пусто, старое)).toEqual(старое)
+  })
+
+  test('отметки нет в списке колонок — колонка едет по-старому, а не замирает навсегда', () => {
+    expect(buildSetList(['appid', 'price_final'])).toBe('price_final = excluded.price_final')
+  })
+})
+
 describe('публикация каталога: битые JSON-колонки не едут', () => {
   test('дважды закодированные теги в локальной базе — отказ с командой починки', async () => {
     // createDb прогоняет миграцию, и она сама чинит то, что лежало до неё;

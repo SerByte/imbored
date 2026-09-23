@@ -20,6 +20,7 @@
  */
 
 import {
+  getGamesMeta,
   loadTagDictionary,
   nextIngestBatch,
   rebuildTagStats,
@@ -28,7 +29,7 @@ import {
   setIngestStatus,
   upsertGameMeta,
 } from '../lib/db'
-import { fetchStoreDescriptions, fetchStoreItems, fetchTagDictionary } from '../lib/catalog'
+import { fetchStoreDescriptions, fetchStoreItems, fetchTagDictionary, mergeMeta } from '../lib/catalog'
 import { openDb } from './opendb'
 import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
 import { judgeLiveness, playMode } from '../lib/liveness'
@@ -228,13 +229,30 @@ async function main() {
   }))
   const superseded = buildSeriesIndex(members, SERIES_OVERRIDES)
 
+  /*
+   * Запись — поверх того, что уже лежит, а не вместо него.
+   *
+   * GetItems не отдаёт ни скриншотов, ни жанров, ни медианы наигранного: их
+   * привозит обогащение карточек (appdetails) прямо в базу. С заданным
+   * TURSO_DATABASE_URL промоут пишет в облако, и голый апсерт затирал там
+   * результат крона карточек, а page_at оставался свежим — вернулись бы они к
+   * этим играм только через полгода (PAGE_MAX_AGE_SEC). Скриншоты, жанры и
+   * русское описание апсерт теперь бережёт и сам (keepFilledSql,
+   * keepRussianSql в lib/db); слияние сверх того сохраняет арт, медиану и
+   * прочее, чего нет в ответе магазина, — то же, что делает прогрев.
+   *
+   * Одним чтением на весь прогон, а не getGameMeta на игру: это тысячи
+   * последовательных походов в Turso.
+   */
+  const existing = await getGamesMeta(db, metas.map((m) => m.appid))
+
   // запись
   let promoted = 0
   let dropped = 0
   for (const m of metas) {
     const verdict = verdicts.get(m.appid) ?? { alive: true, reason: null }
     const replacedBy = superseded.get(m.appid) ?? null
-    await upsertGameMeta(db, m, nowSec)
+    await upsertGameMeta(db, mergeMeta(existing.get(m.appid), m), nowSec)
     await db.execute({
       sql: 'UPDATE games SET alive = ?, dead_reason = ?, superseded_by = ?, signals_at = ? WHERE appid = ?',
       args: [verdict.alive ? 1 : 0, verdict.reason, replacedBy, nowSec, m.appid],

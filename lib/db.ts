@@ -1,6 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
+import { CYRILLIC_GLOB } from './cyrillic'
 import { isDeadReason } from './liveness'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
@@ -1722,6 +1723,52 @@ const GAME_INSERT = `INSERT INTO games (appid, name, tags_json, genres_json, cat
  */
 type OnConflict = 'update' | 'keep'
 
+/*
+ * Кто имеет право затирать что — правила SET для апсерта games.
+ *
+ * Общие для gameMetaStatement ниже и для заливки каталога в облако
+ * (scripts/publishsql). Пока правило жило только в заливке, остальные дороги
+ * записи обходили его: promote-catalog с TURSO_DATABASE_URL писал в облако
+ * этим самым апсертом без слияния и стирал скриншоты и жанры, которые туда
+ * привезло обогащение карточек, а заливка их потом честно берегла — уже
+ * пустыми. Слияние в JS (mergeMeta) помнит об этом только у тех, кто его
+ * зовёт; SQL помнит у всех.
+ */
+
+/**
+ * Поле обогащения (скриншоты, жанры): пустое — NULL, '' или '[]' — не
+ * затирает накопленное. Источник у них один, appdetails в кроне карточек, и
+ * все прочие записи приходят с пустотой не потому, что данных нет, а потому,
+ * что они за ними не ходили.
+ */
+export function keepFilledSql(col: string): string {
+  return `CASE WHEN excluded.${col} IS NULL OR excluded.${col} IN ('', '[]') THEN games.${col} ELSE excluded.${col} END`
+}
+
+/**
+ * Описание: русское не заменяется нерусским, в том числе пустым. Остальное
+ * едет как есть — русское русским (переводы в Steam правят), английское
+ * английским и русским. Класс букв и довод про GLOB — в lib/cyrillic.
+ */
+export function keepRussianSql(col: string): string {
+  return (
+    `CASE WHEN games.${col} GLOB ${CYRILLIC_GLOB}` +
+    ` AND NOT (COALESCE(excluded.${col}, '') GLOB ${CYRILLIC_GLOB})` +
+    ` THEN games.${col} ELSE excluded.${col} END`
+  )
+}
+
+/**
+ * Замер с отметкой времени (цена — price_at, онлайн — ccu_at): едет, только
+ * если он не старше того, что уже лежит. Без отметки считается самым старым.
+ *
+ * В SET все выражения видят строку ДО обновления, поэтому сама отметка тоже
+ * пишется этим правилом и остальные колонки группы решают по старой.
+ */
+export function newerMeasureSql(col: string, stamp: string): string {
+  return `CASE WHEN COALESCE(excluded.${stamp}, 0) >= COALESCE(games.${stamp}, 0) THEN excluded.${col} ELSE games.${col} END`
+}
+
 function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflict = 'update') {
   return {
     sql:
@@ -1732,11 +1779,13 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
           ON CONFLICT(appid) DO UPDATE SET
             name = excluded.name,
             tags_json = excluded.tags_json,
-            genres_json = excluded.genres_json,
+            -- скриншоты, жанры и русское описание берегутся от пустого и от
+            -- английского — см. keepFilledSql и keepRussianSql выше
+            genres_json = ${keepFilledSql('genres_json')},
             categories_json = excluded.categories_json,
-            short_description = excluded.short_description,
+            short_description = ${keepRussianSql('short_description')},
             header_image = excluded.header_image,
-            screenshots_json = excluded.screenshots_json,
+            screenshots_json = ${keepFilledSql('screenshots_json')},
             is_free = excluded.is_free,
             price_final = excluded.price_final,
             release_date = excluded.release_date,

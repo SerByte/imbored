@@ -267,6 +267,52 @@ describe('db', () => {
     expect(await getGameMeta(db, 999)).toBeNull()
   })
 
+  test('апсерт без слияния не стирает скриншоты, жанры и русское описание', async () => {
+    // Так писал в облако promote-catalog: GetItems без скриншотов и жанров,
+    // описание английское, а в строке — результат обогащения карточки
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await upsertGameMeta(
+      db,
+      {
+        ...META,
+        name: 'Portal 2 (upd)',
+        genres: [],
+        screenshots: undefined,
+        shortDescription: 'Portal 2 draws from the award-winning formula',
+      },
+      NOW + 10,
+    )
+    const stored = await getGameMeta(db, 620)
+    expect(stored?.name).toBe('Portal 2 (upd)')
+    expect(stored?.genres).toEqual(['Puzzle'])
+    expect(stored?.screenshots).toEqual(['https://example/620-1.jpg'])
+    expect(stored?.shortDescription).toBe('Головоломка с порталами')
+
+    // пустой список — тоже пустота, а не «кадров больше нет»
+    await upsertGameMeta(db, { ...META, screenshots: [] }, NOW + 20)
+    expect((await getGameMeta(db, 620))?.screenshots).toEqual(['https://example/620-1.jpg'])
+  })
+
+  test('непустое обогащение и русское поверх английского едут как прежде', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, shortDescription: 'Portal 2 draws from', screenshots: undefined }, NOW)
+    await upsertGameMeta(
+      db,
+      { ...META, genres: ['Головоломки'], screenshots: ['https://example/620-2.jpg'] },
+      NOW + 10,
+    )
+    const stored = await getGameMeta(db, 620)
+    expect(stored?.genres).toEqual(['Головоломки'])
+    expect(stored?.screenshots).toEqual(['https://example/620-2.jpg'])
+    expect(stored?.shortDescription).toBe('Головоломка с порталами')
+
+    // английское английским — тоже
+    await upsertGameMeta(db, { ...META, appid: 621, shortDescription: 'Old English' }, NOW)
+    await upsertGameMeta(db, { ...META, appid: 621, shortDescription: 'New English' }, NOW + 10)
+    expect((await getGameMeta(db, 621))?.shortDescription).toBe('New English')
+  })
+
   test('цена и скидка переживают роундтрип — их и теряли в этом месте', async () => {
     // Тот же класс потери, что был у developer, release_year и signals_at:
     // колонка пишется, приезжает в SELECT * и выбрасывается в JS, потому что
