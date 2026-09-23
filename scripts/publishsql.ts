@@ -36,7 +36,9 @@ const ПО_ОТМЕТКЕ: Readonly<Record<string, string>> = {
  * молчаливая — карточки просто снова становятся английскими.
  */
 export function buildSetList(cols: readonly string[]): string {
-  const ОТ_ОБОГАЩЕНИЯ = new Set(['screenshots_json', 'genres_json'])
+  // Трейлер — такое же поле обогащения: в облаке его привозит крон карточек,
+  // а локальный каталог без доливки медиа приходит с пустотой
+  const ОТ_ОБОГАЩЕНИЯ = new Set(['screenshots_json', 'genres_json', 'trailer_json'])
 
   /*
    * Описание — своя ось, и не про пустоту, а про ЯЗЫК.
@@ -69,6 +71,26 @@ export function buildSetList(cols: readonly string[]): string {
       return `${c} = excluded.${c}`
     })
     .join(', ')
+}
+
+/**
+ * Колонки games, которых в локальном каталоге может не быть.
+ *
+ * Локальную базу заливка не мигрирует (как и словарь тегов, см. tagsSelectSql),
+ * а колонку приносит миграция любого скрипта наполнения. Каталог, собранный
+ * до трейлеров и с тех пор не открытый ни одним из них, ответил бы на
+ * SELECT trailer_json «no such column» и уронил всю заливку ради колонки,
+ * которую в нём всё равно нечем было заполнить.
+ */
+const ПОЗДНИЕ = new Set(['trailer_json'])
+
+/**
+ * Список колонок заливки под то, что есть в локальной games: поздние колонки
+ * без пары в базе выпадают, остальные остаются всегда — пропавшая обычная
+ * колонка должна ронять заливку, а не молча уезжать пустой.
+ */
+export function presentCols<T extends string>(cols: readonly T[], have: ReadonlySet<string>): T[] {
+  return cols.filter((c) => !ПОЗДНИЕ.has(c) || have.has(c))
 }
 
 /**

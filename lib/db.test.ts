@@ -21,6 +21,7 @@ import {
   getCatalogMeta,
   getFeedForApps,
   gameDescriptions,
+  gamesMissingMedia,
   getGameNews,
   getGameRanks,
   getNewsBlocks,
@@ -34,6 +35,7 @@ import {
   removeRoomMember,
   reviveGoneNewsPoll,
   setGameDescriptions,
+  setGamesMedia,
   setNewsDigest,
   STEAM_LEASE,
   upsertNewsItems,
@@ -56,7 +58,7 @@ import {
   findRoomMatch,
   getGameJson,
   getGameMeta,
-  getGameShots,
+  getHeroMedia,
   parseIdList,
   parseSemantics,
   parseStrList,
@@ -180,6 +182,93 @@ describe('db', () => {
     const db = await freshDb()
     // db.batch([]) в libsql — ошибка, и вызывающему пришлось бы помнить об этом
     expect(await setGameDescriptions(db, [])).toBe(0)
+  })
+
+  describe('трейлер и кадры', () => {
+    const TRAILER = {
+      mp4: 'https://video.akamai.steamstatic.com/store_trailers/620/1/h/2/microtrailer.mp4',
+      webm: 'https://video.akamai.steamstatic.com/store_trailers/620/1/h/2/microtrailer.webm',
+      poster: 'https://shared.steamstatic.com/store_item_assets/steam/apps/9/movie_full.jpg?t=1',
+    }
+
+    test('трейлер пишется апсертом и читается полной выборкой, узкая его не тащит', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, trailer: TRAILER }, NOW)
+      expect((await getGameMeta(db, 620))?.trailer).toEqual(TRAILER)
+      expect((await getGamesMeta(db, [620])).get(620)?.trailer).toEqual(TRAILER)
+      expect((await getGamesMetaLite(db, [620])).get(620)).not.toHaveProperty('trailer')
+    })
+
+    test('запись без трейлера — прогрев, appdetails — привезённый не стирает', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, trailer: TRAILER }, NOW)
+      await upsertGameMeta(db, { ...META, name: 'Portal 2 (новое имя)' }, NOW + 1)
+      const after = await getGameMeta(db, 620)
+      expect(after?.name).toBe('Portal 2 (новое имя)')
+      expect(after?.trailer).toEqual(TRAILER)
+    })
+
+    test('чужой хост в колонке — трейлера нет, а не <video> с чужой ссылкой', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, META, NOW)
+      await db.execute({
+        sql: 'UPDATE games SET trailer_json = ? WHERE appid = 620',
+        args: [JSON.stringify({ mp4: 'https://evil.example/x.mp4' })],
+      })
+      expect((await getGameMeta(db, 620))?.trailer).toBeUndefined()
+      expect((await getHeroMedia(db, [620])).get(620)).toEqual({ screenshots: META.screenshots })
+    })
+
+    test('getHeroMedia: кадры и трейлер героям; игра с одним трейлером тоже герой', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, trailer: TRAILER }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 730, screenshots: undefined, trailer: TRAILER }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 570, screenshots: undefined }, NOW)
+      const media = await getHeroMedia(db, [620, 730, 570])
+      expect(media.get(620)).toEqual({ screenshots: META.screenshots, trailer: TRAILER })
+      expect(media.get(730)).toEqual({ screenshots: [], trailer: TRAILER })
+      expect(media.has(570)).toBe(false)
+    })
+
+    test('setGamesMedia пишет две колонки, пустое не затирает, updated_at не двигает', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, reviewsTotal: 10 }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 730, screenshots: undefined, reviewsTotal: 20 }, NOW)
+      const shots = ['https://shared.steamstatic.com/store_item_assets/steam/apps/730/ss_a.1920x1080.jpg?t=1']
+
+      const n = await setGamesMedia(db, [
+        { appid: 730, screenshots: shots, trailer: TRAILER },
+        // у 620 в ответе ничего — строку не трогаем вовсе
+        { appid: 620 },
+        // игры нет в games — не создаём
+        { appid: 999, trailer: TRAILER },
+      ])
+      expect(n).toBe(1)
+      const cs2 = await getGameMeta(db, 730)
+      expect(cs2?.screenshots).toEqual(shots)
+      expect(cs2?.trailer).toEqual(TRAILER)
+      expect(await getGameMeta(db, 999)).toBeNull()
+
+      // второй проход без трейлера и с пустыми кадрами прежнее не стирает
+      await setGamesMedia(db, [{ appid: 730, screenshots: [] }])
+      expect((await getGameMeta(db, 730))?.trailer).toEqual(TRAILER)
+      expect((await getGameMeta(db, 730))?.screenshots).toEqual(shots)
+
+      const r = await db.execute('SELECT updated_at FROM games WHERE appid = 730')
+      expect(Number(r.rows[0].updated_at)).toBe(NOW)
+      expect(await setGamesMedia(db, [])).toBe(0)
+    })
+
+    test('gamesMissingMedia: пул без трейлера или кадров, верх каталога первым', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, appid: 1, reviewsTotal: 10, trailer: TRAILER }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 2, reviewsTotal: 30 }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 3, reviewsTotal: 20, screenshots: [], trailer: TRAILER }, NOW)
+      // не пул: без тегов — в выборку не попадает
+      await upsertGameMeta(db, { ...META, appid: 4, reviewsTotal: 99, tags: {} }, NOW)
+      expect(await gamesMissingMedia(db, 10)).toEqual([2, 3])
+      expect(await gamesMissingMedia(db, 1)).toEqual([2])
+    })
   })
 
   test('дважды закодированные теги читаются объектом, а не строкой', async () => {
@@ -413,7 +502,7 @@ describe('db', () => {
     expect((await stalePriceAppids(db, appids, 3600, NOW)).sort((a, b) => a - b)).toEqual([
       1000, 40_999,
     ])
-    expect((await getGameShots(db, appids)).size).toBe(2)
+    expect((await getHeroMedia(db, appids)).size).toBe(2)
   })
 
   test('узкая выборка — та же игра без скриншотов, кадры читаются отдельно', async () => {
@@ -427,8 +516,8 @@ describe('db', () => {
     // полная выборка по-прежнему несёт кадры — ими живёт герой игры дня
     expect((await getGamesMeta(db, [620])).get(620)?.screenshots).toEqual(screenshots)
 
-    const shots = await getGameShots(db, [620, 730, 999])
-    expect(shots.get(620)).toEqual(screenshots)
+    const shots = await getHeroMedia(db, [620, 730, 999])
+    expect(shots.get(620)?.screenshots).toEqual(screenshots)
     // У игры без кадров и у отсутствующей — просто нет записи
     expect(shots.has(730)).toBe(false)
     expect(shots.has(999)).toBe(false)
@@ -2787,8 +2876,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 3,
-      columns: 32,
+      version: 4,
+      columns: 33,
     })
   })
 })

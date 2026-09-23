@@ -3,6 +3,13 @@ import { hasCyrillic } from './cyrillic'
 import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
 import { logSwallowed } from './errlog'
 import { pace } from './pace'
+import {
+  parseStoreScreenshots,
+  parseStoreTrailer,
+  type StoreScreenshots,
+  type StoreTrailers,
+  type Trailer,
+} from './trailer'
 import type { GameMeta } from './types'
 
 type AppDetailsData = {
@@ -88,6 +95,10 @@ type StoreItem = {
   release?: { steam_release_date?: number }
   is_free?: boolean
   best_purchase_option?: PurchaseOption
+  /** только с include_screenshots — см. STORE_MEDIA_DATA_REQUEST */
+  screenshots?: StoreScreenshots
+  /** только с include_trailers */
+  trailers?: StoreTrailers
 }
 
 /**
@@ -210,15 +221,51 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
     if (it.is_free !== undefined) meta.isFree = it.is_free
     Object.assign(meta, parsePurchaseOption(it.best_purchase_option))
     if (it.release?.steam_release_date) meta.releaseDate = isoDate(it.release.steam_release_date)
+    // Кадры и трейлер приходят, только если их просили (fetchStoreItems с
+    // media). Пустое не пишем: без поля mergeMeta и апсерт сберегут то, что
+    // уже привезли appdetails или прошлый обход
+    Object.assign(meta, mediaOf(it))
     out.push(meta)
+  }
+  return out
+}
+
+/** Кадры и трейлер одной игры из ответа GetItems — только то, что нашлось */
+export type StoreMedia = { screenshots?: string[]; trailer?: Trailer }
+
+function mediaOf(it: StoreItem): StoreMedia {
+  const out: StoreMedia = {}
+  const shots = parseStoreScreenshots(it.screenshots)
+  if (shots.length) out.screenshots = shots
+  const trailer = parseStoreTrailer(it.trailers)
+  if (trailer) out.trailer = trailer
+  return out
+}
+
+/**
+ * appid -> кадры и трейлер. Игры, у которых не нашлось ни того ни другого, в
+ * карту не попадают: писать им нечего.
+ */
+export function parseStoreMedia(json: unknown): Map<number, StoreMedia> {
+  const items = (json as { response?: { store_items?: StoreItem[] } })?.response?.store_items
+  const out = new Map<number, StoreMedia>()
+  if (!Array.isArray(items)) return out
+  for (const it of items) {
+    const appid = it?.appid ?? it?.id
+    if (!appid || !it.visible) continue
+    const media = mediaOf(it)
+    if (media.screenshots || media.trailer) out.set(appid, media)
   }
   return out
 }
 
 /**
  * Свежие данные побеждают, но накопленное не теряется: GetItems не отдаёт
- * скриншоты, жанры и медиану наигранного, а `upsertGameMeta` перезаписывает
- * строку целиком — без слияния лёгкий ответ стёр бы уже загруженное.
+ * жанры и медиану наигранного, а кадры и трейлер — только когда их просили
+ * (прогрев не просит, см. STORE_MEDIA_DATA_REQUEST). `upsertGameMeta`
+ * перезаписывает строку целиком — без слияния лёгкий ответ стёр бы уже
+ * загруженное. Трейлер отдельной строки не требует: у свежей записи без него
+ * поля нет вовсе, и спред оставляет прежний.
  */
 export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta): GameMeta {
   if (!existing) return fresh
@@ -303,17 +350,25 @@ export async function fetchTagDictionary(
  */
 export async function fetchStoreItems(
   appids: number[],
-  opts: { fetchFn?: typeof fetch; tagNames?: Map<number, string> } = {},
+  opts: {
+    fetchFn?: typeof fetch
+    tagNames?: Map<number, string>
+    /** кадры и трейлер тем же запросом — втрое тяжелее, см. STORE_MEDIA_DATA_REQUEST */
+    media?: boolean
+  } = {},
 ): Promise<GameMeta[]> {
   const positive = appids.filter((id) => id > 0)
   if (!positive.length) return []
   const { fetchFn = fetch } = opts
   const tagNames = opts.tagNames ?? (await fetchTagDictionary(fetchFn))
+  const dataRequest = opts.media
+    ? { ...STORE_ITEMS_DATA_REQUEST, ...STORE_MEDIA_DATA_REQUEST }
+    : STORE_ITEMS_DATA_REQUEST
 
   const out: GameMeta[] = []
   for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
     const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
-    const json = await callStoreItems(chunk, STORE_ITEMS_DATA_REQUEST, fetchFn)
+    const json = await callStoreItems(chunk, dataRequest, fetchFn)
     // Отметка свежести цены ставится здесь, а не у вызывающих: «сейчас» знает
     // только тот, кто сходил в сеть. Разбор (parseStoreItems) остаётся чистым и
     // без часов, а любой потребитель — прогрев, офлайн-сборка каталога, будущий
@@ -405,6 +460,44 @@ const STORE_ITEMS_DATA_REQUEST = {
   include_categories: true,
   include_release: true,
   include_tag_count: 20,
+}
+
+/**
+ * Кадры и трейлеры — тот же GetItems, два флага.
+ *
+ * В прогрев (/api/prepare) их нет намеренно. Замер на двухстах играх верха
+ * каталога: обычный ответ — 551 КБ, с кадрами и трейлерами — 1,73 МБ, втрое
+ * тяжелее; одни трейлеры — 950 КБ (у каждого ролика ещё и три ссылки на
+ * адаптивный поток). Прогрев платит за это на каждой пачке каждой библиотеки,
+ * а показываются кадры и трейлер у пяти героев выдачи и на странице игры.
+ *
+ * Поэтому просят их те, кто и так ходит за карточкой: промоут каталога
+ * (fetchStoreItems с media), крон карточек — отдельной пачкой по своему срезу
+ * (fetchStoreMedia в lib/pagejob) — и разовая доливка scripts/backfill-media.
+ */
+const STORE_MEDIA_DATA_REQUEST = { include_screenshots: true, include_trailers: true }
+
+/** Сколько миллисекунд таймаута на игру: ответ с медиа втрое тяжелее обычного */
+const MEDIA_MS_PER_APP = 300
+
+/**
+ * Кадры и трейлеры для пачки игр — без тегов, арта и цены. Для тех, кто пишет
+ * их узким UPDATE (setGamesMedia), не трогая остальной строки.
+ */
+export async function fetchStoreMedia(
+  appids: number[],
+  opts: { fetchFn?: typeof fetch } = {},
+): Promise<Map<number, StoreMedia>> {
+  const positive = appids.filter((id) => id > 0)
+  const out = new Map<number, StoreMedia>()
+  if (!positive.length) return out
+  const { fetchFn = fetch } = opts
+  for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
+    const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
+    const json = await callStoreItems(chunk, STORE_MEDIA_DATA_REQUEST, fetchFn, MEDIA_MS_PER_APP)
+    for (const [appid, media] of parseStoreMedia(json)) out.set(appid, media)
+  }
+  return out
 }
 
 /**

@@ -1,0 +1,738 @@
+{
+  "_source": "Настоящий ответ IStoreBrowseService/GetItems с include_trailers и include_screenshots (сентябрь 2026), урезанный до трёх кадров и трёх трейлеров на игру.",
+  "response": {
+    "store_items": [
+      {
+        "item_type": 0,
+        "id": 730,
+        "success": 1,
+        "visible": true,
+        "name": "Counter-Strike 2",
+        "appid": 730,
+        "screenshots": {
+          "all_ages_screenshots": [
+            {
+              "filename": "steam/apps/730/9c8b8fd6ebb2c84a1c38541369e6c05db7f1fbe0/ss_9c8b8fd6ebb2c84a1c38541369e6c05db7f1fbe0.jpg?t=1789251637",
+              "ordinal": 1
+            },
+            {
+              "filename": "steam/apps/730/4ef95eed5fcd98c576bf13e024bc6c845b622132/ss_4ef95eed5fcd98c576bf13e024bc6c845b622132.jpg?t=1789251637",
+              "ordinal": 2
+            },
+            {
+              "filename": "steam/apps/730/ss_13bb35638c0267759276f511ee97064773b37a51.jpg?t=1789251637",
+              "ordinal": 3
+            }
+          ]
+        },
+        "trailers": {
+          "highlights": [
+            {
+              "trailer_name": "Launch Trailer",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1696005467",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "730/612468/aa5a28c78f12232e6b6839034550c28b162fad3e/1748810724/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "730/612468/aa5a28c78f12232e6b6839034550c28b162fad3e/1748810724/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "730/612468/aa5a28c78f12232e6b6839034550c28b162fad3e/1748810724/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "730/612468/aa5a28c78f12232e6b6839034550c28b162fad3e/1748810724/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "730/612468/aa5a28c78f12232e6b6839034550c28b162fad3e/1748810724/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "256972298/movie.293x165.jpg",
+              "screenshot_full": "256972298/movie_full.jpg",
+              "trailer_base_id": 612468,
+              "all_ages": true
+            },
+            {
+              "trailer_name": "Moving Beyond Tick Rate",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1696005475",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "730/608984/a3ae9d5b8de21282056059ca5e851a063a253a55/1748810722/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "730/608984/a3ae9d5b8de21282056059ca5e851a063a253a55/1748810722/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "730/608984/a3ae9d5b8de21282056059ca5e851a063a253a55/1748810722/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "730/608984/a3ae9d5b8de21282056059ca5e851a063a253a55/1748810722/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "730/608984/a3ae9d5b8de21282056059ca5e851a063a253a55/1748810722/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "256970298/movie.293x165.jpg",
+              "screenshot_full": "256970298/movie_full.jpg",
+              "trailer_base_id": 608984,
+              "all_ages": true
+            },
+            {
+              "trailer_name": "Leveling Up",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1696005483",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "730/607867/ed6e0afecb45c615095cf8d84cec9d31659a3cc7/1748810722/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "730/607867/ed6e0afecb45c615095cf8d84cec9d31659a3cc7/1748810722/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "730/607867/ed6e0afecb45c615095cf8d84cec9d31659a3cc7/1748810722/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "730/607867/ed6e0afecb45c615095cf8d84cec9d31659a3cc7/1748810722/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "730/607867/ed6e0afecb45c615095cf8d84cec9d31659a3cc7/1748810722/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "256969703/movie.293x165.jpg",
+              "screenshot_full": "256969703/movie_full.jpg",
+              "trailer_base_id": 607867,
+              "all_ages": true
+            }
+          ]
+        }
+      },
+      {
+        "item_type": 0,
+        "id": 553850,
+        "success": 1,
+        "visible": true,
+        "name": "HELLDIVERS™ 2",
+        "appid": 553850,
+        "screenshots": {
+          "all_ages_screenshots": [
+            {
+              "filename": "steam/apps/553850/aed08979e15f54798f287dd8820fb5838476b5fa/ss_aed08979e15f54798f287dd8820fb5838476b5fa.jpg?t=1789585784",
+              "ordinal": 1
+            },
+            {
+              "filename": "steam/apps/553850/71ef7c65fcf63ff974ce42150190c0420c66c72b/ss_71ef7c65fcf63ff974ce42150190c0420c66c72b.jpg?t=1789585784",
+              "ordinal": 2
+            },
+            {
+              "filename": "steam/apps/553850/6c8b61a7c63479b6f526d285af6687a362d5d7ae/ss_6c8b61a7c63479b6f526d285af6687a362d5d7ae.jpg?t=1789585784",
+              "ordinal": 3
+            }
+          ]
+        },
+        "trailers": {
+          "highlights": [
+            {
+              "trailer_name": "Devoid of Liberty",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1788431411",
+              "trailer_category": 3,
+              "microtrailer": [
+                {
+                  "filename": "553850/97059895/43cbd15ee5e1bd1be5aef57dd4a093d448e2d7f5/1788431043/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "553850/97059895/43cbd15ee5e1bd1be5aef57dd4a093d448e2d7f5/1788431043/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "553850/97059895/43cbd15ee5e1bd1be5aef57dd4a093d448e2d7f5/1788431043/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "553850/97059895/43cbd15ee5e1bd1be5aef57dd4a093d448e2d7f5/1788431043/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "553850/97059895/43cbd15ee5e1bd1be5aef57dd4a093d448e2d7f5/1788431043/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "257416388/40bb356adaabd25fd73488264840abe84ac84718/movie_600x337.jpg",
+              "screenshot_full": "257416388/40bb356adaabd25fd73488264840abe84ac84718/movie_full.jpg",
+              "trailer_base_id": 1314803,
+              "all_ages": false
+            },
+            {
+              "trailer_name": "Face the unknown",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1786525386",
+              "trailer_category": 2,
+              "microtrailer": [
+                {
+                  "filename": "553850/1066241062/9d085e63a7061466f8db4a78f6dab24e1df5de9a/1785860021/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "553850/1066241062/9d085e63a7061466f8db4a78f6dab24e1df5de9a/1785860021/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "553850/1066241062/9d085e63a7061466f8db4a78f6dab24e1df5de9a/1785860021/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "553850/1066241062/9d085e63a7061466f8db4a78f6dab24e1df5de9a/1785860021/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "553850/1066241062/9d085e63a7061466f8db4a78f6dab24e1df5de9a/1785860021/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "257391604/01449b1c2230f3901f09313fcbbf813f45edde93/movie_600x337.jpg",
+              "screenshot_full": "257391604/01449b1c2230f3901f09313fcbbf813f45edde93/movie_full.jpg",
+              "trailer_base_id": 1274047,
+              "all_ages": false
+            },
+            {
+              "trailer_name": "Launch Trailer (US-EN)",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1756923474",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "553850/650713/095c6d5ae33c146b807f4394fa3010847aec1c1e/1750550195/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "553850/650713/095c6d5ae33c146b807f4394fa3010847aec1c1e/1750550195/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "553850/650713/095c6d5ae33c146b807f4394fa3010847aec1c1e/1750550195/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "553850/650713/095c6d5ae33c146b807f4394fa3010847aec1c1e/1750550195/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "553850/650713/095c6d5ae33c146b807f4394fa3010847aec1c1e/1750550195/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "256994373/movie.293x165.jpg",
+              "screenshot_full": "256994373/movie_full.jpg",
+              "trailer_base_id": 650713,
+              "all_ages": true
+            }
+          ]
+        }
+      },
+      {
+        "item_type": 0,
+        "id": 550,
+        "success": 1,
+        "visible": true,
+        "name": "Left 4 Dead 2",
+        "appid": 550,
+        "screenshots": {
+          "all_ages_screenshots": [
+            {
+              "filename": "steam/apps/550/ss_29b3b4f2a3994c889f6fc12e0781d9d4726ef33f.jpg?t=1772742214",
+              "ordinal": 2
+            },
+            {
+              "filename": "steam/apps/550/ss_9488e329bb42d792a059fb44cb7135d25b6262f5.jpg?t=1772742214",
+              "ordinal": 3
+            },
+            {
+              "filename": "steam/apps/550/ss_d97ee8bd9a512f350bd9433730db26da76ff7a29.jpg?t=1772742214",
+              "ordinal": 10
+            }
+          ],
+          "mature_content_screenshots": [
+            {
+              "filename": "steam/apps/550/ss_2eae29fbdfe8e5e8999b96d8bb28c5db70507968.jpg?t=1772742214",
+              "ordinal": 1
+            }
+          ]
+        },
+        "trailers": {
+          "other_trailers": [
+            {
+              "trailer_name": "Left 4 Dead - The Sacrifice Trailer",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1682697457",
+              "trailer_category": 3,
+              "microtrailer": [
+                {
+                  "filename": "550/4183/7fdfab73a52d6b4e69a693f77c66620c53086cbd/1749861554/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "550/4183/7fdfab73a52d6b4e69a693f77c66620c53086cbd/1749861554/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "550/4183/7fdfab73a52d6b4e69a693f77c66620c53086cbd/1749861554/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "550/4183/7fdfab73a52d6b4e69a693f77c66620c53086cbd/1749861554/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "550/4183/7fdfab73a52d6b4e69a693f77c66620c53086cbd/1749861554/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "5952/movie.293x165.jpg",
+              "trailer_base_id": 4183,
+              "all_ages": true
+            },
+            {
+              "trailer_name": "Left 4 Dead 2 - TV Spot 2",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1447352698",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "550/2835/ca3dc2781658e9eaa5129781204f7b126f04ecf7/1749861554/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "550/2835/ca3dc2781658e9eaa5129781204f7b126f04ecf7/1749861554/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "550/2835/ca3dc2781658e9eaa5129781204f7b126f04ecf7/1749861554/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "550/2835/ca3dc2781658e9eaa5129781204f7b126f04ecf7/1749861554/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "550/2835/ca3dc2781658e9eaa5129781204f7b126f04ecf7/1749861554/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "trailer_base_id": 2835,
+              "all_ages": true
+            },
+            {
+              "trailer_name": "Left 4 Dead 2 Teaser",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1447352170",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "550/2063/5a66ec1afd41bc64a8a84354bd9755acdb83b75e/1750107723/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "550/2063/5a66ec1afd41bc64a8a84354bd9755acdb83b75e/1750107723/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "550/2063/5a66ec1afd41bc64a8a84354bd9755acdb83b75e/1750107723/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "550/2063/5a66ec1afd41bc64a8a84354bd9755acdb83b75e/1750107723/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "550/2063/5a66ec1afd41bc64a8a84354bd9755acdb83b75e/1750107723/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "trailer_base_id": 2063,
+              "all_ages": true
+            }
+          ]
+        }
+      },
+      {
+        "item_type": 0,
+        "id": 70,
+        "success": 1,
+        "visible": true,
+        "name": "Half-Life",
+        "appid": 70,
+        "screenshots": {
+          "all_ages_screenshots": [
+            {
+              "filename": "steam/apps/70/0000002343.jpg?t=1745368462",
+              "ordinal": 2
+            },
+            {
+              "filename": "steam/apps/70/0000002342.jpg?t=1745368462",
+              "ordinal": 3
+            },
+            {
+              "filename": "steam/apps/70/0000002344.jpg?t=1745368462",
+              "ordinal": 4
+            }
+          ],
+          "mature_content_screenshots": [
+            {
+              "filename": "steam/apps/70/0000002354.jpg?t=1745368462",
+              "ordinal": 1
+            }
+          ]
+        }
+      },
+      {
+        "item_type": 0,
+        "id": 440,
+        "success": 1,
+        "visible": true,
+        "name": "Team Fortress 2",
+        "appid": 440,
+        "screenshots": {
+          "all_ages_screenshots": [
+            {
+              "filename": "steam/apps/440/ss_ea21f7bbf4f79bada4554df5108d04b6889d3453.jpg?t=1757348372",
+              "ordinal": 1
+            },
+            {
+              "filename": "steam/apps/440/ss_e3aedb2ab36bba8cfe611b1e0eaa807e4bb2d742.jpg?t=1757348372",
+              "ordinal": 2
+            },
+            {
+              "filename": "steam/apps/440/ss_ee24a769dc1d81dcbd7b250d16530394adee4264.jpg?t=1757348372",
+              "ordinal": 3
+            }
+          ]
+        },
+        "trailers": {
+          "highlights": [
+            {
+              "trailer_name": "Jungle Inferno",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1682961253",
+              "trailer_category": 3,
+              "microtrailer": [
+                {
+                  "filename": "440/129304/a9d97ffaf28cac468369400c12abe442a7b688b2/1749861261/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "440/129304/a9d97ffaf28cac468369400c12abe442a7b688b2/1749861261/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "440/129304/a9d97ffaf28cac468369400c12abe442a7b688b2/1749861261/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "440/129304/a9d97ffaf28cac468369400c12abe442a7b688b2/1749861261/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "440/129304/a9d97ffaf28cac468369400c12abe442a7b688b2/1749861261/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "256698790/movie.293x165.jpg",
+              "screenshot_full": "256698790/movie_full.jpg",
+              "trailer_base_id": 129304,
+              "all_ages": true
+            }
+          ],
+          "other_trailers": [
+            {
+              "trailer_name": "Team Fortress 2 Trailer 2",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1682961246",
+              "trailer_category": 1,
+              "microtrailer": [
+                {
+                  "filename": "440/393/c904e24c94bdea912a900a3210da17e2d7d64fe9/1749861208/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "440/393/c904e24c94bdea912a900a3210da17e2d7d64fe9/1749861208/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "440/393/c904e24c94bdea912a900a3210da17e2d7d64fe9/1749861208/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "440/393/c904e24c94bdea912a900a3210da17e2d7d64fe9/1749861208/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "440/393/c904e24c94bdea912a900a3210da17e2d7d64fe9/1749861208/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "trailer_base_id": 393,
+              "all_ages": true
+            },
+            {
+              "trailer_name": "Mann vs. Machine - The Sound of Medicine",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1682961260",
+              "trailer_category": 3,
+              "microtrailer": [
+                {
+                  "filename": "440/15532/067441b3fb41b75e0293c99aef6ae9bbb3a9fa79/1749861261/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "440/15532/067441b3fb41b75e0293c99aef6ae9bbb3a9fa79/1749861261/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "440/15532/067441b3fb41b75e0293c99aef6ae9bbb3a9fa79/1749861261/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "440/15532/067441b3fb41b75e0293c99aef6ae9bbb3a9fa79/1749861261/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "440/15532/067441b3fb41b75e0293c99aef6ae9bbb3a9fa79/1749861261/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "2030252/movie.293x165.jpg",
+              "trailer_base_id": 15532,
+              "all_ages": true
+            },
+            {
+              "trailer_name": "Mann vs Machine_Trailer",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1682961267",
+              "trailer_category": 3,
+              "microtrailer": [
+                {
+                  "filename": "440/8728/9f6212e66778d59b79fdb8ba0da36592b15c0524/1749861261/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "440/8728/9f6212e66778d59b79fdb8ba0da36592b15c0524/1749861261/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "440/8728/9f6212e66778d59b79fdb8ba0da36592b15c0524/1749861261/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "440/8728/9f6212e66778d59b79fdb8ba0da36592b15c0524/1749861261/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "440/8728/9f6212e66778d59b79fdb8ba0da36592b15c0524/1749861261/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "81943/movie.293x165.jpg",
+              "trailer_base_id": 8728,
+              "all_ages": true
+            }
+          ]
+        }
+      },
+      {
+        "item_type": 0,
+        "id": 105600,
+        "success": 1,
+        "visible": true,
+        "name": "Terraria",
+        "appid": 105600,
+        "screenshots": {
+          "all_ages_screenshots": [
+            {
+              "filename": "steam/apps/105600/ss_8c03886f214d2108cafca13845533eaa3d87d83f.jpg?t=1769844435",
+              "ordinal": 1
+            },
+            {
+              "filename": "steam/apps/105600/ss_ae168a00ab08104ba266dc30232654d4b3c919e5.jpg?t=1769844435",
+              "ordinal": 2
+            },
+            {
+              "filename": "steam/apps/105600/ss_9edd98caaf9357c2f40758f354475a56e356e8b0.jpg?t=1769844435",
+              "ordinal": 3
+            }
+          ]
+        },
+        "trailers": {
+          "highlights": [
+            {
+              "trailer_name": "Terraria: Bigger & Boulder Trailer",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1769844434",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "105600/1114648825/03d62ed8c2a353ea17f36caf492d053746655032/1769541214/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "105600/1114648825/03d62ed8c2a353ea17f36caf492d053746655032/1769541214/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "105600/1114648825/03d62ed8c2a353ea17f36caf492d053746655032/1769541214/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "105600/1114648825/03d62ed8c2a353ea17f36caf492d053746655032/1769541214/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "105600/1114648825/03d62ed8c2a353ea17f36caf492d053746655032/1769541214/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "257274214/3400c546ddc61c713c2a2da4df7032f0f264a2a4/movie_600x337.jpg",
+              "screenshot_full": "257274214/3400c546ddc61c713c2a2da4df7032f0f264a2a4/movie_full.jpg",
+              "trailer_base_id": 1088478,
+              "all_ages": true
+            },
+            {
+              "trailer_name": "Terraria: Journey's End Trailer",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1589654781",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "105600/284912/418f39cf00388fbdd8efcdc81e05c19c410dfb6d/1750498447/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "105600/284912/418f39cf00388fbdd8efcdc81e05c19c410dfb6d/1750498447/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "105600/284912/418f39cf00388fbdd8efcdc81e05c19c410dfb6d/1750498447/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "105600/284912/418f39cf00388fbdd8efcdc81e05c19c410dfb6d/1750498447/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "105600/284912/418f39cf00388fbdd8efcdc81e05c19c410dfb6d/1750498447/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "256785003/movie.293x165.jpg",
+              "screenshot_full": "256785003/movie_full.jpg",
+              "trailer_base_id": 284912,
+              "all_ages": true
+            },
+            {
+              "trailer_name": "Terraria 1.3 Trailer",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1447376855",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "105600/38483/f6e095fa12b129c503f70d104eb2e0d2fd106db1/1750498447/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "105600/38483/f6e095fa12b129c503f70d104eb2e0d2fd106db1/1750498447/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "105600/38483/f6e095fa12b129c503f70d104eb2e0d2fd106db1/1750498447/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "105600/38483/f6e095fa12b129c503f70d104eb2e0d2fd106db1/1750498447/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "105600/38483/f6e095fa12b129c503f70d104eb2e0d2fd106db1/1750498447/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "2040428/movie.293x165.jpg",
+              "screenshot_full": "2040428/movie_full.jpg",
+              "trailer_base_id": 38483,
+              "all_ages": true
+            }
+          ],
+          "other_trailers": [
+            {
+              "trailer_name": "Terraria 1.1 Trailer",
+              "trailer_url_format": "steam/apps/${FILENAME}?t=1447355104",
+              "trailer_category": 0,
+              "microtrailer": [
+                {
+                  "filename": "105600/6446/096e6974d2ef94f2c5f55ff6ed6a8e29204e299f/1750498443/microtrailer.webm",
+                  "type": "video/webm"
+                },
+                {
+                  "filename": "105600/6446/096e6974d2ef94f2c5f55ff6ed6a8e29204e299f/1750498443/microtrailer.mp4",
+                  "type": "video/mp4"
+                }
+              ],
+              "adaptive_trailers": [
+                {
+                  "cdn_path": "105600/6446/096e6974d2ef94f2c5f55ff6ed6a8e29204e299f/1750498443/dash_av1.mpd",
+                  "encoding": "dash_av1"
+                },
+                {
+                  "cdn_path": "105600/6446/096e6974d2ef94f2c5f55ff6ed6a8e29204e299f/1750498443/dash_h264.mpd",
+                  "encoding": "dash_h264"
+                },
+                {
+                  "cdn_path": "105600/6446/096e6974d2ef94f2c5f55ff6ed6a8e29204e299f/1750498443/hls_264_master.m3u8",
+                  "encoding": "hls_h264"
+                }
+              ],
+              "screenshot_medium": "81300/movie.293x165.jpg",
+              "trailer_base_id": 6446,
+              "all_ages": true
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

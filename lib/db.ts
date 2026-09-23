@@ -7,6 +7,7 @@ import { OTHER_STORE_GAMES } from './otherstores'
 import { SEMANTICS_V } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import type { NewsBlock } from './steamhtml'
+import { readTrailer, type Trailer } from './trailer'
 import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
 
 /** Соединение с БД: локальный файл в dev, Turso в проде — API одинаковый */
@@ -485,7 +486,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 3
+export const CURRENT_SCHEMA_V = 4
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -544,6 +545,10 @@ export const ADDED_COLUMNS = [
   // Русское имя тега из того же словаря Steam, склеенное по tagid. Только
   // подпись: ключи и все сравнения — по name (см. lib/tagsru.ts).
   ['tags', 'name_ru TEXT'],
+  // Микротрейлер и постер (lib/trailer.ts) из GetItems. Поле обогащения, как
+  // скриншоты: пустое не затирает привезённое (keepFilledSql). NULL — не
+  // искали или у игры нет трейлера, который Steam показывает всем.
+  ['games', 'trailer_json TEXT'],
 ] as const
 
 /**
@@ -1760,8 +1765,8 @@ const GAME_INSERT = `INSERT INTO games (appid, name, tags_json, genres_json, cat
             store, store_url, art_json,
             release_year, developer, publisher, reviews_total, reviews_percent, reviews_30d,
             ccu, ccu_at, tag_count, is_multiplayer,
-            price_initial, discount_percent, discount_ends_at, price_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            price_initial, discount_percent, discount_ends_at, price_at, trailer_json, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 /**
  * Что делать с уже лежащей строкой: 'update' — переписать (обычный апсерт),
@@ -1782,10 +1787,10 @@ type OnConflict = 'update' | 'keep'
  */
 
 /**
- * Поле обогащения (скриншоты, жанры): пустое — NULL, '' или '[]' — не
- * затирает накопленное. Источник у них один, appdetails в кроне карточек, и
- * все прочие записи приходят с пустотой не потому, что данных нет, а потому,
- * что они за ними не ходили.
+ * Поле обогащения (скриншоты, жанры, трейлер): пустое — NULL, '' или '[]' —
+ * не затирает накопленное. Источники у них — крон карточек (appdetails и
+ * GetItems с кадрами), промоут и доливка медиа, и все прочие записи приходят с
+ * пустотой не потому, что данных нет, а потому, что они за ними не ходили.
  */
 export function keepFilledSql(col: string): string {
   return `CASE WHEN excluded.${col} IS NULL OR excluded.${col} IN ('', '[]') THEN games.${col} ELSE excluded.${col} END`
@@ -1858,6 +1863,7 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
             discount_percent = excluded.discount_percent,
             discount_ends_at = excluded.discount_ends_at,
             price_at = excluded.price_at,
+            trailer_json = ${keepFilledSql('trailer_json')},
             updated_at = excluded.updated_at`,
     args: [
       meta.appid,
@@ -1892,6 +1898,7 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
       meta.discountPercent ?? null,
       meta.discountEndsAt ?? null,
       meta.priceAt ?? null,
+      meta.trailer ? JSON.stringify(meta.trailer) : null,
       nowSec,
     ],
   }
@@ -2157,6 +2164,8 @@ export type GameRow = {
   header_image: string | null
   /** В узкой выборке (GAME_LITE_COLUMNS_G) колонки нет, и поле приходит undefined */
   screenshots_json?: string | null
+  /** Как screenshots_json: в узкой выборке колонки нет */
+  trailer_json?: string | null
   is_free: number | null
   price_final: number | null
   price_initial: number | null
@@ -2204,6 +2213,9 @@ export function rowToMeta(row: GameRow): GameMeta {
   if (row.header_image !== null) meta.headerImage = row.header_image
   // Узкая выборка (getGamesMetaLite) колонку не читает вовсе — отсюда undefined
   if (row.screenshots_json) meta.screenshots = parseStrList(row.screenshots_json)
+  // Та же граница, что у семантики: битая строка или чужой хост — нет трейлера
+  const trailer = readTrailer(row.trailer_json)
+  if (trailer) meta.trailer = trailer
   if (row.is_free !== null) meta.isFree = row.is_free === 1
   if (row.price_final !== null) meta.priceFinal = row.price_final
   // Скидка читается целиком, включая ноль: «полная цена» — это ответ, а не
@@ -2418,7 +2430,8 @@ export async function getGamesMeta(db: Db, appids: number[]): Promise<Map<number
 }
 
 /**
- * Колонки узкой выборки — всё, что читает rowToMeta, кроме скриншотов.
+ * Колонки узкой выборки — всё, что читает rowToMeta, кроме скриншотов и
+ * трейлера.
  *
  * SELECT * тащил с каждой строкой три JSON-блоба: сводку отзывов и pros/cons
  * (в GameMeta их нет вовсе — rowToMeta их просто выбрасывал) и скриншоты,
@@ -2448,8 +2461,9 @@ export const GAME_LITE_COLUMNS_G = [
 
 /**
  * Метаданные пачки игр без блобов: всё то же, что getGamesMeta, но без
- * screenshots. Для библиотечных сценариев — подбор, игра дня, /library,
- * портрет, лента, комнаты. Кадры героям — отдельно, getGameShots.
+ * screenshots и trailer. Для библиотечных сценариев — подбор, игра дня,
+ * /library, портрет, лента, комнаты. Кадры и трейлер героям — отдельно,
+ * getHeroMedia.
  */
 export async function getGamesMetaLite(
   db: Db,
@@ -2465,24 +2479,95 @@ export async function getGamesMetaLite(
   )
 }
 
-/** Скриншоты пачки игр — для тех немногих, кто станет героем выдачи */
-export async function getGameShots(db: Db, appids: number[]): Promise<Map<number, string[]>> {
+/** Кадры и трейлер одного героя; игры без того и другого в карту не попадают */
+export type HeroMedia = { screenshots: string[]; trailer?: Trailer }
+
+/** Скриншоты и трейлер пачки игр — для тех немногих, кто станет героем выдачи */
+export async function getHeroMedia(db: Db, appids: number[]): Promise<Map<number, HeroMedia>> {
   if (!appids.length) return new Map()
   const res = await db.execute({
-    sql: `SELECT appid, screenshots_json FROM games
-          WHERE ${APPIDS_IN} AND screenshots_json IS NOT NULL`,
+    sql: `SELECT appid, screenshots_json, trailer_json FROM games
+          WHERE ${APPIDS_IN} AND (screenshots_json IS NOT NULL OR trailer_json IS NOT NULL)`,
     args: [JSON.stringify(appids)],
   })
-  const out = new Map<number, string[]>()
-  for (const r of res.rows as unknown as Array<{ appid: number; screenshots_json: string }>) {
+  const out = new Map<number, HeroMedia>()
+  const rows = res.rows as unknown as Array<{
+    appid: number
+    screenshots_json: string | null
+    trailer_json: string | null
+  }>
+  for (const r of rows) {
+    let screenshots: string[] = []
     try {
-      const shots: unknown = JSON.parse(r.screenshots_json)
-      if (Array.isArray(shots)) out.set(r.appid, shots.filter((x) => typeof x === 'string'))
+      const shots: unknown = r.screenshots_json ? JSON.parse(r.screenshots_json) : []
+      if (Array.isArray(shots)) screenshots = shots.filter((x) => typeof x === 'string')
     } catch {
       // битая строка — у героя просто не будет кадров, как у игры без них
     }
+    const trailer = readTrailer(r.trailer_json)
+    if (!screenshots.length && !trailer) continue
+    out.set(r.appid, trailer ? { screenshots, trailer } : { screenshots })
   }
   return out
+}
+
+/**
+ * Кадры и трейлер — узким UPDATE, не трогая остальной строки.
+ *
+ * Для крона карточек и доливки медиа: у них на руках только ответ GetItems с
+ * кадрами, а upsertGameMeta переписал бы цену, арт и сигналы тем, что лежит
+ * в объекте у вызывающего. Правило пустоты то же, что у апсерта
+ * (keepFilledSql): нет кадров или трейлера в ответе — прежние остаются.
+ *
+ * updated_at не трогаем по той же причине, что setGameDescriptions: это
+ * lastmod карты сайта, а доливка медиа по всему каталогу — не повод сказать
+ * поисковику, что пять тысяч страниц обновились в одну секунду.
+ *
+ * Возвращает, сколько строк нашлось: игры, которой нет в games, не создаём.
+ */
+export async function setGamesMedia(
+  db: Db,
+  rows: ReadonlyArray<{ appid: number; screenshots?: string[]; trailer?: Trailer }>,
+): Promise<number> {
+  const writes = rows.filter((r) => r.screenshots?.length || r.trailer)
+  if (!writes.length) return 0
+  const res = await db.batch(
+    writes.map((r) => ({
+      sql: `UPDATE games SET
+              screenshots_json = COALESCE(?, screenshots_json),
+              trailer_json = COALESCE(?, trailer_json)
+            WHERE appid = ?`,
+      args: [
+        r.screenshots?.length ? JSON.stringify(r.screenshots) : null,
+        r.trailer ? JSON.stringify(r.trailer) : null,
+        r.appid,
+      ],
+    })),
+    'write',
+  )
+  return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
+}
+
+/**
+ * Игры пула, которым не хватает трейлера или кадров, — для доливки медиа
+ * (scripts/backfill-media.ts). Верх каталога первым: его страницы и герои
+ * видят чаще.
+ *
+ * Игра без трейлера в Steam останется в выборке и в следующий прогон — так
+ * же, как описание без русского перевода у catalog:descriptions: трейлер у
+ * игры может появиться позже, а лишний вопрос стоит одного места в пачке.
+ */
+export async function gamesMissingMedia(db: Db, limit: number): Promise<number[]> {
+  const res = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+            AND (trailer_json IS NULL
+              OR screenshots_json IS NULL OR screenshots_json IN ('', '[]'))
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [limit],
+  })
+  return res.rows.map((r) => Number(r.appid))
 }
 
 /** Строка для upsertSemantics */

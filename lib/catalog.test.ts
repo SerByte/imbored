@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { getGameMeta, migrateDb, upsertGameMeta } from './db'
 import {
+  fetchStoreItems,
+  fetchStoreMedia,
+  parseStoreMedia,
   mergeMeta,
   parseAppDetails,
   parseMostPlayed,
@@ -240,6 +245,89 @@ describe('parseStoreItems', () => {
   test('пустой или битый ответ даёт пустой список', () => {
     expect(parseStoreItems(null, TAG_NAMES)).toEqual([])
     expect(parseStoreItems({ response: {} }, TAG_NAMES)).toEqual([])
+  })
+
+  test('без флагов медиа полей кадров и трейлера нет вовсе — не пустые', () => {
+    // Пустое поле апсерт тоже не записал бы (keepFilledSql), но mergeMeta
+    // отдал бы его вместо накопленного: отсутствие и пустота — разное
+    const m = parseStoreItems(GETITEMS_RESPONSE, TAG_NAMES)[0]
+    expect(m).not.toHaveProperty('screenshots')
+    expect(m).not.toHaveProperty('trailer')
+  })
+
+  test('с флагами медиа приезжают кадры и трейлер', () => {
+    const metas = parseStoreItems(MEDIA_RESPONSE, TAG_NAMES)
+    const cs2 = metas.find((m) => m.appid === 730)
+    expect(cs2?.screenshots?.[0]).toMatch(/\.1920x1080\.jpg\?t=\d+$/)
+    expect(cs2?.trailer?.mp4).toMatch(/\/730\/.+\/microtrailer\.mp4$/)
+    // у Half-Life трейлеров нет — поля нет, а кадры есть
+    const hl = metas.find((m) => m.appid === 70)
+    expect(hl).not.toHaveProperty('trailer')
+    expect(hl?.screenshots?.length).toBeGreaterThan(0)
+  })
+})
+
+/** Настоящий ответ GetItems с кадрами и трейлерами — см. lib/trailer.test.ts */
+const MEDIA_RESPONSE: unknown = JSON.parse(
+  readFileSync(path.join(__dirname, '__fixtures__', 'getitems-media.json'), 'utf8'),
+)
+
+describe('кадры и трейлеры из GetItems', () => {
+  /** Стаб, который помнит data_request каждого запроса GetItems */
+  function recording(body: unknown) {
+    const requests: Array<Record<string, unknown>> = []
+    const fetchFn = (async (url: string) => {
+      if (String(url).includes('populartags')) {
+        return new Response(JSON.stringify([{ tagid: 19, name: 'Action' }]), { status: 200 })
+      }
+      const input = new URL(String(url)).searchParams.get('input_json') ?? '{}'
+      requests.push((JSON.parse(input) as { data_request: Record<string, unknown> }).data_request)
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+    return { fetchFn, requests }
+  }
+
+  test('прогрев медиа не просит — ответ втрое тяжелее; промоут просит', async () => {
+    const plain = recording(MEDIA_RESPONSE)
+    await fetchStoreItems([730], { fetchFn: plain.fetchFn })
+    expect(plain.requests[0]).not.toHaveProperty('include_trailers')
+    expect(plain.requests[0]).not.toHaveProperty('include_screenshots')
+
+    const media = recording(MEDIA_RESPONSE)
+    const metas = await fetchStoreItems([730], { fetchFn: media.fetchFn, media: true })
+    expect(media.requests[0]).toMatchObject({
+      include_trailers: true,
+      include_screenshots: true,
+      include_assets: true,
+      include_tag_count: 20,
+    })
+    expect(metas.find((m) => m.appid === 730)?.trailer).toBeDefined()
+  })
+
+  test('fetchStoreMedia: только два флага и только игры, у которых что-то нашлось', async () => {
+    const rec = recording(MEDIA_RESPONSE)
+    const got = await fetchStoreMedia([730, 70, -5], { fetchFn: rec.fetchFn })
+    expect(rec.requests).toEqual([{ include_screenshots: true, include_trailers: true }])
+    expect(got.get(730)?.trailer?.poster).toMatch(/movie_full\.jpg/)
+    expect(got.get(70)?.trailer).toBeUndefined()
+    expect(got.get(70)?.screenshots?.length).toBeGreaterThan(0)
+    // отрицательный appid (другой магазин) в Steam не спрашиваем вовсе
+    expect(await fetchStoreMedia([-5], { fetchFn: rec.fetchFn })).toEqual(new Map())
+    expect(rec.requests).toHaveLength(1)
+  })
+
+  test('parseStoreMedia: невидимые и пустые пропускаются, мусор — пустая карта', () => {
+    const got = parseStoreMedia({
+      response: {
+        store_items: [
+          { appid: 1, visible: true },
+          { appid: 2, visible: false, screenshots: { all_ages_screenshots: [{ filename: 'steam/apps/2/a.jpg' }] } },
+        ],
+      },
+    })
+    expect(got.size).toBe(0)
+    expect(parseStoreMedia(null).size).toBe(0)
+    expect(parseStoreMedia({ response: { store_items: 'нет' } }).size).toBe(0)
   })
 })
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { createDb, repairGameJson, upsertGameMeta } from '../lib/db'
-import { buildSetList, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
+import { buildSetList, presentCols, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
 
 const COLS = ['appid', 'name', 'short_description', 'screenshots_json', 'updated_at'] as const
 
@@ -63,6 +63,40 @@ describe('публикация каталога: что имеет право з
       { short_description: АНГ, screenshots_json: '[]' },
     )
     expect(r.s).toBe('["a.jpg"]')
+  })
+})
+
+describe('публикация каталога: трейлер', () => {
+  const ТРЕЙЛЕР = JSON.stringify({ mp4: 'https://video.akamai.steamstatic.com/store_trailers/1/m.mp4' })
+
+  test('трейлер из облака переживает заливку каталога без него', async () => {
+    // В облаке его привёз крон карточек, локально доливку медиа не гоняли
+    const cols = ['appid', 'name', 'trailer_json', 'updated_at'] as const
+    const db = await createDb(':memory:')
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (1, 'Игра', ?, 0)`,
+      args: [ТРЕЙЛЕР],
+    })
+    for (const локально of [null, '']) {
+      await db.execute({
+        sql: `INSERT INTO games (${cols.join(', ')}) VALUES (1, 'Игра', ?, 1)
+              ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+        args: [локально],
+      })
+    }
+    const r = await db.execute('SELECT trailer_json AS t FROM games')
+    expect(r.rows[0].t).toBe(ТРЕЙЛЕР)
+  })
+
+  test('каталог, собранный до трейлеров, едет без колонки, а не падает', () => {
+    const cols = ['appid', 'name', 'screenshots_json', 'trailer_json'] as const
+    expect(presentCols(cols, new Set(['appid', 'name', 'screenshots_json']))).toEqual([
+      'appid', 'name', 'screenshots_json',
+    ])
+    expect(presentCols(cols, new Set(cols))).toEqual([...cols])
+    // пропавшая обычная колонка остаётся в списке: пусть заливка упадёт громко,
+    // чем молча повезёт пустоту
+    expect(presentCols(cols, new Set(['appid', 'name', 'trailer_json']))).toEqual([...cols])
   })
 })
 

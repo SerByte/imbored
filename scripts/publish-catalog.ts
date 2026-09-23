@@ -21,7 +21,8 @@
  * ТО ЖЕ ПРАВИЛО, ТОЛЬКО МЯГЧЕ, у полей обогащения. screenshots_json и
  * genres_json приходят из appdetails, то есть их наполняет крон страниц, а не
  * промоут: замер на 20 августа — локально ноль и ноль на 6000 игр, в проде 126
- * и 126, ровно столько, сколько карточек успел обогатить крон.
+ * и 126, ровно столько, сколько карточек успел обогатить крон. trailer_json —
+ * туда же: его привозят крон карточек, промоут и доливка медиа.
  *
  * Заливка списком колонок затирала эти 126 пустотой. И это хуже, чем звучит:
  * page_at сюда не входит, значит отметка «карточка обогащена» переживала
@@ -51,7 +52,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { migrateDb, rebuildTagStats, repairGameJson } from '../lib/db'
-import { buildSetList, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
+import { buildSetList, presentCols, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
 
 /** Строк в одном батче. Больше — риск упереться в лимит запроса libsql. */
 const CHUNK = 200
@@ -66,7 +67,7 @@ const COLS = [
   'median_forever', 'store', 'store_url', 'updated_at', 'art_json', 'release_year',
   'developer', 'publisher', 'reviews_total', 'reviews_percent', 'reviews_30d',
   'ccu', 'ccu_at', 'signals_at', 'tag_count', 'is_multiplayer', 'alive',
-  'dead_reason', 'superseded_by',
+  'dead_reason', 'superseded_by', 'trailer_json',
 ] as const
 
 function openLocal(): Client {
@@ -119,22 +120,34 @@ async function main() {
   }
 
   // ---- games ----
+  // Поздние колонки (trailer_json) — только если локальный каталог их знает:
+  // заливка его не мигрирует, см. presentCols
+  const haveCols = new Set(
+    (await local.execute("SELECT name FROM pragma_table_info('games')")).rows.map((r) =>
+      String(r.name),
+    ),
+  )
+  const cols = presentCols(COLS, haveCols)
+  if (cols.length < COLS.length) {
+    const нет = COLS.filter((c) => !cols.includes(c))
+    console.log(`  в локальном каталоге нет ${нет.join(', ')} — эти колонки не поедут`)
+  }
   /*
    * Поля, которые наполняет ОБОГАЩЕНИЕ, а не промоут: пустое локальное
    * значение не имеет права затереть непустое облачное. Пустым считаем и NULL,
    * и пустую строку, и '[]' — промоут пишет именно их, когда данных нет.
    */
-  const setList = buildSetList(COLS)
-  const games = await local.execute(`SELECT ${COLS.join(', ')} FROM games`)
+  const setList = buildSetList(cols)
+  const games = await local.execute(`SELECT ${cols.join(', ')} FROM games`)
   let done = 0
   for (let i = 0; i < games.rows.length; i += CHUNK) {
     const slice = games.rows.slice(i, i + CHUNK)
     await remote.batch(
       slice.map((r) => ({
-        sql: `INSERT INTO games (${COLS.join(', ')})
-              VALUES (${COLS.map(() => '?').join(', ')})
+        sql: `INSERT INTO games (${cols.join(', ')})
+              VALUES (${cols.map(() => '?').join(', ')})
               ON CONFLICT(appid) DO UPDATE SET ${setList}`,
-        args: COLS.map((c) => (r as Record<string, unknown>)[c] as never),
+        args: cols.map((c) => (r as Record<string, unknown>)[c] as never),
       })),
       'write',
     )

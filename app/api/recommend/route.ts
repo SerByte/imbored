@@ -4,7 +4,7 @@ import { assignEdges } from '@/lib/badges'
 import { refreshDealsWithin } from '@/lib/deals'
 import {
   bannedAppids,
-  getGameShots,
+  getHeroMedia,
   getPoolSize,
   getGamesMetaLite,
   getLatestSnapshot,
@@ -454,11 +454,11 @@ export async function POST(req: Request) {
    * кадры получил и герой из каталога — строки пула скриншотов не несут, и
    * раньше они доезжали до него, только если в этом же запросе освежались цены.
    */
-  const shots = await getGameShots(
+  const media = await getHeroMedia(
     db,
     picks.map((p) => p.appid),
   )
-  const heroShots = (appid: number) => (shots.get(appid) ?? []).slice(0, HERO_SLIDES)
+  const heroShots = (appid: number) => (media.get(appid)?.screenshots ?? []).slice(0, HERO_SLIDES)
 
   return NextResponse.json({
     // Серверные часы к ответу: по ним PlayersNow решает, имеет ли право

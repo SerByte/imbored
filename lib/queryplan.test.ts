@@ -8,7 +8,7 @@ import {
   createDb,
   getFeedForApps,
   getFeedHeadForApps,
-  getGameShots,
+  getHeroMedia,
   getGamesMeta,
   getGamesMetaLite,
   getMajorFeed,
@@ -319,7 +319,7 @@ describe('выборки по списку appid', () => {
   const LIST_READS: Array<[string, (db: Db) => Promise<unknown>]> = [
     ['getGamesMeta', (db) => getGamesMeta(db, IDS)],
     ['getGamesMetaLite', (db) => getGamesMetaLite(db, IDS)],
-    ['getGameShots', (db) => getGameShots(db, IDS)],
+    ['getHeroMedia', (db) => getHeroMedia(db, IDS)],
     ['getStaleAppids', (db) => getStaleAppids(db, IDS, 86_400, NOW)],
     ['stalePriceAppids', (db) => stalePriceAppids(db, IDS, 3600, NOW)],
   ]

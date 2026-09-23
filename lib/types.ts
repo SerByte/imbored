@@ -23,6 +23,11 @@ export type GameMeta = {
   /** Резолвленные ссылки на арт всех размеров */
   art?: import('./art').GameArtUrls
   screenshots?: string[]
+  /**
+   * Микротрейлер и его постер (lib/trailer.ts). Как и кадры, в узкую выборку
+   * (getGamesMetaLite, пул открытий) не входит: героям его читает getHeroMedia.
+   */
+  trailer?: import('./trailer').Trailer
   isFree?: boolean
   /** цена в минимальных единицах валюты (копейки/центы) */
   priceFinal?: number
