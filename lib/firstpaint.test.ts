@@ -87,8 +87,6 @@ const LOADING_ALLOWED: Record<string, string> = {
     'force-dynamic, закрыта в robots и noindex: две библиотеки и расчёт совпадения, каркас держит кадр пришедшему из чата',
   'app/portrait/[steamid]/loading.tsx':
     'force-dynamic, закрыта в robots и noindex: самая тяжёлая страница, экран ожидания живёт дольше всего',
-  'app/whatsnew/loading.tsx':
-    'пока держит кадр при переключении вкладок; прячет h1 в первом ответе и уходит следующей правкой',
 }
 
 function loadingFiles(dir: string): string[] {
@@ -106,6 +104,28 @@ describe('граница загрузки не прячет страницу', (
 
   test('у страницы игры нет своего loading.tsx: h1 в первом ответе и настоящий 404', () => {
     expect(loadingFiles('app').filter((f) => f.startsWith('app/game/'))).toEqual([])
+  })
+
+  /**
+   * /whatsnew — в карте сайта и открыт в robots, а его фолбэк прятал h1 в
+   * hidden S:1. Обложка — первый элемент той же ленты, поэтому и своя
+   * граница вокруг ленты ничего не ускорила бы, а строки спрятала бы.
+   * Паузу перехода закрывает мерцание нажатой вкладки.
+   */
+  test('/whatsnew приходит целиком: ни loading.tsx, ни Suspense вокруг ленты', () => {
+    expect(loadingFiles('app').filter((f) => f.startsWith('app/whatsnew/'))).toEqual([])
+    const src = fs.readFileSync(path.join(ROOT, 'app', 'whatsnew', 'page.tsx'), 'utf8')
+    expect(src).not.toMatch(/<Suspense\b/)
+    const tab = src.slice(src.indexOf('function FeedTab'))
+    expect(tab, 'вкладка без LinkPending молчит всю паузу перехода').toMatch(/<LinkPending>/)
+  })
+
+  test('LinkPending читает статус ближайшей ссылки', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'components', 'LinkPending.tsx'), 'utf8')
+    expect(src).toMatch(/^'use client'/)
+    expect(src).toMatch(/useLinkStatus\(\)/)
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+    expect(css, 'класс .link-pending пропал из globals.css').toMatch(/\.link-pending\s*\{/)
   })
 
   test('каждый loading.tsx — из списка и с причиной', () => {

@@ -2878,6 +2878,29 @@ textarea:focus-visible {
   animation: pulse-dot 1.6s ease-in-out infinite;
 }
 
+/*
+ * Ссылка, по которой уже нажали, а страница ещё не приехала
+ * (components/LinkPending.tsx, useLinkStatus).
+ *
+ * Задержка — --dur-fast: переход быстрее неё не мигает вовсе, а мерцание
+ * появляется ровно там, где пауза уже заметна глазу. Ключевые кадры — от
+ * pulse-dot, потому что они НАЧИНАЮТСЯ с полной яркости: на первом кадре
+ * подпись не проваливается скачком.
+ */
+.link-pending {
+  animation: pulse-dot 1.6s ease-in-out var(--dur-fast) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Мерцания нет, а знак «нажато» остаётся: подпись гаснет ступенькой и с той
+     же задержкой, без движения. */
+  .link-pending {
+    animation: none;
+    opacity: 0.55;
+    transition: opacity 0s linear var(--dur-fast);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .anim-reveal,
   .anim-rise,
