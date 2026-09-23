@@ -84,12 +84,13 @@ const TASTE_RIVALS: ReadonlySet<CandidateSource> = new Set(['untouched', 'backlo
  * Из каких множителей реестра (SCORE_FACTORS) складывается «под настроение».
  *
  * Не одна часть mood: с семантикой настроение стало смесью тегов и осей, и
- * поправка осей живёт своей частью (semantics). Сравнивай бейдж одну mood, и
+ * поправка осей живёт своей частью (semantics), а цена входа на короткий
+ * вечер «расслабиться» — своей (entry). Сравнивай бейдж одну mood, и
  * «лучше всех под настроение» доставалось бы по тегам той карточке, которую
  * оси как раз опустили, — превосходная степень снова стала бы ложью.
  * Ключи проверяет тип: множитель, выпавший из реестра, здесь не соберётся.
  */
-const MOOD_FACTORS = ['mood', 'semantics'] as const satisfies readonly ScoreFactor[]
+const MOOD_FACTORS = ['mood', 'semantics', 'entry'] as const satisfies readonly ScoreFactor[]
 
 function moodOf(parts: ScoreParts): number {
   return MOOD_FACTORS.reduce((m, k) => m * parts[k], 1)

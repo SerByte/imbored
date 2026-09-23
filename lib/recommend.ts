@@ -1,5 +1,6 @@
 import { discountOf } from './discount'
 import { editionKey } from './editions'
+import { entryCost } from './entry'
 import { isJunk } from './junk'
 import type { Lean } from './mood'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
@@ -1045,6 +1046,29 @@ export function semanticsMultiplier(
 }
 
 /*
+ * Цена входа на короткий вечер «расслабиться» (lib/entry): игра, которая по
+ * отзывам раскрывается не сразу, — ×0.8. Вечер на полчаса без сил уйдёт на
+ * обучение, и до того, ради чего в неё играют, человек не доберётся.
+ *
+ * Только по отзывам (basis 'reviews'), а не по тегам, хотя строку на карточке
+ * entryCost умеет и по тегам. Жанры из его списков подбор уже слышит: Grand
+ * Strategy, 4X, CRPG, Automation и Management стоят в TIME_TAGS.long (−0.2 на
+ * «меньше часа»), Souls-like и Difficult — в VIBE_TAGS.engaged (−0.25 на
+ * «расслабиться»). Третий штраф за тот же тег был бы тем же голосом, посчитанным
+ * трижды, — и без семантики этот множитель ровно 1, как и все новые.
+ *
+ * «С вызовом» не штрафуется: там порог — часть удовольствия. Знакомое тоже:
+ * управление в руках, осваивать нечего.
+ */
+const ENTRY_PENALTY = 0.8
+
+export function entryMultiplier(meta: GameMeta, source: CandidateSource, mood: Mood): number {
+  if (source === 'familiar' || mood.vibe !== 'chill' || mood.time !== 'short') return 1
+  const entry = entryCost(meta)
+  return entry?.level === 'high' && entry.basis === 'reviews' ? ENTRY_PENALTY : 1
+}
+
+/*
  * Настроение словами для «Почему она?» — только из уверенной семантики и
  * только то, что за игру: «спокойная, короткие сессии». Теги сюда не идут —
  * их объяснение называет само (moodTags). Слова совпадают с корзинами осей
@@ -1351,6 +1375,7 @@ export function scoreCandidates(args: {
       lean: leanMultiplier(meta, source, lean),
       cooldown: pause && pause.mult > 0 ? pause.mult : 1,
       semantics: semanticsMultiplier(meta, mood, tagMood),
+      entry: entryMultiplier(meta, source, mood),
     }
     if (tooLongForShort(meta, mood)) {
       softSemantics.set(meta.appid, semanticsMultiplier(meta, mood, tagMood, { soft: true }))

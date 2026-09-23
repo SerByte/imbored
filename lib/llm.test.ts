@@ -552,6 +552,22 @@ describe('причина называет свою игру-якорь', () => {
       expect(pick.reason).not.toMatch(/вложил|забросил/)
     }
   })
+
+  /*
+   * Цена входа (lib/entry): к сложной игре после долгой паузы возвращаются не
+   * сразу — честнее сказать это заранее, чем обещать «сел и играешь».
+   */
+  test('заброшенная с высоким порогом входа предупреждает про управление', () => {
+    const hard = (appid: number): GameMeta => ({ ...metaOf(appid)!, tags: { Puzzle: 100, Automation: 80 } })
+    const easy = (appid: number): GameMeta => ({ ...metaOf(appid)!, tags: { Puzzle: 100, Arcade: 80 } })
+    const recall = /вспомнить управление/
+    expect(heuristicPicks(one('comeback'), hard, 1, NOW, profile)[0].reason).toMatch(recall)
+    expect(heuristicPicks(one('comeback'), easy, 1, NOW, profile)[0].reason).not.toMatch(recall)
+    // Про вход говорит только заброшенная: у прочих своя строка на карточке
+    for (const source of OWN_AND_NEW) {
+      expect(heuristicPicks(one(source), hard, 1, NOW, profile)[0].reason, source).not.toMatch(recall)
+    }
+  })
 })
 
 /**

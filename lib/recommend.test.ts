@@ -13,6 +13,7 @@ import {
   cosine,
   dealMultiplier,
   deferredOf,
+  entryMultiplier,
   explainMatch,
   familiarWeight,
   hideUrgencyFor,
@@ -2068,6 +2069,7 @@ describe('настроение по осям семантики', () => {
       const plain = scoreOne(meta(1, tags), mood)
       const weak = scoreOne({ ...meta(1, tags), semantics: sem({ challenge: 0, confidence: 0.4 }) }, mood)
       expect(plain.parts!.semantics).toBe(1)
+      expect(plain.parts!.entry).toBe(1)
       expect(weak).toEqual(plain)
       const p = plain.parts!
       expect(plain.score).toBe(p.taste * p.mood * p.source * p.deal * p.lean * p.cooldown)
@@ -2234,5 +2236,48 @@ describe('настроение по осям семантики', () => {
       expect(out.moodWords).toEqual([])
       expect(out.moodTags).toContain('Relaxing')
     })
+  })
+})
+
+/**
+ * Цена входа на короткий вечер «расслабиться». Штраф — только по отзывам:
+ * жанры из списков lib/entry подбор уже слышит через TIME_TAGS и VIBE_TAGS,
+ * и третий штраф за тот же тег посчитал бы один голос трижды.
+ */
+describe('цена входа (entry)', () => {
+  const tired: Mood = { time: 'short', vibe: 'chill', social: 'solo' }
+  const slow = (appid: number, confidence = 0.8): GameMeta => ({
+    ...meta(appid, { Action: 100 }),
+    semantics: { ...sem({ confidence }), timeToFun: { bucket: 'slow', hours: 3 } },
+  })
+
+  test('раскрывается не сразу по отзывам — ×0.8 на «меньше часа» и «расслабиться»', () => {
+    expect(entryMultiplier(slow(1), 'untouched', tired)).toBeCloseTo(0.8)
+    expect(entryMultiplier(slow(1), 'new', tired)).toBeCloseTo(0.8)
+    expect(entryMultiplier(slow(1), 'comeback', tired)).toBeCloseTo(0.8)
+  })
+
+  test('«с вызовом», длинный вечер и знакомое — без штрафа', () => {
+    expect(entryMultiplier(slow(1), 'untouched', { ...tired, vibe: 'engaged' })).toBe(1)
+    expect(entryMultiplier(slow(1), 'untouched', { ...tired, time: 'medium' })).toBe(1)
+    expect(entryMultiplier(slow(1), 'familiar', tired)).toBe(1)
+  })
+
+  test('по одним тегам — единица: жанр подбор уже слышит', () => {
+    expect(entryMultiplier(meta(1, { 'Grand Strategy': 100 }), 'untouched', tired)).toBe(1)
+    expect(entryMultiplier(slow(1, 0.4), 'untouched', tired)).toBe(1)
+  })
+
+  test('часть entry входит в скор', () => {
+    const [c] = scoreCandidates({
+      profile: { Action: 1 },
+      library: [game({ appid: 1 })],
+      metaOf: () => slow(1),
+      newPool: [],
+      mood: tired,
+      nowSec: NOW,
+    })
+    expect(c.parts!.entry).toBeCloseTo(0.8)
+    expect(scoreOfParts(c.parts!)).toBe(c.score)
   })
 })

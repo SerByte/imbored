@@ -13,6 +13,7 @@ import {
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
+import { entryCost, showsEntry } from '@/lib/entry'
 import { sessionTrait } from '@/lib/gametraits'
 import { claudePicks, heuristicPicks, topUpPicks, type Pick } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -411,6 +412,9 @@ export async function POST(req: Request) {
       // «Сессия ~20 мин» / «Матч ~15 мин» — из семантики, только уверенной
       // (sessionTrait): та же строка, что на карточке игры
       session: meta ? sessionTrait(meta) : null,
+      // Цена входа (lib/entry) — только у того, что человек ещё не осваивал:
+      // у своей наигранной про вход говорит причина, а не отдельная строка
+      entry: meta && showsEntry(p.source) ? entryCost(meta) : null,
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,
       priceFinal: meta ? trustedPrice(meta, now) : null,

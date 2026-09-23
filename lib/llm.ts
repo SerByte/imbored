@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
 import { discountEndsLabel, discountOf, formatPrice, trustedPrice } from './discount'
+import { entryCost, type EntryCost } from './entry'
 import type { Lean } from './mood'
 import { sharedTasteTags, type Focus, type OwnAnchor } from './recommend'
 import { tagRu } from './tagsru'
@@ -692,8 +693,10 @@ export async function claudePortraitText(args: {
  *            (Automation)» ему пришлось бы переводить в свой опыт самому;
  *   hours  — сколько наиграно в саму игру. Нужно тому, кто про свои часы и
  *            говорит: «у тебя там уже 40 ч» конкретнее, чем «ты её начинал».
+ *   entry  — цена входа (lib/entry). Нужна заброшенной: к сложной игре после
+ *            долгой паузы возвращаются не сразу, и честнее сказать это вслух.
  */
-export type TemplateCtx = { anchor: OwnAnchor | null; hours: number | null }
+export type TemplateCtx = { anchor: OwnAnchor | null; hours: number | null; entry?: EntryCost | null }
 
 /** Предложение про якорь — одно на все источники, чтобы формулировки не разъехались */
 function nearSentence(a: OwnAnchor): string {
@@ -737,11 +740,20 @@ const SOURCE_TEMPLATES: Record<
   // забросил» звало вернуться ради потраченного: это довод «жалко
   // вложенного», и он давит, а не приглашает. Бросать игры нормально; вернуться
   // стоит потому, что управление уже в руках, а не потому, что жалко часов.
-  comeback: (name, tags, { hours }) => {
+  //
+  // Про вход — только у игры, которая раскрывается не сразу: через полгода
+  // паузы человек в ней не новичок, но и не в форме. Обещание «сел и играешь»
+  // обернулось бы десятью минутами в меню управления и ощущением, что совет
+  // был про другую игру. Сказанное заранее превращает это в ожидаемое.
+  comeback: (name, tags, { hours, entry }) => {
     const known = hours ? `У тебя в «${name}» уже ${hours} ч` : `«${name}» ты уже начинал`
+    const recall =
+      entry?.level === 'high'
+        ? ' Первые минут десять уйдут на то, чтобы вспомнить управление, — это нормально.'
+        : ''
     return tags
-      ? `${known}. Теги (${tags}) по-прежнему в твоём вкусе — вернись и проверь, как оно теперь.`
-      : `${known} — вернись и проверь, как оно теперь.`
+      ? `${known}. Теги (${tags}) по-прежнему в твоём вкусе — вернись и проверь, как оно теперь.${recall}`
+      : `${known} — вернись и проверь, как оно теперь.${recall}`
   },
   // Ни якоря, ни тегов: игра и есть его опыт, похожесть на что-то ещё тут
   // слабее довода «ты это уже умеешь»
@@ -969,6 +981,7 @@ export function heuristicPicks(
         SOURCE_TEMPLATES[c.source](c.name, matchedTags(meta, profile, tagWeight), {
           anchor: opts.anchorOf?.(c.appid) ?? null,
           hours: opts.hoursOf?.(c.appid) ?? null,
+          entry: meta ? entryCost(meta) : null,
         }) + price,
     }
   })

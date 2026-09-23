@@ -23,6 +23,7 @@ import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
+import { entryLine } from '@/lib/entry'
 import { rememberMood } from '@/lib/lastmood'
 import {
   dueLaunchNow,
@@ -1254,6 +1255,15 @@ function Player({ say }: { say: (line: string) => void }) {
               {pick.edge && (
                 <motion.p variants={STEP} className="-mt-2 text-sm text-dim">
                   {EDGE_LINE[pick.edge]}
+                </motion.p>
+              )}
+
+              {/* Сколько времени уйдёт до веселья (lib/entry): вечер с бюджетом,
+                  и игра на три часа обучения — другой ответ, чем «сел и
+                  играешь». Строка есть, только когда отзывы или жанр это знают */}
+              {pick.entry && (
+                <motion.p variants={STEP} className="-mt-2 text-sm text-dim">
+                  {entryLine(pick.entry)}
                 </motion.p>
               )}
 

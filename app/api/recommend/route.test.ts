@@ -161,6 +161,7 @@ describe('/api/recommend: семантика в карточке', () => {
         appid: number
         session: { label: string; value: string } | null
         signals: { moodWords: string[] } | null
+        entry: { level: string; basis: string } | null
       }>
     }
     const byId = new Map(body.picks.map((p) => [p.appid, p]))
@@ -169,5 +170,9 @@ describe('/api/recommend: семантика в карточке', () => {
     expect(byId.get(413150)?.session).toBeNull()
     expect(byId.get(413150)?.signals?.moodWords).toEqual([])
     expect(byId.get(105600)?.session).toBeNull()
+    // Цена входа: уверенная семантика старта не видит — строки нет, хотя
+    // Casual по тегам сказал бы «низкий»; без неё говорит жанр
+    expect(byId.get(620)?.entry).toBeNull()
+    expect(byId.get(413150)?.entry).toEqual({ level: 'low', hours: null, basis: 'tags' })
   })
 })

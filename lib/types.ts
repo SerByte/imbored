@@ -171,6 +171,9 @@ export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
  *              с осевой, плюс ×0.5 длинному заходу на короткий вечер (×0.75,
  *              если сработал пол) и ×1.1 «можно бросить в любой момент» при
  *              «меньше часа» и «расслабиться»; без семантики 1.
+ *   entry    — цена входа (entryMultiplier, lib/entry): ×0.8 игре, которая по
+ *              отзывам раскрывается не сразу, на «меньше часа» и
+ *              «расслабиться»; знакомому и без отзывов 1.
  *
  * Раньше множитель жил в пяти местах сразу: в типе, в сборке частей, в
  * scoreOfParts, в тесте, который перемножал их по именам, и в бейджах. Забытое
@@ -192,6 +195,7 @@ export const SCORE_FACTORS = [
   'lean',
   'cooldown',
   'semantics',
+  'entry',
 ] as const
 
 export type ScoreFactor = (typeof SCORE_FACTORS)[number]

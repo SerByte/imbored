@@ -21,6 +21,7 @@
 import type { GameArtUrls } from './art'
 import type { PickEdge } from './badges'
 import type { Discount } from './discount'
+import type { EntryCost } from './entry'
 import type { GameTrait } from './gametraits'
 import { parseLean, type Lean } from './mood'
 import { plural } from './plural'
@@ -60,6 +61,11 @@ export type PlayPick = {
    * сохранённая до него.
    */
   session?: GameTrait | null
+  /**
+   * Цена входа и время до веселья (entryCost) — только у неосвоенного. null —
+   * сказать нечего; нет поля — выдача из кэша устройства, сохранённая до него.
+   */
+  entry?: EntryCost | null
   store: string | null
   storeUrl: string | null
   priceFinal: number | null
