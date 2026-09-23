@@ -3289,10 +3289,21 @@ export async function logFeedback(
   })
 }
 
+/**
+ * История оценок, свежие первыми — окно, из которого строятся вкус и паузы.
+ *
+ * Без бросков «Крутить ещё» (reason 'spin'): ни профиль, ни паузы их не
+ * читают (applyFeedbackToProfile, cooldownOf), а место в окне они занимали.
+ * Любителю рулетки хватало шестидесяти сессий по пять бросков, чтобы окно в
+ * 300 строк целиком состояло из них: «Зашло» и «не мой жанр» выпадали, вкус
+ * сбрасывался к одним часам, а «надоела» возвращалась раньше обещанного
+ * месяца. Баны читаются отдельно (bannedAppids), остальное — только отсюда.
+ */
 export async function listFeedback(db: Db, steamid: string, limit = 500): Promise<FeedbackRow[]> {
   const res = await db.execute({
     sql: `SELECT steamid, appid, action, reason, mood_json, created_at FROM feedback
-          WHERE steamid = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+          WHERE steamid = ? AND reason IS NOT 'spin'
+          ORDER BY created_at DESC, id DESC LIMIT ?`,
     args: [steamid, limit],
   })
   return (

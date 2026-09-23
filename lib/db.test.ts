@@ -1316,6 +1316,26 @@ describe('db', () => {
     expect(rows[0].appid).toBe(104)
   })
 
+  test('броски «Крутить ещё» не выталкивают настоящие оценки из окна', async () => {
+    // шестьдесят сессий рулетки по пять бросков — ровно окно /api/recommend
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'liked' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'tired' }, NOW + 1)
+    for (let i = 0; i < 300; i++) {
+      await logFeedback(db, { steamid: 'u1', appid: 1000 + i, action: 'skipped', reason: 'spin' }, NOW + 10 + i)
+    }
+    const rows = await listFeedback(db, 'u1', 300)
+    expect(rows.map((r) => [r.appid, r.action])).toEqual([
+      [570, 'skipped'],
+      [620, 'liked'],
+    ])
+    // и «надоела» по-прежнему держит паузу, а не отпускает игру через неделю
+    expect(cooldownOf(rows, NOW + 7 * 86_400).get(570)?.kind).toBe('tired')
+    // сами броски в базе остались — фильтр только в окне чтения
+    const all = await db.execute("SELECT COUNT(*) AS n FROM feedback WHERE reason = 'spin'")
+    expect(Number(all.rows[0].n)).toBe(300)
+  })
+
   test('feedbackStats считает долю попаданий', async () => {
     const db = await freshDb()
     await logFeedback(db, { steamid: 'u1', appid: 1, action: 'liked' }, NOW)
