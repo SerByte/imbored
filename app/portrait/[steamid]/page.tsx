@@ -1,8 +1,10 @@
 import type { Metadata } from 'next'
+import { unstable_cache } from 'next/cache'
 import { headers } from 'next/headers'
 import * as motion from 'motion/react-client'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { cache } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
@@ -23,10 +25,10 @@ import { OG_SITE } from '@/lib/og'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
 import { plural } from '@/lib/plural'
 import { checkRate, clientIp } from '@/lib/ratelimit'
-import { buildPortrait } from '@/lib/portrait'
+import { buildPortraitModel, type PortraitModel } from '@/lib/portraitmodel'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
-import { backlogEquivalent, backlogValue } from '@/lib/stats'
-import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from '@/lib/wrapped'
+import { backlogEquivalent } from '@/lib/stats'
+import type { LibraryGame } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +50,40 @@ const PORTRAIT_LIMIT = 3
 const PORTRAIT_IP_LIMIT = 10
 const PORTRAIT_WINDOW_SEC = 600
 
+/*
+ * Потолок на холодную сборку модели страницы — по адресу.
+ *
+ * Сборка читает метаданные ВСЕЙ библиотеки: у коллекционера это тысячи строк
+ * Turso на один заход. Прогретая модель лежит в кэше по снапшоту и сюда не
+ * доходит, так что потолок видит только заходы на НОВЫЕ портреты — скрипт,
+ * перебирающий steamid. Шестьдесят за десять минут — это не человек даже за
+ * общим NAT.
+ *
+ * Сверх потолка страница не падает, а собирается по одному снапшоту: числа,
+ * топ и мозаика остаются, диагноз, улики и деньги — нет. В кэш такая модель
+ * не попадает (сборка бросает), и следующий заход после окна получит полную.
+ */
+const MODEL_BUILD_IP_LIMIT = 60
+const MODEL_BUILD_WINDOW_SEC = 600
+
+/**
+ * Срок модели в кэше. Ключ и так меняется вместе со снапшотом; сутки — чтобы
+ * догнать то, что меняется без него: метаданные, которые прогрев довёз позже,
+ * и цены в сумме бэклога.
+ */
+const MODEL_TTL_SEC = 86_400
+
+/*
+ * Снапшот и ник — один раз на запрос.
+ *
+ * Их читают и generateMetadata, и страница, и раньше каждый читал сам:
+ * снапшот — это строка с JSON всей библиотеки, и публичный адрес платил за
+ * неё дважды на каждый заход. cache() живёт ровно один запрос — тот же приём,
+ * что на карточке игры и в /compat.
+ */
+const snapshotOf = cache(async (steamid: string) => getLatestSnapshot(await getDb(), steamid))
+const personaOf = cache(async (steamid: string) => getPersonaName(await getDb(), steamid))
+
 /**
  * Без этого ссылка на портрет разворачивалась в мессенджерах общим заголовком
  * сайта и вообще без картинки. Саму картинку рисует opengraph-image.tsx —
@@ -61,11 +97,10 @@ export async function generateMetadata({
   const { steamid } = await params
   if (!/^\d{17}$/.test(steamid)) return {}
 
-  const db = await getDb()
-  const snapshot = await getLatestSnapshot(db, steamid)
+  const snapshot = await snapshotOf(steamid)
   if (!snapshot) return { title: 'Портрет игрока', robots: { index: false } }
 
-  const name = (await getPersonaName(db, steamid)) ?? `Игрок ${steamid.slice(-4)}`
+  const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
   const hours = Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   const games = snapshot.games.length
   const title = `Портрет игрока ${name}`
@@ -120,6 +155,60 @@ const MOSAIC_PLAN = [
   { take: 24, step: 8, cols: 'grid-cols-4 md:grid-cols-8', sizes: '(min-width: 768px) 13vw, 25vw' },
 ]
 
+/** Адрес исчерпал холодные сборки. Бросается ИЗ кэшируемой функции: такой результат кэшу не достаётся */
+class ColdBuildLimited extends Error {}
+
+/**
+ * Модель страницы — из кэша по снапшоту, холодная сборка — под потолком.
+ *
+ * Ключ [steamid, takenAt]: новый снапшот — новый ключ, и старую модель не
+ * надо сбрасывать. Тег portrait:<steamid> — ручка на случай, когда сбросить
+ * всё же понадобится. После удаления данных по запросу (forget-user) запись
+ * недостижима: страница сначала читает снапшот, а без него до кэша не доходит.
+ *
+ * Обёртка собирается на каждый запрос, потому что в замыкании адрес и
+ * снапшот: они нужны холодной сборке, но в ключ попадать не должны — ключ
+ * задают только keyParts (плюс исходник функции).
+ */
+async function loadModel(
+  steamid: string,
+  snapshot: { takenAt: number; games: LibraryGame[] },
+  ip: string,
+  now: number,
+): Promise<{ model: PortraitModel; complete: boolean }> {
+  const build = unstable_cache(
+    async (): Promise<PortraitModel> => {
+      // getDb внутри: объект соединения в ключ кэша не сериализуется
+      const db = await getDb()
+      const gate = await checkRate(db, {
+        bucket: 'portrait-build-ip',
+        id: ip,
+        limit: MODEL_BUILD_IP_LIMIT,
+        windowSec: MODEL_BUILD_WINDOW_SEC,
+        nowSec: now,
+      })
+      if (!gate.ok) throw new ColdBuildLimited()
+      // Портрет строится по библиотеке игрока — весь каталог для этого не нужен
+      const metas = await getGamesMeta(
+        db,
+        snapshot.games.map((g) => g.appid),
+      )
+      return buildPortraitModel(snapshot.games, (id) => metas.get(id), now, MOSAIC_PLAN)
+    },
+    ['portrait-model:v1', steamid, String(snapshot.takenAt)],
+    { tags: [`portrait:${steamid}`], revalidate: MODEL_TTL_SEC },
+  )
+  try {
+    return { model: await build(), complete: true }
+  } catch (err) {
+    if (!(err instanceof ColdBuildLimited)) throw err
+    return {
+      model: buildPortraitModel(snapshot.games, () => undefined, now, MOSAIC_PLAN),
+      complete: false,
+    }
+  }
+}
+
 function fallbackText(
   name: string,
   archetypes: Array<{ label: string; percent: number }>,
@@ -149,8 +238,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   if (!/^\d{17}$/.test(steamid)) notFound()
 
   const now = nowSec()
-  const db = await getDb()
-  const snapshot = await getLatestSnapshot(db, steamid)
+  const snapshot = await snapshotOf(steamid)
   if (!snapshot) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
@@ -162,16 +250,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     )
   }
 
-  // Портрет строится по библиотеке игрока — весь каталог для этого не нужен
-  const games = snapshot.games
-  const metas = await getGamesMeta(
-    db,
-    games.map((g) => g.appid),
-  )
-  const metaOf = (id: number) => metas.get(id)
-  const portrait = buildPortrait(games, metaOf)
-  const wrapped = buildWrapped(games, metaOf)
-  const backlog = backlogValue(games, metaOf, now)
+  const ip = clientIp(await headers())
+  const { model, complete } = await loadModel(steamid, snapshot, ip, now)
+  const { portrait, wrapped, backlog, headline, evidence, starter, mosaic, purgatory } = model
   // Число вынимается из фразы, чтобы остаться моноширинным, как все числа
   const equivalent = (() => {
     const eq = backlogEquivalent(backlog.cents, steamid)
@@ -179,26 +260,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     const [before, after] = eq.text.split('{n}')
     return { count: eq.count, before, after }
   })()
-  const name = (await getPersonaName(db, steamid)) ?? `Игрок ${steamid.slice(-4)}`
-
-  // Заголовок-диагноз только со словарной подписью: фолбэк «фанат Fantasy»
-  // простителен в 14px, но не во весь экран
-  const headline = portrait.archetypes.find((a) => a.known) ?? null
-  // Улики не должны повторить подиум: вес архетипа определяется в основном
-  // часами, поэтому без исключения это были бы те же самые обложки
-  const shownOnPodium = new Set(wrapped.top.map((g) => g.appid))
-  const evidence = headline
-    ? archetypeEvidence(games, metaOf, headline.tag, shownOnPodium, 3)
-    : []
-  const starter = pickStarter(games, metaOf)
-
-  // Мозаика и стена: только Steam-игры, у не-Steam записей арта нет
-  const steamGames = games.filter((g) => g.appid > 0)
-  const mosaic = mosaicBlocks(
-    [...steamGames].sort((a, b) => b.playtimeForever - a.playtimeForever),
-    MOSAIC_PLAN,
-  )
-  const purgatory = wrapped.unplayed.filter((g) => g.appid > 0).slice(0, 36)
+  const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
 
   /*
    * Текст портрета: кэш по времени снапшота, Claude при наличии ключа, иначе шаблон.
@@ -220,12 +282,17 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
    * Отказ не ломает страницу и НЕ ПИШЕТСЯ В КЭШ: человек видит шаблонный текст,
    * а следующий заход после снятия потолка получит настоящий. Записать шаблон
    * значило бы заморозить его до смены снапшота.
+   *
+   * Модель-шаблон (complete: false) к Claude не ходит вовсе: архетипов у неё
+   * нет, и записанный по ней текст заморозил бы пустой портрет до смены снапшота.
    */
-  const ip = clientIp(await headers())
+  const db = await getDb()
   let text: string
   const cached = await getUserPortrait(db, steamid)
   if (cached && cached.takenAt === snapshot.takenAt) {
     text = cached.text
+  } else if (!complete) {
+    text = fallbackText(name, portrait.archetypes, portrait.facts)
   } else {
     const allowed = (
       await Promise.all([
@@ -275,8 +342,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     <GameArt
       appid={g.appid}
       name={g.name}
-      headerImage={metaOf(g.appid)?.headerImage ?? null}
-      art={metaOf(g.appid)?.art ?? null}
+      headerImage={model.covers[g.appid]?.headerImage ?? null}
+      art={model.covers[g.appid]?.art ?? null}
       eager={eager}
       sizes={sizes}
       className={`w-full aspect-[460/215] object-cover ${extra}`}
@@ -331,6 +398,12 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <p className="mt-6 text-dim text-sm md:text-base">
               Это <span className="font-mono text-ink">{wrapped.days.toLocaleString('ru-RU')}</span>{' '}
               полных суток за экраном.
+            </p>
+          )}
+          {!complete && (
+            <p className="mt-3 max-w-md text-dim text-sm">
+              С этого адреса сейчас открывают слишком много портретов подряд. Диагноз по жанрам
+              появится здесь через несколько минут.
             </p>
           )}
         </div>
