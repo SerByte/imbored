@@ -1,4 +1,5 @@
 import type { MetadataRoute } from 'next'
+import { SITE_DESCRIPTION, SITE_TITLE } from '@/lib/site'
 
 /**
  * Манифест — ради «добавить на домашний экран», а не ради полноценного PWA.
@@ -10,13 +11,23 @@ import type { MetadataRoute } from 'next'
  *
  * display: 'standalone' плюс viewportFit: 'cover' в layout: только вдвоём они
  * дают нижнюю панель, не уезжающую под домашнюю полоску iOS.
+ *
+ * Имя и описание — те же строки, что у корневого layout (lib/site.ts). Здесь
+ * одна копия уже пережила смену позиционирования и обещала «из бэклога,
+ * заброшенного или нового» — в окне установки, то есть тому, кто уже решил
+ * остаться.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'imbored — во что поиграть',
+    /*
+     * id — личность установленного приложения. Без него ею служит start_url,
+     * и первая же его смена (например, на /quiz вместо кино-лендинга) сделала
+     * бы у всех установивших «другое» приложение рядом со старым.
+     */
+    id: '/',
+    name: SITE_TITLE,
     short_name: 'imbored',
-    description:
-      'Подключи Steam — подберём игру под твоё настроение прямо сейчас: из бэклога, заброшенного или нового.',
+    description: SITE_DESCRIPTION,
     start_url: '/',
     display: 'standalone',
     // Совпадает с --bg тёмной темы: она базовая, и экран запуска не должен
@@ -50,6 +61,52 @@ export default function manifest(): MetadataRoute.Manifest {
         sizes: '512x512',
         type: 'image/png',
         purpose: 'maskable',
+      },
+    ],
+    /*
+     * Долгое нажатие на иконку — сразу в три главных двери, мимо лендинга.
+     * Имена те же, что в навигации (HeaderNav и MobileNav), чтобы человек
+     * узнавал их, а не переводил.
+     */
+    shortcuts: [
+      {
+        name: 'Подобрать игру',
+        short_name: 'Подбор',
+        description: 'Три вопроса — и одна игра из твоей библиотеки',
+        url: '/quiz',
+      },
+      {
+        name: 'Игра дня',
+        description: 'Одна игра на сегодня, та же самая до завтра',
+        url: '/daily',
+      },
+      {
+        name: 'Пати',
+        description: 'Выбрать игру на вечер вместе с друзьями',
+        url: '/rooms',
+      },
+    ],
+    /*
+     * Без снимков Chrome показывает упрощённое окно установки — голую иконку
+     * с именем. Снимки — первый экран главной в двух раскладках, как её видит
+     * человек до входа: телефон 390×844 и десктоп 1280×800, оба с плотностью
+     * пикселей больше единицы. Лежат в public/screenshots; пересняты с
+     * локальной сборки, при смене первого экрана их надо переснять.
+     */
+    screenshots: [
+      {
+        src: '/screenshots/narrow.jpg',
+        sizes: '780x1688',
+        type: 'image/jpeg',
+        form_factor: 'narrow',
+        label: 'Главная imbored на телефоне: скажи, сколько у тебя времени и сил, — дадим одну игру',
+      },
+      {
+        src: '/screenshots/wide.jpg',
+        sizes: '1920x1200',
+        type: 'image/jpeg',
+        form_factor: 'wide',
+        label: 'Главная imbored на компьютере: вход через Steam и демо без него',
       },
     ],
   }

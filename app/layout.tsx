@@ -14,6 +14,7 @@ import { SmoothScroll } from '@/components/SmoothScroll'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
+import { SITE_DESCRIPTION, SITE_TITLE } from '@/lib/site'
 import './globals.css'
 
 const onest = Onest({
@@ -124,11 +125,11 @@ export const metadata: Metadata = {
   // молча наследовали этот — и пять разделов из восьми выглядели в выдаче
   // одной и той же страницей.
   title: {
-    default: 'imbored — во что поиграть',
+    default: SITE_TITLE,
     template: '%s · imbored',
   },
-  description:
-    'Скажи, сколько у тебя времени и сил, — imbored выберет одну игру из твоей библиотеки Steam и объяснит почему.',
+  // Одна строка с манифестом — см. lib/site.ts, почему их больше не две
+  description: SITE_DESCRIPTION,
   /*
    * Общая обвязка для мессенджеров и соцсетей. До неё её не было вовсе: две
    * личные страницы отдавали свой openGraph сами, а на всех остальных ссылках

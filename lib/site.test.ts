@@ -1,5 +1,8 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import type { ResolvingMetadata } from 'next'
 import { describe, expect, test } from 'vitest'
+import { DESTINATIONS } from './destination'
 import { OG_SITE, ownAddress } from './site'
 
 /** Родительская метадата в том виде, в каком её отдаёт Next: уже разобранная. */
@@ -47,5 +50,36 @@ describe('ownAddress', () => {
     })(null, parent())
     expect(meta.alternates?.canonical).toBe('/whatsnew')
     expect(meta.alternates?.types).toEqual({ 'application/rss+xml': '/feed.xml' })
+  })
+})
+
+/** Исходник без комментариев: объяснение правки в комментарии — не текст интерфейса. */
+function visible(rel: string): string {
+  return fs
+    .readFileSync(path.join(__dirname, '..', rel), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+}
+
+describe('обещание продукта одно', () => {
+  /**
+   * Главная обещает одну игру и объяснение, почему она. Соседние тексты
+   * отставали: последний экран той же главной говорил «три вопроса и пять
+   * карточек», гость, развёрнутый с /play, читал «Подборка собирается…», а
+   * вкладка /play называлась «Подборка», хотя на экране одна игра.
+   */
+  test('вокруг /play не обещаем подборку и пять карточек', () => {
+    for (const rel of [
+      'components/landing/scenes/Money.tsx',
+      'lib/destination.ts',
+      'app/play/layout.tsx',
+      'app/manifest.ts',
+    ]) {
+      expect(visible(rel), rel).not.toMatch(/пять карточек|Подборк|из бэклога, заброшенного или нового/)
+    }
+  })
+
+  test('гость, развёрнутый с /play, читает про одну игру', () => {
+    expect(DESTINATIONS['/play'].promise).toMatch(/^Одна игра/)
   })
 })

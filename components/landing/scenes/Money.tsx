@@ -77,8 +77,8 @@ export function Money() {
         <div className="max-w-md">
           <h3 className="font-display text-display-sm">Подключим твою?</h3>
           <p className="mt-2 text-sm leading-relaxed text-dim">
-            Дальше — три вопроса и пять карточек. Не хочешь отдавать свою — на первом экране есть
-            демо без Steam.
+            Дальше — пара тапов и одна игра. Не хочешь отдавать свою — на первом экране есть демо
+            без Steam.
           </p>
         </div>
         <a className="btn-ember back-btn" href="#main">

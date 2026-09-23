@@ -3,7 +3,15 @@ import { Ambient } from '@/components/Ambient'
 import { LogoMark } from '@/components/Logo'
 import { ownAddress } from '@/lib/site'
 
-export const generateMetadata = ownAddress('/support', { title: 'Поддержать' })
+/*
+ * Своё описание: без него /support наследовал описание главной, и поиск
+ * получал из карты сайта две страницы с одинаковым сниппетом.
+ */
+export const generateMetadata = ownAddress('/support', {
+  title: 'Поддержать',
+  description:
+    'imbored бесплатен и без рекламы в выдаче: рекомендации не продаются. Здесь можно поддержать проект, если он попадает в твои вечера.',
+})
 
 /**
  * Отсюда убран перк «Большие пати — комнаты больше чем на 4 человека».

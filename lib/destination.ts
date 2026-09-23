@@ -43,7 +43,7 @@ export const DESTINATIONS: Record<string, Destination> = {
     action: 'Показать игру дня',
   },
   '/play': {
-    promise: 'Подборка собирается из твоей же библиотеки — подключи Steam, и соберём.',
+    promise: 'Одна игра под твоё состояние из твоей же библиотеки — подключи Steam, и выберем.',
     action: 'Подобрать игру',
   },
   '/portrait': {
