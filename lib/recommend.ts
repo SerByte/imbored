@@ -829,7 +829,9 @@ export function buildAnchorFinder(
     for (const a of anchors) {
       if (a.appid === meta.appid || (key && a.key === key)) continue
       const sim = a.simTo(norm)
-      if (sim < ANCHOR_MIN_SIM) continue
+      // Не «sim < порога»: NaN (битые теги в базе) это сравнение проходит, и
+      // первая же такая игра становилась якорем для любого кандидата
+      if (!(sim >= ANCHOR_MIN_SIM)) continue
       // При равном сходстве — та, где больше часов: её человек помнит лучше
       if (!best || sim > bestSim || (sim === bestSim && a.hours > best.hours)) {
         best = { appid: a.appid, name: a.name, hours: a.hours }

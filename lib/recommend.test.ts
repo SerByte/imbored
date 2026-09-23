@@ -949,6 +949,20 @@ describe('buildAnchorFinder', () => {
     expect(find(cand(103, 'Nothing', { Sports: 100 }))).toBeNull()
   })
 
+  test('сходство NaN — не совпадение: одна битая игра не становится якорем для всех', () => {
+    // Так выглядит строка с дважды закодированным tags_json: JSON.parse отдаёт
+    // строку, и теги разбираются посимвольно — косинус с ней выходит NaN.
+    // NaN < порога — false, и без явной проверки первая же такая игра
+    // становилась «ближе всего» к любому кандидату: Celeste как Dota 2.
+    const broken = { ...meta(1, {}), tags: '{"MOBA":100}' as unknown as Record<string, number> }
+    const brokenMetas = new Map(metas).set(1, broken)
+    const find = buildAnchorFinder(lib, (id) => brokenMetas.get(id), null)
+    expect(find(cand(104, 'Celeste', { Platformer: 100, Difficult: 90 }))).toBeNull()
+    expect(find(cand(101, 'Farm Life', { 'Farming Sim': 100, Relaxing: 80 }))?.name).toBe(
+      'Stardew Valley',
+    )
+  })
+
   test('игра ниже медианы библиотеки якорем не бывает, даже при полном совпадении', () => {
     // Tiny Racer — 150 минут: больше двух часов, но ниже медианы 3075
     const find = buildAnchorFinder(lib, metaOf, null)
