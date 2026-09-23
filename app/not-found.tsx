@@ -1,3 +1,4 @@
+import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 import { GameArt } from '@/components/GameArt'
@@ -34,9 +35,41 @@ const SHELF = 4
 /** Из скольких верхних карточек выбираем ряд дня. */
 const POOL = 24
 
+/**
+ * Верх каталога живёт в кэше Next сутки.
+ *
+ * Раньше каждый рендер 404 шёл в базу. Статическая 404 для опечатки в адресе
+ * собирается один раз на сборке, но notFound() из динамических страниц —
+ * чужой steamid в /compat и /portrait (они force-dynamic), несуществующий
+ * appid в /game — рендерит эту страницу заново, и каждый такой рендер платил
+ * за полку отдельным запросом к Turso. Ответ у запроса один на всех и
+ * меняется медленно: верх по числу отзывов неделями стоит на месте. Сутки —
+ * ровно срок ряда дня ниже, так что свежее полке и не нужно.
+ *
+ * В кэше только выборка, а перемешивание — снаружи, на каждом рендере: ряд
+ * по-прежнему меняется в свою полночь, а не тогда, когда истёк кэш.
+ *
+ * Пустую выборку не кэшируем: бросок не даёт unstable_cache её запомнить, а
+ * shelf() ниже превращает его в пустую полку. Иначе сборка на пустой базе
+ * (превью со своей свежей базой) заморозила бы 404 без полки на сутки.
+ *
+ * unstable_cache, а не "use cache", — по той же причине, что в
+ * lib/whatsnewcache.ts: директиве нужен cacheComponents на всё приложение.
+ */
+const cachedTop = unstable_cache(
+  async (limit: number) => {
+    // getDb внутри: объект соединения в ключ кэша не сериализуется
+    const games = await topCatalogGames(await getDb(), limit)
+    if (games.length === 0) throw new Error('каталог пуст — полку не кэшируем')
+    return games
+  },
+  ['notfound-shelf:v1'],
+  { revalidate: 86_400 },
+)
+
 async function shelf() {
   try {
-    const games = await topCatalogGames(await getDb(), POOL)
+    const games = await cachedTop(POOL)
     if (games.length <= SHELF) return games
     /*
      * Ряд меняется раз в сутки, а не при каждом заходе: у страницы ошибок
