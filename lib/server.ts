@@ -160,6 +160,28 @@ export function sessionCookieOptions() {
   } as const
 }
 
+/** Кука со state на время входа через Steam — см. stateMatches в lib/steam-openid. */
+export const OIDC_COOKIE = 'imbored_oidc'
+
+/**
+ * Флаги куки state.
+ *
+ * Путь — только роуты входа: остальному сайту она не нужна и не должна
+ * ездить с каждым запросом. Десять минут — с запасом на пароль и Steam Guard;
+ * гасится она раньше, первым же возвратом. SameSite=Lax, а не Strict: из
+ * Steam человек возвращается межсайтовым переходом, и Strict-куку браузер на
+ * нём не пришлёт — вход закрылся бы всем.
+ */
+export function oidcCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isDeployed(),
+    path: '/api/auth/steam',
+    maxAge: 600,
+  } as const
+}
+
 /**
  * «Мы не на машине разработчика».
  *

@@ -1,17 +1,19 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import {
+  OIDC_COOKIE,
   SESSION_COOKIE,
   appBaseUrl,
   getDb,
   issueSession,
   nowSec,
+  oidcCookieOptions,
   sessionCookieOptions,
   steamApiKey,
 } from '@/lib/server'
 import { fetchOwnedGames, fetchPlayerSummary } from '@/lib/steam'
-import { verifyAssertion } from '@/lib/steam-openid'
+import { RETURN_PATH, stateMatches, verifyAssertion } from '@/lib/steam-openid'
 import { destinationPath } from '@/lib/destination'
 
 /**
@@ -24,9 +26,29 @@ import { destinationPath } from '@/lib/destination'
 const RETURN_LIMIT = 20
 const RETURN_WINDOW_SEC = 600
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const base = appBaseUrl()
   const params = new URL(req.url).searchParams
+
+  /*
+   * Кука state гасится на ЛЮБОМ исходе: ассерт одноразовый, и после этого
+   * запроса ей сверять больше нечего. Удачный вход оставил бы её висеть до
+   * истечения, неудачный — тоже, а следующая попытка всё равно начнётся
+   * заново на /api/auth/steam и получит свою.
+   */
+  const redirect = (url: string) => {
+    const res = NextResponse.redirect(url)
+    res.cookies.set(OIDC_COOKIE, '', { ...oidcCookieOptions(), maxAge: 0 })
+    return res
+  }
+
+  /*
+   * Сначала state — он проверяется локально и бесплатно, так что чужой или
+   * подсунутый ссылкой ассерт не тратит ни строку лимита, ни запрос к Steam.
+   */
+  if (!stateMatches(req.cookies.get(OIDC_COOKIE)?.value, params.get('state'))) {
+    return redirect(`${base}/?error=auth`)
+  }
 
   // Отказ — редиректом, а не 429 JSON'ом: сюда человека приводит браузер после
   // Steam, и увидеть он должен страницу, а не тело ответа. Код тот же, что у
@@ -38,21 +60,21 @@ export async function GET(req: Request) {
     windowSec: RETURN_WINDOW_SEC,
     nowSec: nowSec(),
   })
-  if (!gate.ok) return NextResponse.redirect(`${base}/?error=ratelimited`)
+  if (!gate.ok) return redirect(`${base}/?error=ratelimited`)
 
-  const steamid = await verifyAssertion(params).catch(() => null)
-  if (!steamid) return NextResponse.redirect(`${base}/?error=auth`)
+  const steamid = await verifyAssertion(params, `${base}${RETURN_PATH}`).catch(() => null)
+  if (!steamid) return redirect(`${base}/?error=auth`)
 
   const key = steamApiKey()
-  if (!key) return NextResponse.redirect(`${base}/?error=nokey`)
+  if (!key) return redirect(`${base}/?error=nokey`)
 
   try {
     const db = await getDb()
     const now = nowSec()
     const summary = await fetchPlayerSummary(steamid, { apiKey: key }).catch(() => null)
     const games = await fetchOwnedGames(steamid, { apiKey: key })
-    if (games === 'private') return NextResponse.redirect(`${base}/?error=private`)
-    if (!games.length) return NextResponse.redirect(`${base}/?error=empty`)
+    if (games === 'private') return redirect(`${base}/?error=private`)
+    if (!games.length) return redirect(`${base}/?error=empty`)
 
     await upsertUser(
       db,
@@ -76,7 +98,7 @@ export async function GET(req: Request) {
         : compat && /^\d{17}$/.test(compat)
           ? `${base}/compat/${compat}`
           : `${base}${next ?? '/quiz'}`
-    const res = NextResponse.redirect(target)
+    const res = redirect(target)
     res.cookies.set(
       SESSION_COOKIE,
       // Единственное место, где владение профилем ДОКАЗАНО: выше отработал
@@ -87,6 +109,6 @@ export async function GET(req: Request) {
     )
     return res
   } catch {
-    return NextResponse.redirect(`${base}/?error=steam`)
+    return redirect(`${base}/?error=steam`)
   }
 }
