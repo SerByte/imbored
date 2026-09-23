@@ -337,6 +337,27 @@ curl -sI https://imbored.cc/ | grep -i -E 'content-security|x-frame|x-content-ty
 
 ---
 
+## 6.8. Статусы и первый кадр (делаешь ты, один раз после деплоя)
+
+Корневого `loading.tsx` больше нет, у `/game/[appid]` и `/whatsnew` — тоже: их
+каркас успевал уйти раньше страницы, и сервер отвечал 200 там, где должен быть
+404 или 307. Гостя без куки на `/library`, `/compat` и `/portrait` разворачивает
+`proxy.ts`. Какие `loading.tsx` остались и почему — список в
+`lib/firstpaint.test.ts`. Проверить (только GET и HEAD):
+
+```bash
+curl -sI https://imbored.cc/game/abc | head -1                        # 404
+curl -sI https://imbored.cc/game/999999999 | head -1                  # 404
+curl -sI https://imbored.cc/library | grep -i -E '^HTTP|^location'    # 307, /?next=%2Flibrary
+curl -s https://imbored.cc/ | grep -c 'hidden id="S:'                 # 0
+curl -s https://imbored.cc/whatsnew | grep -c 'hidden id="S:'         # 0
+```
+
+Если на медленной сети переход на `/whatsnew` или `/compat` кажется
+зависшим — нажатый пункт меню должен мерцать до ответа (`LinkPending`).
+
+---
+
 ## 7. Проверка после деплоя (делаем вместе)
 
 По порядку на живом `https://imbored.cc`:
