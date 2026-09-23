@@ -109,6 +109,12 @@ export function ConnectCard() {
   const [error, setError] = useState<string | null>(search.get('error'))
   /** Минуты до снятия потолка: срок называет только заголовок Retry-After */
   const [retryIn, setRetryIn] = useState<number | null>(null)
+  /*
+   * Ошибочно само поле — только когда отказ про введённое. «Steam не
+   * отвечает» или потолок попыток к нему отношения не имеют, и пометка
+   * «неверное значение» там увела бы человека править правильную ссылку.
+   */
+  const inputError = error === 'badinput' || error === 'notfound'
   const [session, setSession] = useState<{ authed: boolean; personaName: string | null } | null>(
     null,
   )
@@ -345,6 +351,8 @@ export function ConnectCard() {
                 spellCheck={false}
                 enterKeyHint="go"
                 autoComplete="off"
+                aria-invalid={inputError}
+                aria-describedby="connect-error"
                 className="field"
               />
               {/* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */}
@@ -415,13 +423,24 @@ export function ConnectCard() {
         первый экран (см. докблок наверху файла) — просто у одного состояния из
         девяти он уцелел.
       */}
-      {error && (
-        <p role="status" className="anim-rise text-sm text-danger">
-          {error === 'ratelimited' && retryIn
+      {/*
+        Абзац отрисован всегда, пустым, — меняется только текст. Живая
+        область, вставленная в DOM уже с содержимым, звучит не во всех
+        связках (VoiceOver в Safari промолчит), и «Не нашли такой профиль»
+        мог не прозвучать вовсе. Пустой — sr-only: в потоке он дал бы лишний
+        зазор колонки. Он же описание поля (aria-describedby у #steam-profile).
+      */}
+      <p
+        id="connect-error"
+        role="status"
+        className={error ? 'anim-rise text-sm text-danger' : 'sr-only'}
+      >
+        {error
+          ? error === 'ratelimited' && retryIn
             ? `Слишком много попыток подряд. Попробуй снова через ${retryIn} ${plural(retryIn, 'минуту', 'минуты', 'минут')}.`
-            : (ERROR_TEXT[error] ?? 'Что-то пошло не так.')}
-        </p>
-      )}
+            : (ERROR_TEXT[error] ?? 'Что-то пошло не так.')
+          : ''}
+      </p>
       {error === 'private' && <PrivacyHelp />}
     </div>
   )

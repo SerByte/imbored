@@ -106,14 +106,18 @@ export function MemberRoster({
 
                 {/*
                   .anim-pulse-dot выключается в prefers-reduced-motion, поэтому
-                  «свайпает» и «готов» не имеют права держаться на движении.
+                  «свайпает» и «всё» не имеют права держаться на движении.
                   Различает их ФОРМА — галочка против точки, — она работает
                   всегда и на любой ширине. Слово рядом это подтверждает, но
                   на мобиле уезжает: там строка и так плотная, а смысл уже несут
                   галочка и число. Полная фраза — в sr-only ниже.
+
+                  Слова без рода. «Готов» и «закончил» рядом с чужим ником
+                  выходили «Аня · готов» — ровно то, что LikesStrips называет
+                  ошибкой («Аня сошёлся»): род по нику из Steam не узнать.
                 */}
                 <span aria-hidden className="text-xs text-faint shrink-0 hidden sm:inline">
-                  {m.done ? 'готов' : 'свайпает'}
+                  {m.done ? 'всё' : 'свайпает'}
                 </span>
                 <span aria-hidden className="text-xs text-faint font-mono tabular-nums shrink-0">
                   {deckSize ? `${shown}/${deckSize}` : shown}
@@ -142,7 +146,7 @@ export function MemberRoster({
                 <span className="sr-only">
                   {m.name}
                   {m.me ? ' (ты)' : ''}: {shown}
-                  {deckSize ? ` из ${deckSize}` : ''}, {m.done ? 'закончил' : 'ещё свайпает'}
+                  {deckSize ? ` из ${deckSize}` : ''}, {m.done ? 'колода пройдена' : 'ещё свайпает'}
                 </span>
               </motion.li>
             )

@@ -23,6 +23,7 @@ import {
 } from '@/lib/gamepage'
 import { currencyOf, gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { OG_SITE } from '@/lib/site'
+import { plural } from '@/lib/plural'
 import { refundEligible } from '@/lib/refund'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
@@ -358,7 +359,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   size={56}
                   stroke={4}
                   duration={800}
-                  ariaLabel={`${facts.percent}% из ${facts.total.toLocaleString('ru-RU')} отзывов — положительные`}
+                  ariaLabel={`${facts.percent}% из ${facts.total.toLocaleString('ru-RU')} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — положительные`}
                 />
                 <div className="flex flex-col gap-0.5">
                   {facts.label && (
@@ -367,7 +368,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     </span>
                   )}
                   <span className="font-mono text-dim text-xs">
-                    из {facts.total.toLocaleString('ru-RU')} отзывов — за
+                    из {facts.total.toLocaleString('ru-RU')} {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за
                   </span>
                 </div>
               </div>

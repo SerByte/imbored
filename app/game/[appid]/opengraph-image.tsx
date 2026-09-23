@@ -2,6 +2,7 @@ import { ImageResponse } from 'next/og'
 import { artCandidates } from '@/lib/art'
 import { loadGamePage, reviewFacts } from '@/lib/gamepage'
 import { ogFonts, ogNum, ogScrim, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
+import { plural } from '@/lib/plural'
 
 export const alt = 'Стоит ли играть — imbored'
 export const size = { width: 1200, height: 630 }
@@ -104,7 +105,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
     .map(([t]) => t)
 
   const lines = [
-    facts ? `${facts.percent}% из ${ogNum(facts.total)} отзывов — за` : null,
+    facts ? `${facts.percent}% из ${ogNum(facts.total)} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за` : null,
     tags.length ? tags.join(' · ') : null,
   ].filter(Boolean) as string[]
 

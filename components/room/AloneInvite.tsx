@@ -5,7 +5,7 @@ import { FlapCode } from '@/components/FlapCode'
 import { Eyebrow } from '@/components/Labels'
 
 /**
- * «Ты тут один».
+ * «В комнате только ты».
  *
  * Прежде здесь стояло «Ждём остальных. Матч появится сам» — при том, что
  * findRoomMatch требует минимум двух участников, и комната на одного не могла
@@ -38,8 +38,10 @@ export function AloneInvite({
   return (
     <>
       <div className="relative glass rounded-[20px] p-6 sm:p-8 flex flex-col items-center gap-5 text-center">
+        {/* «В комнате только ты», а не «ты тут один»: род того, кто
+            смотрит на экран, нам неизвестен — см. MemberRoster */}
         <h2 className="font-display text-display-sm">
-          Ты тут один — матчиться не с кем
+          В комнате только ты — матчиться не с кем
         </h2>
         <p className="text-dim text-sm leading-relaxed max-w-sm">
           Матч — это договорённость, а договариваться пока не с кем. Твои «играем» уже записаны
@@ -106,12 +108,20 @@ export function AloneInvite({
         разрешении, часть мобильных браузеров. Раньше «Скопировано ✓» загоралось
         безусловно — то же самое враньё, что и «ждём остальных», только в
         главном действии экрана. Здесь есть запасной ход.
+
+        Имя у поля своё, а строка над ним — его описание. Без этого скринридер
+        объявлял «текстовое поле, только чтение» и адрес — без слова о том,
+        что это и зачем: подпись лежала соседним span и с полем связана не была.
       */}
       {copyFailed && (
         <div className="relative flex flex-col gap-1.5">
-          <span className="text-xs text-faint">Не вышло скопировать. Вот ссылка — забирай:</span>
+          <span id="room-link-note" className="text-xs text-faint">
+            Не вышло скопировать. Вот ссылка — забирай:
+          </span>
           <input
             readOnly
+            aria-label="Ссылка на комнату"
+            aria-describedby="room-link-note"
             value={typeof window === 'undefined' ? '' : window.location.href}
             onFocus={(e) => e.currentTarget.select()}
             className="rounded-[14px] bg-surface border border-edge px-4 py-2.5 text-sm font-mono text-dim w-full"
