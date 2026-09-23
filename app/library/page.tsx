@@ -17,7 +17,7 @@ import {
   SHELF_EMPTY,
 } from '@/lib/forgotten'
 import { isUntouched, libraryTileState, type LibraryTileState } from '@/lib/recommend'
-import { currentSession, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { backlogEquivalent, backlogValue } from '@/lib/stats'
 import { bounceTo } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
@@ -402,7 +402,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           настройках, которых в проекте нет — бан ставится в одном клике от
           выдачи, и сниматься должен так же дёшево. */}
       <div className="mt-14">
-        <BannedShelf games={bannedGames} />
+        {/* Сессия есть наверняка: без неё страница развернула бы на вход */}
+        <BannedShelf games={bannedGames} writer={session ? isWriter(session) : false} />
       </div>
 
       {/* Выход живёт здесь, а не в шапке: шапка общая на весь сайт, и чтобы

@@ -89,6 +89,25 @@ export function loginCarry(search: URLSearchParams): URLSearchParams {
   return out
 }
 
+/**
+ * Ссылка «войди через Steam», которая вернёт человека туда, где он нажал.
+ *
+ * Нужна сессии, которой писать нельзя (вошла по вставленной ссылке, см.
+ * isWriter в lib/server): подсказка «войди через Steam» обязана вести не на
+ * квиз, а обратно — на ту же выдачу, в ту же библиотеку, в ту же комнату.
+ * Путь комнаты едет как join, место из DESTINATIONS — как next; остальное
+ * пустым входом: произвольный адрес в next не пропустит loginCarry, и
+ * обещать возврат туда было бы враньём.
+ */
+export function steamLoginFor(path: string): string {
+  const room = /^\/room\/([^/]+)$/.exec(path)?.[1]
+  const carry = new URLSearchParams()
+  if (room && JOIN_RE.test(room)) carry.set('join', room)
+  else if (destinationPath(path)) carry.set('next', path)
+  const query = carry.toString()
+  return query ? `/api/auth/steam?${query}` : '/api/auth/steam'
+}
+
 /** Куда вести после удачного входа: пати, совместимость, место назначения или квиз. */
 export function loginTarget(search: URLSearchParams): string {
   const carry = loginCarry(search)

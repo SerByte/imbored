@@ -11,6 +11,7 @@ import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
 import { HeroShots } from '@/components/HeroShots'
 import { LogoMark } from '@/components/Logo'
+import { NeedSteam } from '@/components/NeedSteam'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
@@ -44,6 +45,7 @@ import type { CandidateSource, Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
 import { runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
 import { TagChips } from '@/components/TagChips'
 
@@ -319,11 +321,22 @@ function Player() {
   const shelfOpen =
     useSyncExternalStore(shelfStore.subscribe, shelfStore.get, shelfStore.server) === true
   /**
+   * Сессия только читает — вошла по вставленной ссылке, а не через Steam
+   * (lib/writer). Выдачу она видит целиком, а сохранить ничего не может:
+   * «Зашло», бан и вопрос о причине пропуска прячутся, «Не то — дальше»
+   * просто листает, и вместо них одна строка NeedSteam о том, как получить
+   * право. null — «не знаем»: кнопки как обычно, правду скажет первый отказ.
+   */
+  const readOnly =
+    useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
+  /**
    * Запуск с этой вкладки, про который пора спросить «не зацепило?» — от
    * десяти минут до двух часов назад (lib/launchmemo.ts). Перечитывается при
-   * возвращении на вкладку; снимок сервера — «не спрашивать».
+   * возвращении на вкладку; снимок сервера — «не спрашивать». Сессии только
+   * для чтения не спрашиваем вовсе: ответ всё равно было бы некуда записать.
    */
-  const stopDue = useSyncExternalStore(subscribeDueLaunch, dueLaunchNow, launchMemoStore.server)
+  const dueLaunch = useSyncExternalStore(subscribeDueLaunch, dueLaunchNow, launchMemoStore.server)
+  const stopDue = readOnly ? null : dueLaunch
 
   /**
    * Догрев после того, как выдача уже на экране.
@@ -358,16 +371,29 @@ function Player() {
       appid: number,
       action: 'liked' | 'skipped' | 'opened' | 'banned' | 'launched',
       reason?: string,
-    ): Promise<boolean> =>
-      fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appid, action, ...(reason ? { reason } : {}), mood }),
-      })
-        .then((r) => r.ok)
-        // Промис намеренно не отклоняется: вызывающий, которому исход не важен,
-        // пишет void sendFeedback(...) и не оставляет непойманного отказа.
-        .catch(() => false),
+    ): Promise<boolean> => {
+      // Сессия только читает — ответ известен заранее, 403 needsteam. Кнопки
+      // записи у неё спрятаны, сюда доходят попутные сигналы: запуск,
+      // открытие карточки, «Крутить ещё». Их незачем гонять до сервера.
+      if (writerStore.get() === false) return Promise.resolve(false)
+      return (
+        fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ appid, action, ...(reason ? { reason } : {}), mood }),
+        })
+          .then(async (r) => {
+            // needsteam — не сбой, а права. Страница переходит в режим чтения
+            // и говорит строкой, почему, — вместо «не получилось, нажми ещё
+            // раз», после которого не получится никогда.
+            if (await isNeedSteam(r)) writerStore.set(false)
+            return r.ok
+          })
+          // Промис намеренно не отклоняется: вызывающий, которому исход не
+          // важен, пишет void sendFeedback(...) и не оставляет непойманного отказа.
+          .catch(() => false)
+      )
+    },
     // mood собирается из строки запроса и в рамках страницы неизменен
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -1081,22 +1107,24 @@ function Player() {
                 >
                   Подробнее
                 </Link>
-                <button
-                  onClick={() => {
-                    // «Зашло» после запуска — уже ответ на «не зацепило?», даже
-                    // повторное: спрашивать про неё больше незачем
-                    forgetLaunch(pick.appid)
-                    // Повторное нажатие — не второе «зашло»: кнопка уже горит
-                    if (liked.has(pick.appid)) return
-                    setLiked(new Set(liked).add(pick.appid))
-                    void sendFeedback(pick.appid, 'liked')
-                  }}
-                  className={`rounded-[14px] px-4 py-3 text-sm transition ${
-                    liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
-                  }`}
-                >
-                  {liked.has(pick.appid) ? 'Зашло ✓' : 'Зашло'}
-                </button>
+                {!readOnly && (
+                  <button
+                    onClick={() => {
+                      // «Зашло» после запуска — уже ответ на «не зацепило?», даже
+                      // повторное: спрашивать про неё больше незачем
+                      forgetLaunch(pick.appid)
+                      // Повторное нажатие — не второе «зашло»: кнопка уже горит
+                      if (liked.has(pick.appid)) return
+                      setLiked(new Set(liked).add(pick.appid))
+                      void sendFeedback(pick.appid, 'liked')
+                    }}
+                    className={`rounded-[14px] px-4 py-3 text-sm transition ${
+                      liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
+                    }`}
+                  >
+                    {liked.has(pick.appid) ? 'Зашло ✓' : 'Зашло'}
+                  </button>
+                )}
                 {roulette ? (
                   // Бросок кубика заслуживает физического отклика в точке нажатия
                   <Magnet>
@@ -1116,74 +1144,81 @@ function Player() {
                   </Magnet>
                 ) : (
                   <button
-                    onClick={() => setAskReason(true)}
+                    // Причину спрашивать не у кого записать — просто листаем
+                    onClick={() => (readOnly ? advance(index) : setAskReason(true))}
                     className="rounded-[14px] glass glass-hover px-4 py-3 text-sm text-dim cursor-pointer"
                   >
                     Не то — дальше
                   </button>
                 )}
-                <button
-                  onClick={async () => {
-                    /*
-                      Бан ЖДЁТ ответа сервера, в отличие от соседей.
+                {!readOnly && (
+                  <button
+                    onClick={async () => {
+                      /*
+                        Бан ЖДЁТ ответа сервера, в отличие от соседей.
 
-                      Остальные кнопки убирают карточку сразу и правы: пропуск и
-                      «зашло» — обучающие сигналы, их потеря стоит одного числа в
-                      статистике. Бан же необратим и обязан быть записан: раньше
-                      карточка исчезала мгновенно, а при обрыве сети в базе не
-                      оставалось ничего — ни бана, ни следа в «Чистилище», откуда
-                      его можно было бы отменить. Человек считал, что высказался
-                      навсегда, и встречал ту же игру завтра. «Уже прошёл» — тот
-                      же бан с причиной, и правило то же.
+                        Остальные кнопки убирают карточку сразу и правы: пропуск и
+                        «зашло» — обучающие сигналы, их потеря стоит одного числа в
+                        статистике. Бан же необратим и обязан быть записан: раньше
+                        карточка исчезала мгновенно, а при обрыве сети в базе не
+                        оставалось ничего — ни бана, ни следа в «Чистилище», откуда
+                        его можно было бы отменить. Человек считал, что высказался
+                        навсегда, и встречал ту же игру завтра. «Уже прошёл» — тот
+                        же бан с причиной, и правило то же.
 
-                      Ждать здесь дёшево: нажимают редко и осознанно.
-                    */
-                    if (banning) return
-                    // Ответ про игру дан, даже если бан не дойдёт: «не
-                    // зацепило?» про неё уже не спрашиваем
-                    forgetLaunch(pick.appid)
-                    setBanning(true)
-                    setBanFailed(null)
-                    const ok = await sendFeedback(pick.appid, 'banned', finished ? 'done' : undefined)
-                    setBanning(false)
-                    if (!ok) {
-                      setBanFailed(pick.appid)
-                      return
-                    }
-                    const rest = picks.filter((p) => p.appid !== pick.appid)
-                    if (!rest.length) {
-                      router.push('/quiz')
-                      return
-                    }
-                    setPicks(rest)
-                    setIndex(Math.min(index, rest.length - 1))
-                    setShowWhy(false)
-                  }}
-                  disabled={banning}
-                  title={finished ? 'Прошёл — больше не предлагать' : 'Больше не показывать эту игру'}
-                  className={`rounded-[14px] glass glass-hover py-3 text-sm cursor-pointer disabled:opacity-60 ${
-                    finished ? 'px-4 text-dim' : 'px-3 text-faint'
-                  }`}
-                >
-                  {/*
-                    Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
-                    не было вовсе (title им не является), а рядом с «Не то —
-                    дальше» её смысл не читался и глазами: обе кнопки убирают
-                    игру с экрана, но одна на сегодня, а другая навсегда.
-                    Эмодзи спрятана от скринридера, текст объясняет разницу.
-                  */}
-                  {finished ? (
-                    banning ? 'Отмечаю…' : 'Уже прошёл'
-                  ) : (
-                    <>
-                      <span aria-hidden>🚫</span>
-                      <span className="sr-only">
-                        {banning ? 'Убираю навсегда…' : 'Больше никогда не показывать эту игру'}
-                      </span>
-                    </>
-                  )}
-                </button>
+                        Ждать здесь дёшево: нажимают редко и осознанно.
+                      */
+                      if (banning) return
+                      // Ответ про игру дан, даже если бан не дойдёт: «не
+                      // зацепило?» про неё уже не спрашиваем
+                      forgetLaunch(pick.appid)
+                      setBanning(true)
+                      setBanFailed(null)
+                      const ok = await sendFeedback(pick.appid, 'banned', finished ? 'done' : undefined)
+                      setBanning(false)
+                      if (!ok) {
+                        // Отказ по правам — не «нажми ещё раз»: кнопка уже
+                        // спряталась, и под ней строка о входе через Steam
+                        if (writerStore.get() !== false) setBanFailed(pick.appid)
+                        return
+                      }
+                      const rest = picks.filter((p) => p.appid !== pick.appid)
+                      if (!rest.length) {
+                        router.push('/quiz')
+                        return
+                      }
+                      setPicks(rest)
+                      setIndex(Math.min(index, rest.length - 1))
+                      setShowWhy(false)
+                    }}
+                    disabled={banning}
+                    title={finished ? 'Прошёл — больше не предлагать' : 'Больше не показывать эту игру'}
+                    className={`rounded-[14px] glass glass-hover py-3 text-sm cursor-pointer disabled:opacity-60 ${
+                      finished ? 'px-4 text-dim' : 'px-3 text-faint'
+                    }`}
+                  >
+                    {/*
+                      Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
+                      не было вовсе (title им не является), а рядом с «Не то —
+                      дальше» её смысл не читался и глазами: обе кнопки убирают
+                      игру с экрана, но одна на сегодня, а другая навсегда.
+                      Эмодзи спрятана от скринридера, текст объясняет разницу.
+                    */}
+                    {finished ? (
+                      banning ? 'Отмечаю…' : 'Уже прошёл'
+                    ) : (
+                      <>
+                        <span aria-hidden>🚫</span>
+                        <span className="sr-only">
+                          {banning ? 'Убираю навсегда…' : 'Больше никогда не показывать эту игру'}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                )}
               </motion.div>
+              {/* Вместо спрятанных «Зашло» и бана — почему их нет и как вернуть */}
+              {readOnly && <NeedSteam from="/play" className="-mt-1" />}
               {/*
                 Отказ бана виден, потому что бан необратим. Формулировка ведёт
                 к следующему шагу, а не констатирует поломку: карточка на месте,

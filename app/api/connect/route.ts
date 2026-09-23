@@ -7,6 +7,7 @@ import {
   currentSteamId,
   demoSteamId,
   getDb,
+  isWriter,
   issueSession,
   nowSec,
   sessionCookieOptions,
@@ -73,6 +74,9 @@ export async function POST(req: Request) {
         personaName: variant === 2 ? 'Демо-друг' : 'Демо-игрок',
         gameCount: variant === 2 ? 10 : 22,
         demo: true,
+        // Тот же признак, что отдаёт /api/session/touch: страница, на которую
+        // карточка входа уведёт без перезагрузки, узнаёт его отсюда (lib/writer)
+        writer: isWriter({ steamid, verified: false }),
       }),
       steamid,
       userAgent,
@@ -119,6 +123,9 @@ export async function POST(req: Request) {
         steamid,
         personaName: summary?.personaName ?? null,
         gameCount: games.length,
+        // Ссылка на профиль владения не доказывает — только чтение, пока
+        // человек не войдёт через Steam (isWriter в lib/server)
+        writer: isWriter({ steamid, verified: false }),
       }),
       steamid,
       userAgent,

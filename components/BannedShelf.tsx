@@ -5,8 +5,10 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { NeedSteam } from '@/components/NeedSteam'
 import type { GameArtUrls } from '@/lib/art'
 import { Eyebrow } from '@/components/Labels'
+import { isNeedSteam } from '@/lib/writer'
 
 export type BannedGame = {
   appid: number
@@ -26,12 +28,20 @@ export type BannedGame = {
  * Клиентский островок на серверной странице: плитка удаляется сразу, а
  * router.refresh() догоняет числа в шапке. Ждать круга до сервера, чтобы
  * увидеть результат нажатия, здесь незачем — операция идемпотентна.
+ *
+ * writer — может ли сессия писать (isWriter в lib/server); страница знает
+ * это сама, из той же сессии, по которой строит полку. Сессия по вставленной
+ * ссылке видит, что выгнано, но вернуть не может: кнопок нет, вместо них
+ * строка о входе через Steam. Отказ needsteam от роута — на случай, если
+ * права поменялись, пока страница была открыта, — ведёт туда же.
  */
-export function BannedShelf({ games }: { games: BannedGame[] }) {
+export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: boolean }) {
   const router = useRouter()
   const [items, setItems] = useState(games)
   const [failed, setFailed] = useState<number | null>(null)
+  const [denied, setDenied] = useState(false)
   const [, startTransition] = useTransition()
+  const readOnly = !writer || denied
 
   async function unban(appid: number) {
     const before = items
@@ -43,6 +53,13 @@ export function BannedShelf({ games }: { games: BannedGame[] }) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ appid }),
       })
+      if (await isNeedSteam(res)) {
+        // Не «попробуй ещё раз»: не получится. Плитка возвращается на место,
+        // кнопки прячутся, и строка под заголовком объясняет почему
+        setItems(before)
+        setDenied(true)
+        return
+      }
       if (!res.ok) throw new Error(String(res.status))
       startTransition(() => router.refresh())
     } catch {
@@ -65,6 +82,7 @@ export function BannedShelf({ games }: { games: BannedGame[] }) {
         Мы их правда больше не показываем — ни в подборе, ни в игре дня, ни в пати. Если передумал,
         верни обратно.
       </p>
+      {readOnly && <NeedSteam from="/library" className="-mt-2 mb-4" />}
       {/* Та же лестница, что у полки «запечатанного»: пять колонок с 768 px
           давали обложку мельче, чем на телефоне. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -90,13 +108,15 @@ export function BannedShelf({ games }: { games: BannedGame[] }) {
                 />
                 <div className="p-3 pb-2 text-sm font-semibold leading-tight truncate">{g.name}</div>
               </Link>
-              <button
-                type="button"
-                onClick={() => unban(g.appid)}
-                className="mt-auto mx-3 mb-3 rounded-[10px] glass glass-hover px-3 py-1.5 text-xs text-dim hover:text-ink transition"
-              >
-                Вернуть в подбор
-              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => unban(g.appid)}
+                  className="mt-auto mx-3 mb-3 rounded-[10px] glass glass-hover px-3 py-1.5 text-xs text-dim hover:text-ink transition"
+                >
+                  Вернуть в подбор
+                </button>
+              )}
               {failed === g.appid && (
                 <p role="status" className="px-3 pb-3 text-[11px] text-danger">
                   Не вышло — попробуй ещё раз

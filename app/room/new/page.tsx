@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { bounceTo } from '@/lib/destination'
+import { bounceTo, steamLoginFor } from '@/lib/destination'
+import { isNeedSteam, writerStore } from '@/lib/writer'
 import { Spinner } from '@/components/Spinner'
 
 /**
@@ -19,8 +20,13 @@ import { Spinner } from '@/components/Spinner'
  * описан в докблоке lib/warmup.ts про копию цикла на /daily. Вторая половина —
  * `res.json()` без проверки `ok`: пятисотка отдаёт HTML, разбор бросает, и
  * ветка ошибки ниже была недостижима в принципе.
+ *
+ * 'needsteam' — сессия по вставленной ссылке: комнату создаёт только вошедший
+ * через Steam (requireWriter в lib/server). «Попробовать снова» здесь соврало
+ * бы, поэтому вместо повтора — вход, который вернёт сюда же и создаст
+ * комнату, и дорога к открытым пати, куда подсесть можно и так.
  */
-type Phase = 'creating' | 'failed' | 'busy'
+type Phase = 'creating' | 'failed' | 'busy' | 'needsteam'
 
 export default function NewRoomPage() {
   const router = useRouter()
@@ -43,6 +49,12 @@ export default function NewRoomPage() {
       // ограничитель частоты, а ждать надо минуты.
       if (res.status === 429) {
         setPhase('busy')
+        return
+      }
+      if (await isNeedSteam(res)) {
+        // Тот же ответ узнают и остальные страницы документа (lib/writer)
+        writerStore.set(false)
+        setPhase('needsteam')
         return
       }
       if (!res.ok) {
@@ -68,6 +80,26 @@ export default function NewRoomPage() {
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-5">
         <Spinner />
         <p className="text-dim text-sm">Создаю комнату для пати…</p>
+      </div>
+    )
+  }
+
+  if (phase === 'needsteam') {
+    return (
+      <div className="flex-1 flex items-center justify-center px-5 py-24">
+        <div className="max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col items-center gap-5 anim-reveal">
+          <h1 className="text-xl font-bold tracking-tight">Комнату создаёт вошедший через Steam</h1>
+          <p className="text-dim text-sm leading-relaxed">
+            Ссылка на профиль не доказывает, что профиль твой. По ней можно смотреть подборки и
+            голосовать в чужих пати, а создавать свои и сохранять оценки — после входа.
+          </p>
+          <a href={steamLoginFor('/room/new')} className="btn-ember is-block py-3">
+            Войти через Steam
+          </a>
+          <Link href="/rooms" className="tap text-sm text-dim hover:text-ink transition-colors">
+            ← Подсесть к открытой пати
+          </Link>
+        </div>
       </div>
     )
   }

@@ -80,3 +80,68 @@ describe('экраны отказа', () => {
     }
   })
 })
+
+/**
+ * needsteam — отказ не одного роута, а всех пишущих: сессия по вставленной
+ * ссылке только читает (requireWriter в lib/server). Страница, которая зовёт
+ * такой роут и сводит 403 к общему «не получилось — нажми ещё раз», совершает
+ * ту же ошибку, что описана в шапке файла, только хуже: повтор здесь не
+ * поможет никогда, а помочь может вход через Steam.
+ *
+ * Список пишущих роутов не выписан руками, а собран из кода: роут, который
+ * зовёт requireWriter, — пишущий. Новый такой роут без разбора на странице
+ * уронит этот тест сам.
+ */
+describe('needsteam', () => {
+  const walk = (dir: string, keep: (f: string) => boolean): string[] =>
+    fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((e) => {
+      const rel = `${dir}/${e.name}`
+      if (e.isDirectory()) return walk(rel, keep)
+      return keep(rel) ? [rel] : []
+    })
+
+  /** app/api/room/[id]/public/route.ts → регэксп вызова fetch(`/api/room/${…}/public`) */
+  const callOf = (route: string) => {
+    const url = route
+      .replace(/^app/, '')
+      .replace(/\/route\.ts$/, '')
+      .split('/')
+      // динамический сегмент в клиенте — подстановка в шаблонной строке
+      .map((seg) => (/^\[.+\]$/.test(seg) ? '\\$\\{[^}]+\\}' : seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+      .join('/')
+    return new RegExp(`fetch\\(\\s*['"\`]${url}['"\`?]`)
+  }
+
+  const writers = walk('app/api', (f) => f.endsWith('/route.ts')).filter((f) =>
+    read(f).includes('requireWriter()'),
+  )
+  const pages = [
+    ...walk('app', (f) => /\.tsx?$/.test(f) && !f.startsWith('app/api/') && !f.includes('.test.')),
+    ...walk('components', (f) => /\.tsx?$/.test(f)),
+  ]
+
+  test('пишущие роуты найдены — иначе сторож ослеп', () => {
+    expect(writers).toEqual(
+      expect.arrayContaining([
+        'app/api/feedback/route.ts',
+        'app/api/room/[id]/public/route.ts',
+        'app/api/room/create/route.ts',
+        'app/api/unban/route.ts',
+      ]),
+    )
+  })
+
+  for (const route of writers) {
+    test(`${route}: у каждого, кто его зовёт, есть разбор needsteam`, () => {
+      const callers = pages.filter((f) => callOf(route).test(read(f)))
+      expect(callers.length, `вызовов ${route} на страницах не найдено — сторож ослеп`).toBeGreaterThan(0)
+      const blind = callers.filter((f) => !read(f).includes('isNeedSteam('))
+      expect(
+        blind,
+        'страница зовёт пишущий роут и не отличает «только чтение» от сбоя: ' +
+          'человек получит «нажми ещё раз» там, где поможет только вход через Steam (lib/writer)',
+      ).toEqual([])
+    })
+  }
+})
+

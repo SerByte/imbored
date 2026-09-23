@@ -1,7 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { bounceTo, DESTINATIONS, destinationPath, loginCarry, loginTarget } from './destination'
+import {
+  bounceTo,
+  DESTINATIONS,
+  destinationPath,
+  loginCarry,
+  loginTarget,
+  steamLoginFor,
+} from './destination'
 
 /**
  * Сторож разворота гостя.
@@ -132,5 +139,32 @@ describe('вход через Steam помнит, куда человек шёл
     expect(loginTarget(q('next=%2Fdaily'))).toBe('/daily')
     expect(loginTarget(q('next=https%3A%2F%2Fevil.example'))).toBe('/quiz')
     expect(loginTarget(q(''))).toBe('/quiz')
+  })
+})
+
+/**
+ * Подсказка «войди через Steam» у сессии, которой писать нельзя. Возврат идёт
+ * через тот же loginTarget, что и у обычного входа, поэтому проверяем круг
+ * целиком: ссылка → query возврата → адрес, куда человека приведут.
+ */
+describe('вход через Steam из подсказки возвращает на место', () => {
+  const back = (href: string) => loginTarget(new URLSearchParams(href.split('?')[1] ?? ''))
+
+  test('выдача, библиотека, новая комната и своя комната', () => {
+    for (const where of ['/play', '/library', '/room/new', '/room/ABC234']) {
+      const href = steamLoginFor(where)
+      expect(href.startsWith('/api/auth/steam'), where).toBe(true)
+      expect(back(href), where).toBe(where)
+    }
+  })
+
+  test('комната едет кодом, а не адресом', () => {
+    expect(steamLoginFor('/room/ABC234')).toBe('/api/auth/steam?join=ABC234')
+  })
+
+  test('чужое и незнакомое — голый вход, без next', () => {
+    for (const where of ['/rooms', '//evil.example', '/room/abc234', '/room/ABC234/x', '']) {
+      expect(steamLoginFor(where), where).toBe('/api/auth/steam')
+    }
   })
 })

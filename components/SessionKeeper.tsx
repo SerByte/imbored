@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useEffect } from 'react'
+import { writerFrom, writerStore } from '@/lib/writer'
 
 /**
  * Продлевает вход, пока человек пользуется сайтом.
@@ -19,6 +20,10 @@ import { useEffect } from 'react'
  * Плюс повтор по возвращении на вкладку: страница, открытая полгода назад и
  * ни разу не перезагруженная, иначе осталась бы с одним-единственным
  * продлением на старте.
+ *
+ * Из ответа берётся одно поле — writer: может ли сессия писать (lib/writer).
+ * Запрос и так уходит с каждой страницы, и спрашивать признак отдельно значило
+ * бы второй круг до сервера ради того же ответа.
  */
 const AGAIN_AFTER_MS = 12 * 60 * 60 * 1000
 
@@ -39,11 +44,17 @@ export function SessionKeeper() {
     const touch = () => {
       if (Date.now() - lastTouch < AGAIN_AFTER_MS) return
       lastTouch = Date.now()
-      // Ответ не нужен: продление — это Set-Cookie, а не тело. Ошибку глотаем
-      // молча, но снимаем отметку, чтобы следующая попытка состоялась.
-      fetch('/api/session/touch', { method: 'POST' }).catch(() => {
-        lastTouch = 0
-      })
+      // Продление — это Set-Cookie, а не тело; из тела нужен только writer.
+      // Ошибку глотаем молча, но снимаем отметку, чтобы следующая попытка
+      // состоялась. Признак при сбое не трогаем: пятисотка о сессии не
+      // говорит ничего, а прежний ответ остаётся верным.
+      fetch('/api/session/touch', { method: 'POST' })
+        .then(async (r) => {
+          if (r.ok) writerStore.set(writerFrom(await r.json()))
+        })
+        .catch(() => {
+          lastTouch = 0
+        })
     }
 
     touch()

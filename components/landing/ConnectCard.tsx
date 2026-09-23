@@ -17,6 +17,7 @@ import {
   rememberSession,
   subscribeSessionHint,
 } from '@/lib/sessionhint'
+import { writerFrom, writerStore } from '@/lib/writer'
 
 /**
  * Рабочая карточка главной: единственная форма страницы, и стоит она в герое.
@@ -123,6 +124,8 @@ export function ConnectCard() {
         if (!r.ok) return settle(false)
         const d = (await r.json()) as { authed?: boolean; personaName?: string | null }
         settle(Boolean(d.authed), d.personaName ?? null)
+        // SessionKeeper на главной молчит, так что признак записи берём здесь
+        writerStore.set(writerFrom(d))
       })
       .catch(() => settle(false))
   }, [])
@@ -171,6 +174,9 @@ export function ConnectCard() {
       })
       const data = (await res.json()) as { ok?: boolean; error?: string }
       if (data.ok) {
+        // Переход клиентский, документ тот же: признак записи прежней сессии
+        // остался бы в памяти и соврал бы на следующей странице (lib/writer)
+        writerStore.set(writerFrom(data))
         router.push(target)
         return
       }

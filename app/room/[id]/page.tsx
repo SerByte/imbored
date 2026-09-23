@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { NeedSteam } from '@/components/NeedSteam'
 import { useShareLink } from '@/components/ShareLink'
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
@@ -16,6 +17,7 @@ import type { RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import type { NearMiss } from '@/lib/roomlikes'
 import { nextPollStep } from '@/lib/roompoll'
+import { isNeedSteam, writerStore } from '@/lib/writer'
 
 /*
  * Церемония матча догружается отдельно.
@@ -155,6 +157,13 @@ export default function RoomPage() {
   const [pulling, setPulling] = useState(false)
   /** Добор раунда не удался — кнопка обязана вернуться нажимаемой */
   const [pullFailed, setPullFailed] = useState(false)
+  /**
+   * Хост вошёл по вставленной ссылке: вывесить комнату на доску ему нельзя
+   * (403 needsteam, см. requireWriter в lib/server). Создать такую комнату он
+   * уже не может, но созданные раньше живы, и их переключатель молча не
+   * срабатывал бы — отсюда строка о входе через Steam.
+   */
+  const [publicDenied, setPublicDenied] = useState(false)
   const deckKey = useRef('')
   const likesKey = useRef('')
   const likesAt = useRef(0)
@@ -620,11 +629,16 @@ export default function RoomPage() {
   }
 
   async function togglePublic() {
-    await fetch(`/api/room/${roomId}/public`, {
+    const res = await fetch(`/api/room/${roomId}/public`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ public: !state?.room.isPublic }),
-    })
+    }).catch(() => null)
+    if (res && (await isNeedSteam(res))) {
+      writerStore.set(false)
+      setPublicDenied(true)
+      return
+    }
     void refresh()
   }
 
@@ -868,6 +882,8 @@ export default function RoomPage() {
           ) : null}
         </div>
       </div>
+
+      {publicDenied && <NeedSteam from={`/room/${roomId}`} className="-mt-3" />}
 
       {card && (
         <div className="flex flex-wrap gap-2">

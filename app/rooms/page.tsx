@@ -2,12 +2,14 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { FlapCode } from '@/components/FlapCode'
+import { NeedSteam } from '@/components/NeedSteam'
 import { Spinner } from '@/components/Spinner'
 import { SectionLabel } from '@/components/Labels'
 import { minutesAgoLabel } from '@/lib/freshness'
+import { writerStore } from '@/lib/writer'
 
 /**
  * Как устроено пати — тремя шагами.
@@ -47,6 +49,13 @@ export default function RoomsBoardPage() {
   // а показанная доска не должна прятать сообщение о том, что она устарела.
   const [failed, setFailed] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  /*
+   * Сессия по вставленной ссылке комнату не создаст — /api/room/create ответит
+   * ей 403 needsteam (lib/writer). Кнопка, которая ведёт на отказ, хуже строки
+   * о том, как получить право. Подсесть к открытой пати ниже она может.
+   */
+  const readOnly =
+    useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
 
   useEffect(() => {
     let alive = true
@@ -114,12 +123,17 @@ export default function RoomsBoardPage() {
       <div className="relative mx-auto w-full max-w-3xl px-5 pt-28 pb-16 flex flex-col gap-8">
       <div className="text-center flex flex-col items-center gap-5 anim-rise">
         <h1 className="font-display text-display-md">Пати</h1>
-        <Link
-          href="/room/new"
-          className="btn-ember px-8 py-3"
-        >
-          Создать комнату
-        </Link>
+        {readOnly ? (
+          // Вход вернёт прямо на создание комнаты, а не на эту доску
+          <NeedSteam from="/room/new" className="max-w-sm" />
+        ) : (
+          <Link
+            href="/room/new"
+            className="btn-ember px-8 py-3"
+          >
+            Создать комнату
+          </Link>
+        )}
       </div>
 
       {/* Номер — моноширинным: это цифра, а в этом интерфейсе цифры набраны
@@ -161,7 +175,10 @@ export default function RoomsBoardPage() {
           </div>
         ) : rooms.length === 0 ? (
           <div className="glass rounded-[20px] p-6 text-center text-dim text-sm">
-            Сейчас открытых комнат нет. Создай свою и нажми «Показать на доске» — сюда придут.
+            {/* Совет «создай свою» тому, кто создать не может, — тупик */}
+            {readOnly
+              ? 'Сейчас открытых комнат нет — загляни чуть позже.'
+              : 'Сейчас открытых комнат нет. Создай свою и нажми «Показать на доске» — сюда придут.'}
           </div>
         ) : (
           <AnimatePresence initial={false} mode="popLayout">

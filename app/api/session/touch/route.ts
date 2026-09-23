@@ -4,6 +4,7 @@ import {
   SESSION_COOKIE,
   currentSession,
   getDb,
+  isWriter,
   nowSec,
   sessionCookieOptions,
   sessionSecret,
@@ -21,6 +22,12 @@ import { deviceLabel, mintSession, renewToken } from '@/lib/sessions'
  * Второй смысл роута — ответ. Главная не умеет узнавать гостя от вошедшего
  * (она клиентская), и именно отсюда берёт «Продолжить как ...».
  *
+ * Третий — writer: может ли сессия писать (isWriter в lib/server). Его читает
+ * каждая страница через SessionKeeper и lib/writer, чтобы сессии по
+ * вставленной ссылке не предлагать «Зашло», бан и новую комнату, которые
+ * ответят ей 403 needsteam. Признак считается из уже разобранной сессии,
+ * похода в базу он не добавляет.
+ *
  * Куку ставят всего четыре роута на весь сайт: два входа, этот и выход. Ни
  * одна страница не трогается, поэтому ISR у /game/[appid] и og-картинок цел.
  */
@@ -33,13 +40,13 @@ export async function POST(req: Request) {
   const now = nowSec()
 
   // Ник и аватар читаются только когда их просят. Спрашивает одна главная —
-  // ради приветствия; SessionKeeper на остальных страницах ответ не читает
-  // вовсе, и лишний запрос в базу на каждую загрузку был бы даром.
+  // ради приветствия; SessionKeeper на остальных страницах берёт из ответа
+  // один writer, и лишний запрос в базу на каждую загрузку был бы даром.
   const card =
     new URL(req.url).searchParams.get('card') === '1'
       ? await getUserCard(db, steamid).catch(() => ({ personaName: null, avatarUrl: null }))
       : null
-  const res = NextResponse.json({ authed: true, steamid, ...(card ?? {}) })
+  const res = NextResponse.json({ authed: true, steamid, writer: isWriter(session), ...(card ?? {}) })
 
   if (!stale) return res
 
