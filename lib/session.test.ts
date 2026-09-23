@@ -1,22 +1,14 @@
+import { createHmac } from 'node:crypto'
 import { describe, expect, test } from 'vitest'
-import { newSid, signSession, signSessionV2, verifySession, verifySessionV2 } from './session'
+import { newSid, signSessionV2, verifySessionV2 } from './session'
 
 const SID = 'a'.repeat(32)
 const STEAMID = '76561197960287930'
 
-describe('session', () => {
-  test('подписанное значение проходит проверку', () => {
-    const token = signSession(STEAMID, 'secret')
-    expect(verifySession(token, 'secret')).toBe(STEAMID)
-  })
-
-  test('подделка и чужой секрет отклоняются', () => {
-    const token = signSession(STEAMID, 'secret')
-    expect(verifySession(token.replace(STEAMID, '76561197960287931'), 'secret')).toBeNull()
-    expect(verifySession(token, 'other')).toBeNull()
-    expect(verifySession('garbage', 'secret')).toBeNull()
-  })
-})
+/** Кука старого формата v1, собранная руками: самого формата в коде больше нет. */
+function legacyToken(steamid: string, secret: string): string {
+  return `${steamid}.${createHmac('sha256', secret).update(steamid).digest('hex')}`
+}
 
 describe('session v2', () => {
   const token = signSessionV2({ sid: SID, steamid: STEAMID, iat: 1000, exp: 2000 }, 'secret')
@@ -49,11 +41,8 @@ describe('session v2', () => {
     }
   })
 
-  test('форматы не подменяют друг друга ни в какую сторону', () => {
-    // v1-кука не должна читаться как v2 — иначе сессия без срока и без sid
-    expect(verifySessionV2(signSession(STEAMID, 'secret'), 'secret')).toBeNull()
-    // и наоборот: v2 не должна читаться как «steamid» старым разбором
-    expect(verifySession(token, 'secret')).toBeNull()
+  test('подписанная v1-кука не читается как v2 — иначе сессия без срока и без sid', () => {
+    expect(verifySessionV2(legacyToken(STEAMID, 'secret'), 'secret')).toBeNull()
   })
 
   test('sid — 32 hex-символа и каждый раз новый', () => {

@@ -1,6 +1,7 @@
+import { createHmac } from 'node:crypto'
 import { beforeEach, describe, expect, test } from 'vitest'
 import type { SessionRow } from './db'
-import { signSession, signSessionV2, verifySessionV2 } from './session'
+import { signSessionV2, verifySessionV2 } from './session'
 import {
   SESSION_TOUCH_AFTER_SEC,
   SESSION_TTL_SEC,
@@ -172,24 +173,27 @@ describe('resolveSession', () => {
     expect(r?.verified).toBe(false)
   })
 
-  test('легаси-кука пускает и помечается на апгрейд', async () => {
+  /*
+   * Кука v1 — «<steamid>.<подпись>», без срока и без sid. Токен
+   * детерминирован: один и тот же для steamid навсегда. Раньше сервер её
+   * пускал, а /api/session/touch менял на свежую сессию на год, так что
+   * утёкший однажды v1 работал вечно. Все честные v1 истекли в браузерах к
+   * середине сентября 2026 (maxAge 30 суток, v2 — с 15 августа).
+   */
+  test('легаси-кука v1 не пускает, даже подписанная верным секретом', async () => {
+    let asked = 0
     const r = await resolveSession({
-      token: signSession(STEAMID, SECRET),
+      token: `${STEAMID}.${createHmac('sha256', SECRET).update(STEAMID).digest('hex')}`,
       secret: SECRET,
       nowSec: NOW,
-      lookup: lookupLive,
-    })
-    expect(r).toEqual({ steamid: STEAMID, sid: null, stale: true, verified: false })
-  })
-
-  test('«выйти везде» достаёт и легаси-куку, у которой нет ни sid, ни времени выдачи', async () => {
-    const r = await resolveSession({
-      token: signSession(STEAMID, SECRET),
-      secret: SECRET,
-      nowSec: NOW,
-      lookup: async () => ({ revokedAt: null, sessionsFrom: NOW, verified: false }),
+      lookup: async () => {
+        asked += 1
+        return live
+      },
     })
     expect(r).toBeNull()
+    // до базы такой токен не доходит — это такой же мусор, как любой другой
+    expect(asked).toBe(0)
   })
 
   test('база не опрашивается, пока жив кэш, и опрашивается снова после', async () => {

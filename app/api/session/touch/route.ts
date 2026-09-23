@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createSession, getUserCard, touchSession } from '@/lib/db'
+import { getUserCard, touchSession } from '@/lib/db'
 import {
   SESSION_COOKIE,
   currentSession,
@@ -9,7 +9,7 @@ import {
   sessionCookieOptions,
   sessionSecret,
 } from '@/lib/server'
-import { deviceLabel, mintSession, renewToken } from '@/lib/sessions'
+import { renewToken } from '@/lib/sessions'
 
 /**
  * ЕДИНСТВЕННОЕ место, где вход продлевается.
@@ -50,20 +50,11 @@ export async function POST(req: Request) {
 
   if (!stale) return res
 
-  if (sid) {
-    res.cookies.set(SESSION_COOKIE, renewToken(sid, steamid, sessionSecret(), now), sessionCookieOptions())
-    // Отметка визита — справка для списка устройств, а не условие входа,
-    // поэтому её падение не должно мешать продлению.
-    await touchSession(db, sid, now).catch(() => {})
-    return res
-  }
-
-  // Легаси-кука без sid: заводим настоящую сессию. Если запись не удалась,
-  // куку всё равно выдаём — отсутствие строки у нас означает «жива»,
-  // а не «отказать» (см. lib/sessions.ts).
-  const minted = mintSession(steamid, sessionSecret(), now)
-  res.cookies.set(SESSION_COOKIE, minted.token, sessionCookieOptions())
-  const device = deviceLabel(req.headers.get('user-agent'))
-  await createSession(db, { sid: minted.sid, steamid, device }, now).catch(() => {})
+  // Легаси-кук без sid здесь больше не бывает: их не пускает resolveSession,
+  // и обменивать на годовую сессию нечего (см. конец resolveSession).
+  res.cookies.set(SESSION_COOKIE, renewToken(sid, steamid, sessionSecret(), now), sessionCookieOptions())
+  // Отметка визита — справка для списка устройств, а не условие входа,
+  // поэтому её падение не должно мешать продлению.
+  await touchSession(db, sid, now).catch(() => {})
   return res
 }

@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       const db = await getDb()
       if (all) {
         await revokeAllSessions(db, session.steamid, now)
-      } else if (session.sid) {
+      } else {
         await revokeSession(db, session.sid, now)
       }
       // Иначе своё же устройство осталось бы внутри до конца минутного кэша.

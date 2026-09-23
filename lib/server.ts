@@ -296,7 +296,7 @@ export async function issueSession(
   const { sid, token } = mintSession(steamid, sessionSecret(), now)
   try {
     const db = await getDb()
-    if (prev?.sid) await revokeSession(db, prev.sid, now)
+    if (prev) await revokeSession(db, prev.sid, now)
     // verified ставит ТОЛЬКО путь Steam OpenID — см. докблок Resolved.verified
     await createSession(
       db,
