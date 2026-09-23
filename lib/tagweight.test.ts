@@ -6,6 +6,7 @@ import {
   tagWeightFrom,
   weightedCosine,
   weightedCosineTo,
+  weighsSomething,
   weighTags,
 } from './tagweight'
 
@@ -80,11 +81,35 @@ describe('weightedCosine', () => {
     expect(weightedCosine(profile, factory, w)).toBeGreaterThan(weightedCosine(profile, brawler, w))
   })
 
-  test('сторона, взвешенная в ноль, откатывает к сырому косинусу, а не к нулю', () => {
-    const a = { Singleplayer: 1, Indie: 1 }
-    const b = { Singleplayer: 1 }
-    expect(weightedCosine(a, b, w)).toBe(cosine(a, b))
-    expect(weightedCosine(b, a, w)).toBe(cosine(b, a))
+  test('профиль, взвешенный в ноль, откатывает к сырому косинусу — всех кандидатов разом', () => {
+    const profile = { Singleplayer: 1 }
+    const toProfile = weightedCosineTo(profile, w)
+    const games: Array<Record<string, number>> = [
+      { Singleplayer: 1, Indie: 1 },
+      { Automation: 1 },
+      { Singleplayer: 1 },
+    ]
+    for (const game of games) expect(toProfile(game)).toBe(cosine(profile, game))
+  })
+
+  test('кандидат, взвешенный в ноль, получает ноль, а не сырой косинус: шкала у выдачи одна', () => {
+    const profile = { Singleplayer: 10, Indie: 8, Automation: 6, 'Colony Sim': 3 }
+    const generic = { Singleplayer: 1 }
+    const colony = { 'Colony Sim': 1, Action: 1 }
+    // Сырой косинус выбирает частотное…
+    expect(cosine(profile, generic)).toBeGreaterThan(cosine(profile, colony))
+    // …и откат по одному кандидату протаскивал это «частотное» мимо веса
+    const toProfile = weightedCosineTo(profile, w)
+    expect(toProfile(generic)).toBe(0)
+    expect(toProfile(colony)).toBeGreaterThan(0)
+    expect(weightedCosine(profile, generic, w)).toBe(0)
+  })
+
+  test('weighsSomething: без веса — да, с весом — только при хоть одном весомом теге', () => {
+    expect(weighsSomething({ Singleplayer: 1 }, null)).toBe(true)
+    expect(weighsSomething({ Singleplayer: 1, 'Нет в карте': 1 }, w)).toBe(false)
+    expect(weighsSomething({ Singleplayer: 1, Automation: 0.1 }, w)).toBe(true)
+    expect(weighsSomething({}, w)).toBe(false)
   })
 
   test('weightedCosineTo считает то же, что weightedCosine, но взвешивает сторону один раз', () => {

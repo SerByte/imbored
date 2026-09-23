@@ -584,6 +584,24 @@ describe('scoreCandidates', () => {
       }
     })
 
+    test('игра из одних частотных тегов не обходит настоящее совпадение: шкала одна', () => {
+      // Indie — самый частый тег карты, вес ноль: игра 11 взвешивается в
+      // пустоту. Откат на сырой косинус давал ей 0.6 против 0.16 у игры 12,
+      // которая делит с профилем хоть что-то весомое
+      const out = scoreCandidates({
+        profile,
+        library: [game({ appid: 11 }), game({ appid: 12 })],
+        metaOf: (id) =>
+          id === 11 ? meta(11, { Indie: 100 }) : meta(12, { Singleplayer: 100, Action: 100 }),
+        newPool: [],
+        mood: baseMood,
+        nowSec: NOW,
+        tagWeight: tagWeightFrom(stats),
+      })
+      expect(out.map((c) => c.appid)).toEqual([12, 11])
+      expect(out.find((c) => c.appid === 11)!.parts!.taste).toBe(0)
+    })
+
     test('процент совпадения на карточке считается тем же весом', () => {
       const mood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
       const common = metas.get(2)!
@@ -985,6 +1003,28 @@ describe('buildAnchorFinder', () => {
       buildAnchorFinder(both, (id) => bothMetas.get(id), w)(factoryish)?.name
     expect(find(null)).toBe('Brawler')
     expect(find(tagWeightFrom(stats))).toBe('Factorio')
+  })
+
+  test('с весом игра из одних частотных тегов не якорь и якоря не получает', () => {
+    const stats = new Map<string, number>([
+      ['Indie', 4000],
+      ['Colony Sim', 300],
+      ['Automation', 100],
+    ])
+    const two = [
+      game({ appid: 30, name: 'Generic Indie', playtimeForever: 300 * HOUR }),
+      game({ appid: 31, name: 'Factorio', playtimeForever: 300 * HOUR }),
+    ]
+    const twoMetas = new Map([
+      [30, meta(30, { Indie: 100 })],
+      [31, meta(31, { Automation: 100, 'Colony Sim': 100 })],
+    ])
+    const find = buildAnchorFinder(two, (id) => twoMetas.get(id), tagWeightFrom(stats))
+    // У Generic Indie после веса не остаётся ничего, и сырой косинус 0.96
+    // обходил взвешенные 0.82 у Factorio — другой шкалой
+    expect(find(cand(109, 'Indie Factory', { Indie: 100, Automation: 30 }))?.name).toBe('Factorio')
+    // Кандидату без весомых тегов сказать «ближе всего к…» нечего
+    expect(find(cand(110, 'Just Indie', { Indie: 100 }))).toBeNull()
   })
 
   test('пустая библиотека — null без падений', () => {

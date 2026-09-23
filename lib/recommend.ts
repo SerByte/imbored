@@ -2,7 +2,7 @@ import { discountOf } from './discount'
 import { editionKey } from './editions'
 import { isJunk } from './junk'
 import type { Lean } from './mood'
-import { cosine, weightedCosine, weightedCosineTo, type TagWeight } from './tagweight'
+import { cosine, weightedCosine, weightedCosineTo, weighsSomething, type TagWeight } from './tagweight'
 import type {
   CandidateSource,
   GameMeta,
@@ -803,12 +803,17 @@ export function buildAnchorFinder(
     if (exclude?.has(g.appid)) continue
     const meta = metaOf(g.appid)
     if (!meta || isJunk(g, meta)) continue
+    const tags = normalizedTags(meta)
+    // Игра из одних частотных тегов с весом сказать ничего не может: её
+    // сходство откатилось бы к сырому косинусу — другой шкале — и обходило
+    // якоря с настоящим совпадением
+    if (!weighsSomething(tags, tagWeight)) continue
     anchors.push({
       appid: g.appid,
       name: g.name,
       hours: Math.round(g.playtimeForever / 60),
       key: editionKey(g.name),
-      simTo: weightedCosineTo(normalizedTags(meta), tagWeight),
+      simTo: weightedCosineTo(tags, tagWeight),
     })
   }
 
