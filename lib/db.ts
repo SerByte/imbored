@@ -3477,60 +3477,7 @@ export async function getGameNews(db: Db, appid: number, limit = 8): Promise<Sto
   return (res.rows as unknown as NewsRow[]).map(rowToNews)
 }
 
-/**
- * Общая лента: и для гостя, и для вкладки «в популярных играх». Предикат
- * повторяет idx_news_feed ДОСЛОВНО — иначе SQLite не возьмёт частичный индекс,
- * и это станет сканом всей таблицы, который noscan не поймает (LIMIT-то на месте).
- *
- * minRank — этаж популярности, и он идёт ВДОБАВОК к rank > 0, а не вместо.
- * Соблазн схлопнуть два условия в одно проверен планом запроса на живой базе:
- *
- *   … rank > 0 AND rank >= ?  →  SEARCH news_items USING INDEX idx_news_feed
- *   … rank >= ?  (без rank>0) →  SCAN news_items + USE TEMP B-TREE FOR ORDER BY
- *
- * Доказать rank > 0 из rank >= ? SQLite не может: значения параметра он не
- * видит. Лишнее AND-условие индексу при этом не мешает.
- *
- * Порог по умолчанию нулевой: «какая игра считается популярной» — решение
- * страницы, а не слоя данных, и живёт оно рядом с LIBRARY_CAP и FEED_LIMIT.
- */
-export async function getMajorFeed(
-  db: Db,
-  limit = 30,
-  opts: { before?: number; minRank?: number } = {},
-): Promise<StoredNews[]> {
-  const { before, minRank = 0 } = opts
-  const res = await db.execute({
-    sql: `SELECT ${NEWS_COLS} FROM news_items
-          WHERE kind = 'patch' AND scale = 'major' AND rank > 0
-            AND rank >= ?
-            AND published_at < ?
-          ORDER BY published_at DESC LIMIT ?`,
-    args: [minRank, before ?? 2_000_000_000, limit * OVERFETCH],
-  })
-  return onePerGame((res.rows as unknown as NewsRow[]).map(rowToNews), limit)
-}
-
-/** Личная лента: крупные патчи по играм библиотеки */
-export async function getFeedForApps(
-  db: Db,
-  appids: number[],
-  limit = 30,
-  before?: number,
-): Promise<StoredNews[]> {
-  const ids = appids.filter((a) => a > 0).slice(0, 400)
-  if (!ids.length) return []
-  const res = await db.execute({
-    sql: `SELECT ${NEWS_COLS} FROM news_items
-          WHERE appid IN (${placeholders(ids.length)})
-            AND kind = 'patch' AND scale = 'major' AND published_at < ?
-          ORDER BY published_at DESC LIMIT ?`,
-    args: [...ids, before ?? 2_000_000_000, limit * OVERFETCH],
-  })
-  return onePerGame((res.rows as unknown as NewsRow[]).map(rowToNews), limit)
-}
-
-/* ---------- голова ленты: то же, но без тел патчей ---------- */
+/* ---------- голова ленты: ключи без тел патчей ---------- */
 
 export type FeedHeadItem = { appid: number; gid: string; publishedAt: number }
 
@@ -3543,18 +3490,24 @@ function rowToHead(r: HeadRow): FeedHeadItem {
 }
 
 /**
- * Голова общей ленты: те же строки в том же порядке, что у getMajorFeed, но
- * без blocks_json.
+ * Голова общей ленты: какие патчи и в каком порядке, без blocks_json. Её
+ * опрашивает /api/whatsnew/head, и из неё же getMajorFeed собирает саму ленту.
  *
- * Строк из базы читается СТОЛЬКО ЖЕ, и Turso тарифицирует строки — экономии в
- * счёте здесь нет вовсе, и обещать её не надо. Экономия в другом: blocks_json
- * это тела тридцати патчей, и возить их по проводу вместе с тридцатью вызовами
- * JSON.parse каждые две минуты на каждую открытую вкладку — только ради ответа
- * «изменилось или нет» — несоразмерно.
+ * Предикат повторяет idx_news_feed ДОСЛОВНО — иначе SQLite не возьмёт частичный
+ * индекс, и это станет сканом всей таблицы, который noscan не поймает (LIMIT-то
+ * на месте).
  *
- * Предикат и порядок обязаны совпадать с getMajorFeed до последнего слова:
- * на этом держится честность числа на плашке. За совпадением следит тест
- * «голова и лента отдают одни и те же ключи» в lib/db.test.ts.
+ * minRank — этаж популярности, и он идёт ВДОБАВОК к rank > 0, а не вместо.
+ * Соблазн схлопнуть два условия в одно проверен планом запроса на живой базе:
+ *
+ *   … rank > 0 AND rank >= ?  →  SEARCH news_items USING INDEX idx_news_feed
+ *   … rank >= ?  (без rank>0) →  SCAN news_items + USE TEMP B-TREE FOR ORDER BY
+ *
+ * Доказать rank > 0 из rank >= ? SQLite не может: значения параметра он не
+ * видит. Лишнее AND-условие индексу при этом не мешает.
+ *
+ * Порог по умолчанию нулевой: «какая игра считается популярной» — решение
+ * страницы, а не слоя данных, и живёт оно рядом с LIBRARY_CAP и FEED_LIMIT.
  */
 export async function getMajorFeedHead(
   db: Db,
@@ -3573,7 +3526,7 @@ export async function getMajorFeedHead(
   return onePerGame((res.rows as unknown as HeadRow[]).map(rowToHead), limit)
 }
 
-/** Голова личной ленты. Зеркало getFeedForApps — см. докблок выше. */
+/** Голова личной ленты: крупные патчи по играм библиотеки. */
 export async function getFeedHeadForApps(
   db: Db,
   appids: number[],
@@ -3590,6 +3543,69 @@ export async function getFeedHeadForApps(
     args: [...ids, before ?? 2_000_000_000, limit * OVERFETCH],
   })
   return onePerGame((res.rows as unknown as HeadRow[]).map(rowToHead), limit)
+}
+
+/* ---------- лента: голова плюс тела ---------- */
+
+/**
+ * Тела ровно тех патчей, что прошли через голову, — вторая фаза ленты.
+ *
+ * Пары едут одним JSON-параметром и соединяются с news_items по первичному
+ * ключу (appid, gid): поиск на каждую пару. Очевидная запись через row values,
+ * `(appid, gid) IN (VALUES (?, ?), …)`, проверена планом и хуже: SQLite ведёт
+ * её по idx_news_app (appid=?) и дочитывает всю историю игры, отсеивая gid уже
+ * потом. CROSS JOIN здесь не декларация, а указание порядка: в SQLite он
+ * держит json_each внешним циклом, и статистика живой базы не развернёт
+ * соединение в проход по news_items. Сторож плана — lib/queryplan.test.ts.
+ *
+ * Порядка соединение не обещает, поэтому он восстанавливается по голове.
+ * Запись, пропавшая между фазами (ретенция подрезала хвост игры), просто
+ * выпадает: показать на её месте нечего.
+ */
+async function withBodies(db: Db, head: FeedHeadItem[]): Promise<StoredNews[]> {
+  if (!head.length) return []
+  const res = await db.execute({
+    sql: `SELECT ${NEWS_COLS} FROM json_each(?) AS k
+          CROSS JOIN news_items AS n
+            ON n.appid = json_extract(k.value, '$[0]') AND n.gid = json_extract(k.value, '$[1]')`,
+    args: [JSON.stringify(head.map((h) => [h.appid, h.gid]))],
+  })
+  const byKey = new Map<string, StoredNews>()
+  for (const r of res.rows as unknown as NewsRow[]) byKey.set(`${r.appid}:${r.gid}`, rowToNews(r))
+  return head.flatMap((h) => byKey.get(`${h.appid}:${h.gid}`) ?? [])
+}
+
+/**
+ * Общая лента: и для гостя, и для вкладки «в популярных играх».
+ *
+ * Две фазы: голова выбирает limit × OVERFETCH узких строк и схлопывает их по
+ * играм, тела читаются только для оставшихся. Одним запросом NEWS_COLS
+ * тащились для всех ста двадцати строк: сто двадцать blocks_json по проводу и
+ * сто двадцать JSON.parse — ради тридцати, которые переживали onePerGame.
+ * Строк база читает на limit больше (вторая фаза — поиск по ключу), зато тела
+ * едут только те, что будут нарисованы.
+ *
+ * Заодно голова и лента совпадают не по договорённости, а по построению: лента
+ * и есть голова плюс тела. Плашка «N новых» (/api/whatsnew/head) считает ровно
+ * те ключи, что страница потом покажет, — раньше это держалось на двух копиях
+ * одного предиката.
+ */
+export async function getMajorFeed(
+  db: Db,
+  limit = 30,
+  opts: { before?: number; minRank?: number } = {},
+): Promise<StoredNews[]> {
+  return withBodies(db, await getMajorFeedHead(db, limit, opts))
+}
+
+/** Личная лента: крупные патчи по играм библиотеки. Те же две фазы. */
+export async function getFeedForApps(
+  db: Db,
+  appids: number[],
+  limit = 30,
+  before?: number,
+): Promise<StoredNews[]> {
+  return withBodies(db, await getFeedHeadForApps(db, appids, limit, before))
 }
 
 /**

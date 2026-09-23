@@ -19,6 +19,7 @@ import {
   stalePriceAppids,
   sweepStale,
   topCatalogAppids,
+  upsertNewsItems,
   type Db,
 } from './db'
 
@@ -87,12 +88,46 @@ type Case = {
   sortFree: boolean
 }
 
+/** Первичный ключ news_items (appid, gid): по нему лента добирает тела. */
+const NEWS_PK = 'sqlite_autoindex_news_items_1'
+
+/**
+ * Лента с пустой головой до тел не доходит вовсе, поэтому её планы смотрятся
+ * на живых строках — иначе вторая фаза в проверку просто не попала бы.
+ * Запись идёт INSERT'ом, и statementsOf её не считает.
+ */
+async function withPatches(db: Db): Promise<Db> {
+  await upsertNewsItems(
+    db,
+    [730, 570].map((appid) => ({
+      appid,
+      gid: '1',
+      title: 'Патч',
+      url: '',
+      publishedAt: NOW,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [],
+      bodyHash: 'h',
+      rank: 20_000,
+    })),
+    NOW,
+  )
+  return db
+}
+
 const CASES: Case[] = [
-  { name: 'общая лента', run: (db) => getMajorFeed(db), indexes: ['idx_news_feed'], sortFree: true },
+  // Лента — две фазы: голова по частичному индексу, тела по первичному ключу
+  {
+    name: 'общая лента',
+    run: async (db) => getMajorFeed(await withPatches(db)),
+    indexes: ['idx_news_feed', NEWS_PK],
+    sortFree: true,
+  },
   {
     name: 'общая лента с порогом популярности',
-    run: (db) => getMajorFeed(db, 30, { minRank: 10_000 }),
-    indexes: ['idx_news_feed'],
+    run: async (db) => getMajorFeed(await withPatches(db), 30, { minRank: 10_000 }),
+    indexes: ['idx_news_feed', NEWS_PK],
     sortFree: true,
   },
   {
@@ -106,8 +141,8 @@ const CASES: Case[] = [
   // четырёхсот игр библиотеки за окно ленты.
   {
     name: 'личная лента',
-    run: (db) => getFeedForApps(db, [730, 570]),
-    indexes: ['idx_news_app'],
+    run: async (db) => getFeedForApps(await withPatches(db), [730, 570]),
+    indexes: ['idx_news_app', NEWS_PK],
     sortFree: false,
   },
   {

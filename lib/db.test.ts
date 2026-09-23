@@ -1453,7 +1453,9 @@ describe('ленты', () => {
     let issued = ''
     const spy = {
       execute: (q: InStatement) => {
-        issued = typeof q === 'string' ? q : q.sql
+        // Первый запрос — голова, порог живёт в ней. Тела ищутся уже по
+        // первичному ключу и порога не видят
+        issued ||= typeof q === 'string' ? q : q.sql
         return db.execute(q)
       },
     } as unknown as Db
@@ -1660,6 +1662,95 @@ describe('очередь опроса', () => {
     const db = await freshDb()
     expect(await getFeedHeadForApps(db, [], 30)).toEqual([])
     expect(await getFeedHeadForApps(db, [-101], 30)).toEqual([])
+  })
+
+  /** Запоминает пары, для которых лента попросила тела патчей. */
+  function bodySpy(db: Db) {
+    const asked: unknown[] = []
+    const spy = {
+      execute: (q: InStatement) => {
+        const sql = typeof q === 'string' ? q : q.sql
+        if (sql.includes('blocks_json')) {
+          asked.push(typeof q === 'string' ? null : JSON.parse(String((q.args as unknown[])[0])))
+        }
+        return db.execute(q)
+      },
+    } as unknown as Db
+    return { spy, asked }
+  }
+
+  /** Шесть патчей одной игры и один чужой: перевыборка есть, в ленту идут двое. */
+  async function seedCrowded(db: Db) {
+    await upsertNewsItems(
+      db,
+      [
+        ...Array.from({ length: 6 }, (_, i) =>
+          newsItem({ appid: 70, gid: `hl${i}`, publishedAt: NOW + i, bodyHash: `a${i}` }),
+        ),
+        newsItem({ appid: 730, gid: 'cs', publishedAt: NOW + 1, bodyHash: 'b' }),
+      ],
+      NOW,
+    )
+  }
+
+  test('тела читаются только у патчей, попавших в ленту', async () => {
+    // Одним запросом NEWS_COLS тянулись для всех limit × OVERFETCH строк, и три
+    // четверти тел выбрасывал onePerGame, не донеся до страницы. Сторож от
+    // возврата к одному запросу: тела просят ровно для строк ленты, один раз
+    const db = await freshDb()
+    await seedCrowded(db)
+    const { spy, asked } = bodySpy(db)
+    const feed = await getMajorFeed(spy, 10)
+    expect(feed.map((n) => n.gid)).toEqual(['hl5', 'cs'])
+    expect(asked).toEqual([
+      [
+        [70, 'hl5'],
+        [730, 'cs'],
+      ],
+    ])
+    // и тела действительно приехали — странице их считать
+    expect(feed.every((n) => n.blocks.length === NEWS_BASE.blocks.length)).toBe(true)
+  })
+
+  test('личная лента тоже просит тела только для своих строк', async () => {
+    const db = await freshDb()
+    await seedCrowded(db)
+    const { spy, asked } = bodySpy(db)
+    const feed = await getFeedForApps(spy, [70, 730], 10)
+    expect(feed.map((n) => n.gid)).toEqual(['hl5', 'cs'])
+    expect(asked).toEqual([
+      [
+        [70, 'hl5'],
+        [730, 'cs'],
+      ],
+    ])
+  })
+
+  test('пустая голова — без второго запроса', async () => {
+    const db = await freshDb()
+    const { spy, asked } = bodySpy(db)
+    expect(await getMajorFeed(spy)).toEqual([])
+    expect(await getFeedForApps(spy, [730])).toEqual([])
+    expect(asked).toEqual([])
+  })
+
+  test('патч, пропавший между головой и телами, выпадает, а порядок держится', async () => {
+    // Ретенция может подрезать хвост игры ровно между двумя фазами — на месте
+    // пропавшей строки показать нечего, а соседей это задевать не должно
+    const db = await freshDb()
+    await seedFeed(db)
+    let first = true
+    const spy = {
+      execute: async (q: InStatement) => {
+        const res = await db.execute(q)
+        if (first) {
+          first = false
+          await db.execute('DELETE FROM news_items WHERE appid = 570')
+        }
+        return res
+      },
+    } as unknown as Db
+    expect((await getMajorFeed(spy, 30)).map((n) => n.appid)).toEqual([730, 440])
   })
 
   test('аренда Steam: второй претендент не входит, пока первый её держит', async () => {
