@@ -42,7 +42,7 @@ export function WarmStrip({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 12 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-          className="fixed inset-x-0 bottom-[calc(64px+env(safe-area-inset-bottom))] md:bottom-6 z-40 flex justify-center px-5 pointer-events-none"
+          className="fixed inset-x-0 bottom-[calc(64px+env(safe-area-inset-bottom))] md:bottom-6 z-40 flex justify-center px-safe pointer-events-none"
         >
           <div className="glass rounded-full pl-4 pr-2 py-2 flex items-center gap-3 text-xs pointer-events-auto">
             {state === 'running' ? (

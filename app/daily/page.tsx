@@ -279,7 +279,7 @@ export default function DailyPage() {
         <BlurBand height="46vh" dir="up" />
         <div aria-hidden className="grain" />
 
-        <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-40">
+        <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
           <div className="max-w-2xl flex flex-col gap-4">
             {/*
               На телефоне здесь остаётся только дата.
@@ -394,7 +394,7 @@ export default function DailyPage() {
           сегодня», а здесь про «присмотреться на будущее». Смешивать их в
           одном блоке значило бы каждый день предлагать что-то купить */}
       {discoveries.length > 0 && (
-        <section className="mx-auto w-full max-w-6xl px-5 py-16">
+        <section className="mx-auto w-full max-w-6xl px-safe py-16">
           <div className="flex items-baseline justify-between gap-3 mb-1">
             <SectionLabel>Нет в твоей библиотеке</SectionLabel>
             <a

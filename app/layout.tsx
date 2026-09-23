@@ -287,7 +287,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             <span className="site-chrome-fade" />
             <span className="site-chrome-bar" />
           </div>
-          <div className="relative mx-auto max-w-6xl px-5 py-4 flex items-center justify-between">
+          <div className="relative mx-auto max-w-6xl px-safe py-4 flex items-center justify-between">
             {/* .tap: логотип — ссылка «домой» на КАЖДОЙ странице продукта, и он
                 единственный остался высотой 28 px. Зона безопасна с запасом —
                 замерено, ближайший сосед по шапке в 408 px. */}
@@ -295,11 +295,23 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <LogoMark size={24} />
               <Wordmark />
             </Link>
-            <nav aria-label="Разделы" className="flex items-center gap-5 text-sm text-dim">
-              {/* на телефоне пункты уезжают в нижнюю панель — в шапке остаётся только тема */}
-              <HeaderNav />
+            <div className="flex items-center gap-5">
+              {/*
+                Тема — рядом с навигацией, а не в ней. Внутри <nav> она делала
+                из шапки на телефоне ориентир «навигация» из одной кнопки
+                темы: пункты там уезжают в нижнюю панель (hidden md:flex), и
+                скринридер, открыв список ориентиров, первой находил её.
+
+                hidden md:flex — на самом <nav>, а не только на пунктах внутри:
+                пустой видимый <nav> оставался бы в списке ориентиров вторыми
+                «Разделами» рядом с нижней панелью. Имя у них одно и то же
+                намеренно — это одно меню, и на экране всегда ровно одно из двух.
+              */}
+              <nav aria-label="Разделы" className="hidden md:flex items-center gap-5 text-sm text-dim">
+                <HeaderNav />
+              </nav>
               <ThemeToggle />
-            </nav>
+            </div>
           </div>
         </header>
         {/*

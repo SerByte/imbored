@@ -105,6 +105,9 @@ export function MobileNav() {
       тем более не стоит держать ту, которой нечего делать.
     */
     <nav
+      // То же имя, что у меню в шапке: это одно меню, на телефоне оно здесь,
+      // на десктопе там, и на экране всегда ровно одно из двух
+      aria-label="Разделы"
       className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-edge"
       style={{
         background: 'color-mix(in srgb, var(--bg) 94%, transparent)',

@@ -975,7 +975,7 @@ function Player() {
             variants={LADDER}
             initial="hidden"
             animate="show"
-            className="relative mx-auto w-full max-w-6xl px-5 pb-12 pt-40"
+            className="relative mx-auto w-full max-w-6xl px-safe pb-12 pt-40"
           >
             <div className="max-w-2xl flex flex-col gap-4">
               <motion.div variants={STEP} className="flex items-center gap-3 text-xs">
@@ -1287,7 +1287,7 @@ function Player() {
           это не рекомендация, и спорить с героем за место ей незачем. В
           рулетке её нет — там весь смысл в броске. */}
       {cont && !roulette && (
-        <div className="mx-auto w-full max-w-6xl px-5 pt-8">
+        <div className="mx-auto w-full max-w-6xl px-safe pt-8">
           <div className="glass rounded-[14px] px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
             <span className="text-dim">
               Или продолжи <span className="text-ink">«{cont.name}»</span>
@@ -1306,7 +1306,7 @@ function Player() {
       )}
 
       {!roulette && (
-        <section className="mx-auto w-full max-w-6xl px-5 py-10">
+        <section className="mx-auto w-full max-w-6xl px-safe py-10">
           {others.length > 0 && (
             // Кнопка внутри заголовка, а не вместо него: скринридер по-прежнему
             // находит раздел по h2 и тут же слышит, свёрнут он или раскрыт
@@ -1472,7 +1472,7 @@ function Player() {
           у покупок остаётся своя полка — с ценами и скидками на виду. Свёрнута
           по умолчанию: «во что поиграть» не должно начинаться с «что купить» */}
       {!roulette && discoveries.length > 0 && (
-        <section className="mx-auto w-full max-w-6xl px-5 pb-16">
+        <section className="mx-auto w-full max-w-6xl px-safe pb-16">
           <div className="border-t border-edge/60 pt-10">
             <div className="flex items-baseline justify-between gap-3">
               <SectionLabel>
@@ -1552,7 +1552,7 @@ function Player() {
         </section>
       )}
 
-      {roulette && <div className="mx-auto w-full max-w-6xl px-5 py-8">{changeMood}</div>}
+      {roulette && <div className="mx-auto w-full max-w-6xl px-safe py-8">{changeMood}</div>}
     </div>
   )
 }
