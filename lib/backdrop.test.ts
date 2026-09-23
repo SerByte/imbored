@@ -1,6 +1,5 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { describe, expect, test } from 'vitest'
+import { readAppCss } from './testing/css'
 
 /**
  * Сторож размытия подложки.
@@ -35,48 +34,28 @@ import { describe, expect, test } from 'vitest'
  * пристойно — заливка, рамка, тень на месте. Поэтому сторож, а не комментарий.
  */
 
-const ROOT = path.join(__dirname, '..')
-const RAW = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
-
 /**
- * Без комментариев — иначе сторож ловит объяснение, зачем его завели: докблок
- * над объявлениями цитирует и само свойство, и префиксную форму. Тот же приём
- * уже применён в lib/labels.test.ts и lib/landingdoor.test.ts.
- *
- * Комментарии заменяются пробелами той же длины, чтобы номера строк в жалобе
- * остались настоящими.
- */
-const stripComments = (css: string) =>
-  css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-const CSS = stripComments(RAW)
-
-/**
- * Не только globals.css: тот же минификатор проходит и по CSS-модулям. У
- * MorphSlider.module.css префикс стоял после стандартного свойства, и в
- * собранном листе у подписи и кнопок слайдера оставался один
+ * Все листы, а не только globals.css: тот же минификатор проходит и по
+ * CSS-модулям. У MorphSlider.module.css префикс стоял после стандартного
+ * свойства, и в собранном листе у подписи и кнопок слайдера оставался один
  * `-webkit-backdrop-filter` — тот же дефект, найденный сравнением исходника с
  * собранным CSS уже после того, как globals.css был вычищен.
+ *
+ * Комментарии погашены (см. lib/testing/css.ts): докблок над объявлениями
+ * цитирует и само свойство, и префиксную форму, и без этого сторож ловил бы
+ * собственное объяснение.
  */
-function cssFiles(dir: string): string[] {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const full = path.join(dir, e.name)
-    if (e.isDirectory()) return cssFiles(full)
-    return e.name.endsWith('.css') ? [full] : []
-  })
-}
-const SHEETS = [...cssFiles(path.join(ROOT, 'app')), ...cssFiles(path.join(ROOT, 'components'))]
+const SHEETS = readAppCss()
+const GLOBALS = SHEETS.find((s) => s.rel === 'app/globals.css')?.css ?? ''
 
 describe('размытие подложки', () => {
   test('вендорный префикс не пишется руками — его ставит минификатор', () => {
     expect(SHEETS.length, 'листы стилей не найдены').toBeGreaterThan(1)
     const offenders: string[] = []
-    for (const file of SHEETS) {
-      const rel = path.relative(ROOT, file).split(path.sep).join('/')
-      stripComments(fs.readFileSync(file, 'utf8'))
-        .split('\n')
-        .forEach((line, i) => {
-          if (line.includes('-webkit-backdrop-filter')) offenders.push(`${rel}:${i + 1}`)
-        })
+    for (const { rel, css } of SHEETS) {
+      css.split('\n').forEach((line, i) => {
+        if (line.includes('-webkit-backdrop-filter')) offenders.push(`${rel}:${i + 1}`)
+      })
     }
     expect(
       offenders,
@@ -90,9 +69,9 @@ describe('размытие подложки', () => {
    * стекло вообще заявляет размытие.
    */
   test('стекло по-прежнему заявляет размытие', () => {
-    const at = CSS.indexOf('.glass {')
+    const at = GLOBALS.indexOf('.glass {')
     expect(at, 'класс .glass не найден').toBeGreaterThan(-1)
-    const block = CSS.slice(at, CSS.indexOf('}', at))
+    const block = GLOBALS.slice(at, GLOBALS.indexOf('}', at))
     expect(block, '.glass без backdrop-filter — это уже не стекло').toMatch(
       /backdrop-filter:\s*blur\(/,
     )
