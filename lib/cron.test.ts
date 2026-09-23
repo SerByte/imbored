@@ -5,6 +5,7 @@ import {
   cronAuthorized,
   DIGEST_STALE_SEC,
   PAGES_STALE_SEC,
+  pagesChainGoesOn,
   pagesNeedKick,
   sliceClock,
   sliceDeadline,
@@ -189,5 +190,37 @@ describe('sliceClock: уложится ли ещё одна итерация', (
     expect(часы.longestMs).toBe(8_000)
     vi.setSystemTime(23_000)
     expect(часы.next()).toBe(false) // 23 + 13 > 30
+  })
+})
+
+describe('pagesChainGoesOn: передавать ли звено крона карточек', () => {
+  const base = { failed: false, chain: 0, maxChain: 24, hasSecret: true }
+  const slice = (hasMore: boolean, stopped: 'done' | 'budget' | 'blocked' = 'budget') => ({ hasMore, stopped })
+
+  test('работа у карточек — дальше, как было', () => {
+    expect(pagesChainGoesOn({ ...base, slice: slice(true), signals: null })).toBe(true)
+    expect(pagesChainGoesOn({ ...base, slice: slice(false, 'done'), signals: null })).toBe(false)
+  })
+
+  test('карточки выбраны, а у сверки сигналов устаревшие остались — дальше', () => {
+    // иначе сверка шла бы пачкой в сутки: круг по пулу в месяц
+    expect(pagesChainGoesOn({ ...base, slice: slice(false, 'done'), signals: { stopped: 'budget' } })).toBe(true)
+    expect(pagesChainGoesOn({ ...base, slice: slice(false, 'done'), signals: { stopped: 'done' } })).toBe(false)
+    // Steam отказал сверке — не повод звать следующее звено ради неё
+    expect(pagesChainGoesOn({ ...base, slice: slice(false, 'done'), signals: { stopped: 'blocked' } })).toBe(false)
+  })
+
+  test('блок магазина у карточек останавливает цепочку, даже если сверке есть что делать', () => {
+    expect(
+      pagesChainGoesOn({ ...base, slice: slice(true, 'blocked'), signals: { stopped: 'budget' } }),
+    ).toBe(false)
+  })
+
+  test('упавшее звено передаёт эстафету; без секрета и за потолком — никогда', () => {
+    expect(pagesChainGoesOn({ ...base, failed: true, slice: null, signals: null })).toBe(true)
+    expect(pagesChainGoesOn({ ...base, hasSecret: false, slice: slice(true), signals: null })).toBe(false)
+    expect(
+      pagesChainGoesOn({ ...base, chain: 24, failed: true, slice: null, signals: { stopped: 'budget' } }),
+    ).toBe(false)
   })
 })

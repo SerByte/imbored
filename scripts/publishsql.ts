@@ -22,6 +22,12 @@ const ПО_ОТМЕТКЕ: Readonly<Record<string, string>> = {
   price_at: 'price_at',
   ccu: 'ccu_at',
   ccu_at: 'ccu_at',
+  // Отзывы в облаке сверяет крон (lib/catalogsignals), а у локального каталога
+  // отметки нет вовсе: его числа — из посева неизвестной давности. Поэтому
+  // reviews_at в список колонок заливки не входит, и сверенные кроном отзывы
+  // заливка не трогает; не сверенные — едут, как раньше.
+  reviews_total: 'reviews_at',
+  reviews_percent: 'reviews_at',
 }
 
 /**
@@ -55,10 +61,11 @@ export function buildSetList(cols: readonly string[]): string {
     .map((c) => {
       if (ОТ_ОБОГАЩЕНИЯ.has(c)) return `${c} = ${keepFilledSql(c)}`
       if (c === 'short_description') return `${c} = ${keepRussianSql(c)}`
-      // Отметка обязана ехать в той же заливке: без неё сравнивать не с чем,
-      // и безотметочный замер считался бы старше любого облачного навсегда
+      // Отметки нет в списке колонок — excluded.<отметка> равен NULL, и
+      // локальный замер считается безотметочным, то есть старше любого
+      // датированного облачного. Для отзывов это и нужно (см. ПО_ОТМЕТКЕ)
       const stamp = ПО_ОТМЕТКЕ[c]
-      if (stamp && cols.includes(stamp)) return `${c} = ${newerMeasureSql(c, stamp)}`
+      if (stamp) return `${c} = ${newerMeasureSql(c, stamp)}`
       return `${c} = excluded.${c}`
     })
     .join(', ')

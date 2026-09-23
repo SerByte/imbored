@@ -95,6 +95,36 @@ export function sliceClock(deadlineAt: number): SliceClock {
   }
 }
 
+type Stopped = 'done' | 'budget' | 'blocked'
+
+/**
+ * Передавать ли звено крона карточек дальше.
+ *
+ * Работа есть у среза карточек (hasMore) ИЛИ у сверки сигналов каталога
+ * (lib/catalogsignals: budget — устаревшие остались). Второе нужно, когда
+ * очередь карточек выбрана: без него цепочка кончалась бы первым звеном, и
+ * сверка шла бы одной пачкой в сутки — круг по пулу в месяц вместо недели.
+ *
+ * Блок Steam у карточек останавливает цепочку и при работе у сверки:
+ * следующее звено всё равно начало бы с похода в закрывшийся магазин.
+ *
+ * Упавшее звено передаёт эстафету всегда — довод в роуте, у «упало». И
+ * всегда нужны секрет (без него ребёнка не позвать) и место до maxChain.
+ */
+export function pagesChainGoesOn(s: {
+  failed: boolean
+  slice: { hasMore: boolean; stopped: Stopped } | null
+  signals: { stopped: Stopped } | null
+  chain: number
+  maxChain: number
+  hasSecret: boolean
+}): boolean {
+  if (!s.hasSecret || s.chain >= s.maxChain) return false
+  if (s.failed) return true
+  if (s.slice?.stopped === 'blocked') return false
+  return Boolean(s.slice?.hasMore) || s.signals?.stopped === 'budget'
+}
+
 /** Сколько крон пересказов может молчать, прежде чем его считают отвалившимся */
 export const DIGEST_STALE_SEC = 3 * 3600
 

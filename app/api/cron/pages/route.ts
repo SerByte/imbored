@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { after, NextResponse } from 'next/server'
+import { refreshCatalogSignals } from '@/lib/catalogsignals'
 import { chainBreakLine, passChain } from '@/lib/chain'
-import { CRON_JOBS, cronAuthorized, sliceDeadline } from '@/lib/cron'
+import { CRON_JOBS, cronAuthorized, pagesChainGoesOn, sliceDeadline } from '@/lib/cron'
 import {
   acquireLease,
   countPageEnrichDue,
@@ -10,6 +11,7 @@ import {
   setCatalogMeta,
   STEAM_LEASE,
 } from '@/lib/db'
+import { logSwallowed } from '@/lib/errlog'
 import { llmAvailable } from '@/lib/llm'
 import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '@/lib/pagejob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
@@ -82,6 +84,24 @@ export async function GET(req: Request) {
   }
 
   after(async () => {
+    const deadlineAt = sliceDeadline(startedAt, maxDuration)
+    /*
+     * Сигналы каталога — рядом со срезом карточек, а не после него.
+     *
+     * После — значило бы никогда: срез карточек съедает бюджет звена целиком,
+     * пока в очереди есть работа, а её там тысячи. Рядом можно, потому что
+     * они не делят лимит: карточки ходят в store.steampowered.com через
+     * pace('steam-store'), сигналы — в api.steampowered.com через
+     * pace('steam-api'). Срок у обоих один, и хвост звена (finally ниже) их
+     * дожидается.
+     *
+     * Своё исключение сигналы глотают сами: сверка отзывов не имеет права
+     * ронять ни срез карточек, ни передачу звена.
+     */
+    const сверка = refreshCatalogSignals(db, { deadlineAt }).catch((err: unknown) => {
+      logSwallowed('cron/pages:signals', err)
+      return null
+    })
     let result: Awaited<ReturnType<typeof runPageSlice>> | null = null
     /*
      * Упало ли звено — отдельно от результата, и это несущая разница.
@@ -101,11 +121,12 @@ export async function GET(req: Request) {
      */
     let упало: string | null = null
     try {
-      result = await runPageSlice(db, { deadlineAt: sliceDeadline(startedAt, maxDuration) })
+      result = await runPageSlice(db, { deadlineAt })
     } catch (err) {
       console.error('page slice', err)
       упало = err instanceof Error ? err.message.slice(0, 120) : 'исключение'
     } finally {
+      const сигналы = await сверка
       // Звено цепочки — в finally и ПОСЛЕ работы, ровно по тем же причинам,
       // что расписаны в /api/cron/news: исключение не должно убивать сутки,
       // а параллельные инвокации сломали бы общий лимитер темпа Steam.
@@ -116,17 +137,27 @@ export async function GET(req: Request) {
         await setCatalogMeta(
           db,
           LAST_KEY,
-          JSON.stringify({ at: nowSec(), chain, ...result, ...(упало ? { упало } : {}) }),
+          JSON.stringify({
+            at: nowSec(),
+            chain,
+            ...result,
+            ...(сигналы ? { сигналы } : {}),
+            ...(упало ? { упало } : {}),
+          }),
         )
       } catch (err) {
         console.error('cron meta', err)
       }
       const secret = process.env.CRON_SECRET
-      const goesOn = Boolean(
-        (упало ? true : result?.hasMore && result.stopped !== 'blocked') &&
-          chain < MAX_CHAIN &&
-          secret,
-      )
+      // Работа — у среза карточек или у сверки сигналов; см. pagesChainGoesOn
+      const goesOn = pagesChainGoesOn({
+        failed: упало !== null,
+        slice: result,
+        signals: сигналы,
+        chain,
+        maxChain: MAX_CHAIN,
+        hasSecret: Boolean(secret),
+      })
       // Аренда передаётся следующему звену вместе с holder, а отдаётся только
       // когда цепочка кончилась — см. тот же кусок в /api/cron/news.
       if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
@@ -154,7 +185,13 @@ export async function GET(req: Request) {
           await setCatalogMeta(
             db,
             LAST_KEY,
-            JSON.stringify({ at: nowSec(), chain, ...result, обрыв: передача.reason }),
+            JSON.stringify({
+              at: nowSec(),
+              chain,
+              ...result,
+              ...(сигналы ? { сигналы } : {}),
+              обрыв: передача.reason,
+            }),
           )
           // Аренду отдаём, ТОЛЬКО когда ребёнка точно нет. При отказе сети он
           // мог принять звено и работать прямо сейчас — тогда пусть аренда

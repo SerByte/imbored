@@ -1,6 +1,7 @@
 import { createClient, type InArgs, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import {
+  catalogSignalsQueue,
   claimNewsPollBatch,
   countNewsPollDue,
   createDb,
@@ -181,6 +182,14 @@ const CASES: Case[] = [
     name: 'топ каталога',
     run: (db) => topCatalogAppids(db),
     indexes: ['idx_games_ccu', 'idx_games_pool'],
+    sortFree: true,
+  },
+  // Отсечки по возрасту в запросе нет — см. catalogSignalsQueue: иначе при
+  // пустой очереди SQLite читал бы весь пул
+  {
+    name: 'очередь сигналов каталога',
+    run: (db) => catalogSignalsQueue(db, 200),
+    indexes: ['idx_games_reviews_at'],
     sortFree: true,
   },
   {

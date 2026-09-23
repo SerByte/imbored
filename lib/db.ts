@@ -280,6 +280,13 @@ CREATE INDEX IF NOT EXISTS idx_games_pool ON games (reviews_total DESC)
 CREATE INDEX IF NOT EXISTS idx_games_ccu ON games (ccu DESC)
   WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
 
+-- Очередь крона сигналов каталога (catalogSignalsQueue): сперва ни разу не
+-- сверенные, потом самые давние, а среди равных — верх каталога. Порядок
+-- целиком из индекса, чтение останавливает LIMIT: пачка в двести строк стоит
+-- двухсот прочитанных, а не всего пула.
+CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_total DESC)
+  WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
+
 -- Доска «ищут игроков». Единственный индекс на rooms, и он нужен: страница
 -- /rooms опрашивает listPublicRooms раз в несколько секунд из КАЖДОЙ открытой
 -- вкладки, а без индекса это полный скан таблицы плюс сортировка во временной
@@ -446,7 +453,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 1
+export const CURRENT_SCHEMA_V = 2
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -498,6 +505,10 @@ export const ADDED_COLUMNS = [
   ['games', 'discount_ends_at INTEGER'],
   ['games', 'price_at INTEGER'],
   ['sessions', 'verified INTEGER NOT NULL DEFAULT 0'],
+  // Когда крон сигналов каталога сверил reviews_total и reviews_percent со
+  // Steam (lib/catalogsignals). NULL — ни разу: значения из посева каталога,
+  // возраст которых неизвестен. Своя ось свежести, как price_at и ccu_at.
+  ['games', 'reviews_at INTEGER'],
 ] as const
 
 /**
@@ -3134,6 +3145,85 @@ export async function updateGamePrices(
         },
   )
   await db.batch(stmts, 'write')
+}
+
+/** Строка очереди крона сигналов каталога — см. catalogSignalsQueue. */
+export type SignalsQueueRow = {
+  appid: number
+  isMultiplayer: boolean
+  ccuAt: number | null
+  reviewsAt: number | null
+}
+
+/**
+ * Голова очереди крона сигналов каталога: живые игры пула, самые давно
+ * сверенные первыми (NULL — ни разу — впереди всех), среди равных — по числу
+ * отзывов.
+ *
+ * Отсечки по возрасту в SQL нет намеренно. «reviews_at IS NULL OR
+ * reviews_at < ?» частичным индексом по порядку не прочитать: когда
+ * устаревших нет, SQLite прошёл бы весь пул в поисках двухсот подходящих.
+ * Без условия читается ровно limit строк из начала индекса, а устаревшие —
+ * это их префикс, его и отрезает вызывающий (lib/catalogsignals).
+ */
+export async function catalogSignalsQueue(db: Db, limit: number): Promise<SignalsQueueRow[]> {
+  const res = await db.execute({
+    sql: `SELECT appid, is_multiplayer, ccu_at, reviews_at FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+          ORDER BY reviews_at, reviews_total DESC
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (
+    res.rows as unknown as Array<{
+      appid: number
+      is_multiplayer: number
+      ccu_at: number | null
+      reviews_at: number | null
+    }>
+  ).map((r) => ({
+    appid: Number(r.appid),
+    isMultiplayer: Number(r.is_multiplayer) === 1,
+    ccuAt: r.ccu_at === null ? null : Number(r.ccu_at),
+    reviewsAt: r.reviews_at === null ? null : Number(r.reviews_at),
+  }))
+}
+
+/**
+ * Записывает сверку сигналов каталога узкими UPDATE — по образцу
+ * updateGamePrices и по той же причине: upsertGameMeta двигал бы updated_at,
+ * то есть lastmod в карте сайта и срок прогрева метаданных.
+ *
+ * checked — все сверенные строки, им ставится reviews_at. Отметка нужна и
+ * тем, про кого Steam промолчал (снята с продажи, нет отзывов на языке):
+ * иначе они вечно стояли бы в голове очереди и съедали бы каждую пачку.
+ * Значения отзывов пишутся только тем, у кого они приехали.
+ */
+export async function updateCatalogSignals(
+  db: Db,
+  signals: {
+    checked: readonly number[]
+    reviews: ReadonlyMap<number, { total: number; percent: number } | null>
+    ccu: ReadonlyArray<{ appid: number; ccu: number }>
+  },
+  nowSec: number,
+): Promise<void> {
+  const stmts = [
+    ...signals.checked.map((appid) => {
+      const r = signals.reviews.get(appid)
+      return r
+        ? {
+            sql: 'UPDATE games SET reviews_total = ?, reviews_percent = ?, reviews_at = ? WHERE appid = ?',
+            args: [r.total, r.percent, nowSec, appid],
+          }
+        : { sql: 'UPDATE games SET reviews_at = ? WHERE appid = ?', args: [nowSec, appid] }
+    }),
+    ...signals.ccu.map(({ appid, ccu }) => ({
+      sql: 'UPDATE games SET ccu = ?, ccu_at = ? WHERE appid = ?',
+      args: [ccu, nowSec, appid],
+    })),
+  ]
+  if (stmts.length) await db.batch(stmts, 'write')
 }
 
 /* ---------- фидбек ---------- */

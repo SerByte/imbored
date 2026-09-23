@@ -352,6 +352,12 @@ async function main() {
         // новостей нет enriched. упало и обрыв — последним, чтобы бросались в
         // глаза: это ровно тот след, которого раньше не оставалось вовсе.
         const parts = SLICE_FIELDS.filter((f) => p[f] !== undefined).map((f) => `${f}=${String(p[f])}`)
+        // Сверка сигналов каталога едет в отметке карточек вложенным объектом
+        // (lib/catalogsignals): сверено / с отзывами / замеров онлайна
+        const sg = p.сигналы as Record<string, unknown> | undefined
+        if (sg && typeof sg === 'object') {
+          parts.push(`сигналы=${ru(sg.checked)}/${ru(sg.reviews)}/${ru(sg.ccu)} ${String(sg.stopped)}`)
+        }
         val = `${ago(p.at)}  ${parts.join('  ')}`
       } catch {
         /* оставляем как есть */
@@ -373,6 +379,18 @@ async function main() {
     'SELECT COUNT(*) AS n FROM games WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0 AND appid > 0',
   )
   console.log(`  живых игр с тегами: ${ru(k.n)}`)
+  // Свежесть отзывов и онлайна пула — работа крона сигналов (lib/catalogsignals).
+  // В try: до деплоя с колонкой reviews_at этого запроса база не поймёт.
+  try {
+    const sv = await one(
+      `SELECT SUM(reviews_at IS NOT NULL) AS ever, SUM(reviews_at >= ?) AS week
+         FROM games WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0 AND appid > 0`,
+      [now - 7 * DAY],
+    )
+    console.log(`  отзывы сверены кроном: хоть раз ${ru(sv.ever)}, за неделю ${ru(sv.week)}`)
+  } catch {
+    console.log('  отзывы сверены кроном: — (колонки reviews_at ещё нет, код не задеплоен)')
+  }
   if (n(k.n) < 800) console.log('  !! меньше 800 — поднимать enrollment бессмысленно, сначала catalog:promote')
 
   // ── L. Глазами ─────────────────────────────────────────────────────────

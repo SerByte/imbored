@@ -149,8 +149,25 @@ describe('публикация каталога: замеры не откаты�
     expect(await заливаем(пусто, старое)).toEqual(старое)
   })
 
-  test('отметки нет в списке колонок — колонка едет по-старому, а не замирает навсегда', () => {
-    expect(buildSetList(['appid', 'price_final'])).toBe('price_final = excluded.price_final')
+  test('отзывы, сверенные кроном, заливка не откатывает к числам посева', async () => {
+    // reviews_at в заливку не входит: у локального каталога его нет вовсе
+    const cols = ['appid', 'name', 'reviews_total', 'reviews_percent', 'updated_at'] as const
+    const db = await createDb(':memory:')
+    await db.execute(`INSERT INTO games (appid, name, reviews_total, reviews_percent, reviews_at, updated_at)
+                      VALUES (1, 'Сверенная', 2620088, 85, ${ВЧЕРА}, 0),
+                             (2, 'Несверенная', 100, 50, NULL, 0)`)
+    for (const [appid, total, percent] of [[1, 2593099, 86], [2, 120, 55]]) {
+      await db.execute({
+        sql: `INSERT INTO games (${cols.join(', ')}) VALUES (?, 'x', ?, ?, 1)
+              ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+        args: [appid, total, percent],
+      })
+    }
+    const r = await db.execute('SELECT appid, reviews_total, reviews_percent FROM games ORDER BY appid')
+    expect(r.rows.map((x) => [x.appid, x.reviews_total, x.reviews_percent])).toEqual([
+      [1, 2620088, 85],
+      [2, 120, 55],
+    ])
   })
 })
 
