@@ -276,6 +276,9 @@ export async function POST(req: Request) {
   // GetItems берёт до двухсот игр за раз.
   const pricedIds = [...new Set([...heroPool, ...discovery].map((c) => c.appid))]
   const refreshed = await refreshDealsWithin(db, pricedIds, now)
+  // Без свежих цен перечитывать незачем: мета пула — та же узкая выборка тем
+  // же маппером (lib/pool), и отличаться от getGamesMetaLite ей больше нечем.
+  // Раньше отличалась: у покупки без обновлённых цен пропадали reviews_30d и ccu_at
   const priced = refreshed ? await getGamesMetaLite(db, pricedIds) : new Map<number, GameMeta>()
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
 

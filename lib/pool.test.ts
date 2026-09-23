@@ -2,6 +2,7 @@ import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import {
   countIngest,
+  getGamesMetaLite,
   getPoolSize,
   loadTagStats,
   migrateDb,
@@ -175,6 +176,54 @@ describe('fetchDiscoveryPool', () => {
     expect(first.discountPercent).toBe(50)
     expect(first.discountEndsAt).toBe(NOW + 86_400)
     expect(first.priceAt).toBe(NOW)
+  })
+
+  test('мета из пула — ровно та же, что из getGamesMetaLite, до последнего поля', async () => {
+    // Свой маппер пула терял reviews_30d и ccu_at: у покупки в герое не было
+    // ни запасного сигнала живости, ни права сказать «онлайн сейчас». Любое
+    // новое поле, которое пул не довезёт, уронит это сравнение
+    const db = await freshDb()
+    const full: GameMeta = {
+      appid: 9,
+      name: 'Полная карточка',
+      tags: { Roguelike: 1000, Indie: 300 },
+      genres: ['Инди'],
+      categories: [1, 9],
+      shortDescription: 'Описание',
+      headerImage: 'https://cdn/9-header.jpg',
+      art: { header: 'https://cdn/9-header.jpg' },
+      screenshots: ['https://cdn/9-1.jpg', 'https://cdn/9-2.jpg'],
+      isFree: false,
+      priceFinal: 500,
+      priceInitial: 1000,
+      discountPercent: 50,
+      discountEndsAt: NOW + 86_400,
+      priceAt: NOW,
+      releaseDate: '1 янв. 2020',
+      medianForever: 600,
+      releaseYear: 2020,
+      developer: 'Студия',
+      publisher: 'Издатель',
+      reviewsTotal: 12_000,
+      reviewsPercent: 91,
+      reviews30d: 140,
+      ccu: 2400,
+      ccuAt: NOW - 600,
+    }
+    await upsertGameMeta(db, full, NOW)
+    await replaceGameTags(db, 9, [{ tag: 'Roguelike', weight: 1000 }])
+    // Вердикт курации пишет promote-catalog отдельным UPDATE
+    await db.execute('UPDATE games SET signals_at = ?, alive = 1 WHERE appid = 9', [NOW])
+
+    const lite = (await getGamesMetaLite(db, [9])).get(9)
+    const { screenshots, ...withoutShots } = full
+    expect(screenshots).toHaveLength(2)
+    expect(lite).toEqual({ ...withoutShots, signalsAt: NOW, alive: true })
+
+    const [byTaste] = await fetchDiscoveryPool(db, { tags: ['Roguelike'], limit: 5 })
+    const [coldStart] = await fetchDiscoveryPool(db, { tags: [], limit: 5 })
+    expect(byTaste).toEqual(lite)
+    expect(coldStart).toEqual(lite)
   })
 
   test('wildcard добирает заметное вне тегов профиля', async () => {

@@ -1993,7 +1993,11 @@ export async function repairGameJson(
   return rows.map((r) => ({ appid: r.appid, name: r.name, tags: Object.keys(r.tags).length }))
 }
 
-type GameRow = {
+/**
+ * Строка games в том виде, в каком её читает rowToMeta. Экспортируется для
+ * lib/pool: пул открытий читает мету этим же маппером, а не своей копией.
+ */
+export type GameRow = {
   appid: number
   name: string
   tags_json: string
@@ -2029,7 +2033,11 @@ type GameRow = {
   dead_reason?: string | null
 }
 
-function rowToMeta(row: GameRow): GameMeta {
+/**
+ * Строка games → GameMeta. Один маппер на всё приложение: второй, в lib/pool,
+ * отставал от этого на каждую новую колонку и молча терял её у всех покупок.
+ */
+export function rowToMeta(row: GameRow): GameMeta {
   const meta: GameMeta = {
     appid: row.appid,
     name: row.name,
@@ -2224,11 +2232,23 @@ export async function getGamesMeta(db: Db, appids: number[]): Promise<Map<number
  * у пятерки героев. У библиотеки на полторы тысячи игр это мегабайт-полтора
  * JSON через сеть на каждый подбор.
  */
-const GAME_LITE_COLUMNS = `appid, name, tags_json, genres_json, categories_json,
-  short_description, header_image, is_free, price_final, price_initial, discount_percent,
-  discount_ends_at, price_at, release_date, median_forever, store, store_url, art_json,
-  ccu, ccu_at, reviews_30d, reviews_total, reviews_percent, release_year, developer,
-  publisher, signals_at, alive, superseded_by`
+const GAME_LITE_COLS = [
+  'appid', 'name', 'tags_json', 'genres_json', 'categories_json',
+  'short_description', 'header_image', 'is_free', 'price_final', 'price_initial',
+  'discount_percent', 'discount_ends_at', 'price_at', 'release_date', 'median_forever',
+  'store', 'store_url', 'art_json', 'ccu', 'ccu_at', 'reviews_30d', 'reviews_total',
+  'reviews_percent', 'release_year', 'developer', 'publisher', 'signals_at', 'alive',
+  'superseded_by',
+] as const
+
+const GAME_LITE_COLUMNS = GAME_LITE_COLS.join(', ')
+
+/**
+ * Те же колонки с алиасом g. — для запросов с JOIN, где appid есть не только у
+ * games (пул открытий, lib/pool). Новая колонка попадает туда сама: список
+ * один, и отстать от getGamesMetaLite пулу больше нечем.
+ */
+export const GAME_LITE_COLUMNS_G = GAME_LITE_COLS.map((c) => `g.${c}`).join(', ')
 
 /**
  * Метаданные пачки игр без блобов: всё то же, что getGamesMeta, но без
