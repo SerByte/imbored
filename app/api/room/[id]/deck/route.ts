@@ -14,6 +14,7 @@ import {
   roomMembers,
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
+import { sessionTrait } from '@/lib/gametraits'
 import { buildGroupDeck } from '@/lib/group'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
@@ -181,6 +182,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       art: meta?.art ?? null,
       ccu: meta?.ccu ?? null,
       ccuAt: meta?.ccuAt ?? null,
+      // «Матч ~15 мин»: для вечера вместе длина захода — второй вопрос после
+      // «есть ли с кем», и ответ на него тот же, что на карточке игры
+      session: meta ? sessionTrait(meta) : null,
       // Скидка нужна только там, где кому-то придётся покупать: у карточки
       // «есть у всех» цена вообще не участвует в разговоре, у бесплатной — тоже
       discount: meta && !c.ownedByAll && !c.isFree ? discountView(meta, now) : null,

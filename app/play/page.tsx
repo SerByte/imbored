@@ -1098,7 +1098,11 @@ function Player({ say }: { say: (line: string) => void }) {
   if (pick.signals) {
     if (pick.signals.matchPercent !== null)
       whyParts.push(`совпадение со вкусом ${pick.signals.matchPercent}%`)
-    if (pick.signals.moodTags.length)
+    // Слова из семантики точнее тегов: «спокойная, короткие сессии» говорит,
+    // ПОЧЕМУ игра под настроение, а «под вайб: Уютная» — только что тег есть
+    if (pick.signals.moodWords?.length)
+      whyParts.push(`под настроение: ${pick.signals.moodWords.join(', ')}`)
+    else if (pick.signals.moodTags.length)
       whyParts.push(`под вайб: ${pick.signals.moodTags.map(tagRu).join(', ')}`)
   }
 
@@ -1211,12 +1215,21 @@ function Player({ say }: { say: (line: string) => void }) {
             className="relative mx-auto w-full max-w-6xl px-safe pb-12 pt-40"
           >
             <div className="max-w-2xl flex flex-col gap-4">
-              <motion.div variants={STEP} className="flex items-center gap-3 text-xs">
+              {/* flex-wrap: строка выросла на длину захода, и на 375px плашка,
+                  часы, сессия и онлайн в одну линию уже не влезают */}
+              <motion.div variants={STEP} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <span className="rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium">
                   {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}
                 </span>
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
                   <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
+                )}
+                {/* Сколько уходит на заход — рядом с тем, сколько уже наиграно:
+                    оба числа про время, и «хватит ли вечера» решается здесь */}
+                {pick.session && (
+                  <span className="text-dim">
+                    {pick.session.label.toLowerCase()} {pick.session.value}
+                  </span>
                 )}
                 {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo)}</span>}
                 <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />

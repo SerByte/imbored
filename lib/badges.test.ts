@@ -92,6 +92,22 @@ describe('assignEdges', () => {
     expect(shared.get(2)).toBe('mood')
   })
 
+  /**
+   * С семантикой настроение — это mood × semantics: оси поправляют теговую
+   * оценку. Бейдж по одной mood достался бы карточке, которую оси опустили.
+   */
+  test('настроение считается вместе с поправкой осей (semantics)', () => {
+    const edges = assignEdges([
+      item(1, { taste: 0.9, mood: 1 }),
+      // теги говорят «под настроение», оси — что не очень
+      item(2, { taste: 0.3, mood: 1.4, semantics: 0.8 }),
+      // тегов вайба нет, оси попали
+      item(3, { taste: 0.3, mood: 1, semantics: 1.2 }),
+    ])
+    expect(edges.get(3)).toBe('mood')
+    expect(edges.get(2)).toBeUndefined()
+  })
+
   test('недооценённая: мало отзывов, почти все хвалят, меньше всех — побеждает', () => {
     const edges = assignEdges([
       item(1, {}, { reviewsTotal: 1500, reviewsPercent: 95 }),

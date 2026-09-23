@@ -2,6 +2,7 @@ import { discountOf } from './discount'
 import { editionKey } from './editions'
 import { isJunk } from './junk'
 import type { Lean } from './mood'
+import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
 import {
   cosine,
   cosineOf,
@@ -16,6 +17,7 @@ import {
   SCORE_FACTORS,
   type CandidateSource,
   type GameMeta,
+  type GameSemantics,
   type LibraryGame,
   type Mood,
   type ScoreParts,
@@ -516,6 +518,11 @@ export type MatchExplanation = {
   matchPercent: number | null
   sharedTags: string[]
   moodTags: string[]
+  /**
+   * Настроение словами из уверенной семантики (moodWordsOf): «спокойная,
+   * короткие сессии». Пусто — семантики нет, и /play называет теги вайба.
+   */
+  moodWords: string[]
 }
 
 /** Сколько совпавших тегов вообще имеет смысл называть. */
@@ -579,7 +586,7 @@ export function explainMatch(
     .filter((t) => moodWanted.has(t))
     .slice(0, 3)
 
-  return { matchPercent, sharedTags, moodTags }
+  return { matchPercent, sharedTags, moodTags, moodWords: moodWordsOf(meta, mood) }
 }
 
 export type LibraryGameState = 'unplayed' | 'comeback' | 'active' | 'played'
@@ -905,6 +912,180 @@ function moodMultiplier(meta: GameMeta, mood: Mood): number {
   return Math.max(mult, 0.1)
 }
 
+/*
+ * НАСТРОЕНИЕ ПО ОСЯМ, А НЕ ТОЛЬКО ПО СПИСКАМ ТЕГОВ.
+ *
+ * moodMultiplier видит только, ЕСТЬ ли у игры тег из списка. Relaxing у
+ * Stardew Valley и Relaxing у игры, где его поставили за саундтрек, для него
+ * одно и то же, а игра без единого тега из VIBE_TAGS для него просто никакая.
+ * Семантика (lib/semantics) знает больше: насколько игра сложная, сколько в
+ * ней осваивать, какой темп и сколько минут уходит на заход, — и по отзывам,
+ * а не только по тегам.
+ *
+ * Поэтому оси не заменяют теговую оценку, а смешиваются с ней пополам:
+ *
+ *   настроение = 0.5 · теговое + 0.5 · (0.6 + 0.8 · fit),  fit ∈ 0..1
+ *
+ * Правая половина живёт в 0.6…1.4, левая — в 0.55…1.40, так что смесь не
+ * выходит за прежний разброс настроения, на котором откалиброван наклон
+ * нетронутого (SOURCE_WEIGHT 1.25). Частью скора это становится отдельной —
+ * semantics — как поправка к теговой: во сколько раз оси меняют то, что
+ * сказали теги. mood × semantics и есть смесь. Так часть mood остаётся ровно
+ * прежней, а игра без семантики получает semantics = 1 и скор до бита старый.
+ *
+ * Верим семантике только с SEMANTICS_MIN_CONFIDENCE, то есть когда оси уточнили
+ * отзывы: приор по тегам подбор и так слышит через сами теги.
+ */
+
+/** На столько пунктов оси (0..100) от цели — совпадение по ней ноль */
+const AXIS_SPAN = 50
+
+/**
+ * Цели осей под вайб. chill — спокойная (сложность 25), без долгого освоения
+ * (35), не быстрая (темп не выше 50: медленное chill не мешает). engaged —
+ * с вызовом (70) и с глубиной (65); темп ему безразличен — тактика бывает и
+ * пошаговой.
+ */
+const VIBE_AXES: Record<Mood['vibe'], Array<{ axis: keyof GameSemantics['axes']; target: number; atMost?: boolean }>> = {
+  chill: [
+    { axis: 'challenge', target: 25 },
+    { axis: 'complexity', target: 35 },
+    { axis: 'pace', target: 50, atMost: true },
+  ],
+  engaged: [
+    { axis: 'challenge', target: 70 },
+    { axis: 'complexity', target: 65 },
+  ],
+}
+
+/** Желаемые минуты захода под ответ «сколько времени» */
+const SESSION_TARGET_MIN: Record<Mood['time'], number> = { short: 20, medium: 90, long: 180 }
+
+/*
+ * Та же асимметрия, что у TIME_FIT: «меньше часа» — ограничение, «весь вечер»
+ * — пожелание. Расстояние считается в разах (log2), и заход вчетверо длиннее
+ * желаемого обнуляет совпадение, а короче — только в тридцать два раза.
+ * Короче короткого и длиннее длинного не бывает плохо вовсе.
+ */
+const SESSION_LONGER_SPAN = 2
+const SESSION_SHORTER_SPAN = 5
+
+function sessionFit(minutes: number, time: Mood['time']): number {
+  const d = Math.log2(Math.max(1, minutes) / SESSION_TARGET_MIN[time])
+  if (d > 0) return time === 'long' ? 1 : Math.max(0, 1 - d / SESSION_LONGER_SPAN)
+  if (d < 0) return time === 'short' ? 1 : Math.max(0, 1 + d / SESSION_SHORTER_SPAN)
+  return 1
+}
+
+/**
+ * Насколько игра попадает в настроение по осям семантики: 0..1. Половина —
+ * вайб (среднее по осям его цели), половина — длина захода.
+ */
+export function moodFitAxes(s: GameSemantics, mood: Mood): number {
+  const goals = VIBE_AXES[mood.vibe]
+  let vibe = 0
+  for (const { axis, target, atMost } of goals) {
+    const x = s.axes[axis]
+    const off = atMost ? Math.max(0, x - target) : Math.abs(x - target)
+    vibe += Math.max(0, 1 - off / AXIS_SPAN)
+  }
+  return (vibe / goals.length + sessionFit(s.session.minutes, mood.time)) / 2
+}
+
+/*
+ * Короткий вечер. «Меньше часа» — ограничение, и игра, заход в которую
+ * дольше часа, в него физически не влезает: ×0.5. Штраф, а не фильтр, и с
+ * полом по образцу applyFocus: если своих, которые в час влезают, меньше
+ * FOCUS_FLOOR, штраф ослабляется до ×0.75 (scoreCandidates) — фильтр,
+ * выкинувший всё, не фильтр, а у человека из одних длинных игр выдача иначе
+ * целиком уехала бы в каталог.
+ *
+ * Игра, которую можно бросить в любой момент (пошаговое, новелла, головоломка),
+ * при «меньше часа» и «расслабиться» получает ×1.1: это ровно вечер «полчаса
+ * перед сном» — сыграл сколько успел, и ничего не потерял.
+ */
+const SHORT_EVENING_MAX_MIN = 60
+const LONG_SESSION_PENALTY = 0.5
+const LONG_SESSION_SOFT = 0.75
+const STOP_ANYTIME_BONUS = 1.1
+
+/** Семантика, которой подбор верит; null — её нет или она по одним тегам */
+function trustedSemantics(meta: GameMeta): GameSemantics | null {
+  const s = meta.semantics
+  return s && s.confidence >= SEMANTICS_MIN_CONFIDENCE ? s : null
+}
+
+/** Заход дольше часа при ответе «меньше часа» — по уверенной семантике */
+function tooLongForShort(meta: GameMeta, mood: Mood): boolean {
+  const s = trustedSemantics(meta)
+  return mood.time === 'short' && s !== null && s.session.minutes > SHORT_EVENING_MAX_MIN
+}
+
+/**
+ * Часть semantics скора: поправка теговой оценки настроения по осям, штраф
+ * длинного захода на короткий вечер и бонус «можно бросить в любой момент».
+ * tagMood — moodMultiplier той же игры; soft — пол короткого вечера сработал.
+ * Без уверенной семантики ровно 1.
+ */
+export function semanticsMultiplier(
+  meta: GameMeta,
+  mood: Mood,
+  tagMood: number,
+  opts: { soft?: boolean } = {},
+): number {
+  const s = trustedSemantics(meta)
+  if (!s) return 1
+  const blend = 0.5 * tagMood + 0.5 * (0.6 + 0.8 * moodFitAxes(s, mood))
+  let mult = blend / tagMood
+  if (tooLongForShort(meta, mood)) mult *= opts.soft ? LONG_SESSION_SOFT : LONG_SESSION_PENALTY
+  if (mood.time === 'short' && mood.vibe === 'chill' && s.session.canStopAnytime) {
+    mult *= STOP_ANYTIME_BONUS
+  }
+  return mult
+}
+
+/*
+ * Настроение словами для «Почему она?» — только из уверенной семантики и
+ * только то, что за игру: «спокойная, короткие сессии». Теги сюда не идут —
+ * их объяснение называет само (moodTags). Слова совпадают с корзинами осей
+ * (axisBucket): «спокойная» — это ровно та сложность, которую отчёт по
+ * семантике называет низкой.
+ */
+const SESSION_MOOD_WORD: Record<Mood['time'], string> = {
+  short: 'короткие сессии',
+  medium: 'заход на час',
+  long: 'на весь вечер',
+}
+
+/** Больше трёх слов — уже не объяснение, а анкета */
+const MOOD_WORDS = 3
+
+export function moodWordsOf(meta: GameMeta, mood: Mood): string[] {
+  const s = trustedSemantics(meta)
+  if (!s) return []
+  const words: string[] = []
+  const { challenge, complexity, pace } = s.axes
+  if (mood.vibe === 'chill') {
+    if (axisBucket(challenge) === 'low') words.push('спокойная')
+    if (axisBucket(pace) === 'low') words.push('неторопливая')
+    if (axisBucket(complexity) === 'low') words.push('без долгого освоения')
+  } else {
+    if (axisBucket(challenge) === 'high') words.push('с вызовом')
+    if (axisBucket(complexity) === 'high') words.push('есть что осваивать')
+    if (axisBucket(pace) === 'high') words.push('динамичная')
+  }
+  // Длина идёт последней, но оси вайба её не вытесняют, когда слов много:
+  // про время человек ответил прямо, и совпадение с ответом важнее оттенков
+  const session =
+    s.session.bucket === mood.time
+      ? SESSION_MOOD_WORD[mood.time]
+      : mood.time === 'short' && s.session.canStopAnytime
+        ? 'можно бросить в любой момент'
+        : null
+  if (session) return [...words.slice(0, MOOD_WORDS - 1), session]
+  return words.slice(0, MOOD_WORDS)
+}
+
 /** Фолбэк для реального режима: appdetails с categories может быть не загружен */
 const MULTIPLAYER_TAGS = [
   'Multiplayer',
@@ -1139,9 +1320,10 @@ export function scoreCandidates(args: {
   lean?: Lean | null
 }): ScoredCandidate[] {
   const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
-  const out: ScoredCandidate[] = []
+  type Scored = ScoredCandidate & { parts: ScoreParts }
+  const out: Scored[] = []
   // Скрытые паузой — отдельно: они нужны только полу ниже
-  const hidden: Array<ScoredCandidate & { parts: ScoreParts }> = []
+  const hidden: Scored[] = []
   const profileEmpty = Object.keys(profile).length === 0
   // Профиль взвешивается один раз на весь запрос, а не на каждого кандидата
   const tasteOf = weightedCosineTo(profile, args.tagWeight ?? null)
@@ -1151,18 +1333,27 @@ export function scoreCandidates(args: {
   const familiarOn = Boolean(args.allowFamiliar) && lean !== 'fresh'
   const relaxed = lean === 'familiar'
 
+  // Кому штраф короткого вечера и какой была бы его мягкая версия: пол ниже
+  // ослабляет его, не пересчитывая остального
+  const softSemantics = new Map<number, number>()
+
   /** sourceMult — насыщение знакомого; у прочих источников ровно 1 */
   const push = (meta: GameMeta, source: ScoredCandidate['source'], sourceMult = 1) => {
     if (exclude?.has(meta.appid)) return
     if (!fitsSocial(meta, mood)) return
     const pause = cooldown?.get(meta.appid)
+    const tagMood = moodMultiplier(meta, mood)
     const parts: ScoreParts = {
       taste: profileEmpty ? popularityScore(meta) : tasteOf(normalizedTags(meta)),
-      mood: moodMultiplier(meta, mood),
+      mood: tagMood,
       source: SOURCE_WEIGHT[source] * sourceMult,
       deal: dealMultiplier(meta, source, nowSec),
       lean: leanMultiplier(meta, source, lean),
       cooldown: pause && pause.mult > 0 ? pause.mult : 1,
+      semantics: semanticsMultiplier(meta, mood, tagMood),
+    }
+    if (tooLongForShort(meta, mood)) {
+      softSemantics.set(meta.appid, semanticsMultiplier(meta, mood, tagMood, { soft: true }))
     }
     const c = { appid: meta.appid, name: meta.name, source, score: scoreOfParts(parts), parts }
     if (pause?.mult === 0) hidden.push(c)
@@ -1189,6 +1380,25 @@ export function scoreCandidates(args: {
   const owned = new Set(library.map((g) => g.appid))
   for (const meta of newPool) {
     if (!owned.has(meta.appid)) push(meta, 'new')
+  }
+
+  // Пол короткого вечера — то же правило, что у applyFocus: если своих, чей
+  // заход влезает в час, меньше FOCUS_FLOOR, длинным своим штраф ослабляется.
+  // Не снимается: влезающее всё равно стоит впереди. Каталог не смягчается —
+  // короткого там хватает и без него. Скрытые паузой смягчаются тоже: пол
+  // паузы ниже может их вернуть, и вернуться они должны уже со смягчённым
+  if (softSemantics.size) {
+    const fitting = out.filter((c) => c.source !== 'new' && !softSemantics.has(c.appid)).length
+    if (fitting < FOCUS_FLOOR) {
+      const soften = (c: Scored): Scored => {
+        const soft = softSemantics.get(c.appid)
+        if (soft === undefined || c.source === 'new') return c
+        const parts = { ...c.parts, semantics: soft }
+        return { ...c, parts, score: scoreOfParts(parts) }
+      }
+      for (let i = 0; i < out.length; i++) out[i] = soften(out[i])
+      for (let i = 0; i < hidden.length; i++) hidden[i] = soften(hidden[i])
+    }
   }
 
   // Пол паузы — то же правило, что у applyFocus: фильтр, выкинувший всё, — не

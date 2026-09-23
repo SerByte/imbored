@@ -14,6 +14,7 @@ import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
 import { claimVote, deckStuck, voteMiss, voteSignal } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
+import type { GameTrait } from '@/lib/gametraits'
 import type { RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import type { NearMiss } from '@/lib/roomlikes'
@@ -81,6 +82,8 @@ type Card = {
   headerImage: string | null
   art?: GameArtUrls | null
   ccu?: number | null
+  /** «Матч ~15 мин» — длина захода из семантики, см. DeckCard */
+  session?: GameTrait | null
   tags: string[]
   store?: string
   storeUrl?: string

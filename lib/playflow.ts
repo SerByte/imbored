@@ -21,6 +21,7 @@
 import type { GameArtUrls } from './art'
 import type { PickEdge } from './badges'
 import type { Discount } from './discount'
+import type { GameTrait } from './gametraits'
 import { parseLean, type Lean } from './mood'
 import { plural } from './plural'
 import type { ContinueGame, OwnAnchor, Scope } from './recommend'
@@ -30,6 +31,11 @@ export type PickSignals = {
   matchPercent: number | null
   sharedTags: string[]
   moodTags: string[]
+  /**
+   * Настроение словами из семантики (explainMatch). Необязательно: выдача,
+   * сохранённая на устройстве до этого поля (lib/playcache.ts), его не несёт.
+   */
+  moodWords?: string[]
 } | null
 
 /** Карточка выдачи — как её отдаёт /api/recommend (enrich в app/api/recommend/route.ts). */
@@ -48,6 +54,12 @@ export type PlayPick = {
   shortDescription: string | null
   tags: string[]
   hoursPlayed: number | null
+  /**
+   * Длина захода из уверенной семантики (sessionTrait): «Сессия ~20 мин»,
+   * «Матч ~15 мин». null — не знаем; нет поля — выдача из кэша устройства,
+   * сохранённая до него.
+   */
+  session?: GameTrait | null
   store: string | null
   storeUrl: string | null
   priceFinal: number | null

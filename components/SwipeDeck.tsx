@@ -14,6 +14,7 @@ import { PlayersNow } from '@/components/PlayersNow'
 import type { GameArtUrls } from '@/lib/art'
 import { deckCardLine, deckPosition } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
+import type { GameTrait } from '@/lib/gametraits'
 import { tagRu } from '@/lib/tagsru'
 
 export type DeckCard = {
@@ -29,6 +30,8 @@ export type DeckCard = {
   art?: GameArtUrls | null
   ccu?: number | null
   ccuAt?: number | null
+  /** «Матч ~15 мин» / «Сессия на вечер» из уверенной семантики (sessionTrait); нет — не знаем */
+  session?: GameTrait | null
   tags: string[]
   store?: string
   storeUrl?: string
@@ -240,8 +243,20 @@ function TopCard({
             </span>
           )}
         </div>
-        {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть */}
-        <PlayersNow ccu={card.ccu ?? null} ccuAt={card.ccuAt} nowSec={nowSec} />
+        {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть;
+            второй — сколько уйдёт на заход: «успеем до ночи?». Обёртка —
+            только когда есть что в неё положить: пустая заняла бы в колонке
+            лишний зазор gap-3 там, где раньше не было ничего */}
+        {(typeof card.ccu === 'number' || card.session) && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <PlayersNow ccu={card.ccu ?? null} ccuAt={card.ccuAt} nowSec={nowSec} />
+            {card.session && (
+              <span className="text-dim">
+                {card.session.label.toLowerCase()} {card.session.value}
+              </span>
+            )}
+          </div>
+        )}
         {card.tags.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {/* ключи английские, подпись русская — см. lib/tagsru.ts */}

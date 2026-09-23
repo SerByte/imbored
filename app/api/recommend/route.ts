@@ -13,6 +13,7 @@ import {
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
+import { sessionTrait } from '@/lib/gametraits'
 import { claudePicks, heuristicPicks, topUpPicks, type Pick } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
@@ -407,6 +408,9 @@ export async function POST(req: Request) {
       shortDescription: meta?.shortDescription ?? null,
       tags: topTags,
       hoursPlayed: hoursOf(p.appid),
+      // «Сессия ~20 мин» / «Матч ~15 мин» — из семантики, только уверенной
+      // (sessionTrait): та же строка, что на карточке игры
+      session: meta ? sessionTrait(meta) : null,
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,
       priceFinal: meta ? trustedPrice(meta, now) : null,

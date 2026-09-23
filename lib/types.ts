@@ -166,6 +166,11 @@ export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
  *   cooldown — пауза после скипа (cooldownOf): ×1.1 у вернувшегося «не
  *              сейчас», доля месяца у «надоела», 0.5 у скрытой, которую
  *              вернул пол; без паузы 1.
+ *   semantics — поправка настроения по осям уверенной семантики
+ *              (semanticsMultiplier): mood × semantics — смесь теговой оценки
+ *              с осевой, плюс ×0.5 длинному заходу на короткий вечер (×0.75,
+ *              если сработал пол) и ×1.1 «можно бросить в любой момент» при
+ *              «меньше часа» и «расслабиться»; без семантики 1.
  *
  * Раньше множитель жил в пяти местах сразу: в типе, в сборке частей, в
  * scoreOfParts, в тесте, который перемножал их по именам, и в бейджах. Забытое
@@ -179,7 +184,15 @@ export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
  * новый множитель единичный, скор старых кандидатов не меняется до бита
  * (демо-пятёрки главной на этом стоят).
  */
-export const SCORE_FACTORS = ['taste', 'mood', 'source', 'deal', 'lean', 'cooldown'] as const
+export const SCORE_FACTORS = [
+  'taste',
+  'mood',
+  'source',
+  'deal',
+  'lean',
+  'cooldown',
+  'semantics',
+] as const
 
 export type ScoreFactor = (typeof SCORE_FACTORS)[number]
 

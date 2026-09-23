@@ -1,5 +1,5 @@
 import { MIN_REVIEWS_TAIL } from './liveness'
-import type { CandidateSource, ScoreParts } from './types'
+import type { CandidateSource, ScoreFactor, ScoreParts } from './types'
 
 /**
  * Чем карточка лучше соседних — одним словом на плитке и одной фразой у героя.
@@ -80,6 +80,21 @@ const TASTE_LEAD = 1.05
  */
 const TASTE_RIVALS: ReadonlySet<CandidateSource> = new Set(['untouched', 'backlog', 'new'])
 
+/**
+ * Из каких множителей реестра (SCORE_FACTORS) складывается «под настроение».
+ *
+ * Не одна часть mood: с семантикой настроение стало смесью тегов и осей, и
+ * поправка осей живёт своей частью (semantics). Сравнивай бейдж одну mood, и
+ * «лучше всех под настроение» доставалось бы по тегам той карточке, которую
+ * оси как раз опустили, — превосходная степень снова стала бы ложью.
+ * Ключи проверяет тип: множитель, выпавший из реестра, здесь не соберётся.
+ */
+const MOOD_FACTORS = ['mood', 'semantics'] as const satisfies readonly ScoreFactor[]
+
+function moodOf(parts: ScoreParts): number {
+  return MOOD_FACTORS.reduce((m, k) => m * parts[k], 1)
+}
+
 /*
  * «Недооценённая» — мало отзывов и почти все хвалят. Нижняя граница — хвост
  * каталога (lib/liveness.ts): ниже тридцати отзывов «девяносто процентов» —
@@ -139,9 +154,9 @@ export function assignEdges(
   // первая стоит рядом с бейджем вкуса, — превосходная степень была бы ложью.
   const rest = scored.filter((it) => !edges.has(it.appid))
   if (rest.length) {
-    const best = Math.max(...rest.map((it) => it.parts.mood))
-    const leaders = rest.filter((it) => it.parts.mood === best)
-    const beaten = scored.some((it) => it.parts.mood > best)
+    const best = Math.max(...rest.map((it) => moodOf(it.parts)))
+    const leaders = rest.filter((it) => moodOf(it.parts) === best)
+    const beaten = scored.some((it) => moodOf(it.parts) > best)
     if (best > 1 && leaders.length === 1 && !beaten) edges.set(leaders[0].appid, 'mood')
   }
 

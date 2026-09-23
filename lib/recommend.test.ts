@@ -23,6 +23,8 @@ import {
   libraryTileState,
   MAX_NEW_PICKS,
   mixHeroPool,
+  moodFitAxes,
+  moodWordsOf,
   neutralParts,
   normalizedTags,
   parseFocus,
@@ -33,6 +35,7 @@ import {
   SCORE_FACTORS,
   scoreCandidates,
   scoreOfParts,
+  semanticsMultiplier,
   sharedTasteTags,
   splitBySource,
   URGENCY_UNTOUCHED_MAX,
@@ -41,7 +44,7 @@ import {
 import { DEMO_METAS, demoLibrary } from './demo'
 import { LEANS, type Lean } from './mood'
 import { tagWeightFrom } from './tagweight'
-import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
+import type { GameMeta, GameSemantics, LibraryGame, Mood, ScoredCandidate } from './types'
 
 const NOW = 1_700_000_000
 const DAY = 86_400
@@ -2008,5 +2011,228 @@ describe('hideUrgencyFor', () => {
   test('демо-библиотека срок не прячет: там нераспакованного немного', () => {
     const metas = new Map(DEMO_METAS.map((m) => [m.appid, m]))
     expect(hideUrgencyFor(demoLibrary(NOW), (id) => metas.get(id))).toBe(false)
+  })
+})
+
+/** Уверенная семантика (как после разбора отзывов) с нужными осями и заходом */
+function sem(over: {
+  challenge?: number
+  complexity?: number
+  pace?: number
+  minutes?: number
+  canStopAnytime?: boolean
+  confidence?: number
+}): GameSemantics {
+  const minutes = over.minutes ?? 40
+  return {
+    v: 1,
+    axes: {
+      challenge: over.challenge ?? 50,
+      complexity: over.complexity ?? 50,
+      pace: over.pace ?? 50,
+    },
+    session: {
+      bucket: minutes <= 25 ? 'short' : minutes >= 75 ? 'long' : 'medium',
+      minutes,
+      canStopAnytime: over.canStopAnytime ?? false,
+    },
+    timeToFun: { bucket: null, hours: null },
+    confidence: over.confidence ?? 0.8,
+    n: 60,
+    basis: 'tags+reviews',
+  }
+}
+
+describe('настроение по осям семантики', () => {
+  const MOODS: Mood[] = (['short', 'medium', 'long'] as const).flatMap((time) =>
+    (['chill', 'engaged'] as const).map((vibe) => ({ time, vibe, social: 'solo' as const })),
+  )
+  const scoreOne = (m: GameMeta, mood: Mood) =>
+    scoreCandidates({
+      profile: { Action: 1 },
+      library: [game({ appid: m.appid, playtimeForever: 10 })],
+      metaOf: () => m,
+      newPool: [],
+      mood,
+      nowSec: NOW,
+    })[0]
+
+  /**
+   * Правило спеки: без семантики выдача не меняется ни на бит. Семантика по
+   * одним тегам (уверенность ниже порога) — то же самое, что её отсутствие:
+   * приор подбор уже слышит через сами теги.
+   */
+  test('без уверенной семантики скор тот же до бита, часть semantics — единица', () => {
+    const tags = { Action: 100, Relaxing: 60, Roguelike: 40 }
+    for (const mood of MOODS) {
+      const plain = scoreOne(meta(1, tags), mood)
+      const weak = scoreOne({ ...meta(1, tags), semantics: sem({ challenge: 0, confidence: 0.4 }) }, mood)
+      expect(plain.parts!.semantics).toBe(1)
+      expect(weak).toEqual(plain)
+      const p = plain.parts!
+      expect(plain.score).toBe(p.taste * p.mood * p.source * p.deal * p.lean * p.cooldown)
+    }
+  })
+
+  test('смесь: mood × semantics = 0.5 · теговое + 0.5 · (0.6 + 0.8 · fit)', () => {
+    const s = sem({ challenge: 20, complexity: 30, pace: 40, minutes: 30 })
+    const m = { ...meta(1, { Action: 100, Difficult: 50 }), semantics: s }
+    for (const mood of MOODS.filter((x) => x.time !== 'short')) {
+      const p = scoreOne(m, mood).parts!
+      expect(p.mood * p.semantics).toBeCloseTo(0.5 * p.mood + 0.5 * (0.6 + 0.8 * moodFitAxes(s, mood)), 12)
+    }
+  })
+
+  /**
+   * Смесь не выходит за разброс теговой оценки: на нём откалиброван наклон
+   * нетронутого (1.25) — шире, и настроение переспорило бы источник.
+   * Штраф и бонус короткого вечера — отдельные правила, поэтому здесь без него.
+   */
+  test('настроение с осями остаётся в 0.55…1.40', () => {
+    const tagSets: Array<Record<string, number>> = [
+      { Action: 100 },
+      { Relaxing: 100, 'Open World': 50 },
+      { Difficult: 100, Roguelike: 50 },
+      { Cozy: 100, Difficult: 80, 'Colony Sim': 60 },
+    ]
+    const extremes = [0, 100].flatMap((challenge) =>
+      [0, 100].flatMap((complexity) =>
+        [0, 100].flatMap((pace) => [10, 160].map((minutes) => sem({ challenge, complexity, pace, minutes }))),
+      ),
+    )
+    for (const mood of MOODS.filter((x) => x.time !== 'short')) {
+      for (const tags of tagSets) {
+        for (const s of extremes) {
+          const p = scoreOne({ ...meta(1, tags), semantics: s }, mood).parts!
+          const moodTotal = p.mood * p.semantics
+          expect(moodTotal).toBeGreaterThanOrEqual(0.55)
+          expect(moodTotal).toBeLessThanOrEqual(1.4 + 1e-12)
+        }
+      }
+    }
+  })
+
+  test('оси решают там, где теги молчат: спокойная — под chill, с вызовом — под engaged', () => {
+    // Теги одинаковые и вне вайб-корзин: разницу даёт только семантика
+    const calm = { ...meta(1, { Action: 100 }), semantics: sem({ challenge: 20, complexity: 30, pace: 30 }) }
+    const hard = { ...meta(2, { Action: 100 }), semantics: sem({ challenge: 75, complexity: 70, pace: 70 }) }
+    const rank = (mood: Mood) =>
+      scoreCandidates({
+        profile: { Action: 1 },
+        library: [game({ appid: 1, playtimeForever: 10 }), game({ appid: 2, playtimeForever: 10 })],
+        metaOf: (id) => (id === 1 ? calm : hard),
+        newPool: [],
+        mood,
+        nowSec: NOW,
+      }).map((c) => c.appid)
+    expect(rank({ time: 'medium', vibe: 'chill', social: 'solo' })).toEqual([1, 2])
+    expect(rank({ time: 'medium', vibe: 'engaged', social: 'solo' })).toEqual([2, 1])
+  })
+
+  test('fit: 0..1, и длиннее желаемого хуже, чем короче', () => {
+    for (const mood of MOODS) {
+      for (const s of [sem({}), sem({ challenge: 0, complexity: 100, pace: 100, minutes: 160 })]) {
+        const fit = moodFitAxes(s, mood)
+        expect(fit).toBeGreaterThanOrEqual(0)
+        expect(fit).toBeLessThanOrEqual(1)
+      }
+    }
+    const at = (minutes: number, time: Mood['time']) =>
+      moodFitAxes(sem({ minutes }), { time, vibe: 'engaged', social: 'solo' })
+    // «меньше часа» — ограничение: заход на два часа хуже, чем десять минут на «весь вечер»
+    expect(at(120, 'short')).toBeLessThan(at(10, 'long'))
+    // короче короткого и длиннее длинного — не плохо
+    expect(at(10, 'short')).toBe(at(20, 'short'))
+    expect(at(160, 'long')).toBeGreaterThan(at(90, 'long'))
+  })
+
+  describe('короткий вечер', () => {
+    const short: Mood = { time: 'short', vibe: 'engaged', social: 'solo' }
+    const long = (appid: number) => ({ ...meta(appid, { Action: 100 }), semantics: sem({ minutes: 120 }) })
+    const quick = (appid: number) => ({ ...meta(appid, { Action: 100 }), semantics: sem({ minutes: 20 }) })
+
+    const run = (metas: GameMeta[], newPool: GameMeta[] = []) => {
+      const byId = new Map([...metas, ...newPool].map((m) => [m.appid, m]))
+      return scoreCandidates({
+        profile: { Action: 1 },
+        library: metas.map((m) => game({ appid: m.appid, playtimeForever: 10 })),
+        metaOf: (id) => byId.get(id),
+        newPool,
+        mood: short,
+        nowSec: NOW,
+      })
+    }
+    const partOf = (list: ScoredCandidate[], appid: number) => list.find((c) => c.appid === appid)!.parts!
+
+    test('заход дольше часа на «меньше часа» — ×0.5, когда влезающих своих хватает', () => {
+      const out = run([long(1), quick(2), quick(3), quick(4)])
+      expect(out.map((c) => c.appid).at(-1)).toBe(1)
+      // Ровно половина от той же поправки без правила короткого вечера: fit у
+      // заходов в два часа при «меньше часа» и при «пара часов» разный, поэтому
+      // сравниваем с формулой смеси напрямую
+      const p = partOf(out, 1)
+      const blend = 0.5 * p.mood + 0.5 * (0.6 + 0.8 * moodFitAxes(sem({ minutes: 120 }), short))
+      expect(p.semantics).toBeCloseTo((blend / p.mood) * 0.5, 12)
+    })
+
+    test('пол: своих, что влезают в час, меньше трёх — штраф ослабляется, а не выкидывает', () => {
+      const tight = run([long(1), long(2), quick(3)])
+      const roomy = run([long(1), quick(2), quick(3), quick(4)])
+      // Та же игра: при нехватке влезающих штраф мягче (×0.75 вместо ×0.5)
+      expect(partOf(tight, 1).semantics / partOf(roomy, 1).semantics).toBeCloseTo(1.5, 12)
+      expect(tight).toHaveLength(3)
+      // влезающая всё равно впереди
+      expect(tight[0].appid).toBe(3)
+      for (const c of tight) expect(scoreOfParts(c.parts!)).toBe(c.score)
+    })
+
+    test('каталог под пол не попадает: короткого там хватает и без него', () => {
+      const out = run([long(1), quick(2)], [long(100)])
+      expect(partOf(out, 100).semantics / partOf(out, 1).semantics).toBeCloseTo(0.5 / 0.75, 12)
+    })
+
+    test('«можно бросить в любой момент» — бонус только при «меньше часа» и «расслабиться»', () => {
+      const stop = { ...meta(1, { Action: 100 }), semantics: sem({ minutes: 40, canStopAnytime: true }) }
+      const keep = { ...meta(1, { Action: 100 }), semantics: sem({ minutes: 40 }) }
+      const chillShort: Mood = { time: 'short', vibe: 'chill', social: 'solo' }
+      expect(semanticsMultiplier(stop, chillShort, 1) / semanticsMultiplier(keep, chillShort, 1)).toBeCloseTo(
+        1.1,
+        12,
+      )
+      expect(semanticsMultiplier(stop, short, 1)).toBe(semanticsMultiplier(keep, short, 1))
+      expect(semanticsMultiplier(stop, { ...chillShort, time: 'long' }, 1)).toBe(
+        semanticsMultiplier(keep, { ...chillShort, time: 'long' }, 1),
+      )
+    })
+  })
+
+  describe('объяснение словами', () => {
+    const chillShort: Mood = { time: 'short', vibe: 'chill', social: 'solo' }
+
+    test('«спокойная, короткие сессии» — из осей, а не из тегов', () => {
+      const m = {
+        ...meta(1, { Action: 100 }),
+        semantics: sem({ challenge: 20, pace: 50, complexity: 50, minutes: 20 }),
+      }
+      expect(explainMatch({ Action: 1 }, m, chillShort).moodWords).toEqual(['спокойная', 'короткие сессии'])
+      expect(moodWordsOf(m, { ...chillShort, vibe: 'engaged' })).toEqual(['короткие сессии'])
+    })
+
+    test('длина не вытесняется осями, слов не больше трёх', () => {
+      const m = { ...meta(1, {}), semantics: sem({ challenge: 10, pace: 10, complexity: 10, minutes: 20 }) }
+      expect(moodWordsOf(m, chillShort)).toEqual(['спокойная', 'неторопливая', 'короткие сессии'])
+    })
+
+    test('можно бросить в любой момент — довод для «меньше часа», даже если заход не короткий', () => {
+      const m = { ...meta(1, {}), semantics: sem({ minutes: 40, canStopAnytime: true }) }
+      expect(moodWordsOf(m, chillShort)).toEqual(['можно бросить в любой момент'])
+    })
+
+    test('без уверенной семантики слов нет — /play назовёт теги вайба', () => {
+      const m = { ...meta(1, { Relaxing: 100 }), semantics: sem({ challenge: 10, confidence: 0.3 }) }
+      const out = explainMatch({ Relaxing: 1 }, m, chillShort)
+      expect(out.moodWords).toEqual([])
+      expect(out.moodTags).toContain('Relaxing')
+    })
   })
 })
