@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { plural } from '@/lib/plural'
+import { inviteCopy } from '@/lib/roominvite'
 import { OG_SITE } from '@/lib/site'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
 
@@ -32,14 +32,9 @@ export async function generateMetadata({
     return { title: 'Пати', robots }
   }
 
-  const invite = await loadRoomInvite(code)
-  const title = invite?.host
-    ? `${invite.host} зовёт в пати ${code}`
-    : `Тебя зовут в пати ${code}`
-  const description = invite
-    ? `${invite.members} ${plural(invite.members, 'человек уже в комнате', 'человека уже в комнате', 'человек уже в комнате')}. ` +
-      'Подключи свою библиотеку Steam и свайпай, во что готов играть: совпадут голоса всех — будет матч.'
-    : 'Подключи свою библиотеку Steam и свайпай, во что готов играть: совпадут голоса всех — будет матч.'
+  // После матча — какая игра и куда идти дальше, без комнаты — нейтрально:
+  // три состояния разобраны в inviteCopy
+  const { title, description } = inviteCopy(code, await loadRoomInvite(code))
 
   // Код — в верхнем регистре: /room/abc234 и /room/ABC234 — одна комната
   const url = `/room/${code}`

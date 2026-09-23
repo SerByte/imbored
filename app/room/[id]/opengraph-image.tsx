@@ -1,6 +1,6 @@
 import { ImageResponse } from 'next/og'
 import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
-import { plural } from '@/lib/plural'
+import { inviteCopy } from '@/lib/roominvite'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
 
 export const alt = 'Приглашение в пати — imbored'
@@ -17,6 +17,11 @@ export const contentType = 'image/png'
  * Героем стоит КОД, а не фраза: код — это и есть предмет, который передают.
  * Он набран моноширинным с большим разрядкой — так печатают номер на билете,
  * и так же он выглядит в самой комнате.
+ *
+ * После матча билет погашен: код остаётся героем, но строка под ним называет
+ * игру, на которой сошлись, а подвал зовёт собрать свою комнату. Раньше
+ * карточка звала свайпать и в сошедшуюся комнату — ссылку ведь пересылают и
+ * после матча. Тексты общие с заголовком страницы — inviteCopy.
  *
  * Комнаты живут часами, а не сутками: пять минут кэша достаточно, чтобы
  * пережить всплеск пересылок, и мало, чтобы врать про число вошедших. При
@@ -52,14 +57,8 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const { id } = await params
   const code = id.toUpperCase()
   const invite = ROOM_ID_RE.test(code) ? await loadRoomInvite(code) : null
-
-  const headline = invite?.host
-    ? `${invite.host.slice(0, 18)} зовёт выбрать игру на вечер`
-    : 'Тебя зовут выбрать игру на вечер'
-
-  const foot = invite
-    ? `${invite.members} ${plural(invite.members, 'человек в комнате', 'человека в комнате', 'человек в комнате')} · подключи библиотеку и свайпай`
-    : 'Подключи библиотеку и свайпай — совпадут голоса всех, будет матч'
+  // Те же три состояния, что у заголовка страницы: ждёт, сошлась, неизвестна
+  const { eyebrow, headline, foot } = inviteCopy(code, invite)
 
   return new ImageResponse(
     (
@@ -86,7 +85,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
             color: OG_EMBER,
           }}
         >
-          ПАТИ · ПРИГЛАШЕНИЕ
+          {eyebrow}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column' }}>
