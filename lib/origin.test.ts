@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { NextRequest } from 'next/server'
 import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server'
 import { config, proxy } from '../proxy'
-import { isSafeMethod, sameOrigin } from './origin'
+import { browserHost, isSafeMethod, sameOrigin } from './origin'
 
 /**
  * Сторож межсайтовых запросов.
@@ -65,6 +65,25 @@ describe('sameOrigin', () => {
     expect(isSafeMethod('GET')).toBe(true)
     expect(isSafeMethod('HEAD')).toBe(true)
     for (const m of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) expect(isSafeMethod(m)).toBe(false)
+  })
+})
+
+describe('browserHost: где браузер держит куки', () => {
+  test('имя хоста из Host, без порта и в нижнем регистре', () => {
+    expect(browserHost(h({ host: 'imbored.cc' }))).toBe('imbored.cc')
+    expect(browserHost(h({ host: '127.0.0.1:3000' }))).toBe('127.0.0.1')
+    expect(browserHost(h({ host: 'Imbored-Git-X.vercel.app' }))).toBe('imbored-git-x.vercel.app')
+    expect(browserHost(h({ host: '[::1]:3000' }))).toBe('[::1]')
+  })
+
+  test('за прокси решает x-forwarded-host, и из списка — первый', () => {
+    expect(browserHost(h({ host: 'localhost:3000', 'x-forwarded-host': 'imbored.cc' }))).toBe('imbored.cc')
+    expect(browserHost(h({ 'x-forwarded-host': 'imbored.cc, internal.lan' }))).toBe('imbored.cc')
+  })
+
+  test('без заголовков и с мусором — не знаем', () => {
+    expect(browserHost(h({}))).toBeNull()
+    expect(browserHost(h({ host: 'bad host' }))).toBeNull()
   })
 })
 

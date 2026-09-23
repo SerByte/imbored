@@ -144,6 +144,43 @@ describe('вход через Steam', () => {
     expect(asked).toEqual([])
   })
 
+  test('начатый не на каноническом хосте вход сперва переезжает туда и там же ставит куку', async () => {
+    // Превью, адрес *.vercel.app, 127.0.0.1 при localhost в APP_BASE_URL.
+    // Кука state на чужом хосте до возврата Steam не доезжала, и каждая
+    // попытка кончалась ?error=auth на боевом домене.
+    for (const headers of [
+      { host: 'imbored-git-xyz.vercel.app' } as Record<string, string>,
+      { host: '127.0.0.1:3000' },
+      { host: 'localhost:3000', 'x-forwarded-host': 'imbored-xxxx.vercel.app' },
+    ]) {
+      const hop = await startLogin(
+        new NextRequest(`https://${headers.host}/api/auth/steam?join=ABC123&junk=1`, { headers }),
+      )
+      expect(hop.headers.get('location'), headers.host).toBe(`${BASE}/api/auth/steam?join=ABC123`)
+      expect(hop.cookies.get('imbored_oidc'), headers.host).toBeUndefined()
+    }
+
+    // Уже на каноническом хосте — обычный вход, и он проходит до конца
+    const there = await startLogin(
+      new NextRequest(`${BASE}/api/auth/steam?join=ABC123`, { headers: { host: 'imbored.test' } }),
+    )
+    const steam = new URL(there.headers.get('location') ?? '')
+    const returnTo = steam.searchParams.get('openid.return_to') ?? ''
+    expect(returnTo.startsWith(`${BASE}/api/auth/steam/return?`)).toBe(true)
+    const res = await fromSteam(returnTo, there.cookies.get('imbored_oidc')?.value ?? '')
+    expect(res.headers.get('location')).toBe(`${BASE}/room/ABC123`)
+    expect(res.cookies.get('imbored_session')?.value).toBe('подписанная-сессия')
+  })
+
+  test('без назначения переезд идёт на голый старт входа', async () => {
+    const hop = await startLogin(
+      new NextRequest('https://imbored-git-xyz.vercel.app/api/auth/steam', {
+        headers: { host: 'imbored-git-xyz.vercel.app' },
+      }),
+    )
+    expect(hop.headers.get('location')).toBe(`${BASE}/api/auth/steam`)
+  })
+
   test('ассерт, выписанный другому сайту, не принимается, хотя подпись у Steam сходится', async () => {
     const { returnTo, cookie } = await start('')
     const res = await fromSteam(returnTo, cookie?.value ?? '', {

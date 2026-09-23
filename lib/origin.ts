@@ -40,6 +40,29 @@ export function appBaseUrl(): string {
 }
 
 /**
+ * Имя хоста, на котором сейчас браузер, — по нему он раскладывает куки
+ * (порт и схема куки не делят). null — понять не из чего.
+ *
+ * Из заголовков, а не из req.url: адрес запроса Next собирает из Host только
+ * на Vercel (trustHostHeader), а локально подставляет свой -H и порт, и
+ * человек на 127.0.0.1 выглядел бы сидящим на localhost. Порядок — как у
+ * самого Next для Server Actions: x-forwarded-host, затем host.
+ *
+ * Заголовки подделать может кто угодно, но только в собственном запросе, —
+ * поэтому доверять им можно лишь решение «перекинуть ли на канонический
+ * адрес». Сам адрес, куда кидать, отсюда браться не должен.
+ */
+export function browserHost(headers: Headers): string | null {
+  const raw = headers.get('x-forwarded-host')?.split(',')[0]?.trim() || headers.get('host')
+  if (!raw) return null
+  try {
+    return new URL(`http://${raw}`).hostname
+  } catch {
+    return null
+  }
+}
+
+/**
  * Пришёл ли запрос с нашей же страницы.
  *
  * Роуты читают тело через req.json(), а он разбирает JSON при ЛЮБОМ
