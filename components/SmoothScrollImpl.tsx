@@ -6,6 +6,7 @@ import { ScrollSmoother } from 'gsap/ScrollSmoother'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef } from 'react'
+import { registerScrollPauser } from '@/lib/pagelock'
 import { focusBand, HEADER_CLEARANCE, needsReveal, takeFocus } from '@/lib/skiplink'
 
 gsap.registerPlugin(ScrollTrigger, ScrollSmoother, useGSAP)
@@ -127,7 +128,18 @@ export function SmoothScrollImpl() {
       smoother = null
     }
 
+    /*
+     * Паузу смузер приносит модальным окнам сам: лайтбокс на странице игры
+     * не может импортировать ScrollSmoother, не вернув gsap в её начальный
+     * набор (lib/pagelock.ts). Без паузы колесо над открытым кадром уводило
+     * страницу под ним — normalizeScroll прокручивает программно и overflow
+     * у body не читает.
+     */
+    const live = smoother
+    const unregister = live ? registerScrollPauser((paused) => live.paused(paused)) : null
+
     return () => {
+      unregister?.()
       smoother?.kill()
     }
   }, [])
