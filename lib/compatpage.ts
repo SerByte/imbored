@@ -43,6 +43,8 @@ export type CompatPick = ArtRef & {
   /** имена тех, у кого игры нет */
   missingFor: string[]
   priceFinal?: number
+  /** бесплатная — цены у неё нет, см. GroupCard.isFree */
+  isFree?: boolean
   discount: Discount | null
   tags: string[]
   store?: string
@@ -254,19 +256,23 @@ export async function loadCompat(
 
   const toPick = (c: (typeof actual)[number]): CompatPick => {
     const meta = metaOf(c.appid)
-    const цена = meta ? trustedPrice(meta, now) : (c.priceFinal ?? null)
+    // «Бесплатно» сильнее цены: у CS2 в строке каталога лежит цена Prime, и
+    // полка «на будущее» показывала её как цену игры — $14.99 за бесплатную.
+    const бесплатная = meta?.isFree ?? c.isFree ?? false
+    const цена = бесплатная ? null : meta ? trustedPrice(meta, now) : (c.priceFinal ?? null)
     return {
       ...artRef(c.appid, c.name, meta),
       ownedByAll: c.ownedByAll,
       missingFor: c.missingFor,
+      ...(бесплатная ? { isFree: true } : {}),
       // Цена — только та, которой верит витрина: при сгоревшей скидке
       // priceFinal это акционное число без акции (см. trustedPrice). Полка «на
       // будущее» показывала его как обычную цену, расходясь с карточкой той же
       // игры на /game и со строкой выдачи на /play.
       ...(цена !== null ? { priceFinal: цена } : {}),
       // Скидка нужна только там, где кому-то придётся покупать: у общей игры
-      // цена в разговоре не участвует
-      discount: meta && !c.ownedByAll ? discountView(meta, now) : null,
+      // цена в разговоре не участвует, у бесплатной — тем более
+      discount: meta && !c.ownedByAll && !бесплатная ? discountView(meta, now) : null,
       tags: c.tags,
       ...(c.store ? { store: c.store } : {}),
     }

@@ -13,6 +13,8 @@ export type DeckCard = {
   ownedByAll: boolean
   missingFor: string[]
   priceFinal?: number
+  /** бесплатная — цены нет, даже если она лежит в каталоге (см. GroupCard) */
+  isFree?: boolean
   discount?: Discount | null
   headerImage: string | null
   art?: GameArtUrls | null
@@ -150,11 +152,15 @@ function TopCard({
                   1.52:1, то есть подпись была практически невидима */}
               <span className="rounded-full bg-info/10 text-info px-3 py-1 text-xs">
                 {alone ? 'Нет в твоей библиотеке' : `Нет у: ${card.missingFor.join(', ')}`}
-                {card.priceFinal !== undefined && card.priceFinal > 0
-                  ? ` · $${(card.priceFinal / 100).toFixed(0)}`
-                  : card.store
-                    ? ' · бесплатно/вне Steam'
-                    : ''}
+                {/* «бесплатно» первым, как в PriceTag: иначе у CS2 здесь
+                    стояла цена Prime — « · $15» за бесплатную игру */}
+                {card.isFree
+                  ? ' · бесплатно'
+                  : card.priceFinal !== undefined && card.priceFinal > 0
+                    ? ` · $${(card.priceFinal / 100).toFixed(0)}`
+                    : card.store
+                      ? ' · бесплатно/вне Steam'
+                      : ''}
               </span>
               {/* Скидка отдельной плашкой, а не внутри синей: там один токен
                   «кому не хватает», и зачёркнутая цена сломала бы его цельность */}

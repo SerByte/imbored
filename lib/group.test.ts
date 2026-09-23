@@ -87,6 +87,26 @@ describe('buildGroupDeck', () => {
     )
   })
 
+  test('бесплатная игра едет в колоду с isFree и без цены чужой редакции', () => {
+    // У CS2 в каталоге is_free = 1 и price_final = 1499 — это Prime. Колода
+    // рисует цену своей строкой, мимо PriceTag, и писала «Нет у: Боря · $15».
+    const cs2: GameMeta = { ...meta(730, { 'Co-op': 100 }, MP, 1499), isFree: true }
+    const deck = buildGroupDeck({ members: MEMBERS, metaOf, extraPool: [cs2], limit: 10 })
+    const card = deck.find((c) => c.appid === 730)
+    expect(card?.isFree).toBe(true)
+    expect(card).not.toHaveProperty('priceFinal')
+  })
+
+  test('у платной игры признака бесплатности нет вовсе', () => {
+    const deck = buildGroupDeck({
+      members: MEMBERS,
+      metaOf,
+      extraPool: [METAS.get(4)!],
+      limit: 10,
+    })
+    expect(deck.find((c) => c.appid === 4)).not.toHaveProperty('isFree')
+  })
+
   test('limit ограничивает размер колоды', () => {
     const deck = buildGroupDeck({
       members: MEMBERS,

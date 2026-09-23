@@ -196,6 +196,7 @@ function PickCard({ pick }: { pick: CompatPick }) {
               </span>
               <PriceTag
                 priceFinal={pick.priceFinal ?? null}
+                isFree={pick.isFree}
                 discount={pick.discount}
                 showPercent={false}
                 className="text-[11px]"

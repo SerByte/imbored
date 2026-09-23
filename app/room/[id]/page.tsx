@@ -69,6 +69,7 @@ type Card = {
   ownedByAll: boolean
   missingFor: string[]
   priceFinal?: number
+  isFree?: boolean
   discount?: Discount | null
   headerImage: string | null
   art?: GameArtUrls | null

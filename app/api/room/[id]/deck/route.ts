@@ -160,13 +160,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const meta = metas.get(c.appid)
     return {
       ...c,
-      priceFinal: meta ? trustedPrice(meta, now) : c.priceFinal,
+      // У бесплатной цены нет: price_final у неё — чужая редакция (Prime у
+      // CS2), и пересчёт отсюда вернул бы в карточку то, что убрал buildGroupDeck
+      priceFinal: c.isFree ? undefined : meta ? trustedPrice(meta, now) : c.priceFinal,
       art: meta?.art ?? null,
       ccu: meta?.ccu ?? null,
       ccuAt: meta?.ccuAt ?? null,
       // Скидка нужна только там, где кому-то придётся покупать: у карточки
-      // «есть у всех» цена вообще не участвует в разговоре
-      discount: meta && !c.ownedByAll ? discountView(meta, now) : null,
+      // «есть у всех» цена вообще не участвует в разговоре, у бесплатной — тоже
+      discount: meta && !c.ownedByAll && !c.isFree ? discountView(meta, now) : null,
     }
   })
 

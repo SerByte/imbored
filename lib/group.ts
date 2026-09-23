@@ -16,6 +16,12 @@ export type GroupCard = {
   missingFor: string[]
   score: number
   priceFinal?: number
+  /**
+   * Бесплатная игра. Цены у такой карточки нет вовсе, даже если в строке
+   * каталога она лежит: у Counter-Strike 2 is_free = 1 и price_final = 1499 —
+   * это Prime, а не игра (см. offersOf в lib/jsonld.ts).
+   */
+  isFree?: boolean
   headerImage?: string
   tags: string[]
   store?: string
@@ -69,7 +75,14 @@ export function buildGroupDeck(args: {
       ownedByAll: missingFor.length === 0,
       missingFor,
       score: cosine(combined, normalizedTags(meta)),
-      ...(meta.priceFinal !== undefined ? { priceFinal: meta.priceFinal } : {}),
+      // «Бесплатно» сильнее цены — тот же порядок, что у PriceTag и разметки.
+      // Колода пати писала «Нет у: Дима · $15» у бесплатной CS2: у колоды своя
+      // строка цены, и isFree до неё просто не доезжал.
+      ...(meta.isFree
+        ? { isFree: true }
+        : meta.priceFinal !== undefined
+          ? { priceFinal: meta.priceFinal }
+          : {}),
       ...(meta.headerImage ? { headerImage: meta.headerImage } : {}),
       tags: topTags,
       ...(meta.store ? { store: meta.store } : {}),
