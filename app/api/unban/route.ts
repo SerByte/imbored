@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { unbanGame } from '@/lib/db'
-import { currentSteamId, getDb } from '@/lib/server'
+import { getDb, requireWriter } from '@/lib/server'
 
 /**
  * Снятие бана. Отдельный роут, а не пятое значение action в /api/feedback:
@@ -8,8 +8,9 @@ import { currentSteamId, getDb } from '@/lib/server'
  * проекте удаляет пользовательские строки. Разные права — разные двери.
  */
 export async function POST(req: Request) {
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const writer = await requireWriter()
+  if (!writer.ok) return writer.response
+  const { steamid } = writer
 
   const body = (await req.json().catch(() => ({}))) as { appid?: number }
   const appid = Number(body.appid)

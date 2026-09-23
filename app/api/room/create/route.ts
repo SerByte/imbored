@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { createRoom, getPersonaName, getRoom, joinRoom } from '@/lib/db'
 import { parseMood } from '@/lib/mood'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { getDb, nowSec, requireWriter } from '@/lib/server'
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 
@@ -15,8 +15,12 @@ const ROOM_CREATE_LIMIT = 10
 const ROOM_CREATE_WINDOW_SEC = 3600
 
 export async function POST(req: Request) {
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  // Комната — от имени профиля: хост видит её на доске под своим ником и
+  // управляет ею. Войти в чужую и голосовать можно и по ссылке — это другие
+  // роуты, и они сюда не ходят (см. requireWriter в lib/server).
+  const writer = await requireWriter()
+  if (!writer.ok) return writer.response
+  const { steamid } = writer
 
   const body = (await req.json().catch(() => ({}))) as { mood?: unknown }
   const mood = parseMood(body.mood) ?? undefined

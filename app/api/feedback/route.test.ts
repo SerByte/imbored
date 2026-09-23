@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { listFeedback, type Db } from '@/lib/db'
-import { freshDb, post, signIn } from '@/lib/testing/route'
+import { STEAMID_OF, freshDb, post, signIn, signInAs } from '@/lib/testing/route'
 import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -79,5 +79,44 @@ describe('/api/feedback', () => {
     expect(Number(res.headers.get('Retry-After'))).toBe(300)
     // Отказ — до записи: в истории ровно пропущенные лимитом сто двадцать
     expect(await listFeedback(db, STEAMID)).toHaveLength(120)
+  })
+
+  /*
+   * Сессия по вставленной ссылке — только чтение. Иначе любой, кто знает чужую
+   * ссылку на профиль, банил бы человеку игры и портил вкус, по которому тому
+   * же человеку потом подбирают. Все действия, а не одни баны: история оценок
+   * и есть профиль вкуса.
+   */
+  test('сессия по ссылке — 403 needsteam на любое действие, и в базу ничего', async () => {
+    const steamid = await signInAs(db, 'claimed')
+    for (const action of ['liked', 'skipped', 'opened', 'banned', 'launched']) {
+      const res = await POST(post('/api/feedback', { appid: 620, action }))
+      expect(res.status, action).toBe(403)
+      expect(await res.json()).toEqual({ error: 'needsteam' })
+    }
+    expect(await listFeedback(db, steamid)).toEqual([])
+  })
+
+  test('needsteam — раньше разбора тела: мусор от сессии по ссылке тоже 403, не 400', async () => {
+    await signInAs(db, 'claimed')
+    const res = await POST(post('/api/feedback', 'это не json'))
+    expect(res.status).toBe(403)
+  })
+
+  test('сессия без строки в базе (Turso моргнула на выдаче) — тоже только чтение', async () => {
+    // Происхождение неизвестно — наименьшие права, как у Resolved.verified
+    const { sid } = await signIn(db, STEAMID_OF.openid, { verified: true })
+    await db.execute({ sql: 'DELETE FROM sessions WHERE sid = ?', args: [sid] })
+    const res = await POST(post('/api/feedback', { appid: 620, action: 'banned' }))
+    expect(res.status).toBe(403)
+  })
+
+  test('вход через Steam и демо пишут, как раньше', async () => {
+    for (const kind of ['openid', 'demo'] as const) {
+      const steamid = await signInAs(db, kind)
+      const res = await POST(post('/api/feedback', { appid: 620, action: 'banned' }))
+      expect(res.status, kind).toBe(200)
+      expect(await listFeedback(db, steamid), kind).toHaveLength(1)
+    }
   })
 })

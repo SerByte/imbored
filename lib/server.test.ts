@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createDb, type Db } from './db'
-import { demoSteamId, getDb, isDemoId, sessionCookieOptions, sessionSecret } from './server'
+import { demoSteamId, getDb, isDemoId, isWriter, sessionCookieOptions, sessionSecret } from './server'
 
 // Настоящий createDb ходил бы в сеть или в файл data/imbored.db. Остальные
 // экспорты модуля — настоящие: подменяется ровно фабрика соединения.
@@ -99,6 +99,27 @@ describe('демо-личность', () => {
     // диапазон Valve начинается с 7656119…, так что первая цифра никогда не 0
     expect(isDemoId('76561197960265728')).toBe(false)
     expect(isDemoId('00000000000000000')).toBe(true)
+  })
+})
+
+/**
+ * Кто пишет в профиль. Сессия по вставленной ссылке — только чтение: иначе
+ * чужой, знающий ссылку, банил бы человеку игры и портил ему вкус.
+ */
+describe('isWriter', () => {
+  const REAL = '76561197960287930'
+
+  test('вход через Steam пишет', () => {
+    expect(isWriter({ steamid: REAL, verified: true })).toBe(true)
+  })
+
+  test('сессия по ссылке и сессия до колонки verified — только читают', () => {
+    expect(isWriter({ steamid: REAL, verified: false })).toBe(false)
+  })
+
+  test('демо пишет без verified: личность ничья, а без «Зашло» демо не показать', () => {
+    expect(isWriter({ steamid: demoSteamId(1), verified: false })).toBe(true)
+    expect(isWriter({ steamid: demoSteamId(2), verified: false })).toBe(true)
   })
 })
 

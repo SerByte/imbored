@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { forgetDailyPick, logFeedback, type FeedbackAction, type SkipReason } from '@/lib/db'
 import { parseMood } from '@/lib/mood'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { getDb, nowSec, requireWriter } from '@/lib/server'
 
 const ACTIONS: readonly FeedbackAction[] = ['liked', 'skipped', 'opened', 'banned', 'launched']
 const REASONS: readonly SkipReason[] = ['genre', 'hard', 'tired', 'notnow', 'spin', 'done']
@@ -22,8 +22,11 @@ const FEEDBACK_LIMIT = 120
 const FEEDBACK_WINDOW_SEC = 600
 
 export async function POST(req: Request) {
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  // Любое действие, включая бан: история оценок и есть профиль вкуса, и
+  // писать в неё по вставленной ссылке нельзя (см. isWriter в lib/server)
+  const writer = await requireWriter()
+  if (!writer.ok) return writer.response
+  const { steamid } = writer
 
   const body = (await req.json().catch(() => ({}))) as {
     appid?: number

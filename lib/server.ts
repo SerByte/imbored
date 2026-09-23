@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { cookies } from 'next/headers'
+import { NextResponse } from 'next/server'
 import { createDb, createSession, getSessionState, revokeSession, type Db } from './db'
 import {
   SESSION_TTL_SEC,
@@ -226,6 +227,52 @@ export async function currentSession(): Promise<Resolved | null> {
 /** SteamID64 текущего пользователя из подписанной куки, либо null */
 export async function currentSteamId(): Promise<string | null> {
   return (await currentSession())?.steamid ?? null
+}
+
+/**
+ * Может ли сессия писать в профиль: оценки, баны, снятие бана, комнаты.
+ *
+ * Сессию по вставленной ссылке (/api/connect) выдают без доказательства
+ * владения — и это сам продукт: библиотека публична, смотреть подборку по
+ * ней может кто угодно. Но писать в профиль по ней нельзя. Иначе любой, кто
+ * знает чужую ссылку, забанил бы человеку игры, накрутил «зашло» и испортил
+ * вкус, по которому тому же человеку потом подбирают.
+ *
+ * Пишут двое:
+ *   • подтверждённая сессия — выданная возвратом из Steam OpenID;
+ *   • демо-личность — она ничья, её выдаёт демо-вход каждому посетителю
+ *     свою (см. demoSteamId), и отнимать у демо «Зашло» значит показывать
+ *     продукт без главного жеста.
+ *
+ * Остальные — только чтение. В том числе все сессии, выданные до появления
+ * признака verified: колонка по умолчанию 0, и это решение, а не недосмотр.
+ * Поставь по умолчанию «подтверждена» — и каждый, кто раньше вставил чужую
+ * ссылку, сохранил бы право записи на год. Цена — честному человеку один раз
+ * войти через Steam.
+ */
+export function isWriter(session: Pick<Resolved, 'steamid' | 'verified'>): boolean {
+  return session.verified || isDemoId(session.steamid)
+}
+
+export type WriterGate = { ok: true; steamid: string } | { ok: false; response: NextResponse }
+
+/**
+ * Вход в пишущий роут: кто пришёл и вправе ли он писать.
+ *
+ * 401 nosession — гостю, как и раньше. 403 needsteam — сессии, которой
+ * писать нельзя (isWriter): страницы по этому коду показывают строку «войди
+ * через Steam», а не экран ошибки. Голос и вход в комнату сюда НЕ ходят —
+ * они живут внутри комнаты и профиль не трогают.
+ */
+export async function requireWriter(): Promise<WriterGate> {
+  const session = await currentSession()
+  if (!session) {
+    return { ok: false, response: NextResponse.json({ error: 'nosession' }, { status: 401 }) }
+  }
+  if (!isWriter(session)) {
+    return { ok: false, response: NextResponse.json({ error: 'needsteam' }, { status: 403 }) }
+  }
+  return { ok: true, steamid: session.steamid }
 }
 
 /**

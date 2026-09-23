@@ -71,6 +71,28 @@ export async function signIn(
   return minted
 }
 
+/**
+ * Три происхождения сессии, которые различает requireWriter (lib/server):
+ *   openid  — вход через Steam, владение доказано;
+ *   claimed — вставленная ссылка на профиль, владение не доказано. Так же
+ *             выглядят все сессии, выданные до колонки verified;
+ *   demo    — демо-личность, verified у неё нет, но она ничья.
+ */
+export type SessionKind = 'openid' | 'claimed' | 'demo'
+
+export const STEAMID_OF: Record<SessionKind, string> = {
+  openid: '76561197960287930',
+  claimed: '76561197960287931',
+  demo: '00012345678901231',
+}
+
+/** Войти так, как вошёл бы человек этим путём. Возвращает его steamid. */
+export async function signInAs(db: Db, kind: SessionKind): Promise<string> {
+  const steamid = STEAMID_OF[kind]
+  await signIn(db, steamid, { verified: kind === 'openid' })
+  return steamid
+}
+
 /** Выйти: «запрос» снова без куки. */
 export function signOut(): void {
   resetTestRequest()
