@@ -26,6 +26,13 @@ gsap.registerPlugin(SplitText, useGSAP)
  *
  * Доступность: реальный текст остаётся в aria-label, разрезанные слова скрыты от
  * скринридера — иначе заголовок читается по слову с паузами.
+ *
+ * Поэтому тег — только заголовок. aria-label на div или span (роль generic)
+ * запрещён ARIA 1.2 и браузерами игнорируется, а слова под ним спрятаны —
+ * и текст пропадает из дерева доступности целиком. Так экран матча не
+ * называл игру, на которой сошлись (components/MatchCeremony.tsx). Прежние
+ * 'div' | 'span' в типе убраны: вернуть их — ошибка компиляции, а не
+ * тихая дыра, которую видно только скринридером.
  */
 export function SplitHeading({
   children,
@@ -40,7 +47,7 @@ export function SplitHeading({
 }: {
   children: string
   className?: string
-  as?: 'h1' | 'h2' | 'div' | 'span'
+  as?: 'h1' | 'h2'
   delay?: number
   stagger?: number
   y?: number

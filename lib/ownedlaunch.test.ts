@@ -39,4 +39,33 @@ describe('кнопка запуска', () => {
     // сразу перед кнопкой — условие владения, и ничего между ними
     expect(src.slice(0, launches[0].index)).toMatch(/ownedByMe === true\s*\?\s*\(\s*$/)
   })
+
+  /**
+   * Развилка «запустить / открыть в магазине» — по устройству, а не по ширине.
+   *
+   * Стояло `hidden md:inline-block`, и ни один планшет не попадал в мобильную
+   * ветку: iPad и телефон в альбоме получали мёртвую steam://run, а /play через
+   * десять минут ещё и спрашивал «не зацепило?» про игру, которую никто не
+   * запускал. Возвращается это одной правкой класса, и ни один тест поведения
+   * этого не заметит: на десктопе кнопка работает.
+   */
+  test('SteamLaunch разветвляется по указателю, а не по брейкпоинту', () => {
+    const src = code(read('components', 'SteamLaunch.tsx'))
+    const classes = [...src.matchAll(/className=\{`([^`]*)`\}/g)].map((m) => m[1])
+    expect(classes, 'две ветки: steam://run и магазин').toHaveLength(2)
+    for (const cls of classes) {
+      expect(cls).toMatch(/\bpointer-fine:(?:hidden|inline-block)\b/)
+      expect(cls, 'ширина окна не говорит, умеет ли устройство steam://').not.toMatch(
+        /\b(?:sm|md|lg|xl|2xl):/,
+      )
+    }
+  })
+
+  test('правило остановки под героем /play стоит на том же признаке, что и кнопка', () => {
+    const src = code(read('app', 'play', 'page.tsx'))
+    const at = src.indexOf('stopRuleLine(')
+    expect(at).toBeGreaterThan(-1)
+    const tag = src.slice(src.lastIndexOf('<motion.p', at), at)
+    expect(tag).toMatch(/\bhidden pointer-fine:block\b/)
+  })
 })
