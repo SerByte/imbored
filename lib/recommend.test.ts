@@ -23,12 +23,14 @@ import {
   libraryTileState,
   MAX_NEW_PICKS,
   mixHeroPool,
+  neutralParts,
   normalizedTags,
   parseFocus,
   parseScope,
   PICK_COUNT,
   pickContinue,
   rankByTaste,
+  SCORE_FACTORS,
   scoreCandidates,
   scoreOfParts,
   sharedTasteTags,
@@ -700,13 +702,64 @@ describe('scoreCandidates', () => {
     expect(result).toHaveLength(3)
     for (const c of result) {
       const p = c.parts!
-      expect(c.score).toBe(p.taste * p.mood * p.source * p.deal * p.lean * p.cooldown)
+      // Свёртка по реестру, а не по именам: новый множитель не требует править
+      // этот тест, а забытый в сборке частей уронит проверку ключей ниже
+      let product = 1
+      for (const k of SCORE_FACTORS) product *= p[k]
+      expect(c.score).toBe(product)
       expect(scoreOfParts(p)).toBe(c.score)
     }
     const byId = new Map(result.map((c) => [c.appid, c.parts!]))
     expect(byId.get(1)?.source).toBe(1.25)
     expect(byId.get(200)?.deal).toBeGreaterThan(1)
     expect(byId.get(2)?.deal).toBe(1)
+  })
+
+  /**
+   * Реестр множителей. Части каждого кандидата — ровно ключи SCORE_FACTORS и
+   * в том же порядке: множитель, добавленный в реестр, но не посчитанный в
+   * сборке частей (или наоборот), здесь и падает, а не тихо выпадает из скора.
+   * Все пути сборки: своё, каталог, знакомое, скидка, пауза с возвратом полом.
+   */
+  test('части каждого кандидата — ровно реестр SCORE_FACTORS, в его порядке', () => {
+    const onSale: GameMeta = {
+      ...meta(300, { Action: 100 }),
+      priceFinal: 500,
+      priceInitial: 1000,
+      discountPercent: 50,
+      priceAt: NOW,
+    }
+    const lib = [
+      game({ appid: 1, playtimeForever: 0 }),
+      game({ appid: 2, playtimeForever: 30 }),
+      game({ appid: 3, playtimeForever: 900, lastPlayed: NOW - 300 * DAY }),
+      game({ appid: 4, playtimeForever: 900, lastPlayed: NOW - 90 * DAY }),
+    ]
+    const result = scoreCandidates({
+      profile: { Action: 1 },
+      library: lib,
+      metaOf: (id) => meta(id, { Action: 100, Sandbox: 50 }),
+      newPool: [onSale],
+      mood: baseMood,
+      nowSec: NOW,
+      allowFamiliar: true,
+      lean: 'familiar',
+      // Все свои скрыты — пол вернёт их с cooldown 0.5, то есть пересоберёт части
+      cooldown: new Map(lib.map((g) => [g.appid, { mult: 0, kind: 'notnow' as const, at: NOW }])),
+    })
+    expect(new Set(result.map((c) => c.source))).toEqual(
+      new Set(['untouched', 'backlog', 'comeback', 'familiar', 'new']),
+    )
+    for (const c of result) {
+      expect(Object.keys(c.parts!), `${c.appid} ${c.source}`).toEqual([...SCORE_FACTORS])
+      expect(scoreOfParts(c.parts!)).toBe(c.score)
+    }
+  })
+
+  test('neutralParts — единицы по всему реестру, кроме переданного', () => {
+    const p = neutralParts({ taste: 0.4 })
+    expect(Object.keys(p)).toEqual([...SCORE_FACTORS])
+    expect(scoreOfParts(p)).toBe(0.4)
   })
 
   test('«с друзьями» при пустых categories (реальный режим без appdetails) падает на теги', () => {

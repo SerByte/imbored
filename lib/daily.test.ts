@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { DAILY_TZ, dayKey, pickDaily, pickDailyPool, publicPick, STORE_DAY_EVERY } from './daily'
 import { dayLabel } from './freshness'
+import { neutralParts } from './recommend'
 import type { ScoredCandidate } from './types'
 
 const CANDS: ScoredCandidate[] = [
@@ -87,7 +88,7 @@ describe('publicPick', () => {
       name: 'A',
       source: 'backlog',
       score: 0.35,
-      parts: { taste: 0.7, mood: 1, source: 1, deal: 1, lean: 1, cooldown: 0.5 },
+      parts: neutralParts({ taste: 0.7, cooldown: 0.5 }),
     }
     expect(publicPick(c)).toEqual({ appid: 1, name: 'A', source: 'backlog' })
   })

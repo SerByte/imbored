@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import { assignEdges, EDGE_BADGE, EDGE_LINE, PICK_EDGES, type EdgeItem } from './badges'
+import { neutralParts } from './recommend'
 import type { ScoreParts } from './types'
 
 function parts(p: Partial<ScoreParts> = {}): ScoreParts {
-  return { taste: 0.5, mood: 1, source: 1, deal: 1, lean: 1, cooldown: 1, ...p }
+  return neutralParts({ taste: 0.5, ...p })
 }
 
 function item(appid: number, p: Partial<ScoreParts> = {}, extra: Partial<EdgeItem> = {}): EdgeItem {

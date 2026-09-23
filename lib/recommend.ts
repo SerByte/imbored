@@ -12,13 +12,14 @@ import {
   type CosineSide,
   type TagWeight,
 } from './tagweight'
-import type {
-  CandidateSource,
-  GameMeta,
-  LibraryGame,
-  Mood,
-  ScoreParts,
-  ScoredCandidate,
+import {
+  SCORE_FACTORS,
+  type CandidateSource,
+  type GameMeta,
+  type LibraryGame,
+  type Mood,
+  type ScoreParts,
+  type ScoredCandidate,
 } from './types'
 
 /** id категорий Steam, означающих «можно с друзьями» */
@@ -1069,14 +1070,28 @@ export function dealMultiplier(meta: GameMeta, source: CandidateSource, nowSec: 
   return 1 + DEAL_BOOST_MAX * share
 }
 
+/** Реестр множителей живёт в lib/types.ts рядом с типом частей; здесь — ради тех, кто берёт скоринг отсюда */
+export { SCORE_FACTORS }
+
 /**
- * Скор из частей. Порядок умножения тот же, что был до появления частей
- * (вкус × настроение × источник × скидка), и это не педантизм: плавающая
- * точка не ассоциативна, а демо-пятёрки главной зафиксированы тестом до бита.
- * Новые множители идут в хвост — пока они единичные, результат не меняется.
+ * Скор из частей — свёртка в порядке реестра SCORE_FACTORS. Порядок тот же,
+ * что был до появления частей (вкус × настроение × источник × скидка), и это
+ * не педантизм: плавающая точка не ассоциативна, а демо-пятёрки главной
+ * зафиксированы тестом до бита. Начальная единица ничего не меняет: умножение
+ * на неё точное, и первым множителем по-прежнему стоит вкус.
  */
 export function scoreOfParts(p: ScoreParts): number {
-  return p.taste * p.mood * p.source * p.deal * p.lean * p.cooldown
+  return SCORE_FACTORS.reduce((score, k) => score * p[k], 1)
+}
+
+/**
+ * Все множители единичные, кроме переданных. Для частей, собранных руками
+ * (тесты, бейджи на литералах): с реестром новый множитель не требует править
+ * каждый такой литерал — он просто единичный там, где о нём не спрашивали.
+ */
+export function neutralParts(over: Partial<ScoreParts> = {}): ScoreParts {
+  const parts = Object.fromEntries(SCORE_FACTORS.map((k) => [k, 1])) as ScoreParts
+  return { ...parts, ...over }
 }
 
 export function scoreCandidates(args: {
