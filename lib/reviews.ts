@@ -60,14 +60,17 @@ export function parseReviews(json: unknown): ParsedReviews | null {
   const s = data.query_summary
   const seen = new Set<string>()
   const reviews: ParsedReviews['reviews'] = []
-  for (const r of data.reviews ?? []) {
-    const id = r.recommendationid
-    const playtime = r.author?.playtime_at_review ?? 0
-    if (!id || seen.has(id) || playtime < MIN_PLAYTIME_MIN || !r.review) continue
+  // Ответ приходит сюда сырым (fetchReviewsRaw), и не-массив на месте
+  // reviews — это одна странная игра, а не повод ронять срез крона
+  for (const r of Array.isArray(data.reviews) ? data.reviews : []) {
+    const id = r?.recommendationid
+    const playtime = r?.author?.playtime_at_review ?? 0
+    const text = typeof r?.review === 'string' ? r.review : ''
+    if (!id || seen.has(id) || playtime < MIN_PLAYTIME_MIN || !text) continue
     seen.add(id)
     reviews.push({
       id,
-      text: r.review,
+      text,
       votedUp: r.voted_up ?? false,
       votesUp: r.votes_up ?? 0,
       playtimeAtReview: playtime,
@@ -116,6 +119,11 @@ export function reviewsUrl(appid: number): string {
 }
 
 /**
+ * Сырой ответ appreviews — один запрос на два разбора: parseReviews (вердикт
+ * и pros/cons) и parseReviewsRaw из lib/reviewmine (семантика игры). Разбор
+ * у вызывающего, а не здесь: крону страниц нужны оба, и второй запрос за тем
+ * же ответом стоил бы ещё одного шага пейсера и ещё одного шанса на 429.
+ *
  * Отказ хоста — ИСКЛЮЧЕНИЕ, а не null, и это ровно то же правило, которое
  * сформулировано у соседнего fetchAppDetails: «лимит/сбой — исключение, чтобы
  * вызывающий не закэшировал неудачу как „данных нет"».
@@ -128,18 +136,19 @@ export function reviewsUrl(appid: number): string {
  *
  * null остаётся ответом на «Steam ответил, но разобрать нечего»: битое тело —
  * это про одну игру, а не про наш адрес, и весь срез из-за неё останавливать
- * не за что.
+ * не за что. Ответ с success != 1 возвращается как есть: оба разбора
+ * превращают его в null сами.
  */
-export async function fetchReviews(
+export async function fetchReviewsRaw(
   appid: number,
   fetchFn: typeof fetch = fetch,
-): Promise<ParsedReviews | null> {
+): Promise<unknown> {
   // общий лимитер хоста store.steampowered.com с appdetails
   await pace('steam-store', STORE_PACE_MS)
   const res = await fetchFn(reviewsUrl(appid), { signal: AbortSignal.timeout(10_000) })
   if (!res.ok) throw new Error(`appreviews ${appid}: HTTP ${res.status}`)
   try {
-    return parseReviews(await res.json())
+    return await res.json()
   } catch {
     return null
   }

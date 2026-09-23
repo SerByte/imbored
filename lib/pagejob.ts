@@ -1,6 +1,6 @@
 /**
  * Один срез работы по карточкам игр: догрузить скриншоты и описание, посчитать
- * вердикт отзывов, собрать pros/cons.
+ * вердикт отзывов, собрать pros/cons и семантику игры (lib/semantics).
  *
  * Раньше всё это делала сама страница /game/[appid] на рендере. Страница
  * публичная, кэша у неё не было, а в каталоге 6000 живых игр — то есть один
@@ -24,11 +24,14 @@ import {
   markPageMissed,
   setGameJson,
   upsertGameMeta,
+  upsertSemantics,
   type Db,
 } from './db'
 import { logSwallowed } from './errlog'
 import { claudeProsCons, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
-import { fetchReviews, heuristicProsCons, type ParsedReviews, type ProsCons } from './reviews'
+import { fetchReviewsRaw, heuristicProsCons, parseReviews, type ProsCons } from './reviews'
+import { mineReviews, parseReviewsRaw } from './reviewmine'
+import { deriveSemantics } from './semantics'
 
 /** Раз в полгода карточку стоит перечитать: отзывы и цена уезжают. */
 export const PAGE_MAX_AGE_SEC = 180 * 86_400
@@ -87,6 +90,8 @@ export type PageSliceResult = {
   withShots: number
   withProsCons: number
   viaClaude: number
+  /** Карточек, получивших запись в game_semantics (по тегам или с отзывами) */
+  withSemantics: number
   hasMore: boolean
   stopped: 'done' | 'budget' | 'blocked'
 }
@@ -99,8 +104,11 @@ export async function runPageSlice(
     limit?: number
     /** подменяются в тестах: иначе прогон уходит и в сеть, и в лимитер темпа */
     fetchDetails?: typeof fetchAppDetails
-    fetchReviewsFn?: typeof fetchReviews
+    /** сырой ответ appreviews — один на вердикт, pros/cons и семантику */
+    fetchReviewsRawFn?: typeof fetchReviewsRaw
     prosConsFn?: typeof claudeProsCons
+    /** подменяется в тестах: сбой семантики не имеет права ронять карточку */
+    semanticsFn?: typeof deriveSemantics
     /**
      * Явное «модель не зовём» для --no-llm. Без него флаг работал наоборот:
      * заглушка приезжала как prosConsFn, Boolean(prosConsFn) включал useClaude,
@@ -114,8 +122,9 @@ export async function runPageSlice(
   const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
   const limit = opts.limit ?? 20
   const details = opts.fetchDetails ?? fetchAppDetails
-  const reviewsOf = opts.fetchReviewsFn ?? fetchReviews
+  const reviewsOf = opts.fetchReviewsRawFn ?? fetchReviewsRaw
   const prosConsOf = opts.prosConsFn ?? claudeProsCons
+  const semanticsOf = opts.semanticsFn ?? deriveSemantics
   const log = opts.onProgress ?? (() => {})
 
   // Модель зовём, только если ключ есть. Без этой проверки каждая карточка
@@ -136,6 +145,7 @@ export async function runPageSlice(
   let withShots = 0
   let withProsCons = 0
   let viaClaude = 0
+  let withSemantics = 0
   let blockedRun = 0
   /** Отказы appdetails подряд — своя ось, см. MAX_BLOCKED_RUN. */
   let detailsBlocked = 0
@@ -202,6 +212,8 @@ export async function runPageSlice(
     })
     if (fresh) detailsBlocked = 0
     else if (sawDetailsFailure) detailsBlocked++
+    /** Теги, с которыми карточка ушла в базу: семантике не нужно второе чтение */
+    let tags: Record<string, number> | null = null
     if (fresh) {
       const existing = await getGameMeta(db, appid)
       const merged = mergeMeta(existing, fresh)
@@ -225,15 +237,19 @@ export async function runPageSlice(
       }
 
       await upsertGameMeta(db, merged, now)
+      tags = merged.tags
       if (merged.screenshots?.length) withShots++
     }
 
     // ---- отзывы, вердикт и pros/cons ----
-    const parsed: ParsedReviews | null = await reviewsOf(appid).catch((err: unknown) => {
+    // Один запрос на всё: вердикт и pros/cons разбирают ответ здесь, семантика
+    // — ниже, из того же ответа
+    const raw: unknown = await reviewsOf(appid).catch((err: unknown) => {
       logSwallowed('pagejob:reviews', err, { appid })
       sawNetworkFailure = true
       return null
     })
+    const parsed = parseReviews(raw)
 
     if (parsed) {
       blockedRun = 0
@@ -316,6 +332,34 @@ export async function runPageSlice(
       blockedRun++
     }
 
+    // ---- семантика: из того же ответа, без нового запроса и без модели ----
+    /*
+     * parseReviewsRaw берёт ВСЕ отзывы ответа, а не отобранные для pros/cons:
+     * там порог в два часа игры, а здесь короткий негатив «через час бросил»
+     * и есть сигнал медленного старта (lib/reviewmine).
+     *
+     * Отзывов нет, их мало или сеть отказала — пишется приор по тегам. Он
+     * ничего не стоит и не затрёт посчитанного раньше по отзывам: это решает
+     * сама upsertSemantics. Отметка reviews_at ставится, только если ответ
+     * пришёл, — даже пустой: тонкую игру незачем перезапрашивать
+     * semantics:build --with-reviews.
+     *
+     * Сбой здесь — не Steam, а код или база, и карточку он не роняет:
+     * скриншоты и pros/cons уже записаны, отметка очереди — ниже. Семантика
+     * вернётся со следующим обходом карточки.
+     */
+    try {
+      const known = tags ?? (await getGameMeta(db, appid))?.tags ?? {}
+      const all = parseReviewsRaw(raw)
+      const semantics = semanticsOf(known, all ? mineReviews(all) : null)
+      await upsertSemantics(db, [
+        { appid, semantics, computedAt: now, reviewsAt: all ? now : null },
+      ])
+      withSemantics++
+    } catch (err) {
+      logSwallowed('pagejob:semantics', err, { appid })
+    }
+
     /*
      * Отметку ставим в любом случае — даже когда Steam ничего не отдал: иначе
      * одна проблемная игра навсегда осталась бы первой в очереди и забирала
@@ -355,7 +399,7 @@ export async function runPageSlice(
   // стража, блоком не доказать, и отметки у неё прежние.
   for (const p of подозреваемые) await отметить(p.appid, p.fresh)
 
-  if (enriched) log(`  карточек обогащено: ${enriched}`)
+  if (enriched) log(`  карточек обогащено: ${enriched}, с семантикой: ${withSemantics}`)
   if (deferred) log(`  Steam закрылся: отложено без отметки ${deferred}`)
 
   return {
@@ -365,6 +409,7 @@ export async function runPageSlice(
     withShots,
     withProsCons,
     viaClaude,
+    withSemantics,
     hasMore: targets.length === limit && stopped !== 'blocked',
     stopped,
   }

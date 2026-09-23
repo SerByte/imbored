@@ -1,5 +1,5 @@
 /**
- * Наполнение карточек игр: скриншоты, вердикт отзывов, pros/cons.
+ * Наполнение карточек игр: скриншоты, вердикт отзывов, pros/cons, семантика.
  *
  *   npm run pages:enrich -- --limit=50 --dry-run   посмотреть объём работы
  *   npm run pages:enrich -- --limit=500            прогнать 500 карточек
@@ -82,6 +82,7 @@ async function main() {
   let shots = 0
   let prosCons = 0
   let viaClaude = 0
+  let semantics = 0
   const startedAt = Date.now()
 
   /*
@@ -119,6 +120,7 @@ async function main() {
         shots += res.withShots
         prosCons += res.withProsCons
         viaClaude += res.viaClaude
+        semantics += res.withSemantics
 
         // Блок — раньше «ничего не отмечено»: карточки, отложенные блоком, отметок
         // не получают (см. deferred), и срез из одних таких ушёл бы молча.
@@ -129,7 +131,7 @@ async function main() {
         if (!res.enriched) break
         const mins = Math.round((Date.now() - startedAt) / 60_000)
         console.log(
-          `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tpros/cons: ${prosCons} (модель: ${viaClaude})\t${mins} мин`,
+          `${done.toLocaleString('ru-RU')} карточек\tскриншоты: ${shots}\tpros/cons: ${prosCons} (модель: ${viaClaude})\tсемантика: ${semantics}\t${mins} мин`,
         )
         if (!res.hasMore) break
       }
@@ -146,7 +148,8 @@ async function main() {
   )
   console.log(
     `\nготово. обогащено ${done.toLocaleString('ru-RU')}, ` +
-      `со скриншотами ${shots.toLocaleString('ru-RU')}, с pros/cons ${prosCons.toLocaleString('ru-RU')}`,
+      `со скриншотами ${shots.toLocaleString('ru-RU')}, с pros/cons ${prosCons.toLocaleString('ru-RU')}, ` +
+      `с семантикой ${semantics.toLocaleString('ru-RU')}`,
   )
   if (left) {
     console.log(`продолжить: npm run pages:enrich (в очереди ещё ${left.toLocaleString('ru-RU')})`)

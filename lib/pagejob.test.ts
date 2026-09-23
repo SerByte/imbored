@@ -5,6 +5,7 @@ import {
   countPageEnrichDue,
   createDb,
   getGameJson,
+  getGamesMetaLite,
   markPageEnriched,
   markPageMissed,
   migrateDb,
@@ -22,7 +23,8 @@ import {
   PROS_CONS_MIN_REVIEWS,
   runPageSlice,
 } from './pagejob'
-import type { ParsedReviews } from './reviews'
+import type { ReviewsResponse } from './reviews'
+import { MIN_REVIEWS } from './semantics'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -48,18 +50,25 @@ async function addGame(db: Db, appid: number, reviewsTotal: number): Promise<voi
   await replaceGameTags(db, appid, [{ tag: 'Action', weight: 100 }])
 }
 
-function reviews(n: number): ParsedReviews {
+type Review = NonNullable<ReviewsResponse['reviews']>[number]
+
+/** Ответ appreviews как от Steam: один на вердикт, pros/cons и семантику */
+function reviews(n: number): ReviewsResponse & { reviews: Review[] } {
   return {
-    score: 8,
-    scoreDesc: 'Very Positive',
-    totalPositive: 900,
-    totalNegative: 100,
+    success: 1,
+    query_summary: {
+      review_score: 8,
+      review_score_desc: 'Very Positive',
+      total_positive: 900,
+      total_negative: 100,
+    },
     reviews: Array.from({ length: n }, (_, i) => ({
-      id: String(i),
-      text: `Отличная игра номер ${i}, играю уже долго и не жалею ни минуты`,
-      votedUp: i % 2 === 0,
-      votesUp: 10 + i,
-      playtimeAtReview: 600,
+      recommendationid: String(i),
+      language: 'russian',
+      review: `Отличная игра номер ${i}, играю уже долго и не жалею ни минуты`,
+      voted_up: i % 2 === 0,
+      votes_up: 10 + i,
+      author: { playtime_at_review: 600, playtime_forever: 900 },
     })),
   }
 }
@@ -69,7 +78,7 @@ const stubs = (over: Partial<Parameters<typeof runPageSlice>[1]> = {}) => ({
   deadlineAt: Date.now() + 60_000,
   nowSec: NOW,
   fetchDetails: async (appid: number) => meta(appid, { screenshots: ['a.jpg', 'b.jpg'] }),
-  fetchReviewsFn: async () => reviews(6),
+  fetchReviewsRawFn: async () => reviews(6),
   prosConsFn: async () => ({ pros: ['красиво'], cons: ['дорого'] }),
   ...over,
 })
@@ -440,7 +449,7 @@ describe('runPageSlice', () => {
       db,
       stubs({
         fetchDetails: async () => null,
-        fetchReviewsFn: async () => null,
+        fetchReviewsRawFn: async () => null,
       }),
     )
 
@@ -458,7 +467,7 @@ describe('runPageSlice', () => {
         fetchDetails: async () => {
           throw new Error('HTTP 429')
         },
-        fetchReviewsFn: async () => {
+        fetchReviewsRawFn: async () => {
           throw new Error('HTTP 429')
         },
       }),
@@ -631,7 +640,7 @@ describe('срез останавливается, когда закрылась
     const res = await runPageSlice(
       db,
       stubs({
-        fetchReviewsFn: async () => {
+        fetchReviewsRawFn: async () => {
           throw new Error('appreviews 10: HTTP 429')
         },
       }),
@@ -667,10 +676,10 @@ describe('срез останавливается, когда закрылась
  */
 describe('pros/cons только из полезных отзывов', () => {
   /** n отзывов, из них useful с голосами «полезно», остальные без единого */
-  function mixed(n: number, useful: number): ParsedReviews {
+  function mixed(n: number, useful: number): ReviewsResponse {
     const r = reviews(n)
     r.reviews.forEach((x, i) => {
-      x.votesUp = i < useful ? 5 : 0
+      x.votes_up = i < useful ? 5 : 0
     })
     return r
   }
@@ -683,7 +692,7 @@ describe('pros/cons только из полезных отзывов', () => {
     const res = await runPageSlice(
       db,
       stubs({
-        fetchReviewsFn: async () => mixed(12, PROS_CONS_MIN_REVIEWS),
+        fetchReviewsRawFn: async () => mixed(12, PROS_CONS_MIN_REVIEWS),
         prosConsFn: async (_n: string, r: Array<{ text: string }>) => {
           видела.push(r)
           return { pros: ['красиво'], cons: ['дорого'] }
@@ -704,7 +713,7 @@ describe('pros/cons только из полезных отзывов', () => {
     const res = await runPageSlice(
       db,
       stubs({
-        fetchReviewsFn: async () => mixed(40, PROS_CONS_MIN_REVIEWS - 1),
+        fetchReviewsRawFn: async () => mixed(40, PROS_CONS_MIN_REVIEWS - 1),
         prosConsFn: async () => {
           звали++
           return { pros: ['реклама'], cons: [] }
@@ -730,13 +739,134 @@ describe('pros/cons только из полезных отзывов', () => {
     await markPageEnriched(db, 10, NOW)
 
     // голосов «полезно» нет ни у кого — эвристика (votesUp >= 3) тоже пуста
-    const res = await runPageSlice(db, stubs({ fetchReviewsFn: async () => mixed(10, 0) }))
+    const res = await runPageSlice(db, stubs({ fetchReviewsRawFn: async () => mixed(10, 0) }))
 
     expect(res.enriched).toBe(1)
     expect(res.withProsCons, 'пустой список — не наполненная карточка').toBe(0)
     expect(await getGameJson(db, 10, 'pros_cons_json')).toEqual({ pros: [], cons: [], source: 'thin' })
     const opts = { redoHeuristic: true, maxTries: PAGE_MAX_TRIES }
     expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
+  })
+})
+
+/**
+ * Семантика игры — из того же ответа appreviews, что вердикт и pros/cons.
+ *
+ * Второго запроса нет: крон и так упирается в пейсер Steam, а каждый лишний
+ * поход — ещё один шанс на 429 и на остановку среза стражем.
+ */
+describe('семантика из уже полученных отзывов', () => {
+  /** Строка game_semantics как есть: basis и отметка разбора отзывов */
+  async function semanticsRow(db: Db, appid: number) {
+    const res = await db.execute({
+      sql: 'SELECT basis, computed_at, reviews_at FROM game_semantics WHERE appid = ?',
+      args: [appid],
+    })
+    const r = res.rows[0]
+    return r
+      ? {
+          basis: String(r.basis),
+          computedAt: Number(r.computed_at),
+          reviewsAt: r.reviews_at === null ? null : Number(r.reviews_at),
+        }
+      : null
+  }
+
+  /** Рогалик: приор по тегам знает о нём достаточно, чтобы сказать «короткие заходы» */
+  async function addRoguelite(db: Db, appid: number): Promise<void> {
+    await upsertGameMeta(db, meta(appid, { tags: { Roguelite: 1000, 'Action Roguelike': 800 }, reviewsTotal: 100 }), NOW)
+    await replaceGameTags(db, appid, [{ tag: 'Roguelite', weight: 1000 }])
+  }
+
+  test('отзывов хватило — basis tags+reviews, и запрос к Steam один на карточку', async () => {
+    const db = await freshDb()
+    await addRoguelite(db, 10)
+
+    let запросов = 0
+    const res = await runPageSlice(
+      db,
+      stubs({
+        fetchReviewsRawFn: async () => {
+          запросов++
+          return reviews(MIN_REVIEWS + 4)
+        },
+      }),
+    )
+
+    expect(запросов).toBe(1)
+    expect(res.withSemantics).toBe(1)
+    expect(await semanticsRow(db, 10)).toEqual({ basis: 'tags+reviews', computedAt: NOW, reviewsAt: NOW })
+    const semantics = (await getGamesMetaLite(db, [10])).get(10)?.semantics
+    expect(semantics?.n).toBe(MIN_REVIEWS + 4)
+    // теги из базы, а не из ответа appdetails (там Action): рогалик — короткие заходы
+    expect(semantics?.session.bucket).toBe('short')
+  })
+
+  test('отзывов мало — приор по тегам, но отметка разбора стоит', async () => {
+    // Тонкую игру незачем перезапрашивать semantics:build --with-reviews
+    const db = await freshDb()
+    await addRoguelite(db, 10)
+
+    await runPageSlice(db, stubs({ fetchReviewsRawFn: async () => reviews(MIN_REVIEWS - 1) }))
+
+    expect(await semanticsRow(db, 10)).toEqual({ basis: 'tags', computedAt: NOW, reviewsAt: NOW })
+  })
+
+  test('appdetails молчит — теги берутся из базы, семантика всё равно пишется', async () => {
+    const db = await freshDb()
+    await addRoguelite(db, 10)
+
+    await runPageSlice(db, stubs({ fetchDetails: async () => null }))
+
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.session.bucket).toBe('short')
+  })
+
+  test('отзывы отказали — приор по тегам без отметки разбора', async () => {
+    const db = await freshDb()
+    await addRoguelite(db, 10)
+
+    await runPageSlice(
+      db,
+      stubs({
+        fetchReviewsRawFn: async () => {
+          throw new Error('appreviews 10: HTTP 500')
+        },
+      }),
+    )
+
+    expect(await semanticsRow(db, 10)).toEqual({ basis: 'tags', computedAt: NOW, reviewsAt: null })
+  })
+
+  test('приор по тегам не затирает посчитанное по отзывам в прошлый обход', async () => {
+    const db = await freshDb()
+    await addRoguelite(db, 10)
+    await runPageSlice(db, stubs({ fetchReviewsRawFn: async () => reviews(MIN_REVIEWS + 4) }))
+    await db.execute('UPDATE games SET page_at = NULL WHERE appid = 10')
+
+    await runPageSlice(db, stubs({ nowSec: NOW + 60, fetchReviewsRawFn: async () => null }))
+
+    expect(await semanticsRow(db, 10)).toMatchObject({ basis: 'tags+reviews', computedAt: NOW })
+  })
+
+  test('сбой семантики не роняет карточку: скриншоты, pros/cons и отметка на месте', async () => {
+    const db = await freshDb()
+    await addRoguelite(db, 10)
+
+    const res = await runPageSlice(
+      db,
+      stubs({
+        semanticsFn: () => {
+          throw new Error('ошибка в коде семантики')
+        },
+      }),
+    )
+
+    expect(res.enriched).toBe(1)
+    expect(res.withShots).toBe(1)
+    expect(res.withProsCons).toBe(1)
+    expect(res.withSemantics).toBe(0)
+    expect(await semanticsRow(db, 10)).toBeNull()
+    expect(await queueState(db, 10)).toEqual({ pageAt: NOW, tries: 0 })
   })
 })
 

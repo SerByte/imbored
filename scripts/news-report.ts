@@ -332,7 +332,7 @@ async function main() {
   // ── J. Состояние крона ─────────────────────────────────────────────────
   const SLICE_FIELDS = [
     'chain', 'polled', 'inserted', 'digested', 'enriched', 'withShots', 'withProsCons',
-    'viaClaude', 'hasMore', 'stopped', 'упало', 'обрыв',
+    'viaClaude', 'withSemantics', 'hasMore', 'stopped', 'упало', 'обрыв',
   ]
   head('J. Что рассказывает про себя крон')
   const j = await rows(

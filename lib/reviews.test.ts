@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { fetchReviews, heuristicProsCons, parseReviews } from './reviews'
+import { fetchReviewsRaw, heuristicProsCons, parseReviews } from './reviews'
 
 const RESPONSE = {
   success: 1,
@@ -79,7 +79,7 @@ describe('heuristicProsCons', () => {
   })
 })
 
-describe('fetchReviews: отказ хоста против пустого ответа', () => {
+describe('fetchReviewsRaw: отказ хоста против пустого ответа', () => {
   const okResponse = (body: unknown) =>
     (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
 
@@ -89,15 +89,23 @@ describe('fetchReviews: отказ хоста против пустого отв
     // возвращался null, страж «Steam закрылся от нашего IP» в lib/pagejob не
     // срабатывал при 429 никогда.
     const deny = (async () => new Response('', { status: 429 })) as unknown as typeof fetch
-    await expect(fetchReviews(730, deny)).rejects.toThrow(/429/)
+    await expect(fetchReviewsRaw(730, deny)).rejects.toThrow(/429/)
   })
 
   test('битое тело — это null: беда одной игры, а не адреса', async () => {
     const junk = (async () => new Response('не json', { status: 200 })) as unknown as typeof fetch
-    expect(await fetchReviews(730, junk)).toBeNull()
+    expect(await fetchReviewsRaw(730, junk)).toBeNull()
   })
 
-  test('ответ без разбираемой сводки тоже null, без исключения', async () => {
-    expect(await fetchReviews(730, okResponse({ success: 0 }))).toBeNull()
+  test('ответ без разбираемой сводки разбирается в null, без исключения', async () => {
+    expect(parseReviews(await fetchReviewsRaw(730, okResponse({ success: 0 })))).toBeNull()
+  })
+
+  test('странная форма ответа — пустой список, а не падение среза', () => {
+    // Сырой ответ разбирают уже в кроне, вне try вокруг сети: TypeError на
+    // «reviews не массив» уронил бы весь срез из-за одной игры
+    expect(parseReviews({ success: 1, reviews: { a: 1 } })?.reviews).toEqual([])
+    const odd = { success: 1, reviews: [null, { recommendationid: 'x', review: 5 }] }
+    expect(parseReviews(odd)?.reviews).toEqual([])
   })
 })
