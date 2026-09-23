@@ -156,6 +156,36 @@ describe('createLocalStore', () => {
     expect(win.count()).toBe(0)
   })
 
+  /**
+   * Кэш снимка сбрасывает событие storage, а слушает его только subscribe.
+   * Кто читает без подписки, получает от get первое прочитанное навсегда —
+   * так список банов /play не видел бан соседней вкладки. fresh читает мимо.
+   */
+  test('без подписки get помнит первое прочитанное, fresh видит соседнюю вкладку', () => {
+    const data: Store = {}
+    vi.stubGlobal('localStorage', fakeStorage(data))
+    const store = createLocalStore(KEY, parseFlag)
+    expect(store.get()).toBeNull()
+
+    data[KEY] = 'true'
+    expect(store.get()).toBeNull()
+    expect(store.fresh()).toBe(true)
+    // прочитанное через fresh — теперь и снимок
+    expect(store.get()).toBe(true)
+
+    delete data[KEY]
+    expect(store.fresh()).toBeNull()
+    expect(store.get()).toBeNull()
+  })
+
+  test('fresh при бросающем хранилище отдаёт записанное в памяти вкладки', () => {
+    vi.stubGlobal('localStorage', fakeStorage({}, { throws: true }))
+    const store = createLocalStore(KEY, parseFlag)
+    expect(store.fresh()).toBeNull()
+    store.set(true)
+    expect(store.fresh()).toBe(true)
+  })
+
   test('sessionStorage живёт отдельно и соседей не слушает', () => {
     const local: Store = {}
     const session: Store = {}

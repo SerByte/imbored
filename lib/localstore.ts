@@ -16,7 +16,12 @@
  *             сервера обязана совпасть с первым рендером клиента, а на сервере
  *             устройства нет;
  *   set     — записать и оповестить; null — стереть;
- *   subscribe — своя запись и запись из соседней вкладки (для localStorage).
+ *   subscribe — своя запись и запись из соседней вкладки (для localStorage);
+ *   fresh   — прочитать хранилище заново, мимо кэша. Кэш снимка сбрасывает
+ *             событие storage, а его слушает только subscribe: без подписки
+ *             get так и отдаёт первое прочитанное, и запись соседней вкладки
+ *             не видна до перезагрузки. Кто читает без подписки или читает,
+ *             чтобы дописать своё поверх, — читает через fresh.
  *
  * Ни один метод не бросает. Хранилище бросает в приватном режиме и при
  * выключенных куках, а в node его нет вовсе — это не повод ронять страницу:
@@ -32,6 +37,7 @@ export type LocalStore<T> = {
   server: () => T | null
   set: (value: T | null) => void
   subscribe: (onChange: () => void) => () => void
+  fresh: () => T | null
 }
 
 export function createLocalStore<T>(
@@ -50,9 +56,15 @@ export function createLocalStore<T>(
   // обращение бросает — и попадает в тот же catch, что и приватный режим
   const area = (): Storage => (storage === 'local' ? localStorage : sessionStorage)
 
-  function read(): T | null {
+  /** undefined — хранилище не прочиталось вовсе: бросило, а не «пусто» */
+  function read(): T | null | undefined {
+    let raw: string | null
     try {
-      const raw = area().getItem(key)
+      raw = area().getItem(key)
+    } catch {
+      return undefined
+    }
+    try {
       return raw === null ? null : parse(JSON.parse(raw))
     } catch {
       return null
@@ -60,8 +72,16 @@ export function createLocalStore<T>(
   }
 
   const get = (): T | null => {
-    if (cache === undefined) cache = read()
+    if (cache === undefined) cache = read() ?? null
     return cache
+  }
+
+  // Хранилище не читается — значит, и запись в него не дошла, и своё значение
+  // вкладка держит только в кэше. Его и отдаём, а не «ничего»
+  function fresh(): T | null {
+    const value = read()
+    if (value !== undefined) cache = value
+    return get()
   }
 
   const server = (): T | null => null
@@ -96,7 +116,7 @@ export function createLocalStore<T>(
     }
   }
 
-  return { get, server, set, subscribe }
+  return { get, server, set, subscribe, fresh }
 }
 
 /** Разбор флага «раскрыто»: только настоящий boolean, остальное — «не знаю». */

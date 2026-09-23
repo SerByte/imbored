@@ -256,7 +256,24 @@ export function recentlyBanned(list: RecentBan[] | null, nowMs: number): Set<num
   return new Set((list ?? []).filter((b) => fresh(b.at, nowMs, PLAY_CACHE_TTL_MS)).map((b) => b.appid))
 }
 
-export const recentBansStore = createLocalStore('imbored.play.bans', parseRecentBans, 'local')
+/*
+ * Список только ради соседних вкладок, поэтому наружу — не хранилище, а два
+ * действия, и оба читают его мимо кэша. Подписки на него нет, а без неё кэш
+ * снимка запоминает первое прочитанное навсегда: бан из соседней вкладки
+ * «Назад» возвращал на экран, а следующий бан здесь, дописанный поверх
+ * пустого кэша, стирал его и для всех остальных вкладок.
+ */
+const recentBansStore = createLocalStore('imbored.play.bans', parseRecentBans, 'local')
+
+/** Что убрано за последние пятнадцать минут — в любой вкладке, по хранилищу */
+export function readRecentBans(nowMs: number): Set<number> {
+  return recentlyBanned(recentBansStore.fresh(), nowMs)
+}
+
+/** Дописать бан к тому, что лежит в хранилище сейчас, а не к кэшу вкладки */
+export function rememberBan(appid: number, nowMs: number): void {
+  recentBansStore.set(withBan(recentBansStore.fresh(), appid, nowMs))
+}
 
 /** Кто вошёл — из ответа /api/session/touch. Гость и мусор — null. */
 export function viewerFrom(body: unknown): string | null {

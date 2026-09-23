@@ -52,13 +52,12 @@ import {
   hasFreshWarm,
   playCacheKey,
   playCacheStore,
-  recentBansStore,
-  recentlyBanned,
+  readRecentBans,
+  rememberBan,
   restoreDeal,
   warmIsFresh,
   warmMarkStore,
   whoAmI,
-  withBan,
 } from '@/lib/playcache'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
@@ -680,7 +679,7 @@ function Player({ say }: { say: (line: string) => void }) {
         viewer,
         nowMs: Date.now(),
         // Бан из соседней вкладки этой записи не видел
-        banned: recentlyBanned(recentBansStore.get(), Date.now()),
+        banned: readRecentBans(Date.now()),
       })
       if (back) {
         applyDeal(back.deal, back)
@@ -1459,7 +1458,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       }
                       // Соседняя вкладка держит свою запись выдачи и про этот
                       // бан не знает — список недавних банов общий на все
-                      recentBansStore.set(withBan(recentBansStore.get(), pick.appid, Date.now()))
+                      rememberBan(pick.appid, Date.now())
                       const rest = picks.filter((p) => p.appid !== pick.appid)
                       if (!rest.length) {
                         router.push('/quiz')

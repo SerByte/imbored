@@ -12,8 +12,9 @@ import {
   parseWarmMark,
   playCacheKey,
   playCacheStore,
-  recentBansStore,
+  readRecentBans,
   recentlyBanned,
+  rememberBan,
   restoreDeal,
   viewerFrom,
   warmIsFresh,
@@ -314,7 +315,7 @@ describe('хранилища', () => {
 
     playCacheStore.set(entry())
     warmMarkStore.set({ viewer: ME, at: NOW })
-    recentBansStore.set(withBan(null, 10, NOW))
+    rememberBan(10, NOW)
     expect(Object.keys(session.data).sort()).toEqual(['imbored.play.deal', 'imbored.play.warm'])
     expect(Object.keys(local.data)).toEqual(['imbored.play.bans'])
 
@@ -322,5 +323,42 @@ describe('хранилища', () => {
     expect(session.data).toEqual({})
     expect(local.data).toEqual({})
     expect(playCacheStore.get()).toBeNull()
+    expect(readRecentBans(NOW).size).toBe(0)
+  })
+
+  /**
+   * Список банов никто не слушает, а страница живёт через «Подробнее» →
+   * «Назад»: модуль тот же, и кэш первого чтения — тоже. Бан соседней вкладки
+   * после него обязан быть виден — иначе игру, убранную навсегда, «Назад»
+   * возвращает на экран, порой героем.
+   */
+  test('бан соседней вкладки виден и после первого чтения в этой', () => {
+    const local = fakeStorage()
+    vi.stubGlobal('localStorage', local.area)
+    expect(readRecentBans(NOW).size).toBe(0)
+
+    // соседняя вкладка пишет в хранилище напрямую, события сюда не приходит
+    local.data['imbored.play.bans'] = JSON.stringify([{ appid: 20, at: NOW }])
+
+    const back = restoreDeal(entry(), {
+      key: KEY,
+      viewer: ME,
+      nowMs: NOW + 1000,
+      banned: readRecentBans(NOW + 1000),
+    })
+    expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 30])
+  })
+
+  test('свой бан дописывается к хранилищу и не стирает бан соседней вкладки', () => {
+    const local = fakeStorage()
+    vi.stubGlobal('localStorage', local.area)
+    expect(readRecentBans(NOW).size).toBe(0)
+
+    local.data['imbored.play.bans'] = JSON.stringify([{ appid: 20, at: NOW }])
+    rememberBan(30, NOW + 1000)
+
+    const stored = parseRecentBans(JSON.parse(local.data['imbored.play.bans']))
+    expect(stored?.map((b) => b.appid)).toEqual([20, 30])
+    expect([...readRecentBans(NOW + 1000)].sort()).toEqual([20, 30])
   })
 })
