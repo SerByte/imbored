@@ -1275,6 +1275,50 @@ export function dealMultiplier(meta: GameMeta, source: CandidateSource, nowSec: 
   return 1 + DEAL_BOOST_MAX * share
 }
 
+/*
+ * Доверие к новинке по объёму и качеству отзывов.
+ *
+ * Скор каталога не знал про отзывы ничего, кроме отсечки хвоста в liveness:
+ * игра с «97% из трёхсот» и игра с «92% из сорока восьми тысяч» при равном
+ * вкусе стояли вровень, а первая с её скидкой — и выше. Но «97% из трёхсот» —
+ * это триста человек, которые её нашли сами, то есть уже её аудитория, а
+ * «92% из сорока восьми тысяч» пережило встречу с людьми, которые её не
+ * искали. Советовать покупку честнее по второму.
+ *
+ * Байесовское среднее — тот же приём, что у взвешенного рейтинга IMDb: доля
+ * положительных сжимается к средней по пулу так, будто у игры есть ещё
+ * CONFIDENCE_PRIOR_REVIEWS отзывов ровно со средней долей. У тонкой игры
+ * своих отзывов мало, и она остаётся у средней, то есть около единицы; у
+ * проверенной её собственная доля перевешивает. Множитель — отклонение от
+ * средней: 1 + (сжатая − средняя)/100, зажатое в [0.85, 1.1]:
+ *
+ *   92% из 48 тыс. → ×1.067   97% из 300 → ×1.016   60% из 5 тыс. → ×0.85
+ *
+ * Средняя 85% и вес 2000 — замер на пуле открытий (5816 живых игр): средняя
+ * доля 84.5%, медиана объёма 2300 отзывов, то есть игра на медиане доверяет
+ * себе чуть больше, чем пулу. Коридор уже, чем у скидки (DEAL_BOOST_MAX
+ * 0.15): доверие — наклон при равном вкусе, а не второй вкус.
+ *
+ * Своего не касается вовсе: купленное уже выбрано, и советуем мы его не по
+ * рейтингу. Без отзывов (демо главной, прогрев без них) — ровно 1.
+ */
+const CONFIDENCE_PRIOR_PERCENT = 85
+const CONFIDENCE_PRIOR_REVIEWS = 2000
+const CONFIDENCE_MIN = 0.85
+const CONFIDENCE_MAX = 1.1
+
+export function confidenceMultiplier(meta: GameMeta, source: CandidateSource): number {
+  if (source !== 'new') return 1
+  const { reviewsTotal: total, reviewsPercent: percent } = meta
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return 1
+  if (typeof percent !== 'number' || !Number.isFinite(percent)) return 1
+  const p = Math.min(100, Math.max(0, percent))
+  const shrunk =
+    (p * total + CONFIDENCE_PRIOR_PERCENT * CONFIDENCE_PRIOR_REVIEWS) / (total + CONFIDENCE_PRIOR_REVIEWS)
+  const mult = 1 + (shrunk - CONFIDENCE_PRIOR_PERCENT) / 100
+  return Math.min(CONFIDENCE_MAX, Math.max(CONFIDENCE_MIN, mult))
+}
+
 /** Реестр множителей живёт в lib/types.ts рядом с типом частей; здесь — ради тех, кто берёт скоринг отсюда */
 export { SCORE_FACTORS }
 
@@ -1376,6 +1420,7 @@ export function scoreCandidates(args: {
       cooldown: pause && pause.mult > 0 ? pause.mult : 1,
       semantics: semanticsMultiplier(meta, mood, tagMood),
       entry: entryMultiplier(meta, source, mood),
+      confidence: confidenceMultiplier(meta, source),
     }
     if (tooLongForShort(meta, mood)) {
       softSemantics.set(meta.appid, semanticsMultiplier(meta, mood, tagMood, { soft: true }))

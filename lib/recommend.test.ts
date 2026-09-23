@@ -9,6 +9,7 @@ import {
   capSource,
   classifyLibraryGame,
   continueView,
+  confidenceMultiplier,
   cooldownOf,
   cosine,
   dealMultiplier,
@@ -1507,6 +1508,66 @@ describe('dealMultiplier', () => {
 
   test('без скидки множитель ровно единица', () => {
     expect(dealMultiplier(meta(1, { Action: 100 }), 'new', NOW)).toBe(1)
+  })
+})
+
+/**
+ * Доверие к новинке. Тонкие отзывы остаются у средней по пулу, проверенные
+ * тянут в свою сторону — и только у покупки: своё советуем не по рейтингу.
+ */
+describe('confidenceMultiplier', () => {
+  const rated = (percent: number, total: number): GameMeta => ({
+    ...meta(1, { Action: 100 }),
+    reviewsPercent: percent,
+    reviewsTotal: total,
+  })
+
+  test('проверенная хорошая выше тонкой отличной: «92% из 48 тыс.» против «97% из 300»', () => {
+    const proven = confidenceMultiplier(rated(92, 48_000), 'new')
+    const thin = confidenceMultiplier(rated(97, 300), 'new')
+    expect(proven).toBeCloseTo(1.0672, 4)
+    expect(thin).toBeCloseTo(1.0157, 4)
+    expect(proven).toBeGreaterThan(thin)
+  })
+
+  test('коридор 0.85…1.1: и провал, и восторг — наклон, а не приговор', () => {
+    expect(confidenceMultiplier(rated(40, 100_000), 'new')).toBe(0.85)
+    expect(confidenceMultiplier(rated(100, 1_000_000), 'new')).toBe(1.1)
+    for (const [p, t] of [[0, 30], [50, 800], [85, 5000], [99, 40]] as const) {
+      const m = confidenceMultiplier(rated(p, t), 'new')
+      expect(m).toBeGreaterThanOrEqual(0.85)
+      expect(m).toBeLessThanOrEqual(1.1)
+    }
+  })
+
+  test('средняя по пулу — ровно единица при любом объёме', () => {
+    expect(confidenceMultiplier(rated(85, 50), 'new')).toBeCloseTo(1, 12)
+    expect(confidenceMultiplier(rated(85, 500_000), 'new')).toBeCloseTo(1, 12)
+  })
+
+  test('своё и игра без отзывов — единица', () => {
+    for (const source of ['untouched', 'backlog', 'comeback', 'familiar'] as const) {
+      expect(confidenceMultiplier(rated(99, 100_000), source)).toBe(1)
+    }
+    expect(confidenceMultiplier(meta(1, { Action: 100 }), 'new')).toBe(1)
+    expect(confidenceMultiplier({ ...meta(1, {}), reviewsTotal: 500 }, 'new')).toBe(1)
+    expect(confidenceMultiplier({ ...meta(1, {}), reviewsTotal: 0, reviewsPercent: 90 }, 'new')).toBe(1)
+  })
+
+  test('в выдаче: при равном вкусе проверенная новинка обгоняет тонкую', () => {
+    const out = scoreCandidates({
+      profile: { Action: 1 },
+      library: [],
+      metaOf: () => undefined,
+      newPool: [
+        { ...rated(97, 300), appid: 10 },
+        { ...rated(92, 48_000), appid: 11 },
+      ],
+      mood: { time: 'medium', vibe: 'chill', social: 'solo' },
+      nowSec: NOW,
+    })
+    expect(out.map((c) => c.appid)).toEqual([11, 10])
+    for (const c of out) expect(scoreOfParts(c.parts!)).toBe(c.score)
   })
 })
 

@@ -3,10 +3,13 @@
  *
  * Отдельный модуль, а не часть lib/gamepage, потому что строку сессии теперь
  * показывают три экрана: карточка игры, герой выдачи /play и колода пати. Два
- * последних — клиентские, а gamepage тянет за собой базу. Модуль чистый: из
- * других модулей только правило режима игры (lib/liveness) и порог уверенности.
+ * последних — клиентские, а gamepage тянет за собой базу. Сюда же — отзывы
+ * короткой строкой для плитки полки на /play. Модуль чистый: из других
+ * модулей только правило режима игры (lib/liveness), склонения и порог
+ * уверенности.
  */
 import { playMode } from './liveness'
+import { plural } from './plural'
 import { SEMANTICS_MIN_CONFIDENCE } from './semantics'
 import type { GameMeta } from './types'
 
@@ -60,4 +63,42 @@ export function sessionTrait(meta: Pick<GameMeta, 'semantics' | 'categories'>): 
   return match
     ? { label: 'Матч', value: `~${minutes} мин` }
     : { label: 'Сессия', value: sessionWords(minutes) }
+}
+
+/** Отзывы короткой строкой для плитки и полной — для скринридера и подсказки */
+export type ReviewsBrief = { short: string; full: string }
+
+/**
+ * Объём коротким числом: «480», «4,8 тыс.», «48 тыс.», «1,2 млн». Плитка полки
+ * узкая, а точность до единицы здесь ничего не решает: «48 тыс.» от «48 213»
+ * отличается только местом в строке. Десятые — только там, где без них
+ * число теряет порядок (4,8 тыс., а не 5).
+ */
+function compactCount(n: number): string {
+  const tenths = (x: number) => String(Math.round(x * 10) / 10).replace('.', ',')
+  if (n < 1000) return String(n)
+  if (n < 10_000) return `${tenths(n / 1000)} тыс.`
+  const thousands = Math.round(n / 1000)
+  if (thousands < 1000) return `${thousands} тыс.`
+  return `${tenths(n / 1_000_000)} млн`
+}
+
+/**
+ * «92% из 48 тыс.» — доверие к покупке на плитке полки: та же пара чисел, что
+ * кольцо на карточке игры (reviewFacts в lib/gamepage), только короче. Полная
+ * фраза — с тем же склонением, что там: «92% из 48 213 отзывов — положительные».
+ * null — отзывов нет или они битые: пустое «0% из 0» хуже молчания.
+ */
+export function reviewsBrief(
+  percent: number | null | undefined,
+  total: number | null | undefined,
+): ReviewsBrief | null {
+  if (typeof percent !== 'number' || !Number.isFinite(percent)) return null
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null
+  const p = Math.round(Math.min(100, Math.max(0, percent)))
+  const n = Math.round(total)
+  return {
+    short: `${p}% из ${compactCount(n)}`,
+    full: `${p}% из ${n.toLocaleString('ru-RU')} ${plural(n, 'отзыва', 'отзывов', 'отзывов')} — положительные`,
+  }
 }

@@ -174,6 +174,9 @@ export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
  *   entry    — цена входа (entryMultiplier, lib/entry): ×0.8 игре, которая по
  *              отзывам раскрывается не сразу, на «меньше часа» и
  *              «расслабиться»; знакомому и без отзывов 1.
+ *   confidence — доверие к покупке по отзывам (confidenceMultiplier):
+ *              байесовское среднее доли положительных, 0.85…1.1; своему и
+ *              игре без отзывов 1.
  *
  * Раньше множитель жил в пяти местах сразу: в типе, в сборке частей, в
  * scoreOfParts, в тесте, который перемножал их по именам, и в бейджах. Забытое
@@ -196,6 +199,7 @@ export const SCORE_FACTORS = [
   'cooldown',
   'semantics',
   'entry',
+  'confidence',
 ] as const
 
 export type ScoreFactor = (typeof SCORE_FACTORS)[number]

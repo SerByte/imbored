@@ -415,6 +415,10 @@ export async function POST(req: Request) {
       // Цена входа (lib/entry) — только у того, что человек ещё не осваивал:
       // у своей наигранной про вход говорит причина, а не отдельная строка
       entry: meta && showsEntry(p.source) ? entryCost(meta) : null,
+      // «92% из 48 тыс.» на плитке полки покупок: те же числа, по которым
+      // confidenceMultiplier решил, насколько новинке верить
+      reviewsPercent: meta?.reviewsPercent ?? null,
+      reviewsTotal: meta?.reviewsTotal ?? null,
       store: meta?.store ?? null,
       storeUrl: meta?.storeUrl ?? null,
       priceFinal: meta ? trustedPrice(meta, now) : null,

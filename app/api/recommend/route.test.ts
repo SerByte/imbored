@@ -146,6 +146,7 @@ describe('/api/recommend: семантика в карточке', () => {
         tags: { Puzzle: 100, Casual: 60 },
         genres: [],
         categories: [2],
+        ...(appid === 620 ? { reviewsTotal: 48_213, reviewsPercent: 92 } : {}),
       })),
       now,
     )
@@ -162,6 +163,8 @@ describe('/api/recommend: семантика в карточке', () => {
         session: { label: string; value: string } | null
         signals: { moodWords: string[] } | null
         entry: { level: string; basis: string } | null
+        reviewsPercent: number | null
+        reviewsTotal: number | null
       }>
     }
     const byId = new Map(body.picks.map((p) => [p.appid, p]))
@@ -174,5 +177,8 @@ describe('/api/recommend: семантика в карточке', () => {
     // Casual по тегам сказал бы «низкий»; без неё говорит жанр
     expect(byId.get(620)?.entry).toBeNull()
     expect(byId.get(413150)?.entry).toEqual({ level: 'low', hours: null, basis: 'tags' })
+    // Отзывы — для «92% из 48 тыс.» на плитке полки
+    expect(byId.get(620)).toMatchObject({ reviewsPercent: 92, reviewsTotal: 48_213 })
+    expect(byId.get(413150)).toMatchObject({ reviewsPercent: null, reviewsTotal: null })
   })
 })

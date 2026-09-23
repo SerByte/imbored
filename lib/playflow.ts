@@ -66,6 +66,12 @@ export type PlayPick = {
    * сказать нечего; нет поля — выдача из кэша устройства, сохранённая до него.
    */
   entry?: EntryCost | null
+  /**
+   * Доля положительных отзывов и их число — для «92% из 48 тыс.» на плитке
+   * полки (reviewsBrief). Необязательно по той же причине, что entry.
+   */
+  reviewsPercent?: number | null
+  reviewsTotal?: number | null
   store: string | null
   storeUrl: string | null
   priceFinal: number | null

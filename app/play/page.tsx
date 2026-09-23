@@ -24,6 +24,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
+import { reviewsBrief } from '@/lib/gametraits'
 import { rememberMood } from '@/lib/lastmood'
 import {
   dueLaunchNow,
@@ -1815,48 +1816,59 @@ function Player({ say }: { say: (line: string) => void }) {
                   на будущее.
                 </p>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {discoveries.map((p, i) => (
-                    <motion.a
-                      key={p.appid}
-                      href={p.storeUrl ?? `https://store.steampowered.com/app/${p.appid}/`}
-                      target="_blank"
-                      rel="noreferrer"
-                      initial={{ opacity: 0, y: 12 }}
-                      whileInView={{ opacity: 1, y: 0 }}
-                      viewport={{ once: true, margin: '-40px' }}
-                      transition={{ duration: 0.45, ease: EASE, delay: i * 0.05 }}
-                      onClick={() => void sendFeedback(p.appid, 'opened')}
-                      className="glass glass-hover rounded-[14px] overflow-hidden text-left"
-                    >
-                      <div className="relative">
-                        <GameArt
-                          appid={p.appid}
-                          name={p.name}
-                          headerImage={p.headerImage}
-                          art={p.art}
-                          sizes="(min-width: 768px) 33vw, 50vw"
-                          className="w-full aspect-[460/215] object-cover"
-                        />
-                        <DiscountCorner discount={p.discount} />
-                      </div>
-                      <div className="p-3">
-                        <div className="text-sm font-semibold leading-tight">{p.name}</div>
-                        <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
-                          <span className="text-dim truncate">
-                            {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
-                          </span>
-                          <PriceTag
-                            priceFinal={p.priceFinal}
-                            discount={p.discount}
-                            isFree={p.isFree}
-                            showPercent={false}
-                            className="shrink-0"
+                  {discoveries.map((p, i) => {
+                    // Отзывы — ответ на «а стоит ли покупать», поэтому только на
+                    // полке покупок: у своей игры этот вопрос уже решён
+                    const reviews = reviewsBrief(p.reviewsPercent, p.reviewsTotal)
+                    return (
+                      <motion.a
+                        key={p.appid}
+                        href={p.storeUrl ?? `https://store.steampowered.com/app/${p.appid}/`}
+                        target="_blank"
+                        rel="noreferrer"
+                        initial={{ opacity: 0, y: 12 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true, margin: '-40px' }}
+                        transition={{ duration: 0.45, ease: EASE, delay: i * 0.05 }}
+                        onClick={() => void sendFeedback(p.appid, 'opened')}
+                        className="glass glass-hover rounded-[14px] overflow-hidden text-left"
+                      >
+                        <div className="relative">
+                          <GameArt
+                            appid={p.appid}
+                            name={p.name}
+                            headerImage={p.headerImage}
+                            art={p.art}
+                            sizes="(min-width: 768px) 33vw, 50vw"
+                            className="w-full aspect-[460/215] object-cover"
                           />
+                          <DiscountCorner discount={p.discount} />
                         </div>
-                        <DiscountEnds discount={p.discount} className="mt-1 block" />
-                      </div>
-                    </motion.a>
-                  ))}
+                        <div className="p-3">
+                          <div className="text-sm font-semibold leading-tight">{p.name}</div>
+                          <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
+                            <span className="text-dim truncate">
+                              {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
+                            </span>
+                            <PriceTag
+                              priceFinal={p.priceFinal}
+                              discount={p.discount}
+                              isFree={p.isFree}
+                              showPercent={false}
+                              className="shrink-0"
+                            />
+                          </div>
+                          <DiscountEnds discount={p.discount} className="mt-1 block" />
+                          {reviews && (
+                            <span className="text-[11px] text-faint mt-1 block" title={reviews.full}>
+                              <span aria-hidden>{reviews.short}</span>
+                              <span className="sr-only">{reviews.full}</span>
+                            </span>
+                          )}
+                        </div>
+                      </motion.a>
+                    )
+                  })}
                 </div>
               </div>
             )}
