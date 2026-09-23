@@ -161,7 +161,8 @@ export function timeFit(tags: Set<string>, time: Mood['time']): number {
 
 /**
  * Косинус переехал в lib/tagweight.ts вместе с весом редкости; реэкспорт —
- * ради compat, group и тестов, которые берут его отсюда.
+ * ради тестов, которые берут его отсюда. Новому коду — weightedCosineTo оттуда
+ * же: сырой косинус остался только её частным случаем без карты тегов.
  */
 export { cosine }
 
@@ -760,16 +761,26 @@ export function continueView(g: LibraryGame): ContinueGame {
  * Игры без метаданных уезжают в конец, а не выбрасываются: мета приезжает
  * прогревом, и у части библиотеки её может не быть вовсе. Сортировка
  * стабильная, поэтому при равном вкусе порядок не скачет между запросами.
+ *
+ * tagWeight — та же мера, что у подбора (weightedCosineTo): с картой тегов
+ * совпадение по Automation весит больше совпадения по Indie. Без неё полка
+ * «Не распакованы» на /library и «начни с этой» на портрете ранжировали по
+ * частотным тегам, а /play — по редкости, и одна и та же пара «человек — игра»
+ * стояла на двух экранах в разном порядке. null — сырой косинус, до бита
+ * прежний.
  */
 export function rankByTaste(
   games: LibraryGame[],
   metaOf: (appid: number) => GameMeta | undefined,
   profile: Record<string, number>,
+  tagWeight: TagWeight | null = null,
 ): LibraryGame[] {
+  // Сторона профиля готовится один раз, а не на каждую игру
+  const tasteOf = weightedCosineTo(profile, tagWeight)
   return games
     .map((g) => {
       const meta = metaOf(g.appid)
-      return { g, score: meta ? cosine(profile, normalizedTags(meta)) : -1 }
+      return { g, score: meta ? tasteOf(normalizedTags(meta)) : -1 }
     })
     .sort((a, b) => b.score - a.score)
     .map((x) => x.g)

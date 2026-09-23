@@ -1544,6 +1544,59 @@ describe('rankByTaste', () => {
     )
     expect(out.map((g) => g.appid)).toEqual([8, 7])
   })
+
+  /*
+   * Та же пара «человек — игра», что в «вес редкости во вкусе» у подбора:
+   * частотный костяк профиля весит больше всего, и сырой косинус отдаёт первое
+   * место игре, у которой кроме костяка ничего нет.
+   */
+  describe('одна мера с подбором', () => {
+    const stats = new Map<string, number>([
+      ['Indie', 4000],
+      ['Singleplayer', 3025],
+      ['Action', 2335],
+      ['Automation', 100],
+    ])
+    const profile = { Singleplayer: 10, Indie: 8, Automation: 2 }
+    const pair = new Map([
+      [1, meta(1, { Automation: 100 })],
+      [2, meta(2, { Singleplayer: 100 })],
+    ])
+    const games = [game({ appid: 2 }), game({ appid: 1 })]
+    const order = (w?: ReturnType<typeof tagWeightFrom>) =>
+      rankByTaste(games, (id) => pair.get(id), profile, w).map((g) => g.appid)
+
+    test('с картой тегов редкое совпадение обходит частотное — как на /play', () => {
+      expect(order()).toEqual([2, 1])
+      expect(order(tagWeightFrom(stats))).toEqual([1, 2])
+      // Тот же порядок, что у scoreCandidates на тех же данных
+      const scored = scoreCandidates({
+        profile,
+        library: games,
+        metaOf: (id) => pair.get(id),
+        newPool: [],
+        mood: { time: 'medium', vibe: 'chill', social: 'solo' },
+        nowSec: NOW,
+        tagWeight: tagWeightFrom(stats),
+      })
+      const byTaste = [...scored].sort((a, b) => b.parts!.taste - a.parts!.taste)
+      expect(byTaste.map((c) => c.appid)).toEqual(order(tagWeightFrom(stats)))
+    })
+
+    test('tagWeight: null — порядок ровно прежний, сырой косинус', () => {
+      expect(order(null)).toEqual(order())
+    })
+
+    test('игра без метаданных и с картой тегов уезжает в конец', () => {
+      const out = rankByTaste(
+        [game({ appid: 99 }), game({ appid: 1 })],
+        (id) => pair.get(id),
+        profile,
+        tagWeightFrom(stats),
+      )
+      expect(out.map((g) => g.appid)).toEqual([1, 99])
+    })
+  })
 })
 
 describe('applyFocus', () => {

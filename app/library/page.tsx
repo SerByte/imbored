@@ -12,6 +12,7 @@ import {
   getGamesMetaLite,
   getLatestSnapshot,
   listBanned,
+  loadTagStats,
 } from '@/lib/db'
 import {
   buildLibraryView,
@@ -30,6 +31,7 @@ import {
 import type { LibraryTileState } from '@/lib/recommend'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
+import { tagWeightFrom } from '@/lib/tagweight'
 import { bounceTo, reconnectHref } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
@@ -67,6 +69,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   if (!steamid) redirect(bounceTo('/library'))
 
   const db = await getDb()
+  const query = await props.searchParams
+  const filter = parseLibraryFilter(query.state)
   /*
    * Независимые чтения — одним заходом, а не лесенкой.
    *
@@ -77,7 +81,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * обход стоит около полутора сотен миллисекунд.
    *
    * Цена размена: у человека с сессией, но без снапшота (редирект строкой
-   * ниже) три запроса уходят впустую. Это редкий случай — снапшот пишется тем
+   * ниже) остальные запросы уходят впустую. Это редкий случай — снапшот пишется тем
    * же действием, что заводит сессию, — и он молчаливый, в отличие от
    * задержки, которую видят все.
    *
@@ -88,18 +92,21 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * шестьдесят плиток, bannedAppids — все до одного, для отсева полки
    * забытого. Шестьдесят первая скрытая игра иначе вернулась бы туда под
    * видом «ты забыл, что она у тебя есть».
+   *
+   * Карта тегов — только полке «Не распакованы»: из всей страницы по вкусу
+   * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
+   * остальных полок незачем.
    */
-  const [snapshot, banned, bannedAll, stats] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats] = await Promise.all([
     getLatestSnapshot(db, steamid),
     listBanned(db, steamid),
     bannedAppids(db, steamid),
     feedbackStats(db, steamid),
+    filter === 'untouched' ? loadTagStats(db) : null,
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
   const now = nowSec()
-  const query = await props.searchParams
-  const filter = parseLibraryFilter(query.state)
   // Сводка, деньги и прогрев считаются по ВСЕЙ библиотеке, а не по выбранной
   // полке: иначе числа в шапке прыгали бы вслед за фильтром
   const games = snapshot.games
@@ -133,7 +140,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
 
   const metaOf = (id: number) => metas.get(id)
-  const view = buildLibraryView(games, metaOf, filter, now)
+  // Та же мера вкуса, что у /play: без карты тегов — сырой косинус
+  const view = buildLibraryView(games, metaOf, filter, now, tagStats ? tagWeightFrom(tagStats) : null)
   // Два разных числа: в строке-сводке — «ни разу не запускал» (ноль минут), в
   // карточке денег — весь бэклог до двух часов, как и раньше. Деньги считает
   // backlogValue по своему определению. Сводка берётся из счётчиков чипсов, а

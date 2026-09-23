@@ -19,6 +19,7 @@ import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildTagProfile } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { tagWeightFrom } from '@/lib/tagweight'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const DECK_SIZE = 20
@@ -141,6 +142,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     // Общие игры участников идут не из пула, а из библиотек — их баны
     // отсеиваются уже здесь
     banned,
+    // Та же мера вкуса, что у /play: карта тегов уже прочитана ради пула
+    tagWeight: tagWeightFrom(tagStats),
   })
 
   // Колода собирается из библиотек участников, а они офлайн-фильтры каталога

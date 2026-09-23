@@ -165,6 +165,10 @@ export function weightedSide(v: Record<string, number>, w: TagWeight | null): Co
  * чего вес редкости и защищает. Пара «человек — человек» (tasteCosine в
  * lib/compat.ts) откатывается по-своему: там сравниваются двое, а не
  * ранжируется список.
+ *
+ * Это единая мера вкуса для всего, что ранжирует список: подбор и якоря,
+ * полка «Не распакованы» и «начни с этой» (rankByTaste), колода пати
+ * (buildGroupDeck). Для пары «игра — игра» — она же, а не tasteCosine.
  */
 export function weightedCosineTo(
   a: Record<string, number>,

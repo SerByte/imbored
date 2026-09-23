@@ -11,6 +11,7 @@ import {
   pickForgotten,
   wallState,
 } from './forgotten'
+import { tagWeightFrom } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
@@ -328,6 +329,29 @@ describe('buildLibraryView', () => {
     metas.set(9, meta(9, { tags: { Action: 100 } }))
     const view = buildLibraryView(withTaste, (id) => metas.get(id), 'untouched', NOW)
     expect(view.games.map((g) => g.appid)).toEqual([2, 1])
+  })
+
+  test('полка «ни разу» меряет вкус той же мерой, что /play: редкое совпадение выше', () => {
+    const stats = new Map<string, number>([
+      ['Indie', 4000],
+      ['Singleplayer', 3025],
+      ['Automation', 100],
+    ])
+    const metas = new Map([
+      [1, meta(1, { tags: { Automation: 100 } })],
+      [2, meta(2, { tags: { Singleplayer: 100 } })],
+      // вкус: частотный костяк весит больше редкого Automation
+      [9, meta(9, { tags: { Singleplayer: 100, Indie: 80, Automation: 20 } })],
+    ])
+    const lib = [
+      game({ appid: 2 }),
+      game({ appid: 1 }),
+      game({ appid: 9, playtimeForever: 6000, lastPlayed: NOW - DAY }),
+    ]
+    const ids = (w: ReturnType<typeof tagWeightFrom>) =>
+      buildLibraryView(lib, (id) => metas.get(id), 'untouched', NOW, w).games.map((g) => g.appid)
+    expect(ids(null)).toEqual([2, 1])
+    expect(ids(tagWeightFrom(stats))).toEqual([1, 2])
   })
 
   test('игра без метаданных на полке «ни разу» остаётся, но в конце', () => {

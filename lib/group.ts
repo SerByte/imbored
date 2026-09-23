@@ -1,5 +1,6 @@
 import { editionKey } from './editions'
-import { buildTagProfile, cosine, isMultiplayerMeta, normalizedTags } from './recommend'
+import { buildTagProfile, isMultiplayerMeta, normalizedTags } from './recommend'
+import { weightedCosineTo, type TagWeight } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
 
 export type GroupMember = {
@@ -36,6 +37,10 @@ export type GroupCard = {
  * banned — «Больше не показывать» хоть кого-то из участников (bannedAppidsOf).
  * Отсев до выбора изданий, а не после: иначе забаненное издание занимало бы
  * ключ, и живое второе издание той же игры в колоду уже не попадало бы.
+ *
+ * tagWeight — вес редкости, та же мера вкуса, что у /play (weightedCosineTo):
+ * на сыром косинусе колода пати ранжировала по Multiplayer и Action, которые
+ * есть у половины каталога. null — сырой косинус, до бита прежний.
  */
 export function buildGroupDeck(args: {
   members: GroupMember[]
@@ -43,8 +48,9 @@ export function buildGroupDeck(args: {
   extraPool: GameMeta[]
   limit: number
   banned?: ReadonlySet<number>
+  tagWeight?: TagWeight | null
 }): GroupCard[] {
-  const { members, metaOf, extraPool, limit, banned } = args
+  const { members, metaOf, extraPool, limit, banned, tagWeight = null } = args
   if (!members.length) return []
 
   // суммарный вкус пати
@@ -54,6 +60,8 @@ export function buildGroupDeck(args: {
       combined[tag] = (combined[tag] ?? 0) + w
     }
   }
+  // Сторона общего вкуса готовится один раз, а не на каждую карту
+  const tasteOf = weightedCosineTo(combined, tagWeight)
 
   const owners = new Map<number, Set<string>>()
   for (const m of members) {
@@ -79,7 +87,7 @@ export function buildGroupDeck(args: {
       name: meta.name,
       ownedByAll: missingFor.length === 0,
       missingFor,
-      score: cosine(combined, normalizedTags(meta)),
+      score: tasteOf(normalizedTags(meta)),
       // «Бесплатно» сильнее цены — тот же порядок, что у PriceTag и разметки.
       // Колода пати писала «Нет у: Дима · $15» у бесплатной CS2: у колоды своя
       // строка цены, и isFree до неё просто не доезжал.

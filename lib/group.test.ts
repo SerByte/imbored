@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { buildGroupDeck } from './group'
+import { buildTagProfile, normalizedTags } from './recommend'
+import { cosine, tagWeightFrom } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
 
 const MP = [1, 9, 38]
@@ -148,6 +150,49 @@ describe('buildGroupDeck', () => {
     })
     expect(deck.map((c) => c.appid)).toContain(1)
     expect(deck.map((c) => c.appid)).not.toContain(11)
+  })
+
+  describe('мера вкуса', () => {
+    const stats = new Map<string, number>([
+      ['Multiplayer', 4000],
+      ['Co-op', 3000],
+      ['Mining', 100],
+      ['FPS', 800],
+      ['Party', 900],
+      ['MOBA', 300],
+      ['Competitive', 1200],
+    ])
+
+    test('без карты тегов скор — сырой косинус, до бита прежний', () => {
+      const combined: Record<string, number> = {}
+      for (const m of MEMBERS) {
+        for (const [t, w] of Object.entries(buildTagProfile(m.library, metaOf))) {
+          combined[t] = (combined[t] ?? 0) + w
+        }
+      }
+      for (const tagWeight of [undefined, null]) {
+        const deck = buildGroupDeck({ members: MEMBERS, metaOf, extraPool: [], limit: 10, tagWeight })
+        expect(deck.length).toBeGreaterThan(0)
+        for (const c of deck) {
+          expect(c.score).toBe(cosine(combined, normalizedTags(metaOf(c.appid)!)))
+        }
+      }
+    })
+
+    test('с картой тегов редкое совпадение вкуса пати весит больше частотного', () => {
+      // Вкус пати: частотный Co-op у всех и редкий Mining у Ани. Карта из
+      // пула без Mining (Co-op + Party) против карты с Mining
+      const pool = [
+        meta(20, { 'Co-op': 100, Party: 100 }),
+        meta(21, { Mining: 100, MOBA: 30 }),
+      ]
+      const score = (w: ReturnType<typeof tagWeightFrom>, appid: number) =>
+        buildGroupDeck({ members: MEMBERS, metaOf, extraPool: pool, limit: 10, tagWeight: w }).find(
+          (c) => c.appid === appid,
+        )!.score
+      expect(score(null, 20)).toBeGreaterThan(score(null, 21))
+      expect(score(tagWeightFrom(stats), 21)).toBeGreaterThan(score(tagWeightFrom(stats), 20))
+    })
   })
 
   describe('«Больше не показывать» участников', () => {

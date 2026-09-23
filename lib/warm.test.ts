@@ -62,6 +62,18 @@ describe('buildWarmPlan', () => {
     expect(buildWarmPlan([], [])).toEqual([])
   })
 
+  test('нераспакованные сверх потолка — свежие первыми, а не самые старые', () => {
+    // 1000 наигранных и 1000 нераспакованных идут через одну: под потолок в
+    // 1200 влезают 600 нераспакованных, и это обязаны быть самые большие appid
+    const plan = buildWarmPlan(bigLibrary(1000, 1000), [])
+    const sealed = plan.filter((id) => id >= 10_000)
+    expect(sealed).toHaveLength(600)
+    expect(Math.min(...sealed)).toBe(10_400)
+    expect(Math.max(...sealed)).toBe(10_999)
+    // и порядок внутри очереди — от новых к старым
+    expect(sealed).toEqual([...sealed].sort((a, b) => b - a))
+  })
+
   test('дубликаты между библиотекой и пулом не размножаются', () => {
     const plan = buildWarmPlan([played(1, 10)], [1, 2])
     expect(plan).toEqual([...new Set(plan)])

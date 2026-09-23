@@ -20,6 +20,7 @@ import {
   getLatestSnapshot,
   getPersonaName,
   getUserPortrait,
+  loadTagStats,
   setUserPortrait,
 } from '@/lib/db'
 import { claudePortraitText } from '@/lib/llm'
@@ -40,6 +41,7 @@ import {
 } from '@/lib/portraitvoice'
 import { appBaseUrl, currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent } from '@/lib/stats'
+import { tagWeightFrom } from '@/lib/tagweight'
 import type { LibraryGame } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -209,15 +211,19 @@ async function loadModel(
       })
       if (!gate.ok) throw new ColdBuildLimited()
       // Портрет строится по библиотеке игрока — весь каталог для этого не
-      // нужен, и блобы тоже: скриншотов на странице нет. Баны владельца —
-      // здесь же, внутри кэша: страница публичная, и читать их на каждый
-      // заход значило бы платить всей его историей фидбека за каждый просмотр
-      const [metas, banned] = await Promise.all([
+      // нужен, и блобы тоже: скриншотов на странице нет. Баны владельца и
+      // карта тегов — здесь же, внутри кэша: страница публичная, и читать их
+      // на каждый заход значило бы платить всей историей фидбека владельца и
+      // всей таблицей тегов за каждый просмотр чужой ссылки
+      const [metas, banned, tagStats] = await Promise.all([
         getGamesMetaLite(db, snapshot.games.map((g) => g.appid)),
         bannedAppids(db, steamid),
+        loadTagStats(db),
       ])
       return buildPortraitModel(snapshot.games, (id) => metas.get(id), now, MOSAIC_PLAN, {
         banned,
+        // «Начни с этой» — той же мерой вкуса, что /play
+        tagWeight: tagWeightFrom(tagStats),
       })
     },
     ['portrait-model:v2', steamid, String(snapshot.takenAt)],

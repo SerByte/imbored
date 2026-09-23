@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import { tagWeightFrom } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
 import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from './wrapped'
 
@@ -328,6 +329,23 @@ describe('pickStarter', () => {
     const games = [lib(1, 300), lib(2, 0), lib(3, 0)]
     expect(pickStarter(games, (id) => metas.get(id), { banned: new Set([2]) })?.appid).toBe(3)
     expect(pickStarter(games, (id) => metas.get(id), { banned: new Set([2, 3]) })).toBeNull()
+  })
+
+  test('стартовая меряется той же мерой вкуса, что /play: с картой тегов редкое выше', () => {
+    const stats = new Map<string, number>([
+      ['Indie', 4000],
+      ['Singleplayer', 3025],
+      ['Automation', 100],
+    ])
+    const metas = new Map<number, GameMeta>([
+      [1, meta(1, { Singleplayer: 100, Indie: 80, Automation: 20 })], // вкус
+      [2, meta(2, { Singleplayer: 100 })],
+      [3, meta(3, { Automation: 100 })],
+    ])
+    const games = [lib(1, 300), lib(2, 0), lib(3, 0)]
+    expect(pickStarter(games, (id) => metas.get(id))?.appid).toBe(2)
+    expect(pickStarter(games, (id) => metas.get(id), { tagWeight: null })?.appid).toBe(2)
+    expect(pickStarter(games, (id) => metas.get(id), { tagWeight: tagWeightFrom(stats) })?.appid).toBe(3)
   })
 
   test('при равном вкусе стартовой остаётся первая по порядку — выдача не скачет', () => {

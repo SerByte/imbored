@@ -9,6 +9,7 @@ import {
   type LibraryTileState,
 } from './recommend'
 import { hasOldMarker } from './series'
+import type { TagWeight } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
 
 type MetaOf = (appid: number) => GameMeta | undefined
@@ -258,11 +259,16 @@ export type LibraryView = {
   counts: Record<LibraryFilter, number>
 }
 
+/**
+ * tagWeight — вес редкости для полки «Не распакованы» (rankByTaste): та же
+ * мера, что у /play. Без неё — сырой косинус, как раньше.
+ */
 export function buildLibraryView(
   library: LibraryGame[],
   metaOf: MetaOf,
   filter: LibraryFilter,
   nowSec: number,
+  tagWeight: TagWeight | null = null,
 ): LibraryView {
   const counts: Record<LibraryFilter, number> = {
     all: library.length,
@@ -286,7 +292,7 @@ export function buildLibraryView(
   // Остальные полки остаются на часах вниз, как было.
   const games =
     filter === 'untouched'
-      ? rankByTaste(picked, metaOf, buildTagProfile(library, metaOf))
+      ? rankByTaste(picked, metaOf, buildTagProfile(library, metaOf), tagWeight)
       : [...picked].sort((a, b) => b.playtimeForever - a.playtimeForever)
 
   return { games, counts }

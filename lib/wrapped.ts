@@ -7,6 +7,7 @@ import {
   normalizedTags,
   rankByTaste,
 } from './recommend'
+import type { TagWeight } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
 
 /**
@@ -238,11 +239,13 @@ export function archetypeEvidence(
  * тоже — в бэклоге она лежит честно, но начинать с неё не с кем. И то, что
  * владелец попросил больше не показывать (banned), тоже: совет «начни с этой»
  * про скрытую игру — тот же совет, от которого он уже отказался на /play.
+ *
+ * tagWeight — вес редкости, та же мера вкуса, что у /play (rankByTaste).
  */
 export function pickStarter(
   library: LibraryGame[],
   metaOf: MetaOf,
-  opts: { banned?: ReadonlySet<number> } = {},
+  opts: { banned?: ReadonlySet<number>; tagWeight?: TagWeight | null } = {},
 ): LibraryGame | null {
   // Фильтр по metaOf обязателен: rankByTaste игры без меты не выбрасывает, а
   // лишь опускает в конец, и без фильтра стартовой могла бы стать игра без тегов
@@ -250,5 +253,8 @@ export function pickStarter(
     const meta = metaOf(g.appid)
     return isUnplayed(g) && meta !== undefined && !opts.banned?.has(g.appid) && !isJunk(g, meta)
   })
-  return rankByTaste(candidates, metaOf, buildTagProfile(library, metaOf))[0] ?? null
+  return (
+    rankByTaste(candidates, metaOf, buildTagProfile(library, metaOf), opts.tagWeight ?? null)[0] ??
+    null
+  )
 }
