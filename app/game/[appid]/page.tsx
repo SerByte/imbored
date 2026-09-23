@@ -241,6 +241,20 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           sizes повторяет обложку дословно, чтобы браузер выбрал тот же
           файл и взял его из кэша. Не «поменьше», а «тот же самый»: любой
           другой размер — это вторая загрузка вместо нуля байт.
+
+          И eager, как у обложки, — по той же причине. Подложка шире
+          обложки, поэтому LCP страницы — она (замер на /game/730: IMG
+          blur-3xl, а не обложка 380×178). Ленивая, она ждала раскладки,
+          хотя её файл к тому моменту уже лежал в кэше: браузер откладывал
+          не загрузку, а показ. Тот же URL делает eager бесплатным — байт
+          это не добавляет ни одного.
+
+          fetchPriority="high" — у обеих картинок героя, и не для красоты.
+          React выносит неленивые картинки в <link rel="preload"> и склеивает
+          одинаковые по srcSet и sizes в один, а приоритет берёт у ПЕРВОЙ
+          встреченной. Первой в разметке стоит подложка: без приоритета у неё
+          preload уходил бы в общую очередь, сколько ни ставь его обложке.
+          Сторожит lib/herolcp.test.ts.
         */}
         <GameArt
           appid={meta.appid}
@@ -248,6 +262,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           headerImage={meta.headerImage ?? null}
           art={meta.art}
           sizes="(min-width: 1024px) 380px, 100vw"
+          eager
+          fetchPriority="high"
           fallback={null}
           className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
         />
@@ -270,6 +286,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           Порог в sizes у обеих картинок героя сдвинут вместе с разрезом: между
           768 и 1024 арт теперь во всю ширину, и подсказка «380px» дала бы
           браузеру выбрать файл вдвое мельче слота.
+
+          Приоритет у обложки тот же, что у подложки выше, и должен
+          совпадать: запрос у них один, и ни одна из двух не имеет права
+          сказать браузеру «можно позже».
         */}
         <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-10 grid lg:grid-cols-[380px_1fr] gap-8 items-start">
           <GameArt
@@ -279,6 +299,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             art={meta.art}
             sizes="(min-width: 1024px) 380px, 100vw"
             eager
+            fetchPriority="high"
             className="w-full aspect-[460/215] object-cover rounded-[20px] border border-edge anim-reveal"
           />
           <div className="flex flex-col gap-4 anim-rise">

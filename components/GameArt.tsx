@@ -24,6 +24,7 @@ export function GameArt({
   sizes,
   fallback,
   eager = false,
+  fetchPriority,
   fade = false,
 }: {
   appid: number
@@ -41,6 +42,13 @@ export function GameArt({
    */
   fallback?: React.ReactNode
   eager?: boolean
+  /**
+   * Приоритет загрузки — только для той картинки, что станет LCP экрана.
+   * eager лишь отменяет ленивую загрузку, а в очереди браузера картинка
+   * по-прежнему стоит в общем ряду со шрифтами и скриптами; 'high' ставит её
+   * первой, и React переносит тот же приоритет в свой preload.
+   */
+  fetchPriority?: 'high' | 'low' | 'auto'
   /**
    * Проявление по факту загрузки (opacity через CSS img[data-art-fade]).
    * Кэшированная картинка получает data-loaded сразу — уже доступный контент
@@ -88,6 +96,7 @@ export function GameArt({
       sizes={srcSet ? (sizes ?? (variant === 'hero' ? '100vw' : undefined)) : undefined}
       alt=""
       loading={eager ? 'eager' : 'lazy'}
+      fetchPriority={fetchPriority}
       onError={() => setTried((t) => ({ appid, idx: t.idx + 1 }))}
       onLoad={fade ? () => setLoaded(true) : undefined}
       data-art-fade={fade ? '' : undefined}
