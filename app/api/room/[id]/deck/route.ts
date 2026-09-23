@@ -7,10 +7,10 @@ import {
   getGamesMeta,
   getLatestSnapshot,
   getRoom,
+  issueRoomDeck,
   loadTagStats,
   myVotedAppids,
   roomMembers,
-  setRoomDeckSize,
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { buildGroupDeck } from '@/lib/group'
@@ -139,7 +139,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   // ПОСЛЕ filterActual. Раньше здесь стоял deck.length, и карты, выброшенные
   // фильтром актуальности, засчитывались в отсвайпанные: свежий участник с
   // нулём голосов открывал колоду на «5/20».
-  await setRoomDeckSize(db, id, actual.length)
+  //
+  // Те же карты записываются в room_deck: голос принимается только за то,
+  // что комнате раздали (castDeckVote в /vote).
+  await issueRoomDeck(db, id, actual.map((c) => c.appid))
 
   // Цены тех карт, что реально уедут в колоду: половина из них не куплена
   // никем из пати, и «Нет у: Дима · $60» без скидки — устаревший ценник.

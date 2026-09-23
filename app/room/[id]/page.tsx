@@ -586,6 +586,16 @@ export default function RoomPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ appid: card.appid, vote: yes }),
       })
+      // 409 — голос не примут и со второй попытки: комната уже договорилась
+      // (matched) или карты нет среди розданных (notindeck). Возвращать такую
+      // карточку в колоду значит предложить жест, который снова откажет.
+      // Карта уходит, а опрос сразу же узнаёт, что в комнате: при матче это
+      // и есть церемония.
+      if (res.status === 409) {
+        setVoteFailed(false)
+        void refresh()
+        return
+      }
       // Проверка res.ok нужна и сама по себе: без неё любая ошибка давала
       // data.matched === undefined, а undefined !== null истинно — и каждый
       // сбой дёргал лишний опрос.

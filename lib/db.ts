@@ -154,6 +154,25 @@ CREATE TABLE IF NOT EXISTS room_votes (
   PRIMARY KEY (room_id, steamid, appid)
 );
 /*
+ * Карты, которые комнате РАЗДАВАЛИ, — объединение всех колод, выданных
+ * /api/room/[id]/deck за её жизнь.
+ *
+ * Голос принимается только за игру отсюда (castDeckVote). Без этого голос был
+ * записью с любым appid: участник публичной комнаты (вход бесплатный, через
+ * демо) мог набить room_votes произвольными играми без края, а каждый опрос
+ * комнаты у каждого участника перечитывал бы их все в roomVoteCounts.
+ *
+ * Объединение, а не последняя колода: она пересобирается при входе нового
+ * участника, и карта, которую кто-то уже держит в руке, из новой колоды может
+ * выпасть. Голос за неё честный — отвергать его значит вернуть человеку
+ * карточку, которую он уже свайпнул.
+ */
+CREATE TABLE IF NOT EXISTS room_deck (
+  room_id TEXT NOT NULL,
+  appid INTEGER NOT NULL,
+  PRIMARY KEY (room_id, appid)
+) WITHOUT ROWID;
+/*
  * Окна ограничителя частоты (lib/ratelimit.ts). Ключ уже содержит номер окна,
  * поэтому индекс не нужен: любое чтение — точное попадание по первичному
  * ключу. expires_at существует только ради подметания из крона.
@@ -912,6 +931,31 @@ export async function setRoomDeckSize(db: Db, roomId: string, size: number): Pro
   })
 }
 
+/**
+ * Выдать колоду: размер — в rooms, сами карты — в room_deck.
+ *
+ * Одной пачкой, и это не экономия ради экономии. Правило перехода в
+ * castDeckVote держится на том, что deck_size и строки room_deck появляются
+ * вместе: «размер есть, а строк нет» значит только «колоду выдал код, который
+ * ещё не знал о room_deck». Раздельные записи открыли бы то же состояние
+ * любому отказу между ними — и голос снова принимался бы за что угодно.
+ *
+ * INSERT OR IGNORE из json_each — одна инструкция на всю колоду, а не строка
+ * на карту: колода растёт на двадцать с каждым раундом.
+ */
+export async function issueRoomDeck(db: Db, roomId: string, appids: number[]): Promise<void> {
+  await db.batch(
+    [
+      { sql: 'UPDATE rooms SET deck_size = ? WHERE id = ?', args: [appids.length, roomId] },
+      {
+        sql: 'INSERT OR IGNORE INTO room_deck (room_id, appid) SELECT ?, value FROM json_each(?)',
+        args: [roomId, JSON.stringify(appids)],
+      },
+    ],
+    'write',
+  )
+}
+
 export async function joinRoom(
   db: Db,
   roomId: string,
@@ -1030,6 +1074,37 @@ export async function castRoomVote(
     sql: 'INSERT OR REPLACE INTO room_votes (room_id, steamid, appid, vote, created_at) VALUES (?, ?, ?, ?, ?)',
     args: [roomId, steamid, appid, vote, nowSec],
   })
+}
+
+/**
+ * Голос из свайпа: пишется, только если эту карту комнате раздавали
+ * (room_deck). false — голос не записан.
+ *
+ * Проверка и запись — одной инструкцией, а не SELECT перед INSERT: это самая
+ * частая запись продукта, и лишний обход до Turso на каждом свайпе ощущался
+ * бы задержкой под пальцем.
+ *
+ * legacy — правило перехода для комнат, колоду которым выдал код до room_deck:
+ * у них deck_size уже стоит, а строк нет, и их участники свайпают карты,
+ * которых здесь не будет никогда. Для такой комнаты, и только пока у неё нет
+ * ни одной строки, голос принимается по-старому. Первая же выдача колоды
+ * новым кодом запишет строки, и комната перейдёт на строгое правило сама.
+ * Новой комнате legacy не светит: issueRoomDeck пишет размер и строки вместе,
+ * так что «размер есть, строк нет» у неё не бывает.
+ */
+export async function castDeckVote(
+  db: Db,
+  v: { roomId: string; steamid: string; appid: number; vote: 0 | 1; legacy: boolean },
+  nowSec: number,
+): Promise<boolean> {
+  const res = await db.execute({
+    sql: `INSERT OR REPLACE INTO room_votes (room_id, steamid, appid, vote, created_at)
+          SELECT ?1, ?2, ?3, ?4, ?5
+          WHERE EXISTS (SELECT 1 FROM room_deck WHERE room_id = ?1 AND appid = ?3)
+             OR (?6 = 1 AND NOT EXISTS (SELECT 1 FROM room_deck WHERE room_id = ?1))`,
+    args: [v.roomId, v.steamid, v.appid, v.vote, nowSec, v.legacy ? 1 : 0],
+  })
+  return res.rowsAffected > 0
 }
 
 /** appid, за который проголосовали «да» ВСЕ участники, либо null */
@@ -2741,6 +2816,9 @@ const USER_ROWS = [
     table: 'room_members',
     where: 'steamid = ? OR room_id IN (SELECT id FROM rooms WHERE created_by = ?)',
   },
+  // Людей в колоде нет, но она часть комнаты и уходит вместе с ней: иначе
+  // осиротевшие карты достались бы новой комнате с тем же кодом.
+  { table: 'room_deck', where: 'room_id IN (SELECT id FROM rooms WHERE created_by = ?)' },
   { table: 'rooms', where: 'created_by = ?' },
   { table: 'feedback', where: 'steamid = ?' },
   { table: 'daily_picks', where: 'steamid = ?' },

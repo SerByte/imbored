@@ -87,6 +87,8 @@ import {
   createSession,
   FORGET_TABLES,
   forgetUser,
+  issueRoomDeck,
+  castDeckVote,
 } from './db'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -713,6 +715,56 @@ describe('db', () => {
     expect(rows.find((r) => r.steamid === 'b')?.vote).toBe(0)
     // соседняя комната не подмешивается
     expect((await roomVotes(db, 'VOT002')).map((r) => r.appid)).toEqual([620])
+  })
+
+  test('голос из свайпа пишется только за карту, которую комнате раздавали', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'DCK001', steamid: 'a' }, NOW)
+    await createRoom(db, { id: 'DCK002', steamid: 'a' }, NOW)
+    await issueRoomDeck(db, 'DCK001', [570, 620])
+    await issueRoomDeck(db, 'DCK002', [730])
+    const vote = (roomId: string, appid: number) =>
+      castDeckVote(db, { roomId, steamid: 'a', appid, vote: 1, legacy: false }, NOW)
+
+    expect(await vote('DCK001', 620)).toBe(true)
+    // произвольный appid — ни строки в room_votes
+    expect(await vote('DCK001', 999_999)).toBe(false)
+    // карта соседней комнаты — тоже чужая
+    expect(await vote('DCK001', 730)).toBe(false)
+    expect((await roomVotes(db, 'DCK001')).map((r) => r.appid)).toEqual([620])
+    // размер колоды пишется той же пачкой
+    expect((await getRoom(db, 'DCK001'))?.deckSize).toBe(2)
+  })
+
+  test('колода копится: карта из прежней выдачи остаётся голосуемой', async () => {
+    // Колода пересобирается, когда входит новый участник, и карта, которую
+    // кто-то уже держит в руке, из новой выдачи может выпасть
+    const db = await freshDb()
+    await createRoom(db, { id: 'DCK003', steamid: 'a' }, NOW)
+    await issueRoomDeck(db, 'DCK003', [570, 620])
+    await issueRoomDeck(db, 'DCK003', [620, 730])
+    const vote = (appid: number) =>
+      castDeckVote(db, { roomId: 'DCK003', steamid: 'a', appid, vote: 0, legacy: false }, NOW)
+    expect(await vote(570)).toBe(true)
+    expect(await vote(730)).toBe(true)
+    // знаменатель — последняя выдача, а не объединение
+    expect((await getRoom(db, 'DCK003'))?.deckSize).toBe(2)
+  })
+
+  test('переход: комната с колодой от старого кода голосует по-старому, пока нет строк', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'DCK004', steamid: 'a' }, NOW)
+    const vote = (appid: number, legacy: boolean) =>
+      castDeckVote(db, { roomId: 'DCK004', steamid: 'a', appid, vote: 1, legacy }, NOW)
+
+    // Колоды не выдавали вовсе — голосовать не за что
+    expect(await vote(570, false)).toBe(false)
+    // Старый код выставил deck_size, а строк не писал: принимаем как раньше
+    expect(await vote(570, true)).toBe(true)
+    // Первая же выдача новым кодом переводит комнату на строгое правило
+    await issueRoomDeck(db, 'DCK004', [620])
+    expect(await vote(730, true)).toBe(false)
+    expect(await vote(620, true)).toBe(true)
   })
 
   test('размер колоды — свойство комнаты, а не участника', async () => {
@@ -1832,6 +1884,7 @@ describe('forgetUser: удаление по запросу', () => {
     await createRoom(db, { id: 'MYROOM', steamid: ME }, NOW)
     await joinRoom(db, 'MYROOM', ME, 'Me', NOW)
     await joinRoom(db, 'MYROOM', FRIEND, 'Friend', NOW)
+    await issueRoomDeck(db, 'MYROOM', [570, 620])
     await castRoomVote(db, 'MYROOM', ME, 570, 1, NOW)
     await castRoomVote(db, 'MYROOM', FRIEND, 570, 1, NOW)
 
@@ -1878,7 +1931,9 @@ describe('forgetUser: удаление по запросу', () => {
     // Сначала — что заготовка действительно покрывает каждую таблицу списка,
     // иначе пустой результат ниже ничего бы не доказывал.
     const before = await traces(db, ME)
-    for (const table of FORGET_TABLES) {
+    // room_deck — колода комнаты: steamid в её ячейках нет, искать нечего.
+    // Что заготовка покрывает и её, проверяет предпросмотр ниже (rows > 0).
+    for (const table of FORGET_TABLES.filter((t) => t !== 'room_deck')) {
       expect(before.some((h) => h.startsWith(`${table}.`)), table).toBe(true)
     }
 
@@ -1897,9 +1952,11 @@ describe('forgetUser: удаление по запросу', () => {
     expect(await roomVotes(db, 'FRROOM')).toEqual([
       { steamid: FRIEND, appid: 620, vote: 0, createdAt: NOW },
     ])
-    // Своя комната уходит целиком, вместе с голосом друга в ней
+    // Своя комната уходит целиком, вместе с голосом друга в ней и колодой
     expect(await getRoom(db, 'MYROOM')).toBeNull()
     expect(await roomVotes(db, 'MYROOM')).toEqual([])
+    const deck = await db.execute("SELECT COUNT(*) AS n FROM room_deck WHERE room_id = 'MYROOM'")
+    expect(Number(deck.rows[0]?.n)).toBe(0)
   })
 
   test('предпросмотр считает ровно то, что удалится', async () => {

@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server'
-import { castRoomVote, findRoomMatch, getRoom, roomMembers, setRoomMatched } from '@/lib/db'
+import { castDeckVote, findRoomMatch, getRoom, roomMembers, setRoomMatched } from '@/lib/db'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
+
+/**
+ * Предел appid. Отрицательные у нас свои (кураторский пул вне Steam, см.
+ * lib/otherstores), а целое за пределами 32 бит — это уже не игра, а мусор,
+ * который до выборки из room_deck пускать незачем.
+ */
+const APPID_BOUND = 2 ** 31
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
@@ -15,12 +22,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const db = await getDb()
   const room = await getRoom(db, id)
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
+
+  // Матч терминален (см. setRoomMatched): голос после него уже ничего не
+  // решает, а запись шла — и в сматченную комнату тоже, без края. matched в
+  // ответе — чтобы экран, чей опрос ещё не увидел матч, сразу его показал.
+  if (room.status !== 'open') {
+    return NextResponse.json(
+      { error: 'matched', matched: room.matchedAppid ?? null },
+      { status: 409 },
+    )
+  }
+
   if (!(await roomMembers(db, id)).some((m) => m.steamid === steamid)) {
     return NextResponse.json({ error: 'notmember' }, { status: 403 })
   }
 
-  // Свайп — самая частая запись в приложении, и голоса накапливаются на
-  // комнату навсегда (room_votes без подметания). Сто двадцать в минуту это
+  // Свайп — самая частая запись в приложении. Сто двадцать в минуту это
   // вдвое быстрее самого быстрого живого свайпа.
   const gate = await checkRate(db, {
     bucket: 'room-vote',
@@ -33,20 +50,37 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const body = (await req.json().catch(() => ({}))) as { appid?: number; vote?: boolean }
   const appid = Number(body.appid)
-  if (!Number.isInteger(appid) || typeof body.vote !== 'boolean') {
+  if (
+    !Number.isSafeInteger(appid) ||
+    Math.abs(appid) >= APPID_BOUND ||
+    typeof body.vote !== 'boolean'
+  ) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }
 
-  await castRoomVote(db, id, steamid, appid, body.vote ? 1 : 0, nowSec())
+  // Голос — только за карту, которую комнате раздали. Лимит выше держит
+  // скорость, а не объём: без этой проверки участник публичной комнаты
+  // набивал room_votes любыми appid, и каждый опрос каждого участника
+  // перечитывал их все. legacy — см. castDeckVote.
+  const accepted = await castDeckVote(
+    db,
+    {
+      roomId: id,
+      steamid,
+      appid,
+      vote: body.vote ? 1 : 0,
+      legacy: room.deckSize !== null && room.deckSize > 0,
+    },
+    nowSec(),
+  )
+  if (!accepted) return NextResponse.json({ error: 'notindeck' }, { status: 409 })
 
   // Клиенту уходит то, что записано в комнате, а не свой кандидат: при двух
   // завершающих голосах в одну секунду кандидаты у запросов разные, и экран,
   // получивший проигравший, показал бы не ту игру и остановил опрос.
-  let matched = room.status === 'matched' ? (room.matchedAppid ?? null) : null
-  if (room.status === 'open') {
-    const candidate = await findRoomMatch(db, id)
-    if (candidate !== null) matched = await setRoomMatched(db, id, candidate)
-  }
+  let matched: number | null = null
+  const candidate = await findRoomMatch(db, id)
+  if (candidate !== null) matched = await setRoomMatched(db, id, candidate)
 
   return NextResponse.json({ matched })
 }
