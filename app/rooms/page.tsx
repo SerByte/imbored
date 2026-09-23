@@ -6,6 +6,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { FlapCode } from '@/components/FlapCode'
 import { NeedSteam } from '@/components/NeedSteam'
+import { RoomCodeForm } from '@/components/room/RoomCodeForm'
 import { Spinner } from '@/components/Spinner'
 import { SectionLabel } from '@/components/Labels'
 import {
@@ -39,7 +40,8 @@ import { writerStore } from '@/lib/writer'
  * рядом — это не вдвое понятнее.
  */
 const STEPS = [
-  { title: 'Создай комнату', hint: 'Получишь код из шести букв и ссылку на неё' },
+  // «символов», а не «букв»: в алфавите кода есть цифры 2–9 (room/create)
+  { title: 'Создай комнату', hint: 'Получишь код из шести символов и ссылку на неё' },
   { title: 'Кинь ссылку своим', hint: 'Каждый подключает свою библиотеку Steam' },
   { title: 'Свайпайте вместе', hint: 'Колода из общих игр; совпадут все голоса — матч' },
 ]
@@ -173,6 +175,9 @@ export default function RoomsBoardPage() {
             Создать комнату
           </Link>
         )}
+        {/* Вход по коду — всем, и сессии по ссылке тоже: создать комнату
+            она не может, а войти в чужую и голосовать — может (lib/writer) */}
+        <RoomCodeForm />
       </div>
 
       {/* Номер — моноширинным: это цифра, а в этом интерфейсе цифры набраны

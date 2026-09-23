@@ -53,6 +53,9 @@ export function AloneInvite({
           <div className="text-5xl sm:text-6xl tracking-[0.06em]">
             <FlapCode code={roomId} />
           </div>
+          {/* Код диктуют — значит, тот, кто его слышит, должен знать, куда
+              его набрать: поле «Есть код комнаты?» стоит на доске «Пати» */}
+          <span className="text-xs text-faint">Друг вводит его на странице «Пати»</span>
         </div>
       </div>
 

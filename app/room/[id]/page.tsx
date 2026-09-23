@@ -815,9 +815,18 @@ export default function RoomPage() {
         <Ambient />
         <div className="relative max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col gap-4 anim-rise">
           <h1 className="font-display text-display-sm">Тебя зовут выбрать игру на вечер</h1>
+          {/*
+            С сессией библиотека уже подключена, и «подключи» над кнопкой
+            «Войти в комнату» читалось так, будто вход не сработал. Сюда с
+            сессией теперь попадают реже — вход по приглашению сажает в
+            комнату сам, — но ссылку открывают и уже вошедшие.
+          */}
           <p className="text-dim text-sm">
-            Комната <span className="font-mono text-ink">{roomId}</span>. Подключи свою библиотеку —
-            и свайпай, во что готов играть. Совпадёте — будет матч.
+            Комната <span className="font-mono text-ink">{roomId}</span>.{' '}
+            {state.hasSession
+              ? 'Библиотека уже подключена — осталось войти и свайпать, во что готов играть.'
+              : 'Подключи свою библиотеку — и свайпай, во что готов играть.'}{' '}
+            Совпадёте — будет матч.
           </p>
           {state.hasSession ? (
             <button

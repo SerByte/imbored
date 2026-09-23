@@ -160,11 +160,32 @@ export function ConnectCard() {
    */
   const showPresets = !joinTarget && !compatTarget && !next
 
+  // «Войти в комнату» — тем же словом, что кнопка на экране приглашения:
+  // одно действие под двумя именами читается как два разных
   const action = joinTarget
-    ? 'Войти в пати'
+    ? 'Войти в комнату'
     : compatTarget
       ? 'Посмотреть совместимость'
       : (dest?.action ?? 'Подобрать игру')
+
+  /*
+   * Приглашённый попадает в комнату сразу, а не ещё одним нажатием.
+   *
+   * Раньше отсюда уходил только переход на /room/X, и там человека встречал
+   * тот же экран приглашения — «Подключи свою библиотеку», — под которым
+   * нужно было нажать третью кнопку. Библиотека к этому моменту уже
+   * подключена, то есть экран врал, и часть людей решала, что вход не
+   * сработал. Возврат из Steam делает то же на сервере (auth/steam/return).
+   *
+   * Отказ входа не держит: комнаты нет, она уже договорилась или сеть
+   * моргнула — страница комнаты покажет это сама и предложит войти вручную.
+   */
+  async function go() {
+    if (joinTarget) {
+      await fetch(`/api/room/${joinTarget}/join`, { method: 'POST' }).catch(() => null)
+    }
+    router.push(target)
+  }
 
   async function connect(demo: boolean) {
     setBusy(demo ? 'demo' : 'connect')
@@ -180,7 +201,7 @@ export function ConnectCard() {
         // Переход клиентский, документ тот же: признак записи прежней сессии
         // остался бы в памяти и соврал бы на следующей странице (lib/writer)
         writerStore.set(writerFrom(data))
-        router.push(target)
+        await go()
         return
       }
       if (res.status === 429) {
@@ -219,7 +240,18 @@ export function ConnectCard() {
             </p>
             <Magnet className="block w-full">
               <ClickSpark className="block w-full">
-                <button type="button" onClick={() => router.push(target)} className="btn-ember is-block">
+                {/* busy — пока уходит вход в комнату: второй клик слал бы его дважды */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (busy !== null) return
+                    setBusy('connect')
+                    void go()
+                  }}
+                  disabled={busy !== null}
+                  data-busy={busy === 'connect' ? '' : undefined}
+                  className="btn-ember is-block"
+                >
                   {action}
                 </button>
               </ClickSpark>

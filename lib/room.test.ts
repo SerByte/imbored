@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { memberLabel, waitingMode } from './room'
+import { memberLabel, parseRoomCode, waitingMode } from './room'
 
 describe('waitingMode', () => {
   test('один в комнате — «ты тут один», а не «ждём остальных»', () => {
@@ -70,5 +70,30 @@ describe('memberLabel', () => {
     const a = memberLabel('ABC123', SID, null)
     const b = memberLabel('ABC123', '76561198087654321', null)
     expect(a).not.toBe(b)
+  })
+})
+
+describe('parseRoomCode', () => {
+  test('код как есть', () => {
+    expect(parseRoomCode('FCPK8G')).toBe('FCPK8G')
+  })
+
+  test('надиктованное: регистр, пробелы и дефисы — не часть кода', () => {
+    expect(parseRoomCode('fcp k8g')).toBe('FCPK8G')
+    expect(parseRoomCode('FCP-K8G')).toBe('FCPK8G')
+    expect(parseRoomCode('  fcpk8g ')).toBe('FCPK8G')
+  })
+
+  test('вставленная целиком ссылка тоже годится', () => {
+    expect(parseRoomCode('https://imbored.cc/room/FCPK8G')).toBe('FCPK8G')
+    expect(parseRoomCode('imbored.cc/room/fcpk8g?utm=chat')).toBe('FCPK8G')
+  })
+
+  test('не шесть знаков или чужие символы — не код', () => {
+    expect(parseRoomCode('')).toBeNull()
+    expect(parseRoomCode('FCPK8')).toBeNull()
+    expect(parseRoomCode('FCPK8GG')).toBeNull()
+    expect(parseRoomCode('FCPK8Ж')).toBeNull()
+    expect(parseRoomCode('../api')).toBeNull()
   })
 })

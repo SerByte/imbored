@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { saveLibrarySnapshot, upsertUser } from '@/lib/db'
+import { joinRoom, saveLibrarySnapshot, upsertUser } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import {
@@ -123,6 +123,28 @@ export async function GET(req: NextRequest) {
       now,
     )
     await saveLibrarySnapshot(db, steamid, games, now)
+
+    /*
+     * Приглашённый попадает в комнату сразу, а не ещё одним нажатием.
+     *
+     * Раньше вход только разворачивал на /room/X, и там человека встречал тот
+     * же экран приглашения — «Подключи свою библиотеку», — под которым нужно
+     * было нажать третью кнопку, «Войти в комнату». Библиотека к этому моменту
+     * уже подключена, то есть экран врал, и часть людей решала, что вход не
+     * сработал. Это главная воронка пати.
+     *
+     * Код — из loginCarry, то есть проверенный. Вход в комнату открыт любой
+     * сессии (голос живёт внутри комнаты и профиль не трогает), а эта к тому
+     * же доказана Steam. Отказ глотаем: вход уже состоялся, а страница
+     * комнаты сама покажет, что с ней — нет её, уже договорилась, — и
+     * предложит войти вручную.
+     */
+    const join = loginCarry(params).get('join')
+    if (join) {
+      await joinRoom(db, join, steamid, summary?.personaName, now).catch((err: unknown) =>
+        logSwallowed('auth/return:join', err),
+      )
+    }
 
     // Куда человек шёл до разворота на лендинг; список закрытый —
     // произвольный адрес сюда не попадёт (см. lib/destination.ts).
