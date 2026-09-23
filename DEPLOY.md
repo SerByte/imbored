@@ -67,7 +67,9 @@
 1. [vercel.com](https://vercel.com) → **Sign up with GitHub** (дай доступ к репозиторию `imbored`).
 2. **Add New → Project** → выбери `imbored` → **Import**.
 3. Framework Vercel определит сам (Next.js). Build-команды **не трогай**.
-4. Разверни **Environment Variables** и добавь (все — для Production, Preview и Development):
+4. Разверни **Environment Variables** и добавь. Все переменные — для Production,
+   Preview и Development, **кроме `TURSO_DATABASE_URL` и `TURSO_AUTH_TOKEN`: эти
+   только для Production**. У превью своя база, см. «Превью: своя база» ниже.
 
 | Переменная | Значение | Обязательна |
 |---|---|---|
@@ -118,6 +120,37 @@ curl -sI https://imbored.cc/whatsnew | grep -i x-vercel-id
 Settings → Environment Variables), поменяй регион в `vercel.json`, а не в
 дашборде, чтобы он проходил через ревью. Пары: `aws-eu-west-1` → `dub1`,
 `aws-eu-central-1` → `fra1`, `aws-us-east-1` → `iad1`.
+
+### Превью: своя база, не продовая
+
+Каждый пуш ветки создаёт превью-деплой, а его сборка и первый холодный старт
+прогоняют миграции схемы (`migrateDb` в `lib/db.ts`). С продовыми `TURSO_*`
+изменения схемы из ветки попадают на живую базу ещё до ревью, а тестеры превью
+пишут в продовые таблицы строки, которых код `main` не знает. Откат ветки
+ни то, ни другое не вернёт. Поэтому:
+
+1. Vercel → Settings → Environment Variables: у `TURSO_DATABASE_URL` и
+   `TURSO_AUTH_TOKEN` оставь только область **Production**.
+2. Создай базу для превью копией прода и токен к ней:
+
+   ```bash
+   turso db create imbored-preview --from-db imbored
+   turso db tokens create imbored-preview
+   ```
+
+3. Добавь `TURSO_DATABASE_URL` и `TURSO_AUTH_TOKEN` превью-базы с областью
+   **Preview**, и там же `PREVIEW_OWN_DB=1`.
+4. **Redeploy** последнего превью.
+
+Не оставляй превью совсем без базы: без `TURSO_DATABASE_URL` на Vercel `getDb`
+падает с внятной ошибкой, и превью не откроется. Поэтому шаги 1 и 3 делаются
+вместе.
+
+`PREVIEW_OWN_DB=1` снимает страховку в коде. Без флага превью не выполняет
+разрушающие миграции (пересборку таблиц), не записывает версию схемы, чтобы
+прод после мержа довёл её сам, и пишет в Runtime Logs строку с
+`"event":"migrate-skipped"`. Страховка нужна на случай, если переменные снова
+разъедутся, поэтому флаг ставь только туда, где база действительно своя.
 
 ### Про тариф
 

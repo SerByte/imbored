@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
+import { PREVIEW_OWN_DB_ENV } from './db'
 
 /**
  * Сторож прод-инфраструктуры, которая записана в репозитории, а не в дашборде.
@@ -41,5 +42,14 @@ describe('404', () => {
     expect(reads).toHaveLength(1)
     expect(reads[0]).toBeGreaterThan(cacheAt)
     expect(reads[0]).toBeLessThan(cacheEnd)
+  })
+})
+
+describe('превью', () => {
+  test('флаг своей базы у превью назван в DEPLOY.md так же, как в коде', () => {
+    // Владелец берёт имя переменной из DEPLOY.md. Разойдись оно с кодом, превью
+    // со своей базой молча не пересобирало бы таблицы, а версия схемы там не
+    // записывалась бы никогда
+    expect(read('DEPLOY.md')).toContain(`${PREVIEW_OWN_DB_ENV}=1`)
   })
 })

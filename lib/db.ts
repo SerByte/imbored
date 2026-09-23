@@ -540,13 +540,18 @@ async function addMissingColumns(db: Db): Promise<void> {
  *
  * Зовётся только под upgrade: новый action в CHECK — это тоже подъём
  * CURRENT_SCHEMA_V, иначе живая база его не увидит.
+ *
+ * Пересборка разрушающая, поэтому спрашивает разрешения (см.
+ * destructiveMigrationsAllowed). false — пересборка нужна, но не выполнена:
+ * схема НЕ доведена, и версию писать нельзя.
  */
-async function rebuildFeedbackCheck(db: Db): Promise<void> {
+async function rebuildFeedbackCheck(db: Db, allowed: boolean): Promise<boolean> {
   const info = await db.execute(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'",
   )
   const createSql = info.rows[0]?.sql as string | undefined
   if (createSql?.includes('CHECK') && !createSql.includes("'launched'")) {
+    if (!allowed) return false
     await db.batch(
       [
         // Хвост прерванной попытки: без него CREATE упал бы на каждом старте
@@ -569,6 +574,33 @@ async function rebuildFeedbackCheck(db: Db): Promise<void> {
       'write',
     )
   }
+  return true
+}
+
+/** Переменная, которой владелец говорит: у превью своя база, миграции можно. */
+export const PREVIEW_OWN_DB_ENV = 'PREVIEW_OWN_DB'
+
+/**
+ * Можно ли этому окружению разрушающие шаги миграции: пересборку таблиц
+ * через DROP и RENAME, а впредь всё, что стирает или переписывает исходные
+ * данные. Добавляешь такой шаг — ставь его под этот же вопрос.
+ *
+ * ЗАЧЕМ. По старой инструкции DEPLOY.md превью получали те же TURSO_*, что и
+ * прод. Пуш ветки создаёт превью, его сборка и первый холодный старт гонят
+ * migrateDb, и пересборка feedback из ветки выполнялась на живой базе ещё до
+ * ревью. Откатили ветку, а схема и строки остались. Правильная защита —
+ * отдельная база у превью, и её заводит владелец (DEPLOY.md, раздел о
+ * превью). Эта проверка — страховка на случай, если переменные снова
+ * разъедутся: превью без явного «база своя» ничего не пересобирает.
+ *
+ * Прод, локальная разработка и скрипты не затронуты: VERCEL_ENV там
+ * 'production' или его нет вовсе.
+ *
+ * Бэкфиллы производных колонок сюда не относятся: они считают значения из
+ * уже лежащих данных и повторяются без потерь.
+ */
+export function destructiveMigrationsAllowed(env: Record<string, string | undefined>): boolean {
+  return env.VERCEL_ENV !== 'preview' || env[PREVIEW_OWN_DB_ENV] === '1'
 }
 
 /**
@@ -577,8 +609,14 @@ async function rebuildFeedbackCheck(db: Db): Promise<void> {
  * На уже доведённой базе это четыре обращения: три блока CREATE … IF NOT
  * EXISTS и одно чтение флагов. Всё остальное — ALTER, пересборка feedback,
  * бэкфиллы по games и news_items — закрыто версией схемы или своим флагом.
+ *
+ * env — окружение для destructiveMigrationsAllowed; параметром, чтобы тест
+ * мог изобразить превью, не трогая process.env.
  */
-export async function migrateDb(db: Db): Promise<Db> {
+export async function migrateDb(
+  db: Db,
+  env: Record<string, string | undefined> = process.env,
+): Promise<Db> {
   await db.executeMultiple(SCHEMA)
 
   // новостные таблицы самодостаточны и на ALTER-колонки не ссылаются
@@ -662,13 +700,27 @@ export async function migrateDb(db: Db): Promise<Db> {
   }
 
   if (upgrade) {
-    await rebuildFeedbackCheck(db)
-    // Последней: версия пишется, только когда всё выше прошло. Оборвись
-    // миграция на полпути — следующий старт повторит её целиком.
-    await db.execute({
-      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
-      args: [SCHEMA_V_KEY, String(CURRENT_SCHEMA_V)],
-    })
+    if (await rebuildFeedbackCheck(db, destructiveMigrationsAllowed(env))) {
+      // Последней: версия пишется, только когда всё выше прошло. Оборвись
+      // миграция на полпути — следующий старт повторит её целиком.
+      await db.execute({
+        sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+        args: [SCHEMA_V_KEY, String(CURRENT_SCHEMA_V)],
+      })
+    } else {
+      // Версию НЕ пишем. Если это продовая база под превью, первый же старт
+      // прода после мержа увидит старую версию и пересоберёт таблицу сам.
+      // Запиши мы её здесь, прод счёл бы схему доведённой и не пересобрал бы
+      // никогда. Строка одна на холодный старт: migrateDb зовётся раз на
+      // процесс (getDb кэширует соединение).
+      console.warn(
+        JSON.stringify({
+          event: 'migrate-skipped',
+          step: 'feedback-check',
+          reason: `превью без ${PREVIEW_OWN_DB_ENV}=1 не пересобирает таблицы`,
+        }),
+      )
+    }
   }
 
   return db

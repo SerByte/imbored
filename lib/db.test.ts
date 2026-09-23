@@ -1,11 +1,13 @@
 import { createClient, type InStatement } from '@libsql/client'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { cooldownOf, isMultiplayerMeta } from './recommend'
 import { checkRate } from './ratelimit'
 import {
   acquireLease,
   ADDED_COLUMNS,
   CURRENT_SCHEMA_V,
+  destructiveMigrationsAllowed,
+  PREVIEW_OWN_DB_ENV,
   advanceRoomDeckRound,
   bannedAppids,
   castRoomVote,
@@ -2320,6 +2322,91 @@ describe('версия схемы', () => {
       version: 1,
       columns: 30,
     })
+  })
+})
+
+describe('превью и продовая база', () => {
+  /** feedback в том виде, в каком он жил до 'launched' */
+  async function oldFeedbackDb(): Promise<Db> {
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(`CREATE TABLE feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      steamid TEXT NOT NULL,
+      appid INTEGER NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned')),
+      reason TEXT,
+      mood_json TEXT,
+      created_at INTEGER NOT NULL
+    );`)
+    await db.execute(
+      "INSERT INTO feedback (id, steamid, appid, action, created_at) VALUES (9, 'u1', 620, 'banned', 1)",
+    )
+    return db
+  }
+
+  const tableRowid = async (db: Db) =>
+    (await db.execute("SELECT rowid, sql FROM sqlite_master WHERE type='table' AND name='feedback'"))
+      .rows[0]
+
+  const PREVIEW = { VERCEL_ENV: 'preview' }
+
+  test('пересобирать таблицы нельзя только превью без своей базы', () => {
+    expect(destructiveMigrationsAllowed({})).toBe(true) // локально и в скриптах
+    expect(destructiveMigrationsAllowed({ VERCEL_ENV: 'production' })).toBe(true)
+    expect(destructiveMigrationsAllowed({ VERCEL_ENV: 'development' })).toBe(true)
+    expect(destructiveMigrationsAllowed(PREVIEW)).toBe(false)
+    expect(destructiveMigrationsAllowed({ ...PREVIEW, [PREVIEW_OWN_DB_ENV]: '1' })).toBe(true)
+    // «true» и «yes» — не единица: флаг ставится один раз и ровно так, как в DEPLOY.md
+    expect(destructiveMigrationsAllowed({ ...PREVIEW, [PREVIEW_OWN_DB_ENV]: 'true' })).toBe(false)
+  })
+
+  test('превью не трогает feedback и не пишет версию, прод потом доводит сам', async () => {
+    const db = await oldFeedbackDb()
+    const before = await tableRowid(db)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await migrateDb(db, PREVIEW)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+        event: 'migrate-skipped',
+        step: 'feedback-check',
+      })
+    } finally {
+      warn.mockRestore()
+    }
+
+    // Таблица та же самая (rowid в sqlite_master не сменился), строки на месте
+    expect(await tableRowid(db)).toEqual(before)
+    expect((await listFeedback(db, 'u1')).map((r) => r.action)).toEqual(['banned'])
+    // Версии нет: запиши её превью — прод счёл бы схему доведённой навсегда
+    expect(await getCatalogMeta(db, 'schema_v')).toBeNull()
+
+    // Первый старт прода после мержа
+    await migrateDb(db, { VERCEL_ENV: 'production' })
+    expect(String((await tableRowid(db))?.sql)).toContain("'launched'")
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+    await logFeedback(db, { steamid: 'u1', appid: 730, action: 'launched' }, NOW)
+    expect((await listFeedback(db, 'u1')).map((r) => r.action).sort()).toEqual(['banned', 'launched'])
+  })
+
+  test('превью со своей базой мигрирует целиком', async () => {
+    const db = await oldFeedbackDb()
+    await migrateDb(db, { ...PREVIEW, [PREVIEW_OWN_DB_ENV]: '1' })
+    expect(String((await tableRowid(db))?.sql)).toContain("'launched'")
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+  })
+
+  test('если пересобирать нечего, превью версию пишет: пропущенного шага нет', async () => {
+    const db = await freshDb()
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'schema_v'")
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await migrateDb(db, PREVIEW)
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
   })
 })
 
