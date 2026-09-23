@@ -25,6 +25,7 @@ import {
   upsertNewsItems,
   type Db,
 } from './db'
+import { fetchDiscoveryPool } from './pool'
 
 /**
  * Частичные индексы и запросы, которые на них держатся.
@@ -180,6 +181,15 @@ const CASES: Case[] = [
     indexes: ['idx_rooms_public'],
     sortFree: false,
   },
+  // Холодный старт пула: порядок по отзывам — из частичного индекса, а
+  // семантика доезжает поиском по ключу game_semantics на каждую строку, не
+  // ломая ни порядок, ни LIMIT
+  {
+    name: 'пул открытий без профиля',
+    run: (db) => fetchDiscoveryPool(db, { tags: [], limit: 50 }),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
   {
     name: 'топ каталога',
     run: (db) => topCatalogAppids(db),
@@ -298,9 +308,14 @@ describe('планы запросов', () => {
  * замены могла бы быть скрытой: SQLite вправе прочитать games целиком и
  * сверять каждую строку со списком. Здесь проверяется, что он идёт от списка
  * к строкам — поиском по первичному ключу на каждый appid.
+ *
+ * Метаданные пачкой джойнят семантику (SEMANTICS_JOIN), и у них та же
+ * проверка для второй таблицы: одна строка game_semantics по ключу на игру, а
+ * не проход по всей семантике каталога.
  */
 describe('выборки по списку appid', () => {
   const IDS = [730, 570, 620]
+  const WITH_SEMANTICS = new Set(['getGamesMeta', 'getGamesMetaLite'])
   const LIST_READS: Array<[string, (db: Db) => Promise<unknown>]> = [
     ['getGamesMeta', (db) => getGamesMeta(db, IDS)],
     ['getGamesMetaLite', (db) => getGamesMetaLite(db, IDS)],
@@ -316,8 +331,10 @@ describe('выборки по списку appid', () => {
       expect(issued.length).toBe(1)
       const plan = await planOf(db, issued[0])
       const where = plan.join(' | ')
-      expect(bareScans(plan).filter((step) => step === 'SCAN games'), where).toEqual([])
-      expect(where).toContain('SEARCH games USING INTEGER PRIMARY KEY')
+      // games бывает и под алиасом g — в выборках с джойном семантики
+      expect(bareScans(plan).filter((step) => /^SCAN (games|g|s)$/.test(step)), where).toEqual([])
+      expect(where).toMatch(/SEARCH (games|g) USING INTEGER PRIMARY KEY/)
+      if (WITH_SEMANTICS.has(name)) expect(where).toContain('SEARCH s USING PRIMARY KEY (appid=?)')
       expect(issued[0].sql).toContain('json_each(?)')
     })
   }

@@ -11,9 +11,11 @@ import {
   saveTagDictionary,
   upsertGameMeta,
   upsertIngestRows,
+  upsertSemantics,
   type Db,
 } from './db'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
+import { deriveSemantics } from './semantics'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -209,8 +211,11 @@ describe('fetchDiscoveryPool', () => {
       reviews30d: 140,
       ccu: 2400,
       ccuAt: NOW - 600,
+      // своя таблица, свой джойн — и всё равно то же поле, что у getGamesMetaLite
+      semantics: deriveSemantics({ Roguelike: 1000, Indie: 300 }, null),
     }
     await upsertGameMeta(db, full, NOW)
+    await upsertSemantics(db, [{ appid: 9, semantics: full.semantics!, computedAt: NOW }])
     await replaceGameTags(db, 9, [{ tag: 'Roguelike', weight: 1000 }])
     // Вердикт курации пишет promote-catalog отдельным UPDATE
     await db.execute('UPDATE games SET signals_at = ?, alive = 1 WHERE appid = 9', [NOW])

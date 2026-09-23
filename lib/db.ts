@@ -4,9 +4,10 @@ import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
 import { isDeadReason } from './liveness'
 import { OTHER_STORE_GAMES } from './otherstores'
+import { SEMANTICS_V } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import type { NewsBlock } from './steamhtml'
-import type { GameMeta, LibraryGame, Mood } from './types'
+import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
 
 /** Соединение с БД: локальный файл в dev, Turso в проде — API одинаковый */
 export type Db = Client
@@ -272,6 +273,27 @@ CREATE TABLE IF NOT EXISTS game_tags (
   PRIMARY KEY (appid, tag)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_game_tags_tag ON game_tags (tag, weight DESC);
+
+-- Семантика игр (lib/semantics): оси, длина сессии, время до веселья.
+--
+-- Своя таблица, а не колонка games, и это главное её свойство. Колонки games
+-- переписывают заливка каталога (publish-catalog) и апсерт меты на прогреве, и
+-- обогащение, жившее в games, однажды уже стёрла заливка: скриншоты и русские
+-- описания у верхушки каталога. Сюда не пишет никто, кроме upsertSemantics, а
+-- она сама решает, чья запись новее (см. её докблок).
+--
+-- v и basis — отдельными колонками ради этого решения и отчёта
+-- (semantics:report), json — сам GameSemantics. reviews_at — когда отзывы
+-- последний раз разбирались, даже если их не хватило сдвинуть оси: по нему
+-- semantics:build --with-reviews не ходит второй раз за теми же тонкими играми.
+CREATE TABLE IF NOT EXISTS game_semantics (
+  appid INTEGER PRIMARY KEY,
+  v INTEGER NOT NULL,
+  json TEXT NOT NULL,
+  basis TEXT NOT NULL,
+  computed_at INTEGER NOT NULL,
+  reviews_at INTEGER
+) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_games_pool ON games (reviews_total DESC)
   WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
@@ -1975,6 +1997,61 @@ export function parseIdList(raw: unknown): number[] {
     : []
 }
 
+const SESSION_BUCKETS: ReadonlySet<unknown> = new Set(['short', 'medium', 'long'])
+const TTF_BUCKETS: ReadonlySet<unknown> = new Set(['fast', 'slow', null])
+const BASES: ReadonlySet<unknown> = new Set(['tags', 'tags+reviews'])
+
+/** Конечное число в [lo, hi] */
+function inRange(x: unknown, lo: number, hi: number): x is number {
+  return typeof x === 'number' && Number.isFinite(x) && x >= lo && x <= hi
+}
+
+/**
+ * Семантика игры из game_semantics.json: целиком или никак.
+ *
+ * Всё, что не той формы, — undefined, а не падение и не частичный объект:
+ * ось NaN так же тихо испортила бы скоринг, как дважды закодированные теги
+ * портили профиль вкуса (см. parseJsonLoose). Чужая версия формата — тоже
+ * undefined: числа старой версии под новыми именами хуже, чем их отсутствие.
+ * Возвращается новый объект только с известными полями — лишнее из базы
+ * дальше не едет.
+ */
+export function parseSemantics(raw: unknown): GameSemantics | undefined {
+  const v = parseJsonLoose(raw)
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined
+  const s = v as Record<string, unknown>
+  if (s.v !== SEMANTICS_V) return undefined
+  const axes = s.axes as Record<string, unknown> | null | undefined
+  const session = s.session as Record<string, unknown> | null | undefined
+  const ttf = s.timeToFun as Record<string, unknown> | null | undefined
+  if (!axes || typeof axes !== 'object' || !session || typeof session !== 'object') return undefined
+  if (!ttf || typeof ttf !== 'object') return undefined
+  const { challenge, complexity, pace } = axes
+  if (!inRange(challenge, 0, 100) || !inRange(complexity, 0, 100) || !inRange(pace, 0, 100)) {
+    return undefined
+  }
+  const { bucket, minutes, canStopAnytime } = session
+  if (!SESSION_BUCKETS.has(bucket) || !inRange(minutes, 0, 24 * 60)) return undefined
+  if (typeof canStopAnytime !== 'boolean') return undefined
+  const hours = ttf.hours
+  if (!TTF_BUCKETS.has(ttf.bucket) || (hours !== null && !inRange(hours, 0, 1000))) return undefined
+  if (!inRange(s.confidence, 0, 1) || !inRange(s.n, 0, Number.MAX_SAFE_INTEGER)) return undefined
+  if (!BASES.has(s.basis)) return undefined
+  return {
+    v: SEMANTICS_V,
+    axes: { challenge, complexity, pace },
+    session: {
+      bucket: bucket as GameSemantics['session']['bucket'],
+      minutes,
+      canStopAnytime,
+    },
+    timeToFun: { bucket: ttf.bucket as GameSemantics['timeToFun']['bucket'], hours },
+    confidence: s.confidence,
+    n: s.n,
+    basis: s.basis as GameSemantics['basis'],
+  }
+}
+
 /**
  * Строки games, у которых JSON-колонка не своей формы: теги — не объект,
  * жанры или категории — не массив. Сюда же попадает битый JSON.
@@ -2065,7 +2142,7 @@ export type GameRow = {
   categories_json: string
   short_description: string | null
   header_image: string | null
-  /** В узкой выборке (GAME_LITE_COLUMNS) колонки нет, и поле приходит undefined */
+  /** В узкой выборке (GAME_LITE_COLUMNS_G) колонки нет, и поле приходит undefined */
   screenshots_json?: string | null
   is_free: number | null
   price_final: number | null
@@ -2089,8 +2166,13 @@ export type GameRow = {
   signals_at: number | null
   alive: number | null
   superseded_by: number | null
-  /** В узкой выборке (GAME_LITE_COLUMNS) колонки нет: причина нужна только /game */
+  /** В узкой выборке (GAME_LITE_COLUMNS_G) колонки нет: причина нужна только /game */
   dead_reason?: string | null
+  /**
+   * game_semantics.json через SEMANTICS_JOIN. Есть только у выборок пачкой;
+   * одиночные чтения (getGameMeta, страница игры) таблицу не джойнят.
+   */
+  semantics_json?: string | null
 }
 
 /**
@@ -2160,6 +2242,10 @@ export function rowToMeta(row: GameRow): GameMeta {
     }
     if (!meta.alive && isDeadReason(row.dead_reason)) meta.deadReason = row.dead_reason
   }
+  // Своя таблица — своё чтение через ту же границу: мусор и чужая версия
+  // формата дают undefined, а не падение всей библиотеки
+  const semantics = parseSemantics(row.semantics_json)
+  if (semantics) meta.semantics = semantics
   return meta
 }
 
@@ -2284,11 +2370,26 @@ export async function topGamesByTag(
  */
 const APPIDS_IN = 'appid IN (SELECT value FROM json_each(?))'
 
+/** То же для запросов с алиасом g.: в JOIN голый appid двусмыслен */
+const APPIDS_IN_G = `g.${APPIDS_IN}`
+
+/**
+ * Семантика к строкам games под алиасом g. Колонку s.json AS semantics_json
+ * несёт GAME_LITE_COLUMNS_G, поэтому запрос с этими колонками, но без джойна
+ * падает на первом же вызове («no such column»), а не теряет семантику молча —
+ * так пул однажды уже отставал от getGamesMetaLite.
+ *
+ * LEFT JOIN по первичному ключу: игра без семантики остаётся в выборке, а
+ * цена — одна строка game_semantics на игру (сторож в lib/queryplan.test.ts).
+ */
+export const SEMANTICS_JOIN = 'LEFT JOIN game_semantics s ON s.appid = g.appid'
+
 /** Метаданные пачки игр одним запросом — строка целиком, со скриншотами */
 export async function getGamesMeta(db: Db, appids: number[]): Promise<Map<number, GameMeta>> {
   if (!appids.length) return new Map()
   const res = await db.execute({
-    sql: `SELECT * FROM games WHERE ${APPIDS_IN}`,
+    sql: `SELECT g.*, s.json AS semantics_json FROM games g ${SEMANTICS_JOIN}
+          WHERE ${APPIDS_IN_G}`,
     args: [JSON.stringify(appids)],
   })
   return new Map(
@@ -2314,14 +2415,16 @@ const GAME_LITE_COLS = [
   'superseded_by',
 ] as const
 
-const GAME_LITE_COLUMNS = GAME_LITE_COLS.join(', ')
-
 /**
- * Те же колонки с алиасом g. — для запросов с JOIN, где appid есть не только у
- * games (пул открытий, lib/pool). Новая колонка попадает туда сама: список
- * один, и отстать от getGamesMetaLite пулу больше нечем.
+ * Колонки с алиасом g. и семантикой — для getGamesMetaLite и пула открытий
+ * (lib/pool). Новая колонка попадает в оба места сама: список один, и отстать
+ * от getGamesMetaLite пулу больше нечем. Запрос с этими колонками обязан
+ * джойнить SEMANTICS_JOIN — см. её докблок.
  */
-export const GAME_LITE_COLUMNS_G = GAME_LITE_COLS.map((c) => `g.${c}`).join(', ')
+export const GAME_LITE_COLUMNS_G = [
+  ...GAME_LITE_COLS.map((c) => `g.${c}`),
+  's.json AS semantics_json',
+].join(', ')
 
 /**
  * Метаданные пачки игр без блобов: всё то же, что getGamesMeta, но без
@@ -2334,7 +2437,7 @@ export async function getGamesMetaLite(
 ): Promise<Map<number, GameMeta>> {
   if (!appids.length) return new Map()
   const res = await db.execute({
-    sql: `SELECT ${GAME_LITE_COLUMNS} FROM games WHERE ${APPIDS_IN}`,
+    sql: `SELECT ${GAME_LITE_COLUMNS_G} FROM games g ${SEMANTICS_JOIN} WHERE ${APPIDS_IN_G}`,
     args: [JSON.stringify(appids)],
   })
   return new Map(
@@ -2360,6 +2463,69 @@ export async function getGameShots(db: Db, appids: number[]): Promise<Map<number
     }
   }
   return out
+}
+
+/** Строка для upsertSemantics */
+export type SemanticsRow = {
+  appid: number
+  semantics: GameSemantics
+  /** когда посчитана (unix-секунды) */
+  computedAt: number
+  /**
+   * Когда разобраны отзывы, даже если их не хватило сдвинуть оси. undefined
+   * или null — отзывов в этот раз не было, и прежняя отметка сохраняется.
+   */
+  reviewsAt?: number | null
+}
+
+/**
+ * Запись семантики, которая не откатывает более знающую.
+ *
+ * Писателей три, и у них разное знание: крон страниц (отзывы из того же
+ * ответа appreviews), semantics:build на локальном каталоге (по умолчанию
+ * только теги) и его --publish в облако. Кто из них придёт последним — дело
+ * случая, поэтому правило в самом UPDATE, а не в вызывающих:
+ *
+ *   • новая версия формата вытесняет старую всегда — старая и так читается
+ *     как отсутствующая (parseSemantics);
+ *   • в той же версии приор по тегам НЕ затирает посчитанное по отзывам,
+ *     даже если он свежее: пересчёт каталога по тегам за секунды выкинул бы
+ *     плоды тысяч запросов в Steam;
+ *   • посчитанное по отзывам вытесняет приор всегда, даже более свежий: оно
+ *     знает строго больше;
+ *   • при равном basis побеждает свежий computed_at (≥, чтобы повтор с той же
+ *     отметкой не был молчаливым отказом).
+ *
+ * Отметка reviews_at не стирается записью без отзывов (COALESCE).
+ */
+export async function upsertSemantics(db: Db, rows: readonly SemanticsRow[]): Promise<void> {
+  const CHUNK = 200
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await db.batch(
+      rows.slice(i, i + CHUNK).map((r) => ({
+        sql: `INSERT INTO game_semantics (appid, v, json, basis, computed_at, reviews_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT(appid) DO UPDATE SET
+                v = excluded.v, json = excluded.json, basis = excluded.basis,
+                computed_at = excluded.computed_at,
+                reviews_at = COALESCE(excluded.reviews_at, game_semantics.reviews_at)
+              WHERE excluded.v > game_semantics.v
+                 OR (excluded.v = game_semantics.v AND (
+                      (excluded.basis = 'tags+reviews' AND game_semantics.basis != 'tags+reviews')
+                   OR (excluded.basis = game_semantics.basis
+                       AND excluded.computed_at >= game_semantics.computed_at)))`,
+        args: [
+          r.appid,
+          r.semantics.v,
+          JSON.stringify(r.semantics),
+          r.semantics.basis,
+          r.computedAt,
+          r.reviewsAt ?? null,
+        ],
+      })),
+      'write',
+    )
+  }
 }
 
 /*

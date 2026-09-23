@@ -1,4 +1,4 @@
-import { GAME_LITE_COLUMNS_G, rowToMeta, type Db, type GameRow } from './db'
+import { GAME_LITE_COLUMNS_G, rowToMeta, SEMANTICS_JOIN, type Db, type GameRow } from './db'
 import type { GameMeta } from './types'
 
 /**
@@ -53,6 +53,7 @@ const DEFAULT_TAG_COUNT = 12
  * (lib/liveness, lib/actual), второй — возраст онлайна, без которого
  * PlayersNow у покупки не смеет сказать «сейчас». Скриншотов в узкой выборке
  * нет намеренно: героям их читает getGameShots, а пул — четыре сотни строк.
+ * Семантика (game_semantics) едет тем же списком колонок и SEMANTICS_JOIN.
  */
 
 /**
@@ -112,7 +113,7 @@ async function fetchNotable(
 ): Promise<GameMeta[]> {
   const page = async (offset: number) => {
     const res = await db.execute({
-      sql: `SELECT ${GAME_LITE_COLUMNS_G} FROM games g
+      sql: `SELECT ${GAME_LITE_COLUMNS_G} FROM games g ${SEMANTICS_JOIN}
             WHERE g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0
               AND (?1 = 0 OR g.is_multiplayer = 1)
               AND g.appid NOT IN (SELECT value FROM json_each(?2))
@@ -163,6 +164,7 @@ export async function fetchDiscoveryPool(db: Db, q: DiscoveryQuery): Promise<Gam
     sql: `WITH pool AS (${branches}),
                best AS (SELECT appid, MAX(weight) AS w FROM pool GROUP BY appid)
           SELECT ${GAME_LITE_COLUMNS_G} FROM best b JOIN games g ON g.appid = b.appid
+            ${SEMANTICS_JOIN}
           WHERE g.alive = 1 AND g.superseded_by IS NULL
             AND (? = 0 OR g.is_multiplayer = 1)
             AND g.appid NOT IN (SELECT value FROM json_each(?))

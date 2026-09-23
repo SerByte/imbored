@@ -57,8 +57,10 @@ import {
   getGameMeta,
   getGameShots,
   parseIdList,
+  parseSemantics,
   parseStrList,
   parseTagMap,
+  upsertSemantics,
   getGamesMeta,
   getGamesMetaLite,
   getLatestSnapshot,
@@ -106,8 +108,9 @@ import {
 } from './db'
 import { seedDemo } from './demo'
 import { OTHER_STORE_GAMES } from './otherstores'
+import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
-import type { GameMeta, LibraryGame } from './types'
+import type { GameMeta, GameSemantics, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
 
@@ -2931,5 +2934,163 @@ describe('файловая база', () => {
     const db = await createDb('file::memory:')
     const res = await db.execute('PRAGMA busy_timeout')
     expect(Number(res.rows[0].timeout)).toBe(10_000)
+  })
+})
+
+describe('семантика игр', () => {
+  /** Приор по тегам Portal 2 — basis 'tags' */
+  const BY_TAGS = deriveSemantics({ Puzzle: 100, 'Co-op': 80 }, null)
+  /** То же, но «по отзывам»: форма и basis — всё, что важно записи */
+  const BY_REVIEWS: GameSemantics = { ...BY_TAGS, n: 60, basis: 'tags+reviews', confidence: 0.7 }
+
+  async function stored(db: Db, appid: number) {
+    const res = await db.execute({
+      sql: 'SELECT v, basis, computed_at, reviews_at, json FROM game_semantics WHERE appid = ?',
+      args: [appid],
+    })
+    const r = res.rows[0]
+    return r
+      ? {
+          v: Number(r.v),
+          basis: String(r.basis),
+          computedAt: Number(r.computed_at),
+          reviewsAt: r.reviews_at === null ? null : Number(r.reviews_at),
+          semantics: parseSemantics(r.json),
+        }
+      : null
+  }
+
+  test('приор по тегам не затирает посчитанное по отзывам, даже будучи свежее', async () => {
+    // Пересчёт каталога по тегам (semantics:build) занимает секунды и
+    // приходит когда угодно — в том числе после крона страниц, который
+    // заплатил за отзывы запросами в Steam
+    const db = await freshDb()
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_REVIEWS, computedAt: NOW, reviewsAt: NOW }])
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_TAGS, computedAt: NOW + 3600 }])
+
+    expect(await stored(db, 620)).toEqual({
+      v: 1,
+      basis: 'tags+reviews',
+      computedAt: NOW,
+      reviewsAt: NOW,
+      semantics: BY_REVIEWS,
+    })
+  })
+
+  test('посчитанное по отзывам вытесняет приор, даже более свежий', async () => {
+    const db = await freshDb()
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_TAGS, computedAt: NOW + 3600 }])
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_REVIEWS, computedAt: NOW, reviewsAt: NOW }])
+
+    expect((await stored(db, 620))?.basis).toBe('tags+reviews')
+  })
+
+  test('при равном basis побеждает свежий, старый не откатывает', async () => {
+    const db = await freshDb()
+    const fresh = { ...BY_REVIEWS, n: 90 }
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_REVIEWS, computedAt: NOW }])
+    await upsertSemantics(db, [{ appid: 620, semantics: fresh, computedAt: NOW + 10 }])
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_REVIEWS, computedAt: NOW + 5 }])
+
+    expect((await stored(db, 620))?.semantics?.n).toBe(90)
+  })
+
+  test('новая версия формата вытесняет старую при любом basis, старая новую — никогда', async () => {
+    const db = await freshDb()
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_REVIEWS, computedAt: NOW }])
+    // так выглядела бы запись v2 кодом после смены формата
+    const v2 = { ...BY_TAGS, v: 2 } as unknown as GameSemantics
+    await upsertSemantics(db, [{ appid: 620, semantics: v2, computedAt: NOW - 100 }])
+    expect(await stored(db, 620)).toMatchObject({ v: 2, basis: 'tags', semantics: undefined })
+
+    // запоздавший инстанс со старым кодом
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_REVIEWS, computedAt: NOW + 100 }])
+    expect((await stored(db, 620))?.v).toBe(2)
+  })
+
+  test('запись без отзывов не стирает отметку их разбора', async () => {
+    const db = await freshDb()
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_TAGS, computedAt: NOW, reviewsAt: NOW }])
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_TAGS, computedAt: NOW + 10 }])
+
+    expect(await stored(db, 620)).toMatchObject({ computedAt: NOW + 10, reviewsAt: NOW })
+  })
+
+  test('апсерт меты и перезапись колонок games семантику не трогают', async () => {
+    // Весь смысл отдельной таблицы: заливка каталога уже стирала обогащение,
+    // жившее в колонках games
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_REVIEWS, computedAt: NOW }])
+    await upsertGameMeta(db, { ...META, name: 'Portal 2 (перезалит)' }, NOW + 60)
+    await db.execute("UPDATE games SET tags_json = '{}', tag_count = 0 WHERE appid = 620")
+
+    expect((await getGamesMetaLite(db, [620])).get(620)?.semantics).toEqual(BY_REVIEWS)
+  })
+
+  test('выборки пачкой несут семантику, игра без неё остаётся в выборке', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await upsertGameMeta(db, { ...META, appid: 730, name: 'CS2' }, NOW)
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_TAGS, computedAt: NOW }])
+
+    for (const read of [getGamesMeta, getGamesMetaLite]) {
+      const metas = await read(db, [620, 730])
+      expect(metas.get(620)?.semantics, read.name).toEqual(BY_TAGS)
+      const cs2 = metas.get(730)
+      expect(cs2?.name, read.name).toBe('CS2')
+      expect(cs2 && 'semantics' in cs2, read.name).toBe(false)
+    }
+  })
+
+  test('мусор в json читается как «семантики нет», а не роняет библиотеку', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await upsertGameMeta(db, { ...META, appid: 730, name: 'CS2' }, NOW)
+    await db.batch(
+      [
+        {
+          sql: `INSERT INTO game_semantics (appid, v, json, basis, computed_at)
+                VALUES (620, 1, ?, 'tags', ?)`,
+          args: ['не json', NOW],
+        },
+        {
+          sql: `INSERT INTO game_semantics (appid, v, json, basis, computed_at)
+                VALUES (730, 1, ?, 'tags', ?)`,
+          args: [JSON.stringify({ v: 1, axes: { challenge: 'много' } }), NOW],
+        },
+      ],
+      'write',
+    )
+
+    const metas = await getGamesMetaLite(db, [620, 730])
+    expect(metas.get(620)?.name).toBe('Portal 2')
+    expect(metas.get(620)?.semantics).toBeUndefined()
+    expect(metas.get(730)?.semantics).toBeUndefined()
+  })
+
+  test('parseSemantics: целиком или никак', () => {
+    expect(parseSemantics(JSON.stringify(BY_TAGS))).toEqual(BY_TAGS)
+    // дважды закодированное разворачивается, как у тегов
+    expect(parseSemantics(JSON.stringify(JSON.stringify(BY_TAGS)))).toEqual(BY_TAGS)
+    // лишнее из базы дальше не едет
+    expect(parseSemantics(JSON.stringify({ ...BY_TAGS, лишнее: 1 }))).toEqual(BY_TAGS)
+
+    const broken: unknown[] = [
+      null,
+      undefined,
+      '',
+      '[]',
+      JSON.stringify({ ...BY_TAGS, v: 2 }),
+      JSON.stringify({ ...BY_TAGS, axes: { ...BY_TAGS.axes, pace: 'быстро' } }),
+      JSON.stringify({ ...BY_TAGS, axes: { ...BY_TAGS.axes, challenge: 140 } }),
+      JSON.stringify({ ...BY_TAGS, session: { ...BY_TAGS.session, bucket: 'вечность' } }),
+      JSON.stringify({ ...BY_TAGS, session: { ...BY_TAGS.session, canStopAnytime: 'да' } }),
+      JSON.stringify({ ...BY_TAGS, timeToFun: { bucket: 'slow', hours: -1 } }),
+      JSON.stringify({ ...BY_TAGS, confidence: 1.5 }),
+      JSON.stringify({ ...BY_TAGS, basis: 'llm' }),
+      JSON.stringify({ ...BY_TAGS, timeToFun: null }),
+    ]
+    for (const raw of broken) expect(parseSemantics(raw), String(raw)).toBeUndefined()
   })
 })

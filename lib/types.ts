@@ -86,6 +86,14 @@ export type GameMeta = {
    * где каталог уже знал, что матч не соберётся. См. deadVerdict.
    */
   deadReason?: import('./liveness').DeadReason
+  /**
+   * Что игра требует от человека: оси, длина сессии, время до веселья.
+   * Живёт в своей таблице game_semantics, а не в колонке games: заливка
+   * каталога (publish-catalog) и апсерт меты её не трогают. Приезжает только
+   * из выборок пачкой (getGamesMeta, getGamesMetaLite, пул открытий);
+   * undefined — не посчитана или записана в чужой версии формата.
+   */
+  semantics?: GameSemantics
 }
 
 /**

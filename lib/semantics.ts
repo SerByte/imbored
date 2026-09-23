@@ -211,6 +211,15 @@ const PRIOR_DAMPING = 0.5
 /** Сумма весов известных таблице тегов, при которой покрытие полное */
 const COVERAGE_FULL = 1.5
 
+/**
+ * Версия формата GameSemantics. Хранимая семантика с другой версией читается
+ * как отсутствующая (parseSemantics в lib/db), а при записи новая версия
+ * вытесняет старую независимо от basis (upsertSemantics). Поменял смысл или
+ * форму полей — подними версию, иначе в базе останутся старые числа под новым
+ * именем.
+ */
+export const SEMANTICS_V = 1
+
 /** Отзывов на RU/EN меньше этого — оси по отзывам не двигаются вовсе */
 export const MIN_REVIEWS = 8
 
@@ -361,7 +370,7 @@ export function deriveSemantics(
   const confidence = tagConfidence + (1 - tagConfidence) * weight * REVIEW_CONFIDENCE
 
   return {
-    v: 1,
+    v: SEMANTICS_V,
     axes: {
       challenge: Math.round(challenge),
       complexity: Math.round(complexity),
