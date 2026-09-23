@@ -1,7 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
-import { SESSION_TTL_SEC } from './sessions'
+import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import type { NewsBlock } from './steamhtml'
 import type { GameMeta, LibraryGame, Mood } from './types'
 
@@ -2924,9 +2924,17 @@ const SESSION_SWEEP_MARGIN_SEC = 30 * 86_400
 
 /**
  * Демо-личность, от которой неделю нет вестей: ни нового демо-входа
- * (users.last_seen_at), ни продления живой сессии, ни оценок. Префикс '000' —
+ * (users.last_seen_at), ни визита по живой сессии, ни оценок. Префикс '000' —
  * признак демо (isDemoId в lib/server): у настоящих SteamID64 он 7656119.
  * GLOB по префиксу идёт по первичному ключу users, а не сканом всех людей.
+ *
+ * Визит по сессии узнаётся по seen_at, но это отметка ПРОДЛЕНИЯ, а не
+ * визита: /api/session/touch переставляет куку и отметку не чаще раза в
+ * SESSION_TOUCH_AFTER_SEC. Человек, заходящий в демо каждый день без единой
+ * оценки, неделю держал seen_at на месте — и уборка сносила его посреди
+ * пользования. Зато позже seen_at + SESSION_TOUCH_AFTER_SEC он заходить не
+ * мог: такой визит продлил бы куку и сдвинул отметку. Поэтому у сессии
+ * порог свой — DEMO_TTL_SEC плюс этот лаг (второй аргумент, см. sweepStale).
  */
 const STALE_DEMO = `steamid IN (
   SELECT u.steamid FROM users u
@@ -2960,7 +2968,7 @@ export type SweepReport = { demos: number; sessions: number; rooms: number }
  */
 export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
   const demoCutoff = nowSec - DEMO_TTL_SEC
-  const demo = [demoCutoff, demoCutoff, demoCutoff]
+  const demo = [demoCutoff, demoCutoff - SESSION_TOUCH_AFTER_SEC, demoCutoff]
   const roomCutoff = nowSec - ROOM_TTL_SEC
   const [, , , , sessions, demos, , , , rooms] = await db.batch(
     [

@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Db } from '@/lib/db'
+import { sweepStale, upsertUser, type Db } from '@/lib/db'
 import { SESSION_COOKIE, sessionSecret } from '@/lib/server'
 import { verifySessionV2 } from '@/lib/session'
 import { SESSION_TOUCH_AFTER_SEC } from '@/lib/sessions'
@@ -65,6 +65,30 @@ describe('/api/session/touch', () => {
     await signIn(db, STEAMID_OF.openid, { verified: true })
     const res = await POST(post('/api/session/touch'))
     expect(newCookie(res)).toBeNull()
+  })
+
+  test('демо, в которое заходят каждый день, суточная уборка не трогает', async () => {
+    // Визит продлевает куку и отметку seen_at лишь раз в неделю, а уборка
+    // считала неделю без отметки молчанием: демо без оценок сносило на
+    // седьмой день посреди пользования.
+    const DAY = 86_400
+    const steamid = STEAMID_OF.demo
+    await upsertUser(db, { steamid, personaName: 'Демо-игрок' }, T0)
+    await signIn(db, steamid)
+    for (let day = 1; day <= 40; day++) {
+      vi.setSystemTime((T0 + day * DAY) * 1000)
+      const res = await POST(post('/api/session/touch'))
+      expect(await res.json(), `день ${day}`).toMatchObject({ authed: true, steamid })
+      const renewed = newCookie(res)
+      if (renewed) setTestCookie(SESSION_COOKIE, renewed)
+      // уборка — ночью, между этим визитом и завтрашним
+      await sweepStale(db, T0 + day * DAY + DAY / 2)
+      const left = await db.execute({
+        sql: 'SELECT COUNT(*) AS n FROM users WHERE steamid = ?',
+        args: [steamid],
+      })
+      expect(Number(left.rows[0]?.n), `день ${day}`).toBe(1)
+    }
   })
 
   test('writer: пишут вход через Steam и демо, сессия по ссылке — только читает', async () => {

@@ -92,7 +92,9 @@ import {
   sweepStale,
   getSessionState,
   revokeSession,
+  DEMO_TTL_SEC,
 } from './db'
+import { SESSION_TOUCH_AFTER_SEC } from './sessions'
 import type { GameMeta, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
@@ -2052,7 +2054,9 @@ describe('sweepStale: суточная уборка', () => {
 
   test('демо, от которого неделю нет вестей, уходит целиком', async () => {
     const db = await freshDb()
-    await demo(db, OLD_DEMO, NOW - 8 * DAY)
+    // Последний визит мог быть не позже продления + SESSION_TOUCH_AFTER_SEC,
+    // и уже от него — неделя тишины
+    await demo(db, OLD_DEMO, NOW - DEMO_TTL_SEC - SESSION_TOUCH_AFTER_SEC - DAY)
     const before = await rowsOf(db, OLD_DEMO)
     // иначе пустой результат ниже ничего бы не доказывал
     expect(Object.values(before).every((n) => n > 0), JSON.stringify(before)).toBe(true)
@@ -2077,6 +2081,17 @@ describe('sweepStale: суточная уборка', () => {
       expect((await rowsOf(db, sid)).users, sid).toBe(1)
       expect((await rowsOf(db, sid)).library_snapshots, sid).toBeGreaterThan(0)
     }
+  })
+
+  test('демо, в которое заходят каждый день без оценок, уборка не трогает', async () => {
+    // Кука и seen_at продлеваются раз в SESSION_TOUCH_AFTER_SEC: всю неделю
+    // после входа отметка стоит на месте, хотя человек заходил и вчера.
+    // Раньше его сносило прямо посреди пользования.
+    const db = await freshDb()
+    const DAILY_DEMO = '00012345678901271'
+    await demo(db, DAILY_DEMO, NOW - SESSION_TOUCH_AFTER_SEC - DAY)
+    expect((await sweepStale(db, NOW)).demos).toBe(0)
+    expect(await rowsOf(db, DAILY_DEMO)).toMatchObject({ users: 1, sessions: 1, library_snapshots: 1 })
   })
 
   test('настоящий человек не демо, сколько бы ни молчал', async () => {
