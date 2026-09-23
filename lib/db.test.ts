@@ -4,6 +4,8 @@ import { cooldownOf, isMultiplayerMeta } from './recommend'
 import { checkRate } from './ratelimit'
 import {
   acquireLease,
+  ADDED_COLUMNS,
+  CURRENT_SCHEMA_V,
   advanceRoomDeckRound,
   bannedAppids,
   castRoomVote,
@@ -1934,5 +1936,171 @@ describe('forgetUser: удаление по запросу', () => {
     }
     expect(personal.length).toBeGreaterThan(5)
     for (const table of personal) expect(FORGET_TABLES, table).toContain(table)
+  })
+})
+
+/**
+ * Версия схемы в catalog_meta.
+ *
+ * До неё каждый холодный старт гонял в Turso три десятка ALTER, заведомо
+ * падавших с «duplicate column name», — по отдельному походу в базу на каждый.
+ * Тесты ниже не про результат миграции (его проверяют остальные), а про то,
+ * СКОЛЬКО она делает: на живой базе дорог каждый запрос.
+ */
+describe('версия схемы', () => {
+  type Call = { kind: 'execute' | 'multiple' | 'batch'; sql: string; failed?: string }
+
+  /**
+   * Обёртка, записывающая каждое обращение к базе. fail позволяет уронить
+   * конкретный запрос — так выглядят обрыв связи или отказ сервера.
+   */
+  function recording(db: Db, fail?: (sql: string) => string | null) {
+    const calls: Call[] = []
+    const text = (q: InStatement) => (typeof q === 'string' ? q : q.sql)
+    const run = async <T>(call: Call, go: () => Promise<T>): Promise<T> => {
+      calls.push(call)
+      const injected = fail?.(call.sql)
+      if (injected) {
+        call.failed = injected
+        throw new Error(injected)
+      }
+      try {
+        return await go()
+      } catch (e) {
+        call.failed = e instanceof Error ? e.message : String(e)
+        throw e
+      }
+    }
+    const spy = {
+      execute: (q: InStatement) => run({ kind: 'execute', sql: text(q) }, () => db.execute(q)),
+      executeMultiple: (sql: string) =>
+        run({ kind: 'multiple', sql }, () => db.executeMultiple(sql)),
+      batch: (qs: InStatement[], mode?: 'write' | 'read' | 'deferred') =>
+        run({ kind: 'batch', sql: qs.map(text).join(';\n') }, () => db.batch(qs, mode)),
+    } as unknown as Db
+    return { spy, calls }
+  }
+
+  const isAlter = (c: Call) => /^\s*ALTER TABLE/i.test(c.sql)
+
+  async function columnsOf(db: Db): Promise<Set<string>> {
+    const res = await db.execute(
+      `SELECT m.name AS tbl, p.name AS col
+         FROM sqlite_master m, pragma_table_info(m.name) p WHERE m.type = 'table'`,
+    )
+    return new Set(res.rows.map((r) => `${r.tbl}.${r.col}`))
+  }
+
+  /** games и rooms в том виде, в каком они жили до ALTER-списка */
+  async function legacyDb(): Promise<Db> {
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(`
+      CREATE TABLE games (
+        appid INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        tags_json TEXT NOT NULL DEFAULT '{}',
+        genres_json TEXT NOT NULL DEFAULT '[]',
+        categories_json TEXT NOT NULL DEFAULT '[]',
+        short_description TEXT,
+        header_image TEXT,
+        screenshots_json TEXT,
+        is_free INTEGER,
+        price_final INTEGER,
+        release_date TEXT,
+        median_forever INTEGER,
+        store TEXT,
+        store_url TEXT,
+        reviews_summary_json TEXT,
+        pros_cons_json TEXT,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE rooms (
+        id TEXT PRIMARY KEY,
+        created_by TEXT NOT NULL,
+        mood_json TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        matched_appid INTEGER,
+        created_at INTEGER NOT NULL
+      );`)
+    return db
+  }
+
+  test('доведённая база стартует за четыре обращения: ни ALTER, ни UPDATE, ни пересборки', async () => {
+    const db = await freshDb()
+    const { spy, calls } = recording(db)
+    await migrateDb(spy)
+
+    expect(calls.filter(isAlter)).toEqual([])
+    expect(calls.filter((c) => /^\s*UPDATE\b/i.test(c.sql))).toEqual([])
+    // проверка CHECK у feedback — это чтение sqlite_master, и оно тоже под версией
+    expect(calls.filter((c) => c.kind === 'execute' && /sqlite_master/.test(c.sql))).toEqual([])
+    // три блока CREATE … IF NOT EXISTS и одно чтение флагов; каждый вызов —
+    // отдельный поход в Turso
+    expect(calls.map((c) => c.kind)).toEqual(['multiple', 'multiple', 'execute', 'multiple'])
+  })
+
+  test('база без версии, но со всеми колонками, обходится без единого ALTER', async () => {
+    // Так выглядит прод в первый холодный старт после этой правки
+    const db = await freshDb()
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'schema_v'")
+    const { spy, calls } = recording(db)
+    await migrateDb(spy)
+
+    expect(calls.filter(isAlter)).toEqual([])
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+  })
+
+  test('старая база получает ровно недостающие колонки, без заведомо падающих ALTER', async () => {
+    const db = await legacyDb()
+    const { spy, calls } = recording(db)
+    await migrateDb(spy)
+
+    const have = await columnsOf(db)
+    for (const [table, col] of ADDED_COLUMNS) {
+      expect(have.has(`${table}.${col.split(' ')[0]}`), `${table}.${col}`).toBe(true)
+    }
+    const alters = calls.filter(isAlter)
+    expect(alters.filter((c) => c.failed)).toEqual([])
+    // store и store_url в старой games уже были — их не трогаем
+    expect(alters.some((c) => /ADD COLUMN store(_url)? /.test(c.sql))).toBe(false)
+    expect(alters.some((c) => /ALTER TABLE rooms ADD COLUMN deck_round/.test(c.sql))).toBe(true)
+  })
+
+  test('без pragma_table_info миграция откатывается к перебору всех колонок', async () => {
+    // Табличную функцию может не пустить сервер. Тогда платим прежнюю цену —
+    // один раз, потому что версия после этого всё равно записывается.
+    const db = await freshDb()
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'schema_v'")
+    const { spy, calls } = recording(db, (sql) =>
+      sql.includes('pragma_table_info') ? 'no such table: pragma_table_info' : null,
+    )
+    await migrateDb(spy)
+
+    expect(calls.filter(isAlter)).toHaveLength(ADDED_COLUMNS.length)
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+  })
+
+  test('оборвавшаяся миграция версию не пишет, и следующий старт её доделывает', async () => {
+    const db = await legacyDb()
+    const { spy } = recording(db, (sql) =>
+      /ADD COLUMN deck_size/.test(sql) ? 'SERVER_ERROR: connection reset' : null,
+    )
+    await expect(migrateDb(spy)).rejects.toThrow(/connection reset/)
+    expect(await getCatalogMeta(db, 'schema_v')).toBeNull()
+
+    await migrateDb(db)
+    expect((await columnsOf(db)).has('rooms.deck_size')).toBe(true)
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+  })
+
+  test('новая колонка без новой версии схемы не проскочит', () => {
+    // На живой базе версия уже записана, и колонка, добавленная без подъёма
+    // CURRENT_SCHEMA_V, туда не доедет никогда, а все остальные тесты гоняют
+    // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
+    // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
+    expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
+      version: 1,
+      columns: 30,
+    })
   })
 })

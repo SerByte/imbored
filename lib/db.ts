@@ -188,6 +188,15 @@ CREATE TABLE IF NOT EXISTS daily_picks (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (steamid, day)
 ) WITHOUT ROWID;
+/*
+ * Служебные ключи: курсоры крона, аренды, счётчики каталога и флаги миграций.
+ * Здесь, а не в SCHEMA_CATALOG рядом с остальным каталогом: migrateDb читает
+ * из неё версию схемы ДО ALTER-цикла, чтобы решить, нужен ли он вообще.
+ */
+CREATE TABLE IF NOT EXISTS catalog_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `
 
 /**
@@ -226,11 +235,6 @@ CREATE TABLE IF NOT EXISTS game_tags (
   PRIMARY KEY (appid, tag)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_game_tags_tag ON game_tags (tag, weight DESC);
-
-CREATE TABLE IF NOT EXISTS catalog_meta (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
 
 CREATE INDEX IF NOT EXISTS idx_games_pool ON games (reviews_total DESC)
   WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
@@ -329,64 +333,132 @@ const DERIVED_BACKFILL_KEY = 'derived_backfilled_v1'
 /** Ключ разовой пометки карточек, помеченных обогащёнными без данных. */
 const PAGE_TRIES_BACKFILL_KEY = 'page_tries_backfilled_v1'
 
-/** Схема и миграции; идемпотентно, безопасно вызывать на каждом старте */
-export async function migrateDb(db: Db): Promise<Db> {
-  await db.executeMultiple(SCHEMA)
+/** Ключ разовой починки веса у уже записанных патчей (см. migrateDb). */
+const NEWS_RANK_FIX_KEY = 'news_rank_fixed'
 
-  // новостные таблицы самодостаточны и на ALTER-колонки не ссылаются
-  await db.executeMultiple(SCHEMA_NEWS)
+/** Ключ в catalog_meta: до какой версии схемы доведена база. */
+const SCHEMA_V_KEY = 'schema_v'
 
-  // колонки, добавленные после первых версий схемы
-  for (const [table, col] of [
-    ['games', 'store TEXT'],
-    ['games', 'store_url TEXT'],
-    ['games', 'art_json TEXT'],
-    ['feedback', 'reason TEXT'],
-    ['rooms', 'is_public INTEGER NOT NULL DEFAULT 0'],
-    // Обязательно и здесь, и в SCHEMA: на живой базе CREATE TABLE IF NOT
-    // EXISTS — no-op, и колонка «только в SCHEMA» появится лишь на свежей
-    // :memory: из тестов, а в проде каждый запрос комнаты упадёт
-    ['rooms', 'deck_round INTEGER NOT NULL DEFAULT 0'],
-    ['rooms', 'deck_size INTEGER'],
-    ['users', 'portrait_json TEXT'],
-    // «выйти на всех устройствах»: отсечка по времени выдачи токена.
-    // Страхует случай, когда строки сессии нет вовсе и гасить по sid нечего.
-    ['users', 'sessions_from INTEGER'],
-    // сигналы актуальности и производные поля для выборки без полного скана
-    ['games', 'release_year INTEGER'],
-    ['games', 'developer TEXT'],
-    ['games', 'publisher TEXT'],
-    ['games', 'reviews_total INTEGER'],
-    ['games', 'reviews_percent INTEGER'],
-    ['games', 'reviews_30d INTEGER'],
-    ['games', 'ccu INTEGER'],
-    ['games', 'ccu_at INTEGER'],
-    ['games', 'signals_at INTEGER'],
-    ['games', 'tag_count INTEGER NOT NULL DEFAULT 0'],
-    ['games', 'is_multiplayer INTEGER NOT NULL DEFAULT 0'],
-    ['games', 'alive INTEGER NOT NULL DEFAULT 1'],
-    ['games', 'dead_reason TEXT'],
-    ['games', 'superseded_by INTEGER'],
-    // когда карточку игры последний раз обогащали (скриншоты, отзывы, pros/cons).
-    // NULL — ни разу; см. lib/pagejob.ts
-    ['games', 'page_at INTEGER'],
-    // Сколько раз подряд поход за карточкой возвращался пустым. Ноль — данные
-    // приехали (или ещё не ходили). Отличает «сходили и привезли» от «сходили
-    // и не привезли», которые до появления колонки были одним и тем же
-    // page_at; см. markPageMissed и lib/pagejob.ts.
-    ['games', 'page_tries INTEGER NOT NULL DEFAULT 0'],
-    // цена без скидки, размер скидки, её конец и время замера — своя ось
-    // свежести у цены, метаданные живут в 30 раз дольше распродажи
-    ['games', 'price_initial INTEGER'],
-    ['games', 'discount_percent INTEGER'],
-    ['games', 'discount_ends_at INTEGER'],
-    ['games', 'price_at INTEGER'],
-    ['sessions', 'verified INTEGER NOT NULL DEFAULT 0'],
-  ] as const) {
+/**
+ * Версия схемы: набор колонок из ADDED_COLUMNS плюс форма таблиц, которые
+ * приходится пересобирать (CHECK у feedback).
+ *
+ * ALTER TABLE ADD COLUMN не умеет IF NOT EXISTS, и миграция раньше просто
+ * пробовала добавить каждую колонку, глотая «duplicate column name». На живой
+ * базе это три десятка заведомо падающих запросов на КАЖДОМ холодном старте,
+ * и каждый — отдельный поход в Turso: секунды до первого ответа нового
+ * инстанса, и ровно в этом окне любой обрыв ронял инициализацию целиком.
+ * База, доведённая до этой версии, пропускает и ALTER, и проверку CHECK.
+ *
+ * ПОДНИМИ ВЕРСИЮ, если добавил колонку в ADDED_COLUMNS или поменял то, что
+ * migrateDb делает под upgrade. Иначе на живой базе, где версия уже записана,
+ * изменение не выполнится никогда, а тесты этого не заметят: на свежей
+ * :memory: версии нет, и миграция там идёт целиком. Об этом напомнит сторож
+ * «новая колонка без новой версии схемы» в lib/db.test.ts.
+ *
+ * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
+ * выполняются на каждом старте, по одному обращению на блок.
+ */
+export const CURRENT_SCHEMA_V = 1
+
+/**
+ * Колонки, добавленные после первых версий схемы.
+ *
+ * НОВАЯ КОЛОНКА — ПОДНЯТЬ CURRENT_SCHEMA_V, см. докблок выше.
+ */
+export const ADDED_COLUMNS = [
+  ['games', 'store TEXT'],
+  ['games', 'store_url TEXT'],
+  ['games', 'art_json TEXT'],
+  ['feedback', 'reason TEXT'],
+  ['rooms', 'is_public INTEGER NOT NULL DEFAULT 0'],
+  // Обязательно и здесь, и в SCHEMA: на живой базе CREATE TABLE IF NOT
+  // EXISTS — no-op, и колонка «только в SCHEMA» появится лишь на свежей
+  // :memory: из тестов, а в проде каждый запрос комнаты упадёт
+  ['rooms', 'deck_round INTEGER NOT NULL DEFAULT 0'],
+  ['rooms', 'deck_size INTEGER'],
+  ['users', 'portrait_json TEXT'],
+  // «выйти на всех устройствах»: отсечка по времени выдачи токена.
+  // Страхует случай, когда строки сессии нет вовсе и гасить по sid нечего.
+  ['users', 'sessions_from INTEGER'],
+  // сигналы актуальности и производные поля для выборки без полного скана
+  ['games', 'release_year INTEGER'],
+  ['games', 'developer TEXT'],
+  ['games', 'publisher TEXT'],
+  ['games', 'reviews_total INTEGER'],
+  ['games', 'reviews_percent INTEGER'],
+  ['games', 'reviews_30d INTEGER'],
+  ['games', 'ccu INTEGER'],
+  ['games', 'ccu_at INTEGER'],
+  ['games', 'signals_at INTEGER'],
+  ['games', 'tag_count INTEGER NOT NULL DEFAULT 0'],
+  ['games', 'is_multiplayer INTEGER NOT NULL DEFAULT 0'],
+  ['games', 'alive INTEGER NOT NULL DEFAULT 1'],
+  ['games', 'dead_reason TEXT'],
+  ['games', 'superseded_by INTEGER'],
+  // когда карточку игры последний раз обогащали (скриншоты, отзывы, pros/cons).
+  // NULL — ни разу; см. lib/pagejob.ts
+  ['games', 'page_at INTEGER'],
+  // Сколько раз подряд поход за карточкой возвращался пустым. Ноль — данные
+  // приехали (или ещё не ходили). Отличает «сходили и привезли» от «сходили
+  // и не привезли», которые до появления колонки были одним и тем же
+  // page_at; см. markPageMissed и lib/pagejob.ts.
+  ['games', 'page_tries INTEGER NOT NULL DEFAULT 0'],
+  // цена без скидки, размер скидки, её конец и время замера — своя ось
+  // свежести у цены, метаданные живут в 30 раз дольше распродажи
+  ['games', 'price_initial INTEGER'],
+  ['games', 'discount_percent INTEGER'],
+  ['games', 'discount_ends_at INTEGER'],
+  ['games', 'price_at INTEGER'],
+  ['sessions', 'verified INTEGER NOT NULL DEFAULT 0'],
+] as const
+
+/**
+ * Флаги миграций одним запросом.
+ *
+ * Раньше каждый флаг бэкфилла читался своим SELECT'ом — лишние походы в базу
+ * на каждом старте ради ответа, который почти всегда «уже сделано».
+ */
+async function readMigrationFlags(db: Db): Promise<Map<string, string>> {
+  const keys = [SCHEMA_V_KEY, DERIVED_BACKFILL_KEY, PAGE_TRIES_BACKFILL_KEY, NEWS_RANK_FIX_KEY]
+  const res = await db.execute({
+    sql: `SELECT key, value FROM catalog_meta WHERE key IN (${placeholders(keys.length)})`,
+    args: keys,
+  })
+  return new Map(res.rows.map((r) => [String(r.key), String(r.value)]))
+}
+
+/**
+ * ALTER только для колонок, которых в базе действительно нет.
+ *
+ * Что уже есть, узнаётся одним запросом по всем таблицам сразу, а не попыткой
+ * ALTER с разбором ошибки. Если сам этот запрос не прошёл (сервер не пустил
+ * табличную функцию pragma_table_info — на Turso это из тестов не проверить),
+ * миграция пробует каждую колонку, как раньше, и платит за это один раз:
+ * после неё будет записана версия схемы.
+ */
+async function addMissingColumns(db: Db): Promise<void> {
+  const tables = [...new Set(ADDED_COLUMNS.map(([table]) => table))]
+  let have: Set<string> | null = null
+  try {
+    const res = await db.execute({
+      sql: `SELECT m.name AS tbl, p.name AS col
+              FROM sqlite_master m, pragma_table_info(m.name) p
+             WHERE m.type = 'table' AND m.name IN (${placeholders(tables.length)})`,
+      args: tables,
+    })
+    have = new Set(res.rows.map((r) => `${r.tbl}.${r.col}`))
+  } catch {
+    have = null
+  }
+
+  for (const [table, col] of ADDED_COLUMNS) {
+    if (have?.has(`${table}.${col.split(' ')[0]}`)) continue
     try {
       await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col}`)
     } catch (e) {
       // «Колонка уже есть» — ожидаемо, и это единственная причина молчать.
+      // После проверки выше так бывает, когда два инстанса стартуют разом.
       // Всё остальное (недоступная Turso, кончившееся место, битая схема) —
       // настоящий сбой, а раньше он был неотличим от дубликата: миграция
       // «успешно» доходила до конца на половине добавленных колонок, и
@@ -395,6 +467,67 @@ export async function migrateDb(db: Db): Promise<Db> {
       if (!/duplicate column name/i.test(msg)) throw e
     }
   }
+}
+
+/**
+ * Старый CHECK у feedback не пускает новые action — сначала 'banned', теперь
+ * 'launched'. SQLite не умеет менять CHECK на месте, поэтому таблица
+ * пересобирается целиком. Условие проверяет именно последнее добавленное
+ * значение в кавычках: после пересборки оно в SQL таблицы есть, и повтор
+ * ничего не делает. Одна ветка покрывает и совсем старую схему без 'banned' —
+ * в ней тоже нет 'launched'.
+ *
+ * Зовётся только под upgrade: новый action в CHECK — это тоже подъём
+ * CURRENT_SCHEMA_V, иначе живая база его не увидит.
+ */
+async function rebuildFeedbackCheck(db: Db): Promise<void> {
+  const info = await db.execute(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'",
+  )
+  const createSql = info.rows[0]?.sql as string | undefined
+  if (createSql?.includes('CHECK') && !createSql.includes("'launched'")) {
+    await db.batch(
+      [
+        // Хвост прерванной попытки: без него CREATE упал бы на каждом старте
+        'DROP TABLE IF EXISTS feedback_new',
+        `CREATE TABLE feedback_new (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           steamid TEXT NOT NULL,
+           appid INTEGER NOT NULL,
+           action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned','launched')),
+           reason TEXT,
+           mood_json TEXT,
+           created_at INTEGER NOT NULL
+         )`,
+        `INSERT INTO feedback_new (id, steamid, appid, action, reason, mood_json, created_at)
+           SELECT id, steamid, appid, action, reason, mood_json, created_at FROM feedback`,
+        'DROP TABLE feedback',
+        'ALTER TABLE feedback_new RENAME TO feedback',
+        'CREATE INDEX IF NOT EXISTS idx_feedback_steamid ON feedback (steamid, created_at DESC)',
+      ],
+      'write',
+    )
+  }
+}
+
+/**
+ * Схема и миграции; идемпотентно, безопасно вызывать на каждом старте.
+ *
+ * На уже доведённой базе это четыре обращения: три блока CREATE … IF NOT
+ * EXISTS и одно чтение флагов. Всё остальное — ALTER, пересборка feedback,
+ * бэкфиллы по games и news_items — закрыто версией схемы или своим флагом.
+ */
+export async function migrateDb(db: Db): Promise<Db> {
+  await db.executeMultiple(SCHEMA)
+
+  // новостные таблицы самодостаточны и на ALTER-колонки не ссылаются
+  await db.executeMultiple(SCHEMA_NEWS)
+
+  const flags = await readMigrationFlags(db)
+  // «не меньше», а не «меньше»: мусор вместо числа тоже означает «доводить»
+  const upgrade = !(Number(flags.get(SCHEMA_V_KEY) ?? 0) >= CURRENT_SCHEMA_V)
+
+  if (upgrade) await addMissingColumns(db)
 
   // строго после ALTER-цикла: частичный индекс ссылается на новые колонки
   await db.executeMultiple(SCHEMA_CATALOG)
@@ -408,11 +541,7 @@ export async function migrateDb(db: Db): Promise<Db> {
   // старте, ни один из них не опирается на индекс, а Turso считает
   // прочитанные строки. Соседний фикс был закрыт флагом, эти два — нет, и
   // разница обходилась в каталог целиком на каждый новый инстанс.
-  const derivedDone = await db.execute({
-    sql: 'SELECT value FROM catalog_meta WHERE key = ?',
-    args: [DERIVED_BACKFILL_KEY],
-  })
-  if (!derivedDone.rows.length) {
+  if (!flags.has(DERIVED_BACKFILL_KEY)) {
     await db.execute(`UPDATE games SET tag_count = (
         SELECT COUNT(*) FROM json_each(games.tags_json)
       ) WHERE tag_count = 0 AND tags_json != '{}'`)
@@ -444,11 +573,7 @@ export async function migrateDb(db: Db): Promise<Db> {
    * Под флагом по той же причине, что и бэкфилл выше: это полнотабличный
    * UPDATE по games, а Turso считает прочитанные строки.
    */
-  const pageTriesDone = await db.execute({
-    sql: 'SELECT value FROM catalog_meta WHERE key = ?',
-    args: [PAGE_TRIES_BACKFILL_KEY],
-  })
-  if (!pageTriesDone.rows.length) {
+  if (!flags.has(PAGE_TRIES_BACKFILL_KEY)) {
     await db.execute(`UPDATE games SET page_tries = 1
       WHERE page_at IS NOT NULL AND page_tries = 0
         AND (screenshots_json IS NULL OR screenshots_json = '[]')`)
@@ -463,11 +588,7 @@ export async function migrateDb(db: Db): Promise<Db> {
   // Deathmatch с Condition Zero — те самые, что каталог метит alive = 0.
   // Флаг в catalog_meta, потому что иначе это скан news_items на каждом
   // холодном старте, а Turso считает прочитанные строки.
-  const rankFixed = await db.execute({
-    sql: 'SELECT value FROM catalog_meta WHERE key = ?',
-    args: ['news_rank_fixed'],
-  })
-  if (!rankFixed.rows.length) {
+  if (!flags.has(NEWS_RANK_FIX_KEY)) {
     await db.execute(`UPDATE news_items SET rank = 0
       WHERE rank > 0 AND NOT EXISTS (
         SELECT 1 FROM games g WHERE g.appid = news_items.appid
@@ -475,42 +596,18 @@ export async function migrateDb(db: Db): Promise<Db> {
       )`)
     await db.execute({
       sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
-      args: ['news_rank_fixed', '1'],
+      args: [NEWS_RANK_FIX_KEY, '1'],
     })
   }
 
-  // Старый CHECK у feedback не пускает новые action — сначала 'banned', теперь
-  // 'launched'. SQLite не умеет менять CHECK на месте, поэтому таблица
-  // пересобирается целиком. Условие проверяет именно последнее добавленное
-  // значение в кавычках: после пересборки оно в SQL таблицы есть, и второй
-  // старт ничего не делает. Одна ветка покрывает и совсем старую схему без
-  // 'banned' — в неё тоже нет 'launched'.
-  const info = await db.execute(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'",
-  )
-  const createSql = info.rows[0]?.sql as string | undefined
-  if (createSql?.includes('CHECK') && !createSql.includes("'launched'")) {
-    await db.batch(
-      [
-        // Хвост прерванной попытки: без него CREATE упал бы на каждом старте
-        'DROP TABLE IF EXISTS feedback_new',
-        `CREATE TABLE feedback_new (
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           steamid TEXT NOT NULL,
-           appid INTEGER NOT NULL,
-           action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned','launched')),
-           reason TEXT,
-           mood_json TEXT,
-           created_at INTEGER NOT NULL
-         )`,
-        `INSERT INTO feedback_new (id, steamid, appid, action, reason, mood_json, created_at)
-           SELECT id, steamid, appid, action, reason, mood_json, created_at FROM feedback`,
-        'DROP TABLE feedback',
-        'ALTER TABLE feedback_new RENAME TO feedback',
-        'CREATE INDEX IF NOT EXISTS idx_feedback_steamid ON feedback (steamid, created_at DESC)',
-      ],
-      'write',
-    )
+  if (upgrade) {
+    await rebuildFeedbackCheck(db)
+    // Последней: версия пишется, только когда всё выше прошло. Оборвись
+    // миграция на полпути — следующий старт повторит её целиком.
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [SCHEMA_V_KEY, String(CURRENT_SCHEMA_V)],
+    })
   }
 
   return db
