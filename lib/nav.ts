@@ -23,3 +23,34 @@ export function isNavActive(pathname: string, href: string, also: readonly strin
     p === '/' ? pathname === '/' : pathname === p || pathname.startsWith(`${p}/`),
   )
 }
+
+/**
+ * Разделы, чья страница собирается на каждый запрос (`dynamic = 'force-dynamic'`).
+ *
+ * Шапка, нижняя панель и подвал стоят на КАЖДОЙ странице, и их ссылки Next
+ * префетчит, как только они попадают в экран. Статическому разделу это ничего
+ * не стоит — префетч берёт готовое с края. Динамическому — вызов функции в
+ * iad1 на каждый просмотр любой страницы: замер на проде — /library, /compat,
+ * /whatsnew и /portrait отвечали на префетч MISS и `private, no-store` с TTFB
+ * 0.26–0.53 с, а на одну загрузку /game/730 префетч шёл двумя кругами. Гостя
+ * с /library при этом всё равно разворачивает на вход, то есть функция
+ * работала ради редиректа, по которому никто не пойдёт.
+ *
+ * Переход по такой ссылке и без префетча не выглядит зависшим: подпись пункта
+ * мерцает, пока едет сервер (components/LinkPending.tsx), — useLinkStatus и
+ * задуман для ссылок с prefetch={false}.
+ *
+ * Список сверяется со страницами сторожем lib/navprefetch.test.ts: раздел,
+ * ставший динамическим, без строки здесь тест не пропустит.
+ */
+export const DYNAMIC_SECTIONS = ['/whatsnew', '/compat', '/library', '/portrait'] as const
+
+/**
+ * prefetch для ссылки навигации: `false` у динамического раздела, иначе
+ * `undefined` — то есть поведение Next по умолчанию. Хвост адреса (`?state=…`,
+ * `/<steamid>`) раздел не меняет.
+ */
+export function navPrefetch(href: string): false | undefined {
+  const path = href.split(/[?#]/)[0]
+  return DYNAMIC_SECTIONS.some((p) => path === p || path.startsWith(`${p}/`)) ? false : undefined
+}

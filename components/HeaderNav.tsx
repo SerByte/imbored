@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { LinkPending } from '@/components/LinkPending'
 import { PickLink } from '@/components/PickLink'
-import { isNavActive } from '@/lib/nav'
+import { isNavActive, navPrefetch } from '@/lib/nav'
 
 /**
  * Меню шапки — на десктопе; на телефоне пункты уезжают в нижнюю панель.
@@ -41,6 +41,9 @@ import { isNavActive } from '@/lib/nav'
  * lib/firstpaint.test.ts), так что переход на них ждёт сервер, и до ответа
  * нажатый пункт обязан сам показать, что нажат. Ширину подписи мерцание не
  * меняет — запас в 23 px выше не трогается.
+ *
+ * Префетча у динамических пунктов нет вовсе — navPrefetch из lib/nav: шапка
+ * стоит на каждой странице, и префетч будил бы их функции на каждом просмотре.
  */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
@@ -66,7 +69,7 @@ export function HeaderNav() {
         return 'pick' in item ? (
           <PickLink key={item.href} {...props} />
         ) : (
-          <Link key={item.href} href={item.href} {...props} />
+          <Link key={item.href} href={item.href} prefetch={navPrefetch(item.href)} {...props} />
         )
       })}
     </span>

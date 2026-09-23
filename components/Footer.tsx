@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { navPrefetch } from '@/lib/nav'
 import { LogoMark } from './Logo'
 import { Wordmark } from './Wordmark'
 
@@ -15,10 +16,21 @@ export function Footer() {
           <Link href="/support" className="tap tap-tight hover:text-ink transition-colors">
             Поддержать проект
           </Link>
-          <Link href="/portrait" className="tap tap-tight hover:text-ink transition-colors">
+          {/* Портрет и совместимость собираются на каждый запрос: префетч из
+              подвала будил бы функцию на каждом просмотре любой страницы
+              (подробно — lib/nav, DYNAMIC_SECTIONS) */}
+          <Link
+            href="/portrait"
+            prefetch={navPrefetch('/portrait')}
+            className="tap tap-tight hover:text-ink transition-colors"
+          >
             Портрет игрока
           </Link>
-          <Link href="/compat" className="tap tap-tight hover:text-ink transition-colors">
+          <Link
+            href="/compat"
+            prefetch={navPrefetch('/compat')}
+            className="tap tap-tight hover:text-ink transition-colors"
+          >
             Совместимость
           </Link>
           <Link href="/privacy" className="tap tap-tight hover:text-ink transition-colors">

@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { LinkPending } from '@/components/LinkPending'
 import { PickLink } from '@/components/PickLink'
-import { isNavActive } from '@/lib/nav'
+import { isNavActive, navPrefetch } from '@/lib/nav'
 
 /**
  * Нижняя панель навигации — только на телефоне; на десктопе меню в шапке.
@@ -157,7 +157,7 @@ export function MobileNav() {
           return 'pick' in item ? (
             <PickLink key={item.href} {...props} />
           ) : (
-            <Link key={item.href} href={item.href} {...props} />
+            <Link key={item.href} href={item.href} prefetch={navPrefetch(item.href)} {...props} />
           )
         })}
       </div>
