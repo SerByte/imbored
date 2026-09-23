@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS users (
  * то икота Turso, холодный старт с пустой базой или не записавшийся INSERT
  * означают массовый разлогин — ровно та беда, которую эта задача чинит.
  * Поэтому «строки нет» и «строка отозвана» обязаны быть разными состояниями:
- * отзыв — это revoked_at, а не DELETE. Надгробия не убираются.
+ * отзыв — это revoked_at, а не DELETE. Надгробия не убираются (кроме
+ * удаления всех данных по запросу человека, см. forgetUser).
  *
  * Строк накапливается по одной на ВХОД, а не на визит (sid живёт вместе с
  * кукой и при продлении не меняется), так что чистка не нужна.
@@ -83,8 +84,9 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_steamid ON library_snapshots (steamid, 
  * запрос к Steam этого уже не вернёт.
  *
  * Поэтому таблица отдельная, а не «не удалять часть library_snapshots»: у неё
- * другой жизненный цикл. Строка на игрока и год, пишется один раз и не
- * удаляется никогда.
+ * другой жизненный цикл. Строка на игрока и год, пишется один раз и
+ * удаляется только вместе со всеми данными игрока по его запросу (forgetUser).
+ * Об этом прямо сказано в /privacy, раздел 06.
  */
 CREATE TABLE IF NOT EXISTS library_baselines (
   steamid TEXT NOT NULL,
@@ -2564,6 +2566,100 @@ export async function unbanGame(db: Db, steamid: string, appid: number): Promise
     sql: "DELETE FROM feedback WHERE steamid = ? AND appid = ? AND action = 'banned'",
     args: [steamid, appid],
   })
+}
+
+/* ---------- удаление по запросу ---------- */
+
+/**
+ * Где лежат данные одного игрока. Один список и для удаления, и для
+ * предпросмотра в scripts/forget-user.ts.
+ *
+ * Список один намеренно. Если бы счёт и удаление держали свои копии условий,
+ * первая же новая таблица попала бы только в одну из них, и предпросмотр
+ * обещал бы то, чего удаление не делает. Что сюда попадают ВСЕ таблицы с
+ * колонкой steamid или created_by, проверяет lib/db.test.ts.
+ *
+ * Комнаты, созданные игроком, уходят целиком, вместе с чужими участниками и
+ * голосами в них. Создатель — часть самой комнаты: обезличить его значит
+ * оставить комнату без хозяина, из которой никто не сможет убрать участника
+ * (leave/route.ts сверяет право по createdBy). Комната живёт один вечер, и
+ * потеря чужих свайпов в ней дешевле недоудалённого человека. Поэтому голоса
+ * и участники идут раньше rooms: находятся они по rooms.created_by.
+ *
+ * Сессии удаляются, хотя в остальном коде надгробия не убираются. Там отзыв
+ * обязан отличаться от «строки нет», чтобы икота базы не разлогинивала людей.
+ * Здесь человек сам попросил убрать всё; если он вернётся с прежней кукой,
+ * это будет первый визит с чистого листа.
+ *
+ * rate_limits: ключ устроен как bucket:id:окно (lib/ratelimit.ts), и id
+ * бывает steamid. instr, а не LIKE: в LIKE `_` и `%` — подстановки.
+ *
+ * news_poll не трогается: это очередь опроса игр, а не людей, и в ней нет
+ * следа того, чья библиотека её пополнила.
+ */
+const USER_ROWS = [
+  {
+    table: 'room_votes',
+    where: 'steamid = ? OR room_id IN (SELECT id FROM rooms WHERE created_by = ?)',
+  },
+  {
+    table: 'room_members',
+    where: 'steamid = ? OR room_id IN (SELECT id FROM rooms WHERE created_by = ?)',
+  },
+  { table: 'rooms', where: 'created_by = ?' },
+  { table: 'feedback', where: 'steamid = ?' },
+  { table: 'daily_picks', where: 'steamid = ?' },
+  { table: 'library_snapshots', where: 'steamid = ?' },
+  { table: 'library_baselines', where: 'steamid = ?' },
+  { table: 'sessions', where: 'steamid = ?' },
+  { table: 'users', where: 'steamid = ?' },
+  { table: 'rate_limits', where: "instr(key, ':' || ? || ':') > 0" },
+] as const
+
+/** Таблицы, которые чистит forgetUser, — для сторожа в тестах */
+export const FORGET_TABLES: readonly string[] = USER_ROWS.map((r) => r.table)
+
+/** Сколько строк нашлось (или удалено) по каждой таблице, в порядке удаления */
+export type ForgetReport = Array<{ table: string; rows: number }>
+
+/**
+ * Пустая строка или опечатка здесь стоили бы чужих данных: instr с пустым
+ * steamid совпал бы с каждым ключом лимитера. Формат тот же, что проверяют
+ * все маршруты и подпись сессии.
+ */
+function userArgs(steamid: string, where: string): string[] {
+  if (!/^\d{17}$/.test(steamid)) throw new Error(`не SteamID64: «${steamid}»`)
+  return Array.from({ length: where.split('?').length - 1 }, () => steamid)
+}
+
+/** Предпросмотр forgetUser: только читает */
+export async function countUserRows(db: Db, steamid: string): Promise<ForgetReport> {
+  const res = await db.batch(
+    USER_ROWS.map((r) => ({
+      sql: `SELECT COUNT(*) AS n FROM ${r.table} WHERE ${r.where}`,
+      args: userArgs(steamid, r.where),
+    })),
+    'read',
+  )
+  return USER_ROWS.map((r, i) => ({ table: r.table, rows: Number(res[i]?.rows[0]?.n ?? 0) }))
+}
+
+/**
+ * Удалить всё, что хранится об игроке, — по запросу из /privacy, раздел 06.
+ *
+ * Одной пачкой: либо ушло всё, либо ничего. Половинное удаление хуже любого
+ * из двух: человеку ответили «удалили», а годовые отметки или голоса
+ * остались, и искать их потом по уже пустым users никто не станет.
+ */
+export async function forgetUser(db: Db, steamid: string): Promise<ForgetReport> {
+  const res = await db.batch(
+    USER_ROWS.map((r) => ({
+      sql: `DELETE FROM ${r.table} WHERE ${r.where}`,
+      args: userArgs(steamid, r.where),
+    })),
+    'write',
+  )
+  return USER_ROWS.map((r, i) => ({ table: r.table, rows: Number(res[i]?.rowsAffected ?? 0) }))
 }
 
 /* ---------- патчноуты ---------- */

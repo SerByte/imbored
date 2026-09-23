@@ -1,6 +1,7 @@
 import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { cooldownOf, isMultiplayerMeta } from './recommend'
+import { checkRate } from './ratelimit'
 import {
   acquireLease,
   advanceRoomDeckRound,
@@ -80,6 +81,10 @@ import {
   sweepDailyPicks,
   forgetDailyPick,
   topCatalogAppids,
+  countUserRows,
+  createSession,
+  FORGET_TABLES,
+  forgetUser,
 } from './db'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -1799,5 +1804,135 @@ describe('топ каталога: кэш на десять минут', () => {
     const вторая = await createDb(':memory:')
     await игра(вторая, 77, 5)
     expect(await topCatalogAppids(вторая, 5)).toEqual([77])
+  })
+})
+
+describe('forgetUser: удаление по запросу', () => {
+  const ME = '76561198000000001'
+  const FRIEND = '76561198000000002'
+
+  /** Игрок, у которого есть строка в каждой таблице, где вообще бывают люди */
+  async function populated() {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME, personaName: 'Me', avatarUrl: 'https://a/me.jpg' }, NOW)
+    await setUserPortrait(db, ME, { takenAt: NOW, text: 'портрет' })
+    await createSession(db, { sid: 'sid-me', steamid: ME, verified: true }, NOW)
+    // Два разных года — две годовые отметки. Ровно их политика раньше не
+    // упоминала, и ровно их проще всего забыть при удалении руками.
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 400 * 86_400)
+    await saveLibrarySnapshot(db, ME, LIB, NOW)
+    await logFeedback(db, { steamid: ME, appid: 570, action: 'liked' }, NOW)
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'banned' }, NOW)
+    await saveDailyPick(db, ME, '2023-11-14', { appid: 570 }, NOW)
+    await checkRate(db, { bucket: 'portrait', id: ME, limit: 10, windowSec: 60, nowSec: NOW })
+
+    // Своя комната: друг в ней тоже голосовал
+    await createRoom(db, { id: 'MYROOM', steamid: ME }, NOW)
+    await joinRoom(db, 'MYROOM', ME, 'Me', NOW)
+    await joinRoom(db, 'MYROOM', FRIEND, 'Friend', NOW)
+    await castRoomVote(db, 'MYROOM', ME, 570, 1, NOW)
+    await castRoomVote(db, 'MYROOM', FRIEND, 570, 1, NOW)
+
+    // Чужая комната, где он только гость
+    await createRoom(db, { id: 'FRROOM', steamid: FRIEND }, NOW)
+    await joinRoom(db, 'FRROOM', FRIEND, 'Friend', NOW)
+    await joinRoom(db, 'FRROOM', ME, 'Me', NOW)
+    await castRoomVote(db, 'FRROOM', ME, 620, 1, NOW)
+    await castRoomVote(db, 'FRROOM', FRIEND, 620, 0, NOW)
+
+    // Данные друга, которые удаление трогать не имеет права
+    await upsertUser(db, { steamid: FRIEND, personaName: 'Friend' }, NOW)
+    await logFeedback(db, { steamid: FRIEND, appid: 570, action: 'liked' }, NOW)
+    await saveLibrarySnapshot(db, FRIEND, LIB, NOW)
+    return db
+  }
+
+  /**
+   * Каждая ячейка каждой таблицы, в которой встречается steamid. Сплошной
+   * перебор, а не список таблиц: список — это ровно то, что проверяется.
+   */
+  async function traces(db: Db, steamid: string): Promise<string[]> {
+    const tables = await db.execute(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    )
+    const hits: string[] = []
+    for (const t of tables.rows) {
+      const table = t.name as string
+      const cols = await db.execute(`PRAGMA table_info(${table})`)
+      for (const c of cols.rows) {
+        const col = c.name as string
+        const res = await db.execute({
+          sql: `SELECT COUNT(*) AS n FROM ${table} WHERE instr(CAST(${col} AS TEXT), ?) > 0`,
+          args: [steamid],
+        })
+        if (Number(res.rows[0]?.n) > 0) hits.push(`${table}.${col}`)
+      }
+    }
+    return hits.sort()
+  }
+
+  test('после удаления steamid не встречается ни в одной ячейке базы', async () => {
+    const db = await populated()
+    // Сначала — что заготовка действительно покрывает каждую таблицу списка,
+    // иначе пустой результат ниже ничего бы не доказывал.
+    const before = await traces(db, ME)
+    for (const table of FORGET_TABLES) {
+      expect(before.some((h) => h.startsWith(`${table}.`)), table).toBe(true)
+    }
+
+    await forgetUser(db, ME)
+    expect(await traces(db, ME)).toEqual([])
+  })
+
+  test('чужое остаётся: данные друга и его комната, где удалённый был гостем', async () => {
+    const db = await populated()
+    await forgetUser(db, ME)
+
+    expect(await getLatestSnapshot(db, FRIEND)).not.toBeNull()
+    expect((await listFeedback(db, FRIEND)).length).toBe(1)
+    expect(await getRoom(db, 'FRROOM')).not.toBeNull()
+    expect((await roomMembers(db, 'FRROOM')).length).toBe(1)
+    expect(await roomVotes(db, 'FRROOM')).toEqual([
+      { steamid: FRIEND, appid: 620, vote: 0, createdAt: NOW },
+    ])
+    // Своя комната уходит целиком, вместе с голосом друга в ней
+    expect(await getRoom(db, 'MYROOM')).toBeNull()
+    expect(await roomVotes(db, 'MYROOM')).toEqual([])
+  })
+
+  test('предпросмотр считает ровно то, что удалится', async () => {
+    const db = await populated()
+    const preview = await countUserRows(db, ME)
+    expect(preview.map((r) => r.table)).toEqual([...FORGET_TABLES])
+    expect(preview.every((r) => r.rows > 0)).toBe(true)
+    expect(await forgetUser(db, ME)).toEqual(preview)
+    expect((await countUserRows(db, ME)).every((r) => r.rows === 0)).toBe(true)
+  })
+
+  test('не SteamID64 — отказ, а не удаление по пустой строке', async () => {
+    // instr с пустым steamid совпал бы с каждым ключом лимитера
+    const db = await populated()
+    await expect(forgetUser(db, '')).rejects.toThrow()
+    await expect(forgetUser(db, '7656')).rejects.toThrow()
+    await expect(countUserRows(db, "1' OR 1=1")).rejects.toThrow()
+    expect(await getLatestSnapshot(db, ME)).not.toBeNull()
+  })
+
+  test('сторож: каждая таблица с steamid или created_by есть в списке удаления', async () => {
+    // Новая таблица с данными людей обязана попасть в forgetUser. Иначе
+    // политика обещает «удаляем всё», а удаление молча её пропускает.
+    const db = await freshDb()
+    const tables = await db.execute(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    )
+    const personal: string[] = []
+    for (const t of tables.rows) {
+      const cols = await db.execute(`PRAGMA table_info(${t.name as string})`)
+      if (cols.rows.some((c) => c.name === 'steamid' || c.name === 'created_by')) {
+        personal.push(t.name as string)
+      }
+    }
+    expect(personal.length).toBeGreaterThan(5)
+    for (const table of personal) expect(FORGET_TABLES, table).toContain(table)
   })
 })
