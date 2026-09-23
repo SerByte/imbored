@@ -22,9 +22,7 @@ import { StopAsk } from '@/components/StopAsk'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import { SplitHeading } from '@/components/SplitHeading'
 import { freshLine, playLine } from '@/lib/announce'
-import type { GameArtUrls } from '@/lib/art'
-import { EDGE_BADGE, EDGE_LINE, type PickEdge } from '@/lib/badges'
-import type { Discount } from '@/lib/discount'
+import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
 import { rememberMood } from '@/lib/lastmood'
 import {
   dueLaunchNow,
@@ -37,12 +35,21 @@ import {
 import { createLocalStore, parseFlag } from '@/lib/localstore'
 import { NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
 import { EASE } from '@/lib/motion'
+import {
+  BURNOUT_AFTER_SKIPS,
+  FRESH_TURN,
+  dealFrom,
+  landingIndex,
+  nextStep,
+  type Deal,
+  type PlayPick,
+} from '@/lib/playflow'
 import { moodCaption } from '@/lib/quiz'
-import type { ContinueGame, Focus, OwnAnchor, Scope } from '@/lib/recommend'
+import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import { bounceTo } from '@/lib/destination'
-import type { CandidateSource, Mood } from '@/lib/types'
+import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
@@ -50,42 +57,7 @@ import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
 import { TagChips } from '@/components/TagChips'
 
-type Signals = {
-  matchPercent: number | null
-  sharedTags: string[]
-  moodTags: string[]
-} | null
-
-type Pick = {
-  appid: number
-  name: string
-  source: CandidateSource
-  reason: string
-  headerImage: string | null
-  art: GameArtUrls | null
-  /** Кадры для морфа в герое. Приходят только у picks: карточки открытий
-      героем не становятся, им они не нужны. */
-  screenshots?: string[]
-  ccu: number | null
-  ccuAt: number | null
-  shortDescription: string | null
-  tags: string[]
-  hoursPlayed: number | null
-  store: string | null
-  storeUrl: string | null
-  priceFinal: number | null
-  isFree: boolean | null
-  discount: Discount | null
-  signals: Signals
-  /** Своя игра, на которую эта похожа сильнее всего (buildAnchorFinder) */
-  via: OwnAnchor | null
-  /** Вернувшееся «Просто не сейчас» (deferredOf): сколько дней назад отложил */
-  deferred: { daysAgo: number } | null
-  /** Чем она лучше соседних по выдаче (assignEdges) — у героя фразой, у плитки бейджем */
-  edge: PickEdge | null
-  /** Можно ли обещать возврат Steam (refundEligible) — только у не купленного */
-  refund: boolean
-}
+type Pick = PlayPick
 
 /**
  * «Откладывал 3 дня назад». Сегодняшнее «не сейчас» сюда попадает, только
@@ -109,7 +81,6 @@ const SKIP_REASONS: Array<{ key: string; label: string }> = [
 ]
 
 const COZY_TAGS = ['Casual', 'Relaxing', 'Cozy', 'Wholesome', 'Puzzle', 'Farming Sim']
-const BURNOUT_AFTER_SKIPS = 5
 /**
  * На сколько должен вырасти разобранный каталог, чтобы предлагать пересчёт.
  *
@@ -195,19 +166,6 @@ const LADDER = {
 const STEP = {
   hidden: { opacity: 0, y: 14 },
   show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: EASE } },
-}
-
-function weightedRandomIndex(length: number, exclude?: number): number {
-  // ранние (лучше отранжированные) позиции весят больше
-  const weights = Array.from({ length }, (_, i) => length - i)
-  if (exclude !== undefined && length > 1) weights[exclude] = 0
-  const total = weights.reduce((s, w) => s + w, 0)
-  let r = Math.random() * total
-  for (let i = 0; i < length; i++) {
-    r -= weights[i]
-    if (r <= 0) return i
-  }
-  return 0
 }
 
 /**
@@ -458,11 +416,11 @@ function Player({ say }: { say: (line: string) => void }) {
 
   /**
    * Запрос выдачи. Отдельно от прогрева: переключение режима повторяет только
-   * его. Возвращает карточки, а не флаг, — вызывающему нужна длина сразу,
-   * а состояние к следующей строке ещё не обновится.
+   * его. Возвращает выдачу, а не кладёт её в состояние: на экран она попадает
+   * одной дверью — applyDeal ниже, — чтобы каждый путь сбрасывал одно и то же.
    */
   const fetchPicks = useCallback(
-    async (next: { scope: Scope; lean: Lean | null }): Promise<Pick[] | null> => {
+    async (next: { scope: Scope; lean: Lean | null }): Promise<Deal | null> => {
       // try/catch, а не голый await: оборванная сеть на этом шаге всплывала из
       // async-функции и оставляла экран в вечном «Подбираю…» — тот же класс
       // ошибки, что был в цикле прогрева до переезда в lib/warmup.ts.
@@ -513,25 +471,8 @@ function Player({ say }: { say: (line: string) => void }) {
           setReason(code)
           return null
         }
-        const data = (await res.json()) as {
-          picks: Pick[]
-          discoveries?: Pick[]
-          engine: string
-          lean?: unknown
-          continue?: ContinueGame | null
-          nowSec: number
-        }
-        if (!data.picks?.length) return null
-        // Серверные часы — по ним подпись онлайна решает, имеет ли право
-        // сказать «сейчас». См. докблок в components/PlayersNow.
-        setNowSec(data.nowSec)
-        setPicks(data.picks)
-        setDiscoveries(data.discoveries ?? [])
-        setContinueGame(data.continue ?? null)
-        setEngine(data.engine)
-        // Ось — из эха сервера, а не из запроса: кнопки обязаны показывать,
-        // под что собрана выдача на экране, а не что мы просили
-        setLean(parseLean(data.lean))
+        const deal = dealFrom(await res.json(), next.scope)
+        if (!deal) return null
         /*
          * Прошлое настроение для «Подобрать» в шапке (lib/lastmood.ts) — только
          * после выдачи, которая собралась, и только сказанное им самим:
@@ -542,9 +483,9 @@ function Player({ say }: { say: (line: string) => void }) {
          * Ось — та, под которую собрана выдача, как и у кнопок выше.
          */
         if (askedMood && !roulette && !focus) {
-          rememberMood(mood, parseLean(data.lean), Math.floor(Date.now() / 1000))
+          rememberMood(mood, deal.lean, Math.floor(Date.now() / 1000))
         }
-        return data.picks
+        return deal
       } catch {
         // Причину обязательно СБРАСЫВАЕМ, а не оставляем как есть: сюда
         // приходит оборванная сеть, и без сброса повтор после отказа
@@ -558,6 +499,42 @@ function Player({ say }: { say: (line: string) => void }) {
     // страницы неизменны
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
+  )
+
+  /**
+   * НОВАЯ ВЫДАЧА — ОДНОЙ ДВЕРЬЮ.
+   *
+   * Её приносят четыре пути: первая выдача после прогрева, «Попробовать снова»,
+   * переключатели источника и оси, «Обновить выдачу» после догрева. Каждый
+   * раньше сбрасывал своё: переключатель — шесть полей, «Обновить выдачу» —
+   * один индекс, и новая пятёрка приезжала с открытым «Почему не то?» и со
+   * счётчиком пропусков прошлой (см. докблок lib/playflow.ts). Теперь все четыре
+   * зовут эту функцию, и состояние вокруг героя одно — FRESH_TURN.
+   *
+   * Фазу и объявление ставит вызывающий: у первой выдачи рулетка крутит
+   * барабан, у переключателя фокус остаётся на нажатой кнопке. Отдаёт индекс
+   * героя — вызывающему он нужен сразу, а состояние обновится к рендеру.
+   */
+  const applyDeal = useCallback(
+    (deal: Deal): number => {
+      const hero = landingIndex(deal.picks.length, roulette)
+      setPicks(deal.picks)
+      setDiscoveries(deal.discoveries)
+      setContinueGame(deal.continueGame)
+      setEngine(deal.engine)
+      setScope(deal.scope)
+      setLean(deal.lean)
+      // Серверные часы — по ним подпись онлайна решает, имеет ли право
+      // сказать «сейчас». См. докблок в components/PlayersNow.
+      setNowSec(deal.nowSec)
+      setIndex(hero)
+      setDir(FRESH_TURN.dir)
+      setAskReason(FRESH_TURN.askReason)
+      setShowWhy(FRESH_TURN.showWhy)
+      setSkipCount(FRESH_TURN.skipCount)
+      return hero
+    },
+    [roulette],
   )
 
   useEffect(() => {
@@ -577,17 +554,17 @@ function Player({ say }: { say: (line: string) => void }) {
       setProgress(
         focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
       )
-      const got = await fetchPicks({ scope, lean })
-      if (!got) {
+      const deal = await fetchPicks({ scope, lean })
+      if (!deal) {
         setPhase('error')
         return false
       }
-      setIndex(roulette ? weightedRandomIndex(got.length) : 0)
+      applyDeal(deal)
       // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
       // та самая случайность, которая до сих пор происходила молча.
       setPhase(roulette ? 'spin' : 'reveal')
       // Выпавшее в рулетке называет сам барабан (SpinWheel)
-      if (!roulette) say(playLine({ kind: 'reveal', name: got[0].name }))
+      if (!roulette) say(playLine({ kind: 'reveal', name: deal.picks[0].name }))
       return true
     }
 
@@ -676,15 +653,15 @@ function Player({ say }: { say: (line: string) => void }) {
     if (retrying) return
     setRetrying(true)
     try {
-      const got = await fetchPicks({ scope, lean })
-      if (!got) return
-      setIndex(roulette ? weightedRandomIndex(got.length) : 0)
+      const deal = await fetchPicks({ scope, lean })
+      if (!deal) return
+      applyDeal(deal)
       setPhase(roulette ? 'spin' : 'reveal')
-      if (!roulette) say(playLine({ kind: 'reveal', name: got[0].name }))
+      if (!roulette) say(playLine({ kind: 'reveal', name: deal.picks[0].name }))
     } finally {
       setRetrying(false)
     }
-  }, [retrying, fetchPicks, scope, lean, roulette, say])
+  }, [retrying, fetchPicks, applyDeal, scope, lean, roulette, say])
 
   /*
    * Переключатели уже показанной выдачи: источник и ось состояния. Один путь на
@@ -695,18 +672,13 @@ function Player({ say }: { say: (line: string) => void }) {
       if ((next.scope === scope && next.lean === lean) || switching) return
       setSwitching(true)
       try {
-        const got = await fetchPicks(next)
-        if (!got) return
-        setScope(next.scope)
-        setDir('pick')
-        setIndex(0)
-        setAskReason(false)
-        setShowWhy(false)
-        setSkipCount(0)
+        const deal = await fetchPicks(next)
+        if (!deal) return
+        const hero = applyDeal(deal)
         // Фокус не трогаем: нажатый переключатель остаётся на месте, и
         // человек, может быть, нажмёт соседний. Сказать надо только, что
         // герой наверху сменился.
-        say(playLine({ kind: 'reshape', name: got[0].name }))
+        say(playLine({ kind: 'reshape', name: deal.picks[hero].name }))
       } finally {
         // finally, а не строка после await: оборванная сеть оставляла бы
         // переключатель навсегда заблокированным, и починить это можно было бы
@@ -715,7 +687,7 @@ function Player({ say }: { say: (line: string) => void }) {
         setSwitching(false)
       }
     },
-    [scope, lean, switching, fetchPicks, say],
+    [scope, lean, switching, fetchPicks, applyDeal, say],
   )
 
   const advance = useCallback(
@@ -723,13 +695,13 @@ function Player({ say }: { say: (line: string) => void }) {
       setAskReason(false)
       setShowWhy(false)
       setDir('next')
-      const next = skipCount + 1
-      setSkipCount(next)
-      if (next >= BURNOUT_AFTER_SKIPS) {
+      const step = nextStep({ from, length: picks.length, roulette, skipCount })
+      setSkipCount(step.skipCount)
+      if (step.burnout) {
         setPhase('burnout')
         return
       }
-      const to = roulette ? weightedRandomIndex(picks.length, from) : (from + 1) % picks.length
+      const { to } = step
       setIndex(to)
       // «Крутить ещё» — это тоже бросок, а не просто следующая карточка.
       // Выпавшее назовёт барабан, а фокус заберёт заголовок, когда появится.
@@ -1018,11 +990,11 @@ function Player({ say }: { say: (line: string) => void }) {
           // пересчёт его сменит — на нового, когда тот смонтируется
           focusHero(true)
           const was = pick.appid
-          void fetchPicks({ scope, lean }).then((got) => {
-            if (!got) return
-            setIndex(0)
-            say(playLine({ kind: 'refresh', name: got[0].name }))
-            if (got[0].appid !== was) focusHero(false)
+          void fetchPicks({ scope, lean }).then((deal) => {
+            if (!deal) return
+            const now = deal.picks[applyDeal(deal)]
+            say(playLine({ kind: 'refresh', name: now.name }))
+            if (now.appid !== was) focusHero(false)
           })
         }}
         onDismiss={() => setWarming('off')}
