@@ -13,6 +13,7 @@ import {
   setCatalogMeta,
   STEAM_LEASE,
   sweepDailyPicks,
+  sweepStale,
   topCatalogAppids,
 } from '@/lib/db'
 import { runNewsSlice } from '@/lib/newsjob'
@@ -29,6 +30,8 @@ const MAX_CHAIN = 24
 const SLICE_BUDGET_MS = 50_000
 const ENROLL_KEY = 'news_enrolled_at'
 const LAST_KEY = 'news_last_slice'
+/** Итог суточной уборки (sweepStale) — чтобы её работу было видно не только по счёту */
+const SWEEP_KEY = 'sweep_last'
 
 /** Чуть больше maxDuration: убитый по таймауту инстанс не держит аренду вечно. */
 const LEASE_TTL_SEC = 75
@@ -103,6 +106,15 @@ export async function GET(req: Request) {
         // ещё идёт «сегодня», и удалять их выбор из-под них незачем. Ключ
         // записи содержит дату, так что лишние строки на выбор не влияют.
         await sweepDailyPicks(db, new Date((now - 86_400) * 1000).toISOString().slice(0, 10))
+        // Демо-личности, истёкшие сессии и старые комнаты — см. sweepStale.
+        // Своим try: мусор спокойно подождёт до завтра, а суточное пополнение
+        // очереди и сам срез из-за него пропадать не должны.
+        try {
+          const swept = await sweepStale(db, now)
+          await setCatalogMeta(db, SWEEP_KEY, JSON.stringify({ at: now, ...swept }))
+        } catch (err) {
+          console.error('sweep stale', err)
+        }
         await setCatalogMeta(db, ENROLL_KEY, String(now))
       }
       // digestLimit: 0 — пересказы уехали в /api/cron/digest со своим

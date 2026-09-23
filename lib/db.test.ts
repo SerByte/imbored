@@ -89,6 +89,9 @@ import {
   forgetUser,
   issueRoomDeck,
   castDeckVote,
+  sweepStale,
+  getSessionState,
+  revokeSession,
 } from './db'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -2005,6 +2008,123 @@ describe('forgetUser: удаление по запросу', () => {
     }
     expect(personal.length).toBeGreaterThan(5)
     for (const table of personal) expect(FORGET_TABLES, table).toContain(table)
+  })
+})
+
+describe('sweepStale: суточная уборка', () => {
+  const DAY = 86_400
+  const REAL = '76561198000000001'
+  /** Демо-личности: префикс '000', как у demoSteamId в lib/server */
+  const OLD_DEMO = '00012345678901231'
+  const FRESH_DEMO = '00012345678901241'
+  const BUSY_DEMO = '00012345678901251'
+  const RENEWED_DEMO = '00012345678901261'
+
+  /** Сколько строк у steamid в каждой таблице, где бывают люди */
+  async function rowsOf(db: Db, steamid: string): Promise<Record<string, number>> {
+    const out: Record<string, number> = {}
+    const tables = [
+      'users',
+      'sessions',
+      'library_snapshots',
+      'library_baselines',
+      'feedback',
+      'daily_picks',
+    ]
+    for (const table of tables) {
+      const res = await db.execute({
+        sql: `SELECT COUNT(*) AS n FROM ${table} WHERE steamid = ?`,
+        args: [steamid],
+      })
+      out[table] = Number(res.rows[0]?.n)
+    }
+    return out
+  }
+
+  /** Демо-вход в момент at: то же, что пишут /api/connect и seedDemo */
+  async function demo(db: Db, steamid: string, at: number) {
+    await upsertUser(db, { steamid, personaName: 'Демо-игрок' }, at)
+    await createSession(db, { sid: `sid-${steamid}`, steamid }, at)
+    await saveLibrarySnapshot(db, steamid, LIB, at)
+    await logFeedback(db, { steamid, appid: 570, action: 'skipped' }, at)
+    await saveDailyPick(db, steamid, '2023-11-06', { appid: 570 }, at)
+  }
+
+  test('демо, от которого неделю нет вестей, уходит целиком', async () => {
+    const db = await freshDb()
+    await demo(db, OLD_DEMO, NOW - 8 * DAY)
+    const before = await rowsOf(db, OLD_DEMO)
+    // иначе пустой результат ниже ничего бы не доказывал
+    expect(Object.values(before).every((n) => n > 0), JSON.stringify(before)).toBe(true)
+
+    const report = await sweepStale(db, NOW)
+    expect(Object.values(await rowsOf(db, OLD_DEMO)).every((n) => n === 0)).toBe(true)
+    expect(report).toMatchObject({ demos: 1, sessions: 1 })
+  })
+
+  test('демо с признаками жизни остаётся: свежий вход, оценка, продлённая сессия', async () => {
+    const db = await freshDb()
+    await demo(db, FRESH_DEMO, NOW - 2 * DAY)
+    // Вошёл давно, но оценивал вчера — это живой человек в демо
+    await demo(db, BUSY_DEMO, NOW - 20 * DAY)
+    await logFeedback(db, { steamid: BUSY_DEMO, appid: 620, action: 'liked' }, NOW - DAY)
+    // Вошёл давно, но кука продлилась позавчера (touchSession)
+    await demo(db, RENEWED_DEMO, NOW - 20 * DAY)
+    await createSession(db, { sid: `sid-${RENEWED_DEMO}`, steamid: RENEWED_DEMO }, NOW - 2 * DAY)
+
+    expect((await sweepStale(db, NOW)).demos).toBe(0)
+    for (const sid of [FRESH_DEMO, BUSY_DEMO, RENEWED_DEMO]) {
+      expect((await rowsOf(db, sid)).users, sid).toBe(1)
+      expect((await rowsOf(db, sid)).library_snapshots, sid).toBeGreaterThan(0)
+    }
+  })
+
+  test('настоящий человек не демо, сколько бы ни молчал', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: REAL, personaName: 'Живой' }, NOW - 300 * DAY)
+    await saveLibrarySnapshot(db, REAL, LIB, NOW - 300 * DAY)
+    await logFeedback(db, { steamid: REAL, appid: 570, action: 'liked' }, NOW - 300 * DAY)
+    await sweepStale(db, NOW)
+    expect(await rowsOf(db, REAL)).toMatchObject({ users: 1, library_snapshots: 1, feedback: 1 })
+  })
+
+  test('сессия уходит, только когда истекли все её токены, надгробие — тоже', async () => {
+    const db = await freshDb()
+    const year = 365 * DAY
+    // Погашенное устройство: строка обязана пережить сам токен, иначе
+    // «строки нет» прочтётся как «вход жив», и отзыв отменится
+    await createSession(db, { sid: 'revoked-fresh', steamid: REAL }, NOW - 30 * DAY)
+    await revokeSession(db, 'revoked-fresh', NOW - 10 * DAY)
+    await createSession(db, { sid: 'revoked-old', steamid: REAL }, NOW - 2 * year)
+    await revokeSession(db, 'revoked-old', NOW - 400 * DAY)
+    // Вход через Steam без продления: до конца срока строка несёт verified
+    await createSession(db, { sid: 'quiet', steamid: REAL, verified: true }, NOW - 380 * DAY)
+    await createSession(db, { sid: 'dead', steamid: REAL, verified: true }, NOW - 400 * DAY)
+
+    await sweepStale(db, NOW)
+    const left = await db.execute('SELECT sid FROM sessions ORDER BY sid')
+    expect(left.rows.map((r) => r.sid)).toEqual(['quiet', 'revoked-fresh'])
+    expect((await getSessionState(db, 'revoked-fresh', REAL)).revokedAt).toBe(NOW - 10 * DAY)
+  })
+
+  test('комната старше двух недель уходит вместе с участниками, голосами и колодой', async () => {
+    const db = await freshDb()
+    for (const [id, at] of [
+      ['OLD001', NOW - 15 * DAY],
+      ['NEW001', NOW - DAY],
+    ] as const) {
+      await createRoom(db, { id, steamid: REAL }, at)
+      await joinRoom(db, id, REAL, 'Живой', at)
+      await issueRoomDeck(db, id, [570])
+      await castRoomVote(db, id, REAL, 570, 1, at)
+    }
+
+    expect((await sweepStale(db, NOW)).rooms).toBe(1)
+    expect(await getRoom(db, 'OLD001')).toBeNull()
+    for (const table of ['room_members', 'room_votes', 'room_deck']) {
+      const res = await db.execute(`SELECT room_id FROM ${table}`)
+      expect(res.rows.map((r) => r.room_id), table).toEqual(['NEW001'])
+    }
   })
 })
 

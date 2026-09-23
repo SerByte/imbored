@@ -12,6 +12,7 @@ import {
   listPublicRooms,
   migrateDb,
   revokeAllSessions,
+  sweepStale,
   topCatalogAppids,
   type Db,
 } from './db'
@@ -170,6 +171,31 @@ describe('планы запросов', () => {
       expect([...used].sort()).toEqual([...c.indexes].sort())
     })
   }
+
+  /*
+   * Суточная уборка в CASES не входит: сессии и комнаты она читает полным
+   * сканом, и это осознанно — раз в сутки, по таблицам, которые она же и
+   * держит короткими. А вот демо-личности ищутся среди ВСЕХ людей, и тут
+   * скан users был бы ценой, растущей вместе с продуктом; как и скан
+   * feedback или снимков библиотек — самых толстых таблиц с людьми.
+   */
+  test('уборка демо идёт по префиксу первичного ключа users, а не по всем людям', async () => {
+    const db = await createDb(':memory:')
+    const demo = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter((q) =>
+      q.sql.includes("GLOB '000*'"),
+    )
+    expect(demo.length).toBe(6)
+    for (const q of demo) {
+      const plan = await planOf(db, q)
+      const where = plan.join(' | ')
+      // Скан sessions — та самая сделка: истёкшие входы ищутся им же
+      expect(
+        bareScans(plan).filter((step) => step !== 'SCAN sessions'),
+        where,
+      ).toEqual([])
+      expect(where).toContain('sqlite_autoindex_users_1 (steamid>? AND steamid<?)')
+    }
+  })
 
   test('у каждого частичного индекса схемы есть запрос, который это проверяет', async () => {
     // Сторож на сам список: новый частичный индекс без строки в CASES — это

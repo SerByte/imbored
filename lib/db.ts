@@ -1,6 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
 import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
+import { SESSION_TTL_SEC } from './sessions'
 import type { NewsBlock } from './steamhtml'
 import type { GameMeta, LibraryGame, Mood } from './types'
 
@@ -50,11 +51,13 @@ CREATE TABLE IF NOT EXISTS users (
  * то икота Turso, холодный старт с пустой базой или не записавшийся INSERT
  * означают массовый разлогин — ровно та беда, которую эта задача чинит.
  * Поэтому «строки нет» и «строка отозвана» обязаны быть разными состояниями:
- * отзыв — это revoked_at, а не DELETE. Надгробия не убираются (кроме
- * удаления всех данных по запросу человека, см. forgetUser).
+ * отзыв — это revoked_at, а не DELETE. Надгробие убирается, только когда
+ * все токены с его sid уже истекли сами (sweepStale), или вместе со всеми
+ * данными по запросу человека (forgetUser).
  *
  * Строк накапливается по одной на ВХОД, а не на визит (sid живёт вместе с
- * кукой и при продлении не меняется), так что чистка не нужна.
+ * кукой и при продлении не меняется), но демо-вход — тоже вход, и его жмут
+ * гости лендинга; поэтому суточная уборка всё же есть (sweepStale).
  */
 CREATE TABLE IF NOT EXISTS sessions (
   sid TEXT PRIMARY KEY,
@@ -2893,6 +2896,99 @@ export async function forgetUser(db: Db, steamid: string): Promise<ForgetReport>
     'write',
   )
   return USER_ROWS.map((r, i) => ({ table: r.table, rows: Number(res[i]?.rowsAffected ?? 0) }))
+}
+
+/* ---------- уборка ---------- */
+
+/** Демо-личность живёт неделю с последнего признака жизни */
+export const DEMO_TTL_SEC = 7 * 86_400
+
+/**
+ * Комната живёт один вечер. Две недели — запас на ссылку, открытую позже,
+ * и на церемонию матча, к которой возвращаются показать друзьям.
+ */
+export const ROOM_TTL_SEC = 14 * 86_400
+
+/**
+ * Запас сверх срока куки, прежде чем строка сессии уйдёт.
+ *
+ * Строку можно удалить, только когда ни один токен с её sid уже не пройдёт
+ * проверку срока. Иначе «строки нет» прочтётся как «вход жив» (см. шапку
+ * sessions и resolveSession): погашенное устройство воскресло бы, а вход
+ * через Steam потерял бы verified. Последний токен выдан не позже последнего
+ * продления, а его отметка — seen_at, но touchSession после продления может
+ * не записаться, и отметка отстанет. Отсюда запас: месяц, а не минута
+ * REVOKE_CACHE_SEC, на которую может опоздать сам отзыв.
+ */
+const SESSION_SWEEP_MARGIN_SEC = 30 * 86_400
+
+/**
+ * Демо-личность, от которой неделю нет вестей: ни нового демо-входа
+ * (users.last_seen_at), ни продления живой сессии, ни оценок. Префикс '000' —
+ * признак демо (isDemoId в lib/server): у настоящих SteamID64 он 7656119.
+ * GLOB по префиксу идёт по первичному ключу users, а не сканом всех людей.
+ */
+const STALE_DEMO = `steamid IN (
+  SELECT u.steamid FROM users u
+   WHERE u.steamid GLOB '000*' AND u.last_seen_at < ?
+     AND NOT EXISTS (SELECT 1 FROM sessions s
+                      WHERE s.steamid = u.steamid AND s.revoked_at IS NULL AND s.seen_at >= ?)
+     AND NOT EXISTS (SELECT 1 FROM feedback f
+                      WHERE f.steamid = u.steamid AND f.created_at >= ?)
+)`
+
+const OLD_ROOM = 'room_id IN (SELECT id FROM rooms WHERE created_at < ?)'
+
+export type SweepReport = { demos: number; sessions: number; rooms: number }
+
+/**
+ * Суточная уборка того, что иначе копилось бы вечно. Зовётся из крона
+ * новостей рядом с sweepRateLimits, никогда — из запроса.
+ *
+ *   • Демо-личности. Каждый клик «Демо» заводил новую — строки в users,
+ *     sessions, library_snapshots, library_baselines, — и ни одна не
+ *     удалялась: один адрес под потолком /api/connect выпускал больше тысячи
+ *     личностей в сутки, и данные живых людей тонули в демо-строках.
+ *   • Сессии, чей вход истёк у всех токенов, — с запасом, см.
+ *     SESSION_SWEEP_MARGIN_SEC. Надгробия моложе этого остаются: отзыв обязан
+ *     отличаться от «строки нет».
+ *   • Комнаты старше ROOM_TTL_SEC — вместе с участниками, голосами и колодой.
+ *     Опоздавший по старой ссылке увидит «Такой комнаты нет».
+ *
+ * Одной пачкой: предикат демо опирается на users, поэтому users уходит
+ * последней, а обрыв посередине не оставит личность без половины строк.
+ */
+export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
+  const demoCutoff = nowSec - DEMO_TTL_SEC
+  const demo = [demoCutoff, demoCutoff, demoCutoff]
+  const roomCutoff = nowSec - ROOM_TTL_SEC
+  const [, , , , sessions, demos, , , , rooms] = await db.batch(
+    [
+      ...['feedback', 'daily_picks', 'library_snapshots', 'library_baselines'].map((table) => ({
+        sql: `DELETE FROM ${table} WHERE ${STALE_DEMO}`,
+        args: demo,
+      })),
+      // Истёкшие и демо — одним проходом. Индекс по steamid у sessions
+      // частичный (только живые), и демо-сессии отдельной инструкцией всё
+      // равно стоили бы полного скана — второго за ту же уборку.
+      {
+        sql: `DELETE FROM sessions
+               WHERE max(seen_at, COALESCE(revoked_at, 0)) < ? OR ${STALE_DEMO}`,
+        args: [nowSec - SESSION_TTL_SEC - SESSION_SWEEP_MARGIN_SEC, ...demo],
+      },
+      { sql: `DELETE FROM users WHERE ${STALE_DEMO}`, args: demo },
+      { sql: `DELETE FROM room_votes WHERE ${OLD_ROOM}`, args: [roomCutoff] },
+      { sql: `DELETE FROM room_members WHERE ${OLD_ROOM}`, args: [roomCutoff] },
+      { sql: `DELETE FROM room_deck WHERE ${OLD_ROOM}`, args: [roomCutoff] },
+      { sql: 'DELETE FROM rooms WHERE created_at < ?', args: [roomCutoff] },
+    ],
+    'write',
+  )
+  return {
+    demos: Number(demos?.rowsAffected ?? 0),
+    sessions: Number(sessions?.rowsAffected ?? 0),
+    rooms: Number(rooms?.rowsAffected ?? 0),
+  }
 }
 
 /* ---------- патчноуты ---------- */
