@@ -289,6 +289,13 @@ function Player({ say }: { say: (line: string) => void }) {
   /** Обложка последнего ответа квиза, если человек пришёл оттуда */
   // Откуда пришла следующая игра — задаёт направление смены героя.
   const [dir, setDir] = useState<'next' | 'pick'>('next')
+  /**
+   * Где стоял герой до того, как стать героем, — для снимка к оценке
+   * (lib/feedbackctx): 'picked' — выбран из «Ещё вариантов», 'hero' — выдача
+   * начата с него или до него дошли «дальше». dir этого не различает: новая
+   * выдача въезжает с той же стороны, что и выбранная карточка.
+   */
+  const [heroFrom, setHeroFrom] = useState<CtxSlot>('hero')
   const [picks, setPicks] = useState<Pick[]>([])
   const [discoveries, setDiscoveries] = useState<Pick[]>([])
   /** То, во что он играет сейчас (pickContinue): строка под героем, не карточка */
@@ -630,6 +637,7 @@ function Player({ say }: { say: (line: string) => void }) {
       // прошлого захода они ушли вперёд на столько, сколько она пролежала.
       setNowSec(deal.nowSec + Math.max(0, Math.floor((Date.now() - at) / 1000)))
       setIndex(hero)
+      setHeroFrom('hero')
       setDir(FRESH_TURN.dir)
       setAskReason(FRESH_TURN.askReason)
       setShowWhy(FRESH_TURN.showWhy)
@@ -966,6 +974,7 @@ function Player({ say }: { say: (line: string) => void }) {
       }
       const { to } = step
       setIndex(to)
+      setHeroFrom('hero')
       // «Крутить ещё» — это тоже бросок, а не просто следующая карточка.
       // Выпавшее назовёт барабан, а фокус заберёт заголовок, когда появится.
       if (roulette) {
@@ -1005,8 +1014,6 @@ function Player({ say }: { say: (line: string) => void }) {
     lean: lean ?? undefined,
     nudge: nudge ?? undefined,
   })
-  /** Герой выбран из «Ещё вариантов» — или дошёл до экрана сам */
-  const heroSlot: CtxSlot = dir === 'pick' ? 'picked' : 'hero'
 
   if (phase === 'prepare') {
     return (
@@ -1116,6 +1123,7 @@ function Player({ say }: { say: (line: string) => void }) {
     const showPick = (p: Pick) => {
       setSkipCount(0)
       setIndex(picks.indexOf(p))
+      setHeroFrom('hero')
       setPhase('reveal')
       say(playLine({ kind: 'pick', name: p.name }))
       focusHero(false)
@@ -1475,7 +1483,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     key={r.key}
                     ref={i === 0 ? focusOnMount : undefined}
                     onClick={() => {
-                      void sendFeedback(pick.appid, 'skipped', r.key, ctxOf(pick, heroSlot))
+                      void sendFeedback(pick.appid, 'skipped', r.key, ctxOf(pick, heroFrom))
                       // Ответил сам — «не зацепило?» про неё уже не спрашиваем
                       forgetLaunch(pick.appid)
                       advance(index)
@@ -1487,7 +1495,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 ))}
                 <button
                   onClick={() => {
-                    void sendFeedback(pick.appid, 'skipped', undefined, ctxOf(pick, heroSlot))
+                    void sendFeedback(pick.appid, 'skipped', undefined, ctxOf(pick, heroFrom))
                     forgetLaunch(pick.appid)
                     advance(index)
                   }}
@@ -1515,7 +1523,7 @@ function Player({ say }: { say: (line: string) => void }) {
                         pick.appid,
                         pick.source === 'new' ? 'opened' : 'launched',
                         undefined,
-                        ctxOf(pick, heroSlot, pick.source === 'new' ? 'store' : 'launch'),
+                        ctxOf(pick, heroFrom, pick.source === 'new' ? 'store' : 'launch'),
                       )
                     }
                     className="btn-ember px-6 py-3"
@@ -1530,7 +1538,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     // Запуск — не «Зашло»: раньше он писался как liked, и точность
                     // подбора на /library росла от любого клика
                     onClick={() =>
-                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroSlot, 'launch'))
+                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroFrom, 'launch'))
                     }
                     // Засекаем только настоящий запуск: через десять минут
                     // вернувшегося спросим, зацепило ли (см. StopAsk)
@@ -1557,7 +1565,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 <Link
                   href={`/game/${pick.appid}`}
                   onClick={() =>
-                    void sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroSlot, 'details'))
+                    void sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'details'))
                   }
                   className="rounded-[14px] glass glass-hover px-6 py-3 text-sm"
                 >
@@ -1572,7 +1580,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       // Повторное нажатие — не второе «зашло»: кнопка уже горит
                       if (liked.has(pick.appid)) return
                       setLiked(new Set(liked).add(pick.appid))
-                      void sendFeedback(pick.appid, 'liked', undefined, ctxOf(pick, heroSlot))
+                      void sendFeedback(pick.appid, 'liked', undefined, ctxOf(pick, heroFrom))
                     }}
                     className={`rounded-[14px] px-4 py-3 text-sm transition ${
                       liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
@@ -1589,7 +1597,7 @@ function Player({ say }: { say: (line: string) => void }) {
                         onClick={() => {
                           // Бросок кубика, а не оценка: 'spin' не трогает ни
                           // вкус, ни точность подбора
-                          void sendFeedback(pick.appid, 'skipped', 'spin', ctxOf(pick, heroSlot))
+                          void sendFeedback(pick.appid, 'skipped', 'spin', ctxOf(pick, heroFrom))
                           advance(index)
                         }}
                         className="rounded-[14px] glass glass-hover no-lift px-4 py-3 text-sm text-dim cursor-pointer"
@@ -1637,7 +1645,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       forgetLaunch(pick.appid)
                       setBanning(true)
                       setBanFailed(null)
-                      const ctx = ctxOf(pick, heroSlot)
+                      const ctx = ctxOf(pick, heroFrom)
                       const ok = await sendFeedback(pick.appid, 'banned', finished ? 'done' : undefined, ctx)
                       setBanning(false)
                       if (!ok) {
@@ -1657,6 +1665,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       const to = Math.min(index, rest.length - 1)
                       setPicks(rest)
                       setIndex(to)
+                      setHeroFrom('hero')
                       setShowWhy(false)
                       say(
                         playLine({ kind: 'ban', name: pick.name, done: finished, next: rest[to].name }),
@@ -1972,6 +1981,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     onClick={() => {
                       setDir('pick')
                       setIndex(picks.indexOf(p))
+                      setHeroFrom('picked')
                       setAskReason(false)
                       setShowWhy(false)
                       // Карточка сама становится героем и уходит из списка
