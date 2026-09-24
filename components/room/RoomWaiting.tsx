@@ -4,8 +4,9 @@ import { useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { plural } from '@/lib/plural'
 import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
-import type { NearMiss } from '@/lib/roomlikes'
+import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { AloneInvite, RoomEscapeHatch } from './AloneInvite'
+import { LeaderPick } from './LeaderPick'
 import { type LikedGame, MyLikesRail, NearMissList } from './LikesStrips'
 import { MemberRoster } from './MemberRoster'
 import { PartyTrivia } from './PartyTrivia'
@@ -31,6 +32,10 @@ export function RoomWaiting({
   deckTotal,
   near,
   myLikes,
+  leader,
+  takingLeader,
+  leaderMiss,
+  onTakeLeader,
   hasMore,
   pulling,
   pullFailed,
@@ -52,6 +57,11 @@ export function RoomWaiting({
   deckTotal: number
   near: NearMiss[]
   myLikes: LikedGame[]
+  /** лидер голосов, когда все отсвайпали и не совпали (pickLeader); иначе null */
+  leader: LeaderOffer | null
+  takingLeader: boolean
+  leaderMiss: 'stale' | 'failed' | null
+  onTakeLeader: () => void
   hasMore: boolean
   pulling: boolean
   /** добор раунда не дошёл — см. pullMore в app/room/[id]/page */
@@ -89,6 +99,10 @@ export function RoomWaiting({
 
   const pending = members.filter((m) => !m.done && !m.me)
   const doneCount = members.filter((m) => m.done).length
+  // Сервер отдаёт лидера только при «все отсвайпали», но опрос ростера и
+  // запрос лайков живут отдельно: пока ростер показывает кого-то свайпающим,
+  // «берём X?» над ним читалось бы спойлером для него же
+  const offer = pending.length === 0 ? leader : null
 
   /*
    * Живой регион держит ТОЛЬКО осмысленные факты и ни одного счётчика: опрос
@@ -102,7 +116,8 @@ export function RoomWaiting({
       : `Вас ${members.length}. Отсвайпали: ${doneCount} из ${members.length}.` +
         (near.length
           ? ` Почти совпали: ${near.length} ${plural(near.length, 'расклад', 'расклада', 'раскладов')}.`
-          : '')
+          : '') +
+        (offer ? ` Лидер голосов: «${offer.name}», ${offer.forCount} из ${offer.memberCount} за.` : '')
 
   return (
     <section className="relative flex-1 flex flex-col gap-5">
@@ -157,10 +172,29 @@ export function RoomWaiting({
               </h2>
               {pending.length === 0 && (
                 <p className="text-dim text-sm">
-                  Вкусы разошлись полностью. Бывает — и это тоже нормальный вечер.
+                  {offer
+                    ? 'Единогласия нет — но одна игра набрала большинство.'
+                    : 'Вкусы разошлись полностью. Бывает — и это тоже нормальный вечер.'}
                 </p>
               )}
             </div>
+            {offer ? (
+              <LeaderPick
+                leader={offer}
+                taking={takingLeader}
+                miss={leaderMiss}
+                onTake={onTakeLeader}
+              />
+            ) : (
+              // Предложение пропало после отказа «noleader» — сказать об этом,
+              // а не погасить блок молча
+              pending.length === 0 &&
+              leaderMiss === 'stale' && (
+                <p role="status" className="text-sm text-dim text-center">
+                  Голоса сдвинулись — брать пока нечего.
+                </p>
+              )
+            )}
             <MemberRoster
               members={members}
               deckSize={deckSize}
@@ -201,7 +235,7 @@ export function RoomWaiting({
       */}
       <PartyTrivia
         roomId={roomId}
-        interruptKey={`${members.length}:${doneCount}:${near.length}`}
+        interruptKey={`${members.length}:${doneCount}:${near.length}:${offer?.appid ?? ''}`}
         interruptNote="В комнате что-то произошло — викторина подождёт."
       />
 

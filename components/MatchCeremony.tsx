@@ -39,6 +39,8 @@ export function MatchCeremony({
     storeUrl: string | null
     /** есть ли игра у смотрящего; null — не знаем (снапшота нет) */
     ownedByMe?: boolean | null
+    /** сколько участников за; null — не знаем (смотрит не участник) */
+    forCount?: number | null
     isFree?: boolean
     priceFinal?: number | null
     discount?: Discount | null
@@ -46,6 +48,14 @@ export function MatchCeremony({
   memberCount: number
 }) {
   const scope = useRef<HTMLDivElement>(null)
+  /*
+   * Матч, взятый лидером голосов (app/api/room/[id]/leader): все отсвайпали,
+   * единогласия не было, и комната согласилась на игру, за которую не меньше
+   * половины. «Все в комнате хотят одного и того же» здесь неправда — поэтому
+   * другой заголовок и честный счёт. Имён нет и тут: только сколько.
+   */
+  const forCount = game.forCount ?? null
+  const byLeader = forCount !== null && forCount < memberCount
 
   useGSAP(
     () => {
@@ -100,12 +110,21 @@ export function MatchCeremony({
         {/* Призраков ровно столько, сколько людей в комнате: голоса схлопываются
             в одно слово — буквальная картинка того, что сейчас произошло. */}
         <EchoTitle
-          text="Это матч!"
-          ghosts={memberCount}
+          text={byLeader ? 'Договорились!' : 'Это матч!'}
+          ghosts={byLeader ? forCount : memberCount}
           className="font-display text-display-md"
         />
 
-        <p className="text-dim">Все в комнате хотят играть в одно и то же:</p>
+        <p className="text-dim">
+          {byLeader ? (
+            <>
+              Не единогласно, но <span className="font-mono tabular-nums text-ink">{forCount}</span>{' '}
+              из <span className="font-mono tabular-nums text-ink">{memberCount}</span> за — играете в:
+            </>
+          ) : (
+            'Все в комнате хотят играть в одно и то же:'
+          )}
+        </p>
 
         <div data-beat="cover" className="w-full max-w-md">
           <GameArt

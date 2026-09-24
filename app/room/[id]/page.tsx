@@ -19,7 +19,7 @@ import type { Mood } from '@/lib/types'
 import type { RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import { roomPresetOf } from '@/lib/presets'
-import type { NearMiss } from '@/lib/roomlikes'
+import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { nextPollStep } from '@/lib/roompoll'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -69,11 +69,16 @@ type RoomState = {
     storeUrl: string | null
     /** есть ли игра у смотрящего; null — не знаем */
     ownedByMe: boolean | null
+    /** сколько участников за; null — смотрит не участник */
+    forCount: number | null
     isFree: boolean
     priceFinal: number | null
     discount: Discount | null
   } | null
 }
+
+/** Ответ /likes: свои «играем», почти-совпадения и лидер голосов */
+type Likes = { mine: LikedGame[]; near: NearMiss[]; leader: LeaderOffer | null }
 
 type Card = {
   appid: number
@@ -180,10 +185,10 @@ export default function RoomPage() {
    * теперь им же говорит и обычный вход: комнаты нет, сессия истекла, сеть.
    */
   const [joinError, setJoinError] = useState<string | null>(null)
-  const [likes, setLikes] = useState<{ mine: LikedGame[]; near: NearMiss[] }>({
-    mine: [],
-    near: [],
-  })
+  const [likes, setLikes] = useState<Likes>({ mine: [], near: [], leader: null })
+  const [takingLeader, setTakingLeader] = useState(false)
+  /** «Берём» не дошло: 'stale' — голоса сдвинулись, 'failed' — сеть или сервер */
+  const [leaderMiss, setLeaderMiss] = useState<'stale' | 'failed' | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [pulling, setPulling] = useState(false)
   /** Добор раунда не удался — кнопка обязана вернуться нажимаемой */
@@ -500,6 +505,17 @@ export default function RoomPage() {
   const waiting = Boolean(state?.isMember) && cards !== null && cards.length === 0
   const votesKey = state ? state.members.map((m) => `${m.id}${m.votes}`).join(',') : ''
 
+  const loadLikes = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/room/${roomId}/likes`)
+      if (!res.ok) return
+      const data = (await res.json()) as Partial<Likes>
+      setLikes({ mine: data.mine ?? [], near: data.near ?? [], leader: data.leader ?? null })
+    } catch {
+      // Фоновая подсказка: следующий сдвиг голосов перечитает её сам
+    }
+  }, [roomId])
+
   useEffect(() => {
     if (!waiting || likesKey.current === votesKey) return
     likesKey.current = votesKey
@@ -507,11 +523,7 @@ export default function RoomPage() {
     const fire = () => {
       likesAt.current = Date.now()
       likesTimer.current = null
-      void (async () => {
-        const res = await fetch(`/api/room/${roomId}/likes`)
-        if (!res.ok) return
-        setLikes((await res.json()) as { mine: LikedGame[]; near: NearMiss[] })
-      })()
+      void loadLikes()
     }
 
     const left = LIKES_MIN_GAP_MS - (Date.now() - likesAt.current)
@@ -520,7 +532,7 @@ export default function RoomPage() {
       return
     }
     if (likesTimer.current === null) likesTimer.current = window.setTimeout(fire, left)
-  }, [waiting, votesKey, roomId])
+  }, [waiting, votesKey, loadLikes])
 
   // Снятие таймера — отдельным эффектом с пустыми зависимостями. Верни мы
   // уборку из эффекта выше, она срабатывала бы на КАЖДОЙ смене votesKey и
@@ -702,6 +714,48 @@ export default function RoomPage() {
         votedLocally.current.delete(card.appid)
         setLocalVotes((v) => Math.max(0, v - 1))
         setVoteFailed(true)
+    }
+  }
+
+  /**
+   * «Берём «X»?» — комната соглашается на лидера голосов (leader/route.ts).
+   *
+   * Матч приезжает тем же опросом, что и единогласный, поэтому после успеха —
+   * сразу refresh: церемония появится у нажавшего без паузы, у остальных — на
+   * ближайшем тике. 409 matched — комната уже договорилась, и опрос покажет о
+   * чём. 409 noleader — голоса сдвинулись, пока человек нажимал (кто-то вышел
+   * или взял ещё игр): предложение перечитывается, а строка под кнопкой
+   * говорит, почему нажатие не сработало. Молча погасшая кнопка читалась бы
+   * как сломанная.
+   */
+  async function takeLeader() {
+    const leader = likes.leader
+    if (!leader || takingLeader) return
+    setTakingLeader(true)
+    setLeaderMiss(null)
+    try {
+      const res = await fetch(`/api/room/${roomId}/leader`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appid: leader.appid }),
+      })
+      const data = res.ok ? {} : ((await res.json().catch(() => ({}))) as { error?: string })
+      if (res.ok || data.error === 'matched') {
+        // Матч уже записан: сбой этого чтения — не отказ «Берём», его
+        // подхватит обычный опрос
+        await refresh().catch(() => null)
+        return
+      }
+      if (data.error === 'noleader') {
+        setLeaderMiss('stale')
+        await loadLikes()
+        return
+      }
+      setLeaderMiss('failed')
+    } catch {
+      setLeaderMiss('failed')
+    } finally {
+      setTakingLeader(false)
     }
   }
 
@@ -1092,6 +1146,10 @@ export default function RoomPage() {
           deckTotal={deckTotal}
           near={likes.near}
           myLikes={likes.mine}
+          leader={likes.leader}
+          takingLeader={takingLeader}
+          leaderMiss={leaderMiss}
+          onTakeLeader={() => void takeLeader()}
           onRemoveMember={(memberId) => void removeMember(memberId)}
           onLeave={() => void removeMember()}
           hasMore={hasMore}

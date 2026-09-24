@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server'
-import { memberLabel } from '@/lib/room'
+import { memberDone, memberLabel } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
-import { getGameMeta, getRoom, roomMembers, roomVoteCounts, snapshotOwns } from '@/lib/db'
+import {
+  getGameMeta,
+  getRoom,
+  roomForCount,
+  roomMembers,
+  roomVoteCounts,
+  snapshotOwns,
+} from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { parseMood } from '@/lib/mood'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
@@ -82,14 +89,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   // без цены и без объяснения. null — «не знаем»: не участник, нет снапшота
   // или игра другого магазина (отрицательный appid), которой в библиотеке
   // Steam не бывает по определению.
+  //
+  // Счёт «за» — тем же заходом и только участникам: матч мог быть взят
+  // лидером голосов (leader/route.ts), и церемония обязана сказать «3 из 4»,
+  // а не «все хотят одного». Чужому, кто зашёл по ссылке, счёт голосов
+  // комнаты ни к чему.
   const matchedAppid = room.status === 'matched' ? room.matchedAppid : undefined
-  const [matchedMeta, ownedByMe] =
+  const [matchedMeta, ownedByMe, forCount] =
     matchedAppid !== undefined
       ? await Promise.all([
           getGameMeta(db, matchedAppid),
           steamid && isMember && matchedAppid > 0 ? snapshotOwns(db, steamid, matchedAppid) : null,
+          isMember ? roomForCount(db, id, matchedAppid) : null,
         ])
-      : [null, null]
+      : [null, null, null]
   const now = nowSec()
 
   const secret = sessionSecret()
@@ -106,9 +119,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       name: memberLabel(id, m.steamid, m.personaName),
       me: m.steamid === steamid,
       votes,
-      // deckSize === 0 — вырожденный случай (колода схлопнулась), и отмечать
-      // им всех «готов» бессмысленно: никто ничего не свайпал
-      done: room.deckSize !== null && room.deckSize > 0 && votes >= room.deckSize,
+      // То же определение, по которому предлагается лидер голосов (memberDone)
+      done: memberDone(votes, room.deckSize),
     }
   })
 
@@ -138,6 +150,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           store: matchedMeta.store ?? null,
           storeUrl: matchedMeta.storeUrl ?? null,
           ownedByMe,
+          forCount,
           // Цена — тому, кому покупать: те же правила, что у колоды (trustedPrice,
           // «бесплатно» сильнее цены)
           isFree: matchedMeta.isFree === true,

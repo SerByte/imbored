@@ -1,4 +1,6 @@
+import type { GameArtUrls } from './art'
 import type { RoomVote } from './db'
+import { memberDone } from './room'
 
 export type MemberRef = { steamid: string; name: string }
 
@@ -102,4 +104,91 @@ export function buildLikes(args: {
     .slice(0, maxNear)
 
   return { mineAppids, near }
+}
+
+/**
+ * «Берём «X»? 3 из 4 за» — выход из тупика, когда все отсвайпали и ни разу не
+ * совпали.
+ *
+ * Матч требует единогласия (findRoomMatch), и комната из четверых, где у трёх
+ * одна и та же игра, упиралась в «Все отсвайпали — и ни разу не совпали». Ни
+ * одного варианта, кроме «ещё 20 игр» — заведомо худших по вкусу пати.
+ *
+ * Почему это не противоречит NearMiss выше, где названия нет намеренно. Оба
+ * довода там про ещё идущую игру: спойлер — это развязка, которую узнают
+ * раньше времени, а раскрытие голоса — это «двое за X» при двух участниках.
+ * Здесь игра кончилась: карт больше нет ни у кого, и развязки, которую можно
+ * испортить, не осталось. А голосов наружу идёт только счёт — ни одного
+ * имени, ни steamid: кто за, кто против, не видно даже хосту.
+ *
+ * Условия, и все вместе:
+ *   • все участники дошли до конца колоды (memberDone — то же определение,
+ *     что у ростера), иначе это спойлер для тех, кто ещё свайпает;
+ *   • за игру не меньше половины комнаты;
+ *   • и не меньше двоих. В комнате на двоих «один из двух» — не лидер, а
+ *     ничья, причём с точным раскрытием: второй знает свой голос и по счёту
+ *     узнаёт чужой. Договорённость — минимум двое, как и у самого матча.
+ *
+ * Среди подходящих — больше «за», потом меньше «против» (голоса могли
+ * остаться с прошлой колоды, до входа нового участника), потом та, что
+ * добрала свой счёт раньше, — тот же порядок, что у findRoomMatch, — и appid,
+ * чтобы два запроса в одну секунду выбрали одно и то же.
+ *
+ * Полей имён в типе нет вовсе — по той же причине, по какой в NearMiss нет
+ * appid: чтобы их физически нельзя было вывести на экран. Пинится тестом.
+ */
+export type Leader = {
+  appid: number
+  /** сколько участников за */
+  forCount: number
+  /** сколько участников в комнате — знаменатель «3 из 4» */
+  memberCount: number
+}
+
+export function pickLeader(args: {
+  votes: RoomVote[]
+  members: ReadonlyArray<Pick<MemberRef, 'steamid'>>
+  deckSize: number | null
+}): Leader | null {
+  const { votes, members, deckSize } = args
+  const memberCount = members.length
+  if (memberCount < 2) return null
+
+  const inRoom = new Set(members.map((m) => m.steamid))
+  const cast = new Map<string, number>()
+  type Tally = { for: number; against: number; lastForAt: number }
+  const tally = new Map<number, Tally>()
+  for (const v of votes) {
+    if (!inRoom.has(v.steamid)) continue // вышедшие из комнаты не считаются
+    cast.set(v.steamid, (cast.get(v.steamid) ?? 0) + 1)
+    let t = tally.get(v.appid)
+    if (!t) {
+      t = { for: 0, against: 0, lastForAt: 0 }
+      tally.set(v.appid, t)
+    }
+    if (v.vote === 1) {
+      t.for += 1
+      t.lastForAt = Math.max(t.lastForAt, v.createdAt)
+    } else {
+      t.against += 1
+    }
+  }
+
+  // Кто-то ещё свайпает — предлагать рано: для него это спойлер развязки
+  if (members.some((m) => !memberDone(cast.get(m.steamid) ?? 0, deckSize))) return null
+
+  const [top] = [...tally]
+    .filter(([, t]) => t.for >= 2 && t.for * 2 >= memberCount)
+    .sort(
+      ([a, x], [b, y]) =>
+        y.for - x.for || x.against - y.against || x.lastForAt - y.lastForAt || a - b,
+    )
+  return top ? { appid: top[0], forCount: top[1].for, memberCount } : null
+}
+
+/** Лидер голосов для экрана ожидания: к счёту — чем его показать */
+export type LeaderOffer = Leader & {
+  name: string
+  headerImage: string | null
+  art: GameArtUrls | null
 }

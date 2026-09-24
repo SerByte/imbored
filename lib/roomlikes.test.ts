@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { plural } from './plural'
 import { describe, expect, test } from 'vitest'
-import { buildLikes, LIKES_MINE_MAX, type MemberRef } from './roomlikes'
+import { buildLikes, LIKES_MINE_MAX, pickLeader, type MemberRef } from './roomlikes'
 import type { RoomVote } from './db'
 
 const MEMBERS: MemberRef[] = [
@@ -151,5 +151,133 @@ describe('почти совпали: род и число', () => {
     for (const bad of ['сошёлся', 'сошлись', 'выбрала']) {
       expect(code, `«${bad}» выбирает род за человека с чужим ником`).not.toContain(bad)
     }
+  })
+})
+
+/**
+ * «Берём «X»? 3 из 4 за». Предлагается, только когда все отсвайпали: пока
+ * кто-то свайпает, название — спойлер развязки. Наружу — только счёт.
+ */
+describe('pickLeader', () => {
+  const FOUR: MemberRef[] = [...MEMBERS, { steamid: 'kat', name: 'Катя' }]
+
+  /** Каждый участник проголосовал за всю колоду: за — из списка, остальное против */
+  function allSwiped(members: MemberRef[], deck: number[], likes: Record<string, number[]>) {
+    return members.flatMap((m) =>
+      deck.map((appid) => vote(m.steamid, appid, likes[m.steamid]?.includes(appid) ? 1 : 0)),
+    )
+  }
+
+  test('все отсвайпали, двое из трёх за — лидер со счётом', () => {
+    const votes = allSwiped(MEMBERS, [570, 620], { me: [570], dima: [570] })
+    expect(pickLeader({ votes, members: MEMBERS, deckSize: 2 })).toEqual({
+      appid: 570,
+      forCount: 2,
+      memberCount: 3,
+    })
+  })
+
+  test('кто-то ещё свайпает — лидера нет: для него это спойлер', () => {
+    const votes = allSwiped(MEMBERS, [570, 620], { me: [570], dima: [570] }).filter(
+      (v) => !(v.steamid === 'sasha' && v.appid === 620),
+    )
+    expect(pickLeader({ votes, members: MEMBERS, deckSize: 2 })).toBeNull()
+  })
+
+  test('колоды не было или её ещё не раздавали — лидера нет', () => {
+    const votes = allSwiped(MEMBERS, [570], { me: [570], dima: [570] })
+    expect(pickLeader({ votes, members: MEMBERS, deckSize: 0 })).toBeNull()
+    expect(pickLeader({ votes, members: MEMBERS, deckSize: null })).toBeNull()
+  })
+
+  test('половина — достаточно, меньше половины — нет', () => {
+    const half = allSwiped(FOUR, [570], { me: [570], dima: [570] })
+    expect(pickLeader({ votes: half, members: FOUR, deckSize: 1 })).toMatchObject({
+      appid: 570,
+      forCount: 2,
+      memberCount: 4,
+    })
+    const five: MemberRef[] = [...FOUR, { steamid: 'lev', name: 'Лев' }]
+    const minority = allSwiped(five, [570], { me: [570], dima: [570] })
+    expect(pickLeader({ votes: minority, members: five, deckSize: 1 })).toBeNull()
+  })
+
+  test('в комнате на двоих «один из двух» — ничья, а не лидер', () => {
+    // и точное раскрытие: второй знает свой голос и по счёту узнал бы чужой
+    const pair = MEMBERS.slice(0, 2)
+    const votes = allSwiped(pair, [570], { me: [570] })
+    expect(pickLeader({ votes, members: pair, deckSize: 1 })).toBeNull()
+  })
+
+  test('один за — не лидер даже в комнате на двоих', () => {
+    const pair = MEMBERS.slice(0, 2)
+    expect(pickLeader({ votes: [vote('me', 570, 1)], members: pair, deckSize: 1 })).toBeNull()
+  })
+
+  test('в комнате на одного лидера не бывает', () => {
+    const solo = MEMBERS.slice(0, 1)
+    expect(pickLeader({ votes: [vote('me', 570, 1)], members: solo, deckSize: 1 })).toBeNull()
+  })
+
+  test('больше «за» побеждает', () => {
+    const votes = allSwiped(FOUR, [570, 620], {
+      me: [570, 620],
+      dima: [570, 620],
+      sasha: [620],
+    })
+    expect(pickLeader({ votes, members: FOUR, deckSize: 2 })?.appid).toBe(620)
+  })
+
+  test('при равном «за» — меньше «против»: голос мог остаться с прошлой колоды', () => {
+    const votes = [
+      ...allSwiped(FOUR, [570], { me: [570], dima: [570] }),
+      // 620 Катя не видела — её голоса по ней нет вовсе
+      vote('me', 620, 1),
+      vote('dima', 620, 1),
+      vote('sasha', 620, 0),
+      vote('kat', 999, 0),
+    ]
+    expect(pickLeader({ votes, members: FOUR, deckSize: 2 })?.appid).toBe(620)
+  })
+
+  test('при полном равенстве — та, что добрала счёт раньше, потом меньший appid', () => {
+    const early = [
+      vote('me', 620, 1, 10),
+      vote('dima', 620, 1, 20),
+      vote('sasha', 620, 0, 30),
+      vote('me', 570, 1, 40),
+      vote('dima', 570, 1, 50),
+      vote('sasha', 570, 0, 60),
+    ]
+    expect(pickLeader({ votes: early, members: MEMBERS, deckSize: 2 })?.appid).toBe(620)
+    const sameSecond = early.map((v) => ({ ...v, createdAt: 0 }))
+    expect(pickLeader({ votes: sameSecond, members: MEMBERS, deckSize: 2 })?.appid).toBe(570)
+  })
+
+  test('голоса вышедших не считаются ни в «за», ни в «все отсвайпали»', () => {
+    const votes = [
+      ...allSwiped(MEMBERS, [570, 620], { me: [570] }),
+      // ушедший был за 570 — без него за только один
+      vote('gone', 570, 1),
+    ]
+    expect(pickLeader({ votes, members: MEMBERS, deckSize: 2 })).toBeNull()
+  })
+
+  test('НИ ИМЁН, НИ steamid — только игра и счёт', () => {
+    const real: MemberRef[] = [
+      { steamid: '76561197960287930', name: 'Аня' },
+      { steamid: '76561197960287931', name: 'Боря' },
+      { steamid: '76561197960287932', name: 'Вика' },
+    ]
+    const votes = allSwiped(real, [570, 620], {
+      '76561197960287930': [570],
+      '76561197960287931': [570],
+    })
+    const leader = pickLeader({ votes, members: real, deckSize: 2 })
+    expect(leader).not.toBeNull()
+    expect(Object.keys(leader ?? {}).sort()).toEqual(['appid', 'forCount', 'memberCount'])
+    const json = JSON.stringify(leader)
+    expect(json).not.toMatch(/\d{17}/)
+    for (const m of real) expect(json).not.toContain(m.name)
   })
 })

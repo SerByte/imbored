@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { memberLabel } from '@/lib/room'
 import { getGamesMetaLite, getRoom, roomMembers, roomVotes } from '@/lib/db'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
-import { buildLikes } from '@/lib/roomlikes'
+import { buildLikes, pickLeader, type LeaderOffer } from '@/lib/roomlikes'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
@@ -36,7 +36,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
   const db = await getDb()
-  if (!(await getRoom(db, id))) return NextResponse.json({ error: 'notfound' }, { status: 404 })
+  const room = await getRoom(db, id)
+  if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
   const members = await roomMembers(db, id)
   if (!members.some((m) => m.steamid === steamid)) {
@@ -62,8 +63,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     me: steamid,
   })
 
-  const metas = await getGamesMetaLite(db, mineAppids)
-  const mine = mineAppids.map((appid) => {
+  // Лидер голосов — только когда все отсвайпали (см. pickLeader): тогда
+  // портить уже нечего, а наружу идёт один счёт без имён
+  const leader = pickLeader({ votes, members, deckSize: room.deckSize })
+
+  // Мета лидера — тем же заходом, что и своих лайков
+  const metas = await getGamesMetaLite(db, leader ? [...mineAppids, leader.appid] : mineAppids)
+  const view = (appid: number) => {
     const meta = metas.get(appid)
     return {
       appid,
@@ -71,8 +77,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       headerImage: meta?.headerImage ?? null,
       art: meta?.art ?? null,
     }
-  })
+  }
+  const mine = mineAppids.map(view)
+  const offer: LeaderOffer | null = leader ? { ...leader, ...view(leader.appid) } : null
 
   // near уходит как есть: в нём нет ни appid, ни названий — см. lib/roomlikes.ts
-  return NextResponse.json({ mine, near, memberCount: members.length })
+  return NextResponse.json({ mine, near, leader: offer, memberCount: members.length })
 }

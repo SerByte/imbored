@@ -1524,6 +1524,24 @@ export async function roomVoteCounts(db: Db, roomId: string): Promise<Map<string
   )
 }
 
+/**
+ * Сколько нынешних участников проголосовали «за» игру. Церемонии матча,
+ * взятого лидером голосов (pickLeader в lib/roomlikes), нужен счёт «3 из 4»:
+ * «все в комнате хотят одного и того же» там было бы неправдой.
+ *
+ * JOIN с room_members — по той же причине, что в findRoomMatch: голос
+ * ушедшего не должен считаться за голос оставшегося.
+ */
+export async function roomForCount(db: Db, roomId: string, appid: number): Promise<number> {
+  const res = await db.execute({
+    sql: `SELECT COUNT(DISTINCT v.steamid) AS n FROM room_votes v
+          JOIN room_members m ON m.room_id = v.room_id AND m.steamid = v.steamid
+          WHERE v.room_id = ? AND v.appid = ? AND v.vote = 1`,
+    args: [roomId, appid],
+  })
+  return Number(res.rows[0]?.n ?? 0)
+}
+
 export async function myVotedAppids(
   db: Db,
   roomId: string,
