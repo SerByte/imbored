@@ -97,6 +97,7 @@ describe('превью в мессенджерах', () => {
     const own: Record<string, string> = {
       'app/page.tsx': '/',
       'app/whatsnew/page.tsx': '/whatsnew',
+      'app/games/page.tsx': '/games',
       'app/privacy/page.tsx': '/privacy',
       'app/support/page.tsx': '/support',
       'app/daily/layout.tsx': '/daily',

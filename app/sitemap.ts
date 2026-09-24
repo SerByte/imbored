@@ -49,6 +49,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
      * по недосмотру продвинули.
      */
     { url: url('/whatsnew'), changeFrequency: 'daily', priority: 0.8 },
+    // Хаб жанров: единственная страница, которая ссылается на карточки пачкой
+    // (см. app/games/page.tsx). Полки меняются медленно — верх по отзывам
+    // стоит неделями, — отсюда weekly, а не daily.
+    { url: url('/games'), changeFrequency: 'weekly', priority: 0.8 },
     { url: url('/support'), changeFrequency: 'yearly', priority: 0.3 },
     { url: url('/privacy'), changeFrequency: 'yearly', priority: 0.2 },
   ]

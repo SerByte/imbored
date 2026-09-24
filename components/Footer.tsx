@@ -15,6 +15,12 @@ export function Footer() {
         {/* Имя — чтобы в списке ориентиров это не было третьей безымянной
             «навигацией» рядом с меню разделов */}
         <nav aria-label="Служебные ссылки" className="flex items-center flex-wrap gap-x-5 gap-y-2 text-xs text-dim">
+          {/* Хаб жанров — единственная ссылка отсюда, открытая гостю и
+              краулеру: остальные разделы шапки и панели живут за входом.
+              Страница на ISR, префетч с края ей ничего не стоит. */}
+          <Link href="/games" className="tap tap-tight hover:text-ink transition-colors">
+            Игры по жанрам
+          </Link>
           <Link href="/support" className="tap tap-tight hover:text-ink transition-colors">
             Поддержать проект
           </Link>

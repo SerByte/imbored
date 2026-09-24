@@ -3107,6 +3107,67 @@ export async function topCatalogGames(db: Db, limit: number): Promise<SimilarGam
 }
 
 /**
+ * Кандидаты полок хаба /games: по каждому тегу — верх по числу отзывов среди
+ * игр, у которых этот тег весит не меньше minWeight. Одним запросом на все
+ * теги; какая игра на какую полку встанет, решает assembleHub (lib/gamehub).
+ *
+ * Читает по диапазону idx_game_tags_tag (tag, weight DESC) на каждый тег и
+ * игру по ключу на каждую найденную строку — то есть все игры тега выше
+ * порога, а не LIMIT: порядок по отзывам индекс тега не даёт. Это тысячи
+ * строк на тридцать тегов, и поэтому зовёт её только страница на ISR с
+ * суточным revalidate, а не запрос посетителя. Сторож плана —
+ * lib/queryplan.test.ts.
+ *
+ * total — сколько игр тега прошло порог и фильтр, до обрезки по perTag:
+ * по нему assembleHub заполняет полки от узкого жанра к широкому.
+ *
+ * Колонки те же, что у полки «Похожие» и у 404: без описаний, скриншотов и
+ * тегов — хабу нужны имя и арт. appid > 0 — по той же причине, что в
+ * topGamesByTag: у записей чужих магазинов нет арта.
+ */
+export async function topGamesByTags(
+  db: Db,
+  tags: readonly string[],
+  opts: { minWeight: number; perTag: number },
+): Promise<Array<SimilarGame & { tag: string; total: number }>> {
+  if (!tags.length) return []
+  const res = await db.execute({
+    sql: `SELECT tag, appid, name, header_image, art_json, total FROM (
+            SELECT gt.tag AS tag, g.appid AS appid, g.name AS name,
+                   g.header_image AS header_image, g.art_json AS art_json,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY gt.tag ORDER BY g.reviews_total DESC, g.appid
+                   ) AS rn,
+                   COUNT(*) OVER (PARTITION BY gt.tag) AS total
+            FROM json_each(?) AS t
+            CROSS JOIN game_tags AS gt ON gt.tag = t.value AND gt.weight >= ?
+            JOIN games AS g ON g.appid = gt.appid
+            WHERE g.appid > 0 AND ${ALIVE_POOL}
+          )
+          WHERE rn <= ?
+          ORDER BY tag, rn`,
+    args: [JSON.stringify(tags), opts.minWeight, opts.perTag],
+  })
+  return (
+    res.rows as unknown as Array<{
+      tag: string
+      appid: number
+      name: string
+      header_image: string | null
+      art_json: string | null
+      total: number
+    }>
+  ).map((r) => ({
+    tag: r.tag,
+    total: Number(r.total),
+    appid: Number(r.appid),
+    name: r.name,
+    headerImage: r.header_image ?? null,
+    art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
+  }))
+}
+
+/**
  * Описания витрины — для разовой доливки на язык сайта.
  *
  * Отдаём текст вместе с appid, потому что отбор «что доливать» делается по

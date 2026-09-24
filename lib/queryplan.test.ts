@@ -24,6 +24,7 @@ import {
   sweepStale,
   topCatalogAppids,
   topGamesByTag,
+  topGamesByTags,
   upsertNewsItems,
   type Db,
 } from './db'
@@ -312,6 +313,26 @@ describe('планы запросов', () => {
       plan.filter((step) => step.includes('TEMP B-TREE')),
       where,
     ).toEqual(['USE TEMP B-TREE FOR RIGHT PART OF ORDER BY'])
+  })
+
+  /*
+   * Хаб /games: по диапазону индекса тега (tag=? AND weight>?) на каждый тег
+   * из списка и игра по ключу на строку. Сортировок три, и все законны: окно
+   * по тегу и итоговый порядок работают по строкам тридцати тегов выше порога,
+   * а не по таблице. Скан game_tags или games здесь значил бы проход по всему
+   * каталогу на каждую перегенерацию страницы.
+   */
+  test('хаб игр: по индексу тега и ключу игры, без проходов по таблицам', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) =>
+      topGamesByTags(spy, ['Roguelike', 'Horror'], { minWeight: 500, perTag: 24 }),
+    )
+    expect(issued).toHaveLength(1)
+    const plan = await planOf(db, issued[0]!)
+    const where = plan.join(' | ')
+    expect(bareScans(plan), where).toEqual([])
+    expect(where).toContain('INDEX idx_game_tags_tag (tag=? AND weight>?)')
+    expect(where).toMatch(/SEARCH g USING INTEGER PRIMARY KEY \(rowid=\?\)/)
   })
 
   /*

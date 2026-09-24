@@ -76,7 +76,7 @@ describe('robots.txt', () => {
 
   test('разделы с содержанием открыты', () => {
     const rules = rulesOf()
-    for (const url of ['/', '/game/730', '/whatsnew', '/privacy', '/support', '/?next=%2Fplay']) {
+    for (const url of ['/', '/game/730', '/games', '/whatsnew', '/privacy', '/support', '/?next=%2Fplay']) {
       expect(allowed(rules, url), url).toBe(true)
     }
   })
@@ -108,7 +108,7 @@ describe('noindex заголовком', () => {
   })
 
   test('не задевает соседей и открытые разделы', () => {
-    for (const url of ['/', '/rooms', '/game/730', '/whatsnew', '/portraits', '/compatibility']) {
+    for (const url of ['/', '/rooms', '/game/730', '/games', '/whatsnew', '/portraits', '/compatibility']) {
       expect(noindexed(url), url).toBe(false)
     }
   })

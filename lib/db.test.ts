@@ -96,6 +96,7 @@ import {
   unbanGame,
   updateGamePrices,
   topCatalogGames,
+  topGamesByTags,
   upsertGameMeta,
   upsertGamesMeta,
   upsertUser,
@@ -2501,6 +2502,60 @@ describe('мёртвые игры и общая лента', () => {
       })
     }
     expect(await topCatalogGames(db, 2)).toHaveLength(2)
+  })
+})
+
+describe('кандидаты полок хаба', () => {
+  async function put(
+    db: Awaited<ReturnType<typeof freshDb>>,
+    appid: number,
+    reviews: number,
+    tags: Array<[string, number]>,
+    alive = 1,
+  ) {
+    await upsertGameMeta(db, { ...META, appid, name: `Игра ${appid}`, reviewsTotal: reviews }, NOW)
+    await db.execute({
+      sql: 'UPDATE games SET alive = ?, tag_count = 3, superseded_by = NULL WHERE appid = ?',
+      args: [alive, appid],
+    })
+    await replaceGameTags(
+      db,
+      appid,
+      tags.map(([tag, weight]) => ({ tag, weight })),
+    )
+  }
+
+  test('по каждому тегу — верх по отзывам среди тех, у кого тег главный', async () => {
+    const db = await freshDb()
+    await put(db, 1, 900, [['Roguelike', 1000]])
+    await put(db, 2, 5000, [['Roguelike', 600], ['Horror', 1000]])
+    await put(db, 3, 9000, [['Roguelike', 300]]) // рогалик хвостом — не на полку
+    await put(db, 4, 7000, [['Roguelike', 800]], 0) // мёртвая
+    await put(db, -5, 8000, [['Roguelike', 1000]]) // чужой магазин
+    await put(db, 6, 100, [['Roguelike', 700]])
+    await put(db, 7, 3000, [['Cozy', 1000]]) // тег не спрошен
+
+    const rows = await topGamesByTags(db, ['Roguelike', 'Horror'], { minWeight: 500, perTag: 2 })
+    expect(rows.map((r) => [r.tag, r.appid, r.total])).toEqual([
+      ['Horror', 2, 1],
+      ['Roguelike', 2, 3],
+      ['Roguelike', 1, 3],
+    ])
+    expect(rows[0].name).toBe('Игра 2')
+    expect(rows[0]).not.toHaveProperty('tags')
+  })
+
+  test('пустой список тегов — ни одного запроса', async () => {
+    const db = await freshDb()
+    let calls = 0
+    const spy = {
+      execute: (...a: Parameters<typeof db.execute>) => {
+        calls++
+        return db.execute(...a)
+      },
+    } as unknown as typeof db
+    expect(await topGamesByTags(spy, [], { minWeight: 500, perTag: 12 })).toEqual([])
+    expect(calls).toBe(0)
   })
 })
 
