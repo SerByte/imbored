@@ -52,7 +52,9 @@ describe('кнопка запуска', () => {
   test('SteamLaunch разветвляется по указателю, а не по брейкпоинту', () => {
     const src = code(read('components', 'SteamLaunch.tsx'))
     const classes = [...src.matchAll(/className=\{`([^`]*)`\}/g)].map((m) => m[1])
-    expect(classes, 'две ветки: steam://run и магазин').toHaveLength(2)
+    // steam://run или steam://install, магазин — и у загрузки на телефоне
+    // строка вместо ссылки: магазин загрузку не начнёт
+    expect(classes, 'ветки: steam://, магазин и строка про загрузку').toHaveLength(3)
     for (const cls of classes) {
       expect(cls).toMatch(/\bpointer-fine:(?:hidden|inline-block)\b/)
       expect(cls, 'ширина окна не говорит, умеет ли устройство steam://').not.toMatch(

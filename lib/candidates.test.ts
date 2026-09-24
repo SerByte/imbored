@@ -87,6 +87,25 @@ describe('buildCandidates', () => {
     expect(daily.candidates.map((c) => c.appid)).toContain(10)
   })
 
+  test('«Не сегодня» с начала суток прячет игру у «Игры дня», вчерашнее и другие причины — нет', async () => {
+    const db = await freshDb()
+    await seed(db)
+    const dayStart = NOW - 3600
+    // сегодня «не сейчас» — прячем; вчера — нет; сегодня «не тот жанр» — нет
+    await logFeedback(db, { steamid: ME, appid: 10, action: 'skipped', reason: 'notnow' }, dayStart + 60)
+    await logFeedback(db, { steamid: ME, appid: 11, action: 'skipped', reason: 'notnow' }, dayStart - 60)
+    await logFeedback(db, { steamid: ME, appid: 12, action: 'skipped', reason: 'genre' }, dayStart + 60)
+    const daily = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', {
+      nowSec: NOW,
+      cooldownKinds: ['tired'],
+      notnowSince: dayStart,
+    })
+    if (typeof daily === 'string') throw new Error(daily)
+    const ids = daily.candidates.map((c) => c.appid)
+    expect(ids).not.toContain(10)
+    expect(ids).toEqual(expect.arrayContaining([11, 12]))
+  })
+
   test('фокус «нераспакованное» сужает своё, scope решает, пускать ли каталог в пул героя', async () => {
     const db = await freshDb()
     await seed(db)

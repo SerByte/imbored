@@ -1521,6 +1521,33 @@ describe('db', () => {
     expect(Number(all.rows[0].n)).toBe(2)
   })
 
+  test('«Поставить на загрузку» — план, а не оценка: ни в окне вкуса, ни снятием паузы', async () => {
+    const db = await freshDb()
+    const install = { source: 'play' as const, intent: 'install' as const }
+    // Открыл карточку вчера, сегодня поставил на загрузку: схлопывание по
+    // (игра, действие) не должно отдать загрузке место настоящего открытия
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'opened' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'opened', ctx: install }, NOW + 86_400)
+    // «Не сейчас», потом загрузка — пауза остаётся: загрузка не «передумал»
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'notnow' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'opened', ctx: install }, NOW + 60)
+    // другой снимок у открытия — обычное открытие
+    await logFeedback(db, { steamid: 'u1', appid: 440, action: 'opened', ctx: { intent: 'details' } }, NOW)
+
+    const rows = await listFeedback(db, 'u1')
+    expect(rows.map((r) => [r.appid, r.action, r.createdAt]).sort()).toEqual(
+      [
+        [440, 'opened', NOW],
+        [570, 'skipped', NOW],
+        [620, 'opened', NOW],
+      ].sort(),
+    )
+    expect(cooldownOf(rows, NOW + 120).get(570)?.kind).toBe('notnow')
+    // сами строки в базе — отчёт их читает
+    const all = await db.execute("SELECT COUNT(*) AS n FROM feedback WHERE ctx_json LIKE '%install%'")
+    expect(Number(all.rows[0].n)).toBe(2)
+  })
+
   test('listExplore: последний свайп решает, свежие сверху, бан сильнее полки', async () => {
     const db = await freshDb()
     await logFeedback(db, { steamid: 'u1', appid: 10, action: 'opened', reason: 'explore' }, NOW)

@@ -103,6 +103,12 @@ export type CandidateOpts = {
    * и «Продолжить» такая игра быть может.
    */
   exclude?: readonly number[]
+  /**
+   * «Не сегодня» с этой секунды не показывать — «Игре дня»: отложенное на
+   * сегодня не должно вернуться героем в тот же день, хотя паузы «не сейчас»
+   * она не читает (cooldownKinds). Секунда — начало суток дня (dayStartSec).
+   */
+  notnowSince?: number
   /** Без настроения — колода исследователя (scoreCandidates, moodless) */
   moodless?: boolean
 }
@@ -189,7 +195,14 @@ export async function buildCandidates(
   const plan = opts.nudge ?? null
   const reroll = plan?.reroll === true
   const shown = new Set(opts.exclude ?? [])
-  const hidden = shown.size ? new Set([...banned, ...shown]) : banned
+  const since = opts.notnowSince
+  const notToday =
+    since === undefined
+      ? []
+      : feedback
+          .filter((f) => f.action === 'skipped' && f.reason === 'notnow' && f.createdAt >= since)
+          .map((f) => f.appid)
+  const hidden = shown.size || notToday.length ? new Set([...banned, ...shown, ...notToday]) : banned
 
   // Метаданные своей библиотеки И игр из истории оценок: весь каталог на сотне
   // тысяч игр сжёг бы лимит прочитанных строк Turso. Игры из фидбека нужны

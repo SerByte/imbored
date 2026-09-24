@@ -1,6 +1,7 @@
 import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
-import { forgetDailyPick, logFeedback, recordOutcome } from '@/lib/db'
+import { dailyHeroAppids, dayKey, parseDailySelection } from '@/lib/daily'
+import { forgetDailyPick, getDailyPick, logFeedback, recordOutcome } from '@/lib/db'
 import { parseFeedbackCtx } from '@/lib/feedbackctx'
 import { logSwallowed } from '@/lib/errlog'
 import { isFeedbackAction, isSkipReason } from '@/lib/feedbackkinds'
@@ -94,6 +95,14 @@ export async function POST(req: Request) {
   // Игра дня записана на сутки, но бан и «надоела» отбор обязан учесть сразу:
   // иначе убранная игра стояла бы героем до полуночи (см. forgetDailyPick)
   if (action === 'banned' || reason === 'tired') await forgetDailyPick(db, steamid)
+  // «Не сегодня» — только если сказано про героя дня или запасную свою: тогда
+  // отбор пересчитается без неё (notnowSince в /api/daily). Про любую другую
+  // игру запись не трогаем — иначе «не сейчас» на /play перетасовывало бы
+  // выбор, обещанный на сутки
+  else if (reason === 'notnow') {
+    const today = parseDailySelection(await getDailyPick(db, steamid, dayKey(now)))
+    if (dailyHeroAppids(today).includes(appid)) await forgetDailyPick(db, steamid)
+  }
   // Модель портрета кэшируется по снапшоту, а бан снапшот не меняет: без
   // сброса «начни с этой» на портрете указывала бы на скрытую игру до
   // следующего снапшота. 'max' — следующий заход получит старую модель, пока

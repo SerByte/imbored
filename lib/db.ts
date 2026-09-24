@@ -3808,12 +3808,19 @@ export async function logFeedback(
  * должно: пролистанное без обязательств — не «не то». Свою колоду
  * исследователь не повторяет сам (listExplore). «Интересно» ('opened') в окне
  * остаётся: это тот же слабый сигнал вкуса, что открытая карточка.
+ *
+ * «Поставить на загрузку» ('opened' со снимком intent 'install') — тоже мимо:
+ * это план на вечер, а не оценка. Отфильтровать его позже, в
+ * applyFeedbackToProfile, было бы мало: там строки схлопываются до последней
+ * на (игру, действие), и загрузка вытеснила бы настоящее открытие карточки
+ * той же игры. А паузу «не сейчас» она снимала бы в cooldownOf.
  */
 export async function listFeedback(db: Db, steamid: string, limit = 500): Promise<FeedbackRow[]> {
   const res = await db.execute({
     sql: `SELECT steamid, appid, action, reason, mood_json, created_at FROM feedback
           WHERE steamid = ? AND reason IS NOT 'spin'
             AND NOT (action = 'skipped' AND reason IS 'explore')
+            AND NOT (action = 'opened' AND json_extract(ctx_json, '$.intent') IS 'install')
           ORDER BY created_at DESC, id DESC LIMIT ?`,
     args: [steamid, limit],
   })

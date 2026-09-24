@@ -1,7 +1,17 @@
 import { NextResponse } from 'next/server'
 import { buildCandidates } from '@/lib/candidates'
 import { dailyCardView, pickContext, storeCardView } from '@/lib/cards'
-import { dayKey, pickDaily, pickDailyPool, publicPick } from '@/lib/daily'
+import {
+  dayKey,
+  dayStartSec,
+  parseDailySelection,
+  pickDaily,
+  pickDailyPool,
+  pickOwnAlternate,
+  publicPick,
+  type DailyAlternate,
+  type DailySelection,
+} from '@/lib/daily'
 import { getDailyPick, getGamesMeta, saveDailyPick } from '@/lib/db'
 import { refreshDealsWithin } from '@/lib/deals'
 import { dayLabel } from '@/lib/freshness'
@@ -10,7 +20,7 @@ import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { sharedTasteTags } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
-import { CANDIDATE_SOURCES, type GameMeta, type ScoredCandidate } from '@/lib/types'
+import type { GameMeta, ScoredCandidate } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
 const DISCOVERY_CARDS = 3
@@ -24,82 +34,11 @@ const DISCOVERY_CARDS = 3
 const DAILY_LIMIT = 10
 const DAILY_WINDOW_SEC = 3600
 
-/** Кандидат в том виде, в каком он уходит в запись дня */
-type Chosen = ReturnType<typeof publicPick>
-
-/**
- * Что именно запоминается на сутки.
- *
- * Герой, полка и часы — результат ОТБОРА: он опирается на пул каталога,
- * профиль вкуса и фидбек и до полуночи меняться не должен по определению
- * страницы. Вместе с ним — всё, для чего иначе пришлось бы снова читать
- * библиотеку: основа причины (якорь и совпавшие теги уже вписаны в неё),
- * отметки на чипсах и флаг hideUrgency.
- *
- * Цены здесь НЕТ, и это не упущение. Ценовой хвост причины («Сейчас −40%:
- * …») и ценник под ней живут своей осью свежести и пересчитываются на каждом
- * заходе: запомнить их значило бы заморозить вчерашнюю сумму рядом с
- * сегодняшним ценником — ровно то расхождение, против которого написан
- * комментарий у refreshDealsWithin ниже.
- *
- * Скора и его частей тоже нет: запись хранит publicPick, а не кандидата.
+/*
+ * Что запоминается на сутки и как запись разбирается — lib/daily.ts
+ * (DailySelection, parseDailySelection): «Не сегодня» в /api/feedback читает
+ * ту же запись, чтобы понять, про героя ли дня оно сказано.
  */
-type DailySelection = {
-  pick: Chosen
-  shelf: Chosen[]
-  hoursPlayed: number | null
-  /** Причина без ценового хвоста; хвост — reasonPrice на каждом заходе */
-  reasonBase: string
-  sharedTags: string[]
-  hideUrgency: boolean
-}
-
-function parseCard(raw: unknown): Chosen | null {
-  if (!raw || typeof raw !== 'object') return null
-  const { appid, name, source } = raw as Record<string, unknown>
-  if (typeof appid !== 'number' || !Number.isInteger(appid)) return null
-  if (typeof name !== 'string') return null
-  if (!CANDIDATE_SOURCES.includes(source as never)) return null
-  return { appid, name, source: source as ScoredCandidate['source'] }
-}
-
-/**
- * Разбор с проверкой формы, а не приведение типом.
- *
- * Строку писала, возможно, предыдущая версия приложения, и состав записи с
- * тех пор мог измениться. Непрошедшая запись — не ошибка: маршрут просто
- * пересчитает выбор и перезапишет её. Сид тот же (steamid:дата), так что для
- * человека, у которого пул и вкус с утра не изменились, ответ останется
- * прежним.
- */
-function parseSelection(raw: unknown): DailySelection | null {
-  if (!raw || typeof raw !== 'object') return null
-  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, hideUrgency } = raw as Record<
-    string,
-    unknown
-  >
-  const parsedPick = parseCard(pick)
-  if (!parsedPick) return null
-  if (!Array.isArray(shelf)) return null
-  const parsedShelf: Chosen[] = []
-  for (const item of shelf) {
-    const c = parseCard(item)
-    if (!c) return null
-    parsedShelf.push(c)
-  }
-  if (hoursPlayed !== null && typeof hoursPlayed !== 'number') return null
-  if (typeof reasonBase !== 'string') return null
-  if (!Array.isArray(sharedTags) || !sharedTags.every((t) => typeof t === 'string')) return null
-  if (typeof hideUrgency !== 'boolean') return null
-  return {
-    pick: parsedPick,
-    shelf: parsedShelf,
-    hoursPlayed,
-    reasonBase,
-    sharedTags,
-    hideUrgency,
-  }
-}
 
 export async function GET(req: Request) {
   const steamid = await currentSteamId()
@@ -117,10 +56,11 @@ export async function GET(req: Request) {
    * selectDaily, и для подписи: разойдись они — на границе суток «одна игра
    * на день» перестала бы быть правдой. Бан и «надоела» запись сбрасывают
    * сразу (см. forgetDailyPick в /api/feedback) — их отбор обязан учесть в
-   * тот же день.
+   * тот же день; «Не сегодня» — только когда сказано про героя дня или
+   * запасную свою.
    */
   const dateStr = dayKey(now)
-  const stored = parseSelection(await getDailyPick(db, steamid, dateStr))
+  const stored = parseDailySelection(await getDailyPick(db, steamid, dateStr))
 
   /*
    * ?cached=1 — «только если уже выбрано».
@@ -153,7 +93,7 @@ export async function GET(req: Request) {
   if (!selection) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
   if (!stored) await saveDailyPick(db, steamid, dateStr, selection, now)
 
-  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, hideUrgency } = selection
+  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, hideUrgency, alt } = selection
 
   // Цены обновляем ДО того, как пишется текст: и хвост причины, и подпись
   // под ценой называют одну и ту же сумму, а расходиться им нельзя.
@@ -162,7 +102,7 @@ export async function GET(req: Request) {
   // это ровно то, что за сутки успевает измениться, и замораживать их вместе
   // с выбором было бы худшим из двух миров. Четыре appid, один запрос —
   // строкой целиком: у героя дня показываются кадры.
-  const pricedIds = [...new Set([pick, ...shelf].map((c) => c.appid))]
+  const pricedIds = [...new Set([pick, ...shelf, ...(alt ? [alt.pick] : [])].map((c) => c.appid))]
   await refreshDealsWithin(db, pricedIds, now)
   const priced = await getGamesMeta(db, pricedIds)
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid)
@@ -180,8 +120,20 @@ export async function GET(req: Request) {
       hideUrgency,
     }),
     discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
+    // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
+    ownAlternate: alt ? alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency) : null,
     // Из того же dateStr, что и ключ записи — см. dayLabel.
     dateLabel: dayLabel(dateStr),
+  })
+}
+
+/** Запасная своя — той же карточкой, что герой: цена и хвост причины свежие */
+function alternateView(alt: DailyAlternate, meta: GameMeta | undefined, now: number, hideUrgency: boolean) {
+  return dailyCardView(alt.pick, meta, now, {
+    reason: alt.reasonBase + reasonPrice(alt.pick.source, meta, now, hideUrgency),
+    sharedTags: alt.sharedTags,
+    hoursPlayed: alt.hoursPlayed,
+    hideUrgency,
   })
 }
 
@@ -203,10 +155,13 @@ async function selectDaily(
 ): Promise<DailySelection | null | typeof NO_LIBRARY> {
   // Конвейер тот же, что у /play (lib/candidates.ts): настроения у страницы
   // нет, знакомого и оси тоже, а из пауз — только «надоела»: «не сейчас» на
-  // /play посреди дня иначе сменило бы игру, выбранную на сутки
+  // /play посреди дня иначе сменило бы игру, выбранную на сутки. Сказанное
+  // сегодня «Не сегодня» — другое дело: отбор, пересчитанный после него, не
+  // имеет права вернуть ту же игру до полуночи
   const set = await buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
     nowSec: now,
     cooldownKinds: ['tired'],
+    notnowSince: dayStartSec(now),
   })
   if (set === 'nolibrary') return NO_LIBRARY
   if (set === 'nocandidates') return null
@@ -224,29 +179,40 @@ async function selectDaily(
   // тем, у кого нераспакованного немного. Цены здесь не обновляются — это
   // делает GET на каждом заходе.
   const ctx = pickContext(set)
-  const hoursPlayed = ctx.hoursOf(pick.appid)
   const hideUrgency = ctx.hideUrgency
-  const reason =
-    heuristicPicks([pick], metaOf, 1, now, profile, {
-      tagWeight,
-      anchorOf: ctx.anchorOf,
-      hoursOf: ctx.hoursOf,
-      hideUrgency,
-    })[0]?.reason ?? ''
-  // В запись уходит причина БЕЗ ценового хвоста: heuristicPicks клеит его
-  // последним (reasonPrice), и на каждом заходе он пересчитывается по свежей
-  // цене. Хвост тут считается по тем же метаданным, что и сама причина, —
-  // поэтому срез всегда попадает ровно по шву.
-  const tail = reasonPrice(pick.source, metaOf(pick.appid), now, hideUrgency)
-  const reasonBase = tail && reason.endsWith(tail) ? reason.slice(0, -tail.length) : reason
 
-  const meta = metaOf(pick.appid)
+  /** Герой — в запись: публичные поля, часы, причина без цены и отметки чипсов */
+  const describe = (c: ScoredCandidate): DailyAlternate => {
+    const reason =
+      heuristicPicks([c], metaOf, 1, now, profile, {
+        tagWeight,
+        anchorOf: ctx.anchorOf,
+        hoursOf: ctx.hoursOf,
+        hideUrgency,
+      })[0]?.reason ?? ''
+    // В запись уходит причина БЕЗ ценового хвоста: heuristicPicks клеит его
+    // последним (reasonPrice), и на каждом заходе он пересчитывается по свежей
+    // цене. Хвост тут считается по тем же метаданным, что и сама причина, —
+    // поэтому срез всегда попадает ровно по шву.
+    const tail = reasonPrice(c.source, metaOf(c.appid), now, hideUrgency)
+    const meta = metaOf(c.appid)
+    return {
+      pick: publicPick(c),
+      hoursPlayed: ctx.hoursOf(c.appid),
+      reasonBase: tail && reason.endsWith(tail) ? reason.slice(0, -tail.length) : reason,
+      sharedTags: meta ? sharedTasteTags(profile, meta, tagWeight) : [],
+    }
+  }
+
+  // Магазинный день — и своя наготове, тем же сидом из своего пула: кто
+  // сегодня покупать не собирался, получает свою по нажатию, а не уходит
+  // в обычный подбор
+  const alternate = pickOwnAlternate(own, discovery, seed)
+
   return {
-    pick: publicPick(pick),
+    ...describe(pick),
     shelf: shelf.map(publicPick),
-    hoursPlayed,
-    reasonBase,
-    sharedTags: meta ? sharedTasteTags(profile, meta, tagWeight) : [],
     hideUrgency,
+    alt: alternate ? describe(alternate) : null,
   }
 }

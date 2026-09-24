@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
-import { freshDb, signIn, signOut } from '@/lib/testing/route'
+import { freshDb, post, signIn, signOut } from '@/lib/testing/route'
+import { POST as feedback } from '../feedback/route'
 import type { GameMeta, LibraryGame } from '@/lib/types'
 import { GET } from './route'
 
@@ -149,5 +150,41 @@ describe('/api/daily: записанный выбор дня', () => {
     expect((await get('?cached=1')).status).toBe(204)
     const next = await get()
     expect(((await next.json()) as { dateLabel: string }).dateLabel).toBe('24 сентября')
+  })
+})
+
+/**
+ * «Не сегодня» на /daily: отзыв сбрасывает запись дня, если он про героя, и
+ * следующий отбор эту игру до полуночи не вернёт. «Не сейчас» про любую
+ * другую игру выбор дня не трогает — ради этого запись и заведена.
+ */
+describe('/api/daily: «Не сегодня»', () => {
+  const pickOf = async (query = '') =>
+    ((await (await get(query)).json()) as { pick: { appid: number } }).pick.appid
+  const notNow = (appid: number, source = 'daily') =>
+    feedback(post('/api/feedback', { appid, action: 'skipped', reason: 'notnow', ctx: { source } }))
+
+  test('про героя дня — другая игра сразу, и она же при следующем заходе', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    const first = await pickOf()
+    expect((await notNow(first)).status).toBe(200)
+    expect(await countRows(db, 'daily_picks')).toBe(0)
+
+    const second = await pickOf()
+    expect(second).not.toBe(first)
+    expect(await pickOf('?cached=1')).toBe(second)
+
+    // и третий раз — ни одна из двух отложенных сегодня
+    await notNow(second)
+    expect([first, second]).not.toContain(await pickOf())
+  })
+
+  test('про другую игру — запись дня на месте', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    const first = await pickOf()
+    const other = [10, 11, 12, 13].find((id) => id !== first)!
+    await notNow(other, 'play')
+    expect(await countRows(db, 'daily_picks')).toBe(1)
+    expect(await pickOf('?cached=1')).toBe(first)
   })
 })

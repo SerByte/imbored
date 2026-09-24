@@ -2,10 +2,11 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { GameArt } from '@/components/GameArt'
 import { HeroShots } from '@/components/HeroShots'
+import { NeedSteam } from '@/components/NeedSteam'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
@@ -17,9 +18,13 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, StoreCard } from '@/lib/cards'
 import { bounceTo, reconnectHref } from '@/lib/destination'
+import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
+import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
+import type { CandidateSource } from '@/lib/types'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { isNeedSteam, writerStore } from '@/lib/writer'
 import { SectionLabel } from '@/components/Labels'
 import { TagChips } from '@/components/TagChips'
 
@@ -65,6 +70,41 @@ const FAIL_UNKNOWN = {
 const storeHref = (c: Pick<StoreCard, 'appid' | 'storeUrl'>) =>
   c.storeUrl ?? `https://store.steampowered.com/app/${c.appid}/`
 
+/** Ответ /api/daily — один разбор на все запросы страницы */
+type DailyResponse = {
+  pick: DailyPickCard
+  discoveries?: StoreCard[]
+  /** Своя на магазинный день — «Сегодня хочу из своего»; null — не магазинный */
+  ownAlternate?: DailyPickCard | null
+  dateLabel: string
+  nowSec: number
+}
+
+/**
+ * Отзыв об игре дня. Тот же роут и та же дисциплина, что у sendFeedback на
+ * /play: промис не отклоняется, needsteam переводит страницу в режим чтения —
+ * «Зашло» и «Не сегодня» прячутся, и на их месте строка о входе через Steam.
+ */
+async function sendFeedback(
+  appid: number,
+  action: FeedbackAction,
+  reason: SkipReason | undefined,
+  ctx: FeedbackCtx,
+): Promise<boolean> {
+  if (writerStore.get() === false) return false
+  try {
+    const r = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appid, action, ...(reason ? { reason } : {}), ctx }),
+    })
+    if (await isNeedSteam(r)) writerStore.set(false)
+    return r.ok
+  } catch {
+    return false
+  }
+}
+
 export default function DailyPage() {
   const router = useRouter()
   const [pick, setPick] = useState<DailyPickCard | null>(null)
@@ -76,6 +116,48 @@ export default function DailyPage() {
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')
+  /** Своя на магазинный день и показана ли она вместо магазинной */
+  const [alternate, setAlternate] = useState<DailyPickCard | null>(null)
+  const [ownDay, setOwnDay] = useState(false)
+  const [liked, setLiked] = useState<Set<number>>(new Set())
+  /** «Не сегодня» ушло, и страница ждёт другую игру */
+  const [rerolling, setRerolling] = useState(false)
+  /** Почему другую подобрать не вышло — строкой под кнопками; null — нечего сказать */
+  const [rerollMiss, setRerollMiss] = useState<string | null>(null)
+  /** Что сказать скринридеру о смене героя — живая строка стоит с первого кадра */
+  const [said, setSaid] = useState('')
+  /*
+   * Герой сменился по нажатию («Не сегодня», «Сегодня хочу из своего») — и
+   * нажатая кнопка ушла вместе со старым героем: секция пересоздаётся по
+   * appid. Фокус без присмотра упал бы в body, поэтому его забирает заголовок
+   * нового героя, когда смонтируется, — тот же приём, что у героя /play.
+   */
+  const wantHeroFocus = useRef(false)
+  const heroRef = useCallback((el: HTMLElement | null) => {
+    if (!el || !wantHeroFocus.current) return
+    wantHeroFocus.current = false
+    el.focus({ preventScroll: true })
+  }, [])
+  /**
+   * Сессия только читает (вошла по ссылке, а не через Steam): «Зашло» и «Не
+   * сегодня» ей некуда записать — вместо них строка NeedSteam. null — «не
+   * знаем»: кнопки как обычно, правду скажет первый отказ.
+   */
+  const readOnly =
+    useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
+
+  /** Ответ /api/daily — на экран: одна дверь и для первого захода, и для «Не сегодня» */
+  function applyDaily(data: DailyResponse) {
+    // Серверные часы — по ним подпись онлайна решает, имеет ли право
+    // сказать «сейчас». См. докблок в components/PlayersNow.
+    setNowSec(data.nowSec)
+    setPick(data.pick)
+    setDiscoveries(data.discoveries ?? [])
+    setAlternate(data.ownAlternate ?? null)
+    setOwnDay(false)
+    setDateLabel(data.dateLabel)
+    setPhase('ok')
+  }
 
   useEffect(() => {
     /*
@@ -110,19 +192,7 @@ export default function DailyPage() {
         setPhase('error')
         return
       }
-      const data = (await res.json()) as {
-        pick: DailyPickCard
-        discoveries?: StoreCard[]
-        dateLabel: string
-        nowSec: number
-      }
-      // Серверные часы — по ним подпись онлайна решает, имеет ли право
-      // сказать «сейчас». См. докблок в components/PlayersNow.
-      setNowSec(data.nowSec)
-      setPick(data.pick)
-      setDiscoveries(data.discoveries ?? [])
-      setDateLabel(data.dateLabel)
-      setPhase('ok')
+      applyDaily((await res.json()) as DailyResponse)
     }
 
     void (async () => {
@@ -232,18 +302,84 @@ export default function DailyPage() {
     )
   }
 
+  /*
+   * Герой на экране: игра дня — или своя, если человек сказал «Сегодня хочу
+   * из своего». Всё ниже — про того, кто на экране: и кнопки, и отзыв.
+   */
+  const hero = ownDay && alternate ? alternate : pick
+  /** Снимок к оценке (lib/feedbackctx): откуда, чья карточка и что значило нажатие */
+  const ctxOf = (c: { source: CandidateSource }, intent?: CtxIntent, slot?: CtxSlot): FeedbackCtx => ({
+    source: 'daily',
+    slot: slot ?? (hero === alternate ? 'picked' : 'hero'),
+    candidate: c.source,
+    intent,
+  })
+
+  /*
+   * «Не сегодня» — и тут же другая игра. Отзыв пишется как «не сейчас» с
+   * /play (пауза на трое суток там же), а запись дня сбрасывается, если он
+   * про героя или запасную свою (/api/feedback). Следующий отбор её не
+   * вернёт до полуночи (notnowSince в /api/daily).
+   */
+  const notToday = async () => {
+    if (rerolling) return
+    setRerolling(true)
+    setRerollMiss(null)
+    // Отложил свою в магазинный день — и следующую хочет своей же
+    const wasOwn = hero === alternate
+    try {
+      const ok = await sendFeedback(hero.appid, 'skipped', 'notnow', ctxOf(hero))
+      // Отказ по правам — кнопки уже спрятались, и строка о входе на месте
+      if (!ok) {
+        if (writerStore.get() !== false) setRerollMiss('Не получилось отложить — попробуй ещё раз.')
+        return
+      }
+      const res = await fetch('/api/daily')
+      if (!res.ok) {
+        const code = await res
+          .json()
+          .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
+          .catch(() => null)
+        setRerollMiss(
+          code === 'nocandidates'
+            ? 'Отложили. Другой игры на сегодня не нашлось — загляни завтра.'
+            : 'Отложили, но другую подобрать не вышло — обнови страницу чуть позже.',
+        )
+        return
+      }
+      const data = (await res.json()) as DailyResponse
+      wantHeroFocus.current = true
+      applyDaily(data)
+      const own = wasOwn && data.ownAlternate
+      if (own) setOwnDay(true)
+      setSaid(`Другая игра на сегодня: ${(own ? data.ownAlternate! : data.pick).name}`)
+    } catch {
+      setRerollMiss('Отложили, но другую подобрать не вышло — обнови страницу чуть позже.')
+    } finally {
+      setRerolling(false)
+    }
+  }
+
   return (
     <div className="flex-1 flex flex-col">
       {/* «Как тебе?» после сыгранного по прошлому совету (lib/outcome.ts) —
           раз в сутки, общий порог с /play */}
       <OutcomeAsk />
-      <section className="media-dark relative flex-1 min-h-[92vh] flex items-end overflow-hidden anim-reveal">
+      <p role="status" className="sr-only">
+        {said}
+      </p>
+      {/* key — герой сменился («Не сегодня», «Сегодня хочу из своего»):
+          кадры и заголовок начинаются заново, а не доигрывают прошлую игру */}
+      <section
+        key={hero.appid}
+        className="media-dark relative flex-1 min-h-[92vh] flex items-end overflow-hidden anim-reveal"
+      >
         <HeroShots
-          appid={pick.appid}
-          headerImage={pick.headerImage}
-          art={pick.art}
-          name={pick.name}
-          screenshots={pick.screenshots ?? []}
+          appid={hero.appid}
+          headerImage={hero.headerImage}
+          art={hero.art}
+          name={hero.name}
+          screenshots={hero.screenshots ?? []}
         />
         <div aria-hidden className="absolute inset-0 hero-scrim" />
         {/* Снег идёт ПОД стеклом и над артом: хлопья, проходящие под панелями,
@@ -287,17 +423,17 @@ export default function DailyPage() {
               </span>
               <span
                 className={`rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium ${
-                  pick.store ? '' : 'hidden md:inline'
+                  hero.store ? '' : 'hidden md:inline'
                 }`}
               >
-                {pick.store ? STORE_LABEL[pick.store] ?? pick.store : SOURCE_BADGE[pick.source]}
+                {hero.store ? STORE_LABEL[hero.store] ?? hero.store : SOURCE_BADGE[hero.source]}
               </span>
-              {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
+              {hero.hoursPlayed !== null && hero.hoursPlayed > 0 && (
                 <span className="hidden font-mono text-dim md:inline">
-                  {pick.hoursPlayed} ч наиграно
+                  {hero.hoursPlayed} ч наиграно
                 </span>
               )}
-              <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
+              <PlayersNow ccu={hero.ccu} ccuAt={hero.ccuAt} nowSec={nowSec} />
             </div>
 
             {/*
@@ -310,59 +446,152 @@ export default function DailyPage() {
               они по определению одно и то же. Название игры — главный текст
               этой страницы, рисковать его читаемостью нельзя.
             */}
-            <SplitHeading className="font-display text-display-lg" delay={0.2}>
-              {pick.name}
+            <SplitHeading
+              headingRef={heroRef}
+              tabIndex={-1}
+              className="font-display text-display-lg outline-none"
+              delay={0.2}
+            >
+              {hero.name}
             </SplitHeading>
-            <p className="text-base md:text-lg text-ink/90 leading-relaxed">{pick.reason}</p>
+            <p className="text-base md:text-lg text-ink/90 leading-relaxed">{hero.reason}</p>
 
-            <TagChips tags={pick.tags} matched={pick.sharedTags ?? []} />
+            <TagChips tags={hero.tags} matched={hero.sharedTags ?? []} />
 
             <div className="flex flex-wrap items-center gap-3 mt-2">
               {/* Некупленную игру запускать нечем: steam://run у неё
                   не делает ровным счётом ничего, поэтому ведём в магазин */}
-              {pick.source === 'new' || pick.storeUrl ? (
+              {hero.source === 'new' || hero.storeUrl ? (
                 <a
-                  href={storeHref(pick)}
+                  href={storeHref(hero)}
                   target="_blank"
                   rel="noreferrer"
+                  // Не купленную смотрят в магазине — это любопытство, а не
+                  // запуск; своя из другого магазина там же и запускается
+                  onClick={() =>
+                    void sendFeedback(
+                      hero.appid,
+                      hero.source === 'new' ? 'opened' : 'launched',
+                      undefined,
+                      ctxOf(hero, hero.source === 'new' ? 'store' : 'launch'),
+                    )
+                  }
                   className="btn-ember px-6 py-3"
                 >
-                  {pick.store
-                    ? `Открыть в ${STORE_LABEL[pick.store] ?? 'магазине'}`
+                  {hero.store
+                    ? `Открыть в ${STORE_LABEL[hero.store] ?? 'магазине'}`
                     : 'Смотреть в Steam'}
                 </a>
               ) : (
                 <SteamLaunch
-                  appid={pick.appid}
+                  appid={hero.appid}
+                  // Запуск — не «Зашло»: как и на /play, он же заводит исход
+                  // совета, который сверят со следующим снапшотом
+                  onClick={() =>
+                    void sendFeedback(hero.appid, 'launched', undefined, ctxOf(hero, 'launch'))
+                  }
                   className="btn-ember px-6 py-3"
                 />
               )}
               <Link
-                href={`/game/${pick.appid}`}
+                href={`/game/${hero.appid}`}
+                onClick={() =>
+                  void sendFeedback(hero.appid, 'opened', undefined, ctxOf(hero, 'details'))
+                }
                 className="rounded-[14px] glass glass-hover px-6 py-3 text-sm"
               >
                 Подробнее
               </Link>
-              <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors px-2">
+              {/* Отзыв об игре дня: «Зашло» учит вкус, «Не сегодня» откладывает
+                  и тут же предлагает другую. У сессии только для чтения их нет
+                  — ниже строка о входе через Steam */}
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Повторное нажатие — не второе «зашло»: кнопка уже горит
+                    if (liked.has(hero.appid)) return
+                    setLiked(new Set(liked).add(hero.appid))
+                    void sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero))
+                  }}
+                  className={`rounded-[14px] px-4 py-3 text-sm transition cursor-pointer ${
+                    liked.has(hero.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
+                  }`}
+                >
+                  {liked.has(hero.appid) ? 'Зашло ✓' : 'Зашло'}
+                </button>
+              )}
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => void notToday()}
+                  aria-disabled={rerolling}
+                  className="rounded-[14px] glass glass-hover px-4 py-3 text-sm text-dim cursor-pointer aria-disabled:opacity-60"
+                >
+                  {rerolling ? 'Подбираю другую…' : 'Не сегодня'}
+                </button>
+              )}
+            </div>
+            {readOnly && <NeedSteam from="/daily" className="-mt-1" />}
+            {rerollMiss && (
+              <p role="status" className="-mt-1 text-sm text-dim">
+                {rerollMiss}
+              </p>
+            )}
+            {/* Своя нетронутая или заброшенная скорее всего не установлена —
+                поставить на загрузку можно сейчас, к вечеру она будет готова
+                (steam://install). План, а не оценка: вкус его не видит */}
+            {(hero.source === 'untouched' || hero.source === 'comeback') && !hero.storeUrl && (
+              <p className="-mt-1 text-xs text-faint">
+                <SteamLaunch
+                  appid={hero.appid}
+                  mode="install"
+                  label="Ещё не установлена? Поставь на загрузку заранее"
+                  onClick={() =>
+                    void sendFeedback(hero.appid, 'opened', undefined, ctxOf(hero, 'install'))
+                  }
+                  className="tap hover:text-ink transition-colors"
+                />
+              </p>
+            )}
+            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
+              <Link href="/quiz" className="tap text-dim hover:text-ink transition-colors">
                 Хочу выбрать сам →
               </Link>
+              {/* Магазинный день — раз в три: кто сегодня покупать не собирался,
+                  берёт свою одним нажатием, а не уходит в обычный подбор */}
+              {alternate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = ownDay ? pick : alternate
+                    wantHeroFocus.current = true
+                    setOwnDay(!ownDay)
+                    setRerollMiss(null)
+                    setSaid(`Игра дня: ${next.name}`)
+                  }}
+                  className="tap text-dim hover:text-ink transition-colors cursor-pointer"
+                >
+                  {ownDay ? 'Вернуть игру дня из магазина' : 'Сегодня хочу из своего →'}
+                </button>
+              )}
             </div>
 
-            {pick.source === 'new' && (
+            {hero.source === 'new' && (
               <div className="flex flex-wrap items-baseline gap-3">
                 <PriceTag
-                  priceFinal={pick.priceFinal}
-                  discount={pick.discount}
-                  isFree={pick.isFree}
+                  priceFinal={hero.priceFinal}
+                  discount={hero.discount}
+                  isFree={hero.isFree}
                   size="hero"
                 />
-                <DiscountEnds discount={pick.discount} />
+                <DiscountEnds discount={hero.discount} />
               </div>
             )}
-            {pick.refund && <RefundNote />}
+            {hero.refund && <RefundNote />}
 
             <p className="text-xs text-faint mt-1 max-w-md">
-              {pick.source === 'new'
+              {hero.source === 'new'
                 ? 'Одна игра на день — завтра здесь будет другая. Покупать ничего не нужно.'
                 : 'Одна игра на день — завтра здесь будет другая.'}
             </p>
@@ -397,6 +626,10 @@ export default function DailyPage() {
                 href={storeHref(c)}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() => {
+                  const ctx = ctxOf({ source: 'new' }, 'store', 'discovery')
+                  void sendFeedback(c.appid, 'opened', undefined, ctx)
+                }}
                 className="glass glass-hover rounded-[14px] overflow-hidden text-left"
               >
                 <div className="relative">

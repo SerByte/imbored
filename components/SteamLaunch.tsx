@@ -40,17 +40,29 @@
  * mobileLabel={null} — на тач-устройстве кнопки нет вовсе. Это для мест, где
  * ссылка на магазин уже стоит рядом (страница игры): там мобильная ветка
  * была бы её точной копией.
+ *
+ * mode='install' — «Поставить на загрузку»: steam://install открывает в
+ * клиенте окно установки, и к вечеру игра уже стоит. Для своей нетронутой и
+ * заброшенной — тех, что скорее всего не установлены: план на вечер, который
+ * начинается с загрузки, иначе кончается на ней. На телефоне протокола нет, а
+ * магазин загрузку не начнёт, — там не ссылка, а строка о том, где это
+ * сделать. onLaunch у загрузки не зовётся: она не запуск, и спрашивать через
+ * десять минут «не зацепило?» не о чем.
  */
 export function SteamLaunch({
   appid,
   className = '',
-  label = 'Запустить в Steam',
-  mobileLabel = 'Открыть в Steam',
+  mode = 'run',
+  label = mode === 'install' ? 'Поставить на загрузку' : 'Запустить в Steam',
+  mobileLabel = mode === 'install'
+    ? 'Поставить на загрузку можно из приложения Steam: «Библиотека» → игра → «Установить»'
+    : 'Открыть в Steam',
   onClick,
   onLaunch,
 }: {
   appid: number
   className?: string
+  mode?: 'run' | 'install'
   label?: string
   mobileLabel?: string | null
   onClick?: () => void
@@ -59,26 +71,29 @@ export function SteamLaunch({
   return (
     <>
       <a
-        href={`steam://run/${appid}`}
+        href={`steam://${mode}/${appid}`}
         onClick={() => {
           onClick?.()
-          onLaunch?.()
+          if (mode === 'run') onLaunch?.()
         }}
         className={`hidden pointer-fine:inline-block ${className}`}
       >
         {label}
       </a>
-      {mobileLabel !== null && (
-        <a
-          href={`https://store.steampowered.com/app/${appid}/`}
-          target="_blank"
-          rel="noreferrer"
-          onClick={onClick}
-          className={`inline-block pointer-fine:hidden ${className}`}
-        >
-          {mobileLabel}
-        </a>
-      )}
+      {mobileLabel !== null &&
+        (mode === 'install' ? (
+          <span className={`inline-block pointer-fine:hidden ${className}`}>{mobileLabel}</span>
+        ) : (
+          <a
+            href={`https://store.steampowered.com/app/${appid}/`}
+            target="_blank"
+            rel="noreferrer"
+            onClick={onClick}
+            className={`inline-block pointer-fine:hidden ${className}`}
+          >
+            {mobileLabel}
+          </a>
+        ))}
     </>
   )
 }

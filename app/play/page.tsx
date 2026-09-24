@@ -1740,6 +1740,24 @@ function Player({ say }: { say: (line: string) => void }) {
                   {stopRuleLine(mood.time)}
                 </motion.p>
               )}
+              {/* План на вечер начинается с загрузки: своя нетронутая или
+                  заброшенная скорее всего не установлена, и «Запустить» вечером
+                  упрётся в полчаса скачивания. Ссылка ставит её на загрузку
+                  сейчас (steam://install). Вкус и паузы это нажатие не видят —
+                  план, а не оценка (listFeedback). */}
+              {(pick.source === 'untouched' || pick.source === 'comeback') && !pick.storeUrl && (
+                <motion.p variants={STEP} className="-mt-1 text-xs text-faint">
+                  <SteamLaunch
+                    appid={pick.appid}
+                    mode="install"
+                    label="Ещё не установлена? Поставь на загрузку заранее"
+                    onClick={() =>
+                      void sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'install'))
+                    }
+                    className="tap hover:text-ink transition-colors"
+                  />
+                </motion.p>
+              )}
               {/*
                 «Как «X», но…» — соседи этой игры (готовые из game_neighbors,
                 а до их заливки — по тегу полки) под то же настроение. Шаг по
