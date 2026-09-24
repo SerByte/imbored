@@ -45,6 +45,22 @@
 
 Ничего в консоли тебе набирать не нужно.
 
+### Обновления зависимостей
+
+Раз в неделю, в понедельник утром, Dependabot открывает PR с обновлениями
+(`.github/dependabot.yml`): вся мелочь одной группой, next с
+eslint-config-next и react с типами — своими, мажоры — каждый отдельно. Свежий
+релиз неделю отлёживается (`cooldown`), прежде чем попасть в PR. CI на таких
+PR обязан быть зелёным — тогда их можно вливать.
+
+Уязвимости — отдельный механизм, и его включаешь ты: GitHub → репозиторий →
+Settings → Code security → **Dependabot alerts** и **Dependabot security
+updates** → Enable. Такие PR приходят сразу, без недельной выдержки.
+
+Проверка, что конфиг принят: Insights → Dependency graph → вкладка
+**Dependabot** — у `npm` и `github-actions` стоит время последней проверки, а
+не ошибка разбора файла.
+
 ---
 
 ## 3. Turso — база данных (делаешь ты, 10 минут)
@@ -120,6 +136,24 @@ curl -sI https://imbored.cc/whatsnew | grep -i x-vercel-id
 Settings → Environment Variables), поменяй регион в `vercel.json`, а не в
 дашборде, чтобы он проходил через ревью. Пары: `aws-eu-west-1` → `dub1`,
 `aws-eu-central-1` → `fra1`, `aws-us-east-1` → `iad1`.
+
+### Версия Node
+
+Версия Node закреплена в `package.json`: `"engines": { "node": "22.x" }`. Vercel
+ставит её выше настройки в дашборде, а CI (`.github/workflows/ci.yml`) читает
+оттуда же через `node-version-file`. Так тесты и сборка идут на том же Node, на
+котором бежит прод, а `@types/node` держится того же мажора (`^22`): типы
+свежего Node пропустили бы через `tsc` API, которого на проде нет. Сторож —
+`lib/nodeversion.test.ts`.
+
+Проверить после деплоя: в логе сборки Vercel (Deployments → деплой → Building)
+не должно быть предупреждения, что `engines` переопределяет версию из
+настроек. Если оно есть — в Settings → Build and Deployment → Node.js Version
+выставь `22.x`, чтобы дашборд не спорил с репозиторием.
+
+Переход на следующий Node — одним коммитом: `engines.node`, `@types/node` того
+же мажора (`npm install -D @types/node@^24`), зелёный CI. Dependabot мажор
+типов Node сам не поднимает, это записано в `.github/dependabot.yml`.
 
 ### Превью: своя база, не продовая
 

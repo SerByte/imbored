@@ -20,9 +20,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Версия Node — из engines.node в package.json, как и у Vercel: тот же
+      # Node, на котором бежит прод, и одно место, где её менять. Раньше здесь
+      # стояла своя 22, а @types/node был от 26-го — tsc пропустил бы API,
+      # которого на проде нет.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: package.json
           cache: npm
 
       - run: npm ci

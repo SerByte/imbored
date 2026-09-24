@@ -1,0 +1,53 @@
+# Обновления зависимостей: раз в неделю и пачкой.
+#
+# Сами они не приезжали никогда. SDK Anthropic стоял на 0.116 при вышедшей
+# 0.128: у версий 0.x каретка «^0.116.0» значит «<0.117.0», и даже патч с
+# починкой ретраев и таймаутов не доходил. next и react закреплены точно — они
+# не обновятся сами вовсе, а у next уже было две критические advisory.
+#
+# Пачкой, а не по PR на пакет: каждый PR гоняет CI (.github/workflows/ci.yml),
+# а минуты приватного репозитория считаются (см. cron.yml). Мелочь одной
+# группой, мажоры — каждый своим PR: их читают глазами.
+#
+# Уязвимости сюда не относятся: их чинит Dependabot security updates, который
+# включается в настройках репозитория (DEPLOY.md, «Обновления зависимостей»),
+# а не этим файлом, и выдержку cooldown он не ждёт.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Moscow
+    open-pull-requests-limit: 5
+    # Свежий релиз неделю отлёживается: угнанные пакеты в npm обычно ловят и
+    # отзывают за дни, и попадать в первую волну незачем.
+    cooldown:
+      default-days: 7
+    groups:
+      # next и eslint-config-next живут одной версией — порознь не ставятся
+      next:
+        patterns: ['next', 'eslint-config-next']
+      react:
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
+      # three и его типы — тоже одной версией (снег в PixelSnow)
+      three:
+        patterns: ['three', '@types/three']
+      minor-and-patch:
+        update-types: ['minor', 'patch']
+    ignore:
+      # Типы Node идут за engines.node в package.json, а не за свежим Node:
+      # типы 26-го пропустили бы через tsc API, которого на проде нет.
+      # Мажор поднимается руками вместе с engines.node (DEPLOY.md, «Версия Node»).
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
