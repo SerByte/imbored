@@ -1,6 +1,6 @@
 import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test, vi } from 'vitest'
-import { buildTagProfile, cooldownOf, isMultiplayerMeta, normalizedTags } from './recommend'
+import { buildTagProfile, cooldownOf, normalizedTags } from './recommend'
 import { checkRate } from './ratelimit'
 import {
   acquireLease,
@@ -44,7 +44,6 @@ import {
   upsertNewsItems,
   type Db,
   type StoredNews,
-  isMultiplayerCategories,
   loadTagDictionary,
   loadTagNamesRu,
   loadTagStats,
@@ -906,16 +905,6 @@ describe('db', () => {
     const res = await db.execute('SELECT tag_count, is_multiplayer FROM games WHERE appid = 620')
     expect(Number(res.rows[0].tag_count)).toBe(2)
     expect(Number(res.rows[0].is_multiplayer)).toBe(1)
-  })
-
-  test('детектор мультиплеера в SQL-слое совпадает с движком рекомендаций', () => {
-    // две реализации одного правила: db не импортирует lib/recommend,
-    // поэтому эквивалентность закрепляем тестом
-    for (const cats of [[2], [1], [2, 9], [38], [49], [], [3, 4]]) {
-      expect(isMultiplayerCategories(cats)).toBe(
-        isMultiplayerMeta({ ...META, categories: cats, tags: {} }),
-      )
-    }
   })
 
   test('setGameJson с невалидной колонкой бросает, а не строит SQL', async () => {

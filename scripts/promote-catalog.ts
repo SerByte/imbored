@@ -36,6 +36,7 @@ import { openDb } from './opendb'
 import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
 import { judgeLiveness, playMode } from '../lib/liveness'
 import { buildSeriesIndex, SERIES_OVERRIDES, type SeriesMember } from '../lib/series'
+import { isMultiplayerCategories } from '../lib/steamcats'
 import type { GameMeta } from '../lib/types'
 
 const STORE_BATCH = 200
@@ -189,7 +190,7 @@ async function main() {
   // Сигналы спрашиваем только у совместных игр: живость гейтит только их,
   // а поштучный запрос на весь пул стоил бы часы. Онлайн важнее отзывов —
   // он резче отделяет мёртвое, поэтому берём его первым.
-  const multiplayer = metas.filter((m) => isMultiplayer(m))
+  const multiplayer = metas.filter((m) => isMultiplayerCategories(m.categories))
   console.log(`\nсигналы для ${multiplayer.length} совместных игр…`)
   for (const [i, m] of multiplayer.entries()) {
     m.ccu = await fetchCurrentPlayers(m.appid).catch(() => undefined)
@@ -235,7 +236,7 @@ async function main() {
   const members: SeriesMember[] = metas.map((m) => ({
     appid: m.appid,
     name: m.name,
-    isMultiplayer: isMultiplayer(m),
+    isMultiplayer: isMultiplayerCategories(m.categories),
     alive: verdicts.get(m.appid)?.alive ?? true,
     soloCapable: playMode(m.categories) === 'solo-capable',
     // сигнал «аудитория переехала»: онлайн точнее, отзывы — запасной вариант
@@ -307,11 +308,6 @@ async function main() {
       console.log(`  ${names.get(oldId) ?? oldId}  →  ${names.get(newId) ?? newId}`)
     }
   }
-}
-
-const MULTIPLAYER_IDS = new Set([1, 9, 24, 36, 38, 39, 49])
-function isMultiplayer(m: GameMeta): boolean {
-  return m.categories.some((c) => MULTIPLAYER_IDS.has(c))
 }
 
 main().catch((err) => {

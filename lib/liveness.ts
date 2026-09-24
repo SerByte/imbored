@@ -10,8 +10,10 @@
  * сигналом там, где онлайн неизвестен.
  */
 
+import { COOP_IDS, isMultiplayerCategories, ONLINE_IDS, SINGLE_PLAYER } from './steamcats'
+
 export type LivenessSignals = {
-  /** id режимов Steam: 1 сетевая, 2 одиночная, 9/24/38/39 кооп, 36/49 PvP */
+  /** id режимов Steam: 1 сетевая, 2 одиночная, 9/24/38/39 кооп, 36/49 PvP (lib/steamcats) */
   categories: number[]
   /** игроков прямо сейчас */
   ccu?: number
@@ -47,10 +49,6 @@ export type PlayContext = 'solo' | 'party'
 /** Как в эту игру вообще играют */
 export type PlayMode = 'online' | 'coop' | 'solo-capable'
 
-const SINGLE_PLAYER = 2
-const COOP_IDS = [9, 24, 38, 39]
-const ONLINE_IDS = [1, 36, 49]
-
 /**
  * Режим важнее тегов. Прежняя проверка угадывала по тегам («Battle Royale»,
  * «MOBA») и не ловила HL2:DM: у неё теги Action, FPS, Shooter, Competitive —
@@ -58,7 +56,7 @@ const ONLINE_IDS = [1, 36, 49]
  * стоит только «сетевая игра», без одиночной и без коопа.
  */
 export function playMode(categories: number[]): PlayMode {
-  const has = (ids: number[]) => categories.some((c) => ids.includes(c))
+  const has = (ids: readonly number[]) => categories.some((c) => ids.includes(c))
   if (categories.includes(SINGLE_PLAYER)) return 'solo-capable'
   if (has(COOP_IDS)) return 'coop'
   if (has(ONLINE_IDS)) return 'online'
@@ -144,7 +142,7 @@ export function judgeLiveness(s: LivenessSignals, context: PlayContext = 'solo')
   if (context === 'solo' && mode === 'solo-capable') return alive
 
   // В компанию не годится то, во что вместе не играют вовсе
-  if (context === 'party' && !s.categories.some((c) => [...ONLINE_IDS, ...COOP_IDS].includes(c))) {
+  if (context === 'party' && !isMultiplayerCategories(s.categories)) {
     return { alive: false, reason: 'solo-only' }
   }
 

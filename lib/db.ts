@@ -22,6 +22,7 @@ import {
 } from './outcome'
 import { SEMANTICS_V } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
+import { isMultiplayerCategories, MULTIPLAYER_CATEGORY_SQL } from './steamcats'
 import type { NewsBlock } from './steamhtml'
 import { readTrailer, type Trailer } from './trailer'
 import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
@@ -786,7 +787,7 @@ export async function migrateDb(
       ) WHERE tag_count = 0 AND tags_json != '{}'`)
     await db.execute(`UPDATE games SET is_multiplayer = 1
       WHERE is_multiplayer = 0 AND EXISTS (
-        SELECT 1 FROM json_each(games.categories_json) WHERE value IN (1,9,24,36,38,39,49)
+        SELECT 1 FROM json_each(games.categories_json) WHERE value IN (${MULTIPLAYER_CATEGORY_SQL})
       )`)
     await db.execute({
       sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
@@ -2028,18 +2029,6 @@ export async function insertMissingGamesMeta(
     metas.map((m) => gameMetaStatement(m, nowSec, 'keep')),
     'write',
   )
-}
-
-/**
- * Категории Steam, означающие совместную игру: 1 Multi-player, 9 Co-op,
- * 24 Shared/Split Screen, 36 Online PvP, 38 Online Co-op, 39 Split Screen PvP, 49 PvP.
- * Дублирует isMultiplayerMeta из lib/recommend, но без импорта: db не должна
- * зависеть от движка рекомендаций. Эквивалентность закреплена тестом.
- */
-const MULTIPLAYER_CATEGORY_IDS = new Set([1, 9, 24, 36, 38, 39, 49])
-
-export function isMultiplayerCategories(categories: number[]): boolean {
-  return categories.some((c) => MULTIPLAYER_CATEGORY_IDS.has(c))
 }
 
 /**

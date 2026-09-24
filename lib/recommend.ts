@@ -4,6 +4,7 @@ import { entryCost } from './entry'
 import { isJunk } from './junk'
 import type { Lean } from './mood'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
+import { isMultiplayerCategories } from './steamcats'
 import {
   cosine,
   cosineOf,
@@ -24,9 +25,6 @@ import {
   type ScoreParts,
   type ScoredCandidate,
 } from './types'
-
-/** id категорий Steam, означающих «можно с друзьями» */
-const MULTIPLAYER_CATEGORIES = new Set([1, 9, 24, 36, 38, 39, 49])
 
 const UNPLAYED_MAX_MIN = 120
 const COMEBACK_AFTER_SEC = 180 * 86_400
@@ -1167,7 +1165,7 @@ const MULTIPLAYER_TAGS = [
 
 /** Годится ли игра для совместной игры (категории Steam или теги как фолбэк) */
 export function isMultiplayerMeta(meta: GameMeta): boolean {
-  if (meta.categories.length) return meta.categories.some((c) => MULTIPLAYER_CATEGORIES.has(c))
+  if (meta.categories.length) return isMultiplayerCategories(meta.categories)
   return MULTIPLAYER_TAGS.some((t) => t in meta.tags)
 }
 

@@ -1,6 +1,7 @@
 import { collapseEditions } from './editions'
 import { filterPlayable, playMode, type PlayContext } from './liveness'
 import { buildSeriesIndex, SERIES_OVERRIDES, type SeriesMember } from './series'
+import { isMultiplayerCategories } from './steamcats'
 import type { GameMeta } from './types'
 
 /**
@@ -26,7 +27,7 @@ export function filterActual<T extends { appid: number }>(
     members.push({
       appid: meta.appid,
       name: meta.name,
-      isMultiplayer: meta.categories.some((c) => [1, 9, 24, 36, 38, 39, 49].includes(c)),
+      isMultiplayer: isMultiplayerCategories(meta.categories),
       // Вердикт офлайн-курации, если он доехал: раньше здесь стояло true
       // безусловно, потому что rowToMeta терял колонку alive при чтении, и
       // buildSeriesIndex всегда объявлял канонической первую игру серии.
