@@ -2,7 +2,7 @@ import { discountOf } from './discount'
 import { editionKey } from './editions'
 import { entryCost } from './entry'
 import { isJunk } from './junk'
-import type { Lean } from './mood'
+import { VIBE_TAGS, type Lean } from './mood'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
 import { isMultiplayerCategories } from './steamcats'
 import {
@@ -28,15 +28,6 @@ import {
 
 const UNPLAYED_MAX_MIN = 120
 const COMEBACK_AFTER_SEC = 180 * 86_400
-
-/**
- * Экспортируется ради отбора кандидатов: там надо
- * оценить игру по ОДНОЙ оси, а scoreCandidates умеет только целое настроение.
- */
-export const VIBE_TAGS: Record<Mood['vibe'], string[]> = {
-  chill: ['Casual', 'Relaxing', 'Cozy', 'Wholesome', 'Puzzle', 'Atmospheric', 'Farming Sim'],
-  engaged: ['Difficult', 'Competitive', 'Souls-like', 'Tactical', 'Strategy', 'Fast-Paced'],
-}
 
 /*
  * Корзины длины сессии.

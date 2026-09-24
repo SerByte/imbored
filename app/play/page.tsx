@@ -38,7 +38,7 @@ import {
   subscribeDueLaunch,
 } from '@/lib/launchmemo'
 import { createLocalStore, parseFlag } from '@/lib/localstore'
-import { NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
+import { COZY_TAGS, NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
 import { NUDGE_LABEL, NUDGES, type Nudge } from '@/lib/nudge'
 import { EASE } from '@/lib/motion'
 import {
@@ -109,7 +109,6 @@ const SKIP_REASONS: Array<{ key: SkipReason; label: string }> = [
   { key: 'notnow', label: 'Просто не сейчас' },
 ]
 
-const COZY_TAGS = ['Casual', 'Relaxing', 'Cozy', 'Wholesome', 'Puzzle', 'Farming Sim']
 /**
  * На сколько должен вырасти разобранный каталог, чтобы предлагать пересчёт.
  *
@@ -1112,8 +1111,8 @@ function Player({ say }: { say: (line: string) => void }) {
      * Чем ответить на «не игровой вечер» — по убыванию того, сколько сил это
      * стоит. Сначала знакомое любимое: там нечего осваивать. Потом то, во что
      * он и так играет сейчас, — сразу запуском, а не ещё одной карточкой. И
-     * только потом «уютное» по тегам: Casual на обложке ещё не значит, что в
-     * игру легко войти.
+     * только потом «уютное» по тегам (COZY_TAGS из lib/mood — спокойная ось
+     * движка): Casual на обложке ещё не значит, что в игру легко войти.
      */
     const familiar = picks.find((p) => p.source === 'familiar')
     const cozy =

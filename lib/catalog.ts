@@ -319,8 +319,8 @@ const tagDictCache = new Map<TagLang, { at: number; map: Map<number, string> }>(
 
 /**
  * Словарь тегов Steam. По умолчанию английский: ключи тегов используются в
- * скоринге (VIBE_TAGS, HARDCORE_TAGS в lib/recommend.ts) и в портрете, они
- * английские.
+ * скоринге (VIBE_TAGS в lib/mood.ts, HARDCORE_TAGS в lib/recommend.ts) и в
+ * портрете, они английские.
  *
  * Русский — тот же список с теми же tagid, только имена переведены. Им ничего
  * не сравнивается: он склеивается с английским по tagid и нужен для вывода
