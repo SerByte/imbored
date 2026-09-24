@@ -622,6 +622,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     className="w-full aspect-[460/215] object-cover"
                   />
                   <div className="p-3 text-sm font-semibold leading-tight truncate">{g.name}</div>
+                  {/* Чем похожи — у готовых соседей: заголовок блока у них без
+                      тега, и без этой строки «похожие» было бы голословным */}
+                  {g.shared && g.shared.length > 0 && (
+                    <div className="-mt-1.5 px-3 pb-3 text-xs text-dim truncate">
+                      общее: {g.shared.slice(0, 2).map(tagRu).join(', ')}
+                    </div>
+                  )}
                 </Link>
               ))}
             </div>

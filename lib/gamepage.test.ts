@@ -5,6 +5,7 @@ import {
   replaceGameTags,
   setGameJson,
   upsertGameMeta,
+  upsertNeighbors,
   upsertSemantics,
   type Db,
 } from './db'
@@ -16,6 +17,7 @@ import {
   hookTrait,
   isRussianText,
   loadGamePage,
+  nearGames,
   pickSimilar,
   reviewFacts,
   SESSION_MIN_CONFIDENCE,
@@ -354,6 +356,74 @@ describe('похожие на карточке', () => {
     // патчей и отзывов Steam у такой записи нет, а похожие — есть
     expect(page?.news).toEqual([])
     expect(page?.similar.map((g) => g.appid)).toEqual([9])
+  })
+})
+
+/**
+ * Готовые соседи (game_neighbors, npm run neighbors:build): похожие по всему
+ * вектору тегов. Пока их не залили — прежняя полка по тегу, её тесты выше.
+ */
+describe('готовые соседи на карточке', () => {
+  /** Страница 1 и десять соседей по порядку сходства: 20…29 */
+  async function withNeighbors(): Promise<Db> {
+    const db = await withDb()
+    await upsertGameMeta(db, meta(1, { tags: { Mythology: 1000, Action: 900 } }), NOW)
+    await replaceGameTags(db, 1, [{ tag: 'Mythology', weight: 1000 }])
+    for (let appid = 20; appid < 30; appid++) {
+      await upsertGameMeta(db, meta(appid, { tags: { Mythology: 800 } }), NOW)
+    }
+    await upsertNeighbors(
+      db,
+      new Map([
+        [
+          1,
+          Array.from({ length: 10 }, (_, i) => ({
+            neighbor: 20 + i,
+            score: 0.9 - i / 100,
+            shared: ['Mythology', 'Hack and Slash'],
+          })),
+        ],
+      ]),
+    )
+    return db
+  }
+
+  test('полка — первые шесть по сходству, без тега в заголовке, с общим у плитки', async () => {
+    await withNeighbors()
+    const page = await loadGamePage(1)
+    expect(page?.similar.map((g) => g.appid)).toEqual([20, 21, 22, 23, 24, 25])
+    expect(page?.similarTag).toBeNull()
+    expect(page?.similar[0].shared).toEqual(['Mythology', 'Hack and Slash'])
+  })
+
+  test('умершие соседи выпадают, а на их место встают следующие', async () => {
+    const db = await withNeighbors()
+    await db.execute('UPDATE games SET alive = 0 WHERE appid IN (21, 23)')
+    const page = await loadGamePage(1)
+    expect(page?.similar.map((g) => g.appid)).toEqual([20, 22, 24, 25, 26, 27])
+  })
+
+  test('живых меньше шести — прежняя полка по тегу', async () => {
+    const db = await withNeighbors()
+    await db.execute('UPDATE games SET alive = 0 WHERE appid BETWEEN 20 AND 25')
+    await upsertGameMeta(db, meta(40, { tags: { Mythology: 900 } }), NOW)
+    await replaceGameTags(db, 40, [{ tag: 'Mythology', weight: 900 }])
+    const page = await loadGamePage(1)
+    expect(page?.similarTag).toBe('Mythology')
+    expect(page?.similar.map((g) => g.appid)).toEqual([40])
+  })
+
+  test('игре без тегов соседей не ищем вовсе — ни одного чтения', async () => {
+    const db = await withDb()
+    const reads: string[] = []
+    const spy = {
+      execute: (q: InStatement) => {
+        reads.push(typeof q === 'string' ? q : q.sql)
+        return db.execute(q)
+      },
+    } as unknown as Db
+    expect(await nearGames(spy, meta(50, { tags: {} }), null)).toEqual({ games: [], tag: null, basis: 'none' })
+    expect(reads).toEqual([])
   })
 })
 

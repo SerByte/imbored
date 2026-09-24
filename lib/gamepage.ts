@@ -2,6 +2,7 @@ import { hashString, mulberry32 } from './daily'
 import {
   getGamePageRow,
   getGameNews,
+  getNeighbors,
   loadTagStats,
   topGamesByTag,
   withoutBody,
@@ -13,6 +14,7 @@ import { logSwallowed } from './errlog'
 import { sessionTrait, type GameTrait } from './gametraits'
 import { distinctiveTags } from './hook'
 import { judgeLiveness, type DeadReason } from './liveness'
+import { NEIGHBORS_K } from './neighbors'
 import { plural } from './plural'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
@@ -30,9 +32,17 @@ export type GamePageData = {
   prosCons: ProsCons | null
   /** без тел патчей — их отдаёт app/api/news по раскрытию, см. withoutBody */
   news: FeedItem[]
-  /** соседи по тегу полки (topTagOf, pickSimilar); пусто, если тегов нет */
+  /**
+   * «Похожие»: готовые соседи по всему вектору тегов (nearGames), а пока их
+   * не залили — соседи по тегу полки (topTagOf, pickSimilar); пусто, если
+   * тегов нет
+   */
   similar: SimilarGame[]
-  /** по какому тегу они подобраны — он же стоит в заголовке блока */
+  /**
+   * По какому тегу подобрана полка — он же стоит в заголовке блока. null у
+   * готовых соседей: они похожи всем вектором, и один тег в заголовке был бы
+   * неправдой; общее у каждой пары стоит под её плиткой (SimilarGame.shared)
+   */
   similarTag: string | null
   /**
    * «Чем выделяется»: до двух характерных тегов (lib/hook, английскими
@@ -186,6 +196,41 @@ export function pickSimilar<T>(ranked: readonly T[], pageAppid: number, shown = 
     .map((k) => k.i)
     .sort((a, b) => a - b)
     .map((i) => ranked[i])
+}
+
+/**
+ * Соседи игры — для полки «Похожие» и для «Как «X», но…» на /play.
+ *
+ * Сначала готовые (getNeighbors, lib/neighbors): похожие по всему вектору
+ * тегов с весом редкости, посчитанные офлайн. Замер на копии каталога, 5816
+ * живых игр: первая шестёрка соседей даёт входящую ссылку 5348 карточкам из
+ * 5816 (полка по тегу со взвешенной выборкой — 3580), самая «популярная» —
+ * 48 входящих (было 45) — и это соседи по сути, а не шесть случайных из тысяч
+ * игр с тем же Action. Поэтому готовые показываются просто по порядку, без
+ * выборки pickSimilar: разносить ссылки им уже не нужно.
+ *
+ * Меньше шести живых — прежняя полка по тегу: таблицу ещё не залили (или
+ * игры не было в каталоге при сборке), а половинная полка хуже полной по
+ * тегу. Это же фолбэк держит «Как «X», но…» до первой заливки.
+ *
+ * stats — карта тегов или её промис: соседям она не нужна, и чтение соседей
+ * идёт параллельно с ней, а не после.
+ */
+export async function nearGames(
+  db: Db,
+  meta: GameMeta,
+  stats: Map<string, number> | null | Promise<Map<string, number> | null>,
+): Promise<{ games: SimilarGame[]; tag: string | null; basis: 'neighbors' | 'tag' | 'none' }> {
+  if (!Object.keys(meta.tags ?? {}).length) return { games: [], tag: null, basis: 'none' }
+  const near = await getNeighbors(db, meta.appid, NEIGHBORS_K)
+  if (near.length >= SIMILAR_SHOWN) return { games: near, tag: null, basis: 'neighbors' }
+  const tag = topTagOf(meta, await stats)
+  if (!tag) return { games: [], tag: null, basis: 'none' }
+  return {
+    games: await topGamesByTag(db, tag, meta.appid, SIMILAR_CANDIDATES),
+    tag,
+    basis: 'tag',
+  }
 }
 
 /**
@@ -447,14 +492,14 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
     ? tagStatsFor(db, Math.floor(Date.now() / 1000))
     : Promise.resolve(null)
   const similarOf = async (): Promise<Pick<GamePageData, 'similar' | 'similarTag' | 'hook'>> => {
-    const stats = await statsOf
+    const [stats, near] = await Promise.all([statsOf, nearGames(db, meta, statsOf)])
     // Редкость — по той же карте, что у полки: тег, которым игра выделяется,
     // должен быть редким по каталогу, а не просто первым по голосам
     const hook = distinctiveTags(meta, stats ? tagWeightFrom(stats) : null)
-    const tag = topTagOf(meta, stats)
-    if (!tag) return { similar: [], similarTag: null, hook }
-    const candidates = await topGamesByTag(db, tag, appid, SIMILAR_CANDIDATES)
-    return { similar: pickSimilar(candidates, appid), similarTag: tag, hook }
+    // Готовые соседи — по порядку сходства, полка по тегу — выборкой, см. nearGames
+    const similar =
+      near.basis === 'neighbors' ? near.games.slice(0, SIMILAR_SHOWN) : pickSimilar(near.games, appid)
+    return { similar, similarTag: near.tag, hook }
   }
 
   if (appid < 0) {
