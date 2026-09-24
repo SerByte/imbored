@@ -221,3 +221,44 @@ describe('/api/feedback: снимок выдачи', () => {
     expect(await ctxOf(steamid)).toEqual([null, null, null, null])
   })
 })
+
+/**
+ * Исход совета (lib/outcome.ts): запуск и переход в магазин за не купленной
+ * заводят строку, которую следующие снапшоты дополнят реальными минутами.
+ */
+describe('/api/feedback: исход совета', () => {
+  const outcomesOf = async (steamid: string) =>
+    (
+      await db.execute({
+        sql: `SELECT appid, source, launched_at IS NOT NULL AS launched
+                FROM outcomes WHERE steamid = ? ORDER BY appid`,
+        args: [steamid],
+      })
+    ).rows.map((r) => [Number(r.appid), r.source, Number(r.launched)])
+
+  test('запуск и магазин пишут исход, остальное — нет', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const send = (appid: number, action: string, ctx?: unknown) =>
+      POST(post('/api/feedback', { appid, action, ctx }))
+    await send(620, 'launched', { source: 'play', intent: 'launch', candidate: 'untouched' })
+    await send(999, 'opened', { source: 'play', intent: 'store', candidate: 'new' })
+    // карточка на сайте, «Зашло», скип — не совет, принятый в работу
+    await send(570, 'opened', { source: 'play', intent: 'details' })
+    await send(440, 'liked', { source: 'play' })
+    await send(730, 'skipped')
+    // запуск без снимка — тоже запуск, только без источника
+    await send(10, 'launched')
+    expect(await outcomesOf(steamid)).toEqual([
+      [10, null, 1],
+      [620, 'untouched', 1],
+      [999, 'new', 0],
+    ])
+  })
+
+  test('демо-личности исход не пишется: её библиотека не меняется', async () => {
+    const steamid = await signInAs(db, 'demo')
+    const res = await POST(post('/api/feedback', { appid: 620, action: 'launched' }))
+    expect(res.status).toBe(200)
+    expect(await outcomesOf(steamid)).toEqual([])
+  })
+})

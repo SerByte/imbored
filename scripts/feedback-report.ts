@@ -10,7 +10,9 @@
  * Считает долю «зашло» против «не то» по осям снимка (lib/feedbackctx): герой
  * против выбранного из «Ещё вариантов», модель против подбора по тегам, с
  * подталкиванием и без, рулетка, источник кандидата. Счёт — lib/feedbackreport,
- * тот же, что у feedbackStats в продукте.
+ * тот же, что у feedbackStats в продукте. Второй раздел — исход совета
+ * (lib/outcome.ts): сколько после запуска или магазина на самом деле сыграли
+ * по следующему снапшоту, сколько купили и что ответили на «как тебе?».
  *
  * Только чтение: клиент без migrateDb, ни локальную базу, ни облако отчёт не
  * меняет. Демо-личности по умолчанию не считаются: они листают чужую
@@ -22,7 +24,16 @@ import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { parseFeedbackCtx } from '../lib/feedbackctx'
 import { isFeedbackAction } from '../lib/feedbackkinds'
-import { REPORT_AXES, formatRates, hitRates, type ReportRow } from '../lib/feedbackreport'
+import {
+  OUTCOME_AXES,
+  REPORT_AXES,
+  formatOutcomes,
+  formatRates,
+  hitRates,
+  outcomeStats,
+  type OutcomeReportRow,
+  type ReportRow,
+} from '../lib/feedbackreport'
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
@@ -85,6 +96,38 @@ async function main() {
   for (const axis of REPORT_AXES) {
     console.log('')
     for (const line of formatRates(axis, hitRates(rows, axis))) console.log(line)
+  }
+
+  // Исходы — по индексу shown_at, тем же окном
+  const out = await db.execute({
+    sql: `SELECT source, minutes_before, minutes_after, owned_after, checked_at, verdict, ctx_json
+            FROM outcomes WHERE shown_at >= ?
+            ${withDemo ? '' : "AND steamid NOT GLOB '000*'"}`,
+    args: [since],
+  })
+  const outcomes: OutcomeReportRow[] = out.rows.map((r) => {
+    let ctx = null
+    try {
+      ctx = r.ctx_json === null ? null : parseFeedbackCtx(JSON.parse(String(r.ctx_json)))
+    } catch {
+      ctx = null
+    }
+    const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
+    return {
+      source: r.source === null ? null : String(r.source),
+      ctx,
+      minutesBefore: num(r.minutes_before),
+      minutesAfter: num(r.minutes_after),
+      ownedAfter: r.owned_after === null ? null : Number(r.owned_after) === 1,
+      checked: r.checked_at !== null,
+      verdict: r.verdict === null ? null : String(r.verdict),
+    }
+  })
+  console.log('')
+  console.log(`исход совета (запуски и переходы в магазин), строк: ${outcomes.length}`)
+  for (const axis of OUTCOME_AXES) {
+    console.log('')
+    for (const line of formatOutcomes(axis, outcomeStats(outcomes, axis))) console.log(line)
   }
 }
 

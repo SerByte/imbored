@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'vitest'
-import { MIN_RATED, NO_VALUE, formatRates, hitRates, type ReportRow } from './feedbackreport'
+import {
+  MIN_RATED,
+  NO_VALUE,
+  formatOutcomes,
+  formatRates,
+  hitRates,
+  outcomeStats,
+  type OutcomeReportRow,
+  type ReportRow,
+} from './feedbackreport'
 
 const row = (over: Partial<ReportRow>): ReportRow => ({
   steamid: 'u1',
@@ -92,5 +101,73 @@ describe('formatRates', () => {
     const [, line] = formatRates('slot', hitRates(rows, 'slot'))
     expect(line).not.toContain('мало данных')
     expect(line).toContain(`${MIN_RATED} зашло`)
+  })
+})
+
+describe('outcomeStats', () => {
+  const out = (over: Partial<OutcomeReportRow>): OutcomeReportRow => ({
+    source: 'untouched',
+    ctx: { source: 'play', slot: 'hero' },
+    minutesBefore: 30,
+    minutesAfter: 30,
+    ownedAfter: true,
+    checked: true,
+    verdict: null,
+    ...over,
+  })
+
+  test('доля сыгравших — от сверенных, а несверенные только в «всего»', () => {
+    const [line] = outcomeStats(
+      [
+        out({ minutesAfter: 30 + 120 }),
+        out({ minutesAfter: 30 + 10 }),
+        out({ minutesAfter: 30 + 40 }),
+        out({ checked: false, minutesAfter: null }),
+      ],
+      'candidate',
+    )
+    expect(line).toEqual({
+      key: 'untouched',
+      total: 4,
+      checked: 3,
+      played: 2,
+      bought: 0,
+      medianMinutes: 40,
+      hooked: 0,
+      meh: 0,
+    })
+  })
+
+  test('покупка — игры не было до совета, а после она в библиотеке', () => {
+    const [line] = outcomeStats(
+      [
+        out({ source: 'new', minutesBefore: null, minutesAfter: 0, ownedAfter: true }),
+        out({ source: 'new', minutesBefore: null, minutesAfter: null, ownedAfter: false }),
+        out({ source: 'new', minutesBefore: null, minutesAfter: 90, ownedAfter: true, verdict: 'hooked' }),
+      ],
+      'candidate',
+    )
+    expect(line).toMatchObject({ key: 'new', checked: 3, bought: 2, played: 1, hooked: 1 })
+  })
+
+  test('оси снимка: откуда совет и с какого места; нет значения — «—»', () => {
+    const lines = outcomeStats(
+      [out({}), out({ ctx: { source: 'daily' } }), out({ ctx: null })],
+      'source',
+    )
+    expect(lines.map((l) => [l.key, l.total])).toEqual([
+      [NO_VALUE, 1],
+      ['daily', 1],
+      ['play', 1],
+    ])
+  })
+
+  test('формат: доля, медиана и пометка о жидкой выборке', () => {
+    const [head, line] = formatOutcomes('candidate', outcomeStats([out({ minutesAfter: 230 })], 'candidate'))
+    expect(head).toBe('candidate:')
+    expect(line).toContain('100% сыграли')
+    expect(line).toContain('медиана 3 ч 20 мин')
+    expect(line).toContain('(мало данных)')
+    expect(formatOutcomes('slot', [])).toEqual(['slot:', '  (пусто)'])
   })
 })

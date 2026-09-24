@@ -12,6 +12,7 @@ import { Magnet } from '@/components/Magnet'
 import { HeroShots } from '@/components/HeroShots'
 import { LogoMark } from '@/components/Logo'
 import { NeedSteam } from '@/components/NeedSteam'
+import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
@@ -367,6 +368,11 @@ function Player({ say }: { say: (line: string) => void }) {
    */
   const dueLaunch = useSyncExternalStore(subscribeDueLaunch, dueLaunchNow, launchMemoStore.server)
   const stopDue = readOnly ? null : dueLaunch
+  /**
+   * На экране вопрос «как тебе?» после сыгранного (components/OutcomeAsk): он
+   * стоит там же, где плашка прогрева, и та ждёт, пока человек не ответит.
+   */
+  const [outcomeShown, setOutcomeShown] = useState(false)
 
   /**
    * Догрев после того, как выдача уже на экране.
@@ -1295,8 +1301,11 @@ function Player({ say }: { say: (line: string) => void }) {
           focusHero(true)
         }}
       />
+      {/* «Как тебе?» после настоящей игры (lib/outcome.ts) — раз в сутки и
+          только когда «Не зацепило?» молчит: два вопроса разом — анкета */}
+      <OutcomeAsk paused={!!stopDue} onShown={setOutcomeShown} onDone={() => focusHero(true)} />
       <WarmStrip
-        state={stopDue ? 'off' : warming}
+        state={stopDue || outcomeShown ? 'off' : warming}
         remaining={prep?.remaining ?? 0}
         onRefresh={() => {
           setWarming('off')

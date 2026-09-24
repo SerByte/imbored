@@ -13,6 +13,13 @@ import {
 import { isDeadReason } from './liveness'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
+import {
+  OUTCOME_PLAYED_MIN,
+  OUTCOME_TTL_SEC,
+  OUTCOME_WINDOW_SEC,
+  type OutcomeAsk,
+  type OutcomeVerdict,
+} from './outcome'
 import { SEMANTICS_V } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import type { NewsBlock } from './steamhtml'
@@ -209,6 +216,40 @@ CREATE TABLE IF NOT EXISTS daily_picks (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (steamid, day)
 ) WITHOUT ROWID;
+/*
+ * Исход совета (lib/outcome.ts): сколько человек сыграл в игру после того, как
+ * её посоветовали. Строка — нажатие «Запустить» (или переход в магазин за не
+ * купленной) с минутами до; следующие снапшоты в течение двух недель
+ * дописывают минуты после и то, стоит ли игра в библиотеке.
+ *
+ *   source         — источник кандидата (untouched, comeback, new…); NULL —
+ *                    нажатие не с карточки выдачи;
+ *   shown_at       — когда совет приняли в работу: нажатие запуска или магазина;
+ *   launched_at    — нажатие «Запустить»; NULL — только магазин;
+ *   minutes_before — наиграно до, по последнему снапшоту; NULL — игры не было;
+ *   minutes_after  — по свежему снапшоту; NULL — не сверяли или игры нет;
+ *   owned_after    — игра в библиотеке по свежему снапшоту;
+ *   verdict        — ответ на «как тебе?»: hooked, meh, dismissed.
+ *
+ * Девяносто дней (sweepStale) и уходит вместе со всем остальным по запросу
+ * человека (forgetUser). /privacy, разделы 01 и 06.
+ */
+CREATE TABLE IF NOT EXISTS outcomes (
+  steamid TEXT NOT NULL,
+  appid INTEGER NOT NULL,
+  source TEXT,
+  shown_at INTEGER NOT NULL,
+  launched_at INTEGER,
+  minutes_before INTEGER,
+  minutes_after INTEGER,
+  owned_after INTEGER,
+  checked_at INTEGER,
+  verdict TEXT,
+  ctx_json TEXT,
+  PRIMARY KEY (steamid, appid, shown_at)
+) WITHOUT ROWID;
+-- для суточной уборки старше девяноста дней: иначе полный проход по таблице
+CREATE INDEX IF NOT EXISTS idx_outcomes_shown ON outcomes (shown_at);
 /*
  * Служебные ключи: курсоры крона, аренды, счётчики каталога и флаги миграций.
  * Здесь, а не в SCHEMA_CATALOG рядом с остальным каталогом: migrateDb читает
@@ -1685,6 +1726,17 @@ export async function saveLibrarySnapshot(
     ],
     'write',
   )
+
+  // Исход советов последних двух недель — по этому же снапшоту. Здесь, а не в
+  // одном из маршрутов: свежая библиотека приходит тремя дорогами (прогрев,
+  // вход через Steam, подключение по ссылке), и сверка нужна после каждой.
+  // Отказ сверки снапшот не отменяет: он уже записан, а исход доделает
+  // следующий
+  try {
+    await fillOutcomesFromSnapshot(db, steamid, games, nowSec)
+  } catch (e) {
+    console.warn('исход совета не сверен', e)
+  }
 
   // Игры библиотеки — в очередь опроса новостей (tier 0, самый частый).
   // Именно отсюда наполняется личная лента «Что нового», и делать это надо
@@ -3936,6 +3988,167 @@ export async function unbanGame(db: Db, steamid: string, appid: number): Promise
   })
 }
 
+/* ---------- исход совета ---------- */
+
+/**
+ * Совет приняли в работу: запуск или переход в магазин. Строка исхода с
+ * минутами до — из последнего снапшота, одним запросом, без блоба библиотеки
+ * в функции (тот же приём, что у snapshotOwns).
+ *
+ * Одна строка на игру в окне OUTCOME_WINDOW_SEC: повторный запуск той же игры
+ * через три дня — не новый совет, а продолжение старого, и минуты считаются
+ * от первого. Магазин, а потом запуск купленного — та же строка, в неё
+ * дописывается время запуска.
+ */
+export async function recordOutcome(
+  db: Db,
+  entry: {
+    steamid: string
+    appid: number
+    /** Источник кандидата из снимка выдачи; null — не с карточки */
+    source: string | null
+    launched: boolean
+    ctx?: FeedbackCtx
+  },
+  nowSec: number,
+): Promise<void> {
+  const { steamid, appid } = entry
+  const windowFrom = nowSec - OUTCOME_WINDOW_SEC
+  await db.batch(
+    [
+      {
+        sql: `INSERT INTO outcomes (steamid, appid, source, shown_at, launched_at, minutes_before, ctx_json)
+              SELECT ?1, ?2, ?3, ?4, ?5,
+                (SELECT CASE
+                    WHEN instr(games_json, '"appid":' || ?6) = 0 THEN NULL
+                    ELSE (SELECT json_extract(value, '$.playtimeForever') FROM json_each(games_json)
+                           WHERE json_extract(value, '$.appid') = ?2)
+                  END
+                   FROM library_snapshots WHERE steamid = ?1
+                  ORDER BY taken_at DESC, id DESC LIMIT 1),
+                ?7
+              WHERE NOT EXISTS (
+                SELECT 1 FROM outcomes WHERE steamid = ?1 AND appid = ?2 AND shown_at > ?8
+              )`,
+        args: [
+          steamid,
+          appid,
+          entry.source,
+          nowSec,
+          entry.launched ? nowSec : null,
+          // Для подстроки — строкой, см. snapshotOwns
+          String(appid),
+          entry.ctx ? JSON.stringify(entry.ctx) : null,
+          windowFrom,
+        ],
+      },
+      // Запуск после магазина — в ту же строку; у свежей строки время уже стоит
+      ...(entry.launched
+        ? [
+            {
+              sql: `UPDATE outcomes SET launched_at = ?
+                     WHERE steamid = ? AND appid = ? AND shown_at > ? AND launched_at IS NULL`,
+              args: [nowSec, steamid, appid, windowFrom],
+            },
+          ]
+        : []),
+    ],
+    'write',
+  )
+}
+
+/**
+ * Свежий снапшот → минуты после у советов последних двух недель.
+ *
+ * Строки моложе снапшота не трогаются: совет, данный в ту же секунду, ещё не
+ * успел ни во что превратиться. Минуты перезаписываются каждым снапшотом окна
+ * — в строке всегда последнее, что известно. Игры нет в библиотеке —
+ * minutes_after NULL и owned_after 0: так выглядит «посмотрел в магазине и не
+ * купил».
+ */
+export async function fillOutcomesFromSnapshot(
+  db: Db,
+  steamid: string,
+  games: LibraryGame[],
+  nowSec: number,
+): Promise<number> {
+  const res = await db.execute({
+    sql: 'SELECT appid, shown_at FROM outcomes WHERE steamid = ? AND shown_at >= ? AND shown_at < ?',
+    args: [steamid, nowSec - OUTCOME_WINDOW_SEC, nowSec],
+  })
+  if (!res.rows.length) return 0
+  const byAppid = new Map(games.map((g) => [g.appid, g]))
+  await db.batch(
+    (res.rows as unknown as Array<{ appid: number; shown_at: number }>).map((r) => {
+      const appid = Number(r.appid)
+      const g = byAppid.get(appid)
+      return {
+        sql: `UPDATE outcomes SET minutes_after = ?, owned_after = ?, checked_at = ?
+               WHERE steamid = ? AND appid = ? AND shown_at = ?`,
+        args: [g ? g.playtimeForever : null, g ? 1 : 0, nowSec, steamid, appid, Number(r.shown_at)],
+      }
+    }),
+    'write',
+  )
+  return res.rows.length
+}
+
+/**
+ * О чём спросить «как тебе?»: самый свежий совет из окна, по которому снапшот
+ * уже показал заметную игру (OUTCOME_PLAYED_MIN), а ответа ещё нет.
+ *
+ * Имя — из каталога: снапшот ради одного названия читать незачем, а игры
+ * библиотеки прогрев в games заводит. Игры там нет — не спрашиваем про неё
+ * вовсе: вопрос про «игру без названия» хуже, чем никакого.
+ */
+export async function pendingOutcomeAsk(
+  db: Db,
+  steamid: string,
+  nowSec: number,
+): Promise<OutcomeAsk | null> {
+  const res = await db.execute({
+    sql: `SELECT o.appid AS appid, o.shown_at AS shown_at, o.minutes_before AS before_min,
+                 o.minutes_after AS after_min, g.name AS name
+            FROM outcomes o JOIN games g ON g.appid = o.appid
+           WHERE o.steamid = ? AND o.shown_at >= ? AND o.verdict IS NULL
+             AND o.checked_at IS NOT NULL AND o.minutes_after IS NOT NULL
+             AND o.minutes_after - COALESCE(o.minutes_before, 0) >= ?
+           ORDER BY o.shown_at DESC LIMIT 1`,
+    args: [steamid, nowSec - OUTCOME_WINDOW_SEC, OUTCOME_PLAYED_MIN],
+  })
+  const row = res.rows[0] as unknown as
+    | { appid: number; shown_at: number; before_min: number | null; after_min: number; name: string }
+    | undefined
+  if (!row) return null
+  const before = row.before_min === null ? null : Number(row.before_min)
+  return {
+    appid: Number(row.appid),
+    name: String(row.name),
+    shownAt: Number(row.shown_at),
+    minutes: Number(row.after_min) - (before ?? 0),
+    bought: before === null,
+  }
+}
+
+/**
+ * Ответ на «как тебе?». Только в строку без ответа: второй ответ с соседней
+ * вкладки первый не переписывает. false — строки нет или ответ уже был.
+ */
+export async function setOutcomeVerdict(
+  db: Db,
+  steamid: string,
+  appid: number,
+  shownAt: number,
+  verdict: OutcomeVerdict,
+): Promise<boolean> {
+  const res = await db.execute({
+    sql: `UPDATE outcomes SET verdict = ?
+           WHERE steamid = ? AND appid = ? AND shown_at = ? AND verdict IS NULL`,
+    args: [verdict, steamid, appid, shownAt],
+  })
+  return Number(res.rowsAffected) > 0
+}
+
 /* ---------- удаление по запросу ---------- */
 
 /**
@@ -3979,6 +4192,7 @@ const USER_ROWS = [
   { table: 'room_deck', where: 'room_id IN (SELECT id FROM rooms WHERE created_by = ?)' },
   { table: 'rooms', where: 'created_by = ?' },
   { table: 'feedback', where: 'steamid = ?' },
+  { table: 'outcomes', where: 'steamid = ?' },
   { table: 'daily_picks', where: 'steamid = ?' },
   { table: 'library_snapshots', where: 'steamid = ?' },
   { table: 'library_baselines', where: 'steamid = ?' },
@@ -4090,7 +4304,13 @@ const OLD_ROOM = 'room_id IN (SELECT id FROM rooms WHERE created_at < ?)'
  */
 export const FEEDBACK_CTX_TTL_SEC = 90 * 86_400
 
-export type SweepReport = { demos: number; sessions: number; rooms: number; ctx: number }
+export type SweepReport = {
+  demos: number
+  sessions: number
+  rooms: number
+  ctx: number
+  outcomes: number
+}
 
 /**
  * Суточная уборка того, что иначе копилось бы вечно. Зовётся из крона
@@ -4107,6 +4327,7 @@ export type SweepReport = { demos: number; sessions: number; rooms: number; ctx:
  *     Опоздавший по старой ссылке увидит «Такой комнаты нет».
  *   • Снимки выдачи у оценок старше FEEDBACK_CTX_TTL_SEC: колонка обнуляется,
  *     оценка остаётся — по ней считается вкус.
+ *   • Исходы советов старше OUTCOME_TTL_SEC — целиком: вкус их не читает.
  *
  * Одной пачкой: предикат демо опирается на users, поэтому users уходит
  * последней, а обрыв посередине не оставит личность без половины строк.
@@ -4115,7 +4336,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
   const demoCutoff = nowSec - DEMO_TTL_SEC
   const demo = [demoCutoff, demoCutoff - SESSION_TOUCH_AFTER_SEC, demoCutoff]
   const roomCutoff = nowSec - ROOM_TTL_SEC
-  const [, , , , sessions, demos, , , , rooms, ctx] = await db.batch(
+  const [, , , , sessions, demos, , , , rooms, ctx, outcomes] = await db.batch(
     [
       ...['feedback', 'daily_picks', 'library_snapshots', 'library_baselines'].map((table) => ({
         sql: `DELETE FROM ${table} WHERE ${STALE_DEMO}`,
@@ -4140,6 +4361,9 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
         sql: 'UPDATE feedback SET ctx_json = NULL WHERE ctx_json IS NOT NULL AND created_at < ?',
         args: [nowSec - FEEDBACK_CTX_TTL_SEC],
       },
+      // Демо-личностей здесь нет и не будет: их библиотека не меняется, и
+      // /api/feedback исходы им не пишет
+      { sql: 'DELETE FROM outcomes WHERE shown_at < ?', args: [nowSec - OUTCOME_TTL_SEC] },
     ],
     'write',
   )
@@ -4148,6 +4372,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
     sessions: Number(sessions?.rowsAffected ?? 0),
     rooms: Number(rooms?.rowsAffected ?? 0),
     ctx: Number(ctx?.rowsAffected ?? 0),
+    outcomes: Number(outcomes?.rowsAffected ?? 0),
   }
 }
 

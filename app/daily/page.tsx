@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { GameArt } from '@/components/GameArt'
 import { HeroShots } from '@/components/HeroShots'
+import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
@@ -233,6 +234,9 @@ export default function DailyPage() {
 
   return (
     <div className="flex-1 flex flex-col">
+      {/* «Как тебе?» после сыгранного по прошлому совету (lib/outcome.ts) —
+          раз в сутки, общий порог с /play */}
+      <OutcomeAsk />
       <section className="media-dark relative flex-1 min-h-[92vh] flex items-end overflow-hidden anim-reveal">
         <HeroShots
           appid={pick.appid}

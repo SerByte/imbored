@@ -83,6 +83,10 @@ import {
   roomVoteCounts,
   roomVotes,
   saveLibrarySnapshot,
+  fillOutcomesFromSnapshot,
+  pendingOutcomeAsk,
+  recordOutcome,
+  setOutcomeVerdict,
   setRoomDeckSize,
   setGameJson,
   setRoomMatched,
@@ -93,6 +97,7 @@ import {
   updateGamePrices,
   topCatalogGames,
   upsertGameMeta,
+  upsertGamesMeta,
   upsertUser,
   getDailyPick,
   saveDailyPick,
@@ -113,6 +118,7 @@ import {
 } from './db'
 import { seedDemo } from './demo'
 import { FEEDBACK_ACTIONS } from './feedbackkinds'
+import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC } from './outcome'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
@@ -2518,6 +2524,7 @@ describe('forgetUser: удаление по запросу', () => {
     await logFeedback(db, { steamid: ME, appid: 570, action: 'liked' }, NOW)
     await logFeedback(db, { steamid: ME, appid: 620, action: 'banned' }, NOW)
     await saveDailyPick(db, ME, '2023-11-14', { appid: 570 }, NOW)
+    await recordOutcome(db, { steamid: ME, appid: 570, source: 'comeback', launched: true }, NOW)
     await checkRate(db, { bucket: 'portrait', id: ME, limit: 10, windowSec: 60, nowSec: NOW })
 
     // Своя комната: друг в ней тоже голосовал
@@ -3343,5 +3350,176 @@ describe('семантика игр', () => {
       JSON.stringify({ ...BY_TAGS, timeToFun: null }),
     ]
     for (const raw of broken) expect(parseSemantics(raw), String(raw)).toBeUndefined()
+  })
+})
+
+/**
+ * Исход совета (lib/outcome.ts): запуск пишет минуты до, следующий снапшот —
+ * минуты после, и по заметно сыгранному спрашивают «как тебе?».
+ */
+describe('исход совета', () => {
+  const ME = '76561198000000001'
+  const DAY = 86_400
+
+  /** Запуск своей заброшенной с /play */
+  const launch = (db: Db, appid: number, at: number) =>
+    recordOutcome(db, { steamid: ME, appid, source: 'untouched', launched: true }, at)
+
+  async function outcomeRows(db: Db) {
+    const res = await db.execute({
+      sql: `SELECT appid, source, shown_at, launched_at, minutes_before, minutes_after, owned_after,
+                   checked_at, verdict FROM outcomes WHERE steamid = ? ORDER BY appid, shown_at`,
+      args: [ME],
+    })
+    return res.rows.map((r) => ({
+      appid: Number(r.appid),
+      source: r.source,
+      shownAt: Number(r.shown_at),
+      launchedAt: r.launched_at === null ? null : Number(r.launched_at),
+      before: r.minutes_before === null ? null : Number(r.minutes_before),
+      after: r.minutes_after === null ? null : Number(r.minutes_after),
+      owned: r.owned_after === null ? null : Number(r.owned_after),
+      checkedAt: r.checked_at === null ? null : Number(r.checked_at),
+      verdict: r.verdict,
+    }))
+  }
+
+  test('запуск пишет минуты до из последнего снапшота, у не своей игры их нет', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - DAY)
+    await recordOutcome(db, { steamid: ME, appid: 620, source: 'untouched', launched: true }, NOW)
+    // 6200 — подстрока 620 в тексте снапшота не должна дать минуты Portal 2
+    await recordOutcome(db, { steamid: ME, appid: 6200, source: 'new', launched: false }, NOW)
+    expect(await outcomeRows(db)).toEqual([
+      {
+        appid: 620,
+        source: 'untouched',
+        shownAt: NOW,
+        launchedAt: NOW,
+        before: 30,
+        after: null,
+        owned: null,
+        checkedAt: null,
+        verdict: null,
+      },
+      {
+        appid: 6200,
+        source: 'new',
+        shownAt: NOW,
+        launchedAt: null,
+        before: null,
+        after: null,
+        owned: null,
+        checkedAt: null,
+        verdict: null,
+      },
+    ])
+  })
+
+  test('повтор в окне — та же строка; запуск после магазина дописывает время запуска', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - DAY)
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: false }, NOW)
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: true }, NOW + DAY)
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: true }, NOW + 2 * DAY)
+    const rows = await outcomeRows(db)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ shownAt: NOW, launchedAt: NOW + DAY })
+
+    // За окном — уже новый совет
+    const later = NOW + OUTCOME_WINDOW_SEC + DAY
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: true }, later)
+    expect(await outcomeRows(db)).toHaveLength(2)
+  })
+
+  test('свежий снапшот дописывает минуты после и покупку, строки за окном не трогает', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 20 * DAY)
+    await launch(db, 620, NOW - 20 * DAY + 60)
+    await saveLibrarySnapshot(db, ME, LIB, NOW - DAY)
+    await recordOutcome(db, { steamid: ME, appid: 620, source: 'untouched', launched: true }, NOW - DAY + 60)
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: false }, NOW - DAY + 60)
+    await recordOutcome(db, { steamid: ME, appid: 888, source: 'new', launched: false }, NOW - DAY + 60)
+
+    const fresh = [
+      { ...LIB[1]!, playtimeForever: 150 },
+      { appid: 999, name: 'Купленная', playtimeForever: 45, playtime2Weeks: 45 },
+      LIB[0]!,
+    ]
+    // Через saveLibrarySnapshot: сверка идёт на любой дороге, что приносит снапшот
+    await saveLibrarySnapshot(db, ME, fresh, NOW)
+    const rows = await outcomeRows(db)
+    expect(rows.map((r) => [r.appid, r.shownAt, r.before, r.after, r.owned, r.checkedAt])).toEqual([
+      // старая строка — за окном, её никто не сверяет
+      [620, NOW - 20 * DAY + 60, 30, null, null, null],
+      [620, NOW - DAY + 60, 30, 150, 1, NOW],
+      [888, NOW - DAY + 60, null, null, 0, NOW],
+      [999, NOW - DAY + 60, null, 45, 1, NOW],
+    ])
+  })
+
+  test('строка моложе снапшота не сверяется: совет ещё ни во что не превратился', async () => {
+    const db = await freshDb()
+    await recordOutcome(db, { steamid: ME, appid: 620, source: 'untouched', launched: true }, NOW)
+    expect(await fillOutcomesFromSnapshot(db, ME, LIB, NOW)).toBe(0)
+    expect((await outcomeRows(db))[0]?.checkedAt).toBeNull()
+  })
+
+  test('«как тебе?» — по заметно сыгранному, свежий первым, с именем из каталога', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(
+      db,
+      [620, 999, 777].map((appid) => ({ ...META, appid, name: `Игра ${appid}` })),
+      NOW,
+    )
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 3 * DAY)
+    await launch(db, 620, NOW - 3 * DAY + 1)
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: false }, NOW - 2 * DAY)
+    await recordOutcome(db, { steamid: ME, appid: 777, source: 'backlog', launched: true }, NOW - DAY)
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [
+        { ...LIB[1]!, playtimeForever: 30 + 90 },
+        { appid: 999, name: 'Игра 999', playtimeForever: 200, playtime2Weeks: 200 },
+        // 777 сыграна меньше порога — это проба, а не игра
+        { appid: 777, name: 'Игра 777', playtimeForever: 5, playtime2Weeks: 5 },
+      ],
+      NOW,
+    )
+
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toEqual({
+      appid: 999,
+      name: 'Игра 999',
+      shownAt: NOW - 2 * DAY,
+      minutes: 200,
+      bought: true,
+    })
+    // Ответили — следующий по свежести
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toBe(true)
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 90, bought: false })
+    // Второй ответ первый не переписывает
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'hooked')).toBe(false)
+    expect((await outcomeRows(db)).find((r) => r.appid === 999)?.verdict).toBe('meh')
+    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'dismissed')).toBe(true)
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toBeNull()
+  })
+
+  test('за окном не спрашиваем: вопрос про прошлый месяц — не забота, а слежка', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [{ ...META, appid: 620 }], NOW)
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 20 * DAY)
+    await launch(db, 620, NOW - 20 * DAY + 1)
+    await saveLibrarySnapshot(db, ME, [{ ...LIB[1]!, playtimeForever: 500 }], NOW - 19 * DAY)
+    expect(await pendingOutcomeAsk(db, ME, NOW - 19 * DAY)).not.toBeNull()
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toBeNull()
+  })
+
+  test('уборка стирает исходы старше девяноста дней', async () => {
+    const db = await freshDb()
+    await launch(db, 620, NOW - OUTCOME_TTL_SEC - DAY)
+    await launch(db, 570, NOW - OUTCOME_TTL_SEC + DAY)
+    expect((await sweepStale(db, NOW)).outcomes).toBe(1)
+    expect((await outcomeRows(db)).map((r) => r.appid)).toEqual([570])
   })
 })

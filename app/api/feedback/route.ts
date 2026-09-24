@@ -1,12 +1,13 @@
 import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
-import { forgetDailyPick, logFeedback } from '@/lib/db'
+import { forgetDailyPick, logFeedback, recordOutcome } from '@/lib/db'
 import { parseFeedbackCtx } from '@/lib/feedbackctx'
+import { logSwallowed } from '@/lib/errlog'
 import { isFeedbackAction, isSkipReason } from '@/lib/feedbackkinds'
 import { parseMood } from '@/lib/mood'
 import { portraitTag } from '@/lib/portraitmodel'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
-import { getDb, nowSec, requireWriter } from '@/lib/server'
+import { getDb, isDemoId, nowSec, requireWriter } from '@/lib/server'
 
 /*
  * Потолок на запись фидбека.
@@ -73,6 +74,23 @@ export async function POST(req: Request) {
     },
     now,
   )
+  /*
+   * Исход совета (lib/outcome.ts): запуск или переход в магазин за не
+   * купленной — строка, которую следующие снапшоты дополнят реальными
+   * минутами. Демо-личностям нет: их библиотека не меняется, и исход у них
+   * всегда «ничего не сыграно». Отказ оценку не срывает: она уже записана, а
+   * исход — измерение, и потерять одно лучше, чем ответить пятисоткой.
+   */
+  const launched = action === 'launched'
+  if (!isDemoId(steamid) && (launched || (action === 'opened' && ctx?.intent === 'store'))) {
+    await recordOutcome(
+      db,
+      { steamid, appid, source: ctx?.candidate ?? null, launched, ...(ctx ? { ctx } : {}) },
+      now,
+    ).catch((err: unknown) => {
+      logSwallowed('feedback:outcome', err)
+    })
+  }
   // Игра дня записана на сутки, но бан и «надоела» отбор обязан учесть сразу:
   // иначе убранная игра стояла бы героем до полуночи (см. forgetDailyPick)
   if (action === 'banned' || reason === 'tired') await forgetDailyPick(db, steamid)
