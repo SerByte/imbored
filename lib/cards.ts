@@ -4,6 +4,7 @@ import { refreshDealsWithin } from './deals'
 import { getGamesMetaLite, type Db, type HeroMedia } from './db'
 import { discountView, trustedPrice } from './discount'
 import { entryCost, showsEntry } from './entry'
+import { partsView } from './feedbackctx'
 import { sessionTrait } from './gametraits'
 import type { Pick as LlmPick } from './llm'
 import {
@@ -18,7 +19,7 @@ import {
 import { refundEligible } from './refund'
 import { HERO_SLIDES } from './shots'
 import type { TagWeight } from './tagweight'
-import type { CandidateSource, GameMeta, Mood } from './types'
+import type { CandidateSource, GameMeta, Mood, ScoreParts } from './types'
 
 /*
  * КАРТОЧКА ВЫДАЧИ — ОДИН КОНТРАКТ ОТ СЕРВЕРА ДО КЛИЕНТА.
@@ -198,6 +199,21 @@ export function heroMediaView(media: HeroMedia | undefined) {
 }
 
 export type HeroMediaView = ReturnType<typeof heroMediaView>
+
+/**
+ * Место карточки в своём списке ответа и части её скора — для снимка к оценке
+ * (lib/feedbackctx), и только для него: на экран ни то, ни другое не выводится.
+ *
+ * Части скора раньше не покидали сервер вовсе. Решение владельца — хранить их
+ * в фидбеке для отчёта, без показа (/privacy, раздел 01). Клиент — единственный,
+ * кто знает, на какой карточке нажали, поэтому снимок едет к нему и
+ * возвращается с оценкой; уходит он только самому человеку, по его сессии.
+ */
+export function scoreView(rank: number, parts: ScoreParts | undefined) {
+  return { rank, parts: parts ? partsView(parts) : null }
+}
+
+export type ScoreView = ReturnType<typeof scoreView>
 
 /**
  * Плитка магазина — полка находок «Игры дня». Полка всегда из каталога,

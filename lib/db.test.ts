@@ -109,6 +109,7 @@ import {
   getSessionState,
   revokeSession,
   DEMO_TTL_SEC,
+  FEEDBACK_CTX_TTL_SEC,
 } from './db'
 import { seedDemo } from './demo'
 import { FEEDBACK_ACTIONS } from './feedbackkinds'
@@ -2777,6 +2778,33 @@ describe('sweepStale: суточная уборка', () => {
       expect(res.rows.map((r) => r.room_id), table).toEqual(['NEW001'])
     }
   })
+
+  test('снимок выдачи старше девяноста дней стирается, а сама оценка остаётся', async () => {
+    const db = await freshDb()
+    const ctx = { source: 'play' as const, slot: 'hero' as const, parts: { taste: 0.5 } }
+    const old = NOW - FEEDBACK_CTX_TTL_SEC - DAY
+    const fresh = NOW - FEEDBACK_CTX_TTL_SEC + DAY
+    await logFeedback(db, { steamid: REAL, appid: 620, action: 'liked', ctx }, old)
+    await logFeedback(db, { steamid: REAL, appid: 570, action: 'liked', ctx }, fresh)
+    await logFeedback(db, { steamid: REAL, appid: 440, action: 'skipped' }, old)
+
+    expect((await sweepStale(db, NOW)).ctx).toBe(1)
+    const rows = await db.execute({
+      sql: 'SELECT appid, ctx_json FROM feedback WHERE steamid = ? ORDER BY appid',
+      args: [REAL],
+    })
+    const kept = rows.rows.map((r) => [
+      Number(r.appid),
+      r.ctx_json === null ? null : JSON.parse(String(r.ctx_json)),
+    ])
+    expect(kept).toEqual([
+      [440, null],
+      [570, ctx],
+      [620, null],
+    ])
+    // Повтор — ничего: стёртое выпало из частичного индекса
+    expect((await sweepStale(db, NOW)).ctx).toBe(0)
+  })
 })
 
 /**
@@ -2958,8 +2986,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 4,
-      columns: 33,
+      version: 5,
+      columns: 34,
     })
   })
 })
@@ -3069,8 +3097,12 @@ describe('превью и продовая база', () => {
       warn.mockRestore()
     }
 
-    // Таблица та же самая (rowid в sqlite_master не сменился), строки на месте
-    expect(await tableRowid(db)).toEqual(before)
+    // Таблица та же самая (rowid в sqlite_master не сменился), строки на месте.
+    // Текст схемы сравнивать нельзя: ALTER ADD COLUMN разрушающим не считается
+    // и превью его делает, — но CHECK остался прежним, узким
+    const after = await tableRowid(db)
+    expect(after?.rowid).toBe(before?.rowid)
+    expect(String(after?.sql)).not.toContain("'launched'")
     expect((await listFeedback(db, 'u1')).map((r) => r.action)).toEqual(['banned'])
     // Версии нет: запиши её превью — прод счёл бы схему доведённой навсегда
     expect(await getCatalogMeta(db, 'schema_v')).toBeNull()

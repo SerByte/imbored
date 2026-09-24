@@ -24,6 +24,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
+import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { reviewsBrief } from '@/lib/gametraits'
 import { rememberMood } from '@/lib/lastmood'
@@ -443,6 +444,7 @@ function Player({ say }: { say: (line: string) => void }) {
       appid: number,
       action: FeedbackAction,
       reason?: SkipReason,
+      ctx?: FeedbackCtx,
     ): Promise<boolean> => {
       // Сессия только читает — ответ известен заранее, 403 needsteam. Кнопки
       // записи у неё спрятаны, сюда доходят попутные сигналы: запуск,
@@ -452,7 +454,13 @@ function Player({ say }: { say: (line: string) => void }) {
         fetch('/api/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ appid, action, ...(reason ? { reason } : {}), mood }),
+          body: JSON.stringify({
+            appid,
+            action,
+            ...(reason ? { reason } : {}),
+            mood,
+            ...(ctx ? { ctx } : {}),
+          }),
         })
           .then(async (r) => {
             // needsteam — не сбой, а права. Страница переходит в режим чтения
@@ -973,6 +981,27 @@ function Player({ say }: { say: (line: string) => void }) {
    */
   const cont = focus || lean === 'fresh' ? null : continueGame
 
+  /**
+   * Снимок выдачи к оценке (lib/feedbackctx): где стояла карточка, под что и
+   * каким движком собрана выдача, части скора. Собирается в обработчике, на
+   * свежем состоянии: у sendFeedback зависимости пустые, и прочитай он
+   * состояние сам, видел бы первую выдачу. На экран из снимка не выводится
+   * ничего — он только для отчёта (scripts/feedback-report.ts).
+   */
+  const ctxOf = (p: Pick | null, slot?: CtxSlot, intent?: CtxIntent): FeedbackCtx => ({
+    source: 'play',
+    slot,
+    intent,
+    ...(p ? { rank: p.rank, candidate: p.source, parts: p.parts ?? undefined } : {}),
+    engine: engine === 'claude' || engine === 'heuristic' ? engine : undefined,
+    variant: roulette ? 'roulette' : focus ? 'untouched' : seed ? 'seed' : undefined,
+    scope,
+    lean: lean ?? undefined,
+    nudge: nudge ?? undefined,
+  })
+  /** Герой выбран из «Ещё вариантов» — или дошёл до экрана сам */
+  const heroSlot: CtxSlot = dir === 'pick' ? 'picked' : 'hero'
+
   if (phase === 'prepare') {
     return (
       <WarmupScreen
@@ -1109,7 +1138,9 @@ function Player({ say }: { say: (line: string) => void }) {
               appid={cont.appid}
               label={`Просто продолжить «${cont.name}»`}
               mobileLabel={`Открыть «${cont.name}» в Steam`}
-              onClick={() => void sendFeedback(cont.appid, 'launched')}
+              onClick={() =>
+                void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))
+              }
               className="btn-ember is-block py-3"
             />
           ) : (
@@ -1242,7 +1273,8 @@ function Player({ say }: { say: (line: string) => void }) {
         // упал бы в body — отдаём его герою, как после любого ответа
         onReason={(key) => {
           if (!stopDue) return
-          void sendFeedback(stopDue.appid, 'skipped', key)
+          const asked = picks.find((p) => p.appid === stopDue.appid) ?? null
+          void sendFeedback(stopDue.appid, 'skipped', key, ctxOf(asked, undefined, 'ask'))
           launchMemoStore.set(null)
           // «Дадим другую» — буквально: если на экране та самая игра, листаем
           if (pick.appid === stopDue.appid) advance(index)
@@ -1252,7 +1284,8 @@ function Player({ say }: { say: (line: string) => void }) {
           if (!stopDue) return
           if (!liked.has(stopDue.appid)) {
             setLiked(new Set(liked).add(stopDue.appid))
-            void sendFeedback(stopDue.appid, 'liked')
+            const asked = picks.find((p) => p.appid === stopDue.appid) ?? null
+            void sendFeedback(stopDue.appid, 'liked', undefined, ctxOf(asked, undefined, 'ask'))
           }
           launchMemoStore.set(null)
           focusHero(true)
@@ -1433,7 +1466,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     key={r.key}
                     ref={i === 0 ? focusOnMount : undefined}
                     onClick={() => {
-                      void sendFeedback(pick.appid, 'skipped', r.key)
+                      void sendFeedback(pick.appid, 'skipped', r.key, ctxOf(pick, heroSlot))
                       // Ответил сам — «не зацепило?» про неё уже не спрашиваем
                       forgetLaunch(pick.appid)
                       advance(index)
@@ -1445,7 +1478,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 ))}
                 <button
                   onClick={() => {
-                    void sendFeedback(pick.appid, 'skipped')
+                    void sendFeedback(pick.appid, 'skipped', undefined, ctxOf(pick, heroSlot))
                     forgetLaunch(pick.appid)
                     advance(index)
                   }}
@@ -1469,7 +1502,12 @@ function Player({ say }: { say: (line: string) => void }) {
                     // не запуск. Своя игра из другого магазина открывается там
                     // же, где и запускается, поэтому для неё это запуск.
                     onClick={() =>
-                      void sendFeedback(pick.appid, pick.source === 'new' ? 'opened' : 'launched')
+                      void sendFeedback(
+                        pick.appid,
+                        pick.source === 'new' ? 'opened' : 'launched',
+                        undefined,
+                        ctxOf(pick, heroSlot, pick.source === 'new' ? 'store' : 'launch'),
+                      )
                     }
                     className="btn-ember px-6 py-3"
                   >
@@ -1482,7 +1520,9 @@ function Player({ say }: { say: (line: string) => void }) {
                     appid={pick.appid}
                     // Запуск — не «Зашло»: раньше он писался как liked, и точность
                     // подбора на /library росла от любого клика
-                    onClick={() => void sendFeedback(pick.appid, 'launched')}
+                    onClick={() =>
+                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroSlot, 'launch'))
+                    }
                     // Засекаем только настоящий запуск: через десять минут
                     // вернувшегося спросим, зацепило ли (см. StopAsk)
                     onLaunch={() => rememberLaunch(pick.appid, pick.name, Math.floor(Date.now() / 1000))}
@@ -1507,7 +1547,9 @@ function Player({ say }: { say: (line: string) => void }) {
                 )}
                 <Link
                   href={`/game/${pick.appid}`}
-                  onClick={() => void sendFeedback(pick.appid, 'opened')}
+                  onClick={() =>
+                    void sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroSlot, 'details'))
+                  }
                   className="rounded-[14px] glass glass-hover px-6 py-3 text-sm"
                 >
                   Подробнее
@@ -1521,7 +1563,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       // Повторное нажатие — не второе «зашло»: кнопка уже горит
                       if (liked.has(pick.appid)) return
                       setLiked(new Set(liked).add(pick.appid))
-                      void sendFeedback(pick.appid, 'liked')
+                      void sendFeedback(pick.appid, 'liked', undefined, ctxOf(pick, heroSlot))
                     }}
                     className={`rounded-[14px] px-4 py-3 text-sm transition ${
                       liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
@@ -1538,7 +1580,7 @@ function Player({ say }: { say: (line: string) => void }) {
                         onClick={() => {
                           // Бросок кубика, а не оценка: 'spin' не трогает ни
                           // вкус, ни точность подбора
-                          void sendFeedback(pick.appid, 'skipped', 'spin')
+                          void sendFeedback(pick.appid, 'skipped', 'spin', ctxOf(pick, heroSlot))
                           advance(index)
                         }}
                         className="rounded-[14px] glass glass-hover no-lift px-4 py-3 text-sm text-dim cursor-pointer"
@@ -1586,7 +1628,8 @@ function Player({ say }: { say: (line: string) => void }) {
                       forgetLaunch(pick.appid)
                       setBanning(true)
                       setBanFailed(null)
-                      const ok = await sendFeedback(pick.appid, 'banned', finished ? 'done' : undefined)
+                      const ctx = ctxOf(pick, heroSlot)
+                      const ok = await sendFeedback(pick.appid, 'banned', finished ? 'done' : undefined, ctx)
                       setBanning(false)
                       if (!ok) {
                         // Отказ по правам — не «нажми ещё раз»: кнопка уже
@@ -1777,7 +1820,9 @@ function Player({ say }: { say: (line: string) => void }) {
             <SteamLaunch
               appid={cont.appid}
               label="Продолжить"
-              onClick={() => void sendFeedback(cont.appid, 'launched')}
+              onClick={() =>
+                void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))
+              }
               className="tap text-ember-text hover:underline"
             />
           </div>
@@ -2023,7 +2068,9 @@ function Player({ say }: { say: (line: string) => void }) {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true, margin: '-40px' }}
                         transition={{ duration: 0.45, ease: EASE, delay: i * 0.05 }}
-                        onClick={() => void sendFeedback(p.appid, 'opened')}
+                        onClick={() =>
+                          void sendFeedback(p.appid, 'opened', undefined, ctxOf(p, 'discovery', 'store'))
+                        }
                         className="glass glass-hover rounded-[14px] overflow-hidden text-left"
                       >
                         <div className="relative">

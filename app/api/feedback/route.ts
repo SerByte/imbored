@@ -1,6 +1,7 @@
 import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
 import { forgetDailyPick, logFeedback } from '@/lib/db'
+import { parseFeedbackCtx } from '@/lib/feedbackctx'
 import { isFeedbackAction, isSkipReason } from '@/lib/feedbackkinds'
 import { parseMood } from '@/lib/mood'
 import { portraitTag } from '@/lib/portraitmodel'
@@ -33,6 +34,7 @@ export async function POST(req: Request) {
     action?: string
     reason?: string
     mood?: unknown
+    ctx?: unknown
   }
   const appid = Number(body.appid)
   const action = body.action
@@ -53,9 +55,12 @@ export async function POST(req: Request) {
   })
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
-  // невалидные mood/reason не роняют фидбек — просто не сохраняются
+  // невалидные mood/reason/ctx не роняют фидбек — просто не сохраняются.
+  // Снимок выдачи (lib/feedbackctx) — белым списком: слот, движок, части
+  // скора и прочее, что нужно отчёту, и ничего сверх
   const mood = parseMood(body.mood)
   const reason = isSkipReason(body.reason) ? body.reason : null
+  const ctx = parseFeedbackCtx(body.ctx)
   await logFeedback(
     db,
     {
@@ -64,6 +69,7 @@ export async function POST(req: Request) {
       action,
       ...(reason ? { reason } : {}),
       ...(mood ? { mood } : {}),
+      ...(ctx ? { ctx } : {}),
     },
     now,
   )

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { assignEdges } from '@/lib/badges'
 import { buildCandidates } from '@/lib/candidates'
-import { buildPickContext, cardView, heroMediaView } from '@/lib/cards'
+import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getHeroMedia } from '@/lib/db'
 import { claudePicks, heuristicPicks, topUpPicks } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -249,11 +249,17 @@ export async function POST(req: Request) {
     // подписать онлайн словом «сейчас». Клиентский Date.now() в рендере и
     // нечист, и расходится с SSR — тот же довод, что в components/whatsnew/Now
     nowSec: nowSec(),
-    picks: picks.map((p) => ({
+    // scoreView — место и части скора для снимка к оценке (lib/feedbackctx):
+    // /play возвращает их с «Зашло» и «Не то», на экран они не выводятся
+    picks: picks.map((p, i) => ({
       ...cardView(p, ctx, edges.get(p.appid) ?? null),
       ...heroMediaView(media.get(p.appid)),
+      ...scoreView(i, partsOf.get(p.appid)),
     })),
-    discoveries: discoveries.map((p) => cardView(p, ctx)),
+    discoveries: discoveries.map((p, i) => ({
+      ...cardView(p, ctx),
+      ...scoreView(i, partsOf.get(p.appid)),
+    })),
     engine: fromClaude ? 'claude' : 'heuristic',
     candidateCount: candidates.length,
     scope,

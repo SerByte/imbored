@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, upsertSemantics, type Db } from '@/lib/db'
 import { nowSec } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
-import type { GameSemantics } from '@/lib/types'
+import { SCORE_FACTORS, type GameSemantics } from '@/lib/types'
 import { freshDb, post, signIn } from '@/lib/testing/route'
 import { POST } from './route'
 
@@ -114,6 +114,60 @@ describe('/api/recommend: кадры героев', () => {
         ids.indexOf(p.appid) % 2 === 0 ? trailerOf(p.appid) : null,
       )
     }
+  })
+})
+
+/**
+ * Место и части скора едут в каждую карточку — для снимка к оценке
+ * (lib/feedbackctx): /play возвращает их с «Зашло» и «Не то». Округлённые и
+ * только известные множители: изнанка скоринга не должна расползаться шире
+ * того, что прочитает отчёт.
+ */
+describe('/api/recommend: снимок к оценке', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  test('у каждой карточки rank по порядку и части скора из реестра', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    const ids = [620, 413150, 105600, 646570, 892970, 1966720]
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      ids.map((appid, i) => ({ appid, name: `Игра ${appid}`, playtimeForever: i * 30, playtime2Weeks: 0 })),
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      ids.map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Puzzle: 100, Casual: 60 },
+        genres: [],
+        categories: [2],
+      })),
+      now,
+    )
+
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      picks: Array<{ appid: number; rank: number; parts: Record<string, number> | null }>
+    }
+    expect(body.picks.length).toBeGreaterThan(0)
+    body.picks.forEach((p, i) => {
+      expect(p.rank, `место ${p.appid}`).toBe(i)
+      expect(p.parts, `части ${p.appid}`).not.toBeNull()
+      expect(Object.keys(p.parts!).sort()).toEqual([...SCORE_FACTORS].sort())
+      for (const v of Object.values(p.parts!)) {
+        // четыре знака после запятой — не больше
+        expect(Math.round(v * 10_000) / 10_000).toBe(v)
+      }
+    })
   })
 })
 

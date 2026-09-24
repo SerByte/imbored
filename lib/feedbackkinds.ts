@@ -75,6 +75,9 @@ const FEEDBACK_COLUMN_DEFS: ReadonlyArray<readonly [string, string]> = [
   ['reason', 'TEXT'],
   ['mood_json', 'TEXT'],
   ['created_at', 'INTEGER NOT NULL'],
+  // Снимок выдачи к оценке (lib/feedbackctx): слот, движок, части скора.
+  // Только для отчёта; хранится девяносто дней (sweepStale)
+  ['ctx_json', 'TEXT'],
 ]
 
 export const FEEDBACK_COLUMNS: readonly string[] = FEEDBACK_COLUMN_DEFS.map(([name]) => name)

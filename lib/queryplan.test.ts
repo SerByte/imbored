@@ -277,6 +277,23 @@ describe('планы запросов', () => {
   })
 
   /*
+   * Снимки выдачи у оценок стираются через девяносто дней. feedback — самая
+   * толстая таблица с людьми, и суточный полный проход по ней Turso считал бы
+   * целиком; частичный индекс держит только строки со снимком.
+   */
+  test('уборка снимков выдачи идёт по частичному индексу, а не по всему фидбеку', async () => {
+    const db = await createDb(':memory:')
+    const ctx = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter((q) =>
+      q.sql.includes('ctx_json = NULL'),
+    )
+    expect(ctx).toHaveLength(1)
+    const plan = await planOf(db, ctx[0]!)
+    const where = plan.join(' | ')
+    expect(bareScans(plan), where).toEqual([])
+    expect(where).toContain('idx_feedback_ctx')
+  })
+
+  /*
    * Полка «Похожие» досортировывает ничьи по отзывам, и это законно, пока
    * сортировка касается только правой части ORDER BY: вес приходит из индекса
    * (tag, weight DESC), а по отзывам упорядочивается один блок равных весов, в
@@ -323,7 +340,9 @@ describe('планы запросов', () => {
       "SELECT name FROM sqlite_master WHERE type = 'index' AND sql LIKE '%WHERE%'",
     )
     const partial = res.rows.map((r) => String(r.name)).sort()
-    const covered = new Set(CASES.flatMap((c) => c.indexes))
+    // Индекс уборки снимков проверяется отдельным тестом выше: его запрос —
+    // UPDATE внутри пачки sweepStale, и в CASES он не ложится
+    const covered = new Set([...CASES.flatMap((c) => c.indexes), 'idx_feedback_ctx'])
     expect(partial.filter((name) => !covered.has(name))).toEqual([])
   })
 })

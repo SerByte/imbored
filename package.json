@@ -25,7 +25,8 @@
     "neighbors:build": "tsx --env-file-if-exists=.env.turso scripts/build-neighbors.ts",
     "catalog:publish": "tsx --env-file-if-exists=.env.turso scripts/publish-catalog.ts",
     "tags:ru": "tsx scripts/gen-tagsru.ts",
-    "user:forget": "tsx --env-file-if-exists=.env.turso scripts/forget-user.ts"
+    "user:forget": "tsx --env-file-if-exists=.env.turso scripts/forget-user.ts",
+    "feedback:report": "tsx --env-file-if-exists=.env.turso scripts/feedback-report.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

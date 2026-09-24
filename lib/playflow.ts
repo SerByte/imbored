@@ -18,7 +18,7 @@
  * app/play/page.tsx, — и сторож в playflow.test.ts не даёт завести вторую дверь.
  */
 
-import type { HeroMediaView, PickCard } from './cards'
+import type { HeroMediaView, PickCard, ScoreView } from './cards'
 import { parseLean, type Lean } from './mood'
 import { parseNudge, type Nudge } from './nudge'
 import { plural } from './plural'
@@ -45,11 +45,14 @@ type LateField = 'session' | 'entry' | 'reviewsPercent' | 'reviewsTotal'
  * Карточка выдачи — ровно то, что отдаёт /api/recommend: тип выведен из
  * cardView (lib/cards.ts), а не переписан руками. Кадры и трейлер
  * (heroMediaView) приходят только у picks — карточки открытий героем не
- * становятся — и необязательны по той же причине, что LateField.
+ * становятся — и необязательны по той же причине, что LateField. Место и
+ * части скора (scoreView) — только для снимка к оценке, и тоже необязательны:
+ * выдача с прошлого захода их может не нести.
  */
 export type PlayPick = Omit<PickCard, LateField | 'signals'> &
   Partial<Pick<PickCard, LateField>> &
-  Partial<HeroMediaView> & { signals: PickSignals }
+  Partial<HeroMediaView> &
+  Partial<ScoreView> & { signals: PickSignals }
 
 /**
  * «Как «X», но…»: чьи соседи на экране — эхо seed из /api/recommend. Имя —

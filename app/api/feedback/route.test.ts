@@ -176,3 +176,48 @@ describe('/api/feedback: колода исследователя', () => {
     ])
   })
 })
+
+/**
+ * Снимок выдачи к оценке (lib/feedbackctx) — для отчёта, белым списком. Мусор
+ * в нём оценку не срывает: пишется то, что прошло, или ничего.
+ */
+describe('/api/feedback: снимок выдачи', () => {
+  const ctxOf = async (steamid: string) =>
+    (
+      await db.execute({
+        sql: 'SELECT ctx_json FROM feedback WHERE steamid = ? ORDER BY id',
+        args: [steamid],
+      })
+    ).rows.map((r) => (r.ctx_json === null ? null : JSON.parse(String(r.ctx_json))))
+
+  test('годное пишется, незнакомое отбрасывается', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const res = await POST(
+      post('/api/feedback', {
+        appid: 620,
+        action: 'liked',
+        ctx: {
+          source: 'play',
+          slot: 'hero',
+          rank: 0,
+          engine: 'claude',
+          parts: { taste: 0.51234, mood: 1.1, hacked: 9 },
+          steamid: '76561197960287930',
+        },
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(await ctxOf(steamid)).toEqual([
+      { source: 'play', slot: 'hero', rank: 0, engine: 'claude', parts: { taste: 0.5123, mood: 1.1 } },
+    ])
+  })
+
+  test('без снимка или с одним мусором — оценка есть, снимка нет', async () => {
+    const steamid = await signInAs(db, 'openid')
+    for (const ctx of [undefined, 'hero', { slot: 'sidebar' }, [1, 2]]) {
+      const res = await POST(post('/api/feedback', { appid: 620, action: 'opened', ctx }))
+      expect(res.status, JSON.stringify(ctx)).toBe(200)
+    }
+    expect(await ctxOf(steamid)).toEqual([null, null, null, null])
+  })
+})

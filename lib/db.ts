@@ -2,6 +2,7 @@ import { createClient, type Client, type InStatement } from '@libsql/client'
 import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
+import type { FeedbackCtx } from './feedbackctx'
 import {
   FEEDBACK_COLUMNS,
   feedbackCheckStale,
@@ -336,6 +337,14 @@ CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_to
 -- блок выполняется строго после ALTER-цикла.
 CREATE INDEX IF NOT EXISTS idx_rooms_public ON rooms (created_at DESC)
   WHERE is_public = 1 AND status = 'open';
+
+-- Снимки выдачи в фидбеке старше девяноста дней стирает суточная уборка
+-- (sweepStale). Без индекса это полный проход по feedback — самой толстой
+-- таблице с людьми — каждые сутки, а Turso считает прочитанные строки. В
+-- частичный индекс попадают только строки со снимком, и стёртая выпадает из
+-- него сама. Здесь, а не в SCHEMA: ctx_json у старых баз приезжает ALTER'ом.
+CREATE INDEX IF NOT EXISTS idx_feedback_ctx ON feedback (created_at)
+  WHERE ctx_json IS NOT NULL;
 `
 
 /**
@@ -493,7 +502,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 4
+export const CURRENT_SCHEMA_V = 5
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -556,6 +565,9 @@ export const ADDED_COLUMNS = [
   // скриншоты: пустое не затирает привезённое (keepFilledSql). NULL — не
   // искали или у игры нет трейлера, который Steam показывает всем.
   ['games', 'trailer_json TEXT'],
+  // Снимок выдачи к оценке (lib/feedbackctx): слот, движок, части скора — для
+  // отчёта scripts/feedback-report.ts. Девяносто дней, потом NULL (sweepStale)
+  ['feedback', 'ctx_json TEXT'],
 ] as const
 
 /**
@@ -3679,6 +3691,8 @@ export async function logFeedback(
     action: FeedbackAction
     reason?: SkipReason
     mood?: Mood
+    /** Снимок выдачи (lib/feedbackctx) — уже разобранный белым списком */
+    ctx?: FeedbackCtx
   },
   nowSec: number,
 ): Promise<void> {
@@ -3689,6 +3703,7 @@ export async function logFeedback(
     entry.reason ?? null,
     entry.mood ? JSON.stringify(entry.mood) : null,
     nowSec,
+    entry.ctx ? JSON.stringify(entry.ctx) : null,
   ]
   // Скипы, открытия и баны пишутся как есть: у них своя история (причина,
   // время, снятие бана), и схлопывать её незачем. Дедуп — только для положительных сигналов,
@@ -3702,8 +3717,8 @@ export async function logFeedback(
   // ответом про игру не считается — как и в cooldownOf.
   if (entry.action === 'liked' || entry.action === 'launched') {
     await db.execute({
-      sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at)
-            SELECT ?, ?, ?, ?, ?, ?
+      sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at, ctx_json)
+            SELECT ?, ?, ?, ?, ?, ?, ?
             WHERE NOT EXISTS (
               SELECT 1 FROM feedback f
               WHERE f.steamid = ? AND f.appid = ? AND f.action = ? AND f.created_at > ?
@@ -3719,7 +3734,8 @@ export async function logFeedback(
     return
   }
   await db.execute({
-    sql: 'INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at, ctx_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
     args,
   })
 }
@@ -4066,7 +4082,15 @@ const STALE_DEMO = `steamid IN (
 
 const OLD_ROOM = 'room_id IN (SELECT id FROM rooms WHERE created_at < ?)'
 
-export type SweepReport = { demos: number; sessions: number; rooms: number }
+/**
+ * Сколько живёт снимок выдачи у оценки (feedback.ctx_json, lib/feedbackctx).
+ * Три месяца — с запасом на отчёт по гипотезе, которой нужны недели данных;
+ * дальше снимок — это просто история поведения, и хранить её незачем.
+ * Сама оценка остаётся: без неё нет вкуса. /privacy, раздел 06.
+ */
+export const FEEDBACK_CTX_TTL_SEC = 90 * 86_400
+
+export type SweepReport = { demos: number; sessions: number; rooms: number; ctx: number }
 
 /**
  * Суточная уборка того, что иначе копилось бы вечно. Зовётся из крона
@@ -4081,6 +4105,8 @@ export type SweepReport = { demos: number; sessions: number; rooms: number }
  *     отличаться от «строки нет».
  *   • Комнаты старше ROOM_TTL_SEC — вместе с участниками, голосами и колодой.
  *     Опоздавший по старой ссылке увидит «Такой комнаты нет».
+ *   • Снимки выдачи у оценок старше FEEDBACK_CTX_TTL_SEC: колонка обнуляется,
+ *     оценка остаётся — по ней считается вкус.
  *
  * Одной пачкой: предикат демо опирается на users, поэтому users уходит
  * последней, а обрыв посередине не оставит личность без половины строк.
@@ -4089,7 +4115,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
   const demoCutoff = nowSec - DEMO_TTL_SEC
   const demo = [demoCutoff, demoCutoff - SESSION_TOUCH_AFTER_SEC, demoCutoff]
   const roomCutoff = nowSec - ROOM_TTL_SEC
-  const [, , , , sessions, demos, , , , rooms] = await db.batch(
+  const [, , , , sessions, demos, , , , rooms, ctx] = await db.batch(
     [
       ...['feedback', 'daily_picks', 'library_snapshots', 'library_baselines'].map((table) => ({
         sql: `DELETE FROM ${table} WHERE ${STALE_DEMO}`,
@@ -4108,6 +4134,12 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
       { sql: `DELETE FROM room_members WHERE ${OLD_ROOM}`, args: [roomCutoff] },
       { sql: `DELETE FROM room_deck WHERE ${OLD_ROOM}`, args: [roomCutoff] },
       { sql: 'DELETE FROM rooms WHERE created_at < ?', args: [roomCutoff] },
+      // Условие дословно повторяет предикат idx_feedback_ctx — иначе SQLite
+      // частичный индекс не возьмёт (lib/queryplan.test.ts)
+      {
+        sql: 'UPDATE feedback SET ctx_json = NULL WHERE ctx_json IS NOT NULL AND created_at < ?',
+        args: [nowSec - FEEDBACK_CTX_TTL_SEC],
+      },
     ],
     'write',
   )
@@ -4115,6 +4147,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
     demos: Number(demos?.rowsAffected ?? 0),
     sessions: Number(sessions?.rowsAffected ?? 0),
     rooms: Number(rooms?.rowsAffected ?? 0),
+    ctx: Number(ctx?.rowsAffected ?? 0),
   }
 }
 
