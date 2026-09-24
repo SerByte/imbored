@@ -12,6 +12,7 @@ import {
 import { editionKey } from './editions'
 import { nearGames } from './gamepage'
 import type { Lean } from './mood'
+import type { NudgePlan } from './nudge'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
 import {
   applyFeedbackToProfile,
@@ -21,10 +22,12 @@ import {
   cooldownOf,
   mixHeroPool,
   scoreCandidates,
+  seenTagsOf,
   splitBySource,
   type Cooldown,
   type CooldownKind,
   type Focus,
+  type NudgeTilt,
   type Scope,
 } from './recommend'
 import { tagWeightFrom, type TagWeight } from './tagweight'
@@ -60,6 +63,14 @@ const WILDCARD_POOL = 30
 /** Сколько игр каталога читает пул открытий — одним запросом с LIMIT */
 const POOL_LIMIT = 400
 
+/**
+ * «Что-то другое» (lib/nudge.ts): соседний срез пула по тегам вкуса и вдвое
+ * шире добор вне их. Срезов столько же, сколько у недельной ротации
+ * (rotationSlot), — следующий по кругу.
+ */
+const ROTATION_SLOTS = 5
+const REROLL_WILDCARD = 60
+
 export type CandidateOpts = {
   /** Серверные часы запроса */
   nowSec: number
@@ -80,6 +91,14 @@ export type CandidateOpts = {
   focus?: Focus | null
   /** «Как «X», но…» — appid игры, из соседей которой собирать */
   seed?: number | null
+  /**
+   * Подталкивание после выдачи (lib/nudge.ts). Настроение и источник план уже
+   * поменял — маршрут передаёт их вместо спрошенных; здесь — отсев, наклоны и
+   * «Что-то другое».
+   */
+  nudge?: NudgePlan | null
+  /** Что уже на экране — читается только у «Что-то другое» */
+  exclude?: readonly number[]
 }
 
 /**
@@ -158,13 +177,25 @@ export async function buildCandidates(
   // отложенное возвращалось на следующей же перезагрузке
   const cooldown = cooldownOf(feedback, now, opts.cooldownKinds)
 
+  // «Что-то другое»: показанное уходит вместе с банами — и из пула, и из
+  // скоринга. Баны сами по себе остаются банами: якорем и «Продолжить» уже
+  // показанная игра быть может, забаненная — нет
+  const plan = opts.nudge ?? null
+  const reroll = plan?.reroll === true
+  const shown = new Set(reroll ? (opts.exclude ?? []) : [])
+  const hidden = shown.size ? new Set([...banned, ...shown]) : banned
+
   // Метаданные своей библиотеки И игр из истории оценок: весь каталог на сотне
   // тысяч игр сжёг бы лимит прочитанных строк Turso. Игры из фидбека нужны
   // здесь же — иначе оценка игры, которой нет в библиотеке, перестанет влиять
   // на профиль вкуса. Узкой выборкой, без блобов: кадры героям читает маршрут
-  // отдельным запросом по пятёрке.
-  const libMetas = await getGamesMetaLite(db, [
-    ...new Set([...games.map((g) => g.appid), ...feedback.map((f) => f.appid)]),
+  // отдельным запросом по пятёрке. Показанное — отдельной картой и тем же
+  // заходом: в libMetas ему не место, filterActual судил бы и по нему
+  const [libMetas, shownMetas] = await Promise.all([
+    getGamesMetaLite(db, [
+      ...new Set([...games.map((g) => g.appid), ...feedback.map((f) => f.appid)]),
+    ]),
+    shown.size ? getGamesMetaLite(db, [...shown]) : new Map<number, GameMeta>(),
   ])
   const poolByAppid = new Map<number, GameMeta>()
   const metaOf = (appid: number): GameMeta | undefined =>
@@ -212,15 +243,22 @@ export async function buildCandidates(
     newPool = (
       await fetchDiscoveryPool(db, {
         tags: pickQueryTags(profile, tagStats, poolSize),
-        bannedAppids: [...banned],
+        bannedAppids: [...hidden],
         requireMultiplayer: mood.social === 'friends',
-        rotation: rotationSlot(steamid, now),
+        rotation: (rotationSlot(steamid, now, ROTATION_SLOTS) + (reroll ? 1 : 0)) % ROTATION_SLOTS,
         limit: POOL_LIMIT,
-        wildcard: WILDCARD_POOL,
+        wildcard: reroll ? REROLL_WILDCARD : WILDCARD_POOL,
       })
     ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
   }
   for (const m of newPool) poolByAppid.set(m.appid, m)
+
+  const tilt: NudgeTilt | null = plan && {
+    cut: plan.cut,
+    sourceWeight: plan.sourceWeight,
+    tagBoost: plan.tagBoost,
+    seenTags: reroll ? seenTagsOf(shownMetas.values()) : null,
+  }
 
   const candidates = scoreCandidates({
     profile,
@@ -237,7 +275,7 @@ export async function buildCandidates(
     limit: opts.limit ?? CANDIDATE_LIMIT,
     // Баны — внутри скоринга, до отсечки: фильтр после неё отдавал тридцатку
     // минус забаненные, и места, которые они занимали, не доставались никому
-    exclude: banned,
+    exclude: hidden,
     // Вкус с весом редкости: совпадение по частотному костяку больше не решает
     tagWeight,
     cooldown,
@@ -246,6 +284,7 @@ export async function buildCandidates(
     // своими все песочницы и не возвращал отложенное, хотя до выдачи дойдёт одна
     familiarCap: opts.familiarCap,
     lean: opts.lean ?? null,
+    nudge: tilt,
   })
   if (!candidates.length) return 'nocandidates'
 

@@ -292,3 +292,108 @@ describe('/api/recommend: затравка seed', () => {
     }
   })
 })
+
+/**
+ * Подталкивания после выдачи (lib/nudge.ts): модель не зовётся ни при каком
+ * ключе, эхо nudge говорит /play, какой чипс нажат, «Что-то другое» не
+ * повторяет показанное, «Знакомое» — только своё.
+ */
+describe('/api/recommend: подталкивания', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  /** Своё 10…15 и каталог 20…25 — с одинаковым вкусом */
+  async function setup(): Promise<string[]> {
+    // Ключ модели есть: без подталкивания маршрут пошёл бы в Anthropic
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        calls.push(input instanceof Request ? input.url : String(input))
+        return new Response('', { status: 404 })
+      }),
+    )
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      [10, 11, 12, 13, 14, 15].map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        playtimeForever: appid === 10 ? 3000 : 0,
+        playtime2Weeks: 0,
+      })),
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      [10, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24, 25].map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Puzzle: 100, Casual: 60 },
+        genres: [],
+        categories: [2],
+      })),
+      now,
+    )
+    return calls
+  }
+
+  type Body = {
+    picks: Array<{ appid: number; source: string }>
+    discoveries: Array<{ appid: number }>
+    engine: string
+    nudge: unknown
+    scope: unknown
+  }
+
+  test('подталкивание — эвристикой, с эхом, и модель не зовётся', async () => {
+    const calls = await setup()
+    const res = await POST(post('/api/recommend', { mood: MOOD, nudge: 'story' }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect(body.nudge).toBe('story')
+    expect(body.engine).toBe('heuristic')
+    expect(calls.filter((u) => u.includes('anthropic'))).toEqual([])
+  })
+
+  test('мусор в поле — обычная выдача: эхо null, и модель снова зовётся', async () => {
+    const calls = await setup()
+    const res = await POST(post('/api/recommend', { mood: MOOD, nudge: 'faster' }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as Body).nudge).toBeNull()
+    expect(calls.some((u) => u.includes('anthropic'))).toBe(true)
+  })
+
+  test('«Что-то другое» не повторяет того, что уже на экране', async () => {
+    await setup()
+    const shown = [11, 12, 20, 21]
+    const res = await POST(post('/api/recommend', { mood: MOOD, nudge: 'different', exclude: shown }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    const got = [...body.picks, ...body.discoveries].map((p) => p.appid)
+    expect(got.length).toBeGreaterThan(0)
+    for (const appid of shown) expect(got, `${appid} уже был на экране`).not.toContain(appid)
+  })
+
+  test('exclude без «Что-то другое» ничего не прячет', async () => {
+    await setup()
+    const ask = async (body: object) => (await (await POST(post('/api/recommend', body))).json()) as Body
+    const plain = await ask({ mood: MOOD, nudge: 'story' })
+    const withExclude = await ask({ mood: MOOD, nudge: 'story', exclude: plain.picks.map((p) => p.appid) })
+    expect(withExclude.picks.map((p) => p.appid)).toEqual(plain.picks.map((p) => p.appid))
+  })
+
+  test('«Знакомое» — только своё, и эхо источника это говорит', async () => {
+    await setup()
+    const res = await POST(post('/api/recommend', { mood: MOOD, nudge: 'familiar', scope: 'all' }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect(body.scope).toBe('library')
+    expect(body.picks.every((p) => p.source !== 'new')).toBe(true)
+  })
+})

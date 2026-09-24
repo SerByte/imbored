@@ -20,6 +20,7 @@
 
 import type { HeroMediaView, PickCard } from './cards'
 import { parseLean, type Lean } from './mood'
+import { parseNudge, type Nudge } from './nudge'
 import { plural } from './plural'
 import type { ContinueGame, MatchExplanation, Scope } from './recommend'
 
@@ -85,6 +86,12 @@ export type Deal = {
    * и подпись обязаны говорить, подо что собрана выдача. null — обычная.
    */
   seed: SeedRef | null
+  /**
+   * Подталкивание, под которое собрана выдача (lib/nudge.ts), — из эха, как и
+   * lean: нажатым чипс под героем показывается по ответу, а не по нажатию.
+   * null — без него.
+   */
+  nudge: Nudge | null
   /** Серверные часы ответа — по ним PlayersNow решает, можно ли сказать «сейчас» */
   nowSec: number
   /**
@@ -107,6 +114,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     engine?: unknown
     lean?: unknown
     seed?: unknown
+    nudge?: unknown
     continue?: unknown
     nowSec?: unknown
     viewer?: unknown
@@ -120,6 +128,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     lean: parseLean(d.lean),
     scope,
     seed: parseSeedRef(d.seed),
+    nudge: parseNudge(d.nudge),
     nowSec: typeof d.nowSec === 'number' && Number.isFinite(d.nowSec) ? d.nowSec : 0,
     viewer: typeof d.viewer === 'string' && d.viewer ? d.viewer : null,
   }

@@ -36,6 +36,7 @@ import {
 } from '@/lib/launchmemo'
 import { createLocalStore, parseFlag } from '@/lib/localstore'
 import { NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
+import { NUDGE_LABEL, NUDGES, type Nudge } from '@/lib/nudge'
 import { EASE } from '@/lib/motion'
 import {
   BURNOUT_AFTER_SKIPS,
@@ -305,14 +306,19 @@ function Player({ say }: { say: (line: string) => void }) {
    * как переключатели. null — обычная выдача.
    */
   const [seed, setSeed] = useState<SeedRef | null>(null)
+  /**
+   * Подталкивание под героем (lib/nudge.ts), под которое собрана выдача на
+   * экране, — тоже только из эха. null — обычная выдача.
+   */
+  const [nudge, setNudge] = useState<Nudge | null>(null)
   const [switching, setSwitching] = useState(false)
   /**
    * Почему переключатель не пересобрал выдачу (switchLine) — строкой под ним.
    * null — сказать нечего. Гаснет с любой следующей выдачей (applyDeal).
    */
   const [switchMiss, setSwitchMiss] = useState<string | null>(null)
-  /** То же для «Как «X», но…» — строкой у самой кнопки, под героем */
-  const [seedMiss, setSeedMiss] = useState<string | null>(null)
+  /** То же для «Как «X», но…» и подталкиваний — строкой у самих кнопок, под героем */
+  const [heroMiss, setHeroMiss] = useState<string | null>(null)
   /*
    * ВЫДАЧА МЕЖДУ ЗАХОДАМИ (lib/playcache.ts).
    *
@@ -477,7 +483,14 @@ function Player({ say }: { say: (line: string) => void }) {
    * после await состояние ещё не обновится.
    */
   const fetchPicks = useCallback(
-    async (next: { scope: Scope; lean: Lean | null; seed?: number | null }): Promise<Deal | Miss> => {
+    async (next: {
+      scope: Scope
+      lean: Lean | null
+      seed?: number | null
+      nudge?: Nudge | null
+      /** Что уже на экране — нужно только «Что-то другое» */
+      exclude?: number[]
+    }): Promise<Deal | Miss> => {
       // try/catch, а не голый await: оборванная сеть на этом шаге всплывала из
       // async-функции и оставляла экран в вечном «Подбираю…» — тот же класс
       // ошибки, что был в цикле прогрева до переезда в lib/warmup.ts.
@@ -492,6 +505,8 @@ function Player({ say }: { say: (line: string) => void }) {
             scope: next.scope,
             ...(next.lean ? { lean: next.lean } : {}),
             ...(next.seed ? { seed: next.seed } : {}),
+            ...(next.nudge ? { nudge: next.nudge } : {}),
+            ...(next.exclude?.length ? { exclude: next.exclude } : {}),
           }),
           // Свой срок ожидания, а не браузерный. Сервер модель ждёт не дольше
           // восьми секунд (INTERACTIVE_CLIENT) и дальше отдаёт эвристику, так
@@ -589,6 +604,7 @@ function Player({ say }: { say: (line: string) => void }) {
       setScope(deal.scope)
       setLean(deal.lean)
       setSeed(deal.seed)
+      setNudge(deal.nudge)
       // Серверные часы — по ним подпись онлайна решает, имеет ли право
       // сказать «сейчас». См. докблок в components/PlayersNow. У выдачи с
       // прошлого захода они ушли вперёд на столько, сколько она пролежала.
@@ -602,7 +618,7 @@ function Player({ say }: { say: (line: string) => void }) {
       if (back) setLiked(new Set(back.liked))
       // Выдача пришла — прежний отказ переключателя больше не про неё
       setSwitchMiss(null)
-      setSeedMiss(null)
+      setHeroMiss(null)
       return hero
     },
     [roulette],
@@ -631,13 +647,14 @@ function Player({ say }: { say: (line: string) => void }) {
         lean,
         scope,
         seed,
+        nudge,
         nowSec: meta.nowSec,
         viewer: meta.viewer,
       },
       hero: picks[Math.min(index, picks.length - 1)].appid,
       liked: [...liked],
     })
-  }, [phase, picks, discoveries, continueGame, engine, lean, scope, seed, index, liked, cacheKey])
+  }, [phase, picks, discoveries, continueGame, engine, lean, scope, seed, nudge, index, liked, cacheKey])
 
   useEffect(() => {
     /*
@@ -837,19 +854,36 @@ function Player({ say }: { say: (line: string) => void }) {
   }, [retrying, fetchPicks, applyDeal, scope, lean, roulette, say])
 
   /*
-   * Переключатели уже показанной выдачи: источник, ось состояния и затравка
-   * «Как «X», но…». Один путь на все — тот же прогрев, другой вопрос к движку,
-   * и выдача с начала. Затравка переживает переключатели: «похожие на X, но
-   * только мои» — осмысленный вопрос. from — где сказать об отказе: у
-   * переключателей или у кнопки под героем.
+   * Переключатели уже показанной выдачи: источник, ось состояния, затравка
+   * «Как «X», но…» и подталкивания под героем. Один путь на все — тот же
+   * прогрев, другой вопрос к движку, и выдача с начала. Затравка и
+   * подталкивание переживают переключатели: «похожие на X, но покороче и
+   * только мои» — осмысленный вопрос. Кроме «Что-то другое»: оно разовое —
+   * новый срез без того, что было на экране, — и повторять его при смене
+   * источника значило бы выбросить и ту выдачу, о которой спросили. from —
+   * где сказать об отказе: у переключателей или у кнопок под героем.
    */
   const seedAppid = seed?.appid ?? null
+  const keptNudge = nudge === 'different' ? null : nudge
   const reshape = useCallback(
     async (
-      next: { scope: Scope; lean: Lean | null; seed: number | null },
-      from: 'switch' | 'seed' = 'switch',
+      next: {
+        scope: Scope
+        lean: Lean | null
+        seed: number | null
+        nudge: Nudge | null
+        exclude?: number[]
+      },
+      from: 'switch' | 'hero' = 'switch',
     ) => {
-      if ((next.scope === scope && next.lean === lean && next.seed === seedAppid) || switching) return
+      // «Что-то другое» повторяется: каждое нажатие — новый срез
+      const same =
+        next.scope === scope &&
+        next.lean === lean &&
+        next.seed === seedAppid &&
+        next.nudge === nudge &&
+        next.nudge !== 'different'
+      if (same || switching) return
       setSwitching(true)
       try {
         const got = await fetchPicks(next)
@@ -857,7 +891,7 @@ function Player({ say }: { say: (line: string) => void }) {
           // Выдача прежняя — и об этом надо сказать, а не просто отжать кнопку:
           // чаще всего это потолок частоты, и у него есть срок (switchLine)
           const line = switchLine(got)
-          if (from === 'seed') setSeedMiss(line)
+          if (from === 'hero') setHeroMiss(line)
           else setSwitchMiss(line)
           return
         }
@@ -875,8 +909,29 @@ function Player({ say }: { say: (line: string) => void }) {
         setSwitching(false)
       }
     },
-    [scope, lean, seedAppid, switching, fetchPicks, applyDeal, say],
+    [scope, lean, seedAppid, nudge, switching, fetchPicks, applyDeal, say],
   )
+
+  /*
+   * Подталкивание под героем (lib/nudge.ts). Нажатое отжимается обратно в
+   * обычную выдачу; «Что-то другое» — нет: каждое нажатие — новый срез без
+   * того, что сейчас на экране. «Знакомое» — это «только моё» с наклоном к
+   * заброшенному, поэтому и переключатель источника покажет «Только моё», а
+   * отжатое вернёт «Любые игры».
+   */
+  const nudgeTo = (n: Nudge) => {
+    const off = nudge === n && n !== 'different'
+    void reshape(
+      {
+        scope: n === 'familiar' ? (off ? 'all' : 'library') : scope,
+        lean,
+        seed: seedAppid,
+        nudge: off ? null : n,
+        exclude: n === 'different' ? [...picks, ...discoveries].map((p) => p.appid) : undefined,
+      },
+      'hero',
+    )
+  }
 
   const advance = useCallback(
     (from: number) => {
@@ -1625,7 +1680,9 @@ function Player({ say }: { say: (line: string) => void }) {
                   {!roulette && !focus && pick.tags.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => void reshape({ scope, lean, seed: pick.appid }, 'seed')}
+                      onClick={() =>
+                        void reshape({ scope, lean, seed: pick.appid, nudge: keptNudge }, 'hero')
+                      }
                       aria-disabled={switching}
                       title="Похожие на эту игру — под то же настроение"
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
@@ -1636,7 +1693,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   {seed && (
                     <button
                       type="button"
-                      onClick={() => void reshape({ scope, lean, seed: null }, 'seed')}
+                      onClick={() => void reshape({ scope, lean, seed: null, nudge: keptNudge }, 'hero')}
                       aria-disabled={switching}
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
                     >
@@ -1645,9 +1702,41 @@ function Player({ say }: { say: (line: string) => void }) {
                   )}
                 </motion.div>
               )}
-              {seedMiss && (
+              {/*
+                Подталкивания — «не то, но почти»: одним тапом та же просьба с
+                поправкой (lib/nudge.ts). Там же, где «Как «X», но…», и по
+                тем же правилам: не в рулетке и не в «нераспакованном» —
+                вопрос там уже задан. Пилюлями, как ось состояния ниже, и с
+                тем же зазором gap-3: зоны .tap соседей не перекрываются.
+              */}
+              {!roulette && !focus && (
+                <motion.div
+                  variants={STEP}
+                  role="group"
+                  aria-label="Подправить выдачу"
+                  className="flex flex-wrap items-center gap-3 text-xs"
+                >
+                  {NUDGES.map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => nudgeTo(n)}
+                      aria-disabled={switching}
+                      // «Что-то другое» — действие, а не переключатель: у
+                      // повторяемого нажатия нет «нажатого» состояния
+                      aria-pressed={n === 'different' ? undefined : nudge === n}
+                      className={`tap glass rounded-full px-3.5 py-2 transition cursor-pointer aria-disabled:opacity-50 ${
+                        nudge === n ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
+                      }`}
+                    >
+                      {NUDGE_LABEL[n]}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+              {heroMiss && (
                 <p role="status" className="-mt-1 text-sm text-danger">
-                  {seedMiss}
+                  {heroMiss}
                 </p>
               )}
               </>
@@ -1726,7 +1815,9 @@ function Player({ say }: { say: (line: string) => void }) {
                       {SCOPES.map((s) => (
                         <button
                           key={s.key}
-                          onClick={() => reshape({ scope: s.key, lean, seed: seedAppid })}
+                          onClick={() =>
+                            reshape({ scope: s.key, lean, seed: seedAppid, nudge: keptNudge })
+                          }
                           /* aria-disabled, а не disabled: пока выдача
                              пересобирается, нажатая кнопка обязана удержать
                              фокус. disabled выбрасывал его в body на всё время
@@ -1764,7 +1855,12 @@ function Player({ say }: { say: (line: string) => void }) {
                         <button
                           key={l.key}
                           onClick={() =>
-                            reshape({ scope, lean: lean === l.key ? null : l.key, seed: seedAppid })
+                            reshape({
+                              scope,
+                              lean: lean === l.key ? null : l.key,
+                              seed: seedAppid,
+                              nudge: keptNudge,
+                            })
                           }
                           aria-disabled={switching}
                           aria-pressed={lean === l.key}

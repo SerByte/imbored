@@ -182,6 +182,9 @@ export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
  *   confidence — доверие к покупке по отзывам (confidenceMultiplier):
  *              байесовское среднее доли положительных, 0.85…1.1; своему и
  *              игре без отзывов 1.
+ *   nudge    — подталкивание после выдачи (lib/nudge.ts, nudgeMultiplier):
+ *              ×1.3 заброшенному на «Знакомое», ×0.8 похожему на уже
+ *              показанное на «Что-то другое»; без подталкивания 1.
  *
  * Раньше множитель жил в пяти местах сразу: в типе, в сборке частей, в
  * scoreOfParts, в тесте, который перемножал их по именам, и в бейджах. Забытое
@@ -205,6 +208,7 @@ export const SCORE_FACTORS = [
   'semantics',
   'entry',
   'confidence',
+  'nudge',
 ] as const
 
 export type ScoreFactor = (typeof SCORE_FACTORS)[number]

@@ -5,6 +5,7 @@ import { buildPickContext, cardView, heroMediaView } from '@/lib/cards'
 import { getHeroMedia } from '@/lib/db'
 import { claudePicks, heuristicPicks, topUpPicks } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
+import { parseExclude, parseNudge, planNudge } from '@/lib/nudge'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
   continueView,
@@ -74,18 +75,25 @@ export async function POST(req: Request) {
     scope?: unknown
     lean?: unknown
     seed?: unknown
+    nudge?: unknown
+    exclude?: unknown
   }
-  const mood = parseMood(body.mood)
-  if (!mood) return NextResponse.json({ error: 'badmood' }, { status: 400 })
+  const asked = parseMood(body.mood)
+  if (!asked) return NextResponse.json({ error: 'badmood' }, { status: 400 })
   const focus = parseFocus(body.focus)
-  // «Разгрести своё» и «покажи что угодно» — противоположные запросы:
-  // при явном фокусе каталог в главную выдачу не пускаем вовсе
-  const scope = focus ? 'library' : parseScope(body.scope)
   // Неверное значение не ошибка, а «ось не выбрана»: у каждого кода ошибки
   // здесь должен быть свой экран на /play, а опечатка в адресе его не стоит
   const lean = parseLean(body.lean)
   // «Как «X», но…» — по тому же правилу: мусор значит «без затравки»
   const seed = parseSeed(body.seed)
+  // Подталкивание после выдачи (lib/nudge.ts) — и снова мусор значит «без
+  // него». Настроение и источник оно меняет до подбора: «Покороче» — это то
+  // же настроение, только на ступень короче, и объяснять карточку надо им
+  const nudge = parseNudge(body.nudge)
+  // «Разгрести своё» и «покажи что угодно» — противоположные запросы:
+  // при явном фокусе каталог в главную выдачу не пускаем вовсе
+  const plan = planNudge(nudge, asked, focus ? 'library' : parseScope(body.scope))
+  const { mood, scope } = plan
 
   const db = await getDb()
   const now = nowSec()
@@ -109,6 +117,8 @@ export async function POST(req: Request) {
     lean,
     focus,
     seed,
+    nudge: plan,
+    exclude: parseExclude(body.exclude),
   })
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
   if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
@@ -129,12 +139,14 @@ export async function POST(req: Request) {
   // после того как пул собран: она должна тратить квоту только тогда, когда
   // вызов модели реально состоялся бы.
   //
-  // Выдача из соседей («Как «X», но…») к модели не ходит вовсе: правило
-  // владельца — никакого нового расхода на модель, а это новый повод её звать.
-  // Эвристика с якорем и причинами по тегам здесь и так говорит по делу.
-  // Условие про затравку стоит в && первым: такой запрос не тратит и демо-квоту.
+  // Выдача из соседей («Как «X», но…») и по подталкиванию к модели не ходит
+  // вовсе: правило владельца — никакого нового расхода на модель, а это новые
+  // поводы её звать. Эвристика с якорем и причинами по тегам здесь и так
+  // говорит по делу. Условия про затравку и подталкивание стоят в && первыми:
+  // такой запрос не тратит и демо-квоту.
   const llmAllowed =
     seedRef === null &&
+    nudge === null &&
     (!isDemoId(steamid) ||
       (
         await checkRate(db, {
@@ -248,6 +260,9 @@ export async function POST(req: Request) {
     lean,
     // Эхо затравки «Как «X», но…»: чьи соседи на экране. null — обычная выдача
     seed: seedRef,
+    // Эхо подталкивания: какой чипс под героем нажат. null — без него, в том
+    // числе при мусоре в поле
+    nudge,
     // Строка «Продолжить» или null — /play сам решает, где её не показывать
     continue: cont ? continueView(cont) : null,
     // Чья выдача. /play держит её на устройстве пятнадцать минут и обязан не

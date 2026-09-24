@@ -12,6 +12,7 @@ import {
   confidenceMultiplier,
   cooldownOf,
   cosine,
+  cutByNudge,
   dealMultiplier,
   deferredOf,
   entryMultiplier,
@@ -29,6 +30,7 @@ import {
   moodWordsOf,
   neutralParts,
   normalizedTags,
+  nudgeMultiplier,
   parseFocus,
   parseScope,
   PICK_COUNT,
@@ -37,6 +39,7 @@ import {
   SCORE_FACTORS,
   scoreCandidates,
   scoreOfParts,
+  seenTagsOf,
   semanticsMultiplier,
   sharedTasteTags,
   splitBySource,
@@ -44,7 +47,8 @@ import {
   type Cooldown,
 } from './recommend'
 import { DEMO_METAS, demoLibrary } from './demo'
-import { LEANS, type Lean } from './mood'
+import { LEANS, NEUTRAL_MOOD, type Lean } from './mood'
+import { NUDGES, planNudge } from './nudge'
 import { tagWeightFrom } from './tagweight'
 import type { GameMeta, GameSemantics, LibraryGame, Mood, ScoredCandidate } from './types'
 
@@ -2340,5 +2344,121 @@ describe('цена входа (entry)', () => {
     })
     expect(c.parts!.entry).toBeCloseTo(0.8)
     expect(scoreOfParts(c.parts!)).toBe(c.score)
+  })
+})
+
+/**
+ * Подталкивания после выдачи (lib/nudge.ts). У каждого — своя поправка, и ни
+ * одно не трогает выдачу без него: демо-пятёрки главной и обычный /play
+ * обязаны остаться до бита прежними.
+ */
+describe('подталкивания (nudge)', () => {
+  const baseMood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+  const lib = [
+    game({ appid: 1 }), // untouched
+    game({ appid: 2, playtimeForever: 30 }), // backlog
+    game({ appid: 3, playtimeForever: 900, lastPlayed: NOW - 300 * DAY }), // comeback
+  ]
+  const metas = new Map<number, GameMeta>([
+    [1, meta(1, { Puzzle: 100, 'Story Rich': 80, Narrative: 60 })],
+    [2, meta(2, { Puzzle: 100, 'Open World': 50 })],
+    [3, meta(3, { Puzzle: 100, Roguelike: 60, 'Open World': 50 })],
+  ])
+  const pool = [meta(100, { Strategy: 100, Indie: 70 }), meta(101, { Puzzle: 100, Cozy: 50 })]
+  const run = (mood: Mood, nudge?: Parameters<typeof scoreCandidates>[0]['nudge']) =>
+    scoreCandidates({
+      profile: { Puzzle: 1 },
+      library: lib,
+      metaOf: (id) => metas.get(id),
+      newPool: pool,
+      mood,
+      nowSec: NOW,
+      ...(nudge !== undefined ? { nudge } : {}),
+    })
+  const byId = (list: ScoredCandidate[]) => new Map(list.map((c) => [c.appid, c]))
+
+  test('без подталкивания скоры ровно прежние, до бита, и часть nudge — единица', () => {
+    expect(run(baseMood, null)).toEqual(run(baseMood))
+    expect(run(baseMood).every((c) => c.parts!.nudge === 1)).toBe(true)
+    // План без подталкивания ничего не меняет
+    expect(planNudge(null, baseMood, 'all')).toEqual({
+      mood: baseMood,
+      scope: 'all',
+      cut: null,
+      sourceWeight: null,
+      tagBoost: null,
+      reroll: false,
+    })
+  })
+
+  test('«Покороче»: время на ступень короче, а у «меньше часа» отсекается длинное', () => {
+    expect(planNudge('shorter', { ...baseMood, time: 'long' }, 'all').mood.time).toBe('medium')
+    expect(planNudge('shorter', baseMood, 'all').mood.time).toBe('short')
+    const short = planNudge('shorter', { ...baseMood, time: 'short' }, 'all')
+    expect(short).toMatchObject({ mood: { time: 'short' }, cut: 'long' })
+    const kept = byId(run(short.mood, { cut: short.cut }))
+    // Только длинное по тегам — отсечено; рогалик с открытым миром — сомнение в пользу игры
+    expect(kept.has(2)).toBe(false)
+    expect(kept.has(3)).toBe(true)
+    expect(kept.has(1)).toBe(true)
+  })
+
+  test('«Покороче» по уверенной семантике: длинный заход отсечён, даже если теги короткие', () => {
+    const long = { ...meta(9, { Roguelike: 100 }), semantics: sem({ minutes: 180 }) }
+    const quick = { ...meta(10, { 'Open World': 100 }), semantics: sem({ minutes: 20 }) }
+    expect(cutByNudge(long, 'long')).toBe(true)
+    expect(cutByNudge(quick, 'long')).toBe(false)
+  })
+
+  test('«Поспокойнее»: вайб «расслабиться», а у него — отсечь напряжённое', () => {
+    expect(planNudge('calmer', { ...baseMood, vibe: 'engaged' }, 'all').mood.vibe).toBe('chill')
+    const calm = planNudge('calmer', baseMood, 'all')
+    expect(calm.cut).toBe('intense')
+    const kept = byId(run(calm.mood, { cut: calm.cut }))
+    expect(kept.has(100)).toBe(false) // только Strategy — напряжённое
+    expect(kept.has(101)).toBe(true)
+    const tense = { ...meta(11, { Cozy: 100 }), semantics: sem({ challenge: 90 }) }
+    expect(cutByNudge(tense, 'intense')).toBe(true)
+  })
+
+  test('«Знакомое»: только своё, заброшенное ×1.3 частью nudge', () => {
+    const plan = planNudge('familiar', baseMood, 'all')
+    expect(plan.scope).toBe('library')
+    const got = byId(run(plan.mood, { sourceWeight: plan.sourceWeight }))
+    const plain = byId(run(baseMood))
+    expect(got.get(3)!.parts!.nudge).toBeCloseTo(1.3)
+    expect(got.get(3)!.score).toBeCloseTo(plain.get(3)!.score * 1.3)
+    expect(got.get(1)!.parts!.nudge).toBe(1)
+  })
+
+  test('«Про историю»: одна прибавка к настроению, сколько бы тегов о ней ни стояло', () => {
+    const plan = planNudge('story', baseMood, 'all')
+    const got = byId(run(plan.mood, { tagBoost: plan.tagBoost }))
+    const plain = byId(run(baseMood))
+    expect(got.get(1)!.parts!.mood).toBeCloseTo(plain.get(1)!.parts!.mood + 0.25)
+    expect(got.get(2)!.parts!.mood).toBe(plain.get(2)!.parts!.mood)
+  })
+
+  test('«Что-то другое»: похожее на показанное главными тегами — ×0.8', () => {
+    expect(planNudge('different', baseMood, 'all').reroll).toBe(true)
+    const seen = seenTagsOf([meta(50, { Strategy: 100, Indie: 10, Action: 5, Puzzle: 1 })])
+    expect([...seen]).toEqual(['Strategy', 'Indie', 'Action'])
+    expect(nudgeMultiplier(pool[0], 'new', { seenTags: seen })).toBeCloseTo(0.8)
+    expect(nudgeMultiplier(pool[1], 'new', { seenTags: seen })).toBe(1)
+    const got = byId(run(baseMood, { seenTags: seen }))
+    expect(got.get(100)!.parts!.nudge).toBeCloseTo(0.8)
+  })
+
+  test('часть nudge входит в произведение у каждого подталкивания', () => {
+    for (const n of NUDGES) {
+      const plan = planNudge(n, NEUTRAL_MOOD, 'all')
+      const tilt = {
+        cut: plan.cut,
+        sourceWeight: plan.sourceWeight,
+        tagBoost: plan.tagBoost,
+        seenTags: plan.reroll ? new Set(['Strategy']) : null,
+      }
+      for (const c of run(plan.mood, tilt)) expect(scoreOfParts(c.parts!), `${n} ${c.appid}`).toBe(c.score)
+    }
   })
 })

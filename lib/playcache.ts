@@ -38,6 +38,7 @@
 
 import { createLocalStore } from './localstore'
 import { parseLean, type Lean } from './mood'
+import { parseNudge } from './nudge'
 import { parseSeedRef, type Deal, type PlayPick } from './playflow'
 import type { ContinueGame, Focus } from './recommend'
 import type { Mood } from './types'
@@ -138,6 +139,8 @@ function parseDeal(x: unknown): Deal | null {
     scope: d.scope,
     // Записи до «Как «X», но…» поля не несут — это обычная выдача
     seed: parseSeedRef(d.seed),
+    // Записи до подталкиваний — тоже: выдача без него
+    nudge: parseNudge(d.nudge),
     nowSec: d.nowSec,
     viewer: d.viewer,
   }

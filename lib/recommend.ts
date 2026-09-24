@@ -925,7 +925,16 @@ export function buildAnchorFinder(
   }
 }
 
-function moodMultiplier(meta: GameMeta, mood: Mood): number {
+/**
+ * tagBoost — прибавка за теги сверх вайба и времени («Про историю»,
+ * lib/nudge.ts). Берётся самая большая из совпавших, а не сумма: Story Rich и
+ * Narrative говорят об одном, и два тега не должны весить вдвое.
+ */
+function moodMultiplier(
+  meta: GameMeta,
+  mood: Mood,
+  tagBoost: Readonly<Record<string, number>> | null = null,
+): number {
   const tags = new Set(Object.keys(meta.tags))
   const hasAny = (list: string[]) => list.some((t) => tags.has(t))
   let mult = 1
@@ -933,6 +942,11 @@ function moodMultiplier(meta: GameMeta, mood: Mood): number {
   const oppositeVibe = mood.vibe === 'chill' ? 'engaged' : 'chill'
   if (hasAny(VIBE_TAGS[oppositeVibe])) mult -= 0.25
   mult += timeFit(tags, mood.time)
+  if (tagBoost) {
+    let boost = 0
+    for (const [tag, b] of Object.entries(tagBoost)) if (tags.has(tag) && b > boost) boost = b
+    mult += boost
+  }
   return Math.max(mult, 0.1)
 }
 
@@ -1342,6 +1356,68 @@ export function confidenceMultiplier(meta: GameMeta, source: CandidateSource): n
   return Math.min(CONFIDENCE_MAX, Math.max(CONFIDENCE_MIN, mult))
 }
 
+/*
+ * ПОДТАЛКИВАНИЯ (lib/nudge.ts) — В ЯЗЫКЕ СКОРИНГА.
+ *
+ * План подталкивания меняет настроение и источник сам, до скоринга; сюда
+ * доезжает то, что без игры не решить: кого отсечь, кого наклонить и на кого
+ * похожа уже показанная выдача.
+ */
+export type NudgeTilt = {
+  /** 'long' — во что за короткий вечер не войти, 'intense' — напряжённое */
+  cut?: 'long' | 'intense' | null
+  /** Наклон источников сверх SOURCE_WEIGHT — часть nudge */
+  sourceWeight?: Readonly<Partial<Record<CandidateSource, number>>> | null
+  /** Прибавка к настроению за теги — часть mood (moodMultiplier) */
+  tagBoost?: Readonly<Record<string, number>> | null
+  /** Главные теги уже показанного: совпадение с главными тегами кандидата — ×SIMILAR_PENALTY */
+  seenTags?: ReadonlySet<string> | null
+}
+
+/**
+ * Отсечь ли игру по подталкиванию. Сначала — уверенная семантика: она знает
+ * длину захода и сложность по отзывам. Без неё — теги, и сомнение толкуется в
+ * пользу игры, как в timeFit: рогалик с открытым миром за вечер войти даёт,
+ * тактика с тегом Relaxing — не обязательно напряжённая.
+ */
+export function cutByNudge(meta: GameMeta, cut: 'long' | 'intense'): boolean {
+  const s = trustedSemantics(meta)
+  if (cut === 'long') {
+    if (s) return s.session.bucket === 'long'
+    return hasAnyTag(meta, TIME_TAGS.long) && !hasAnyTag(meta, TIME_TAGS.short)
+  }
+  if (s) return axisBucket(s.axes.challenge) === 'high' || axisBucket(s.axes.pace) === 'high'
+  return hasAnyTag(meta, VIBE_TAGS.engaged) && !hasAnyTag(meta, VIBE_TAGS.chill)
+}
+
+function hasAnyTag(meta: GameMeta, list: readonly string[]): boolean {
+  return list.some((t) => t in meta.tags)
+}
+
+/**
+ * «Что-то другое»: похожее на показанное — ×0.8, а не фильтр. Похожесть — по
+ * трём главным тегам (topTags): у двух рогаликов общий Indie ещё ничего не
+ * значит, а общий главный тег — уже «то же самое».
+ */
+const SIMILAR_PENALTY = 0.8
+const SIMILAR_TOP = 3
+
+/** Часть nudge скора: наклон источника и штраф похожести; без подталкивания 1 */
+export function nudgeMultiplier(meta: GameMeta, source: CandidateSource, tilt: NudgeTilt | null): number {
+  if (!tilt) return 1
+  let mult = tilt.sourceWeight?.[source] ?? 1
+  const seen = tilt.seenTags
+  if (seen?.size && topTags(meta, SIMILAR_TOP).some((t) => seen.has(t))) mult *= SIMILAR_PENALTY
+  return mult
+}
+
+/** Главные теги уже показанного — для штрафа похожести «Что-то другое» */
+export function seenTagsOf(metas: Iterable<GameMeta>): Set<string> {
+  const out = new Set<string>()
+  for (const m of metas) for (const t of topTags(m, SIMILAR_TOP)) out.add(t)
+  return out
+}
+
 /** Реестр множителей живёт в lib/types.ts рядом с типом частей; здесь — ради тех, кто берёт скоринг отсюда */
 export { SCORE_FACTORS }
 
@@ -1409,6 +1485,12 @@ export function scoreCandidates(args: {
    * часть lean ровно 1, скоры прежние.
    */
   lean?: Lean | null
+  /**
+   * Подталкивание после выдачи (lib/nudge.ts): отсев, наклон источников,
+   * прибавка к настроению за теги и штраф похожести на показанное. null и
+   * отсутствие — ровно прежние скоры: часть nudge 1, настроение без прибавки.
+   */
+  nudge?: NudgeTilt | null
 }): ScoredCandidate[] {
   const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
   type Scored = ScoredCandidate & { parts: ScoreParts }
@@ -1428,12 +1510,16 @@ export function scoreCandidates(args: {
   // ослабляет его, не пересчитывая остального
   const softSemantics = new Map<number, number>()
 
+  const tilt = args.nudge ?? null
+
   /** sourceMult — насыщение знакомого; у прочих источников ровно 1 */
   const push = (meta: GameMeta, source: ScoredCandidate['source'], sourceMult = 1) => {
     if (exclude?.has(meta.appid)) return
     if (!fitsSocial(meta, mood)) return
+    // Отсев подталкивания — до пауз: отсечённое не должно вернуться и полом
+    if (tilt?.cut && cutByNudge(meta, tilt.cut)) return
     const pause = cooldown?.get(meta.appid)
-    const tagMood = moodMultiplier(meta, mood)
+    const tagMood = moodMultiplier(meta, mood, tilt?.tagBoost ?? null)
     const parts: ScoreParts = {
       taste: profileEmpty ? popularityScore(meta) : tasteOf(normalizedTags(meta)),
       mood: tagMood,
@@ -1444,6 +1530,7 @@ export function scoreCandidates(args: {
       semantics: semanticsMultiplier(meta, mood, tagMood),
       entry: entryMultiplier(meta, source, mood),
       confidence: confidenceMultiplier(meta, source),
+      nudge: nudgeMultiplier(meta, source, tilt),
     }
     if (tooLongForShort(meta, mood)) {
       softSemantics.set(meta.appid, semanticsMultiplier(meta, mood, tagMood, { soft: true }))

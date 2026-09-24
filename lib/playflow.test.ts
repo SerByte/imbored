@@ -179,7 +179,15 @@ describe('/play применяет новую выдачу одной функц
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
 
   test('поля выдачи пишутся в одном месте', () => {
-    for (const setter of ['setDiscoveries(', 'setContinueGame(', 'setEngine(', 'setNowSec(', 'setScope(', 'setSeed(']) {
+    for (const setter of [
+      'setDiscoveries(',
+      'setContinueGame(',
+      'setEngine(',
+      'setNowSec(',
+      'setScope(',
+      'setSeed(',
+      'setNudge(',
+    ]) {
       expect(code.split(setter).length - 1, setter).toBe(1)
     }
   })

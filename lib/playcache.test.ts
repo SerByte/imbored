@@ -70,6 +70,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
       lean: 'fresh',
       scope: 'library',
       seed: null,
+      nudge: null,
       nowSec: Math.floor(NOW / 1000),
       viewer: ME,
     },
@@ -157,6 +158,16 @@ describe('parsePlayCache', () => {
     for (const seed of ['Hades', { appid: '1', name: 'Hades' }, { appid: 0, name: 'X' }, { appid: 5, name: '' }]) {
       expect(parsePlayCache({ ...entry(), deal: { ...entry().deal, seed } })?.deal.seed).toBeNull()
     }
+  })
+
+  test('выдача по подталкиванию возвращается с ним; запись до них и мусор — без него', () => {
+    const e = entry()
+    const nudged = { ...e, deal: { ...e.deal, nudge: 'shorter' } }
+    expect(parsePlayCache(JSON.parse(JSON.stringify(nudged)))?.deal.nudge).toBe('shorter')
+    const old: Record<string, unknown> = { ...e.deal }
+    delete old.nudge
+    expect(parsePlayCache({ ...e, deal: old })?.deal.nudge).toBeNull()
+    expect(parsePlayCache({ ...e, deal: { ...e.deal, nudge: 'faster' } })?.deal.nudge).toBeNull()
   })
 })
 
