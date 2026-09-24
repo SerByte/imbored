@@ -4,13 +4,16 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
+import { ROOM_PRESETS, roomPresetByKey, type RoomPreset } from '@/lib/presets'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { Spinner } from '@/components/Spinner'
+import { useSearch } from '@/components/useSearch'
 
 /**
- * Страница-действие: заходишь — создаётся комната, и тебя уносит в неё.
+ * Страница-действие: выбираешь настроение — создаётся комната, и тебя уносит в
+ * неё.
  *
- * Смотреть тут не на что, поэтому и цена ошибки здесь выше обычного: если
+ * Смотреть тут почти не на что, поэтому и цена ошибки здесь выше обычного: если
  * действие не состоялось, у человека на экране не остаётся НИЧЕГО — ни
  * содержимого, ни выхода. Раньше именно это и происходило.
  *
@@ -25,57 +28,135 @@ import { Spinner } from '@/components/Spinner'
  * через Steam (requireWriter в lib/server). «Попробовать снова» здесь соврало
  * бы, поэтому вместо повтора — вход, который вернёт сюда же и создаст
  * комнату, и дорога к открытым пати, куда подсесть можно и так.
+ *
+ * 'choosing' — первый шаг: хост выбирает настроение комнаты (ROOM_PRESETS), и
+ * колода собирается под него. Раньше тело запроса зашивало одно настроение на
+ * все комнаты, а колода его и вовсе не читала. Выбор — один тап, и он же
+ * создаёт комнату: отдельной кнопки «создать» нет, как не было и раньше.
+ *
+ * Выбранное едет через вход ключом ?preset= (roomQuery в lib/destination):
+ * развёрнутый на вход хост возвращается сюда и получает комнату сразу, без
+ * повторного вопроса.
  */
-type Phase = 'creating' | 'failed' | 'busy' | 'needsteam'
+type Phase = 'choosing' | 'creating' | 'failed' | 'busy' | 'needsteam'
 
 export default function NewRoomPage() {
   const router = useRouter()
-  const [phase, setPhase] = useState<Phase>('creating')
+  const [phase, setPhase] = useState<Phase>('choosing')
+  /** что выбрано тапом; до тапа — то, с чем вернулись со входа */
+  const [picked, setPicked] = useState<RoomPreset | null>(null)
   const started = useRef(false)
 
-  const create = useCallback(async () => {
-    setPhase('creating')
-    try {
-      const res = await fetch('/api/room/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mood: { time: 'long', vibe: 'engaged', social: 'friends' } }),
-      })
-      if (res.status === 401) {
-        router.push(bounceTo('/room/new'))
-        return
-      }
-      // Своя ветка у 429: «попробуй ещё раз» — вредный совет, когда упёрся в
-      // ограничитель частоты, а ждать надо минуты.
-      if (res.status === 429) {
-        setPhase('busy')
-        return
-      }
-      if (await isNeedSteam(res)) {
-        // Тот же ответ узнают и остальные страницы документа (lib/writer)
-        writerStore.set(false)
-        setPhase('needsteam')
-        return
-      }
-      if (!res.ok) {
+  /*
+   * Настроение, с которым вернулись со входа (?preset=). Через useSearch, а не
+   * чтением адреса в эффекте: эффект, который ставит фазу сам, линтер
+   * справедливо называет каскадным рендером, а здесь фаза выводится из
+   * адреса прямо в рендере. Эффект ниже зовёт запрос только при найденном
+   * пресете, поэтому пустой снимок кадра гидратации (см. components/useSearch)
+   * запроса с чужим настроением не пошлёт — он не пошлёт никакого.
+   */
+  const search = useSearch()
+  const back = roomPresetByKey(new URLSearchParams(search).get('preset'))
+  const preset = picked ?? back ?? ROOM_PRESETS[0]
+  const view: Phase = phase === 'choosing' && back ? 'creating' : phase
+
+  const send = useCallback(
+    async (p: RoomPreset) => {
+      try {
+        const res = await fetch('/api/room/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mood: p.mood }),
+        })
+        if (res.status === 401) {
+          router.push(bounceTo('/room/new', new URLSearchParams({ preset: p.key })))
+          return
+        }
+        // Своя ветка у 429: «попробуй ещё раз» — вредный совет, когда упёрся в
+        // ограничитель частоты, а ждать надо минуты.
+        if (res.status === 429) {
+          setPhase('busy')
+          return
+        }
+        if (await isNeedSteam(res)) {
+          // Тот же ответ узнают и остальные страницы документа (lib/writer)
+          writerStore.set(false)
+          setPhase('needsteam')
+          return
+        }
+        if (!res.ok) {
+          setPhase('failed')
+          return
+        }
+        const data = (await res.json()) as { roomId?: string }
+        // replace, а не push: «назад» из комнаты не должен приводить сюда. С
+        // ?preset= в адресе этот заход создал бы ВТОРУЮ комнату, а без него
+        // показал бы выбор, который уже сделан
+        if (data.roomId) router.replace(`/room/${data.roomId}`)
+        else setPhase('failed')
+      } catch {
         setPhase('failed')
-        return
       }
-      const data = (await res.json()) as { roomId?: string }
-      if (data.roomId) router.push(`/room/${data.roomId}`)
-      else setPhase('failed')
-    } catch {
-      setPhase('failed')
-    }
-  }, [router])
+    },
+    [router],
+  )
 
+  const create = (p: RoomPreset) => {
+    setPicked(p)
+    setPhase('creating')
+    void send(p)
+  }
+
+  // Вернулся со входа с уже выбранным настроением — создаём сразу. Один раз:
+  // повтор после отказа — кнопкой, с тем же пресетом
   useEffect(() => {
-    if (started.current) return
+    if (!back || started.current) return
     started.current = true
-    void create()
-  }, [create])
+    void send(back)
+  }, [back, send])
 
-  if (phase === 'creating') {
+  if (view === 'choosing') {
+    return (
+      <div className="flex-1 flex items-center justify-center px-5 py-24">
+        <div className="max-w-md w-full glass rounded-[20px] p-8 flex flex-col gap-5 anim-reveal">
+          <div className="text-center flex flex-col gap-2">
+            <h1 className="text-xl font-bold tracking-tight">Какой будет вечер?</h1>
+            <p className="text-dim text-sm leading-relaxed">
+              Колода соберётся из ваших библиотек под это настроение — его увидят все, кто
+              зайдёт в комнату.
+            </p>
+          </div>
+          <ul className="flex flex-col gap-2">
+            {ROOM_PRESETS.map((p) => (
+              <li key={p.key}>
+                <button
+                  type="button"
+                  onClick={() => create(p)}
+                  className="w-full rounded-[14px] glass glass-hover px-4 py-3 text-left cursor-pointer flex items-center gap-3"
+                >
+                  <span aria-hidden className="text-xl leading-none">
+                    {p.emoji}
+                  </span>
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-sm text-ink">{p.label}</span>
+                    <span className="text-xs text-dim">{p.hint}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <Link
+            href="/rooms"
+            className="tap self-center text-sm text-dim hover:text-ink transition-colors"
+          >
+            ← Подсесть к открытой пати
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (view === 'creating') {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-5">
         <Spinner />
@@ -84,7 +165,7 @@ export default function NewRoomPage() {
     )
   }
 
-  if (phase === 'needsteam') {
+  if (view === 'needsteam') {
     return (
       <div className="flex-1 flex items-center justify-center px-5 py-24">
         <div className="max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col items-center gap-5 anim-reveal">
@@ -93,7 +174,7 @@ export default function NewRoomPage() {
             Ссылка на профиль не доказывает, что профиль твой. По ней можно смотреть подборки и
             голосовать в чужих пати, а создавать свои и сохранять оценки — после входа.
           </p>
-          <a href={steamLoginFor('/room/new')} className="btn-ember is-block py-3">
+          <a href={steamLoginFor(`/room/new?preset=${preset.key}`)} className="btn-ember is-block py-3">
             Войти через Steam
           </a>
           <Link href="/rooms" className="tap text-sm text-dim hover:text-ink transition-colors">
@@ -108,17 +189,17 @@ export default function NewRoomPage() {
     <div className="flex-1 flex items-center justify-center px-5 py-24">
       <div className="max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col items-center gap-5 anim-reveal">
         <h1 className="text-xl font-bold tracking-tight">
-          {phase === 'busy' ? 'Слишком много комнат подряд' : 'Не получилось создать комнату'}
+          {view === 'busy' ? 'Слишком много комнат подряд' : 'Не получилось создать комнату'}
         </h1>
         <p className="text-dim text-sm leading-relaxed">
-          {phase === 'busy'
+          {view === 'busy'
             ? 'С твоего адреса за последний час создано много комнат. Подожди немного — или подсядь к уже открытой пати.'
             : 'Скорее всего, это на нашей стороне. Обычно помогает повторить.'}
         </p>
         {/* Повтор на месте, а не ссылка на эту же страницу: перезаход сюда
             прошёл бы через started.current и снова упёрся бы в ту же попытку. */}
-        {phase === 'failed' && (
-          <button type="button" onClick={() => void create()} className="btn-ember is-block py-3">
+        {view === 'failed' && (
+          <button type="button" onClick={() => create(preset)} className="btn-ember is-block py-3">
             Попробовать снова
           </button>
         )}

@@ -1,7 +1,14 @@
 import { editionKey } from './editions'
-import { buildTagProfile, isMultiplayerMeta, normalizedTags, topTags } from './recommend'
+import {
+  buildTagProfile,
+  isMultiplayerMeta,
+  moodMultiplier,
+  normalizedTags,
+  semanticsMultiplier,
+  topTags,
+} from './recommend'
 import { weightedCosineTo, type TagWeight } from './tagweight'
-import type { GameMeta, LibraryGame } from './types'
+import type { GameMeta, LibraryGame, Mood } from './types'
 
 export type GroupMember = {
   steamid: string
@@ -41,6 +48,15 @@ export type GroupCard = {
  * tagWeight — вес редкости, та же мера вкуса, что у /play (weightedCosineTo):
  * на сыром косинусе колода пати ранжировала по Multiplayer и Action, которые
  * есть у половины каталога. null — сырой косинус, до бита прежний.
+ *
+ * mood — настроение комнаты, которое хост выбрал при создании (ROOM_PRESETS в
+ * lib/presets). Раньше оно хранилось в rooms.mood_json и не доезжало до
+ * колоды вовсе: «пара быстрых каток» и «весь вечер» раздавали одно и то же.
+ * Вкус пати остаётся главным, настроение его взвешивает — той же мерой, что у
+ * /play: теговая часть (moodMultiplier) с поправкой по осям семантики
+ * (semanticsMultiplier). Общие игры по-прежнему идут раньше недостающих:
+ * настроение переставляет карты внутри этих групп, а не между ними. null и
+ * отсутствие — скор до бита прежний.
  */
 export function buildGroupDeck(args: {
   members: GroupMember[]
@@ -49,8 +65,9 @@ export function buildGroupDeck(args: {
   limit: number
   banned?: ReadonlySet<number>
   tagWeight?: TagWeight | null
+  mood?: Mood | null
 }): GroupCard[] {
-  const { members, metaOf, extraPool, limit, banned, tagWeight = null } = args
+  const { members, metaOf, extraPool, limit, banned, tagWeight = null, mood = null } = args
   if (!members.length) return []
 
   // суммарный вкус пати
@@ -62,6 +79,12 @@ export function buildGroupDeck(args: {
   }
   // Сторона общего вкуса готовится один раз, а не на каждую карту
   const tasteOf = weightedCosineTo(combined, tagWeight)
+  // Без настроения — ровно 1, а умножение на единицу скор не трогает вовсе
+  const moodOf = (meta: GameMeta): number => {
+    if (!mood) return 1
+    const tagMood = moodMultiplier(meta, mood)
+    return tagMood * semanticsMultiplier(meta, mood, tagMood)
+  }
 
   const owners = new Map<number, Set<string>>()
   for (const m of members) {
@@ -83,7 +106,7 @@ export function buildGroupDeck(args: {
       name: meta.name,
       ownedByAll: missingFor.length === 0,
       missingFor,
-      score: tasteOf(normalizedTags(meta)),
+      score: tasteOf(normalizedTags(meta)) * moodOf(meta),
       // «Бесплатно» сильнее цены — тот же порядок, что у PriceTag и разметки.
       // Колода пати писала «Нет у: Дима · $15» у бесплатной CS2: у колоды своя
       // строка цены, и isFree до неё просто не доезжал.

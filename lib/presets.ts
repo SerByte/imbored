@@ -52,6 +52,74 @@ export const VIBE_PRESETS: VibePreset[] = [
 ]
 
 /**
+ * Настроение комнаты: хост выбирает его до создания, и колода пати
+ * взвешивается под него (buildGroupDeck в lib/group).
+ *
+ * Своим списком, а не VIBE_PRESETS. Из пяти вайб-пресетов компанию
+ * подразумевает один — «Пятница с друзьями»; остальные сказаны про одного
+ * человека («Залипнуть на выходные», «30 минут до сна»), и выбирать хосту
+ * было бы не из чего. Оси те же: time и vibe взвешивают колоду ровно той же
+ * мерой, что и выдачу /play. social у всех 'friends' — комната и есть
+ * компания.
+ *
+ * Первый — прежнее зашитое настроение (весь вечер, с вызовом): так комнаты,
+ * созданные до выбора, называются тем, чем они и были.
+ */
+export type RoomPreset = {
+  key: string
+  label: string
+  emoji: string
+  /** чем вечер отличается — одной строкой под названием */
+  hint: string
+  mood: Mood
+}
+
+export const ROOM_PRESETS: readonly RoomPreset[] = [
+  {
+    key: 'evening',
+    label: 'Весь вечер вместе',
+    emoji: '🎉',
+    hint: 'Во что можно уйти с головой на пару часов',
+    mood: { time: 'long', vibe: 'engaged', social: 'friends' },
+  },
+  {
+    key: 'quick',
+    label: 'Пара быстрых каток',
+    emoji: '⚡',
+    hint: 'Короткие матчи: зашли, сыграли, разошлись',
+    mood: { time: 'short', vibe: 'engaged', social: 'friends' },
+  },
+  {
+    key: 'cozy',
+    label: 'Уютно и надолго',
+    emoji: '🏡',
+    hint: 'Строить, выживать, фармить — без спешки',
+    mood: { time: 'long', vibe: 'chill', social: 'friends' },
+  },
+  {
+    key: 'talk',
+    label: 'Спокойно, под разговор',
+    emoji: '🛋️',
+    hint: 'Лёгкое, чтобы болтать и не напрягаться',
+    mood: { time: 'medium', vibe: 'chill', social: 'friends' },
+  },
+]
+
+/** Пресет комнаты по ключу из адреса; чужое и пустое — null */
+export function roomPresetByKey(raw: string | null | undefined): RoomPreset | null {
+  return ROOM_PRESETS.find((p) => p.key === raw) ?? null
+}
+
+/**
+ * Пресет, которым названо настроение комнаты, либо null. Сверяются оси,
+ * которые двигают колоду (time и vibe): social у комнаты всегда компания.
+ */
+export function roomPresetOf(mood: Mood | null | undefined): RoomPreset | null {
+  if (!mood) return null
+  return ROOM_PRESETS.find((p) => p.mood.time === mood.time && p.mood.vibe === mood.vibe) ?? null
+}
+
+/**
  * Адрес выдачи — в одном месте.
  *
  * Собирался в трёх: квиз, карточка главной и /play каждый клеили строку

@@ -13,7 +13,7 @@ import {
   reconnectHref,
   steamLoginFor,
 } from './destination'
-import { playHref, presetHref, VIBE_PRESETS } from './presets'
+import { playHref, presetHref, ROOM_PRESETS, VIBE_PRESETS } from './presets'
 
 /**
  * Сторож разворота гостя.
@@ -287,6 +287,47 @@ describe('ответы квиза переживают вход', () => {
     expect(bounceTo('/play', new URLSearchParams())).toBe('/?next=%2Fplay')
     expect(bounceTo('/play', null)).toBe('/?next=%2Fplay')
     expect(steamLoginFor('/play?')).toBe('/api/auth/steam?next=%2Fplay')
+  })
+})
+
+/**
+ * Настроение новой комнаты через вход.
+ *
+ * Хост выбирает настроение до создания, и если его разворачивает на вход —
+ * гостя на лендинг, сессию по ссылке в Steam, — после возврата комната
+ * создаётся сразу с выбранным. Без хвоста он отвечал бы на тот же вопрос
+ * второй раз.
+ */
+describe('настроение комнаты переживает вход', () => {
+  const query = (href: string) => new URLSearchParams(href.split('?')[1] ?? '')
+
+  test('каждый пресет доезжает через лендинг и через Steam', () => {
+    for (const p of ROOM_PRESETS) {
+      const here = `/room/new?preset=${p.key}`
+      expect(destinationUrl(here), p.key).toBe(here)
+      // гость → лендинг → подключение → туда же
+      const landing = bounceTo('/room/new', new URLSearchParams({ preset: p.key }))
+      expect(destinationPath(query(landing).get('next')), p.key).toBe('/room/new')
+      expect(loginTarget(query(landing)), p.key).toBe(here)
+      // сессия по ссылке → вход через Steam → туда же
+      expect(loginTarget(query(steamLoginFor(here))), p.key).toBe(here)
+    }
+  })
+
+  test('чужой ключ и посторонние параметры отбрасываются, место остаётся', () => {
+    expect(destinationUrl('/room/new?preset=rage')).toBe('/room/new')
+    expect(destinationUrl('/room/new?preset=quick&next=%2F%2Fevil.example')).toBe(
+      '/room/new?preset=quick',
+    )
+    // настроение выдачи комнате не хвост
+    expect(destinationUrl('/room/new?time=short&vibe=chill&social=friends')).toBe('/room/new')
+    // и наоборот: ключ комнаты выдаче не хвост
+    expect(destinationUrl('/play?preset=quick')).toBe('/play')
+  })
+
+  test('без выбора — как раньше', () => {
+    expect(bounceTo('/room/new')).toBe('/?next=%2Froom%2Fnew')
+    expect(steamLoginFor('/room/new')).toBe('/api/auth/steam?next=%2Froom%2Fnew')
   })
 })
 

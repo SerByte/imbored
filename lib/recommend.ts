@@ -929,8 +929,12 @@ export function buildAnchorFinder(
  * tagBoost — прибавка за теги сверх вайба и времени («Про историю»,
  * lib/nudge.ts). Берётся самая большая из совпавших, а не сумма: Story Rich и
  * Narrative говорят об одном, и два тега не должны весить вдвое.
+ *
+ * Экспортируется ради колоды пати (lib/group): у комнаты своё настроение, и
+ * мера у него обязана быть той же, что у /play, — вместе с поправкой по осям
+ * семантики (semanticsMultiplier), а не второй копией списков тегов.
  */
-function moodMultiplier(
+export function moodMultiplier(
   meta: GameMeta,
   mood: Mood,
   tagBoost: Readonly<Record<string, number>> | null = null,

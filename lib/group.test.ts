@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { buildGroupDeck } from './group'
 import { buildTagProfile, normalizedTags } from './recommend'
 import { cosine, tagWeightFrom } from './tagweight'
-import type { GameMeta, LibraryGame } from './types'
+import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
 
 const MP = [1, 9, 38]
 const SP = [2]
@@ -233,6 +233,87 @@ describe('buildGroupDeck', () => {
     test('без банов колода та же, что и раньше', () => {
       const args = { members: MEMBERS, metaOf, extraPool: [METAS.get(4)!], limit: 10 }
       expect(buildGroupDeck({ ...args, banned: new Set() })).toEqual(buildGroupDeck(args))
+    })
+  })
+
+  /**
+   * Настроение комнаты хранилось с первого дня (rooms.mood_json) и до колоды
+   * не доезжало: «пара быстрых каток» и «весь вечер» раздавали одно и то же.
+   */
+  describe('настроение комнаты', () => {
+    // Две общие игры, одинаково близкие к вкусу пати: у обоих участников
+    // они есть с одинаковыми часами, а теги зеркальны. Разводит их только
+    // настроение
+    const cozy = meta(30, { 'Co-op': 100, Relaxing: 90, 'Farming Sim': 80 })
+    const frantic = meta(31, { 'Co-op': 100, Competitive: 90, 'Fast-Paced': 80 })
+    const both = [cozy, frantic]
+    const byId = new Map(both.map((g) => [g.appid, g]))
+    const pair = [
+      { steamid: 'a', name: 'Аня', library: [lib(30, 20), lib(31, 20)] },
+      { steamid: 'b', name: 'Боря', library: [lib(30, 20), lib(31, 20)] },
+    ]
+    const COZY: Mood = { time: 'long', vibe: 'chill', social: 'friends' }
+    const QUICK: Mood = { time: 'short', vibe: 'engaged', social: 'friends' }
+    const deckFor = (mood: Mood | null | undefined, extraPool: GameMeta[] = []) =>
+      buildGroupDeck({
+        members: pair,
+        metaOf: (id) => byId.get(id) ?? extraPool.find((g) => g.appid === id),
+        extraPool,
+        limit: 10,
+        ...(mood !== undefined ? { mood } : {}),
+      })
+
+    test('без настроения зеркальные игры равны — разводить их нечему', () => {
+      const [x, y] = deckFor(undefined)
+      expect(x.score).toBe(y.score)
+    })
+
+    test('уютный вечер ставит уютное первым, быстрые катки — быстрое', () => {
+      expect(deckFor(COZY)[0].appid).toBe(30)
+      expect(deckFor(QUICK)[0].appid).toBe(31)
+    })
+
+    test('null и отсутствие — колода до бита прежняя', () => {
+      expect(deckFor(null)).toEqual(deckFor(undefined))
+      const args = { members: MEMBERS, metaOf, extraPool: [METAS.get(4)!], limit: 10 }
+      expect(buildGroupDeck({ ...args, mood: null })).toEqual(buildGroupDeck(args))
+    })
+
+    test('настроение переставляет внутри групп, но общее по-прежнему раньше недостающего', () => {
+      // Идеальная под уютный вечер игра из пула, которой нет ни у кого, против
+      // общей «быстрой» — общая всё равно первой: купить ради вечера дороже,
+      // чем сыграть в то, что уже есть
+      const perfect = meta(40, { 'Co-op': 100, Relaxing: 100, 'Farming Sim': 100, Cozy: 90 })
+      const deck = deckFor(COZY, [perfect])
+      const firstPool = deck.findIndex((c) => !c.ownedByAll)
+      expect(deck.slice(0, firstPool).every((c) => c.ownedByAll)).toBe(true)
+      expect(deck[firstPool].appid).toBe(40)
+    })
+
+    test('уверенная семантика слышна: заход на три часа тонет в «паре быстрых каток»', () => {
+      const long: GameSemantics = {
+        v: 1,
+        axes: { challenge: 70, complexity: 65, pace: 60 },
+        session: { bucket: 'long', minutes: 180, canStopAnytime: false },
+        timeToFun: { bucket: null, hours: null },
+        confidence: 0.9,
+        n: 40,
+        basis: 'tags+reviews',
+      }
+      const tags = { 'Co-op': 100, Competitive: 90 }
+      const plain = meta(50, tags)
+      const heavy = { ...meta(51, tags), semantics: long }
+      const pool = new Map([plain, heavy].map((g) => [g.appid, g]))
+      const members = pair.map((m) => ({ ...m, library: [lib(50, 20), lib(51, 20)] }))
+      const deck = buildGroupDeck({
+        members,
+        metaOf: (id) => pool.get(id),
+        extraPool: [],
+        limit: 10,
+        mood: QUICK,
+      })
+      expect(deck.map((c) => c.appid)).toEqual([50, 51])
+      expect(deck[1].score).toBeLessThan(deck[0].score)
     })
   })
 })

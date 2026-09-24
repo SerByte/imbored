@@ -11,7 +11,7 @@ import {
 import { rotationSlot } from '@/lib/pool'
 import { nowSec } from '@/lib/server'
 import { freshDb, params, post, signInAs } from '@/lib/testing/route'
-import type { GameMeta, LibraryGame } from '@/lib/types'
+import type { GameMeta, LibraryGame, Mood } from '@/lib/types'
 import { POST as vote } from '../vote/route'
 import { GET as deck } from './route'
 
@@ -169,5 +169,57 @@ describe('/api/room/[id]/deck: «Больше не показывать»', () =
     await logFeedback(db, { steamid: '76561197960280000', appid: 620, action: 'banned' }, nowSec())
     const body = (await (await get()).json()) as { cards: Array<{ appid: number }> }
     expect(body.cards.map((c) => c.appid).sort()).toEqual([570, 620])
+  })
+})
+
+/**
+ * Настроение, которое хост выбрал при создании. Лежало в rooms.mood_json с
+ * первого дня, а колода его не читала: «пара быстрых каток» и «весь вечер»
+ * раздавали одно и то же.
+ */
+describe('/api/room/[id]/deck: настроение комнаты', () => {
+  // Зеркальные общие игры: вкус пати их не различает, различает настроение
+  const COZY: GameMeta = {
+    ...meta(30, 'Cozy Farm'),
+    tags: { 'Co-op': 100, Relaxing: 90, 'Farming Sim': 80 },
+  }
+  const FRANTIC: GameMeta = {
+    ...meta(31, 'Frantic Arena'),
+    tags: { 'Co-op': 100, Competitive: 90, 'Fast-Paced': 80 },
+  }
+
+  async function roomWith(mood?: Mood) {
+    const now = nowSec()
+    const me = await signInAs(db, 'openid')
+    for (const g of [COZY, FRANTIC]) await upsertGameMeta(db, g, now)
+    await createRoom(db, { id: ROOM, steamid: me, ...(mood ? { mood } : {}) }, now)
+    for (const steamid of [me, FRIEND]) {
+      await joinRoom(db, ROOM, steamid, undefined, now)
+      await saveLibrarySnapshot(db, steamid, owned(COZY, FRANTIC), now)
+    }
+  }
+
+  const order = async () =>
+    ((await (await get()).json()) as { cards: Array<{ appid: number }> }).cards.map((c) => c.appid)
+
+  test('уютный вечер — уютное первым', async () => {
+    await roomWith({ time: 'long', vibe: 'chill', social: 'friends' })
+    expect(await order()).toEqual([30, 31])
+  })
+
+  test('пара быстрых каток — быстрое первым', async () => {
+    await roomWith({ time: 'short', vibe: 'engaged', social: 'friends' })
+    expect(await order()).toEqual([31, 30])
+  })
+
+  test('битая строка настроения в базе колоду не роняет', async () => {
+    await roomWith()
+    await db.execute({
+      sql: 'UPDATE rooms SET mood_json = ? WHERE id = ?',
+      args: ['{"time":"forever"}', ROOM],
+    })
+    const res = await get()
+    expect(res.status).toBe(200)
+    expect((await order()).sort()).toEqual([30, 31])
   })
 })

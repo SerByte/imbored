@@ -19,12 +19,14 @@
  *
  * Хвост запроса едет тоже, но так же по списку — см. destinationUrl.
  *
- * Единственный импорт — разбор настроения из lib/mood, у которого самого
- * зависимостей нет: модуль читают и серверные страницы, и клиентский лендинг,
- * и роут возврата из Steam, и proxy.ts.
+ * Импорты — разбор настроения из lib/mood и пресеты комнаты из lib/presets, у
+ * которых самих зависимостей нет (у presets они только типовые): модуль
+ * читают и серверные страницы, и клиентский лендинг, и роут возврата из
+ * Steam, и proxy.ts.
  */
 
 import { parseLean, parseMood } from './mood'
+import { roomPresetByKey } from './presets'
 
 export type Destination = {
   /** Что сказать на лендинге вместо общего обещания продукта. */
@@ -96,20 +98,40 @@ function playQuery(src: URLSearchParams): URLSearchParams {
 }
 
 /**
+ * Что из строки запроса новой комнаты едет через вход: выбранное хостом
+ * настроение, ключом пресета (ROOM_PRESETS). Хост выбирал его до того, как
+ * его развернуло на вход, и после входа комната создаётся сразу с ним — а не
+ * заново с вопросом, на который он уже ответил. Чужой ключ отбрасывается.
+ */
+function roomQuery(src: URLSearchParams): URLSearchParams {
+  const out = new URLSearchParams()
+  const preset = roomPresetByKey(src.get('preset'))
+  if (preset) out.set('preset', preset.key)
+  return out
+}
+
+/** У кого из мест назначения есть свой хвост запроса */
+const QUERY_OF: Record<string, (src: URLSearchParams) => URLSearchParams> = {
+  '/play': playQuery,
+  '/room/new': roomQuery,
+}
+
+/**
  * Проверенный адрес назначения вместе с разрешённым хвостом запроса либо null.
  *
- * Путь — строго из DESTINATIONS, хвост — только у /play и только его
- * параметры (playQuery). У остальных мест хвоста нет, и мусор в нём
- * отбрасывается, а не губит весь адрес: человек всё равно шёл в библиотеку.
- * Результат собирается заново из проверенного, поэтому его можно класть и в
- * next, и в редирект.
+ * Путь — строго из DESTINATIONS, хвост — только у /play и /room/new и только
+ * их параметры (playQuery, roomQuery). У остальных мест хвоста нет, и мусор в
+ * нём отбрасывается, а не губит весь адрес: человек всё равно шёл в
+ * библиотеку. Результат собирается заново из проверенного, поэтому его можно
+ * класть и в next, и в редирект.
  */
 export function destinationUrl(raw: string | null | undefined): string | null {
   if (!raw) return null
   const cut = raw.indexOf('?')
   const path = cut < 0 ? raw : raw.slice(0, cut)
   if (!Object.hasOwn(DESTINATIONS, path)) return null
-  const query = cut >= 0 && path === '/play' ? playQuery(new URLSearchParams(raw.slice(cut + 1))) : null
+  const tail = Object.hasOwn(QUERY_OF, path) ? QUERY_OF[path] : null
+  const query = cut >= 0 && tail ? tail(new URLSearchParams(raw.slice(cut + 1))) : null
   return query?.size ? `${path}?${query}` : path
 }
 

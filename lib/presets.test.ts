@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import { LEANS, NEUTRAL_MOOD, parseLean, parseMood } from './mood'
-import { playHref, presetHref, VIBE_PRESETS } from './presets'
+import {
+  playHref,
+  presetHref,
+  ROOM_PRESETS,
+  roomPresetByKey,
+  roomPresetOf,
+  VIBE_PRESETS,
+} from './presets'
 import { parseFocus } from './recommend'
 import type { Mood } from './types'
 
@@ -65,5 +72,51 @@ describe('playHref', () => {
   test('null и отсутствие опций в адрес не попадают', () => {
     const got = read(playHref(NEUTRAL_MOOD, { lean: null, focus: null, roulette: false }))
     expect(got.keys).toEqual(['time', 'vibe', 'social'])
+  })
+})
+
+/**
+ * Настроение комнаты. Хост выбирает пресет до создания, в базу уходит его
+ * mood, а комната потом называет его обратно (roomPresetOf) — круг обязан
+ * замыкаться, иначе подпись в комнате расходилась бы с тем, подо что собрана
+ * колода.
+ */
+describe('ROOM_PRESETS', () => {
+  test('каждый пресет — компания и проходит тот же разбор, что тело создания комнаты', () => {
+    for (const p of ROOM_PRESETS) {
+      expect(p.mood.social, p.key).toBe('friends')
+      expect(parseMood(p.mood), p.key).toEqual(p.mood)
+    }
+  })
+
+  test('ключи и пары «время + вайб» не повторяются — название настроения однозначно', () => {
+    const keys = ROOM_PRESETS.map((p) => p.key)
+    expect(new Set(keys).size).toBe(keys.length)
+    const axes = ROOM_PRESETS.map((p) => `${p.mood.time}|${p.mood.vibe}`)
+    expect(new Set(axes).size).toBe(axes.length)
+  })
+
+  test('первый — прежнее зашитое настроение: старые комнаты называются тем, чем были', () => {
+    expect(ROOM_PRESETS[0].mood).toEqual({ time: 'long', vibe: 'engaged', social: 'friends' })
+    expect(roomPresetOf({ time: 'long', vibe: 'engaged', social: 'friends' })?.key).toBe(
+      ROOM_PRESETS[0].key,
+    )
+  })
+
+  test('ключ и настроение ведут к одному и тому же пресету', () => {
+    for (const p of ROOM_PRESETS) {
+      expect(roomPresetByKey(p.key), p.key).toBe(p)
+      expect(roomPresetOf(p.mood), p.key).toBe(p)
+    }
+  })
+
+  test('чужое — не пресет', () => {
+    for (const raw of [null, undefined, '', 'EVENING', 'friday', '__proto__']) {
+      expect(roomPresetByKey(raw), String(raw)).toBeNull()
+    }
+    expect(roomPresetOf(null)).toBeNull()
+    expect(roomPresetOf(undefined)).toBeNull()
+    // Комнаты «коротко и спокойно» в списке нет — и подписывать её нечем
+    expect(roomPresetOf({ time: 'short', vibe: 'chill', social: 'friends' })).toBeNull()
   })
 })

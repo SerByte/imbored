@@ -3,6 +3,7 @@ import { memberLabel } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
 import { getGameMeta, getRoom, roomMembers, roomVoteCounts, snapshotOwns } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
+import { parseMood } from '@/lib/mood'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
 
@@ -119,6 +120,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       isPublic: room.isPublic,
       deckRound: room.deckRound,
       deckSize: room.deckSize,
+      // Под какое настроение собрана колода — его выбирал хост, а видеть
+      // должны все: без подписи «пара быстрых каток» у пришедшего по ссылке
+      // колода из коротких матчей выглядит случайной
+      mood: parseMood(room.mood),
     },
     isHost: steamid === room.createdBy,
     members: memberViews,

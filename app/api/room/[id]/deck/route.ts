@@ -16,6 +16,7 @@ import {
 import { discountView, trustedPrice } from '@/lib/discount'
 import { sessionTrait } from '@/lib/gametraits'
 import { buildGroupDeck } from '@/lib/group'
+import { parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildTagProfile } from '@/lib/recommend'
@@ -145,6 +146,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     banned,
     // Та же мера вкуса, что у /play: карта тегов уже прочитана ради пула
     tagWeight: tagWeightFrom(tagStats),
+    // Настроение, которое хост выбрал при создании (ROOM_PRESETS). Лежало в
+    // mood_json с первого дня и до колоды не доезжало. Через parseMood: строка
+    // из базы разбирается тем же сторожем, что и тело запроса создания, — у
+    // старой или битой строки настроения просто нет, и колода прежняя
+    mood: parseMood(room.mood),
   })
 
   // Колода собирается из библиотек участников, а они офлайн-фильтры каталога

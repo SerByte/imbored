@@ -15,8 +15,10 @@ import type { GameArtUrls } from '@/lib/art'
 import { claimVote, deckStuck, voteMiss, voteSignal } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
+import type { Mood } from '@/lib/types'
 import type { RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
+import { roomPresetOf } from '@/lib/presets'
 import type { NearMiss } from '@/lib/roomlikes'
 import { nextPollStep } from '@/lib/roompoll'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -51,6 +53,8 @@ type RoomState = {
     isPublic: boolean
     deckRound: number
     deckSize: number | null
+    /** настроение, под которое собрана колода; null — у старой комнаты его нет */
+    mood?: Mood | null
   }
   isHost: boolean
   members: RoomMemberView[]
@@ -917,6 +921,7 @@ export default function RoomPage() {
   // Ровно то условие, при котором ниже рендерится RoomWaiting с AloneInvite:
   // колода загружена и пуста, а waitingMode отдаёт 'alone'
   const aloneInvite = alone && !deckFailed && cards !== null && !card
+  const moodPreset = roomPresetOf(state.room.mood)
 
   return (
     <div className="flex-1 mx-auto w-full max-w-2xl px-5 pt-24 pb-16 flex flex-col gap-6">
@@ -929,6 +934,12 @@ export default function RoomPage() {
           <p className="text-xs text-dim mt-0.5">
             {alone ? 'Матч нужен минимум вдвоём' : 'Совпадут голоса всех — будет матч'}
           </p>
+          {/* Настроение выбирал хост при создании, и колода собрана под него */}
+          {moodPreset && (
+            <p className="text-xs text-dim mt-0.5">
+              <span aria-hidden>{moodPreset.emoji}</span> {moodPreset.label}
+            </p>
+          )}
         </div>
         {/*
           Кнопки прячутся, когда внизу уже стоит AloneInvite.
