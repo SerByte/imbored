@@ -74,6 +74,7 @@ import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
 import { TagChips } from '@/components/TagChips'
+import { TrailerPreview } from '@/components/TrailerPreview'
 
 type Pick = PlayPick
 
@@ -1304,6 +1305,17 @@ function Player({ say }: { say: (line: string) => void }) {
             {pick.tags.length > 0 && (
               <motion.div variants={STEP}>
                 <TagChips tags={pick.tags} matched={pick.signals?.sharedTags ?? []} />
+              </motion.div>
+            )}
+
+            {/* Секунды геймплея — по нажатию, свёрнутые в строку: герой и так
+                несёт кадры фоном, а ролик в пару мегабайт качать без спроса на
+                каждой пролистанной карточке незачем (см. TrailerPreview). Секция
+                героя пересоздаётся на каждую игру, так что ролик прошлой не
+                доиграет под новой */}
+            {pick.trailer && (
+              <motion.div variants={STEP} className="max-w-xl">
+                <TrailerPreview trailer={pick.trailer} name={pick.name} compact />
               </motion.div>
             )}
 

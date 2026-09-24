@@ -1,4 +1,5 @@
 import { STEAM_IMG_DOMAINS } from './steamhtml'
+import { STEAM_MEDIA_DOMAIN } from './trailer'
 
 /**
  * Заголовки безопасности и политика содержимого (CSP).
@@ -70,6 +71,11 @@ export function cspMode(env: Record<string, string | undefined>): CspMode {
  * Policy» в vercel.com/docs/vercel-toolbar/managing-toolbar). На проде его
  * нет, и хосты туда не попадают.
  *
+ * Видео — только микротрейлеры Steam (lib/trailer.ts), с поддоменов
+ * steamstatic.com: сейчас это video.akamai. Без своей директивы media-src
+ * падала бы в default-src 'self', и в режиме запрета трейлер молча не играл
+ * бы ни у кого. Постер к нему — картинка с CDN магазина, он уже в img-src.
+ *
  * upgrade-insecure-requests нет намеренно: в режиме отчёта браузер его
  * игнорирует и пишет об этом в консоль, а HTTPS держит HSTS от Vercel.
  */
@@ -95,6 +101,7 @@ export function cspDirectives({ dev, preview }: CspMode): Array<[string, string[
       'img-src',
       ["'self'", 'data:', 'blob:', ...steamImg, ...(preview ? [...live, 'https://vercel.com'] : [])],
     ],
+    ['media-src', ["'self'", `https://*.${STEAM_MEDIA_DOMAIN}`]],
     // next/font раздаёт шрифты со своего адреса, Google Fonts браузер не видит
     ['font-src', ["'self'", ...(preview ? [...live, 'https://assets.vercel.com'] : [])]],
     ['connect-src', ["'self'", ...(preview ? [...live, 'wss://ws-us3.pusher.com'] : [])]],

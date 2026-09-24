@@ -50,10 +50,14 @@ describe('/api/recommend', () => {
   })
 })
 
+const trailerOf = (appid: number) => ({
+  mp4: `https://video.akamai.steamstatic.com/store_trailers/${appid}/1/h/2/microtrailer.mp4`,
+})
+
 /**
- * Метаданные библиотеки читаются узкой выборкой, без скриншотов, — а кадры
- * героям доезжают отдельным запросом по пятёрке (getHeroMedia). Проверка, что
- * при этой перестановке у героя не пропали кадры.
+ * Метаданные библиотеки читаются узкой выборкой, без скриншотов, — а кадры и
+ * трейлер героям доезжают отдельным запросом по пятёрке (getHeroMedia).
+ * Проверка, что при этой перестановке у героя не пропали кадры.
  */
 describe('/api/recommend: кадры героев', () => {
   afterEach(() => {
@@ -89,17 +93,25 @@ describe('/api/recommend: кадры героев', () => {
         categories: [2],
         art: {},
         screenshots: [1, 2, 3, 4, 5].map((n) => `https://cdn.example/${appid}/${n}.jpg`),
+        // трейлер есть не у всех: у нечётных по позиции его нет вовсе
+        ...(ids.indexOf(appid) % 2 === 0 ? { trailer: trailerOf(appid) } : {}),
       })),
       now,
     )
 
     const res = await POST(post('/api/recommend', { mood: MOOD }))
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { picks: Array<{ appid: number; screenshots: string[] }> }
+    const body = (await res.json()) as {
+      picks: Array<{ appid: number; screenshots: string[]; trailer: unknown }>
+    }
     expect(body.picks.length).toBeGreaterThan(0)
     for (const p of body.picks) {
       expect(p.screenshots, `кадры ${p.appid}`).toEqual(
         [1, 2, 3, 4, 5].slice(0, HERO_SLIDES).map((n) => `https://cdn.example/${p.appid}/${n}.jpg`),
+      )
+      // Трейлер едет тем же отдельным чтением, что и кадры; нет — явный null
+      expect(p.trailer, `трейлер ${p.appid}`).toEqual(
+        ids.indexOf(p.appid) % 2 === 0 ? trailerOf(p.appid) : null,
       )
     }
   })

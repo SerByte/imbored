@@ -26,6 +26,7 @@ import type { GameTrait } from './gametraits'
 import { parseLean, type Lean } from './mood'
 import { plural } from './plural'
 import type { ContinueGame, OwnAnchor, Scope } from './recommend'
+import type { Trailer } from './trailer'
 import type { CandidateSource } from './types'
 
 export type PickSignals = {
@@ -50,6 +51,11 @@ export type PlayPick = {
   /** Кадры для морфа в герое. Приходят только у picks: карточки открытий
       героем не становятся, им они не нужны. */
   screenshots?: string[]
+  /**
+   * Микротрейлер героя (lib/trailer.ts) — тоже только у picks. null — у игры
+   * его нет; нет поля — выдача из кэша устройства, сохранённая до трейлеров.
+   */
+  trailer?: Trailer | null
   ccu: number | null
   ccuAt: number | null
   shortDescription: string | null

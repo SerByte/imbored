@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { shotUrl } from './shots'
@@ -168,5 +168,66 @@ describe('readTrailer', () => {
     expect(readTrailer(JSON.stringify({ mp4: ok, poster: 'https://evil.example/p.jpg' }))).toEqual({
       mp4: ok,
     })
+  })
+})
+
+/**
+ * Сторож «ничего без нажатия».
+ *
+ * Ролик весит 2–3 МБ, а на /play пятёрку листают руками: один autoPlay или
+ * preload="auto" — и каждая пролистанная карточка стоит мегабайты трафика, а
+ * фон под заголовком начинает двигаться без спроса. Атрибут poster у <video>
+ * тоже нельзя: он качается сразу, мимо ленивой загрузки. Поведение в браузере
+ * тестом не проверить, поэтому здесь текст — как у остальных сторожей
+ * разметки.
+ */
+describe('видео на страницах', () => {
+  const ROOT = path.join(__dirname, '..')
+  const videos: Array<{ file: string; tag: string }> = []
+
+  /** Открывающий тег целиком: `=>` внутри {…} его не обрывает */
+  const tagAt = (src: string, i: number): string => {
+    let depth = 0
+    for (let j = i; j < src.length; j++) {
+      const c = src[j]
+      if (c === '{') depth++
+      else if (c === '}') depth--
+      else if (c === '>' && depth === 0) return src.slice(i, j + 1)
+    }
+    return src.slice(i)
+  }
+
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith('.tsx')) {
+        // без комментариев: в них «<video>» — слово, а не разметка
+        const src = readFileSync(p, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/^\s*\/\/.*$/gm, '')
+        for (const m of src.matchAll(/<video\b/g)) {
+          videos.push({
+            file: path.relative(ROOT, p).split(path.sep).join('/'),
+            tag: tagAt(src, m.index),
+          })
+        }
+      }
+    }
+  }
+  for (const dir of ['app', 'components']) walk(path.join(ROOT, dir))
+
+  test('сторож видит ролик трейлера', () => {
+    expect(videos.map((v) => v.file)).toContain('components/TrailerPreview.tsx')
+  })
+
+  test('без автоплея, без предзагрузки и без постера-атрибута', () => {
+    for (const v of videos) {
+      expect(v.tag, v.file).toMatch(/\bpreload="none"/)
+      expect(v.tag, v.file).not.toMatch(/\bautoPlay\b/)
+      expect(v.tag, v.file).not.toMatch(/\bposter=/)
+      expect(v.tag, v.file).toMatch(/\bmuted\b/)
+      expect(v.tag, v.file).toMatch(/\bplaysInline\b/)
+    }
   })
 })

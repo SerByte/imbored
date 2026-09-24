@@ -14,6 +14,7 @@ import {
   violationKey,
 } from './csp'
 import { STEAM_IMG_DOMAINS } from './steamhtml'
+import { parseStoreTrailer, VIDEO_BASE } from './trailer'
 
 const ROOT = path.join(__dirname, '..')
 const PROD = { dev: false, preview: false }
@@ -115,6 +116,26 @@ describe('CSP', () => {
     // и ничего лишнего: чужой хост и подделка под Steam не проходят
     expect(allows(img, 'https://evil.example/x.png')).toBe(false)
     expect(allows(img, 'https://steamstatic.com.evil.example/x.png')).toBe(false)
+  })
+
+  test('трейлеры Steam играют, а чужое видео — нет', () => {
+    const media = directive('media-src')
+    const t = parseStoreTrailer({
+      highlights: [
+        {
+          all_ages: true,
+          trailer_url_format: 'steam/apps/${FILENAME}?t=1',
+          screenshot_full: '9/movie_full.jpg',
+          microtrailer: [{ filename: '730/1/h/2/microtrailer.mp4', type: 'video/mp4' }],
+        },
+      ],
+    })
+    expect(t?.mp4.startsWith(VIDEO_BASE)).toBe(true)
+    expect(allows(media, t!.mp4), 'ролик').toBe(true)
+    // постер — картинка, его пускает img-src
+    expect(allows(directive('img-src'), t!.poster!), 'постер').toBe(true)
+    expect(allows(media, 'https://evil.example/x.mp4')).toBe(false)
+    expect(allows(media, 'https://steamstatic.com.evil.example/x.mp4')).toBe(false)
   })
 
   test('отчёты уходят в роут, который их принимает', () => {

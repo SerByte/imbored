@@ -30,6 +30,7 @@ import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
 import { SectionLabel } from '@/components/Labels'
+import { TrailerPreview } from '@/components/TrailerPreview'
 
 /**
  * Страница кэшируется на сутки вместо force-dynamic.
@@ -508,6 +509,22 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
       </section>
 
       <div className="mx-auto max-w-5xl px-5 pb-16 flex flex-col gap-10">
+        {/*
+          Как игра выглядит в движении — первым под героем, раньше мнений о
+          ней: «стоит ли играть» начинается с того, что это вообще такое, а
+          единственным способом увидеть это была ссылка на YouTube в герое.
+
+          Микротрейлер Steam, несколько секунд без звука. Ничего не качается,
+          пока не нажали, и постер ленивый — см. TrailerPreview. Страница живёт
+          на ISR, а островок клиентский и про кэш ничего не знает.
+        */}
+        {meta.trailer && (
+          <section>
+            <SectionLabel className="mb-4">В движении</SectionLabel>
+            <TrailerPreview trailer={meta.trailer} name={meta.name} className="max-w-3xl" />
+          </section>
+        )}
+
         {/* pros / cons из реальных отзывов */}
         {/* Сюда доходит только собранное моделью — эвристику отсекает
             loadGamePage, там же объяснено почему. */}

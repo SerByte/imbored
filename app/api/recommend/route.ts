@@ -444,7 +444,8 @@ export async function POST(req: Request) {
   }
 
   /**
-   * Кадры для морфа в герое — только у picks, и это не экономия ради экономии.
+   * Кадры для морфа в герое и трейлер — только у picks, и это не экономия
+   * ради экономии.
    * Карточка «Ещё варианты» по клику становится героем, а «нет в библиотеке»
    * ведёт в магазин и героем не станет никогда, так что её кадры точно никто
    * не покажет. Обрезка до HERO_SLIDES по той же причине: в одном ответе пять
@@ -459,13 +460,20 @@ export async function POST(req: Request) {
     picks.map((p) => p.appid),
   )
   const heroShots = (appid: number) => (media.get(appid)?.screenshots ?? []).slice(0, HERO_SLIDES)
+  // Трейлер — пара ссылок, а не ролик: сам ролик качается только по нажатию
+  // (components/TrailerPreview), так что лишняя пятёрка ссылок ничего не стоит
+  const heroTrailer = (appid: number) => media.get(appid)?.trailer ?? null
 
   return NextResponse.json({
     // Серверные часы к ответу: по ним PlayersNow решает, имеет ли право
     // подписать онлайн словом «сейчас». Клиентский Date.now() в рендере и
     // нечист, и расходится с SSR — тот же довод, что в components/whatsnew/Now
     nowSec: nowSec(),
-    picks: picks.map((p) => ({ ...enrich(p), screenshots: heroShots(p.appid) })),
+    picks: picks.map((p) => ({
+      ...enrich(p),
+      screenshots: heroShots(p.appid),
+      trailer: heroTrailer(p.appid),
+    })),
     discoveries: discoveries.map(enrich),
     engine: fromClaude ? 'claude' : 'heuristic',
     candidateCount: candidates.length,
