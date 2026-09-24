@@ -1,8 +1,10 @@
 'use client'
 
 import { AnimatePresence, motion } from 'motion/react'
+import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FeedItem } from '@/lib/db'
+import { newsPath } from '@/lib/newspage'
 import type { NewsBlock } from '@/lib/steamhtml'
 import { NewsBody } from './NewsBody'
 import { NewsDate, ScaleBadge } from './NewsMeta'
@@ -178,14 +180,27 @@ function Row({
                   ))}
                 </div>
               )}
-              <a
-                href={item.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="tap text-xs text-dim hover:text-ink transition-colors self-start"
-              >
-                Оригинал в Steam
-              </a>
+              {/* Свой адрес патча — первым, оригинал — вторым: пересказ
+                  есть только у нас, а Steam человек найдёт и сам. Страницей
+                  патча можно поделиться, и её видит поиск. Без префетча:
+                  раскрыть можно несколько строк, а переходят по одной. */}
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 self-start text-xs">
+                <Link
+                  href={newsPath(item.appid, item.gid)}
+                  prefetch={false}
+                  className="tap font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+                >
+                  Отдельной страницей
+                </Link>
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="tap text-dim hover:text-ink transition-colors"
+                >
+                  Оригинал в Steam
+                </a>
+              </div>
             </div>
           </motion.div>
         )}

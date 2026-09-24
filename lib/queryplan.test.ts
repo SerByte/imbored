@@ -8,17 +8,20 @@ import {
   createDb,
   getFeedForApps,
   getFeedHeadForApps,
+  getGamePatchHeads,
   getHeroMedia,
   getGamesMeta,
   getGamesMetaLite,
   getMajorFeed,
   getMajorFeedHead,
   getNeighbors,
+  getNewsPage,
   getUnsummarized,
   listExplore,
   listPublicRooms,
   migrateDb,
   revokeAllSessions,
+  sitemapNews,
   getStaleAppids,
   stalePriceAppids,
   sweepStale,
@@ -157,6 +160,28 @@ const CASES: Case[] = [
     run: (db) => getFeedHeadForApps(db, [730, 570]),
     indexes: ['idx_news_app'],
     sortFree: false,
+  },
+  // Карта сайта: те же крупные патчи, что в ленте, с отсечкой по дате —
+  // диапазон частичного индекса, порядок из него же
+  {
+    name: 'патчи для карты сайта',
+    run: (db) => sitemapNews(db, NOW - 90 * 86_400, 5000),
+    indexes: ['idx_news_feed'],
+    sortFree: true,
+  },
+  // «Другие патчи» на странице патча: одна игра, свежие первыми
+  {
+    name: 'заголовки патчей игры',
+    run: (db) => getGamePatchHeads(db, 730, 7),
+    indexes: ['idx_news_app'],
+    sortFree: true,
+  },
+  // Страница патча: пост по первичному ключу, игра — по своему
+  {
+    name: 'страница патча',
+    run: (db) => getNewsPage(db, 730, '1'),
+    indexes: [NEWS_PK],
+    sortFree: true,
   },
   {
     name: 'очередь пересказа',

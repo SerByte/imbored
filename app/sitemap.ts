@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next'
-import { sitemapGames } from '@/lib/db'
-import { appBaseUrl, getDb } from '@/lib/server'
+import { sitemapGames, sitemapNews } from '@/lib/db'
+import { newsPath, SITEMAP_NEWS_MAX, SITEMAP_NEWS_WINDOW_SEC } from '@/lib/newspage'
+import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
 /**
  * Карта сайта. Раньше её не было вовсе, и единственное содержание проекта —
@@ -69,6 +70,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     console.error('sitemap: каталог недоступен, отдаём только статические адреса', err)
   }
 
+  /*
+   * Страницы пересказов патчей — отдельной выборкой и отдельным try: упавшая
+   * выборка патчей не должна уносить с собой пять тысяч карточек игр. Только
+   * крупные, с пересказом, у живых игр и за девяносто дней — что и почему, в
+   * lib/newspage и у sitemapNews.
+   */
+  let news: Awaited<ReturnType<typeof sitemapNews>> = []
+  try {
+    news = await sitemapNews(await getDb(), nowSec() - SITEMAP_NEWS_WINDOW_SEC, SITEMAP_NEWS_MAX)
+  } catch (err) {
+    console.error('sitemap: патчи недоступны, отдаём без них', err)
+  }
+
   return [
     ...stat,
     ...games.map((g) => ({
@@ -76,6 +90,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: new Date(g.updatedAt * 1000),
       changeFrequency: 'weekly' as const,
       priority: 0.7,
+    })),
+    // Ниже карточек: патч — повод зайти, а не главное содержание сайта
+    ...news.map((n) => ({
+      url: url(newsPath(n.appid, n.gid)),
+      lastModified: new Date(n.changedAt * 1000),
+      changeFrequency: 'monthly' as const,
+      priority: 0.5,
     })),
   ]
 }

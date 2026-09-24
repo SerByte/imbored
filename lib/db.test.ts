@@ -25,6 +25,8 @@ import {
   getGameNews,
   getGameRanks,
   getNewsBlocks,
+  getNewsPage,
+  getGamePatchHeads,
   getFeedHeadForApps,
   getMajorFeed,
   getMajorFeedHead,
@@ -37,6 +39,7 @@ import {
   setGameDescriptions,
   setGamesMedia,
   setNewsDigest,
+  sitemapNews,
   STEAM_LEASE,
   upsertNewsItems,
   type Db,
@@ -1745,6 +1748,104 @@ describe('getNewsBlocks', () => {
       args: ['{не json', '1'],
     })
     expect(await getNewsBlocks(db, 730, '1')).toBeNull()
+  })
+})
+
+describe('страница патча', () => {
+  async function liveGame(db: Db, appid: number, alive = 1) {
+    await upsertGameMeta(db, { ...META, appid, name: `Игра ${appid}` }, NOW)
+    await db.execute({
+      sql: 'UPDATE games SET alive = ?, tag_count = 3, superseded_by = NULL WHERE appid = ?',
+      args: [alive, appid],
+    })
+  }
+
+  test('пост с телом и игрой: имя, арт и живость из каталога', async () => {
+    const db = await freshDb()
+    await liveGame(db, 730)
+    await upsertNewsItems(db, [newsItem()], NOW)
+    await setNewsDigest(db, 730, '1', { tldr: 'Починили дым', scale: 'major' }, NOW)
+
+    const page = await getNewsPage(db, 730, '1')
+    expect(page?.item).toMatchObject({
+      appid: 730,
+      gid: '1',
+      title: 'Обновление',
+      kind: 'patch',
+      tldr: 'Починили дым',
+      blocks: NEWS_BASE.blocks,
+    })
+    expect(page?.game).toMatchObject({ name: 'Игра 730', listed: true })
+  })
+
+  test('мёртвая игра — страница есть, но игра не «в каталоге»', async () => {
+    const db = await freshDb()
+    await liveGame(db, 730, 0)
+    await upsertNewsItems(db, [newsItem()], NOW)
+    expect((await getNewsPage(db, 730, '1'))?.game?.listed).toBe(false)
+  })
+
+  test('игры нет в каталоге — пост отдаётся без неё', async () => {
+    // Пост приехал по игре из чьей-то библиотеки, а каталог до неё не дошёл:
+    // страница живёт, просто без имени игры
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    const page = await getNewsPage(db, 730, '1')
+    expect(page?.item.gid).toBe('1')
+    expect(page?.game).toBeNull()
+  })
+
+  test('чужой gid, чужая игра и отрицательный appid — null', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem()], NOW)
+    expect(await getNewsPage(db, 730, '2')).toBeNull()
+    expect(await getNewsPage(db, 570, '1')).toBeNull()
+    expect(await getNewsPage(db, -730, '1')).toBeNull()
+  })
+
+  test('заголовки патчей игры: свежие первыми, только патчи, без тел', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: 'a', publishedAt: NOW - 300, title: 'Старый' }),
+        newsItem({ gid: 'b', publishedAt: NOW - 100, title: 'Свежий', scale: null }),
+        newsItem({ gid: 'c', publishedAt: NOW - 200, title: 'Распродажа', kind: 'news' }),
+        newsItem({ appid: 570, gid: 'd', publishedAt: NOW, title: 'Чужой' }),
+      ],
+      NOW,
+    )
+    const heads = await getGamePatchHeads(db, 730, 5)
+    expect(heads).toEqual([
+      { gid: 'b', title: 'Свежий', publishedAt: NOW - 100, scale: null },
+      { gid: 'a', title: 'Старый', publishedAt: NOW - 300, scale: 'major' },
+    ])
+    expect(await getGamePatchHeads(db, 730, 1)).toHaveLength(1)
+  })
+
+  test('карта сайта: крупные, с пересказом, у игр каталога и не старше окна', async () => {
+    const db = await freshDb()
+    const DAY = 86_400
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: 'ok', publishedAt: NOW - DAY }),
+        newsItem({ gid: 'raw', publishedAt: NOW - DAY }), // без пересказа
+        newsItem({ gid: 'small', publishedAt: NOW - DAY, scale: 'hotfix' }),
+        newsItem({ gid: 'old', publishedAt: NOW - 100 * DAY }),
+        newsItem({ gid: 'norank', publishedAt: NOW - DAY, rank: 0 }), // не игра каталога
+        newsItem({ gid: 'fresh', publishedAt: NOW - 10 }),
+      ],
+      NOW,
+    )
+    for (const gid of ['ok', 'small', 'old', 'norank', 'fresh']) {
+      await setNewsDigest(db, 730, gid, { tldr: 'коротко', scale: gid === 'small' ? 'hotfix' : 'major' }, NOW + 50)
+    }
+    const got = await sitemapNews(db, NOW - 90 * DAY, 100)
+    expect(got.map((n) => n.gid)).toEqual(['fresh', 'ok'])
+    // пересказ записан позже тела — страница с тех пор изменилась
+    expect(got[0].changedAt).toBe(NOW + 50)
+    expect(await sitemapNews(db, NOW - 90 * DAY, 1)).toHaveLength(1)
   })
 })
 

@@ -12,6 +12,7 @@ import type { Discount } from '@/lib/discount'
 import type { NewsBlock } from '@/lib/steamhtml'
 import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline } from '@/lib/byline'
+import { newsPath } from '@/lib/newspage'
 import { changesLabel, freshness } from './format'
 import { useNow } from './Now'
 import { MetaLine } from '@/components/Labels'
@@ -271,6 +272,16 @@ export function PatchRow({
                 </div>
               )}
               <div className="mt-6 flex flex-wrap items-center gap-5 text-sm">
+                {/* Свой адрес патча: пересказ есть только у нас, и отсюда им
+                    можно поделиться. Без префетча — раскрытых строк бывает
+                    несколько, а переходят по одной. */}
+                <Link
+                  href={newsPath(item.appid, item.gid)}
+                  prefetch={false}
+                  className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+                >
+                  Отдельной страницей
+                </Link>
                 <Link
                   href={`/game/${item.appid}`}
                   className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"

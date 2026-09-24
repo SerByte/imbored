@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getNewsBlocks } from '@/lib/db'
+import { isNewsGid } from '@/lib/newspage'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, nowSec } from '@/lib/server'
 
@@ -36,8 +37,9 @@ export async function GET(req: Request) {
 
   // Валидация до базы: gid приходит строкой из чужого ответа Steam и в SQL
   // едет параметром, но пускать в ограничитель мусор произвольной длины
-  // незачем — ключ лимита строится из него же.
-  if (!Number.isInteger(appid) || appid <= 0 || !gid || !/^[A-Za-z0-9_-]{1,64}$/.test(gid)) {
+  // незачем — ключ лимита строится из него же. Правило одно на этот роут и
+  // страницу патча (lib/newspage).
+  if (!Number.isInteger(appid) || appid <= 0 || !isNewsGid(gid)) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }
 

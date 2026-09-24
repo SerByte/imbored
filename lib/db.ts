@@ -4681,6 +4681,136 @@ export async function getGameNews(db: Db, appid: number, limit = 8): Promise<Sto
   return (res.rows as unknown as NewsRow[]).map(rowToNews)
 }
 
+/* ---------- страница пересказа патча: /game/<appid>/news/<gid> ---------- */
+
+/** NEWS_COLS с алиасом n.: в соединении с games у обеих таблиц есть appid */
+const NEWS_COLS_N = NEWS_COLS.split(', ')
+  .map((c) => `n.${c}`)
+  .join(', ')
+
+export type NewsPage = {
+  item: StoredNews
+  /**
+   * Игра поста. null — строки в games нет: пост приехал по игре из чьей-то
+   * библиотеки, до которой каталог не дошёл. Страница тогда живёт без имени
+   * игры и вне поиска.
+   */
+  game: {
+    name: string
+    headerImage: string | null
+    art: GameArtUrls | null
+    /** Живая игра каталога — тот же ALIVE_POOL, что держит её карточку в поиске */
+    listed: boolean
+  } | null
+}
+
+/**
+ * Один пост с игрой — по первичному ключу news_items и ключу games.
+ *
+ * Карточку игры (getGamePageRow) страница патча не читает: там отзывы,
+ * описания и скриншоты, а здесь нужны имя, арт и то, жива ли игра в каталоге.
+ * Тело поста — да, целиком: ради него страница и существует.
+ */
+export async function getNewsPage(db: Db, appid: number, gid: string): Promise<NewsPage | null> {
+  if (appid <= 0) return null
+  const res = await db.execute({
+    sql: `SELECT ${NEWS_COLS_N}, g.name AS game_name, g.header_image AS game_header,
+                 g.art_json AS game_art, (${ALIVE_POOL}) AS game_listed
+          FROM news_items AS n LEFT JOIN games AS g ON g.appid = n.appid
+          WHERE n.appid = ? AND n.gid = ?`,
+    args: [appid, gid],
+  })
+  const r = res.rows[0] as unknown as
+    | (NewsRow & {
+        game_name: string | null
+        game_header: string | null
+        game_art: string | null
+        game_listed: number | null
+      })
+    | undefined
+  if (!r) return null
+  return {
+    item: rowToNews(r),
+    game:
+      r.game_name == null
+        ? null
+        : {
+            name: r.game_name,
+            headerImage: r.game_header ?? null,
+            art: r.game_art ? (JSON.parse(r.game_art) as GameArtUrls) : null,
+            listed: Number(r.game_listed) === 1,
+          },
+  }
+}
+
+export type NewsHead = {
+  gid: string
+  title: string
+  publishedAt: number
+  scale: NewsScale | null
+}
+
+/**
+ * Заголовки патчей игры — для списка «Другие патчи» на странице патча.
+ *
+ * Не getGameNews: та везёт blocks_json каждой строки, а здесь нужны только
+ * заголовок и дата. Идёт по idx_news_app (appid, published_at DESC), порядок
+ * приходит из индекса.
+ */
+export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promise<NewsHead[]> {
+  if (appid <= 0) return []
+  const res = await db.execute({
+    sql: `SELECT gid, title, published_at, scale FROM news_items
+          WHERE appid = ? AND kind = 'patch'
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [appid, limit],
+  })
+  return (
+    res.rows as unknown as Array<{
+      gid: string
+      title: string
+      published_at: number
+      scale: string | null
+    }>
+  ).map((r) => ({
+    gid: r.gid,
+    title: r.title,
+    publishedAt: Number(r.published_at),
+    scale: r.scale === 'major' || r.scale === 'hotfix' ? r.scale : null,
+  }))
+}
+
+/**
+ * Патчи для карты сайта: крупные, с пересказом, у живых игр каталога, не
+ * старше since.
+ *
+ * Предикат повторяет idx_news_feed дословно — это та же выборка, что лента
+ * «Что нового», только с отсечкой по дате вместо LIMIT по играм. rank > 0 —
+ * игра прошла фильтры каталога (см. getGameRanks), то есть её карточка сама
+ * в поиске. tldr IS NOT NULL — своё у страницы только пересказ: без него это
+ * копия поста Steam, и страница стоит с noindex (lib/newspage).
+ *
+ * changed_at — когда страница последний раз менялась по существу: тело
+ * (updated_at) или пересказ (tldr_at).
+ */
+export async function sitemapNews(
+  db: Db,
+  sinceSec: number,
+  limit: number,
+): Promise<Array<{ appid: number; gid: string; changedAt: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, gid, MAX(updated_at, COALESCE(tldr_at, 0)) AS changed_at
+          FROM news_items
+          WHERE kind = 'patch' AND scale = 'major' AND rank > 0
+            AND published_at >= ? AND tldr IS NOT NULL
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [sinceSec, limit],
+  })
+  return (
+    res.rows as unknown as Array<{ appid: number; gid: string; changed_at: number }>
+  ).map((r) => ({ appid: Number(r.appid), gid: r.gid, changedAt: Number(r.changed_at) }))
+}
+
 /* ---------- голова ленты: ключи без тел патчей ---------- */
 
 export type FeedHeadItem = { appid: number; gid: string; publishedAt: number }

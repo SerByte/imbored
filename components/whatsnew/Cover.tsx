@@ -11,6 +11,7 @@ import type { FeedItem } from '@/lib/db'
 import { dateLabel } from '@/lib/freshness'
 import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline } from '@/lib/byline'
+import { newsPath } from '@/lib/newspage'
 import { plural } from '@/lib/plural'
 import { freshness } from './format'
 import { useNow } from './Now'
@@ -181,6 +182,15 @@ export function Cover({
                   </span>
                 </span>
               ) : null}
+              {/* Тела ведущего патча на /whatsnew нет вовсе — ни строкой, ни
+                  раскрытием: обложка не повторяется в ленте. Прочитать его
+                  целиком можно только на его собственной странице. */}
+              <Link
+                href={newsPath(item.appid, item.gid)}
+                className="tap text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+              >
+                Читать патч
+              </Link>
               <Link
                 href={`/game/${item.appid}`}
                 className="tap text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
