@@ -97,8 +97,14 @@ export type CandidateOpts = {
    * «Что-то другое».
    */
   nudge?: NudgePlan | null
-  /** Что уже на экране — читается только у «Что-то другое» */
+  /**
+   * Чего не показывать сверх банов: «Что-то другое» — то, что уже на экране,
+   * колоде исследователя — уже пролистанное. Баном это не становится: якорем
+   * и «Продолжить» такая игра быть может.
+   */
   exclude?: readonly number[]
+  /** Без настроения — колода исследователя (scoreCandidates, moodless) */
+  moodless?: boolean
 }
 
 /**
@@ -177,12 +183,12 @@ export async function buildCandidates(
   // отложенное возвращалось на следующей же перезагрузке
   const cooldown = cooldownOf(feedback, now, opts.cooldownKinds)
 
-  // «Что-то другое»: показанное уходит вместе с банами — и из пула, и из
-  // скоринга. Баны сами по себе остаются банами: якорем и «Продолжить» уже
-  // показанная игра быть может, забаненная — нет
+  // Исключённое уходит вместе с банами — и из пула, и из скоринга. Баны сами
+  // по себе остаются банами: якорем и «Продолжить» уже показанная игра быть
+  // может, забаненная — нет
   const plan = opts.nudge ?? null
   const reroll = plan?.reroll === true
-  const shown = new Set(reroll ? (opts.exclude ?? []) : [])
+  const shown = new Set(opts.exclude ?? [])
   const hidden = shown.size ? new Set([...banned, ...shown]) : banned
 
   // Метаданные своей библиотеки И игр из истории оценок: весь каталог на сотне
@@ -195,7 +201,8 @@ export async function buildCandidates(
     getGamesMetaLite(db, [
       ...new Set([...games.map((g) => g.appid), ...feedback.map((f) => f.appid)]),
     ]),
-    shown.size ? getGamesMetaLite(db, [...shown]) : new Map<number, GameMeta>(),
+    // Теги показанного нужны только штрафу похожести «Что-то другое»
+    reroll && shown.size ? getGamesMetaLite(db, [...shown]) : new Map<number, GameMeta>(),
   ])
   const poolByAppid = new Map<number, GameMeta>()
   const metaOf = (appid: number): GameMeta | undefined =>
@@ -285,6 +292,7 @@ export async function buildCandidates(
     familiarCap: opts.familiarCap,
     lean: opts.lean ?? null,
     nudge: tilt,
+    moodless: opts.moodless,
   })
   if (!candidates.length) return 'nocandidates'
 

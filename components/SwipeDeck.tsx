@@ -35,7 +35,21 @@ export type DeckCard = {
   tags: string[]
   store?: string
   storeUrl?: string
+  /**
+   * Почему эта игра — только у колоды исследователя (/explore, exploreCardView):
+   * там колоду собрал подбор, и ему есть что сказать. В пати карту объясняет
+   * общий вкус комнаты, а не фраза.
+   */
+  reason?: string
 }
+
+/**
+ * Подписи голосов. В пати — «Играем!» и «Не хочу»: это голос за вечер вместе.
+ * В колоде исследователя играть никто не обещает — там «Интересно» и «Мимо».
+ */
+export type DeckLabels = { yes: string; no: string }
+
+const PARTY_LABELS: DeckLabels = { yes: 'Играем!', no: 'Не хочу' }
 
 const EASE = [0.22, 1, 0.36, 1] as const
 const DEPTH = 3 // сколько карточек видно в стопке
@@ -83,6 +97,7 @@ function TopCard({
   nowSec,
   card,
   alone,
+  labels,
   focusOn,
   onCommit,
 }: {
@@ -90,6 +105,7 @@ function TopCard({
   nowSec: number
   card: DeckCard
   alone: boolean
+  labels: DeckLabels
   /** прошлый голос был с клавиатуры — фокус встаёт на ту же кнопку этой карты */
   focusOn: 'yes' | 'no' | null
   /** keyboard — голос кнопкой с клавиатуры или скринридера, а не пальцем */
@@ -185,14 +201,14 @@ function TopCard({
           className="absolute top-4 left-4 rounded-full bg-ember text-on-ember px-3 py-1 text-sm font-bold"
           style={{ opacity: yesGlow }}
         >
-          Играем!
+          {labels.yes}
         </motion.span>
         <motion.span
           aria-hidden
           className="absolute top-4 right-4 rounded-full glass px-3 py-1 text-sm text-dim"
           style={{ opacity: noFade }}
         >
-          Не хочу
+          {labels.no}
         </motion.span>
       </div>
 
@@ -243,6 +259,7 @@ function TopCard({
             </span>
           )}
         </div>
+        {card.reason && <p className="text-sm text-dim leading-relaxed">{card.reason}</p>}
         {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть;
             второй — сколько уйдёт на заход: «успеем до ночи?». Обёртка —
             только когда есть что в неё положить: пустая заняла бы в колонке
@@ -275,7 +292,7 @@ function TopCard({
             onClick={(e) => send(false, e.detail === 0)}
             className="rounded-[14px] glass glass-hover py-5 text-lg cursor-pointer active:scale-[0.98] transition"
           >
-            ✖ Не хочу
+            ✖ {labels.no}
           </button>
           <button
             ref={yesRef}
@@ -283,7 +300,7 @@ function TopCard({
             onClick={(e) => send(true, e.detail === 0)}
             className="btn-ember is-block font-bold py-5 text-lg"
           >
-            Играем!
+            {labels.yes}
           </button>
         </div>
       </div>
@@ -297,6 +314,7 @@ export function SwipeDeck({
   votedCount,
   deckTotal,
   alone = false,
+  labels = PARTY_LABELS,
   nowSec,
 }: {
   cards: DeckCard[]
@@ -305,6 +323,8 @@ export function SwipeDeck({
   deckTotal: number
   /** В комнате пока один человек — см. плашку владения в TopCard. */
   alone?: boolean
+  /** Подписи голосов; по умолчанию — пати */
+  labels?: DeckLabels
   /** серверные часы ответа /deck — см. PlayersNow */
   nowSec: number
 }) {
@@ -359,6 +379,7 @@ export function SwipeDeck({
             key={top.appid}
             card={top}
             alone={alone}
+            labels={labels}
             focusOn={focusOn}
             onCommit={commit}
             nowSec={nowSec}

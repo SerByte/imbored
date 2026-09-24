@@ -73,6 +73,7 @@ import {
   insertMissingGamesMeta,
   joinRoom,
   listBanned,
+  listExplore,
   listFeedback,
   listPublicRooms,
   logFeedback,
@@ -1447,6 +1448,40 @@ describe('db', () => {
     // сами броски в базе остались — фильтр только в окне чтения
     const all = await db.execute("SELECT COUNT(*) AS n FROM feedback WHERE reason = 'spin'")
     expect(Number(all.rows[0].n)).toBe(300)
+  })
+
+  test('колода исследователя: «Мимо» не в окне вкуса и не в точности подбора', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 1, action: 'liked' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 2, action: 'skipped', reason: 'explore' }, NOW + 1)
+    await logFeedback(db, { steamid: 'u1', appid: 3, action: 'opened', reason: 'explore' }, NOW + 2)
+    await logFeedback(db, { steamid: 'u1', appid: 4, action: 'skipped' }, NOW + 3)
+    expect((await listFeedback(db, 'u1')).map((r) => [r.appid, r.action])).toEqual([
+      [4, 'skipped'],
+      [3, 'opened'],
+      [1, 'liked'],
+    ])
+    expect(await feedbackStats(db, 'u1')).toEqual({ liked: 1, skipped: 1, rate: 0.5 })
+    // сами свайпы в базе — их читает listExplore
+    const all = await db.execute("SELECT COUNT(*) AS n FROM feedback WHERE reason = 'explore'")
+    expect(Number(all.rows[0].n)).toBe(2)
+  })
+
+  test('listExplore: последний свайп решает, свежие сверху, бан сильнее полки', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 10, action: 'opened', reason: 'explore' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 10, action: 'skipped', reason: 'explore' }, NOW + 5)
+    await logFeedback(db, { steamid: 'u1', appid: 20, action: 'skipped', reason: 'explore' }, NOW + 1)
+    await logFeedback(db, { steamid: 'u1', appid: 20, action: 'opened', reason: 'explore' }, NOW + 6)
+    await logFeedback(db, { steamid: 'u1', appid: 30, action: 'opened', reason: 'explore' }, NOW + 2)
+    await logFeedback(db, { steamid: 'u1', appid: 30, action: 'banned' }, NOW + 3)
+    // не свайп колоды — не её дело
+    await logFeedback(db, { steamid: 'u1', appid: 40, action: 'opened' }, NOW + 7)
+    await logFeedback(db, { steamid: 'u2', appid: 50, action: 'opened', reason: 'explore' }, NOW)
+    expect(await listExplore(db, 'u1')).toEqual([
+      { appid: 20, at: NOW + 6, liked: true },
+      { appid: 10, at: NOW + 5, liked: false },
+    ])
   })
 
   test('feedbackStats считает долю попаданий', async () => {

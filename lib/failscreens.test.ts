@@ -32,6 +32,7 @@ const read = (...p: string[]) => fs.readFileSync(path.join(ROOT, ...p), 'utf8')
 const PAIRS = [
   { имя: '/play', api: ['app', 'api', 'recommend', 'route.ts'], page: ['app', 'play', 'page.tsx'] },
   { имя: '/daily', api: ['app', 'api', 'daily', 'route.ts'], page: ['app', 'daily', 'page.tsx'] },
+  { имя: '/explore', api: ['app', 'api', 'explore', 'route.ts'], page: ['app', 'explore', 'page.tsx'] },
 ]
 
 /** Коды, у которых ответ — действие, а не текст на экране отказа. */

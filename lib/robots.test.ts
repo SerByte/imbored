@@ -57,7 +57,19 @@ describe('robots.txt', () => {
 
   test('состояние сессии, хабы и /api закрыты', () => {
     const rules = rulesOf()
-    for (const url of ['/portrait', '/compat', '/rooms', '/room/new', '/play', '/play?time=short', '/quiz', '/library', '/daily', '/api/prepare']) {
+    for (const url of [
+      '/portrait',
+      '/compat',
+      '/rooms',
+      '/room/new',
+      '/play',
+      '/play?time=short',
+      '/explore',
+      '/quiz',
+      '/library',
+      '/daily',
+      '/api/prepare',
+    ]) {
       expect(allowed(rules, url), url).toBe(false)
     }
   })

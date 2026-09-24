@@ -15,6 +15,7 @@ import {
   getMajorFeedHead,
   getNeighbors,
   getUnsummarized,
+  listExplore,
   listPublicRooms,
   migrateDb,
   revokeAllSessions,
@@ -210,6 +211,14 @@ const CASES: Case[] = [
   {
     name: 'баны участников пати',
     run: (db) => bannedAppidsOf(db, ['76561198000000001', '76561198000000002']),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  // Колода исследователя: строки одного человека по индексу, и бан — тоже по
+  // нему. GROUP BY сортирует только найденные строки этого человека.
+  {
+    name: 'пролистанное в колоде исследователя',
+    run: (db) => listExplore(db, '76561198000000001'),
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },

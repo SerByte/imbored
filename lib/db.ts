@@ -24,11 +24,14 @@ export type FeedbackAction = 'liked' | 'skipped' | 'opened' | 'banned' | 'launch
 /**
  * 'spin' — «Крутить ещё» в рулетке: не оценка игры, а бросок кубика. Ни вкуса,
  * ни точности подбора не трогает. 'done' — «Уже прошёл» рядом с баном: бан, но
- * по другой причине, чем «не нравится».
+ * по другой причине, чем «не нравится». 'explore' — свайп в колоде
+ * исследователя (/explore): «Интересно» пишется как 'opened', «Мимо» — как
+ * 'skipped', оба с этой причиной. Листание без обязательств — не промах
+ * подбора и не пауза (см. listFeedback, feedbackStats, listExplore).
  *
  * У reason в таблице нет CHECK, поэтому новые значения не требуют миграции.
  */
-export type SkipReason = 'genre' | 'hard' | 'tired' | 'notnow' | 'spin' | 'done'
+export type SkipReason = 'genre' | 'hard' | 'tired' | 'notnow' | 'spin' | 'done' | 'explore'
 
 export type FeedbackRow = {
   steamid: string
@@ -3747,11 +3750,19 @@ export async function logFeedback(
  * 300 строк целиком состояло из них: «Зашло» и «не мой жанр» выпадали, вкус
  * сбрасывался к одним часам, а «надоела» возвращалась раньше обещанного
  * месяца. Баны читаются отдельно (bannedAppids), остальное — только отсюда.
+ *
+ * «Мимо» в колоде исследователя (skipped с причиной 'explore') — туда же и по
+ * той же причине: колода — пятнадцать карт за заход, и листающий вытеснил бы
+ * из окна настоящие оценки за пару вечеров. Паузы на /play оно тоже давать не
+ * должно: пролистанное без обязательств — не «не то». Свою колоду
+ * исследователь не повторяет сам (listExplore). «Интересно» ('opened') в окне
+ * остаётся: это тот же слабый сигнал вкуса, что открытая карточка.
  */
 export async function listFeedback(db: Db, steamid: string, limit = 500): Promise<FeedbackRow[]> {
   const res = await db.execute({
     sql: `SELECT steamid, appid, action, reason, mood_json, created_at FROM feedback
           WHERE steamid = ? AND reason IS NOT 'spin'
+            AND NOT (action = 'skipped' AND reason IS 'explore')
           ORDER BY created_at DESC, id DESC LIMIT ?`,
     args: [steamid, limit],
   })
@@ -3780,7 +3791,9 @@ export async function listFeedback(db: Db, steamid: string, limit = 500): Promis
  * «Зашло» считается по играм, а не по нажатиям: одна игра, отмеченная трижды
  * за месяц, — одно попадание. Запуски ('launched') сюда не входят вовсе:
  * запуск — ещё не оценка. «Крутить ещё» в рулетке (reason 'spin') — тоже не
- * промах подбора, а бросок кубика, поэтому из знаменателя исключён.
+ * промах подбора, а бросок кубика, поэтому из знаменателя исключён. «Мимо» в
+ * колоде исследователя (reason 'explore') — по той же причине: листание без
+ * обязательств, а не ответ на подбор.
  */
 export async function feedbackStats(
   db: Db,
@@ -3789,7 +3802,8 @@ export async function feedbackStats(
   const res = await db.execute({
     sql: `SELECT
             COUNT(DISTINCT CASE WHEN action = 'liked' THEN appid END) AS liked,
-            SUM(CASE WHEN action = 'skipped' AND reason IS NOT 'spin' THEN 1 ELSE 0 END) AS skipped
+            SUM(CASE WHEN action = 'skipped' AND reason IS NOT 'spin' AND reason IS NOT 'explore'
+                THEN 1 ELSE 0 END) AS skipped
           FROM feedback WHERE steamid = ?`,
     args: [steamid],
   })
@@ -3873,6 +3887,41 @@ export async function listBanned(
       done: r.reason === 'done',
     }),
   )
+}
+
+/** Сколько игр колоды исследователя читается за раз — с запасом на полку и отсев */
+const EXPLORE_ROWS = 200
+
+/**
+ * Что человек уже листал в колоде исследователя (/explore): одна строка на
+ * игру — последний свайп, свежие сверху. liked — последний свайп «Интересно»
+ * ('opened'): это полка «Приглянулось»; иначе — «Мимо».
+ *
+ * Последний, а не любой: передумать можно в обе стороны, и полка обязана
+ * показывать то, что сказано позже. action берётся из строки с MAX(created_at)
+ * — тот же документированный приём SQLite, что в listBanned, и тот же
+ * тай-брейк по appid.
+ *
+ * Забаненное не отдаётся: бан сильнее, и «Приглянулось» не должно
+ * показывать игру, которую человек попросил не показывать никогда.
+ */
+export async function listExplore(
+  db: Db,
+  steamid: string,
+  limit = EXPLORE_ROWS,
+): Promise<Array<{ appid: number; at: number; liked: boolean }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, MAX(created_at) AS at, action FROM feedback
+          WHERE steamid = ?1 AND reason = 'explore'
+            AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')
+          GROUP BY appid ORDER BY at DESC, appid LIMIT ?2`,
+    args: [steamid, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; at: number; action: string }>).map((r) => ({
+    appid: Number(r.appid),
+    at: Number(r.at),
+    liked: r.action === 'opened',
+  }))
 }
 
 /**

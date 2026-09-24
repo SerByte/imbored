@@ -118,7 +118,9 @@ export async function POST(req: Request) {
     focus,
     seed,
     nudge: plan,
-    exclude: parseExclude(body.exclude),
+    // Что уже на экране — только «Что-то другое»: остальным подталкиваниям
+    // показанная игра, подошедшая под поправку, не помеха
+    exclude: nudge === 'different' ? parseExclude(body.exclude) : [],
   })
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
   if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })

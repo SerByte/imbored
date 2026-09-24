@@ -1491,6 +1491,13 @@ export function scoreCandidates(args: {
    * отсутствие — ровно прежние скоры: часть nudge 1, настроение без прибавки.
    */
   nudge?: NudgeTilt | null
+  /**
+   * Без настроения — колода исследователя (/explore): настроение там не
+   * спрашивали, и судить им нечего. Части mood, semantics и entry ровно 1,
+   * штрафа длинному на короткий вечер нет; остаётся только fitsSocial —
+   * компании одиночное по-прежнему не предлагается.
+   */
+  moodless?: boolean
 }): ScoredCandidate[] {
   const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
   type Scored = ScoredCandidate & { parts: ScoreParts }
@@ -1511,6 +1518,7 @@ export function scoreCandidates(args: {
   const softSemantics = new Map<number, number>()
 
   const tilt = args.nudge ?? null
+  const moodless = args.moodless === true
 
   /** sourceMult — насыщение знакомого; у прочих источников ровно 1 */
   const push = (meta: GameMeta, source: ScoredCandidate['source'], sourceMult = 1) => {
@@ -1519,7 +1527,7 @@ export function scoreCandidates(args: {
     // Отсев подталкивания — до пауз: отсечённое не должно вернуться и полом
     if (tilt?.cut && cutByNudge(meta, tilt.cut)) return
     const pause = cooldown?.get(meta.appid)
-    const tagMood = moodMultiplier(meta, mood, tilt?.tagBoost ?? null)
+    const tagMood = moodless ? 1 : moodMultiplier(meta, mood, tilt?.tagBoost ?? null)
     const parts: ScoreParts = {
       taste: profileEmpty ? popularityScore(meta) : tasteOf(normalizedTags(meta)),
       mood: tagMood,
@@ -1527,12 +1535,12 @@ export function scoreCandidates(args: {
       deal: dealMultiplier(meta, source, nowSec),
       lean: leanMultiplier(meta, source, lean),
       cooldown: pause && pause.mult > 0 ? pause.mult : 1,
-      semantics: semanticsMultiplier(meta, mood, tagMood),
-      entry: entryMultiplier(meta, source, mood),
+      semantics: moodless ? 1 : semanticsMultiplier(meta, mood, tagMood),
+      entry: moodless ? 1 : entryMultiplier(meta, source, mood),
       confidence: confidenceMultiplier(meta, source),
       nudge: nudgeMultiplier(meta, source, tilt),
     }
-    if (tooLongForShort(meta, mood)) {
+    if (!moodless && tooLongForShort(meta, mood)) {
       softSemantics.set(meta.appid, semanticsMultiplier(meta, mood, tagMood, { soft: true }))
     }
     const c = { appid: meta.appid, name: meta.name, source, score: scoreOfParts(parts), parts }

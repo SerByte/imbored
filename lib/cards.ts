@@ -252,3 +252,51 @@ export function dailyCardView(
 }
 
 export type DailyPickCard = ReturnType<typeof dailyCardView>
+
+/**
+ * Карта колоды исследователя (/explore) — в форме колоды пати (DeckCard в
+ * components/SwipeDeck), чтобы колода была одна. У одного человека
+ * ownedByAll — «есть в библиотеке», а не хватает её никому. Причина — та же,
+ * что у эвристики /play: колоде, как и выдаче, есть что сказать о своей игре.
+ */
+export function exploreCardView(p: LlmPick, ctx: PickContext) {
+  const meta = ctx.metaNow(p.appid)
+  const shop = shopView(meta, ctx.now)
+  return {
+    appid: p.appid,
+    name: p.name,
+    ownedByAll: p.source !== 'new',
+    missingFor: [] as string[],
+    // У колоды «нет цены» — отсутствие поля, а не null, и «бесплатно» сильнее
+    // цены: у бесплатной CS2 в каталоге лежит цена Prime (см. GroupCard)
+    ...(shop.isFree
+      ? { isFree: true }
+      : shop.priceFinal !== null
+        ? { priceFinal: shop.priceFinal }
+        : {}),
+    discount: buyView(meta, p.source, ctx.now, ctx.hideUrgency).discount,
+    headerImage: shop.headerImage,
+    art: shop.art,
+    ccu: meta?.ccu ?? null,
+    ccuAt: meta?.ccuAt ?? null,
+    session: meta ? sessionTrait(meta) : null,
+    tags: topTags(meta),
+    ...(shop.store ? { store: shop.store } : {}),
+    ...(shop.storeUrl ? { storeUrl: shop.storeUrl } : {}),
+    reason: p.reason,
+  }
+}
+
+export type ExploreCard = ReturnType<typeof exploreCardView>
+
+/** Плитка полки «Приглянулось»: картинка и дорога к карточке игры */
+export function shelfCardView(meta: GameMeta) {
+  return {
+    appid: meta.appid,
+    name: meta.name,
+    headerImage: meta.headerImage ?? null,
+    art: meta.art ?? null,
+  }
+}
+
+export type ShelfCard = ReturnType<typeof shelfCardView>

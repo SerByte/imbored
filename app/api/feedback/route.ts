@@ -7,7 +7,8 @@ import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, nowSec, requireWriter } from '@/lib/server'
 
 const ACTIONS: readonly FeedbackAction[] = ['liked', 'skipped', 'opened', 'banned', 'launched']
-const REASONS: readonly SkipReason[] = ['genre', 'hard', 'tired', 'notnow', 'spin', 'done']
+// 'explore' — свайп колоды исследователя (/explore): «Интересно» и «Мимо»
+const REASONS: readonly SkipReason[] = ['genre', 'hard', 'tired', 'notnow', 'spin', 'done', 'explore']
 
 /*
  * Потолок на запись фидбека.

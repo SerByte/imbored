@@ -1129,6 +1129,12 @@ function Player({ say }: { say: (line: string) => void }) {
               На сегодня всё
             </Link>
           </div>
+          {/* Третий путь для вечера, когда выбирать не хочется: колода без
+              вопросов и без последствий (app/explore) — посмотреть, что
+              вообще есть, и, может быть, зацепиться за одну */}
+          <Link href="/explore" className="tap text-sm text-dim hover:text-ink transition-colors">
+            Просто полистать, без обязательств →
+          </Link>
         </div>
       </div>
     )
@@ -1211,6 +1217,10 @@ function Player({ say }: { say: (line: string) => void }) {
       )}
       <Link href="/quiz" className="tap text-dim hover:text-ink transition-colors">
         Изменить настроение →
+      </Link>
+      {/* Колода исследователя — для того, кому сейчас не до вопросов */}
+      <Link href="/explore" className="tap text-dim hover:text-ink transition-colors">
+        Просто полистать →
       </Link>
     </div>
   )

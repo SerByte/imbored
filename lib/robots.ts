@@ -38,7 +38,7 @@ export const PERSONAL_PREFIXES = ['/portrait', '/compat', '/room'] as const
  *
  *   • /api/ — работа, а не контент. /api/prepare и /api/recommend вдобавок
  *     дёргают Steam и платную модель.
- *   • /play, /quiz, /library, /daily, /rooms, /room/new — состояние сессии, а
+ *   • /play, /explore, /quiz, /library, /daily, /rooms, /room/new — состояние сессии, а
  *     не страница. Без куки они выбрасывают на лендинг, то есть краулер
  *     индексировал бы редирект. /daily на деплое без куки отдавал 249 символов
  *     видимого текста, содержательного — «Изучаю твою библиотеку…».
@@ -62,6 +62,7 @@ export const ROBOTS_DISALLOW = [
   '/room/new',
   '/rooms',
   '/play',
+  '/explore',
   '/quiz',
   '/library',
   '/daily',

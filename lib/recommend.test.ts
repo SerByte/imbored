@@ -2462,3 +2462,44 @@ describe('подталкивания (nudge)', () => {
     }
   })
 })
+
+/**
+ * Колода исследователя (/explore) собирается без настроения: его там не
+ * спрашивали. Остаётся только компания — одиночное ей не предлагается.
+ */
+describe('без настроения (moodless)', () => {
+  const lib = [game({ appid: 1 }), game({ appid: 2 })]
+  const metas = new Map<number, GameMeta>([
+    // «меньше часа» и «расслабиться» наказали бы её дважды — длиной и вайбом
+    [1, { ...meta(1, { Puzzle: 100, 'Open World': 80, Difficult: 60 }), semantics: sem({ minutes: 240 }) }],
+    [2, meta(2, { Puzzle: 100, Cozy: 50 })],
+  ])
+  const tired: Mood = { time: 'short', vibe: 'chill', social: 'solo' }
+  const run = (mood: Mood, moodless?: boolean) =>
+    scoreCandidates({
+      profile: { Puzzle: 1 },
+      library: lib,
+      metaOf: (id) => metas.get(id),
+      newPool: [],
+      mood,
+      nowSec: NOW,
+      ...(moodless !== undefined ? { moodless } : {}),
+    })
+
+  test('части настроения — единица, и скор от настроения не зависит', () => {
+    const got = run(tired, true)
+    for (const c of got) {
+      expect(c.parts!.mood, `${c.appid}`).toBe(1)
+      expect(c.parts!.semantics, `${c.appid}`).toBe(1)
+      expect(c.parts!.entry, `${c.appid}`).toBe(1)
+    }
+    expect(got).toEqual(run({ time: 'long', vibe: 'engaged', social: 'solo' }, true))
+    // без флага настроение по-прежнему решает
+    expect(run(tired, false)).toEqual(run(tired))
+    expect(run(tired).find((c) => c.appid === 1)!.parts!.mood).toBeLessThan(1)
+  })
+
+  test('компания остаётся фильтром: одиночное ей не предлагается и без настроения', () => {
+    expect(run({ ...tired, social: 'friends' }, true)).toEqual([])
+  })
+})

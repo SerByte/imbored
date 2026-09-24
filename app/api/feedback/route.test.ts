@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { listFeedback, type Db } from '@/lib/db'
+import { listExplore, listFeedback, type Db } from '@/lib/db'
 import { STEAMID_OF, freshDb, post, signIn, signInAs } from '@/lib/testing/route'
 import { POST } from './route'
 
@@ -153,5 +153,26 @@ describe('/api/feedback: портрет после бана', () => {
     await signInAs(db, 'claimed')
     await POST(post('/api/feedback', { appid: 620, action: 'banned' }))
     expect(revalidated).toEqual([])
+  })
+})
+
+/**
+ * Свайпы колоды исследователя (/explore) пишутся с причиной 'explore': по ней
+ * listExplore собирает полку «Приглянулось» и не повторяет пролистанное.
+ */
+describe('/api/feedback: колода исследователя', () => {
+  test('«Интересно» и «Мимо» пишутся с причиной explore', async () => {
+    const steamid = await signInAs(db, 'openid')
+    for (const [appid, action] of [
+      [620, 'opened'],
+      [570, 'skipped'],
+    ] as const) {
+      const res = await POST(post('/api/feedback', { appid, action, reason: 'explore' }))
+      expect(res.status, action).toBe(200)
+    }
+    expect((await listExplore(db, steamid)).map((r) => [r.appid, r.liked])).toEqual([
+      [570, false],
+      [620, true],
+    ])
   })
 })
