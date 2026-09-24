@@ -22,6 +22,7 @@
     "reviews:fixtures": "tsx scripts/review-fixtures.ts",
     "semantics:build": "tsx --env-file-if-exists=.env.turso scripts/build-semantics.ts",
     "semantics:report": "tsx --env-file-if-exists=.env.turso scripts/semantics-report.ts",
+    "neighbors:build": "tsx --env-file-if-exists=.env.turso scripts/build-neighbors.ts",
     "catalog:publish": "tsx --env-file-if-exists=.env.turso scripts/publish-catalog.ts",
     "tags:ru": "tsx scripts/gen-tagsru.ts",
     "user:forget": "tsx --env-file-if-exists=.env.turso scripts/forget-user.ts"

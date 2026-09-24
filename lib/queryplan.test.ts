@@ -13,6 +13,7 @@ import {
   getGamesMetaLite,
   getMajorFeed,
   getMajorFeedHead,
+  getNeighbors,
   getUnsummarized,
   listPublicRooms,
   migrateDb,
@@ -285,6 +286,24 @@ describe('планы запросов', () => {
       plan.filter((step) => step.includes('TEMP B-TREE')),
       where,
     ).toEqual(['USE TEMP B-TREE FOR RIGHT PART OF ORDER BY'])
+  })
+
+  /*
+   * Готовые соседи — двенадцать строк по первичному ключу game_neighbors и по
+   * ключу games на каждую. Сортировка по rank приходит из самого ключа
+   * (appid, rank): временное дерево здесь значило бы, что порядок перестал
+   * быть бесплатным, а скан — что карточка читает всю таблицу соседей.
+   */
+  test('соседи игры: по первичному ключу, без сортировки и сканов', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) => getNeighbors(spy, 730))
+    expect(issued).toHaveLength(1)
+    const plan = await planOf(db, issued[0]!)
+    const where = plan.join(' | ')
+    expect(bareScans(plan), where).toEqual([])
+    expect(where).toMatch(/SEARCH n USING PRIMARY KEY \(appid=\?\)/)
+    expect(where).toMatch(/SEARCH g USING INTEGER PRIMARY KEY \(rowid=\?\)/)
+    expect(where).not.toContain('TEMP B-TREE')
   })
 
   test('у каждого частичного индекса схемы есть запрос, который это проверяет', async () => {

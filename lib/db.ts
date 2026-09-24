@@ -1,8 +1,9 @@
-import { createClient, type Client } from '@libsql/client'
+import { createClient, type Client, type InStatement } from '@libsql/client'
 import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
 import { isDeadReason } from './liveness'
+import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { SEMANTICS_V } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
@@ -304,6 +305,21 @@ CREATE TABLE IF NOT EXISTS game_semantics (
   basis TEXT NOT NULL,
   computed_at INTEGER NOT NULL,
   reviews_at INTEGER
+) WITHOUT ROWID;
+
+-- Соседи игры (lib/neighbors): двенадцать похожих по всему вектору тегов,
+-- посчитанных офлайн (npm run neighbors:build). Своя таблица по той же
+-- причине, что game_semantics: заливка каталога её не трогает, пишет только
+-- upsertNeighbors. rank — место в списке с нуля; первичный ключ (appid, rank)
+-- отдаёт список одной игры одним коротким проходом по ключу, уже по порядку.
+-- shared_json — общие теги пары для подписи плитки, английскими ключами.
+CREATE TABLE IF NOT EXISTS game_neighbors (
+  appid INTEGER NOT NULL,
+  rank INTEGER NOT NULL,
+  neighbor INTEGER NOT NULL,
+  score REAL NOT NULL,
+  shared_json TEXT NOT NULL DEFAULT '[]',
+  PRIMARY KEY (appid, rank)
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_games_pool ON games (reviews_total DESC)
@@ -2328,6 +2344,12 @@ export type SimilarGame = {
   name: string
   headerImage: string | null
   art: GameArtUrls | null
+  /**
+   * Общие теги с игрой страницы (английскими ключами) — только у готовых
+   * соседей (getNeighbors). У полки по одному тегу поля нет: общее там и так
+   * стоит в заголовке блока.
+   */
+  shared?: string[]
 }
 
 /**
@@ -2388,6 +2410,117 @@ export async function topGamesByTag(
     headerImage: r.header_image ?? null,
     art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
   }))
+}
+
+/** Общие теги пары из shared_json: только строки, мусор — пустой список */
+function parseShared(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw) return []
+  try {
+    const v = JSON.parse(raw) as unknown
+    return Array.isArray(v) ? v.filter((t): t is string => typeof t === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Готовые соседи игры (lib/neighbors, таблица game_neighbors) — по порядку
+ * сходства.
+ *
+ * Чтение — проход по первичному ключу (appid, rank) и по ключу games на
+ * каждого соседа: двенадцать строк на карточку, как бы широки ни были её теги
+ * (сторож в lib/queryplan.test.ts). Соседа, который с пересчёта умер или
+ * вытеснен, отсекает тот же ALIVE_POOL, что у полки по тегу, — поэтому
+ * список бывает короче, чем посчитан; решать, хватит ли его, — вызывающему
+ * (nearGames в lib/gamepage).
+ *
+ * Пустой список — соседей не считали: таблицу ещё не залили или игры не было
+ * в каталоге на момент сборки.
+ */
+export async function getNeighbors(
+  db: Db,
+  appid: number,
+  limit = NEIGHBORS_K,
+): Promise<SimilarGame[]> {
+  const res = await db.execute({
+    sql: `SELECT g.appid, g.name, g.header_image, g.art_json, n.shared_json
+          FROM game_neighbors n JOIN games g ON g.appid = n.neighbor
+          WHERE n.appid = ? AND g.appid > 0 AND ${ALIVE_POOL}
+          ORDER BY n.rank
+          LIMIT ?`,
+    args: [appid, limit],
+  })
+  return (
+    res.rows as unknown as Array<{
+      appid: number
+      name: string
+      header_image: string | null
+      art_json: string | null
+      shared_json: unknown
+    }>
+  ).map((r) => ({
+    appid: Number(r.appid),
+    name: r.name,
+    headerImage: r.header_image ?? null,
+    art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
+    shared: parseShared(r.shared_json),
+  }))
+}
+
+/** Строк соседей в одном INSERT: пять колонок, пятьсот параметров — с запасом ниже лимита SQLite */
+const NEIGHBOR_ROWS_PER_INSERT = 100
+
+/**
+ * Списки соседей целиком — вместо прежних, по игре.
+ *
+ * Пишет только изменившееся, и это про квоту записи Turso: ~70 тысяч строк на
+ * каталог, а пересборка на том же каталоге меняет единицы. UPDATE с WHERE
+ * «что-то отличается» совпавшую строку не трогает и в rowsAffected не
+ * попадает (тот же приём, что в enrollNewsPoll). Хвост прежнего списка, если
+ * новый короче, снимается DELETE по rank — на своей игре и только там.
+ *
+ * Игры, которых в lists нет, не трогаются: заливка в облако не стирает
+ * чужого. Отдаёт число реально записанных и удалённых строк — столько и
+ * спишется с квоты.
+ */
+export async function upsertNeighbors(
+  db: Db,
+  lists: ReadonlyMap<number, readonly Neighbor[]>,
+): Promise<{ written: number }> {
+  const entries = [...lists]
+  let written = 0
+  // Порция на один batch — одна транзакция и один обход к базе
+  const APPIDS_PER_BATCH = 100
+  for (let i = 0; i < entries.length; i += APPIDS_PER_BATCH) {
+    const part = entries.slice(i, i + APPIDS_PER_BATCH)
+    const rows = part.flatMap(([appid, list]) =>
+      list.map((nb, rank) => [appid, rank, nb.neighbor, nb.score, JSON.stringify(nb.shared)] as const),
+    )
+    const stmts: InStatement[] = []
+    for (let r = 0; r < rows.length; r += NEIGHBOR_ROWS_PER_INSERT) {
+      const chunk = rows.slice(r, r + NEIGHBOR_ROWS_PER_INSERT)
+      stmts.push({
+        sql: `INSERT INTO game_neighbors (appid, rank, neighbor, score, shared_json)
+              VALUES ${chunk.map(() => '(?, ?, ?, ?, ?)').join(', ')}
+              ON CONFLICT (appid, rank) DO UPDATE SET
+                neighbor = excluded.neighbor, score = excluded.score, shared_json = excluded.shared_json
+              WHERE game_neighbors.neighbor IS NOT excluded.neighbor
+                 OR game_neighbors.score IS NOT excluded.score
+                 OR game_neighbors.shared_json IS NOT excluded.shared_json`,
+        args: chunk.flat(),
+      })
+    }
+    for (const [appid, list] of part) {
+      stmts.push({
+        sql: 'DELETE FROM game_neighbors WHERE appid = ? AND rank >= ?',
+        args: [appid, list.length],
+      })
+    }
+    if (!stmts.length) continue
+    const results = await db.batch(stmts, 'write')
+    for (const res of results) written += res.rowsAffected
+  }
+  return { written }
 }
 
 /**
