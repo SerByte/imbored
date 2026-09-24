@@ -19,7 +19,7 @@ import { EASE } from '@/lib/motion'
  * WarmStrip: шапка fixed, а вопрос обязан быть виден, где бы ни стояла
  * прокрутка. Ничего не решает сам: уйти молча — «Закрыть».
  */
-export function StopAsk({
+export function StopAsk<K extends string>({
   game,
   reasons,
   onReason,
@@ -27,8 +27,8 @@ export function StopAsk({
   onClose,
 }: {
   game: { appid: number; name: string } | null
-  reasons: ReadonlyArray<{ key: string; label: string }>
-  onReason: (key: string) => void
+  reasons: ReadonlyArray<{ key: K; label: string }>
+  onReason: (key: K) => void
   onHooked: () => void
   onClose: () => void
 }) {

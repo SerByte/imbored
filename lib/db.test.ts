@@ -111,6 +111,7 @@ import {
   DEMO_TTL_SEC,
 } from './db'
 import { seedDemo } from './demo'
+import { FEEDBACK_ACTIONS } from './feedbackkinds'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
@@ -1344,6 +1345,52 @@ describe('db', () => {
     expect(await sqlOf()).toBe(firstSql)
     expect(after.rows[0]?.rowid).toBe(before.rows[0]?.rowid)
     expect((await listFeedback(once, 'u1')).map((r) => r.appid)).toEqual([620])
+  })
+
+  test('миграция: CHECK без любого действия списка пересобирается, а не только без launched', async () => {
+    // Условие пересборки раньше искало литерал 'launched'. Следующее действие,
+    // добавленное в список, до живой базы бы не доехало: 'launched' там уже
+    // есть, пересборки нет, и каждый INSERT нового действия падал бы на CHECK.
+    // Каждое по очереди — и последнее, и из середины
+    for (const missing of FEEDBACK_ACTIONS) {
+      const narrow = FEEDBACK_ACTIONS.filter((a) => a !== missing)
+        .map((a) => `'${a}'`)
+        .join(',')
+      const db = createClient({ url: ':memory:' })
+      await db.executeMultiple(`CREATE TABLE feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        steamid TEXT NOT NULL,
+        appid INTEGER NOT NULL,
+        action TEXT NOT NULL CHECK (action IN (${narrow})),
+        reason TEXT,
+        mood_json TEXT,
+        created_at INTEGER NOT NULL
+      );`)
+      // Старая строка — любым действием, которое эта схема пускает
+      const kept = FEEDBACK_ACTIONS.find((a) => a !== missing)!
+      await db.execute({
+        sql: "INSERT INTO feedback (id, steamid, appid, action, reason, created_at) VALUES (9, 'u1', 620, ?, 'notnow', 1)",
+        args: [kept],
+      })
+      const migrated = await migrateDb(db)
+      const sql = String(
+        (await migrated.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'"))
+          .rows[0]?.sql,
+      )
+      for (const a of FEEDBACK_ACTIONS) expect(sql, `${missing}: ${a}`).toContain(`'${a}'`)
+      await migrated.execute({
+        sql: "INSERT INTO feedback (steamid, appid, action, created_at) VALUES ('u1', 730, ?, ?)",
+        args: [missing, NOW],
+      })
+      const rows = await migrated.execute('SELECT id, action, reason FROM feedback ORDER BY id')
+      expect(
+        rows.rows.map((r) => [Number(r.id), r.action, r.reason]),
+        missing,
+      ).toEqual([
+        [9, kept, 'notnow'],
+        [10, missing, null],
+      ])
+    }
   })
 
   test('свежая база сразу принимает launched и не пересобирается', async () => {

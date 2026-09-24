@@ -24,6 +24,7 @@ import { SplitHeading } from '@/components/SplitHeading'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
+import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { reviewsBrief } from '@/lib/gametraits'
 import { rememberMood } from '@/lib/lastmood'
 import {
@@ -94,7 +95,12 @@ function storeHref(p: Pick): string {
   return p.storeUrl ?? `https://store.steampowered.com/app/${p.appid}/`
 }
 
-const SKIP_REASONS: Array<{ key: string; label: string }> = [
+/**
+ * Причины «Не то — дальше» с подписями. Ключи — из lib/feedbackkinds.ts, где
+ * их пускает роут: опечатка здесь — красный tsc, а не молча выброшенная
+ * причина. Не все ключи: 'spin', 'done' и 'explore' ставят свои кнопки.
+ */
+const SKIP_REASONS: Array<{ key: SkipReason; label: string }> = [
   { key: 'genre', label: 'Не тот жанр' },
   { key: 'hard', label: 'Слишком сложная' },
   { key: 'tired', label: 'Надоела' },
@@ -435,8 +441,8 @@ function Player({ say }: { say: (line: string) => void }) {
   const sendFeedback = useCallback(
     (
       appid: number,
-      action: 'liked' | 'skipped' | 'opened' | 'banned' | 'launched',
-      reason?: string,
+      action: FeedbackAction,
+      reason?: SkipReason,
     ): Promise<boolean> => {
       // Сессия только читает — ответ известен заранее, 403 needsteam. Кнопки
       // записи у неё спрятаны, сюда доходят попутные сигналы: запуск,

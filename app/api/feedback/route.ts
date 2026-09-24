@@ -1,14 +1,11 @@
 import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
-import { forgetDailyPick, logFeedback, type FeedbackAction, type SkipReason } from '@/lib/db'
+import { forgetDailyPick, logFeedback } from '@/lib/db'
+import { isFeedbackAction, isSkipReason } from '@/lib/feedbackkinds'
 import { parseMood } from '@/lib/mood'
 import { portraitTag } from '@/lib/portraitmodel'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, nowSec, requireWriter } from '@/lib/server'
-
-const ACTIONS: readonly FeedbackAction[] = ['liked', 'skipped', 'opened', 'banned', 'launched']
-// 'explore' — свайп колоды исследователя (/explore): «Интересно» и «Мимо»
-const REASONS: readonly SkipReason[] = ['genre', 'hard', 'tired', 'notnow', 'spin', 'done', 'explore']
 
 /*
  * Потолок на запись фидбека.
@@ -38,8 +35,10 @@ export async function POST(req: Request) {
     mood?: unknown
   }
   const appid = Number(body.appid)
-  const action = body.action as FeedbackAction | undefined
-  if (!Number.isInteger(appid) || !action || !ACTIONS.includes(action)) {
+  const action = body.action
+  // Белые списки действий и причин — lib/feedbackkinds.ts: там же строится
+  // CHECK таблицы, и новое действие не разъедется с тем, что пускает роут
+  if (!Number.isInteger(appid) || !isFeedbackAction(action)) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }
 
@@ -56,7 +55,7 @@ export async function POST(req: Request) {
 
   // невалидные mood/reason не роняют фидбек — просто не сохраняются
   const mood = parseMood(body.mood)
-  const reason = REASONS.includes(body.reason as SkipReason) ? (body.reason as SkipReason) : null
+  const reason = isSkipReason(body.reason) ? body.reason : null
   await logFeedback(
     db,
     {

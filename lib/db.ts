@@ -2,6 +2,13 @@ import { createClient, type Client, type InStatement } from '@libsql/client'
 import { memberLabel } from './room'
 import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
+import {
+  FEEDBACK_COLUMNS,
+  feedbackCheckStale,
+  feedbackTableSql,
+  type FeedbackAction,
+  type SkipReason,
+} from './feedbackkinds'
 import { isDeadReason } from './liveness'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
@@ -14,24 +21,12 @@ import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
 /** Соединение с БД: локальный файл в dev, Turso в проде — API одинаковый */
 export type Db = Client
 
-/**
- * 'launched' — нажал «Запустить». Раньше это писалось как 'liked', и точность
- * подбора на /library росла от любого клика: запуск — ещё не «зашло», а
- * человек, запустивший игру и тут же закрывший её, выглядел довольным.
+/*
+ * Действия и причины фидбека — lib/feedbackkinds.ts: там один список на весь
+ * проект, из него же строится CHECK таблицы. Здесь только реэкспорт типов для
+ * тех, кто привык брать их отсюда.
  */
-export type FeedbackAction = 'liked' | 'skipped' | 'opened' | 'banned' | 'launched'
-
-/**
- * 'spin' — «Крутить ещё» в рулетке: не оценка игры, а бросок кубика. Ни вкуса,
- * ни точности подбора не трогает. 'done' — «Уже прошёл» рядом с баном: бан, но
- * по другой причине, чем «не нравится». 'explore' — свайп в колоде
- * исследователя (/explore): «Интересно» пишется как 'opened', «Мимо» — как
- * 'skipped', оба с этой причиной. Листание без обязательств — не промах
- * подбора и не пауза (см. listFeedback, feedbackStats, listExplore).
- *
- * У reason в таблице нет CHECK, поэтому новые значения не требуют миграции.
- */
-export type SkipReason = 'genre' | 'hard' | 'tired' | 'notnow' | 'spin' | 'done' | 'explore'
+export type { FeedbackAction, SkipReason } from './feedbackkinds'
 
 export type FeedbackRow = {
   steamid: string
@@ -126,15 +121,8 @@ CREATE TABLE IF NOT EXISTS games (
   pros_cons_json TEXT,
   updated_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS feedback (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  steamid TEXT NOT NULL,
-  appid INTEGER NOT NULL,
-  action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned','launched')),
-  reason TEXT,
-  mood_json TEXT,
-  created_at INTEGER NOT NULL
-);
+-- CREATE и CHECK по списку действий — lib/feedbackkinds.ts (feedbackTableSql)
+${feedbackTableSql('feedback', { ifNotExists: true })};
 CREATE INDEX IF NOT EXISTS idx_feedback_steamid ON feedback (steamid, created_at DESC);
 -- deck_round/deck_size — свойства КОМНАТЫ, а не участника: пул кандидатов
 -- крутится по rotationSlot(id комнаты, created_at), поэтому колода у всех одна
@@ -634,12 +622,13 @@ async function addMissingColumns(db: Db): Promise<void> {
 }
 
 /**
- * Старый CHECK у feedback не пускает новые action — сначала 'banned', теперь
+ * Старый CHECK у feedback не пускает новые action — сначала 'banned', потом
  * 'launched'. SQLite не умеет менять CHECK на месте, поэтому таблица
- * пересобирается целиком. Условие проверяет именно последнее добавленное
- * значение в кавычках: после пересборки оно в SQL таблицы есть, и повтор
- * ничего не делает. Одна ветка покрывает и совсем старую схему без 'banned' —
- * в ней тоже нет 'launched'.
+ * пересобирается целиком. Условие (feedbackCheckStale) проверяет КАЖДОЕ
+ * действие из FEEDBACK_ACTIONS в кавычках: после пересборки все они в SQL
+ * таблицы есть, и повтор ничего не делает. Раньше это был литерал 'launched',
+ * и следующее действие, добавленное в список, но не в условие, на проде
+ * роняло бы каждый INSERT с собой.
  *
  * Зовётся только под upgrade: новый action в CHECK — это тоже подъём
  * CURRENT_SCHEMA_V, иначе живая база его не увидит.
@@ -653,23 +642,17 @@ async function rebuildFeedbackCheck(db: Db, allowed: boolean): Promise<boolean> 
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='feedback'",
   )
   const createSql = info.rows[0]?.sql as string | undefined
-  if (createSql?.includes('CHECK') && !createSql.includes("'launched'")) {
+  if (feedbackCheckStale(createSql)) {
     if (!allowed) return false
+    // Колонки — тем же списком, что и CREATE: к этому моменту ALTER-цикл уже
+    // довёл старую таблицу до полного набора (addMissingColumns идёт раньше)
+    const cols = FEEDBACK_COLUMNS.join(', ')
     await db.batch(
       [
         // Хвост прерванной попытки: без него CREATE упал бы на каждом старте
         'DROP TABLE IF EXISTS feedback_new',
-        `CREATE TABLE feedback_new (
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           steamid TEXT NOT NULL,
-           appid INTEGER NOT NULL,
-           action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned','launched')),
-           reason TEXT,
-           mood_json TEXT,
-           created_at INTEGER NOT NULL
-         )`,
-        `INSERT INTO feedback_new (id, steamid, appid, action, reason, mood_json, created_at)
-           SELECT id, steamid, appid, action, reason, mood_json, created_at FROM feedback`,
+        feedbackTableSql('feedback_new'),
+        `INSERT INTO feedback_new (${cols}) SELECT ${cols} FROM feedback`,
         'DROP TABLE feedback',
         'ALTER TABLE feedback_new RENAME TO feedback',
         'CREATE INDEX IF NOT EXISTS idx_feedback_steamid ON feedback (steamid, created_at DESC)',
