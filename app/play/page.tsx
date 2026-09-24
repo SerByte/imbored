@@ -47,6 +47,7 @@ import {
   type Deal,
   type Miss,
   type PlayPick,
+  type SeedRef,
 } from '@/lib/playflow'
 import {
   PLAY_CACHE_VERSION,
@@ -298,12 +299,20 @@ function Player({ say }: { say: (line: string) => void }) {
   // сил»), а дальше живёт в состоянии — как и scope: переключается на уже
   // показанной выдаче, без перезагрузки и прогрева. Мусор в адресе — «без оси».
   const [lean, setLean] = useState<Lean | null>(() => parseLean(search.get('lean')))
+  /**
+   * «Как «X», но…» — соседи какой игры на экране. Только из эха выдачи
+   * (applyDeal): адреса у затравки нет, это шаг по уже показанной выдаче,
+   * как переключатели. null — обычная выдача.
+   */
+  const [seed, setSeed] = useState<SeedRef | null>(null)
   const [switching, setSwitching] = useState(false)
   /**
    * Почему переключатель не пересобрал выдачу (switchLine) — строкой под ним.
    * null — сказать нечего. Гаснет с любой следующей выдачей (applyDeal).
    */
   const [switchMiss, setSwitchMiss] = useState<string | null>(null)
+  /** То же для «Как «X», но…» — строкой у самой кнопки, под героем */
+  const [seedMiss, setSeedMiss] = useState<string | null>(null)
   /*
    * ВЫДАЧА МЕЖДУ ЗАХОДАМИ (lib/playcache.ts).
    *
@@ -468,7 +477,7 @@ function Player({ say }: { say: (line: string) => void }) {
    * после await состояние ещё не обновится.
    */
   const fetchPicks = useCallback(
-    async (next: { scope: Scope; lean: Lean | null }): Promise<Deal | Miss> => {
+    async (next: { scope: Scope; lean: Lean | null; seed?: number | null }): Promise<Deal | Miss> => {
       // try/catch, а не голый await: оборванная сеть на этом шаге всплывала из
       // async-функции и оставляла экран в вечном «Подбираю…» — тот же класс
       // ошибки, что был в цикле прогрева до переезда в lib/warmup.ts.
@@ -482,6 +491,7 @@ function Player({ say }: { say: (line: string) => void }) {
             ...(focus ? { focus } : {}),
             scope: next.scope,
             ...(next.lean ? { lean: next.lean } : {}),
+            ...(next.seed ? { seed: next.seed } : {}),
           }),
           // Свой срок ожидания, а не браузерный. Сервер модель ждёт не дольше
           // восьми секунд (INTERACTIVE_CLIENT) и дальше отдаёт эвристику, так
@@ -578,6 +588,7 @@ function Player({ say }: { say: (line: string) => void }) {
       setEngine(deal.engine)
       setScope(deal.scope)
       setLean(deal.lean)
+      setSeed(deal.seed)
       // Серверные часы — по ним подпись онлайна решает, имеет ли право
       // сказать «сейчас». См. докблок в components/PlayersNow. У выдачи с
       // прошлого захода они ушли вперёд на столько, сколько она пролежала.
@@ -591,6 +602,7 @@ function Player({ say }: { say: (line: string) => void }) {
       if (back) setLiked(new Set(back.liked))
       // Выдача пришла — прежний отказ переключателя больше не про неё
       setSwitchMiss(null)
+      setSeedMiss(null)
       return hero
     },
     [roulette],
@@ -618,13 +630,14 @@ function Player({ say }: { say: (line: string) => void }) {
         engine,
         lean,
         scope,
+        seed,
         nowSec: meta.nowSec,
         viewer: meta.viewer,
       },
       hero: picks[Math.min(index, picks.length - 1)].appid,
       liked: [...liked],
     })
-  }, [phase, picks, discoveries, continueGame, engine, lean, scope, index, liked, cacheKey])
+  }, [phase, picks, discoveries, continueGame, engine, lean, scope, seed, index, liked, cacheKey])
 
   useEffect(() => {
     /*
@@ -824,26 +837,36 @@ function Player({ say }: { say: (line: string) => void }) {
   }, [retrying, fetchPicks, applyDeal, scope, lean, roulette, say])
 
   /*
-   * Переключатели уже показанной выдачи: источник и ось состояния. Один путь на
-   * оба — тот же прогрев, другой вопрос к движку, и выдача с начала.
+   * Переключатели уже показанной выдачи: источник, ось состояния и затравка
+   * «Как «X», но…». Один путь на все — тот же прогрев, другой вопрос к движку,
+   * и выдача с начала. Затравка переживает переключатели: «похожие на X, но
+   * только мои» — осмысленный вопрос. from — где сказать об отказе: у
+   * переключателей или у кнопки под героем.
    */
+  const seedAppid = seed?.appid ?? null
   const reshape = useCallback(
-    async (next: { scope: Scope; lean: Lean | null }) => {
-      if ((next.scope === scope && next.lean === lean) || switching) return
+    async (
+      next: { scope: Scope; lean: Lean | null; seed: number | null },
+      from: 'switch' | 'seed' = 'switch',
+    ) => {
+      if ((next.scope === scope && next.lean === lean && next.seed === seedAppid) || switching) return
       setSwitching(true)
       try {
         const got = await fetchPicks(next)
         if ('miss' in got) {
           // Выдача прежняя — и об этом надо сказать, а не просто отжать кнопку:
           // чаще всего это потолок частоты, и у него есть срок (switchLine)
-          setSwitchMiss(switchLine(got))
+          const line = switchLine(got)
+          if (from === 'seed') setSeedMiss(line)
+          else setSwitchMiss(line)
           return
         }
         const hero = applyDeal(got)
         // Фокус не трогаем: нажатый переключатель остаётся на месте, и
         // человек, может быть, нажмёт соседний. Сказать надо только, что
         // герой наверху сменился.
-        say(playLine({ kind: 'reshape', name: got.picks[hero].name }))
+        const name = got.picks[hero].name
+        say(playLine(got.seed ? { kind: 'seed', name, seed: got.seed.name } : { kind: 'reshape', name }))
       } finally {
         // finally, а не строка после await: оборванная сеть оставляла бы
         // переключатель навсегда заблокированным, и починить это можно было бы
@@ -852,7 +875,7 @@ function Player({ say }: { say: (line: string) => void }) {
         setSwitching(false)
       }
     },
-    [scope, lean, switching, fetchPicks, applyDeal, say],
+    [scope, lean, seedAppid, switching, fetchPicks, applyDeal, say],
   )
 
   const advance = useCallback(
@@ -1177,7 +1200,7 @@ function Player({ say }: { say: (line: string) => void }) {
           // пересчёт его сменит — на нового, когда тот смонтируется
           focusHero(true)
           const was = pick.appid
-          void fetchPicks({ scope, lean }).then((got) => {
+          void fetchPicks({ scope, lean, seed: seedAppid }).then((got) => {
             if ('miss' in got) return
             const now = got.picks[applyDeal(got)]
             say(playLine({ kind: 'refresh', name: now.name }))
@@ -1585,6 +1608,48 @@ function Player({ say }: { say: (line: string) => void }) {
                   {stopRuleLine(mood.time)}
                 </motion.p>
               )}
+              {/*
+                «Как «X», но…» — соседи этой игры (готовые из game_neighbors,
+                а до их заливки — по тегу полки) под то же настроение. Шаг по
+                выдаче, как переключатели ниже: без адреса и без прогрева. В
+                рулетке его нет — там смысл в броске, в «нераспакованном» тоже:
+                вопрос там уже задан, и соседи его не услышали бы. У выдачи из
+                соседей — подпись, чьи они, и дорога обратно.
+              */}
+              {(seed || (!roulette && !focus && pick.tags.length > 0)) && (
+                <motion.div
+                  variants={STEP}
+                  className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm"
+                >
+                  {seed && <span className="text-faint">Похожие на «{seed.name}»</span>}
+                  {!roulette && !focus && pick.tags.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void reshape({ scope, lean, seed: pick.appid }, 'seed')}
+                      aria-disabled={switching}
+                      title="Похожие на эту игру — под то же настроение"
+                      className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
+                    >
+                      Как «{pick.name}», но…
+                    </button>
+                  )}
+                  {seed && (
+                    <button
+                      type="button"
+                      onClick={() => void reshape({ scope, lean, seed: null }, 'seed')}
+                      aria-disabled={switching}
+                      className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
+                    >
+                      Вернуть обычную выдачу
+                    </button>
+                  )}
+                </motion.div>
+              )}
+              {seedMiss && (
+                <p role="status" className="-mt-1 text-sm text-danger">
+                  {seedMiss}
+                </p>
+              )}
               </>
             )}
             </div>
@@ -1628,7 +1693,9 @@ function Player({ say }: { say: (line: string) => void }) {
               >
                 {focus
                   ? `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} из нераспакованного`
-                  : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}
+                  : seed
+                    ? `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')}, похожих на «${seed.name}»`
+                    : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}
                 {/* Глиф — для глаза: состояние уже в aria-expanded, а вслух
                     он читался «чёрный треугольник вниз» */}
                 <span aria-hidden>{moreOpen ? '▴' : '▾'}</span>
@@ -1659,7 +1726,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       {SCOPES.map((s) => (
                         <button
                           key={s.key}
-                          onClick={() => reshape({ scope: s.key, lean })}
+                          onClick={() => reshape({ scope: s.key, lean, seed: seedAppid })}
                           /* aria-disabled, а не disabled: пока выдача
                              пересобирается, нажатая кнопка обязана удержать
                              фокус. disabled выбрасывал его в body на всё время
@@ -1696,7 +1763,9 @@ function Player({ say }: { say: (line: string) => void }) {
                       {LEAN_CHIPS.map((l) => (
                         <button
                           key={l.key}
-                          onClick={() => reshape({ scope, lean: lean === l.key ? null : l.key })}
+                          onClick={() =>
+                            reshape({ scope, lean: lean === l.key ? null : l.key, seed: seedAppid })
+                          }
                           aria-disabled={switching}
                           aria-pressed={lean === l.key}
                           className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer aria-disabled:opacity-50 ${

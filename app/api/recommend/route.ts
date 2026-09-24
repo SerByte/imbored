@@ -14,6 +14,7 @@ import {
 import { discountView, trustedPrice } from '@/lib/discount'
 import { editionKey } from '@/lib/editions'
 import { entryCost, showsEntry } from '@/lib/entry'
+import { nearGames } from '@/lib/gamepage'
 import { sessionTrait } from '@/lib/gametraits'
 import { claudePicks, heuristicPicks, topUpPicks, type Pick } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -33,6 +34,7 @@ import {
   mixHeroPool,
   parseFocus,
   parseScope,
+  parseSeed,
   PICK_COUNT,
   pickContinue,
   scoreCandidates,
@@ -110,6 +112,7 @@ export async function POST(req: Request) {
     focus?: unknown
     scope?: unknown
     lean?: unknown
+    seed?: unknown
   }
   const mood = parseMood(body.mood)
   if (!mood) return NextResponse.json({ error: 'badmood' }, { status: 400 })
@@ -120,6 +123,8 @@ export async function POST(req: Request) {
   // Неверное значение не ошибка, а «ось не выбрана»: у каждого кода ошибки
   // здесь должен быть свой экран на /play, а опечатка в адресе его не стоит
   const lean = parseLean(body.lean)
+  // «Как «X», но…» — по тому же правилу: мусор значит «без затравки»
+  const seed = parseSeed(body.seed)
 
   const db = await getDb()
   const now = nowSec()
@@ -194,22 +199,55 @@ export async function POST(req: Request) {
   // то, что есть у половины каталога. null на непрогретой базе — тогда как раньше.
   const tagWeight = tagWeightFrom(tagStats)
 
-  // Кандидаты из большого каталога — одним запросом с LIMIT, а не полным сканом
-  const newPool = (
-    await fetchDiscoveryPool(db, {
-      tags: pickQueryTags(profile, tagStats, poolSize),
-      bannedAppids: [...banned],
-      requireMultiplayer: mood.social === 'friends',
-      rotation: rotationSlot(steamid, now),
-      limit: 400,
-      wildcard: WILDCARD_POOL,
-    })
-  ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
+  /*
+   * «КАК «X», НО…» — ВЫДАЧА ИЗ СОСЕДЕЙ ОДНОЙ ИГРЫ.
+   *
+   * Кандидаты — только соседи X (nearGames: готовые из game_neighbors, а пока
+   * их не залили — полка по тегу), свои и из каталога; дальше обычный скоринг
+   * под настроение, ось и паузы. Пул каталога по тегам профиля здесь не
+   * нужен: вопрос задан про X, а не про вкус вообще.
+   *
+   * Соседей не нашлось или всех отсекли фильтры — тот же nocandidates, что у
+   * пустой выдачи: /play на переключателе говорит «ничего не нашлось, выдача
+   * прежняя», и это правда.
+   */
+  let seedRef: { appid: number; name: string } | null = null
+  let scoredLibrary = games
+  let newPool: GameMeta[]
+  if (seed !== null) {
+    const seedMeta = libMetas.get(seed) ?? (await getGamesMetaLite(db, [seed])).get(seed)
+    if (!seedMeta) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
+    const seedKey = editionKey(seedMeta.name)
+    const near = new Set(
+      (await nearGames(db, seedMeta, tagStats)).games.map((g) => g.appid).filter((id) => id !== seed),
+    )
+    scoredLibrary = games.filter((g) => near.has(g.appid))
+    newPool = [
+      ...(await getGamesMetaLite(db, [...near].filter((id) => !owned.has(id)))).values(),
+    ].filter(
+      (m) => !ownedKeys.has(editionKey(m.name)) && !(seedKey && editionKey(m.name) === seedKey),
+    )
+    seedRef = { appid: seed, name: seedMeta.name }
+  } else {
+    // Кандидаты из большого каталога — одним запросом с LIMIT, а не полным сканом
+    newPool = (
+      await fetchDiscoveryPool(db, {
+        tags: pickQueryTags(profile, tagStats, poolSize),
+        bannedAppids: [...banned],
+        requireMultiplayer: mood.social === 'friends',
+        rotation: rotationSlot(steamid, now),
+        limit: 400,
+        wildcard: WILDCARD_POOL,
+      })
+    ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
+  }
   for (const m of newPool) poolByAppid.set(m.appid, m)
   const familiarCap = lean === 'familiar' ? FAMILIAR_CAP_ASKED : FAMILIAR_CAP
   const candidates = scoreCandidates({
     profile,
-    library: games,
+    // При затравке — только свои игры из её соседей; профиль вкуса, якоря и
+    // «Продолжить» ниже по-прежнему считаются по всей библиотеке
+    library: scoredLibrary,
     metaOf,
     newPool,
     mood,
@@ -306,17 +344,23 @@ export async function POST(req: Request) {
   // дальше та же выдача собирается эвристикой. Проверка идёт последней, уже
   // после того как пул собран: она должна тратить квоту только тогда, когда
   // вызов модели реально состоялся бы.
+  //
+  // Выдача из соседей («Как «X», но…») к модели не ходит вовсе: правило
+  // владельца — никакого нового расхода на модель, а это новый повод её звать.
+  // Эвристика с якорем и причинами по тегам здесь и так говорит по делу.
+  // Условие про затравку стоит в && первым: такой запрос не тратит и демо-квоту.
   const llmAllowed =
-    !isDemoId(steamid) ||
-    (
-      await checkRate(db, {
-        bucket: 'llm-demo',
-        id: steamid,
-        limit: DEMO_LLM_LIMIT,
-        windowSec: DEMO_LLM_WINDOW_SEC,
-        nowSec: now,
-      })
-    ).ok
+    seedRef === null &&
+    (!isDemoId(steamid) ||
+      (
+        await checkRate(db, {
+          bucket: 'llm-demo',
+          id: steamid,
+          limit: DEMO_LLM_LIMIT,
+          windowSec: DEMO_LLM_WINDOW_SEC,
+          nowSec: now,
+        })
+      ).ok)
 
   const fromClaude =
     heroPool.length && llmAllowed
@@ -481,6 +525,8 @@ export async function POST(req: Request) {
     // Эхо оси: под какое состояние собрана выдача. null — без оси, в том
     // числе когда в адресе была опечатка: её мы молча не применили
     lean,
+    // Эхо затравки «Как «X», но…»: чьи соседи на экране. null — обычная выдача
+    seed: seedRef,
     // Строка «Продолжить» или null — /play сам решает, где её не показывать
     continue: cont ? continueView(cont) : null,
     // Чья выдача. /play держит её на устройстве пятнадцать минут и обязан не

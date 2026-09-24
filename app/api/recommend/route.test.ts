@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { saveLibrarySnapshot, upsertGamesMeta, upsertSemantics, type Db } from '@/lib/db'
+import { saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, upsertSemantics, type Db } from '@/lib/db'
 import { nowSec } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
 import type { GameSemantics } from '@/lib/types'
@@ -192,5 +192,103 @@ describe('/api/recommend: семантика в карточке', () => {
     // Отзывы — для «92% из 48 тыс.» на плитке полки
     expect(byId.get(620)).toMatchObject({ reviewsPercent: 92, reviewsTotal: 48_213 })
     expect(byId.get(413150)).toMatchObject({ reviewsPercent: null, reviewsTotal: null })
+  })
+})
+
+/**
+ * «Как «X», но…»: выдача из соседей одной игры. Кандидаты — только соседи
+ * (свои и из каталога), модель не зовётся ни при каком ключе, а эхо seed
+ * говорит /play, чьи соседи на экране.
+ */
+describe('/api/recommend: затравка seed', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  /** Своя 10 — затравка; соседи: свои 11, 12 и каталог 20…24; мимо: своя 13 и каталог 25 */
+  const NEAR = [11, 12, 20, 21, 22, 23, 24]
+
+  async function setup(): Promise<string[]> {
+    // Ключ модели есть: без затравки маршрут пошёл бы в Anthropic
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        calls.push(input instanceof Request ? input.url : String(input))
+        return new Response('', { status: 404 })
+      }),
+    )
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      [10, 11, 12, 13].map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        playtimeForever: appid === 10 ? 3000 : 0,
+        playtime2Weeks: 0,
+      })),
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      [10, 11, 12, 13, 20, 21, 22, 23, 24, 25].map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Puzzle: 100, Casual: 60 },
+        genres: [],
+        categories: [2],
+      })),
+      now,
+    )
+    await upsertNeighbors(
+      db,
+      new Map([[10, NEAR.map((neighbor, i) => ({ neighbor, score: 0.9 - i / 100, shared: ['Puzzle'] }))]]),
+    )
+    return calls
+  }
+
+  test('кандидаты — только соседи затравки, эхо seed, модель не зовётся', async () => {
+    const calls = await setup()
+    const res = await POST(post('/api/recommend', { mood: MOOD, seed: 10 }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      picks: Array<{ appid: number }>
+      discoveries: Array<{ appid: number }>
+      engine: string
+      seed: unknown
+    }
+    const shown = [...body.picks, ...body.discoveries].map((p) => p.appid)
+    expect(shown.length).toBeGreaterThan(0)
+    for (const appid of shown) expect(NEAR, `${appid} не сосед затравки`).toContain(appid)
+    expect(body.seed).toEqual({ appid: 10, name: 'Игра 10' })
+    expect(body.engine).toBe('heuristic')
+    expect(calls.filter((u) => u.includes('anthropic'))).toEqual([])
+  })
+
+  test('без затравки тот же запрос идёт к модели — значит, тест выше что-то проверяет', async () => {
+    const calls = await setup()
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { seed: unknown }).seed).toBeNull()
+    expect(calls.some((u) => u.includes('anthropic'))).toBe(true)
+  })
+
+  test('незнакомая затравка — 409 nocandidates, мусор в поле — обычная выдача', async () => {
+    await setup()
+    // здесь модель не проверяем — без ключа обычная выдача не шумит отказами
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    const unknown = await POST(post('/api/recommend', { mood: MOOD, seed: 999 }))
+    expect(unknown.status).toBe(409)
+    expect(await unknown.json()).toEqual({ error: 'nocandidates' })
+
+    for (const seed of ['10', 1.5, 0, null]) {
+      const res = await POST(post('/api/recommend', { mood: MOOD, seed }))
+      expect(res.status, JSON.stringify(seed)).toBe(200)
+      expect(((await res.json()) as { seed: unknown }).seed, JSON.stringify(seed)).toBeNull()
+    }
   })
 })

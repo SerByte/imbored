@@ -38,7 +38,7 @@
 
 import { createLocalStore } from './localstore'
 import { parseLean, type Lean } from './mood'
-import type { Deal, PlayPick } from './playflow'
+import { parseSeedRef, type Deal, type PlayPick } from './playflow'
 import type { ContinueGame, Focus } from './recommend'
 import type { Mood } from './types'
 
@@ -136,6 +136,8 @@ function parseDeal(x: unknown): Deal | null {
     engine: d.engine,
     lean: parseLean(d.lean),
     scope: d.scope,
+    // Записи до «Как «X», но…» поля не несут — это обычная выдача
+    seed: parseSeedRef(d.seed),
     nowSec: d.nowSec,
     viewer: d.viewer,
   }

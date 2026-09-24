@@ -69,6 +69,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
       engine: 'heuristic',
       lean: 'fresh',
       scope: 'library',
+      seed: null,
       nowSec: Math.floor(NOW / 1000),
       viewer: ME,
     },
@@ -138,6 +139,24 @@ describe('parsePlayCache', () => {
   test('мусор в оси — «без оси», запись при этом жива', () => {
     const e = entry()
     expect(parsePlayCache({ ...e, deal: { ...e.deal, lean: 'sideways' } })?.deal.lean).toBeNull()
+  })
+
+  test('выдача из соседей «Как «X», но…» возвращается со своей затравкой', () => {
+    const e = entry()
+    const seeded = { ...e, deal: { ...e.deal, seed: { appid: 1145360, name: 'Hades' } } }
+    expect(parsePlayCache(JSON.parse(JSON.stringify(seeded)))?.deal.seed).toEqual({
+      appid: 1145360,
+      name: 'Hades',
+    })
+  })
+
+  test('запись до затравки и мусор в ней — обычная выдача, запись жива', () => {
+    const old: Record<string, unknown> = { ...entry().deal }
+    delete old.seed
+    expect(parsePlayCache({ ...entry(), deal: old })?.deal.seed).toBeNull()
+    for (const seed of ['Hades', { appid: '1', name: 'Hades' }, { appid: 0, name: 'X' }, { appid: 5, name: '' }]) {
+      expect(parsePlayCache({ ...entry(), deal: { ...entry().deal, seed } })?.deal.seed).toBeNull()
+    }
   })
 })
 

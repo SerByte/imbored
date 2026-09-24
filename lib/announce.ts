@@ -23,6 +23,8 @@ export type PlayEvent =
   | { kind: 'pick'; name: string }
   /** Переключатели «Любые игры / Только моё» и «хочется …» */
   | { kind: 'reshape'; name: string }
+  /** «Как «X», но…»: выдача из соседей X */
+  | { kind: 'seed'; name: string; seed: string }
   /** «Обновить выдачу» после догрева */
   | { kind: 'refresh'; name: string }
   /** Бан или «Уже прошёл»: карточка ушла навсегда, на её месте следующая */
@@ -42,6 +44,8 @@ export function playLine(e: PlayEvent): string {
       return `На экране «${e.name}»`
     case 'reshape':
       return `Выдача пересобрана. Первая игра: «${e.name}»`
+    case 'seed':
+      return `Похожие на «${e.seed}». Первая игра: «${e.name}»`
     case 'refresh':
       return `Выдача обновлена. Первая игра: «${e.name}»`
     case 'ban':

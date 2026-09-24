@@ -9,11 +9,18 @@ describe('playLine', () => {
       { kind: 'next', name: 'Balatro' },
       { kind: 'pick', name: 'Balatro' },
       { kind: 'reshape', name: 'Balatro' },
+      { kind: 'seed', name: 'Balatro', seed: 'Hades' },
       { kind: 'refresh', name: 'Balatro' },
     ]
     for (const e of events) expect(playLine(e), e.kind).toContain('«Balatro»')
     // и строки разные: по звуку надо отличить «дальше» от «пересобрал»
     expect(new Set(events.map(playLine)).size).toBe(events.length)
+  })
+
+  test('«Как «X», но…» называет и затравку, и игру на экране', () => {
+    expect(playLine({ kind: 'seed', name: 'Dead Cells', seed: 'Hades' })).toBe(
+      'Похожие на «Hades». Первая игра: «Dead Cells»',
+    )
   })
 
   test('бан говорит и что ушло, и что пришло на его место', () => {

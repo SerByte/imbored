@@ -95,6 +95,21 @@ export type PlayPick = {
 }
 
 /**
+ * «Как «X», но…»: чьи соседи на экране — эхо seed из /api/recommend. Имя —
+ * для подписи «Похожие на «X»»: сама X в выдачу не попадает, и взять его
+ * больше неоткуда.
+ */
+export type SeedRef = { appid: number; name: string }
+
+/** Эхо затравки или null — обычная выдача, в том числе при любом мусоре */
+export function parseSeedRef(x: unknown): SeedRef | null {
+  if (!x || typeof x !== 'object') return null
+  const s = x as Record<string, unknown>
+  if (typeof s.appid !== 'number' || !Number.isSafeInteger(s.appid) || s.appid === 0) return null
+  return typeof s.name === 'string' && s.name ? { appid: s.appid, name: s.name } : null
+}
+
+/**
  * Выдача целиком: то, что пришло, плюс то, о чём спрашивали.
  *
  * scope — из запроса, а не из эха сервера: при фокусе «нераспакованное» сервер
@@ -109,6 +124,11 @@ export type Deal = {
   engine: string
   lean: Lean | null
   scope: Scope
+  /**
+   * Соседи какой игры на экране («Как «X», но…») — из эха, как и lean: кнопки
+   * и подпись обязаны говорить, подо что собрана выдача. null — обычная.
+   */
+  seed: SeedRef | null
   /** Серверные часы ответа — по ним PlayersNow решает, можно ли сказать «сейчас» */
   nowSec: number
   /**
@@ -130,6 +150,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     discoveries?: unknown
     engine?: unknown
     lean?: unknown
+    seed?: unknown
     continue?: unknown
     nowSec?: unknown
     viewer?: unknown
@@ -142,6 +163,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     engine: typeof d.engine === 'string' ? d.engine : '',
     lean: parseLean(d.lean),
     scope,
+    seed: parseSeedRef(d.seed),
     nowSec: typeof d.nowSec === 'number' && Number.isFinite(d.nowSec) ? d.nowSec : 0,
     viewer: typeof d.viewer === 'string' && d.viewer ? d.viewer : null,
   }

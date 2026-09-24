@@ -35,8 +35,17 @@ describe('dealFrom', () => {
       engine: 'claude',
       lean: null,
       scope: 'library',
+      seed: null,
       nowSec: 100,
     })
+  })
+
+  test('затравка «Как «X», но…» — из эха; мусор — обычная выдача', () => {
+    const seed = { appid: 1145360, name: 'Hades' }
+    expect(dealFrom({ picks: [pick], nowSec: 1, seed }, 'all')?.seed).toEqual(seed)
+    for (const bad of [null, 'Hades', { appid: 1.5, name: 'Hades' }, { appid: 7 }, { appid: 0, name: 'X' }]) {
+      expect(dealFrom({ picks: [pick], nowSec: 1, seed: bad }, 'all')?.seed, JSON.stringify(bad)).toBeNull()
+    }
   })
 
   test('ось — из эха сервера, источник — из запроса', () => {
@@ -170,7 +179,7 @@ describe('/play применяет новую выдачу одной функц
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
 
   test('поля выдачи пишутся в одном месте', () => {
-    for (const setter of ['setDiscoveries(', 'setContinueGame(', 'setEngine(', 'setNowSec(', 'setScope(']) {
+    for (const setter of ['setDiscoveries(', 'setContinueGame(', 'setEngine(', 'setNowSec(', 'setScope(', 'setSeed(']) {
       expect(code.split(setter).length - 1, setter).toBe(1)
     }
   })
