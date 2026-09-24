@@ -188,6 +188,18 @@ export function normalizedTags(meta: GameMeta): Record<string, number> {
   return out
 }
 
+/**
+ * Главные теги игры — по числу голосов, n штук. Чипсы карточки выдачи,
+ * «Игры дня» и колоды пати: одна мера на все три места, иначе одна и та же
+ * игра показывала бы в разных местах разные теги. Нет меты — пусто.
+ */
+export function topTags(meta: GameMeta | undefined, n = 4): string[] {
+  return Object.entries(meta?.tags ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([t]) => t)
+}
+
 export function buildTagProfile(
   library: LibraryGame[],
   metaOf: (appid: number) => GameMeta | undefined,

@@ -1,53 +1,19 @@
 import { NextResponse } from 'next/server'
+import { buildCandidates } from '@/lib/candidates'
+import { dailyCardView, pickContext, storeCardView } from '@/lib/cards'
 import { dayKey, pickDaily, pickDailyPool, publicPick } from '@/lib/daily'
-import { filterActual } from '@/lib/actual'
+import { getDailyPick, getGamesMeta, saveDailyPick } from '@/lib/db'
 import { refreshDealsWithin } from '@/lib/deals'
-import {
-  bannedAppids,
-  getDailyPick,
-  getPoolSize,
-  getGamesMeta,
-  getGamesMetaLite,
-  getLatestSnapshot,
-  listFeedback,
-  loadTagStats,
-  saveDailyPick,
-} from '@/lib/db'
 import { dayLabel } from '@/lib/freshness'
-import { discountView, trustedPrice } from '@/lib/discount'
-import { editionKey } from '@/lib/editions'
 import { heuristicPicks, reasonPrice } from '@/lib/llm'
-import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
-import { refundEligible } from '@/lib/refund'
-import {
-  applyFeedbackToProfile,
-  buildAnchorFinder,
-  buildTagProfile,
-  cooldownOf,
-  hideUrgencyFor,
-  sharedTasteTags,
-  scoreCandidates,
-  splitBySource,
-} from '@/lib/recommend'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { sharedTasteTags } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
-import { tagWeightFrom } from '@/lib/tagweight'
 import { CANDIDATE_SOURCES, type GameMeta, type ScoredCandidate } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
 const DISCOVERY_CARDS = 3
-
-/** Пул каталога, добираемый вне тегов профиля — тот же приём, что в выдаче */
-const WILDCARD_POOL = 30
-
-/**
- * Кандидатов на ранжирование. Тридцать, а не прежние двадцать пять, по той же
- * причине, что и в основной выдаче: DISCOVERY_SHARE резервирует под каталог
- * заметную долю бюджета, и на старом лимите своих кандидатов стало бы меньше,
- * чем было до появления каталога на этой странице.
- */
-const CANDIDATE_LIMIT = 30
 
 /**
  * Игра дня одна на сутки, а её отбор стоит около восьмисот прочитанных строк
@@ -58,8 +24,8 @@ const CANDIDATE_LIMIT = 30
 const DAILY_LIMIT = 10
 const DAILY_WINDOW_SEC = 3600
 
-/** Кандидат в том виде, в каком он уходит клиенту и в запись дня */
-type DailyCard = ReturnType<typeof publicPick>
+/** Кандидат в том виде, в каком он уходит в запись дня */
+type Chosen = ReturnType<typeof publicPick>
 
 /**
  * Что именно запоминается на сутки.
@@ -79,8 +45,8 @@ type DailyCard = ReturnType<typeof publicPick>
  * Скора и его частей тоже нет: запись хранит publicPick, а не кандидата.
  */
 type DailySelection = {
-  pick: DailyCard
-  shelf: DailyCard[]
+  pick: Chosen
+  shelf: Chosen[]
   hoursPlayed: number | null
   /** Причина без ценового хвоста; хвост — reasonPrice на каждом заходе */
   reasonBase: string
@@ -88,7 +54,7 @@ type DailySelection = {
   hideUrgency: boolean
 }
 
-function parseCard(raw: unknown): DailyCard | null {
+function parseCard(raw: unknown): Chosen | null {
   if (!raw || typeof raw !== 'object') return null
   const { appid, name, source } = raw as Record<string, unknown>
   if (typeof appid !== 'number' || !Number.isInteger(appid)) return null
@@ -115,7 +81,7 @@ function parseSelection(raw: unknown): DailySelection | null {
   const parsedPick = parseCard(pick)
   if (!parsedPick) return null
   if (!Array.isArray(shelf)) return null
-  const parsedShelf: DailyCard[] = []
+  const parsedShelf: Chosen[] = []
   for (const item of shelf) {
     const c = parseCard(item)
     if (!c) return null
@@ -201,62 +167,19 @@ export async function GET(req: Request) {
   const priced = await getGamesMeta(db, pricedIds)
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid)
 
-  const meta = metaNow(pick.appid)
-  const reason = reasonBase + reasonPrice(pick.source, meta, now, hideUrgency)
-  const topTags = Object.entries(meta?.tags ?? {})
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4)
-    .map(([t]) => t)
+  const reason = reasonBase + reasonPrice(pick.source, metaNow(pick.appid), now, hideUrgency)
 
   return NextResponse.json({
     // см. докблок в PlayersNow: подпись «сейчас» требует серверных часов
     nowSec: now,
-    pick: {
-      ...pick,
+    // Карточка — lib/cards: тот же контракт, по которому /daily берёт тип
+    pick: dailyCardView(pick, metaNow(pick.appid), now, {
       reason,
-      // Ссылку не угадываем шаблоном — путь Steam контент-адресуемый.
-      // Клиент соберёт нужный размер сам через GameArt.
-      headerImage: meta?.headerImage ?? null,
-      art: meta?.art ?? null,
-      // Кадры отдаём целиком: сколько из них показать, решает сам герой —
-      // это упирается в бюджет видеопамяти слайдера, а не в состав ответа.
-      screenshots: meta?.screenshots ?? [],
-      ccu: meta?.ccu ?? null,
-      // без отметки подпись не имеет права говорить «сейчас» — см. PlayersNow
-      ccuAt: meta?.ccuAt ?? null,
-      tags: topTags,
-      // Чипсы совпавших тегов помечаются на экране, и метка обязана считаться
-      // там же, где лежит профиль вкуса, — то есть в отборе; здесь она из
-      // записи. Настроения у «Игры дня» нет — поэтому sharedTasteTags, а не
-      // explainMatch: процент и вайб тут не о чем.
       sharedTags,
       hoursPlayed,
-      store: meta?.store ?? null,
-      storeUrl: meta?.storeUrl ?? null,
-      priceFinal: meta ? trustedPrice(meta, now) : null,
-      isFree: meta?.isFree ?? null,
-      // Скидка — разговор про покупку: у своей игры «−40%» сообщает только то,
-      // что ты купил её дороже. Считается на сервере вместе с подписью срока —
-      // у клиента свой часовой пояс, и «до 17 августа» разъехалось бы.
-      discount:
-        pick.source === 'new' && meta ? discountView(meta, now, { urgency: !hideUrgency }) : null,
-      // Страховка покупки — там же, где цена: только у не купленного
-      refund: pick.source === 'new' && meta ? refundEligible(meta, now) : false,
-    },
-    discoveries: shelf.map((c) => {
-      const m = metaNow(c.appid)
-      return {
-        appid: c.appid,
-        name: c.name,
-        headerImage: m?.headerImage ?? null,
-        art: m?.art ?? null,
-        store: m?.store ?? null,
-        storeUrl: m?.storeUrl ?? null,
-        priceFinal: m ? trustedPrice(m, now) : null,
-        isFree: m?.isFree ?? null,
-        discount: m ? discountView(m, now, { urgency: !hideUrgency }) : null,
-      }
+      hideUrgency,
     }),
+    discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
     // Из того же dateStr, что и ключ записи — см. dayLabel.
     dateLabel: dayLabel(dateStr),
   })
@@ -278,126 +201,36 @@ async function selectDaily(
   dateStr: string,
   now: number,
 ): Promise<DailySelection | null | typeof NO_LIBRARY> {
-  /*
-   * Пять чтений — двумя заходами, как в /api/recommend, и по той же причине.
-   *
-   * Зависимость среди них ровно одна: getGamesMetaLite нужны appid из библиотеки,
-   * поэтому он остаётся вторым заходом. Забаненное и оценки ключуются одним
-   * steamid, статистика тегов и размер пула вообще не про человека — все
-   * четверо ждали снапшот без всякой на то причины, а каждая ступень — это
-   * отдельный обход к Turso.
-   *
-   * Цена размена: у человека без снапшота (возврат NO_LIBRARY строкой ниже)
-   * четыре запроса уходят впустую. Случай редкий и молчаливый, в отличие от
-   * задержки, которую видят все.
-   */
-  const [snapshot, banned, feedback, tagStats, poolSize] = await Promise.all([
-    getLatestSnapshot(db, steamid),
-    bannedAppids(db, steamid),
-    listFeedback(db, steamid, 300),
-    loadTagStats(db),
-    getPoolSize(db),
-  ])
-  if (!snapshot) return NO_LIBRARY
-
-  const games = snapshot.games
-  const owned = new Set(games.map((g) => g.appid))
-  // Второй ключ владения — по названию: у Skyrim и Skyrim Special Edition
-  // разные appid, и по одному только owned находки предлагали бы купить то,
-  // что уже стоит в библиотеке
-  const ownedKeys = new Set(games.map((g) => editionKey(g.name)).filter(Boolean))
-
-  // Узкой выборкой: кадры нужны одному герою, и их читает сам GET по четырём
-  // appid, а не отбор по всей библиотеке
-  const libMetas = await getGamesMetaLite(
-    db,
-    games.map((g) => g.appid),
-  )
-  const poolByAppid = new Map<number, GameMeta>()
-  const metaOf = (appid: number): GameMeta | undefined =>
-    libMetas.get(appid) ?? poolByAppid.get(appid)
-  const profile = applyFeedbackToProfile(
-    buildTagProfile(games, (id) => libMetas.get(id)),
-    feedback,
-    metaOf,
-  )
-
-  // Вес редкости — тот же, что в основной выдаче: и причина, и отметки на
-  // чипсах называют характерные теги, а не Indie с Action
-  const tagWeight = tagWeightFrom(tagStats)
-
-  // Каталог тут больше не лишний: «игра дня» перестала быть только разбором
-  // купленного. Пул тот же, что в основной выдаче, одним запросом с LIMIT.
-  const newPool = (
-    await fetchDiscoveryPool(db, {
-      tags: pickQueryTags(profile, tagStats, poolSize),
-      bannedAppids: [...banned],
-      // на этой странице настроение всегда одиночное
-      requireMultiplayer: false,
-      rotation: rotationSlot(steamid, now),
-      limit: 400,
-      wildcard: WILDCARD_POOL,
-    })
-  ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
-  for (const m of newPool) poolByAppid.set(m.appid, m)
-
-  const candidates = scoreCandidates({
-    profile,
-    library: games,
-    metaOf,
-    newPool,
-    mood: NEUTRAL_MOOD,
+  // Конвейер тот же, что у /play (lib/candidates.ts): настроения у страницы
+  // нет, знакомого и оси тоже, а из пауз — только «надоела»: «не сейчас» на
+  // /play посреди дня иначе сменило бы игру, выбранную на сутки
+  const set = await buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
     nowSec: now,
-    limit: CANDIDATE_LIMIT,
-    // баны до отсечки, а не после — см. тот же параметр в /api/recommend
-    exclude: banned,
-    tagWeight,
-    // Только «надоела»: «не сейчас» на /play посреди дня иначе сменило бы
-    // игру, выбранную на сутки
-    cooldown: cooldownOf(feedback, now, ['tired']),
+    cooldownKinds: ['tired'],
   })
-
-  if (!candidates.length) return null
-
-  // Своя библиотека не проходит офлайн-фильтры каталога, поэтому актуальность
-  // считаем здесь: иначе игрой дня становился мёртвый мультиплеер.
-  //
-  // Метаданные каталога идут в тот же расчёт — серия определяется по группе
-  // целиком. Но только по КАНДИДАТАМ, а не по всем четырём сотням пула:
-  // лишние члены группы ничего не судят, зато могут её возглавить, и случайная
-  // «Часть 3» из хвоста каталога отменила бы работавшее вытеснение.
-  const judged = new Set(candidates.map((c) => c.appid))
-  const allMetas = new Map(libMetas)
-  for (const [appid, meta] of poolByAppid) {
-    if (judged.has(appid) && !allMetas.has(appid)) allMetas.set(appid, meta)
-  }
-  const actual = filterActual(candidates, allMetas, 'solo')
+  if (set === 'nolibrary') return NO_LIBRARY
+  if (set === 'nocandidates') return null
+  const { own, discovery, profile, tagWeight, metaOf } = set
 
   const seed = `${steamid}:${dateStr}`
-  const { own, discovery } = splitBySource(actual)
   const pick = pickDaily(pickDailyPool(own, discovery, seed), seed)!
 
   // Полка находок — всегда из каталога, даже когда герой уже оттуда: одна и та
   // же игра дважды на экране выглядит сбоем, а не рекомендацией
   const shelf = discovery.filter((c) => c.appid !== pick.appid).slice(0, DISCOVERY_CARDS)
 
-  const lib = games.find((g) => g.appid === pick.appid)
-  const hoursPlayed = lib ? Math.round(lib.playtimeForever / 60) : null
-  // Срок распродажи — тем, у кого нераспакованного немного: см. тот же флаг
-  // в /api/recommend
-  const hideUrgency = hideUrgencyFor(games, (id) => libMetas.get(id))
-
   // Тот же контекст причины, что в основной выдаче: своя игра, на которую эта
-  // похожа, вместо тегов, и свои часы у заброшенной. Баны якорем не бывают.
-  const findAnchor = buildAnchorFinder(games, (id) => libMetas.get(id), tagWeight, banned)
+  // похожа, вместо тегов, свои часы у заброшенной и срок распродажи только
+  // тем, у кого нераспакованного немного. Цены здесь не обновляются — это
+  // делает GET на каждом заходе.
+  const ctx = pickContext(set)
+  const hoursPlayed = ctx.hoursOf(pick.appid)
+  const hideUrgency = ctx.hideUrgency
   const reason =
     heuristicPicks([pick], metaOf, 1, now, profile, {
       tagWeight,
-      anchorOf: (appid) => {
-        const m = metaOf(appid)
-        return m ? findAnchor(m) : null
-      },
-      hoursOf: (appid) => (appid === pick.appid ? hoursPlayed : null),
+      anchorOf: ctx.anchorOf,
+      hoursOf: ctx.hoursOf,
       hideUrgency,
     })[0]?.reason ?? ''
   // В запись уходит причина БЕЗ ценового хвоста: heuristicPicks клеит его

@@ -14,12 +14,10 @@ import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
-import type { GameArtUrls } from '@/lib/art'
+import type { DailyPickCard, StoreCard } from '@/lib/cards'
 import { bounceTo, reconnectHref } from '@/lib/destination'
-import type { Discount } from '@/lib/discount'
 import { SOURCE_BADGE } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
-import type { CandidateSource } from '@/lib/types'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { SectionLabel } from '@/components/Labels'
 import { TagChips } from '@/components/TagChips'
@@ -57,39 +55,18 @@ const FAIL_UNKNOWN = {
   text: 'Похоже, что-то сломалось по дороге. Попробуй зайти чуть позже.',
 }
 
-/** Карточка магазина: и герой в день каталога, и плитки на полке ниже */
-type StoreCard = {
-  appid: number
-  name: string
-  headerImage: string | null
-  art: GameArtUrls | null
-  store: string | null
-  storeUrl: string | null
-  priceFinal: number | null
-  isFree: boolean | null
-  discount: Discount | null
-}
-
-type DailyPick = StoreCard & {
-  source: CandidateSource
-  reason: string
-  screenshots: string[]
-  tags: string[]
-  /** теги, уже присутствующие во вкусе игрока — их чипсы помечены */
-  sharedTags?: string[]
-  hoursPlayed: number | null
-  ccu: number | null
-  /** Можно ли обещать возврат Steam (refundEligible) — только у не купленного */
-  refund?: boolean
-  ccuAt: number | null
-}
-
-const storeHref = (c: StoreCard) =>
+/*
+ * Карточки — DailyPickCard и StoreCard — ровно то, что отдаёт /api/daily:
+ * типы выведены из функций, которые их строят (lib/cards.ts), а не
+ * переписаны руками. Новое поле там — видно здесь, переименованное — красный
+ * tsc там, где его читают.
+ */
+const storeHref = (c: Pick<StoreCard, 'appid' | 'storeUrl'>) =>
   c.storeUrl ?? `https://store.steampowered.com/app/${c.appid}/`
 
 export default function DailyPage() {
   const router = useRouter()
-  const [pick, setPick] = useState<DailyPick | null>(null)
+  const [pick, setPick] = useState<DailyPickCard | null>(null)
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
   const [nowSec, setNowSec] = useState(0)
   const [dateLabel, setDateLabel] = useState('')
@@ -133,7 +110,7 @@ export default function DailyPage() {
         return
       }
       const data = (await res.json()) as {
-        pick: DailyPick
+        pick: DailyPickCard
         discoveries?: StoreCard[]
         dateLabel: string
         nowSec: number

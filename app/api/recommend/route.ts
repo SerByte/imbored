@@ -1,50 +1,21 @@
 import { NextResponse } from 'next/server'
-import { filterActual } from '@/lib/actual'
 import { assignEdges } from '@/lib/badges'
-import { refreshDealsWithin } from '@/lib/deals'
-import {
-  bannedAppids,
-  getHeroMedia,
-  getPoolSize,
-  getGamesMetaLite,
-  getLatestSnapshot,
-  listFeedback,
-  loadTagStats,
-} from '@/lib/db'
-import { discountView, trustedPrice } from '@/lib/discount'
-import { editionKey } from '@/lib/editions'
-import { entryCost, showsEntry } from '@/lib/entry'
-import { nearGames } from '@/lib/gamepage'
-import { sessionTrait } from '@/lib/gametraits'
-import { claudePicks, heuristicPicks, topUpPicks, type Pick } from '@/lib/llm'
+import { buildCandidates } from '@/lib/candidates'
+import { buildPickContext, cardView, heroMediaView } from '@/lib/cards'
+import { getHeroMedia } from '@/lib/db'
+import { claudePicks, heuristicPicks, topUpPicks } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
-import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
-  applyFeedbackToProfile,
-  applyFocus,
-  buildAnchorFinder,
-  buildTagProfile,
-  capSource,
   continueView,
-  cooldownOf,
-  deferredOf,
-  explainMatch,
-  hideUrgencyFor,
-  mixHeroPool,
   parseFocus,
   parseScope,
   parseSeed,
   PICK_COUNT,
   pickContinue,
-  scoreCandidates,
-  splitBySource,
 } from '@/lib/recommend'
-import { refundEligible } from '@/lib/refund'
 import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
-import { HERO_SLIDES } from '@/lib/shots'
-import { tagWeightFrom } from '@/lib/tagweight'
-import { CANDIDATE_SOURCES, type GameMeta, type ScoredCandidate } from '@/lib/types'
+import { CANDIDATE_SOURCES, type ScoredCandidate } from '@/lib/types'
 
 // Маршрут по дороге зовёт модель. Предел объявляем явно, как в кроновых
 // маршрутах: иначе он неявный, а зависший вызов способен съесть его целиком
@@ -54,9 +25,6 @@ export const maxDuration = 60
 /** Сколько игр из каталога уходит в нижний блок «Нет в твоей библиотеке» */
 const DISCOVERY_CARDS = 6
 
-/** Кандидатов на ранжирование. Из них Claude выбирает пятёрку. */
-const CANDIDATE_LIMIT = 30
-
 /**
  * Сколько знакомого пускать в пятёрку. Одно — по умолчанию: иначе у человека
  * с сотней наигранных песочниц выдача стала бы «играй в то, что всегда». Три —
@@ -64,13 +32,6 @@ const CANDIDATE_LIMIT = 30
  */
 const FAMILIAR_CAP = 1
 const FAMILIAR_CAP_ASKED = 3
-
-/**
- * Пул каталога, добираемый вне тегов профиля. Тридцать штук на четыре сотни —
- * заметная, но не подавляющая доля: ровно чтобы у большой игры не из твоего
- * жанра появился шанс, а не чтобы выдача перестала быть твоей.
- */
-const WILDCARD_POOL = 30
 
 /*
  * Потолки на самую дорогую ручку продукта.
@@ -138,207 +99,30 @@ export async function POST(req: Request) {
     if (!verdict.ok) return rateLimitedResponse(verdict.retryAfterSec)
   }
 
-  /*
-   * Пять чтений — двумя заходами, а не лесенкой из пяти.
-   *
-   * Зависимость тут ровно одна: getGamesMetaLite ниже нужны appid и из библиотеки,
-   * и из истории оценок, поэтому он остаётся вторым заходом. Всё остальное друг
-   * от друга не зависит вовсе — забаненное и оценки ключуются одним steamid, а
-   * статистика тегов и размер пула вообще не про человека, — и всё равно шло по
-   * очереди. Один обход к Turso стоит около тридцати пяти миллисекунд по замеру
-   * на проде; лесенка из пяти ложится в главное действие продукта целиком.
-   *
-   * Цена размена записана: у человека с сессией, но без снапшота (ответ 409
-   * строкой ниже) четыре запроса уходят впустую. Случай редкий — снапшот
-   * заводит /api/prepare, через который проходит весь путь с квиза, — и
-   * молчаливый, в отличие от задержки, которую видят все.
-   */
-  const [snapshot, banned, feedback, tagStats, poolSize] = await Promise.all([
-    getLatestSnapshot(db, steamid),
-    bannedAppids(db, steamid),
-    listFeedback(db, steamid, 300),
-    loadTagStats(db),
-    getPoolSize(db),
-  ])
-  if (!snapshot) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
-
-  const games = snapshot.games
-  const owned = new Set(games.map((g) => g.appid))
-  // Второй ключ владения — по названию: у Skyrim и Skyrim Special Edition
-  // разные appid, и по одному только owned каталог предлагал бы купить то,
-  // что уже стоит в библиотеке
-  const ownedKeys = new Set(games.map((g) => editionKey(g.name)).filter(Boolean))
-
-  // «Не сейчас» прячет игру на трое суток, «надоела» — на месяц: без паузы
-  // отложенное возвращалось на следующей же перезагрузке
-  const cooldown = cooldownOf(feedback, now)
-
-  // Метаданные своей библиотеки И игр из истории оценок: раньше здесь читался
-  // весь каталог, что на сотне тысяч игр сожгло бы лимит прочитанных строк
-  // Turso. Игры из фидбека нужны здесь же — иначе оценка игры, которой нет
-  // в библиотеке, перестанет влиять на профиль вкуса.
-  //
-  // Узкой выборкой, без блобов: скриншоты всей библиотеки разбирались ради
-  // пяти героев, а сводка отзывов и pros/cons не читались вовсе. Кадры героям
-  // — отдельным запросом по пятёрке, ниже.
-  const libMetas = await getGamesMetaLite(db, [
-    ...new Set([...games.map((g) => g.appid), ...feedback.map((f) => f.appid)]),
-  ])
-  const poolByAppid = new Map<number, GameMeta>()
-  const metaOf = (appid: number): GameMeta | undefined =>
-    libMetas.get(appid) ?? poolByAppid.get(appid)
-
-  // профиль вкуса с поправкой на историю «зашло»/«не то»
-  const profile = applyFeedbackToProfile(
-    buildTagProfile(games, (id) => libMetas.get(id)),
-    feedback,
-    metaOf,
-  )
-
-  // Вес редкости тегов: объяснение называет характерное («Automation»), а не
-  // то, что есть у половины каталога. null на непрогретой базе — тогда как раньше.
-  const tagWeight = tagWeightFrom(tagStats)
-
-  /*
-   * «КАК «X», НО…» — ВЫДАЧА ИЗ СОСЕДЕЙ ОДНОЙ ИГРЫ.
-   *
-   * Кандидаты — только соседи X (nearGames: готовые из game_neighbors, а пока
-   * их не залили — полка по тегу), свои и из каталога; дальше обычный скоринг
-   * под настроение, ось и паузы. Пул каталога по тегам профиля здесь не
-   * нужен: вопрос задан про X, а не про вкус вообще.
-   *
-   * Соседей не нашлось или всех отсекли фильтры — тот же nocandidates, что у
-   * пустой выдачи: /play на переключателе говорит «ничего не нашлось, выдача
-   * прежняя», и это правда.
-   */
-  let seedRef: { appid: number; name: string } | null = null
-  let scoredLibrary = games
-  let newPool: GameMeta[]
-  if (seed !== null) {
-    const seedMeta = libMetas.get(seed) ?? (await getGamesMetaLite(db, [seed])).get(seed)
-    if (!seedMeta) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
-    const seedKey = editionKey(seedMeta.name)
-    const near = new Set(
-      (await nearGames(db, seedMeta, tagStats)).games.map((g) => g.appid).filter((id) => id !== seed),
-    )
-    scoredLibrary = games.filter((g) => near.has(g.appid))
-    newPool = [
-      ...(await getGamesMetaLite(db, [...near].filter((id) => !owned.has(id)))).values(),
-    ].filter(
-      (m) => !ownedKeys.has(editionKey(m.name)) && !(seedKey && editionKey(m.name) === seedKey),
-    )
-    seedRef = { appid: seed, name: seedMeta.name }
-  } else {
-    // Кандидаты из большого каталога — одним запросом с LIMIT, а не полным сканом
-    newPool = (
-      await fetchDiscoveryPool(db, {
-        tags: pickQueryTags(profile, tagStats, poolSize),
-        bannedAppids: [...banned],
-        requireMultiplayer: mood.social === 'friends',
-        rotation: rotationSlot(steamid, now),
-        limit: 400,
-        wildcard: WILDCARD_POOL,
-      })
-    ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
-  }
-  for (const m of newPool) poolByAppid.set(m.appid, m)
-  const familiarCap = lean === 'familiar' ? FAMILIAR_CAP_ASKED : FAMILIAR_CAP
-  const candidates = scoreCandidates({
-    profile,
-    // При затравке — только свои игры из её соседей; профиль вкуса, якоря и
-    // «Продолжить» ниже по-прежнему считаются по всей библиотеке
-    library: scoredLibrary,
-    metaOf,
-    newPool,
-    mood,
+  // Весь путь от снапшота до отранжированных кандидатов — lib/candidates.ts,
+  // общий с «Игрой дня»: копии этого пути в двух маршрутах уже расходились
+  const set = await buildCandidates(db, steamid, mood, scope, {
     nowSec: now,
-    // Тридцать, а не прежние двадцать пять: доля каталога в бюджете выросла
-    // (DISCOVERY_SHARE), и на прежнем лимите своих кандидатов стало бы меньше,
-    // чем было до появления каталога в главной выдаче. Режим «только моё»
-    // просел бы вместе со всеми, ничего для этого не сделав.
-    limit: CANDIDATE_LIMIT,
-    // Баны — внутри скоринга, до отсечки: фильтр после неё отдавал тридцатку
-    // минус забаненные, и места, которые они занимали, не доставались никому
-    exclude: banned,
-    // Вкус с весом редкости: совпадение по частотному костяку больше не решает
-    tagWeight,
-    cooldown,
     // Знакомое любимое — только здесь: «Игре дня» и демо главной оно не нужно
     allowFamiliar: true,
-    // Тот же потолок, что срежет знакомое ниже: без него пол паузы считал бы
-    // своими все песочницы и не возвращал отложенное, хотя до выдачи дойдёт одна
-    familiarCap,
+    familiarCap: lean === 'familiar' ? FAMILIAR_CAP_ASKED : FAMILIAR_CAP,
     lean,
+    focus,
+    seed,
   })
+  if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
+  if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
+  const { games, libMetas, profile, tagWeight, cooldown, banned, candidates, actual, discovery, heroPool } =
+    set
+  const seedRef = set.seed
 
-  if (!candidates.length) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
-
-  // Игры из библиотеки не проходят офлайн-фильтры каталога — считаем здесь.
-  // «С друзьями» судим строже: в компанию не годится то, во что вместе не сесть.
-  //
-  // Метаданные каталога идут в тот же расчёт, а не только библиотечные: серии
-  // определяются по группе целиком, и без пула вопрос «у тебя старая часть, а
-  // живёт новая» решался бы вслепую ровно в ту сторону, где появился каталог.
-  //
-  // Но только по КАНДИДАТАМ, а не по всем четырём сотням пула: лишние члены
-  // группы ничего не судят, зато могут её возглавить — buildSeriesIndex
-  // выбирает победителя по номеру версии, и случайная «Часть 3» из хвоста
-  // каталога отменяла бы вытеснение, которое до неё работало.
-  const judged = new Set(candidates.map((c) => c.appid))
-  const allMetas = new Map(libMetas)
-  for (const [appid, meta] of poolByAppid) {
-    if (judged.has(appid) && !allMetas.has(appid)) allMetas.set(appid, meta)
-  }
-  const actual = filterActual(
-    candidates,
-    allMetas,
-    mood.social === 'friends' ? 'party' : 'solo',
+  // Цены — до подбора, и по всем, кто может попасть на экран: см. buildPickContext
+  const ctx = await buildPickContext(
+    db,
+    set,
+    [...new Set([...heroPool, ...discovery].map((c) => c.appid))],
   )
-
-  // Своё и «нет в библиотеке» — по-прежнему разные разговоры и разные блоки.
-  // Разница в том, что при scope = 'all' каталог получает и несколько мест в
-  // главной выдаче: «во что поиграть» — это вопрос про игры, а не про чеки.
-  // Потолок держит mixHeroPool, чтобы ответ не превратился в витрину.
-  const { own, discovery } = splitBySource(actual)
-  // Потолок знакомого ставится ДО смешивания с каталогом: mixHeroPool считает,
-  // сколько мест отдать покупкам, по числу своих, и срезанное после него
-  // знакомое оставило бы выдачу короче пяти
-  const focused = capSource(applyFocus(own, focus), 'familiar', familiarCap)
-  const heroPool = scope === 'all' ? mixHeroPool(focused, discovery) : focused
-
-  // Цены обновляются ДО подбора, а не перед самой отдачей.
-  //
-  // Соблазн был обратный — спросить цены только для тех пяти игр, что реально
-  // показываем. Но объяснение к карточке пишется в тот же момент, что и сама
-  // карточка: и шаблон, и промпт Claude называют цену со скидкой. Спроси мы
-  // цены после — в тексте стояла бы вчерашняя цена, а на плашке рядом
-  // сегодняшняя. Кандидатов в разы больше пяти, но запрос всё равно один:
-  // GetItems берёт до двухсот игр за раз.
-  const pricedIds = [...new Set([...heroPool, ...discovery].map((c) => c.appid))]
-  const refreshed = await refreshDealsWithin(db, pricedIds, now)
-  // Без свежих цен перечитывать незачем: мета пула — та же узкая выборка тем
-  // же маппером (lib/pool), и отличаться от getGamesMetaLite ей больше нечем.
-  // Раньше отличалась: у покупки без обновлённых цен пропадали reviews_30d и ccu_at
-  const priced = refreshed ? await getGamesMetaLite(db, pricedIds) : new Map<number, GameMeta>()
-  const metaNow = (appid: number): GameMeta | undefined => priced.get(appid) ?? metaOf(appid)
-
-  // «Ближе всего к X, где у тебя N ч»: своя игра вместо тегов — и в причине
-  // шаблона, и в строке промпта, и в поле via карточки. Одна и та же для всех
-  // трёх, поэтому считается один раз и из одного места. Баны якорем не бывают:
-  // ссылаться на игру, которую человек попросил не показывать, — издёвка.
-  const findAnchor = buildAnchorFinder(games, (id) => libMetas.get(id), tagWeight, banned)
-  const anchorOf = (appid: number) => {
-    const meta = metaNow(appid)
-    return meta ? findAnchor(meta) : null
-  }
-  const libByAppid = new Map(games.map((g) => [g.appid, g]))
-  const hoursOf = (appid: number) => {
-    const lib = libByAppid.get(appid)
-    return lib ? Math.round(lib.playtimeForever / 60) : null
-  }
-  // Больше тридцати нераспакованных — срок распродажи не называем ни в
-  // причине, ни под ценой: «успей купить» ему не помощь, а ещё одна покупка
-  const hideUrgency = hideUrgencyFor(games, (id) => libMetas.get(id))
+  const { metaNow, anchorOf, hoursOf, hideUrgency } = ctx
 
   // Демо-личность получает настоящую подборку, но считанное число раз в сутки —
   // дальше та же выдача собирается эвристикой. Проверка идёт последней, уже
@@ -438,75 +222,13 @@ export async function POST(req: Request) {
     { taste: Object.keys(profile).length > 0 },
   )
 
-  const enrich = (p: Pick) => {
-    const meta = metaNow(p.appid)
-    const topTags = Object.entries(meta?.tags ?? {})
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([t]) => t)
-    return {
-      ...p,
-      headerImage: meta?.headerImage ?? null,
-      art: meta?.art ?? null,
-      ccu: meta?.ccu ?? null,
-      ccuAt: meta?.ccuAt ?? null,
-      shortDescription: meta?.shortDescription ?? null,
-      tags: topTags,
-      hoursPlayed: hoursOf(p.appid),
-      // «Сессия ~20 мин» / «Матч ~15 мин» — из семантики, только уверенной
-      // (sessionTrait): та же строка, что на карточке игры
-      session: meta ? sessionTrait(meta) : null,
-      // Цена входа (lib/entry) — только у того, что человек ещё не осваивал:
-      // у своей наигранной про вход говорит причина, а не отдельная строка
-      entry: meta && showsEntry(p.source) ? entryCost(meta) : null,
-      // «92% из 48 тыс.» на плитке полки покупок: те же числа, по которым
-      // confidenceMultiplier решил, насколько новинке верить
-      reviewsPercent: meta?.reviewsPercent ?? null,
-      reviewsTotal: meta?.reviewsTotal ?? null,
-      store: meta?.store ?? null,
-      storeUrl: meta?.storeUrl ?? null,
-      priceFinal: meta ? trustedPrice(meta, now) : null,
-      isFree: meta?.isFree ?? null,
-      // Скидка — разговор про покупку, поэтому только у не купленного: на
-      // своей игре «−40%» сообщает ровно ничего, кроме того, что ты купил
-      // её дороже. Считается на сервере вместе с подписью срока: у клиента
-      // свой часовой пояс, и «до 17 августа» разъехалось бы при гидратации.
-      discount:
-        meta && p.source === 'new' ? discountView(meta, now, { urgency: !hideUrgency }) : null,
-      // «Не зайдёт — Steam вернёт деньги» — тоже разговор про покупку, поэтому
-      // только у не купленного. Решение здесь, текст в lib/refund.ts
-      refund: meta && p.source === 'new' ? refundEligible(meta, now) : false,
-      signals: meta ? explainMatch(profile, meta, mood, tagWeight) : null,
-      // Своя игра, на которую эта похожа. Причина от Claude может её не
-      // назвать — тогда /play добавляет строку сам, в «Почему она?»
-      via: anchorOf(p.appid),
-      // «Откладывал N дней назад» — только у вернувшегося «не сейчас»
-      deferred: deferredOf(cooldown.get(p.appid), now),
-      // Одно преимущество перед соседними (lib/badges.ts) или null
-      edge: edges.get(p.appid) ?? null,
-    }
-  }
-
-  /**
-   * Кадры для морфа в герое и трейлер — только у picks, и это не экономия
-   * ради экономии.
-   * Карточка «Ещё варианты» по клику становится героем, а «нет в библиотеке»
-   * ведёт в магазин и героем не станет никогда, так что её кадры точно никто
-   * не покажет. Обрезка до HERO_SLIDES по той же причине: в одном ответе пять
-   * игр, а у иных в базе по два десятка скриншотов.
-   *
-   * Читаются отдельно, по пятёрке: метаданные выше узкие, без блобов. Заодно
-   * кадры получил и герой из каталога — строки пула скриншотов не несут, и
-   * раньше они доезжали до него, только если в этом же запросе освежались цены.
-   */
+  // Кадры и трейлер — только у пятёрки (heroMediaView). Читаются отдельно, по
+  // пятёрке: метаданные конвейера узкие, без блобов. Заодно кадры получает и
+  // герой из каталога — строки пула скриншотов не несут.
   const media = await getHeroMedia(
     db,
     picks.map((p) => p.appid),
   )
-  const heroShots = (appid: number) => (media.get(appid)?.screenshots ?? []).slice(0, HERO_SLIDES)
-  // Трейлер — пара ссылок, а не ролик: сам ролик качается только по нажатию
-  // (components/TrailerPreview), так что лишняя пятёрка ссылок ничего не стоит
-  const heroTrailer = (appid: number) => media.get(appid)?.trailer ?? null
 
   return NextResponse.json({
     // Серверные часы к ответу: по ним PlayersNow решает, имеет ли право
@@ -514,11 +236,10 @@ export async function POST(req: Request) {
     // нечист, и расходится с SSR — тот же довод, что в components/whatsnew/Now
     nowSec: nowSec(),
     picks: picks.map((p) => ({
-      ...enrich(p),
-      screenshots: heroShots(p.appid),
-      trailer: heroTrailer(p.appid),
+      ...cardView(p, ctx, edges.get(p.appid) ?? null),
+      ...heroMediaView(media.get(p.appid)),
     })),
-    discoveries: discoveries.map(enrich),
+    discoveries: discoveries.map((p) => cardView(p, ctx)),
     engine: fromClaude ? 'claude' : 'heuristic',
     candidateCount: candidates.length,
     scope,

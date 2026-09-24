@@ -1,5 +1,5 @@
 import { editionKey } from './editions'
-import { buildTagProfile, isMultiplayerMeta, normalizedTags } from './recommend'
+import { buildTagProfile, isMultiplayerMeta, normalizedTags, topTags } from './recommend'
 import { weightedCosineTo, type TagWeight } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -78,10 +78,6 @@ export function buildGroupDeck(args: {
   const toCard = (meta: GameMeta): GroupCard => {
     const owning = owners.get(meta.appid) ?? new Set()
     const missingFor = members.filter((m) => !owning.has(m.steamid)).map((m) => m.name)
-    const topTags = Object.entries(meta.tags)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([t]) => t)
     return {
       appid: meta.appid,
       name: meta.name,
@@ -97,7 +93,7 @@ export function buildGroupDeck(args: {
           ? { priceFinal: meta.priceFinal }
           : {}),
       ...(meta.headerImage ? { headerImage: meta.headerImage } : {}),
-      tags: topTags,
+      tags: topTags(meta),
       ...(meta.store ? { store: meta.store } : {}),
       ...(meta.storeUrl ? { storeUrl: meta.storeUrl } : {}),
     }

@@ -18,81 +18,37 @@
  * app/play/page.tsx, — и сторож в playflow.test.ts не даёт завести вторую дверь.
  */
 
-import type { GameArtUrls } from './art'
-import type { PickEdge } from './badges'
-import type { Discount } from './discount'
-import type { EntryCost } from './entry'
-import type { GameTrait } from './gametraits'
+import type { HeroMediaView, PickCard } from './cards'
 import { parseLean, type Lean } from './mood'
 import { plural } from './plural'
-import type { ContinueGame, OwnAnchor, Scope } from './recommend'
-import type { Trailer } from './trailer'
-import type { CandidateSource } from './types'
+import type { ContinueGame, MatchExplanation, Scope } from './recommend'
 
-export type PickSignals = {
-  matchPercent: number | null
-  sharedTags: string[]
-  moodTags: string[]
-  /**
-   * Настроение словами из семантики (explainMatch). Необязательно: выдача,
-   * сохранённая на устройстве до этого поля (lib/playcache.ts), его не несёт.
-   */
-  moodWords?: string[]
-} | null
+/**
+ * «Почему она?»: процент, совпавшие теги, настроение. moodWords необязательно:
+ * выдача, сохранённая на устройстве до этого поля (lib/playcache.ts), его не
+ * несёт.
+ */
+export type PickSignals =
+  | (Omit<MatchExplanation, 'moodWords'> & Partial<Pick<MatchExplanation, 'moodWords'>>)
+  | null
 
-/** Карточка выдачи — как её отдаёт /api/recommend (enrich в app/api/recommend/route.ts). */
-export type PlayPick = {
-  appid: number
-  name: string
-  source: CandidateSource
-  reason: string
-  headerImage: string | null
-  art: GameArtUrls | null
-  /** Кадры для морфа в герое. Приходят только у picks: карточки открытий
-      героем не становятся, им они не нужны. */
-  screenshots?: string[]
-  /**
-   * Микротрейлер героя (lib/trailer.ts) — тоже только у picks. null — у игры
-   * его нет; нет поля — выдача из кэша устройства, сохранённая до трейлеров.
-   */
-  trailer?: Trailer | null
-  ccu: number | null
-  ccuAt: number | null
-  shortDescription: string | null
-  tags: string[]
-  hoursPlayed: number | null
-  /**
-   * Длина захода из уверенной семантики (sessionTrait): «Сессия ~20 мин»,
-   * «Матч ~15 мин». null — не знаем; нет поля — выдача из кэша устройства,
-   * сохранённая до него.
-   */
-  session?: GameTrait | null
-  /**
-   * Цена входа и время до веселья (entryCost) — только у неосвоенного. null —
-   * сказать нечего; нет поля — выдача из кэша устройства, сохранённая до него.
-   */
-  entry?: EntryCost | null
-  /**
-   * Доля положительных отзывов и их число — для «92% из 48 тыс.» на плитке
-   * полки (reviewsBrief). Необязательно по той же причине, что entry.
-   */
-  reviewsPercent?: number | null
-  reviewsTotal?: number | null
-  store: string | null
-  storeUrl: string | null
-  priceFinal: number | null
-  isFree: boolean | null
-  discount: Discount | null
-  signals: PickSignals
-  /** Своя игра, на которую эта похожа сильнее всего (buildAnchorFinder) */
-  via: OwnAnchor | null
-  /** Вернувшееся «Просто не сейчас» (deferredOf): сколько дней назад отложил */
-  deferred: { daysAgo: number } | null
-  /** Чем она лучше соседних по выдаче (assignEdges) — у героя фразой, у плитки бейджем */
-  edge: PickEdge | null
-  /** Можно ли обещать возврат Steam (refundEligible) — только у не купленного */
-  refund: boolean
-}
+/**
+ * Поля карточки, которых нет у выдачи, сохранённой на устройстве раньше, чем
+ * они появились (lib/playcache.ts): длина захода, цена входа, отзывы. Тип
+ * обязан признать, что их может не быть, — иначе страница читала бы
+ * undefined как null.
+ */
+type LateField = 'session' | 'entry' | 'reviewsPercent' | 'reviewsTotal'
+
+/**
+ * Карточка выдачи — ровно то, что отдаёт /api/recommend: тип выведен из
+ * cardView (lib/cards.ts), а не переписан руками. Кадры и трейлер
+ * (heroMediaView) приходят только у picks — карточки открытий героем не
+ * становятся — и необязательны по той же причине, что LateField.
+ */
+export type PlayPick = Omit<PickCard, LateField | 'signals'> &
+  Partial<Pick<PickCard, LateField>> &
+  Partial<HeroMediaView> & { signals: PickSignals }
 
 /**
  * «Как «X», но…»: чьи соседи на экране — эхо seed из /api/recommend. Имя —
