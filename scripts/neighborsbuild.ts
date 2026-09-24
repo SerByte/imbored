@@ -1,4 +1,4 @@
-import { loadTagStats, upsertNeighbors, type Db } from '../lib/db'
+import { ALIVE_POOL_G, loadTagStats, upsertNeighbors, type Db } from '../lib/db'
 import { buildNeighbors, type Neighbor, type NeighborGame } from '../lib/neighbors'
 import { tagWeightFrom } from '../lib/tagweight'
 
@@ -9,9 +9,6 @@ import { tagWeightFrom } from '../lib/tagweight'
  *
  * Сети и модели здесь нет: всё считается из того, что уже лежит в каталоге.
  */
-
-/** Живая игра пула — тот же предикат, что у ALIVE_POOL в lib/db */
-const LIVE = 'g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0'
 
 /** Игр за одно чтение при обходе локальной таблицы соседей */
 const PAGE = 500
@@ -25,7 +22,7 @@ export async function loadNeighborGames(db: Db): Promise<NeighborGame[]> {
   const res = await db.execute(
     `SELECT g.appid, g.name, g.reviews_total, gt.tag, gt.weight
      FROM games g JOIN game_tags gt ON gt.appid = g.appid
-     WHERE ${LIVE}
+     WHERE ${ALIVE_POOL_G}
      ORDER BY g.appid`,
   )
   const byAppid = new Map<number, NeighborGame>()

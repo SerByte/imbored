@@ -15,6 +15,8 @@
  */
 
 import { createClient } from '@libsql/client'
+// Из lib/db — только строка предиката: createDb и миграции сюда не заходят
+import { ALIVE_POOL } from '../lib/db'
 
 const DAY = 86_400
 const OVERFETCH = 4
@@ -376,7 +378,7 @@ async function main() {
   // ── K. Потолок каталога ────────────────────────────────────────────────
   head('K. Сколько игр каталог вообще может дать очереди')
   const k = await one(
-    'SELECT COUNT(*) AS n FROM games WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0 AND appid > 0',
+    `SELECT COUNT(*) AS n FROM games WHERE ${ALIVE_POOL} AND appid > 0`,
   )
   console.log(`  живых игр с тегами: ${ru(k.n)}`)
   // Свежесть отзывов и онлайна пула — работа крона сигналов (lib/catalogsignals).
@@ -384,7 +386,7 @@ async function main() {
   try {
     const sv = await one(
       `SELECT SUM(reviews_at IS NOT NULL) AS ever, SUM(reviews_at >= ?) AS week
-         FROM games WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0 AND appid > 0`,
+         FROM games WHERE ${ALIVE_POOL} AND appid > 0`,
       [now - 7 * DAY],
     )
     console.log(`  отзывы сверены кроном: хоть раз ${ru(sv.ever)}, за неделю ${ru(sv.week)}`)

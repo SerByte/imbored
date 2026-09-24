@@ -56,4 +56,27 @@ describe('запрет полного скана каталога', () => {
     )
     expect(offenders).toEqual([])
   })
+
+  /*
+   * Предикат живой игры — ALIVE_POOL в lib/db, и частичные индексы каталога
+   * построены из той же строки. Копий было девять, включая скрипты, и отъезд
+   * любой из них не ломал ответа, а тихо уводил запрос мимо индекса. Здесь
+   * ловится сам способ завести копию: выписать `superseded_by IS NULL` руками
+   * где-то, кроме определения.
+   */
+  test('предикат живой игры выписан один раз — ALIVE_POOL в lib/db', () => {
+    const files = [...FILES, ...sourceFiles('scripts')]
+    const code = (f: string) =>
+      fs
+        .readFileSync(path.join(ROOT, f), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/\/\/[^\n]*/g, '')
+    const hits = files.flatMap((f) =>
+      [...code(f).matchAll(/superseded_by\s+IS\s+NULL/gi)].map(() => f.replace(/\\/g, '/')),
+    )
+    expect(
+      hits,
+      'предикат живой игры выписан заново — бери ALIVE_POOL или ALIVE_POOL_G из lib/db',
+    ).toEqual(['lib/db.ts'])
+  })
 })

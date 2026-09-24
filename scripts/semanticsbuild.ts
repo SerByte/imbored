@@ -1,4 +1,11 @@
-import { parseSemantics, parseTagMap, upsertSemantics, type Db, type SemanticsRow } from '../lib/db'
+import {
+  ALIVE_POOL_G,
+  parseSemantics,
+  parseTagMap,
+  upsertSemantics,
+  type Db,
+  type SemanticsRow,
+} from '../lib/db'
 import { mineReviews, parseReviewsRaw } from '../lib/reviewmine'
 import { fetchReviewsRaw } from '../lib/reviews'
 import { deriveSemantics, SEMANTICS_V } from '../lib/semantics'
@@ -11,9 +18,6 @@ import { deriveSemantics, SEMANTICS_V } from '../lib/semantics'
  * Модели здесь нет и не будет: семантика считается lib/semantics и
  * lib/reviewmine, а из сети — только appreviews Steam, бесплатный.
  */
-
-/** Живая игра пула — тот же предикат, что у ALIVE_POOL в lib/db */
-const LIVE = 'g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0'
 
 /** Строк за одно чтение при обходе таблиц: каталог не держим в памяти целиком */
 const PAGE = 1000
@@ -39,7 +43,7 @@ export async function buildTagPrior(db: Db, nowSec: number): Promise<{ games: nu
   for (;;) {
     const res = await db.execute({
       sql: `SELECT g.appid, g.tags_json FROM games g
-            WHERE ${LIVE} AND g.appid > ? ORDER BY g.appid LIMIT ?`,
+            WHERE ${ALIVE_POOL_G} AND g.appid > ? ORDER BY g.appid LIMIT ?`,
       args: [after, PAGE],
     })
     const rows = res.rows as unknown as Array<{ appid: number; tags_json: unknown }>
@@ -73,7 +77,7 @@ export async function reviewQueue(
   const res = await db.execute({
     sql: `SELECT g.appid, g.tags_json FROM games g
           LEFT JOIN game_semantics s ON s.appid = g.appid
-          WHERE ${LIVE} AND g.appid > 0
+          WHERE ${ALIVE_POOL_G} AND g.appid > 0
             AND (s.appid IS NULL OR s.reviews_at IS NULL OR s.v < ?)
           ORDER BY g.reviews_total DESC, g.appid
           LIMIT ?`,

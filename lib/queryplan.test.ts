@@ -21,6 +21,7 @@ import {
   listPublicRooms,
   migrateDb,
   revokeAllSessions,
+  sitemapGames,
   sitemapNews,
   getStaleAppids,
   stalePriceAppids,
@@ -32,6 +33,7 @@ import {
   type Db,
 } from './db'
 import { fetchDiscoveryPool } from './pool'
+import { loadTriviaCatalog } from './trivia'
 
 /**
  * Частичные индексы и запросы, которые на них держатся.
@@ -222,6 +224,22 @@ const CASES: Case[] = [
     name: 'топ каталога',
     run: (db) => topCatalogAppids(db),
     indexes: ['idx_games_ccu', 'idx_games_pool'],
+    sortFree: true,
+  },
+  // Викторина пати: людные живые игры — диапазон idx_games_ccu, порядок из
+  // него же. Предикат — ALIVE_POOL, та же строка, что в индексе
+  {
+    name: 'каталог викторины',
+    run: (db) => loadTriviaCatalog(db, 'ABC123'),
+    indexes: ['idx_games_ccu'],
+    sortFree: true,
+  },
+  // Карта сайта игр: предикат под алиасом g. обязан брать тот же индекс, что
+  // и без алиаса, а свежий патч доезжает поиском по ключу на каждую игру
+  {
+    name: 'игры для карты сайта',
+    run: (db) => sitemapGames(db, 5000),
+    indexes: ['idx_games_pool', 'idx_news_app'],
     sortFree: true,
   },
   // Отсечки по возрасту в запросе нет — см. catalogSignalsQueue: иначе при

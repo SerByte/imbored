@@ -143,13 +143,14 @@ describe('buildTrivia', () => {
     expect(toptrio).toBeGreaterThan(0)
   })
 
-  test('дословный предикат частичного индекса не потерян', () => {
-    // Без него SQLite не возьмёт idx_games_ccu, и выборка для викторины
-    // превратится в полный скан каталога — см. lib/noscan.test.ts
+  test('выборка идёт по предикату частичного индекса и без RANDOM()', () => {
+    // Без ALIVE_POOL SQLite не возьмёт idx_games_ccu, и выборка для викторины
+    // превратится в полный скан каталога. Сам план сторожит
+    // lib/queryplan.test.ts, здесь — что строка не выписана заново
     const src = readFileSync('lib/trivia.ts', 'utf8')
-    expect(src).toContain('alive = 1 AND superseded_by IS NULL AND tag_count > 0')
     // Комментарии выкидываем: в них про запрет RANDOM() как раз и написано
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    expect(code).toContain('WHERE ${ALIVE_POOL} AND ccu > ?')
     expect(code).not.toMatch(/ORDER BY\s+RANDOM\(\)/i)
   })
 })

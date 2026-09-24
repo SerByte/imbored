@@ -1,6 +1,6 @@
 import type { GameArtUrls } from './art'
 import { hashString, mulberry32 } from './daily'
-import { parseTagMap, type Db } from './db'
+import { ALIVE_POOL, parseTagMap, type Db } from './db'
 import type { LibraryGame } from './types'
 
 /**
@@ -53,13 +53,11 @@ const CCU_RATIO = 2
 /** Часы сравниваем с тем же принципом: 30% разницы, а не «почти поровну» */
 const HOURS_RATIO = 1.3
 
-/** Предикат частичного индекса idx_games_ccu — повторяется ДОСЛОВНО */
-const ALIVE = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
-
 /**
  * Выборка каталога для викторины: один запрос по частичному индексу
- * idx_games_ccu. Предикат повторён дословно — без этого SQLite не возьмёт
- * индекс, и вопрос про обложку станет полным сканом games на каждый показ.
+ * idx_games_ccu. Предикат — ALIVE_POOL из lib/db, та же строка, что в индексе:
+ * без этого SQLite не возьмёт индекс, и вопрос про обложку станет полным
+ * сканом games на каждый показ (план сторожит lib/queryplan.test.ts).
  *
  * Ротация — тот же приём hashString + OFFSET, что в lib/pool.ts и lib/daily.ts.
  * ORDER BY RANDOM() запрещён: это сортировка всей таблицы.
@@ -73,7 +71,7 @@ export async function loadTriviaCatalog(
     const res = await db.execute({
       sql: `SELECT appid, name, ccu, art_json, header_image, tags_json
             FROM games
-            WHERE ${ALIVE} AND ccu > ?
+            WHERE ${ALIVE_POOL} AND ccu > ?
             ORDER BY ccu DESC LIMIT ? OFFSET ?`,
       args: [TRIVIA_MIN_CCU, size, offset],
     })

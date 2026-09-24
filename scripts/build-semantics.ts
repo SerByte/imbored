@@ -27,7 +27,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createClient } from '@libsql/client'
-import { createDb, migrateDb, type Db } from '../lib/db'
+import { ALIVE_POOL_G, createDb, migrateDb, type Db } from '../lib/db'
 import { plural } from '../lib/plural'
 import { STORE_PACE_MS } from '../lib/catalog'
 import { buildTagPrior, publishSemantics, reviewPass } from './semanticsbuild'
@@ -96,7 +96,7 @@ async function main() {
   const due = await count(
     local,
     `SELECT COUNT(*) AS n FROM games g LEFT JOIN game_semantics s ON s.appid = g.appid
-     WHERE g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0 AND g.appid > 0
+     WHERE ${ALIVE_POOL_G} AND g.appid > 0
        AND s.reviews_at IS NULL`,
   )
   if (due) console.log(`без отзывов ещё ${due.toLocaleString('ru-RU')}: npm run semantics:build -- --with-reviews --limit=500`)

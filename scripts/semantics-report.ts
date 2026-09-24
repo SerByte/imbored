@@ -17,7 +17,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { parseSemantics } from '../lib/db'
+import { ALIVE_POOL, ALIVE_POOL_G, parseSemantics } from '../lib/db'
 import { plural } from '../lib/plural'
 import type { GameSemantics } from '../lib/types'
 import {
@@ -73,14 +73,14 @@ async function main() {
   const live = Number(
     (
       await db.execute(
-        'SELECT COUNT(*) AS n FROM games WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0',
+        `SELECT COUNT(*) AS n FROM games WHERE ${ALIVE_POOL}`,
       )
     ).rows[0]?.n ?? 0,
   )
   const res = await db.execute(
     `SELECT s.appid, s.json, s.reviews_at FROM game_semantics s
      JOIN games g ON g.appid = s.appid
-     WHERE g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0`,
+     WHERE ${ALIVE_POOL_G}`,
   )
   const byAppid = new Map<number, GameSemantics>()
   let unreadable = 0

@@ -1,4 +1,11 @@
-import { GAME_LITE_COLUMNS_G, rowToMeta, SEMANTICS_JOIN, type Db, type GameRow } from './db'
+import {
+  ALIVE_POOL_G,
+  GAME_LITE_COLUMNS_G,
+  rowToMeta,
+  SEMANTICS_JOIN,
+  type Db,
+  type GameRow,
+} from './db'
 import type { GameMeta } from './types'
 
 /**
@@ -115,7 +122,7 @@ async function fetchNotable(
   const page = async (offset: number) => {
     const res = await db.execute({
       sql: `SELECT ${GAME_LITE_COLUMNS_G} FROM games g ${SEMANTICS_JOIN}
-            WHERE g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0
+            WHERE ${ALIVE_POOL_G}
               AND (?1 = 0 OR g.is_multiplayer = 1)
               AND g.appid NOT IN (SELECT value FROM json_each(?2))
             ORDER BY g.reviews_total DESC LIMIT ?3 OFFSET ?4`,
@@ -161,12 +168,13 @@ export async function fetchDiscoveryPool(db: Db, q: DiscoveryQuery): Promise<Gam
     // дублирование ради симметрии: без него мёртвые и переехавшие в сиквел
     // игры попадали в выдачу всем, у кого есть профиль вкуса, — то есть почти
     // всем. Ветку холодного старта это не задевало, поэтому расхождение и
-    // прожило незамеченным: в ней предикат стоял с самого начала.
+    // прожило незамеченным: в ней предикат стоял с самого начала. Теперь это
+    // буквально одна строка — ALIVE_POOL_G из lib/db, и отстать ей нечем.
     sql: `WITH pool AS (${branches}),
                best AS (SELECT appid, MAX(weight) AS w FROM pool GROUP BY appid)
           SELECT ${GAME_LITE_COLUMNS_G} FROM best b JOIN games g ON g.appid = b.appid
             ${SEMANTICS_JOIN}
-          WHERE g.alive = 1 AND g.superseded_by IS NULL
+          WHERE ${ALIVE_POOL_G}
             AND (? = 0 OR g.is_multiplayer = 1)
             AND g.appid NOT IN (SELECT value FROM json_each(?))
           ORDER BY b.w DESC LIMIT ?`,

@@ -276,6 +276,31 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 `
 
+/** Строка предиката живой игры с префиксом таблицы или без него */
+const alivePool = (p: '' | 'g.') =>
+  `${p}alive = 1 AND ${p}superseded_by IS NULL AND ${p}tag_count > 0`
+
+/**
+ * Предикат живой игры пула: курация её не отсеяла (alive), серия не отдала её
+ * сиквелу (superseded_by), и теги у неё есть (tag_count: у стабов «App
+ * {appid}» из /api/prepare их нет).
+ *
+ * Одна строка на весь проект. Ею построены частичные индексы каталога ниже
+ * (idx_games_pool, idx_games_ccu, idx_games_reviews_at), а SQLite берёт
+ * частичный индекс, только если WHERE запроса повторяет его предикат почти
+ * дословно. Копий было девять — в lib/db, lib/pool, lib/trivia и скриптах, — и
+ * отъезд любой из них не ломал ни одного ответа, а молча превращал запрос в
+ * полный скан games. Планы сторожит lib/queryplan.test.ts, копии —
+ * lib/noscan.test.ts.
+ *
+ * Правка этой строки меняет и индексы, а CREATE INDEX IF NOT EXISTS смотрит
+ * только на имя: см. ПРАВИЛО ДЛЯ ИНДЕКСОВ у SCHEMA_CATALOG.
+ */
+export const ALIVE_POOL = alivePool('')
+
+/** То же под алиасом g. — для JOIN и подзапросов, где голая колонка двусмысленна */
+export const ALIVE_POOL_G = alivePool('g.')
+
 /**
  * Схема каталога. Отделена от SCHEMA, потому что часть её объектов ссылается
  * на колонки, добавляемые ALTER-циклом, и создаваться должна строго после него.
@@ -357,18 +382,18 @@ CREATE TABLE IF NOT EXISTS game_neighbors (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_games_pool ON games (reviews_total DESC)
-  WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
+  WHERE ${ALIVE_POOL};
 
 -- набор игр для опроса новостей по живому онлайну
 CREATE INDEX IF NOT EXISTS idx_games_ccu ON games (ccu DESC)
-  WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
+  WHERE ${ALIVE_POOL};
 
 -- Очередь крона сигналов каталога (catalogSignalsQueue): сперва ни разу не
 -- сверенные, потом самые давние, а среди равных — верх каталога. Порядок
 -- целиком из индекса, чтение останавливает LIMIT: пачка в двести строк стоит
 -- двухсот прочитанных, а не всего пула.
 CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_total DESC)
-  WHERE alive = 1 AND superseded_by IS NULL AND tag_count > 0;
+  WHERE ${ALIVE_POOL};
 
 -- Доска «ищут игроков». Единственный индекс на rooms, и он нужен: страница
 -- /rooms опрашивает listPublicRooms раз в несколько секунд из КАЖДОЙ открытой
@@ -886,7 +911,7 @@ export async function migrateDb(
     await db.execute(`UPDATE news_items SET rank = 0
       WHERE rank > 0 AND NOT EXISTS (
         SELECT 1 FROM games g WHERE g.appid = news_items.appid
-          AND g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0
+          AND ${ALIVE_POOL_G}
       )`)
     await db.execute({
       sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
@@ -2882,11 +2907,9 @@ export async function getGameJson(
  * для патчноутов; здесь оно доведено до остальных полей карточки.
  *
  * Отдельной таблицы нет намеренно: очередь целиком выражается колонкой page_at
- * на games. Предикат живой игры повторяет idx_games_pool ДОСЛОВНО — иначе
+ * на games. Живая игра — ALIVE_POOL, та же строка, что в idx_games_pool: иначе
  * SQLite не возьмёт частичный индекс и это станет сканом (см. noscan).
  */
-
-const ALIVE_POOL = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
 
 /**
  * Игры, которым пора обогатить карточку.
@@ -3048,9 +3071,9 @@ export async function sitemapGames(
                    COALESCE((SELECT MAX(n.published_at) FROM news_items n WHERE n.appid = g.appid), 0)
                  ) AS updated_at
           FROM games g
-          -- предикат живой игры, тот же что в ALIVE_POOL, но с алиасом таблицы:
-          -- подзапрос по news_items требует различать g.appid и n.appid
-          WHERE g.alive = 1 AND g.superseded_by IS NULL AND g.tag_count > 0 AND g.appid > 0
+          -- живая игра с алиасом таблицы: подзапрос по news_items требует
+          -- различать g.appid и n.appid
+          WHERE ${ALIVE_POOL_G} AND g.appid > 0
           ORDER BY g.reviews_total DESC
           LIMIT ?`,
     args: [limit],
@@ -5198,15 +5221,14 @@ export async function topCatalogAppids(db: Db, per = 200): Promise<number[]> {
   const кэш = topCatalogCache.get(db)
   if (кэш && кэш.per === per && Date.now() - кэш.at < TOP_CATALOG_TTL_MS) return кэш.ids
 
-  const alive = 'alive = 1 AND superseded_by IS NULL AND tag_count > 0'
   const [byCcu, byReviews] = await Promise.all([
     db.execute({
-      sql: `SELECT appid FROM games WHERE ${alive} AND appid > 0
+      sql: `SELECT appid FROM games WHERE ${ALIVE_POOL} AND appid > 0
             ORDER BY ccu DESC LIMIT ?`,
       args: [per],
     }),
     db.execute({
-      sql: `SELECT appid FROM games WHERE ${alive} AND appid > 0
+      sql: `SELECT appid FROM games WHERE ${ALIVE_POOL} AND appid > 0
             ORDER BY reviews_total DESC LIMIT ?`,
       args: [per],
     }),
@@ -5238,7 +5260,7 @@ export async function getGameRanks(db: Db, appids: number[]): Promise<Map<number
   if (!ids.length) return new Map()
   const res = await db.execute({
     sql: `SELECT appid,
-            CASE WHEN alive = 1 AND superseded_by IS NULL AND tag_count > 0
+            CASE WHEN ${ALIVE_POOL}
                  THEN MAX(COALESCE(reviews_total, 0), COALESCE(ccu, 0))
                  ELSE 0 END AS rank
           FROM games WHERE appid IN (${placeholders(ids.length)})`,
