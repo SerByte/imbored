@@ -88,7 +88,7 @@ export function MatchCeremony({
           art={game.art}
           sizes="100vw"
           eager
-          className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
+          className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-60 scale-125"
         />
       </div>
       <div
@@ -112,7 +112,7 @@ export function MatchCeremony({
         <EchoTitle
           text={byLeader ? 'Договорились!' : 'Это матч!'}
           ghosts={byLeader ? forCount : memberCount}
-          className="font-display text-display-md"
+          className="font-display text-display-lg"
         />
 
         <p className="text-dim">
@@ -126,15 +126,18 @@ export function MatchCeremony({
           )}
         </p>
 
-        <div data-beat="cover" className="w-full max-w-md">
+        {/* Постер, а не капсула: это та же «одна из многих», что выходит из
+            стены на экране ожидания подбора, — только выбрали её вместе */}
+        <div data-beat="cover" className="match-poster">
           <GameArt
             appid={game.appid}
             name={game.name}
             headerImage={game.headerImage}
             art={game.art}
-            sizes="(min-width: 768px) 448px, 100vw"
+            variant="poster"
+            sizes="240px"
             eager
-            className="w-full rounded-[20px] border border-edge aspect-[460/215] object-cover"
+            className="h-full w-full object-cover"
           />
         </div>
 
@@ -155,7 +158,7 @@ export function MatchCeremony({
           Заголовком имя и является: выше стоит h1 «Это матч!» (EchoTitle), и
           уровень h2 заодно чинит структуру, где после h1 не было ничего.
         */}
-        <SplitHeading as="h2" className="text-2xl font-bold" delay={0.9} stagger={0.05}>
+        <SplitHeading as="h2" className="font-display text-display-sm" delay={0.9} stagger={0.05}>
           {game.name}
         </SplitHeading>
 
@@ -183,6 +186,7 @@ export function MatchCeremony({
             ) : game.ownedByMe === true ? (
               <SteamLaunch
                 appid={game.appid}
+                icon
                 className="btn-ember px-8 py-3"
               />
             ) : (

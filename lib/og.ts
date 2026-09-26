@@ -23,18 +23,23 @@ const FONT_DIR = join(process.cwd(), 'assets')
 
 /** Ассеты не зависят от запроса — читаем один раз на модуль. */
 /*
- * Manrope — тот же голос, что на сайте (app/layout.tsx). Два файла одной
- * гарнитуры, латиница и кириллица: satori собирает строку из них по глифам,
- * а статичный woff нужен потому, что вариативный он читает только первым
- * начертанием. Файлы — @fontsource/manrope, вес 800.
+ * Manrope — тот же голос, что на сайте (app/layout.tsx), ОДНИМ файлом.
+ *
+ * Были два — латиница и кириллица из @fontsource под одним именем. satori
+ * так не умеет: из двух шрифтов одного имени и веса он берёт первый, и
+ * кириллица уходила в следующий зарегистрированный шрифт — JetBrains Mono.
+ * Замерено на карточке совместимости: «Демо-игрок зовёт сравнить» рисовалось
+ * моноширинным и без пробела — «Демо-игрокзовёт».
+ *
+ * Файл собран из вариативного Manrope[wght].ttf (google/fonts, OFL): начертание
+ * зафиксировано на 800 (вариативный satori читает только первым начертанием),
+ * оставлены латиница, кириллица и знаки препинания — 28 КБ.
  */
 export const ogFonts = Promise.all([
-  readFile(join(FONT_DIR, 'manrope-latin-800.woff')),
-  readFile(join(FONT_DIR, 'manrope-cyrillic-800.woff')),
+  readFile(join(FONT_DIR, 'manrope-800.woff')),
   readFile(join(FONT_DIR, 'JetBrainsMono-Bold.woff')),
-]).then(([latin, cyrillic, mono]) => [
-  { name: 'Manrope', data: latin, style: 'normal' as const, weight: 800 as const },
-  { name: 'Manrope', data: cyrillic, style: 'normal' as const, weight: 800 as const },
+]).then(([manrope, mono]) => [
+  { name: 'Manrope', data: manrope, style: 'normal' as const, weight: 800 as const },
   { name: 'JetBrains Mono', data: mono, style: 'normal' as const, weight: 700 as const },
 ])
 

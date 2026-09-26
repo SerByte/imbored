@@ -57,7 +57,7 @@ export function StopAsk<K extends string>({
           >
             <section
               aria-label="Не зацепило?"
-              className="glass rounded-[20px] p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
+              className="panel-lift p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
             >
               <div className="flex items-baseline justify-between gap-3">
                 <p className="text-sm">

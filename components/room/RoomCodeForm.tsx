@@ -41,7 +41,8 @@ export function RoomCodeForm({ className = '' }: { className?: string }) {
       <label htmlFor="room-code" className="text-xs text-dim">
         Есть код комнаты?
       </label>
-      <div className="flex gap-2">
+      {/* Поле и кнопка — одной стеклянной пилюлей, как вход на главной */}
+      <div className="join">
         {/* Заглавными и моноширинным — как код набран везде, где его
             показывают; значение при этом остаётся тем, что ввели, а
             регистр и пробелы снимает parseRoomCode. */}
@@ -62,12 +63,12 @@ export function RoomCodeForm({ className = '' }: { className?: string }) {
           enterKeyHint="go"
           aria-invalid={bad}
           aria-describedby="room-code-error"
-          className="field min-w-0 flex-1 font-mono uppercase placeholder:font-sans placeholder:normal-case"
+          className="min-w-0 flex-1 font-mono uppercase placeholder:font-sans placeholder:normal-case"
         />
         <button
           type="submit"
           disabled={!raw.trim()}
-          className="shrink-0 rounded-[14px] glass glass-hover px-5 py-3 text-sm cursor-pointer disabled:cursor-default disabled:opacity-40"
+          className="btn-glass shrink-0 disabled:opacity-40"
         >
           Войти
         </button>

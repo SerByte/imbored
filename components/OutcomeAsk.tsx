@@ -116,7 +116,7 @@ export function OutcomeAsk({
           >
             <section
               aria-label="Как тебе игра?"
-              className="glass rounded-[20px] p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
+              className="panel-lift p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
             >
               <div className="flex items-baseline justify-between gap-3">
                 <p className="text-sm">{outcomeQuestion(ask)}</p>

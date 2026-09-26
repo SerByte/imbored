@@ -26,7 +26,7 @@ export function LeaderPick({
   onTake: () => void
 }) {
   return (
-    <section className="relative glass rounded-[20px] p-5 sm:p-6 flex flex-col sm:flex-row items-center gap-4 anim-rise">
+    <section className="relative panel-lift p-5 sm:p-6 flex flex-col sm:flex-row items-center gap-4 anim-rise">
       <GameArt
         appid={leader.appid}
         name={leader.name}

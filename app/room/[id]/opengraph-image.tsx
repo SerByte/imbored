@@ -79,7 +79,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         <div
           style={{
             display: 'flex',
-            fontFamily: 'JetBrains Mono',
+            fontFamily: 'Manrope',
             fontSize: 20,
             letterSpacing: 6,
             color: OG_EMBER,
@@ -111,7 +111,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
           <div
             style={{
               display: 'flex',
-              fontFamily: 'JetBrains Mono',
+              fontFamily: 'Manrope',
               fontSize: 20,
               letterSpacing: 3,
               color: OG_EMBER,

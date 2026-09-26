@@ -67,7 +67,7 @@ export function CompatCardImage({ invite }: { invite: CompatInvite }) {
       >
         <div
           style={{
-            fontFamily: 'JetBrains Mono',
+            fontFamily: 'Manrope',
             fontSize: 20,
             letterSpacing: 6,
             color: OG_EMBER,
@@ -91,7 +91,7 @@ export function CompatCardImage({ invite }: { invite: CompatInvite }) {
         style={{
           display: 'flex',
           padding: '0 64px 44px',
-          fontFamily: 'JetBrains Mono',
+          fontFamily: 'Manrope',
           fontSize: 20,
           color: OG_EMBER,
           letterSpacing: 3,

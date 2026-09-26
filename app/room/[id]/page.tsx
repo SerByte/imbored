@@ -9,6 +9,7 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { useShareLink } from '@/components/ShareLink'
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
+import { Icon } from '@/components/Icon'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
@@ -978,11 +979,11 @@ export default function RoomPage() {
   const moodPreset = roomPresetOf(state.room.mood)
 
   return (
-    <div className="flex-1 mx-auto w-full max-w-2xl px-5 pt-24 pb-16 flex flex-col gap-6">
+    <div className="room-page flex-1 mx-auto w-full max-w-3xl px-5 pt-24 pb-16 flex flex-col gap-6">
       {staleBadge}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="font-display text-display-xs">
+          <h1 className="font-display text-display-sm">
             Пати <span className="font-mono text-ember-text">{roomId}</span>
           </h1>
           <p className="text-xs text-dim mt-0.5">
@@ -1033,12 +1034,10 @@ export default function RoomPage() {
             заходят так же, как по ссылке. Молчаливое нажатие читалось бы как
             сломанная кнопка.
           */}
-          <button
-            onClick={copyLink}
-            className="rounded-[14px] glass glass-hover px-4 py-3 text-sm cursor-pointer"
-          >
+          <button onClick={copyLink} className="btn-glass py-3 text-sm">
+            <Icon name={copied ? 'check' : 'link'} size={16} />
             {copied
-              ? 'Скопировано ✓'
+              ? 'Скопировано'
               : copyFailed
                 ? 'Не вышло — продиктуй код'
                 : share.native
@@ -1067,12 +1066,11 @@ export default function RoomPage() {
                  6 px вбок, а соседняя кнопка стоит в 8 — зоны перекрылись бы и
                  воровали друг у друга нажатия. Это единственные два контрола,
                  которыми в пати вообще зовут людей. */
-              className={`rounded-[14px] px-4 py-3 text-sm cursor-pointer transition ${
-                state.room.isPublic ? 'bg-ember/15 text-ember-text' : 'glass glass-hover text-dim'
-              }`}
+              className="btn-glass py-3 text-sm"
               title="Открытая комната видна на доске «Пати» — к вам смогут подсесть"
             >
-              {state.room.isPublic ? 'На доске ✓' : 'Показать на доске'}
+              <Icon name={state.room.isPublic ? 'check' : 'users'} size={16} />
+              {state.room.isPublic ? 'На доске' : 'Показать на доске'}
             </button>
           ) : state.room.isPublic ? (
             <span
@@ -1092,9 +1090,7 @@ export default function RoomPage() {
           {state.members.map((m) => (
             <span
               key={m.id}
-              className={`rounded-full px-3 py-1.5 text-xs ${
-                m.me ? 'bg-ember/15 text-ember-text' : 'glass text-dim'
-              }`}
+              className={`pill cursor-default text-xs ${m.me ? 'is-on' : 'text-dim'}`}
             >
               {m.name}
               {m.me ? ' (ты)' : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
@@ -1106,7 +1102,7 @@ export default function RoomPage() {
       )}
 
       {deckFailed ? (
-        <div className="glass rounded-[20px] p-8 text-center flex flex-col gap-4 anim-rise">
+        <div className="panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
           <p className="font-semibold">Не получилось загрузить игры</p>
           <p className="text-dim text-sm">Скорее всего, это на нашей стороне.</p>
           <button

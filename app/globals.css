@@ -3587,6 +3587,19 @@ img[data-art-fade][data-loaded] {
   }
 }
 
+/* Веер над заголовком /rooms: по центру, размером с три постера в ряд */
+.rooms-fan {
+  position: relative;
+  isolation: isolate;
+  width: 120px;
+  height: 170px;
+  margin-bottom: 8px;
+}
+.rooms-fan .fan {
+  inset: 0;
+  height: 100%;
+}
+
 /*
  * Свет игры за шапкой патча: размытая капсула во всю ширину сверху, гаснущая
  * вниз к фону. Слой декоративный и под статьёй.
@@ -3677,6 +3690,16 @@ img[data-art-fade][data-loaded] {
 .deck-stack {
   --deck-h: clamp(460px, 100svh - 240px, 640px);
   min-height: var(--deck-h);
+}
+/* В комнате над колодой шапка с кодом, кнопками и составом — карта ниже,
+   чтобы кнопки голоса оставались в первом экране */
+.room-page .deck-stack {
+  --deck-h: clamp(440px, 100svh - 310px, 600px);
+}
+@media (max-width: 767px) {
+  .room-page .deck-stack {
+    --deck-h: clamp(420px, 100svh - 340px, 560px);
+  }
 }
 /* Телефон: над колодой заголовок в четыре строки, под ней — нижняя панель.
    Карта обязана кончаться над панелью, иначе кнопки голоса уходят под неё. */
@@ -3857,6 +3880,18 @@ img[data-art-fade][data-loaded] {
     0 40px 90px -30px rgba(0, 0, 0, 0.9),
     0 0 120px -20px color-mix(in srgb, var(--ink) 22%, transparent);
   animation: chosen-in 0.8s var(--ease-lift);
+}
+/* Постер матча — тот же предмет, что постер выбора на экране ожидания */
+.match-poster {
+  width: clamp(168px, 22vw, 232px);
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #fff 14%, transparent),
+    0 40px 90px -30px rgba(0, 0, 0, 0.9),
+    0 0 120px -20px color-mix(in srgb, var(--ink) 22%, transparent);
 }
 .warmup-chosen-line {
   font-family: var(--font-display);
