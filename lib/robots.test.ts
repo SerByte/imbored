@@ -89,6 +89,8 @@ describe('robots.txt', () => {
       '/games/roguelike',
       '/games/point-and-click',
       '/whatsnew',
+      '/whatsnew/feed.xml',
+      '/indexnow-key.txt',
       '/privacy',
       '/support',
       '/?next=%2Fplay',

@@ -5328,6 +5328,35 @@ export async function sitemapNews(
   ).map((r) => ({ appid: Number(r.appid), gid: r.gid, changedAt: Number(r.changed_at) }))
 }
 
+/**
+ * Свежепересказанные крупные патчи — для IndexNow (lib/indexnow): страница
+ * патча становится индексируемой именно тогда, когда у неё появляется
+ * пересказ (newsIndexable), и поисковикам есть что сказать.
+ *
+ * Предикат — тот же, что у карты сайта, и дословно с rank > 0: иначе SQLite
+ * не возьмёт частичный idx_news_feed (см. getMajorFeedHead). tldr_at —
+ * остаточный фильтр по уже суженному окну публикации.
+ */
+export async function freshlyDigestedPatches(
+  db: Db,
+  publishedSince: number,
+  digestedAfter: number,
+  limit: number,
+): Promise<Array<{ appid: number; gid: string; digestedAt: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, gid, tldr_at FROM news_items
+          WHERE kind = 'patch' AND scale = 'major' AND rank > 0
+            AND published_at >= ? AND tldr IS NOT NULL AND tldr_at > ?
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [publishedSince, digestedAfter, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; gid: string; tldr_at: number }>).map((r) => ({
+    appid: Number(r.appid),
+    gid: String(r.gid),
+    digestedAt: Number(r.tldr_at),
+  }))
+}
+
 /* ---------- голова ленты: ключи без тел патчей ---------- */
 
 export type FeedHeadItem = { appid: number; gid: string; publishedAt: number }

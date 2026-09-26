@@ -33,6 +33,7 @@ import {
   revokeAllSessions,
   sitemapGames,
   sitemapNews,
+  freshlyDigestedPatches,
   getStaleAppids,
   stalePriceAppids,
   sweepStale,
@@ -178,6 +179,14 @@ const CASES: Case[] = [
   {
     name: 'патчи для карты сайта',
     run: (db) => sitemapNews(db, NOW - 90 * 86_400, 5000),
+    indexes: ['idx_news_feed'],
+    sortFree: true,
+  },
+  // IndexNow после среза пересказов: то же окно и тот же индекс, что у
+  // карты сайта, tldr_at — остаточным фильтром
+  {
+    name: 'свежепересказанные патчи',
+    run: (db) => freshlyDigestedPatches(db, NOW - 90 * 86_400, NOW - 3600, 100),
     indexes: ['idx_news_feed'],
     sortFree: true,
   },

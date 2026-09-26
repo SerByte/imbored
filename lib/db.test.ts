@@ -40,6 +40,7 @@ import {
   setGamesMedia,
   setNewsDigest,
   sitemapNews,
+  freshlyDigestedPatches,
   STEAM_LEASE,
   upsertNewsItems,
   type Db,
@@ -1938,6 +1939,30 @@ describe('страница патча', () => {
     // пересказ записан позже тела — страница с тех пор изменилась
     expect(got[0].changedAt).toBe(NOW + 50)
     expect(await sitemapNews(db, NOW - 90 * DAY, 1)).toHaveLength(1)
+  })
+
+  test('свежепересказанные: тот же отбор, что у карты сайта, и только пересказанные после отметки', async () => {
+    const db = await freshDb()
+    const DAY = 86_400
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: 'early', publishedAt: NOW - 2 * DAY }),
+        newsItem({ gid: 'late', publishedAt: NOW - DAY }),
+        newsItem({ gid: 'small', publishedAt: NOW - DAY, scale: 'hotfix' }),
+        newsItem({ gid: 'norank', publishedAt: NOW - DAY, rank: 0 }),
+      ],
+      NOW,
+    )
+    await setNewsDigest(db, 730, 'early', { tldr: 'коротко', scale: 'major' }, NOW + 10)
+    for (const gid of ['late', 'norank']) {
+      await setNewsDigest(db, 730, gid, { tldr: 'коротко', scale: 'major' }, NOW + 100)
+    }
+    await setNewsDigest(db, 730, 'small', { tldr: 'коротко', scale: 'hotfix' }, NOW + 100)
+    expect(await freshlyDigestedPatches(db, NOW - 90 * DAY, NOW + 50, 100)).toEqual([
+      { appid: 730, gid: 'late', digestedAt: NOW + 100 },
+    ])
+    expect((await freshlyDigestedPatches(db, NOW - 90 * DAY, NOW, 100)).map((n) => n.gid)).toEqual(['late', 'early'])
   })
 })
 
