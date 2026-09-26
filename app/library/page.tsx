@@ -16,6 +16,7 @@ import {
   listBanned,
   loadTagStats,
   listEvenings,
+  listLiked,
 } from '@/lib/db'
 import {
   buildLibraryView,
@@ -42,6 +43,7 @@ import { plural } from '@/lib/plural'
 import { dateLabel } from '@/lib/freshness'
 import { eveningsSummary, OUTCOME_TTL_SEC, playedEnough, playedLine } from '@/lib/outcome'
 import { Evenings, type EveningItem } from '@/components/Evenings'
+import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 
 export const metadata = {
   title: 'Библиотека',
@@ -112,7 +114,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats, evenings] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked] = await Promise.all([
     getLatestSnapshot(db, steamid),
     listBanned(db, steamid),
     bannedAppids(db, steamid),
@@ -120,6 +122,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     filter === 'untouched' ? loadTagStats(db) : null,
     // «Твои вечера» — советы за тот же срок, что их хранят (OUTCOME_TTL_SEC)
     listEvenings(db, steamid, nowSec() - OUTCOME_TTL_SEC),
+    // Полка «Зашло» — что подбор запомнил как понравившееся
+    listLiked(db, steamid),
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -142,6 +146,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       ...games.map((g) => g.appid),
       ...banned.map((b) => b.appid),
       ...shownEvenings.map((e) => e.appid),
+      ...liked.map((l) => l.appid),
     ]),
   ])
   const bannedGames: BannedGame[] = banned.map((b) => {
@@ -154,6 +159,15 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
       done: b.done,
+    }
+  })
+  const likedGames: LikedGame[] = liked.map((l) => {
+    const meta = metas.get(l.appid)
+    return {
+      appid: l.appid,
+      name: meta?.name ?? `Игра ${l.appid}`,
+      headerImage: meta?.headerImage ?? null,
+      art: trimArt(meta?.art),
     }
   })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
@@ -265,10 +279,17 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
             </div>
           </dl>
-          <Link href="/portrait" prefetch={false} className="btn-glass mt-8">
-            <Icon name="spark" size={18} />
-            Мой портрет игрока
-          </Link>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link href="/portrait" prefetch={false} className="btn-glass">
+              <Icon name="spark" size={18} />
+              Мой портрет игрока
+            </Link>
+            {/* Колода без вопросов о настроении — и полка «Приглянулось» при ней */}
+            <Link href="/explore" className="btn-glass">
+              Полистать без обязательств
+              <Icon name="arrow" size={18} />
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -618,6 +639,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           выдачи, и сниматься должен так же дёшево. */}
       <div className="mt-14">
         {/* Сессия есть наверняка: без неё страница развернула бы на вход */}
+        <LikedShelf games={likedGames} writer={session ? isWriter(session) : false} />
         <BannedShelf games={bannedGames} writer={session ? isWriter(session) : false} />
       </div>
 

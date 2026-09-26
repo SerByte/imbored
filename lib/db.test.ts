@@ -76,6 +76,8 @@ import {
   joinRoom,
   listBanned,
   listExplore,
+  listExploreLiked,
+  listLiked,
   listFeedback,
   listPublicRooms,
   logFeedback,
@@ -96,6 +98,7 @@ import {
   setUserPortrait,
   stalePriceAppids,
   unbanGame,
+  unlikeGame,
   updateGamePrices,
   topCatalogGames,
   topGamesByTags,
@@ -1656,6 +1659,75 @@ describe('db', () => {
   test('unbanGame на несуществующем бане молчит', async () => {
     const db = await freshDb()
     await expect(unbanGame(db, 'u1', 12_345)).resolves.toBeUndefined()
+  })
+
+  test('listExploreLiked: только последний свайп «Интересно», без потолка listExplore', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 10, action: 'opened', reason: 'explore' }, NOW)
+    // передумал — «Мимо» после «Интересно» снимает с полки
+    await logFeedback(db, { steamid: 'u1', appid: 10, action: 'skipped', reason: 'explore' }, NOW + 5)
+    await logFeedback(db, { steamid: 'u1', appid: 20, action: 'skipped', reason: 'explore' }, NOW + 1)
+    await logFeedback(db, { steamid: 'u1', appid: 20, action: 'opened', reason: 'explore' }, NOW + 6)
+    await logFeedback(db, { steamid: 'u1', appid: 30, action: 'opened', reason: 'explore' }, NOW + 2)
+    await logFeedback(db, { steamid: 'u1', appid: 30, action: 'banned' }, NOW + 3)
+    await logFeedback(db, { steamid: 'u1', appid: 40, action: 'opened' }, NOW + 7)
+    await logFeedback(db, { steamid: 'u1', appid: 50, action: 'opened', reason: 'explore' }, NOW + 6)
+    await logFeedback(db, { steamid: 'u2', appid: 60, action: 'opened', reason: 'explore' }, NOW)
+    expect(await listExploreLiked(db, 'u1', 10)).toEqual([
+      { appid: 20, at: NOW + 6 },
+      { appid: 50, at: NOW + 6 },
+    ])
+    expect(await listExploreLiked(db, 'u1', 1)).toEqual([{ appid: 20, at: NOW + 6 }])
+
+    // Двести свежих «Мимо» не выталкивают старое «Интересно» — это и был
+    // скрытый потолок полки, пока её читали из listExplore
+    const passes = Array.from({ length: 210 }, (_, i) =>
+      logFeedback(db, { steamid: 'u3', appid: 1000 + i, action: 'skipped', reason: 'explore' }, NOW + 100 + i),
+    )
+    await logFeedback(db, { steamid: 'u3', appid: 7, action: 'opened', reason: 'explore' }, NOW)
+    await Promise.all(passes)
+    expect((await listExplore(db, 'u3')).some((r) => r.appid === 7)).toBe(false)
+    expect(await listExploreLiked(db, 'u3', 120)).toEqual([{ appid: 7, at: NOW }])
+  })
+
+  test('listLiked: по строке на игру, свежие сверху, без забаненного и чужого', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW)
+    // второе «зашло» той же игры через сутки — logFeedback склеивает только в пределах суток
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 90_000)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'liked' }, NOW + 100)
+    await logFeedback(db, { steamid: 'u1', appid: 730, action: 'liked' }, NOW + 200)
+    await logFeedback(db, { steamid: 'u1', appid: 730, action: 'banned' }, NOW + 300)
+    await logFeedback(db, { steamid: 'u1', appid: 440, action: 'skipped' }, NOW + 400)
+    await logFeedback(db, { steamid: 'u2', appid: 999, action: 'liked' }, NOW + 500)
+    // одна секунда — порядок по appid, а не как ляжет
+    await logFeedback(db, { steamid: 'u1', appid: 300, action: 'liked' }, NOW + 100)
+
+    expect(await listLiked(db, 'u1')).toEqual([
+      { appid: 570, at: NOW + 90_000 },
+      { appid: 300, at: NOW + 100 },
+      { appid: 620, at: NOW + 100 },
+    ])
+    expect(await listLiked(db, 'u1', 1)).toEqual([{ appid: 570, at: NOW + 90_000 }])
+    expect(await listLiked(db, 'nobody')).toEqual([])
+  })
+
+  test('unlikeGame снимает все «зашло» игры и не трогает остальную историю', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 90_000)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW + 10)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'tired' }, NOW + 20)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'liked' }, NOW + 30)
+    await logFeedback(db, { steamid: 'u2', appid: 570, action: 'liked' }, NOW + 40)
+
+    await unlikeGame(db, 'u1', 570)
+
+    expect(await listLiked(db, 'u1')).toEqual([{ appid: 620, at: NOW + 30 }])
+    const rest = (await listFeedback(db, 'u1', 50)).filter((f) => f.appid === 570).map((f) => f.action)
+    expect(rest.sort()).toEqual(['launched', 'skipped'])
+    expect(await listLiked(db, 'u2')).toEqual([{ appid: 570, at: NOW + 40 }])
+    await expect(unlikeGame(db, 'u1', 12_345)).resolves.toBeUndefined()
   })
 
   test('фидбек логируется и читается по пользователю', async () => {

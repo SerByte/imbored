@@ -16,6 +16,8 @@ import {
   getMajorFeedHead,
   getNeighbors,
   listEvenings,
+  listExploreLiked,
+  listLiked,
   getNewsPage,
   getUnsummarized,
   listExplore,
@@ -264,6 +266,20 @@ const CASES: Case[] = [
   {
     name: 'пролистанное в колоде исследователя',
     run: (db) => listExplore(db, '76561198000000001'),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  // Полка «Приглянулось» и полка «Зашло» — тот же разговор: строки одного
+  // человека по индексу, GROUP BY сортирует только их
+  {
+    name: 'полка «Приглянулось»',
+    run: (db) => listExploreLiked(db, '76561198000000001', 120),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  {
+    name: 'полка «Зашло»',
+    run: (db) => listLiked(db, '76561198000000001'),
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },

@@ -7,12 +7,13 @@ import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
 import { SectionLabel } from '@/components/Labels'
 import { NeedSteam } from '@/components/NeedSteam'
+import { DiscountCorner, PriceTag } from '@/components/PriceTag'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { SwipeDeck, type DeckCard, type DeckLabels } from '@/components/SwipeDeck'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { ExploreCard, ShelfCard } from '@/lib/cards'
 import { bounceTo, reconnectHref } from '@/lib/destination'
-import { EXPLORE_REASON, EXPLORE_SHELF } from '@/lib/explore'
+import { EXPLORE_REASON, EXPLORE_SHELF_FOLD, EXPLORE_SHELF_MAX } from '@/lib/explore'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -50,9 +51,23 @@ const FAIL_UNKNOWN = {
  */
 const LABELS: DeckLabels = { yes: 'Интересно', no: 'Мимо' }
 
-/** Плитка полки из карты колоды — приглянувшееся только что, ещё до сервера */
+/**
+ * Плитка полки из карты колоды — приглянувшееся только что, ещё до сервера.
+ * Цена — по тем же правилам, что у shelfCardView: у своей игры её нет.
+ */
 function shelfOf(card: DeckCard): ShelfCard {
-  return { appid: card.appid, name: card.name, headerImage: card.headerImage, art: card.art ?? null }
+  const owned = card.ownedByAll
+  const isFree = !owned && card.isFree === true
+  return {
+    appid: card.appid,
+    name: card.name,
+    headerImage: card.headerImage,
+    art: card.art ?? null,
+    owned,
+    isFree,
+    priceFinal: owned || isFree ? null : (card.priceFinal ?? null),
+    discount: owned ? null : (card.discount ?? null),
+  }
 }
 
 export default function ExplorePage() {
@@ -66,6 +81,14 @@ export default function ExplorePage() {
   const [deckTotal, setDeckTotal] = useState(0)
   const [voted, setVoted] = useState(0)
   const [liked, setLiked] = useState<ShelfCard[]>([])
+  /** Полка развёрнута целиком — до этого видно EXPLORE_SHELF_FOLD плиток */
+  const [shelfOpen, setShelfOpen] = useState(false)
+  /** Какую плитку не удалось убрать — строка под ней */
+  const [unlikeMiss, setUnlikeMiss] = useState<number | null>(null)
+  /** Фокус после ухода плитки: соседняя кнопка «Убрать» или заголовок полки */
+  const pendingFocus = useRef<number | 'heading' | null>(null)
+  const unlikeButtons = useRef(new Map<number, HTMLButtonElement>())
+  const shelfHeading = useRef<HTMLHeadingElement>(null)
   const [nowSec, setNowSec] = useState(0)
   /** «Ещё колоду» едет — кнопка ждёт ответа */
   const [dealing, setDealing] = useState(false)
@@ -223,6 +246,48 @@ export default function ExplorePage() {
       .catch(() => {})
   }
 
+  useEffect(() => {
+    const target = pendingFocus.current
+    if (target === null) return
+    pendingFocus.current = null
+    const el = target === 'heading' ? shelfHeading.current : unlikeButtons.current.get(target)
+    el?.focus()
+  })
+
+  /**
+   * «Убрать» с полки — тот же свайп «Мимо», только запоздалый: listExploreLiked
+   * смотрит на последний свайп, и он снимает игру с полки. Плитка уходит
+   * сразу; отказ сервера возвращает полку как была. Сессия только для
+   * чтения держит полку на устройстве — ей убирать можно без сервера.
+   */
+  const unlike = async (card: ShelfCard) => {
+    const before = liked
+    const at = liked.findIndex((c) => c.appid === card.appid)
+    const neighbour = liked[at + 1] ?? liked[at - 1]
+    setUnlikeMiss(null)
+    pendingFocus.current = neighbour ? neighbour.appid : 'heading'
+    setLiked((l) => l.filter((c) => c.appid !== card.appid))
+    if (writerStore.get() === false) return
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appid: card.appid, action: 'skipped', reason: EXPLORE_REASON }),
+      })
+      if (await isNeedSteam(res)) {
+        // Права кончились, пока страница была открыта: полка дальше живёт на
+        // устройстве, и убранное остаётся убранным
+        writerStore.set(false)
+        return
+      }
+      if (!res.ok) throw new Error(String(res.status))
+    } catch {
+      pendingFocus.current = card.appid
+      setLiked(before)
+      setUnlikeMiss(card.appid)
+    }
+  }
+
   if (phase === 'loading') {
     return <WarmupScreen progress={prep} message={message} />
   }
@@ -316,34 +381,76 @@ export default function ExplorePage() {
       </div>
 
       {liked.length > 0 && (
-        <section className="flex flex-col gap-4 md:col-start-2 md:row-start-2">
-          <SectionLabel>Приглянулось</SectionLabel>
+        <section aria-labelledby="explore-shelf" className="flex flex-col gap-4 md:col-start-2 md:row-start-2">
+          {/* Заголовок держит фокус, когда с полки ушла последняя плитка */}
+          <h2 id="explore-shelf" ref={shelfHeading} tabIndex={-1}>
+            <SectionLabel as="span">Приглянулось</SectionLabel>
+          </h2>
           <div className="grid grid-cols-2 gap-x-4 gap-y-6">
-            {liked.map((c) => (
-              <Link
-                key={c.appid}
-                href={`/game/${c.appid}`}
-                transitionTypes={['nav-forward']}
-                className="game-card block text-left"
-              >
-                <GameCardBody
-                  morph
-                  appid={c.appid}
-                  name={c.name}
-                  headerImage={c.headerImage}
-                  art={c.art}
-                  sizes="(min-width: 768px) 320px, 50vw"
-                />
-              </Link>
+            {(shelfOpen ? liked : liked.slice(0, EXPLORE_SHELF_FOLD)).map((c) => (
+              <div key={c.appid} className="flex flex-col">
+                {/* Ссылка и кнопка — соседи, а не вложенные (как у BannedShelf) */}
+                <Link
+                  href={`/game/${c.appid}`}
+                  transitionTypes={['nav-forward']}
+                  className="game-card block text-left"
+                >
+                  <GameCardBody
+                    morph
+                    appid={c.appid}
+                    name={c.name}
+                    headerImage={c.headerImage}
+                    art={c.art}
+                    sizes="(min-width: 768px) 320px, 50vw"
+                    corner={<DiscountCorner discount={c.discount} />}
+                    meta={
+                      c.owned ? (
+                        <span className="truncate">в библиотеке</span>
+                      ) : (
+                        <PriceTag
+                          priceFinal={c.priceFinal}
+                          discount={c.discount}
+                          isFree={c.isFree}
+                          showPercent={false}
+                          className="shrink-0"
+                        />
+                      )
+                    }
+                  />
+                </Link>
+                <button
+                  type="button"
+                  ref={(el) => {
+                    if (el) unlikeButtons.current.set(c.appid, el)
+                    else unlikeButtons.current.delete(c.appid)
+                  }}
+                  onClick={() => void unlike(c)}
+                  aria-label={`Убрать «${c.name}» с полки`}
+                  className="pill mt-3 self-start"
+                >
+                  Убрать
+                </button>
+                {unlikeMiss === c.appid && (
+                  <p role="status" className="pt-2 text-[11px] text-danger">
+                    Не вышло — попробуй ещё раз
+                  </p>
+                )}
+              </div>
             ))}
           </div>
+          {!shelfOpen && liked.length > EXPLORE_SHELF_FOLD && (
+            <button type="button" onClick={() => setShelfOpen(true)} className="tap link-more self-start">
+              Показать все · <span className="tabular-nums">{liked.length}</span>
+              <Icon name="down" size={14} />
+            </button>
+          )}
         </section>
       )}
     </div>
   )
 }
 
-/** Полка: новое сверху, без повторов, не длиннее EXPLORE_SHELF */
+/** Полка: новое сверху, без повторов, не длиннее EXPLORE_SHELF_MAX */
 function mergeShelf(first: ShelfCard[], rest: ShelfCard[]): ShelfCard[] {
   const seen = new Set<number>()
   const out: ShelfCard[] = []
@@ -352,5 +459,5 @@ function mergeShelf(first: ShelfCard[], rest: ShelfCard[]): ShelfCard[] {
     seen.add(c.appid)
     out.push(c)
   }
-  return out.slice(0, EXPLORE_SHELF)
+  return out.slice(0, EXPLORE_SHELF_MAX)
 }

@@ -338,13 +338,27 @@ export function exploreCardView(p: LlmPick, ctx: PickContext) {
 
 export type ExploreCard = ReturnType<typeof exploreCardView>
 
-/** Плитка полки «Приглянулось»: картинка и дорога к карточке игры */
-export function shelfCardView(meta: GameMeta) {
+/**
+ * Плитка полки «Приглянулось»: картинка, дорога к карточке игры и цена.
+ *
+ * Цена — потому что полка и есть список «может, купить»: приглянувшееся из
+ * магазина без ценника заставляло открывать каждую карточку. Правила те же,
+ * что у колоды (exploreCardView): «бесплатно» сильнее цены, скидка — только у
+ * не купленного (buyView), срок распродажи молчит при большом бэклоге.
+ * Своя игра — без цены вовсе: её не покупают.
+ */
+export function shelfCardView(meta: GameMeta, opts: { now: number; owned: boolean; hideUrgency: boolean }) {
+  const shop = shopView(meta, opts.now)
+  const buying = !opts.owned
   return {
     appid: meta.appid,
     name: meta.name,
-    headerImage: meta.headerImage ?? null,
-    art: meta.art ?? null,
+    headerImage: shop.headerImage,
+    art: shop.art,
+    owned: opts.owned,
+    isFree: buying && shop.isFree === true,
+    priceFinal: buying && !shop.isFree ? shop.priceFinal : null,
+    discount: buyView(meta, buying ? 'new' : 'familiar', opts.now, opts.hideUrgency).discount,
   }
 }
 

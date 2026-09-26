@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, exploreCardView, shelfCardView } from '@/lib/cards'
-import { getGamesMetaLite, listExplore } from '@/lib/db'
-import { EXPLORE_SHELF, exploreDeck, exploredAppids } from '@/lib/explore'
+import { getGamesMetaLite, listExplore, listExploreLiked } from '@/lib/db'
+import { EXPLORE_SHELF_MAX, exploreDeck, exploredAppids } from '@/lib/explore'
 import { heuristicPicks } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
@@ -44,7 +44,7 @@ export async function GET(req: Request) {
    * потолок адреса. Цена — лишнее чтение listExplore на отказанном запросе.
    */
   const ip = clientIp(req.headers)
-  const [gate, explored] = await Promise.all([
+  const [gate, explored, shelf] = await Promise.all([
     checkRatesInOrder(
       db,
       [
@@ -56,6 +56,9 @@ export async function GET(req: Request) {
     // Что уже листал: приглянувшееся лежит на полке, «Мимо» неделю не
     // возвращается — колода каждый заход о новом (exploredAppids)
     listExplore(db, steamid),
+    // Полка «Приглянулось» — своим запросом: listExplore читает двести
+    // последних свайпов обоих видов, и старое «Интересно» тонуло бы в «Мимо»
+    listExploreLiked(db, steamid, EXPLORE_SHELF_MAX),
   ])
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
@@ -63,7 +66,7 @@ export async function GET(req: Request) {
   // не спрашивали, и судить им нечего (moodless). Нейтральное настроение —
   // ради одиночного social: компании колода не собирается
   // Полка «Приглянулось» от колоды не зависит — её мета едет параллельно
-  const likedIds = explored.filter((r) => r.liked).map((r) => r.appid).slice(0, EXPLORE_SHELF)
+  const likedIds = shelf.map((r) => r.appid)
   const [set, likedMetas] = await Promise.all([
     buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
       nowSec: now,
@@ -76,12 +79,11 @@ export async function GET(req: Request) {
   if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
 
   const deck = exploreDeck(set.own, set.discovery)
-  // Цены — до причин: шаблон называет скидку, а карта — ценник (buildPickContext)
-  const ctx = await buildPickContext(
-    db,
-    set,
-    deck.map((c) => c.appid),
-  )
+  // Цены — до причин: шаблон называет скидку, а карта — ценник (buildPickContext).
+  // Полка — тем же запросом в магазин: у неё тоже ценник, и GetItems берёт
+  // до двухсот игр разом
+  const ctx = await buildPickContext(db, set, [...deck.map((c) => c.appid), ...likedIds])
+  const owned = new Set(set.games.map((g) => g.appid))
   const reasons = new Map(
     heuristicPicks(deck, ctx.metaNow, deck.length, now, set.profile, {
       tagWeight: set.tagWeight,
@@ -101,8 +103,11 @@ export async function GET(req: Request) {
     }),
     // Полка «Приглянулось», свежие первыми; игра, выпавшая из каталога, — мимо
     liked: likedIds.flatMap((id) => {
-      const meta = likedMetas.get(id)
-      return meta ? [shelfCardView(meta)] : []
+      // Свежая цена, если её только что обновили; иначе — из прочитанного
+      const meta = ctx.metaNow(id) ?? likedMetas.get(id)
+      return meta
+        ? [shelfCardView(meta, { now, owned: owned.has(id), hideUrgency: ctx.hideUrgency })]
+        : []
     }),
   })
 }

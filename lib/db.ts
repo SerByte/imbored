@@ -4120,6 +4120,78 @@ export async function unbanGame(db: Db, steamid: string, appid: number): Promise
   })
 }
 
+/**
+ * Полка «Приглянулось» на /explore — только игры, чей последний свайп
+ * «Интересно», свежие сверху. Отдельно от listExplore: тот читает двести
+ * последних свайпов ОБОИХ видов ради отсева колоды, и приглянувшееся
+ * полугодовой давности тонуло бы под свежими «Мимо».
+ *
+ * Последний свайп — та же голая колонка из строки с MAX(created_at), что в
+ * listExplore, и HAVING смотрит на неё же: «Мимо» после «Интересно» снимает
+ * игру с полки. Забаненное не отдаётся — бан сильнее.
+ */
+export async function listExploreLiked(
+  db: Db,
+  steamid: string,
+  limit: number,
+): Promise<Array<{ appid: number; at: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, MAX(created_at) AS at, action FROM feedback
+          WHERE steamid = ?1 AND reason = 'explore'
+            AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')
+          GROUP BY appid HAVING action = 'opened'
+          ORDER BY at DESC, appid LIMIT ?2`,
+    args: [steamid, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; at: number }>).map((r) => ({
+    appid: Number(r.appid),
+    at: Number(r.at),
+  }))
+}
+
+/** Сколько плиток держит полка «Зашло» на /library — как у забаненного */
+export const LIKED_SHELF = 60
+
+/**
+ * «Зашло» одной строкой на игру, свежие сверху — полка на /library.
+ *
+ * Оценки ведут подбор (профиль вкуса, снятие паузы после «не то»), и до сих
+ * пор человек не видел, что именно сервис запомнил. Тай-брейк по appid — по
+ * той же причине, что у listBanned. Забаненное не отдаётся: оно лежит на своей
+ * полке, и одна игра на двух полках с противоположным смыслом только путает.
+ */
+export async function listLiked(
+  db: Db,
+  steamid: string,
+  limit = LIKED_SHELF,
+): Promise<Array<{ appid: number; at: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, MAX(created_at) AS at FROM feedback
+          WHERE steamid = ?1 AND action = 'liked'
+            AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')
+          GROUP BY appid ORDER BY at DESC, appid LIMIT ?2`,
+    args: [steamid, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; at: number }>).map((r) => ({
+    appid: Number(r.appid),
+    at: Number(r.at),
+  }))
+}
+
+/**
+ * Снять «зашло». DELETE всех строк liked этой игры — как unbanGame: оценка
+ * одной игры лежит несколькими строками (logFeedback склеивает повторы только
+ * в пределах суток), и оставь хоть одну — подбор помнил бы её по-прежнему.
+ * Остальное — скипы, открытия, запуски, бан — остаётся на месте. Ответ на
+ * «как тебе?» живёт в outcomes и тоже не трогается.
+ */
+export async function unlikeGame(db: Db, steamid: string, appid: number): Promise<void> {
+  await db.execute({
+    sql: "DELETE FROM feedback WHERE steamid = ? AND appid = ? AND action = 'liked'",
+    args: [steamid, appid],
+  })
+}
+
 /* ---------- исход совета ---------- */
 
 /**

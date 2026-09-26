@@ -7,8 +7,8 @@ import { readJsonObject } from '@/lib/reqbody'
 
 /**
  * Снятие бана. Отдельный роут, а не пятое значение action в /api/feedback:
- * тот пишет историю и обязан оставаться append-only, а этот единственный в
- * проекте удаляет пользовательские строки. Разные права — разные двери.
+ * тот пишет историю и обязан оставаться append-only, а этот удаляет
+ * пользовательские строки (как и /api/unlike). Разные права — разные двери.
  */
 export async function POST(req: Request) {
   const writer = await requireWriter()
