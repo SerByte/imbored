@@ -12,6 +12,7 @@ import { Magnet } from '@/components/Magnet'
 import { HeroShots } from '@/components/HeroShots'
 import { LogoMark } from '@/components/Logo'
 import { NeedSteam } from '@/components/NeedSteam'
+import { useSharePick } from '@/components/SharePick'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
@@ -1063,6 +1064,12 @@ function Player({ say }: { say: (line: string) => void }) {
     nudge: nudge ?? undefined,
   })
 
+  /*
+   * «Отправить другу» — до ранних возвратов: хук. Герой тот же, что ниже
+   * (pick), просто посчитан раньше; пустой выдачи хук не боится.
+   */
+  const sharePick = useSharePick(picks[Math.min(index, picks.length - 1)], 'play')
+
   if (phase === 'prepare') {
     return (
       <WarmupScreen
@@ -1707,6 +1714,8 @@ function Player({ say }: { say: (line: string) => void }) {
                     <span className="sr-only">Зашло</span>
                   </button>
                 )}
+                {/* Отправить выбор другу — /pick/<id>; пишет строку, поэтому не читателю */}
+                {!readOnly && sharePick.button}
                 {!readOnly && (
                   <button
                     onClick={async () => {
@@ -1793,6 +1802,7 @@ function Player({ say }: { say: (line: string) => void }) {
               </m.div>
               {/* Вместо спрятанных «Зашло» и бана — почему их нет и как вернуть */}
               {readOnly && <NeedSteam from={`/play?${search}`} why="launch" className="-mt-1" />}
+              {!readOnly && sharePick.panel}
               {/*
                 Отказ бана виден, потому что бан необратим. Формулировка ведёт
                 к следующему шагу, а не констатирует поломку: карточка на месте,

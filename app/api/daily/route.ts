@@ -19,7 +19,8 @@ import { heuristicPicks, reasonPrice } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { sharedTasteTags } from '@/lib/recommend'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { shareView } from '@/lib/pickshare'
+import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
 import type { GameMeta, ScoredCandidate } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
@@ -123,16 +124,30 @@ export async function GET(req: Request) {
     // см. докблок в PlayersNow: подпись «сейчас» требует серверных часов
     nowSec: now,
     // Карточка — lib/cards: тот же контракт, по которому /daily берёт тип
-    pick: dailyCardView(pick, metaNow(pick.appid), now, {
-      reason,
-      sharedTags,
-      hoursPlayed,
-      hideUrgency,
-      via,
-    }),
+    pick: {
+      ...dailyCardView(pick, metaNow(pick.appid), now, {
+        reason,
+        sharedTags,
+        hoursPlayed,
+        hideUrgency,
+        via,
+      }),
+      // «Отправить другу» (/pick) — основа причины, без свежего ценового хвоста
+      ...shareView(sessionSecret(), { steamid, appid: pick.appid, source: pick.source, text: reasonBase }),
+    },
     discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
     // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
-    ownAlternate: alt ? alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency) : null,
+    ownAlternate: alt
+      ? {
+          ...alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency),
+          ...shareView(sessionSecret(), {
+            steamid,
+            appid: alt.pick.appid,
+            source: alt.pick.source,
+            text: alt.reasonBase,
+          }),
+        }
+      : null,
     // Из того же dateStr, что и ключ записи — см. dayLabel.
     dateLabel: dayLabel(dateStr),
   })

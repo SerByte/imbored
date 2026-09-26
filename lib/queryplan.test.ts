@@ -17,6 +17,8 @@ import {
   getNeighbors,
   listEvenings,
   listCompatViews,
+  findSharedPick,
+  getSharedPick,
   getLibraryBaselines,
   getOlderSnapshotMinutes,
   listExploreLiked,
@@ -289,6 +291,20 @@ const CASES: Case[] = [
     name: 'кто сравнился с тобой',
     run: (db) => listCompatViews(db, '76561198000000001', 0),
     indexes: ['idx_compat_views_owner_at', 'sqlite_autoindex_users_1'],
+    sortFree: true,
+  },
+  // /pick/<id> — одна строка по первичному ключу; повтор нажатия — по
+  // индексу автора, без полного скана выборов всех людей
+  {
+    name: 'выбор по ссылке',
+    run: (db) => getSharedPick(db, 'abcdefghjkmn', 0),
+    indexes: ['sqlite_autoindex_shared_picks_1'],
+    sortFree: true,
+  },
+  {
+    name: 'повтор «Отправить другу»',
+    run: (db) => findSharedPick(db, '76561198000000001', 620, 'Причина.', 0),
+    indexes: ['idx_shared_picks_by'],
     sortFree: true,
   },
   {

@@ -338,6 +338,9 @@ export function exploreCardView(p: LlmPick, ctx: PickContext) {
 
 export type ExploreCard = ReturnType<typeof exploreCardView>
 
+/** «Отправить другу» у героя: текст и подпись сервера (lib/pickshare shareView) */
+export type ShareView = { share: { text: string; sig: string } }
+
 /**
  * Плитка полки «Приглянулось»: картинка, дорога к карточке игры и цена.
  *

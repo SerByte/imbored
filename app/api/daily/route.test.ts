@@ -3,6 +3,8 @@ import { saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
 import { freshDb, post, signIn, signOut } from '@/lib/testing/route'
 import { POST as feedback } from '../feedback/route'
 import type { GameMeta, LibraryGame } from '@/lib/types'
+import { pickShareOk } from '@/lib/pickshare'
+import { sessionSecret } from '@/lib/server'
 import { GET } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -116,6 +118,12 @@ describe('/api/daily: записанный выбор дня', () => {
     expect(first.status).toBe(200)
     const morning = ((await first.json()) as { pick: { appid: number; source: string } }).pick
     const chosen = morning.appid
+    // «Отправить другу»: основа причины, подписанная для этой сессии
+    const { share, reason } = morning as unknown as { share: { text: string; sig: string }; reason: string }
+    expect(reason.startsWith(share.text)).toBe(true)
+    expect(
+      pickShareOk(sessionSecret(), { steamid: STEAMID, appid: chosen, source: morning.source, text: share.text }, share.sig),
+    ).toBe(true)
     expect(await countRows(db, 'daily_picks')).toBe(1)
 
     // Утренний выбор ушёл из библиотеки, остались совсем другие игры: отбор

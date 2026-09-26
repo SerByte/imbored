@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, upsertSemantics, type Db } from '@/lib/db'
-import { nowSec } from '@/lib/server'
+import { pickShareOk } from '@/lib/pickshare'
+import { nowSec, sessionSecret } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
 import { SCORE_FACTORS, type GameSemantics } from '@/lib/types'
 import { freshDb, post, signIn } from '@/lib/testing/route'
@@ -156,9 +157,27 @@ describe('/api/recommend: снимок к оценке', () => {
     const res = await POST(post('/api/recommend', { mood: MOOD }))
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
-      picks: Array<{ appid: number; rank: number; parts: Record<string, number> | null }>
+      picks: Array<{
+        appid: number
+        source: string
+        reason: string
+        rank: number
+        parts: Record<string, number> | null
+        share?: { text: string; sig: string }
+      }>
+      discoveries: Array<{ share?: unknown }>
     }
     expect(body.picks.length).toBeGreaterThan(0)
+    // «Отправить другу»: у каждого героя подписанный для ЭТОЙ сессии текст
+    // (lib/pickshare), у находок — нет: героями они не становятся
+    for (const p of body.picks) {
+      expect(p.share, `share ${p.appid}`).toBeDefined()
+      expect(p.reason.startsWith(p.share!.text), `текст ${p.appid}`).toBe(true)
+      const v = { steamid: STEAMID, appid: p.appid, source: p.source, text: p.share!.text }
+      expect(pickShareOk(sessionSecret(), v, p.share!.sig), `подпись ${p.appid}`).toBe(true)
+      expect(pickShareOk(sessionSecret(), { ...v, steamid: '76561197960287931' }, p.share!.sig)).toBe(false)
+    }
+    for (const d of body.discoveries) expect(d.share).toBeUndefined()
     body.picks.forEach((p, i) => {
       expect(p.rank, `место ${p.appid}`).toBe(i)
       expect(p.parts, `части ${p.appid}`).not.toBeNull()

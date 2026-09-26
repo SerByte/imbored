@@ -3,7 +3,7 @@ import { assignEdges } from '@/lib/badges'
 import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getHeroMedia } from '@/lib/db'
-import { claudePicks, heuristicPicks, llmAvailable, topUpPicks } from '@/lib/llm'
+import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
 import { takeLlmBudget } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
 import { parseExclude, parseNudge, planNudge } from '@/lib/nudge'
@@ -16,7 +16,9 @@ import {
   PICK_COUNT,
   pickContinue,
 } from '@/lib/recommend'
-import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
+import { shareView } from '@/lib/pickshare'
+import { shareText } from '@/lib/sharedpick'
+import { currentSteamId, getDb, isDemoId, nowSec, sessionSecret } from '@/lib/server'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from '@/lib/types'
 import { readJsonObject } from '@/lib/reqbody'
 
@@ -263,6 +265,14 @@ export async function POST(req: Request) {
       ...cardView(p, ctx, edges.get(p.appid) ?? null),
       ...heroMediaView(media.get(p.appid)),
       ...scoreView(i, partsOf.get(p.appid)),
+      // «Отправить другу» (/pick): текст без ценового хвоста, подписанный
+      // сервером для этой сессии — lib/pickshare
+      ...shareView(sessionSecret(), {
+        steamid,
+        appid: p.appid,
+        source: p.source,
+        text: shareText(p.reason, reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency)),
+      }),
     })),
     discoveries: discoveries.map((p, i) => ({
       ...cardView(p, ctx),

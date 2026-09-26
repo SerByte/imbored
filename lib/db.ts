@@ -23,11 +23,12 @@ import {
   type Evening,
 } from './outcome'
 import { SEMANTICS_V } from './semantics'
+import { SHARED_PICK_TTL_SEC, type PickKind } from './sharedpick'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import { isMultiplayerCategories, MULTIPLAYER_CATEGORY_SQL } from './steamcats'
 import type { NewsBlock } from './steamhtml'
 import { readTrailer, type Trailer } from './trailer'
-import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
+import type { CandidateSource, GameMeta, GameSemantics, LibraryGame, Mood } from './types'
 
 /** Соединение с БД: локальный файл в dev, Turso в проде — API одинаковый */
 export type Db = Client
@@ -268,6 +269,30 @@ CREATE TABLE IF NOT EXISTS outcomes (
 ) WITHOUT ROWID;
 -- для суточной уборки старше девяноста дней: иначе полный проход по таблице
 CREATE INDEX IF NOT EXISTS idx_outcomes_shown ON outcomes (shown_at);
+/*
+ * Выбор, которым поделились: /pick/<id> — «imbored выбрал мне на вечер».
+ *
+ * Пишется только по нажатию «Отправить» у героя /play или /daily и только
+ * текстом, который подписал сам сервер (lib/pickshare). id непрозрачный —
+ * steamid в адресе и на странице нет; created_by хранится ради удаления по
+ * запросу и повтора той же ссылки, публичное чтение его не выбирает.
+ *
+ * Тридцать дней (sweepStale); по запросу — forgetUser. /privacy, разделы 05
+ * и 06.
+ */
+CREATE TABLE IF NOT EXISTS shared_picks (
+  id TEXT PRIMARY KEY,
+  created_by TEXT NOT NULL,
+  appid INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+-- та же ссылка на тот же выбор повтором — по автору и сроку
+CREATE INDEX IF NOT EXISTS idx_shared_picks_by ON shared_picks (created_by, created_at);
+-- уборка по сроку без полного прохода
+CREATE INDEX IF NOT EXISTS idx_shared_picks_created ON shared_picks (created_at);
 /*
  * Кто открыл чью ссылку на сравнение (/compat/<owner>) и какой вышел
  * процент — для «Сравнили с тобой» на хабе /compat владельца.
@@ -4605,6 +4630,75 @@ export async function listCompatViews(
   )
 }
 
+/* ---------- выбор, которым поделились ---------- */
+
+export type SharedPick = {
+  id: string
+  appid: number
+  source: CandidateSource
+  kind: PickKind
+  reason: string
+  createdAt: number
+}
+
+export async function createSharedPick(
+  db: Db,
+  row: { id: string; createdBy: string; appid: number; source: CandidateSource; kind: PickKind; reason: string },
+  nowSec: number,
+): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO shared_picks (id, created_by, appid, source, kind, reason, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [row.id, row.createdBy, row.appid, row.source, row.kind, row.reason, nowSec],
+  })
+}
+
+/**
+ * Та же ссылка на тот же выбор: двойное нажатие и повторная отправка того
+ * же героя не плодят строк — вернётся прежний id, пока он не истёк.
+ */
+export async function findSharedPick(
+  db: Db,
+  createdBy: string,
+  appid: number,
+  reason: string,
+  sinceSec: number,
+): Promise<string | null> {
+  const res = await db.execute({
+    sql: `SELECT id FROM shared_picks
+           WHERE created_by = ? AND created_at >= ? AND appid = ? AND reason = ?
+           LIMIT 1`,
+    args: [createdBy, sinceSec, appid, reason],
+  })
+  const row = res.rows[0] as unknown as { id: string } | undefined
+  return row ? String(row.id) : null
+}
+
+/**
+ * Публичное чтение по id. created_by не выбирается вовсе: страница и
+ * карточка открыты кому угодно, и автор им не нужен. Истёкшее не отдаётся
+ * ещё до суточной уборки.
+ */
+export async function getSharedPick(db: Db, id: string, sinceSec: number): Promise<SharedPick | null> {
+  const res = await db.execute({
+    sql: `SELECT id, appid, source, kind, reason, created_at FROM shared_picks
+           WHERE id = ? AND created_at >= ?`,
+    args: [id, sinceSec],
+  })
+  const row = res.rows[0] as unknown as
+    | { id: string; appid: number; source: string; kind: string; reason: string; created_at: number }
+    | undefined
+  if (!row) return null
+  return {
+    id: String(row.id),
+    appid: Number(row.appid),
+    source: String(row.source) as CandidateSource,
+    kind: String(row.kind) === 'daily' ? 'daily' : 'play',
+    reason: String(row.reason),
+    createdAt: Number(row.created_at),
+  }
+}
+
 /* ---------- удаление по запросу ---------- */
 
 /**
@@ -4652,6 +4746,7 @@ const USER_ROWS = [
   // Пара сравнения уходит у обеих сторон: и «кого он сравнивал», и «кто
   // сравнивал его» — след человека в чужом хабе тоже его след
   { table: 'compat_views', where: 'owner = ? OR viewer = ?' },
+  { table: 'shared_picks', where: 'created_by = ?' },
   { table: 'daily_picks', where: 'steamid = ?' },
   { table: 'library_snapshots', where: 'steamid = ?' },
   { table: 'library_baselines', where: 'steamid = ?' },
@@ -4770,6 +4865,7 @@ export type SweepReport = {
   ctx: number
   outcomes: number
   compat: number
+  picks: number
 }
 
 /** Сколько живёт отметка «X сравнился с тобой» — как и исходы советов */
@@ -4792,6 +4888,7 @@ export const COMPAT_VIEW_TTL_SEC = 90 * 86_400
  *     оценка остаётся — по ней считается вкус.
  *   • Исходы советов старше OUTCOME_TTL_SEC — целиком: вкус их не читает.
  *   • Отметки сравнений старше COMPAT_VIEW_TTL_SEC.
+ *   • Выборы, которыми поделились, старше SHARED_PICK_TTL_SEC.
  *
  * Одной пачкой: предикат демо опирается на users, поэтому users уходит
  * последней, а обрыв посередине не оставит личность без половины строк.
@@ -4800,7 +4897,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
   const demoCutoff = nowSec - DEMO_TTL_SEC
   const demo = [demoCutoff, demoCutoff - SESSION_TOUCH_AFTER_SEC, demoCutoff]
   const roomCutoff = nowSec - ROOM_TTL_SEC
-  const [, , , , sessions, demos, , , , rooms, ctx, outcomes, compat] = await db.batch(
+  const [, , , , sessions, demos, , , , rooms, ctx, outcomes, compat, picks] = await db.batch(
     [
       ...['feedback', 'daily_picks', 'library_snapshots', 'library_baselines'].map((table) => ({
         sql: `DELETE FROM ${table} WHERE ${STALE_DEMO}`,
@@ -4829,6 +4926,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
       // /api/feedback исходы им не пишет
       { sql: 'DELETE FROM outcomes WHERE shown_at < ?', args: [nowSec - OUTCOME_TTL_SEC] },
       { sql: 'DELETE FROM compat_views WHERE at < ?', args: [nowSec - COMPAT_VIEW_TTL_SEC] },
+      { sql: 'DELETE FROM shared_picks WHERE created_at < ?', args: [nowSec - SHARED_PICK_TTL_SEC] },
     ],
     'write',
   )
@@ -4839,6 +4937,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
     ctx: Number(ctx?.rowsAffected ?? 0),
     outcomes: Number(outcomes?.rowsAffected ?? 0),
     compat: Number(compat?.rowsAffected ?? 0),
+    picks: Number(picks?.rowsAffected ?? 0),
   }
 }
 

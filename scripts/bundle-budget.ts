@@ -6,6 +6,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { plural } from '../lib/plural'
 import { checkBudget, type Budget, type RouteStat } from './bundlebudget'
 
 const ROOT = path.join(__dirname, '..')
@@ -36,4 +37,4 @@ if (problems.length) {
   console.error('\n' + problems.join('\n'))
   process.exit(1)
 }
-console.log(`\nВсе ${v.rows.length} маршрутов в бюджете.`)
+console.log(`\nВсе ${v.rows.length} ${plural(v.rows.length, 'маршрут', 'маршрута', 'маршрутов')} в бюджете.`)

@@ -18,7 +18,7 @@
  * app/play/page.tsx, — и сторож в playflow.test.ts не даёт завести вторую дверь.
  */
 
-import type { HeroMediaView, PickCard, ScoreView } from './cards'
+import type { HeroMediaView, PickCard, ScoreView, ShareView } from './cards'
 import { parseLean, type Lean } from './mood'
 import { parseNudge, type Nudge } from './nudge'
 import { plural } from './plural'
@@ -52,7 +52,8 @@ type LateField = 'session' | 'entry' | 'reviewsPercent' | 'reviewsTotal'
 export type PlayPick = Omit<PickCard, LateField | 'signals'> &
   Partial<Pick<PickCard, LateField>> &
   Partial<HeroMediaView> &
-  Partial<ScoreView> & { signals: PickSignals }
+  Partial<ScoreView> &
+  Partial<ShareView> & { signals: PickSignals }
 
 /**
  * «Как «X», но…»: чьи соседи на экране — эхо seed из /api/recommend. Имя —

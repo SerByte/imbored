@@ -92,6 +92,9 @@ import {
   pendingOutcomeAsk,
   recordOutcome,
   recordCompatView,
+  createSharedPick,
+  findSharedPick,
+  getSharedPick,
   listCompatViews,
   COMPAT_VIEW_TTL_SEC,
   setOutcomeVerdict,
@@ -128,6 +131,7 @@ import {
   listEvenings,
 } from './db'
 import { seedDemo } from './demo'
+import { SHARED_PICK_TTL_SEC } from './sharedpick'
 import { FEEDBACK_ACTIONS } from './feedbackkinds'
 import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC } from './outcome'
 import { OTHER_STORE_GAMES } from './otherstores'
@@ -2788,6 +2792,12 @@ describe('forgetUser: удаление по запросу', () => {
     // Сравнения в обе стороны: он открыл ссылку друга и друг — его
     await recordCompatView(db, { owner: FRIEND, viewer: ME, percent: 71 }, NOW)
     await recordCompatView(db, { owner: ME, viewer: FRIEND, percent: 71 }, NOW)
+    // Выбор, которым он поделился (/pick/<id>)
+    await createSharedPick(
+      db,
+      { id: 'mepick234567', createdBy: ME, appid: 570, source: 'comeback', kind: 'play', reason: 'Вернись.' },
+      NOW,
+    )
 
     // Своя комната: друг в ней тоже голосовал
     await createRoom(db, { id: 'MYROOM', steamid: ME }, NOW)
@@ -2807,6 +2817,11 @@ describe('forgetUser: удаление по запросу', () => {
     // Данные друга, которые удаление трогать не имеет права
     await upsertUser(db, { steamid: FRIEND, personaName: 'Friend' }, NOW)
     await recordCompatView(db, { owner: FRIEND, viewer: THIRD, percent: 40 }, NOW)
+    await createSharedPick(
+      db,
+      { id: 'frpick234567', createdBy: FRIEND, appid: 620, source: 'new', kind: 'daily', reason: 'Попробуй.' },
+      NOW,
+    )
     await logFeedback(db, { steamid: FRIEND, appid: 570, action: 'liked' }, NOW)
     await saveLibrarySnapshot(db, FRIEND, LIB, NOW)
     return db
@@ -2870,6 +2885,9 @@ describe('forgetUser: удаление по запросу', () => {
     // Сравнения удалённого ушли в обе стороны, а друга с третьим — остались
     expect((await listCompatViews(db, FRIEND, 0)).map((v) => v.steamid)).toEqual([THIRD])
     expect(await listCompatViews(db, ME, 0)).toEqual([])
+    // Его ссылка на выбор перестала открываться, ссылка друга — открывается
+    expect(await getSharedPick(db, 'mepick234567', 0)).toBeNull()
+    expect(await getSharedPick(db, 'frpick234567', 0)).not.toBeNull()
   })
 
   test('предпросмотр считает ровно то, что удалится', async () => {
@@ -3871,5 +3889,59 @@ describe('кто сравнился с тобой', () => {
     const report = await sweepStale(db, NOW)
     expect(report.compat).toBe(1)
     expect((await listCompatViews(db, A, 0)).map((v) => v.steamid)).toEqual([C])
+  })
+})
+
+describe('выбор, которым поделились (/pick/<id>)', () => {
+  const A = '76561198000000021'
+  const row = (id: string, over: Partial<{ appid: number; reason: string }> = {}) => ({
+    id,
+    createdBy: A,
+    appid: 620,
+    source: 'untouched' as const,
+    kind: 'play' as const,
+    reason: 'Вечер на головоломки.',
+    ...over,
+  })
+
+  test('публичное чтение — без автора; истёкшее не отдаётся ещё до уборки', async () => {
+    const db = await freshDb()
+    await createSharedPick(db, row('abcdefghjkmn'), NOW)
+    const got = await getSharedPick(db, 'abcdefghjkmn', NOW - SHARED_PICK_TTL_SEC)
+    expect(got).toEqual({
+      id: 'abcdefghjkmn',
+      appid: 620,
+      source: 'untouched',
+      kind: 'play',
+      reason: 'Вечер на головоломки.',
+      createdAt: NOW,
+    })
+    expect(await getSharedPick(db, 'abcdefghjkmn', NOW + 1)).toBeNull()
+    expect(await getSharedPick(db, 'nosuchpick23', 0)).toBeNull()
+  })
+
+  test('повтор находится по автору, игре и тексту — и только свежий', async () => {
+    const db = await freshDb()
+    await createSharedPick(db, row('abcdefghjkmn'), NOW)
+    expect(await findSharedPick(db, A, 620, 'Вечер на головоломки.', NOW - 60)).toBe('abcdefghjkmn')
+    expect(await findSharedPick(db, A, 620, 'Другой текст.', NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, A, 570, 'Вечер на головоломки.', NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, '76561198000000022', 620, 'Вечер на головоломки.', NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, A, 620, 'Вечер на головоломки.', NOW + 1)).toBeNull()
+  })
+
+  test('тот же id дважды — ошибка ключа: роут пробует другой', async () => {
+    const db = await freshDb()
+    await createSharedPick(db, row('abcdefghjkmn'), NOW)
+    await expect(createSharedPick(db, row('abcdefghjkmn', { appid: 570 }), NOW)).rejects.toThrow(/UNIQUE|PRIMARY/i)
+  })
+
+  test('старше срока уходят в суточной уборке', async () => {
+    const db = await freshDb()
+    await createSharedPick(db, row('oldpick23456'), NOW - SHARED_PICK_TTL_SEC - 10)
+    await createSharedPick(db, row('newpick23456', { reason: 'Свежий.' }), NOW)
+    expect((await sweepStale(db, NOW)).picks).toBe(1)
+    expect(await getSharedPick(db, 'oldpick23456', 0)).toBeNull()
+    expect(await getSharedPick(db, 'newpick23456', 0)).not.toBeNull()
   })
 })

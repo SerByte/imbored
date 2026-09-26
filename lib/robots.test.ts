@@ -53,6 +53,8 @@ describe('robots.txt', () => {
       `/compat/${STEAMID}/opengraph-image`,
       '/room/ABC234',
       '/room/ABC234/opengraph-image',
+      '/pick/abcdefghjkmn',
+      '/pick/abcdefghjkmn/opengraph-image',
     ]) {
       expect(allowed(rules, url), url).toBe(true)
     }
@@ -117,6 +119,8 @@ describe('noindex заголовком', () => {
       `/compat/${STEAMID}/opengraph-image`,
       '/room/ABC234',
       '/room/ABC234/opengraph-image',
+      '/pick/abcdefghjkmn',
+      '/pick/abcdefghjkmn/opengraph-image',
     ]) {
       expect(noindexed(url), url).toBe(true)
     }
