@@ -63,6 +63,65 @@ export const HUB_TAGS: readonly string[] = [
   'Racing',
 ]
 
+/**
+ * Своя страница у жанра: /games/<slug>.
+ *
+ * Адрес — латиницей и руками, а не выводом из ключа тега: ключ «Point & Click»
+ * при механическом переводе в адрес теряет амперсанд и обратно уже не
+ * собирается. Заголовок — множественным числом, как жанр ищут и как о нём
+ * говорят («рогалики», «игры с открытым миром»); tagRu даёт подпись тега в
+ * единственном («Рогалик») и для заголовка страницы не годится.
+ *
+ * Адреса не меняются никогда: на них ведут поиск, карта сайта и чужие ссылки.
+ */
+export const HUB_GENRES: Readonly<Record<string, { slug: string; title: string }>> = {
+  'Open World': { slug: 'open-world', title: 'Игры с открытым миром' },
+  'Souls-like': { slug: 'souls-like', title: 'Соулслайки' },
+  Metroidvania: { slug: 'metroidvania', title: 'Метроидвании' },
+  Roguelike: { slug: 'roguelike', title: 'Рогалики' },
+  'Hack and Slash': { slug: 'hack-and-slash', title: 'Слэшеры' },
+  FPS: { slug: 'fps', title: 'Шутеры от первого лица' },
+  Stealth: { slug: 'stealth', title: 'Стелс-игры' },
+  'Immersive Sim': { slug: 'immersive-sim', title: 'Иммерсивные симуляторы' },
+  'Action RPG': { slug: 'action-rpg', title: 'Ролевые экшены' },
+  JRPG: { slug: 'jrpg', title: 'Японские ролевые игры' },
+  CRPG: { slug: 'crpg', title: 'Компьютерные ролевые игры' },
+  'Visual Novel': { slug: 'visual-novel', title: 'Визуальные новеллы' },
+  'Point & Click': { slug: 'point-and-click', title: 'Квесты point-and-click' },
+  Detective: { slug: 'detective', title: 'Детективы' },
+  Puzzle: { slug: 'puzzle', title: 'Головоломки' },
+  Horror: { slug: 'horror', title: 'Хорроры' },
+  Survival: { slug: 'survival', title: 'Игры на выживание' },
+  Sandbox: { slug: 'sandbox', title: 'Песочницы' },
+  'City Builder': { slug: 'city-builder', title: 'Градостроительные симуляторы' },
+  'Colony Sim': { slug: 'colony-sim', title: 'Симуляторы колонии' },
+  Automation: { slug: 'automation', title: 'Игры про автоматизацию' },
+  'Grand Strategy': { slug: 'grand-strategy', title: 'Глобальные стратегии' },
+  RTS: { slug: 'rts', title: 'Стратегии в реальном времени' },
+  'Turn-Based Tactics': { slug: 'turn-based-tactics', title: 'Пошаговые тактики' },
+  'Tower Defense': { slug: 'tower-defense', title: 'Tower defense' },
+  Deckbuilding: { slug: 'deckbuilding', title: 'Игры с построением колоды' },
+  'Farming Sim': { slug: 'farming-sim', title: 'Симуляторы фермы' },
+  Cozy: { slug: 'cozy', title: 'Уютные игры' },
+  Platformer: { slug: 'platformer', title: 'Платформеры' },
+  Racing: { slug: 'racing', title: 'Гонки' },
+}
+
+/** Адрес страницы жанра; null — у тега нет своей страницы */
+export function hubPath(tag: string): string | null {
+  // hasOwn — ключ тега приходит из данных, и «constructor» не должен найти прототип
+  return Object.hasOwn(HUB_GENRES, tag) ? `/games/${HUB_GENRES[tag].slug}` : null
+}
+
+/** Тег по адресу страницы; null — такой страницы нет */
+export function hubTagOf(slug: string): string | null {
+  for (const tag of HUB_TAGS) if (HUB_GENRES[tag]?.slug === slug) return tag
+  return null
+}
+
+/** Игр на странице жанра — верх по отзывам, для которых жанр главный */
+export const HUB_PAGE = 40
+
 /** Игр на полке */
 export const HUB_SHELF = 12
 

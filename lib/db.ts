@@ -3326,6 +3326,37 @@ export async function topGamesByTags(
 }
 
 /**
+ * «За что любят» пачкой — для страницы жанра: по сорок игр разом, а не
+ * getGamePageRow на каждую.
+ *
+ * Только собранное моделью (source 'claude'), и фильтр стоит здесь, в SQL, а
+ * не у вызывающего: эвристика ('reviews', 'thin') бывает на английском и с
+ * бранью из отзывов, и страница игры её не показывает никогда (lib/gamepage).
+ * Новому потребителю обойти это правило нечем — строк с ней он не получит.
+ */
+export async function getLovedFor(db: Db, appids: number[]): Promise<Map<number, string[]>> {
+  if (!appids.length) return new Map()
+  const res = await db.execute({
+    sql: `SELECT appid, json_extract(pros_cons_json, '$.pros') AS pros FROM games
+          WHERE ${APPIDS_IN} AND json_extract(pros_cons_json, '$.source') = 'claude'`,
+    args: [JSON.stringify(appids)],
+  })
+  const out = new Map<number, string[]>()
+  for (const r of res.rows as unknown as Array<{ appid: number; pros: string | null }>) {
+    let pros: unknown = null
+    try {
+      pros = r.pros ? JSON.parse(r.pros) : null
+    } catch {
+      continue
+    }
+    if (!Array.isArray(pros)) continue
+    const clean = pros.filter((p): p is string => typeof p === 'string' && p.trim() !== '').map((p) => p.trim())
+    if (clean.length) out.set(Number(r.appid), clean)
+  }
+  return out
+}
+
+/**
  * Описания витрины — для разовой доливки на язык сайта.
  *
  * Отдаём текст вместе с appid, потому что отбор «что доливать» делается по

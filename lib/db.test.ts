@@ -100,6 +100,7 @@ import {
   setOutcomeVerdict,
   setRoomDeckSize,
   setGameJson,
+  getLovedFor,
   setRoomMatched,
   setRoomPublic,
   setUserPortrait,
@@ -938,6 +939,18 @@ describe('db', () => {
     })
     expect(await getGameJson(db, 620, 'pros_cons_json')).toEqual({ pros: ['a'], cons: [] })
     expect(await getGameJson(db, 999, 'pros_cons_json')).toBeNull()
+  })
+
+  test('«за что любят» пачкой — только собранное моделью', async () => {
+    const db = await freshDb()
+    for (const appid of [620, 621, 622, 623]) await upsertGameMeta(db, { ...META, appid }, NOW)
+    await setGameJson(db, 620, 'pros_cons_json', { pros: [' Сюжет ', '', 'Юмор', 7], cons: [], source: 'claude' })
+    // эвристика бывает по-английски и с бранью — на страницу не идёт никогда
+    await setGameJson(db, 621, 'pros_cons_json', { pros: ['great game lol'], cons: [], source: 'reviews' })
+    await setGameJson(db, 622, 'pros_cons_json', { pros: [], cons: ['Баги'], source: 'claude' })
+    const loved = await getLovedFor(db, [620, 621, 622, 623, 999])
+    expect([...loved.entries()]).toEqual([[620, ['Сюжет', 'Юмор']]])
+    expect(await getLovedFor(db, [])).toEqual(new Map())
   })
 
   test('портрет кэшируется в users и читается', async () => {

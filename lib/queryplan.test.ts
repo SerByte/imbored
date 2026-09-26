@@ -10,6 +10,7 @@ import {
   getFeedHeadForApps,
   getGamePatchHeads,
   getHeroMedia,
+  getLovedFor,
   getGamesMeta,
   getGamesMetaLite,
   getMajorFeed,
@@ -521,6 +522,7 @@ describe('выборки по списку appid', () => {
     ['getGamesMeta', (db) => getGamesMeta(db, IDS)],
     ['getGamesMetaLite', (db) => getGamesMetaLite(db, IDS)],
     ['getHeroMedia', (db) => getHeroMedia(db, IDS)],
+    ['getLovedFor', (db) => getLovedFor(db, IDS)],
     ['getStaleAppids', (db) => getStaleAppids(db, IDS, 86_400, NOW)],
     ['stalePriceAppids', (db) => stalePriceAppids(db, IDS, 3600, NOW)],
   ]
