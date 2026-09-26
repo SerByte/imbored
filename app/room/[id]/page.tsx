@@ -1097,7 +1097,7 @@ export default function RoomPage() {
               }`}
             >
               {m.name}
-              {m.me ? ' (ты)' : ''} · <span className="font-mono tabular-nums">{m.votes}</span>{' '}
+              {m.me ? ' (ты)' : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
               {/* было прибито строкой: «1 голосов», «2 голосов» */}
               {plural(m.votes, 'голос', 'голоса', 'голосов')}
             </span>

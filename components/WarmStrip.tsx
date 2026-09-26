@@ -67,7 +67,7 @@ export function WarmStrip({
                   {remaining > 0 && (
                     <>
                       {' · '}
-                      <span className="font-mono">{remaining}</span>
+                      <span className="tabular-nums">{remaining}</span>
                     </>
                   )}
                 </span>

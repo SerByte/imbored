@@ -3588,6 +3588,84 @@ img[data-art-fade][data-loaded] {
 }
 
 /*
+ * Свет игры за шапкой патча: размытая капсула во всю ширину сверху, гаснущая
+ * вниз к фону. Слой декоративный и под статьёй.
+ */
+.news-glow {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 520px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.45;
+  filter: blur(64px) saturate(1.3);
+  transform: scale(1.2);
+  mask-image: linear-gradient(to bottom, #000 30%, transparent);
+}
+
+/*
+ * ПОЛКА-РЯД (/games): капсулы листаются вбок, край тает — «дальше есть ещё».
+ * На телефоне ряд выходит к краям экрана (отрицательные поля), чтобы капсула
+ * обрезалась краем стекла, а не полем страницы. Поля снизу — под тень
+ * капсулы при наведении: прокручиваемый контейнер режет всё, что за краем.
+ */
+.shelf-rail {
+  display: flex;
+  gap: 16px;
+  margin: -8px -1.25rem -16px;
+  padding: 8px 1.25rem 16px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 1.25rem;
+  scrollbar-width: none;
+  list-style: none;
+}
+.shelf-rail::-webkit-scrollbar {
+  display: none;
+}
+.shelf-rail > li {
+  flex: none;
+  width: clamp(200px, 21vw, 264px);
+  scroll-snap-align: start;
+}
+@media (min-width: 768px) {
+  .shelf-rail {
+    mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
+  }
+}
+
+/*
+ * ГЕРОЙ СТРАНИЦЫ ИГРЫ. Картинки те же, что были (lib/herolcp.test.ts: лёгкая
+ * капсула — она же LCP, и размытая подложка из того же файла), меняется свет:
+ * подложка стала ярче и крупнее — цветной свет игры, а не бурое пятно, — а
+ * скрим сажает низ и левую колонку на ровный фон. На светлой теме скрим тот
+ * же по форме, но гуще: тёмный текст на цветном размытии держит контраст
+ * только на почти ровной подложке.
+ */
+.game-hero {
+  isolation: isolate;
+}
+.game-hero-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to top, var(--bg) 0%, color-mix(in srgb, var(--bg) 55%, transparent) 38%, transparent 72%),
+    linear-gradient(90deg, color-mix(in srgb, var(--bg) 20%, transparent), color-mix(in srgb, var(--bg) 55%, transparent) 60%, color-mix(in srgb, var(--bg) 35%, transparent));
+}
+:root[data-theme='light'] .game-hero-scrim {
+  background:
+    linear-gradient(to top, var(--bg) 0%, color-mix(in srgb, var(--bg) 70%, transparent) 40%, color-mix(in srgb, var(--bg) 45%, transparent) 100%),
+    color-mix(in srgb, var(--bg) 45%, transparent);
+}
+.game-cover {
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #fff 10%, transparent),
+    0 40px 80px -30px rgba(0, 0, 0, 0.75);
+}
+
+/*
  * КАРТА КОЛОДЫ (components/SwipeDeck): постер 2:3 на всю карту, текст и
  * кнопки поверх нижней части на тёмном градиенте.
  *

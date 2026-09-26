@@ -31,6 +31,8 @@ import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
+import { GameCardBody } from '@/components/GameCard'
+import { Icon } from '@/components/Icon'
 
 /**
  * Страница кэшируется на сутки вместо force-dynamic.
@@ -235,7 +237,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         }}
       />
       {/* hero */}
-      <section className="relative overflow-hidden">
+      <section className="game-hero relative overflow-hidden">
         {/*
           Подложка берёт ТУ ЖЕ картинку, что и обложка ниже, и это не
           небрежность, а расчёт.
@@ -274,8 +276,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           eager
           fetchPriority="high"
           fallback={null}
-          className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-30 scale-110"
+          className="absolute inset-0 h-full w-full object-cover blur-3xl opacity-60 scale-125"
         />
+        {/* Скрим «Премьеры»: подложка — цветной свет игры, а не пятно; текст
+            слева и низ стоят на ровном тёмном, как у героя выдачи */}
+        <div aria-hidden className="game-hero-scrim" />
         {/*
           Разрез на две колонки с lg, а не с md: раньше он включался там, где
           ещё вредил.
@@ -300,7 +305,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           совпадать: запрос у них один, и ни одна из двух не имеет права
           сказать браузеру «можно позже».
         */}
-        <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-10 grid lg:grid-cols-[380px_1fr] gap-8 items-start">
+        <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-12 lg:pt-32 lg:pb-16 grid lg:grid-cols-[380px_1fr] gap-8 lg:gap-12 items-start">
           <GameArt
             appid={meta.appid}
             name={meta.name}
@@ -309,7 +314,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             sizes="(min-width: 1024px) 380px, 100vw"
             eager
             fetchPriority="high"
-            className="w-full aspect-[460/215] object-cover rounded-[20px] border border-edge anim-reveal"
+            className="game-cover w-full aspect-[460/215] object-cover anim-reveal"
           />
           <div className="flex flex-col gap-4 anim-rise">
             <h1 className="font-display text-display-lg">{meta.name}</h1>
@@ -371,7 +376,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       {SCORE_RU[facts.label] ?? facts.label}
                     </span>
                   )}
-                  <span className="font-mono text-dim text-xs">
+                  <span className="tabular-nums text-dim text-xs">
                     из {facts.total.toLocaleString('ru-RU')} {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за
                   </span>
                 </div>
@@ -384,19 +389,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               не как очередной абзац описания.
             */}
             {verdict && (
-              <div role="note" className="glass rounded-[14px] px-4 py-3 flex flex-col gap-1">
+              <div role="note" className="panel-lift px-4 py-3 flex flex-col gap-1">
                 <Eyebrow>Сейчас не советуем</Eyebrow>
                 <p className="text-sm leading-relaxed">{verdict}</p>
               </div>
             )}
+            {/* Жанры строкой через точку, как под названием у стриминга */}
             {topTags.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {topTags.map((t) => (
-                  <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-                    {tagRu(t)}
-                  </span>
-                ))}
-              </div>
+              <p className="text-sm font-semibold text-ink/80">{topTags.map((t) => tagRu(t)).join(' · ')}</p>
             )}
             {/*
               Чем игра выделяется и сколько длится заход — без модели: первое
@@ -436,7 +436,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   href={meta.storeUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="btn-ember px-5 py-3 text-sm"
+                  className="btn-ember px-6 py-3"
                 >
                   Открыть в {STORE_LABEL[meta.store ?? ''] ?? 'магазине'}
                 </a>
@@ -460,19 +460,12 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     href={`https://store.steampowered.com/app/${appid}/`}
                     target="_blank"
                     rel="noreferrer"
-                    className={
-                      verdict
-                        ? 'rounded-[14px] glass glass-hover px-5 py-3 text-sm'
-                        : 'btn-ember px-5 py-3 text-sm'
-                    }
+                    className={verdict ? 'btn-glass' : 'btn-ember px-6 py-3'}
                   >
                     Страница в Steam
                   </a>
                   {!verdict && (
-                    <OwnedLaunch
-                      appid={appid}
-                      className="rounded-[14px] glass glass-hover px-5 py-3 text-sm"
-                    />
+                    <OwnedLaunch appid={appid} className="btn-glass" />
                   )}
                 </>
               )}
@@ -480,8 +473,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 href={`https://www.youtube.com/results?search_query=${encodeURIComponent(`${meta.name} обзор`)}`}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-[14px] glass glass-hover px-5 py-3 text-sm text-dim"
+                className="btn-glass"
               >
+                <Icon name="play" size={16} />
                 Обзоры на YouTube
               </a>
               {/* Бесплатная игра тоже получает плашку. Условие было «цена больше
@@ -492,7 +486,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   на который страница с заголовком «стоит ли играть» и должна
                   отвечать. PriceTag такой случай умел с самого начала. */}
               {(meta.isFree || (price !== null && price > 0)) && (
-                <span className="rounded-[14px] glass px-5 py-3 text-sm flex items-center gap-2">
+                <span className="glass rounded-[11px] px-5 py-3 text-sm flex items-center gap-2">
                   <PriceTag
                     priceFinal={price}
                     isFree={meta.isFree}
@@ -546,7 +540,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {prosCons && (prosCons.pros.length > 0 || prosCons.cons.length > 0) && (
           <section className="grid md:grid-cols-2 gap-4">
             {prosCons.pros.length > 0 && (
-              <div className="glass rounded-[20px] p-6 anim-rise">
+              <div className="panel-lift p-6 anim-rise">
                 <SectionLabel className="mb-3">За что любят</SectionLabel>
                 <ul className="space-y-2 text-sm text-ink/90">
                   {prosCons.pros.map((p) => (
@@ -559,7 +553,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               </div>
             )}
             {prosCons.cons.length > 0 && (
-              <div className="glass rounded-[20px] p-6 anim-rise" style={{ animationDelay: '80ms' }}>
+              <div className="panel-lift p-6 anim-rise" style={{ animationDelay: '80ms' }}>
                 <SectionLabel className="mb-3">За что ругают</SectionLabel>
                 <ul className="space-y-2 text-sm text-ink/90">
                   {prosCons.cons.map((c) => (
@@ -606,29 +600,23 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             <SectionLabel className="mb-4">
               Похожие{data.similarTag ? <> · {tagRu(data.similarTag)}</> : null}
             </SectionLabel>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
               {data.similar.map((g) => (
-                <Link
-                  key={g.appid}
-                  href={`/game/${g.appid}`}
-                  className="library-tile glass glass-hover rounded-[14px] overflow-hidden"
-                >
-                  <GameArt
+                <Link key={g.appid} href={`/game/${g.appid}`} className="game-card block">
+                  <GameCardBody
                     appid={g.appid}
                     name={g.name}
                     headerImage={g.headerImage}
                     art={g.art}
                     sizes="(min-width: 768px) 33vw, 50vw"
-                    className="w-full aspect-[460/215] object-cover"
+                    /* Чем похожи — у готовых соседей: заголовок блока у них без
+                       тега, и без этой строки «похожие» было бы голословным */
+                    meta={
+                      g.shared && g.shared.length > 0 ? (
+                        <span className="truncate">общее: {g.shared.slice(0, 2).map(tagRu).join(', ')}</span>
+                      ) : undefined
+                    }
                   />
-                  <div className="p-3 text-sm font-semibold leading-tight truncate">{g.name}</div>
-                  {/* Чем похожи — у готовых соседей: заголовок блока у них без
-                      тега, и без этой строки «похожие» было бы голословным */}
-                  {g.shared && g.shared.length > 0 && (
-                    <div className="-mt-1.5 px-3 pb-3 text-xs text-dim truncate">
-                      общее: {g.shared.slice(0, 2).map(tagRu).join(', ')}
-                    </div>
-                  )}
                 </Link>
               ))}
             </div>
@@ -662,8 +650,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           {/* btn-ember — тот же класс и размер, что у «Страница в Steam» выше:
               вид парадной кнопки на сайте один, и своя заливка здесь
               разъехалась бы с ним на первой же правке. */}
-          <Link href="/quiz" className="btn-ember px-5 py-3 text-sm">
-            Подобрать игру под настроение →
+          <Link href="/quiz" className="btn-ember px-6 py-3">
+            Подобрать игру под настроение <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
           </Link>
         </div>
       </div>

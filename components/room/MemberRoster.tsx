@@ -38,7 +38,7 @@ export function MemberRoster({
     <div className="relative glass rounded-[20px] p-5 sm:p-6 flex flex-col gap-4">
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="font-display text-display-xs">Кто где</h2>
-        <span aria-hidden className="text-xs text-faint font-mono tabular-nums shrink-0">
+        <span aria-hidden className="text-xs text-faint tabular-nums shrink-0">
           {doneCount}/{members.length}
         </span>
       </div>
@@ -119,7 +119,7 @@ export function MemberRoster({
                 <span aria-hidden className="text-xs text-faint shrink-0 hidden sm:inline">
                   {m.done ? 'всё' : 'свайпает'}
                 </span>
-                <span aria-hidden className="text-xs text-faint font-mono tabular-nums shrink-0">
+                <span aria-hidden className="text-xs text-faint tabular-nums shrink-0">
                   {deckSize ? `${shown}/${deckSize}` : shown}
                 </span>
 

@@ -236,7 +236,7 @@ export function Lightbox({
               </button>
             </>
           )}
-          <span className="absolute bottom-5 font-mono text-xs text-dim">
+          <span className="absolute bottom-5 tabular-nums text-xs text-dim">
             {index + 1}/{images.length}
           </span>
           </motion.div>

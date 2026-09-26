@@ -38,8 +38,8 @@ export function LeaderPick({
       <div className="flex flex-col gap-2 text-center sm:text-left">
         <h3 className="font-semibold">Берём «{leader.name}»?</h3>
         <p className="text-sm text-dim">
-          <span className="font-mono tabular-nums text-ember-text">{leader.forCount}</span> из{' '}
-          <span className="font-mono tabular-nums text-ember-text">{leader.memberCount}</span> за.
+          <span className="tabular-nums text-ember-text">{leader.forCount}</span> из{' '}
+          <span className="tabular-nums text-ember-text">{leader.memberCount}</span> за.
           Не все, но карт больше нет ни у кого — а кто за что голосовал, не видно никому.
         </p>
         <button

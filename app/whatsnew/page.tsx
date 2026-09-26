@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { Icon } from '@/components/Icon'
 import { LinkPending } from '@/components/LinkPending'
 import { Cover } from '@/components/whatsnew/Cover'
 import { FeedWatch } from '@/components/whatsnew/FeedWatch'
@@ -98,15 +99,15 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   if (!hero) {
     return (
       <div className="whatsnew flex min-h-screen flex-col items-center justify-center gap-4 px-5 text-center">
+        <span aria-hidden className="mb-2 grid size-16 place-items-center rounded-full bg-ink/10 text-dim">
+          <Icon name="news" size={28} />
+        </span>
         <h1 className="font-display text-display-md">Что нового</h1>
         <p className="max-w-sm text-sm leading-relaxed text-dim">
           Пока пусто. Обновления подтягиваются по расписанию — загляни попозже.
         </p>
-        <Link
-          href="/quiz"
-          className="tap text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
-        >
-          А пока подобрать игру →
+        <Link href="/quiz" className="btn-ember mt-2 px-6 py-3">
+          А пока подобрать игру <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
         </Link>
       </div>
     )

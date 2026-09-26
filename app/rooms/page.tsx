@@ -185,7 +185,7 @@ export default function RoomsBoardPage() {
       <ol className="grid gap-4 sm:grid-cols-3 anim-rise" style={{ animationDelay: '80ms' }}>
         {STEPS.map((step, i) => (
           <li key={step.title} className="glass rounded-[20px] p-5 flex flex-col gap-1.5">
-            <span className="font-mono text-xs text-ember-text">{`0${i + 1}`}</span>
+            <span className="tabular-nums text-xs text-ember-text">{`0${i + 1}`}</span>
             <span className="font-semibold leading-tight">{step.title}</span>
             <span className="text-sm text-dim leading-relaxed">{step.hint}</span>
           </li>

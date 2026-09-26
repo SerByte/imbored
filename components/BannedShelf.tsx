@@ -232,7 +232,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
             tabIndex={-1}
             className="font-display text-display-sm"
           >
-            <span className="font-mono text-ember-text">{hidden.length}</span>{' '}
+            <span className="tabular-nums text-ember-text">{hidden.length}</span>{' '}
             {plural(hidden.length, 'игру', 'игры', 'игр')} больше не предлагаем
           </h2>
           <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
@@ -253,7 +253,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
             tabIndex={-1}
             className="font-display text-display-sm"
           >
-            <span className="font-mono text-ember-text">{done.length}</span>{' '}
+            <span className="tabular-nums text-ember-text">{done.length}</span>{' '}
             {plural(done.length, 'игра пройдена', 'игры пройдены', 'игр пройдено')}
           </h2>
           <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">

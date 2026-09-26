@@ -31,7 +31,7 @@ export function NewsDate({ at, className = '' }: { at: number; className?: strin
   return (
     <time
       dateTime={new Date(at * 1000).toISOString()}
-      className={`font-mono tabular-nums text-xs text-dim ${className}`}
+      className={`tabular-nums text-xs text-dim ${className}`}
     >
       {dateLabel(at, { year: true })}
     </time>

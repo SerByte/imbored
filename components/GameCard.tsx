@@ -25,6 +25,7 @@ export function GameCardBody({
   overlay,
   meta,
   dim = false,
+  eager = false,
 }: {
   appid: number
   name: string
@@ -39,6 +40,8 @@ export function GameCardBody({
   meta?: ReactNode
   /** приглушить обложку (скрытое, заброшенное) */
   dim?: boolean
+  /** обложка над сгибом — грузить сразу, а не лениво */
+  eager?: boolean
 }) {
   return (
     <>
@@ -49,6 +52,7 @@ export function GameCardBody({
           headerImage={headerImage}
           art={art}
           sizes={sizes}
+          eager={eager}
           className={`h-full w-full object-cover ${dim ? 'opacity-60 grayscale' : ''}`}
         />
         {overlay}

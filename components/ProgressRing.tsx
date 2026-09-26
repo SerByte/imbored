@@ -135,7 +135,7 @@ export function ProgressRing({
             <span
               // Число уже сказано в ariaLabel — второй раз его читать не надо
               aria-hidden={ariaLabel ? true : undefined}
-              className="font-mono font-extrabold text-ink"
+              className="tabular-nums font-extrabold text-ink"
               style={{ fontSize: size * 0.24, fontVariantNumeric: 'tabular-nums' }}
             >
               {Math.round(shown)}
