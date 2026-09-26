@@ -82,7 +82,7 @@ export function PlayersNow({
       {ccu > 0 && свежий ? (
         <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok anim-pulse-dot" />
       ) : null}
-      <span className="font-mono">{ccu.toLocaleString('ru-RU')}</span>{' '}
+      <span className="tabular-nums">{ccu.toLocaleString('ru-RU')}</span>{' '}
       {свежий ? 'сейчас играют' : 'играли'}
     </span>
   )

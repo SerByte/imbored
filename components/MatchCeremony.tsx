@@ -118,8 +118,8 @@ export function MatchCeremony({
         <p className="text-dim">
           {byLeader ? (
             <>
-              Не единогласно, но <span className="font-mono tabular-nums text-ink">{forCount}</span>{' '}
-              из <span className="font-mono tabular-nums text-ink">{memberCount}</span> за — играете в:
+              Не единогласно, но <span className="tabular-nums text-ink">{forCount}</span>{' '}
+              из <span className="tabular-nums text-ink">{memberCount}</span> за — играете в:
             </>
           ) : (
             'Все в комнате хотят играть в одно и то же:'

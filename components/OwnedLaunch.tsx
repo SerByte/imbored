@@ -48,5 +48,5 @@ export function OwnedLaunch({ appid, className = '' }: { appid: number; classNam
   }, [appid, hasSession])
 
   if (!owns || owns.appid !== appid || !owns.owned) return null
-  return <SteamLaunch appid={appid} label="Запустить" mobileLabel={null} className={className} />
+  return <SteamLaunch appid={appid} label="Запустить" mobileLabel={null} icon className={className} />
 }

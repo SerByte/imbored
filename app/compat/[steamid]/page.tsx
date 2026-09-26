@@ -122,7 +122,7 @@ function HoursSplit({ hoursA, hoursB }: { hoursA: number; hoursB: number }) {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-dim">
+      <span className="w-14 shrink-0 text-right tabular-nums text-[11px] text-dim">
         {ru(hoursA)} ч
       </span>
       <div aria-hidden className="flex h-1.5 flex-1 items-center">
@@ -133,7 +133,7 @@ function HoursSplit({ hoursA, hoursB }: { hoursA: number; hoursB: number }) {
           <div className="h-1.5 rounded-r-full bg-info" style={{ width: share(hoursB) }} />
         </div>
       </div>
-      <span className="w-14 shrink-0 font-mono text-[11px] tabular-nums text-dim">
+      <span className="w-14 shrink-0 tabular-nums text-[11px] text-dim">
         {ru(hoursB)} ч
       </span>
     </div>

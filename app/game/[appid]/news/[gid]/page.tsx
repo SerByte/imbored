@@ -2,6 +2,8 @@ import type { Metadata, ResolvingMetadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
+import { GameArt } from '@/components/GameArt'
+import { Icon } from '@/components/Icon'
 import { Eyebrow, SectionLabel } from '@/components/Labels'
 import { NewsBody } from '@/components/NewsBody'
 import { NewsDate, ScaleBadge } from '@/components/NewsMeta'
@@ -117,17 +119,33 @@ export default async function PatchPage({ params }: Params) {
   const gameHref = `/game/${item.appid}`
 
   return (
-    <div className="flex-1">
-      <article className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-safe pt-28 pb-16">
+    <div className="relative flex-1 overflow-x-clip">
+      {/*
+        Свет игры за шапкой патча — тот же приём и тот же лёгкий файл, что
+        у героя страницы игры (размытая капсула, а не library_hero): патч —
+        продолжение её карточки, и открываться он должен в её цвете.
+      */}
+      {game && (
+        <div aria-hidden className="news-glow">
+          <GameArt
+            appid={item.appid}
+            name=""
+            headerImage={game.headerImage}
+            art={game.art}
+            sizes="460px"
+            fallback={null}
+            className="h-full w-full object-cover"
+          />
+        </div>
+      )}
+      <article className="relative mx-auto flex w-full max-w-3xl flex-col gap-8 px-safe pt-28 pb-16">
         <header className="flex flex-col gap-4 anim-rise">
           {/* Игры в каталоге может не быть (пост пришёл по чьей-то
               библиотеке) — тогда и её карточки нет, и ссылаться некуда */}
           {game && (
-            <Link
-              href={gameHref}
-              className="tap tap-tight self-start text-sm text-dim transition-colors hover:text-ink"
-            >
-              ← {game.name}
+            <Link href={gameHref} className="tap tap-tight link-more self-start">
+              <Icon name="back" size={16} />
+              {game.name}
             </Link>
           )}
           <Eyebrow as="p">Что изменилось</Eyebrow>
@@ -142,7 +160,7 @@ export default async function PatchPage({ params }: Params) {
             честная, как у «За что любят» на карточке: это собрала модель, а
             ниже — текст издателя без изменений. */}
         {item.tldr && (
-          <section className="glass flex flex-col gap-2 rounded-[20px] p-5 md:p-6">
+          <section className="panel-lift flex flex-col gap-2 p-5 md:p-6">
             <SectionLabel as="h2">Коротко</SectionLabel>
             <p className="leading-relaxed text-ink/90">{item.tldr}</p>
             <p className="text-[11px] text-faint">Пересказ собран ИИ по тексту патча</p>
@@ -160,7 +178,7 @@ export default async function PatchPage({ params }: Params) {
               src={item.imageUrl}
               alt=""
               decoding="async"
-              className="w-full rounded-[14px] border border-edge object-cover"
+              className="w-full rounded-[var(--radius-card)] border border-edge object-cover"
             />
           )}
           {item.blocks.length > 0 ? (

@@ -210,8 +210,8 @@ export function PartyTrivia({
               {done && (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-sm text-faint">
-                    <span className="font-mono tabular-nums">{score}</span> из{' '}
-                    <span className="font-mono tabular-nums">{questions.length}</span>. Ну, время
+                    <span className="tabular-nums">{score}</span> из{' '}
+                    <span className="tabular-nums">{questions.length}</span>. Ну, время
                     прошло.
                   </p>
                   <button

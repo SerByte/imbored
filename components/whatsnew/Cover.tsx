@@ -165,7 +165,7 @@ export function Cover({
                   <CountNumber
                     value={meta.ccu}
                     delay={320}
-                    className="font-mono text-2xl font-bold tabular-nums md:text-3xl"
+                    className="tabular-nums text-2xl font-bold md:text-3xl"
                   />
                   <span className="mt-0.5 text-xs text-dim">играют прямо сейчас</span>
                 </span>
@@ -175,7 +175,7 @@ export function Cover({
                   <CountNumber
                     value={changes}
                     delay={420}
-                    className="font-mono text-2xl font-bold tabular-nums md:text-3xl"
+                    className="tabular-nums text-2xl font-bold md:text-3xl"
                   />
                   <span className="mt-0.5 text-xs text-dim">
                     {plural(changes, 'правка', 'правки', 'правок')} в патче
@@ -226,7 +226,7 @@ export function Cover({
                 loading="lazy"
                 decoding="async"
                 fetchPriority="low"
-                className="w-full rounded-[20px] border border-edge object-cover shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)]"
+                className="w-full rounded-[var(--radius-panel)] border border-edge object-cover shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)]"
               />
               <MetaLine as="figcaption" className="mt-2">
                 {/* Зона зафиксирована в dateLabel — см. lib/freshness. */}

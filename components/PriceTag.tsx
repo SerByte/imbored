@@ -39,7 +39,7 @@ export function PriceTag({
   className = '',
 }: PriceTagProps) {
   if (isFree || priceFinal === 0) {
-    return <span className={`font-mono tabular-nums text-ember-text ${className}`}>бесплатно</span>
+    return <span className={`font-bold tabular-nums text-ember-text ${className}`}>бесплатно</span>
   }
   if (priceFinal === null || priceFinal === undefined) return null
 
@@ -47,14 +47,14 @@ export function PriceTag({
   const price = formatPrice(discount ? discount.finalCents : priceFinal)
 
   if (!discount) {
-    return <span className={`font-mono tabular-nums text-ember-text ${className}`}>{price}</span>
+    return <span className={`font-bold tabular-nums text-ember-text ${className}`}>{price}</span>
   }
 
   return (
     <span className={`inline-flex items-baseline gap-2 ${className}`}>
       {showPercent && (
         <span
-          className={`rounded-full bg-ember/15 text-ember-text font-mono font-semibold ${
+          className={`rounded-full bg-ember/15 text-ember-text tabular-nums font-semibold ${
             hero ? 'px-2 py-0.5 text-sm' : 'px-1.5 py-0.5 text-[11px]'
           }`}
         >
@@ -62,10 +62,10 @@ export function PriceTag({
         </span>
       )}
       {/* Старая цена приглушена намеренно: это история, а не второй ценник */}
-      <span className="font-mono tabular-nums text-faint line-through">
+      <span className="tabular-nums text-faint line-through">
         {formatPrice(discount.initialCents)}
       </span>
-      <span className={`font-mono tabular-nums text-ember-text ${hero ? 'text-base font-semibold' : ''}`}>
+      <span className={`font-bold tabular-nums text-ember-text ${hero ? 'text-base' : ''}`}>
         {price}
       </span>
     </span>
@@ -91,7 +91,7 @@ export function PriceTag({
 export function DiscountCorner({ discount }: { discount: Discount | null | undefined }) {
   if (!discount) return null
   return (
-    <span className="absolute left-2 top-2 rounded-full bg-ember px-2 py-0.5 font-mono text-[11px] font-bold tabular-nums text-on-ember shadow-lg">
+    <span className="absolute left-2 top-2 rounded-full bg-ember px-2 py-0.5 tabular-nums text-[11px] font-bold text-on-ember shadow-lg">
       −{discount.percent}%
     </span>
   )

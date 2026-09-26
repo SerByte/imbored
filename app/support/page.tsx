@@ -88,7 +88,7 @@ export default function SupportPage() {
             <h2 className="font-display text-display-xs">
               imbored<span className="text-ember-text">+</span>
             </h2>
-            <span className="text-xs text-dim font-mono">когда-нибудь</span>
+            <span className="text-xs text-dim tabular-nums">когда-нибудь</span>
           </div>
           <p className="text-sm text-dim -mt-2">
             Для тех, кто хочет больше удовольствия — база остаётся бесплатной.

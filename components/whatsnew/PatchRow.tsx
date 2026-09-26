@@ -166,7 +166,7 @@ export function PatchRow({
         aria-expanded={open}
         className="group flex w-full items-start gap-4 py-6 text-left transition-opacity md:gap-6"
       >
-        <span className="w-[92px] shrink-0 overflow-hidden rounded-[14px] border border-edge md:w-[168px]">
+        <span className="w-[92px] shrink-0 overflow-hidden rounded-[var(--radius-card)] border border-edge md:w-[168px]">
           <GameArt
             appid={item.appid}
             name={name}
@@ -242,14 +242,14 @@ export function PatchRow({
             transition={{ duration: 0.32, ease: EASE }}
             className="overflow-hidden"
           >
-            <div className="mb-6 rounded-[20px] border border-edge bg-paper p-5 md:p-7">
+            <div className="mb-6 rounded-[var(--radius-panel)] border border-edge bg-paper p-5 md:p-7">
               {item.imageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={item.imageUrl}
                   alt=""
                   loading="lazy"
-                  className="mb-5 w-full rounded-[14px] border border-edge object-cover"
+                  className="mb-5 w-full rounded-[var(--radius-card)] border border-edge object-cover"
                 />
               ) : null}
               {blocks ? (

@@ -1,6 +1,7 @@
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import Link from 'next/link'
-import { GameArt } from '@/components/GameArt'
+import { GameCardBody } from '@/components/GameCard'
+import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
 import { topGamesByTags } from '@/lib/db'
 import {
@@ -77,22 +78,27 @@ export default async function GamesHubPage() {
         </header>
 
         {shelves.length > 0 ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="flex flex-col gap-10">
             {shelves.map((s, i) => (
-              // Первый ряд грузится сразу: на десктопе это три обложки над
-              // сгибом, и ленивая загрузка только отложила бы их показ
-              <Shelf key={s.tag} shelf={s} eager={i < 3} />
+              // Первая полка грузится сразу: это обложки над сгибом, и
+              // ленивая загрузка только отложила бы их показ
+              <Shelf key={s.tag} shelf={s} eager={i === 0} />
             ))}
           </div>
         ) : (
-          <p className="text-dim">Полки собираются — загляни чуть позже.</p>
+          <div className="panel-lift flex items-center gap-4 p-6">
+            <span aria-hidden className="grid size-12 shrink-0 place-items-center rounded-full bg-ink/10 text-dim">
+              <Icon name="grid" size={22} />
+            </span>
+            <p className="text-dim">Полки собираются — загляни чуть позже.</p>
+          </div>
         )}
 
         <div>
           {/* Тот же выход, что внизу карточки игры: гостю /play не откроется,
               а квиз работает любому */}
-          <Link href="/quiz" className="btn-ember px-5 py-3 text-sm">
-            Подобрать игру под настроение →
+          <Link href="/quiz" className="btn-ember px-6 py-3">
+            Подобрать игру под настроение <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
           </Link>
         </div>
       </div>
@@ -112,53 +118,46 @@ export default async function GamesHubPage() {
  * и так стоит в списке первой строкой, и вторая ссылка туда же была бы для
  * скринридера повтором.
  */
+/*
+ * ПОЛКА ЖАНРА — РЯД КАПСУЛ, КАК У СТРИМИНГА.
+ *
+ * Была карточка: одна обложка и под ней столбик из двенадцати названий. То
+ * есть одиннадцать игр из двенадцати страница показывала буквами — на сайте
+ * про игры, где у каждой есть арт. Теперь у каждой своя капсула, а полка
+ * листается вбок (.shelf-rail): двенадцать обложек в ряд на экран не лезут,
+ * и видимый обрез последней — это и есть подсказка «дальше есть ещё».
+ *
+ * Картинки ленивые, кроме первой полки: остальные грузятся по мере того, как
+ * до них доходят, — и вниз, и вбок.
+ */
 function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
-  const cover = shelf.games[0]
   const headingId = `shelf-${shelf.tag.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
   return (
-    <section
-      aria-labelledby={headingId}
-      className="glass flex flex-col overflow-hidden rounded-[20px]"
-    >
-      {cover && (
-        <GameArt
-          appid={cover.appid}
-          name=""
-          headerImage={cover.headerImage}
-          art={cover.art}
-          sizes="(min-width: 1024px) 360px, (min-width: 640px) 50vw, 100vw"
-          eager={eager}
-          className="aspect-[460/215] w-full object-cover"
-        />
-      )}
-      <div className="flex flex-col gap-3 p-5">
-        <h2 id={headingId} className="font-display text-display-xs">
-          {tagRu(shelf.tag)}
-        </h2>
-        <ol className="flex flex-col text-sm">
-          {shelf.games.map((g) => (
-            <li key={g.appid} className="min-w-0">
-              {/* py-1 даёт строке 28 px — выше порога 24 px, а соседние
-                  строки списка не налезают друг на друга зонами .tap.
-
-                  Без префетча, и это про деньги. Next префетчит каждую
-                  ссылку, попавшую в экран, а здесь их три с половиной сотни,
-                  по три десятка на экран. Карточки вне предрендеренной
-                  пятисотки при первом заходе рендерятся функцией и читают
-                  базу — прокрутка хаба будила бы её на каждую строку, по
-                  которой никто не пойдёт. Без префетча переход стоит один
-                  рендер по клику, а не сотню на прокрутку. */}
-              <Link
-                href={`/game/${g.appid}`}
-                prefetch={false}
-                className="block truncate py-1 text-dim transition-colors hover:text-ink"
-              >
-                {g.name}
-              </Link>
-            </li>
-          ))}
-        </ol>
-      </div>
+    <section aria-labelledby={headingId} className="flex flex-col gap-4">
+      <h2 id={headingId} className="section-title">
+        {tagRu(shelf.tag)}
+      </h2>
+      <ol className="shelf-rail">
+        {shelf.games.map((g, i) => (
+          <li key={g.appid}>
+            {/* Без префетча, и это про деньги. Next префетчит каждую ссылку,
+                попавшую в экран, а здесь их три с половиной сотни. Карточки
+                вне предрендеренной пятисотки при первом заходе рендерятся
+                функцией и читают базу — прокрутка хаба будила бы её на каждую
+                капсулу, по которой никто не пойдёт. */}
+            <Link href={`/game/${g.appid}`} prefetch={false} className="game-card block">
+              <GameCardBody
+                appid={g.appid}
+                name={g.name}
+                headerImage={g.headerImage}
+                art={g.art}
+                sizes="260px"
+                eager={eager && i < 5}
+              />
+            </Link>
+          </li>
+        ))}
+      </ol>
     </section>
   )
 }

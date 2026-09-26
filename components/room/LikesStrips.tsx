@@ -45,7 +45,7 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
             <span className={i === 0 ? 'text-ink' : 'text-dim'}>
               {n.forNames.join(' и ')}: {plural(n.games, 'совпала', 'совпало', 'совпало')}
             </span>
-            <span className="font-mono tabular-nums text-ember-text">{n.games}</span>
+            <span className="tabular-nums text-ember-text">{n.games}</span>
             <span className={i === 0 ? 'text-ink' : 'text-dim'}>
               {plural(n.games, 'игра', 'игры', 'игр')}.
             </span>
@@ -69,7 +69,7 @@ export function MyLikesRail({ games }: { games: LikedGame[] }) {
     <ScrollRail
       label={
         <>
-          Ты выбрал <span className="font-mono tabular-nums text-ember-text">{games.length}</span>{' '}
+          Ты выбрал <span className="tabular-nums text-ember-text">{games.length}</span>{' '}
           {plural(games.length, 'игру', 'игры', 'игр')}
         </>
       }

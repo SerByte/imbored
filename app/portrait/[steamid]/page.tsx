@@ -410,7 +410,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           </div>
           {wrapped.days > 0 && (
             <p className="mt-6 text-dim text-sm md:text-base">
-              Это <span className="font-mono text-ink">{wrapped.days.toLocaleString('ru-RU')}</span>{' '}
+              Это <span className="tabular-nums text-ink">{wrapped.days.toLocaleString('ru-RU')}</span>{' '}
               полных суток за экраном.
             </p>
           )}
@@ -436,7 +436,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           <div className="flex flex-col gap-3">
             {wrapped.top.map((g, i) => (
               <motion.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
-                <span className="font-mono text-dim text-sm w-5 shrink-0">{i + 1}</span>
+                <span className="tabular-nums text-dim text-sm w-5 shrink-0">{i + 1}</span>
                 <Link
                   href={`/game/${g.appid}`}
                   className="glass glass-hover rounded-[14px] overflow-hidden w-28 md:w-44 shrink-0"
@@ -455,7 +455,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                     />
                   </div>
                 </div>
-                <span className="font-mono text-sm text-dim shrink-0 tabular-nums">
+                <span className="tabular-nums text-sm text-dim shrink-0">
                   {g.hours.toLocaleString('ru-RU')} ч
                 </span>
               </motion.div>
@@ -484,9 +484,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <motion.div {...inView(1)} className="text-center md:text-left">
               <p className="text-lg md:text-xl leading-relaxed">
                 {paretoLead(voice)}{' '}
-                <span className="font-mono text-ember-text">{wrapped.pareto80}</span>{' '}
+                <span className="tabular-nums text-ember-text">{wrapped.pareto80}</span>{' '}
                 {plural(wrapped.pareto80, 'игра', 'игры', 'игр')} из{' '}
-                <span className="font-mono">{wrapped.gamesCount}</span>.
+                <span className="tabular-nums">{wrapped.gamesCount}</span>.
               </p>
               <p className="mt-2 text-dim text-sm">
                 Концентрация {wrapped.concentration} из 100:{' '}
@@ -494,7 +494,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               </p>
               {wrapped.social && (
                 <p className="mt-2 text-dim text-sm">
-                  <span className="font-mono text-ink">{wrapped.social.percent}%</span>{' '}
+                  <span className="tabular-nums text-ink">{wrapped.social.percent}%</span>{' '}
                   {socialTail(voice)}
                 </p>
               )}
@@ -543,7 +543,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               <motion.div key={a.tag} {...inView(i)}>
                 <div className="flex items-baseline justify-between mb-1.5">
                   <span className="text-sm font-semibold">{a.label}</span>
-                  <span className="font-mono text-ember-text text-sm">
+                  <span className="tabular-nums text-ember-text text-sm">
                     <CountNumber value={a.percent} delay={i * 90} duration={800} suffix="%" />
                   </span>
                 </div>
@@ -587,7 +587,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {backlog.pricedCount > 0 && (
               <p>
                 В них лежит не меньше{' '}
-                <span className="font-mono text-ember-text">
+                <span className="tabular-nums text-ember-text">
                   ${(backlog.cents / 100).toFixed(0)}
                 </span>{' '}
                 — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}.
@@ -598,16 +598,16 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {isMine && equivalent && (
               <p>
                 {equivalent.before}
-                <span className="font-mono text-ember-text">{equivalent.count}</span>
+                <span className="tabular-nums text-ember-text">{equivalent.count}</span>
                 {equivalent.after}
               </p>
             )}
             {wrapped.era && (
               <p>
                 {eraLead(voice)}{' '}
-                <span className="font-mono text-ink">{wrapped.era.medianYear}</span>, а самая старая
+                <span className="tabular-nums text-ink">{wrapped.era.medianYear}</span>, а самая старая
                 игра с наигранным временем — «{wrapped.era.oldest.name}»{' '}
-                <span className="font-mono">{wrapped.era.oldest.year}</span> года.
+                <span className="tabular-nums">{wrapped.era.oldest.year}</span> года.
               </p>
             )}
           </motion.div>
@@ -724,7 +724,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 function Fact({ value, caption, delay }: { value: number; caption: string; delay: number }) {
   return (
     <div>
-      <div className="font-mono text-3xl md:text-4xl font-bold">
+      <div className="tabular-nums text-3xl md:text-4xl font-bold">
         <CountNumber value={value} delay={delay} />
       </div>
       <div className="text-xs text-dim mt-0.5">{caption}</div>
