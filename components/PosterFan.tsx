@@ -23,7 +23,10 @@ export function PosterFan({ games, className = '' }: { games: readonly FanGame[]
     <span aria-hidden className={`fan ${className}`} style={{ '--n': games.length } as CSSProperties}>
       {games.map((g, i) => (
         <span key={g.appid} className="fan-poster" style={{ '--i': i } as CSSProperties}>
-          <GameArt appid={g.appid} name={g.name} variant="poster" sizes="160px" />
+          {/* Постер в веере — около 90 px (замерено на 390 и 1280): при
+              «160px» телефон с плотностью 3x тянул 600-пиксельный файл
+              вместо 300-пиксельного, вдвое тяжелее */}
+          <GameArt appid={g.appid} name={g.name} variant="poster" sizes="96px" />
         </span>
       ))}
     </span>

@@ -458,7 +458,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {wrapped.top.map((g, i) => (
               <motion.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
                 <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-                <Link href={`/game/${g.appid}`} className="game-card w-28 shrink-0 md:w-44">
+                <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
                   <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
                 </Link>
                 <div className="min-w-0 flex-1">
@@ -491,11 +491,12 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 без него диктор произносит голое число, а чего именно это
                 число, из разметки не следует.
               */}
-              <p className="lib-stat portrait-index" aria-label={`Концентрация ${wrapped.concentration} из 100`}>
+              <p className="lib-stat portrait-index">
                 <span aria-hidden>
                   {wrapped.concentration}
                   <span className="portrait-index-of">/100</span>
                 </span>
+                <span className="sr-only">Концентрация {wrapped.concentration} из 100</span>
               </p>
             </motion.div>
             <motion.div {...inView(1)} className="text-center md:text-left">
@@ -631,6 +632,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 <Link
                   key={g.appid}
                   href={`/game/${g.appid}`}
+                  aria-label={g.name}
                   // library-tile уже обесцвечивает обложку в покое нулём JS —
                   // ровно то, что здесь нужно по смыслу
                   className="library-tile game-card block"

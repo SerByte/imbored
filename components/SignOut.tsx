@@ -95,7 +95,7 @@ export function SignOut({ verified }: { verified: boolean }) {
           Выход на всех устройствах — после{' '}
           {/* next=/library: после входа человек возвращается туда, где
               нажимал, и кнопка «везде» уже на месте */}
-          <a href="/api/auth/steam?next=%2Flibrary" className="tap tap-tight text-ember-text hover:underline">
+          <a href="/api/auth/steam?next=%2Flibrary" className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2">
             входа через Steam
           </a>
         </span>

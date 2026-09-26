@@ -187,7 +187,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   headerImage={metas.get(g.appid)?.headerImage ?? null}
                   art={trimArt(metas.get(g.appid)?.art)}
                   variant="poster"
-                  sizes="180px"
+                  // Фон под скримом: на телефоне хватает постера 300 px и при
+                  // плотности 3x — 600-пиксельный весил вчетверо больше
+                  sizes="(max-width: 767px) 100px, 180px"
                   fallback={null}
                   className="h-full w-full object-cover"
                 />
@@ -468,8 +470,11 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               key={g.appid}
               href={`/game/${g.appid}`}
               prefetch={false}
+              // Заброшенная приглушается обложкой, а не целиком: прозрачность
+              // на всей плитке роняла и подпись под ней — на светлой теме до
+              // 3.97:1 (axe, color-contrast)
               className={`library-tile game-card block ${
-                state === 'comeback' ? 'opacity-75 hover:opacity-100' : ''
+                state === 'comeback' ? '[&_.card-thumb]:opacity-75 hover:[&_.card-thumb]:opacity-100' : ''
               }`}
             >
               <GameCardBody

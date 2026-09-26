@@ -316,7 +316,15 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               Кольца у него нет — почему и почему не классом, см. #main в
               globals.css.
             */}
-            <main id="main" tabIndex={-1} className="flex-1 flex flex-col">
+            {/*
+              min-h-svh: подвал начинается за первым экраном. Экраны с данными
+              с клиента (/play, /daily, /explore) рисуют сперва короткую
+              заглушку, и подвал стоял в самом низу окна — а когда приезжало
+              содержимое, уезжал вниз прямо на глазах: замерено на сборке,
+              CLS 0.15–0.30 целиком от него. За сгибом его сдвиг не виден
+              и в CLS не считается.
+            */}
+            <main id="main" tabIndex={-1} className="flex-1 flex flex-col min-h-svh">
               <MotionProvider>{children}</MotionProvider>
             </main>
             <Footer />
