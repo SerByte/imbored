@@ -79,8 +79,10 @@ export function AloneInvite({
           <span className="block text-xs opacity-80 mt-0.5">
             {share.native ? 'Откроется «Поделиться»' : 'Ссылка в буфер — кидай в чат'}
           </span>
-          {share.status}
         </button>
+        {/* Живая область — рядом с кнопкой: внутри она стала бы частью её
+            имени. sr-only — вне потока, клетку сетки не занимает */}
+        {share.status}
 
         {isHost ? (
           <button

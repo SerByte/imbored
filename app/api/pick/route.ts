@@ -4,7 +4,7 @@ import { newPickId, pickShareOk } from '@/lib/pickshare'
 import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { readJsonObject } from '@/lib/reqbody'
 import { getDb, nowSec, requireWriter, sessionSecret } from '@/lib/server'
-import { cleanReason, parseSharePickBody, SHARED_PICK_TTL_SEC } from '@/lib/sharedpick'
+import { cleanReason, parseSharePickBody, SHARED_PICK_REUSE_SEC } from '@/lib/sharedpick'
 
 /*
  * Потолки: личный — двадцать ссылок в час (героев в выдаче пять, выдач за
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
   }
 
   const reason = cleanReason(text)
-  const same = await findSharedPick(db, steamid, appid, reason, now - SHARED_PICK_TTL_SEC)
+  const same = await findSharedPick(db, steamid, appid, kind, reason, now - SHARED_PICK_REUSE_SEC)
   if (same) return NextResponse.json({ id: same })
 
   for (let i = 0; i < ID_TRIES; i++) {

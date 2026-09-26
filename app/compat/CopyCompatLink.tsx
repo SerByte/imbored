@@ -45,10 +45,14 @@ export function CopyCompatLink({
     () => router.push('/compat'),
   )
 
+  // Живая область — рядом с кнопкой, а не внутри: внутри она становится
+  // частью имени кнопки, и объявление сливается с подписью
   return (
-    <button type="button" onClick={() => void share.run()} className={className}>
-      {share.label(label, { native: 'Отправить мою ссылку' })}
+    <>
+      <button type="button" onClick={() => void share.run()} className={className}>
+        {share.label(label, { native: 'Отправить мою ссылку' })}
+      </button>
       {share.status}
-    </button>
+    </>
   )
 }

@@ -54,11 +54,14 @@ export function newPickId(): string {
 /**
  * Поле share у героя выдачи — текст, который можно отправить, и подпись к
  * нему. Отдаётся только героям (/play, /daily): открытия героем не
- * становятся, и делиться ими нечем.
+ * становятся, и делиться ими нечем. Текст приходит уже без денег
+ * (lib/sharedpick shareText).
  */
 export function shareView(
   secret: string,
   v: PickShareFields,
-): { share: { text: string; sig: string } } {
+): { share?: { text: string; sig: string } } {
+  // Пустой текст (всё объяснение было про цену, см. shareText) — кнопки нет
+  if (!v.text.trim()) return {}
   return { share: { text: v.text, sig: pickShareSig(secret, v) } }
 }

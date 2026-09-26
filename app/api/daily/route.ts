@@ -20,6 +20,7 @@ import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { sharedTasteTags } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
+import { shareText } from '@/lib/sharedpick'
 import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
 import type { GameMeta, ScoredCandidate } from '@/lib/types'
 
@@ -133,7 +134,12 @@ export async function GET(req: Request) {
         via,
       }),
       // «Отправить другу» (/pick) — основа причины, без свежего ценового хвоста
-      ...shareView(sessionSecret(), { steamid, appid: pick.appid, source: pick.source, text: reasonBase }),
+      ...shareView(sessionSecret(), {
+        steamid,
+        appid: pick.appid,
+        source: pick.source,
+        text: shareText(reasonBase, ''),
+      }),
     },
     discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
     // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
@@ -144,7 +150,7 @@ export async function GET(req: Request) {
             steamid,
             appid: alt.pick.appid,
             source: alt.pick.source,
-            text: alt.reasonBase,
+            text: shareText(alt.reasonBase, ''),
           }),
         }
       : null,

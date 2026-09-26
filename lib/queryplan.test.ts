@@ -303,7 +303,7 @@ const CASES: Case[] = [
   },
   {
     name: 'повтор «Отправить другу»',
-    run: (db) => findSharedPick(db, '76561198000000001', 620, 'Причина.', 0),
+    run: (db) => findSharedPick(db, '76561198000000001', 620, 'play', 'Причина.', 0),
     indexes: ['idx_shared_picks_by'],
     sortFree: true,
   },

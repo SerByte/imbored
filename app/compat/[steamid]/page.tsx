@@ -295,8 +295,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             <>
               <p className="text-sm leading-relaxed text-dim">
                 Подключи свою библиотеку — и увидите общий процент, общие игры и во что вам зайти
-                вместе. Прочитаем только список игр и часы, ничего не публикуем. После входа через
-                Steam {invite.name} увидит у себя, что вы сравнились.
+                вместе. Прочитаем только список игр и часы, ничего не публикуем.
+                {/* Демо-личность отметок не получает (compat_views) — обещать ей нечего */}
+                {!isDemoId(other) && <> После входа через Steam {invite.name} увидит у себя, что вы сравнились.</>}
               </p>
               <a
                 href={`/api/auth/steam?compat=${other}`}

@@ -2,11 +2,11 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
+import { BlurBand } from '@/components/BlurBand'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
 import { dayKey } from '@/lib/daily'
-import { bounceTo } from '@/lib/destination'
 import { dayLabel } from '@/lib/freshness'
 import { pickCopy, quoted } from '@/lib/sharedpick'
 import { OG_SITE } from '@/lib/site'
@@ -76,27 +76,40 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
           fallback={null}
           className="absolute inset-0 h-full w-full object-cover"
         />
-        <div aria-hidden className="game-hero-scrim" />
+        {/*
+          Скрим и полоса — те же, что у героя /play и /daily: арт здесь чёткий
+          и любой яркости, и .hero-scrim держит 0.63 над колонкой текста
+          (max-w-xl в контейнере max-w-6xl — его геометрия). Скрим карточки
+          игры для этого не годится: там фон размыт и приглушён заранее.
+        */}
+        <div aria-hidden className="absolute inset-0 hero-scrim" />
+        <BlurBand height="46vh" dir="up" />
         <div aria-hidden className="grain" />
 
-        <div className="relative mx-auto w-full max-w-5xl px-safe pb-14 pt-40">
-          <Eyebrow className="mb-3">
-            {eyebrow} · {dayLabel(dayKey(pick.createdAt))}
-          </Eyebrow>
-          <h1 className="font-display text-display-xl">{meta.name}</h1>
-          <blockquote className="mt-5 max-w-2xl text-lg leading-relaxed text-ink">{quoted(pick.reason)}</blockquote>
-          <p className="mt-3 text-sm text-dim">{sourceLine(pick.source, meta.appid)}</p>
+        <div className="relative mx-auto w-full max-w-6xl px-safe pb-14 pt-40">
+          <div className="flex max-w-xl flex-col">
+            <Eyebrow className="mb-3">
+              {eyebrow} · {dayLabel(dayKey(pick.createdAt))}
+            </Eyebrow>
+            {/* Кегль героя игры, как на /play и /daily: крупнее одно длинное
+                слово названия на телефоне не помещается */}
+            <h1 className="font-display text-display-lg [overflow-wrap:anywhere]">{meta.name}</h1>
+            <blockquote className="mt-5 text-lg leading-relaxed text-ink">{quoted(pick.reason)}</blockquote>
+            <p className="mt-3 text-sm text-dim">{sourceLine(pick.source, meta.appid)}</p>
+          </div>
         </div>
       </section>
 
-      <section className="mx-auto flex w-full max-w-5xl flex-col items-start gap-5 px-safe py-14">
+      <section className="mx-auto flex w-full max-w-6xl flex-col items-start gap-5 px-safe py-14">
         <h2 className="font-display text-display-sm">А тебе?</h2>
         <p className="max-w-md text-sm leading-relaxed text-dim">
           imbored читает библиотеку Steam и выбирает одну игру на вечер — с объяснением, почему
           она. Без Steam — есть демо, это минута.
         </p>
         <div className="flex flex-wrap items-center gap-4">
-          <Link href={bounceTo('/quiz')} className="btn-ember px-6 py-3">
+          {/* Квиз открыт любому: гостя он сам доведёт до входа или демо,
+              а /quiz не пункт назначения, и bounceTo свёл бы его к главной */}
+          <Link href="/quiz" className="btn-ember px-6 py-3">
             Выбери мне игру
           </Link>
           {meta.appid > 0 && (

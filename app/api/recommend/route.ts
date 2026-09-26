@@ -265,8 +265,8 @@ export async function POST(req: Request) {
       ...cardView(p, ctx, edges.get(p.appid) ?? null),
       ...heroMediaView(media.get(p.appid)),
       ...scoreView(i, partsOf.get(p.appid)),
-      // «Отправить другу» (/pick): текст без ценового хвоста, подписанный
-      // сервером для этой сессии — lib/pickshare
+      // «Отправить другу» (/pick): текст без денег — ни хвоста шаблона, ни
+      // цены словами модели, — подписанный для этой сессии (lib/pickshare)
       ...shareView(sessionSecret(), {
         steamid,
         appid: p.appid,

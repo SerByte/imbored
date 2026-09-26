@@ -71,7 +71,12 @@ describe('newPickId', () => {
 describe('shareView', () => {
   test('поле share — текст как есть и подпись к нему', () => {
     const { share } = shareView(SECRET, BASE)
-    expect(share.text).toBe(BASE.text)
-    expect(pickShareOk(SECRET, BASE, share.sig)).toBe(true)
+    expect(share?.text).toBe(BASE.text)
+    expect(pickShareOk(SECRET, BASE, share?.sig)).toBe(true)
+  })
+
+  test('пустой текст — поля нет, и кнопки у героя не будет', () => {
+    expect(shareView(SECRET, { ...BASE, text: '' })).toEqual({})
+    expect(shareView(SECRET, { ...BASE, text: '  ' })).toEqual({})
   })
 })

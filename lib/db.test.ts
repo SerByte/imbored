@@ -3920,14 +3920,17 @@ describe('выбор, которым поделились (/pick/<id>)', () => {
     expect(await getSharedPick(db, 'nosuchpick23', 0)).toBeNull()
   })
 
-  test('повтор находится по автору, игре и тексту — и только свежий', async () => {
+  test('повтор находится по автору, игре, виду и тексту — и только свежий', async () => {
     const db = await freshDb()
     await createSharedPick(db, row('abcdefghjkmn'), NOW)
-    expect(await findSharedPick(db, A, 620, 'Вечер на головоломки.', NOW - 60)).toBe('abcdefghjkmn')
-    expect(await findSharedPick(db, A, 620, 'Другой текст.', NOW - 60)).toBeNull()
-    expect(await findSharedPick(db, A, 570, 'Вечер на головоломки.', NOW - 60)).toBeNull()
-    expect(await findSharedPick(db, '76561198000000022', 620, 'Вечер на головоломки.', NOW - 60)).toBeNull()
-    expect(await findSharedPick(db, A, 620, 'Вечер на головоломки.', NOW + 1)).toBeNull()
+    const text = 'Вечер на головоломки.'
+    expect(await findSharedPick(db, A, 620, 'play', text, NOW - 60)).toBe('abcdefghjkmn')
+    expect(await findSharedPick(db, A, 620, 'play', 'Другой текст.', NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, A, 570, 'play', text, NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, '76561198000000022', 620, 'play', text, NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, A, 620, 'play', text, NOW + 1)).toBeNull()
+    // тот же текст игрой дня — другая страница с другой подписью
+    expect(await findSharedPick(db, A, 620, 'daily', text, NOW - 60)).toBeNull()
   })
 
   test('тот же id дважды — ошибка ключа: роут пробует другой', async () => {

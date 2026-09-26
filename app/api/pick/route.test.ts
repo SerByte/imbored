@@ -114,6 +114,23 @@ describe('/api/pick: что может стать публичным', () => {
 })
 
 describe('/api/pick: повтор и потолок', () => {
+  test('через сутки — новая ссылка со своим сроком, а не вчерашняя строка', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const a = (await (await share(body(steamid))).json()) as { id: string }
+    // строка «вчерашняя»: сдвигаем её назад на сутки с запасом
+    await db.execute({ sql: 'UPDATE shared_picks SET created_at = created_at - ? WHERE id = ?', args: [86_401, a.id] })
+    const b = (await (await share(body(steamid))).json()) as { id: string }
+    expect(b.id).not.toBe(a.id)
+  })
+
+  test('тот же текст игрой дня — своя ссылка: у страниц разные подписи', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const play = (await (await share(body(steamid))).json()) as { id: string }
+    const daily = (await (await share(body(steamid, { kind: 'daily' }))).json()) as { id: string }
+    expect(daily.id).not.toBe(play.id)
+    expect((await getSharedPick(db, daily.id, 0))?.kind).toBe('daily')
+  })
+
   test('то же нажатие ещё раз — та же ссылка, другой текст — новая', async () => {
     const steamid = await signInAs(db, 'openid')
     const a = (await (await share(body(steamid))).json()) as { id: string }

@@ -4655,20 +4655,27 @@ export async function createSharedPick(
 
 /**
  * Та же ссылка на тот же выбор: двойное нажатие и повторная отправка того
- * же героя не плодят строк — вернётся прежний id, пока он не истёк.
+ * же героя в тот же вечер не плодят строк — вернётся прежний id.
+ *
+ * Окно зовущий держит коротким (SHARED_PICK_REUSE_SEC), а не во весь срок
+ * жизни: причины из шаблона повторяются дословно, и отправленная через
+ * месяц ссылка иначе оказалась бы вчерашней строкой, которая истечёт завтра.
+ * kind — в условии: тот же текст бывает и игрой дня, и выбором на вечер, а
+ * подписи у страниц разные.
  */
 export async function findSharedPick(
   db: Db,
   createdBy: string,
   appid: number,
+  kind: PickKind,
   reason: string,
   sinceSec: number,
 ): Promise<string | null> {
   const res = await db.execute({
     sql: `SELECT id FROM shared_picks
-           WHERE created_by = ? AND created_at >= ? AND appid = ? AND reason = ?
+           WHERE created_by = ? AND created_at >= ? AND appid = ? AND kind = ? AND reason = ?
            LIMIT 1`,
-    args: [createdBy, sinceSec, appid, reason],
+    args: [createdBy, sinceSec, appid, kind, reason],
   })
   const row = res.rows[0] as unknown as { id: string } | undefined
   return row ? String(row.id) : null
