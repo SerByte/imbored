@@ -29,6 +29,7 @@ import {
 } from '@/lib/sessionhint'
 import { writerFrom, writerStore } from '@/lib/writer'
 import { announceReadOnly } from '@/lib/readonlynote'
+import { LIVE_DEFAULT, liveLineFrom } from '@/lib/liveline'
 
 /**
  * Рабочая карточка главной: единственная форма страницы, и стоит она в герое.
@@ -128,6 +129,8 @@ export function ConnectCard() {
    */
   const inputError = error === 'badinput' || error === 'notfound'
   const [session, setSession] = useState<SessionHint | null>(null)
+  /** Живая строка вошедшего — до ответа touch дверь по умолчанию (lib/liveline) */
+  const [live, setLive] = useState(LIVE_DEFAULT)
 
   const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
   const view: SessionHint = session ?? hint ?? { authed: false, personaName: null }
@@ -196,8 +199,10 @@ export function ConnectCard() {
           personaName?: string | null
           demo?: boolean
           writer?: boolean
+          live?: unknown
         }
         settle(d.authed ? hintFrom(d) : null)
+        setLive(liveLineFrom(d.live))
         // SessionKeeper на главной молчит, так что признак записи берём здесь
         writerStore.set(writerFrom(d))
       })
@@ -356,6 +361,24 @@ export function ConnectCard() {
                       Войти через Steam
                     </a>
                     , чтобы сервис запоминал.
+                  </p>
+                )}
+                {/*
+                  Живая строка (lib/liveline): «как тебе?», готовая игра дня
+                  или дверь в «Твои вечера». Место держится с первого кадра,
+                  а текст — в одну строку с многоточием: ответ сервера
+                  меняет слова, но не высоту карточки.
+                */}
+                {!readOnly && (
+                  <p className="mt-1 max-w-md text-sm text-dim">
+                    <Link
+                      href={live.href}
+                      prefetch={false}
+                      className="tap tap-tight inline-flex max-w-full items-baseline gap-1.5 transition-colors hover:text-ink"
+                    >
+                      <span className="min-w-0 truncate">{live.text}</span>
+                      <span aria-hidden>→</span>
+                    </Link>
                   </p>
                 )}
               </div>
