@@ -27,14 +27,14 @@ import { isNavActive, navPrefetch } from '@/lib/nav'
  * всегда /quiz. Подсветку решает href, а не адрес ссылки.
  *
  * Самая тесная ширина — 768 px, нижняя граница md и ровно iPad в портрете.
- * Замер: шесть подписей с gap-5 занимают 562 px, логотип 91 — в одну строку с
- * запасом 23 px (8 при полосе прокрутки десктопного окна). Когда логотип был
- * набран широким Unbounded, этого запаса не было: три пункта уезжали на вторую
- * строку, и шапка росла с 64 до 72 px. Если подписи или логотип вырастут,
- * первой сломается именно эта ширина. Чинить сужением зазора на md (gap-3.5
- * даёт 30 px, и зоны .tap по 6 px вбок ещё не сходятся), а не переездом
- * планшета на нижнюю панель: в ней пять пунктов против шести, и
- * «Совместимость» просто пропала бы.
+ * Когда-то шесть подписей с gap-5 и логотип вставали в строку с запасом
+ * 23 px; потом рядом встал переключатель темы, и запас кончился: на 768 px
+ * «Игра дня», «Подобрать игру» и «Что нового» переносились на две строки
+ * (замер: высота меню 40 px вместо 20). Починено так, как здесь и было
+ * завещано, — сужением зазора на md: gap-3.5 (зоны .tap по 6 px вбок ещё не
+ * сходятся), с lg обратно gap-6. Не переездом планшета на нижнюю панель: в
+ * ней пять пунктов против шести, и «Совместимость» просто пропала бы. Тот же
+ * зазор стоит у <nav> в app/layout.tsx — менять вместе.
  *
  * Подписи — в LinkPending. /whatsnew и /compat динамические и без
  * loading.tsx (каркас прятал страницу в первом ответе, см.
@@ -44,26 +44,34 @@ import { isNavActive, navPrefetch } from '@/lib/nav'
  *
  * Префетча у динамических пунктов нет вовсе — navPrefetch из lib/nav: шапка
  * стоит на каждой странице, и префетч будил бы их функции на каждом просмотре.
+ *
+ * «Каталог» (/games, жанры) — седьмой пункт и только с lg: на 768 px
+ * запаса 23 px, и седьмая подпись унесла бы пункты на вторую строку. На
+ * планшете хаб остаётся в подвале и в пути над названием на карточке игры.
+ * Подсвечен и на карточке игры (/game): это та же витрина. «Каталог», а не
+ * «Игры»: «Игры» в нижней панели — это библиотека, и одно слово вело бы в
+ * два разных места.
  */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
   { href: '/quiz', label: 'Подобрать игру', also: ['/play'], pick: true },
   { href: '/rooms', label: 'Пати', also: ['/room'] },
   { href: '/whatsnew', label: 'Что нового' },
+  { href: '/games', label: 'Каталог', also: ['/game'], wide: true },
   { href: '/compat', label: 'Совместимость' },
   { href: '/library', label: 'Библиотека' },
-] satisfies Array<{ href: string; label: string; also?: string[]; pick?: boolean }>
+] satisfies Array<{ href: string; label: string; also?: string[]; pick?: boolean; wide?: boolean }>
 
 export function HeaderNav() {
   const pathname = usePathname() ?? ''
 
   return (
-    <span className="hidden md:flex items-center gap-6">
+    <span className="hidden md:flex items-center gap-3.5 lg:gap-6">
       {ITEMS.map((item) => {
         const active = isNavActive(pathname, item.href, 'also' in item ? item.also : [])
         const props = {
           'aria-current': active ? ('page' as const) : undefined,
-          className: `tap transition-colors ${active ? 'text-ink font-extrabold' : 'font-semibold hover:text-ink'}`,
+          className: `tap transition-colors ${'wide' in item ? 'hidden lg:inline' : ''} ${active ? 'text-ink font-extrabold' : 'font-semibold hover:text-ink'}`,
           children: <LinkPending>{item.label}</LinkPending>,
         }
         return 'pick' in item ? (

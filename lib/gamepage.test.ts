@@ -26,6 +26,7 @@ import {
   SIMILAR_SHOWN,
   topTagOf,
 } from './gamepage'
+import { characterTrait, entryTrait } from './gametraits'
 import { tagRu } from './tagsru'
 import type { GameMeta, GameSemantics } from './types'
 
@@ -810,6 +811,68 @@ describe('«Чем выделяется» и длина сессии', () => {
     const page = await loadGamePage(71)
     expect(page?.hook).toBeNull()
     expect(page?.meta.semantics).toBeUndefined()
+    // «Вход» по одному жанру (Automation в ENTRY_HIGH_TAGS) — приор, а не
+    // факт об игре: на публичной карточке его нет, как и сессии по тегам
     expect(gameTraits(page!.meta, page!.hook)).toEqual([])
+  })
+})
+
+describe('вход, характер и «можно бросить»', () => {
+  const sem = (over: Partial<GameSemantics> = {}): GameSemantics => ({
+    v: 1,
+    axes: { challenge: 50, complexity: 50, pace: 50 },
+    session: { bucket: 'short', minutes: 20, canStopAnytime: false },
+    timeToFun: { bucket: null, hours: null },
+    confidence: 0.8,
+    n: 40,
+    basis: 'tags+reviews',
+    ...over,
+  })
+
+  test('сессия, которую можно бросить, — так и сказано; у матча — нет', () => {
+    const stop = sem({ session: { bucket: 'short', minutes: 20, canStopAnytime: true } })
+    expect(gameTraits({ categories: [2], semantics: stop }, null)).toEqual([
+      { label: 'Сессия', value: '~20 мин, можно бросить в любой момент' },
+    ])
+    // сетевой матч без одиночного режима — не «сессия», и бросить его нельзя по определению
+    expect(gameTraits({ categories: [1], semantics: sem() }, null)).toEqual([{ label: 'Матч', value: '~20 мин' }])
+  })
+
+  test('вход — только из отзывов, со ссылкой на них и часами', () => {
+    const slow = sem({ timeToFun: { bucket: 'slow', hours: 3.4 } })
+    expect(entryTrait({ tags: {}, semantics: slow })).toEqual({
+      label: 'Вход',
+      value: 'раскрывается через 3 часа — по отзывам',
+    })
+    expect(entryTrait({ tags: {}, semantics: sem({ timeToFun: { bucket: 'fast', hours: null } }) })?.value).toBe(
+      'затягивает с первых минут — по отзывам',
+    )
+    // уверенная семантика без выраженного старта — ответ «не знаем», теги её не переспорят
+    expect(entryTrait({ tags: { 'Grand Strategy': 900 }, semantics: sem() })).toBeNull()
+    // по одним тегам — не на карточке: жанровый приор выдал бы себя за факт
+    expect(entryTrait({ tags: { 'Grand Strategy': 900 } })).toBeNull()
+  })
+
+  test('характер — две самые выраженные оси, середина молчит', () => {
+    const calm = sem({ axes: { challenge: 20, complexity: 60, pace: 30 } })
+    expect(characterTrait({ semantics: calm })).toEqual({ label: 'Характер', value: 'спокойная, неторопливая' })
+    const hard = sem({ axes: { challenge: 90, complexity: 80, pace: 70 } })
+    expect(characterTrait({ semantics: hard })?.value).toBe('с вызовом, есть что осваивать')
+    expect(characterTrait({ semantics: sem() })).toBeNull()
+    // по одним тегам оси — приор жанра, а не факт об игре
+    expect(characterTrait({ semantics: sem({ confidence: 0.4, axes: { challenge: 10, complexity: 50, pace: 50 } }) })).toBeNull()
+  })
+
+  test('порядок строк: выделяется → сессия → вход → характер', () => {
+    const all = sem({
+      axes: { challenge: 20, complexity: 50, pace: 50 },
+      timeToFun: { bucket: 'fast', hours: null },
+    })
+    expect(gameTraits({ categories: [2], semantics: all }, ['Automation']).map((t) => t.label)).toEqual([
+      'Чем выделяется',
+      'Сессия',
+      'Вход',
+      'Характер',
+    ])
   })
 })

@@ -12,7 +12,7 @@ import {
   type SimilarGame,
 } from './db'
 import { logSwallowed } from './errlog'
-import { sessionTrait, type GameTrait } from './gametraits'
+import { characterTrait, entryTrait, sessionTrait, stopsAnytime, type GameTrait } from './gametraits'
 import { distinctiveTags } from './hook'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { NEIGHBORS_K } from './neighbors'
@@ -417,12 +417,23 @@ export function hookTrait(hook: readonly string[] | null): GameTrait | null {
   return { label: 'Чем выделяется', value: hook.map(tagRu).join(', ') }
 }
 
-/** Строки фактов карточки по порядку; пустой список — блока нет вовсе */
+/**
+ * Строки фактов карточки по порядку; пустой список — блока нет вовсе.
+ *
+ * Чем выделяется → сессия (с «можно бросить в любой момент») → вход →
+ * характер. Всё без модели и только то, что знаем: сессия и характер — из
+ * уверенной семантики, вход — из отзывов.
+ */
 export function gameTraits(
-  meta: Pick<GameMeta, 'semantics' | 'categories'>,
+  meta: Pick<GameMeta, 'semantics' | 'categories'> & Partial<Pick<GameMeta, 'tags'>>,
   hook: readonly string[] | null,
 ): GameTrait[] {
-  return [hookTrait(hook), sessionTrait(meta)].filter((t): t is GameTrait => t !== null)
+  const session = sessionTrait(meta)
+  const withStop =
+    session && stopsAnytime(meta) ? { ...session, value: `${session.value}, можно бросить в любой момент` } : session
+  return [hookTrait(hook), withStop, entryTrait({ tags: meta.tags ?? {}, semantics: meta.semantics }), characterTrait(meta)].filter(
+    (t): t is GameTrait => t !== null,
+  )
 }
 
 /**

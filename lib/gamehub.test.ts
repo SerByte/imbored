@@ -10,6 +10,7 @@ import {
   HUB_TAGS,
   hubPath,
   hubTagOf,
+  primaryGenre,
   type HubRow,
 } from './gamehub'
 import { GENERIC_TAGS } from './hook'
@@ -89,6 +90,34 @@ describe('страницы жанров', () => {
   test('заголовок — по-русски и с большой буквы', () => {
     for (const tag of HUB_TAGS) expect(HUB_GENRES[tag].title, tag).toMatch(/^[А-ЯЁA-Z]/)
     expect(HUB_PAGE).toBeGreaterThanOrEqual(HUB_SHELF)
+  })
+})
+
+describe('главный жанр игры', () => {
+  test('самый весомый из жанров со своей страницей', () => {
+    expect(primaryGenre({ Action: 2000, Roguelike: 1800, 'Action Roguelike': 1700, Indie: 900 })).toBe('Roguelike')
+  })
+
+  test('жанр-метка не главный: легче половины главного тега — пути нет', () => {
+    // у CS2 Tactical 453 при FPS 1000 — ровно тот случай из HUB_MIN_WEIGHT
+    expect(primaryGenre({ Shooter: 1000, Tactical: 453, Cozy: 400 })).toBeNull()
+    expect(primaryGenre({ Shooter: 1000, FPS: 500 })).toBe('FPS')
+  })
+
+  test('только среди двенадцати верхних тегов, как в game_tags', () => {
+    const tags: Record<string, number> = {}
+    for (let i = 0; i < 12; i++) tags[`Tag ${i}`] = 1000 - i
+    tags.Roguelike = 700
+    expect(primaryGenre(tags)).toBeNull()
+  })
+
+  test('при равных весах — по имени, порядок не прыгает', () => {
+    expect(primaryGenre({ Survival: 1000, 'Open World': 1000 })).toBe('Open World')
+  })
+
+  test('пустые и нулевые теги — null', () => {
+    expect(primaryGenre({})).toBeNull()
+    expect(primaryGenre({ Roguelike: 0 })).toBeNull()
   })
 })
 

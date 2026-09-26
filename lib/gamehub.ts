@@ -119,6 +119,28 @@ export function hubTagOf(slug: string): string | null {
   return null
 }
 
+/**
+ * Главный жанр игры — для пути на её карточке («Игры по жанрам → Рогалики»).
+ *
+ * Самый весомый из тегов, у которых есть своя страница, и только если для
+ * игры он правда один из главных: по тем же правилам, по которым игра попадает
+ * на страницу жанра, — среди двенадцати верхних тегов (столько лежит в
+ * game_tags) и не легче половины главного (HUB_MIN_WEIGHT от 1000). Иначе у
+ * CS2 путь вёл бы в «Тактику», а у всего подряд — в «Уютную».
+ *
+ * Веса — голоса Steam как есть: доля от главного считается здесь. При равных
+ * весах — по имени, как у тегов героя и жанров разметки: порядок не прыгает.
+ */
+export function primaryGenre(tags: Readonly<Record<string, number>>): string | null {
+  const top = Object.entries(tags)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 12)
+  const max = top[0]?.[1] ?? 0
+  if (!(max > 0)) return null
+  const hit = top.find(([tag, w]) => Object.hasOwn(HUB_GENRES, tag) && (w / max) * 1000 >= HUB_MIN_WEIGHT)
+  return hit ? hit[0] : null
+}
+
 /** Игр на странице жанра — верх по отзывам, для которых жанр главный */
 export const HUB_PAGE = 40
 

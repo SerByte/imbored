@@ -247,20 +247,37 @@ export type BreadcrumbLd = {
 }
 
 /**
- * Хлебные крошки карточки: главная → игра.
+ * Хлебные крошки карточки: главная → «Игры по жанрам» → жанр → игра.
  *
- * Два уровня, а не три, и это правило модуля, а не бедность: промежуточного
- * «Каталога» на сайте нет, а разметка не говорит больше, чем страница. Путь
- * на страницу есть ровно такой — логотип в шапке ведёт на главную.
+ * Жанр — главный жанр игры (lib/gamehub primaryGenre), и путь через него
+ * страница показывает сама, строкой над названием: разметка не говорит
+ * больше, чем страница. Главного жанра нет — нет и строки, и крошки
+ * остаются двумя уровнями: главная (логотип в шапке) → игра.
  */
-export function gameBreadcrumbLd({ meta, baseUrl }: { meta: GameMeta; baseUrl: string }): BreadcrumbLd {
+export function gameBreadcrumbLd({
+  meta,
+  baseUrl,
+  genre = null,
+}: {
+  meta: GameMeta
+  baseUrl: string
+  /** Видимый путь над названием: заголовок страницы жанра и её адрес */
+  genre?: { title: string; path: string } | null
+}): BreadcrumbLd {
+  const trail = genre
+    ? [
+        { name: 'Игры по жанрам', item: `${baseUrl}/games` },
+        { name: genre.title, item: `${baseUrl}${genre.path}` },
+      ]
+    : []
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'imbored', item: `${baseUrl}/` },
-      { '@type': 'ListItem', position: 2, name: meta.name, item: `${baseUrl}/game/${meta.appid}` },
-    ],
+      { name: 'imbored', item: `${baseUrl}/` },
+      ...trail,
+      { name: meta.name, item: `${baseUrl}/game/${meta.appid}` },
+    ].map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
   }
 }
 

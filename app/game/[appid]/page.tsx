@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { cache } from 'react'
+import { cache, Fragment } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameMorph } from '@/components/Morph'
 import { GameNews } from '@/components/GameNews'
@@ -14,6 +14,7 @@ import { RefundNote } from '@/components/RefundNote'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { sitemapGames } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
+import { HUB_GENRES, hubPath, primaryGenre } from '@/lib/gamehub'
 import { byline } from '@/lib/byline'
 import {
   deadVerdict,
@@ -199,11 +200,16 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   // Ответ мёртвой игре — он же прячет «Запустить»: звать в пустой матчмейкинг
   // кнопкой запуска значит спорить с собственным вердиктом
   const verdict = deadVerdict(meta)
+  // При равных весах — по имени: тот же порядок, что у жанров в разметке
+  // (gameJsonLd), иначе видимое и размеченное расходились бы на ничьих
   const topTags = Object.entries(meta.tags)
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, 8)
     .map(([t]) => t)
   const traits = gameTraits(meta, data.hook)
+  // Главный жанр — путь над названием и в крошках разметки (одно и то же)
+  const genreTag = primaryGenre(meta.tags)
+  const genre = genreTag ? { tag: genreTag, title: HUB_GENRES[genreTag].title, path: hubPath(genreTag)! } : null
 
   return (
     <div className="flex-1">
@@ -233,7 +239,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               currency: currencyOf(process.env.STEAM_STORE_CC),
               now,
             }),
-            gameBreadcrumbLd({ meta, baseUrl: appBaseUrl() }),
+            gameBreadcrumbLd({ meta, baseUrl: appBaseUrl(), genre }),
           ]),
         }}
       />
@@ -327,6 +333,23 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             />
           </GameMorph>
           <div className="flex flex-col gap-4 anim-rise">
+            {/*
+              Путь к игре через её главный жанр: «Игры по жанрам → Рогалики».
+              Это выход «посмотреть ещё такого же» для человека и путь для
+              краулера — и та же цепочка, что в крошках разметки выше: разметка
+              не говорит больше, чем страница. Главного жанра нет — нет строки.
+            */}
+            {genre && (
+              <nav aria-label="Жанр игры" className="-mb-2 flex flex-wrap items-center gap-1.5">
+                <Link href="/games" className="tap tap-tight link-more">
+                  Игры по жанрам
+                </Link>
+                <Icon name="arrow" size={14} className="text-faint" />
+                <Link href={genre.path} className="tap tap-tight link-more">
+                  {genre.title}
+                </Link>
+              </nav>
+            )}
             <h1 className="font-display text-display-lg">{meta.name}</h1>
             {/*
               Студия и год. Оба поля заполнены у ВСЕХ игр каталога (1000 из
@@ -404,9 +427,30 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 <p className="text-sm leading-relaxed">{verdict}</p>
               </div>
             )}
-            {/* Жанры строкой через точку, как под названием у стриминга */}
+            {/* Жанры строкой через точку, как под названием у стриминга. Жанр
+                со своей страницей — ссылка туда: «ещё таких» в одно касание */}
             {topTags.length > 0 && (
-              <p className="text-sm font-semibold text-ink/80">{topTags.map((t) => tagRu(t)).join(' · ')}</p>
+              <p className="text-sm font-semibold text-ink/80">
+                {topTags.map((t, i) => {
+                  const path = hubPath(t)
+                  return (
+                    <Fragment key={t}>
+                      {i > 0 && ' · '}
+                      {path ? (
+                        <Link
+                          href={path}
+                          prefetch={false}
+                          className="tap tap-tight underline decoration-1 underline-offset-4 decoration-ink/30 transition-colors hover:text-ink hover:decoration-ink"
+                        >
+                          {tagRu(t)}
+                        </Link>
+                      ) : (
+                        tagRu(t)
+                      )}
+                    </Fragment>
+                  )
+                })}
+              </p>
             )}
             {/*
               Чем игра выделяется и сколько длится заход — без модели: первое

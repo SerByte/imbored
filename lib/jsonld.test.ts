@@ -296,6 +296,20 @@ describe('gameBreadcrumbLd', () => {
       { '@type': 'ListItem', position: 2, name: 'Counter-Strike 2', item: ld().url },
     ])
   })
+
+  test('с главным жанром — через «Игры по жанрам» и жанр, как в строке над названием', () => {
+    const out = gameBreadcrumbLd({
+      meta: game(),
+      baseUrl: BASE,
+      genre: { title: 'Шутеры от первого лица', path: '/games/fps' },
+    })
+    expect(out.itemListElement).toEqual([
+      { '@type': 'ListItem', position: 1, name: 'imbored', item: 'https://imbored.cc/' },
+      { '@type': 'ListItem', position: 2, name: 'Игры по жанрам', item: 'https://imbored.cc/games' },
+      { '@type': 'ListItem', position: 3, name: 'Шутеры от первого лица', item: 'https://imbored.cc/games/fps' },
+      { '@type': 'ListItem', position: 4, name: 'Counter-Strike 2', item: ld().url },
+    ])
+  })
 })
 
 describe('websiteJsonLd', () => {
