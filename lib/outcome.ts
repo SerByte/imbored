@@ -78,12 +78,15 @@ export function parseOutcomeAsk(raw: unknown): OutcomeAsk | null {
 /**
  * Сыгранное — коротко: «40 мин», «2 ч», «3 ч 20 мин». Сокращения не
  * склоняются, и строке рядом с названием игры не нужно «часа» и «минут».
+ * От десяти часов — только часы, с разрядами: «2434 ч 42 мин» минуты не
+ * уточняют, а читаются дольше самого числа.
  */
 export function playedLine(minutes: number): string {
   const m = Math.max(0, Math.round(minutes))
   const h = Math.floor(m / 60)
   const rest = m % 60
   if (!h) return `${rest} мин`
+  if (h >= 10) return `${Math.round(m / 60).toLocaleString('ru-RU')} ч`
   return rest ? `${h} ч ${rest} мин` : `${h} ч`
 }
 

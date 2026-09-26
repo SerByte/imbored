@@ -2,7 +2,9 @@ import { describe, expect, test } from 'vitest'
 import {
   createDb,
   getLibraryBaseline,
+  getLibraryBaselines,
   getLatestSnapshot,
+  getOlderSnapshotMinutes,
   saveLibrarySnapshot,
   snapshotYear,
 } from './db'
@@ -117,5 +119,35 @@ describe('отметка библиотеки на начало года', () =>
     await saveLibrarySnapshot(db, ME, lib(100), MARCH_2026)
     expect(await getLibraryBaseline(db, ME, 2025)).toBeNull()
     expect(await getLibraryBaseline(db, 'никого', 2026)).toBeNull()
+  })
+})
+
+describe('чтения для динамики и итогов', () => {
+  test('getLibraryBaselines: один год, два года по порядку, пропущенный год', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, lib(10), MARCH_2026)
+    await saveLibrarySnapshot(db, ME, lib(40), JAN_2027)
+    const one = await getLibraryBaselines(db, ME, 2026, 2026)
+    expect(one.map((b) => [b.year, b.takenAt])).toEqual([[2026, MARCH_2026]])
+    const two = await getLibraryBaselines(db, ME, 2026, 2027)
+    // отметка 2027 — декабрьское (здесь мартовское) состояние, а не январское
+    expect(two.map((b) => [b.year, b.takenAt, b.games[0]?.playtimeForever])).toEqual([
+      [2026, MARCH_2026, 600],
+      [2027, MARCH_2026, 600],
+    ])
+    expect(await getLibraryBaselines(db, ME, 2024, 2025)).toEqual([])
+  })
+
+  test('getOlderSnapshotMinutes: все снимки, кроме последнего, свежие первыми, парами', async () => {
+    const db = await freshDb()
+    expect(await getOlderSnapshotMinutes(db, ME)).toEqual([])
+    for (const [i, at] of [MARCH_2026, NOV_2026, JAN_2027, JAN_2027 + 100].entries()) {
+      await saveLibrarySnapshot(db, ME, lib(i + 1), at)
+    }
+    const older = await getOlderSnapshotMinutes(db, ME)
+    // хранится три, последний не отдаётся — остаётся два
+    expect(older.map((o) => o.takenAt)).toEqual([JAN_2027, NOV_2026])
+    expect(older.map((o) => [...o.minutes])).toEqual([[[570, 180]], [[570, 120]]])
+    expect(await getOlderSnapshotMinutes(db, '76561198000000002')).toEqual([])
   })
 })

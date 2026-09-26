@@ -1,7 +1,18 @@
 import { describe, expect, test } from 'vitest'
 import { tagWeightFrom } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
-import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter } from './wrapped'
+import {
+  archetypeEvidence,
+  buildWrapped,
+  buildWrappedYear,
+  isEmptyYear,
+  mosaicBlocks,
+  pickStarter,
+  pickYearWindow,
+  YEAR_SHELF_MAX,
+  yearCandidates,
+  yearsToRead,
+} from './wrapped'
 
 function lib(appid: number, hours: number, weeks = 0): LibraryGame {
   return {
@@ -356,5 +367,101 @@ describe('pickStarter', () => {
     ])
     const games = [lib(1, 300), lib(2, 0), lib(3, 0)]
     expect(pickStarter(games, (id) => metas.get(id))?.appid).toBe(2)
+  })
+})
+
+describe('итоги года', () => {
+  const at = (y: number, m: number, d: number) => Math.floor(Date.UTC(y, m, d) / 1000)
+  const noMeta = () => undefined
+
+  test('yearsToRead: в январе — и прошлый год, иначе только текущий', () => {
+    expect(yearsToRead(at(2026, 8, 26))).toEqual([2026, 2026])
+    expect(yearsToRead(at(2027, 0, 10))).toEqual([2026, 2027])
+    expect(yearsToRead(at(2027, 1, 1))).toEqual([2027, 2027])
+  })
+
+  test('окно: текущий год от отметки до последнего снимка', () => {
+    const base = { year: 2026, takenAt: at(2026, 8, 23), games: [lib(1, 10)] }
+    const latest = { takenAt: at(2026, 10, 1), games: [lib(1, 15)] }
+    expect(pickYearWindow(latest, [base])).toEqual({ year: 2026, closed: false, base, end: latest })
+  })
+
+  test('окно в январе — закрывшийся год, от отметки до отметки', () => {
+    const prev = { year: 2026, takenAt: at(2026, 2, 1), games: [lib(1, 10)] }
+    const cur = { year: 2027, takenAt: at(2026, 11, 20), games: [lib(1, 50)] }
+    const latest = { takenAt: at(2027, 0, 5), games: [lib(1, 52)] }
+    expect(pickYearWindow(latest, [prev, cur])).toEqual({ year: 2026, closed: true, base: prev, end: cur })
+    // без прошлогодней отметки — нынешний год, от его отметки
+    expect(pickYearWindow(latest, [cur])).toMatchObject({ year: 2027, closed: false, base: cur })
+  })
+
+  test('сравнивать не с чем — null', () => {
+    const latest = { takenAt: at(2026, 8, 23), games: [lib(1, 10)] }
+    // первый заход: отметка и есть последний снимок
+    expect(pickYearWindow(latest, [{ year: 2026, ...latest }])).toBeNull()
+    expect(pickYearWindow(latest, [])).toBeNull()
+  })
+
+  test('топ по приросту, а не по часам за всё время; доля — от минут года', () => {
+    const w = {
+      year: 2026,
+      closed: false,
+      base: { takenAt: at(2026, 0, 3), games: [lib(1, 1000), lib(2, 10), lib(3, 0)] },
+      end: { takenAt: at(2026, 10, 1), games: [lib(1, 1000), lib(2, 40), lib(3, 10), lib(4, 20)] },
+    }
+    const y = buildWrappedYear(w, metaOf)
+    // тысячечасовая игра без прироста в итоги не попадает
+    expect(y.top.map((g) => [g.appid, g.minutes])).toEqual([
+      [2, 1800],
+      [4, 1200],
+      [3, 600],
+    ])
+    expect(y.minutes).toBe(3600)
+    expect(y.top[0].sharePercent).toBe(50)
+    expect(y.unpacked.games.map((g) => g.appid)).toEqual([3])
+    expect(y.added.games.map((g) => g.appid)).toEqual([4])
+    expect(y.partial).toBe(false)
+    expect(y.fromPrevYear).toBe(false)
+    expect(yearCandidates(w).sort()).toEqual([2, 3, 4])
+  })
+
+  test('отметка осенью — «с даты», отметка из декабря — дата с годом', () => {
+    const end = { takenAt: at(2026, 10, 1), games: [lib(1, 20)] }
+    const autumn = buildWrappedYear(
+      { year: 2026, closed: false, base: { takenAt: at(2026, 8, 23), games: [lib(1, 10)] }, end },
+      metaOf,
+    )
+    expect(autumn.partial).toBe(true)
+    const december = buildWrappedYear(
+      { year: 2026, closed: false, base: { takenAt: at(2025, 11, 28), games: [lib(1, 10)] }, end },
+      metaOf,
+    )
+    expect(december.fromPrevYear).toBe(true)
+    expect(december.partial).toBe(false)
+  })
+
+  test('коллекционер с бандлом: полка ограничена, счёт полный, JSON без потерь', () => {
+    const bundle = Array.from({ length: 500 }, (_, i) => lib(10_000 + i, 0))
+    const w = {
+      year: 2026,
+      closed: false,
+      base: { takenAt: at(2026, 0, 2), games: [lib(1, 5)] },
+      end: { takenAt: at(2026, 5, 1), games: [lib(1, 5), ...bundle] },
+    }
+    const y = buildWrappedYear(w, noMeta)
+    expect(y.added.count).toBe(500)
+    expect(y.added.games).toHaveLength(YEAR_SHELF_MAX)
+    expect(y.minutes).toBe(0)
+    expect(isEmptyYear(y)).toBe(false)
+    expect(JSON.parse(JSON.stringify(y))).toEqual(y)
+  })
+
+  test('пустой год — пустой, без NaN', () => {
+    const same = { takenAt: at(2026, 0, 2), games: [lib(1, 5)] }
+    const end = { ...same, takenAt: at(2026, 3, 1) }
+    const y = buildWrappedYear({ year: 2026, closed: false, base: same, end }, noMeta)
+    expect(isEmptyYear(y)).toBe(true)
+    expect(y.top).toEqual([])
+    expect(Number.isNaN(y.minutes)).toBe(false)
   })
 })

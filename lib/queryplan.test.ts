@@ -16,6 +16,8 @@ import {
   getMajorFeedHead,
   getNeighbors,
   listEvenings,
+  getLibraryBaselines,
+  getOlderSnapshotMinutes,
   listExploreLiked,
   listLiked,
   countLiked,
@@ -272,6 +274,14 @@ const CASES: Case[] = [
   },
   // Полка «Приглянулось» и полка «Зашло» — тот же разговор: строки одного
   // человека по индексу, GROUP BY сортирует только их
+  // Прежние снимки одного человека — по индексу; сортировка — тай-брейк по
+  // id среди не больше трёх его строк, а json_each — по одному блобу
+  {
+    name: 'прошлые снимки библиотеки',
+    run: (db) => getOlderSnapshotMinutes(db, '76561198000000001'),
+    indexes: ['idx_snapshots_steamid'],
+    sortFree: false,
+  },
   {
     name: 'полка «Приглянулось»',
     run: (db) => listExploreLiked(db, '76561198000000001', 120),
@@ -434,6 +444,21 @@ describe('планы запросов', () => {
     const where = plan.join(' | ')
     expect(bareScans(plan), where).toEqual([])
     expect(where).toMatch(/SEARCH outcomes USING PRIMARY KEY \(steamid=\?\)/)
+  })
+
+  /*
+   * Отметки года — первичный ключ (steamid, year) целиком: диапазон лет по
+   * второй колонке ключа, порядок по году — из самого ключа.
+   */
+  test('отметки года: по первичному ключу, без сортировки и сканов', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) => getLibraryBaselines(spy, '76561198000000001', 2026, 2027))
+    expect(issued).toHaveLength(1)
+    const plan = await planOf(db, issued[0]!)
+    const where = plan.join(' | ')
+    expect(bareScans(plan), where).toEqual([])
+    expect(where).toMatch(/SEARCH library_baselines USING PRIMARY KEY \(steamid=\? AND year>\? AND year<\?\)/)
+    expect(where).not.toContain('TEMP B-TREE')
   })
 
   test('у каждого частичного индекса схемы есть запрос, который это проверяет', async () => {

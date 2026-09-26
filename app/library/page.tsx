@@ -17,6 +17,7 @@ import {
   loadTagStats,
   listEvenings,
   listLiked,
+  getOlderSnapshotMinutes,
   countLiked,
 } from '@/lib/db'
 import {
@@ -45,6 +46,7 @@ import { dateLabel } from '@/lib/freshness'
 import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
 import { Evenings, type EveningItem } from '@/components/Evenings'
 import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
+import { pickSnapshotDelta } from '@/lib/libdelta'
 
 export const metadata = {
   title: 'Библиотека',
@@ -115,7 +117,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older] = await Promise.all([
     getLatestSnapshot(db, steamid),
     listBanned(db, steamid),
     bannedAppids(db, steamid),
@@ -126,6 +128,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     // Полка «Зашло» — что подбор запомнил как понравившееся, и сколько всего
     listLiked(db, steamid),
     countLiked(db, steamid),
+    // Прежние снимки парами [appid, минуты] — для строки «с прошлого снимка»
+    getOlderSnapshotMinutes(db, steamid),
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -212,6 +216,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
 
   const metaOf = (id: number) => metas.get(id)
+  // Что изменилось с прошлого снимка — с первого, с которым есть о чём
+  // сказать (pickSnapshotDelta). Снимки и отметки года /privacy обещает ради
+  // «динамики бэклога и итогов» — вот динамика
+  const since = pickSnapshotDelta(older, snapshot, metaOf)
   // Та же мера вкуса, что у /play: без карты тегов — сырой косинус
   const view = buildLibraryView(games, metaOf, filter, now, tagStats ? tagWeightFrom(tagStats) : null)
   // Два разных числа: в строке-сводке — «ни разу не запускал» (ноль минут), в
@@ -286,6 +294,35 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
             </div>
           </dl>
+          {/*
+            С прошлого снимка — без «было X, стало Y» рядом с числами выше:
+            «ни разу не запускал» двигают и новые нетронутые игры, и разница
+            двух чисел врала бы. Обе даты — потому что сама страница снимок не
+            обновляет, и «по сегодня» было бы неправдой.
+          */}
+          {since && (
+            <p className="mt-5 max-w-md text-sm leading-relaxed text-dim">
+              С {dateLabel(since.fromAt, { year: !sameYear(since.fromAt, snapshot.takenAt) })} по{' '}
+              {dateLabel(snapshot.takenAt)}
+              {since.delta.minutes > 0 && (
+                <>
+                  {' '}· наиграно <span className="tabular-nums text-ink">{playedLine(since.delta.minutes)}</span>
+                </>
+              )}
+              {since.delta.added.length > 0 && (
+                <>
+                  {' '}· <span className="tabular-nums">{since.delta.added.length}</span>{' '}
+                  {plural(since.delta.added.length, 'новая игра', 'новые игры', 'новых игр')}
+                </>
+              )}
+              {since.delta.unpacked.length > 0 && (
+                <>
+                  {' '}· <span className="tabular-nums">{since.delta.unpacked.length}</span>{' '}
+                  {plural(since.delta.unpacked.length, 'игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено')}
+                </>
+              )}
+            </p>
+          )}
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/portrait" prefetch={false} className="btn-glass">
               <Icon name="spark" size={18} />
@@ -658,4 +695,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       </div>
     </div>
   )
+}
+
+/** Два момента в одном году по UTC — тогда дату пишем без года */
+function sameYear(a: number, b: number): boolean {
+  return new Date(a * 1000).getUTCFullYear() === new Date(b * 1000).getUTCFullYear()
 }

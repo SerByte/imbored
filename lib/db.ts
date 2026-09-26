@@ -1894,6 +1894,68 @@ export async function getLibraryBaseline(
   return { takenAt: row.taken_at, games: JSON.parse(row.games_json) as LibraryGame[] }
 }
 
+/**
+ * Прежние снимки библиотеки (все, кроме последнего) — для строки «с прошлого
+ * снимка» на /library (pickSnapshotDelta в lib/libdelta).
+ *
+ * Не блобом, а парами [appid, минуты], собранными в SQL: для разницы нужны
+ * только минуты, а games_json большой библиотеки — сотни килобайт (см.
+ * snapshotOwns). Пара весит байт пятнадцать против сотни у целой LibraryGame.
+ * json_group_array отдаёт текст — разбираем его здесь.
+ *
+ * Сортировка с тай-брейком по id — та же, что у getLatestSnapshot, и
+ * строк в ней не больше трёх одного человека.
+ */
+export async function getOlderSnapshotMinutes(
+  db: Db,
+  steamid: string,
+): Promise<Array<{ takenAt: number; minutes: Map<number, number> }>> {
+  const res = await db.execute({
+    sql: `SELECT taken_at,
+                 (SELECT json_group_array(json_array(json_extract(value, '$.appid'),
+                                                     json_extract(value, '$.playtimeForever')))
+                    FROM json_each(games_json)) AS pairs
+          FROM library_snapshots WHERE steamid = ?
+          ORDER BY taken_at DESC, id DESC LIMIT ${SNAPSHOTS_KEPT - 1} OFFSET 1`,
+    args: [steamid],
+  })
+  return (res.rows as unknown as Array<{ taken_at: number; pairs: string | null }>).map((r) => {
+    let pairs: Array<[number, number]> = []
+    try {
+      pairs = JSON.parse(r.pairs ?? '[]') as Array<[number, number]>
+    } catch {
+      // битый блоб — как пустой снимок: точкой отсчёта он не станет
+    }
+    return {
+      takenAt: Number(r.taken_at),
+      minutes: new Map(pairs.map(([appid, min]) => [Number(appid), Number(min) || 0])),
+    }
+  })
+}
+
+/**
+ * Отметки года за диапазон лет одним запросом — для «Итогов года» (lib/wrapped,
+ * pickYearWindow). Обычно год один; в январе — два: итоги закрывшегося года
+ * считаются от его отметки до отметки нового (см. pickYearWindow).
+ */
+export async function getLibraryBaselines(
+  db: Db,
+  steamid: string,
+  fromYear: number,
+  toYear: number,
+): Promise<Array<{ year: number; takenAt: number; games: LibraryGame[] }>> {
+  const res = await db.execute({
+    sql: `SELECT year, taken_at, games_json FROM library_baselines
+          WHERE steamid = ? AND year BETWEEN ? AND ? ORDER BY year`,
+    args: [steamid, fromYear, toYear],
+  })
+  return (res.rows as unknown as Array<{ year: number; taken_at: number; games_json: string }>).map((r) => ({
+    year: Number(r.year),
+    takenAt: Number(r.taken_at),
+    games: JSON.parse(r.games_json) as LibraryGame[],
+  }))
+}
+
 /* ---------- каталог игр ---------- */
 
 /**

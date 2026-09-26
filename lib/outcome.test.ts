@@ -18,6 +18,10 @@ describe('playedLine', () => {
     expect(playedLine(200)).toBe('3 ч 20 мин')
     expect(playedLine(89.6)).toBe('1 ч 30 мин')
     expect(playedLine(-5)).toBe('0 мин')
+    // от десяти часов — только часы, с разрядами
+    expect(playedLine(9 * 60 + 59)).toBe('9 ч 59 мин')
+    expect(playedLine(12 * 60 + 40)).toBe('13 ч')
+    expect(playedLine(2434 * 60 + 42)).toBe('2\u00a0435 ч')
   })
 })
 
