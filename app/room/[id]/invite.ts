@@ -33,9 +33,13 @@ export async function loadRoomInvite(id: string): Promise<RoomInvite | null> {
         : Promise.resolve(null),
     ])
     const host = members.find((m) => m.steamid === room.createdBy)?.personaName ?? null
-    const matchedName =
-      room.matchedAppid !== undefined ? (games?.get(room.matchedAppid)?.name ?? null) : null
-    return { id: room.id, members: members.length, host, matched, matchedName }
+    const game = room.matchedAppid !== undefined ? games?.get(room.matchedAppid) : undefined
+    const matchedName = game?.name ?? null
+    // Арт — из той же строки, без лишнего запроса: карточке после матча фоном
+    const matchedArt = game
+      ? { appid: game.appid, art: game.art ?? null, headerImage: game.headerImage ?? null }
+      : null
+    return { id: room.id, members: members.length, host, matched, matchedName, matchedArt }
   } catch {
     // База молчит — приглашение всё равно должно развернуться в чате чем-то
     // осмысленным, а не пятисоткой у краулера.

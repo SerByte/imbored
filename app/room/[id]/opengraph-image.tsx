@@ -1,5 +1,7 @@
 import { ImageResponse } from 'next/og'
 import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
+import { ArtBackdrop, ogArt } from '@/lib/ogcard'
+import { CANVAS_WIDE } from '@/lib/ogwall'
 import { inviteCopy } from '@/lib/roominvite'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
 
@@ -59,6 +61,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const invite = ROOM_ID_RE.test(code) ? await loadRoomInvite(code) : null
   // Те же три состояния, что у заголовка страницы: ждёт, сошлась, неизвестна
   const { eyebrow, headline, foot } = inviteCopy(code, invite)
+  // После матча билет погашен — и фоном встаёт игра, на которой сошлись. Арт
+  // не дотянулся (чужой магазин, сбой CDN) — прежний билет на тёмном
+  const art = invite?.matched && invite.matchedArt ? await ogArt(invite.matchedArt) : null
 
   return new ImageResponse(
     (
@@ -67,57 +72,70 @@ export default async function Image({ params }: { params: Promise<{ id: string }
           width: '100%',
           height: '100%',
           display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          padding: '64px 72px',
+          position: 'relative',
           background: OG_BG,
-          backgroundImage: ogGlow(),
+          ...(art ? {} : { backgroundImage: ogGlow() }),
           color: OG_INK,
           fontFamily: 'Manrope',
         }}
       >
+        {art && <ArtBackdrop src={art} canvas={CANVAS_WIDE} />}
         <div
           style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            ...CANVAS_WIDE,
             display: 'flex',
-            fontFamily: 'Manrope',
-            fontSize: 20,
-            letterSpacing: 6,
-            color: OG_EMBER,
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            padding: '64px 72px',
           }}
         >
-          {eyebrow}
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {/* Код — предмет, который передают. Разрядка как на билете. */}
-          <div
-            style={{
-              display: 'flex',
-              fontFamily: 'JetBrains Mono',
-              fontSize: 132,
-              letterSpacing: 16,
-              lineHeight: 1,
-              color: OG_INK,
-            }}
-          >
-            {ROOM_ID_RE.test(code) ? code : 'ПАТИ'}
-          </div>
-          {/* Отступ с запасом — см. lib/og про кириллические выносные */}
-          <div style={{ display: 'flex', marginTop: 36, fontSize: 44, maxWidth: 900 }}>{headline}</div>
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', fontSize: 26, color: OG_DIM, maxWidth: 880 }}>{foot}</div>
           <div
             style={{
               display: 'flex',
               fontFamily: 'Manrope',
               fontSize: 20,
-              letterSpacing: 3,
+              letterSpacing: 6,
               color: OG_EMBER,
             }}
           >
-            IMBORED.CC
+            {eyebrow}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {/* Код — предмет, который передают. Разрядка как на билете. */}
+            <div
+              style={{
+                display: 'flex',
+                fontFamily: 'JetBrains Mono',
+                // На арте код скромнее: ему лежать в тёмной части скрима, а не на картинке
+                fontSize: art ? 96 : 132,
+                letterSpacing: 16,
+                lineHeight: 1,
+                color: OG_INK,
+              }}
+            >
+              {ROOM_ID_RE.test(code) ? code : 'ПАТИ'}
+            </div>
+            {/* Отступ с запасом — см. lib/og про кириллические выносные */}
+            <div style={{ display: 'flex', marginTop: 36, fontSize: 44, maxWidth: 900 }}>{headline}</div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', fontSize: 26, color: OG_DIM, maxWidth: 880 }}>{foot}</div>
+            <div
+              style={{
+                display: 'flex',
+                fontFamily: 'Manrope',
+                fontSize: 20,
+                letterSpacing: 3,
+                color: OG_EMBER,
+              }}
+            >
+              IMBORED.CC
+            </div>
           </div>
         </div>
       </div>

@@ -143,6 +143,8 @@ export async function loadCompatInvite(
   db: Db,
   steamid: string,
   known?: Awaited<ReturnType<typeof getLatestSnapshot>>,
+  /** Сколько самых наигранных взять: странице — ленту, карточке — стену */
+  opts: { top?: number } = {},
 ): Promise<CompatInvite | null> {
   const snapshot = known === undefined ? await getLatestSnapshot(db, steamid) : known
   if (!snapshot) return null
@@ -150,7 +152,7 @@ export async function loadCompatInvite(
   const top = [...snapshot.games]
     .filter((g) => g.appid > 0)
     .sort((a, b) => b.playtimeForever - a.playtimeForever)
-    .slice(0, HERO_ART)
+    .slice(0, opts.top ?? HERO_ART)
   const metas = await getGamesMetaLite(db, top.map((g) => g.appid))
 
   return {

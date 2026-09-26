@@ -1,11 +1,11 @@
 import { describe, expect, test, vi } from 'vitest'
 import { ogPoster } from './og'
-import { WALL_TALL, WALL_WIDE, wallColumns, wallCovers } from './ogwall'
+import { CANVAS_TALL, CANVAS_WIDE, WALL_TALL, WALL_WIDE, wallColumns, wallCovers } from './ogwall'
 
 describe('стена постеров', () => {
   test('закрывает холст целиком — без голых углов после поворота', () => {
-    expect(wallCovers(WALL_WIDE, { width: 1200, height: 630 })).toBe(true)
-    expect(wallCovers(WALL_TALL, { width: 1080, height: 1350 })).toBe(true)
+    expect(wallCovers(WALL_WIDE, CANVAS_WIDE)).toBe(true)
+    expect(wallCovers(WALL_TALL, CANVAS_TALL)).toBe(true)
     // и проверка правда умеет сказать «нет»
     expect(wallCovers({ ...WALL_WIDE, left: 0, top: 0 }, { width: 1200, height: 630 })).toBe(false)
   })

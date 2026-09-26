@@ -27,6 +27,10 @@ export type WallSpec = {
   top: number
 }
 
+/** Холсты карточек: OG и сторис */
+export const CANVAS_WIDE = { width: 1200, height: 630 } as const
+export const CANVAS_TALL = { width: 1080, height: 1350 } as const
+
 /** OG 1200×630 */
 export const WALL_WIDE: WallSpec = {
   cols: 9,

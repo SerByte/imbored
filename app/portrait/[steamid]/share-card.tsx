@@ -1,7 +1,7 @@
-import { artCandidates, type GameArtUrls } from '@/lib/art'
 import { getGamesMetaLite, getLatestSnapshot, getPersonaName } from '@/lib/db'
-import { ogFonts, ogGlow, ogNum, ogPoster, ogScrim, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
-import { WALL_TALL, WALL_WIDE, wallColumns, wallSize, type WallSpec } from '@/lib/ogwall'
+import { ogFonts, ogNum, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
+import { PosterWall, postersOf, WALL_POSTERS, WallShade } from '@/lib/ogcard'
+import { CANVAS_TALL, CANVAS_WIDE, WALL_TALL, WALL_WIDE } from '@/lib/ogwall'
 import { buildPortrait } from '@/lib/portrait'
 import { getDb } from '@/lib/server'
 import { buildWrapped } from '@/lib/wrapped'
@@ -30,12 +30,6 @@ export type CardData = {
   posters: string[]
   topGame: { name: string; sharePercent: number } | null
 }
-
-/**
- * Уникальных постеров на стене. Каждый — загрузка при рендере; клеток больше,
- * и остальное — повтор, который ничего не стоит.
- */
-export const WALL_POSTERS = 12
 
 export async function loadCardData(steamid: string): Promise<CardData | null> {
   if (!/^\d{17}$/.test(steamid)) return null
@@ -75,95 +69,6 @@ const INK = OG_INK
 const DIM = OG_DIM
 const EMBER = OG_EMBER
 const num = ogNum
-
-/** Постеры игр — параллельно, каждый со своим таймаутом (ogPoster) */
-export async function postersOf(
-  games: ReadonlyArray<{ appid: number }>,
-  metaOf: (appid: number) => { art?: GameArtUrls | null; headerImage?: string | null } | undefined,
-): Promise<string[]> {
-  const got = await Promise.all(
-    games.map((g) => {
-      const meta = metaOf(g.appid)
-      return ogPoster(
-        artCandidates({ appid: g.appid, art: meta?.art ?? null, headerImage: meta?.headerImage ?? null }, 'poster'),
-      )
-    }),
-  )
-  return got.filter((p): p is string => p !== null)
-}
-
-/**
- * Стена постеров под карточкой — тот же жест, что у героя портрета на сайте.
- * satori не знает grid: стена — ряд колонок, поворот — у контейнера.
- */
-export function PosterWall({ posters, spec }: { posters: string[]; spec: WallSpec }) {
-  const columns = wallColumns(posters, spec)
-  if (!columns.length) return null
-  const { width, height } = wallSize(spec)
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        left: spec.left,
-        top: spec.top,
-        width,
-        height,
-        display: 'flex',
-        transform: `rotate(${spec.angleDeg}deg)`,
-        opacity: 0.8,
-      }}
-    >
-      {columns.map((column, c) => (
-        <div
-          key={c}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            marginRight: c < columns.length - 1 ? spec.gap : 0,
-            marginTop: c % 2 ? spec.stagger : 0,
-          }}
-        >
-          {column.map((src, r) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={r}
-              src={src}
-              width={spec.cellW}
-              height={spec.cellH}
-              alt=""
-              style={{
-                width: spec.cellW,
-                height: spec.cellH,
-                objectFit: 'cover',
-                borderRadius: 12,
-                marginBottom: r < column.length - 1 ? spec.gap : 0,
-              }}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-/** Холсты карточек: OG и сторис */
-export const CANVAS_WIDE = { width: 1200, height: 630 }
-export const CANVAS_TALL = { width: 1080, height: 1350 }
-
-/**
- * Скрим и тёплое пятно поверх стены — текст ложится на погашенное. Размер —
- * пикселями: у satori абсолютный слой в процентах схлопывается в ноль, и
- * стена оставалась голой (замерено на первой отрисовке).
- */
-export function WallShade({ canvas }: { canvas: { width: number; height: number } }) {
-  const fill = { position: 'absolute', left: 0, top: 0, ...canvas, display: 'flex' } as const
-  return (
-    <>
-      <div style={{ ...fill, backgroundImage: ogScrim() }} />
-      <div style={{ ...fill, backgroundImage: ogGlow() }} />
-    </>
-  )
-}
 
 /**
  * Раскладка карточки. Ориентация задаёт всё остальное: у широкой OG числа

@@ -1,7 +1,7 @@
 import { getGamesMetaLite, getLatestSnapshot, getLibraryBaselines, getPersonaName } from '@/lib/db'
 import { dateLabel } from '@/lib/freshness'
 import { OG_BG, OG_DIM, OG_EMBER, OG_INK, ogFonts } from '@/lib/og'
-import { WALL_TALL, WALL_WIDE } from '@/lib/ogwall'
+import { CANVAS_TALL, CANVAS_WIDE, WALL_TALL, WALL_WIDE } from '@/lib/ogwall'
 import { playedLine } from '@/lib/outcome'
 import { plural } from '@/lib/plural'
 import { getDb } from '@/lib/server'
@@ -13,7 +13,7 @@ import {
   yearEyebrow,
   yearsToRead,
 } from '@/lib/wrapped'
-import { CANVAS_TALL, CANVAS_WIDE, PosterWall, postersOf, WALL_POSTERS, WallShade } from '../share-card'
+import { PosterWall, postersOf, WALL_POSTERS, WallShade } from '@/lib/ogcard'
 
 /**
  * Карточка итогов года — OG-превью 1200×630 и сторис 1080×1350. Та же
