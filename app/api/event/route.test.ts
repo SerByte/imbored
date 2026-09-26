@@ -48,6 +48,14 @@ describe('/api/event', () => {
     expect(JSON.stringify(all.rows)).not.toMatch(/7656119|203\.0\.113/)
   })
 
+  // Потолок в памяти, а не в rate_limits: адрес рядом с числом шагов не
+  // должен оседать в базе даже до суточной уборки
+  test('адрес в базу не пишется', async () => {
+    await send({ event: 'quiz_done' }, '192.0.2.44')
+    const rows = await db.execute('SELECT key FROM rate_limits')
+    expect(JSON.stringify(rows.rows)).not.toContain('192.0.2.44')
+  })
+
   test('один адрес упирается в потолок, соседний — нет', async () => {
     let last = 0
     for (let i = 0; i < 61; i++) last = (await send({ event: 'share_click' }, '198.51.100.9')).status

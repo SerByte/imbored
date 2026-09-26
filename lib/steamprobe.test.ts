@@ -36,13 +36,21 @@ describe('runSteamProbe', () => {
     expect(await getCatalogMeta(db, STEAM_PROBE_KEY)).not.toContain(KEY)
   })
 
+  test('Steam мигнул (503 дважды) — отметка «мигание», а не «мёртвый ключ»', async () => {
+    const db = await createDb(':memory:')
+    const { urls, fetchFn } = steam(() => new Response('Service Unavailable', { status: 503 }))
+    const mark = await runSteamProbe(db, { nowSec: T0, apiKey: KEY, fetchFn })
+    expect(mark).toMatchObject({ ok: false, transient: true })
+    expect(urls).toHaveLength(2)
+  })
+
   test('сетевая ошибка с адресом в тексте — ключ вычищен', async () => {
     const db = await createDb(':memory:')
     const { fetchFn } = steam(() => {
       throw new TypeError(`fetch failed: https://api.steampowered.com/x?key=${KEY}&format=json`)
     })
     const mark = await runSteamProbe(db, { nowSec: T0, apiKey: KEY, fetchFn })
-    expect(mark?.ok).toBe(false)
+    expect(mark).toMatchObject({ ok: false, transient: true })
     expect(JSON.stringify(mark)).not.toContain(KEY)
   })
 

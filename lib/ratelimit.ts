@@ -73,6 +73,24 @@ function memoryHits(key: string): number {
   return n
 }
 
+/**
+ * Потолок только в памяти инстанса — для ручек, где адрес незачем хранить.
+ *
+ * checkRate пишет адрес в rate_limits до суточной уборки: для входа и
+ * подбора это честная плата за общий на все инстансы потолок. Счётчикам
+ * воронки (/api/event, начало входа) такая точность не нужна — им надо лишь,
+ * чтобы один скрипт не жёг записи Turso без предела, — а адрес рядом с числом
+ * шагов в базе противоречил бы обещанию «шаги не связаны с тобой». Здесь
+ * адрес живёт только в памяти, в пределах окна, и никуда не пишется.
+ *
+ * Ключ — имя ручки и адрес; окно фиксированное. Карта чистится оптом при
+ * переполнении, как префильтр выше.
+ */
+export function memoryGate(o: { bucket: string; id: string; limit: number; windowSec: number; nowSec: number }): boolean {
+  const key = `${o.bucket}:${o.id}:${Math.floor(o.nowSec / o.windowSec) * o.windowSec}`
+  return memoryHits(`gate:${key}`) <= o.limit
+}
+
 /** Только для тестов: префильтр живёт на модуле и иначе течёт между случаями */
 export function resetRateMemory(): void {
   memory.clear()

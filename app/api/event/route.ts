@@ -1,5 +1,5 @@
-import { checkRate, clientIp } from '@/lib/ratelimit'
-import { getDb, nowSec } from '@/lib/server'
+import { clientIp, memoryGate } from '@/lib/ratelimit'
+import { nowSec } from '@/lib/server'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { eventKey, parseTrackEvent, TRACK_MAX_BODY } from '@/lib/track'
 
@@ -11,7 +11,9 @@ import { eventKey, parseTrackEvent, TRACK_MAX_BODY } from '@/lib/track'
  * видна как отношение чисел, без пути конкретного человека.
  *
  * Потолок по адресу — чтобы один скрипт не накрутил счётчики и не жёг
- * записи Turso: живой человек за десять минут делает единицы шагов.
+ * записи Turso: живой человек за десять минут делает единицы шагов. Потолок
+ * в памяти инстанса (memoryGate), а не в базе: адрес рядом с числом шагов не
+ * должен оседать нигде.
  */
 
 const EVENT_LIMIT = 60
@@ -33,14 +35,14 @@ export async function POST(req: Request) {
   // Чужое — 204 без базы: маяку ответ не нужен, а повторять он не станет
   if (!step) return new Response(null, { status: 204 })
 
-  const gate = await checkRate(await getDb(), {
+  const allowed = memoryGate({
     bucket: 'event',
     id: clientIp(req.headers),
     limit: EVENT_LIMIT,
     windowSec: EVENT_WINDOW_SEC,
     nowSec: nowSec(),
   })
-  if (!gate.ok) return new Response(null, { status: 429 })
+  if (!allowed) return new Response(null, { status: 429 })
 
   recordTelemetryLater('event', eventKey(step.event, step.source))
   return new Response(null, { status: 204 })

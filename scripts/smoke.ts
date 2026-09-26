@@ -104,8 +104,11 @@ async function main(): Promise<void> {
 }
 
 main()
-  .catch(() => {
-    // провал уже записан в problems шагом
+  .catch((err: unknown) => {
+    // Провал шага уже записан самим шагом. А вот браузер, который не
+    // запустился, и контекст, который не создался, — нет: без этой строки
+    // смоук рапортовал бы успех, не открыв ни одной страницы
+    if (!problems.length) problems.push(`до первого шага: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`)
   })
   .finally(() => {
     if (problems.length) {

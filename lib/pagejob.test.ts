@@ -445,6 +445,21 @@ describe('runPageSlice', () => {
     expect(res).toMatchObject({ llm: 'down', llmStatus: 402 })
   })
 
+  test('перегруз модели (529) — эвристика, но без отметки для health', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const res = await runPageSlice(
+      db,
+      stubs({
+        prosConsFn: async () => {
+          throw new LlmUnavailableError(529, 'overloaded')
+        },
+      }),
+    )
+    expect(res).toMatchObject({ enriched: 1, withProsCons: 1, viaClaude: 0 })
+    expect(res.llm).toBeUndefined()
+  })
+
   test('модель отвечает — отметки об отказе нет', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)

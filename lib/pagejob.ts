@@ -30,7 +30,7 @@ import {
   type Db,
 } from './db'
 import { logSwallowed } from './errlog'
-import { claudeProsCons, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
+import { claudeProsCons, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { llmBudgetLeft, takeLlmBudget } from './llmcap'
 import { fetchReviewsRaw, heuristicProsCons, parseReviews, type ProsCons } from './reviews'
 import { mineReviews, parseReviewsRaw } from './reviewmine'
@@ -100,9 +100,10 @@ export type PageSliceResult = {
   hasMore: boolean
   stopped: 'done' | 'budget' | 'blocked'
   /**
-   * Сервис модели отказал в этом срезе (пустой баланс, отозванный ключ,
-   * квота). Карточки при этом собраны эвристикой, но /api/cron/health должен
-   * это видеть — см. sliceHealth в lib/cron.ts.
+   * Сервис модели отказал в этом срезе всерьёз — пустой баланс, отозванный
+   * ключ, нет модели (isPersistentOutage в lib/llm; 429/5xx — мигание, его
+   * здесь нет). Карточки при этом собраны эвристикой, но /api/cron/health
+   * должен это видеть — см. sliceHealth в lib/cron.ts.
    */
   llm?: 'down'
   /** HTTP-статус отказа; null — до сервиса не дошли */
@@ -482,7 +483,11 @@ export async function runPageSlice(
     withSemantics,
     hasMore: targets.length === limit && stopped !== 'blocked',
     stopped,
-    ...(claudeDown ? { llm: 'down' as const, llmStatus: llmStatus ?? null } : {}),
+    // Модель в этом срезе не зовут после любого системного отказа, а в
+    // отметку для health — только отказ, который сам не пройдёт
+    ...(claudeDown && isPersistentOutage(llmStatus ?? null)
+      ? { llm: 'down' as const, llmStatus: llmStatus ?? null }
+      : {}),
     ...(llmCapped ? { llmCapped: true as const } : {}),
   }
 }

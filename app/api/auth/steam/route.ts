@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { loginCarry } from '@/lib/destination'
 import { browserHost } from '@/lib/origin'
-import { OIDC_COOKIE, appBaseUrl, oidcCookieOptions } from '@/lib/server'
+import { clientIp, memoryGate } from '@/lib/ratelimit'
+import { OIDC_COOKIE, appBaseUrl, nowSec, oidcCookieOptions } from '@/lib/server'
 import { RETURN_PATH, buildSteamLoginUrl, newLoginState } from '@/lib/steam-openid'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { eventKey } from '@/lib/track'
@@ -46,7 +47,12 @@ export async function GET(req: Request) {
   const res = NextResponse.redirect(buildSteamLoginUrl(`${base}${RETURN_PATH}?${query}`))
   res.cookies.set(OIDC_COOKIE, state, oidcCookieOptions())
   // Шаг воронки — здесь, после прыжка на канонический хост: иначе один вход
-  // считался бы дважды
-  recordTelemetryLater('event', eventKey('connect_start', 'openid'))
+  // считался бы дважды. Под потолком в памяти: ручка открыта GET'ом без
+  // сессии, и обход ссылок ботом иначе писал бы в базу без предела
+  if (
+    memoryGate({ bucket: 'connect-start', id: clientIp(req.headers), limit: 10, windowSec: 600, nowSec: nowSec() })
+  ) {
+    recordTelemetryLater('event', eventKey('connect_start', 'openid'))
+  }
   return res
 }

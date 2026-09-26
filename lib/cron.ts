@@ -326,12 +326,19 @@ export function steamKeyHealth(
   staleSec: number,
   paused = false,
 ): SliceHealth {
-  let mark: { at: number; ok: boolean; detail?: string } | null = null
+  let mark: { at: number; ok: boolean; transient: boolean; detail?: string } | null = null
   try {
-    const o = raw ? (JSON.parse(raw) as { at?: unknown; ok?: unknown; detail?: unknown }) : null
+    const o = raw
+      ? (JSON.parse(raw) as { at?: unknown; ok?: unknown; detail?: unknown; transient?: unknown })
+      : null
     const at = Number(o?.at ?? 0)
     if (o && Number.isFinite(at) && at > 0) {
-      mark = { at, ok: o.ok === true, ...(typeof o.detail === 'string' ? { detail: o.detail } : {}) }
+      mark = {
+        at,
+        ok: o.ok === true,
+        transient: o.transient === true,
+        ...(typeof o.detail === 'string' ? { detail: o.detail } : {}),
+      }
     }
   } catch {
     mark = null
@@ -340,6 +347,9 @@ export function steamKeyHealth(
   if (paused) return { ok: true, paused: true, ...(ageSec !== undefined ? { ageSec } : {}) }
   if (!mark || ageSec === undefined) return { ok: false, problem: 'нет записи' }
   if (ageSec >= staleSec) return { ok: false, problem: 'протух', ageSec }
-  if (!mark.ok) return { ok: false, problem: 'ключ Steam', ageSec, ...(mark.detail ? { detail: mark.detail } : {}) }
+  // Мигание Steam (5xx, 429, таймаут) про ключ ничего не говорит
+  if (!mark.ok && !mark.transient) {
+    return { ok: false, problem: 'ключ Steam', ageSec, ...(mark.detail ? { detail: mark.detail } : {}) }
+  }
   return { ok: true, ageSec }
 }

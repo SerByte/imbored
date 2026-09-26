@@ -23,6 +23,35 @@ import { recordTelemetryLater } from '@/lib/telemetry'
  * same-origin, а где этого заголовка нет, Origin свой.
  */
 
+/**
+ * Директивы, которые бывают на самом деле. Счётчик заводит строку на каждый
+ * ключ и держит её 90 дней, а директиву в отчёте пишет кто угодно: выдуманные
+ * уходят в 'other', иначе скрипт засевал бы таблицу мусорными ключами.
+ */
+const KNOWN_DIRECTIVES = new Set([
+  'default-src',
+  'script-src',
+  'script-src-elem',
+  'script-src-attr',
+  'style-src',
+  'style-src-elem',
+  'style-src-attr',
+  'img-src',
+  'font-src',
+  'connect-src',
+  'media-src',
+  'object-src',
+  'frame-src',
+  'child-src',
+  'worker-src',
+  'manifest-src',
+  'form-action',
+  'frame-ancestors',
+  'base-uri',
+  'trusted-types',
+  'require-trusted-types-for',
+])
+
 /** Отчёт — пара килобайт. Больше — не отчёт, читать не будем. */
 const MAX_BODY = 64 * 1024
 
@@ -47,7 +76,8 @@ export async function POST(req: Request) {
   for (const v of parseCspReports(body)) {
     if (!shouldLog(violationKey(v), now)) continue
     console.warn(JSON.stringify({ event: 'csp-report', ...v }))
-    logged.set(v.directive, (logged.get(v.directive) ?? 0) + 1)
+    const key = KNOWN_DIRECTIVES.has(v.directive) ? v.directive : 'other'
+    logged.set(key, (logged.get(key) ?? 0) + 1)
   }
   for (const [directive, n] of logged) recordTelemetryLater('csp', directive, n)
   // 204 и на пустой разбор: браузеру ответ не нужен, а повторять он не станет

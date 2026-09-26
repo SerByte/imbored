@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { joinRoom, saveLibrarySnapshot, upsertUser } from '@/lib/db'
+import { joinRoom, roomMembers, saveLibrarySnapshot, upsertUser } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import {
@@ -144,11 +144,16 @@ export async function GET(req: NextRequest) {
      */
     const join = loginCarry(params).get('join')
     if (join) {
+      // Был ли уже в комнате — для воронки, как в /api/room/[id]/join:
+      // хозяин, перелогинившийся по своей же ссылке, новым входом не считается
+      const before = await roomMembers(db, join).catch(() => null)
       const joined = await joinRoom(db, join, steamid, summary?.personaName, now).catch((err: unknown) => {
         logSwallowed('auth/return:join', err)
         return null
       })
-      if (joined === 'joined') recordTelemetryLater('event', eventKey('invite_join', 'login'))
+      if (joined === 'joined' && before && !before.some((m) => m.steamid === steamid)) {
+        recordTelemetryLater('event', eventKey('invite_join', 'login'))
+      }
     }
 
     // Куда человек шёл до разворота на лендинг; список закрытый —

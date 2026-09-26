@@ -278,6 +278,12 @@ describe('steamKeyHealth', () => {
     })
   })
 
+  test('мигание Steam — здоров: про ключ оно ничего не говорит', () => {
+    expect(
+      steamKeyHealth(JSON.stringify({ at: NOW - 600, ok: false, transient: true, detail: 'HTTP 503' }), NOW, STALE),
+    ).toEqual({ ok: true, ageSec: 600 })
+  })
+
   test('нет записи, мусор и старая проба', () => {
     expect(steamKeyHealth(null, NOW, STALE)).toEqual({ ok: false, problem: 'нет записи' })
     expect(steamKeyHealth('{не json', NOW, STALE)).toEqual({ ok: false, problem: 'нет записи' })

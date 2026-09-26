@@ -29,7 +29,7 @@ import {
 } from './db'
 import { sliceClock } from './cron'
 import { logSwallowed } from './errlog'
-import { claudeNewsDigest, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
+import { claudeNewsDigest, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { takeLlmBudget } from './llmcap'
 import { bodyHash, detectLang, fetchGameNews, isPatchNote, looksTrivial, newsText } from './news'
 import { blocksToText } from './steamhtml'
@@ -340,7 +340,8 @@ export type DigestResult = {
    */
   stopped: 'done' | 'budget' | 'unavailable' | 'capped'
   /**
-   * Сервис модели отказал — не «ключа нет», а отказ живого вызова. Ложится в
+   * Сервис модели отказал всерьёз — не «ключа нет» и не мигание 429/5xx, а
+   * баланс, ключ или модель (isPersistentOutage в lib/llm). Ложится в
    * отметку среза и поднимает /api/cron/health (sliceHealth, lib/cron.ts):
    * пустой баланс или отозванный ключ иначе видно только по тому, что
    * пересказы перестали появляться.
@@ -433,7 +434,14 @@ export async function runDigestSlice(
         // В кроне onProgress не слушает никто: без этой строки статус отказа
         // терялся целиком
         logSwallowed('newsjob:digest', e, { status: e.status ?? 'net' })
-        return { digested, hasMore: false, stopped: 'unavailable', llm: 'down', llmStatus: e.status }
+        // В отметку — только отказ, который сам не пройдёт (баланс, ключ,
+        // модель): мигание 429/5xx/таймаута срез переживёт через час
+        return {
+          digested,
+          hasMore: false,
+          stopped: 'unavailable',
+          ...(isPersistentOutage(e.status) ? { llm: 'down' as const, llmStatus: e.status } : {}),
+        }
       }
       throw e
     }

@@ -226,8 +226,22 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
     expect(res).toMatchObject({ digested: 0, hasMore: false, stopped: 'unavailable' })
     expect((await getUnsummarized(db, 10)).length).toBe(1)
-    // отказ живого вызова виден в отметке среза — по нему краснеет health
-    expect(res).toMatchObject({ llm: 'down', llmStatus: 429 })
+    // 429 — мигание: срез встал, но health из-за него не краснеет
+    expect(res.llm).toBeUndefined()
+  })
+
+  test('отказ, который сам не пройдёт, — в отметке среза, по нему краснеет health', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    const revoked = async () => {
+      throw new LlmUnavailableError(401, 'ключ отозван')
+    }
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: revoked as unknown as typeof okDigest,
+    })
+    expect(res).toMatchObject({ stopped: 'unavailable', llm: 'down', llmStatus: 401 })
   })
 
   test('без ключа — «недоступна», но не «отказала»: health не краснеет', async () => {
