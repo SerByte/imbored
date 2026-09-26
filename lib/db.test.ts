@@ -118,6 +118,7 @@ import {
   revokeSession,
   DEMO_TTL_SEC,
   FEEDBACK_CTX_TTL_SEC,
+  listEvenings,
 } from './db'
 import { seedDemo } from './demo'
 import { FEEDBACK_ACTIONS } from './feedbackkinds'
@@ -3588,6 +3589,31 @@ describe('исход совета', () => {
     ])
   })
 
+  // «Твои вечера» на /library: свои советы за окно, новые первыми
+  test('listEvenings — свои за окно, новые первыми, с приростом минут', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 100 * DAY)
+    await recordOutcome(db, { steamid: ME, appid: 620, source: 'untouched', launched: true }, NOW - 95 * DAY)
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 3 * DAY)
+    await launch(db, 620, NOW - 2 * DAY)
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: false }, NOW - DAY)
+    await recordOutcome(db, { steamid: '76561198000000002', appid: 620, source: 'untouched', launched: true }, NOW)
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: g.playtimeForever + 50 } : g)),
+      NOW,
+    )
+    const list = await listEvenings(db, ME, NOW - 90 * DAY)
+    expect(list.map((e) => [e.appid, e.shownAt])).toEqual([
+      [999, NOW - DAY],
+      [620, NOW - 2 * DAY],
+    ])
+    expect(list[1]).toMatchObject({ launched: true, minutes: 50 })
+    // игры нет и после снапшота — заглянул и не взял: сверено, сыграно ноль
+    expect(list[0]).toMatchObject({ launched: false, minutes: 0, bought: false })
+  })
+
   test('повтор в окне — та же строка; запуск после магазина дописывает время запуска', async () => {
     const db = await freshDb()
     await saveLibrarySnapshot(db, ME, LIB, NOW - DAY)
@@ -3670,9 +3696,13 @@ describe('исход совета', () => {
     // Ответили — следующий по свежести
     expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toBe(true)
     expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 90, bought: false })
-    // Второй ответ первый не переписывает
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'hooked')).toBe(false)
-    expect((await outcomeRows(db)).find((r) => r.appid === 999)?.verdict).toBe('meh')
+    // Ответ можно поменять («Твои вечера» на /library), а тот же ответ
+    // повтором ничего не пишет — роуту это говорит, что «зашло» заводить незачем
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toBe(false)
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'hooked')).toBe(true)
+    expect((await outcomeRows(db)).find((r) => r.appid === 999)?.verdict).toBe('hooked')
+    // Спрашивать об отвеченном по-прежнему незачем
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620 })
     expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'dismissed')).toBe(true)
     expect(await pendingOutcomeAsk(db, ME, NOW)).toBeNull()
   })

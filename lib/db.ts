@@ -19,6 +19,8 @@ import {
   OUTCOME_WINDOW_SEC,
   type OutcomeAsk,
   type OutcomeVerdict,
+  eveningFrom,
+  type Evening,
 } from './outcome'
 import { SEMANTICS_V } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
@@ -4261,8 +4263,45 @@ export async function pendingOutcomeAsk(
 }
 
 /**
- * Ответ на «как тебе?». Только в строку без ответа: второй ответ с соседней
- * вкладки первый не переписывает. false — строки нет или ответ уже был.
+ * Советы за окно (для «Твоих вечеров» на /library): новые первыми. Без
+ * join — имена и обложки страница берёт одним общим getGamesMetaLite.
+ * Чтение по префиксу первичного ключа (steamid) — не по idx_outcomes_shown,
+ * который сквозной по всем людям и нужен только суточной уборке.
+ */
+export async function listEvenings(
+  db: Db,
+  steamid: string,
+  sinceSec: number,
+  limit = 200,
+): Promise<Evening[]> {
+  const res = await db.execute({
+    sql: `SELECT appid, shown_at, launched_at, minutes_before, minutes_after, owned_after,
+                 checked_at, verdict
+            FROM outcomes
+           WHERE steamid = ? AND shown_at >= ?
+           ORDER BY shown_at DESC, appid LIMIT ?`,
+    args: [steamid, sinceSec, limit],
+  })
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v))
+  return res.rows.map((r) =>
+    eveningFrom({
+      appid: Number(r.appid),
+      shownAt: Number(r.shown_at),
+      launchedAt: n(r.launched_at),
+      minutesBefore: n(r.minutes_before),
+      minutesAfter: n(r.minutes_after),
+      ownedAfter: n(r.owned_after),
+      checkedAt: n(r.checked_at),
+      verdict: r.verdict === null ? null : String(r.verdict),
+    }),
+  )
+}
+
+/**
+ * Ответ на «как тебе?» — первый или исправленный (ответ можно поменять в
+ * «Твоих вечерах» на /library). true — ответ изменился; false — строки нет
+ * или ответ тот же: повтор с соседней вкладки ничего не пишет, и роут не
+ * заводит лишнее «зашло».
  */
 export async function setOutcomeVerdict(
   db: Db,
@@ -4273,8 +4312,9 @@ export async function setOutcomeVerdict(
 ): Promise<boolean> {
   const res = await db.execute({
     sql: `UPDATE outcomes SET verdict = ?
-           WHERE steamid = ? AND appid = ? AND shown_at = ? AND verdict IS NULL`,
-    args: [verdict, steamid, appid, shownAt],
+           WHERE steamid = ? AND appid = ? AND shown_at = ?
+             AND (verdict IS NULL OR verdict <> ?)`,
+    args: [verdict, steamid, appid, shownAt, verdict],
   })
   return Number(res.rowsAffected) > 0
 }

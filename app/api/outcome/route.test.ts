@@ -101,10 +101,23 @@ describe('/api/outcome: ответ', () => {
     const steamid = await signInAs(db, 'openid')
     const shownAt = await played(steamid)
     await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'meh' }))
-    // Второй ответ с соседней вкладки — не «зашло» поверх «так себе»
-    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'hooked' }))
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'meh' }))
     expect(await listFeedback(db, steamid)).toEqual([])
     const row = await db.execute({ sql: 'SELECT verdict FROM outcomes WHERE steamid = ?', args: [steamid] })
     expect(row.rows.map((r) => r.verdict)).toEqual(['meh'])
+  })
+
+  // Ответ меняется в «Твоих вечерах»: передумал в сторону «Зацепило» — одно
+  // «зашло», а повтор того же ответа второго не заводит
+  test('поменял ответ на «Зацепило» — одно «зашло», повтор второго не пишет', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const shownAt = await played(steamid)
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'meh' }))
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'hooked' }))
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'hooked' }))
+    const liked = (await listFeedback(db, steamid)).filter((f) => f.action === 'liked')
+    expect(liked).toHaveLength(1)
+    const row = await db.execute({ sql: 'SELECT verdict FROM outcomes WHERE steamid = ?', args: [steamid] })
+    expect(row.rows.map((r) => r.verdict)).toEqual(['hooked'])
   })
 })

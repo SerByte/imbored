@@ -15,6 +15,7 @@ import {
   getMajorFeed,
   getMajorFeedHead,
   getNeighbors,
+  listEvenings,
   getNewsPage,
   getUnsummarized,
   listExplore,
@@ -394,6 +395,22 @@ describe('планы запросов', () => {
     expect(where).toMatch(/SEARCH n USING PRIMARY KEY \(appid=\?\)/)
     expect(where).toMatch(/SEARCH g USING INTEGER PRIMARY KEY \(rowid=\?\)/)
     expect(where).not.toContain('TEMP B-TREE')
+  })
+
+  /*
+   * «Твои вечера» — советы одного человека за девяносто дней. Первичный ключ
+   * outcomes начинается со steamid, и чтение не выходит за строки этого
+   * человека. Сортировка по дате — временное дерево, и оно законно: его
+   * объём — советы одного человека за три месяца, а не таблица.
+   */
+  test('вечера человека: по первичному ключу, без сканов', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) => listEvenings(spy, '76561198000000001', NOW - 90 * 86400))
+    expect(issued).toHaveLength(1)
+    const plan = await planOf(db, issued[0]!)
+    const where = plan.join(' | ')
+    expect(bareScans(plan), where).toEqual([])
+    expect(where).toMatch(/SEARCH outcomes USING PRIMARY KEY \(steamid=\?\)/)
   })
 
   test('у каждого частичного индекса схемы есть запрос, который это проверяет', async () => {

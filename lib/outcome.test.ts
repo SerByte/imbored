@@ -6,6 +6,8 @@ import {
   parseOutcomeAsk,
   playedEnough,
   playedLine,
+  eveningFrom,
+  eveningsSummary,
 } from './outcome'
 
 describe('playedLine', () => {
@@ -64,5 +66,46 @@ describe('ответы и порог', () => {
     expect(playedEnough(null)).toBe(false)
     expect(playedEnough(OUTCOME_PLAYED_MIN - 1)).toBe(false)
     expect(playedEnough(OUTCOME_PLAYED_MIN)).toBe(true)
+  })
+})
+
+describe('Твои вечера', () => {
+  const row = (over: Partial<Parameters<typeof eveningFrom>[0]> = {}) => ({
+    appid: 620,
+    shownAt: 1_760_000_000,
+    launchedAt: 1_760_000_100,
+    minutesBefore: 100,
+    minutesAfter: 190,
+    ownedAfter: 1,
+    checkedAt: 1_760_100_000,
+    verdict: null,
+    ...over,
+  })
+
+  test('минуты — прирост за окно совета, не меньше нуля', () => {
+    expect(eveningFrom(row()).minutes).toBe(90)
+    // снапшот показал меньше (сброс счётчика в Steam) — не отрицательное
+    expect(eveningFrom(row({ minutesAfter: 50 })).minutes).toBe(0)
+  })
+
+  test('несверенный — неизвестно, а не ноль; заглянул и не купил — ноль', () => {
+    expect(eveningFrom(row({ checkedAt: null })).minutes).toBeNull()
+    expect(eveningFrom(row({ minutesBefore: null, minutesAfter: null, ownedAfter: 0 })).minutes).toBe(0)
+  })
+
+  test('купил после совета — bought; чужой вердикт — null', () => {
+    expect(eveningFrom(row({ minutesBefore: null, minutesAfter: 30 })).bought).toBe(true)
+    expect(eveningFrom(row({ verdict: 'meh' })).verdict).toBe('meh')
+    expect(eveningFrom(row({ verdict: 'drop table' })).verdict).toBeNull()
+  })
+
+  // Честная доля: знаменатель — только сверенные
+  test('сводка считает только сверенные и сыгранное от пятнадцати минут', () => {
+    const list = [
+      eveningFrom(row({ minutesAfter: 190 })), // 90 — сыграл
+      eveningFrom(row({ minutesAfter: 105 })), // 5 — открыл и закрыл
+      eveningFrom(row({ checkedAt: null })), // неизвестно
+    ]
+    expect(eveningsSummary(list)).toEqual({ checked: 2, played: 1, minutes: 95 })
   })
 })

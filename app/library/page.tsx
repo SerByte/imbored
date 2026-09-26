@@ -15,6 +15,7 @@ import {
   getLatestSnapshot,
   listBanned,
   loadTagStats,
+  listEvenings,
 } from '@/lib/db'
 import {
   buildLibraryView,
@@ -38,6 +39,9 @@ import { bounceTo, reconnectHref } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
 import { plural } from '@/lib/plural'
+import { dateLabel } from '@/lib/freshness'
+import { eveningsSummary, OUTCOME_TTL_SEC, playedEnough, playedLine } from '@/lib/outcome'
+import { Evenings, type EveningItem } from '@/components/Evenings'
 
 export const metadata = {
   title: 'Библиотека',
@@ -59,6 +63,12 @@ const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
   comeback: { text: 'заброшена', cls: 'text-dim' },
   played: { text: '', cls: 'text-dim' },
 }
+
+/** Сколько советов на полке «Твои вечера»: свежие; сводка — по всем за окно */
+const EVENINGS_SHOWN = 12
+
+/** С какого числа сверенных советов показывать честную долю */
+const EVENINGS_HONEST_MIN = 3
 
 /** Сколько постеров в мозаике героя: пять колонок по три на широком экране */
 const MOSAIC = 15
@@ -102,12 +112,14 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings] = await Promise.all([
     getLatestSnapshot(db, steamid),
     listBanned(db, steamid),
     bannedAppids(db, steamid),
     feedbackStats(db, steamid),
     filter === 'untouched' ? loadTagStats(db) : null,
+    // «Твои вечера» — советы за тот же срок, что их хранят (OUTCOME_TTL_SEC)
+    listEvenings(db, steamid, nowSec() - OUTCOME_TTL_SEC),
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -124,8 +136,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
   // библиотеке не встретится, но обложка на полку нужна.
   // Узкой выборкой: скриншоты на этой странице не показываются нигде
+  const shownEvenings = evenings.slice(0, EVENINGS_SHOWN)
   const metas = await getGamesMetaLite(db, [
-    ...new Set([...games.map((g) => g.appid), ...banned.map((b) => b.appid)]),
+    ...new Set([
+      ...games.map((g) => g.appid),
+      ...banned.map((b) => b.appid),
+      ...shownEvenings.map((e) => e.appid),
+    ]),
   ])
   const bannedGames: BannedGame[] = banned.map((b) => {
     const meta = metas.get(b.appid)
@@ -140,6 +157,35 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     }
   })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
+
+  // Сводка — по всем советам окна, полка — по свежим (EVENINGS_SHOWN)
+  const eveningsTotal = eveningsSummary(evenings)
+  // Доля от трёх сверенных советов и больше: «сыграно в 100%» по одному — шум
+  const honest = eveningsTotal.checked >= EVENINGS_HONEST_MIN
+  const ownedNow = new Set(games.map((g) => g.appid))
+  const eveningItems: EveningItem[] = shownEvenings.map((e) => {
+    const meta = metas.get(e.appid)
+    return {
+      appid: e.appid,
+      shownAt: e.shownAt,
+      name: meta?.name ?? `Игра ${e.appid}`,
+      headerImage: meta?.headerImage ?? null,
+      art: trimArt(meta?.art),
+      date: dateLabel(e.shownAt),
+      played:
+        e.minutes === null
+          ? 'ещё не сверяли'
+          : e.minutes === 0
+            ? e.launched
+              ? 'открыл и закрыл'
+              : 'не запускал'
+            : playedLine(e.minutes),
+      playedEnough: playedEnough(e.minutes),
+      verdict: e.verdict,
+      owned: ownedNow.has(e.appid),
+      storeUrl: meta?.storeUrl ?? null,
+    }
+  })
 
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
@@ -261,7 +307,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         </section>
       )}
 
-      {(backlog.pricedCount > 0 || stats.rate !== null) && (
+      {(backlog.pricedCount > 0 || stats.rate !== null || honest) && (
         <div className="grid md:grid-cols-2 gap-4 mb-10">
           {backlog.pricedCount > 0 && (
             /*
@@ -327,18 +373,54 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               </Link>
             </div>
           )}
-          {stats.rate !== null && (
+          {(stats.rate !== null || honest) && (
             <div className="panel-lift p-5">
-              <div className="font-display text-display-xs">
-                Подбор попадает в{' '}
-                <span className="match">{Math.round(stats.rate * 100)}%</span>
-              </div>
-              <div className="text-xs text-dim mt-1">
-                {stats.liked} «зашло» против {stats.skipped} «не то»
-              </div>
+              {stats.rate !== null && (
+                <>
+                  <div className="font-display text-display-xs">
+                    Подбор попадает в{' '}
+                    <span className="match">{Math.round(stats.rate * 100)}%</span>
+                  </div>
+                  <div className="text-xs text-dim mt-1">
+                    {stats.liked} «зашло» против {stats.skipped} «не то»
+                  </div>
+                </>
+              )}
+              {/*
+                Честная мера рядом со словами: «зашло» — нажатие, а сыграно
+                ли — знает только следующий снапшот библиотеки. Доля от
+                сверенных советов (eveningsSummary): несверенный — «ещё
+                неизвестно», а не промах.
+              */}
+              {honest && (
+                <div className={stats.rate !== null ? 'text-xs text-dim mt-2' : 'font-display text-display-xs'}>
+                  Сыграно всерьёз —{' '}
+                  <span className={stats.rate !== null ? 'tabular-nums text-ink' : 'match'}>
+                    {Math.round((eveningsTotal.played / eveningsTotal.checked) * 100)}%
+                  </span>{' '}
+                  советов
+                  {stats.rate !== null ? (
+                    <>
+                      : {eveningsTotal.played} из {eveningsTotal.checked}, от пятнадцати минут
+                    </>
+                  ) : null}
+                </div>
+              )}
             </div>
           )}
         </div>
+      )}
+
+      {eveningItems.length > 0 && (
+        <Evenings
+          items={eveningItems}
+          summary={{
+            checked: eveningsTotal.checked,
+            played: eveningsTotal.played,
+            hours: playedLine(eveningsTotal.minutes),
+          }}
+          writer={session ? isWriter(session) : false}
+        />
       )}
 
       {shelf.length > 0 && (
