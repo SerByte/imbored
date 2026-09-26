@@ -1280,20 +1280,25 @@ export async function joinRoom(
     })
     return res.rows.length ? 'joined' : 'closed'
   }
-  // 'full' — только для НОВОГО участника: свой, зашедший повторно, проходит
-  // (INSERT OR REPLACE ниже освежает ему ник и время входа)
-  const seats = await db.execute({
-    sql: 'SELECT COUNT(*) AS n, SUM(steamid = ?) AS me FROM room_members WHERE room_id = ?',
-    args: [steamid, roomId],
+  /*
+   * Потолок — условием самой вставки, одним запросом.
+   *
+   * Проверка отдельным SELECT и вставка следом — две разные поездки в базу, и
+   * двое, вошедшие в одно окно (код комнаты кинули в открытый канал — ровно
+   * тот случай, ради которого потолок и заведён), оба видели семь мест из
+   * восьми и оба садились. Одна инструкция SQLite атомарна.
+   *
+   * 'full' — только для НОВОГО участника: свой, зашедший повторно, проходит
+   * по EXISTS (INSERT OR REPLACE освежает ему ник и время входа).
+   */
+  const res = await db.execute({
+    sql: `INSERT OR REPLACE INTO room_members (room_id, steamid, persona_name, joined_at)
+          SELECT ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = ? AND steamid = ?)
+             OR (SELECT COUNT(*) FROM room_members WHERE room_id = ?) < ?`,
+    args: [roomId, steamid, personaName ?? null, nowSec, roomId, steamid, roomId, maxMembers],
   })
-  const taken = Number(seats.rows[0]?.n ?? 0)
-  const already = Number(seats.rows[0]?.me ?? 0) > 0
-  if (!already && taken >= maxMembers) return 'full'
-  await db.execute({
-    sql: 'INSERT OR REPLACE INTO room_members (room_id, steamid, persona_name, joined_at) VALUES (?, ?, ?, ?)',
-    args: [roomId, steamid, personaName ?? null, nowSec],
-  })
-  return 'joined'
+  return res.rowsAffected > 0 ? 'joined' : 'full'
 }
 
 export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]> {
@@ -1693,8 +1698,10 @@ export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoo
           FROM rooms r
           LEFT JOIN room_members m ON m.room_id = r.id
           WHERE r.is_public = 1 AND r.status = 'open' AND r.created_at > ?
+            -- полная комната на доске — приглашение, которое кончится отказом «мест нет»
+            AND (SELECT COUNT(*) FROM room_members f WHERE f.room_id = r.id) < ?
           ORDER BY r.created_at DESC, m.joined_at ASC`,
-    args: [nowSec - PUBLIC_ROOM_MAX_AGE_SEC],
+    args: [nowSec - PUBLIC_ROOM_MAX_AGE_SEC, ROOM_MAX_MEMBERS],
   })
 
   const byRoom = new Map<string, PublicRoomListing>()

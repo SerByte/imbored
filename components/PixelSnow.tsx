@@ -280,16 +280,23 @@ export default function PixelSnow({
     const container = containerRef.current;
     if (!container) return;
 
-    const renderer = new Renderer({
-      webgl: 2,
-      alpha: true,
-      premultipliedAlpha: false,
-      antialias: false,
-      depth: false,
-      stencil: false,
-      powerPreference: 'high-performance',
-      dpr: Math.min(window.devicePixelRatio, 2)
-    });
+    // Без WebGL вовсе конструктор ogl падает (gl = null) — а снег декоративен,
+    // и ронять из-за него «Игру дня» в экран ошибки нельзя
+    let renderer: Renderer;
+    try {
+      renderer = new Renderer({
+        webgl: 2,
+        alpha: true,
+        premultipliedAlpha: false,
+        antialias: false,
+        depth: false,
+        stencil: false,
+        powerPreference: 'high-performance',
+        dpr: Math.min(window.devicePixelRatio, 2)
+      });
+    } catch {
+      return;
+    }
     const gl = renderer.gl;
     // Шейдер на uint — только GLSL ES 3.0; без WebGL2 снега нет, страница та же
     if (!renderer.isWebgl2) {

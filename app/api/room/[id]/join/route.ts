@@ -1,21 +1,16 @@
 import { NextResponse } from 'next/server'
 import { getPersonaName, joinRoom } from '@/lib/db'
-import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
+import { peekGate } from '@/lib/roompeek'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
 /*
- * Потолок — тот же ключ, что у просмотра комнаты не-участником (room-peek в
- * app/api/room/[id]/route.ts), и по той же причине: перебор кодов. Вход
- * отвечал 404 или ok без всякого потолка, то есть был вторым, открытым входом
- * в тот же перебор — а попадание здесь сразу сажает в чужую комнату, не
- * только показывает её. Счётчик общий: вход и опрос приглашения делят одни
- * триста запросов за десять минут, и честный гость в них с запасом укладывается.
+ * Потолок — тот же ключ, что у просмотра комнаты не-участником (room-peek,
+ * lib/roompeek), и по той же причине: перебор кодов. Вход отвечал 404 или ok
+ * без всякого потолка, то есть был вторым, открытым входом в тот же перебор —
+ * а попадание здесь сразу сажает в чужую комнату, не только показывает её.
  */
-const PEEK_LIMIT = 300
-const PEEK_WINDOW_SEC = 600
-
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
@@ -25,14 +20,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const db = await getDb()
   // До getRoom: промах перебора обязан стоить так же, как попадание
-  const gate = await checkRate(db, {
-    bucket: 'room-peek',
-    id: clientIp(req.headers),
-    limit: PEEK_LIMIT,
-    windowSec: PEEK_WINDOW_SEC,
-    nowSec: nowSec(),
-  })
-  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
+  const refused = await peekGate(db, req)
+  if (refused) return refused
 
   const name = await getPersonaName(db, steamid)
 

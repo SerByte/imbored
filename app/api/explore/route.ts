@@ -5,7 +5,7 @@ import { getGamesMetaLite, listExplore } from '@/lib/db'
 import { EXPLORE_SHELF, exploreDeck, exploredAppids } from '@/lib/explore'
 import { heuristicPicks } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
-import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 /*
@@ -35,27 +35,29 @@ export async function GET(req: Request) {
   const now = nowSec()
 
   /*
-   * Оба гейта и прочитанное — одним заходом, а не лесенкой.
+   * Гейты и прочитанное — параллельно, а не лесенкой.
    *
    * Обращение к Turso стоит около 35 мс (замер в lib/candidates.ts), и три
    * независимых чтения по очереди складывались в сотню миллисекунд до
-   * первого полезного шага. Цена — лишнее чтение listExplore на отказанном
-   * запросе, и отказ по первому гейту теперь всё равно отмечается во втором.
+   * первого полезного шага. Сами гейты между собой — по очереди
+   * (checkRatesInOrder): отказанный по личному потолку запрос не съедает
+   * потолок адреса. Цена — лишнее чтение listExplore на отказанном запросе.
    */
   const ip = clientIp(req.headers)
-  const [verdicts, explored] = await Promise.all([
-    Promise.all(
+  const [gate, explored] = await Promise.all([
+    checkRatesInOrder(
+      db,
       [
         { bucket: 'explore', id: steamid, limit: EXPLORE_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
         { bucket: 'explore-ip', id: ip, limit: EXPLORE_IP_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
-      ].map((gate) => checkRate(db, { ...gate, nowSec: now })),
+      ],
+      now,
     ),
     // Что уже листал: приглянувшееся лежит на полке, «Мимо» неделю не
     // возвращается — колода каждый заход о новом (exploredAppids)
     listExplore(db, steamid),
   ])
-  const refused = verdicts.find((v) => !v.ok)
-  if (refused) return rateLimitedResponse(refused.retryAfterSec)
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   // Тот же конвейер, что у /play и «Игры дня», но без настроения: его здесь
   // не спрашивали, и судить им нечего (moodless). Нейтральное настроение —

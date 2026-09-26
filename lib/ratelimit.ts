@@ -150,6 +150,28 @@ export function clientIp(headers: Headers): string {
   return first || headers.get('x-real-ip')?.trim() || 'local'
 }
 
+/**
+ * Несколько гейтов ПО ОЧЕРЕДИ: следующий спрашивается, только если прошёл
+ * предыдущий. Первый отказ — и дальше не считаем.
+ *
+ * Порядок здесь смысловой, а не для красоты: checkRate отмечает запрос в
+ * счётчике ДО решения. Спроси гейты разом (Promise.all), и запрос, уже
+ * отказанный по личному потолку, всё равно съедал бы место в потолке адреса:
+ * один человек, давящий «ещё» после отказа, выедал бы общий на адрес бюджет
+ * соседям по квартире или мобильному NAT. Ставь личный гейт первым.
+ */
+export async function checkRatesInOrder(
+  db: Db,
+  gates: Array<Omit<Parameters<typeof checkRate>[1], 'nowSec'>>,
+  nowSec: number,
+): Promise<{ ok: true } | { ok: false; retryAfterSec: number }> {
+  for (const gate of gates) {
+    const verdict = await checkRate(db, { ...gate, nowSec })
+    if (!verdict.ok) return verdict
+  }
+  return { ok: true }
+}
+
 /** Стандартный отказ. Retry-After — чтобы честный клиент знал, когда вернуться */
 export function rateLimitedResponse(retryAfterSec: number): Response {
   return Response.json(

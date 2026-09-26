@@ -4245,6 +4245,13 @@ img[data-art-fade][data-loaded] {
   object-fit: cover;
   background: var(--surface);
 }
+/* Каркас (app/compat/[steamid]/loading.tsx) берёт тот же размер постера, но
+   фон — дыхание каркаса, а не --surface картинки: правило выше вне слоёв и
+   перебило бы .skel из @layer components */
+.skel.cwall-poster,
+.skel.portrait-wall-cell {
+  background: var(--track);
+}
 .cwall-scrim {
   position: absolute;
   inset: 0;

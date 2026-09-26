@@ -4,6 +4,7 @@ import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { pickLeader } from '@/lib/roomlikes'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
+import { peekGate } from '@/lib/roompeek'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -50,6 +51,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const db = await getDb()
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
+  // открытая проверка, существует ли комната с таким кодом
+  if (!members.some((m) => m.steamid === steamid)) {
+    const refused = await peekGate(db, req)
+    if (refused) return refused
+  }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
   // Матч терминален: второй раз договариваться не о чем. matched — чтобы

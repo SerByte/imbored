@@ -3,6 +3,7 @@ import { castDeckVote, findRoomMatch, getRoom, roomMembers, setRoomMatched } fro
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
+import { peekGate } from '@/lib/roompeek'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -21,7 +22,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
   const db = await getDb()
-  const room = await getRoom(db, id)
+  const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
+  // открытая проверка, существует ли комната с таким кодом
+  if (!members.some((m) => m.steamid === steamid)) {
+    const refused = await peekGate(db, req)
+    if (refused) return refused
+  }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
   // Матч терминален (см. setRoomMatched): голос после него уже ничего не
@@ -34,7 +41,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     )
   }
 
-  if (!(await roomMembers(db, id)).some((m) => m.steamid === steamid)) {
+  if (!members.some((m) => m.steamid === steamid)) {
     return NextResponse.json({ error: 'notmember' }, { status: 403 })
   }
 

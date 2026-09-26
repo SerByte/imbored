@@ -6,7 +6,7 @@ import { getHeroMedia } from '@/lib/db'
 import { claudePicks, heuristicPicks, topUpPicks } from '@/lib/llm'
 import { parseLean, parseMood } from '@/lib/mood'
 import { parseExclude, parseNudge, planNudge } from '@/lib/nudge'
-import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRate, checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
   continueView,
   parseFocus,
@@ -99,16 +99,17 @@ export async function POST(req: Request) {
   const db = await getDb()
   const now = nowSec()
 
-  // Оба гейта — одним заходом: по очереди это два похода в Turso подряд
+  // Личный гейт первым: отказанный по нему запрос не съедает потолок адреса
   const ip = clientIp(req.headers)
-  const verdicts = await Promise.all(
+  const gate = await checkRatesInOrder(
+    db,
     [
       { bucket: 'recommend', id: steamid, limit: RECOMMEND_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
       { bucket: 'recommend-ip', id: ip, limit: RECOMMEND_IP_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
-    ].map((gate) => checkRate(db, { ...gate, nowSec: now })),
+    ],
+    now,
   )
-  const refused = verdicts.find((v) => !v.ok)
-  if (refused) return rateLimitedResponse(refused.retryAfterSec)
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   // Весь путь от снапшота до отранжированных кандидатов — lib/candidates.ts,
   // общий с «Игрой дня»: копии этого пути в двух маршрутах уже расходились

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { createRoom, joinRoom, roomMembers, setRoomMatched, type Db } from '@/lib/db'
+import { createRoom, joinRoom, listPublicRooms, roomMembers, setRoomMatched, setRoomPublic, type Db } from '@/lib/db'
 import { ROOM_MAX_MEMBERS } from '@/lib/room'
 import { nowSec } from '@/lib/server'
 import { freshDb, params, post, signIn, signInAs, signOut } from '@/lib/testing/route'
 import { POST } from './route'
+import { POST as vote } from '../vote/route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -75,5 +76,35 @@ describe('/api/room/[id]/join', () => {
     signOut()
     await signIn(db, crowd[0])
     expect((await join()).status).toBe(200)
+  })
+
+  test('одновременные входы не пробивают потолок', async () => {
+    await createRoom(db, { id: ROOM, steamid: HOST }, nowSec())
+    const seated = Array.from({ length: ROOM_MAX_MEMBERS - 1 }, (_, i) => `765611900000${String(200 + i).padStart(5, '0')}`)
+    for (const s of seated) await joinRoom(db, ROOM, s, undefined, nowSec())
+    const rush = Array.from({ length: 4 }, (_, i) => `765611900000${String(300 + i).padStart(5, '0')}`)
+    const results = await Promise.all(rush.map((s) => joinRoom(db, ROOM, s, undefined, nowSec())))
+    expect(results.filter((r) => r === 'joined')).toHaveLength(1)
+    expect(await roomMembers(db, ROOM)).toHaveLength(ROOM_MAX_MEMBERS)
+  })
+
+  test('полная комната пропадает с доски «Пати»', async () => {
+    await createRoom(db, { id: ROOM, steamid: HOST }, nowSec())
+    await setRoomPublic(db, ROOM, true)
+    await joinRoom(db, ROOM, HOST, undefined, nowSec())
+    expect((await listPublicRooms(db, nowSec())).map((r) => r.id)).toContain(ROOM)
+    const crowd = Array.from({ length: ROOM_MAX_MEMBERS - 1 }, (_, i) => `765611900000${String(400 + i).padStart(5, '0')}`)
+    for (const s of crowd) await joinRoom(db, ROOM, s, undefined, nowSec())
+    expect((await listPublicRooms(db, nowSec())).map((r) => r.id)).not.toContain(ROOM)
+  })
+
+  test('соседние роуты комнаты — тот же потолок для не-участника', async () => {
+    await signInAs(db, 'openid')
+    await createRoom(db, { id: ROOM, steamid: HOST }, nowSec())
+    const ask = (id: string) =>
+      vote(post(`/api/room/${id}/vote`, { appid: 570, vote: true }, { 'x-forwarded-for': '198.51.100.20' }), params({ id }))
+    let last = 0
+    for (let i = 0; i < 301; i++) last = (await ask(i % 2 ? ROOM : 'ZZZ999')).status
+    expect(last).toBe(429)
   })
 })
