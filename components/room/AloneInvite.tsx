@@ -1,5 +1,6 @@
 'use client'
 
+import { Icon } from '@/components/Icon'
 import Link from 'next/link'
 import { FlapCode } from '@/components/FlapCode'
 import { Eyebrow } from '@/components/Labels'
@@ -37,7 +38,7 @@ export function AloneInvite({
 }) {
   return (
     <>
-      <div className="relative glass rounded-[20px] p-6 sm:p-8 flex flex-col items-center gap-5 text-center">
+      <div className="relative panel-lift p-6 sm:p-8 flex flex-col items-center gap-5 text-center">
         {/* «В комнате только ты», а не «ты тут один»: род того, кто
             смотрит на экран, нам неизвестен — см. MemberRoster */}
         <h2 className="font-display text-display-sm">
@@ -66,7 +67,7 @@ export function AloneInvite({
           onClick={onCopyLink}
           className="rounded-[20px] bg-ember text-on-ember px-5 py-4 text-left hover:brightness-110 active:scale-[0.98] transition cursor-pointer"
         >
-          <span className="block font-semibold">{copied ? 'Скопировано ✓' : 'Позвать своих'}</span>
+          <span className="block font-semibold">{copied ? 'Скопировано' : 'Позвать своих'}</span>
           {/* Подпись обязана называть то, что произойдёт: на телефоне это не буфер */}
           <span className="block text-xs opacity-80 mt-0.5">
             {native ? 'Откроется «Поделиться»' : 'Ссылка в буфер — кидай в чат'}
@@ -94,7 +95,7 @@ export function AloneInvite({
             </span>
           </button>
         ) : (
-          <div className="rounded-[20px] glass px-5 py-4 text-left">
+          <div className="panel-lift px-5 py-4 text-left">
             <span className="block text-sm text-dim">Комната не на доске</span>
             <span className="block text-xs text-faint mt-0.5">
               Выложить может только тот, кто её создал
@@ -136,7 +137,7 @@ export function AloneInvite({
 export function RoomEscapeHatch({ className = '' }: { className?: string }) {
   return (
     <Link href="/rooms" className={`tap text-sm text-dim hover:text-ink transition-colors ${className}`}>
-      Подсесть к другим →
+      Подсесть к другим <Icon name="arrow" size={14} className="inline-block align-[-0.1em]" />
     </Link>
   )
 }

@@ -169,7 +169,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
             layout
             exit={{ opacity: 0, scale: 0.94 }}
             transition={{ duration: 0.22 }}
-            className="glass rounded-[14px] overflow-hidden flex flex-col"
+            className="glass rounded-[var(--radius-card)] overflow-hidden flex flex-col"
           >
             {/* Ссылка и кнопка — соседи, а не вложенные: интерактив внутри
                 интерактива не кликается и не читается скринридером */}

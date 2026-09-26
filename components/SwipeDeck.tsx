@@ -350,7 +350,9 @@ export function SwipeDeck({
   const pos = deckPosition(votedCount, deckTotal)
 
   return (
-    <div className="flex flex-col gap-4">
+    // Не шире 460: постер 2:3 во всю колонку комнаты (672) становился
+    // альбомным кадром, и карта переставала быть обложкой
+    <div className="mx-auto flex w-full max-w-[460px] flex-col gap-4">
       <div className="deck-stack relative">
         {/* Задние карточки — только глубина, без содержимого и без обработчиков */}
         {cards.slice(1, DEPTH).map((c, i) => (

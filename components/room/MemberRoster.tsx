@@ -1,5 +1,6 @@
 'use client'
 
+import { Icon } from '@/components/Icon'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { RoomMemberView } from '@/lib/room'
 
@@ -35,7 +36,7 @@ export function MemberRoster({
   const doneCount = members.filter((m) => m.done).length
 
   return (
-    <div className="relative glass rounded-[20px] p-5 sm:p-6 flex flex-col gap-4">
+    <div className="relative panel-lift p-5 sm:p-6 flex flex-col gap-4">
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="font-display text-display-xs">Кто где</h2>
         <span aria-hidden className="text-xs text-faint tabular-nums shrink-0">
@@ -65,7 +66,7 @@ export function MemberRoster({
               >
                 <span aria-hidden className="w-4 shrink-0 flex justify-center">
                   {m.done ? (
-                    <span className="text-ok text-sm leading-none">✓</span>
+                    <Icon name="check" size={14} className="text-ok" />
                   ) : (
                     <span className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
                   )}
@@ -139,7 +140,7 @@ export function MemberRoster({
                     aria-label={`Убрать ${m.name} из пати`}
                     className="tap tap-tight shrink-0 -my-1.5 px-1.5 py-1.5 text-xs text-faint hover:text-danger transition-colors cursor-pointer"
                   >
-                    ✕
+                    <Icon name="close" size={14} />
                   </button>
                 ) : null}
 

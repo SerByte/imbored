@@ -65,22 +65,24 @@ export default async function Image() {
         {/* знак и раздел */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
           <svg width="56" height="56" viewBox="0 0 64 64">
-            <rect width="64" height="64" rx="16" fill={OG_PLATE} />
-            <circle cx="22" cy="25" r="5.5" fill={OG_INK} />
-            <circle cx="22" cy="42" r="5.5" fill={OG_INK} />
+            {/* Знак монохромный, как LogoMark: плашка светлая, глиф цвета фона.
+                Прежние INK и EMBER на белой плашке «Премьеры» пропадали. */}
+            <rect width="64" height="64" rx="18" fill={OG_PLATE} />
+            <circle cx="22" cy="24.5" r="6" fill={OG_BG} />
+            <circle cx="22" cy="42" r="6" fill={OG_BG} />
             <line
               x1="36"
-              y1="22"
+              y1="20"
               x2="46"
               y2="45"
-              stroke={OG_EMBER}
+              stroke={OG_BG}
               strokeWidth="9"
               strokeLinecap="round"
             />
           </svg>
           <div
             style={{
-              fontFamily: 'JetBrains Mono',
+              fontFamily: 'Manrope',
               fontSize: 20,
               letterSpacing: 6,
               color: OG_EMBER,
@@ -124,7 +126,7 @@ export default async function Image() {
         <div
           style={{
             display: 'flex',
-            fontFamily: 'JetBrains Mono',
+            fontFamily: 'Manrope',
             fontSize: 20,
             letterSpacing: 3,
             color: OG_EMBER,

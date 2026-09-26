@@ -170,7 +170,7 @@ export function ShareLinkField({
         className="btn-ember shrink-0 px-5 py-3"
       >
         {state === 'done'
-          ? 'Скопировано ✓'
+          ? 'Скопировано'
           : state === 'manual'
             ? 'Скопируй вручную'
             : native

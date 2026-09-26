@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { ROOM_PRESETS, roomPresetByKey, type RoomPreset } from '@/lib/presets'
 import { isNeedSteam, writerStore } from '@/lib/writer'
+import { Icon } from '@/components/Icon'
+import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { Spinner } from '@/components/Spinner'
 import { useSearch } from '@/components/useSearch'
 
@@ -38,6 +40,32 @@ import { useSearch } from '@/components/useSearch'
  * развёрнутый на вход хост возвращается сюда и получает комнату сразу, без
  * повторного вопроса.
  */
+
+/*
+ * Веер на плитке настроения — кооп-игры, в которые с этим настроением уходят
+ * компанией. Иллюстрация, а не колода: колоду соберёт сервер из ваших
+ * библиотек. Эмодзи пресетов остаются в данных — их показывает шапка комнаты.
+ */
+const PRESET_ART: Record<string, readonly FanGame[]> = {
+  evening: [
+    { appid: 548430, name: 'Deep Rock Galactic' },
+    { appid: 1426210, name: 'It Takes Two' },
+    { appid: 892970, name: 'Valheim' },
+  ],
+  quick: [
+    { appid: 252950, name: 'Rocket League' },
+    { appid: 730, name: 'Counter-Strike 2' },
+  ],
+  cozy: [
+    { appid: 413150, name: 'Stardew Valley' },
+    { appid: 105600, name: 'Terraria' },
+    { appid: 648800, name: 'Raft' },
+  ],
+  talk: [
+    { appid: 945360, name: 'Among Us' },
+    { appid: 728880, name: 'Overcooked! 2' },
+  ],
+}
 type Phase = 'choosing' | 'creating' | 'failed' | 'busy' | 'needsteam'
 
 export default function NewRoomPage() {
@@ -118,38 +146,37 @@ export default function NewRoomPage() {
   if (view === 'choosing') {
     return (
       <div className="flex-1 flex items-center justify-center px-5 py-24">
-        <div className="max-w-md w-full glass rounded-[20px] p-8 flex flex-col gap-5 anim-reveal">
-          <div className="text-center flex flex-col gap-2">
-            <h1 className="text-xl font-bold tracking-tight">Какой будет вечер?</h1>
-            <p className="text-dim text-sm leading-relaxed">
+        <div className="max-w-3xl w-full flex flex-col gap-8 anim-reveal">
+          <div className="text-center flex flex-col items-center gap-2">
+            <h1 className="font-display text-display-md">Какой будет вечер?</h1>
+            <p className="max-w-md text-dim text-sm leading-relaxed">
               Колода соберётся из ваших библиотек под это настроение — его увидят все, кто
               зайдёт в комнату.
             </p>
           </div>
-          <ul className="flex flex-col gap-2">
+          {/* Плитки с веером, как ответы квиза: постеры — примеры того, во
+              что компания уходит с этим настроением, а не сама колода */}
+          <ul className="grid gap-4 md:grid-cols-2">
             {ROOM_PRESETS.map((p) => (
               <li key={p.key}>
                 <button
                   type="button"
                   onClick={() => create(p)}
-                  className="w-full rounded-[14px] glass glass-hover px-4 py-3 text-left cursor-pointer flex items-center gap-3"
+                  className="panel-lift quiz-tile fan-host w-full px-6 py-6 text-left cursor-pointer"
                 >
-                  <span aria-hidden className="text-xl leading-none">
-                    {p.emoji}
+                  <PosterFan games={PRESET_ART[p.key] ?? []} />
+                  <span aria-hidden className="quiz-scrim" />
+                  <span className="relative block text-[1.375rem] leading-tight font-extrabold tracking-[-0.025em]">
+                    {p.label}
                   </span>
-                  <span className="flex flex-col gap-0.5">
-                    <span className="text-sm text-ink">{p.label}</span>
-                    <span className="text-xs text-dim">{p.hint}</span>
-                  </span>
+                  <span className="relative block text-sm text-dim mt-1.5">{p.hint}</span>
                 </button>
               </li>
             ))}
           </ul>
-          <Link
-            href="/rooms"
-            className="tap self-center text-sm text-dim hover:text-ink transition-colors"
-          >
-            ← Подсесть к открытой пати
+          <Link href="/rooms" className="tap link-more self-center">
+            <Icon name="back" size={16} />
+            Подсесть к открытой пати
           </Link>
         </div>
       </div>

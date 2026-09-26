@@ -123,7 +123,7 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
       >
         <div
           style={{
-            fontFamily: 'JetBrains Mono',
+            fontFamily: 'Manrope',
             fontSize: 20,
             letterSpacing: 6,
             color: EMBER,
@@ -180,7 +180,7 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
         style={{
           display: 'flex',
           padding: '0 64px 44px',
-          fontFamily: 'JetBrains Mono',
+          fontFamily: 'Manrope',
           fontSize: 20,
           color: EMBER,
           letterSpacing: 3,
@@ -202,7 +202,7 @@ function Stat({ value, caption, wide }: { value: string; caption: string; wide: 
         marginBottom: wide ? 0 : 22,
       }}
     >
-      <div style={{ fontFamily: 'JetBrains Mono', fontSize: wide ? 54 : 62, color: INK }}>
+      <div style={{ fontFamily: 'Manrope', fontSize: wide ? 54 : 62, color: INK }}>
         {value}
       </div>
       <div style={{ fontSize: 20, color: DIM, marginTop: 4 }}>{caption}</div>

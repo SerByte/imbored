@@ -29,7 +29,7 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
         {near.map((n, i) => (
           <li
             key={`${n.forNames.join()}|${n.pendingNames.join()}`}
-            className="glass rounded-[14px] px-4 py-3 text-sm flex flex-wrap items-baseline gap-x-1.5 gap-y-1"
+            className="glass rounded-[var(--radius-card)] px-4 py-3 text-sm flex flex-wrap items-baseline gap-x-1.5 gap-y-1"
           >
             {/*
               БЕЗ РОДА У ГЛАГОЛА. Здесь стояло «{имя} сошёлся» — мужской род,

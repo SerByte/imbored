@@ -148,7 +148,7 @@ export function RoomWaiting({
 
         {mode === 'others' && (
           <>
-            <div className="relative glass rounded-[20px] p-6 sm:p-8 flex flex-col gap-2 text-center">
+            <div className="relative panel-lift p-6 sm:p-8 flex flex-col gap-2 text-center">
               {/*
                 Имя тут намеренно не подставляется. «Ждём Демо-друг» — не
                 по-русски, а склонять произвольный ник из Steam нельзя: винительный
@@ -212,7 +212,7 @@ export function RoomWaiting({
 
         {mode === 'empty' && (
           <>
-            <div className="relative glass rounded-[20px] p-6 sm:p-8 flex flex-col gap-3 text-center">
+            <div className="relative panel-lift p-6 sm:p-8 flex flex-col gap-3 text-center">
               <h2 className="font-display text-display-sm">
                 Выбирать не из чего
               </h2>
@@ -244,7 +244,7 @@ export function RoomWaiting({
           <button
             onClick={onPullMore}
             disabled={pulling}
-            className="rounded-[14px] glass glass-hover px-5 py-3 text-sm cursor-pointer disabled:opacity-40 text-left"
+            className="btn-glass justify-start py-3 text-sm text-left disabled:opacity-40"
           >
             <span className="block">{pulling ? 'Добираю…' : 'Ещё 20 игр'}</span>
             {/*

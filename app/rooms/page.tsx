@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { FlapCode } from '@/components/FlapCode'
+import { Icon, type IconName } from '@/components/Icon'
+import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { NeedSteam } from '@/components/NeedSteam'
 import { RoomCodeForm } from '@/components/room/RoomCodeForm'
 import { Spinner } from '@/components/Spinner'
@@ -44,6 +46,16 @@ const STEPS = [
   { title: 'Создай комнату', hint: 'Получишь код из шести символов и ссылку на неё' },
   { title: 'Кинь ссылку своим', hint: 'Каждый подключает свою библиотеку Steam' },
   { title: 'Свайпайте вместе', hint: 'Колода из общих игр; совпадут все голоса — матч' },
+]
+
+/** Что делают на шаге — иконкой, по порядку STEPS */
+const STEP_ICONS: readonly IconName[] = ['plus', 'link', 'heart']
+
+/** Веер над заголовком: кооп, в который уходят компанией */
+const ROOMS_ART: readonly FanGame[] = [
+  { appid: 548430, name: 'Deep Rock Galactic' },
+  { appid: 1426210, name: 'It Takes Two' },
+  { appid: 892970, name: 'Valheim' },
 ]
 
 type Listing = { id: string; memberNames: string[]; minutesAgo: number }
@@ -163,7 +175,12 @@ export default function RoomsBoardPage() {
       <Ambient />
       <div className="relative mx-auto w-full max-w-3xl px-5 pt-28 pb-16 flex flex-col gap-8">
       <div className="text-center flex flex-col items-center gap-5 anim-rise">
-        <h1 className="font-display text-display-md">Пати</h1>
+        {/* Веер кооп-игр над заголовком: о чём вообще эта страница, видно до
+            первого слова */}
+        <div aria-hidden className="rooms-fan fan-host">
+          <PosterFan games={ROOMS_ART} />
+        </div>
+        <h1 className="font-display text-display-lg">Пати</h1>
         {readOnly ? (
           // Вход вернёт прямо на создание комнаты, а не на эту доску
           <NeedSteam from="/room/new" className="max-w-sm" />
@@ -180,13 +197,15 @@ export default function RoomsBoardPage() {
         <RoomCodeForm />
       </div>
 
-      {/* Номер — моноширинным: это цифра, а в этом интерфейсе цифры набраны
-          моноширинным везде, от кода комнаты до процента совместимости. */}
+      {/* Шаг — иконкой в круге: порядок и так задан списком (ol), а
+          иконка говорит, ЧТО на шаге делают */}
       <ol className="grid gap-4 sm:grid-cols-3 anim-rise" style={{ animationDelay: '80ms' }}>
         {STEPS.map((step, i) => (
-          <li key={step.title} className="glass rounded-[20px] p-5 flex flex-col gap-1.5">
-            <span className="tabular-nums text-xs text-ember-text">{`0${i + 1}`}</span>
-            <span className="font-semibold leading-tight">{step.title}</span>
+          <li key={step.title} className="panel-lift p-5 flex flex-col gap-1.5">
+            <span aria-hidden className="mb-2 grid size-10 place-items-center rounded-full bg-ink/10 text-ink">
+              <Icon name={STEP_ICONS[i]} size={18} />
+            </span>
+            <span className="font-extrabold leading-tight">{step.title}</span>
             <span className="text-sm text-dim leading-relaxed">{step.hint}</span>
           </li>
         ))}
@@ -207,13 +226,13 @@ export default function RoomsBoardPage() {
           <div
             role="status"
             aria-live="polite"
-            className="glass anim-rise rounded-[14px] px-4 py-2.5 text-xs leading-relaxed text-dim"
+            className="glass anim-rise rounded-[var(--radius-card)] px-4 py-2.5 text-xs leading-relaxed text-dim"
           >
             Доска не отвечает — пробую снова…
           </div>
         )}
         {rooms === null && fails > 0 ? (
-          <div className="glass rounded-[20px] p-6 text-center text-dim text-sm flex flex-col items-center gap-3">
+          <div className="panel-lift p-6 text-center text-dim text-sm flex flex-col items-center gap-3">
             Не получилось загрузить доску.
             {/* Сброс отказов здесь же: пока идёт повтор, на месте ошибки
                 крутится спиннер, а не висит та же строка без ответа. */}
@@ -233,7 +252,10 @@ export default function RoomsBoardPage() {
             <Spinner size={32} />
           </div>
         ) : rooms.length === 0 ? (
-          <div className="glass rounded-[20px] p-6 text-center text-dim text-sm">
+          <div className="panel-lift p-6 text-center text-dim text-sm flex flex-col items-center gap-3">
+            <span aria-hidden className="grid size-12 place-items-center rounded-full bg-ink/10">
+              <Icon name="users" size={22} />
+            </span>
             {/* Совет «создай свою» тому, кто создать не может, — тупик */}
             {readOnly
               ? 'Сейчас открытых комнат нет — загляни чуть позже.'
@@ -253,7 +275,7 @@ export default function RoomsBoardPage() {
               >
                 <Link
                   href={`/room/${r.id}`}
-                  className="glass glass-hover rounded-[20px] p-5 flex items-center justify-between gap-4"
+                  className="panel-lift glass-hover p-5 flex items-center justify-between gap-4"
                 >
                   <div>
                     {/* Створки только для строк, появившихся на ЭТОМ тике:
@@ -271,7 +293,9 @@ export default function RoomsBoardPage() {
                       {minutesAgoLabel(r.minutesAgo)}
                     </div>
                   </div>
-                  <span className="text-sm text-ink shrink-0">Подсесть →</span>
+                  <span className="pill shrink-0">
+                    Подсесть <Icon name="arrow" size={14} />
+                  </span>
                 </Link>
               </motion.div>
             ))}

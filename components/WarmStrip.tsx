@@ -1,5 +1,6 @@
 'use client'
 
+import { Icon } from '@/components/Icon'
 import { AnimatePresence, motion } from 'motion/react'
 import { Portal } from '@/components/Portal'
 
@@ -90,7 +91,7 @@ export function WarmStrip({
               aria-label="Скрыть"
               className="rounded-full px-2 py-1 text-faint hover:text-ink transition"
             >
-              ✕
+              <Icon name="close" size={16} />
             </button>
           </div>
           </motion.div>

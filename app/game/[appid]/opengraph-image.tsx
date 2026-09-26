@@ -79,7 +79,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
             justifyContent: 'center',
             background: OG_BG,
             color: OG_EMBER,
-            fontFamily: 'JetBrains Mono',
+            fontFamily: 'Manrope',
             fontSize: 40,
             letterSpacing: 6,
           }}
@@ -160,7 +160,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
           <div
             style={{
               display: 'flex',
-              fontFamily: 'JetBrains Mono',
+              fontFamily: 'Manrope',
               fontSize: 20,
               letterSpacing: 6,
               color: OG_EMBER,
@@ -186,7 +186,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
             right: 72,
             top: 56,
             display: 'flex',
-            fontFamily: 'JetBrains Mono',
+            fontFamily: 'Manrope',
             fontSize: 20,
             letterSpacing: 3,
             color: OG_EMBER,

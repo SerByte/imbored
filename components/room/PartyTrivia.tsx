@@ -1,5 +1,6 @@
 'use client'
 
+import { Icon } from '@/components/Icon'
 import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
@@ -100,7 +101,7 @@ export function PartyTrivia({
         }}
         aria-expanded={open}
         aria-controls="trivia-body"
-        className="w-full glass glass-hover rounded-[20px] px-5 py-4 flex items-center justify-between gap-3 text-left cursor-pointer"
+        className="w-full panel-lift glass-hover px-5 py-4 flex items-center justify-between gap-3 text-left cursor-pointer"
       >
         <span className="flex flex-col gap-0.5">
           <span className="text-sm font-medium">Пока ждём — маленькая викторина</span>
@@ -121,7 +122,7 @@ export function PartyTrivia({
             transition={{ duration: 0.22, ease: EASE }}
             className="overflow-hidden"
           >
-            <div className="glass rounded-[20px] mt-3 p-5 flex flex-col gap-4">
+            <div className="panel-lift mt-3 p-5 flex flex-col gap-4">
               {questions === null && <p className="text-sm text-faint">Придумываю вопросы…</p>}
 
               {/*
@@ -175,7 +176,7 @@ export function PartyTrivia({
                           }}
                           className={
                             !revealed
-                              ? 'rounded-[14px] glass glass-hover px-4 py-3 text-sm text-left cursor-pointer transition-colors'
+                              ? 'rounded-[var(--radius-control)] glass glass-hover px-4 py-3 text-sm text-left cursor-pointer transition-colors'
                               : right
                                 ? 'rounded-[14px] bg-ember/15 text-ember-text border border-edge px-4 py-3 text-sm text-left'
                                 : 'rounded-[14px] bg-surface text-faint px-4 py-3 text-sm text-left'
@@ -198,9 +199,9 @@ export function PartyTrivia({
                           setAt((n) => n + 1)
                           setChosen(null)
                         }}
-                        className="rounded-[14px] glass glass-hover px-4 py-2 text-sm cursor-pointer shrink-0"
+                        className="btn-glass shrink-0 py-2.5 text-sm"
                       >
-                        Дальше →
+                        Дальше <Icon name="arrow" size={14} />
                       </button>
                     </div>
                   )}
@@ -221,7 +222,7 @@ export function PartyTrivia({
                       setQuestions(null)
                       void load(next)
                     }}
-                    className="rounded-[14px] glass glass-hover px-4 py-2 text-sm cursor-pointer"
+                    className="btn-glass py-2.5 text-sm"
                   >
                     Ещё раунд
                   </button>
