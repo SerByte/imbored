@@ -91,6 +91,9 @@ import {
   fillOutcomesFromSnapshot,
   pendingOutcomeAsk,
   recordOutcome,
+  recordCompatView,
+  listCompatViews,
+  COMPAT_VIEW_TTL_SEC,
   setOutcomeVerdict,
   setRoomDeckSize,
   setGameJson,
@@ -2765,6 +2768,7 @@ describe('топ каталога: кэш на десять минут', () => {
 describe('forgetUser: удаление по запросу', () => {
   const ME = '76561198000000001'
   const FRIEND = '76561198000000002'
+  const THIRD = '76561198000000003'
 
   /** Игрок, у которого есть строка в каждой таблице, где вообще бывают люди */
   async function populated() {
@@ -2781,6 +2785,9 @@ describe('forgetUser: удаление по запросу', () => {
     await saveDailyPick(db, ME, '2023-11-14', { appid: 570 }, NOW)
     await recordOutcome(db, { steamid: ME, appid: 570, source: 'comeback', launched: true }, NOW)
     await checkRate(db, { bucket: 'portrait', id: ME, limit: 10, windowSec: 60, nowSec: NOW })
+    // Сравнения в обе стороны: он открыл ссылку друга и друг — его
+    await recordCompatView(db, { owner: FRIEND, viewer: ME, percent: 71 }, NOW)
+    await recordCompatView(db, { owner: ME, viewer: FRIEND, percent: 71 }, NOW)
 
     // Своя комната: друг в ней тоже голосовал
     await createRoom(db, { id: 'MYROOM', steamid: ME }, NOW)
@@ -2799,6 +2806,7 @@ describe('forgetUser: удаление по запросу', () => {
 
     // Данные друга, которые удаление трогать не имеет права
     await upsertUser(db, { steamid: FRIEND, personaName: 'Friend' }, NOW)
+    await recordCompatView(db, { owner: FRIEND, viewer: THIRD, percent: 40 }, NOW)
     await logFeedback(db, { steamid: FRIEND, appid: 570, action: 'liked' }, NOW)
     await saveLibrarySnapshot(db, FRIEND, LIB, NOW)
     return db
@@ -2859,6 +2867,9 @@ describe('forgetUser: удаление по запросу', () => {
     expect(await roomVotes(db, 'MYROOM')).toEqual([])
     const deck = await db.execute("SELECT COUNT(*) AS n FROM room_deck WHERE room_id = 'MYROOM'")
     expect(Number(deck.rows[0]?.n)).toBe(0)
+    // Сравнения удалённого ушли в обе стороны, а друга с третьим — остались
+    expect((await listCompatViews(db, FRIEND, 0)).map((v) => v.steamid)).toEqual([THIRD])
+    expect(await listCompatViews(db, ME, 0)).toEqual([])
   })
 
   test('предпросмотр считает ровно то, что удалится', async () => {
@@ -2879,7 +2890,7 @@ describe('forgetUser: удаление по запросу', () => {
     expect(await getLatestSnapshot(db, ME)).not.toBeNull()
   })
 
-  test('сторож: каждая таблица с steamid или created_by есть в списке удаления', async () => {
+  test('сторож: каждая таблица с людьми (steamid, created_by, owner, viewer) есть в списке удаления', async () => {
     // Новая таблица с данными людей обязана попасть в forgetUser. Иначе
     // политика обещает «удаляем всё», а удаление молча её пропускает.
     const db = await freshDb()
@@ -2889,7 +2900,7 @@ describe('forgetUser: удаление по запросу', () => {
     const personal: string[] = []
     for (const t of tables.rows) {
       const cols = await db.execute(`PRAGMA table_info(${t.name as string})`)
-      if (cols.rows.some((c) => c.name === 'steamid' || c.name === 'created_by')) {
+      if (cols.rows.some((c) => ['steamid', 'created_by', 'owner', 'viewer'].includes(c.name as string))) {
         personal.push(t.name as string)
       }
     }
@@ -3820,5 +3831,45 @@ describe('исход совета', () => {
     await launch(db, 570, NOW - OUTCOME_TTL_SEC + DAY)
     expect((await sweepStale(db, NOW)).outcomes).toBe(1)
     expect((await outcomeRows(db)).map((r) => r.appid)).toEqual([570])
+  })
+})
+
+describe('кто сравнился с тобой', () => {
+  const A = '76561198000000011'
+  const B = '76561198000000012'
+  const C = '76561198000000013'
+
+  test('пишется только пара двух разных живых людей с процентом 0..100', async () => {
+    const db = await freshDb()
+    await expect(recordCompatView(db, { owner: A, viewer: A, percent: 50 }, NOW)).rejects.toThrow()
+    await expect(recordCompatView(db, { owner: A, viewer: '00012345678901234', percent: 50 }, NOW)).rejects.toThrow()
+    await expect(recordCompatView(db, { owner: A, viewer: B, percent: 101 }, NOW)).rejects.toThrow()
+    await expect(recordCompatView(db, { owner: A, viewer: B, percent: 12.5 }, NOW)).rejects.toThrow()
+    expect(await listCompatViews(db, A, 0)).toEqual([])
+  })
+
+  test('повтор в те же сутки — без записи, новый процент — обновляет', async () => {
+    const db = await freshDb()
+    await recordCompatView(db, { owner: A, viewer: B, percent: 60 }, NOW)
+    await recordCompatView(db, { owner: A, viewer: B, percent: 60 }, NOW + 3600)
+    expect(await listCompatViews(db, A, 0)).toEqual([{ steamid: B, name: null, percent: 60, at: NOW }])
+    await recordCompatView(db, { owner: A, viewer: B, percent: 64 }, NOW + 7200)
+    expect(await listCompatViews(db, A, 0)).toEqual([{ steamid: B, name: null, percent: 64, at: NOW + 7200 }])
+    // через сутки — обновляет и тот же процент: «когда сравнивались» свежеет
+    await recordCompatView(db, { owner: A, viewer: B, percent: 64 }, NOW + 7200 + 90_000)
+    expect((await listCompatViews(db, A, 0))[0]?.at).toBe(NOW + 7200 + 90_000)
+  })
+
+  test('свежие первыми, с ником, старше срока не видны и уходят в уборке', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: C, personaName: 'Сэм' }, NOW)
+    await recordCompatView(db, { owner: A, viewer: B, percent: 30 }, NOW - COMPAT_VIEW_TTL_SEC - 10)
+    await recordCompatView(db, { owner: A, viewer: C, percent: 80 }, NOW)
+    expect(await listCompatViews(db, A, NOW - COMPAT_VIEW_TTL_SEC)).toEqual([
+      { steamid: C, name: 'Сэм', percent: 80, at: NOW },
+    ])
+    const report = await sweepStale(db, NOW)
+    expect(report.compat).toBe(1)
+    expect((await listCompatViews(db, A, 0)).map((v) => v.steamid)).toEqual([C])
   })
 })

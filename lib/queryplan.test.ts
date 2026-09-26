@@ -16,6 +16,7 @@ import {
   getMajorFeedHead,
   getNeighbors,
   listEvenings,
+  listCompatViews,
   getLibraryBaselines,
   getOlderSnapshotMinutes,
   listExploreLiked,
@@ -281,6 +282,14 @@ const CASES: Case[] = [
     run: (db) => getOlderSnapshotMinutes(db, '76561198000000001'),
     indexes: ['idx_snapshots_steamid'],
     sortFree: false,
+  },
+  // «Сравнили с тобой» — строки владельца по индексу (owner, at) в его же
+  // порядке, ник — по первичному ключу users
+  {
+    name: 'кто сравнился с тобой',
+    run: (db) => listCompatViews(db, '76561198000000001', 0),
+    indexes: ['idx_compat_views_owner_at', 'sqlite_autoindex_users_1'],
+    sortFree: true,
   },
   {
     name: 'полка «Приглянулось»',

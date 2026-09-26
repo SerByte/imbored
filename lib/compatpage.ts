@@ -109,7 +109,8 @@ function artRef(appid: number, name: string, meta: GameMeta | undefined): ArtRef
   return { appid, name, headerImage: meta?.headerImage ?? null, art: meta?.art ?? null }
 }
 
-function nameOf(steamid: string, stored: string | null): string {
+/** Ник или «Игрок 1234» — одно на страницу сравнения, карточку и хаб */
+export function nameOf(steamid: string, stored: string | null): string {
   return stored ?? `Игрок ${steamid.slice(-4)}`
 }
 

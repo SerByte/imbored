@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import * as m from 'framer-motion/m'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { after } from 'next/server'
 import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
@@ -21,7 +22,9 @@ import {
 } from '@/lib/compatpage'
 import { reconnectHref } from '@/lib/destination'
 import { plural } from '@/lib/plural'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { recordCompatView } from '@/lib/db'
+import { logSwallowed } from '@/lib/errlog'
+import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { CopyCompatLink } from '../CopyCompatLink'
 import { CompatNotice } from './CompatNotice'
@@ -233,8 +236,19 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
   if (!STEAMID.test(other)) notFound()
 
   const db = await getDb()
-  const me = await currentSteamId()
-  const state = await loadCompat(db, { other, me, now: nowSec() })
+  const session = await currentSession()
+  const me = session?.steamid ?? null
+  const now = nowSec()
+  const state = await loadCompat(db, { other, me, now })
+  /*
+   * «Сравнили с тобой» у владельца ссылки — только от подтверждённого входа
+   * не из демо, и только когда сравнение правда посчитано. Вход по ссылке на
+   * профиль не доказывает, что профиль его: иначе любой выдумал бы «X
+   * сравнился с тобой». Демо — не человек. Краулер и префетч сюда не
+   * доходят: у первого нет сессии, второй останавливается на loading.tsx.
+   */
+  const records =
+    session !== null && isWriter(session) && !isDemoId(session.steamid) && !isDemoId(other)
 
   if (state.kind === 'self') {
     // Фон — свои же игры: приглашение уже посчитано для метаданных (cache)
@@ -281,7 +295,8 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             <>
               <p className="text-sm leading-relaxed text-dim">
                 Подключи свою библиотеку — и увидите общий процент, общие игры и во что вам зайти
-                вместе. Прочитаем только список игр и часы, ничего не публикуем.
+                вместе. Прочитаем только список игр и часы, ничего не публикуем. После входа через
+                Steam {invite.name} увидит у себя, что вы сравнились.
               </p>
               <a
                 href={`/api/auth/steam?compat=${other}`}
@@ -313,6 +328,23 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
 
   const d = state.data
   const hidden = d.commonTotal - d.commonGames.length
+
+  // Отметка — после ответа: страница сравнения не ждёт записи. Вне запроса
+  // (тест, скрипт) after бросает — тогда и писать некому
+  if (records) {
+    const view = { owner: d.other, viewer: d.me, percent: d.percent }
+    try {
+      after(async () => {
+        try {
+          await recordCompatView(db, view, now)
+        } catch (err) {
+          logSwallowed('compat/page:view', err)
+        }
+      })
+    } catch {
+      // вне контекста запроса
+    }
+  }
 
   return (
     <div className="flex-1">
@@ -453,6 +485,12 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             Портрет {d.otherName}
             <Icon name="arrow" size={16} />
           </Link>
+          {/* Что осталось после этого экрана — говорится здесь же, а не в политике */}
+          {records && (
+            <p className="basis-full text-center text-xs text-faint">
+              {d.otherName} увидит у себя, что вы сравнились, и ваш процент.
+            </p>
+          )}
         </m.div>
       </div>
     </div>

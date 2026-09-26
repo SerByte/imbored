@@ -269,6 +269,31 @@ CREATE TABLE IF NOT EXISTS outcomes (
 -- для суточной уборки старше девяноста дней: иначе полный проход по таблице
 CREATE INDEX IF NOT EXISTS idx_outcomes_shown ON outcomes (shown_at);
 /*
+ * Кто открыл чью ссылку на сравнение (/compat/<owner>) и какой вышел
+ * процент — для «Сравнили с тобой» на хабе /compat владельца.
+ *
+ * Пишет только страница /compat/[steamid] у подтверждённого входа не из демо
+ * (вход по ссылке на профиль не доказывает, что профиль его, — иначе любой
+ * выдумал бы «X сравнился с тобой»). Читает хаб владельца — тоже только
+ * подтверждённый вход. Одна строка на пару; процент симметричен, так что
+ * владелец, открыв сравнение в ответ, увидит то же число.
+ *
+ * Девяносто дней (sweepStale); по запросу уходит у обеих сторон
+ * (forgetUser). /privacy, разделы 01, 05 и 06.
+ */
+CREATE TABLE IF NOT EXISTS compat_views (
+  owner TEXT NOT NULL,
+  viewer TEXT NOT NULL,
+  percent INTEGER NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (owner, viewer)
+) WITHOUT ROWID;
+-- хаб владельца — свежие первыми, без сортировки
+CREATE INDEX IF NOT EXISTS idx_compat_views_owner_at ON compat_views (owner, at);
+-- вторая сторона forgetUser (viewer = ?) и уборка по сроку — без полного прохода
+CREATE INDEX IF NOT EXISTS idx_compat_views_viewer ON compat_views (viewer);
+CREATE INDEX IF NOT EXISTS idx_compat_views_at ON compat_views (at);
+/*
  * Служебные ключи: курсоры крона, аренды, счётчики каталога и флаги миграций.
  * Здесь, а не в SCHEMA_CATALOG рядом с остальным каталогом: migrateDb читает
  * из неё версию схемы ДО ALTER-цикла, чтобы решить, нужен ли он вообще.
@@ -4508,6 +4533,78 @@ export async function unlikeAsked(db: Db, steamid: string, appid: number, sinceS
   })
 }
 
+/* ---------- кто сравнился с тобой ---------- */
+
+/** SteamID64 живого человека: не демо (их id начинаются с 000) */
+const REAL_ID_RE = /^(?!000)\d{17}$/
+
+/**
+ * Отметить, что viewer открыл ссылку owner на сравнение и увидел процент.
+ *
+ * Бросает на неверном вводе — самосравнение, демо, процент вне 0..100: это
+ * ошибка вызывающего, а не данные. Демо проверяется здесь по префиксу, а не
+ * через isDemoId: lib/server сам импортирует lib/db.
+ *
+ * Запись — не чаще раза в сутки на пару или при смене процента: страницу
+ * сравнения открывают по нескольку раз, и переписывать строку ради того же
+ * числа незачем.
+ */
+export async function recordCompatView(
+  db: Db,
+  v: { owner: string; viewer: string; percent: number },
+  nowSec: number,
+): Promise<void> {
+  if (!REAL_ID_RE.test(v.owner) || !REAL_ID_RE.test(v.viewer) || v.owner === v.viewer) {
+    throw new Error('compat_views: пара не из двух разных живых людей')
+  }
+  if (!Number.isInteger(v.percent) || v.percent < 0 || v.percent > 100) {
+    throw new Error(`compat_views: процент ${v.percent}`)
+  }
+  await db.execute({
+    sql: `INSERT INTO compat_views (owner, viewer, percent, at) VALUES (?, ?, ?, ?)
+          ON CONFLICT(owner, viewer) DO UPDATE SET percent = excluded.percent, at = excluded.at
+           WHERE compat_views.percent <> excluded.percent OR compat_views.at < excluded.at - 86400`,
+    args: [v.owner, v.viewer, v.percent, nowSec],
+  })
+}
+
+export type CompatView = {
+  /** Кто открыл ссылку */
+  steamid: string
+  /** Ник Steam, если известен */
+  name: string | null
+  percent: number
+  at: number
+}
+
+/**
+ * «Сравнили с тобой» — свежие первыми. sinceSec прячет строки старше срока
+ * ещё до суточной уборки. Ник — из users: строки там может не быть (демо
+ * убрано, человек удалён), тогда null.
+ */
+export async function listCompatViews(
+  db: Db,
+  owner: string,
+  sinceSec: number,
+  limit = 12,
+): Promise<CompatView[]> {
+  const res = await db.execute({
+    sql: `SELECT v.viewer AS steamid, u.persona_name AS name, v.percent AS percent, v.at AS at
+            FROM compat_views v LEFT JOIN users u ON u.steamid = v.viewer
+           WHERE v.owner = ? AND v.at >= ?
+           ORDER BY v.at DESC LIMIT ?`,
+    args: [owner, sinceSec, limit],
+  })
+  return (res.rows as unknown as Array<{ steamid: string; name: string | null; percent: number; at: number }>).map(
+    (r) => ({
+      steamid: String(r.steamid),
+      name: r.name === null ? null : String(r.name),
+      percent: Number(r.percent),
+      at: Number(r.at),
+    }),
+  )
+}
+
 /* ---------- удаление по запросу ---------- */
 
 /**
@@ -4517,7 +4614,7 @@ export async function unlikeAsked(db: Db, steamid: string, appid: number, sinceS
  * Список один намеренно. Если бы счёт и удаление держали свои копии условий,
  * первая же новая таблица попала бы только в одну из них, и предпросмотр
  * обещал бы то, чего удаление не делает. Что сюда попадают ВСЕ таблицы с
- * колонкой steamid или created_by, проверяет lib/db.test.ts.
+ * колонкой steamid, created_by, owner или viewer, проверяет lib/db.test.ts.
  *
  * Комнаты, созданные игроком, уходят целиком, вместе с чужими участниками и
  * голосами в них. Создатель — часть самой комнаты: обезличить его значит
@@ -4552,6 +4649,9 @@ const USER_ROWS = [
   { table: 'rooms', where: 'created_by = ?' },
   { table: 'feedback', where: 'steamid = ?' },
   { table: 'outcomes', where: 'steamid = ?' },
+  // Пара сравнения уходит у обеих сторон: и «кого он сравнивал», и «кто
+  // сравнивал его» — след человека в чужом хабе тоже его след
+  { table: 'compat_views', where: 'owner = ? OR viewer = ?' },
   { table: 'daily_picks', where: 'steamid = ?' },
   { table: 'library_snapshots', where: 'steamid = ?' },
   { table: 'library_baselines', where: 'steamid = ?' },
@@ -4669,7 +4769,11 @@ export type SweepReport = {
   rooms: number
   ctx: number
   outcomes: number
+  compat: number
 }
+
+/** Сколько живёт отметка «X сравнился с тобой» — как и исходы советов */
+export const COMPAT_VIEW_TTL_SEC = 90 * 86_400
 
 /**
  * Суточная уборка того, что иначе копилось бы вечно. Зовётся из крона
@@ -4687,6 +4791,7 @@ export type SweepReport = {
  *   • Снимки выдачи у оценок старше FEEDBACK_CTX_TTL_SEC: колонка обнуляется,
  *     оценка остаётся — по ней считается вкус.
  *   • Исходы советов старше OUTCOME_TTL_SEC — целиком: вкус их не читает.
+ *   • Отметки сравнений старше COMPAT_VIEW_TTL_SEC.
  *
  * Одной пачкой: предикат демо опирается на users, поэтому users уходит
  * последней, а обрыв посередине не оставит личность без половины строк.
@@ -4695,7 +4800,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
   const demoCutoff = nowSec - DEMO_TTL_SEC
   const demo = [demoCutoff, demoCutoff - SESSION_TOUCH_AFTER_SEC, demoCutoff]
   const roomCutoff = nowSec - ROOM_TTL_SEC
-  const [, , , , sessions, demos, , , , rooms, ctx, outcomes] = await db.batch(
+  const [, , , , sessions, demos, , , , rooms, ctx, outcomes, compat] = await db.batch(
     [
       ...['feedback', 'daily_picks', 'library_snapshots', 'library_baselines'].map((table) => ({
         sql: `DELETE FROM ${table} WHERE ${STALE_DEMO}`,
@@ -4723,6 +4828,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
       // Демо-личностей здесь нет и не будет: их библиотека не меняется, и
       // /api/feedback исходы им не пишет
       { sql: 'DELETE FROM outcomes WHERE shown_at < ?', args: [nowSec - OUTCOME_TTL_SEC] },
+      { sql: 'DELETE FROM compat_views WHERE at < ?', args: [nowSec - COMPAT_VIEW_TTL_SEC] },
     ],
     'write',
   )
@@ -4732,6 +4838,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
     rooms: Number(rooms?.rowsAffected ?? 0),
     ctx: Number(ctx?.rowsAffected ?? 0),
     outcomes: Number(outcomes?.rowsAffected ?? 0),
+    compat: Number(compat?.rowsAffected ?? 0),
   }
 }
 
