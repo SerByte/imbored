@@ -1,11 +1,20 @@
 'use client'
 
-import { Fragment, useCallback, useEffect, useRef } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { splitWords } from '@/lib/splitwords'
 
 /** power3.out — та же кривая, что была у gsap-твина */
 const easeOut = (t: number) => 1 - (1 - t) ** 3
 const DURATION_MS = 600
+
+/*
+ * Эффект входа — layout-эффект: первый кадр прячет слова ДО отрисовки. В
+ * обычном useEffect браузер успевал нарисовать заголовок готовым, а потом
+ * слова исчезали и въезжали заново: название игры в церемонии матча мигало
+ * и пропадало на секунду. Так же работал useGSAP. На сервере layout-эффекта
+ * нет — там обычный, который всё равно не запускается.
+ */
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 /**
  * Заголовок, который собирается по словам.
@@ -87,7 +96,7 @@ export function SplitHeading({
     [headingRef],
   )
 
-  useEffect(() => {
+  useIsoLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return

@@ -428,19 +428,24 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           не показав самих чипсов, значит приводить в никуда. */}
       {games.length > 0 && (
       /* Пилюлями, лентой на телефоне. Полоса липкая: смузер теперь живёт
-         только на главной, и sticky здесь снова держится (.lib-filters). */
-      <div id="wall" className="chip-rail lib-filters">
-        {LIBRARY_FILTERS.map((f) => (
-          <Link
-            key={f.id}
-            href={libraryHref(f.id)}
-            prefetch={false}
-            aria-current={f.id === filter ? 'page' : undefined}
-            className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
-          >
-            {f.label} <span className="tabular-nums opacity-70">{view.counts[f.id]}</span>
-          </Link>
-        ))}
+         только на главной, и sticky здесь снова держится (.lib-filters).
+         Липкая подложка и лента — два разных элемента: маска ленты
+         (.chip-rail) растворяла бы и фон с размытием, и стена карточек
+         проступала бы по краям полосы. */
+      <div id="wall" className="lib-filters">
+        <div className="chip-rail lib-filters-rail">
+          {LIBRARY_FILTERS.map((f) => (
+            <Link
+              key={f.id}
+              href={libraryHref(f.id)}
+              prefetch={false}
+              aria-current={f.id === filter ? 'page' : undefined}
+              className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
+            >
+              {f.label} <span className="tabular-nums opacity-70">{view.counts[f.id]}</span>
+            </Link>
+          ))}
+        </div>
       </div>
       )}
 

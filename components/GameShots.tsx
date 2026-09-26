@@ -38,7 +38,14 @@ const Lightbox = dynamic(() => import('@/components/Lightbox').then((mod) => mod
 })
 const Screenshots = dynamic(
   () => import('@/components/Screenshots').then((mod) => mod.Screenshots),
-  { ssr: false },
+  {
+    ssr: false,
+    // Пока чанк сетки едет, держим бокс кадра: пустой заглушкой блок схлопывался
+    // в ноль, и всё ниже прыгало вверх, а потом обратно
+    loading: () => (
+      <div className="relative aspect-video overflow-hidden rounded-(--radius-panel) border border-edge" />
+    ),
+  },
 )
 
 /**
