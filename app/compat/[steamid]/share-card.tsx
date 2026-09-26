@@ -39,7 +39,7 @@ export function CompatCardImage({ invite }: { invite: CompatInvite }) {
         flexDirection: 'column',
         background: OG_BG,
         color: OG_INK,
-        fontFamily: 'Onest',
+        fontFamily: 'Manrope',
       }}
     >
       <div style={{ display: 'flex', height: 150, opacity: 0.3, overflow: 'hidden' }}>

@@ -34,13 +34,14 @@ import type { ReactNode } from 'react'
  * держать в голове ещё один словарь поверх уже существующего.
  */
 
-type Tone = 'ember' | 'dim' | 'faint'
+type Tone = 'ember' | 'dim' | 'faint' | 'ink'
 type Tag = 'p' | 'h1' | 'h2' | 'h3' | 'span' | 'div' | 'figcaption'
 
 const TONE: Record<Tone, string> = {
   ember: 'text-ember-text',
   dim: 'text-dim',
   faint: 'text-faint',
+  ink: 'text-ink',
 }
 
 /**
@@ -52,7 +53,12 @@ const TONE: Record<Tone, string> = {
  * значений разрядки при трёх кеглях. Пока число живёт в двух файлах, оно
  * разъедется в третий раз. Сторож — lib/tracking.test.ts.
  */
-const MONO = 'font-mono [font-size:var(--text-label)] uppercase'
+/*
+ * «Премьера»: надзаголовок набран тем же гротеском, что и всё остальное, —
+ * жирным капсом с разрядкой, как «ВО ЧТО ПОИГРАТЬ СЕГОДНЯ» над титром
+ * стримингового героя. Моноширинный остался цифрам и кодам комнат.
+ */
+const LABEL = 'font-sans font-bold [font-size:var(--text-label)] leading-[1.3] uppercase'
 
 /**
  * Те же классы строкой — для чужих тегов, на которые компонент не натянуть:
@@ -60,13 +66,13 @@ const MONO = 'font-mono [font-size:var(--text-label)] uppercase'
  * подписи значило бы добавлять уровень разметки на каждом экране портрета.
  * Источник у формы всё равно один — вот этот файл.
  */
-export function eyebrow(tone: Tone = 'ember'): string {
-  return `${MONO} [letter-spacing:var(--track-eyebrow)] ${TONE[tone]}`
+export function eyebrow(tone: Tone = 'dim'): string {
+  return `${LABEL} [letter-spacing:var(--track-eyebrow)] ${TONE[tone]}`
 }
 
 export function Eyebrow({
   children,
-  tone = 'ember',
+  tone = 'dim',
   as: Tag = 'p',
   className = '',
 }: {
@@ -89,12 +95,12 @@ export function MetaLine({
   as?: Tag
   className?: string
 }) {
-  return <Tag className={`${MONO} [letter-spacing:var(--track-meta)] ${TONE[tone]} ${className}`}>{children}</Tag>
+  return <Tag className={`${LABEL} [letter-spacing:var(--track-meta)] ${TONE[tone]} ${className}`}>{children}</Tag>
 }
 
 export function SectionLabel({
   children,
-  tone = 'dim',
+  tone = 'ink',
   as: Tag = 'h2',
   className = '',
 }: {
@@ -103,5 +109,33 @@ export function SectionLabel({
   as?: Tag
   className?: string
 }) {
-  return <Tag className={`text-sm font-medium ${TONE[tone]} ${className}`}>{children}</Tag>
+  return <Tag className={`section-title ${TONE[tone]} ${className}`}>{children}</Tag>
+}
+
+/**
+ * Шапка раздела «Премьеры»: заголовок, необязательная строка под ним и
+ * ссылка «Все →» справа. Так начинается каждая полка — как ряд в стриминге.
+ */
+export function SectionTitle({
+  children,
+  sub,
+  action,
+  as: Tag = 'h2',
+  className = '',
+}: {
+  children: ReactNode
+  sub?: ReactNode
+  action?: ReactNode
+  as?: Tag
+  className?: string
+}) {
+  return (
+    <div className={`flex items-end justify-between gap-4 ${className}`}>
+      <div className="min-w-0">
+        <Tag className="section-title">{children}</Tag>
+        {sub ? <p className="mt-1.5 text-[15px] leading-snug text-dim">{sub}</p> : null}
+      </div>
+      {action ? <div className="shrink-0 text-sm font-bold text-dim">{action}</div> : null}
+    </div>
+  )
 }

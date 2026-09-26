@@ -50,7 +50,7 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
             justifyContent: 'center',
             background: OG_BG,
             color: OG_INK,
-            fontFamily: 'Onest',
+            fontFamily: 'Manrope',
             fontSize: 56,
           }}
         >

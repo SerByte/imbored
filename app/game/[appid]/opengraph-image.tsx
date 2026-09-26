@@ -121,7 +121,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
           position: 'relative',
           background: OG_BG,
           color: OG_INK,
-          fontFamily: 'Onest',
+          fontFamily: 'Manrope',
         }}
       >
         {art ? (

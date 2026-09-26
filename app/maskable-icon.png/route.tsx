@@ -1,5 +1,5 @@
 import { ImageResponse } from 'next/og'
-import { EMBER, INK, PLATE } from '@/lib/palette'
+import { BG, INK } from '@/lib/palette'
 
 /**
  * Иконка под маску Android — та, что реально ложится на домашний экран.
@@ -33,7 +33,7 @@ const at = (v: number) => SIZE / 2 + (v - GRID / 2) * K
 export function GET(): Response {
   return new ImageResponse(
     (
-      <div style={{ width: '100%', height: '100%', display: 'flex', background: PLATE }}>
+      <div style={{ width: '100%', height: '100%', display: 'flex', background: BG }}>
         <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
           <circle cx={at(22)} cy={at(25)} r={5.5 * K} fill={INK} />
           <circle cx={at(22)} cy={at(42)} r={5.5 * K} fill={INK} />
@@ -42,7 +42,7 @@ export function GET(): Response {
             y1={at(22)}
             x2={at(46)}
             y2={at(45)}
-            stroke={EMBER}
+            stroke={INK}
             strokeWidth={9 * K}
             strokeLinecap="round"
           />

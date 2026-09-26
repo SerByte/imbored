@@ -94,7 +94,7 @@ export function MatchCeremony({
       <div
         aria-hidden
         className="absolute inset-0"
-        style={{ background: 'radial-gradient(60% 60% at 50% 45%, transparent, #0b0c10 90%)' }}
+        style={{ background: 'radial-gradient(60% 60% at 50% 45%, transparent, #050505 90%)' }}
       />
       <div aria-hidden className="grain" />
 

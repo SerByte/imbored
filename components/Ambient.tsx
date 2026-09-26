@@ -19,7 +19,7 @@ export function Ambient({ className = '' }: { className?: string }) {
       className={`absolute inset-0 pointer-events-none ${className}`}
       style={{
         background:
-          'radial-gradient(55% 40% at 50% 0%, rgba(255,158,100,0.15), transparent 70%), radial-gradient(40% 35% at 80% 90%, rgba(100,140,255,0.10), transparent 70%)',
+          'radial-gradient(60% 45% at 50% 0%, color-mix(in srgb, var(--ink) 7%, transparent), transparent 70%), radial-gradient(40% 35% at 85% 95%, color-mix(in srgb, var(--ink) 4%, transparent), transparent 70%)',
       }}
     />
   )

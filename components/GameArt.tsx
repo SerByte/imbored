@@ -113,7 +113,7 @@ export function ArtPlaceholder({ name, className = '' }: { name: string; classNa
       className={`flex items-center justify-center px-3 text-center ${className}`}
       style={{
         background:
-          'radial-gradient(80% 120% at 50% 0%, rgba(255,158,100,0.14), transparent 70%), var(--glass-bg)',
+          'radial-gradient(80% 120% at 50% 0%, color-mix(in srgb, var(--ink) 10%, transparent), transparent 70%), var(--surface)',
       }}
     >
       <span className="text-xs font-semibold leading-tight text-dim line-clamp-3">{name}</span>

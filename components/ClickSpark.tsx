@@ -85,7 +85,7 @@ export function ClickSpark({
 
       // Цвет читаем в рантайме: в светлой теме ember другой (#e0742f)
       const color =
-        getComputedStyle(document.documentElement).getPropertyValue('--ember').trim() || '#ff9e64'
+        getComputedStyle(document.documentElement).getPropertyValue('--ember').trim() || '#ffffff'
 
       ctx.strokeStyle = color
       ctx.lineWidth = 1

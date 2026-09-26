@@ -29,7 +29,7 @@ export default function AppleIcon() {
           height: '100%',
           display: 'flex',
           position: 'relative',
-          background: '#16171d',
+          background: '#050505',
         }}
       >
         {/* глаза эмотикона «:\» */}
@@ -43,7 +43,7 @@ export default function AppleIcon() {
               width: 11 * SCALE,
               height: 11 * SCALE,
               borderRadius: '50%',
-              background: '#f2f3f5',
+              background: '#f5f5f7',
             }}
           />
         ))}
@@ -56,7 +56,7 @@ export default function AppleIcon() {
             width: 9 * SCALE,
             height: 29 * SCALE,
             borderRadius: 9 * SCALE,
-            background: '#ff9e64',
+            background: '#f5f5f7',
             transform: 'rotate(-23deg)',
           }}
         />

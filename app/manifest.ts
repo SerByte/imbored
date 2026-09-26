@@ -32,8 +32,8 @@ export default function manifest(): MetadataRoute.Manifest {
     display: 'standalone',
     // Совпадает с --bg тёмной темы: она базовая, и экран запуска не должен
     // моргать белым перед тем, как приложение отрисуется.
-    background_color: '#0b0c10',
-    theme_color: '#0b0c10',
+    background_color: '#050505',
+    theme_color: '#050505',
     lang: 'ru',
     categories: ['games', 'entertainment'],
     icons: [
