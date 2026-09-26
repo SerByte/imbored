@@ -103,7 +103,8 @@ export function GameArt({
             appid={anchor.appid}
             name={anchor.name}
             variant={variant === 'poster' ? 'poster' : 'hero'}
-            sizes="480px"
+            // Размыт на 28 px — разрешение не видно вовсе, берём самый лёгкий
+            sizes="60px"
             fallback={null}
             className="type-cover-anchor"
           />

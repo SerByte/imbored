@@ -38,7 +38,9 @@ export function CoverWall({ rows }: { rows: ArtRef[][] }) {
                 headerImage={g.headerImage}
                 art={g.art}
                 variant="poster"
-                sizes="180px"
+                // Фон за скримом: 300-пиксельного постера хватает с запасом,
+                // 600-пиксельный на телефоне с плотностью 3x весил вчетверо больше
+                sizes="100px"
                 eager={r === 0 && i < 6}
                 className="cwall-poster"
               />
