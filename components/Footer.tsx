@@ -5,16 +5,16 @@ import { Wordmark } from './Wordmark'
 
 export function Footer() {
   return (
-    <footer className="relative mt-auto border-t border-edge/60">
+    <footer className="relative mt-auto border-t border-edge">
       <div className="mx-auto max-w-6xl px-safe py-6 flex items-center justify-between gap-4 flex-wrap text-sm">
         <div className="flex items-center gap-2.5 text-faint">
-          <LogoMark size={18} />
-          <Wordmark className="text-base" />
-          <span className="text-xs">· imbored.cc</span>
+          <LogoMark size={22} />
+          <Wordmark className="text-[17px]" />
+          <span className="text-[13px] font-semibold">· во что поиграть сегодня</span>
         </div>
         {/* Имя — чтобы в списке ориентиров это не было третьей безымянной
             «навигацией» рядом с меню разделов */}
-        <nav aria-label="Служебные ссылки" className="flex items-center flex-wrap gap-x-5 gap-y-2 text-xs text-dim">
+        <nav aria-label="Служебные ссылки" className="flex items-center flex-wrap gap-x-6 gap-y-2 text-[13px] font-semibold text-dim">
           {/* Хаб жанров — единственная ссылка отсюда, открытая гостю и
               краулеру: остальные разделы шапки и панели живут за входом.
               Страница на ISR, префетч с края ей ничего не стоит. */}

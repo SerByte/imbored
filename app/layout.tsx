@@ -269,8 +269,8 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             {/* .tap: логотип — ссылка «домой» на КАЖДОЙ странице продукта, и он
                 единственный остался высотой 28 px. Зона безопасна с запасом —
                 замерено, ближайший сосед по шапке в 408 px. */}
-            <Link href="/" className="tap text-xl flex items-center gap-2.5">
-              <LogoMark size={24} />
+            <Link href="/" className="tap text-[22px] flex items-center gap-2.5">
+              <LogoMark size={28} />
               <Wordmark />
             </Link>
             <div className="flex items-center gap-5">
@@ -285,7 +285,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
                 «Разделами» рядом с нижней панелью. Имя у них одно и то же
                 намеренно — это одно меню, и на экране всегда ровно одно из двух.
               */}
-              <nav aria-label="Разделы" className="hidden md:flex items-center gap-5 text-sm text-dim">
+              <nav aria-label="Разделы" className="hidden md:flex items-center gap-6 text-sm font-semibold text-dim">
                 <HeaderNav />
               </nav>
               <ThemeToggle />

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { Icon, type IconName } from '@/components/Icon'
 import { LinkPending } from '@/components/LinkPending'
 import { PickLink } from '@/components/PickLink'
 import { isNavActive, navPrefetch } from '@/lib/nav'
@@ -29,12 +30,12 @@ import { isNavActive, navPrefetch } from '@/lib/nav'
  * а то, где человек находится, — нет.
  */
 const ITEMS = [
-  { href: '/daily', label: 'Игра дня' },
-  { href: '/quiz', label: 'Подбор', also: ['/play'], pick: true },
-  { href: '/rooms', label: 'Пати', also: ['/room'] },
-  { href: '/whatsnew', label: 'Новое' },
-  { href: '/library', label: 'Игры' },
-] satisfies Array<{ href: string; label: string; also?: string[]; pick?: boolean }>
+  { href: '/daily', label: 'Игра дня', icon: 'calendar' },
+  { href: '/quiz', label: 'Подбор', icon: 'spark', also: ['/play'], pick: true },
+  { href: '/rooms', label: 'Пати', icon: 'users', also: ['/room'] },
+  { href: '/whatsnew', label: 'Новое', icon: 'news' },
+  { href: '/library', label: 'Игры', icon: 'grid' },
+] satisfies Array<{ href: string; label: string; icon: IconName; also?: string[]; pick?: boolean }>
 
 export function MobileNav() {
   const pathname = usePathname() ?? ''
@@ -139,22 +140,29 @@ export function MobileNav() {
               (--dur-fast 180, --dur-base 320): волосок был единственным в
               приложении, кто ехал вне тональности. Класс берёт --dur-base.
             */
-            className="rail-bar absolute top-0 h-[2px] rounded-full bg-ember"
+            className="rail-bar absolute top-0 h-[2px] rounded-full bg-ink"
             style={{ left: bar.left, width: bar.width }}
           />
         )}
         {ITEMS.map((item, i) => {
           const props = {
             'aria-current': i === activeIndex ? ('page' as const) : undefined,
-            className: `py-3.5 text-center text-[11px] transition-colors ${
-              i === activeIndex ? 'text-ember-text font-semibold' : 'text-dim'
+            // Иконка над подписью, а высота панели прежняя, 52 px — то же число,
+            // что в отступе под неё у #smooth-content: 7 + 18 + 3 + 14 + 7 и
+            // волосок. Активный пункт белый и жирный, как в шапке: зелёный
+            // оставлен проценту совпадения и больше ничему.
+            className: `flex flex-col items-center gap-[3px] py-[7px] text-center text-[11px] leading-[14px] transition-colors ${
+              i === activeIndex ? 'text-ink font-extrabold' : 'text-dim font-semibold'
             }`,
             // LinkPending: переход на динамическую страницу без каркаса ждёт
             // сервер, и нажатый пункт мерцает до ответа (как в HeaderNav)
             children: (
-              <span data-label>
-                <LinkPending>{item.label}</LinkPending>
-              </span>
+              <>
+                <Icon name={item.icon} size={18} strokeWidth={i === activeIndex ? 2.2 : 1.8} />
+                <span data-label>
+                  <LinkPending>{item.label}</LinkPending>
+                </span>
+              </>
             ),
           }
           return 'pick' in item ? (

@@ -803,9 +803,11 @@ textarea:focus-visible {
 .site-chrome-bar {
   height: 66.6667%;
   opacity: 0;
-  background: var(--glass-bg);
+  /* Полка — тёмное стекло цвета фона, а не светлая плёнка --glass-bg: над
+     текстом страницы она обязана гасить, а не подсвечивать. */
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
   border-bottom: 1px solid var(--edge);
-  backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.6);
 }
 :root[data-chrome='page'] .site-chrome-fade {
   opacity: 0;

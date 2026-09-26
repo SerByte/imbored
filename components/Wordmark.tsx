@@ -36,7 +36,7 @@ export function Wordmark({
 }) {
   return (
     <span
-      className={`font-display font-extrabold tracking-[-0.015em] select-none ${className}`}
+      className={`font-display font-extrabold tracking-[-0.045em] select-none ${className}`}
     >
       <span className="text-ink">im</span>
       {drawable ? (
@@ -45,7 +45,7 @@ export function Wordmark({
           <span aria-hidden className="wordmark-strike" data-wordmark-strike />
         </span>
       ) : (
-        <span className="text-dim line-through decoration-ember/70 decoration-[max(2px,0.07em)]">
+        <span className="text-dim line-through decoration-current decoration-[max(2px,0.08em)]">
           bored
         </span>
       )}
