@@ -385,7 +385,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           className="absolute inset-0"
           style={{
             background:
-              'linear-gradient(to top, #0b0c10 6%, rgba(11,12,16,0.86) 30%, rgba(11,12,16,0.5) 62%, rgba(11,12,16,0.7) 100%)',
+              'linear-gradient(to top, #050505 6%, rgba(5,5,5,0.86) 30%, rgba(5,5,5,0.5) 62%, rgba(5,5,5,0.7) 100%)',
           }}
         />
         <BlurBand height="46vh" dir="up" />

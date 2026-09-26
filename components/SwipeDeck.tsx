@@ -194,7 +194,7 @@ function TopCard({
         <motion.div
           aria-hidden
           className="absolute inset-0 pointer-events-none"
-          style={{ opacity: yesGlow, background: 'rgba(255,158,100,0.12)' }}
+          style={{ opacity: yesGlow, background: 'rgba(70,211,105,0.14)' }}
         />
         <motion.span
           aria-hidden

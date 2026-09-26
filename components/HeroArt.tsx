@@ -30,7 +30,7 @@ export function HeroArt({
           className="absolute inset-0"
           style={{
             background:
-              'radial-gradient(60% 50% at 70% 20%, rgba(255,158,100,0.16), transparent 70%), radial-gradient(50% 45% at 20% 80%, rgba(100,140,255,0.10), transparent 70%)',
+              'radial-gradient(60% 50% at 70% 20%, rgba(255,255,255,0.08), transparent 70%), radial-gradient(50% 45% at 20% 80%, rgba(255,255,255,0.04), transparent 70%)',
           }}
         />
       }

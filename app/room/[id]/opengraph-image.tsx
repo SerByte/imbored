@@ -73,7 +73,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
           background: OG_BG,
           backgroundImage: ogGlow(),
           color: OG_INK,
-          fontFamily: 'Onest',
+          fontFamily: 'Manrope',
         }}
       >
         <div

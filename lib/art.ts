@@ -30,6 +30,10 @@ export type GameArtUrls = {
   hero?: string
   /** 3840×1240 — герой на широких экранах */
   hero2x?: string
+  /** 300×450 — вертикальный постер: лента главной, колода, сцена выбора */
+  poster?: string
+  /** 600×900 — он же на retina */
+  poster2x?: string
 }
 
 /** Сырые ассеты из ответа GetItems: значения — `{hash}/{filename}`, без хоста. */
@@ -42,6 +46,8 @@ const ASSET_KEYS: Array<[keyof GameArtUrls, string]> = [
   ['capsule', 'main_capsule'],
   ['hero', 'library_hero'],
   ['hero2x', 'library_hero_2x'],
+  ['poster', 'library_capsule'],
+  ['poster2x', 'library_capsule_2x'],
 ]
 
 /** Ширина ассета в пикселях — для дескрипторов srcSet */
@@ -51,14 +57,17 @@ const WIDTH: Record<keyof GameArtUrls, number> = {
   capsule: 616,
   hero: 1920,
   hero2x: 3840,
+  poster: 300,
+  poster2x: 600,
 }
 
-export type ArtVariant = 'card' | 'hero'
+export type ArtVariant = 'card' | 'hero' | 'poster'
 
 /** Порядок деградации для каждого места. Герой начинается с широкого арта. */
 const ORDER: Record<ArtVariant, Array<keyof GameArtUrls>> = {
   hero: ['hero', 'capsule', 'header'],
   card: ['header', 'capsule'],
+  poster: ['poster', 'poster2x', 'capsule', 'header'],
 }
 
 export function buildAssetUrl(format: string, filename: string): string | null {
@@ -95,9 +104,25 @@ export function legacyCapsuleUrl(appid: number): string {
 }
 
 /** Плоский путь без хэша: работает у игр, вышедших до перехода Valve. */
-export function legacyArtUrl(appid: number, kind: 'header' | 'hero'): string {
-  const file = kind === 'hero' ? 'library_hero.jpg' : 'header.jpg'
+export function legacyArtUrl(appid: number, kind: 'header' | 'hero' | 'poster' | 'poster2x'): string {
+  const file =
+    kind === 'hero'
+      ? 'library_hero.jpg'
+      : kind === 'poster'
+        ? 'library_600x900.jpg'
+        : kind === 'poster2x'
+          ? 'library_600x900_2x.jpg'
+          : 'header.jpg'
   return `${ASSET_BASE}steam/apps/${appid}/${file}`
+}
+
+/**
+ * Логотип игры без фона — то, что стриминг ставит поверх арта вместо
+ * набранного заголовка. Есть не у всех игр: GameLogo на ошибке загрузки
+ * молча возвращается к названию текстом.
+ */
+export function logoUrl(appid: number): string | null {
+  return appid > 0 ? `${ASSET_BASE}steam/apps/${appid}/logo.png` : null
 }
 
 type ArtSource = { appid: number; art?: GameArtUrls | null; headerImage?: string | null }
@@ -121,7 +146,11 @@ export function trimArt(
 ): GameArtUrls | null {
   if (!art) return null
   const keep: Array<keyof GameArtUrls> =
-    variant === 'hero' ? ['hero', 'hero2x', 'capsule', 'header'] : ['header', 'header2x', 'capsule']
+    variant === 'hero'
+      ? ['hero', 'hero2x', 'capsule', 'header']
+      : variant === 'poster'
+        ? ['poster', 'poster2x', 'capsule', 'header']
+        : ['header', 'header2x', 'capsule']
   const out: GameArtUrls = {}
   for (const k of keep) if (art[k]) out[k] = art[k]
   return Object.keys(out).length ? out : null
@@ -143,6 +172,10 @@ export function artCandidates(game: ArtSource, variant: ArtVariant = 'card'): st
   if (variant === 'hero') {
     push(art.hero)
     if (game.appid > 0) push(legacyArtUrl(game.appid, 'hero'))
+  }
+  if (variant === 'poster') {
+    push(art.poster)
+    if (game.appid > 0) push(legacyArtUrl(game.appid, 'poster'))
   }
   for (const key of ORDER[variant]) push(art[key])
   push(game.headerImage)
@@ -184,10 +217,15 @@ export function lightCapsuleFrom(url: string | null | undefined): string | null 
  */
 export function artSrcSet(game: ArtSource, variant: ArtVariant = 'card'): string | undefined {
   const art = game.art ?? {}
-  const pair: Array<keyof GameArtUrls> = variant === 'hero' ? ['hero', 'hero2x'] : ['header', 'header2x']
+  const pair: Array<keyof GameArtUrls> =
+    variant === 'hero' ? ['hero', 'hero2x'] : variant === 'poster' ? ['poster', 'poster2x'] : ['header', 'header2x']
   const parts = pair.filter((k) => art[k]).map((k) => `${art[k]} ${WIDTH[k]}w`)
 
-  if (variant !== 'hero') {
+  if (variant === 'poster' && !art.poster && game.appid > 0) {
+    return `${legacyArtUrl(game.appid, 'poster')} 300w, ${legacyArtUrl(game.appid, 'poster2x')} 600w`
+  }
+
+  if (variant === 'card') {
     const light = lightCapsuleFrom(art.header ?? game.headerImage ?? candidateHeader(game))
     if (light) parts.unshift(`${light} 231w`)
   }

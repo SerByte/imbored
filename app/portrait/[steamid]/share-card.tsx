@@ -94,7 +94,7 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
         flexDirection: 'column',
         background: BG,
         color: INK,
-        fontFamily: 'Onest',
+        fontFamily: 'Manrope',
       }}
     >
       {/* лента обложек — единственный носитель «это конкретный человек» */}

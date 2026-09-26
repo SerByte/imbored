@@ -22,11 +22,19 @@ import { BG, DIM, EMBER, INK, PLATE } from './palette'
 const FONT_DIR = join(process.cwd(), 'assets')
 
 /** Ассеты не зависят от запроса — читаем один раз на модуль. */
+/*
+ * Manrope — тот же голос, что на сайте (app/layout.tsx). Два файла одной
+ * гарнитуры, латиница и кириллица: satori собирает строку из них по глифам,
+ * а статичный woff нужен потому, что вариативный он читает только первым
+ * начертанием. Файлы — @fontsource/manrope, вес 800.
+ */
 export const ogFonts = Promise.all([
-  readFile(join(FONT_DIR, 'Onest-ExtraBold.woff')),
+  readFile(join(FONT_DIR, 'manrope-latin-800.woff')),
+  readFile(join(FONT_DIR, 'manrope-cyrillic-800.woff')),
   readFile(join(FONT_DIR, 'JetBrainsMono-Bold.woff')),
-]).then(([sans, mono]) => [
-  { name: 'Onest', data: sans, style: 'normal' as const, weight: 800 as const },
+]).then(([latin, cyrillic, mono]) => [
+  { name: 'Manrope', data: latin, style: 'normal' as const, weight: 800 as const },
+  { name: 'Manrope', data: cyrillic, style: 'normal' as const, weight: 800 as const },
   { name: 'JetBrains Mono', data: mono, style: 'normal' as const, weight: 700 as const },
 ])
 

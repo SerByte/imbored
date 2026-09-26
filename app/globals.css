@@ -1,14 +1,24 @@
 @import "tailwindcss";
 
-/* Токены темы: тёмная — базовая, светлая — через data-theme. */
+/*
+ * Токены темы: тёмная — базовая, светлая — через data-theme.
+ *
+ * «ПРЕМЬЕРА». Палитра стриминга: почти чёрный фон, на котором играет арт игры,
+ * а интерфейс уходит на второй план. Своего цветного акцента у продукта больше
+ * нет — главная кнопка белая, как у Apple TV и Netflix, а единственный
+ * фирменный цвет — зелёный процент совпадения. Вся насыщенность экрана теперь
+ * от обложки, и ни одна плашка с ней не спорит.
+ */
 :root {
-  --bg: #0b0c10;
-  --ink: #f2f3f5;
-  --dim: #9ba1ab;
-  --ember: #ff9e64;
-  --edge: rgba(255, 255, 255, 0.08);
-  --glass-bg: rgba(18, 20, 26, 0.6);
-  --header-fade: rgba(11, 12, 16, 0.85);
+  --bg: #050505;
+  --ink: #f5f5f7;
+  --dim: #a9a9ae;
+  --ember: #ffffff;
+  --edge: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --header-fade: rgba(5, 5, 5, 0.85);
+  /* Цвет тени: на чёрном тень должна быть глубже фона, на молочном — мягкой. */
+  --shadow: rgba(0, 0, 0, 0.7);
   color-scheme: dark;
 
   /*
@@ -28,8 +38,13 @@
    * Все числа посчитаны, а не подобраны на глаз; они закреплены тестом
    * lib/contrast.test.ts, который читает этот файл.
    */
-  --ember-text: var(--ember); /* 9.61:1 на --bg */
-  --on-ember: var(--bg); /* текст поверх заливки --ember, 9.61:1 */
+  /*
+   * Роль «акцент в тексте» больше не повторяет заливку: заливка белая, и
+   * белый акцентный текст перестал бы отличаться от основного. Акцентом стал
+   * зелёный совпадения — им набраны проценты, цены и выбранные состояния.
+   */
+  --ember-text: #46d369;
+  --on-ember: var(--bg); /* текст поверх белой заливки */
   /*
    * Приглушённый текст. Число посчитано не на фоне, а на САМОЙ СВЕТЛОЙ
    * подложке, на которую эта роль ложится.
@@ -46,14 +61,14 @@
    * Пересчитывает lib/contrast.test.ts — подложки он берёт из этого же
    * файла, так что новая прозрачность стекла уронит прогон, а не читаемость.
    */
-  --faint: #7c828c;
+  --faint: #85858c;
   --surface: rgba(255, 255, 255, 0.05); /* замена bg-white/N, невидимого на светлой */
   /* незалитая часть прогресса и неактивная точка шага: роль отдельная от
      поверхности, потому что её задача — быть ВИДНОЙ рядом с залитой */
-  --track: rgba(255, 255, 255, 0.12);
-  --ok: #5bd6a0; /* 10.77:1 */
-  --info: #7cc9f0; /* 10.68:1 */
-  --danger: #ff8b8b; /* 8.67:1 */
+  --track: rgba(255, 255, 255, 0.14);
+  --ok: #5bd6a0;
+  --info: #7cc9f0;
+  --danger: #ff8b8b;
 
   /* Токены движения. Вся хореография звучит в одной тональности:
      новые анимации берут длительности и кривую отсюда, а не из воздуха.
@@ -89,19 +104,22 @@
      1.04 на --ease-out читается как ресайз, с перелётом — как шаг вперёд. */
   --ease-lift: cubic-bezier(0.34, 1.36, 0.64, 1);
 
-  /* Радиус крупных панелей. Токен, а не литерал: его читают два правила
-     ниже, .back-block и .panel-lift, и расходиться им незачем. */
-  --radius-panel: 20px;
+  /* Радиусы — три ступени на весь продукт. Панель — баннеры и карточки
+     входа, карточка — обложки и плитки, контрол — кнопки и поля. */
+  --radius-panel: 22px;
+  --radius-card: 12px;
+  --radius-control: 11px;
 }
 
 :root[data-theme="light"] {
-  --bg: #f5f4f1;
-  --ink: #17181c;
-  --dim: #5b6170;
-  --ember: #e0742f;
-  --edge: rgba(15, 17, 22, 0.1);
-  --glass-bg: rgba(255, 255, 255, 0.66);
-  --header-fade: rgba(245, 244, 241, 0.92);
+  --bg: #f5f5f7;
+  --ink: #0b0b0c;
+  --dim: #4f4f55;
+  --ember: #0b0b0c;
+  --edge: rgba(0, 0, 0, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --header-fade: rgba(245, 245, 247, 0.92);
+  --shadow: rgba(30, 30, 40, 0.26);
   color-scheme: light;
 
   /*
@@ -121,11 +139,11 @@
    * причём альфы он вычитывает из самой разметки, так что новая плашка с
    * другой прозрачностью уронит прогон, а не читаемость.
    */
-  --ember-text: #96400e; /* 6.29:1 на фоне, 4.90:1 на самой плотной плашке */
-  --on-ember: var(--ink); /* 5.67:1 поверх заливки, вместо 2.85 у --bg */
-  --faint: #626875; /* 4.59:1 на --surface, 5.41 на стекле, 5.08 на фоне */
-  --surface: rgba(15, 17, 22, 0.05);
-  --track: rgba(15, 17, 22, 0.12);
+  --ember-text: #0b5323; /* тёмный зелёный: светлый #46d369 на молочном даёт 1.9 */
+  --on-ember: #ffffff; /* белый текст на чёрной главной кнопке */
+  --faint: #636369;
+  --surface: rgba(0, 0, 0, 0.05);
+  --track: rgba(0, 0, 0, 0.12);
   /*
    * У статусных цветов запас БОЛЬШЕ порога — по той же причине, что и у
    * --ember-text выше. Они тоже почти нигде не стоят на голом фоне: «✓ есть у
@@ -141,23 +159,24 @@
 
 /* Кино-зона: экраны с артом игр всегда тёмные (как у стримингов) */
 .media-dark {
-  --bg: #0b0c10;
-  --ink: #f2f3f5;
-  --dim: #9ba1ab;
-  --ember: #ff9e64;
-  --edge: rgba(255, 255, 255, 0.08);
-  --glass-bg: rgba(18, 20, 26, 0.6);
+  --bg: #050505;
+  --ink: #f5f5f7;
+  --dim: #a9a9ae;
+  --ember: #ffffff;
+  --edge: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --shadow: rgba(0, 0, 0, 0.7);
   /*
    * Ролевые токены обязаны переопределяться здесь вместе с базовыми. Иначе у
    * человека на светлой теме внутри кино-зоны фон тёмный, а --ember-text,
    * --faint и --on-ember остаются светлыми: тёмный текст на тёмном фоне.
    * Ровно этот класс ошибки уже стоил читаемости шапке.
    */
-  --ember-text: var(--ember);
+  --ember-text: #46d369;
   --on-ember: var(--bg);
-  --faint: #7c828c;
+  --faint: #85858c;
   --surface: rgba(255, 255, 255, 0.05);
-  --track: rgba(255, 255, 255, 0.12);
+  --track: rgba(255, 255, 255, 0.14);
   --ok: #5bd6a0;
   --info: #7cc9f0;
   --danger: #ff8b8b;
@@ -183,12 +202,13 @@
  *    легче на чуть поднятой поверхности, чем прямо на фоне.
  */
 .whatsnew {
-  --bg: #07080c;
-  --ink: #f4f6fb;
-  --dim: #8a93a6;
-  --ember: #f4f6fb;
-  --edge: rgba(255, 255, 255, 0.07);
-  --glass-bg: rgba(12, 14, 20, 0.55);
+  --bg: #050507;
+  --ink: #f5f5f7;
+  --dim: #a3a3ab;
+  --ember: #f5f5f7;
+  --edge: rgba(255, 255, 255, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --shadow: rgba(0, 0, 0, 0.7);
   --wn-paper: rgba(255, 255, 255, 0.035);
   --wn-rule: rgba(255, 255, 255, 0.1);
   /*
@@ -198,9 +218,9 @@
    */
   --ember-text: var(--ember);
   --on-ember: var(--bg);
-  --faint: #7c828c;
+  --faint: #85858c;
   --surface: rgba(255, 255, 255, 0.05);
-  --track: rgba(255, 255, 255, 0.12);
+  --track: rgba(255, 255, 255, 0.14);
   --ok: #5bd6a0;
   --info: #7cc9f0;
   --danger: #ff8b8b;
@@ -251,14 +271,16 @@
  * поведение ровно прежнее: скрипт может улучшить картинку, но не сломать.
  */
 :root:not([data-chrome='page']):has(.media-dark) body > header {
-  --header-fade: rgba(11, 12, 16, 0.85);
-  --ink: #f2f3f5;
-  --dim: #9ba1ab;
-  --ember: #ff9e64;
-  --ember-text: #ff9e64;
-  --faint: #7c828c;
-  --edge: rgba(255, 255, 255, 0.08);
-  --glass-bg: rgba(18, 20, 26, 0.6);
+  --header-fade: rgba(5, 5, 5, 0.85);
+  --bg: #050505;
+  --ink: #f5f5f7;
+  --dim: #a9a9ae;
+  --ember: #ffffff;
+  --ember-text: #46d369;
+  --on-ember: #050505;
+  --faint: #85858c;
+  --edge: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.08);
   color: var(--ink);
 }
 
@@ -282,30 +304,32 @@
  * вся страница», CSS реагирует. Сторож — lib/chrome.test.ts.
  */
 :root:has(.media-full) body footer {
-  --bg: #0b0c10;
-  --ink: #f2f3f5;
-  --dim: #9ba1ab;
-  --ember: #ff9e64;
-  --ember-text: #ff9e64;
-  --faint: #7c828c;
-  --edge: rgba(255, 255, 255, 0.08);
-  --glass-bg: rgba(18, 20, 26, 0.6);
+  --bg: #050505;
+  --ink: #f5f5f7;
+  --dim: #a9a9ae;
+  --ember: #ffffff;
+  --ember-text: #46d369;
+  --on-ember: #050505;
+  --faint: #85858c;
+  --edge: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.08);
   color: var(--ink);
   background: var(--bg);
 }
 
 :root:has(.whatsnew) body > header,
 :root:has(.whatsnew) body footer {
-  --bg: #07080c;
-  --header-fade: rgba(7, 8, 12, 0.85);
-  --ink: #f4f6fb;
-  --dim: #8a93a6;
+  --bg: #050507;
+  --header-fade: rgba(5, 5, 7, 0.85);
+  --ink: #f5f5f7;
+  --dim: #a3a3ab;
   /* акцента в этом мире нет по замыслу — см. блок .whatsnew выше */
-  --ember: #f4f6fb;
-  --ember-text: #f4f6fb;
-  --faint: #7c828c;
-  --edge: rgba(255, 255, 255, 0.07);
-  --glass-bg: rgba(12, 14, 20, 0.55);
+  --ember: #f5f5f7;
+  --ember-text: #f5f5f7;
+  --on-ember: #050507;
+  --faint: #85858c;
+  --edge: rgba(255, 255, 255, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.06);
   color: var(--ink);
 }
 
@@ -364,7 +388,7 @@
   --color-danger: var(--danger);
   --color-paper: var(--wn-paper);
   --color-rule: var(--wn-rule);
-  --font-sans: var(--font-onest), system-ui, sans-serif;
+  --font-sans: var(--font-manrope), system-ui, sans-serif;
   --font-mono: var(--font-jbmono), ui-monospace, monospace;
   /*
    * Дисплейный голос продукта — один на всё приложение.
@@ -380,7 +404,7 @@
    *
    * Обоснование выбора начертания — в докблоке app/layout.tsx.
    */
-  --font-display: var(--font-sofia), var(--font-onest), system-ui, sans-serif;
+  --font-display: var(--font-manrope), system-ui, sans-serif;
 }
 
 /*
@@ -415,27 +439,27 @@
  */
 @theme {
   /* подписи разделов внутри панели */
-  --text-display-xs: clamp(1.25rem, 1.144rem + 0.444vw, 1.5rem);
-  --text-display-xs--line-height: 1.15;
-  --text-display-xs--letter-spacing: 0em;
+  --text-display-xs: clamp(1.125rem, 1.072rem + 0.222vw, 1.25rem);
+  --text-display-xs--line-height: 1.2;
+  --text-display-xs--letter-spacing: -0.015em;
   --text-display-xs--font-weight: 700;
 
   /* заголовок карточки, панели, строки ленты */
-  --text-display-sm: clamp(1.5rem, 1.342rem + 0.667vw, 1.875rem);
-  --text-display-sm--line-height: 1.1;
-  --text-display-sm--letter-spacing: -0.005em;
-  --text-display-sm--font-weight: 700;
+  --text-display-sm: clamp(1.375rem, 1.272rem + 0.444vw, 1.625rem);
+  --text-display-sm--line-height: 1.12;
+  --text-display-sm--letter-spacing: -0.025em;
+  --text-display-sm--font-weight: 800;
 
   /* титул экрана */
-  --text-display-md: clamp(2rem, 1.683rem + 1.333vw, 2.75rem);
-  --text-display-md--line-height: 1.04;
-  --text-display-md--letter-spacing: -0.01em;
+  --text-display-md: clamp(1.875rem, 1.611rem + 1.111vw, 2.5rem);
+  --text-display-md--line-height: 1.05;
+  --text-display-md--letter-spacing: -0.035em;
   --text-display-md--font-weight: 800;
 
   /* герой страницы */
-  --text-display-lg: clamp(2.75rem, 2.011rem + 3.111vw, 4.5rem);
-  --text-display-lg--line-height: 0.98;
-  --text-display-lg--letter-spacing: -0.02em;
+  --text-display-lg: clamp(2.5rem, 1.817rem + 2.889vw, 4.25rem);
+  --text-display-lg--line-height: 1;
+  --text-display-lg--letter-spacing: -0.045em;
   --text-display-lg--font-weight: 800;
 
   /*
@@ -464,11 +488,11 @@
    *             широкая разрядка вредит — рельс перестаёт читаться колонкой.
    *             Роль здесь не четвёртая: это не подпись вообще.
    */
-  --track-eyebrow: 0.3em;
-  --track-meta: 0.16em;
-  --track-rail: 0.06em;
-  /* Кегль всех моноширинных подписей и рельсов. */
-  --text-label: 11px;
+  --track-eyebrow: 0.18em;
+  --track-meta: 0.1em;
+  --track-rail: 0.04em;
+  /* Кегль всех надзаголовков, подписей и рельсов. */
+  --text-label: 12px;
 
   /*
    * ХОД НАЖАТИЯ. Одно число на все нажимаемые элементы страницы.
@@ -491,9 +515,9 @@
   --text-lede: clamp(1.0625rem, 0.98rem + 0.4vw, 1.3125rem);
 
   /* событие: матч, процент совместимости, первый экран */
-  --text-display-xl: clamp(3.5rem, 2.022rem + 6.222vw, 7rem);
-  --text-display-xl--line-height: 0.94;
-  --text-display-xl--letter-spacing: -0.03em;
+  --text-display-xl: clamp(3rem, 1.733rem + 5.333vw, 6rem);
+  --text-display-xl--line-height: 0.96;
+  --text-display-xl--letter-spacing: -0.05em;
   --text-display-xl--font-weight: 800;
 }
 
@@ -858,7 +882,7 @@ textarea:focus-visible {
 }
 
 :root:has(.media-full) body {
-  background: #0b0c10;
+  background: #050505;
 }
 
 .ribbon-grid {
@@ -1401,28 +1425,28 @@ textarea:focus-visible {
  */
 .field {
   width: 100%;
-  border-radius: 14px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--edge);
-  /* Через --bg, а не литеральным чёрным: борозда обязана быть темнее подложки
-     в тёмной теме и светлее в светлой, иначе класс живёт ровно на одной
-     странице и ломается на первой же попытке переиспользовать. */
-  background: color-mix(in srgb, var(--bg) 58%, transparent);
-  padding: 0.8125rem 1rem;
+  /* Поле на стекле и на фоне одинаково: подложка — доля цвета текста, а не
+     фона. Так поле заметно и на чёрном, и на молочном без второго правила. */
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  padding: 0.875rem 1rem;
   color: var(--ink);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.42);
   transition:
     border-color var(--dur-base) var(--ease-out),
-    background var(--dur-base) var(--ease-out);
+    background var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
 }
 .field::placeholder {
   color: var(--faint);
 }
 .field:hover {
-  border-color: color-mix(in srgb, var(--ink) 18%, transparent);
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
 }
 .field:focus {
-  border-color: color-mix(in srgb, var(--ember) 65%, transparent);
-  background: color-mix(in srgb, var(--bg) 74%, transparent);
+  border-color: color-mix(in srgb, var(--ink) 55%, transparent);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ink) 9%, transparent);
 }
 
 /*
@@ -1457,73 +1481,45 @@ textarea:focus-visible {
    */
   .btn-ember {
     position: relative;
-    /*
-     * Ширину класс НЕ задаёт: этот же вид носит и парадная кнопка первого
-     * экрана во всю карточку, и призыв в финале страницы, который обязан быть
-     * по содержимому. Растяжка — модификатор .is-block ниже.
-     *
-     * Свести их в один класс пришлось не ради красоты кода: до этого финальная
-     * кнопка была плоским прямоугольником с одним brightness на наведении, то
-     * есть ПОСЛЕДНИЙ призыв страницы выглядел дешевле первого. Две копии одной
-     * заливки в двух правилах разъехались бы снова на первой же правке.
-     */
     display: inline-block;
-    border-radius: 14px;
-    padding-block: 0.8125rem;
+    border-radius: var(--radius-control);
+    padding-block: 0.875rem;
     text-align: center;
     text-decoration: none;
-    font-weight: 600;
+    font-weight: 800;
+    letter-spacing: -0.01em;
     color: var(--on-ember);
-    background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 88%, #fff), var(--ember));
+    /* «Премьера»: плоская белая заливка без градиента и цветного свечения —
+       как главная кнопка стримингового сервиса. Выделяет её контраст, а не
+       ореол: рядом со стеклянной второстепенной она читается сразу. */
+    background: var(--ember);
     cursor: pointer;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.3),
-      0 10px 26px -12px color-mix(in srgb, var(--ember) 80%, transparent);
+    box-shadow: 0 10px 28px -14px var(--shadow);
     transition:
+      background-color var(--dur-base) var(--ease-out),
       box-shadow var(--dur-base) var(--ease-out),
-      filter var(--dur-base) var(--ease-out),
       transform var(--dur-fast) var(--ease-out);
   }
   .btn-ember:hover:not(:disabled) {
-    filter: brightness(1.07);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.36),
-      0 16px 36px -14px color-mix(in srgb, var(--ember) 92%, transparent);
+    background: color-mix(in srgb, var(--ember) 88%, var(--bg));
+    box-shadow: 0 16px 36px -16px var(--shadow);
   }
   .btn-ember:active:not(:disabled) {
-    transform: translateY(1px);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.2),
-      0 4px 12px -8px color-mix(in srgb, var(--ember) 70%, transparent);
+    transform: scale(0.98);
+    box-shadow: 0 4px 12px -8px var(--shadow);
   }
   .btn-ember:disabled {
     cursor: default;
-    color: var(--ember-text);
-    background: color-mix(in srgb, var(--ember) 11%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ember) 30%, transparent);
+    color: var(--dim);
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--edge);
   }
 
-  /*
-   * ЗАНЯТА — ЭТО НЕ ОТКЛЮЧЕНА, И ВЫГЛЯДЕТЬ ОНИ ОБЯЗАНЫ ПО-РАЗНОМУ.
-   *
-   * Дефект был заведён вместе с обведённым видом выключенной кнопки: форма
-   * ставит `disabled` и на «поле пустое», и на «идёт запрос», а вид у обоих
-   * состояний оказался один. То есть в момент, когда продукт РАБОТАЕТ — читает
-   * библиотеку из Steam, и это единственная секунда ожидания на всём сайте, —
-   * кнопка показывала ровно то же, что показывала до ввода. Подпись менялась
-   * («Читаю библиотеку…»), вид нет.
-   *
-   * Занятая остаётся ЗАЛИТОЙ: работа идёт, кнопка жива. По ней проходит блик —
-   * единственное движение на странице, которое говорит «ждём ответа».
-   */
   .btn-ember[data-busy] {
     overflow: hidden;
     color: var(--on-ember);
-    background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 88%, #fff), var(--ember));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.24),
-      0 8px 20px -12px color-mix(in srgb, var(--ember) 70%, transparent);
-    filter: saturate(0.86);
+    background: color-mix(in srgb, var(--ember) 90%, var(--bg));
+    box-shadow: 0 8px 20px -12px var(--shadow);
   }
   .btn-ember[data-busy]::after {
     content: '';
@@ -1533,7 +1529,7 @@ textarea:focus-visible {
     background: linear-gradient(
       100deg,
       transparent 34%,
-      rgba(255, 255, 255, 0.28) 50%,
+      color-mix(in srgb, var(--on-ember) 16%, transparent) 50%,
       transparent 66%
     );
     transform: translateX(-100%);
@@ -2021,7 +2017,7 @@ textarea:focus-visible {
   font-size: clamp(1.1875rem, 0.98rem + 0.56vw, 1.625rem);
 }
 .pick-name {
-  font-family: var(--font-sofia), sans-serif;
+  font-family: var(--font-display);
   font-weight: 700;
   font-size: clamp(1.0625rem, 0.9rem + 0.42vw, 1.4rem);
   line-height: 1.2;
@@ -2155,7 +2151,7 @@ textarea:focus-visible {
  * что и шов между библиотеками, только досюда доехавший.
  */
 .tally-n {
-  font-family: var(--font-sofia), sans-serif;
+  font-family: var(--font-display);
   font-weight: 800;
   font-size: clamp(2.75rem, 1.9rem + 3.6vw, 4.75rem);
   line-height: 0.94;
@@ -2411,7 +2407,7 @@ textarea:focus-visible {
   color: var(--ember-text);
 }
 .rep-name {
-  font-family: var(--font-sofia), sans-serif;
+  font-family: var(--font-display);
   font-weight: 700;
   font-size: clamp(1.1875rem, 1rem + 0.72vw, 1.625rem);
   letter-spacing: -0.015em;
@@ -2665,7 +2661,7 @@ textarea:focus-visible {
 /* стеклянная панель — базовый строительный блок интерфейса */
 .glass {
   background: var(--glass-bg);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid var(--edge);
 }
 
@@ -2698,12 +2694,12 @@ textarea:focus-visible {
   border-radius: var(--radius-panel);
   border: 1px solid var(--edge);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 44%), var(--glass-bg);
+    linear-gradient(180deg, color-mix(in srgb, var(--ink) 6%, transparent), transparent 44%), var(--glass-bg);
+  backdrop-filter: blur(24px) saturate(160%);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
-    0 2px 6px rgba(0, 0, 0, 0.34),
-    0 34px 74px -30px rgba(0, 0, 0, 0.92);
+    inset 0 1px 0 color-mix(in srgb, #fff 14%, transparent),
+    0 2px 6px color-mix(in srgb, var(--shadow) 45%, transparent),
+    0 40px 80px -36px var(--shadow);
 }
 
 .glass-hover {
@@ -2732,6 +2728,188 @@ textarea:focus-visible {
 .glass-hover.no-lift:hover,
 .glass-hover.no-lift:active {
   transform: none;
+}
+
+/*
+ * НАБОР «ПРЕМЬЕРЫ»: второстепенные кнопки, чипы, заголовок раздела, обложка.
+ *
+ * До него каждая страница набирала вторую кнопку сама — `glass glass-hover
+ * rounded-[14px] px-… py-…` с разными полями, — и в одном ряду под героем
+ * стояло пять разных кнопок. Теперь рецептов три, и они различаются ролью:
+ *
+ *   .btn-ember  — главное действие, одно на экран (белая заливка);
+ *   .btn-glass  — второстепенное: стекло поверх арта или фона;
+ *   .btn-circle — действие-иконка («Зашло», «Скрыть»), подпись в aria-label.
+ *
+ * Подложки — доля цвета текста, а не белого: так одна и та же кнопка
+ * читается и на чёрном, и на молочном, и поверх обложки.
+ */
+@layer components {
+  .btn-glass {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: 0;
+    border-radius: var(--radius-control);
+    padding: 0.875rem 1.25rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    background: color-mix(in srgb, var(--ink) 13%, transparent);
+    backdrop-filter: blur(16px);
+    cursor: pointer;
+    transition:
+      background-color var(--dur-base) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+  .btn-glass:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ink) 22%, transparent);
+  }
+  .btn-glass:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .btn-glass:disabled {
+    cursor: default;
+    color: var(--faint);
+  }
+  .btn-glass[aria-pressed='true'] {
+    color: var(--bg);
+    background: var(--ink);
+  }
+
+  .btn-circle {
+    display: inline-grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    flex: none;
+    border-radius: 999px;
+    border: 1.5px solid color-mix(in srgb, var(--ink) 45%, transparent);
+    background: color-mix(in srgb, var(--bg) 30%, transparent);
+    color: var(--ink);
+    cursor: pointer;
+    transition:
+      border-color var(--dur-base) var(--ease-out),
+      background-color var(--dur-base) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+  .btn-circle:hover:not(:disabled) {
+    border-color: var(--ink);
+    background: color-mix(in srgb, var(--ink) 10%, transparent);
+  }
+  .btn-circle:active:not(:disabled) {
+    transform: scale(0.94);
+  }
+  .btn-circle[aria-pressed='true'] {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  /* Чип выбора: настроение, фильтр, причина. Выбранный — инверсия. */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.5625rem 0.9375rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--ink);
+    background: color-mix(in srgb, var(--ink) 9%, transparent);
+    cursor: pointer;
+    transition:
+      background-color var(--dur-base) var(--ease-out),
+      color var(--dur-base) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+  .pill:hover {
+    background: color-mix(in srgb, var(--ink) 16%, transparent);
+  }
+  .pill:active {
+    transform: scale(0.97);
+  }
+  .pill[aria-pressed='true'],
+  .pill.is-on {
+    color: var(--bg);
+    background: var(--ink);
+  }
+
+  /* Заголовок раздела: то, чем был тусклый SectionLabel в 14 px. */
+  .section-title {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(1.25rem, 1.144rem + 0.444vw, 1.5rem);
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+
+  /* Обложка в ряду: капсула 460×215 со скруглением и тонкой кромкой. */
+  .card-thumb {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    transition:
+      transform 0.45s var(--ease-out),
+      box-shadow 0.45s var(--ease-out);
+  }
+  .card-thumb::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 8%, transparent);
+    pointer-events: none;
+  }
+  .game-card:hover .card-thumb,
+  .game-card:focus-visible .card-thumb {
+    transform: scale(1.05);
+    box-shadow: 0 26px 50px -22px var(--shadow);
+  }
+
+  /* Процент совпадения — единственный фирменный цвет. */
+  .match {
+    color: var(--ember-text);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Контурный бейдж поверх арта: «Из бэклога», «Хотфикс». */
+  .badge-line {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, var(--ink) 45%, transparent);
+    border-radius: 4px;
+    padding: 0.25rem 0.4375rem 0.1875rem;
+    font-size: 0.65625rem;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: var(--track-meta);
+    text-transform: uppercase;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-glass,
+  .btn-circle,
+  .pill,
+  .card-thumb {
+    transition: none;
+  }
+  .btn-glass:active:not(:disabled),
+  .btn-circle:active:not(:disabled),
+  .pill:active,
+  .game-card:hover .card-thumb,
+  .game-card:focus-visible .card-thumb {
+    transform: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3116,11 +3294,11 @@ img[data-art-fade][data-loaded] {
 .hero-scrim {
   background: linear-gradient(
     to top,
-    #0b0c10 4%,
-    rgba(11, 12, 16, 0.88) 26%,
-    rgba(11, 12, 16, 0.68) 58%,
-    rgba(11, 12, 16, 0.63) 80%,
-    rgba(11, 12, 16, 0.42) 100%
+    #050505 4%,
+    rgba(5, 5, 5, 0.88) 26%,
+    rgba(5, 5, 5, 0.68) 58%,
+    rgba(5, 5, 5, 0.63) 80%,
+    rgba(5, 5, 5, 0.42) 100%
   );
 }
 /*
@@ -3262,7 +3440,7 @@ img[data-art-fade][data-loaded] {
   transition: opacity 0.25s ease;
   background: radial-gradient(
     280px circle at var(--mx, 50%) var(--my, 50%),
-    rgba(255, 158, 100, 0.1),
+    color-mix(in srgb, var(--ink) 7%, transparent),
     transparent 70%
   );
 }
@@ -3323,5 +3501,5 @@ img[data-art-fade][data-loaded] {
 }
 
 ::selection {
-  background: rgba(255, 158, 100, 0.35);
+  background: color-mix(in srgb, var(--ink) 26%, transparent);
 }

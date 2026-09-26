@@ -190,7 +190,7 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
           radius={0}
           /* виньетка подмешивает этот цвет по краям: фон секции, а не чёрный,
              иначе по периметру читается кольцо */
-          overlayColor="#0b0c10"
+          overlayColor="#050505"
           showCaptions={false}
           showControls={false}
           showIndicators={false}

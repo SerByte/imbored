@@ -19,16 +19,20 @@
  * означает, что бренд в мессенджере или на экране аварии не тот же самый, что
  * на сайте. Совпадение сторожит lib/palette.test.ts, который читает CSS.
  */
-export const BG = '#0b0c10'
-export const INK = '#f2f3f5'
-export const DIM = '#9ba1ab'
-export const EMBER = '#ff9e64'
+export const BG = '#050505'
+export const INK = '#f5f5f7'
+export const DIM = '#a9a9ae'
+export const EMBER = '#ffffff'
 
-/** Подложка знака — то же число, что в components/Logo.tsx. */
-export const PLATE = '#16171d'
+/** Подложка знака — то же число, что в components/Logo.tsx. Знак монохромный:
+ *  белая плашка с тёмным «:\», как у логотипов стриминговых сервисов. */
+export const PLATE = '#ffffff'
 
 /** Светлая тема: нужна там, где нет ни токенов, ни возможности их подключить. */
-export const LIGHT_BG = '#f5f4f1'
-export const LIGHT_INK = '#17181c'
-export const LIGHT_DIM = '#5b6170'
-export const LIGHT_EMBER = '#e0742f'
+export const LIGHT_BG = '#f5f5f7'
+export const LIGHT_INK = '#0b0b0c'
+export const LIGHT_DIM = '#4f4f55'
+export const LIGHT_EMBER = '#0b0b0c'
+
+/** Зелёный процента совпадения — единственный фирменный цвет «Премьеры». */
+export const MATCH = '#46d369'

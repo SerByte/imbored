@@ -59,7 +59,7 @@ export default async function Image() {
           background: OG_BG,
           backgroundImage: ogGlow(),
           color: OG_INK,
-          fontFamily: 'Onest',
+          fontFamily: 'Manrope',
         }}
       >
         {/* знак и раздел */}

@@ -84,12 +84,14 @@ export default function GlobalError({
             body { background: ${LIGHT_BG} !important; color: ${LIGHT_INK} !important }
             .ge-dim { color: ${LIGHT_DIM} !important }
             /* Заливка и текст на ней меняются ПАРОЙ — точно так же, как --ember и
-               --on-ember в globals.css. Оставить тёмный ember на молочном листе
-               было бы читаемо (9.61:1), но это был бы не тот оттенок бренда. */
-            .ge-btn { background: ${LIGHT_EMBER} !important; color: ${LIGHT_INK} !important }
+               --on-ember в globals.css: на тёмном главная кнопка белая, на
+               молочном — чёрная с белым текстом. */
+            .ge-btn { background: ${LIGHT_EMBER} !important; color: ${LIGHT_BG} !important }
+            .ge-plate { fill: ${LIGHT_INK} !important }
+            .ge-glyph { fill: ${LIGHT_BG} !important; stroke: ${LIGHT_BG} !important }
           }
-          .ge-btn { transition: filter .15s ease }
-          .ge-btn:hover { filter: brightness(1.1) }
+          .ge-btn { transition: opacity .15s ease }
+          .ge-btn:hover { opacity: .88 }
           .ge-btn:focus-visible, .ge-link:focus-visible { outline: 2px solid ${EMBER}; outline-offset: 2px }
         `}</style>
 
@@ -108,10 +110,10 @@ export default function GlobalError({
               красится теми же литералами, но тянуть в аварийный экран лишний
               модуль — лишний способ упасть второй раз. */}
           <svg width="48" height="48" viewBox="0 0 64 64" aria-hidden>
-            <rect width="64" height="64" rx="16" fill={PLATE} />
-            <circle cx="22" cy="25" r="5.5" fill="#f2f3f5" />
-            <circle cx="22" cy="42" r="5.5" fill="#f2f3f5" />
-            <line x1="36" y1="22" x2="46" y2="45" stroke={EMBER} strokeWidth="9" strokeLinecap="round" />
+            <rect className="ge-plate" width="64" height="64" rx="18" fill={PLATE} />
+            <circle className="ge-glyph" cx="22" cy="24.5" r="6" fill={BG} />
+            <circle className="ge-glyph" cx="22" cy="42" r="6" fill={BG} />
+            <line className="ge-glyph" x1="36" y1="20" x2="46" y2="45" stroke={BG} strokeWidth="9" strokeLinecap="round" />
           </svg>
 
           <h1 style={{ margin: 0, fontSize: '26px', lineHeight: 1.2, letterSpacing: '-0.01em' }}>
@@ -130,11 +132,11 @@ export default function GlobalError({
             style={{
               width: '100%',
               border: 0,
-              borderRadius: '14px',
+              borderRadius: '11px',
               background: EMBER,
               color: BG,
               font: 'inherit',
-              fontWeight: 600,
+              fontWeight: 700,
               fontSize: '15px',
               padding: '13px 20px',
               cursor: 'pointer',
