@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { ClickSpark } from '@/components/ClickSpark'
+import { Eyebrow } from '@/components/Labels'
 import { Magnet } from '@/components/Magnet'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { CONNECT_CARD_MIN_H } from '@/components/landing/ConnectFallback'
@@ -295,13 +296,13 @@ export function ConnectCard() {
   }
 
   return (
-    <div className="flex w-full max-w-md flex-col gap-4">
+    <div className="flex w-full max-w-xl flex-col gap-4">
       {/*
         Потолок высоты общий с фолбэком — см. CONNECT_CARD_MIN_H. Коробка
         одного размера в обоих состояниях и до гидратации, иначе первый экран
         дёргается ровно в тот момент, когда в него целятся пальцем.
       */}
-      <div className={`panel-lift connect-card flex ${CONNECT_CARD_MIN_H} flex-col gap-3 p-6`}>
+      <div className={`connect-card flex ${CONNECT_CARD_MIN_H} flex-col gap-4`}>
         {view.authed ? (
           <div className="flex flex-1 flex-col justify-center gap-4">
             {/*
@@ -311,15 +312,15 @@ export function ConnectCard() {
             */}
             {demo && (
               <div>
-                <p className="text-lg text-ink">Ты в демо-режиме.</p>
-                <p className="mt-1 text-sm leading-relaxed text-dim">
+                <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">Ты в демо-режиме.</p>
+                <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
                   Подбор идёт по чужой витрине. Вставь ссылку на свой профиль — и он пойдёт по
                   твоей библиотеке.
                 </p>
               </div>
             )}
             {!demo && (
-              <p className="text-lg text-ink">
+              <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">
                 С возвращением
                 {view.personaName ? (
                   <>
@@ -329,8 +330,8 @@ export function ConnectCard() {
                 .
               </p>
             )}
-            <Magnet className="block w-full">
-              <ClickSpark className="block w-full">
+            <Magnet className="block w-full sm:w-auto sm:self-start">
+              <ClickSpark className="block w-full sm:w-auto">
                 {/* busy — пока уходит вход в комнату: второй клик слал бы его дважды */}
                 <button
                   type="button"
@@ -341,7 +342,7 @@ export function ConnectCard() {
                   }}
                   disabled={busy !== null}
                   data-busy={busy === 'go' ? '' : undefined}
-                  className="btn-ember is-block"
+                  className="btn-ember is-block px-8 text-base sm:w-auto"
                 >
                   {action}
                 </button>
@@ -354,7 +355,7 @@ export function ConnectCard() {
               настроение к ней отношения не имеет.
             */}
             {showPresets && moodLine && (
-              <p className="-mt-2 text-center text-xs text-dim">
+              <p className="-mt-2 text-xs text-dim">
                 {moodLine} ·{' '}
                 <Link
                   href={QUIZ_HREF}
@@ -384,15 +385,11 @@ export function ConnectCard() {
             */}
             {showPresets && !formShown && (
               <div className="flex flex-col gap-2">
-                <p className="text-center text-xs text-faint">Или сразу:</p>
-                <div className="flex flex-wrap justify-center gap-2">
+                <Eyebrow>Или сразу</Eyebrow>
+                <div className="flex flex-wrap gap-2">
                   {QUICK_PRESETS.map((p) => (
-                    <Link
-                      key={p.key}
-                      href={presetHref(p)}
-                      className="glass glass-hover rounded-full px-4 py-2 text-sm"
-                    >
-                      {p.emoji} {p.label}
+                    <Link key={p.key} href={presetHref(p)} className="pill">
+                      {p.label}
                     </Link>
                   ))}
                 </div>
@@ -424,7 +421,7 @@ export function ConnectCard() {
               должно быть возможно, а спрятанное под раскрывашку «сменить
               аккаунт» ищут дольше, чем оно того стоит.
             */}
-            <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
               {!demo && (
                 <button
                   type="button"
@@ -455,7 +452,6 @@ export function ConnectCard() {
               сцен ниже — первый экран и рассказ под ним говорят одним
               шрифтом.
             */}
-            <p className="card-eyebrow">Доступ к библиотеке</p>
             <ProfileForm
               value={input}
               onChange={setInput}
@@ -466,20 +462,27 @@ export function ConnectCard() {
               primary
               onSubmit={submitProfile}
             />
-            <div className="rule-or">или</div>
-            <a
-              href={steamHref}
-              className="glass glass-hover w-full rounded-[14px] py-3 text-center text-sm text-ink"
-            >
-              Войти через Steam
-            </a>
-            <button
-              onClick={() => connect(true)}
-              disabled={busy !== null}
-              className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
-            >
-              {busy === 'demo' ? 'Готовлю демо…' : 'Попробовать демо без Steam'}
-            </button>
+            {/*
+              Две другие двери — строкой под пилюлей, как «Войти» под формой
+              стримингового героя: вход через Steam и демо. Раньше между ними
+              и полем стояла «или»-линейка и третья кнопка во всю ширину —
+              первый экран говорил тремя одинаково громкими голосами.
+            */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[15px] font-bold">
+              <a href={steamHref} className="tap py-1 text-ink transition-colors hover:text-dim">
+                Войти через Steam
+              </a>
+              <span aria-hidden className="text-faint">
+                ·
+              </span>
+              <button
+                onClick={() => connect(true)}
+                disabled={busy !== null}
+                className="tap py-1 text-dim transition-colors hover:text-ink active:text-ember-text"
+              >
+                {busy === 'demo' ? 'Готовлю демо…' : 'Демо без Steam'}
+              </button>
+            </div>
             {/*
               text-dim и 12 px, а не text-faint и 11. Замерено: faint на стекле
               карточки даёт ровно 4.50:1 — порог без единого запаса. Но главное
@@ -487,7 +490,7 @@ export function ConnectCard() {
               тот, кто как раз колеблется, отдавать ли свой профиль. Прятать
               ответ на этот вопрос в самый тихий токен было бы странно.
             */}
-            <p className="text-xs leading-relaxed text-dim">
+            <p className="max-w-md text-xs leading-relaxed text-dim">
               Пароль не спрашиваем — вход идёт на стороне Steam. Читаем только список игр и
               наигранные часы, ничего не публикуем.{' '}
               <Link
@@ -591,7 +594,7 @@ function ProfileForm({
         e.preventDefault()
         onSubmit()
       }}
-      className="flex flex-col gap-3"
+      className="join"
     >
       {/* Подпись есть, но не показана: место под ней съело бы карточку,
           а placeholder подписью не является — он исчезает при вводе и
@@ -621,12 +624,11 @@ function ProfileForm({
         autoFocus={autoFocus}
         aria-invalid={invalid}
         aria-describedby="connect-error"
-        className="field"
       />
       {primary ? (
         /* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */
-        <Magnet className="block w-full">
-          <ClickSpark className="block w-full">
+        <Magnet className="block w-full sm:w-auto">
+          <ClickSpark className="block w-full sm:w-auto">
             {/*
               data-busy отдельно от disabled: форма выключает кнопку и
               когда поле пустое, и когда идёт запрос, а это два разных
@@ -637,7 +639,7 @@ function ProfileForm({
               type="submit"
               disabled={!value || busy !== null}
               data-busy={busy === 'connect' ? '' : undefined}
-              className="btn-ember is-block"
+              className="btn-ember is-block whitespace-nowrap px-6 sm:w-auto"
             >
               {label}
             </button>
@@ -647,7 +649,7 @@ function ProfileForm({
         <button
           type="submit"
           disabled={!value || busy !== null}
-          className="glass glass-hover w-full rounded-[14px] py-3 text-center text-sm text-ink disabled:opacity-60"
+          className="btn-glass w-full whitespace-nowrap disabled:opacity-60 sm:w-auto"
         >
           {label}
         </button>

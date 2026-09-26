@@ -1,6 +1,7 @@
 'use client'
 
 import gsap from 'gsap'
+import { Icon } from '@/components/Icon'
 import { Stage } from '@/components/landing/Stage'
 
 /**
@@ -82,7 +83,7 @@ export function Money() {
           </p>
         </div>
         <a className="btn-ember back-btn" href="#main">
-          Наверх, к подключению ↑
+          Наверх, к подключению <Icon name="up" size={18} />
         </a>
       </div>
 

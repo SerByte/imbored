@@ -43,7 +43,13 @@ export type SceneRange = { start: number; end: number }
 export type ResolvedStop = RibbonState & { y: number }
 
 /** Покой ленты: с ним она встречает человека и им же провожает. */
-export const RIBBON_REST: RibbonState = { speed: 1, sat: 0.92, opacity: 0.5 }
+/*
+ * «Премьера»: в покое лента почти в полную силу — она и есть кадр первого
+ * экрана, а читаемость текста держит скрим слева, а не общая тусклость.
+ * В сценах рассказа она гаснет почти до нуля: ниже героя фон спокойный, и
+ * постеры в самих сценах не спорят с витриной за спиной.
+ */
+export const RIBBON_REST: RibbonState = { speed: 1, sat: 1, opacity: 0.9 }
 
 /**
  * Партитура света. Читается сверху вниз как путь по странице.
@@ -63,13 +69,13 @@ export const RIBBON_REST: RibbonState = { speed: 1, sat: 0.92, opacity: 0.5 }
  */
 export const RIBBON_SCORE: readonly RibbonStop[] = [
   { scene: null, k: 0, ...RIBBON_REST },
-  { scene: 'pain', k: 0, speed: 2, sat: 0.92, opacity: 0.5 },
-  { scene: 'pain', k: 0.62, speed: 0.05, sat: 0, opacity: 0.2 },
-  { scene: 'engine', k: 0, speed: 0.4, sat: 0.92, opacity: 0.13 },
-  { scene: 'compat', k: 0, speed: 0.32, sat: 0.92, opacity: 0.14 },
-  { scene: 'more', k: 0, speed: 0.3, sat: 0.92, opacity: 0.13 },
-  { scene: 'money', k: 0, speed: 0.3, sat: 0.92, opacity: 0.13 },
-  { scene: 'money', k: 0.55, speed: 1.6, sat: 0.92, opacity: 0.5 },
+  { scene: 'pain', k: 0, speed: 2, sat: 1, opacity: 0.9 },
+  { scene: 'pain', k: 0.62, speed: 0.05, sat: 0, opacity: 0.14 },
+  { scene: 'engine', k: 0, speed: 0.4, sat: 0.9, opacity: 0.05 },
+  { scene: 'compat', k: 0, speed: 0.32, sat: 0.9, opacity: 0.05 },
+  { scene: 'more', k: 0, speed: 0.3, sat: 0.9, opacity: 0.05 },
+  { scene: 'money', k: 0, speed: 0.3, sat: 0.9, opacity: 0.05 },
+  { scene: 'money', k: 0.55, speed: 1.6, sat: 1, opacity: 0.9 },
 ]
 
 /**

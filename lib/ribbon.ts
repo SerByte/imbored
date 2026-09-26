@@ -1,4 +1,4 @@
-import { legacyArtUrl, legacyCapsuleUrl } from './art'
+import { legacyArtUrl } from './art'
 import type { GameArtUrls } from './art'
 
 /**
@@ -25,22 +25,21 @@ export type RibbonSource = {
 export type RibbonGame = {
   appid: number
   name: string
-  /** Запасная ссылка: та же обложка 460×215, если лёгкой не оказалось. */
+  /**
+   * Вертикальный постер 300×450 (library_600x900) — то, что лента показывает.
+   *
+   * «Премьера» собирает ленту из постеров, а не из широких капсул: постер —
+   * это обложка, какой её знают по полке магазина, и колонка постеров
+   * читается витриной, а не мозаикой из полосок. Разрешения 300 хватает:
+   * колонка на широком экране около двухсот пикселей.
+   */
   src: string
   /**
-   * Лёгкая обложка 231×87 — то, что лента показывает на самом деле.
-   *
-   * Замерено на живых адресах Steam: `header.jpg` у одних и тех же игр весит
-   * 128, 114, 69 и 38 КБ, а `capsule_231x87.jpg` — 18.6, 15.4, 16.5 и 4.4.
-   * Разница в семь раз, и платится она ни за что: лента размыта на 0.6…3.0 px,
-   * непрерывно движется, лежит под скримом и показывает колонку шириной около
-   * ста пикселей. Разрешения 231 хватает с двойным запасом.
-   *
-   * Может отсутствовать: плоский путь без хэша работает не у всех игр, а у
-   * новых ассетов имя содержит хэш и вывести его нельзя. Поэтому поле
-   * необязательное, а лента умеет откатиться на `src` по ошибке загрузки.
+   * Запас на ошибку загрузки: широкая обложка 460×215. Плоский путь к постеру
+   * работает не у всех игр — у новых ассетов имя содержит хэш, и вывести его
+   * нельзя, — поэтому лента умеет откатиться сюда.
    */
-  light: string | null
+  fallback: string | null
 }
 
 /**
@@ -83,17 +82,14 @@ export const FALLBACK_RIBBON: ReadonlyArray<{ appid: number; name: string }> = [
   { appid: 646570, name: 'Slay the Spire' },
 ]
 
-/** Ссылка на обложку: резолвленная, потом сохранённая, потом шаблон Steam. */
-function coverUrl(g: RibbonSource): string | null {
-  return g.art?.header ?? g.headerImage ?? (g.appid > 0 ? legacyArtUrl(g.appid, 'header') : null)
+/** Постер: резолвленный ассет, потом шаблон Steam по плоскому пути. */
+function posterUrl(g: RibbonSource): string | null {
+  return g.art?.poster ?? (g.appid > 0 ? legacyArtUrl(g.appid, 'poster') : null)
 }
 
-/**
- * Лёгкая обложка по плоскому пути Steam. Только для игр с положительным
- * appid: у игр вне Steam шаблоны неприменимы, у отрицательных id — тем более.
- */
-function lightCoverUrl(appid: number): string | null {
-  return appid > 0 ? legacyCapsuleUrl(appid) : null
+/** Широкая обложка на случай, если постера нет: резолвленная, сохранённая, шаблон. */
+function headerUrl(g: RibbonSource): string | null {
+  return g.art?.header ?? g.headerImage ?? (g.appid > 0 ? legacyArtUrl(g.appid, 'header') : null)
 }
 
 /**
@@ -109,10 +105,11 @@ export function ribbonGames(catalog: readonly RibbonSource[]): RibbonGame[] {
   for (const g of catalog) {
     if (out.length >= RIBBON_MAX) break
     if (g.appid <= 0 || seen.has(g.appid)) continue
-    const src = coverUrl(g)
+    const src = posterUrl(g) ?? headerUrl(g)
     if (!src) continue
     seen.add(g.appid)
-    out.push({ appid: g.appid, name: g.name, src, light: lightCoverUrl(g.appid) })
+    const fallback = headerUrl(g)
+    out.push({ appid: g.appid, name: g.name, src, fallback: fallback === src ? null : fallback })
   }
 
   // Добор, а не подмена: если каталог отдал десять живых строк, десять живых и
@@ -124,8 +121,8 @@ export function ribbonGames(catalog: readonly RibbonSource[]): RibbonGame[] {
     out.push({
       appid: g.appid,
       name: g.name,
-      src: legacyArtUrl(g.appid, 'header'),
-      light: lightCoverUrl(g.appid),
+      src: legacyArtUrl(g.appid, 'poster'),
+      fallback: legacyArtUrl(g.appid, 'header'),
     })
   }
 

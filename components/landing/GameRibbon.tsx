@@ -54,8 +54,14 @@ gsap.registerPlugin(ScrollTrigger, useGSAP)
  * (их 80 при 1280×800 и под полторы сотни на широком мониторе).
  */
 
-/** Целевая ширина колонки и зазор — из них считается число колонок. */
-const COL_TARGET = 300
+/**
+ * Целевая ширина колонки и зазор — из них считается число колонок.
+ *
+ * «Премьера»: колонка постеров уже, чем колонка широких капсул, — около
+ * двухсот пикселей, то есть семь колонок на 1280. Постер 2:3 в такой колонке
+ * читается обложкой с полки, а не полоской.
+ */
+const COL_TARGET = 200
 const GAP = 14
 
 /**
@@ -155,7 +161,7 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
         const gh = grid.clientHeight || window.innerHeight
         const cols = Math.max(4, Math.min(12, Math.round(gw / COL_TARGET)))
         const cw = Math.floor((gw - GAP * (cols - 1)) / cols)
-        const tile = (cw * 215) / 460 + GAP
+        const tile = cw * 1.5 + GAP
         const per = Math.ceil(gh / tile) + 1
 
         /*
@@ -166,38 +172,17 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
         const narrow = window.innerWidth < NARROW_WIDTH
         const pool = narrow ? games.slice(0, NARROW_COVERS) : games
 
-        /*
-         * ЛЁГКАЯ ВИТРИНА — ТОЛЬКО НА УЗКОМ ЭКРАНЕ, и это замер, а не осторожность.
-         *
-         * Витрина 231 px шириной. На телефоне колонка выходит около ста, то есть
-         * запас двойной и картинка честно уменьшается. На широком мониторе
-         * колонка около 250, и та же витрина уже РАСТЯГИВАЕТСЯ, да ещё
-         * подрезается по бокам под соотношение плитки: снятый кадр показал
-         * ленту заметно мутнее прежней. Там полосу экономить не на чем, и
-         * правильный источник — обычная обложка 460.
-         */
-        const useLight = narrow
 
         for (let c = 0; c < cols; c++) {
           const col = document.createElement('div')
           col.className = 'ribbon-col'
           col.style.setProperty('--ribbon-col', `${cw}px`)
           /*
-           * Размытие — на колонке, а не на каждой обложке: обложек восемь
-           * десятков при 1280×800 и под полторы сотни на широком мониторе, а
-           * колонок от четырёх до двенадцати.
-           *
-           * Ширину колонки глубина НЕ трогает: колонки уложены в ряд с
-           * фиксированными ширинами, и любой масштаб развалил бы ряд щелями.
-           *
-           * Четвёртым каналом задумывалась сила тени под обложкой — и не
-           * прошла по кадру. Замер в докблоке ленты выше: тень с радиусом
-           * размытия на обложках роняет прокрутку с 60 fps до 30.
-           * Осталась тень нулевого радиуса — волосок по кромке, он бесплатен.
+           * Размытия глубины у «Премьеры» нет: постеры резкие, как полка
+           * магазина, а глубину даёт наклон ряда и разная скорость колонок.
+           * Заодно колонка перестаёт быть отдельным слоем с фильтром —
+           * композитору на каждом кадре проезда становится проще.
            */
-          const d = depth(c, cols)
-          col.style.setProperty('--ribbon-blur', `${(0.6 + d * 2.4).toFixed(2)}px`)
-          col.style.setProperty('--ribbon-fade', (1 - d * 0.42).toFixed(3))
           const block: RibbonGame[] = []
           for (let k = 0; k < per; k++) {
             block.push(pool[(c * 5 + k * 3) % pool.length])
@@ -207,22 +192,19 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
             for (const g of block) {
               const img = document.createElement('img')
               /*
-               * Сначала лёгкая витрина, полноразмерная обложка — только если
-               * лёгкой не оказалось (см. RibbonGame.light). Плоский путь без
-               * хэша работает не у всех игр, поэтому откат по ошибке
+               * Постер, а на его ошибке — широкая обложка (см. RibbonGame).
+               * Плоский путь к постеру работает не у всех игр, поэтому откат
                * обязателен: без него плитка осталась бы битой иконкой.
-               *
                * onerror снимается сразу после подмены — иначе на втором сбое
-               * (нет и полной обложки) он зациклился бы на самом себе.
+               * он зациклился бы на самом себе.
                */
-              if (useLight && g.light) {
-                img.src = g.light
+              img.src = g.src
+              if (g.fallback) {
+                const fallback = g.fallback
                 img.onerror = () => {
                   img.onerror = null
-                  img.src = g.src
+                  img.src = fallback
                 }
-              } else {
-                img.src = g.src
               }
               img.alt = ''
               img.loading = 'lazy'
@@ -257,7 +239,7 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
                * разница скоростей начинает читаться расстоянием, а не
                * дёрганьем.
                */
-              duration: 30 + depth(i, cols.length) * 36,
+              duration: 48 + depth(i, cols.length) * 40,
               ease: 'none',
               repeat: -1,
             }),
@@ -368,7 +350,7 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
        * может добавить церемонию, но не может изменить состояние покоя.
        */
       if (document.visibilityState === 'visible') {
-        gsap.from(grid, { scale: 1.24, duration: 1.2, ease: 'power3.out' })
+        gsap.from(grid, { scale: 1.32, duration: 1.6, ease: 'power3.out' })
       }
 
       gsap.ticker.add(paint)

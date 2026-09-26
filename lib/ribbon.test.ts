@@ -64,13 +64,18 @@ describe('лента главной', () => {
 
   /**
    * Ссылка берётся в том же порядке деградации, что и везде в продукте:
-   * резолвленный ассет, потом сохранённый header_image, потом шаблон Steam.
+   * резолвленный постер, потом шаблон Steam; широкая обложка — запасом.
    */
   test('ссылка берётся из резолвленного арта, когда он есть', () => {
     const got = ribbonGames([
-      row(570, { art: { header: 'https://example.test/a.jpg' }, headerImage: 'https://example.test/b.jpg' }),
+      row(570, {
+        art: { poster: 'https://example.test/p.jpg', header: 'https://example.test/a.jpg' },
+        headerImage: 'https://example.test/b.jpg',
+      }),
     ])
-    expect(got[0].src).toBe('https://example.test/a.jpg')
+    expect(got[0].src).toBe('https://example.test/p.jpg')
+    // широкая обложка остаётся запасом на ошибку загрузки постера
+    expect(got[0].fallback).toBe('https://example.test/a.jpg')
   })
 
   test('строка без единой ссылки в ленту не попадает', () => {
