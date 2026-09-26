@@ -4,9 +4,10 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { GameCardBody } from '@/components/GameCard'
+import { Icon } from '@/components/Icon'
 import { Magnet } from '@/components/Magnet'
 import { DiscountCorner, PriceTag } from '@/components/PriceTag'
-import { ProgressRing } from '@/components/ProgressRing'
 import { SplitHeading } from '@/components/SplitHeading'
 import { verdict } from '@/lib/compat'
 import { tagRu } from '@/lib/tagsru'
@@ -24,8 +25,9 @@ import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { CopyCompatLink } from '../CopyCompatLink'
 import { CompatNotice } from './CompatNotice'
-import { CoverStrip } from './CoverStrip'
-import { Eyebrow } from '@/components/Labels'
+import { CoverWall } from './CoverStrip'
+import { Eyebrow, SectionTitle } from '@/components/Labels'
+import type { ArtRef } from '@/lib/compatpage'
 
 export const dynamic = 'force-dynamic'
 
@@ -94,12 +96,10 @@ const inView = (i = 0) => ({
 
 const ru = (n: number) => n.toLocaleString('ru-RU')
 
-function Kicker({ children }: { children: React.ReactNode }) {
-  return (
-    <Eyebrow as="h2" className="mb-1">
-      {children}
-    </Eyebrow>
-  )
+/** Без повторов: одна игра дважды в одной ленте читается сбоем, а не узором */
+function uniq(games: ArtRef[]): ArtRef[] {
+  const seen = new Set<number>()
+  return games.filter((g) => !seen.has(g.appid) && seen.add(g.appid))
 }
 
 /**
@@ -142,74 +142,62 @@ function HoursSplit({ hoursA, hoursB }: { hoursA: number; hoursB: number }) {
 
 function CommonRow({ game }: { game: CompatGame }) {
   return (
-    <Link
-      href={`/game/${game.appid}`}
-      className="glass glass-hover flex items-center gap-3 rounded-[14px] p-2 pr-3"
-    >
-      <GameArt
-        appid={game.appid}
-        name={game.name}
-        headerImage={game.headerImage}
-        art={game.art}
-        // Слот шириной 104px: без подсказки браузер тянул сюда 920px-ассет
-        sizes="104px"
-        className="h-12 w-[104px] shrink-0 rounded-[8px] border border-edge object-cover"
-      />
+    <Link href={`/game/${game.appid}`} className="common-row game-card">
+      <span className="card-thumb aspect-[460/215] w-[112px] shrink-0 md:w-[136px]">
+        <GameArt
+          appid={game.appid}
+          name={game.name}
+          headerImage={game.headerImage}
+          art={game.art}
+          // Слот шириной 136px: без подсказки браузер тянул сюда 920px-ассет
+          sizes="136px"
+          className="h-full w-full object-cover"
+        />
+      </span>
       {/* min-w-0 обязателен: без него flex-1 не даёт ужаться ниже содержимого
           и truncate не срабатывает вовсе */}
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <span className="truncate text-sm font-semibold">{game.name}</span>
+      <span className="flex min-w-0 flex-1 flex-col gap-2">
+        <span className="truncate text-[15px] font-extrabold tracking-[-0.01em]">{game.name}</span>
         <HoursSplit hoursA={game.hoursA} hoursB={game.hoursB} />
-      </div>
+      </span>
     </Link>
   )
 }
 
 function PickCard({ pick }: { pick: CompatPick }) {
   return (
-    <Link
-      href={`/game/${pick.appid}`}
-      className="glass glass-hover overflow-hidden rounded-[14px]"
-    >
-      <div className="relative">
-        <GameArt
-          appid={pick.appid}
-          name={pick.name}
-          headerImage={pick.headerImage}
-          art={pick.art}
-          sizes="(min-width: 768px) 33vw, 50vw"
-          className="aspect-[460/215] w-full object-cover"
-        />
-        <DiscountCorner discount={pick.discount} />
-      </div>
-      <div className="p-3">
-        <div className="line-clamp-2 text-sm font-semibold leading-tight">{pick.name}</div>
-        {/* Ряд независимых элементов, а не склеенная строка: висячему « · »
-            неоткуда взяться, когда разделителя нет вовсе */}
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
-          {pick.ownedByAll ? (
-            <span className="rounded-full bg-ok/15 px-2.5 py-1 font-medium text-ok">
-              ✓ есть у обоих
+    <Link href={`/game/${pick.appid}`} className="game-card block">
+      <GameCardBody
+        appid={pick.appid}
+        name={pick.name}
+        headerImage={pick.headerImage}
+        art={pick.art}
+        sizes="(min-width: 768px) 33vw, 50vw"
+        corner={<DiscountCorner discount={pick.discount} />}
+        meta={
+          // Ряд независимых элементов, а не склеенная строка: висячему « · »
+          // неоткуда взяться, когда разделителя нет вовсе
+          pick.ownedByAll ? (
+            <span className="inline-flex items-center gap-1.5 text-ok">
+              <Icon name="check" size={14} />
+              Есть у обоих
             </span>
           ) : (
             <>
-              <span className="rounded-full bg-info/10 px-2.5 py-1 text-info">
-                нет у: {pick.missingFor.join(', ')}
+              <span className="min-w-0 truncate">Нет у: {pick.missingFor.join(', ')}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                <PriceTag
+                  priceFinal={pick.priceFinal ?? null}
+                  isFree={pick.isFree}
+                  discount={pick.discount}
+                  showPercent={false}
+                />
+                {pick.store && <span>{STORE_LABEL[pick.store] ?? pick.store}</span>}
               </span>
-              <PriceTag
-                priceFinal={pick.priceFinal ?? null}
-                isFree={pick.isFree}
-                discount={pick.discount}
-                showPercent={false}
-                className="text-[11px]"
-              />
-              {pick.store && (
-                <span className="text-dim">{STORE_LABEL[pick.store] ?? pick.store}</span>
-              )}
             </>
-          )}
-        </div>
-      </div>
+          )
+        }
+      />
     </Link>
   )
 }
@@ -228,9 +216,10 @@ function Shelf({
   if (!picks.length) return null
   return (
     <motion.section {...inView(index)}>
-      <Kicker>{kicker}</Kicker>
-      <p className="mb-4 text-xs text-faint">{hint}</p>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+      <SectionTitle sub={hint} className="mb-5">
+        {kicker}
+      </SectionTitle>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-6 md:grid-cols-3">
         {picks.map((p) => (
           <PickCard key={p.appid} pick={p} />
         ))}
@@ -254,8 +243,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         body="Кинь её кому-нибудь другому — сервис сравнит ваши библиотеки и покажет, во что вам зайти вместе."
       >
         <CopyOwn steamid={other} />
-        <Link href={`/portrait/${other}`} className="tap text-sm text-dim transition-colors hover:text-ink">
-          Посмотреть свой портрет →
+        <Link href={`/portrait/${other}`} className="tap link-more">
+          Посмотреть свой портрет
+          <Icon name="arrow" size={16} />
         </Link>
       </CompatNotice>
     )
@@ -268,8 +258,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         body="Сравнивать пока не с чем. Можно кинуть ему свою ссылку — тогда сравнение соберётся с его стороны."
       >
         {me && <CopyOwn steamid={me} />}
-        <Link href="/compat" className="tap text-sm text-dim transition-colors hover:text-ink">
-          ← К своей ссылке
+        <Link href="/compat" className="tap link-more">
+          <Icon name="arrow" size={16} className="rotate-180" />
+          К своей ссылке
         </Link>
       </CompatNotice>
     )
@@ -282,7 +273,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
     return (
       <div className="flex-1">
         <InviteHero invite={invite} />
-        <div className="mx-auto flex w-full max-w-md flex-col gap-4 px-5 pb-24 text-center">
+        <div className="mx-auto flex w-full max-w-md flex-col gap-3 px-5 pb-24 text-center">
           {state.kind === 'noauth' ? (
             <>
               <p className="text-sm leading-relaxed text-dim">
@@ -295,10 +286,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
               >
                 Войти через Steam
               </a>
-              <Link
-                href={`/?compat=${other}`}
-                className="glass glass-hover rounded-[14px] py-3 text-sm"
-              >
+              <Link href={`/?compat=${other}`} className="btn-glass flex w-full">
                 Вставить ссылку на профиль / демо
               </Link>
             </>
@@ -326,61 +314,66 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
   return (
     <div className="flex-1">
       <section className="media-dark anim-reveal relative flex min-h-[88svh] flex-col justify-end overflow-hidden">
-        <CoverStrip games={d.heroGames} />
-        <div
-          aria-hidden
-          className="absolute inset-0"
-          style={{
-            background:
-              'linear-gradient(to bottom, color-mix(in srgb, var(--bg) 25%, transparent) 0%, var(--bg) 52%)',
-          }}
+        {/* Верхняя лента — общее, нижняя — во что зайти дальше */}
+        <CoverWall
+          rows={[
+            uniq([...d.heroGames, ...d.commonGames]),
+            uniq([...d.playNow, ...d.playLater, ...d.heroGames].reverse()),
+          ]}
         />
+        <div aria-hidden className="cwall-scrim" />
         <div aria-hidden className="grain" />
 
-        <div className="relative mx-auto flex w-full max-w-6xl flex-col items-start gap-8 px-5 pb-16 pt-40 md:flex-row md:items-end md:gap-12">
-          <ProgressRing
-            percent={d.percent}
-            ariaLabel={`Совместимость вкусов: ${d.percent} процентов`}
-            className="origin-left shrink-0 scale-[0.8] md:scale-100"
-          />
-          <div className="min-w-0">
-            <Eyebrow className="mb-3">Совместимость</Eyebrow>
-            <SplitHeading
-              className="font-display text-display-lg"
-              delay={0.18}
-            >
-              {`${d.myName} × ${d.otherName}`}
-            </SplitHeading>
-            <p className="mt-5 max-w-xl font-display text-display-md">
-              {verdict(d.percent)}
-            </p>
-            <p className="mt-3 text-sm text-dim md:text-base">
-              {d.commonTotal} {plural(d.commonTotal, 'общая игра', 'общие игры', 'общих игр')}
-              {d.sharedTags.length > 0 &&
-                ` · ${d.sharedTags.length} ${plural(d.sharedTags.length, 'общая тема', 'общие темы', 'общих тем')}`}
-            </p>
-          </div>
+        <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
+          <Eyebrow className="mb-3">Совместимость</Eyebrow>
+          <SplitHeading className="font-display text-display-lg" delay={0.18}>
+            {`${d.myName} × ${d.otherName}`}
+          </SplitHeading>
+          <p className="mt-4 max-w-xl font-display text-display-md text-dim">{verdict(d.percent)}</p>
+          {/*
+            Процент — главное число страницы, и он стоит крупно, как счёт, а не
+            в кольце на 200 px: кольцо читалось приборной панелью. Рядом — то,
+            из чего он сложился.
+          */}
+          <dl className="mt-10 flex flex-wrap items-end gap-x-10 gap-y-6 md:gap-x-12">
+            {/* На телефоне процент — отдельной строкой, два числа под ним рядом */}
+            <div className="flex basis-full flex-col-reverse md:basis-auto">
+              <dt className="lib-stat-label">совместимость вкусов</dt>
+              <dd className="lib-stat compat-percent text-ember-text">
+                {d.percent}
+                <span className="compat-percent-sign">%</span>
+              </dd>
+            </div>
+            <div className="flex flex-col-reverse">
+              <dt className="lib-stat-label">
+                {plural(d.commonTotal, 'общая игра', 'общие игры', 'общих игр')}
+              </dt>
+              <dd className="lib-stat">{ru(d.commonTotal)}</dd>
+            </div>
+            {d.sharedTags.length > 0 && (
+              <div className="flex flex-col-reverse">
+                <dt className="lib-stat-label">
+                  {plural(d.sharedTags.length, 'общая тема', 'общие темы', 'общих тем')}
+                </dt>
+                <dd className="lib-stat">{d.sharedTags.length}</dd>
+              </div>
+            )}
+          </dl>
         </div>
       </section>
 
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-5 py-16">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-safe py-16">
         {d.sharedTags.length > 0 && (
           <motion.section {...inView(0)}>
-            <Kicker>Что вас роднит</Kicker>
-            <p className="mb-4 text-xs text-faint">
-              Эти темы совпадают у вас чаще, чем у случайной пары — считаем по редкости тега в
-              каталоге, а не по популярности.
-            </p>
+            <SectionTitle
+              sub="Эти темы совпадают у вас чаще, чем у случайной пары — считаем по редкости тега в каталоге, а не по популярности."
+              className="mb-5"
+            >
+              Что вас роднит
+            </SectionTitle>
             <ul className="flex flex-wrap gap-2">
               {d.sharedTags.map((tag, i) => (
-                <li
-                  key={tag}
-                  className={
-                    i === 0
-                      ? 'rounded-full bg-ember/15 px-3.5 py-1.5 text-sm text-ember-text'
-                      : 'glass rounded-full px-3 py-1 text-xs text-dim'
-                  }
-                >
+                <li key={tag} className={`compat-tag ${i === 0 ? 'is-top' : ''}`}>
                   {tagRu(tag)}
                 </li>
               ))}
@@ -389,16 +382,17 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         )}
 
         <motion.section {...inView(1)}>
-          <Kicker>Общие игры</Kicker>
           {d.commonTotal > 0 ? (
             <>
-              <p className="mb-4 text-xs text-faint">
-                Вместе в них — {ru(d.commonHours)}{' '}
-                {plural(d.commonHours, 'час', 'часа', 'часов')}.
-              </p>
+              <SectionTitle
+                sub={`Вместе в них — ${ru(d.commonHours)} ${plural(d.commonHours, 'час', 'часа', 'часов')}.`}
+                className="mb-4"
+              >
+                Общие игры
+              </SectionTitle>
               {/* Легенда заодно подписывает колонки: какое число чьё, иначе
                   видно только по порядку слов в заголовке страницы */}
-              <div className="mb-3 flex flex-wrap items-center gap-4 text-[11px] text-faint">
+              <div className="mb-3 flex flex-wrap items-center gap-4 text-[13px] font-semibold text-dim">
                 <span className="flex items-center gap-1.5">
                   <span aria-hidden className="h-2 w-2 rounded-full bg-ember" />
                   {d.myName}
@@ -408,7 +402,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                   {d.otherName}
                 </span>
               </div>
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1">
                 {d.commonGames.map((g) => (
                   <CommonRow key={g.appid} game={g} />
                 ))}
@@ -420,9 +414,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
               )}
             </>
           ) : (
-            <p className="text-sm text-dim">
-              Общих игр нет — вы играете в разное. Тем интереснее собрать пати.
-            </p>
+            <SectionTitle sub="Общих игр нет — вы играете в разное. Тем интереснее собрать пати.">
+              Общие игры
+            </SectionTitle>
           )}
         </motion.section>
 
@@ -441,7 +435,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
 
         <motion.div
           {...inView(4)}
-          className="glass flex flex-wrap items-center justify-center gap-3 rounded-[20px] p-6 md:p-8"
+          className="panel-lift flex flex-wrap items-center justify-center gap-3 p-6 md:p-8"
         >
           <Magnet>
             <Link
@@ -452,11 +446,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             </Link>
           </Magnet>
           <CopyOwn steamid={d.me} inline />
-          <Link
-            href={`/portrait/${d.other}`}
-            className="p-2 text-sm text-dim transition-colors hover:text-ink"
-          >
-            Портрет {d.otherName} →
+          <Link href={`/portrait/${d.other}`} className="tap link-more p-2">
+            Портрет {d.otherName}
+            <Icon name="arrow" size={16} />
           </Link>
         </motion.div>
       </div>
@@ -465,18 +457,11 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
 }
 
 /** Шапка приглашения: то же лицо, что и на карточке для мессенджера */
-function InviteHero({ invite }: { invite: { name: string; gamesCount: number; totalHours: number; topGames: React.ComponentProps<typeof CoverStrip>['games'] } }) {
+function InviteHero({ invite }: { invite: { name: string; gamesCount: number; totalHours: number; topGames: ArtRef[] } }) {
   return (
     <section className="media-dark anim-reveal relative flex min-h-[62svh] flex-col justify-end overflow-hidden">
-      <CoverStrip games={invite.topGames} />
-      <div
-        aria-hidden
-        className="absolute inset-0"
-        style={{
-          background:
-            'linear-gradient(to bottom, color-mix(in srgb, var(--bg) 25%, transparent) 0%, var(--bg) 58%)',
-        }}
-      />
+      <CoverWall rows={[invite.topGames, [...invite.topGames].reverse()]} />
+      <div aria-hidden className="cwall-scrim" />
       <div aria-hidden className="grain" />
       <div className="relative mx-auto w-full max-w-2xl px-5 pb-10 pt-32 text-center">
         <Eyebrow className="mb-3">Совместимость</Eyebrow>
@@ -503,7 +488,7 @@ function CopyOwn({ steamid, inline = false }: { steamid: string; inline?: boolea
       steamid={steamid}
       className={
         inline
-          ? 'glass glass-hover cursor-pointer rounded-[14px] px-6 py-3 text-sm'
+          ? 'btn-glass px-6'
           : 'btn-ember is-block py-3'
       }
       label="Моя ссылка совместимости"

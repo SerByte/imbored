@@ -5,6 +5,7 @@ import { ShareLinkField } from '@/components/ShareLink'
 import { bounceTo } from '@/lib/destination'
 import { appBaseUrl, currentSteamId } from '@/lib/server'
 import { Eyebrow } from '@/components/Labels'
+import { Icon } from '@/components/Icon'
 
 export const metadata = {
   title: 'Совместимость',
@@ -81,8 +82,9 @@ export default async function CompatHubPage() {
         </div>
 
         <div>
-          <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
-            ← К подбору игры
+          <Link href="/quiz" className="tap link-more">
+            <Icon name="arrow" size={16} className="rotate-180" />
+            К подбору игры
           </Link>
         </div>
       </div>

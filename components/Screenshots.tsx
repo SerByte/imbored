@@ -27,11 +27,13 @@ export function Screenshots({ images, name }: { images: string[]; name: string }
             key={src}
             layoutId={`shot-${i}`}
             onClick={() => setOpen(i)}
-            className="glass glass-hover rounded-[14px] overflow-hidden cursor-pointer"
+            className="game-card block w-full cursor-pointer rounded-(--radius-card)"
             aria-label={`Скриншот ${i + 1} из ${images.length} — ${name}`}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={src} alt="" loading="lazy" className="w-full aspect-video object-cover" />
+            <span className="card-thumb">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={src} alt="" loading="lazy" className="w-full aspect-video object-cover" />
+            </span>
           </motion.button>
         ))}
       </div>

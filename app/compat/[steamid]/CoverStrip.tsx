@@ -2,34 +2,50 @@ import { GameArt } from '@/components/GameArt'
 import type { ArtRef } from '@/lib/compatpage'
 
 /**
- * Лента обложек в шапке — фон, который что-то значит.
+ * Две ленты постеров навстречу друг другу — фон шапки совместимости.
  *
- * Раньше здесь лежали два library_hero по 1920px, размытые в кашу чисто ради
- * цвета, да ещё и взятые как две самые наигранные общие игры: страница
- * буквально красилась самым старым, что есть у пары. Лента показывает то же,
- * про что страница, — общие игры, — и берёт header 460×215, которые всё равно
- * нужны списку ниже.
+ * Страница про двоих и про то, где их вкусы сходятся, поэтому и фон — два
+ * потока: верхний — то, что у пары уже общее, нижний — во что им зайти
+ * дальше. Механика та же, что у стены ожидания (.pwall в WarmupScreen):
+ * ряд задвоен и едет на половину своей ширины, петля бесшовная, двигается
+ * только transform; при «уменьшить движение» ленты стоят.
  *
- * Та же композиция, что у карточки для шеринга (полоса обложек сверху, текст
- * под ней): превью в мессенджере и сама страница должны быть одной картинкой.
+ * Раньше здесь была неподвижная полоса из пяти капсул 460×215 — фон, который
+ * читался как таблица. Карточка для мессенджера (share-card) остаётся полосой:
+ * там движения нет по определению.
  */
-export function CoverStrip({ games, eagerCount = 3 }: { games: ArtRef[]; eagerCount?: number }) {
-  if (!games.length) return null
+const ROW_MIN = 10
+
+function fill(games: ArtRef[]): ArtRef[] {
+  if (!games.length) return []
+  return games.length >= ROW_MIN ? games : Array.from({ length: ROW_MIN }, (_, i) => games[i % games.length])
+}
+
+export function CoverWall({ rows }: { rows: ArtRef[][] }) {
+  const filled = rows.map(fill).filter((r) => r.length)
+  if (!filled.length) return null
 
   return (
-    <div aria-hidden className="absolute inset-x-0 top-0 flex h-[46svh]">
-      {games.map((g, i) => (
-        <GameArt
-          key={g.appid}
-          appid={g.appid}
-          name={g.name}
-          headerImage={g.headerImage}
-          art={g.art}
-          eager={i < eagerCount}
-          sizes="(min-width: 768px) 20vw, 34vw"
-          className="h-full w-1/3 shrink-0 object-cover md:w-1/5"
-        />
-      ))}
+    <div aria-hidden className="pwall cwall">
+      <div className="pwall-grid">
+        {filled.map((row, r) => (
+          <div key={r} className="pwall-row">
+            {[...row, ...row].map((g, i) => (
+              <GameArt
+                key={i}
+                appid={g.appid}
+                name={g.name}
+                headerImage={g.headerImage}
+                art={g.art}
+                variant="poster"
+                sizes="180px"
+                eager={r === 0 && i < 6}
+                className="cwall-poster"
+              />
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

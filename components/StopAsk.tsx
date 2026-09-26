@@ -78,7 +78,7 @@ export function StopAsk<K extends string>({
                     key={r.key}
                     type="button"
                     onClick={() => onReason(r.key)}
-                    className="rounded-full glass glass-hover px-4 py-2 text-sm cursor-pointer"
+                    className="pill"
                   >
                     {r.label}
                   </button>

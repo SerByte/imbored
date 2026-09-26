@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition } from 'react'
-import { GameArt } from '@/components/GameArt'
+import { GameCardBody } from '@/components/GameCard'
 import { NeedSteam } from '@/components/NeedSteam'
 import type { GameArtUrls } from '@/lib/art'
 import { Eyebrow } from '@/components/Labels'
@@ -169,21 +169,20 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
             layout
             exit={{ opacity: 0, scale: 0.94 }}
             transition={{ duration: 0.22 }}
-            className="glass rounded-[var(--radius-card)] overflow-hidden flex flex-col"
+            className="flex flex-col"
           >
             {/* Ссылка и кнопка — соседи, а не вложенные: интерактив внутри
                 интерактива не кликается и не читается скринридером */}
-            <Link href={`/game/${g.appid}`} className="block">
-              <GameArt
+            <Link href={`/game/${g.appid}`} className="game-card block">
+              <GameCardBody
                 appid={g.appid}
                 name={g.name}
                 headerImage={g.headerImage}
                 art={g.art}
                 sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
                 // Обесцвечено только скрытое: пройденное — не изгнанное
-                className={`w-full aspect-[460/215] object-cover ${shelf === 'hidden' ? 'grayscale' : ''}`}
+                dim={shelf === 'hidden'}
               />
-              <div className="p-3 pb-2 text-sm font-semibold leading-tight truncate">{g.name}</div>
             </Link>
             {!readOnly && (
               /*
@@ -201,7 +200,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
                 aria-label={
                   shelf === 'done' ? `Снова предлагать «${g.name}»` : `Вернуть «${g.name}» в подбор`
                 }
-                className="mt-auto mx-3 mb-3 rounded-[10px] glass glass-hover px-3 py-1.5 text-xs text-dim hover:text-ink transition"
+                className="pill mt-3 self-start"
               >
                 {shelf === 'done' ? 'Снова предлагать' : 'Вернуть в подбор'}
               </button>

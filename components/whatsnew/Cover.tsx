@@ -16,6 +16,7 @@ import { plural } from '@/lib/plural'
 import { freshness } from './format'
 import { useNow } from './Now'
 import { Eyebrow, MetaLine } from '@/components/Labels'
+import { Icon } from '@/components/Icon'
 
 /**
  * Обложка ленты: главное обновление во весь экран.
@@ -159,43 +160,39 @@ export function Cover({
               <p className="mt-3 max-w-xl leading-relaxed text-dim">{item.tldr}</p>
             ) : null}
 
-            <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-4">
-              {meta?.ccu ? (
-                <span className="flex flex-col">
-                  <CountNumber
-                    value={meta.ccu}
-                    delay={320}
-                    className="tabular-nums text-2xl font-bold md:text-3xl"
-                  />
-                  <span className="mt-0.5 text-xs text-dim">играют прямо сейчас</span>
-                </span>
-              ) : null}
-              {changes > 0 ? (
-                <span className="flex flex-col">
-                  <CountNumber
-                    value={changes}
-                    delay={420}
-                    className="tabular-nums text-2xl font-bold md:text-3xl"
-                  />
-                  <span className="mt-0.5 text-xs text-dim">
-                    {plural(changes, 'правка', 'правки', 'правок')} в патче
-                  </span>
-                </span>
-              ) : null}
+            {meta?.ccu || changes > 0 ? (
+              <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
+                {meta?.ccu ? (
+                  <div className="flex flex-col-reverse">
+                    <dt className="lib-stat-label">играют прямо сейчас</dt>
+                    <dd className="lib-stat">
+                      <CountNumber value={meta.ccu} delay={320} />
+                    </dd>
+                  </div>
+                ) : null}
+                {changes > 0 ? (
+                  <div className="flex flex-col-reverse">
+                    <dt className="lib-stat-label">
+                      {plural(changes, 'правка', 'правки', 'правок')} в патче
+                    </dt>
+                    <dd className="lib-stat">
+                      <CountNumber value={changes} delay={420} />
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            ) : null}
+
+            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
               {/* Тела ведущего патча на /whatsnew нет вовсе — ни строкой, ни
                   раскрытием: обложка не повторяется в ленте. Прочитать его
                   целиком можно только на его собственной странице. */}
-              <Link
-                href={newsPath(item.appid, item.gid)}
-                className="tap text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
-              >
+              <Link href={newsPath(item.appid, item.gid)} className="btn-ember px-6 py-3">
                 Читать патч
               </Link>
-              <Link
-                href={`/game/${item.appid}`}
-                className="tap text-sm font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
-              >
+              <Link href={`/game/${item.appid}`} className="tap link-more">
                 Что ещё меняли
+                <Icon name="arrow" size={16} />
               </Link>
             </div>
           </motion.div>

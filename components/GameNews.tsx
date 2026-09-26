@@ -9,6 +9,7 @@ import type { NewsBlock } from '@/lib/steamhtml'
 import { NewsBody } from './NewsBody'
 import { NewsDate, ScaleBadge } from './NewsMeta'
 import { stripGameName } from '@/lib/patchtitle'
+import { Icon } from '@/components/Icon'
 
 /**
  * Клиентский островок: /game/[appid] остаётся серверным компонентом.
@@ -108,7 +109,7 @@ function Row({
   useEffect(() => cancelHover, [cancelHover])
 
   return (
-    <div className="glass rounded-[20px] overflow-hidden">
+    <div className="panel-lift overflow-hidden">
       <button
         type="button"
         onClick={() => {
@@ -128,7 +129,7 @@ function Row({
       >
         <div className="min-w-0 flex-1 flex flex-col gap-1.5">
           {/* Название игры — заголовок всей страницы; в заголовке патча оно лишнее. */}
-          <span className="text-base font-medium text-ink leading-snug">
+          <span className="text-base font-bold text-ink leading-snug">
             {stripGameName(item.title, name)}
           </span>
           <span className="flex items-center gap-3">
@@ -139,10 +140,10 @@ function Row({
         <ScaleBadge scale={item.scale} />
         <span
           aria-hidden
-          className="text-dim text-xs mt-1 shrink-0 transition-transform duration-200"
+          className="text-dim mt-1 shrink-0 transition-transform duration-200"
           style={{ transform: open ? 'rotate(180deg)' : 'none' }}
         >
-          ▾
+          <Icon name="down" size={16} />
         </span>
       </button>
 

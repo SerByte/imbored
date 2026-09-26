@@ -243,8 +243,9 @@ export default function ExplorePage() {
             Подключить заново
           </Link>
         ) : (
-          <Link href="/quiz" className="tap text-sm text-dim transition-colors hover:text-ink">
-            Подобрать под настроение →
+          <Link href="/quiz" className="tap link-more">
+            Подобрать под настроение
+            <Icon name="arrow" size={16} />
           </Link>
         )}
       </div>

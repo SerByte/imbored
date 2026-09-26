@@ -1,4 +1,5 @@
 import { REFUND_NOTE, REFUND_NOTE_NEUTRAL, REFUND_URL } from '@/lib/refund'
+import { Icon } from '@/components/Icon'
 
 /**
  * Страховка покупки одной строкой — под ценой, а не рядом с кнопкой.
@@ -28,9 +29,10 @@ export function RefundNote({
         href={REFUND_URL}
         target="_blank"
         rel="noreferrer"
-        className="tap text-dim underline-offset-2 transition-colors hover:text-ink hover:underline"
+        className="tap inline-flex items-center gap-1 text-dim underline-offset-2 transition-colors hover:text-ink hover:underline"
       >
-        Правила возврата →
+        Правила возврата
+        <Icon name="arrow" size={12} />
       </a>
     </p>
   )

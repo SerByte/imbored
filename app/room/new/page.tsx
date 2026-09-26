@@ -195,8 +195,8 @@ export default function NewRoomPage() {
   if (view === 'needsteam') {
     return (
       <div className="flex-1 flex items-center justify-center px-5 py-24">
-        <div className="max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col items-center gap-5 anim-reveal">
-          <h1 className="text-xl font-bold tracking-tight">Комнату создаёт вошедший через Steam</h1>
+        <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5 anim-reveal">
+          <h1 className="font-display text-display-sm">Комнату создаёт вошедший через Steam</h1>
           <p className="text-dim text-sm leading-relaxed">
             Ссылка на профиль не доказывает, что профиль твой. По ней можно смотреть подборки и
             голосовать в чужих пати, а создавать свои и сохранять оценки — после входа.
@@ -204,8 +204,9 @@ export default function NewRoomPage() {
           <a href={steamLoginFor(`/room/new?preset=${preset.key}`)} className="btn-ember is-block py-3">
             Войти через Steam
           </a>
-          <Link href="/rooms" className="tap text-sm text-dim hover:text-ink transition-colors">
-            ← Подсесть к открытой пати
+          <Link href="/rooms" className="tap link-more">
+            <Icon name="arrow" size={16} className="rotate-180" />
+            Подсесть к открытой пати
           </Link>
         </div>
       </div>
@@ -214,8 +215,8 @@ export default function NewRoomPage() {
 
   return (
     <div className="flex-1 flex items-center justify-center px-5 py-24">
-      <div className="max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col items-center gap-5 anim-reveal">
-        <h1 className="text-xl font-bold tracking-tight">
+      <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5 anim-reveal">
+        <h1 className="font-display text-display-sm">
           {view === 'busy' ? 'Слишком много комнат подряд' : 'Не получилось создать комнату'}
         </h1>
         <p className="text-dim text-sm leading-relaxed">
@@ -230,8 +231,9 @@ export default function NewRoomPage() {
             Попробовать снова
           </button>
         )}
-        <Link href="/rooms" className="tap text-sm text-dim hover:text-ink transition-colors">
-          ← К списку пати
+        <Link href="/rooms" className="tap link-more">
+          <Icon name="arrow" size={16} className="rotate-180" />
+          К списку пати
         </Link>
       </div>
     </div>

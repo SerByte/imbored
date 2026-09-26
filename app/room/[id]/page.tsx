@@ -802,9 +802,10 @@ export default function RoomPage() {
   if (notFound) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-        <p className="text-lg">Такой комнаты нет.</p>
-        <Link href="/room/new" className="tap text-ember-text hover:underline text-sm">
-          Создать свою →
+        <p className="font-display text-display-sm">Такой комнаты нет</p>
+        <Link href="/room/new" className="tap link-more">
+          Создать свою
+          <Icon name="arrow" size={16} />
         </Link>
       </div>
     )
@@ -822,13 +823,14 @@ export default function RoomPage() {
     if (stale) {
       return (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-          <p className="text-lg">Комната не отвечает</p>
+          <p className="font-display text-display-sm">Комната не отвечает</p>
           <p className="text-dim text-sm max-w-md leading-relaxed">
             Сервер молчит или связь оборвалась. Пробую снова — если комната жива, она появится
             сама.
           </p>
-          <Link href="/rooms" className="tap text-ember-text hover:underline text-sm">
-            Ко всем комнатам →
+          <Link href="/rooms" className="tap link-more">
+            Ко всем комнатам
+            <Icon name="arrow" size={16} />
           </Link>
         </div>
       )
@@ -859,7 +861,7 @@ export default function RoomPage() {
     <div
       role="status"
       aria-live="polite"
-      className="glass anim-rise rounded-[14px] px-4 py-2.5 text-xs leading-relaxed text-dim"
+      className="panel-lift anim-rise px-4 py-2.5 text-xs leading-relaxed text-dim"
     >
       Связь потеряна — комната не обновляется. Пробую снова…
     </div>
@@ -879,7 +881,7 @@ export default function RoomPage() {
     return (
       <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
         <Ambient />
-        <div className="relative max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col gap-4 anim-rise">
+        <div className="relative max-w-md w-full panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
           <h1 className="font-display text-display-sm">
             Эта пати уже договорилась: «{state.matchedGame.name}»
           </h1>
@@ -890,8 +892,9 @@ export default function RoomPage() {
           <Link href="/room/new" className="btn-ember is-block py-3">
             Создать свою комнату
           </Link>
-          <Link href="/rooms" className="tap text-sm text-dim hover:text-ink transition-colors">
-            Открытые пати →
+          <Link href="/rooms" className="tap link-more">
+            Открытые пати
+            <Icon name="arrow" size={16} />
           </Link>
         </div>
       </div>
@@ -906,7 +909,7 @@ export default function RoomPage() {
     return (
       <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
         <Ambient />
-        <div className="relative max-w-md w-full glass rounded-[20px] p-8 text-center flex flex-col gap-4 anim-rise">
+        <div className="relative max-w-md w-full panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
           <h1 className="font-display text-display-sm">Тебя зовут выбрать игру на вечер</h1>
           {/*
             С сессией библиотека уже подключена, и «подключи» над кнопкой
@@ -939,7 +942,7 @@ export default function RoomPage() {
               </a>
               <Link
                 href={`/?join=${roomId}`}
-                className="rounded-[14px] glass glass-hover py-3 text-sm"
+                className="btn-glass flex w-full"
               >
                 Вставить ссылку на профиль
               </Link>
@@ -1074,7 +1077,7 @@ export default function RoomPage() {
             </button>
           ) : state.room.isPublic ? (
             <span
-              className="rounded-[14px] bg-ember/15 text-ember-text px-4 py-3 text-sm"
+              className="rounded-(--radius-control) bg-ember/15 text-ember-text px-4 py-3 text-sm font-extrabold"
               title="Комната открыта на доске «Пати» — твой ник виден на /rooms"
             >
               На доске
