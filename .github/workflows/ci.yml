@@ -75,3 +75,25 @@ jobs:
       # бандл. Числа пишет сама сборка; здесь их только сверяют.
       - name: Бюджет веса
         run: npm run budget
+
+      # Смоук: собранный сайт поднимается на пустой файловой базе без ключей
+      # Steam и модели и проходит главный путь в настоящем Chrome раннера —
+      # демо-вход, квиз, выдача, страница игры (scripts/smoke.ts). Тесты
+      # видят части, сборка — что всё собирается; ни то ни другое не видит,
+      # что сайт вообще открывается. Сборка — та же, что шагом выше: база и
+      # секрет читаются только при запуске. Порт 3000 — из-за куки: она
+      # ставится с Secure, и по http Chrome примет её только от localhost.
+      - name: Смоук
+        env:
+          TURSO_DATABASE_URL: file:${{ runner.temp }}/smoke.db
+          SESSION_SECRET: ci-smoke-secret-not-for-production-0123456789
+        run: |
+          npx next start -p 3000 > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/privacy && break; sleep 1; done
+          npm run smoke
+          # Сервер мог упасть там, где браузер ничего не заметил
+          if grep -E '"event":"(server-error|db-init-failed)"' "$RUNNER_TEMP/server.log"; then exit 1; fi
+
+      - name: Лог сервера смоука
+        if: failure()
+        run: tail -n 200 "$RUNNER_TEMP/server.log" || true
