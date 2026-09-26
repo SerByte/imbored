@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { GameArt } from '@/components/GameArt'
+import { GameCardBody } from '@/components/GameCard'
+import { Icon } from '@/components/Icon'
 import { SectionLabel } from '@/components/Labels'
 import { NeedSteam } from '@/components/NeedSteam'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
@@ -253,8 +254,14 @@ export default function ExplorePage() {
   const top = cards[0]
 
   return (
-    <div className="flex-1 mx-auto w-full max-w-2xl px-safe pt-28 pb-16 flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
+    /*
+      Две колонки с md: колода слева, заголовок и полка «Приглянулось»
+      справа — постер 2:3 во всю ширину прежней колонки был бы выше окна.
+      Порядок в разметке прежний (заголовок, колода, полка): на телефоне
+      колонка одна, и скринридер читает то же, что видит глаз.
+    */
+    <div className="flex-1 mx-auto w-full max-w-6xl px-safe pt-28 pb-16 grid gap-8 md:grid-cols-[minmax(0,440px)_minmax(0,1fr)] md:grid-rows-[auto_1fr] md:gap-x-14">
+      <div className="flex flex-col gap-2 md:col-start-2 md:row-start-1 md:pt-4">
         <h1 className="font-display text-display-sm">Полистать без обязательств</h1>
         <p className="text-sm text-dim leading-relaxed">
           Своё и из магазина вперемешку, без вопросов о настроении. «Мимо» ничего не
@@ -268,6 +275,7 @@ export default function ExplorePage() {
         {readOnly && <NeedSteam from="/explore" />}
       </div>
 
+      <div className="md:col-start-1 md:row-start-1 md:row-span-2">
       {top ? (
         <SwipeDeck
           cards={cards}
@@ -279,7 +287,7 @@ export default function ExplorePage() {
           nowSec={nowSec}
         />
       ) : (
-        <div className="glass rounded-[20px] p-8 text-center flex flex-col gap-4 items-center">
+        <div className="panel-lift p-8 text-center flex flex-col gap-4 items-center">
           <p className="text-lg">Колода кончилась</p>
           <p className="text-sm text-dim max-w-md leading-relaxed">
             {liked.length
@@ -295,8 +303,8 @@ export default function ExplorePage() {
             >
               {dealing ? 'Собираю…' : 'Ещё колоду'}
             </button>
-            <Link href="/quiz" className="tap text-sm text-dim transition-colors hover:text-ink">
-              Подобрать под настроение →
+            <Link href="/quiz" className="tap link-more">
+              Подобрать под настроение <Icon name="arrow" size={14} />
             </Link>
           </div>
           <p role="status" className="text-sm text-danger max-w-md">
@@ -304,26 +312,21 @@ export default function ExplorePage() {
           </p>
         </div>
       )}
+      </div>
 
       {liked.length > 0 && (
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-4 md:col-start-2 md:row-start-2">
           <SectionLabel>Приглянулось</SectionLabel>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-6">
             {liked.map((c) => (
-              <Link
-                key={c.appid}
-                href={`/game/${c.appid}`}
-                className="glass glass-hover rounded-[14px] overflow-hidden text-left"
-              >
-                <GameArt
+              <Link key={c.appid} href={`/game/${c.appid}`} className="game-card block text-left">
+                <GameCardBody
                   appid={c.appid}
                   name={c.name}
                   headerImage={c.headerImage}
                   art={c.art}
-                  sizes="(min-width: 768px) 224px, 50vw"
-                  className="w-full aspect-[460/215] object-cover"
+                  sizes="(min-width: 768px) 320px, 50vw"
                 />
-                <div className="p-3 text-sm font-semibold leading-tight">{c.name}</div>
               </Link>
             ))}
           </div>

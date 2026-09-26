@@ -10,6 +10,7 @@ import {
 } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { Icon } from '@/components/Icon'
 import { PlayersNow } from '@/components/PlayersNow'
 import type { GameArtUrls } from '@/lib/art'
 import { deckCardLine, deckPosition } from '@/lib/deckvote'
@@ -162,7 +163,7 @@ function TopCard({
          box-shadow ровно none, то есть плоское стекло. Карточка, которую
          листают и по которой голосуют, — тот же предмет, что карточка ответа в
          квизе и карточка подключения на первом экране. */
-      className="panel-lift glass overflow-hidden relative touch-pan-y"
+      className="deck-card media-card relative touch-pan-y"
       style={{ x, rotate }}
       inert={!present}
       drag="x"
@@ -179,40 +180,49 @@ function TopCard({
         send(info.offset.x > 0, false)
       }}
     >
-      <div className="relative">
-        <motion.div style={{ filter: artSaturate }}>
-          <GameArt
-            appid={card.appid}
-            name={card.name}
-            headerImage={card.headerImage}
-            art={card.art}
-            sizes="(min-width: 768px) 672px, 100vw"
-            eager
-            className="w-full aspect-[460/215] object-cover"
-          />
-        </motion.div>
-        <motion.div
-          aria-hidden
-          className="absolute inset-0 pointer-events-none"
-          style={{ opacity: yesGlow, background: 'rgba(70,211,105,0.14)' }}
+      {/*
+        ПОСТЕР НА ВСЮ КАРТУ. Колоду листают ради игр, а не ради подписей:
+        капсула 460×215 над столбцом текста делала карту анкетой с
+        картинкой. Теперь это обложка 2:3, как в каталоге стриминга, и всё
+        остальное лежит поверх её нижней части на тёмном градиенте.
+      */}
+      <motion.div aria-hidden className="absolute inset-0" style={{ filter: artSaturate }}>
+        <GameArt
+          appid={card.appid}
+          name={card.name}
+          headerImage={card.headerImage}
+          art={card.art}
+          variant="poster"
+          sizes="(min-width: 768px) 440px, 100vw"
+          eager
+          className="h-full w-full object-cover"
+          fallback={<div className="deck-noart h-full w-full" />}
         />
-        <motion.span
-          aria-hidden
-          className="absolute top-4 left-4 rounded-full bg-ember text-on-ember px-3 py-1 text-sm font-bold"
-          style={{ opacity: yesGlow }}
-        >
-          {labels.yes}
-        </motion.span>
-        <motion.span
-          aria-hidden
-          className="absolute top-4 right-4 rounded-full glass px-3 py-1 text-sm text-dim"
-          style={{ opacity: noFade }}
-        >
-          {labels.no}
-        </motion.span>
-      </div>
+      </motion.div>
+      <div aria-hidden className="deck-scrim" />
+      <motion.div
+        aria-hidden
+        className="absolute inset-0 pointer-events-none"
+        style={{ opacity: yesGlow, background: 'rgba(70,211,105,0.14)' }}
+      />
+      {/* Штампы: наклонены, как печать на карточке, — «да» заливкой, «нет»
+          контуром. Проявляются жестом, а не стоят всегда. */}
+      <motion.span
+        aria-hidden
+        className="deck-stamp left-5 -rotate-12 bg-ember text-on-ember uppercase tracking-wide"
+        style={{ opacity: yesGlow }}
+      >
+        {labels.yes}
+      </motion.span>
+      <motion.span
+        aria-hidden
+        className="deck-stamp right-5 rotate-12 border-2 border-ink text-ink uppercase"
+        style={{ opacity: noFade }}
+      >
+        {labels.no}
+      </motion.span>
 
-      <div className="p-6 flex flex-col gap-3">
+      <div className="relative mt-auto p-5 flex flex-col gap-2.5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="font-display text-display-sm">{card.name}</h2>
           {/*
@@ -252,14 +262,14 @@ function TopCard({
               {/* Скидка отдельной плашкой, а не внутри синей: там один токен
                   «кому не хватает», и зачёркнутая цена сломала бы его цельность */}
               {card.discount && (
-                <span className="rounded-full bg-ember/15 text-ember-text px-2.5 py-1 text-xs font-mono font-semibold tabular-nums">
+                <span className="rounded-full bg-ember/15 text-ember-text px-2.5 py-1 text-xs font-bold tabular-nums">
                   −{card.discount.percent}%
                 </span>
               )}
             </span>
           )}
         </div>
-        {card.reason && <p className="text-sm text-dim leading-relaxed">{card.reason}</p>}
+        {card.reason && <p className="text-sm text-ink/80 leading-relaxed line-clamp-2 md:line-clamp-3">{card.reason}</p>}
         {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть;
             второй — сколько уйдёт на заход: «успеем до ночи?». Обёртка —
             только когда есть что в неё положить: пустая заняла бы в колонке
@@ -275,30 +285,26 @@ function TopCard({
           </div>
         )}
         {card.tags.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {/* ключи английские, подпись русская — см. lib/tagsru.ts */}
-            {card.tags.map((t) => (
-              <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-                {tagRu(t)}
-              </span>
-            ))}
-          </div>
+          // Строкой через точку, как жанры под названием у стриминга;
+          // ключи английские, подпись русская — см. lib/tagsru.ts
+          <p className="text-sm text-dim line-clamp-1 md:line-clamp-2">{card.tags.map((t) => tagRu(t)).join(' · ')}</p>
         )}
-        <div className="grid grid-cols-2 gap-3 mt-2">
+        <div className="grid grid-cols-2 gap-3 mt-1.5">
           {/* detail === 0 — щелчок без мыши: Enter, пробел или скринридер */}
           <button
             ref={noRef}
             type="button"
             onClick={(e) => send(false, e.detail === 0)}
-            className="rounded-[14px] glass glass-hover py-5 text-lg cursor-pointer active:scale-[0.98] transition"
+            className="btn-glass w-full py-4 text-lg"
           >
-            ✖ {labels.no}
+            <Icon name="close" size={20} />
+            {labels.no}
           </button>
           <button
             ref={yesRef}
             type="button"
             onClick={(e) => send(true, e.detail === 0)}
-            className="btn-ember is-block font-bold py-5 text-lg"
+            className="btn-ember is-block font-bold py-4 text-lg"
           >
             {labels.yes}
           </button>
@@ -345,13 +351,13 @@ export function SwipeDeck({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="relative" style={{ minHeight: 420 }}>
+      <div className="deck-stack relative">
         {/* Задние карточки — только глубина, без содержимого и без обработчиков */}
         {cards.slice(1, DEPTH).map((c, i) => (
           <motion.div
             key={c.appid}
             aria-hidden
-            className="panel-lift glass overflow-hidden absolute inset-x-0 top-0"
+            className="deck-card deck-back media-card absolute inset-x-0 top-0"
             initial={false}
             animate={{
               scale: 1 - (i + 1) * 0.04,
@@ -365,9 +371,11 @@ export function SwipeDeck({
               name={c.name}
               headerImage={c.headerImage}
               art={c.art}
-              className="w-full aspect-[460/215] object-cover"
+              variant="poster"
+              sizes="440px"
+              className="h-full w-full object-cover"
+              fallback={<div className="deck-noart h-full w-full" />}
             />
-            <div className="h-24" />
           </motion.div>
         ))}
 
@@ -407,7 +415,7 @@ export function SwipeDeck({
           />
         </div>
         {/* aria-hidden: номер карты скринридер слышит в строке выше, вместе с игрой */}
-        <span aria-hidden className="text-xs text-faint font-mono shrink-0">
+        <span aria-hidden className="text-xs font-bold text-faint tabular-nums shrink-0">
           {pos.label}
         </span>
       </div>
