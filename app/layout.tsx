@@ -229,7 +229,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         */}
         <a
           href="#main"
-          className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-3 focus-visible:left-3 focus-visible:z-[60] focus-visible:rounded-[14px] focus-visible:bg-ember focus-visible:px-4 focus-visible:py-2 focus-visible:text-on-ember focus-visible:font-semibold"
+          className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-3 focus-visible:left-3 focus-visible:z-[60] focus-visible:rounded-(--radius-control) focus-visible:bg-ember focus-visible:px-4 focus-visible:py-2 focus-visible:text-on-ember focus-visible:font-semibold"
         >
           К содержанию
         </a>

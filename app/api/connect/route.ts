@@ -15,6 +15,7 @@ import {
   steamApiKey,
 } from '@/lib/server'
 import { fetchOwnedGames, fetchPlayerSummary, parseProfileInput, resolveProfile } from '@/lib/steam'
+import { readJsonObject } from '@/lib/reqbody'
 
 async function withSession(
   res: NextResponse,
@@ -44,7 +45,7 @@ const CONNECT_WINDOW_SEC = 900
 
 export async function POST(req: Request) {
   const userAgent = req.headers.get('user-agent')
-  const body = (await req.json().catch(() => ({}))) as {
+  const body = (await readJsonObject(req)) as {
     input?: string
     demo?: boolean
     variant?: number

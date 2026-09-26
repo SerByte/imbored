@@ -122,7 +122,7 @@ export function GameShots({ images, name }: { images: string[]; name: string }) 
     <>
       <div
         ref={wrapRef}
-        className="relative aspect-video overflow-hidden rounded-[20px] border border-edge"
+        className="relative aspect-video overflow-hidden rounded-(--radius-panel) border border-edge"
       >
         {/*
           Первый кадр обычной картинкой: он держит бокс до монтирования слайдера

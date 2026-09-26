@@ -3,6 +3,7 @@ import { logFeedback, pendingOutcomeAsk, setOutcomeVerdict } from '@/lib/db'
 import { isOutcomeVerdict } from '@/lib/outcome'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSession, getDb, isWriter, nowSec, requireWriter } from '@/lib/server'
+import { readJsonObject } from '@/lib/reqbody'
 
 /*
  * «Как тебе?» после совета (lib/outcome.ts, components/OutcomeAsk).
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
   if (!writer.ok) return writer.response
   const { steamid } = writer
 
-  const body = (await req.json().catch(() => ({}))) as {
+  const body = (await readJsonObject(req)) as {
     appid?: unknown
     shownAt?: unknown
     verdict?: unknown

@@ -74,7 +74,7 @@ export default async function CompatHubPage() {
             width={1200}
             height={630}
             alt="Превью карточки: приглашение сравнить библиотеки"
-            className="w-full rounded-[20px] border border-edge"
+            className="w-full rounded-(--radius-panel) border border-edge"
           />
           <p className="text-sm text-faint">
             Он откроет ссылку, подключит свою библиотеку — и процент увидите оба.

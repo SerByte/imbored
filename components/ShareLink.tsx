@@ -162,7 +162,7 @@ export function ShareLinkField({
         value={url}
         onFocus={(e) => e.currentTarget.select()}
         onClick={(e) => e.currentTarget.select()}
-        className="min-w-0 flex-1 rounded-[14px] border border-edge bg-surface px-4 py-3 font-mono text-sm text-ink"
+        className="min-w-0 flex-1 rounded-(--radius-control) border border-edge bg-surface px-4 py-3 font-mono text-sm text-ink"
       />
       <button
         type="button"

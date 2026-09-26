@@ -59,16 +59,6 @@ export function parseAppDetails(json: unknown, appid: number): GameMeta | null {
   return meta
 }
 
-export function parseSteamSpyTags(json: unknown): Record<string, number> {
-  const tags = (json as { tags?: unknown })?.tags
-  if (!tags || Array.isArray(tags) || typeof tags !== 'object') return {}
-  const out: Record<string, number> = {}
-  for (const [tag, votes] of Object.entries(tags as Record<string, unknown>)) {
-    if (typeof votes === 'number') out[tag] = votes
-  }
-  return out
-}
-
 /* ---------- IStoreBrowseService/GetItems ---------- */
 
 /**
@@ -305,7 +295,6 @@ const STORE_CC = process.env.STEAM_STORE_CC ?? 'us'
 const FETCH_TIMEOUT_MS = 10_000
 // ~200 запросов/5 мин на store.steampowered.com => >=1.7с между запросами
 export const STORE_PACE_MS = 1700
-const STEAMSPY_PACE_MS = 1100
 
 /** GetItems берёт до 200 appid за запрос; замерено 200 штук за ~7 секунд. */
 export const STORE_ITEMS_BATCH = 200
@@ -549,23 +538,6 @@ export async function fetchAppDetails(
   }
 }
 
-export async function fetchSteamSpyTags(
-  appid: number,
-  fetchFn: typeof fetch = fetch,
-): Promise<Record<string, number>> {
-  await pace('steamspy', STEAMSPY_PACE_MS)
-  const res = await fetchFn(`https://steamspy.com/api.php?request=appdetails&appid=${appid}`, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  })
-  if (!res.ok) throw new Error(`steamspy ${appid}: HTTP ${res.status}`)
-  try {
-    return parseSteamSpyTags(await res.json())
-  } catch (err) {
-    logSwallowed('catalog:steamspy-parse', err, { appid })
-    return {}
-  }
-}
-
 /** Официальные чарты Steam: appid в порядке пикового онлайна. */
 export function parseMostPlayed(json: unknown): number[] {
   const ranks = (json as { response?: { ranks?: Array<{ appid?: unknown }> } })?.response?.ranks
@@ -592,31 +564,10 @@ export async function fetchMostPlayed(fetchFn: typeof fetch = fetch): Promise<nu
   }
 }
 
-/** Популярные игры за 2 недели по SteamSpy — пул кандидатов «попробуй новое» */
-export async function fetchSteamSpyTop(
-  fetchFn: typeof fetch = fetch,
-): Promise<Array<{ appid: number; name: string }>> {
-  await pace('steamspy', STEAMSPY_PACE_MS)
-  try {
-    const res = await fetchFn('https://steamspy.com/api.php?request=top100in2weeks', {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    })
-    if (!res.ok) return []
-    const json = (await res.json()) as Record<string, { appid?: number; name?: string }> | null
-    if (!json || typeof json !== 'object') return []
-    return Object.values(json)
-      .filter((g) => g && typeof g.appid === 'number' && typeof g.name === 'string')
-      .map((g) => ({ appid: g.appid as number, name: g.name as string }))
-  } catch (err) {
-    logSwallowed('catalog:steamspy-top', err)
-    return []
-  }
-}
-
 const META_MAX_AGE_SEC = 14 * 86_400
 
 /**
- * Догружает метаданные (SteamSpy теги + при необходимости appdetails) для appid'ов,
+ * Догружает метаданные (GetItems + при необходимости appdetails) для appid'ов,
  * которых нет в кэше или которые протухли. Ограничен по количеству за один вызов,
  * чтобы не подвешивать запрос пользователя.
  *

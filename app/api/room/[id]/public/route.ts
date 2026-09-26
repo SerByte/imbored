@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getRoom, setRoomPublic } from '@/lib/db'
 import { getDb, requireWriter } from '@/lib/server'
+import { readJsonObject } from '@/lib/reqbody'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -18,7 +19,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
   if (room.createdBy !== steamid) return NextResponse.json({ error: 'nothost' }, { status: 403 })
 
-  const body = (await req.json().catch(() => ({}))) as { public?: boolean }
+  const body = (await readJsonObject(req)) as { public?: boolean }
   if (typeof body.public !== 'boolean') {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }

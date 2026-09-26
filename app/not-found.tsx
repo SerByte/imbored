@@ -1,7 +1,7 @@
 import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
-import { GameCardBody } from '@/components/GameCard'
+import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
 import { topCatalogGames } from '@/lib/db'
@@ -133,7 +133,7 @@ export default async function NotFound() {
                   transitionTypes={['nav-forward']}
                   className="game-card block text-left"
                 >
-                  <GameCardBody
+                  <StaticGameCardBody
                     morph
                     appid={g.appid}
                     name={g.name}

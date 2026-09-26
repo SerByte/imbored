@@ -3,6 +3,7 @@ import { getRoom, roomMembers, roomVotes, setRoomMatched } from '@/lib/db'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { pickLeader } from '@/lib/roomlikes'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { readJsonObject } from '@/lib/reqbody'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -73,7 +74,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   })
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
-  const body = (await req.json().catch(() => ({}))) as { appid?: unknown }
+  const body = (await readJsonObject(req)) as { appid?: unknown }
   const appid = Number(body.appid)
   if (!Number.isSafeInteger(appid) || Math.abs(appid) >= APPID_BOUND) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })

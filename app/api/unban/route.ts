@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { unbanGame } from '@/lib/db'
 import { portraitTag } from '@/lib/portraitmodel'
 import { getDb, requireWriter } from '@/lib/server'
+import { readJsonObject } from '@/lib/reqbody'
 
 /**
  * Снятие бана. Отдельный роут, а не пятое значение action в /api/feedback:
@@ -14,7 +15,7 @@ export async function POST(req: Request) {
   if (!writer.ok) return writer.response
   const { steamid } = writer
 
-  const body = (await req.json().catch(() => ({}))) as { appid?: number }
+  const body = (await readJsonObject(req)) as { appid?: number }
   const appid = Number(body.appid)
   // appid бывает отрицательным — под такими id лежат игры чужих магазинов
   if (!Number.isInteger(appid) || appid === 0) {

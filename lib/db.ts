@@ -1,5 +1,5 @@
 import { createClient, type Client, type InStatement } from '@libsql/client'
-import { memberLabel } from './room'
+import { memberLabel, ROOM_MAX_MEMBERS } from './room'
 import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
 import type { FeedbackCtx } from './feedbackctx'
@@ -1261,7 +1261,7 @@ export async function issueRoomDeck(db: Db, roomId: string, appids: number[]): P
  * Свой же участник, зашедший повторно, получает 'joined' и остаётся на
  * месте: для него это та же страница церемонии.
  */
-export type JoinResult = 'joined' | 'notfound' | 'closed'
+export type JoinResult = 'joined' | 'notfound' | 'closed' | 'full'
 
 export async function joinRoom(
   db: Db,
@@ -1269,6 +1269,7 @@ export async function joinRoom(
   steamid: string,
   personaName: string | undefined,
   nowSec: number,
+  maxMembers: number = ROOM_MAX_MEMBERS,
 ): Promise<JoinResult> {
   const room = await getRoom(db, roomId)
   if (!room) return 'notfound'
@@ -1279,6 +1280,15 @@ export async function joinRoom(
     })
     return res.rows.length ? 'joined' : 'closed'
   }
+  // 'full' — только для НОВОГО участника: свой, зашедший повторно, проходит
+  // (INSERT OR REPLACE ниже освежает ему ник и время входа)
+  const seats = await db.execute({
+    sql: 'SELECT COUNT(*) AS n, SUM(steamid = ?) AS me FROM room_members WHERE room_id = ?',
+    args: [steamid, roomId],
+  })
+  const taken = Number(seats.rows[0]?.n ?? 0)
+  const already = Number(seats.rows[0]?.me ?? 0) > 0
+  if (!already && taken >= maxMembers) return 'full'
   await db.execute({
     sql: 'INSERT OR REPLACE INTO room_members (room_id, steamid, persona_name, joined_at) VALUES (?, ?, ?, ?)',
     args: [roomId, steamid, personaName ?? null, nowSec],

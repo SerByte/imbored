@@ -34,27 +34,42 @@ export async function GET(req: Request) {
   const db = await getDb()
   const now = nowSec()
 
+  /*
+   * Оба гейта и прочитанное — одним заходом, а не лесенкой.
+   *
+   * Обращение к Turso стоит около 35 мс (замер в lib/candidates.ts), и три
+   * независимых чтения по очереди складывались в сотню миллисекунд до
+   * первого полезного шага. Цена — лишнее чтение listExplore на отказанном
+   * запросе, и отказ по первому гейту теперь всё равно отмечается во втором.
+   */
   const ip = clientIp(req.headers)
-  for (const gate of [
-    { bucket: 'explore', id: steamid, limit: EXPLORE_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
-    { bucket: 'explore-ip', id: ip, limit: EXPLORE_IP_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
-  ]) {
-    const verdict = await checkRate(db, { ...gate, nowSec: now })
-    if (!verdict.ok) return rateLimitedResponse(verdict.retryAfterSec)
-  }
-
-  // Что уже листал: приглянувшееся лежит на полке, «Мимо» неделю не
-  // возвращается — колода каждый заход о новом (exploredAppids)
-  const explored = await listExplore(db, steamid)
+  const [verdicts, explored] = await Promise.all([
+    Promise.all(
+      [
+        { bucket: 'explore', id: steamid, limit: EXPLORE_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
+        { bucket: 'explore-ip', id: ip, limit: EXPLORE_IP_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
+      ].map((gate) => checkRate(db, { ...gate, nowSec: now })),
+    ),
+    // Что уже листал: приглянувшееся лежит на полке, «Мимо» неделю не
+    // возвращается — колода каждый заход о новом (exploredAppids)
+    listExplore(db, steamid),
+  ])
+  const refused = verdicts.find((v) => !v.ok)
+  if (refused) return rateLimitedResponse(refused.retryAfterSec)
 
   // Тот же конвейер, что у /play и «Игры дня», но без настроения: его здесь
   // не спрашивали, и судить им нечего (moodless). Нейтральное настроение —
   // ради одиночного social: компании колода не собирается
-  const set = await buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
-    nowSec: now,
-    moodless: true,
-    exclude: exploredAppids(explored, now),
-  })
+  // Полка «Приглянулось» от колоды не зависит — её мета едет параллельно
+  const likedIds = explored.filter((r) => r.liked).map((r) => r.appid).slice(0, EXPLORE_SHELF)
+  const [set, likedMetas] = await Promise.all([
+    buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
+      nowSec: now,
+      moodless: true,
+      exclude: exploredAppids(explored, now),
+    }),
+    getGamesMetaLite(db, likedIds),
+  ])
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
   if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
 
@@ -73,9 +88,6 @@ export async function GET(req: Request) {
       hideUrgency: ctx.hideUrgency,
     }).map((p) => [p.appid, p]),
   )
-
-  const likedIds = explored.filter((r) => r.liked).map((r) => r.appid).slice(0, EXPLORE_SHELF)
-  const likedMetas = await getGamesMetaLite(db, likedIds)
 
   return NextResponse.json({
     // см. докблок в PlayersNow: подпись «сейчас» требует серверных часов

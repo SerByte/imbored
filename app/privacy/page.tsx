@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 import { Eyebrow, MetaLine } from '@/components/Labels'
 import { ownAddress } from '@/lib/site'
+import { Icon } from '@/components/Icon'
 
 export const generateMetadata = ownAddress('/privacy', {
   title: 'Конфиденциальность',
@@ -20,7 +21,7 @@ export const generateMetadata = ownAddress('/privacy', {
  * lib/policy.test.ts: он снимает отпечаток с прозы этой страницы и роняет
  * прогон, если проза разошлась с записанным отпечатком.
  */
-const UPDATED = '24 сентября 2026'
+const UPDATED = '26 сентября 2026'
 
 /**
  * ПОЛИТИКА, КОТОРУЮ МОЖНО ПРОЧИТАТЬ ГЛАЗАМИ, А НЕ ЮРИСТОМ.
@@ -91,7 +92,7 @@ function Ledger() {
   return (
     <section
       aria-labelledby="ledger-title"
-      className="glass rounded-[20px] p-6 anim-rise"
+      className="panel-lift p-6 anim-rise"
       style={{ animationDelay: '60ms' }}
     >
       <h2 id="ledger-title" className="sr-only">
@@ -242,8 +243,8 @@ export default function PrivacyPage() {
           >
             <p>
               Сервис обращается к внешним источникам, но <span className="text-ink">не отправляет
-              им твои персональные данные</span>: Steam Web API и Steam Store (метаданные и отзывы
-              об играх), SteamSpy (теги игр).
+              им твои персональные данные</span>: Steam Web API и Steam Store (метаданные, теги
+              и отзывы об играх).
             </p>
             <p>
               Если включены умные объяснения, в Claude API (Anthropic) отправляются названия игр
@@ -352,8 +353,9 @@ export default function PrivacyPage() {
         </div>
 
         <div className="text-center">
-          <Link href="/" className="tap text-sm text-dim transition-colors hover:text-ink">
-            ← На главную
+          <Link href="/" className="tap link-more">
+            <Icon name="arrow" size={16} className="rotate-180" />
+            На главную
           </Link>
         </div>
       </div>

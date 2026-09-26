@@ -17,7 +17,7 @@ import { claimVote, deckStuck, voteMiss, voteSignal } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
 import type { Mood } from '@/lib/types'
-import type { RoomMemberView } from '@/lib/room'
+import { ROOM_MAX_MEMBERS, type RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import { roomPresetOf } from '@/lib/presets'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
@@ -553,11 +553,21 @@ export default function RoomPage() {
    * оставался ровно тот же экран приглашения. Нажатие внешне не делало
    * НИЧЕГО и ни строчки о причине.
    */
-  function joinFailure(status: number): string {
+  function joinFailure(status: number, code: string | null): string {
     if (status === 404) return 'Такой комнаты уже нет — попроси новую ссылку.'
+    // 409 бывает двух видов: комната сошлась или мест нет — различает код
+    if (code === 'full')
+      return `В пати уже ${ROOM_MAX_MEMBERS} ${plural(ROOM_MAX_MEMBERS, 'человек', 'человека', 'человек')}, больше не помещается. Собери свою.`
     if (status === 409) return 'Эта пати уже договорилась об игре — попроси новую ссылку.'
     if (status === 401) return 'Сессия истекла — подключи библиотеку заново, и вернём тебя сюда.'
+    if (status === 429) return 'Слишком много попыток подряд. Подожди немного и попробуй снова.'
     return 'Не получилось войти. Проверь связь и попробуй ещё раз.'
+  }
+
+  /** Код отказа из тела ответа; тело может быть и не JSON — тогда null */
+  async function failureCode(res: Response): Promise<string | null> {
+    const body = (await res.json().catch(() => null)) as { error?: unknown } | null
+    return typeof body?.error === 'string' ? body.error : null
   }
 
   /*
@@ -594,12 +604,12 @@ export default function RoomPage() {
       }
       const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
       if (!res.ok) {
-        setJoinError(joinFailure(res.status))
+        setJoinError(joinFailure(res.status, await failureCode(res)))
         return
       }
       void refresh()
     } catch {
-      setJoinError(joinFailure(0))
+      setJoinError(joinFailure(0, null))
     } finally {
       setBusy(false)
     }
@@ -620,12 +630,12 @@ export default function RoomPage() {
     try {
       const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
       if (!res.ok) {
-        setJoinError(joinFailure(res.status))
+        setJoinError(joinFailure(res.status, await failureCode(res)))
         return
       }
       void refresh()
     } catch {
-      setJoinError(joinFailure(0))
+      setJoinError(joinFailure(0, null))
     } finally {
       setBusy(false)
     }

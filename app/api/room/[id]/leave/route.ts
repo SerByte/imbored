@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { findRoomMatch, getRoom, removeRoomMember, roomMembers, setRoomMatched } from '@/lib/db'
 import { memberKey } from '@/lib/roomkey'
 import { currentSteamId, getDb, sessionSecret } from '@/lib/server'
+import { readJsonObject } from '@/lib/reqbody'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -43,7 +44,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
    * Заодно это сужает вход: подобранный ключ бесполезен — он сверяется со
    * списком участников ЭТОЙ комнаты, и ничем, кроме удаления из неё, не станет.
    */
-  const body = (await req.json().catch(() => ({}))) as { memberId?: unknown }
+  const body = (await readJsonObject(req)) as { memberId?: unknown }
   const memberId = typeof body.memberId === 'string' ? body.memberId : null
 
   const members = await roomMembers(db, id)

@@ -60,7 +60,23 @@ export async function GET(req: Request) {
    * запасную свою.
    */
   const dateStr = dayKey(now)
-  const stored = parseDailySelection(await getDailyPick(db, steamid, dateStr))
+  const cachedOnly = new URL(req.url).searchParams.get('cached') === '1'
+  const dailyGate = () =>
+    checkRate(db, {
+      bucket: 'daily',
+      id: steamid,
+      limit: DAILY_LIMIT,
+      windowSec: DAILY_WINDOW_SEC,
+      nowSec: now,
+    })
+  // Обычный запрос тратит лимит в любом случае — запись и гейт читаются
+  // одним заходом. «Только если уже выбрано» — по очереди: его промах лимит
+  // не тратит (см. ниже), значит гейт там нельзя звать заранее.
+  const [rawStored, early] = await Promise.all([
+    getDailyPick(db, steamid, dateStr),
+    cachedOnly ? Promise.resolve(null) : dailyGate(),
+  ])
+  const stored = parseDailySelection(rawStored)
 
   /*
    * ?cached=1 — «только если уже выбрано».
@@ -75,17 +91,11 @@ export async function GET(req: Request) {
    * ключу, как сама проверка лимита, а следующий за ним обычный запрос своё
    * отметит. Иначе каждый первый заход дня списывал бы два обращения из десяти.
    */
-  if (!stored && new URL(req.url).searchParams.get('cached') === '1') {
+  if (!stored && cachedOnly) {
     return new NextResponse(null, { status: 204 })
   }
 
-  const gate = await checkRate(db, {
-    bucket: 'daily',
-    id: steamid,
-    limit: DAILY_LIMIT,
-    windowSec: DAILY_WINDOW_SEC,
-    nowSec: now,
-  })
+  const gate = early ?? (await dailyGate())
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const selection = stored ?? (await selectDaily(db, steamid, dateStr, now))

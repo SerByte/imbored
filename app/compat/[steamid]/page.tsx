@@ -237,12 +237,15 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
   const state = await loadCompat(db, { other, me, now: nowSec() })
 
   if (state.kind === 'self') {
+    // Фон — свои же игры: приглашение уже посчитано для метаданных (cache)
+    const own = await inviteOnce(db, other)
     return (
       <CompatNotice
         title="Это твоя собственная ссылка"
         body="Кинь её кому-нибудь другому — сервис сравнит ваши библиотеки и покажет, во что вам зайти вместе."
+        games={own?.topGames}
       >
-        <CopyOwn steamid={other} />
+        <CopyCompatLink steamid={other} className="btn-ember px-6 py-3" label="Моя ссылка совместимости" />
         <Link href={`/portrait/${other}`} className="tap link-more">
           Посмотреть свой портрет
           <Icon name="arrow" size={16} />
@@ -257,7 +260,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         title={`${state.otherName ?? 'Этот игрок'} ещё не подключал библиотеку`}
         body="Сравнивать пока не с чем. Можно кинуть ему свою ссылку — тогда сравнение соберётся с его стороны."
       >
-        {me && <CopyOwn steamid={me} />}
+        {me && <CopyCompatLink steamid={me} className="btn-ember px-6 py-3" label="Моя ссылка совместимости" />}
         <Link href="/compat" className="tap link-more">
           <Icon name="arrow" size={16} className="rotate-180" />
           К своей ссылке

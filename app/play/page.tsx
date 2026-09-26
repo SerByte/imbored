@@ -1473,6 +1473,15 @@ function Player({ say }: { say: (line: string) => void }) {
                 </motion.p>
               )}
 
+              {/* «О чём игра» — у некупленной из каталога: название, теги и
+                  причина не говорят, что это вообще такое (lib/cards aboutLine) */}
+              {pick.about && (
+                <motion.p variants={STEP} className="-mt-2 line-clamp-3 text-sm text-dim">
+                  <span className="font-bold text-ink">О чём: </span>
+                  {pick.about}
+                </motion.p>
+              )}
+
             {whyParts.length > 0 && (
               <motion.div variants={STEP} className="text-sm">
                 {/*

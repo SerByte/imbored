@@ -462,6 +462,13 @@ export default function DailyPage() {
               delay={0.2}
             />
             <p className="text-base md:text-lg text-ink/90 leading-relaxed">{hero.reason}</p>
+            {/* «О чём игра» — у игры дня из магазина (lib/cards aboutLine) */}
+            {hero.about && (
+              <p className="-mt-2 line-clamp-3 text-sm text-dim">
+                <span className="font-bold text-ink">О чём: </span>
+                {hero.about}
+              </p>
+            )}
 
             <TagChips tags={hero.tags} matched={hero.sharedTags ?? []} />
 

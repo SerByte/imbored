@@ -5,6 +5,7 @@ import { getGamesMetaLite, type Db, type HeroMedia } from './db'
 import { discountView, trustedPrice } from './discount'
 import { entryCost, showsEntry } from './entry'
 import { partsView } from './feedbackctx'
+import { isRussianText } from './gamepage'
 import { sessionTrait } from './gametraits'
 import type { Pick as LlmPick } from './llm'
 import {
@@ -147,6 +148,22 @@ function buyView(meta: GameMeta | undefined, source: CandidateSource, now: numbe
  * Карточка выдачи /play — и героя, и «Ещё вариантов», и полки покупок.
  * edge — одно преимущество перед соседними (lib/badges.ts), только у пятёрки.
  */
+/**
+ * «О чём игра» — одной строкой описания магазина, только у новой для человека
+ * игры из каталога (source 'new') и только по-русски.
+ *
+ * Своя игра в объяснении не нуждается: человек её купил. А про некупленную из
+ * каталога он видел название, теги и причину — и ни слова о том, что это
+ * вообще такое. Раньше shortDescription ехал в каждой карточке и нигде не
+ * читался; английский хвост из магазина (у большинства карточек до прохода
+ * крона страниц) посреди русского героя читался бы сбоем — см. isRussianText.
+ */
+export function aboutLine(source: CandidateSource, meta: GameMeta | undefined): string | null {
+  if (source !== 'new') return null
+  const text = meta?.shortDescription?.trim()
+  return text && isRussianText(text) ? text : null
+}
+
 export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = null) {
   const meta = ctx.metaNow(p.appid)
   return {
@@ -158,7 +175,7 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     ccu: meta?.ccu ?? null,
     // без отметки подпись не имеет права говорить «сейчас» — см. PlayersNow
     ccuAt: meta?.ccuAt ?? null,
-    shortDescription: meta?.shortDescription ?? null,
+    about: aboutLine(p.source, meta),
     tags: topTags(meta),
     hoursPlayed: ctx.hoursOf(p.appid),
     // «Сессия ~20 мин» / «Матч ~15 мин» — из семантики, только уверенной
@@ -260,6 +277,8 @@ export function dailyCardView(
     // Кадры целиком: сколько из них показать, решает сам герой — это упирается
     // в бюджет видеопамяти слайдера, а не в состав ответа
     screenshots: meta?.screenshots ?? [],
+    // «О чём игра» — только у игры из каталога и только по-русски (aboutLine)
+    about: aboutLine(pick.source, meta),
     // Микротрейлер — живой фон героя после паузы (components/HeroTrailer).
     // Лежит в той же записи, что кадры: лишнего чтения нет
     trailer: meta?.trailer ?? null,

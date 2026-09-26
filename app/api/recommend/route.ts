@@ -17,6 +17,7 @@ import {
 } from '@/lib/recommend'
 import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from '@/lib/types'
+import { readJsonObject } from '@/lib/reqbody'
 
 // Маршрут по дороге зовёт модель. Предел объявляем явно, как в кроновых
 // маршрутах: иначе он неявный, а зависший вызов способен съесть его целиком
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
   const steamid = await currentSteamId()
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
-  const body = (await req.json().catch(() => ({}))) as {
+  const body = (await readJsonObject(req)) as {
     mood?: unknown
     focus?: unknown
     scope?: unknown
@@ -98,14 +99,16 @@ export async function POST(req: Request) {
   const db = await getDb()
   const now = nowSec()
 
+  // Оба гейта — одним заходом: по очереди это два похода в Turso подряд
   const ip = clientIp(req.headers)
-  for (const gate of [
-    { bucket: 'recommend', id: steamid, limit: RECOMMEND_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
-    { bucket: 'recommend-ip', id: ip, limit: RECOMMEND_IP_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
-  ]) {
-    const verdict = await checkRate(db, { ...gate, nowSec: now })
-    if (!verdict.ok) return rateLimitedResponse(verdict.retryAfterSec)
-  }
+  const verdicts = await Promise.all(
+    [
+      { bucket: 'recommend', id: steamid, limit: RECOMMEND_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
+      { bucket: 'recommend-ip', id: ip, limit: RECOMMEND_IP_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
+    ].map((gate) => checkRate(db, { ...gate, nowSec: now })),
+  )
+  const refused = verdicts.find((v) => !v.ok)
+  if (refused) return rateLimitedResponse(refused.retryAfterSec)
 
   // Весь путь от снапшота до отранжированных кандидатов — lib/candidates.ts,
   // общий с «Игрой дня»: копии этого пути в двух маршрутах уже расходились
