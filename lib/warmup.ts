@@ -31,6 +31,53 @@ import { plural } from './plural'
 export type LibraryFacts = {
   games: number
   untouched: number
+  /**
+   * Стена экрана ожидания: appid самых наигранных игр (libraryWall). Пока
+   * идёт подбор, за кольцом плывут обложки ЕГО библиотеки, и выбранная игра
+   * выходит из них вперёд — «из многих — одна». Необязательна: ответ старой
+   * версии сервера её не несёт, и экран остаётся просто экраном ожидания.
+   */
+  wall?: number[]
+}
+
+/** Стена — украшение: мусорный элемент выпадает сам, а не роняет факты */
+function wallIds(raw: unknown): number[] | null {
+  if (!Array.isArray(raw)) return null
+  const ids = raw
+    .filter((x): x is number => typeof x === 'number' && Number.isSafeInteger(x) && x > 0)
+    .slice(0, WALL_MAX)
+  return ids.length > 0 ? ids : null
+}
+
+/**
+ * Последняя стена на устройстве. Вернувшийся в течение десяти минут прогрев
+ * пропускает (warmIsFresh), и /api/prepare в этот заход не звучит вовсе — без
+ * памяти экран ожидания остался бы пустым ровно у того, кто здесь частый.
+ */
+export type WallMemo = { games: number; wall: number[] }
+
+export function parseWallMemo(raw: unknown): WallMemo | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { games, wall } = raw as { games?: unknown; wall?: unknown }
+  if (typeof games !== 'number' || !Number.isSafeInteger(games) || games < 0) return null
+  const ids = wallIds(wall)
+  return ids ? { games, wall: ids } : null
+}
+
+/** Сколько обложек уходит на стену: три ряда по восемь на широком экране */
+export const WALL_MAX = 24
+
+/**
+ * Стена — самые наигранные, а не случайные: человек должен узнать на ней
+ * СВОЮ библиотеку с первого взгляда, а узнаёт он то, во что играл.
+ * Игры не из Steam (отрицательный appid) пропускаются — постера у них нет.
+ */
+export function libraryWall(games: ReadonlyArray<{ appid: number; playtimeForever: number }>): number[] {
+  return games
+    .filter((g) => g.appid > 0)
+    .sort((a, b) => b.playtimeForever - a.playtimeForever)
+    .slice(0, WALL_MAX)
+    .map((g) => g.appid)
 }
 
 export type WarmupProgress = {
@@ -52,7 +99,10 @@ function parseFacts(raw: unknown): LibraryFacts | null {
   const { games, untouched } = raw as { games?: unknown; untouched?: unknown }
   if (typeof games !== 'number' || !Number.isFinite(games) || games < 0) return null
   if (typeof untouched !== 'number' || !Number.isFinite(untouched) || untouched < 0) return null
-  return { games, untouched }
+  const facts: LibraryFacts = { games, untouched }
+  const wall = wallIds((raw as { wall?: unknown }).wall)
+  if (wall) facts.wall = wall
+  return facts
 }
 
 /**

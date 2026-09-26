@@ -24,6 +24,7 @@ export function SpotlightCard({
   onKeyDown,
   buttonRef,
   attrs,
+  backdrop,
 }: {
   children: React.ReactNode
   onClick?: () => void
@@ -39,6 +40,12 @@ export function SpotlightCard({
    * знать не должна — она отвечает за материал, а не за смысл.
    */
   attrs?: React.ButtonHTMLAttributes<HTMLButtonElement>
+  /**
+   * Слой под содержимым — арт плитки. Стоит прямо в кнопке, а не в обёртке
+   * текста: обёртка позиционирована, и абсолютный арт встал бы по ней, а не
+   * по карточке.
+   */
+  backdrop?: React.ReactNode
 }) {
   const ref = useRef<HTMLButtonElement>(null)
 
@@ -66,6 +73,7 @@ export function SpotlightCard({
       {...attrs}
       className={`spotlight glass glass-hover cursor-pointer ${className}`}
     >
+      {backdrop}
       {/* Обёртка позиционирована, чтобы текст печатался ПОВЕРХ ::before:
           псевдоэлемент абсолютный, а значит по умолчанию перекрывает
           статичное содержимое, и подсветка ложилась бы на буквы. */}

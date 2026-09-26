@@ -44,24 +44,32 @@ export function TagChips({
   if (tags.length === 0) return null
   const hit = new Set(matched)
 
+  /*
+   * «Премьера»: строкой через точку, как жанры под названием у стриминга, а
+   * не россыпью пилюль. Пилюли спорили с кнопками героя за вес — теперь
+   * кнопка одна выглядит кнопкой. Совпавший с твоим вкусом тег — ярче и с
+   * зелёной точкой, той же, что у источника выдачи.
+   */
   return (
-    <div className={`flex flex-wrap gap-2 ${className}`}>
-      {tags.map((t) =>
-        hit.has(t) ? (
-          <span
-            key={t}
-            className="flex items-center gap-1.5 rounded-full bg-ember/20 px-3 py-1 text-xs text-ember-text"
-          >
-            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-ember" />
-            {tagRu(t)}
-            <span className="sr-only"> — совпадает с твоим вкусом</span>
-          </span>
-        ) : (
-          <span key={t} className="glass rounded-full px-3 py-1 text-xs text-dim">
-            {tagRu(t)}
-          </span>
-        ),
-      )}
-    </div>
+    <ul className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${className}`}>
+      {tags.map((t, i) => (
+        <li key={t} className="flex items-center gap-2">
+          {i > 0 && (
+            <span aria-hidden className="text-faint">
+              ·
+            </span>
+          )}
+          {hit.has(t) ? (
+            <span className="inline-flex items-center gap-1.5 font-bold text-ink">
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-ember-text" />
+              {tagRu(t)}
+              <span className="sr-only"> — совпадает с твоим вкусом</span>
+            </span>
+          ) : (
+            <span className="font-medium text-dim">{tagRu(t)}</span>
+          )}
+        </li>
+      ))}
+    </ul>
   )
 }

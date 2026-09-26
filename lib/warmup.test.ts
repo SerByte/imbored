@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
   COUNTING_STAGE,
+  libraryWall,
   remainingLine,
   runWarmup,
   warmupPercent,
@@ -9,6 +10,7 @@ import {
   WARMUP_MAX_CALLS,
   WARMUP_STALL_LIMIT,
   WARMUP_STALL_PAUSE_MS,
+  WALL_MAX,
 } from './warmup'
 
 /**
@@ -455,5 +457,49 @@ describe('прогрев уходит вместе со страницей', () 
     // больше не держит экран ожидания сколько угодно
     expect(signals[0]).toBeInstanceOf(AbortSignal)
     expect(WARMUP_CALL_TIMEOUT_MS).toBe(30_000)
+  })
+})
+
+/**
+ * Стена экрана ожидания — обложки своей библиотеки за кольцом прогрева.
+ * Украшение, поэтому разбор мягкий: мусорный элемент выпадает, а факты
+ * о библиотеке остаются.
+ */
+describe('стена экрана ожидания', () => {
+  test('самые наигранные первыми, без игр не из Steam, не больше WALL_MAX', () => {
+    const games = [
+      { appid: 10, playtimeForever: 5 },
+      { appid: -3, playtimeForever: 9000 },
+      { appid: 20, playtimeForever: 500 },
+      ...Array.from({ length: 40 }, (_, i) => ({ appid: 100 + i, playtimeForever: 1 })),
+    ]
+    const wall = libraryWall(games)
+    expect(wall.slice(0, 2)).toEqual([20, 10])
+    expect(wall).not.toContain(-3)
+    expect(wall).toHaveLength(WALL_MAX)
+    // исходный список не тронут: снапшот дальше читают другие
+    expect(games[0].appid).toBe(10)
+  })
+
+  test('приходит вместе с фактами; мусор в ней выпадает поштучно', async () => {
+    const seen: Array<unknown> = []
+    await runWarmup({
+      fetchFn: sequence(
+        reply({ remaining: 0, library: { games: 3, untouched: 1, wall: [570, '730', -1, 1.5, 413150] } }),
+      ),
+      onProgress: (p) => seen.push(p.library),
+    })
+    expect(seen).toEqual([{ games: 3, untouched: 1, wall: [570, 413150] }])
+  })
+
+  test('пустая или сломанная стена — просто факты без неё', async () => {
+    for (const wall of [[], 'стена', null, [0, -5]]) {
+      const seen: Array<unknown> = []
+      await runWarmup({
+        fetchFn: sequence(reply({ remaining: 0, library: { games: 3, untouched: 1, wall } })),
+        onProgress: (p) => seen.push(p.library),
+      })
+      expect(seen).toEqual([{ games: 3, untouched: 1 }])
+    }
   })
 })
