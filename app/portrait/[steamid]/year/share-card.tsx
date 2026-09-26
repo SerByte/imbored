@@ -76,10 +76,10 @@ export async function loadYearCardData(steamid: string): Promise<YearCardData | 
 
 export function YearCardImage({ data, wide }: { data: YearCardData; wide: boolean }) {
   const counts = [
-    data.unpackedCount > 0
+    data.minutes > 0 && data.unpackedCount > 0
       ? `${data.unpackedCount} ${plural(data.unpackedCount, 'впервые запущена', 'впервые запущены', 'впервые запущено')}`
       : null,
-    data.addedCount > 0
+    data.minutes > 0 && data.addedCount > 0
       ? `${data.addedCount} ${plural(data.addedCount, 'появилась', 'появились', 'появилось')} в библиотеке`
       : null,
   ].filter(Boolean)
@@ -118,9 +118,14 @@ export function YearCardImage({ data, wide }: { data: YearCardData; wide: boolea
         <div style={{ fontSize: wide ? 64 : 80, lineHeight: 1.15, marginBottom: wide ? 18 : 28 }}>
           {data.name.slice(0, 22)}
         </div>
+        {/* Без минут крупная строка — новые игры, а не «+0 мин в играх» */}
         <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: wide ? 18 : 30 }}>
-          <div style={{ fontSize: wide ? 64 : 88, color: OG_EMBER }}>{`+${playedLine(data.minutes)}`}</div>
-          <div style={{ fontSize: wide ? 22 : 26, color: OG_DIM, marginLeft: 18 }}>в играх</div>
+          <div style={{ fontSize: wide ? 64 : 88, color: OG_EMBER }}>
+            {data.minutes > 0 ? `+${playedLine(data.minutes)}` : `+${data.addedCount}`}
+          </div>
+          <div style={{ fontSize: wide ? 22 : 26, color: OG_DIM, marginLeft: 18 }}>
+            {data.minutes > 0 ? 'в играх' : `${plural(data.addedCount, 'игра', 'игры', 'игр')} в библиотеке`}
+          </div>
         </div>
         {data.top.map((g, i) => (
           <div key={i} style={{ fontSize: wide ? 22 : 28, color: OG_INK, marginBottom: 8 }}>

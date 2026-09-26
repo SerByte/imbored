@@ -798,8 +798,18 @@ function YearBlock({
       <m.p {...inView()} className={`${eyebrow()} mb-3`}>
         {yearEyebrow(year)}
       </m.p>
+      {/* Без минут (только новые игры с нулём) заголовок — они, а не «0 мин в играх» */}
       <m.h2 {...inView(1)} className="font-display text-display-lg">
-        <span className="tabular-nums text-ember-text">{playedLine(year.minutes)}</span> в играх
+        {year.minutes > 0 ? (
+          <>
+            <span className="tabular-nums text-ember-text">{playedLine(year.minutes)}</span> в играх
+          </>
+        ) : (
+          <>
+            <span className="tabular-nums text-ember-text">{year.added.count}</span>{' '}
+            {plural(year.added.count, 'игра появилась', 'игры появились', 'игр появилось')} в библиотеке
+          </>
+        )}
       </m.h2>
       <m.p {...inView(2)} className="mt-3 text-dim text-sm">
         По снимкам библиотеки: с {dateLabel(year.from, { year: year.fromPrevYear })} по{' '}
@@ -823,7 +833,7 @@ function YearBlock({
         </div>
       )}
 
-      {(year.unpacked.count > 0 || year.added.count > 0) && (
+      {year.minutes > 0 && (year.unpacked.count > 0 || year.added.count > 0) && (
         <m.p {...inView()} className="mt-8 text-dim text-sm">
           {year.unpacked.count > 0 && (
             <>

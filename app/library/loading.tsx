@@ -38,7 +38,13 @@ export default function LibraryLoading() {
               </div>
             ))}
           </div>
-          <Skel className="mt-8 h-[48px] w-[14rem] rounded-[11px]" delay={380} />
+          {/* строка «с прошлого снимка» — обычно две строки текста */}
+          <Skel className="mt-5 h-[46px] w-[min(100%,28rem)] rounded-[4px]" delay={340} />
+          {/* две кнопки: портрет и «Полистать» — на телефоне встают друг под другом */}
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Skel className="h-[48px] w-[14rem] rounded-[11px]" delay={380} />
+            <Skel className="h-[48px] w-[17rem] rounded-[11px]" delay={420} />
+          </div>
         </div>
       </div>
 

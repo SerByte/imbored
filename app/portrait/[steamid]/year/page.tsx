@@ -231,10 +231,12 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
           <Eyebrow className="mb-3">{yearEyebrow(year)}</Eyebrow>
           <h1 className="font-display text-display-xl">{name}</h1>
           <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
-            <div className="flex flex-col-reverse">
-              <dt className="lib-stat-label">наиграно</dt>
-              <dd className="lib-stat text-ember-text">{playedLine(year.minutes)}</dd>
-            </div>
+            {year.minutes > 0 && (
+              <div className="flex flex-col-reverse">
+                <dt className="lib-stat-label">наиграно</dt>
+                <dd className="lib-stat text-ember-text">{playedLine(year.minutes)}</dd>
+              </div>
+            )}
             {year.unpacked.count > 0 && (
               <div className="flex flex-col-reverse">
                 <dt className="lib-stat-label">

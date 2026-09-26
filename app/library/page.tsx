@@ -302,8 +302,15 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           */}
           {since && (
             <p className="mt-5 max-w-md text-sm leading-relaxed text-dim">
-              С {dateLabel(since.fromAt, { year: !sameYear(since.fromAt, snapshot.takenAt) })} по{' '}
-              {dateLabel(snapshot.takenAt)}
+              {/* Снимки одного дня — одна дата, а не «с 26 сентября по 26 сентября» */}
+              {dateLabel(since.fromAt) === dateLabel(snapshot.takenAt) ? (
+                `За ${dateLabel(snapshot.takenAt)}`
+              ) : (
+                <>
+                  С {dateLabel(since.fromAt, { year: !sameYear(since.fromAt, snapshot.takenAt) })} по{' '}
+                  {dateLabel(snapshot.takenAt)}
+                </>
+              )}
               {since.delta.minutes > 0 && (
                 <>
                   {' '}· наиграно <span className="tabular-nums text-ink">{playedLine(since.delta.minutes)}</span>

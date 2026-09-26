@@ -1,7 +1,7 @@
 import { dateLabel } from './freshness'
 import { parseReleaseYear } from './ingest'
 import { isJunk, looksLikeNonGame } from './junk'
-import { libraryDelta, minutesByApp } from './libdelta'
+import { isEmptyDelta, libraryDelta, minutesByApp } from './libdelta'
 import {
   buildTagProfile,
   isMultiplayerMeta,
@@ -157,12 +157,14 @@ export type WrappedYear = {
   from: number
   to: number
   /**
-   * Отметка заметно позже начала года: окно — «с 23 сентября», а не «за
-   * год». Отметка ставится при первом за год заходе, и у пришедшего осенью
-   * итоги честно осенние.
+   * Окно — не год: подпись «с 23 сентября», а не «Итоги 2026». Отметка
+   * ставится при первом за год заходе копией прежнего снимка, поэтому окно
+   * бывает и позже начала года (пришёл осенью), и заметно раньше (прежний
+   * снимок — прошлогодний или ещё старше, после перерыва). Итогами года
+   * честно называется только окно, начатое около первого января.
    */
   partial: boolean
-  /** Отметка из прошлого года (последний снимок декабря) — дату писать с годом */
+  /** Отметка из прошлых лет — дату писать с годом */
   fromPrevYear: boolean
   /** Наиграно за окно, минут */
   minutes: number
@@ -179,8 +181,13 @@ export type WrappedYear = {
 /** Сколько обложек держат полки итогов — счёт при этом полный */
 export const YEAR_SHELF_MAX = 12
 
-/** Отметка не позже недели от первого января — это ещё «весь год» */
+/**
+ * Насколько отметка может отстоять от первого января, чтобы окно ещё было
+ * «годом»: неделю после — первый заход в году бывает не первого числа, и
+ * месяц до — последний снимок прошлого года бывает не тридцать первого.
+ */
 export const YEAR_GRACE_SEC = 7 * 86_400
+export const YEAR_GRACE_BEFORE_SEC = 31 * 86_400
 
 /** Год по UTC — тот же, по которому ставится отметка (snapshotYear в lib/db) */
 function utcYear(sec: number): number {
@@ -227,8 +234,12 @@ export function pickYearWindow(
   const y = utcYear(latest.takenAt)
   const cur = baselines.find((b) => b.year === y)
   const prev = baselines.find((b) => b.year === y - 1)
+  // Закрывшийся год — только если в нём есть о чём сказать: иначе (заходил
+  // в ноябре дважды подряд, а играл в декабре) весь январь не было бы
+  // никаких итогов, хотя за декабрь-январь сказать есть что
   if (inJanuary(latest.takenAt) && prev && cur && cur.takenAt > prev.takenAt) {
-    return { year: y - 1, closed: true, base: prev, end: cur }
+    const closed = libraryDelta(minutesByApp(prev.games), cur.games, prev.takenAt, () => undefined)
+    if (!isEmptyDelta(closed)) return { year: y - 1, closed: true, base: prev, end: cur }
   }
   if (!cur || latest.takenAt <= cur.takenAt) return null
   return { year: y, closed: false, base: cur, end: latest }
@@ -270,7 +281,7 @@ export function buildWrappedYear(w: YearWindow, metaOf: MetaOf): WrappedYear {
     closed: w.closed,
     from: w.base.takenAt,
     to: w.end.takenAt,
-    partial: w.base.takenAt > start + YEAR_GRACE_SEC,
+    partial: w.base.takenAt > start + YEAR_GRACE_SEC || w.base.takenAt < start - YEAR_GRACE_BEFORE_SEC,
     fromPrevYear: w.base.takenAt < start,
     minutes: d.minutes,
     playedCount: d.played.length,
@@ -291,9 +302,14 @@ export function buildWrappedYear(w: YearWindow, metaOf: MetaOf): WrappedYear {
   }
 }
 
-/** «Итоги 2026» или «2026 · с 23 сентября» — когда отметка поставлена не в начале года */
-export function yearEyebrow(y: Pick<WrappedYear, 'year' | 'partial' | 'from'>): string {
-  return y.partial ? `${y.year} · с ${dateLabel(y.from)}` : `Итоги ${y.year}`
+/**
+ * «Итоги 2026» — или «2026 · с 23 сентября», когда окно не год: отметка
+ * поставлена осенью или взята из снимка, сделанного задолго до января
+ * («2026 · с 5 марта 2024 г.»). Заголовок карточки читают раньше подписи с
+ * датами, и «Итоги 2026» над полутора годами игры были бы неправдой.
+ */
+export function yearEyebrow(y: Pick<WrappedYear, 'year' | 'partial' | 'from' | 'fromPrevYear'>): string {
+  return y.partial ? `${y.year} · с ${dateLabel(y.from, { year: y.fromPrevYear })}` : `Итоги ${y.year}`
 }
 
 /** Сказать нечего — блок итогов не рисуется */

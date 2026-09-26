@@ -11,6 +11,7 @@ import {
   pickYearWindow,
   YEAR_SHELF_MAX,
   yearCandidates,
+  yearEyebrow,
   yearsToRead,
 } from './wrapped'
 
@@ -438,6 +439,24 @@ describe('итоги года', () => {
     )
     expect(december.fromPrevYear).toBe(true)
     expect(december.partial).toBe(false)
+    expect(yearEyebrow(december)).toBe('Итоги 2026')
+    // Вернулся после перерыва: отметка — снимок полуторагодовой давности.
+    // «Итоги 2026» над ним были бы неправдой — подпись по дате, с годом
+    const stale = buildWrappedYear(
+      { year: 2026, closed: false, base: { takenAt: at(2024, 2, 5), games: [lib(1, 10)] }, end },
+      metaOf,
+    )
+    expect(stale.partial).toBe(true)
+    expect(yearEyebrow(stale)).toMatch(/^2026 · с 5 марта 2024/)
+    expect(yearEyebrow(autumn)).toBe('2026 · с 23 сентября')
+  })
+
+  test('январь: закрывшийся год без разницы — итоги текущего окна, а не пустота', () => {
+    // заходил 20 и 21 ноября без игры, играл в декабре, вернулся 5 января
+    const prev = { year: 2026, takenAt: at(2026, 10, 20), games: [lib(1, 10)] }
+    const cur = { year: 2027, takenAt: at(2026, 10, 21), games: [lib(1, 10)] }
+    const latest = { takenAt: at(2027, 0, 5), games: [lib(1, 40)] }
+    expect(pickYearWindow(latest, [prev, cur])).toEqual({ year: 2027, closed: false, base: cur, end: latest })
   })
 
   test('коллекционер с бандлом: полка ограничена, счёт полный, JSON без потерь', () => {
