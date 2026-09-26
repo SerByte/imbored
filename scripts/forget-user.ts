@@ -97,8 +97,9 @@ async function main() {
   print('удалено строк:', await forgetUser(db, steamid))
   console.log(
     '\nГотово. Что осталось вне базы и отсюда не достаётся:\n' +
-      '  • картинки портрета (/portrait/<steamid>/card.png и opengraph-image) живут в\n' +
-      '    кэше Vercel до часа (revalidate 3600);\n' +
+      '  • картинки портрета и итогов года (/portrait/<steamid>/card.png,\n' +
+      '    /portrait/<steamid>/year/card.png и их opengraph-image) живут в кэше\n' +
+      '    Vercel до часа (revalidate 3600);\n' +
       '  • превью ссылок, которые уже закэшировали мессенджеры и соцсети (/privacy, раздел 05).',
   )
 }

@@ -84,3 +84,33 @@ export function ogScrim(): string {
 export function ogGlow(): string {
   return `radial-gradient(900px 520px at 8% 118%, ${alpha(OG_EMBER, 0.16)}, ${alpha(OG_BG, 0)} 70%)`
 }
+
+/**
+ * Постер для карточки — заранее, data-URI, а не адресом для satori.
+ *
+ * satori тянет картинки сам и без таймаута: один подвисший ответ CDN держит
+ * всю карточку, а неудачную загрузку он запоминает пустым местом. WebP он не
+ * читает вовсе. Поэтому здесь: свой таймаут на попытку, только JPEG и PNG, и
+ * следующий кандидат (artCandidates), если этот не вышел. null — не вышел ни
+ * один: стена просто обойдётся без этой клетки.
+ */
+export async function ogPoster(
+  candidates: readonly string[],
+  opts: { timeoutMs?: number; fetchFn?: typeof fetch } = {},
+): Promise<string | null> {
+  const fetchFn = opts.fetchFn ?? fetch
+  for (const url of candidates) {
+    try {
+      const res = await fetchFn(url, { signal: AbortSignal.timeout(opts.timeoutMs ?? 2500) })
+      if (!res.ok) continue
+      const type = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
+      if (type !== 'image/jpeg' && type !== 'image/png') continue
+      const body = Buffer.from(await res.arrayBuffer())
+      if (!body.length) continue
+      return `data:${type};base64,${body.toString('base64')}`
+    } catch {
+      // таймаут или сеть — следующий кандидат
+    }
+  }
+  return null
+}

@@ -351,6 +351,24 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
 
       {/* ——— 5. Финал ——— */}
       <section className="relative mx-auto flex w-full max-w-2xl flex-col items-center gap-8 px-safe pb-24 pt-8 text-center">
+        {/* Превью — картинка на тот же роут, что и скачивание: лишний рендер
+            satori заново тянул бы постеры со Steam */}
+        <a
+          href={`/portrait/${steamid}/year/card.png`}
+          download={`imbored-${steamid}-${year.year}.png`}
+          className="game-card block w-56"
+        >
+          <span className="card-thumb">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`/portrait/${steamid}/year/card.png`}
+              alt="Карточка итогов года"
+              loading="lazy"
+              className="w-full aspect-[1080/1350] object-cover"
+            />
+          </span>
+          <span className="link-more mt-3">Скачать карточку</span>
+        </a>
         <Link href={`/portrait/${steamid}`} prefetch={false} className="tap link-more">
           <Icon name="arrow" size={16} className="rotate-180" />
           {isMine ? 'К своему портрету' : `К портрету игрока ${name}`}

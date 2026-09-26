@@ -13,6 +13,7 @@
     "/rooms": 590,
     "/quiz": 580,
     "/portrait/[steamid]": 580,
+    "/portrait/[steamid]/year": 580,
     "/compat/[steamid]": 580,
     "/room/new": 520,
     "/game/[appid]/news/[gid]": 520,
