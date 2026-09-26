@@ -19,6 +19,7 @@ import { STEPS } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
 import type { Focus } from '@/lib/recommend'
 import type { Mood } from '@/lib/types'
+import { track } from '@/lib/track'
 
 /**
  * Направление задаёт «Назад»: шаг возвращается оттуда, куда ушёл.
@@ -229,6 +230,8 @@ function Quiz() {
   // три, и ось lean добавилась бы в одну из них
   const go = useCallback(
     (mood: Mood, opts: { roulette?: boolean; focus?: Focus; lean?: Lean } = {}) => {
+      // Любой уход на выдачу — финал квиза, пресет или рулетка
+      track('quiz_done')
       router.push(
         playHref(mood, { roulette: opts.roulette, focus: opts.focus ?? focus, lean: opts.lean }),
       )

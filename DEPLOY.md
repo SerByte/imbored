@@ -633,8 +633,24 @@ curl -sI "https://imbored.cc/portrait/<твой steamid>/card.png" | grep -i x-r
 
 ## 6.10. Логи ошибок: что искать (делаешь ты, когда что-то не так)
 
-Отдельного хранилища ошибок нет — всё в Vercel → Logs, одной строкой JSON на
-событие. Ищи по полю `event`:
+Тексты ошибок — только в Vercel → Logs, одной строкой JSON на событие. В
+базе от них остаются числа: таблица `telemetry_hourly` (`lib/telemetry.ts`)
+считает по часам сбои на сервере (`server-error`, ключ — шаблон маршрута),
+отчёты из браузера (`client-error`, ключ — вид), нарушения CSP (`csp`, ключ —
+директива) и шаги воронки (`event`, ключ — `событие:источник`). Числа живут
+90 дней; сбоев на сервере больше 50 за час — `/api/cron/health` отвечает 503
+(`checks.serverErrors`).
+
+```sql
+-- сбои за сутки по маршрутам
+SELECT key, SUM(count) FROM telemetry_hourly
+WHERE kind = 'server-error' AND hour >= unixepoch() - 86400 GROUP BY key ORDER BY 2 DESC;
+-- воронка за неделю
+SELECT key, SUM(count) FROM telemetry_hourly
+WHERE kind = 'event' AND hour >= unixepoch() - 7 * 86400 GROUP BY key ORDER BY key;
+```
+
+Сами строки ищи по полю `event`:
 
 - `"event":"server-error"` — исключение долетело до Next (`instrumentation.ts`).
   `digest` — тот же код, что человек видит на экране ошибки: жалоба «показало
@@ -659,6 +675,9 @@ curl -sI "https://imbored.cc/portrait/<твой steamid>/card.png" | grep -i x-r
 | `auth/return:steam`, `connect:steam` | Steam Web API не отдал библиотеку. `status: 403` — ключ отозван или неверен (Steam → Web API Key), `429`/`5xx` — лимит или обслуживание (по вторникам) |
 | `auth/return:openid` | steamcommunity.com не ответил на проверку входа — человек видит «Steam сейчас не отвечает» |
 | `auth/return:db`, `connect:db` | Steam ответил, а база не приняла запись. `code: BLOCKED` или ошибки квоты — Turso → Usage |
+| `telemetry:bump` | почасовой счётчик не записался — база легла или упёрлась в квоту; строки в логе при этом на месте |
+| `llm-cap:take`, `llm-cap:used` | суточный бюджет модели не прочитался — модель в это время не зовётся, всё идёт эвристикой |
+| `newsjob:digest` | сервис модели отказал пересказам (`status` — ответ Anthropic); health покажет «модель недоступна» |
 | `ratelimit:check`, `sessions:lookup` | база недоступна, и лимиты с отзывом сессий работают вслепую (fail-open). Разовая строка — моргание, строки подряд с `repeats` — чинить |
 | `catalog:ensure-meta`, `deals:refresh` | прогрев или цены не получили ответ Steam; `status: 429` — нас ограничивают |
 | `pagejob:*`, `news:feed` | кроны карточек и новостей; `pagejob:pros-cons` — модель недоступна (баланс, ключ) |

@@ -23,6 +23,8 @@ import { roomPresetOf } from '@/lib/presets'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { nextPollStep } from '@/lib/roompoll'
 import { isNeedSteam, writerStore } from '@/lib/writer'
+import { roomShareUrl } from '@/lib/roomshare'
+import { track } from '@/lib/track'
 
 /*
  * Церемония матча догружается отдельно.
@@ -136,8 +138,10 @@ export default function RoomPage() {
    * Поле со ссылкой в AloneInvite остаётся последним рубежом — теперь оно
    * показывается только когда отказали ОБА пути, а не первый.
    */
+  // Адрес комнаты без хвоста своей страницы: window.location.href уносил бы
+  // и чужие метки из адреса того, кто делится
   const share = useShareLink(
-    () => window.location.href,
+    () => roomShareUrl(window.location.origin, roomId),
     `Пати ${roomId} — imbored`,
     'Выберем игру на вечер вместе',
   )
@@ -544,6 +548,16 @@ export default function RoomPage() {
     },
     [],
   )
+
+  // Открыл чужую комнату по приглашению — шаг воронки, раз на заход: экран
+  // приглашения перерисовывается каждым опросом
+  const inviteSeen = useRef(false)
+  const notMember = state !== null && !state.isMember
+  useEffect(() => {
+    if (!notMember || inviteSeen.current) return
+    inviteSeen.current = true
+    track('invite_open')
+  }, [notMember])
 
   /*
    * Ответ на вход — своими словами для каждой причины.

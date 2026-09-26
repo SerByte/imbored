@@ -9,6 +9,7 @@ import { HeaderNav } from '@/components/HeaderNav'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
+import { RefCapture } from '@/components/RefCapture'
 import { SessionKeeper } from '@/components/SessionKeeper'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
@@ -338,6 +339,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         {/* Плавная прокрутка — только у главной (app/page.tsx): закреплённые
             сцены есть только там, остальной сайт прокручивается нативно. */}
         <SessionKeeper />
+        <RefCapture />
         <Analytics />
         {/* Полевые Web Vitals. На сайте, где LCP — это всегда чужая обложка со
             steamstatic, синтетика меряет не то: реальный разброс дают чужой CDN

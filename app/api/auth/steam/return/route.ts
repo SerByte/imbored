@@ -16,6 +16,8 @@ import {
 import { fetchOwnedGames, fetchPlayerSummary } from '@/lib/steam'
 import { RETURN_PATH, stateMatches, verifyAssertion } from '@/lib/steam-openid'
 import { loginCarry, loginTarget } from '@/lib/destination'
+import { recordTelemetryLater } from '@/lib/telemetry'
+import { eventKey } from '@/lib/track'
 
 /**
  * Каждый вызов этой ручки — исходящий POST на steamcommunity.com
@@ -123,6 +125,7 @@ export async function GET(req: NextRequest) {
       now,
     )
     await saveLibrarySnapshot(db, steamid, games, now)
+    recordTelemetryLater('event', eventKey('connect_ok', 'openid'))
 
     /*
      * Приглашённый попадает в комнату сразу, а не ещё одним нажатием.
@@ -141,9 +144,11 @@ export async function GET(req: NextRequest) {
      */
     const join = loginCarry(params).get('join')
     if (join) {
-      await joinRoom(db, join, steamid, summary?.personaName, now).catch((err: unknown) =>
-        logSwallowed('auth/return:join', err),
-      )
+      const joined = await joinRoom(db, join, steamid, summary?.personaName, now).catch((err: unknown) => {
+        logSwallowed('auth/return:join', err)
+        return null
+      })
+      if (joined === 'joined') recordTelemetryLater('event', eventKey('invite_join', 'login'))
     }
 
     // Куда человек шёл до разворота на лендинг; список закрытый —

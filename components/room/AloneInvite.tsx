@@ -4,6 +4,7 @@ import { Icon } from '@/components/Icon'
 import Link from 'next/link'
 import { FlapCode } from '@/components/FlapCode'
 import { Eyebrow } from '@/components/Labels'
+import { roomShareUrl } from '@/lib/roomshare'
 
 /**
  * «В комнате только ты».
@@ -126,7 +127,7 @@ export function AloneInvite({
             readOnly
             aria-label="Ссылка на комнату"
             aria-describedby="room-link-note"
-            value={typeof window === 'undefined' ? '' : window.location.href}
+            value={typeof window === 'undefined' ? '' : roomShareUrl(window.location.origin, roomId)}
             onFocus={(e) => e.currentTarget.select()}
             className="rounded-(--radius-control) bg-surface border border-edge px-4 py-2.5 text-sm font-mono text-dim w-full"
           />

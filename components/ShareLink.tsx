@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, useSyncExternalStore } from 'react'
+import { track } from '@/lib/track'
 
 type State = 'idle' | 'done' | 'manual'
 
@@ -81,6 +82,8 @@ export function useShareLink(
   async function run() {
     const url = getUrl()
     if (!url) return
+    // Намерение поделиться — шаг воронки, чем бы ни кончилась панель
+    track('share_click')
     if (native) {
       try {
         await navigator.share({ title, text, url })

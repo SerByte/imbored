@@ -6,6 +6,7 @@ import { bounceTo } from '@/lib/destination'
 import { appBaseUrl, currentSteamId } from '@/lib/server'
 import { Eyebrow } from '@/components/Labels'
 import { Icon } from '@/components/Icon'
+import { withRef } from '@/lib/track'
 
 export const metadata = {
   title: 'Совместимость',
@@ -37,7 +38,7 @@ export default async function CompatHubPage() {
 
   // Адрес собирается на сервере: поле обязано приехать заполненным с первым
   // кадром, а не мигнуть пустым в ожидании гидратации.
-  const url = `${appBaseUrl()}/compat/${steamid}`
+  const url = withRef(`${appBaseUrl()}/compat/${steamid}`, 'compat')
 
   return (
     <div className="relative flex-1 overflow-hidden">

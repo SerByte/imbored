@@ -29,6 +29,7 @@ import { runNewsSlice } from '@/lib/newsjob'
 import { sweepRateLimits } from '@/lib/ratelimit'
 import { appBaseUrl, getDb, nowSec, steamApiKey } from '@/lib/server'
 import { runSteamProbe } from '@/lib/steamprobe'
+import { pruneTelemetry } from '@/lib/telemetry'
 import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
 
 export const dynamic = 'force-dynamic'
@@ -121,7 +122,10 @@ export async function GET(req: Request) {
         // очереди и сам срез из-за него пропадать не должны.
         try {
           const swept = await sweepStale(db, now)
-          await setCatalogMeta(db, SWEEP_KEY, JSON.stringify({ at: now, ...swept }))
+          // Почасовые счётчики (lib/telemetry) старше 90 дней — тем же
+          // проходом и в ту же отметку уборки
+          const telemetry = await pruneTelemetry(db, now)
+          await setCatalogMeta(db, SWEEP_KEY, JSON.stringify({ at: now, ...swept, telemetry }))
         } catch (err) {
           console.error('sweep stale', err)
         }

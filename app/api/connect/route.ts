@@ -16,6 +16,8 @@ import {
 } from '@/lib/server'
 import { fetchOwnedGames, fetchPlayerSummary, parseProfileInput, resolveProfile } from '@/lib/steam'
 import { readJsonObject } from '@/lib/reqbody'
+import { recordTelemetryLater } from '@/lib/telemetry'
+import { eventKey } from '@/lib/track'
 
 async function withSession(
   res: NextResponse,
@@ -69,6 +71,8 @@ export async function POST(req: Request) {
     // демо-игроком, а не с чужим.
     const steamid = demoSteamId(variant, await currentSteamId())
     await seedDemo(db, steamid, now, variant)
+    // Демо-друг приходит из комнаты — это отдельный канал, а не новый визит
+    recordTelemetryLater('event', eventKey('demo_start', variant === 2 ? 'room' : 'demo'))
     return withSession(
       NextResponse.json({
         ok: true,
@@ -127,6 +131,7 @@ export async function POST(req: Request) {
       now,
     )
     await saveLibrarySnapshot(db, steamid, games, now)
+    recordTelemetryLater('event', eventKey('connect_ok', 'link'))
     return withSession(
       NextResponse.json({
         ok: true,

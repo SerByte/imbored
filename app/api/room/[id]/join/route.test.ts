@@ -44,6 +44,18 @@ describe('/api/room/[id]/join', () => {
     expect((await roomMembers(db, ROOM)).map((m) => m.steamid)).toContain(me)
   })
 
+  test('вход по приглашению считается шагом воронки — один раз на человека', async () => {
+    await signInAs(db, 'openid')
+    await createRoom(db, { id: ROOM, steamid: HOST }, nowSec())
+    expect((await join()).status).toBe(200)
+    // повторное «Войти» своего — не новый вход
+    expect((await join()).status).toBe(200)
+    await vi.waitFor(async () => {
+      const res = await db.execute("SELECT key, count FROM telemetry_hourly WHERE kind = 'event'")
+      expect(res.rows.map((r) => [r.key, Number(r.count)])).toEqual([['invite_join:room', 1]])
+    })
+  })
+
   test('перебор кодов упирается в тот же потолок, что просмотр комнаты', async () => {
     await signInAs(db, 'openid')
     let last = 0

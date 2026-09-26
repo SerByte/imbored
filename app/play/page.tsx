@@ -78,6 +78,7 @@ import { bounceTo, reconnectHref } from '@/lib/destination'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
+import { track } from '@/lib/track'
 import { parseWallMemo, remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
@@ -732,6 +733,9 @@ function Player({ say }: { say: (line: string) => void }) {
         return false
       }
       const at = applyDeal(got)
+      // Первый показ выдачи; переборы, повторы и восстановление после «Назад»
+      // идут мимо reveal() и шагом воронки не считаются
+      track('pick_shown')
       /*
        * Такт «из многих — одна». Только на первом показе и не в рулетке: у
        * той свой барабан, и два выбора подряд читались бы как заминка.

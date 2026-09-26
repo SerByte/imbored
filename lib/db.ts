@@ -193,6 +193,21 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   expires_at INTEGER NOT NULL
 ) WITHOUT ROWID;
 /*
+ * Почасовые счётчики (lib/telemetry.ts): сбои на сервере и в браузере,
+ * отчёты CSP и шаги воронки. Только числа — kind и key из закрытых списков,
+ * без SteamID, адресов и путей: ни одна строка не относится к человеку, и
+ * forgetUser здесь забывать нечего. Живут 90 дней (pruneTelemetry из крона
+ * новостей). Первый столбец ключа — час: и упсёрт, и подсчёт за окно, и
+ * уборка идут по префиксу первичного ключа.
+ */
+CREATE TABLE IF NOT EXISTS telemetry_hourly (
+  hour INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (hour, kind, key)
+) WITHOUT ROWID;
+/*
  * Выбранная игра дня.
  *
  * Обещание страницы — «одна игра на весь день», и до этой таблицы оно

@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { Icon } from '@/components/Icon'
 import { useShareLink } from '@/components/ShareLink'
+import { withRef } from '@/lib/track'
 
 const TITLE = 'Совместимость вкусов — imbored'
 const TEXT = 'Сравним библиотеки Steam по-настоящему, а не по анкете'
@@ -39,7 +40,7 @@ export function CopyCompatLink({
 }) {
   const router = useRouter()
   const { run, state, native } = useShareLink(
-    () => `${window.location.origin}/compat/${steamid}`,
+    () => withRef(`${window.location.origin}/compat/${steamid}`, 'compat'),
     TITLE,
     TEXT,
     () => router.push('/compat'),

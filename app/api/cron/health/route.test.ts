@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CRON_JOBS, LLM_DOWN_FRESH_SEC, PAGES_STALE_SEC, SWEEP_KEY } from '@/lib/cron'
 import { setCatalogMeta, type Db } from '@/lib/db'
 import { takeLlmBudget } from '@/lib/llmcap'
+import { bumpTelemetry, SERVER_ERRORS_LIMIT } from '@/lib/telemetry'
 import { STEAM_PROBE_KEY } from '@/lib/steamprobe'
 import { freshDb } from '@/lib/testing/route'
 import { GET } from './route'
@@ -204,6 +205,31 @@ describe('/api/cron/health', () => {
     const res = await ask()
     expect(res.status).toBe(200)
     expect(((await res.json()) as { llm: unknown }).llm).toEqual({ used: 3, cap: 2 })
+  })
+
+  test('сбои на сервере сверх порога за час — 503 с числом', async () => {
+    await allFresh()
+    await bumpTelemetry(db, 'server-error', 'route:/api/recommend', T0 - 3600, SERVER_ERRORS_LIMIT)
+    const calm = await ask()
+    expect(calm.status).toBe(200)
+    expect(((await calm.json()) as { checks: Record<string, unknown> }).checks.serverErrors).toEqual({
+      ok: true,
+      count: SERVER_ERRORS_LIMIT,
+    })
+    await bumpTelemetry(db, 'server-error', 'render:/play', T0 - 60)
+    const res = await ask()
+    expect(res.status).toBe(503)
+    expect(((await res.json()) as { checks: Record<string, unknown> }).checks.serverErrors).toMatchObject({
+      ok: false,
+      problem: 'сбои',
+      count: SERVER_ERRORS_LIMIT + 1,
+    })
+  })
+
+  test('сбои позапрошлого часа уже не в счёт', async () => {
+    await allFresh()
+    await bumpTelemetry(db, 'server-error', 'route:/api/recommend', T0 - 3 * 3600, SERVER_ERRORS_LIMIT * 2)
+    expect((await ask()).status).toBe(200)
   })
 
   test('проверка ничего не пишет', async () => {

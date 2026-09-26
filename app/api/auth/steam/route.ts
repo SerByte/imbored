@@ -3,6 +3,8 @@ import { loginCarry } from '@/lib/destination'
 import { browserHost } from '@/lib/origin'
 import { OIDC_COOKIE, appBaseUrl, oidcCookieOptions } from '@/lib/server'
 import { RETURN_PATH, buildSteamLoginUrl, newLoginState } from '@/lib/steam-openid'
+import { recordTelemetryLater } from '@/lib/telemetry'
+import { eventKey } from '@/lib/track'
 
 export async function GET(req: Request) {
   /*
@@ -43,5 +45,8 @@ export async function GET(req: Request) {
   query.set('state', state)
   const res = NextResponse.redirect(buildSteamLoginUrl(`${base}${RETURN_PATH}?${query}`))
   res.cookies.set(OIDC_COOKIE, state, oidcCookieOptions())
+  // Шаг воронки — здесь, после прыжка на канонический хост: иначе один вход
+  // считался бы дважды
+  recordTelemetryLater('event', eventKey('connect_start', 'openid'))
   return res
 }

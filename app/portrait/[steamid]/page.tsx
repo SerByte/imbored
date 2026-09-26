@@ -45,6 +45,7 @@ import { backlogEquivalent } from '@/lib/stats'
 import { tagWeightFrom } from '@/lib/tagweight'
 import type { LibraryGame } from '@/lib/types'
 import { Icon } from '@/components/Icon'
+import { withRef } from '@/lib/track'
 
 export const dynamic = 'force-dynamic'
 
@@ -724,7 +725,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               По этой ссылке увидят твой портрет и смогут проверить совместимость.
             </p>
             <ShareLinkField
-              url={`${appBaseUrl()}/portrait/${steamid}`}
+              url={withRef(`${appBaseUrl()}/portrait/${steamid}`, 'portrait')}
               label="Ссылка на твой портрет игрока"
               title={`Портрет игрока ${name} — imbored`}
               text="Мой портрет игрока по библиотеке Steam — проверь, совпадаем ли мы"

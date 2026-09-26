@@ -12,6 +12,7 @@ import { getCatalogMeta } from '@/lib/db'
 import { llmBudgetUsed, llmDailyCap } from '@/lib/llmcap'
 import { getDb, nowSec } from '@/lib/server'
 import { STEAM_PROBE_KEY } from '@/lib/steamprobe'
+import { SERVER_ERRORS_LIMIT, telemetryCount } from '@/lib/telemetry'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +35,12 @@ export const dynamic = 'force-dynamic'
  *     последние 48 часов. Упавшая уборка пишет только в console.error, а
  *     протухшие демо и комнаты копятся молча.
  * Обе стоят на паузе вместе с новостями: их делает тот же крон.
+ *
+ * serverErrors — сбои на сервере за последний час (почасовые счётчики,
+ * lib/telemetry.ts; пишет instrumentation.ts). Порог — SERVER_ERRORS_LIMIT:
+ * единичные 500 бывают всегда, а десятки в час — это уже поломка, о
+ * которой иначе узнавали бы из жалоб. Недоступный счётчик проверку не
+ * валит: о лёгшей базе и так скажут кроны.
  *
  * llm — справка, а не проверка: сколько вызовов модели потрачено сегодня из
  * суточного бюджета (lib/llmcap). Выбранный бюджет — не авария, сервис
@@ -71,14 +78,19 @@ export async function GET(req: Request) {
   }
 
   const newsPaused = (await getCatalogMeta(db, CRON_JOBS.news.pausedKey)) === '1'
-  const [probe, sweep, used] = await Promise.all([
+  const [probe, sweep, used, errors] = await Promise.all([
     getCatalogMeta(db, STEAM_PROBE_KEY),
     getCatalogMeta(db, SWEEP_KEY),
     llmBudgetUsed(db, now),
+    telemetryCount(db, 'server-error', now - 3600).catch(() => null),
   ])
   const checks = {
     steamKey: steamKeyHealth(probe, now, STEAM_PROBE_STALE_SEC, newsPaused),
     sweep: sliceHealth(sweep, now, SWEEP_STALE_SEC, newsPaused),
+    serverErrors:
+      errors !== null && errors > SERVER_ERRORS_LIMIT
+        ? { ok: false as const, problem: 'сбои' as const, count: errors, limit: SERVER_ERRORS_LIMIT }
+        : { ok: true as const, count: errors },
   }
 
   const ok = Object.values(jobs).every((j) => j.ok) && Object.values(checks).every((c) => c.ok)
