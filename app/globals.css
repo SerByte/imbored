@@ -3587,6 +3587,24 @@ img[data-art-fade][data-loaded] {
   }
 }
 
+/*
+ * «404» титром: огромная цифра, заливка которой гаснет книзу, — как номер
+ * серии на заставке. Декоративна (aria-hidden), для скринридера новость
+ * сказана подписью «Ошибка 404» и заголовком.
+ */
+.nf-code {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(6rem, 3rem + 14vw, 12rem);
+  line-height: 0.85;
+  letter-spacing: -0.06em;
+  font-variant-numeric: tabular-nums;
+  color: transparent;
+  background: linear-gradient(to bottom, var(--ink) 30%, color-mix(in srgb, var(--ink) 12%, transparent));
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
 /* Веер над заголовком /rooms: по центру, размером с три постера в ряд */
 .rooms-fan {
   position: relative;

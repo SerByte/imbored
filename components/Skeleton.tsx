@@ -58,17 +58,18 @@ export function SkelPage({ children, className = '' }: { children: React.ReactNo
  */
 export function SkelTile({ delay = 0, caption = 1 }: { delay?: number; caption?: 1 | 2 }) {
   return (
-    <div className="glass rounded-[14px] overflow-hidden">
-      <Skel className="w-full aspect-[460/215] rounded-none" delay={delay} />
+    <div>
+      <Skel className="w-full aspect-[460/215] rounded-[var(--radius-card)]" delay={delay} />
       {/*
-        Числа сверены с настоящей плиткой замером в браузере, а не подобраны:
-        подпись занимает 42 px в одну строку (p-3 плюс text-sm/leading-tight)
-        и 62 px в две (плюс mt-1 и строка 11-м кеглем). Разойдись они — и
-        каждый ряд стены поехал бы вниз в момент подмены каркаса содержимым.
+        Форма — капсулы GameCardBody, которую каркас подменяет: обложка без
+        панели и подпись под ней (mt-3). Строка названия — 15 px с
+        leading-tight, то есть 19 px; вторая строка — 13 px leading-snug, 18 px
+        после mt-1. Разойдись числа — и каждый ряд стены поехал бы вниз в
+        момент подмены каркаса содержимым.
       */}
-      <div className="p-3 flex flex-col">
-        <Skel className="h-[18px] w-4/5 rounded-[4px]" delay={delay + 70} />
-        {caption === 2 && <Skel className="mt-1 h-4 w-1/3 rounded-[4px]" delay={delay + 140} />}
+      <div className="mt-3 px-0.5 flex flex-col">
+        <Skel className="h-[19px] w-4/5 rounded-[4px]" delay={delay + 70} />
+        {caption === 2 && <Skel className="mt-1 h-[18px] w-1/3 rounded-[4px]" delay={delay + 140} />}
       </div>
     </div>
   )
