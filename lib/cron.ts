@@ -169,25 +169,52 @@ export const CRON_JOBS: Record<CronJob, CronJobMeta> = {
   pages: { lastKey: 'pages_last_slice', pausedKey: 'pages_paused', staleSec: PAGES_STALE_SEC },
 }
 
-/** То, что крон пишет о себе в *_last_slice. Поля среза сверх этих не нужны. */
-type SliceMark = { at: number; упало?: string; обрыв?: string }
+/**
+ * Отметка суточной уборки (sweepStale): пишет крон новостей, читает
+ * /api/cron/health. Одно имя на обоих — по той же причине, что CRON_JOBS.
+ */
+export const SWEEP_KEY = 'sweep_last'
+
+/**
+ * То, что крон пишет о себе в *_last_slice. Поля среза сверх этих не нужны.
+ * llm — отказ сервиса модели внутри среза (DigestResult, PageSliceResult):
+ * срез при этом отработал эвристикой и сам не «упал».
+ */
+type SliceMark = { at: number; упало?: string; обрыв?: string; llm?: 'down'; llmStatus?: number | null }
 
 /** null — записи нет или в ней мусор: подтверждения, что крон жив, нет. */
 function readMark(raw: string | null): SliceMark | null {
   if (!raw) return null
   try {
-    const o = JSON.parse(raw) as { at?: unknown; упало?: unknown; обрыв?: unknown }
+    const o = JSON.parse(raw) as {
+      at?: unknown
+      упало?: unknown
+      обрыв?: unknown
+      llm?: unknown
+      llmStatus?: unknown
+    }
     const at = Number(o?.at ?? 0)
     if (!Number.isFinite(at) || at <= 0) return null
     return {
       at,
       ...(typeof o.упало === 'string' ? { упало: o.упало } : {}),
       ...(typeof o.обрыв === 'string' ? { обрыв: o.обрыв } : {}),
+      ...(o.llm === 'down'
+        ? { llm: 'down' as const, llmStatus: typeof o.llmStatus === 'number' ? o.llmStatus : null }
+        : {}),
     }
   } catch {
     return null
   }
 }
+
+/**
+ * Сколько отказ модели в отметке считается новостью. Пересказы пишут отметку
+ * каждый час, и живой отказ там не устаревает. А отметка карточек живёт сутки
+ * (PAGES_STALE_SEC): мимолётный сбой в утреннем звене красил бы health весь
+ * день — и присылал письмо «воркфлоу упал» каждый час.
+ */
+export const LLM_DOWN_FRESH_SEC = 3 * 3600
 
 /**
  * Пора ли пнуть крон вручную: последний срез старше maxAgeSec.
@@ -238,7 +265,7 @@ export type SliceHealth =
   | { ok: true; ageSec?: number; paused?: true }
   | {
       ok: false
-      problem: 'нет записи' | 'протух' | 'упало' | 'обрыв'
+      problem: 'нет записи' | 'протух' | 'упало' | 'обрыв' | 'модель недоступна' | 'ключ Steam'
       ageSec?: number
       /** Причина из самой отметки: текст исключения или отказ передачи */
       detail?: string
@@ -252,7 +279,11 @@ export type SliceHealth =
  * пустым карточкам неделями позже.
  *
  * Нездоров, если отметки нет, она старше staleSec, либо последнее, что крон о
- * себе записал, — «упало» или «обрыв».
+ * себе записал, — «упало» или «обрыв». И если в свежей отметке (моложе
+ * LLM_DOWN_FRESH_SEC) сервис модели отказал: пустой баланс или отозванный
+ * ключ иначе видно только по тому, что пересказы перестали появляться, а
+ * карточки собираются эвристикой. «Ключа нет вовсе» отказом не считается —
+ * это настройка (без ключа сервис работает на эвристике), а не авария.
  *
  * Пауза (килл-свитч *_paused) — здорова, но видна. Паузу ставят руками и во
  * время разбора аварии, и ежечасное письмо «воркфлоу упал» в это время —
@@ -272,5 +303,43 @@ export function sliceHealth(
   if (mark.обрыв) return { ok: false, problem: 'обрыв', ageSec, detail: mark.обрыв }
   if (mark.упало) return { ok: false, problem: 'упало', ageSec, detail: mark.упало }
   if (ageSec >= staleSec) return { ok: false, problem: 'протух', ageSec }
+  if (mark.llm === 'down' && ageSec < LLM_DOWN_FRESH_SEC) {
+    const detail = mark.llmStatus == null ? 'нет связи' : `HTTP ${mark.llmStatus}`
+    return { ok: false, problem: 'модель недоступна', ageSec, detail }
+  }
+  return { ok: true, ageSec }
+}
+
+/**
+ * Жив ли ключ Steam Web API — по отметке пробы (lib/steamprobe.ts), которую
+ * пишет конец цепочки новостей раз в час. Отозванный или просроченный ключ
+ * иначе виден только как проглоченные строки в логе входа: люди просто не
+ * могут войти.
+ *
+ * Отметки нет или она старше staleSec — пробы не было: цепочка новостей не
+ * доходит до конца (это же покажет и сам news). Пауза новостей — здорово,
+ * как у кронов: проба стоит вместе с ними.
+ */
+export function steamKeyHealth(
+  raw: string | null,
+  nowSec: number,
+  staleSec: number,
+  paused = false,
+): SliceHealth {
+  let mark: { at: number; ok: boolean; detail?: string } | null = null
+  try {
+    const o = raw ? (JSON.parse(raw) as { at?: unknown; ok?: unknown; detail?: unknown }) : null
+    const at = Number(o?.at ?? 0)
+    if (o && Number.isFinite(at) && at > 0) {
+      mark = { at, ok: o.ok === true, ...(typeof o.detail === 'string' ? { detail: o.detail } : {}) }
+    }
+  } catch {
+    mark = null
+  }
+  const ageSec = mark ? nowSec - mark.at : undefined
+  if (paused) return { ok: true, paused: true, ...(ageSec !== undefined ? { ageSec } : {}) }
+  if (!mark || ageSec === undefined) return { ok: false, problem: 'нет записи' }
+  if (ageSec >= staleSec) return { ok: false, problem: 'протух', ageSec }
+  if (!mark.ok) return { ok: false, problem: 'ключ Steam', ageSec, ...(mark.detail ? { detail: mark.detail } : {}) }
   return { ok: true, ageSec }
 }

@@ -11,6 +11,8 @@ import {
   sliceDeadline,
   sliceHealth,
   sliceLooksStale,
+  steamKeyHealth,
+  LLM_DOWN_FRESH_SEC,
 } from './cron'
 
 // Заголовки HTTP это ByteString: секрет обязан быть ASCII.
@@ -222,5 +224,69 @@ describe('pagesChainGoesOn: передавать ли звено крона ка
     expect(
       pagesChainGoesOn({ ...base, chain: 24, failed: true, slice: null, signals: { stopped: 'budget' } }),
     ).toBe(false)
+  })
+})
+
+describe('sliceHealth: отказ модели внутри среза', () => {
+  const NOW = 1_760_000_000
+  const mark = (ago: number, extra: Record<string, unknown>) => JSON.stringify({ at: NOW - ago, chain: 0, ...extra })
+
+  test('свежий отказ — нездоров, со статусом', () => {
+    expect(sliceHealth(mark(60, { llm: 'down', llmStatus: 401 }), NOW, 3 * 3600)).toEqual({
+      ok: false,
+      problem: 'модель недоступна',
+      ageSec: 60,
+      detail: 'HTTP 401',
+    })
+    expect(sliceHealth(mark(60, { llm: 'down', llmStatus: null }), NOW, 3 * 3600)).toMatchObject({
+      detail: 'нет связи',
+    })
+  })
+
+  test('старый отказ — уже не новость', () => {
+    expect(sliceHealth(mark(LLM_DOWN_FRESH_SEC, { llm: 'down', llmStatus: 500 }), NOW, 26 * 3600)).toEqual({
+      ok: true,
+      ageSec: LLM_DOWN_FRESH_SEC,
+    })
+  })
+
+  test('«протух», «упало» и «обрыв» важнее отказа модели', () => {
+    expect(sliceHealth(mark(4 * 3600, { llm: 'down' }), NOW, 3 * 3600)).toMatchObject({ problem: 'протух' })
+    expect(sliceHealth(mark(60, { llm: 'down', упало: 'x' }), NOW, 3 * 3600)).toMatchObject({ problem: 'упало' })
+    expect(sliceHealth(mark(60, { llm: 'down', обрыв: 'y' }), NOW, 3 * 3600)).toMatchObject({ problem: 'обрыв' })
+  })
+
+  test('llm с чужим значением — не отказ', () => {
+    expect(sliceHealth(mark(60, { llm: 'ok' }), NOW, 3 * 3600)).toEqual({ ok: true, ageSec: 60 })
+  })
+})
+
+describe('steamKeyHealth', () => {
+  const NOW = 1_760_000_000
+  const STALE = 3 * 3600
+
+  test('живая проба — здоров', () => {
+    expect(steamKeyHealth(JSON.stringify({ at: NOW - 600, ok: true }), NOW, STALE)).toEqual({ ok: true, ageSec: 600 })
+  })
+
+  test('проба с отказом — «ключ Steam» с причиной', () => {
+    expect(steamKeyHealth(JSON.stringify({ at: NOW - 600, ok: false, detail: 'HTTP 403' }), NOW, STALE)).toEqual({
+      ok: false,
+      problem: 'ключ Steam',
+      ageSec: 600,
+      detail: 'HTTP 403',
+    })
+  })
+
+  test('нет записи, мусор и старая проба', () => {
+    expect(steamKeyHealth(null, NOW, STALE)).toEqual({ ok: false, problem: 'нет записи' })
+    expect(steamKeyHealth('{не json', NOW, STALE)).toEqual({ ok: false, problem: 'нет записи' })
+    expect(steamKeyHealth(JSON.stringify({ at: NOW - STALE, ok: true }), NOW, STALE)).toMatchObject({
+      problem: 'протух',
+    })
+  })
+
+  test('пауза — здоров, но видно', () => {
+    expect(steamKeyHealth(null, NOW, STALE, true)).toEqual({ ok: true, paused: true })
   })
 })

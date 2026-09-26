@@ -23,7 +23,8 @@ import {
   loadTagStats,
   setUserPortrait,
 } from '@/lib/db'
-import { claudePortraitText } from '@/lib/llm'
+import { claudePortraitText, llmAvailable } from '@/lib/llm'
+import { takeLlmBudget } from '@/lib/llmcap'
 import { reconnectHref } from '@/lib/destination'
 import { OG_SITE } from '@/lib/site'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
@@ -335,9 +336,12 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
       ])
     ).every((v) => v.ok)
 
-    const written = allowed
-      ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
-      : null
+    // Общий суточный бюджет модели — после личных потолков: иначе его тратили
+    // бы и отказанные запросы (lib/llmcap)
+    const written =
+      allowed && llmAvailable() && (await takeLlmBudget(db, now))
+        ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
+        : null
     text = written ?? fallbackText()
     if (written) await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text })
   }

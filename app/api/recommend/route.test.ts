@@ -331,6 +331,19 @@ describe('/api/recommend: затравка seed', () => {
     expect(calls.some((u) => u.includes('anthropic'))).toBe(true)
   })
 
+  // Общий суточный бюджет модели (lib/llmcap): выбран — та же выдача
+  // эвристикой, без 429 и без похода в Anthropic
+  test('суточный бюджет модели выбран — эвристика, модель не зовётся', async () => {
+    const calls = await setup()
+    vi.stubEnv('LLM_DAILY_CAP', '0')
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { picks: unknown[]; engine: string }
+    expect(body.picks.length).toBeGreaterThan(0)
+    expect(body.engine).toBe('heuristic')
+    expect(calls.filter((u) => u.includes('anthropic'))).toEqual([])
+  })
+
   test('незнакомая затравка — 409 nocandidates, мусор в поле — обычная выдача', async () => {
     await setup()
     // здесь модель не проверяем — без ключа обычная выдача не шумит отказами

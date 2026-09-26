@@ -3,7 +3,8 @@ import { assignEdges } from '@/lib/badges'
 import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getHeroMedia } from '@/lib/db'
-import { claudePicks, heuristicPicks, topUpPicks } from '@/lib/llm'
+import { claudePicks, heuristicPicks, llmAvailable, topUpPicks } from '@/lib/llm'
+import { takeLlmBudget } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
 import { parseExclude, parseNudge, planNudge } from '@/lib/nudge'
 import { checkRate, checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
@@ -164,8 +165,11 @@ export async function POST(req: Request) {
         })
       ).ok)
 
+  // Общий суточный бюджет модели (lib/llmcap) — самым последним: берётся,
+  // только когда вызов точно состоится. Выбран — та же выдача эвристикой, без
+  // 429: это не личный потолок человека, и отказывать ему не за что.
   const fromClaude =
-    heroPool.length && llmAllowed
+    heroPool.length && llmAllowed && llmAvailable() && (await takeLlmBudget(db, now))
       ? await claudePicks({
           candidates: heroPool,
           metaOf: metaNow,
