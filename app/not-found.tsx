@@ -1,9 +1,9 @@
 import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
-import { GameArt } from '@/components/GameArt'
+import { GameCardBody } from '@/components/GameCard'
+import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
-import { LogoMark } from '@/components/Logo'
 import { topCatalogGames } from '@/lib/db'
 import { dayKey } from '@/lib/forgotten'
 import { hashString, mulberry32 } from '@/lib/daily'
@@ -99,8 +99,10 @@ export default async function NotFound() {
       <Ambient />
       <div className="relative mx-auto flex w-full max-w-4xl flex-col items-center gap-8 px-5 pt-32 pb-16 text-center">
         <div className="flex flex-col items-center gap-4 anim-reveal">
-          <LogoMark size={48} />
-          <Eyebrow tone="faint">Ошибка 404</Eyebrow>
+          {/* «404» крупно, как титр: цифра — это и есть новость экрана, а
+              знак сайта уже стоит в шапке */}
+          <p aria-hidden className="nf-code">404</p>
+          <Eyebrow tone="faint" className="sr-only">Ошибка 404</Eyebrow>
           <h1 className="font-display text-display-md">Такой страницы нет</h1>
           <p className="max-w-md leading-relaxed text-dim">
             Ссылка битая или игру убрали из каталога. Бывает — зато есть, во что поиграть.
@@ -114,7 +116,8 @@ export default async function NotFound() {
           >
             Подобрать игру
           </Link>
-          <Link href="/" className="rounded-[14px] glass glass-hover px-6 py-3 text-sm">
+          <Link href="/" className="btn-glass">
+            <Icon name="home" size={18} />
             На главную
           </Link>
         </div>
@@ -122,22 +125,16 @@ export default async function NotFound() {
         {games.length > 0 && (
           <section className="w-full anim-rise" style={{ animationDelay: '120ms' }}>
             <Eyebrow className="mb-3">Из каталога</Eyebrow>
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-6 md:grid-cols-4">
               {games.map((g) => (
-                <Link
-                  key={g.appid}
-                  href={`/game/${g.appid}`}
-                  className="library-tile glass glass-hover overflow-hidden rounded-[14px] text-left"
-                >
-                  <GameArt
+                <Link key={g.appid} href={`/game/${g.appid}`} className="game-card block text-left">
+                  <GameCardBody
                     appid={g.appid}
                     name={g.name}
                     headerImage={g.headerImage}
                     art={g.art}
                     sizes="(min-width: 768px) 25vw, 50vw"
-                    className="aspect-[460/215] w-full object-cover"
                   />
-                  <div className="truncate p-3 text-sm font-semibold leading-tight">{g.name}</div>
                 </Link>
               ))}
             </div>
