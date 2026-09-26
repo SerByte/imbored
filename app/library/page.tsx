@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
+import { GameCardBody } from '@/components/GameCard'
+import { Icon } from '@/components/Icon'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
@@ -57,6 +59,9 @@ const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
   comeback: { text: 'заброшена', cls: 'text-dim' },
   played: { text: '', cls: 'text-dim' },
 }
+
+/** Сколько постеров в мозаике героя: пять колонок по три на широком экране */
+const MOSAIC = 15
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
   // Сессия целиком, а не только steamid: SignOut ниже спрашивает, доказано ли
@@ -159,28 +164,67 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     `${steamid}:${dayKey(new Date(now * 1000))}:shelf`,
   )
 
+  // Мозаика героя — самые наигранные: свою полку узнают по тому, во что играли
+  const mosaic = [...games].sort((a, b) => b.playtimeForever - a.playtimeForever).slice(0, MOSAIC)
+
   return (
-    <div className="flex-1 mx-auto w-full max-w-6xl px-5 pt-28 pb-16">
+    <div className="flex-1 flex flex-col">
       <WarmCatalog enabled={missingArt > 0} />
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
-        <h1 className="font-display text-display-md">
-          Твоя библиотека глазами сервиса
-        </h1>
-        <Link
-          href="/portrait"
-          prefetch={false}
-          className="rounded-[14px] glass glass-hover px-4 py-2 text-sm shrink-0"
-        >
-          Мой портрет игрока →
-        </Link>
-      </div>
-      <p className="text-dim text-sm mb-6">
-        <span className="font-mono">{games.length}</span>{' '}
-        {plural(games.length, 'игра', 'игры', 'игр')} ·{' '}
-        <span className="font-mono">{totalHours.toLocaleString('ru-RU')}</span>{' '}
-        {plural(totalHours, 'час', 'часа', 'часов')} ·{' '}
-        <span className="font-mono">{untouched}</span> ни разу не запускал
-      </p>
+      {/*
+        ГЕРОЙ — ЕГО ПОЛКА, А НЕ ЗАГОЛОВОК НАД НЕЙ.
+        Справа мозаика постеров самых наигранных игр под наклоном ленты
+        главной, слева на скриме — заголовок и три числа крупно. Кино-зона:
+        постеры остаются на тёмном и в светлой теме, как арт в герое выдачи.
+      */}
+      <section className="media-dark lib-hero relative overflow-hidden">
+        {mosaic.length > 0 && (
+          <div aria-hidden className="lib-mosaic">
+            {mosaic.map((g) => (
+              <span key={g.appid} className="lib-mosaic-cell">
+                <GameArt
+                  appid={g.appid}
+                  name={g.name}
+                  headerImage={metas.get(g.appid)?.headerImage ?? null}
+                  art={trimArt(metas.get(g.appid)?.art)}
+                  variant="poster"
+                  sizes="180px"
+                  fallback={null}
+                  className="h-full w-full object-cover"
+                />
+              </span>
+            ))}
+          </div>
+        )}
+        <div aria-hidden className="lib-hero-scrim" />
+        <div className="relative mx-auto w-full max-w-6xl px-5 pt-32 pb-12 md:pb-16">
+          <Eyebrow className="mb-3">Библиотека</Eyebrow>
+          <h1 className="font-display text-display-md max-w-md">Твоя библиотека глазами сервиса</h1>
+          <dl className="mt-7 flex flex-wrap gap-x-10 gap-y-4">
+            <div className="flex flex-col-reverse">
+              <dt className="lib-stat-label">
+                {plural(games.length, 'игра', 'игры', 'игр')}
+              </dt>
+              <dd className="lib-stat">{games.length.toLocaleString('ru-RU')}</dd>
+            </div>
+            <div className="flex flex-col-reverse">
+              <dt className="lib-stat-label">
+                {plural(totalHours, 'час', 'часа', 'часов')} в игре
+              </dt>
+              <dd className="lib-stat">{totalHours.toLocaleString('ru-RU')}</dd>
+            </div>
+            <div className="flex flex-col-reverse">
+              <dt className="lib-stat-label">ни разу не запускал</dt>
+              <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
+            </div>
+          </dl>
+          <Link href="/portrait" prefetch={false} className="btn-glass mt-8">
+            <Icon name="spark" size={18} />
+            Мой портрет игрока
+          </Link>
+        </div>
+      </section>
+
+      <div className="mx-auto w-full max-w-6xl px-5 pt-10 pb-16">
 
       {/*
         ПУСТАЯ БИБЛИОТЕКА — НЕ ПУСТАЯ ПОЛКА.
@@ -257,16 +301,16 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               шуток про еду. Шутки живут на портрете: там это самоирония
               владельца, а не укор от сервиса посреди его библиотеки.
             */
-            <div className="glass rounded-[20px] p-5 flex flex-col items-start gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="panel-lift p-5 flex flex-col items-start gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div className="text-lg font-bold">
-                  <span className="font-mono text-ember-text">{backlog.unplayedCount}</span>{' '}
+                  <span className="tabular-nums text-ember-text">{backlog.unplayedCount}</span>{' '}
                   {plural(backlog.unplayedCount, 'игра уже твоя', 'игры уже твои', 'игр уже твои')} —
                   попробовать можно прямо сейчас
                 </div>
                 <div className="text-xs text-dim mt-1">
                   Вместе не меньше{' '}
-                  <span className="font-mono">${(backlog.cents / 100).toFixed(0)}</span> — цена
+                  <span className="tabular-nums">${(backlog.cents / 100).toFixed(0)}</span> — цена
                   известна у {backlog.pricedCount} из {backlog.unplayedCount}
                 </div>
               </div>
@@ -274,17 +318,18 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   значит и подбор про несыгранное */}
               <Link
                 href="/quiz?from=untouched"
-                className="btn-ember shrink-0 px-4 py-2.5 text-sm"
+                className="btn-ember shrink-0 px-5 py-3 text-sm"
               >
-                Выбрать одну →
+                <Icon name="play" className="mr-2 inline-block align-[-0.125em]" />
+                Выбрать одну
               </Link>
             </div>
           )}
           {stats.rate !== null && (
-            <div className="glass rounded-[20px] p-5">
+            <div className="panel-lift p-5">
               <div className="text-lg font-bold">
                 Подбор попадает в{' '}
-                <span className="font-mono text-ember-text">{Math.round(stats.rate * 100)}%</span>
+                <span className="match">{Math.round(stats.rate * 100)}%</span>
               </div>
               <div className="text-xs text-dim mt-1">
                 {stats.liked} «зашло» против {stats.skipped} «не то»
@@ -320,9 +365,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               <Link
                 href="/library?state=untouched#wall"
                 prefetch={false}
-                className="tap text-sm text-ember-text hover:underline shrink-0"
+                className="tap link-more shrink-0"
               >
-                Все нераспакованные →
+                Все нераспакованные <Icon name="arrow" size={14} />
               </Link>
             )}
           </div>
@@ -347,15 +392,15 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             Промежуточная ступень в три колонки закрывает полосу 640–1023
             (232 px на 768), пять остаются там, где для них есть место.
           */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-6">
             {shelf.map((g) => (
               <Link
                 key={g.appid}
                 href={`/game/${g.appid}`}
                 prefetch={false}
-                className="library-tile glass glass-hover rounded-[14px] overflow-hidden"
+                className="game-card block"
               >
-                <GameArt
+                <GameCardBody
                   appid={g.appid}
                   name={g.name}
                   headerImage={metas.get(g.appid)?.headerImage ?? null}
@@ -365,9 +410,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                      сетки 2 → 5 и в полосе 640–1023 промахивалась: просила
                      то 50vw, то 20vw при настоящих 33vw. */
                   sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
-                  className="w-full aspect-[460/215] object-cover"
+                  corner={<span className="lib-badge badge-line">Запечатана</span>}
                 />
-                <div className="p-3 text-sm font-semibold leading-tight truncate">{g.name}</div>
               </Link>
             ))}
           </div>
@@ -381,18 +425,19 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           id — цель ссылки с полки «запечатанного»: приводить к фильтру,
           не показав самих чипсов, значит приводить в никуда. */}
       {games.length > 0 && (
-      <div id="wall" className="flex flex-wrap gap-2 mb-6">
+      /* Пилюлями, лентой на телефоне. Липкой полосу не сделать: страница
+         живёт под ScrollSmoother, контент там едет transform, и sticky внутри
+         него не держится. */
+      <div id="wall" className="chip-rail lib-filters">
         {LIBRARY_FILTERS.map((f) => (
           <Link
             key={f.id}
             href={libraryHref(f.id)}
             prefetch={false}
             aria-current={f.id === filter ? 'page' : undefined}
-            className={`rounded-full px-3.5 py-1.5 text-xs transition ${
-              f.id === filter ? 'bg-ember text-on-ember font-semibold' : 'glass glass-hover text-dim'
-            }`}
+            className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
           >
-            {f.label} <span className="font-mono">{view.counts[f.id]}</span>
+            {f.label} <span className="tabular-nums opacity-70">{view.counts[f.id]}</span>
           </Link>
         ))}
       </div>
@@ -406,7 +451,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         <p className="text-dim text-sm">{SHELF_EMPTY[filter]}</p>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-6">
         {wall.shown.map((g) => {
           const state = wallState(g, metas.get(g.appid), now)
           const label = STATE_LABEL[state]
@@ -423,11 +468,11 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               key={g.appid}
               href={`/game/${g.appid}`}
               prefetch={false}
-              className={`library-tile glass glass-hover rounded-[14px] overflow-hidden ${
+              className={`library-tile game-card block ${
                 state === 'comeback' ? 'opacity-75 hover:opacity-100' : ''
               }`}
             >
-              <GameArt
+              <GameCardBody
                 appid={g.appid}
                 name={g.name}
                 headerImage={metas.get(g.appid)?.headerImage ?? null}
@@ -438,17 +483,15 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                    33vw при настоящих 50vw, и плитки грузились ПОЛТОРА раза
                    мельче нужного, то есть мылом. */
                 sizes="(min-width: 768px) 25vw, 50vw"
-                className="w-full aspect-[460/215] object-cover"
+                meta={
+                  <>
+                    <span className="tabular-nums">
+                      {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
+                    </span>
+                    {label.text && <span className={`truncate ${label.cls}`}>{label.text}</span>}
+                  </>
+                }
               />
-              <div className="p-3">
-                <div className="text-sm font-semibold leading-tight truncate">{g.name}</div>
-                <div className="text-[11px] mt-1 flex items-center justify-between">
-                  <span className="font-mono text-dim">
-                    {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
-                  </span>
-                  {label.text && <span className={label.cls}>{label.text}</span>}
-                </div>
-              </div>
             </Link>
           )
         })}
@@ -469,11 +512,11 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             href={libraryHref(filter, wall.nextPage)}
             scroll={false}
             prefetch={false}
-            className="rounded-[14px] glass glass-hover px-5 py-2.5 text-sm"
+            className="btn-glass"
           >
             <LinkPending>
-              Показать ещё <span className="font-mono">{Math.min(wall.rest, LIBRARY_PAGE_SIZE)}</span>{' '}
-              из <span className="font-mono">{wall.rest}</span>
+              Показать ещё <span className="tabular-nums">{Math.min(wall.rest, LIBRARY_PAGE_SIZE)}</span>{' '}
+              из <span className="tabular-nums">{wall.rest}</span>
             </LinkPending>
           </Link>
         </div>
@@ -492,6 +535,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           куки — а это сделало бы динамическими все страницы разом, включая
           кэшируемые /game/[appid]. Библиотека и так force-dynamic. */}
       <SignOut verified={Boolean(session?.verified)} />
+      </div>
     </div>
   )
 }

@@ -157,7 +157,14 @@
   --danger: #b4231f; /* 5.96:1 — red-400 давал 2.51 */
 }
 
-/* Кино-зона: экраны с артом игр всегда тёмные (как у стримингов) */
+/*
+ * Кино-зона: экраны с артом игр всегда тёмные (как у стримингов).
+ *
+ * .media-card — те же токены для тёмной поверхности ВНУТРИ обычной страницы
+ * (карта колоды). От .media-dark она отличается одним: шапка по ней не
+ * темнеет — правило шапки ниже ищет именно .media-dark, то есть героя сверху.
+ */
+.media-card,
 .media-dark {
   --bg: #050505;
   --ink: #f5f5f7;
@@ -3236,6 +3243,103 @@ textarea:focus-visible {
 }
 
 /*
+ * ГЕРОЙ БИБЛИОТЕКИ: мозаика постеров самых наигранных игр справа, под
+ * наклоном ленты главной, заголовок и три числа слева на скриме.
+ *
+ * Мозаика не движется — это полка, а не лента: движение здесь спорило бы с
+ * крупными числами за внимание. Скрим держит левую колонку текста на ровном
+ * тёмном, как .hero-scrim у выдачи; на телефоне мозаика уходит вверх и
+ * гаснет сильнее, потому что текст там во всю ширину.
+ */
+.lib-hero {
+  isolation: isolate;
+  min-height: min(560px, 78svh);
+  display: flex;
+  align-items: flex-end;
+  background: var(--bg);
+}
+.lib-mosaic {
+  position: absolute;
+  z-index: -2;
+  top: -12%;
+  right: -6%;
+  width: min(70%, 900px);
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  transform: rotate(-8deg);
+  transform-origin: right top;
+  opacity: 0.75;
+}
+.lib-mosaic-cell {
+  display: block;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--surface);
+}
+.lib-mosaic-cell:nth-child(5n + 2),
+.lib-mosaic-cell:nth-child(5n + 4) {
+  transform: translateY(18%);
+}
+.lib-hero-scrim {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    linear-gradient(to top, var(--bg) 0%, transparent 42%),
+    linear-gradient(90deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 88%, transparent) 38%, transparent 72%);
+}
+@media (max-width: 767px) {
+  .lib-mosaic {
+    width: 140%;
+    top: -18%;
+    right: -30%;
+    opacity: 0.45;
+  }
+  .lib-hero-scrim {
+    background: linear-gradient(to top, var(--bg) 18%, color-mix(in srgb, var(--bg) 70%, transparent) 60%, transparent);
+  }
+}
+.lib-stat {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.25rem, 1.6rem + 2.6vw, 3.5rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+}
+/* Подпись под числом героя — пара к .lib-stat, а не подпись раздела */
+.lib-stat-label {
+  margin-top: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--dim);
+}
+.lib-filters {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 -1.25rem 1.5rem;
+  padding: 0.25rem 1.25rem;
+}
+@media (min-width: 768px) {
+  .lib-filters {
+    flex-wrap: wrap;
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+}
+/* Бейдж состояния на арте: контурный, как «Из бэклога» в макете */
+.lib-badge {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  color: #fff;
+  border-color: color-mix(in srgb, #fff 70%, transparent);
+  background: rgba(5, 5, 5, 0.55);
+}
+
+/*
  * Стена библиотеки: сотни обложек разом — это шум, в котором не видно ничего.
  * Обесцвечиваем в покое и возвращаем цвет тому, на что смотрят. По сути это
  * цветовое правило дизайна («вся насыщенность — от арта») превращённое во
@@ -3481,6 +3585,77 @@ img[data-art-fade][data-loaded] {
   .rail-bar {
     transition: none;
   }
+}
+
+/*
+ * КАРТА КОЛОДЫ (components/SwipeDeck): постер 2:3 на всю карту, текст и
+ * кнопки поверх нижней части на тёмном градиенте.
+ *
+ * Высота — от экрана, а не от ширины: постер во всю ширину колонки на
+ * десктопе вышел бы выше окна, и кнопки голоса уехали бы под сгиб. Карта —
+ * тёмная поверхность (.media-card в разметке): это обложка, и в светлой теме
+ * она остаётся тёмной, как арт в герое, не перекрашивая шапку.
+ */
+.deck-stack {
+  --deck-h: clamp(460px, 100svh - 240px, 640px);
+  min-height: var(--deck-h);
+}
+/* Телефон: над колодой заголовок в четыре строки, под ней — нижняя панель.
+   Карта обязана кончаться над панелью, иначе кнопки голоса уходят под неё. */
+@media (max-width: 767px) {
+  .deck-stack {
+    --deck-h: clamp(420px, 100svh - 340px, 600px);
+  }
+}
+/* Без position: задние карты стопки ставят absolute утилитой, а правило вне
+   слоёв перебило бы её. Верхняя карта получает relative в разметке. */
+.deck-card {
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  height: var(--deck-h);
+  overflow: hidden;
+  border-radius: var(--radius-panel);
+  /* Непрозрачная: --surface в кино-зоне — стекло, и сквозь верхнюю карту
+     просвечивала следующая */
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #fff 10%, transparent),
+    0 30px 70px -30px rgba(0, 0, 0, 0.8);
+}
+/* Игре не из Steam постера взять неоткуда: вместо заглушки с названием —
+   ровный свет, название и так стоит крупно внизу карты. */
+.deck-noart {
+  background:
+    radial-gradient(90% 60% at 50% 18%, color-mix(in srgb, var(--ink) 14%, transparent), transparent 70%),
+    var(--bg);
+}
+.deck-back {
+  pointer-events: none;
+}
+.deck-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    var(--bg) 0%,
+    color-mix(in srgb, var(--bg) 94%, transparent) 30%,
+    color-mix(in srgb, var(--bg) 62%, transparent) 50%,
+    transparent 70%
+  );
+}
+.deck-stamp {
+  position: absolute;
+  top: 24px;
+  z-index: 1;
+  border-radius: 8px;
+  padding: 0.375rem 0.875rem;
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1.2;
+  pointer-events: none;
 }
 
 /*
