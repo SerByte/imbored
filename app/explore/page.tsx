@@ -85,10 +85,18 @@ export default function ExplorePage() {
   const [shelfOpen, setShelfOpen] = useState(false)
   /** Какую плитку не удалось убрать — строка под ней */
   const [unlikeMiss, setUnlikeMiss] = useState<number | null>(null)
-  /** Фокус после ухода плитки: соседняя кнопка «Убрать» или заголовок полки */
-  const pendingFocus = useRef<number | 'heading' | null>(null)
+  /** Фокус после ухода плитки: соседняя кнопка «Убрать» или строка «полка пуста» */
+  const pendingFocus = useRef<number | 'empty' | null>(null)
   const unlikeButtons = useRef(new Map<number, HTMLButtonElement>())
-  const shelfHeading = useRef<HTMLHeadingElement>(null)
+  const shelfEmpty = useRef<HTMLParagraphElement>(null)
+  /**
+   * Убранное на этой странице. Ответ «Ещё колоду» мог прочитать полку до
+   * того, как «Мимо» доехало до базы (а у сессии только для чтения полка и
+   * вовсе на устройстве), — без этого списка mergeShelf вернул бы убранное.
+   */
+  const removed = useRef(new Set<number>())
+  /** С полки уже убирали — пустая полка тогда говорит об этом, а не исчезает */
+  const [shelfTouched, setShelfTouched] = useState(false)
   const [nowSec, setNowSec] = useState(0)
   /** «Ещё колоду» едет — кнопка ждёт ответа */
   const [dealing, setDealing] = useState(false)
@@ -149,7 +157,7 @@ export default function ExplorePage() {
       setVoted(0)
       // Приглянувшееся на этом устройстве (сессия только читает) не теряется
       // с новой колодой: сервер его не знает, но человек его видел
-      setLiked((local) => mergeShelf(local, data.liked))
+      setLiked((local) => mergeShelf(local, data.liked.filter((c) => !removed.current.has(c.appid))))
       setReason(null)
       setPhase('ok')
     },
@@ -229,7 +237,10 @@ export default function ExplorePage() {
     votedIds.current.add(card.appid)
     setCards((cs) => cs.filter((c) => c.appid !== card.appid))
     setVoted((v) => v + 1)
-    if (yes) setLiked((l) => mergeShelf([shelfOf(card)], l))
+    if (yes) {
+      removed.current.delete(card.appid)
+      setLiked((l) => mergeShelf([shelfOf(card)], l))
+    }
     if (writerStore.get() === false) return
     void fetch('/api/feedback', {
       method: 'POST',
@@ -250,7 +261,7 @@ export default function ExplorePage() {
     const target = pendingFocus.current
     if (target === null) return
     pendingFocus.current = null
-    const el = target === 'heading' ? shelfHeading.current : unlikeButtons.current.get(target)
+    const el = target === 'empty' ? shelfEmpty.current : unlikeButtons.current.get(target)
     el?.focus()
   })
 
@@ -265,7 +276,9 @@ export default function ExplorePage() {
     const at = liked.findIndex((c) => c.appid === card.appid)
     const neighbour = liked[at + 1] ?? liked[at - 1]
     setUnlikeMiss(null)
-    pendingFocus.current = neighbour ? neighbour.appid : 'heading'
+    setShelfTouched(true)
+    removed.current.add(card.appid)
+    pendingFocus.current = neighbour ? neighbour.appid : 'empty'
     setLiked((l) => l.filter((c) => c.appid !== card.appid))
     if (writerStore.get() === false) return
     try {
@@ -282,6 +295,7 @@ export default function ExplorePage() {
       }
       if (!res.ok) throw new Error(String(res.status))
     } catch {
+      removed.current.delete(card.appid)
       pendingFocus.current = card.appid
       setLiked(before)
       setUnlikeMiss(card.appid)
@@ -380,12 +394,17 @@ export default function ExplorePage() {
       )}
       </div>
 
-      {liked.length > 0 && (
+      {(liked.length > 0 || shelfTouched) && (
         <section aria-labelledby="explore-shelf" className="flex flex-col gap-4 md:col-start-2 md:row-start-2">
-          {/* Заголовок держит фокус, когда с полки ушла последняя плитка */}
-          <h2 id="explore-shelf" ref={shelfHeading} tabIndex={-1}>
-            <SectionLabel as="span">Приглянулось</SectionLabel>
-          </h2>
+          <SectionLabel>
+            <span id="explore-shelf">Приглянулось</span>
+          </SectionLabel>
+          {/* Убрали последнее — полка не исчезает молча и держит фокус строкой */}
+          {liked.length === 0 && (
+            <p ref={shelfEmpty} tabIndex={-1} role="status" className="text-sm text-dim">
+              С полки всё убрано. «Интересно» в колоде положит сюда новое.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-6">
             {(shelfOpen ? liked : liked.slice(0, EXPLORE_SHELF_FOLD)).map((c) => (
               <div key={c.appid} className="flex flex-col">
@@ -439,7 +458,17 @@ export default function ExplorePage() {
             ))}
           </div>
           {!shelfOpen && liked.length > EXPLORE_SHELF_FOLD && (
-            <button type="button" onClick={() => setShelfOpen(true)} className="tap link-more self-start">
+            <button
+              type="button"
+              onClick={() => {
+                // Кнопка уходит вместе со свёрнутой полкой — фокус на первую
+                // открывшуюся плитку, а не в body
+                const next = liked[EXPLORE_SHELF_FOLD]
+                if (next) pendingFocus.current = next.appid
+                setShelfOpen(true)
+              }}
+              className="tap link-more self-start"
+            >
               Показать все · <span className="tabular-nums">{liked.length}</span>
               <Icon name="down" size={14} />
             </button>

@@ -78,6 +78,7 @@ import {
   listExplore,
   listExploreLiked,
   listLiked,
+  countLiked,
   listFeedback,
   listPublicRooms,
   logFeedback,
@@ -1679,6 +1680,12 @@ describe('db', () => {
     ])
     expect(await listExploreLiked(db, 'u1', 1)).toEqual([{ appid: 20, at: NOW + 6 }])
 
+    // «Убрать» в ту же секунду, что «Интересно», — всё равно убрано: ничью
+    // разбивает порядок вставки
+    await logFeedback(db, { steamid: 'u1', appid: 70, action: 'opened', reason: 'explore' }, NOW + 9)
+    await logFeedback(db, { steamid: 'u1', appid: 70, action: 'skipped', reason: 'explore' }, NOW + 9)
+    expect((await listExploreLiked(db, 'u1', 10)).map((r) => r.appid)).not.toContain(70)
+
     // Двести свежих «Мимо» не выталкивают старое «Интересно» — это и был
     // скрытый потолок полки, пока её читали из listExplore
     const passes = Array.from({ length: 210 }, (_, i) =>
@@ -1710,6 +1717,9 @@ describe('db', () => {
     ])
     expect(await listLiked(db, 'u1', 1)).toEqual([{ appid: 570, at: NOW + 90_000 }])
     expect(await listLiked(db, 'nobody')).toEqual([])
+    // счёт — всех, мимо потолка полки, и по тем же правилам
+    expect(await countLiked(db, 'u1')).toBe(3)
+    expect(await countLiked(db, 'nobody')).toBe(0)
   })
 
   test('unlikeGame снимает все «зашло» игры и не трогает остальную историю', async () => {
@@ -3766,16 +3776,31 @@ describe('исход совета', () => {
       bought: true,
     })
     // Ответили — следующий по свежести
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toBe(true)
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toEqual({ changed: true, was: null })
     expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 90, bought: false })
     // Ответ можно поменять («Твои вечера» на /library), а тот же ответ
     // повтором ничего не пишет — роуту это говорит, что «зашло» заводить незачем
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toBe(false)
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'hooked')).toBe(true)
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toEqual({ changed: false, was: 'meh' })
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'hooked')).toEqual({ changed: true, was: 'meh' })
+    // «Закрыть» из забытой всплывашки настоящий ответ не стирает
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'dismissed')).toEqual({
+      changed: false,
+      was: 'hooked',
+    })
     expect((await outcomeRows(db)).find((r) => r.appid === 999)?.verdict).toBe('hooked')
     // Спрашивать об отвеченном по-прежнему незачем
     expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620 })
-    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'dismissed')).toBe(true)
+    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'dismissed')).toEqual({
+      changed: true,
+      was: null,
+    })
+    // а отказ отвечать ответом переписать можно
+    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'meh')).toEqual({
+      changed: true,
+      was: 'dismissed',
+    })
+    // строки нет — ничего не изменилось
+    expect(await setOutcomeVerdict(db, ME, 12_345, NOW, 'hooked')).toEqual({ changed: false, was: null })
     expect(await pendingOutcomeAsk(db, ME, NOW)).toBeNull()
   })
 

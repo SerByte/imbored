@@ -14,8 +14,15 @@ import { READONLY_NOTE_EVENT, takeReadOnlyNote } from '@/lib/readonlynote'
  * комнату. Без анимаций motion: корню провайдер не положен
  * (components/motion/MotionLazy.tsx), появление — CSS-классом.
  *
- * Не модальная и без фокуса: сообщает, а не требует. role="status", чтобы
- * скринридер прочёл её, не уводя человека с места.
+ * Не модальная и без фокуса: сообщает, а не требует. Для скринридера — своя
+ * живая область, которая стоит в документе с первого кадра, а текст в неё
+ * приходит потом: область, вставленная вместе с текстом, зачитывается не
+ * каждой парой браузера и скринридера (тот же приём, что у StopAsk и
+ * OutcomeAsk).
+ *
+ * Сверху, под шапкой, а не снизу: нижний угол занят плашками /play —
+ * прогревом (WarmStrip), «как тебе?» и вопросом после запуска, — и записка
+ * легла бы на них. Сверху так же стоит FeedWatch на /whatsnew.
  */
 export function ReadOnlyNote() {
   const [shown, setShown] = useState(false)
@@ -30,35 +37,38 @@ export function ReadOnlyNote() {
     return () => window.removeEventListener(READONLY_NOTE_EVENT, check)
   }, [])
 
-  if (!shown) return null
   // Портал: на главной содержимое едет трансформом смузера, и fixed внутри
   // него поехал бы вместе с прокруткой (lib/smoothfixed.test.ts)
   return (
     <Portal>
-      <div className="fixed inset-x-0 bottom-[calc(64px+env(safe-area-inset-bottom))] md:bottom-6 z-40 flex justify-center px-safe pointer-events-none">
-        <section
-          role="status"
-          aria-label="Режим просмотра"
-          className="panel-lift anim-rise p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
-        >
-          <p className="text-sm leading-relaxed text-ink">
-            Ты вошёл по ссылке на профиль — это режим просмотра. Подбор работает, а оценки,
-            запуски и свои пати сохранятся после входа через Steam.
-          </p>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-            <a href={steamLoginFor(pathname)} className="tap text-sm text-ember-text hover:underline">
-              Войти через Steam
-            </a>
-            <button
-              type="button"
-              onClick={() => setShown(false)}
-              className="tap text-sm text-dim transition-colors hover:text-ink"
-            >
-              Понятно
-            </button>
-          </div>
-        </section>
-      </div>
+      <p role="status" className="sr-only">
+        {shown ? 'Режим просмотра: оценки, запуски и свои пати сохранятся после входа через Steam.' : ''}
+      </p>
+      {shown && (
+        <div className="fixed inset-x-0 top-20 z-40 flex justify-center px-safe pointer-events-none">
+          <section
+            aria-label="Режим просмотра"
+            className="panel-lift anim-rise p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
+          >
+            <p className="text-sm leading-relaxed text-ink">
+              Ты вошёл по ссылке на профиль — это режим просмотра. Подбор работает, а оценки,
+              запуски и свои пати сохранятся после входа через Steam.
+            </p>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+              <a href={steamLoginFor(pathname)} className="tap text-sm text-ember-text hover:underline">
+                Войти через Steam
+              </a>
+              <button
+                type="button"
+                onClick={() => setShown(false)}
+                className="tap text-sm text-dim transition-colors hover:text-ink"
+              >
+                Понятно
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </Portal>
   )
 }

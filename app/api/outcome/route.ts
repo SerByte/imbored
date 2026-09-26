@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { logFeedback, pendingOutcomeAsk, setOutcomeVerdict } from '@/lib/db'
+import { logFeedback, pendingOutcomeAsk, setOutcomeVerdict, unlikeAsked } from '@/lib/db'
 import { isOutcomeVerdict } from '@/lib/outcome'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSession, getDb, isWriter, nowSec, requireWriter } from '@/lib/server'
@@ -69,13 +69,18 @@ export async function POST(req: Request) {
   })
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
-  const answered = await setOutcomeVerdict(db, steamid, appid, shownAt, verdict)
+  const { changed, was } = await setOutcomeVerdict(db, steamid, appid, shownAt, verdict)
   // «Зацепило» после часов настоящей игры — та же оценка, что «Зацепило» в
   // вопросе после запуска (StopAsk на /play): вкус её слышит. «Так себе» —
   // только ответ для отчёта: сыгранные часы уже сказали своё, а «не тот
   // жанр» человек не говорил
-  if (answered && verdict === 'hooked') {
+  if (changed && verdict === 'hooked') {
     await logFeedback(db, { steamid, appid, action: 'liked', ctx: { intent: 'ask' } }, now)
+  }
+  // Передумал — «зашло», заведённое прежним «Зацепило», уходит вместе с ним:
+  // иначе смена ответа не меняла бы подбор, а игра оставалась бы на полке «Зашло»
+  if (changed && was === 'hooked' && verdict !== 'hooked') {
+    await unlikeAsked(db, steamid, appid, shownAt)
   }
   return NextResponse.json({ ok: true })
 }

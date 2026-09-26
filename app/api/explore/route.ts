@@ -71,7 +71,9 @@ export async function GET(req: Request) {
     buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
       nowSec: now,
       moodless: true,
-      exclude: exploredAppids(explored, now),
+      // Полка — сверх двухсот свайпов listExplore: старое «Интересно» лежит
+      // на полке и в колоду второй раз не сдаётся
+      exclude: [...new Set([...exploredAppids(explored, now), ...likedIds])],
     }),
     getGamesMetaLite(db, likedIds),
   ])

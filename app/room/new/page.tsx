@@ -209,7 +209,13 @@ export default function NewRoomPage() {
             Ссылка на профиль не доказывает, что профиль твой. По ней можно смотреть подборки и
             голосовать в чужих пати, а создавать свои и сохранять оценки — после входа.
           </p>
-          <a href={steamLoginFor(`/room/new?preset=${preset.key}`)} className="btn-ember is-block py-3">
+          {/* Настроение — в адрес, только если его правда выбрали: экран входа
+              бывает и до выбора, и тогда после входа ждёт выбор, а не комната
+              с настроением по умолчанию */}
+          <a
+            href={steamLoginFor(picked || back ? `/room/new?preset=${preset.key}` : '/room/new')}
+            className="btn-ember is-block py-3"
+          >
             Войти через Steam
           </a>
           <Link href="/rooms" className="tap link-more">

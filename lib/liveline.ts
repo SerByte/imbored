@@ -18,7 +18,8 @@ export type LiveLine = { href: string; text: string }
 
 /** Дверь по умолчанию — и до ответа сервера, и когда сказать нечего */
 export const LIVE_DEFAULT: LiveLine = {
-  href: '/library#evenings',
+  // Без якоря: у того, кому ещё ничего не советовали, блока «Твои вечера» нет
+  href: '/library',
   text: 'Твои вечера и то, что зашло, — в библиотеке',
 }
 

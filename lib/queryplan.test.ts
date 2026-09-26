@@ -18,6 +18,7 @@ import {
   listEvenings,
   listExploreLiked,
   listLiked,
+  countLiked,
   getNewsPage,
   getUnsummarized,
   listExplore,
@@ -280,6 +281,12 @@ const CASES: Case[] = [
   {
     name: 'полка «Зашло»',
     run: (db) => listLiked(db, '76561198000000001'),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  {
+    name: 'счёт «Зашло»',
+    run: (db) => countLiked(db, '76561198000000001'),
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },

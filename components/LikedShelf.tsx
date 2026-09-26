@@ -36,15 +36,33 @@ export type LikedGame = {
  * writer — может ли сессия писать (isWriter в lib/server). Сессия по ссылке
  * видит полку, но без кнопок — со строкой о входе через Steam.
  */
-export function LikedShelf({ games, writer }: { games: LikedGame[]; writer: boolean }) {
+export function LikedShelf({
+  games,
+  total,
+  writer,
+}: {
+  games: LikedGame[]
+  /** Всего «зашло» (countLiked) — полка держит LIKED_SHELF свежих */
+  total: number
+  writer: boolean
+}) {
   const router = useRouter()
-  const [items, setItems] = useState(games)
+  /*
+   * Убранное — множеством, а плитки выводятся из пропа, а не копией в
+   * состоянии: router.refresh() приносит полку заново, и шестьдесят первая
+   * оценка встаёт на место убранной. Копия так и осталась бы шестидесятью
+   * минус убранные.
+   */
+  const [removed, setRemoved] = useState<ReadonlySet<number>>(() => new Set())
+  const items = games.filter((g) => !removed.has(g.appid))
   const [failed, setFailed] = useState<number | null>(null)
   const [denied, setDenied] = useState(false)
   /** Хоть одну оценку уже сняли — пустая полка тогда говорит об этом, а не исчезает */
-  const [touched, setTouched] = useState(false)
+  const touched = removed.size > 0
   const [, startTransition] = useTransition()
   const readOnly = !writer || denied
+  // Убранные, которых сервер ещё не отдал заново без них, из итога вычитаются сами
+  const shownTotal = Math.max(items.length, total - games.filter((g) => removed.has(g.appid)).length)
 
   // Фокус — как у BannedShelf: цель в ref, ставится эффектом после рендера
   const pendingFocus = useRef<number | 'heading' | 'empty' | null>(null)
@@ -61,14 +79,19 @@ export function LikedShelf({ games, writer }: { games: LikedGame[]; writer: bool
     el?.focus()
   })
 
+  const restore = (appid: number) =>
+    setRemoved((prev) => {
+      const next = new Set(prev)
+      next.delete(appid)
+      return next
+    })
+
   async function unlike(appid: number) {
-    const before = items
     const at = items.findIndex((g) => g.appid === appid)
     const neighbour = items[at + 1] ?? items[at - 1]
     setFailed(null)
-    setTouched(true)
     pendingFocus.current = neighbour ? neighbour.appid : 'empty'
-    setItems((prev) => prev.filter((g) => g.appid !== appid))
+    setRemoved((prev) => new Set(prev).add(appid))
     try {
       const res = await fetch('/api/unlike', {
         method: 'POST',
@@ -78,16 +101,16 @@ export function LikedShelf({ games, writer }: { games: LikedGame[]; writer: bool
       if (await isNeedSteam(res)) {
         // Не «попробуй ещё раз»: не получится. Кнопок больше нет — фокус на заголовок
         pendingFocus.current = 'heading'
-        setItems(before)
+        restore(appid)
         setDenied(true)
         return
       }
       if (!res.ok) throw new Error(String(res.status))
       startTransition(() => router.refresh())
     } catch {
-      // Откат целиком: порядок полки задаёт сервер
+      // Плитка встаёт на своё место: порядок задаёт сервер, а не клиент
       pendingFocus.current = appid
-      setItems(before)
+      restore(appid)
       setFailed(appid)
     }
   }
@@ -108,12 +131,13 @@ export function LikedShelf({ games, writer }: { games: LikedGame[]; writer: bool
     <section aria-labelledby="shelf-liked" className="mb-12">
       <Eyebrow className="mb-2">Зашло</Eyebrow>
       <h2 id="shelf-liked" ref={heading} tabIndex={-1} className="font-display text-display-sm">
-        <span className="tabular-nums text-ember-text">{items.length}</span>{' '}
-        {plural(items.length, 'игру', 'игры', 'игр')} подбор помнит как «зашло»
+        <span className="tabular-nums text-ember-text">{shownTotal}</span>{' '}
+        {plural(shownTotal, 'игру', 'игры', 'игр')} подбор помнит как «зашло»
       </h2>
       <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
         По ним он учится твоему вкусу: похожее — выше, пауза после «не то» снимается. Нажал по
         ошибке или вкус поменялся — убери.
+        {shownTotal > items.length && ' Здесь — самые свежие; уберёшь лишнее — подтянутся следующие.'}
       </p>
       {readOnly && <NeedSteam from="/library" className="mb-4" />}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">

@@ -4126,9 +4126,12 @@ export async function unbanGame(db: Db, steamid: string, appid: number): Promise
  * последних свайпов ОБОИХ видов ради отсева колоды, и приглянувшееся
  * полугодовой давности тонуло бы под свежими «Мимо».
  *
- * Последний свайп — та же голая колонка из строки с MAX(created_at), что в
- * listExplore, и HAVING смотрит на неё же: «Мимо» после «Интересно» снимает
- * игру с полки. Забаненное не отдаётся — бан сильнее.
+ * Последний свайп — по (created_at, id), а не голой колонкой при MAX: «Убрать»
+ * на полке жмут через секунду после «Интересно», created_at секундный, и при
+ * равенстве SQLite взял бы первую прочитанную строку — то есть «Интересно»,
+ * и убранная игра вернулась бы на полку. id растёт с каждой вставкой и
+ * разбивает ничью в пользу позднего. «Мимо» после «Интересно» снимает игру с
+ * полки. Забаненное не отдаётся — бан сильнее.
  */
 export async function listExploreLiked(
   db: Db,
@@ -4136,10 +4139,14 @@ export async function listExploreLiked(
   limit: number,
 ): Promise<Array<{ appid: number; at: number }>> {
   const res = await db.execute({
-    sql: `SELECT appid, MAX(created_at) AS at, action FROM feedback
-          WHERE steamid = ?1 AND reason = 'explore'
-            AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')
-          GROUP BY appid HAVING action = 'opened'
+    sql: `SELECT appid, created_at AS at FROM (
+            SELECT appid, created_at, action,
+                   ROW_NUMBER() OVER (PARTITION BY appid ORDER BY created_at DESC, id DESC) AS nth
+            FROM feedback
+            WHERE steamid = ?1 AND reason = 'explore'
+              AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')
+          )
+          WHERE nth = 1 AND action = 'opened'
           ORDER BY at DESC, appid LIMIT ?2`,
     args: [steamid, limit],
   })
@@ -4176,6 +4183,21 @@ export async function listLiked(
     appid: Number(r.appid),
     at: Number(r.at),
   }))
+}
+
+/**
+ * Сколько игр подбор помнит как «зашло» — всех, а не только полки в
+ * LIKED_SHELF плиток: заголовок полки не должен выдавать потолок за итог.
+ * Условия — те же, что у listLiked.
+ */
+export async function countLiked(db: Db, steamid: string): Promise<number> {
+  const res = await db.execute({
+    sql: `SELECT COUNT(DISTINCT appid) AS n FROM feedback
+          WHERE steamid = ?1 AND action = 'liked'
+            AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')`,
+    args: [steamid],
+  })
+  return Number((res.rows[0] as unknown as { n: number } | undefined)?.n ?? 0)
 }
 
 /**
@@ -4371,9 +4393,19 @@ export async function listEvenings(
 
 /**
  * Ответ на «как тебе?» — первый или исправленный (ответ можно поменять в
- * «Твоих вечерах» на /library). true — ответ изменился; false — строки нет
- * или ответ тот же: повтор с соседней вкладки ничего не пишет, и роут не
- * заводит лишнее «зашло».
+ * «Твоих вечерах» на /library). changed — ответ изменился; false — строки
+ * нет или ответ тот же: повтор с соседней вкладки ничего не пишет, и роут не
+ * заводит лишнее «зашло». was — прежний ответ: роуту он нужен, чтобы забрать
+ * «зашло», заведённое прежним «Зацепило».
+ *
+ * «Закрыть» ('dismissed') — не ответ, а отказ отвечать, и настоящий ответ он
+ * не переписывает: иначе всплывашка, забытая в соседней вкладке, стирала бы
+ * «Зацепило», данное в «Твоих вечерах». Сам 'dismissed' ответом переписать
+ * можно.
+ *
+ * Чтение и запись — двумя запросами, а не одним: SQLite в RETURNING отдаёт
+ * новые значения, а не прежние. Гонка двух ответов одной строки безвредна —
+ * второй просто прочтёт первый как прежний.
  */
 export async function setOutcomeVerdict(
   db: Db,
@@ -4381,14 +4413,37 @@ export async function setOutcomeVerdict(
   appid: number,
   shownAt: number,
   verdict: OutcomeVerdict,
-): Promise<boolean> {
-  const res = await db.execute({
-    sql: `UPDATE outcomes SET verdict = ?
-           WHERE steamid = ? AND appid = ? AND shown_at = ?
-             AND (verdict IS NULL OR verdict <> ?)`,
-    args: [verdict, steamid, appid, shownAt, verdict],
+): Promise<{ changed: boolean; was: string | null }> {
+  const before = await db.execute({
+    sql: 'SELECT verdict FROM outcomes WHERE steamid = ? AND appid = ? AND shown_at = ?',
+    args: [steamid, appid, shownAt],
   })
-  return Number(res.rowsAffected) > 0
+  const row = before.rows[0] as unknown as { verdict: string | null } | undefined
+  if (!row) return { changed: false, was: null }
+  const was = row.verdict === null ? null : String(row.verdict)
+  const res = await db.execute({
+    sql: `UPDATE outcomes SET verdict = ?1
+           WHERE steamid = ?2 AND appid = ?3 AND shown_at = ?4
+             AND (verdict IS NULL OR (?1 <> 'dismissed' AND verdict <> ?1))`,
+    args: [verdict, steamid, appid, shownAt],
+  })
+  return { changed: Number(res.rowsAffected) > 0, was }
+}
+
+/**
+ * Забрать «зашло», которое завёл ответ «Зацепило» на «как тебе?» (роут
+ * /api/outcome, ctx intent 'ask'), когда ответ поменяли. Только его: «Зашло»,
+ * нажатое на /play или /daily, — отдельное слово человека, и смена ответа
+ * про вечер его не отменяет. created_at не раньше совета — «зашло» по
+ * вопросу о прошлом совете этой же игры не трогается.
+ */
+export async function unlikeAsked(db: Db, steamid: string, appid: number, sinceSec: number): Promise<void> {
+  await db.execute({
+    sql: `DELETE FROM feedback
+           WHERE steamid = ? AND appid = ? AND action = 'liked' AND created_at >= ?
+             AND json_extract(ctx_json, '$.intent') IS 'ask'`,
+    args: [steamid, appid, sinceSec],
+  })
 }
 
 /* ---------- удаление по запросу ---------- */

@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { listFeedback, recordOutcome, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
+import {
+  listFeedback,
+  listLiked,
+  logFeedback,
+  recordOutcome,
+  saveLibrarySnapshot,
+  upsertGamesMeta,
+  type Db,
+} from '@/lib/db'
 import { nowSec } from '@/lib/server'
 import { freshDb, post, signInAs, signOut } from '@/lib/testing/route'
 import { GET, POST } from './route'
@@ -119,5 +127,33 @@ describe('/api/outcome: ответ', () => {
     expect(liked).toHaveLength(1)
     const row = await db.execute({ sql: 'SELECT verdict FROM outcomes WHERE steamid = ?', args: [steamid] })
     expect(row.rows.map((r) => r.verdict)).toEqual(['hooked'])
+  })
+
+  // Обратно: «Зацепило» → «Так себе» забирает «зашло», заведённое ответом, —
+  // иначе смена ответа не меняла бы подбор и полку «Зашло»
+  test('передумал: «Зацепило» → «Так себе» забирает «зашло» ответа, но не нажатое само', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const shownAt = await played(steamid)
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'hooked' }))
+    expect(await listLiked(db, steamid)).toHaveLength(1)
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'meh' }))
+    expect(await listLiked(db, steamid)).toEqual([])
+
+    // «Зашло», нажатое на /play, — отдельное слово: смена ответа его не трогает
+    await logFeedback(db, { steamid, appid: 620, action: 'liked' }, nowSec() + 90_000)
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'hooked' }))
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'meh' }))
+    expect((await listFeedback(db, steamid)).filter((f) => f.action === 'liked')).toHaveLength(1)
+  })
+
+  test('«Закрыть» из забытой вкладки настоящий ответ не стирает', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const shownAt = await played(steamid)
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'hooked' }))
+    const res = await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'dismissed' }))
+    expect(res.status).toBe(200)
+    const row = await db.execute({ sql: 'SELECT verdict FROM outcomes WHERE steamid = ?', args: [steamid] })
+    expect(row.rows.map((r) => r.verdict)).toEqual(['hooked'])
+    expect(await listLiked(db, steamid)).toHaveLength(1)
   })
 })

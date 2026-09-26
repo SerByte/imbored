@@ -17,6 +17,7 @@ import {
   loadTagStats,
   listEvenings,
   listLiked,
+  countLiked,
 } from '@/lib/db'
 import {
   buildLibraryView,
@@ -41,7 +42,7 @@ import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
 import { plural } from '@/lib/plural'
 import { dateLabel } from '@/lib/freshness'
-import { eveningsSummary, OUTCOME_TTL_SEC, playedEnough, playedLine } from '@/lib/outcome'
+import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
 import { Evenings, type EveningItem } from '@/components/Evenings'
 import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 
@@ -114,7 +115,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal] = await Promise.all([
     getLatestSnapshot(db, steamid),
     listBanned(db, steamid),
     bannedAppids(db, steamid),
@@ -122,8 +123,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     filter === 'untouched' ? loadTagStats(db) : null,
     // «Твои вечера» — советы за тот же срок, что их хранят (OUTCOME_TTL_SEC)
     listEvenings(db, steamid, nowSec() - OUTCOME_TTL_SEC),
-    // Полка «Зашло» — что подбор запомнил как понравившееся
+    // Полка «Зашло» — что подбор запомнил как понравившееся, и сколько всего
     listLiked(db, steamid),
+    countLiked(db, steamid),
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -140,7 +142,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
   // библиотеке не встретится, но обложка на полку нужна.
   // Узкой выборкой: скриншоты на этой странице не показываются нигде
-  const shownEvenings = evenings.slice(0, EVENINGS_SHOWN)
+  // Свежие двенадцать — и, сверх них, каждый несверенный ответом совет из окна
+  // вопроса: на него ведёт «Как тебе X?» с главной и из OutcomeAsk, и ответить
+  // должно быть где, даже если после него было ещё двенадцать советов
+  const askable = (e: (typeof evenings)[number]) =>
+    e.verdict === null && playedEnough(e.minutes) && e.shownAt >= nowSec() - OUTCOME_WINDOW_SEC
+  const shownEvenings = evenings.filter((e, i) => i < EVENINGS_SHOWN || askable(e))
   const metas = await getGamesMetaLite(db, [
     ...new Set([
       ...games.map((g) => g.appid),
@@ -639,7 +646,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           выдачи, и сниматься должен так же дёшево. */}
       <div className="mt-14">
         {/* Сессия есть наверняка: без неё страница развернула бы на вход */}
-        <LikedShelf games={likedGames} writer={session ? isWriter(session) : false} />
+        <LikedShelf games={likedGames} total={likedTotal} writer={session ? isWriter(session) : false} />
         <BannedShelf games={bannedGames} writer={session ? isWriter(session) : false} />
       </div>
 
