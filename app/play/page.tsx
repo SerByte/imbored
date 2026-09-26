@@ -1,6 +1,6 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -1383,7 +1383,7 @@ function Player({ say }: { say: (line: string) => void }) {
         onDismiss={() => setWarming('off')}
       />
       <AnimatePresence mode="wait" custom={dir}>
-        <motion.section
+        <m.section
           key={pick.appid}
           custom={dir}
           variants={HERO}
@@ -1409,7 +1409,7 @@ function Player({ say }: { say: (line: string) => void }) {
           <BlurBand height="46vh" dir="up" />
           <div aria-hidden className="grain" />
 
-          <motion.div
+          <m.div
             variants={LADDER}
             initial="hidden"
             animate="show"
@@ -1424,7 +1424,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   Источник — фирменным зелёным, как «совпадение» у стриминга:
                   процента совпадения у выдачи нет, и выдумывать его мы не
                   будем, а «почему она здесь» — ровно то, что он заменяет. */}
-              <motion.div variants={STEP} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <m.div variants={STEP} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 <span className="font-extrabold text-ember-text">
                   {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}
                 </span>
@@ -1440,7 +1440,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 )}
                 {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo)}</span>}
                 <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
-              </motion.div>
+              </m.div>
 
               <HeroTitle
                 appid={pick.appid}
@@ -1451,39 +1451,39 @@ function Player({ say }: { say: (line: string) => void }) {
                 delay={0.18}
               />
 
-              <motion.p variants={STEP} className="text-base md:text-lg text-ink/90 leading-relaxed">
+              <m.p variants={STEP} className="text-base md:text-lg text-ink/90 leading-relaxed">
                 {pick.reason}
-              </motion.p>
+              </m.p>
 
               {/* Одна фраза о том, чем она лучше остальных четырёх. Причина
                   отвечает «почему она тебе», эта строка — «почему она, а не
                   соседняя»: без неё пять подходящих карточек снова выбор с нуля. */}
               {pick.edge && (
-                <motion.p variants={STEP} className="-mt-2 text-sm text-dim">
+                <m.p variants={STEP} className="-mt-2 text-sm text-dim">
                   {EDGE_LINE[pick.edge]}
-                </motion.p>
+                </m.p>
               )}
 
               {/* Сколько времени уйдёт до веселья (lib/entry): вечер с бюджетом,
                   и игра на три часа обучения — другой ответ, чем «сел и
                   играешь». Строка есть, только когда отзывы или жанр это знают */}
               {pick.entry && (
-                <motion.p variants={STEP} className="-mt-2 text-sm text-dim">
+                <m.p variants={STEP} className="-mt-2 text-sm text-dim">
                   {entryLine(pick.entry)}
-                </motion.p>
+                </m.p>
               )}
 
               {/* «О чём игра» — у некупленной из каталога: название, теги и
                   причина не говорят, что это вообще такое (lib/cards aboutLine) */}
               {pick.about && (
-                <motion.p variants={STEP} className="-mt-2 line-clamp-3 text-sm text-dim">
+                <m.p variants={STEP} className="-mt-2 line-clamp-3 text-sm text-dim">
                   <span className="font-bold text-ink">О чём: </span>
                   {pick.about}
-                </motion.p>
+                </m.p>
               )}
 
             {whyParts.length > 0 && (
-              <motion.div variants={STEP} className="text-sm">
+              <m.div variants={STEP} className="text-sm">
                 {/*
                   aria-expanded — единственный способ сказать скринридеру, что
                   блок раскрыт: до этого признаком состояния был ТОЛЬКО глиф, а
@@ -1500,7 +1500,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 </button>
                 <AnimatePresence initial={false}>
                   {showWhy && (
-                    <motion.p
+                    <m.p
                       id="play-why"
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
@@ -1509,16 +1509,16 @@ function Player({ say }: { say: (line: string) => void }) {
                       className="mt-1.5 text-dim overflow-hidden"
                     >
                       {whyParts.join(' · ')}
-                    </motion.p>
+                    </m.p>
                   )}
                 </AnimatePresence>
-              </motion.div>
+              </m.div>
             )}
 
             {pick.tags.length > 0 && (
-              <motion.div variants={STEP}>
+              <m.div variants={STEP}>
                 <TagChips tags={pick.tags} matched={pick.signals?.sharedTags ?? []} />
-              </motion.div>
+              </m.div>
             )}
 
             {/* Секунды геймплея — по нажатию, свёрнутые в строку: герой и так
@@ -1527,16 +1527,16 @@ function Player({ say }: { say: (line: string) => void }) {
                 героя пересоздаётся на каждую игру, так что ролик прошлой не
                 доиграет под новой */}
             {pick.trailer && (
-              <motion.div variants={STEP} className="max-w-xl">
+              <m.div variants={STEP} className="max-w-xl">
                 <TrailerPreview trailer={pick.trailer} name={pick.name} compact />
-              </motion.div>
+              </m.div>
             )}
 
             {askReason ? (
               /* Ряд встаёт на место кнопок, которые только что нажали, —
                  фокус на первую причину, а вопрос звучит именем группы:
                  фокус на кнопке без него читался бы голым «Не тот жанр». */
-              <motion.div
+              <m.div
                 role="group"
                 aria-labelledby="play-ask"
                 initial={{ opacity: 0, y: 8 }}
@@ -1572,12 +1572,12 @@ function Player({ say }: { say: (line: string) => void }) {
                 >
                   пропустить
                 </button>
-              </motion.div>
+              </m.div>
             ) : (
               <>
               {/* С md ряд в одну линию и может быть шире колонки текста: кнопки
                   несут свою подложку, и край скрима им не нужен */}
-              <motion.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2 md:w-max md:flex-nowrap">
+              <m.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2 md:w-max md:flex-nowrap">
                 {pick.source === 'new' || pick.storeUrl ? (
                   // Игры нет в библиотеке — «Запустить» для неё кнопка-обманка:
                   // steam://run у не купленной игры не делает ничего. Ведём
@@ -1786,7 +1786,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     )}
                   </button>
                 )}
-              </motion.div>
+              </m.div>
               {/* Вместо спрятанных «Зашло» и бана — почему их нет и как вернуть */}
               {readOnly && <NeedSteam from={`/play?${search}`} className="-mt-1" />}
               {/*
@@ -1804,9 +1804,9 @@ function Player({ say }: { say: (line: string) => void }) {
               {/* Под ценой — «а если не зайдёт»: покупка перестаёт быть ставкой.
                   Только у платного, вышедшего и из Steam — решает сервер. */}
               {pick.refund && (
-                <motion.div variants={STEP}>
+                <m.div variants={STEP}>
                   <RefundNote />
-                </motion.div>
+                </m.div>
               )}
               {/* Правило остановки — выход, названный заранее: попробовать не
                   страшно, если известно, когда можно бросить. Только у своего
@@ -1815,9 +1815,9 @@ function Player({ say }: { say: (line: string) => void }) {
                   магазин, и двадцати минут игры там не наступает. Признак тот
                   же, что у развилки SteamLaunch, — pointer, а не ширина. */}
               {pick.source !== 'new' && (
-                <motion.p variants={STEP} className="hidden pointer-fine:block -mt-1 text-xs text-faint">
+                <m.p variants={STEP} className="hidden pointer-fine:block -mt-1 text-xs text-faint">
                   {stopRuleLine(mood.time)}
-                </motion.p>
+                </m.p>
               )}
               {/* План на вечер начинается с загрузки: своя нетронутая или
                   заброшенная скорее всего не установлена, и «Запустить» вечером
@@ -1825,7 +1825,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   сейчас (steam://install). Вкус и паузы это нажатие не видят —
                   план, а не оценка (listFeedback). */}
               {(pick.source === 'untouched' || pick.source === 'comeback') && !pick.storeUrl && (
-                <motion.p variants={STEP} className="-mt-1 text-xs text-faint">
+                <m.p variants={STEP} className="-mt-1 text-xs text-faint">
                   <SteamLaunch
                     appid={pick.appid}
                     mode="install"
@@ -1835,7 +1835,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     }
                     className="tap hover:text-ink transition-colors"
                   />
-                </motion.p>
+                </m.p>
               )}
               {/*
                 «Как «X», но…» — соседи этой игры (готовые из game_neighbors,
@@ -1846,7 +1846,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 соседей — подпись, чьи они, и дорога обратно.
               */}
               {(seed || (!roulette && !focus && pick.tags.length > 0)) && (
-                <motion.div
+                <m.div
                   variants={STEP}
                   className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm"
                 >
@@ -1874,7 +1874,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       Вернуть обычную выдачу
                     </button>
                   )}
-                </motion.div>
+                </m.div>
               )}
               {/*
                 Подталкивания — «не то, но почти»: одним тапом та же просьба с
@@ -1884,7 +1884,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 тем же зазором gap-3: зоны .tap соседей не перекрываются.
               */}
               {!roulette && !focus && (
-                <motion.div
+                <m.div
                   variants={STEP}
                   role="group"
                   aria-label="Подправить выдачу"
@@ -1904,7 +1904,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       {NUDGE_LABEL[n]}
                     </button>
                   ))}
-                </motion.div>
+                </m.div>
               )}
               {heroMiss && (
                 <p role="status" className="-mt-1 text-sm text-danger">
@@ -1914,8 +1914,8 @@ function Player({ say }: { say: (line: string) => void }) {
               </>
             )}
             </div>
-          </motion.div>
-        </motion.section>
+          </m.div>
+        </m.section>
       </AnimatePresence>
 
       {/* «Продолжить» — то, во что он играет сейчас. Строкой, а не карточкой:
@@ -2063,7 +2063,7 @@ function Player({ say }: { say: (line: string) => void }) {
               </p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-6">
                 {others.map((p, i) => (
-                  <motion.button
+                  <m.button
                     key={p.appid}
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -2114,7 +2114,7 @@ function Player({ say }: { say: (line: string) => void }) {
                         </>
                       }
                     />
-                  </motion.button>
+                  </m.button>
                 ))}
               </div>
             </div>
@@ -2164,7 +2164,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     // полке покупок: у своей игры этот вопрос уже решён
                     const reviews = reviewsBrief(p.reviewsPercent, p.reviewsTotal)
                     return (
-                      <motion.a
+                      <m.a
                         key={p.appid}
                         href={p.storeUrl ?? `https://store.steampowered.com/app/${p.appid}/`}
                         target="_blank"
@@ -2209,7 +2209,7 @@ function Player({ say }: { say: (line: string) => void }) {
                             </span>
                           )}
                         </span>
-                      </motion.a>
+                      </m.a>
                     )
                   })}
                 </div>

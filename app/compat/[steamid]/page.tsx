@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import * as motion from 'motion/react-client'
+import * as m from 'framer-motion/m'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
@@ -215,7 +215,7 @@ function Shelf({
 }) {
   if (!picks.length) return null
   return (
-    <motion.section {...inView(index)}>
+    <m.section {...inView(index)}>
       <SectionTitle sub={hint} className="mb-5">
         {kicker}
       </SectionTitle>
@@ -224,7 +224,7 @@ function Shelf({
           <PickCard key={p.appid} pick={p} />
         ))}
       </div>
-    </motion.section>
+    </m.section>
   )
 }
 
@@ -367,7 +367,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-safe py-16">
         {d.sharedTags.length > 0 && (
-          <motion.section {...inView(0)}>
+          <m.section {...inView(0)}>
             <SectionTitle
               sub="Эти темы совпадают у вас чаще, чем у случайной пары — считаем по редкости тега в каталоге, а не по популярности."
               className="mb-5"
@@ -381,10 +381,10 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                 </li>
               ))}
             </ul>
-          </motion.section>
+          </m.section>
         )}
 
-        <motion.section {...inView(1)}>
+        <m.section {...inView(1)}>
           {d.commonTotal > 0 ? (
             <>
               <SectionTitle
@@ -421,7 +421,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
               Общие игры
             </SectionTitle>
           )}
-        </motion.section>
+        </m.section>
 
         <Shelf
           kicker="Заходите прямо сейчас"
@@ -436,7 +436,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           index={3}
         />
 
-        <motion.div
+        <m.div
           {...inView(4)}
           className="panel-lift flex flex-wrap items-center justify-center gap-3 p-6 md:p-8"
         >
@@ -453,7 +453,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             Портрет {d.otherName}
             <Icon name="arrow" size={16} />
           </Link>
-        </motion.div>
+        </m.div>
       </div>
     </div>
   )

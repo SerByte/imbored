@@ -1,6 +1,6 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
@@ -190,9 +190,9 @@ function Quiz() {
      * в состоянии running.
      */
     void import('@/lib/quizaudio')
-      .then((m) => {
-        m.armAudio()
-        m.play(v)
+      .then((audio) => {
+        audio.armAudio()
+        audio.play(v)
       })
       .catch(() => {})
   }, [])
@@ -211,7 +211,7 @@ function Quiz() {
       if (audioLive.current || !isSoundOn()) return
       audioLive.current = true
       void import('@/lib/quizaudio')
-        .then((m) => m.armAudio())
+        .then((audio) => audio.armAudio())
         .catch(() => {})
     }
     window.addEventListener('pointerdown', arm)
@@ -221,7 +221,7 @@ function Quiz() {
       window.removeEventListener('pointerdown', arm)
       window.removeEventListener('click', arm)
       window.removeEventListener('keydown', arm)
-      if (audioLive.current) void import('@/lib/quizaudio').then((m) => m.disposeAudio())
+      if (audioLive.current) void import('@/lib/quizaudio').then((audio) => audio.disposeAudio())
     }
   }, [])
 
@@ -278,7 +278,7 @@ function Quiz() {
       className={`grid w-full gap-4 ${step.options.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}
     >
       {step.options.map((o) => (
-        <motion.div key={o.value} variants={ITEM_VARIANTS} className="h-full">
+        <m.div key={o.value} variants={ITEM_VARIANTS} className="h-full">
           {/* Состояние живёт на CSS, а не в motion: transform обёртки уже занят
               вариантами входа, и два источника одного свойства дрались бы за
               него на каждом кадре. */}
@@ -299,7 +299,7 @@ function Quiz() {
               <span className="block text-sm text-dim mt-1.5">{o.hint}</span>
             </SpotlightCard>
           </div>
-        </motion.div>
+        </m.div>
       ))}
     </div>
   )
@@ -463,7 +463,7 @@ function Quiz() {
             Хореография при этом не теряется: мгновенно появляется только ПЕРВЫЙ
             шаг, а переходы между шагами — то, ради чего всё и сделано, — едут как ехали. */}
         <AnimatePresence mode="wait" custom={back} initial={false}>
-          <motion.div
+          <m.div
             key={step.key}
             custom={back}
             variants={STEP_VARIANTS}
@@ -478,14 +478,14 @@ function Quiz() {
               лишний: заголовок и так объявляется при получении фокуса, а
               «какой это вопрос из скольких» несёт подпись ниже.
             */}
-            <motion.h1
+            <m.h1
               ref={stepHeadRef}
               tabIndex={-1}
               variants={ITEM_VARIANTS}
               className="font-display text-display-md text-center outline-none"
             >
               {step.question}
-            </motion.h1>
+            </m.h1>
             {/* Точки прогресса выше — голые span, для скринридера их нет.
                 Одна строка вместо них, и меняется она раз в шаг, а не в кадр. */}
             <p role="status" className="sr-only">
@@ -502,7 +502,7 @@ function Quiz() {
             ) : (
               grid
             )}
-          </motion.div>
+          </m.div>
         </AnimatePresence>
 
         {stepIndex > 0 && !outro && (

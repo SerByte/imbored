@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { MotionLazy } from '@/components/motion/MotionLazy'
 
 /**
  * Страница клиентская, а metadata экспортируется только из серверных модулей —
@@ -12,5 +13,5 @@ export const metadata: Metadata = {
 }
 
 export default function RoomsLayout({ children }: LayoutProps<'/rooms'>) {
-  return children
+  return <MotionLazy>{children}</MotionLazy>
 }

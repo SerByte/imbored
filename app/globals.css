@@ -3456,11 +3456,22 @@ textarea:focus-visible {
   font-weight: 600;
   color: var(--dim);
 }
+/*
+ * Липкая полоса фильтров под фиксированной шапкой (72 px на всех ширинах).
+ * Стала возможной, когда смузер ушёл со страниц кроме главной: под ним
+ * содержимое ехало transform, и sticky внутри не держался. Подложка — фон
+ * страницы с размытием: стена карточек уходит под полосу, а не сквозь неё.
+ */
 .lib-filters {
+  position: sticky;
+  top: 72px;
+  z-index: 5;
   display: flex;
   gap: 0.5rem;
   margin: 0 -1.25rem 1.5rem;
-  padding: 0.25rem 1.25rem;
+  padding: 0.5rem 1.25rem;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
 }
 @media (min-width: 768px) {
   .lib-filters {
@@ -3629,6 +3640,15 @@ img[data-art-fade][data-loaded] {
         rgba(5, 5, 5, 0.06) calc(var(--text-edge) + 30rem)
       );
   }
+}
+
+/*
+ * Слово пословного заголовка (components/SplitHeading): inline-block, иначе
+ * transform входа к строчному элементу не применяется. Перенос строк по
+ * пробелам между словами остаётся обычным.
+ */
+.split-word {
+  display: inline-block;
 }
 
 /*

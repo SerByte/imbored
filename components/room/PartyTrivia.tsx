@@ -1,7 +1,7 @@
 'use client'
 
 import { Icon } from '@/components/Icon'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
 import { useCallback, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import type { TriviaQuestion } from '@/lib/trivia'
@@ -118,7 +118,7 @@ export function PartyTrivia({
 
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div
+          <m.div
             id="trivia-body"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
@@ -241,7 +241,7 @@ export function PartyTrivia({
                 </div>
               )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </div>

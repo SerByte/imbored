@@ -1,4 +1,5 @@
 import { ownAddress } from '@/lib/site'
+import { MotionLazy } from '@/components/motion/MotionLazy'
 
 /** См. app/rooms/layout.tsx: страница клиентская, metadata — только серверная. */
 export const generateMetadata = ownAddress('/daily', {
@@ -8,5 +9,5 @@ export const generateMetadata = ownAddress('/daily', {
 })
 
 export default function DailyLayout({ children }: LayoutProps<'/daily'>) {
-  return children
+  return <MotionLazy>{children}</MotionLazy>
 }

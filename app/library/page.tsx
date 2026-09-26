@@ -427,9 +427,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           id — цель ссылки с полки «запечатанного»: приводить к фильтру,
           не показав самих чипсов, значит приводить в никуда. */}
       {games.length > 0 && (
-      /* Пилюлями, лентой на телефоне. Липкой полосу не сделать: страница
-         живёт под ScrollSmoother, контент там едет transform, и sticky внутри
-         него не держится. */
+      /* Пилюлями, лентой на телефоне. Полоса липкая: смузер теперь живёт
+         только на главной, и sticky здесь снова держится (.lib-filters). */
       <div id="wall" className="chip-rail lib-filters">
         {LIBRARY_FILTERS.map((f) => (
           <Link

@@ -1,31 +1,39 @@
 'use client'
 
-import { useGSAP } from '@gsap/react'
-import gsap from 'gsap'
-import { SplitText } from 'gsap/SplitText'
-import { useCallback, useRef } from 'react'
+import { Fragment, useCallback, useEffect, useRef } from 'react'
+import { splitWords } from '@/lib/splitwords'
 
-gsap.registerPlugin(SplitText, useGSAP)
+/** power3.out — та же кривая, что была у gsap-твина */
+const easeOut = (t: number) => 1 - (1 - t) ** 3
+const DURATION_MS = 600
 
 /**
  * Заголовок, который собирается по словам.
  *
- * Здесь gsap, а не motion, по одной причине: SplitText корректно режет строку на
- * слова и символы с учётом юникода — интерфейс кириллический, и наивный split(' ')
- * ломается на составных названиях и неразрывных пробелах.
+ * БЕЗ GSAP. Раньше слова резал SplitText на клиенте, а въезжали они твином
+ * gsap: ради пословного входа одного заголовка ядро gsap (70 КБ) стояло в
+ * первой загрузке /play, /daily, /whatsnew, /portrait и /compat
+ * (route-bundle-stats.json). Теперь слова — обычные <span> прямо в разметке,
+ * уже на сервере, а вход — свой цикл на requestAnimationFrame: ноль килобайт.
  *
- * Два обязательных условия, без которых эффект выглядит сломанным:
+ * ПОЧЕМУ НЕ WEB ANIMATIONS API. Он был первым и выглядел так же, но
+ * прозрачность в нём анимирует композитор, а Chrome засчитывает слово в LCP
+ * только когда главный поток рисует его видимым — то есть в конце входа.
+ * Замер на /whatsnew (телефон, 4x CPU, 4G): LCP 1400 → 2020 мс, заголовок —
+ * элемент LCP. Покадровые стили, как у gsap, рисуют слово на первом же кадре,
+ * и LCP вернулся к прежнему.
  *
- * 1. Не режем текст до подмены шрифта: слова замерялись бы по метрикам
- *    фолбэка и после свопа разъезжались. Но и ждать fonts.ready бесконечно
- *    нельзя — у ожидания есть бюджет (см. ниже): на медленном шрифте текст
- *    уже виден, и перепрятывать отрисованные слова ради повторного входа —
- *    это мигание, а не церемония. Анимация может только добавить появление.
- * 2. split.revert() на очистке. Без него в DOM остаются служебные <span>, и
- *    следующий рендер режет уже разрезанное.
+ * Два обязательных условия остались прежними:
  *
- * Доступность: реальный текст остаётся в aria-label, разрезанные слова скрыты от
- * скринридера — иначе заголовок читается по слову с паузами.
+ * 1. Не анимируем до подмены шрифта: у ожидания бюджет 150 мс. Успели —
+ *    стаггер как обычно; нет — вход пропускается целиком, текст просто
+ *    виден. Своп шрифта — сам по себе событие, второе поверх него читалось
+ *    бы сбоем. Анимация может только добавить появление, не спрятать текст.
+ * 2. Очистка останавливает цикл и снимает стили слов: смена названия — это
+ *    новые слова и новый вход, а не доигрывание прошлого.
+ *
+ * Доступность: реальный текст — в aria-label на самом заголовке, слова
+ * скрыты от скринридера — иначе заголовок читается по слову с паузами.
  *
  * Поэтому тег — только заголовок. aria-label на div или span (роль generic)
  * запрещён ARIA 1.2 и браузерами игнорируется, а слова под ним спрятаны —
@@ -79,69 +87,77 @@ export function SplitHeading({
     [headingRef],
   )
 
-  useGSAP(
-    () => {
-      const el = ref.current
-      if (!el) return
-      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      // Ударение — ТИПОГРАФИКА, а не движение: при выключенных анимациях резать
-      // строку всё равно нужно, иначе вес ударного слова пропадал бы вместе со
-      // стаггером. Экраны без stress ведут себя ровно как раньше.
-      if (reduce && stress === undefined) return
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
-      let split: SplitText | null = null
-      let tween: gsap.core.Tween | null = null
-      let cancelled = false
-      let budget = 0
+    let cancelled = false
+    let budget = 0
+    let raf = 0
+    let words: HTMLElement[] = []
 
-      const run = () => {
-        if (cancelled || !ref.current) return
-        split = new SplitText(ref.current, { type: 'words', wordsClass: 'split-word' })
-        if (stress !== undefined) split.words[stress]?.setAttribute('data-stress', '')
-        if (reduce) return
-        tween = gsap.from(split.words, {
-          y,
-          opacity: 0,
-          duration: 0.6,
-          ease: 'power3.out',
-          stagger,
-          delay,
-        })
+    const clear = () => {
+      for (const w of words) {
+        w.style.opacity = ''
+        w.style.transform = ''
       }
+    }
 
-      if (document.fonts.status === 'loaded') {
-        // Тёплый путь (все смены шага, повторные заходы): шрифты уже на месте
-        run()
-      } else {
-        // Холодный путь: даём шрифтам 150 мс. Успели — стаггер как обычно;
-        // нет — стаггер пропускается целиком, текст просто остаётся видимым.
-        // Своп шрифта — сам по себе визуальное событие, второе поверх него
-        // читалось бы как сбой (и до этой развилки так и читалось: контейнер
-        // уже устаканивался, когда слова начинали въезжать заново).
-        budget = window.setTimeout(() => {
-          cancelled = true
-        }, 150)
-        void document.fonts.ready.then(() => {
-          window.clearTimeout(budget)
-          run()
+    const run = () => {
+      if (cancelled || !ref.current) return
+      words = [...ref.current.querySelectorAll<HTMLElement>('.split-word')]
+      const start = performance.now()
+      const frame = (now: number) => {
+        let done = true
+        words.forEach((word, i) => {
+          const t = Math.min(1, Math.max(0, (now - start - (delay + i * stagger) * 1000) / DURATION_MS))
+          if (t < 1) done = false
+          const k = easeOut(t)
+          word.style.opacity = String(k)
+          word.style.transform = `translateY(${(1 - k) * y}px)`
         })
+        if (done) clear()
+        else raf = requestAnimationFrame(frame)
       }
+      // Первый кадр — синхронно: слова не должны мелькнуть готовыми до старта
+      frame(start)
+    }
 
-      return () => {
+    if (document.fonts.status === 'loaded') {
+      // Тёплый путь (все смены шага, повторные заходы): шрифты уже на месте
+      run()
+    } else {
+      // Холодный путь: даём шрифтам 150 мс, иначе вход пропускается
+      budget = window.setTimeout(() => {
         cancelled = true
+      }, 150)
+      void document.fonts.ready.then(() => {
         window.clearTimeout(budget)
-        tween?.kill()
-        split?.revert()
-      }
-    },
-    { scope: ref, dependencies: [children] },
-  )
+        run()
+      })
+    }
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(budget)
+      cancelAnimationFrame(raf)
+      clear()
+    }
+  }, [children, delay, stagger, y])
 
   // Колбэк с общим HTMLElement подходит любому из тегов — объектный ref
   // динамического тега раньше приходилось глушить @ts-expect-error
   return (
     <Tag ref={setRef} className={className} aria-label={children} tabIndex={tabIndex}>
-      {children}
+      {splitWords(children).map((word, i) => (
+        <Fragment key={i}>
+          {i > 0 && ' '}
+          <span aria-hidden className="split-word" data-stress={i === stress ? '' : undefined}>
+            {word}
+          </span>
+        </Fragment>
+      ))}
     </Tag>
   )
 }

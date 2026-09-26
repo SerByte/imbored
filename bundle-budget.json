@@ -1,0 +1,23 @@
+{
+  "$comment": "Потолок первой загрузки JS по маршрутам, КБ без сжатия (Next пишет .next/diagnostics/route-bundle-stats.json при сборке). Проверяет scripts/bundle-budget.ts в CI. Поднимать потолок — осознанно, в том же PR, что и вес; ~480 КБ — общий фундамент (React, Next, корневой лэйаут).",
+  "defaultKb": 510,
+  "routes": {
+    "/": 680,
+    "/play": 680,
+    "/room/[id]": 650,
+    "/daily": 640,
+    "/explore": 620,
+    "/whatsnew": 610,
+    "/game/[appid]": 590,
+    "/library": 590,
+    "/rooms": 590,
+    "/quiz": 580,
+    "/portrait/[steamid]": 580,
+    "/compat/[steamid]": 580,
+    "/room/new": 520,
+    "/game/[appid]/news/[gid]": 520,
+    "/games": 520
+  },
+  "$staticComment": "Маршруты, которые обязаны пререндериться статически: главная — лицо сайта, её отдаёт CDN без функции.",
+  "static": ["/"]
+}

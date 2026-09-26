@@ -10,7 +10,6 @@ import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
 import { SessionKeeper } from '@/components/SessionKeeper'
-import { SmoothScroll } from '@/components/SmoothScroll'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
@@ -336,8 +335,8 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         {/* Ставит data-chrome на <html>, когда шапка уезжает с кино-зоны на
             контент. Клиентский и без разметки — как SessionKeeper. */}
         <ChromeZone />
-        {/* Плавная прокрутка на весь сайт. Клиентский и без разметки. */}
-        <SmoothScroll />
+        {/* Плавная прокрутка — только у главной (app/page.tsx): закреплённые
+            сцены есть только там, остальной сайт прокручивается нативно. */}
         <SessionKeeper />
         <Analytics />
         {/* Полевые Web Vitals. На сайте, где LCP — это всегда чужая обложка со

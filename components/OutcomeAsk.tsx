@@ -1,6 +1,6 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { Portal } from '@/components/Portal'
 import { dayKey } from '@/lib/daily'
@@ -106,7 +106,7 @@ export function OutcomeAsk({
       </p>
       <AnimatePresence>
         {shown && ask && (
-          <motion.div
+          <m.div
             key={`${ask.appid}:${ask.shownAt}`}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -146,7 +146,7 @@ export function OutcomeAsk({
                 </button>
               </div>
             </section>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </Portal>
