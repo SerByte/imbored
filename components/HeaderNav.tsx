@@ -58,12 +58,12 @@ export function HeaderNav() {
   const pathname = usePathname() ?? ''
 
   return (
-    <span className="hidden md:flex items-center gap-5">
+    <span className="hidden md:flex items-center gap-6">
       {ITEMS.map((item) => {
         const active = isNavActive(pathname, item.href, 'also' in item ? item.also : [])
         const props = {
           'aria-current': active ? ('page' as const) : undefined,
-          className: `tap transition-colors ${active ? 'text-ink font-medium' : 'hover:text-ink'}`,
+          className: `tap transition-colors ${active ? 'text-ink font-extrabold' : 'hover:text-ink'}`,
           children: <LinkPending>{item.label}</LinkPending>,
         }
         return 'pick' in item ? (
