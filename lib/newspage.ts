@@ -15,6 +15,7 @@
 import { clip, DESCRIPTION_MAX } from './clip'
 import { stripGameName } from './patchtitle'
 import { blocksToText, type NewsBlock } from './steamhtml'
+import { withRef } from './track'
 
 /**
  * Каким бывает gid. Приходит строкой из чужого ответа Steam (хвост
@@ -31,6 +32,11 @@ export function isNewsGid(gid: unknown): gid is string {
 /** Адрес страницы патча. gid под GID кодирования не требует, но адрес строится один раз и здесь */
 export function newsPath(appid: number, gid: string): string {
   return `/game/${appid}/news/${encodeURIComponent(gid)}`
+}
+
+/** Адрес патча с меткой воронки — для «Поделиться» (как pickShareUrl у выбора) */
+export function patchShareUrl(origin: string, appid: number, gid: string): string {
+  return withRef(`${origin}${newsPath(appid, gid)}`, 'patch')
 }
 
 /**

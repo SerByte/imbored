@@ -1,4 +1,5 @@
 import { discountOf, trustedPrice } from './discount'
+import { newsHeading, newsPath } from './newspage'
 import type { ReviewFacts } from './gamepage'
 import { OG_SITE, SITE_DESCRIPTION } from './site'
 import { STORE_LABEL } from './stores'
@@ -343,6 +344,95 @@ export function genreItemListLd({
       url: `${baseUrl}/game/${g.appid}`,
       name: g.name,
     })),
+  }
+}
+
+/** Пост патча — столько, сколько знает страница патча */
+type PatchLdItem = {
+  appid: number
+  gid: string
+  title: string
+  url: string
+  publishedAt: number
+  tldr?: string | null
+  imageUrl?: string | null
+}
+
+export type NewsArticleLd = {
+  '@context': 'https://schema.org'
+  '@type': 'NewsArticle'
+  headline: string
+  url: string
+  mainEntityOfPage: string
+  datePublished: string
+  inLanguage: 'ru'
+  description?: string
+  image?: string[]
+  about?: { '@type': 'VideoGame'; name: string; url: string }
+  isBasedOn: string
+  author: { '@type': 'Organization'; name: string; url: string }
+  publisher: { '@type': 'Organization'; name: string; url: string }
+}
+
+/**
+ * Патч как статья: заголовок, дата, пересказ, кадр, игра и оригинал.
+ *
+ * Каждое поле — то, что страница показывает: заголовок — тот же, что в h1
+ * (newsHeading), описание — «Коротко», только если пересказ есть, кадр —
+ * только если он стоит на странице, isBasedOn — «Оригинал в Steam». Автор и
+ * издатель — imbored: страница — наш пересказ поста, а не сам пост, и у
+ * текста издателя ниже подписи нет.
+ */
+export function patchArticleLd({
+  item,
+  game,
+  baseUrl,
+}: {
+  item: PatchLdItem
+  game: { name: string } | null
+  baseUrl: string
+}): NewsArticleLd {
+  const url = `${baseUrl}${newsPath(item.appid, item.gid)}`
+  const site = { '@type': 'Organization' as const, name: OG_SITE.siteName, url: `${baseUrl}/` }
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'NewsArticle',
+    headline: newsHeading(item.title, game?.name),
+    url,
+    mainEntityOfPage: url,
+    datePublished: new Date(item.publishedAt * 1000).toISOString(),
+    inLanguage: 'ru',
+    ...(item.tldr?.trim() ? { description: item.tldr.trim() } : {}),
+    ...(item.imageUrl ? { image: [item.imageUrl] } : {}),
+    ...(game ? { about: { '@type': 'VideoGame', name: game.name, url: `${baseUrl}/game/${item.appid}` } } : {}),
+    isBasedOn: item.url,
+    author: site,
+    publisher: site,
+  }
+}
+
+/**
+ * Крошки патча: главная → игра → патч — ровно та ссылка назад, что стоит над
+ * заголовком. Игры нет в каталоге — нет и ссылки на неё: два уровня.
+ */
+export function patchBreadcrumbLd({
+  item,
+  game,
+  baseUrl,
+}: {
+  item: PatchLdItem
+  game: { name: string } | null
+  baseUrl: string
+}): BreadcrumbLd {
+  const steps = [
+    { name: 'imbored', item: `${baseUrl}/` },
+    ...(game ? [{ name: game.name, item: `${baseUrl}/game/${item.appid}` }] : []),
+    { name: newsHeading(item.title, game?.name), item: `${baseUrl}${newsPath(item.appid, item.gid)}` },
+  ]
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: steps.map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
   }
 }
 

@@ -7,6 +7,7 @@ import {
   newsIndexable,
   newsPageTitle,
   newsPath,
+  patchShareUrl,
   SITEMAP_NEWS_MAX,
   SITEMAP_NEWS_WINDOW_SEC,
 } from './newspage'
@@ -94,5 +95,13 @@ describe('индексация', () => {
     expect(newsIndexable('   ', true)).toBe(false)
     // мёртвая или не каталожная игра — как её собственная карточка
     expect(newsIndexable('Починили дым', false)).toBe(false)
+  })
+})
+
+describe('patchShareUrl', () => {
+  test('адрес патча с меткой ref=patch', () => {
+    expect(patchShareUrl('https://imbored.cc', 730, '5123894512345')).toBe(
+      'https://imbored.cc/game/730/news/5123894512345?ref=patch',
+    )
   })
 })

@@ -10,7 +10,7 @@
  * Ничего о человеке: ни SteamID, ни адреса, ни идентификатора вкладки.
  * Шаги не связываются между собой — воронка видна как отношение чисел, а не
  * как путь конкретного человека. Источник — из закрытого списка: по какой
- * общей ссылке пришли (сравнение, портрет, комната, выбор), или 'direct'.
+ * общей ссылке пришли (сравнение, портрет, комната, выбор, патч), или 'direct'.
  *
  * Модуль общий для браузера и сервера: сервер берёт отсюда разбор тела и
  * списки, браузер — отправку. Ни базы, ни next/server здесь быть не должно.
@@ -49,7 +49,7 @@ export type ServerEvent = (typeof SERVER_EVENTS)[number]
 export type Channel = 'openid' | 'link' | 'demo' | 'room' | 'login'
 
 /** Откуда пришли: закрытый список, ничего личного в значении */
-export const REF_SOURCES = ['compat', 'portrait', 'room', 'pick'] as const
+export const REF_SOURCES = ['compat', 'portrait', 'room', 'pick', 'patch'] as const
 export type RefSource = (typeof REF_SOURCES)[number]
 export type Source = RefSource | 'direct'
 

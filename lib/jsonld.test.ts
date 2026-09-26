@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'vitest'
-import { gameBreadcrumbLd, gameJsonLd, genreBreadcrumbLd, genreItemListLd, ldScript, websiteJsonLd } from './jsonld'
+import {
+  gameBreadcrumbLd,
+  gameJsonLd,
+  genreBreadcrumbLd,
+  genreItemListLd,
+  ldScript,
+  patchArticleLd,
+  patchBreadcrumbLd,
+  websiteJsonLd,
+} from './jsonld'
 import { SITE_DESCRIPTION } from './site'
 import { tagRu } from './tagsru'
 import type { ReviewFacts } from './gamepage'
@@ -358,5 +367,51 @@ describe('страница жанра', () => {
       { '@type': 'ListItem', position: 1, url: 'https://imbored.cc/game/1145360', name: 'Hades' },
       { '@type': 'ListItem', position: 2, url: 'https://imbored.cc/game/646570', name: 'Slay the Spire' },
     ])
+  })
+})
+
+describe('страница патча', () => {
+  const item = {
+    appid: 730,
+    gid: '5123894512345',
+    title: 'Counter-Strike 2: Release Notes for 9/25/2026',
+    url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+    publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+    tldr: 'Поправили баланс AWP и карту Mirage.',
+    imageUrl: 'https://clan.cloudflare.steamstatic.com/images/1/abc.png',
+  }
+
+  test('статья — только из видимого: заголовок как в h1, пересказ, кадр, игра, оригинал', () => {
+    const out = patchArticleLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE })
+    expect(out).toMatchObject({
+      '@type': 'NewsArticle',
+      url: 'https://imbored.cc/game/730/news/5123894512345',
+      mainEntityOfPage: 'https://imbored.cc/game/730/news/5123894512345',
+      datePublished: '2026-09-25T18:00:00.000Z',
+      inLanguage: 'ru',
+      description: item.tldr,
+      image: [item.imageUrl],
+      about: { '@type': 'VideoGame', name: 'Counter-Strike 2', url: 'https://imbored.cc/game/730' },
+      isBasedOn: item.url,
+    })
+    // название игры в заголовке не повторяется — как в h1 (newsHeading)
+    expect(out.headline).not.toMatch(/^Counter-Strike 2:/)
+  })
+
+  test('нет пересказа, кадра или игры — нет и полей', () => {
+    const out = patchArticleLd({ item: { ...item, tldr: null, imageUrl: null }, game: null, baseUrl: BASE })
+    expect(out).not.toHaveProperty('description')
+    expect(out).not.toHaveProperty('image')
+    expect(out).not.toHaveProperty('about')
+  })
+
+  test('крошки: главная → игра → патч; без игры — два уровня', () => {
+    const withGame = patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE })
+    expect(withGame.itemListElement.map((i) => i.item)).toEqual([
+      'https://imbored.cc/',
+      'https://imbored.cc/game/730',
+      'https://imbored.cc/game/730/news/5123894512345',
+    ])
+    expect(patchBreadcrumbLd({ item, game: null, baseUrl: BASE }).itemListElement).toHaveLength(2)
   })
 })
