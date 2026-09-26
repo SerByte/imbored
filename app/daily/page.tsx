@@ -7,6 +7,7 @@ import { BlurBand } from '@/components/BlurBand'
 import { DailyCountdown } from '@/components/DailyCountdown'
 import { GameCardBody } from '@/components/GameCard'
 import { HeroTitle } from '@/components/HeroTitle'
+import { HeroTrailer } from '@/components/HeroTrailer'
 import { Icon } from '@/components/Icon'
 import { HeroShots } from '@/components/HeroShots'
 import { NeedSteam } from '@/components/NeedSteam'
@@ -383,6 +384,7 @@ export default function DailyPage() {
           name={hero.name}
           screenshots={hero.screenshots ?? []}
         />
+        <HeroTrailer trailer={hero.trailer} />
         <div aria-hidden className="absolute inset-0 hero-scrim" />
         {/* Снег идёт ПОД стеклом и над артом: хлопья, проходящие под панелями,
             подмораживаются их backdrop-filter. */}

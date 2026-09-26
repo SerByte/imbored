@@ -3492,6 +3492,47 @@ img[data-art-fade][data-loaded] {
 }
 
 /*
+ * Живой герой (components/HeroTrailer): микротрейлер наплывает поверх арта и
+ * слайдера кадров, под скримом — текст остаётся на той же гарантии контраста.
+ * Кнопка «пауза» — в правом нижнем углу героя, над текстом по слоям.
+ */
+.hero-trailer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.2s var(--ease-out);
+}
+.hero-trailer.is-on {
+  opacity: 1;
+}
+/* Правый край — по колонке контента (72rem по центру, поле px-safe), а не по
+   краю окна: на широком экране кнопка иначе уезжала от всего остального. */
+.hero-trailer-toggle {
+  position: absolute;
+  right: max(max(1.25rem, env(safe-area-inset-right)), calc((100% - 72rem) / 2 + 1.25rem));
+  bottom: 3rem;
+  z-index: 2;
+}
+
+/*
+ * Параллакс фона героя (components/HeroShots, useParallax): translate пишет
+ * скрипт, здесь — запас по краям и плавность догона. Только для мыши и без
+ * «уменьшить движение» — ровно там, где скрипт вообще включается.
+ */
+@media (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .hero-layer {
+    scale: 1.04;
+    transition-property: translate, opacity;
+    transition-duration: 900ms, 700ms;
+    transition-timing-function: var(--ease-out);
+  }
+  .hero-trailer.hero-layer {
+    transition-duration: 900ms, 1.2s;
+  }
+}
+
+/*
  * Логотип игры на месте названия (components/HeroTitle). Проявляется, когда
  * загрузился: до этого его место держит прозрачный текстовый заголовок, так
  * что проявление ничего не прячет — прятать тут нечего, логотип дублирует h1.
@@ -3919,6 +3960,20 @@ img[data-art-fade][data-loaded] {
   color: var(--ink);
   animation: chosen-line-in 0.6s var(--ease-out) 0.25s backwards;
 }
+/* Уход: постер наплывает на весь экран и гаснет, подпись и стена уходят
+   первыми — из-под постера встаёт герой выдачи */
+.warmup.is-leaving .warmup-chosen-poster {
+  transform: scale(2.6);
+  opacity: 0;
+  transition:
+    transform 320ms cubic-bezier(0.55, 0, 0.8, 0.4),
+    opacity 320ms cubic-bezier(0.55, 0, 0.8, 0.4);
+}
+.warmup.is-leaving .warmup-chosen-line,
+.warmup.is-leaving .pwall {
+  opacity: 0;
+  transition: opacity 180ms linear;
+}
 @keyframes chosen-in {
   from {
     opacity: 0;
@@ -4076,6 +4131,96 @@ img[data-art-fade][data-loaded] {
   }
 }
 
+
+/*
+ * VIEW TRANSITIONS: морф обложки и направление навигации.
+ *
+ * Обложка игры (components/Morph, .morph) летит из клетки полки в слот героя
+ * страницы игры и обратно. 420 мс: достаточно, чтобы глаз проследил один
+ * предмет, и не настолько долго, чтобы ждать. Лёгкое размытие в середине
+ * прячет пиксельную интерполяцию, когда капсула растягивается.
+ *
+ * Сдвиг страниц — только у переходов с типом (app/template.tsx): вглубь —
+ * влево, назад — вправо, на 48 px. Шапка и нижняя панель стоят на месте:
+ * их снимки не анимируются вовсе, иначе съезжала бы и точка опоры.
+ *
+ * Оверлей перехода не ловит нажатия — клик во время анимации уходит живой
+ * странице, а не теряется.
+ */
+::view-transition {
+  pointer-events: none;
+}
+::view-transition-group(.morph) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+::view-transition-image-pair(.morph) {
+  animation-name: morph-soften;
+}
+@keyframes morph-soften {
+  35% {
+    filter: blur(2px);
+  }
+}
+::view-transition-old(.nav-forward) {
+  --slide-offset: -48px;
+  animation:
+    140ms ease-in both vt-fade reverse,
+    360ms cubic-bezier(0.22, 1, 0.36, 1) both vt-slide reverse;
+}
+::view-transition-new(.nav-forward) {
+  --slide-offset: 48px;
+  animation:
+    200ms ease-out 120ms both vt-fade,
+    360ms cubic-bezier(0.22, 1, 0.36, 1) both vt-slide;
+}
+::view-transition-old(.nav-back) {
+  --slide-offset: 48px;
+  animation:
+    140ms ease-in both vt-fade reverse,
+    360ms cubic-bezier(0.22, 1, 0.36, 1) both vt-slide reverse;
+}
+::view-transition-new(.nav-back) {
+  --slide-offset: -48px;
+  animation:
+    200ms ease-out 120ms both vt-fade,
+    360ms cubic-bezier(0.22, 1, 0.36, 1) both vt-slide;
+}
+@keyframes vt-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes vt-slide {
+  from {
+    translate: var(--slide-offset);
+  }
+  to {
+    translate: 0;
+  }
+}
+::view-transition-group(site-header),
+::view-transition-group(site-tabbar) {
+  z-index: 100;
+  animation: none;
+}
+::view-transition-old(site-header),
+::view-transition-old(site-tabbar) {
+  display: none;
+}
+::view-transition-new(site-header),
+::view-transition-new(site-tabbar) {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*),
+  ::view-transition-image-pair(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+}
 
 /* Шов между экранами — тихий и на CSS, см. комментарий в app/template.tsx */
 @keyframes page-in {

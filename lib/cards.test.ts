@@ -102,6 +102,15 @@ describe('storeCardView и dailyCardView', () => {
     expect(bought.tags).toEqual(topTags(meta(20)))
     expect(bought.sharedTags).toEqual(['Puzzle'])
   })
+
+  test('трейлер героя дня — из записи игры, без него явный null', () => {
+    const day = { reason: 'r', sharedTags: [], hoursPlayed: null, hideUrgency: false }
+    const trailer = { mp4: 'https://video.akamai.steamstatic.com/store_trailers/10/m.mp4' }
+    const withClip = dailyCardView({ appid: 10, name: 'Игра 10', source: 'untouched' }, { ...meta(10), trailer }, NOW, day)
+    const without = dailyCardView({ appid: 10, name: 'Игра 10', source: 'untouched' }, meta(10), NOW, day)
+    expect(withClip.trailer).toEqual(trailer)
+    expect(without.trailer).toBeNull()
+  })
 })
 
 describe('heroMediaView', () => {

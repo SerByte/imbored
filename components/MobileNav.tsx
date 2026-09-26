@@ -113,6 +113,8 @@ export function MobileNav() {
       style={{
         background: 'color-mix(in srgb, var(--bg) 94%, transparent)',
         paddingBottom: 'env(safe-area-inset-bottom)',
+        // Опора при переходе между страницами, как шапка (см. layout.tsx)
+        viewTransitionName: 'site-tabbar',
       }}
     >
       <div ref={rowRef} className="grid grid-cols-5 relative">

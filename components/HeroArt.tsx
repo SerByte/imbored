@@ -23,7 +23,7 @@ export function HeroArt({
       art={art}
       variant="hero"
       eager
-      className="absolute inset-0 h-full w-full object-cover anim-kenburns"
+      className="hero-layer absolute inset-0 h-full w-full object-cover anim-kenburns"
       fallback={
         <div
           aria-hidden

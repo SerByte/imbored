@@ -99,6 +99,7 @@ const PATHS = {
   ),
   moon: <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" />,
   bolt: <path d="M13 3L5.5 13.5h5.5L10 21l7.5-10.5H12z" />,
+  pause: <path d="M8.5 5.5v13M15.5 5.5v13" />,
   dice: (
     <>
       <rect x="4" y="4" width="16" height="16" rx="3.5" />

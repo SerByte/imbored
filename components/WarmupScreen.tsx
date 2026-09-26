@@ -30,6 +30,7 @@ export function WarmupScreen({
   message,
   caption,
   chosen = null,
+  leaving = false,
   memo = null,
 }: {
   progress: WarmupProgress | null
@@ -53,6 +54,8 @@ export function WarmupScreen({
    * null — обычное ожидание.
    */
   chosen?: ChosenGame | null
+  /** Такт ухода: постер наплывает на экран и растворяется перед героем */
+  leaving?: boolean
   /** Стена с прошлого прогрева — когда этот заход прогрев пропустил */
   memo?: WallMemo | null
 }) {
@@ -65,7 +68,7 @@ export function WarmupScreen({
     <div
       className={`warmup relative flex-1 flex flex-col items-center justify-center gap-7 px-5 overflow-hidden ${
         chosen ? 'is-chosen' : ''
-      }`}
+      } ${leaving ? 'is-leaving' : ''}`}
     >
       <Ambient className="anim-breathe" />
       {wall.length > 0 && <PosterWall ids={wall} />}

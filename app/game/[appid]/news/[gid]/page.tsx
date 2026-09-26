@@ -143,7 +143,7 @@ export default async function PatchPage({ params }: Params) {
           {/* Игры в каталоге может не быть (пост пришёл по чьей-то
               библиотеке) — тогда и её карточки нет, и ссылаться некуда */}
           {game && (
-            <Link href={gameHref} className="tap tap-tight link-more self-start">
+            <Link href={gameHref} transitionTypes={['nav-back']} className="tap tap-tight link-more self-start">
               <Icon name="back" size={16} />
               {game.name}
             </Link>
