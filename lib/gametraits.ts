@@ -67,33 +67,22 @@ export function sessionTrait(meta: Pick<GameMeta, 'semantics' | 'categories'>): 
 }
 
 /**
- * «Можно бросить в любой момент» — добавка к строке сессии на карточке игры.
+ * «Вход» — время до веселья, названное отзывами: «затягивает с первых минут»
+ * или «раскрывается через 3 часа».
  *
- * Только у «Сессии», не у «Матча»: матч — это как раз то, что посреди не
- * бросить (sessionTrait). И только из уверенной семантики: это обещание
- * вечеру, а по одним тегам его не дать.
- */
-export function stopsAnytime(meta: Pick<GameMeta, 'semantics' | 'categories'>): boolean {
-  const s = meta.semantics
-  if (!s || s.confidence < SESSION_MIN_CONFIDENCE || !s.session.canStopAnytime) return false
-  return sessionTrait(meta)?.label === 'Сессия'
-}
-
-/**
- * «Вход» — время до веселья из отзывов (lib/entry): «затягивает с первых
- * минут» или «раскрывается через 3 часа».
- *
- * Только из отзывов. На /play строка по тегам уместна — там она подсказка
- * к выбору на вечер, — а публичная карточка говорит об игре как о факте, и
- * жанровый приор выдал бы себя за него: у Hades по тегу Difficult выходило
- * «высокий порог — сначала придётся разобраться». То же правило, что у
- * строки сессии (SESSION_MIN_CONFIDENCE).
+ * Только когда отзывы дали число (timeToFun.hours — медиана упоминаний, не
+ * меньше MIN_TTF_MENTIONS в lib/semantics). Уверенности семантики мало:
+ * она говорит, что отзывы разобраны, а не что они что-то сказали про старт.
+ * Без упоминаний корзина времени до веселья — приор по тегам жанра, и
+ * подпись «по отзывам» выдала бы его за мнение игроков. На /play строка по
+ * тегам уместна — там она подсказка к выбору на вечер, — а публичная
+ * карточка говорит об игре как о факте: у Hades по одному тегу Difficult
+ * выходило «высокий порог — сначала придётся разобраться».
  */
 export function entryTrait(meta: Pick<GameMeta, 'tags' | 'semantics'>): GameTrait | null {
   const e = entryCost(meta)
-  if (!e || e.basis !== 'reviews') return null
+  if (!e || e.basis !== 'reviews' || e.hours === null) return null
   if (e.level === 'low') return { label: 'Вход', value: 'затягивает с первых минут — по отзывам' }
-  if (e.hours === null) return { label: 'Вход', value: 'раскрывается не сразу — по отзывам' }
   const h = Math.max(1, Math.round(e.hours))
   return { label: 'Вход', value: `раскрывается через ${h} ${plural(h, 'час', 'часа', 'часов')} — по отзывам` }
 }

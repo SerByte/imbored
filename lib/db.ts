@@ -5336,6 +5336,11 @@ export async function sitemapNews(
  * Предикат — тот же, что у карты сайта, и дословно с rank > 0: иначе SQLite
  * не возьмёт частичный idx_news_feed (см. getMajorFeedHead). tldr_at —
  * остаточный фильтр по уже суженному окну публикации.
+ *
+ * Порядок — по времени пересказа, от старых: отметка IndexNow двигается к
+ * последней строке выборки, и при обрезке по LIMIT за ней не должно остаться
+ * ничего, что пересказано раньше. Сортировка — по окну в девяносто дней
+ * крупных патчей, это сотни строк, а не таблица.
  */
 export async function freshlyDigestedPatches(
   db: Db,
@@ -5347,7 +5352,7 @@ export async function freshlyDigestedPatches(
     sql: `SELECT appid, gid, tldr_at FROM news_items
           WHERE kind = 'patch' AND scale = 'major' AND rank > 0
             AND published_at >= ? AND tldr IS NOT NULL AND tldr_at > ?
-          ORDER BY published_at DESC LIMIT ?`,
+          ORDER BY tldr_at, appid, gid LIMIT ?`,
     args: [publishedSince, digestedAfter, limit],
   })
   return (res.rows as unknown as Array<{ appid: number; gid: string; tldr_at: number }>).map((r) => ({

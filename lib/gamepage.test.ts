@@ -817,7 +817,7 @@ describe('«Чем выделяется» и длина сессии', () => {
   })
 })
 
-describe('вход, характер и «можно бросить»', () => {
+describe('вход и характер', () => {
   const sem = (over: Partial<GameSemantics> = {}): GameSemantics => ({
     v: 1,
     axes: { challenge: 50, complexity: 50, pace: 50 },
@@ -829,13 +829,9 @@ describe('вход, характер и «можно бросить»', () => {
     ...over,
   })
 
-  test('сессия, которую можно бросить, — так и сказано; у матча — нет', () => {
+  test('«можно бросить в любой момент» не пишем: признак — только из тегов', () => {
     const stop = sem({ session: { bucket: 'short', minutes: 20, canStopAnytime: true } })
-    expect(gameTraits({ categories: [2], semantics: stop }, null)).toEqual([
-      { label: 'Сессия', value: '~20 мин, можно бросить в любой момент' },
-    ])
-    // сетевой матч без одиночного режима — не «сессия», и бросить его нельзя по определению
-    expect(gameTraits({ categories: [1], semantics: sem() }, null)).toEqual([{ label: 'Матч', value: '~20 мин' }])
+    expect(gameTraits({ categories: [2], semantics: stop }, null)).toEqual([{ label: 'Сессия', value: '~20 мин' }])
   })
 
   test('вход — только из отзывов, со ссылкой на них и часами', () => {
@@ -844,9 +840,12 @@ describe('вход, характер и «можно бросить»', () => {
       label: 'Вход',
       value: 'раскрывается через 3 часа — по отзывам',
     })
-    expect(entryTrait({ tags: {}, semantics: sem({ timeToFun: { bucket: 'fast', hours: null } }) })?.value).toBe(
+    expect(entryTrait({ tags: {}, semantics: sem({ timeToFun: { bucket: 'fast', hours: 0.3 } }) })?.value).toBe(
       'затягивает с первых минут — по отзывам',
     )
+    // корзина без числа — приор по тегам, а не слова отзывов: «по отзывам» здесь было бы неправдой
+    expect(entryTrait({ tags: {}, semantics: sem({ timeToFun: { bucket: 'fast', hours: null } }) })).toBeNull()
+    expect(entryTrait({ tags: {}, semantics: sem({ timeToFun: { bucket: 'slow', hours: null } }) })).toBeNull()
     // уверенная семантика без выраженного старта — ответ «не знаем», теги её не переспорят
     expect(entryTrait({ tags: { 'Grand Strategy': 900 }, semantics: sem() })).toBeNull()
     // по одним тегам — не на карточке: жанровый приор выдал бы себя за факт
@@ -866,7 +865,7 @@ describe('вход, характер и «можно бросить»', () => {
   test('порядок строк: выделяется → сессия → вход → характер', () => {
     const all = sem({
       axes: { challenge: 20, complexity: 50, pace: 50 },
-      timeToFun: { bucket: 'fast', hours: null },
+      timeToFun: { bucket: 'fast', hours: 0.4 },
     })
     expect(gameTraits({ categories: [2], semantics: all }, ['Automation']).map((t) => t.label)).toEqual([
       'Чем выделяется',

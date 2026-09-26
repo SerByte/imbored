@@ -108,6 +108,13 @@ describe('announceFreshPatches', () => {
     expect(again?.count).toBe(2)
   })
 
+  test('отказ, который повтор не исправит (422), — отметка двигается, чтобы список не рос вечно', async () => {
+    const fetchFn = vi.fn(async () => new Response(null, { status: 422 }))
+    const revalidate = vi.fn()
+    await announceFreshPatches(db, { now: NOW + 60, baseUrl: BASE, revalidate, env: PROD, fetchFn })
+    expect(await announceFreshPatches(db, { now: NOW + 120, baseUrl: BASE, revalidate, env: PROD, fetchFn })).toBeNull()
+  })
+
   test('без ключа или не на проде — страницы перегенерируются, а в сеть не ходим', async () => {
     const fetchFn = vi.fn(async () => new Response(null, { status: 200 }))
     const revalidate = vi.fn()

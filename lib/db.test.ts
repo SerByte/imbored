@@ -1962,7 +1962,8 @@ describe('страница патча', () => {
     expect(await freshlyDigestedPatches(db, NOW - 90 * DAY, NOW + 50, 100)).toEqual([
       { appid: 730, gid: 'late', digestedAt: NOW + 100 },
     ])
-    expect((await freshlyDigestedPatches(db, NOW - 90 * DAY, NOW, 100)).map((n) => n.gid)).toEqual(['late', 'early'])
+    // от раньше пересказанных: отметка IndexNow двигается к последней строке
+    expect((await freshlyDigestedPatches(db, NOW - 90 * DAY, NOW, 100)).map((n) => n.gid)).toEqual(['early', 'late'])
   })
 })
 

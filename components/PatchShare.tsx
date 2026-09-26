@@ -17,6 +17,8 @@ import { patchShareUrl } from '@/lib/newspage'
  * (буфер закрыт настройками, webview мессенджера): тогда адрес виден и
  * выделяется руками.
  */
+const LINK = 'underline decoration-1 underline-offset-4'
+
 export function PatchShare({ appid, gid, title }: { appid: number; gid: string; title: string }) {
   const [manual, setManual] = useState<string | null>(null)
   const urlOf = () => patchShareUrl(window.location.origin, appid, gid)
@@ -24,12 +26,17 @@ export function PatchShare({ appid, gid, title }: { appid: number; gid: string; 
 
   return (
     <>
+      {/* Подчёркивание — на тексте, а не на кнопке: share.label оборачивает
+          подпись в inline-flex, а в такой блок text-decoration родителя не
+          проходит, и кнопка стояла бы голой рядом с подчёркнутыми соседями */}
       <button
         type="button"
         onClick={() => void share.run()}
-        className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+        className="tap tap-tight font-semibold transition-opacity hover:opacity-70"
       >
-        {share.label('Поделиться', { manual: 'Скопируй адрес ниже' })}
+        {share.label(<span className={LINK}>Поделиться</span>, {
+          manual: <span className={LINK}>Скопируй адрес ниже</span>,
+        })}
       </button>
       {share.status}
       {manual && (

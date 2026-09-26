@@ -119,26 +119,41 @@ export function hubTagOf(slug: string): string | null {
   return null
 }
 
+/** Сколько тегов игры лежит в game_tags: хвост на выборку почти не влияет, а строк экономит кратно */
+export const TAGS_PER_GAME = 12
+
+/**
+ * Веса тегов так, как их кладёт в game_tags каталог (scripts/promote-catalog):
+ * верхние двенадцать по голосам Steam, вес — доля от главного тега в
+ * тысячных, округлённая. «Характерность», а не популярность: «топ по тегу
+ * Roguelike» должен давать самые рогаликовые игры, а не самые продаваемые.
+ *
+ * Одна функция на каталог и на карточку игры (primaryGenre): порог
+ * HUB_MIN_WEIGHT сравнивается с одним и тем же числом, и игра, стоящая на
+ * странице жанра, получает этот жанр в пути над названием — и наоборот.
+ * Порядок при равных голосах — порядок тегов у игры (сортировка устойчива),
+ * как в каталоге.
+ */
+export function storedTagWeights(tags: Readonly<Record<string, number>>): Array<{ tag: string; weight: number }> {
+  const sorted = Object.entries(tags).sort((a, b) => b[1] - a[1])
+  const max = sorted[0]?.[1] ?? 0
+  if (!(max > 0)) return []
+  return sorted.slice(0, TAGS_PER_GAME).map(([tag, w]) => ({ tag, weight: Math.round((w / max) * 1000) }))
+}
+
 /**
  * Главный жанр игры — для пути на её карточке («Игры по жанрам → Рогалики»).
  *
- * Самый весомый из тегов, у которых есть своя страница, и только если для
- * игры он правда один из главных: по тем же правилам, по которым игра попадает
- * на страницу жанра, — среди двенадцати верхних тегов (столько лежит в
- * game_tags) и не легче половины главного (HUB_MIN_WEIGHT от 1000). Иначе у
- * CS2 путь вёл бы в «Тактику», а у всего подряд — в «Уютную».
- *
- * Веса — голоса Steam как есть: доля от главного считается здесь. При равных
- * весах — по имени, как у тегов героя и жанров разметки: порядок не прыгает.
+ * Самый весомый из тегов, у которых есть своя страница, и только если игра
+ * стоит на этой странице по тем же правилам: среди её тегов в game_tags и не
+ * легче HUB_MIN_WEIGHT (storedTagWeights — то же число, что в каталоге).
+ * Иначе у CS2 путь вёл бы в «Тактику», а у всего подряд — в «Уютную».
  */
 export function primaryGenre(tags: Readonly<Record<string, number>>): string | null {
-  const top = Object.entries(tags)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 12)
-  const max = top[0]?.[1] ?? 0
-  if (!(max > 0)) return null
-  const hit = top.find(([tag, w]) => Object.hasOwn(HUB_GENRES, tag) && (w / max) * 1000 >= HUB_MIN_WEIGHT)
-  return hit ? hit[0] : null
+  const hit = storedTagWeights(tags).find(
+    ({ tag, weight }) => Object.hasOwn(HUB_GENRES, tag) && weight >= HUB_MIN_WEIGHT,
+  )
+  return hit ? hit.tag : null
 }
 
 /** Игр на странице жанра — верх по отзывам, для которых жанр главный */

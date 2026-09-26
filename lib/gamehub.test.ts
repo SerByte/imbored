@@ -11,6 +11,8 @@ import {
   hubPath,
   hubTagOf,
   primaryGenre,
+  storedTagWeights,
+  TAGS_PER_GAME,
   type HubRow,
 } from './gamehub'
 import { GENERIC_TAGS } from './hook'
@@ -111,8 +113,25 @@ describe('главный жанр игры', () => {
     expect(primaryGenre(tags)).toBeNull()
   })
 
-  test('при равных весах — по имени, порядок не прыгает', () => {
-    expect(primaryGenre({ Survival: 1000, 'Open World': 1000 })).toBe('Open World')
+  test('порог — на том же округлённом числе, что в game_tags', () => {
+    // 1001 / 2003 = 499,75 → в каталоге 500: игра стоит на странице жанра,
+    // значит, и путь над названием ведёт туда же
+    expect(storedTagWeights({ Action: 2003, Roguelike: 1001 })).toEqual([
+      { tag: 'Action', weight: 1000 },
+      { tag: 'Roguelike', weight: 500 },
+    ])
+    expect(primaryGenre({ Action: 2003, Roguelike: 1001 })).toBe('Roguelike')
+  })
+
+  test('при равных голосах — порядок тегов у игры, как в каталоге', () => {
+    expect(primaryGenre({ Survival: 1000, 'Open World': 1000 })).toBe('Survival')
+    expect(storedTagWeights({ B: 5, A: 5 }).map((t) => t.tag)).toEqual(['B', 'A'])
+  })
+
+  test('в game_tags — двенадцать верхних', () => {
+    const tags: Record<string, number> = {}
+    for (let i = 0; i < 20; i++) tags[`T${i}`] = 100 - i
+    expect(storedTagWeights(tags)).toHaveLength(TAGS_PER_GAME)
   })
 
   test('пустые и нулевые теги — null', () => {

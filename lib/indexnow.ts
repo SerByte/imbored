@@ -32,11 +32,19 @@ export const INDEXNOW_MARK = 'indexnow_last'
 
 /**
  * Адресов за раз. Цепочка пересказов успевает до двухсот за час (25 × 8
- * звеньев), протокол принимает до 10 000. Запас нужен, потому что отметка
- * двигается к самому позднему пересказу выборки: всё, что не влезло бы в
- * неё, осталось бы необъявленным навсегда.
+ * звеньев), протокол принимает до 10 000. Выборка идёт по времени пересказа
+ * от старых (freshlyDigestedPatches), так что не влезшее не теряется, а
+ * ждёт следующего раза.
  */
 const BATCH = 1000
+
+/**
+ * Отказы, которые повтор не исправит: 400 — мы собрали запрос неверно, 422 —
+ * адреса не того хоста. На них отметка двигается (иначе тот же список уходил
+ * бы каждую цепочку вечно и рос). 403 (ключ) и 429 (часто) — ждут исправления
+ * ключа и паузы: список повторится.
+ */
+const FINAL_STATUSES = new Set([400, 422])
 
 /** Первый запуск без отметки: берём пересказы за сутки, а не за все девяносто */
 const FIRST_LOOKBACK_SEC = 86_400
@@ -129,7 +137,16 @@ export async function announceFreshPatches(
     ? await pingIndexNow({ baseUrl, key, urls: paths.map((p) => `${baseUrl}${p}`), fetchFn })
     : { ok: true, status: null }
 
-  const digestedAt = result.ok ? Math.max(after, ...fresh.map((n) => n.digestedAt)) : after
+  /*
+   * Докуда объявлено. Выборка — от раньше пересказанных, значит последняя
+   * строка — самая поздняя. Если выборка обрезана по BATCH, за ней могли
+   * остаться строки с тем же tldr_at — отметка встаёт на секунду раньше, и
+   * они придут в следующий раз (повтор адреса ничего не стоит).
+   */
+  const last = fresh[fresh.length - 1].digestedAt
+  const through = fresh.length === BATCH ? last - 1 : last
+  const advance = result.ok || (result.status !== null && FINAL_STATUSES.has(result.status))
+  const digestedAt = advance ? Math.max(after, through) : after
   const next: Mark = { at: now, digestedAt, count: fresh.length, status: result.status }
   await setCatalogMeta(db, INDEXNOW_MARK, JSON.stringify(next))
   return { count: fresh.length, pinged: key !== null, ok: result.ok, status: result.status }

@@ -129,9 +129,16 @@ export default async function GenrePage({ params }: Params) {
                     meta={
                       (g.reviews || g.session) && (
                         <>
-                          <span className="truncate" title={g.reviews?.full}>
-                            {g.reviews?.short}
-                          </span>
+                          {/* Короткое — глазу, полное — скринридеру: «92% из
+                              48 тыс.» вслух не говорит, чего 92% (как на /play) */}
+                          {g.reviews ? (
+                            <span className="truncate" title={g.reviews.full}>
+                              <span aria-hidden>{g.reviews.short}</span>
+                              <span className="sr-only">{g.reviews.full}</span>
+                            </span>
+                          ) : (
+                            <span />
+                          )}
                           {g.session && (
                             <span className="shrink-0">
                               {g.session.label}: {g.session.value}
