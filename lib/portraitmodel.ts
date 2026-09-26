@@ -3,7 +3,17 @@ import { buildPortrait, type Archetype, type Portrait } from './portrait'
 import { backlogValue } from './stats'
 import type { TagWeight } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
-import { archetypeEvidence, buildWrapped, mosaicBlocks, pickStarter, type Wrapped } from './wrapped'
+import {
+  archetypeEvidence,
+  buildWrapped,
+  buildWrappedYear,
+  isEmptyYear,
+  mosaicBlocks,
+  pickStarter,
+  type Wrapped,
+  type WrappedYear,
+  type YearWindow,
+} from './wrapped'
 
 /**
  * Всё, что страница /portrait/[steamid] рисует по библиотеке и метаданным, —
@@ -36,8 +46,40 @@ export type PortraitModel = {
   starter: LibraryGame | null
   mosaic: LibraryGame[][]
   purgatory: LibraryGame[]
+  /**
+   * Итоги года (lib/wrapped, buildWrappedYear); null — сравнивать не с чем
+   * или сказать нечего: блок на странице не рисуется
+   */
+  year: WrappedYear | null
   /** Обложки ровно тех игр, что стоят на странице; ключ — appid */
   covers: Record<number, CoverArt>
+}
+
+/** Страница /portrait/[steamid]/year — итоги и обложки ровно их игр */
+export type YearModel = { year: WrappedYear; covers: Record<number, CoverArt> }
+
+type MetaOf = (appid: number) => GameMeta | undefined
+
+/** Обложки ровно тех игр, что стоят на странице — не всей библиотеки */
+export function coversOf(shown: ReadonlyArray<{ appid: number }>, metaOf: MetaOf): Record<number, CoverArt> {
+  const covers: Record<number, CoverArt> = {}
+  for (const { appid } of shown) {
+    const meta = metaOf(appid)
+    covers[appid] = { headerImage: meta?.headerImage ?? null, art: meta?.art ?? null }
+  }
+  return covers
+}
+
+/** Игры итогов, которым нужна обложка: топ, распакованные, появившиеся */
+function yearShown(y: WrappedYear): Array<{ appid: number }> {
+  return [...y.top, ...y.unpacked.games, ...y.added.games]
+}
+
+/** Модель страницы года. null — сравнивать не с чем или сказать нечего */
+export function buildYearModel(w: YearWindow, metaOf: MetaOf): YearModel | null {
+  const year = buildWrappedYear(w, metaOf)
+  if (isEmptyYear(year)) return null
+  return { year, covers: coversOf(yearShown(year), metaOf) }
 }
 
 /** Сколько обложек у стены нераспакованного */
@@ -67,7 +109,12 @@ export function buildPortraitModel(
   metaOf: (appid: number) => GameMeta | undefined,
   nowSec: number,
   mosaicPlan: Array<{ take: number; step: number }>,
-  opts: { banned?: ReadonlySet<number>; tagWeight?: TagWeight | null } = {},
+  opts: {
+    banned?: ReadonlySet<number>
+    tagWeight?: TagWeight | null
+    /** Окно итогов года (pickYearWindow); без него блока итогов нет */
+    yearWindow?: YearWindow | null
+  } = {},
 ): PortraitModel {
   const portrait = buildPortrait(games, metaOf)
   const { unplayed, ...wrapped } = buildWrapped(games, metaOf)
@@ -90,13 +137,13 @@ export function buildPortraitModel(
   )
   const purgatory = unplayed.filter((g) => g.appid > 0).slice(0, PURGATORY_MAX)
 
-  const covers: Record<number, CoverArt> = {}
-  const shown = [...wrapped.top, ...evidence, ...mosaic.flat(), ...purgatory]
-  if (starter) shown.push(starter)
-  for (const { appid } of shown) {
-    const meta = metaOf(appid)
-    covers[appid] = { headerImage: meta?.headerImage ?? null, art: meta?.art ?? null }
-  }
+  const built = opts.yearWindow ? buildWrappedYear(opts.yearWindow, metaOf) : null
+  const year = built && !isEmptyYear(built) ? built : null
 
-  return { portrait, wrapped, backlog, headline, evidence, starter, mosaic, purgatory, covers }
+  const shown: Array<{ appid: number }> = [...wrapped.top, ...evidence, ...mosaic.flat(), ...purgatory]
+  if (starter) shown.push(starter)
+  if (year) shown.push(...yearShown(year))
+  const covers = coversOf(shown, metaOf)
+
+  return { portrait, wrapped, backlog, headline, evidence, starter, mosaic, purgatory, year, covers }
 }

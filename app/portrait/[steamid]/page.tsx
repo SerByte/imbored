@@ -4,7 +4,7 @@ import { headers } from 'next/headers'
 import * as m from 'framer-motion/m'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { cache } from 'react'
+import { cache, type ReactNode } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
@@ -18,6 +18,7 @@ import {
   bannedAppids,
   getGamesMetaLite,
   getLatestSnapshot,
+  getLibraryBaselines,
   getPersonaName,
   getUserPortrait,
   loadTagStats,
@@ -28,6 +29,9 @@ import { takeLlmBudget } from '@/lib/llmcap'
 import { reconnectHref } from '@/lib/destination'
 import { OG_SITE } from '@/lib/site'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
+import { dateLabel } from '@/lib/freshness'
+import { playedLine } from '@/lib/outcome'
+import { pickYearWindow, yearEyebrow, yearsToRead, type WrappedYear } from '@/lib/wrapped'
 import { plural } from '@/lib/plural'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { buildPortraitModel, portraitTag, type PortraitModel } from '@/lib/portraitmodel'
@@ -221,18 +225,26 @@ async function loadModel(
       // карта тегов — здесь же, внутри кэша: страница публичная, и читать их
       // на каждый заход значило бы платить всей историей фидбека владельца и
       // всей таблицей тегов за каждый просмотр чужой ссылки
-      const [metas, banned, tagStats] = await Promise.all([
+      //
+      // Отметки года — тоже здесь: блоб библиотеки на начало года, и
+      // платить им за каждый просмотр незачем. Год — от снапшота, а не от
+      // часов сервера: ключ кэша — снапшот (yearsToRead)
+      const [fromYear, toYear] = yearsToRead(snapshot.takenAt)
+      const [metas, banned, tagStats, baselines] = await Promise.all([
         getGamesMetaLite(db, snapshot.games.map((g) => g.appid)),
         bannedAppids(db, steamid),
         loadTagStats(db),
+        getLibraryBaselines(db, steamid, fromYear, toYear),
       ])
       return buildPortraitModel(snapshot.games, (id) => metas.get(id), now, MOSAIC_PLAN, {
         banned,
         // «Начни с этой» — той же мерой вкуса, что /play
         tagWeight: tagWeightFrom(tagStats),
+        yearWindow: pickYearWindow(snapshot, baselines),
       })
     },
-    ['portrait-model:v2', steamid, String(snapshot.takenAt)],
+    // v3 — в модели появились итоги года: запись v2 без них отдавалась бы сутки
+    ['portrait-model:v3', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
   try {
@@ -526,6 +538,11 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         </section>
       )}
 
+      {/* ——— 2½. Итоги года ——— */}
+      {model.year && (
+        <YearBlock year={model.year} steamid={steamid} cover={cover} />
+      )}
+
       {/* ——— 3. Диагноз ——— */}
       {portrait.archetypes.length > 0 && (
         <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
@@ -758,5 +775,78 @@ function Fact({
         <CountNumber value={value} delay={delay} />
       </dd>
     </div>
+  )
+}
+
+/**
+ * Итоги года — коротко, между подиумом и диагнозом: сколько наиграно по
+ * снимкам, тройка года по приросту, сколько распаковано и появилось, две
+ * честные даты и дверь на страницу итогов целиком. Голос нейтральный: блок
+ * читают и владелец, и гость по ссылке.
+ */
+function YearBlock({
+  year,
+  steamid,
+  cover,
+}: {
+  year: WrappedYear
+  steamid: string
+  cover: (g: { appid: number; name: string }, sizes: string) => ReactNode
+}) {
+  return (
+    <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
+      <m.p {...inView()} className={`${eyebrow()} mb-3`}>
+        {yearEyebrow(year)}
+      </m.p>
+      <m.h2 {...inView(1)} className="font-display text-display-lg">
+        <span className="tabular-nums text-ember-text">{playedLine(year.minutes)}</span> в играх
+      </m.h2>
+      <m.p {...inView(2)} className="mt-3 text-dim text-sm">
+        По снимкам библиотеки: с {dateLabel(year.from, { year: year.fromPrevYear })} по{' '}
+        {dateLabel(year.to, { year: year.closed })}.
+      </m.p>
+
+      {year.top.length > 0 && (
+        <div className="mt-10 flex flex-col gap-3">
+          {year.top.slice(0, 3).map((g, i) => (
+            <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
+              <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
+              <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+                <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
+              </Link>
+              <div className="min-w-0 flex-1 truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">
+                {g.name}
+              </div>
+              <span className="shrink-0 text-sm font-bold tabular-nums text-dim">+{playedLine(g.minutes)}</span>
+            </m.div>
+          ))}
+        </div>
+      )}
+
+      {(year.unpacked.count > 0 || year.added.count > 0) && (
+        <m.p {...inView()} className="mt-8 text-dim text-sm">
+          {year.unpacked.count > 0 && (
+            <>
+              <span className="tabular-nums text-ink">{year.unpacked.count}</span>{' '}
+              {plural(year.unpacked.count, 'игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено')}
+            </>
+          )}
+          {year.unpacked.count > 0 && year.added.count > 0 && ' · '}
+          {year.added.count > 0 && (
+            <>
+              <span className="tabular-nums text-ink">{year.added.count}</span>{' '}
+              {plural(year.added.count, 'появилась', 'появились', 'появилось')} в библиотеке
+            </>
+          )}
+        </m.p>
+      )}
+
+      <m.div {...inView()} className="mt-8">
+        <Link href={`/portrait/${steamid}/year`} prefetch={false} className="tap link-more">
+          Все итоги года
+          <Icon name="arrow" size={16} />
+        </Link>
+      </m.div>
+    </section>
   )
 }

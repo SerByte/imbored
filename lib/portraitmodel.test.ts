@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { buildPortraitModel, portraitTag, PURGATORY_MAX } from './portraitmodel'
+import { buildPortraitModel, buildYearModel, portraitTag, PURGATORY_MAX } from './portraitmodel'
 import type { GameMeta, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
@@ -50,6 +50,24 @@ function collector(): { games: LibraryGame[]; metas: Map<number, GameMeta> } {
   return { games, metas }
 }
 
+/**
+ * Окно года для коллекционера: на отметке сотня игр была на десять часов
+ * меньше, пары нетронутых не было вовсе, а две сотни лежали с нулём минут и
+ * две из них с тех пор запущены.
+ */
+function yearWindowOf(games: LibraryGame[]) {
+  const base = games
+    .filter((g) => g.appid !== 40_100 && g.appid !== 40_099)
+    .map((g) => (g.appid > 0 && g.appid <= 100 ? { ...g, playtimeForever: g.playtimeForever - 600 } : g))
+  const end = games.map((g) => (g.appid === 101 || g.appid === 102 ? { ...g, playtimeForever: 45 } : g))
+  return {
+    year: 2023,
+    closed: false,
+    base: { takenAt: NOW - 90 * 86_400, games: base },
+    end: { takenAt: NOW, games: end },
+  }
+}
+
 describe('buildPortraitModel', () => {
   test('модель переживает JSON без потерь: кэш Next хранит её строкой', () => {
     const { games, metas } = collector()
@@ -71,13 +89,19 @@ describe('buildPortraitModel', () => {
 
   test('обложка есть у каждой игры, которую страница рисует', () => {
     const { games, metas } = collector()
-    const model = buildPortraitModel(games, (id) => metas.get(id), NOW, PLAN)
+    const model = buildPortraitModel(games, (id) => metas.get(id), NOW, PLAN, {
+      yearWindow: yearWindowOf(games),
+    })
+    expect(model.year).not.toBeNull()
     const shown = [
       ...model.wrapped.top,
       ...model.evidence,
       ...model.mosaic.flat(),
       ...model.purgatory,
       ...(model.starter ? [model.starter] : []),
+      ...(model.year?.top ?? []),
+      ...(model.year?.unpacked.games ?? []),
+      ...(model.year?.added.games ?? []),
     ]
     expect(shown.length).toBeGreaterThan(0)
     for (const g of shown) {
@@ -145,5 +169,41 @@ describe('buildPortraitModel', () => {
     expect(model.backlog.pricedCount).toBe(0)
     // Обложки без ссылок: GameArt построит запасную по appid
     expect(Object.values(model.covers).every((c) => !c.headerImage && !c.art)).toBe(true)
+  })
+})
+
+describe('итоги года в модели', () => {
+  test('без окна итогов нет, и шаблон без меты тоже без них', () => {
+    const { games, metas } = collector()
+    expect(buildPortraitModel(games, (id) => metas.get(id), NOW, PLAN).year).toBeNull()
+    expect(buildPortraitModel(games, () => undefined, NOW, PLAN).year).toBeNull()
+  })
+
+  test('коллекционер с итогами — модель по-прежнему маленькая и переживает JSON', () => {
+    const { games, metas } = collector()
+    // пять тысяч новых игр одним бандлом
+    const bundle = Array.from({ length: 5_000 }, (_, i) => lib(50_000 + i, 0))
+    const w = yearWindowOf(games)
+    const window = { ...w, end: { ...w.end, games: [...w.end.games, ...bundle] } }
+    const model = buildPortraitModel([...games, ...bundle], (id) => metas.get(id), NOW, PLAN, {
+      yearWindow: window,
+    })
+    expect(model.year?.added.count).toBe(5_002)
+    expect(model.year?.unpacked.games.map((g) => g.appid)).toEqual([101, 102])
+    expect(JSON.stringify(model).length).toBeLessThan(64_000)
+    expect(JSON.parse(JSON.stringify(model))).toEqual(model)
+  })
+
+  test('модель страницы года: пустые итоги — null, иначе обложки ровно показанного', () => {
+    const { games, metas } = collector()
+    const same = { takenAt: NOW - 86_400, games }
+    const metaOf = (id: number) => metas.get(id)
+    const empty = { year: 2023, closed: false, base: same, end: { takenAt: NOW, games } }
+    expect(buildYearModel(empty, metaOf)).toBeNull()
+    const model = buildYearModel(yearWindowOf(games), metaOf)
+    const year = model?.year
+    const shown = [...(year?.top ?? []), ...(year?.unpacked.games ?? []), ...(year?.added.games ?? [])]
+    const ids = (xs: number[]) => [...new Set(xs)].sort((a, b) => a - b)
+    expect(ids(Object.keys(model?.covers ?? {}).map(Number))).toEqual(ids(shown.map((g) => g.appid)))
   })
 })

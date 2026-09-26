@@ -1,3 +1,4 @@
+import { dateLabel } from './freshness'
 import { parseReleaseYear } from './ingest'
 import { isJunk, looksLikeNonGame } from './junk'
 import { libraryDelta, minutesByApp } from './libdelta'
@@ -288,6 +289,11 @@ export function buildWrappedYear(w: YearWindow, metaOf: MetaOf): WrappedYear {
     },
     removedCount: d.removedCount,
   }
+}
+
+/** «Итоги 2026» или «2026 · с 23 сентября» — когда отметка поставлена не в начале года */
+export function yearEyebrow(y: Pick<WrappedYear, 'year' | 'partial' | 'from'>): string {
+  return y.partial ? `${y.year} · с ${dateLabel(y.from)}` : `Итоги ${y.year}`
 }
 
 /** Сказать нечего — блок итогов не рисуется */
