@@ -4,6 +4,7 @@ import { useReducedMotion } from 'motion/react'
 import { useRef, useState } from 'react'
 import { Spinner } from '@/components/Spinner'
 import type { Trailer } from '@/lib/trailer'
+import { Icon } from '@/components/Icon'
 
 /** idle — постер и кнопка; loading — нажали, ждём первого кадра */
 type State = 'idle' | 'loading' | 'playing' | 'failed'
@@ -86,18 +87,18 @@ export function TrailerPreview({
         <button
           type="button"
           onClick={start}
-          className="rounded-full glass glass-hover px-4 py-2 text-sm inline-flex items-center gap-2"
+          className="btn-glass"
         >
-          <span aria-hidden>▶</span>
+          <Icon name="play" size={16} />
           В движении
-          <span className="text-dim">· без звука</span>
+          <span className="font-semibold text-dim">· без звука</span>
           {forReader}
         </button>
       )}
       <div
         ref={boxRef}
         tabIndex={-1}
-        className={`relative aspect-video w-full overflow-hidden rounded-[20px] border border-edge bg-surface ${
+        className={`relative aspect-video w-full overflow-hidden rounded-(--radius-panel) border border-edge bg-surface ${
           open ? '' : 'hidden'
         }`}
       >
@@ -132,7 +133,7 @@ export function TrailerPreview({
             )}
             <div className="absolute inset-0 flex items-center justify-center p-4">
               {state === 'failed' ? (
-                <p role="status" className="glass rounded-[14px] px-4 py-2 text-sm text-dim">
+                <p role="status" className="panel-lift px-4 py-2 text-sm text-dim">
                   Видео не загрузилось
                 </p>
               ) : state === 'loading' ? (
@@ -141,11 +142,11 @@ export function TrailerPreview({
                 <button
                   type="button"
                   onClick={start}
-                  className="rounded-full glass glass-hover px-5 py-3 text-sm inline-flex items-center gap-2"
+                  className="btn-glass"
                 >
-                  <span aria-hidden>▶</span>
+                  <Icon name="play" size={16} />
                   В движении
-                  <span className="text-dim">· без звука</span>
+                  <span className="font-semibold text-dim">· без звука</span>
                   {forReader}
                 </button>
               )}

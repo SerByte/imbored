@@ -245,8 +245,9 @@ function TopCard({
           */}
           {card.ownedByAll ? (
             alone ? null : (
-              <span className="rounded-full bg-ok/15 text-ok px-3 py-1 text-xs font-medium">
-                ✓ Есть у всех
+              <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 text-ok px-3 py-1 text-xs font-semibold">
+                <Icon name="check" size={12} />
+                Есть у всех
               </span>
             )
           ) : (

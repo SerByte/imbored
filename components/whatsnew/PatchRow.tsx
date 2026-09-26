@@ -17,6 +17,7 @@ import { changesLabel, freshness } from './format'
 import { useNow } from './Now'
 import { MetaLine } from '@/components/Labels'
 import { stripGameName } from '@/lib/patchtitle'
+import { Icon } from '@/components/Icon'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -164,9 +165,9 @@ export function PatchRow({
         onFocus={loadBody}
         onTouchStart={loadBody}
         aria-expanded={open}
-        className="group flex w-full items-start gap-4 py-6 text-left transition-opacity md:gap-6"
+        className="group game-card flex w-full items-start gap-4 py-6 text-left transition-opacity md:gap-6"
       >
-        <span className="w-[92px] shrink-0 overflow-hidden rounded-[var(--radius-card)] border border-edge md:w-[168px]">
+        <span className="card-thumb w-[92px] shrink-0 md:w-[168px]">
           <GameArt
             appid={item.appid}
             name={name}
@@ -188,7 +189,7 @@ export function PatchRow({
 
           {/* Название игры уже стоит строкой выше — в заголовке патча оно лишнее.
               Каждый пятый заголовок из Steam начинается именно с него. */}
-          <span className="text-sm font-medium leading-snug text-ink/90 md:text-base">
+          <span className="text-sm font-semibold leading-snug text-ink/90 md:text-base">
             {stripGameName(item.title, name)}
           </span>
 
@@ -208,7 +209,7 @@ export function PatchRow({
           className="mt-1 shrink-0 text-dim transition-transform duration-200"
           style={{ transform: open ? 'rotate(180deg)' : 'none' }}
         >
-          ▾
+          <Icon name="down" size={18} />
         </span>
       </button>
 
@@ -226,9 +227,10 @@ export function PatchRow({
             href={`/game/${item.appid}`}
             // -my-1.5 гасит собственную высоту: палец получает свои 44 пикселя,
             // а ритм строки не меняется
-            className="-my-1.5 py-1.5 font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+            className="-my-1.5 inline-flex items-center gap-1.5 py-1.5 font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
-            Открыть игру →
+            Открыть игру
+            <Icon name="arrow" size={16} />
           </Link>
         </div>
       ) : null}

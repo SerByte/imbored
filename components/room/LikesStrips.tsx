@@ -29,7 +29,7 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
         {near.map((n, i) => (
           <li
             key={`${n.forNames.join()}|${n.pendingNames.join()}`}
-            className="glass rounded-[var(--radius-card)] px-4 py-3 text-sm flex flex-wrap items-baseline gap-x-1.5 gap-y-1"
+            className="rounded-(--radius-card) bg-surface px-4 py-3 text-sm flex flex-wrap items-baseline gap-x-1.5 gap-y-1"
           >
             {/*
               БЕЗ РОДА У ГЛАГОЛА. Здесь стояло «{имя} сошёлся» — мужской род,
@@ -82,7 +82,7 @@ export function MyLikesRail({ games }: { games: LikedGame[] }) {
             headerImage={g.headerImage}
             art={g.art}
             sizes="136px"
-            className="w-full aspect-[460/215] object-cover rounded-[14px] border border-edge"
+            className="w-full aspect-[460/215] object-cover rounded-(--radius-card) border border-edge"
           />
           {/* GameArt отдаёт alt="", поэтому подпись обязательна — иначе рельс
               для скринридера превращается в список безымянных картинок */}

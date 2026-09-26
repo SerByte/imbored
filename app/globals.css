@@ -3282,6 +3282,132 @@ textarea:focus-visible {
 .lib-mosaic-cell:nth-child(5n + 4) {
   transform: translateY(18%);
 }
+/*
+ * Плитка-действие с подписью (components/room/AloneInvite): кнопка, у которой
+ * под названием строка о том, что произойдёт. Главная — белая, как основная
+ * кнопка; вторая — стекло панели, нажатая — тинт акцента.
+ */
+.action-tile {
+  display: block;
+  width: 100%;
+  padding: 1rem 1.25rem;
+  text-align: left;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--edge);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ink) 6%, transparent), transparent 44%), var(--glass-bg);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out);
+}
+.action-tile:hover {
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+}
+.action-tile:active {
+  transform: scale(0.98);
+}
+.action-tile.is-primary {
+  border-color: transparent;
+  background: var(--ember);
+  color: var(--on-ember);
+}
+.action-tile.is-primary:hover {
+  background: color-mix(in srgb, var(--ember) 88%, var(--bg));
+}
+.action-tile[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  background: color-mix(in srgb, var(--ember) 15%, transparent);
+  color: var(--ember-text);
+}
+.action-tile.is-static {
+  cursor: default;
+}
+.action-tile.is-static:active {
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .action-tile:active {
+    transform: none;
+  }
+}
+
+/*
+ * Портрет игрока (app/portrait/[steamid]): стена постеров во весь герой —
+ * восемь колонок, чётные сдвинуты вниз, как у .lib-mosaic; наклон тот же.
+ * Затемняет её градиент страницы, здесь только раскладка.
+ */
+.portrait-wall {
+  position: absolute;
+  inset: -14% -8% auto;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: clamp(8px, 1.1vw, 14px);
+  transform: rotate(-6deg);
+  opacity: 0.8;
+}
+.portrait-wall-cell {
+  display: block;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.portrait-wall-cell:nth-child(2n) {
+  transform: translateY(22%);
+}
+@media (max-width: 767px) {
+  .portrait-wall {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    inset: -6% -14% auto;
+  }
+}
+/* Место в топе — крупной цифрой, как номер в чарте */
+.portrait-rank {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.5rem;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.portrait-index {
+  font-size: clamp(3.5rem, 2.4rem + 4.6vw, 6rem);
+}
+.portrait-index-of {
+  font-size: 0.36em;
+  letter-spacing: -0.02em;
+  color: var(--dim);
+}
+/* Вывод страницы — цитатой: крупно, с ёлочками акцентом */
+.portrait-quote blockquote {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.25rem, 1.08rem + 0.7vw, 1.625rem);
+  line-height: 1.38;
+  letter-spacing: -0.015em;
+  text-wrap: pretty;
+  color: var(--ink);
+}
+.portrait-quote blockquote::before {
+  content: '«';
+  display: block;
+  margin-bottom: 0.1em;
+  font-size: 2.6em;
+  font-weight: 800;
+  line-height: 0.8;
+  color: var(--ember-text);
+}
+.portrait-quote figcaption {
+  margin-top: 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--dim);
+}
+
 .lib-hero-scrim {
   position: absolute;
   z-index: -1;
@@ -4079,6 +4205,75 @@ img[data-art-fade][data-loaded] {
     opacity: 0;
     transform: translateY(8px);
   }
+}
+
+/*
+ * Совместимость (app/compat/[steamid]): две ленты постеров навстречу друг
+ * другу — механика .pwall, но две строки и в верхней части шапки, чтобы
+ * текст внизу стоял на ровном. Скрим — сверху прозрачный, к тексту фон.
+ */
+.cwall .pwall-grid {
+  inset: -18% -30% 30%;
+  opacity: 0.62;
+  transform: rotate(-6deg);
+}
+.cwall .pwall-row {
+  animation-duration: 90s;
+}
+.cwall .pwall-row:nth-child(2) {
+  animation-duration: 110s;
+}
+.cwall-poster {
+  height: clamp(170px, 27vh, 270px);
+  aspect-ratio: 2 / 3;
+  flex: none;
+  border-radius: var(--radius-card);
+  object-fit: cover;
+  background: var(--surface);
+}
+.cwall-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--bg) 30%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 55%, transparent) 30%,
+    var(--bg) 62%
+  );
+}
+/* Процент — крупнее остальных чисел: это счёт, ради которого открыли ссылку */
+.compat-percent {
+  font-size: clamp(4rem, 2.6rem + 6vw, 7.5rem);
+  letter-spacing: -0.06em;
+}
+.compat-percent-sign {
+  font-size: 0.5em;
+  margin-left: 0.04em;
+  letter-spacing: 0;
+}
+/* Строка общей игры: капсула и счёт часов, без стеклянной рамки */
+.common-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem;
+  border-radius: calc(var(--radius-card) + 4px);
+  transition: background-color var(--dur-base) var(--ease-out);
+}
+.common-row:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.compat-tag {
+  border-radius: 999px;
+  padding: 0.5rem 0.95rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--dim);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.compat-tag.is-top {
+  color: var(--ember-text);
+  background: color-mix(in srgb, var(--ember) 16%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

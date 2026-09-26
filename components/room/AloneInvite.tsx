@@ -65,9 +65,12 @@ export function AloneInvite({
       <div className="relative grid gap-3 sm:grid-cols-2">
         <button
           onClick={onCopyLink}
-          className="rounded-[20px] bg-ember text-on-ember px-5 py-4 text-left hover:brightness-110 active:scale-[0.98] transition cursor-pointer"
+          className="action-tile is-primary"
         >
-          <span className="block font-semibold">{copied ? 'Скопировано' : 'Позвать своих'}</span>
+          <span className="flex items-center gap-2 font-extrabold">
+            <Icon name={copied ? 'check' : 'link'} size={18} />
+            {copied ? 'Скопировано' : 'Позвать своих'}
+          </span>
           {/* Подпись обязана называть то, что произойдёт: на телефоне это не буфер */}
           <span className="block text-xs opacity-80 mt-0.5">
             {native ? 'Откроется «Поделиться»' : 'Ссылка в буфер — кидай в чат'}
@@ -78,13 +81,13 @@ export function AloneInvite({
           <button
             onClick={onTogglePublic}
             aria-pressed={isPublic}
-            className={`rounded-[20px] px-5 py-4 text-left transition cursor-pointer ${
-              isPublic ? 'bg-ember/15 text-ember-text' : 'glass glass-hover'
-            }`}
+            className="action-tile"
           >
-            <span className="flex items-center gap-2 font-semibold">
-              {isPublic && (
+            <span className="flex items-center gap-2 font-extrabold">
+              {isPublic ? (
                 <span aria-hidden className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
+              ) : (
+                <Icon name="users" size={18} />
               )}
               {isPublic ? 'Комната на доске' : 'Пустить чужих'}
             </span>
@@ -95,8 +98,8 @@ export function AloneInvite({
             </span>
           </button>
         ) : (
-          <div className="panel-lift px-5 py-4 text-left">
-            <span className="block text-sm text-dim">Комната не на доске</span>
+          <div className="action-tile is-static">
+            <span className="block text-sm font-bold text-dim">Комната не на доске</span>
             <span className="block text-xs text-faint mt-0.5">
               Выложить может только тот, кто её создал
             </span>
@@ -125,7 +128,7 @@ export function AloneInvite({
             aria-describedby="room-link-note"
             value={typeof window === 'undefined' ? '' : window.location.href}
             onFocus={(e) => e.currentTarget.select()}
-            className="rounded-[14px] bg-surface border border-edge px-4 py-2.5 text-sm font-mono text-dim w-full"
+            className="rounded-(--radius-control) bg-surface border border-edge px-4 py-2.5 text-sm font-mono text-dim w-full"
           />
         </div>
       )}
@@ -136,8 +139,9 @@ export function AloneInvite({
 /** Тихая строка «а можно и не тут» — одинаковая во всех режимах ожидания */
 export function RoomEscapeHatch({ className = '' }: { className?: string }) {
   return (
-    <Link href="/rooms" className={`tap text-sm text-dim hover:text-ink transition-colors ${className}`}>
-      Подсесть к другим <Icon name="arrow" size={14} className="inline-block align-[-0.1em]" />
+    <Link href="/rooms" className={`tap link-more ${className}`}>
+      Подсесть к другим
+      <Icon name="arrow" size={16} />
     </Link>
   )
 }

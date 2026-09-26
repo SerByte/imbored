@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react'
 import { Portal } from '@/components/Portal'
 import { stepIndex, swipeStep } from '@/lib/lightbox'
 import { backdropOf, holdScroll, makeInert } from '@/lib/pagelock'
+import { Icon } from '@/components/Icon'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -187,7 +188,7 @@ export function Lightbox({
             draggable={false}
             initial={layoutId ? undefined : { opacity: 0, scale: 0.97 }}
             animate={layoutId ? undefined : { opacity: 1, scale: 1 }}
-            className="relative max-h-[85vh] w-auto max-w-full rounded-[20px] border border-edge"
+            className="relative max-h-[85vh] w-auto max-w-full rounded-(--radius-panel) border border-edge"
             transition={{ duration: 0.35, ease: EASE }}
           />
           <button
@@ -197,9 +198,9 @@ export function Lightbox({
               onClose()
             }}
             aria-label="Закрыть"
-            className="absolute top-5 right-5 rounded-full glass px-4 py-2 text-sm cursor-pointer"
+            className="btn-circle absolute top-5 right-5"
           >
-            Закрыть ✕
+            <Icon name="close" size={18} />
           </button>
           {many && (
             <>
@@ -215,7 +216,7 @@ export function Lightbox({
                   onIndex(stepIndex(index, -1, images.length))
                 }}
                 aria-label="Предыдущий кадр"
-                className="absolute left-3 top-1/2 -translate-y-1/2 grid h-11 w-11 place-items-center rounded-full glass cursor-pointer"
+                className="btn-circle absolute left-3 top-1/2 -translate-y-1/2"
               >
                 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                   <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -228,7 +229,7 @@ export function Lightbox({
                   onIndex(stepIndex(index, 1, images.length))
                 }}
                 aria-label="Следующий кадр"
-                className="absolute right-3 top-1/2 -translate-y-1/2 grid h-11 w-11 place-items-center rounded-full glass cursor-pointer"
+                className="btn-circle absolute right-3 top-1/2 -translate-y-1/2"
               >
                 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                   <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

@@ -284,16 +284,18 @@ export default function DailyPage() {
 
         {/* Кандидатов нет — вернуть игры из бана можно только в библиотеке. */}
         {reason === 'nocandidates' && (
-          <Link href="/library" className="tap text-sm text-dim transition-colors hover:text-ink">
-            Посмотреть библиотеку →
+          <Link href="/library" className="tap link-more">
+            Посмотреть библиотеку
+            <Icon name="arrow" size={16} />
           </Link>
         )}
 
         {/* Обычный подбор предлагается везде, КРОМЕ случая без библиотеки: там
             он упрётся ровно в ту же причину, и совет был бы тупиком. */}
         {reason !== 'nolibrary' && (
-          <Link href="/quiz" className="tap text-sm text-dim transition-colors hover:text-ink">
-            Обычный подбор →
+          <Link href="/quiz" className="tap link-more">
+            Обычный подбор
+            <Icon name="arrow" size={16} />
           </Link>
         )}
 
@@ -565,8 +567,9 @@ export default function DailyPage() {
               </p>
             )}
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
-              <Link href="/quiz" className="tap text-dim hover:text-ink transition-colors">
-                Хочу выбрать сам →
+              <Link href="/quiz" className="tap link-more">
+                Хочу выбрать сам
+                <Icon name="arrow" size={16} />
               </Link>
               {/* Магазинный день — раз в три: кто сегодня покупать не собирался,
                   берёт свою одним нажатием, а не уходит в обычный подбор */}
@@ -580,9 +583,10 @@ export default function DailyPage() {
                     setRerollMiss(null)
                     setSaid(`Игра дня: ${next.name}`)
                   }}
-                  className="tap text-dim hover:text-ink transition-colors cursor-pointer"
+                  className="tap link-more cursor-pointer"
                 >
-                  {ownDay ? 'Вернуть игру дня из магазина' : 'Сегодня хочу из своего →'}
+                  {ownDay ? 'Вернуть игру дня из магазина' : 'Сегодня хочу из своего'}
+                  {!ownDay && <Icon name="arrow" size={16} />}
                 </button>
               )}
             </div>

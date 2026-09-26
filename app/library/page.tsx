@@ -303,7 +303,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             */
             <div className="panel-lift p-5 flex flex-col items-start gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <div className="text-lg font-bold">
+                <div className="font-display text-display-xs">
                   <span className="tabular-nums text-ember-text">{backlog.unplayedCount}</span>{' '}
                   {plural(backlog.unplayedCount, 'игра уже твоя', 'игры уже твои', 'игр уже твои')} —
                   попробовать можно прямо сейчас
@@ -327,7 +327,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           )}
           {stats.rate !== null && (
             <div className="panel-lift p-5">
-              <div className="text-lg font-bold">
+              <div className="font-display text-display-xs">
                 Подбор попадает в{' '}
                 <span className="match">{Math.round(stats.rate * 100)}%</span>
               </div>

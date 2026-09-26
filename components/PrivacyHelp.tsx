@@ -15,7 +15,7 @@
  */
 export function PrivacyHelp() {
   return (
-    <div className="glass rounded-[20px] p-5 text-sm leading-relaxed anim-rise">
+    <div className="panel-lift p-5 text-sm leading-relaxed anim-rise">
       <p className="font-semibold text-ink mb-2">Библиотека скрыта настройками Steam</p>
       <p className="text-dim">
         Steam по умолчанию прячет список игр даже при публичном профиле. Открой его — это меняется

@@ -33,7 +33,7 @@ export function LeaderPick({
         headerImage={leader.headerImage}
         art={leader.art}
         sizes="(min-width: 640px) 184px, 100vw"
-        className="w-full sm:w-[184px] shrink-0 aspect-[460/215] object-cover rounded-[14px] border border-edge"
+        className="w-full sm:w-[184px] shrink-0 aspect-[460/215] object-cover rounded-(--radius-card) border border-edge"
       />
       <div className="flex flex-col gap-2 text-center sm:text-left">
         <h3 className="font-semibold">Берём «{leader.name}»?</h3>

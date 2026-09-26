@@ -9,7 +9,7 @@ import { BlurBand } from '@/components/BlurBand'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
-import { ProgressRing } from '@/components/ProgressRing'
+import { GameCardBody } from '@/components/GameCard'
 import { ShareLinkField } from '@/components/ShareLink'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Eyebrow, eyebrow } from '@/components/Labels'
@@ -43,6 +43,7 @@ import { appBaseUrl, currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent } from '@/lib/stats'
 import { tagWeightFrom } from '@/lib/tagweight'
 import type { LibraryGame } from '@/lib/types'
+import { Icon } from '@/components/Icon'
 
 export const dynamic = 'force-dynamic'
 
@@ -175,6 +176,9 @@ const MOSAIC_PLAN = [
   { take: 24, step: 8, cols: 'grid-cols-4 md:grid-cols-8', sizes: '(min-width: 768px) 13vw, 25vw' },
 ]
 
+/** Постеров в стене героя: восемь колонок на четыре ряда на десктопе */
+const PORTRAIT_WALL = 32
+
 /** Адрес исчерпал холодные сборки. Бросается ИЗ кэшируемой функции: такой результат кэшу не достаётся */
 class ColdBuildLimited extends Error {}
 
@@ -250,8 +254,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
         <p className="text-lg">Этот игрок ещё не подключал библиотеку к imbored.</p>
-        <Link href={reconnectHref()} className="tap text-ember-text hover:underline text-sm">
-          Подключить свою →
+        <Link href={reconnectHref()} className="tap link-more">
+          Подключить свою
+          <Icon name="arrow" size={16} />
         </Link>
       </div>
     )
@@ -347,6 +352,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
    * где-то вдвое крупнее (и грузила лишнее). Обязательный довод заставляет
    * каждое место назвать свою ширину — забыть его нельзя, сборка не даст.
    */
+  const flat = mosaic.flat()
+  const wall = flat.length ? Array.from({ length: PORTRAIT_WALL }, (_, i) => flat[i % flat.length]) : []
+
   const cover = (
     g: { appid: number; name: string },
     sizes: string,
@@ -371,13 +379,28 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         className="media-dark relative flex min-h-screen flex-col justify-end overflow-hidden"
         style={{ minHeight: '100svh' }}
       >
-        <div aria-hidden className="absolute inset-0 flex flex-col">
-          {mosaic.map((block, bi) => (
-            <div key={MOSAIC_PLAN[bi].cols} className={`grid ${MOSAIC_PLAN[bi].cols}`}>
-              {block.map((g) => (
-                <div key={g.appid}>{cover(g, MOSAIC_PLAN[bi].sizes, '', bi === 0)}</div>
-              ))}
-            </div>
+        {/*
+          Библиотека стеной постеров — самые наигранные первыми, то есть в
+          верхнем левом углу, где взгляд начинает. Раньше стена была из
+          капсул 460×215 рядами разной высоты и читалась как таблица.
+          Маленькая библиотека добирается повтором, как стена ожидания:
+          иначе от стены оставался один ряд.
+        */}
+        <div aria-hidden className="portrait-wall">
+          {wall.map((g, i) => (
+            <span key={i} className="portrait-wall-cell">
+              <GameArt
+                appid={g.appid}
+                name={g.name}
+                headerImage={model.covers[g.appid]?.headerImage ?? null}
+                art={model.covers[g.appid]?.art ?? null}
+                variant="poster"
+                sizes="(min-width: 768px) 12vw, 25vw"
+                eager={i < 8}
+                fallback={null}
+                className="h-full w-full object-cover"
+              />
+            </span>
           ))}
         </div>
         <div
@@ -385,13 +408,13 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           className="absolute inset-0"
           style={{
             background:
-              'linear-gradient(to top, #050505 6%, rgba(5,5,5,0.86) 30%, rgba(5,5,5,0.5) 62%, rgba(5,5,5,0.7) 100%)',
+              'linear-gradient(to top, #050505 6%, rgba(5,5,5,0.86) 30%, rgba(5,5,5,0.45) 62%, rgba(5,5,5,0.5) 100%)',
           }}
         />
         <BlurBand height="46vh" dir="up" />
         <div aria-hidden className="grain" />
 
-        <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-40">
+        <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
           <Eyebrow className="mb-3">Портрет игрока</Eyebrow>
           <SplitHeading
             className="font-display text-display-xl"
@@ -399,15 +422,16 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           >
             {name}
           </SplitHeading>
-          <div className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
+          <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
             <Fact value={wrapped.gamesCount} caption={gamesCaption(wrapped.gamesCount)} delay={300} />
             <Fact value={wrapped.totalHours} caption={hoursCaption(wrapped.totalHours)} delay={360} />
             <Fact
               value={wrapped.unplayedCount}
               caption={unplayedCaption(wrapped.unplayedCount)}
               delay={420}
+              accent
             />
-          </div>
+          </dl>
           {wrapped.days > 0 && (
             <p className="mt-6 text-dim text-sm md:text-base">
               Это <span className="tabular-nums text-ink">{wrapped.days.toLocaleString('ru-RU')}</span>{' '}
@@ -425,26 +449,20 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
       {/* ——— 2. Подиум: куда ушло время ——— */}
       {wrapped.top.length > 0 && (
-        <section className="relative mx-auto w-full max-w-5xl px-5 py-24 md:py-32">
-          <motion.p
-            {...inView()}
-            className={`${eyebrow()} mb-8`}
-          >
+        <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
+          <motion.h2 {...inView()} className="mb-8 font-display text-display-lg">
             Куда ушло время
-          </motion.p>
+          </motion.h2>
 
           <div className="flex flex-col gap-3">
             {wrapped.top.map((g, i) => (
               <motion.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
-                <span className="tabular-nums text-dim text-sm w-5 shrink-0">{i + 1}</span>
-                <Link
-                  href={`/game/${g.appid}`}
-                  className="glass glass-hover rounded-[14px] overflow-hidden w-28 md:w-44 shrink-0"
-                >
-                  {cover(g, '(min-width: 768px) 176px, 112px')}
+                <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
+                <Link href={`/game/${g.appid}`} className="game-card w-28 shrink-0 md:w-44">
+                  <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
                 </Link>
                 <div className="min-w-0 flex-1">
-                  <div className="font-semibold truncate">{g.name}</div>
+                  <div className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">{g.name}</div>
                   <div className="mt-1.5 h-1.5 rounded-full bg-track overflow-hidden">
                     <motion.div
                       className="h-full rounded-full bg-ember"
@@ -455,7 +473,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                     />
                   </div>
                 </div>
-                <span className="tabular-nums text-sm text-dim shrink-0">
+                <span className="shrink-0 text-sm font-bold tabular-nums text-dim">
                   {g.hours.toLocaleString('ru-RU')} ч
                 </span>
               </motion.div>
@@ -473,16 +491,15 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 без него диктор произносит голое число, а чего именно это
                 число, из разметки не следует.
               */}
-              <ProgressRing
-                percent={wrapped.concentration}
-                size={140}
-                stroke={8}
-                suffix=""
-                ariaLabel={`Концентрация ${wrapped.concentration} из 100`}
-              />
+              <p className="lib-stat portrait-index" aria-label={`Концентрация ${wrapped.concentration} из 100`}>
+                <span aria-hidden>
+                  {wrapped.concentration}
+                  <span className="portrait-index-of">/100</span>
+                </span>
+              </p>
             </motion.div>
             <motion.div {...inView(1)} className="text-center md:text-left">
-              <p className="text-lg md:text-xl leading-relaxed">
+              <p className="font-display text-display-sm">
                 {paretoLead(voice)}{' '}
                 <span className="tabular-nums text-ember-text">{wrapped.pareto80}</span>{' '}
                 {plural(wrapped.pareto80, 'игра', 'игры', 'игр')} из{' '}
@@ -505,11 +522,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
       {/* ——— 3. Диагноз ——— */}
       {portrait.archetypes.length > 0 && (
-        <section className="relative mx-auto w-full max-w-5xl px-5 py-24 md:py-32">
-          <motion.p
-            {...inView()}
-            className={`${eyebrow()} mb-3`}
-          >
+        <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
+          <motion.p {...inView()} className={`${eyebrow()} mb-3`}>
             Диагноз
           </motion.p>
           {headline && (
@@ -522,16 +536,18 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           )}
 
           {evidence.length > 0 && (
-            <div className="grid grid-cols-3 gap-3 mb-12">
+            <div className="mb-12 grid grid-cols-3 gap-3 md:gap-4">
               {evidence.map((g, i) => (
                 <motion.div key={g.appid} {...inView(i)}>
-                  <Link
-                    href={`/game/${g.appid}`}
-                    className="glass glass-hover rounded-[14px] overflow-hidden block"
-                  >
+                  <Link href={`/game/${g.appid}`} className="game-card block">
                     {/* grid-cols-3 без порогов — треть экрана на любой ширине */}
-                    {cover(g, '33vw')}
-                    <div className="p-2.5 text-xs font-semibold truncate">{g.name}</div>
+                    <GameCardBody
+                      appid={g.appid}
+                      name={g.name}
+                      headerImage={model.covers[g.appid]?.headerImage ?? null}
+                      art={model.covers[g.appid]?.art ?? null}
+                      sizes="33vw"
+                    />
                   </Link>
                 </motion.div>
               ))}
@@ -542,8 +558,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {portrait.archetypes.map((a, i) => (
               <motion.div key={a.tag} {...inView(i)}>
                 <div className="flex items-baseline justify-between mb-1.5">
-                  <span className="text-sm font-semibold">{a.label}</span>
-                  <span className="tabular-nums text-ember-text text-sm">
+                  <span className="text-[15px] font-bold">{a.label}</span>
+                  <span className="tabular-nums text-ember-text text-sm font-extrabold">
                     <CountNumber value={a.percent} delay={i * 90} duration={800} suffix="%" />
                   </span>
                 </div>
@@ -571,11 +587,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
       {/* ——— 4. Чистилище ——— */}
       {wrapped.unplayedCount > 0 && (
-        <section className="relative mx-auto w-full max-w-6xl px-5 py-24 md:py-32">
-          <motion.p
-            {...inView()}
-            className={`${eyebrow()} mb-3`}
-          >
+        <section className="relative mx-auto w-full max-w-6xl px-safe py-24 md:py-32">
+          <motion.p {...inView()} className={`${eyebrow()} mb-3`}>
             Чистилище
           </motion.p>
           <motion.h2 {...inView(1)} className="font-display text-display-lg">
@@ -620,10 +633,10 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   href={`/game/${g.appid}`}
                   // library-tile уже обесцвечивает обложку в покое нулём JS —
                   // ровно то, что здесь нужно по смыслу
-                  className="library-tile glass glass-hover rounded-[14px] overflow-hidden"
+                  className="library-tile game-card block"
                 >
                   {/* grid-cols-3 md:grid-cols-6 */}
-                  {cover(g, '(min-width: 768px) 17vw, 33vw')}
+                  <span className="card-thumb">{cover(g, '(min-width: 768px) 17vw, 33vw')}</span>
                 </Link>
               ))}
             </div>
@@ -632,14 +645,15 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           {/* Совет, с чего начать, — владельцу: у гостя этой игры может не быть вовсе */}
           {isMine && starter && (
             <motion.div {...inView()} className="mt-12 flex flex-col items-start gap-3">
-              <p className="text-dim text-sm">Если решишься — начни с этой:</p>
+              <p className="text-sm text-dim">Если решишься — начни с этой:</p>
               <Magnet>
                 <Link
                   href={`/game/${starter.appid}`}
-                  className="glass glass-hover no-lift rounded-[14px] overflow-hidden flex items-center gap-4 pr-5"
+                  className="panel-lift game-card no-lift flex items-center gap-4 p-2 pr-5"
                 >
-                  <div className="w-40 shrink-0">{cover(starter, '160px')}</div>
-                  <span className="font-semibold">{starter.name}</span>
+                  <span className="card-thumb w-40 shrink-0">{cover(starter, '160px')}</span>
+                  <span className="font-extrabold tracking-[-0.01em]">{starter.name}</span>
+                  <Icon name="arrow" size={18} className="text-dim" />
                 </Link>
               </Magnet>
             </motion.div>
@@ -648,7 +662,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
       )}
 
       {/* ——— 5. Финал ——— */}
-      <section className="relative mx-auto w-full max-w-xl px-5 pb-24 pt-8 flex flex-col items-center gap-8 text-center">
+      <section className="relative mx-auto flex w-full max-w-2xl flex-col items-center gap-10 px-safe pb-24 pt-8 text-center">
         {/*
           Гостю текст — цитатой с подписью. Текст модели пишется владельцу, на
           «ты», и кэшируется на снапшот: переписать его под гостя нельзя без
@@ -656,16 +670,12 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           кто открыл ссылку. «Об игроке», а не «о {name}»: ник не склоняется,
           а «о Аня» и «о Игорь» — ошибка там, где «об» требует гласная.
         */}
-        {isMine ? (
-          <motion.p {...inView()} className="glass rounded-[20px] p-6 leading-relaxed text-ink/90">
-            {text}
-          </motion.p>
-        ) : (
-          <motion.figure {...inView()} className="glass rounded-[20px] p-6 text-left">
-            <blockquote className="leading-relaxed text-ink/90">{text}</blockquote>
-            <figcaption className="mt-3 text-xs text-dim">— imbored об игроке {name}</figcaption>
-          </motion.figure>
-        )}
+        {/* Текст — крупной цитатой, а не абзацем в стеклянной рамке: это
+            вывод всей страницы, и читается он как вывод */}
+        <motion.figure {...inView()} className="portrait-quote">
+          <blockquote>{text}</blockquote>
+          {!isMine && <figcaption>— imbored об игроке {name}</figcaption>}
+        </motion.figure>
 
         {/* Превью — обычная картинка на тот же роут, что и скачивание: каждый
             лишний рендер satori заново тянет обложки со Steam. */}
@@ -673,16 +683,18 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           {...inView(1)}
           href={`/portrait/${steamid}/card.png`}
           download={`imbored-${steamid}.png`}
-          className="glass glass-hover rounded-[20px] overflow-hidden w-56 block"
+          className="game-card block w-56"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`/portrait/${steamid}/card.png`}
-            alt="Карточка портрета"
-            loading="lazy"
-            className="w-full aspect-[1080/1350] object-cover"
-          />
-          <span className="block py-2.5 text-xs font-semibold">Скачать карточку</span>
+          <span className="card-thumb">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`/portrait/${steamid}/card.png`}
+              alt="Карточка портрета"
+              loading="lazy"
+              className="w-full aspect-[1080/1350] object-cover"
+            />
+          </span>
+          <span className="link-more mt-3">Скачать карточку</span>
         </motion.a>
 
         {!isMine && (
@@ -721,13 +733,23 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   )
 }
 
-function Fact({ value, caption, delay }: { value: number; caption: string; delay: number }) {
+function Fact({
+  value,
+  caption,
+  delay,
+  accent = false,
+}: {
+  value: number
+  caption: string
+  delay: number
+  accent?: boolean
+}) {
   return (
-    <div>
-      <div className="tabular-nums text-3xl md:text-4xl font-bold">
+    <div className="flex flex-col-reverse">
+      <dt className="lib-stat-label">{caption}</dt>
+      <dd className={`lib-stat ${accent ? 'text-ember-text' : ''}`}>
         <CountNumber value={value} delay={delay} />
-      </div>
-      <div className="text-xs text-dim mt-0.5">{caption}</div>
+      </dd>
     </div>
   )
 }

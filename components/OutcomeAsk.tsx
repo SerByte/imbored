@@ -140,7 +140,7 @@ export function OutcomeAsk({
                 <button
                   type="button"
                   onClick={() => answer('meh')}
-                  className="rounded-full glass glass-hover px-4 py-2 text-sm cursor-pointer"
+                  className="pill"
                 >
                   Так себе
                 </button>

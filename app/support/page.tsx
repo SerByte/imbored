@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Ambient } from '@/components/Ambient'
 import { LogoMark } from '@/components/Logo'
 import { ownAddress } from '@/lib/site'
+import { Icon } from '@/components/Icon'
 
 /*
  * Своё описание: без него /support наследовал описание главной, и поиск
@@ -47,7 +48,7 @@ export default function SupportPage() {
           </p>
         </div>
 
-        <div className="glass rounded-[20px] p-6 flex flex-col gap-3 anim-rise">
+        <div className="panel-lift p-6 flex flex-col gap-3 anim-rise">
           <h2 className="font-display text-display-xs">Поддержать рублём</h2>
           <p className="text-sm text-dim">
             Донат — это спасибо, а не подписка. Ничего не блокируется.
@@ -83,7 +84,7 @@ export default function SupportPage() {
           )}
         </div>
 
-        <div className="glass rounded-[20px] p-6 flex flex-col gap-4 anim-rise" style={{ animationDelay: '80ms' }}>
+        <div className="panel-lift p-6 flex flex-col gap-4 anim-rise" style={{ animationDelay: '80ms' }}>
           <div className="flex items-baseline justify-between">
             <h2 className="font-display text-display-xs">
               imbored<span className="text-ember-text">+</span>
@@ -112,8 +113,9 @@ export default function SupportPage() {
         </p>
 
         <div className="text-center">
-          <Link href="/quiz" className="tap text-sm text-dim hover:text-ink transition-colors">
-            ← К подбору игры
+          <Link href="/quiz" className="tap link-more">
+            <Icon name="arrow" size={16} className="rotate-180" />
+            К подбору игры
           </Link>
         </div>
       </div>

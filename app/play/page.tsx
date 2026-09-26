@@ -1132,16 +1132,18 @@ function Player({ say }: { say: (line: string) => void }) {
             Кроме случая, когда библиотеки нет вовсе: менять там настроение
             нечему, и ссылка была бы предложением заняться ерундой. */}
         {reason !== 'nolibrary' && (
-          <Link href="/quiz" className="tap text-sm text-dim transition-colors hover:text-ink">
-            Изменить настроение →
+          <Link href="/quiz" className="tap link-more">
+            Изменить настроение
+            <Icon name="arrow" size={16} />
           </Link>
         )}
 
         {/* Вернуть игры из бана можно только в библиотеке, и это единственный
             выход, когда кандидатов не осталось из-за банов. */}
         {reason === 'nocandidates' && (
-          <Link href="/library" className="tap text-sm text-dim transition-colors hover:text-ink">
-            Посмотреть библиотеку →
+          <Link href="/library" className="tap link-more">
+            Посмотреть библиотеку
+            <Icon name="arrow" size={16} />
           </Link>
         )}
         {reason === 'nolibrary' && (
@@ -1177,7 +1179,7 @@ function Player({ say }: { say: (line: string) => void }) {
     }
     return (
       <div className="flex-1 flex items-center justify-center px-5 py-24">
-        <div className="max-w-lg w-full glass rounded-[20px] p-8 text-center flex flex-col gap-5 anim-reveal">
+        <div className="max-w-lg w-full panel-lift p-8 text-center flex flex-col gap-5 anim-reveal">
           <LogoMark size={48} className="mx-auto" />
           {/* Сюда приходят только нажатием («Не то — дальше» в пятый раз), и
               нажатая кнопка при этом исчезает — фокус забирает заголовок */}
@@ -1230,8 +1232,9 @@ function Player({ say }: { say: (line: string) => void }) {
           {/* Третий путь для вечера, когда выбирать не хочется: колода без
               вопросов и без последствий (app/explore) — посмотреть, что
               вообще есть, и, может быть, зацепиться за одну */}
-          <Link href="/explore" className="tap text-sm text-dim hover:text-ink transition-colors">
-            Просто полистать, без обязательств →
+          <Link href="/explore" className="tap link-more">
+            Просто полистать, без обязательств
+            <Icon name="arrow" size={16} />
           </Link>
         </div>
       </div>
@@ -1313,12 +1316,14 @@ function Player({ say }: { say: (line: string) => void }) {
           Подобрать заново
         </button>
       )}
-      <Link href="/quiz" className="tap text-dim hover:text-ink transition-colors">
-        Изменить настроение →
+      <Link href="/quiz" className="tap link-more">
+        Изменить настроение
+        <Icon name="arrow" size={16} />
       </Link>
       {/* Колода исследователя — для того, кому сейчас не до вопросов */}
-      <Link href="/explore" className="tap text-dim hover:text-ink transition-colors">
-        Просто полистать →
+      <Link href="/explore" className="tap link-more">
+        Просто полистать
+        <Icon name="arrow" size={16} />
       </Link>
     </div>
   )

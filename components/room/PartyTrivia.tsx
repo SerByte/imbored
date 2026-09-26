@@ -16,8 +16,9 @@ const EASE = [0.22, 1, 0.36, 1] as const
  * 1. Здесь никогда нет bg-ember. Максимум — bg-ember/15 на раскрытом ответе.
  *    Всё остальное на экране громче, поэтому блок не может выиграть внимание
  *    у ростера и тем более у церемонии матча.
- * 2. Арт всегда в rounded-[14px] с рамкой — это радиус КНОПКИ. Обложка читается
- *    как контрол; в rounded-[20px] она стала бы героем и перебила бы всё вокруг.
+ * 2. Арт всегда в --radius-card с рамкой — радиус обложки в ряду, как у
+ *    капсул на полках. В --radius-panel она стала бы героем и перебила бы всё
+ *    вокруг.
  * 3. Блок свёрнут по умолчанию и сворачивается сам, когда в комнате происходит
  *    настоящее — кто-то зашёл или появилось почти-совпадение.
  *
@@ -109,7 +110,10 @@ export function PartyTrivia({
             {interrupted ? interruptNote : 'Про ваши библиотеки. На матч не влияет.'}
           </span>
         </span>
-        <span className="text-sm text-dim shrink-0">{open ? 'Свернуть ▴' : 'Играть ▾'}</span>
+        <span className="link-more shrink-0">
+          {open ? 'Свернуть' : 'Играть'}
+          <Icon name="down" size={16} className={open ? 'rotate-180' : ''} />
+        </span>
       </button>
 
       <AnimatePresence initial={false}>
@@ -154,7 +158,7 @@ export function PartyTrivia({
                       headerImage={q.image.headerImage}
                       art={q.image.art}
                       sizes="(max-width: 640px) 100vw, 560px"
-                      className="w-full aspect-[460/215] object-cover rounded-[14px] border border-edge"
+                      className="w-full aspect-[460/215] object-cover rounded-(--radius-card) border border-edge"
                     />
                   )}
 
@@ -176,10 +180,10 @@ export function PartyTrivia({
                           }}
                           className={
                             !revealed
-                              ? 'rounded-[var(--radius-control)] glass glass-hover px-4 py-3 text-sm text-left cursor-pointer transition-colors'
+                              ? 'btn-glass justify-start px-4 py-3 text-left text-sm'
                               : right
-                                ? 'rounded-[14px] bg-ember/15 text-ember-text border border-edge px-4 py-3 text-sm text-left'
-                                : 'rounded-[14px] bg-surface text-faint px-4 py-3 text-sm text-left'
+                                ? 'rounded-(--radius-control) bg-ember/15 text-ember-text border border-edge px-4 py-3 text-sm font-extrabold text-left'
+                                : 'rounded-(--radius-control) bg-surface text-faint px-4 py-3 text-sm font-bold text-left'
                           }
                         >
                           {o.label}
