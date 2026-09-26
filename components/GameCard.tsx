@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { GameArtUrls } from '@/lib/art'
 import { GameArt } from './GameArt'
+import { GameMorph } from './Morph'
 
 /**
  * Карточка игры в ряду — одна на весь продукт.
@@ -26,6 +27,7 @@ export function GameCardBody({
   meta,
   dim = false,
   eager = false,
+  morph = false,
 }: {
   appid: number
   name: string
@@ -42,22 +44,32 @@ export function GameCardBody({
   dim?: boolean
   /** обложка над сгибом — грузить сразу, а не лениво */
   eager?: boolean
+  /**
+   * Обложка перелетает в героя страницы игры (components/Morph). Только там,
+   * где ссылка предзагружена и игра стоит на странице один раз: одно имя
+   * перехода дважды на странице срывает переход целиком (стена библиотеки
+   * повторяет полку «Запечатанное», поэтому там его нет).
+   */
+  morph?: boolean
 }) {
+  const thumbEl = (
+    <span className="card-thumb aspect-[460/215]">
+      <GameArt
+        appid={appid}
+        name={name}
+        headerImage={headerImage}
+        art={art}
+        sizes={sizes}
+        eager={eager}
+        className={`h-full w-full object-cover ${dim ? 'opacity-60 grayscale' : ''}`}
+      />
+      {overlay}
+      {corner}
+    </span>
+  )
   return (
     <>
-      <span className="card-thumb aspect-[460/215]">
-        <GameArt
-          appid={appid}
-          name={name}
-          headerImage={headerImage}
-          art={art}
-          sizes={sizes}
-          eager={eager}
-          className={`h-full w-full object-cover ${dim ? 'opacity-60 grayscale' : ''}`}
-        />
-        {overlay}
-        {corner}
-      </span>
+      {morph ? <GameMorph appid={appid}>{thumbEl}</GameMorph> : thumbEl}
       <span className="mt-3 block px-0.5">
         <span className="block truncate text-[15px] leading-tight font-extrabold tracking-[-0.01em]">
           {name}

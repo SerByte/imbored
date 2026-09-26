@@ -22,6 +22,7 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
 import { WarmupScreen, type ChosenGame } from '@/components/WarmupScreen'
 import { HeroTitle } from '@/components/HeroTitle'
+import { HeroTrailer } from '@/components/HeroTrailer'
 import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
@@ -266,6 +267,14 @@ const PREPARE_MESSAGE = 'Изучаю твою библиотеку…'
  */
 const CHOSEN_MS = 1300
 
+/**
+ * Последний такт: постер наплывает на весь экран и растворяется, и из-под
+ * него встаёт герой выдачи (.warmup.is-leaving). View Transitions здесь не
+ * годятся: герой сам въезжает из прозрачности и размытия (HERO), и общий
+ * элемент приземлялся бы в пустое место.
+ */
+const LEAVE_MS = 320
+
 function Player({ say }: { say: (line: string) => void }) {
   const router = useRouter()
   const search = useSearchParams()
@@ -288,6 +297,7 @@ function Player({ say }: { say: (line: string) => void }) {
   const [phase, setPhase] = useState<'prepare' | 'spin' | 'reveal' | 'burnout' | 'error'>('prepare')
   /** Игра, выходящая из стены экрана ожидания; null — обычное ожидание */
   const [chosen, setChosen] = useState<ChosenGame | null>(null)
+  const [leaving, setLeaving] = useState(false)
   /*
    * Сколько ждать, если выдача отказала по потолку частоты, а не по сбою.
    * Экран ошибки говорит «каталог прогревается» — для 429 это прямая неправда:
@@ -728,11 +738,17 @@ function Player({ say }: { say: (line: string) => void }) {
       const hero = got.picks[at]
       // У игры не из Steam вертикального постера нет — выходить из стены нечему
       if (!roulette && hero.appid > 0 && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        // прерванный показ мог оставить такт ухода взведённым
+        setLeaving(false)
         setChosen({ appid: hero.appid, name: hero.name, art: hero.art })
         await new Promise((done) => window.setTimeout(done, CHOSEN_MS))
         if (ac.signal.aborted) return false
+        setLeaving(true)
+        await new Promise((done) => window.setTimeout(done, LEAVE_MS))
+        if (ac.signal.aborted) return false
       }
       setChosen(null)
+      setLeaving(false)
       // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
       // та самая случайность, которая до сих пор происходила молча.
       setPhase(roulette ? 'spin' : 'reveal')
@@ -1049,6 +1065,7 @@ function Player({ say }: { say: (line: string) => void }) {
         message={progress}
         caption={askedMood ? moodCaption(mood) : undefined}
         chosen={chosen}
+        leaving={leaving}
         memo={wallMemo}
       />
     )
@@ -1376,6 +1393,7 @@ function Player({ say }: { say: (line: string) => void }) {
             name={pick.name}
             screenshots={pick.screenshots ?? []}
           />
+          <HeroTrailer trailer={pick.trailer} />
           <div aria-hidden className="absolute inset-0 hero-scrim" />
           {/* Арт остаётся ярким и просто уходит в мягкость под текстом —
               жёсткий градиент-стоп гасил его целиком, оставляя резким.

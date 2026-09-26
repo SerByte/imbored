@@ -319,8 +319,14 @@ export default function ExplorePage() {
           <SectionLabel>Приглянулось</SectionLabel>
           <div className="grid grid-cols-2 gap-x-4 gap-y-6">
             {liked.map((c) => (
-              <Link key={c.appid} href={`/game/${c.appid}`} className="game-card block text-left">
+              <Link
+                key={c.appid}
+                href={`/game/${c.appid}`}
+                transitionTypes={['nav-forward']}
+                className="game-card block text-left"
+              >
                 <GameCardBody
+                  morph
                   appid={c.appid}
                   name={c.name}
                   headerImage={c.headerImage}

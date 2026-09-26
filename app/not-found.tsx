@@ -127,8 +127,14 @@ export default async function NotFound() {
             <Eyebrow className="mb-3">Из каталога</Eyebrow>
             <div className="grid grid-cols-2 gap-x-4 gap-y-6 md:grid-cols-4">
               {games.map((g) => (
-                <Link key={g.appid} href={`/game/${g.appid}`} className="game-card block text-left">
+                <Link
+                  key={g.appid}
+                  href={`/game/${g.appid}`}
+                  transitionTypes={['nav-forward']}
+                  className="game-card block text-left"
+                >
                   <GameCardBody
+                    morph
                     appid={g.appid}
                     name={g.name}
                     headerImage={g.headerImage}

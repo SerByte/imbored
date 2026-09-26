@@ -56,12 +56,56 @@ export function HeroShots({
    */
   const enabled = reduced !== true && shots.length >= 2
 
+  useParallax(reduced !== true)
+
   return (
     <>
       <HeroArt appid={appid} headerImage={headerImage} art={art} name={name} />
       {enabled && <HeroMorph shots={shots} name={name} />}
     </>
   )
+}
+
+/** Предел сдвига фона за курсором, px: по горизонтали и по вертикали */
+const PARALLAX_X = 12
+const PARALLAX_Y = 8
+
+/**
+ * ПАРАЛЛАКС ФОНА ЗА КУРСОРОМ.
+ *
+ * Слои героя с классом .hero-layer (арт, морф, фоновый трейлер) чуть
+ * отъезжают против курсора — фон «глубже» текста, и экран перестаёт быть
+ * плоской картинкой. Сдвиг — CSS-свойство translate, отдельное от transform:
+ * у арта transform занят кен-бёрнсом, и они складываются, а не перебивают друг
+ * друга. Запас по краям даёт scale в той же таблице.
+ *
+ * Только мышь (pointer: fine) и только без «уменьшить движение». Пишем прямо
+ * в style слоёв раз в кадр, а не в переменную на корне: переменная на <html>
+ * пересчитывала бы стили всей страницы на каждое движение мыши. Слои ищутся
+ * на каждом кадре, потому что трейлер и морф монтируются позже героя.
+ */
+function useParallax(on: boolean) {
+  useEffect(() => {
+    if (!on || !window.matchMedia('(pointer: fine)').matches) return
+    let raf = 0
+    let x = 0
+    let y = 0
+    const paint = () => {
+      raf = 0
+      const value = `${(-x * PARALLAX_X).toFixed(1)}px ${(-y * PARALLAX_Y).toFixed(1)}px`
+      for (const el of document.querySelectorAll<HTMLElement>('.hero-layer')) el.style.translate = value
+    }
+    const move = (e: PointerEvent) => {
+      x = (e.clientX / window.innerWidth) * 2 - 1
+      y = (e.clientY / window.innerHeight) * 2 - 1
+      if (!raf) raf = requestAnimationFrame(paint)
+    }
+    window.addEventListener('pointermove', move, { passive: true })
+    return () => {
+      window.removeEventListener('pointermove', move)
+      cancelAnimationFrame(raf)
+    }
+  }, [on])
 }
 
 function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
@@ -161,7 +205,7 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
          tabIndex, и фон иначе стал бы бессмысленной остановкой табуляции —
          а aria-hidden вокруг фокусируемого элемента ещё и нарушение. */
       inert
-      className={`absolute inset-0 transition-opacity duration-700 ${
+      className={`hero-layer absolute inset-0 transition-opacity duration-700 ${
         ready ? 'opacity-100' : 'opacity-0'
       }`}
     >

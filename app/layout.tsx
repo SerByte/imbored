@@ -233,7 +233,9 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         >
           К содержанию
         </a>
-        <header className="fixed top-0 inset-x-0 z-50">
+        {/* Своё имя перехода: при сдвиге страницы шапка стоит на месте — она
+            точка опоры, по которой видно, что уехало содержимое, а не экран */}
+        <header className="fixed top-0 inset-x-0 z-50" style={{ viewTransitionName: 'site-header' }}>
           {/*
             Затемнение — отдельным слоем под содержимым, а не фоном самой шапки.
 

@@ -254,6 +254,9 @@ export function dailyCardView(
     // Кадры целиком: сколько из них показать, решает сам герой — это упирается
     // в бюджет видеопамяти слайдера, а не в состав ответа
     screenshots: meta?.screenshots ?? [],
+    // Микротрейлер — живой фон героя после паузы (components/HeroTrailer).
+    // Лежит в той же записи, что кадры: лишнего чтения нет
+    trailer: meta?.trailer ?? null,
     ccu: meta?.ccu ?? null,
     ccuAt: meta?.ccuAt ?? null,
     tags: topTags(meta),

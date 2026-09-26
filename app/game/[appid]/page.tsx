@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { GameMorph } from '@/components/Morph'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
@@ -306,16 +307,25 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           сказать браузеру «можно позже».
         */}
         <div className="relative mx-auto max-w-5xl px-5 pt-28 pb-12 lg:pt-32 lg:pb-16 grid lg:grid-cols-[380px_1fr] gap-8 lg:gap-12 items-start">
-          <GameArt
-            appid={meta.appid}
-            name={meta.name}
-            headerImage={meta.headerImage ?? null}
-            art={meta.art}
-            sizes="(min-width: 1024px) 380px, 100vw"
-            eager
-            fetchPriority="high"
-            className="game-cover w-full aspect-[460/215] object-cover anim-reveal"
-          />
+          {/*
+            Вторая половина пары морфа: капсула с полки перелетает сюда.
+            Своего проявления (.anim-reveal) у обложки больше нет: оно
+            начиналось с прозрачности и размытия, и морф приземлялся в пустое
+            место — на кадре оставался размытый призрак. А при прямом заходе
+            это LCP, и показывать его сразу только быстрее.
+          */}
+          <GameMorph appid={meta.appid}>
+            <GameArt
+              appid={meta.appid}
+              name={meta.name}
+              headerImage={meta.headerImage ?? null}
+              art={meta.art}
+              sizes="(min-width: 1024px) 380px, 100vw"
+              eager
+              fetchPriority="high"
+              className="game-cover w-full aspect-[460/215] object-cover"
+            />
+          </GameMorph>
           <div className="flex flex-col gap-4 anim-rise">
             <h1 className="font-display text-display-lg">{meta.name}</h1>
             {/*
@@ -602,8 +612,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             </SectionLabel>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
               {data.similar.map((g) => (
-                <Link key={g.appid} href={`/game/${g.appid}`} className="game-card block">
+                <Link
+                  key={g.appid}
+                  href={`/game/${g.appid}`}
+                  transitionTypes={['nav-forward']}
+                  className="game-card block"
+                >
                   <GameCardBody
+                    morph
                     appid={g.appid}
                     name={g.name}
                     headerImage={g.headerImage}

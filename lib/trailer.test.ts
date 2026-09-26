@@ -180,6 +180,11 @@ describe('readTrailer', () => {
  * тоже нельзя: он качается сразу, мимо ленивой загрузки. Поведение в браузере
  * тестом не проверить, поэтому здесь текст — как у остальных сторожей
  * разметки.
+ *
+ * Единственный ролик без нажатия — фон героя (components/HeroTrailer), и он
+ * запускается скриптом, а не атрибутом: после паузы на одной игре, только на
+ * широком экране, без экономии трафика и без «уменьшить движение». Эти
+ * условия сторож держит отдельно.
  */
 describe('видео на страницах', () => {
   const ROOT = path.join(__dirname, '..')
@@ -219,6 +224,18 @@ describe('видео на страницах', () => {
 
   test('сторож видит ролик трейлера', () => {
     expect(videos.map((v) => v.file)).toContain('components/TrailerPreview.tsx')
+  })
+
+  test('фон героя ждёт паузу и уважает движение, трафик и ширину', () => {
+    const src = readFileSync(path.join(ROOT, 'components/HeroTrailer.tsx'), 'utf8')
+    const wait = Number(/const WAIT_MS = ([\d_]+)/.exec(src)?.[1].replace(/_/g, ''))
+    expect(wait).toBeGreaterThanOrEqual(2000)
+    expect(src).toContain("'(prefers-reduced-motion: reduce)'")
+    expect(src).toContain('saveData')
+    expect(src).toContain("'(min-width: 768px)'")
+    expect(src).toContain('IntersectionObserver')
+    // WCAG 2.2.2: зацикленное движение обязано останавливаться
+    expect(src).toMatch(/aria-pressed=\{stopped\}/)
   })
 
   test('без автоплея, без предзагрузки и без постера-атрибута', () => {
