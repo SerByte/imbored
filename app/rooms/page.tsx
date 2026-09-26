@@ -184,7 +184,7 @@ export default function RoomsBoardPage() {
         <h1 className="font-display text-display-lg">Пати</h1>
         {readOnly ? (
           // Вход вернёт прямо на создание комнаты, а не на эту доску
-          <NeedSteam from="/room/new" className="max-w-sm" />
+          <NeedSteam from="/room/new" why="room" className="max-w-sm" />
         ) : (
           <Link
             href="/room/new"

@@ -551,7 +551,7 @@ export default function DailyPage() {
                 </button>
               )}
             </div>
-            {readOnly && <NeedSteam from="/daily" className="-mt-1" />}
+            {readOnly && <NeedSteam from="/daily" why="launch" className="-mt-1" />}
             {rerollMiss && (
               <p role="status" className="-mt-1 text-sm text-dim">
                 {rerollMiss}

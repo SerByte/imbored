@@ -1792,7 +1792,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 )}
               </m.div>
               {/* Вместо спрятанных «Зашло» и бана — почему их нет и как вернуть */}
-              {readOnly && <NeedSteam from={`/play?${search}`} className="-mt-1" />}
+              {readOnly && <NeedSteam from={`/play?${search}`} why="launch" className="-mt-1" />}
               {/*
                 Отказ бана виден, потому что бан необратим. Формулировка ведёт
                 к следующему шагу, а не констатирует поломку: карточка на месте,
