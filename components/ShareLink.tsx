@@ -1,9 +1,10 @@
 'use client'
 
-import { useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from 'react'
+import { Icon, type IconName } from '@/components/Icon'
 import { track } from '@/lib/track'
 
-type State = 'idle' | 'done' | 'manual'
+export type ShareState = 'idle' | 'done' | 'manual'
 
 /**
  * Подписка на тип указателя. На модуле, а не в компоненте: useSyncExternalStore
@@ -76,8 +77,20 @@ export function useShareLink(
   /** Показать ссылку человеку, когда скопировать не вышло ни одним способом. */
   onManual?: () => void,
 ) {
-  const [state, setState] = useState<State>('idle')
+  const [state, setState] = useState<ShareState>('idle')
   const native = useSyncExternalStore(subscribeCoarse, readCoarse, () => false)
+  /*
+   * Один таймер на кнопку. Раньше каждое нажатие ставило свой setTimeout, и
+   * второе нажатие через секунду гасило «Скопировано» раньше срока — первым
+   * таймером; а уход со страницы оставлял его висеть над размонтированным.
+   */
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const flash = (next: ShareState, ms: number) => {
+    clearTimeout(timer.current)
+    setState(next)
+    timer.current = setTimeout(() => setState('idle'), ms)
+  }
 
   async function run() {
     const url = getUrl()
@@ -104,8 +117,7 @@ export function useShareLink(
     }
 
     if (copied) {
-      setState('done')
-      setTimeout(() => setState('idle'), 1600)
+      flash('done', 1600)
       return
     }
 
@@ -113,15 +125,69 @@ export function useShareLink(
     // ссылку выделенной и сказать об этом подписью, а не оставлять нажатие
     // без всякого следа.
     onManual?.()
-    setState('manual')
-    setTimeout(() => setState('idle'), 3200)
+    flash('manual', 3200)
   }
 
-  return { run, state, native }
+  /**
+   * Подпись кнопки — одна на все места, где делятся ссылкой.
+   *
+   * Отклик «Скопировано» был свой в каждом месте: на /compat — текст, у
+   * кнопки сравнения — текст с галочкой, в пати — галочка вместо иконки
+   * ссылки. Теперь он один и ровно здесь: «Скопировано» с галочкой. Место
+   * задаёт только свою подпись в покое, на телефоне (там откроется панель
+   * «Поделиться») и при отказе буфера.
+   *
+   * После системной панели галочки нет: отправил человек или передумал,
+   * знать нельзя (см. run).
+   */
+  function label(
+    idle: ReactNode,
+    o: { native?: ReactNode; manual?: ReactNode; icon?: IconName; iconSize?: number } = {},
+  ): ReactNode {
+    if (state === 'done') {
+      return (
+        <ShareMark icon="check" size={o.iconSize}>
+          Скопировано
+        </ShareMark>
+      )
+    }
+    const text = state === 'manual' ? (o.manual ?? idle) : native ? (o.native ?? idle) : idle
+    return (
+      <ShareMark icon={o.icon} size={o.iconSize}>
+        {text}
+      </ShareMark>
+    )
+  }
+
+  /*
+   * Живая область для скринридера — стоит в разметке всегда, текст приходит
+   * потом: область, вставленная вместе с текстом, зачитывается не каждой
+   * парой браузера и скринридера (тот же приём, что у StopAsk и OutcomeAsk).
+   * Смена подписи на кнопке сама по себе не объявляется вовсе.
+   */
+  const status = (
+    <span role="status" className="sr-only">
+      {state === 'done' ? 'Ссылка скопирована' : state === 'manual' ? 'Скопировать не вышло' : ''}
+    </span>
+  )
+
+  return { run, state, native, label, status }
+}
+
+export type ShareLink = ReturnType<typeof useShareLink>
+
+/** Подпись с иконкой — одна строка, которая одинаково садится в btn-ember, btn-glass и action-tile */
+function ShareMark({ icon, size = 16, children }: { icon?: IconName; size?: number; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center justify-center gap-2">
+      {icon && <Icon name={icon} size={size} />}
+      {children}
+    </span>
+  )
 }
 
 /**
- * Поле со ссылкой и кнопка рядом.
+ * Поле со ссылкой и кнопка рядом — одной пилюлей, как вход на главной (.join).
  *
  * Ссылка ВИДНА, и это главное отличие от прежней одинокой кнопки
  * «Скопировать»: страница целиком про то, что ты сейчас кому-то передашь, а
@@ -132,6 +198,9 @@ export function useShareLink(
  * readOnly input, а не div: поле выделяется целиком одним нажатием, работают
  * Ctrl+A и Ctrl+C, и оно доступно с клавиатуры как поле. select() на фокусе —
  * чтобы это одно нажатие сразу давало готовое к копированию выделение.
+ *
+ * id — из useId, а не из хвоста адреса: у всех ссылок хвост теперь «?ref=…»,
+ * и два поля на странице получали один и тот же id.
  */
 export function ShareLinkField({
   url,
@@ -146,40 +215,54 @@ export function ShareLinkField({
   text: string
 }) {
   const ref = useRef<HTMLInputElement>(null)
-  const { run, state, native } = useShareLink(() => url, title, text, () => {
+  const share = useShareLink(() => url, title, text, () => {
     ref.current?.focus()
     ref.current?.select()
   })
-  const id = 'share-' + url.replace(/\W+/g, '').slice(-10)
 
   return (
-    <div className="flex flex-col gap-2.5 sm:flex-row">
+    <div className="join is-link">
+      <ShareLinkInput url={url} label={label} inputRef={ref} />
+      <button type="button" onClick={() => void share.run()} className="btn-ember is-block whitespace-nowrap px-5">
+        {share.label('Скопировать', { native: 'Отправить', manual: 'Скопируй вручную' })}
+      </button>
+      {share.status}
+    </div>
+  )
+}
+
+/**
+ * Та же ссылка без кнопки — запасной путь, когда скопировать не вышло: поле
+ * в пилюле, выделяется одним нажатием. Внутри .join.is-link — в общей
+ * пилюле с кнопкой; одно — в своей.
+ */
+export function ShareLinkInput({
+  url,
+  label,
+  inputRef,
+  describedBy,
+}: {
+  url: string
+  label: string
+  inputRef?: Ref<HTMLInputElement>
+  describedBy?: string
+}) {
+  const id = useId()
+  return (
+    <>
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
       <input
-        ref={ref}
+        ref={inputRef}
         id={id}
         type="text"
         readOnly
         value={url}
+        aria-describedby={describedBy}
         onFocus={(e) => e.currentTarget.select()}
         onClick={(e) => e.currentTarget.select()}
-        className="min-w-0 flex-1 rounded-(--radius-control) border border-edge bg-surface px-4 py-3 font-mono text-sm text-ink"
       />
-      <button
-        type="button"
-        onClick={() => void run()}
-        className="btn-ember shrink-0 px-5 py-3"
-      >
-        {state === 'done'
-          ? 'Скопировано'
-          : state === 'manual'
-            ? 'Скопируй вручную'
-            : native
-              ? 'Отправить'
-              : 'Скопировать'}
-      </button>
-    </div>
+    </>
   )
 }

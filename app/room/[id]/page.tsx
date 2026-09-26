@@ -145,8 +145,6 @@ export default function RoomPage() {
     `Пати ${roomId} — imbored`,
     'Выберем игру на вечер вместе',
   )
-  const copied = share.state === 'done'
-  const copyFailed = share.state === 'manual'
   const copyLink = () => void share.run()
 
   const [state, setState] = useState<RoomState | null>(null)
@@ -1062,14 +1060,12 @@ export default function RoomPage() {
             сломанная кнопка.
           */}
           <button onClick={copyLink} className="btn-glass py-3 text-sm">
-            <Icon name={copied ? 'check' : 'link'} size={16} />
-            {copied
-              ? 'Скопировано'
-              : copyFailed
-                ? 'Не вышло — продиктуй код'
-                : share.native
-                  ? 'Отправить ссылку друзьям'
-                  : 'Скопировать ссылку для друзей'}
+            {share.label('Скопировать ссылку для друзей', {
+              icon: 'link',
+              native: 'Отправить ссылку друзьям',
+              manual: 'Не вышло — продиктуй код',
+            })}
+            {share.status}
           </button>
           {/*
             Индикатор отделён от переключателя.
@@ -1179,13 +1175,10 @@ export default function RoomPage() {
           pulling={pulling}
           pullFailed={pullFailed}
           onPullMore={pullMore}
-          copied={copied}
-          copyFailed={copyFailed}
-          native={share.native}
+          share={share}
           // именно localVotes: колода исчезла из-под пальцев прямо сейчас,
           // а не «когда-то в прошлый заход» — только тогда фокус стоит забирать
           cameFromDeck={localVotes > 0}
-          onCopyLink={copyLink}
           onTogglePublic={togglePublic}
         />
       )}

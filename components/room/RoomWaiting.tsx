@@ -1,5 +1,6 @@
 'use client'
 
+import type { ShareLink } from '@/components/ShareLink'
 import { useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { plural } from '@/lib/plural'
@@ -40,11 +41,8 @@ export function RoomWaiting({
   pulling,
   pullFailed,
   onPullMore,
-  copied,
-  copyFailed,
-  native,
+  share,
   cameFromDeck,
-  onCopyLink,
   onTogglePublic,
   onRemoveMember,
   onLeave,
@@ -67,12 +65,10 @@ export function RoomWaiting({
   /** добор раунда не дошёл — см. pullMore в app/room/[id]/page */
   pullFailed: boolean
   onPullMore: () => void
-  copied: boolean
-  copyFailed: boolean
-  native?: boolean
+  /** ссылка на комнату — общая с кнопкой в шапке (useShareLink) */
+  share: ShareLink
   /** пришли сюда, домахав колоду, — тогда переносим фокус */
   cameFromDeck: boolean
-  onCopyLink: () => void
   onTogglePublic: () => void
   /** убрать участника (хост) или выйти самому — см. app/api/room/[id]/leave */
   onRemoveMember: (memberId: string) => void
@@ -134,10 +130,7 @@ export function RoomWaiting({
             roomId={roomId}
             isHost={isHost}
             isPublic={isPublic}
-            copied={copied}
-            copyFailed={copyFailed}
-            native={native}
-            onCopyLink={onCopyLink}
+            share={share}
             onTogglePublic={onTogglePublic}
           />
         )}

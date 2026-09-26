@@ -1414,6 +1414,23 @@ textarea:focus-visible {
 .join input::placeholder {
   color: var(--faint);
 }
+/*
+ * Та же пилюля под ссылкой, которой делятся (ShareLinkField): адрес
+ * моноширинным и с многоточием — хвост «?ref=…» не должен выталкивать
+ * кнопку. С 560 px кнопка по содержимому: is-block растягивал бы её на всю
+ * пилюлю и в строке. Прямой потомок — кнопку входа на главной это не
+ * задевает (она внутри Magnet).
+ */
+.join.is-link input {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-overflow: ellipsis;
+}
+@media (min-width: 560px) {
+  .join > .btn-ember.is-block {
+    width: auto;
+  }
+}
 
 /*
  * НА НИЗКОМ ЭКРАНЕ КАРТОЧКА ДЫШИТ ТЕСНЕЕ.

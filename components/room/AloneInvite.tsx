@@ -1,7 +1,9 @@
 'use client'
 
+import { useState } from 'react'
 import { Icon } from '@/components/Icon'
 import Link from 'next/link'
+import { ShareLinkInput, type ShareLink } from '@/components/ShareLink'
 import { FlapCode } from '@/components/FlapCode'
 import { Eyebrow } from '@/components/Labels'
 import { roomShareUrl } from '@/lib/roomshare'
@@ -21,22 +23,24 @@ export function AloneInvite({
   roomId,
   isHost,
   isPublic,
-  copied,
-  copyFailed,
-  native = false,
-  onCopyLink,
+  share,
   onTogglePublic,
 }: {
   roomId: string
   isHost: boolean
   isPublic: boolean
-  copied: boolean
-  copyFailed: boolean
-  /** на телефоне откроется системная панель, а не буфер */
-  native?: boolean
-  onCopyLink: () => void
+  /** ссылка на комнату — общая с кнопкой в шапке (useShareLink) */
+  share: ShareLink
   onTogglePublic: () => void
 }) {
+  /*
+   * Поле со ссылкой — после первого отказа буфера и насовсем. Раньше оно
+   * держалось на state === 'manual', а тот через три секунды возвращается в
+   * покой — и поле исчезало из-под пальцев, пока человек его выделял.
+   */
+  const [revealed, setRevealed] = useState(false)
+  if (share.state === 'manual' && !revealed) setRevealed(true)
+
   return (
     <>
       <div className="relative panel-lift p-6 sm:p-8 flex flex-col items-center gap-5 text-center">
@@ -65,17 +69,17 @@ export function AloneInvite({
 
       <div className="relative grid gap-3 sm:grid-cols-2">
         <button
-          onClick={onCopyLink}
+          onClick={() => void share.run()}
           className="action-tile is-primary"
         >
           <span className="flex items-center gap-2 font-extrabold">
-            <Icon name={copied ? 'check' : 'link'} size={18} />
-            {copied ? 'Скопировано' : 'Позвать своих'}
+            {share.label('Позвать своих', { icon: 'link', iconSize: 18 })}
           </span>
           {/* Подпись обязана называть то, что произойдёт: на телефоне это не буфер */}
           <span className="block text-xs opacity-80 mt-0.5">
-            {native ? 'Откроется «Поделиться»' : 'Ссылка в буфер — кидай в чат'}
+            {share.native ? 'Откроется «Поделиться»' : 'Ссылка в буфер — кидай в чат'}
           </span>
+          {share.status}
         </button>
 
         {isHost ? (
@@ -118,19 +122,18 @@ export function AloneInvite({
         объявлял «текстовое поле, только чтение» и адрес — без слова о том,
         что это и зачем: подпись лежала соседним span и с полем связана не была.
       */}
-      {copyFailed && (
+      {revealed && (
         <div className="relative flex flex-col gap-1.5">
           <span id="room-link-note" className="text-xs text-faint">
             Не вышло скопировать. Вот ссылка — забирай:
           </span>
-          <input
-            readOnly
-            aria-label="Ссылка на комнату"
-            aria-describedby="room-link-note"
-            value={typeof window === 'undefined' ? '' : roomShareUrl(window.location.origin, roomId)}
-            onFocus={(e) => e.currentTarget.select()}
-            className="rounded-(--radius-control) bg-surface border border-edge px-4 py-2.5 text-sm font-mono text-dim w-full"
-          />
+          <div className="join is-link">
+            <ShareLinkInput
+              url={typeof window === 'undefined' ? '' : roomShareUrl(window.location.origin, roomId)}
+              label="Ссылка на комнату"
+              describedBy="room-link-note"
+            />
+          </div>
         </div>
       )}
     </>
