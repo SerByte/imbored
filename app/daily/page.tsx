@@ -4,7 +4,10 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { BlurBand } from '@/components/BlurBand'
-import { GameArt } from '@/components/GameArt'
+import { DailyCountdown } from '@/components/DailyCountdown'
+import { GameCardBody } from '@/components/GameCard'
+import { HeroTitle } from '@/components/HeroTitle'
+import { Icon } from '@/components/Icon'
 import { HeroShots } from '@/components/HeroShots'
 import { NeedSteam } from '@/components/NeedSteam'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
@@ -13,7 +16,6 @@ import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
-import { SplitHeading } from '@/components/SplitHeading'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, StoreCard } from '@/lib/cards'
@@ -396,7 +398,8 @@ export default function DailyPage() {
         <div aria-hidden className="grain" />
 
         <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
-          <div className="max-w-2xl flex flex-col gap-4">
+          {/* max-w-xl — край, по которому .hero-scrim держит контраст */}
+          <div className="max-w-xl flex flex-col gap-4">
             {/*
               На телефоне здесь остаётся только дата.
 
@@ -417,19 +420,16 @@ export default function DailyPage() {
               flex-wrap — страховка: даже если подписи однажды подрастут, плашки
               встанут в столбик целиком, а не сломаются внутри себя.
             */}
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <span className="rounded-full bg-ember text-on-ember px-3 py-1 font-bold uppercase tracking-wide">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <span className="rounded-full bg-ember text-on-ember px-3 py-1 text-xs font-bold uppercase tracking-wide">
                 Игра дня · {dateLabel}
               </span>
-              <span
-                className={`rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium ${
-                  hero.store ? '' : 'hidden md:inline'
-                }`}
-              >
+              {/* Источник — фирменным зелёным, как на /play */}
+              <span className={`font-extrabold text-ember-text ${hero.store ? '' : 'hidden md:inline'}`}>
                 {hero.store ? STORE_LABEL[hero.store] ?? hero.store : SOURCE_BADGE[hero.source]}
               </span>
               {hero.hoursPlayed !== null && hero.hoursPlayed > 0 && (
-                <span className="hidden font-mono text-dim md:inline">
+                <span className="hidden tabular-nums text-dim md:inline">
                   {hero.hoursPlayed} ч наиграно
                 </span>
               )}
@@ -446,19 +446,19 @@ export default function DailyPage() {
               они по определению одно и то же. Название игры — главный текст
               этой страницы, рисковать его читаемостью нельзя.
             */}
-            <SplitHeading
+            <HeroTitle
+              appid={hero.appid}
+              name={hero.name}
               headingRef={heroRef}
-              tabIndex={-1}
-              className="font-display text-display-lg outline-none"
+              className="font-display text-display-lg"
+              logoClassName="h-[clamp(96px,14vw,184px)]"
               delay={0.2}
-            >
-              {hero.name}
-            </SplitHeading>
+            />
             <p className="text-base md:text-lg text-ink/90 leading-relaxed">{hero.reason}</p>
 
             <TagChips tags={hero.tags} matched={hero.sharedTags ?? []} />
 
-            <div className="flex flex-wrap items-center gap-3 mt-2">
+            <div className="flex flex-wrap items-center gap-3 mt-2 md:w-max md:flex-nowrap">
               {/* Некупленную игру запускать нечем: steam://run у неё
                   не делает ровным счётом ничего, поэтому ведём в магазин */}
               {hero.source === 'new' || hero.storeUrl ? (
@@ -490,17 +490,31 @@ export default function DailyPage() {
                   onClick={() =>
                     void sendFeedback(hero.appid, 'launched', undefined, ctxOf(hero, 'launch'))
                   }
+                  icon
                   className="btn-ember px-6 py-3"
                 />
+              )}
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => void notToday()}
+                  aria-disabled={rerolling}
+                  className="btn-glass aria-disabled:opacity-60"
+                >
+                  <Icon name="next" size={18} />
+                  {rerolling ? 'Подбираю другую…' : 'Не сегодня'}
+                </button>
               )}
               <Link
                 href={`/game/${hero.appid}`}
                 onClick={() =>
                   void sendFeedback(hero.appid, 'opened', undefined, ctxOf(hero, 'details'))
                 }
-                className="rounded-[14px] glass glass-hover px-6 py-3 text-sm"
+                title="Подробнее об игре"
+                className="btn-circle"
               >
-                Подробнее
+                <Icon name="info" size={20} />
+                <span className="sr-only">Подробнее</span>
               </Link>
               {/* Отзыв об игре дня: «Зашло» учит вкус, «Не сегодня» откладывает
                   и тут же предлагает другую. У сессии только для чтения их нет
@@ -514,21 +528,12 @@ export default function DailyPage() {
                     setLiked(new Set(liked).add(hero.appid))
                     void sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero))
                   }}
-                  className={`rounded-[14px] px-4 py-3 text-sm transition cursor-pointer ${
-                    liked.has(hero.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
-                  }`}
+                  aria-pressed={liked.has(hero.appid)}
+                  title={liked.has(hero.appid) ? 'Зашло — учтём в подборе' : 'Зашло'}
+                  className="btn-circle"
                 >
-                  {liked.has(hero.appid) ? 'Зашло ✓' : 'Зашло'}
-                </button>
-              )}
-              {!readOnly && (
-                <button
-                  type="button"
-                  onClick={() => void notToday()}
-                  aria-disabled={rerolling}
-                  className="rounded-[14px] glass glass-hover px-4 py-3 text-sm text-dim cursor-pointer aria-disabled:opacity-60"
-                >
-                  {rerolling ? 'Подбираю другую…' : 'Не сегодня'}
+                  <Icon name={liked.has(hero.appid) ? 'check' : 'heart'} size={20} />
+                  <span className="sr-only">Зашло</span>
                 </button>
               )}
             </div>
@@ -590,10 +595,16 @@ export default function DailyPage() {
             )}
             {hero.refund && <RefundNote />}
 
-            <p className="text-xs text-faint mt-1 max-w-md">
-              {hero.source === 'new'
-                ? 'Одна игра на день — завтра здесь будет другая. Покупать ничего не нужно.'
-                : 'Одна игра на день — завтра здесь будет другая.'}
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint mt-1 max-w-md">
+              <span className="inline-flex items-center gap-1.5 text-dim">
+                <Icon name="clock" size={14} />
+                <DailyCountdown nowSec={nowSec} />
+              </span>
+              <span>
+                {hero.source === 'new'
+                  ? 'Одна игра на день. Покупать ничего не нужно.'
+                  : 'Одна игра на день.'}
+              </span>
             </p>
           </div>
         </div>
@@ -610,16 +621,16 @@ export default function DailyPage() {
               href="https://steamdb.info/sales/"
               target="_blank"
               rel="noreferrer"
-              className="tap text-xs text-faint hover:text-ink transition-colors shrink-0"
+              className="tap link-more shrink-0"
             >
-              все скидки Steam →
+              Все скидки Steam <Icon name="arrow" size={14} />
             </a>
           </div>
           <p className="text-xs text-faint mb-4 max-w-md">
             Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто на
             будущее.
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
             {discoveries.map((c) => (
               <a
                 key={c.appid}
@@ -630,34 +641,28 @@ export default function DailyPage() {
                   const ctx = ctxOf({ source: 'new' }, 'store', 'discovery')
                   void sendFeedback(c.appid, 'opened', undefined, ctx)
                 }}
-                className="glass glass-hover rounded-[14px] overflow-hidden text-left"
+                className="game-card block text-left"
               >
-                <div className="relative">
-                  <GameArt
-                    appid={c.appid}
-                    name={c.name}
-                    headerImage={c.headerImage}
-                    art={c.art}
-                    sizes="(min-width: 768px) 33vw, 50vw"
-                    className="w-full aspect-[460/215] object-cover"
-                  />
-                  <DiscountCorner discount={c.discount} />
-                </div>
-                <div className="p-3">
-                  <div className="text-sm font-semibold leading-tight">{c.name}</div>
-                  <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
-                    <span className="text-dim truncate">
-                      {c.store ? (STORE_LABEL[c.store] ?? c.store) : 'Steam'}
-                    </span>
-                    <PriceTag
-                      priceFinal={c.priceFinal}
-                      discount={c.discount}
-                      isFree={c.isFree}
-                      showPercent={false}
-                      className="shrink-0"
-                    />
-                  </div>
-                </div>
+                <GameCardBody
+                  appid={c.appid}
+                  name={c.name}
+                  headerImage={c.headerImage}
+                  art={c.art}
+                  sizes="(min-width: 768px) 33vw, 50vw"
+                  corner={<DiscountCorner discount={c.discount} />}
+                  meta={
+                    <>
+                      <span className="truncate">{c.store ? (STORE_LABEL[c.store] ?? c.store) : 'Steam'}</span>
+                      <PriceTag
+                        priceFinal={c.priceFinal}
+                        discount={c.discount}
+                        isFree={c.isFree}
+                        showPercent={false}
+                        className="shrink-0"
+                      />
+                    </>
+                  }
+                />
               </a>
             ))}
           </div>

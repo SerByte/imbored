@@ -2,10 +2,9 @@
 
 import gsap from 'gsap'
 import Link from 'next/link'
-import type { CSSProperties } from 'react'
-import { GameArt } from '@/components/GameArt'
 import { Icon, type IconName } from '@/components/Icon'
 import { Stage } from '@/components/landing/Stage'
+import { PosterFan, type FanGame } from '@/components/PosterFan'
 
 /**
  * СЦЕНА 5: ЧТО ЗДЕСЬ ЕЩЁ ЕСТЬ.
@@ -33,7 +32,7 @@ type Section = {
   name: string
   line: string
   icon: IconName
-  art: ReadonlyArray<{ appid: number; name: string }>
+  art: readonly FanGame[]
 }
 
 const REPERTOIRE: readonly Section[] = [
@@ -110,11 +109,11 @@ export function Repertoire() {
          *
          * Карточки поднимаются по одной, и веер каждой приходит на такт позже
          * своей карточки — сначала витрина, потом то, что в ней лежит. Веер
-         * едет ОБЁРТКОЙ (.rep-art): у самих постеров свой transform, им
+         * едет ОБЁРТКОЙ (.fan): у самих постеров свой transform, им
          * управляет наведение, и твин на том же свойстве его бы перебил.
          */
         const cards = root.querySelectorAll('[data-rep-row]')
-        const fans = root.querySelectorAll('.rep-art')
+        const fans = root.querySelectorAll('.fan')
         gsap.set(cards, { autoAlpha: 0, y: 36 })
         gsap.set(fans, { yPercent: 28 })
         intro
@@ -141,14 +140,8 @@ export function Repertoire() {
       <ul className="rep">
         {REPERTOIRE.map((item) => (
           <li key={item.href} data-rep-row>
-            <Link href={item.href} className="rep-card">
-              <span aria-hidden className="rep-art" style={{ '--n': item.art.length } as CSSProperties}>
-                {item.art.map((g, i) => (
-                  <span key={g.appid} className="rep-poster" style={{ '--i': i } as CSSProperties}>
-                    <GameArt appid={g.appid} name={g.name} variant="poster" sizes="160px" />
-                  </span>
-                ))}
-              </span>
+            <Link href={item.href} className="rep-card fan-host">
+              <PosterFan games={item.art} />
               <span aria-hidden className="rep-icon">
                 <Icon name={item.icon} size={18} />
               </span>

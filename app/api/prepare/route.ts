@@ -24,6 +24,7 @@ import {
 import { fetchOwnedGames } from '@/lib/steam'
 import type { LibraryGame } from '@/lib/types'
 import { buildWarmPlan, shouldRefreshSnapshot } from '@/lib/warm'
+import { libraryWall } from '@/lib/warmup'
 
 /**
  * Предел объявлен явно, потому что после ответа идёт работа в after() — онлайн
@@ -93,6 +94,8 @@ export async function POST() {
   const facts = {
     games: snapshot.games.length,
     untouched: snapshot.games.filter(isUntouched).length,
+    // Стена экрана ожидания — из того же снапшота, без запросов (lib/warmup)
+    wall: libraryWall(snapshot.games),
   }
 
   // Демо-библиотека статична и уже засеяна — греть в ней нечего.

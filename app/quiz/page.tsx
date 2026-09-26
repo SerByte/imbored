@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { ClickSpark } from '@/components/ClickSpark'
+import { Icon, type IconName } from '@/components/Icon'
+import { Eyebrow } from '@/components/Labels'
+import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { SoundToggle } from '@/components/SoundToggle'
 import { SpotlightCard } from '@/components/SpotlightCard'
 import { useSearch } from '@/components/useSearch'
@@ -45,6 +48,63 @@ const STEP_VARIANTS = {
     x: back ? 24 : -24,
     transition: { duration: DUR.fast, ease: EASE_IN },
   }),
+}
+
+/*
+ * АРТ ОТВЕТОВ. Плитка «Весь вечер» с веером из «Ведьмака», «Балдура» и
+ * «Элдена» объясняет ответ быстрее подписи: это не картинка к слову, а
+ * примеры того, что с этим ответом приедет. Игры известные и узнаваемые по
+ * постеру; в выдачу они не попадают сами по себе — выдачу собирает движок из
+ * библиотеки человека, здесь только иллюстрация.
+ *
+ * Постеры — legacy library_600x900 из CDN Steam, как у полки разделов на
+ * главной (PosterFan): тот же файл уже мог лежать в кэше.
+ */
+const ANSWER_ART: Record<string, readonly FanGame[]> = {
+  short: [
+    { appid: 1794680, name: 'Vampire Survivors' },
+    { appid: 2379780, name: 'Balatro' },
+    { appid: 646570, name: 'Slay the Spire' },
+  ],
+  medium: [
+    { appid: 1145360, name: 'Hades' },
+    { appid: 588650, name: 'Dead Cells' },
+  ],
+  long: [
+    { appid: 292030, name: 'The Witcher 3' },
+    { appid: 1086940, name: "Baldur's Gate 3" },
+    { appid: 1245620, name: 'Elden Ring' },
+  ],
+  chill: [
+    { appid: 413150, name: 'Stardew Valley' },
+    { appid: 105600, name: 'Terraria' },
+  ],
+  engaged: [
+    { appid: 367520, name: 'Hollow Knight' },
+    { appid: 504230, name: 'Celeste' },
+  ],
+  solo: [
+    { appid: 753640, name: 'Outer Wilds' },
+    { appid: 632470, name: 'Disco Elysium' },
+  ],
+  friends: [
+    { appid: 548430, name: 'Deep Rock Galactic' },
+    { appid: 892970, name: 'Valheim' },
+  ],
+}
+
+/*
+ * Иконки ярлыков вместо эмодзи. Эмодзи рисует шрифт системы — цветные, разного
+ * веса и на каждой платформе свои; рядом с монохромной «Премьерой» они
+ * читались наклейками. Сами эмодзи остаются в данных (lib/presets.ts): их
+ * по-прежнему показывает выбор настроения комнаты.
+ */
+const PRESET_ICON: Record<string, IconName> = {
+  'after-work': 'home',
+  sleep: 'moon',
+  friday: 'users',
+  weekend: 'calendar',
+  quick: 'bolt',
 }
 
 /** Заголовок и карточки приходят по одной — шаг раскладывается, а не падает. */
@@ -225,10 +285,18 @@ function Quiz() {
           <div data-answer={cardState(o.value)} className="quiz-answer h-full">
             <SpotlightCard
               onClick={() => pick(o.value)}
-              className="panel-lift h-full px-6 py-8 text-left"
+              className="panel-lift quiz-tile fan-host h-full w-full px-6 py-6 text-left"
+              backdrop={
+                <>
+                  <PosterFan games={ANSWER_ART[o.value] ?? []} />
+                  <span aria-hidden className="quiz-scrim" />
+                </>
+              }
             >
-              <div className="text-xl font-semibold">{o.label}</div>
-              <div className="text-sm text-dim mt-1.5">{o.hint}</div>
+              <span className="block text-[1.375rem] leading-tight font-extrabold tracking-[-0.025em]">
+                {o.label}
+              </span>
+              <span className="block text-sm text-dim mt-1.5">{o.hint}</span>
             </SpotlightCard>
           </div>
         </motion.div>
@@ -247,7 +315,7 @@ function Quiz() {
         <SoundToggle />
       </div>
 
-      <div className="relative w-full max-w-2xl flex flex-col items-center gap-10">
+      <div className="relative w-full max-w-3xl flex flex-col items-center gap-10">
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
             <span className="text-xs text-faint">
@@ -290,9 +358,10 @@ function Quiz() {
                      стоят с зазором 8, и соседи начали бы воровать нажатия —
                      ровно тот дефект, что уже описан у .chip. Растёт сама
                      кнопка, зазор остаётся настоящим. */
-                  className="glass glass-hover shrink-0 rounded-full px-4 py-3 text-sm cursor-pointer"
+                  className="pill shrink-0 py-3"
                 >
-                  {p.emoji} {p.label}
+                  {PRESET_ICON[p.key] ? <Icon name={PRESET_ICON[p.key]} size={16} /> : <span aria-hidden>{p.emoji}</span>}
+                  {p.label}
                 </button>
               ))}
               <button
@@ -312,8 +381,9 @@ function Quiz() {
                     { roulette: true },
                   )
                 }}
-                className="shrink-0 rounded-full bg-ember/15 text-ember-text px-4 py-3 text-sm hover:bg-ember/25 transition cursor-pointer"
+                className="pill shrink-0 py-3 text-ember-text"
               >
+                <Icon name="dice" size={16} />
                 Мне повезёт
               </button>
               {/*
@@ -326,8 +396,9 @@ function Quiz() {
               {!focus && (
                 <button
                   onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
-                  className="shrink-0 rounded-full bg-ember/15 text-ember-text px-4 py-3 text-sm hover:bg-ember/25 transition cursor-pointer"
+                  className="pill shrink-0 py-3 text-ember-text"
                 >
+                  <Icon name="box" size={16} />
                   Ни разу не запускал
                 </button>
               )}
@@ -354,21 +425,26 @@ function Quiz() {
           {stepIndex === 0 && (
             <span className="text-xs text-faint anim-rise">Или ответь на три вопроса:</span>
           )}
-          <div className="flex gap-2.5">
-          {STEPS.map((s, i) => (
-            <span
-              key={s.key}
-              // Текущая точка чуть крупнее: цвет говорит «пройдено», размер —
-              // «ты здесь». Раньше оба состояния передавал один цвет.
-              //
-              // В transition именно scale, а не transform: Tailwind v4 пишет
-              // scale-125 в отдельное свойство scale, и переход по transform
-              // его не касался — точка прыгала вместо роста.
-              className={`h-2 w-2 rounded-full transition-[background-color,scale] duration-[320ms] ease-[cubic-bezier(.22,1,.36,1)] ${
-                i <= stepIndex ? 'bg-ember' : 'bg-track'
-              } ${i === stepIndex ? 'scale-125' : ''}`}
-              />
-            ))}
+          {/* «Шаг 2 из 3 · Вайб» и три полосы, как у сериала «серия 2 из 3».
+              Для глаза: скринридер слышит «Вопрос N из 3» из живой строки
+              ниже, и вторая такая же подпись была бы дублем. */}
+          <div aria-hidden className="flex flex-col items-center gap-2.5">
+            <Eyebrow as="span" tone="dim">
+              Шаг {stepIndex + 1} из {STEPS.length} · {step.axis}
+            </Eyebrow>
+            <div className="flex gap-1.5">
+              {STEPS.map((s, i) => (
+                <span key={s.key} className="relative h-1 w-12 overflow-hidden rounded-full bg-track">
+                  {/* Заливка едет масштабом от левого края: пройденный шаг
+                      дотягивается до конца, будущий стоит пустым */}
+                  <span
+                    className={`absolute inset-0 origin-left rounded-full bg-ink transition-transform duration-[320ms] ease-[cubic-bezier(.22,1,.36,1)] ${
+                      i <= stepIndex ? 'scale-x-100' : 'scale-x-0'
+                    }`}
+                  />
+                </span>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -436,9 +512,10 @@ function Quiz() {
               wantStepFocus.current = true
               setStepIndex(stepIndex - 1)
             }}
-            className="tap text-sm text-dim hover:text-ink transition-colors cursor-pointer"
+            className="tap link-more cursor-pointer"
           >
-            ← Назад
+            <Icon name="back" size={16} />
+            Назад
           </button>
         )}
       </div>

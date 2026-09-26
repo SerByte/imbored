@@ -1,5 +1,7 @@
 'use client'
 
+import { Icon } from '@/components/Icon'
+
 /**
  * Кнопка «играть».
  *
@@ -59,6 +61,7 @@ export function SteamLaunch({
     : 'Открыть в Steam',
   onClick,
   onLaunch,
+  icon = false,
 }: {
   appid: number
   className?: string
@@ -67,6 +70,12 @@ export function SteamLaunch({
   mobileLabel?: string | null
   onClick?: () => void
   onLaunch?: () => void
+  /**
+   * Треугольник «играть» перед подписью — у главной кнопки героя. Только у
+   * steam://run: ссылка в магазин и строка про загрузку ничего не запускают,
+   * и треугольник на них обещал бы то, чего не будет.
+   */
+  icon?: boolean
 }) {
   return (
     <>
@@ -78,6 +87,7 @@ export function SteamLaunch({
         }}
         className={`hidden pointer-fine:inline-block ${className}`}
       >
+        {icon && mode === 'run' && <Icon name="play" className="mr-2 inline-block align-[-0.125em]" />}
         {label}
       </a>
       {mobileLabel !== null &&

@@ -98,6 +98,21 @@ const PATHS = {
     </>
   ),
   moon: <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" />,
+  bolt: <path d="M13 3L5.5 13.5h5.5L10 21l7.5-10.5H12z" />,
+  dice: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="3.5" />
+      <circle cx="8.75" cy="8.75" r="1.35" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.35" fill="currentColor" stroke="none" />
+      <circle cx="15.25" cy="15.25" r="1.35" fill="currentColor" stroke="none" />
+    </>
+  ),
+  box: (
+    <>
+      <path d="M4 8l8-4 8 4v8.5L12 20.5 4 16.5z" />
+      <path d="M4 8l8 4 8-4M12 12v8.5" />
+    </>
+  ),
 } as const
 
 export type IconName = keyof typeof PATHS

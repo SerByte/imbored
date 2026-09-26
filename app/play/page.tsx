@@ -7,7 +7,7 @@ import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStor
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
-import { GameArt } from '@/components/GameArt'
+import { GameCardBody } from '@/components/GameCard'
 import { Magnet } from '@/components/Magnet'
 import { HeroShots } from '@/components/HeroShots'
 import { LogoMark } from '@/components/Logo'
@@ -20,8 +20,9 @@ import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
-import { WarmupScreen } from '@/components/WarmupScreen'
-import { SplitHeading } from '@/components/SplitHeading'
+import { WarmupScreen, type ChosenGame } from '@/components/WarmupScreen'
+import { HeroTitle } from '@/components/HeroTitle'
+import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
@@ -75,7 +76,7 @@ import { bounceTo, reconnectHref } from '@/lib/destination'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
-import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { parseWallMemo, remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
 import { TagChips } from '@/components/TagChips'
@@ -155,6 +156,8 @@ const LEAN_CHIPS: Array<{ key: Lean; label: string }> = [
  * Снимок сервера — «свёрнуто»: разметка до гидратации обязана совпасть.
  */
 const moreStore = createLocalStore('imbored.play.more-open', parseFlag)
+/** Стена экрана ожидания с прошлого прогрева (lib/warmup, WallMemo) */
+const wallStore = createLocalStore('imbored.play.wall', parseWallMemo)
 const shelfStore = createLocalStore('imbored.play.shelf-open', parseFlag)
 
 /**
@@ -254,6 +257,15 @@ const FAIL_UNKNOWN = {
  */
 const PREPARE_MESSAGE = 'Изучаю твою библиотеку…'
 
+/**
+ * «Из многих — одна»: сколько экран ожидания держится после ответа, пока
+ * постер выбранной игры выходит из стены (WarmupScreen, .warmup-chosen).
+ * Такт, а не пауза ради паузы: 0.8 с на выход постера и полсекунды, чтобы
+ * его увидеть. При «уменьшить движение» не держим вовсе — там это была бы
+ * просто задержка.
+ */
+const CHOSEN_MS = 1300
+
 function Player({ say }: { say: (line: string) => void }) {
   const router = useRouter()
   const search = useSearchParams()
@@ -274,6 +286,8 @@ function Player({ say }: { say: (line: string) => void }) {
   const askedMood = (['time', 'vibe', 'social'] as const).every((k) => search.has(k))
 
   const [phase, setPhase] = useState<'prepare' | 'spin' | 'reveal' | 'burnout' | 'error'>('prepare')
+  /** Игра, выходящая из стены экрана ожидания; null — обычное ожидание */
+  const [chosen, setChosen] = useState<ChosenGame | null>(null)
   /*
    * Сколько ждать, если выдача отказала по потолку частоты, а не по сбою.
    * Экран ошибки говорит «каталог прогревается» — для 429 это прямая неправда:
@@ -355,6 +369,7 @@ function Player({ say }: { say: (line: string) => void }) {
   const dealMeta = useRef<{ at: number; nowSec: number; viewer: string | null } | null>(null)
   const moreOpen =
     useSyncExternalStore(moreStore.subscribe, moreStore.get, moreStore.server) === true
+  const wallMemo = useSyncExternalStore(wallStore.subscribe, wallStore.get, wallStore.server)
   const shelfOpen =
     useSyncExternalStore(shelfStore.subscribe, shelfStore.get, shelfStore.server) === true
   /**
@@ -705,7 +720,19 @@ function Player({ say }: { say: (line: string) => void }) {
         setPhase('error')
         return false
       }
-      applyDeal(got)
+      const at = applyDeal(got)
+      /*
+       * Такт «из многих — одна». Только на первом показе и не в рулетке: у
+       * той свой барабан, и два выбора подряд читались бы как заминка.
+       */
+      const hero = got.picks[at]
+      // У игры не из Steam вертикального постера нет — выходить из стены нечему
+      if (!roulette && hero.appid > 0 && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        setChosen({ appid: hero.appid, name: hero.name, art: hero.art })
+        await new Promise((done) => window.setTimeout(done, CHOSEN_MS))
+        if (ac.signal.aborted) return false
+      }
+      setChosen(null)
       // В рулетке между «подбираю» и выдачей появляется барабан: он и есть
       // та самая случайность, которая до сих пор происходила молча.
       setPhase(roulette ? 'spin' : 'reveal')
@@ -778,6 +805,7 @@ function Player({ say }: { say: (line: string) => void }) {
           lastTotal = p.total
           warmedAll = p.remaining <= 0
           setPrep(p)
+          if (p.library?.wall) wallStore.set({ games: p.library.games, wall: p.library.wall })
           if (p.remaining > 0) setProgress(remainingLine(p.remaining))
         },
         onYield: (p) => {
@@ -1020,6 +1048,8 @@ function Player({ say }: { say: (line: string) => void }) {
         progress={prep}
         message={progress}
         caption={askedMood ? moodCaption(mood) : undefined}
+        chosen={chosen}
+        memo={wallMemo}
       />
     )
   }
@@ -1360,15 +1390,20 @@ function Player({ say }: { say: (line: string) => void }) {
             animate="show"
             className="relative mx-auto w-full max-w-6xl px-safe pb-12 pt-40"
           >
-            <div className="max-w-2xl flex flex-col gap-4">
+            {/* max-w-xl — не вкус: по этому краю .hero-scrim держит свои 0.63,
+                и шире колонка вышла бы из-под гарантии контраста */}
+            <div className="max-w-xl flex flex-col gap-4">
               {/* flex-wrap: строка выросла на длину захода, и на 375px плашка,
-                  часы, сессия и онлайн в одну линию уже не влезают */}
-              <motion.div variants={STEP} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                <span className="rounded-full bg-ember/15 text-ember-text px-3 py-1 font-medium">
+                  часы, сессия и онлайн в одну линию уже не влезают.
+                  Источник — фирменным зелёным, как «совпадение» у стриминга:
+                  процента совпадения у выдачи нет, и выдумывать его мы не
+                  будем, а «почему она здесь» — ровно то, что он заменяет. */}
+              <motion.div variants={STEP} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="font-extrabold text-ember-text">
                   {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}
                 </span>
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
-                  <span className="font-mono text-dim">{pick.hoursPlayed} ч наиграно</span>
+                  <span className="text-dim tabular-nums">{pick.hoursPlayed} ч наиграно</span>
                 )}
                 {/* Сколько уходит на заход — рядом с тем, сколько уже наиграно:
                     оба числа про время, и «хватит ли вечера» решается здесь */}
@@ -1381,14 +1416,14 @@ function Player({ say }: { say: (line: string) => void }) {
                 <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
               </motion.div>
 
-              <SplitHeading
+              <HeroTitle
+                appid={pick.appid}
+                name={pick.name}
                 headingRef={heroRef}
-                tabIndex={-1}
-                className="font-display text-display-lg outline-none"
+                className="font-display text-display-lg"
+                logoClassName="h-[clamp(96px,14vw,184px)]"
                 delay={0.18}
-              >
-                {pick.name}
-              </SplitHeading>
+              />
 
               <motion.p variants={STEP} className="text-base md:text-lg text-ink/90 leading-relaxed">
                 {pick.reason}
@@ -1426,7 +1461,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   aria-controls="play-why"
                   className="tap text-dim hover:text-ink transition-colors cursor-pointer"
                 >
-                  Почему она? <span aria-hidden>{showWhy ? '▴' : '▾'}</span>
+                  Почему она? <Icon name={showWhy ? 'up' : 'down'} className="inline-block align-[-0.15em]" />
                 </button>
                 <AnimatePresence initial={false}>
                   {showWhy && (
@@ -1487,7 +1522,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       forgetLaunch(pick.appid)
                       advance(index)
                     }}
-                    className="rounded-full glass glass-hover px-4 py-2 text-sm"
+                    className="pill"
                   >
                     {r.label}
                   </button>
@@ -1505,7 +1540,9 @@ function Player({ say }: { say: (line: string) => void }) {
               </motion.div>
             ) : (
               <>
-              <motion.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2">
+              {/* С md ряд в одну линию и может быть шире колонки текста: кнопки
+                  несут свою подложку, и край скрима им не нужен */}
+              <motion.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2 md:w-max md:flex-nowrap">
                 {pick.source === 'new' || pick.storeUrl ? (
                   // Игры нет в библиотеке — «Запустить» для неё кнопка-обманка:
                   // steam://run у не купленной игры не делает ничего. Ведём
@@ -1542,6 +1579,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     // Засекаем только настоящий запуск: через десять минут
                     // вернувшегося спросим, зацепило ли (см. StopAsk)
                     onLaunch={() => rememberLaunch(pick.appid, pick.name, Math.floor(Date.now() / 1000))}
+                    icon
                     className="btn-ember px-6 py-3"
                   />
                 )}
@@ -1550,7 +1588,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     href={storeHref(pick)}
                     target="_blank"
                     rel="noreferrer"
-                    className="rounded-[14px] glass glass-hover px-5 py-3 text-sm flex items-center gap-2"
+                    className="btn-glass"
                   >
                     <PriceTag
                       priceFinal={pick.priceFinal}
@@ -1560,33 +1598,6 @@ function Player({ say }: { say: (line: string) => void }) {
                     />
                     <DiscountEnds discount={pick.discount} />
                   </a>
-                )}
-                <Link
-                  href={`/game/${pick.appid}`}
-                  onClick={() =>
-                    void sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'details'))
-                  }
-                  className="rounded-[14px] glass glass-hover px-6 py-3 text-sm"
-                >
-                  Подробнее
-                </Link>
-                {!readOnly && (
-                  <button
-                    onClick={() => {
-                      // «Зашло» после запуска — уже ответ на «не зацепило?», даже
-                      // повторное: спрашивать про неё больше незачем
-                      forgetLaunch(pick.appid)
-                      // Повторное нажатие — не второе «зашло»: кнопка уже горит
-                      if (liked.has(pick.appid)) return
-                      setLiked(new Set(liked).add(pick.appid))
-                      void sendFeedback(pick.appid, 'liked', undefined, ctxOf(pick, heroFrom))
-                    }}
-                    className={`rounded-[14px] px-4 py-3 text-sm transition ${
-                      liked.has(pick.appid) ? 'bg-ember/20 text-ember-text' : 'glass glass-hover text-dim'
-                    }`}
-                  >
-                    {liked.has(pick.appid) ? 'Зашло ✓' : 'Зашло'}
-                  </button>
                 )}
                 {roulette ? (
                   // Бросок кубика заслуживает физического отклика в точке нажатия
@@ -1599,8 +1610,9 @@ function Player({ say }: { say: (line: string) => void }) {
                           void sendFeedback(pick.appid, 'skipped', 'spin', ctxOf(pick, heroFrom))
                           advance(index)
                         }}
-                        className="rounded-[14px] glass glass-hover no-lift px-4 py-3 text-sm text-dim cursor-pointer"
+                        className="btn-glass no-lift"
                       >
+                        <Icon name="refresh" size={18} />
                         Крутить ещё
                       </button>
                     </ClickSpark>
@@ -1616,9 +1628,44 @@ function Player({ say }: { say: (line: string) => void }) {
                       setAskReason(true)
                       say(playLine({ kind: 'ask' }))
                     }}
-                    className="rounded-[14px] glass glass-hover px-4 py-3 text-sm text-dim cursor-pointer"
+                    className="btn-glass"
                   >
+                    <Icon name="next" size={18} />
                     Не то — дальше
+                  </button>
+                )}
+                <Link
+                  href={`/game/${pick.appid}`}
+                  onClick={() =>
+                    void sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'details'))
+                  }
+                  // Кругом, как ⓘ у стриминга: подпись — для скринридера и
+                  // подсказкой под курсором
+                  title="Подробнее об игре"
+                  className="btn-circle"
+                >
+                  <Icon name="info" size={20} />
+                  <span className="sr-only">Подробнее</span>
+                </Link>
+                {!readOnly && (
+                  <button
+                    onClick={() => {
+                      // «Зашло» после запуска — уже ответ на «не зацепило?», даже
+                      // повторное: спрашивать про неё больше незачем
+                      forgetLaunch(pick.appid)
+                      // Повторное нажатие — не второе «зашло»: кнопка уже горит
+                      if (liked.has(pick.appid)) return
+                      setLiked(new Set(liked).add(pick.appid))
+                      void sendFeedback(pick.appid, 'liked', undefined, ctxOf(pick, heroFrom))
+                    }}
+                    // Круг с сердцем, как «в мой список» у стриминга; подпись
+                    // для скринридера — та же, что была текстом кнопки
+                    aria-pressed={liked.has(pick.appid)}
+                    title={liked.has(pick.appid) ? 'Зашло — учтём в подборе' : 'Зашло'}
+                    className="btn-circle"
+                  >
+                    <Icon name={liked.has(pick.appid) ? 'check' : 'heart'} size={20} />
+                    <span className="sr-only">Зашло</span>
                   </button>
                 )}
                 {!readOnly && (
@@ -1679,9 +1726,7 @@ function Player({ say }: { say: (line: string) => void }) {
                           ? 'Убрать с полки. Бросать игры — нормально'
                           : 'Больше не показывать эту игру'
                     }
-                    className={`rounded-[14px] glass glass-hover py-3 text-sm cursor-pointer disabled:opacity-60 ${
-                      finished ? 'px-4 text-dim' : 'px-3 text-faint'
-                    }`}
+                    className={finished ? 'btn-glass disabled:opacity-60' : 'btn-circle disabled:opacity-60'}
                   >
                     {/*
                       Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
@@ -1694,7 +1739,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       banning ? 'Отмечаю…' : 'Уже прошёл'
                     ) : (
                       <>
-                        <span aria-hidden>🚫</span>
+                        <Icon name="hide" size={20} />
                         <span className="sr-only">
                           {banning
                             ? 'Убираю навсегда…'
@@ -1819,9 +1864,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       // «Что-то другое» — действие, а не переключатель: у
                       // повторяемого нажатия нет «нажатого» состояния
                       aria-pressed={n === 'different' ? undefined : nudge === n}
-                      className={`tap glass rounded-full px-3.5 py-2 transition cursor-pointer aria-disabled:opacity-50 ${
-                        nudge === n ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
-                      }`}
+                      className="tap pill aria-disabled:opacity-50"
                     >
                       {NUDGE_LABEL[n]}
                     </button>
@@ -1845,11 +1888,11 @@ function Player({ say }: { say: (line: string) => void }) {
           рулетке её нет — там весь смысл в броске. */}
       {cont && !roulette && (
         <div className="mx-auto w-full max-w-6xl px-safe pt-8">
-          <div className="glass rounded-[14px] px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+          <div className="panel-lift px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
             <span className="text-dim">
-              Или продолжи <span className="text-ink">«{cont.name}»</span>
+              Или продолжи <span className="font-extrabold text-ink">«{cont.name}»</span>
               {cont.recentHours > 0 && (
-                <span className="font-mono text-faint"> · {cont.recentHours} ч за две недели</span>
+                <span className="tabular-nums text-faint"> · {cont.recentHours} ч за две недели</span>
               )}
             </span>
             <SteamLaunch
@@ -1858,7 +1901,7 @@ function Player({ say }: { say: (line: string) => void }) {
               onClick={() =>
                 void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))
               }
-              className="tap text-ember-text hover:underline"
+              className="tap font-extrabold text-ember-text hover:underline"
             />
           </div>
         </div>
@@ -1881,9 +1924,8 @@ function Player({ say }: { say: (line: string) => void }) {
                   : seed
                     ? `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')}, похожих на «${seed.name}»`
                     : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}
-                {/* Глиф — для глаза: состояние уже в aria-expanded, а вслух
-                    он читался «чёрный треугольник вниз» */}
-                <span aria-hidden>{moreOpen ? '▴' : '▾'}</span>
+                {/* Иконка — для глаза: состояние уже в aria-expanded */}
+                <Icon name={moreOpen ? 'up' : 'down'} className="inline-block align-[-0.12em]" />
               </button>
             </SectionLabel>
           )}
@@ -1906,7 +1948,7 @@ function Player({ say }: { say: (line: string) => void }) {
                          4 px соседние зоны перекрылись бы на 8 px и воровали бы друг
                          у друга нажатия. 12 px — ровно столько, сколько зона
                          занимает, и ни пикселем больше. */
-                      className="flex items-center gap-3 rounded-full glass p-1 text-xs"
+                      className="seg-group"
                     >
                       {SCOPES.map((s) => (
                         <button
@@ -1927,9 +1969,7 @@ function Player({ say }: { say: (line: string) => void }) {
                              основной фильтр экрана выдачи. Зону наращивать нечем:
                              кнопки стоят внутри одной пилюли в 4 px друг от друга, и
                              псевдозона .tap перекрыла бы соседа. */
-                          className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer aria-disabled:opacity-50 ${
-                            scope === s.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
-                          }`}
+                          className="tap seg"
                         >
                           {s.label}
                         </button>
@@ -1942,7 +1982,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     <div
                       role="group"
                       aria-label="Чего хочется"
-                      className="flex items-center gap-3 rounded-full glass p-1 text-xs"
+                      className="seg-group"
                     >
                       <span aria-hidden className="pl-2.5 text-faint">
                         хочется
@@ -1960,9 +2000,7 @@ function Player({ say }: { say: (line: string) => void }) {
                           }
                           aria-disabled={switching}
                           aria-pressed={lean === l.key}
-                          className={`tap rounded-full px-3.5 py-2.5 transition cursor-pointer aria-disabled:opacity-50 ${
-                            lean === l.key ? 'bg-ember/20 text-ember-text' : 'text-dim hover:text-ink'
-                          }`}
+                          className="tap seg"
                         >
                           {l.label}
                         </button>
@@ -1970,7 +2008,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     </div>
                   </div>
                 )}
-                <span className="text-xs text-faint font-mono">
+                <span className="text-xs font-semibold text-faint">
                   {/*
                     «по тегам», а не «эвристика». Раскрытие тут по делу — продукт
                     обещает, что рекомендация себя объясняет, — но «эвристика» было
@@ -1988,7 +2026,7 @@ function Player({ say }: { say: (line: string) => void }) {
               <p role="status" className="text-xs text-danger">
                 {switchMiss && <span className="block -mt-2 mb-4">{switchMiss}</span>}
               </p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-6">
                 {others.map((p, i) => (
                   <motion.button
                     key={p.appid}
@@ -2005,46 +2043,42 @@ function Player({ say }: { say: (line: string) => void }) {
                       say(playLine({ kind: 'pick', name: p.name }))
                       focusHero(false)
                     }}
-                    className="glass glass-hover rounded-[14px] overflow-hidden text-left cursor-pointer"
+                    className="game-card block text-left cursor-pointer"
                   >
-                    <div className="relative">
-                      <GameArt
-                        appid={p.appid}
-                        name={p.name}
-                        headerImage={p.headerImage}
-                        art={p.art}
-                        /* сетка тут grid-cols-2 md:grid-cols-4, то есть 50vw и 25vw;
-                           стояло «33vw, 100vw» — вдвое шире нужного на телефоне */
-                        sizes="(min-width: 768px) 25vw, 50vw"
-                        className="w-full aspect-[460/215] object-cover"
-                      />
-                      <DiscountCorner discount={p.discount} />
-                    </div>
-                    <div className="p-3">
-                      <div className="text-sm font-semibold leading-tight">{p.name}</div>
-                      <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
-                        {/* Преимущество важнее источника: «откуда» видно и по
-                            герою, а «чем лучше соседних» — только здесь */}
-                        <span className={`truncate ${p.edge ? 'text-ember-text' : 'text-dim'}`}>
-                          {p.edge
-                            ? EDGE_BADGE[p.edge]
-                            : p.store
-                              ? (STORE_LABEL[p.store] ?? p.store)
-                              : SOURCE_BADGE_SHORT[p.source]}
-                        </span>
-                        {/* Цена — только у не купленного: у своей игры она уже
-                            ничего не решает, а место в строке занимает */}
-                        {p.source === 'new' && (
-                          <PriceTag
-                            priceFinal={p.priceFinal}
-                            discount={p.discount}
-                            isFree={p.isFree}
-                            showPercent={false}
-                            className="shrink-0"
-                          />
-                        )}
-                      </div>
-                    </div>
+                    <GameCardBody
+                      appid={p.appid}
+                      name={p.name}
+                      headerImage={p.headerImage}
+                      art={p.art}
+                      /* сетка тут grid-cols-2 md:grid-cols-4, то есть 50vw и 25vw;
+                         стояло «33vw, 100vw» — вдвое шире нужного на телефоне */
+                      sizes="(min-width: 768px) 25vw, 50vw"
+                      corner={<DiscountCorner discount={p.discount} />}
+                      meta={
+                        <>
+                          {/* Преимущество важнее источника: «откуда» видно и по
+                              герою, а «чем лучше соседних» — только здесь */}
+                          <span className={`truncate ${p.edge ? 'text-ember-text' : ''}`}>
+                            {p.edge
+                              ? EDGE_BADGE[p.edge]
+                              : p.store
+                                ? (STORE_LABEL[p.store] ?? p.store)
+                                : SOURCE_BADGE_SHORT[p.source]}
+                          </span>
+                          {/* Цена — только у не купленного: у своей игры она уже
+                              ничего не решает, а место в строке занимает */}
+                          {p.source === 'new' && (
+                            <PriceTag
+                              priceFinal={p.priceFinal}
+                              discount={p.discount}
+                              isFree={p.isFree}
+                              showPercent={false}
+                              className="shrink-0"
+                            />
+                          )}
+                        </>
+                      }
+                    />
                   </motion.button>
                 ))}
               </div>
@@ -2069,7 +2103,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   className="tap hover:text-ink transition-colors cursor-pointer text-left"
                 >
                   Нет в библиотеке · {discoveries.length}{' '}
-                  <span aria-hidden>{shelfOpen ? '▴' : '▾'}</span>
+                  <Icon name={shelfOpen ? 'up' : 'down'} className="inline-block align-[-0.12em]" />
                 </button>
               </SectionLabel>
               {shelfOpen && (
@@ -2077,9 +2111,9 @@ function Player({ say }: { say: (line: string) => void }) {
                   href="https://steamdb.info/sales/"
                   target="_blank"
                   rel="noreferrer"
-                  className="tap text-xs text-faint hover:text-ink transition-colors shrink-0"
+                  className="tap link-more shrink-0"
                 >
-                  все скидки Steam →
+                  Все скидки Steam <Icon name="arrow" size={14} />
                 </a>
               )}
             </div>
@@ -2089,7 +2123,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто
                   на будущее.
                 </p>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
                   {discoveries.map((p, i) => {
                     // Отзывы — ответ на «а стоит ли покупать», поэтому только на
                     // полке покупок: у своей игры этот вопрос уже решён
@@ -2107,41 +2141,39 @@ function Player({ say }: { say: (line: string) => void }) {
                         onClick={() =>
                           void sendFeedback(p.appid, 'opened', undefined, ctxOf(p, 'discovery', 'store'))
                         }
-                        className="glass glass-hover rounded-[14px] overflow-hidden text-left"
+                        className="game-card block text-left"
                       >
-                        <div className="relative">
-                          <GameArt
-                            appid={p.appid}
-                            name={p.name}
-                            headerImage={p.headerImage}
-                            art={p.art}
-                            sizes="(min-width: 768px) 33vw, 50vw"
-                            className="w-full aspect-[460/215] object-cover"
-                          />
-                          <DiscountCorner discount={p.discount} />
-                        </div>
-                        <div className="p-3">
-                          <div className="text-sm font-semibold leading-tight">{p.name}</div>
-                          <div className="text-[11px] mt-1 flex items-center justify-between gap-2">
-                            <span className="text-dim truncate">
-                              {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
-                            </span>
-                            <PriceTag
-                              priceFinal={p.priceFinal}
-                              discount={p.discount}
-                              isFree={p.isFree}
-                              showPercent={false}
-                              className="shrink-0"
-                            />
-                          </div>
-                          <DiscountEnds discount={p.discount} className="mt-1 block" />
+                        <GameCardBody
+                          appid={p.appid}
+                          name={p.name}
+                          headerImage={p.headerImage}
+                          art={p.art}
+                          sizes="(min-width: 768px) 33vw, 50vw"
+                          corner={<DiscountCorner discount={p.discount} />}
+                          meta={
+                            <>
+                              <span className="truncate">
+                                {p.store ? (STORE_LABEL[p.store] ?? p.store) : 'Steam'}
+                              </span>
+                              <PriceTag
+                                priceFinal={p.priceFinal}
+                                discount={p.discount}
+                                isFree={p.isFree}
+                                showPercent={false}
+                                className="shrink-0"
+                              />
+                            </>
+                          }
+                        />
+                        <span className="block px-0.5">
+                          <DiscountEnds discount={p.discount} className="mt-1 block text-xs" />
                           {reviews && (
-                            <span className="text-[11px] text-faint mt-1 block" title={reviews.full}>
+                            <span className="text-xs text-faint mt-1 block" title={reviews.full}>
                               <span aria-hidden>{reviews.short}</span>
                               <span className="sr-only">{reviews.full}</span>
                             </span>
                           )}
-                        </div>
+                        </span>
                       </motion.a>
                     )
                   })}
