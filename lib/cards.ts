@@ -243,7 +243,13 @@ export function dailyCardView(
   pick: { appid: number; name: string; source: CandidateSource },
   meta: GameMeta | undefined,
   now: number,
-  day: { reason: string; sharedTags: string[]; hoursPlayed: number | null; hideUrgency: boolean },
+  day: {
+    reason: string
+    sharedTags: string[]
+    hoursPlayed: number | null
+    hideUrgency: boolean
+    via?: OwnAnchor | null
+  },
 ) {
   return {
     appid: pick.appid,
@@ -266,6 +272,9 @@ export function dailyCardView(
     // explainMatch: процент и вайб тут не о чем.
     sharedTags: day.sharedTags,
     hoursPlayed: day.hoursPlayed,
+    // Своя игра-ориентир: у игры не из Steam своего арта нет, и герой стоит
+    // на размытом арте той, на которую она похожа (components/HeroArt)
+    via: day.via ?? null,
     ...buyView(meta, pick.source, now, day.hideUrgency),
   }
 }
@@ -303,6 +312,8 @@ export function exploreCardView(p: LlmPick, ctx: PickContext) {
     ...(shop.store ? { store: shop.store } : {}),
     ...(shop.storeUrl ? { storeUrl: shop.storeUrl } : {}),
     reason: p.reason,
+    // Ориентир — фон карты у игры не из Steam (components/TypeCover)
+    via: ctx.anchorOf(p.appid),
   }
 }
 

@@ -1,3 +1,4 @@
+import type { OwnAnchor } from './recommend'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from './types'
 
 /** FNV-1a — стабильный хеш строки в uint32 */
@@ -163,6 +164,11 @@ export type DailyAlternate = {
   /** Причина без ценового хвоста, как у героя */
   reasonBase: string
   sharedTags: string[]
+  /**
+   * Своя игра, на которую эта похожа. Её арт — фон героя у игры не из Steam,
+   * у которой своего арта нет. Записи до появления поля его не несут: null.
+   */
+  via: OwnAnchor | null
 }
 
 /**
@@ -188,6 +194,7 @@ export type DailySelection = {
   /** Причина без ценового хвоста; хвост — reasonPrice на каждом заходе */
   reasonBase: string
   sharedTags: string[]
+  via: OwnAnchor | null
   hideUrgency: boolean
   /** Своя на магазинный день; null — день и так свой, или своего нет */
   alt: DailyAlternate | null
@@ -204,14 +211,23 @@ function parseChosen(raw: unknown): DailyChosen | null {
 
 const isTags = (x: unknown): x is string[] => Array.isArray(x) && x.every((t) => typeof t === 'string')
 
+/** Якорь необязателен: битый или отсутствующий — просто без фона, запись живёт */
+function parseAnchor(raw: unknown): OwnAnchor | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { appid, name, hours } = raw as Record<string, unknown>
+  if (typeof appid !== 'number' || !Number.isInteger(appid) || appid <= 0) return null
+  if (typeof name !== 'string' || typeof hours !== 'number') return null
+  return { appid, name, hours }
+}
+
 function parseAlternate(raw: unknown): DailyAlternate | null {
   if (!raw || typeof raw !== 'object') return null
-  const { pick, hoursPlayed, reasonBase, sharedTags } = raw as Record<string, unknown>
+  const { pick, hoursPlayed, reasonBase, sharedTags, via } = raw as Record<string, unknown>
   const chosen = parseChosen(pick)
   if (!chosen) return null
   if (hoursPlayed !== null && typeof hoursPlayed !== 'number') return null
   if (typeof reasonBase !== 'string' || !isTags(sharedTags)) return null
-  return { pick: chosen, hoursPlayed, reasonBase, sharedTags }
+  return { pick: chosen, hoursPlayed, reasonBase, sharedTags, via: parseAnchor(via) }
 }
 
 /**
@@ -225,7 +241,7 @@ function parseAlternate(raw: unknown): DailyAlternate | null {
  */
 export function parseDailySelection(raw: unknown): DailySelection | null {
   if (!raw || typeof raw !== 'object') return null
-  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, hideUrgency, alt } = raw as Record<
+  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, via, hideUrgency, alt } = raw as Record<
     string,
     unknown
   >
@@ -248,6 +264,7 @@ export function parseDailySelection(raw: unknown): DailySelection | null {
     hoursPlayed,
     reasonBase,
     sharedTags,
+    via: parseAnchor(via),
     hideUrgency,
     alt: parseAlternate(alt),
   }

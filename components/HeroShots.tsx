@@ -33,12 +33,15 @@ export function HeroShots({
   headerImage,
   art,
   screenshots,
+  anchor = null,
 }: {
   appid: number
   name: string
   headerImage: string | null
   art: GameArtUrls | null
   screenshots: string[]
+  /** Своя игра-ориентир — фон у игры не из Steam (см. HeroArt) */
+  anchor?: { appid: number; name: string } | null
 }) {
   const reduced = useReducedMotion()
   const shots = useMemo(() => screenshots.slice(0, HERO_SLIDES), [screenshots])
@@ -60,7 +63,7 @@ export function HeroShots({
 
   return (
     <>
-      <HeroArt appid={appid} headerImage={headerImage} art={art} name={name} />
+      <HeroArt appid={appid} headerImage={headerImage} art={art} name={name} anchor={anchor} />
       {enabled && <HeroMorph shots={shots} name={name} />}
     </>
   )

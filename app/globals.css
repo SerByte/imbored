@@ -3786,6 +3786,100 @@ img[data-art-fade][data-loaded] {
 }
 /* Игре не из Steam постера взять неоткуда: вместо заглушки с названием —
    ровный свет, название и так стоит крупно внизу карты. */
+/*
+ * Типографская обложка игры не из Steam (components/TypeCover).
+ *
+ * Свечение цвета магазина (--tc) сверху справа и отсвет снизу слева — на
+ * почти чёрном, как ключ-арт; поверх — название крупно. Слои складывает
+ * grid в одну клетку, поэтому position здесь не задаётся: обложку зовут и с
+ * absolute-утилитами (герой), и в потоке. Кегль — от ширины обложки (cqi):
+ * одна и та же обложка живёт и в капсуле на 200 px, и в постере на 260.
+ * Цвета не зависят от темы — как у любой картинки.
+ */
+.type-cover {
+  display: grid;
+  overflow: hidden;
+  container-type: inline-size;
+  background:
+    radial-gradient(110% 80% at 100% 0%, color-mix(in srgb, var(--tc) 62%, transparent), transparent 66%),
+    radial-gradient(90% 70% at 0% 100%, color-mix(in srgb, var(--tc) 24%, transparent), transparent 70%),
+    #0b0b0c;
+  color: #fff;
+}
+.type-cover > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+}
+.type-cover-anchor {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.55;
+  filter: blur(28px) saturate(1.3);
+  scale: 1.15;
+  mix-blend-mode: screen;
+}
+.type-cover-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4cqi;
+  padding: 7cqi;
+}
+.type-cover-card .type-cover-text {
+  padding: 5cqi 6cqi;
+}
+/* Постер — название сверху, под меткой магазина: нижнюю половину карты
+   колоды занимает её собственная подпись, и титр там читался бы призраком
+   сквозь скрим. */
+.type-cover-poster .type-cover-text {
+  justify-content: flex-start;
+}
+/* Постер в герое ничем не накрыт — там титр внизу, как у настоящего постера */
+.hero-poster.type-cover-poster .type-cover-text {
+  justify-content: space-between;
+}
+.type-cover-store {
+  font-size: max(9px, 3.6cqi);
+  font-weight: 800;
+  letter-spacing: var(--track-meta);
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 0.78);
+}
+.type-cover-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5cqi;
+}
+.type-cover-name {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 14cqi;
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.type-cover-card .type-cover-name {
+  font-size: 10cqi;
+}
+.type-cover-genre {
+  font-size: max(10px, 4cqi);
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.72);
+}
+.type-cover-card .type-cover-genre {
+  font-size: max(10px, 3.2cqi);
+}
+.hero-poster {
+  border-radius: var(--radius-card);
+  rotate: 2deg;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.1),
+    0 30px 80px -10px rgb(0 0 0 / 0.6);
+}
+
 .deck-noart {
   background:
     radial-gradient(90% 60% at 50% 18%, color-mix(in srgb, var(--ink) 14%, transparent), transparent 70%),

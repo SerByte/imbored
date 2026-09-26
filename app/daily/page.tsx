@@ -8,6 +8,7 @@ import { DailyCountdown } from '@/components/DailyCountdown'
 import { GameCardBody } from '@/components/GameCard'
 import { HeroTitle } from '@/components/HeroTitle'
 import { HeroTrailer } from '@/components/HeroTrailer'
+import { HeroPoster } from '@/components/TypeCover'
 import { Icon } from '@/components/Icon'
 import { HeroShots } from '@/components/HeroShots'
 import { NeedSteam } from '@/components/NeedSteam'
@@ -383,6 +384,7 @@ export default function DailyPage() {
           art={hero.art}
           name={hero.name}
           screenshots={hero.screenshots ?? []}
+          anchor={hero.via}
         />
         <HeroTrailer trailer={hero.trailer} />
         <div aria-hidden className="absolute inset-0 hero-scrim" />
@@ -400,6 +402,7 @@ export default function DailyPage() {
         <div aria-hidden className="grain" />
 
         <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
+          <HeroPoster appid={hero.appid} name={hero.name} className="absolute bottom-16 right-5" />
           {/* max-w-xl — край, по которому .hero-scrim держит контраст */}
           <div className="max-w-xl flex flex-col gap-4">
             {/*

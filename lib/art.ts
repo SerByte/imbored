@@ -118,7 +118,7 @@ export function legacyArtUrl(appid: number, kind: 'header' | 'hero' | 'poster' |
 
 /**
  * Логотип игры без фона — то, что стриминг ставит поверх арта вместо
- * набранного заголовка. Есть не у всех игр: GameLogo на ошибке загрузки
+ * набранного заголовка. Есть не у всех игр: HeroTitle на ошибке загрузки
  * молча возвращается к названию текстом.
  */
 export function logoUrl(appid: number): string | null {
