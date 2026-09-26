@@ -889,11 +889,11 @@ textarea:focus-visible {
 
 .ribbon-grid {
   position: absolute;
-  inset: -12vh -12vw;
+  inset: -14vh -10vw;
   display: flex;
   justify-content: center;
   gap: 14px;
-  transform: rotate(-6deg) scale(1.16);
+  transform: rotate(-8deg) scale(1.2);
 }
 
 /*
@@ -922,28 +922,22 @@ textarea:focus-visible {
  */
 .ribbon-col {
   flex: 0 0 auto;
-  width: var(--ribbon-col, 300px);
+  width: var(--ribbon-col, 200px);
   display: flex;
   flex-direction: column;
   gap: 14px;
-  filter: blur(var(--ribbon-blur, 1.4px));
-  opacity: var(--ribbon-fade, 1);
   will-change: transform;
 }
 
 .ribbon-col img {
   width: 100%;
-  aspect-ratio: 460 / 215;
+  aspect-ratio: 2 / 3;
   object-fit: cover;
-  border-radius: 10px;
-  /*
-   * Волосок по верхней кромке: обложка ловит свет ребром и перестаёт быть
-   * отпечатком на общем листе. Тень НУЛЕВОГО радиуса — это принципиально:
-   * посадочная тень с размытием стояла здесь ровно один замер и уронила
-   * прокрутку вдвое (числа в докблоке GameRibbon.tsx). Картинок восемь
-   * десятков на ноутбуке и под полторы сотни на широком мониторе.
-   */
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: #111;
+  /* Кромка нулевого радиуса: посадочная тень с размытием на этих картинках
+     роняла прокрутку вдвое (числа в докблоке GameRibbon.tsx). */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 
 /*
@@ -954,13 +948,29 @@ textarea:focus-visible {
 .ribbon-scrim {
   position: absolute;
   inset: 0;
-  background: radial-gradient(
-    86% 82% at 50% 46%,
-    rgba(11, 12, 16, 0.9) 0%,
-    rgba(11, 12, 16, 0.87) 30%,
-    rgba(11, 12, 16, 0.62) 68%,
-    rgba(11, 12, 16, 0.34) 100%
+  /*
+   * «Премьера»: текст героя стоит слева, поэтому и тень под ним слева —
+   * как у стримингового героя. Справа постеры идут почти в полную силу:
+   * это и есть кадр первого экрана.
+   */
+  background: linear-gradient(
+    90deg,
+    rgba(5, 5, 5, 0.94) 0%,
+    rgba(5, 5, 5, 0.8) 32%,
+    rgba(5, 5, 5, 0.38) 64%,
+    rgba(5, 5, 5, 0.5) 100%
   );
+}
+@media (max-width: 767px) {
+  .ribbon-scrim {
+    /* на телефоне текст идёт во всю ширину: тень ровная, легче сверху */
+    background: linear-gradient(
+      180deg,
+      rgba(5, 5, 5, 0.55) 0%,
+      rgba(5, 5, 5, 0.84) 38%,
+      rgba(5, 5, 5, 0.92) 100%
+    );
+  }
 }
 
 /*
@@ -991,14 +1001,9 @@ textarea:focus-visible {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background:
-    radial-gradient(
-      58% 46% at 50% 20%,
-      color-mix(in srgb, var(--ember) 26%, transparent),
-      transparent 72%
-    ),
-    radial-gradient(66% 56% at 6% 96%, rgba(72, 116, 198, 0.3), transparent 70%),
-    radial-gradient(60% 52% at 96% 86%, rgba(72, 116, 198, 0.2), transparent 72%);
+  /* Цветного света у «Премьеры» нет: цвет даёт сам арт. Остался мягкий
+     блик над витриной — как свет из зала на полке. */
+  background: radial-gradient(52% 46% at 74% 22%, rgba(255, 255, 255, 0.07), transparent 72%);
 }
 
 /*
@@ -1010,19 +1015,8 @@ textarea:focus-visible {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(
-      128% 100% at 50% 50%,
-      transparent 54%,
-      rgba(11, 12, 16, 0.3) 84%,
-      rgba(11, 12, 16, 0.6) 100%
-    ),
-    linear-gradient(
-      to bottom,
-      rgba(11, 12, 16, 0.82),
-      transparent 15%,
-      transparent 85%,
-      rgba(11, 12, 16, 0.9) 100%
-    );
+    radial-gradient(128% 100% at 50% 50%, transparent 54%, rgba(5, 5, 5, 0.3) 84%, rgba(5, 5, 5, 0.6) 100%),
+    linear-gradient(to bottom, rgba(5, 5, 5, 0.72), transparent 14%, transparent 80%, rgba(5, 5, 5, 0.95) 100%);
 }
 
 /*
@@ -1083,7 +1077,8 @@ textarea:focus-visible {
   align-items: baseline;
   gap: 10px;
   margin-bottom: clamp(16px, 3vh, 28px);
-  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-family: var(--font-sans);
+  font-weight: 700;
   font-size: var(--text-label);
   letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
@@ -1092,12 +1087,12 @@ textarea:focus-visible {
    две отдельные цифры и перестаёт читаться номером. */
 .slate b {
   color: var(--ember-text);
-  font-weight: 500;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   letter-spacing: var(--track-rail);
 }
 .slate span {
-  color: var(--faint);
+  color: var(--dim);
 }
 
 /*
@@ -1113,8 +1108,12 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: clamp(96px, 12vh, 140px) clamp(20px, 4vw, 40px) clamp(72px, 10vh, 120px);
-  text-align: center;
+  /* Поля по бокам те же, что у шапки (px-safe), и ширина та же (72rem):
+     титр встаёт ровно под знак, как у стримингового героя. */
+  padding: clamp(96px, 12vh, 140px) max(1.25rem, env(safe-area-inset-right))
+    clamp(72px, 10vh, 120px) max(1.25rem, env(safe-area-inset-left));
+  /* «Премьера»: текст героя слева; справа — кадр ленты. */
+  text-align: left;
 }
 
 /*
@@ -1148,10 +1147,11 @@ textarea:focus-visible {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: clamp(16px, 2.4vh, 24px);
+  align-items: flex-start;
+  gap: clamp(18px, 2.6vh, 26px);
   width: 100%;
-  max-width: 34rem;
+  /* 72rem шапки минус её собственные поля по 1.25rem */
+  max-width: calc(72rem - 2.5rem);
 }
 
 /*
@@ -1162,8 +1162,11 @@ textarea:focus-visible {
 .hero-body::before {
   content: '';
   position: absolute;
-  inset: -14% -34%;
-  background: radial-gradient(58% 52% at 50% 42%, rgba(11, 12, 16, 0.72), rgba(11, 12, 16, 0) 72%);
+  inset: -18% auto -18% -24%;
+  width: min(62rem, 120%);
+  /* Тёмное сиденье под текстом — поверх скрима ленты, на случай светлых
+     постеров прямо за титром. Слева и мягко, без видимой границы. */
+  background: radial-gradient(60% 55% at 30% 50%, rgba(5, 5, 5, 0.55), rgba(5, 5, 5, 0) 72%);
   pointer-events: none;
 }
 .hero-body > * {
@@ -1195,18 +1198,9 @@ textarea:focus-visible {
   position: absolute;
   inset: -30% -52% -34%;
   pointer-events: none;
-  background:
-    radial-gradient(
-      42% 34% at 50% 30%,
-      color-mix(in srgb, var(--ember) 30%, transparent),
-      transparent 70%
-    ),
-    radial-gradient(
-      72% 58% at 50% 36%,
-      color-mix(in srgb, var(--ember) 11%, transparent),
-      transparent 74%
-    ),
-    radial-gradient(46% 40% at 50% 86%, rgba(104, 148, 226, 0.16), transparent 72%);
+  /* Своего света у героя «Премьеры» нет — свет в кадре от постеров. Слой
+     оставлен: на нём держится вход первого экрана (см. Hero.tsx). */
+  background: none;
   will-change: transform, opacity;
 }
 
@@ -1215,22 +1209,34 @@ textarea:focus-visible {
 .hero-type {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: clamp(16px, 2.4vh, 24px);
+  align-items: flex-start;
+  gap: clamp(14px, 2vh, 20px);
   width: 100%;
+  max-width: 46rem;
   will-change: transform;
+}
+.hero-eyebrow {
+  font-size: var(--text-label);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--ink) 74%, transparent);
 }
 
 .hero-wordmark {
   margin: 0;
-  font-size: var(--text-display-xl);
-  line-height: 0.92;
-  letter-spacing: -0.03em;
-  /* Тёплый ореол вплотную к литерам: продолжение ключевого света, а не
-     обводка. Тень читается только там, где под знаком светлая обложка. */
-  text-shadow:
-    0 2px 30px color-mix(in srgb, var(--ember) 26%, transparent),
-    0 1px 2px rgba(11, 12, 16, 0.55);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.625rem, 1.75rem + 3.9vw, 5.5rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.35);
+}
+.hero-wordmark span {
+  display: block;
+  color: color-mix(in srgb, var(--ink) 62%, transparent);
 }
 
 /*
@@ -1242,16 +1248,16 @@ textarea:focus-visible {
  * (balance), а не по остатку ширины.
  */
 .hero-lede {
-  max-width: 27rem;
+  max-width: 34rem;
   font-size: var(--text-lede);
-  line-height: 1.5;
-  letter-spacing: -0.005em;
-  color: var(--dim);
-  text-wrap: balance;
+  line-height: 1.55;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--ink) 80%, transparent);
+  text-wrap: pretty;
 }
 .hero-lede b {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /*
@@ -1269,7 +1275,7 @@ textarea:focus-visible {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-weight: 700;
   font-size: var(--text-label);
   letter-spacing: var(--track-meta);
   text-transform: uppercase;
@@ -1330,12 +1336,62 @@ textarea:focus-visible {
  * различить глазом: фолбэк — это то, что видит человек до гидратации, и
  * подмена одного вида другим на первом экране читается как моргание.
  */
-/* Материал общий (.panel-lift на том же элементе); здесь остаётся только то,
-   что есть у этой карточки и нет у остальных панелей: размытие подложки —
-   она одна стоит на живой ленте. */
+/* Материал общий (.panel-lift на том же элементе); здесь остаётся только
+   точка отсчёта для слоёв внутри карточки. */
 .connect-card {
   position: relative;
-  backdrop-filter: blur(26px) saturate(118%);
+}
+/*
+ * ВХОД ОДНОЙ СТРОКОЙ. Поле и главная кнопка в общей стеклянной пилюле — как
+ * «email и Начать» у стримингового героя. Пилюля подсвечивает кромку, когда
+ * фокус внутри: поле без собственной рамки иначе не показывало бы, что оно
+ * активно. На узком экране поле и кнопка встают друг под другом.
+ */
+.join {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  background: color-mix(in srgb, var(--ink) 11%, transparent);
+  backdrop-filter: blur(22px) saturate(160%);
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out);
+}
+@media (min-width: 560px) {
+  .join {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+.join:focus-within {
+  border-color: color-mix(in srgb, var(--ink) 55%, transparent);
+  background: color-mix(in srgb, var(--ink) 15%, transparent);
+}
+.join .btn-ember:disabled {
+  /* Пустое поле: кнопка та же белая, только приглушённая, — серая плашка
+     читалась бы сломанной, а это ожидание ввода. */
+  color: var(--on-ember);
+  background: color-mix(in srgb, var(--ember) 55%, transparent);
+  box-shadow: none;
+}
+.join input {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  padding: 0 14px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 500;
+}
+.join input::placeholder {
+  color: var(--faint);
 }
 
 /*
@@ -1351,7 +1407,7 @@ textarea:focus-visible {
  * ВНУТРИ карточки: 24 → 16 по краю и 12 → 8 между строками. Двадцать четыре
  * пикселя, которых на низком экране и правда не жалко.
  *
- * Высота карточки не меняется: она стоит на min-h-[392px], и это тот самый
+ * Высота карточки не меняется: она стоит на CONNECT_CARD_MIN_H, и это тот самый
  * потолок, который держит фолбэк и настоящую карточку неотличимыми. Меняется
  * только раскладка внутри — у обеих одинаково, класс общий.
  *
@@ -1363,49 +1419,6 @@ textarea:focus-visible {
     padding: 1rem;
     gap: 0.5rem;
   }
-}
-
-/* Блик по верхней кромке — тот же ключевой свет, что стоит за титром, только
-   пойманный ребром карточки. Не по всей ширине: свет точечный, и кромка
-   обязана гаснуть к углам, иначе это уже не блик, а вторая рамка. */
-.connect-card::before {
-  content: '';
-  position: absolute;
-  inset-inline: 14%;
-  top: -1px;
-  height: 1px;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--ember) 55%, transparent),
-    transparent
-  );
-}
-
-/*
- * Надзаголовок карточки. До него карточка начиналась прямо с поля ввода —
- * шесть элементов равного веса стопкой и ни одного слова о том, что вообще
- * происходит. Набран тем же моноширинным языком, что хлопушки сцен (.slate):
- * первый экран и рассказ под ним обязаны говорить одним шрифтом.
- */
-.card-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 2px;
-  font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: var(--text-label);
-  letter-spacing: var(--track-eyebrow);
-  text-transform: uppercase;
-  color: var(--faint);
-  white-space: nowrap;
-}
-.card-eyebrow::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, var(--edge), transparent);
 }
 
 /*
@@ -1567,15 +1580,16 @@ textarea:focus-visible {
 }
 
 /*
- * Разделитель «или». Тем же моноширинным языком, что надзаголовок и хлопушки
- * сцен: до этого он был единственной строчной надписью в карточке и читался
+ * Разделитель «или». Тем же языком капсом, что надзаголовок и хлопушки сцен:
+ * до этого он был единственной строчной надписью в карточке и читался
  * забытой.
  */
 .rule-or {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-family: var(--font-sans);
+  font-weight: 700;
   font-size: var(--text-label);
   letter-spacing: var(--track-meta);
   text-transform: uppercase;
@@ -1985,7 +1999,8 @@ textarea:focus-visible {
 .pick-rank {
   flex: none;
   width: 1.6em;
-  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-family: var(--font-sans);
+  font-weight: 800;
   font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
   letter-spacing: var(--track-rail);
@@ -2157,20 +2172,21 @@ textarea:focus-visible {
   font-weight: 800;
   font-size: clamp(2.75rem, 1.9rem + 3.6vw, 4.75rem);
   line-height: 0.94;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.045em;
   color: var(--ember-text);
   font-variant-numeric: tabular-nums;
   text-shadow:
-    0 0 26px color-mix(in srgb, var(--ember) 46%, transparent),
-    0 2px 3px rgba(11, 12, 16, 0.6);
+    0 0 30px color-mix(in srgb, var(--ember-text) 38%, transparent),
+    0 2px 3px rgba(5, 5, 5, 0.6);
 }
 .tally-l {
-  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-family: var(--font-sans);
+  font-weight: 700;
   font-size: var(--text-label);
   text-transform: uppercase;
   letter-spacing: var(--track-meta);
-  color: var(--faint);
-  margin-top: 6px;
+  color: var(--dim);
+  margin-top: 8px;
 }
 
 .compat-rows {
@@ -2218,7 +2234,8 @@ textarea:focus-visible {
 .compat-a,
 .compat-b {
   flex: none;
-  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-family: var(--font-sans);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: var(--track-rail);
   font-size: clamp(0.75rem, 0.7rem + 0.2vw, 0.9375rem);
@@ -2297,203 +2314,207 @@ textarea:focus-visible {
 /* ── Сцена «Что здесь ещё есть» ───────────────────────────────────────── */
 
 /*
- * РАСПИСАНИЕ, КОТОРОЕ ЗАЖИГАЕТСЯ ПОД РУКОЙ.
+ * ПОЛКА РАЗДЕЛОВ.
  *
- * Была таблица: шесть строк, разделённых волосками, и между описанием и
- * стрелкой три сотни пикселей пустоты — стрелка стояла у правого края одна,
- * ничем со своей строкой не связанная. Наведение меняло только цвет текста, то
- * есть единственная сцена страницы, которая одновременно и рассказ, и
- * НАВИГАЦИЯ, никак не показывала, что по ней можно идти.
+ * Было расписание: шесть строк текста между волосками. Раздел читался
+ * названием, но не показывал, что в нём лежит, — а навигация по сайту про
+ * игры, которая не показывает ни одной игры, читалась оглавлением документа.
  *
- * Теперь строка — предмет: у неё есть тёплая заливка, которая выезжает слева
- * под курсором, ведущая линия вместо пустоты и стрелка, которая на эту линию
- * отвечает. Пустота между описанием и стрелкой стала связью между ними — тем
- * же приёмом, что в оглавлении книги.
+ * Теперь раздел — карточка «категории», как на полке стриминга: иконка,
+ * название, строка и веер постеров справа. Текст стоит на левой половине,
+ * и под ним свой скрим — веер заходит под него, но буквы всегда на ровном.
+ *
+ * Сетка: одна колонка на телефоне, две с 720 px, три с 1024. На телефоне
+ * шесть карточек выше экрана — Stage это видит и не закрепляет сцену, и
+ * полка листается обычным документом.
  */
 .rep {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(10px, 1.3vw, 16px);
 }
-.rep li {
-  border-top: 1px solid var(--edge);
+@media (min-width: 720px) {
+  .rep {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
-.rep li:last-child {
-  border-bottom: 1px solid var(--edge);
+@media (min-width: 1024px) {
+  .rep {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
-.rep a {
+
+.rep-card {
   position: relative;
   isolation: isolate;
   display: flex;
-  align-items: center;
-  gap: clamp(12px, 2vw, 22px);
-  padding: clamp(14px, 2.3vh, 22px) clamp(10px, 1.2vw, 18px);
-  border-radius: 12px;
-  color: inherit;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: clamp(148px, 27vh, 232px);
+  padding: clamp(16px, 1.6vw, 22px);
+  padding-right: 46%;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--edge);
+  background: var(--surface);
+  color: var(--ink);
   text-decoration: none;
   transition:
-    color var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
+    transform var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
 }
-
-/*
- * Заливка выезжает слева, а не проявляется на месте: движение из-под номера
- * наружу читается «строка открывается», проявление на месте — «строка
- * подсветилась». Первое обещает переход, а переход здесь и произойдёт.
- *
- * Отдельным слоем под содержимым (isolation + z-index: -1), а не фоном ссылки:
- * фон нельзя двигать, а этот слой едет масштабом, то есть даром.
- */
-.rep a::before {
+/* Скрим под текстом: сплошной у левого края и прозрачный к вееру. */
+.rep-card::before {
   content: '';
   position: absolute;
   inset: 0;
   z-index: -1;
-  border-radius: inherit;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--ember) 15%, transparent),
-    color-mix(in srgb, var(--ember) 4%, transparent) 46%,
-    transparent 76%
-  );
-  opacity: 0;
-  transform: scaleX(0.92);
-  transform-origin: left center;
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
+  pointer-events: none;
+  background:
+    linear-gradient(
+      90deg,
+      var(--surface) 0%,
+      color-mix(in srgb, var(--surface) 92%, transparent) 42%,
+      transparent 78%
+    ),
+    linear-gradient(0deg, color-mix(in srgb, var(--bg) 55%, transparent), transparent 46%);
 }
-.rep a:hover::before,
-.rep a:focus-visible::before {
-  opacity: 1;
-  transform: scaleX(1);
+.rep-card:hover,
+.rep-card:focus-visible {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--ink) 28%, transparent);
+  box-shadow: 0 24px 56px -20px var(--shadow);
 }
-.rep a:hover,
-.rep a:focus-visible {
-  color: var(--ember-text);
-}
-/*
- * Нажатие: строка идёт вниз, а заливка на мгновение садится обратно к левому
- * краю — жест «взял», обратный тому, которым она открывалась. Переход при этом
- * укорачивается, иначе отклик приходит уже после того, как палец ушёл.
- */
-.rep a:active {
+.rep-card:active {
   transform: translateY(var(--press-shift));
   transition-duration: var(--dur-fast);
 }
-.rep a:active::before {
-  transform: scaleX(0.985);
-  transition-duration: var(--dur-fast);
-}
-@media (prefers-reduced-motion: reduce) {
-  .rep a:active {
-    transform: none;
-  }
-  .rep a:active::before {
-    transform: scaleX(1);
+/* Телефон: карточка во всю ширину и ниже — шесть высоких карточек подряд
+   читались лентой рекламы, а не оглавлением. Веер от высоты и зависит, так
+   что он сам становится уже и уходит правее текста. */
+@media (max-width: 719px) {
+  .rep-card {
+    min-height: 164px;
+    padding-right: 42%;
   }
 }
 
-.rep-no {
-  font-family: var(--font-jbmono), ui-monospace, monospace;
-  font-size: var(--text-label);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: var(--track-rail);
-  color: var(--faint);
-  width: 26px;
-  flex: none;
-  transition: color var(--dur-base) var(--ease-out);
+/*
+ * ВЕЕР. Обёртка стоит справа и размером с один постер; постеры лежат в ней
+ * стопкой и расходятся от центра: --c — номер постера относительно середины
+ * веера (−1, 0, 1 для трёх; ±0.5 для двух; 0 для одного). Сдвиг, наклон и
+ * провисание считаются от него, поэтому одно правило держит любой размер.
+ *
+ * Под курсором веер раскрывается шире — движение то же, только сильнее.
+ * Только transform: на полке шесть карточек, и перерисовка на наведении
+ * стоила бы кадров.
+ */
+.rep-art {
+  position: absolute;
+  z-index: -2;
+  /* Чем больше постеров, тем дальше веер уходит за правый край: левый постер
+     тройки иначе залезал под строку описания. */
+  right: calc(3% - (var(--n) - 1) * 4%);
+  bottom: -14%;
+  height: 90%;
+  aspect-ratio: 2 / 3;
+  pointer-events: none;
 }
-.rep a:hover .rep-no,
-.rep a:focus-visible .rep-no {
-  color: var(--ember-text);
+.rep-poster {
+  --c: calc(var(--i) - (var(--n) - 1) / 2);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 18px 40px -10px rgba(0, 0, 0, 0.7);
+  transform-origin: 50% 100%;
+  transform: translateX(calc(var(--c) * 42%)) translateY(calc(var(--c) * var(--c) * 7%))
+    rotate(calc(var(--c) * 7deg));
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+.rep-poster img,
+.rep-poster > div {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.rep-card:hover .rep-poster,
+.rep-card:focus-visible .rep-poster {
+  transform: translateX(calc(var(--c) * 54%)) translateY(calc(var(--c) * var(--c) * 9% - 5%))
+    rotate(calc(var(--c) * 10deg));
+}
+
+.rep-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: auto;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
 }
 .rep-name {
+  margin-top: 18px;
   font-family: var(--font-display);
-  font-weight: 700;
-  font-size: clamp(1.1875rem, 1rem + 0.72vw, 1.625rem);
-  letter-spacing: -0.015em;
-  flex: none;
-  min-width: clamp(120px, 16vw, 210px);
+  font-weight: 800;
+  font-size: clamp(1.25rem, 1.05rem + 0.6vw, 1.625rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
 }
-/* max-w — мера набора: без потолка строка расписания растягивалась на 135
-   символов при комфортных 45–75. */
 .rep-line {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 34rem;
   font-size: 0.875rem;
-  line-height: 1.5;
+  line-height: 1.45;
   color: var(--dim);
 }
 
-/*
- * ВЕДУЩАЯ ЛИНИЯ. Она и есть ответ на пустоту между описанием и стрелкой: в
- * оглавлении книги это место занимает точечный пунктир, и по той же причине —
- * глазу нужно, чем дойти от названия до номера страницы.
- *
- * Едет масштабом от левого края: под курсором линия ДОТЯГИВАЕТСЯ до стрелки, а
- * не перекрашивается.
- */
-.rep-lead {
-  flex: 1;
-  min-width: 20px;
-  height: 1px;
-  align-self: center;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--ink) 14%, transparent) 30%,
-    color-mix(in srgb, var(--ink) 20%, transparent)
-  );
-  transform-origin: left center;
-  transition: background var(--dur-base) var(--ease-out);
-}
-.rep a:hover .rep-lead,
-.rep a:focus-visible .rep-lead {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--ember) 34%, transparent) 24%,
-    color-mix(in srgb, var(--ember) 82%, transparent)
-  );
-}
-
+/* Стрелка — белый круг, как круглые кнопки героя. В покое прозрачная, под
+   курсором заливается: это и есть обещание перехода. */
 .rep-arrow {
-  flex: none;
-  color: var(--dim);
+  position: absolute;
+  top: clamp(16px, 1.6vw, 22px);
+  right: clamp(16px, 1.6vw, 22px);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ink) 30%, transparent);
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+  color: var(--ink);
   transition:
-    transform var(--dur-base) var(--ease-out),
-    color var(--dur-base) var(--ease-out);
+    background-color var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
 }
-.rep a:hover .rep-arrow,
-.rep a:focus-visible .rep-arrow {
-  color: var(--ember-text);
-  transform: translateX(5px);
+.rep-card:hover .rep-arrow,
+.rep-card:focus-visible .rep-arrow {
+  border-color: var(--ember);
+  background: var(--ember);
+  color: var(--on-ember);
 }
 
-@media (max-width: 719px) {
-  .rep a {
-    flex-wrap: wrap;
-    row-gap: 4px;
+@media (prefers-reduced-motion: reduce) {
+  .rep-card:hover,
+  .rep-card:focus-visible,
+  .rep-card:active {
+    transform: none;
   }
-  .rep-line {
-    flex-basis: 100%;
-    order: 3;
-  }
-  /* На телефоне ведущей линии вести некуда: имя и стрелка стоят в одной
-     строке вплотную, а описание уходит на следующую. Линия там была бы
-     украшением без работы. */
-  .rep-lead {
-    display: none;
-  }
-  .rep-arrow {
-    margin-left: auto;
+  .rep-card:hover .rep-poster,
+  .rep-card:focus-visible .rep-poster {
+    transform: translateX(calc(var(--c) * 42%)) translateY(calc(var(--c) * var(--c) * 7%))
+      rotate(calc(var(--c) * 7deg));
   }
 }
 
 /*
- * Свет расписания: тёплая полоса вдоль верхних строк. Сцена шла ровным чёрным
+ * Свет полки: мягкое пятно над верхним рядом. Сцена шла ровным чёрным
  * прямоугольником между двумя освещёнными — сквозная температура страницы на
  * ней обрывалась.
  */
@@ -2505,10 +2526,10 @@ textarea:focus-visible {
   background:
     radial-gradient(
       52% 40% at 32% 24%,
-      color-mix(in srgb, var(--ember) 15%, transparent),
+      color-mix(in srgb, var(--ember) 9%, transparent),
       transparent 74%
     ),
-    radial-gradient(46% 44% at 88% 86%, rgba(72, 116, 198, 0.14), transparent 74%);
+    radial-gradient(46% 44% at 88% 86%, rgba(72, 116, 198, 0.12), transparent 74%);
 }
 
 /* ── Сцена «О деньгах» ────────────────────────────────────────────────── */
@@ -2626,6 +2647,10 @@ textarea:focus-visible {
    не имеет права выглядеть дешевле первого. Здесь остаются только те свойства,
    которых у общего класса нет по смыслу: горизонтальные поля и неразрывность. */
 .back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding-inline: clamp(20px, 2vw, 28px);
   white-space: nowrap;
 }
@@ -3069,39 +3094,6 @@ textarea:focus-visible {
 }
 .anim-kenburns {
   animation: kenburns 20s ease-out both;
-}
-
-/* кино-коллаж главной: медленный дрейф колонок с артами */
-@keyframes drift-up {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(-50%);
-  }
-}
-
-@keyframes drift-down {
-  from {
-    transform: translateY(-50%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
-.anim-drift-up {
-  animation: drift-up 90s linear infinite;
-}
-.anim-drift-down {
-  animation: drift-down 110s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .anim-drift-up,
-  .anim-drift-down {
-    animation: none;
-  }
 }
 
 @keyframes pulse-dot {

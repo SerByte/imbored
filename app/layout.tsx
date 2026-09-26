@@ -285,7 +285,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
                 «Разделами» рядом с нижней панелью. Имя у них одно и то же
                 намеренно — это одно меню, и на экране всегда ровно одно из двух.
               */}
-              <nav aria-label="Разделы" className="hidden md:flex items-center gap-6 text-sm font-semibold text-dim">
+              <nav aria-label="Разделы" className="hidden md:flex items-center gap-6 text-sm text-dim">
                 <HeaderNav />
               </nav>
               <ThemeToggle />

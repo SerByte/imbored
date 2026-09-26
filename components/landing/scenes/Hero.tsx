@@ -7,8 +7,7 @@ import { Suspense, useRef } from 'react'
 import { ConnectCard } from '@/components/landing/ConnectCard'
 import { ConnectFallback } from '@/components/landing/ConnectFallback'
 import { HeroNotice } from '@/components/landing/HeroNotice'
-import { Wordmark } from '@/components/Wordmark'
-import { DUR, EASE_GSAP, EASE_STRIKE_GSAP } from '@/lib/motion'
+import { DUR, EASE_GSAP } from '@/lib/motion'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
 
@@ -90,28 +89,16 @@ export function Hero() {
             duration: 1.1,
             ease: 'power2.out',
           }, 0)
+          .from('[data-hero-eyebrow]', { y: 10, opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.1)
           .from('[data-hero-wordmark]', {
-            y: 18,
+            y: 22,
             opacity: 0,
             duration: DUR.slow,
             ease: EASE_GSAP,
-          }, 0.15)
-          /*
-           * ГЛАВНЫЙ ТАКТ. --ease-strike описан как «контакт: ~90% пути за
-           * первые 12% времени, свет БЬЁТ, а не приезжает» — и написан он ровно
-           * под такой жест. Зачёркивание не выезжает, оно ПРОВОДИТСЯ.
-           *
-           * Отдельным элементом, потому что text-decoration не анимируется;
-           * см. проп drawable у components/Wordmark.tsx.
-           */
-          .from('[data-wordmark-strike]', {
-            scaleX: 0,
-            duration: DUR.base,
-            ease: EASE_STRIKE_GSAP,
-          }, 0.45)
-          .from('[data-hero-lede]', { y: 12, opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.55)
-          .from('[data-hero-card]', { y: 20, opacity: 0, duration: DUR.slow, ease: EASE_GSAP }, 0.7)
-          .from('[data-hero-cue]', { opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.95)
+          }, 0.2)
+          .from('[data-hero-lede]', { y: 12, opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.42)
+          .from('[data-hero-card]', { y: 18, opacity: 0, duration: DUR.slow, ease: EASE_GSAP }, 0.56)
+          .from('[data-hero-cue]', { opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.9)
       }
 
       /*
@@ -209,12 +196,16 @@ export function Hero() {
           целиком, а у самих знака и строки остался их собственный такт входа.
         */}
         <div className="hero-type" data-hero-type>
+          <p className="hero-eyebrow" data-hero-eyebrow>
+            Во что поиграть сегодня
+          </p>
           <h1 className="hero-wordmark" data-hero-wordmark>
-            <Wordmark drawable />
+            Одна игра. <span>И почему именно она.</span>
           </h1>
 
           <p className="hero-lede" data-hero-lede>
-            Скажи, сколько у тебя времени и сил, — <b>дадим одну игру и объясним, почему она</b>.
+            Скажи, сколько у тебя времени и сил. Мы прочитаем твою библиотеку Steam и{' '}
+            <b>выберем одну игру на вечер — с объяснением</b>.
           </p>
         </div>
 
@@ -227,7 +218,7 @@ export function Hero() {
         {/* w-full обязателен: .hero-body — флекс-колонка с центрированием, и
             обёртка без ширины схлопнулась бы по содержимому, утащив за собой
             карточку вместе с её max-w-md. */}
-        <div className="flex w-full justify-center" data-hero-card>
+        <div className="flex w-full justify-start" data-hero-card>
           <Suspense fallback={<ConnectFallback />}>
             <ConnectCard />
           </Suspense>
