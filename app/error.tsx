@@ -57,7 +57,7 @@ export default function Error({
         <Link href="/" className="tap text-sm text-dim hover:text-ink transition-colors">
           На главную
         </Link>
-        <span className="font-mono text-[11px] text-faint">код: {code}</span>
+        <span className="text-[11px] tabular-nums text-faint">код: {code}</span>
       </div>
     </div>
   )

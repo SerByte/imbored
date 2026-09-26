@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { ROOM_PRESETS, roomPresetByKey, type RoomPreset } from '@/lib/presets'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -86,7 +86,15 @@ export default function NewRoomPage() {
   const search = useSearch()
   const back = roomPresetByKey(new URLSearchParams(search).get('preset'))
   const preset = picked ?? back ?? ROOM_PRESETS[0]
-  const view: Phase = phase === 'choosing' && back ? 'creating' : phase
+  /*
+   * Сессия по ссылке на профиль комнату не создаст — это уже известно, если
+   * другая страница документа получила needsteam (lib/writer). Раньше человек
+   * выбирал настроение, видел «Создаю комнату…» и только потом узнавал, что
+   * нельзя. Теперь экран входа — сразу, до выбора.
+   */
+  const writer = useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)
+  const view: Phase =
+    phase !== 'choosing' ? phase : writer === false ? 'needsteam' : back ? 'creating' : 'choosing'
 
   const send = useCallback(
     async (p: RoomPreset) => {
@@ -138,7 +146,7 @@ export default function NewRoomPage() {
   // Вернулся со входа с уже выбранным настроением — создаём сразу. Один раз:
   // повтор после отказа — кнопкой, с тем же пресетом
   useEffect(() => {
-    if (!back || started.current) return
+    if (!back || started.current || writerStore.get() === false) return
     started.current = true
     void send(back)
   }, [back, send])
@@ -201,7 +209,13 @@ export default function NewRoomPage() {
             Ссылка на профиль не доказывает, что профиль твой. По ней можно смотреть подборки и
             голосовать в чужих пати, а создавать свои и сохранять оценки — после входа.
           </p>
-          <a href={steamLoginFor(`/room/new?preset=${preset.key}`)} className="btn-ember is-block py-3">
+          {/* Настроение — в адрес, только если его правда выбрали: экран входа
+              бывает и до выбора, и тогда после входа ждёт выбор, а не комната
+              с настроением по умолчанию */}
+          <a
+            href={steamLoginFor(picked || back ? `/room/new?preset=${preset.key}` : '/room/new')}
+            className="btn-ember is-block py-3"
+          >
             Войти через Steam
           </a>
           <Link href="/rooms" className="tap link-more">

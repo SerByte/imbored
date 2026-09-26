@@ -1,6 +1,6 @@
 'use client'
 
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import { Portal } from '@/components/Portal'
 import { NowProvider } from './Now'
@@ -97,7 +97,7 @@ export function Stage({
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
         <AnimatePresence initial={false}>
           {wash ? (
-            <motion.img
+            <m.img
               key={wash}
               src={wash}
               alt=""

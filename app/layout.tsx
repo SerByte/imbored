@@ -9,8 +9,9 @@ import { HeaderNav } from '@/components/HeaderNav'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
+import { ReadOnlyNote } from '@/components/ReadOnlyNote'
+import { RefCapture } from '@/components/RefCapture'
 import { SessionKeeper } from '@/components/SessionKeeper'
-import { SmoothScroll } from '@/components/SmoothScroll'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
@@ -229,7 +230,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         */}
         <a
           href="#main"
-          className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-3 focus-visible:left-3 focus-visible:z-[60] focus-visible:rounded-[14px] focus-visible:bg-ember focus-visible:px-4 focus-visible:py-2 focus-visible:text-on-ember focus-visible:font-semibold"
+          className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-3 focus-visible:left-3 focus-visible:z-[60] focus-visible:rounded-(--radius-control) focus-visible:bg-ember focus-visible:px-4 focus-visible:py-2 focus-visible:text-on-ember focus-visible:font-semibold"
         >
           К содержанию
         </a>
@@ -336,9 +337,11 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         {/* Ставит data-chrome на <html>, когда шапка уезжает с кино-зоны на
             контент. Клиентский и без разметки — как SessionKeeper. */}
         <ChromeZone />
-        {/* Плавная прокрутка на весь сайт. Клиентский и без разметки. */}
-        <SmoothScroll />
+        {/* Плавная прокрутка — только у главной (app/page.tsx): закреплённые
+            сцены есть только там, остальной сайт прокручивается нативно. */}
         <SessionKeeper />
+        <RefCapture />
+        <ReadOnlyNote />
         <Analytics />
         {/* Полевые Web Vitals. На сайте, где LCP — это всегда чужая обложка со
             steamstatic, синтетика меряет не то: реальный разброс дают чужой CDN

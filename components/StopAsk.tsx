@@ -1,6 +1,6 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
 import { Portal } from '@/components/Portal'
 import { EASE } from '@/lib/motion'
 
@@ -47,7 +47,7 @@ export function StopAsk<K extends string>({
       </p>
       <AnimatePresence>
         {game && (
-          <motion.div
+          <m.div
             key={game.appid}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -92,7 +92,7 @@ export function StopAsk<K extends string>({
                 </button>
               </div>
             </section>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </Portal>

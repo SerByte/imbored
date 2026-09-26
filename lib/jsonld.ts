@@ -264,6 +264,71 @@ export function gameBreadcrumbLd({ meta, baseUrl }: { meta: GameMeta; baseUrl: s
   }
 }
 
+/**
+ * Хлебные крошки страницы жанра: главная → «Игры по жанрам» → жанр.
+ *
+ * Три уровня здесь честные: страница показывает этот путь сама, строкой над
+ * заголовком, а главная — логотип в шапке. Имя жанра — заголовок страницы
+ * («Рогалики»), тот же, что стоит в видимой строке.
+ */
+export function genreBreadcrumbLd({
+  title,
+  path,
+  baseUrl,
+}: {
+  title: string
+  path: string
+  baseUrl: string
+}): BreadcrumbLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'imbored', item: `${baseUrl}/` },
+      { '@type': 'ListItem', position: 2, name: 'Игры по жанрам', item: `${baseUrl}/games` },
+      { '@type': 'ListItem', position: 3, name: title, item: `${baseUrl}${path}` },
+    ],
+  }
+}
+
+export type ItemListLd = {
+  '@context': 'https://schema.org'
+  '@type': 'ItemList'
+  name: string
+  numberOfItems: number
+  itemListElement: Array<{ '@type': 'ListItem'; position: number; url: string; name: string }>
+}
+
+/**
+ * Список игр жанра — тем же порядком и тем же числом, что на странице.
+ *
+ * Только адрес и название: всё остальное (отзывы, цена) у каждой игры своё и
+ * размечено на её карточке. Здесь это повтором было бы вторым источником тех
+ * же чисел — а разметка обязана совпадать со страницей, где их показывают.
+ */
+export function genreItemListLd({
+  title,
+  games,
+  baseUrl,
+}: {
+  title: string
+  games: ReadonlyArray<{ appid: number; name: string }>
+  baseUrl: string
+}): ItemListLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    name: title,
+    numberOfItems: games.length,
+    itemListElement: games.map((g, i) => ({
+      '@type': 'ListItem',
+      position: i + 1,
+      url: `${baseUrl}/game/${g.appid}`,
+      name: g.name,
+    })),
+  }
+}
+
 export type WebSiteLd = {
   '@context': 'https://schema.org'
   '@type': 'WebSite'

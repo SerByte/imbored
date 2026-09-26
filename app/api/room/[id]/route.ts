@@ -11,6 +11,7 @@ import {
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { parseMood } from '@/lib/mood'
+import { PEEK_LIMIT, PEEK_WINDOW_SEC } from '@/lib/roompeek'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
 
@@ -32,8 +33,7 @@ const ROOM_ID_RE = /^[A-Z0-9]{6}$/
  * одна вкладка на быстром шаге все десять минут, с запасом на вторую. Перебору
  * это оставляет порядка сорока тысяч кодов в сутки с адреса против 8,9·10^8.
  */
-const PEEK_LIMIT = 300
-const PEEK_WINDOW_SEC = 600
+// Числа общие для всех роутов комнаты — lib/roompeek
 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params

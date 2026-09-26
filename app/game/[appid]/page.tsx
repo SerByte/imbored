@@ -496,7 +496,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   на который страница с заголовком «стоит ли играть» и должна
                   отвечать. PriceTag такой случай умел с самого начала. */}
               {(meta.isFree || (price !== null && price > 0)) && (
-                <span className="glass rounded-[11px] px-5 py-3 text-sm flex items-center gap-2">
+                // Цена — строкой рядом с кнопками, а не стеклянной плашкой их
+                // формы: в ряду кнопок плашка притворялась ещё одной кнопкой
+                <span className="flex items-center gap-2 px-1 text-sm">
                   <PriceTag
                     priceFinal={price}
                     isFree={meta.isFree}

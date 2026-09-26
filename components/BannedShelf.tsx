@@ -1,6 +1,7 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
+import { MotionMax } from '@/components/motion/MotionMax'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition } from 'react'
@@ -162,57 +163,60 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
     /* Та же лестница, что у полки «запечатанного»: пять колонок с 768 px
        давали обложку мельче, чем на телефоне. */
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-      <AnimatePresence mode="popLayout" initial={false}>
-        {list.map((g) => (
-          <motion.div
-            key={g.appid}
-            layout
-            exit={{ opacity: 0, scale: 0.94 }}
-            transition={{ duration: 0.22 }}
-            className="flex flex-col"
-          >
-            {/* Ссылка и кнопка — соседи, а не вложенные: интерактив внутри
-                интерактива не кликается и не читается скринридером */}
-            <Link href={`/game/${g.appid}`} className="game-card block">
-              <GameCardBody
-                appid={g.appid}
-                name={g.name}
-                headerImage={g.headerImage}
-                art={g.art}
-                sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
-                // Обесцвечено только скрытое: пройденное — не изгнанное
-                dim={shelf === 'hidden'}
-              />
-            </Link>
-            {!readOnly && (
-              /*
-                У каждой кнопки своё имя. Видимый текст один на всю полку, и
-                скринридер зачитывал список из пяти одинаковых «Вернуть в
-                подбор», не говоря, какая к какой игре.
-              */
-              <button
-                type="button"
-                ref={(el) => {
-                  if (el) buttons.current.set(g.appid, el)
-                  else buttons.current.delete(g.appid)
-                }}
-                onClick={() => unban(g.appid)}
-                aria-label={
-                  shelf === 'done' ? `Снова предлагать «${g.name}»` : `Вернуть «${g.name}» в подбор`
-                }
-                className="pill mt-3 self-start"
-              >
-                {shelf === 'done' ? 'Снова предлагать' : 'Вернуть в подбор'}
-              </button>
-            )}
-            {failed === g.appid && (
-              <p role="status" className="px-3 pb-3 text-[11px] text-danger">
-                Не вышло — попробуй ещё раз
-              </p>
-            )}
-          </motion.div>
-        ))}
-      </AnimatePresence>
+      {/* layout — фича domMax, её догружает MotionMax */}
+      <MotionMax>
+        <AnimatePresence mode="popLayout" initial={false}>
+          {list.map((g) => (
+            <m.div
+              key={g.appid}
+              layout
+              exit={{ opacity: 0, scale: 0.94 }}
+              transition={{ duration: 0.22 }}
+              className="flex flex-col"
+            >
+              {/* Ссылка и кнопка — соседи, а не вложенные: интерактив внутри
+                  интерактива не кликается и не читается скринридером */}
+              <Link href={`/game/${g.appid}`} className="game-card block">
+                <GameCardBody
+                  appid={g.appid}
+                  name={g.name}
+                  headerImage={g.headerImage}
+                  art={g.art}
+                  sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
+                  // Обесцвечено только скрытое: пройденное — не изгнанное
+                  dim={shelf === 'hidden'}
+                />
+              </Link>
+              {!readOnly && (
+                /*
+                  У каждой кнопки своё имя. Видимый текст один на всю полку, и
+                  скринридер зачитывал список из пяти одинаковых «Вернуть в
+                  подбор», не говоря, какая к какой игре.
+                */
+                <button
+                  type="button"
+                  ref={(el) => {
+                    if (el) buttons.current.set(g.appid, el)
+                    else buttons.current.delete(g.appid)
+                  }}
+                  onClick={() => unban(g.appid)}
+                  aria-label={
+                    shelf === 'done' ? `Снова предлагать «${g.name}»` : `Вернуть «${g.name}» в подбор`
+                  }
+                  className="pill mt-3 self-start"
+                >
+                  {shelf === 'done' ? 'Снова предлагать' : 'Вернуть в подбор'}
+                </button>
+              )}
+              {failed === g.appid && (
+                <p role="status" className="px-3 pb-3 text-[11px] text-danger">
+                  Не вышло — попробуй ещё раз
+                </p>
+              )}
+            </m.div>
+          ))}
+        </AnimatePresence>
+      </MotionMax>
     </div>
   )
 

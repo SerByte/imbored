@@ -28,9 +28,11 @@
  * 7. Точки — обычные кнопки «Кадр N из M» с aria-current, а не tablist/tab:
  *    вкладок без панелей и без стрелочной навигации здесь нет, и скринридер
  *    обещал то, чего не было. Зона попадания — 24×24 (см. .dot::before).
+ * 8. Переход ведёт свой твин на rAF (./tween), а не gsap: ради одного числа
+ *    ядро gsap ехало на /play, /daily и /game. Имена кривых прежние.
  */
 
-import { gsap } from 'gsap'
+import { tweenValue, type Tween } from './tween'
 import { Mesh, Program, Renderer, Texture, Triangle } from 'ogl'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
@@ -306,7 +308,7 @@ class MorphEngine {
   private dragging = false
   private dragDir = 0
   private shownIndex: number
-  private tween: gsap.core.Tween | null = null
+  private tween: Tween | null = null
 
   private renderer: Renderer
   private gl: GL
@@ -456,16 +458,13 @@ class MorphEngine {
     this.animating = true
     this.announce(target)
     const duration = this.reducedMotion ? Math.min(opts.duration, 0.4) : opts.duration
-    this.tween = gsap.fromTo(
-      this.program.uniforms.uProgress,
-      { value: 0 },
-      {
-        value: 1,
-        duration,
-        ease: opts.ease,
-        onComplete: () => this.commit(target),
-      },
-    )
+    this.tween = tweenValue(this.program.uniforms.uProgress, {
+      from: 0,
+      to: 1,
+      duration,
+      ease: opts.ease,
+      onComplete: () => this.commit(target),
+    })
   }
 
   goTo(dir: number): void {
@@ -566,16 +565,16 @@ class MorphEngine {
     this.animating = true
     if (p > 0.4) {
       this.announce(target)
-      this.tween = gsap.to(this.program.uniforms.uProgress, {
-        value: 1,
+      this.tween = tweenValue(this.program.uniforms.uProgress, {
+        to: 1,
         duration,
         ease: 'power2.out',
         onComplete: () => this.commit(target),
       })
     } else {
       this.announce(this.current)
-      this.tween = gsap.to(this.program.uniforms.uProgress, {
-        value: 0,
+      this.tween = tweenValue(this.program.uniforms.uProgress, {
+        to: 0,
         duration,
         ease: 'power2.out',
         onComplete: () => {

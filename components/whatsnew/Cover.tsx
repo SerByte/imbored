@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useReducedMotion, useScroll, useTransform } from 'motion/react'
+import { m, useReducedMotion, useScroll, useTransform } from 'framer-motion'
 import Link from 'next/link'
 import { useRef } from 'react'
 import { BlurBand } from '@/components/BlurBand'
@@ -76,7 +76,7 @@ export function Cover({
       style={{ minHeight: '100svh' }}
     >
       {/* фон — арт игры */}
-      <motion.div
+      <m.div
         aria-hidden
         className="absolute inset-0"
         style={reduced ? undefined : { y: artY, scale: artScale }}
@@ -90,7 +90,7 @@ export function Cover({
           eager
           className="h-full w-full object-cover"
         />
-      </motion.div>
+      </m.div>
 
       {/* скрим: снизу почти непрозрачный, чтобы текст лёг на плотное */}
       <div
@@ -124,7 +124,7 @@ export function Cover({
               : 'grid gap-10'
           }
         >
-          <motion.div style={reduced ? undefined : { y: textY, opacity: textFade }}>
+          <m.div style={reduced ? undefined : { y: textY, opacity: textFade }}>
             {/* Заголовок страницы, а не игры: h1 обязан говорить, где ты, даже
                 когда на весь экран стоит чужое название. Игра идёт следом h2.
                 Метка ленты живёт здесь же: переключатель остался экраном ниже,
@@ -195,11 +195,11 @@ export function Cover({
                 <Icon name="arrow" size={16} />
               </Link>
             </div>
-          </motion.div>
+          </m.div>
 
           {/* кадр из самого патча — второй слой, обгоняет фон */}
           {item.imageUrl ? (
-            <motion.figure
+            <m.figure
               aria-hidden
               className="hidden md:block"
               style={reduced ? undefined : { y: stillY }}
@@ -229,7 +229,7 @@ export function Cover({
                 {/* Зона зафиксирована в dateLabel — см. lib/freshness. */}
                 <time dateTime={published.toISOString()}>{dateLabel(item.publishedAt)}</time>
               </MetaLine>
-            </motion.figure>
+            </m.figure>
           ) : null}
         </div>
       </div>

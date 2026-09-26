@@ -2,10 +2,15 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Ambient } from '@/components/Ambient'
 import { ShareLinkField } from '@/components/ShareLink'
-import { bounceTo } from '@/lib/destination'
-import { appBaseUrl, currentSteamId } from '@/lib/server'
+import { verdict } from '@/lib/compat'
+import { nameOf } from '@/lib/compatpage'
+import { COMPAT_VIEW_TTL_SEC, listCompatViews } from '@/lib/db'
+import { bounceTo, steamLoginFor } from '@/lib/destination'
+import { freshness } from '@/lib/freshness'
+import { appBaseUrl, currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { Eyebrow } from '@/components/Labels'
 import { Icon } from '@/components/Icon'
+import { withRef } from '@/lib/track'
 
 export const metadata = {
   title: 'Совместимость',
@@ -32,12 +37,21 @@ export const dynamic = 'force-dynamic'
  * 404 и экран ошибки, и три совершенно разных экрана выглядели одним.
  */
 export default async function CompatHubPage() {
-  const steamid = await currentSteamId()
-  if (!steamid) redirect(bounceTo('/compat'))
+  const session = await currentSession()
+  if (!session) redirect(bounceTo('/compat'))
+  const { steamid } = session
+  /*
+   * «Сравнили с тобой» — только подтверждённому входу не из демо. Ссылка на
+   * профиль не доказывает, что профиль твой: без этого условия вставивший
+   * чужую ссылку увидел бы, кто сравнивался с её владельцем.
+   */
+  const canSee = isWriter(session) && !isDemoId(steamid)
+  const now = nowSec()
+  const views = canSee ? await listCompatViews(await getDb(), steamid, now - COMPAT_VIEW_TTL_SEC) : []
 
   // Адрес собирается на сервере: поле обязано приехать заполненным с первым
   // кадром, а не мигнуть пустым в ожидании гидратации.
-  const url = `${appBaseUrl()}/compat/${steamid}`
+  const url = withRef(`${appBaseUrl()}/compat/${steamid}`, 'compat')
 
   return (
     <div className="relative flex-1 overflow-hidden">
@@ -61,6 +75,48 @@ export default async function CompatHubPage() {
           />
         </div>
 
+        {views.length > 0 && (
+          <section
+            aria-labelledby="compat-views"
+            className="flex flex-col gap-3 anim-rise"
+            style={{ animationDelay: '120ms' }}
+          >
+            <Eyebrow>
+              <span id="compat-views">Сравнили с тобой</span>
+            </Eyebrow>
+            <ul className="flex flex-col gap-2">
+              {views.map((v) => (
+                <li key={v.steamid}>
+                  {/* Открыть сравнение в ответ — тот же процент: он симметричен */}
+                  <Link
+                    href={`/compat/${v.steamid}`}
+                    prefetch={false}
+                    className="panel-lift tap flex items-center gap-4 px-4 py-3"
+                  >
+                    <span className="font-display text-display-xs shrink-0 tabular-nums text-ember-text">{v.percent}%</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-bold">{nameOf(v.steamid, v.name)}</span>
+                      <span className="block truncate text-xs text-dim">
+                        {verdict(v.percent)} · {freshness(v.at, now)}
+                      </span>
+                    </span>
+                    <Icon name="arrow" size={16} className="shrink-0 text-dim" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {!canSee && !isDemoId(steamid) && (
+          <p className="text-sm text-dim anim-rise">
+            Кто с тобой сравнился — видно после{' '}
+            <a href={steamLoginFor('/compat')} className="tap tap-tight text-ember-text hover:underline">
+              входа через Steam
+            </a>
+            : ссылка на профиль не доказывает, что он твой.
+          </p>
+        )}
+
         <div className="flex flex-col gap-3 anim-rise" style={{ animationDelay: '160ms' }}>
           <Eyebrow tone="faint">Так она развернётся в чате</Eyebrow>
           {/*
@@ -74,10 +130,16 @@ export default async function CompatHubPage() {
             width={1200}
             height={630}
             alt="Превью карточки: приглашение сравнить библиотеки"
-            className="w-full rounded-[20px] border border-edge"
+            className="w-full rounded-(--radius-panel) border border-edge"
           />
+          {/* Обещание дословно правдиво: процент у открывшего — сразу, у тебя —
+              здесь, в «Сравнили с тобой», если он вошёл через Steam. Демо и
+              вход по ссылке этого списка не видят — им обещана только первая
+              половина */}
           <p className="text-sm text-faint">
-            Он откроет ссылку, подключит свою библиотеку — и процент увидите оба.
+            {canSee
+              ? 'Он откроет ссылку, войдёт через Steam — и процент увидите оба: он сразу, ты — здесь.'
+              : 'Он откроет ссылку, войдёт через Steam — и сразу увидит ваш процент.'}
           </p>
         </div>
 

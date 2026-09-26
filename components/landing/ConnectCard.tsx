@@ -28,6 +28,8 @@ import {
   type SessionHint,
 } from '@/lib/sessionhint'
 import { writerFrom, writerStore } from '@/lib/writer'
+import { announceReadOnly } from '@/lib/readonlynote'
+import { LIVE_DEFAULT, liveLineFrom } from '@/lib/liveline'
 
 /**
  * Рабочая карточка главной: единственная форма страницы, и стоит она в герое.
@@ -127,10 +129,14 @@ export function ConnectCard() {
    */
   const inputError = error === 'badinput' || error === 'notfound'
   const [session, setSession] = useState<SessionHint | null>(null)
+  /** Живая строка вошедшего — до ответа touch дверь по умолчанию (lib/liveline) */
+  const [live, setLive] = useState(LIVE_DEFAULT)
 
   const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
   const view: SessionHint = session ?? hint ?? { authed: false, personaName: null }
   const demo = view.authed && view.demo === true
+  /** Вошёл по ссылке на профиль: смотреть можно, сохранять — после входа через Steam */
+  const readOnly = view.authed && !demo && view.readOnly === true
 
   /*
    * ПОЛЕ ДЛЯ ССЫЛКИ ЕСТЬ И У ВОШЕДШЕГО.
@@ -188,8 +194,15 @@ export function ConnectCard() {
     fetch('/api/session/touch?card=1', { method: 'POST' })
       .then(async (r) => {
         if (!r.ok) return settle(null)
-        const d = (await r.json()) as { authed?: boolean; personaName?: string | null; demo?: boolean }
+        const d = (await r.json()) as {
+          authed?: boolean
+          personaName?: string | null
+          demo?: boolean
+          writer?: boolean
+          live?: unknown
+        }
         settle(d.authed ? hintFrom(d) : null)
+        setLive(liveLineFrom(d.live))
         // SessionKeeper на главной молчит, так что признак записи берём здесь
         writerStore.set(writerFrom(d))
       })
@@ -264,8 +277,12 @@ export function ConnectCard() {
         error?: string
         personaName?: string | null
         demo?: boolean
+        writer?: boolean
       }
       if (data.ok) {
+        // Вход по ссылке — только просмотр: разовая записка об этом всплывёт
+        // уже на странице, куда поведёт go() (components/ReadOnlyNote)
+        if (writerFrom(data) === false && data.demo !== true) announceReadOnly()
         // Переход клиентский, документ тот же: признак записи прежней сессии
         // остался бы в памяти и соврал бы на следующей странице (lib/writer)
         writerStore.set(writerFrom(data))
@@ -320,15 +337,51 @@ export function ConnectCard() {
               </div>
             )}
             {!demo && (
-              <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">
-                С возвращением
-                {view.personaName ? (
-                  <>
-                    , <span className="font-semibold">{view.personaName}</span>
-                  </>
-                ) : null}
-                .
-              </p>
+              <div>
+                <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">
+                  С возвращением
+                  {view.personaName ? (
+                    <>
+                      , <span className="font-semibold">{view.personaName}</span>
+                    </>
+                  ) : null}
+                  .
+                </p>
+                {/*
+                  Вход по ссылке — только просмотр, и об этом говорится здесь,
+                  до первого нажатия, а не спрятанными потом кнопками. Вход
+                  через Steam стоит в строке — тихая дверь внизу в этом случае
+                  убрана, чтобы не звать дважды. Строка добавляет карточке
+                  высоту только этой сессии (см. CONNECT_CARD_MIN_H).
+                */}
+                {readOnly && (
+                  <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
+                    Вход по ссылке — только просмотр: оценки и запуски не сохраняются.{' '}
+                    <a href={steamHref} className="tap tap-tight text-ember-text hover:underline">
+                      Войти через Steam
+                    </a>
+                    , чтобы сервис запоминал.
+                  </p>
+                )}
+                {/*
+                  Живая строка (lib/liveline): «как тебе?», готовая игра дня
+                  или дверь в «Твои вечера». Место держится с первого кадра,
+                  а текст — в одну строку с многоточием: ответ сервера
+                  меняет слова, но не высоту карточки.
+                */}
+                {!readOnly && (
+                  <p className="mt-1 max-w-md text-sm text-dim">
+                    <Link
+                      href={live.href}
+                      prefetch={false}
+                      className="tap tap-tight inline-flex max-w-full items-baseline gap-1.5 transition-colors hover:text-ink"
+                    >
+                      <span className="min-w-0 truncate">{live.text}</span>
+                      <span aria-hidden>→</span>
+                    </Link>
+                  </p>
+                )}
+              </div>
             )}
             <Magnet className="block w-full sm:w-auto sm:self-start">
               <ClickSpark className="block w-full sm:w-auto">
@@ -435,12 +488,14 @@ export function ConnectCard() {
                   Сменить библиотеку
                 </button>
               )}
-              <a
-                href={steamHref}
-                className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
-              >
-                Войти через Steam
-              </a>
+              {!readOnly && (
+                <a
+                  href={steamHref}
+                  className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
+                >
+                  Войти через Steam
+                </a>
+              )}
             </div>
           </div>
         ) : (
@@ -542,12 +597,16 @@ export function ConnectCard() {
 
 type Busy = 'go' | 'connect' | 'demo' | null
 
-/** Подсказка о входе из ответа touch или connect: демо помнится только настоящим true. */
-function hintFrom(d: { personaName?: string | null; demo?: boolean }): SessionHint {
+/**
+ * Подсказка о входе из ответа touch или connect: демо помнится только
+ * настоящим true, «только просмотр» — только настоящим writer: false у не-демо.
+ */
+function hintFrom(d: { personaName?: string | null; demo?: boolean; writer?: boolean }): SessionHint {
   return {
     authed: true,
     personaName: d.personaName ?? null,
     ...(d.demo === true ? { demo: true as const } : {}),
+    ...(d.demo !== true && d.writer === false ? { readOnly: true as const } : {}),
   }
 }
 

@@ -19,7 +19,9 @@ import { heuristicPicks, reasonPrice } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { sharedTasteTags } from '@/lib/recommend'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { shareView } from '@/lib/pickshare'
+import { shareText } from '@/lib/sharedpick'
+import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
 import type { GameMeta, ScoredCandidate } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
@@ -60,7 +62,23 @@ export async function GET(req: Request) {
    * запасную свою.
    */
   const dateStr = dayKey(now)
-  const stored = parseDailySelection(await getDailyPick(db, steamid, dateStr))
+  const cachedOnly = new URL(req.url).searchParams.get('cached') === '1'
+  const dailyGate = () =>
+    checkRate(db, {
+      bucket: 'daily',
+      id: steamid,
+      limit: DAILY_LIMIT,
+      windowSec: DAILY_WINDOW_SEC,
+      nowSec: now,
+    })
+  // Обычный запрос тратит лимит в любом случае — запись и гейт читаются
+  // одним заходом. «Только если уже выбрано» — по очереди: его промах лимит
+  // не тратит (см. ниже), значит гейт там нельзя звать заранее.
+  const [rawStored, early] = await Promise.all([
+    getDailyPick(db, steamid, dateStr),
+    cachedOnly ? Promise.resolve(null) : dailyGate(),
+  ])
+  const stored = parseDailySelection(rawStored)
 
   /*
    * ?cached=1 — «только если уже выбрано».
@@ -75,17 +93,11 @@ export async function GET(req: Request) {
    * ключу, как сама проверка лимита, а следующий за ним обычный запрос своё
    * отметит. Иначе каждый первый заход дня списывал бы два обращения из десяти.
    */
-  if (!stored && new URL(req.url).searchParams.get('cached') === '1') {
+  if (!stored && cachedOnly) {
     return new NextResponse(null, { status: 204 })
   }
 
-  const gate = await checkRate(db, {
-    bucket: 'daily',
-    id: steamid,
-    limit: DAILY_LIMIT,
-    windowSec: DAILY_WINDOW_SEC,
-    nowSec: now,
-  })
+  const gate = early ?? (await dailyGate())
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const selection = stored ?? (await selectDaily(db, steamid, dateStr, now))
@@ -113,16 +125,35 @@ export async function GET(req: Request) {
     // см. докблок в PlayersNow: подпись «сейчас» требует серверных часов
     nowSec: now,
     // Карточка — lib/cards: тот же контракт, по которому /daily берёт тип
-    pick: dailyCardView(pick, metaNow(pick.appid), now, {
-      reason,
-      sharedTags,
-      hoursPlayed,
-      hideUrgency,
-      via,
-    }),
+    pick: {
+      ...dailyCardView(pick, metaNow(pick.appid), now, {
+        reason,
+        sharedTags,
+        hoursPlayed,
+        hideUrgency,
+        via,
+      }),
+      // «Отправить другу» (/pick) — основа причины, без свежего ценового хвоста
+      ...shareView(sessionSecret(), {
+        steamid,
+        appid: pick.appid,
+        source: pick.source,
+        text: shareText(reasonBase, ''),
+      }),
+    },
     discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
     // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
-    ownAlternate: alt ? alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency) : null,
+    ownAlternate: alt
+      ? {
+          ...alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency),
+          ...shareView(sessionSecret(), {
+            steamid,
+            appid: alt.pick.appid,
+            source: alt.pick.source,
+            text: shareText(alt.reasonBase, ''),
+          }),
+        }
+      : null,
     // Из того же dateStr, что и ключ записи — см. dayLabel.
     dateLabel: dayLabel(dateStr),
   })

@@ -1,7 +1,7 @@
 'use client'
 
 import { Icon } from '@/components/Icon'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
 import { Portal } from '@/components/Portal'
 
 /**
@@ -44,7 +44,7 @@ export function WarmStrip({
       </p>
       <AnimatePresence>
         {state !== 'off' && (
-        <motion.div
+        <m.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 12 }}
@@ -57,7 +57,7 @@ export function WarmStrip({
                 {/* Волосок, а не спиннер: это фоновая работа, и она не должна
                     выглядеть как что-то, чего ждут */}
                 <span aria-hidden className="relative block h-[2px] w-10 overflow-hidden rounded-full bg-track">
-                  <motion.span
+                  <m.span
                     className="absolute inset-y-0 w-1/2 rounded-full bg-ember"
                     animate={{ x: ['-100%', '200%'] }}
                     transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
@@ -94,7 +94,7 @@ export function WarmStrip({
               <Icon name="close" size={16} />
             </button>
           </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </Portal>

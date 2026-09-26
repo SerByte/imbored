@@ -1,4 +1,5 @@
 import { GameRibbon } from '@/components/landing/GameRibbon'
+import { SmoothScroll } from '@/components/SmoothScroll'
 import { Compat } from '@/components/landing/scenes/Compat'
 import { Engine } from '@/components/landing/scenes/Engine'
 import { Hero } from '@/components/landing/scenes/Hero'
@@ -113,6 +114,16 @@ export default async function Home() {
       <Compat demo={demo} />
       <Repertoire />
       <Money />
+
+      {/*
+        Плавная прокрутка — ТОЛЬКО здесь. Закреплённые сцены (Stage) есть
+        только у главной, а смузер на каждой странице стоил отдельного чанка
+        в 129 КБ (gsap, ScrollTrigger, ScrollSmoother) и программной прокрутки
+        на таче, где она спорила с системной инерцией. Уход с главной
+        размонтирует компонент — смузер гасится, и дальше сайт едет нативно;
+        заодно там снова работает position: sticky.
+      */}
+      <SmoothScroll />
     </div>
   )
 }

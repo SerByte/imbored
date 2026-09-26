@@ -1,6 +1,7 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { Portal } from '@/components/Portal'
 import { dayKey } from '@/lib/daily'
@@ -106,7 +107,7 @@ export function OutcomeAsk({
       </p>
       <AnimatePresence>
         {shown && ask && (
-          <motion.div
+          <m.div
             key={`${ask.appid}:${ask.shownAt}`}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -128,7 +129,14 @@ export function OutcomeAsk({
                   Закрыть
                 </button>
               </div>
-              <p className="-mt-2 text-xs text-dim">Часы — из Steam. Ответ поможет подбирать точнее.</p>
+              <p className="-mt-2 text-xs text-dim">
+                Часы — из Steam. Ответ поможет подбирать точнее, а поменять его можно в{' '}
+                {/* История советов и ответов — «Твои вечера» (components/Evenings) */}
+                <Link href="/library#evenings" prefetch={false} className="tap tap-tight underline decoration-edge hover:text-ink">
+                  библиотеке
+                </Link>
+                .
+              </p>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -146,7 +154,7 @@ export function OutcomeAsk({
                 </button>
               </div>
             </section>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </Portal>

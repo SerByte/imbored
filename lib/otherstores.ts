@@ -38,6 +38,28 @@ export const OTHER_STORE_GAMES: GameMeta[] = [
   ext(-111, 'Minecraft', 'mojang', 'https://www.minecraft.net/ru-ru', { Sandbox: 5400, Crafting: 4800, Survival: 4400, Multiplayer: 4200, Building: 4000 }, COOP, 'Кубики, из которых сделано детство интернета.'),
 ]
 
+/**
+ * Жанр одной строкой — для типографской обложки (components/TypeCover).
+ *
+ * Готовой подписью, а не tagRu по верхнему тегу: обложка живёт в клиентском
+ * GameArt, и словарь тегов Steam (около 12 КБ) ехал ради одиннадцати слов в
+ * первую загрузку всех двадцати маршрутов — замерено по
+ * route-bundle-stats.json. Полноту таблицы держит lib/otherstores.test.ts.
+ */
+export const OTHER_STORE_GENRE: Readonly<Record<number, string>> = {
+  [-101]: 'Королевская битва',
+  [-102]: 'Спорт',
+  [-103]: 'Вечеринка',
+  [-104]: 'Хоррор',
+  [-105]: 'Тактический шутер',
+  [-106]: 'MOBA',
+  [-107]: 'MMORPG',
+  [-108]: 'Карточная игра',
+  [-109]: 'Геройский шутер',
+  [-110]: 'Открытый мир',
+  [-111]: 'Песочница',
+}
+
 /*
  * Здесь жил seedOtherStores, и звали его с КАЖДОГО POST /api/prepare: пул
  * сеется один раз и живёт вечно, а прогрев дёргает prepare до восьмидесяти

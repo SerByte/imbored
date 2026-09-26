@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useReducedMotion } from 'motion/react'
+import { m, useReducedMotion } from 'framer-motion'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 const SPREAD = 14 // максимальный разлёт призраков по X, px
@@ -41,7 +41,7 @@ export function EchoTitle({
         // равномерный разлёт: -SPREAD … +SPREAD
         const t = n === 1 ? 0 : (i / (n - 1)) * 2 - 1
         return (
-          <motion.span
+          <m.span
             key={i}
             aria-hidden
             className={`${className} absolute inset-0 whitespace-nowrap text-ember-text`}
@@ -50,7 +50,7 @@ export function EchoTitle({
             transition={{ duration: 0.55, ease: EASE, delay }}
           >
             {text}
-          </motion.span>
+          </m.span>
         )
       })}
       {/* relative обязателен: призраки выше — позиционированные, и без этого

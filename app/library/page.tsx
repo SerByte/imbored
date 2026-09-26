@@ -15,6 +15,10 @@ import {
   getLatestSnapshot,
   listBanned,
   loadTagStats,
+  listEvenings,
+  listLiked,
+  getOlderSnapshotMinutes,
+  countLiked,
 } from '@/lib/db'
 import {
   buildLibraryView,
@@ -38,6 +42,11 @@ import { bounceTo, reconnectHref } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
 import { plural } from '@/lib/plural'
+import { dateLabel } from '@/lib/freshness'
+import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
+import { Evenings, type EveningItem } from '@/components/Evenings'
+import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
+import { pickSnapshotDelta } from '@/lib/libdelta'
 
 export const metadata = {
   title: 'Библиотека',
@@ -59,6 +68,12 @@ const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
   comeback: { text: 'заброшена', cls: 'text-dim' },
   played: { text: '', cls: 'text-dim' },
 }
+
+/** Сколько советов на полке «Твои вечера»: свежие; сводка — по всем за окно */
+const EVENINGS_SHOWN = 12
+
+/** С какого числа сверенных советов показывать честную долю */
+const EVENINGS_HONEST_MIN = 3
 
 /** Сколько постеров в мозаике героя: пять колонок по три на широком экране */
 const MOSAIC = 15
@@ -102,12 +117,19 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older] = await Promise.all([
     getLatestSnapshot(db, steamid),
     listBanned(db, steamid),
     bannedAppids(db, steamid),
     feedbackStats(db, steamid),
     filter === 'untouched' ? loadTagStats(db) : null,
+    // «Твои вечера» — советы за тот же срок, что их хранят (OUTCOME_TTL_SEC)
+    listEvenings(db, steamid, nowSec() - OUTCOME_TTL_SEC),
+    // Полка «Зашло» — что подбор запомнил как понравившееся, и сколько всего
+    listLiked(db, steamid),
+    countLiked(db, steamid),
+    // Прежние снимки парами [appid, минуты] — для строки «с прошлого снимка»
+    getOlderSnapshotMinutes(db, steamid),
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -124,8 +146,19 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
   // библиотеке не встретится, но обложка на полку нужна.
   // Узкой выборкой: скриншоты на этой странице не показываются нигде
+  // Свежие двенадцать — и, сверх них, каждый несверенный ответом совет из окна
+  // вопроса: на него ведёт «Как тебе X?» с главной и из OutcomeAsk, и ответить
+  // должно быть где, даже если после него было ещё двенадцать советов
+  const askable = (e: (typeof evenings)[number]) =>
+    e.verdict === null && playedEnough(e.minutes) && e.shownAt >= nowSec() - OUTCOME_WINDOW_SEC
+  const shownEvenings = evenings.filter((e, i) => i < EVENINGS_SHOWN || askable(e))
   const metas = await getGamesMetaLite(db, [
-    ...new Set([...games.map((g) => g.appid), ...banned.map((b) => b.appid)]),
+    ...new Set([
+      ...games.map((g) => g.appid),
+      ...banned.map((b) => b.appid),
+      ...shownEvenings.map((e) => e.appid),
+      ...liked.map((l) => l.appid),
+    ]),
   ])
   const bannedGames: BannedGame[] = banned.map((b) => {
     const meta = metas.get(b.appid)
@@ -139,12 +172,54 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       done: b.done,
     }
   })
+  const likedGames: LikedGame[] = liked.map((l) => {
+    const meta = metas.get(l.appid)
+    return {
+      appid: l.appid,
+      name: meta?.name ?? `Игра ${l.appid}`,
+      headerImage: meta?.headerImage ?? null,
+      art: trimArt(meta?.art),
+    }
+  })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
+
+  // Сводка — по всем советам окна, полка — по свежим (EVENINGS_SHOWN)
+  const eveningsTotal = eveningsSummary(evenings)
+  // Доля от трёх сверенных советов и больше: «сыграно в 100%» по одному — шум
+  const honest = eveningsTotal.checked >= EVENINGS_HONEST_MIN
+  const ownedNow = new Set(games.map((g) => g.appid))
+  const eveningItems: EveningItem[] = shownEvenings.map((e) => {
+    const meta = metas.get(e.appid)
+    return {
+      appid: e.appid,
+      shownAt: e.shownAt,
+      name: meta?.name ?? `Игра ${e.appid}`,
+      headerImage: meta?.headerImage ?? null,
+      art: trimArt(meta?.art),
+      date: dateLabel(e.shownAt),
+      played:
+        e.minutes === null
+          ? 'ещё не сверяли'
+          : e.minutes === 0
+            ? e.launched
+              ? 'открыл и закрыл'
+              : 'не запускал'
+            : playedLine(e.minutes),
+      playedEnough: playedEnough(e.minutes),
+      verdict: e.verdict,
+      owned: ownedNow.has(e.appid),
+      storeUrl: meta?.storeUrl ?? null,
+    }
+  })
 
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
 
   const metaOf = (id: number) => metas.get(id)
+  // Что изменилось с прошлого снимка — с первого, с которым есть о чём
+  // сказать (pickSnapshotDelta). Снимки и отметки года /privacy обещает ради
+  // «динамики бэклога и итогов» — вот динамика
+  const since = pickSnapshotDelta(older, snapshot, metaOf)
   // Та же мера вкуса, что у /play: без карты тегов — сырой косинус
   const view = buildLibraryView(games, metaOf, filter, now, tagStats ? tagWeightFrom(tagStats) : null)
   // Два разных числа: в строке-сводке — «ни разу не запускал» (ноль минут), в
@@ -219,10 +294,53 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
             </div>
           </dl>
-          <Link href="/portrait" prefetch={false} className="btn-glass mt-8">
-            <Icon name="spark" size={18} />
-            Мой портрет игрока
-          </Link>
+          {/*
+            С прошлого снимка — без «было X, стало Y» рядом с числами выше:
+            «ни разу не запускал» двигают и новые нетронутые игры, и разница
+            двух чисел врала бы. Обе даты — потому что сама страница снимок не
+            обновляет, и «по сегодня» было бы неправдой.
+          */}
+          {since && (
+            <p className="mt-5 max-w-md text-sm leading-relaxed text-dim">
+              {/* Снимки одного дня — одна дата, а не «с 26 сентября по 26 сентября» */}
+              {dateLabel(since.fromAt) === dateLabel(snapshot.takenAt) ? (
+                `За ${dateLabel(snapshot.takenAt)}`
+              ) : (
+                <>
+                  С {dateLabel(since.fromAt, { year: !sameYear(since.fromAt, snapshot.takenAt) })} по{' '}
+                  {dateLabel(snapshot.takenAt)}
+                </>
+              )}
+              {since.delta.minutes > 0 && (
+                <>
+                  {' '}· наиграно <span className="tabular-nums text-ink">{playedLine(since.delta.minutes)}</span>
+                </>
+              )}
+              {since.delta.added.length > 0 && (
+                <>
+                  {' '}· <span className="tabular-nums">{since.delta.added.length}</span>{' '}
+                  {plural(since.delta.added.length, 'новая игра', 'новые игры', 'новых игр')}
+                </>
+              )}
+              {since.delta.unpacked.length > 0 && (
+                <>
+                  {' '}· <span className="tabular-nums">{since.delta.unpacked.length}</span>{' '}
+                  {plural(since.delta.unpacked.length, 'игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено')}
+                </>
+              )}
+            </p>
+          )}
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link href="/portrait" prefetch={false} className="btn-glass">
+              <Icon name="spark" size={18} />
+              Мой портрет игрока
+            </Link>
+            {/* Колода без вопросов о настроении — и полка «Приглянулось» при ней */}
+            <Link href="/explore" className="btn-glass">
+              Полистать без обязательств
+              <Icon name="arrow" size={18} />
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -261,7 +379,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         </section>
       )}
 
-      {(backlog.pricedCount > 0 || stats.rate !== null) && (
+      {(backlog.pricedCount > 0 || stats.rate !== null || honest) && (
         <div className="grid md:grid-cols-2 gap-4 mb-10">
           {backlog.pricedCount > 0 && (
             /*
@@ -327,18 +445,54 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               </Link>
             </div>
           )}
-          {stats.rate !== null && (
+          {(stats.rate !== null || honest) && (
             <div className="panel-lift p-5">
-              <div className="font-display text-display-xs">
-                Подбор попадает в{' '}
-                <span className="match">{Math.round(stats.rate * 100)}%</span>
-              </div>
-              <div className="text-xs text-dim mt-1">
-                {stats.liked} «зашло» против {stats.skipped} «не то»
-              </div>
+              {stats.rate !== null && (
+                <>
+                  <div className="font-display text-display-xs">
+                    Подбор попадает в{' '}
+                    <span className="match">{Math.round(stats.rate * 100)}%</span>
+                  </div>
+                  <div className="text-xs text-dim mt-1">
+                    {stats.liked} «зашло» против {stats.skipped} «не то»
+                  </div>
+                </>
+              )}
+              {/*
+                Честная мера рядом со словами: «зашло» — нажатие, а сыграно
+                ли — знает только следующий снапшот библиотеки. Доля от
+                сверенных советов (eveningsSummary): несверенный — «ещё
+                неизвестно», а не промах.
+              */}
+              {honest && (
+                <div className={stats.rate !== null ? 'text-xs text-dim mt-2' : 'font-display text-display-xs'}>
+                  Сыграно всерьёз —{' '}
+                  <span className={stats.rate !== null ? 'tabular-nums text-ink' : 'match'}>
+                    {Math.round((eveningsTotal.played / eveningsTotal.checked) * 100)}%
+                  </span>{' '}
+                  советов
+                  {stats.rate !== null ? (
+                    <>
+                      : {eveningsTotal.played} из {eveningsTotal.checked}, от пятнадцати минут
+                    </>
+                  ) : null}
+                </div>
+              )}
             </div>
           )}
         </div>
+      )}
+
+      {eveningItems.length > 0 && (
+        <Evenings
+          items={eveningItems}
+          summary={{
+            checked: eveningsTotal.checked,
+            played: eveningsTotal.played,
+            hours: playedLine(eveningsTotal.minutes),
+          }}
+          writer={session ? isWriter(session) : false}
+        />
       )}
 
       {shelf.length > 0 && (
@@ -427,21 +581,25 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           id — цель ссылки с полки «запечатанного»: приводить к фильтру,
           не показав самих чипсов, значит приводить в никуда. */}
       {games.length > 0 && (
-      /* Пилюлями, лентой на телефоне. Липкой полосу не сделать: страница
-         живёт под ScrollSmoother, контент там едет transform, и sticky внутри
-         него не держится. */
-      <div id="wall" className="chip-rail lib-filters">
-        {LIBRARY_FILTERS.map((f) => (
-          <Link
-            key={f.id}
-            href={libraryHref(f.id)}
-            prefetch={false}
-            aria-current={f.id === filter ? 'page' : undefined}
-            className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
-          >
-            {f.label} <span className="tabular-nums opacity-70">{view.counts[f.id]}</span>
-          </Link>
-        ))}
+      /* Пилюлями, лентой на телефоне. Полоса липкая: смузер теперь живёт
+         только на главной, и sticky здесь снова держится (.lib-filters).
+         Липкая подложка и лента — два разных элемента: маска ленты
+         (.chip-rail) растворяла бы и фон с размытием, и стена карточек
+         проступала бы по краям полосы. */
+      <div id="wall" className="lib-filters">
+        <div className="chip-rail lib-filters-rail">
+          {LIBRARY_FILTERS.map((f) => (
+            <Link
+              key={f.id}
+              href={libraryHref(f.id)}
+              prefetch={false}
+              aria-current={f.id === filter ? 'page' : undefined}
+              className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
+            >
+              {f.label} <span className="tabular-nums opacity-70">{view.counts[f.id]}</span>
+            </Link>
+          ))}
+        </div>
       </div>
       )}
 
@@ -532,6 +690,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           выдачи, и сниматься должен так же дёшево. */}
       <div className="mt-14">
         {/* Сессия есть наверняка: без неё страница развернула бы на вход */}
+        <LikedShelf games={likedGames} total={likedTotal} writer={session ? isWriter(session) : false} />
         <BannedShelf games={bannedGames} writer={session ? isWriter(session) : false} />
       </div>
 
@@ -543,4 +702,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       </div>
     </div>
   )
+}
+
+/** Два момента в одном году по UTC — тогда дату пишем без года */
+function sameYear(a: number, b: number): boolean {
+  return new Date(a * 1000).getUTCFullYear() === new Date(b * 1000).getUTCFullYear()
 }

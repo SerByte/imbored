@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { CandidateSet } from './candidates'
-import { cardView, dailyCardView, heroMediaView, pickContext, storeCardView } from './cards'
+import { aboutLine, cardView, dailyCardView, heroMediaView, pickContext, storeCardView } from './cards'
 import { NEUTRAL_MOOD } from './mood'
 import { topTags } from './recommend'
 import { HERO_SLIDES } from './shots'
@@ -129,5 +129,17 @@ describe('heroMediaView', () => {
       trailer: null,
     })
     expect(heroMediaView(undefined)).toEqual({ screenshots: [], trailer: null })
+  })
+})
+
+describe('aboutLine', () => {
+  const ru = 'Взберись на гору с друзьями и не сорвись.'
+  const en = 'Climb a mountain with your friends.'
+  test('только у игры из каталога и только по-русски', () => {
+    expect(aboutLine('new', { ...meta(20), shortDescription: ru })).toBe(ru)
+    expect(aboutLine('new', { ...meta(20), shortDescription: en })).toBeNull()
+    expect(aboutLine('untouched', { ...meta(20), shortDescription: ru })).toBeNull()
+    expect(aboutLine('new', undefined)).toBeNull()
+    expect(aboutLine('new', { ...meta(20), shortDescription: '   ' })).toBeNull()
   })
 })

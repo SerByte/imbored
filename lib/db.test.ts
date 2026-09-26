@@ -76,6 +76,9 @@ import {
   joinRoom,
   listBanned,
   listExplore,
+  listExploreLiked,
+  listLiked,
+  countLiked,
   listFeedback,
   listPublicRooms,
   logFeedback,
@@ -88,14 +91,22 @@ import {
   fillOutcomesFromSnapshot,
   pendingOutcomeAsk,
   recordOutcome,
+  recordCompatView,
+  createSharedPick,
+  findSharedPick,
+  getSharedPick,
+  listCompatViews,
+  COMPAT_VIEW_TTL_SEC,
   setOutcomeVerdict,
   setRoomDeckSize,
   setGameJson,
+  getLovedFor,
   setRoomMatched,
   setRoomPublic,
   setUserPortrait,
   stalePriceAppids,
   unbanGame,
+  unlikeGame,
   updateGamePrices,
   topCatalogGames,
   topGamesByTags,
@@ -118,8 +129,10 @@ import {
   revokeSession,
   DEMO_TTL_SEC,
   FEEDBACK_CTX_TTL_SEC,
+  listEvenings,
 } from './db'
 import { seedDemo } from './demo'
+import { SHARED_PICK_TTL_SEC } from './sharedpick'
 import { FEEDBACK_ACTIONS } from './feedbackkinds'
 import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC } from './outcome'
 import { OTHER_STORE_GAMES } from './otherstores'
@@ -928,6 +941,18 @@ describe('db', () => {
     expect(await getGameJson(db, 999, 'pros_cons_json')).toBeNull()
   })
 
+  test('«за что любят» пачкой — только собранное моделью', async () => {
+    const db = await freshDb()
+    for (const appid of [620, 621, 622, 623]) await upsertGameMeta(db, { ...META, appid }, NOW)
+    await setGameJson(db, 620, 'pros_cons_json', { pros: [' Сюжет ', '', 'Юмор', 7], cons: [], source: 'claude' })
+    // эвристика бывает по-английски и с бранью — на страницу не идёт никогда
+    await setGameJson(db, 621, 'pros_cons_json', { pros: ['great game lol'], cons: [], source: 'reviews' })
+    await setGameJson(db, 622, 'pros_cons_json', { pros: [], cons: ['Баги'], source: 'claude' })
+    const loved = await getLovedFor(db, [620, 621, 622, 623, 999])
+    expect([...loved.entries()]).toEqual([[620, ['Сюжет', 'Юмор']]])
+    expect(await getLovedFor(db, [])).toEqual(new Map())
+  })
+
   test('портрет кэшируется в users и читается', async () => {
     const db = await freshDb()
     await upsertUser(db, { steamid: 'u1', personaName: 'A' }, NOW)
@@ -1655,6 +1680,84 @@ describe('db', () => {
   test('unbanGame на несуществующем бане молчит', async () => {
     const db = await freshDb()
     await expect(unbanGame(db, 'u1', 12_345)).resolves.toBeUndefined()
+  })
+
+  test('listExploreLiked: только последний свайп «Интересно», без потолка listExplore', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 10, action: 'opened', reason: 'explore' }, NOW)
+    // передумал — «Мимо» после «Интересно» снимает с полки
+    await logFeedback(db, { steamid: 'u1', appid: 10, action: 'skipped', reason: 'explore' }, NOW + 5)
+    await logFeedback(db, { steamid: 'u1', appid: 20, action: 'skipped', reason: 'explore' }, NOW + 1)
+    await logFeedback(db, { steamid: 'u1', appid: 20, action: 'opened', reason: 'explore' }, NOW + 6)
+    await logFeedback(db, { steamid: 'u1', appid: 30, action: 'opened', reason: 'explore' }, NOW + 2)
+    await logFeedback(db, { steamid: 'u1', appid: 30, action: 'banned' }, NOW + 3)
+    await logFeedback(db, { steamid: 'u1', appid: 40, action: 'opened' }, NOW + 7)
+    await logFeedback(db, { steamid: 'u1', appid: 50, action: 'opened', reason: 'explore' }, NOW + 6)
+    await logFeedback(db, { steamid: 'u2', appid: 60, action: 'opened', reason: 'explore' }, NOW)
+    expect(await listExploreLiked(db, 'u1', 10)).toEqual([
+      { appid: 20, at: NOW + 6 },
+      { appid: 50, at: NOW + 6 },
+    ])
+    expect(await listExploreLiked(db, 'u1', 1)).toEqual([{ appid: 20, at: NOW + 6 }])
+
+    // «Убрать» в ту же секунду, что «Интересно», — всё равно убрано: ничью
+    // разбивает порядок вставки
+    await logFeedback(db, { steamid: 'u1', appid: 70, action: 'opened', reason: 'explore' }, NOW + 9)
+    await logFeedback(db, { steamid: 'u1', appid: 70, action: 'skipped', reason: 'explore' }, NOW + 9)
+    expect((await listExploreLiked(db, 'u1', 10)).map((r) => r.appid)).not.toContain(70)
+
+    // Двести свежих «Мимо» не выталкивают старое «Интересно» — это и был
+    // скрытый потолок полки, пока её читали из listExplore
+    const passes = Array.from({ length: 210 }, (_, i) =>
+      logFeedback(db, { steamid: 'u3', appid: 1000 + i, action: 'skipped', reason: 'explore' }, NOW + 100 + i),
+    )
+    await logFeedback(db, { steamid: 'u3', appid: 7, action: 'opened', reason: 'explore' }, NOW)
+    await Promise.all(passes)
+    expect((await listExplore(db, 'u3')).some((r) => r.appid === 7)).toBe(false)
+    expect(await listExploreLiked(db, 'u3', 120)).toEqual([{ appid: 7, at: NOW }])
+  })
+
+  test('listLiked: по строке на игру, свежие сверху, без забаненного и чужого', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW)
+    // второе «зашло» той же игры через сутки — logFeedback склеивает только в пределах суток
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 90_000)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'liked' }, NOW + 100)
+    await logFeedback(db, { steamid: 'u1', appid: 730, action: 'liked' }, NOW + 200)
+    await logFeedback(db, { steamid: 'u1', appid: 730, action: 'banned' }, NOW + 300)
+    await logFeedback(db, { steamid: 'u1', appid: 440, action: 'skipped' }, NOW + 400)
+    await logFeedback(db, { steamid: 'u2', appid: 999, action: 'liked' }, NOW + 500)
+    // одна секунда — порядок по appid, а не как ляжет
+    await logFeedback(db, { steamid: 'u1', appid: 300, action: 'liked' }, NOW + 100)
+
+    expect(await listLiked(db, 'u1')).toEqual([
+      { appid: 570, at: NOW + 90_000 },
+      { appid: 300, at: NOW + 100 },
+      { appid: 620, at: NOW + 100 },
+    ])
+    expect(await listLiked(db, 'u1', 1)).toEqual([{ appid: 570, at: NOW + 90_000 }])
+    expect(await listLiked(db, 'nobody')).toEqual([])
+    // счёт — всех, мимо потолка полки, и по тем же правилам
+    expect(await countLiked(db, 'u1')).toBe(3)
+    expect(await countLiked(db, 'nobody')).toBe(0)
+  })
+
+  test('unlikeGame снимает все «зашло» игры и не трогает остальную историю', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 90_000)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'launched' }, NOW + 10)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'tired' }, NOW + 20)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'liked' }, NOW + 30)
+    await logFeedback(db, { steamid: 'u2', appid: 570, action: 'liked' }, NOW + 40)
+
+    await unlikeGame(db, 'u1', 570)
+
+    expect(await listLiked(db, 'u1')).toEqual([{ appid: 620, at: NOW + 30 }])
+    const rest = (await listFeedback(db, 'u1', 50)).filter((f) => f.appid === 570).map((f) => f.action)
+    expect(rest.sort()).toEqual(['launched', 'skipped'])
+    expect(await listLiked(db, 'u2')).toEqual([{ appid: 570, at: NOW + 40 }])
+    await expect(unlikeGame(db, 'u1', 12_345)).resolves.toBeUndefined()
   })
 
   test('фидбек логируется и читается по пользователю', async () => {
@@ -2682,6 +2785,7 @@ describe('топ каталога: кэш на десять минут', () => {
 describe('forgetUser: удаление по запросу', () => {
   const ME = '76561198000000001'
   const FRIEND = '76561198000000002'
+  const THIRD = '76561198000000003'
 
   /** Игрок, у которого есть строка в каждой таблице, где вообще бывают люди */
   async function populated() {
@@ -2698,6 +2802,15 @@ describe('forgetUser: удаление по запросу', () => {
     await saveDailyPick(db, ME, '2023-11-14', { appid: 570 }, NOW)
     await recordOutcome(db, { steamid: ME, appid: 570, source: 'comeback', launched: true }, NOW)
     await checkRate(db, { bucket: 'portrait', id: ME, limit: 10, windowSec: 60, nowSec: NOW })
+    // Сравнения в обе стороны: он открыл ссылку друга и друг — его
+    await recordCompatView(db, { owner: FRIEND, viewer: ME, percent: 71 }, NOW)
+    await recordCompatView(db, { owner: ME, viewer: FRIEND, percent: 71 }, NOW)
+    // Выбор, которым он поделился (/pick/<id>)
+    await createSharedPick(
+      db,
+      { id: 'mepick234567', createdBy: ME, appid: 570, source: 'comeback', kind: 'play', reason: 'Вернись.' },
+      NOW,
+    )
 
     // Своя комната: друг в ней тоже голосовал
     await createRoom(db, { id: 'MYROOM', steamid: ME }, NOW)
@@ -2716,6 +2829,12 @@ describe('forgetUser: удаление по запросу', () => {
 
     // Данные друга, которые удаление трогать не имеет права
     await upsertUser(db, { steamid: FRIEND, personaName: 'Friend' }, NOW)
+    await recordCompatView(db, { owner: FRIEND, viewer: THIRD, percent: 40 }, NOW)
+    await createSharedPick(
+      db,
+      { id: 'frpick234567', createdBy: FRIEND, appid: 620, source: 'new', kind: 'daily', reason: 'Попробуй.' },
+      NOW,
+    )
     await logFeedback(db, { steamid: FRIEND, appid: 570, action: 'liked' }, NOW)
     await saveLibrarySnapshot(db, FRIEND, LIB, NOW)
     return db
@@ -2776,6 +2895,12 @@ describe('forgetUser: удаление по запросу', () => {
     expect(await roomVotes(db, 'MYROOM')).toEqual([])
     const deck = await db.execute("SELECT COUNT(*) AS n FROM room_deck WHERE room_id = 'MYROOM'")
     expect(Number(deck.rows[0]?.n)).toBe(0)
+    // Сравнения удалённого ушли в обе стороны, а друга с третьим — остались
+    expect((await listCompatViews(db, FRIEND, 0)).map((v) => v.steamid)).toEqual([THIRD])
+    expect(await listCompatViews(db, ME, 0)).toEqual([])
+    // Его ссылка на выбор перестала открываться, ссылка друга — открывается
+    expect(await getSharedPick(db, 'mepick234567', 0)).toBeNull()
+    expect(await getSharedPick(db, 'frpick234567', 0)).not.toBeNull()
   })
 
   test('предпросмотр считает ровно то, что удалится', async () => {
@@ -2796,7 +2921,7 @@ describe('forgetUser: удаление по запросу', () => {
     expect(await getLatestSnapshot(db, ME)).not.toBeNull()
   })
 
-  test('сторож: каждая таблица с steamid или created_by есть в списке удаления', async () => {
+  test('сторож: каждая таблица с людьми (steamid, created_by, owner, viewer) есть в списке удаления', async () => {
     // Новая таблица с данными людей обязана попасть в forgetUser. Иначе
     // политика обещает «удаляем всё», а удаление молча её пропускает.
     const db = await freshDb()
@@ -2806,7 +2931,7 @@ describe('forgetUser: удаление по запросу', () => {
     const personal: string[] = []
     for (const t of tables.rows) {
       const cols = await db.execute(`PRAGMA table_info(${t.name as string})`)
-      if (cols.rows.some((c) => c.name === 'steamid' || c.name === 'created_by')) {
+      if (cols.rows.some((c) => ['steamid', 'created_by', 'owner', 'viewer'].includes(c.name as string))) {
         personal.push(t.name as string)
       }
     }
@@ -3588,6 +3713,31 @@ describe('исход совета', () => {
     ])
   })
 
+  // «Твои вечера» на /library: свои советы за окно, новые первыми
+  test('listEvenings — свои за окно, новые первыми, с приростом минут', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 100 * DAY)
+    await recordOutcome(db, { steamid: ME, appid: 620, source: 'untouched', launched: true }, NOW - 95 * DAY)
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 3 * DAY)
+    await launch(db, 620, NOW - 2 * DAY)
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: false }, NOW - DAY)
+    await recordOutcome(db, { steamid: '76561198000000002', appid: 620, source: 'untouched', launched: true }, NOW)
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: g.playtimeForever + 50 } : g)),
+      NOW,
+    )
+    const list = await listEvenings(db, ME, NOW - 90 * DAY)
+    expect(list.map((e) => [e.appid, e.shownAt])).toEqual([
+      [999, NOW - DAY],
+      [620, NOW - 2 * DAY],
+    ])
+    expect(list[1]).toMatchObject({ launched: true, minutes: 50 })
+    // игры нет и после снапшота — заглянул и не взял: сверено, сыграно ноль
+    expect(list[0]).toMatchObject({ launched: false, minutes: 0, bought: false })
+  })
+
   test('повтор в окне — та же строка; запуск после магазина дописывает время запуска', async () => {
     const db = await freshDb()
     await saveLibrarySnapshot(db, ME, LIB, NOW - DAY)
@@ -3668,12 +3818,31 @@ describe('исход совета', () => {
       bought: true,
     })
     // Ответили — следующий по свежести
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toBe(true)
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toEqual({ changed: true, was: null })
     expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 90, bought: false })
-    // Второй ответ первый не переписывает
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'hooked')).toBe(false)
-    expect((await outcomeRows(db)).find((r) => r.appid === 999)?.verdict).toBe('meh')
-    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'dismissed')).toBe(true)
+    // Ответ можно поменять («Твои вечера» на /library), а тот же ответ
+    // повтором ничего не пишет — роуту это говорит, что «зашло» заводить незачем
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toEqual({ changed: false, was: 'meh' })
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'hooked')).toEqual({ changed: true, was: 'meh' })
+    // «Закрыть» из забытой всплывашки настоящий ответ не стирает
+    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'dismissed')).toEqual({
+      changed: false,
+      was: 'hooked',
+    })
+    expect((await outcomeRows(db)).find((r) => r.appid === 999)?.verdict).toBe('hooked')
+    // Спрашивать об отвеченном по-прежнему незачем
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620 })
+    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'dismissed')).toEqual({
+      changed: true,
+      was: null,
+    })
+    // а отказ отвечать ответом переписать можно
+    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'meh')).toEqual({
+      changed: true,
+      was: 'dismissed',
+    })
+    // строки нет — ничего не изменилось
+    expect(await setOutcomeVerdict(db, ME, 12_345, NOW, 'hooked')).toEqual({ changed: false, was: null })
     expect(await pendingOutcomeAsk(db, ME, NOW)).toBeNull()
   })
 
@@ -3693,5 +3862,102 @@ describe('исход совета', () => {
     await launch(db, 570, NOW - OUTCOME_TTL_SEC + DAY)
     expect((await sweepStale(db, NOW)).outcomes).toBe(1)
     expect((await outcomeRows(db)).map((r) => r.appid)).toEqual([570])
+  })
+})
+
+describe('кто сравнился с тобой', () => {
+  const A = '76561198000000011'
+  const B = '76561198000000012'
+  const C = '76561198000000013'
+
+  test('пишется только пара двух разных живых людей с процентом 0..100', async () => {
+    const db = await freshDb()
+    await expect(recordCompatView(db, { owner: A, viewer: A, percent: 50 }, NOW)).rejects.toThrow()
+    await expect(recordCompatView(db, { owner: A, viewer: '00012345678901234', percent: 50 }, NOW)).rejects.toThrow()
+    await expect(recordCompatView(db, { owner: A, viewer: B, percent: 101 }, NOW)).rejects.toThrow()
+    await expect(recordCompatView(db, { owner: A, viewer: B, percent: 12.5 }, NOW)).rejects.toThrow()
+    expect(await listCompatViews(db, A, 0)).toEqual([])
+  })
+
+  test('повтор в те же сутки — без записи, новый процент — обновляет', async () => {
+    const db = await freshDb()
+    await recordCompatView(db, { owner: A, viewer: B, percent: 60 }, NOW)
+    await recordCompatView(db, { owner: A, viewer: B, percent: 60 }, NOW + 3600)
+    expect(await listCompatViews(db, A, 0)).toEqual([{ steamid: B, name: null, percent: 60, at: NOW }])
+    await recordCompatView(db, { owner: A, viewer: B, percent: 64 }, NOW + 7200)
+    expect(await listCompatViews(db, A, 0)).toEqual([{ steamid: B, name: null, percent: 64, at: NOW + 7200 }])
+    // через сутки — обновляет и тот же процент: «когда сравнивались» свежеет
+    await recordCompatView(db, { owner: A, viewer: B, percent: 64 }, NOW + 7200 + 90_000)
+    expect((await listCompatViews(db, A, 0))[0]?.at).toBe(NOW + 7200 + 90_000)
+  })
+
+  test('свежие первыми, с ником, старше срока не видны и уходят в уборке', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: C, personaName: 'Сэм' }, NOW)
+    await recordCompatView(db, { owner: A, viewer: B, percent: 30 }, NOW - COMPAT_VIEW_TTL_SEC - 10)
+    await recordCompatView(db, { owner: A, viewer: C, percent: 80 }, NOW)
+    expect(await listCompatViews(db, A, NOW - COMPAT_VIEW_TTL_SEC)).toEqual([
+      { steamid: C, name: 'Сэм', percent: 80, at: NOW },
+    ])
+    const report = await sweepStale(db, NOW)
+    expect(report.compat).toBe(1)
+    expect((await listCompatViews(db, A, 0)).map((v) => v.steamid)).toEqual([C])
+  })
+})
+
+describe('выбор, которым поделились (/pick/<id>)', () => {
+  const A = '76561198000000021'
+  const row = (id: string, over: Partial<{ appid: number; reason: string }> = {}) => ({
+    id,
+    createdBy: A,
+    appid: 620,
+    source: 'untouched' as const,
+    kind: 'play' as const,
+    reason: 'Вечер на головоломки.',
+    ...over,
+  })
+
+  test('публичное чтение — без автора; истёкшее не отдаётся ещё до уборки', async () => {
+    const db = await freshDb()
+    await createSharedPick(db, row('abcdefghjkmn'), NOW)
+    const got = await getSharedPick(db, 'abcdefghjkmn', NOW - SHARED_PICK_TTL_SEC)
+    expect(got).toEqual({
+      id: 'abcdefghjkmn',
+      appid: 620,
+      source: 'untouched',
+      kind: 'play',
+      reason: 'Вечер на головоломки.',
+      createdAt: NOW,
+    })
+    expect(await getSharedPick(db, 'abcdefghjkmn', NOW + 1)).toBeNull()
+    expect(await getSharedPick(db, 'nosuchpick23', 0)).toBeNull()
+  })
+
+  test('повтор находится по автору, игре, виду и тексту — и только свежий', async () => {
+    const db = await freshDb()
+    await createSharedPick(db, row('abcdefghjkmn'), NOW)
+    const text = 'Вечер на головоломки.'
+    expect(await findSharedPick(db, A, 620, 'play', text, NOW - 60)).toBe('abcdefghjkmn')
+    expect(await findSharedPick(db, A, 620, 'play', 'Другой текст.', NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, A, 570, 'play', text, NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, '76561198000000022', 620, 'play', text, NOW - 60)).toBeNull()
+    expect(await findSharedPick(db, A, 620, 'play', text, NOW + 1)).toBeNull()
+    // тот же текст игрой дня — другая страница с другой подписью
+    expect(await findSharedPick(db, A, 620, 'daily', text, NOW - 60)).toBeNull()
+  })
+
+  test('тот же id дважды — ошибка ключа: роут пробует другой', async () => {
+    const db = await freshDb()
+    await createSharedPick(db, row('abcdefghjkmn'), NOW)
+    await expect(createSharedPick(db, row('abcdefghjkmn', { appid: 570 }), NOW)).rejects.toThrow(/UNIQUE|PRIMARY/i)
+  })
+
+  test('старше срока уходят в суточной уборке', async () => {
+    const db = await freshDb()
+    await createSharedPick(db, row('oldpick23456'), NOW - SHARED_PICK_TTL_SEC - 10)
+    await createSharedPick(db, row('newpick23456', { reason: 'Свежий.' }), NOW)
+    expect((await sweepStale(db, NOW)).picks).toBe(1)
+    expect(await getSharedPick(db, 'oldpick23456', 0)).toBeNull()
+    expect(await getSharedPick(db, 'newpick23456', 0)).not.toBeNull()
   })
 })

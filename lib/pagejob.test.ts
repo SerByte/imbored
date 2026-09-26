@@ -441,6 +441,71 @@ describe('runPageSlice', () => {
     expect(res.enriched).toBe(2)
     expect(res.withProsCons).toBe(2)
     expect(res.viaClaude).toBe(0)
+    // и отказ виден в отметке среза — по нему краснеет health
+    expect(res).toMatchObject({ llm: 'down', llmStatus: 402 })
+  })
+
+  test('перегруз модели (529) — эвристика, но без отметки для health', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const res = await runPageSlice(
+      db,
+      stubs({
+        prosConsFn: async () => {
+          throw new LlmUnavailableError(529, 'overloaded')
+        },
+      }),
+    )
+    expect(res).toMatchObject({ enriched: 1, withProsCons: 1, viaClaude: 0 })
+    expect(res.llm).toBeUndefined()
+  })
+
+  test('модель отвечает — отметки об отказе нет', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const res = await runPageSlice(db, stubs())
+    expect(res.viaClaude).toBe(1)
+    expect(res.llm).toBeUndefined()
+    expect(res.llmCapped).toBeUndefined()
+  })
+
+  test('бюджет модели выбран ещё до среза — модель не зовут и карточки не перезабирают', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    let called = 0
+    const prosConsFn = async () => {
+      called++
+      return { pros: ['x'], cons: [] }
+    }
+    vi.stubEnv('LLM_DAILY_CAP', '0')
+    try {
+      const first = await runPageSlice(db, stubs({ prosConsFn }))
+      expect(called).toBe(0)
+      expect(first).toMatchObject({ viaClaude: 0, withProsCons: 1, llmCapped: true })
+      // Карточка собрана эвристикой. Без бюджета её не перезабирают ради
+      // модели: redoHeuristic погашен вместе с useClaude ещё до выборки
+      const second = await runPageSlice(db, stubs({ prosConsFn }))
+      expect(second.claimed).toBe(0)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    // Бюджет вернулся — та же карточка снова в очереди, теперь за моделью
+    const third = await runPageSlice(db, stubs({ prosConsFn }))
+    expect(third.claimed).toBe(1)
+    expect(called).toBe(1)
+  })
+
+  test('бюджет кончился посреди среза — дальше эвристика', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 90)
+    vi.stubEnv('LLM_DAILY_CAP', '1')
+    try {
+      const res = await runPageSlice(db, stubs())
+      expect(res).toMatchObject({ enriched: 2, withProsCons: 2, viaClaude: 1, llmCapped: true })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   test('карточку отмечают даже когда Steam ничего не отдал — иначе очередь встанет', async () => {

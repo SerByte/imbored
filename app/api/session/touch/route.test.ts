@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { sweepStale, type Db } from '@/lib/db'
+import { saveDailyPick, sweepStale, upsertGamesMeta, type Db } from '@/lib/db'
+import { dayKey } from '@/lib/daily'
 import { SESSION_COOKIE, sessionSecret } from '@/lib/server'
 import { verifySessionV2 } from '@/lib/session'
 import { SESSION_TOUCH_AFTER_SEC } from '@/lib/sessions'
@@ -133,6 +134,52 @@ describe('/api/session/touch', () => {
       // Остальные страницы спрашивают только writer — ник и демо им не нужны
       const plain = await (await POST(post('/api/session/touch'))).json()
       expect(plain, kind).not.toHaveProperty('demo')
+    }
+  })
+
+  test('card=1 у пишущей сессии — живая строка: игра дня и «как тебе?»', async () => {
+    const steamid = await signInAs(db, 'openid')
+    // Пока сказать нечего — поле есть, но пустое: карточка покажет дверь в библиотеку
+    const empty = await (await POST(post('/api/session/touch?card=1'))).json()
+    expect(empty.live).toEqual({ daily: null, ask: null })
+
+    await saveDailyPick(
+      db,
+      steamid,
+      dayKey(T0),
+      {
+        pick: { appid: 620, name: 'Portal 2', source: 'untouched' },
+        shelf: [],
+        hoursPlayed: null,
+        reasonBase: 'Причина.',
+        sharedTags: [],
+        hideUrgency: false,
+      },
+      T0,
+    )
+    await upsertGamesMeta(db, [{ appid: 1145360, name: 'Hades', tags: {}, genres: [], categories: [] }], T0)
+    // Совет два дня назад, сверен, сыграно 135 минут, ответа нет — pendingOutcomeAsk
+    await db.execute({
+      sql: `INSERT INTO outcomes (steamid, appid, source, shown_at, minutes_before, minutes_after, owned_after, checked_at)
+            VALUES (?, 1145360, 'backlog', ?, 60, 195, 1, ?)`,
+      args: [steamid, T0 - 2 * 86_400, T0 - 86_400],
+    })
+    const card = await (await POST(post('/api/session/touch?card=1'))).json()
+    expect(card.live).toEqual({
+      daily: { appid: 620, name: 'Portal 2' },
+      ask: { appid: 1145360, name: 'Hades', shownAt: T0 - 2 * 86_400, minutes: 135, bought: false },
+    })
+    // Остальным страницам живая строка не нужна — и в базу за ней не ходят
+    const plain = await (await POST(post('/api/session/touch'))).json()
+    expect(plain).not.toHaveProperty('live')
+  })
+
+  test('демо и вход по ссылке живой строки не получают', async () => {
+    for (const kind of ['demo', 'claimed'] as const) {
+      await signInAs(db, kind)
+      const card = await (await POST(post('/api/session/touch?card=1'))).json()
+      expect(card, kind).toMatchObject({ authed: true })
+      expect(card, kind).not.toHaveProperty('live')
     }
   })
 })

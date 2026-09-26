@@ -2,10 +2,14 @@ import { describe, expect, test } from 'vitest'
 import {
   assembleHub,
   HUB_FETCH,
+  HUB_GENRES,
   HUB_MIN_SHELF,
+  HUB_PAGE,
   HUB_MIN_WEIGHT,
   HUB_SHELF,
   HUB_TAGS,
+  hubPath,
+  hubTagOf,
   type HubRow,
 } from './gamehub'
 import { GENERIC_TAGS } from './hook'
@@ -53,6 +57,38 @@ describe('список полок', () => {
     expect(HUB_MIN_SHELF).toBeLessThanOrEqual(HUB_SHELF)
     expect(HUB_MIN_WEIGHT).toBeGreaterThan(0)
     expect(HUB_MIN_WEIGHT).toBeLessThan(1000)
+  })
+})
+
+describe('страницы жанров', () => {
+  test('у каждой полки своя страница: адрес и заголовок', () => {
+    expect(Object.keys(HUB_GENRES).sort()).toEqual([...HUB_TAGS].sort())
+  })
+
+  test('адреса — латиницей через дефис, без повторов, и обратно дают тот же тег', () => {
+    const slugs = HUB_TAGS.map((t) => HUB_GENRES[t].slug)
+    expect(new Set(slugs).size).toBe(slugs.length)
+    for (const tag of HUB_TAGS) {
+      const { slug } = HUB_GENRES[tag]
+      expect(slug, tag).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+      expect(hubTagOf(slug), slug).toBe(tag)
+      expect(hubPath(tag)).toBe(`/games/${slug}`)
+    }
+    // амперсанд не теряется: механический перевод дал бы point-click
+    expect(hubPath('Point & Click')).toBe('/games/point-and-click')
+  })
+
+  test('чужой тег и чужой адрес — null, а не страница', () => {
+    expect(hubPath('Indie')).toBeNull()
+    expect(hubPath('constructor')).toBeNull()
+    expect(hubTagOf('indie')).toBeNull()
+    expect(hubTagOf('Open-World')).toBeNull()
+    expect(hubTagOf('constructor')).toBeNull()
+  })
+
+  test('заголовок — по-русски и с большой буквы', () => {
+    for (const tag of HUB_TAGS) expect(HUB_GENRES[tag].title, tag).toMatch(/^[А-ЯЁA-Z]/)
+    expect(HUB_PAGE).toBeGreaterThanOrEqual(HUB_SHELF)
   })
 })
 

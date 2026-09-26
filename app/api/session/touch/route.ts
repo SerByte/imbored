@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { getUserCard, touchSession } from '@/lib/db'
+import { getDailyPick, getUserCard, pendingOutcomeAsk, touchSession, type Db } from '@/lib/db'
+import { dayKey, parseDailySelection } from '@/lib/daily'
+import type { OutcomeAsk } from '@/lib/outcome'
 import {
   SESSION_COOKIE,
   currentSession,
@@ -47,13 +49,21 @@ export async function POST(req: Request) {
   // demo — туда же: демо-личность главная встречает не «С возвращением,
   // Демо-игрок», а полем для своей ссылки. Признак считается по самому
   // steamid, в базу за ним не ходят.
-  const card =
-    new URL(req.url).searchParams.get('card') === '1'
-      ? {
-          ...(await getUserCard(db, steamid).catch(() => ({ personaName: null, avatarUrl: null }))),
-          demo: isDemoId(steamid),
-        }
-      : null
+  //
+  // live — живая строка карточки (liveLine в ConnectCard): вопрос «как тебе?»
+  // или готовая игра дня. Только пишущей сессии не из демо: демо и вход по
+  // ссылке заняты своими подписями, а спрашивать «как тебе?» того, чей ответ
+  // не сохранится, незачем (GET /api/outcome отвечает им так же).
+  const wantCard = new URL(req.url).searchParams.get('card') === '1'
+  const demo = isDemoId(steamid)
+  const withLive = wantCard && isWriter(session) && !demo
+  const [user, live] = wantCard
+    ? await Promise.all([
+        getUserCard(db, steamid).catch(() => ({ personaName: null, avatarUrl: null })),
+        withLive ? liveOf(db, steamid, now) : null,
+      ])
+    : [null, null]
+  const card = user ? { ...user, demo, ...(withLive ? { live } : {}) } : null
   const res = NextResponse.json({ authed: true, steamid, writer: isWriter(session), ...(card ?? {}) })
 
   if (!stale) return res
@@ -65,4 +75,28 @@ export async function POST(req: Request) {
   // поэтому её падение не должно мешать продлению.
   await touchSession(db, sid, now).catch(() => {})
   return res
+}
+
+/**
+ * Живое для карточки главной — две точечные выборки по первичным ключам:
+ * строка daily_picks этого дня и самый свежий несверенный совет (тот же
+ * pendingOutcomeAsk, что у GET /api/outcome). Каждая падает в null сама:
+ * приветствие важнее живой строки.
+ *
+ * Патчей здесь нет намеренно: счёт «обновлений в твоих играх» читает весь
+ * снапшот библиотеки и ленту по трёмстам играм (lib/whatsnewfeed), а этот
+ * роут зовут на каждый заход главной и без потолка частоты.
+ */
+async function liveOf(
+  db: Db,
+  steamid: string,
+  now: number,
+): Promise<{ daily: { appid: number; name: string } | null; ask: OutcomeAsk | null }> {
+  const [daily, ask] = await Promise.all([
+    getDailyPick(db, steamid, dayKey(now))
+      .then((raw) => parseDailySelection(raw)?.pick ?? null)
+      .catch(() => null),
+    pendingOutcomeAsk(db, steamid, now).catch(() => null),
+  ])
+  return { daily: daily ? { appid: daily.appid, name: daily.name } : null, ask }
 }

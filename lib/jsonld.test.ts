@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { gameBreadcrumbLd, gameJsonLd, ldScript, websiteJsonLd } from './jsonld'
+import { gameBreadcrumbLd, gameJsonLd, genreBreadcrumbLd, genreItemListLd, ldScript, websiteJsonLd } from './jsonld'
 import { SITE_DESCRIPTION } from './site'
 import { tagRu } from './tagsru'
 import type { ReviewFacts } from './gamepage'
@@ -317,5 +317,32 @@ describe('ldScript со списком сущностей', () => {
     expect(out).not.toContain('</script>')
     const parsed = JSON.parse(out) as Array<{ '@type': string }>
     expect(parsed.map((e) => e['@type'])).toEqual(['VideoGame', 'BreadcrumbList'])
+  })
+})
+
+describe('страница жанра', () => {
+  test('крошки: главная → игры по жанрам → жанр, как в строке над заголовком', () => {
+    const out = genreBreadcrumbLd({ title: 'Рогалики', path: '/games/roguelike', baseUrl: 'https://imbored.cc' })
+    expect(out.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/'],
+      [2, 'Игры по жанрам', 'https://imbored.cc/games'],
+      [3, 'Рогалики', 'https://imbored.cc/games/roguelike'],
+    ])
+  })
+
+  test('список — в порядке страницы, с позициями с единицы и числом игр', () => {
+    const out = genreItemListLd({
+      title: 'Рогалики',
+      games: [
+        { appid: 1145360, name: 'Hades' },
+        { appid: 646570, name: 'Slay the Spire' },
+      ],
+      baseUrl: 'https://imbored.cc',
+    })
+    expect(out.numberOfItems).toBe(2)
+    expect(out.itemListElement).toEqual([
+      { '@type': 'ListItem', position: 1, url: 'https://imbored.cc/game/1145360', name: 'Hades' },
+      { '@type': 'ListItem', position: 2, url: 'https://imbored.cc/game/646570', name: 'Slay the Spire' },
+    ])
   })
 })

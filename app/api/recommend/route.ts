@@ -3,10 +3,11 @@ import { assignEdges } from '@/lib/badges'
 import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getHeroMedia } from '@/lib/db'
-import { claudePicks, heuristicPicks, topUpPicks } from '@/lib/llm'
+import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
+import { takeLlmBudget } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
 import { parseExclude, parseNudge, planNudge } from '@/lib/nudge'
-import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRate, checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import {
   continueView,
   parseFocus,
@@ -15,8 +16,11 @@ import {
   PICK_COUNT,
   pickContinue,
 } from '@/lib/recommend'
-import { currentSteamId, getDb, isDemoId, nowSec } from '@/lib/server'
+import { shareView } from '@/lib/pickshare'
+import { shareText } from '@/lib/sharedpick'
+import { currentSteamId, getDb, isDemoId, nowSec, sessionSecret } from '@/lib/server'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from '@/lib/types'
+import { readJsonObject } from '@/lib/reqbody'
 
 // Маршрут по дороге зовёт модель. Предел объявляем явно, как в кроновых
 // маршрутах: иначе он неявный, а зависший вызов способен съесть его целиком
@@ -69,7 +73,7 @@ export async function POST(req: Request) {
   const steamid = await currentSteamId()
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
-  const body = (await req.json().catch(() => ({}))) as {
+  const body = (await readJsonObject(req)) as {
     mood?: unknown
     focus?: unknown
     scope?: unknown
@@ -98,14 +102,17 @@ export async function POST(req: Request) {
   const db = await getDb()
   const now = nowSec()
 
+  // Личный гейт первым: отказанный по нему запрос не съедает потолок адреса
   const ip = clientIp(req.headers)
-  for (const gate of [
-    { bucket: 'recommend', id: steamid, limit: RECOMMEND_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
-    { bucket: 'recommend-ip', id: ip, limit: RECOMMEND_IP_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
-  ]) {
-    const verdict = await checkRate(db, { ...gate, nowSec: now })
-    if (!verdict.ok) return rateLimitedResponse(verdict.retryAfterSec)
-  }
+  const gate = await checkRatesInOrder(
+    db,
+    [
+      { bucket: 'recommend', id: steamid, limit: RECOMMEND_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
+      { bucket: 'recommend-ip', id: ip, limit: RECOMMEND_IP_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
+    ],
+    now,
+  )
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   // Весь путь от снапшота до отранжированных кандидатов — lib/candidates.ts,
   // общий с «Игрой дня»: копии этого пути в двух маршрутах уже расходились
@@ -160,8 +167,11 @@ export async function POST(req: Request) {
         })
       ).ok)
 
+  // Общий суточный бюджет модели (lib/llmcap) — самым последним: берётся,
+  // только когда вызов точно состоится. Выбран — та же выдача эвристикой, без
+  // 429: это не личный потолок человека, и отказывать ему не за что.
   const fromClaude =
-    heroPool.length && llmAllowed
+    heroPool.length && llmAllowed && llmAvailable() && (await takeLlmBudget(db, now))
       ? await claudePicks({
           candidates: heroPool,
           metaOf: metaNow,
@@ -255,6 +265,14 @@ export async function POST(req: Request) {
       ...cardView(p, ctx, edges.get(p.appid) ?? null),
       ...heroMediaView(media.get(p.appid)),
       ...scoreView(i, partsOf.get(p.appid)),
+      // «Отправить другу» (/pick): текст без денег — ни хвоста шаблона, ни
+      // цены словами модели, — подписанный для этой сессии (lib/pickshare)
+      ...shareView(sessionSecret(), {
+        steamid,
+        appid: p.appid,
+        source: p.source,
+        text: shareText(p.reason, reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency)),
+      }),
     })),
     discoveries: discoveries.map((p, i) => ({
       ...cardView(p, ctx),

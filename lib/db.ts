@@ -1,5 +1,5 @@
 import { createClient, type Client, type InStatement } from '@libsql/client'
-import { memberLabel } from './room'
+import { memberLabel, ROOM_MAX_MEMBERS } from './room'
 import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
 import type { FeedbackCtx } from './feedbackctx'
@@ -19,13 +19,16 @@ import {
   OUTCOME_WINDOW_SEC,
   type OutcomeAsk,
   type OutcomeVerdict,
+  eveningFrom,
+  type Evening,
 } from './outcome'
 import { SEMANTICS_V } from './semantics'
+import { SHARED_PICK_TTL_SEC, type PickKind } from './sharedpick'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import { isMultiplayerCategories, MULTIPLAYER_CATEGORY_SQL } from './steamcats'
 import type { NewsBlock } from './steamhtml'
 import { readTrailer, type Trailer } from './trailer'
-import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
+import type { CandidateSource, GameMeta, GameSemantics, LibraryGame, Mood } from './types'
 
 /** Соединение с БД: локальный файл в dev, Turso в проде — API одинаковый */
 export type Db = Client
@@ -193,6 +196,21 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   expires_at INTEGER NOT NULL
 ) WITHOUT ROWID;
 /*
+ * Почасовые счётчики (lib/telemetry.ts): сбои на сервере и в браузере,
+ * отчёты CSP и шаги воронки. Только числа — kind и key из закрытых списков,
+ * без SteamID, адресов и путей: ни одна строка не относится к человеку, и
+ * forgetUser здесь забывать нечего. Живут 90 дней (pruneTelemetry из крона
+ * новостей). Первый столбец ключа — час: и упсёрт, и подсчёт за окно, и
+ * уборка идут по префиксу первичного ключа.
+ */
+CREATE TABLE IF NOT EXISTS telemetry_hourly (
+  hour INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (hour, kind, key)
+) WITHOUT ROWID;
+/*
  * Выбранная игра дня.
  *
  * Обещание страницы — «одна игра на весь день», и до этой таблицы оно
@@ -251,6 +269,55 @@ CREATE TABLE IF NOT EXISTS outcomes (
 ) WITHOUT ROWID;
 -- для суточной уборки старше девяноста дней: иначе полный проход по таблице
 CREATE INDEX IF NOT EXISTS idx_outcomes_shown ON outcomes (shown_at);
+/*
+ * Выбор, которым поделились: /pick/<id> — «imbored выбрал мне на вечер».
+ *
+ * Пишется только по нажатию «Отправить» у героя /play или /daily и только
+ * текстом, который подписал сам сервер (lib/pickshare). id непрозрачный —
+ * steamid в адресе и на странице нет; created_by хранится ради удаления по
+ * запросу и повтора той же ссылки, публичное чтение его не выбирает.
+ *
+ * Тридцать дней (sweepStale); по запросу — forgetUser. /privacy, разделы 05
+ * и 06.
+ */
+CREATE TABLE IF NOT EXISTS shared_picks (
+  id TEXT PRIMARY KEY,
+  created_by TEXT NOT NULL,
+  appid INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+-- та же ссылка на тот же выбор повтором — по автору и сроку
+CREATE INDEX IF NOT EXISTS idx_shared_picks_by ON shared_picks (created_by, created_at);
+-- уборка по сроку без полного прохода
+CREATE INDEX IF NOT EXISTS idx_shared_picks_created ON shared_picks (created_at);
+/*
+ * Кто открыл чью ссылку на сравнение (/compat/<owner>) и какой вышел
+ * процент — для «Сравнили с тобой» на хабе /compat владельца.
+ *
+ * Пишет только страница /compat/[steamid] у подтверждённого входа не из демо
+ * (вход по ссылке на профиль не доказывает, что профиль его, — иначе любой
+ * выдумал бы «X сравнился с тобой»). Читает хаб владельца — тоже только
+ * подтверждённый вход. Одна строка на пару; процент симметричен, так что
+ * владелец, открыв сравнение в ответ, увидит то же число.
+ *
+ * Девяносто дней (sweepStale); по запросу уходит у обеих сторон
+ * (forgetUser). /privacy, разделы 01, 05 и 06.
+ */
+CREATE TABLE IF NOT EXISTS compat_views (
+  owner TEXT NOT NULL,
+  viewer TEXT NOT NULL,
+  percent INTEGER NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (owner, viewer)
+) WITHOUT ROWID;
+-- хаб владельца — свежие первыми, без сортировки
+CREATE INDEX IF NOT EXISTS idx_compat_views_owner_at ON compat_views (owner, at);
+-- вторая сторона forgetUser (viewer = ?) и уборка по сроку — без полного прохода
+CREATE INDEX IF NOT EXISTS idx_compat_views_viewer ON compat_views (viewer);
+CREATE INDEX IF NOT EXISTS idx_compat_views_at ON compat_views (at);
 /*
  * Служебные ключи: курсоры крона, аренды, счётчики каталога и флаги миграций.
  * Здесь, а не в SCHEMA_CATALOG рядом с остальным каталогом: migrateDb читает
@@ -1261,7 +1328,7 @@ export async function issueRoomDeck(db: Db, roomId: string, appids: number[]): P
  * Свой же участник, зашедший повторно, получает 'joined' и остаётся на
  * месте: для него это та же страница церемонии.
  */
-export type JoinResult = 'joined' | 'notfound' | 'closed'
+export type JoinResult = 'joined' | 'notfound' | 'closed' | 'full'
 
 export async function joinRoom(
   db: Db,
@@ -1269,6 +1336,7 @@ export async function joinRoom(
   steamid: string,
   personaName: string | undefined,
   nowSec: number,
+  maxMembers: number = ROOM_MAX_MEMBERS,
 ): Promise<JoinResult> {
   const room = await getRoom(db, roomId)
   if (!room) return 'notfound'
@@ -1279,11 +1347,25 @@ export async function joinRoom(
     })
     return res.rows.length ? 'joined' : 'closed'
   }
-  await db.execute({
-    sql: 'INSERT OR REPLACE INTO room_members (room_id, steamid, persona_name, joined_at) VALUES (?, ?, ?, ?)',
-    args: [roomId, steamid, personaName ?? null, nowSec],
+  /*
+   * Потолок — условием самой вставки, одним запросом.
+   *
+   * Проверка отдельным SELECT и вставка следом — две разные поездки в базу, и
+   * двое, вошедшие в одно окно (код комнаты кинули в открытый канал — ровно
+   * тот случай, ради которого потолок и заведён), оба видели семь мест из
+   * восьми и оба садились. Одна инструкция SQLite атомарна.
+   *
+   * 'full' — только для НОВОГО участника: свой, зашедший повторно, проходит
+   * по EXISTS (INSERT OR REPLACE освежает ему ник и время входа).
+   */
+  const res = await db.execute({
+    sql: `INSERT OR REPLACE INTO room_members (room_id, steamid, persona_name, joined_at)
+          SELECT ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = ? AND steamid = ?)
+             OR (SELECT COUNT(*) FROM room_members WHERE room_id = ?) < ?`,
+    args: [roomId, steamid, personaName ?? null, nowSec, roomId, steamid, roomId, maxMembers],
   })
-  return 'joined'
+  return res.rowsAffected > 0 ? 'joined' : 'full'
 }
 
 export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]> {
@@ -1683,8 +1765,10 @@ export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoo
           FROM rooms r
           LEFT JOIN room_members m ON m.room_id = r.id
           WHERE r.is_public = 1 AND r.status = 'open' AND r.created_at > ?
+            -- полная комната на доске — приглашение, которое кончится отказом «мест нет»
+            AND (SELECT COUNT(*) FROM room_members f WHERE f.room_id = r.id) < ?
           ORDER BY r.created_at DESC, m.joined_at ASC`,
-    args: [nowSec - PUBLIC_ROOM_MAX_AGE_SEC],
+    args: [nowSec - PUBLIC_ROOM_MAX_AGE_SEC, ROOM_MAX_MEMBERS],
   })
 
   const byRoom = new Map<string, PublicRoomListing>()
@@ -1858,6 +1942,68 @@ export async function getLibraryBaseline(
   const row = res.rows[0] as unknown as { taken_at: number; games_json: string } | undefined
   if (!row) return null
   return { takenAt: row.taken_at, games: JSON.parse(row.games_json) as LibraryGame[] }
+}
+
+/**
+ * Прежние снимки библиотеки (все, кроме последнего) — для строки «с прошлого
+ * снимка» на /library (pickSnapshotDelta в lib/libdelta).
+ *
+ * Не блобом, а парами [appid, минуты], собранными в SQL: для разницы нужны
+ * только минуты, а games_json большой библиотеки — сотни килобайт (см.
+ * snapshotOwns). Пара весит байт пятнадцать против сотни у целой LibraryGame.
+ * json_group_array отдаёт текст — разбираем его здесь.
+ *
+ * Сортировка с тай-брейком по id — та же, что у getLatestSnapshot, и
+ * строк в ней не больше трёх одного человека.
+ */
+export async function getOlderSnapshotMinutes(
+  db: Db,
+  steamid: string,
+): Promise<Array<{ takenAt: number; minutes: Map<number, number> }>> {
+  const res = await db.execute({
+    sql: `SELECT taken_at,
+                 (SELECT json_group_array(json_array(json_extract(value, '$.appid'),
+                                                     json_extract(value, '$.playtimeForever')))
+                    FROM json_each(games_json)) AS pairs
+          FROM library_snapshots WHERE steamid = ?
+          ORDER BY taken_at DESC, id DESC LIMIT ${SNAPSHOTS_KEPT - 1} OFFSET 1`,
+    args: [steamid],
+  })
+  return (res.rows as unknown as Array<{ taken_at: number; pairs: string | null }>).map((r) => {
+    let pairs: Array<[number, number]> = []
+    try {
+      pairs = JSON.parse(r.pairs ?? '[]') as Array<[number, number]>
+    } catch {
+      // битый блоб — как пустой снимок: точкой отсчёта он не станет
+    }
+    return {
+      takenAt: Number(r.taken_at),
+      minutes: new Map(pairs.map(([appid, min]) => [Number(appid), Number(min) || 0])),
+    }
+  })
+}
+
+/**
+ * Отметки года за диапазон лет одним запросом — для «Итогов года» (lib/wrapped,
+ * pickYearWindow). Обычно год один; в январе — два: итоги закрывшегося года
+ * считаются от его отметки до отметки нового (см. pickYearWindow).
+ */
+export async function getLibraryBaselines(
+  db: Db,
+  steamid: string,
+  fromYear: number,
+  toYear: number,
+): Promise<Array<{ year: number; takenAt: number; games: LibraryGame[] }>> {
+  const res = await db.execute({
+    sql: `SELECT year, taken_at, games_json FROM library_baselines
+          WHERE steamid = ? AND year BETWEEN ? AND ? ORDER BY year`,
+    args: [steamid, fromYear, toYear],
+  })
+  return (res.rows as unknown as Array<{ year: number; taken_at: number; games_json: string }>).map((r) => ({
+    year: Number(r.year),
+    takenAt: Number(r.taken_at),
+    games: JSON.parse(r.games_json) as LibraryGame[],
+  }))
 }
 
 /* ---------- каталог игр ---------- */
@@ -3180,6 +3326,37 @@ export async function topGamesByTags(
 }
 
 /**
+ * «За что любят» пачкой — для страницы жанра: по сорок игр разом, а не
+ * getGamePageRow на каждую.
+ *
+ * Только собранное моделью (source 'claude'), и фильтр стоит здесь, в SQL, а
+ * не у вызывающего: эвристика ('reviews', 'thin') бывает на английском и с
+ * бранью из отзывов, и страница игры её не показывает никогда (lib/gamepage).
+ * Новому потребителю обойти это правило нечем — строк с ней он не получит.
+ */
+export async function getLovedFor(db: Db, appids: number[]): Promise<Map<number, string[]>> {
+  if (!appids.length) return new Map()
+  const res = await db.execute({
+    sql: `SELECT appid, json_extract(pros_cons_json, '$.pros') AS pros FROM games
+          WHERE ${APPIDS_IN} AND json_extract(pros_cons_json, '$.source') = 'claude'`,
+    args: [JSON.stringify(appids)],
+  })
+  const out = new Map<number, string[]>()
+  for (const r of res.rows as unknown as Array<{ appid: number; pros: string | null }>) {
+    let pros: unknown = null
+    try {
+      pros = r.pros ? JSON.parse(r.pros) : null
+    } catch {
+      continue
+    }
+    if (!Array.isArray(pros)) continue
+    const clean = pros.filter((p): p is string => typeof p === 'string' && p.trim() !== '').map((p) => p.trim())
+    if (clean.length) out.set(Number(r.appid), clean)
+  }
+  return out
+}
+
+/**
  * Описания витрины — для разовой доливки на язык сайта.
  *
  * Отдаём текст вместе с appid, потому что отбор «что доливать» делается по
@@ -4086,6 +4263,100 @@ export async function unbanGame(db: Db, steamid: string, appid: number): Promise
   })
 }
 
+/**
+ * Полка «Приглянулось» на /explore — только игры, чей последний свайп
+ * «Интересно», свежие сверху. Отдельно от listExplore: тот читает двести
+ * последних свайпов ОБОИХ видов ради отсева колоды, и приглянувшееся
+ * полугодовой давности тонуло бы под свежими «Мимо».
+ *
+ * Последний свайп — по (created_at, id), а не голой колонкой при MAX: «Убрать»
+ * на полке жмут через секунду после «Интересно», created_at секундный, и при
+ * равенстве SQLite взял бы первую прочитанную строку — то есть «Интересно»,
+ * и убранная игра вернулась бы на полку. id растёт с каждой вставкой и
+ * разбивает ничью в пользу позднего. «Мимо» после «Интересно» снимает игру с
+ * полки. Забаненное не отдаётся — бан сильнее.
+ */
+export async function listExploreLiked(
+  db: Db,
+  steamid: string,
+  limit: number,
+): Promise<Array<{ appid: number; at: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, created_at AS at FROM (
+            SELECT appid, created_at, action,
+                   ROW_NUMBER() OVER (PARTITION BY appid ORDER BY created_at DESC, id DESC) AS nth
+            FROM feedback
+            WHERE steamid = ?1 AND reason = 'explore'
+              AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')
+          )
+          WHERE nth = 1 AND action = 'opened'
+          ORDER BY at DESC, appid LIMIT ?2`,
+    args: [steamid, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; at: number }>).map((r) => ({
+    appid: Number(r.appid),
+    at: Number(r.at),
+  }))
+}
+
+/** Сколько плиток держит полка «Зашло» на /library — как у забаненного */
+export const LIKED_SHELF = 60
+
+/**
+ * «Зашло» одной строкой на игру, свежие сверху — полка на /library.
+ *
+ * Оценки ведут подбор (профиль вкуса, снятие паузы после «не то»), и до сих
+ * пор человек не видел, что именно сервис запомнил. Тай-брейк по appid — по
+ * той же причине, что у listBanned. Забаненное не отдаётся: оно лежит на своей
+ * полке, и одна игра на двух полках с противоположным смыслом только путает.
+ */
+export async function listLiked(
+  db: Db,
+  steamid: string,
+  limit = LIKED_SHELF,
+): Promise<Array<{ appid: number; at: number }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, MAX(created_at) AS at FROM feedback
+          WHERE steamid = ?1 AND action = 'liked'
+            AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')
+          GROUP BY appid ORDER BY at DESC, appid LIMIT ?2`,
+    args: [steamid, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; at: number }>).map((r) => ({
+    appid: Number(r.appid),
+    at: Number(r.at),
+  }))
+}
+
+/**
+ * Сколько игр подбор помнит как «зашло» — всех, а не только полки в
+ * LIKED_SHELF плиток: заголовок полки не должен выдавать потолок за итог.
+ * Условия — те же, что у listLiked.
+ */
+export async function countLiked(db: Db, steamid: string): Promise<number> {
+  const res = await db.execute({
+    sql: `SELECT COUNT(DISTINCT appid) AS n FROM feedback
+          WHERE steamid = ?1 AND action = 'liked'
+            AND appid NOT IN (SELECT appid FROM feedback WHERE steamid = ?1 AND action = 'banned')`,
+    args: [steamid],
+  })
+  return Number((res.rows[0] as unknown as { n: number } | undefined)?.n ?? 0)
+}
+
+/**
+ * Снять «зашло». DELETE всех строк liked этой игры — как unbanGame: оценка
+ * одной игры лежит несколькими строками (logFeedback склеивает повторы только
+ * в пределах суток), и оставь хоть одну — подбор помнил бы её по-прежнему.
+ * Остальное — скипы, открытия, запуски, бан — остаётся на месте. Ответ на
+ * «как тебе?» живёт в outcomes и тоже не трогается.
+ */
+export async function unlikeGame(db: Db, steamid: string, appid: number): Promise<void> {
+  await db.execute({
+    sql: "DELETE FROM feedback WHERE steamid = ? AND appid = ? AND action = 'liked'",
+    args: [steamid, appid],
+  })
+}
+
 /* ---------- исход совета ---------- */
 
 /**
@@ -4229,8 +4500,55 @@ export async function pendingOutcomeAsk(
 }
 
 /**
- * Ответ на «как тебе?». Только в строку без ответа: второй ответ с соседней
- * вкладки первый не переписывает. false — строки нет или ответ уже был.
+ * Советы за окно (для «Твоих вечеров» на /library): новые первыми. Без
+ * join — имена и обложки страница берёт одним общим getGamesMetaLite.
+ * Чтение по префиксу первичного ключа (steamid) — не по idx_outcomes_shown,
+ * который сквозной по всем людям и нужен только суточной уборке.
+ */
+export async function listEvenings(
+  db: Db,
+  steamid: string,
+  sinceSec: number,
+  limit = 200,
+): Promise<Evening[]> {
+  const res = await db.execute({
+    sql: `SELECT appid, shown_at, launched_at, minutes_before, minutes_after, owned_after,
+                 checked_at, verdict
+            FROM outcomes
+           WHERE steamid = ? AND shown_at >= ?
+           ORDER BY shown_at DESC, appid LIMIT ?`,
+    args: [steamid, sinceSec, limit],
+  })
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v))
+  return res.rows.map((r) =>
+    eveningFrom({
+      appid: Number(r.appid),
+      shownAt: Number(r.shown_at),
+      launchedAt: n(r.launched_at),
+      minutesBefore: n(r.minutes_before),
+      minutesAfter: n(r.minutes_after),
+      ownedAfter: n(r.owned_after),
+      checkedAt: n(r.checked_at),
+      verdict: r.verdict === null ? null : String(r.verdict),
+    }),
+  )
+}
+
+/**
+ * Ответ на «как тебе?» — первый или исправленный (ответ можно поменять в
+ * «Твоих вечерах» на /library). changed — ответ изменился; false — строки
+ * нет или ответ тот же: повтор с соседней вкладки ничего не пишет, и роут не
+ * заводит лишнее «зашло». was — прежний ответ: роуту он нужен, чтобы забрать
+ * «зашло», заведённое прежним «Зацепило».
+ *
+ * «Закрыть» ('dismissed') — не ответ, а отказ отвечать, и настоящий ответ он
+ * не переписывает: иначе всплывашка, забытая в соседней вкладке, стирала бы
+ * «Зацепило», данное в «Твоих вечерах». Сам 'dismissed' ответом переписать
+ * можно.
+ *
+ * Чтение и запись — двумя запросами, а не одним: SQLite в RETURNING отдаёт
+ * новые значения, а не прежние. Гонка двух ответов одной строки безвредна —
+ * второй просто прочтёт первый как прежний.
  */
 export async function setOutcomeVerdict(
   db: Db,
@@ -4238,13 +4556,185 @@ export async function setOutcomeVerdict(
   appid: number,
   shownAt: number,
   verdict: OutcomeVerdict,
-): Promise<boolean> {
+): Promise<{ changed: boolean; was: string | null }> {
+  const before = await db.execute({
+    sql: 'SELECT verdict FROM outcomes WHERE steamid = ? AND appid = ? AND shown_at = ?',
+    args: [steamid, appid, shownAt],
+  })
+  const row = before.rows[0] as unknown as { verdict: string | null } | undefined
+  if (!row) return { changed: false, was: null }
+  const was = row.verdict === null ? null : String(row.verdict)
   const res = await db.execute({
-    sql: `UPDATE outcomes SET verdict = ?
-           WHERE steamid = ? AND appid = ? AND shown_at = ? AND verdict IS NULL`,
+    sql: `UPDATE outcomes SET verdict = ?1
+           WHERE steamid = ?2 AND appid = ?3 AND shown_at = ?4
+             AND (verdict IS NULL OR (?1 <> 'dismissed' AND verdict <> ?1))`,
     args: [verdict, steamid, appid, shownAt],
   })
-  return Number(res.rowsAffected) > 0
+  return { changed: Number(res.rowsAffected) > 0, was }
+}
+
+/**
+ * Забрать «зашло», которое завёл ответ «Зацепило» на «как тебе?» (роут
+ * /api/outcome, ctx intent 'ask'), когда ответ поменяли. Только его: «Зашло»,
+ * нажатое на /play или /daily, — отдельное слово человека, и смена ответа
+ * про вечер его не отменяет. created_at не раньше совета — «зашло» по
+ * вопросу о прошлом совете этой же игры не трогается.
+ */
+export async function unlikeAsked(db: Db, steamid: string, appid: number, sinceSec: number): Promise<void> {
+  await db.execute({
+    sql: `DELETE FROM feedback
+           WHERE steamid = ? AND appid = ? AND action = 'liked' AND created_at >= ?
+             AND json_extract(ctx_json, '$.intent') IS 'ask'`,
+    args: [steamid, appid, sinceSec],
+  })
+}
+
+/* ---------- кто сравнился с тобой ---------- */
+
+/** SteamID64 живого человека: не демо (их id начинаются с 000) */
+const REAL_ID_RE = /^(?!000)\d{17}$/
+
+/**
+ * Отметить, что viewer открыл ссылку owner на сравнение и увидел процент.
+ *
+ * Бросает на неверном вводе — самосравнение, демо, процент вне 0..100: это
+ * ошибка вызывающего, а не данные. Демо проверяется здесь по префиксу, а не
+ * через isDemoId: lib/server сам импортирует lib/db.
+ *
+ * Запись — не чаще раза в сутки на пару или при смене процента: страницу
+ * сравнения открывают по нескольку раз, и переписывать строку ради того же
+ * числа незачем.
+ */
+export async function recordCompatView(
+  db: Db,
+  v: { owner: string; viewer: string; percent: number },
+  nowSec: number,
+): Promise<void> {
+  if (!REAL_ID_RE.test(v.owner) || !REAL_ID_RE.test(v.viewer) || v.owner === v.viewer) {
+    throw new Error('compat_views: пара не из двух разных живых людей')
+  }
+  if (!Number.isInteger(v.percent) || v.percent < 0 || v.percent > 100) {
+    throw new Error(`compat_views: процент ${v.percent}`)
+  }
+  await db.execute({
+    sql: `INSERT INTO compat_views (owner, viewer, percent, at) VALUES (?, ?, ?, ?)
+          ON CONFLICT(owner, viewer) DO UPDATE SET percent = excluded.percent, at = excluded.at
+           WHERE compat_views.percent <> excluded.percent OR compat_views.at < excluded.at - 86400`,
+    args: [v.owner, v.viewer, v.percent, nowSec],
+  })
+}
+
+export type CompatView = {
+  /** Кто открыл ссылку */
+  steamid: string
+  /** Ник Steam, если известен */
+  name: string | null
+  percent: number
+  at: number
+}
+
+/**
+ * «Сравнили с тобой» — свежие первыми. sinceSec прячет строки старше срока
+ * ещё до суточной уборки. Ник — из users: строки там может не быть (демо
+ * убрано, человек удалён), тогда null.
+ */
+export async function listCompatViews(
+  db: Db,
+  owner: string,
+  sinceSec: number,
+  limit = 12,
+): Promise<CompatView[]> {
+  const res = await db.execute({
+    sql: `SELECT v.viewer AS steamid, u.persona_name AS name, v.percent AS percent, v.at AS at
+            FROM compat_views v LEFT JOIN users u ON u.steamid = v.viewer
+           WHERE v.owner = ? AND v.at >= ?
+           ORDER BY v.at DESC LIMIT ?`,
+    args: [owner, sinceSec, limit],
+  })
+  return (res.rows as unknown as Array<{ steamid: string; name: string | null; percent: number; at: number }>).map(
+    (r) => ({
+      steamid: String(r.steamid),
+      name: r.name === null ? null : String(r.name),
+      percent: Number(r.percent),
+      at: Number(r.at),
+    }),
+  )
+}
+
+/* ---------- выбор, которым поделились ---------- */
+
+export type SharedPick = {
+  id: string
+  appid: number
+  source: CandidateSource
+  kind: PickKind
+  reason: string
+  createdAt: number
+}
+
+export async function createSharedPick(
+  db: Db,
+  row: { id: string; createdBy: string; appid: number; source: CandidateSource; kind: PickKind; reason: string },
+  nowSec: number,
+): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO shared_picks (id, created_by, appid, source, kind, reason, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [row.id, row.createdBy, row.appid, row.source, row.kind, row.reason, nowSec],
+  })
+}
+
+/**
+ * Та же ссылка на тот же выбор: двойное нажатие и повторная отправка того
+ * же героя в тот же вечер не плодят строк — вернётся прежний id.
+ *
+ * Окно зовущий держит коротким (SHARED_PICK_REUSE_SEC), а не во весь срок
+ * жизни: причины из шаблона повторяются дословно, и отправленная через
+ * месяц ссылка иначе оказалась бы вчерашней строкой, которая истечёт завтра.
+ * kind — в условии: тот же текст бывает и игрой дня, и выбором на вечер, а
+ * подписи у страниц разные.
+ */
+export async function findSharedPick(
+  db: Db,
+  createdBy: string,
+  appid: number,
+  kind: PickKind,
+  reason: string,
+  sinceSec: number,
+): Promise<string | null> {
+  const res = await db.execute({
+    sql: `SELECT id FROM shared_picks
+           WHERE created_by = ? AND created_at >= ? AND appid = ? AND kind = ? AND reason = ?
+           LIMIT 1`,
+    args: [createdBy, sinceSec, appid, kind, reason],
+  })
+  const row = res.rows[0] as unknown as { id: string } | undefined
+  return row ? String(row.id) : null
+}
+
+/**
+ * Публичное чтение по id. created_by не выбирается вовсе: страница и
+ * карточка открыты кому угодно, и автор им не нужен. Истёкшее не отдаётся
+ * ещё до суточной уборки.
+ */
+export async function getSharedPick(db: Db, id: string, sinceSec: number): Promise<SharedPick | null> {
+  const res = await db.execute({
+    sql: `SELECT id, appid, source, kind, reason, created_at FROM shared_picks
+           WHERE id = ? AND created_at >= ?`,
+    args: [id, sinceSec],
+  })
+  const row = res.rows[0] as unknown as
+    | { id: string; appid: number; source: string; kind: string; reason: string; created_at: number }
+    | undefined
+  if (!row) return null
+  return {
+    id: String(row.id),
+    appid: Number(row.appid),
+    source: String(row.source) as CandidateSource,
+    kind: String(row.kind) === 'daily' ? 'daily' : 'play',
+    reason: String(row.reason),
+    createdAt: Number(row.created_at),
+  }
 }
 
 /* ---------- удаление по запросу ---------- */
@@ -4256,7 +4746,7 @@ export async function setOutcomeVerdict(
  * Список один намеренно. Если бы счёт и удаление держали свои копии условий,
  * первая же новая таблица попала бы только в одну из них, и предпросмотр
  * обещал бы то, чего удаление не делает. Что сюда попадают ВСЕ таблицы с
- * колонкой steamid или created_by, проверяет lib/db.test.ts.
+ * колонкой steamid, created_by, owner или viewer, проверяет lib/db.test.ts.
  *
  * Комнаты, созданные игроком, уходят целиком, вместе с чужими участниками и
  * голосами в них. Создатель — часть самой комнаты: обезличить его значит
@@ -4291,6 +4781,10 @@ const USER_ROWS = [
   { table: 'rooms', where: 'created_by = ?' },
   { table: 'feedback', where: 'steamid = ?' },
   { table: 'outcomes', where: 'steamid = ?' },
+  // Пара сравнения уходит у обеих сторон: и «кого он сравнивал», и «кто
+  // сравнивал его» — след человека в чужом хабе тоже его след
+  { table: 'compat_views', where: 'owner = ? OR viewer = ?' },
+  { table: 'shared_picks', where: 'created_by = ?' },
   { table: 'daily_picks', where: 'steamid = ?' },
   { table: 'library_snapshots', where: 'steamid = ?' },
   { table: 'library_baselines', where: 'steamid = ?' },
@@ -4408,7 +4902,12 @@ export type SweepReport = {
   rooms: number
   ctx: number
   outcomes: number
+  compat: number
+  picks: number
 }
+
+/** Сколько живёт отметка «X сравнился с тобой» — как и исходы советов */
+export const COMPAT_VIEW_TTL_SEC = 90 * 86_400
 
 /**
  * Суточная уборка того, что иначе копилось бы вечно. Зовётся из крона
@@ -4426,6 +4925,8 @@ export type SweepReport = {
  *   • Снимки выдачи у оценок старше FEEDBACK_CTX_TTL_SEC: колонка обнуляется,
  *     оценка остаётся — по ней считается вкус.
  *   • Исходы советов старше OUTCOME_TTL_SEC — целиком: вкус их не читает.
+ *   • Отметки сравнений старше COMPAT_VIEW_TTL_SEC.
+ *   • Выборы, которыми поделились, старше SHARED_PICK_TTL_SEC.
  *
  * Одной пачкой: предикат демо опирается на users, поэтому users уходит
  * последней, а обрыв посередине не оставит личность без половины строк.
@@ -4434,7 +4935,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
   const demoCutoff = nowSec - DEMO_TTL_SEC
   const demo = [demoCutoff, demoCutoff - SESSION_TOUCH_AFTER_SEC, demoCutoff]
   const roomCutoff = nowSec - ROOM_TTL_SEC
-  const [, , , , sessions, demos, , , , rooms, ctx, outcomes] = await db.batch(
+  const [, , , , sessions, demos, , , , rooms, ctx, outcomes, compat, picks] = await db.batch(
     [
       ...['feedback', 'daily_picks', 'library_snapshots', 'library_baselines'].map((table) => ({
         sql: `DELETE FROM ${table} WHERE ${STALE_DEMO}`,
@@ -4462,6 +4963,8 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
       // Демо-личностей здесь нет и не будет: их библиотека не меняется, и
       // /api/feedback исходы им не пишет
       { sql: 'DELETE FROM outcomes WHERE shown_at < ?', args: [nowSec - OUTCOME_TTL_SEC] },
+      { sql: 'DELETE FROM compat_views WHERE at < ?', args: [nowSec - COMPAT_VIEW_TTL_SEC] },
+      { sql: 'DELETE FROM shared_picks WHERE created_at < ?', args: [nowSec - SHARED_PICK_TTL_SEC] },
     ],
     'write',
   )
@@ -4471,6 +4974,8 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
     rooms: Number(rooms?.rowsAffected ?? 0),
     ctx: Number(ctx?.rowsAffected ?? 0),
     outcomes: Number(outcomes?.rowsAffected ?? 0),
+    compat: Number(compat?.rowsAffected ?? 0),
+    picks: Number(picks?.rowsAffected ?? 0),
   }
 }
 

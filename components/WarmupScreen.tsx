@@ -1,6 +1,6 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
 import { Ambient } from '@/components/Ambient'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
@@ -158,7 +158,7 @@ export function WarmupScreen({
               крутящуюся дугу без единого слова о том, что происходит. Смена подписей
               по ходу прогрева продолжает перетекать как раньше. */}
           <AnimatePresence mode="wait" initial={false}>
-            <motion.p
+            <m.p
               key={message}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
@@ -167,7 +167,7 @@ export function WarmupScreen({
               className="absolute inset-x-0 text-dim text-sm"
             >
               {message}
-            </motion.p>
+            </m.p>
           </AnimatePresence>
         </div>
 
@@ -176,7 +176,7 @@ export function WarmupScreen({
             считаются по снапшоту без единого байта метаданных, то есть приходят
             с первым же ответом прогрева, и говорят про того, кто ждёт. */}
         {progress?.library && progress.library.games > 0 && (
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.45, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
@@ -196,7 +196,7 @@ export function WarmupScreen({
                 из них ты не открывал ни разу
               </p>
             )}
-          </motion.div>
+          </m.div>
         )}
       </div>
     </div>

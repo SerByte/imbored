@@ -30,7 +30,8 @@ import {
   type Db,
 } from './db'
 import { logSwallowed } from './errlog'
-import { claudeProsCons, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
+import { claudeProsCons, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
+import { llmBudgetLeft, takeLlmBudget } from './llmcap'
 import { fetchReviewsRaw, heuristicProsCons, parseReviews, type ProsCons } from './reviews'
 import { mineReviews, parseReviewsRaw } from './reviewmine'
 import { deriveSemantics } from './semantics'
@@ -98,6 +99,17 @@ export type PageSliceResult = {
   withSemantics: number
   hasMore: boolean
   stopped: 'done' | 'budget' | 'blocked'
+  /**
+   * Сервис модели отказал в этом срезе всерьёз — пустой баланс, отозванный
+   * ключ, нет модели (isPersistentOutage в lib/llm; 429/5xx — мигание, его
+   * здесь нет). Карточки при этом собраны эвристикой, но /api/cron/health
+   * должен это видеть — см. sliceHealth в lib/cron.ts.
+   */
+  llm?: 'down'
+  /** HTTP-статус отказа; null — до сервиса не дошли */
+  llmStatus?: number | null
+  /** Суточный бюджет модели выбран (lib/llmcap): pros/cons — эвристикой */
+  llmCapped?: true
 }
 
 export async function runPageSlice(
@@ -137,7 +149,16 @@ export async function runPageSlice(
   // Модель зовём, только если ключ есть. Без этой проверки каждая карточка
   // впустую тратила бы попытку, а page_at всё равно проставлялся бы — то есть
   // забытый ключ выжигал бы очередь на полгода вперёд.
-  const useClaude = opts.useClaude ?? (Boolean(opts.prosConsFn) || llmAvailable())
+  const wantsClaude = opts.useClaude ?? (Boolean(opts.prosConsFn) || llmAvailable())
+  /*
+   * И только если на сегодня остался бюджет (lib/llmcap). Спрашиваем ДО
+   * выборки: useClaude включает redoHeuristic, и при выбранном бюджете срез
+   * перезабирал бы карточки ради модели, которую звать нельзя, — ровно та
+   * карусель «эвристика поверх эвристики», что описана у useClaude в опциях.
+   */
+  const budgetLeft = wantsClaude ? await llmBudgetLeft(db, now) : false
+  const useClaude = wantsClaude && budgetLeft
+  let llmCapped = wantsClaude && !budgetLeft
 
   // Когда модель есть, в очередь возвращаются и карточки, собранные раньше без
   // неё: page_at значит «в сеть сходили», а не «карточка готова». Без ключа
@@ -159,6 +180,7 @@ export async function runPageSlice(
   let detailsBlocked = 0
   let stopped: PageSliceResult['stopped'] = 'done'
   let claudeDown = false
+  let llmStatus: number | null | undefined
 
   /*
    * Карточки, на которых отказала сеть, ждут приговора, а не отметки.
@@ -344,7 +366,12 @@ export async function runPageSlice(
        * source === 'reviews'.
        */
       const бюджет = opts.deadlineAt - Date.now()
-      if (useClaude && !claudeDown && !thin && бюджет >= LLM_MIN_BUDGET_MS) {
+      if (useClaude && !claudeDown && !thin && бюджет >= LLM_MIN_BUDGET_MS && !llmCapped) {
+        // Бюджет берётся на каждый вызов: между началом среза и этой карточкой
+        // его могли выбрать подбор и пересказы
+        if (!(await takeLlmBudget(db, now))) llmCapped = true
+      }
+      if (useClaude && !claudeDown && !thin && бюджет >= LLM_MIN_BUDGET_MS && !llmCapped) {
         try {
           const fromClaude = await prosConsOf(fresh?.name ?? `Игра ${appid}`, useful, бюджет)
           if (fromClaude && (fromClaude.pros.length || fromClaude.cons.length)) {
@@ -359,6 +386,7 @@ export async function runPageSlice(
             // onProgress слышит только ручной прогон; в кроне это единственный след
             logSwallowed('pagejob:pros-cons', e)
             claudeDown = true
+            llmStatus = e.status
             log(`  pros/cons недоступны (${e.status ?? '—'}), дальше только эвристика`)
           } else {
             throw e
@@ -455,5 +483,11 @@ export async function runPageSlice(
     withSemantics,
     hasMore: targets.length === limit && stopped !== 'blocked',
     stopped,
+    // Модель в этом срезе не зовут после любого системного отказа, а в
+    // отметку для health — только отказ, который сам не пройдёт
+    ...(claudeDown && isPersistentOutage(llmStatus ?? null)
+      ? { llm: 'down' as const, llmStatus: llmStatus ?? null }
+      : {}),
+    ...(llmCapped ? { llmCapped: true as const } : {}),
   }
 }

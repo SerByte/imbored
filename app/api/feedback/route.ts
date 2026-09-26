@@ -9,6 +9,7 @@ import { parseMood } from '@/lib/mood'
 import { portraitTag } from '@/lib/portraitmodel'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, isDemoId, nowSec, requireWriter } from '@/lib/server'
+import { readJsonObject } from '@/lib/reqbody'
 
 /*
  * Потолок на запись фидбека.
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
   if (!writer.ok) return writer.response
   const { steamid } = writer
 
-  const body = (await req.json().catch(() => ({}))) as {
+  const body = (await readJsonObject(req)) as {
     appid?: number
     action?: string
     reason?: string

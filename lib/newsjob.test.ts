@@ -226,6 +226,57 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
     expect(res).toMatchObject({ digested: 0, hasMore: false, stopped: 'unavailable' })
     expect((await getUnsummarized(db, 10)).length).toBe(1)
+    // 429 — мигание: срез встал, но health из-за него не краснеет
+    expect(res.llm).toBeUndefined()
+  })
+
+  test('отказ, который сам не пройдёт, — в отметке среза, по нему краснеет health', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    const revoked = async () => {
+      throw new LlmUnavailableError(401, 'ключ отозван')
+    }
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: revoked as unknown as typeof okDigest,
+    })
+    expect(res).toMatchObject({ stopped: 'unavailable', llm: 'down', llmStatus: 401 })
+  })
+
+  test('без ключа — «недоступна», но не «отказала»: health не краснеет', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    try {
+      const res = await runDigestSlice(db, { nowSec: NOW + 4000, deadlineAt: Date.now() + ЗАПАС_MS })
+      expect(res.stopped).toBe('unavailable')
+      expect(res.llm).toBeUndefined()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  test('суточный бюджет модели выбран — стоп без засчитанных попыток', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await seedPatch(db, 570, '1')
+    vi.stubEnv('LLM_DAILY_CAP', '1')
+    try {
+      const res = await runDigestSlice(db, {
+        nowSec: NOW + 4000,
+        deadlineAt: Date.now() + ЗАПАС_MS,
+        digestFn: okDigest,
+      })
+      expect(res).toMatchObject({ digested: 1, hasMore: false, stopped: 'capped' })
+      // вторая запись осталась в очереди нетронутой: её tldr_tries не вырос
+      const left = await getUnsummarized(db, 10)
+      expect(left).toHaveLength(1)
+      const tries = await db.execute({ sql: 'SELECT tldr_tries FROM news_items WHERE appid = ?', args: [left[0].appid] })
+      expect(Number(tries.rows[0].tldr_tries)).toBe(0)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   test('опрос без пересказа отдаёт весь бюджет играм', async () => {

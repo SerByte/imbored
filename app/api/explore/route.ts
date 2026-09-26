@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, exploreCardView, shelfCardView } from '@/lib/cards'
-import { getGamesMetaLite, listExplore } from '@/lib/db'
-import { EXPLORE_SHELF, exploreDeck, exploredAppids } from '@/lib/explore'
+import { getGamesMetaLite, listExplore, listExploreLiked } from '@/lib/db'
+import { EXPLORE_SHELF_MAX, exploreDeck, exploredAppids } from '@/lib/explore'
 import { heuristicPicks } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
-import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 
 /*
@@ -34,37 +34,58 @@ export async function GET(req: Request) {
   const db = await getDb()
   const now = nowSec()
 
+  /*
+   * Гейты и прочитанное — параллельно, а не лесенкой.
+   *
+   * Обращение к Turso стоит около 35 мс (замер в lib/candidates.ts), и три
+   * независимых чтения по очереди складывались в сотню миллисекунд до
+   * первого полезного шага. Сами гейты между собой — по очереди
+   * (checkRatesInOrder): отказанный по личному потолку запрос не съедает
+   * потолок адреса. Цена — лишнее чтение listExplore на отказанном запросе.
+   */
   const ip = clientIp(req.headers)
-  for (const gate of [
-    { bucket: 'explore', id: steamid, limit: EXPLORE_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
-    { bucket: 'explore-ip', id: ip, limit: EXPLORE_IP_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
-  ]) {
-    const verdict = await checkRate(db, { ...gate, nowSec: now })
-    if (!verdict.ok) return rateLimitedResponse(verdict.retryAfterSec)
-  }
-
-  // Что уже листал: приглянувшееся лежит на полке, «Мимо» неделю не
-  // возвращается — колода каждый заход о новом (exploredAppids)
-  const explored = await listExplore(db, steamid)
+  const [gate, explored, shelf] = await Promise.all([
+    checkRatesInOrder(
+      db,
+      [
+        { bucket: 'explore', id: steamid, limit: EXPLORE_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
+        { bucket: 'explore-ip', id: ip, limit: EXPLORE_IP_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
+      ],
+      now,
+    ),
+    // Что уже листал: приглянувшееся лежит на полке, «Мимо» неделю не
+    // возвращается — колода каждый заход о новом (exploredAppids)
+    listExplore(db, steamid),
+    // Полка «Приглянулось» — своим запросом: listExplore читает двести
+    // последних свайпов обоих видов, и старое «Интересно» тонуло бы в «Мимо»
+    listExploreLiked(db, steamid, EXPLORE_SHELF_MAX),
+  ])
+  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   // Тот же конвейер, что у /play и «Игры дня», но без настроения: его здесь
   // не спрашивали, и судить им нечего (moodless). Нейтральное настроение —
   // ради одиночного social: компании колода не собирается
-  const set = await buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
-    nowSec: now,
-    moodless: true,
-    exclude: exploredAppids(explored, now),
-  })
+  // Полка «Приглянулось» от колоды не зависит — её мета едет параллельно
+  const likedIds = shelf.map((r) => r.appid)
+  const [set, likedMetas] = await Promise.all([
+    buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
+      nowSec: now,
+      moodless: true,
+      // Полка — сверх двухсот свайпов listExplore: старое «Интересно» лежит
+      // на полке и в колоду второй раз не сдаётся
+      exclude: [...new Set([...exploredAppids(explored, now), ...likedIds])],
+    }),
+    getGamesMetaLite(db, likedIds),
+  ])
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
   if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
 
   const deck = exploreDeck(set.own, set.discovery)
-  // Цены — до причин: шаблон называет скидку, а карта — ценник (buildPickContext)
-  const ctx = await buildPickContext(
-    db,
-    set,
-    deck.map((c) => c.appid),
-  )
+  // Цены — до причин: шаблон называет скидку, а карта — ценник (buildPickContext).
+  // Полка — тем же запросом в магазин: у неё тоже ценник, и GetItems берёт
+  // до двухсот игр разом
+  const ctx = await buildPickContext(db, set, [...deck.map((c) => c.appid), ...likedIds])
+  const owned = new Set(set.games.map((g) => g.appid))
   const reasons = new Map(
     heuristicPicks(deck, ctx.metaNow, deck.length, now, set.profile, {
       tagWeight: set.tagWeight,
@@ -73,9 +94,6 @@ export async function GET(req: Request) {
       hideUrgency: ctx.hideUrgency,
     }).map((p) => [p.appid, p]),
   )
-
-  const likedIds = explored.filter((r) => r.liked).map((r) => r.appid).slice(0, EXPLORE_SHELF)
-  const likedMetas = await getGamesMetaLite(db, likedIds)
 
   return NextResponse.json({
     // см. докблок в PlayersNow: подпись «сейчас» требует серверных часов
@@ -87,8 +105,11 @@ export async function GET(req: Request) {
     }),
     // Полка «Приглянулось», свежие первыми; игра, выпавшая из каталога, — мимо
     liked: likedIds.flatMap((id) => {
-      const meta = likedMetas.get(id)
-      return meta ? [shelfCardView(meta)] : []
+      // Свежая цена, если её только что обновили; иначе — из прочитанного
+      const meta = ctx.metaNow(id) ?? likedMetas.get(id)
+      return meta
+        ? [shelfCardView(meta, { now, owned: owned.has(id), hideUrgency: ctx.hideUrgency })]
+        : []
     }),
   })
 }

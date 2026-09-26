@@ -10,11 +10,21 @@ import {
   getFeedHeadForApps,
   getGamePatchHeads,
   getHeroMedia,
+  getLovedFor,
   getGamesMeta,
   getGamesMetaLite,
   getMajorFeed,
   getMajorFeedHead,
   getNeighbors,
+  listEvenings,
+  listCompatViews,
+  findSharedPick,
+  getSharedPick,
+  getLibraryBaselines,
+  getOlderSnapshotMinutes,
+  listExploreLiked,
+  listLiked,
+  countLiked,
   getNewsPage,
   getUnsummarized,
   listExplore,
@@ -266,6 +276,56 @@ const CASES: Case[] = [
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },
+  // Полка «Приглянулось» и полка «Зашло» — тот же разговор: строки одного
+  // человека по индексу, GROUP BY сортирует только их
+  // Прежние снимки одного человека — по индексу; сортировка — тай-брейк по
+  // id среди не больше трёх его строк, а json_each — по одному блобу
+  {
+    name: 'прошлые снимки библиотеки',
+    run: (db) => getOlderSnapshotMinutes(db, '76561198000000001'),
+    indexes: ['idx_snapshots_steamid'],
+    sortFree: false,
+  },
+  // «Сравнили с тобой» — строки владельца по индексу (owner, at) в его же
+  // порядке, ник — по первичному ключу users
+  {
+    name: 'кто сравнился с тобой',
+    run: (db) => listCompatViews(db, '76561198000000001', 0),
+    indexes: ['idx_compat_views_owner_at', 'sqlite_autoindex_users_1'],
+    sortFree: true,
+  },
+  // /pick/<id> — одна строка по первичному ключу; повтор нажатия — по
+  // индексу автора, без полного скана выборов всех людей
+  {
+    name: 'выбор по ссылке',
+    run: (db) => getSharedPick(db, 'abcdefghjkmn', 0),
+    indexes: ['sqlite_autoindex_shared_picks_1'],
+    sortFree: true,
+  },
+  {
+    name: 'повтор «Отправить другу»',
+    run: (db) => findSharedPick(db, '76561198000000001', 620, 'play', 'Причина.', 0),
+    indexes: ['idx_shared_picks_by'],
+    sortFree: true,
+  },
+  {
+    name: 'полка «Приглянулось»',
+    run: (db) => listExploreLiked(db, '76561198000000001', 120),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  {
+    name: 'полка «Зашло»',
+    run: (db) => listLiked(db, '76561198000000001'),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  {
+    name: 'счёт «Зашло»',
+    run: (db) => countLiked(db, '76561198000000001'),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
   {
     name: 'выйти на всех устройствах',
     run: (db) => revokeAllSessions(db, '76561198000000001', NOW),
@@ -396,6 +456,37 @@ describe('планы запросов', () => {
     expect(where).not.toContain('TEMP B-TREE')
   })
 
+  /*
+   * «Твои вечера» — советы одного человека за девяносто дней. Первичный ключ
+   * outcomes начинается со steamid, и чтение не выходит за строки этого
+   * человека. Сортировка по дате — временное дерево, и оно законно: его
+   * объём — советы одного человека за три месяца, а не таблица.
+   */
+  test('вечера человека: по первичному ключу, без сканов', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) => listEvenings(spy, '76561198000000001', NOW - 90 * 86400))
+    expect(issued).toHaveLength(1)
+    const plan = await planOf(db, issued[0]!)
+    const where = plan.join(' | ')
+    expect(bareScans(plan), where).toEqual([])
+    expect(where).toMatch(/SEARCH outcomes USING PRIMARY KEY \(steamid=\?\)/)
+  })
+
+  /*
+   * Отметки года — первичный ключ (steamid, year) целиком: диапазон лет по
+   * второй колонке ключа, порядок по году — из самого ключа.
+   */
+  test('отметки года: по первичному ключу, без сортировки и сканов', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) => getLibraryBaselines(spy, '76561198000000001', 2026, 2027))
+    expect(issued).toHaveLength(1)
+    const plan = await planOf(db, issued[0]!)
+    const where = plan.join(' | ')
+    expect(bareScans(plan), where).toEqual([])
+    expect(where).toMatch(/SEARCH library_baselines USING PRIMARY KEY \(steamid=\? AND year>\? AND year<\?\)/)
+    expect(where).not.toContain('TEMP B-TREE')
+  })
+
   test('у каждого частичного индекса схемы есть запрос, который это проверяет', async () => {
     // Сторож на сам список: новый частичный индекс без строки в CASES — это
     // индекс, про который никто не узнает, если запрос от него отъедет.
@@ -431,6 +522,7 @@ describe('выборки по списку appid', () => {
     ['getGamesMeta', (db) => getGamesMeta(db, IDS)],
     ['getGamesMetaLite', (db) => getGamesMetaLite(db, IDS)],
     ['getHeroMedia', (db) => getHeroMedia(db, IDS)],
+    ['getLovedFor', (db) => getLovedFor(db, IDS)],
     ['getStaleAppids', (db) => getStaleAppids(db, IDS, 86_400, NOW)],
     ['stalePriceAppids', (db) => stalePriceAppids(db, IDS, 3600, NOW)],
   ]

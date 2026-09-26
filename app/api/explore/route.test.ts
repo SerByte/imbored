@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { logFeedback, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
+import { logFeedback, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from '@/lib/db'
 import { EXPLORE_DECK } from '@/lib/explore'
 import { nowSec } from '@/lib/server'
 import { freshDb, signIn, signInAs } from '@/lib/testing/route'
@@ -21,7 +21,7 @@ const get = () => GET(new Request('http://localhost/api/explore'))
 
 type Body = {
   cards: Array<{ appid: number; ownedByAll: boolean; reason: string; tags: string[] }>
-  liked: Array<{ appid: number; name: string }>
+  liked: Array<{ appid: number; name: string; owned: boolean; priceFinal: number | null }>
   nowSec: number
 }
 
@@ -116,7 +116,53 @@ describe('/api/explore', () => {
     const shown = body.cards.map((c) => c.appid)
     expect(shown).not.toContain(20)
     expect(shown).not.toContain(10)
-    expect(body.liked).toEqual([{ appid: 20, name: 'Игра 20', headerImage: null, art: null }])
+    expect(body.liked).toEqual([
+      {
+        appid: 20,
+        name: 'Игра 20',
+        headerImage: null,
+        art: null,
+        owned: false,
+        isFree: false,
+        priceFinal: null,
+        discount: null,
+      },
+    ])
+  })
+
+  test('полка — с ценой у чужого, без цены у своего, и без потолка в двенадцать', async () => {
+    await signIn(db, STEAMID, { verified: true })
+    await seed()
+    const now = nowSec()
+    // Свежая цена — магазин не спрашивается, а на плитке ценник
+    await updateGamePrices(
+      db,
+      [
+        { appid: 21, priceFinal: 49_900, priceInitial: 49_900 },
+        { appid: 11, priceFinal: 19_900, priceInitial: 19_900 },
+      ],
+      now,
+    )
+    await logFeedback(db, { steamid: STEAMID, appid: 21, action: 'opened', reason: 'explore' }, now - 100)
+    await logFeedback(db, { steamid: STEAMID, appid: 11, action: 'opened', reason: 'explore' }, now - 90)
+    // Прежний потолок: двенадцать плиток. Тринадцатая и дальше теперь на полке
+    const more = Array.from({ length: 14 }, (_, i) => 1000 + i)
+    await upsertGamesMeta(
+      db,
+      more.map((appid) => ({ appid, name: `Игра ${appid}`, tags: { Puzzle: 100 }, genres: [], categories: [2] })),
+      now,
+    )
+    for (const [i, appid] of more.entries()) {
+      await logFeedback(db, { steamid: STEAMID, appid, action: 'opened', reason: 'explore' }, now - 80 + i)
+    }
+    const body = (await (await get()).json()) as Body
+    expect(body.liked).toHaveLength(16)
+    const byId = new Map(body.liked.map((c) => [c.appid, c]))
+    expect(byId.get(21)).toMatchObject({ owned: false, priceFinal: 49_900 })
+    // своя игра — без ценника: её не покупают
+    expect(byId.get(11)).toMatchObject({ owned: true, priceFinal: null })
+    // свежие сверху
+    expect(body.liked[0].appid).toBe(1013)
   })
 
   test('сессия по ссылке колоду получает: это чтение', async () => {

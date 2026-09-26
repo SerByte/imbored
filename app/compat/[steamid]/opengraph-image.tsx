@@ -1,6 +1,7 @@
 import { ImageResponse } from 'next/og'
 import { loadCompatInvite } from '@/lib/compatpage'
 import { ogFonts, OG_BG, OG_INK } from '@/lib/og'
+import { postersOf, WALL_POSTERS } from '@/lib/ogcard'
 import { getDb } from '@/lib/server'
 import { CompatCardImage } from './share-card'
 
@@ -42,7 +43,9 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
 
 export default async function Image({ params }: { params: Promise<{ steamid: string }> }) {
   const { steamid } = await params
-  const invite = /^\d{17}$/.test(steamid) ? await loadCompatInvite(await getDb(), steamid) : null
+  const invite = /^\d{17}$/.test(steamid)
+    ? await loadCompatInvite(await getDb(), steamid, undefined, { top: WALL_POSTERS })
+    : null
 
   if (!invite) {
     return new ImageResponse(
@@ -67,7 +70,11 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
     )
   }
 
-  return new ImageResponse(<CompatCardImage invite={invite} />, {
+  // Постеры — заранее и со своим таймаутом (ogPoster), а не адресами для satori
+  const byId = new Map(invite.topGames.map((g) => [g.appid, g]))
+  const posters = await postersOf(invite.topGames, (id) => byId.get(id))
+
+  return new ImageResponse(<CompatCardImage invite={invite} posters={posters} />, {
     ...size,
     fonts: await ogFonts,
   })

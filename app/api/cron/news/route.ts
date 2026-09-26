@@ -10,6 +10,7 @@ import {
   pagesNeedKick,
   sliceDeadline,
   sliceLooksStale,
+  SWEEP_KEY,
 } from '@/lib/cron'
 import {
   acquireLease,
@@ -26,7 +27,9 @@ import {
 } from '@/lib/db'
 import { runNewsSlice } from '@/lib/newsjob'
 import { sweepRateLimits } from '@/lib/ratelimit'
-import { appBaseUrl, getDb, nowSec } from '@/lib/server'
+import { appBaseUrl, getDb, nowSec, steamApiKey } from '@/lib/server'
+import { runSteamProbe } from '@/lib/steamprobe'
+import { pruneTelemetry } from '@/lib/telemetry'
 import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
 
 export const dynamic = 'force-dynamic'
@@ -37,8 +40,6 @@ export const maxDuration = 60
 const MAX_CHAIN = 24
 const ENROLL_KEY = 'news_enrolled_at'
 const LAST_KEY = CRON_JOBS.news.lastKey
-/** Итог суточной уборки (sweepStale) — чтобы её работу было видно не только по счёту */
-const SWEEP_KEY = 'sweep_last'
 
 /** Чуть больше maxDuration: убитый по таймауту инстанс не держит аренду вечно. */
 const LEASE_TTL_SEC = 75
@@ -121,7 +122,10 @@ export async function GET(req: Request) {
         // очереди и сам срез из-за него пропадать не должны.
         try {
           const swept = await sweepStale(db, now)
-          await setCatalogMeta(db, SWEEP_KEY, JSON.stringify({ at: now, ...swept }))
+          // Почасовые счётчики (lib/telemetry) старше 90 дней — тем же
+          // проходом и в ту же отметку уборки
+          const telemetry = await pruneTelemetry(db, now)
+          await setCatalogMeta(db, SWEEP_KEY, JSON.stringify({ at: now, ...swept, telemetry }))
         } catch (err) {
           console.error('sweep stale', err)
         }
@@ -224,6 +228,17 @@ export async function GET(req: Request) {
           }
         } catch (err) {
           console.error('cron kick', err)
+        }
+
+        /*
+         * Проба ключа Steam Web API (lib/steamprobe): раз в час, отсюда же —
+         * единственного места, что ходит ежечасно. Только если до жёсткого
+         * срока функции остаётся с запасом: проба кладёт на себя две попытки
+         * по пять секунд, а обрыв посреди неё стоил бы и остатка after().
+         */
+        const hardLeftMs = startedAt + maxDuration * 1000 - Date.now()
+        if (hardLeftMs > 15_000) {
+          await runSteamProbe(db, { nowSec: nowSec(), apiKey: steamApiKey() })
         }
       }
 

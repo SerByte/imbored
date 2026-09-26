@@ -73,6 +73,24 @@ function memoryHits(key: string): number {
   return n
 }
 
+/**
+ * Потолок только в памяти инстанса — для ручек, где адрес незачем хранить.
+ *
+ * checkRate пишет адрес в rate_limits до суточной уборки: для входа и
+ * подбора это честная плата за общий на все инстансы потолок. Счётчикам
+ * воронки (/api/event, начало входа) такая точность не нужна — им надо лишь,
+ * чтобы один скрипт не жёг записи Turso без предела, — а адрес рядом с числом
+ * шагов в базе противоречил бы обещанию «шаги не связаны с тобой». Здесь
+ * адрес живёт только в памяти, в пределах окна, и никуда не пишется.
+ *
+ * Ключ — имя ручки и адрес; окно фиксированное. Карта чистится оптом при
+ * переполнении, как префильтр выше.
+ */
+export function memoryGate(o: { bucket: string; id: string; limit: number; windowSec: number; nowSec: number }): boolean {
+  const key = `${o.bucket}:${o.id}:${Math.floor(o.nowSec / o.windowSec) * o.windowSec}`
+  return memoryHits(`gate:${key}`) <= o.limit
+}
+
 /** Только для тестов: префильтр живёт на модуле и иначе течёт между случаями */
 export function resetRateMemory(): void {
   memory.clear()
@@ -148,6 +166,28 @@ export function clientIp(headers: Headers): string {
   const fwd = headers.get('x-forwarded-for')
   const first = fwd?.split(',')[0]?.trim()
   return first || headers.get('x-real-ip')?.trim() || 'local'
+}
+
+/**
+ * Несколько гейтов ПО ОЧЕРЕДИ: следующий спрашивается, только если прошёл
+ * предыдущий. Первый отказ — и дальше не считаем.
+ *
+ * Порядок здесь смысловой, а не для красоты: checkRate отмечает запрос в
+ * счётчике ДО решения. Спроси гейты разом (Promise.all), и запрос, уже
+ * отказанный по личному потолку, всё равно съедал бы место в потолке адреса:
+ * один человек, давящий «ещё» после отказа, выедал бы общий на адрес бюджет
+ * соседям по квартире или мобильному NAT. Ставь личный гейт первым.
+ */
+export async function checkRatesInOrder(
+  db: Db,
+  gates: Array<Omit<Parameters<typeof checkRate>[1], 'nowSec'>>,
+  nowSec: number,
+): Promise<{ ok: true } | { ok: false; retryAfterSec: number }> {
+  for (const gate of gates) {
+    const verdict = await checkRate(db, { ...gate, nowSec })
+    if (!verdict.ok) return verdict
+  }
+  return { ok: true }
 }
 
 /** Стандартный отказ. Retry-After — чтобы честный клиент знал, когда вернуться */
