@@ -93,7 +93,7 @@ export async function GET(req: Request) {
   if (!selection) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
   if (!stored) await saveDailyPick(db, steamid, dateStr, selection, now)
 
-  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, hideUrgency, alt } = selection
+  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, via, hideUrgency, alt } = selection
 
   // Цены обновляем ДО того, как пишется текст: и хвост причины, и подпись
   // под ценой называют одну и ту же сумму, а расходиться им нельзя.
@@ -118,6 +118,7 @@ export async function GET(req: Request) {
       sharedTags,
       hoursPlayed,
       hideUrgency,
+      via,
     }),
     discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
     // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
@@ -134,6 +135,7 @@ function alternateView(alt: DailyAlternate, meta: GameMeta | undefined, now: num
     sharedTags: alt.sharedTags,
     hoursPlayed: alt.hoursPlayed,
     hideUrgency,
+    via: alt.via,
   })
 }
 
@@ -201,6 +203,7 @@ async function selectDaily(
       hoursPlayed: ctx.hoursOf(c.appid),
       reasonBase: tail && reason.endsWith(tail) ? reason.slice(0, -tail.length) : reason,
       sharedTags: meta ? sharedTasteTags(profile, meta, tagWeight) : [],
+      via: ctx.anchorOf(c.appid),
     }
   }
 

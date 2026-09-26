@@ -23,6 +23,7 @@ import { StopAsk } from '@/components/StopAsk'
 import { WarmupScreen, type ChosenGame } from '@/components/WarmupScreen'
 import { HeroTitle } from '@/components/HeroTitle'
 import { HeroTrailer } from '@/components/HeroTrailer'
+import { HeroPoster } from '@/components/TypeCover'
 import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
@@ -1392,6 +1393,7 @@ function Player({ say }: { say: (line: string) => void }) {
             art={pick.art}
             name={pick.name}
             screenshots={pick.screenshots ?? []}
+            anchor={pick.via}
           />
           <HeroTrailer trailer={pick.trailer} />
           <div aria-hidden className="absolute inset-0 hero-scrim" />
@@ -1408,6 +1410,7 @@ function Player({ say }: { say: (line: string) => void }) {
             animate="show"
             className="relative mx-auto w-full max-w-6xl px-safe pb-12 pt-40"
           >
+            <HeroPoster appid={pick.appid} name={pick.name} className="absolute bottom-12 right-5" />
             {/* max-w-xl — не вкус: по этому краю .hero-scrim держит свои 0.63,
                 и шире колонка вышла бы из-под гарантии контраста */}
             <div className="max-w-xl flex flex-col gap-4">

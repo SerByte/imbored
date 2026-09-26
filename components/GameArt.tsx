@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { artCandidates, artSrcSet, type ArtVariant, type GameArtUrls } from '@/lib/art'
+import { TypeCover } from './TypeCover'
 
 /**
  * Обложка игры с деградацией по цепочке источников.
@@ -26,6 +27,7 @@ export function GameArt({
   eager = false,
   fetchPriority,
   fade = false,
+  anchor = null,
 }: {
   appid: number
   name: string
@@ -55,6 +57,11 @@ export function GameArt({
    * не прячется ради анимации, правило то же, что у .anim-page-in.
    */
   fade?: boolean
+  /**
+   * Своя игра-ориентир: у игры не из Steam её размытый арт ложится под
+   * типографскую обложку (герой, колода). У игр Steam не используется.
+   */
+  anchor?: { appid: number; name: string } | null
 }) {
   const source = { appid, art, headerImage }
   const candidates = artCandidates(source, variant)
@@ -77,6 +84,32 @@ export function GameArt({
     const el = imgRef.current
     if (el?.complete && el.naturalWidth > 0) setLoaded(true)
   }, [fade, loaded, src])
+
+  /*
+   * Игре не из Steam картинок взять неоткуда — вместо заглушки типографская
+   * обложка. fallback={null} («ничем») уважается: это вторые, декоративные
+   * слои, и обложка там легла бы поверх настоящей.
+   */
+  if (!src && appid < 0 && fallback !== null)
+    return (
+      <TypeCover
+        appid={appid}
+        name={name}
+        variant={variant}
+        className={className}
+      >
+        {anchor && (
+          <GameArt
+            appid={anchor.appid}
+            name={anchor.name}
+            variant={variant === 'poster' ? 'poster' : 'hero'}
+            sizes="480px"
+            fallback={null}
+            className="type-cover-anchor"
+          />
+        )}
+      </TypeCover>
+    )
 
   if (!src)
     return (

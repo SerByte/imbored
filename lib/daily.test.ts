@@ -204,15 +204,27 @@ describe('parseDailySelection', () => {
   }
 
   test('запись до запасной своей проходит — утренний выбор посреди дня не пересчитывается', () => {
-    expect(parseDailySelection(base)).toEqual({ ...base, alt: null })
+    expect(parseDailySelection(base)).toEqual({ ...base, via: null, alt: null })
   })
 
   test('запасная своя читается; битая — отбрасывается одна, без выбора дня', () => {
-    expect(parseDailySelection({ ...base, alt })?.alt).toEqual(alt)
+    expect(parseDailySelection({ ...base, alt })?.alt).toEqual({ ...alt, via: null })
     expect(parseDailySelection({ ...base, alt: { ...alt, pick: { appid: 'x' } } })).toEqual({
       ...base,
+      via: null,
       alt: null,
     })
+  })
+
+  test('ориентир читается; битый или чужой — без фона, запись живёт', () => {
+    const via = { appid: 570, name: 'Dota 2', hours: 2400 }
+    expect(parseDailySelection({ ...base, via })?.via).toEqual(via)
+    expect(parseDailySelection({ ...base, alt: { ...alt, via } })?.alt?.via).toEqual(via)
+    for (const bad of [{ appid: -106, name: 'LoL', hours: 1 }, { appid: 570 }, 'Dota 2', 7]) {
+      const sel = parseDailySelection({ ...base, via: bad })
+      expect(sel, JSON.stringify(bad)).not.toBeNull()
+      expect(sel?.via, JSON.stringify(bad)).toBeNull()
+    }
   })
 
   test('битый герой, полка или причина — записи нет, выбор пересчитается', () => {

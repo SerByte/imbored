@@ -111,6 +111,14 @@ describe('storeCardView и dailyCardView', () => {
     expect(withClip.trailer).toEqual(trailer)
     expect(without.trailer).toBeNull()
   })
+
+  test('ориентир героя дня — из записи, у старой записи явный null', () => {
+    const day = { reason: 'r', sharedTags: [], hoursPlayed: null, hideUrgency: false }
+    const via = { appid: 570, name: 'Dota 2', hours: 2400 }
+    const lol = { appid: -106, name: 'League of Legends', source: 'new' as const }
+    expect(dailyCardView(lol, undefined, NOW, { ...day, via }).via).toEqual(via)
+    expect(dailyCardView(lol, undefined, NOW, day).via).toBeNull()
+  })
 })
 
 describe('heroMediaView', () => {

@@ -42,6 +42,11 @@ export type DeckCard = {
    * общий вкус комнаты, а не фраза.
    */
   reason?: string
+  /**
+   * Своя игра-ориентир (exploreCardView): у игры не из Steam её размытый арт
+   * ложится под типографскую обложку. В пати ориентира нет.
+   */
+  via?: { appid: number; name: string } | null
 }
 
 /**
@@ -195,6 +200,7 @@ function TopCard({
           variant="poster"
           sizes="(min-width: 768px) 440px, 100vw"
           eager
+          anchor={card.via}
           className="h-full w-full object-cover"
           fallback={<div className="deck-noart h-full w-full" />}
         />
