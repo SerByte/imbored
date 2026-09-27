@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { DailyCountdown } from '@/components/DailyCountdown'
+import { DemoBar, useDemoSession } from '@/components/DemoBar'
 import { GameCardBody } from '@/components/GameCard'
 import { HeroTitle } from '@/components/HeroTitle'
 import { HeroTrailer } from '@/components/HeroTrailer'
@@ -22,7 +23,7 @@ import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
-import { bounceTo, reconnectHref } from '@/lib/destination'
+import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { SOURCE_BADGE, suggestsInstall } from '@/lib/sources'
@@ -153,6 +154,8 @@ export default function DailyPage() {
    */
   const readOnly =
     useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
+  /** Демо-личность: над героем полоса «это чужая демо-библиотека» (DemoBar) */
+  const demo = useDemoSession()
 
   /** Ответ /api/daily — на экран: одна дверь и для первого захода, и для «Не сегодня» */
   function applyDaily(data: DailyResponse) {
@@ -283,9 +286,10 @@ export default function DailyPage() {
             доехала. Панель общая с карточкой подключения, пустой библиотекой и
             отказом подбора: четыре копии инструкции по чужому интерфейсу
             разъехались бы на первой же правке. */}
+        {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
         {reason === 'nolibrary' && (
           <div className="max-w-md text-left">
-            <PrivacyHelp />
+            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/daily')} />
           </div>
         )}
 
@@ -409,6 +413,9 @@ export default function DailyPage() {
         */}
         <BlurBand height="46vh" dir="up" />
         <div aria-hidden className="grain" />
+        {/* Демо называет себя и даёт дверь к своей библиотеке — вне потока,
+            как на /play (см. DemoBar) */}
+        {demo && <DemoBar from="/daily" overlay />}
 
         <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
           <HeroPoster appid={hero.appid} name={hero.name} className="absolute bottom-16 right-5" />

@@ -7,6 +7,7 @@ import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStor
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
+import { DemoBar, useDemoSession } from '@/components/DemoBar'
 import { GameCardBody } from '@/components/GameCard'
 import { Magnet } from '@/components/Magnet'
 import { HeroShots } from '@/components/HeroShots'
@@ -76,7 +77,7 @@ import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
-import { bounceTo, reconnectHref } from '@/lib/destination'
+import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
@@ -397,6 +398,8 @@ function Player({ say }: { say: (line: string) => void }) {
    */
   const readOnly =
     useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
+  /** Демо-личность: над героем полоса «это чужая демо-библиотека» (DemoBar) */
+  const demo = useDemoSession()
   /**
    * Запуск с этой вкладки, про который пора спросить «не зацепило?» — от
    * десяти минут до двух часов назад (lib/launchmemo.ts). Перечитывается при
@@ -1139,9 +1142,13 @@ function Player({ say }: { say: (line: string) => void }) {
             доехала. Панель общая с карточкой подключения и с пустой
             библиотекой: три копии одной инструкции про чужой интерфейс
             разъехались бы на первой же правке. */}
+        {/* Проверка — входом через Steam: снимок библиотеки пишет вход, а
+            /api/prepare без снимка сам ничего не перезапрашивает. Возвращает
+            на ту же выдачу. Сессии по ссылке Steam-вход не предлагаем
+            проверкой: её дверь — «Подключить заново» ниже. */}
         {reason === 'nolibrary' && limitedFor === null && (
           <div className="max-w-md text-left">
-            <PrivacyHelp />
+            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor(`/play?${search}`)} />
           </div>
         )}
 
@@ -1435,6 +1442,10 @@ function Player({ say }: { say: (line: string) => void }) {
               попадает любая игра из библиотеки, в том числе светлая. */}
           <BlurBand height="46vh" dir="up" />
           <div aria-hidden className="grain" />
+          {/* Демо называет себя здесь, в момент ценности, и даёт дверь к своей
+              библиотеке. Поверх верха кадра, вне потока: признак клиентский,
+              и полоса в потоке двигала бы героя (см. DemoBar). */}
+          {demo && <DemoBar from={`/play?${search}`} overlay />}
 
           <m.div
             variants={LADDER}

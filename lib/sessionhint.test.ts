@@ -177,6 +177,135 @@ describe('подсказка о прошлом входе', () => {
   })
 })
 
+describe('подсказка из ответа сервера', () => {
+  test('демо — только настоящим true, «только просмотр» — только writer: false у не-демо', async () => {
+    install({})
+    const { hintFrom } = await fresh()
+    expect(hintFrom({ personaName: 'Гоша', writer: true })).toEqual({ authed: true, personaName: 'Гоша' })
+    expect(hintFrom({ personaName: null, demo: true, writer: true })).toEqual({
+      authed: true,
+      personaName: null,
+      demo: true,
+    })
+    // демо пишет (isWriter в lib/server): «только просмотр» ему не положен ни при каком writer
+    expect(hintFrom({ demo: true, writer: false })).toEqual({ authed: true, personaName: null, demo: true })
+    expect(hintFrom({ writer: false })).toEqual({ authed: true, personaName: null, readOnly: true })
+    // writer не пришёл — «не знаем», а не «только просмотр»
+    expect(hintFrom({ personaName: 'Гоша' })).toEqual({ authed: true, personaName: 'Гоша' })
+  })
+})
+
+/**
+ * Сверка с ответом touch на остальных страницах (SessionKeeper).
+ *
+ * Вход через Steam из полосы демо возвращает прямо в выдачу, мимо главной, и
+ * подсказка «демо» оставалась бы на устройстве — полоса называла бы чужой
+ * собственную библиотеку человека. У touch здесь нет ни ника, ни признака
+ * демо, только steamid и writer.
+ */
+describe('сверка подсказки с ответом touch', () => {
+  const REAL = '76561197960287930'
+  const DEMO = '00012345678901231'
+
+  test('демо вошёл через Steam — признак демо и чужой ник гаснут', async () => {
+    const store: Store = { [KEY]: JSON.stringify({ authed: true, personaName: 'Демо-игрок', demo: true }) }
+    install(store)
+    const m = await fresh()
+    let woke = 0
+    m.subscribeSessionHint(() => {
+      woke += 1
+    })
+    m.settleSessionHint({ authed: true, steamid: REAL, writer: true })
+    expect(m.getSessionHint()).toEqual({ authed: true, personaName: null })
+    expect(JSON.parse(store[KEY])).toEqual({ authed: true, personaName: null })
+    expect(woke).toBe(1)
+  })
+
+  test('подсказка не врёт — не трогаем: ник на месте, снимок тот же', async () => {
+    for (const [saved, touch] of [
+      [{ authed: true, personaName: 'Демо-игрок', demo: true }, { authed: true, steamid: DEMO, writer: true }],
+      [{ authed: true, personaName: 'Гоша' }, { authed: true, steamid: REAL, writer: true }],
+      [{ authed: true, personaName: 'Гоша', readOnly: true }, { authed: true, steamid: REAL, writer: false }],
+    ] as const) {
+      install({ [KEY]: JSON.stringify(saved) })
+      const m = await fresh()
+      const before = m.getSessionHint()
+      m.settleSessionHint(touch)
+      expect(m.getSessionHint(), JSON.stringify(saved)).toBe(before)
+    }
+  })
+
+  test('вид входа сменился — подсказка следом', async () => {
+    install({ [KEY]: JSON.stringify({ authed: true, personaName: 'Гоша', readOnly: true }) })
+    let m = await fresh()
+    // вошёл по ссылке, потом через Steam (NeedSteam) — «только просмотр» снят,
+    // а ник свой: тот же человек, и приветствию главной незачем его ждать
+    m.settleSessionHint({ authed: true, steamid: REAL, writer: true })
+    expect(m.getSessionHint()).toEqual({ authed: true, personaName: 'Гоша' })
+
+    // в демо — ник гаснет: «Гоша» у демо-личности был бы чужим
+    install({ [KEY]: JSON.stringify({ authed: true, personaName: 'Гоша' }) })
+    m = await fresh()
+    m.settleSessionHint({ authed: true, steamid: DEMO, writer: true })
+    expect(m.getSessionHint()).toEqual({ authed: true, personaName: null, demo: true })
+  })
+
+  /*
+   * Подсказки, записанные до признака readOnly, его не знают: у сессии по
+   * ссылке там лежит просто { authed, personaName }. Первая же сверка после
+   * выкладки его добавит — у всех таких людей разом, — и если бы она гасила
+   * при этом ник, приветствие главной у каждого прыгнуло бы на следующем
+   * заходе.
+   */
+  test('старая подсказка сессии по ссылке получает «только просмотр» и сохраняет ник', async () => {
+    const store: Store = { [KEY]: JSON.stringify({ authed: true, personaName: 'Гоша' }) }
+    install(store)
+    const m = await fresh()
+    m.settleSessionHint({ authed: true, steamid: REAL, writer: false })
+    expect(m.getSessionHint()).toEqual({ authed: true, personaName: 'Гоша', readOnly: true })
+    expect(JSON.parse(store[KEY])).toEqual({ authed: true, personaName: 'Гоша', readOnly: true })
+  })
+
+  test('гость — подсказка стирается, как это сделала бы главная', async () => {
+    const store: Store = { [KEY]: JSON.stringify({ authed: true, personaName: 'Демо-игрок', demo: true }) }
+    install(store)
+    const m = await fresh()
+    m.settleSessionHint({ authed: false })
+    expect(m.getSessionHint()).toBeNull()
+    expect(store[KEY]).toBeUndefined()
+  })
+
+  test('подсказки не было — не заводим: без ника она беднее той, что запишет главная', async () => {
+    const store: Store = {}
+    install(store)
+    const m = await fresh()
+    m.settleSessionHint({ authed: true, steamid: REAL, writer: true })
+    expect(m.getSessionHint()).toBeNull()
+    expect(store).toEqual({})
+  })
+
+  test.each([
+    ['null', null],
+    ['строка', 'authed'],
+    ['без steamid', { authed: true, writer: true }],
+    ['steamid числом', { authed: true, steamid: 76561197960287930, writer: true }],
+    ['writer строкой', { authed: true, steamid: REAL, writer: 'true' }],
+    ['без authed', { steamid: REAL, writer: true }],
+  ])('непонятный ответ (%s) подсказку не трогает', async (_name, body) => {
+    install({ [KEY]: JSON.stringify({ authed: true, personaName: 'Демо-игрок', demo: true }) })
+    const m = await fresh()
+    const before = m.getSessionHint()
+    expect(() => m.settleSessionHint(body)).not.toThrow()
+    expect(m.getSessionHint()).toBe(before)
+  })
+
+  test('SessionKeeper сверяет подсказку тем же ответом, что и признак записи', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'SessionKeeper.tsx'), 'utf8')
+    expect(src).toMatch(/from '@\/lib\/sessionhint'/)
+    expect(src).toMatch(/writerStore\.set\(writerFrom\(body\)\)\s*settleSessionHint\(body\)/)
+  })
+})
+
 /**
  * Подсказка переживает перезагрузку — значит её обязан кто-то гасить, и гасит
  * ровно одно место. Если эта строка когда-нибудь уедет при рефакторинге,

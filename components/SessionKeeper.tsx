@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useEffect } from 'react'
+import { settleSessionHint } from '@/lib/sessionhint'
 import { writerFrom, writerStore } from '@/lib/writer'
 
 /**
@@ -21,9 +22,12 @@ import { writerFrom, writerStore } from '@/lib/writer'
  * ни разу не перезагруженная, иначе осталась бы с одним-единственным
  * продлением на старте.
  *
- * Из ответа берётся одно поле — writer: может ли сессия писать (lib/writer).
- * Запрос и так уходит с каждой страницы, и спрашивать признак отдельно значило
- * бы второй круг до сервера ради того же ответа.
+ * Из ответа берётся writer: может ли сессия писать (lib/writer). Запрос и так
+ * уходит с каждой страницы, и спрашивать признак отдельно значило бы второй
+ * круг до сервера ради того же ответа. По той же причине ответом сверяется и
+ * подсказка о входе (settleSessionHint в lib/sessionhint): вход мимо главной
+ * иначе оставлял бы на устройстве прежний вид входа — демо, вошедший через
+ * Steam, продолжал бы видеть полосу «это чужая демо-библиотека».
  */
 const AGAIN_AFTER_MS = 12 * 60 * 60 * 1000
 
@@ -44,13 +48,19 @@ export function SessionKeeper() {
     const touch = () => {
       if (Date.now() - lastTouch < AGAIN_AFTER_MS) return
       lastTouch = Date.now()
-      // Продление — это Set-Cookie, а не тело; из тела нужен только writer.
-      // Ошибку глотаем молча, но снимаем отметку, чтобы следующая попытка
-      // состоялась. Признак при сбое не трогаем: пятисотка о сессии не
-      // говорит ничего, а прежний ответ остаётся верным.
+      // Продление — это Set-Cookie, а не тело. Из тела нужны writer и — для
+      // сверки подсказки о входе — authed и steamid (settleSessionHint: без
+      // строкового steamid она молча ничего не делает, так что урезать их из
+      // ответа touch нельзя). Ошибку глотаем молча, но снимаем отметку, чтобы
+      // следующая попытка состоялась. Признак и подсказку при сбое не
+      // трогаем: пятисотка о сессии не говорит ничего, а прежний ответ
+      // остаётся верным.
       fetch('/api/session/touch', { method: 'POST' })
         .then(async (r) => {
-          if (r.ok) writerStore.set(writerFrom(await r.json()))
+          if (!r.ok) return
+          const body: unknown = await r.json()
+          writerStore.set(writerFrom(body))
+          settleSessionHint(body)
         })
         .catch(() => {
           lastTouch = 0

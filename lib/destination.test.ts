@@ -348,6 +348,25 @@ describe('«Подключить заново» ведёт к полю, а не 
     expect(reconnectHref({ compat: '../evil' })).toBe('/?reconnect=1')
   })
 
+  /*
+   * next — место, откуда пришли за своей библиотекой (полоса демо). После
+   * подключения карточка уводит по нему обратно, а не туда, куда поведёт
+   * память настроения. Порядок и проверка те же, что у loginCarry.
+   */
+  test('next везёт место назначения — только из закрытого списка', () => {
+    expect(reconnectHref({ next: '/daily' })).toBe('/?next=%2Fdaily&reconnect=1')
+    const play = playHref({ time: 'short', vibe: 'chill', social: 'solo' })
+    const q = new URLSearchParams(reconnectHref({ next: play }).slice(2))
+    expect(destinationUrl(q.get('next'))).toBe(play)
+    for (const evil of ['//evil.example', '/rooms', 'https://evil.example/play']) {
+      expect(reconnectHref({ next: evil }), evil).toBe('/?reconnect=1')
+    }
+    // Совместимость важнее — как у loginCarry
+    expect(reconnectHref({ compat: '76561197960287930', next: '/daily' })).toBe(
+      '/?compat=76561197960287930&reconnect=1',
+    )
+  })
+
   test('ни одна кнопка «Подключить…» не ведёт на голую главную', () => {
     const offenders: string[] = []
     const walk = (dir: string) => {

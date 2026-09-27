@@ -19,6 +19,14 @@ describe('разбор маяка', () => {
     expect(parseTrackEvent([{ event: 'quiz_done' }])).toBeNull()
   })
 
+  // Полоса демо (components/DemoBar): показ и две двери — отдельными шагами,
+  // чтобы видеть не только «нажали», но и какую дверь выбирают
+  test('шаги полосы демо браузеру доверены', () => {
+    for (const event of ['demo_door_shown', 'demo_door_steam', 'demo_door_link'] as const) {
+      expect(parseTrackEvent({ event, source: 'pick' })).toEqual({ event, source: 'pick' })
+    }
+  })
+
   test('ключ счётчика — событие:источник', () => {
     expect(eventKey('share_click', 'portrait')).toBe('share_click:portrait')
     expect(eventKey('connect_ok', 'openid')).toBe('connect_ok:openid')

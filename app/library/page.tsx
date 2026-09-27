@@ -7,6 +7,7 @@ import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
+import { DemoBar } from '@/components/DemoBar'
 import { trimArt } from '@/lib/art'
 import {
   bannedAppids,
@@ -35,10 +36,10 @@ import {
   wallState,
 } from '@/lib/forgotten'
 import type { LibraryTileState } from '@/lib/recommend'
-import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
+import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
 import { tagWeightFrom } from '@/lib/tagweight'
-import { bounceTo, reconnectHref } from '@/lib/destination'
+import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
 import { plural } from '@/lib/plural'
@@ -280,6 +281,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         )}
         <div aria-hidden className="lib-hero-scrim" />
         <div className="relative mx-auto w-full max-w-6xl px-5 pt-32 pb-12 md:pb-16">
+          {/* Демо называет себя и здесь: «твоя библиотека глазами сервиса» над
+              чужой витриной — прямая неправда. Признак серверный, полоса
+              приходит в первом HTML и стоит в потоке (см. DemoBar). */}
+          {isDemoId(steamid) && <DemoBar from="/library" className="mb-6" />}
           <Eyebrow className="mb-3">Библиотека</Eyebrow>
           <h1 className="font-display text-display-md max-w-md">Твоя библиотека глазами сервиса</h1>
           <dl className="mt-7 flex flex-wrap gap-x-10 gap-y-4">
@@ -393,7 +398,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             Причин ровно две: игровые данные закрыты настройками профиля — или библиотека правда
             пуста. Первая встречается намного чаще.
           </p>
-          <PrivacyHelp />
+          {/* Проверка — входом через Steam: он пишет свежий снимок. Сессии по
+              ссылке — «Подключить заново» ниже, её дверь. */}
+          <PrivacyHelp retryHref={session && isWriter(session) ? steamLoginFor('/library') : undefined} />
           <Link href={reconnectHref()} className="btn-ember mt-5 px-6 py-3">
             Подключить заново
           </Link>
