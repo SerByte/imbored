@@ -73,6 +73,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
       nudge: null,
       nowSec: Math.floor(NOW / 1000),
       viewer: ME,
+      playtimeHidden: false,
     },
     hero: 20,
     liked: [10],
@@ -105,6 +106,15 @@ describe('parsePlayCache', () => {
   test('своя запись проходит туда и обратно через JSON', () => {
     const e = entry()
     expect(parsePlayCache(JSON.parse(JSON.stringify(e)))).toEqual(e)
+  })
+
+  test('скрытое время переживает запись; запись до этого поля — без строки о галочке', () => {
+    const e = entry()
+    const hidden = { ...e, deal: { ...e.deal, playtimeHidden: true } }
+    expect(parsePlayCache(JSON.parse(JSON.stringify(hidden)))?.deal.playtimeHidden).toBe(true)
+    const old: Record<string, unknown> = { ...e.deal }
+    delete old.playtimeHidden
+    expect(parsePlayCache({ ...e, deal: old })?.deal.playtimeHidden).toBe(false)
   })
 
   test('запись прошлой версии сайта не узнаётся', () => {

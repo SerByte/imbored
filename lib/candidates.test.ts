@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 import { buildCandidates } from './candidates'
 import { logFeedback, migrateDb, saveLibrarySnapshot, upsertGamesMeta, type Db } from './db'
 import { NEUTRAL_MOOD } from './mood'
+import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
 /**
@@ -117,5 +118,41 @@ describe('buildCandidates', () => {
     expect(focused.own.length).toBeGreaterThan(0)
     expect(focused.own.every((c) => c.source === 'untouched')).toBe(true)
     expect(focused.heroPool).toEqual(focused.own)
+  })
+
+  /*
+   * Время скрыто в Steam (lib/playtime.ts): 20 игр, у всех нули. Признак
+   * считается здесь один раз по всей библиотеке и едет дальше — в скоринг и
+   * маршрутам; вкус собран поровну, а не пуст.
+   */
+  test('скрытое время: своё — owned, вкус не пустой, признак в наборе', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, hiddenLibraryMetas(), NOW)
+    await saveLibrarySnapshot(db, ME, hiddenLibrary(), NOW)
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'library', { nowSec: NOW })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.playtimeHidden).toBe(true)
+    expect(Object.keys(set.profile).length).toBeGreaterThan(0)
+    expect(set.own.length).toBeGreaterThan(0)
+    expect(set.own.every((c) => c.source === 'owned')).toBe(true)
+  })
+
+  test('скрытое время и «нераспакованное»: фокус не находит нетронутых и отдаёт своё', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, hiddenLibraryMetas(), NOW)
+    await saveLibrarySnapshot(db, ME, hiddenLibrary(), NOW)
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'library', { nowSec: NOW, focus: 'untouched' })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.own.length).toBeGreaterThan(0)
+    expect(set.own.every((c) => c.source === 'owned')).toBe(true)
+  })
+
+  test('обычная библиотека — признака нет', async () => {
+    const db = await freshDb()
+    await seed(db)
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.playtimeHidden).toBe(false)
+    expect(set.candidates.some((c) => c.source === 'owned')).toBe(false)
   })
 })

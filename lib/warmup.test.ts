@@ -220,6 +220,23 @@ describe('факты о библиотеке в прогреве', () => {
     }
   })
 
+  // Время скрыто в Steam (lib/playtime.ts): экран говорит «время скрыто»
+  // вместо «ни разу не открывал»; старый сервер поля не несёт — молчим
+  test('признак скрытого времени — только явным true', async () => {
+    for (const [timeHidden, want] of [
+      [true, { games: 20, untouched: 0, timeHidden: true }],
+      ['да', { games: 20, untouched: 0 }],
+      [undefined, { games: 20, untouched: 0 }],
+    ] as const) {
+      const seen: Array<unknown> = []
+      await runWarmup({
+        fetchFn: sequence(reply({ remaining: 0, library: { games: 20, untouched: 0, timeHidden } })),
+        onProgress: (p) => seen.push(p.library),
+      })
+      expect(seen).toEqual([want])
+    }
+  })
+
   test('ноль игр — валидный ответ, а не отсутствие фактов', async () => {
     const seen: Array<unknown> = []
     await runWarmup({

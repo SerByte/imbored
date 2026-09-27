@@ -2,7 +2,7 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Icon, type IconName } from '@/components/Icon'
@@ -14,6 +14,7 @@ import { useSearch } from '@/components/useSearch'
 import { freshLastMood, lastMoodStore } from '@/lib/lastmood'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
+import { timeHiddenStore } from '@/lib/playtime'
 import { playHref, VIBE_PRESETS } from '@/lib/presets'
 import { STEPS } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
@@ -174,6 +175,9 @@ function Quiz() {
     () => (new URLSearchParams(search).get('from') === 'untouched' ? 'untouched' : null),
     [search],
   )
+  // Скрыто ли время в Steam — с прошлой выдачи на этом устройстве (lib/playtime)
+  const timeHidden =
+    useSyncExternalStore(timeHiddenStore.subscribe, timeHiddenStore.get, timeHiddenStore.server) === true
 
   /** Заведён ли аудиоконтекст. Общий на оба пути — иначе снос пропускает тот,
    *  что подняли не тем путём, и контекст переживает уход на выдачу. */
@@ -396,13 +400,16 @@ function Quiz() {
                 настроение, а кнопка ставит NEUTRAL_MOOD и уезжает, то есть
                 отменяет ровно то, о чём её сосед только что попросил.
               */}
+              {/* При скрытом в Steam времени нетронутого не узнать: сервер
+                  отдаёт на этот фокус всё своё, и подпись говорит, что
+                  приедет (timeHiddenStore — признак с прошлой выдачи) */}
               {!focus && (
                 <button
                   onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
                   className="pill shrink-0 py-3 text-ember-text"
                 >
                   <Icon name="box" size={16} />
-                  Ни разу не запускал
+                  {timeHidden ? 'Из своей библиотеки' : 'Ни разу не запускал'}
                 </button>
               )}
             </div>

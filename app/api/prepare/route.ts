@@ -12,6 +12,7 @@ import {
   topCatalogAppids,
   upsertGamesMeta,
 } from '@/lib/db'
+import { playtimeHidden } from '@/lib/playtime'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { isUntouched } from '@/lib/recommend'
 import {
@@ -90,10 +91,16 @@ export async function POST() {
    * есть чтения метаданных всей библиотеки на каждом вызове цикла. Прогрев
    * дёргается десятками вызовов подряд, и это ровно та статья, за которую
    * Turso берёт деньги. Сумма живёт на /library, где читается один раз.
+   *
+   * Время скрыто настройками Steam (lib/playtime.ts) — нетронутых не считаем:
+   * «из них ты не открывал ни разу» было бы сказано про всю библиотеку.
+   * Экран вместо числа говорит, что время скрыто.
    */
+  const timeHidden = playtimeHidden(snapshot.games)
   const facts = {
     games: snapshot.games.length,
-    untouched: snapshot.games.filter(isUntouched).length,
+    untouched: timeHidden ? 0 : snapshot.games.filter(isUntouched).length,
+    timeHidden,
     // Стена экрана ожидания — из того же снапшота, без запросов (lib/warmup)
     wall: libraryWall(snapshot.games),
   }

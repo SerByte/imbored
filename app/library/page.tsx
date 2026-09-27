@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
-import { PrivacyHelp } from '@/components/PrivacyHelp'
+import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
@@ -47,6 +47,7 @@ import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, pla
 import { Evenings, type EveningItem } from '@/components/Evenings'
 import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 import { pickSnapshotDelta } from '@/lib/libdelta'
+import { playtimeHidden } from '@/lib/playtime'
 
 export const metadata = {
   title: 'Библиотека',
@@ -138,6 +139,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // полке: иначе числа в шапке прыгали бы вслед за фильтром
   const games = snapshot.games
   const totalHours = Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
+  // Время скрыто настройками Steam (lib/playtime.ts): часы, «ни разу не
+  // запускал» и минуты после советов — нули галочки, а не факты
+  const timeHidden = playtimeHidden(games)
 
   // Только игры библиотеки, а не весь каталог: нужны обложки для сетки и
   // цена бэклога, и то и другое считается по своим играм.
@@ -183,8 +187,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
 
-  // Сводка — по всем советам окна, полка — по свежим (EVENINGS_SHOWN)
-  const eveningsTotal = eveningsSummary(evenings)
+  // Сводка — по всем советам окна, полка — по свежим (EVENINGS_SHOWN). При
+  // скрытом времени сверять нечем: сверенные раньше нули — не «не запускал»
+  const eveningsTotal = eveningsSummary(timeHidden ? [] : evenings)
   // Доля от трёх сверенных советов и больше: «сыграно в 100%» по одному — шум
   const honest = eveningsTotal.checked >= EVENINGS_HONEST_MIN
   const ownedNow = new Set(games.map((g) => g.appid))
@@ -197,8 +202,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
       date: dateLabel(e.shownAt),
-      played:
-        e.minutes === null
+      played: timeHidden
+        ? 'время скрыто'
+        : e.minutes === null
           ? 'ещё не сверяли'
           : e.minutes === 0
             ? e.launched
@@ -283,16 +289,27 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               </dt>
               <dd className="lib-stat">{games.length.toLocaleString('ru-RU')}</dd>
             </div>
-            <div className="flex flex-col-reverse">
-              <dt className="lib-stat-label">
-                {plural(totalHours, 'час', 'часа', 'часов')} в игре
-              </dt>
-              <dd className="lib-stat">{totalHours.toLocaleString('ru-RU')}</dd>
-            </div>
-            <div className="flex flex-col-reverse">
-              <dt className="lib-stat-label">ни разу не запускал</dt>
-              <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
-            </div>
+            {/* Время скрыто — одно слово вместо двух нулей: «0 часов» и «ни
+                разу не запускал: 300» были бы сказаны про сотни часов */}
+            {timeHidden ? (
+              <div className="flex flex-col-reverse">
+                <dt className="lib-stat-label">время в играх</dt>
+                <dd className="lib-stat">скрыто</dd>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col-reverse">
+                  <dt className="lib-stat-label">
+                    {plural(totalHours, 'час', 'часа', 'часов')} в игре
+                  </dt>
+                  <dd className="lib-stat">{totalHours.toLocaleString('ru-RU')}</dd>
+                </div>
+                <div className="flex flex-col-reverse">
+                  <dt className="lib-stat-label">ни разу не запускал</dt>
+                  <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
+                </div>
+              </>
+            )}
           </dl>
           {/*
             С прошлого снимка — без «было X, стало Y» рядом с числами выше:
@@ -345,6 +362,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       </section>
 
       <div className="mx-auto w-full max-w-6xl px-5 pt-10 pb-16">
+
+      {/* Список открыт, а часы — нет: ошибки private тут не бывает, и панель
+          ниже этот человек не увидит никогда. Шаг — тот же, что в ней. */}
+      {timeHidden && <PlaytimeHiddenNote className="mb-10 max-w-2xl" />}
 
       {/*
         ПУСТАЯ БИБЛИОТЕКА — НЕ ПУСТАЯ ПОЛКА.
@@ -580,7 +601,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           функции на один просмотр ради фильтров, которые откроют один раз.
           id — цель ссылки с полки «запечатанного»: приводить к фильтру,
           не показав самих чипсов, значит приводить в никуда. */}
-      {games.length > 0 && (
+      {games.length > 0 && !timeHidden && (
       /* Пилюлями, лентой на телефоне. Полоса липкая: смузер теперь живёт
          только на главной, и sticky здесь снова держится (.lib-filters).
          Липкая подложка и лента — два разных элемента: маска ленты
@@ -607,13 +628,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           полка, и без него человек с ?state=active получил бы два сообщения
           сразу — «за две недели ты не запускал ничего» поверх «Steam не отдал
           ни одной игры». */}
-      {games.length > 0 && view.games.length === 0 && filter !== 'all' && (
-        <p className="text-dim text-sm">{SHELF_EMPTY[filter]}</p>
+      {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && (
+        <p className="text-dim text-sm">{SHELF_EMPTY[view.filter]}</p>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-6">
         {wall.shown.map((g) => {
-          const state = wallState(g, metas.get(g.appid), now)
+          const state = wallState(g, metas.get(g.appid), now, timeHidden)
           const label = STATE_LABEL[state]
           const hours = Math.round(g.playtimeForever / 60)
           return (
@@ -648,9 +669,14 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                 sizes="(min-width: 768px) 25vw, 50vw"
                 meta={
                   <>
-                    <span className="tabular-nums">
-                      {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
-                    </span>
+                    {/* При скрытом времени — без числа: «0 ч» на каждой плитке
+                        было бы неправдой, а «скрыто» сорок восемь раз подряд —
+                        шумом; это сказано один раз, в шапке */}
+                    {!timeHidden && (
+                      <span className="tabular-nums">
+                        {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
+                      </span>
+                    )}
                     {label.text && <span className={`truncate ${label.cls}`}>{label.text}</span>}
                   </>
                 }
@@ -672,7 +698,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {wall.nextPage !== null && (
         <div className="mt-8 flex justify-center">
           <Link
-            href={libraryHref(filter, wall.nextPage)}
+            href={libraryHref(view.filter, wall.nextPage)}
             scroll={false}
             prefetch={false}
             className="btn-glass"

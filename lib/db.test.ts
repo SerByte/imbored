@@ -139,6 +139,7 @@ import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC } from './outcome'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
+import { hiddenLibrary } from './testing/hiddenlibrary'
 import type { GameMeta, GameSemantics, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
@@ -3844,6 +3845,91 @@ describe('исход совета', () => {
       [888, NOW - DAY + 60, null, null, 0, NOW],
       [999, NOW - DAY + 60, null, 45, 1, NOW],
     ])
+  })
+
+  // Время скрыто в Steam (lib/playtime.ts): нули галочки записались бы как
+  // «не запускал», и «Твои вечера» сказали бы это про каждый совет
+  test('скрытое время: снапшот из нулей советы не сверяет', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - DAY)
+    await recordOutcome(db, { steamid: ME, appid: 620, source: 'untouched', launched: true }, NOW - DAY + 60)
+    const hidden = [...hiddenLibrary(), { ...LIB[1]!, playtimeForever: 0 }]
+    expect(await fillOutcomesFromSnapshot(db, ME, hidden, NOW)).toBe(0)
+    expect((await outcomeRows(db))[0]).toMatchObject({ after: null, checkedAt: null })
+  })
+
+  // Снял галочку и подключил библиотеку заново — ровно то, что советует
+  // PlaytimeHiddenNote. Минуты до, записанные при скрытом времени, — ноль
+  // галочки, и первая сверка засчитала бы «после совета» все часы за жизнь
+  test('скрытое время → открытое: минуты до перебазируются, «как тебе?» не спрашивается', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const hidden = [...hiddenLibrary(), { ...LIB[1]!, playtimeForever: 0 }]
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 3 * DAY)
+    await launch(db, 620, NOW - 3 * DAY + 60)
+    // вторая сверка при скрытом времени — пропуск, строка ждёт открытого
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 2 * DAY)
+    const open = hidden.map((g) => ({ ...g, playtimeForever: g.appid === 620 ? 30_000 : 600 }))
+    await saveLibrarySnapshot(db, ME, open, NOW - DAY)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 30_000, after: null, checkedAt: null })
+    expect(await pendingOutcomeAsk(db, ME, NOW - DAY)).toBeNull()
+    // «Твои вечера»: не сверено, а не «500 ч после совета»
+    expect((await listEvenings(db, ME, NOW - 30 * DAY))[0]?.minutes).toBeNull()
+
+    // Следующий открытый снапшот сверяет уже от перебазированных минут
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      open.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 30_040 } : g)),
+      NOW,
+    )
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 40, bought: false })
+  })
+
+  // Переход: строки, записанные до правила «скрытое не сверяем», код тех дней
+  // уже сверил по нулям — ноль до, ноль после, отметка стоит
+  test('сверенная по нулям скрытого снапшота строка тоже перебазируется', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const hidden = [...hiddenLibrary(), { ...LIB[1]!, playtimeForever: 0 }]
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 3 * DAY)
+    await launch(db, 620, NOW - 3 * DAY + 60)
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 2 * DAY)
+    // так сверял прежний fillOutcomesFromSnapshot
+    await db.execute({
+      sql: 'UPDATE outcomes SET minutes_after = 0, owned_after = 1, checked_at = ? WHERE steamid = ? AND appid = 620',
+      args: [NOW - 2 * DAY, ME],
+    })
+    const open = hidden.map((g) => ({ ...g, playtimeForever: g.appid === 620 ? 30_000 : 600 }))
+    await saveLibrarySnapshot(db, ME, open, NOW - DAY)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 30_000, after: null, owned: null, checkedAt: null })
+    expect(await pendingOutcomeAsk(db, ME, NOW - DAY)).toBeNull()
+    expect((await listEvenings(db, ME, NOW - 30 * DAY))[0]?.minutes).toBeNull()
+  })
+
+  // Ноль после при открытом прежнем снапшоте — тоже правда: не запускал тогда,
+  // сыграл теперь. Такая строка сверяется обычным путём
+  test('сверенный ноль при открытом прежнем снапшоте — не перебазируется', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const untouched = LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 0 } : g))
+    await saveLibrarySnapshot(db, ME, untouched, NOW - 2 * DAY)
+    await launch(db, 620, NOW - 2 * DAY + 60)
+    await saveLibrarySnapshot(db, ME, untouched, NOW - DAY)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 0, after: 0, checkedAt: NOW - DAY })
+    await saveLibrarySnapshot(db, ME, LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 90 } : g)), NOW)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 0, after: 90, checkedAt: NOW })
+  })
+
+  test('ноль до при открытом прежнем снапшоте — правда: сверяется как обычно', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const untouched = LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 0 } : g))
+    await saveLibrarySnapshot(db, ME, untouched, NOW - DAY)
+    await launch(db, 620, NOW - DAY + 60)
+    await saveLibrarySnapshot(db, ME, LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 90 } : g)), NOW)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 0, after: 90, checkedAt: NOW })
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 90 })
   })
 
   test('строка моложе снапшота не сверяется: совет ещё ни во что не превратился', async () => {

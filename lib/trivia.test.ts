@@ -8,6 +8,7 @@ import {
   type TriviaCatalogGame,
   type TriviaParty,
 } from './trivia'
+import { hiddenLibrary } from './testing/hiddenlibrary'
 import type { LibraryGame } from './types'
 
 function game(appid: number, name: string, over: Partial<TriviaCatalogGame> = {}): TriviaCatalogGame {
@@ -120,6 +121,20 @@ describe('buildTrivia', () => {
     const qs = buildTrivia({ seed: 'r:1:0', catalog: CATALOG, party: PARTY })
     for (const q of qs.filter((x) => x.kind === 'hours')) {
       expect(q.options[q.answer].label).toBe('Аня') // 300ч в Dota 2 против 20ч
+    }
+  })
+
+  // Время скрыто в Steam (lib/playtime.ts): нули у всех игр — не топ и не
+  // «меньше часов», а галочка. Про такого участника спрашивать не о чем
+  test('участник со скрытым временем не загадывается ни топом, ни часами', () => {
+    const hidden: TriviaParty = { steamid: 'c', name: 'Вика', library: hiddenLibrary() }
+    for (let round = 0; round < 20; round++) {
+      const qs = buildTrivia({ seed: `r:2:${round}`, catalog: CATALOG, party: [PARTY[0], hidden] })
+      for (const q of qs.filter((x) => x.kind === 'toptrio' || x.kind === 'hours')) {
+        expect(q.options[q.answer].label, q.prompt).not.toBe('Вика')
+      }
+      // у второго — ни одной наигранной игры: «у кого больше часов» не с кем сравнить
+      expect(qs.some((q) => q.kind === 'hours')).toBe(false)
     }
   })
 

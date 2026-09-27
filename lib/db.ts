@@ -13,6 +13,7 @@ import {
 import { isDeadReason } from './liveness'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
+import { minutesHidden, playtimeHidden } from './playtime'
 import {
   OUTCOME_PLAYED_MIN,
   OUTCOME_TTL_SEC,
@@ -1170,7 +1171,8 @@ export async function getUserCard(
   }
 }
 
-export type PortraitCache = { takenAt: number; text: string }
+/** v — версия промпта, которым написан текст (PORTRAIT_TEXT_V в lib/portraitvoice) */
+export type PortraitCache = { takenAt: number; text: string; v?: number }
 
 export async function setUserPortrait(
   db: Db,
@@ -1944,6 +1946,21 @@ export async function getLibraryBaseline(
   return { takenAt: row.taken_at, games: JSON.parse(row.games_json) as LibraryGame[] }
 }
 
+/** Пары [appid, минуты] снимка — собираются в SQL, см. getOlderSnapshotMinutes */
+const SNAPSHOT_MINUTE_PAIRS = `(SELECT json_group_array(json_array(json_extract(value, '$.appid'),
+                                                     json_extract(value, '$.playtimeForever')))
+                    FROM json_each(games_json))`
+
+function minutesFromPairs(raw: string | null): Map<number, number> {
+  let pairs: Array<[number, number]> = []
+  try {
+    pairs = JSON.parse(raw ?? '[]') as Array<[number, number]>
+  } catch {
+    // битый блоб — как пустой снимок: точкой отсчёта он не станет
+  }
+  return new Map(pairs.map(([appid, min]) => [Number(appid), Number(min) || 0]))
+}
+
 /**
  * Прежние снимки библиотеки (все, кроме последнего) — для строки «с прошлого
  * снимка» на /library (pickSnapshotDelta в lib/libdelta).
@@ -1961,26 +1978,15 @@ export async function getOlderSnapshotMinutes(
   steamid: string,
 ): Promise<Array<{ takenAt: number; minutes: Map<number, number> }>> {
   const res = await db.execute({
-    sql: `SELECT taken_at,
-                 (SELECT json_group_array(json_array(json_extract(value, '$.appid'),
-                                                     json_extract(value, '$.playtimeForever')))
-                    FROM json_each(games_json)) AS pairs
+    sql: `SELECT taken_at, ${SNAPSHOT_MINUTE_PAIRS} AS pairs
           FROM library_snapshots WHERE steamid = ?
           ORDER BY taken_at DESC, id DESC LIMIT ${SNAPSHOTS_KEPT - 1} OFFSET 1`,
     args: [steamid],
   })
-  return (res.rows as unknown as Array<{ taken_at: number; pairs: string | null }>).map((r) => {
-    let pairs: Array<[number, number]> = []
-    try {
-      pairs = JSON.parse(r.pairs ?? '[]') as Array<[number, number]>
-    } catch {
-      // битый блоб — как пустой снимок: точкой отсчёта он не станет
-    }
-    return {
-      takenAt: Number(r.taken_at),
-      minutes: new Map(pairs.map(([appid, min]) => [Number(appid), Number(min) || 0])),
-    }
-  })
+  return (res.rows as unknown as Array<{ taken_at: number; pairs: string | null }>).map((r) => ({
+    takenAt: Number(r.taken_at),
+    minutes: minutesFromPairs(r.pairs),
+  }))
 }
 
 /**
@@ -4390,7 +4396,9 @@ export async function unlikeGame(db: Db, steamid: string, appid: number): Promis
 /**
  * Совет приняли в работу: запуск или переход в магазин. Строка исхода с
  * минутами до — из последнего снапшота, одним запросом, без блоба библиотеки
- * в функции (тот же приём, что у snapshotOwns).
+ * в функции (тот же приём, что у snapshotOwns). При скрытом в Steam времени
+ * (lib/playtime.ts) минуты до — ноль галочки; их перебазирует первый
+ * открытый снапшот (см. fillOutcomesFromSnapshot).
  *
  * Одна строка на игру в окне OUTCOME_WINDOW_SEC: повторный запуск той же игры
  * через три дня — не новый совет, а продолжение старого, и минуты считаются
@@ -4455,13 +4463,37 @@ export async function recordOutcome(
 }
 
 /**
- * Свежий снапшот → минуты после у советов последних двух недель.
+ * Свежий снапшот → минуты после у советов последних двух недель. Отдаёт,
+ * сколько строк сверено.
  *
  * Строки моложе снапшота не трогаются: совет, данный в ту же секунду, ещё не
  * успел ни во что превратиться. Минуты перезаписываются каждым снапшотом окна
  * — в строке всегда последнее, что известно. Игры нет в библиотеке —
  * minutes_after NULL и owned_after 0: так выглядит «посмотрел в магазине и не
  * купил».
+ *
+ * Время скрыто настройками Steam (lib/playtime.ts) — не сверяем вовсе: нули
+ * галочки записались бы как «не запускал», и «Твои вечера» сказали бы это про
+ * каждый совет. Несверенная строка честнее: «ещё не сверяли».
+ *
+ * ПЕРВЫЙ ОТКРЫТЫЙ СНАПШОТ ПОСЛЕ СКРЫТОГО. Совет, принятый при скрытом
+ * времени, записал минуты до из снапшота-нулей (recordOutcome), и первая же
+ * сверка засчитала бы «после совета» все часы игры за жизнь: «Как тебе X?
+ * 500 ч с тех пор, как мы её предложили». Путь сюда — подсказка
+ * PlaytimeHiddenNote: снял галочку, подключил библиотеку заново. Поэтому такие
+ * строки не сверяются, а перебазируются: минуты до — нынешние, минуты после
+ * и отметка сверки — пусто, сверит следующий снапшот окна. Сыгранное между
+ * советом и снятием галочки при этом теряется — его и правда не узнать, а
+ * «не узнали» честнее «пятисот часов».
+ *
+ * Какие строки такие, видно без отметки в схеме: ноль до, с минутами теперь,
+ * а после — либо ничего (скрытые снапшоты сверку пропускают), либо тоже ноль:
+ * так строку сверил по нулям код до этого правила, и такие строки ещё живут в
+ * окне. И прежний снапшот скрытый. Прежний снапшот читается, только когда
+ * такие строки есть: у остальных людей сверка обходится без лишнего запроса.
+ * Под правило попадает и совет по нетронутой игре, данный при открытом
+ * времени, если до первой игры в неё галочку поставили и сняли, — редкость, и
+ * ошибка там в ту же сторону: недосчитали, а не приписали.
  */
 export async function fillOutcomesFromSnapshot(
   db: Db,
@@ -4469,25 +4501,72 @@ export async function fillOutcomesFromSnapshot(
   games: LibraryGame[],
   nowSec: number,
 ): Promise<number> {
+  if (playtimeHidden(games)) return 0
   const res = await db.execute({
-    sql: 'SELECT appid, shown_at FROM outcomes WHERE steamid = ? AND shown_at >= ? AND shown_at < ?',
+    sql: `SELECT appid, shown_at, minutes_before, minutes_after, checked_at FROM outcomes
+           WHERE steamid = ? AND shown_at >= ? AND shown_at < ?`,
     args: [steamid, nowSec - OUTCOME_WINDOW_SEC, nowSec],
   })
   if (!res.rows.length) return 0
   const byAppid = new Map(games.map((g) => [g.appid, g]))
+  const rows = (
+    res.rows as unknown as Array<{
+      appid: number
+      shown_at: number
+      minutes_before: number | null
+      minutes_after: number | null
+      checked_at: number | null
+    }>
+  ).map((r) => ({
+    appid: Number(r.appid),
+    shownAt: Number(r.shown_at),
+    // Ноль до при минутах теперь, а после — не сверено или тоже ноль: возможно,
+    // ноль галочки (второе — сверка по нулям кодом до этого правила)
+    suspect:
+      r.minutes_before !== null &&
+      Number(r.minutes_before) === 0 &&
+      (r.checked_at === null || Number(r.minutes_after) === 0) &&
+      (byAppid.get(Number(r.appid))?.playtimeForever ?? 0) > 0,
+  }))
+  const rebase = rows.some((r) => r.suspect) && (await snapshotTimeHiddenBefore(db, steamid, nowSec))
+  const moved = (r: (typeof rows)[number]) => rebase && r.suspect
   await db.batch(
-    (res.rows as unknown as Array<{ appid: number; shown_at: number }>).map((r) => {
-      const appid = Number(r.appid)
-      const g = byAppid.get(appid)
+    rows.map((r) => {
+      const g = byAppid.get(r.appid)
+      if (moved(r)) {
+        // Сверку по нулям — назад в «ещё не сверяли»: иначе «Твои вечера» так
+        // и показывали бы «не запускал» до следующего снапшота
+        return {
+          sql: `UPDATE outcomes SET minutes_before = ?, minutes_after = NULL, owned_after = NULL, checked_at = NULL
+                 WHERE steamid = ? AND appid = ? AND shown_at = ?`,
+          args: [g!.playtimeForever, steamid, r.appid, r.shownAt],
+        }
+      }
       return {
         sql: `UPDATE outcomes SET minutes_after = ?, owned_after = ?, checked_at = ?
                WHERE steamid = ? AND appid = ? AND shown_at = ?`,
-        args: [g ? g.playtimeForever : null, g ? 1 : 0, nowSec, steamid, appid, Number(r.shown_at)],
+        args: [g ? g.playtimeForever : null, g ? 1 : 0, nowSec, steamid, r.appid, r.shownAt],
       }
     }),
     'write',
   )
-  return res.rows.length
+  return rows.filter((r) => !moved(r)).length
+}
+
+/**
+ * Было ли время скрыто (lib/playtime.ts) в снапшоте до nowSec — последнем
+ * перед только что записанным. Парами минут, а не блобом: см.
+ * getOlderSnapshotMinutes. Снапшота нет — не скрыто: сравнивать не с чем.
+ */
+async function snapshotTimeHiddenBefore(db: Db, steamid: string, nowSec: number): Promise<boolean> {
+  const res = await db.execute({
+    sql: `SELECT ${SNAPSHOT_MINUTE_PAIRS} AS pairs
+          FROM library_snapshots WHERE steamid = ? AND taken_at < ?
+          ORDER BY taken_at DESC, id DESC LIMIT 1`,
+    args: [steamid, nowSec],
+  })
+  const row = res.rows[0] as unknown as { pairs: string | null } | undefined
+  return row ? minutesHidden(minutesFromPairs(row.pairs)) : false
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { buildPortrait } from './portrait'
+import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
 function lib(appid: number, hours: number): LibraryGame {
@@ -17,6 +18,24 @@ const METAS = new Map<number, GameMeta>([
   [4, meta(4, { Zorkovka: 100 })], // неизвестный тег — фолбэк-лейбл
 ])
 const metaOf = (id: number) => METAS.get(id)
+
+describe('buildPortrait при скрытом времени', () => {
+  const metas = new Map(hiddenLibraryMetas().map((m) => [m.appid, m]))
+
+  test('20 игр с нулями: архетипы по всей библиотеке, «не запущено» не считается', () => {
+    const p = buildPortrait(hiddenLibrary(), (id) => metas.get(id))
+    expect(p.facts.playtimeHidden).toBe(true)
+    expect(p.facts.unplayedCount).toBe(0)
+    expect(p.facts.topGame).toBeNull()
+    expect(p.archetypes.map((a) => a.label)).toEqual(
+      expect.arrayContaining(['рогалик-энтузиаст', 'строитель фабрик']),
+    )
+  })
+
+  test('обычная библиотека — признака нет', () => {
+    expect(buildPortrait([lib(1, 300), lib(2, 0)], metaOf).facts.playtimeHidden).toBe(false)
+  })
+})
 
 describe('buildPortrait', () => {
   test('архетипы: проценты в сумме ~100, известные лейблы по-русски', () => {

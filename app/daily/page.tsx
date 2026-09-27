@@ -25,7 +25,7 @@ import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
 import { bounceTo, reconnectHref } from '@/lib/destination'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
-import { SOURCE_BADGE } from '@/lib/sources'
+import { SOURCE_BADGE, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
@@ -567,10 +567,11 @@ export default function DailyPage() {
                 {rerollMiss}
               </p>
             )}
-            {/* Своя нетронутая или заброшенная скорее всего не установлена —
-                поставить на загрузку можно сейчас, к вечеру она будет готова
-                (steam://install). План, а не оценка: вкус его не видит */}
-            {(hero.source === 'untouched' || hero.source === 'comeback') && !hero.storeUrl && (
+            {/* Своя нетронутая или заброшенная (и любая своя при скрытом
+                времени) скорее всего не установлена — поставить на загрузку
+                можно сейчас, к вечеру она будет готова (steam://install,
+                suggestsInstall). План, а не оценка: вкус его не видит */}
+            {suggestsInstall(hero.source) && !hero.storeUrl && (
               <p className="-mt-1 text-xs text-faint">
                 <SteamLaunch
                   appid={hero.appid}

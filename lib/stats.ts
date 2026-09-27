@@ -1,4 +1,5 @@
 import { looksLikeNonGame } from './junk'
+import { playtimeHidden } from './playtime'
 import { plural } from './plural'
 import { classifyLibraryGame } from './recommend'
 import type { GameMeta, LibraryGame } from './types'
@@ -9,12 +10,18 @@ import type { GameMeta, LibraryGame } from './types'
  * Не-игры (looksLikeNonGame) в бэклог не входят: саундтрек за $9.99 с нулём
  * минут добавлял себя и к счётчику, и к «сгоревшим» деньгам, хотя /play тот же
  * саундтрек бэклогом не считает. Мёртвая сетевая игра входит — она куплена.
+ *
+ * Время скрыто настройками Steam (lib/playtime.ts) — бэклога нет: «несыгранной»
+ * тогда выглядит вся библиотека, и сумма за неё была бы суммой за всё
+ * купленное, названной долгом. Нули гасят и карточку на /library, и строку
+ * денег на портрете.
  */
 export function backlogValue(
   library: LibraryGame[],
   metaOf: (appid: number) => GameMeta | undefined,
   nowSec: number,
 ): { cents: number; pricedCount: number; unplayedCount: number } {
+  if (playtimeHidden(library)) return { cents: 0, pricedCount: 0, unplayedCount: 0 }
   let cents = 0
   let pricedCount = 0
   let unplayedCount = 0

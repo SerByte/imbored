@@ -25,6 +25,38 @@ export type PortraitFacts = {
   totalHours: number
   unplayedCount: number
   topGame: { name: string; sharePercent: number } | null
+  /**
+   * Время скрыто настройками Steam (lib/playtime.ts): «за плечами 0 часов»
+   * — не факт, а галочка. Необязательно — без него всё как было.
+   */
+  playtimeHidden?: boolean
+}
+
+/**
+ * Версия текста портрета, который пишет модель (users.portrait_json, см.
+ * app/portrait/[steamid]/page.tsx). Текст привязан к снапшоту и живёт, пока
+ * снапшот не сменится, — у того, кто больше не заходит, сколько угодно.
+ *
+ * 2 — промпт узнал о скрытом времени (lib/playtime.ts). Текст, написанный
+ * раньше по библиотеке из нулей, обыгрывал «0 часов, 200 игр так и не
+ * запущены» и висел бы на расшаренной ссылке до следующего захода владельца.
+ * Записи без версии — первая.
+ */
+export const PORTRAIT_TEXT_V = 2
+
+/**
+ * Годится ли записанный текст: снапшот тот же, и текст написан тем промптом,
+ * который знает о скрытом времени, — если оно скрыто. При открытом времени
+ * промпт не менялся, и старый текст годится: пересобрать разом все портреты
+ * значило бы звать модель на каждый первый заход по каждой ссылке.
+ */
+export function portraitTextFresh(
+  cached: { takenAt: number; v?: number },
+  snapshotAt: number,
+  playtimeHidden: boolean,
+): boolean {
+  if (cached.takenAt !== snapshotAt) return false
+  return !playtimeHidden || (cached.v ?? 1) >= PORTRAIT_TEXT_V
 }
 
 /** Начало фразы про 80% времени: «… — это N игр из M» */
@@ -87,6 +119,16 @@ export function portraitFallbackText(
         ? `${name}, ты на ${a.percent}% ${a.label} и на ${b.percent}% ${b.label}.`
         : `${name} на ${a.percent}% ${a.label} и на ${b.percent}% ${b.label}.`,
     )
+  }
+  if (facts.playtimeHidden) {
+    // Ни часов, ни нераспакованного, ни любимой игры по доле — только то, что
+    // известно: сколько игр и почему про время молчим. «Похоже» — признак
+    // угадан по нулям (lib/playtime.ts) и бывает ложным: десять подаренных и
+    // ни разу не запущенных игр выглядят так же, а текст публичный
+    parts.push(
+      `В библиотеке ${facts.gamesCount} ${plural(facts.gamesCount, 'игра', 'игры', 'игр')}, а время в них, похоже, скрыто настройками Steam.`,
+    )
+    return parts.join(' ')
   }
   const hours = `${facts.totalHours.toLocaleString('ru-RU')} ${plural(facts.totalHours, 'час', 'часа', 'часов')}`
   const games = `${facts.gamesCount} ${plural(facts.gamesCount, 'игре', 'играх', 'играх')}`

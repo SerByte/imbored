@@ -222,6 +222,7 @@ async function selectDaily(
         anchorOf: ctx.anchorOf,
         hoursOf: ctx.hoursOf,
         hideUrgency,
+        playtimeHidden: set.playtimeHidden,
       })[0]?.reason ?? ''
     // В запись уходит причина БЕЗ ценового хвоста: heuristicPicks клеит его
     // последним (reasonPrice), и на каждом заходе он пересчитывается по свежей

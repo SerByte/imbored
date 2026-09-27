@@ -6,6 +6,8 @@ import {
   eraLead,
   paretoLead,
   portraitFallbackText,
+  portraitTextFresh,
+  PORTRAIT_TEXT_V,
   socialTail,
   unplayedHeading,
   type PortraitVoice,
@@ -30,6 +32,43 @@ const ARCH = [
   { label: 'строитель', percent: 46 },
   { label: 'стратег', percent: 30 },
 ]
+
+describe('запасной текст при скрытом времени', () => {
+  const hidden = { gamesCount: 20, totalHours: 0, unplayedCount: 0, topGame: null, playtimeHidden: true }
+
+  test('ни «0 часов», ни нераспакованного — только сколько игр и почему про время молчим', () => {
+    for (const voice of ['you', 'them'] as const) {
+      const text = portraitFallbackText('Аня', ARCH, hidden, voice)
+      expect(text).toContain('В библиотеке 20 игр, а время в них, похоже, скрыто настройками Steam.')
+      expect(text).not.toMatch(/0 часов|распаков/)
+    }
+    expect(portraitFallbackText('Аня', ARCH, hidden, 'them')).not.toMatch(ADDRESS)
+  })
+})
+
+/**
+ * Текст модели записан по снапшоту и живёт, пока тот не сменится. Написанный
+ * до того, как промпт узнал о скрытом времени, говорил «0 часов» — и висел бы
+ * на расшаренной ссылке у того, кто больше не заходит.
+ */
+describe('записанный текст портрета', () => {
+  const AT = 1_780_000_000
+
+  test('при скрытом времени старый текст не годится, новый — годится', () => {
+    expect(portraitTextFresh({ takenAt: AT }, AT, true)).toBe(false)
+    expect(portraitTextFresh({ takenAt: AT, v: 1 }, AT, true)).toBe(false)
+    expect(portraitTextFresh({ takenAt: AT, v: PORTRAIT_TEXT_V }, AT, true)).toBe(true)
+  })
+
+  test('при открытом времени старый текст годится: промпт для него не менялся', () => {
+    expect(portraitTextFresh({ takenAt: AT }, AT, false)).toBe(true)
+  })
+
+  test('другой снапшот — не годится никакой', () => {
+    expect(portraitTextFresh({ takenAt: AT, v: PORTRAIT_TEXT_V }, AT + 60, false)).toBe(false)
+    expect(portraitTextFresh({ takenAt: AT, v: PORTRAIT_TEXT_V }, AT + 60, true)).toBe(false)
+  })
+})
 
 describe('голос портрета', () => {
   test('гостю — ни одного обращения на «ты»', () => {

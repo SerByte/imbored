@@ -50,6 +50,7 @@ import { DEMO_METAS, demoLibrary } from './demo'
 import { LEANS, NEUTRAL_MOOD, type Lean } from './mood'
 import { NUDGES, planNudge } from './nudge'
 import { tagWeightFrom } from './tagweight'
+import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, GameSemantics, LibraryGame, Mood, ScoredCandidate } from './types'
 
 const NOW = 1_700_000_000
@@ -159,6 +160,93 @@ describe('buildTagProfile', () => {
     )
     expect(Object.keys(profile)).toEqual(['Puzzle'])
     expect(Number.isFinite(profile.Puzzle)).toBe(true)
+  })
+})
+
+/**
+ * Время скрыто в Steam (lib/playtime.ts): у каждой игры ноль минут. Лог часов
+ * давал вкусу ноль, и подбор откатывался на популярность; теперь каждая игра
+ * весит поровну.
+ */
+describe('buildTagProfile при скрытом времени', () => {
+  const metas = new Map(hiddenLibraryMetas().map((m) => [m.appid, m]))
+  const metaOf = (id: number) => metas.get(id)
+
+  test('20 игр с нулями — вкус не пустой, и каждая игра весит поровну', () => {
+    const profile = buildTagProfile(hiddenLibrary(), metaOf)
+    // Три жанра по кругу на 20 игр: 7, 7 и 6 — ровно столько и весят
+    expect(profile.Roguelike).toBe(7)
+    expect(profile.Automation).toBe(7)
+    expect(profile['Story Rich']).toBe(6)
+  })
+
+  test('мусор при равных весах не весит ничего', () => {
+    const lib = hiddenLibrary()
+    lib[0] = { ...lib[0], name: 'Игра — Original Soundtrack' }
+    const profile = buildTagProfile(lib, metaOf)
+    expect(profile.Roguelike).toBe(6)
+  })
+
+  test('игра прямо сейчас весит больше и при скрытом времени', () => {
+    const lib = hiddenLibrary()
+    lib[1] = { ...lib[1], playtime2Weeks: 120 }
+    // appid 1001 — второй жанр по кругу: 6 обычных и одна ×1.5
+    expect(buildTagProfile(lib, metaOf).Automation).toBe(7.5)
+  })
+
+  test('обычная библиотека — прежний лог часов, нулевые игры не весят', () => {
+    const lib = hiddenLibrary()
+    lib[0] = { ...lib[0], playtimeForever: 600 }
+    const profile = buildTagProfile(lib, metaOf)
+    expect(profile.Roguelike).toBeCloseTo(Math.log1p(10))
+    expect(profile.Automation).toBeUndefined()
+  })
+})
+
+describe('scoreCandidates при скрытом времени', () => {
+  const metas = new Map(hiddenLibraryMetas().map((m) => [m.appid, m]))
+  const catalog = meta(99, { Roguelike: 100 })
+  const metaOf = (id: number) => metas.get(id) ?? (id === 99 ? catalog : undefined)
+  const score = (library: LibraryGame[], playtimeHidden: boolean) =>
+    scoreCandidates({
+      profile: buildTagProfile(library, metaOf),
+      library,
+      metaOf,
+      newPool: [catalog],
+      mood: NEUTRAL_MOOD,
+      nowSec: NOW,
+      limit: 50,
+      playtimeHidden,
+    })
+
+  test('своё идёт источником owned с единичным весом, а не «ни разу не запускал»', () => {
+    const out = score(hiddenLibrary(), true)
+    const own = out.filter((c) => c.source !== 'new')
+    expect(own).toHaveLength(20)
+    expect(new Set(own.map((c) => c.source))).toEqual(new Set(['owned']))
+    for (const c of own) expect(c.parts?.source).toBe(1)
+    // каталог как был
+    expect(out.find((c) => c.appid === 99)?.source).toBe('new')
+  })
+
+  test('без флага те же нули — прежняя раскладка в untouched', () => {
+    const own = score(hiddenLibrary(), false).filter((c) => c.source !== 'new')
+    expect(new Set(own.map((c) => c.source))).toEqual(new Set(['untouched']))
+  })
+
+  test('то, во что он играет сейчас, в кандидаты не идёт и при скрытом времени', () => {
+    const lib = hiddenLibrary()
+    lib[3] = { ...lib[3], playtime2Weeks: 45 }
+    expect(score(lib, true).some((c) => c.appid === lib[3].appid)).toBe(false)
+  })
+
+  test('вкус не пустой — порядок не по популярности', () => {
+    const out = score(hiddenLibrary(), true)
+    // Популярность у всех троих жанров одна (180 голосов), а вкус — косинус
+    // с профилем: жанры 7/7/6 дают третьему заметно меньший taste
+    const tasteOf = (appid: number) => out.find((c) => c.appid === appid)?.parts?.taste ?? Number.NaN
+    expect(tasteOf(1002)).toBeGreaterThan(0)
+    expect(tasteOf(1000)).toBeGreaterThan(tasteOf(1002))
   })
 })
 
@@ -2050,16 +2138,24 @@ describe('pickContinue', () => {
 
 describe('hideUrgencyFor', () => {
   const metaOf = (appid: number) => meta(appid, { Action: 10 })
+  // Одна наигранная игра рядом с нераспакованными обязательна: библиотека из
+  // одних нулей — это уже не бэклог, а скрытое в Steam время (lib/playtime.ts),
+  // и у неё свой тест ниже
+  const played = game({ appid: 9999, playtimeForever: 600 })
   const untouched = (n: number, from = 1) =>
     Array.from({ length: n }, (_, i) => game({ appid: from + i }))
 
   test('больше тридцати нераспакованных — срок распродажи прячем', () => {
-    expect(hideUrgencyFor(untouched(URGENCY_UNTOUCHED_MAX + 1), metaOf)).toBe(true)
+    expect(hideUrgencyFor([played, ...untouched(URGENCY_UNTOUCHED_MAX + 1)], metaOf)).toBe(true)
   })
 
   test('ровно тридцать и меньше — срок на месте', () => {
-    expect(hideUrgencyFor(untouched(URGENCY_UNTOUCHED_MAX), metaOf)).toBe(false)
+    expect(hideUrgencyFor([played, ...untouched(URGENCY_UNTOUCHED_MAX)], metaOf)).toBe(false)
     expect(hideUrgencyFor([], metaOf)).toBe(false)
+  })
+
+  test('время скрыто в Steam — нули не бэклог, и срок на месте', () => {
+    expect(hideUrgencyFor(untouched(URGENCY_UNTOUCHED_MAX + 10), metaOf)).toBe(false)
   })
 
   test('считаются только ни разу не запущенные и не мусор', () => {

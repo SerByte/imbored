@@ -104,6 +104,13 @@ export type Deal = {
    * по чужой библиотеке показывать нельзя. null — сервер старой версии.
    */
   viewer: string | null
+  /**
+   * Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера. Страница
+   * говорит об этом строкой с шагом, как открыть. false — и у сервера старой
+   * версии, и у записи на устройстве до этого поля: промолчать про галочку
+   * лучше, чем заявить о ней без повода.
+   */
+  playtimeHidden: boolean
 }
 
 /**
@@ -122,6 +129,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     continue?: unknown
     nowSec?: unknown
     viewer?: unknown
+    playtimeHidden?: unknown
   }
   if (!Array.isArray(d.picks) || d.picks.length === 0) return null
   return {
@@ -135,6 +143,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     nudge: parseNudge(d.nudge),
     nowSec: typeof d.nowSec === 'number' && Number.isFinite(d.nowSec) ? d.nowSec : 0,
     viewer: typeof d.viewer === 'string' && d.viewer ? d.viewer : null,
+    playtimeHidden: d.playtimeHidden === true,
   }
 }
 

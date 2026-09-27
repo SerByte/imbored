@@ -92,6 +92,7 @@ export async function GET(req: Request) {
       anchorOf: ctx.anchorOf,
       hoursOf: ctx.hoursOf,
       hideUrgency: ctx.hideUrgency,
+      playtimeHidden: set.playtimeHidden,
     }).map((p) => [p.appid, p]),
   )
 

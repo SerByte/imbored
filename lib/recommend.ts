@@ -3,6 +3,7 @@ import { editionKey } from './editions'
 import { entryCost } from './entry'
 import { isJunk } from './junk'
 import { VIBE_TAGS, type Lean } from './mood'
+import { playtimeHidden } from './playtime'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
 import { isMultiplayerCategories } from './steamcats'
 import {
@@ -189,17 +190,42 @@ export function topTags(meta: GameMeta | undefined, n = 4): string[] {
     .map(([t]) => t)
 }
 
+/**
+ * Сколько своя игра весит во вкусе: лог часов, ×1.5 за игру прямо сейчас.
+ *
+ * hidden — время скрыто настройками Steam (lib/playtime.ts). Тогда часов нет
+ * ни у одной игры, и лог даёт ноль всей библиотеке: вкус пустел, и подбор
+ * откатывался на популярность — то есть на жребий, раз у заметных игр она
+ * насыщается почти поголовно. Равный вес каждой игре лучше жребия: игры
+ * человек покупал сам, и это тоже про вкус. Мусор при этом не весит ничего:
+ * у саундтрека и SDK часов не было бы и без галочки, а поровну с играми он
+ * тянул бы вкус к «Soundtrack».
+ *
+ * Отдельной функцией, потому что вес нужен двоим: профилю и «уликам»
+ * портрета (archetypeEvidence), — и разойтись им нельзя.
+ */
+export function playWeight(g: LibraryGame, meta: GameMeta, hidden: boolean): number {
+  let weight = hidden ? (isJunk(g, meta) ? 0 : 1) : Math.log1p(g.playtimeForever / 60)
+  if (weight > 0 && g.playtime2Weeks > 0) weight *= 1.5
+  return weight
+}
+
+/**
+ * Признак скрытого времени — по той библиотеке, что пришла. Вызывающие
+ * отдают сюда библиотеку целиком, а не выборку: выборка из нулевых игр
+ * обычной библиотеки выглядела бы скрытой.
+ */
 export function buildTagProfile(
   library: LibraryGame[],
   metaOf: (appid: number) => GameMeta | undefined,
 ): Record<string, number> {
   const profile: Record<string, number> = {}
+  const hidden = playtimeHidden(library)
   for (const g of library) {
     const meta = metaOf(g.appid)
     if (!meta) continue
-    let weight = Math.log1p(g.playtimeForever / 60)
+    const weight = playWeight(g, meta, hidden)
     if (weight === 0) continue
-    if (g.playtime2Weeks > 0) weight *= 1.5
     for (const [tag, v] of Object.entries(normalizedTags(meta))) {
       profile[tag] = (profile[tag] ?? 0) + weight * v
     }
@@ -675,11 +701,15 @@ export const URGENCY_UNTOUCHED_MAX = 30
  * Прятать ли срок распродажи (discountView {urgency}, heuristicPicks
  * hideUrgency). Считается нераспакованное без мусора: саундтреки и демо с
  * нулём минут в бэклог не входят — их и не собирались «проходить».
+ *
+ * При скрытом времени (lib/playtime.ts) нули — не бэклог, а галочка Steam:
+ * нераспакованного мы не знаем, и срок остаётся, как у всех.
  */
 export function hideUrgencyFor(
   library: readonly LibraryGame[],
   metaOf: (appid: number) => GameMeta | undefined,
 ): boolean {
+  if (playtimeHidden(library)) return false
   let untouched = 0
   for (const g of library) {
     if (!isUntouched(g) || isJunk(g, metaOf(g.appid))) continue
@@ -1227,12 +1257,16 @@ function popularityScore(meta: GameMeta): number {
  * У 'familiar' — 0.9, ступенька вниз: знакомое — хороший ответ, когда на новое
  * нет сил, но не повод оттеснять то, ради чего человек пришёл. Сверху на неё
  * ложится насыщение (familiarWeight).
+ *
+ * У 'owned' — единица: время скрыто настройками Steam, и наклонять своё
+ * нечем — ни «не запускал», ни «забросил» про эти игры не известно.
  */
 const SOURCE_WEIGHT: Record<CandidateSource, number> = {
   untouched: 1.25,
   backlog: 1,
   comeback: 1,
   familiar: 0.9,
+  owned: 1,
   new: 1,
 }
 
@@ -1491,6 +1525,14 @@ export function scoreCandidates(args: {
    * компании одиночное по-прежнему не предлагается.
    */
   moodless?: boolean
+  /**
+   * Время скрыто настройками Steam (lib/playtime.ts). Флагом, а не расчётом
+   * здесь: library бывает выборкой — при затравке это только соседи X, — а
+   * признак судится по библиотеке целиком. Свои тогда идут источником
+   * 'owned': по нулевым минутам нельзя назвать игру ни нетронутой, ни
+   * брошенной, ни любимой.
+   */
+  playtimeHidden?: boolean
 }): ScoredCandidate[] {
   const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
   type Scored = ScoredCandidate & { parts: ScoreParts }
@@ -1549,6 +1591,13 @@ export function scoreCandidates(args: {
     // место. Тот же отсев, что у полки забытого на /library: одно определение
     // мусора на весь продукт.
     if (isJunk(g, meta)) continue
+    // Время скрыто: часы — ноль у всех, и классифицировать по ним нельзя.
+    // Минуты за две недели Steam бывает, что и отдаёт: такая игра — то, во
+    // что он играет сейчас, и в кандидаты она не идёт, как любая активная
+    if (args.playtimeHidden) {
+      if (g.playtime2Weeks === 0) push(meta, 'owned')
+      continue
+    }
     const state = classifyLibraryGame(g, nowSec)
     if (state === 'unplayed') push(meta, isUntouched(g) ? 'untouched' : 'backlog')
     else if (state === 'comeback') push(meta, 'comeback')

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { tagWeightFrom } from './tagweight'
+import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 import {
   archetypeEvidence,
@@ -218,6 +219,69 @@ describe('buildWrapped — годы выпуска', () => {
   test('дата без года («скоро») не роняет и не считается', () => {
     const w = withYears([[1, 'скоро', 100]])
     expect(w.era).toBeNull()
+  })
+})
+
+describe('скрытое время в Steam', () => {
+  const metas = new Map(hiddenLibraryMetas().map((m) => [m.appid, m]))
+  const hiddenMeta = (id: number) => metas.get(id)
+
+  test('20 игр с нулями: «Чистилища» нет, признак для страницы есть', () => {
+    const w = buildWrapped(hiddenLibrary(), hiddenMeta)
+    expect(w.playtimeHidden).toBe(true)
+    expect(w.unplayedCount).toBe(0)
+    expect(w.unplayed).toEqual([])
+    expect(w.top).toEqual([])
+  })
+
+  test('улики архетипа — по равным весам, а не пустота', () => {
+    const ids = archetypeEvidence(hiddenLibrary(), hiddenMeta, 'Automation', new Set(), 3)
+    expect(ids).toHaveLength(3)
+    expect(ids.every((g) => hiddenMeta(g.appid)?.tags.Automation)).toBe(true)
+  })
+
+  test('«начни с этой» не советуется: игра могла быть на сотню часов', () => {
+    expect(pickStarter(hiddenLibrary(), hiddenMeta)).toBeNull()
+  })
+
+  test('итоги года знают о скрытом времени по концу окна', () => {
+    const base = { takenAt: 1_000, games: hiddenLibrary(15) }
+    const end = { takenAt: 2_000, games: hiddenLibrary(20) }
+    const y = buildWrappedYear({ year: 2026, closed: false, base, end }, hiddenMeta)
+    expect(y.playtimeHidden).toBe(true)
+    expect(y.added.count).toBe(5)
+  })
+
+  // Отметка года снята при скрытом времени, а к концу окна галочку сняли:
+  // разница с отметкой приписала бы году все часы за жизнь
+  test('отметка года со скрытым временем: ни часов, ни «впервые запущены» — только появившиеся', () => {
+    const base = { takenAt: 1_000, games: hiddenLibrary() }
+    const opened = hiddenLibrary().map((g, i) => ({ ...g, playtimeForever: (i + 1) * 600 }))
+    const fresh = { appid: 5000, name: 'Новая', playtimeForever: 90, playtime2Weeks: 90 }
+    const w = { year: 2026, closed: false, base, end: { takenAt: 2_000, games: [...opened, fresh] } }
+    const y = buildWrappedYear(w, hiddenMeta)
+    expect(y.minutes).toBe(0)
+    expect(y.playedCount).toBe(0)
+    expect(y.top).toEqual([])
+    expect(y.unpacked.count).toBe(0)
+    expect(y.added.games.map((g) => g.appid)).toEqual([5000])
+    // на конце окна время открыто — «не запускалась» у новых снова правда
+    expect(y.playtimeHidden).toBe(false)
+    // мета — только новым: «прибавившей» была бы вся библиотека
+    expect(yearCandidates(w)).toEqual([5000])
+  })
+
+  test('январь: закрывшийся год от скрытой отметки — пустой, итоги берёт текущее окно', () => {
+    const at = (y: number, m: number, d: number) => Math.floor(Date.UTC(y, m, d) / 1000)
+    const prev = { year: 2026, takenAt: at(2026, 2, 1), games: hiddenLibrary() }
+    const opened = hiddenLibrary().map((g) => ({ ...g, playtimeForever: 600 }))
+    const cur = { year: 2027, takenAt: at(2026, 11, 20), games: opened }
+    const latest = { takenAt: at(2027, 0, 5), games: opened.map((g) => ({ ...g, playtimeForever: 660 })) }
+    expect(pickYearWindow(latest, [prev, cur])).toMatchObject({ year: 2027, closed: false, base: cur })
+  })
+
+  test('обычная библиотека — признака нет', () => {
+    expect(buildWrapped([lib(1, 10), lib(2, 0)], metaOf).playtimeHidden).toBe(false)
   })
 })
 

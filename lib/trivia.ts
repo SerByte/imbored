@@ -175,7 +175,14 @@ export function buildTrivia(args: {
     const withTop = party
       .map((p) => ({
         p,
-        top: [...p.library].sort((a, b) => b.playtimeForever - a.playtimeForever).slice(0, 3),
+        // Топ — только из наигранного, как и «у кого больше часов» выше. При
+        // скрытом в Steam времени (lib/playtime.ts) нули у всех игр, и
+        // «топом» были бы три первые игры списка — вопрос, на который не
+        // знает ответа и сам владелец
+        top: p.library
+          .filter((g) => g.playtimeForever > 0)
+          .sort((a, b) => b.playtimeForever - a.playtimeForever)
+          .slice(0, 3),
       }))
       .filter((x) => x.top.length === 3)
     const chosen = pick(withTop, rnd)

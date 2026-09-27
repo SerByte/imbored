@@ -131,7 +131,9 @@ async function loadYear(
       const metas = await getGamesMetaLite(db, yearCandidates(window))
       return buildYearModel(window, (id) => metas.get(id))
     },
-    ['portrait-year:v1', steamid, String(snapshot.takenAt)],
+    // v2 — признак скрытого времени (year.playtimeHidden): запись v1 без него
+    // сутки подписывала бы новые игры «не запускалась»
+    ['portrait-year:v2', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: YEAR_TTL_SEC },
   )
   try {
@@ -345,7 +347,8 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
           games={year.added.games.map((g) => ({
             appid: g.appid,
             name: g.name,
-            meta: g.playtimeForever > 0 ? playedLine(g.playtimeForever) : 'не запускалась',
+            // При скрытом времени ноль минут — галочка Steam, и подпись молчит
+            meta: g.playtimeForever > 0 ? playedLine(g.playtimeForever) : year.playtimeHidden ? '' : 'не запускалась',
           }))}
           cover={cover}
         />

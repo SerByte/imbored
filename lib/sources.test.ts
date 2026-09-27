@@ -1,5 +1,7 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from './sources'
+import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from './sources'
 import { CANDIDATE_SOURCES } from './types'
 
 describe('SOURCE_BADGE', () => {
@@ -36,6 +38,24 @@ describe('SOURCE_BADGE_SHORT', () => {
   test('короткая форма не длиннее полной', () => {
     for (const source of CANDIDATE_SOURCES) {
       expect(SOURCE_BADGE_SHORT[source].length).toBeLessThanOrEqual(SOURCE_BADGE[source].length)
+    }
+  })
+})
+
+describe('suggestsInstall', () => {
+  // Своя при скрытом в Steam времени (owned) — та же «скорее всего не
+  // установлена», что нетронутая: без неё ссылку теряла вся своя выдача
+  test('нетронутая, заброшенная и своя при скрытом времени — да; остальные — нет', () => {
+    expect(CANDIDATE_SOURCES.filter(suggestsInstall)).toEqual(['untouched', 'comeback', 'owned'])
+  })
+
+  // Условие жило копией в двух страницах, и новый источник терял ссылку молча
+  test('/play и /daily решают по нему, а не своим условием', () => {
+    const root = path.join(__dirname, '..')
+    for (const rel of ['app/play/page.tsx', 'app/daily/page.tsx']) {
+      const src = fs.readFileSync(path.join(root, rel), 'utf8')
+      expect(src, rel).toMatch(/suggestsInstall\(\w+\.source\) && !\w+\.storeUrl/)
+      expect(src, rel).not.toMatch(/source === 'untouched' \|\| \w+\.source === 'comeback'/)
     }
   })
 })

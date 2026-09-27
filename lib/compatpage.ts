@@ -1,6 +1,6 @@
 import { filterActual } from './actual'
 import type { GameArtUrls } from './art'
-import { COMMON_SHOWN, compatibility } from './compat'
+import { COMMON_SHOWN, compatibility, pairTasteProfile } from './compat'
 import {
   getPoolSize,
   getGamesMetaLite,
@@ -11,8 +11,8 @@ import {
 } from './db'
 import { type Discount, discountView, trustedPrice } from './discount'
 import { buildGroupDeck } from './group'
+import { playtimeHidden } from './playtime'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
-import { buildTagProfile } from './recommend'
 import type { GameMeta } from './types'
 
 /**
@@ -36,7 +36,8 @@ export type ArtRef = {
   art: GameArtUrls | null
 }
 
-export type CompatGame = ArtRef & { hoursA: number; hoursB: number }
+/** Часы null — время этой стороны скрыто настройками Steam (см. Compatibility) */
+export type CompatGame = ArtRef & { hoursA: number | null; hoursB: number | null }
 
 export type CompatPick = ArtRef & {
   ownedByAll: boolean
@@ -67,6 +68,9 @@ export type CompatResult = {
   myName: string
   other: string
   otherName: string
+  /** Время скрыто настройками Steam (lib/playtime.ts) — у каждого своё */
+  myTimeHidden: boolean
+  otherTimeHidden: boolean
 }
 
 /** Что можно показать про владельца ссылки, ничего не зная о зрителе */
@@ -75,6 +79,11 @@ export type CompatInvite = {
   name: string
   gamesCount: number
   totalHours: number
+  /**
+   * Время скрыто настройками Steam (lib/playtime.ts): вместо «0 часов» в
+   * превью, герое и карточке — «время скрыто», как у портрета
+   */
+  playtimeHidden: boolean
   topGames: ArtRef[]
 }
 
@@ -150,6 +159,8 @@ export async function loadCompatInvite(
   const snapshot = known === undefined ? await getLatestSnapshot(db, steamid) : known
   if (!snapshot) return null
 
+  // При скрытом времени сортировать не по чему, и стена — библиотека как
+  // есть, как у карточки портрета: подписи «самые наигранные» у стены нет
   const top = [...snapshot.games]
     .filter((g) => g.appid > 0)
     .sort((a, b) => b.playtimeForever - a.playtimeForever)
@@ -161,6 +172,7 @@ export async function loadCompatInvite(
     name: nameOf(steamid, await getPersonaName(db, steamid)),
     gamesCount: snapshot.games.length,
     totalHours: Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60),
+    playtimeHidden: playtimeHidden(snapshot.games),
     topGames: top.map((g) => artRef(g.appid, g.name, metas.get(g.appid))),
   }
 }
@@ -206,7 +218,8 @@ export async function loadCompat(
   const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const compat = compatibility(mySnap.games, otherSnap.games, metaOf, tagStats)
 
-  const pairProfile = buildTagProfile([...mySnap.games, ...otherSnap.games], metaOf)
+  // Сумма двух профилей, а не профиль склейки: см. pairTasteProfile
+  const pairProfile = pairTasteProfile(mySnap.games, otherSnap.games, metaOf)
   const extraPool = await fetchDiscoveryPool(db, {
     tags: pickQueryTags(pairProfile, tagStats, poolSize),
     requireMultiplayer: true,
@@ -304,6 +317,8 @@ export async function loadCompat(
       myName,
       other,
       otherName,
+      myTimeHidden: compat.timeHiddenA,
+      otherTimeHidden: compat.timeHiddenB,
     },
   }
 }

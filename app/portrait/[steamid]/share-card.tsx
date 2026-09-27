@@ -29,6 +29,11 @@ export type CardData = {
   /** Постеры стены — data-URI (ogPoster), самые наигранные первыми */
   posters: string[]
   topGame: { name: string; sharePercent: number } | null
+  /**
+   * Время скрыто настройками Steam (lib/playtime.ts): вместо «0 часов» и
+   * «0 не запущено» — одно «время скрыто», а стена — из всей библиотеки.
+   */
+  playtimeHidden: boolean
 }
 
 export async function loadCardData(steamid: string): Promise<CardData | null> {
@@ -46,9 +51,12 @@ export async function loadCardData(steamid: string): Promise<CardData | null> {
   const portrait = buildPortrait(games, metaOf)
   const wrapped = buildWrapped(games, metaOf)
 
-  // Стена — самые наигранные, как у героя портрета на сайте
+  // Стена — самые наигранные, как у героя портрета на сайте. При скрытом
+  // времени наигранных нет ни одной, и стена берёт библиотеку как есть:
+  // пустая карточка сказала бы «в библиотеке ничего», а это неправда
+  const hidden = wrapped.playtimeHidden
   const played = games
-    .filter((g) => g.appid > 0 && g.playtimeForever > 0)
+    .filter((g) => g.appid > 0 && (hidden || g.playtimeForever > 0))
     .sort((a, b) => b.playtimeForever - a.playtimeForever)
     .slice(0, WALL_POSTERS)
   const posters = await postersOf(played, metaOf)
@@ -61,6 +69,7 @@ export async function loadCardData(steamid: string): Promise<CardData | null> {
     archetypes: portrait.archetypes.filter((a) => a.known).slice(0, 2).map((a) => a.label),
     posters,
     topGame: portrait.facts.topGame,
+    playtimeHidden: hidden,
   }
 }
 
@@ -133,15 +142,22 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
         )}
 
         {/* Числа строкой и в сторис: колонкой они поднимали текст на полкарточки и прятали стену */}
-        <div style={{ display: 'flex' }}>
-          <Stat value={num(data.totalHours)} caption={hoursCaption(data.totalHours)} wide={wide} />
-          <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount)} wide={wide} />
-          <Stat
-            value={num(data.unplayedCount)}
-            caption={unplayedCaption(data.unplayedCount)}
-            wide={wide}
-          />
-        </div>
+        {data.playtimeHidden ? (
+          <div style={{ display: 'flex' }}>
+            <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount)} wide={wide} />
+            <Stat value="скрыто" caption="время в играх" wide={wide} />
+          </div>
+        ) : (
+          <div style={{ display: 'flex' }}>
+            <Stat value={num(data.totalHours)} caption={hoursCaption(data.totalHours)} wide={wide} />
+            <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount)} wide={wide} />
+            <Stat
+              value={num(data.unplayedCount)}
+              caption={unplayedCaption(data.unplayedCount)}
+              wide={wide}
+            />
+          </div>
+        )}
 
         {/* Одной строкой, а не склейкой из выражений: satori требует явный
             display:flex у любого div с несколькими детьми, и смешанный текст

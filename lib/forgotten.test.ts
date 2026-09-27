@@ -12,6 +12,7 @@ import {
   wallState,
 } from './forgotten'
 import { tagWeightFrom } from './tagweight'
+import { hiddenLibrary } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
@@ -121,7 +122,17 @@ describe('forgottenCandidates', () => {
   })
 
   test('без банов полка та же, что и раньше', () => {
-    expect(forgottenCandidates(sealed, metaOf, new Set())).toEqual(forgottenCandidates(sealed, metaOf))
+    // Одна наигранная рядом обязательна: двадцать нулей без неё — уже не
+    // запечатанное, а скрытое в Steam время, и полка пуста при любых банах
+    const lib = [...sealed, game({ appid: 500, playtimeForever: 600 })]
+    expect(forgottenCandidates(lib, metaOf).length).toBeGreaterThan(0)
+    expect(forgottenCandidates(lib, metaOf, new Set())).toEqual(forgottenCandidates(lib, metaOf))
+  })
+
+  test('время скрыто в Steam: 20 игр с нулями — полки нет, «ты не запускал» не про них', () => {
+    const lib = hiddenLibrary()
+    const metas = new Map(lib.map((g) => [g.appid, meta(g.appid)]))
+    expect(forgottenCandidates(lib, (id) => metas.get(id))).toEqual([])
   })
 })
 
@@ -359,6 +370,22 @@ describe('buildLibraryView', () => {
     expect(view.games.map((g) => g.appid)).toEqual([1, 99])
   })
 
+  test('время скрыто в Steam: без полок бэклога, чипсы по нулям, показана «Все»', () => {
+    const hidden = hiddenLibrary()
+    hidden[0] = { ...hidden[0], playtime2Weeks: 30 }
+    const metas = new Map(hidden.map((g) => [g.appid, meta(g.appid)]))
+    const view = buildLibraryView(hidden, (id) => metas.get(id), 'untouched', NOW)
+    // Спросили «Не распакованы» — показана вся библиотека, а не пустая полка
+    // с «всё, что куплено, ты хотя бы открывал»
+    expect(view.filter).toBe('all')
+    expect(view.games).toHaveLength(20)
+    expect(view.counts).toEqual({ all: 20, untouched: 0, unplayed: 0, comeback: 0, active: 1 })
+  })
+
+  test('обычная библиотека показывает ту полку, что спросили', () => {
+    expect(buildLibraryView(lib, metaOf, 'comeback', NOW).filter).toBe('comeback')
+  })
+
   test('пустая библиотека — пустые полки и нули', () => {
     const view = buildLibraryView([], metaOf, 'all', NOW)
     expect(view.games).toEqual([])
@@ -398,6 +425,11 @@ describe('wallState', () => {
     expect(wallState(game({ appid: 10, name: 'Foo - Soundtrack' }), undefined, NOW)).toBe('played')
     // Прогретая пустая запись: ни тегов, ни категорий
     expect(wallState(game({ appid: 12 }), meta(12, { tags: {}, categories: [] }), NOW)).toBe('played')
+  })
+
+  test('время скрыто: плитка нейтральная, «играешь сейчас» — по двум неделям', () => {
+    expect(wallState(game({ appid: 1 }), meta(1), NOW, true)).toBe('played')
+    expect(wallState(game({ appid: 2, playtime2Weeks: 30 }), meta(2), NOW, true)).toBe('active')
   })
 
   test('мёртвая сетевая игра в бэклоге остаётся нераспакованной: её купили', () => {
