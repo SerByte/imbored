@@ -13,7 +13,7 @@ import {
 } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
 import { llmAvailable } from '@/lib/llm'
-import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, runPageSlice } from '@/lib/pagejob'
+import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, PAGE_REDO_AFTER_SEC, runPageSlice } from '@/lib/pagejob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
@@ -222,6 +222,7 @@ export async function GET(req: Request) {
         ? {
             due: await countPageEnrichDue(db, nowSec() - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, {
               redoHeuristic: llmAvailable(),
+              redoBefore: nowSec() - PAGE_REDO_AFTER_SEC,
             }),
           }
         : {}),

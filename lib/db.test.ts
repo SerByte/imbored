@@ -942,6 +942,46 @@ describe('db', () => {
     expect(await getGameJson(db, 999, 'pros_cons_json')).toBeNull()
   })
 
+  test('pros/cons от модели не затираются собранными без неё', async () => {
+    // Страница показывает только source 'claude'. Эвристика поверх пересказа
+    // снимала с витрины «За что любят» у верха каталога — CS2, Stardew Valley.
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    const claude = { pros: ['Сюжет'], cons: ['Баги'], source: 'claude' }
+    expect(await setGameJson(db, 620, 'pros_cons_json', claude)).toBe(true)
+
+    for (const over of [{ source: 'reviews' }, { source: 'thin' }, {}]) {
+      expect(await setGameJson(db, 620, 'pros_cons_json', { pros: ['x'], cons: [], ...over })).toBe(false)
+    }
+    expect(await getGameJson(db, 620, 'pros_cons_json')).toEqual(claude)
+
+    // свежий пересказ модели заменяет старый
+    const fresh = { pros: ['Музыка'], cons: [], source: 'claude' }
+    expect(await setGameJson(db, 620, 'pros_cons_json', fresh)).toBe(true)
+    expect(await getGameJson(db, 620, 'pros_cons_json')).toEqual(fresh)
+    // вердикта отзывов правило не касается
+    expect(await setGameJson(db, 620, 'reviews_summary_json', { scoreDesc: 'Mixed' })).toBe(true)
+  })
+
+  test('между эвристиками побеждает свежая: по ней очередь решает, звать ли модель', async () => {
+    // 'thin' поверх 'reviews' снимает карточку с пересборки, которой не из
+    // чего быть. Стой 'reviews' выше 'thin', старый маркер держал бы петлю
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await setGameJson(db, 620, 'pros_cons_json', { pros: ['a'], cons: [], source: 'reviews' })
+    expect(await setGameJson(db, 620, 'pros_cons_json', { pros: [], cons: [], source: 'thin' })).toBe(true)
+    expect(await setGameJson(db, 620, 'pros_cons_json', { pros: ['b'], cons: [], source: 'reviews' })).toBe(true)
+    expect(await getGameJson(db, 620, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
+  })
+
+  test('битые pros/cons в базе не мешают записи, которая их починит', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await db.execute("UPDATE games SET pros_cons_json = '{оборвано' WHERE appid = 620")
+    expect(await setGameJson(db, 620, 'pros_cons_json', { pros: ['a'], cons: [], source: 'reviews' })).toBe(true)
+    expect(await setGameJson(db, 999, 'pros_cons_json', { pros: ['a'], cons: [], source: 'reviews' })).toBe(false)
+  })
+
   test('«за что любят» пачкой — только собранное моделью', async () => {
     const db = await freshDb()
     for (const appid of [620, 621, 622, 623]) await upsertGameMeta(db, { ...META, appid }, NOW)
