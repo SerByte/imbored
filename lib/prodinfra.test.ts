@@ -53,3 +53,47 @@ describe('превью', () => {
     expect(read('DEPLOY.md')).toContain(`${PREVIEW_OWN_DB_ENV}=1`)
   })
 })
+
+describe('сторож прокси Cloudflare', () => {
+  const cron = read('.github', 'workflows', 'cron.yml')
+
+  // Текст job'а — после его ключа и до ключа следующего job'а (тот же отступ
+  // в два пробела) или до конца файла
+  const job = (name: string) => {
+    const at = cron.search(new RegExp(`^  ${name}:\\s*$`, 'm'))
+    expect(at, `job ${name} в cron.yml не найден`).toBeGreaterThan(-1)
+    const body = cron.slice(at + `  ${name}:`.length)
+    const next = body.search(/^ {2}[\w-]+:\s*$/m)
+    return next === -1 ? body : body.slice(0, next)
+  }
+  const skips = (name: string) => job(name).match(/^\s*if: github\.event\.schedule != '([^']+)'/m)?.[1]
+
+  test('часовой прогон пропускает сторож, суточный — пинки, и строки те же, что в schedule', () => {
+    // Job'ы делят прогоны буквальным сравнением со строкой cron. Забудь
+    // поправить if после смены расписания или перепутай их местами — и сторож
+    // молча пойдёт каждый час (лишние 720 минут в месяц из бесплатных 2000),
+    // а очереди с health — раз в сутки
+    const schedules = [...cron.matchAll(/^\s*- cron: '([^']+)'/gm)].map((m) => m[1])
+    expect(schedules).toHaveLength(2)
+    // Часовое — то, у которого поле часа '*'
+    const hourly = schedules.filter((s) => s.split(/\s+/)[1] === '*')
+    expect(hourly, 'ровно одно расписание в schedule должно быть часовым').toHaveLength(1)
+    const daily = schedules.find((s) => s !== hourly[0])
+    expect(skips('cloudflare'), 'сторож обязан пропускать часовой прогон').toBe(hourly[0])
+    expect(skips('ping'), 'пинки обязаны пропускать суточный прогон сторожа').toBe(daily)
+  })
+
+  test('сторож смотрит обе записи и все признаки прокси, и DEPLOY.md называет его так же', () => {
+    const guard = job('cloudflare')
+    expect(guard).toContain('server: *cloudflare')
+    expect(guard).toContain('cf-ray:')
+    expect(guard).toContain('cf-cache-status:')
+    // Облачко у A @ и CNAME www переключается отдельно, и оранжевый www при
+    // сером apex снаружи не виден
+    const hosts = guard.match(/for host in ([^;\n]+);/)?.[1].trim().split(/\s+/)
+    expect(hosts?.sort()).toEqual(['imbored.cc', 'www.imbored.cc'])
+    // Владелец узнаёт о стороже из §5: переименуй job — и после переключения
+    // облачка он будет искать в Actions то, чего нет
+    expect(read('DEPLOY.md')).toContain('`cloudflare` в `.github/workflows/cron.yml`')
+  })
+})
