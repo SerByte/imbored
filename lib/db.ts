@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url TEXT,
   portrait_json TEXT,
   created_at INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL
+  last_seen_at INTEGER NOT NULL,
+  last_active_day TEXT
 );
 /*
  * Сессии. Строка здесь — НЕ источник истины о том, вошёл ли человек: это
@@ -198,11 +199,12 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 ) WITHOUT ROWID;
 /*
  * Почасовые счётчики (lib/telemetry.ts): сбои на сервере и в браузере,
- * отчёты CSP и шаги воронки. Только числа — kind и key из закрытых списков,
- * без SteamID, адресов и путей: ни одна строка не относится к человеку, и
- * forgetUser здесь забывать нечего. Живут 90 дней (pruneTelemetry из крона
- * новостей). Первый столбец ключа — час: и упсёрт, и подсчёт за окно, и
- * уборка идут по префиксу первичного ключа.
+ * отчёты CSP, шаги воронки и возвраты по когортам (lib/retention.ts — эти
+ * все в часе понедельника своей когорты). Только числа — kind и key из
+ * закрытых списков, без SteamID, адресов и путей: ни одна строка не
+ * относится к человеку, и forgetUser здесь забывать нечего. Живут 90 дней
+ * (pruneTelemetry из крона новостей). Первый столбец ключа — час: и упсёрт,
+ * и подсчёт за окно, и уборка идут по префиксу первичного ключа.
  */
 CREATE TABLE IF NOT EXISTS telemetry_hourly (
   hour INTEGER NOT NULL,
@@ -637,7 +639,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 5
+export const CURRENT_SCHEMA_V = 6
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -703,6 +705,10 @@ export const ADDED_COLUMNS = [
   // Снимок выдачи к оценке (lib/feedbackctx): слот, движок, части скора — для
   // отчёта scripts/feedback-report.ts. Девяносто дней, потом NULL (sweepStale)
   ['feedback', 'ctx_json TEXT'],
+  // День последнего захода по московским суткам — защёлка счётчика возвратов
+  // (markActiveDay, lib/retention). Одна дата без истории; уходит вместе со
+  // строкой users. NULL — с появления колонки не заходил
+  ['users', 'last_active_day TEXT'],
 ] as const
 
 /**
@@ -1169,6 +1175,86 @@ export async function getUserCard(
     personaName: (row?.persona_name as string | null) ?? null,
     avatarUrl: (row?.avatar_url as string | null) ?? null,
   }
+}
+
+/** Отметка захода: когда завели строку users и день прошлого захода */
+export type ActiveDay = { createdAt: number; prevDay: string | null }
+
+/**
+ * Счётчик события в telemetry_hourly, который прибавляется вместе с
+ * переставленной датой. key — из закрытого алфавита (returnKey в
+ * lib/retention): telemetryKey отсюда не позвать, lib/telemetry тянет за
+ * собой next/server.
+ */
+export type ActiveDayBump = { key: string; hour: number }
+
+/**
+ * Защёлка «первый заход за сутки» для счётчика возвратов (lib/retention).
+ *
+ * users.last_active_day — одна дата, день последнего захода (ключ dayKey из
+ * lib/daily). Истории нет: дата перезаписывается, ровно так обещает /privacy,
+ * раздел 07. Уходит вместе со строкой users — уборкой демо и forgetUser.
+ *
+ * Чтение и условная запись, а не один UPDATE … RETURNING: счётчику нужна
+ * ПРЕЖНЯЯ дата (по ней узнаётся, посчитан ли человек в этом окне), а
+ * RETURNING отдаёт уже новую. Прежняя дата в WHERE делает запись защёлкой:
+ * из двух одновременных заходов (главная и /play, телефон и ноутбук)
+ * переставит её один, и счётчик получит одну единицу.
+ *
+ * Счётчик (bumpOf — какой, по прежней дате) пишется той же пачкой, что и
+ * дата, и только если защёлку переставила именно она (changes() = 1).
+ * Порознь дата могла переставиться, а счётчик — упасть или оборваться вместе
+ * с after(): единица за окно терялась бы навсегда, а потерянный d0 оставил бы
+ * у человека возвраты без прихода.
+ *
+ * Обычный заход — одно чтение по первичному ключу: дата уже сегодняшняя, и
+ * писать нечего. Запись — раз в сутки на человека, одна пачка.
+ *
+ * null — считать нечего: сегодня уже отмечено, строки users нет (вход, чья
+ * запись не удалась) или защёлку переставил соседний запрос.
+ */
+export async function markActiveDay(
+  db: Db,
+  steamid: string,
+  today: string,
+  bumpOf: (mark: ActiveDay) => ActiveDayBump | null = () => null,
+): Promise<ActiveDay | null> {
+  const res = await db.execute({
+    sql: 'SELECT created_at, last_active_day FROM users WHERE steamid = ?',
+    args: [steamid],
+  })
+  const row = res.rows[0]
+  if (!row) return null
+  const mark: ActiveDay = {
+    createdAt: Number(row.created_at),
+    prevDay: (row.last_active_day as string | null) ?? null,
+  }
+  // «не раньше», а не «равно»: назад, к чужим часам соседнего инстанса,
+  // дата не двигается никогда
+  if (mark.prevDay !== null && mark.prevDay >= today) return null
+  const bump = bumpOf(mark)
+  const [moved] = await db.batch(
+    [
+      {
+        sql: 'UPDATE users SET last_active_day = ? WHERE steamid = ? AND last_active_day IS ?',
+        args: [today, steamid, mark.prevDay],
+      },
+      // WHERE здесь нужен и ради разбора: без него ON CONFLICT после SELECT
+      // SQLite читает как ON у соединения
+      ...(bump
+        ? [
+            {
+              sql: `INSERT INTO telemetry_hourly (hour, kind, key, count)
+                    SELECT ?, 'event', ?, 1 WHERE changes() = 1
+                    ON CONFLICT (hour, kind, key) DO UPDATE SET count = count + 1`,
+              args: [bump.hour, bump.key],
+            },
+          ]
+        : []),
+    ],
+    'write',
+  )
+  return moved?.rowsAffected ? mark : null
 }
 
 /** v — версия промпта, которым написан текст (PORTRAIT_TEXT_V в lib/portraitvoice) */

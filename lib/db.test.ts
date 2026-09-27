@@ -131,6 +131,7 @@ import {
   DEMO_TTL_SEC,
   FEEDBACK_CTX_TTL_SEC,
   listEvenings,
+  markActiveDay,
 } from './db'
 import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
@@ -2859,6 +2860,8 @@ describe('forgetUser: удаление по запросу', () => {
     const db = await freshDb()
     await upsertUser(db, { steamid: ME, personaName: 'Me', avatarUrl: 'https://a/me.jpg' }, NOW)
     await setUserPortrait(db, ME, { takenAt: NOW, text: 'портрет' })
+    // День последнего захода (lib/retention) — колонка users, уходит со строкой
+    await markActiveDay(db, ME, '2023-11-15')
     await createSession(db, { sid: 'sid-me', steamid: ME, verified: true }, NOW)
     // Два разных года — две годовые отметки. Ровно их политика раньше не
     // упоминала, и ровно их проще всего забыть при удалении руками.
@@ -3004,6 +3007,99 @@ describe('forgetUser: удаление по запросу', () => {
     }
     expect(personal.length).toBeGreaterThan(5)
     for (const table of personal) expect(FORGET_TABLES, table).toContain(table)
+  })
+})
+
+/**
+ * Защёлка счётчика возвратов (lib/retention): одна дата на человека, и из
+ * двух одновременных заходов её переставляет один — иначе счётчик получил бы
+ * две единицы за одни сутки.
+ */
+describe('markActiveDay: день последнего захода', () => {
+  const ME = '76561198000000001'
+  const TODAY = '2023-11-15'
+
+  async function lastActive(db: Db): Promise<unknown> {
+    const res = await db.execute({ sql: 'SELECT last_active_day FROM users WHERE steamid = ?', args: [ME] })
+    return res.rows[0]?.last_active_day
+  }
+
+  test('первый заход за сутки переставляет дату и отдаёт прежнюю, повтор в те же сутки — null', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    expect(await markActiveDay(db, ME, TODAY)).toEqual({ createdAt: NOW, prevDay: null })
+    expect(await markActiveDay(db, ME, TODAY)).toBeNull()
+    expect(await markActiveDay(db, ME, '2023-11-16')).toEqual({ createdAt: NOW, prevDay: TODAY })
+    expect(await lastActive(db)).toBe('2023-11-16')
+  })
+
+  test('назад дата не двигается: часы соседнего инстанса отстали', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    await markActiveDay(db, ME, '2023-11-16')
+    expect(await markActiveDay(db, ME, TODAY)).toBeNull()
+    expect(await lastActive(db)).toBe('2023-11-16')
+  })
+
+  test('без строки users считать нечего, и строка не заводится', async () => {
+    const db = await freshDb()
+    expect(await markActiveDay(db, ME, TODAY)).toBeNull()
+    const users = await db.execute('SELECT COUNT(*) AS n FROM users')
+    expect(Number(users.rows[0]?.n)).toBe(0)
+  })
+
+  test('из одновременных заходов защёлку переставляет ровно один', async () => {
+    // Главная и /play зовут touch почти разом, как и телефон с ноутбуком
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    const got = await Promise.all([1, 2, 3].map(() => markActiveDay(db, ME, TODAY)))
+    expect(got.filter((m) => m !== null)).toEqual([{ createdAt: NOW, prevDay: null }])
+  })
+
+  /** Счётчики событий, как их пишет markActiveDay: ключ → число */
+  async function bumps(db: Db): Promise<Record<string, number>> {
+    const res = await db.execute("SELECT key, count FROM telemetry_hourly WHERE kind = 'event'")
+    return Object.fromEntries(res.rows.map((r) => [String(r.key), Number(r.count)]))
+  }
+
+  test('счётчик — той же пачкой и только у того, кто переставил защёлку', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    const seen: unknown[] = []
+    const bumpOf = (mark: unknown) => {
+      seen.push(mark)
+      return { key: 'return:2023-W46:d0:steam', hour: 1_699_833_600 }
+    }
+    await Promise.all([1, 2, 3].map(() => markActiveDay(db, ME, TODAY, bumpOf)))
+    // Счётчику решать по прежней дате — её он и получает
+    expect(seen[0]).toEqual({ createdAt: NOW, prevDay: null })
+    expect(await bumps(db)).toEqual({ 'return:2023-W46:d0:steam': 1 })
+    // Считать нечего — дата всё равно переставляется, счётчик не трогается
+    expect(await markActiveDay(db, ME, '2023-11-16', () => null)).toEqual({ createdAt: NOW, prevDay: TODAY })
+    expect(await lastActive(db)).toBe('2023-11-16')
+    expect(await bumps(db)).toEqual({ 'return:2023-W46:d0:steam': 1 })
+  })
+
+  test('не записался счётчик — не переставилась и дата: следующий заход посчитает', async () => {
+    // Порознь дата уже стояла бы на сегодня, и единица за окно пропала бы навсегда
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    const bumpOf = () => ({ key: 'return:2023-W46:d0:steam', hour: 1_699_833_600 })
+    await db.execute('ALTER TABLE telemetry_hourly RENAME TO telemetry_gone')
+    await expect(markActiveDay(db, ME, TODAY, bumpOf)).rejects.toThrow()
+    expect(await lastActive(db)).toBeNull()
+    await db.execute('ALTER TABLE telemetry_gone RENAME TO telemetry_hourly')
+    expect(await markActiveDay(db, ME, TODAY, bumpOf)).toEqual({ createdAt: NOW, prevDay: null })
+    expect(await bumps(db)).toEqual({ 'return:2023-W46:d0:steam': 1 })
+  })
+
+  test('дата уходит вместе со строкой users по запросу на удаление', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    await markActiveDay(db, ME, TODAY)
+    await forgetUser(db, ME)
+    const left = await db.execute('SELECT COUNT(*) AS n FROM users WHERE last_active_day IS NOT NULL')
+    expect(Number(left.rows[0]?.n)).toBe(0)
   })
 })
 
@@ -3357,8 +3453,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 5,
-      columns: 34,
+      version: 6,
+      columns: 35,
     })
   })
 })
