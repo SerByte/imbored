@@ -5,7 +5,7 @@ import { MotionLazy } from '@/components/motion/MotionLazy'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FeedItem } from '@/lib/db'
-import { newsPath } from '@/lib/newspage'
+import { indexedNewsPath, newsPath } from '@/lib/newspage'
 import type { NewsBlock } from '@/lib/steamhtml'
 import { NewsBody } from './NewsBody'
 import { NewsDate, ScaleBadge } from './NewsMeta'
@@ -113,44 +113,76 @@ function Row({
   // Висящий таймер не должен пережить строку.
   useEffect(() => cancelHover, [cancelHover])
 
+  // Название игры — заголовок всей страницы; в заголовке патча оно лишнее.
+  const heading = stripGameName(item.title, name)
+  // null — страницы нет в поиске (хотфикс без пересказа, игра вне каталога):
+  // заголовок тогда просто текст, см. indexedNewsPath
+  const href = indexedNewsPath(item)
+
   return (
     <div className="panel-lift overflow-hidden">
-      <button
-        type="button"
-        onClick={() => {
-          if (!open) loadBody()
-          onToggle(open ? null : item.gid)
-        }}
-        // Предзагрузка, как в PatchRow: курсор доезжает до строки за сотни
-        // миллисекунд до нажатия, touchstart опережает click примерно на сто.
-        // Наведение — через задержку намерения, касание и фокус — сразу:
-        // проездом они не бывают.
-        onPointerEnter={hoverIntent}
-        onPointerLeave={cancelHover}
-        onFocus={loadBody}
-        onTouchStart={loadBody}
-        aria-expanded={open}
-        className="w-full text-left p-5 flex items-start gap-3 hover:bg-ink/[0.03] transition-colors"
-      >
+      {/*
+        Шапка строки — не одна большая кнопка, как раньше, а заголовок-ссылка
+        и кнопка раскрытия рядом: ссылку внутрь <button> вложить нельзя, а
+        ссылка на страницу патча обязана стоять в серверном HTML, а не в
+        раскрытой части (почему — indexedNewsPath).
+
+        Попадать по строке от этого не труднее: ::before кнопки растянут на
+        всю шапку (relative здесь — его рамка), и нажатие на дату, пересказ или
+        пустое место раскрывает строку, как раньше. Выше слоя стоит только
+        сама ссылка — z-10.
+      */}
+      <div className="relative p-5 flex items-start gap-3 hover:bg-ink/[0.03] transition-colors">
         <div className="min-w-0 flex-1 flex flex-col gap-1.5">
-          {/* Название игры — заголовок всей страницы; в заголовке патча оно лишнее. */}
-          <span className="text-base font-bold text-ink leading-snug">
-            {stripGameName(item.title, name)}
-          </span>
+          {href ? (
+            <Link
+              href={href}
+              prefetch={false}
+              className="tap tap-tight relative z-10 self-start text-base font-bold text-ink leading-snug decoration-1 underline-offset-4 hover:underline"
+            >
+              {heading}
+            </Link>
+          ) : (
+            <span className="text-base font-bold text-ink leading-snug">{heading}</span>
+          )}
           <span className="flex items-center gap-3">
             <NewsDate at={item.publishedAt} />
             {item.tldr && !open && <span className="text-xs text-dim truncate">{item.tldr}</span>}
           </span>
         </div>
         <ScaleBadge scale={item.scale} />
-        <span
-          aria-hidden
-          className="text-dim mt-1 shrink-0 transition-transform duration-200"
-          style={{ transform: open ? 'rotate(180deg)' : 'none' }}
+        {/* Без tap и без relative: любой из них сделал бы рамкой ::before
+            саму кнопку, и слой сжался бы до шеврона */}
+        <button
+          type="button"
+          onClick={() => {
+            if (!open) loadBody()
+            onToggle(open ? null : item.gid)
+          }}
+          // Предзагрузка, как в PatchRow: курсор доезжает до строки за сотни
+          // миллисекунд до нажатия, touchstart опережает click примерно на сто.
+          // Наведение — через задержку намерения, касание и фокус — сразу:
+          // проездом они не бывают. Наведение на ссылку сюда не считается —
+          // она ведёт на страницу, а не раскрывает.
+          onPointerEnter={hoverIntent}
+          onPointerLeave={cancelHover}
+          onFocus={loadBody}
+          onTouchStart={loadBody}
+          aria-expanded={open}
+          // Видимого текста у кнопки больше нет — только шеврон; имя — то,
+          // что она покажет, а «свёрнуто/развёрнуто» скажет aria-expanded
+          aria-label={`Что изменилось: ${heading}`}
+          className="mt-1 shrink-0 rounded-full text-dim before:absolute before:inset-0"
         >
-          <Icon name="down" size={16} />
-        </span>
-      </button>
+          <span
+            aria-hidden
+            className="block transition-transform duration-200"
+            style={{ transform: open ? 'rotate(180deg)' : 'none' }}
+          >
+            <Icon name="down" size={16} />
+          </span>
+        </button>
+      </div>
 
       <AnimatePresence initial={false}>
         {open && (
@@ -188,8 +220,11 @@ function Row({
               )}
               {/* Свой адрес патча — первым, оригинал — вторым: пересказ
                   есть только у нас, а Steam человек найдёт и сам. Страницей
-                  патча можно поделиться, и её видит поиск. Без префетча:
-                  раскрыть можно несколько строк, а переходят по одной. */}
+                  патча можно поделиться. Здесь ссылка есть у любого патча,
+                  с пересказом или без: человеку страница открыта всегда, а
+                  поиску её показывает заголовок строки — и только ту, что
+                  в индексе. Без префетча: раскрыть можно несколько строк, а
+                  переходят по одной. */}
               <div className="flex flex-wrap items-center gap-x-5 gap-y-1 self-start text-xs">
                 <Link
                   href={newsPath(item.appid, item.gid)}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { DESCRIPTION_MAX } from './clip'
 import {
+  indexedNewsPath,
   isNewsGid,
   newsDescription,
   newsHeading,
@@ -95,6 +96,29 @@ describe('индексация', () => {
     expect(newsIndexable('   ', true)).toBe(false)
     // мёртвая или не каталожная игра — как её собственная карточка
     expect(newsIndexable('Починили дым', false)).toBe(false)
+  })
+})
+
+describe('ссылка с заголовка патча', () => {
+  const row = { appid: 730, gid: '5123894512345', kind: 'patch', rank: 5000, tldr: 'Починили дым' }
+
+  test('пересказ у игры каталога — ссылка на страницу патча', () => {
+    expect(indexedNewsPath(row)).toBe('/game/730/news/5123894512345')
+  })
+
+  test('noindex-страниц в разметке нет: без пересказа и у игры вне каталога', () => {
+    // копия поста Steam: так выглядят хотфиксы, пересказ им не пишется
+    expect(indexedNewsPath({ ...row, tldr: undefined })).toBeNull()
+    expect(indexedNewsPath({ ...row, tldr: null })).toBeNull()
+    expect(indexedNewsPath({ ...row, tldr: '  ' })).toBeNull()
+    // rank = 0 — игра не прошла фильтры каталога (getGameRanks)
+    expect(indexedNewsPath({ ...row, rank: 0 })).toBeNull()
+  })
+
+  test('ссылки нет туда, где loadPatch отдаст 404', () => {
+    expect(indexedNewsPath({ ...row, kind: 'news' })).toBeNull()
+    expect(indexedNewsPath({ ...row, gid: '../x' })).toBeNull()
+    expect(indexedNewsPath({ ...row, appid: -101 })).toBeNull()
   })
 })
 

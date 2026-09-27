@@ -12,7 +12,7 @@ import type { Discount } from '@/lib/discount'
 import type { NewsBlock } from '@/lib/steamhtml'
 import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline } from '@/lib/byline'
-import { newsPath } from '@/lib/newspage'
+import { indexedNewsPath, newsPath } from '@/lib/newspage'
 import { changesLabel, freshness } from './format'
 import { useNow } from './Now'
 import { MetaLine } from '@/components/Labels'
@@ -33,7 +33,8 @@ const EASE = [0.22, 1, 0.36, 1] as const
 const HOVER_INTENT_MS = 120
 
 /**
- * Строка ленты. Раскрывается на месте, а не уводит на другую страницу.
+ * Строка ленты. Раскрывается на месте, а не уводит на другую страницу; на
+ * страницу патча ведёт только заголовок-ссылка, и то не у каждой строки.
  *
  * Тело приезжает по требованию, а не вместе со страницей, и это единственное,
  * что здесь стоило дорого. Тридцать тел в разметке — это 277 КБ из 476 на
@@ -135,6 +136,12 @@ export function PatchRow({
     { appid: item.appid, art: meta?.art, headerImage: meta?.headerImage },
     'card',
   )[0]
+  // Название игры уже стоит строкой выше — в заголовке патча оно лишнее.
+  // Каждый пятый заголовок из Steam начинается именно с него.
+  const heading = stripGameName(item.title, name)
+  // null — страницы нет в поиске (без пересказа, игра вне каталога — это
+  // бывает в личной ленте): заголовок тогда просто текст, см. indexedNewsPath
+  const href = indexedNewsPath(item)
 
   return (
     <article
@@ -147,26 +154,18 @@ export function PatchRow({
         containIntrinsicSize: discovery ? 'auto 260px' : 'auto 220px',
       }}
     >
-      <button
-        type="button"
-        onClick={() => {
-          loadBody()
-          setOpen((v) => !v)
-        }}
-        // Предзагрузка. Курсор доезжает до строки за сотни миллисекунд до
-        // нажатия, touchstart опережает click примерно на сто — этого хватает,
-        // чтобы тело успело приехать и раскрытие выглядело мгновенным, как
-        // когда оно ехало вместе со страницей.
-        //
-        // Наведение — через задержку намерения, остальные три — сразу: касание
-        // и фокус с клавиатуры проездом не бывают.
-        onPointerEnter={hoverIntent}
-        onPointerLeave={cancelHover}
-        onFocus={loadBody}
-        onTouchStart={loadBody}
-        aria-expanded={open}
-        className="group game-card flex w-full items-start gap-4 py-6 text-left transition-opacity md:gap-6"
-      >
+      {/*
+        Шапка строки — не одна большая кнопка, как раньше, а заголовок-ссылка
+        и кнопка раскрытия: ссылку внутрь <button> вложить нельзя, а ссылка на
+        страницу патча обязана стоять в серверном HTML, а не в раскрытой
+        части (почему — indexedNewsPath).
+
+        Раскрывается строка по-прежнему нажатием куда угодно: ::before кнопки
+        растянут на всю шапку (relative здесь — его рамка), выше слоя стоит
+        только ссылка (z-10). Кнопка идёт в разметке после арта — поэтому её
+        слой и над .card-thumb, хотя та тоже позиционирована.
+      */}
+      <div className="group game-card relative flex items-start gap-4 py-6 transition-opacity md:gap-6">
         <span className="card-thumb w-[92px] shrink-0 md:w-[168px]">
           <GameArt
             appid={item.appid}
@@ -187,11 +186,19 @@ export function PatchRow({
             {studio ? <span className="text-xs text-dim">{studio}</span> : null}
           </span>
 
-          {/* Название игры уже стоит строкой выше — в заголовке патча оно лишнее.
-              Каждый пятый заголовок из Steam начинается именно с него. */}
-          <span className="text-sm font-semibold leading-snug text-ink/90 md:text-base">
-            {stripGameName(item.title, name)}
-          </span>
+          {href ? (
+            <Link
+              href={href}
+              prefetch={false}
+              className="tap tap-tight relative z-10 self-start text-sm font-semibold leading-snug text-ink/90 decoration-1 underline-offset-4 hover:underline md:text-base"
+            >
+              {heading}
+            </Link>
+          ) : (
+            <span className="text-sm font-semibold leading-snug text-ink/90 md:text-base">
+              {heading}
+            </span>
+          )}
 
           {item.tldr ? (
             <span className="line-clamp-2 text-sm leading-relaxed text-dim">{item.tldr}</span>
@@ -204,20 +211,48 @@ export function PatchRow({
           </MetaLine>
         </span>
 
-        <span
-          aria-hidden
-          className="mt-1 shrink-0 text-dim transition-transform duration-200"
-          style={{ transform: open ? 'rotate(180deg)' : 'none' }}
+        {/* Без tap и без relative: любой из них сделал бы рамкой ::before
+            саму кнопку, и слой сжался бы до шеврона */}
+        <button
+          type="button"
+          onClick={() => {
+            loadBody()
+            setOpen((v) => !v)
+          }}
+          // Предзагрузка. Курсор доезжает до строки за сотни миллисекунд до
+          // нажатия, touchstart опережает click примерно на сто — этого хватает,
+          // чтобы тело успело приехать и раскрытие выглядело мгновенным, как
+          // когда оно ехало вместе со страницей.
+          //
+          // Наведение — через задержку намерения, остальные три — сразу: касание
+          // и фокус с клавиатуры проездом не бывают. Наведение на ссылку сюда
+          // не считается — она ведёт на страницу, а не раскрывает.
+          onPointerEnter={hoverIntent}
+          onPointerLeave={cancelHover}
+          onFocus={loadBody}
+          onTouchStart={loadBody}
+          aria-expanded={open}
+          // Видимого текста у кнопки больше нет — только шеврон. Имя — то, что
+          // она покажет; игра в нём затем, что в ленте патчи разных игр, а
+          // заголовки у них бывают одинаковые («Update»)
+          aria-label={`Что изменилось: ${name}, ${heading}`}
+          className="mt-1 shrink-0 rounded-full text-dim before:absolute before:inset-0"
         >
-          <Icon name="down" size={18} />
-        </span>
-      </button>
+          <span
+            aria-hidden
+            className="block transition-transform duration-200"
+            style={{ transform: open ? 'rotate(180deg)' : 'none' }}
+          >
+            <Icon name="down" size={18} />
+          </span>
+        </button>
+      </div>
 
       {/*
-        Полоска живёт ВНЕ кнопки, и это не вопрос вкуса: ссылку внутрь <button>
-        вложить нельзя. По той же причине вся начинка кнопки выше — только
-        <span>. Отступ повторяет колонку арта: 92 + gap-4 на телефоне,
-        168 + gap-6 на десктопе.
+        Полоска живёт ВНЕ шапки: растянутый слой кнопки раскрытия накрывает
+        шапку целиком, и цена со ссылкой на игру оказались бы под ним.
+        Отступ повторяет колонку арта: 92 + gap-4 на телефоне, 168 + gap-6 на
+        десктопе.
       */}
       {discovery ? (
         <div className="-mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pb-6 pl-[108px] text-sm md:pl-[192px]">
