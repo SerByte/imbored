@@ -1,5 +1,5 @@
 import type { InStatement } from '@libsql/client'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { createDb, getCatalogMeta, setCatalogMeta, upsertGameMeta, type Db, type GamePageRow } from './db'
 import { PRICE_TRUST_SEC } from './discount'
 import {
@@ -159,6 +159,22 @@ describe('revalidateEndedDeals', () => {
     expect(await revalidateEndedDeals(db, (p) => paths.push(p), NOW)).toBe(2)
     expect(paths.sort()).toEqual(['/game/10', '/game/20'])
     expect(await getCatalogMeta(db, DEALS_SWEPT_KEY)).toBe(String(NOW))
+  })
+
+  test('скидка чужого региона карточку не сбрасывает: на странице её и так нет', async () => {
+    // После смены STEAM_STORE_CC строки до неё (price_cc NULL — это us) ещё
+    // держат долларовые распродажи. Карточка их не показывает (rowToMeta), и
+    // запись ISR ради неизменной страницы — чистый расход бюджета
+    const db = await catalog()
+    await upsertGameMeta(db, sale(70, { priceCc: 'ru', priceAt: measuredFor(NOW - 60) }), NOW - 10 * 86_400)
+    vi.stubEnv('STEAM_STORE_CC', 'ru')
+    try {
+      const paths: string[] = []
+      expect(await revalidateEndedDeals(db, (p) => paths.push(p), NOW)).toBe(1)
+      expect(paths).toEqual(['/game/70'])
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   test('следующий проход — только окно после прошлого: те же карточки второй раз не сбрасываются', async () => {

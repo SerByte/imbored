@@ -1,10 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
-import { discountEndsLabel, discountOf, formatPrice, trustedPrice } from './discount'
+import { discountEndsLabel, discountOf, trustedPrice } from './discount'
 import { entryCost, type EntryCost } from './entry'
 import type { Lean } from './mood'
 import { playtimeHidden } from './playtime'
 import { rankByTaste, sharedTasteTags, type Focus, type OwnAnchor } from './recommend'
+import { formatPrice, LEGACY_PRICE_CC } from './steamregion'
 import { tagRu } from './tagsru'
 import type { TagWeight } from './tagweight'
 import { CANDIDATE_SOURCES } from './types'
@@ -271,7 +272,9 @@ function priceNote(meta: GameMeta | undefined, source: CandidateSource, nowSec: 
   const price = trustedPrice(meta, nowSec)
   if (price === null) return ''
   const deal = discountOf(meta, nowSec)
-  const текст = formatPrice(price)
+  // Валюта — региона этой цены: модель повторит «1 999 ₽» под рублёвым
+  // ценником, а не «$19.99», которых человек в своём магазине не увидит
+  const текст = formatPrice(price, meta.priceCc ?? LEGACY_PRICE_CC)
   return deal ? ` цена ${текст} со скидкой −${deal.percent}%,` : ` цена ${текст},`
 }
 
@@ -873,11 +876,12 @@ function priceSentence(meta: GameMeta | undefined, nowSec: number, hideUrgency =
   const deal = discountOf(meta, nowSec)
   // «Нет в библиотеке» здесь больше не повторяется: это уже сказано шаблоном
   // источника new, и вместе получалось «у тебя нет … Её нет в библиотеке».
-  if (!deal) return ` В Steam — ${formatPrice(price)}.`
+  const cc = meta.priceCc ?? LEGACY_PRICE_CC
+  if (!deal) return ` В Steam — ${formatPrice(price, cc)}.`
   // Срок — только когда он не давит: см. HeuristicOptions.hideUrgency
   const ends =
     deal.endsAt && !hideUrgency ? (discountEndsLabel(deal.endsAt, nowSec) ?? '') : ''
-  return ` Сейчас −${deal.percent}%: ${formatPrice(deal.finalCents)} вместо ${formatPrice(deal.initialCents)}${ends ? ` — ${ends}` : ''}.`
+  return ` Сейчас −${deal.percent}%: ${formatPrice(deal.finalCents, cc)} вместо ${formatPrice(deal.initialCents, cc)}${ends ? ` — ${ends}` : ''}.`
 }
 
 /**

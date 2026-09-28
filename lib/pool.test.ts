@@ -201,6 +201,10 @@ describe('fetchDiscoveryPool', () => {
       discountPercent: 50,
       discountEndsAt: NOW + 86_400,
       priceAt: NOW,
+      // регион замера и «не продаётся» — тоже колонки, которые пул обязан
+      // довезти: без них скрытая регионом игра попала бы в покупки
+      priceCc: 'us',
+      storeHidden: true,
       releaseDate: '1 янв. 2020',
       medianForever: 600,
       releaseYear: 2020,

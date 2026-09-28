@@ -44,6 +44,10 @@ export type CompatPick = ArtRef & {
   /** имена тех, у кого игры нет */
   missingFor: string[]
   priceFinal?: number
+  /** регион магазина цены (lib/steamregion) — её валюта */
+  priceCc?: string
+  /** «не продаётся в российском Steam» */
+  unsold?: boolean
   /** бесплатная — цены у неё нет, см. GroupCard.isFree */
   isFree?: boolean
   discount: Discount | null
@@ -276,6 +280,11 @@ export async function loadCompat(
     // полка «на будущее» показывала её как цену игры — $14.99 за бесплатную.
     const бесплатная = meta?.isFree ?? c.isFree ?? false
     const цена = бесплатная ? null : meta ? trustedPrice(meta, now) : (c.priceFinal ?? null)
+    // Регион и «не продаётся» — той же меты, что и цена; без меты — с карты колоды
+    const регион = meta ? meta.priceCc : c.priceCc
+    // И у бесплатной: рядом с isFree ответ выбирает PriceTag, и «не продаётся»
+    // у него первым — Warzone бесплатна в US, а магазин RU её не показывает
+    const нетВРегионе = meta ? meta.storeHidden === true : c.unsold === true
     return {
       ...artRef(c.appid, c.name, meta),
       ownedByAll: c.ownedByAll,
@@ -286,6 +295,8 @@ export async function loadCompat(
       // будущее» показывала его как обычную цену, расходясь с карточкой той же
       // игры на /game и со строкой выдачи на /play.
       ...(цена !== null ? { priceFinal: цена } : {}),
+      ...(регион ? { priceCc: регион } : {}),
+      ...(нетВРегионе ? { unsold: true } : {}),
       // Скидка нужна только там, где кому-то придётся покупать: у общей игры
       // цена в разговоре не участвует, у бесплатной — тем более
       discount: meta && !c.ownedByAll && !бесплатная ? discountView(meta, now) : null,

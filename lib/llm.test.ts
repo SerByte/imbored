@@ -188,7 +188,7 @@ describe('heuristicPicks', () => {
     const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
     const [pick] = heuristicPicks([CANDS[2]], priced, 1, NOW)
     expect(pick.reason).toContain('в твоей библиотеке нет')
-    expect(pick.reason).toContain('$14.99')
+    expect(pick.reason).toContain('В Steam — 14,99\u00a0$.')
   })
 
   /**
@@ -256,8 +256,8 @@ describe('heuristicPicks', () => {
     })
     const [pick] = heuristicPicks([CANDS[2]], onSale, 1, NOW)
     expect(pick.reason).toContain('−50%')
-    expect(pick.reason).toContain('$7.49')
-    expect(pick.reason).toContain('вместо $14.99')
+    expect(pick.reason).toContain('7,49\u00a0$')
+    expect(pick.reason).toContain('вместо 14,99\u00a0$')
     expect(pick.reason).toContain('до 24 ноября')
   })
 
@@ -272,7 +272,7 @@ describe('heuristicPicks', () => {
     })
     const [pick] = heuristicPicks([CANDS[2]], onSale, 1, NOW, {}, { hideUrgency: true })
     expect(pick.reason).toContain('−50%')
-    expect(pick.reason).toContain('$7.49 вместо $14.99.')
+    expect(pick.reason).toContain('7,49\u00a0$ вместо 14,99\u00a0$.')
     expect(pick.reason).not.toContain('до 24 ноября')
   })
 
@@ -292,9 +292,28 @@ describe('heuristicPicks', () => {
     })
     const [pick] = heuristicPicks([CANDS[2]], stale, 1, NOW)
     expect(pick.reason).not.toContain('%')
-    // И цены тоже нет: $7.49 здесь акционное число без акции (см. trustedPrice),
-    // а полная $14.99 была бы такой же выдумкой в другую сторону
+    // И цены тоже нет: 7,49 $ здесь акционное число без акции (см. trustedPrice),
+    // а полная 14,99 $ была бы такой же выдумкой в другую сторону
     expect(pick.reason).not.toContain('$')
+  })
+
+  test('хвост причины — в валюте региона этой цены: рубли рублями', () => {
+    // BG3 в российском Steam: 1 999 ₽, в распродажу — 1 399 ₽
+    const rub = (over: Partial<GameMeta>) => (appid: number): GameMeta => ({
+      ...metaOf(appid)!,
+      priceCc: 'ru',
+      ...over,
+    })
+    const [full] = heuristicPicks([CANDS[2]], rub({ priceFinal: 199_900 }), 1, NOW)
+    expect(full.reason).toContain('В Steam — 1\u00a0999\u00a0₽.')
+    expect(full.reason).not.toContain('$')
+    const [sale] = heuristicPicks(
+      [CANDS[2]],
+      rub({ priceFinal: 139_900, priceInitial: 199_900, discountPercent: 30, priceAt: NOW }),
+      1,
+      NOW,
+    )
+    expect(sale.reason).toContain('Сейчас −30%: 1\u00a0399\u00a0₽ вместо 1\u00a0999\u00a0₽.')
   })
 })
 
@@ -526,7 +545,7 @@ describe('причина называет свою игру-якорь', () => {
     const priced = (appid: number): GameMeta => ({ ...metaOf(appid)!, priceFinal: 1499 })
     const [pick] = heuristicPicks(one('new'), priced, 1, NOW, profile, { anchorOf })
     expect(pick.reason.match(/библиотек/g) ?? []).toHaveLength(1)
-    expect(pick.reason).toContain('$14.99')
+    expect(pick.reason).toContain('14,99\u00a0$')
   })
 
   test('заброшенная называет свои часы, а не якорь', () => {

@@ -19,6 +19,11 @@ const ПО_ОТМЕТКЕ: Readonly<Record<string, string>> = {
   price_initial: 'price_at',
   discount_percent: 'price_at',
   discount_ends_at: 'price_at',
+  // Регион и «не продаётся» — часть того же замера: едут только вместе с
+  // ценой, иначе рубли облака получили бы долларовый регион локального или
+  // наоборот (lib/steamregion)
+  price_cc: 'price_at',
+  store_hidden: 'price_at',
   price_at: 'price_at',
   ccu: 'ccu_at',
   ccu_at: 'ccu_at',
@@ -82,15 +87,25 @@ export function buildSetList(cols: readonly string[]): string {
  * SELECT trailer_json «no such column» и уронил всю заливку ради колонки,
  * которую в нём всё равно нечем было заполнить.
  */
-const ПОЗДНИЕ = new Set(['trailer_json'])
+const ПОЗДНИЕ = new Set(['trailer_json', 'price_cc', 'store_hidden'])
+
+/** Колонки замера цены — вся группа отметки price_at, включая её саму */
+const ЦЕНОВЫЕ = new Set(Object.keys(ПО_ОТМЕТКЕ).filter((c) => ПО_ОТМЕТКЕ[c] === 'price_at'))
 
 /**
  * Список колонок заливки под то, что есть в локальной games: поздние колонки
  * без пары в базе выпадают, остальные остаются всегда — пропавшая обычная
  * колонка должна ронять заливку, а не молча уезжать пустой.
+ *
+ * Цена без региона не едет вовсе, всей группой. Каталог старше колонки
+ * price_cc не знает, в чьей валюте его цены, а облако после смены
+ * STEAM_STORE_CC держит другие: поехав одна, price_final легла бы под чужой
+ * price_cc облака, и доллары подписались бы рублями. Облако цены перемеряет
+ * само (lib/deals, lib/catalogsignals), так что не потеряно ничего.
  */
 export function presentCols<T extends string>(cols: readonly T[], have: ReadonlySet<string>): T[] {
-  return cols.filter((c) => !ПОЗДНИЕ.has(c) || have.has(c))
+  const priced = have.has('price_cc')
+  return cols.filter((c) => (!ПОЗДНИЕ.has(c) || have.has(c)) && (priced || !ЦЕНОВЫЕ.has(c)))
 }
 
 /**

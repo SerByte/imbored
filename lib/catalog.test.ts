@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { createClient } from '@libsql/client'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { getGameMeta, migrateDb, upsertGameMeta } from './db'
 import {
+  fetchAppDetails,
   fetchStoreItems,
   fetchStoreMedia,
   parseStoreMedia,
@@ -60,6 +61,9 @@ describe('parseAppDetails', () => {
       priceFinal: 499,
       priceInitial: 999,
       discountPercent: 50,
+      // регион этой цены и «продаётся»: цена в ответе — значит, в магазине есть
+      priceCc: 'us',
+      storeHidden: false,
       releaseDate: '18 Apr, 2011',
     })
   })
@@ -655,5 +659,91 @@ describe('parseStoreDescriptions', () => {
     expect(parseStoreDescriptions({}).size).toBe(0)
     expect(parseStoreDescriptions({ response: {} }).size).toBe(0)
     expect(parseStoreDescriptions({ response: { store_items: 'нет' } }).size).toBe(0)
+  })
+})
+
+/**
+ * Два региона (lib/steamregion): метаданные, отзывы и appdetails — всегда из
+ * `us`, цены — из STEAM_STORE_CC. В российском магазине часть игр не видна
+ * вовсе, и одна переменная на оба сломала бы каталог: прогрев сделал бы им
+ * заглушки «App N», крон карточек — пустые карточки.
+ */
+describe('регион запросов к магазину', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  /** Стаб, который помнит адрес и context каждого запроса */
+  function recording(items: unknown[]) {
+    const contexts: Array<Record<string, unknown>> = []
+    const urls: string[] = []
+    const fetchFn = (async (url: string) => {
+      urls.push(String(url))
+      if (String(url).includes('populartags')) {
+        return new Response(JSON.stringify([{ tagid: 19, name: 'Action' }]), { status: 200 })
+      }
+      if (String(url).includes('appdetails')) {
+        return new Response(JSON.stringify(APPDETAILS_RESPONSE), { status: 200 })
+      }
+      const input = new URL(String(url)).searchParams.get('input_json') ?? '{}'
+      contexts.push((JSON.parse(input) as { context: Record<string, unknown> }).context)
+      return new Response(JSON.stringify({ response: { store_items: items } }), { status: 200 })
+    }) as unknown as typeof fetch
+    return { fetchFn, contexts, urls }
+  }
+
+  const BG3 = {
+    appid: 1086940,
+    id: 1086940,
+    name: "Baldur's Gate 3",
+    visible: true,
+    best_purchase_option: { final_price_in_cents: '5999' },
+  }
+
+  test('цены из ru: метаданные всё равно из US, а долларовая цена в мету не попадает', async () => {
+    vi.stubEnv('STEAM_STORE_CC', 'ru')
+    const rec = recording([BG3])
+    const [meta] = await fetchStoreItems([1086940], { fetchFn: rec.fetchFn })
+    expect(rec.contexts.map((c) => c.country_code)).toEqual(['US'])
+    expect(meta.name).toBe("Baldur's Gate 3")
+    for (const key of ['priceFinal', 'priceInitial', 'discountPercent', 'discountEndsAt', 'priceAt', 'priceCc']) {
+      expect(meta, key).not.toHaveProperty(key)
+    }
+  })
+
+  test('цены из us: та же пачка несёт датированную цену со своим регионом', async () => {
+    vi.stubEnv('STEAM_STORE_CC', 'us')
+    const rec = recording([BG3])
+    const before = Math.floor(Date.now() / 1000)
+    const [meta] = await fetchStoreItems([1086940], { fetchFn: rec.fetchFn })
+    expect(meta).toMatchObject({ priceFinal: 5999, priceCc: 'us', storeHidden: false, discountPercent: 0 })
+    expect(meta.priceAt).toBeGreaterThanOrEqual(before)
+  })
+
+  test('appdetails всегда из us: при ценах из ru карточка приезжает без цены', async () => {
+    vi.stubEnv('STEAM_STORE_CC', 'ru')
+    const rec = recording([])
+    const meta = await fetchAppDetails(620, rec.fetchFn)
+    expect(rec.urls[0]).toContain('cc=us')
+    expect(meta?.name).toBe('Portal 2')
+    expect(meta).not.toHaveProperty('priceFinal')
+    expect(meta).not.toHaveProperty('priceCc')
+  })
+
+  test('appdetails в чужой валюте ценой региона не считается', () => {
+    // Steam назначает валюту и по адресу запроса: ответ в рублях при регионе
+    // us — не цена американского магазина
+    const rub = {
+      '620': {
+        success: true,
+        data: {
+          type: 'game',
+          name: 'Portal 2',
+          price_overview: { currency: 'RUB', initial: 39_900, final: 39_900, discount_percent: 0 },
+        },
+      },
+    }
+    expect(parseAppDetails(rub, 620)).not.toHaveProperty('priceFinal')
+    expect(parseAppDetails(APPDETAILS_RESPONSE, 620)?.priceFinal).toBe(499)
   })
 })

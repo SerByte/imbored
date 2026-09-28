@@ -18,7 +18,7 @@ import { StatusLine } from '@/components/StatusLine'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
-import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { DiscountCorner, DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch } from '@/components/SteamLaunch'
@@ -1688,7 +1688,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     className="btn-ember px-6 py-3"
                   />
                 )}
-                {pick.source === 'new' && (pick.priceFinal !== null || pick.isFree) && (
+                {pick.source === 'new' && (pick.priceFinal !== null || pick.isFree || pick.unsold) && (
                   <a
                     href={storeHref(pick)}
                     target="_blank"
@@ -1697,6 +1697,8 @@ function Player({ say }: { say: (line: string) => void }) {
                   >
                     <PriceTag
                       priceFinal={pick.priceFinal}
+                      cc={pick.priceCc}
+                      unsold={pick.unsold}
                       discount={pick.discount}
                       isFree={pick.isFree}
                       size="hero"
@@ -1884,6 +1886,15 @@ function Player({ say }: { say: (line: string) => void }) {
                 }
                 className="-mt-1 text-sm text-danger"
               />
+              {/* Чья это цена — под кнопкой с ней: русскоязычный аккаунт не
+                  обязательно российский, и у KZ или СНГ-доллара она другая.
+                  Только у цены: «бесплатно» и «не продаётся…» регион уже
+                  называют сами. */}
+              {pick.source === 'new' && pick.priceFinal !== null && !pick.isFree && !pick.unsold && (
+                <m.div variants={STEP} className="-mt-1">
+                  <PriceWhere cc={pick.priceCc} />
+                </m.div>
+              )}
               {/* Под ценой — «а если не зайдёт»: покупка перестаёт быть ставкой.
                   Только у платного, вышедшего и из Steam — решает сервер. */}
               {pick.refund && (
@@ -2198,6 +2209,8 @@ function Player({ say }: { say: (line: string) => void }) {
                           {p.source === 'new' && (
                             <PriceTag
                               priceFinal={p.priceFinal}
+                              cc={p.priceCc}
+                              unsold={p.unsold}
                               discount={p.discount}
                               isFree={p.isFree}
                               showPercent={false}
@@ -2285,6 +2298,8 @@ function Player({ say }: { say: (line: string) => void }) {
                               </span>
                               <PriceTag
                                 priceFinal={p.priceFinal}
+                                cc={p.priceCc}
+                                unsold={p.unsold}
                                 discount={p.discount}
                                 isFree={p.isFree}
                                 showPercent={false}

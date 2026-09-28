@@ -10,6 +10,7 @@ import {
   websiteJsonLd,
 } from './jsonld'
 import { SITE_DESCRIPTION } from './site'
+import { regionCurrency } from './steamregion'
 import { tagRu } from './tagsru'
 import type { ReviewFacts } from './gamepage'
 import type { GameMeta } from './types'
@@ -189,6 +190,24 @@ describe('gameJsonLd', () => {
     // при этом бесплатная. Именно так лежат CS2, Dota 2 и Warframe — верх
     // каталога по онлайну.
     expect(ld({ isFree: true, priceFinal: undefined }).offers).toMatchObject({ price: '0.00' })
+  })
+
+  test('валюта оффера — валюта региона цены: рубли размечаются рублями', () => {
+    const out = gameJsonLd({
+      meta: game({ appid: 1086940, priceFinal: 199_900, priceCc: 'ru' }),
+      rating: null,
+      baseUrl: BASE,
+      currency: regionCurrency('ru'),
+      now: NOW,
+    })
+    expect(out.offers).toMatchObject({ price: '1999.00', priceCurrency: 'RUB' })
+  })
+
+  test('«не продаётся в регионе» — оффера нет, даже бесплатного', () => {
+    // InStock про игру, которую в этом магазине не взять, был бы неправдой, а
+    // страница пишет «не продаётся в российском Steam»
+    expect(ld({ storeHidden: true, priceCc: 'ru' }).offers).toBeUndefined()
+    expect(ld({ storeHidden: true, isFree: true }).offers).toBeUndefined()
   })
 
   test('про цену ничего не известно — оффера нет', () => {

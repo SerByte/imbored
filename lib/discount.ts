@@ -65,13 +65,8 @@ export function discountOf(
   }
 }
 
-/**
- * Цена как строка. Валюта приходит из STEAM_STORE_CC и по умолчанию доллар —
- * тот же символ, что уже стоял по всем страницам до появления этого модуля.
- */
-export function formatPrice(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`
-}
+// Цена строкой — formatPrice в lib/steamregion: у неё есть валюта, и её
+// знает только регион, в котором цену сняли
 
 const MONTHS_GEN = [
   'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',

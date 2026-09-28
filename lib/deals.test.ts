@@ -1,5 +1,5 @@
 import { createClient } from '@libsql/client'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   PRICE_MAX_AGE_SEC,
   clearDealsCooldown,
@@ -7,7 +7,7 @@ import {
   parseStorePrices,
   refreshDeals,
 } from './deals'
-import { getGameMeta, migrateDb, upsertGameMeta, type Db } from './db'
+import { getGameMeta, migrateDb, stalePriceAppids, updateGamePrices, upsertGameMeta, type Db } from './db'
 import { discountOf } from './discount'
 import type { GameMeta } from './types'
 
@@ -221,5 +221,145 @@ describe('refreshDeals', () => {
     }) as typeof fetch
     expect(await refreshDeals(db, [1, 2, 3], NOW, { fetchFn: spy })).toBe(0)
     expect(called).toBe(false)
+  })
+})
+
+/**
+ * Регион цен (lib/steamregion). Замер — единственный запрос в Steam, который
+ * идёт не в `us`, а в регион STEAM_STORE_CC: country_code задаёт и валюту, и
+ * то, продаётся ли игра там вообще.
+ */
+describe('регион цен', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    clearDealsCooldown()
+  })
+
+  /** Стаб GetItems, который помнит country_code каждого запроса */
+  function recording(body: unknown) {
+    const countries: string[] = []
+    const fetchFn = (async (url: string) => {
+      const input = new URL(String(url)).searchParams.get('input_json') ?? '{}'
+      countries.push((JSON.parse(input) as { context: { country_code: string } }).context.country_code)
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+    return { fetchFn, countries }
+  }
+
+  async function stored(db: Db, appid: number) {
+    const r = await db.execute({
+      sql: `SELECT price_final, price_initial, discount_percent, price_cc, store_hidden, price_at
+            FROM games WHERE appid = ?`,
+      args: [appid],
+    })
+    return r.rows[0]
+  }
+
+  test('в GetItems уходит country_code региона цен, и он же ложится в строку', async () => {
+    vi.stubEnv('STEAM_STORE_CC', 'ru')
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(1086940), NOW)
+    const rec = recording({
+      response: {
+        store_items: [
+          { appid: 1086940, visible: true, best_purchase_option: { final_price_in_cents: '199900' } },
+        ],
+      },
+    })
+    expect(await refreshDeals(db, [1086940], NOW, { fetchFn: rec.fetchFn })).toBe(1)
+    expect(rec.countries).toEqual(['RU'])
+    expect(await stored(db, 1086940)).toMatchObject({ price_final: 199_900, price_cc: 'ru', store_hidden: 0 })
+    expect((await getGameMeta(db, 1086940))?.priceFinal).toBe(199_900)
+  })
+
+  test('fetchStorePrices берёт регион из опций, а не из окружения', async () => {
+    const rec = recording({ response: { store_items: [] } })
+    await fetchStorePrices([1086940], { fetchFn: rec.fetchFn, cc: 'kz' })
+    expect(rec.countries).toEqual(['KZ'])
+  })
+
+  test('visible:false — «не продаётся в регионе», а не «цены нет»', () => {
+    // Живой ответ GetItems с country_code RU для Cyberpunk 2077 (28.09.2026)
+    const map = parseStorePrices({
+      response: { store_items: [{ item_type: 0, id: 1091500, success: 1, visible: false }] },
+    })
+    expect(map.get(1091500)).toEqual({ appid: 1091500, hidden: true })
+  })
+
+  test('updateGamePrices, цена есть: пишется с регионом, «не продаётся» гаснет', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(1), NOW)
+    await db.execute('UPDATE games SET store_hidden = 1 WHERE appid = 1')
+    await updateGamePrices(db, [{ appid: 1, priceFinal: 139_900, priceInitial: 199_900, discountPercent: 30 }], NOW, 'ru')
+    expect(await stored(db, 1)).toMatchObject({
+      price_final: 139_900,
+      price_initial: 199_900,
+      discount_percent: 30,
+      price_cc: 'ru',
+      store_hidden: 0,
+      price_at: NOW,
+    })
+  })
+
+  test('updateGamePrices, hidden: цена и скидка стираются, игра помечена', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(1, { priceFinal: 5999, priceInitial: 5999, discountPercent: 0 }), NOW)
+    await updateGamePrices(db, [{ appid: 1, hidden: true }], NOW, 'ru')
+    expect(await stored(db, 1)).toMatchObject({
+      price_final: null,
+      price_initial: null,
+      discount_percent: null,
+      price_cc: 'ru',
+      store_hidden: 1,
+      price_at: NOW,
+    })
+  })
+
+  test('updateGamePrices без блока покупки: цену своего региона бережём, чужую — нет', async () => {
+    const db = await freshDb()
+    // своя: рублёвая цена со скидкой
+    await upsertGameMeta(db, meta(1, { priceCc: 'ru', priceFinal: 139_900, priceInitial: 199_900, discountPercent: 30, priceAt: NOW - 100 }), NOW)
+    // чужая: доллары из строки до смены региона (price_cc NULL — это us)
+    await upsertGameMeta(db, meta(2, { priceFinal: 5999, priceInitial: 5999, discountPercent: 0, priceAt: NOW - 100 }), NOW)
+    await updateGamePrices(db, [{ appid: 1 }, { appid: 2 }], NOW, 'ru')
+    expect(await stored(db, 1)).toMatchObject({
+      price_final: 139_900,
+      price_initial: 199_900,
+      discount_percent: null,
+      price_cc: 'ru',
+      store_hidden: 0,
+    })
+    // Оставшись под price_cc = ru, 5999 стали бы «59,99 ₽»
+    expect(await stored(db, 2)).toMatchObject({
+      price_final: null,
+      price_initial: null,
+      price_cc: 'ru',
+      price_at: NOW,
+    })
+  })
+
+  test('stalePriceAppids: цена чужого региона протухла при любом возрасте и идёт первой', async () => {
+    const db = await freshDb()
+    // свежая своя, давняя своя, свежая чужая (NULL — это us)
+    await upsertGameMeta(db, meta(1, { priceCc: 'ru', priceFinal: 1, priceAt: NOW - 60 }), NOW)
+    await upsertGameMeta(db, meta(2, { priceCc: 'ru', priceFinal: 1, priceAt: NOW - PRICE_MAX_AGE_SEC - 60 }), NOW)
+    await upsertGameMeta(db, meta(3, { priceFinal: 5999, priceAt: NOW - 60 }), NOW)
+    expect(await stalePriceAppids(db, [1, 2, 3], PRICE_MAX_AGE_SEC, NOW, 200, 'ru')).toEqual([3, 2])
+    // в своём регионе та же долларовая — свежая
+    expect(await stalePriceAppids(db, [3], PRICE_MAX_AGE_SEC, NOW, 200, 'us')).toEqual([])
+  })
+
+  test('stalePriceAppids с hidden: свежее «не продаётся» своего региона тоже в очереди', async () => {
+    const db = await freshDb()
+    // 1 — свежая своя цена; 2 — свежее «не продаётся» в ru; 3 — «не продаётся» в us
+    await upsertGameMeta(db, meta(1, { priceCc: 'ru', priceFinal: 1, priceAt: NOW - 60 }), NOW)
+    await upsertGameMeta(db, meta(2), NOW)
+    await upsertGameMeta(db, meta(3), NOW)
+    await updateGamePrices(db, [{ appid: 2, hidden: true }], NOW - 60, 'ru')
+    await updateGamePrices(db, [{ appid: 3, hidden: true }], NOW - 60, 'us')
+    // заходам людей скрытая строка протухает по сроку, как любая
+    expect(await stalePriceAppids(db, [1, 2], PRICE_MAX_AGE_SEC, NOW, 200, 'ru')).toEqual([])
+    // сверке — при любом возрасте; чужой регион протух и без флага
+    expect(await stalePriceAppids(db, [1, 2, 3], Number.MAX_SAFE_INTEGER, NOW, 200, 'ru', { hidden: true })).toEqual([3, 2])
   })
 })

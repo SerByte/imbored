@@ -207,6 +207,8 @@ function PickCard({ pick }: { pick: CompatPick }) {
               <span className="flex shrink-0 items-center gap-2">
                 <PriceTag
                   priceFinal={pick.priceFinal ?? null}
+                  cc={pick.priceCc ?? null}
+                  unsold={pick.unsold}
                   isFree={pick.isFree}
                   discount={pick.discount}
                   showPercent={false}
@@ -311,7 +313,8 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             <>
               <p className="text-sm leading-relaxed text-dim">
                 Подключи свою библиотеку — и увидите общий процент, общие игры и во что вам зайти
-                вместе. Прочитаем только список игр и часы, ничего не публикуем.
+                вместе. Прочитаем игры с часами и открытый список желаемого, ничего не
+                публикуем.
                 {/* Демо-личность отметок не получает (compat_views) — обещать ей нечего */}
                 {!isDemoId(other) && <> После входа через Steam {invite.name} увидит у себя, что вы сравнились.</>}
               </p>

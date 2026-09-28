@@ -26,7 +26,7 @@ import { describe, expect, test } from 'vitest'
 const PAGE = path.join(__dirname, '..', 'app', 'privacy', 'page.tsx')
 
 /** Отпечаток прозы, действительный для даты ниже. */
-const DIGEST = '8f84af311b93ae49'
+const DIGEST = '7393e9eb761caa9b'
 
 /** Та же дата, что и в UPDATED на странице. Дублируется, чтобы тест видел смену. */
 const UPDATED = '28 сентября 2026'

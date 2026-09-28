@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import {
   fetchOwnedGames,
+  fetchWishlist,
   friendCodeToSteamId,
+  parseWishlist,
+  WISHLIST_KEPT,
   parseProfileInput,
   resolveProfile,
   resolveVanity,
@@ -316,5 +319,95 @@ describe('повтор на разовый сбой', () => {
     const broken = script([new TypeError('bad url'), GAMES])
     await expect(resolveVanity('gaben', opts(broken.fn))).rejects.toThrow(/bad url/)
     expect(broken.calls()).toBe(1)
+  })
+})
+
+/**
+ * Список желаемого: IWishlistService/GetWishlist без ключа. Ответы сняты с
+ * живого Steam 28.09.2026: открытый список — 200 и items, закрытый — тоже 200,
+ * но с X-eresult: 15 и пустым response, кривой steamid — 400.
+ */
+describe('fetchWishlist', () => {
+  const ME = '76561198000000001'
+
+  /** eresult: null — ответ вовсе без заголовка */
+  function answer(body: unknown, init: { status?: number; eresult?: string | null } = {}) {
+    const urls: string[] = []
+    const fetchFn = (async (url: string) => {
+      urls.push(String(url))
+      return new Response(JSON.stringify(body), {
+        status: init.status ?? 200,
+        headers: init.eresult === null ? {} : { 'x-eresult': init.eresult ?? '1' },
+      })
+    }) as unknown as FetchLike
+    return { fetchFn, urls }
+  }
+
+  test('порядок самого человека: сначала расставленные по приоритету, потом свежедобавленные', async () => {
+    const { fetchFn, urls } = answer({
+      response: {
+        items: [
+          { appid: 226620, priority: 0, date_added: 1708728972 },
+          { appid: 219820, priority: 5, date_added: 1348292979 },
+          { appid: 202350, priority: 3, date_added: 1403384867 },
+          { appid: 453170, priority: 0, date_added: 1777000000 },
+          { appid: 338440, priority: 1, date_added: 1446532956 },
+        ],
+      },
+    })
+    expect(await fetchWishlist(ME, { fetchFn })).toEqual([338440, 202350, 219820, 453170, 226620])
+    // Метод открытый: ключу в адресе делать нечего
+    expect(urls[0]).toContain('/IWishlistService/GetWishlist/v1/')
+    expect(urls[0]).toContain(`steamid=${ME}`)
+    expect(urls[0]).not.toMatch(/[?&]key=/)
+  })
+
+  test('повторы и мусор выпадают, хвост за двумя сотнями — тоже', () => {
+    const items = [
+      { appid: 10, priority: 1, date_added: 1 },
+      { appid: 10, priority: 2, date_added: 2 },
+      { appid: -5, priority: 0, date_added: 3 },
+      { appid: 'x', priority: 0 },
+      null,
+      ...Array.from({ length: 300 }, (_, i) => ({ appid: 1000 + i, priority: 0, date_added: i })),
+    ]
+    const got = parseWishlist({ response: { items } })
+    expect(got).toHaveLength(WISHLIST_KEPT)
+    expect(got[0]).toBe(10)
+    expect(got.filter((id) => id === 10)).toHaveLength(1)
+    // среди нерасставленных — свежие первыми
+    expect(got[1]).toBe(1299)
+  })
+
+  test('закрытый список — «closed», открытый пустой — пустой список', async () => {
+    expect(await fetchWishlist(ME, answer({ response: {} }, { eresult: '15' }))).toBe('closed')
+    expect(await fetchWishlist(ME, answer({ response: {} }))).toEqual([])
+    expect(await fetchWishlist(ME, answer({ response: { items: [] } }))).toEqual([])
+  })
+
+  test('не-2xx — исключение, а не «список пуст»', async () => {
+    await expect(fetchWishlist('кривой', answer({}, { status: 400 }))).rejects.toThrow('400')
+    await expect(fetchWishlist(ME, answer({}, { status: 503 }))).rejects.toThrow('503')
+    await expect(fetchWishlist(ME, answer({}, { status: 429 }))).rejects.toThrow('429')
+  })
+
+  /*
+   * Свой сбой сервисный метод отдаёт тем же 200 с пустым response, отличие —
+   * только в X-eresult. Прочитанный как [], он лёг бы открытым пустым списком,
+   * и полка молча пропала бы на полсуток.
+   */
+  test('200 со сбоем в X-eresult — исключение, а не «список пуст»', async () => {
+    // 2 — Fail, 10 — Busy, 20 — ServiceUnavailable, 16 — Timeout
+    for (const eresult of ['2', '10', '20', '16']) {
+      await expect(fetchWishlist(ME, answer({ response: {} }, { eresult }))).rejects.toThrow(
+        `eresult ${eresult}`,
+      )
+    }
+  })
+
+  test('без заголовка X-eresult верим телу', async () => {
+    expect(await fetchWishlist(ME, answer({ response: {} }, { eresult: null }))).toEqual([])
+    const items = [{ appid: 620, priority: 1, date_added: 1 }]
+    expect(await fetchWishlist(ME, answer({ response: { items } }, { eresult: null }))).toEqual([620])
   })
 })

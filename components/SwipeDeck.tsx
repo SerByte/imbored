@@ -17,6 +17,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { deckCardLine, deckPosition } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
+import { formatPrice, notSoldShort } from '@/lib/steamregion'
 import { tagRu } from '@/lib/tagsru'
 
 export type DeckCard = {
@@ -25,6 +26,10 @@ export type DeckCard = {
   ownedByAll: boolean
   missingFor: string[]
   priceFinal?: number
+  /** регион магазина цены (lib/steamregion); без него цену не пишем — нет валюты */
+  priceCc?: string | null
+  /** магазин региона игру не показывает — «нет в российском Steam» */
+  unsold?: boolean
   /** бесплатная — цены нет, даже если она лежит в каталоге (см. GroupCard) */
   isFree?: boolean
   discount?: Discount | null
@@ -264,15 +269,20 @@ function TopCard({
                   1.52:1, то есть подпись была практически невидима */}
               <span className="rounded-full bg-info/10 text-info px-3 py-1 text-xs">
                 {alone ? 'Нет в твоей библиотеке' : `Нет у: ${card.missingFor.join(', ')}`}
-                {/* «бесплатно» первым, как в PriceTag: иначе у CS2 здесь
-                    стояла цена Prime — « · $15» за бесплатную игру */}
-                {card.isFree
-                  ? ' · бесплатно'
-                  : card.priceFinal !== undefined && card.priceFinal > 0
-                    ? ` · $${(card.priceFinal / 100).toFixed(0)}`
-                    : card.store
-                      ? ' · бесплатно/вне Steam'
-                      : ''}
+                {/* Порядок — как в PriceTag. «Нет в российском Steam» первым,
+                    даже раньше «бесплатно»: бесплатную игру, которую магазин
+                    региона не показывает, из него не взять. «Бесплатно» —
+                    раньше цены: иначе у CS2 здесь стояла цена Prime — « · $15»
+                    за бесплатную игру */}
+                {card.unsold && card.priceCc
+                  ? ` · ${notSoldShort(card.priceCc)}`
+                  : card.isFree
+                    ? ' · бесплатно'
+                    : typeof card.priceFinal === 'number' && card.priceFinal > 0 && card.priceCc
+                      ? ` · ${formatPrice(card.priceFinal, card.priceCc, { whole: true })}`
+                      : card.store
+                        ? ' · бесплатно/вне Steam'
+                        : ''}
               </span>
               {/* Скидка отдельной плашкой, а не внутри синей: там один токен
                   «кому не хватает», и зачёркнутая цена сломала бы его цельность */}

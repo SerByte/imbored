@@ -27,7 +27,9 @@ import {
 import { SEMANTICS_V } from './semantics'
 import { SHARED_PICK_TTL_SEC, type PickKind } from './sharedpick'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
+import { WISHLIST_KEPT } from './steam'
 import { isMultiplayerCategories, MULTIPLAYER_CATEGORY_SQL } from './steamcats'
+import { LEGACY_PRICE_CC, priceRegion } from './steamregion'
 import type { NewsBlock } from './steamhtml'
 import { readTrailer, type Trailer } from './trailer'
 import type { CandidateSource, GameMeta, GameSemantics, LibraryGame, Mood } from './types'
@@ -238,6 +240,27 @@ CREATE TABLE IF NOT EXISTS daily_picks (
   payload_json TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (steamid, day)
+) WITHOUT ROWID;
+/*
+ * Список желаемого Steam (IWishlistService/GetWishlist) — для полки «Из
+ * желаемого подешевело» на /library.
+ *
+ * Строка на человека: последний прочитанный список целиком заменяет прежний,
+ * истории нет. Хранятся только номера игр в порядке самого человека (его
+ * приоритеты), без дат добавления, и не больше WISHLIST_KEPT. closed = 1 —
+ * Steam ответил, что список закрыт настройками приватности: это тоже ответ, и
+ * он избавляет от похода в Steam на каждый заход. taken_at — когда читали,
+ * от него срок жизни (WISHLIST_MAX_AGE_SEC в lib/wishlist).
+ *
+ * Читает и пишет только сессия, доказавшая владение профилем (isWriter), не
+ * демо. Модели список не уходит и в скоринге не участвует. По запросу —
+ * forgetUser; /privacy, разделы 01 и 06.
+ */
+CREATE TABLE IF NOT EXISTS wishlists (
+  steamid TEXT PRIMARY KEY,
+  taken_at INTEGER NOT NULL,
+  closed INTEGER NOT NULL DEFAULT 0,
+  appids_json TEXT NOT NULL DEFAULT '[]'
 ) WITHOUT ROWID;
 /*
  * Исход совета (lib/outcome.ts): сколько человек сыграл в игру после того, как
@@ -660,7 +683,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 6
+export const CURRENT_SCHEMA_V = 7
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -730,6 +753,14 @@ export const ADDED_COLUMNS = [
   // (markActiveDay, lib/retention). Одна дата без истории; уходит вместе со
   // строкой users. NULL — с появления колонки не заходил
   ['users', 'last_active_day TEXT'],
+  // Регион магазина, в котором снята цена (lib/steamregion). NULL — строка
+  // старше колонки, и это LEGACY_PRICE_CC: до неё все цены снимались с `us`.
+  // Цену чужого региона rowToMeta не отдаёт вовсе — так валюты не смешиваются
+  // ни в суммах, ни в разметке, пока крон переоценивает каталог
+  ['games', 'price_cc TEXT'],
+  // 1 — магазин региона price_cc игру не показывает (GetItems visible:false):
+  // «не продаётся в российском Steam». Замер той же оси, что цена, — price_at
+  ['games', 'store_hidden INTEGER NOT NULL DEFAULT 0'],
 ] as const
 
 /**
@@ -2127,6 +2158,51 @@ export async function getLibraryBaselines(
   }))
 }
 
+/* ---------- список желаемого ---------- */
+
+/**
+ * Последний прочитанный список желаемого (таблица wishlists). null — ни разу
+ * не читали; closed — Steam сказал, что список закрыт.
+ */
+export type WishlistRow = { takenAt: number; closed: boolean; appids: number[] }
+
+/**
+ * Записать список целиком — вместо прежнего, истории нет (см. схему). Закрытый
+ * список тоже пишется: ответ «закрыт» избавляет от похода в Steam на каждый
+ * заход до конца срока строки.
+ */
+export async function saveWishlist(
+  db: Db,
+  steamid: string,
+  list: readonly number[] | 'closed',
+  nowSec: number,
+): Promise<void> {
+  const appids = list === 'closed' ? [] : list.slice(0, WISHLIST_KEPT)
+  await db.execute({
+    sql: `INSERT INTO wishlists (steamid, taken_at, closed, appids_json) VALUES (?, ?, ?, ?)
+          ON CONFLICT(steamid) DO UPDATE SET
+            taken_at = excluded.taken_at, closed = excluded.closed, appids_json = excluded.appids_json`,
+    args: [steamid, nowSec, list === 'closed' ? 1 : 0, JSON.stringify(appids)],
+  })
+}
+
+/** Список желаемого одним чтением по ключу; битый блоб — пустой список */
+export async function getWishlist(db: Db, steamid: string): Promise<WishlistRow | null> {
+  const res = await db.execute({
+    sql: 'SELECT taken_at, closed, appids_json FROM wishlists WHERE steamid = ?',
+    args: [steamid],
+  })
+  const row = res.rows[0] as unknown as
+    | { taken_at: number; closed: number; appids_json: string }
+    | undefined
+  if (!row) return null
+  return {
+    takenAt: Number(row.taken_at),
+    closed: Number(row.closed) === 1,
+    appids: parseIdList(row.appids_json).filter((id) => Number.isInteger(id) && id > 0),
+  }
+}
+
 /* ---------- каталог игр ---------- */
 
 /**
@@ -2142,8 +2218,9 @@ const GAME_INSERT = `INSERT INTO games (appid, name, tags_json, genres_json, cat
             store, store_url, art_json,
             release_year, developer, publisher, reviews_total, reviews_percent, reviews_30d,
             ccu, ccu_at, tag_count, is_multiplayer,
-            price_initial, discount_percent, discount_ends_at, price_at, trailer_json, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            price_initial, discount_percent, discount_ends_at, price_at, trailer_json, updated_at,
+            price_cc, store_hidden)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 /**
  * Что делать с уже лежащей строкой: 'update' — переписать (обычный апсерт),
@@ -2215,7 +2292,6 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
             header_image = excluded.header_image,
             screenshots_json = ${keepFilledSql('screenshots_json')},
             is_free = excluded.is_free,
-            price_final = excluded.price_final,
             release_date = excluded.release_date,
             median_forever = excluded.median_forever,
             store = excluded.store,
@@ -2233,13 +2309,20 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
             ccu_at = COALESCE(excluded.ccu_at, games.ccu_at),
             tag_count = excluded.tag_count,
             is_multiplayer = excluded.is_multiplayer,
-            -- Цена и скидка перезаписываются как есть, включая NULL и ноль:
-            -- у кончившейся распродажи нет своего события, есть только ответ
-            -- Steam без полей скидки. COALESCE тут означал бы «−70%» навсегда.
-            price_initial = excluded.price_initial,
-            discount_percent = excluded.discount_percent,
-            discount_ends_at = excluded.discount_ends_at,
-            price_at = excluded.price_at,
+            -- Цена, скидка, регион и «не продаётся» — одна группа замера по
+            -- price_at (newerMeasureSql). Свежий замер пишется как есть,
+            -- включая NULL и ноль: у кончившейся распродажи нет своего события,
+            -- есть только ответ Steam без полей скидки, и COALESCE тут означал
+            -- бы «−70%» навсегда. А запись без замера — мета без priceAt:
+            -- скрипт с другим регионом, мета, у которой rowToMeta спрятал
+            -- чужую цену, — лежащий замер больше не стирает.
+            price_final = ${newerMeasureSql('price_final', 'price_at')},
+            price_initial = ${newerMeasureSql('price_initial', 'price_at')},
+            discount_percent = ${newerMeasureSql('discount_percent', 'price_at')},
+            discount_ends_at = ${newerMeasureSql('discount_ends_at', 'price_at')},
+            price_cc = ${newerMeasureSql('price_cc', 'price_at')},
+            store_hidden = ${newerMeasureSql('store_hidden', 'price_at')},
+            price_at = ${newerMeasureSql('price_at', 'price_at')},
             trailer_json = ${keepFilledSql('trailer_json')},
             updated_at = excluded.updated_at`,
     args: [
@@ -2277,6 +2360,10 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
       meta.priceAt ?? null,
       meta.trailer ? JSON.stringify(meta.trailer) : null,
       nowSec,
+      // Регион замера — только у меты, которую его замер и принёс (lib/catalog,
+      // lib/deals); без него NULL, то есть LEGACY_PRICE_CC
+      meta.priceCc ?? null,
+      meta.storeHidden ? 1 : 0,
     ],
   }
 }
@@ -2537,6 +2624,9 @@ export type GameRow = {
   discount_percent: number | null
   discount_ends_at: number | null
   price_at: number | null
+  /** Колонки из ALTER-цикла: у строки, прочитанной до него, их нет вовсе */
+  price_cc?: string | null
+  store_hidden?: number | null
   release_date: string | null
   median_forever: number | null
   store: string | null
@@ -2565,8 +2655,17 @@ export type GameRow = {
 /**
  * Строка games → GameMeta. Один маппер на всё приложение: второй, в lib/pool,
  * отставал от этого на каждую новую колонку и молча терял её у всех покупок.
+ *
+ * ЕДИНСТВЕННЫЙ ШЛЮЗ ЦЕНЫ ИЗ БАЗЫ В КОД. Цена, скидка, отметка замера, регион
+ * и «не продаётся» выходят отсюда, только если сняты в регионе cc — по
+ * умолчанию в регионе цен сервиса (priceRegion). Цена чужого региона — это
+ * «цена неизвестна»: её нет ни на ценнике, ни в разметке, ни в промпте модели,
+ * ни в сумме бэклога, а для замера (stalePriceAppids) она протухшая. Поэтому
+ * любая сумма по мете отсюда однородна по валюте, и после переключения
+ * STEAM_STORE_CC доллары не встанут рядом с рублями, пока крон переоценивает
+ * каталог.
  */
-export function rowToMeta(row: GameRow): GameMeta {
+export function rowToMeta(row: GameRow, cc: string = priceRegion()): GameMeta {
   const meta: GameMeta = {
     appid: row.appid,
     name: row.name,
@@ -2582,20 +2681,30 @@ export function rowToMeta(row: GameRow): GameMeta {
   const trailer = readTrailer(row.trailer_json)
   if (trailer) meta.trailer = trailer
   if (row.is_free !== null) meta.isFree = row.is_free === 1
-  if (row.price_final !== null) meta.priceFinal = row.price_final
-  // Скидка читается целиком, включая ноль: «полная цена» — это ответ, а не
-  // отсутствие ответа. Колонки появились позже, у старых строк их нет вовсе,
-  // поэтому проверяем и на undefined — так же, как ccu и developer выше.
-  if (row.price_initial !== null && row.price_initial !== undefined) {
-    meta.priceInitial = row.price_initial
+  // Регион замера: NULL — строка старше колонки, её цены сняты в `us`
+  const rowCc = row.price_cc ?? LEGACY_PRICE_CC
+  if (rowCc === cc) {
+    if (row.price_final !== null && row.price_final !== undefined) meta.priceFinal = row.price_final
+    // Скидка читается целиком, включая ноль: «полная цена» — это ответ, а не
+    // отсутствие ответа. Колонки появились позже, у старых строк их нет вовсе,
+    // поэтому проверяем и на undefined — так же, как ccu и developer ниже.
+    if (row.price_initial !== null && row.price_initial !== undefined) {
+      meta.priceInitial = row.price_initial
+    }
+    if (row.discount_percent !== null && row.discount_percent !== undefined) {
+      meta.discountPercent = row.discount_percent
+    }
+    if (row.discount_ends_at !== null && row.discount_ends_at !== undefined) {
+      meta.discountEndsAt = row.discount_ends_at
+    }
+    if (row.price_at !== null && row.price_at !== undefined) meta.priceAt = row.price_at
+    if (row.store_hidden === 1) meta.storeHidden = true
+    // Регион — только у того, что о цене что-то знает: иначе он висел бы и
+    // на ни разу не мерянной строке, где ему нечего подписывать
+    if (meta.priceFinal !== undefined || meta.priceAt !== undefined || meta.storeHidden) {
+      meta.priceCc = rowCc
+    }
   }
-  if (row.discount_percent !== null && row.discount_percent !== undefined) {
-    meta.discountPercent = row.discount_percent
-  }
-  if (row.discount_ends_at !== null && row.discount_ends_at !== undefined) {
-    meta.discountEndsAt = row.discount_ends_at
-  }
-  if (row.price_at !== null && row.price_at !== undefined) meta.priceAt = row.price_at
   if (row.release_date !== null) meta.releaseDate = row.release_date
   if (row.median_forever !== null) meta.medianForever = row.median_forever
   if (row.store !== null) meta.store = row.store
@@ -2948,7 +3057,8 @@ export async function getGamesMeta(db: Db, appids: number[]): Promise<Map<number
 const GAME_LITE_COLS = [
   'appid', 'name', 'tags_json', 'genres_json', 'categories_json',
   'short_description', 'header_image', 'is_free', 'price_final', 'price_initial',
-  'discount_percent', 'discount_ends_at', 'price_at', 'release_date', 'median_forever',
+  'discount_percent', 'discount_ends_at', 'price_at', 'price_cc', 'store_hidden',
+  'release_date', 'median_forever',
   'store', 'store_url', 'art_json', 'ccu', 'ccu_at', 'reviews_30d', 'reviews_total',
   'reviews_percent', 'release_year', 'developer', 'publisher', 'signals_at', 'alive',
   'superseded_by',
@@ -4006,6 +4116,9 @@ export async function getStaleAppids(
   return appids.filter((appid) => !fresh.has(appid))
 }
 
+/** Регион замера строки games в SQL: NULL — строка старше колонки, LEGACY_PRICE_CC */
+const PRICE_CC = `COALESCE(price_cc, '${LEGACY_PRICE_CC}')`
+
 /**
  * appid, у которых цену пора перезамерить.
  *
@@ -4013,6 +4126,18 @@ export async function getStaleAppids(
  * недели, у скидки — часы. Отрицательные appid (кураторский пул других
  * магазинов) не берём вовсе — в Steam их нет, и они бы вечно висели в очереди,
  * съедая бюджет запроса.
+ *
+ * Цена чужого региона протухшая при любом возрасте (cc — регион цен, см.
+ * rowToMeta): для витрины её нет, и в очередь она встаёт рядом с «никогда не
+ * мерили». Так после смены STEAM_STORE_CC сбрасывать price_at не нужно — то,
+ * что человек открывает, переоценивается на первом же заходе.
+ *
+ * hidden — «не продаётся» своего региона тоже протухшее при любом возрасте.
+ * Нужно сверке каталога (lib/catalogsignals), и только ей: игру с этой
+ * отметкой подбор покупкой не предлагает (lib/candidates), а значит и заход
+ * человека её не переснимет, — без сверки однажды пойманный visible:false
+ * остался бы на игре каталога навсегда. Заходам людей флаг не нужен: им
+ * хватает срока.
  */
 export async function stalePriceAppids(
   db: Db,
@@ -4020,18 +4145,21 @@ export async function stalePriceAppids(
   maxAgeSec: number,
   nowSec: number,
   limit = 200,
+  cc: string = priceRegion(),
+  opts: { hidden?: boolean } = {},
 ): Promise<number[]> {
   const positive = appids.filter((id) => id > 0)
   if (!positive.length) return []
+  const hidden = opts.hidden ? ' OR store_hidden = 1' : ''
   const res = await db.execute({
-    // Сначала те, у кого цены не было никогда, потом самые давние: бюджет
-    // одного вызова конечен, а пустая цена заметнее устаревшей
+    // Сначала те, у кого цены своего региона не было никогда, потом самые
+    // давние: бюджет одного вызова конечен, а пустая цена заметнее устаревшей
     sql: `SELECT appid FROM games
           WHERE ${APPIDS_IN}
-            AND (price_at IS NULL OR price_at < ?)
-          ORDER BY price_at IS NOT NULL, price_at
+            AND (price_at IS NULL OR price_at < ? OR ${PRICE_CC} <> ?${hidden})
+          ORDER BY (price_at IS NOT NULL AND ${PRICE_CC} = ?), price_at
           LIMIT ?`,
-    args: [JSON.stringify(positive), nowSec - maxAgeSec, limit],
+    args: [JSON.stringify(positive), nowSec - maxAgeSec, cc, cc, limit],
   })
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }
@@ -4042,6 +4170,8 @@ export type PriceQuote = {
   priceInitial?: number
   discountPercent?: number
   discountEndsAt?: number
+  /** Магазин региона игру не показывает (GetItems: visible:false) */
+  hidden?: true
 }
 
 /**
@@ -4051,38 +4181,61 @@ export type PriceQuote = {
  * двигает updated_at, то есть замер цены отменял бы прогрев метаданных на
  * две недели вперёд.
  *
- * Ответ без блока покупки (free-to-play, снято с продажи, региональное
- * ограничение) гасит скидку, но НЕ цену: «Steam не назвал цену» и «игра стала
- * бесплатной» с этой стороны неразличимы, а обнулить цену бэклога из-за
- * регионального сбоя дороже, чем показать вчерашнюю. price_at ставится в обоих
- * случаях — иначе такие игры перезапрашивались бы на каждом заходе.
+ * cc — регион, в котором котировки сняты; он же ложится в price_cc. Веток три:
+ *
+ *   • цена есть — пишется она, store_hidden гаснет;
+ *   • hidden — магазин региона игру не показывает: цена и скидка стираются,
+ *     store_hidden = 1, и витрина пишет «не продаётся в российском Steam»;
+ *   • блока покупки нет (free-to-play, снято с продажи) — гасится скидка, но
+ *     НЕ цена своего региона: «Steam не назвал цену» и «игра стала бесплатной»
+ *     с этой стороны неразличимы, а обнулить цену бэклога из-за сбоя дороже,
+ *     чем показать вчерашнюю. Цену чужого региона не держим: оставшись под
+ *     новым price_cc, она стала бы долларами, подписанными рублями.
+ *
+ * price_at ставится во всех трёх — иначе такие игры перезапрашивались бы на
+ * каждом заходе.
  */
 export async function updateGamePrices(
   db: Db,
   quotes: PriceQuote[],
   nowSec: number,
+  cc: string = priceRegion(),
 ): Promise<void> {
   if (!quotes.length) return
   const stmts = quotes.map((q) =>
-    q.priceFinal === undefined
+    q.hidden
       ? {
-          sql: `UPDATE games SET discount_percent = NULL, discount_ends_at = NULL, price_at = ?
+          sql: `UPDATE games SET price_final = NULL, price_initial = NULL, discount_percent = NULL,
+                  discount_ends_at = NULL, price_at = ?, price_cc = ?, store_hidden = 1
                 WHERE appid = ?`,
-          args: [nowSec, q.appid],
+          args: [nowSec, cc, q.appid],
         }
-      : {
-          sql: `UPDATE games SET price_final = ?, price_initial = ?, discount_percent = ?,
-                  discount_ends_at = ?, price_at = ?
-                WHERE appid = ?`,
-          args: [
-            q.priceFinal,
-            q.priceInitial ?? q.priceFinal,
-            q.discountPercent ?? 0,
-            q.discountEndsAt ?? null,
-            nowSec,
-            q.appid,
-          ],
-        },
+      : q.priceFinal === undefined
+        ? {
+            // В SET все выражения видят строку ДО обновления: регион в CASE —
+            // прежний, а не тот, что пишется рядом
+            sql: `UPDATE games SET
+                    price_final = CASE WHEN ${PRICE_CC} = ? THEN price_final END,
+                    price_initial = CASE WHEN ${PRICE_CC} = ? THEN price_initial END,
+                    discount_percent = NULL, discount_ends_at = NULL, price_at = ?,
+                    price_cc = ?, store_hidden = 0
+                  WHERE appid = ?`,
+            args: [cc, cc, nowSec, cc, q.appid],
+          }
+        : {
+            sql: `UPDATE games SET price_final = ?, price_initial = ?, discount_percent = ?,
+                    discount_ends_at = ?, price_at = ?, price_cc = ?, store_hidden = 0
+                  WHERE appid = ?`,
+            args: [
+              q.priceFinal,
+              q.priceInitial ?? q.priceFinal,
+              q.discountPercent ?? 0,
+              q.discountEndsAt ?? null,
+              nowSec,
+              cc,
+              q.appid,
+            ],
+          },
   )
   await db.batch(stmts, 'write')
 }
@@ -4100,11 +4253,20 @@ export async function updateGamePrices(
  * freshlyDigestedPatches) на такой ничьей встала бы навсегда. Строк — не
  * больше, чем скидок, погасших с прошлого прохода, и каждая — один appid.
  */
-export async function dealsEndedBetween(db: Db, after: number, through: number): Promise<number[]> {
+export async function dealsEndedBetween(
+  db: Db,
+  after: number,
+  through: number,
+  cc: string = priceRegion(),
+): Promise<number[]> {
   const res = await db.execute({
+    // Скидку чужого региона карточка не показывает (rowToMeta), и её конец
+    // — запись ISR без новой страницы. После смены STEAM_STORE_CC иначе каждая
+    // ещё не переоценённая распродажа сбрасывала бы свою карточку зря
     sql: `SELECT appid FROM games
-          WHERE discount_percent > 0 AND ${DEAL_UNTIL} > ? AND ${DEAL_UNTIL} <= ?`,
-    args: [after, through],
+          WHERE discount_percent > 0 AND ${DEAL_UNTIL} > ? AND ${DEAL_UNTIL} <= ?
+            AND ${PRICE_CC} = ?`,
+    args: [after, through, cc],
   })
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => Number(r.appid))
 }
@@ -5056,6 +5218,7 @@ const USER_ROWS = [
   { table: 'daily_picks', where: 'steamid = ?' },
   { table: 'library_snapshots', where: 'steamid = ?' },
   { table: 'library_baselines', where: 'steamid = ?' },
+  { table: 'wishlists', where: 'steamid = ?' },
   { table: 'sessions', where: 'steamid = ?' },
   { table: 'users', where: 'steamid = ?' },
   { table: 'rate_limits', where: "instr(key, ':' || ? || ':') > 0" },

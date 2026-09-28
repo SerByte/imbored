@@ -155,6 +155,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           // «бесплатно» сильнее цены)
           isFree: matchedMeta.isFree === true,
           priceFinal: matchedMeta.isFree ? null : trustedPrice(matchedMeta, now),
+          priceCc: matchedMeta.priceCc ?? null,
+          // и у бесплатной: взять её в магазине региона нельзя всё равно, а
+          // рядом с isFree ответ выбирает PriceTag — «не продаётся» первым
+          unsold: matchedMeta.storeHidden === true,
           discount: matchedMeta.isFree ? null : discountView(matchedMeta, now),
         }
       : null,

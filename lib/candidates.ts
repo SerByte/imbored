@@ -266,7 +266,11 @@ export async function buildCandidates(
     newPool = [
       ...(await getGamesMetaLite(db, [...near].filter((id) => !owned.has(id)))).values(),
     ].filter(
-      (m) => !ownedKeys.has(editionKey(m.name)) && !(seedKey && editionKey(m.name) === seedKey),
+      (m) =>
+        !ownedKeys.has(editionKey(m.name)) &&
+        !(seedKey && editionKey(m.name) === seedKey) &&
+        // см. докблок у ветки пула ниже
+        !m.storeHidden,
     )
     seed = { appid: seedId, name: seedMeta.name }
   } else {
@@ -279,7 +283,20 @@ export async function buildCandidates(
         limit: POOL_LIMIT,
         wildcard: reroll ? REROLL_WILDCARD : WILDCARD_POOL,
       })
-    ).filter((m) => !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)))
+    ).filter(
+      (m) =>
+        !owned.has(m.appid) &&
+        !ownedKeys.has(editionKey(m.name)) &&
+        /*
+         * «Не продаётся в российском Steam» — не покупка. Совет купить то,
+         * чего в магазине региона нет, человек физически не исполнит, а в
+         * одиночной выдаче (/play, /daily, /explore) покупок и так не больше
+         * двух (MAX_NEW_PICKS) — место отдаётся тому, что купить можно. В пати
+         * и в сравнении такие игры остаются с подписью: там речь об общей
+         * библиотеке, а не о покупке.
+         */
+        !m.storeHidden,
+    )
   }
   for (const m of newPool) poolByAppid.set(m.appid, m)
 

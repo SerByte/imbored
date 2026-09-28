@@ -548,6 +548,11 @@ describe('выборки по списку appid', () => {
     ['getLovedFor', (db) => getLovedFor(db, IDS)],
     ['getStaleAppids', (db) => getStaleAppids(db, IDS, 86_400, NOW)],
     ['stalePriceAppids', (db) => stalePriceAppids(db, IDS, 3600, NOW)],
+    // вариант сверки каталога: лишнее OR в условии не должно сбить план
+    [
+      'stalePriceAppids со скрытыми',
+      (db) => stalePriceAppids(db, IDS, Number.MAX_SAFE_INTEGER, NOW, 200, 'us', { hidden: true }),
+    ],
   ]
 
   for (const [name, run] of LIST_READS) {

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
@@ -20,6 +21,7 @@ import {
   listLiked,
   getOlderSnapshotMinutes,
   countLiked,
+  getWishlist,
 } from '@/lib/db'
 import {
   buildLibraryView,
@@ -38,6 +40,7 @@ import {
 import type { LibraryTileState } from '@/lib/recommend'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
+import { byPrices, formatPrice } from '@/lib/steamregion'
 import { tagWeightFrom } from '@/lib/tagweight'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
@@ -50,6 +53,7 @@ import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
 import { pickSnapshotDelta } from '@/lib/libdelta'
 import { playtimeHidden } from '@/lib/playtime'
+import { WishlistShelf } from './WishlistShelf'
 
 export const metadata = {
   title: 'Библиотека',
@@ -125,7 +129,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * публичный профиль. Раньше такая сессия получала всё это целиком и только
    * без кнопок: чужой человек со ссылкой видел, что владелец скрыл и когда,
    * что ему «зашло», во что он играл после советов и как часто подбор
-   * попадал. Теперь эти пять чтений ей не делаются вовсе — пустое не утечёт
+   * попадал. Теперь эти чтения ей не делаются вовсе — пустое не утечёт
    * ни в HTML, ни в пропсы клиентских полок. Правило то же, что у GET
    * /api/outcome и «кто открыл» на /compat. Честному владельцу на втором
    * устройстве это стоит одного входа через Steam: вместо полок ему строка
@@ -138,8 +142,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * Карта тегов — только полке «Не распакованы»: из всей страницы по вкусу
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
+   *
+   * Список желаемого — шестое личное чтение и за той же проверкой: что человек
+   * хочет купить, — его дело, а не того, у кого есть ссылка на профиль. Одна
+   * строка по ключу; Steam, если строка протухла, зовёт уже полка
+   * (WishlistShelf), и страницу он не держит.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older, wishlist] = await Promise.all([
     getLatestSnapshot(db, steamid),
     writer ? listBanned(db, steamid) : [],
     bannedAppids(db, steamid),
@@ -153,6 +162,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     writer ? countLiked(db, steamid) : 0,
     // Прежние снимки парами [appid, минуты] — для строки «с прошлого снимка»
     getOlderSnapshotMinutes(db, steamid),
+    // «Из желаемого подешевело» — последний прочитанный список
+    writer ? getWishlist(db, steamid) : null,
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -483,9 +494,11 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   попробовать можно прямо сейчас
                 </div>
                 <div className="text-xs text-dim mt-1">
+                  {/* Валюта — региона суммы (backlogValue), а не угаданная:
+                      цены других регионов в неё не входят вовсе */}
                   Вместе не меньше{' '}
-                  <span className="tabular-nums">${(backlog.cents / 100).toFixed(0)}</span> — цена
-                  известна у {backlog.pricedCount} из {backlog.unplayedCount}
+                  <span className="tabular-nums">{formatPrice(backlog.cents, backlog.cc, { whole: true })}</span>{' '}
+                  {byPrices(backlog.cc)} — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}
                 </div>
               </div>
               {/* Не в общий опрос про настроение: карточка про несыгранное —
@@ -757,6 +770,15 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         {/* Сессии по ссылке полки приходят пустыми и не рисуются вовсе: строка
             о входе для неё стоит выше, на месте «Твоих вечеров» */}
         <LikedShelf games={likedGames} total={likedTotal} writer={writer} />
+        {/* Под «Зашло», над уборкой: страница по-прежнему начинается с «играй
+            в своё», а покупки — ниже всего своего. Под Suspense — Steam
+            страницу не держит. У демо списка нет, у сессии по ссылке он не
+            читается вовсе (writer выше) */}
+        {writer && !isDemoId(steamid) && (
+          <Suspense fallback={null}>
+            <WishlistShelf steamid={steamid} row={wishlist} owned={ownedNow} now={now} />
+          </Suspense>
+        )}
         <BannedShelf games={bannedGames} writer={writer} />
       </div>
 

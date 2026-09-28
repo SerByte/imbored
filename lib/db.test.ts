@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test, vi } from 'vitest'
 import { buildTagProfile, cooldownOf, normalizedTags } from './recommend'
@@ -132,6 +134,10 @@ import {
   FEEDBACK_CTX_TTL_SEC,
   listEvenings,
   markActiveDay,
+  getWishlist,
+  rowToMeta,
+  saveWishlist,
+  type GameRow,
 } from './db'
 import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
@@ -166,6 +172,9 @@ const META: GameMeta = {
   screenshots: ['https://example/620-1.jpg'],
   isFree: false,
   priceFinal: 999,
+  // Регион цены едет с ней туда и обратно; строку без него (NULL) rowToMeta
+  // читает как LEGACY_PRICE_CC — см. «регион цены» ниже
+  priceCc: 'us',
   releaseDate: '2011-04-19',
 }
 
@@ -2879,6 +2888,8 @@ describe('forgetUser: удаление по запросу', () => {
     await logFeedback(db, { steamid: ME, appid: 570, action: 'liked' }, NOW)
     await logFeedback(db, { steamid: ME, appid: 620, action: 'banned' }, NOW)
     await saveDailyPick(db, ME, '2023-11-14', { appid: 570 }, NOW)
+    // Список желаемого — последний прочитанный, одна строка на человека
+    await saveWishlist(db, ME, [1086940, 1145360], NOW)
     await recordOutcome(db, { steamid: ME, appid: 570, source: 'comeback', launched: true }, NOW)
     await checkRate(db, { bucket: 'portrait', id: ME, limit: 10, windowSec: 60, nowSec: NOW })
     // Сравнения в обе стороны: он открыл ссылку друга и друг — его
@@ -3462,8 +3473,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 6,
-      columns: 35,
+      version: 7,
+      columns: 37,
     })
   })
 })
@@ -4216,5 +4227,221 @@ describe('выбор, которым поделились (/pick/<id>)', () => {
     expect((await sweepStale(db, NOW)).picks).toBe(1)
     expect(await getSharedPick(db, 'oldpick23456', 0)).toBeNull()
     expect(await getSharedPick(db, 'newpick23456', 0)).not.toBeNull()
+  })
+})
+
+/**
+ * Регион цены (lib/steamregion): цена лежит рядом со своим регионом, и из базы
+ * в код выходит только цена региона цен сервиса. Так после смены
+ * STEAM_STORE_CC доллары не встанут рядом с рублями — ни на ценнике, ни в
+ * сумме бэклога, ни в разметке, — пока крон переоценивает каталог.
+ */
+describe('регион цены', () => {
+  /** Строка games в том виде, в каком её читает rowToMeta, — с ценой и скидкой */
+  function row(over: Partial<GameRow> = {}): GameRow {
+    return {
+      appid: 1086940,
+      name: "Baldur's Gate 3",
+      tags_json: '{"RPG":100}',
+      genres_json: '[]',
+      categories_json: '[2]',
+      short_description: null,
+      header_image: null,
+      is_free: 0,
+      price_final: 199_900,
+      price_initial: 199_900,
+      discount_percent: 0,
+      discount_ends_at: null,
+      price_at: NOW,
+      price_cc: 'ru',
+      store_hidden: 0,
+      release_date: null,
+      median_forever: null,
+      store: null,
+      store_url: null,
+      art_json: null,
+      ccu: null,
+      ccu_at: null,
+      reviews_30d: null,
+      reviews_total: null,
+      reviews_percent: null,
+      release_year: null,
+      developer: null,
+      publisher: null,
+      signals_at: null,
+      alive: 1,
+      superseded_by: null,
+      ...over,
+    }
+  }
+
+  test('цена своего региона выходит целиком, с регионом', () => {
+    const meta = rowToMeta(row(), 'ru')
+    expect(meta).toMatchObject({ priceFinal: 199_900, priceInitial: 199_900, discountPercent: 0, priceAt: NOW })
+    expect(meta.priceCc).toBe('ru')
+    expect(meta.storeHidden).toBeUndefined()
+  })
+
+  test('цена чужого региона — «цена неизвестна»: ни числа, ни скидки, ни отметки замера', () => {
+    const meta = rowToMeta(row({ discount_percent: 30, price_final: 139_900 }), 'us')
+    for (const key of ['priceFinal', 'priceInitial', 'discountPercent', 'discountEndsAt', 'priceAt', 'priceCc']) {
+      expect(meta, key).not.toHaveProperty(key)
+    }
+    // остальное на месте: регион прячет цену, а не игру
+    expect(meta.name).toBe("Baldur's Gate 3")
+    expect(meta.isFree).toBe(false)
+  })
+
+  test('«не продаётся» — тоже свойство региона: чужое не выходит', () => {
+    const hidden = row({ price_final: null, price_initial: null, discount_percent: null, store_hidden: 1 })
+    expect(rowToMeta(hidden, 'ru')).toMatchObject({ storeHidden: true, priceCc: 'ru' })
+    expect(rowToMeta(hidden, 'us').storeHidden).toBeUndefined()
+  })
+
+  test('NULL в price_cc — строка старше колонки, то есть us', () => {
+    const legacy = row({ price_cc: null, price_final: 5999, price_initial: 5999 })
+    expect(rowToMeta(legacy, 'us')).toMatchObject({ priceFinal: 5999, priceCc: 'us' })
+    expect(rowToMeta(legacy, 'ru')).not.toHaveProperty('priceFinal')
+    // и строка, прочитанная до ALTER-цикла, где колонки нет вовсе
+    const before: Partial<GameRow> = { ...legacy }
+    delete before.price_cc
+    delete before.store_hidden
+    expect(rowToMeta(before as GameRow, 'us').priceFinal).toBe(5999)
+  })
+
+  test('регион по умолчанию — STEAM_STORE_CC', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, priceCc: 'ru', priceFinal: 199_900, priceAt: NOW }, NOW)
+    vi.stubEnv('STEAM_STORE_CC', 'ru')
+    try {
+      expect((await getGameMeta(db, 620))?.priceFinal).toBe(199_900)
+      expect((await getGamesMetaLite(db, [620])).get(620)?.priceCc).toBe('ru')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    // без переменной — us, и рублёвой цены не видно
+    expect((await getGameMeta(db, 620))?.priceFinal).toBeUndefined()
+  })
+
+  test('апсерт меты без замера не стирает замеренную цену с её регионом', async () => {
+    // Так пишут все, у кого на руках мета без цены своего региона: прогрев при
+    // ценах не из `us`, промоут, обогащение карточки, которому rowToMeta
+    // спрятал чужую цену. Раньше это стирало цену до NULL
+    const db = await freshDb()
+    const measured = {
+      ...META,
+      priceCc: 'ru',
+      priceFinal: 139_900,
+      priceInitial: 199_900,
+      discountPercent: 30,
+      discountEndsAt: NOW + 86_400,
+      priceAt: NOW,
+    }
+    await upsertGameMeta(db, measured, NOW)
+    const unmeasured: GameMeta = { ...META, name: 'Portal 2 (upd)' }
+    delete unmeasured.priceFinal
+    delete unmeasured.priceCc
+    await upsertGameMeta(db, unmeasured, NOW + 100)
+    const res = await db.execute('SELECT name, price_final, price_initial, discount_percent, price_cc, price_at FROM games')
+    expect(res.rows[0]).toMatchObject({
+      name: 'Portal 2 (upd)',
+      price_final: 139_900,
+      price_initial: 199_900,
+      discount_percent: 30,
+      price_cc: 'ru',
+      price_at: NOW,
+    })
+  })
+
+  test('свежий замер по-прежнему гасит скидку, в том числе значением NULL', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(
+      db,
+      { ...META, priceInitial: 1999, discountPercent: 50, discountEndsAt: NOW + 10, priceAt: NOW },
+      NOW,
+    )
+    // Ответ Steam без блока покупки: ни цены, ни скидки — но замер свежий
+    const fresh: GameMeta = { ...META, priceAt: NOW + 100 }
+    delete fresh.priceFinal
+    await upsertGameMeta(db, fresh, NOW + 100)
+    const res = await db.execute('SELECT price_final, discount_percent, discount_ends_at, price_at FROM games')
+    expect(res.rows[0]).toMatchObject({
+      price_final: null,
+      discount_percent: null,
+      discount_ends_at: null,
+      price_at: NOW + 100,
+    })
+  })
+
+  test('сторож: кто пишет price_final в games, тот пишет и price_cc', () => {
+    // Цена без региона после смены STEAM_STORE_CC — доллары под рублёвым
+    // price_cc строки. Правило держится не на памяти, а здесь: в lib/ и
+    // scripts/ каждый SQL, который пишет цену в games, и каждый список колонок
+    // с price_final обязаны назвать и регион
+    const root = path.join(__dirname, '..')
+    const offenders: string[] = []
+    let writers = 0
+    for (const dir of ['lib', 'scripts']) {
+      for (const name of fs.readdirSync(path.join(root, dir))) {
+        if (!/\.ts$/.test(name) || /\.test\.ts$/.test(name)) continue
+        const rel = `${dir}/${name}`
+        const src = fs.readFileSync(path.join(root, rel), 'utf8')
+        // SQL в шаблонных строках: запись в games с ценой
+        for (const m of src.matchAll(/`([^`]*)`/g)) {
+          const sql = m[1]
+          if (!/\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE)\s+games\b/i.test(sql)) continue
+          if (!/\bprice_final\b/.test(sql)) continue
+          writers++
+          if (!/\bprice_cc\b/.test(sql)) offenders.push(`${rel}: ${sql.trim().slice(0, 60)}…`)
+        }
+        // Списки колонок: где названа цена, назван и регион
+        for (const m of src.matchAll(/\[[^\]]*'price_final'[^\]]*\]/g)) {
+          writers++
+          if (!/'price_cc'/.test(m[0])) offenders.push(`${rel}: список колонок без price_cc`)
+        }
+      }
+    }
+    // GAME_INSERT, три ветки updateGamePrices, GAME_LITE_COLS, COLS заливки
+    expect(writers).toBeGreaterThanOrEqual(6)
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('список желаемого', () => {
+  const ME = '76561198000000001'
+
+  test('пишется целиком и заменяет прежний: истории нет', async () => {
+    const db = await freshDb()
+    expect(await getWishlist(db, ME)).toBeNull()
+    await saveWishlist(db, ME, [1086940, 1145360], NOW)
+    expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW, closed: false, appids: [1086940, 1145360] })
+    await saveWishlist(db, ME, [620], NOW + 60)
+    expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW + 60, closed: false, appids: [620] })
+  })
+
+  test('закрытый список — тоже ответ: пишется без игр', async () => {
+    const db = await freshDb()
+    await saveWishlist(db, ME, [620], NOW)
+    await saveWishlist(db, ME, 'closed', NOW + 60)
+    expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW + 60, closed: true, appids: [] })
+  })
+
+  test('не больше WISHLIST_KEPT игр и только номера — без дат', async () => {
+    const db = await freshDb()
+    await saveWishlist(db, ME, Array.from({ length: 250 }, (_, i) => i + 1), NOW)
+    expect((await getWishlist(db, ME))?.appids).toHaveLength(200)
+    const cols = await db.execute('PRAGMA table_info(wishlists)')
+    expect(cols.rows.map((c) => c.name)).toEqual(['steamid', 'taken_at', 'closed', 'appids_json'])
+  })
+
+  test('forgetUser уносит и его, чужой остаётся', async () => {
+    const db = await freshDb()
+    const FRIEND = '76561198000000002'
+    await saveWishlist(db, ME, [620], NOW)
+    await saveWishlist(db, FRIEND, [730], NOW)
+    expect(FORGET_TABLES).toContain('wishlists')
+    await forgetUser(db, ME)
+    expect(await getWishlist(db, ME)).toBeNull()
+    expect((await getWishlist(db, FRIEND))?.appids).toEqual([730])
   })
 })

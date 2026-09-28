@@ -156,3 +156,29 @@ describe('buildCandidates', () => {
     expect(set.candidates.some((c) => c.source === 'owned')).toBe(false)
   })
 })
+
+/**
+ * «Не продаётся в российском Steam» — не покупка: советовать купить то, чего в
+ * магазине региона нет, значит дать совет, который не исполнить. В одиночную
+ * выдачу такая игра не попадает; признак ставит замер цены (updateGamePrices).
+ */
+describe('buildCandidates: игры, которых нет в магазине региона', () => {
+  async function newOnes(db: Db): Promise<number[]> {
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW })
+    if (typeof set === 'string') throw new Error(set)
+    return set.candidates.filter((c) => c.source === 'new').map((c) => c.appid)
+  }
+
+  test('скрытая регионом игра каталога не становится покупкой', async () => {
+    const db = await freshDb()
+    await seed(db)
+    // та же игра, пока магазин её продаёт, — в покупках есть
+    expect(await newOnes(db)).toContain(99)
+
+    await db.execute({
+      sql: "UPDATE games SET store_hidden = 1, price_cc = 'us', price_at = ? WHERE appid = 99",
+      args: [NOW],
+    })
+    expect(await newOnes(db)).not.toContain(99)
+  })
+})

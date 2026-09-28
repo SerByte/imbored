@@ -126,6 +126,11 @@ function shopView(meta: GameMeta | undefined, now: number) {
     store: meta?.store ?? null,
     storeUrl: meta?.storeUrl ?? null,
     priceFinal: meta ? trustedPrice(meta, now) : null,
+    // Регион цены едет рядом с ней: валюту знает только он (lib/steamregion),
+    // а клиентскому ценнику до STEAM_STORE_CC не дотянуться
+    priceCc: meta?.priceCc ?? null,
+    // «Не продаётся в российском Steam» — вместо цены, а не вместе с ней
+    unsold: meta?.storeHidden === true,
     isFree: meta?.isFree ?? null,
   }
 }
@@ -321,6 +326,8 @@ export function exploreCardView(p: LlmPick, ctx: PickContext) {
       : shop.priceFinal !== null
         ? { priceFinal: shop.priceFinal }
         : {}),
+    priceCc: shop.priceCc,
+    unsold: shop.unsold,
     discount: buyView(meta, p.source, ctx.now, ctx.hideUrgency).discount,
     headerImage: shop.headerImage,
     art: shop.art,
@@ -361,6 +368,8 @@ export function shelfCardView(meta: GameMeta, opts: { now: number; owned: boolea
     owned: opts.owned,
     isFree: buying && shop.isFree === true,
     priceFinal: buying && !shop.isFree ? shop.priceFinal : null,
+    priceCc: buying ? shop.priceCc : null,
+    unsold: buying && shop.unsold,
     discount: buyView(meta, buying ? 'new' : 'familiar', opts.now, opts.hideUrgency).discount,
   }
 }

@@ -6,7 +6,7 @@ import { GameArt } from '@/components/GameArt'
 import { GameMorph } from '@/components/Morph'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
-import { DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
 import { ShownUntil } from '@/components/ShownUntil'
 import { Eyebrow, MetaLine } from '@/components/Labels'
 import { PlayersNow } from '@/components/PlayersNow'
@@ -26,7 +26,8 @@ import {
   loadGamePage,
   reviewFacts,
 } from '@/lib/gamepage'
-import { currencyOf, gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
+import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
+import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { OG_SITE } from '@/lib/site'
 import { plural } from '@/lib/plural'
 import { refundEligible } from '@/lib/refund'
@@ -277,7 +278,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               // aggregateRating доставался лишь малой доле страниц
               rating: facts,
               baseUrl: appBaseUrl(),
-              currency: currencyOf(process.env.STEAM_STORE_CC),
+              // Та же валюта, что на ценнике: цену другого региона rowToMeta
+              // сюда не пропускает, и Offer без неё не строится вовсе
+              currency: regionCurrency(priceRegion()),
               now,
             }),
             gameBreadcrumbLd({ meta, baseUrl: appBaseUrl(), genre }),
@@ -582,19 +585,28 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   как «про цену мы ничего не знаем» — то есть ровно тот вопрос,
                   на который страница с заголовком «стоит ли играть» и должна
                   отвечать. PriceTag такой случай умел с самого начала. */}
-              {(meta.isFree || (price !== null && price > 0)) && (
+              {/* «Не продаётся в российском Steam» — тоже ответ на вопрос о
+                  цене, и плашка для него рисуется так же, как для цены */}
+              {(meta.isFree || meta.storeHidden || (price !== null && price > 0)) && (
                 <PriceLine until={dealUntil}>
                   {/* Цена — строкой рядом с кнопками, а не стеклянной плашкой
                       их формы: в ряду кнопок плашка притворялась ещё одной
                       кнопкой */}
-                  <span className="flex items-center gap-2 px-1 text-sm">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm">
                     <PriceTag
                       priceFinal={price}
+                      cc={meta.priceCc ?? null}
+                      unsold={meta.storeHidden}
                       isFree={meta.isFree}
                       discount={deal}
                       size="hero"
                     />
                     <DiscountEnds discount={deal} />
+                    {/* Чья это цена: у KZ и СНГ-доллара она другая. Только у
+                        цены — «бесплатно» и «не продаётся» говорят сами */}
+                    {!meta.isFree && !meta.storeHidden && price !== null && price > 0 && (
+                      <PriceWhere cc={meta.priceCc} />
+                    )}
                   </span>
                 </PriceLine>
               )}

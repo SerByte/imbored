@@ -5,7 +5,6 @@ import {
   discountOf,
   discountTrustedUntil,
   discountView,
-  formatPrice,
   trustedPrice,
 } from './discount'
 import type { GameMeta } from './types'
@@ -162,14 +161,6 @@ describe('discountTrustedUntil', () => {
   test('скидки нет или ей уже не верят — границы нет', () => {
     expect(discountTrustedUntil(onSale({ discountPercent: 0, priceInitial: 999 }), NOW)).toBeNull()
     expect(discountTrustedUntil(onSale({ priceAt: NOW - PRICE_TRUST_SEC - 1 }), NOW)).toBeNull()
-  })
-})
-
-describe('formatPrice', () => {
-  test('центы превращаются в цену с двумя знаками', () => {
-    expect(formatPrice(999)).toBe('$9.99')
-    expect(formatPrice(0)).toBe('$0.00')
-    expect(formatPrice(5999)).toBe('$59.99')
   })
 })
 

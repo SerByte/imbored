@@ -24,6 +24,10 @@ export type GroupCard = {
   missingFor: string[]
   score: number
   priceFinal?: number
+  /** Регион магазина цены (lib/steamregion) — без него у числа нет валюты */
+  priceCc?: string
+  /** «Нет в российском Steam»: магазин региона игру не показывает */
+  unsold?: boolean
   /**
    * Бесплатная игра. Цены у такой карточки нет вовсе, даже если в строке
    * каталога она лежит: у Counter-Strike 2 is_free = 1 и price_final = 1499 —
@@ -115,6 +119,13 @@ export function buildGroupDeck(args: {
         : meta.priceFinal !== undefined
           ? { priceFinal: meta.priceFinal }
           : {}),
+      ...(meta.priceCc ? { priceCc: meta.priceCc } : {}),
+      // Пати такую игру не прячет: общая библиотека — не покупка, а тем, у кого
+      // её нет, честнее прочитать «нет в российском Steam», чем не узнать. И
+      // у бесплатной тоже: Warzone бесплатна в US, а магазин RU её не
+      // показывает. Рядом с isFree ответ выбирает строка колоды (SwipeDeck) —
+      // «нет в российском Steam» первым, как в PriceTag
+      ...(meta.storeHidden ? { unsold: true } : {}),
       ...(meta.headerImage ? { headerImage: meta.headerImage } : {}),
       tags: topTags(meta),
       ...(meta.store ? { store: meta.store } : {}),

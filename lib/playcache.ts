@@ -54,8 +54,11 @@ export const WARM_MARK_TTL_MS = 10 * 60_000
  * Версия формы записи. Вкладка живёт через деплой, и запись прошлой версии
  * сайта с другой формой карточки уронила бы рендер — а так её просто не узнают.
  * Поднимать при любой несовместимой правке PlayPick или Deal.
+ *
+ * 2 — у цены появился регион (priceCc, unsold): карточка первой версии пришла
+ * бы без валюты, и ценник у героя-покупки молча пропал бы на пятнадцать минут.
  */
-export const PLAY_CACHE_VERSION = 1
+export const PLAY_CACHE_VERSION = 2
 
 export type PlayCache = {
   v: typeof PLAY_CACHE_VERSION

@@ -5,6 +5,7 @@ import {
   logFeedback,
   roomVotes,
   saveLibrarySnapshot,
+  updateGamePrices,
   upsertGameMeta,
   type Db,
 } from '@/lib/db'
@@ -102,6 +103,37 @@ describe('/api/room/[id]/deck → /vote', () => {
     expect(stray.status).toBe(409)
     expect(await stray.json()).toEqual({ error: 'notindeck' })
     expect((await roomVotes(db, ROOM)).map((v) => [v.steamid, v.appid])).toEqual([[me, 570]])
+  })
+})
+
+/**
+ * Бесплатная игра, которую магазин региона не показывает: Warzone бесплатна в
+ * US, а российский Steam отвечает на неё visible:false. Тому, у кого её нет,
+ * «бесплатно» обещало бы то, чего он там не возьмёт. Поэтому роут не гасит
+ * «не продаётся» бесплатностью: карта везёт оба признака, а выбирает строка
+ * колоды (SwipeDeck) — «нет в российском Steam» первым, как в PriceTag.
+ */
+describe('/api/room/[id]/deck: бесплатная, но не в магазине региона', () => {
+  test('карта везёт и isFree, и unsold — «не продаётся» не гасится бесплатностью', async () => {
+    const now = nowSec()
+    const me = await signInAs(db, 'openid')
+    const WARZONE: GameMeta = { ...meta(1962663, 'Call of Duty: Warzone'), isFree: true }
+    for (const g of [DOTA, WARZONE]) await upsertGameMeta(db, g, now)
+    // регион по умолчанию: и замер, и чтение — в одном
+    await updateGamePrices(db, [{ appid: WARZONE.appid, hidden: true }], now)
+    await createRoom(db, { id: ROOM, steamid: me }, now)
+    await joinRoom(db, ROOM, me, undefined, now)
+    await joinRoom(db, ROOM, FRIEND, undefined, now)
+    // Общая — чтобы карта точно попала в колоду: признаки на ней от владения
+    // не зависят, а состав пула «не у всех» в тесте не управляем
+    for (const steamid of [me, FRIEND]) await saveLibrarySnapshot(db, steamid, owned(DOTA, WARZONE), now)
+
+    const { cards } = (await (await get()).json()) as {
+      cards: Array<{ appid: number; isFree?: boolean; unsold?: boolean; priceFinal?: number }>
+    }
+    const card = cards.find((c) => c.appid === WARZONE.appid)
+    expect(card).toMatchObject({ isFree: true, unsold: true })
+    expect(card).not.toHaveProperty('priceFinal')
   })
 })
 

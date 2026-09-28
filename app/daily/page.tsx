@@ -18,7 +18,7 @@ import { StatusLine } from '@/components/StatusLine'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
-import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { DiscountCorner, DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SteamLaunch } from '@/components/SteamLaunch'
@@ -701,11 +701,17 @@ export default function DailyPage() {
               <div className="flex flex-wrap items-baseline gap-3">
                 <PriceTag
                   priceFinal={hero.priceFinal}
+                  cc={hero.priceCc}
+                  unsold={hero.unsold}
                   discount={hero.discount}
                   isFree={hero.isFree}
                   size="hero"
                 />
                 <DiscountEnds discount={hero.discount} />
+                {/* Чья цена — рядом с ней: у KZ и СНГ-доллара она другая */}
+                {hero.priceFinal !== null && !hero.isFree && !hero.unsold && (
+                  <PriceWhere cc={hero.priceCc} />
+                )}
               </div>
             )}
             {hero.refund && <RefundNote />}
@@ -770,6 +776,8 @@ export default function DailyPage() {
                       <span className="truncate">{c.store ? (STORE_LABEL[c.store] ?? c.store) : 'Steam'}</span>
                       <PriceTag
                         priceFinal={c.priceFinal}
+                        cc={c.priceCc}
+                        unsold={c.unsold}
                         discount={c.discount}
                         isFree={c.isFree}
                         showPercent={false}
