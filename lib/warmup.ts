@@ -32,6 +32,12 @@ export type LibraryFacts = {
   games: number
   untouched: number
   /**
+   * Время скрыто настройками Steam (lib/playtime.ts): вместо «ни разу не
+   * открывал» экран говорит, что время скрыто. Необязательно: ответ старой
+   * версии сервера поля не несёт — тогда молчим, как и раньше.
+   */
+  timeHidden?: boolean
+  /**
    * Стена экрана ожидания: appid самых наигранных игр (libraryWall). Пока
    * идёт подбор, за кольцом плывут обложки ЕГО библиотеки, и выбранная игра
    * выходит из них вперёд — «из многих — одна». Необязательна: ответ старой
@@ -100,6 +106,7 @@ function parseFacts(raw: unknown): LibraryFacts | null {
   if (typeof games !== 'number' || !Number.isFinite(games) || games < 0) return null
   if (typeof untouched !== 'number' || !Number.isFinite(untouched) || untouched < 0) return null
   const facts: LibraryFacts = { games, untouched }
+  if ((raw as { timeHidden?: unknown }).timeHidden === true) facts.timeHidden = true
   const wall = wallIds((raw as { wall?: unknown }).wall)
   if (wall) facts.wall = wall
   return facts

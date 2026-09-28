@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { forgetPlay } from '@/lib/playcache'
+import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
 
 /**
@@ -44,6 +45,8 @@ export function SignOut({ verified }: { verified: boolean }) {
     // И выдачу /play, которую вкладка держит пятнадцать минут (lib/playcache):
     // чужому входу её и так не покажут, но хранить подборку вышедшего незачем
     forgetPlay()
+    // Его «время скрыто» (lib/playtime) — не про следующего на этом устройстве
+    timeHiddenStore.set(null)
     // refresh обязателен и идёт после перехода: страницы уже отрендерены с
     // прежней сессией, и без сброса роутерного кэша клиент показал бы их
     // из памяти — с библиотекой человека, который только что вышел.

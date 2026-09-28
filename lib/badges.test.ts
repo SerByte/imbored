@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { assignEdges, EDGE_BADGE, EDGE_LINE, PICK_EDGES, type EdgeItem } from './badges'
+import { assignEdges, EDGE_BADGE, EDGE_LINE, edgeLine, PICK_EDGES, type EdgeItem } from './badges'
 import { neutralParts } from './recommend'
 import type { ScoreParts } from './types'
 
@@ -18,6 +18,17 @@ describe('подписи преимуществ', () => {
       expect(EDGE_LINE[e].trim().length).toBeGreaterThan(0)
     }
     expect(new Set(PICK_EDGES.map((e) => EDGE_BADGE[e])).size).toBe(PICK_EDGES.length)
+  })
+
+  // Время скрыто в Steam (lib/playtime.ts): вкус собран по владению, а не по
+  // часам, и фраза про «во что ты играешь» была бы утверждением про часы
+  test('скрытое время: фраза вкуса — про библиотеку, остальные как были', () => {
+    expect(edgeLine('taste', true)).toBe('Из всей подборки она ближе всего к тому, что есть в твоей библиотеке.')
+    expect(edgeLine('taste', true)).not.toMatch(/играешь/)
+    expect(edgeLine('taste', false)).toBe(EDGE_LINE.taste)
+    for (const e of PICK_EDGES.filter((x) => x !== 'taste')) {
+      expect(edgeLine(e, true)).toBe(EDGE_LINE[e])
+    }
   })
 })
 

@@ -41,6 +41,18 @@ export const EDGE_LINE: Record<PickEdge, string> = {
   underrated: 'Её мало кто знает, но почти все, кто играл, её хвалят.',
 }
 
+/**
+ * Фраза героя с поправкой на скрытое в Steam время (lib/playtime.ts). Вкус
+ * тогда собран из всех своих игр поровну (playWeight), и «во что ты играешь»
+ * утверждало бы про часы, которых никто не видел. Сравнение то же — меняются
+ * только слова: ближе всего к тому, что у него есть.
+ */
+export function edgeLine(edge: PickEdge, timeHidden: boolean): string {
+  return edge === 'taste' && timeHidden
+    ? 'Из всей подборки она ближе всего к тому, что есть в твоей библиотеке.'
+    : EDGE_LINE[edge]
+}
+
 export type EdgeItem = {
   appid: number
   /** Нет частей — нет и сравнения по вкусу и настроению (карточка собрана руками) */
@@ -77,6 +89,9 @@ const TASTE_LEAD = 1.05
  * (untouched, backlog) и некупленное (new) — ровно то, про что «ближе всего к
  * тому, во что ты играешь» что-то сообщает. Карточка без источника
  * соревнуется, как раньше.
+ *
+ * Своя при скрытом в Steam времени (owned) не соревнуется по той же причине:
+ * вкус тогда собран из всех своих игр поровну (playWeight), и она в нём есть.
  */
 const TASTE_RIVALS: ReadonlySet<CandidateSource> = new Set(['untouched', 'backlog', 'new'])
 

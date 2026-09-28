@@ -23,6 +23,7 @@ import { presetHref, VIBE_PRESETS } from '@/lib/presets'
 import {
   getServerSessionHint,
   getSessionHint,
+  hintFrom,
   rememberSession,
   subscribeSessionHint,
   type SessionHint,
@@ -128,6 +129,22 @@ export function ConnectCard() {
    * «неверное значение» там увела бы человека править правильную ссылку.
    */
   const inputError = error === 'badinput' || error === 'notfound'
+  /*
+   * Каким путём пришёл последний отказ — от этого зависит, что проверяет
+   * «Я открыл — проверить» в панели private (PrivacyHelp). Отказ в адресе
+   * (?error=private) — это возврат из Steam, и проверка — снова вход через
+   * Steam. Отправка поля переводит в 'form': проверка — та же ссылка ещё раз,
+   * поле после отказа не очищается.
+   */
+  const [lastTry, setLastTry] = useState<'steam' | 'form'>('steam')
+  /**
+   * Проверка из панели идёт. Панель на это время остаётся на месте: кнопка,
+   * которую нажали, стоит в ней, и пропади панель вместе с ошибкой — фокус
+   * упал бы в body (по той же причине сама кнопка на это время aria-disabled,
+   * а не disabled). Строка ошибки при этом гаснет и загорается снова: живая
+   * область перечитает «Steam прячет…», и повторный отказ будет услышан.
+   */
+  const [rechecking, setRechecking] = useState(false)
   const [session, setSession] = useState<SessionHint | null>(null)
   /** Живая строка вошедшего — до ответа touch дверь по умолчанию (lib/liveline) */
   const [live, setLive] = useState(LIVE_DEFAULT)
@@ -266,6 +283,7 @@ export function ConnectCard() {
   async function connect(asDemo: boolean) {
     setBusy(asDemo ? 'demo' : 'connect')
     setError(null)
+    if (!asDemo) setLastTry('form')
     try {
       const res = await fetch('/api/connect', {
         method: 'POST',
@@ -311,6 +329,19 @@ export function ConnectCard() {
   function submitProfile() {
     if (input && busy === null) void connect(false)
   }
+
+  /** «Я открыл — проверить» после отказа по ссылке: та же ссылка ещё раз */
+  function recheckProfile() {
+    if (!input || busy !== null) return
+    setRechecking(true)
+    void connect(false).finally(() => setRechecking(false))
+  }
+
+  /*
+   * Проверять повтором поля можно, только пока ссылка в нём: стёр — проверка
+   * идёт входом через Steam, а не кнопкой, которая ничего не шлёт.
+   */
+  const recheckByForm = lastTry === 'form' && input !== ''
 
   return (
     <div className="flex w-full max-w-xl flex-col gap-4">
@@ -590,25 +621,18 @@ export function ConnectCard() {
             : (ERROR_TEXT[error] ?? 'Что-то пошло не так.')
           : ''}
       </p>
-      {error === 'private' && <PrivacyHelp />}
+      {(error === 'private' || rechecking) && (
+        <PrivacyHelp
+          {...(recheckByForm
+            ? { onRetry: recheckProfile, retrying: busy === 'connect' }
+            : { retryHref: steamHref })}
+        />
+      )}
     </div>
   )
 }
 
 type Busy = 'go' | 'connect' | 'demo' | null
-
-/**
- * Подсказка о входе из ответа touch или connect: демо помнится только
- * настоящим true, «только просмотр» — только настоящим writer: false у не-демо.
- */
-function hintFrom(d: { personaName?: string | null; demo?: boolean; writer?: boolean }): SessionHint {
-  return {
-    authed: true,
-    personaName: d.personaName ?? null,
-    ...(d.demo === true ? { demo: true as const } : {}),
-    ...(d.demo !== true && d.writer === false ? { readOnly: true as const } : {}),
-  }
-}
 
 /**
  * Поле для ссылки на профиль — одно на карточку.

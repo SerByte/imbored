@@ -1,4 +1,5 @@
 import { looksLikeNonGame } from './junk'
+import { minutesHidden, playtimeHidden } from './playtime'
 import type { GameMeta, LibraryGame } from './types'
 
 /**
@@ -25,6 +26,13 @@ import type { GameMeta, LibraryGame } from './types'
  *   идут: наиграно — значит наиграно.
  * - Пропавшие игры (были, а теперь нет) только считаются: их часы не
  *   вычитаются — сыгранное не отменяется тем, что игра ушла из библиотеки.
+ * - Прежнее время скрыто настройками Steam (lib/playtime.ts) — минут не
+ *   считаем вовсе: ни прироста, ни распакованных, ни часов новых игр. Ноль
+ *   там — галочка, а не ноль минут, и человек, снявший её, получил бы в
+ *   «наиграно» все свои часы за жизнь, а всю библиотеку — во «впервые
+ *   запущены». Часы одних новинок тоже не в счёт: «наиграно» без прежних игр
+ *   читалось бы итогом, а было бы его обрывком. Появившиеся и пропавшие
+ *   считаются как обычно — список игр галочка не прячет.
  *
  * Модуль чистый: без базы, без Map и Set в результате — он уезжает в кэш
  * портрета JSON-ом (lib/portraitmodel).
@@ -65,6 +73,8 @@ export function libraryDelta(
   const added: LibraryGame[] = []
   const unpacked: PlayedDelta[] = []
   const seen = new Set<number>()
+  // Прежнее время скрыто — минуты считать не от чего (см. ПРАВИЛА)
+  const blind = minutesHidden(before)
 
   for (const g of after) {
     seen.add(g.appid)
@@ -72,13 +82,14 @@ export function libraryDelta(
     if (was === undefined) {
       // Последний запуск раньше отметки — игра была и тогда, просто Steam её не отдал
       if (g.lastPlayed !== undefined && g.lastPlayed > 0 && g.lastPlayed < sinceAt) continue
-      if (g.playtimeForever > 0) {
+      if (!blind && g.playtimeForever > 0) {
         minutes += g.playtimeForever
         played.push({ game: g, minutes: g.playtimeForever })
       }
       if (!looksLikeNonGame(g, metaOf(g.appid))) added.push(g)
       continue
     }
+    if (blind) continue
     const gained = Math.max(0, g.playtimeForever - was)
     if (gained === 0) continue
     minutes += gained
@@ -116,14 +127,28 @@ export function isEmptyDelta(d: Pick<LibraryDelta, 'minutes' | 'added' | 'unpack
  * параллельно, и снимок, записанный между ними, сдвинул бы OFFSET.
  * Пустой прежний снимок (старые строки без игр) — не точка отсчёта: с ним
  * «новым» оказалось бы всё.
+ *
+ * Снимок со скрытым временем (lib/playtime.ts) — тоже не точка отсчёта.
+ * Про минуты libraryDelta с ним честно промолчит, но строка «с 3 сентября ·
+ * 2 новые игры» читалась бы как «с тех пор не играл», а снимок старше, если
+ * он с часами, скажет всё. Путь сюда ведёт сама подсказка
+ * PlaytimeHiddenNote: снял галочку, подключил библиотеку заново — и первым
+ * же открытым снимком строка сравнивала бы с нулями галочки.
+ *
+ * Скрыт сам последний снимок (галочку только что поставили) — строки нет
+ * вовсе. Прирост до нулей ноль, и осталось бы то же «с 3 сентября · 2 новые
+ * игры» без минут, только с другого конца. Про минуты там скажут шапка
+ * («время в играх — скрыто») и PlaytimeHiddenNote, а новые игры без минут —
+ * не та динамика, ради которой строка.
  */
 export function pickSnapshotDelta(
   older: ReadonlyArray<{ takenAt: number; minutes: ReadonlyMap<number, number> }>,
   latest: { takenAt: number; games: readonly LibraryGame[] },
   metaOf: MetaOf,
 ): { fromAt: number; delta: LibraryDelta } | null {
+  if (playtimeHidden(latest.games)) return null
   const candidates = older
-    .filter((o) => o.takenAt < latest.takenAt && o.minutes.size > 0)
+    .filter((o) => o.takenAt < latest.takenAt && o.minutes.size > 0 && !minutesHidden(o.minutes))
     .sort((a, b) => b.takenAt - a.takenAt)
   for (const o of candidates) {
     const delta = libraryDelta(o.minutes, latest.games, o.takenAt, metaOf)

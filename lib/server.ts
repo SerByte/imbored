@@ -12,6 +12,7 @@ import {
   type Resolved,
 } from './sessions'
 import { SESSION_COOKIE } from './session'
+import { DEMO_PREFIX, isDemoId } from './demoid'
 
 const globalStore = globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }
 
@@ -105,13 +106,10 @@ export { SESSION_COOKIE }
  * Вариант 2 — «демо-друг» для пати: он делит со своим игроком всё, кроме
  * последней цифры, поэтому пара всегда состоит из двух разных участников
  * одного посетителя.
+ *
+ * Само правило узнавания — в lib/demoid: его читает и браузер (см. там).
  */
-const DEMO_PREFIX = '000'
-const DEMO_ID_RE = /^000\d{14}$/
-
-export function isDemoId(steamid: string): boolean {
-  return DEMO_ID_RE.test(steamid)
-}
+export { isDemoId }
 
 /** Основа демо-личности посетителя: 16 знаков, к которым добавляется вариант. */
 function newDemoBase(): string {

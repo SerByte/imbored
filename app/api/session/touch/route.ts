@@ -1,7 +1,9 @@
-import { NextResponse } from 'next/server'
+import { after, NextResponse } from 'next/server'
 import { getDailyPick, getUserCard, pendingOutcomeAsk, touchSession, type Db } from '@/lib/db'
 import { dayKey, parseDailySelection } from '@/lib/daily'
+import { logSwallowed } from '@/lib/errlog'
 import type { OutcomeAsk } from '@/lib/outcome'
+import { markReturn } from '@/lib/retention'
 import {
   SESSION_COOKIE,
   currentSession,
@@ -31,6 +33,10 @@ import { renewToken } from '@/lib/sessions'
  * ответят ей 403 needsteam. Признак считается из уже разобранной сессии,
  * похода в базу он не добавляет.
  *
+ * Четвёртый — отметка возврата (lib/retention): первый за сутки заход
+ * считается здесь, потому что сюда приходят все страницы, включая главную,
+ * где SessionKeeper молчит.
+ *
  * Куку ставят всего четыре роута на весь сайт: два входа, этот и выход. Ни
  * одна страница не трогается, поэтому ISR у /game/[appid] и og-картинок цел.
  */
@@ -41,10 +47,28 @@ export async function POST(req: Request) {
   const { steamid, sid, stale } = session
   const db = await getDb()
   const now = nowSec()
+  const demo = isDemoId(steamid)
+
+  // Отметка возврата — после ответа и лучшим усилием: приветствию незачем
+  // ждать счётчик, а отказ базы — не повод отказать во входе. Стоит до
+  // раннего выхода ниже: считается каждый заход, а не только продление. Цена
+  // обычного захода — одно чтение по первичному ключу (markActiveDay).
+  const marked = markReturn(db, steamid, demo, now).catch((err: unknown) => {
+    logSwallowed('touch:return', err)
+  })
+  try {
+    after(marked)
+  } catch {
+    // Вне запроса (тест, скрипт) after недоступен: работа идёт и так, а отказ
+    // уже пойман выше.
+  }
 
   // Ник и аватар читаются только когда их просят. Спрашивает одна главная —
   // ради приветствия; SessionKeeper на остальных страницах берёт из ответа
-  // один writer, и лишний запрос в базу на каждую загрузку был бы даром.
+  // writer, а для сверки подсказки о входе — authed и steamid
+  // (settleSessionHint в lib/sessionhint), и лишний запрос в базу на каждую
+  // загрузку был бы даром. Поэтому steamid отвечается и без card=1: без него
+  // сверка молча перестала бы работать.
   //
   // demo — туда же: демо-личность главная встречает не «С возвращением,
   // Демо-игрок», а полем для своей ссылки. Признак считается по самому
@@ -55,7 +79,6 @@ export async function POST(req: Request) {
   // ссылке заняты своими подписями, а спрашивать «как тебе?» того, чей ответ
   // не сохранится, незачем (GET /api/outcome отвечает им так же).
   const wantCard = new URL(req.url).searchParams.get('card') === '1'
-  const demo = isDemoId(steamid)
   const withLive = wantCard && isWriter(session) && !demo
   const [user, live] = wantCard
     ? await Promise.all([

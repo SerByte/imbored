@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { backlogEquivalent, backlogValue } from './stats'
+import { hiddenLibrary } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
@@ -74,6 +75,18 @@ describe('backlogValue', () => {
 
   test('пустая библиотека — нули', () => {
     expect(backlogValue([], () => undefined, NOW)).toEqual({
+      cents: 0,
+      pricedCount: 0,
+      unplayedCount: 0,
+    })
+  })
+})
+
+describe('backlogValue при скрытом времени', () => {
+  test('20 игр с нулями — бэклога нет: сумма за всё купленное долгом не называется', () => {
+    const lib = hiddenLibrary()
+    const metas = new Map(lib.map((g) => [g.appid, meta(g.appid, 1999)]))
+    expect(backlogValue(lib, (id) => metas.get(id), NOW)).toEqual({
       cents: 0,
       pricedCount: 0,
       unplayedCount: 0,

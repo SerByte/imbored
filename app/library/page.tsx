@@ -3,10 +3,11 @@ import { redirect } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
-import { PrivacyHelp } from '@/components/PrivacyHelp'
+import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
+import { DemoBar } from '@/components/DemoBar'
 import { trimArt } from '@/lib/art'
 import {
   bannedAppids,
@@ -35,10 +36,10 @@ import {
   wallState,
 } from '@/lib/forgotten'
 import type { LibraryTileState } from '@/lib/recommend'
-import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
+import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
 import { tagWeightFrom } from '@/lib/tagweight'
-import { bounceTo, reconnectHref } from '@/lib/destination'
+import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
 import { plural } from '@/lib/plural'
@@ -46,7 +47,9 @@ import { dateLabel } from '@/lib/freshness'
 import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
 import { Evenings, type EveningItem } from '@/components/Evenings'
 import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
+import { NeedSteam } from '@/components/NeedSteam'
 import { pickSnapshotDelta } from '@/lib/libdelta'
+import { playtimeHidden } from '@/lib/playtime'
 
 export const metadata = {
   title: 'Библиотека',
@@ -87,6 +90,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // отсюда редирект ушёл бы статусом 200 — каркас loading.tsx к этому моменту
   // уже отдан. Здесь остаются протухшая и поддельная кука.
   if (!steamid) redirect(bounceTo('/library'))
+  // Видеть оценки, скрытое и вечера — тому же, кто вправе их писать (isWriter):
+  // см. докблок чтений ниже
+  const writer = session !== null && isWriter(session)
 
   const db = await getDb()
   const query = await props.searchParams
@@ -113,21 +119,38 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * забытого. Шестьдесят первая скрытая игра иначе вернулась бы туда под
    * видом «ты забыл, что она у тебя есть».
    *
+   * ОЦЕНКИ, СКРЫТОЕ И ВЕЧЕРА — ТОЛЬКО ТОМУ, КТО ВПРАВЕ ИХ ПИСАТЬ.
+   * Пишет их лишь сессия, доказавшая владение профилем (Steam OpenID) или
+   * демо, а сессию по вставленной ссылке /api/connect выдаёт на любой
+   * публичный профиль. Раньше такая сессия получала всё это целиком и только
+   * без кнопок: чужой человек со ссылкой видел, что владелец скрыл и когда,
+   * что ему «зашло», во что он играл после советов и как часто подбор
+   * попадал. Теперь эти пять чтений ей не делаются вовсе — пустое не утечёт
+   * ни в HTML, ни в пропсы клиентских полок. Правило то же, что у GET
+   * /api/outcome и «кто открыл» на /compat. Честному владельцу на втором
+   * устройстве это стоит одного входа через Steam: вместо полок ему строка
+   * NeedSteam.
+   *
+   * bannedAppids читается всем — но только для отсева полки забытого и
+   * наружу не выводится: иначе скрытая владельцем игра вернулась бы на полку
+   * под видом «ты забыл», теперь уже любому со ссылкой.
+   *
    * Карта тегов — только полке «Не распакованы»: из всей страницы по вкусу
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
    */
   const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older] = await Promise.all([
     getLatestSnapshot(db, steamid),
-    listBanned(db, steamid),
+    writer ? listBanned(db, steamid) : [],
     bannedAppids(db, steamid),
-    feedbackStats(db, steamid),
+    // rate: null — и блока «Подбор попадает в N%» нет, как у того, кто ещё не оценивал
+    writer ? feedbackStats(db, steamid) : { liked: 0, skipped: 0, rate: null },
     filter === 'untouched' ? loadTagStats(db) : null,
     // «Твои вечера» — советы за тот же срок, что их хранят (OUTCOME_TTL_SEC)
-    listEvenings(db, steamid, nowSec() - OUTCOME_TTL_SEC),
+    writer ? listEvenings(db, steamid, nowSec() - OUTCOME_TTL_SEC) : [],
     // Полка «Зашло» — что подбор запомнил как понравившееся, и сколько всего
-    listLiked(db, steamid),
-    countLiked(db, steamid),
+    writer ? listLiked(db, steamid) : [],
+    writer ? countLiked(db, steamid) : 0,
     // Прежние снимки парами [appid, минуты] — для строки «с прошлого снимка»
     getOlderSnapshotMinutes(db, steamid),
   ])
@@ -138,6 +161,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // полке: иначе числа в шапке прыгали бы вслед за фильтром
   const games = snapshot.games
   const totalHours = Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
+  // Время скрыто настройками Steam (lib/playtime.ts): часы, «ни разу не
+  // запускал» и минуты после советов — нули галочки, а не факты
+  const timeHidden = playtimeHidden(games)
 
   // Только игры библиотеки, а не весь каталог: нужны обложки для сетки и
   // цена бэклога, и то и другое считается по своим играм.
@@ -183,8 +209,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   })
   const backlog = backlogValue(games, (id) => metas.get(id), now)
 
-  // Сводка — по всем советам окна, полка — по свежим (EVENINGS_SHOWN)
-  const eveningsTotal = eveningsSummary(evenings)
+  // Сводка — по всем советам окна, полка — по свежим (EVENINGS_SHOWN). При
+  // скрытом времени сверять нечем: сверенные раньше нули — не «не запускал»
+  const eveningsTotal = eveningsSummary(timeHidden ? [] : evenings)
   // Доля от трёх сверенных советов и больше: «сыграно в 100%» по одному — шум
   const honest = eveningsTotal.checked >= EVENINGS_HONEST_MIN
   const ownedNow = new Set(games.map((g) => g.appid))
@@ -197,8 +224,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
       date: dateLabel(e.shownAt),
-      played:
-        e.minutes === null
+      played: timeHidden
+        ? 'время скрыто'
+        : e.minutes === null
           ? 'ещё не сверяли'
           : e.minutes === 0
             ? e.launched
@@ -274,6 +302,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         )}
         <div aria-hidden className="lib-hero-scrim" />
         <div className="relative mx-auto w-full max-w-6xl px-5 pt-32 pb-12 md:pb-16">
+          {/* Демо называет себя и здесь: «твоя библиотека глазами сервиса» над
+              чужой витриной — прямая неправда. Признак серверный, полоса
+              приходит в первом HTML и стоит в потоке (см. DemoBar). */}
+          {isDemoId(steamid) && <DemoBar from="/library" className="mb-6" />}
           <Eyebrow className="mb-3">Библиотека</Eyebrow>
           <h1 className="font-display text-display-md max-w-md">Твоя библиотека глазами сервиса</h1>
           <dl className="mt-7 flex flex-wrap gap-x-10 gap-y-4">
@@ -283,16 +315,27 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               </dt>
               <dd className="lib-stat">{games.length.toLocaleString('ru-RU')}</dd>
             </div>
-            <div className="flex flex-col-reverse">
-              <dt className="lib-stat-label">
-                {plural(totalHours, 'час', 'часа', 'часов')} в игре
-              </dt>
-              <dd className="lib-stat">{totalHours.toLocaleString('ru-RU')}</dd>
-            </div>
-            <div className="flex flex-col-reverse">
-              <dt className="lib-stat-label">ни разу не запускал</dt>
-              <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
-            </div>
+            {/* Время скрыто — одно слово вместо двух нулей: «0 часов» и «ни
+                разу не запускал: 300» были бы сказаны про сотни часов */}
+            {timeHidden ? (
+              <div className="flex flex-col-reverse">
+                <dt className="lib-stat-label">время в играх</dt>
+                <dd className="lib-stat">скрыто</dd>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col-reverse">
+                  <dt className="lib-stat-label">
+                    {plural(totalHours, 'час', 'часа', 'часов')} в игре
+                  </dt>
+                  <dd className="lib-stat">{totalHours.toLocaleString('ru-RU')}</dd>
+                </div>
+                <div className="flex flex-col-reverse">
+                  <dt className="lib-stat-label">ни разу не запускал</dt>
+                  <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
+                </div>
+              </>
+            )}
           </dl>
           {/*
             С прошлого снимка — без «было X, стало Y» рядом с числами выше:
@@ -346,6 +389,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
 
       <div className="mx-auto w-full max-w-6xl px-5 pt-10 pb-16">
 
+      {/* Список открыт, а часы — нет: ошибки private тут не бывает, и панель
+          ниже этот человек не увидит никогда. Шаг — тот же, что в ней. */}
+      {timeHidden && <PlaytimeHiddenNote className="mb-10 max-w-2xl" />}
+
       {/*
         ПУСТАЯ БИБЛИОТЕКА — НЕ ПУСТАЯ ПОЛКА.
         
@@ -364,15 +411,22 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         Чипсы и сетка ниже при пустой библиотеке не рисуются вовсе: пять нулей
         не сообщают ничего, а якорь #wall на них ведёт только с полки
         «запечатанного», которой здесь тоже нет.
+
+        Отступ снизу — свой, mb-10, как у соседних блоков: сетка карточек со
+        своим mb-10 здесь обычно не рисуется, и следующий блок («Твои вечера»
+        или строка NeedSteam у сессии по ссылке) иначе лёг бы вплотную под
+        кнопку «Подключить заново».
       */}
       {games.length === 0 && (
-        <section className="max-w-2xl">
+        <section className="max-w-2xl mb-10">
           <p className="font-semibold text-ink mb-2">Steam не отдал ни одной игры</p>
           <p className="text-dim text-sm leading-relaxed mb-5">
             Причин ровно две: игровые данные закрыты настройками профиля — или библиотека правда
             пуста. Первая встречается намного чаще.
           </p>
-          <PrivacyHelp />
+          {/* Проверка — входом через Steam: он пишет свежий снимок. Сессии по
+              ссылке — «Подключить заново» ниже, её дверь. */}
+          <PrivacyHelp retryHref={session && isWriter(session) ? steamLoginFor('/library') : undefined} />
           <Link href={reconnectHref()} className="btn-ember mt-5 px-6 py-3">
             Подключить заново
           </Link>
@@ -483,6 +537,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         </div>
       )}
 
+      {/* Вечеров, «Зашло» и скрытого сессии по ссылке не прочитано вовсе (см.
+          writer выше) — одна строка на месте первой из полок говорит, где они,
+          а не три пустоты подряд. Есть ли там что-то, не сказано: это тоже
+          сведение о владельце. */}
+      {!writer && <NeedSteam from="/library" why="see" className="mb-12 max-w-md" />}
+
       {eveningItems.length > 0 && (
         <Evenings
           items={eveningItems}
@@ -491,7 +551,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             played: eveningsTotal.played,
             hours: playedLine(eveningsTotal.minutes),
           }}
-          writer={session ? isWriter(session) : false}
+          writer={writer}
         />
       )}
 
@@ -580,7 +640,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           функции на один просмотр ради фильтров, которые откроют один раз.
           id — цель ссылки с полки «запечатанного»: приводить к фильтру,
           не показав самих чипсов, значит приводить в никуда. */}
-      {games.length > 0 && (
+      {games.length > 0 && !timeHidden && (
       /* Пилюлями, лентой на телефоне. Полоса липкая: смузер теперь живёт
          только на главной, и sticky здесь снова держится (.lib-filters).
          Липкая подложка и лента — два разных элемента: маска ленты
@@ -607,13 +667,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           полка, и без него человек с ?state=active получил бы два сообщения
           сразу — «за две недели ты не запускал ничего» поверх «Steam не отдал
           ни одной игры». */}
-      {games.length > 0 && view.games.length === 0 && filter !== 'all' && (
-        <p className="text-dim text-sm">{SHELF_EMPTY[filter]}</p>
+      {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && (
+        <p className="text-dim text-sm">{SHELF_EMPTY[view.filter]}</p>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-6">
         {wall.shown.map((g) => {
-          const state = wallState(g, metas.get(g.appid), now)
+          const state = wallState(g, metas.get(g.appid), now, timeHidden)
           const label = STATE_LABEL[state]
           const hours = Math.round(g.playtimeForever / 60)
           return (
@@ -648,9 +708,14 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                 sizes="(min-width: 768px) 25vw, 50vw"
                 meta={
                   <>
-                    <span className="tabular-nums">
-                      {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
-                    </span>
+                    {/* При скрытом времени — без числа: «0 ч» на каждой плитке
+                        было бы неправдой, а «скрыто» сорок восемь раз подряд —
+                        шумом; это сказано один раз, в шапке */}
+                    {!timeHidden && (
+                      <span className="tabular-nums">
+                        {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
+                      </span>
+                    )}
                     {label.text && <span className={`truncate ${label.cls}`}>{label.text}</span>}
                   </>
                 }
@@ -672,7 +737,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {wall.nextPage !== null && (
         <div className="mt-8 flex justify-center">
           <Link
-            href={libraryHref(filter, wall.nextPage)}
+            href={libraryHref(view.filter, wall.nextPage)}
             scroll={false}
             prefetch={false}
             className="btn-glass"
@@ -689,9 +754,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           настройках, которых в проекте нет — бан ставится в одном клике от
           выдачи, и сниматься должен так же дёшево. */}
       <div className="mt-14">
-        {/* Сессия есть наверняка: без неё страница развернула бы на вход */}
-        <LikedShelf games={likedGames} total={likedTotal} writer={session ? isWriter(session) : false} />
-        <BannedShelf games={bannedGames} writer={session ? isWriter(session) : false} />
+        {/* Сессии по ссылке полки приходят пустыми и не рисуются вовсе: строка
+            о входе для неё стоит выше, на месте «Твоих вечеров» */}
+        <LikedShelf games={likedGames} total={likedTotal} writer={writer} />
+        <BannedShelf games={bannedGames} writer={writer} />
       </div>
 
       {/* Выход живёт здесь, а не в шапке: шапка общая на весь сайт, и чтобы

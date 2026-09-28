@@ -143,6 +143,8 @@ function parseDeal(x: unknown): Deal | null {
     nudge: parseNudge(d.nudge),
     nowSec: d.nowSec,
     viewer: d.viewer,
+    // Записи до строки о скрытом времени — выдача без неё
+    playtimeHidden: d.playtimeHidden === true,
   }
 }
 

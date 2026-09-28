@@ -55,6 +55,13 @@ describe('dealFrom', () => {
     expect(d?.scope).toBe('all')
   })
 
+  test('скрытое время — только из явного true: мусор и старый сервер молчат о галочке', () => {
+    expect(dealFrom({ picks: [pick], nowSec: 1, playtimeHidden: true }, 'all')?.playtimeHidden).toBe(true)
+    for (const v of [undefined, false, 'true', 1]) {
+      expect(dealFrom({ picks: [pick], nowSec: 1, playtimeHidden: v }, 'all')?.playtimeHidden, String(v)).toBe(false)
+    }
+  })
+
   test('мусор в оси — «без оси», а не строка, которой нет среди кнопок', () => {
     expect(dealFrom({ picks: [pick], lean: 'sideways', nowSec: 1 }, 'all')?.lean).toBeNull()
   })
@@ -182,6 +189,7 @@ describe('/play применяет новую выдачу одной функц
     for (const setter of [
       'setDiscoveries(',
       'setContinueGame(',
+      'setTimeHidden(',
       'setEngine(',
       'setNowSec(',
       'setScope(',

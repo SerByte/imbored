@@ -152,8 +152,14 @@ export type Mood = {
  * знаешь». Стоит после 'comeback', но гарантированного слота по умолчанию не
  * получает (см. heuristicPicks): знакомое — ответ, когда нет сил на новое, а
  * не обязательная часть каждой выдачи.
+ *
+ * 'owned' — своя игра, когда время скрыто настройками Steam (lib/playtime.ts).
+ * Все четыре источника выше — утверждения про часы, а часов тогда нет ни у
+ * одной игры: назвать её нетронутой, брошенной или любимой значило бы сказать
+ * неправду. Отдельный источник по той же причине, что и выше: свой бейдж,
+ * свой шаблон причины и своя строка в промпте, без слов про минуты.
  */
-export const CANDIDATE_SOURCES = ['untouched', 'backlog', 'comeback', 'familiar', 'new'] as const
+export const CANDIDATE_SOURCES = ['untouched', 'backlog', 'comeback', 'familiar', 'owned', 'new'] as const
 
 export type CandidateSource = (typeof CANDIDATE_SOURCES)[number]
 

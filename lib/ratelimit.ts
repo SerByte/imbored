@@ -161,6 +161,12 @@ export async function sweepRateLimits(db: Db, nowSec: number): Promise<void> {
  * его подставляет прокси Vercel, всё остальное клиент может написать сам.
  * Без прокси (локальная разработка) адреса нет вовсе, и общий ключ 'local'
  * честнее, чем выдуманный уникальный: локально лимит просто общий на всех.
+ *
+ * Честен этот адрес, только пока перед Vercel нет чужого прокси. За оранжевым
+ * облаком Cloudflare Vercel пишет сюда адрес узла Cloudflare, и лимиты по IP
+ * сливаются в общий на всю его площадку (DEPLOY.md, §5; сторож — в
+ * .github/workflows/cron.yml). cf-connecting-ip вслепую не лекарство: его
+ * подделает любой прямой запрос на 76.76.21.21 или *.vercel.app.
  */
 export function clientIp(headers: Headers): string {
   const fwd = headers.get('x-forwarded-for')

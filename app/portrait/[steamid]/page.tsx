@@ -33,6 +33,7 @@ import { dateLabel } from '@/lib/freshness'
 import { playedLine } from '@/lib/outcome'
 import { pickYearWindow, yearEyebrow, yearsToRead, type WrappedYear } from '@/lib/wrapped'
 import { plural } from '@/lib/plural'
+import { playtimeHidden } from '@/lib/playtime'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { buildPortraitModel, portraitTag, type PortraitModel } from '@/lib/portraitmodel'
 import {
@@ -40,6 +41,8 @@ import {
   eraLead,
   paretoLead,
   portraitFallbackText,
+  portraitTextFresh,
+  PORTRAIT_TEXT_V,
   socialTail,
   unplayedHeading,
   type PortraitVoice,
@@ -125,9 +128,13 @@ export async function generateMetadata({
   const hours = Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   const games = snapshot.games.length
   const title = `Портрет игрока ${name}`
+  // Превью ссылки в чате — то же правило, что и сама страница: при скрытом
+  // времени «0 часов» было бы сказано про галочку Steam (lib/playtime.ts)
+  const time = playtimeHidden(snapshot.games)
+    ? 'время скрыто'
+    : `${hours.toLocaleString('ru-RU')} ${plural(hours, 'час', 'часа', 'часов')}`
   const description =
-    `${games} ${plural(games, 'игра', 'игры', 'игр')}, ` +
-    `${hours.toLocaleString('ru-RU')} ${plural(hours, 'час', 'часа', 'часов')}. ` +
+    `${games} ${plural(games, 'игра', 'игры', 'игр')}, ${time}. ` +
     'Посмотри портрет и проверь совместимость вкусов.'
 
   // Свой адрес, а не корневой '/': см. ownAddress в lib/site.ts
@@ -243,8 +250,10 @@ async function loadModel(
         yearWindow: pickYearWindow(snapshot, baselines),
       })
     },
-    // v3 — в модели появились итоги года: запись v2 без них отдавалась бы сутки
-    ['portrait-model:v3', steamid, String(snapshot.takenAt)],
+    // v3 — в модели появились итоги года: запись v2 без них отдавалась бы сутки.
+    // v4 — признак скрытого времени (wrapped.playtimeHidden): запись v3 без него
+    // сутки показывала бы «0 часов» и «Чистилище» на всю библиотеку
+    ['portrait-model:v4', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
   try {
@@ -325,7 +334,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const db = await getDb()
   let text: string
   const cached = await getUserPortrait(db, steamid)
-  if (cached && cached.takenAt === snapshot.takenAt) {
+  // Снапшот тот же — но текст про «0 часов», записанный до того, как промпт
+  // узнал о скрытом времени, не годится и при нём (PORTRAIT_TEXT_V)
+  if (cached && portraitTextFresh(cached, snapshot.takenAt, portrait.facts.playtimeHidden)) {
     text = cached.text
   } else if (!complete) {
     text = fallbackText()
@@ -356,7 +367,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
         : null
     text = written ?? fallbackText()
-    if (written) await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text })
+    if (written) await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text, v: PORTRAIT_TEXT_V })
   }
 
   /*
@@ -441,13 +452,25 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           </SplitHeading>
           <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
             <Fact value={wrapped.gamesCount} caption={gamesCaption(wrapped.gamesCount)} delay={300} />
-            <Fact value={wrapped.totalHours} caption={hoursCaption(wrapped.totalHours)} delay={360} />
-            <Fact
-              value={wrapped.unplayedCount}
-              caption={unplayedCaption(wrapped.unplayedCount)}
-              delay={420}
-              accent
-            />
+            {/* Время скрыто настройками Steam (lib/playtime.ts): одно слово
+                вместо «0 часов» и «0 не запущено» — оба нуля были бы про
+                галочку, а не про человека */}
+            {wrapped.playtimeHidden ? (
+              <div className="flex flex-col-reverse">
+                <dt className="lib-stat-label">время в играх</dt>
+                <dd className="lib-stat">скрыто</dd>
+              </div>
+            ) : (
+              <>
+                <Fact value={wrapped.totalHours} caption={hoursCaption(wrapped.totalHours)} delay={360} />
+                <Fact
+                  value={wrapped.unplayedCount}
+                  caption={unplayedCaption(wrapped.unplayedCount)}
+                  delay={420}
+                  accent
+                />
+              </>
+            )}
           </dl>
           {wrapped.days > 0 && (
             <p className="mt-6 text-dim text-sm md:text-base">

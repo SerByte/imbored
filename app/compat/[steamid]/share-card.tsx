@@ -68,9 +68,15 @@ export function CompatCardImage({ invite, posters }: { invite: CompatInvite; pos
         <div style={{ fontSize: 64, lineHeight: 1.15, marginBottom: 30 }}>
           {`${invite.name.slice(0, 20)} зовёт сравнить библиотеки`}
         </div>
+        {/* Время скрыто настройками Steam (lib/playtime.ts) — слово, а не
+            «0 часов»: картинку из чата уже не отозвать */}
         <div style={{ display: 'flex' }}>
           <Stat value={ogNum(invite.gamesCount)} caption={gamesCaption(invite.gamesCount)} />
-          <Stat value={ogNum(invite.totalHours)} caption={hoursCaption(invite.totalHours)} />
+          {invite.playtimeHidden ? (
+            <Stat value="скрыто" caption="время в играх" />
+          ) : (
+            <Stat value={ogNum(invite.totalHours)} caption={hoursCaption(invite.totalHours)} />
+          )}
         </div>
       </div>
     </div>

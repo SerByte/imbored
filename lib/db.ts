@@ -13,6 +13,7 @@ import {
 import { isDeadReason } from './liveness'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
+import { minutesHidden, playtimeHidden } from './playtime'
 import {
   OUTCOME_PLAYED_MIN,
   OUTCOME_TTL_SEC,
@@ -56,7 +57,8 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url TEXT,
   portrait_json TEXT,
   created_at INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL
+  last_seen_at INTEGER NOT NULL,
+  last_active_day TEXT
 );
 /*
  * Сессии. Строка здесь — НЕ источник истины о том, вошёл ли человек: это
@@ -197,11 +199,12 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 ) WITHOUT ROWID;
 /*
  * Почасовые счётчики (lib/telemetry.ts): сбои на сервере и в браузере,
- * отчёты CSP и шаги воронки. Только числа — kind и key из закрытых списков,
- * без SteamID, адресов и путей: ни одна строка не относится к человеку, и
- * forgetUser здесь забывать нечего. Живут 90 дней (pruneTelemetry из крона
- * новостей). Первый столбец ключа — час: и упсёрт, и подсчёт за окно, и
- * уборка идут по префиксу первичного ключа.
+ * отчёты CSP, шаги воронки и возвраты по когортам (lib/retention.ts — эти
+ * все в часе понедельника своей когорты). Только числа — kind и key из
+ * закрытых списков, без SteamID, адресов и путей: ни одна строка не
+ * относится к человеку, и forgetUser здесь забывать нечего. Живут 90 дней
+ * (pruneTelemetry из крона новостей). Первый столбец ключа — час: и упсёрт,
+ * и подсчёт за окно, и уборка идут по префиксу первичного ключа.
  */
 CREATE TABLE IF NOT EXISTS telemetry_hourly (
   hour INTEGER NOT NULL,
@@ -636,7 +639,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 5
+export const CURRENT_SCHEMA_V = 6
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -702,6 +705,10 @@ export const ADDED_COLUMNS = [
   // Снимок выдачи к оценке (lib/feedbackctx): слот, движок, части скора — для
   // отчёта scripts/feedback-report.ts. Девяносто дней, потом NULL (sweepStale)
   ['feedback', 'ctx_json TEXT'],
+  // День последнего захода по московским суткам — защёлка счётчика возвратов
+  // (markActiveDay, lib/retention). Одна дата без истории; уходит вместе со
+  // строкой users. NULL — с появления колонки не заходил
+  ['users', 'last_active_day TEXT'],
 ] as const
 
 /**
@@ -1170,7 +1177,88 @@ export async function getUserCard(
   }
 }
 
-export type PortraitCache = { takenAt: number; text: string }
+/** Отметка захода: когда завели строку users и день прошлого захода */
+export type ActiveDay = { createdAt: number; prevDay: string | null }
+
+/**
+ * Счётчик события в telemetry_hourly, который прибавляется вместе с
+ * переставленной датой. key — из закрытого алфавита (returnKey в
+ * lib/retention): telemetryKey отсюда не позвать, lib/telemetry тянет за
+ * собой next/server.
+ */
+export type ActiveDayBump = { key: string; hour: number }
+
+/**
+ * Защёлка «первый заход за сутки» для счётчика возвратов (lib/retention).
+ *
+ * users.last_active_day — одна дата, день последнего захода (ключ dayKey из
+ * lib/daily). Истории нет: дата перезаписывается, ровно так обещает /privacy,
+ * раздел 07. Уходит вместе со строкой users — уборкой демо и forgetUser.
+ *
+ * Чтение и условная запись, а не один UPDATE … RETURNING: счётчику нужна
+ * ПРЕЖНЯЯ дата (по ней узнаётся, посчитан ли человек в этом окне), а
+ * RETURNING отдаёт уже новую. Прежняя дата в WHERE делает запись защёлкой:
+ * из двух одновременных заходов (главная и /play, телефон и ноутбук)
+ * переставит её один, и счётчик получит одну единицу.
+ *
+ * Счётчик (bumpOf — какой, по прежней дате) пишется той же пачкой, что и
+ * дата, и только если защёлку переставила именно она (changes() = 1).
+ * Порознь дата могла переставиться, а счётчик — упасть или оборваться вместе
+ * с after(): единица за окно терялась бы навсегда, а потерянный d0 оставил бы
+ * у человека возвраты без прихода.
+ *
+ * Обычный заход — одно чтение по первичному ключу: дата уже сегодняшняя, и
+ * писать нечего. Запись — раз в сутки на человека, одна пачка.
+ *
+ * null — считать нечего: сегодня уже отмечено, строки users нет (вход, чья
+ * запись не удалась) или защёлку переставил соседний запрос.
+ */
+export async function markActiveDay(
+  db: Db,
+  steamid: string,
+  today: string,
+  bumpOf: (mark: ActiveDay) => ActiveDayBump | null = () => null,
+): Promise<ActiveDay | null> {
+  const res = await db.execute({
+    sql: 'SELECT created_at, last_active_day FROM users WHERE steamid = ?',
+    args: [steamid],
+  })
+  const row = res.rows[0]
+  if (!row) return null
+  const mark: ActiveDay = {
+    createdAt: Number(row.created_at),
+    prevDay: (row.last_active_day as string | null) ?? null,
+  }
+  // «не раньше», а не «равно»: назад, к чужим часам соседнего инстанса,
+  // дата не двигается никогда
+  if (mark.prevDay !== null && mark.prevDay >= today) return null
+  const bump = bumpOf(mark)
+  const [moved] = await db.batch(
+    [
+      {
+        sql: 'UPDATE users SET last_active_day = ? WHERE steamid = ? AND last_active_day IS ?',
+        args: [today, steamid, mark.prevDay],
+      },
+      // WHERE здесь нужен и ради разбора: без него ON CONFLICT после SELECT
+      // SQLite читает как ON у соединения
+      ...(bump
+        ? [
+            {
+              sql: `INSERT INTO telemetry_hourly (hour, kind, key, count)
+                    SELECT ?, 'event', ?, 1 WHERE changes() = 1
+                    ON CONFLICT (hour, kind, key) DO UPDATE SET count = count + 1`,
+              args: [bump.hour, bump.key],
+            },
+          ]
+        : []),
+    ],
+    'write',
+  )
+  return moved?.rowsAffected ? mark : null
+}
+
+/** v — версия промпта, которым написан текст (PORTRAIT_TEXT_V в lib/portraitvoice) */
+export type PortraitCache = { takenAt: number; text: string; v?: number }
 
 export async function setUserPortrait(
   db: Db,
@@ -1944,6 +2032,21 @@ export async function getLibraryBaseline(
   return { takenAt: row.taken_at, games: JSON.parse(row.games_json) as LibraryGame[] }
 }
 
+/** Пары [appid, минуты] снимка — собираются в SQL, см. getOlderSnapshotMinutes */
+const SNAPSHOT_MINUTE_PAIRS = `(SELECT json_group_array(json_array(json_extract(value, '$.appid'),
+                                                     json_extract(value, '$.playtimeForever')))
+                    FROM json_each(games_json))`
+
+function minutesFromPairs(raw: string | null): Map<number, number> {
+  let pairs: Array<[number, number]> = []
+  try {
+    pairs = JSON.parse(raw ?? '[]') as Array<[number, number]>
+  } catch {
+    // битый блоб — как пустой снимок: точкой отсчёта он не станет
+  }
+  return new Map(pairs.map(([appid, min]) => [Number(appid), Number(min) || 0]))
+}
+
 /**
  * Прежние снимки библиотеки (все, кроме последнего) — для строки «с прошлого
  * снимка» на /library (pickSnapshotDelta в lib/libdelta).
@@ -1961,26 +2064,15 @@ export async function getOlderSnapshotMinutes(
   steamid: string,
 ): Promise<Array<{ takenAt: number; minutes: Map<number, number> }>> {
   const res = await db.execute({
-    sql: `SELECT taken_at,
-                 (SELECT json_group_array(json_array(json_extract(value, '$.appid'),
-                                                     json_extract(value, '$.playtimeForever')))
-                    FROM json_each(games_json)) AS pairs
+    sql: `SELECT taken_at, ${SNAPSHOT_MINUTE_PAIRS} AS pairs
           FROM library_snapshots WHERE steamid = ?
           ORDER BY taken_at DESC, id DESC LIMIT ${SNAPSHOTS_KEPT - 1} OFFSET 1`,
     args: [steamid],
   })
-  return (res.rows as unknown as Array<{ taken_at: number; pairs: string | null }>).map((r) => {
-    let pairs: Array<[number, number]> = []
-    try {
-      pairs = JSON.parse(r.pairs ?? '[]') as Array<[number, number]>
-    } catch {
-      // битый блоб — как пустой снимок: точкой отсчёта он не станет
-    }
-    return {
-      takenAt: Number(r.taken_at),
-      minutes: new Map(pairs.map(([appid, min]) => [Number(appid), Number(min) || 0])),
-    }
-  })
+  return (res.rows as unknown as Array<{ taken_at: number; pairs: string | null }>).map((r) => ({
+    takenAt: Number(r.taken_at),
+    minutes: minutesFromPairs(r.pairs),
+  }))
 }
 
 /**
@@ -3016,17 +3108,48 @@ function assertGameJsonColumn(column: string): void {
   if (!GAME_JSON_COLUMNS.has(column)) throw new Error(`недопустимая колонка: ${column}`)
 }
 
+/*
+ * Pros/cons, собранные моделью, не затираются собранными без неё.
+ *
+ * Страница игры показывает только source 'claude' (lib/gamepage), а это
+ * единственный русский текст карточки, которого нет больше нигде. Крон же
+ * писал pros/cons безусловно: карточка, взятая заново (протухла или пустой
+ * поход), в срез с упавшей моделью или выбранным суточным бюджетом (lib/llmcap)
+ * получала эвристику поверх готового пересказа — и блок «За что любят» с
+ * витрины пропадал. Так в бэкапе от 24 сентября у CS2, Stardew Valley и
+ * Cyberpunk 2077 лежал 'claude', а живые страницы шли уже без него.
+ *
+ * Между собой 'reviews' и 'thin' не ранжируются: на витрину не идёт ни то ни
+ * другое, а маркер обязан следовать свежим данным — 'thin' поверх 'reviews'
+ * снимает карточку с пересборки моделью, звать которую не из чего (см.
+ * PROS_CONS_MIN_REVIEWS в lib/pagejob). Новое от модели заменяет старое от
+ * модели: это пересказ тех же отзывов, только свежее.
+ *
+ * Правило здесь, в SQL, а не у вызывающего, — по доводу правил SET апсерта
+ * games (keepFilledSql): проверка у вызывающего помнит о правиле только там,
+ * где её написали, а SQL — у всех. json_valid — чтобы битая строка не роняла
+ * запись, которая её и починит.
+ */
+const PROS_CONS_NOT_CLAUDE = `COALESCE(CASE WHEN json_valid(pros_cons_json)
+  THEN json_extract(pros_cons_json, '$.source') END, '') <> 'claude'`
+
+/** true — записано; false — строки нет или pros/cons от модели сохранены. */
 export async function setGameJson(
   db: Db,
   appid: number,
   column: GameJsonColumn,
   value: unknown,
-): Promise<void> {
+): Promise<boolean> {
   assertGameJsonColumn(column)
-  await db.execute({
-    sql: `UPDATE games SET ${column} = ? WHERE appid = ?`,
+  const keep =
+    column === 'pros_cons_json' && (value as { source?: unknown } | null)?.source !== 'claude'
+      ? ` AND ${PROS_CONS_NOT_CLAUDE}`
+      : ''
+  const res = await db.execute({
+    sql: `UPDATE games SET ${column} = ? WHERE appid = ?${keep}`,
     args: [JSON.stringify(value), appid],
   })
+  return Number(res.rowsAffected ?? 0) > 0
 }
 
 export async function getGameJson(
@@ -3057,126 +3180,129 @@ export async function getGameJson(
  * SQLite не возьмёт частичный индекс и это станет сканом (см. noscan).
  */
 
+/** Политика очереди — общая у выборки и у счётчика, см. pageDueSql. */
+export type PageQueueOpts = {
+  /** Возвращать в очередь pros/cons, собранные без модели ('reviews') */
+  redoHeuristic?: boolean
+  /**
+   * ...и только у карточек, за которыми ходили раньше этого момента. Без него
+   * — у всех; зачем срок, см. pageDueSql.
+   */
+  redoBefore?: number
+}
+
 /**
- * Игры, которым пора обогатить карточку.
+ * Кто стоит в очереди обогащения — одно условие на выборку и на счётчик.
  *
- * Сначала те, за которыми в сеть ещё не ходили ИЛИ ходили впустую, потом
- * самые давние. Порядок внутри группы — по числу отзывов: витрину имеет
- * смысл наполнять с тех страниц, на которые вообще придут.
+ * Пока условий было два, они разъехались: у выборки четыре ветки OR, у
+ * счётчика три (см. countPageEnrichDue). Теперь расходиться нечему.
  *
- * «Ходили впустую» стоит в первой группе намеренно. Пустые походы достались
- * верху каталога — очередь выгребается по убыванию reviews_total, и первый
- * прогон уткнулся в лимит Steam именно на самых заметных играх. Оставить их
- * во второй группе значило бы чинить CS2 после пяти тысяч игр, которых никто
- * не ищет.
+ * Карточка, собранная без модели, не должна замирать на полгода.
+ *
+ * Эвристика тащит в «за что любят» куски чужих языков и обрывки вроде
+ * «693 часов в Steam» — читать это на витрине, которая уходит в индекс,
+ * нельзя. Но и не заполнять карточку вовсе, пока нет ключа, тоже нельзя:
+ * скриншоты и вердикт отзывов от модели не зависят и нужны сразу.
+ *
+ * Поэтому page_at значит «в сеть за этой карточкой сходили», а не «карточка
+ * готова». Когда модель есть, вызывающий поднимает redoHeuristic, и
+ * эвристические pros/cons возвращаются в очередь на пересборку моделью.
+ *
+ * Пустой поход тоже не должен замирать на полгода — по той же логике, только
+ * причина другая: там данные приехали и оказались хуже нужного, здесь не
+ * приехали вовсе. Счётчик обязателен, и ограничение сверху тоже: без них игра,
+ * у которой Steam молчит всегда, возвращалась бы каждый прогон и съедала бы
+ * бюджет — тот самый head-of-line, ради которого отметка и ставится при
+ * неудаче. После maxTries пустых походов карточка ждёт общего срока.
+ *
+ * Пересборку эвристики держит не потолок попыток, а срок (redoBefore).
+ *
+ * Потолок стоял здесь раньше, и держал он не то. Карточке с 'reviews', у
+ * которой appdetails четырежды промолчал, пересобирать pros/cons моделью было
+ * по-прежнему из чего — отзывы-то приехали, — а она выпадала из очереди на
+ * полгода. Настоящая угроза head-of-line в этой ветке другая: карточка, у
+ * которой модель раз за разом ничего не даёт (пустой ответ, всё выброшено
+ * фильтром спама, срез упёрся в срок), осталась бы 'reviews' навсегда и
+ * возвращалась бы каждое звено — а с общей сортировкой по отзывам она ещё и
+ * стоит в голове очереди. Срок закрывает её при любом счётчике: пересобрать
+ * такую карточку пробуют не чаще раза за срок.
+ */
+function pageDueSql(
+  staleBefore: number,
+  maxTries: number,
+  opts: PageQueueOpts,
+): { where: string; args: number[] } {
+  return {
+    where: `${ALIVE_POOL} AND appid > 0
+            AND (
+              page_at IS NULL
+              OR page_at < ?
+              OR (page_tries > 0 AND page_tries < ?)
+              OR (? = 1 AND page_at < ? AND json_extract(pros_cons_json, '$.source') = 'reviews')
+            )`,
+    args: [
+      staleBefore,
+      maxTries,
+      opts.redoHeuristic ? 1 : 0,
+      // без срока — любая отметка раньше конца времён
+      opts.redoBefore ?? Number.MAX_SAFE_INTEGER,
+    ],
+  }
+}
+
+/**
+ * Игры, которым пора обогатить карточку: верх каталога первым, кто бы в
+ * очереди ни стоял.
+ *
+ * Порядок один — по числу отзывов: витрину имеет смысл наполнять с тех
+ * страниц, на которые вообще придут. Нетронутая карточка, пустой поход,
+ * протухшая и собранная без модели идут вперемешку.
+ *
+ * Раньше очередь была двухступенчатой: сперва нетронутые и пустые походы,
+ * потом протухшие и пересборка эвристики. Пустые походы попали в первую
+ * ступень ради верха каталога — и ровно верх каталога вторая ступень и
+ * хоронила. Первый массовый проход шёл без модели, эвристику получил топ по
+ * отзывам: в бэкапе от 24 сентября из первой сотни 94 карточки с 'reviews' и
+ * 6 с 'claude'. Модель добиралась бы до них после пяти с лишним тысяч
+ * нетронутых — при 49 карточках в сутки это около ста дней, и всё это время у
+ * самых искомых страниц не было «За что любят»: страница показывает только
+ * собранное моделью (lib/gamepage).
+ *
+ * Модель при этом может лежать, и тогда верх каталога с 'reviews' крутился бы
+ * в голове очереди вместо нетронутых. Это решает не выборка, а вызывающий:
+ * runPageSlice не поднимает redoHeuristic, пока модель недавно отказала.
  */
 export async function claimPageEnrichBatch(
   db: Db,
   staleBefore: number,
   limit: number,
-  opts: { redoHeuristic?: boolean; maxTries?: number } = {},
+  opts: PageQueueOpts & { maxTries?: number } = {},
 ): Promise<number[]> {
-  // Карточка, собранная без модели, не должна замирать на полгода.
-  //
-  // Эвристика тащит в «за что любят» куски чужих языков и обрывки вроде
-  // «693 часов в Steam» — читать это на витрине, которая уходит в индекс,
-  // нельзя. Но и не заполнять карточку вовсе, пока нет ключа, тоже нельзя:
-  // скриншоты и вердикт отзывов от модели не зависят и нужны сразу.
-  //
-  // Поэтому page_at means «в сеть за этой карточкой сходили», а не «карточка
-  // готова». Когда ключ появляется, вызывающий поднимает redoHeuristic, и
-  // эвристические pros/cons возвращаются в очередь на пересборку моделью.
   /*
-   * Пустой поход тоже не должен замирать на полгода — по той же логике, что
-   * и эвристические pros/cons абзацем выше, только причина другая: там данные
-   * приехали и оказались хуже нужного, здесь не приехали вовсе.
+   * ОДИН ЗАПРОС ПО ИНДЕКСУ, и это про цену.
    *
-   * Счётчик обязателен, и ограничение сверху тоже. Без счётчика игра, у
-   * которой Steam молчит всегда, возвращалась бы в очередь каждый прогон и
-   * съедала бы бюджет — тот самый head-of-line, ради которого отметка и
-   * ставится при неудаче. maxTries закрывает эту дверь: после нескольких
-   * пустых походов карточка уходит ждать общего срока устаревания.
-   */
-  /*
-   * Ветка пересборки эвристики тоже уважает потолок попыток.
-   *
-   * Её предикат стоял голым: `redo = 1 AND source = 'reviews'`, без оглядки на
-   * page_tries. Карточка, у которой appdetails молчит (значит счётчик пустых
-   * походов растёт), а эвристические pros/cons записаны, оставалась бы в
-   * очереди ВЕЧНО и возвращалась каждый прогон — тот самый head-of-line, ради
-   * которого потолок и заводили двумя условиями выше.
-   *
-   * Сейчас это латентно: по проду таких карточек 498, но сортировка ставит их
-   * в хвост (page_at есть, page_tries ноль), а впереди 5198 непройденных.
-   * Дверь закрывается ДО того, как очередь до них доберётся.
-   *
-   * Условие написано как «политика есть И исчерпана», а не просто
-   * `page_tries < maxTries`: при maxTries = 0 политики повторов нет вовсе (так
-   * же выключена и ветка выше), и голое сравнение убило бы пересборку целиком
-   * — у неисчерпанной карточки page_tries как раз ноль.
-   */
-  /*
-   * ДВА ЗАПРОСА, А НЕ ВЫРАЖЕНИЕ В ORDER BY, и это про цену.
-   *
-   * Приоритет прежний: сперва те, за кем не ходили или ходили впустую, потом
-   * протухшие и кандидаты на пересборку. Но выражался он вычислением в ORDER BY
-   * — `(page_at IS NOT NULL AND page_tries = 0), reviews_total DESC`, — и такой
+   * Двухступенчатый порядок выражался вычислением в ORDER BY —
+   * `(page_at IS NOT NULL AND page_tries = 0), reviews_total DESC`, — а такой
    * порядок частичному индексу не соответствует. План на живой базе:
    *
    *   было:  SEARCH games USING INTEGER PRIMARY KEY + USE TEMP B-TREE FOR ORDER BY
-   *   стало: SCAN games USING INDEX idx_games_pool  (обе половины)
+   *   стало: SCAN games USING INDEX idx_games_pool
    *
    * То есть ради двадцати appid читался и сортировался ВЕСЬ каталог: около
    * шести тысяч строк, которые Turso тарифицирует, на каждое звено цепочки.
-   *
-   * Разбиение точное, а не приблизительное: объединение двух условий равно
-   * прежнему одному. Проверено разбором по веткам — «нет page_at», «есть, но
-   * попытки не исчерпаны», «протухло», «пересобрать эвристику» — и тестами,
-   * которые на этот порядок уже опирались.
-   *
-   * Последняя ветка у пустого похода (page_tries > 0) сводится к «политики
-   * повторов нет»: при maxTries > 0 её `page_tries < ?` уже покрыто соседним
-   * условием, а при maxTries = 0 без неё карточка с эвристикой и пустым
-   * походом выпала бы из обеих групп — и разошлась бы с countPageEnrichDue,
-   * который обязан считать ровно то же.
+   * Лечилось это двумя запросами, по одному на ступень. Ступеней больше нет, и
+   * порядок — ровно порядок idx_games_pool: SQLite идёт по индексу сверху и
+   * останавливается на LIMIT (сторож плана — lib/pagejob.test.ts).
    */
-  const redo = opts.redoHeuristic ? 1 : 0
-  const maxTries = opts.maxTries ?? 0
-
-  // Группа 1: не ходили ни разу ИЛИ ходили впустую. Именно она забирает бюджет
-  // первой — см. абзац про верх каталога выше.
-  const первые = await db.execute({
+  const due = pageDueSql(staleBefore, opts.maxTries ?? 0, opts)
+  const res = await db.execute({
     sql: `SELECT appid FROM games
-          WHERE ${ALIVE_POOL} AND appid > 0
-            AND (
-              page_at IS NULL
-              OR (page_tries > 0 AND (
-                page_tries < ?
-                OR page_at < ?
-                OR (? = 1 AND ? = 0 AND json_extract(pros_cons_json, '$.source') = 'reviews')
-              ))
-            )
+          WHERE ${due.where}
           ORDER BY reviews_total DESC
           LIMIT ?`,
-    args: [maxTries, staleBefore, redo, maxTries, limit],
+    args: [...due.args, limit],
   })
-  const appids = (первые.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
-  if (appids.length >= limit) return appids
-
-  // Группа 2: сходили удачно, но карточка протухла или собрана без модели.
-  const вторые = await db.execute({
-    sql: `SELECT appid FROM games
-          WHERE ${ALIVE_POOL} AND appid > 0
-            AND page_at IS NOT NULL AND page_tries = 0
-            AND (
-              page_at < ?
-              OR (? = 1 AND (? = 0 OR page_tries < ?) AND json_extract(pros_cons_json, '$.source') = 'reviews')
-            )
-          ORDER BY reviews_total DESC
-          LIMIT ?`,
-    args: [staleBefore, redo, maxTries, maxTries, limit - appids.length],
-  })
-  return [...appids, ...(вторые.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)]
+  return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }
 
 /**
@@ -3427,26 +3553,20 @@ export async function setGameDescriptions(
  * забирать по двадцать карточек на звено и платить за каждую двумя запросами
  * к Steam и вызовом модели. Ровно то, от чего докблок и предостерегал.
  *
- * Четвёртый аргумент назван так же, как у выборки, и по той же причине: два
- * запроса об одном и том же обязаны читаться рядом как один.
+ * Теперь условие у них одно на двоих — pageDueSql, — и разъехаться ему
+ * негде. Опции те же, что у выборки, и по той же причине: два запроса об
+ * одном и том же обязаны читаться рядом как один.
  */
 export async function countPageEnrichDue(
   db: Db,
   staleBefore: number,
   maxTries = 0,
-  opts: { redoHeuristic?: boolean } = {},
+  opts: PageQueueOpts = {},
 ): Promise<number> {
-  const redo = opts.redoHeuristic ? 1 : 0
+  const due = pageDueSql(staleBefore, maxTries, opts)
   const res = await db.execute({
-    sql: `SELECT COUNT(*) AS n FROM games
-          WHERE ${ALIVE_POOL} AND appid > 0
-            AND (
-              page_at IS NULL
-              OR page_at < ?
-              OR (page_tries > 0 AND page_tries < ?)
-              OR (? = 1 AND (? = 0 OR page_tries < ?) AND json_extract(pros_cons_json, '$.source') = 'reviews')
-            )`,
-    args: [staleBefore, maxTries, redo, maxTries, maxTries],
+    sql: `SELECT COUNT(*) AS n FROM games WHERE ${due.where}`,
+    args: due.args,
   })
   return Number((res.rows[0] as unknown as { n: number }).n)
 }
@@ -4362,7 +4482,9 @@ export async function unlikeGame(db: Db, steamid: string, appid: number): Promis
 /**
  * Совет приняли в работу: запуск или переход в магазин. Строка исхода с
  * минутами до — из последнего снапшота, одним запросом, без блоба библиотеки
- * в функции (тот же приём, что у snapshotOwns).
+ * в функции (тот же приём, что у snapshotOwns). При скрытом в Steam времени
+ * (lib/playtime.ts) минуты до — ноль галочки; их перебазирует первый
+ * открытый снапшот (см. fillOutcomesFromSnapshot).
  *
  * Одна строка на игру в окне OUTCOME_WINDOW_SEC: повторный запуск той же игры
  * через три дня — не новый совет, а продолжение старого, и минуты считаются
@@ -4427,13 +4549,37 @@ export async function recordOutcome(
 }
 
 /**
- * Свежий снапшот → минуты после у советов последних двух недель.
+ * Свежий снапшот → минуты после у советов последних двух недель. Отдаёт,
+ * сколько строк сверено.
  *
  * Строки моложе снапшота не трогаются: совет, данный в ту же секунду, ещё не
  * успел ни во что превратиться. Минуты перезаписываются каждым снапшотом окна
  * — в строке всегда последнее, что известно. Игры нет в библиотеке —
  * minutes_after NULL и owned_after 0: так выглядит «посмотрел в магазине и не
  * купил».
+ *
+ * Время скрыто настройками Steam (lib/playtime.ts) — не сверяем вовсе: нули
+ * галочки записались бы как «не запускал», и «Твои вечера» сказали бы это про
+ * каждый совет. Несверенная строка честнее: «ещё не сверяли».
+ *
+ * ПЕРВЫЙ ОТКРЫТЫЙ СНАПШОТ ПОСЛЕ СКРЫТОГО. Совет, принятый при скрытом
+ * времени, записал минуты до из снапшота-нулей (recordOutcome), и первая же
+ * сверка засчитала бы «после совета» все часы игры за жизнь: «Как тебе X?
+ * 500 ч с тех пор, как мы её предложили». Путь сюда — подсказка
+ * PlaytimeHiddenNote: снял галочку, подключил библиотеку заново. Поэтому такие
+ * строки не сверяются, а перебазируются: минуты до — нынешние, минуты после
+ * и отметка сверки — пусто, сверит следующий снапшот окна. Сыгранное между
+ * советом и снятием галочки при этом теряется — его и правда не узнать, а
+ * «не узнали» честнее «пятисот часов».
+ *
+ * Какие строки такие, видно без отметки в схеме: ноль до, с минутами теперь,
+ * а после — либо ничего (скрытые снапшоты сверку пропускают), либо тоже ноль:
+ * так строку сверил по нулям код до этого правила, и такие строки ещё живут в
+ * окне. И прежний снапшот скрытый. Прежний снапшот читается, только когда
+ * такие строки есть: у остальных людей сверка обходится без лишнего запроса.
+ * Под правило попадает и совет по нетронутой игре, данный при открытом
+ * времени, если до первой игры в неё галочку поставили и сняли, — редкость, и
+ * ошибка там в ту же сторону: недосчитали, а не приписали.
  */
 export async function fillOutcomesFromSnapshot(
   db: Db,
@@ -4441,25 +4587,72 @@ export async function fillOutcomesFromSnapshot(
   games: LibraryGame[],
   nowSec: number,
 ): Promise<number> {
+  if (playtimeHidden(games)) return 0
   const res = await db.execute({
-    sql: 'SELECT appid, shown_at FROM outcomes WHERE steamid = ? AND shown_at >= ? AND shown_at < ?',
+    sql: `SELECT appid, shown_at, minutes_before, minutes_after, checked_at FROM outcomes
+           WHERE steamid = ? AND shown_at >= ? AND shown_at < ?`,
     args: [steamid, nowSec - OUTCOME_WINDOW_SEC, nowSec],
   })
   if (!res.rows.length) return 0
   const byAppid = new Map(games.map((g) => [g.appid, g]))
+  const rows = (
+    res.rows as unknown as Array<{
+      appid: number
+      shown_at: number
+      minutes_before: number | null
+      minutes_after: number | null
+      checked_at: number | null
+    }>
+  ).map((r) => ({
+    appid: Number(r.appid),
+    shownAt: Number(r.shown_at),
+    // Ноль до при минутах теперь, а после — не сверено или тоже ноль: возможно,
+    // ноль галочки (второе — сверка по нулям кодом до этого правила)
+    suspect:
+      r.minutes_before !== null &&
+      Number(r.minutes_before) === 0 &&
+      (r.checked_at === null || Number(r.minutes_after) === 0) &&
+      (byAppid.get(Number(r.appid))?.playtimeForever ?? 0) > 0,
+  }))
+  const rebase = rows.some((r) => r.suspect) && (await snapshotTimeHiddenBefore(db, steamid, nowSec))
+  const moved = (r: (typeof rows)[number]) => rebase && r.suspect
   await db.batch(
-    (res.rows as unknown as Array<{ appid: number; shown_at: number }>).map((r) => {
-      const appid = Number(r.appid)
-      const g = byAppid.get(appid)
+    rows.map((r) => {
+      const g = byAppid.get(r.appid)
+      if (moved(r)) {
+        // Сверку по нулям — назад в «ещё не сверяли»: иначе «Твои вечера» так
+        // и показывали бы «не запускал» до следующего снапшота
+        return {
+          sql: `UPDATE outcomes SET minutes_before = ?, minutes_after = NULL, owned_after = NULL, checked_at = NULL
+                 WHERE steamid = ? AND appid = ? AND shown_at = ?`,
+          args: [g!.playtimeForever, steamid, r.appid, r.shownAt],
+        }
+      }
       return {
         sql: `UPDATE outcomes SET minutes_after = ?, owned_after = ?, checked_at = ?
                WHERE steamid = ? AND appid = ? AND shown_at = ?`,
-        args: [g ? g.playtimeForever : null, g ? 1 : 0, nowSec, steamid, appid, Number(r.shown_at)],
+        args: [g ? g.playtimeForever : null, g ? 1 : 0, nowSec, steamid, r.appid, r.shownAt],
       }
     }),
     'write',
   )
-  return res.rows.length
+  return rows.filter((r) => !moved(r)).length
+}
+
+/**
+ * Было ли время скрыто (lib/playtime.ts) в снапшоте до nowSec — последнем
+ * перед только что записанным. Парами минут, а не блобом: см.
+ * getOlderSnapshotMinutes. Снапшота нет — не скрыто: сравнивать не с чем.
+ */
+async function snapshotTimeHiddenBefore(db: Db, steamid: string, nowSec: number): Promise<boolean> {
+  const res = await db.execute({
+    sql: `SELECT ${SNAPSHOT_MINUTE_PAIRS} AS pairs
+          FROM library_snapshots WHERE steamid = ? AND taken_at < ?
+          ORDER BY taken_at DESC, id DESC LIMIT 1`,
+    args: [steamid, nowSec],
+  })
+  const row = res.rows[0] as unknown as { pairs: string | null } | undefined
+  return row ? minutesHidden(minutesFromPairs(row.pairs)) : false
 }
 
 /**

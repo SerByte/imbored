@@ -27,6 +27,7 @@ import {
 import { tagRu } from './tagsru'
 import { tagWeightFrom } from './tagweight'
 import { CANDIDATE_SOURCES, type GameMeta, type Mood, type ScoredCandidate } from './types'
+import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 
 /**
  * Клиент подменяем целиком, а классы ошибок оставляем настоящими: классификатор
@@ -603,6 +604,132 @@ describe('знакомое в эвристике', () => {
     const [noHours] = heuristicPicks(one, nameOf, 1, NOW, { Puzzle: 1 })
     expect(noHours.reason).toContain('управление ты знаешь')
     expect(noHours.reason).not.toMatch(/\d+ ч/)
+  })
+})
+
+/**
+ * Время скрыто в Steam (lib/playtime.ts): своё идёт источником 'owned', и ни
+ * причина шаблона, ни промпт модели не утверждают про часы ничего — ни «ноль
+ * минут», ни «открыл и закрыл».
+ */
+describe('скрытое время в Steam', () => {
+  const MINUTE_CLAIMS = /ноль минут|не запускал|открыл|закрыл|забросил|— 0 ч/
+
+  test('шаблон своей игры не говорит про часы', () => {
+    const own: ScoredCandidate[] = [{ appid: 1, name: 'Backlog Gem', source: 'owned', score: 0.9 }]
+    const [withTags] = heuristicPicks(own, metaOf, 1, NOW, { Puzzle: 1 })
+    expect(withTags.reason).toBe('«Backlog Gem» уже есть в твоей библиотеке, а по тегам (Головоломка) это очень твоё.')
+    const [bare] = heuristicPicks(own, metaOf, 1, NOW)
+    expect(bare.reason).toBe('«Backlog Gem» уже есть в твоей библиотеке — покупать ничего не надо.')
+    for (const r of [withTags.reason, bare.reason]) expect(r).not.toMatch(MINUTE_CLAIMS)
+  })
+
+  test('своей игре достаётся гарантированный слот, как прежде бэклогу', () => {
+    const pool: ScoredCandidate[] = [
+      { appid: 3, name: 'Shiny New', source: 'new', score: 0.9 },
+      { appid: 5, name: 'New Two', source: 'new', score: 0.8 },
+      { appid: 1, name: 'Backlog Gem', source: 'owned', score: 0.1 },
+    ]
+    expect(heuristicPicks(pool, metaOf, 2).map((p) => p.appid)).toContain(1)
+  })
+
+  // Вкус при скрытом времени собран по владению (playWeight), и «во что ты
+  // играешь больше всего» — утверждение про часы, которых никто не видел
+  test('новинка: теги совпадают с библиотекой, а не с «играешь больше всего»', () => {
+    const cand: ScoredCandidate[] = [{ appid: 3, name: 'Shiny New', source: 'new', score: 0.9 }]
+    const [hidden] = heuristicPicks(cand, metaOf, 1, NOW, { Puzzle: 1 }, { playtimeHidden: true })
+    expect(hidden.reason).toBe(
+      '«Shiny New» в твоей библиотеке нет, но её теги (Головоломка) совпадают с тем, что в ней уже есть.',
+    )
+    expect(hidden.reason).not.toMatch(/играешь/)
+    const [open] = heuristicPicks(cand, metaOf, 1, NOW, { Puzzle: 1 })
+    expect(open.reason).toContain('совпадают с тем, во что ты играешь больше всего')
+  })
+
+  describe('промпт модели', () => {
+    let key: string | undefined
+    beforeEach(() => {
+      key = process.env.ANTHROPIC_API_KEY
+      process.env.ANTHROPIC_API_KEY = 'test-key'
+      create.mockReset()
+      create.mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] })
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+    afterEach(() => {
+      if (key === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = key
+      vi.restoreAllMocks()
+    })
+    const promptOf = () => create.mock.calls[0][0].messages[0].content as string
+    const owned: ScoredCandidate[] = [
+      { appid: 1000, name: 'Игра 1000', source: 'owned', score: 0.9 },
+      { appid: 3, name: 'Shiny New', source: 'new', score: 0.5 },
+    ]
+
+    test('20 игр с нулями: ни «0 ч», ни «ни разу не запускал» — только почему часов нет', async () => {
+      await claudePicks({ candidates: owned, metaOf, library: hiddenLibrary(), mood: MOOD })
+      const prompt = promptOf()
+      // «похоже» — признак угадан по нулям (lib/playtime.ts) и бывает ложным
+      expect(prompt).toContain('Время в играх у него, похоже, скрыто настройками Steam')
+      expect(prompt).toContain('[своя, сколько он в неё играл — неизвестно]')
+      expect(prompt).toContain('(своя / новая)')
+      expect(prompt).toContain('«Игра 1000»')
+      expect(prompt).not.toContain('— 0 ч')
+      expect(prompt).not.toContain('ни разу не запускал')
+      expect(prompt).not.toContain('любимыми играми')
+    })
+
+    test('«нераспакованное» при скрытом времени не выдаётся модели за факт', async () => {
+      await claudePicks({
+        candidates: owned,
+        metaOf,
+        library: hiddenLibrary(),
+        mood: MOOD,
+        focus: 'untouched',
+      })
+      expect(promptOf()).not.toContain('ни разу не запускал')
+    })
+
+    // Топ по часам из нулей — первые пятнадцать в порядке ответа Steam
+    test('блок библиотеки: сперва «играет сейчас», дальше — ближайшее к вкусу', async () => {
+      const lib = hiddenLibrary()
+      lib[7] = { ...lib[7], playtime2Weeks: 90 }
+      const metas = new Map(hiddenLibraryMetas().map((m) => [m.appid, m]))
+      await claudePicks({
+        candidates: owned,
+        metaOf: (id) => metas.get(id) ?? metaOf(id),
+        library: lib,
+        mood: MOOD,
+        profile: { Automation: 1, 'Base Building': 0.8 },
+      })
+      const block = promptOf().split('<library>')[1]!.split('</library>')[0]!.trim().split('\n')
+      expect(block).toHaveLength(15)
+      expect(block[0]).toBe('Игра 1007 (играет сейчас)')
+      // Automation в фикстуре — каждая третья, с 1001; 1007 уже стоит первой
+      expect(block.slice(1, 7)).toEqual([1001, 1004, 1010, 1013, 1016, 1019].map((id) => `Игра ${id}`))
+      expect(block.slice(7).every((line) => !line.includes('играет сейчас'))).toBe(true)
+    })
+
+    test('обычная библиотека — часы в промпте как были', async () => {
+      const lib = hiddenLibrary()
+      lib[0] = { ...lib[0], playtimeForever: 600 }
+      await claudePicks({ candidates: CANDS, metaOf, library: lib, mood: MOOD })
+      const prompt = promptOf()
+      expect(prompt).toContain('Игра 1000 — 10 ч')
+      expect(prompt).not.toContain('скрыто настройками Steam')
+    })
+
+    test('портрет: без «0 часов всего» и «так и не запущены»', async () => {
+      await claudePortraitText({
+        name: 'Игрок',
+        archetypes: [{ label: 'исследователь', percent: 60 }],
+        facts: { gamesCount: 20, totalHours: 0, unplayedCount: 0, topGame: null, playtimeHidden: true },
+      })
+      const prompt = promptOf()
+      expect(prompt).toContain('время в играх, похоже, скрыто настройками Steam')
+      expect(prompt).not.toContain('0 часов всего')
+      expect(prompt).not.toContain('так и не запущены')
+    })
   })
 })
 

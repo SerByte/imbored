@@ -13,6 +13,7 @@ import { editionKey } from './editions'
 import { nearGames } from './gamepage'
 import type { Lean } from './mood'
 import type { NudgePlan } from './nudge'
+import { playtimeHidden } from './playtime'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
 import {
   applyFeedbackToProfile,
@@ -130,6 +131,12 @@ export type CandidateSet = {
   cooldown: Map<number, Cooldown>
   profile: Record<string, number>
   tagWeight: TagWeight | null
+  /**
+   * Время скрыто настройками Steam (lib/playtime.ts) — по всей библиотеке.
+   * Маршрутам он нужен для строки «Похоже, Steam скрывает твоё время…» и
+   * для промпта: своё тогда идёт источником 'owned'.
+   */
+  playtimeHidden: boolean
   /** Затравка, если она применилась: чьи соседи в кандидатах */
   seed: { appid: number; name: string } | null
   /** Отранжированные кандидаты — с частями скора */
@@ -179,6 +186,9 @@ export async function buildCandidates(
   if (!snapshot) return 'nolibrary'
 
   const games = snapshot.games
+  // По всей библиотеке, до затравки: выборка из соседей X у обычной
+  // библиотеки тоже бывает сплошь из нулей
+  const timeHidden = playtimeHidden(games)
   const owned = new Set(games.map((g) => g.appid))
   // Второй ключ владения — по названию: у Skyrim и Skyrim Special Edition
   // разные appid, и по одному только owned каталог предлагал бы купить то,
@@ -306,6 +316,7 @@ export async function buildCandidates(
     lean: opts.lean ?? null,
     nudge: tilt,
     moodless: opts.moodless,
+    playtimeHidden: timeHidden,
   })
   if (!candidates.length) return 'nocandidates'
 
@@ -346,6 +357,7 @@ export async function buildCandidates(
     cooldown,
     profile,
     tagWeight,
+    playtimeHidden: timeHidden,
     seed,
     candidates,
     actual,

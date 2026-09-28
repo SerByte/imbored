@@ -2,11 +2,13 @@ import { dateLabel } from './freshness'
 import { parseReleaseYear } from './ingest'
 import { isJunk, looksLikeNonGame } from './junk'
 import { isEmptyDelta, libraryDelta, minutesByApp } from './libdelta'
+import { minutesHidden, playtimeHidden } from './playtime'
 import {
   buildTagProfile,
   isMultiplayerMeta,
   isUnplayed,
   normalizedTags,
+  playWeight,
   rankByTaste,
 } from './recommend'
 import type { TagWeight } from './tagweight'
@@ -35,6 +37,13 @@ export type WrappedGame = {
 
 export type Wrapped = {
   gamesCount: number
+  /**
+   * Время скрыто настройками Steam (lib/playtime.ts). Часы, подиум и эпоха
+   * тогда пустые сами — считать не из чего, — а «Чистилище» гасится здесь:
+   * ноль минут у каждой игры не делает её нераспакованной. Страница вместо
+   * нулей говорит «время скрыто».
+   */
+  playtimeHidden: boolean
   totalHours: number
   /** часы в сутках, для строки «столько-то суток за экраном» */
   days: number
@@ -104,9 +113,10 @@ export function buildWrapped(library: LibraryGame[], metaOf: MetaOf): Wrapped {
   // Саундтрек, SDK и демо — не бэклог: их никто не собирался проходить, а
   // портрет считал их в «N лежат нераспакованными» и ставил их обложки в
   // «Чистилище». Та же граница, что у backlogValue и /library.
-  const unplayed = library.filter(
-    (g) => isUnplayed(g) && !looksLikeNonGame(g, metaOf(g.appid)),
-  )
+  const hidden = playtimeHidden(library)
+  const unplayed = hidden
+    ? []
+    : library.filter((g) => isUnplayed(g) && !looksLikeNonGame(g, metaOf(g.appid)))
 
   let socialMinutes = 0
   let coveredMinutes = 0
@@ -119,6 +129,7 @@ export function buildWrapped(library: LibraryGame[], metaOf: MetaOf): Wrapped {
 
   return {
     gamesCount: library.length,
+    playtimeHidden: hidden,
     totalHours,
     days: Math.round(totalHours / 24),
     era: buildEra(played, metaOf, totalMinutes),
@@ -176,6 +187,12 @@ export type WrappedYear = {
   /** Впервые запущены — были в бэклоге с нулём минут */
   unpacked: { count: number; games: YearGame[] }
   removedCount: number
+  /**
+   * Время скрыто настройками Steam (lib/playtime.ts) на конец окна: у новых
+   * игр ноль минут — галочка, а не «не запускалась». Скрытое время на
+   * отметке — другое дело, его libraryDelta гасит сама (см. buildWrappedYear).
+   */
+  playtimeHidden: boolean
 }
 
 /** Сколько обложек держат полки итогов — счёт при этом полный */
@@ -248,14 +265,17 @@ export function pickYearWindow(
 /**
  * Игры, которым нужна мета для итогов: прибавившие и новые. Остальная
  * библиотека итогам не нужна вовсе — и читать мету сотен нетронутых игр
- * ради года незачем.
+ * ради года незачем. Отметка со скрытым временем прибавивших не знает
+ * (libraryDelta их не считает) — тогда только новые: иначе при первом
+ * открытом снимке «прибавившей» оказалась бы вся наигранная библиотека.
  */
 export function yearCandidates(w: YearWindow): number[] {
   const before = minutesByApp(w.base.games)
+  const blind = minutesHidden(before)
   return w.end.games
     .filter((g) => {
       const was = before.get(g.appid)
-      return was === undefined || g.playtimeForever > was
+      return was === undefined || (!blind && g.playtimeForever > was)
     })
     .map((g) => g.appid)
 }
@@ -272,6 +292,12 @@ const yearGame = (g: LibraryGame, minutes: number, total: number): YearGame => (
  * buildWrapped по «годовой» библиотеке — у того бэклог и эпоха считаются по
  * часам за всё время, и синтетическая библиотека из приростов дала бы в них
  * неправду.
+ *
+ * Отметка года, снятая при скрытом времени, минут не даёт (правило
+ * libraryDelta): итоги тогда — только появившиеся и пропавшие игры, без
+ * «наиграно» и «впервые запущены». Иначе до января и портрет, и /year
+ * выдавали бы часы за всю жизнь за часы года. Отметку не заменить: она
+ * ставится раз в год, и более раннего состояния с часами у окна нет.
  */
 export function buildWrappedYear(w: YearWindow, metaOf: MetaOf): WrappedYear {
   const d = libraryDelta(minutesByApp(w.base.games), w.end.games, w.base.takenAt, metaOf)
@@ -299,6 +325,7 @@ export function buildWrappedYear(w: YearWindow, metaOf: MetaOf): WrappedYear {
         .map((u) => yearGame(u.game, u.minutes, d.minutes)),
     },
     removedCount: d.removedCount,
+    playtimeHidden: playtimeHidden(w.end.games),
   }
 }
 
@@ -397,15 +424,17 @@ export function archetypeEvidence(
   limit: number,
 ): LibraryGame[] {
   const scored: Array<{ game: LibraryGame; score: number }> = []
+  // Вес — тот же, что у профиля (playWeight): при скрытом времени архетип
+  // собран из всех игр поровну, и улики у него должны быть, а не пустота
+  const hidden = playtimeHidden(library)
   for (const g of library) {
     if (exclude.has(g.appid)) continue
     const meta = metaOf(g.appid)
     if (!meta) continue
     const share = normalizedTags(meta)[tag]
     if (!share) continue
-    let weight = Math.log1p(g.playtimeForever / 60)
+    const weight = playWeight(g, meta, hidden)
     if (weight === 0) continue
-    if (g.playtime2Weeks > 0) weight *= 1.5
     scored.push({ game: g, score: weight * share })
   }
   return scored
@@ -424,12 +453,16 @@ export function archetypeEvidence(
  * про скрытую игру — тот же совет, от которого он уже отказался на /play.
  *
  * tagWeight — вес редкости, та же мера вкуса, что у /play (rankByTaste).
+ *
+ * Время скрыто настройками Steam (lib/playtime.ts) — стартовой нет: «начни с
+ * этой» про игру, где у человека, возможно, сотня часов, — совет мимо.
  */
 export function pickStarter(
   library: LibraryGame[],
   metaOf: MetaOf,
   opts: { banned?: ReadonlySet<number>; tagWeight?: TagWeight | null } = {},
 ): LibraryGame | null {
+  if (playtimeHidden(library)) return null
   // Фильтр по metaOf обязателен: rankByTaste игры без меты не выбрасывает, а
   // лишь опускает в конец, и без фильтра стартовой могла бы стать игра без тегов
   const candidates = library.filter((g) => {

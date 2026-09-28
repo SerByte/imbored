@@ -16,6 +16,8 @@ export const SOURCE_BADGE: Record<CandidateSource, string> = {
   backlog: 'Открыл и закрыл',
   comeback: 'Пора вернуться',
   familiar: 'Любимое',
+  // Время скрыто настройками Steam: известно только, что игра своя
+  owned: 'Из твоей библиотеки',
   new: 'Новое для тебя',
 }
 
@@ -41,5 +43,18 @@ export const SOURCE_BADGE_SHORT: Record<CandidateSource, string> = {
   backlog: 'Открыл и закрыл',
   comeback: 'Пора вернуться',
   familiar: 'Любимое',
+  owned: 'Твоя',
   new: 'Новое',
+}
+
+/**
+ * Кому под героем ссылка «Ещё не установлена? Поставь на загрузку заранее»
+ * (steam://install): своей игре, которая скорее всего не установлена, —
+ * нетронутой и заброшенной. /play и /daily решали это каждая своим условием,
+ * и при скрытом в Steam времени (owned) ссылку теряли обе: вся своя выдача
+ * тогда идёт этим источником, а большая часть любой библиотеки на диске не
+ * лежит.
+ */
+export function suggestsInstall(source: CandidateSource): boolean {
+  return source === 'untouched' || source === 'comeback' || source === 'owned'
 }

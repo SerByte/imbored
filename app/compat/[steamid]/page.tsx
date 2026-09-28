@@ -16,7 +16,9 @@ import { OG_SITE } from '@/lib/site'
 import {
   COMMON_SHOWN,
   type CompatGame,
+  type CompatInvite,
   type CompatPick,
+  type CompatResult,
   loadCompat,
   loadCompatInvite,
 } from '@/lib/compatpage'
@@ -65,8 +67,7 @@ export async function generateMetadata({
   const title = `${invite.name} зовёт сравнить библиотеки`
   const description =
     `Сравни свою библиотеку Steam с библиотекой ${invite.name}: ` +
-    `${invite.gamesCount} ${plural(invite.gamesCount, 'игра', 'игры', 'игр')}, ` +
-    `${invite.totalHours.toLocaleString('ru-RU')} ${plural(invite.totalHours, 'час', 'часа', 'часов')}. ` +
+    `${invite.gamesCount} ${plural(invite.gamesCount, 'игра', 'игры', 'игр')}, ${inviteHours(invite)}. ` +
     'Процент совпадения вкусов, общие игры и во что вам зайти вместе.'
 
   // Свой адрес, а не корневой: og:url из layout был '/', и VK с Facebook
@@ -99,6 +100,17 @@ const inView = (i = 0) => ({
 
 const ru = (n: number) => n.toLocaleString('ru-RU')
 
+/**
+ * Часы владельца ссылки — в превью и в герое приглашения одной строкой. Время
+ * скрыто настройками Steam (lib/playtime.ts) — слово вместо числа: «0 часов»
+ * было бы сказано про галочку, а не про человека, и ушло бы в каждый чат.
+ */
+function inviteHours(invite: Pick<CompatInvite, 'totalHours' | 'playtimeHidden'>): string {
+  return invite.playtimeHidden
+    ? 'время скрыто'
+    : `${ru(invite.totalHours)} ${plural(invite.totalHours, 'час', 'часа', 'часов')}`
+}
+
 /** Без повторов: одна игра дважды в одной ленте читается сбоем, а не узором */
 function uniq(games: ArtRef[]): ArtRef[] {
   const seen = new Set<number>()
@@ -119,14 +131,18 @@ function uniq(games: ArtRef[]): ArtRef[] {
  * не «насколько эта игра больше остальных» (на это отвечает порядок сортировки),
  * а «кто из вас двоих здесь ветеран».
  */
-function HoursSplit({ hoursA, hoursB }: { hoursA: number; hoursB: number }) {
-  const max = Math.max(hoursA, hoursB)
-  const share = (h: number) => (max ? `${(h / max) * 100}%` : '0%')
+function HoursSplit({ hoursA, hoursB }: { hoursA: number | null; hoursB: number | null }) {
+  // Время скрыто у обоих (lib/playtime.ts) — сравнивать нечего, строка без счёта
+  if (hoursA === null && hoursB === null) return null
+  const max = Math.max(hoursA ?? 0, hoursB ?? 0)
+  // У скрытой стороны полосы нет вовсе: пустая полоса читалась бы нулём
+  const share = (h: number | null) => (max && h ? `${(h / max) * 100}%` : '0%')
+  const label = (h: number | null) => (h === null ? 'скрыто' : `${ru(h)} ч`)
 
   return (
     <div className="flex items-center gap-2">
       <span className="w-14 shrink-0 text-right tabular-nums text-[11px] text-dim">
-        {ru(hoursA)} ч
+        {label(hoursA)}
       </span>
       <div aria-hidden className="flex h-1.5 flex-1 items-center">
         <div className="flex flex-1 justify-end">
@@ -137,7 +153,7 @@ function HoursSplit({ hoursA, hoursB }: { hoursA: number; hoursB: number }) {
         </div>
       </div>
       <span className="w-14 shrink-0 tabular-nums text-[11px] text-dim">
-        {ru(hoursB)} ч
+        {label(hoursB)}
       </span>
     </div>
   )
@@ -329,6 +345,8 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
 
   const d = state.data
   const hidden = d.commonTotal - d.commonGames.length
+  // Время скрыто у обоих (lib/playtime.ts): счёта часов в строках нет вовсе
+  const noHours = d.myTimeHidden && d.otherTimeHidden
 
   // Отметка — после ответа: страница сравнения не ждёт записи. Вне запроса
   // (тест, скрипт) after бросает — тогда и писать некому
@@ -420,24 +438,24 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         <m.section {...inView(1)}>
           {d.commonTotal > 0 ? (
             <>
-              <SectionTitle
-                sub={`Вместе в них — ${ru(d.commonHours)} ${plural(d.commonHours, 'час', 'часа', 'часов')}.`}
-                className="mb-4"
-              >
+              <SectionTitle sub={commonHoursLine(d)} className="mb-4">
                 Общие игры
               </SectionTitle>
               {/* Легенда заодно подписывает колонки: какое число чьё, иначе
-                  видно только по порядку слов в заголовке страницы */}
-              <div className="mb-3 flex flex-wrap items-center gap-4 text-[13px] font-semibold text-dim">
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden className="h-2 w-2 rounded-full bg-ember" />
-                  {d.myName}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden className="h-2 w-2 rounded-full bg-info" />
-                  {d.otherName}
-                </span>
-              </div>
+                  видно только по порядку слов в заголовке страницы. Чисел
+                  нет — подписывать нечего */}
+              {!noHours && (
+                <div className="mb-3 flex flex-wrap items-center gap-4 text-[13px] font-semibold text-dim">
+                  <span className="flex items-center gap-1.5">
+                    <span aria-hidden className="h-2 w-2 rounded-full bg-ember" />
+                    {d.myName}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span aria-hidden className="h-2 w-2 rounded-full bg-info" />
+                    {d.otherName}
+                  </span>
+                </div>
+              )}
               <div className="flex flex-col gap-1">
                 {d.commonGames.map((g) => (
                   <CommonRow key={g.appid} game={g} />
@@ -445,7 +463,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
               </div>
               {hidden > 0 && (
                 <p className="mt-3 text-xs text-faint">
-                  Показаны {COMMON_SHOWN} самых наигранных из {d.commonTotal}.
+                  {/* Время скрыто у обоих — порядок не по часам, и «самых
+                      наигранных» было бы неправдой */}
+                  Показаны {COMMON_SHOWN} {noHours ? '' : 'самых наигранных '}из {d.commonTotal}.
                 </p>
               )}
             </>
@@ -498,8 +518,27 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
   )
 }
 
+/**
+ * «Вместе в них — N часов» — только когда часы известны у обоих. Время скрыто
+ * у одного (lib/playtime.ts) — сумма была бы часами второго, выданными за
+ * общие; скрыто у обоих — считать нечего.
+ */
+function commonHoursLine(
+  d: Pick<CompatResult, 'commonHours' | 'myName' | 'otherName' | 'myTimeHidden' | 'otherTimeHidden'>,
+): string {
+  const hours = `${ru(d.commonHours)} ${plural(d.commonHours, 'час', 'часа', 'часов')}`
+  if (d.myTimeHidden && d.otherTimeHidden) return 'Время в играх скрыто у обоих — сравниваем только сами игры.'
+  if (d.myTimeHidden) return `У ${d.otherName} в них — ${hours}, твоё время скрыто.`
+  if (d.otherTimeHidden) return `У тебя в них — ${hours}, время ${d.otherName} скрыто.`
+  return `Вместе в них — ${hours}.`
+}
+
 /** Шапка приглашения: то же лицо, что и на карточке для мессенджера */
-function InviteHero({ invite }: { invite: { name: string; gamesCount: number; totalHours: number; topGames: ArtRef[] } }) {
+function InviteHero({
+  invite,
+}: {
+  invite: Pick<CompatInvite, 'name' | 'gamesCount' | 'totalHours' | 'playtimeHidden' | 'topGames'>
+}) {
   return (
     <section className="media-dark anim-reveal relative flex min-h-[62svh] flex-col justify-end overflow-hidden">
       <CoverWall rows={[invite.topGames, [...invite.topGames].reverse()]} />
@@ -511,8 +550,7 @@ function InviteHero({ invite }: { invite: { name: string; gamesCount: number; to
           {invite.name} зовёт сравнить библиотеки
         </h1>
         <p className="mt-4 text-sm text-dim">
-          {invite.gamesCount} {plural(invite.gamesCount, 'игра', 'игры', 'игр')} ·{' '}
-          {ru(invite.totalHours)} {plural(invite.totalHours, 'час', 'часа', 'часов')}
+          {invite.gamesCount} {plural(invite.gamesCount, 'игра', 'игры', 'игр')} · {inviteHours(invite)}
         </p>
       </div>
     </section>

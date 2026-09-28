@@ -181,6 +181,8 @@ export async function POST(req: Request) {
           nowSec: now,
           anchorOf,
           lean,
+          profile,
+          tagWeight,
         })
       : null
   const byHeuristic = (pool: ScoredCandidate[], count: number) =>
@@ -192,6 +194,7 @@ export async function POST(req: Request) {
       // заслуживает места и без лучшего скора; в остальных — только по скору
       guaranteed: mood.vibe === 'chill' || lean === 'familiar' ? CANDIDATE_SOURCES : undefined,
       hideUrgency,
+      playtimeHidden: set.playtimeHidden,
     })
   // Модель могла вернуть меньше пятёрки (отсеяла validatePicks) — недостающее
   // добирает та же эвристика из кандидатов, которых модель не взяла
@@ -211,7 +214,7 @@ export async function POST(req: Request) {
         DISCOVERY_CARDS,
         now,
         profile,
-        { tagWeight, anchorOf, hideUrgency },
+        { tagWeight, anchorOf, hideUrgency, playtimeHidden: set.playtimeHidden },
       )
 
   // «Продолжить «X»» — то, во что он играет сейчас: строкой под героем, а не
@@ -291,6 +294,10 @@ export async function POST(req: Request) {
     nudge,
     // Строка «Продолжить» или null — /play сам решает, где её не показывать
     continue: cont ? continueView(cont) : null,
+    // Время скрыто настройками Steam (lib/playtime.ts): /play говорит об этом
+    // строкой и подсказывает, как открыть, — иначе свои карточки «Из твоей
+    // библиотеки» без единого часа выглядели бы сбоем
+    playtimeHidden: set.playtimeHidden,
     // Чья выдача. /play держит её на устройстве пятнадцать минут и обязан не
     // показать её другому входу в той же вкладке (lib/playcache.ts). Свой же
     // steamid своему же человеку — то, что и так отдаёт /api/session/touch.

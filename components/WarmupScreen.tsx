@@ -186,7 +186,12 @@ export function WarmupScreen({
               <CountNumber value={progress.library.games} className="font-bold tabular-nums text-ink" />{' '}
               {plural(progress.library.games, 'игра', 'игры', 'игр')} в библиотеке
             </p>
-            {progress.library.untouched > 0 && (
+            {/* Время скрыто — ни числа нетронутых, ни нуля: это галочка Steam.
+                «Похоже» — признак угадан по нулям (lib/playtime.ts) и бывает
+                ложным у десятка ни разу не запущенных игр */}
+            {progress.library.timeHidden ? (
+              <p className="text-sm text-dim mt-1">похоже, время в них скрыто настройками Steam</p>
+            ) : progress.library.untouched > 0 && (
               <p className="text-sm text-dim mt-1">
                 <CountNumber
                   value={progress.library.untouched}

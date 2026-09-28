@@ -1,3 +1,4 @@
+import { playtimeHidden } from './playtime'
 import { buildTagProfile } from './recommend'
 import { cosine, rarityOf, rarityScale } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
@@ -5,8 +6,12 @@ import type { GameMeta, LibraryGame } from './types'
 export type Compatibility = {
   /** 0–100, близость вкусов; см. tasteCosine */
   percent: number
-  /** Самые наигранные из общих, не больше COMMON_SHOWN */
-  commonGames: Array<{ appid: number; name: string; hoursA: number; hoursB: number }>
+  /**
+   * Самые наигранные из общих, не больше COMMON_SHOWN. Часы null — время этой
+   * стороны скрыто настройками Steam (lib/playtime.ts): «0 ч» против часов
+   * друга было бы сказано про галочку, а не про человека.
+   */
+  commonGames: Array<{ appid: number; name: string; hoursA: number | null; hoursB: number | null }>
   /**
    * Размер ВСЕГО пересечения, а не показанного среза.
    *
@@ -16,9 +21,12 @@ export type Compatibility = {
    * тоже делается здесь.
    */
   commonTotal: number
-  /** Часы обоих по всему пересечению, а не по срезу */
+  /** Часы обоих по всему пересечению, а не по срезу; скрытая сторона — ноль */
   commonHours: number
   sharedTags: string[]
+  /** Время скрыто настройками Steam — у каждой стороны своё (lib/playtime.ts) */
+  timeHiddenA: boolean
+  timeHiddenB: boolean
 }
 
 /** Сколько общих игр отдаём наружу: список, а не каталог */
@@ -166,8 +174,13 @@ export function compatibility(
   const profileB = buildTagProfile(libB, metaOf)
   const percent = Math.round(tasteCosine(profileA, profileB, tagStats) * 100)
   const top = rarityScale(tagStats)
+  // Признак — по каждой библиотеке целиком, а не по паре: скрыть время могут
+  // и оба, и один (lib/playtime.ts)
+  const timeHiddenA = playtimeHidden(libA)
+  const timeHiddenB = playtimeHidden(libB)
 
   const byAppidB = new Map(libB.map((g) => [g.appid, g]))
+  const both = (g: { hoursA: number | null; hoursB: number | null }) => (g.hoursA ?? 0) + (g.hoursB ?? 0)
   const allCommon = libA
     .filter((g) => byAppidB.has(g.appid))
     .map((g) => {
@@ -175,15 +188,15 @@ export function compatibility(
       return {
         appid: g.appid,
         name: g.name,
-        hoursA: Math.round(g.playtimeForever / 60),
-        hoursB: Math.round(other.playtimeForever / 60),
+        hoursA: timeHiddenA ? null : Math.round(g.playtimeForever / 60),
+        hoursB: timeHiddenB ? null : Math.round(other.playtimeForever / 60),
       }
     })
-    .sort((a, b) => b.hoursA + b.hoursB - (a.hoursA + a.hoursB))
+    .sort((a, b) => both(b) - both(a))
 
   // Счётчик и сумма — по всему пересечению, до среза: см. Compatibility.commonTotal
   const commonTotal = allCommon.length
-  const commonHours = allCommon.reduce((sum, g) => sum + g.hoursA + g.hoursB, 0)
+  const commonHours = allCommon.reduce((sum, g) => sum + both(g), 0)
   const commonGames = allCommon.slice(0, COMMON_SHOWN)
 
   /*
@@ -201,7 +214,30 @@ export function compatibility(
     .sort((a, b) => weightOf(b) - weightOf(a))
     .slice(0, 6)
 
-  return { percent, commonGames, commonTotal, commonHours, sharedTags }
+  return { percent, commonGames, commonTotal, commonHours, sharedTags, timeHiddenA, timeHiddenB }
+}
+
+/**
+ * Вкус пары — сумма двух профилей, а не профиль склейки двух библиотек.
+ *
+ * buildTagProfile судит о скрытом времени (lib/playtime.ts) по библиотеке,
+ * которую ему дали. Склейка, где время скрыто только у одного, под признак не
+ * попадает — нули второго остаются нулями, и половина пары весит ноль: полку
+ * «на будущее» подбирали бы по вкусу одного. По отдельности каждая сторона
+ * получает свой вес; колода пати суммирует так же (buildGroupDeck). Когда
+ * время открыто у обоих, сумма — та же склейка: вес игры от соседей по
+ * библиотеке не зависит.
+ */
+export function pairTasteProfile(
+  libA: LibraryGame[],
+  libB: LibraryGame[],
+  metaOf: (appid: number) => GameMeta | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const lib of [libA, libB]) {
+    for (const [tag, w] of Object.entries(buildTagProfile(lib, metaOf))) out[tag] = (out[tag] ?? 0) + w
+  }
+  return out
 }
 
 /*

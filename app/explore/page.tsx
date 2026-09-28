@@ -12,7 +12,7 @@ import { PrivacyHelp } from '@/components/PrivacyHelp'
 import { SwipeDeck, type DeckCard, type DeckLabels } from '@/components/SwipeDeck'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { ExploreCard, ShelfCard } from '@/lib/cards'
-import { bounceTo, reconnectHref } from '@/lib/destination'
+import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { EXPLORE_REASON, EXPLORE_SHELF_FOLD, EXPLORE_SHELF_MAX } from '@/lib/explore'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -312,9 +312,10 @@ export default function ExplorePage() {
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
         <p className="text-lg">{fail.title}</p>
         <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
+        {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
         {reason === 'nolibrary' && (
           <div className="max-w-md text-left">
-            <PrivacyHelp />
+            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/explore')} />
           </div>
         )}
         {reason === 'nolibrary' ? (

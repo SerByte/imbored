@@ -21,6 +21,8 @@ import {
   MAX_BLOCKED_RUN,
   PAGE_MAX_AGE_SEC,
   PAGE_MAX_TRIES,
+  PAGE_REDO_AFTER_SEC,
+  PAGE_REDO_PAUSE_SEC,
   PROS_CONS_MIN_REVIEWS,
   runPageSlice,
 } from './pagejob'
@@ -119,11 +121,11 @@ describe('очередь обогащения карточек', () => {
     expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([10])
   })
 
-  test('две группы выборки в сумме — ровно то, что считает countPageEnrichDue', async () => {
-    // Выборка разбита на два запроса ради индекса (см. claimPageEnrichBatch),
-    // и разбиение обязано быть точным: иначе отчёт крона говорит одно, а
-    // очередь делает другое. Перебираем все сочетания, которые различает
-    // предикат, при обеих политиках повторов и с пересборкой и без.
+  test('выборка берёт ровно то, что считает countPageEnrichDue', async () => {
+    // Иначе отчёт крона говорит одно, а очередь делает другое — так уже было,
+    // когда у выборки было четыре ветки OR, а у счётчика три. Перебираем все
+    // сочетания, которые различает предикат, при обеих политиках повторов, с
+    // пересборкой и без, со сроком пересборки и без него.
     const db = await freshDb()
     const stale = NOW - PAGE_MAX_AGE_SEC
     const cases: Array<{ pageAt: number | null; tries: number; heuristic: boolean }> = []
@@ -142,18 +144,21 @@ describe('очередь обогащения карточек', () => {
     }
 
     for (const maxTries of [0, PAGE_MAX_TRIES])
-      for (const redoHeuristic of [false, true]) {
-        const claimed = await claimPageEnrichBatch(db, stale, 1000, { maxTries, redoHeuristic })
-        const due = await countPageEnrichDue(db, stale, maxTries, { redoHeuristic })
-        expect(claimed.length, `maxTries=${maxTries} redo=${redoHeuristic}`).toBe(due)
-        expect(new Set(claimed).size).toBe(claimed.length)
-      }
+      for (const redoHeuristic of [false, true])
+        for (const redoBefore of [undefined, NOW - PAGE_REDO_AFTER_SEC]) {
+          const opts = { redoHeuristic, redoBefore }
+          const claimed = await claimPageEnrichBatch(db, stale, 1000, { maxTries, ...opts })
+          const due = await countPageEnrichDue(db, stale, maxTries, opts)
+          expect(claimed.length, `maxTries=${maxTries} redo=${redoHeuristic} до=${redoBefore}`).toBe(due)
+          expect(new Set(claimed).size).toBe(claimed.length)
+        }
   })
 
-  test('обе группы выборки идут по частичному индексу, а не сортируют каталог', async () => {
-    // Ради этого выборка и разбита на два запроса: выражение в ORDER BY
-    // частичному индексу не соответствовало, и SQLite читал и сортировал весь
-    // каталог ради двадцати appid (USE TEMP B-TREE FOR ORDER BY).
+  test('выборка идёт по частичному индексу одним запросом, а не сортирует каталог', async () => {
+    // Выражение в ORDER BY частичному индексу не соответствовало, и SQLite
+    // читал и сортировал весь каталог ради двадцати appid (USE TEMP B-TREE FOR
+    // ORDER BY). Порядок теперь — ровно порядок индекса, и LIMIT останавливает
+    // чтение на двадцатой подходящей строке.
     const db = await freshDb()
     const issued: Array<{ sql: string; args: unknown[] }> = []
     const spy = {
@@ -166,9 +171,10 @@ describe('очередь обогащения карточек', () => {
     await claimPageEnrichBatch(spy, NOW - PAGE_MAX_AGE_SEC, 20, {
       maxTries: PAGE_MAX_TRIES,
       redoHeuristic: true,
+      redoBefore: NOW - PAGE_REDO_AFTER_SEC,
     })
 
-    expect(issued).toHaveLength(2)
+    expect(issued).toHaveLength(1)
     for (const q of issued) {
       const plan = await db.execute({ sql: `EXPLAIN QUERY PLAN ${q.sql}`, args: q.args as InArgs })
       const detail = plan.rows.map((r) => String(r.detail)).join(' | ')
@@ -215,6 +221,26 @@ describe('очередь обогащения карточек', () => {
     expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, { maxTries: PAGE_MAX_TRIES })).toEqual([
       10, 20,
     ])
+  })
+
+  test('эвристика и протухшее у верха каталога идут впереди нетронутого хвоста', async () => {
+    // Первый массовый проход шёл без модели, и эвристику получил как раз топ по
+    // отзывам. Пока пересборка стояла второй ступенью выборки, модель
+    // добиралась бы до CS2 после пяти тысяч нетронутых — около ста дней при
+    // 49 карточках в сутки.
+    const db = await freshDb()
+    await addGame(db, 10, 900) // собрана эвристикой месяц назад
+    await addGame(db, 20, 600) // собрана моделью, но полгода назад
+    await addGame(db, 30, 400) // нетронутая
+    await addGame(db, 40, 50) // нетронутая
+    await setGameJson(db, 10, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
+    await markPageEnriched(db, 10, NOW - 30 * 86_400)
+    await setGameJson(db, 20, 'pros_cons_json', { pros: ['а'], cons: [], source: 'claude' })
+    await markPageEnriched(db, 20, NOW - PAGE_MAX_AGE_SEC - 1)
+
+    const opts = { maxTries: PAGE_MAX_TRIES, redoHeuristic: true, redoBefore: NOW - PAGE_REDO_AFTER_SEC }
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 1, opts)).toEqual([10])
+    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([10, 20, 30, 40])
   })
 
   test('без maxTries поведение прежнее: повторов нет', async () => {
@@ -342,7 +368,7 @@ describe('очередь обогащения карточек', () => {
     expect(again.enriched).toBe(0)
   })
 
-  test('исчерпавшая попытки карточка не возвращается и через пересборку эвристики', async () => {
+  test('исчерпавшая попытки карточка с эвристикой возвращается через неделю, а не через полгода', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)
     // эвристические pros/cons — то есть кандидат на пересборку моделью
@@ -350,11 +376,45 @@ describe('очередь обогащения карточек', () => {
     // и при этом счётчик пустых походов уже упёрся в потолок
     for (let i = 0; i < PAGE_MAX_TRIES; i++) await markPageMissed(db, 10, NOW)
 
-    const opts = { redoHeuristic: true, maxTries: PAGE_MAX_TRIES }
-    // Ветка пересборки стояла без оглядки на счётчик: карточка, у которой
-    // appdetails молчит, а эвристика записана, возвращалась бы в очередь
-    // вечно — тот самый head-of-line, ради которого потолок и заводили.
-    expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
+    const claim = (now: number) =>
+      claimPageEnrichBatch(db, now - PAGE_MAX_AGE_SEC, 10, {
+        redoHeuristic: true,
+        maxTries: PAGE_MAX_TRIES,
+        redoBefore: now - PAGE_REDO_AFTER_SEC,
+      })
+    // Сразу — нет: карточка, у которой модель раз за разом ничего не даёт, иначе
+    // стояла бы в голове очереди каждое звено.
+    expect(await claim(NOW)).toEqual([])
+    // Но и не полгода. Потолок попыток считает пустые походы appdetails, а
+    // отзывы-то приехали: пересобрать pros/cons моделью есть из чего. Раньше
+    // такая карточка выпадала из обеих групп выборки до общего срока.
+    expect(await claim(NOW + PAGE_REDO_AFTER_SEC)).toEqual([])
+    expect(await claim(NOW + PAGE_REDO_AFTER_SEC + 1)).toEqual([10])
+    // без модели пересобирать нечем — ждёт общего срока, как и прежде
+    expect(
+      await claimPageEnrichBatch(db, NOW + PAGE_REDO_AFTER_SEC + 1 - PAGE_MAX_AGE_SEC, 10, {
+        maxTries: PAGE_MAX_TRIES,
+      }),
+    ).toEqual([])
+  })
+
+  test('карточку, у которой модель ничего не дала, следующее звено не берёт снова', async () => {
+    // С общей сортировкой по отзывам такая карточка стоит в голове очереди, и
+    // без срока пересборки держала бы её каждое звено: два запроса в Steam и
+    // вызов модели впустую, а нетронутые ждали бы.
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await addGame(db, 20, 50)
+    await setGameJson(db, 10, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
+    await markPageEnriched(db, 10, NOW - 30 * 86_400)
+    const slice = () => runPageSlice(db, stubs({ limit: 1, prosConsFn: async () => null }))
+
+    expect((await slice()).claimed).toBe(1)
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
+    expect(await queueState(db, 20)).toEqual({ pageAt: null, tries: 0 })
+
+    await slice()
+    expect(await queueState(db, 20)).toEqual({ pageAt: NOW, tries: 0 })
   })
 
   test('без политики повторов пересборка эвристики работает как прежде', async () => {
@@ -489,8 +549,9 @@ describe('runPageSlice', () => {
     } finally {
       vi.unstubAllEnvs()
     }
-    // Бюджет вернулся — та же карточка снова в очереди, теперь за моделью
-    const third = await runPageSlice(db, stubs({ prosConsFn }))
+    // Бюджет вернулся — та же карточка снова в очереди, теперь за моделью.
+    // Не в тот же день, а через срок пересборки: см. PAGE_REDO_AFTER_SEC
+    const third = await runPageSlice(db, stubs({ prosConsFn, nowSec: NOW + PAGE_REDO_AFTER_SEC + 1 }))
     expect(third.claimed).toBe(1)
     expect(called).toBe(1)
   })
@@ -867,9 +928,10 @@ describe('pros/cons только из полезных отзывов', () => {
   test('старый маркер пересборки снимается, даже когда эвристике нечего сказать', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)
-    // прошлый прогон без модели оставил маркер «пересобрать моделью»
+    // прошлый прогон без модели оставил маркер «пересобрать моделью» — и
+    // давно, так что срок пересборки вышел
     await setGameJson(db, 10, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
-    await markPageEnriched(db, 10, NOW)
+    await markPageEnriched(db, 10, NOW - PAGE_REDO_AFTER_SEC - 1)
 
     // голосов «полезно» нет ни у кого — эвристика (votesUp >= 3) тоже пуста
     const res = await runPageSlice(db, stubs({ fetchReviewsRawFn: async () => mixed(10, 0) }))
@@ -879,6 +941,180 @@ describe('pros/cons только из полезных отзывов', () => {
     expect(await getGameJson(db, 10, 'pros_cons_json')).toEqual({ pros: [], cons: [], source: 'thin' })
     const opts = { redoHeuristic: true, maxTries: PAGE_MAX_TRIES }
     expect(await claimPageEnrichBatch(db, NOW - PAGE_MAX_AGE_SEC, 10, opts)).toEqual([])
+  })
+})
+
+/**
+ * Пересказ модели не затирается эвристикой — ни одной дорогой среза.
+ *
+ * Страница игры показывает только source 'claude', и у верха каталога это
+ * единственный русский текст. Карточку берут заново — протухла, пустой поход —
+ * и если в этот срез модели нет, эвристика раньше ложилась поверх пересказа.
+ */
+describe('собранное моделью не затирается', () => {
+  const OLD = { pros: ['Сюжет'], cons: ['Баги'], source: 'claude' }
+
+  /** Пересказ модели полугодовой давности: карточку берут заново как протухшую */
+  async function staleClaude(db: Db, appid: number, reviewsTotal: number): Promise<void> {
+    await addGame(db, appid, reviewsTotal)
+    await setGameJson(db, appid, 'pros_cons_json', OLD)
+    await markPageEnriched(db, appid, NOW - PAGE_MAX_AGE_SEC - 1)
+  }
+
+  const fails = async (): Promise<never> => {
+    throw new LlmUnavailableError(402, 'кончились деньги')
+  }
+  // Опции — функцией: срок среза считается от момента теста, а не загрузки файла
+  const cases: Array<[string, () => Partial<Parameters<typeof runPageSlice>[1]>, Record<string, string>?]> = [
+    ['модель лежит', () => ({ prosConsFn: fails })],
+    ['суточный бюджет модели выбран до среза', () => ({}), { LLM_DAILY_CAP: '0' }],
+    ['модель ответила пустым', () => ({ prosConsFn: async () => null })],
+    [
+      'мало полезных отзывов — модель не зовут',
+      () => ({ fetchReviewsRawFn: async () => reviews(PROS_CONS_MIN_REVIEWS - 1) }),
+    ],
+    ['остатка срока мало — модель не зовут', () => ({ deadlineAt: Date.now() + 2_000 })],
+    ['--no-llm', () => ({ useClaude: false })],
+  ]
+  for (const [name, over, env] of cases) {
+    test(`${name}: пересказ остаётся, карточка обогащена`, async () => {
+      const db = await freshDb()
+      await staleClaude(db, 10, 100)
+      for (const [k, v] of Object.entries(env ?? {})) vi.stubEnv(k, v)
+      try {
+        const res = await runPageSlice(db, stubs(over()))
+        expect(res).toMatchObject({ claimed: 1, enriched: 1, viaClaude: 0, withProsCons: 1 })
+      } finally {
+        vi.unstubAllEnvs()
+      }
+      expect(await getGameJson(db, 10, 'pros_cons_json')).toEqual(OLD)
+      // отметка очереди стоит как обычно: протухшая карточка снова свежая
+      expect(await queueState(db, 10)).toEqual({ pageAt: NOW, tries: 0 })
+    })
+  }
+
+  test('бюджет кончился посреди среза — у следующей карточки пересказ остаётся', async () => {
+    // Путь llmCapped: первая карточка взяла последний вызов суточного бюджета,
+    // вторая идёт уже без модели
+    const db = await freshDb()
+    await staleClaude(db, 10, 100)
+    await staleClaude(db, 20, 90)
+    const fresh = { pros: ['Музыка'], cons: ['Цена'] }
+    vi.stubEnv('LLM_DAILY_CAP', '1')
+    try {
+      const res = await runPageSlice(db, stubs({ prosConsFn: async () => fresh }))
+      expect(res).toMatchObject({ viaClaude: 1, withProsCons: 2, llmCapped: true })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toEqual({ ...fresh, source: 'claude' })
+    expect(await getGameJson(db, 20, 'pros_cons_json')).toEqual(OLD)
+  })
+})
+
+/**
+ * Пока модель лежит, пересборка эвристики стоит на паузе.
+ *
+ * Иначе карточки с 'reviews' — верх каталога — в общей очереди по числу
+ * отзывов шли бы впереди нетронутых срез за срезом, и все звенья уходили бы
+ * на то, чтобы переписать эвристику эвристикой.
+ */
+describe('пауза пересборки, пока модель лежит', () => {
+  /** Собрана эвристикой месяц назад: кандидат на пересборку, срок вышел */
+  async function heuristic(db: Db, appid: number, reviewsTotal: number): Promise<void> {
+    await addGame(db, appid, reviewsTotal)
+    await setGameJson(db, appid, 'pros_cons_json', { pros: ['а'], cons: [], source: 'reviews' })
+    await markPageEnriched(db, appid, NOW - 30 * 86_400)
+  }
+
+  test('отказ ставит паузу: нетронутые идут своим чередом, на них же пробуют модель', async () => {
+    const db = await freshDb()
+    await heuristic(db, 10, 900)
+    await heuristic(db, 20, 800)
+    await addGame(db, 30, 50)
+    let звали = 0
+    const лежит = async (): Promise<never> => {
+      звали++
+      throw new LlmUnavailableError(402, 'кончились деньги')
+    }
+    const slice = () => runPageSlice(db, stubs({ limit: 1, prosConsFn: лежит }))
+
+    await slice() // верх каталога, модель отказала
+    expect(await queueState(db, 10)).toEqual({ pageAt: NOW, tries: 0 })
+
+    await slice()
+    // без паузы взяли бы 20 — следующую эвристику верха, впустую
+    expect(await queueState(db, 20)).toEqual({ pageAt: NOW - 30 * 86_400, tries: 0 })
+    expect(await queueState(db, 30)).toEqual({ pageAt: NOW, tries: 0 })
+    // и модель пробовали на нетронутой: по ней пауза и снимется
+    expect(звали).toBe(2)
+  })
+
+  test('первый же ответ модели снимает паузу', async () => {
+    const db = await freshDb()
+    await heuristic(db, 10, 900)
+    await heuristic(db, 20, 800)
+    await addGame(db, 30, 50)
+    const ok = async () => ({ pros: ['красиво'], cons: ['дорого'] })
+    await runPageSlice(
+      db,
+      stubs({
+        limit: 1,
+        prosConsFn: async () => {
+          throw new LlmUnavailableError(401, 'ключ отозван')
+        },
+      }),
+    )
+
+    // пауза: берут нетронутую, модель на ней отвечает
+    await runPageSlice(db, stubs({ limit: 1, prosConsFn: ok }))
+    expect(await getGameJson(db, 30, 'pros_cons_json')).toMatchObject({ source: 'claude' })
+    // паузы больше нет — верх каталога снова за моделью
+    await runPageSlice(db, stubs({ limit: 1, prosConsFn: ok }))
+    expect(await getGameJson(db, 20, 'pros_cons_json')).toMatchObject({ source: 'claude' })
+  })
+
+  test('пробовать не на чем — пауза кончается сама', async () => {
+    // Остались одни 'reviews': без срока пауза не снялась бы никогда, и
+    // вернувшаяся модель верх каталога так и не увидела бы
+    const db = await freshDb()
+    await heuristic(db, 10, 900)
+    await heuristic(db, 20, 800)
+    const лежит = async (): Promise<never> => {
+      throw new LlmUnavailableError(402, 'кончились деньги')
+    }
+    await runPageSlice(db, stubs({ limit: 1, prosConsFn: лежит }))
+
+    const ok = async () => ({ pros: ['красиво'], cons: ['дорого'] })
+    expect((await runPageSlice(db, stubs({ limit: 1, nowSec: NOW + 3600, prosConsFn: ok }))).claimed).toBe(0)
+    const later = await runPageSlice(db, stubs({ limit: 1, nowSec: NOW + PAGE_REDO_PAUSE_SEC, prosConsFn: ok }))
+    expect(later).toMatchObject({ claimed: 1, viaClaude: 1 })
+    expect(await getGameJson(db, 20, 'pros_cons_json')).toMatchObject({ source: 'claude' })
+  })
+
+  test('отказ после удачного ответа в том же срезе паузы не ставит', async () => {
+    // Чаще всего это последний вызов, которому не хватило остатка срока:
+    // модель жива, и верх каталога ждать незачем
+    const db = await freshDb()
+    await heuristic(db, 10, 900)
+    await heuristic(db, 20, 800)
+    await heuristic(db, 30, 700)
+    await addGame(db, 40, 50)
+    let звали = 0
+    await runPageSlice(
+      db,
+      stubs({
+        limit: 2,
+        prosConsFn: async () => {
+          if (++звали > 1) throw new LlmUnavailableError(null, 'таймаут')
+          return { pros: ['красиво'], cons: [] }
+        },
+      }),
+    )
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toMatchObject({ source: 'claude' })
+
+    await runPageSlice(db, stubs({ limit: 1, prosConsFn: async () => ({ pros: ['x'], cons: [] }) }))
+    expect(await getGameJson(db, 30, 'pros_cons_json')).toMatchObject({ source: 'claude' })
   })
 })
 

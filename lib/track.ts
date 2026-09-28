@@ -35,6 +35,12 @@ export const CLIENT_EVENTS = [
   'share_click',
   /** открыл чужую комнату по приглашению, ещё не войдя в неё */
   'invite_open',
+  /** увидел полосу «это чужая демо-библиотека» — раз на страницу за документ */
+  'demo_door_shown',
+  /** нажал в ней «Войти через Steam» */
+  'demo_door_steam',
+  /** нажал в ней «вставить ссылку» */
+  'demo_door_link',
 ] as const
 export type ClientEvent = (typeof CLIENT_EVENTS)[number]
 

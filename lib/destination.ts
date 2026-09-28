@@ -252,10 +252,18 @@ export function loginTarget(search: URLSearchParams): string {
  * carry — то, что карточка и так читает из адреса (loginCarry): совместимость,
  * которую человек шёл смотреть, едет с ним, и после подключения карточка
  * уведёт туда же, а не в квиз.
+ *
+ * next — место, откуда пришли за своей библиотекой: демо с выдачи, игры дня
+ * или библиотеки (components/DemoBar). Без него «вставить ссылку» из демо
+ * возвращала бы не на ту же выдачу, а куда поведёт память настроения. Тот же
+ * порядок и та же проверка, что у loginCarry: совместимость важнее, а next —
+ * только из закрытого списка (destinationUrl), чужое просто не едет.
  */
-export function reconnectHref(carry?: { compat?: string }): string {
+export function reconnectHref(carry?: { compat?: string; next?: string }): string {
   const q = new URLSearchParams()
+  const next = destinationUrl(carry?.next)
   if (carry?.compat && COMPAT_RE.test(carry.compat)) q.set('compat', carry.compat)
+  else if (next) q.set('next', next)
   q.set('reconnect', '1')
   return `/?${q}`
 }

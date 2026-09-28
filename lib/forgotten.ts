@@ -1,6 +1,7 @@
 import { hashString } from './daily'
 import { collapseEditions, editionKey, isVariantName } from './editions'
 import { isJunk, looksLikeNonGame } from './junk'
+import { playtimeHidden } from './playtime'
 import {
   buildTagProfile,
   isUntouched,
@@ -89,12 +90,17 @@ function canonicalFirst(metaOf: MetaOf) {
  * banned — «Больше не показывать» (bannedAppids). Полка — тоже совет, и игра,
  * которую человек попросил не предлагать, не должна возвращаться сюда под
  * видом «ты забыл, что она у тебя есть»: он помнит, он её и убрал.
+ *
+ * Время скрыто настройками Steam (lib/playtime.ts) — полки нет вовсе: ноль
+ * минут там у каждой игры, и «ни одну из них ты не запускал» было бы сказано
+ * про игры, где у человека сотни часов.
  */
 export function forgottenCandidates(
   library: LibraryGame[],
   metaOf: MetaOf,
   banned: ReadonlySet<number> = new Set(),
 ): LibraryGame[] {
+  if (playtimeHidden(library)) return []
   const sealed = library.filter(
     (g) =>
       g.appid > 0 && isUntouched(g) && !banned.has(g.appid) && !isJunk(g, metaOf(g.appid)),
@@ -242,12 +248,19 @@ export function libraryHref(filter: LibraryFilter, page = 1): string {
  * ровно к ним. Поэтому не-игра в бэклоговых состояниях стоит нейтральной
  * плиткой: без подписи и вне полок бэклога, как пройденная. На полке «Все»
  * она остаётся — это библиотека, и саундтрек в ней правда есть.
+ *
+ * hidden — время скрыто настройками Steam (lib/playtime.ts): по нулям нельзя
+ * сказать ни «не распакована», ни «открыл и закрыл», ни «заброшена», и
+ * плитка стоит нейтральной. Остаётся только «играешь сейчас» — минуты за две
+ * недели Steam бывает, что и отдаёт.
  */
 export function wallState(
   g: LibraryGame,
   meta: GameMeta | undefined,
   nowSec: number,
+  hidden = false,
 ): LibraryTileState {
+  if (hidden) return g.playtime2Weeks > 0 ? 'active' : 'played'
   const state = libraryTileState(g, nowSec)
   if ((state === 'untouched' || state === 'unplayed') && looksLikeNonGame(g, meta)) return 'played'
   return state
@@ -257,6 +270,12 @@ export type LibraryView = {
   games: LibraryGame[]
   /** по ВСЕЙ библиотеке, а не по выбранной полке — это подписи на чипсах */
   counts: Record<LibraryFilter, number>
+  /**
+   * Какая полка на самом деле показана. Обычно та, что спросили; при скрытом
+   * времени — всегда «Все»: полки бэклога делятся по часам, а часов нет, и
+   * пустая «Не распакованы» сказала бы «всё, что куплено, ты хотя бы открывал»
+   */
+  filter: LibraryFilter
 }
 
 /**
@@ -270,6 +289,8 @@ export function buildLibraryView(
   nowSec: number,
   tagWeight: TagWeight | null = null,
 ): LibraryView {
+  const hidden = playtimeHidden(library)
+  const shelf: LibraryFilter = hidden ? 'all' : filter
   const counts: Record<LibraryFilter, number> = {
     all: library.length,
     untouched: 0,
@@ -278,22 +299,22 @@ export function buildLibraryView(
     active: 0,
   }
   for (const g of library) {
-    const state = wallState(g, metaOf(g.appid), nowSec)
+    const state = wallState(g, metaOf(g.appid), nowSec, hidden)
     if (state !== 'played') counts[state]++
   }
 
   const picked =
-    filter === 'all'
+    shelf === 'all'
       ? library
-      : library.filter((g) => wallState(g, metaOf(g.appid), nowSec) === filter)
+      : library.filter((g) => wallState(g, metaOf(g.appid), nowSec) === shelf)
 
   // «Ни разу не запускал» ранжируется по вкусу: часов у этих игр нет вовсе, а
   // даты покупки Steam не отдаёт — вкус здесь единственный осмысленный порядок.
   // Остальные полки остаются на часах вниз, как было.
   const games =
-    filter === 'untouched'
+    shelf === 'untouched'
       ? rankByTaste(picked, metaOf, buildTagProfile(library, metaOf), tagWeight)
       : [...picked].sort((a, b) => b.playtimeForever - a.playtimeForever)
 
-  return { games, counts }
+  return { games, counts, filter: shelf }
 }

@@ -131,6 +131,7 @@ import {
   DEMO_TTL_SEC,
   FEEDBACK_CTX_TTL_SEC,
   listEvenings,
+  markActiveDay,
 } from './db'
 import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
@@ -139,6 +140,7 @@ import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC } from './outcome'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
+import { hiddenLibrary } from './testing/hiddenlibrary'
 import type { GameMeta, GameSemantics, LibraryGame } from './types'
 
 const NOW = 1_700_000_000
@@ -940,6 +942,46 @@ describe('db', () => {
     })
     expect(await getGameJson(db, 620, 'pros_cons_json')).toEqual({ pros: ['a'], cons: [] })
     expect(await getGameJson(db, 999, 'pros_cons_json')).toBeNull()
+  })
+
+  test('pros/cons от модели не затираются собранными без неё', async () => {
+    // Страница показывает только source 'claude'. Эвристика поверх пересказа
+    // снимала с витрины «За что любят» у верха каталога — CS2, Stardew Valley.
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    const claude = { pros: ['Сюжет'], cons: ['Баги'], source: 'claude' }
+    expect(await setGameJson(db, 620, 'pros_cons_json', claude)).toBe(true)
+
+    for (const over of [{ source: 'reviews' }, { source: 'thin' }, {}]) {
+      expect(await setGameJson(db, 620, 'pros_cons_json', { pros: ['x'], cons: [], ...over })).toBe(false)
+    }
+    expect(await getGameJson(db, 620, 'pros_cons_json')).toEqual(claude)
+
+    // свежий пересказ модели заменяет старый
+    const fresh = { pros: ['Музыка'], cons: [], source: 'claude' }
+    expect(await setGameJson(db, 620, 'pros_cons_json', fresh)).toBe(true)
+    expect(await getGameJson(db, 620, 'pros_cons_json')).toEqual(fresh)
+    // вердикта отзывов правило не касается
+    expect(await setGameJson(db, 620, 'reviews_summary_json', { scoreDesc: 'Mixed' })).toBe(true)
+  })
+
+  test('между эвристиками побеждает свежая: по ней очередь решает, звать ли модель', async () => {
+    // 'thin' поверх 'reviews' снимает карточку с пересборки, которой не из
+    // чего быть. Стой 'reviews' выше 'thin', старый маркер держал бы петлю
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await setGameJson(db, 620, 'pros_cons_json', { pros: ['a'], cons: [], source: 'reviews' })
+    expect(await setGameJson(db, 620, 'pros_cons_json', { pros: [], cons: [], source: 'thin' })).toBe(true)
+    expect(await setGameJson(db, 620, 'pros_cons_json', { pros: ['b'], cons: [], source: 'reviews' })).toBe(true)
+    expect(await getGameJson(db, 620, 'pros_cons_json')).toMatchObject({ source: 'reviews' })
+  })
+
+  test('битые pros/cons в базе не мешают записи, которая их починит', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    await db.execute("UPDATE games SET pros_cons_json = '{оборвано' WHERE appid = 620")
+    expect(await setGameJson(db, 620, 'pros_cons_json', { pros: ['a'], cons: [], source: 'reviews' })).toBe(true)
+    expect(await setGameJson(db, 999, 'pros_cons_json', { pros: ['a'], cons: [], source: 'reviews' })).toBe(false)
   })
 
   test('«за что любят» пачкой — только собранное моделью', async () => {
@@ -2818,6 +2860,8 @@ describe('forgetUser: удаление по запросу', () => {
     const db = await freshDb()
     await upsertUser(db, { steamid: ME, personaName: 'Me', avatarUrl: 'https://a/me.jpg' }, NOW)
     await setUserPortrait(db, ME, { takenAt: NOW, text: 'портрет' })
+    // День последнего захода (lib/retention) — колонка users, уходит со строкой
+    await markActiveDay(db, ME, '2023-11-15')
     await createSession(db, { sid: 'sid-me', steamid: ME, verified: true }, NOW)
     // Два разных года — две годовые отметки. Ровно их политика раньше не
     // упоминала, и ровно их проще всего забыть при удалении руками.
@@ -2963,6 +3007,99 @@ describe('forgetUser: удаление по запросу', () => {
     }
     expect(personal.length).toBeGreaterThan(5)
     for (const table of personal) expect(FORGET_TABLES, table).toContain(table)
+  })
+})
+
+/**
+ * Защёлка счётчика возвратов (lib/retention): одна дата на человека, и из
+ * двух одновременных заходов её переставляет один — иначе счётчик получил бы
+ * две единицы за одни сутки.
+ */
+describe('markActiveDay: день последнего захода', () => {
+  const ME = '76561198000000001'
+  const TODAY = '2023-11-15'
+
+  async function lastActive(db: Db): Promise<unknown> {
+    const res = await db.execute({ sql: 'SELECT last_active_day FROM users WHERE steamid = ?', args: [ME] })
+    return res.rows[0]?.last_active_day
+  }
+
+  test('первый заход за сутки переставляет дату и отдаёт прежнюю, повтор в те же сутки — null', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    expect(await markActiveDay(db, ME, TODAY)).toEqual({ createdAt: NOW, prevDay: null })
+    expect(await markActiveDay(db, ME, TODAY)).toBeNull()
+    expect(await markActiveDay(db, ME, '2023-11-16')).toEqual({ createdAt: NOW, prevDay: TODAY })
+    expect(await lastActive(db)).toBe('2023-11-16')
+  })
+
+  test('назад дата не двигается: часы соседнего инстанса отстали', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    await markActiveDay(db, ME, '2023-11-16')
+    expect(await markActiveDay(db, ME, TODAY)).toBeNull()
+    expect(await lastActive(db)).toBe('2023-11-16')
+  })
+
+  test('без строки users считать нечего, и строка не заводится', async () => {
+    const db = await freshDb()
+    expect(await markActiveDay(db, ME, TODAY)).toBeNull()
+    const users = await db.execute('SELECT COUNT(*) AS n FROM users')
+    expect(Number(users.rows[0]?.n)).toBe(0)
+  })
+
+  test('из одновременных заходов защёлку переставляет ровно один', async () => {
+    // Главная и /play зовут touch почти разом, как и телефон с ноутбуком
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    const got = await Promise.all([1, 2, 3].map(() => markActiveDay(db, ME, TODAY)))
+    expect(got.filter((m) => m !== null)).toEqual([{ createdAt: NOW, prevDay: null }])
+  })
+
+  /** Счётчики событий, как их пишет markActiveDay: ключ → число */
+  async function bumps(db: Db): Promise<Record<string, number>> {
+    const res = await db.execute("SELECT key, count FROM telemetry_hourly WHERE kind = 'event'")
+    return Object.fromEntries(res.rows.map((r) => [String(r.key), Number(r.count)]))
+  }
+
+  test('счётчик — той же пачкой и только у того, кто переставил защёлку', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    const seen: unknown[] = []
+    const bumpOf = (mark: unknown) => {
+      seen.push(mark)
+      return { key: 'return:2023-W46:d0:steam', hour: 1_699_833_600 }
+    }
+    await Promise.all([1, 2, 3].map(() => markActiveDay(db, ME, TODAY, bumpOf)))
+    // Счётчику решать по прежней дате — её он и получает
+    expect(seen[0]).toEqual({ createdAt: NOW, prevDay: null })
+    expect(await bumps(db)).toEqual({ 'return:2023-W46:d0:steam': 1 })
+    // Считать нечего — дата всё равно переставляется, счётчик не трогается
+    expect(await markActiveDay(db, ME, '2023-11-16', () => null)).toEqual({ createdAt: NOW, prevDay: TODAY })
+    expect(await lastActive(db)).toBe('2023-11-16')
+    expect(await bumps(db)).toEqual({ 'return:2023-W46:d0:steam': 1 })
+  })
+
+  test('не записался счётчик — не переставилась и дата: следующий заход посчитает', async () => {
+    // Порознь дата уже стояла бы на сегодня, и единица за окно пропала бы навсегда
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    const bumpOf = () => ({ key: 'return:2023-W46:d0:steam', hour: 1_699_833_600 })
+    await db.execute('ALTER TABLE telemetry_hourly RENAME TO telemetry_gone')
+    await expect(markActiveDay(db, ME, TODAY, bumpOf)).rejects.toThrow()
+    expect(await lastActive(db)).toBeNull()
+    await db.execute('ALTER TABLE telemetry_gone RENAME TO telemetry_hourly')
+    expect(await markActiveDay(db, ME, TODAY, bumpOf)).toEqual({ createdAt: NOW, prevDay: null })
+    expect(await bumps(db)).toEqual({ 'return:2023-W46:d0:steam': 1 })
+  })
+
+  test('дата уходит вместе со строкой users по запросу на удаление', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: ME }, NOW)
+    await markActiveDay(db, ME, TODAY)
+    await forgetUser(db, ME)
+    const left = await db.execute('SELECT COUNT(*) AS n FROM users WHERE last_active_day IS NOT NULL')
+    expect(Number(left.rows[0]?.n)).toBe(0)
   })
 })
 
@@ -3316,8 +3453,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 5,
-      columns: 34,
+      version: 6,
+      columns: 35,
     })
   })
 })
@@ -3804,6 +3941,91 @@ describe('исход совета', () => {
       [888, NOW - DAY + 60, null, null, 0, NOW],
       [999, NOW - DAY + 60, null, 45, 1, NOW],
     ])
+  })
+
+  // Время скрыто в Steam (lib/playtime.ts): нули галочки записались бы как
+  // «не запускал», и «Твои вечера» сказали бы это про каждый совет
+  test('скрытое время: снапшот из нулей советы не сверяет', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - DAY)
+    await recordOutcome(db, { steamid: ME, appid: 620, source: 'untouched', launched: true }, NOW - DAY + 60)
+    const hidden = [...hiddenLibrary(), { ...LIB[1]!, playtimeForever: 0 }]
+    expect(await fillOutcomesFromSnapshot(db, ME, hidden, NOW)).toBe(0)
+    expect((await outcomeRows(db))[0]).toMatchObject({ after: null, checkedAt: null })
+  })
+
+  // Снял галочку и подключил библиотеку заново — ровно то, что советует
+  // PlaytimeHiddenNote. Минуты до, записанные при скрытом времени, — ноль
+  // галочки, и первая сверка засчитала бы «после совета» все часы за жизнь
+  test('скрытое время → открытое: минуты до перебазируются, «как тебе?» не спрашивается', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const hidden = [...hiddenLibrary(), { ...LIB[1]!, playtimeForever: 0 }]
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 3 * DAY)
+    await launch(db, 620, NOW - 3 * DAY + 60)
+    // вторая сверка при скрытом времени — пропуск, строка ждёт открытого
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 2 * DAY)
+    const open = hidden.map((g) => ({ ...g, playtimeForever: g.appid === 620 ? 30_000 : 600 }))
+    await saveLibrarySnapshot(db, ME, open, NOW - DAY)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 30_000, after: null, checkedAt: null })
+    expect(await pendingOutcomeAsk(db, ME, NOW - DAY)).toBeNull()
+    // «Твои вечера»: не сверено, а не «500 ч после совета»
+    expect((await listEvenings(db, ME, NOW - 30 * DAY))[0]?.minutes).toBeNull()
+
+    // Следующий открытый снапшот сверяет уже от перебазированных минут
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      open.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 30_040 } : g)),
+      NOW,
+    )
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 40, bought: false })
+  })
+
+  // Переход: строки, записанные до правила «скрытое не сверяем», код тех дней
+  // уже сверил по нулям — ноль до, ноль после, отметка стоит
+  test('сверенная по нулям скрытого снапшота строка тоже перебазируется', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const hidden = [...hiddenLibrary(), { ...LIB[1]!, playtimeForever: 0 }]
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 3 * DAY)
+    await launch(db, 620, NOW - 3 * DAY + 60)
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 2 * DAY)
+    // так сверял прежний fillOutcomesFromSnapshot
+    await db.execute({
+      sql: 'UPDATE outcomes SET minutes_after = 0, owned_after = 1, checked_at = ? WHERE steamid = ? AND appid = 620',
+      args: [NOW - 2 * DAY, ME],
+    })
+    const open = hidden.map((g) => ({ ...g, playtimeForever: g.appid === 620 ? 30_000 : 600 }))
+    await saveLibrarySnapshot(db, ME, open, NOW - DAY)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 30_000, after: null, owned: null, checkedAt: null })
+    expect(await pendingOutcomeAsk(db, ME, NOW - DAY)).toBeNull()
+    expect((await listEvenings(db, ME, NOW - 30 * DAY))[0]?.minutes).toBeNull()
+  })
+
+  // Ноль после при открытом прежнем снапшоте — тоже правда: не запускал тогда,
+  // сыграл теперь. Такая строка сверяется обычным путём
+  test('сверенный ноль при открытом прежнем снапшоте — не перебазируется', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const untouched = LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 0 } : g))
+    await saveLibrarySnapshot(db, ME, untouched, NOW - 2 * DAY)
+    await launch(db, 620, NOW - 2 * DAY + 60)
+    await saveLibrarySnapshot(db, ME, untouched, NOW - DAY)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 0, after: 0, checkedAt: NOW - DAY })
+    await saveLibrarySnapshot(db, ME, LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 90 } : g)), NOW)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 0, after: 90, checkedAt: NOW })
+  })
+
+  test('ноль до при открытом прежнем снапшоте — правда: сверяется как обычно', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const untouched = LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 0 } : g))
+    await saveLibrarySnapshot(db, ME, untouched, NOW - DAY)
+    await launch(db, 620, NOW - DAY + 60)
+    await saveLibrarySnapshot(db, ME, LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 90 } : g)), NOW)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 0, after: 90, checkedAt: NOW })
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 90 })
   })
 
   test('строка моложе снапшота не сверяется: совет ещё ни во что не превратился', async () => {

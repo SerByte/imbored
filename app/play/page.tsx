@@ -7,6 +7,7 @@ import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStor
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
+import { DemoBar, useDemoSession } from '@/components/DemoBar'
 import { GameCardBody } from '@/components/GameCard'
 import { Magnet } from '@/components/Magnet'
 import { HeroShots } from '@/components/HeroShots'
@@ -15,7 +16,7 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { useSharePick } from '@/components/SharePick'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
-import { PrivacyHelp } from '@/components/PrivacyHelp'
+import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
@@ -27,7 +28,7 @@ import { HeroTrailer } from '@/components/HeroTrailer'
 import { HeroPoster } from '@/components/TypeCover'
 import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
-import { EDGE_BADGE, EDGE_LINE } from '@/lib/badges'
+import { EDGE_BADGE, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
@@ -70,12 +71,13 @@ import {
   warmMarkStore,
   whoAmI,
 } from '@/lib/playcache'
+import { timeHiddenStore } from '@/lib/playtime'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
-import { SOURCE_BADGE, SOURCE_BADGE_SHORT } from '@/lib/sources'
+import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
-import { bounceTo, reconnectHref } from '@/lib/destination'
+import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
@@ -326,6 +328,8 @@ function Player({ say }: { say: (line: string) => void }) {
   const [discoveries, setDiscoveries] = useState<Pick[]>([])
   /** То, во что он играет сейчас (pickContinue): строка под героем, не карточка */
   const [continueGame, setContinueGame] = useState<ContinueGame | null>(null)
+  /** Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера, строка над «Продолжить» */
+  const [timeHidden, setTimeHidden] = useState(false)
   const [index, setIndex] = useState(0)
   const [liked, setLiked] = useState<Set<number>>(new Set())
   const [askReason, setAskReason] = useState(false)
@@ -394,6 +398,8 @@ function Player({ say }: { say: (line: string) => void }) {
    */
   const readOnly =
     useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
+  /** Демо-личность: над героем полоса «это чужая демо-библиотека» (DemoBar) */
+  const demo = useDemoSession()
   /**
    * Запуск с этой вкладки, про который пора спросить «не зацепило?» — от
    * десяти минут до двух часов назад (lib/launchmemo.ts). Перечитывается при
@@ -654,6 +660,9 @@ function Player({ say }: { say: (line: string) => void }) {
       setPicks(deal.picks)
       setDiscoveries(deal.discoveries)
       setContinueGame(deal.continueGame)
+      setTimeHidden(deal.playtimeHidden)
+      // И на устройство: /quiz и строка ожидания узнают признак до ответа
+      timeHiddenStore.set(deal.playtimeHidden ? true : null)
       setEngine(deal.engine)
       setScope(deal.scope)
       setLean(deal.lean)
@@ -705,11 +714,12 @@ function Player({ say }: { say: (line: string) => void }) {
         nudge,
         nowSec: meta.nowSec,
         viewer: meta.viewer,
+        playtimeHidden: timeHidden,
       },
       hero: picks[Math.min(index, picks.length - 1)].appid,
       liked: [...liked],
     })
-  }, [phase, picks, discoveries, continueGame, engine, lean, scope, seed, nudge, index, liked, cacheKey])
+  }, [phase, picks, discoveries, continueGame, timeHidden, engine, lean, scope, seed, nudge, index, liked, cacheKey])
 
   useEffect(() => {
     /*
@@ -725,8 +735,14 @@ function Player({ say }: { say: (line: string) => void }) {
 
     /** Выдача на экран. Один путь и для догретого каталога, и для частичного. */
     async function reveal(): Promise<boolean> {
+      // При скрытом времени нетронутого не узнать — сервер отдаст всё своё, и
+      // «ни разу не запускал» было бы обещанием, которого выдача не сдержит
       setProgress(
-        focus ? 'Ищу то, что ты ни разу не запускал…' : 'Подбираю игру под твоё состояние…',
+        !focus
+          ? 'Подбираю игру под твоё состояние…'
+          : timeHiddenStore.fresh()
+            ? 'Ищу в твоей библиотеке…'
+            : 'Ищу то, что ты ни разу не запускал…',
       )
       const got = await fetchPicks({ scope, lean })
       if ('miss' in got) {
@@ -828,6 +844,9 @@ function Player({ say }: { say: (line: string) => void }) {
           warmedAll = p.remaining <= 0
           setPrep(p)
           if (p.library?.wall) wallStore.set({ games: p.library.games, wall: p.library.wall })
+          // Факты прогрева — со свежего снимка: приходят раньше выдачи, и
+          // строка ожидания reveal() читает признак уже по ним
+          if (p.library) timeHiddenStore.set(p.library.timeHidden ? true : null)
           if (p.remaining > 0) setProgress(remainingLine(p.remaining))
         },
         onYield: (p) => {
@@ -1123,9 +1142,13 @@ function Player({ say }: { say: (line: string) => void }) {
             доехала. Панель общая с карточкой подключения и с пустой
             библиотекой: три копии одной инструкции про чужой интерфейс
             разъехались бы на первой же правке. */}
+        {/* Проверка — входом через Steam: снимок библиотеки пишет вход, а
+            /api/prepare без снимка сам ничего не перезапрашивает. Возвращает
+            на ту же выдачу. Сессии по ссылке Steam-вход не предлагаем
+            проверкой: её дверь — «Подключить заново» ниже. */}
         {reason === 'nolibrary' && limitedFor === null && (
           <div className="max-w-md text-left">
-            <PrivacyHelp />
+            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor(`/play?${search}`)} />
           </div>
         )}
 
@@ -1419,6 +1442,10 @@ function Player({ say }: { say: (line: string) => void }) {
               попадает любая игра из библиотеки, в том числе светлая. */}
           <BlurBand height="46vh" dir="up" />
           <div aria-hidden className="grain" />
+          {/* Демо называет себя здесь, в момент ценности, и даёт дверь к своей
+              библиотеке. Поверх верха кадра, вне потока: признак клиентский,
+              и полоса в потоке двигала бы героя (см. DemoBar). */}
+          {demo && <DemoBar from={`/play?${search}`} overlay />}
 
           <m.div
             variants={LADDER}
@@ -1471,7 +1498,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   соседняя»: без неё пять подходящих карточек снова выбор с нуля. */}
               {pick.edge && (
                 <m.p variants={STEP} className="-mt-2 text-sm text-dim">
-                  {EDGE_LINE[pick.edge]}
+                  {edgeLine(pick.edge, timeHidden)}
                 </m.p>
               )}
 
@@ -1834,11 +1861,12 @@ function Player({ say }: { say: (line: string) => void }) {
                 </m.p>
               )}
               {/* План на вечер начинается с загрузки: своя нетронутая или
-                  заброшенная скорее всего не установлена, и «Запустить» вечером
-                  упрётся в полчаса скачивания. Ссылка ставит её на загрузку
-                  сейчас (steam://install). Вкус и паузы это нажатие не видят —
-                  план, а не оценка (listFeedback). */}
-              {(pick.source === 'untouched' || pick.source === 'comeback') && !pick.storeUrl && (
+                  заброшенная (и любая своя при скрытом времени) скорее всего
+                  не установлена, и «Запустить» вечером упрётся в полчаса
+                  скачивания. Ссылка ставит её на загрузку сейчас
+                  (steam://install), кому — решает suggestsInstall. Вкус и
+                  паузы это нажатие не видят — план, а не оценка (listFeedback). */}
+              {suggestsInstall(pick.source) && !pick.storeUrl && (
                 <m.p variants={STEP} className="-mt-1 text-xs text-faint">
                   <SteamLaunch
                     appid={pick.appid}
@@ -1932,6 +1960,15 @@ function Player({ say }: { say: (line: string) => void }) {
         </m.section>
       </AnimatePresence>
 
+      {/* Время скрыто настройками Steam: карточки «Из твоей библиотеки» без
+          единого часа иначе выглядели бы сбоем, а подбор — случайным. Строка
+          говорит, почему так, и как открыть, — шагом из PrivacyHelp. */}
+      {timeHidden && (
+        <div className="mx-auto w-full max-w-6xl px-safe pt-8">
+          <PlaytimeHiddenNote />
+        </div>
+      )}
+
       {/* «Продолжить» — то, во что он играет сейчас. Строкой, а не карточкой:
           это не рекомендация, и спорить с героем за место ей незачем. В
           рулетке её нет — там весь смысл в броске. */}
@@ -1968,8 +2005,10 @@ function Player({ say }: { say: (line: string) => void }) {
                 aria-controls="play-more"
                 className="tap hover:text-ink transition-colors cursor-pointer text-left"
               >
+                {/* При скрытом времени нераспакованного не узнать: сервер
+                    отдаёт тогда всё своё, и подпись говорит ровно это */}
                 {focus
-                  ? `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} из нераспакованного`
+                  ? `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} ${timeHidden ? 'из твоей библиотеки' : 'из нераспакованного'}`
                   : seed
                     ? `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')}, похожих на «${seed.name}»`
                     : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}

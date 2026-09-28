@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import { COMMON_SHOWN, compatibility, tasteCosine, verdict } from './compat'
+import { COMMON_SHOWN, compatibility, pairTasteProfile, tasteCosine, verdict } from './compat'
 import { buildTagProfile } from './recommend'
+import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
 function lib(appid: number, hours: number): LibraryGame {
@@ -96,6 +97,53 @@ describe('compatibility', () => {
     expect(out.commonTotal).toBe(12)
     // 10+20+…+120 у первого, 5×12 у второго — включая две игры вне среза
     expect(out.commonHours).toBe(780 + 60)
+  })
+})
+
+/**
+ * Время скрыто настройками Steam (lib/playtime.ts) — у одного из двоих или у
+ * обоих. «0 ч» у общих игр против часов друга было бы про галочку, а вкус
+ * пары по склейке двух библиотек забывал бы половину со скрытым временем.
+ */
+describe('скрытое время в Steam', () => {
+  const hiddenMetas = new Map(hiddenLibraryMetas().map((m) => [m.appid, m]))
+  const both = (id: number) => METAS.get(id) ?? hiddenMetas.get(id)
+  // 1002 — «Story Rich» из фикстуры; у второго в ней пятьдесят часов
+  const open = [lib(1002, 50), lib(1, 10)]
+
+  test('у скрытой стороны часов нет, а не ноль; её вкус всё равно весит', () => {
+    const out = compatibility(hiddenLibrary(), open, both, TAG_STATS)
+    expect(out.timeHiddenA).toBe(true)
+    expect(out.timeHiddenB).toBe(false)
+    expect(out.commonGames).toEqual([{ appid: 1002, name: 'Игра 1002', hoursA: null, hoursB: 50 }])
+    // «вместе» — только известные часы
+    expect(out.commonHours).toBe(50)
+    // профиль скрытой стороны не пуст — общие темы находятся
+    expect(out.sharedTags).toContain('Story Rich')
+  })
+
+  test('у обоих скрыто — часов нет ни у кого, общие игры на месте', () => {
+    const out = compatibility(hiddenLibrary(), hiddenLibrary(12), both, TAG_STATS)
+    expect(out.commonTotal).toBe(12)
+    expect(out.commonGames.every((g) => g.hoursA === null && g.hoursB === null)).toBe(true)
+    expect(out.commonHours).toBe(0)
+  })
+
+  test('вкус пары — сумма профилей: скрытая половина не пропадает', () => {
+    const pair = pairTasteProfile(hiddenLibrary(), open, both)
+    // Roguelike есть только у стороны со скрытым временем. Профиль склейки
+    // признака не видит (у второго часы есть), и она весила бы ноль
+    expect(pair.Roguelike).toBeGreaterThan(0)
+    expect(buildTagProfile([...hiddenLibrary(), ...open], both).Roguelike).toBeUndefined()
+  })
+
+  test('у обоих время открыто — сумма та же, что профиль склейки', () => {
+    const a = [lib(1, 100), lib(2, 10)]
+    const b = [lib(2, 30), lib(3, 5)]
+    const pair = pairTasteProfile(a, b, metaOf)
+    const glued = buildTagProfile([...a, ...b], metaOf)
+    expect(Object.keys(pair).sort()).toEqual(Object.keys(glued).sort())
+    for (const [tag, w] of Object.entries(glued)) expect(pair[tag]).toBeCloseTo(w, 9)
   })
 })
 

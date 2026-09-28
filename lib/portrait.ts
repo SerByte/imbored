@@ -1,4 +1,5 @@
 import { looksLikeNonGame } from './junk'
+import { playtimeHidden } from './playtime'
 import { buildTagProfile, isUnplayed } from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -24,6 +25,12 @@ export type Portrait = {
     totalHours: number
     unplayedCount: number
     topGame: { appid: number; name: string; hours: number; sharePercent: number } | null
+    /**
+     * Время скрыто настройками Steam (lib/playtime.ts). Часы тогда нулевые, а
+     * незапущенных — ноль не потому, что всё сыграно, а потому, что сказать
+     * нельзя: текст портрета и шеринговая карточка о часах молчат.
+     */
+    playtimeHidden: boolean
   }
 }
 
@@ -117,10 +124,12 @@ export function buildPortrait(
     : []
 
   const totalHours = Math.round(library.reduce((s, g) => s + g.playtimeForever, 0) / 60)
-  // Та же граница, что у buildWrapped и backlogValue: саундтрек не бэклог
-  const unplayedCount = library.filter(
-    (g) => isUnplayed(g) && !looksLikeNonGame(g, metaOf(g.appid)),
-  ).length
+  const hidden = playtimeHidden(library)
+  // Та же граница, что у buildWrapped и backlogValue: саундтрек не бэклог.
+  // При скрытом времени «так и не запущена» выглядит вся библиотека — не считаем
+  const unplayedCount = hidden
+    ? 0
+    : library.filter((g) => isUnplayed(g) && !looksLikeNonGame(g, metaOf(g.appid))).length
   const topLib = [...library].sort((a, b) => b.playtimeForever - a.playtimeForever)[0]
   const topGame =
     topLib && topLib.playtimeForever > 0 && totalHours > 0
@@ -134,6 +143,6 @@ export function buildPortrait(
 
   return {
     archetypes,
-    facts: { gamesCount: library.length, totalHours, unplayedCount, topGame },
+    facts: { gamesCount: library.length, totalHours, unplayedCount, topGame, playtimeHidden: hidden },
   }
 }

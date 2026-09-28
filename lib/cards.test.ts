@@ -44,6 +44,7 @@ function set(metas: GameMeta[], games: LibraryGame[]): CandidateSet {
     cooldown: new Map(),
     profile: {},
     tagWeight: null,
+    playtimeHidden: false,
     seed: null,
     candidates: [],
     actual: [],

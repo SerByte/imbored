@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { isEmptyDelta, libraryDelta, minutesByApp, pickSnapshotDelta } from './libdelta'
+import { hiddenLibrary } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
 function g(appid: number, minutes: number, extra: Partial<LibraryGame> = {}): LibraryGame {
@@ -66,6 +67,22 @@ describe('libraryDelta', () => {
     expect(d.minutes).toBe(30)
   })
 
+  // Время скрыто настройками Steam (lib/playtime.ts): нули прежнего снимка —
+  // галочка, и разница с ним приписала бы «после» все часы за жизнь
+  test('прежнее время скрыто: ни минут, ни распакованных, новые и пропавшие — как обычно', () => {
+    const before = hiddenLibrary()
+    const opened = before.slice(1).map((gm) => ({ ...gm, playtimeForever: 600 }))
+    const d = libraryDelta(minutesByApp(before), [...opened, g(7, 120)], SINCE, noMeta)
+    expect(d.minutes).toBe(0)
+    expect(d.played).toEqual([])
+    expect(d.unpacked).toEqual([])
+    expect(d.added.map((a) => a.appid)).toEqual([7])
+    expect(d.removedCount).toBe(1)
+    // скрыто на конце, а не на отметке — прежний случай: прирост не меньше нуля
+    const later = libraryDelta(minutesByApp(opened), before.slice(1), SINCE, noMeta)
+    expect(isEmptyDelta(later)).toBe(true)
+  })
+
   test('порядок при равных минутах — по appid; пустая разница — пустая', () => {
     const d = libraryDelta(minutesByApp([g(9, 0), g(3, 0)]), [g(9, 30), g(3, 30)], SINCE, noMeta)
     expect(d.played.map((p) => p.game.appid)).toEqual([3, 9])
@@ -102,5 +119,34 @@ describe('pickSnapshotDelta', () => {
 
   test('пустой прежний снимок — не точка отсчёта: «новым» было бы всё', () => {
     expect(pickSnapshotDelta([{ takenAt: SINCE, minutes: new Map() }], latest, noMeta)).toBeNull()
+  })
+
+  // Снял галочку «скрывать время» и подключил библиотеку заново — ровно то,
+  // что советует PlaytimeHiddenNote. Строка не должна написать «наиграно
+  // 5 000 ч» и «20 игр впервые запущены»
+  test('снимок со скрытым временем — не точка отсчёта, берётся старше с часами', () => {
+    const hidden = hiddenLibrary()
+    const opened = {
+      takenAt: SINCE + 3000,
+      games: [...hidden.map((gm) => ({ ...gm, playtimeForever: 300 })), g(7, 60)],
+    }
+    const hiddenAt = { takenAt: SINCE + 2000, minutes: minutesByApp(hidden) }
+    expect(pickSnapshotDelta([hiddenAt], opened, noMeta)).toBeNull()
+
+    const earlier = { takenAt: SINCE, minutes: minutesByApp(hidden.map((gm) => ({ ...gm, playtimeForever: 240 }))) }
+    const got = pickSnapshotDelta([hiddenAt, earlier], opened, noMeta)
+    expect(got?.fromAt).toBe(SINCE)
+    expect(got?.delta.minutes).toBe(hidden.length * 60 + 60)
+    expect(got?.delta.unpacked).toEqual([])
+  })
+
+  // Галочку только что поставили: прирост до нулей ноль, и строка вышла бы
+  // «с 3 сентября · 2 новые игры» — читается как «с тех пор не играл»
+  test('скрыт последний снимок — строки нет, даже с новыми играми', () => {
+    const hidden = hiddenLibrary()
+    const earlier = { takenAt: SINCE, minutes: minutesByApp(hidden.slice(2).map((gm) => ({ ...gm, playtimeForever: 240 }))) }
+    // без правила здесь был бы ответ: две игры появились после отметки
+    expect(libraryDelta(earlier.minutes, hidden, SINCE, noMeta).added).toHaveLength(2)
+    expect(pickSnapshotDelta([earlier], { takenAt: SINCE + 3000, games: hidden }, noMeta)).toBeNull()
   })
 })

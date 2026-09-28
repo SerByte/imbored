@@ -33,8 +33,13 @@ export type LikedGame = {
  * полка BannedShelf: там сторож читает подписи кнопок (lib/bannedshelf.test),
  * а здесь действие другое — не «вернуть», а «забыть».
  *
- * writer — может ли сессия писать (isWriter в lib/server). Сессия по ссылке
- * видит полку, но без кнопок — со строкой о входе через Steam.
+ * writer — может ли сессия писать (isWriter в lib/server). Сессии по ссылке
+ * «зашло» владельца не показывается: /library не читает для неё ни listLiked,
+ * ни countLiked (writer ? … в app/library/page.tsx, сторож
+ * lib/ownerreads.test.ts), полка приходит пустой и не рисуется — её место
+ * занимает строка NeedSteam why="see". readOnly остаётся защитой и для отказа
+ * needsteam от роута, если права поменялись, пока страница была открыта:
+ * кнопки гаснут, вместо них строка о входе через Steam.
  */
 export function LikedShelf({
   games,
