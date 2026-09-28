@@ -3,6 +3,7 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import manifest from '../app/manifest'
 import { SITE_DESCRIPTION, SITE_TITLE } from './site'
+import { THEME_COLOR } from './themecolor'
 
 /**
  * Сторож установки на домашний экран.
@@ -38,6 +39,24 @@ describe('манифест', () => {
     const layout = fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
     expect(layout, 'корень должен брать описание из lib/site.ts').toMatch(/description:\s*SITE_DESCRIPTION\b/)
     expect(layout, 'и имя тоже').toMatch(/default:\s*SITE_TITLE\b/)
+  })
+
+  /**
+   * Цвет обвязки не спрашивает тему ОС, пока её не спрашивает сам сайт.
+   *
+   * Стояли две строки по prefers-color-scheme, а тема сайта живёт в
+   * localStorage: у светлой ОС молочная адресная строка висела над чёрной
+   * страницей. Теперь в разметке одно значение, то же, что у манифеста, а
+   * дальше его ведут ChromeZone и ThemeToggle (lib/themecolor).
+   */
+  test('theme-color — одно значение без media, как у манифеста', () => {
+    expect(m.theme_color).toBe(THEME_COLOR)
+    const layout = fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
+    const at = layout.indexOf('export const viewport')
+    expect(at, 'viewport в корне не найден').toBeGreaterThan(-1)
+    const viewport = layout.slice(at, layout.indexOf('\n}\n', at))
+    expect(viewport).toMatch(/themeColor:\s*THEME_COLOR\b/)
+    expect(viewport, 'тема сайта не зависит от темы ОС').not.toContain('prefers-color-scheme')
   })
 
   test('у приложения есть id — смена start_url не создаст второе', () => {

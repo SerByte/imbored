@@ -13,6 +13,7 @@ import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline } from '@/lib/byline'
 import { newsPath } from '@/lib/newspage'
 import { plural } from '@/lib/plural'
+import { textLang } from '@/lib/textlang'
 import { freshness } from './format'
 import { useNow } from './Now'
 import { Eyebrow, MetaLine } from '@/components/Labels'
@@ -152,7 +153,12 @@ export function Cover({
               {name}
             </SplitHeading>
 
-            <p className="mt-5 max-w-xl text-lg font-medium leading-snug text-ink/90 md:text-xl">
+            {/* Заголовок патча — текст издателя, обычно английский: lang
+                по большинству букв, как у строк ленты (lib/textlang) */}
+            <p
+              lang={textLang(item.title)}
+              className="mt-5 max-w-xl text-lg font-medium leading-snug text-ink/90 md:text-xl"
+            >
               {item.title}
             </p>
 

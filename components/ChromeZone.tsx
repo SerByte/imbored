@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useEffect } from 'react'
+import { syncThemeColor } from '@/lib/themecolor'
 
 /**
  * Шапка узнаёт, над чем она стоит СЕЙЧАС.
@@ -39,6 +40,11 @@ import { useEffect } from 'react'
  * и поведение остаётся ровно прежним: правило в CSS написано через
  * :not([data-chrome='page']), поэтому скрипт может только улучшить картинку,
  * но не может её сломать.
+ *
+ * Отсюда же — цвет браузерной обвязки (meta theme-color, lib/themecolor):
+ * адресная строка стоит над шапкой и обязана знать то же, что она. Каждое
+ * решение наблюдателя перекрашивает и её — по --bg шапки, уже с новым
+ * атрибутом.
  */
 export function ChromeZone() {
   const pathname = usePathname()
@@ -88,6 +94,9 @@ export function ChromeZone() {
         ([entry]) => {
           if (entry.isIntersecting) delete root.dataset.chrome
           else root.dataset.chrome = 'page'
+          // Первый вызов приходит сразу после observe — то есть и на каждой
+          // смене страницы и зоны, а не только на прокрутке
+          syncThemeColor()
         },
         { rootMargin: `-${h}px 0px 0px 0px`, threshold: 0 },
       )
