@@ -9,6 +9,7 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { useShareLink } from '@/components/ShareLink'
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
+import { StatusLine } from '@/components/StatusLine'
 import { Icon } from '@/components/Icon'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
@@ -678,6 +679,11 @@ export default function RoomPage() {
     // карте голосовал дважды, см. claimVote. Отказ ниже вычёркивает карту
     // обратно, и повтор после сбоя проходит.
     if (!claimVote(votedLocally.current, card.appid)) return
+    // Прежний отказ гаснет с новой попыткой. Иначе второй отказ подряд пришёл
+    // бы тем же текстом — а это не изменение, и строка под колодой промолчала
+    // бы (components/StatusLine); пока голос в пути, под следующей картой
+    // висело бы «вернулась» про прошлую.
+    setVoteFailed(false)
     setCards((prev) => (prev ? prev.filter((c) => c.appid !== card.appid) : prev))
     setLocalVotes((v) => v + 1)
     // 0 — ответа нет: обрыв сети, VOTE_TIMEOUT_MS или неразборчивое тело
@@ -876,18 +882,17 @@ export default function RoomPage() {
    * колода, ростер, кто голосовал. Врал он ровно тем, что выглядел свежим.
    * Плашка это и снимает, ничего не пряча.
    *
-   * role="status" с aria-live="polite" — новость приходит без действия
-   * человека, и без объявления её не заметит тот, кто не смотрит на экран.
+   * Живая область — новость приходит без действия человека, и без
+   * объявления её не заметит тот, кто не смотрит на экран. Стоит всегда, а
+   * не появляется вместе с плашкой: область, вставленная уже с текстом,
+   * звучит не везде (components/StatusLine).
    */
-  const staleBadge = stale ? (
-    <div
-      role="status"
-      aria-live="polite"
+  const staleBadge = (
+    <StatusLine
+      text={stale ? 'Связь потеряна — комната не обновляется. Пробую снова…' : null}
       className="panel-lift anim-rise px-4 py-2.5 text-xs leading-relaxed text-dim"
-    >
-      Связь потеряна — комната не обновляется. Пробую снова…
-    </div>
-  ) : null
+    />
+  )
 
   // ---- МАТЧ ----
   /*
@@ -980,12 +985,10 @@ export default function RoomPage() {
           {/*
             Под обеими ветками, а не только под демо-другом: обычный вход тоже
             умеет отказывать, и прежде экран молчал на все его отказы одинаково.
+            Строка стоит всегда, пустой: join сбрасывает прежний отказ, и новый
+            приходит в неё изменением текста — такое скринридер объявит.
           */}
-          {joinError && (
-            <p role="status" className="anim-rise text-sm text-danger">
-              {joinError}
-            </p>
-          )}
+          <StatusLine text={joinError} className="anim-rise text-sm text-danger" />
         </div>
       </div>
     )
@@ -1141,21 +1144,14 @@ export default function RoomPage() {
           <Spinner />
         </div>
       ) : card ? (
-        <>
-          <SwipeDeck
-            cards={cards}
-            onVote={vote}
-            votedCount={votedCount}
-            deckTotal={deckTotal}
-            alone={state.members.length < 2}
-            nowSec={nowSec}
-          />
-          {voteFailed ? (
-            <p role="status" className="mt-3 text-center text-sm text-danger">
-              Голос не ушёл — карточка вернулась, свайпни ещё раз.
-            </p>
-          ) : null}
-        </>
+        <SwipeDeck
+          cards={cards}
+          onVote={vote}
+          votedCount={votedCount}
+          deckTotal={deckTotal}
+          alone={state.members.length < 2}
+          nowSec={nowSec}
+        />
       ) : (
         <RoomWaiting
           roomId={roomId}
@@ -1183,6 +1179,18 @@ export default function RoomPage() {
           onTogglePublic={togglePublic}
         />
       )}
+      {/*
+        Отказ голоса — под колодой, но не внутри её ветки. Последняя карта
+        уходит свайпом сразу, и на её месте встаёт экран ожидания; отказ
+        возвращает её, и ветка колоды монтируется заново — строка внутри неё
+        рождалась бы вместе с текстом и звучала бы не везде. Здесь она живёт
+        всё лобби. Колода своей живой областью заново назовёт вернувшуюся
+        карту — эта строка говорит, почему она вернулась.
+      */}
+      <StatusLine
+        text={card && voteFailed ? 'Голос не ушёл — карточка вернулась, свайпни ещё раз.' : null}
+        className="mt-3 text-center text-sm text-danger"
+      />
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { GameArt } from '@/components/GameArt'
+import { StatusLine } from '@/components/StatusLine'
 import type { LeaderOffer } from '@/lib/roomlikes'
 
 /**
@@ -50,13 +51,18 @@ export function LeaderPick({
         >
           {taking ? 'Берём…' : 'Берём'}
         </button>
-        {miss && (
-          <p role="status" className="text-sm text-danger">
-            {miss === 'stale'
+        {/* Строка стоит всегда, пустой: takeLeader сбрасывает прежний отказ,
+            и новый приходит изменением текста — такое скринридер объявит */}
+        <StatusLine
+          text={
+            miss === 'stale'
               ? 'Голоса сдвинулись — предложение пересчитано.'
-              : 'Не дошло — проверь связь и нажми ещё раз.'}
-          </p>
-        )}
+              : miss === 'failed'
+                ? 'Не дошло — проверь связь и нажми ещё раз.'
+                : null
+          }
+          className="text-sm text-danger"
+        />
       </div>
     </section>
   )

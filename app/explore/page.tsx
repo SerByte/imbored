@@ -9,6 +9,7 @@ import { SectionLabel } from '@/components/Labels'
 import { NeedSteam } from '@/components/NeedSteam'
 import { DiscountCorner, PriceTag } from '@/components/PriceTag'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
+import { StatusLine } from '@/components/StatusLine'
 import { SwipeDeck, type DeckCard, type DeckLabels } from '@/components/SwipeDeck'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { ExploreCard, ShelfCard } from '@/lib/cards'
@@ -333,6 +334,8 @@ export default function ExplorePage() {
   }
 
   const top = cards[0]
+  // Откат уже вернул плитку на полку — название берётся оттуда
+  const unlikeMissName = unlikeMiss === null ? undefined : liked.find((c) => c.appid === unlikeMiss)?.name
 
   return (
     /*
@@ -400,9 +403,24 @@ export default function ExplorePage() {
           <SectionLabel>
             <span id="explore-shelf">Приглянулось</span>
           </SectionLabel>
-          {/* Убрали последнее — полка не исчезает молча и держит фокус строкой */}
+          {/*
+            Отказ «Убрать» скринридеру говорит строка полки, а не плитки:
+            плитка уходит сразу и возвращается откатом, то есть монтируется
+            заново, и живая область внутри неё рождалась бы вместе с текстом —
+            такую скринридер объявляет не везде (components/StatusLine). Полка
+            же живёт всё это время: shelfTouched ставится до ухода плитки.
+          */}
+          <StatusLine
+            text={
+              unlikeMissName ? `Не вышло — «${unlikeMissName}» осталась на полке. Попробуй ещё раз.` : null
+            }
+            className="sr-only"
+          />
+          {/* Убрали последнее — полка не исчезает молча и держит фокус строкой.
+              Живой области на ней нет: объявляет строку фокус, который сюда
+              переезжает, а область, родившаяся вместе с текстом, звучит не везде */}
           {liked.length === 0 && (
-            <p ref={shelfEmpty} tabIndex={-1} role="status" className="text-sm text-dim">
+            <p ref={shelfEmpty} tabIndex={-1} className="text-sm text-dim">
               С полки всё убрано. «Интересно» в колоде положит сюда новое.
             </p>
           )}
@@ -450,8 +468,9 @@ export default function ExplorePage() {
                 >
                   Убрать
                 </button>
+                {/* Для глаза: скринридеру отказ уже сказала строка полки */}
                 {unlikeMiss === c.appid && (
-                  <p role="status" className="pt-2 text-[11px] text-danger">
+                  <p aria-hidden className="pt-2 text-[11px] text-danger">
                     Не вышло — попробуй ещё раз
                   </p>
                 )}

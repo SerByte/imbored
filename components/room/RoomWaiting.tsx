@@ -3,6 +3,7 @@
 import type { ShareLink } from '@/components/ShareLink'
 import { useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { StatusLine } from '@/components/StatusLine'
 import { plural } from '@/lib/plural'
 import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
@@ -171,23 +172,28 @@ export function RoomWaiting({
                 </p>
               )}
             </div>
-            {offer ? (
+            {offer && (
               <LeaderPick
                 leader={offer}
                 taking={takingLeader}
                 miss={leaderMiss}
                 onTake={onTakeLeader}
               />
-            ) : (
-              // Предложение пропало после отказа «noleader» — сказать об этом,
-              // а не погасить блок молча
-              pending.length === 0 &&
-              leaderMiss === 'stale' && (
-                <p role="status" className="text-sm text-dim text-center">
-                  Голоса сдвинулись — брать пока нечего.
-                </p>
-              )
             )}
+            {/*
+              Предложение пропало после отказа «noleader» — сказать об этом, а
+              не погасить блок молча. Строка стоит рядом с предложением, а не
+              вместо него: на его месте она рождалась бы тем же рендером, что
+              и свой текст, — такую живую область скринридер объявляет не везде.
+            */}
+            <StatusLine
+              text={
+                !offer && pending.length === 0 && leaderMiss === 'stale'
+                  ? 'Голоса сдвинулись — брать пока нечего.'
+                  : null
+              }
+              className="text-sm text-dim text-center"
+            />
             <MemberRoster
               members={members}
               deckSize={deckSize}

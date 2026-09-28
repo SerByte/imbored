@@ -14,6 +14,7 @@ import { HeroShots } from '@/components/HeroShots'
 import { LogoMark } from '@/components/Logo'
 import { NeedSteam } from '@/components/NeedSteam'
 import { useSharePick } from '@/components/SharePick'
+import { StatusLine } from '@/components/StatusLine'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
@@ -360,7 +361,8 @@ function Player({ say }: { say: (line: string) => void }) {
   const [switching, setSwitching] = useState(false)
   /**
    * Почему переключатель не пересобрал выдачу (switchLine) — строкой под ним.
-   * null — сказать нечего. Гаснет с любой следующей выдачей (applyDeal).
+   * null — сказать нечего. Гаснет с новым нажатием (reshape) и с любой
+   * следующей выдачей (applyDeal).
    */
   const [switchMiss, setSwitchMiss] = useState<string | null>(null)
   /** То же для «Как «X», но…» и подталкиваний — строкой у самих кнопок, под героем */
@@ -1001,6 +1003,12 @@ function Player({ say }: { say: (line: string) => void }) {
         next.nudge === nudge &&
         next.nudge !== 'different'
       if (same || switching) return
+      // Прежний отказ этого места гаснет с новой попыткой: второй потолок
+      // частоты подряд — тот же switchLine, и живая область, где текст не
+      // изменился, промолчала бы — нажатие осталось бы без отклика вовсе
+      // (components/StatusLine)
+      if (from === 'hero') setHeroMiss(null)
+      else setSwitchMiss(null)
       setSwitching(true)
       try {
         const got = await fetchPicks(next)
@@ -1854,15 +1862,20 @@ function Player({ say }: { say: (line: string) => void }) {
               {/*
                 Отказ бана виден, потому что бан необратим. Формулировка ведёт
                 к следующему шагу, а не констатирует поломку: карточка на месте,
-                жест повторяется тем же нажатием.
+                жест повторяется тем же нажатием. Строка стоит всегда, пустой:
+                отказ приходит в неё изменением текста, и скринридер его
+                объявит (components/StatusLine).
               */}
-              {banFailed === pick.appid && (
-                <p role="status" className="-mt-1 text-sm text-danger">
-                  {finished
-                    ? 'Не получилось отметить игру пройденной — нажми ещё раз.'
-                    : 'Не получилось убрать игру насовсем — нажми ещё раз.'}
-                </p>
-              )}
+              <StatusLine
+                text={
+                  banFailed !== pick.appid
+                    ? null
+                    : finished
+                      ? 'Не получилось отметить игру пройденной — нажми ещё раз.'
+                      : 'Не получилось убрать игру насовсем — нажми ещё раз.'
+                }
+                className="-mt-1 text-sm text-danger"
+              />
               {/* Под ценой — «а если не зайдёт»: покупка перестаёт быть ставкой.
                   Только у платного, вышедшего и из Steam — решает сервер. */}
               {pick.refund && (
@@ -1969,11 +1982,9 @@ function Player({ say }: { say: (line: string) => void }) {
                   ))}
                 </m.div>
               )}
-              {heroMiss && (
-                <p role="status" className="-mt-1 text-sm text-danger">
-                  {heroMiss}
-                </p>
-              )}
+              {/* Отказ «Как «X», но…» и подталкиваний — тем же приёмом: строка
+                  стоит всегда, а меняется в ней только текст */}
+              <StatusLine text={heroMiss} className="-mt-1 text-sm text-danger" />
               </>
             )}
             </div>
