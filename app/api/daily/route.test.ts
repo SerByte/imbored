@@ -159,6 +159,23 @@ describe('/api/daily: записанный выбор дня', () => {
     const next = await get()
     expect(((await next.json()) as { dateLabel: string }).dateLabel).toBe('24 сентября')
   })
+
+  test('назавтра — не вчерашний герой: вчерашняя запись уходит в исключение', async () => {
+    const DAY_MS = 86_400_000
+    let yesterday: number | null = null
+    for (let d = 0; d < 10; d++) {
+      vi.setSystemTime(NOON_MSK + d * DAY_MS)
+      const now = Math.floor(Date.now() / 1000)
+      // Каждый день свежий снимок и свежие цены — отбору нечем отличать дни,
+      // кроме сида и вчерашней записи
+      await seedLibrary(db, [10, 11, 12, 13], now)
+      const res = await get()
+      expect(res.status).toBe(200)
+      const today = ((await res.json()) as { pick: { appid: number } }).pick.appid
+      expect(today, `день ${d}`).not.toBe(yesterday)
+      yesterday = today
+    }
+  })
 })
 
 /**
@@ -185,6 +202,24 @@ describe('/api/daily: «Не сегодня»', () => {
     // и третий раз — ни одна из двух отложенных сегодня
     await notNow(second)
     expect([first, second]).not.toContain(await pickOf())
+  })
+
+  test('после «Не сегодня» вчерашняя запись на месте — пересчёт не вернёт и вчерашнего', async () => {
+    const DAY_MS = 86_400_000
+    vi.setSystemTime(NOON_MSK - DAY_MS)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(Date.now() / 1000))
+    const yesterday = await pickOf()
+
+    vi.setSystemTime(NOON_MSK)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    const first = await pickOf()
+    expect(first).not.toBe(yesterday)
+    await notNow(first)
+    // стёрта только сегодняшняя: по вчерашней отбор помнит, кого не повторять
+    const days = await db.execute('SELECT day FROM daily_picks')
+    expect(days.rows.map((r) => r.day)).toEqual(['2026-09-22'])
+
+    expect([yesterday, first]).not.toContain(await pickOf())
   })
 
   test('про другую игру — запись дня на месте', async () => {

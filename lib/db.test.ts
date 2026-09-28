@@ -899,9 +899,18 @@ describe('db', () => {
     const db = await freshDb()
     await saveDailyPick(db, 'S1', '2026-08-19', { v: 1 }, NOW)
     await saveDailyPick(db, 'S2', '2026-08-19', { v: 2 }, NOW)
-    await forgetDailyPick(db, 'S1')
+    await forgetDailyPick(db, 'S1', '2026-08-19')
     expect(await getDailyPick(db, 'S1', '2026-08-19')).toBeNull()
     expect(await getDailyPick(db, 'S2', '2026-08-19')).toEqual({ v: 2 })
+  })
+
+  test('игра дня: сброс не трогает вчерашнюю — по ней пересчёт не повторит вчерашнего героя', async () => {
+    const db = await freshDb()
+    await saveDailyPick(db, 'S1', '2026-08-18', { v: 'вчера' }, NOW)
+    await saveDailyPick(db, 'S1', '2026-08-19', { v: 'сегодня' }, NOW)
+    await forgetDailyPick(db, 'S1', '2026-08-19')
+    expect(await getDailyPick(db, 'S1', '2026-08-19')).toBeNull()
+    expect(await getDailyPick(db, 'S1', '2026-08-18')).toEqual({ v: 'вчера' })
   })
 
   test('подметание игр дня убирает прошлые дни и не трогает текущий', async () => {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { buildCandidates } from '@/lib/candidates'
 import { dailyCardView, pickContext, storeCardView } from '@/lib/cards'
 import {
+  dailyHeroAppids,
   dayKey,
   dayStartSec,
   parseDailySelection,
@@ -191,17 +192,28 @@ async function selectDaily(
   // /play посреди дня иначе сменило бы игру, выбранную на сутки. Сказанное
   // сегодня «Не сегодня» — другое дело: отбор, пересчитанный после него, не
   // имеет права вернуть ту же игру до полуночи
-  const set = await buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
-    nowSec: now,
-    cooldownKinds: ['tired'],
-    notnowSince: dayStartSec(now),
-  })
+  //
+  // Запись за вчера — тем же заходом: вчерашний герой сегодня героем не
+  // станет (avoid у pickDaily). Она ещё в базе: крон подметает только то,
+  // что старше вчерашнего (sweepDailyPicks), а сброс после бана, «надоела» и
+  // «Не сегодня» стирает лишь сегодняшнюю (forgetDailyPick). Минус сутки
+  // секундами — и есть вчера: перевода часов в Москве нет. Записи нет или
+  // она не разобралась — выбор без исключения, как раньше.
+  const [set, yesterday] = await Promise.all([
+    buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
+      nowSec: now,
+      cooldownKinds: ['tired'],
+      notnowSince: dayStartSec(now),
+    }),
+    getDailyPick(db, steamid, dayKey(now - 86_400)),
+  ])
   if (set === 'nolibrary') return NO_LIBRARY
   if (set === 'nocandidates') return null
   const { own, discovery, profile, tagWeight, metaOf } = set
 
   const seed = `${steamid}:${dateStr}`
-  const pick = pickDaily(pickDailyPool(own, discovery, seed), seed)!
+  const avoid = dailyHeroAppids(parseDailySelection(yesterday))
+  const pick = pickDaily(pickDailyPool(own, discovery, seed), seed, avoid)!
 
   // Полка находок — всегда из каталога, даже когда герой уже оттуда: одна и та
   // же игра дважды на экране выглядит сбоем, а не рекомендацией
@@ -242,7 +254,7 @@ async function selectDaily(
   // Магазинный день — и своя наготове, тем же сидом из своего пула: кто
   // сегодня покупать не собирался, получает свою по нажатию, а не уходит
   // в обычный подбор
-  const alternate = pickOwnAlternate(own, discovery, seed)
+  const alternate = pickOwnAlternate(own, discovery, seed, avoid)
 
   return {
     ...describe(pick),

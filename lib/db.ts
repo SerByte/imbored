@@ -1832,10 +1832,18 @@ export async function saveDailyPick(
  * /api/daily), и без сброса убранная игра продолжала бы стоять героем до
  * полуночи. Остальной фидбек выбор дня не трогает — ради этого запись и
  * заведена.
+ *
+ * Стирается только запись дня day, вчерашняя остаётся: по ней пересчёт не
+ * вернёт вчерашнего героя (avoid у pickDaily). Стёртая вместе с сегодняшней,
+ * она пропадала бы ровно тогда, когда отбор идёт второй раз за день, — после
+ * «Не сегодня» про героя.
  */
-export async function forgetDailyPick(db: Db, steamid: string): Promise<void> {
+export async function forgetDailyPick(db: Db, steamid: string, day: string): Promise<void> {
   try {
-    await db.execute({ sql: 'DELETE FROM daily_picks WHERE steamid = ?', args: [steamid] })
+    await db.execute({
+      sql: 'DELETE FROM daily_picks WHERE steamid = ? AND day = ?',
+      args: [steamid, day],
+    })
   } catch (e) {
     console.warn('daily pick не сброшен', e)
   }
