@@ -20,9 +20,10 @@ import { getDb, nowSec } from './server'
  *
  * Ничего личного. kind — из закрытого списка, key — шаблон маршрута
  * ('/game/[appid]', а не '/game/730'), вид ошибки, директива CSP,
- * «событие:источник» воронки или «return:неделя:окно:demo|steam» у возврата.
- * SteamID, адресов, путей с параметрами, IP и user-agent здесь нет — поэтому
- * и forgetUser эту таблицу не трогает.
+ * «событие:источник» воронки, «return:неделя:окно:demo|steam» у возврата или
+ * «ratelimited:потолок» у отказа по частоте (имя потолка, а не того, кто в
+ * него упёрся). SteamID, адресов, путей с параметрами, IP и user-agent здесь
+ * нет — поэтому и forgetUser эту таблицу не трогает.
  */
 
 export type TelemetryKind = 'server-error' | 'client-error' | 'csp' | 'event'

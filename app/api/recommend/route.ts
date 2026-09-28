@@ -19,6 +19,7 @@ import {
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
 import { currentSteamId, getDb, isDemoId, nowSec, sessionSecret } from '@/lib/server'
+import { recordTelemetryLater } from '@/lib/telemetry'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from '@/lib/types'
 import { readJsonObject } from '@/lib/reqbody'
 
@@ -112,7 +113,15 @@ export async function POST(req: Request) {
     ],
     now,
   )
-  if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
+  if (!gate.ok) {
+    // Сколько раз упёрлись в потолок — числом за час (telemetry_hourly), раз
+    // на человека или адрес за окно: 'ratelimited:recommend' или
+    // 'ratelimited:recommend-ip'. Подталкивания и «Как «X», но…» к модели не
+    // ходят, а квоту тратят ту же — делить потолок на дорогой и дешёвый стоит,
+    // только если это число окажется заметным рядом с pick_shown
+    if (gate.first) recordTelemetryLater('event', `ratelimited:${gate.bucket}`)
+    return rateLimitedResponse(gate.retryAfterSec)
+  }
 
   // Весь путь от снапшота до отранжированных кандидатов — lib/candidates.ts,
   // общий с «Игрой дня»: копии этого пути в двух маршрутах уже расходились

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   MIN_RATED,
   NO_VALUE,
+  REPORT_AXES,
   formatOutcomes,
   formatRates,
   hitRates,
@@ -72,6 +73,26 @@ describe('hitRates', () => {
   test('нет значения оси или снимка — своя строка «—», а не потеря', () => {
     const lines = hitRates([row({ ctx: null }), row({ appid: 2, ctx: { engine: 'claude' } })], 'nudge')
     expect(lines).toEqual([{ key: NO_VALUE, liked: 2, skipped: 0, launched: 0, rate: 1 }])
+  })
+
+  // Место в пятёрке пишется в снимок давно, а в отчёт не выводилось. Ноль —
+  // первое место, а не «нет значения»: проверка на ложность его бы потеряла
+  test('место в выдаче — своя ось, и первое место (0) не уходит в «—»', () => {
+    expect(REPORT_AXES).toContain('rank')
+    const lines = hitRates(
+      [
+        row({ appid: 1, ctx: { slot: 'hero', rank: 0 } }),
+        row({ appid: 2, action: 'skipped', ctx: { slot: 'hero', rank: 0 } }),
+        row({ appid: 3, action: 'skipped', ctx: { slot: 'picked', rank: 2 } }),
+        row({ appid: 4, action: 'launched', ctx: { slot: 'continue' } }),
+      ],
+      'rank',
+    )
+    expect(lines).toEqual([
+      { key: '0', liked: 1, skipped: 1, launched: 0, rate: 0.5 },
+      { key: '2', liked: 0, skipped: 1, launched: 0, rate: 0 },
+      { key: NO_VALUE, liked: 0, skipped: 0, launched: 1, rate: null },
+    ])
   })
 
   test('сверху — где оценок больше', () => {

@@ -265,7 +265,7 @@ describe('отказ входа помнит пати и ?next', () => {
   })
 
   test('потолок попыток — error=ratelimited, а ?next на месте', async () => {
-    vi.mocked(checkRate).mockResolvedValueOnce({ ok: false, retryAfterSec: 60 })
+    vi.mocked(checkRate).mockResolvedValueOnce({ ok: false, retryAfterSec: 60, first: true })
     const { returnTo, cookie } = await start('?next=%2Fdaily')
     const res = await fromSteam(returnTo, cookie?.value ?? '')
     expect(landing(res).searchParams.get('error')).toBe('ratelimited')

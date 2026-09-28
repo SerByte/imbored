@@ -19,7 +19,19 @@ import { logSwallowed } from './errlog'
  * считает по-настоящему.
  */
 
-export type RateVerdict = { ok: true } | { ok: false; retryAfterSec: number }
+export type RateVerdict =
+  | { ok: true }
+  | {
+      ok: false
+      retryAfterSec: number
+      /**
+       * Первый отказ этому id в этом окне. Счётчику «сколько раз упёрлись в
+       * потолок» нужен он, а не каждый отказ: человек, давящий «ещё» после
+       * первого 429, раздул бы число, а скрипт за потолком писал бы в базу на
+       * каждый запрос — ровно то, от чего бережёт префильтр.
+       */
+      first: boolean
+    }
 
 export type RateOptions = {
   /** Пространство имён: 'connect', 'recommend', … — чтобы лимиты не смешивались */
@@ -107,7 +119,10 @@ export async function checkRate(db: Db, o: RateOptions): Promise<RateVerdict> {
   const key = keyFor(o)
   const retryAfterSec = windowStart(o.nowSec, o.windowSec) + o.windowSec - o.nowSec
 
-  if (memoryHits(key) > o.limit * PREFILTER_FACTOR) return { ok: false, retryAfterSec }
+  // Префильтр срабатывает, когда с этого инстанса в базу ушло уже десять
+  // потолков: первый отказ к тому времени выдала она. Или она лежит — и тогда
+  // счётчику отказов писать всё равно некуда
+  if (memoryHits(key) > o.limit * PREFILTER_FACTOR) return { ok: false, retryAfterSec, first: false }
 
   try {
     const res = await db.execute({
@@ -120,7 +135,9 @@ export async function checkRate(db: Db, o: RateOptions): Promise<RateVerdict> {
       args: [key, o.nowSec + o.windowSec * 2],
     })
     const count = Number(res.rows[0]?.count ?? 0)
-    return count > o.limit ? { ok: false, retryAfterSec } : { ok: true }
+    // Счёт в базе общий на все инстансы, поэтому «первый» — один на окно, а
+    // не по одному на каждый инстанс, куда попал человек
+    return count > o.limit ? { ok: false, retryAfterSec, first: count === o.limit + 1 } : { ok: true }
   } catch (err) {
     // Ворота открыты, и это решение — но не тайна: пока база лежит, защита
     // от чужого счёта за Steam и Claude держится на одном префильтре в памяти
@@ -183,15 +200,18 @@ export function clientIp(headers: Headers): string {
  * отказанный по личному потолку, всё равно съедал бы место в потолке адреса:
  * один человек, давящий «ещё» после отказа, выедал бы общий на адрес бюджет
  * соседям по квартире или мобильному NAT. Ставь личный гейт первым.
+ *
+ * Отказ называет свой bucket: личный потолок и потолок адреса значат разное,
+ * и тот, кто считает отказы (/api/recommend), их различает.
  */
 export async function checkRatesInOrder(
   db: Db,
   gates: Array<Omit<Parameters<typeof checkRate>[1], 'nowSec'>>,
   nowSec: number,
-): Promise<{ ok: true } | { ok: false; retryAfterSec: number }> {
+): Promise<{ ok: true } | (Extract<RateVerdict, { ok: false }> & { bucket: string })> {
   for (const gate of gates) {
     const verdict = await checkRate(db, { ...gate, nowSec })
-    if (!verdict.ok) return verdict
+    if (!verdict.ok) return { ...verdict, bucket: gate.bucket }
   }
   return { ok: true }
 }

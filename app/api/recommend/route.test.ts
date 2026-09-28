@@ -3,11 +3,18 @@ import { saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, upsertSemantics,
 import { pickShareOk } from '@/lib/pickshare'
 import { nowSec, sessionSecret } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
+import { recordTelemetryLater } from '@/lib/telemetry'
 import { SCORE_FACTORS, type GameSemantics } from '@/lib/types'
 import { freshDb, post, signIn } from '@/lib/testing/route'
 import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
+// Счётчик отказов — настоящий, но под наблюдением: запись идёт после ответа,
+// и «ровно один раз» по одной таблице не проверить без гонки с ней
+vi.mock('@/lib/telemetry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/telemetry')>()
+  return { ...actual, recordTelemetryLater: vi.fn(actual.recordTelemetryLater) }
+})
 
 /**
  * /api/recommend — отказы до подбора, настоящим роутом.
@@ -48,6 +55,68 @@ describe('/api/recommend', () => {
     const res = await POST(post('/api/recommend', { mood: MOOD }))
     expect(res.status).toBe(409)
     expect(await res.json()).toEqual({ error: 'nolibrary' })
+  })
+})
+
+/**
+ * Потолок частоты и счётчик отказов. Отказ — 429 с Retry-After, а первый
+ * отказ в окне оседает числом «ratelimited:потолок» в telemetry_hourly. По
+ * этому числу решается, делить ли потолок на подборы с моделью и
+ * подталкивания без неё, — и считать в нём надо тех, кто упёрся, а не
+ * нажатия после отказа.
+ */
+describe('/api/recommend: потолок частоты', () => {
+  const T0 = 1_760_000_000
+
+  // Окно фиксированное, по часам: граница окна посреди теста обнулила бы счёт
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0 * 1000)
+    vi.mocked(recordTelemetryLater).mockClear()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const ask = (ip = '203.0.113.7') => POST(post('/api/recommend', { mood: MOOD }, { 'x-forwarded-for': ip }))
+
+  async function counted(): Promise<Array<[string, number]>> {
+    const res = await db.execute("SELECT key, count FROM telemetry_hourly WHERE kind = 'event' ORDER BY key")
+    return res.rows.map((r) => [String(r.key), Number(r.count)])
+  }
+
+  test('двадцать первый подбор за окно — 429, и отказ посчитан один раз', async () => {
+    await signIn(db, STEAMID)
+    // Библиотеки нет: каждый пропущенный запрос — 409, но в потолок засчитан
+    for (let i = 0; i < 20; i++) expect((await ask()).status).toBe(409)
+    const refused = await ask()
+    expect(refused.status).toBe(429)
+    expect(await refused.json()).toEqual({ error: 'ratelimited' })
+    expect(Number(refused.headers.get('Retry-After'))).toBeGreaterThan(0)
+    // Давит «ещё» после отказа — это всё тот же один раз
+    expect((await ask()).status).toBe(429)
+    expect((await ask()).status).toBe(429)
+    expect(vi.mocked(recordTelemetryLater).mock.calls).toEqual([['event', 'ratelimited:recommend']])
+    await vi.waitFor(async () => expect(await counted()).toEqual([['ratelimited:recommend', 1]]))
+    // Ничего личного: ни SteamID, ни адреса
+    const all = await db.execute('SELECT * FROM telemetry_hourly')
+    expect(JSON.stringify(all.rows)).not.toMatch(/7656119|203\.0\.113/)
+  })
+
+  test('потолок адреса — свой ключ: соседи по NAT не смешаны с одним упорным', async () => {
+    // Трое по двадцать — ровно потолок адреса; четвёртому с того же адреса отказ
+    for (const id of ['76561197960287931', '76561197960287932', '76561197960287933']) {
+      await signIn(db, id)
+      for (let i = 0; i < 20; i++) expect((await ask()).status).toBe(409)
+    }
+    await signIn(db, STEAMID)
+    expect((await ask()).status).toBe(429)
+    expect((await ask()).status).toBe(429)
+    expect(vi.mocked(recordTelemetryLater).mock.calls).toEqual([['event', 'ratelimited:recommend-ip']])
+    // Соседний адрес не задет
+    expect((await ask('203.0.113.8')).status).toBe(409)
+    await vi.waitFor(async () => expect(await counted()).toEqual([['ratelimited:recommend-ip', 1]]))
   })
 })
 
