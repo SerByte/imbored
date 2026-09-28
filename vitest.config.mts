@@ -15,7 +15,8 @@ export default defineConfig({
     //
     // app/ — ради тестов роутов рядом с самими роутами (app/api/*/route.test.ts,
     // обвязка в lib/testing/route.ts). Next такой файл маршрутом не считает:
-    // маршрут — только route.ts и page.tsx.
+    // маршрут — только route.ts и page.tsx. Там же app/**/page.test.ts — тесты
+    // серверных страниц деревом, без рендера (app/library/page.test.ts).
     include: ['lib/**/*.test.ts', 'scripts/**/*.test.ts', 'app/**/*.test.ts'],
     environment: 'node',
   },

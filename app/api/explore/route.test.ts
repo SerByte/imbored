@@ -47,11 +47,11 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-async function seed(): Promise<void> {
+async function seed(steamid = STEAMID): Promise<void> {
   const now = nowSec()
   await saveLibrarySnapshot(
     db,
-    STEAMID,
+    steamid,
     [1, ...OWN].map((appid) => ({
       appid,
       name: `Игра ${appid}`,
@@ -180,5 +180,28 @@ describe('/api/explore', () => {
       now,
     )
     expect((await get()).status).toBe(200)
+  })
+
+  /*
+   * «Приглянулось» — свайпы владельца, а пишет их только сессия, доказавшая
+   * владение профилем. Сессия по вставленной ссылке бывает на любой публичный
+   * профиль, и полку владельца ей не отдаём: её собственное «Интересно» живёт
+   * на устройстве. Отсев колоды пролистанным при этом остаётся — он наружу
+   * ничего не называет.
+   */
+  test('сессия по ссылке — колода без полки владельца', async () => {
+    const steamid = await signInAs(db, 'claimed')
+    await seed(steamid)
+    const now = nowSec()
+    await logFeedback(db, { steamid, appid: 20, action: 'opened', reason: 'explore' }, now - 60)
+    await logFeedback(db, { steamid, appid: 10, action: 'skipped', reason: 'explore' }, now - 30)
+    const res = await get()
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect(body.liked).toEqual([])
+    expect(body.cards.length).toBeGreaterThan(0)
+    const shown = body.cards.map((c) => c.appid)
+    expect(shown).not.toContain(20)
+    expect(shown).not.toContain(10)
   })
 })

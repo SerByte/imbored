@@ -47,6 +47,7 @@ import { dateLabel } from '@/lib/freshness'
 import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
 import { Evenings, type EveningItem } from '@/components/Evenings'
 import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
+import { NeedSteam } from '@/components/NeedSteam'
 import { pickSnapshotDelta } from '@/lib/libdelta'
 import { playtimeHidden } from '@/lib/playtime'
 
@@ -89,6 +90,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // отсюда редирект ушёл бы статусом 200 — каркас loading.tsx к этому моменту
   // уже отдан. Здесь остаются протухшая и поддельная кука.
   if (!steamid) redirect(bounceTo('/library'))
+  // Видеть оценки, скрытое и вечера — тому же, кто вправе их писать (isWriter):
+  // см. докблок чтений ниже
+  const writer = session !== null && isWriter(session)
 
   const db = await getDb()
   const query = await props.searchParams
@@ -115,21 +119,38 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * забытого. Шестьдесят первая скрытая игра иначе вернулась бы туда под
    * видом «ты забыл, что она у тебя есть».
    *
+   * ОЦЕНКИ, СКРЫТОЕ И ВЕЧЕРА — ТОЛЬКО ТОМУ, КТО ВПРАВЕ ИХ ПИСАТЬ.
+   * Пишет их лишь сессия, доказавшая владение профилем (Steam OpenID) или
+   * демо, а сессию по вставленной ссылке /api/connect выдаёт на любой
+   * публичный профиль. Раньше такая сессия получала всё это целиком и только
+   * без кнопок: чужой человек со ссылкой видел, что владелец скрыл и когда,
+   * что ему «зашло», во что он играл после советов и как часто подбор
+   * попадал. Теперь эти пять чтений ей не делаются вовсе — пустое не утечёт
+   * ни в HTML, ни в пропсы клиентских полок. Правило то же, что у GET
+   * /api/outcome и «кто открыл» на /compat. Честному владельцу на втором
+   * устройстве это стоит одного входа через Steam: вместо полок ему строка
+   * NeedSteam.
+   *
+   * bannedAppids читается всем — но только для отсева полки забытого и
+   * наружу не выводится: иначе скрытая владельцем игра вернулась бы на полку
+   * под видом «ты забыл», теперь уже любому со ссылкой.
+   *
    * Карта тегов — только полке «Не распакованы»: из всей страницы по вкусу
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
    */
   const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older] = await Promise.all([
     getLatestSnapshot(db, steamid),
-    listBanned(db, steamid),
+    writer ? listBanned(db, steamid) : [],
     bannedAppids(db, steamid),
-    feedbackStats(db, steamid),
+    // rate: null — и блока «Подбор попадает в N%» нет, как у того, кто ещё не оценивал
+    writer ? feedbackStats(db, steamid) : { liked: 0, skipped: 0, rate: null },
     filter === 'untouched' ? loadTagStats(db) : null,
     // «Твои вечера» — советы за тот же срок, что их хранят (OUTCOME_TTL_SEC)
-    listEvenings(db, steamid, nowSec() - OUTCOME_TTL_SEC),
+    writer ? listEvenings(db, steamid, nowSec() - OUTCOME_TTL_SEC) : [],
     // Полка «Зашло» — что подбор запомнил как понравившееся, и сколько всего
-    listLiked(db, steamid),
-    countLiked(db, steamid),
+    writer ? listLiked(db, steamid) : [],
+    writer ? countLiked(db, steamid) : 0,
     // Прежние снимки парами [appid, минуты] — для строки «с прошлого снимка»
     getOlderSnapshotMinutes(db, steamid),
   ])
@@ -390,9 +411,14 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         Чипсы и сетка ниже при пустой библиотеке не рисуются вовсе: пять нулей
         не сообщают ничего, а якорь #wall на них ведёт только с полки
         «запечатанного», которой здесь тоже нет.
+
+        Отступ снизу — свой, mb-10, как у соседних блоков: сетка карточек со
+        своим mb-10 здесь обычно не рисуется, и следующий блок («Твои вечера»
+        или строка NeedSteam у сессии по ссылке) иначе лёг бы вплотную под
+        кнопку «Подключить заново».
       */}
       {games.length === 0 && (
-        <section className="max-w-2xl">
+        <section className="max-w-2xl mb-10">
           <p className="font-semibold text-ink mb-2">Steam не отдал ни одной игры</p>
           <p className="text-dim text-sm leading-relaxed mb-5">
             Причин ровно две: игровые данные закрыты настройками профиля — или библиотека правда
@@ -511,6 +537,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         </div>
       )}
 
+      {/* Вечеров, «Зашло» и скрытого сессии по ссылке не прочитано вовсе (см.
+          writer выше) — одна строка на месте первой из полок говорит, где они,
+          а не три пустоты подряд. Есть ли там что-то, не сказано: это тоже
+          сведение о владельце. */}
+      {!writer && <NeedSteam from="/library" why="see" className="mb-12 max-w-md" />}
+
       {eveningItems.length > 0 && (
         <Evenings
           items={eveningItems}
@@ -519,7 +551,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             played: eveningsTotal.played,
             hours: playedLine(eveningsTotal.minutes),
           }}
-          writer={session ? isWriter(session) : false}
+          writer={writer}
         />
       )}
 
@@ -722,9 +754,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           настройках, которых в проекте нет — бан ставится в одном клике от
           выдачи, и сниматься должен так же дёшево. */}
       <div className="mt-14">
-        {/* Сессия есть наверняка: без неё страница развернула бы на вход */}
-        <LikedShelf games={likedGames} total={likedTotal} writer={session ? isWriter(session) : false} />
-        <BannedShelf games={bannedGames} writer={session ? isWriter(session) : false} />
+        {/* Сессии по ссылке полки приходят пустыми и не рисуются вовсе: строка
+            о входе для неё стоит выше, на месте «Твоих вечеров» */}
+        <LikedShelf games={likedGames} total={likedTotal} writer={writer} />
+        <BannedShelf games={bannedGames} writer={writer} />
       </div>
 
       {/* Выход живёт здесь, а не в шапке: шапка общая на весь сайт, и чтобы

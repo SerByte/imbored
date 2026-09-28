@@ -6,7 +6,7 @@ import { EXPLORE_SHELF_MAX, exploreDeck, exploredAppids } from '@/lib/explore'
 import { heuristicPicks } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 
 /*
  * Колода исследователя (/explore, lib/explore.ts): пятнадцать карт своего и
@@ -28,8 +28,18 @@ const EXPLORE_WINDOW_SEC = 600
 const EXPLORE_IP_LIMIT = 60
 
 export async function GET(req: Request) {
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  /*
+   * Полка «Приглянулось» — только сессии, которая может её писать (isWriter).
+   * Свайпы пишет лишь доказавший владение профилем, а сессия по вставленной
+   * ссылке бывает на любой публичный профиль: без этого условия чужой человек
+   * листал бы вместе с колодой и то, что приглянулось владельцу. Её собственное
+   * «Интересно» живёт на устройстве (app/explore), так что полка ей от
+   * сервера не нужна. Тот же порядок, что у полок /library.
+   */
+  const writer = isWriter(session)
 
   const db = await getDb()
   const now = nowSec()
@@ -57,8 +67,9 @@ export async function GET(req: Request) {
     // возвращается — колода каждый заход о новом (exploredAppids)
     listExplore(db, steamid),
     // Полка «Приглянулось» — своим запросом: listExplore читает двести
-    // последних свайпов обоих видов, и старое «Интересно» тонуло бы в «Мимо»
-    listExploreLiked(db, steamid, EXPLORE_SHELF_MAX),
+    // последних свайпов обоих видов, и старое «Интересно» тонуло бы в «Мимо».
+    // Сессии по ссылке — пустая (writer выше); отсев колоды ей держит listExplore
+    writer ? listExploreLiked(db, steamid, EXPLORE_SHELF_MAX) : [],
   ])
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
