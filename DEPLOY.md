@@ -573,7 +573,16 @@ EXISTS`), строки старше 90 дней стирает суточная 
 ## 6.6. Удаление данных по запросу (делаешь ты, по письму)
 
 /privacy, раздел 06, обещает удалить всё по письму на hello@imbored.cc за 30
-дней. Удаление — одна команда, учётки Turso берутся из `.env.turso`:
+дней. Своего почтового ящика у домена нет: Cloudflare Email Routing (Cloudflare
+→ **Compute → Email Service → Email Routing**) пересылает hello@ в отдельный
+ящик проекта **imboredcc@proton.me** — письма читать и отвечать оттуда. Catch-all
+выключен, письма на любые другие адреса домена отклоняются. MX
+(`route1–3.mx.cloudflare.net`), SPF и DKIM (`cf2024-1._domainkey`) Cloudflare
+поставил сам — в **DNS → Records** их не трогать. Отвечать от имени hello@
+пересылка не умеет; для этого нужен платный Proton Mail Plus со своим доменом,
+и тогда Email Routing выключается, а записи меняются на протоновские.
+
+Удаление — одна команда, учётки Turso берутся из `.env.turso`:
 
 ```bash
 npm run user:forget -- https://steamcommunity.com/profiles/7656119XXXXXXXXXX
@@ -831,6 +840,7 @@ SELECT week, who,
 | Сервис | Сейчас | Когда вырастет |
 |---|---|---|
 | Домен imbored.cc | уже куплен | ~$10/год продление |
+| Почта hello@ | $0 (Cloudflare Email Routing → Proton) | €4.99/мес (Proton Mail Plus, чтобы отвечать от hello@) |
 | Vercel | $0 (Hobby) | $20/мес (Pro, при монетизации) |
 | Turso | $0 | от $5/мес после бесплатных лимитов |
 | Claude API | ~$0.01 за подборку | ~$1–3/мес на первую сотню юзеров |
