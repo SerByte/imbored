@@ -66,8 +66,26 @@ export const SERVER_EVENTS = ['connect_start', 'connect_ok', 'demo_start', 'invi
 export type ServerEvent = (typeof SERVER_EVENTS)[number]
 export type Channel = 'openid' | 'link' | 'demo' | 'room' | 'login'
 
-/** Откуда пришли: закрытый список, ничего личного в значении */
-export const REF_SOURCES = ['compat', 'portrait', 'room', 'pick', 'patch'] as const
+/**
+ * Откуда пришли: закрытый список, ничего личного в значении.
+ *
+ * Первые пять — общие ссылки самого сайта. Остальные — площадки, где сайт
+ * запускается постами: без своих меток переход с DTF или из Telegram
+ * считался бы прямым заходом, и по телеметрии нельзя было бы понять, какой
+ * пост вообще кого-то привёл.
+ */
+export const REF_SOURCES = [
+  'compat',
+  'portrait',
+  'room',
+  'pick',
+  'patch',
+  'dtf',
+  'pikabu',
+  'habr',
+  'vc',
+  'tg',
+] as const
 export type RefSource = (typeof REF_SOURCES)[number]
 export type Source = RefSource | 'direct'
 

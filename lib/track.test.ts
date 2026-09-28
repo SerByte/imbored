@@ -144,6 +144,8 @@ describe('ожидание первой выдачи', () => {
 describe('метка ref', () => {
   test('закрытый список', () => {
     expect(parseRef('room')).toBe('room')
+    expect(parseRef('dtf')).toBe('dtf')
+    expect(parseRef('tg')).toBe('tg')
     expect(parseRef('evil')).toBeNull()
     expect(parseRef(null)).toBeNull()
   })
