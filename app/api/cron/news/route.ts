@@ -1,30 +1,33 @@
 import { randomUUID } from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
-import { chainBreakLine, passChain } from '@/lib/chain'
+import { kickCron, kickFailLine, linksToday, openRun, runChain } from '@/lib/chain'
 import { dayKey } from '@/lib/daily'
 import {
   CRON_JOBS,
   cronAuthorized,
   DIGEST_STALE_SEC,
+  newsLinkVerdict,
+  pagesDailyLinks,
   pagesNeedKick,
-  sliceDeadline,
   sliceLooksStale,
   SWEEP_KEY,
+  type CronJob,
 } from '@/lib/cron'
 import {
-  acquireLease,
   countNewsPollDue,
   enrollNewsPoll,
   getCatalogMeta,
-  releaseLease,
   reviveGoneNewsPoll,
   setCatalogMeta,
   STEAM_LEASE,
   sweepDailyPicks,
   sweepStale,
   topCatalogAppids,
+  type Db,
 } from '@/lib/db'
+import { llmAvailable } from '@/lib/llm'
+import { llmDailyCap } from '@/lib/llmcap'
 import { runNewsSlice } from '@/lib/newsjob'
 import { sweepRateLimits } from '@/lib/ratelimit'
 import { appBaseUrl, getDb, nowSec, steamApiKey } from '@/lib/server'
@@ -33,16 +36,16 @@ import { pruneTelemetry } from '@/lib/telemetry'
 import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
 
 export const dynamic = 'force-dynamic'
-/** Потолок Hobby. На Pro можно поднять до 300 и опустить MAX_CHAIN. */
-export const maxDuration = 60
+/** Потолок Hobby с Fluid — CRON_MAX_DURATION_SEC, см. там; сверяет lib/chain.test.ts */
+export const maxDuration = 300
 
-/** Сколько звеньев цепочки максимум. 24 × 20 игр = 480 опросов в сутки. */
-const MAX_CHAIN = 24
+/**
+ * Сколько звеньев максимум за запуск. Спрос — около трёхсот опросов в сутки,
+ * то есть дюжина игр в час: обычно запуск кончается первым же звеном (20 игр),
+ * а упирается, когда упирается, во время — шесть звеньев по LINK_MS.
+ */
+const MAX_LINKS = 8
 const ENROLL_KEY = 'news_enrolled_at'
-const LAST_KEY = CRON_JOBS.news.lastKey
-
-/** Чуть больше maxDuration: убитый по таймауту инстанс не держит аренду вечно. */
-const LEASE_TTL_SEC = 75
 
 /** Через сколько давать похороненной игре ещё один шанс */
 const REVIVE_AFTER_SEC = 30 * 86_400
@@ -50,224 +53,169 @@ const REVIVE_AFTER_SEC = 30 * 86_400
 /**
  * Vercel Cron ходит именно GET.
  *
- * Отвечаем 202 СРАЗУ, а работаем в after(): на Hobby крон вызывается примерно
- * раз в сутки независимо от выражения в vercel.json, поэтому пропускная
- * способность берётся из цепочки вызовов, а не из частоты расписания.
+ * Отвечаем 202 СРАЗУ, а работаем в after(): звенья подряд внутри этого же
+ * вызова (lib/chain). Зовут сюда часовой воркфлоу (.github/workflows/cron.yml)
+ * и суточное расписание в vercel.json как подстраховка.
  */
 export async function GET(req: Request) {
-  // Первой строкой: срок среза считается от начала вызова — см. sliceDeadline.
+  // Первой строкой: срок запуска считается от начала вызова — см. sliceDeadline.
   const startedAt = Date.now()
   if (!cronAuthorized(req.headers)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 401 })
   }
 
-  const url = new URL(req.url)
-  const chain = Number(url.searchParams.get('chain') ?? 0)
   const db = await getDb()
 
-  // килл-свитч без редеплоя
-  if ((await getCatalogMeta(db, CRON_JOBS.news.pausedKey)) === '1') {
-    return NextResponse.json({ paused: true })
-  }
-
-  // Своё имя цепочка получает на первом звене и передаёт дальше: аренда
-  // реентерабельна по holder, поэтому звенья продлевают её, а не отбивают
-  // друг у друга.
-  const holder = url.searchParams.get('holder') ?? `news:${randomUUID()}`
-
   // Расписание живёт снаружи (GitHub Actions), поэтому триггер вполне может
-  // прийти поверх ещё живой цепочки. Тогда это не работа, а второй поток
-  // запросов к Steam мимо общего лимитера — молча уходим.
-  if (!(await acquireLease(db, STEAM_LEASE, holder, LEASE_TTL_SEC, nowSec()))) {
-    return NextResponse.json({ skipped: 'locked' }, { status: 202 })
-  }
+  // прийти поверх ещё живого запуска — своего или карточек. Тогда это не
+  // работа, а второй поток запросов к Steam мимо общего лимитера — молча
+  // уходим (openRun: аренда STEAM_LEASE).
+  const lease = { key: STEAM_LEASE, holder: `news:${randomUUID()}` }
+  const refusal = await openRun(db, { job: 'news', lease, startedAt, maxDurationSec: maxDuration })
+  // килл-свитч без редеплоя
+  if (refusal === 'paused') return NextResponse.json({ paused: true })
+  if (refusal) return NextResponse.json({ skipped: refusal }, { status: 202 })
 
-  after(async () => {
-    let result: Awaited<ReturnType<typeof runNewsSlice>> | null = null
-    /*
-     * Упало ли звено — отдельно от результата. Комментарий ниже обещает, что
-     * «одно исключение на кривом фиде тихо убивает всю суточную работу» больше
-     * не случится, но обещание не выполнялось: при броске result оставался
-     * null, goesOn читал result?.hasMore и получал false, и цепочка обрывалась.
-     * finally защищал запись отметки и аренду, а не продолжение.
-     *
-     * Здесь цена ниже, чем у страниц (снаружи ходит ежечасный воркфлоу), но
-     * причина та же и решается так же: упавшее звено передаёт эстафету дальше,
-     * следующее заново выберет очередь. Долбёжку ограничивает MAX_CHAIN.
-     */
-    let упало: string | null = null
-    try {
-      const now = nowSec()
-      // раз в сутки пополняем очередь топом каталога
-      const lastEnroll = Number((await getCatalogMeta(db, ENROLL_KEY)) ?? 0)
-      if (now - lastEnroll > 86_400) {
-        await enrollNewsPoll(db, await topCatalogAppids(db, 200), 1, now)
-        // Заодно поднимаем похороненных: три отказа подряд чаще означают
-        // закрывшийся Steam, чем мёртвую игру, а отметка 'gone' до сих пор
-        // была вечной. Раз в месяц на игру — цена пренебрежимая.
-        await reviveGoneNewsPoll(db, now - REVIVE_AFTER_SEC, now)
-        // Заодно подметаем истёкшие окна ограничителя частоты. Из запроса это
-        // делать нельзя — лишняя запись на каждом обращении к дорогой ручке
-        // ровно там, где мы экономим, — а суточного прохода хватает: ключи
-        // содержат номер окна, поэтому старые строки не влияют на счёт и
-        // только занимают место.
-        await sweepRateLimits(db, now)
-        // Граница — сутки игры дня (dayKey, московские), а не UTC: иначе
-        // уборка и ключ записи жили бы в разных календарях. Вчерашние
-        // оставляем, и не только с запасом на запрос, начатый до полуночи и
-        // ещё дописывающий вчерашний ключ: по вчерашней записи отбор не
-        // повторяет вчерашнего героя (avoid у pickDaily в /api/daily).
-        // Старше вчерашних строки на выбор уже не влияют.
-        await sweepDailyPicks(db, dayKey(now - 86_400))
-        // Демо-личности, истёкшие сессии и старые комнаты — см. sweepStale.
-        // Своим try: мусор спокойно подождёт до завтра, а суточное пополнение
-        // очереди и сам срез из-за него пропадать не должны.
-        try {
-          const swept = await sweepStale(db, now)
-          // Почасовые счётчики (lib/telemetry) старше 90 дней — тем же
-          // проходом и в ту же отметку уборки
-          const telemetry = await pruneTelemetry(db, now)
-          await setCatalogMeta(db, SWEEP_KEY, JSON.stringify({ at: now, ...swept, telemetry }))
-        } catch (err) {
-          console.error('sweep stale', err)
-        }
-        await setCatalogMeta(db, ENROLL_KEY, String(now))
-      }
-      // digestLimit: 0 — пересказы уехали в /api/cron/digest со своим
-      // бюджетом. Здесь это не только разделение задач, но и прибавка к
-      // опросу: те 35% времени, что придерживались под модель, теперь идут
-      // на игры.
-      result = await runNewsSlice(db, {
-        deadlineAt: sliceDeadline(startedAt, maxDuration),
-        digestLimit: 0,
-      })
-    } catch (err) {
-      console.error('news slice', err)
-      упало = err instanceof Error ? err.message.slice(0, 120) : 'исключение'
-    } finally {
-      // Звено цепочки — в finally и ПОСЛЕ работы. В finally, потому что иначе
-      // одно исключение на кривом фиде тихо убивает всю суточную работу.
-      // После работы, потому что запуск ребёнка первым дал бы параллельные
-      // инвокации, а lib/pace — состояние модуля: на разных инстансах защиты
-      // от общего лимита Steam нет вовсе.
-      // Отметка — диагностика, а не работа. Её отказ не имеет права обрывать
-      // цепочку: иначе одно моргнувшее соединение к Turso стоит того же, что и
-      // исключение в самом срезе, ради которого всё это и написано.
-      try {
-        await setCatalogMeta(
-          db,
-          LAST_KEY,
-          JSON.stringify({ at: nowSec(), chain, ...result, ...(упало ? { упало } : {}) }),
-        )
-      } catch (err) {
-        console.error('cron meta', err)
-      }
+  after(() =>
+    runChain({
+      db,
+      job: 'news',
+      lease,
+      startedAt,
+      maxDurationSec: maxDuration,
+      maxLinks: MAX_LINKS,
+      totals: ['polled', 'inserted'],
+      link: async ({ deadlineAt }) => {
+        await dailyChores(db)
+        // digestLimit: 0 — пересказы уехали в /api/cron/digest со своим
+        // бюджетом. Здесь это не только разделение задач, но и прибавка к
+        // опросу: те 35% времени, что придерживались под модель, теперь идут
+        // на игры.
+        return runNewsSlice(db, { deadlineAt, digestLimit: 0 })
+      },
+      verdict: ({ result, failed }) => newsLinkVerdict({ failed, result }),
+      onEnd: async ({ totals, hardLeftMs }) => {
+        /*
+         * Лента перестала быть свежей — сообщаем кэшу. Раз на запуск, а не на
+         * звено: каждый сброс — это перегенерация ленты при следующем заходе,
+         * а ISR Writes на Hobby уже выбраны сверх лимита.
+         *
+         * Общая лента лежит в unstable_cache с десятиминутным потолком, но
+         * потолок здесь страховка, а не механизм: обновления приезжают
+         * запусками по расписанию, и ждать до десяти минут после того, как
+         * патч уже в базе, незачем. Инвалидация по тегу делает ленту
+         * событийной.
+         *
+         * profile 'max' — это stale-while-revalidate: следующий посетитель
+         * получает старую ленту мгновенно, а свежая подтягивается фоном. Без
+         * второго аргумента (устаревшая форма) он же получил бы блокирующий
+         * промах ровно в тот момент, когда крон только что отработал.
+         *
+         * Условие по inserted: запуск, не принёсший ни одной записи, ленту не
+         * менял, и сбрасывать кэш из-за него значит платить за холодный рендер
+         * на пустом месте.
+         */
+        if ((totals.inserted ?? 0) > 0) revalidateTag(NEWS_MAJOR_TAG, 'max')
 
-      /*
-       * Лента перестала быть свежей — сообщаем кэшу.
-       *
-       * Общая лента лежит в unstable_cache с десятиминутным потолком, но
-       * потолок здесь страховка, а не механизм: обновления приезжают срезами
-       * по расписанию, и ждать до десяти минут после того, как патч уже в
-       * базе, незачем. Инвалидация по тегу делает ленту событийной.
-       *
-       * profile 'max' — это stale-while-revalidate: следующий посетитель
-       * получает старую ленту мгновенно, а свежая подтягивается фоном. Без
-       * второго аргумента (устаревшая форма) он же получил бы блокирующий
-       * промах ровно в тот момент, когда крон только что отработал.
-       *
-       * Условие по inserted: срез, не принёсший ни одной записи, ленту не
-       * менял, и сбрасывать кэш из-за него значит платить за холодный рендер
-       * на пустом месте.
-       */
-      if ((result?.inserted ?? 0) > 0) revalidateTag(NEWS_MAJOR_TAG, 'max')
-
-      const secret = process.env.CRON_SECRET
-      const goesOn = Boolean(
-        (упало ? true : result?.hasMore && result.stopped !== 'blocked') &&
-          chain < MAX_CHAIN &&
-          secret,
-      )
-      // Аренду отдаём, только если цепочка на этом кончилась. Иначе передаём
-      // её следующему звену вместе с holder: пауза между отдал-и-взял пустила
-      // бы внутрь чужой триггер ровно в тот момент, когда работа продолжается.
-      if (!goesOn) await releaseLease(db, STEAM_LEASE, holder)
-
-      /*
-       * Цепочка кончилась — заодно проверяем, живы ли кроны пересказов и
-       * карточек.
-       *
-       * Пересказы висят на одном GitHub Actions без подстраховки в
-       * vercel.json. У карточек наоборот — одно суточное расписание и ни
-       * одного внешнего, так что пропущенный вызов или оборванная цепочка
-       * стоили суток без повтора (см. pagesNeedKick). Ежечасная цепочка
-       * новостей — единственное, что ходит часто, ей и подстраховывать.
-       *
-       * Пинок делается ОДИН раз на цепочку, а не на каждом звене. Аренда
-       * Steam к этому моменту уже отдана строкой выше, так что карточки её
-       * возьмут. Если крон на паузе, его роут сам ответит {paused:true} —
-       * килл-свитч остаётся главнее нас. Отказ пинка больше не глотается
-       * молча: строка в лог, тем же форматом, что обрыв звена.
-       *
-       * Своим try: чтение отметки — сетевой вызов к Turso, а исключение в
-       * finally внутри after() уходит в никуда вместе с остатком блока.
-       */
-      if (!goesOn && secret) {
-        try {
-          const now = nowSec()
-          const digestLast = await getCatalogMeta(db, CRON_JOBS.digest.lastKey)
-          const pagesLast = await getCatalogMeta(db, CRON_JOBS.pages.lastKey)
-          const пинки = [
-            { cron: 'digest', надо: sliceLooksStale(digestLast, now, DIGEST_STALE_SEC) },
-            { cron: 'pages', надо: pagesNeedKick(pagesLast, now) },
-          ]
-          for (const { cron, надо } of пинки) {
-            if (!надо) continue
-            const пинок = await passChain(`${appBaseUrl()}/api/cron/${cron}`, secret)
-            if (!пинок.ok) {
-              console.error(chainBreakLine({ cron, chain: 0, reason: пинок.reason, kick: true }))
-            }
-          }
-        } catch (err) {
-          console.error('cron kick', err)
-        }
+        await kickNeighbours(db)
 
         /*
          * Проба ключа Steam Web API (lib/steamprobe): раз в час, отсюда же —
          * единственного места, что ходит ежечасно. Только если до жёсткого
          * срока функции остаётся с запасом: проба кладёт на себя две попытки
          * по пять секунд, а обрыв посреди неё стоил бы и остатка after().
+         * Остаток — на сейчас, а не на начало конца запуска: пинки выше
+         * ждут ответа соседних роутов (hardLeftMs считает в момент вызова).
          */
-        const hardLeftMs = startedAt + maxDuration * 1000 - Date.now()
-        if (hardLeftMs > 15_000) {
+        if (hardLeftMs() > 15_000) {
           await runSteamProbe(db, { nowSec: nowSec(), apiKey: steamApiKey() })
         }
-      }
-
-      // Обрыв записывается, а не проглатывается — см. докблок lib/chain.
-      // У новостей цепочка обычно кончается на первом же звене (работы мало),
-      // но передача устроена так же, и молчать о её отказе незачем.
-      if (goesOn && secret) {
-        const передача = await passChain(
-          `${appBaseUrl()}/api/cron/news?chain=${chain + 1}&holder=${encodeURIComponent(holder)}`,
-          secret,
-        )
-        if (!передача.ok) {
-          console.error(chainBreakLine({ cron: 'news', chain, reason: передача.reason }))
-          await setCatalogMeta(
-            db,
-            LAST_KEY,
-            JSON.stringify({ at: nowSec(), chain, ...result, обрыв: передача.reason }),
-          )
-          // Аренду отдаём, ТОЛЬКО когда ребёнка точно нет — см. lib/chain.
-          if (!передача.childMayRun) await releaseLease(db, STEAM_LEASE, holder)
-        }
-      }
-    }
-  })
-
-  return NextResponse.json(
-    { started: true, chain, due: await countNewsPollDue(db, nowSec()) },
-    { status: 202 },
+      },
+    }),
   )
+
+  return NextResponse.json({ started: true, due: await countNewsPollDue(db, nowSec()) }, { status: 202 })
+}
+
+/**
+ * Раз в сутки: пополнить очередь топом каталога и прибраться. В звене, а не
+ * отдельно перед запуском: упади она — звено упадёт и следующее попробует
+ * снова (newsLinkVerdict), а проверка «прошли ли сутки» — одно чтение.
+ */
+async function dailyChores(db: Db): Promise<void> {
+  const now = nowSec()
+  const lastEnroll = Number((await getCatalogMeta(db, ENROLL_KEY)) ?? 0)
+  if (now - lastEnroll <= 86_400) return
+  await enrollNewsPoll(db, await topCatalogAppids(db, 200), 1, now)
+  // Заодно поднимаем похороненных: три отказа подряд чаще означают
+  // закрывшийся Steam, чем мёртвую игру, а отметка 'gone' до сих пор была
+  // вечной. Раз в месяц на игру — цена пренебрежимая.
+  await reviveGoneNewsPoll(db, now - REVIVE_AFTER_SEC, now)
+  // Заодно подметаем истёкшие окна ограничителя частоты. Из запроса это
+  // делать нельзя — лишняя запись на каждом обращении к дорогой ручке ровно
+  // там, где мы экономим, — а суточного прохода хватает: ключи содержат номер
+  // окна, поэтому старые строки не влияют на счёт и только занимают место.
+  await sweepRateLimits(db, now)
+  // Граница — сутки игры дня (dayKey, московские), а не UTC: иначе уборка и
+  // ключ записи жили бы в разных календарях. Вчерашние оставляем, и не только
+  // с запасом на запрос, начатый до полуночи и ещё дописывающий вчерашний
+  // ключ: по вчерашней записи отбор не повторяет вчерашнего героя (avoid у
+  // pickDaily в /api/daily). Старше вчерашних строки на выбор уже не влияют.
+  await sweepDailyPicks(db, dayKey(now - 86_400))
+  // Демо-личности, истёкшие сессии и старые комнаты — см. sweepStale. Своим
+  // try: мусор спокойно подождёт до завтра, а суточное пополнение очереди и
+  // сам срез из-за него пропадать не должны.
+  try {
+    const swept = await sweepStale(db, now)
+    // Почасовые счётчики (lib/telemetry) старше 90 дней — тем же проходом и
+    // в ту же отметку уборки
+    const telemetry = await pruneTelemetry(db, now)
+    await setCatalogMeta(db, SWEEP_KEY, JSON.stringify({ at: now, ...swept, telemetry }))
+  } catch (err) {
+    console.error('sweep stale', err)
+  }
+  await setCatalogMeta(db, ENROLL_KEY, String(now))
+}
+
+/**
+ * Запуск кончился — пнуть соседей, если им пора.
+ *
+ * Пересказы висят на одном GitHub Actions без подстраховки в vercel.json
+ * (на Hobby два расписания, оба заняты): молчат дольше DIGEST_STALE_SEC —
+ * пинок. Карточки берут отсюда свой часовой ритм, пока не выбран суточный
+ * потолок звеньев, — почему отсюда, а не из воркфлоу, см. pagesNeedKick.
+ * Аренда Steam к этому моменту уже отдана (runChain отдаёт её до onEnd), так
+ * что карточки её возьмут. Если крон на паузе, его роут сам ответит
+ * {paused:true} — килл-свитч остаётся главнее нас.
+ *
+ * Пинок — один HTTP-запрос к соседнему роуту, а не звено: см. kickCron.
+ * Своим try: чтение отметок — сетевой вызов к Turso, а исключение здесь не
+ * должно лишить запуск пробы ключа ниже.
+ */
+async function kickNeighbours(db: Db): Promise<void> {
+  const secret = process.env.CRON_SECRET
+  if (!secret) return
+  try {
+    const now = nowSec()
+    const пинки: Array<{ cron: CronJob; надо: boolean }> = [
+      {
+        cron: 'digest',
+        надо: sliceLooksStale(await getCatalogMeta(db, CRON_JOBS.digest.lastKey), now, DIGEST_STALE_SEC),
+      },
+      {
+        cron: 'pages',
+        надо: pagesNeedKick({
+          linksToday: await linksToday(db, 'pages', now),
+          cap: pagesDailyLinks({ llmCap: llmDailyCap(), llmOn: llmAvailable() }),
+        }),
+      },
+    ]
+    for (const { cron, надо } of пинки) {
+      if (!надо) continue
+      const пинок = await kickCron(`${appBaseUrl()}/api/cron/${cron}`, secret)
+      if (!пинок.ok) console.error(kickFailLine({ cron, reason: пинок.reason }))
+    }
+  } catch (err) {
+    console.error('cron kick', err)
+  }
 }
