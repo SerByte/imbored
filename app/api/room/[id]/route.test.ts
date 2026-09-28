@@ -6,6 +6,7 @@ import {
   roomMembers,
   saveLibrarySnapshot,
   setRoomMatched,
+  updateGamePrices,
   upsertGameMeta,
   type Db,
 } from '@/lib/db'
@@ -124,6 +125,7 @@ describe('/api/room/[id]: сматченная игра и владение', ()
       ownedByMe: boolean | null
       isFree: boolean
       priceFinal: number | null
+      unsold: boolean
     } | null
   }
   const matched = async () => ((await (await peek()).json()) as Matched).matchedGame
@@ -159,6 +161,17 @@ describe('/api/room/[id]: сматченная игра и владение', ()
     await matchedOn(730, { isFree: true, priceFinal: 1499 })
     await signIn(db, FRIEND)
     expect(await matched()).toMatchObject({ ownedByMe: false, isFree: true, priceFinal: null })
+  })
+
+  test('бесплатная, которую магазин региона не показывает, — и isFree, и unsold', async () => {
+    // Warzone бесплатна в US, в российском Steam visible:false. Взять её там
+    // нельзя, и церемония (PriceTag) должна сказать «не продаётся», а не
+    // «бесплатно»: признак не гасится бесплатностью, выбирает ценник
+    await matchedOn(1962663, { isFree: true })
+    // регион по умолчанию: и замер, и чтение — в одном
+    await updateGamePrices(db, [{ appid: 1962663, hidden: true }], nowSec())
+    await signIn(db, FRIEND)
+    expect(await matched()).toMatchObject({ ownedByMe: false, isFree: true, priceFinal: null, unsold: true })
   })
 
   test('не участнику — «не знаем», а не чужое «есть»', async () => {

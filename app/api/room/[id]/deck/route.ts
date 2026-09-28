@@ -192,6 +192,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       // У бесплатной цены нет: price_final у неё — чужая редакция (Prime у
       // CS2), и пересчёт отсюда вернул бы в карточку то, что убрал buildGroupDeck
       priceFinal: c.isFree ? undefined : meta ? trustedPrice(meta, now) : c.priceFinal,
+      // Регион и «не продаётся» — из той же свежей меты, что и цена: замер
+      // выше мог переоценить карту в другом регионе
+      priceCc: meta ? (meta.priceCc ?? null) : (c.priceCc ?? null),
+      // и у бесплатной — см. unsold в buildGroupDeck (lib/group)
+      unsold: meta ? meta.storeHidden === true : c.unsold === true,
       art: meta?.art ?? null,
       ccu: meta?.ccu ?? null,
       ccuAt: meta?.ccuAt ?? null,

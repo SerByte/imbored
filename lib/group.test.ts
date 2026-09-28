@@ -99,6 +99,25 @@ describe('buildGroupDeck', () => {
     expect(card).not.toHaveProperty('priceFinal')
   })
 
+  test('регион цены едет в карту; «не продаётся» пати не прячет, а подписывает', () => {
+    // В пати речь об общей библиотеке, а не о покупке: тем, у кого игры нет,
+    // честнее прочитать «нет в российском Steam», чем не увидеть её вовсе
+    const rub: GameMeta = { ...meta(40, { 'Co-op': 100 }, MP, 199_900), priceCc: 'ru' }
+    const hidden: GameMeta = { ...meta(41, { 'Co-op': 100 }, MP), priceCc: 'ru', storeHidden: true }
+    const deck = buildGroupDeck({ members: MEMBERS, metaOf, extraPool: [rub, hidden], limit: 10 })
+    expect(deck.find((c) => c.appid === 40)).toMatchObject({ priceFinal: 199_900, priceCc: 'ru' })
+    expect(deck.find((c) => c.appid === 40)).not.toHaveProperty('unsold')
+    expect(deck.find((c) => c.appid === 41)).toMatchObject({ priceCc: 'ru', unsold: true })
+  })
+
+  test('«не продаётся» не гасится бесплатностью: карта везёт оба признака', () => {
+    // Warzone бесплатна в US, а российский Steam её не показывает. Что сказать,
+    // решает строка колоды (SwipeDeck): «нет в российском Steam» первым
+    const warzone: GameMeta = { ...meta(1962663, { 'Co-op': 100 }, MP), isFree: true, priceCc: 'ru', storeHidden: true }
+    const deck = buildGroupDeck({ members: MEMBERS, metaOf, extraPool: [warzone], limit: 10 })
+    expect(deck.find((c) => c.appid === 1962663)).toMatchObject({ isFree: true, priceCc: 'ru', unsold: true })
+  })
+
   test('у платной игры признака бесплатности нет вовсе', () => {
     const deck = buildGroupDeck({
       members: MEMBERS,

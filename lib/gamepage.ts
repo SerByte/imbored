@@ -6,10 +6,10 @@ import {
   getNeighbors,
   loadTagStats,
   topGamesByTag,
-  withoutBody,
   type Db,
   type FeedItem,
   type SimilarGame,
+  type StoredNews,
 } from './db'
 import { logSwallowed } from './errlog'
 import { characterTrait, entryTrait, sessionTrait, type GameTrait } from './gametraits'
@@ -32,8 +32,8 @@ export type GamePageData = {
     totalNegative: number
   } | null
   prosCons: ProsCons | null
-  /** без тел патчей — их отдаёт app/api/news по раскрытию, см. withoutBody */
-  news: FeedItem[]
+  /** без тел патчей — их отдаёт app/api/news по раскрытию; см. cardNews */
+  news: CardNews[]
   /**
    * «Похожие»: готовые соседи по всему вектору тегов (nearGames), а пока их
    * не залили — соседи по тегу полки (topTagOf, pickSimilar); пусто, если
@@ -52,6 +52,37 @@ export type GamePageData = {
    * не прошёл порог. Строку из него собирает gameTraits.
    */
   hook: string[] | null
+}
+
+/**
+ * Строка «Что нового» на карточке — ровно то, что рисует островок GameNews.
+ *
+ * Не FeedItem целиком (withoutBody), и дело не в байтах. Всё, что уходит в
+ * клиентский островок, лежит в RSC-части страницы, а страница живёт в ISR
+ * неделю и пишется заново, только если её вывод разошёлся с прошлым (см.
+ * lib/gamecache). У FeedItem есть поля, которые меняются без единой
+ * видимой перемены:
+ *   • rank — вес игры, max(отзывы, онлайн), переписывается у всех её постов
+ *     на каждом опросе, где сдвинулись отзывы (upsertNewsItems). Карточке из
+ *     него нужен один бит — в каталоге ли игра (indexedNewsPath: rank > 0);
+ *   • bodyHash и imageUrl — островок их не читает вовсе.
+ * С ними каждая перегенерация писала бы страницу заново из-за числа, которого
+ * на ней не видно.
+ */
+export type CardNews = Pick<FeedItem, 'appid' | 'gid' | 'title' | 'url' | 'publishedAt' | 'kind' | 'scale' | 'tldr' | 'rank'>
+
+export function cardNews(item: StoredNews): CardNews {
+  return {
+    appid: item.appid,
+    gid: item.gid,
+    title: item.title,
+    url: item.url,
+    publishedAt: item.publishedAt,
+    kind: item.kind,
+    scale: item.scale,
+    ...(item.tldr !== undefined ? { tldr: item.tldr } : {}),
+    rank: item.rank > 0 ? 1 : 0,
+  }
 }
 
 export type ReviewFacts = {
@@ -141,7 +172,7 @@ const SHELF_MIN_GAMES = SIMILAR_SHOWN + 1
  * Без карты (непрогретая база, сбой чтения) или когда все пять тегов
  * частотные — прежний порядок, первый по весу.
  *
- * Тай-брейк по имени обязателен: страница кэшируется на сутки и пререндерится,
+ * Тай-брейк по имени обязателен: страница кэшируется на неделю и пререндерится,
  * и блок «похожие» не должен меняться от того, в каком порядке Object.entries
  * вернул ключи после очередной пересборки каталога.
  */
@@ -183,7 +214,7 @@ export function topTagOf(meta: GameMeta, tagStats?: Map<string, number> | null):
  * 339. Равномерная выборка разносит чуть шире (3718 и 39), но чаще выкидывает
  * самых похожих.
  *
- * Сид — appid страницы, а не время: страница кэшируется на сутки, и полка не
+ * Сид — appid страницы, а не время: страница кэшируется на неделю, и полка не
  * должна меняться от пересборки к пересборке, пока не поменялись кандидаты.
  * Показываются выбранные в исходном порядке — самые характерные первыми.
  */
@@ -242,7 +273,7 @@ export async function nearGames(
  * массовая страница: пять тысяч адресов в карте сайта, у каждой ещё и
  * OG-картинка. Без памяти один проход краулера стоил бы больше двух миллионов
  * прочитанных строк Turso ради карты, которая меняется только с заливкой
- * каталога. Шесть часов — с запасом короче суток, на которые кэшируется сама
+ * каталога. Шесть часов — с запасом короче недели, на которую кэшируется сама
  * страница.
  *
  * Ключ — сам клиент базы: в проде он один на процесс (lib/server), а тесты с
@@ -497,7 +528,7 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   const reviewsSummary = строка.reviewsSummary as GamePageData['reviewsSummary']
   const stored = строка.prosCons as GamePageData['prosCons']
   const [news, shelf] = await Promise.all([
-    getGameNews(db, appid, 8).then((rows) => rows.map(withoutBody)),
+    getGameNews(db, appid, 8).then((rows) => rows.map(cardNews)),
     similarOf(),
   ])
 

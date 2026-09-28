@@ -142,7 +142,7 @@ describe('topTagOf', () => {
   })
 
   test('при равных весах порядок не зависит от порядка ключей', () => {
-    // Страница кэшируется на сутки и пререндерится: блок «похожие» не имеет
+    // Страница кэшируется на неделю и пререндерится: блок «похожие» не имеет
     // права меняться от того, как Object.entries вернул ключи после пересборки
     const a = topTagOf(meta(1, { tags: { Zzz: 500, Aaa: 500 } }))
     const b = topTagOf(meta(1, { tags: { Aaa: 500, Zzz: 500 } }))
@@ -223,7 +223,7 @@ describe('pickSimilar', () => {
     expect(a).toHaveLength(SIMILAR_SHOWN)
     expect(new Set(a).size).toBe(SIMILAR_SHOWN)
     expect([...a].sort((x, y) => x - y)).toEqual(a)
-    // страница кэшируется на сутки: полка не должна прыгать между пересборками
+    // страница кэшируется на неделю: полка не должна прыгать между пересборками
     expect(pickSimilar(ranked, 1_593_500)).toEqual(a)
   })
 

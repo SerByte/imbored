@@ -47,6 +47,8 @@ function pick(appid: number, name = `Game ${appid}`): PlayPick {
     store: null,
     storeUrl: null,
     priceFinal: null,
+    priceCc: null,
+    unsold: false,
     isFree: null,
     discount: null,
     signals: null,
@@ -121,6 +123,19 @@ describe('parsePlayCache', () => {
   test('запись прошлой версии сайта не узнаётся', () => {
     expect(parsePlayCache({ ...entry(), v: 0 })).toBeNull()
     expect(parsePlayCache({ ...entry(), v: undefined })).toBeNull()
+  })
+
+  test('карточка без региона цены (версия 1) не узнаётся: у её ценника нет валюты', () => {
+    expect(PLAY_CACHE_VERSION).toBe(2)
+    const e = entry()
+    const bare = (p: PlayPick) => {
+      const rest: Record<string, unknown> = { ...p }
+      delete rest.priceCc
+      delete rest.unsold
+      return rest
+    }
+    const v1 = { ...e, v: 1, deal: { ...e.deal, picks: e.deal.picks.map(bare) } }
+    expect(parsePlayCache(JSON.parse(JSON.stringify(v1)))).toBeNull()
   })
 
   test('одна битая карточка — вся запись мимо', () => {

@@ -39,6 +39,7 @@ import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
 import { judgeLiveness, playMode } from '../lib/liveness'
 import { buildSeriesIndex, SERIES_OVERRIDES, type SeriesMember } from '../lib/series'
 import { isMultiplayerCategories } from '../lib/steamcats'
+import { priceRegion } from '../lib/steamregion'
 import type { GameMeta } from '../lib/types'
 
 const STORE_BATCH = 200
@@ -105,6 +106,9 @@ async function main() {
 
   const metas: GameMeta[] = []
   const done: number[] = []
+  // Цена карты территории — из поиска магазина, а он всегда в `us` (lib/ingest
+  // fetchSearchPage). Годится она, только когда и регион цен сервиса `us`
+  const searchPricesFit = priceRegion() === 'us'
   for (let i = 0; i < queue.length; i += STORE_BATCH) {
     const chunk = queue.slice(i, i + STORE_BATCH)
     // media: кадры и трейлер тем же запросом. Ответ втрое тяжелее, но это
@@ -131,7 +135,10 @@ async function main() {
       if (src?.releaseYear) m.releaseYear = src.releaseYear
       if (src?.reviewsTotal) m.reviewsTotal = src.reviewsTotal
       if (src?.reviewsPercent) m.reviewsPercent = src.reviewsPercent
-      if (src?.priceFinal !== undefined && m.priceFinal === undefined) m.priceFinal = src.priceFinal
+      if (searchPricesFit && src?.priceFinal !== undefined && m.priceFinal === undefined) {
+        m.priceFinal = src.priceFinal
+        m.priceCc = 'us'
+      }
     }
     metas.push(...fetched)
     console.log(`глубина: ${metas.length}/${queue.length}`)

@@ -78,7 +78,10 @@ export type GameLdInput = {
   rating: ReviewFacts | null
   /** абсолютный адрес сайта — schema.org требует полных ссылок */
   baseUrl: string
-  /** ISO 4217 региона цен; см. currencyOf */
+  /**
+   * ISO 4217 региона цен — regionCurrency(priceRegion()) из lib/steamregion.
+   * Цена в мете всегда этого региона: чужую rowToMeta не отдаёт вовсе.
+   */
   currency: string
   now: number
 }
@@ -87,7 +90,7 @@ export type GameLdInput = {
  * Категории Steam -> GamePlayMode схемы.
  *
  * Порядок задан здесь, а не приходит из meta.categories, и это важно: страница
- * кэшируется на сутки и пререндерится, а порядок категорий в ответе Steam
+ * кэшируется на неделю и пререндерится, а порядок категорий в ответе Steam
  * между пересборками каталога не гарантирован. Разметка не должна меняться от
  * того, в каком порядке они легли в базу.
  */
@@ -96,25 +99,6 @@ const PLAY_MODES: Array<[number[], string]> = [
   [[1], 'MultiPlayer'],
   [[9, 38], 'CoOp'],
 ]
-
-/**
- * Steam-регион цен -> код валюты.
- *
- * Нужен только разметке: витрина рисует цену через formatPrice, который
- * доллар зашивает (модуль клиентский и до process.env не дотягивается).
- * Пока STEAM_STORE_CC не трогали, оба места говорят одно и то же; расходиться
- * они начнут ровно тогда, когда регион сменят — и чинить тогда придётся
- * formatPrice, а не это.
- */
-const CURRENCY: Record<string, string> = {
-  us: 'USD', ru: 'RUB', eu: 'EUR', de: 'EUR', fr: 'EUR', uk: 'GBP', gb: 'GBP',
-  ua: 'UAH', kz: 'KZT', tr: 'TRY', pl: 'PLN', br: 'BRL', jp: 'JPY', cn: 'CNY',
-  ca: 'CAD', au: 'AUD', in: 'INR',
-}
-
-export function currencyOf(cc: string | undefined): string {
-  return CURRENCY[(cc ?? '').toLowerCase()] ?? 'USD'
-}
 
 export function gameJsonLd({
   meta,
@@ -143,7 +127,7 @@ export function gameJsonLd({
   // genre не появлялся бы вовсе там, где на странице стоит восемь чипсов.
   //
   // Тай-брейк по имени обязателен по той же причине, что и в topTagOf:
-  // страница пререндерится и кэшируется на сутки, а порядок ключей после
+  // страница пререндерится и кэшируется на неделю, а порядок ключей после
   // очередной пересборки каталога не гарантирован.
   //
   // Теги — русскими подписями (tagRu), как на чипсах: разметка обязана
@@ -189,6 +173,11 @@ export function gameJsonLd({
 }
 
 function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers'] {
+  // «Не продаётся в российском Steam» — предложения нет, в том числе
+  // бесплатного: InStock про игру, которую в этом регионе не взять, был бы
+  // неправдой. Видимое на странице говорит то же — PriceTag ставит «не
+  // продаётся» раньше «бесплатно» (lib/pricetag.test.ts)
+  if (meta.storeHidden) return undefined
   // Free-to-play приезжает без price_final вовсе — у Steam этого поля для
   // таких игр нет. Ноль здесь не догадка: страница в этом же случае рисует
   // «бесплатно», и разметка обязана говорить то же самое.
@@ -201,6 +190,11 @@ function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers
    * Rain в базе стояло $0.99 при настоящих $19.99. Показать такое человеку
    * плохо, а отдать поисковику — хуже: Offer живёт в индексе дольше страницы
    * и попадает в сниппет, по которому кликают.
+   *
+   * Проверка — на момент рендера, а карточка живёт в кэше неделю. Поэтому
+   * скидку, погасшую уже после рендера, из разметки убирает не она, а крон
+   * карточек: сбрасывает адрес, когда срок доверия вышел (revalidateEndedDeals
+   * в lib/gamecache).
    */
   const trusted = meta.isFree ? 0 : trustedPrice(meta, now)
   if (trusted === null) return undefined
@@ -209,7 +203,7 @@ function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers
   /*
    * isFree СИЛЬНЕЕ цены, и порядок тут не вкусовой — он повторяет PriceTag,
    * который решает то же самое для страницы: `if (isFree || priceFinal === 0)`
-   * стоит у него первой строкой.
+   * стоит у него раньше цены, сразу за «не продаётся» (оно отсеяно выше).
    *
    * Случай не выдуманный, он найден на живом деплое: у Counter-Strike 2 в
    * базе одновременно is_free = 1 и price_final = 1499 — это цена Prime, а

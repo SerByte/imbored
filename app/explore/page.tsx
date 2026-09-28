@@ -68,6 +68,9 @@ function shelfOf(card: DeckCard): ShelfCard {
     owned,
     isFree,
     priceFinal: owned || isFree ? null : (card.priceFinal ?? null),
+    priceCc: owned ? null : (card.priceCc ?? null),
+    // и у бесплатной: «не продаётся» PriceTag ставит раньше «бесплатно»
+    unsold: !owned && card.unsold === true,
     discount: owned ? null : (card.discount ?? null),
   }
 }
@@ -485,6 +488,8 @@ export default function ExplorePage() {
                       ) : (
                         <PriceTag
                           priceFinal={c.priceFinal}
+                          cc={c.priceCc}
+                          unsold={c.unsold}
                           discount={c.discount}
                           isFree={c.isFree}
                           showPercent={false}

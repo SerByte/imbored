@@ -64,6 +64,8 @@ export function PatchRow({
   discovery = false,
   discount = null,
   price = null,
+  priceCc = null,
+  unsold = false,
 }: {
   item: FeedItem
   meta?: FeedMeta
@@ -79,6 +81,10 @@ export function PatchRow({
    * акции. См. trustedPrice.
    */
   price?: number | null
+  /** регион магазина цены (lib/steamregion) — её валюта; с сервера, как и цена */
+  priceCc?: string | null
+  /** магазин региона игру не показывает */
+  unsold?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [blocks, setBlocks] = useState<NewsBlock[] | null>(null)
@@ -262,7 +268,7 @@ export function PatchRow({
       */}
       {discovery ? (
         <div className="-mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pb-6 pl-[108px] text-sm md:pl-[192px]">
-          <PriceTag priceFinal={price} discount={discount} isFree={meta?.isFree} />
+          <PriceTag priceFinal={price} cc={priceCc} unsold={unsold} discount={discount} isFree={meta?.isFree} />
           <DiscountEnds discount={discount} />
           <Link
             href={`/game/${item.appid}`}

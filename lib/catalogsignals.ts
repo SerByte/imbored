@@ -16,6 +16,26 @@
  *   • Отзывы — GetItems с include_reviews, двести игр одним запросом.
  *   • Онлайн — по игре за запрос (другого API нет), и только у совместных:
  *     живость гейтит только их, ровно как в promote-catalog.
+ *   • Цены — тот же GetItems, но в регионе цен (lib/deals), той же пачкой, и
+ *     только тем, у кого цены своего региона нет вовсе: ни разу не мерили,
+ *     мерили в чужом или магазин региона игру не показывал (store_hidden).
+ *     Здесь, а не отдельной очередью: это единственный крон, который обходит
+ *     весь пул, и его шаг — неделя. Без него цену каталога двигали только
+ *     заходы людей, и после смены STEAM_STORE_CC у переоценки не было бы
+ *     срока; с ним весь пул переоценён не позже чем за SIGNALS_MAX_AGE_SEC.
+ *     «Не продаётся» — единственное, что без сверки не переснял бы никто:
+ *     такую игру подбор покупкой не предлагает (lib/candidates), и заходы
+ *     людей до неё не доходят. Разовый visible:false (предзаказ, временный
+ *     запрет, осечка магазина) держался бы вечно; так — не дольше недели.
+ *     Скидки у скрытой строки нет, и бюджету ISR её перезамер не стоит ничего.
+ *     Свою цену, пусть и давнюю, сверка не переснимает — это не забыто. Сама
+ *     она карточек не сбрасывает, но замер со скидкой доверенный, и конец этой
+ *     скидки отдаст карточку в revalidateEndedDeals (lib/gamecache): запись
+ *     ISR, хотя собранная страница скидки обычно и не видела. Еженедельный
+ *     замер всего пула платил бы так на каждой распродаже, а бюджет ISR и без
+ *     того выбран. Свежесть своей цены держат заходы людей (refreshDeals); при
+ *     постоянном регионе сверка спрашивает цены только у новичков без замера
+ *     и у скрытых.
  *
  * Очередь — колонка reviews_at: сперва ни разу не сверенные, потом самые
  * давние (catalogSignalsQueue). Ни alive, ни signals_at здесь не пишутся:
@@ -29,9 +49,18 @@
 
 import { callStoreItems, STORE_ITEMS_BATCH } from './catalog'
 import { sliceClock } from './cron'
-import { catalogSignalsQueue, updateCatalogSignals, type Db } from './db'
+import {
+  catalogSignalsQueue,
+  stalePriceAppids,
+  updateCatalogSignals,
+  updateGamePrices,
+  type Db,
+  type PriceQuote,
+} from './db'
+import { fetchStorePrices } from './deals'
 import { logSwallowed } from './errlog'
 import { CCU_TIMEOUT_MS, fetchCurrentPlayers, pollPlayerCounts } from './ingest'
+import { priceRegion } from './steamregion'
 
 /**
  * Раз в сколько сверять игру. Неделя: пул — около шести тысяч игр, и при
@@ -134,6 +163,10 @@ export type SignalsResult = {
   reviews: number
   /** Замеров онлайна */
   ccu: number
+  /** Котировок цены, записанных в регионе цен (с ценой, без неё и скрытых) */
+  prices: number
+  /** Из них — «не продаётся в этом регионе» (visible:false) */
+  hidden: number
   /**
    * done — устаревших больше нет; budget — кончилось время звена, а работа
    * осталась; blocked — Steam отказал, дальше в этом звене не ходим.
@@ -148,7 +181,8 @@ export type SignalsResult = {
  * Отказ отзывов — пачка не пишется вовсе, отметок нет, и следующее звено
  * возьмёт её же первой. Отказ онлайна (серия из CCU_FAIL_STREAK) или срок —
  * пачка пишется тем, что успело приехать: отзывы и отметки у всех, онлайн у
- * замеренных. Недомеренные дождутся следующего круга.
+ * замеренных. Недомеренные дождутся следующего круга. Отказ цен — строка в
+ * журнал, и пачка пишется без них.
  */
 export async function refreshCatalogSignals(
   db: Db,
@@ -160,6 +194,7 @@ export async function refreshCatalogSignals(
     /** подменяются в тестах: иначе прогон уходит и в сеть, и в лимитер темпа */
     fetchReviews?: (appids: number[]) => Promise<Map<number, StoreReviews | null>>
     fetchPlayers?: (appid: number) => Promise<number | undefined>
+    fetchPrices?: (appids: number[], cc: string) => Promise<PriceQuote[]>
   },
 ): Promise<SignalsResult> {
   const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
@@ -168,8 +203,12 @@ export async function refreshCatalogSignals(
   const reviewsOf = opts.fetchReviews ?? ((ids: number[]) => fetchStoreReviews(ids))
   const playersOf =
     opts.fetchPlayers ?? ((appid: number) => fetchCurrentPlayers(appid, fetch, CCU_TIMEOUT_MS))
+  const pricesOf =
+    opts.fetchPrices ?? ((ids: number[], cc: string) => fetchStorePrices(ids, { cc }))
+  // Один регион на звено: запрос и запись цен — про одни и те же деньги
+  const cc = priceRegion()
 
-  const result: SignalsResult = { checked: 0, reviews: 0, ccu: 0, stopped: 'budget' }
+  const result: SignalsResult = { checked: 0, reviews: 0, ccu: 0, prices: 0, hidden: 0, stopped: 'budget' }
   const часы = sliceClock(opts.deadlineAt)
 
   for (let b = 0; b < maxBatches; b++) {
@@ -195,6 +234,30 @@ export async function refreshCatalogSignals(
       return result
     }
 
+    // Цены — сразу за отзывами и до онлайна: один запрос на пачку, а опрос
+    // онлайна сам встаёт по сроку звена, и так звено не вылезает за срок
+    // из-за цен. Их отказ пачку не останавливает: отзывы с отметками пишутся
+    // всё равно, а цены этих игр переснимет первый же заход человека
+    // (refreshDeals) или следующий круг.
+    // Спрашиваем только игры без цены своего региона: срок без предела, и
+    // stalePriceAppids оставляет ровно «ни разу не мерили», «чужой регион» и
+    // «не продаётся» (почему не всех — в шапке). Нет таких — нет и запроса
+    let quotes: PriceQuote[] = []
+    try {
+      const unpriced = await stalePriceAppids(
+        db,
+        due.map((r) => r.appid),
+        Number.MAX_SAFE_INTEGER,
+        now,
+        due.length,
+        cc,
+        { hidden: true },
+      )
+      if (unpriced.length) quotes = await pricesOf(unpriced, cc)
+    } catch (err) {
+      logSwallowed('catalog-signals:prices', err, { batch: due.length })
+    }
+
     const ccuDue = due
       .filter((r) => r.isMultiplayer && (r.ccuAt === null || r.ccuAt < now - CCU_FRESH_SEC))
       .map((r) => r.appid)
@@ -207,9 +270,12 @@ export async function refreshCatalogSignals(
       { checked: due.map((r) => r.appid), reviews, ccu: polled.counts },
       now,
     )
+    if (quotes.length) await updateGamePrices(db, quotes, now, cc)
     result.checked += due.length
     result.reviews += due.filter((r) => reviews.get(r.appid)).length
     result.ccu += polled.counts.length
+    result.prices += quotes.length
+    result.hidden += quotes.filter((q) => q.hidden).length
 
     if (polled.stopped) {
       // Опрос онлайна встаёт по сроку или по серии отказов; различить их

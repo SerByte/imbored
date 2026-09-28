@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'vitest'
 import type { CandidateSet } from './candidates'
-import { aboutLine, cardView, dailyCardView, heroMediaView, pickContext, storeCardView } from './cards'
+import {
+  aboutLine,
+  cardView,
+  dailyCardView,
+  exploreCardView,
+  heroMediaView,
+  pickContext,
+  shelfCardView,
+  storeCardView,
+} from './cards'
 import { NEUTRAL_MOOD } from './mood'
 import { topTags } from './recommend'
 import { HERO_SLIDES } from './shots'
@@ -142,5 +151,45 @@ describe('aboutLine', () => {
     expect(aboutLine('untouched', { ...meta(20), shortDescription: ru })).toBeNull()
     expect(aboutLine('new', undefined)).toBeNull()
     expect(aboutLine('new', { ...meta(20), shortDescription: '   ' })).toBeNull()
+  })
+})
+
+/**
+ * Регион цены едет к клиенту рядом с ней: ценник в браузере валюту знает
+ * только отсюда (STEAM_STORE_CC в бандле нет, см. lib/steamregion).
+ */
+describe('регион цены в карточках', () => {
+  test('у каждой карточки с ценой — её регион; «не продаётся» — отдельным признаком', () => {
+    const rub = meta(20, { priceCc: 'ru' })
+    const hidden = meta(30, { priceCc: 'ru', storeHidden: true, priceFinal: undefined, discountPercent: undefined })
+    const ctx = pickContext(set([rub, hidden], []))
+    expect(cardView({ appid: 20, name: 'Игра 20', source: 'new', reason: 'x' }, ctx)).toMatchObject({
+      priceFinal: 1999,
+      priceCc: 'ru',
+      unsold: false,
+    })
+    expect(storeCardView({ appid: 30, name: 'Игра 30' }, hidden, NOW, false)).toMatchObject({
+      priceFinal: null,
+      priceCc: 'ru',
+      unsold: true,
+    })
+    const plate = exploreCardView({ appid: 20, name: 'Игра 20', source: 'new', reason: 'x' }, ctx)
+    expect(plate).toMatchObject({ priceFinal: 1999, priceCc: 'ru', unsold: false })
+  })
+
+  test('без меты — регион null: ценник промолчит, а не нарисует чужую валюту', () => {
+    const ctx = pickContext(set([], []))
+    expect(cardView({ appid: 99, name: 'Игра 99', source: 'new', reason: 'x' }, ctx)).toMatchObject({
+      priceFinal: null,
+      priceCc: null,
+      unsold: false,
+    })
+  })
+
+  test('полка «Приглянулось»: у своей игры ни цены, ни региона', () => {
+    const own = shelfCardView(meta(20, { priceCc: 'ru' }), { now: NOW, owned: true, hideUrgency: false })
+    expect(own).toMatchObject({ priceFinal: null, priceCc: null, unsold: false })
+    const buy = shelfCardView(meta(20, { priceCc: 'ru' }), { now: NOW, owned: false, hideUrgency: false })
+    expect(buy).toMatchObject({ priceFinal: 1999, priceCc: 'ru' })
   })
 })

@@ -77,6 +77,10 @@ type RoomState = {
     forCount: number | null
     isFree: boolean
     priceFinal: number | null
+    /** регион магазина цены — её валюта (lib/steamregion) */
+    priceCc: string | null
+    /** магазин региона игру не показывает */
+    unsold: boolean
     discount: Discount | null
   } | null
 }
@@ -90,6 +94,8 @@ type Card = {
   ownedByAll: boolean
   missingFor: string[]
   priceFinal?: number
+  priceCc?: string | null
+  unsold?: boolean
   isFree?: boolean
   discount?: Discount | null
   headerImage: string | null

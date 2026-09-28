@@ -45,6 +45,10 @@ export function MatchCeremony({
     forCount?: number | null
     isFree?: boolean
     priceFinal?: number | null
+    /** регион магазина цены; null — цены нет */
+    priceCc?: string | null
+    /** «не продаётся в российском Steam» */
+    unsold?: boolean
     discount?: Discount | null
   }
   memberCount: number
@@ -236,11 +240,13 @@ export function MatchCeremony({
           {game.ownedByMe === false && (
             <p className="text-sm text-dim">
               У тебя её пока нет
-              {(game.isFree || (game.priceFinal ?? null) !== null) && (
+              {(game.isFree || game.unsold || (game.priceFinal ?? null) !== null) && (
                 <>
                   {' · '}
                   <PriceTag
                     priceFinal={game.priceFinal ?? null}
+                    cc={game.priceCc ?? null}
+                    unsold={game.unsold}
                     isFree={game.isFree}
                     discount={game.discount}
                   />

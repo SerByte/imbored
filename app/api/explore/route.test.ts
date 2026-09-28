@@ -125,6 +125,8 @@ describe('/api/explore', () => {
         owned: false,
         isFree: false,
         priceFinal: null,
+        priceCc: null,
+        unsold: false,
         discount: null,
       },
     ])

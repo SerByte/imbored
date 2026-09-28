@@ -1,5 +1,5 @@
 import type { Discount } from '@/lib/discount'
-import { formatPrice } from '@/lib/discount'
+import { formatPrice, notSold, priceWhere } from '@/lib/steamregion'
 
 /**
  * Цена игры — с распродажей, если она идёт.
@@ -12,11 +12,23 @@ import { formatPrice } from '@/lib/discount'
  * Скидка приезжает уже посчитанной с сервера (см. discountView): решение
  * «верить ли этому замеру» принимается там, где известны часы и время
  * замера, а не в браузере.
+ *
+ * Регион — тоже с сервера и рядом с ценой (cc): валюта — свойство замера, а
+ * не страницы. Карточка, отданная до смены STEAM_STORE_CC, рисует свои
+ * доллары долларами, а не долларами со знаком рубля.
  */
 
 export type PriceTagProps = {
   /** цена в минимальных единицах валюты; null — цена неизвестна */
   priceFinal: number | null
+  /**
+   * Регион магазина, в котором снята цена (lib/steamregion). Обязателен:
+   * без него у цены нет валюты. null — региона нет, а значит, и цены: кроме
+   * «бесплатно», ничего не рисуется.
+   */
+  cc: string | null
+  /** Магазин региона игру не показывает — «не продаётся в российском Steam» */
+  unsold?: boolean | null
   discount?: Discount | null
   isFree?: boolean | null
   /** «hero» — крупная плашка под кнопкой, «inline» — строка в карточке */
@@ -32,19 +44,32 @@ export type PriceTagProps = {
 
 export function PriceTag({
   priceFinal,
+  cc,
+  unsold = false,
   discount = null,
   isFree = false,
   size = 'inline',
   showPercent = true,
   className = '',
 }: PriceTagProps) {
+  // «Не продаётся» сильнее даже «бесплатно»: бесплатную игру, которую магазин
+  // региона не показывает, из него тоже не взять, и «бесплатно» обещало бы
+  // человеку то, чего он не получит. Так же решает разметка (offersOf в
+  // lib/jsonld: у скрытой игры Offer нет, даже нулевого) — видимое и
+  // размеченное не расходятся. Факт, а не ошибка: тем же тоном, что цена, но
+  // без акцента — купить здесь нечего. Без региона сказать «где» нечем, и
+  // такой ответ молчит, как цена без валюты
+  if (unsold && cc) return <span className={`text-dim ${className}`}>{notSold(cc)}</span>
   if (isFree || priceFinal === 0) {
     return <span className={`font-bold tabular-nums text-ember-text ${className}`}>бесплатно</span>
   }
+  // cc === undefined — карточка из вкладки, открытой до этого поля: валюты у
+  // её цены не узнать, и она молчит так же, как без региона
+  if (cc === null || cc === undefined) return null
   if (priceFinal === null || priceFinal === undefined) return null
 
   const hero = size === 'hero'
-  const price = formatPrice(discount ? discount.finalCents : priceFinal)
+  const price = formatPrice(discount ? discount.finalCents : priceFinal, cc)
 
   if (!discount) {
     return <span className={`font-bold tabular-nums text-ember-text ${className}`}>{price}</span>
@@ -63,7 +88,7 @@ export function PriceTag({
       )}
       {/* Старая цена приглушена намеренно: это история, а не второй ценник */}
       <span className="tabular-nums text-faint line-through">
-        {formatPrice(discount.initialCents)}
+        {formatPrice(discount.initialCents, cc)}
       </span>
       <span className={`font-bold tabular-nums text-ember-text ${hero ? 'text-base' : ''}`}>
         {price}
@@ -95,6 +120,20 @@ export function DiscountCorner({ discount }: { discount: Discount | null | undef
       −{discount.percent}%
     </span>
   )
+}
+
+/**
+ * «цена в российском Steam» — мелкой строкой у ценника, где для неё есть
+ * место (герой /play и /daily, карточка игры).
+ *
+ * Не у каждой плитки: регион у всех цен страницы один, и подпись под каждой
+ * из двенадцати была бы шумом. Нужна она там, где человек решает купить:
+ * русскоязычный аккаунт — не обязательно российский (у KZ и СНГ-доллара
+ * цены другие), и число без региона обещало бы ему чужую цену.
+ */
+export function PriceWhere({ cc, className = '' }: { cc: string | null | undefined; className?: string }) {
+  if (!cc) return null
+  return <span className={`text-xs text-faint ${className}`}>{priceWhere(cc)}</span>
 }
 
 /** «до 17 августа» — отдельно, потому что в карточке для неё нет места */

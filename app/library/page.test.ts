@@ -6,10 +6,11 @@ import { Evenings } from '@/components/Evenings'
 import { GameCardBody } from '@/components/GameCard'
 import { LikedShelf } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
-import { logFeedback, recordOutcome, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
+import { logFeedback, recordOutcome, saveLibrarySnapshot, saveWishlist, upsertGamesMeta, type Db } from '@/lib/db'
 import { nowSec } from '@/lib/server'
-import { freshDb, signInAs, type SessionKind } from '@/lib/testing/route'
+import { freshDb, signInAs, STEAMID_OF, type SessionKind } from '@/lib/testing/route'
 import LibraryPage from './page'
+import { WishlistShelf } from './WishlistShelf'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -39,6 +40,8 @@ const BANNED = 900
 const LIKED = 901
 const EVENING = 902
 const SKIPPED = 903
+/** Из списка желаемого владельца */
+const WISHED = 904
 
 const NAMES: Record<number, string> = {
   [PLAYED]: 'Альфа',
@@ -89,6 +92,8 @@ async function seed(steamid: string): Promise<void> {
   await logFeedback(db, { steamid, appid: LIKED, action: 'liked' }, now - 200)
   await logFeedback(db, { steamid, appid: SKIPPED, action: 'skipped' }, now - 100)
   await recordOutcome(db, { steamid, appid: EVENING, source: null, launched: true }, now - 60)
+  // Список желаемого — что человек хочет купить: тоже его личное
+  await saveWishlist(db, steamid, [WISHED], now - 30)
 }
 
 async function render(kind: SessionKind): Promise<ReactElement> {
@@ -163,6 +168,20 @@ describe('/library: личное владельца — только тому, �
     expect(propsOf(tree, NeedSteam).filter((p) => p.why === 'see')).toEqual([])
   })
 
+  test('вошедший через Steam получает полку желаемого с уже прочитанным списком', async () => {
+    const tree = await render('openid')
+    const shelves = propsOf(tree, WishlistShelf)
+    expect(shelves).toHaveLength(1)
+    expect(shelves[0].steamid).toBe(STEAMID_OF.openid)
+    expect((shelves[0].row as { appids: number[] }).appids).toEqual([WISHED])
+    // своё не предлагается купить: полка знает библиотеку
+    expect((shelves[0].owned as ReadonlySet<number>).has(PLAYED)).toBe(true)
+  })
+
+  test('у демо списка желаемого нет — и полки тоже: в Steam за ним не ходим', async () => {
+    expect(propsOf(await render('demo'), WishlistShelf)).toEqual([])
+  })
+
   test('сессия по ссылке — ни полок, ни вечеров, ни доли; вместо них строка о входе', async () => {
     const tree = await render('claimed')
 
@@ -173,6 +192,9 @@ describe('/library: личное владельца — только тому, �
     expect(liked.games).toEqual([])
     expect(liked.total).toBe(0)
     expect(propsOf(tree, Evenings)).toEqual([])
+    // Список желаемого не читается и не показывается: что человек хочет
+    // купить — не дело того, у кого есть ссылка на профиль
+    expect(propsOf(tree, WishlistShelf)).toEqual([])
 
     const all = strings(tree)
     for (const name of PRIVATE) {

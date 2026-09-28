@@ -229,6 +229,8 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                 discovery={showPopular}
                 discount={showPopular && meta ? discountView(meta, now) : null}
                 price={showPopular && meta ? trustedPrice(meta, now) : null}
+                priceCc={showPopular ? (meta?.priceCc ?? null) : null}
+                unsold={showPopular && meta?.storeHidden === true}
               />
             )
           })}
@@ -265,6 +267,8 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                     discovery
                     discount={meta ? discountView(meta, now) : null}
                     price={meta ? trustedPrice(meta, now) : null}
+                    priceCc={meta?.priceCc ?? null}
+                    unsold={meta?.storeHidden === true}
                   />
                 )
               })}

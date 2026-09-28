@@ -54,18 +54,34 @@ describe('превью', () => {
   })
 })
 
-describe('сторож прокси Cloudflare', () => {
-  const cron = read('.github', 'workflows', 'cron.yml')
+const cron = read('.github', 'workflows', 'cron.yml')
 
-  // Текст job'а — после его ключа и до ключа следующего job'а (тот же отступ
-  // в два пробела) или до конца файла
-  const job = (name: string) => {
-    const at = cron.search(new RegExp(`^  ${name}:\\s*$`, 'm'))
-    expect(at, `job ${name} в cron.yml не найден`).toBeGreaterThan(-1)
-    const body = cron.slice(at + `  ${name}:`.length)
-    const next = body.search(/^ {2}[\w-]+:\s*$/m)
-    return next === -1 ? body : body.slice(0, next)
-  }
+// Текст job'а — после его ключа и до ключа следующего job'а (тот же отступ
+// в два пробела) или до конца файла
+const job = (name: string) => {
+  const at = cron.search(new RegExp(`^  ${name}:\\s*$`, 'm'))
+  expect(at, `job ${name} в cron.yml не найден`).toBeGreaterThan(-1)
+  const body = cron.slice(at + `  ${name}:`.length)
+  const next = body.search(/^ {2}[\w-]+:\s*$/m)
+  return next === -1 ? body : body.slice(0, next)
+}
+
+describe('часовой прогон кронов', () => {
+  test('health — первым шагом, до пингов, а пинги идут при любом его ответе', () => {
+    // Health обязан читать итоги ПРОШЛОГО часа. Позови его после пингов — и
+    // он читал бы запуски, начатые секунды назад, и крон, падающий через раз,
+    // проскальзывал бы зелёным. А без always() красный health останавливал бы
+    // и сами очереди
+    const steps = job('ping').split(/^ {6}- name: /m).slice(1)
+    const names = steps.map((st) => st.slice(0, st.indexOf('\n')).trim())
+    expect(names[0]).toBe('Здоровье кронов')
+    expect(steps[0]).toContain('https://imbored.cc/api/cron/health')
+    expect(names.slice(1)).toEqual(['Пнуть /api/cron/news', 'Пнуть /api/cron/digest'])
+    for (const st of steps.slice(1)) expect(st).toMatch(/^\s*if: always\(\)\s*$/m)
+  })
+})
+
+describe('сторож прокси Cloudflare', () => {
   const skips = (name: string) => job(name).match(/^\s*if: github\.event\.schedule != '([^']+)'/m)?.[1]
 
   test('часовой прогон пропускает сторож, суточный — пинки, и строки те же, что в schedule', () => {

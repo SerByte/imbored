@@ -49,6 +49,7 @@ import {
 } from '@/lib/portraitvoice'
 import { appBaseUrl, currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent } from '@/lib/stats'
+import { byPrices, formatPrice } from '@/lib/steamregion'
 import { tagWeightFrom } from '@/lib/tagweight'
 import type { LibraryGame } from '@/lib/types'
 import { Icon } from '@/components/Icon'
@@ -252,8 +253,10 @@ async function loadModel(
     },
     // v3 — в модели появились итоги года: запись v2 без них отдавалась бы сутки.
     // v4 — признак скрытого времени (wrapped.playtimeHidden): запись v3 без него
-    // сутки показывала бы «0 часов» и «Чистилище» на всю библиотеку
-    ['portrait-model:v4', steamid, String(snapshot.takenAt)],
+    // сутки показывала бы «0 часов» и «Чистилище» на всю библиотеку.
+    // v5 — сумма бэклога несёт свой регион (backlog.cc): запись v4 после смены
+    // STEAM_STORE_CC сутки рисовала бы долларовые центы знаком рубля
+    ['portrait-model:v5', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
   try {
@@ -290,7 +293,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const { portrait, wrapped, backlog, headline, evidence, starter, mosaic, purgatory } = model
   // Число вынимается из фразы, чтобы остаться моноширинным, как все числа
   const equivalent = (() => {
-    const eq = backlogEquivalent(backlog.cents, steamid)
+    const eq = backlogEquivalent(backlog.cents, backlog.cc, steamid)
     if (!eq) return null
     const [before, after] = eq.text.split('{n}')
     return { count: eq.count, before, after }
@@ -647,9 +650,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               <p>
                 В них лежит не меньше{' '}
                 <span className="tabular-nums text-ember-text">
-                  ${(backlog.cents / 100).toFixed(0)}
+                  {formatPrice(backlog.cents, backlog.cc, { whole: true })}
                 </span>{' '}
-                — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}.
+                {byPrices(backlog.cc)} — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}.
               </p>
             )}
             {/* Шутки про бургеры обращаются к владельцу («их бы ты доел») —

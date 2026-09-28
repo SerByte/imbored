@@ -3,6 +3,7 @@ import { hasCyrillic } from './cyrillic'
 import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
 import { logSwallowed } from './errlog'
 import { pace } from './pace'
+import { META_CC, priceRegion, regionCurrency } from './steamregion'
 import {
   parseStoreScreenshots,
   parseStoreTrailer,
@@ -22,11 +23,19 @@ type AppDetailsData = {
   screenshots?: Array<{ path_full?: string }>
   genres?: Array<{ description?: string }>
   categories?: Array<{ id?: number }>
-  price_overview?: { final?: number; initial?: number; discount_percent?: number }
+  price_overview?: { currency?: string; final?: number; initial?: number; discount_percent?: number }
   release_date?: { date?: string }
 }
 
-export function parseAppDetails(json: unknown, appid: number): GameMeta | null {
+/**
+ * cc — регион, в котором спрашивали (fetchAppDetails ходит в META_CC). Цену
+ * отсюда берём, только если это и есть регион цен сервиса и валюта ответа —
+ * его валюта: appdetails в `us` при ценах из `ru` принёс бы доллары, которые
+ * апсерт подписал бы рублями. Валюта сверяется и при совпавшем регионе —
+ * Steam назначает её по адресу запроса, и ответ в чужой валюте ценой этого
+ * региона не считается.
+ */
+export function parseAppDetails(json: unknown, appid: number, cc: string = META_CC): GameMeta | null {
   const entry = (json as Record<string, { success?: boolean; data?: AppDetailsData }>)?.[
     String(appid)
   ]
@@ -49,11 +58,18 @@ export function parseAppDetails(json: unknown, appid: number): GameMeta | null {
   if (shots.length) meta.screenshots = shots
   if (d.is_free !== undefined) meta.isFree = d.is_free
   const price = d.price_overview
-  if (price?.final !== undefined) {
+  if (
+    price?.final !== undefined &&
+    cc === priceRegion() &&
+    price.currency === regionCurrency(cc)
+  ) {
     meta.priceFinal = price.final
     // initial у Steam есть всегда, когда есть final, и вне распродажи равен ему
     meta.priceInitial = price.initial ?? price.final
     meta.discountPercent = price.discount_percent ?? 0
+    // Цена пришла — значит, в этом регионе игру продают
+    meta.priceCc = cc
+    meta.storeHidden = false
   }
   if (d.release_date?.date) meta.releaseDate = d.release_date.date
   return meta
@@ -291,7 +307,18 @@ export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta
 
 /* ---------- сетевые фетчеры с бережным темпом ---------- */
 
-const STORE_CC = process.env.STEAM_STORE_CC ?? 'us'
+/*
+ * Регион запросов к магазину — META_CC (lib/steamregion), а не
+ * STEAM_STORE_CC. Замер 28.09.2026: GetItems с country_code RU отдаёт
+ * visible:false у Cyberpunk 2077, Starfield, The Witcher 3, Hogwarts Legacy,
+ * Spider-Man 2 и Helldivers 2 — без отзывов и без блока покупки, а appdetails
+ * с cc=ru у Cyberpunk — success:false. BG3 там же приходит с
+ * final_price_in_cents 199900, то есть 1 999 ₽ в копейках. Одна переменная на
+ * всё сделала бы новым играм с региональным запретом заглушки «App N» в
+ * прогреве, пустые карточки в кроне (page_tries) и застывшие отзывы у верха
+ * каталога. Поэтому метаданные — всегда из `us`, а цены — отдельным запросом
+ * в регионе цен (lib/deals).
+ */
 const FETCH_TIMEOUT_MS = 10_000
 // ~200 запросов/5 мин на store.steampowered.com => >=1.7с между запросами
 export const STORE_PACE_MS = 1700
@@ -354,6 +381,10 @@ export async function fetchStoreItems(
     ? { ...STORE_ITEMS_DATA_REQUEST, ...STORE_MEDIA_DATA_REQUEST }
     : STORE_ITEMS_DATA_REQUEST
 
+  // Цена этого ответа — цена региона META_CC. Годится она, только когда
+  // регион цен сервиса тот же; иначе её нет вовсе, а не «есть, но чужая»
+  const pricesHere = priceRegion() === META_CC
+
   const out: GameMeta[] = []
   for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
     const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
@@ -364,14 +395,26 @@ export async function fetchStoreItems(
     // третий — получает датированную цену, не помня об этом.
     const at = Math.floor(Date.now() / 1000)
     for (const meta of parseStoreItems(json, tagNames)) {
-      // Ответ без блока покупки — это тоже ответ: игра стала бесплатной или
-      // снята с продажи. Промолчать здесь значит оставить в базе вчерашние
-      // «−70%», которые mergeMeta бережно перенесёт в новую запись, а карточка
-      // покажет как действующую скидку. Цену при этом не трогаем — «Steam не
-      // назвал цену» и «игра подешевела до нуля» отсюда неразличимы, и то же
-      // правило действует в updateGamePrices.
-      if (meta.discountPercent === undefined) meta.discountPercent = 0
-      meta.priceAt = at
+      if (pricesHere) {
+        // Ответ без блока покупки — это тоже ответ: игра стала бесплатной или
+        // снята с продажи. Промолчать здесь значит оставить в базе вчерашние
+        // «−70%», которые mergeMeta бережно перенесёт в новую запись, а карточка
+        // покажет как действующую скидку. Цену при этом не трогаем — «Steam не
+        // назвал цену» и «игра подешевела до нуля» отсюда неразличимы, и то же
+        // правило действует в updateGamePrices.
+        if (meta.discountPercent === undefined) meta.discountPercent = 0
+        meta.priceAt = at
+        meta.priceCc = META_CC
+        // В ответе только видимые (parseStoreItems), а видимую — продают
+        meta.storeHidden = false
+      } else {
+        // Удалить, а не обнулить: mergeMeta спредом перенёс бы undefined
+        // поверх цены своего региона, и прогрев стирал бы её раз в две недели
+        delete meta.priceFinal
+        delete meta.priceInitial
+        delete meta.discountPercent
+        delete meta.discountEndsAt
+      }
       out.push(meta)
     }
   }
@@ -494,6 +537,9 @@ export async function fetchStoreMedia(
  * ходит обновление цен (lib/deals) — но с пустым data_request: блок покупки
  * приезжает и без единого include-флага, а лишние поля на батче в 200 игр
  * стоят секунд.
+ *
+ * cc — регион запроса. По умолчанию META_CC: метаданные и отзывы. Регион цен
+ * передают только те, кто пришёл за ценой (fetchStorePrices).
  */
 export async function callStoreItems(
   appids: number[],
@@ -501,11 +547,12 @@ export async function callStoreItems(
   fetchFn: typeof fetch = fetch,
   msPerApp = 200,
   language = STORE_LANGUAGE,
+  cc: string = META_CC,
 ): Promise<unknown> {
   await pace('steam-api', STORE_API_PACE_MS)
   const input = JSON.stringify({
     ids: appids.map((appid) => ({ appid })),
-    context: { language, country_code: STORE_CC.toUpperCase(), steam_realm: 1 },
+    context: { language, country_code: cc.toUpperCase(), steam_realm: 1 },
     data_request: dataRequest,
   })
   const url = `https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(input)}`
@@ -525,12 +572,14 @@ export async function fetchAppDetails(
   fetchFn: typeof fetch = fetch,
 ): Promise<GameMeta | null> {
   await pace('steam-store', STORE_PACE_MS)
-  const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${STORE_CC}&l=russian`
+  // META_CC: в регионе цен часть игр отвечает success:false (см. выше), а
+  // цену отсюда parseAppDetails возьмёт, только если регионы совпали
+  const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${META_CC}&l=russian`
   const res = await fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
   // rate limit/сбой — исключение, чтобы вызывающий не закэшировал неудачу как «данных нет»
   if (!res.ok) throw new Error(`appdetails ${appid}: HTTP ${res.status}`)
   try {
-    return parseAppDetails(await res.json(), appid)
+    return parseAppDetails(await res.json(), appid, META_CC)
   } catch (err) {
     // Ответ 200, а тело не разобралось: Steam сменил формат или отдал заглушку
     logSwallowed('catalog:appdetails-parse', err, { appid })

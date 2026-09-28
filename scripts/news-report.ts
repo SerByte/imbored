@@ -270,10 +270,13 @@ async function main() {
       `  ${bucket.padEnd(28)}${String(tier).padEnd(6)}${ru(r.n).padStart(6)}${perDay.toFixed(0).padStart(13)}`,
     )
   }
+  // Запуск в час (воркфлоу), в запуске до шести звеньев по LINK_MS (lib/chain),
+  // в звене двадцать игр
+  const capacity = 24 * 6 * 20
   console.log(`\n  спрос:      ~${demand.toFixed(0)} опросов/сут`)
-  console.log(`  ёмкость:     480/сут (24 звена × 20), и только если цепочка доходит до конца`)
+  console.log(`  ёмкость:     ${ru(capacity)}/сут (24 запуска × 6 звеньев × 20), если воркфлоу ходит каждый час`)
   console.log(`  просрочено:  ${ru(due)} прямо сейчас`)
-  if (demand > 480) console.log(`\n  !! спрос выше ёмкости — очередь не может догнать себя в принципе`)
+  if (demand > capacity) console.log(`\n  !! спрос выше ёмкости — очередь не может догнать себя в принципе`)
 
   // ── H. Лестница свежести ───────────────────────────────────────────────
   head('H. Что самое свежее на каждом уровне фильтра')
@@ -332,9 +335,11 @@ async function main() {
   )
 
   // ── J. Состояние крона ─────────────────────────────────────────────────
+  // links и ended — запуск целиком (lib/chain): сколько звеньев и почему
+  // кончился; остальное — последнее звено. Без ended запуск идёт или снят.
   const SLICE_FIELDS = [
-    'chain', 'polled', 'inserted', 'digested', 'enriched', 'withShots', 'withTrailers', 'withProsCons',
-    'viaClaude', 'withSemantics', 'hasMore', 'stopped', 'llm', 'llmStatus', 'llmCapped', 'упало', 'обрыв',
+    'links', 'ended', 'polled', 'inserted', 'digested', 'enriched', 'withShots', 'withTrailers', 'withProsCons',
+    'viaClaude', 'withSemantics', 'hasMore', 'stopped', 'llm', 'llmStatus', 'llmCapped', 'упало',
   ]
   head('J. Что рассказывает про себя крон')
   const j = await rows(
@@ -352,9 +357,14 @@ async function main() {
       try {
         const p = JSON.parse(val) as Record<string, unknown>
         // Только поля, которые этот крон пишет: у карточек нет polled, у
-        // новостей нет enriched. упало и обрыв — последним, чтобы бросались в
-        // глаза: это ровно тот след, которого раньше не оставалось вовсе.
+        // новостей нет enriched. упало — последним, чтобы бросалось в глаза:
+        // это ровно тот след, которого раньше не оставалось вовсе.
         const parts = SLICE_FIELDS.filter((f) => p[f] !== undefined).map((f) => `${f}=${String(p[f])}`)
+        // Суммы за запуск (lib/chain, totals): сколько сделали все звенья
+        const total = p.итого as Record<string, unknown> | undefined
+        if (total && typeof total === 'object') {
+          parts.push(`итого=${Object.entries(total).map(([k, v]) => `${k}:${String(v)}`).join(',')}`)
+        }
         // Сверка сигналов каталога едет в отметке карточек вложенным объектом
         // (lib/catalogsignals): сверено / с отзывами / замеров онлайна
         const sg = p.сигналы as Record<string, unknown> | undefined

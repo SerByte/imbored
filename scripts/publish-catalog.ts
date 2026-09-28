@@ -63,7 +63,7 @@ const flag = (name: string) => process.argv.includes(`--${name}`)
 const COLS = [
   'appid', 'name', 'tags_json', 'genres_json', 'categories_json', 'short_description',
   'header_image', 'screenshots_json', 'is_free', 'price_final', 'release_date',
-  'price_initial', 'discount_percent', 'discount_ends_at', 'price_at',
+  'price_initial', 'discount_percent', 'discount_ends_at', 'price_at', 'price_cc', 'store_hidden',
   'median_forever', 'store', 'store_url', 'updated_at', 'art_json', 'release_year',
   'developer', 'publisher', 'reviews_total', 'reviews_percent', 'reviews_30d',
   'ccu', 'ccu_at', 'signals_at', 'tag_count', 'is_multiplayer', 'alive',
@@ -120,8 +120,9 @@ async function main() {
   }
 
   // ---- games ----
-  // Поздние колонки (trailer_json) — только если локальный каталог их знает:
-  // заливка его не мигрирует, см. presentCols
+  // Поздние колонки (trailer_json, price_cc, store_hidden) — только если
+  // локальный каталог их знает: заливка его не мигрирует, см. presentCols.
+  // Без price_cc не едет и цена — вся её группа
   const haveCols = new Set(
     (await local.execute("SELECT name FROM pragma_table_info('games')")).rows.map((r) =>
       String(r.name),
@@ -130,7 +131,12 @@ async function main() {
   const cols = presentCols(COLS, haveCols)
   if (cols.length < COLS.length) {
     const нет = COLS.filter((c) => !cols.includes(c))
-    console.log(`  в локальном каталоге нет ${нет.join(', ')} — эти колонки не поедут`)
+    const безРегиона = нет.filter((c) => haveCols.has(c))
+    const пропали = нет.filter((c) => !haveCols.has(c))
+    if (пропали.length) console.log(`  в локальном каталоге нет ${пропали.join(', ')} — эти колонки не поедут`)
+    if (безРегиона.length) {
+      console.log(`  цена без региона (price_cc) не едет: ${безРегиона.join(', ')} — облако перемеряет их само`)
+    }
   }
   /*
    * Поля, которые наполняет ОБОГАЩЕНИЕ, а не промоут: пустое локальное
