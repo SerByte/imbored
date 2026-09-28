@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CRON_JOBS, sliceHealth } from '@/lib/cron'
 import { acquireLease, DIGEST_LEASE, getCatalogMeta, type Db } from '@/lib/db'
 import { takeLlmBudget } from '@/lib/llmcap'
+import { runDigestSlice } from '@/lib/newsjob'
 import { freshDb } from '@/lib/testing/route'
 import { GET } from './route'
 
@@ -15,11 +16,20 @@ vi.mock('next/server', async (importOriginal) => ({
     pending.push(typeof work === 'function' ? Promise.resolve().then(work) : work)
   },
 }))
+const { revalidated } = vi.hoisted(() => ({ revalidated: [] as string[] }))
 vi.mock('next/cache', async (importOriginal) => ({
   ...(await importOriginal<typeof import('next/cache')>()),
   revalidateTag: () => {},
-  revalidatePath: () => {},
+  revalidatePath: (path: string) => {
+    revalidated.push(path)
+  },
 }))
+
+// Срез настоящий, но тест может подменить его итог: чьи патчи пересказаны
+vi.mock('@/lib/newsjob', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/newsjob')>()
+  return { ...real, runDigestSlice: vi.fn(real.runDigestSlice) }
+})
 
 async function settled(): Promise<void> {
   while (pending.length) await pending.shift()
@@ -45,6 +55,7 @@ beforeEach(async () => {
     throw new Error('пустая очередь не должна ходить в сеть')
   })
   vi.spyOn(console, 'log').mockImplementation(() => {})
+  revalidated.length = 0
   db = await freshDb()
 })
 
@@ -68,6 +79,24 @@ describe('/api/cron/digest', () => {
     await settled()
     expect(await lastMark()).toMatchObject({ links: 1, ended: 'done', итого: { digested: 0 } })
     expect(await acquireLease(db, DIGEST_LEASE, 'other', 60, T0)).toBe(true)
+    expect(revalidated).toEqual([])
+  })
+
+  test('карточки игр с новым пересказом уходят в перегенерацию', async () => {
+    // Пересказ стоит на карточке строкой под патчем, а карточка живёт в ISR
+    // неделю (lib/gamecache)
+    vi.mocked(runDigestSlice).mockResolvedValueOnce({
+      digested: 2,
+      cards: [730, 570],
+      hasMore: false,
+      stopped: 'done',
+    })
+    expect((await ask()).status).toBe(202)
+    await settled()
+    expect(revalidated).toEqual(['/game/730', '/game/570'])
+    const mark = await lastMark()
+    expect(mark).not.toHaveProperty('cards')
+    expect(mark).toMatchObject({ digested: 2, сброшено: 2, итого: { digested: 2, сброшено: 2 } })
   })
 
   test('бюджет модели на сутки выбран — запуск кончается, не начав звена', async () => {

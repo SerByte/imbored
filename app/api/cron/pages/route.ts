@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { revalidatePath } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { refreshCatalogSignals, type SignalsResult } from '@/lib/catalogsignals'
 import { openRun, runChain } from '@/lib/chain'
 import { cronAuthorized, pagesDailyLinks, pagesLinkVerdict } from '@/lib/cron'
 import { countPageEnrichDue, STEAM_LEASE } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
+import { resetSliceCards, revalidateEndedDeals } from '@/lib/gamecache'
 import { llmAvailable } from '@/lib/llm'
 import { llmDailyCap } from '@/lib/llmcap'
 import {
@@ -35,7 +37,7 @@ export const maxDuration = 300
  */
 const MAX_LINKS = 8
 
-type PagesLink = PageSliceResult & { сигналы?: SignalsResult }
+type PagesLink = Omit<PageSliceResult, 'cards'> & { сброшено: number; сигналы?: SignalsResult }
 
 /**
  * Обогащение карточек игр: скриншоты, вердикт отзывов, pros/cons.
@@ -76,7 +78,7 @@ export async function GET(req: Request) {
       maxDurationSec: maxDuration,
       maxLinks: MAX_LINKS,
       dailyCap,
-      totals: ['enriched', 'withShots', 'withProsCons', 'viaClaude', 'withSemantics'],
+      totals: ['enriched', 'withShots', 'withProsCons', 'viaClaude', 'withSemantics', 'сброшено'],
       link: async ({ deadlineAt }) => {
         /*
          * Сигналы каталога — рядом со срезом карточек, а не после него.
@@ -95,7 +97,11 @@ export async function GET(req: Request) {
           return null
         })
         try {
-          const slice = await runPageSlice(db, { deadlineAt })
+          // Карточки, которые срез поменял, — в перегенерацию: страница живёт
+          // неделю (lib/gamecache), и без сброса свежие pros/cons и кадры
+          // ждали бы её конца. Сверка сигналов карточки не сбрасывает: её
+          // шаг — неделя, ровно срок кэша, и он доезжает сам
+          const slice = resetSliceCards(await runPageSlice(db, { deadlineAt }), revalidatePath)
           const сигналы = await сверка
           return { ...slice, ...(сигналы ? { сигналы } : {}) }
         } finally {
@@ -107,6 +113,17 @@ export async function GET(req: Request) {
       // Работа — у среза карточек или у сверки сигналов; см. pagesLinkVerdict
       verdict: ({ result, failed }) =>
         pagesLinkVerdict({ failed, slice: result, signals: result?.сигналы ?? null }),
+      /*
+       * Карточки с погасшей с прошлого запуска скидкой — в перегенерацию: в
+       * недельном кэше они обещают её в JSON-LD (revalidateEndedDeals). В
+       * конце запуска, а не в начале: пометки уходят в Next разом, когда
+       * after() закончил, и отметка прохода должна двигаться как можно ближе
+       * к ним. Снимут вызов раньше — отметка стоит на месте, и окно целиком
+       * достанется следующему запуску. Исключение глотает runChain.
+       */
+      onEnd: async () => {
+        await revalidateEndedDeals(db, revalidatePath, nowSec())
+      },
     }),
   )
 

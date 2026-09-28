@@ -2,6 +2,7 @@ import { createClient, type Client, type InStatement } from '@libsql/client'
 import { memberLabel, ROOM_MAX_MEMBERS } from './room'
 import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
+import { PRICE_TRUST_SEC } from './discount'
 import type { FeedbackCtx } from './feedbackctx'
 import {
   FEEDBACK_COLUMNS,
@@ -372,6 +373,19 @@ export const ALIVE_POOL = alivePool('')
 export const ALIVE_POOL_G = alivePool('g.')
 
 /**
+ * До какого момента витрина верит скидке — discountOf (lib/discount) в SQL:
+ * срок, названный Steam, а без него — замер плюс PRICE_TRUST_SEC. Им построен
+ * idx_games_deal_until, и запрос обязан повторять это выражение дословно:
+ * индекс по выражению SQLite берёт только так, и «price_at + ?» с параметром
+ * вместо числа — уже не повтор.
+ *
+ * Число вписано в определение индекса, поэтому смена PRICE_TRUST_SEC — это
+ * смена определения: по ПРАВИЛУ ДЛЯ ИНДЕКСОВ у SCHEMA_CATALOG индексу нужно
+ * новое имя. Напоминает об этом сторож в lib/queryplan.test.ts.
+ */
+const DEAL_UNTIL = `COALESCE(discount_ends_at, price_at + ${PRICE_TRUST_SEC})`
+
+/**
  * Схема каталога. Отделена от SCHEMA, потому что часть её объектов ссылается
  * на колонки, добавляемые ALTER-циклом, и создаваться должна строго после него.
  *
@@ -464,6 +478,13 @@ CREATE INDEX IF NOT EXISTS idx_games_ccu ON games (ccu DESC)
 -- двухсот прочитанных, а не всего пула.
 CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_total DESC)
   WHERE ${ALIVE_POOL};
+
+-- Конец доверия скидке (DEAL_UNTIL): по нему крон карточек находит тех, чья
+-- скидка погасла с прошлого прохода (dealsEndedBetween), — их карточки в
+-- недельном кэше ещё обещают её в микроразметке. Только строки со скидкой, а
+-- их на витрине доля каталога; выборка — диапазон индекса, без прохода по games.
+CREATE INDEX IF NOT EXISTS idx_games_deal_until ON games (${DEAL_UNTIL})
+  WHERE discount_percent > 0;
 
 -- Доска «ищут игроков». Единственный индекс на rooms, и он нужен: страница
 -- /rooms опрашивает listPublicRooms раз в несколько секунд из КАЖДОЙ открытой
@@ -2642,16 +2663,18 @@ export async function getGameMeta(db: Db, appid: number): Promise<GameMeta | nul
  * SEMANTICS_JOIN по первичному ключу, одна строка game_semantics, а не
  * второй поход в базу на каждый рендер.
  */
-export async function getGamePageRow(
-  db: Db,
-  appid: number,
-): Promise<{ meta: GameMeta; reviewsSummary: unknown; prosCons: unknown } | null> {
+export async function getGamePageRow(db: Db, appid: number): Promise<GamePageRow | null> {
   const res = await db.execute({
     sql: `SELECT g.*, s.json AS semantics_json FROM games g ${SEMANTICS_JOIN} WHERE g.appid = ?`,
     args: [appid],
   })
   const row = res.rows[0] as unknown as (GameRow & Record<string, unknown>) | undefined
-  if (!row) return null
+  return row ? pageRowOf(row) : null
+}
+
+export type GamePageRow = { meta: GameMeta; reviewsSummary: unknown; prosCons: unknown }
+
+function pageRowOf(row: GameRow & Record<string, unknown>): GamePageRow {
   const разобрать = (v: unknown): unknown => {
     if (typeof v !== 'string' || !v) return null
     try {
@@ -2665,6 +2688,28 @@ export async function getGamePageRow(
     reviewsSummary: разобрать(row.reviews_summary_json),
     prosCons: разобрать(row.pros_cons_json),
   }
+}
+
+/**
+ * Строки карточек пачкой — то же, что getGamePageRow, одним запросом.
+ *
+ * Читает их крон карточек дважды за срез, до и после (lib/pagejob): так он
+ * узнаёт, чьи карточки срез и правда поменял, и сбрасывает в ISR только их
+ * (cardRowPrint в lib/gamecache). Двадцать строк по первичному ключу на
+ * звено — дешевле любой попытки угадать это по тому, что срез записал.
+ */
+export async function getGamePageRows(db: Db, appids: number[]): Promise<Map<number, GamePageRow>> {
+  if (!appids.length) return new Map()
+  const res = await db.execute({
+    sql: `SELECT g.*, s.json AS semantics_json FROM games g ${SEMANTICS_JOIN}
+          WHERE ${APPIDS_IN_G}`,
+    args: [JSON.stringify(appids)],
+  })
+  return new Map(
+    (res.rows as unknown as Array<GameRow & Record<string, unknown>>).map(
+      (r) => [Number(r.appid), pageRowOf(r)] as const,
+    ),
+  )
 }
 
 export type SimilarGame = {
@@ -4040,6 +4085,28 @@ export async function updateGamePrices(
         },
   )
   await db.batch(stmts, 'write')
+}
+
+/**
+ * Игры, чья скидка погасла в окне (after, through]: момент, до которого ей
+ * верит витрина (DEAL_UNTIL — discountOf в SQL), попал в окно.
+ *
+ * Для крона карточек (revalidateEndedDeals в lib/gamecache): карточка живёт в
+ * ISR неделю, и собранная до этого момента обещает скидку в JSON-LD, пока её
+ * не перегенерируют.
+ *
+ * Без LIMIT, и это не забыто. Распродажа Steam кончается одной секундой у
+ * сотен игр разом, и обрезка по LIMIT с отметкой «докуда дошли» (как у
+ * freshlyDigestedPatches) на такой ничьей встала бы навсегда. Строк — не
+ * больше, чем скидок, погасших с прошлого прохода, и каждая — один appid.
+ */
+export async function dealsEndedBetween(db: Db, after: number, through: number): Promise<number[]> {
+  const res = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE discount_percent > 0 AND ${DEAL_UNTIL} > ? AND ${DEAL_UNTIL} <= ?`,
+    args: [after, through],
+  })
+  return (res.rows as unknown as Array<{ appid: number }>).map((r) => Number(r.appid))
 }
 
 /** Строка очереди крона сигналов каталога — см. catalogSignalsQueue. */

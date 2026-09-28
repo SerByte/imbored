@@ -1,19 +1,21 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { cache, Fragment } from 'react'
+import { cache, Fragment, type ReactNode } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameMorph } from '@/components/Morph'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { ShownUntil } from '@/components/ShownUntil'
 import { Eyebrow, MetaLine } from '@/components/Labels'
 import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
 import { RefundNote } from '@/components/RefundNote'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { sitemapGames } from '@/lib/db'
-import { discountView, trustedPrice } from '@/lib/discount'
+import { discountTrustedUntil, discountView, trustedPrice } from '@/lib/discount'
+import { PRERENDER_TOP, prerenderAtBuild } from '@/lib/gamecache'
 import { HUB_GENRES, hubPath, primaryGenre } from '@/lib/gamehub'
 import { byline } from '@/lib/byline'
 import {
@@ -37,31 +39,52 @@ import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
 
 /**
- * Страница кэшируется на сутки вместо force-dynamic.
+ * Страница кэшируется на неделю вместо force-dynamic — GAME_PAGE_REVALIDATE_SEC
+ * в lib/gamecache, литералом, потому что Next читает его только так.
  *
- * Это стало возможным ровно потому, что loadGamePage больше не ходит в сеть:
- * пока карточка собиралась из appdetails, appreviews и Claude прямо на рендере,
- * кэшировать было нечего — каждый заход и был той самой работой. Теперь всё
- * тяжёлое наполняет крон (lib/pagejob.ts), а страница только читает базу,
- * поэтому сутки жизни кэша ничего не устаревают заметно.
+ * Кэш вообще стал возможен ровно потому, что loadGamePage больше не ходит в
+ * сеть: пока карточка собиралась из appdetails, appreviews и Claude прямо на
+ * рендере, кэшировать было нечего. Теперь всё тяжёлое наполняет крон
+ * (lib/pagejob.ts), а страница только читает базу.
+ *
+ * Неделя, а не сутки, — ради ISR Writes (лимит Hobby выбран, см.
+ * lib/gamecache). Свежесть при этом держат не часы, а события: кроны карточек,
+ * новостей и пересказов сбрасывают адрес сами, когда поменяли его данные
+ * (revalidateGamePages). По часам доезжает только медленное — сверка отзывов
+ * и онлайна раз в неделю (lib/catalogsignals), ей неделя и есть родной шаг.
+ *
+ * Неделя бесплатна, только пока вывод СТАБИЛЕН: перегенерация без новых
+ * данных обязана дать ту же страницу байт в байт, иначе Vercel пишет её
+ * заново. Поэтому в разметке нет ничего, что меняется от одних часов:
+ *   • онлайн — всегда прошедшим временем (PlayersNow ниже);
+ *   • срок скидки — датой, а не «осталось 2 дня» (discountView, calendar);
+ *   • в островок новостей едет только видимое (cardNews в lib/gamepage).
+ * Часы остаются только на порогах, которые назначили сами данные: конец
+ * скидки, выход игры. Конец скидки к тому же сбрасывает крон карточек
+ * (revalidateEndedDeals в lib/gamecache): строку цены клиент гасит сам, а
+ * Offer в JSON-LD иначе обещал бы акционную цену до конца недели. Сторож —
+ * app/game/[appid]/page.test.ts.
  */
-export const revalidate = 86_400
+export const revalidate = 604_800
 
 /**
  * Обязателен, и не ради предрендера.
  *
  * Без generateStaticParams динамический сегмент не попадает в dynamicRoutes
  * манифеста вовсе — то есть `revalidate` выше не значит ничего, и каждый заход
- * рендерится заново (проверено: Cache-Control приходил no-store). Отдаём топ
- * каталога, остальные appid досоздаются по требованию и кэшируются на те же
- * сутки: dynamicParams по умолчанию true.
+ * рендерится заново (проверено: Cache-Control приходил no-store). На продовой
+ * сборке отдаём верх каталога, остальные appid досоздаются по требованию и
+ * кэшируются на ту же неделю: dynamicParams по умолчанию true.
  *
- * Сборка не должна падать из-за базы: локально и в превью TURSO_DATABASE_URL
- * может быть не задан, и тогда предрендерить просто нечего.
+ * Везде, кроме прода, список пустой (prerenderAtBuild): каждая пререндеренная
+ * карточка — запись ISR на каждой сборке, и превью платили за это наравне с
+ * продом. Сколько и почему столько — PRERENDER_TOP.
+ *
+ * Сборка не должна падать из-за базы: локально TURSO_DATABASE_URL может быть
+ * не задан, и тогда предрендерить просто нечего.
  */
-const PRERENDER_TOP = 500
-
 export async function generateStaticParams(): Promise<Array<{ appid: string }>> {
+  if (!prerenderAtBuild()) return []
   try {
     const games = await sitemapGames(await getDb(), PRERENDER_TOP)
     return games.map((g) => ({ appid: String(g.appid) }))
@@ -159,6 +182,20 @@ export async function generateMetadata({
   }
 }
 
+/**
+ * Строка цены со сроком годности — только у скидки.
+ *
+ * Со скидкой вся строка — акционное число, и гаснет она вместе с акцией
+ * (discountTrustedUntil): страница из недельного кэша иначе обещала бы
+ * «−70%» после конца распродажи. Без скидки цене верим без срока
+ * (trustedPrice), и клиентский островок ей ни к чему. Разметку островок не
+ * трогает — её после конца скидки освежает крон карточек сбросом адреса
+ * (revalidateEndedDeals).
+ */
+function PriceLine({ until, children }: { until: number | null; children: ReactNode }) {
+  return until === null ? children : <ShownUntil untilSec={until}>{children}</ShownUntil>
+}
+
 const SCORE_RU: Record<string, string> = {
   'Overwhelmingly Positive': 'Крайне положительные',
   'Very Positive': 'Очень положительные',
@@ -188,7 +225,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
   const { meta, reviewsSummary, prosCons } = data
   const now = nowSec()
-  const deal = discountView(meta, now)
+  // Срок — датой: отсчёт «осталось 2 дня» менял бы страницу каждые сутки и
+  // врал бы из недельного кэша (см. докблок revalidate)
+  const deal = discountView(meta, now, { calendar: true })
+  // Страница переживёт скидку — после этого момента цену прячет клиент
+  const dealUntil = deal ? discountTrustedUntil(meta, now) : null
   // null — цене верить нечему (сгоревшая распродажа), см. trustedPrice. Плашку
   // тогда не рисуем вовсе: пустое стекло в герое хуже отсутствия цены.
   const price = trustedPrice(meta, now)
@@ -375,10 +416,12 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   им: у игры 2011 года бывает и двести тысяч человек, и двести.
 
                   Часы — не момент рендера, а последний момент, когда этот
-                  рендер ещё могут показать: страница живёт в кэше сутки
-                  (revalidate выше), и «сейчас», верное при сборке, к вечеру
+                  рендер ещё могут показать: страница живёт в кэше неделю
+                  (revalidate выше), и «сейчас», верное при сборке, через день
                   было бы тем же неправдивым утверждением, ради которого
-                  PlayersNow и спрашивает возраст замера.
+                  PlayersNow и спрашивает возраст замера. Замер свежее шести
+                  часов на неделю вперёд не бывает, так что здесь всегда
+                  «играли» и без пульса — и вывод от часов не зависит.
                 */}
                 <PlayersNow ccu={meta.ccu ?? null} ccuAt={meta.ccuAt} nowSec={now + revalidate} />
               </p>
@@ -540,17 +583,20 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   на который страница с заголовком «стоит ли играть» и должна
                   отвечать. PriceTag такой случай умел с самого начала. */}
               {(meta.isFree || (price !== null && price > 0)) && (
-                // Цена — строкой рядом с кнопками, а не стеклянной плашкой их
-                // формы: в ряду кнопок плашка притворялась ещё одной кнопкой
-                <span className="flex items-center gap-2 px-1 text-sm">
-                  <PriceTag
-                    priceFinal={price}
-                    isFree={meta.isFree}
-                    discount={deal}
-                    size="hero"
-                  />
-                  <DiscountEnds discount={deal} />
-                </span>
+                <PriceLine until={dealUntil}>
+                  {/* Цена — строкой рядом с кнопками, а не стеклянной плашкой
+                      их формы: в ряду кнопок плашка притворялась ещё одной
+                      кнопкой */}
+                  <span className="flex items-center gap-2 px-1 text-sm">
+                    <PriceTag
+                      priceFinal={price}
+                      isFree={meta.isFree}
+                      discount={deal}
+                      size="hero"
+                    />
+                    <DiscountEnds discount={deal} />
+                  </span>
+                </PriceLine>
               )}
             </div>
             {refund && <RefundNote tone="neutral" />}
@@ -685,7 +731,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           </section>
         )}
 
-        {/* /quiz, а не /play: страница кэшируется на сутки и пререндерится, то
+        {/* /quiz, а не /play: страница кэшируется на неделю и пререндерится, то
             есть про сессию тут знать нечего. Гостя /play разворачивал на
             лендинг через экран прогрева, а квиз работает обоим — участник
             выбирает настроение и попадает в ту же выдачу. */}

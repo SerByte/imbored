@@ -1,8 +1,8 @@
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import Link from 'next/link'
-import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
+import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { topGamesByTags } from '@/lib/db'
 import {
   assembleHub,
@@ -130,6 +130,14 @@ export default async function GamesHubPage() {
  *
  * Картинки ленивые, кроме первой полки: остальные грузятся по мере того, как
  * до них доходят, — и вниз, и вбок.
+ *
+ * Капсулы серверные (StaticGameCardBody), а не островки GameArt, и это про
+ * вес. У каждого GameArt в RSC-части страницы ехал весь объект арта — пять
+ * ссылок и дубль header, из которых плитке нужны две, — и триста шестьдесят
+ * таких островков давали 761 КБ HTML при 230 КБ разметки (perf-10 аудита).
+ * Телефон разбирал и гидрировал это целиком, а ISR писал при каждой
+ * перегенерации. Запасной цепочки по onError у серверной капсулы нет, но на
+ * хабе только игры каталога с разрешённым артом — ей она и не нужна.
  */
 function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
   const headingId = `shelf-${shelf.tag.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
@@ -155,11 +163,11 @@ function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
           <li key={g.appid}>
             {/* Без префетча, и это про деньги. Next префетчит каждую ссылку,
                 попавшую в экран, а здесь их три с половиной сотни. Карточки
-                вне предрендеренной пятисотки при первом заходе рендерятся
-                функцией и читают базу — прокрутка хаба будила бы её на каждую
-                капсулу, по которой никто не пойдёт. */}
+                вне пререндеренного верха (PRERENDER_TOP) при первом заходе
+                рендерятся функцией и читают базу — прокрутка хаба будила бы
+                её на каждую капсулу, по которой никто не пойдёт. */}
             <Link href={`/game/${g.appid}`} prefetch={false} className="game-card block">
-              <GameCardBody
+              <StaticGameCardBody
                 appid={g.appid}
                 name={g.name}
                 headerImage={g.headerImage}

@@ -87,15 +87,44 @@ const MONTHS_GEN = [
  *
  * Дата берётся в UTC осознанно: распродажи Steam заканчиваются по
  * тихоокеанскому времени, и точность до часа тут всё равно недостижима.
+ *
+ * calendar — только датой, без «осталось N дней». Для страниц, которые живут
+ * в кэше дольше суток (карточка игры, см. GAME_PAGE_REVALIDATE_SEC): отсчёт
+ * там был бы неправдой уже назавтра, а каждая его новая цифра — новым
+ * выводом страницы, то есть лишней записью ISR. Дата верна весь срок акции.
  */
-export function discountEndsLabel(endsAt: number, nowSec: number): string | null {
+export function discountEndsLabel(
+  endsAt: number,
+  nowSec: number,
+  opts: { calendar?: boolean } = {},
+): string | null {
   const left = endsAt - nowSec
   if (left <= 0) return null
-  if (left < 24 * 3600) return 'сегодня последний день'
-  const days = Math.floor(left / 86_400)
-  if (days <= 3) return `${plural(days, 'остался', 'осталось', 'осталось')} ${days} ${plural(days, 'день', 'дня', 'дней')}`
+  if (!opts.calendar) {
+    if (left < 24 * 3600) return 'сегодня последний день'
+    const days = Math.floor(left / 86_400)
+    if (days <= 3) return `${plural(days, 'остался', 'осталось', 'осталось')} ${days} ${plural(days, 'день', 'дня', 'дней')}`
+  }
   const d = new Date(endsAt * 1000)
   return `до ${d.getUTCDate()} ${MONTHS_GEN[d.getUTCMonth()]}`
+}
+
+/**
+ * До какого момента скидке верит discountOf: названный Steam срок, а без него
+ * — замер плюс PRICE_TRUST_SEC. null — верить нечему или скидки нет.
+ *
+ * Нужна странице, которая показывает скидку дольше, чем та живёт: карточка
+ * игры кэшируется на неделю, и страница, собранная в последний день
+ * распродажи, иначе обещала бы «−70%» ещё шесть дней. Клиент прячет цену по
+ * этому сроку сам (components/ShownUntil).
+ */
+export function discountTrustedUntil(
+  meta: Parameters<typeof discountOf>[0],
+  nowSec: number,
+): number | null {
+  if (!discountOf(meta, nowSec)) return null
+  if (meta.discountEndsAt !== undefined) return meta.discountEndsAt
+  return meta.priceAt !== undefined ? meta.priceAt + PRICE_TRUST_SEC : null
 }
 
 /**
@@ -134,15 +163,18 @@ export function trustedPrice(
  * «успей купить», и у человека, у которого нераспакованного больше, чем он
  * успеет пройти за год, оно работает против него же: цена и процент остаются
  * фактом, а обратный отсчёт убираем (см. hideUrgencyFor в lib/recommend.ts).
+ *
+ * calendar: true — срок только датой (см. discountEndsLabel): для страниц,
+ * которые живут в кэше дольше суток.
  */
 export function discountView(
   meta: Parameters<typeof discountOf>[0],
   nowSec: number,
-  opts: { urgency?: boolean } = {},
+  opts: { urgency?: boolean; calendar?: boolean } = {},
 ): Discount | null {
   const d = discountOf(meta, nowSec)
   if (!d) return null
   if (d.endsAt === undefined || opts.urgency === false) return d
-  const label = discountEndsLabel(d.endsAt, nowSec)
+  const label = discountEndsLabel(d.endsAt, nowSec, { calendar: opts.calendar })
   return label ? { ...d, endsLabel: label } : d
 }

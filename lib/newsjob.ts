@@ -62,6 +62,12 @@ export type SliceResult = {
   polled: number
   inserted: number
   digested: number
+  /**
+   * Игры, у которых опрос поменял ленту патчей карточки: роут сбрасывает их
+   * адреса в ISR (lib/gamecache). Лента без единого патча сюда не попадает —
+   * карточка показывает только патчи (getGameNews).
+   */
+  cards: number[]
   hasMore: boolean
   stopped: 'done' | 'budget' | 'blocked'
 }
@@ -190,6 +196,7 @@ export async function runNewsSlice(
   const outcomes: PollOutcome[] = []
   let inserted = 0
   let polled = 0
+  const cards: number[] = []
   let stopped: SliceResult['stopped'] = 'done'
 
   /*
@@ -291,6 +298,15 @@ export async function runNewsSlice(
     const n = await upsertNewsItems(db, rows, now)
     inserted += n
     if (n > 0) await pruneNewsForApp(db, t.appid, NEWS_KEEP)
+    /*
+     * Карточку сбрасываем, когда строки её ленты поменялись. Точнее по счёту
+     * не сказать: upsertNewsItems переписывает и одни веса (rank), когда у
+     * игры сдвинулись отзывы, а какая строка переписана за что — не
+     * возвращает. Лишний сброс здесь ничего не пишет: вес в выводе карточки —
+     * один бит «в каталоге ли игра» (cardNews в lib/gamepage), и
+     * перегенерация с той же страницей ISR Writes не стоит.
+     */
+    if (n > 0 && rows.some((r) => r.kind === 'patch')) cards.push(t.appid)
 
     const lastPubAt = Math.max(...items.map((i) => i.publishedAt))
     outcomes.push({
@@ -321,12 +337,14 @@ export async function runNewsSlice(
       onProgress: log,
     })
     digested = d.digested
+    cards.push(...d.cards)
   }
 
   return {
     polled,
     inserted,
     digested,
+    cards: [...new Set(cards)],
     hasMore: targets.length === limit && stopped !== 'blocked',
     stopped,
   }
@@ -334,6 +352,12 @@ export async function runNewsSlice(
 
 export type DigestResult = {
   digested: number
+  /**
+   * Игры, патчам которых срез дописал пересказ: он стоит на карточке строкой
+   * под заголовком и делает заголовок ссылкой (indexedNewsPath) — роут
+   * сбрасывает их адреса в ISR (lib/gamecache).
+   */
+  cards: number[]
   hasMore: boolean
   /**
    * 'unavailable' — модели нет: ключ не задан или сервис отказал (тогда ещё
@@ -382,11 +406,11 @@ export async function runDigestSlice(
   // пересказа: причина-то временная (ключ забыли положить), а отметка вечная.
   // Попытка должна засчитываться за отказ модели, а не за её отсутствие.
   if (!opts.digestFn && !llmAvailable()) {
-    return { digested: 0, hasMore: false, stopped: 'unavailable' }
+    return { digested: 0, cards: [], hasMore: false, stopped: 'unavailable' }
   }
 
   const pending = await getUnsummarized(db, limit)
-  if (!pending.length) return { digested: 0, hasMore: false, stopped: 'done' }
+  if (!pending.length) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
 
   const metas = await getGamesMeta(
     db,
@@ -394,6 +418,7 @@ export async function runDigestSlice(
   )
 
   let digested = 0
+  const cards = new Set<number>()
   let stopped: DigestResult['stopped'] = 'done'
 
   for (const item of pending) {
@@ -413,7 +438,7 @@ export async function runDigestSlice(
     // в ней, и запись должна дождаться завтрашнего бюджета в очереди.
     if (!(await takeLlmBudget(db, now))) {
       log('  суточный бюджет модели выбран, попытки не засчитаны')
-      return { digested, hasMore: false, stopped: 'capped' }
+      return { digested, cards: [...cards], hasMore: false, stopped: 'capped' }
     }
     const text = blocksToText(item.blocks)
     let res: Awaited<ReturnType<typeof digest>>
@@ -439,6 +464,7 @@ export async function runDigestSlice(
         // модель): мигание 429/5xx/таймаута срез переживёт через час
         return {
           digested,
+          cards: [...cards],
           hasMore: false,
           stopped: 'unavailable',
           ...(isPersistentOutage(e.status) ? { llm: 'down' as const, llmStatus: e.status } : {}),
@@ -447,10 +473,13 @@ export async function runDigestSlice(
       throw e
     }
     await setNewsDigest(db, item.appid, item.gid, res, now)
-    if (res) digested++
+    if (res) {
+      digested++
+      cards.add(item.appid)
+    }
   }
 
   // Взяли полную пачку — значит в очереди почти наверняка ещё есть. Случай
   // «модель отвалилась» сюда не доходит: он возвращается выше по return.
-  return { digested, hasMore: pending.length === limit, stopped }
+  return { digested, cards: [...cards], hasMore: pending.length === limit, stopped }
 }

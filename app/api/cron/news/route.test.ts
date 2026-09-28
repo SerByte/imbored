@@ -22,11 +22,16 @@ vi.mock('next/server', async (importOriginal) => ({
   },
 }))
 
-// Настоящий revalidateTag вне сервера Next бросает; ленте в этих тестах
-// сбрасывать нечего — запуск на пустой базе ничего не вставляет
+// Настоящие revalidateTag и revalidatePath вне сервера Next бросают; ленте в
+// этих тестах сбрасывать нечего — запуск на пустой базе ничего не вставляет, —
+// а адреса карточек копим: их сброс роут делает по итогу звена
+const { revalidated } = vi.hoisted(() => ({ revalidated: [] as string[] }))
 vi.mock('next/cache', async (importOriginal) => ({
   ...(await importOriginal<typeof import('next/cache')>()),
   revalidateTag: () => {},
+  revalidatePath: (path: string) => {
+    revalidated.push(path)
+  },
 }))
 
 // Срез новостей — настоящий, но тест может придержать его на старте: так
@@ -71,6 +76,7 @@ beforeEach(async () => {
     return new Response(JSON.stringify({ started: true }), { status: 202 })
   })
   vi.spyOn(console, 'log').mockImplementation(() => {})
+  revalidated.length = 0
 })
 
 afterEach(async () => {
@@ -100,6 +106,23 @@ describe('/api/cron/news', () => {
     expect(mark).toMatchObject({ links: 1, ended: 'done', hasMore: false, итого: { polled: 0, inserted: 0 } })
     expect(mark).not.toHaveProperty('chain')
     expect(await acquireLease(db, STEAM_LEASE, 'other', 60, T0)).toBe(true)
+    // лента ни у кого не поменялась — карточки не сбрасываются
+    expect(revalidated).toEqual([])
+  })
+
+  test('карточки игр с новыми патчами уходят в перегенерацию', async () => {
+    // Карточка живёт в ISR неделю (lib/gamecache): новый патч не должен ждать
+    // её конца
+    await digestFresh()
+    const real = (await vi.importActual<typeof import('@/lib/newsjob')>('@/lib/newsjob')).runNewsSlice
+    vi.mocked(runNewsSlice).mockImplementationOnce(async (...a) => ({ ...(await real(...a)), cards: [730] }))
+    expect((await ask()).status).toBe(202)
+    await settled()
+    expect(revalidated).toEqual(['/game/730'])
+    // В отметку — число, а не список: у новостей это десятки appid на звено
+    const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.news.lastKey)) ?? '{}') as Record<string, unknown>
+    expect(mark).not.toHaveProperty('cards')
+    expect(mark).toMatchObject({ сброшено: 1, итого: { сброшено: 1 } })
   })
 
   test('конец запуска пинает карточки, пока суточный потолок звеньев не выбран', async () => {

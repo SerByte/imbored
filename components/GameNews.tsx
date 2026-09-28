@@ -4,7 +4,7 @@ import { AnimatePresence, m } from 'framer-motion'
 import { MotionLazy } from '@/components/motion/MotionLazy'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { FeedItem } from '@/lib/db'
+import type { CardNews } from '@/lib/gamepage'
 import { indexedNewsPath, newsPath } from '@/lib/newspage'
 import type { NewsBlock } from '@/lib/steamhtml'
 import { NewsBody } from './NewsBody'
@@ -34,7 +34,7 @@ const EASE = [0.22, 1, 0.36, 1] as const
  */
 const HOVER_INTENT_MS = 120
 
-export function GameNews({ items, name }: { items: FeedItem[]; name: string }) {
+export function GameNews({ items, name }: { items: CardNews[]; name: string }) {
   /*
    * Свёрнуто всё, и это разворот прежнего решения.
    *
@@ -72,7 +72,7 @@ function Row({
   open,
   onToggle,
 }: {
-  item: FeedItem
+  item: CardNews
   name: string
   open: boolean
   onToggle: (gid: string | null) => void

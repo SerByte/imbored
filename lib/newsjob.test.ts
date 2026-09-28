@@ -154,7 +154,24 @@ describe('runDigestSlice: пересказы отдельно от опроса'
   test('пустая очередь — не работа и не повод продолжать цепочку', async () => {
     const db = await freshDb()
     const res = await runDigestSlice(db, { deadlineAt: Date.now() + ЗАПАС_MS, digestFn: okDigest })
-    expect(res).toMatchObject({ digested: 0, hasMore: false, stopped: 'done' })
+    expect(res).toMatchObject({ digested: 0, cards: [], hasMore: false, stopped: 'done' })
+  })
+
+  test('карточки с новым пересказом — в cards, без пересказа — нет', async () => {
+    // Пересказ стоит на карточке игры строкой под патчем: её роут сбрасывает
+    // в ISR (lib/gamecache). Пустой ответ модели карточку не меняет
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await seedPatch(db, 570, '1')
+
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (a: DigestArgs) => (a.gameName === 'Игра 730' ? okDigest() : noDigest()),
+    })
+
+    expect(res.digested).toBe(1)
+    expect(res.cards).toEqual([730])
   })
 
   test('на исходе бюджета пересказ не начинаем, а останавливаем фазу', async () => {
@@ -321,6 +338,34 @@ describe('runNewsSlice', () => {
     expect(res.inserted).toBe(2)
     const news = await getGameNews(db, 730)
     expect(news.map((n) => n.title)).toEqual(['Обновление Counter-Strike 2'])
+  })
+
+  /*
+   * cards — игры, чьи карточки роут сбросит в ISR (lib/gamecache): страница
+   * живёт неделю, и новый патч не должен ждать её конца. А игра, у которой
+   * опрос ничего не поменял или принёс одни новости без патчей, карточку не
+   * трогает — её лента показывает только патчи.
+   */
+  test('cards — игры с изменившейся лентой патчей, и только они', async () => {
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await seedGame(db, 570, 'Dota 2', 8_000_000)
+    await enrollNewsPoll(db, [730, 570], 1, NOW)
+    const feed = feedOf({
+      730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)],
+      570: [post(570, '9', 'Скидки выходного дня', ['Скидка 50%'])],
+    })
+    const opts = { deadlineAt: Date.now() + ЗАПАС_MS, fetchNews: feed, digestLimit: 0 }
+
+    const first = await runNewsSlice(db, { ...opts, nowSec: NOW + 4000 })
+    expect(first.inserted).toBe(2)
+    expect(first.cards).toEqual([730])
+
+    // Тот же фид на следующем опросе: в базе ничего не поменялось
+    await db.execute('UPDATE news_poll SET next_at = 0')
+    const again = await runNewsSlice(db, { ...opts, nowSec: NOW + 200_000 })
+    expect(again.polled).toBe(2)
+    expect(again.cards).toEqual([])
   })
 
   test('пересказ доезжает до записи и попадает в общую ленту', async () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { revalidateTag } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { kickCron, kickFailLine, linksToday, openRun, runChain } from '@/lib/chain'
 import { dayKey } from '@/lib/daily'
@@ -26,6 +26,7 @@ import {
   topCatalogAppids,
   type Db,
 } from '@/lib/db'
+import { resetSliceCards } from '@/lib/gamecache'
 import { llmAvailable } from '@/lib/llm'
 import { llmDailyCap } from '@/lib/llmcap'
 import { runNewsSlice } from '@/lib/newsjob'
@@ -84,14 +85,19 @@ export async function GET(req: Request) {
       startedAt,
       maxDurationSec: maxDuration,
       maxLinks: MAX_LINKS,
-      totals: ['polled', 'inserted'],
+      totals: ['polled', 'inserted', 'сброшено'],
       link: async ({ deadlineAt }) => {
         await dailyChores(db)
         // digestLimit: 0 — пересказы уехали в /api/cron/digest со своим
         // бюджетом. Здесь это не только разделение задач, но и прибавка к
         // опросу: те 35% времени, что придерживались под модель, теперь идут
         // на игры.
-        return runNewsSlice(db, { deadlineAt, digestLimit: 0 })
+        const slice = await runNewsSlice(db, { deadlineAt, digestLimit: 0 })
+        // Карточки игр, чья лента патчей поменялась, — в перегенерацию: они
+        // живут в ISR неделю (lib/gamecache). На звено, а не на запуск:
+        // сброс ничего не рендерит сам, а отметки всё равно уходят разом,
+        // когда after() закончит (withExecuteRevalidates в Next)
+        return resetSliceCards(slice, revalidatePath)
       },
       verdict: ({ result, failed }) => newsLinkVerdict({ failed, result }),
       onEnd: async ({ totals, hardLeftMs }) => {

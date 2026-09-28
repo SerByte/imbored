@@ -5,6 +5,7 @@ import { openRun, runChain } from '@/lib/chain'
 import { cronAuthorized, digestLinkVerdict } from '@/lib/cron'
 import { DIGEST_LEASE } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
+import { resetSliceCards } from '@/lib/gamecache'
 import { announceFreshPatches } from '@/lib/indexnow'
 import { runDigestSlice } from '@/lib/newsjob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
@@ -65,8 +66,14 @@ export async function GET(req: Request) {
       maxDurationSec: maxDuration,
       maxLinks: MAX_LINKS,
       needsLlm: true,
-      totals: ['digested'],
-      link: ({ deadlineAt }) => runDigestSlice(db, { deadlineAt, limit: DIGEST_LIMIT }),
+      totals: ['digested', 'сброшено'],
+      link: async ({ deadlineAt }) => {
+        const slice = await runDigestSlice(db, { deadlineAt, limit: DIGEST_LIMIT })
+        // Пересказ стоит и на карточке игры — строкой под заголовком патча,
+        // а заголовок с ним становится ссылкой. Карточка живёт в ISR неделю
+        // (lib/gamecache), поэтому её адрес сбрасываем здесь же, по звену
+        return resetSliceCards(slice, revalidatePath)
+      },
       // Упавшее звено запуск останавливает — это про деньги, см. digestLinkVerdict
       verdict: ({ result, failed }) => digestLinkVerdict({ failed, result }),
       onEnd: async ({ totals, hardLeftMs }) => {

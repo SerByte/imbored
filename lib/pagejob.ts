@@ -22,6 +22,7 @@ import {
   claimPageEnrichBatch,
   getCatalogMeta,
   getGameMeta,
+  getGamePageRows,
   markPageEnriched,
   markPageMissed,
   setCatalogMeta,
@@ -32,6 +33,7 @@ import {
   type Db,
 } from './db'
 import { logSwallowed } from './errlog'
+import { cardRowPrint } from './gamecache'
 import { claudeProsCons, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { llmBudgetLeft, takeLlmBudget } from './llmcap'
 import { fetchReviewsRaw, heuristicProsCons, parseReviews, type ProsCons } from './reviews'
@@ -135,6 +137,12 @@ export type PageSliceResult = {
   viaClaude: number
   /** Карточек, получивших запись в game_semantics (по тегам или с отзывами) */
   withSemantics: number
+  /**
+   * Карточки, чья строка после среза другая, чем до него (cardRowPrint в
+   * lib/gamecache): их адреса роут сбрасывает в ISR. Не «кого срез тронул» —
+   * тронул он всех, а поменял не всех.
+   */
+  cards: number[]
   hasMore: boolean
   stopped: 'done' | 'budget' | 'blocked'
   /**
@@ -210,6 +218,23 @@ export async function runPageSlice(
     redoHeuristic,
     redoBefore: now - PAGE_REDO_AFTER_SEC,
   })
+
+  /*
+   * Отпечатки карточек до среза — сравнить с тем, что останется после. Нужны
+   * роуту: он сбрасывает в ISR только поменявшиеся карточки, а страница живёт
+   * неделю (lib/gamecache). Сбой чтения срез не роняет — без отпечатков роуту
+   * просто нечего сбросить, и карточки доедут по сроку кэша.
+   */
+  const отпечатки = async (): Promise<Map<number, string> | null> => {
+    try {
+      const rows = await getGamePageRows(db, targets)
+      return new Map([...rows].map(([appid, row]) => [appid, cardRowPrint(row, now)]))
+    } catch (err) {
+      logSwallowed('pagejob:prints', err)
+      return null
+    }
+  }
+  const до = targets.length ? await отпечатки() : null
 
   let enriched = 0
   let withShots = 0
@@ -542,6 +567,11 @@ export async function runPageSlice(
   if (enriched) log(`  карточек обогащено: ${enriched}, с семантикой: ${withSemantics}`)
   if (deferred) log(`  Steam закрылся: отложено без отметки ${deferred}`)
 
+  // Все карточки пачки, а не только пройденные: кадры и трейлеры пачкой
+  // GetItems легли всем ещё до цикла
+  const после = до ? await отпечатки() : null
+  const cards = после ? targets.filter((appid) => до!.get(appid) !== после.get(appid)) : []
+
   return {
     claimed: targets.length,
     enriched,
@@ -551,6 +581,7 @@ export async function runPageSlice(
     withProsCons,
     viaClaude,
     withSemantics,
+    cards,
     hasMore: targets.length === limit && stopped !== 'blocked',
     stopped,
     // Модель в этом срезе не зовут после любого системного отказа, а в

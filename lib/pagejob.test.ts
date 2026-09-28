@@ -1248,6 +1248,99 @@ describe('семантика из уже полученных отзывов', (
   })
 })
 
+/**
+ * Какие карточки срез поменял — их роут сбрасывает в ISR (lib/gamecache).
+ *
+ * Страница живёт неделю, и сброс — это перегенерация при следующем заходе.
+ * Срез пишет всем безусловно (кадры пачкой, семантику, сводку), поэтому
+ * «трогал» здесь ничего не значит: считается строка до и после.
+ */
+describe('карточки, которые срез поменял', () => {
+  /** Ответ appdetails с ценой: срез датирует её замер (priceAt) каждый раз */
+  const priced = (appid: number) =>
+    meta(appid, { screenshots: ['a.jpg', 'b.jpg'], priceFinal: 1999, priceInitial: 1999, discountPercent: 0 })
+
+  test('новое содержимое — в списке; тот же ответ Steam ещё раз — нет', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 50)
+
+    const first = await runPageSlice(db, stubs({ fetchDetails: async (appid: number) => priced(appid) }))
+    expect(first.cards.sort()).toEqual([10, 20])
+
+    // Те же карточки снова в очереди, Steam и модель отвечают тем же, а замер
+    // цены — на час позже: метка другая, карточка та же
+    await db.execute('UPDATE games SET page_at = NULL')
+    const again = await runPageSlice(
+      db,
+      stubs({ nowSec: NOW + 3600, fetchDetails: async (appid: number) => priced(appid) }),
+    )
+    expect(again.claimed).toBe(2)
+    expect(again.cards).toEqual([])
+  })
+
+  test('поменялось видимое — сводка отзывов — только эта карточка', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 50)
+    await runPageSlice(db, stubs())
+    await db.execute('UPDATE games SET page_at = NULL')
+
+    const moved = reviews(6)
+    moved.query_summary!.total_positive = 950
+    const res = await runPageSlice(
+      db,
+      stubs({ fetchReviewsRawFn: async (appid: number) => (appid === 20 ? moved : reviews(6)) }),
+    )
+    expect(res.cards).toEqual([20])
+  })
+
+  test('скидка, которой поверили, — перемена, хотя в строке сдвинулась одна метка замера', async () => {
+    // priceAt в отпечатке заменён вердиктом доверия: сам он не виден, а
+    // «−50%», которое после свежего замера появилось на витрине, — видно
+    const db = await freshDb()
+    await upsertGameMeta(
+      db,
+      meta(10, { reviewsTotal: 100, priceFinal: 999, priceInitial: 1999, discountPercent: 50, priceAt: NOW - 30 * 86_400 }),
+      NOW,
+    )
+    await replaceGameTags(db, 10, [{ tag: 'Action', weight: 100 }])
+    const onSale = () => meta(10, { priceFinal: 999, priceInitial: 1999, discountPercent: 50 })
+    await runPageSlice(db, stubs({ fetchDetails: async () => onSale() }))
+    await db.execute('UPDATE games SET page_at = NULL, price_at = ?', [NOW - 30 * 86_400])
+
+    const res = await runPageSlice(db, stubs({ fetchDetails: async () => onSale() }))
+    expect(res.cards).toEqual([10])
+  })
+
+  test('та же скидка без срока, свежий замер — перемена: по замеру страница прячет цену', async () => {
+    // Вердикт тот же («−50%» и так на витрине), но срок, по которому
+    // ShownUntil гасит строку цены, — замер плюс PRICE_TRUST_SEC. Карточка,
+    // собранная по старому замеру, погасила бы ещё живую скидку раньше срока
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const onSale = () => meta(10, { priceFinal: 999, priceInitial: 1999, discountPercent: 50 })
+    await runPageSlice(db, stubs({ fetchDetails: async () => onSale() }))
+    await db.execute('UPDATE games SET page_at = NULL')
+
+    const res = await runPageSlice(db, stubs({ nowSec: NOW + 3600, fetchDetails: async () => onSale() }))
+    expect(res.cards).toEqual([10])
+  })
+
+  test('та же скидка со сроком от Steam, свежий замер — не перемена: срок назвал Steam', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const onSale = () =>
+      meta(10, { priceFinal: 999, priceInitial: 1999, discountPercent: 50, discountEndsAt: NOW + 5 * 86_400 })
+    await runPageSlice(db, stubs({ fetchDetails: async () => onSale() }))
+    await db.execute('UPDATE games SET page_at = NULL')
+
+    const res = await runPageSlice(db, stubs({ nowSec: NOW + 3600, fetchDetails: async () => onSale() }))
+    expect(res.claimed).toBe(1)
+    expect(res.cards).toEqual([])
+  })
+})
+
 describe('карта сайта', () => {
   test('отдаёт живые игры по убыванию отзывов и не ждёт обогащения', async () => {
     const db = await freshDb()

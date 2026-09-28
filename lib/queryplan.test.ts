@@ -6,8 +6,10 @@ import {
   claimNewsPollBatch,
   countNewsPollDue,
   createDb,
+  dealsEndedBetween,
   getFeedForApps,
   getFeedHeadForApps,
+  getGamePageRows,
   getGamePatchHeads,
   getHeroMedia,
   getLovedFor,
@@ -43,6 +45,7 @@ import {
   upsertNewsItems,
   type Db,
 } from './db'
+import { PRICE_TRUST_SEC } from './discount'
 import { fetchDiscoveryPool } from './pool'
 import { loadTriviaCatalog } from './trivia'
 
@@ -268,6 +271,15 @@ const CASES: Case[] = [
     name: 'очередь сигналов каталога',
     run: (db) => catalogSignalsQueue(db, 200),
     indexes: ['idx_games_reviews_at'],
+    sortFree: true,
+  },
+  // Погасшие скидки для сброса карточек (revalidateEndedDeals): диапазон
+  // индекса по выражению DEAL_UNTIL — только скидки, погасшие в окне, а не
+  // проход по всем скидкам каталога
+  {
+    name: 'погасшие скидки',
+    run: (db) => dealsEndedBetween(db, NOW - 86_400, NOW),
+    indexes: ['idx_games_deal_until'],
     sortFree: true,
   },
   // Баны участников пати: по диапазону индекса на каждого участника. DISTINCT
@@ -527,10 +539,11 @@ describe('планы запросов', () => {
  */
 describe('выборки по списку appid', () => {
   const IDS = [730, 570, 620]
-  const WITH_SEMANTICS = new Set(['getGamesMeta', 'getGamesMetaLite'])
+  const WITH_SEMANTICS = new Set(['getGamesMeta', 'getGamesMetaLite', 'getGamePageRows'])
   const LIST_READS: Array<[string, (db: Db) => Promise<unknown>]> = [
     ['getGamesMeta', (db) => getGamesMeta(db, IDS)],
     ['getGamesMetaLite', (db) => getGamesMetaLite(db, IDS)],
+    ['getGamePageRows', (db) => getGamePageRows(db, IDS)],
     ['getHeroMedia', (db) => getHeroMedia(db, IDS)],
     ['getLovedFor', (db) => getLovedFor(db, IDS)],
     ['getStaleAppids', (db) => getStaleAppids(db, IDS, 86_400, NOW)],
@@ -554,6 +567,19 @@ describe('выборки по списку appid', () => {
 })
 
 describe('смена определения индекса', () => {
+  test('idx_games_deal_until построен на нынешнем PRICE_TRUST_SEC', async () => {
+    // Число вписано в определение индекса (DEAL_UNTIL в lib/db), и живая база
+    // держит индекс со старым числом, сколько бы его ни меняли: CREATE INDEX
+    // IF NOT EXISTS смотрит только на имя. Сменил PRICE_TRUST_SEC — дай
+    // индексу новое имя (…_v2), положи DROP INDEX IF EXISTS старого перед
+    // созданием и только потом поправь число здесь. Иначе выборка погасших
+    // скидок молча уйдёт в полный скан games.
+    expect(PRICE_TRUST_SEC, 'сменил PRICE_TRUST_SEC — переименуй idx_games_deal_until').toBe(129_600)
+    const db = await createDb(':memory:')
+    const res = await db.execute("SELECT sql FROM sqlite_master WHERE name = 'idx_games_deal_until'")
+    expect(String(res.rows[0]?.sql)).toContain(`price_at + ${PRICE_TRUST_SEC}`)
+  })
+
   /**
    * Так выглядела живая база: индекс с прежним предикатом «scale IS NULL»
    * пережил его смену, потому что CREATE INDEX IF NOT EXISTS смотрит только

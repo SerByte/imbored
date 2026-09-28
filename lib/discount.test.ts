@@ -3,6 +3,7 @@ import {
   PRICE_TRUST_SEC,
   discountEndsLabel,
   discountOf,
+  discountTrustedUntil,
   discountView,
   formatPrice,
   trustedPrice,
@@ -99,6 +100,17 @@ describe('discountEndsLabel', () => {
   test('срок в прошлом подписи не даёт', () => {
     expect(discountEndsLabel(NOW - 1, NOW)).toBeNull()
   })
+
+  test('calendar — только датой: страница из недельного кэша не считает дни', () => {
+    // Отсчёт на карточке игры был бы неправдой назавтра и новым выводом
+    // страницы каждые сутки — то есть записью ISR без единой новой строки
+    // в базе. Дата одна и та же весь срок акции.
+    const endsAt = NOW + 10 * DAY
+    for (const now of [NOW, NOW + 7 * DAY, NOW + 9.5 * DAY]) {
+      expect(discountEndsLabel(endsAt, now, { calendar: true })).toBe('до 24 ноября')
+    }
+    expect(discountEndsLabel(endsAt, endsAt, { calendar: true })).toBeNull()
+  })
 })
 
 describe('discountView', () => {
@@ -118,10 +130,38 @@ describe('discountView', () => {
     expect(view?.percent).toBe(50)
     expect(view?.finalCents).toBe(999)
     expect(view?.endsLabel).toBeUndefined()
-    // По умолчанию срок на месте: страница игры и всё прежнее не меняются
+    // По умолчанию срок на месте: подбор, лента и колоды не меняются
     expect(discountView(onSale({ discountEndsAt: NOW + 2 * DAY }), NOW)?.endsLabel).toBe(
       'осталось 2 дня',
     )
+  })
+
+  test('calendar — срок датой и в последние дни', () => {
+    const meta = onSale({ discountEndsAt: NOW + 2 * DAY })
+    expect(discountView(meta, NOW, { calendar: true })?.endsLabel).toBe('до 16 ноября')
+    expect(discountView(meta, NOW + DAY, { calendar: true })).toEqual(
+      discountView(meta, NOW, { calendar: true }),
+    )
+  })
+})
+
+describe('discountTrustedUntil', () => {
+  test('названный Steam срок — он и есть граница', () => {
+    const meta = onSale({ priceAt: NOW - 30 * DAY, discountEndsAt: NOW + 2 * DAY })
+    expect(discountTrustedUntil(meta, NOW)).toBe(NOW + 2 * DAY)
+  })
+
+  test('без срока — замер плюс PRICE_TRUST_SEC, ровно где гаснет discountOf', () => {
+    const meta = onSale({ priceAt: NOW - HOUR })
+    const until = discountTrustedUntil(meta, NOW)
+    expect(until).toBe(NOW - HOUR + PRICE_TRUST_SEC)
+    expect(discountOf(meta, until! - 1)).not.toBeNull()
+    expect(discountOf(meta, until! + 1)).toBeNull()
+  })
+
+  test('скидки нет или ей уже не верят — границы нет', () => {
+    expect(discountTrustedUntil(onSale({ discountPercent: 0, priceInitial: 999 }), NOW)).toBeNull()
+    expect(discountTrustedUntil(onSale({ priceAt: NOW - PRICE_TRUST_SEC - 1 }), NOW)).toBeNull()
   })
 })
 
