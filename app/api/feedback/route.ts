@@ -95,14 +95,15 @@ export async function POST(req: Request) {
   }
   // Игра дня записана на сутки, но бан и «надоела» отбор обязан учесть сразу:
   // иначе убранная игра стояла бы героем до полуночи (см. forgetDailyPick)
-  if (action === 'banned' || reason === 'tired') await forgetDailyPick(db, steamid)
+  const day = dayKey(now)
+  if (action === 'banned' || reason === 'tired') await forgetDailyPick(db, steamid, day)
   // «Не сегодня» — только если сказано про героя дня или запасную свою: тогда
   // отбор пересчитается без неё (notnowSince в /api/daily). Про любую другую
   // игру запись не трогаем — иначе «не сейчас» на /play перетасовывало бы
   // выбор, обещанный на сутки
   else if (reason === 'notnow') {
-    const today = parseDailySelection(await getDailyPick(db, steamid, dayKey(now)))
-    if (dailyHeroAppids(today).includes(appid)) await forgetDailyPick(db, steamid)
+    const today = parseDailySelection(await getDailyPick(db, steamid, day))
+    if (dailyHeroAppids(today).includes(appid)) await forgetDailyPick(db, steamid, day)
   }
   // Модель портрета кэшируется по снапшоту, а бан снапшот не меняет: без
   // сброса «начни с этой» на портрете указывала бы на скрытую игру до

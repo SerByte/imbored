@@ -14,13 +14,17 @@ import { useSearch } from '@/components/useSearch'
 import { freshLastMood, lastMoodStore } from '@/lib/lastmood'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
+import { hasFreshWarm, warmMarkStore } from '@/lib/playcache'
 import { timeHiddenStore } from '@/lib/playtime'
 import { playHref, VIBE_PRESETS } from '@/lib/presets'
 import { STEPS } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
 import type { Focus } from '@/lib/recommend'
+import { getSessionHint, subscribeSessionHint } from '@/lib/sessionhint'
 import type { Mood } from '@/lib/types'
 import { track } from '@/lib/track'
+import { forgetPrewarm, hintChanged, prewarmWanted, startPrewarm } from '@/lib/warmup'
+import { writerStore } from '@/lib/writer'
 
 /**
  * Направление задаёт «Назад»: шаг возвращается оттуда, куда ушёл.
@@ -227,6 +231,48 @@ function Quiz() {
       window.removeEventListener('click', arm)
       window.removeEventListener('keydown', arm)
       if (audioLive.current) void import('@/lib/quizaudio').then((audio) => audio.disposeAudio())
+    }
+  }, [])
+
+  /*
+   * Прогрев каталога — пока человек отвечает (startPrewarm в lib/warmup).
+   *
+   * Первый вызов /api/prepare разбирает пачку в двести игр, до десяти секунд.
+   * Раньше эти секунды человек проводил на экране ожидания /play, уже
+   * ответив на всё; теперь они идут под вопросами, а /play забирает готовый
+   * ответ своим первым кругом.
+   *
+   * Кому греть — решает prewarmWanted: гостю и демо не греем. Слушаем обе
+   * догадки о входе, а не читаем их один раз: после возврата из Steam вход
+   * подтверждает только ответ touch, и он приходит уже после монтирования.
+   * Повторы безвредны — второй вызов, пока первый свежий, не уходит.
+   *
+   * Свежая метка прогрева (lib/playcache) — повод не греть вовсе: /play её
+   * увидит и цикл пропустит, ответ квиза забрать будет некому.
+   *
+   * Подсказка сменилась — в соседней вкладке вышли или вошли другим
+   * профилем (hintChanged): ответ, начатый при прежнем входе, забываем, и
+   * круг начинается заново уже под новым.
+   */
+  useEffect(() => {
+    const warm = () => {
+      if (!prewarmWanted(getSessionHint(), writerStore.get())) return
+      if (hasFreshWarm(warmMarkStore.get(), Date.now())) return
+      startPrewarm()
+    }
+    let seen = getSessionHint()
+    const onHint = () => {
+      const next = getSessionHint()
+      if (hintChanged(seen, next)) forgetPrewarm()
+      seen = next
+      warm()
+    }
+    warm()
+    const offWriter = writerStore.subscribe(warm)
+    const offHint = subscribeSessionHint(onHint)
+    return () => {
+      offWriter()
+      offHint()
     }
   }, [])
 

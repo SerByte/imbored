@@ -528,19 +528,11 @@ describe('вердикт мёртвой игре', () => {
   })
 })
 
+/** Само правило и его примеры — в lib/textlang.test.ts; здесь только то, что реэкспорт жив */
 describe('isRussianText', () => {
-  test('русское описание с латинскими названиями — русское', () => {
+  test('реэкспорт из lib/textlang отвечает тем же', () => {
     expect(isRussianText('Станьте вором в VR! Ощутите азарт воровства.')).toBe(true)
-  })
-
-  test('английское — нет, даже с одним русским словом', () => {
     expect(isRussianText('Rise, Tarnished, and be guided by grace')).toBe(false)
-    expect(isRussianText('A game about Москва and everything else in the world')).toBe(false)
-  })
-
-  test('пусто — не русское', () => {
-    expect(isRussianText(undefined)).toBe(false)
-    expect(isRussianText('')).toBe(false)
   })
 })
 

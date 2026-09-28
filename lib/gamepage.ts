@@ -21,6 +21,7 @@ import type { ProsCons } from './reviews'
 import { getDb } from './server'
 import { tagRu } from './tagsru'
 import { rarityOf, rarityScale, tagWeightFrom } from './tagweight'
+import { isRussianText } from './textlang'
 import type { GameMeta } from './types'
 
 export type GamePageData = {
@@ -327,20 +328,11 @@ export function deadVerdict(meta: GameMeta): string | null {
 export { DESCRIPTION_MAX }
 
 /**
- * Написан ли текст по-русски.
- *
- * short_description каталог берёт у магазина с language=english, и русский
- * есть только у тех карточек, до которых дошёл крон страниц. Выборка из 25
- * адресов карты сайта: английский хвост у 19. Кириллицы больше, чем латиницы, —
- * а не «есть хоть одна буква»: названия и аббревиатуры в русском тексте
- * латиницей («Станьте вором в VR!») его русским быть не мешают.
+ * Написан ли текст по-русски. Правило переехало в lib/textlang: оно нужно и
+ * клиентским строкам ленты патчей, а этот модуль тянет базу. Реэкспорт — для
+ * серверных потребителей, которые брали его отсюда (cards, хабы жанров).
  */
-export function isRussianText(text: string | null | undefined): boolean {
-  if (!text) return false
-  const cyr = text.match(/[А-Яа-яЁё]/g)?.length ?? 0
-  const lat = text.match(/[A-Za-z]/g)?.length ?? 0
-  return cyr > 0 && cyr >= lat
-}
+export { isRussianText }
 
 /** Пункт из pros/cons как предложение: без своей точки в конце, одной строкой */
 function point(text: string): string {

@@ -29,6 +29,7 @@ export function SignOut({ verified }: { verified: boolean }) {
   const [confirmAll, setConfirmAll] = useState(false)
 
   async function out(all: boolean) {
+    if (busy !== null) return
     setBusy(all ? 'all' : 'one')
     try {
       await fetch(`/api/auth/logout${all ? '?scope=all' : ''}`, { method: 'POST' })
@@ -54,13 +55,19 @@ export function SignOut({ verified }: { verified: boolean }) {
     router.refresh()
   }
 
+  /*
+   * Кнопки на время запроса — aria-disabled, а не disabled. Отказ сети
+   * возвращает их (см. out), и нажатая обязана удержать фокус: disabled
+   * выбрасывал его в body, и клавиатура после отказа начинала со страницы
+   * сверху. Второе нажатие гасят обработчики — по busy.
+   */
   return (
     <div className="mt-10 pt-6 border-t border-edge flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
       <button
         type="button"
         onClick={() => void out(false)}
-        disabled={busy !== null}
-        className="tap tap-tight text-dim hover:text-ink transition-colors disabled:opacity-40 cursor-pointer"
+        aria-disabled={busy !== null}
+        className="tap tap-tight text-dim hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
       >
         {busy === 'one' ? 'Выхожу…' : 'Выйти'}
       </button>
@@ -70,15 +77,18 @@ export function SignOut({ verified }: { verified: boolean }) {
           <button
             type="button"
             onClick={() => void out(true)}
-            disabled={busy !== null}
-            className="tap tap-tight text-danger hover:brightness-110 transition disabled:opacity-40 cursor-pointer"
+            aria-disabled={busy !== null}
+            className="tap tap-tight text-danger hover:brightness-110 transition aria-disabled:opacity-40 cursor-pointer"
           >
             {busy === 'all' ? 'Выхожу…' : 'Да, везде'}
           </button>
           <button
             type="button"
-            onClick={() => setConfirmAll(false)}
-            disabled={busy !== null}
+            onClick={() => {
+              if (busy !== null) return
+              setConfirmAll(false)
+            }}
+            aria-disabled={busy !== null}
             className="tap tap-tight hover:text-ink transition-colors cursor-pointer"
           >
             Отмена
@@ -87,9 +97,12 @@ export function SignOut({ verified }: { verified: boolean }) {
       ) : verified ? (
         <button
           type="button"
-          onClick={() => setConfirmAll(true)}
-          disabled={busy !== null}
-          className="tap tap-tight text-faint hover:text-ink transition-colors disabled:opacity-40 cursor-pointer"
+          onClick={() => {
+            if (busy !== null) return
+            setConfirmAll(true)
+          }}
+          aria-disabled={busy !== null}
+          className="tap tap-tight text-faint hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
         >
           Выйти на всех устройствах
         </button>

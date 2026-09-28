@@ -18,6 +18,7 @@ import {
 import { patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
 import { appBaseUrl, getDb } from '@/lib/server'
 import { OG_SITE } from '@/lib/site'
+import { textLang } from '@/lib/textlang'
 import { loadPatch } from './load'
 
 /**
@@ -97,6 +98,7 @@ export default async function PatchPage({ params }: Params) {
     .filter((h) => h.gid !== item.gid)
     .slice(0, OTHERS)
   const gameHref = `/game/${item.appid}`
+  const heading = newsHeading(item.title, game?.name)
 
   const baseUrl = appBaseUrl()
 
@@ -139,7 +141,13 @@ export default async function PatchPage({ params }: Params) {
             </Link>
           )}
           <Eyebrow as="p">Что изменилось</Eyebrow>
-          <h1 className="font-display text-display-md">{newsHeading(item.title, game?.name)}</h1>
+          {/* Заголовок и тело — текст издателя, обычно английский, а
+              страница — lang="ru". Без пометки скринридер читал бы латиницу
+              русским голосом (WCAG 3.1.2), см. lib/textlang. Тело помечает
+              NewsBody сам; пересказ «Коротко» наш и русский — без пометки. */}
+          <h1 lang={textLang(heading)} className="font-display text-display-md">
+            {heading}
+          </h1>
           <div className="flex flex-wrap items-center gap-3">
             <NewsDate at={item.publishedAt} />
             <ScaleBadge scale={item.scale} />
@@ -211,17 +219,22 @@ export default async function PatchPage({ params }: Params) {
               {game ? `Другие патчи ${game.name}` : 'Другие патчи'}
             </SectionLabel>
             <ul className="flex flex-col">
-              {others.map((o) => (
-                <li key={o.gid} className="border-b border-rule last:border-b-0">
-                  <Link
-                    href={newsPath(item.appid, o.gid)}
-                    className="flex items-baseline justify-between gap-4 py-3 text-sm transition-opacity hover:opacity-70"
-                  >
-                    <span className="min-w-0 truncate">{newsHeading(o.title, game?.name)}</span>
-                    <NewsDate at={o.publishedAt} className="shrink-0" />
-                  </Link>
-                </li>
-              ))}
+              {others.map((o) => {
+                const title = newsHeading(o.title, game?.name)
+                return (
+                  <li key={o.gid} className="border-b border-rule last:border-b-0">
+                    <Link
+                      href={newsPath(item.appid, o.gid)}
+                      className="flex items-baseline justify-between gap-4 py-3 text-sm transition-opacity hover:opacity-70"
+                    >
+                      <span lang={textLang(title)} className="min-w-0 truncate">
+                        {title}
+                      </span>
+                      <NewsDate at={o.publishedAt} className="shrink-0" />
+                    </Link>
+                  </li>
+                )
+              })}
             </ul>
           </section>
         )}

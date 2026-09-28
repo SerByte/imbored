@@ -155,4 +155,36 @@ describe('обвязка над зонами', () => {
     expect(CODE).toMatch(/:root:has\(\.media-full\)\s+body\s*>?\s*footer/)
   })
 
+  /**
+   * Слой в портале — не кино-зона, даже когда он тёмный.
+   *
+   * Правило шапки ищет .media-dark ГДЕ УГОДНО в документе (:root:has), а
+   * ChromeZone берёт первый такой узел за героя страницы. Оверлей, который
+   * портал вешает в <body>, с этим классом перекрашивал бы шапку при каждом
+   * открытии, а на странице без героя (карточка игры, где живёт лайтбокс)
+   * ChromeZone наблюдал бы сам оверлей. Тёмные токены такому слою даёт
+   * .media-card — та же палитра без реакции обвязки.
+   */
+  test('в файлах с порталом нет .media-dark', () => {
+    const offenders: string[] = []
+    let portals = 0
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (e.name.endsWith('.tsx')) {
+          const src = fs.readFileSync(p, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+          if (!/<Portal\b/.test(src)) continue
+          portals++
+          if (/className=[^\n]*\bmedia-dark\b/.test(src)) {
+            offenders.push(path.relative(ROOT, p).split(path.sep).join('/'))
+          }
+        }
+      }
+    }
+    for (const dir of ['app', 'components']) walk(path.join(ROOT, dir))
+    expect(portals, 'порталы не найдены — разбор ослеп').toBeGreaterThan(0)
+    expect(offenders, 'тёмный слой в портале — .media-card, а не .media-dark').toEqual([])
+  })
+
 })

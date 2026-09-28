@@ -1,6 +1,7 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
+import { syncThemeColor } from '@/lib/themecolor'
 import { Icon } from './Icon'
 
 const STORAGE_KEY = 'imbored-theme'
@@ -45,6 +46,9 @@ export function ThemeToggle() {
     // Пишем в DOM — подписка выше сама пересчитает состояние.
     if (next === 'light') document.documentElement.dataset.theme = 'light'
     else delete document.documentElement.dataset.theme
+    // Адресная строка — вслед за шапкой: над обычной страницей она сменила
+    // цвет вместе с темой, над кино-зоной осталась тёмной (lib/themecolor)
+    syncThemeColor()
     localStorage.setItem(STORAGE_KEY, next)
   }
 

@@ -1,5 +1,6 @@
-import { stripBbcode, type Inline, type NewsBlock } from '@/lib/steamhtml'
+import { blocksToText, stripBbcode, type Inline, type NewsBlock } from '@/lib/steamhtml'
 import { linkLabel } from '@/lib/linklabel'
+import { textLang } from '@/lib/textlang'
 
 /**
  * Рендер тела патчноута. Серверный, без единой строчки JS на клиенте.
@@ -15,6 +16,14 @@ import { linkLabel } from '@/lib/linklabel'
  * linkLabel правит только ВИДИМЫЙ текст ссылки; href не трогается никогда.
  * У четверти ссылок в патчнотах подписью стоит сам адрес со схемой и хвостом
  * параметров — см. докблок там же.
+ *
+ * lang на корне — по большинству букв всего тела (lib/textlang). Перевод в
+ * RSS Steam есть только у тех издателей, что его загрузили, и тело патча
+ * обычно английское — самый длинный чужой текст на сайте, который скринридер
+ * иначе читал бы русским голосом. Признак один на всё тело, а не на абзац:
+ * подзаголовок «v1.2» или пункт «FPS» по отдельности языка не выдают, а
+ * большинство по всему тексту выдаёт. Цена — двуязычный пост целиком
+ * читается голосом того языка, которого в нём больше.
  */
 
 function Runs({ runs }: { runs: Inline[] }) {
@@ -58,6 +67,7 @@ export function NewsBody({ blocks, className = '' }: { blocks: NewsBlock[]; clas
       и обрезалась предком, то есть хвост адреса было не прочитать.
     */
     <div
+      lang={textLang(blocksToText(blocks))}
       className={`flex flex-col gap-3 text-sm leading-relaxed break-words text-dim ${className}`}
     >
       {blocks.map((b, i) => {

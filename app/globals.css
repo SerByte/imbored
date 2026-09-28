@@ -687,6 +687,15 @@ textarea:focus-visible {
   .tap-tight {
     --tap: 24px;
   }
+  /*
+   * Зона не заходит за начальный край: там вплотную чужая цель, у которой
+   * нельзя отнимать нажатия. У «Где взять?» (LinkHelp) слева поле ввода, и
+   * его последние пиксели нужны пальцу, чтобы поставить каретку в конец
+   * ссылки. Наружу зона растёт как обычно, и ширина всё равно не меньше 44.
+   */
+  .tap-flush-start::after {
+    inset-inline-start: 0;
+  }
 }
 
 /*
@@ -1392,9 +1401,12 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--ink) 55%, transparent);
   background: color-mix(in srgb, var(--ink) 15%, transparent);
 }
-.join .btn-ember:disabled {
+.join .btn-ember:disabled,
+.join .btn-ember[aria-disabled='true'] {
   /* Пустое поле: кнопка та же белая, только приглушённая, — серая плашка
-     читалась бы сломанной, а это ожидание ввода. */
+     читалась бы сломанной, а это ожидание ввода. Идущий запрос выключает
+     кнопку через aria-disabled (фокус остаётся на ней, см. .btn-ember ниже),
+     и выглядит она так же, как выглядела под disabled. */
   color: var(--on-ember);
   background: color-mix(in srgb, var(--ember) 55%, transparent);
   box-shadow: none;
@@ -1413,6 +1425,57 @@ textarea:focus-visible {
 }
 .join input::placeholder {
   color: var(--faint);
+}
+/*
+ * СТРОКА ПОЛЯ С «ГДЕ ВЗЯТЬ?» (components/landing/LinkHelp.tsx).
+ *
+ * Подсказка стоит в самой пилюле, справа от поля, а не строкой под ним: у
+ * гостевой карточки на телефоне до потолка CONNECT_CARD_MIN_H три пикселя
+ * (241 из 244), и новая строка сдвинула бы первый экран в момент подмены
+ * фолбэка. В строке поля место уже есть — его и делят.
+ *
+ * Делят впритык, поэтому счёт — по метрикам шрифта, не замер. Плейсхолдер
+ * «Ссылка, ник или код друга» (Manrope 500, 16 px) — 203 px, «Где взять?»
+ * (12 px, 600, px-1.5) — 75, одинокий «?» — 40 (min-w-10). Внутри пилюли на
+ * телефоне — ширина экрана минус 40 (поля героя) и 14 (рамка и отступ самой
+ * пилюли), а на низком экране ещё минус 32: там у карточки появляется свой
+ * отступ (правило max-height: 700px ниже). Правый отступ поля ужат с 14 до 4 —
+ * зазор до слова даёт отступ самой кнопки. Плейсхолдеру остаётся:
+ *
+ *   со словом — 213 px на 360, 228 на 375, на низком экране 211 на 390;
+ *   с одним «?» — 208 на 320, на низком экране 216 на 360 и 231 на 375.
+ *
+ * Отсюда пороги, на которых слово прячется. Мимо счёта остаётся один случай —
+ * 320 px при низком экране (iPhone SE первого поколения в Safari): там и с
+ * одним «?» плейсхолдер обрежется. Правка шрифта или отступов пилюли и
+ * карточки обязана пересчитать всё это заново, иначе плейсхолдер снова
+ * оборвётся посреди слова.
+ *
+ * Запас при этом — 5–28 px, а крупный шрифт в настройках Android (110–115 %)
+ * съедает его целиком. Поэтому у поля многоточие: не влезший плейсхолдер
+ * кончается «…», а не обрубком слова, который читается сломанной вёрсткой.
+ * Это страховка, а не замена пересчёту.
+ *
+ * Основа flex — auto, а не 0% как у самого поля. Между 560 и 640 px пилюля
+ * уже строка, а обёртка парадной кнопки ещё w-full (её sm: — это 640), и при
+ * нулевой основе строка поля сжималась бы в ноль: кнопка «Где взять?» с
+ * shrink-0 легла бы поверх «Подобрать игру». С основой auto нехватку места
+ * строка делит с кнопкой, а не отдаёт ей целиком.
+ */
+.join-field {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+}
+.join-field input {
+  padding-right: 4px;
+  text-overflow: ellipsis;
+}
+@media (max-width: 359px), (max-width: 389px) and (max-height: 700px) {
+  .join-help-word {
+    display: none;
+  }
 }
 /*
  * Та же пилюля под ссылкой, которой делятся (ShareLinkField): адрес
@@ -1553,15 +1616,25 @@ textarea:focus-visible {
       box-shadow var(--dur-base) var(--ease-out),
       transform var(--dur-fast) var(--ease-out);
   }
-  .btn-ember:hover:not(:disabled) {
+  /*
+   * Выключенная — это и :disabled, и [aria-disabled='true']. Кнопку, которая
+   * ждёт своего запроса, выключают через aria-disabled: disabled отбирает фокус
+   * у нажатой кнопки и роняет его в body (сторож lib/disabledfocus.test.ts).
+   * Для глаза разницы быть не должно. Специфичность прежняя: :not() со
+   * списком весит как самый тяжёлый его пункт, а [aria-disabled] — как
+   * :disabled. Поэтому занятая ([data-busy]) и «уменьшить движение» ниже
+   * перебивают эти правила так же, как перебивали.
+   */
+  .btn-ember:hover:not(:disabled, [aria-disabled='true']) {
     background: color-mix(in srgb, var(--ember) 88%, var(--bg));
     box-shadow: 0 16px 36px -16px var(--shadow);
   }
-  .btn-ember:active:not(:disabled) {
+  .btn-ember:active:not(:disabled, [aria-disabled='true']) {
     transform: scale(0.98);
     box-shadow: 0 4px 12px -8px var(--shadow);
   }
-  .btn-ember:disabled {
+  .btn-ember:disabled,
+  .btn-ember[aria-disabled='true'] {
     cursor: default;
     color: var(--dim);
     background: var(--surface);
@@ -1611,7 +1684,7 @@ textarea:focus-visible {
     .btn-ember {
       transition: none;
     }
-    .btn-ember:active:not(:disabled) {
+    .btn-ember:active:not(:disabled, [aria-disabled='true']) {
       transform: none;
     }
   }
@@ -2834,13 +2907,15 @@ textarea:focus-visible {
       background-color var(--dur-base) var(--ease-out),
       transform var(--dur-fast) var(--ease-out);
   }
-  .btn-glass:hover:not(:disabled) {
+  /* Выключенная — и :disabled, и [aria-disabled='true'], как у .btn-ember */
+  .btn-glass:hover:not(:disabled, [aria-disabled='true']) {
     background: color-mix(in srgb, var(--ink) 22%, transparent);
   }
-  .btn-glass:active:not(:disabled) {
+  .btn-glass:active:not(:disabled, [aria-disabled='true']) {
     transform: scale(0.98);
   }
-  .btn-glass:disabled {
+  .btn-glass:disabled,
+  .btn-glass[aria-disabled='true'] {
     cursor: default;
     color: var(--faint);
   }
@@ -2865,11 +2940,11 @@ textarea:focus-visible {
       background-color var(--dur-base) var(--ease-out),
       transform var(--dur-fast) var(--ease-out);
   }
-  .btn-circle:hover:not(:disabled) {
+  .btn-circle:hover:not(:disabled, [aria-disabled='true']) {
     border-color: var(--ink);
     background: color-mix(in srgb, var(--ink) 10%, transparent);
   }
-  .btn-circle:active:not(:disabled) {
+  .btn-circle:active:not(:disabled, [aria-disabled='true']) {
     transform: scale(0.94);
   }
   .btn-circle[aria-pressed='true'] {
@@ -3028,8 +3103,8 @@ textarea:focus-visible {
   .card-thumb {
     transition: none;
   }
-  .btn-glass:active:not(:disabled),
-  .btn-circle:active:not(:disabled),
+  .btn-glass:active:not(:disabled, [aria-disabled='true']),
+  .btn-circle:active:not(:disabled, [aria-disabled='true']),
   .pill:active,
   .game-card:hover .card-thumb,
   .game-card:focus-visible .card-thumb {

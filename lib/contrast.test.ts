@@ -380,3 +380,64 @@ describe('контраст палитры', () => {
   }
 
 })
+
+/*
+ * ЛАЙТБОКС: РОЛИ НА ЗАТЕМНЕНИИ, А НЕ НА ФОНЕ.
+ *
+ * Просмотр кадра висит в портале, в <body>, — вне любой зоны, и токены у него
+ * те, что объявит его корень. А под текстом у него не --bg, а чёрное
+ * затемнение поверх страницы. Пока корень ничего не объявлял, в светлой теме
+ * счётчик text-dim давал на затемнении 1.9:1, контур кнопок — меньше 1.5, и
+ * ни одна проверка палитры этого не видела: каждый токен по отдельности верен.
+ *
+ * Всё берётся из разметки: класс корня решает, какие токены проверять (без
+ * тёмной поверхности — обе темы :root), прозрачность затемнения и роль
+ * счётчика вычитываются из Lightbox.tsx, доли контура и подложки кнопки — из
+ * .btn-circle. Под затемнением может оказаться что угодно, от белой страницы
+ * до чёрного неба на арте, поэтому подложек две — крайние.
+ */
+describe('лайтбокс: счётчик и кнопки на затемнении', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'Lightbox.tsx'), 'utf8')
+  const root = src.slice(src.indexOf('ref={overlayRef}')).match(/className="([^"]*)"/)?.[1] ?? ''
+  const shade = Number(src.match(/\bbg-black\/(\d+)\b/)?.[1]) / 100
+  const counterAt = src.indexOf('{index + 1}/{images.length}')
+  const counterCls = src.slice(src.lastIndexOf('className="', counterAt), counterAt)
+  const role = counterCls.match(/\btext-(ink|dim|faint)\b/)?.[1]
+
+  const btn = CSS.slice(CSS.indexOf('.btn-circle {'))
+  const edgeShare = Number(btn.match(/border:[^;]*var\(--ink\)\s+(\d+)%/)?.[1]) / 100
+  const fillShare = Number(btn.match(/background:[^;]*var\(--bg\)\s+(\d+)%/)?.[1]) / 100
+
+  const zones = /\bmedia-(?:card|dark)\b/.test(root)
+    ? [{ name: 'тёмная поверхность', selector: '.media-dark {' }]
+    : THEMES.slice(0, 2)
+  const unders = ['#ffffff', '#000000'].map((page) => composite('#000000', page, shade))
+
+  test('разбор видит затемнение, счётчик и кнопку', () => {
+    expect(shade, 'bg-black/NN не найден у оверлея').toBeGreaterThan(0)
+    expect(role, 'роль текста у счётчика не найдена').toBeDefined()
+    expect(edgeShare, 'доля --ink в контуре .btn-circle').toBeGreaterThan(0)
+    expect(fillShare, 'доля --bg в подложке .btn-circle').toBeGreaterThan(0)
+  })
+
+  test('.media-card несёт те же токены, что и кино-зона', () => {
+    // иначе ниже проверялся бы блок .media-dark, а корень получал бы другое
+    expect(CSS).toMatch(/\.media-card,\s*\.media-dark\s*\{/)
+  })
+
+  for (const zone of zones) {
+    test(`${zone.name}: счётчик — текст, глиф, кольцо и контур — не-текст`, () => {
+      const t = block(zone.selector)
+      for (const under of unders) {
+        const at = `на ${under} в «${zone.name}»`
+        expect(contrast(resolve(t, `--${role}`), under), `счётчик --${role} ${at}`).toBeGreaterThanOrEqual(AA)
+        // 1.4.11: глиф кнопки (--ink) и кольцо фокуса (--ember) — 3:1
+        expect(contrast(resolve(t, '--ink'), under), `глиф ${at}`).toBeGreaterThanOrEqual(3)
+        expect(contrast(resolve(t, '--ember'), under), `кольцо фокуса ${at}`).toBeGreaterThanOrEqual(3)
+        const fill = composite(resolve(t, '--bg'), under, fillShare)
+        const edge = composite(resolve(t, '--ink'), fill, edgeShare)
+        expect(contrast(edge, under), `контур кнопки ${edge} ${at}`).toBeGreaterThanOrEqual(3)
+      }
+    })
+  }
+})

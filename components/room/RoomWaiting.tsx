@@ -3,6 +3,7 @@
 import type { ShareLink } from '@/components/ShareLink'
 import { useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { StatusLine } from '@/components/StatusLine'
 import { plural } from '@/lib/plural'
 import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
@@ -74,7 +75,7 @@ export function RoomWaiting({
   onRemoveMember: (memberId: string) => void
   onLeave: () => void
 }) {
-  const headRef = useRef<HTMLDivElement>(null)
+  const headRef = useRef<HTMLHeadingElement>(null)
   const me = members.find((m) => m.me)
   const mode = waitingMode({
     memberCount: members.length,
@@ -87,6 +88,12 @@ export function RoomWaiting({
    * которых он был, и фокус падает в body — клавиатурного человека молча
    * выкидывает в начало документа. Забираем его только при уходе колоды, иначе
    * воровали бы фокус при обычном заходе на страницу.
+   *
+   * Цель — заголовок режима, у каждого свой h2. Прежде ею был div с
+   * display: contents вокруг всех трёх: без бокса кольцо не рисовалось, имени
+   * у обёртки нет, и скринридеру нечего было объявить, а в части движков
+   * такой элемент фокус не принимает вовсе. Заголовок назовёт экран сам —
+   * «Колода пройдена — ждём ещё одного».
    */
   useEffect(() => {
     if (!cameFromDeck) return
@@ -124,101 +131,105 @@ export function RoomWaiting({
         {liveSummary}
       </p>
 
-      <div ref={headRef} tabIndex={-1} className="outline-none contents">
-        {mode === 'alone' && (
-          <AloneInvite
-            roomId={roomId}
-            isHost={isHost}
-            isPublic={isPublic}
-            share={share}
-            onTogglePublic={onTogglePublic}
-          />
-        )}
+      {mode === 'alone' && (
+        <AloneInvite
+          roomId={roomId}
+          isHost={isHost}
+          isPublic={isPublic}
+          share={share}
+          onTogglePublic={onTogglePublic}
+          headRef={headRef}
+        />
+      )}
 
-        {/* Свои лайки нужны и в одиночестве: они и есть ответ на «а не зря ли
-            я всё это листал» — голоса записаны и ждут второго человека */}
-        {mode === 'alone' && <MyLikesRail games={myLikes} />}
+      {/* Свои лайки нужны и в одиночестве: они и есть ответ на «а не зря ли
+          я всё это листал» — голоса записаны и ждут второго человека */}
+      {mode === 'alone' && <MyLikesRail games={myLikes} />}
 
-        {mode === 'others' && (
-          <>
-            <div className="relative panel-lift p-6 sm:p-8 flex flex-col gap-2 text-center">
-              {/*
-                Имя тут намеренно не подставляется. «Ждём Демо-друг» — не
-                по-русски, а склонять произвольный ник из Steam нельзя: винительный
-                падеж от «xX_Sniper_Xx» не существует. Кто именно держит комнату,
-                видно строчкой ниже, в ростере, вместе с его прогрессом.
+      {mode === 'others' && (
+        <>
+          <div className="relative panel-lift p-6 sm:p-8 flex flex-col gap-2 text-center">
+            {/*
+              Имя тут намеренно не подставляется. «Ждём Демо-друг» — не
+              по-русски, а склонять произвольный ник из Steam нельзя: винительный
+              падеж от «xX_Sniper_Xx» не существует. Кто именно держит комнату,
+              видно строчкой ниже, в ростере, вместе с его прогрессом.
 
-                «Колода пройдена», а не «ты всё отсвайпал»: род того, кто
-                смотрит на экран, нам неизвестен так же, как род ника.
-              */}
-              <h2 className="font-display text-display-sm">
-                {pending.length === 0
-                  ? 'Все отсвайпали — и ни разу не совпали'
-                  : pending.length === 1
-                    ? 'Колода пройдена — ждём ещё одного'
-                    : `Колода пройдена — ждём ещё ${pending.length} ${plural(
-                        pending.length,
-                        'человека',
-                        'человека',
-                        'человек',
-                      )}`}
-              </h2>
-              {pending.length === 0 && (
-                <p className="text-dim text-sm">
-                  {offer
-                    ? 'Единогласия нет — но одна игра набрала большинство.'
-                    : 'Вкусы разошлись полностью. Бывает — и это тоже нормальный вечер.'}
-                </p>
-              )}
-            </div>
-            {offer ? (
-              <LeaderPick
-                leader={offer}
-                taking={takingLeader}
-                miss={leaderMiss}
-                onTake={onTakeLeader}
-              />
-            ) : (
-              // Предложение пропало после отказа «noleader» — сказать об этом,
-              // а не погасить блок молча
-              pending.length === 0 &&
-              leaderMiss === 'stale' && (
-                <p role="status" className="text-sm text-dim text-center">
-                  Голоса сдвинулись — брать пока нечего.
-                </p>
-              )
-            )}
-            <MemberRoster
-              members={members}
-              deckSize={deckSize}
-              hint={rosterHint({
-                swiping: members.filter((m) => !m.done).length,
-                hasMore,
-              })}
-              isHost={isHost}
-              onRemove={onRemoveMember}
-            />
-            <NearMissList near={near} />
-            <MyLikesRail games={myLikes} />
-          </>
-        )}
-
-        {mode === 'empty' && (
-          <>
-            <div className="relative panel-lift p-6 sm:p-8 flex flex-col gap-3 text-center">
-              <h2 className="font-display text-display-sm">
-                Выбирать не из чего
-              </h2>
-              <p className="text-dim text-sm leading-relaxed max-w-md mx-auto">
-                Колода пустая — в ваших библиотеках не нашлось ничего сетевого. Тут дело не в
-                тебе: подключи библиотеку или позови кого-то, у кого есть во что играть вместе.
+              «Колода пройдена», а не «ты всё отсвайпал»: род того, кто
+              смотрит на экран, нам неизвестен так же, как род ника.
+            */}
+            <h2 ref={headRef} tabIndex={-1} className="font-display text-display-sm">
+              {pending.length === 0
+                ? 'Все отсвайпали — и ни разу не совпали'
+                : pending.length === 1
+                  ? 'Колода пройдена — ждём ещё одного'
+                  : `Колода пройдена — ждём ещё ${pending.length} ${plural(
+                      pending.length,
+                      'человека',
+                      'человека',
+                      'человек',
+                    )}`}
+            </h2>
+            {pending.length === 0 && (
+              <p className="text-dim text-sm">
+                {offer
+                  ? 'Единогласия нет — но одна игра набрала большинство.'
+                  : 'Вкусы разошлись полностью. Бывает — и это тоже нормальный вечер.'}
               </p>
-            </div>
-            {/* Без строки под списком: колоды не было, и матчу неоткуда взяться */}
-            <MemberRoster members={members} deckSize={deckSize} />
-          </>
-        )}
-      </div>
+            )}
+          </div>
+          {offer && (
+            <LeaderPick
+              leader={offer}
+              taking={takingLeader}
+              miss={leaderMiss}
+              onTake={onTakeLeader}
+            />
+          )}
+          {/*
+            Предложение пропало после отказа «noleader» — сказать об этом, а
+            не погасить блок молча. Строка стоит рядом с предложением, а не
+            вместо него: на его месте она рождалась бы тем же рендером, что
+            и свой текст, — такую живую область скринридер объявляет не везде.
+          */}
+          <StatusLine
+            text={
+              !offer && pending.length === 0 && leaderMiss === 'stale'
+                ? 'Голоса сдвинулись — брать пока нечего.'
+                : null
+            }
+            className="text-sm text-dim text-center"
+          />
+          <MemberRoster
+            members={members}
+            deckSize={deckSize}
+            hint={rosterHint({
+              swiping: members.filter((m) => !m.done).length,
+              hasMore,
+            })}
+            isHost={isHost}
+            onRemove={onRemoveMember}
+          />
+          <NearMissList near={near} />
+          <MyLikesRail games={myLikes} />
+        </>
+      )}
+
+      {mode === 'empty' && (
+        <>
+          <div className="relative panel-lift p-6 sm:p-8 flex flex-col gap-3 text-center">
+            <h2 ref={headRef} tabIndex={-1} className="font-display text-display-sm">
+              Выбирать не из чего
+            </h2>
+            <p className="text-dim text-sm leading-relaxed max-w-md mx-auto">
+              Колода пустая — в ваших библиотеках не нашлось ничего сетевого. Тут дело не в
+              тебе: подключи библиотеку или позови кого-то, у кого есть во что играть вместе.
+            </p>
+          </div>
+          {/* Без строки под списком: колоды не было, и матчу неоткуда взяться */}
+          <MemberRoster members={members} deckSize={deckSize} />
+        </>
+      )}
 
       {/*
         Викторина — самый тихий блок и единственный свёрнутый. Ключ прерывания
@@ -233,11 +244,14 @@ export function RoomWaiting({
       />
 
       <div className="relative flex flex-wrap items-center justify-between gap-3 pt-2">
+        {/* aria-disabled, а не disabled: отказ добора оставляет кнопку и
+            пишет в ней «нажми ещё раз» — фокус обязан остаться на ней.
+            Повтор гасит onPullMore (pullMore — по pulling) */}
         {hasMore ? (
           <button
             onClick={onPullMore}
-            disabled={pulling}
-            className="btn-glass justify-start py-3 text-sm text-left disabled:opacity-40"
+            aria-disabled={pulling}
+            className="btn-glass justify-start py-3 text-sm text-left aria-disabled:opacity-40"
           >
             <span className="block">{pulling ? 'Добираю…' : 'Ещё 20 игр'}</span>
             {/*

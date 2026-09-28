@@ -9,6 +9,7 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { useShareLink } from '@/components/ShareLink'
 import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
+import { StatusLine } from '@/components/StatusLine'
 import { Icon } from '@/components/Icon'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
@@ -17,7 +18,7 @@ import { claimVote, deckStuck, voteMiss, voteSignal } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
 import type { Mood } from '@/lib/types'
-import { ROOM_MAX_MEMBERS, type RoomMemberView } from '@/lib/room'
+import { matchLine, ROOM_MAX_MEMBERS, type RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import { roomPresetOf } from '@/lib/presets'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
@@ -203,6 +204,12 @@ export default function RoomPage() {
    * срабатывал бы — отсюда строка о входе через Steam.
    */
   const [publicDenied, setPublicDenied] = useState(false)
+  /**
+   * Комната была открыта на глазах у этого экрана. Матч, пришедший после, —
+   * новость: о нём говорит строка matchStatus, а церемония забирает фокус.
+   * Открыл ссылку на уже сошедшуюся комнату — новости нет (matchLine в lib/room).
+   */
+  const [sawOpen, setSawOpen] = useState(false)
   const deckKey = useRef('')
   const likesKey = useRef('')
   const likesAt = useRef(0)
@@ -242,6 +249,7 @@ export default function RoomPage() {
       if (!res.ok) return { ok: false, gone: false }
       const next = (await res.json()) as RoomState
       setState(next)
+      if (next.room.status === 'open') setSawOpen(true)
       return { ok: true, state: next }
     },
     [roomId],
@@ -448,7 +456,7 @@ export default function RoomPage() {
    * Было: setPulling(true), голый await fetch и снятие флага только на !res.ok.
    * Любой обрыв сети — а докблок vote ниже прямо называет лифт и метро
    * обычным делом — отклонял промис в пустоту, и pulling оставался true до
-   * перезагрузки страницы. Кнопка при этом disabled={pulling} и подписана
+   * перезагрузки страницы. Кнопка при этом выключена по pulling и подписана
    * «Добираю…», то есть врала, что работа идёт, и одновременно не давала
    * нажать ещё раз. А это единственный способ расшевелить застрявшую пати:
    * раунд общий и приходит всем сразу.
@@ -631,7 +639,7 @@ export default function RoomPage() {
    * Вход в комнату по приглашению.
    *
    * Было: setBusy(true), голый await, снятие флага без try. Обрыв сети
-   * оставлял busy=true навсегда, а кнопки экрана стоят под disabled={busy} —
+   * оставлял busy=true навсегда, а кнопки экрана выключены по busy —
    * то есть единственное действие страницы-приглашения умирало от одного
    * моргнувшего вайфая. Отказы роута теперь названы — см. joinFailure.
    */
@@ -678,6 +686,11 @@ export default function RoomPage() {
     // карте голосовал дважды, см. claimVote. Отказ ниже вычёркивает карту
     // обратно, и повтор после сбоя проходит.
     if (!claimVote(votedLocally.current, card.appid)) return
+    // Прежний отказ гаснет с новой попыткой. Иначе второй отказ подряд пришёл
+    // бы тем же текстом — а это не изменение, и строка под колодой промолчала
+    // бы (components/StatusLine); пока голос в пути, под следующей картой
+    // висело бы «вернулась» про прошлую.
+    setVoteFailed(false)
     setCards((prev) => (prev ? prev.filter((c) => c.appid !== card.appid) : prev))
     setLocalVotes((v) => v + 1)
     // 0 — ответа нет: обрыв сети, VOTE_TIMEOUT_MS или неразборчивое тело
@@ -876,18 +889,42 @@ export default function RoomPage() {
    * колода, ростер, кто голосовал. Врал он ровно тем, что выглядел свежим.
    * Плашка это и снимает, ничего не пряча.
    *
-   * role="status" с aria-live="polite" — новость приходит без действия
-   * человека, и без объявления её не заметит тот, кто не смотрит на экран.
+   * Живая область — новость приходит без действия человека, и без
+   * объявления её не заметит тот, кто не смотрит на экран. Стоит всегда, а
+   * не появляется вместе с плашкой: область, вставленная уже с текстом,
+   * звучит не везде (components/StatusLine).
    */
-  const staleBadge = stale ? (
-    <div
-      role="status"
-      aria-live="polite"
+  const staleBadge = (
+    <StatusLine
+      text={stale ? 'Связь потеряна — комната не обновляется. Пробую снова…' : null}
       className="panel-lift anim-rise px-4 py-2.5 text-xs leading-relaxed text-dim"
-    >
-      Связь потеряна — комната не обновляется. Пробую снова…
-    </div>
-  ) : null
+    />
+  )
+
+  /*
+   * МАТЧ ОБЪЯВЛЯЕТ СТРАНИЦА, А НЕ ЦЕРЕМОНИЯ.
+   *
+   * Матч приходит опросом — чужим последним голосом или чужим «Берём», — и
+   * церемония заменяет комнату целиком: колода и её живая область уходят,
+   * фокус падает в body. Незрячий участник не узнавал, что матч случился.
+   * Внутри MatchCeremony строка родилась бы вместе с текстом и звучала бы не
+   * везде (components/StatusLine), поэтому она стоит первым ребёнком
+   * фрагмента в обоих return — лобби и церемонии: React сверяет детей по
+   * месту, и узел переживает подмену. Поставь что-нибудь над ней в одном из
+   * них — и область смонтируется заново вместе с текстом (сторож —
+   * lib/focushandoff.test.ts).
+   */
+  const matchStatus = (
+    <StatusLine
+      text={matchLine({
+        sawOpen,
+        status: state.room.status,
+        isMember: state.isMember,
+        game: state.matchedGame,
+      })}
+      className="sr-only"
+    />
+  )
 
   // ---- МАТЧ ----
   /*
@@ -923,7 +960,16 @@ export default function RoomPage() {
     )
   }
   if (state.room.status === 'matched' && state.matchedGame) {
-    return <MatchCeremony game={state.matchedGame} memberCount={state.members.length} />
+    return (
+      <>
+        {matchStatus}
+        <MatchCeremony
+          game={state.matchedGame}
+          memberCount={state.members.length}
+          takeFocus={sawOpen}
+        />
+      </>
+    )
   }
 
   // ---- НЕ УЧАСТНИК ----
@@ -946,10 +992,16 @@ export default function RoomPage() {
               : 'Подключи свою библиотеку — и свайпай, во что готов играть.'}{' '}
             Совпадёте — будет матч.
           </p>
+          {/*
+            aria-disabled, а не disabled, у обеих дверей: на отказе экран
+            остаётся, строка ниже говорит почему, и нажатая кнопка обязана
+            удержать фокус — disabled ронял его в body на всё время запроса.
+            Повтор гасят сами join и joinAsDemoFriend (по busy).
+          */}
           {state.hasSession ? (
             <button
               onClick={join}
-              disabled={busy}
+              aria-disabled={busy}
               className="btn-ember is-block py-3"
             >
               Войти в комнату
@@ -970,7 +1022,7 @@ export default function RoomPage() {
               </Link>
               <button
                 onClick={joinAsDemoFriend}
-                disabled={busy}
+                aria-disabled={busy}
                 className="tap text-sm text-dim hover:text-ink transition-colors"
               >
                 {busy ? 'Подключаю…' : 'Демо-друг (без Steam)'}
@@ -980,12 +1032,10 @@ export default function RoomPage() {
           {/*
             Под обеими ветками, а не только под демо-другом: обычный вход тоже
             умеет отказывать, и прежде экран молчал на все его отказы одинаково.
+            Строка стоит всегда, пустой: join сбрасывает прежний отказ, и новый
+            приходит в неё изменением текста — такое скринридер объявит.
           */}
-          {joinError && (
-            <p role="status" className="anim-rise text-sm text-danger">
-              {joinError}
-            </p>
-          )}
+          <StatusLine text={joinError} className="anim-rise text-sm text-danger" />
         </div>
       </div>
     )
@@ -1004,6 +1054,8 @@ export default function RoomPage() {
   const moodPreset = roomPresetOf(state.room.mood)
 
   return (
+    <>
+    {matchStatus}
     <div className="room-page flex-1 mx-auto w-full max-w-3xl px-5 pt-24 pb-16 flex flex-col gap-6">
       {staleBadge}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1141,21 +1193,14 @@ export default function RoomPage() {
           <Spinner />
         </div>
       ) : card ? (
-        <>
-          <SwipeDeck
-            cards={cards}
-            onVote={vote}
-            votedCount={votedCount}
-            deckTotal={deckTotal}
-            alone={state.members.length < 2}
-            nowSec={nowSec}
-          />
-          {voteFailed ? (
-            <p role="status" className="mt-3 text-center text-sm text-danger">
-              Голос не ушёл — карточка вернулась, свайпни ещё раз.
-            </p>
-          ) : null}
-        </>
+        <SwipeDeck
+          cards={cards}
+          onVote={vote}
+          votedCount={votedCount}
+          deckTotal={deckTotal}
+          alone={state.members.length < 2}
+          nowSec={nowSec}
+        />
       ) : (
         <RoomWaiting
           roomId={roomId}
@@ -1183,6 +1228,19 @@ export default function RoomPage() {
           onTogglePublic={togglePublic}
         />
       )}
+      {/*
+        Отказ голоса — под колодой, но не внутри её ветки. Последняя карта
+        уходит свайпом сразу, и на её месте встаёт экран ожидания; отказ
+        возвращает её, и ветка колоды монтируется заново — строка внутри неё
+        рождалась бы вместе с текстом и звучала бы не везде. Здесь она живёт
+        всё лобби. Колода своей живой областью заново назовёт вернувшуюся
+        карту — эта строка говорит, почему она вернулась.
+      */}
+      <StatusLine
+        text={card && voteFailed ? 'Голос не ушёл — карточка вернулась, свайпни ещё раз.' : null}
+        className="mt-3 text-center text-sm text-danger"
+      />
     </div>
+    </>
   )
 }

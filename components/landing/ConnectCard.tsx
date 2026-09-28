@@ -7,7 +7,12 @@ import { ClickSpark } from '@/components/ClickSpark'
 import { Eyebrow } from '@/components/Labels'
 import { Magnet } from '@/components/Magnet'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
-import { CONNECT_CARD_MIN_H } from '@/components/landing/ConnectFallback'
+import {
+  AccessNote,
+  CONNECT_CARD_MIN_H,
+  PASSWORD_NOTE_ID,
+} from '@/components/landing/ConnectFallback'
+import { LinkHelp, LinkHelpToggle, toggleLinkHelp } from '@/components/landing/LinkHelp'
 import { markSessionTouched } from '@/components/SessionKeeper'
 import { DESTINATIONS, destinationPath, destinationUrl } from '@/lib/destination'
 import {
@@ -29,6 +34,7 @@ import {
   type SessionHint,
 } from '@/lib/sessionhint'
 import { writerFrom, writerStore } from '@/lib/writer'
+import { forgetPrewarm } from '@/lib/warmup'
 import { announceReadOnly } from '@/lib/readonlynote'
 import { LIVE_DEFAULT, liveLineFrom } from '@/lib/liveline'
 
@@ -307,6 +313,10 @@ export function ConnectCard() {
         // И подсказка о входе — новая: из демо ушли в свою библиотеку, и
         // «Ты в демо-режиме» на следующем заходе было бы уже неправдой
         rememberSession(hintFrom(data))
+        // Прогрев, начатый квизом прежнего входа (lib/warmup), — про другую
+        // библиотеку: квиз нового не начал бы своего, пока тот свежий, и /play
+        // показал бы стену прежнего человека
+        forgetPrewarm()
         await go()
         return
       }
@@ -416,7 +426,12 @@ export function ConnectCard() {
             )}
             <Magnet className="block w-full sm:w-auto sm:self-start">
               <ClickSpark className="block w-full sm:w-auto">
-                {/* busy — пока уходит вход в комнату: второй клик слал бы его дважды */}
+                {/*
+                  busy — пока уходит вход в комнату: второй клик слал бы его
+                  дважды. Гасит его обработчик, а кнопка выключена через
+                  aria-disabled: disabled выбросил бы фокус в body (см.
+                  rechecking выше)
+                */}
                 <button
                   type="button"
                   onClick={() => {
@@ -424,7 +439,7 @@ export function ConnectCard() {
                     setBusy('go')
                     void go()
                   }}
-                  disabled={busy !== null}
+                  aria-disabled={busy !== null}
                   data-busy={busy === 'go' ? '' : undefined}
                   className="btn-ember is-block px-8 text-base sm:w-auto"
                 >
@@ -553,39 +568,38 @@ export function ConnectCard() {
               стримингового героя: вход через Steam и демо. Раньше между ними
               и полем стояла «или»-линейка и третья кнопка во всю ширину —
               первый экран говорил тремя одинаково громкими голосами.
+
+              Подпись двери Steam — первая фраза сноски ниже: «пароль вводишь
+              на сайте Steam, мы его не видим». Глазом она стоит прямо под
+              ссылкой, а скринридеру её отдаёт aria-describedby — вместе с
+              именем двери, а не отдельной строкой после демо.
             */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[15px] font-bold">
-              <a href={steamHref} className="tap py-1 text-ink transition-colors hover:text-dim">
+              <a
+                href={steamHref}
+                aria-describedby={PASSWORD_NOTE_ID}
+                className="tap py-1 text-ink transition-colors hover:text-dim"
+              >
                 Войти через Steam
               </a>
               <span aria-hidden className="text-faint">
                 ·
               </span>
+              {/* Повтор гасит обработчик, а не disabled: отказ демо (потолок,
+                  сеть) оставляет карточку, и фокус обязан остаться здесь */}
               <button
-                onClick={() => connect(true)}
-                disabled={busy !== null}
+                onClick={() => {
+                  if (busy !== null) return
+                  void connect(true)
+                }}
+                aria-disabled={busy !== null}
                 className="tap py-1 text-dim transition-colors hover:text-ink active:text-ember-text"
               >
                 {busy === 'demo' ? 'Готовлю демо…' : 'Демо без Steam'}
               </button>
             </div>
-            {/*
-              text-dim и 12 px, а не text-faint и 11. Замерено: faint на стекле
-              карточки даёт ровно 4.50:1 — порог без единого запаса. Но главное
-              даже не это: faint — роль «едва заметного», а эту строку читает
-              тот, кто как раз колеблется, отдавать ли свой профиль. Прятать
-              ответ на этот вопрос в самый тихий токен было бы странно.
-            */}
-            <p className="max-w-md text-xs leading-relaxed text-dim">
-              Пароль не спрашиваем — вход идёт на стороне Steam. Читаем только список игр и
-              наигранные часы, ничего не публикуем.{' '}
-              <Link
-                href="/privacy"
-                className="tap tap-tight underline decoration-edge hover:text-ink"
-              >
-                Подробнее
-              </Link>
-            </p>
+            {/* Сноска общая с фолбэком — подмена при гидратации не меняет в ней ни слова */}
+            <AccessNote />
           </>
         )}
       </div>
@@ -666,77 +680,104 @@ function ProfileForm({
   onSubmit: () => void
 }) {
   const label = busy === 'connect' ? 'Читаю библиотеку…' : submit
+  /** «Где взять?» раскрыта (LinkHelp). Закрыта, пока о ней не попросили */
+  const [helpOpen, setHelpOpen] = useState(false)
   return (
-    /*
-      Настоящая форма, а не инпут с onKeyDown. Даёт три вещи разом: Enter
-      работает штатно (и на мобильной клавиатуре тоже), браузер понимает поле
-      как поле, а скринридер объявляет его подпись.
-    */
-    <form
-      onSubmit={(e) => {
-        e.preventDefault()
-        onSubmit()
-      }}
-      className="join"
-    >
-      {/* Подпись есть, но не показана: место под ней съело бы карточку,
-          а placeholder подписью не является — он исчезает при вводе и
-          не читается скринридером как имя поля. */}
-      <label htmlFor="steam-profile" className="sr-only">
-        Ссылка, ник или код друга в Steam
-      </label>
+    <>
       {/*
-        Подсказка в поле КОРОЧЕ подписи, и это не небрежность: полная
-        фраза не помещалась в поле на телефоне и обрывалась на «Steam-
-        профиль и…». Обрезанная подсказка хуже короткой — она выглядит
-        сломанной вёрсткой. Скринридер и label читают полный вариант.
+        Настоящая форма, а не инпут с onKeyDown. Даёт три вещи разом: Enter
+        работает штатно (и на мобильной клавиатуре тоже), браузер понимает поле
+        как поле, а скринридер объявляет его подпись.
       */}
-      <input
-        id="steam-profile"
-        name="profile"
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Ссылка, ник или код друга"
-        inputMode="url"
-        autoCapitalize="none"
-        autoCorrect="off"
-        spellCheck={false}
-        enterKeyHint="go"
-        autoComplete="off"
-        autoFocus={autoFocus}
-        aria-invalid={invalid}
-        aria-describedby="connect-error"
-      />
-      {primary ? (
-        /* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */
-        <Magnet className="block w-full sm:w-auto">
-          <ClickSpark className="block w-full sm:w-auto">
-            {/*
-              data-busy отдельно от disabled: форма выключает кнопку и
-              когда поле пустое, и когда идёт запрос, а это два разных
-              состояния. Выключенная ЖДЁТ ввода, занятая РАБОТАЕТ — и
-              выглядеть они обязаны по-разному (см. .btn-ember[data-busy]).
-            */}
-            <button
-              type="submit"
-              disabled={!value || busy !== null}
-              data-busy={busy === 'connect' ? '' : undefined}
-              className="btn-ember is-block whitespace-nowrap px-6 sm:w-auto"
-            >
-              {label}
-            </button>
-          </ClickSpark>
-        </Magnet>
-      ) : (
-        <button
-          type="submit"
-          disabled={!value || busy !== null}
-          className="btn-glass w-full whitespace-nowrap disabled:opacity-60 sm:w-auto"
-        >
-          {label}
-        </button>
-      )}
-    </form>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          onSubmit()
+        }}
+        className="join"
+      >
+        {/* Подпись есть, но не показана: место под ней съело бы карточку,
+            а placeholder подписью не является — он исчезает при вводе и
+            не читается скринридером как имя поля. */}
+        <label htmlFor="steam-profile" className="sr-only">
+          Ссылка, ник или код друга в Steam
+        </label>
+        {/*
+          «Где взять?» — в строке поля, а не строкой под ней: закрытая
+          подсказка не имеет права добавить карточке ни пикселя (см.
+          LinkHelp и .join-field). Кнопка после поля и в обходе: Tab с поля
+          ведёт прямо к ней, а type="button" не даёт ей отправить форму.
+        */}
+        <div className="join-field">
+          {/*
+            Подсказка в поле КОРОЧЕ подписи, и это не небрежность: полная
+            фраза не помещалась в поле на телефоне и обрывалась на «Steam-
+            профиль и…». Обрезанная подсказка хуже короткой — она выглядит
+            сломанной вёрсткой. Скринридер и label читают полный вариант.
+          */}
+          <input
+            id="steam-profile"
+            name="profile"
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Ссылка, ник или код друга"
+            inputMode="url"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="go"
+            autoComplete="off"
+            autoFocus={autoFocus}
+            aria-invalid={invalid}
+            aria-describedby="connect-error"
+          />
+          <LinkHelpToggle
+            open={helpOpen}
+            onToggle={() => setHelpOpen(toggleLinkHelp(helpOpen))}
+          />
+        </div>
+        {primary ? (
+          /* Парадная кнопка продукта: наклон к курсору + ember-залп на нажатии */
+          <Magnet className="block w-full sm:w-auto">
+            <ClickSpark className="block w-full sm:w-auto">
+              {/*
+                data-busy отдельно от выключения: форма выключает кнопку и
+                когда поле пустое, и когда идёт запрос, а это два разных
+                состояния. Выключенная ЖДЁТ ввода, занятая РАБОТАЕТ — и
+                выглядеть они обязаны по-разному (см. .btn-ember[data-busy]).
+
+                И выключаются они по-разному. Пустое поле — disabled: фокус в
+                этот момент в поле, а кнопке без ввода и правда не место в
+                обходе. Запрос — aria-disabled: нажатая кнопка обязана
+                удержать фокус, disabled уронил бы его в body. Второй запрос
+                гасит onSubmit (submitProfile — по busy).
+              */}
+              <button
+                type="submit"
+                disabled={!value}
+                aria-disabled={busy !== null}
+                data-busy={busy === 'connect' ? '' : undefined}
+                className="btn-ember is-block whitespace-nowrap px-6 sm:w-auto"
+              >
+                {label}
+              </button>
+            </ClickSpark>
+          </Magnet>
+        ) : (
+          /* Выключается так же, как парадная выше: поле — disabled, запрос — aria-disabled */
+          <button
+            type="submit"
+            disabled={!value}
+            aria-disabled={busy !== null}
+            className="btn-glass w-full whitespace-nowrap disabled:opacity-60 aria-disabled:opacity-60 sm:w-auto"
+          >
+            {label}
+          </button>
+        )}
+      </form>
+      {/* Сразу под пилюлей: шаги читаются рядом с полем, для которого они */}
+      <LinkHelp open={helpOpen} />
+    </>
   )
 }

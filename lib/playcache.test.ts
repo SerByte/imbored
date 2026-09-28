@@ -24,6 +24,7 @@ import {
   type PlayCache,
 } from './playcache'
 import type { PlayPick } from './playflow'
+import { runWarmup, startPrewarm } from './warmup'
 
 const ME = '76561197960287930'
 const OTHER = '76561197960265728'
@@ -364,6 +365,23 @@ describe('хранилища', () => {
     expect(local.data).toEqual({})
     expect(playCacheStore.get()).toBeNull()
     expect(readRecentBans(NOW).size).toBe(0)
+  })
+
+  /*
+   * Ответ прогрева, начатого квизом (lib/warmup), — про того, кто был вошедшим
+   * в момент вызова. Выход без этого оставлял бы его в памяти документа, и
+   * следующий вход забрал бы его первым кругом: стену и числа прежнего.
+   */
+  test('выход забывает и прогрев, начатый квизом', async () => {
+    vi.stubGlobal('sessionStorage', fakeStorage().area)
+    vi.stubGlobal('localStorage', fakeStorage().area)
+    const ok = () => new Response(JSON.stringify({ remaining: 0 }), { status: 200 })
+    startPrewarm({ fetchFn: vi.fn(async () => ok()) as unknown as typeof fetch })
+
+    forgetPlay()
+    const own = vi.fn(async () => ok())
+    expect(await runWarmup({ fetchFn: own as unknown as typeof fetch })).toBe('done')
+    expect(own).toHaveBeenCalledTimes(1)
   })
 
   /**

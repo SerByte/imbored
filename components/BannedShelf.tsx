@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { NeedSteam } from '@/components/NeedSteam'
+import { StatusLine } from '@/components/StatusLine'
 import type { GameArtUrls } from '@/lib/art'
 import { Eyebrow } from '@/components/Labels'
 import { plural } from '@/lib/plural'
@@ -147,18 +148,43 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
   const done = items.filter((g) => g.done)
 
   /*
+   * ОТКАЗ СКРИНРИДЕРУ ГОВОРИТ СТРОКА ПОЛОК, А НЕ ПЛИТКИ.
+   *
+   * Плитка уходит сразу, а отказ возвращает её откатом — то есть монтирует
+   * заново, и живая область внутри плитки рождалась бы вместе с текстом
+   * отказа: такую скринридер объявляет не везде (components/StatusLine).
+   * Эта строка стоит первой в обоих вариантах разметки ниже — и в «всё
+   * вернулось», и в полках, — и React держит её одним узлом, даже когда
+   * последняя плитка ушла и вернулась. Название игры — в ней же: фокус
+   * вернётся на кнопку плитки, а «не вышло» без названия было бы ни о чём.
+   */
+  const missed = failed === null ? undefined : items.find((g) => g.appid === failed)
+  const miss = (
+    <StatusLine
+      text={missed ? `Не вышло — «${missed.name}» осталась на полке. Попробуй ещё раз.` : null}
+      className="sr-only"
+    />
+  )
+
+  /*
    * Всё вернули — полка не исчезает молча, а говорит об этом. Строка же
    * держит фокус: иначе после последней плитки он упал бы в body. И держится
    * она и после router.refresh(): полки живут в своём состоянии, а не в
    * пропе, который сервер пришлёт уже пустым.
+   *
+   * Живой области на ней нет намеренно: строка рождается вместе со своим
+   * текстом, и объявляет её не роль, а фокус, который на неё переезжает.
    */
   if (items.length === 0) {
     return (
-      <section className="mb-12">
-        <p ref={emptyLine} tabIndex={-1} role="status" className="text-dim text-sm">
-          Всё вернулось в подбор.
-        </p>
-      </section>
+      <>
+        {miss}
+        <section className="mb-12">
+          <p ref={emptyLine} tabIndex={-1} className="text-dim text-sm">
+            Всё вернулось в подбор.
+          </p>
+        </section>
+      </>
     )
   }
 
@@ -211,8 +237,9 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
                   {shelf === 'done' ? 'Снова предлагать' : 'Вернуть в подбор'}
                 </button>
               )}
+              {/* Для глаза: скринридеру отказ уже сказала строка полок (miss) */}
               {failed === g.appid && (
-                <p role="status" className="px-3 pb-3 text-[11px] text-danger">
+                <p aria-hidden className="px-3 pb-3 text-[11px] text-danger">
                   Не вышло — попробуй ещё раз
                 </p>
               )}
@@ -224,51 +251,54 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
   )
 
   return (
-    <div className="flex flex-col gap-12 mb-12">
-      {readOnly && <NeedSteam from="/library" />}
+    <>
+      {miss}
+      <div className="flex flex-col gap-12 mb-12">
+        {readOnly && <NeedSteam from="/library" />}
 
-      {hidden.length > 0 && (
-        <section aria-labelledby="shelf-hidden">
-          <Eyebrow className="mb-2">Скрытые</Eyebrow>
-          <h2
-            id="shelf-hidden"
-            ref={(el) => {
-              headings.current.hidden = el
-            }}
-            tabIndex={-1}
-            className="font-display text-display-sm"
-          >
-            <span className="tabular-nums text-ember-text">{hidden.length}</span>{' '}
-            {plural(hidden.length, 'игру', 'игры', 'игр')} больше не предлагаем
-          </h2>
-          <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-            Их правда нет ни в подборе, ни в игре дня, ни в пати. Передумаешь — верни обратно.
-          </p>
-          {tiles(hidden, 'hidden')}
-        </section>
-      )}
+        {hidden.length > 0 && (
+          <section aria-labelledby="shelf-hidden">
+            <Eyebrow className="mb-2">Скрытые</Eyebrow>
+            <h2
+              id="shelf-hidden"
+              ref={(el) => {
+                headings.current.hidden = el
+              }}
+              tabIndex={-1}
+              className="font-display text-display-sm"
+            >
+              <span className="tabular-nums text-ember-text">{hidden.length}</span>{' '}
+              {plural(hidden.length, 'игру', 'игры', 'игр')} больше не предлагаем
+            </h2>
+            <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
+              Их правда нет ни в подборе, ни в игре дня, ни в пати. Передумаешь — верни обратно.
+            </p>
+            {tiles(hidden, 'hidden')}
+          </section>
+        )}
 
-      {done.length > 0 && (
-        <section aria-labelledby="shelf-done">
-          <Eyebrow className="mb-2">Пройдено</Eyebrow>
-          <h2
-            id="shelf-done"
-            ref={(el) => {
-              headings.current.done = el
-            }}
-            tabIndex={-1}
-            className="font-display text-display-sm"
-          >
-            <span className="tabular-nums text-ember-text">{done.length}</span>{' '}
-            {plural(done.length, 'игра пройдена', 'игры пройдены', 'игр пройдено')}
-          </h2>
-          <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-            Их не предлагаем не потому, что не понравились: они пройдены. Захочешь перепройти —
-            верни.
-          </p>
-          {tiles(done, 'done')}
-        </section>
-      )}
-    </div>
+        {done.length > 0 && (
+          <section aria-labelledby="shelf-done">
+            <Eyebrow className="mb-2">Пройдено</Eyebrow>
+            <h2
+              id="shelf-done"
+              ref={(el) => {
+                headings.current.done = el
+              }}
+              tabIndex={-1}
+              className="font-display text-display-sm"
+            >
+              <span className="tabular-nums text-ember-text">{done.length}</span>{' '}
+              {plural(done.length, 'игра пройдена', 'игры пройдены', 'игр пройдено')}
+            </h2>
+            <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
+              Их не предлагаем не потому, что не понравились: они пройдены. Захочешь перепройти —
+              верни.
+            </p>
+            {tiles(done, 'done')}
+          </section>
+        )}
+      </div>
+    </>
   )
 }

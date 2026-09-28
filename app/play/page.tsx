@@ -14,6 +14,7 @@ import { HeroShots } from '@/components/HeroShots'
 import { LogoMark } from '@/components/Logo'
 import { NeedSteam } from '@/components/NeedSteam'
 import { useSharePick } from '@/components/SharePick'
+import { StatusLine } from '@/components/StatusLine'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
@@ -78,10 +79,11 @@ import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
+import { isDemoId } from '@/lib/demoid'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
-import { track } from '@/lib/track'
+import { track, trackWait, type WaitPath } from '@/lib/track'
 import { parseWallMemo, remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
@@ -359,7 +361,8 @@ function Player({ say }: { say: (line: string) => void }) {
   const [switching, setSwitching] = useState(false)
   /**
    * Почему переключатель не пересобрал выдачу (switchLine) — строкой под ним.
-   * null — сказать нечего. Гаснет с любой следующей выдачей (applyDeal).
+   * null — сказать нечего. Гаснет с новым нажатием (reshape) и с любой
+   * следующей выдачей (applyDeal).
    */
   const [switchMiss, setSwitchMiss] = useState<string | null>(null)
   /** То же для «Как «X», но…» и подталкиваний — строкой у самих кнопок, под героем */
@@ -733,6 +736,14 @@ function Player({ say }: { say: (line: string) => void }) {
      */
     const ac = new AbortController()
 
+    /*
+     * Замер ожидания первой выдачи (pick_wait в lib/track): от захода до
+     * карточки, и каким путём к ней пришёл каталог. performance.now, а не
+     * Date.now: длительность не должна прыгать вместе с часами устройства.
+     */
+    const waitFrom = performance.now()
+    let waitPath: WaitPath = 'cold'
+
     /** Выдача на экран. Один путь и для догретого каталога, и для частичного. */
     async function reveal(): Promise<boolean> {
       // При скрытом времени нетронутого не узнать — сервер отдаст всё своё, и
@@ -753,6 +764,12 @@ function Player({ say }: { say: (line: string) => void }) {
       // Первый показ выдачи; переборы, повторы и восстановление после «Назад»
       // идут мимо reveal() и шагом воронки не считаются
       track('pick_shown')
+      // Замер — только у захода: «Подобрать заново» ждёт на уже тронутом
+      // каталоге и размыл бы холодный путь. Демо — по ответу сервера, а не
+      // по подсказке: чья выдача, знает он
+      if (round === 0) {
+        trackWait(got.viewer && isDemoId(got.viewer) ? 'demo' : waitPath, performance.now() - waitFrom)
+      }
       /*
        * Такт «из многих — одна». Только на первом показе и не в рулетке: у
        * той свой барабан, и два выбора подряд читались бы как заминка.
@@ -816,6 +833,7 @@ function Player({ say }: { say: (line: string) => void }) {
       // Каталог разобран минуты назад: прогрев ответил бы «нечего» первым же
       // вызовом, а экран ожидания простоял бы ради этого лишний круг
       if (warmIsFresh(mark, viewer, Date.now())) {
+        waitPath = 'skip'
         if (!back) await reveal()
         return
       }
@@ -839,6 +857,11 @@ function Player({ say }: { say: (line: string) => void }) {
 
       const warm = await runWarmup({
         signal: ac.signal,
+        // Первый круг сделал квиз (startPrewarm) — экран ожидания короче ровно
+        // на него, и замер это должен различать
+        onPrewarm: () => {
+          waitPath = 'prewarm'
+        },
         onProgress: (p) => {
           lastTotal = p.total
           warmedAll = p.remaining <= 0
@@ -980,6 +1003,12 @@ function Player({ say }: { say: (line: string) => void }) {
         next.nudge === nudge &&
         next.nudge !== 'different'
       if (same || switching) return
+      // Прежний отказ этого места гаснет с новой попыткой: второй потолок
+      // частоты подряд — тот же switchLine, и живая область, где текст не
+      // изменился, промолчала бы — нажатие осталось бы без отклика вовсе
+      // (components/StatusLine)
+      if (from === 'hero') setHeroMiss(null)
+      else setSwitchMiss(null)
       setSwitching(true)
       try {
         const got = await fetchPicks(next)
@@ -1152,11 +1181,14 @@ function Player({ say }: { say: (line: string) => void }) {
           </div>
         )}
 
+        {/* aria-disabled, а не disabled: неудача повтора оставляет экран как
+            есть (см. retry), и фокус обязан остаться на кнопке, а не упасть
+            в body. Второе нажатие гасит сам retry */}
         {fail.retry && (
           <button
             onClick={() => void retry()}
-            disabled={retrying}
-            className="tap cursor-pointer text-sm text-ember-text hover:underline disabled:opacity-50"
+            aria-disabled={retrying}
+            className="tap cursor-pointer text-sm text-ember-text hover:underline aria-disabled:opacity-50"
           >
             {retrying ? 'Пробую…' : 'Попробовать снова'}
           </button>
@@ -1793,7 +1825,12 @@ function Player({ say }: { say: (line: string) => void }) {
                       )
                       focusHero(false)
                     }}
-                    disabled={banning}
+                    /* aria-disabled, а не disabled: бан ждёт ответа, и на
+                       отказе кнопка остаётся на месте со строкой «не дошло»
+                       под ней. disabled выбрасывал фокус в body на всё время
+                       запроса — нажать ещё раз было уже не с чего. Повтор
+                       гасит if (banning) в начале обработчика. */
+                    aria-disabled={banning}
                     title={
                       finished
                         ? 'Прошёл — больше не предлагать'
@@ -1801,7 +1838,7 @@ function Player({ say }: { say: (line: string) => void }) {
                           ? 'Убрать с полки. Бросать игры — нормально'
                           : 'Больше не показывать эту игру'
                     }
-                    className={finished ? 'btn-glass disabled:opacity-60' : 'btn-circle disabled:opacity-60'}
+                    className={finished ? 'btn-glass aria-disabled:opacity-60' : 'btn-circle aria-disabled:opacity-60'}
                   >
                     {/*
                       Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
@@ -1833,15 +1870,20 @@ function Player({ say }: { say: (line: string) => void }) {
               {/*
                 Отказ бана виден, потому что бан необратим. Формулировка ведёт
                 к следующему шагу, а не констатирует поломку: карточка на месте,
-                жест повторяется тем же нажатием.
+                жест повторяется тем же нажатием. Строка стоит всегда, пустой:
+                отказ приходит в неё изменением текста, и скринридер его
+                объявит (components/StatusLine).
               */}
-              {banFailed === pick.appid && (
-                <p role="status" className="-mt-1 text-sm text-danger">
-                  {finished
-                    ? 'Не получилось отметить игру пройденной — нажми ещё раз.'
-                    : 'Не получилось убрать игру насовсем — нажми ещё раз.'}
-                </p>
-              )}
+              <StatusLine
+                text={
+                  banFailed !== pick.appid
+                    ? null
+                    : finished
+                      ? 'Не получилось отметить игру пройденной — нажми ещё раз.'
+                      : 'Не получилось убрать игру насовсем — нажми ещё раз.'
+                }
+                className="-mt-1 text-sm text-danger"
+              />
               {/* Под ценой — «а если не зайдёт»: покупка перестаёт быть ставкой.
                   Только у платного, вышедшего и из Steam — решает сервер. */}
               {pick.refund && (
@@ -1948,11 +1990,9 @@ function Player({ say }: { say: (line: string) => void }) {
                   ))}
                 </m.div>
               )}
-              {heroMiss && (
-                <p role="status" className="-mt-1 text-sm text-danger">
-                  {heroMiss}
-                </p>
-              )}
+              {/* Отказ «Как «X», но…» и подталкиваний — тем же приёмом: строка
+                  стоит всегда, а меняется в ней только текст */}
+              <StatusLine text={heroMiss} className="-mt-1 text-sm text-danger" />
               </>
             )}
             </div>

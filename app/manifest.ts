@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next'
 import { SITE_DESCRIPTION, SITE_TITLE } from '@/lib/site'
+import { THEME_COLOR } from '@/lib/themecolor'
 
 /**
  * Манифест — ради «добавить на домашний экран», а не ради полноценного PWA.
@@ -33,7 +34,9 @@ export default function manifest(): MetadataRoute.Manifest {
     // Совпадает с --bg тёмной темы: она базовая, и экран запуска не должен
     // моргать белым перед тем, как приложение отрисуется.
     background_color: '#050505',
-    theme_color: '#050505',
+    // Одна константа с meta theme-color в разметке (lib/themecolor): они уже
+    // расходились — манифест тёмный, meta по теме ОС
+    theme_color: THEME_COLOR,
     lang: 'ru',
     categories: ['games', 'entertainment'],
     icons: [

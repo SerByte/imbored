@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { memberLabel, parseRoomCode, rosterHint, waitingMode } from './room'
+import { matchLine, memberLabel, parseRoomCode, rosterHint, waitingMode } from './room'
 
 describe('waitingMode', () => {
   test('один в комнате — «ты тут один», а не «ждём остальных»', () => {
@@ -112,5 +112,29 @@ describe('rosterHint', () => {
 
   test('все закончили и карт больше нет — совет взять ещё был бы тупиком', () => {
     expect(rosterHint({ swiping: 0, hasMore: false })).toBeNull()
+  })
+})
+
+describe('matchLine', () => {
+  const matched = { status: 'matched' as const, isMember: true, game: { name: 'Hades' } }
+
+  test('комната сошлась на глазах — строка называет игру', () => {
+    // ради названия строка и звучит: заголовок церемонии говорит только «Это матч!»
+    expect(matchLine({ sawOpen: true, ...matched })).toBe('Матч: «Hades»')
+  })
+
+  test('открыл ссылку на уже сошедшуюся комнату — новости нет', () => {
+    // церемония здесь и есть страница, её читают как страницу
+    expect(matchLine({ sawOpen: false, ...matched })).toBeNull()
+  })
+
+  test('пока комната открыта — сказать нечего', () => {
+    expect(matchLine({ sawOpen: true, ...matched, status: 'open' })).toBeNull()
+  })
+
+  test('те же условия, что у церемонии: только своим и только с игрой', () => {
+    // чужому рисуется «эта пати уже договорилась», а не церемония
+    expect(matchLine({ sawOpen: true, ...matched, isMember: false })).toBeNull()
+    expect(matchLine({ sawOpen: true, ...matched, game: null })).toBeNull()
   })
 })

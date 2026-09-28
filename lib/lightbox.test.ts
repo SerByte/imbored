@@ -88,3 +88,53 @@ describe('лайтбокс модальный на деле', () => {
     expect(impl, 'убитый смузер обязан отписаться').toContain('unregister?.()')
   })
 })
+
+/**
+ * Оверлей висит в портале, в <body>, и тем самым вне любой зоны — токены он
+ * берёт у того, что сам на себе объявит. Композицию (счётчик и кнопки на
+ * затемнении) считает lib/contrast.test.ts; здесь — подключение.
+ */
+describe('лайтбокс тёмный в обеих темах и не лезет под вырез', () => {
+  const src = code('components/Lightbox.tsx')
+  const at = src.indexOf('ref={overlayRef}')
+  const root = src.slice(at).match(/className="([^"]*)"/)?.[1] ?? ''
+
+  test('корень — тёмная поверхность, но не кино-зона', () => {
+    expect(at, 'корень оверлея не найден — сторож ослеп').toBeGreaterThan(-1)
+    expect(root, 'без тёмных токенов в светлой теме счётчик даёт 1.9:1').toMatch(/\bmedia-card\b/)
+    expect(root, '.media-dark перекрасил бы шапку при открытии кадра').not.toMatch(/\bmedia-dark\b/)
+    // .media-card красит фон вне слоёв: без !important утилита проиграет,
+    // и сплошной --bg закроет затемнение с размытием
+    expect(root).toMatch(/(?:^|\s)!bg-transparent\b/)
+  })
+
+  /**
+   * Каждый отступ от края у абсолютного элемента — через max(…, env(…)) со
+   * СВОЕЙ стороной. top-1/2 — центровка по высоте, а не отступ от края.
+   */
+  test('отступы от краёв берут вырез', () => {
+    const offenders: string[] = []
+    let seen = 0
+    for (const m of src.matchAll(/className="([^"]*)"/g)) {
+      const cls = m[1].split(/\s+/)
+      if (!cls.includes('absolute') || cls.includes('inset-0')) continue
+      for (const c of cls) {
+        const side = c.match(/^(top|right|bottom|left)-(.+)$/)
+        if (!side || c === 'top-1/2') continue
+        seen++
+        const safe = new RegExp(String.raw`^\[max\([\d.]+rem,env\(safe-area-inset-${side[1]}\)\)\]$`)
+        if (!safe.test(side[2])) offenders.push(c)
+      }
+    }
+    // крестик (сверху и справа), две стрелки, счётчик
+    expect(seen, 'отступы не найдены — разбор ослеп').toBeGreaterThanOrEqual(5)
+    expect(offenders, 'в ландшафте iPhone этот край уходит под вырез').toEqual([])
+  })
+
+  test('смена кадра озвучивается строкой, а «2/6» от скринридера спрятан', () => {
+    expect(src).toMatch(/<StatusLine text=\{`Кадр \$\{index \+ 1\} из \$\{images\.length\}`\}/)
+    expect(src, 'видимый счётчик голосом звучит дробью').toMatch(
+      /<span\s+aria-hidden\s+className="[^"]*"\s*>\s*\{index \+ 1\}\/\{images\.length\}/,
+    )
+  })
+})

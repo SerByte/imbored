@@ -10,6 +10,7 @@ import type { NewsBlock } from '@/lib/steamhtml'
 import { NewsBody } from './NewsBody'
 import { NewsDate, ScaleBadge } from './NewsMeta'
 import { stripGameName } from '@/lib/patchtitle'
+import { textLang } from '@/lib/textlang'
 import { Icon } from '@/components/Icon'
 
 /**
@@ -115,6 +116,8 @@ function Row({
 
   // Название игры — заголовок всей страницы; в заголовке патча оно лишнее.
   const heading = stripGameName(item.title, name)
+  // Английский заголовок — с lang="en", как в ленте (PatchRow, lib/textlang)
+  const headingLang = textLang(heading)
   // null — страницы нет в поиске (хотфикс без пересказа, игра вне каталога):
   // заголовок тогда просто текст, см. indexedNewsPath
   const href = indexedNewsPath(item)
@@ -138,12 +141,15 @@ function Row({
             <Link
               href={href}
               prefetch={false}
+              lang={headingLang}
               className="tap tap-tight relative z-10 self-start text-base font-bold text-ink leading-snug decoration-1 underline-offset-4 hover:underline"
             >
               {heading}
             </Link>
           ) : (
-            <span className="text-base font-bold text-ink leading-snug">{heading}</span>
+            <span lang={headingLang} className="text-base font-bold text-ink leading-snug">
+              {heading}
+            </span>
           )}
           <span className="flex items-center gap-3">
             <NewsDate at={item.publishedAt} />

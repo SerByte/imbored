@@ -22,6 +22,7 @@
  */
 
 import { plural } from './plural'
+import type { SessionHint } from './sessionhint'
 
 /**
  * Два факта о библиотеке, которые /api/prepare отдаёт с первого же ответа.
@@ -204,6 +205,247 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/* ──────────────── вызов, от которого ушли, а сервер дорабатывает ──────────────── */
+
+/**
+ * Сколько /api/prepare считается занятым вызовом, ответа на который никто не
+ * дождался, мс от начала вызова.
+ *
+ * Уход страницы отменяет fetch только у нас (opts.signal): маршрут сигнал
+ * запроса не слушает и свою пачку GetItems дорабатывает. Пачку он выбирает по
+ * «протухшим» строкам каталога (getStaleAppids в ensureMeta), и пока первый
+ * вызов их не записал, второй, начатый рядом, выберет те же двести appid —
+ * второй GetItems на ту же пачку. Конца такого вызова клиенту не видно,
+ * поэтому срок: честный вызов — десять секунд с небольшим, отсюда пятнадцать.
+ * WARMUP_CALL_TIMEOUT_MS — потолок нашего терпения, а не длина работы сервера.
+ */
+export const WARMUP_ORPHAN_MS = 15_000
+
+type OpenCall = { quiet: Promise<void>; close: () => void }
+
+/** Вызовы /api/prepare из этого документа, которые сервер, возможно, ещё разбирает */
+const openCalls = new Set<OpenCall>()
+
+/**
+ * Вызов /api/prepare с отметкой «сервер занят». Снимает её ответ — любой, хоть
+ * 401: сервер закончил, — или срок WARMUP_ORPHAN_MS. Отказ не снимает: и уход
+ * страницы, и обрыв сети говорят только о нашей стороне разговора.
+ */
+function callPrepare(init: RequestInit, fetchFn: typeof fetch): Promise<Response> {
+  const res = fetchFn('/api/prepare', { method: 'POST', ...init })
+  let quieted = () => {}
+  const call: OpenCall = {
+    quiet: new Promise<void>((done) => {
+      quieted = done
+    }),
+    close: () => {
+      clearTimeout(timer)
+      openCalls.delete(call)
+      quieted()
+    },
+  }
+  const timer = setTimeout(call.close, WARMUP_ORPHAN_MS)
+  openCalls.add(call)
+  void Promise.resolve(res).then(call.close, () => {})
+  return res
+}
+
+/**
+ * Вызов /api/prepare в очередь за нашими же: уходит, когда ответили или
+ * отжили свой срок все вызовы этого документа, начатые раньше.
+ *
+ * Очередь нужна тем, кто зовёт /api/prepare не из цикла страницы: первому
+ * кругу под квизом (startPrewarm) и WarmCatalog на /library. «Изменить
+ * настроение» уводит с /play на квиз посреди догрева, «Выбрать одну» — с
+ * /library на квиз, пока WarmCatalog ждёт ответа; в обоих случаях новый вызов
+ * тут же рядом со старым — тот самый второй GetItems (WARMUP_ORPHAN_MS).
+ *
+ * Проверка и вызов — в одном синхронном шаге: двое ждущих одного и того же
+ * вызова иначе проснулись бы вместе и ушли бы рядом друг с другом.
+ *
+ * init — функция, а не объект: потолок вызова (callSignal) считается от его
+ * выхода, а не от начала очереди. null — вызов за время ожидания стал не
+ * нужен (wanted): квиз забыл ответ, WarmCatalog ушёл со страницей.
+ */
+export async function queuePrepare(
+  opts: { init?: () => RequestInit; fetchFn?: typeof fetch; wanted?: () => boolean } = {},
+): Promise<Response | null> {
+  while (openCalls.size > 0) await Promise.all([...openCalls].map((c) => c.quiet))
+  if (opts.wanted && !opts.wanted()) return null
+  return callPrepare(opts.init?.() ?? {}, opts.fetchFn ?? fetch)
+}
+
+/** Только для тестов: вызовы в полёте живут на модуле и иначе текут между случаями */
+export function resetPrepareCalls(): void {
+  for (const call of [...openCalls]) call.close()
+}
+
+/* ─────────────────────── первый круг под квизом ─────────────────────── */
+
+/**
+ * ПЕРВЫЙ ВЫЗОВ ПРОГРЕВА — ПОКА ЧЕЛОВЕК ОТВЕЧАЕТ НА ТРИ ВОПРОСА.
+ *
+ * /api/prepare впервые звучал только на /play. Вошедший тратил секунды на
+ * квиз, а потом смотрел на экран ожидания, пока первый вызов разбирал пачку
+ * GetItems на двести игр, — до десяти секунд работы, которую можно было
+ * сделать под вопросами. Теперь квиз начинает этот вызов сам (startPrewarm),
+ * а цикл прогрева берёт его ответ своим первым кругом (runWarmup): ждёт
+ * недоехавший или забирает готовый.
+ *
+ * Забирает, а не повторяет, — ради Steam. Вызов /play поверх незаконченного
+ * вызова квиза разбирал бы ту же пачку: два GetItems по двести appid вместо
+ * одного, и ни один из них не быстрее. В обратную сторону то же: квиз, куда
+ * ушли посреди догрева /play, встаёт со своим вызовом в очередь (queuePrepare)
+ * за брошенным, который сервер ещё дорабатывает.
+ *
+ * В памяти модуля, а не в хранилище: квиз уводит на /play клиентским
+ * переходом, документ тот же. Перезагрузка ответ забывает — /play сделает
+ * первый вызов сам, как раньше, а разобранное сервером всё равно останется в
+ * каталоге. keepalive — ради того же: вызов, начатый под квизом, доезжает до
+ * сервера и тогда, когда документ ушёл посреди него.
+ */
+type Prewarm = { at: number; reply: Promise<unknown> }
+let prewarm: Prewarm | null = null
+
+/**
+ * Сколько ответ квиза годится первым кругом, мс от начала вызова. Три вопроса
+ * — это секунды, две минуты — с запасом. Дальше это уже не «пока отвечал», и
+ * /play начнёт своим вызовом: то, что квиз успел разобрать, лежит в каталоге
+ * и так. Тесный срок держит и метку прогрева (lib/playcache): /play ставит её
+ * по такому ответу на десять минут, и от самого вызова до её конца пройдёт
+ * не больше двенадцати.
+ */
+export const PREWARM_TTL_MS = 2 * 60_000
+
+function prewarmFresh(p: Prewarm, nowMs: number): boolean {
+  const age = nowMs - p.at
+  // «Из будущего» — часы перевели назад, и сколько ему на самом деле, не узнать
+  return age >= -60_000 && age <= PREWARM_TTL_MS
+}
+
+/**
+ * Кому греть под квизом.
+ *
+ * Квиз открыт и гостю, а ему сервер ответил бы 401 — пустой вызов с каждого
+ * захода. Демо греть нечего: библиотека статична и засеяна, /api/prepare
+ * отвечает ей remaining: 0, не трогая Steam, и свой первый вызов /play
+ * делает за один круг до сервера.
+ *
+ * Вошедшего узнаём без сети, по двум догадкам: подсказке о входе
+ * (lib/sessionhint) и признаку записи из ответа touch (lib/writer). Одной
+ * подсказки мало ровно там, где прогрев нужнее всего: возврат из Steam ведёт
+ * новичка прямо на /quiz (loginTarget), новым документом, а подсказку заводит
+ * только главная. На квизе вход тогда подтверждает touch из SessionKeeper —
+ * признак записи перестаёт быть «не знаем». Ошибись догадки — сервер ответит
+ * 401, и /play сделает первый вызов сам.
+ */
+export function prewarmWanted(
+  hint: Pick<SessionHint, 'authed' | 'demo'> | null,
+  writer: boolean | null,
+): boolean {
+  if (hint?.demo) return false
+  return hint?.authed === true || writer !== null
+}
+
+/**
+ * Начать первый круг заранее. Один на заход: пока прошлый ответ свежий —
+ * доехал он, едет или ждёт очереди, — второй не начинается. Возвращает,
+ * начат ли круг.
+ *
+ * Вызов уходит не сразу, если сервер ещё занят нашим же брошенным вызовом
+ * (queuePrepare). Ждёт сам ответ, а не квиз: /play, пришедший раньше, ждёт
+ * вместе с ним (takePrewarm) — своим вызовом рядом он сделал бы тот же дубль.
+ *
+ * Ответ хранится разобранным и только удачный: тело Response читается один
+ * раз, а отказ (401, 409, 500, обрыв) цикл на /play должен получить своим
+ * вызовом — со своими развилками «иди подключайся» и «ошибка».
+ */
+export function startPrewarm(opts: { fetchFn?: typeof fetch; nowMs?: () => number } = {}): boolean {
+  const now = (opts.nowMs ?? (() => Date.now()))()
+  if (prewarm && prewarmFresh(prewarm, now)) return false
+  const entry: Prewarm = { at: now, reply: Promise.resolve(null) }
+  // Через then, а не прямым вызовом: fetch, бросивший синхронно, не должен
+  // уронить квиз — прогрев здесь только ускорение
+  entry.reply = Promise.resolve()
+    .then(() =>
+      queuePrepare({
+        fetchFn: opts.fetchFn,
+        init: () => ({ keepalive: true, signal: callSignal(undefined) }),
+        // Забыт, пока стоял в очереди (сменился вход), — не нужен никому
+        wanted: () => prewarm === entry,
+      }),
+    )
+    .then(async (res): Promise<unknown> => (res?.ok ? await res.json() : null))
+    .catch(() => null)
+  prewarm = entry
+  return true
+}
+
+/**
+ * Забыть ответ квиза — вход сменился. Ответ не знает, чей он: /api/prepare
+ * отвечает про того, кто вошёл в момент вызова, и после выхода или входа
+ * другим профилем в том же документе /play показал бы стену и числа
+ * прежнего человека.
+ */
+export function forgetPrewarm(): void {
+  prewarm = null
+}
+
+/**
+ * Сменился ли вход между двумя подсказками — повод квизу забыть свой ответ.
+ *
+ * Выход и вход другим профилем в ЭТОМ документе забывают ответ сами
+ * (forgetPlay, ConnectCard). В соседней вкладке — нет, а кука у вкладок
+ * общая: следующий /play здесь забрал бы стену и числа прежнего человека.
+ * Узнать о чужой вкладке можно только по подсказке (lib/sessionhint): та её
+ * переписывает, и сюда доходит событие storage. steamid в подсказке нет,
+ * поэтому сравнивается всё, что есть. Лишнее «сменился» стоит одного круга
+ * заново, а не дубля: новый вызов встаёт в очередь за прежним (queuePrepare).
+ */
+export function hintChanged(prev: SessionHint | null, next: SessionHint | null): boolean {
+  if (!prev || !next) return prev !== next
+  return (
+    prev.authed !== next.authed ||
+    prev.personaName !== next.personaName ||
+    prev.demo !== next.demo ||
+    prev.readOnly !== next.readOnly
+  )
+}
+
+/** Ожидание, которое прерывает уход страницы: тогда null. */
+function untilAbort<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T | null> {
+  if (!signal) return p
+  if (signal.aborted) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    const gone = () => resolve(null)
+    signal.addEventListener('abort', gone, { once: true })
+    void p.then((v) => {
+      signal.removeEventListener('abort', gone)
+      resolve(v)
+    })
+  })
+}
+
+/**
+ * Ответ квиза для первого круга, или null: его нет, он протух или не удался.
+ * Недоехавший ждём здесь, а не зовём /api/prepare рядом с ним (см. докблок
+ * выше). Страница ушла посреди ожидания — ответ остаётся следующему заходу:
+ * он всё ещё свежий и всё ещё единственный вызов в полёте.
+ */
+async function takePrewarm(signal: AbortSignal | undefined, nowMs: number): Promise<unknown> {
+  const p = prewarm
+  if (!p) return null
+  if (!prewarmFresh(p, nowMs)) {
+    prewarm = null
+    return null
+  }
+  const reply = await untilAbort(p.reply, signal)
+  if (signal?.aborted) return null
+  // Забран: следующий заход на /play начнёт свой цикл, а не повторит этот круг
+  if (prewarm === p) prewarm = null
+  return reply
+}
+
 export async function runWarmup(
   opts: {
     onProgress?: (p: WarmupProgress) => void
@@ -220,6 +462,12 @@ export async function runWarmup(
      * Отменяет и текущий вызов, и паузу между вызовами.
      */
     signal?: AbortSignal
+    /**
+     * Первый круг пришёл из квиза (startPrewarm), а не своим вызовом. Страница
+     * узнаёт об этом ради замера ожидания (pick_wait в lib/track): без него не
+     * отличить выдачу, которую ускорил квиз, от обычной.
+     */
+    onPrewarm?: () => void
     fetchFn?: typeof fetch
     /** подменяется в тестах, иначе предел по времени не проверить */
     nowMs?: () => number
@@ -248,24 +496,41 @@ export async function runWarmup(
 
   for (let i = 0; i < maxCalls; i++) {
     if (signal?.aborted) return 'aborted'
-    let res: Response
-    try {
-      res = await fetchFn('/api/prepare', { method: 'POST', signal: callSignal(signal) })
-    } catch {
-      // Ушла страница — не сбой, а конец разговора. Иначе сеть отвалилась
-      // или вызов вышел за потолок — и это не «прогрев закончен»
-      return signal?.aborted ? 'aborted' : 'error'
-    }
 
-    // 401 без сессии, 409 без снапшота библиотеки: обоим лечение одно —
-    // отправить человека подключаться заново, а не показывать ошибку
-    if (res.status === 401 || res.status === 409) return 'unauthorized'
-    if (!res.ok) return 'error'
+    // Первый круг — ответ квиза, если он есть: вызов уже сделан под вопросами
+    // (см. startPrewarm). Нет его или не удался — круг идёт своим вызовом.
+    let body: unknown = i === 0 ? await takePrewarm(signal, nowMs()) : null
+    if (signal?.aborted) return 'aborted'
+    if (body !== null) {
+      opts.onPrewarm?.()
+    } else {
+      let res: Response
+      try {
+        // Не в очередь: цикл страницы — главный, кто зовёт /api/prepare. Но с
+        // отметкой — уйди страница посреди вызова, квиз подождёт его конца
+        res = await callPrepare({ signal: callSignal(signal) }, fetchFn)
+      } catch {
+        // Ушла страница — не сбой, а конец разговора. Иначе сеть отвалилась
+        // или вызов вышел за потолок — и это не «прогрев закончен»
+        return signal?.aborted ? 'aborted' : 'error'
+      }
+
+      // 401 без сессии, 409 без снапшота библиотеки: обоим лечение одно —
+      // отправить человека подключаться заново, а не показывать ошибку
+      if (res.status === 401 || res.status === 409) return 'unauthorized'
+      if (!res.ok) return 'error'
+
+      try {
+        body = await res.json()
+      } catch {
+        return signal?.aborted ? 'aborted' : 'error'
+      }
+    }
 
     let remaining: number
     let stalled: boolean
     try {
-      const data = (await res.json()) as { remaining?: number; library?: unknown; stalled?: unknown }
+      const data = body as { remaining?: number; library?: unknown; stalled?: unknown }
       remaining = data.remaining ?? 0
       // Флаг сервера: Steam не отдал метаданные, и повтор прямо сейчас упрётся
       // в тот же отказ (см. ensureMeta и /api/prepare)

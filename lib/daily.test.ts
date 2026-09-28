@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  DAILY_TOP,
   DAILY_TZ,
   dailyHeroAppids,
   dayKey,
@@ -57,6 +58,87 @@ describe('pickDaily', () => {
 
   test('пустые кандидаты — null', () => {
     expect(pickDaily([], 'seed')).toBeNull()
+  })
+
+  test('вчерашний в исключении: тот же сид и тот же вчерашний — та же игра', () => {
+    const first = pickDaily(CANDS, 'user1:2026-08-12', [1])
+    expect(first?.appid).not.toBe(1)
+    for (let i = 0; i < 10; i++) {
+      expect(pickDaily(CANDS, 'user1:2026-08-12', [1])).toEqual(first)
+    }
+  })
+
+  test('вчерашнего нет среди кандидатов — выбор тот же, что без исключения', () => {
+    for (let d = 1; d <= 20; d++) {
+      const seed = `user1:2026-08-${String(d).padStart(2, '0')}`
+      expect(pickDaily(CANDS, seed, [999])).toEqual(pickDaily(CANDS, seed))
+      expect(pickDaily(CANDS, seed, [])).toEqual(pickDaily(CANDS, seed))
+    }
+  })
+
+  test('кроме вчерашнего выбирать не из чего — повтор лучше пустого экрана', () => {
+    expect(pickDaily([CANDS[0]], 'seed', [CANDS[0].appid])).toEqual(CANDS[0])
+    expect(pickDaily(CANDS.slice(0, 2), 'seed', [1, 2])).not.toBeNull()
+  })
+})
+
+/**
+ * Распределение героя на 10 000 сидов: сто человек по сто дней подряд, и
+ * вчерашний герой каждому уходит в исключение — как в /api/daily.
+ *
+ * Прежние линейные веса по всему списку давали пятёрке лучших меньше
+ * половины дней, а лучшему — каждый десятый: «одна игра на сегодня» чаще
+ * бралась ниже пятого места по скору.
+ */
+describe('pickDaily: распределение по дням', () => {
+  // Своих кандидатов у /api/daily обычно около восемнадцати — с запасом за дюжину
+  const MANY: ScoredCandidate[] = Array.from({ length: 20 }, (_, i) => ({
+    appid: 100 + i,
+    name: `Игра ${i}`,
+    source: 'backlog',
+    score: 1 - i / 20,
+  }))
+  const USERS = 100
+  const DAYS = 100
+
+  /** Сколько раз герой стоял на каждом месте и сколько раз повторил вчерашнего */
+  function run(avoidYesterday: boolean) {
+    const counts = new Array<number>(MANY.length).fill(0)
+    let repeats = 0
+    for (let u = 0; u < USERS; u++) {
+      let yesterday: number[] = []
+      for (let d = 0; d < DAYS; d++) {
+        const pick = pickDaily(MANY, `7656119${u}:day${d}`, avoidYesterday ? yesterday : [])!
+        if (yesterday.includes(pick.appid)) repeats++
+        counts[MANY.indexOf(pick)]++
+        yesterday = [pick.appid]
+      }
+    }
+    return { counts, repeats, total: USERS * DAYS }
+  }
+  const withAvoid = run(true)
+
+  test('пятёрка лучших — больше половины дней, лучший — чаще любого другого', () => {
+    const { counts, total } = withAvoid
+    const top5 = counts.slice(0, 5).reduce((s, n) => s + n, 0)
+    expect(top5 / total).toBeGreaterThan(0.5)
+    expect(counts[0]).toBe(Math.max(...counts))
+  })
+
+  test('вчерашний не выпадает ни разу — а без исключения выпадал бы', () => {
+    expect(withAvoid.repeats).toBe(0)
+    // Не пустой ли тест: с крутыми весами без исключения повтор идёт
+    // примерно в каждый седьмой день
+    expect(run(false).repeats).toBeGreaterThan(0)
+  })
+
+  test('ниже дюжины не разыгрывается; место вчерашнего достаётся следующему', () => {
+    const { counts } = withAvoid
+    // Без исключения тринадцатый не выпадает никогда
+    expect(run(false).counts.slice(DAILY_TOP).every((n) => n === 0)).toBe(true)
+    // С исключением он входит в дюжину, когда вчерашний — из неё, а дальше — нет
+    expect(counts[DAILY_TOP]).toBeGreaterThan(0)
+    expect(counts.slice(DAILY_TOP + 1).every((n) => n === 0)).toBe(true)
   })
 })
 
@@ -177,6 +259,13 @@ describe('pickOwnAlternate', () => {
   test('в магазинный день — своя тем же сидом', () => {
     expect(pickDailyPool(own, shop, storeDay)).toBe(shop)
     expect(pickOwnAlternate(own, shop, storeDay)).toBe(pickDaily(own, storeDay))
+  })
+
+  test('вчерашняя своя запасной не станет: исключение то же, что у героя', () => {
+    const plain = pickOwnAlternate(own, shop, storeDay)!
+    const alt = pickOwnAlternate(own, shop, storeDay, [plain.appid])
+    expect(alt?.appid).not.toBe(plain.appid)
+    expect(alt).toBe(pickDaily(own, storeDay, [plain.appid]))
   })
 
   test('в свой день и без своего предлагать нечего', () => {

@@ -4,6 +4,7 @@ import { Icon } from '@/components/Icon'
 import { AnimatePresence, m } from 'framer-motion'
 import { useCallback, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { StatusLine } from '@/components/StatusLine'
 import type { TriviaQuestion } from '@/lib/trivia'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -86,6 +87,11 @@ export function PartyTrivia({
 
   const q = questions?.[at]
   const done = questions !== null && at >= questions.length && questions.length > 0
+  /** Разбор ответа на текущий вопрос; null — ещё не ответили */
+  const verdict =
+    q && chosen !== null
+      ? `${chosen === q.answer ? 'Ага.' : `Не-а — ${q.options[q.answer].label}.`}${q.reveal ? ` ${q.reveal}` : ''}`
+      : null
 
   return (
     <div className="relative mt-auto">
@@ -177,8 +183,14 @@ export function PartyTrivia({
                       return (
                         <button
                           key={o.label}
-                          disabled={revealed}
+                          // aria-disabled, а не disabled: ответ выключает все
+                          // варианты разом, и disabled ронял фокус с только
+                          // что выбранного в body — с клавиатуры до «Дальше»
+                          // приходилось идти со страницы сверху. Второй ответ
+                          // гасит сам обработчик
+                          aria-disabled={revealed}
                           onClick={() => {
+                            if (revealed) return
                             setChosen(i)
                             if (right) setScore((s) => s + 1)
                           }}
@@ -200,11 +212,20 @@ export function PartyTrivia({
                     })}
                   </div>
 
+                  {/*
+                    Разбор ответа скринридеру говорит строка, которая стоит весь
+                    вопрос, а не строка в ряду с «Дальше»: ряд появляется тем же
+                    рендером, что и разбор, и живая область внутри него рождалась
+                    бы вместе с текстом — такую скринридер объявляет не везде.
+                    Сама она sr-only и места в колонке не занимает; глазу разбор
+                    показывает ряд ниже.
+                  */}
+                  <StatusLine text={verdict} className="sr-only" />
                   {chosen !== null && (
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p role="status" aria-live="polite" className="text-xs text-faint">
-                        {chosen === q.answer ? 'Ага.' : `Не-а — ${q.options[q.answer].label}.`}
-                        {q.reveal ? ` ${q.reveal}` : ''}
+                      {/* Скринридеру разбор уже сказала строка выше — второй раз не читаем */}
+                      <p aria-hidden className="text-xs text-faint">
+                        {verdict}
                       </p>
                       <button
                         onClick={() => {

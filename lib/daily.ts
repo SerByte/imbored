@@ -23,21 +23,52 @@ export function mulberry32(seed: number): () => number {
   }
 }
 
+/** Из скольких верхних кандидатов разыгрывается игра дня */
+export const DAILY_TOP = 12
+
+/** Вес места i в розыгрыше — exp(−i/4), см. pickDaily */
+const RANK_WEIGHTS = Array.from({ length: DAILY_TOP }, (_, i) => Math.exp(-i / 4))
+
 /**
  * «Игра дня»: детерминированный взвешенный выбор — один и тот же весь день
- * для конкретного пользователя, завтра другой. Верхние кандидаты весят больше.
+ * для конкретного пользователя, завтра другой.
+ *
+ * Веса — по месту в скоре и круто вниз: exp(−i/4) по верхней дюжине. Прежние
+ * линейные n−i по всему списку (своих обычно около восемнадцати) были почти
+ * равномерны: лучший выпадал в каждый десятый день, пятёрка лучших — меньше
+ * чем в половине дней, то есть «одна игра на сегодня» чаще бралась ниже пятого
+ * места. Теперь, вместе с исключением вчерашнего (ниже), лучший выпадает
+ * примерно в каждый пятый день, пятёрка лучших — в семи днях из десяти, а
+ * хвост ниже дюжины не разыгрывается вовсе.
+ *
+ * avoid — вчерашний герой дня (и запасная своя), см. dailyHeroAppids и
+ * selectDaily в /api/daily. С крутыми весами та же игра выпадала бы два дня
+ * подряд примерно в каждый седьмой день, а назавтра «одна игра на сегодня» —
+ * это «что-нибудь новое», даже если вчерашняя по-прежнему лучшая по скору.
+ * Исключается ДО отсечки дюжиной: освободившееся место достаётся следующему.
+ * Если, кроме вчерашней, выбирать не из чего, повтор лучше пустого экрана —
+ * то же правило, что у pickDailyPool.
+ *
+ * Детерминированность на день держится: avoid читается из записи за вчера,
+ * а она до полуночи не меняется.
  */
-export function pickDaily(candidates: ScoredCandidate[], seed: string): ScoredCandidate | null {
-  if (!candidates.length) return null
+export function pickDaily(
+  candidates: ScoredCandidate[],
+  seed: string,
+  avoid: readonly number[] = [],
+): ScoredCandidate | null {
+  const fresh = avoid.length ? candidates.filter((c) => !avoid.includes(c.appid)) : candidates
+  const pool = (fresh.length ? fresh : candidates).slice(0, DAILY_TOP)
+  if (!pool.length) return null
   const rng = mulberry32(hashString(seed))
-  const weights = candidates.map((_, i) => candidates.length - i)
+  const weights = RANK_WEIGHTS.slice(0, pool.length)
   const total = weights.reduce((s, w) => s + w, 0)
   let r = rng() * total
-  for (let i = 0; i < candidates.length; i++) {
+  for (let i = 0; i < pool.length; i++) {
     r -= weights[i]
-    if (r <= 0) return candidates[i]
+    if (r <= 0) return pool[i]
   }
-  return candidates[0]
+  return pool[0]
 }
 
 /**
@@ -107,16 +138,18 @@ export function pickDailyPool<T>(own: T[], discovery: T[], seed: string): T[] {
 }
 
 /**
- * Своя запасная на магазинный день: тот же сид, свой пул. null — день и так
- * свой (или своего нет вовсе): предлагать «из своего» тогда нечего.
+ * Своя запасная на магазинный день: тот же сид, свой пул и те же вчерашние
+ * в исключении — по нажатию она становится героем. null — день и так свой
+ * (или своего нет вовсе): предлагать «из своего» тогда нечего.
  */
 export function pickOwnAlternate(
   own: ScoredCandidate[],
   discovery: ScoredCandidate[],
   seed: string,
+  avoid: readonly number[] = [],
 ): ScoredCandidate | null {
   if (!own.length || pickDailyPool(own, discovery, seed) !== discovery) return null
-  return pickDaily(own, seed)
+  return pickDaily(own, seed, avoid)
 }
 
 /**
@@ -275,6 +308,9 @@ export function parseDailySelection(raw: unknown): DailySelection | null {
  * запасная своя. «Не сегодня» про любую из них сбрасывает запись — отбор
  * обязан учесть его в тот же день; про остальные игры — нет, иначе любое
  * «не сейчас» на /play перетасовывало бы выбор, обещанный на сутки.
+ *
+ * Назавтра те же две — исключение отбора (avoid у pickDaily): показанное
+ * героем вчера сегодня не повторяется.
  */
 export function dailyHeroAppids(sel: DailySelection | null): number[] {
   if (!sel) return []

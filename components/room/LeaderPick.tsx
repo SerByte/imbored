@@ -1,4 +1,5 @@
 import { GameArt } from '@/components/GameArt'
+import { StatusLine } from '@/components/StatusLine'
 import type { LeaderOffer } from '@/lib/roomlikes'
 
 /**
@@ -42,21 +43,29 @@ export function LeaderPick({
           <span className="tabular-nums text-ember-text">{leader.memberCount}</span> за.
           Не все, но карт больше нет ни у кого — а кто за что голосовал, не видно никому.
         </p>
+        {/* aria-disabled, а не disabled: на отказе кнопка остаётся, и строка
+            под ней зовёт «нажми ещё раз» — фокус обязан быть на ней, а не в
+            body. Повтор гасит onTake (takeLeader — по takingLeader) */}
         <button
           type="button"
           onClick={onTake}
-          disabled={taking}
+          aria-disabled={taking}
           className="btn-ember px-6 py-3 self-center sm:self-start"
         >
           {taking ? 'Берём…' : 'Берём'}
         </button>
-        {miss && (
-          <p role="status" className="text-sm text-danger">
-            {miss === 'stale'
+        {/* Строка стоит всегда, пустой: takeLeader сбрасывает прежний отказ,
+            и новый приходит изменением текста — такое скринридер объявит */}
+        <StatusLine
+          text={
+            miss === 'stale'
               ? 'Голоса сдвинулись — предложение пересчитано.'
-              : 'Не дошло — проверь связь и нажми ещё раз.'}
-          </p>
-        )}
+              : miss === 'failed'
+                ? 'Не дошло — проверь связь и нажми ещё раз.'
+                : null
+          }
+          className="text-sm text-danger"
+        />
       </div>
     </section>
   )

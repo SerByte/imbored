@@ -16,6 +16,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
 import { SITE_DESCRIPTION, SITE_TITLE } from '@/lib/site'
+import { THEME_COLOR } from '@/lib/themecolor'
 import './globals.css'
 
 /**
@@ -84,16 +85,15 @@ const jbMono = JetBrains_Mono({
  * посчитан «с запасом на безопасную зону», по факту не срабатывал ни разу, и
  * на телефонах с домашней полоской панель уезжала под неё.
  *
- * themeColor двумя строками, а не одной: браузерная обвязка (адресная строка
- * в Chrome, статус-бар в PWA) должна совпадать с фоном страницы, а он у нас
- * зависит от темы. Одно значение красило бы шов при светлой теме тёмным.
+ * themeColor одним значением и без media. Двумя строками по
+ * prefers-color-scheme он спрашивал тему ОС, а тема сайта от неё не зависит
+ * (localStorage, см. скрипт темы ниже): у светлой ОС молочная полоса висела
+ * над чёрной страницей. В разметке — базовый тёмный, дальше цвет ведут
+ * ChromeZone и ThemeToggle по тому, что стоит под шапкой (lib/themecolor).
  */
 export const viewport: Viewport = {
   viewportFit: 'cover',
-  themeColor: [
-    { media: '(prefers-color-scheme: dark)', color: '#050505' },
-    { media: '(prefers-color-scheme: light)', color: '#f5f5f7' },
-  ],
+  themeColor: THEME_COLOR,
 }
 
 export const metadata: Metadata = {

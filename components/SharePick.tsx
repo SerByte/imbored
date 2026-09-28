@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@/components/Icon'
 import { ShareLinkField, useShareLink } from '@/components/ShareLink'
+import { StatusLine } from '@/components/StatusLine'
 import { bounceTo } from '@/lib/destination'
 import { pickShareUrl, type PickKind } from '@/lib/sharedpick'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -154,18 +155,28 @@ export function useSharePick(
     </>
   )
 
-  const panel =
-    current?.phase === 'ready' ? (
-      <div className="flex w-full max-w-xl flex-col gap-1.5">
-        <ShareLinkField url={current.url} label={`Ссылка на выбор «${pick.name}»`} title={title} text={text} />
-        {/* Что уйдёт по ссылке — сказано тут же, а не только в политике */}
-        <p className="text-xs text-faint">По ссылке — игра и это объяснение, как здесь, но без имени профиля.</p>
-      </div>
-    ) : current?.phase === 'failed' ? (
-      <p role="status" className="-mt-1 text-sm text-danger">
-        {current.message}
-      </p>
-    ) : null
+  /*
+   * Отказ — в строке, которая стоит всегда, пока у героя есть кнопка: пустая,
+   * пока ссылку не просили, и create переводит её в «busy» (пусто) перед
+   * каждой попыткой — так что отказ приходит изменением текста и прозвучит.
+   * Ветвью рядом с полем ссылки она рождалась бы вместе с текстом, а такую
+   * живую область скринридер объявляет не везде (components/StatusLine).
+   */
+  const panel = (
+    <>
+      {current?.phase === 'ready' && (
+        <div className="flex w-full max-w-xl flex-col gap-1.5">
+          <ShareLinkField url={current.url} label={`Ссылка на выбор «${pick.name}»`} title={title} text={text} />
+          {/* Что уйдёт по ссылке — сказано тут же, а не только в политике */}
+          <p className="text-xs text-faint">По ссылке — игра и это объяснение, как здесь, но без имени профиля.</p>
+        </div>
+      )}
+      <StatusLine
+        text={current?.phase === 'failed' ? current.message : null}
+        className="-mt-1 text-sm text-danger"
+      />
+    </>
+  )
 
   return { button, panel }
 }

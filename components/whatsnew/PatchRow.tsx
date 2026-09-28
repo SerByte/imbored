@@ -17,6 +17,7 @@ import { changesLabel, freshness } from './format'
 import { useNow } from './Now'
 import { MetaLine } from '@/components/Labels'
 import { stripGameName } from '@/lib/patchtitle'
+import { textLang } from '@/lib/textlang'
 import { Icon } from '@/components/Icon'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -139,6 +140,10 @@ export function PatchRow({
   // Название игры уже стоит строкой выше — в заголовке патча оно лишнее.
   // Каждый пятый заголовок из Steam начинается именно с него.
   const heading = stripGameName(item.title, name)
+  // Заголовок из Steam обычно английский («Patch 0.5.1 Has Been Released»),
+  // а страница — lang="ru": без пометки его читают русским голосом. Пересказ
+  // ниже наш и русский — пометки не получает. См. lib/textlang.
+  const headingLang = textLang(heading)
   // null — страницы нет в поиске (без пересказа, игра вне каталога — это
   // бывает в личной ленте): заголовок тогда просто текст, см. indexedNewsPath
   const href = indexedNewsPath(item)
@@ -190,12 +195,13 @@ export function PatchRow({
             <Link
               href={href}
               prefetch={false}
+              lang={headingLang}
               className="tap tap-tight relative z-10 self-start text-sm font-semibold leading-snug text-ink/90 decoration-1 underline-offset-4 hover:underline md:text-base"
             >
               {heading}
             </Link>
           ) : (
-            <span className="text-sm font-semibold leading-snug text-ink/90 md:text-base">
+            <span lang={headingLang} className="text-sm font-semibold leading-snug text-ink/90 md:text-base">
               {heading}
             </span>
           )}

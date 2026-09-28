@@ -3,11 +3,13 @@ import { createDb } from './db'
 import { resetSwallowed } from './errlog'
 import {
   checkRate,
+  checkRatesInOrder,
   clientIp,
   rateLimitedResponse,
   rateUsage,
   resetRateMemory,
   sweepRateLimits,
+  type RateVerdict,
 } from './ratelimit'
 
 const NOW = 1_700_000_000
@@ -103,6 +105,44 @@ test('префильтр отсекает флуд по одному ключу,
   const verdict = await checkRate(counting, base)
   expect(verdict.ok).toBe(false)
   expect(calls).toBe(30)
+})
+
+/*
+ * «Первый отказ» — то, что считает счётчик отказов /api/recommend: сколько раз
+ * упёрлись в потолок, а не сколько раз потом нажали. И запись в telemetry на
+ * отказ — одна за окно, сколько бы ни давил скрипт.
+ */
+test('first — только у первого отказа в окне; новое окно — снова первый', async () => {
+  const db = await freshDb()
+  for (let i = 0; i < 3; i++) await checkRate(db, base)
+  expect(await checkRate(db, base)).toMatchObject({ ok: false, first: true })
+  expect(await checkRate(db, base)).toMatchObject({ ok: false, first: false })
+  const next = { ...base, nowSec: NOW + 60 }
+  for (let i = 0; i < 3; i++) await checkRate(db, next)
+  expect(await checkRate(db, next)).toMatchObject({ ok: false, first: true })
+})
+
+test('отказ префильтра первым не бывает: первый к тому времени выдала база', async () => {
+  const db = await freshDb()
+  const verdicts: RateVerdict[] = []
+  // потолок префильтра — 30 при limit = 3: тридцать первая попытка в базу не идёт
+  for (let i = 0; i < 31; i++) verdicts.push(await checkRate(db, base))
+  expect(verdicts.filter((v) => !v.ok && v.first)).toHaveLength(1)
+  expect(verdicts[3]).toMatchObject({ ok: false, first: true })
+  expect(verdicts[30]).toMatchObject({ ok: false, first: false })
+})
+
+test('checkRatesInOrder называет отказавший потолок, а дальнего не трогает', async () => {
+  const db = await freshDb()
+  const me = { bucket: 'me', id: 'a', limit: 1, windowSec: 60 }
+  const ip = { bucket: 'ip', id: 'x', limit: 5, windowSec: 60 }
+  expect(await checkRatesInOrder(db, [me, ip], NOW)).toEqual({ ok: true })
+  expect(await checkRatesInOrder(db, [me, ip], NOW)).toMatchObject({ ok: false, bucket: 'me', first: true })
+  // отказанный по личному потолку запрос место в потолке адреса не съел
+  expect(await rateUsage(db, { ...ip, nowSec: NOW })).toBe(1)
+  expect(
+    await checkRatesInOrder(db, [{ ...me, id: 'b' }, { ...ip, limit: 1 }], NOW),
+  ).toMatchObject({ ok: false, bucket: 'ip', first: true })
 })
 
 test('rateUsage показывает счёт, не увеличивая его', async () => {

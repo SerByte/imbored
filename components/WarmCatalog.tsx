@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { queuePrepare } from '@/lib/warmup'
 
 /**
  * Тихо догревает метаданные библиотеки и обновляет страницу, когда появились
@@ -19,7 +20,10 @@ export function WarmCatalog({ enabled }: { enabled: boolean }) {
     ;(async () => {
       // Несколько шагов: один вызов греет пачку, дальше добираем остаток
       for (let step = 0; step < 6 && !cancelled; step++) {
-        const res = await fetch('/api/prepare', { method: 'POST' }).catch(() => null)
+        // В очередь (queuePrepare в lib/warmup): сюда приходят и посреди
+        // прогрева /play, и из-под квиза, чей первый круг ещё едет, — шаг
+        // рядом с таким вызовом взял бы у Steam ту же пачку второй раз
+        const res = await queuePrepare({ wanted: () => !cancelled }).catch(() => null)
         if (!res?.ok) return
         const { remaining, stalled } = (await res.json().catch(() => ({ remaining: 0 }))) as {
           remaining?: number

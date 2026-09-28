@@ -7,6 +7,7 @@ import { Portal } from '@/components/Portal'
 import { stepIndex, swipeStep } from '@/lib/lightbox'
 import { backdropOf, holdScroll, makeInert } from '@/lib/pagelock'
 import { Icon } from '@/components/Icon'
+import { StatusLine } from '@/components/StatusLine'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -31,6 +32,23 @@ const EASE = [0.22, 1, 0.36, 1] as const
  * стоит на паузе (lib/pagelock.ts): колесо над кадром больше не уводит
  * страницу, и виртуальный курсор скринридера не читает её под затемнением.
  * Листается кадр стрелками, кнопками по бокам и свайпом (lib/lightbox.ts).
+ *
+ * ТЁМНЫЙ В ОБЕИХ ТЕМАХ — И ТОКЕНАМИ, А НЕ ТОЛЬКО ФОНОМ. Оверлей висит в
+ * портале, то есть в <body>, вне любой кино-зоны, и красился токенами :root.
+ * Затемнение при этом чёрное всегда. В светлой теме счётчик text-dim (#4f4f55)
+ * ложился на ≈#252525 — 1.9:1 при пороге 4.5; контур и глиф кнопок были
+ * тёмными на тёмном, а кольцо фокуса — чёрным на чёрном. Сторож палитры этого
+ * не видел: он считает токены, а здесь дело в композиции. Теперь корень —
+ * .media-card: те же тёмные токены, что у кино-зоны, но не сама кино-зона.
+ * С .media-dark открытый кадр перекрасил бы шапку (правило шапки в
+ * globals.css ищет именно его), а на карточке игры, где героя нет,
+ * ChromeZone принял бы за героя сам оверлей. Композицию считает
+ * lib/contrast.test.ts.
+ *
+ * ПОД ВЫРЕЗОМ. viewportFit: 'cover' пускает страницу под вырез iPhone, а
+ * скриншоты 16:9 смотрят как раз в ландшафте — там сенсорный блок сбоку,
+ * около 47 px. Кнопки стояли в 12 px от края, ровно под ним. Все отступы от
+ * краёв — max(свой, env(safe-area-inset-*)): без выреза ничего не меняется.
  */
 export function Lightbox({
   images,
@@ -139,7 +157,7 @@ export function Lightbox({
           {index !== null && (
           <m.div
             ref={overlayRef}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-5 touch-pinch-zoom select-none"
+            className="media-card !bg-transparent fixed inset-0 z-[100] flex items-center justify-center p-5 touch-pinch-zoom select-none"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -152,6 +170,9 @@ export function Lightbox({
               select-none: протяжка мышью выделяла кадр, и следующая протяжка
               тащила уже выделение — dragstart, pointercancel, кадр стоит
               (замерено на втором свайпе подряд).
+              !bg-transparent: .media-card красит фон var(--bg) вне слоёв, и
+              обычная утилита ему проигрывает, а сплошной фон спрятал бы
+              затемнение с размытием страницы под ним.
             */
             onPointerDown={(e) => {
               swipedRef.current = false
@@ -202,7 +223,7 @@ export function Lightbox({
                 onClose()
               }}
               aria-label="Закрыть"
-              className="btn-circle absolute top-5 right-5"
+              className="btn-circle absolute top-[max(1.25rem,env(safe-area-inset-top))] right-[max(1.25rem,env(safe-area-inset-right))]"
             >
               <Icon name="close" size={18} />
             </button>
@@ -220,7 +241,7 @@ export function Lightbox({
                     onIndex(stepIndex(index, -1, images.length))
                   }}
                   aria-label="Предыдущий кадр"
-                  className="btn-circle absolute left-3 top-1/2 -translate-y-1/2"
+                  className="btn-circle absolute left-[max(0.75rem,env(safe-area-inset-left))] top-1/2 -translate-y-1/2"
                 >
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                     <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -233,7 +254,7 @@ export function Lightbox({
                     onIndex(stepIndex(index, 1, images.length))
                   }}
                   aria-label="Следующий кадр"
-                  className="btn-circle absolute right-3 top-1/2 -translate-y-1/2"
+                  className="btn-circle absolute right-[max(0.75rem,env(safe-area-inset-right))] top-1/2 -translate-y-1/2"
                 >
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                     <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -241,9 +262,23 @@ export function Lightbox({
                 </button>
               </>
             )}
-            <span className="absolute bottom-5 tabular-nums text-xs text-dim">
+            {/*
+              Счётчик для глаза и строка для скринридера — раздельно. При
+              листании менялся только aria-label диалога, а его смену не
+              объявляет никто: номер кадра не был слышен вовсе. Строка стоит
+              в оверлее, который есть, пока открыт диалог, и каждый шаг
+              листания меняет текст уже стоящей области — такое объявляется
+              (components/StatusLine). Первый кадр при открытии называет имя
+              диалога. «2/6» голосом звучит дробью, поэтому видимая копия от
+              скринридера спрятана.
+            */}
+            <span
+              aria-hidden
+              className="absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] tabular-nums text-xs text-dim"
+            >
               {index + 1}/{images.length}
             </span>
+            <StatusLine text={`Кадр ${index + 1} из ${images.length}`} className="sr-only" />
             </m.div>
           )}
         </AnimatePresence>

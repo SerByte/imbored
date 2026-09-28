@@ -14,6 +14,7 @@ import { Icon } from '@/components/Icon'
 import { HeroShots } from '@/components/HeroShots'
 import { NeedSteam } from '@/components/NeedSteam'
 import { useSharePick } from '@/components/SharePick'
+import { StatusLine } from '@/components/StatusLine'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
@@ -650,11 +651,10 @@ export default function DailyPage() {
             </div>
             {readOnly && <NeedSteam from="/daily" why="launch" className="-mt-1" />}
             {!readOnly && sharePick.panel}
-            {rerollMiss && (
-              <p role="status" className="-mt-1 text-sm text-dim">
-                {rerollMiss}
-              </p>
-            )}
+            {/* Отказ «Не сегодня» — в строке, которая стоит всегда: notToday
+                сбрасывает прежний, и новый приходит изменением текста —
+                такое скринридер объявит (components/StatusLine) */}
+            <StatusLine text={rerollMiss} className="-mt-1 text-sm text-dim" />
             {/* Своя нетронутая или заброшенная (и любая своя при скрытом
                 времени) скорее всего не установлена — поставить на загрузку
                 можно сейчас, к вечеру она будет готова (steam://install,

@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { NeedSteam } from '@/components/NeedSteam'
+import { StatusLine } from '@/components/StatusLine'
 import type { GameArtUrls } from '@/lib/art'
 import { Eyebrow } from '@/components/Labels'
 import { plural } from '@/lib/plural'
@@ -122,75 +123,97 @@ export function LikedShelf({
 
   if (items.length === 0 && !touched) return null
 
+  /*
+   * Отказ скринридеру говорит строка полки, а не плитки — как у BannedShelf:
+   * откат монтирует плитку заново, и область внутри неё рождалась бы вместе
+   * с текстом. Стоит первой в обоих вариантах разметки — React держит её
+   * одним узлом, даже когда последняя плитка ушла и вернулась.
+   */
+  const missed = failed === null ? undefined : items.find((g) => g.appid === failed)
+  const miss = (
+    <StatusLine
+      text={missed ? `Не вышло — «${missed.name}» осталась в «зашло». Попробуй ещё раз.` : null}
+      className="sr-only"
+    />
+  )
+
+  // Живой области на пустой строке нет: объявляет её фокус, который сюда переезжает
   if (items.length === 0) {
     return (
-      <section className="mb-12">
-        <p ref={emptyLine} tabIndex={-1} role="status" className="text-dim text-sm">
-          Оценок «зашло» больше нет — подбор будет судить по библиотеке и новым ответам.
-        </p>
-      </section>
+      <>
+        {miss}
+        <section className="mb-12">
+          <p ref={emptyLine} tabIndex={-1} className="text-dim text-sm">
+            Оценок «зашло» больше нет — подбор будет судить по библиотеке и новым ответам.
+          </p>
+        </section>
+      </>
     )
   }
 
   return (
-    <section aria-labelledby="shelf-liked" className="mb-12">
-      <Eyebrow className="mb-2">Зашло</Eyebrow>
-      <h2 id="shelf-liked" ref={heading} tabIndex={-1} className="font-display text-display-sm">
-        <span className="tabular-nums text-ember-text">{shownTotal}</span>{' '}
-        {plural(shownTotal, 'игру', 'игры', 'игр')} подбор помнит как «зашло»
-      </h2>
-      <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-        По ним он учится твоему вкусу: похожее — выше, пауза после «не то» снимается. Нажал по
-        ошибке или вкус поменялся — убери.
-        {shownTotal > items.length && ' Здесь — самые свежие; уберёшь лишнее — подтянутся следующие.'}
-      </p>
-      {readOnly && <NeedSteam from="/library" className="mb-4" />}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-        {/* layout — фича domMax, её догружает MotionMax */}
-        <MotionMax>
-          <AnimatePresence mode="popLayout" initial={false}>
-            {items.map((g) => (
-              <m.div
-                key={g.appid}
-                layout
-                exit={{ opacity: 0, scale: 0.94 }}
-                transition={{ duration: 0.22 }}
-                className="flex flex-col"
-              >
-                <Link href={`/game/${g.appid}`} className="game-card block">
-                  <GameCardBody
-                    appid={g.appid}
-                    name={g.name}
-                    headerImage={g.headerImage}
-                    art={g.art}
-                    sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
-                  />
-                </Link>
-                {!readOnly && (
-                  // Своё имя у каждой кнопки: видимый текст один на всю полку
-                  <button
-                    type="button"
-                    ref={(el) => {
-                      if (el) buttons.current.set(g.appid, el)
-                      else buttons.current.delete(g.appid)
-                    }}
-                    onClick={() => unlike(g.appid)}
-                    aria-label={`Убрать «${g.name}» из «зашло»`}
-                    className="pill mt-3 self-start"
-                  >
-                    Убрать
-                  </button>
-                )}
-                {failed === g.appid && (
-                  <p role="status" className="px-3 pb-3 text-[11px] text-danger">
-                    Не вышло — попробуй ещё раз
-                  </p>
-                )}
-              </m.div>
-            ))}
-          </AnimatePresence>
-        </MotionMax>
-      </div>
-    </section>
+    <>
+      {miss}
+      <section aria-labelledby="shelf-liked" className="mb-12">
+        <Eyebrow className="mb-2">Зашло</Eyebrow>
+        <h2 id="shelf-liked" ref={heading} tabIndex={-1} className="font-display text-display-sm">
+          <span className="tabular-nums text-ember-text">{shownTotal}</span>{' '}
+          {plural(shownTotal, 'игру', 'игры', 'игр')} подбор помнит как «зашло»
+        </h2>
+        <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
+          По ним он учится твоему вкусу: похожее — выше, пауза после «не то» снимается. Нажал по
+          ошибке или вкус поменялся — убери.
+          {shownTotal > items.length && ' Здесь — самые свежие; уберёшь лишнее — подтянутся следующие.'}
+        </p>
+        {readOnly && <NeedSteam from="/library" className="mb-4" />}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          {/* layout — фича domMax, её догружает MotionMax */}
+          <MotionMax>
+            <AnimatePresence mode="popLayout" initial={false}>
+              {items.map((g) => (
+                <m.div
+                  key={g.appid}
+                  layout
+                  exit={{ opacity: 0, scale: 0.94 }}
+                  transition={{ duration: 0.22 }}
+                  className="flex flex-col"
+                >
+                  <Link href={`/game/${g.appid}`} className="game-card block">
+                    <GameCardBody
+                      appid={g.appid}
+                      name={g.name}
+                      headerImage={g.headerImage}
+                      art={g.art}
+                      sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
+                    />
+                  </Link>
+                  {!readOnly && (
+                    // Своё имя у каждой кнопки: видимый текст один на всю полку
+                    <button
+                      type="button"
+                      ref={(el) => {
+                        if (el) buttons.current.set(g.appid, el)
+                        else buttons.current.delete(g.appid)
+                      }}
+                      onClick={() => unlike(g.appid)}
+                      aria-label={`Убрать «${g.name}» из «зашло»`}
+                      className="pill mt-3 self-start"
+                    >
+                      Убрать
+                    </button>
+                  )}
+                  {/* Для глаза: скринридеру отказ уже сказала строка полки (miss) */}
+                  {failed === g.appid && (
+                    <p aria-hidden className="px-3 pb-3 text-[11px] text-danger">
+                      Не вышло — попробуй ещё раз
+                    </p>
+                  )}
+                </m.div>
+              ))}
+            </AnimatePresence>
+          </MotionMax>
+        </div>
+      </section>
+    </>
   )
 }

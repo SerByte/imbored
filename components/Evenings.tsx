@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { Eyebrow } from '@/components/Labels'
 import { NeedSteam } from '@/components/NeedSteam'
+import { StatusLine } from '@/components/StatusLine'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import type { GameArtUrls } from '@/lib/art'
 import type { OutcomeVerdict } from '@/lib/outcome'
@@ -68,6 +69,7 @@ export function Evenings({
   const [denied, setDenied] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
   const readOnly = !writer || denied
+  const missed = failed === null ? undefined : items.find((i) => keyOf(i) === failed)
 
   async function answer(item: EveningItem, verdict: OutcomeVerdict) {
     const key = keyOf(item)
@@ -111,6 +113,19 @@ export function Evenings({
           'Что мы советовали и что из этого вышло. Минуты подтянутся со следующим снимком библиотеки.'
         )}
       </p>
+      {/*
+        Отказ скринридеру говорит одна строка на всю полку, а не строка под
+        карточкой. Живая область стоит в разметке всегда, пустой (область,
+        вставленная вместе с текстом, звучит не везде), а пустая она sr-only —
+        то есть absolute. У ленты с горизонтальной прокруткой и у карточки нет
+        position, и такой узел у дальней карточки выпадал бы из обрезки ленты
+        за край экрана. Название игры — в самой строке: фокус остаётся на
+        кнопке ответа, и «не вышло» без названия было бы ни о чём.
+      */}
+      <StatusLine
+        text={missed ? `Не вышло — ответ про «${missed.name}» не сохранился. Попробуй ещё раз.` : null}
+        className="sr-only"
+      />
       <ol className="shelf-rail">
         {items.map((item) => {
           const key = keyOf(item)
@@ -147,8 +162,9 @@ export function Evenings({
                   ))}
                 </div>
               )}
+              {/* Для глаза: скринридеру отказ сказала строка над полкой */}
               {failed === key && (
-                <p role="status" className="text-[11px] text-danger">
+                <p aria-hidden className="text-[11px] text-danger">
                   Не вышло — попробуй ещё раз
                 </p>
               )}

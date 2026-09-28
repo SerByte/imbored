@@ -11,6 +11,7 @@ import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { NeedSteam } from '@/components/NeedSteam'
 import { RoomCodeForm } from '@/components/room/RoomCodeForm'
 import { Spinner } from '@/components/Spinner'
+import { StatusLine } from '@/components/StatusLine'
 import { SectionLabel } from '@/components/Labels'
 import {
   afterBoardAnswer,
@@ -220,18 +221,14 @@ export default function RoomsBoardPage() {
         {/*
           Доска уже на экране, а сервер молчит: последний снимок остаётся —
           он всё ещё полезен, — но выглядеть свежим не имеет права. Та же
-          плашка в потоке, что у комнаты (room/[id], staleBadge): role="status"
-          объявляет новость тому, кто не смотрит на экран.
+          плашка в потоке, что у комнаты (room/[id], staleBadge): живая
+          область объявляет новость тому, кто не смотрит на экран. Стоит она
+          всегда, пустой, — появившаяся вместе с текстом звучала бы не везде.
         */}
-        {rooms !== null && boardStale({ fails }) && (
-          <div
-            role="status"
-            aria-live="polite"
-            className="glass anim-rise rounded-[var(--radius-card)] px-4 py-2.5 text-xs leading-relaxed text-dim"
-          >
-            Доска не отвечает — пробую снова…
-          </div>
-        )}
+        <StatusLine
+          text={rooms !== null && boardStale({ fails }) ? 'Доска не отвечает — пробую снова…' : null}
+          className="glass anim-rise rounded-[var(--radius-card)] px-4 py-2.5 text-xs leading-relaxed text-dim"
+        />
         {rooms === null && fails > 0 ? (
           <div className="panel-lift p-6 text-center text-dim text-sm flex flex-col items-center gap-3">
             Не получилось загрузить доску.

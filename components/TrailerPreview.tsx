@@ -3,6 +3,7 @@
 import { useReducedMotion } from 'framer-motion'
 import { useRef, useState } from 'react'
 import { Spinner } from '@/components/Spinner'
+import { StatusLine } from '@/components/StatusLine'
 import type { Trailer } from '@/lib/trailer'
 import { Icon } from '@/components/Icon'
 
@@ -132,11 +133,17 @@ export function TrailerPreview({
               />
             )}
             <div className="absolute inset-0 flex items-center justify-center p-4">
-              {state === 'failed' ? (
-                <p role="status" className="panel-lift px-4 py-2 text-sm text-dim">
-                  Видео не загрузилось
-                </p>
-              ) : state === 'loading' ? (
+              {/*
+                Отказ — в строке, которая стоит с первого кадра постера, а не
+                появляется на месте спиннера: живая область, вставленная вместе
+                с текстом, звучит не везде (components/StatusLine). Пустая она
+                sr-only и середину кадра не сдвигает.
+              */}
+              <StatusLine
+                text={state === 'failed' ? 'Видео не загрузилось' : null}
+                className="panel-lift px-4 py-2 text-sm text-dim"
+              />
+              {state === 'failed' ? null : state === 'loading' ? (
                 <Spinner size={32} />
               ) : (
                 <button
