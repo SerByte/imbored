@@ -5,6 +5,7 @@ import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { useRef } from 'react'
 import { Portal } from '@/components/Portal'
+import { autoMotion } from '@/lib/motion'
 import type { RibbonGame } from '@/lib/ribbon'
 import {
   RIBBON_REST,
@@ -36,10 +37,12 @@ gsap.registerPlugin(ScrollTrigger, useGSAP)
  *
  * ЧТО ЭТОТ СЛОЙ НЕ МОЖЕТ СЕБЕ ПОЗВОЛИТЬ — ЗАМЕРЕНО, А НЕ ПРЕДПОЛОЖЕНО.
  *
- * Лента — слой во весь экран, который двигается НЕПРЕРЫВНО: колонки дрейфуют
- * всегда, даже когда страница стоит. Поэтому всё, что заставляет композитор
- * пересобирать этот слой покадрово, стоит здесь вдвое дороже, чем где-либо
- * ещё. Замер: медиана кадра на проезде от героя до второй сцены, 1280×800.
+ * Лента — слой во весь экран, который двигается весь проезд по странице:
+ * колонки дрейфуют, пока человек прокручивает, и ещё несколько секунд после
+ * (дальше дрейф гаснет — см. autoMotion в paint()). Поэтому всё, что
+ * заставляет композитор пересобирать этот слой покадрово, стоит здесь вдвое
+ * дороже, чем где-либо ещё. Замер: медиана кадра на проезде от героя до
+ * второй сцены, 1280×800.
  *
  *   покой (как есть)                                    16.7 мс  — 60 fps
  *   + mix-blend-mode: screen на слое света              33.3 мс  — 30 fps
@@ -76,7 +79,7 @@ const GAP = 14
  * ДЕКОРАТИВНОГО фона на мобильном тарифе — это не «тяжеловато», это счёт.
  *
  * Двенадцати хватает, и это не на глаз: лента размыта (0.6…3.0 px по планам),
- * непрерывно движется, лежит под скримом и почти всегда идёт на прозрачности
+ * движется на прокрутке, лежит под скримом и почти всегда идёт на прозрачности
  * 0.13…0.5. Повтор в таких условиях увидеть нельзя, а раскладка
  * `(c * 5 + k * 3) % n` разносит одинаковые кадры по разным колонкам и высотам.
  *
@@ -139,6 +142,24 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
       let lastOpacity = ''
       let lastSat = ''
       let lastGrade = ''
+
+      /*
+       * ДРЕЙФ ГАСНЕТ САМ — WCAG 2.2.2, см. AUTO_MOTION в lib/motion.ts.
+       *
+       * Колонки ехали бесконечно (repeat: -1), а остановить их было нечем,
+       * кроме системного «уменьшить движение», которое почти никто не
+       * включает. Теперь партитура задаёт скорость, а autoMotion — сколько от
+       * неё осталось: полный ход после загрузки и после каждой прокрутки,
+       * через четыре с половиной секунды покоя — ноль.
+       *
+       * Множитель, а не gsap.to(drifts, { timeScale: 0 }): paint() ставит
+       * timeScale сам на каждом кадре и перетёр бы такой твин в первом же
+       * тике. И будить ленту приходится прокруткой явно: скорость в
+       * партитуре — функция ПОЛОЖЕНИЯ, а не движения, и лента, раз вставшая,
+       * без побудки не поехала бы уже нигде — в том числе на разгоне, с
+       * которым уходит первый экран.
+       */
+      let wokeAt = performance.now()
 
       /**
        * ГЛУБИНА КОЛОНКИ: 0 — ближний план, 1 — дальний.
@@ -283,7 +304,8 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
       const paint = () => {
         const y = window.scrollY
         const state = sampleRibbon(y, resolveStops(RIBBON_SCORE, ranges()))
-        for (const t of drifts) t.timeScale(state.speed)
+        const auto = autoMotion(performance.now() - wokeAt)
+        for (const t of drifts) t.timeScale(state.speed * auto)
         /*
          * Пишем в стиль только когда число реально изменилось.
          * `filter: saturate()` на трёх сотнях обложек — это полная
@@ -356,8 +378,12 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
       gsap.ticker.add(paint)
       // И по событию прокрутки: тикер gsap спит, когда на странице нет активных
       // анимаций и когда вкладка в фоне, а положение ленты обязано быть верным
-      // в первый же кадр после возвращения.
-      window.addEventListener('scroll', paint, { passive: true })
+      // в первый же кадр после возвращения. Заодно прокрутка будит дрейф.
+      const onScroll = () => {
+        wokeAt = performance.now()
+        paint()
+      }
+      window.addEventListener('scroll', onScroll, { passive: true })
 
       /*
        * Пересборка только на смене ШИРИНЫ. Высоту на телефоне меняет
@@ -381,7 +407,7 @@ function RibbonLayer({ games }: { games: RibbonGame[] }) {
 
       return () => {
         gsap.ticker.remove(paint)
-        window.removeEventListener('scroll', paint)
+        window.removeEventListener('scroll', onScroll)
         window.removeEventListener('resize', onResize)
         if (timer) clearTimeout(timer)
         for (const t of drifts) t.kill()

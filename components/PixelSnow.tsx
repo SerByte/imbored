@@ -19,6 +19,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Mesh, Program, Renderer, Triangle } from 'ogl';
+import { autoMotion } from '@/lib/motion';
 
 const VERTEX = `#version 300 es
 in vec2 position;
@@ -231,6 +232,7 @@ export default function PixelSnow({
   const isVisibleRef = useRef(true);
   const rendererRef = useRef<Renderer | null>(null);
   const programRef = useRef<Program | null>(null);
+  const meshRef = useRef<Mesh | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
 
   // Memoize shader variant value
@@ -256,6 +258,11 @@ export default function PixelSnow({
       const h = container.offsetHeight;
       renderer.setSize(w, h);
       program.uniforms.uResolution.value = [w, h];
+      // setSize переписывает размер холста, а это стирает его. Вставший снег
+      // сам уже не перерисуется (см. animate), и без этого кадра любой resize —
+      // хоть спрятавшаяся адресная строка телефона — стирал бы его насовсем.
+      const mesh = meshRef.current;
+      if (mesh) renderer.render({ scene: mesh });
     }, 100);
   }, []);
 
@@ -335,18 +342,38 @@ export default function PixelSnow({
     programRef.current = program;
 
     const mesh = new Mesh(gl, { geometry: new Triangle(gl), program });
+    meshRef.current = mesh;
 
     window.addEventListener('resize', handleResize);
 
+    /*
+     * СНЕГ ПОШЁЛ САМ — САМ И ВСТАЁТ: WCAG 2.2.2, см. AUTO_MOTION в lib/motion.ts.
+     *
+     * Раньше uTime было просто временем с монтирования, и снег шёл на весь
+     * экран, пока открыта вкладка, без всякой паузы. Теперь время шейдера
+     * копится с множителем autoMotion: хлопья замедляются и замирают, и под
+     * заголовком остаётся неподвижный снежный кадр — декабрь виден, а
+     * отвлекать нечему.
+     *
+     * Вставший снег больше не рисуется вовсе: петля выходит, и полноэкранный
+     * рэймарч (до 128 шагов на пиксель) перестаёт жечь GPU ради одинаковых
+     * кадров.
+     */
     const startTime = performance.now();
+    let last = startTime;
+    let snowTime = 0;
     const animate = () => {
-      animationRef.current = requestAnimationFrame(animate);
+      const now = performance.now();
+      const pace = autoMotion(now - startTime);
+      snowTime += (now - last) * 0.001 * pace;
+      last = now;
 
       // Only render if visible
       if (isVisibleRef.current) {
-        program.uniforms.uTime.value = (performance.now() - startTime) * 0.001;
+        program.uniforms.uTime.value = snowTime;
         renderer.render({ scene: mesh });
       }
+      if (pace > 0) animationRef.current = requestAnimationFrame(animate);
     };
     animate();
 
@@ -362,6 +389,7 @@ export default function PixelSnow({
       gl.getExtension('WEBGL_lose_context')?.loseContext();
       rendererRef.current = null;
       programRef.current = null;
+      meshRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- сцена одна на жизнь компонента; пропсы доезжают эффектом ниже
   }, [handleResize]);
