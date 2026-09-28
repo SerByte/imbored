@@ -18,7 +18,7 @@ import { claimVote, deckStuck, voteMiss, voteSignal } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
 import type { Mood } from '@/lib/types'
-import { ROOM_MAX_MEMBERS, type RoomMemberView } from '@/lib/room'
+import { matchLine, ROOM_MAX_MEMBERS, type RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import { roomPresetOf } from '@/lib/presets'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
@@ -204,6 +204,12 @@ export default function RoomPage() {
    * срабатывал бы — отсюда строка о входе через Steam.
    */
   const [publicDenied, setPublicDenied] = useState(false)
+  /**
+   * Комната была открыта на глазах у этого экрана. Матч, пришедший после, —
+   * новость: о нём говорит строка matchStatus, а церемония забирает фокус.
+   * Открыл ссылку на уже сошедшуюся комнату — новости нет (matchLine в lib/room).
+   */
+  const [sawOpen, setSawOpen] = useState(false)
   const deckKey = useRef('')
   const likesKey = useRef('')
   const likesAt = useRef(0)
@@ -243,6 +249,7 @@ export default function RoomPage() {
       if (!res.ok) return { ok: false, gone: false }
       const next = (await res.json()) as RoomState
       setState(next)
+      if (next.room.status === 'open') setSawOpen(true)
       return { ok: true, state: next }
     },
     [roomId],
@@ -894,6 +901,31 @@ export default function RoomPage() {
     />
   )
 
+  /*
+   * МАТЧ ОБЪЯВЛЯЕТ СТРАНИЦА, А НЕ ЦЕРЕМОНИЯ.
+   *
+   * Матч приходит опросом — чужим последним голосом или чужим «Берём», — и
+   * церемония заменяет комнату целиком: колода и её живая область уходят,
+   * фокус падает в body. Незрячий участник не узнавал, что матч случился.
+   * Внутри MatchCeremony строка родилась бы вместе с текстом и звучала бы не
+   * везде (components/StatusLine), поэтому она стоит первым ребёнком
+   * фрагмента в обоих return — лобби и церемонии: React сверяет детей по
+   * месту, и узел переживает подмену. Поставь что-нибудь над ней в одном из
+   * них — и область смонтируется заново вместе с текстом (сторож —
+   * lib/focushandoff.test.ts).
+   */
+  const matchStatus = (
+    <StatusLine
+      text={matchLine({
+        sawOpen,
+        status: state.room.status,
+        isMember: state.isMember,
+        game: state.matchedGame,
+      })}
+      className="sr-only"
+    />
+  )
+
   // ---- МАТЧ ----
   /*
    * Церемония — только своим.
@@ -928,7 +960,16 @@ export default function RoomPage() {
     )
   }
   if (state.room.status === 'matched' && state.matchedGame) {
-    return <MatchCeremony game={state.matchedGame} memberCount={state.members.length} />
+    return (
+      <>
+        {matchStatus}
+        <MatchCeremony
+          game={state.matchedGame}
+          memberCount={state.members.length}
+          takeFocus={sawOpen}
+        />
+      </>
+    )
   }
 
   // ---- НЕ УЧАСТНИК ----
@@ -1007,6 +1048,8 @@ export default function RoomPage() {
   const moodPreset = roomPresetOf(state.room.mood)
 
   return (
+    <>
+    {matchStatus}
     <div className="room-page flex-1 mx-auto w-full max-w-3xl px-5 pt-24 pb-16 flex flex-col gap-6">
       {staleBadge}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1192,5 +1235,6 @@ export default function RoomPage() {
         className="mt-3 text-center text-sm text-danger"
       />
     </div>
+    </>
   )
 }

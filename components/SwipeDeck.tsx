@@ -113,7 +113,10 @@ function TopCard({
   card: DeckCard
   alone: boolean
   labels: DeckLabels
-  /** прошлый голос был с клавиатуры — фокус встаёт на ту же кнопку этой карты */
+  /**
+   * прошлый голос был с клавиатуры — фокус встаёт на ту же кнопку этой карты;
+   * у первой карты — initialFocus колоды
+   */
   focusOn: 'yes' | 'no' | null
   /** keyboard — голос кнопкой с клавиатуры или скринридера, а не пальцем */
   onCommit: (yes: boolean, keyboard: boolean) => void
@@ -334,9 +337,15 @@ export function SwipeDeck({
   alone = false,
   labels = PARTY_LABELS,
   nowSec,
+  initialFocus = null,
 }: {
   cards: DeckCard[]
-  onVote: (card: DeckCard, yes: boolean) => void
+  /**
+   * keyboard — голос кнопкой с клавиатуры или скринридера. Страница знает то,
+   * чего не знает колода: последняя карта уносит колоду целиком, и фокус с
+   * клавиатуры забирает то, что встаёт на её место (конец колоды в /explore).
+   */
+  onVote: (card: DeckCard, yes: boolean, keyboard: boolean) => void
   votedCount: number
   deckTotal: number
   /** В комнате пока один человек — см. плашку владения в TopCard. */
@@ -345,10 +354,16 @@ export function SwipeDeck({
   labels?: DeckLabels
   /** серверные часы ответа /deck — см. PlayersNow */
   nowSec: number
+  /**
+   * Колода встала на место того, в чём был фокус («Ещё колоду» в /explore):
+   * первая карта забирает его на эту кнопку, как после голоса с клавиатуры.
+   * Читается только при монтировании — дальше фокус ведут голоса.
+   */
+  initialFocus?: 'yes' | 'no' | null
 }) {
   // Куда улетает верхняя карточка — и кнопкой, и жестом.
   const [flyOut, setFlyOut] = useState<Fly>(null)
-  const [focusOn, setFocusOn] = useState<'yes' | 'no' | null>(null)
+  const [focusOn, setFocusOn] = useState<'yes' | 'no' | null>(initialFocus)
 
   const top = cards[0]
   if (!top) return null
@@ -356,7 +371,7 @@ export function SwipeDeck({
   const commit = (yes: boolean, keyboard: boolean) => {
     setFlyOut(yes ? 'right' : 'left')
     setFocusOn(keyboard ? (yes ? 'yes' : 'no') : null)
-    onVote(top, yes)
+    onVote(top, yes, keyboard)
   }
 
   const pos = deckPosition(votedCount, deckTotal)

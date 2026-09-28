@@ -3,7 +3,7 @@
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import Link from 'next/link'
-import { useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import { ClickSpark } from '@/components/ClickSpark'
 import { EchoTitle } from '@/components/EchoTitle'
 import { GameArt } from '@/components/GameArt'
@@ -14,6 +14,7 @@ import { PriceTag } from '@/components/PriceTag'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
+import { focusAdrift } from '@/lib/focushandoff'
 import { STORE_LABEL } from '@/lib/stores'
 
 gsap.registerPlugin(useGSAP)
@@ -29,6 +30,7 @@ gsap.registerPlugin(useGSAP)
 export function MatchCeremony({
   game,
   memberCount,
+  takeFocus = false,
 }: {
   game: {
     appid: number
@@ -46,6 +48,11 @@ export function MatchCeremony({
     discount?: Discount | null
   }
   memberCount: number
+  /**
+   * Церемония пришла на место комнаты на глазах у этого экрана (sawOpen на
+   * странице комнаты), а не открыта ссылкой на сошедшуюся комнату.
+   */
+  takeFocus?: boolean
 }) {
   const scope = useRef<HTMLDivElement>(null)
   /*
@@ -56,6 +63,30 @@ export function MatchCeremony({
    */
   const forCount = game.forCount ?? null
   const byLeader = forCount !== null && forCount < memberCount
+
+  /*
+   * ФОКУС — НА «ЭТО МАТЧ!», НО ТОЛЬКО ПОТЕРЯННЫЙ.
+   *
+   * Церемония заменяет страницу комнаты целиком: кнопки колоды или экран
+   * ожидания уходят вместе с фокусом, и он падал в body — главная эмоция
+   * продукта доставалась клавиатурному человеку прыжком в начало документа.
+   * Заголовок забирает его и объявляет себя; во что играете, скринридеру
+   * говорит живая строка страницы комнаты и следующий заголовок, h2 с игрой.
+   *
+   * Матч приезжает опросом, в любую минуту, поэтому фокус берётся, только
+   * если его некому держать (lib/focushandoff): человек, который стоит в
+   * шапке, там и остаётся. Открывшему ссылку на сошедшуюся комнату фокус не
+   * нужен вовсе — takeFocus ложен.
+   *
+   * ref-колбэк, как у героя /play и шага квиза: заголовок живёт в EchoTitle,
+   * и колбэк получает ровно тот узел, который смонтировался.
+   */
+  const titleRef = useCallback(
+    (el: HTMLHeadingElement | null) => {
+      if (el && takeFocus && focusAdrift(document)) el.focus()
+    },
+    [takeFocus],
+  )
 
   useGSAP(
     () => {
@@ -113,6 +144,7 @@ export function MatchCeremony({
           text={byLeader ? 'Договорились!' : 'Это матч!'}
           ghosts={byLeader ? forCount : memberCount}
           className="font-display text-display-lg"
+          headRef={titleRef}
         />
 
         <p className="text-dim">

@@ -15,6 +15,7 @@ import { WarmupScreen } from '@/components/WarmupScreen'
 import type { ExploreCard, ShelfCard } from '@/lib/cards'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { EXPLORE_REASON, EXPLORE_SHELF_FOLD, EXPLORE_SHELF_MAX } from '@/lib/explore'
+import { focusAdrift } from '@/lib/focushandoff'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -86,10 +87,16 @@ export default function ExplorePage() {
   const [shelfOpen, setShelfOpen] = useState(false)
   /** Какую плитку не удалось убрать — строка под ней */
   const [unlikeMiss, setUnlikeMiss] = useState<number | null>(null)
-  /** Фокус после ухода плитки: соседняя кнопка «Убрать» или строка «полка пуста» */
-  const pendingFocus = useRef<number | 'empty' | null>(null)
+  /**
+   * Фокус после ухода плитки: соседняя кнопка «Убрать» или строка «полка
+   * пуста». 'end' — заголовок «Колода кончилась» после голоса с клавиатуры.
+   */
+  const pendingFocus = useRef<number | 'empty' | 'end' | null>(null)
   const unlikeButtons = useRef(new Map<number, HTMLButtonElement>())
   const shelfEmpty = useRef<HTMLParagraphElement>(null)
+  /** Панель «Колода кончилась» и её заголовок — см. vote и redeal */
+  const deckEnd = useRef<HTMLDivElement>(null)
+  const deckEndHead = useRef<HTMLHeadingElement>(null)
   /**
    * Убранное на этой странице. Ответ «Ещё колоду» мог прочитать полку до
    * того, как «Мимо» доехало до базы (а у сессии только для чтения полка и
@@ -109,6 +116,14 @@ export default function ExplorePage() {
    * частоты незачем. null — сказать нечего.
    */
   const [redealMiss, setRedealMiss] = useState<string | null>(null)
+  /**
+   * Новая колода забирает фокус на «Интересно» первой карты (initialFocus у
+   * SwipeDeck): «Ещё колоду» нажали с клавиатуры, и фокус так и остался в
+   * уходящей панели — или потерян. Решается, когда ответ уже пришёл, а не при
+   * нажатии: за время запроса человек мог уйти на полку, и отнимать у него
+   * это место незачем (lib/focushandoff).
+   */
+  const [dealFocus, setDealFocus] = useState(false)
   /**
    * За какие карты голос уже отдан. Улетающая карта ещё 220 мс живёт в DOM, и
    * второй Enter по ней отправил бы второй свайп той же игры (см. TopCard).
@@ -210,15 +225,20 @@ export default function ExplorePage() {
 
   useEffect(() => () => redealing.current?.abort(), [])
 
-  /** «Ещё колоду» — без прогрева: каталог уже разобран первым заходом */
-  const redeal = async () => {
+  /**
+   * «Ещё колоду» — без прогрева: каталог уже разобран первым заходом.
+   * keyboard — нажата с клавиатуры или скринридером (см. dealFocus).
+   */
+  const redeal = async (keyboard: boolean) => {
     if (dealing) return
     const ac = new AbortController()
     redealing.current = ac
     setDealing(true)
     const miss = (code: string | null) => setRedealMiss((FAIL[code ?? ''] ?? FAIL_UNKNOWN).text)
     try {
-      await show(await fetch('/api/explore', { signal: ac.signal }), ac.signal, miss)
+      const res = await fetch('/api/explore', { signal: ac.signal })
+      setDealFocus(keyboard && focusAdrift(document, deckEnd.current))
+      await show(res, ac.signal, miss)
     } catch {
       if (!ac.signal.aborted) miss(null)
     } finally {
@@ -233,9 +253,13 @@ export default function ExplorePage() {
    * потерянный свайп не беда. Сессии только для чтения сервер ответит
    * needsteam — тогда страница перестаёт слать и листает на устройстве.
    */
-  const vote = (card: DeckCard, yes: boolean) => {
+  const vote = (card: DeckCard, yes: boolean, keyboard: boolean) => {
     if (votedIds.current.has(card.appid)) return
     votedIds.current.add(card.appid)
+    // Последняя карта уносит колоду целиком — вместе с кнопкой в фокусе и
+    // живой областью, — и фокус падал в body. Голос с клавиатуры забирает
+    // заголовок панели, вставшей на её место: он же и объявит, что случилось
+    if (keyboard && cards.length === 1) pendingFocus.current = 'end'
     setCards((cs) => cs.filter((c) => c.appid !== card.appid))
     setVoted((v) => v + 1)
     if (yes) {
@@ -262,7 +286,12 @@ export default function ExplorePage() {
     const target = pendingFocus.current
     if (target === null) return
     pendingFocus.current = null
-    const el = target === 'empty' ? shelfEmpty.current : unlikeButtons.current.get(target)
+    const el =
+      target === 'empty'
+        ? shelfEmpty.current
+        : target === 'end'
+          ? deckEndHead.current
+          : unlikeButtons.current.get(target)
     el?.focus()
   })
 
@@ -369,10 +398,16 @@ export default function ExplorePage() {
           alone
           labels={LABELS}
           nowSec={nowSec}
+          initialFocus={dealFocus ? 'yes' : null}
         />
       ) : (
-        <div className="panel-lift p-8 text-center flex flex-col gap-4 items-center">
-          <p className="text-lg">Колода кончилась</p>
+        <div ref={deckEnd} className="panel-lift p-8 text-center flex flex-col gap-4 items-center">
+          {/* Заголовок, а не абзац: на него переезжает фокус с последнего
+              голоса (pendingFocus 'end') и объявляет, что колода кончилась.
+              Кольцо не снимается — фокус сюда приходит с клавиатуры */}
+          <h2 ref={deckEndHead} tabIndex={-1} className="text-lg">
+            Колода кончилась
+          </h2>
           <p className="text-sm text-dim max-w-md leading-relaxed">
             {liked.length
               ? 'Приглянувшееся лежит ниже — открой любую, там и трейлер, и кадры, и цена.'
@@ -381,7 +416,7 @@ export default function ExplorePage() {
           <div className="flex flex-wrap justify-center items-center gap-4">
             <button
               type="button"
-              onClick={() => void redeal()}
+              onClick={(e) => void redeal(e.detail === 0)}
               disabled={dealing}
               className="btn-ember px-6 py-3 disabled:opacity-50"
             >

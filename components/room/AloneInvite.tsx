@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { type Ref, useState } from 'react'
 import { Icon } from '@/components/Icon'
 import Link from 'next/link'
 import { ShareLinkInput, type ShareLink } from '@/components/ShareLink'
@@ -25,6 +25,7 @@ export function AloneInvite({
   isPublic,
   share,
   onTogglePublic,
+  headRef,
 }: {
   roomId: string
   isHost: boolean
@@ -32,6 +33,8 @@ export function AloneInvite({
   /** ссылка на комнату — общая с кнопкой в шапке (useShareLink) */
   share: ShareLink
   onTogglePublic: () => void
+  /** заголовок — цель фокуса, когда колода ушла из-под пальцев (RoomWaiting) */
+  headRef: Ref<HTMLHeadingElement>
 }) {
   /*
    * Поле со ссылкой — после первого отказа буфера и насовсем. Раньше оно
@@ -46,7 +49,7 @@ export function AloneInvite({
       <div className="relative panel-lift p-6 sm:p-8 flex flex-col items-center gap-5 text-center">
         {/* «В комнате только ты», а не «ты тут один»: род того, кто
             смотрит на экран, нам неизвестен — см. MemberRoster */}
-        <h2 className="font-display text-display-sm">
+        <h2 ref={headRef} tabIndex={-1} className="font-display text-display-sm">
           В комнате только ты — матчиться не с кем
         </h2>
         <p className="text-dim text-sm leading-relaxed max-w-sm">
