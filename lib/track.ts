@@ -47,6 +47,12 @@ export const CLIENT_EVENTS = [
   'demo_door_steam',
   /** нажал в ней «вставить ссылку» */
   'demo_door_link',
+  /**
+   * раскрыл «Где взять?» у поля ссылки на профиль — раз за документ: вопрос в
+   * том, скольким не хватило подсказки, а не сколько раз её дёргали. Рядом с
+   * connect_ok:link (сервер) — доля тех, кто искал, откуда взять ссылку
+   */
+  'link_help_open',
 ] as const
 export type ClientEvent = (typeof CLIENT_EVENTS)[number]
 

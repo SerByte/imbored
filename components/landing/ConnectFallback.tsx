@@ -43,22 +43,65 @@ import Link from 'next/link'
  */
 export const CONNECT_CARD_MIN_H = 'min-h-[244px]'
 
+/** Фраза про пароль: на неё ссылается aria-describedby у «Войти через Steam» */
+export const PASSWORD_NOTE_ID = 'steam-password-note'
+
+/**
+ * Сноска про доступ — одна на фолбэк и настоящую карточку.
+ *
+ * По той же причине, что и потолок выше: подмена фолбэка карточкой не должна
+ * менять на первом экране ни пикселя, ни слова, а две копии одного абзаца
+ * разъехались бы на первой же правке. Живут в разных ветках Suspense и в
+ * документе вместе не стоят — id фразы поэтому не задваивается.
+ *
+ * «Пароль вводишь на сайте Steam — мы его не видим», а не прежнее «Пароль не
+ * спрашиваем». Пароль как раз спросят — на странице Steam, через секунду после
+ * нажатия, и обещание «не спрашиваем» ломалось ровно в тот момент, когда
+ * человек решал, доверять ли. Новая фраза говорит, где пароль вводится и кто
+ * его видит, — то же, что /privacy: «логин и пароль вводятся на сайте Valve».
+ * Она и короче прежней (по метрикам шрифта 295 px против 312 при 12 px), но
+ * короче — ещё не «не выше»: перенос по словам ломает строки по-своему. Поэтому
+ * перенос прогнан по тем же метрикам на каждой ширине сноски от 200 до 448 px
+ * (max-w-md) с шагом в четверть пикселя: лишней строки новая фраза не даёт
+ * нигде, а местами даёт на одну меньше — потолок этого не замечает, карточка и
+ * так ниже него. Это счёт без кернинга, не замер: перемер, которого требует
+ * CONNECT_CARD_MIN_H, остаётся за браузером.
+ *
+ * Фраза — подпись к двери «Войти через Steam»: глазом стоит прямо под ней, а
+ * скринридеру её отдаёт aria-describedby={PASSWORD_NOTE_ID} на самой двери.
+ *
+ * text-dim и 12 px, а не text-faint и 11. Замерено: faint на стекле карточки
+ * даёт ровно 4.50:1 — порог без единого запаса. Но главное даже не это: faint
+ * — роль «едва заметного», а эту строку читает тот, кто как раз колеблется,
+ * отдавать ли свой профиль. Прятать ответ на этот вопрос в самый тихий токен
+ * было бы странно.
+ */
+export function AccessNote() {
+  return (
+    <p className="max-w-md text-xs leading-relaxed text-dim">
+      <span id={PASSWORD_NOTE_ID}>Пароль вводишь на сайте Steam — мы его не видим.</span> Читаем
+      только список игр и наигранные часы, ничего не публикуем.{' '}
+      <Link href="/privacy" className="tap tap-tight underline decoration-edge hover:text-ink">
+        Подробнее
+      </Link>
+    </p>
+  )
+}
+
 export function ConnectFallback() {
   return (
     <div className="flex w-full max-w-xl flex-col gap-4">
       <div className={`connect-card flex ${CONNECT_CARD_MIN_H} flex-col items-start gap-4`}>
         {/* Без скрипта поле ссылки не работает, поэтому здесь одна дверь —
             вход через Steam, той же белой кнопкой, что у настоящей формы. */}
-        <a href="/api/auth/steam" className="btn-ember inline-block px-8 text-base">
+        <a
+          href="/api/auth/steam"
+          aria-describedby={PASSWORD_NOTE_ID}
+          className="btn-ember inline-block px-8 text-base"
+        >
           Войти через Steam
         </a>
-        <p className="max-w-md text-xs leading-relaxed text-dim">
-          Пароль не спрашиваем — вход идёт на стороне Steam. Читаем только список игр и наигранные
-          часы, ничего не публикуем.{' '}
-          <Link href="/privacy" className="tap tap-tight underline decoration-edge hover:text-ink">
-            Подробнее
-          </Link>
-        </p>
+        <AccessNote />
       </div>
     </div>
   )
