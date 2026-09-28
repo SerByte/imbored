@@ -29,6 +29,7 @@ import {
   type SessionHint,
 } from '@/lib/sessionhint'
 import { writerFrom, writerStore } from '@/lib/writer'
+import { forgetPrewarm } from '@/lib/warmup'
 import { announceReadOnly } from '@/lib/readonlynote'
 import { LIVE_DEFAULT, liveLineFrom } from '@/lib/liveline'
 
@@ -307,6 +308,10 @@ export function ConnectCard() {
         // И подсказка о входе — новая: из демо ушли в свою библиотеку, и
         // «Ты в демо-режиме» на следующем заходе было бы уже неправдой
         rememberSession(hintFrom(data))
+        // Прогрев, начатый квизом прежнего входа (lib/warmup), — про другую
+        // библиотеку: квиз нового не начал бы своего, пока тот свежий, и /play
+        // показал бы стену прежнего человека
+        forgetPrewarm()
         await go()
         return
       }

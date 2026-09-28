@@ -42,6 +42,7 @@ import { parseNudge } from './nudge'
 import { parseSeedRef, type Deal, type PlayPick } from './playflow'
 import type { ContinueGame, Focus } from './recommend'
 import type { Mood } from './types'
+import { forgetPrewarm } from './warmup'
 
 /** Сколько выдача считается «той же самой», мс */
 export const PLAY_CACHE_TTL_MS = 15 * 60_000
@@ -312,4 +313,7 @@ export function forgetPlay(): void {
   playCacheStore.set(null)
   warmMarkStore.set(null)
   recentBansStore.set(null)
+  // И ответ прогрева, начатого квизом (lib/warmup): он про вышедшего, а
+  // следующий вход в этом же документе забрал бы его первым кругом
+  forgetPrewarm()
 }

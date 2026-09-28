@@ -78,10 +78,11 @@ import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
+import { isDemoId } from '@/lib/demoid'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
-import { track } from '@/lib/track'
+import { track, trackWait, type WaitPath } from '@/lib/track'
 import { parseWallMemo, remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
@@ -733,6 +734,14 @@ function Player({ say }: { say: (line: string) => void }) {
      */
     const ac = new AbortController()
 
+    /*
+     * Замер ожидания первой выдачи (pick_wait в lib/track): от захода до
+     * карточки, и каким путём к ней пришёл каталог. performance.now, а не
+     * Date.now: длительность не должна прыгать вместе с часами устройства.
+     */
+    const waitFrom = performance.now()
+    let waitPath: WaitPath = 'cold'
+
     /** Выдача на экран. Один путь и для догретого каталога, и для частичного. */
     async function reveal(): Promise<boolean> {
       // При скрытом времени нетронутого не узнать — сервер отдаст всё своё, и
@@ -753,6 +762,12 @@ function Player({ say }: { say: (line: string) => void }) {
       // Первый показ выдачи; переборы, повторы и восстановление после «Назад»
       // идут мимо reveal() и шагом воронки не считаются
       track('pick_shown')
+      // Замер — только у захода: «Подобрать заново» ждёт на уже тронутом
+      // каталоге и размыл бы холодный путь. Демо — по ответу сервера, а не
+      // по подсказке: чья выдача, знает он
+      if (round === 0) {
+        trackWait(got.viewer && isDemoId(got.viewer) ? 'demo' : waitPath, performance.now() - waitFrom)
+      }
       /*
        * Такт «из многих — одна». Только на первом показе и не в рулетке: у
        * той свой барабан, и два выбора подряд читались бы как заминка.
@@ -816,6 +831,7 @@ function Player({ say }: { say: (line: string) => void }) {
       // Каталог разобран минуты назад: прогрев ответил бы «нечего» первым же
       // вызовом, а экран ожидания простоял бы ради этого лишний круг
       if (warmIsFresh(mark, viewer, Date.now())) {
+        waitPath = 'skip'
         if (!back) await reveal()
         return
       }
@@ -839,6 +855,11 @@ function Player({ say }: { say: (line: string) => void }) {
 
       const warm = await runWarmup({
         signal: ac.signal,
+        // Первый круг сделал квиз (startPrewarm) — экран ожидания короче ровно
+        // на него, и замер это должен различать
+        onPrewarm: () => {
+          waitPath = 'prewarm'
+        },
         onProgress: (p) => {
           lastTotal = p.total
           warmedAll = p.remaining <= 0

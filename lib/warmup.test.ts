@@ -1,17 +1,34 @@
-import { describe, expect, test, vi } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   COUNTING_STAGE,
+  forgetPrewarm,
+  hintChanged,
   libraryWall,
+  PREWARM_TTL_MS,
+  prewarmWanted,
+  queuePrepare,
   remainingLine,
+  resetPrepareCalls,
   runWarmup,
+  startPrewarm,
   warmupPercent,
   warmupStage,
   WARMUP_CALL_TIMEOUT_MS,
   WARMUP_MAX_CALLS,
+  WARMUP_ORPHAN_MS,
   WARMUP_STALL_LIMIT,
   WARMUP_STALL_PAUSE_MS,
   WALL_MAX,
 } from './warmup'
+
+// Вызовы /api/prepare в полёте живут на модуле (queuePrepare): брошенный в
+// одном случае заставил бы startPrewarm следующего ждать его срок
+afterEach(() => {
+  resetPrepareCalls()
+  vi.useRealTimers()
+})
 
 /**
  * Цикл прогрева ходит в сеть по несколько минут и до этих тестов существовал
@@ -518,5 +535,394 @@ describe('стена экрана ожидания', () => {
       })
       expect(seen).toEqual([{ games: 3, untouched: 1 }])
     }
+  })
+})
+
+/**
+ * Первый круг под квизом (startPrewarm). Обещания два: вошедший не ждёт на
+ * /play вызова, который мог сделаться, пока он отвечал, — и Steam не получает
+ * два GetItems на одну пачку, когда /play приходит раньше, чем вызов квиза
+ * доехал.
+ */
+describe('первый круг под квизом', () => {
+  afterEach(() => {
+    // Ответ квиза живёт в памяти модуля: случай не должен достаться соседнему
+    forgetPrewarm()
+  })
+
+  /** Дать уйти вызову квиза: он начинается микрозадачей, а не сразу */
+  const tick = () => new Promise((done) => setTimeout(done, 0))
+
+  const calls = (fn: typeof fetch) => (fn as unknown as { mock: { calls: unknown[][] } }).mock.calls
+
+  /** Вызов квиза, который доедет, когда скажет тест */
+  function pending() {
+    let release: (r: Response) => void = () => {}
+    const fetchFn = vi.fn(
+      () =>
+        new Promise<Response>((done) => {
+          release = done
+        }),
+    ) as unknown as typeof fetch
+    return { fetchFn, release: (r: Response) => release(r) }
+  }
+
+  test('один вызов на заход, POST с keepalive и своим потолком', async () => {
+    const fetchFn = sequence(reply({ remaining: 0 }))
+    expect(startPrewarm({ fetchFn, nowMs: () => 1_000 })).toBe(true)
+    // смена шага квиза, повторный ответ touch — второго вызова нет
+    expect(startPrewarm({ fetchFn, nowMs: () => 61_000 })).toBe(false)
+    await tick()
+    expect(calls(fetchFn)).toHaveLength(1)
+    const [url, init] = calls(fetchFn)[0] as [string, RequestInit]
+    expect(url).toBe('/api/prepare')
+    expect(init.method).toBe('POST')
+    // доезжает до сервера и тогда, когда документ ушёл посреди вызова
+    expect(init.keepalive).toBe(true)
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  test('готовый ответ — первый круг цикла, без своего вызова', async () => {
+    startPrewarm({ fetchFn: sequence(reply({ remaining: 0, library: { games: 3, untouched: 1 } })) })
+    const own = vi.fn() as unknown as typeof fetch
+    let used = 0
+    const seen: unknown[] = []
+    const res = await runWarmup({ fetchFn: own, onPrewarm: () => used++, onProgress: (p) => seen.push(p) })
+    expect(res).toBe('done')
+    expect(calls(own)).toHaveLength(0)
+    expect(used).toBe(1)
+    expect(seen).toEqual([{ remaining: 0, total: 0, library: { games: 3, untouched: 1 } }])
+  })
+
+  /** Ради этого всё и сделано: второй вызов рядом с первым — второй GetItems на ту же пачку */
+  test('недоехавший ответ ждут, а не зовут /api/prepare рядом с ним', async () => {
+    const quiz = pending()
+    startPrewarm({ fetchFn: quiz.fetchFn })
+    const own = sequence(reply({ remaining: 0 }))
+    let yields = 0
+    const run = runWarmup({ fetchFn: own, onYield: () => yields++ })
+    await tick()
+    expect(calls(quiz.fetchFn)).toHaveLength(1)
+    expect(calls(own)).toHaveLength(0)
+
+    quiz.release(reply({ remaining: 300 }))
+    expect(await run).toBe('done')
+    // ответ квиза — это и есть первый круг: выдача отдаётся по нему, а
+    // догрев дальше идёт своими вызовами
+    expect(yields).toBe(1)
+    expect(calls(own)).toHaveLength(1)
+  })
+
+  test('ответ забирается один раз', async () => {
+    startPrewarm({ fetchFn: sequence(reply({ remaining: 0 })) })
+    const first = vi.fn() as unknown as typeof fetch
+    expect(await runWarmup({ fetchFn: first })).toBe('done')
+    const second = sequence(reply({ remaining: 0 }))
+    let used = 0
+    expect(await runWarmup({ fetchFn: second, onPrewarm: () => used++ })).toBe('done')
+    expect(calls(first)).toHaveLength(0)
+    expect(calls(second)).toHaveLength(1)
+    expect(used).toBe(0)
+  })
+
+  /*
+   * Отказ квиза не выдаётся за первый круг: у цикла свои развилки — «иди
+   * подключайся» на 401 и 409, экран ошибки на остальном, — и решать их
+   * должен ответ, полученный самим циклом.
+   */
+  test.each([
+    ['401', () => reply({}, { status: 401 })],
+    ['500', () => reply({}, { status: 500 })],
+    ['обрыв', () => Promise.reject(new TypeError('Failed to fetch'))],
+    ['не json', () => new Response('не json', { status: 200 })],
+  ] as const)('неудачный вызов квиза (%s) — цикл делает свой', async (_name, make) => {
+    startPrewarm({ fetchFn: vi.fn(make) as unknown as typeof fetch })
+    const own = sequence(reply({}, { status: 401 }))
+    let used = 0
+    expect(await runWarmup({ fetchFn: own, onPrewarm: () => used++ })).toBe('unauthorized')
+    expect(calls(own)).toHaveLength(1)
+    expect(used).toBe(0)
+  })
+
+  test('протухший ответ не берётся, и квиз может начать новый', async () => {
+    const t0 = 1_780_000_000_000
+    const later = t0 + PREWARM_TTL_MS + 1
+    startPrewarm({ fetchFn: sequence(reply({ remaining: 0 })), nowMs: () => t0 })
+    const own = sequence(reply({ remaining: 0 }))
+    expect(await runWarmup({ fetchFn: own, nowMs: () => later })).toBe('done')
+    expect(calls(own)).toHaveLength(1)
+    expect(startPrewarm({ fetchFn: sequence(reply({ remaining: 0 })), nowMs: () => later })).toBe(true)
+  })
+
+  test('ответ «из будущего» — часы перевели назад — тоже не берётся', async () => {
+    const t0 = 1_780_000_000_000
+    startPrewarm({ fetchFn: sequence(reply({ remaining: 0 })), nowMs: () => t0 })
+    const own = sequence(reply({ remaining: 0 }))
+    expect(await runWarmup({ fetchFn: own, nowMs: () => t0 - 5 * 60_000 })).toBe('done')
+    expect(calls(own)).toHaveLength(1)
+  })
+
+  test('страница ушла, пока ждала, — ответ остаётся следующему заходу', async () => {
+    const quiz = pending()
+    startPrewarm({ fetchFn: quiz.fetchFn })
+    const ac = new AbortController()
+    const gone = vi.fn() as unknown as typeof fetch
+    const run = runWarmup({ fetchFn: gone, signal: ac.signal })
+    await tick()
+    ac.abort()
+    // не ждёт вызова квиза: уход страницы важнее
+    expect(await run).toBe('aborted')
+
+    quiz.release(reply({ remaining: 0 }))
+    const next = vi.fn() as unknown as typeof fetch
+    let used = 0
+    expect(await runWarmup({ fetchFn: next, onPrewarm: () => used++ })).toBe('done')
+    expect(calls(gone)).toHaveLength(0)
+    expect(calls(next)).toHaveLength(0)
+    expect(used).toBe(1)
+  })
+
+  test('forgetPrewarm — цикл греет сам', async () => {
+    startPrewarm({ fetchFn: sequence(reply({ remaining: 0 })) })
+    forgetPrewarm()
+    const own = sequence(reply({ remaining: 0 }))
+    expect(await runWarmup({ fetchFn: own })).toBe('done')
+    expect(calls(own)).toHaveLength(1)
+  })
+
+  test.each([
+    // гость: подсказки нет, touch молчит или ответил «не вошёл»
+    [null, null, false],
+    // вернувшийся: подсказка с главной
+    [{ authed: true }, null, true],
+    // новичок сразу после Steam: подсказки ещё нет, вход подтвердил touch
+    [null, true, true],
+    // вход по ссылке только читает, но выдача у него своя — греть есть что
+    [null, false, true],
+    // демо: библиотека статична, /api/prepare ответит ей remaining: 0
+    [{ authed: true, demo: true }, null, false],
+    [{ authed: true, demo: true }, true, false],
+  ] as const)('кому греть: подсказка %j, запись %j → %j', (hint, writer, want) => {
+    expect(prewarmWanted(hint, writer)).toBe(want)
+  })
+
+  const A = { authed: true, personaName: 'A' }
+  test.each([
+    ['никого и не было', null, null, false],
+    ['перезаписана тем же', A, { ...A }, false],
+    ['вышли в соседней вкладке', A, null, true],
+    ['вошли в соседней вкладке', null, A, true],
+    ['другой профиль', A, { authed: true, personaName: 'B' }, true],
+    ['ушли в демо', A, { ...A, demo: true as const }, true],
+    ['вошли по ссылке', A, { ...A, readOnly: true as const }, true],
+  ])('сменился ли вход: %s', (_name, prev, next, want) => {
+    expect(hintChanged(prev, next)).toBe(want)
+  })
+
+  /*
+   * ОЧЕРЕДЬ ЗА БРОШЕННЫМ ВЫЗОВОМ (queuePrepare, WARMUP_ORPHAN_MS).
+   *
+   * «Изменить настроение» уводит с /play на квиз посреди догрева. Уход
+   * отменяет fetch, а сервер свою пачку дорабатывает — и квиз, начав первый
+   * круг тут же, отправил бы в Steam её же второй раз. Время здесь
+   * поддельное: срок брошенного вызова — настоящий таймер модуля.
+   */
+
+  /** Вызов /play, который висит, пока страница не уйдёт, — как настоящий fetch */
+  const hanging = () =>
+    vi.fn(
+      (_: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError')),
+          )
+        }),
+    ) as unknown as typeof fetch
+
+  /** /play ушёл через `after` мс после начала своего вызова */
+  async function abandonPlay(after: number) {
+    const ac = new AbortController()
+    const run = runWarmup({ fetchFn: hanging(), signal: ac.signal })
+    await vi.advanceTimersByTimeAsync(after)
+    ac.abort()
+    expect(await run).toBe('aborted')
+  }
+
+  const fakeTime = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+  test('квиз, куда ушли посреди прогрева /play, ждёт брошенный вызов, а не идёт рядом', async () => {
+    fakeTime()
+    await abandonPlay(3_000)
+    const quiz = sequence(reply({ remaining: 0 }))
+    // круг начат — ответ квиза уже есть, пусть и не доехавший
+    expect(startPrewarm({ fetchFn: quiz })).toBe(true)
+    await vi.advanceTimersByTimeAsync(WARMUP_ORPHAN_MS - 3_000 - 1)
+    expect(calls(quiz)).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(calls(quiz)).toHaveLength(1)
+  })
+
+  test('ответ снимает отметку сразу — срока ждут только брошенные', async () => {
+    const play = pending()
+    const run = runWarmup({ fetchFn: play.fetchFn })
+    await tick()
+    const quiz = sequence(reply({ remaining: 0 }))
+    startPrewarm({ fetchFn: quiz })
+    await tick()
+    expect(calls(quiz)).toHaveLength(0)
+
+    play.release(reply({ remaining: 0 }))
+    expect(await run).toBe('done')
+    await tick()
+    expect(calls(quiz)).toHaveLength(1)
+  })
+
+  test('/play, пришедший, пока круг стоит в очереди, ждёт его, а не зовёт свой', async () => {
+    fakeTime()
+    await abandonPlay(1_000)
+    const quiz = sequence(reply({ remaining: 0 }))
+    startPrewarm({ fetchFn: quiz })
+    const own = vi.fn() as unknown as typeof fetch
+    let used = 0
+    const run = runWarmup({ fetchFn: own, onPrewarm: () => used++ })
+    await vi.advanceTimersByTimeAsync(WARMUP_ORPHAN_MS)
+    expect(await run).toBe('done')
+    expect(calls(own)).toHaveLength(0)
+    expect(calls(quiz)).toHaveLength(1)
+    expect(used).toBe(1)
+  })
+
+  test('забытый в очереди круг не уходит вовсе', async () => {
+    fakeTime()
+    await abandonPlay(1_000)
+    const quiz = sequence(reply({ remaining: 0 }))
+    startPrewarm({ fetchFn: quiz })
+    // вход сменился, пока круг ждал: вызов про прежнего не нужен никому
+    forgetPrewarm()
+    await vi.advanceTimersByTimeAsync(WARMUP_ORPHAN_MS)
+    expect(calls(quiz)).toHaveLength(0)
+  })
+
+  test('WarmCatalog ждёт первого круга квиза, а ответ квиза остаётся /play', async () => {
+    const quiz = pending()
+    startPrewarm({ fetchFn: quiz.fetchFn })
+    await tick()
+    const lib = sequence(reply({ remaining: 0 }))
+    const step = queuePrepare({ fetchFn: lib })
+    await tick()
+    expect(calls(lib)).toHaveLength(0)
+
+    quiz.release(reply({ remaining: 0 }))
+    expect((await step)?.ok).toBe(true)
+    expect(calls(lib)).toHaveLength(1)
+    let used = 0
+    expect(await runWarmup({ fetchFn: vi.fn() as unknown as typeof fetch, onPrewarm: () => used++ })).toBe('done')
+    expect(used).toBe(1)
+  })
+
+  test('двое ждущих одного вызова уходят по очереди, а не рядом', async () => {
+    fakeTime()
+    await abandonPlay(0)
+    const a = pending()
+    const b = pending()
+    const first = queuePrepare({ fetchFn: a.fetchFn })
+    const second = queuePrepare({ fetchFn: b.fetchFn })
+    await vi.advanceTimersByTimeAsync(WARMUP_ORPHAN_MS)
+    expect(calls(a.fetchFn)).toHaveLength(1)
+    expect(calls(b.fetchFn)).toHaveLength(0)
+
+    a.release(reply({ remaining: 0 }))
+    await first
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls(b.fetchFn)).toHaveLength(1)
+    b.release(reply({ remaining: 0 }))
+    expect((await second)?.ok).toBe(true)
+  })
+
+  test('ставший ненужным за время очереди — null и без вызова', async () => {
+    fakeTime()
+    await abandonPlay(0)
+    let wanted = true
+    const lib = vi.fn() as unknown as typeof fetch
+    const step = queuePrepare({ fetchFn: lib, wanted: () => wanted })
+    // WarmCatalog ушёл со страницей, пока ждал
+    wanted = false
+    await vi.advanceTimersByTimeAsync(WARMUP_ORPHAN_MS)
+    expect(await step).toBeNull()
+    expect(calls(lib)).toHaveLength(0)
+  })
+
+  test('потолок вызова считается от его выхода, а не от начала очереди', async () => {
+    fakeTime()
+    await abandonPlay(0)
+    let built = 0
+    const lib = sequence(reply({ remaining: 0 }))
+    const step = queuePrepare({
+      fetchFn: lib,
+      init: () => {
+        built++
+        return { keepalive: true }
+      },
+    })
+    await vi.advanceTimersByTimeAsync(WARMUP_ORPHAN_MS - 1)
+    expect(built).toBe(0)
+    await vi.advanceTimersByTimeAsync(1)
+    await step
+    expect(built).toBe(1)
+    expect((calls(lib)[0] as [string, RequestInit])[1]).toMatchObject({ method: 'POST', keepalive: true })
+  })
+})
+
+/**
+ * Сторож проводки. Логику выше легко оставить без дела: квиз, который
+ * перестал звать startPrewarm, и /play, который перестал отличать путь
+ * каталога в замере, тесты модуля не заметят.
+ */
+describe('прогрев под квизом: проводка', () => {
+  const ROOT = path.join(__dirname, '..')
+  const code = (rel: string) =>
+    fs
+      .readFileSync(path.join(ROOT, rel), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+
+  test('квиз греет вошедшему и слушает обе догадки о входе', () => {
+    const src = code('app/quiz/page.tsx')
+    expect(src).toMatch(/if \(!prewarmWanted\(getSessionHint\(\), writerStore\.get\(\)\)\) return/)
+    // свежая метка — /play пропустит прогрев, и ответ забрать будет некому
+    expect(src).toMatch(/if \(hasFreshWarm\(warmMarkStore\.get\(\), Date\.now\(\)\)\) return/)
+    expect(src).toMatch(/startPrewarm\(\)/)
+    // возврат из Steam подтверждает вход только ответом touch — после монтирования
+    expect(src).toMatch(/writerStore\.subscribe\(warm\)/)
+    expect(src).toMatch(/subscribeSessionHint\(onHint\)/)
+    // …а смена подсказки из соседней вкладки забывает ответ прежнего входа
+    // и греет заново
+    expect(src).toMatch(
+      /const onHint = \(\) => \{\s*const next = getSessionHint\(\)\s*if \(hintChanged\(seen, next\)\) forgetPrewarm\(\)\s*seen = next\s*warm\(\)\s*\}/,
+    )
+  })
+
+  test('/play отличает в замере первый круг, сделанный квизом', () => {
+    expect(code('app/play/page.tsx')).toMatch(/onPrewarm: \(\) => \{\s*waitPath = 'prewarm'\s*\}/)
+  })
+
+  test('смена входа в том же документе забывает ответ квиза', () => {
+    expect(code('components/landing/ConnectCard.tsx')).toMatch(
+      /rememberSession\(hintFrom\(data\)\)\s*forgetPrewarm\(\)/,
+    )
+    expect(code('lib/playcache.ts')).toMatch(/export function forgetPlay\(\): void \{[^}]*forgetPrewarm\(\)/)
+  })
+
+  /*
+   * Очередь держит, только если через неё идут все: вызов /api/prepare мимо
+   * callPrepare не оставит отметки, и квиз пойдёт рядом с ним.
+   */
+  test('все вызовы /api/prepare — через отметку, WarmCatalog — в очередь', () => {
+    const lib = code('lib/warmup.ts')
+    expect([...lib.matchAll(/'\/api\/prepare'/g)]).toHaveLength(1)
+    expect(lib).toMatch(/function callPrepare\([^)]*\): Promise<Response> \{\s*const res = fetchFn\('\/api\/prepare'/)
+    const warm = code('components/WarmCatalog.tsx')
+    expect(warm).not.toMatch(/\/api\/prepare/)
+    expect(warm).toMatch(/await queuePrepare\(\{ wanted: \(\) => !cancelled \}\)/)
   })
 })

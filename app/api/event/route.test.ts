@@ -48,6 +48,21 @@ describe('/api/event', () => {
     expect(JSON.stringify(all.rows)).not.toMatch(/7656119|203\.0\.113/)
   })
 
+  // Ожидание первой выдачи (lib/track, pick_wait): вторая часть ключа — корзина,
+  // а не источник, и без корзины из списка маяк не считается вовсе
+  test('ожидание — плюс один к «pick_wait:путь.корзина»', async () => {
+    expect((await send({ event: 'pick_wait', source: 'compat', wait: 'prewarm.lt5' })).status).toBe(204)
+    expect((await send({ event: 'pick_wait', wait: 'cold.lt20' })).status).toBe(204)
+    expect((await send({ event: 'pick_wait', wait: 4200 })).status).toBe(204)
+    expect((await send({ event: 'pick_wait' })).status).toBe(204)
+    await vi.waitFor(async () =>
+      expect(await counted()).toEqual([
+        ['pick_wait:cold.lt20', 1],
+        ['pick_wait:prewarm.lt5', 1],
+      ]),
+    )
+  })
+
   // Потолок в памяти, а не в rate_limits: адрес рядом с числом шагов не
   // должен оседать в базе даже до суточной уборки
   test('адрес в базу не пишется', async () => {

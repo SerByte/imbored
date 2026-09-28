@@ -1,7 +1,7 @@
 import { clientIp, memoryGate } from '@/lib/ratelimit'
 import { nowSec } from '@/lib/server'
 import { recordTelemetryLater } from '@/lib/telemetry'
-import { eventKey, parseTrackEvent, TRACK_MAX_BODY } from '@/lib/track'
+import { parseTrackEvent, stepKey, TRACK_MAX_BODY } from '@/lib/track'
 
 /**
  * Приёмник шагов воронки (lib/track.ts).
@@ -44,6 +44,7 @@ export async function POST(req: Request) {
   })
   if (!allowed) return new Response(null, { status: 429 })
 
-  recordTelemetryLater('event', eventKey(step.event, step.source))
+  // У pick_wait вторая часть ключа — корзина ожидания, а не источник (lib/track)
+  recordTelemetryLater('event', stepKey(step))
   return new Response(null, { status: 204 })
 }
