@@ -414,11 +414,14 @@ export default function ExplorePage() {
               : 'Ничего не зацепило — это тоже ответ. Можно взять ещё колоду или подобрать под настроение.'}
           </p>
           <div className="flex flex-wrap justify-center items-center gap-4">
+            {/* aria-disabled, а не disabled: на отказе панель остаётся, и
+                нажатая кнопка обязана удержать фокус — disabled ронял его в
+                body на всё время запроса. Повтор гасит сам redeal */}
             <button
               type="button"
               onClick={(e) => void redeal(e.detail === 0)}
-              disabled={dealing}
-              className="btn-ember px-6 py-3 disabled:opacity-50"
+              aria-disabled={dealing}
+              className="btn-ember px-6 py-3 aria-disabled:opacity-50"
             >
               {dealing ? 'Собираю…' : 'Ещё колоду'}
             </button>

@@ -456,7 +456,7 @@ export default function RoomPage() {
    * Было: setPulling(true), голый await fetch и снятие флага только на !res.ok.
    * Любой обрыв сети — а докблок vote ниже прямо называет лифт и метро
    * обычным делом — отклонял промис в пустоту, и pulling оставался true до
-   * перезагрузки страницы. Кнопка при этом disabled={pulling} и подписана
+   * перезагрузки страницы. Кнопка при этом выключена по pulling и подписана
    * «Добираю…», то есть врала, что работа идёт, и одновременно не давала
    * нажать ещё раз. А это единственный способ расшевелить застрявшую пати:
    * раунд общий и приходит всем сразу.
@@ -639,7 +639,7 @@ export default function RoomPage() {
    * Вход в комнату по приглашению.
    *
    * Было: setBusy(true), голый await, снятие флага без try. Обрыв сети
-   * оставлял busy=true навсегда, а кнопки экрана стоят под disabled={busy} —
+   * оставлял busy=true навсегда, а кнопки экрана выключены по busy —
    * то есть единственное действие страницы-приглашения умирало от одного
    * моргнувшего вайфая. Отказы роута теперь названы — см. joinFailure.
    */
@@ -992,10 +992,16 @@ export default function RoomPage() {
               : 'Подключи свою библиотеку — и свайпай, во что готов играть.'}{' '}
             Совпадёте — будет матч.
           </p>
+          {/*
+            aria-disabled, а не disabled, у обеих дверей: на отказе экран
+            остаётся, строка ниже говорит почему, и нажатая кнопка обязана
+            удержать фокус — disabled ронял его в body на всё время запроса.
+            Повтор гасят сами join и joinAsDemoFriend (по busy).
+          */}
           {state.hasSession ? (
             <button
               onClick={join}
-              disabled={busy}
+              aria-disabled={busy}
               className="btn-ember is-block py-3"
             >
               Войти в комнату
@@ -1016,7 +1022,7 @@ export default function RoomPage() {
               </Link>
               <button
                 onClick={joinAsDemoFriend}
-                disabled={busy}
+                aria-disabled={busy}
                 className="tap text-sm text-dim hover:text-ink transition-colors"
               >
                 {busy ? 'Подключаю…' : 'Демо-друг (без Steam)'}

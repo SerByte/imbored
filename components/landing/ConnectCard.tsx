@@ -426,7 +426,12 @@ export function ConnectCard() {
             )}
             <Magnet className="block w-full sm:w-auto sm:self-start">
               <ClickSpark className="block w-full sm:w-auto">
-                {/* busy — пока уходит вход в комнату: второй клик слал бы его дважды */}
+                {/*
+                  busy — пока уходит вход в комнату: второй клик слал бы его
+                  дважды. Гасит его обработчик, а кнопка выключена через
+                  aria-disabled: disabled выбросил бы фокус в body (см.
+                  rechecking выше)
+                */}
                 <button
                   type="button"
                   onClick={() => {
@@ -434,7 +439,7 @@ export function ConnectCard() {
                     setBusy('go')
                     void go()
                   }}
-                  disabled={busy !== null}
+                  aria-disabled={busy !== null}
                   data-busy={busy === 'go' ? '' : undefined}
                   className="btn-ember is-block px-8 text-base sm:w-auto"
                 >
@@ -580,9 +585,14 @@ export function ConnectCard() {
               <span aria-hidden className="text-faint">
                 ·
               </span>
+              {/* Повтор гасит обработчик, а не disabled: отказ демо (потолок,
+                  сеть) оставляет карточку, и фокус обязан остаться здесь */}
               <button
-                onClick={() => connect(true)}
-                disabled={busy !== null}
+                onClick={() => {
+                  if (busy !== null) return
+                  void connect(true)
+                }}
+                aria-disabled={busy !== null}
                 className="tap py-1 text-dim transition-colors hover:text-ink active:text-ember-text"
               >
                 {busy === 'demo' ? 'Готовлю демо…' : 'Демо без Steam'}
@@ -732,14 +742,21 @@ function ProfileForm({
           <Magnet className="block w-full sm:w-auto">
             <ClickSpark className="block w-full sm:w-auto">
               {/*
-                data-busy отдельно от disabled: форма выключает кнопку и
+                data-busy отдельно от выключения: форма выключает кнопку и
                 когда поле пустое, и когда идёт запрос, а это два разных
                 состояния. Выключенная ЖДЁТ ввода, занятая РАБОТАЕТ — и
                 выглядеть они обязаны по-разному (см. .btn-ember[data-busy]).
+
+                И выключаются они по-разному. Пустое поле — disabled: фокус в
+                этот момент в поле, а кнопке без ввода и правда не место в
+                обходе. Запрос — aria-disabled: нажатая кнопка обязана
+                удержать фокус, disabled уронил бы его в body. Второй запрос
+                гасит onSubmit (submitProfile — по busy).
               */}
               <button
                 type="submit"
-                disabled={!value || busy !== null}
+                disabled={!value}
+                aria-disabled={busy !== null}
                 data-busy={busy === 'connect' ? '' : undefined}
                 className="btn-ember is-block whitespace-nowrap px-6 sm:w-auto"
               >
@@ -748,10 +765,12 @@ function ProfileForm({
             </ClickSpark>
           </Magnet>
         ) : (
+          /* Выключается так же, как парадная выше: поле — disabled, запрос — aria-disabled */
           <button
             type="submit"
-            disabled={!value || busy !== null}
-            className="btn-glass w-full whitespace-nowrap disabled:opacity-60 sm:w-auto"
+            disabled={!value}
+            aria-disabled={busy !== null}
+            className="btn-glass w-full whitespace-nowrap disabled:opacity-60 aria-disabled:opacity-60 sm:w-auto"
           >
             {label}
           </button>

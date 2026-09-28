@@ -142,15 +142,19 @@ export function FeedWatch({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
             transition={{ duration: reduced ? 0 : 0.28, ease: EASE }}
-            disabled={pending}
+            // aria-disabled, а не disabled: disabled ронял фокус нажатой
+            // плашки в body на всё время обновления. Второй refresh гасит
+            // сам обработчик
+            aria-disabled={pending}
             onClick={() => {
+              if (pending) return
               // Прокрутка наверх — не украшение. Новые строки встают ВЫШЕ места
               // чтения, а высота непрорисованных строк — оценка (см. докблок).
               // Человек нажал «покажи новые» — везём его к ним.
               window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' })
               startTransition(() => router.refresh())
             }}
-            className="pointer-events-auto flex items-center gap-2 rounded-full border border-rule bg-bg/90 px-4 py-2 text-sm font-semibold text-ink shadow-lg backdrop-blur transition-opacity hover:opacity-80 disabled:opacity-60"
+            className="pointer-events-auto flex items-center gap-2 rounded-full border border-rule bg-bg/90 px-4 py-2 text-sm font-semibold text-ink shadow-lg backdrop-blur transition-opacity hover:opacity-80 aria-disabled:opacity-60"
           >
             <span aria-hidden className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
             {pending ? 'Обновляю…' : label}

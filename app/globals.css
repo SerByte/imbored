@@ -1401,9 +1401,12 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--ink) 55%, transparent);
   background: color-mix(in srgb, var(--ink) 15%, transparent);
 }
-.join .btn-ember:disabled {
+.join .btn-ember:disabled,
+.join .btn-ember[aria-disabled='true'] {
   /* Пустое поле: кнопка та же белая, только приглушённая, — серая плашка
-     читалась бы сломанной, а это ожидание ввода. */
+     читалась бы сломанной, а это ожидание ввода. Идущий запрос выключает
+     кнопку через aria-disabled (фокус остаётся на ней, см. .btn-ember ниже),
+     и выглядит она так же, как выглядела под disabled. */
   color: var(--on-ember);
   background: color-mix(in srgb, var(--ember) 55%, transparent);
   box-shadow: none;
@@ -1613,15 +1616,25 @@ textarea:focus-visible {
       box-shadow var(--dur-base) var(--ease-out),
       transform var(--dur-fast) var(--ease-out);
   }
-  .btn-ember:hover:not(:disabled) {
+  /*
+   * Выключенная — это и :disabled, и [aria-disabled='true']. Кнопку, которая
+   * ждёт своего запроса, выключают через aria-disabled: disabled отбирает фокус
+   * у нажатой кнопки и роняет его в body (сторож lib/disabledfocus.test.ts).
+   * Для глаза разницы быть не должно. Специфичность прежняя: :not() со
+   * списком весит как самый тяжёлый его пункт, а [aria-disabled] — как
+   * :disabled. Поэтому занятая ([data-busy]) и «уменьшить движение» ниже
+   * перебивают эти правила так же, как перебивали.
+   */
+  .btn-ember:hover:not(:disabled, [aria-disabled='true']) {
     background: color-mix(in srgb, var(--ember) 88%, var(--bg));
     box-shadow: 0 16px 36px -16px var(--shadow);
   }
-  .btn-ember:active:not(:disabled) {
+  .btn-ember:active:not(:disabled, [aria-disabled='true']) {
     transform: scale(0.98);
     box-shadow: 0 4px 12px -8px var(--shadow);
   }
-  .btn-ember:disabled {
+  .btn-ember:disabled,
+  .btn-ember[aria-disabled='true'] {
     cursor: default;
     color: var(--dim);
     background: var(--surface);
@@ -1671,7 +1684,7 @@ textarea:focus-visible {
     .btn-ember {
       transition: none;
     }
-    .btn-ember:active:not(:disabled) {
+    .btn-ember:active:not(:disabled, [aria-disabled='true']) {
       transform: none;
     }
   }
@@ -2894,13 +2907,15 @@ textarea:focus-visible {
       background-color var(--dur-base) var(--ease-out),
       transform var(--dur-fast) var(--ease-out);
   }
-  .btn-glass:hover:not(:disabled) {
+  /* Выключенная — и :disabled, и [aria-disabled='true'], как у .btn-ember */
+  .btn-glass:hover:not(:disabled, [aria-disabled='true']) {
     background: color-mix(in srgb, var(--ink) 22%, transparent);
   }
-  .btn-glass:active:not(:disabled) {
+  .btn-glass:active:not(:disabled, [aria-disabled='true']) {
     transform: scale(0.98);
   }
-  .btn-glass:disabled {
+  .btn-glass:disabled,
+  .btn-glass[aria-disabled='true'] {
     cursor: default;
     color: var(--faint);
   }
@@ -2925,11 +2940,11 @@ textarea:focus-visible {
       background-color var(--dur-base) var(--ease-out),
       transform var(--dur-fast) var(--ease-out);
   }
-  .btn-circle:hover:not(:disabled) {
+  .btn-circle:hover:not(:disabled, [aria-disabled='true']) {
     border-color: var(--ink);
     background: color-mix(in srgb, var(--ink) 10%, transparent);
   }
-  .btn-circle:active:not(:disabled) {
+  .btn-circle:active:not(:disabled, [aria-disabled='true']) {
     transform: scale(0.94);
   }
   .btn-circle[aria-pressed='true'] {
@@ -3088,8 +3103,8 @@ textarea:focus-visible {
   .card-thumb {
     transition: none;
   }
-  .btn-glass:active:not(:disabled),
-  .btn-circle:active:not(:disabled),
+  .btn-glass:active:not(:disabled, [aria-disabled='true']),
+  .btn-circle:active:not(:disabled, [aria-disabled='true']),
   .pill:active,
   .game-card:hover .card-thumb,
   .game-card:focus-visible .card-thumb {

@@ -183,8 +183,14 @@ export function PartyTrivia({
                       return (
                         <button
                           key={o.label}
-                          disabled={revealed}
+                          // aria-disabled, а не disabled: ответ выключает все
+                          // варианты разом, и disabled ронял фокус с только
+                          // что выбранного в body — с клавиатуры до «Дальше»
+                          // приходилось идти со страницы сверху. Второй ответ
+                          // гасит сам обработчик
+                          aria-disabled={revealed}
                           onClick={() => {
+                            if (revealed) return
                             setChosen(i)
                             if (right) setScore((s) => s + 1)
                           }}

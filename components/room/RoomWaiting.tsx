@@ -244,11 +244,14 @@ export function RoomWaiting({
       />
 
       <div className="relative flex flex-wrap items-center justify-between gap-3 pt-2">
+        {/* aria-disabled, а не disabled: отказ добора оставляет кнопку и
+            пишет в ней «нажми ещё раз» — фокус обязан остаться на ней.
+            Повтор гасит onPullMore (pullMore — по pulling) */}
         {hasMore ? (
           <button
             onClick={onPullMore}
-            disabled={pulling}
-            className="btn-glass justify-start py-3 text-sm text-left disabled:opacity-40"
+            aria-disabled={pulling}
+            className="btn-glass justify-start py-3 text-sm text-left aria-disabled:opacity-40"
           >
             <span className="block">{pulling ? 'Добираю…' : 'Ещё 20 игр'}</span>
             {/*

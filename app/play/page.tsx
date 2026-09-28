@@ -1181,11 +1181,14 @@ function Player({ say }: { say: (line: string) => void }) {
           </div>
         )}
 
+        {/* aria-disabled, а не disabled: неудача повтора оставляет экран как
+            есть (см. retry), и фокус обязан остаться на кнопке, а не упасть
+            в body. Второе нажатие гасит сам retry */}
         {fail.retry && (
           <button
             onClick={() => void retry()}
-            disabled={retrying}
-            className="tap cursor-pointer text-sm text-ember-text hover:underline disabled:opacity-50"
+            aria-disabled={retrying}
+            className="tap cursor-pointer text-sm text-ember-text hover:underline aria-disabled:opacity-50"
           >
             {retrying ? 'Пробую…' : 'Попробовать снова'}
           </button>
@@ -1822,7 +1825,12 @@ function Player({ say }: { say: (line: string) => void }) {
                       )
                       focusHero(false)
                     }}
-                    disabled={banning}
+                    /* aria-disabled, а не disabled: бан ждёт ответа, и на
+                       отказе кнопка остаётся на месте со строкой «не дошло»
+                       под ней. disabled выбрасывал фокус в body на всё время
+                       запроса — нажать ещё раз было уже не с чего. Повтор
+                       гасит if (banning) в начале обработчика. */
+                    aria-disabled={banning}
                     title={
                       finished
                         ? 'Прошёл — больше не предлагать'
@@ -1830,7 +1838,7 @@ function Player({ say }: { say: (line: string) => void }) {
                           ? 'Убрать с полки. Бросать игры — нормально'
                           : 'Больше не показывать эту игру'
                     }
-                    className={finished ? 'btn-glass disabled:opacity-60' : 'btn-circle disabled:opacity-60'}
+                    className={finished ? 'btn-glass aria-disabled:opacity-60' : 'btn-circle aria-disabled:opacity-60'}
                   >
                     {/*
                       Раньше здесь стояла голая эмодзи. Доступного имени у кнопки

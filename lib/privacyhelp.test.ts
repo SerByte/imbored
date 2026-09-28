@@ -57,7 +57,7 @@ describe('панель скрытой библиотеки', () => {
     expect(busy).toMatch(/<button[^>]*aria-disabled="true"/)
     expect(busy).toMatch(/<button[^>]*aria-busy="true"/)
     expect(busy, 'disabled уводит фокус в body').not.toMatch(/<button[^>]*\sdisabled[=\s>]/)
-    // приглушение — по aria-disabled: у .btn-glass своё только для :disabled
+    // приглушение — по aria-disabled, как у всех кнопок на время запроса (lib/disabledfocus.test.ts)
     expect(busy).toMatch(/<button[^>]*class="[^"]*aria-disabled:opacity-60/)
     // шаг инструкции по-прежнему называет кнопку её настоящим именем
     expect(busy).toContain('нажми «Я открыл — проверить»')
