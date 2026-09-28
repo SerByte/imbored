@@ -48,7 +48,11 @@ describe('подписи под числами портрета', () => {
    * общим — иначе однажды поправят только одну из двух.
    */
   test('страница и карточка берут подписи из одного места', () => {
-    for (const rel of ['app/portrait/[steamid]/page.tsx', 'app/portrait/[steamid]/share-card.tsx']) {
+    for (const rel of [
+      'app/portrait/[steamid]/page.tsx',
+      'app/portrait/[steamid]/share-card.tsx',
+      'app/compat/[steamid]/share-card.tsx',
+    ]) {
       const src = fs.readFileSync(path.join(ROOT, rel), 'utf8')
       expect(src, `${rel} не подключает lib/factcaptions`).toContain('@/lib/factcaptions')
       const code = src.replace(/\/\*[\s\S]*?\*\//g, '')

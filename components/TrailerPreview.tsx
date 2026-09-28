@@ -1,6 +1,6 @@
 'use client'
 
-import { useReducedMotion } from 'motion/react'
+import { useReducedMotion } from 'framer-motion'
 import { useRef, useState } from 'react'
 import { Spinner } from '@/components/Spinner'
 import type { Trailer } from '@/lib/trailer'

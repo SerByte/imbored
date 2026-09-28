@@ -12,6 +12,7 @@ import { HeroPoster } from '@/components/TypeCover'
 import { Icon } from '@/components/Icon'
 import { HeroShots } from '@/components/HeroShots'
 import { NeedSteam } from '@/components/NeedSteam'
+import { useSharePick } from '@/components/SharePick'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
@@ -20,7 +21,7 @@ import { RefundNote } from '@/components/RefundNote'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { WarmupScreen } from '@/components/WarmupScreen'
-import type { DailyPickCard, StoreCard } from '@/lib/cards'
+import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
 import { bounceTo, reconnectHref } from '@/lib/destination'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
@@ -74,12 +75,15 @@ const FAIL_UNKNOWN = {
 const storeHref = (c: Pick<StoreCard, 'appid' | 'storeUrl'>) =>
   c.storeUrl ?? `https://store.steampowered.com/app/${c.appid}/`
 
+/** Игра дня и подпись для «Отправить другу» (lib/pickshare) — её кладёт роут, не dailyCardView */
+type DailyHero = DailyPickCard & Partial<ShareView>
+
 /** Ответ /api/daily — один разбор на все запросы страницы */
 type DailyResponse = {
-  pick: DailyPickCard
+  pick: DailyHero
   discoveries?: StoreCard[]
   /** Своя на магазинный день — «Сегодня хочу из своего»; null — не магазинный */
-  ownAlternate?: DailyPickCard | null
+  ownAlternate?: DailyHero | null
   dateLabel: string
   nowSec: number
 }
@@ -111,7 +115,7 @@ async function sendFeedback(
 
 export default function DailyPage() {
   const router = useRouter()
-  const [pick, setPick] = useState<DailyPickCard | null>(null)
+  const [pick, setPick] = useState<DailyHero | null>(null)
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
   const [nowSec, setNowSec] = useState(0)
   const [dateLabel, setDateLabel] = useState('')
@@ -121,7 +125,7 @@ export default function DailyPage() {
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')
   /** Своя на магазинный день и показана ли она вместо магазинной */
-  const [alternate, setAlternate] = useState<DailyPickCard | null>(null)
+  const [alternate, setAlternate] = useState<DailyHero | null>(null)
   const [ownDay, setOwnDay] = useState(false)
   const [liked, setLiked] = useState<Set<number>>(new Set())
   /** «Не сегодня» ушло, и страница ждёт другую игру */
@@ -260,6 +264,9 @@ export default function DailyPage() {
     return () => ac.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // «Отправить другу» — хук, поэтому до ранних возвратов; герой тот же, что ниже
+  const sharePick = useSharePick(ownDay && alternate ? alternate : pick, 'daily')
 
   if (phase === 'loading') {
     return <WarmupScreen progress={prep} message={message} />
@@ -462,6 +469,13 @@ export default function DailyPage() {
               delay={0.2}
             />
             <p className="text-base md:text-lg text-ink/90 leading-relaxed">{hero.reason}</p>
+            {/* «О чём игра» — у игры дня из магазина (lib/cards aboutLine) */}
+            {hero.about && (
+              <p className="-mt-2 line-clamp-3 text-sm text-dim">
+                <span className="font-bold text-ink">О чём: </span>
+                {hero.about}
+              </p>
+            )}
 
             <TagChips tags={hero.tags} matched={hero.sharedTags ?? []} />
 
@@ -543,8 +557,11 @@ export default function DailyPage() {
                   <span className="sr-only">Зашло</span>
                 </button>
               )}
+              {/* Отправить игру дня другу — /pick/<id>; пишет строку, поэтому не читателю */}
+              {!readOnly && sharePick.button}
             </div>
-            {readOnly && <NeedSteam from="/daily" className="-mt-1" />}
+            {readOnly && <NeedSteam from="/daily" why="launch" className="-mt-1" />}
+            {!readOnly && sharePick.panel}
             {rerollMiss && (
               <p role="status" className="-mt-1 text-sm text-dim">
                 {rerollMiss}

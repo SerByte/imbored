@@ -28,6 +28,9 @@ export const dynamic = 'force-dynamic'
 export const generateMetadata = ownAddress('/whatsnew', {
   title: 'Что нового',
   description: 'Крупные обновления игр: что изменилось в твоей библиотеке и в популярных играх.',
+  // <link rel="alternate" type="application/rss+xml"> — по нему ридеры и
+  // браузерные расширения находят ленту сами (app/whatsnew/feed.xml)
+  alternates: { types: { 'application/rss+xml': '/whatsnew/feed.xml' } },
 })
 
 /*

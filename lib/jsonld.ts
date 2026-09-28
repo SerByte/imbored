@@ -1,4 +1,5 @@
 import { discountOf, trustedPrice } from './discount'
+import { newsHeading, newsPath } from './newspage'
 import type { ReviewFacts } from './gamepage'
 import { OG_SITE, SITE_DESCRIPTION } from './site'
 import { STORE_LABEL } from './stores'
@@ -247,20 +248,191 @@ export type BreadcrumbLd = {
 }
 
 /**
- * Хлебные крошки карточки: главная → игра.
+ * Хлебные крошки карточки: главная → «Игры по жанрам» → жанр → игра.
  *
- * Два уровня, а не три, и это правило модуля, а не бедность: промежуточного
- * «Каталога» на сайте нет, а разметка не говорит больше, чем страница. Путь
- * на страницу есть ровно такой — логотип в шапке ведёт на главную.
+ * Жанр — главный жанр игры (lib/gamehub primaryGenre), и путь через него
+ * страница показывает сама, строкой над названием: разметка не говорит
+ * больше, чем страница. Главного жанра нет — нет и строки, и крошки
+ * остаются двумя уровнями: главная (логотип в шапке) → игра.
  */
-export function gameBreadcrumbLd({ meta, baseUrl }: { meta: GameMeta; baseUrl: string }): BreadcrumbLd {
+export function gameBreadcrumbLd({
+  meta,
+  baseUrl,
+  genre = null,
+}: {
+  meta: GameMeta
+  baseUrl: string
+  /** Видимый путь над названием: заголовок страницы жанра и её адрес */
+  genre?: { title: string; path: string } | null
+}): BreadcrumbLd {
+  const trail = genre
+    ? [
+        { name: 'Игры по жанрам', item: `${baseUrl}/games` },
+        { name: genre.title, item: `${baseUrl}${genre.path}` },
+      ]
+    : []
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { name: 'imbored', item: `${baseUrl}/` },
+      ...trail,
+      { name: meta.name, item: `${baseUrl}/game/${meta.appid}` },
+    ].map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
+  }
+}
+
+/**
+ * Хлебные крошки страницы жанра: главная → «Игры по жанрам» → жанр.
+ *
+ * Три уровня здесь честные: страница показывает этот путь сама, строкой над
+ * заголовком, а главная — логотип в шапке. Имя жанра — заголовок страницы
+ * («Рогалики»), тот же, что стоит в видимой строке.
+ */
+export function genreBreadcrumbLd({
+  title,
+  path,
+  baseUrl,
+}: {
+  title: string
+  path: string
+  baseUrl: string
+}): BreadcrumbLd {
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'imbored', item: `${baseUrl}/` },
-      { '@type': 'ListItem', position: 2, name: meta.name, item: `${baseUrl}/game/${meta.appid}` },
+      { '@type': 'ListItem', position: 2, name: 'Игры по жанрам', item: `${baseUrl}/games` },
+      { '@type': 'ListItem', position: 3, name: title, item: `${baseUrl}${path}` },
     ],
+  }
+}
+
+export type ItemListLd = {
+  '@context': 'https://schema.org'
+  '@type': 'ItemList'
+  name: string
+  numberOfItems: number
+  itemListElement: Array<{ '@type': 'ListItem'; position: number; url: string; name: string }>
+}
+
+/**
+ * Список игр жанра — тем же порядком и тем же числом, что на странице.
+ *
+ * Только адрес и название: всё остальное (отзывы, цена) у каждой игры своё и
+ * размечено на её карточке. Здесь это повтором было бы вторым источником тех
+ * же чисел — а разметка обязана совпадать со страницей, где их показывают.
+ */
+export function genreItemListLd({
+  title,
+  games,
+  baseUrl,
+}: {
+  title: string
+  games: ReadonlyArray<{ appid: number; name: string }>
+  baseUrl: string
+}): ItemListLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    name: title,
+    numberOfItems: games.length,
+    itemListElement: games.map((g, i) => ({
+      '@type': 'ListItem',
+      position: i + 1,
+      url: `${baseUrl}/game/${g.appid}`,
+      name: g.name,
+    })),
+  }
+}
+
+/** Пост патча — столько, сколько знает страница патча */
+type PatchLdItem = {
+  appid: number
+  gid: string
+  title: string
+  url: string
+  publishedAt: number
+  tldr?: string | null
+  imageUrl?: string | null
+}
+
+export type NewsArticleLd = {
+  '@context': 'https://schema.org'
+  '@type': 'NewsArticle'
+  headline: string
+  url: string
+  mainEntityOfPage: string
+  datePublished: string
+  inLanguage: 'ru'
+  description?: string
+  image?: string[]
+  about?: { '@type': 'VideoGame'; name: string; url: string }
+  isBasedOn: string
+  author: { '@type': 'Organization'; name: string; url: string }
+  publisher: { '@type': 'Organization'; name: string; url: string }
+}
+
+/**
+ * Патч как статья: заголовок, дата, пересказ, кадр, игра и оригинал.
+ *
+ * Каждое поле — то, что страница показывает: заголовок — тот же, что в h1
+ * (newsHeading), описание — «Коротко», только если пересказ есть, кадр —
+ * только если он стоит на странице, isBasedOn — «Оригинал в Steam». Автор и
+ * издатель — imbored: страница — наш пересказ поста, а не сам пост, и у
+ * текста издателя ниже подписи нет.
+ */
+export function patchArticleLd({
+  item,
+  game,
+  baseUrl,
+}: {
+  item: PatchLdItem
+  game: { name: string } | null
+  baseUrl: string
+}): NewsArticleLd {
+  const url = `${baseUrl}${newsPath(item.appid, item.gid)}`
+  const site = { '@type': 'Organization' as const, name: OG_SITE.siteName, url: `${baseUrl}/` }
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'NewsArticle',
+    headline: newsHeading(item.title, game?.name),
+    url,
+    mainEntityOfPage: url,
+    datePublished: new Date(item.publishedAt * 1000).toISOString(),
+    inLanguage: 'ru',
+    ...(item.tldr?.trim() ? { description: item.tldr.trim() } : {}),
+    ...(item.imageUrl ? { image: [item.imageUrl] } : {}),
+    ...(game ? { about: { '@type': 'VideoGame', name: game.name, url: `${baseUrl}/game/${item.appid}` } } : {}),
+    isBasedOn: item.url,
+    author: site,
+    publisher: site,
+  }
+}
+
+/**
+ * Крошки патча: главная → игра → патч — ровно та ссылка назад, что стоит над
+ * заголовком. Игры нет в каталоге — нет и ссылки на неё: два уровня.
+ */
+export function patchBreadcrumbLd({
+  item,
+  game,
+  baseUrl,
+}: {
+  item: PatchLdItem
+  game: { name: string } | null
+  baseUrl: string
+}): BreadcrumbLd {
+  const steps = [
+    { name: 'imbored', item: `${baseUrl}/` },
+    ...(game ? [{ name: game.name, item: `${baseUrl}/game/${item.appid}` }] : []),
+    { name: newsHeading(item.title, game?.name), item: `${baseUrl}${newsPath(item.appid, item.gid)}` },
+  ]
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: steps.map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
   }
 }
 

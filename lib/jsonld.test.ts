@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'vitest'
-import { gameBreadcrumbLd, gameJsonLd, ldScript, websiteJsonLd } from './jsonld'
+import {
+  gameBreadcrumbLd,
+  gameJsonLd,
+  genreBreadcrumbLd,
+  genreItemListLd,
+  ldScript,
+  patchArticleLd,
+  patchBreadcrumbLd,
+  websiteJsonLd,
+} from './jsonld'
 import { SITE_DESCRIPTION } from './site'
 import { tagRu } from './tagsru'
 import type { ReviewFacts } from './gamepage'
@@ -296,6 +305,20 @@ describe('gameBreadcrumbLd', () => {
       { '@type': 'ListItem', position: 2, name: 'Counter-Strike 2', item: ld().url },
     ])
   })
+
+  test('с главным жанром — через «Игры по жанрам» и жанр, как в строке над названием', () => {
+    const out = gameBreadcrumbLd({
+      meta: game(),
+      baseUrl: BASE,
+      genre: { title: 'Шутеры от первого лица', path: '/games/fps' },
+    })
+    expect(out.itemListElement).toEqual([
+      { '@type': 'ListItem', position: 1, name: 'imbored', item: 'https://imbored.cc/' },
+      { '@type': 'ListItem', position: 2, name: 'Игры по жанрам', item: 'https://imbored.cc/games' },
+      { '@type': 'ListItem', position: 3, name: 'Шутеры от первого лица', item: 'https://imbored.cc/games/fps' },
+      { '@type': 'ListItem', position: 4, name: 'Counter-Strike 2', item: ld().url },
+    ])
+  })
 })
 
 describe('websiteJsonLd', () => {
@@ -317,5 +340,78 @@ describe('ldScript со списком сущностей', () => {
     expect(out).not.toContain('</script>')
     const parsed = JSON.parse(out) as Array<{ '@type': string }>
     expect(parsed.map((e) => e['@type'])).toEqual(['VideoGame', 'BreadcrumbList'])
+  })
+})
+
+describe('страница жанра', () => {
+  test('крошки: главная → игры по жанрам → жанр, как в строке над заголовком', () => {
+    const out = genreBreadcrumbLd({ title: 'Рогалики', path: '/games/roguelike', baseUrl: 'https://imbored.cc' })
+    expect(out.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/'],
+      [2, 'Игры по жанрам', 'https://imbored.cc/games'],
+      [3, 'Рогалики', 'https://imbored.cc/games/roguelike'],
+    ])
+  })
+
+  test('список — в порядке страницы, с позициями с единицы и числом игр', () => {
+    const out = genreItemListLd({
+      title: 'Рогалики',
+      games: [
+        { appid: 1145360, name: 'Hades' },
+        { appid: 646570, name: 'Slay the Spire' },
+      ],
+      baseUrl: 'https://imbored.cc',
+    })
+    expect(out.numberOfItems).toBe(2)
+    expect(out.itemListElement).toEqual([
+      { '@type': 'ListItem', position: 1, url: 'https://imbored.cc/game/1145360', name: 'Hades' },
+      { '@type': 'ListItem', position: 2, url: 'https://imbored.cc/game/646570', name: 'Slay the Spire' },
+    ])
+  })
+})
+
+describe('страница патча', () => {
+  const item = {
+    appid: 730,
+    gid: '5123894512345',
+    title: 'Counter-Strike 2: Release Notes for 9/25/2026',
+    url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+    publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+    tldr: 'Поправили баланс AWP и карту Mirage.',
+    imageUrl: 'https://clan.cloudflare.steamstatic.com/images/1/abc.png',
+  }
+
+  test('статья — только из видимого: заголовок как в h1, пересказ, кадр, игра, оригинал', () => {
+    const out = patchArticleLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE })
+    expect(out).toMatchObject({
+      '@type': 'NewsArticle',
+      url: 'https://imbored.cc/game/730/news/5123894512345',
+      mainEntityOfPage: 'https://imbored.cc/game/730/news/5123894512345',
+      datePublished: '2026-09-25T18:00:00.000Z',
+      inLanguage: 'ru',
+      description: item.tldr,
+      image: [item.imageUrl],
+      about: { '@type': 'VideoGame', name: 'Counter-Strike 2', url: 'https://imbored.cc/game/730' },
+      isBasedOn: item.url,
+    })
+    // название игры в заголовке не повторяется — как в h1 (newsHeading)
+    expect(out.headline).not.toMatch(/^Counter-Strike 2:/)
+  })
+
+  test('нет пересказа, кадра или игры — нет и полей', () => {
+    const out = patchArticleLd({ item: { ...item, tldr: null, imageUrl: null }, game: null, baseUrl: BASE })
+    expect(out).not.toHaveProperty('description')
+    expect(out).not.toHaveProperty('image')
+    expect(out).not.toHaveProperty('about')
+  })
+
+  test('крошки: главная → игра → патч; без игры — два уровня', () => {
+    const withGame = patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE })
+    expect(withGame.itemListElement.map((i) => i.item)).toEqual([
+      'https://imbored.cc/',
+      'https://imbored.cc/game/730',
+      'https://imbored.cc/game/730/news/5123894512345',
+    ])
+    expect(patchBreadcrumbLd({ item, game: null, baseUrl: BASE }).itemListElement).toHaveLength(2)
   })
 })

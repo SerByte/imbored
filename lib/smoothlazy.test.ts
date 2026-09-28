@@ -3,20 +3,21 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 /**
- * Сторож веса корневого лэйаута: gsap в него статически не въезжает.
+ * Сторож веса: gsap едет только туда, где без него нельзя.
  *
- * Плавная прокрутка стоит в app/layout.tsx, то есть на каждой странице сайта.
- * Пока components/SmoothScroll.tsx импортировал gsap напрямую, ядро с
- * ScrollTrigger и ScrollSmoother — около 57 КБ br — лежало в начальном наборе
- * скриптов даже у /privacy и /support и качалось даже при «уменьшить
- * движение». Теперь смузер грузится отдельным чанком (SmoothScrollImpl) и
- * только когда движение разрешено.
+ * Плавная прокрутка раньше стояла в app/layout.tsx, то есть на каждой
+ * странице сайта. Пока components/SmoothScroll.tsx импортировал gsap
+ * напрямую, ядро с ScrollTrigger и ScrollSmoother — около 57 КБ br — лежало в
+ * начальном наборе скриптов даже у /privacy и /support. Потом смузер стал
+ * отдельным чанком (SmoothScrollImpl), а теперь и вовсе живёт только на
+ * главной: закреплённые сцены есть только там. Заголовки (SplitHeading) и
+ * слайдер кадров (MorphSlider) обходятся без gsap — WAAPI и свой rAF.
  *
  * Ломается это одной строкой и незаметно: достаточно, чтобы любой модуль,
- * до которого лэйаут дотягивается статическим импортом, сам импортировал gsap —
- * шапка, подвал, нижняя панель, что угодно. Сборка пройдёт, страницы
- * отрисуются, вес вернётся на все маршруты сразу. Поэтому проверяется весь
- * граф статических импортов от лэйаута, а не один файл.
+ * до которого страница дотягивается статическим импортом, сам импортировал
+ * gsap — шапка, подвал, заголовок, что угодно. Сборка пройдёт, страницы
+ * отрисуются, вес вернётся. Поэтому проверяется весь граф статических
+ * импортов от лэйаута и от каждой страницы, а не один файл.
  *
  * Граф строится регуляркой по тексту, и это осознанное огрубление: `import
  * type` и динамический `import()` в бандл начальной загрузки не попадают и
@@ -79,10 +80,20 @@ const isGsap = (spec: string) => spec === 'gsap' || spec.startsWith('gsap/') || 
 
 describe('gsap не в начальном наборе каждой страницы', () => {
   const layout = reach(path.join(ROOT, 'app', 'layout.tsx'))
+  const landing = reach(path.join(ROOT, 'app', 'page.tsx'))
 
-  test('обход графа от лэйаута доходит до входа плавной прокрутки', () => {
+  test('обход графа доходит до входа плавной прокрутки — от главной', () => {
     // Без этого сторож ниже мог бы быть зелёным потому, что обход сломан
-    expect([...layout.files].map(rel)).toContain('components/SmoothScroll.tsx')
+    expect([...landing.files].map(rel)).toContain('components/SmoothScroll.tsx')
+  })
+
+  /**
+   * Смузер нужен только главной: закреплённые сцены есть только там. Из
+   * лэйаута он догружал 129 КБ на каждой странице и вёл прокрутку программно
+   * на таче, где закреплять было нечего.
+   */
+  test('плавная прокрутка не стоит в корневом лэйауте', () => {
+    expect([...layout.files].map(rel)).not.toContain('components/SmoothScroll.tsx')
   })
 
   test('ни один статически достижимый из лэйаута модуль не импортирует gsap', () => {
@@ -95,8 +106,34 @@ describe('gsap не в начальном наборе каждой страни
     ).toEqual([])
   })
 
-  test('сам смузер статически из лэйаута недостижим', () => {
+  test('сам смузер статически недостижим ни из лэйаута, ни из главной', () => {
     expect([...layout.files].map(rel)).not.toContain('components/SmoothScrollImpl.tsx')
+    expect([...landing.files].map(rel)).not.toContain('components/SmoothScrollImpl.tsx')
+  })
+
+  /**
+   * Главная — единственная страница со сценами на ScrollTrigger. Остальным
+   * gsap не нужен: церемония матча в комнате догружается через next/dynamic.
+   */
+  test('ни одна страница, кроме главной, не тянет gsap статически', () => {
+    const pages: string[] = []
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (e.name === 'page.tsx' && p !== path.join(ROOT, 'app', 'page.tsx')) pages.push(p)
+      }
+    }
+    walk(path.join(ROOT, 'app'))
+    expect(pages.length, 'обход страниц ничего не нашёл — сторож ослеп').toBeGreaterThan(10)
+    const offenders = pages.flatMap((page) =>
+      [...reach(page).packages]
+        .filter(([spec]) => isGsap(spec))
+        .map(([spec, file]) => `${rel(page)}: ${file} → ${spec}`),
+    )
+    expect(offenders, 'gsap въехал в первую загрузку страницы — догружай его через import() или next/dynamic').toEqual(
+      [],
+    )
   })
 
   test('обход умеет находить gsap: смузер его импортирует', () => {

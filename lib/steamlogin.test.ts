@@ -32,6 +32,13 @@ vi.mock('./ratelimit', async (importOriginal) => ({
   checkRate: vi.fn(async () => ({ ok: true })),
 }))
 
+// Шаги воронки (lib/telemetry) пишутся в ту же подменённую пустышкой базу —
+// здесь проверяется вход, а не счётчики, и отказ их записи шумел бы в логе
+vi.mock('./telemetry', () => ({
+  recordTelemetry: vi.fn(async () => {}),
+  recordTelemetryLater: vi.fn(),
+}))
+
 const BASE = 'https://imbored.test'
 const STEAMID = '76561197960287930'
 const ID = `https://steamcommunity.com/openid/id/${STEAMID}`

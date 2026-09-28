@@ -4,6 +4,7 @@ import { createRoom, getPersonaName, getRoom, joinRoom } from '@/lib/db'
 import { parseMood } from '@/lib/mood'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, nowSec, requireWriter } from '@/lib/server'
+import { readJsonObject } from '@/lib/reqbody'
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
   if (!writer.ok) return writer.response
   const { steamid } = writer
 
-  const body = (await req.json().catch(() => ({}))) as { mood?: unknown }
+  const body = (await readJsonObject(req)) as { mood?: unknown }
   const mood = parseMood(body.mood) ?? undefined
 
   const db = await getDb()

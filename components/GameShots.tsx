@@ -1,11 +1,9 @@
 'use client'
 
-import { useReducedMotion } from 'motion/react'
+import { useReducedMotion } from 'framer-motion'
 import dynamic from 'next/dynamic'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Lightbox } from '@/components/Lightbox'
 import { webglAvailable } from '@/components/morph/gl'
-import { Screenshots } from '@/components/Screenshots'
 import { pickShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
 /**
@@ -29,6 +27,26 @@ import { pickShotSize, shotUrl, type ShotSize } from '@/lib/shots'
  * и до него доскроллит не каждый.
  */
 const MorphSlider = dynamic(() => import('@/components/morph/MorphSlider'), { ssr: false })
+/*
+ * Лайтбокс открывают по нажатию, а сетка — запасной путь без WebGL: ни то ни
+ * другое не нужно для первого кадра страницы игры, и в первую загрузку они
+ * не едут. Лайтбокс смонтирован всегда (выход анимирует AnimatePresence
+ * внутри), поэтому чанк догружается сразу после гидрации, а не на клике.
+ */
+const Lightbox = dynamic(() => import('@/components/Lightbox').then((mod) => mod.Lightbox), {
+  ssr: false,
+})
+const Screenshots = dynamic(
+  () => import('@/components/Screenshots').then((mod) => mod.Screenshots),
+  {
+    ssr: false,
+    // Пока чанк сетки едет, держим бокс кадра: пустой заглушкой блок схлопывался
+    // в ноль, и всё ниже прыгало вверх, а потом обратно
+    loading: () => (
+      <div className="relative aspect-video overflow-hidden rounded-(--radius-panel) border border-edge" />
+    ),
+  },
+)
 
 /**
  * Сколько кадров отдаём слайдеру.
@@ -122,7 +140,7 @@ export function GameShots({ images, name }: { images: string[]; name: string }) 
     <>
       <div
         ref={wrapRef}
-        className="relative aspect-video overflow-hidden rounded-[20px] border border-edge"
+        className="relative aspect-video overflow-hidden rounded-(--radius-panel) border border-edge"
       >
         {/*
           Первый кадр обычной картинкой: он держит бокс до монтирования слайдера

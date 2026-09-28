@@ -72,14 +72,24 @@ const STEAMID_RE = /(^|\D)\d{17}(?!\d)/g
 const ROOM_RE = /\/room\/(?!(?:new|create)(?:[/?#]|$))[^/?#]+/g
 
 /**
+ * Сегмент после /pick/ — непрозрачный id выбора, которым поделились. Он и
+ * есть доступ к странице: адрес не перебрать, пока его не положили в лог.
+ */
+const PICK_RE = /\/pick\/[^/?#]+/g
+
+/**
  * Путь, который можно положить в лог: без строки запроса и фрагмента, с
- * чужими steamid и кодами пати под масками.
+ * чужими steamid, кодами пати и id выборов под масками.
  *
  * Одна функция на сервер и на браузер (instrumentation-client.ts): страница
  * приватности обещает одно и то же про оба лога.
  */
 export function maskPath(raw: string): string {
-  return raw.split(/[?#]/)[0].replace(STEAMID_RE, '$1:steamid').replace(ROOM_RE, '/room/:id')
+  return raw
+    .split(/[?#]/)[0]
+    .replace(STEAMID_RE, '$1:steamid')
+    .replace(ROOM_RE, '/room/:id')
+    .replace(PICK_RE, '/pick/:id')
 }
 
 /**
@@ -110,6 +120,7 @@ export function scrubText(raw: string): string {
     .replace(SECRET_PARAM_RE, '$1=…')
     .replace(STEAMID_RE, '$1:steamid')
     .replace(ROOM_RE, '/room/:id')
+    .replace(PICK_RE, '/pick/:id')
 }
 
 /** JSON.stringify, который не бросает: цикл в объекте не должен уронить логгер. */

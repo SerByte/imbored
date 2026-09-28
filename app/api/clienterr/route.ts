@@ -2,13 +2,16 @@ import { CLIENT_ERROR_MAX_BODY, parseClientReport, reportKey } from '@/lib/clien
 import { createLogThrottle } from '@/lib/csp'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { getDb, nowSec } from '@/lib/server'
+import { recordTelemetryLater } from '@/lib/telemetry'
 
 /**
  * Приёмник отчётов о падениях в браузере (lib/clienterr.ts).
  *
  * Каждое падение — одна строка JSON с "event":"client-error" в Runtime Logs,
- * рядом с серверными "server-error". Ни таблицы, ни внешнего сборщика: лог и
- * есть хранилище, как у /api/csp-report.
+ * рядом с серверными "server-error". Внешнего сборщика нет: лог — главное
+ * хранилище, как у /api/csp-report. Сверх строки — число за час по виду
+ * падения (error, rejection, boundary) в telemetry_hourly (lib/telemetry.ts):
+ * без текста, страницы и браузера, только «сколько».
  *
  * Сессия не читается и не пишется в лог: чтобы найти поломку, нужен код с
  * экрана, страница и браузер, а не человек.
@@ -55,6 +58,10 @@ export async function POST(req: Request) {
     nowSec: nowSec(),
   })
   if (!gate.ok) return new Response(null, { status: 429 })
+
+  // Счёт — каждому принятому отчёту, а не только попавшему в лог: его
+  // потолок — лимит по адресу выше, а прореживание лога отвечает за строки
+  recordTelemetryLater('client-error', report.kind)
 
   if (shouldLog(reportKey(report), Date.now())) {
     const ua = req.headers.get('user-agent')?.slice(0, UA_MAX)

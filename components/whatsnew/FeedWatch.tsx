@@ -1,6 +1,6 @@
 'use client'
 
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useTransition } from 'react'
 import {
@@ -135,7 +135,7 @@ export function FeedWatch({
       >
         <AnimatePresence initial={false}>
           {есть ? (
-          <motion.button
+          <m.button
             key="feedwatch"
             type="button"
             initial={{ opacity: 0, y: -12 }}
@@ -154,7 +154,7 @@ export function FeedWatch({
           >
             <span aria-hidden className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
             {pending ? 'Обновляю…' : label}
-          </motion.button>
+          </m.button>
           ) : null}
         </AnimatePresence>
       </div>

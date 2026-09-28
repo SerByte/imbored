@@ -7,7 +7,7 @@
  * сверяет числа — тот же приём, что у lib/contrast.test.ts с палитрой.
  */
 
-/** --ease-out как массив для motion/react. */
+/** --ease-out как массив для framer-motion. */
 export const EASE = [0.22, 1, 0.36, 1] as const
 
 /** --ease-out как строка — для inline-стилей и CustomEase. */
@@ -18,7 +18,7 @@ export const EASE_CSS = 'cubic-bezier(0.22, 1, 0.36, 1)'
  * чтобы поставить свет, нужны ещё удар, уход и разлив.
  */
 
-/** --ease-in: уходящее ускоряется. Массив — для motion/react. */
+/** --ease-in: уходящее ускоряется. Массив — для framer-motion. */
 export const EASE_IN = [0.7, 0, 0.84, 0] as const
 export const EASE_IN_CSS = 'cubic-bezier(0.7, 0, 0.84, 0)'
 /** --ease-strike: контакт. ~90% пути за 12% времени. */

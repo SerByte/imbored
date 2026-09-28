@@ -34,5 +34,3 @@ export const LIGHT_INK = '#0b0b0c'
 export const LIGHT_DIM = '#4f4f55'
 export const LIGHT_EMBER = '#0b0b0c'
 
-/** Зелёный процента совпадения — единственный фирменный цвет «Премьеры». */
-export const MATCH = '#46d369'

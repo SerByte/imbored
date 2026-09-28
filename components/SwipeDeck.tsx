@@ -2,12 +2,13 @@
 
 import {
   AnimatePresence,
-  motion,
+  m,
   useIsPresent,
   useMotionValue,
   useTransform,
   type Variants,
-} from 'motion/react'
+} from 'framer-motion'
+import { MotionMax } from '@/components/motion/MotionMax'
 import { useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
@@ -163,7 +164,7 @@ function TopCard({
   const artSaturate = useTransform(noFade, (v: number) => `saturate(${1 - v * 0.8})`)
 
   return (
-    <motion.div
+    <m.div
       /* panel-lift — общий материал панелей продукта: замерено, у колоды был
          box-shadow ровно none, то есть плоское стекло. Карточка, которую
          листают и по которой голосуют, — тот же предмет, что карточка ответа в
@@ -191,7 +192,11 @@ function TopCard({
         картинкой. Теперь это обложка 2:3, как в каталоге стриминга, и всё
         остальное лежит поверх её нижней части на тёмном градиенте.
       */}
-      <motion.div aria-hidden className="absolute inset-0" style={{ filter: artSaturate }}>
+      {/* pointer-events-none: мышь, нажатая на <img>, запускает родной
+          перетаск картинки браузера, и тот съедает жест — карта на десктопе
+          не тянулась вовсе (на таче родного перетаска нет). Нажатие проходит
+          сквозь постер к самой карте. */}
+      <m.div aria-hidden className="absolute inset-0 pointer-events-none" style={{ filter: artSaturate }}>
         <GameArt
           appid={card.appid}
           name={card.name}
@@ -204,29 +209,29 @@ function TopCard({
           className="h-full w-full object-cover"
           fallback={<div className="deck-noart h-full w-full" />}
         />
-      </motion.div>
+      </m.div>
       <div aria-hidden className="deck-scrim" />
-      <motion.div
+      <m.div
         aria-hidden
         className="absolute inset-0 pointer-events-none"
         style={{ opacity: yesGlow, background: 'rgba(70,211,105,0.14)' }}
       />
       {/* Штампы: наклонены, как печать на карточке, — «да» заливкой, «нет»
           контуром. Проявляются жестом, а не стоят всегда. */}
-      <motion.span
+      <m.span
         aria-hidden
         className="deck-stamp left-5 -rotate-12 bg-ember text-on-ember uppercase tracking-wide"
         style={{ opacity: yesGlow }}
       >
         {labels.yes}
-      </motion.span>
-      <motion.span
+      </m.span>
+      <m.span
         aria-hidden
         className="deck-stamp right-5 rotate-12 border-2 border-ink text-ink uppercase"
         style={{ opacity: noFade }}
       >
         {labels.no}
-      </motion.span>
+      </m.span>
 
       <div className="relative mt-auto p-5 flex flex-col gap-2.5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -317,7 +322,7 @@ function TopCard({
           </button>
         </div>
       </div>
-    </motion.div>
+    </m.div>
   )
 }
 
@@ -357,77 +362,80 @@ export function SwipeDeck({
   const pos = deckPosition(votedCount, deckTotal)
 
   return (
+    // drag у верхней карты — фича domMax, её догружает MotionMax.
     // Не шире 460: постер 2:3 во всю колонку комнаты (672) становился
     // альбомным кадром, и карта переставала быть обложкой
-    <div className="mx-auto flex w-full max-w-[460px] flex-col gap-4">
-      <div className="deck-stack relative">
-        {/* Задние карточки — только глубина, без содержимого и без обработчиков */}
-        {cards.slice(1, DEPTH).map((c, i) => (
-          <motion.div
-            key={c.appid}
-            aria-hidden
-            className="deck-card deck-back media-card absolute inset-x-0 top-0"
-            initial={false}
-            animate={{
-              scale: 1 - (i + 1) * 0.04,
-              y: (i + 1) * 8,
-              opacity: i === 0 ? 0.5 : 0.25,
-            }}
-            transition={{ duration: 0.3, ease: EASE }}
-          >
-            <GameArt
-              appid={c.appid}
-              name={c.name}
-              headerImage={c.headerImage}
-              art={c.art}
-              variant="poster"
-              sizes="440px"
-              className="h-full w-full object-cover"
-              fallback={<div className="deck-noart h-full w-full" />}
+    <MotionMax>
+      <div className="mx-auto flex w-full max-w-[460px] flex-col gap-4">
+        <div className="deck-stack relative">
+          {/* Задние карточки — только глубина, без содержимого и без обработчиков */}
+          {cards.slice(1, DEPTH).map((c, i) => (
+            <m.div
+              key={c.appid}
+              aria-hidden
+              className="deck-card deck-back media-card absolute inset-x-0 top-0"
+              initial={false}
+              animate={{
+                scale: 1 - (i + 1) * 0.04,
+                y: (i + 1) * 8,
+                opacity: i === 0 ? 0.5 : 0.25,
+              }}
+              transition={{ duration: 0.3, ease: EASE }}
+            >
+              <GameArt
+                appid={c.appid}
+                name={c.name}
+                headerImage={c.headerImage}
+                art={c.art}
+                variant="poster"
+                sizes="440px"
+                className="h-full w-full object-cover"
+                fallback={<div className="deck-noart h-full w-full" />}
+              />
+            </m.div>
+          ))}
+
+          <AnimatePresence mode="popLayout" custom={flyOut} onExitComplete={() => setFlyOut(null)}>
+            {/* key по appid: каждая карточка получает СВОИ motion-значения.
+                Общий x на всю колоду оставлял бы следующей карте смещение
+                предыдущей и дрался бы с exit-анимацией улетающей. */}
+            <TopCard
+              key={top.appid}
+              card={top}
+              alone={alone}
+              labels={labels}
+              focusOn={focusOn}
+              onCommit={commit}
+              nowSec={nowSec}
             />
-          </motion.div>
-        ))}
-
-        <AnimatePresence mode="popLayout" custom={flyOut} onExitComplete={() => setFlyOut(null)}>
-          {/* key по appid: каждая карточка получает СВОИ motion-значения.
-              Общий x на всю колоду оставлял бы следующей карте смещение
-              предыдущей и дрался бы с exit-анимацией улетающей. */}
-          <TopCard
-            key={top.appid}
-            card={top}
-            alone={alone}
-            labels={labels}
-            focusOn={focusOn}
-            onCommit={commit}
-            nowSec={nowSec}
-          />
-        </AnimatePresence>
-      </div>
-
-      {/*
-        Новая карта сверху — новость для того, кто не смотрит на экран: см.
-        deckCardLine. Регион вне AnimatePresence и живёт всё время колоды —
-        живая область, вставленная вместе с текстом, звучит не везде.
-      */}
-      <p role="status" aria-live="polite" className="sr-only">
-        {deckCardLine(pos, top.name)}
-      </p>
-
-      {/* Числитель зажат знаменателем — почему, см. deckPosition в lib/deckvote */}
-      <div className="flex items-center gap-3">
-        <div className="h-1 flex-1 rounded-full bg-track overflow-hidden">
-          <motion.div
-            className="h-full bg-ember rounded-full"
-            initial={false}
-            animate={{ width: `${pos.pct}%` }}
-            transition={{ duration: 0.3, ease: EASE }}
-          />
+          </AnimatePresence>
         </div>
-        {/* aria-hidden: номер карты скринридер слышит в строке выше, вместе с игрой */}
-        <span aria-hidden className="text-xs font-bold text-faint tabular-nums shrink-0">
-          {pos.label}
-        </span>
+
+        {/*
+          Новая карта сверху — новость для того, кто не смотрит на экран: см.
+          deckCardLine. Регион вне AnimatePresence и живёт всё время колоды —
+          живая область, вставленная вместе с текстом, звучит не везде.
+        */}
+        <p role="status" aria-live="polite" className="sr-only">
+          {deckCardLine(pos, top.name)}
+        </p>
+
+        {/* Числитель зажат знаменателем — почему, см. deckPosition в lib/deckvote */}
+        <div className="flex items-center gap-3">
+          <div className="h-1 flex-1 rounded-full bg-track overflow-hidden">
+            <m.div
+              className="h-full bg-ember rounded-full"
+              initial={false}
+              animate={{ width: `${pos.pct}%` }}
+              transition={{ duration: 0.3, ease: EASE }}
+            />
+          </div>
+          {/* aria-hidden: номер карты скринридер слышит в строке выше, вместе с игрой */}
+          <span aria-hidden className="text-xs font-bold text-faint tabular-nums shrink-0">
+            {pos.label}
+          </span>
+        </div>
       </div>
-    </div>
+    </MotionMax>
   )
 }

@@ -68,6 +68,14 @@ describe('formatServerError', () => {
     )
   })
 
+  test('id выбора в пути — доступ к странице, и тоже под маской', () => {
+    expect(formatServerError(new Error('b'), { path: '/pick/abcdefghjkmn' }).path).toBe('/pick/:id')
+    expect(formatServerError(new Error('b'), { path: '/pick/abcdefghjkmn/opengraph-image' }).path).toBe(
+      '/pick/:id/opengraph-image',
+    )
+    expect(formatServerError(new Error('see /pick/abcdefghjkmn?ref=pick'), {}).message).not.toContain('abcdefghjkmn')
+  })
+
   test('digest доезжает — это тот же код, что человек видит на экране', () => {
     /*
      * Весь смысл файла. Обе границы ошибок печатают digest человеку; без него

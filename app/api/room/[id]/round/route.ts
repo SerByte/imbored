@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { advanceRoomDeckRound, getRoom, roomMembers } from '@/lib/db'
 import { currentSteamId, getDb } from '@/lib/server'
+import { peekGate } from '@/lib/roompeek'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -15,7 +16,7 @@ const MAX_ROUND = 4
  * ко мне, не даст матча, сколько её ни лайкай. Поэтому раунд поднимается на
  * комнате, а остальные подхватывают его из обычного опроса.
  */
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
@@ -23,10 +24,15 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
   const db = await getDb()
-  const room = await getRoom(db, id)
+  const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
+  // открытая проверка, существует ли комната с таким кодом
+  if (!members.some((m) => m.steamid === steamid)) {
+    const refused = await peekGate(db, req)
+    if (refused) return refused
+  }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
-  const members = await roomMembers(db, id)
   if (!members.some((m) => m.steamid === steamid)) {
     return NextResponse.json({ error: 'notmember' }, { status: 403 })
   }

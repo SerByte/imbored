@@ -46,10 +46,15 @@ describe('robots.txt', () => {
       `/portrait/${STEAMID}`,
       `/portrait/${STEAMID}/opengraph-image?7a1c`,
       `/portrait/${STEAMID}/card.png`,
+      `/portrait/${STEAMID}/year`,
+      `/portrait/${STEAMID}/year/card.png`,
+      `/portrait/${STEAMID}/year/opengraph-image`,
       `/compat/${STEAMID}`,
       `/compat/${STEAMID}/opengraph-image`,
       '/room/ABC234',
       '/room/ABC234/opengraph-image',
+      '/pick/abcdefghjkmn',
+      '/pick/abcdefghjkmn/opengraph-image',
     ]) {
       expect(allowed(rules, url), url).toBe(true)
     }
@@ -81,7 +86,11 @@ describe('robots.txt', () => {
       '/game/730',
       '/game/730/news/5123894512345',
       '/games',
+      '/games/roguelike',
+      '/games/point-and-click',
       '/whatsnew',
+      '/whatsnew/feed.xml',
+      '/indexnow-key.txt',
       '/privacy',
       '/support',
       '/?next=%2Fplay',
@@ -107,10 +116,15 @@ describe('noindex заголовком', () => {
       `/portrait/${STEAMID}`,
       `/portrait/${STEAMID}/card.png`,
       `/portrait/${STEAMID}/opengraph-image`,
+      `/portrait/${STEAMID}/year`,
+      `/portrait/${STEAMID}/year/card.png`,
+      `/portrait/${STEAMID}/year/opengraph-image`,
       `/compat/${STEAMID}`,
       `/compat/${STEAMID}/opengraph-image`,
       '/room/ABC234',
       '/room/ABC234/opengraph-image',
+      '/pick/abcdefghjkmn',
+      '/pick/abcdefghjkmn/opengraph-image',
     ]) {
       expect(noindexed(url), url).toBe(true)
     }
@@ -123,6 +137,7 @@ describe('noindex заголовком', () => {
       '/game/730',
       '/game/730/news/5123894512345',
       '/games',
+      '/games/roguelike',
       '/whatsnew',
       '/portraits',
       '/compatibility',

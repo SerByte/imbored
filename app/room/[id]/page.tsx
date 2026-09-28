@@ -17,12 +17,14 @@ import { claimVote, deckStuck, voteMiss, voteSignal } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
 import type { Mood } from '@/lib/types'
-import type { RoomMemberView } from '@/lib/room'
+import { ROOM_MAX_MEMBERS, type RoomMemberView } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import { roomPresetOf } from '@/lib/presets'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { nextPollStep } from '@/lib/roompoll'
 import { isNeedSteam, writerStore } from '@/lib/writer'
+import { roomShareUrl } from '@/lib/roomshare'
+import { track } from '@/lib/track'
 
 /*
  * Церемония матча догружается отдельно.
@@ -136,13 +138,13 @@ export default function RoomPage() {
    * Поле со ссылкой в AloneInvite остаётся последним рубежом — теперь оно
    * показывается только когда отказали ОБА пути, а не первый.
    */
+  // Адрес комнаты без хвоста своей страницы: window.location.href уносил бы
+  // и чужие метки из адреса того, кто делится
   const share = useShareLink(
-    () => window.location.href,
+    () => roomShareUrl(window.location.origin, roomId),
     `Пати ${roomId} — imbored`,
     'Выберем игру на вечер вместе',
   )
-  const copied = share.state === 'done'
-  const copyFailed = share.state === 'manual'
   const copyLink = () => void share.run()
 
   const [state, setState] = useState<RoomState | null>(null)
@@ -545,6 +547,16 @@ export default function RoomPage() {
     [],
   )
 
+  // Открыл чужую комнату по приглашению — шаг воронки, раз на заход: экран
+  // приглашения перерисовывается каждым опросом
+  const inviteSeen = useRef(false)
+  const notMember = state !== null && !state.isMember
+  useEffect(() => {
+    if (!notMember || inviteSeen.current) return
+    inviteSeen.current = true
+    track('invite_open')
+  }, [notMember])
+
   /*
    * Ответ на вход — своими словами для каждой причины.
    *
@@ -553,11 +565,21 @@ export default function RoomPage() {
    * оставался ровно тот же экран приглашения. Нажатие внешне не делало
    * НИЧЕГО и ни строчки о причине.
    */
-  function joinFailure(status: number): string {
+  function joinFailure(status: number, code: string | null): string {
     if (status === 404) return 'Такой комнаты уже нет — попроси новую ссылку.'
+    // 409 бывает двух видов: комната сошлась или мест нет — различает код
+    if (code === 'full')
+      return `В пати уже ${ROOM_MAX_MEMBERS} ${plural(ROOM_MAX_MEMBERS, 'человек', 'человека', 'человек')}, больше не помещается. Собери свою.`
     if (status === 409) return 'Эта пати уже договорилась об игре — попроси новую ссылку.'
     if (status === 401) return 'Сессия истекла — подключи библиотеку заново, и вернём тебя сюда.'
+    if (status === 429) return 'Слишком много попыток подряд. Подожди немного и попробуй снова.'
     return 'Не получилось войти. Проверь связь и попробуй ещё раз.'
+  }
+
+  /** Код отказа из тела ответа; тело может быть и не JSON — тогда null */
+  async function failureCode(res: Response): Promise<string | null> {
+    const body = (await res.json().catch(() => null)) as { error?: unknown } | null
+    return typeof body?.error === 'string' ? body.error : null
   }
 
   /*
@@ -594,12 +616,12 @@ export default function RoomPage() {
       }
       const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
       if (!res.ok) {
-        setJoinError(joinFailure(res.status))
+        setJoinError(joinFailure(res.status, await failureCode(res)))
         return
       }
       void refresh()
     } catch {
-      setJoinError(joinFailure(0))
+      setJoinError(joinFailure(0, null))
     } finally {
       setBusy(false)
     }
@@ -620,12 +642,12 @@ export default function RoomPage() {
     try {
       const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
       if (!res.ok) {
-        setJoinError(joinFailure(res.status))
+        setJoinError(joinFailure(res.status, await failureCode(res)))
         return
       }
       void refresh()
     } catch {
-      setJoinError(joinFailure(0))
+      setJoinError(joinFailure(0, null))
     } finally {
       setBusy(false)
     }
@@ -1038,15 +1060,14 @@ export default function RoomPage() {
             сломанная кнопка.
           */}
           <button onClick={copyLink} className="btn-glass py-3 text-sm">
-            <Icon name={copied ? 'check' : 'link'} size={16} />
-            {copied
-              ? 'Скопировано'
-              : copyFailed
-                ? 'Не вышло — продиктуй код'
-                : share.native
-                  ? 'Отправить ссылку друзьям'
-                  : 'Скопировать ссылку для друзей'}
+            {share.label('Скопировать ссылку для друзей', {
+              icon: 'link',
+              native: 'Отправить ссылку друзьям',
+              manual: 'Не вышло — продиктуй код',
+            })}
           </button>
+          {/* Живая область — рядом с кнопкой: внутри она стала бы частью её имени */}
+          {share.status}
           {/*
             Индикатор отделён от переключателя.
 
@@ -1155,13 +1176,10 @@ export default function RoomPage() {
           pulling={pulling}
           pullFailed={pullFailed}
           onPullMore={pullMore}
-          copied={copied}
-          copyFailed={copyFailed}
-          native={share.native}
+          share={share}
           // именно localVotes: колода исчезла из-под пальцев прямо сейчас,
           // а не «когда-то в прошлый заход» — только тогда фокус стоит забирать
           cameFromDeck={localVotes > 0}
-          onCopyLink={copyLink}
           onTogglePublic={togglePublic}
         />
       )}

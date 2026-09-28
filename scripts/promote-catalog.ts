@@ -32,6 +32,8 @@ import {
   upsertGameMeta,
 } from '../lib/db'
 import { fetchStoreDescriptions, fetchStoreItems, fetchTagDictionary, mergeMeta } from '../lib/catalog'
+// Проекция тегов в game_tags — общая с картой жанров (lib/gamehub primaryGenre)
+import { storedTagWeights } from '../lib/gamehub'
 import { openDb } from './opendb'
 import { fetchCurrentPlayers, fetchRecentReviews } from '../lib/ingest'
 import { judgeLiveness, playMode } from '../lib/liveness'
@@ -40,8 +42,6 @@ import { isMultiplayerCategories } from '../lib/steamcats'
 import type { GameMeta } from '../lib/types'
 
 const STORE_BATCH = 200
-/** Топ-N тегов на игру: хвост на косинус почти не влияет, а строк экономит кратно */
-const TAGS_PER_GAME = 12
 const REVIEW_PACE_MS = 250
 const STORE_PACE_MS = 1500
 
@@ -64,19 +64,6 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T | nu
     }
   }
   return null
-}
-
-/** Топ-N тегов по весу — в проекцию, из которой идёт выборка кандидатов */
-function topTags(tags: Record<string, number>): Array<{ tag: string; weight: number }> {
-  const sorted = Object.entries(tags).sort((a, b) => b[1] - a[1])
-  const max = sorted[0]?.[1] ?? 0
-  if (!max) return []
-  // вес = характерность (доля от главного тега игры), а не популярность:
-  // «топ по тегу Roguelike» должен давать самые рогаликовые игры, а не самые продаваемые
-  return sorted.slice(0, TAGS_PER_GAME).map(([tag, weight]) => ({
-    tag,
-    weight: Math.round((weight / max) * 1000),
-  }))
 }
 
 async function main() {
@@ -280,7 +267,7 @@ async function main() {
     const eligible = verdict.alive && replacedBy === null && Object.keys(m.tags).length > 0
     // В проекции лежат только допустимые игры: иначе «топ-60 по тегу» вернул бы
     // мертвецов, JS отфильтровал бы их, и выдача осталась бы пустой
-    await replaceGameTags(db, m.appid, eligible ? topTags(m.tags) : [])
+    await replaceGameTags(db, m.appid, eligible ? storedTagWeights(m.tags) : [])
     if (eligible) promoted++
     else dropped++
   }

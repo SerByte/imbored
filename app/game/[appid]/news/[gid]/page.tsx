@@ -1,23 +1,24 @@
-import type { Metadata, ResolvingMetadata } from 'next'
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
 import { Eyebrow, SectionLabel } from '@/components/Labels'
 import { NewsBody } from '@/components/NewsBody'
 import { NewsDate, ScaleBadge } from '@/components/NewsMeta'
-import { getGamePatchHeads, getNewsPage } from '@/lib/db'
+import { PatchShare } from '@/components/PatchShare'
+import { getGamePatchHeads } from '@/lib/db'
 import {
-  isNewsGid,
   newsDescription,
   newsHeading,
   newsIndexable,
   newsPageTitle,
   newsPath,
 } from '@/lib/newspage'
-import { getDb } from '@/lib/server'
+import { patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
+import { appBaseUrl, getDb } from '@/lib/server'
 import { OG_SITE } from '@/lib/site'
+import { loadPatch } from './load'
 
 /**
  * Страница одного патча: русский пересказ, тело поста и ссылка на оригинал.
@@ -40,32 +41,11 @@ export async function generateStaticParams(): Promise<Array<{ appid: string; gid
   return []
 }
 
-/**
- * Пост с игрой или null — на всё, чего страницы нет: кривой appid или gid,
- * поста нет в базе, пост не патч.
- *
- * Не патч — тоже 404: в news_items лежат и распродажи с анонсами (их
- * отсеивает классификатор lib/news), но ни лента, ни карточка игры на них не
- * ссылаются, и выставлять их отдельными страницами незачем.
- *
- * cache: generateMetadata и сама страница рендерят один запрос — база
- * читается однажды.
- */
-const load = cache(async (rawAppid: string, rawGid: string) => {
-  const appid = Number(rawAppid)
-  if (!Number.isInteger(appid) || appid <= 0 || !isNewsGid(rawGid)) return null
-  const page = await getNewsPage(await getDb(), appid, rawGid)
-  return page && page.item.kind === 'patch' ? page : null
-})
-
 type Params = { params: Promise<{ appid: string; gid: string }> }
 
-export async function generateMetadata(
-  { params }: Params,
-  parent: ResolvingMetadata,
-): Promise<Metadata> {
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { appid, gid } = await params
-  const page = await load(appid, gid)
+  const page = await loadPatch(appid, gid)
   if (!page) return {}
   const { item, game } = page
 
@@ -73,11 +53,12 @@ export async function generateMetadata(
   const description = newsDescription(item, game?.name)
   const canonical = newsPath(item.appid, item.gid)
   /*
-   * Картинку берём у родителя, как ownAddress в lib/site: свой openGraph
-   * заменяет родительский ЦЕЛИКОМ, вместе с картинкой, и без этой строки
-   * ссылка на патч в мессенджере разворачивалась бы без неё.
+   * Картинки здесь нет намеренно: у патча своя карточка (opengraph-image.tsx
+   * рядом), и Next подставляет её сам — но только пока у openGraph этого
+   * уровня нет своего ключа images. Раньше здесь передавалась картинка
+   * родителя, и патч разворачивался в чате карточкой игры — «СТОИТ ЛИ
+   * ИГРАТЬ» вместо того, что изменилось.
    */
-  const images = (await parent).openGraph?.images
 
   return {
     title,
@@ -93,7 +74,6 @@ export async function generateMetadata(
       title,
       description,
       publishedTime: new Date(item.publishedAt * 1000).toISOString(),
-      ...(images?.length ? { images } : {}),
     },
     twitter: { card: 'summary_large_image', title, description },
   }
@@ -109,7 +89,7 @@ export default async function PatchPage({ params }: Params) {
    * страницей нет границы Suspense — ни loading.tsx, ни своей. Каркас сюда
    * не добавлять, см. lib/firstpaint.test.ts.
    */
-  const page = await load(rawAppid, rawGid)
+  const page = await loadPatch(rawAppid, rawGid)
   if (!page) notFound()
   const { item, game } = page
 
@@ -118,8 +98,18 @@ export default async function PatchPage({ params }: Params) {
     .slice(0, OTHERS)
   const gameHref = `/game/${item.appid}`
 
+  const baseUrl = appBaseUrl()
+
   return (
     <div className="relative flex-1 overflow-x-clip">
+      {/* Статья и крошки — из того же, что на экране (lib/jsonld): заголовок
+          как в h1, «Коротко», кадр, ссылка назад на игру, оригинал */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: ldScript([patchArticleLd({ item, game, baseUrl }), patchBreadcrumbLd({ item, game, baseUrl })]),
+        }}
+      />
       {/*
         Свет игры за шапкой патча — тот же приём и тот же лёгкий файл, что
         у героя страницы игры (размытая капсула, а не library_hero): патч —
@@ -199,6 +189,12 @@ export default async function PatchPage({ params }: Params) {
               Всё об игре
             </Link>
           )}
+          {/* Пересказ есть только у нас — отсюда им и делятся (с меткой ref) */}
+          <PatchShare
+            appid={item.appid}
+            gid={item.gid}
+            title={newsPageTitle(item.title, game?.name)}
+          />
           <a
             href={item.url}
             target="_blank"

@@ -1,6 +1,7 @@
 'use client'
 
-import { motion } from 'motion/react'
+import { m } from 'framer-motion'
+import { MotionMax } from '@/components/motion/MotionMax'
 import { useState } from 'react'
 import { Lightbox } from '@/components/Lightbox'
 
@@ -19,11 +20,12 @@ import { Lightbox } from '@/components/Lightbox'
 export function Screenshots({ images, name }: { images: string[]; name: string }) {
   const [open, setOpen] = useState<number | null>(null)
 
+  // layoutId — фича domMax, её догружает MotionMax
   return (
-    <>
+    <MotionMax>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {images.map((src, i) => (
-          <motion.button
+          <m.button
             key={src}
             layoutId={`shot-${i}`}
             onClick={() => setOpen(i)}
@@ -34,7 +36,7 @@ export function Screenshots({ images, name }: { images: string[]; name: string }
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={src} alt="" loading="lazy" className="w-full aspect-video object-cover" />
             </span>
-          </motion.button>
+          </m.button>
         ))}
       </div>
 
@@ -45,6 +47,6 @@ export function Screenshots({ images, name }: { images: string[]; name: string }
         onClose={() => setOpen(null)}
         layoutId={(i) => `shot-${i}`}
       />
-    </>
+    </MotionMax>
   )
 }

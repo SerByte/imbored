@@ -11,7 +11,6 @@ import {
   parseAppDetails,
   parseMostPlayed,
   parsePurchaseOption,
-  parseSteamSpyTags,
   parseStoreItems,
   parseTagDictionary,
   fetchTagDictionary,
@@ -523,20 +522,6 @@ describe('mergeMeta', () => {
     test('русское русским едет — переводы в Steam правят', () => {
       expect(mergeMeta(с(РУС), с('Новый перевод')).shortDescription).toBe('Новый перевод')
     })
-  })
-})
-
-describe('parseSteamSpyTags', () => {
-  test('извлекает теги с голосами', () => {
-    expect(parseSteamSpyTags({ appid: 620, tags: { Puzzle: 3212, 'Co-op': 2800 } })).toEqual({
-      Puzzle: 3212,
-      'Co-op': 2800,
-    })
-  })
-
-  test('SteamSpy отдаёт [] вместо объекта, когда тегов нет', () => {
-    expect(parseSteamSpyTags({ appid: 1, tags: [] })).toEqual({})
-    expect(parseSteamSpyTags({})).toEqual({})
   })
 })
 

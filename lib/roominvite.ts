@@ -1,3 +1,4 @@
+import type { GameArtUrls } from './art'
 import { plural } from './plural'
 
 /**
@@ -20,6 +21,11 @@ export type RoomInvite = {
   matched: boolean
   /** на чём сошлись; null — матча нет или игры нет в каталоге */
   matchedName: string | null
+  /**
+   * Арт сошедшейся игры — фон карточки после матча. Необязательное поле:
+   * заголовку страницы оно не нужно, только картинке.
+   */
+  matchedArt?: { appid: number; art: GameArtUrls | null; headerImage: string | null } | null
 }
 
 export type InviteCopy = {

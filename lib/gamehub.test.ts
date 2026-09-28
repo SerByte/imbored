@@ -2,10 +2,17 @@ import { describe, expect, test } from 'vitest'
 import {
   assembleHub,
   HUB_FETCH,
+  HUB_GENRES,
   HUB_MIN_SHELF,
+  HUB_PAGE,
   HUB_MIN_WEIGHT,
   HUB_SHELF,
   HUB_TAGS,
+  hubPath,
+  hubTagOf,
+  primaryGenre,
+  storedTagWeights,
+  TAGS_PER_GAME,
   type HubRow,
 } from './gamehub'
 import { GENERIC_TAGS } from './hook'
@@ -53,6 +60,83 @@ describe('список полок', () => {
     expect(HUB_MIN_SHELF).toBeLessThanOrEqual(HUB_SHELF)
     expect(HUB_MIN_WEIGHT).toBeGreaterThan(0)
     expect(HUB_MIN_WEIGHT).toBeLessThan(1000)
+  })
+})
+
+describe('страницы жанров', () => {
+  test('у каждой полки своя страница: адрес и заголовок', () => {
+    expect(Object.keys(HUB_GENRES).sort()).toEqual([...HUB_TAGS].sort())
+  })
+
+  test('адреса — латиницей через дефис, без повторов, и обратно дают тот же тег', () => {
+    const slugs = HUB_TAGS.map((t) => HUB_GENRES[t].slug)
+    expect(new Set(slugs).size).toBe(slugs.length)
+    for (const tag of HUB_TAGS) {
+      const { slug } = HUB_GENRES[tag]
+      expect(slug, tag).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+      expect(hubTagOf(slug), slug).toBe(tag)
+      expect(hubPath(tag)).toBe(`/games/${slug}`)
+    }
+    // амперсанд не теряется: механический перевод дал бы point-click
+    expect(hubPath('Point & Click')).toBe('/games/point-and-click')
+  })
+
+  test('чужой тег и чужой адрес — null, а не страница', () => {
+    expect(hubPath('Indie')).toBeNull()
+    expect(hubPath('constructor')).toBeNull()
+    expect(hubTagOf('indie')).toBeNull()
+    expect(hubTagOf('Open-World')).toBeNull()
+    expect(hubTagOf('constructor')).toBeNull()
+  })
+
+  test('заголовок — по-русски и с большой буквы', () => {
+    for (const tag of HUB_TAGS) expect(HUB_GENRES[tag].title, tag).toMatch(/^[А-ЯЁA-Z]/)
+    expect(HUB_PAGE).toBeGreaterThanOrEqual(HUB_SHELF)
+  })
+})
+
+describe('главный жанр игры', () => {
+  test('самый весомый из жанров со своей страницей', () => {
+    expect(primaryGenre({ Action: 2000, Roguelike: 1800, 'Action Roguelike': 1700, Indie: 900 })).toBe('Roguelike')
+  })
+
+  test('жанр-метка не главный: легче половины главного тега — пути нет', () => {
+    // у CS2 Tactical 453 при FPS 1000 — ровно тот случай из HUB_MIN_WEIGHT
+    expect(primaryGenre({ Shooter: 1000, Tactical: 453, Cozy: 400 })).toBeNull()
+    expect(primaryGenre({ Shooter: 1000, FPS: 500 })).toBe('FPS')
+  })
+
+  test('только среди двенадцати верхних тегов, как в game_tags', () => {
+    const tags: Record<string, number> = {}
+    for (let i = 0; i < 12; i++) tags[`Tag ${i}`] = 1000 - i
+    tags.Roguelike = 700
+    expect(primaryGenre(tags)).toBeNull()
+  })
+
+  test('порог — на том же округлённом числе, что в game_tags', () => {
+    // 1001 / 2003 = 499,75 → в каталоге 500: игра стоит на странице жанра,
+    // значит, и путь над названием ведёт туда же
+    expect(storedTagWeights({ Action: 2003, Roguelike: 1001 })).toEqual([
+      { tag: 'Action', weight: 1000 },
+      { tag: 'Roguelike', weight: 500 },
+    ])
+    expect(primaryGenre({ Action: 2003, Roguelike: 1001 })).toBe('Roguelike')
+  })
+
+  test('при равных голосах — порядок тегов у игры, как в каталоге', () => {
+    expect(primaryGenre({ Survival: 1000, 'Open World': 1000 })).toBe('Survival')
+    expect(storedTagWeights({ B: 5, A: 5 }).map((t) => t.tag)).toEqual(['B', 'A'])
+  })
+
+  test('в game_tags — двенадцать верхних', () => {
+    const tags: Record<string, number> = {}
+    for (let i = 0; i < 20; i++) tags[`T${i}`] = 100 - i
+    expect(storedTagWeights(tags)).toHaveLength(TAGS_PER_GAME)
+  })
+
+  test('пустые и нулевые теги — null', () => {
+    expect(primaryGenre({})).toBeNull()
+    expect(primaryGenre({ Roguelike: 0 })).toBeNull()
   })
 })
 

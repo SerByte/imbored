@@ -50,7 +50,10 @@ export type GameMeta = {
    */
   priceAt?: number
   releaseDate?: string
-  /** медиана наигранного (минуты), из SteamSpy */
+  /**
+   * Медиана наигранного (минуты). Заполнял SteamSpy; с его ухода (403 с
+   * серверных IP) писателя нет, колонка оставлена ради совместимости с Turso.
+   */
   medianForever?: number
   /** год выхода — для определения серий; парсится из releaseDate в любой локали */
   releaseYear?: number

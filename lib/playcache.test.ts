@@ -40,7 +40,7 @@ function pick(appid: number, name = `Game ${appid}`): PlayPick {
     art: null,
     ccu: null,
     ccuAt: null,
-    shortDescription: null,
+    about: null,
     tags: ['Co-op'],
     hoursPlayed: 12,
     store: null,

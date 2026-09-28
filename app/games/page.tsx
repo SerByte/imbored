@@ -9,6 +9,7 @@ import {
   HUB_FETCH,
   HUB_MIN_WEIGHT,
   HUB_TAGS,
+  hubPath,
   type HubShelf,
 } from '@/lib/gamehub'
 import { getDb } from '@/lib/server'
@@ -132,11 +133,23 @@ export default async function GamesHubPage() {
  */
 function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
   const headingId = `shelf-${shelf.tag.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+  const path = hubPath(shelf.tag)
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4">
-      <h2 id={headingId} className="section-title">
-        {tagRu(shelf.tag)}
-      </h2>
+      {/* У жанра своя страница (/games/<slug>): там он весь, без правила
+          «одна игра — одна полка», с отзывами и тем, за что любят */}
+      <div className="flex items-baseline justify-between gap-4">
+        <h2 id={headingId} className="section-title">
+          {tagRu(shelf.tag)}
+        </h2>
+        {path && (
+          <Link href={path} prefetch={false} className="tap link-more shrink-0">
+            Весь жанр
+            <Icon name="arrow" size={16} />
+            <span className="sr-only">: {tagRu(shelf.tag)}</span>
+          </Link>
+        )}
+      </div>
       <ol className="shelf-rail">
         {shelf.games.map((g, i) => (
           <li key={g.appid}>

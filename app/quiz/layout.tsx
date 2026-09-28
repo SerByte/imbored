@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { MotionLazy } from '@/components/motion/MotionLazy'
 
 /** См. app/rooms/layout.tsx: страница клиентская, metadata — только серверная. */
 export const metadata: Metadata = {
@@ -8,5 +9,5 @@ export const metadata: Metadata = {
 }
 
 export default function QuizLayout({ children }: LayoutProps<'/quiz'>) {
-  return children
+  return <MotionLazy>{children}</MotionLazy>
 }

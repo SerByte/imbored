@@ -334,14 +334,15 @@ async function main() {
   // ── J. Состояние крона ─────────────────────────────────────────────────
   const SLICE_FIELDS = [
     'chain', 'polled', 'inserted', 'digested', 'enriched', 'withShots', 'withTrailers', 'withProsCons',
-    'viaClaude', 'withSemantics', 'hasMore', 'stopped', 'упало', 'обрыв',
+    'viaClaude', 'withSemantics', 'hasMore', 'stopped', 'llm', 'llmStatus', 'llmCapped', 'упало', 'обрыв',
   ]
   head('J. Что рассказывает про себя крон')
   const j = await rows(
     `SELECT key, value FROM catalog_meta WHERE key IN
       ('news_last_slice','news_enrolled_at','news_paused',
        'pages_last_slice','pages_paused',
-       'digest_last_slice','digest_paused')`,
+       'digest_last_slice','digest_paused',
+       'steam_key_probe','sweep_last')`,
   )
   if (!j.length) console.log('  catalog_meta пуст — крон ни разу не отработал')
   for (const r of j) {
@@ -361,6 +362,14 @@ async function main() {
           parts.push(`сигналы=${ru(sg.checked)}/${ru(sg.reviews)}/${ru(sg.ccu)} ${String(sg.stopped)}`)
         }
         val = `${ago(p.at)}  ${parts.join('  ')}`
+      } catch {
+        /* оставляем как есть */
+      }
+    } else if (key === 'steam_key_probe' || key === 'sweep_last') {
+      // Проба ключа Steam и суточная уборка: давность и то, что записано
+      try {
+        const { at, ...rest } = JSON.parse(val) as Record<string, unknown>
+        val = `${ago(at)}  ${Object.entries(rest).map(([k, v]) => `${k}=${String(v)}`).join('  ')}`
       } catch {
         /* оставляем как есть */
       }

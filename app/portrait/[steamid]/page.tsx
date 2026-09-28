@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
 import { unstable_cache } from 'next/cache'
 import { headers } from 'next/headers'
-import * as motion from 'motion/react-client'
+import * as m from 'framer-motion/m'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { cache } from 'react'
+import { cache, type ReactNode } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
@@ -18,15 +18,20 @@ import {
   bannedAppids,
   getGamesMetaLite,
   getLatestSnapshot,
+  getLibraryBaselines,
   getPersonaName,
   getUserPortrait,
   loadTagStats,
   setUserPortrait,
 } from '@/lib/db'
-import { claudePortraitText } from '@/lib/llm'
+import { claudePortraitText, llmAvailable } from '@/lib/llm'
+import { takeLlmBudget } from '@/lib/llmcap'
 import { reconnectHref } from '@/lib/destination'
 import { OG_SITE } from '@/lib/site'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
+import { dateLabel } from '@/lib/freshness'
+import { playedLine } from '@/lib/outcome'
+import { pickYearWindow, yearEyebrow, yearsToRead, type WrappedYear } from '@/lib/wrapped'
 import { plural } from '@/lib/plural'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { buildPortraitModel, portraitTag, type PortraitModel } from '@/lib/portraitmodel'
@@ -44,6 +49,7 @@ import { backlogEquivalent } from '@/lib/stats'
 import { tagWeightFrom } from '@/lib/tagweight'
 import type { LibraryGame } from '@/lib/types'
 import { Icon } from '@/components/Icon'
+import { withRef } from '@/lib/track'
 
 export const dynamic = 'force-dynamic'
 
@@ -219,18 +225,26 @@ async function loadModel(
       // карта тегов — здесь же, внутри кэша: страница публичная, и читать их
       // на каждый заход значило бы платить всей историей фидбека владельца и
       // всей таблицей тегов за каждый просмотр чужой ссылки
-      const [metas, banned, tagStats] = await Promise.all([
+      //
+      // Отметки года — тоже здесь: блоб библиотеки на начало года, и
+      // платить им за каждый просмотр незачем. Год — от снапшота, а не от
+      // часов сервера: ключ кэша — снапшот (yearsToRead)
+      const [fromYear, toYear] = yearsToRead(snapshot.takenAt)
+      const [metas, banned, tagStats, baselines] = await Promise.all([
         getGamesMetaLite(db, snapshot.games.map((g) => g.appid)),
         bannedAppids(db, steamid),
         loadTagStats(db),
+        getLibraryBaselines(db, steamid, fromYear, toYear),
       ])
       return buildPortraitModel(snapshot.games, (id) => metas.get(id), now, MOSAIC_PLAN, {
         banned,
         // «Начни с этой» — той же мерой вкуса, что /play
         tagWeight: tagWeightFrom(tagStats),
+        yearWindow: pickYearWindow(snapshot, baselines),
       })
     },
-    ['portrait-model:v2', steamid, String(snapshot.takenAt)],
+    // v3 — в модели появились итоги года: запись v2 без них отдавалась бы сутки
+    ['portrait-model:v3', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
   try {
@@ -335,9 +349,12 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
       ])
     ).every((v) => v.ok)
 
-    const written = allowed
-      ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
-      : null
+    // Общий суточный бюджет модели — после личных потолков: иначе его тратили
+    // бы и отказанные запросы (lib/llmcap)
+    const written =
+      allowed && llmAvailable() && (await takeLlmBudget(db, now))
+        ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
+        : null
     text = written ?? fallbackText()
     if (written) await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text })
   }
@@ -450,13 +467,13 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
       {/* ——— 2. Подиум: куда ушло время ——— */}
       {wrapped.top.length > 0 && (
         <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
-          <motion.h2 {...inView()} className="mb-8 font-display text-display-lg">
+          <m.h2 {...inView()} className="mb-8 font-display text-display-lg">
             Куда ушло время
-          </motion.h2>
+          </m.h2>
 
           <div className="flex flex-col gap-3">
             {wrapped.top.map((g, i) => (
-              <motion.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
+              <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
                 <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
                 <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
                   <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
@@ -464,7 +481,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">{g.name}</div>
                   <div className="mt-1.5 h-1.5 rounded-full bg-track overflow-hidden">
-                    <motion.div
+                    <m.div
                       className="h-full rounded-full bg-ember"
                       initial={{ width: 0 }}
                       whileInView={{ width: `${g.sharePercent}%` }}
@@ -476,12 +493,12 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 <span className="shrink-0 text-sm font-bold tabular-nums text-dim">
                   {g.hours.toLocaleString('ru-RU')} ч
                 </span>
-              </motion.div>
+              </m.div>
             ))}
           </div>
 
           <div className="mt-12 flex flex-col md:flex-row items-center gap-8 md:gap-12">
-            <motion.div {...inView()} className="shrink-0">
+            <m.div {...inView()} className="shrink-0">
               {/*
                 suffix="" — число в центре не процент, а индекс: 0 «размазан
                 ровно», 100 «всё в одной игре». С «%» кольцо противоречило
@@ -498,8 +515,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 </span>
                 <span className="sr-only">Концентрация {wrapped.concentration} из 100</span>
               </p>
-            </motion.div>
-            <motion.div {...inView(1)} className="text-center md:text-left">
+            </m.div>
+            <m.div {...inView(1)} className="text-center md:text-left">
               <p className="font-display text-display-sm">
                 {paretoLead(voice)}{' '}
                 <span className="tabular-nums text-ember-text">{wrapped.pareto80}</span>{' '}
@@ -516,30 +533,35 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   {socialTail(voice)}
                 </p>
               )}
-            </motion.div>
+            </m.div>
           </div>
         </section>
+      )}
+
+      {/* ——— 2½. Итоги года ——— */}
+      {model.year && (
+        <YearBlock year={model.year} steamid={steamid} cover={cover} />
       )}
 
       {/* ——— 3. Диагноз ——— */}
       {portrait.archetypes.length > 0 && (
         <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
-          <motion.p {...inView()} className={`${eyebrow()} mb-3`}>
+          <m.p {...inView()} className={`${eyebrow()} mb-3`}>
             Диагноз
-          </motion.p>
+          </m.p>
           {headline && (
-            <motion.h2
+            <m.h2
               {...inView(1)}
               className="font-display text-display-lg mb-10"
             >
               {headline.label}
-            </motion.h2>
+            </m.h2>
           )}
 
           {evidence.length > 0 && (
             <div className="mb-12 grid grid-cols-3 gap-3 md:gap-4">
               {evidence.map((g, i) => (
-                <motion.div key={g.appid} {...inView(i)}>
+                <m.div key={g.appid} {...inView(i)}>
                   <Link href={`/game/${g.appid}`} className="game-card block">
                     {/* grid-cols-3 без порогов — треть экрана на любой ширине */}
                     <GameCardBody
@@ -550,14 +572,14 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                       sizes="33vw"
                     />
                   </Link>
-                </motion.div>
+                </m.div>
               ))}
             </div>
           )}
 
           <div className="flex flex-col gap-3 max-w-xl">
             {portrait.archetypes.map((a, i) => (
-              <motion.div key={a.tag} {...inView(i)}>
+              <m.div key={a.tag} {...inView(i)}>
                 <div className="flex items-baseline justify-between mb-1.5">
                   <span className="text-[15px] font-bold">{a.label}</span>
                   <span className="tabular-nums text-ember-text text-sm font-extrabold">
@@ -568,7 +590,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   {/* Ширина — barPercent (лидер = 100%): при нормировке к сумме
                       даже главный архетип получал куцую полосу и шкала читалась
                       как случайная. В тексте остаётся честный percent. */}
-                  <motion.div
+                  <m.div
                     className="h-full rounded-full"
                     initial={{ width: 0 }}
                     whileInView={{ width: `${a.barPercent}%` }}
@@ -580,7 +602,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                     }}
                   />
                 </div>
-              </motion.div>
+              </m.div>
             ))}
           </div>
         </section>
@@ -589,15 +611,15 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
       {/* ——— 4. Чистилище ——— */}
       {wrapped.unplayedCount > 0 && (
         <section className="relative mx-auto w-full max-w-6xl px-safe py-24 md:py-32">
-          <motion.p {...inView()} className={`${eyebrow()} mb-3`}>
+          <m.p {...inView()} className={`${eyebrow()} mb-3`}>
             Чистилище
-          </motion.p>
-          <motion.h2 {...inView(1)} className="font-display text-display-lg">
+          </m.p>
+          <m.h2 {...inView(1)} className="font-display text-display-lg">
             <CountNumber value={wrapped.unplayedCount} />{' '}
             {unplayedHeading(wrapped.unplayedCount, voice)}
-          </motion.h2>
+          </m.h2>
 
-          <motion.div {...inView(2)} className="mt-4 flex flex-wrap gap-x-8 gap-y-2 text-dim text-sm">
+          <m.div {...inView(2)} className="mt-4 flex flex-wrap gap-x-8 gap-y-2 text-dim text-sm">
             {backlog.pricedCount > 0 && (
               <p>
                 В них лежит не меньше{' '}
@@ -624,7 +646,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 <span className="tabular-nums">{wrapped.era.oldest.year}</span> года.
               </p>
             )}
-          </motion.div>
+          </m.div>
 
           {purgatory.length > 0 && (
             <div className="mt-10 grid grid-cols-3 md:grid-cols-6 gap-2">
@@ -646,7 +668,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
           {/* Совет, с чего начать, — владельцу: у гостя этой игры может не быть вовсе */}
           {isMine && starter && (
-            <motion.div {...inView()} className="mt-12 flex flex-col items-start gap-3">
+            <m.div {...inView()} className="mt-12 flex flex-col items-start gap-3">
               <p className="text-sm text-dim">Если решишься — начни с этой:</p>
               <Magnet>
                 <Link
@@ -658,7 +680,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   <Icon name="arrow" size={18} className="text-dim" />
                 </Link>
               </Magnet>
-            </motion.div>
+            </m.div>
           )}
         </section>
       )}
@@ -674,14 +696,14 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         */}
         {/* Текст — крупной цитатой, а не абзацем в стеклянной рамке: это
             вывод всей страницы, и читается он как вывод */}
-        <motion.figure {...inView()} className="portrait-quote">
+        <m.figure {...inView()} className="portrait-quote">
           <blockquote>{text}</blockquote>
           {!isMine && <figcaption>— imbored об игроке {name}</figcaption>}
-        </motion.figure>
+        </m.figure>
 
         {/* Превью — обычная картинка на тот же роут, что и скачивание: каждый
             лишний рендер satori заново тянет обложки со Steam. */}
-        <motion.a
+        <m.a
           {...inView(1)}
           href={`/portrait/${steamid}/card.png`}
           download={`imbored-${steamid}.png`}
@@ -697,7 +719,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             />
           </span>
           <span className="link-more mt-3">Скачать карточку</span>
-        </motion.a>
+        </m.a>
 
         {!isMine && (
           <Link
@@ -715,17 +737,17 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           сервере: полю он нужен в разметке, а не после гидратации.
         */}
         {isMine && (
-          <motion.div {...inView(2)} className="flex w-full flex-col gap-2.5 text-left">
+          <m.div {...inView(2)} className="flex w-full flex-col gap-2.5 text-left">
             <p className="text-xs text-dim">
               По этой ссылке увидят твой портрет и смогут проверить совместимость.
             </p>
             <ShareLinkField
-              url={`${appBaseUrl()}/portrait/${steamid}`}
+              url={withRef(`${appBaseUrl()}/portrait/${steamid}`, 'portrait')}
               label="Ссылка на твой портрет игрока"
               title={`Портрет игрока ${name} — imbored`}
               text="Мой портрет игрока по библиотеке Steam — проверь, совпадаем ли мы"
             />
-          </motion.div>
+          </m.div>
         )}
         <div className="flex items-center gap-2 text-faint text-xs">
           <Wordmark className="text-sm" /> · imbored.cc
@@ -753,5 +775,88 @@ function Fact({
         <CountNumber value={value} delay={delay} />
       </dd>
     </div>
+  )
+}
+
+/**
+ * Итоги года — коротко, между подиумом и диагнозом: сколько наиграно по
+ * снимкам, тройка года по приросту, сколько распаковано и появилось, две
+ * честные даты и дверь на страницу итогов целиком. Голос нейтральный: блок
+ * читают и владелец, и гость по ссылке.
+ */
+function YearBlock({
+  year,
+  steamid,
+  cover,
+}: {
+  year: WrappedYear
+  steamid: string
+  cover: (g: { appid: number; name: string }, sizes: string) => ReactNode
+}) {
+  return (
+    <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
+      <m.p {...inView()} className={`${eyebrow()} mb-3`}>
+        {yearEyebrow(year)}
+      </m.p>
+      {/* Без минут (только новые игры с нулём) заголовок — они, а не «0 мин в играх» */}
+      <m.h2 {...inView(1)} className="font-display text-display-lg">
+        {year.minutes > 0 ? (
+          <>
+            <span className="tabular-nums text-ember-text">{playedLine(year.minutes)}</span> в играх
+          </>
+        ) : (
+          <>
+            <span className="tabular-nums text-ember-text">{year.added.count}</span>{' '}
+            {plural(year.added.count, 'игра появилась', 'игры появились', 'игр появилось')} в библиотеке
+          </>
+        )}
+      </m.h2>
+      <m.p {...inView(2)} className="mt-3 text-dim text-sm">
+        По снимкам библиотеки: с {dateLabel(year.from, { year: year.fromPrevYear })} по{' '}
+        {dateLabel(year.to, { year: year.closed })}.
+      </m.p>
+
+      {year.top.length > 0 && (
+        <div className="mt-10 flex flex-col gap-3">
+          {year.top.slice(0, 3).map((g, i) => (
+            <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
+              <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
+              <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+                <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
+              </Link>
+              <div className="min-w-0 flex-1 truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">
+                {g.name}
+              </div>
+              <span className="shrink-0 text-sm font-bold tabular-nums text-dim">+{playedLine(g.minutes)}</span>
+            </m.div>
+          ))}
+        </div>
+      )}
+
+      {year.minutes > 0 && (year.unpacked.count > 0 || year.added.count > 0) && (
+        <m.p {...inView()} className="mt-8 text-dim text-sm">
+          {year.unpacked.count > 0 && (
+            <>
+              <span className="tabular-nums text-ink">{year.unpacked.count}</span>{' '}
+              {plural(year.unpacked.count, 'игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено')}
+            </>
+          )}
+          {year.unpacked.count > 0 && year.added.count > 0 && ' · '}
+          {year.added.count > 0 && (
+            <>
+              <span className="tabular-nums text-ink">{year.added.count}</span>{' '}
+              {plural(year.added.count, 'появилась', 'появились', 'появилось')} в библиотеке
+            </>
+          )}
+        </m.p>
+      )}
+
+      <m.div {...inView()} className="mt-8">
+        <Link href={`/portrait/${steamid}/year`} prefetch={false} className="tap link-more">
+          Все итоги года
+          <Icon name="arrow" size={16} />
+        </Link>
+      </m.div>
+    </section>
   )
 }

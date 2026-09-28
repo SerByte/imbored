@@ -87,6 +87,8 @@ const LOADING_ALLOWED: Record<string, string> = {
     'force-dynamic и noindex (метатег и X-Robots-Tag): две библиотеки и расчёт совпадения, каркас держит кадр пришедшему из чата',
   'app/portrait/[steamid]/loading.tsx':
     'force-dynamic и noindex (метатег и X-Robots-Tag): самая тяжёлая страница, экран ожидания живёт дольше всего',
+  'app/portrait/[steamid]/year/loading.tsx':
+    'force-dynamic и noindex, как портрет: без своего каркаса наследовался бы портретный, и имя прыгало бы при подмене',
 }
 
 function loadingFiles(dir: string): string[] {

@@ -94,11 +94,22 @@ async function main() {
     return
   }
 
+  // Адреса выборов, которыми он поделился, — до удаления: после него их не
+  // узнать, а карточки по ним ещё час живут в кэше
+  const picks = await db.execute({ sql: 'SELECT id FROM shared_picks WHERE created_by = ?', args: [steamid] })
+  const pickIds = picks.rows.map((r) => String(r.id))
+
   print('удалено строк:', await forgetUser(db, steamid))
   console.log(
     '\nГотово. Что осталось вне базы и отсюда не достаётся:\n' +
-      '  • картинки портрета (/portrait/<steamid>/card.png и opengraph-image) живут в\n' +
-      '    кэше Vercel до часа (revalidate 3600);\n' +
+      '  • картинки портрета, итогов года и сравнения (/portrait/<steamid>/card.png,\n' +
+      '    /portrait/<steamid>/year/card.png, их opengraph-image и\n' +
+      '    /compat/<steamid>/opengraph-image) живут в кэше Vercel до часа\n' +
+      '    (revalidate 3600);\n' +
+      (pickIds.length
+        ? '  • карточки выборов, которыми он поделился, — тоже до часа:\n' +
+          pickIds.map((id) => `    /pick/${id}/opengraph-image\n`).join('')
+        : '') +
       '  • превью ссылок, которые уже закэшировали мессенджеры и соцсети (/privacy, раздел 05).',
   )
 }

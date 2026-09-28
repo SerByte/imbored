@@ -1,29 +1,29 @@
 /**
  * PixelSnow — источник: React Bits (reactbits.dev/backgrounds/pixel-snow, MIT).
- * Скопирован как есть; вся настройка снаружи, в app/daily/page.tsx.
+ * Шейдер скопирован как есть; вся настройка снаружи, в components/SeasonalSnow.
  *
- * ЕДИНСТВЕННОЕ место в проекте, которое тянет three (~150 КБ gzip). Поэтому
- * подключается ТОЛЬКО через next/dynamic и ТОЛЬКО в декабре: остальные
- * одиннадцать месяцев этот чанк не попадает в бандл и не скачивается.
- * Снег — холодная и зимняя метафора, а палитра у нас тёплая; в декабре это
- * оправдано, круглый год — нет.
+ * НА OGL, А НЕ НА THREE. Оригинал рисовал один полноэкранный квад через
+ * three: WebGLRenderer, Scene, камеру и ShaderMaterial — ленивый чанк на
+ * 528 КБ без сжатия ради одного фрагментного шейдера. ogl в проекте уже есть
+ * (слайдер кадров, components/morph), и тот же кадр он рисует треугольником на
+ * весь экран за десятки килобайт; three ушёл из зависимостей.
+ *
+ * Шейдер — GLSL ES 3.0: хэш на uint и битовых сдвигах в WebGL1 не собрать.
+ * three молча дописывал `#version 300 es`, `precision highp int` и выход
+ * вместо gl_FragColor — здесь это сделано явно (FRAGMENT ниже), а без WebGL2
+ * снега просто нет.
+ *
+ * Подключается ТОЛЬКО через next/dynamic и ТОЛЬКО в декабре. Снег — холодная
+ * зимняя метафора, а палитра у нас тёплая; в декабре это оправдано, круглый
+ * год — нет.
  */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import {
-  Color,
-  Mesh,
-  OrthographicCamera,
-  PlaneGeometry,
-  Scene,
-  ShaderMaterial,
-  Vector2,
-  Vector3,
-  WebGLRenderer
-} from 'three';
+import { Mesh, Program, Renderer, Triangle } from 'ogl';
 
-const vertexShader = `
+const VERTEX = `#version 300 es
+in vec2 position;
 void main() {
-  gl_Position = vec4(position, 1.0);
+  gl_Position = vec4(position, 0.0, 1.0);
 }
 `;
 
@@ -179,6 +179,20 @@ void main() {
 }
 `;
 
+const FRAGMENT = `#version 300 es
+precision highp float;
+precision highp int;
+out vec4 fragColor;
+${fragmentShader.replace(/gl_FragColor/g, 'fragColor')}`;
+
+/** '#fff' и '#ffffff' → [r, g, b] в 0..1; всё прочее — белый */
+function hexToRgb(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return [1, 1, 1];
+  const h = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
+  return [0, 2, 4].map((k) => parseInt(h.slice(k, k + 2), 16) / 255) as [number, number, number];
+}
+
 interface PixelSnowProps {
   color?: string;
   flakeSize?: number;
@@ -215,8 +229,8 @@ export default function PixelSnow({
   const containerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number>(0);
   const isVisibleRef = useRef(true);
-  const rendererRef = useRef<WebGLRenderer | null>(null);
-  const materialRef = useRef<ShaderMaterial | null>(null);
+  const rendererRef = useRef<Renderer | null>(null);
+  const programRef = useRef<Program | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
 
   // Memoize shader variant value
@@ -225,10 +239,7 @@ export default function PixelSnow({
   }, [variant]);
 
   // Memoize color conversion
-  const colorVector = useMemo(() => {
-    const threeColor = new Color(color);
-    return new Vector3(threeColor.r, threeColor.g, threeColor.b);
-  }, [color]);
+  const colorVector = useMemo(() => hexToRgb(color), [color]);
 
   // Debounced resize handler
   const handleResize = useCallback(() => {
@@ -238,13 +249,13 @@ export default function PixelSnow({
     resizeTimeoutRef.current = window.setTimeout(() => {
       const container = containerRef.current;
       const renderer = rendererRef.current;
-      const material = materialRef.current;
-      if (!container || !renderer || !material) return;
+      const program = programRef.current;
+      if (!container || !renderer || !program) return;
 
       const w = container.offsetWidth;
       const h = container.offsetHeight;
       renderer.setSize(w, h);
-      material.uniforms.uResolution.value.set(w, h);
+      program.uniforms.uResolution.value = [w, h];
     }, 100);
   }, []);
 
@@ -264,53 +275,66 @@ export default function PixelSnow({
     return () => observer.disconnect();
   }, []);
 
-  // Main Three.js setup - only runs once
+  // Сцена — один раз: треугольник на весь экран и программа с шейдером
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const scene = new Scene();
-    const camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const renderer = new WebGLRenderer({
-      antialias: false,
-      alpha: true,
-      premultipliedAlpha: false,
-      powerPreference: 'high-performance',
-      stencil: false,
-      depth: false
-    });
-
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Без WebGL вовсе конструктор ogl падает (gl = null) — а снег декоративен,
+    // и ронять из-за него «Игру дня» в экран ошибки нельзя
+    let renderer: Renderer;
+    try {
+      renderer = new Renderer({
+        webgl: 2,
+        alpha: true,
+        premultipliedAlpha: false,
+        antialias: false,
+        depth: false,
+        stencil: false,
+        powerPreference: 'high-performance',
+        dpr: Math.min(window.devicePixelRatio, 2)
+      });
+    } catch {
+      return;
+    }
+    const gl = renderer.gl;
+    // Шейдер на uint — только GLSL ES 3.0; без WebGL2 снега нет, страница та же
+    if (!renderer.isWebgl2) {
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+      return;
+    }
+    gl.clearColor(0, 0, 0, 0);
     renderer.setSize(container.offsetWidth, container.offsetHeight);
-    renderer.setClearColor(0x000000, 0);
-    container.appendChild(renderer.domElement);
+    container.appendChild(gl.canvas);
     rendererRef.current = renderer;
 
-    const material = new ShaderMaterial({
-      vertexShader,
-      fragmentShader,
+    const program = new Program(gl, {
+      vertex: VERTEX,
+      fragment: FRAGMENT,
       uniforms: {
         uTime: { value: 0 },
-        uResolution: { value: new Vector2(container.offsetWidth, container.offsetHeight) },
+        // CSS-пиксели, как в оригинале: шейдер сам делит gl_FragCoord на размер «пикселя»
+        uResolution: { value: [container.offsetWidth, container.offsetHeight] },
         uFlakeSize: { value: flakeSize },
         uMinFlakeSize: { value: minFlakeSize },
         uPixelResolution: { value: pixelResolution },
         uSpeed: { value: speed },
         uDepthFade: { value: depthFade },
         uFarPlane: { value: farPlane },
-        uColor: { value: colorVector.clone() },
+        uColor: { value: [...colorVector] },
         uBrightness: { value: brightness },
         uGamma: { value: gamma },
         uDensity: { value: density },
         uVariant: { value: variantValue },
         uDirection: { value: (direction * Math.PI) / 180 }
       },
-      transparent: true
+      transparent: true,
+      depthTest: false,
+      depthWrite: false
     });
-    materialRef.current = material;
+    programRef.current = program;
 
-    const geometry = new PlaneGeometry(2, 2);
-    scene.add(new Mesh(geometry, material));
+    const mesh = new Mesh(gl, { geometry: new Triangle(gl), program });
 
     window.addEventListener('resize', handleResize);
 
@@ -320,8 +344,8 @@ export default function PixelSnow({
 
       // Only render if visible
       if (isVisibleRef.current) {
-        material.uniforms.uTime.value = (performance.now() - startTime) * 0.001;
-        renderer.render(scene, camera);
+        program.uniforms.uTime.value = (performance.now() - startTime) * 0.001;
+        renderer.render({ scene: mesh });
       }
     };
     animate();
@@ -332,35 +356,33 @@ export default function PixelSnow({
       if (resizeTimeoutRef.current) {
         clearTimeout(resizeTimeoutRef.current);
       }
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
+      if (container.contains(gl.canvas)) {
+        container.removeChild(gl.canvas);
       }
-      renderer.dispose();
-      renderer.forceContextLoss();
-      geometry.dispose();
-      material.dispose();
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
       rendererRef.current = null;
-      materialRef.current = null;
+      programRef.current = null;
     };
-  }, [handleResize]); // Only recreate scene when handleResize changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- сцена одна на жизнь компонента; пропсы доезжают эффектом ниже
+  }, [handleResize]);
 
-  // Update material uniforms when props change
+  // Пропсы — в униформы программы
   useEffect(() => {
-    const material = materialRef.current;
-    if (!material) return;
+    const program = programRef.current;
+    if (!program) return;
 
-    material.uniforms.uFlakeSize.value = flakeSize;
-    material.uniforms.uMinFlakeSize.value = minFlakeSize;
-    material.uniforms.uPixelResolution.value = pixelResolution;
-    material.uniforms.uSpeed.value = speed;
-    material.uniforms.uDepthFade.value = depthFade;
-    material.uniforms.uFarPlane.value = farPlane;
-    material.uniforms.uBrightness.value = brightness;
-    material.uniforms.uGamma.value = gamma;
-    material.uniforms.uDensity.value = density;
-    material.uniforms.uVariant.value = variantValue;
-    material.uniforms.uDirection.value = (direction * Math.PI) / 180;
-    material.uniforms.uColor.value.copy(colorVector);
+    program.uniforms.uFlakeSize.value = flakeSize;
+    program.uniforms.uMinFlakeSize.value = minFlakeSize;
+    program.uniforms.uPixelResolution.value = pixelResolution;
+    program.uniforms.uSpeed.value = speed;
+    program.uniforms.uDepthFade.value = depthFade;
+    program.uniforms.uFarPlane.value = farPlane;
+    program.uniforms.uBrightness.value = brightness;
+    program.uniforms.uGamma.value = gamma;
+    program.uniforms.uDensity.value = density;
+    program.uniforms.uVariant.value = variantValue;
+    program.uniforms.uDirection.value = (direction * Math.PI) / 180;
+    program.uniforms.uColor.value = [...colorVector];
   }, [
     flakeSize,
     minFlakeSize,

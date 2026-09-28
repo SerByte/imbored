@@ -24,8 +24,13 @@
  * ссылки, а не «С возвращением, Демо-игрок». Без признака в подсказке
  * вернувшийся в демо видел бы приветствие, которое через круг до сервера
  * сменялось бы другой карточкой, — прыжок первого экрана под пальцем.
+ *
+ * readOnly — вошёл по ссылке на профиль: смотреть можно, сохранять нельзя
+ * (isWriter в lib/server). По той же причине, что demo: карточка главной
+ * говорит ему «только просмотр» и зовёт войти через Steam сразу, а не после
+ * круга до сервера.
  */
-export type SessionHint = { authed: boolean; personaName: string | null; demo?: true }
+export type SessionHint = { authed: boolean; personaName: string | null; demo?: true; readOnly?: true }
 
 const KEY = 'imbored.session-hint'
 
@@ -48,6 +53,7 @@ function parse(raw: string): SessionHint | null {
       authed: true,
       personaName: typeof o.personaName === 'string' ? o.personaName : null,
       ...(o.demo === true ? { demo: true as const } : {}),
+      ...(o.readOnly === true ? { readOnly: true as const } : {}),
     }
   } catch {
     return null

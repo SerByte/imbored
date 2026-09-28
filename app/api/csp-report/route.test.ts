@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from 'vitest'
+import type { Db } from '@/lib/db'
+import { freshDb } from '@/lib/testing/route'
 import { POST } from './route'
+
+// Счётчик нарушений пишется в базу (lib/telemetry): без подменённой базы
+// тест писал бы в локальную data/imbored.db
+vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
 /**
  * /api/csp-report — по его строкам владелец решает, можно ли включать запрет
@@ -11,8 +17,10 @@ import { POST } from './route'
  */
 
 let warn: MockInstance<typeof console.warn>
+let db: Db
 
-beforeEach(() => {
+beforeEach(async () => {
+  db = await freshDb()
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 
@@ -66,6 +74,29 @@ describe('/api/csp-report', () => {
     expect(logged()).toEqual([
       { event: 'csp-report', directive: 'connect-src', blocked: 'https://three.example', page: '/' },
     ])
+  })
+
+  // Число за час по директиве — те же прореженные строки, а не каждый отчёт:
+  // иначе запись в базу на каждого посетителя и каждое расширение
+  test('в почасовой счётчик ложится то, что попало в лог', async () => {
+    for (let i = 0; i < 3; i++) await send(report('https://four.example/y.png'))
+    await send(report('https://five.example/z.png'))
+    await vi.waitFor(async () => {
+      const res = await db.execute("SELECT key, count FROM telemetry_hourly WHERE kind = 'csp'")
+      expect(res.rows.map((r) => [r.key, Number(r.count)])).toEqual([['img-src', 2]])
+    })
+  })
+
+  test('выдуманная директива в счётчик ложится как other', async () => {
+    await send(
+      JSON.stringify({
+        'csp-report': { 'document-uri': 'https://imbored.cc/', 'effective-directive': 'zzz-made-up', 'blocked-uri': 'https://six.example/q' },
+      }),
+    )
+    await vi.waitFor(async () => {
+      const res = await db.execute("SELECT key FROM telemetry_hourly WHERE kind = 'csp'")
+      expect(res.rows.map((r) => r.key)).toEqual(['other'])
+    })
   })
 
   test('не JSON — 400, слишком большое тело — 413, в лог ничего', async () => {

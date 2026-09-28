@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { inviteCopy } from '@/lib/roominvite'
 import { OG_SITE } from '@/lib/site'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
+import { MotionLazy } from '@/components/motion/MotionLazy'
 
 /**
  * Приглашение в пати — самая пересылаемая ссылка продукта: комната только для
@@ -50,5 +51,5 @@ export async function generateMetadata({
 }
 
 export default function RoomLayout({ children }: LayoutProps<'/room/[id]'>) {
-  return children
+  return <MotionLazy>{children}</MotionLazy>
 }

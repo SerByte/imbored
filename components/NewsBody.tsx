@@ -110,7 +110,7 @@ export function NewsBody({ blocks, className = '' }: { blocks: NewsBlock[]; clas
               src={b.src}
               alt=""
               loading="lazy"
-              className="rounded-[14px] border border-edge max-w-full h-auto"
+              className="rounded-(--radius-card) border border-edge max-w-full h-auto"
             />
           )
         }

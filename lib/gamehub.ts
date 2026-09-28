@@ -63,6 +63,102 @@ export const HUB_TAGS: readonly string[] = [
   'Racing',
 ]
 
+/**
+ * Своя страница у жанра: /games/<slug>.
+ *
+ * Адрес — латиницей и руками, а не выводом из ключа тега: ключ «Point & Click»
+ * при механическом переводе в адрес теряет амперсанд и обратно уже не
+ * собирается. Заголовок — множественным числом, как жанр ищут и как о нём
+ * говорят («рогалики», «игры с открытым миром»); tagRu даёт подпись тега в
+ * единственном («Рогалик») и для заголовка страницы не годится.
+ *
+ * Адреса не меняются никогда: на них ведут поиск, карта сайта и чужие ссылки.
+ */
+export const HUB_GENRES: Readonly<Record<string, { slug: string; title: string }>> = {
+  'Open World': { slug: 'open-world', title: 'Игры с открытым миром' },
+  'Souls-like': { slug: 'souls-like', title: 'Соулслайки' },
+  Metroidvania: { slug: 'metroidvania', title: 'Метроидвании' },
+  Roguelike: { slug: 'roguelike', title: 'Рогалики' },
+  'Hack and Slash': { slug: 'hack-and-slash', title: 'Слэшеры' },
+  FPS: { slug: 'fps', title: 'Шутеры от первого лица' },
+  Stealth: { slug: 'stealth', title: 'Стелс-игры' },
+  'Immersive Sim': { slug: 'immersive-sim', title: 'Иммерсивные симуляторы' },
+  'Action RPG': { slug: 'action-rpg', title: 'Ролевые экшены' },
+  JRPG: { slug: 'jrpg', title: 'Японские ролевые игры' },
+  CRPG: { slug: 'crpg', title: 'Компьютерные ролевые игры' },
+  'Visual Novel': { slug: 'visual-novel', title: 'Визуальные новеллы' },
+  'Point & Click': { slug: 'point-and-click', title: 'Квесты point-and-click' },
+  Detective: { slug: 'detective', title: 'Детективы' },
+  Puzzle: { slug: 'puzzle', title: 'Головоломки' },
+  Horror: { slug: 'horror', title: 'Хорроры' },
+  Survival: { slug: 'survival', title: 'Игры на выживание' },
+  Sandbox: { slug: 'sandbox', title: 'Песочницы' },
+  'City Builder': { slug: 'city-builder', title: 'Градостроительные симуляторы' },
+  'Colony Sim': { slug: 'colony-sim', title: 'Симуляторы колонии' },
+  Automation: { slug: 'automation', title: 'Игры про автоматизацию' },
+  'Grand Strategy': { slug: 'grand-strategy', title: 'Глобальные стратегии' },
+  RTS: { slug: 'rts', title: 'Стратегии в реальном времени' },
+  'Turn-Based Tactics': { slug: 'turn-based-tactics', title: 'Пошаговые тактики' },
+  'Tower Defense': { slug: 'tower-defense', title: 'Tower defense' },
+  Deckbuilding: { slug: 'deckbuilding', title: 'Игры с построением колоды' },
+  'Farming Sim': { slug: 'farming-sim', title: 'Симуляторы фермы' },
+  Cozy: { slug: 'cozy', title: 'Уютные игры' },
+  Platformer: { slug: 'platformer', title: 'Платформеры' },
+  Racing: { slug: 'racing', title: 'Гонки' },
+}
+
+/** Адрес страницы жанра; null — у тега нет своей страницы */
+export function hubPath(tag: string): string | null {
+  // hasOwn — ключ тега приходит из данных, и «constructor» не должен найти прототип
+  return Object.hasOwn(HUB_GENRES, tag) ? `/games/${HUB_GENRES[tag].slug}` : null
+}
+
+/** Тег по адресу страницы; null — такой страницы нет */
+export function hubTagOf(slug: string): string | null {
+  for (const tag of HUB_TAGS) if (HUB_GENRES[tag]?.slug === slug) return tag
+  return null
+}
+
+/** Сколько тегов игры лежит в game_tags: хвост на выборку почти не влияет, а строк экономит кратно */
+export const TAGS_PER_GAME = 12
+
+/**
+ * Веса тегов так, как их кладёт в game_tags каталог (scripts/promote-catalog):
+ * верхние двенадцать по голосам Steam, вес — доля от главного тега в
+ * тысячных, округлённая. «Характерность», а не популярность: «топ по тегу
+ * Roguelike» должен давать самые рогаликовые игры, а не самые продаваемые.
+ *
+ * Одна функция на каталог и на карточку игры (primaryGenre): порог
+ * HUB_MIN_WEIGHT сравнивается с одним и тем же числом, и игра, стоящая на
+ * странице жанра, получает этот жанр в пути над названием — и наоборот.
+ * Порядок при равных голосах — порядок тегов у игры (сортировка устойчива),
+ * как в каталоге.
+ */
+export function storedTagWeights(tags: Readonly<Record<string, number>>): Array<{ tag: string; weight: number }> {
+  const sorted = Object.entries(tags).sort((a, b) => b[1] - a[1])
+  const max = sorted[0]?.[1] ?? 0
+  if (!(max > 0)) return []
+  return sorted.slice(0, TAGS_PER_GAME).map(([tag, w]) => ({ tag, weight: Math.round((w / max) * 1000) }))
+}
+
+/**
+ * Главный жанр игры — для пути на её карточке («Игры по жанрам → Рогалики»).
+ *
+ * Самый весомый из тегов, у которых есть своя страница, и только если игра
+ * стоит на этой странице по тем же правилам: среди её тегов в game_tags и не
+ * легче HUB_MIN_WEIGHT (storedTagWeights — то же число, что в каталоге).
+ * Иначе у CS2 путь вёл бы в «Тактику», а у всего подряд — в «Уютную».
+ */
+export function primaryGenre(tags: Readonly<Record<string, number>>): string | null {
+  const hit = storedTagWeights(tags).find(
+    ({ tag, weight }) => Object.hasOwn(HUB_GENRES, tag) && weight >= HUB_MIN_WEIGHT,
+  )
+  return hit ? hit.tag : null
+}
+
+/** Игр на странице жанра — верх по отзывам, для которых жанр главный */
+export const HUB_PAGE = 40
+
 /** Игр на полке */
 export const HUB_SHELF = 12
 

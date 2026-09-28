@@ -1,16 +1,16 @@
 'use client'
 
-import { MotionConfig } from 'motion/react'
+import { MotionConfig } from 'framer-motion'
 
 /**
- * Уважение к «уменьшить движение» для motion/react.
+ * Уважение к «уменьшить движение» для framer-motion.
  *
  * В globals.css блок @media (prefers-reduced-motion: reduce) написан
  * подробно и с пониманием — там даже отдельно оговорено, почему спиннер
  * останавливается цельным кольцом, а не замершим огрызком дуги. Но покрывает
  * он только CSS-анимации.
  *
- * Всё, что двигает motion/react, эту настройку по умолчанию НЕ смотрит:
+ * Всё, что двигает framer-motion, эту настройку по умолчанию НЕ смотрит:
  * смена героя на /play, шаги квиза, появление блоков портрета, церемония
  * матча. То есть человек, который выключил анимации в системе, получал
  * половину хореографии всё равно.
@@ -21,6 +21,10 @@ import { MotionConfig } from 'motion/react'
  *
  * Отдельный клиентский компонент, потому что MotionConfig — контекст, а
  * корневой layout серверный.
+ *
+ * LazyMotion сюда не ставится, хотя просится: ленивые фичи из корня
+ * Turbopack поднимает в первую загрузку всех страниц. Почему и где он стоит
+ * вместо этого — components/motion/MotionLazy.tsx.
  */
 export function MotionProvider({ children }: { children: React.ReactNode }) {
   return <MotionConfig reducedMotion="user">{children}</MotionConfig>

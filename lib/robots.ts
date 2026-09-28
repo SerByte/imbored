@@ -31,7 +31,7 @@
  * поиск по картинкам. Заголовок не зависит от того, успел ли стриминг
  * метаданных дописать метатег в <head>.
  */
-export const PERSONAL_PREFIXES = ['/portrait', '/compat', '/room'] as const
+export const PERSONAL_PREFIXES = ['/portrait', '/compat', '/room', '/pick'] as const
 
 /**
  * Что закрыто в robots.txt.

@@ -67,7 +67,7 @@ describe('кнопка запуска', () => {
     const src = code(read('app', 'play', 'page.tsx'))
     const at = src.indexOf('stopRuleLine(')
     expect(at).toBeGreaterThan(-1)
-    const tag = src.slice(src.lastIndexOf('<motion.p', at), at)
+    const tag = src.slice(src.lastIndexOf('<m.p', at), at)
     expect(tag).toMatch(/\bhidden pointer-fine:block\b/)
   })
 })

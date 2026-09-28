@@ -1,3 +1,5 @@
+import { MotionLazy } from '@/components/motion/MotionLazy'
+
 /**
  * Здесь жил Unbounded — единственное дисплейное начертание приложения.
  *
@@ -9,5 +11,9 @@
  * <main> и страницей появляется звено, которое рвёт flex-цепочку.
  */
 export default function WhatsNewLayout({ children }: LayoutProps<'/whatsnew'>) {
-  return <div className="flex-1 flex flex-col">{children}</div>
+  return (
+    <MotionLazy>
+      <div className="flex-1 flex flex-col">{children}</div>
+    </MotionLazy>
+  )
 }

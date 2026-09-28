@@ -1,6 +1,7 @@
 'use client'
 
 import { Icon } from '@/components/Icon'
+import { track } from '@/lib/track'
 
 /**
  * Кнопка «играть».
@@ -84,6 +85,7 @@ export function SteamLaunch({
         onClick={() => {
           onClick?.()
           if (mode === 'run') onLaunch?.()
+          track('launch_click')
         }}
         className={`hidden pointer-fine:inline-block ${className}`}
       >
@@ -98,7 +100,10 @@ export function SteamLaunch({
             href={`https://store.steampowered.com/app/${appid}/`}
             target="_blank"
             rel="noreferrer"
-            onClick={onClick}
+            onClick={() => {
+              onClick?.()
+              track('launch_click')
+            }}
             className={`inline-block pointer-fine:hidden ${className}`}
           >
             {mobileLabel}

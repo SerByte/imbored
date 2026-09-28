@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { revalidateTag } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { chainBreakLine, passChain } from '@/lib/chain'
 import { CRON_JOBS, cronAuthorized, sliceDeadline } from '@/lib/cron'
 import { acquireLease, DIGEST_LEASE, getCatalogMeta, releaseLease, setCatalogMeta } from '@/lib/db'
+import { logSwallowed } from '@/lib/errlog'
+import { announceFreshPatches } from '@/lib/indexnow'
 import { runDigestSlice } from '@/lib/newsjob'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
@@ -107,6 +109,27 @@ export async function GET(req: Request) {
       // Аренду передаём следующему звену вместе с holder, отдаём — только
       // когда цепочка кончилась. См. тот же кусок в /api/cron/news.
       if (!goesOn) await releaseLease(db, DIGEST_LEASE, holder)
+
+      /*
+       * Цепочка кончилась — страницы свежепересказанных патчей перегенерировать
+       * и объявить поисковикам (lib/indexnow). Раз на цепочку, а не на звено:
+       * один пинг со всеми адресами вместо восьми. Только если хватает
+       * времени: у хвоста функции свой срок (как у пробы Steam в
+       * /api/cron/news), а пропущенное дождётся следующей цепочки — отметка
+       * двигается только после успеха.
+       */
+      const hardLeftMs = startedAt + maxDuration * 1000 - Date.now()
+      if (!goesOn && hardLeftMs > 15_000) {
+        try {
+          await announceFreshPatches(db, {
+            now: nowSec(),
+            baseUrl: appBaseUrl(),
+            revalidate: (path) => revalidatePath(path),
+          })
+        } catch (err) {
+          logSwallowed('digest:indexnow', err)
+        }
+      }
       // Обрыв записывается, а не проглатывается — см. докблок lib/chain. Здесь
       // стоял тот же `.catch(() => {})`, что уже стоил карточкам суток.
       if (goesOn && secret) {

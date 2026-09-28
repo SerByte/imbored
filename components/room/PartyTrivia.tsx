@@ -1,7 +1,7 @@
 'use client'
 
 import { Icon } from '@/components/Icon'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
 import { useCallback, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import type { TriviaQuestion } from '@/lib/trivia'
@@ -118,7 +118,7 @@ export function PartyTrivia({
 
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div
+          <m.div
             id="trivia-body"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
@@ -170,6 +170,10 @@ export function PartyTrivia({
                     {q.options.map((o, i) => {
                       const revealed = chosen !== null
                       const right = i === q.answer
+                      // Свой промах отмечен отдельно: раньше выбранный неверный
+                      // ответ гас вместе с остальными, и было не видно, что
+                      // нажал ты сам — только какой ответ правильный
+                      const missed = revealed && !right && i === chosen
                       return (
                         <button
                           key={o.label}
@@ -182,10 +186,14 @@ export function PartyTrivia({
                             !revealed
                               ? 'btn-glass justify-start px-4 py-3 text-left text-sm'
                               : right
-                                ? 'rounded-(--radius-control) bg-ember/15 text-ember-text border border-edge px-4 py-3 text-sm font-extrabold text-left'
-                                : 'rounded-(--radius-control) bg-surface text-faint px-4 py-3 text-sm font-bold text-left'
+                                ? 'flex items-center gap-2 rounded-(--radius-control) bg-ember/15 text-ember-text border border-edge px-4 py-3 text-sm font-extrabold text-left'
+                                : missed
+                                  ? 'flex items-center gap-2 rounded-(--radius-control) bg-danger/10 text-danger border border-danger/30 px-4 py-3 text-sm font-bold text-left'
+                                  : 'rounded-(--radius-control) bg-surface text-faint px-4 py-3 text-sm font-bold text-left'
                           }
                         >
+                          {revealed && right && <Icon name="check" size={16} className="shrink-0" />}
+                          {missed && <Icon name="close" size={16} className="shrink-0" />}
                           {o.label}
                         </button>
                       )
@@ -233,7 +241,7 @@ export function PartyTrivia({
                 </div>
               )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </div>

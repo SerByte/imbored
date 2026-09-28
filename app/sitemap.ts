@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next'
 import { sitemapGames, sitemapNews } from '@/lib/db'
+import { HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { newsPath, SITEMAP_NEWS_MAX, SITEMAP_NEWS_WINDOW_SEC } from '@/lib/newspage'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
@@ -54,6 +55,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // (см. app/games/page.tsx). Полки меняются медленно — верх по отзывам
     // стоит неделями, — отсюда weekly, а не daily.
     { url: url('/games'), changeFrequency: 'weekly', priority: 0.8 },
+    // Страницы жанров — адреса известны без базы (HUB_GENRES), поэтому
+    // переживают и сборку без каталога. Ниже хаба: хаб ссылается на них
+    ...HUB_TAGS.flatMap((tag) => {
+      const path = hubPath(tag)
+      return path ? [{ url: url(path), changeFrequency: 'weekly' as const, priority: 0.7 }] : []
+    }),
     { url: url('/support'), changeFrequency: 'yearly', priority: 0.3 },
     { url: url('/privacy'), changeFrequency: 'yearly', priority: 0.2 },
   ]

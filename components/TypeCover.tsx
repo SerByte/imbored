@@ -1,7 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { OTHER_STORE_GAMES } from '@/lib/otherstores'
+import { OTHER_STORE_GAMES, OTHER_STORE_GENRE } from '@/lib/otherstores'
 import { STORE_LABEL, STORE_TINT, STORE_TINT_DEFAULT } from '@/lib/stores'
-import { tagRu } from '@/lib/tagsru'
 
 /**
  * ТИПОГРАФСКАЯ ОБЛОЖКА — для игр не из Steam (lib/otherstores, appid < 0).
@@ -37,7 +36,7 @@ export function TypeCover({
   const game = OTHER_STORE_GAMES.find((g) => g.appid === appid)
   const store = game?.store
   const tint = (store && STORE_TINT[store]) || STORE_TINT_DEFAULT
-  const top = game ? Object.entries(game.tags).sort((a, b) => b[1] - a[1])[0]?.[0] : undefined
+  const genre = OTHER_STORE_GENRE[appid]
   return (
     <div
       aria-hidden
@@ -50,7 +49,7 @@ export function TypeCover({
           {store && <span className="type-cover-store">{STORE_LABEL[store] ?? store}</span>}
           <span className="type-cover-title">
             <span className="type-cover-name">{name}</span>
-            {top && <span className="type-cover-genre">{tagRu(top)}</span>}
+            {genre && <span className="type-cover-genre">{genre}</span>}
           </span>
         </span>
       )}

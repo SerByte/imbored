@@ -1,6 +1,6 @@
 'use client'
 
-import { useReducedMotion } from 'motion/react'
+import { useReducedMotion } from 'framer-motion'
 import dynamic from 'next/dynamic'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { HeroArt } from '@/components/HeroArt'

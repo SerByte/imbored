@@ -22,6 +22,7 @@ import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildTagProfile } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
 import { tagWeightFrom } from '@/lib/tagweight'
+import { peekGate } from '@/lib/roompeek'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const DECK_SIZE = 20
@@ -47,7 +48,7 @@ const DECK_WINDOW_SEC = 300
 const POOL_BASE = 150
 const POOL_STEP = 100
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
@@ -68,6 +69,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
    * приходит из адреса, по которому участник уже стоит, так что это редкость.
    */
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
+  // открытая проверка, существует ли комната с таким кодом
+  if (!members.some((m) => m.steamid === steamid)) {
+    const refused = await peekGate(db, req)
+    if (refused) return refused
+  }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
   if (!members.some((m) => m.steamid === steamid)) {
     return NextResponse.json({ error: 'notmember' }, { status: 403 })

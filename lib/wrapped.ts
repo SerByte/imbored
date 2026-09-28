@@ -1,5 +1,7 @@
+import { dateLabel } from './freshness'
 import { parseReleaseYear } from './ingest'
 import { isJunk, looksLikeNonGame } from './junk'
+import { isEmptyDelta, libraryDelta, minutesByApp } from './libdelta'
 import {
   buildTagProfile,
   isMultiplayerMeta,
@@ -132,6 +134,187 @@ export function buildWrapped(library: LibraryGame[], metaOf: MetaOf): Wrapped {
         }
       : null,
   }
+}
+
+/* ---------- итоги года ---------- */
+
+/** Состояние библиотеки на момент — форма getLatestSnapshot и отметок года */
+export type LibraryAt = { takenAt: number; games: LibraryGame[] }
+
+/**
+ * Окно итогов: от отметки года до его конца. closed — год закрылся (январь,
+ * итоги прошлого года); иначе конец окна — последний снимок.
+ */
+export type YearWindow = { year: number; closed: boolean; base: LibraryAt; end: LibraryAt }
+
+/** Игра года: прирост за окно, а не часы за всё время */
+export type YearGame = { appid: number; name: string; minutes: number; sharePercent: number }
+
+export type WrappedYear = {
+  year: number
+  closed: boolean
+  /** Две честные даты: отметка года и снимок, которым окно кончается */
+  from: number
+  to: number
+  /**
+   * Окно — не год: подпись «с 23 сентября», а не «Итоги 2026». Отметка
+   * ставится при первом за год заходе копией прежнего снимка, поэтому окно
+   * бывает и позже начала года (пришёл осенью), и заметно раньше (прежний
+   * снимок — прошлогодний или ещё старше, после перерыва). Итогами года
+   * честно называется только окно, начатое около первого января.
+   */
+  partial: boolean
+  /** Отметка из прошлых лет — дату писать с годом */
+  fromPrevYear: boolean
+  /** Наиграно за окно, минут */
+  minutes: number
+  /** В скольких играх прибавилось */
+  playedCount: number
+  top: YearGame[]
+  /** Появились в библиотеке — «появились», а не «куплены»: покупок сервис не видит */
+  added: { count: number; games: LibraryGame[] }
+  /** Впервые запущены — были в бэклоге с нулём минут */
+  unpacked: { count: number; games: YearGame[] }
+  removedCount: number
+}
+
+/** Сколько обложек держат полки итогов — счёт при этом полный */
+export const YEAR_SHELF_MAX = 12
+
+/**
+ * Насколько отметка может отстоять от первого января, чтобы окно ещё было
+ * «годом»: неделю после — первый заход в году бывает не первого числа, и
+ * месяц до — последний снимок прошлого года бывает не тридцать первого.
+ */
+export const YEAR_GRACE_SEC = 7 * 86_400
+export const YEAR_GRACE_BEFORE_SEC = 31 * 86_400
+
+/** Год по UTC — тот же, по которому ставится отметка (snapshotYear в lib/db) */
+function utcYear(sec: number): number {
+  return new Date(sec * 1000).getUTCFullYear()
+}
+
+function yearStart(year: number): number {
+  return Math.floor(Date.UTC(year, 0, 1) / 1000)
+}
+
+/** Последний снимок — в январе: итогами становится закрывшийся год */
+function inJanuary(sec: number): boolean {
+  return new Date(sec * 1000).getUTCMonth() === 0
+}
+
+/**
+ * Какие годы отметок читать. Год — от последнего снимка, а не от «сейчас»:
+ * итоги кэшируются по времени снимка (heavyreads), и год, взятый из часов
+ * сервера, разъехался бы с кэшем в новогоднюю ночь. В январе — два года:
+ * закрывшийся год кончается отметкой нового.
+ */
+export function yearsToRead(latestAt: number): [number, number] {
+  const y = utcYear(latestAt)
+  return inJanuary(latestAt) ? [y - 1, y] : [y, y]
+}
+
+/**
+ * Окно итогов по последнему снимку и отметкам (getLibraryBaselines).
+ *
+ * Обычно — текущий год: от его отметки до последнего снимка. В январе, если
+ * есть отметки и прошлого, и этого года, — закрывшийся год: от отметки
+ * прошлого до отметки нынешнего. Отметка нынешнего года — последнее состояние
+ * ДО первого январского захода (saveLibrarySnapshot копирует прежний снимок),
+ * то есть ровно конец прошлого года. Без этого правила в январе, когда итогами
+ * и делятся, страница показывала бы тонкий срез «декабрь → январь».
+ *
+ * null — сравнивать не с чем: отметка и есть последний снимок (первый заход
+ * в жизни или в году), или отметки нет вовсе.
+ */
+export function pickYearWindow(
+  latest: LibraryAt,
+  baselines: ReadonlyArray<LibraryAt & { year: number }>,
+): YearWindow | null {
+  const y = utcYear(latest.takenAt)
+  const cur = baselines.find((b) => b.year === y)
+  const prev = baselines.find((b) => b.year === y - 1)
+  // Закрывшийся год — только если в нём есть о чём сказать: иначе (заходил
+  // в ноябре дважды подряд, а играл в декабре) весь январь не было бы
+  // никаких итогов, хотя за декабрь-январь сказать есть что
+  if (inJanuary(latest.takenAt) && prev && cur && cur.takenAt > prev.takenAt) {
+    const closed = libraryDelta(minutesByApp(prev.games), cur.games, prev.takenAt, () => undefined)
+    if (!isEmptyDelta(closed)) return { year: y - 1, closed: true, base: prev, end: cur }
+  }
+  if (!cur || latest.takenAt <= cur.takenAt) return null
+  return { year: y, closed: false, base: cur, end: latest }
+}
+
+/**
+ * Игры, которым нужна мета для итогов: прибавившие и новые. Остальная
+ * библиотека итогам не нужна вовсе — и читать мету сотен нетронутых игр
+ * ради года незачем.
+ */
+export function yearCandidates(w: YearWindow): number[] {
+  const before = minutesByApp(w.base.games)
+  return w.end.games
+    .filter((g) => {
+      const was = before.get(g.appid)
+      return was === undefined || g.playtimeForever > was
+    })
+    .map((g) => g.appid)
+}
+
+const yearGame = (g: LibraryGame, minutes: number, total: number): YearGame => ({
+  appid: g.appid,
+  name: g.name,
+  minutes,
+  sharePercent: total ? Math.round((minutes / total) * 100) : 0,
+})
+
+/**
+ * Итоги года: разница двух состояний библиотеки (lib/libdelta), а не
+ * buildWrapped по «годовой» библиотеке — у того бэклог и эпоха считаются по
+ * часам за всё время, и синтетическая библиотека из приростов дала бы в них
+ * неправду.
+ */
+export function buildWrappedYear(w: YearWindow, metaOf: MetaOf): WrappedYear {
+  const d = libraryDelta(minutesByApp(w.base.games), w.end.games, w.base.takenAt, metaOf)
+  const start = yearStart(w.year)
+  return {
+    year: w.year,
+    closed: w.closed,
+    from: w.base.takenAt,
+    to: w.end.takenAt,
+    partial: w.base.takenAt > start + YEAR_GRACE_SEC || w.base.takenAt < start - YEAR_GRACE_BEFORE_SEC,
+    fromPrevYear: w.base.takenAt < start,
+    minutes: d.minutes,
+    playedCount: d.played.length,
+    top: d.played.slice(0, TOP_COUNT).map((p) => yearGame(p.game, p.minutes, d.minutes)),
+    added: {
+      count: d.added.length,
+      // Обложки — только у игр Steam: у чужих магазинов отрицательные id
+      games: d.added.filter((g) => g.appid > 0).slice(0, YEAR_SHELF_MAX),
+    },
+    unpacked: {
+      count: d.unpacked.length,
+      games: d.unpacked
+        .filter((u) => u.game.appid > 0)
+        .slice(0, YEAR_SHELF_MAX)
+        .map((u) => yearGame(u.game, u.minutes, d.minutes)),
+    },
+    removedCount: d.removedCount,
+  }
+}
+
+/**
+ * «Итоги 2026» — или «2026 · с 23 сентября», когда окно не год: отметка
+ * поставлена осенью или взята из снимка, сделанного задолго до января
+ * («2026 · с 5 марта 2024 г.»). Заголовок карточки читают раньше подписи с
+ * датами, и «Итоги 2026» над полутора годами игры были бы неправдой.
+ */
+export function yearEyebrow(y: Pick<WrappedYear, 'year' | 'partial' | 'from' | 'fromPrevYear'>): string {
+  return y.partial ? `${y.year} · с ${dateLabel(y.from, { year: y.fromPrevYear })}` : `Итоги ${y.year}`
+}
+
+/** Сказать нечего — блок итогов не рисуется */
+export function isEmptyYear(y: Pick<WrappedYear, 'minutes' | 'added' | 'unpacked'>): boolean {
+  return y.minutes === 0 && y.added.count === 0 && y.unpacked.count === 0
 }
 
 /**

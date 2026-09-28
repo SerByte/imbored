@@ -1,6 +1,7 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
+import { MotionMax } from '@/components/motion/MotionMax'
 import Link from 'next/link'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
@@ -183,7 +184,7 @@ export default function RoomsBoardPage() {
         <h1 className="font-display text-display-lg">Пати</h1>
         {readOnly ? (
           // Вход вернёт прямо на создание комнаты, а не на эту доску
-          <NeedSteam from="/room/new" className="max-w-sm" />
+          <NeedSteam from="/room/new" why="room" className="max-w-sm" />
         ) : (
           <Link
             href="/room/new"
@@ -262,44 +263,47 @@ export default function RoomsBoardPage() {
               : 'Сейчас открытых комнат нет. Создай свою и нажми «Показать на доске» — сюда придут.'}
           </div>
         ) : (
-          <AnimatePresence initial={false} mode="popLayout">
-            {rooms.map((r) => (
-              <motion.div
-                key={r.id}
-                layout
-                initial={{ opacity: 0, y: -8, height: 0 }}
-                animate={{ opacity: 1, y: 0, height: 'auto' }}
-                exit={{ opacity: 0, x: 8, height: 0 }}
-                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                className="overflow-hidden"
-              >
-                <Link
-                  href={`/room/${r.id}`}
-                  className="panel-lift glass-hover p-5 flex items-center justify-between gap-4"
+          // layout — фича domMax, её догружает MotionMax
+          <MotionMax>
+            <AnimatePresence initial={false} mode="popLayout">
+              {rooms.map((r) => (
+                <m.div
+                  key={r.id}
+                  layout
+                  initial={{ opacity: 0, y: -8, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: 'auto' }}
+                  exit={{ opacity: 0, x: 8, height: 0 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  className="overflow-hidden"
                 >
-                  <div>
-                    {/* Створки только для строк, появившихся на ЭТОМ тике:
-                        иначе каждые 8 секунд вся доска — игровой автомат. */}
-                    <FlapCode code={r.id} animate={board?.fresh.has(r.id) ?? false} />
-                    {/*
-                      Разделитель только при именах. Комната без участников на
-                      доске возможна — она висит там до суток, — и строка
-                      начиналась с висячего « · », будто имя не дорисовалось.
-                      Пустой состав называем словами: это ответ на вопрос «к
-                      кому я подсяду».
-                    */}
-                    <div className="text-sm text-dim mt-0.5">
-                      {r.memberNames.length ? `${r.memberNames.join(', ')} · ` : 'пока никого · '}
-                      {minutesAgoLabel(r.minutesAgo)}
+                  <Link
+                    href={`/room/${r.id}`}
+                    className="panel-lift glass-hover p-5 flex items-center justify-between gap-4"
+                  >
+                    <div>
+                      {/* Створки только для строк, появившихся на ЭТОМ тике:
+                          иначе каждые 8 секунд вся доска — игровой автомат. */}
+                      <FlapCode code={r.id} animate={board?.fresh.has(r.id) ?? false} />
+                      {/*
+                        Разделитель только при именах. Комната без участников на
+                        доске возможна — она висит там до суток, — и строка
+                        начиналась с висячего « · », будто имя не дорисовалось.
+                        Пустой состав называем словами: это ответ на вопрос «к
+                        кому я подсяду».
+                      */}
+                      <div className="text-sm text-dim mt-0.5">
+                        {r.memberNames.length ? `${r.memberNames.join(', ')} · ` : 'пока никого · '}
+                        {minutesAgoLabel(r.minutesAgo)}
+                      </div>
                     </div>
-                  </div>
-                  <span className="pill shrink-0">
-                    Подсесть <Icon name="arrow" size={14} />
-                  </span>
-                </Link>
-              </motion.div>
-            ))}
-          </AnimatePresence>
+                    <span className="pill shrink-0">
+                      Подсесть <Icon name="arrow" size={14} />
+                    </span>
+                  </Link>
+                </m.div>
+              ))}
+            </AnimatePresence>
+          </MotionMax>
         )}
       </div>
       </div>

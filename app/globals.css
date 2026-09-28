@@ -1414,6 +1414,23 @@ textarea:focus-visible {
 .join input::placeholder {
   color: var(--faint);
 }
+/*
+ * Та же пилюля под ссылкой, которой делятся (ShareLinkField): адрес
+ * моноширинным и с многоточием — хвост «?ref=…» не должен выталкивать
+ * кнопку. С 560 px кнопка по содержимому: is-block растягивал бы её на всю
+ * пилюлю и в строке. Прямой потомок — кнопку входа на главной это не
+ * задевает (она внутри Magnet).
+ */
+.join.is-link input {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-overflow: ellipsis;
+}
+@media (min-width: 560px) {
+  .join > .btn-ember.is-block {
+    width: auto;
+  }
+}
 
 /*
  * НА НИЗКОМ ЭКРАНЕ КАРТОЧКА ДЫШИТ ТЕСНЕЕ.
@@ -3456,18 +3473,47 @@ textarea:focus-visible {
   font-weight: 600;
   color: var(--dim);
 }
+/*
+ * Липкая полоса фильтров под фиксированной шапкой (72 px на всех ширинах).
+ * Стала возможной, когда смузер ушёл со страниц кроме главной: под ним
+ * содержимое ехало transform, и sticky внутри не держался. Подложка — фон
+ * страницы с размытием: стена карточек уходит под полосу, а не сквозь неё.
+ *
+ * Подложка и лента чипов — разные элементы. Маска .chip-rail режет всё, что
+ * элемент рисует, фон и backdrop-filter тоже: на одной коробке края полосы
+ * становились прозрачными, и обложки проступали сквозь них.
+ */
 .lib-filters {
+  position: sticky;
+  top: 72px;
+  z-index: 5;
+  margin: 0 -1.25rem 1.5rem;
+  padding-block: 0.5rem;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+.lib-filters-rail {
   display: flex;
   gap: 0.5rem;
-  margin: 0 -1.25rem 1.5rem;
-  padding: 0.25rem 1.25rem;
+  padding-inline: 1.25rem;
 }
 @media (min-width: 768px) {
   .lib-filters {
-    flex-wrap: wrap;
     margin-inline: 0;
+  }
+  .lib-filters-rail {
+    flex-wrap: wrap;
     padding-inline: 0;
   }
+}
+/*
+ * Фокус и якоря не должны садиться под полосу. scroll-padding-top у html
+ * помнит только шапку (5rem): плитка, до которой дошли Tab'ом снизу вверх,
+ * вставала верхом ровно под липкие фильтры. Полоса — одна строка пилюль,
+ * 51 px на 390, 768 и 1280 (замер); сверху ещё 12 px воздуха.
+ */
+html:has(.lib-filters) {
+  scroll-padding-top: calc(72px + 51px + 0.75rem);
 }
 /* Бейдж состояния на арте: контурный, как «Из бэклога» в макете */
 .lib-badge {
@@ -3629,6 +3675,15 @@ img[data-art-fade][data-loaded] {
         rgba(5, 5, 5, 0.06) calc(var(--text-edge) + 30rem)
       );
   }
+}
+
+/*
+ * Слово пословного заголовка (components/SplitHeading): inline-block, иначе
+ * transform входа к строчному элементу не применяется. Перенос строк по
+ * пробелам между словами остаётся обычным.
+ */
+.split-word {
+  display: inline-block;
 }
 
 /*
@@ -4244,6 +4299,13 @@ img[data-art-fade][data-loaded] {
   border-radius: var(--radius-card);
   object-fit: cover;
   background: var(--surface);
+}
+/* Каркас (app/compat/[steamid]/loading.tsx) берёт тот же размер постера, но
+   фон — дыхание каркаса, а не --surface картинки: правило выше вне слоёв и
+   перебило бы .skel из @layer components */
+.skel.cwall-poster,
+.skel.portrait-wall-cell {
+  background: var(--track);
 }
 .cwall-scrim {
   position: absolute;

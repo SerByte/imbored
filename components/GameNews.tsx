@@ -1,6 +1,7 @@
 'use client'
 
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'framer-motion'
+import { MotionLazy } from '@/components/motion/MotionLazy'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FeedItem } from '@/lib/db'
@@ -51,12 +52,16 @@ export function GameNews({ items, name }: { items: FeedItem[]; name: string }) {
 
   if (!items.length) return null
 
+  // Провайдер анимаций — свой: на странице игры лента единственная, кому он
+  // нужен (почему не в корне — components/motion/MotionLazy.tsx)
   return (
-    <div className="flex flex-col gap-2">
-      {items.map((item) => (
-        <Row key={item.gid} item={item} name={name} open={open === item.gid} onToggle={setOpen} />
-      ))}
-    </div>
+    <MotionLazy>
+      <div className="flex flex-col gap-2">
+        {items.map((item) => (
+          <Row key={item.gid} item={item} name={name} open={open === item.gid} onToggle={setOpen} />
+        ))}
+      </div>
+    </MotionLazy>
   )
 }
 
@@ -149,7 +154,7 @@ function Row({
 
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div
+          <m.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -203,7 +208,7 @@ function Row({
                 </a>
               </div>
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </div>

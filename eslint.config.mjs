@@ -24,6 +24,37 @@ const eslintConfig = defineConfig([
     // код каждая копия линтует сама, из своего корня.
     ".claude/**",
   ]),
+  {
+    // Анимации — m.* под LazyMotion (components/motion/MotionLazy.tsx): m весит
+    // в разы меньше motion.*, а фичи догружаются чанком. Импорт motion.*
+    // возвращает всё в первую загрузку. Пакет motion (motion/react) — обёртка,
+    // которая сама обращается к motion.* и ломает тришейкинг, поэтому
+    // импортируем framer-motion напрямую.
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "framer-motion",
+              importNames: ["motion"],
+              message: "Используй m из framer-motion под MotionLazy (components/motion/MotionLazy.tsx).",
+            },
+            {
+              name: "framer-motion/client",
+              message: "Используй framer-motion/m под MotionLazy (components/motion/MotionLazy.tsx).",
+            },
+          ],
+          patterns: [
+            {
+              regex: "^motion(/|$)",
+              message: "Импортируй из framer-motion: motion/react тянет motion.* со всеми фичами (components/motion/MotionLazy.tsx).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;
