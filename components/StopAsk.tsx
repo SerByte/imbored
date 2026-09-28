@@ -18,16 +18,22 @@ import { EASE } from '@/lib/motion'
  * Плавающая плашка, а не полоса над героем, по той же причине, что у
  * WarmStrip: шапка fixed, а вопрос обязан быть виден, где бы ни стояла
  * прокрутка. Ничего не решает сам: уйти молча — «Закрыть».
+ *
+ * Тот же вопрос задаёт /daily про игру дня. Причин там нет — только «дай
+ * другую», — поэтому строку под вопросом страница пишет сама (hint): «скажи,
+ * что не так» над единственной кнопкой обещало бы выбор, которого нет.
  */
 export function StopAsk<K extends string>({
   game,
   reasons,
+  hint = 'Так бывает. Скажи, что не так, — дадим другую.',
   onReason,
   onHooked,
   onClose,
 }: {
   game: { appid: number; name: string } | null
   reasons: ReadonlyArray<{ key: K; label: string }>
+  hint?: string
   onReason: (key: K) => void
   onHooked: () => void
   onClose: () => void
@@ -71,7 +77,7 @@ export function StopAsk<K extends string>({
                   Закрыть
                 </button>
               </div>
-              <p className="-mt-2 text-xs text-dim">Так бывает. Скажи, что не так, — дадим другую.</p>
+              <p className="-mt-2 text-xs text-dim">{hint}</p>
               <div className="flex flex-wrap items-center gap-2">
                 {reasons.map((r) => (
                   <button

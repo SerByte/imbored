@@ -21,11 +21,20 @@ import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { StopAsk } from '@/components/StopAsk'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
+import {
+  dueLaunchFor,
+  dueLaunchNow,
+  forgetLaunch,
+  launchMemoStore,
+  rememberLaunch,
+  subscribeDueLaunch,
+} from '@/lib/launchmemo'
 import { SOURCE_BADGE, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
@@ -75,6 +84,19 @@ const FAIL_UNKNOWN = {
  */
 const storeHref = (c: Pick<StoreCard, 'appid' | 'storeUrl'>) =>
   c.storeUrl ?? `https://store.steampowered.com/app/${c.appid}/`
+
+/**
+ * Ответ на «Не зацепило?» (StopAsk) — один: «дай другую», то есть та же
+ * notToday(), что у кнопки «Не сегодня».
+ *
+ * Причин /play — «не тот жанр», «слишком сложная» — здесь нет намеренно: отбор
+ * дня слышит только «не сегодня» и «надоела» (notnowSince и cooldownKinds в
+ * /api/daily, forgetDailyPick в /api/feedback). После «не тот жанр» запись дня
+ * осталась бы на месте, и обещанная «другая» оказалась бы той же игрой.
+ */
+const STOP_REASONS: ReadonlyArray<{ key: SkipReason; label: string }> = [
+  { key: 'notnow', label: 'Дай другую' },
+]
 
 /** Игра дня и подпись для «Отправить другу» (lib/pickshare) — её кладёт роут, не dailyCardView */
 type DailyHero = DailyPickCard & Partial<ShareView>
@@ -141,11 +163,21 @@ export default function DailyPage() {
    * appid. Фокус без присмотра упал бы в body, поэтому его забирает заголовок
    * нового героя, когда смонтируется, — тот же приём, что у героя /play.
    */
+  const heroEl = useRef<HTMLElement | null>(null)
   const wantHeroFocus = useRef(false)
   const heroRef = useCallback((el: HTMLElement | null) => {
+    heroEl.current = el
     if (!el || !wantHeroFocus.current) return
     wantHeroFocus.current = false
     el.focus({ preventScroll: true })
+  }, [])
+  /**
+   * Плашка «Не зацепило?» уходит вместе с нажатой кнопкой, и фокус без
+   * присмотра упал бы в body — отдаём его заголовку героя, как на /play. Если
+   * ответ сменит героя, фокус переедет к новому сам (wantHeroFocus выше).
+   */
+  const focusHero = useCallback(() => {
+    heroEl.current?.focus({ preventScroll: true })
   }, [])
   /**
    * Сессия только читает (вошла по ссылке, а не через Steam): «Зашло» и «Не
@@ -156,6 +188,12 @@ export default function DailyPage() {
     useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
   /** Демо-личность: над героем полоса «это чужая демо-библиотека» (DemoBar) */
   const demo = useDemoSession()
+  /**
+   * Запуск с этой вкладки, про который пора спросить «не зацепило?» (см.
+   * lib/launchmemo.ts) — тот же снимок, что на /play. Про какую игру
+   * спрашивать, решается ниже, когда известен герой (dueLaunchFor).
+   */
+  const dueLaunch = useSyncExternalStore(subscribeDueLaunch, dueLaunchNow, launchMemoStore.server)
 
   /** Ответ /api/daily — на экран: одна дверь и для первого захода, и для «Не сегодня» */
   function applyDaily(data: DailyResponse) {
@@ -337,15 +375,20 @@ export default function DailyPage() {
    * /play (пауза на трое суток там же), а запись дня сбрасывается, если он
    * про героя или запасную свою (/api/feedback). Следующий отбор её не
    * вернёт до полуночи (notnowSince в /api/daily).
+   *
+   * intent 'ask' — это ответ на «Не зацепило?» после запуска, а не нажатие
+   * кнопки: отчёт различает их по снимку (lib/feedbackctx).
    */
-  const notToday = async () => {
+  const notToday = async (intent?: CtxIntent) => {
     if (rerolling) return
     setRerolling(true)
     setRerollMiss(null)
     // Отложил свою в магазинный день — и следующую хочет своей же
     const wasOwn = hero === alternate
+    // Ответил про героя сам — «не зацепило?» про него уже не спрашиваем
+    forgetLaunch(hero.appid)
     try {
-      const ok = await sendFeedback(hero.appid, 'skipped', 'notnow', ctxOf(hero))
+      const ok = await sendFeedback(hero.appid, 'skipped', 'notnow', ctxOf(hero, intent))
       // Отказ по правам — кнопки уже спрятались, и строка о входе на месте
       if (!ok) {
         if (writerStore.get() !== false) setRerollMiss('Не получилось отложить — попробуй ещё раз.')
@@ -377,11 +420,51 @@ export default function DailyPage() {
     }
   }
 
+  /** «Зашло» — с кнопки у героя или «Зацепило» из вопроса после запуска */
+  const like = (intent?: CtxIntent) => {
+    // «Зашло» после запуска — уже ответ на «не зацепило?», даже повторное
+    forgetLaunch(hero.appid)
+    // Повторное нажатие — не второе «зашло»: кнопка уже горит
+    if (liked.has(hero.appid)) return
+    setLiked(new Set(liked).add(hero.appid))
+    void sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero, intent))
+  }
+
+  /*
+   * «Не зацепило?» — только про героя на экране (dueLaunchFor) и только у
+   * сессии, которой есть куда записать ответ: как на /play, читателю по
+   * ссылке не спрашиваем вовсе.
+   */
+  const stopDue = readOnly ? null : dueLaunchFor(dueLaunch, hero.appid)
+
   return (
     <div className="flex-1 flex flex-col">
+      {/* «Не зацепило «X»?» — игру дня запустили отсюда и вернулись спустя
+          десять минут (lib/launchmemo.ts). «Дай другую» — та же notToday(),
+          что у «Не сегодня»: откладывает героя и подбирает другого */}
+      <StopAsk
+        game={stopDue}
+        reasons={STOP_REASONS}
+        hint="Так бывает. Отложим её и подберём другую на сегодня."
+        // Плашка исчезает вместе с нажатой кнопкой, и фокус без присмотра
+        // упал бы в body — отдаём его герою, как после любого ответа
+        onReason={() => {
+          focusHero()
+          void notToday('ask')
+        }}
+        onHooked={() => {
+          like('ask')
+          focusHero()
+        }}
+        onClose={() => {
+          launchMemoStore.set(null)
+          focusHero()
+        }}
+      />
       {/* «Как тебе?» после сыгранного по прошлому совету (lib/outcome.ts) —
-          раз в сутки, общий порог с /play */}
-      <OutcomeAsk />
+          раз в сутки, общий порог с /play, и только когда «Не зацепило?»
+          молчит: два вопроса разом — анкета */}
+      <OutcomeAsk paused={!!stopDue} />
       <p role="status" className="sr-only">
         {said}
       </p>
@@ -518,6 +601,9 @@ export default function DailyPage() {
                   onClick={() =>
                     void sendFeedback(hero.appid, 'launched', undefined, ctxOf(hero, 'launch'))
                   }
+                  // Засекаем только настоящий запуск: через десять минут
+                  // вернувшегося спросим, зацепило ли (см. StopAsk выше)
+                  onLaunch={() => rememberLaunch(hero.appid, hero.name, Math.floor(Date.now() / 1000))}
                   icon
                   className="btn-ember px-6 py-3"
                 />
@@ -550,12 +636,7 @@ export default function DailyPage() {
               {!readOnly && (
                 <button
                   type="button"
-                  onClick={() => {
-                    // Повторное нажатие — не второе «зашло»: кнопка уже горит
-                    if (liked.has(hero.appid)) return
-                    setLiked(new Set(liked).add(hero.appid))
-                    void sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero))
-                  }}
+                  onClick={() => like()}
                   aria-pressed={liked.has(hero.appid)}
                   title={liked.has(hero.appid) ? 'Зашло — учтём в подборе' : 'Зашло'}
                   className="btn-circle"

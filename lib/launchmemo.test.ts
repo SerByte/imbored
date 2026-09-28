@@ -5,6 +5,7 @@ import {
   ASK_AFTER_SEC,
   ASK_UNTIL_SEC,
   dueLaunch,
+  dueLaunchFor,
   dueLaunchNow,
   forgetLaunch,
   launchMemoStore,
@@ -79,6 +80,25 @@ describe('dueLaunch — когда спрашивать', () => {
   test('запуск из будущего и пустая память — молчим', () => {
     expect(dueLaunch({ ...MEMO, at: NOW + 3600 }, NOW)).toBeNull()
     expect(dueLaunch(null, NOW)).toBeNull()
+  })
+})
+
+/**
+ * /daily отвечает на «не зацепило?» тем, что откладывает героя дня. Запись же
+ * одна на вкладку — спроси страница про запуск с /play, отложен был бы герой,
+ * в которого никто не играл.
+ */
+describe('dueLaunchFor — вопрос только про игру на экране', () => {
+  test('запуск той же игры — спрашиваем про него', () => {
+    expect(dueLaunchFor(MEMO, MEMO.appid)).toBe(MEMO)
+  })
+
+  test('запуск другой игры — молчим', () => {
+    expect(dueLaunchFor(MEMO, 570)).toBeNull()
+  })
+
+  test('спрашивать не о чем — молчим', () => {
+    expect(dueLaunchFor(null, MEMO.appid)).toBeNull()
   })
 })
 
@@ -221,4 +241,81 @@ describe('/play забывает запуск, когда на героя отв
       expect(handler, `app/play/page.tsx:${i + 1}`).toContain('forgetLaunch(pick.appid)')
     }
   })
+})
+
+/**
+ * Игра дня запускалась тем же steam://run, что герой /play, но запуск нигде
+ * не запоминался — и «Не зацепило?» после неё не звучало никогда: человек
+ * возвращался к той же карточке, как будто ничего не было. Возвращается это
+ * удалением одного пропа, и ни один тест поведения этого не заметит: кнопка
+ * ведь запускает.
+ */
+describe('/daily запоминает запуск и спрашивает про героя', () => {
+  const read = (...p: string[]) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')
+  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  const DAILY = read('app', 'daily', 'page.tsx')
+  const stopAsk = (src: string) => src.match(/<StopAsk\b[\s\S]*?\/>/)?.[0] ?? ''
+
+  test('steam://run героя запоминает запуск, загрузка — нет', () => {
+    const tags = [...code(DAILY).matchAll(/<SteamLaunch\b[\s\S]*?\/>/g)].map((m) => m[0])
+    const runs = tags.filter((t) => !t.includes('mode="install"'))
+    expect(runs.length).toBeGreaterThanOrEqual(1)
+    for (const t of runs) {
+      expect(t).toMatch(/onLaunch=\{\(\) => rememberLaunch\(hero\.appid, hero\.name, /)
+    }
+    // Загрузка — план, а не запуск: спрашивать про неё не о чем
+    for (const t of tags.filter((t) => t.includes('mode="install"'))) {
+      expect(t).not.toContain('rememberLaunch')
+    }
+  })
+
+  test('вопрос — только про героя на экране и не читателю по ссылке', () => {
+    const src = code(DAILY)
+    expect(src).toMatch(/const stopDue = readOnly \? null : dueLaunchFor\(dueLaunch, hero\.appid\)/)
+    expect(stopAsk(src)).toMatch(/\bgame=\{stopDue\}/)
+  })
+
+  test('«дай другую» — та же notToday(), что у «Не сегодня»; «Зацепило» — то же «Зашло»', () => {
+    const ask = stopAsk(code(DAILY))
+    const [, onReason, onHooked] = ask.split(/\bon(?:Reason|Hooked|Close)=/)
+    expect(onReason).toContain("notToday('ask')")
+    expect(onHooked).toContain("like('ask')")
+    // Ни одной своей отправки в обход: отзыв и забывание запуска — там же
+    expect(ask).not.toContain('sendFeedback(')
+  })
+
+  test('каждая оценка героя зовёт forgetLaunch', () => {
+    const lines = DAILY.split('\n')
+    const rated = lines
+      .map((line, i) => ({ line, i }))
+      .filter(({ line }) => /sendFeedback\(hero\.appid, '(liked|skipped|banned)'/.test(line))
+    // «Не сегодня» (оно же «дай другую» из вопроса) и «Зашло» (оно же «Зацепило»)
+    expect(rated.length).toBeGreaterThanOrEqual(2)
+    for (const { i } of rated) {
+      const handler = lines.slice(Math.max(0, i - 6), i + 3).join('\n')
+      expect(handler, `app/daily/page.tsx:${i + 1}`).toContain('forgetLaunch(hero.appid)')
+    }
+  })
+
+  /*
+   * Плашка — порталом в конце <body> и уходит вместе с нажатой кнопкой. Без
+   * явного переноса фокус падает в body, и следующий Tab начинается с начала
+   * документа. На /play это правило было, на /daily оно обязано быть с первого
+   * дня.
+   */
+  test.each(['app/play/page.tsx', 'app/daily/page.tsx'])(
+    '%s: каждый ответ на «Не зацепило?» отдаёт фокус герою',
+    (file) => {
+      const handlers = stopAsk(code(read(file))).split(/\bon(?:Reason|Hooked|Close)=/).slice(1)
+      expect(handlers).toHaveLength(3)
+      for (const h of handlers) expect(h).toContain('focusHero(')
+    },
+  )
+
+  test.each(['app/play/page.tsx', 'app/daily/page.tsx'])(
+    '%s: «Как тебе?» ждёт, пока на экране «Не зацепило?»',
+    (file) => {
+      expect(code(read(file))).toMatch(/<OutcomeAsk\s+paused=\{!!stopDue\}/)
+    },
+  )
 })
