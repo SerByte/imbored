@@ -45,7 +45,8 @@ const DEFAULT_PREFETCH: Record<string, { links: number; why: string }> = {
   },
   'app/explore/page.tsx': {
     links: 1,
-    why: 'полка «Приглянулось» одного человека, свёрнута до EXPLORE_SHELF_FOLD; в правку GameLink не входила',
+    why:
+      'полка «Приглянулось» в колоде /explore: её видит один человек, до разворота не больше EXPLORE_SHELF_FOLD плиток, и это игры, которые он только что сам отметил «Интересно» — по ним и идут',
   },
 }
 
