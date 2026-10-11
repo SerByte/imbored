@@ -24,6 +24,9 @@ import {
   sessionTrait,
   SIMILAR_CANDIDATES,
   SIMILAR_SHOWN,
+  STUDIO_MAX_GAMES,
+  STUDIO_SHOWN,
+  studioLine,
   topTagOf,
 } from './gamepage'
 import { characterTrait, entryTrait } from './gametraits'
@@ -865,5 +868,139 @@ describe('вход и характер', () => {
       'Вход',
       'Характер',
     ])
+  })
+})
+
+/**
+ * «Ещё у <студии>» под полкой «Похожие» — строка текстовых ссылок. Правила,
+ * которые легко потерять правкой: корпоративный каталог молчит, одна игра —
+ * не строка, издания и уже показанное не повторяются, порядок не зависит от
+ * порядка входа (страница живёт в ISR неделю).
+ */
+describe('studioLine', () => {
+  const page = { appid: 1, name: 'Hades', developer: 'Supergiant Games' }
+  const g = (appid: number, name: string, reviewsTotal: number) => ({ appid, name, reviewsTotal })
+  const supergiant = [
+    g(1, 'Hades', 300_000),
+    g(2, 'Bastion', 60_000),
+    g(3, 'Transistor', 50_000),
+    g(4, 'Pyre', 20_000),
+  ]
+  const names = (line: ReturnType<typeof studioLine>) => line?.games.map((x) => x.name) ?? null
+
+  test('Hades: Bastion · Transistor · Pyre — по отзывам, без самой страницы', () => {
+    expect(studioLine(page, supergiant, [])).toEqual({
+      developer: 'Supergiant Games',
+      games: [
+        { appid: 2, name: 'Bastion' },
+        { appid: 3, name: 'Transistor' },
+        { appid: 4, name: 'Pyre' },
+      ],
+    })
+  })
+
+  test('больше двенадцати живых игр — корпоративный каталог, строки нет', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => g(i + 1, `Игра ${i + 1}`, 1000 - i))
+    expect(studioLine(page, many(STUDIO_MAX_GAMES), [])?.games).toHaveLength(STUDIO_SHOWN)
+    expect(studioLine(page, many(STUDIO_MAX_GAMES + 1), [])).toBeNull()
+  })
+
+  test('меньше двух названий после отсева — строки нет', () => {
+    expect(studioLine(page, supergiant.slice(0, 3), [])?.games).toHaveLength(2)
+    expect(studioLine(page, supergiant.slice(0, 2), [])).toBeNull()
+    // одна игра у студии — это сама страница
+    expect(studioLine(page, supergiant.slice(0, 1), [])).toBeNull()
+    expect(studioLine(page, [], [])).toBeNull()
+  })
+
+  test('издания страницы не выдают себя за «ещё игру», издания между собой схлопываются', () => {
+    const witcher = { appid: 292030, name: 'The Witcher 3: Wild Hunt', developer: 'CD PROJEKT RED' }
+    const line = studioLine(
+      witcher,
+      [
+        g(292030, 'The Witcher 3: Wild Hunt', 900_000),
+        g(499450, 'The Witcher 3: Wild Hunt - Game of the Year Edition', 50_000),
+        g(20900, 'The Witcher: Enhanced Edition', 60_000),
+        g(20901, 'The Witcher', 5_000),
+        g(20920, 'The Witcher 2: Assassins of Kings Enhanced Edition', 70_000),
+      ],
+      [],
+    )
+    // издание страницы выпало, из двух первых Witcher осталось самое обсуждаемое
+    expect(names(line)).toEqual(['The Witcher 2: Assassins of Kings Enhanced Edition', 'The Witcher: Enhanced Edition'])
+  })
+
+  test('то, что уже стоит в «Похожих», не повторяется — ни по appid, ни изданием', () => {
+    const similar = [
+      { appid: 2, name: 'Bastion' },
+      { appid: 77, name: 'Transistor Remastered' },
+    ]
+    expect(studioLine(page, supergiant, similar)).toBeNull()
+    expect(names(studioLine(page, [...supergiant, g(5, 'Hades II', 40_000)], similar))).toEqual(['Hades II', 'Pyre'])
+  })
+
+  test('саундтрек и демо студии — не игры, их не советуем', () => {
+    const line = studioLine(
+      page,
+      [...supergiant, g(9, 'Transistor - Original Soundtrack', 90_000), g(10, 'Pyre Demo', 80_000)],
+      [],
+    )
+    expect(names(line)).toEqual(['Bastion', 'Transistor', 'Pyre'])
+  })
+
+  test('порядок — отзывы, затем appid, от порядка входа не зависит', () => {
+    const tied = [g(1, 'Hades', 1), g(40, 'Д', 500), g(30, 'Г', 500), g(20, 'В', 900), g(10, 'Б', 500)]
+    const expected = ['В', 'Б', 'Г', 'Д']
+    expect(names(studioLine(page, tied, []))).toEqual(expected)
+    expect(names(studioLine(page, [...tied].reverse(), []))).toEqual(expected)
+    // и не больше четырёх названий
+    expect(names(studioLine(page, [...tied, g(50, 'Е', 100)], []))).toEqual(expected)
+  })
+
+  test('чужой магазин и игра без разработчика — строки нет', () => {
+    expect(studioLine({ ...page, appid: -7 }, supergiant, [])).toBeNull()
+    expect(studioLine({ ...page, developer: undefined }, supergiant, [])).toBeNull()
+    expect(studioLine({ ...page, developer: '  ' }, supergiant, [])).toBeNull()
+  })
+
+  test('на карточке: живые игры той же студии, без «Похожих», мёртвые и чужие не в счёт', async () => {
+    const db = await withDb()
+    const dev = { developer: 'Supergiant Games' }
+    await upsertGameMeta(db, meta(1, { name: 'Hades', tags: { Roguelike: 1000 }, reviewsTotal: 300_000, ...dev }), NOW)
+    await replaceGameTags(db, 1, [{ tag: 'Roguelike', weight: 1000 }])
+    // Hades II стоит в «Похожих» по тегу
+    await upsertGameMeta(db, meta(5, { name: 'Hades II', tags: { Roguelike: 1000 }, reviewsTotal: 90_000, ...dev }), NOW)
+    await replaceGameTags(db, 5, [{ tag: 'Roguelike', weight: 1000 }])
+    for (const [appid, name, reviewsTotal] of [
+      [2, 'Bastion', 60_000],
+      [3, 'Transistor', 50_000],
+      [4, 'Pyre', 20_000],
+    ] as Array<[number, string, number]>) {
+      await upsertGameMeta(db, meta(appid, { name, tags: { Action: 900 }, reviewsTotal, ...dev }), NOW)
+    }
+    await upsertGameMeta(db, meta(6, { name: 'Мёртвая', reviewsTotal: 99_000, ...dev }), NOW)
+    await db.execute('UPDATE games SET alive = 0 WHERE appid = 6')
+    await upsertGameMeta(db, meta(7, { name: 'Чужая', reviewsTotal: 99_000, developer: 'Klei' }), NOW)
+
+    const data = await loadGamePage(1)
+    expect(data?.similar.map((x) => x.appid)).toEqual([5])
+    expect(data?.studio).toEqual({
+      developer: 'Supergiant Games',
+      games: [
+        { appid: 2, name: 'Bastion' },
+        { appid: 3, name: 'Transistor' },
+        { appid: 4, name: 'Pyre' },
+      ],
+    })
+  })
+
+  test('на карточке: у студии тринадцать живых игр — строки нет', async () => {
+    const db = await withDb()
+    for (let appid = 1; appid <= STUDIO_MAX_GAMES + 1; appid++) {
+      await upsertGameMeta(db, meta(appid, { tags: { Action: 900 }, reviewsTotal: appid, developer: 'Square Enix' }), NOW)
+    }
+    expect((await loadGamePage(1))?.studio).toBeNull()
+    await db.execute('UPDATE games SET alive = 0 WHERE appid = 13')
+    expect((await loadGamePage(1))?.studio?.games).toHaveLength(STUDIO_SHOWN)
   })
 })

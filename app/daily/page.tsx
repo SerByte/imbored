@@ -25,6 +25,7 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
+import type { DailyYesterday } from '@/lib/daily'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
@@ -69,6 +70,16 @@ const FAIL: Record<string, { title: string; text: string }> = {
     title: 'Выбирать не из чего',
     text: 'В библиотеке не осталось игр, из которых можно собрать игру дня: возможно, всё подходящее уехало в бан.',
   },
+  /*
+   * Потолок частоты /api/daily (десять в час). Без этой строки 429 уходил в
+   * FAIL_UNKNOWN и страница говорила «что-то сломалось по дороге» — неправда:
+   * не сломалось ничего, и через несколько минут всё заработает. /play и
+   * /explore этот случай уже различали, здесь его просто не было.
+   */
+  ratelimited: {
+    title: 'Слишком часто',
+    text: 'Игру дня запрашивали много раз подряд, и на это стоит потолок. Загляни через несколько минут — а пока можно подобрать игру под настроение.',
+  },
 }
 
 /** Сеть, пятисотка, оборванный ответ. */
@@ -109,6 +120,8 @@ type DailyResponse = {
   /** Своя на магазинный день — «Сегодня хочу из своего»; null — не магазинный */
   ownAlternate?: DailyHero | null
   dateLabel: string
+  /** «Вчера была: …» — вчерашняя игра дня (lib/daily yesterdayLine); null — строки нет */
+  yesterday?: DailyYesterday | null
   nowSec: number
 }
 
@@ -143,6 +156,7 @@ export default function DailyPage() {
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
   const [nowSec, setNowSec] = useState(0)
   const [dateLabel, setDateLabel] = useState('')
+  const [yesterday, setYesterday] = useState<DailyYesterday | null>(null)
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
   /** Код отказа из тела ответа: nolibrary, nocandidates или null. */
   const [reason, setReason] = useState<string | null>(null)
@@ -206,6 +220,7 @@ export default function DailyPage() {
     setAlternate(data.ownAlternate ?? null)
     setOwnDay(false)
     setDateLabel(data.dateLabel)
+    setYesterday(data.yesterday ?? null)
     setPhase('ok')
   }
 
@@ -727,6 +742,30 @@ export default function DailyPage() {
                   : 'Одна игра на день.'}
               </span>
             </p>
+            {/*
+              «Вчера была: …» — сразу под отсчётом до следующей: одна строка
+              про соседние дни, тише всего остального в герое. Без архива,
+              статусов и «вернуть»: это память, а не вторая рекомендация, и
+              отзыв о ней не шлётся — героем она сегодня не была. Сервер уже
+              отсеял пустое имя, повтор сегодняшней и скрытую сегодня
+              (yesterdayLine, сброс в /api/feedback). Без prefetch, как
+              StudioLinks на странице игры: строку видят все, а идут по ней
+              редко, и полная выборка статичной /game на каждый заход — лишняя.
+            */}
+            {yesterday && (
+              <p className="-mt-2 text-xs text-faint">
+                {/* Ссылка строчная, не inline-flex: длинное название
+                    переносится внутри строки, а &nbsp; держат его начало при
+                    «Вчера была:» и стрелку при последнем слове */}
+                Вчера была:&nbsp;<Link
+                  href={`/game/${yesterday.appid}`}
+                  prefetch={false}
+                  className="tap font-semibold text-dim transition-colors hover:text-ink"
+                >
+                  {yesterday.name}&nbsp;<Icon name="arrow" size={12} className="inline align-[-0.1em]" />
+                </Link>
+              </p>
+            )}
           </div>
         </div>
       </section>

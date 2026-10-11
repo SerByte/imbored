@@ -1,9 +1,11 @@
 import type { PickEdge } from './badges'
 import type { CandidateSet } from './candidates'
 import { refreshDealsWithin } from './deals'
-import { getGamesMetaLite, type Db, type HeroMedia } from './db'
+import { comebackPatchPairs } from './comeback'
+import { getGamesMetaLite, latestMajorPatchSince, type Db, type HeroMedia } from './db'
 import { discountView, trustedPrice } from './discount'
 import { entryCost, showsEntry } from './entry'
+import { logSwallowed } from './errlog'
 import { partsView } from './feedbackctx'
 import { isRussianText } from './gamepage'
 import { sessionTrait } from './gametraits'
@@ -59,6 +61,11 @@ export type PickContext = {
    * причине, ни под ценой: «успей купить» ему не помощь, а ещё одна покупка.
    */
   hideUrgency: boolean
+  /**
+   * Пересказ крупного патча, вышедшего после последнего запуска заброшенной
+   * игры (lib/comeback.ts); null — факта нет, и причина говорит по-старому.
+   */
+  patchOf: (appid: number) => string | null
 }
 
 /**
@@ -72,6 +79,7 @@ export type PickContext = {
 export function pickContext(
   set: CandidateSet,
   metaNow: (appid: number) => GameMeta | undefined = set.metaOf,
+  patches: ReadonlyMap<number, string> = new Map(),
 ): PickContext {
   const { games, libMetas, tagWeight, banned } = set
   const findAnchor = buildAnchorFinder(games, (id) => libMetas.get(id), tagWeight, banned)
@@ -92,6 +100,36 @@ export function pickContext(
       return lib ? Math.round(lib.playtimeForever / 60) : null
     },
     hideUrgency: hideUrgencyFor(games, (id) => libMetas.get(id)),
+    patchOf: (appid) => patches.get(appid) ?? null,
+  }
+}
+
+/**
+ * Крупные патчи после последнего запуска — у заброшенных из cands, одним
+ * обходом к базе (latestMajorPatchSince). Нет ни одной заброшенной с датой —
+ * нет и запроса: у выдачи при скрытом времени он не стоит ничего.
+ *
+ * Вызывающий сам решает, вправе ли сессия этот факт видеть: он производный от
+ * даты последнего запуска (см. lib/comeback.ts).
+ *
+ * Сбой базы здесь не бросает, а даёт пустую карту. Факт о патче — украшение
+ * причины, а не её основа: без него шаблон говорит по-старому («вернись и
+ * проверь»). Проброшенный обрыв Turso ронял бы 500-й всю выдачу /play и
+ * «Игру дня» ради одной фразы, которую и так можно не сказать. Сбой не
+ * молчит — строка в логе (logSwallowed), как у соседних фолбэков.
+ */
+export async function comebackPatches(
+  db: Db,
+  set: CandidateSet,
+  cands: ReadonlyArray<{ appid: number; source: CandidateSource }>,
+): Promise<Map<number, string>> {
+  const pairs = comebackPatchPairs(cands, set.games, set.playtimeHidden)
+  if (!pairs.length) return new Map()
+  try {
+    return await latestMajorPatchSince(db, pairs)
+  } catch (err) {
+    logSwallowed('cards:comeback-patches', err, { pairs: pairs.length })
+    return new Map()
   }
 }
 
@@ -105,15 +143,32 @@ export function pickContext(
  *
  * Без свежих цен перечитывать незачем: мета пула — та же узкая выборка тем же
  * маппером (lib/pool), и отличаться от getGamesMetaLite ей больше нечем.
+ *
+ * opts.patches — грузить ли крупные патчи у заброшенных (comebackPatches).
+ * По умолчанию нет: «Открытия» (/api/explore) тоже зовут этот контекст, и
+ * заброшенные в их колоде бывают, но причину про патч они не пишут — запрос
+ * там был бы чтением ради выброса на каждом свайпе. Включает его только
+ * /api/recommend, и только writer-сессии.
  */
 export async function buildPickContext(
   db: Db,
   set: CandidateSet,
   pricedIds: number[],
+  opts: { patches?: boolean } = {},
 ): Promise<PickContext> {
-  const refreshed = await refreshDealsWithin(db, pricedIds, set.now)
+  // Патчи — у тех же, кто может попасть на экран, и тем же заходом, что цены:
+  // друг от друга они не зависят. Источник берётся из пула героя (он и
+  // решает, заброшенная ли)
+  const onScreen = () => {
+    const byId = new Map([...set.candidates, ...set.heroPool].map((c) => [c.appid, c]))
+    return pricedIds.flatMap((id) => byId.get(id) ?? [])
+  }
+  const [refreshed, patches] = await Promise.all([
+    refreshDealsWithin(db, pricedIds, set.now),
+    opts.patches ? comebackPatches(db, set, onScreen()) : new Map<number, string>(),
+  ])
   const priced = refreshed ? await getGamesMetaLite(db, pricedIds) : new Map<number, GameMeta>()
-  return pickContext(set, (appid) => priced.get(appid) ?? set.metaOf(appid))
+  return pickContext(set, (appid) => priced.get(appid) ?? set.metaOf(appid), patches)
 }
 
 /** Картинка, магазин и цена — общее у всех карточек, от героя до плитки полки */

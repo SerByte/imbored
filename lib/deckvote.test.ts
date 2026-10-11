@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import {
   claimVote,
+  deckKeyVote,
+  type DeckKeyEvent,
+  deckOnScreen,
+  OWN_ARROWS_SELECTOR,
   deckCardLine,
   deckPosition,
   deckStuck,
@@ -114,5 +118,66 @@ describe('строка для скринридера', () => {
 
   test('без знаменателя — без «из 0»', () => {
     expect(deckCardLine(deckPosition(0, 0), 'Dota 2')).toBe('Карта 1: Dota 2')
+  })
+})
+
+describe('голос стрелкой', () => {
+  const key = (over: Partial<DeckKeyEvent>): DeckKeyEvent => ({
+    key: 'ArrowRight',
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    repeat: false,
+    defaultPrevented: false,
+    ownArrows: false,
+    onScreen: true,
+    ...over,
+  })
+
+  test('вправо — да, влево — нет, как у жеста', () => {
+    expect(deckKeyVote(key({ key: 'ArrowRight' }))).toBe(true)
+    expect(deckKeyVote(key({ key: 'ArrowLeft' }))).toBe(false)
+  })
+
+  test('прочие клавиши — не голос', () => {
+    for (const k of ['ArrowUp', 'ArrowDown', 'Enter', ' ', 'a']) {
+      expect(deckKeyVote(key({ key: k })), k).toBeNull()
+    }
+  })
+
+  test('зажатая стрелка не пролистывает колоду очередью', () => {
+    expect(deckKeyVote(key({ repeat: true }))).toBeNull()
+  })
+
+  test('Alt+← остаётся «Назад» браузера, Shift+→ — выделением', () => {
+    expect(deckKeyVote(key({ key: 'ArrowLeft', altKey: true }))).toBeNull()
+    expect(deckKeyVote(key({ shiftKey: true }))).toBeNull()
+    expect(deckKeyVote(key({ ctrlKey: true }))).toBeNull()
+    expect(deckKeyVote(key({ metaKey: true }))).toBeNull()
+  })
+
+  test('стрелку, занятую полем или каруселью, колода не отнимает', () => {
+    expect(deckKeyVote(key({ ownArrows: true }))).toBeNull()
+    expect(deckKeyVote(key({ defaultPrevented: true }))).toBeNull()
+  })
+
+  test('колода вне экрана не голосует за невидимую карту', () => {
+    expect(deckKeyVote(key({ onScreen: false }))).toBeNull()
+  })
+
+  test('в экране — это хотя бы 120 px карты', () => {
+    expect(deckOnScreen({ top: 200, bottom: 700 }, 900)).toBe(true)
+    // уехала вверх под шапку: видна полоска в 60 px
+    expect(deckOnScreen({ top: -500, bottom: 60 }, 900)).toBe(false)
+    // ещё ниже сгиба: торчит край в 80 px
+    expect(deckOnScreen({ top: 820, bottom: 1400 }, 900)).toBe(false)
+    expect(deckOnScreen({ top: 780, bottom: 1400 }, 900)).toBe(true)
+  })
+
+  test('карусель скриншотов и лайтбокс держат свои стрелки', () => {
+    expect(OWN_ARROWS_SELECTOR).toContain('[aria-roledescription]')
+    expect(OWN_ARROWS_SELECTOR).toContain('[aria-modal="true"]')
+    expect(OWN_ARROWS_SELECTOR).toContain('input')
   })
 })

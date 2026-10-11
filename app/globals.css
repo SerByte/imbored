@@ -2923,6 +2923,12 @@ textarea:focus-visible {
     color: var(--bg);
     background: var(--ink);
   }
+  /* Наведение на нажатую: правило hover выше сильнее (0,3,0 против 0,2,0) и
+     перебивало заливку на 22% стекла, не трогая цвет, — подпись цвета фона
+     на почти прозрачной подложке пропадала. Нажатая темнеет от своей заливки */
+  .btn-glass[aria-pressed='true']:hover:not(:disabled, [aria-disabled='true']) {
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+  }
 
   .btn-circle {
     display: inline-grid;
@@ -3590,6 +3596,71 @@ textarea:focus-visible {
 html:has(.lib-filters) {
   scroll-padding-top: calc(72px + 51px + 0.75rem);
 }
+/*
+ * Поиск по библиотеке (components/LibrarySearch): стеклянная строка того же
+ * материала, что вход на главной (.join), но ниже и тише — это инструмент
+ * над стеной, а не главное действие экрана. На телефоне во всю ширину, на
+ * десктопе — колонкой, чтобы не спорить с рядом чипсов под ней.
+ */
+.lib-search {
+  position: relative;
+  margin-bottom: 0.75rem;
+}
+/*
+ * Пилюля — само поле, а не обёртка вокруг него: общее :focus-visible рисует
+ * кольцо по контуру фокусируемого элемента, и только так оно обводит строку
+ * целиком, а не вложенный прямоугольник внутри неё. Лупа лежит поверх, в
+ * левом поле отступа.
+ */
+.lib-search svg {
+  position: absolute;
+  left: 0.875rem;
+  top: 50%;
+  translate: 0 -50%;
+  pointer-events: none;
+}
+.lib-search input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 1rem 0 2.625rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out);
+}
+.lib-search input:focus {
+  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.lib-search input::placeholder {
+  color: var(--dim);
+}
+/* Родной крестик очистки: в светлой теме он синий, чужой палитре цвет —
+   гасим до серого. Нажатие на него — то же событие input, поиск сбросится. */
+.lib-search input::-webkit-search-cancel-button {
+  filter: grayscale(1);
+  cursor: pointer;
+}
+/* Пока сервер отвечает — лупа дышит: знак, что поиск идёт, без спиннера */
+.lib-search[data-pending] svg {
+  animation: pulse-dot 1s var(--ease-glow) infinite;
+}
+@media (min-width: 768px) {
+  .lib-search {
+    max-width: 22rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lib-search[data-pending] svg {
+    animation: none;
+    opacity: 0.5;
+  }
+}
 /* Бейдж состояния на арте: контурный, как «Из бэклога» в макете */
 .lib-badge {
   position: absolute;
@@ -4025,9 +4096,12 @@ img[data-art-fade][data-loaded] {
 .room-page .deck-stack {
   --deck-h: clamp(440px, 100svh - 310px, 600px);
 }
+/* Минимум 330, а не 420: на 375×667 (iPhone SE) 420 перебивал формулу, и
+   карта кончалась на 80 px ниже верха нижней панели. Текст и кнопки карты
+   занимают около 280 px — постер под ними просто обрезается сильнее. */
 @media (max-width: 767px) {
   .room-page .deck-stack {
-    --deck-h: clamp(420px, 100svh - 340px, 560px);
+    --deck-h: clamp(330px, 100svh - 340px, 560px);
   }
 }
 /* Телефон: над колодой заголовок в четыре строки, под ней — нижняя панель.
@@ -4180,6 +4254,25 @@ img[data-art-fade][data-loaded] {
   font-weight: 800;
   line-height: 1.2;
   pointer-events: none;
+}
+
+/* Клавиша в подсказке под колодой (← «Не хочу» · → «Играем!»): тонкая рамка
+   цвета волоска, как у клавиши, а не пилюля — это справка, не кнопка. */
+.deck-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.375rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--edge);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--dim);
 }
 
 /*
@@ -4460,6 +4553,15 @@ img[data-art-fade][data-loaded] {
   top: -5%;
   height: 58%;
 }
+/*
+ * Отмеченная плитка /room/new?hint=: похожий на настроение выдачи пресет.
+ * Кромка акцентом, а не заливка: это подсказка, а не выбор, и нажатой
+ * плитка выглядеть не должна. Смысл несёт и текст «похоже на твоё» внутри
+ * кнопки — цветом одним не обходимся.
+ */
+.quiz-tile.is-hinted {
+  border-color: color-mix(in srgb, var(--ember-text) 70%, transparent);
+}
 .quiz-scrim {
   position: absolute;
   inset: 0;
@@ -4477,10 +4579,19 @@ img[data-art-fade][data-loaded] {
     min-height: 124px;
     padding-right: 44%;
   }
+  /*
+   * Веер — от ШИРИНЫ плитки, а не от высоты. Было height: 104%, и это
+   * замкнутый круг: на узком экране подпись переносится, плитка растёт, веер
+   * растёт вместе с ней и шире наезжает на ту же подпись. Замер на /room/new:
+   * постеры заходили на текст на 79 px при 320, на 41 при 360 и на 12 при 390.
+   * 24% ширины держат левый постер правее колонки текста (padding-right 44%)
+   * при любой высоте плитки; низ веера по-прежнему уходит за край.
+   */
   .quiz-tile .fan {
-    right: 6%;
+    right: 5%;
     top: 14%;
-    height: 104%;
+    width: 24%;
+    height: auto;
   }
   .quiz-scrim {
     background: linear-gradient(

@@ -1,6 +1,7 @@
 import { hashString } from './daily'
 import { collapseEditions, editionKey, isVariantName } from './editions'
 import { isJunk, looksLikeNonGame } from './junk'
+import { LIBRARY_QUERY_MAX } from './libraryhref'
 import { playtimeHidden } from './playtime'
 import {
   buildTagProfile,
@@ -226,16 +227,78 @@ export function libraryPage<T>(games: T[], page: number, size = LIBRARY_PAGE_SIZ
   return { shown, rest, nextPage: rest > 0 ? p + 1 : null }
 }
 
+// Адрес полки и потолок запроса живут в lib/libraryhref.ts: их берёт
+// клиентское поле поиска, а этот модуль тянет за собой весь движок подбора
+export { LIBRARY_QUERY_MAX, libraryHref } from './libraryhref'
+
+/* ---------- поиск по стене /library ---------- */
+
 /**
- * Адрес полки. Смена фильтра сбрасывает порцию: у новой полки своя длина, и
- * «третья порция заброшенных» ничего не значит для нераспакованных.
+ * ПОИСК ПО СВОЕЙ БИБЛИОТЕКЕ.
+ *
+ * Стена отдаётся порциями по LIBRARY_PAGE_SIZE, и у коллекционера на пару
+ * тысяч игр найти одну можно было только нажимая «Показать ещё» раз за
+ * разом — страница знала название каждой, но спросить её было нельзя.
+ *
+ * Запрос ищет в названии по словам: каждое слово запроса обязано встретиться
+ * где-то в названии, порядок не важен. «witcher 3» находит «The Witcher 3:
+ * Wild Hunt», «hunt witcher» — тоже. Регистр, ё/е и знаки вроде ™, ®, двоеточий
+ * и дефисов не различаются: человек набирает по памяти, а не копирует.
  */
-export function libraryHref(filter: LibraryFilter, page = 1): string {
-  const qs = new URLSearchParams()
-  if (filter !== 'all') qs.set('state', filter)
-  if (page > 1) qs.set('page', String(page))
-  const s = qs.toString()
-  return s ? `/library?${s}` : '/library'
+
+/** ?q= из URL: строка, обрезанная и без лишних пробелов; всё прочее — пусто. */
+export function parseLibraryQuery(raw: string | string[] | undefined): string {
+  if (typeof raw !== 'string') return ''
+  return raw.replace(/\s+/g, ' ').trim().slice(0, LIBRARY_QUERY_MAX)
+}
+
+/** Название и запрос в одном виде: строчные, ё→е, только буквы и цифры через пробел. */
+export function normalizeTitle(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+}
+
+/** Подходит ли название: каждое слово запроса — часть названия. Пустой запрос — всё. */
+export function matchesTitle(name: string, q: string): boolean {
+  const words = normalizeTitle(q).split(' ').filter(Boolean)
+  if (words.length === 0) return true
+  const title = normalizeTitle(name)
+  return words.every((w) => title.includes(w))
+}
+
+/**
+ * Полка с учётом запроса и счётчики чипсов по найденному.
+ *
+ * Счётчики без запроса — по всей библиотеке, как и было. С запросом — по
+ * найденному: «Заброшенные 1» говорит, на какой полке искомое, и чипс с нулём
+ * не обещает того, чего там нет. Вкусовой порядок полки «Не распакованы»
+ * посчитан по всей библиотеке ДО отбора: профиль вкуса из трёх найденных игр
+ * был бы уже не вкусом.
+ */
+export function searchLibraryView(
+  view: LibraryView,
+  library: LibraryGame[],
+  metaOf: MetaOf,
+  nowSec: number,
+  q: string,
+): LibraryView {
+  if (!normalizeTitle(q)) return view
+  // Та же поправка на скрытое время, что у buildLibraryView: иначе чипсы с
+  // запросом разошлись бы с чипсами без него
+  const hidden = playtimeHidden(library)
+  const counts: Record<LibraryFilter, number> = { all: 0, untouched: 0, unplayed: 0, comeback: 0, active: 0 }
+  for (const g of library) {
+    if (!matchesTitle(g.name, q)) continue
+    counts.all++
+    const state = wallState(g, metaOf(g.appid), nowSec, hidden)
+    if (state !== 'played') counts[state]++
+  }
+  return { ...view, games: view.games.filter((g) => matchesTitle(g.name, q)), counts }
 }
 
 /**

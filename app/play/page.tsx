@@ -73,6 +73,7 @@ import {
   whoAmI,
 } from '@/lib/playcache'
 import { timeHiddenStore } from '@/lib/playtime'
+import { roomBridgeHref } from '@/lib/presets'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources'
@@ -1368,6 +1369,17 @@ function Player({ say }: { say: (line: string) => void }) {
    * слова нельзя.
    */
   const caption = askedMood ? moodCaption(mood) : ''
+  /*
+   * Мост в пати — только когда человек сам сказал «с друзьями»: выдача выше
+   * собрана из одной его библиотеки, а комната учтёт библиотеки всех. Ссылкой
+   * в этой же строке, последней, а не кнопкой у героя:
+   * это другой путь, а не действие над игрой, и выбор одной игры он не
+   * перебивает. Адрес — lib/presets: точный пресет создаёт комнату в один тап,
+   * без точного /room/new только отмечает похожий. prefetch выключен, как у
+   * «Позвать в пати» на /pick: путь редкий, и грузить его с каждой выдачей
+   * незачем.
+   */
+  const party = askedMood ? roomBridgeHref(mood) : null
   const changeMood = (
     <div className="mt-8 flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1 text-sm">
       {caption && <span className="text-faint">{caption}</span>}
@@ -1391,6 +1403,14 @@ function Player({ say }: { say: (line: string) => void }) {
         Просто полистать
         <Icon name="arrow" size={16} />
       </Link>
+      {/* Мост в пати — последним: пара «подпись → Изменить настроение» не
+          разрывается, а другой путь стоит тихо в хвосте строки */}
+      {party && (
+        <Link href={party} prefetch={false} className="tap link-more">
+          Позвать друзей выбрать вместе
+          <Icon name="arrow" size={16} />
+        </Link>
+      )}
     </div>
   )
 

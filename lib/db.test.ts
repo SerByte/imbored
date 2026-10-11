@@ -33,6 +33,8 @@ import {
   getMajorFeed,
   getMajorFeedHead,
   getUnsummarized,
+  latestMajorPatchSince,
+  PATCH_SINCE_MAX,
   pruneNewsForApp,
   releaseLease,
   repairGameJson,
@@ -2024,6 +2026,108 @@ describe('страница патча', () => {
     ])
     // от раньше пересказанных: отметка IndexNow двигается к последней строке
     expect((await freshlyDigestedPatches(db, NOW - 90 * DAY, NOW, 100)).map((n) => n.gid)).toEqual(['early', 'late'])
+  })
+})
+
+/*
+ * Причина заброшенной игры называет факт, только когда он подтверждён: крупный
+ * патч (масштаб от модели, а не от эвристики) с пересказом и строго после
+ * последнего запуска. Всё прочее — «не знаем», и фраза остаётся прежней.
+ */
+describe('latestMajorPatchSince', () => {
+  const DAY = 86_400
+
+  test('самый свежий подтверждённый крупный патч после момента, по одному на игру', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: 'before', publishedAt: NOW - 10 * DAY }),
+        newsItem({ gid: 'old', publishedAt: NOW - 3 * DAY }),
+        newsItem({ gid: 'new', publishedAt: NOW - DAY }),
+        // самый свежий, но без пересказа: масштаб major тут от эвристики
+        newsItem({ gid: 'raw', publishedAt: NOW - 100 }),
+        newsItem({ gid: 'small', publishedAt: NOW - 50 }),
+        newsItem({ gid: 'news', publishedAt: NOW - 40, kind: 'news' }),
+        newsItem({ appid: 570, gid: 'x', publishedAt: NOW - 20 * DAY }),
+      ],
+      NOW,
+    )
+    await setNewsDigest(db, 730, 'before', { tldr: 'До паузы', scale: 'major' }, NOW)
+    await setNewsDigest(db, 730, 'old', { tldr: 'Старый крупный', scale: 'major' }, NOW)
+    await setNewsDigest(db, 730, 'new', { tldr: '  Переделали бои  ', scale: 'major' }, NOW)
+    await setNewsDigest(db, 730, 'small', { tldr: 'Починили вылет', scale: 'hotfix' }, NOW)
+    await setNewsDigest(db, 730, 'news', { tldr: 'Распродажа', scale: 'major' }, NOW)
+    await setNewsDigest(db, 570, 'x', { tldr: 'Давнее', scale: 'major' }, NOW)
+
+    const got = await latestMajorPatchSince(db, [
+      [730, NOW - 5 * DAY],
+      // патч у 570 был, но до последнего запуска — фактом он не считается
+      [570, NOW - 10 * DAY],
+      // игра без новостей вовсе
+      [440, NOW - 5 * DAY],
+    ])
+    expect([...got]).toEqual([[730, 'Переделали бои']])
+  })
+
+  test('патч ровно в момент запуска — не «с тех пор»; нулевой момент и чужой магазин не спрашиваются', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem({ gid: 'p', publishedAt: NOW - DAY })], NOW)
+    await setNewsDigest(db, 730, 'p', { tldr: 'Новый режим', scale: 'major' }, NOW)
+    expect((await latestMajorPatchSince(db, [[730, NOW - DAY]])).size).toBe(0)
+    // since = 0 — «даты нет», а не «с начала времён»: иначе любой патч стал бы фактом
+    expect((await latestMajorPatchSince(db, [[730, 0]])).size).toBe(0)
+    expect((await latestMajorPatchSince(db, [[-730, NOW - 2 * DAY]])).size).toBe(0)
+    expect(await latestMajorPatchSince(db, [])).toEqual(new Map())
+  })
+
+  test('пар больше потолка — ответ у каждой, порциями по потолку одним batch', async () => {
+    const db = await freshDb()
+    // Крупный патч у самой последней пары: срез по потолку отнял бы именно его
+    const last = PATCH_SINCE_MAX + 20
+    await upsertNewsItems(db, [newsItem({ appid: last, gid: 'p', publishedAt: NOW - DAY })], NOW)
+    await setNewsDigest(db, last, 'p', { tldr: 'Новый режим', scale: 'major' }, NOW)
+    const executed: string[] = []
+    const batched: string[][] = []
+    const argOf = (q: InStatement) => (typeof q === 'string' ? '' : String((q.args as unknown[])[0]))
+    const spy = {
+      execute: (q: InStatement) => {
+        executed.push(argOf(q))
+        return db.execute(q)
+      },
+      batch: (qs: InStatement[], mode?: 'write' | 'read' | 'deferred') => {
+        batched.push(qs.map(argOf))
+        return db.batch(qs, mode)
+      },
+    } as unknown as Db
+    const pairs = Array.from({ length: last }, (_, i) => [i + 1, NOW - 2 * DAY] as const)
+    const got = await latestMajorPatchSince(spy, pairs)
+    expect([...got]).toEqual([[last, 'Новый режим']])
+    // Один обход: ни одного отдельного execute, одна пачка из двух порций
+    expect(executed).toHaveLength(0)
+    expect(batched).toHaveLength(1)
+    expect(batched[0]!.map((a) => (JSON.parse(a) as unknown[]).length)).toEqual([PATCH_SINCE_MAX, 20])
+  })
+
+  test('пар не больше потолка — один обычный запрос, повтор игры — одна пара', async () => {
+    const db = await freshDb()
+    const sent: string[] = []
+    const spy = {
+      execute: (q: InStatement) => {
+        if (typeof q !== 'string') sent.push(String((q.args as unknown[])[0]))
+        return db.execute(q)
+      },
+    } as unknown as Db
+    await latestMajorPatchSince(spy, [
+      [730, NOW - DAY],
+      [730, NOW - 2 * DAY],
+      [570, NOW - DAY],
+    ])
+    expect(sent).toHaveLength(1)
+    expect(JSON.parse(sent[0]!)).toEqual([
+      [730, NOW - DAY],
+      [570, NOW - DAY],
+    ])
   })
 })
 

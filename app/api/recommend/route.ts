@@ -18,7 +18,7 @@ import {
 } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
-import { currentSteamId, getDb, isDemoId, nowSec, sessionSecret } from '@/lib/server'
+import { currentSession, getDb, isDemoId, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from '@/lib/types'
 import { readJsonObject } from '@/lib/reqbody'
@@ -71,8 +71,9 @@ const DEMO_LLM_LIMIT = 2
 const DEMO_LLM_WINDOW_SEC = 86_400
 
 export async function POST(req: Request) {
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
 
   const body = (await readJsonObject(req)) as {
     mood?: unknown
@@ -144,13 +145,17 @@ export async function POST(req: Request) {
     set
   const seedRef = set.seed
 
-  // Цены — до подбора, и по всем, кто может попасть на экран: см. buildPickContext
+  // Цены — до подбора, и по всем, кто может попасть на экран: см. buildPickContext.
+  // Крупный патч после последнего запуска — только writer-сессии: факт
+  // производный от даты запуска, а сессию по вставленной ссылке выдают на
+  // любой публичный профиль (lib/comeback.ts). Остальным и запроса нет
   const ctx = await buildPickContext(
     db,
     set,
     [...new Set([...heroPool, ...discovery].map((c) => c.appid))],
+    { patches: isWriter(session) },
   )
-  const { metaNow, anchorOf, hoursOf, hideUrgency } = ctx
+  const { metaNow, anchorOf, hoursOf, hideUrgency, patchOf } = ctx
 
   // Демо-личность получает настоящую подборку, но считанное число раз в сутки —
   // дальше та же выдача собирается эвристикой. Проверка идёт последней, уже
@@ -192,6 +197,9 @@ export async function POST(req: Request) {
           lean,
           profile,
           tagWeight,
+          // «С твоего последнего захода вышло крупное обновление» — у
+          // заброшенных, где патч подтверждён моделью (lib/comeback.ts)
+          patchOf,
         })
       : null
   const byHeuristic = (pool: ScoredCandidate[], count: number) =>
@@ -204,6 +212,7 @@ export async function POST(req: Request) {
       guaranteed: mood.vibe === 'chill' || lean === 'familiar' ? CANDIDATE_SOURCES : undefined,
       hideUrgency,
       playtimeHidden: set.playtimeHidden,
+      patchOf,
     })
   // Модель могла вернуть меньше пятёрки (отсеяла validatePicks) — недостающее
   // добирает та же эвристика из кандидатов, которых модель не взяла
@@ -278,12 +287,19 @@ export async function POST(req: Request) {
       ...heroMediaView(media.get(p.appid)),
       ...scoreView(i, partsOf.get(p.appid)),
       // «Отправить другу» (/pick): текст без денег — ни хвоста шаблона, ни
-      // цены словами модели, — подписанный для этой сессии (lib/pickshare)
+      // цены словами модели, — подписанный для этой сессии (lib/pickshare).
+      // И без факта о патче: «С твоего последнего захода…» на публичной
+      // странице получатель прочтёт про себя, а дату запуска она выдаст
+      // любому (shareText, lib/comeback.ts)
       ...shareView(sessionSecret(), {
         steamid,
         appid: p.appid,
         source: p.source,
-        text: shareText(p.reason, reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency)),
+        text: shareText(
+          p.reason,
+          reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency),
+          patchOf(p.appid),
+        ),
       }),
     })),
     discoveries: discoveries.map((p, i) => ({

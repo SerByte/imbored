@@ -124,3 +124,34 @@ export function post(path: string, body: unknown = {}, headers: Record<string, s
 export function params<T extends Record<string, string>>(p: T): { params: Promise<T> } {
   return { params: Promise.resolve(p) }
 }
+
+/**
+ * Обрыв базы на одном чтении: роут получает ту же базу, но запрос, текст
+ * которого содержит sqlPart, бросает — как бросил бы Turso при обрыве. Так
+ * проверяется, что сбой вспомогательного чтения не роняет весь ответ, а
+ * остальная работа роута идёт по настоящей базе.
+ *
+ * Зовётся после freshDb и засева: подменяет то, что отдаст getDb().
+ */
+export function breakDbOn(db: Db, sqlPart: string): void {
+  const sqlOf = (stmt: unknown) =>
+    typeof stmt === 'string' ? stmt : ((stmt as { sql?: string } | null)?.sql ?? '')
+  const fail = () => Promise.reject(new Error('обрыв базы в тесте'))
+  const broken = new Proxy(db, {
+    get(target, key) {
+      if (key === 'execute') {
+        return (stmt: unknown, ...rest: unknown[]) =>
+          sqlOf(stmt).includes(sqlPart) ? fail() : (target.execute as (...a: unknown[]) => unknown)(stmt, ...rest)
+      }
+      if (key === 'batch') {
+        return (stmts: unknown[], ...rest: unknown[]) =>
+          stmts.some((s) => sqlOf(s).includes(sqlPart))
+            ? fail()
+            : (target.batch as (...a: unknown[]) => unknown)(stmts, ...rest)
+      }
+      const value: unknown = Reflect.get(target, key, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  globalStore.__imboredDb = Promise.resolve(broken)
+}

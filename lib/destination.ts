@@ -102,11 +102,19 @@ function playQuery(src: URLSearchParams): URLSearchParams {
  * настроение, ключом пресета (ROOM_PRESETS). Хост выбирал его до того, как
  * его развернуло на вход, и после входа комната создаётся сразу с ним — а не
  * заново с вопросом, на который он уже ответил. Чужой ключ отбрасывается.
+ *
+ * hint — подсказка с /play (roomBridgeHref в lib/presets): точного пресета под
+ * настроение выдачи нет, и экран выбора лишь отмечает похожий. Едет через
+ * вход наравне с preset — иначе гость, развёрнутый на вход, вернулся бы к
+ * выбору без отметки. Вместе с preset не едет: выбранное перекрывает
+ * подсказку, комната всё равно создастся сразу.
  */
 function roomQuery(src: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams()
   const preset = roomPresetByKey(src.get('preset'))
+  const hint = roomPresetByKey(src.get('hint'))
   if (preset) out.set('preset', preset.key)
+  else if (hint) out.set('hint', hint.key)
   return out
 }
 

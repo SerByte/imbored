@@ -4,9 +4,10 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
-import { ROOM_PRESETS, roomPresetByKey, type RoomPreset } from '@/lib/presets'
+import { ROOM_PRESETS, roomArrival, type RoomPreset } from '@/lib/presets'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { Icon } from '@/components/Icon'
+import { eyebrow } from '@/components/Labels'
 import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { Spinner } from '@/components/Spinner'
 import { useSearch } from '@/components/useSearch'
@@ -39,6 +40,14 @@ import { useSearch } from '@/components/useSearch'
  * Выбранное едет через вход ключом ?preset= (roomQuery в lib/destination):
  * развёрнутый на вход хост возвращается сюда и получает комнату сразу, без
  * повторного вопроса.
+ *
+ * ?hint= — мост с /play (roomBridgeHref в lib/presets): человек выбирал игру
+ * компанией, а ровно такого вечера среди пресетов нет. Похожий пресет только
+ * ОТМЕЧАЕТСЯ плашкой «похоже на твоё», комнату по-прежнему создаёт тап:
+ * молча создать её с ближайшим настроением значило бы выдать вечер, которого
+ * человек не выбирал, без способа поправить. Порядок плиток не меняется —
+ * отметка, а не перестановка. С ?preset= подсказка не читается: выбранное
+ * важнее похожего.
  */
 
 /*
@@ -84,7 +93,8 @@ export default function NewRoomPage() {
    * запроса с чужим настроением не пошлёт — он не пошлёт никакого.
    */
   const search = useSearch()
-  const back = roomPresetByKey(new URLSearchParams(search).get('preset'))
+  /* back создаёт комнату сразу, hint — только отметка на плитке (lib/presets) */
+  const { create: back, hint } = roomArrival(new URLSearchParams(search))
   const preset = picked ?? back ?? ROOM_PRESETS[0]
   /*
    * Сессия по ссылке на профиль комнату не создаст — это уже известно, если
@@ -160,6 +170,7 @@ export default function NewRoomPage() {
             <p className="max-w-md text-dim text-sm leading-relaxed">
               Колода соберётся из ваших библиотек под это настроение — его увидят все, кто
               зайдёт в комнату.
+              {hint && ` Ровно такого вечера, как в подборе, здесь нет — похожий, «${hint.label}», отмечен ниже, но выбирать тебе.`}
             </p>
           </div>
           {/* Плитки с веером, как ответы квиза: постеры — примеры того, во
@@ -170,10 +181,15 @@ export default function NewRoomPage() {
                 <button
                   type="button"
                   onClick={() => create(p)}
-                  className="panel-lift quiz-tile fan-host w-full px-6 py-6 text-left cursor-pointer"
+                  className={`panel-lift quiz-tile fan-host w-full px-6 py-6 text-left cursor-pointer${hint?.key === p.key ? ' is-hinted' : ''}`}
                 >
                   <PosterFan games={PRESET_ART[p.key] ?? []} />
                   <span aria-hidden className="quiz-scrim" />
+                  {/* Отметка — текстом внутри кнопки, а не только рамкой: её
+                      слышит скринридер и видит тот, кто не различает цвет */}
+                  {hint?.key === p.key && (
+                    <span className={`relative block mb-1.5 ${eyebrow('ember')}`}>похоже на твоё</span>
+                  )}
                   <span className="relative block text-[1.375rem] leading-tight font-extrabold tracking-[-0.025em]">
                     {p.label}
                   </span>
@@ -213,7 +229,13 @@ export default function NewRoomPage() {
               бывает и до выбора, и тогда после входа ждёт выбор, а не комната
               с настроением по умолчанию */}
           <a
-            href={steamLoginFor(picked || back ? `/room/new?preset=${preset.key}` : '/room/new')}
+            href={steamLoginFor(
+              picked || back
+                ? `/room/new?preset=${preset.key}`
+                : hint
+                  ? `/room/new?hint=${hint.key}`
+                  : '/room/new',
+            )}
             className="btn-ember is-block py-3"
           >
             Войти через Steam

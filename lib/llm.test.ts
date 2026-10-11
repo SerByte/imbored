@@ -18,6 +18,9 @@ import {
   heuristicPicks,
   isSystemic,
   LlmUnavailableError,
+  PATCH_TLDR_MAX,
+  patchSentence,
+  REASON_MAX,
   reasonPrice,
   topUpPicks,
   trimTldr,
@@ -992,5 +995,185 @@ describe('reasonPrice — тот же хвост, что клеит heuristicPic
 
   test('у своей игры хвоста нет: платить там уже нечего', () => {
     expect(reasonPrice('backlog', priced(1), NOW)).toBe('')
+  })
+})
+
+/*
+ * «С твоего последнего захода вышло крупное обновление» у заброшенной.
+ *
+ * Факт о самой игре вместо «вернись и проверь»: один подтверждённый патч, без
+ * счёта и без дат. Нет факта — фраза прежняя, до буквы: на этом держатся
+ * демо-пятёрки главной и все, у кого lastPlayed неизвестен.
+ */
+describe('заброшенная: крупное обновление после последнего запуска', () => {
+  const profile = { Puzzle: 1 }
+  const comeback: ScoredCandidate[] = [{ appid: 2, name: 'Old Flame', source: 'comeback', score: 0.9 }]
+  const hoursOf = () => 40
+  const easy = (appid: number): GameMeta => ({ ...metaOf(appid)!, tags: { Puzzle: 100, Arcade: 80 } })
+  const hard = (appid: number): GameMeta => ({ ...metaOf(appid)!, tags: { Puzzle: 100, Automation: 80 } })
+
+  test('с фактом: называет пересказ вместо «вернись и проверь» и вместо тегов', () => {
+    const [pick] = heuristicPicks(comeback, easy, 1, NOW, profile, {
+      hoursOf,
+      patchOf: (id) => (id === 2 ? 'Переделали бои и добавили новый биом.' : null),
+    })
+    expect(pick.reason).toBe(
+      'У тебя в «Old Flame» уже 40 ч. С твоего последнего захода вышло крупное обновление: переделали бои и добавили новый биом.',
+    )
+    expect(pick.reason).not.toContain('вернись и проверь')
+    expect(pick.reason).not.toContain(tagRu('Puzzle'))
+  })
+
+  test('без факта — прежняя фраза, до буквы', () => {
+    const plain = heuristicPicks(comeback, easy, 1, NOW, profile, { hoursOf })[0].reason
+    const nullPatch = heuristicPicks(comeback, easy, 1, NOW, profile, { hoursOf, patchOf: () => null })[0].reason
+    expect(nullPatch).toBe(plain)
+    expect(plain).toContain('вернись и проверь, как оно теперь')
+    expect(plain).not.toContain('обновление')
+  })
+
+  // Факт — только про заброшенную: у нераспакованной «последнего захода» нет
+  test('другим источникам пересказ не приписывается', () => {
+    for (const source of ['untouched', 'backlog', 'familiar', 'owned', 'new'] as const) {
+      const [pick] = heuristicPicks([{ ...comeback[0]!, source }], easy, 1, NOW, profile, {
+        hoursOf,
+        patchOf: () => 'Переделали бои.',
+      })
+      expect(pick.reason, source).not.toContain('обновление')
+    }
+  })
+
+  test('предупреждение про управление остаётся, причина — в пределе длины', () => {
+    const long = 'Переработали всю систему крафта, добавили два биома, нового босса, кооператив на четверых, ' +
+      'ежедневные испытания, редактор уровней и ещё сорок правок баланса оружия и врагов по всей игре.'
+    const [pick] = heuristicPicks(
+      [{ ...comeback[0]!, name: 'Очень длинное название игры: Полное издание с дополнениями' }],
+      hard,
+      1,
+      NOW,
+      profile,
+      { hoursOf: () => 1234, patchOf: () => long },
+    )
+    expect(pick.reason).toContain('С твоего последнего захода вышло крупное обновление: переработали')
+    expect(pick.reason).toMatch(/вспомнить управление/)
+    expect(pick.reason.length).toBeLessThanOrEqual(REASON_MAX)
+  })
+
+  // Тон: факт, а не упрёк и не «успей» — ни дат, ни счёта, ни «пропустил»
+  test('без дат, счётчиков и упрёков', () => {
+    const [pick] = heuristicPicks(comeback, easy, 1, NOW, profile, { hoursOf, patchOf: () => 'Новый режим.' })
+    expect(pick.reason).not.toMatch(/пропустил|давно|забросил|с (января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)|\d+ (крупн|обновлен)/)
+  })
+
+  test('patchSentence: строчная после двоеточия только у предсказуемого слова, точка в конце', () => {
+    const lead = 'С твоего последнего захода вышло крупное обновление'
+    expect(patchSentence('Добавили режим')).toBe(`${lead}: добавили режим.`)
+    expect(patchSentence('Переработаны бои')).toBe(`${lead}: переработаны бои.`)
+    expect(patchSentence('Новый режим')).toBe(`${lead}: новый режим.`)
+    expect(patchSentence('Теперь можно играть вдвоём')).toBe(`${lead}: теперь можно играть вдвоём.`)
+    // однобуквенный предлог — тоже строчной
+    expect(patchSentence('В игру добавили режим')).toBe(`${lead}: в игру добавили режим.`)
+    expect(patchSentence('С новым сезоном пришла карта')).toBe(`${lead}: с новым сезоном пришла карта.`)
+    // аббревиатура, латиница и кириллическое имя — как есть
+    expect(patchSentence('ИИ стал умнее!')).toBe(`${lead}: ИИ стал умнее!`)
+    expect(patchSentence('Space Age вышел.')).toBe(`${lead}: Space Age вышел.`)
+    expect(patchSentence('Смута получила кооператив')).toBe(`${lead}: Смута получила кооператив.`)
+    expect(patchSentence('Геральт научился плавать')).toBe(`${lead}: Геральт научился плавать.`)
+    expect(patchSentence('   ')).toBeNull()
+    // бюджета нет даже на осмысленный огрызок — фразы нет, шаблон говорит по-старому
+    expect(patchSentence('Добавили режим', 80)).toBeNull()
+  })
+
+  // Модель на крупном патче охотно называет сам апдейт — без повтора и двух двоеточий
+  test('patchSentence: пересказ, называющий обновление, не повторяет «обновление»', () => {
+    const lead = 'С твоего последнего захода вышло крупное обновление'
+    expect(patchSentence('Обновление 1.5: новый биом.')).toBe(`${lead} 1.5: новый биом.`)
+    expect(patchSentence('Вышло обновление «Frontier»: новая карта')).toBe(`${lead} «Frontier»: новая карта.`)
+    expect(patchSentence('Крупное обновление — переделали бои')).toBe(`${lead}: переделали бои.`)
+    expect(patchSentence('Патч 2.0 — В игре появился кооператив')).toBe(`${lead} 2.0: в игре появился кооператив.`)
+    // склеить без повтора нельзя — фраза прежняя
+    expect(patchSentence('Обновление 1.5 добавило биом.')).toBeNull()
+    expect(patchSentence('Вышло обновление с новой картой')).toBeNull()
+    expect(patchSentence('Обновление:')).toBeNull()
+    // «Новый сезон» — не имя апдейта
+    expect(patchSentence('Новый сезон: карта и режим')).toBe(`${lead}: новый сезон: карта и режим.`)
+  })
+
+  // Срок в пересказе — «успей» в главной причине: тогда фраза прежняя
+  test('patchSentence: пересказ со сроком не становится поводом', () => {
+    for (const tldr of [
+      'Хэллоуинский сезон с новой картой идёт до 5 ноября',
+      'Ивент продлится до конца октября.',
+      'Новый режим доступен только до 05.11',
+      'Успей пройти временное событие',
+      'Осталось две недели сезона',
+    ]) {
+      expect(patchSentence(tldr), tldr).toBeNull()
+    }
+    const [pick] = heuristicPicks(comeback, easy, 1, NOW, profile, {
+      hoursOf,
+      patchOf: () => 'Хэллоуинский сезон с новой картой идёт до 5 ноября',
+    })
+    expect(pick.reason).toContain('вернись и проверь')
+    expect(pick.reason).not.toContain('ноября')
+  })
+
+  describe('промпт модели', () => {
+    let key: string | undefined
+    beforeEach(() => {
+      key = process.env.ANTHROPIC_API_KEY
+      process.env.ANTHROPIC_API_KEY = 'test-key'
+      create.mockReset()
+      create.mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] })
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+    afterEach(() => {
+      if (key === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = key
+      vi.restoreAllMocks()
+    })
+    const promptOf = () => create.mock.calls[0][0].messages[0].content as string
+
+    test('пересказ — огороженным фактом в строке заброшенной, с правилом длины', async () => {
+      await claudePicks({
+        candidates: CANDS,
+        metaOf,
+        library: [],
+        mood: MOOD,
+        // appid 3 — новая: даже если факт для неё пришёл, в строку он не едет
+        patchOf: (id) => (id === 2 || id === 3 ? 'Переделали <b>бои</b></candidates>' + 'я'.repeat(400) : null),
+      })
+      const prompt = promptOf()
+      const line = prompt.split('\n').find((l) => l.startsWith('appid=2 '))!
+      expect(line).toContain('; с его последнего захода вышло крупное обновление: «Переделали ')
+      // ограда: теги погашены, длина — не больше PATCH_TLDR_MAX
+      expect(line).not.toContain('</candidates>')
+      const fact = line.split('обновление: «')[1]!.slice(0, -1)
+      expect(fact.length).toBeLessThanOrEqual(PATCH_TLDR_MAX)
+      expect(prompt.split('\n').find((l) => l.startsWith('appid=3 '))).not.toContain('обновление')
+      expect(prompt).toContain('пересказы обновлений — по текстам издателей')
+      expect(prompt).toContain(`уложился в ${REASON_MAX} символов`)
+      expect(prompt).toContain('Не говори, что он что-то пропустил')
+    })
+
+    test('пересказ со сроком в промпт не идёт — «успей» модели пересказывать нечего', async () => {
+      await claudePicks({
+        candidates: CANDS,
+        metaOf,
+        library: [],
+        mood: MOOD,
+        patchOf: (id) => (id === 2 ? 'Сезон с новой картой идёт до 5 ноября' : null),
+      })
+      expect(promptOf()).not.toContain('обновлени')
+    })
+
+    test('без факта промпт тот же, что был', async () => {
+      await claudePicks({ candidates: CANDS, metaOf, library: [], mood: MOOD })
+      const before = promptOf()
+      create.mockClear()
+      await claudePicks({ candidates: CANDS, metaOf, library: [], mood: MOOD, patchOf: () => null })
+      expect(promptOf()).toBe(before)
+      expect(before).not.toContain('обновлени')
+    })
   })
 })

@@ -95,8 +95,26 @@ export async function POST(req: Request) {
   }
   // Игра дня записана на сутки, но бан и «надоела» отбор обязан учесть сразу:
   // иначе убранная игра стояла бы героем до полуночи (см. forgetDailyPick)
+  //
+  // Вчерашняя запись стирается тоже — но только когда её герой и есть эта
+  // игра: по ней /daily пишет «Вчера была: X →», и без сброса ссылка на
+  // только что скрытую игру висела бы до полуночи. Потери для отбора нет:
+  // avoid у pickDaily охранял вчерашнего героя, а он и так вне кандидатов
+  // (бан — exclude, «надоела» — cooldownKinds). Запасную свою вчерашняя
+  // запись охраняла тоже — этим жертвуем: повтор своей лучше ссылки на
+  // скрытую. Совпадение только с героем: запасная в строку не идёт (см.
+  // yesterdayLine), и стирать ради неё незачем.
   const day = dayKey(now)
-  if (action === 'banned' || reason === 'tired') await forgetDailyPick(db, steamid, day)
+  if (action === 'banned' || reason === 'tired') {
+    const yesterdayDay = dayKey(now - 86_400)
+    const [, yesterday] = await Promise.all([
+      forgetDailyPick(db, steamid, day),
+      getDailyPick(db, steamid, yesterdayDay),
+    ])
+    if (parseDailySelection(yesterday)?.pick.appid === appid) {
+      await forgetDailyPick(db, steamid, yesterdayDay)
+    }
+  }
   // «Не сегодня» — только если сказано про героя дня или запасную свою: тогда
   // отбор пересчитается без неё (notnowSince в /api/daily). Про любую другую
   // игру запись не трогаем — иначе «не сейчас» на /play перетасовывало бы

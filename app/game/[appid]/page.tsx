@@ -25,6 +25,7 @@ import {
   isRussianText,
   loadGamePage,
   reviewFacts,
+  type StudioLine,
 } from '@/lib/gamepage'
 import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
@@ -195,6 +196,40 @@ export async function generateMetadata({
  */
 function PriceLine({ until, children }: { until: number | null; children: ReactNode }) {
   return until === null ? children : <ShownUntil untilSec={until}>{children}</ShownUntil>
+}
+
+/**
+ * «Ещё у Supergiant Games: Bastion · Transistor · Pyre» — что ещё сделали
+ * авторы. Какие игры и когда строки нет вовсе — studioLine в lib/gamepage.
+ *
+ * Строка текста, а не сетка карточек, и это про соседнюю кнопку: «Подобрать
+ * игру под настроение» — единственная ссылка страницы в продукт, и её уже
+ * поднимали с 96% глубины до половины. Ещё шесть обложек над ней утопили бы
+ * её обратно, а заодно стоили бы шести картинок на каждой из пяти тысяч
+ * карточек. Ссылки без prefetch: строку видят все, а идут по ней редко.
+ *
+ * Имя студии — ровно как в подписи героя: та же строка из базы, без
+ * «исправлений», которые разошлись бы с ней на той же странице.
+ */
+function StudioLinks({ studio, className = '' }: { studio: StudioLine; className?: string }) {
+  return (
+    <p className={`text-sm text-dim leading-relaxed ${className}`}>
+      Ещё у&nbsp;{studio.developer}:{' '}
+      {studio.games.map((g, i) => (
+        <Fragment key={g.appid}>
+          {i > 0 && ' · '}
+          <Link
+            href={`/game/${g.appid}`}
+            prefetch={false}
+            transitionTypes={['nav-forward']}
+            className="tap tap-tight text-ink/80 underline decoration-1 underline-offset-4 decoration-ink/30 transition-colors hover:text-ink hover:decoration-ink"
+          >
+            {g.name}
+          </Link>
+        </Fragment>
+      ))}
+    </p>
+  )
 }
 
 const SCORE_RU: Record<string, string> = {
@@ -437,8 +472,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
               Слово — только из сводки. Проценты и количество мы пересказываем,
               а словесную шкалу Steam придумывать за неё нельзя; без сводки
-              рядом с кольцом остаётся «из N отзывов — за», и этого хватает —
-              процент уже стоит внутри кольца.
+              рядом с кольцом остаётся «положительных из N отзывов», и этого
+              хватает — процент уже стоит внутри кольца.
             */}
             {facts && (
               <div className="flex items-center gap-3.5 text-sm">
@@ -455,8 +490,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       {SCORE_RU[facts.label] ?? facts.label}
                     </span>
                   )}
+                  {/* Было «из N отзывов — за»: «за» здесь значило «голосов
+                      за», но читалось как обрубленное «за …» — будто строку
+                      срезало на полуслове. Со словом Steam процент уже назван
+                      дважды (кольцо и шкала), без него — называем сами. */}
                   <span className="tabular-nums text-dim text-xs">
-                    из {facts.total.toLocaleString('ru-RU')} {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за
+                    {facts.label ? 'из' : 'положительных из'} {facts.total.toLocaleString('ru-RU')}{' '}
+                    {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')}
                   </span>
                 </div>
               </div>
@@ -740,8 +780,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </Link>
               ))}
             </div>
+            {/* Под сеткой, внутри её секции: отдельная секция добавила бы ещё
+                один межблочный отступ над кнопкой ниже */}
+            {data.studio && <StudioLinks studio={data.studio} className="mt-6" />}
           </section>
         )}
+        {/* Полки нет (у игры нет тегов), а игры студии есть — строка сама по себе */}
+        {data.similar.length === 0 && data.studio && <StudioLinks studio={data.studio} />}
 
         {/* /quiz, а не /play: страница кэшируется на неделю и пререндерится, то
             есть про сессию тут знать нечего. Гостя /play разворачивал на

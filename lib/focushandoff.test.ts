@@ -124,7 +124,8 @@ describe('/explore: колода уходит — фокус остаётся н
 
   test('голос с клавиатуры по последней карте отдаёт фокус этому заголовку', () => {
     // колода сообщает, чем голосовали; страница знает, что карта последняя
-    expect(deck).toMatch(/onVote\(top, yes, keyboard\)/)
+    // card — голос стрелкой идёт той же функцией (commitCard), что и кнопкой
+    expect(deck).toMatch(/onVote\((?:top|card), yes, keyboard\)/)
     expect(page).toMatch(/if \(keyboard && cards\.length === 1\) pendingFocus\.current = 'end'/)
     expect(page).toMatch(/target === 'end'\s*\?\s*deckEndHead\.current/)
   })

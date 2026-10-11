@@ -3,6 +3,7 @@ import {
   DAILY_TOP,
   DAILY_TZ,
   dailyHeroAppids,
+  dailyReasonBase,
   dayKey,
   dayStartSec,
   hashString,
@@ -12,6 +13,7 @@ import {
   pickOwnAlternate,
   publicPick,
   STORE_DAY_EVERY,
+  yesterdayLine,
 } from './daily'
 import { dayLabel } from './freshness'
 import { neutralParts } from './recommend'
@@ -329,9 +331,95 @@ describe('parseDailySelection', () => {
     }
   })
 
+  /*
+   * Факт «с твоего последнего захода вышло крупное обновление» — производная
+   * от даты последнего запуска. Запись одна на steamid и общая для всех его
+   * сессий, поэтому факт лежит отдельным полем, а отдаёт его только writer.
+   */
+  test('причина с патчем — отдельным полем и только writer-сессии', () => {
+    const patched = 'У тебя в «Dota 2» уже 12 ч. С твоего последнего захода вышло крупное обновление: новый режим.'
+    const sel = parseDailySelection({ ...base, reasonPatched: patched, alt: { ...alt, reasonPatched: patched } })!
+    expect(sel.reasonBase).toBe('Причина.')
+    expect(dailyReasonBase(sel, true)).toBe(patched)
+    expect(dailyReasonBase(sel, false)).toBe('Причина.')
+    expect(dailyReasonBase(sel.alt!, true)).toBe(patched)
+    expect(dailyReasonBase(sel.alt!, false)).toBe('Своя.')
+    // Запись до поля и битое поле — прежняя причина всем, запись живёт
+    expect(dailyReasonBase(parseDailySelection(base)!, true)).toBe('Причина.')
+    for (const bad of [7, '', null]) {
+      const got = parseDailySelection({ ...base, reasonPatched: bad })
+      expect(got, JSON.stringify(bad)).toEqual({ ...base, via: null, alt: null })
+    }
+  })
+
   test('«Не сегодня» сбрасывает запись только про героя дня и запасную свою', () => {
     expect(dailyHeroAppids(null)).toEqual([])
     expect(dailyHeroAppids(parseDailySelection(base))).toEqual([620])
     expect(dailyHeroAppids(parseDailySelection({ ...base, alt }))).toEqual([620, 570])
+  })
+})
+
+describe('yesterdayLine', () => {
+  const sel = (appid: number, name: string, alt?: number) =>
+    parseDailySelection({
+      pick: { appid, name, source: 'untouched' },
+      shelf: [],
+      hoursPlayed: null,
+      reasonBase: 'Причина.',
+      sharedTags: [],
+      hideUrgency: false,
+      ...(alt
+        ? {
+            alt: {
+              pick: { appid: alt, name: 'Своя', source: 'backlog' },
+              hoursPlayed: null,
+              reasonBase: '',
+              sharedTags: [],
+            },
+          }
+        : {}),
+    })!
+  const today = sel(620, 'Portal 2', 570)
+
+  test('вчерашний герой — строкой со ссылкой: appid и имя из записи, без пробелов по краям', () => {
+    expect(yesterdayLine(sel(400, '  Portal  '), today)).toEqual({ appid: 400, name: 'Portal' })
+  })
+
+  test('записи нет или она не разобралась — строки нет', () => {
+    expect(yesterdayLine(null, today)).toBeNull()
+    expect(yesterdayLine(parseDailySelection({ pick: 7 }), today)).toBeNull()
+  })
+
+  test('имени нет — строки нет: «Вчера была: →» пустой ссылкой хуже молчания', () => {
+    expect(yesterdayLine(sel(400, ''), today)).toBeNull()
+    expect(yesterdayLine(sel(400, ' \t '), today)).toBeNull()
+  })
+
+  test('вчерашняя сегодня снова на экране — героем или запасной своей — строки нет', () => {
+    expect(yesterdayLine(sel(620, 'Portal 2'), today)).toBeNull()
+    expect(yesterdayLine(sel(570, 'Dota 2'), today)).toBeNull()
+  })
+
+  test('вчерашняя сегодня на полке находок — строки нет: одна игра дважды на странице', () => {
+    const withShelf = parseDailySelection({
+      pick: { appid: 620, name: 'Portal 2', source: 'new' },
+      shelf: [
+        { appid: 730, name: 'CS2', source: 'new' },
+        { appid: 400, name: 'Portal', source: 'new' },
+      ],
+      hoursPlayed: null,
+      reasonBase: 'Причина.',
+      sharedTags: [],
+      hideUrgency: false,
+    })!
+    expect(yesterdayLine(sel(400, 'Portal'), withShelf)).toBeNull()
+    expect(yesterdayLine(sel(440, 'TF2'), withShelf)).toEqual({ appid: 440, name: 'TF2' })
+  })
+
+  test('вчерашняя запасная своя в строку не идёт: героем её делало только нажатие', () => {
+    expect(yesterdayLine(sel(400, 'Portal', 500), sel(620, 'Portal 2'))).toEqual({
+      appid: 400,
+      name: 'Portal',
+    })
   })
 })

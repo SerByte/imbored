@@ -3,7 +3,10 @@ import { LEANS, NEUTRAL_MOOD, parseLean, parseMood } from './mood'
 import {
   playHref,
   presetHref,
+  nearestRoomPreset,
   ROOM_PRESETS,
+  roomArrival,
+  roomBridgeHref,
   roomPresetByKey,
   roomPresetOf,
   VIBE_PRESETS,
@@ -118,5 +121,127 @@ describe('ROOM_PRESETS', () => {
     expect(roomPresetOf(undefined)).toBeNull()
     // Комнаты «коротко и спокойно» в списке нет — и подписывать её нечем
     expect(roomPresetOf({ time: 'short', vibe: 'chill', social: 'friends' })).toBeNull()
+  })
+})
+
+const TIMES: readonly Mood['time'][] = ['short', 'medium', 'long']
+const VIBES: readonly Mood['vibe'][] = ['chill', 'engaged']
+const ALL_AXES = TIMES.flatMap((time) => VIBES.map((vibe) => ({ time, vibe })))
+
+/**
+ * Ближайший пресет — подсказка на экране выбора, а не молчаливая подмена.
+ * Стережём все шесть сочетаний time×vibe явной таблицей: смена меры
+ * (вайб дороже времени, ничья — в пользу короткого) обязана быть видна здесь,
+ * а не всплыть у хоста отмеченной не той плиткой.
+ */
+describe('nearestRoomPreset', () => {
+  const EXPECTED: Record<string, string> = {
+    'short|chill': 'talk', // спокойно важнее, чем «коротко»: быстрые катки — с вызовом
+    'short|engaged': 'quick',
+    'medium|chill': 'talk',
+    'medium|engaged': 'quick', // ничья quick/evening — короткий укладывается в час
+    'long|chill': 'cozy',
+    'long|engaged': 'evening',
+  }
+
+  test('каждое из шести сочетаний — своя явная строка таблицы', () => {
+    expect(ALL_AXES).toHaveLength(6)
+    for (const axes of ALL_AXES) {
+      const key = `${axes.time}|${axes.vibe}`
+      expect(nearestRoomPreset(axes)?.key, key).toBe(EXPECTED[key])
+    }
+  })
+
+  test('точный пресет, где он есть, — тот же, что у roomPresetOf', () => {
+    for (const axes of ALL_AXES) {
+      const exact = roomPresetOf({ ...axes, social: 'friends' })
+      if (exact) expect(nearestRoomPreset(axes), `${axes.time}|${axes.vibe}`).toBe(exact)
+    }
+  })
+
+  test('вайб не меняется никогда: спокойной компании — не соревнование', () => {
+    for (const axes of ALL_AXES) {
+      expect(nearestRoomPreset(axes)?.mood.vibe, `${axes.time}|${axes.vibe}`).toBe(axes.vibe)
+    }
+  })
+
+  test('чужие значения осей — null, а не случайный пресет', () => {
+    expect(nearestRoomPreset(null)).toBeNull()
+    expect(nearestRoomPreset(undefined)).toBeNull()
+    expect(nearestRoomPreset({ time: 'forever' as Mood['time'], vibe: 'chill' })).toBeNull()
+    expect(nearestRoomPreset({ time: 'short', vibe: 'rage' as Mood['vibe'] })).toBeNull()
+    expect(nearestRoomPreset({ time: '__proto__' as Mood['time'], vibe: 'chill' })).toBeNull()
+  })
+})
+
+/**
+ * Мост «Позвать друзей выбрать вместе» с /play. Главное обещание: комната
+ * создаётся в один тап ТОЛЬКО с тем настроением, которое человек назвал сам.
+ * Без точного пресета — подсказка (?hint=), и тогда в адресе нет preset,
+ * иначе /room/new создал бы комнату с чужим вечером.
+ */
+describe('roomBridgeHref', () => {
+  test('соло-настроению мост не предлагается', () => {
+    for (const axes of ALL_AXES) expect(roomBridgeHref({ ...axes, social: 'solo' })).toBeNull()
+    expect(roomBridgeHref(null)).toBeNull()
+    expect(roomBridgeHref(undefined)).toBeNull()
+  })
+
+  test('точный пресет — создание в один тап, и настроение комнаты — ровно выдачи', () => {
+    for (const axes of ALL_AXES) {
+      const mood: Mood = { ...axes, social: 'friends' }
+      const exact = roomPresetOf(mood)
+      if (!exact) continue
+      const href = roomBridgeHref(mood)
+      expect(href, exact.key).toBe(`/room/new?preset=${exact.key}`)
+      const got = roomPresetByKey(new URL(href!, 'https://imbored.test').searchParams.get('preset'))
+      expect(got?.mood, exact.key).toEqual(mood)
+    }
+  })
+
+  test('без точного — только подсказка: в адресе нет preset, и /room/new комнату сам не создаст', () => {
+    const gaps = ALL_AXES.filter((axes) => !roomPresetOf({ ...axes, social: 'friends' }))
+    expect(gaps.map((a) => `${a.time}|${a.vibe}`).sort()).toEqual(['medium|engaged', 'short|chill'])
+    for (const axes of gaps) {
+      const q = new URL(roomBridgeHref({ ...axes, social: 'friends' })!, 'https://imbored.test').searchParams
+      expect([...q.keys()], `${axes.time}|${axes.vibe}`).toEqual(['hint'])
+      expect(q.get('hint')).toBe(nearestRoomPreset(axes)?.key)
+      // тот же разбор, что у /room/new: создать не с чем, отмечен ближайший
+      const got = roomArrival(q)
+      expect(got.create, `${axes.time}|${axes.vibe}`).toBeNull()
+      expect(got.hint, `${axes.time}|${axes.vibe}`).toBe(nearestRoomPreset(axes))
+    }
+  })
+
+  test('чужие оси из адреса /play — без моста, а не hint=undefined', () => {
+    expect(roomBridgeHref({ time: 'forever' as Mood['time'], vibe: 'chill', social: 'friends' })).toBeNull()
+  })
+})
+
+/**
+ * Разбор адреса /room/new: create — комната сразу, hint — только отметка.
+ * Сторож главного обещания моста: подсказка сама комнату не создаёт никогда,
+ * а выбранный пресет подсказку перекрывает.
+ */
+describe('roomArrival', () => {
+  const arrive = (s: string) => roomArrival(new URLSearchParams(s))
+
+  test('?hint= без preset — отметка, но не создание, для каждого пресета', () => {
+    for (const p of ROOM_PRESETS) {
+      expect(arrive(`hint=${p.key}`), p.key).toEqual({ create: null, hint: p })
+    }
+  })
+
+  test('?preset= создаёт, а подсказку рядом не читает', () => {
+    for (const p of ROOM_PRESETS) {
+      expect(arrive(`preset=${p.key}`), p.key).toEqual({ create: p, hint: null })
+      expect(arrive(`preset=${p.key}&hint=talk`), p.key).toEqual({ create: p, hint: null })
+    }
+  })
+
+  test('чужой preset не создаёт и не губит годную подсказку; чужое — null', () => {
+    expect(arrive('preset=rage&hint=talk')).toEqual({ create: null, hint: roomPresetByKey('talk') })
+    expect(arrive('hint=__proto__')).toEqual({ create: null, hint: null })
+    expect(arrive('')).toEqual({ create: null, hint: null })
   })
 })

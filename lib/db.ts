@@ -380,11 +380,11 @@ const alivePool = (p: '' | 'g.') =>
  * {appid}» из /api/prepare их нет).
  *
  * Одна строка на весь проект. Ею построены частичные индексы каталога ниже
- * (idx_games_pool, idx_games_ccu, idx_games_reviews_at), а SQLite берёт
- * частичный индекс, только если WHERE запроса повторяет его предикат почти
- * дословно. Копий было девять — в lib/db, lib/pool, lib/trivia и скриптах, — и
- * отъезд любой из них не ломал ни одного ответа, а молча превращал запрос в
- * полный скан games. Планы сторожит lib/queryplan.test.ts, копии —
+ * (idx_games_pool, idx_games_ccu, idx_games_reviews_at, idx_games_developer),
+ * а SQLite берёт частичный индекс, только если WHERE запроса повторяет его
+ * предикат почти дословно. Копий было девять — в lib/db, lib/pool, lib/trivia
+ * и скриптах, — и отъезд любой из них не ломал ни одного ответа, а молча
+ * превращал запрос в полный скан games. Планы сторожит lib/queryplan.test.ts, копии —
  * lib/noscan.test.ts.
  *
  * Правка этой строки меняет и индексы, а CREATE INDEX IF NOT EXISTS смотрит
@@ -502,6 +502,14 @@ CREATE INDEX IF NOT EXISTS idx_games_ccu ON games (ccu DESC)
 CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_total DESC)
   WHERE ${ALIVE_POOL};
 
+-- «Ещё у этой студии» на карточке игры (gamesByDeveloper): игры одного
+-- разработчика по отзывам, второй ключ — appid, он же rowid, которым индекс
+-- заканчивается сам. Порядок целиком из индекса, чтение обрывает LIMIT: без
+-- него каждая из пяти тысяч карточек карты сайта читала бы весь games. Здесь,
+-- а не в SCHEMA: developer у старых баз приезжает ALTER-циклом.
+CREATE INDEX IF NOT EXISTS idx_games_developer ON games (developer, reviews_total DESC)
+  WHERE ${ALIVE_POOL};
+
 -- Конец доверия скидке (DEAL_UNTIL): по нему крон карточек находит тех, чья
 -- скидка погасла с прошлого прохода (dealsEndedBetween), — их карточки в
 -- недельном кэше ещё обещают её в микроразметке. Только строки со скидкой, а
@@ -567,6 +575,15 @@ CREATE TABLE IF NOT EXISTS news_items (
   PRIMARY KEY (appid, gid)
 );
 CREATE INDEX IF NOT EXISTS idx_news_app ON news_items (appid, published_at DESC);
+
+-- Подтверждённые крупные патчи игры: причина заброшенной на /play и в «Игре
+-- дня», метка «обновлялась» на стене /library (latestMajorPatchSince). По
+-- idx_news_app подзапрос дочитывал бы все ≤30 постов игры после давнего
+-- последнего запуска, если среди них нет пересказанного крупного патча, — а
+-- это обычный случай: ивенты, распродажи, хотфиксы. Здесь — не больше одной
+-- строки на пару. Предикат повторяет запрос дословно.
+CREATE INDEX IF NOT EXISTS idx_news_app_major ON news_items (appid, published_at DESC)
+  WHERE kind = 'patch' AND scale = 'major' AND tldr <> '';
 
 -- общая лента: только крупные патчи игр из каталога (rank > 0), а не всё подряд
 CREATE INDEX IF NOT EXISTS idx_news_feed ON news_items (published_at DESC)
@@ -1888,7 +1905,9 @@ export async function saveDailyPick(
  * Стирается только запись дня day, вчерашняя остаётся: по ней пересчёт не
  * вернёт вчерашнего героя (avoid у pickDaily). Стёртая вместе с сегодняшней,
  * она пропадала бы ровно тогда, когда отбор идёт второй раз за день, — после
- * «Не сегодня» про героя.
+ * «Не сегодня» про героя. Исключение — бан и «надоела» про самого
+ * вчерашнего героя: /api/feedback тогда зовёт сброс и для вчерашнего дня,
+ * иначе /daily показывал бы скрытую игру строкой «Вчера была: …».
  */
 export async function forgetDailyPick(db: Db, steamid: string, day: string): Promise<void> {
   try {
@@ -2892,6 +2911,46 @@ export async function topGamesByTag(
     headerImage: r.header_image ?? null,
     art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
   }))
+}
+
+/** Игра студии для строки «Ещё у …» на карточке: без арта, строка текстовая */
+export type StudioGame = {
+  appid: number
+  name: string
+  /** Для порядка, а не для вывода: studioLine досортировывает по нему сама */
+  reviewsTotal: number
+}
+
+/**
+ * Живые игры одного разработчика — кандидаты строки «Ещё у …» (studioLine в
+ * lib/gamepage), самые обсуждаемые первыми.
+ *
+ * Совпадение точное, по строке games.developer как есть. Там лежит только
+ * ПЕРВЫЙ разработчик из appdetails (lib/catalog), а одна студия бывает
+ * записана по-разному («CAPCOM Co., Ltd.» и «Capcom»), так что строка бывает
+ * неполной. Нормализовать имя здесь значило бы уйти с индекса на выражение
+ * ради редкого случая, а неполный список честен: всё в нём — правда.
+ *
+ * Игра страницы в выборке остаётся намеренно: limit — это «на одну больше
+ * порога», и по нему studioLine понимает, что у студии больше двенадцати живых
+ * игр и это корпоративный каталог, а не почерк. Исключи её здесь — порог
+ * сдвинулся бы на единицу у живых игр и остался бы на месте у мёртвых.
+ *
+ * Порядок reviews_total DESC, appid — второй ключ ради ISR: при равных
+ * отзывах карточка не должна меняться от того, как SQLite обошёл ничью.
+ * Оба ключа приходят из idx_games_developer (сторож в lib/queryplan.test.ts).
+ */
+export async function gamesByDeveloper(db: Db, developer: string, limit: number): Promise<StudioGame[]> {
+  const res = await db.execute({
+    sql: `SELECT appid, name, reviews_total FROM games
+          WHERE developer = ? AND appid > 0 AND ${ALIVE_POOL}
+          ORDER BY reviews_total DESC, appid
+          LIMIT ?`,
+    args: [developer, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; name: string; reviews_total: number | null }>).map(
+    (r) => ({ appid: Number(r.appid), name: r.name, reviewsTotal: Number(r.reviews_total ?? 0) }),
+  )
 }
 
 /** Общие теги пары из shared_json: только строки, мусор — пустой список */
@@ -5791,6 +5850,81 @@ export async function freshlyDigestedPatches(
     gid: String(r.gid),
     digestedAt: Number(r.tldr_at),
   }))
+}
+
+/**
+ * Сколько пар «игра — с какого момента» несёт один SQL-запрос
+ * latestMajorPatchSince. Потолок держит длину одного оператора, а не ответа:
+ * пар больше — запросов несколько, одним db.batch.
+ */
+export const PATCH_SINCE_MAX = 60
+
+/**
+ * Самый свежий подтверждённый моделью крупный патч каждой игры после её
+ * момента since — для причины заброшенной игры на /play и в «Игре дня» и
+ * метки «обновлялась» на стене /library.
+ *
+ * «Подтверждённый» — scale = 'major' И непустой tldr. Масштаб major эвристика
+ * newsjob ставит любому патчноуту, который не выглядит мелочью, а уточняет его
+ * модель при пересказе. Без tldr «крупное обновление» значило бы «длинный
+ * текст», и балансная правка на три экрана звала бы вернуться в игру. Пересказ
+ * заодно и есть то, что причина называет: без него сказать было бы нечего.
+ *
+ * Пары едут одним JSON-параметром, как у withBodies, а на каждую пару —
+ * скалярный подзапрос по частичному индексу idx_news_app_major (appid = ? AND
+ * published_at > ?): в нём только подтверждённые крупные патчи, порядок DESC
+ * приходит из индекса, и LIMIT 1 читает не больше одной строки на пару, как бы
+ * давно ни был последний запуск. Предикат подзапроса повторяет предикат
+ * индекса дословно — разойдутся, и SQLite молча уйдёт на idx_news_app с
+ * дочитыванием всей истории игры. Сторож плана — lib/queryplan.test.ts.
+ *
+ * Пар больше PATCH_SINCE_MAX — они режутся на порции, и порции уходят одним
+ * db.batch: один обход к базе, и ответ получает КАЖДАЯ пара. Стена /library
+ * грузится накопительно (порция 48 плиток, «Показать ещё» добавляет к ним), и
+ * срез по потолку оставлял бы метку верхним плиткам и отнимал у нижних при том
+ * же условии.
+ *
+ * Игры без такого патча в ответе нет; «нет» здесь значит «не знаем», а не
+ * «обновлений не было» — история патчей неглубокая и опрашивается не у всех.
+ * Поэтому вызывающие говорят о факте, только когда он есть.
+ */
+export async function latestMajorPatchSince(
+  db: Db,
+  pairs: ReadonlyArray<readonly [appid: number, since: number]>,
+): Promise<Map<number, string>> {
+  const out = new Map<number, string>()
+  // Отрицательные appid — игры чужих магазинов, новостей Steam у них нет.
+  // Повтор игры — одна пара: ответ всё равно один на appid
+  const seen = new Set<number>()
+  const args = pairs.filter(([appid, since]) => {
+    if (!(appid > 0 && since > 0) || seen.has(appid)) return false
+    seen.add(appid)
+    return true
+  })
+  if (!args.length) return out
+  const stmts: InStatement[] = []
+  for (let i = 0; i < args.length; i += PATCH_SINCE_MAX) {
+    stmts.push({
+      sql: `SELECT k.appid AS appid,
+                   (SELECT n.tldr FROM news_items AS n
+                     WHERE n.appid = k.appid AND n.published_at > k.since
+                       AND n.kind = 'patch' AND n.scale = 'major' AND n.tldr <> ''
+                     ORDER BY n.published_at DESC LIMIT 1) AS tldr
+            FROM (SELECT json_extract(value, '$[0]') AS appid,
+                         json_extract(value, '$[1]') AS since
+                  FROM json_each(?)) AS k`,
+      args: [JSON.stringify(args.slice(i, i + PATCH_SINCE_MAX))],
+    })
+  }
+  // Порция одна — обычный execute; несколько — один batch на чтение
+  const results = stmts.length === 1 ? [await db.execute(stmts[0]!)] : await db.batch(stmts, 'read')
+  for (const res of results) {
+    for (const r of res.rows as unknown as Array<{ appid: number; tldr: string | null }>) {
+      const tldr = typeof r.tldr === 'string' ? r.tldr.trim() : ''
+      if (tldr) out.set(Number(r.appid), tldr)
+    }
+  }
+  return out
 }
 
 /* ---------- голова ленты: ключи без тел патчей ---------- */

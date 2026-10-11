@@ -50,12 +50,20 @@ export function TagChips({
    * кнопка одна выглядит кнопкой. Совпавший с твоим вкусом тег — ярче и с
    * зелёной точкой, той же, что у источника выдачи.
    */
+  /*
+   * Разделитель висит СЛЕВА от пункта, в зазоре между пунктами, а не внутри
+   * него. Внутри он переносился вместе с тегом и открывал новую строку:
+   * «Исследования · Космос · Тайна / · Глубокий сюжет» — точка в начале
+   * строки ничего не разделяет. Теперь у пункта, с которого начинается
+   * строка, точка оказывается левее края списка, и overflow-hidden её
+   * срезает; между пунктами одной строки она стоит как раньше.
+   */
   return (
-    <ul className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${className}`}>
+    <ul className={`flex flex-wrap items-center gap-x-4 gap-y-1 overflow-hidden text-sm ${className}`}>
       {tags.map((t, i) => (
-        <li key={t} className="flex items-center gap-2">
+        <li key={t} className="relative flex items-center">
           {i > 0 && (
-            <span aria-hidden className="text-faint">
+            <span aria-hidden className="absolute right-full mr-1.5 text-faint">
               ·
             </span>
           )}

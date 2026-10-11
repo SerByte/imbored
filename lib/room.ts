@@ -180,3 +180,160 @@ export function matchLine(args: {
   if (!args.sawOpen || args.status !== 'matched' || !args.isMember || !args.game) return null
   return `Матч: «${args.game.name}»`
 }
+
+/**
+ * Есть ли ждущему что узнать из фона — условие фонового опроса комнаты
+ * (hiddenPollDelay в lib/roompoll): своя колода кончилась (waiting — загружена
+ * и пуста) и режим ожидания 'others'.
+ *
+ * Шире, чем awaitingOthers, намеренно. Когда отсвайпали все и не сошлись,
+ * «ждём остальных» было бы неправдой, но матч прийти ещё может: лидера голосов
+ * берёт любой участник, и «Берём» соседа сводит комнату без этого человека.
+ * А вот 'alone' и 'empty' фону ничего не принесут: в комнате на одного матча
+ * нет, при пустой колоде — не из чего, и час запросов раз в минуту там был бы
+ * платой ни за что.
+ *
+ * И не тогда, когда колода на руках отстала от комнаты (deckBehind): сосед
+ * поднял раунд, сервер уже раздал больше карт (deckSize), а своя колода
+ * этого раунда ещё не догружена — скрытая вкладка её не грузит (app/room/[id],
+ * эффект колоды). Пусто на руках тогда не потому, что всё отсвайпано, а
+ * потому, что новые карты ждут возвращения на вкладку: человеку есть что
+ * свайпать, и ни «ждём остальных», ни минутный фоновый опрос ему не положены.
+ * Иначе двое ждущих в скрытых вкладках видели бы друг друга «ещё свайпает» —
+ * и оба висели бы на «ждём остальных».
+ */
+export function waitsInBackground(args: {
+  waiting: boolean
+  memberCount: number
+  deckTotal: number
+  myVotes: number
+  /** rooms.deck_size из опроса; null — колоду ещё никто не запрашивал */
+  deckSize?: number | null
+}): boolean {
+  return args.waiting && waitingMode(args) === 'others' && !deckBehind(args)
+}
+
+/**
+ * Отстала ли загруженная колода от комнаты: сервер раздал больше карт
+ * (deckSize — последняя выданная колода, её же считает memberDone), чем
+ * пришло на руки (deckTotal), и сам человек до конца серверной колоды не
+ * дошёл. Последнее отделяет «новые карты ждут загрузки» от расхождений, где
+ * свайпать уже нечего.
+ *
+ * Не путать с deckStuck (lib/deckvote): там колода на руках актуальна, а голос
+ * потерялся — сразу после последнего свайпа, пока опрос не принёс done, это
+ * штатное состояние, и фоновый опрос ровно его и лечит. Здесь же deckTotal
+ * отстаёт, пока колоду не перечитали.
+ */
+export function deckBehind(args: { deckTotal: number; myVotes: number; deckSize?: number | null }): boolean {
+  const size = args.deckSize ?? null
+  return size !== null && args.deckTotal < size && !memberDone(args.myVotes, size)
+}
+
+/**
+ * Ждёт ли человек ДРУГИХ: своя колода кончилась (waiting — загружена и пуста),
+ * режим ожидания 'others', и хоть кто-то, кроме него, ещё свайпает. Ровно то
+ * состояние, в котором экран говорит «Колода пройдена — ждём ещё…», и только
+ * в нём заголовок вкладки говорит «Ждём остальных» (roomTabTitle).
+ *
+ * othersSwiping — участники, кроме себя, не дошедшие до конца колоды (pending
+ * в components/room/RoomWaiting).
+ */
+export function awaitingOthers(args: {
+  waiting: boolean
+  memberCount: number
+  deckTotal: number
+  myVotes: number
+  othersSwiping: number
+}): boolean {
+  return waitsInBackground(args) && args.othersSwiping > 0
+}
+
+/**
+ * Заголовок вкладки комнаты. null — заголовок не трогаем, стоит серверный
+ * (generateMetadata в app/room/[id]/layout.tsx).
+ *
+ * Сценарий один: человек отсвайпал своё и ушёл в соседнюю вкладку, а пати
+ * досвайпывает без него. Полоса вкладок — всё, что он при этом видит от
+ * комнаты, и сказать она обязана ровно две вещи: «ты ждёшь» и «дождался».
+ *
+ * Только два состояния, и это решение, а не недоделка. Прогресс на каждый
+ * голос дёргал бы заголовок каждые пару секунд — шум, который приучает не
+ * смотреть. «Берём X?» в заголовке — подталкивание к решению из фона, а решают
+ * в комнате, глядя на ростер.
+ *
+ *   «Ждём остальных · Пати ABC123» — своя колода кончилась, а кто-то ещё
+ *     свайпает (awaitingOthers). Только так: эту же фразу страница уже
+ *     однажды убрала, потому что в двух режимах ожидания из трёх она врала
+ *     (WaitingMode), и полоса вкладок не должна вернуть её туда. В комнате на
+ *     одного ждать некого, при пустой колоде — нечего, а когда отсвайпали все
+ *     и не сошлись, решение («Берём», «Ещё 20 игр») за самими людьми — у
+ *     каждого висело бы «ждём остальных», и все ждали бы друг друга;
+ *   «● Сошлись: X» — матч пришёл на глазах у этого экрана (sawOpen, как у
+ *     matchLine), а вкладку с тех пор не открывали. Точка — метка
+ *     непрочитанного: вернулся — она снимается, остаётся «Сошлись: X».
+ *
+ * Не участнику — null: приглашение называется так, как назвал его сервер, а
+ * чужой матч — не его новость. Открыл ссылку на уже сошедшуюся комнату — тоже
+ * null: новости нет, церемония и есть страница.
+ */
+export function roomTabTitle(args: {
+  roomId: string
+  status: 'open' | 'matched'
+  isMember: boolean
+  /** ждёт ли человек других — awaitingOthers */
+  awaiting: boolean
+  sawOpen: boolean
+  /** матч пришёл, пока вкладка была скрыта, и её с тех пор не открывали */
+  unseen: boolean
+  matchedName: string | null
+}): string | null {
+  if (!args.isMember) return null
+  if (args.status === 'matched') {
+    if (!args.sawOpen || !args.matchedName) return null
+    return `${args.unseen ? '● ' : ''}Сошлись: ${args.matchedName}`
+  }
+  if (args.awaiting) return `Ждём остальных · Пати ${args.roomId}`
+  return null
+}
+
+/**
+ * Работает ли здесь уведомление со страницы — new Notification() без
+ * сервис-воркера (его нет и не будет, см. app/manifest.ts).
+ *
+ * Наличия window.Notification мало, и в этом главный подвох. В Chrome на
+ * Android оно определено, разрешение спрашивается и выдаётся — а конструктор
+ * бросает TypeError и требует ServiceWorkerRegistration.showNotification. На
+ * iOS уведомления бывают только у установленного PWA через push. На телефоне
+ * переключатель выпросил бы разрешение и молча не сработал — обещание,
+ * которое мы не выполним. Поэтому телефоны исключаются явно: по
+ * userAgentData.mobile там, где он есть (Chromium), и по грубому указателю
+ * (pointer: coarse) везде — это палец, а не мышь. Планшет отсеется тоже:
+ * лучше не показать работающее, чем показать неработающее.
+ */
+export function pageNotices(args: {
+  hasNotification: boolean
+  /** navigator.userAgentData?.mobile; undefined — браузер не сообщает */
+  uaMobile: boolean | undefined
+  coarsePointer: boolean
+}): boolean {
+  return args.hasNotification && args.uaMobile !== true && !args.coarsePointer
+}
+
+/**
+ * Показать ли уведомление о матче. «Одно на комнату» держит вызывающий.
+ *
+ * Только из скрытой вкладки: видимую уже заняли церемония и строка
+ * matchStatus, второй сигнал поверх — шум. И только чужой матч: свой последний
+ * голос или своё «Берём» человек сделал сам, и сообщать ему о его же нажатии
+ * незачем (selfCaused в app/room/[id]/page).
+ */
+export function matchNoticeDue(args: {
+  /** переключатель «Сообщить, когда сойдёмся» включён на этом устройстве */
+  enabled: boolean
+  permission: NotificationPermission
+  visible: boolean
+  selfCaused: boolean
+}): boolean {
+  return args.enabled && args.permission === 'granted' && !args.visible && !args.selfCaused
+}

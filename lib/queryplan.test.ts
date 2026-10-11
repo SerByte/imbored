@@ -17,6 +17,8 @@ import {
   getGamesMetaLite,
   getMajorFeed,
   getMajorFeedHead,
+  latestMajorPatchSince,
+  PATCH_SINCE_MAX,
   getNeighbors,
   listEvenings,
   listCompatViews,
@@ -36,6 +38,7 @@ import {
   sitemapGames,
   sitemapNews,
   freshlyDigestedPatches,
+  gamesByDeveloper,
   getStaleAppids,
   stalePriceAppids,
   sweepStale,
@@ -201,6 +204,32 @@ const CASES: Case[] = [
     indexes: ['idx_news_app'],
     sortFree: true,
   },
+  // Причина заброшенной игры и метка «обновлялась»: на каждую пару игра —
+  // момент последнего запуска один скалярный подзапрос по частичному
+  // idx_news_app_major (appid=? AND published_at>?), свежий первым из индекса,
+  // и LIMIT 1 читает одну строку. По idx_news_app он дочитывал бы всю историю
+  // игры после давнего запуска, если в ней нет пересказанного крупного патча
+  {
+    name: 'свежий крупный патч после последнего запуска',
+    run: async (db) =>
+      latestMajorPatchSince(await withPatches(db), [
+        [730, NOW - 86_400],
+        [570, NOW - 86_400],
+      ]),
+    indexes: ['idx_news_app_major'],
+    sortFree: true,
+  },
+  // Пар больше потолка одного запроса — порции одним batch, план тот же
+  {
+    name: 'свежий крупный патч после последнего запуска, порциями',
+    run: async (db) =>
+      latestMajorPatchSince(
+        await withPatches(db),
+        Array.from({ length: PATCH_SINCE_MAX + 5 }, (_, i) => [i + 1, NOW - 86_400] as const),
+      ),
+    indexes: ['idx_news_app_major'],
+    sortFree: true,
+  },
   // Страница патча: пост по первичному ключу, игра — по своему
   {
     name: 'страница патча',
@@ -271,6 +300,16 @@ const CASES: Case[] = [
     name: 'очередь сигналов каталога',
     run: (db) => catalogSignalsQueue(db, 200),
     indexes: ['idx_games_reviews_at'],
+    sortFree: true,
+  },
+  // «Ещё у этой студии» на карточке: диапазон developer=? частичного индекса,
+  // порядок — отзывы и appid (rowid, которым индекс кончается сам), и чтение
+  // обрывает LIMIT. Скан games здесь — весь каталог на каждую из пяти тысяч
+  // карточек карты сайта
+  {
+    name: 'игры студии',
+    run: (db) => gamesByDeveloper(db, 'Supergiant Games', 13),
+    indexes: ['idx_games_developer'],
     sortFree: true,
   },
   // Погасшие скидки для сброса карточек (revalidateEndedDeals): диапазон

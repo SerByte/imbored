@@ -364,8 +364,14 @@ function Quiz() {
 
       {/* Тумблер вне центральной колонки: композиция экрана не меняется, а
           звук всё равно нужно чем-то включать. */}
-      <div className="absolute right-5 top-20 md:top-24">
-        <SoundToggle />
+      {/* По колонке шапки (max-w-6xl px-safe), а не по краю окна: на 1440
+          тумблер стоял в 20px от края экрана, на 144px правее кнопки темы */}
+      <div className="pointer-events-none absolute inset-x-0 top-20 md:top-24">
+        <div className="mx-auto flex max-w-6xl justify-end px-safe">
+          <div className="pointer-events-auto">
+            <SoundToggle />
+          </div>
+        </div>
       </div>
 
       <div className="relative w-full max-w-3xl flex flex-col items-center gap-10">

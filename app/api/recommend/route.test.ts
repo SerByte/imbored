@@ -1,11 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, upsertSemantics, type Db } from '@/lib/db'
+import { PATCH_SINCE_LEAD } from '@/lib/comeback'
+import { resetSwallowed } from '@/lib/errlog'
+import {
+  saveLibrarySnapshot,
+  setNewsDigest,
+  upsertGamesMeta,
+  upsertNeighbors,
+  upsertNewsItems,
+  upsertSemantics,
+  type Db,
+} from '@/lib/db'
 import { pickShareOk } from '@/lib/pickshare'
 import { nowSec, sessionSecret } from '@/lib/server'
 import { HERO_SLIDES } from '@/lib/shots'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { SCORE_FACTORS, type GameSemantics } from '@/lib/types'
-import { freshDb, post, signIn } from '@/lib/testing/route'
+import { breakDbOn, freshDb, post, signIn, signInAs, type SessionKind } from '@/lib/testing/route'
 import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -550,5 +560,117 @@ describe('/api/recommend: подталкивания', () => {
     const body = (await res.json()) as Body
     expect(body.scope).toBe('library')
     expect(body.picks.every((p) => p.source !== 'new')).toBe(true)
+  })
+})
+
+/**
+ * «С твоего последнего захода вышло крупное обновление» — настоящим роутом.
+ *
+ * Факт производный от даты последнего запуска, а её видит только writer:
+ * сессию по вставленной ссылке /api/connect выдаёт на любой публичный
+ * профиль (lib/comeback.ts). Чистые функции это уже стерегут; здесь — что
+ * роут их правильно склеил: кто получает фразу, что уходит в «Отправить
+ * другу» и что обрыв базы на чтении патча не роняет выдачу.
+ */
+describe('/api/recommend: крупный патч с последнего захода', () => {
+  const DAY = 86_400
+  /** Заброшенная с датой последнего запуска и патчем после неё */
+  const STALE = 620
+  const TLDR = 'Добавили новый биом и переделали бои с боссами'
+
+  type Body = { picks: Array<{ appid: number; source: string; reason: string; share?: { text: string } }> }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  async function setup(kind: SessionKind): Promise<void> {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    const steamid = await signInAs(db, kind)
+    const now = nowSec()
+    const ids = [STALE, 413150, 105600, 646570]
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      [
+        { appid: STALE, name: `Игра ${STALE}`, playtimeForever: 40 * 60, playtime2Weeks: 0, lastPlayed: now - 200 * DAY },
+        ...ids.slice(1).map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      ],
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      ids.map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Puzzle: 100, Casual: 60 },
+        genres: [],
+        categories: [2],
+      })),
+      now,
+    )
+    await upsertNewsItems(
+      db,
+      [
+        {
+          appid: STALE,
+          gid: 'major',
+          title: 'Обновление',
+          url: `https://store.steampowered.com/news/app/${STALE}/view/1`,
+          publishedAt: now - 30 * DAY,
+          kind: 'patch',
+          scale: 'major',
+          blocks: [{ kind: 'p', runs: [{ text: 'правки' }] }],
+          bodyHash: 'h1',
+          rank: 5000,
+        },
+      ],
+      now,
+    )
+    await setNewsDigest(db, STALE, 'major', { tldr: TLDR, scale: 'major' }, now)
+  }
+
+  async function staleCard(): Promise<Body['picks'][number]> {
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const card = ((await res.json()) as Body).picks.find((p) => p.appid === STALE)
+    expect(card, 'заброшенная в выдаче').toBeDefined()
+    expect(card!.source).toBe('comeback')
+    return card!
+  }
+
+  test('сессия по вставленной ссылке — прежняя фраза, без факта', async () => {
+    await setup('claimed')
+    const card = await staleCard()
+    expect(card.reason).not.toContain(PATCH_SINCE_LEAD)
+    expect(card.reason).toContain('вернись и проверь')
+    expect(card.share!.text).not.toContain(PATCH_SINCE_LEAD)
+  })
+
+  test.each(['openid', 'demo'] as const)('writer (%s) — фраза в причине, но не в «Отправить другу»', async (kind) => {
+    await setup(kind)
+    const card = await staleCard()
+    expect(card.reason).toContain(PATCH_SINCE_LEAD)
+    expect(card.reason).toContain('новый биом')
+    // По ссылке уходит только то, что верно и для получателя
+    expect(card.share!.text).not.toContain(PATCH_SINCE_LEAD)
+    expect(card.share!.text).not.toContain('новый биом')
+    expect(card.share!.text).toContain(`«Игра ${STALE}»`)
+  })
+
+  test('обрыв базы на чтении патча — выдача собирается без факта, сбой в логе', async () => {
+    await setup('openid')
+    // logSwallowed глушит повтор того же where на минуту: без сброса строка
+    // зависела бы от того, не залогировал ли её раньше другой тест файла
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    breakDbOn(db, 'FROM news_items')
+    const card = await staleCard()
+    expect(card.reason).not.toContain(PATCH_SINCE_LEAD)
+    expect(card.reason).toContain('вернись и проверь')
+    expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('cards:comeback-patches')
   })
 })

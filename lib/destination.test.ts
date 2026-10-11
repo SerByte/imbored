@@ -13,7 +13,7 @@ import {
   reconnectHref,
   steamLoginFor,
 } from './destination'
-import { playHref, presetHref, ROOM_PRESETS, VIBE_PRESETS } from './presets'
+import { playHref, presetHref, ROOM_PRESETS, roomBridgeHref, VIBE_PRESETS } from './presets'
 
 /**
  * Сторож разворота гостя.
@@ -328,6 +328,43 @@ describe('настроение комнаты переживает вход', ()
   test('без выбора — как раньше', () => {
     expect(bounceTo('/room/new')).toBe('/?next=%2Froom%2Fnew')
     expect(steamLoginFor('/room/new')).toBe('/api/auth/steam?next=%2Froom%2Fnew')
+  })
+
+  /*
+   * Подсказка с /play (?hint=) — отмеченный похожий пресет на экране выбора.
+   * Без неё гость после входа вернулся бы к выбору без отметки, а мост обещал
+   * «похоже на твоё».
+   */
+  test('подсказка доезжает через лендинг и через Steam наравне с пресетом', () => {
+    for (const p of ROOM_PRESETS) {
+      const here = `/room/new?hint=${p.key}`
+      expect(destinationUrl(here), p.key).toBe(here)
+      const landing = bounceTo('/room/new', new URLSearchParams({ hint: p.key }))
+      expect(destinationPath(query(landing).get('next')), p.key).toBe('/room/new')
+      expect(loginTarget(query(landing)), p.key).toBe(here)
+      expect(loginTarget(query(steamLoginFor(here))), p.key).toBe(here)
+    }
+  })
+
+  test('чужая подсказка отбрасывается; выбранный пресет перекрывает подсказку', () => {
+    expect(destinationUrl('/room/new?hint=rage')).toBe('/room/new')
+    expect(destinationUrl('/room/new?hint=__proto__')).toBe('/room/new')
+    expect(destinationUrl('/room/new?hint=talk&preset=quick')).toBe('/room/new?preset=quick')
+    // чужой preset не губит годную подсказку
+    expect(destinationUrl('/room/new?preset=rage&hint=talk')).toBe('/room/new?hint=talk')
+    // подсказка комнаты выдаче не хвост
+    expect(destinationUrl('/play?hint=talk')).toBe('/play')
+  })
+
+  test('каждый мост с /play переживает вход без изменений', () => {
+    for (const time of ['short', 'medium', 'long'] as const) {
+      for (const vibe of ['chill', 'engaged'] as const) {
+        const href = roomBridgeHref({ time, vibe, social: 'friends' })
+        expect(href, `${time}|${vibe}`).not.toBeNull()
+        expect(destinationUrl(href), `${time}|${vibe}`).toBe(href)
+        expect(loginTarget(query(steamLoginFor(href!))), `${time}|${vibe}`).toBe(href)
+      }
+    }
   })
 })
 

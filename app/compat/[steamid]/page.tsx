@@ -290,7 +290,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
     return (
       <CompatNotice
         title={`${state.otherName ?? 'Этот игрок'} ещё не подключал библиотеку`}
-        body="Сравнивать пока не с чем. Можно кинуть ему свою ссылку — тогда сравнение соберётся с его стороны."
+        body="Сравнивать пока не с чем. Можно кинуть в ответ свою ссылку — сравнение соберётся, когда по ней подключат библиотеку."
       >
         {me && <CopyCompatLink steamid={me} className="btn-ember px-6 py-3" label="Моя ссылка совместимости" />}
         <Link href="/compat" className="tap link-more">
@@ -506,7 +506,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           </Magnet>
           <CopyOwn steamid={d.me} inline />
           <Link href={`/portrait/${d.other}`} className="tap link-more p-2">
-            Портрет {d.otherName}
+            {/* «Портрет Демо-игрок» не склонялось: ник — не слово, и падеж
+                ему даёт только приложение «игрока», как в заголовке портрета */}
+            Портрет игрока {d.otherName}
             <Icon name="arrow" size={16} />
           </Link>
           {/* Что осталось после этого экрана — говорится здесь же, а не в политике */}

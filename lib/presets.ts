@@ -119,6 +119,88 @@ export function roomPresetOf(mood: Mood | null | undefined): RoomPreset | null {
   return ROOM_PRESETS.find((p) => p.mood.time === mood.time && p.mood.vibe === mood.vibe) ?? null
 }
 
+/** Порядок длительности: «ближе» по времени — на меньшее число шагов */
+const TIME_RANK: Record<string, number> = { short: 0, medium: 1, long: 2 }
+
+/**
+ * Пресет комнаты, ближайший к настроению, — только для ПОДСКАЗКИ, не для
+ * создания комнаты.
+ *
+ * Пресетов четыре, сочетаний time×vibe шесть: «коротко и спокойно» и «около
+ * часа, с вызовом» своей комнаты не имеют. Молча подменить их ближайшим
+ * нельзя — /room/new?preset= создаёт комнату сразу, и человек получил бы
+ * вечер, которого не выбирал, без способа поправить. Поэтому ближайший
+ * только отмечается на экране выбора (?hint=), а решает сам хост.
+ *
+ * Мера: вайб дороже любой разницы во времени (3 против максимум 2 шагов).
+ * «Спокойно» и «с вызовом» — разные вечера, а на полчаса дольше или короче —
+ * тот же вечер: спокойной компании предлагать соревновательные катки — промах,
+ * а лишние полчаса — нет. Оба вайба в пресетах есть, так что вайб
+ * сохраняется всегда.
+ *
+ * Ничья по времени — в пользу более короткого: на час с вызовом «пара быстрых
+ * каток» укладывается в то, что есть, а «весь вечер» обещал бы больше, чем у
+ * компании времени. Точное совпадение стоит ноль — у четырёх сочетаний
+ * ответ тот же, что у roomPresetOf. Чужие значения осей — null.
+ */
+export function nearestRoomPreset(mood: Pick<Mood, 'time' | 'vibe'> | null | undefined): RoomPreset | null {
+  if (!mood || !Object.hasOwn(TIME_RANK, mood.time) || (mood.vibe !== 'chill' && mood.vibe !== 'engaged')) {
+    return null
+  }
+  const cost = (p: RoomPreset) =>
+    (p.mood.vibe === mood.vibe ? 0 : 3) + Math.abs(TIME_RANK[p.mood.time] - TIME_RANK[mood.time])
+  let best: RoomPreset | null = null
+  for (const p of ROOM_PRESETS) {
+    if (
+      !best ||
+      cost(p) < cost(best) ||
+      (cost(p) === cost(best) && TIME_RANK[p.mood.time] < TIME_RANK[best.mood.time])
+    ) {
+      best = p
+    }
+  }
+  return best
+}
+
+/**
+ * Мост из выдачи в пати: адрес «позвать друзей выбрать вместе» либо null.
+ *
+ * Только для social='friends' — человек сам сказал, что играет компанией, а
+ * выдача /play собрана из ОДНОЙ его библиотеки. Пати — ровно тот инструмент,
+ * который учитывает библиотеки друзей. Соло-настроению мост не предлагается:
+ * звать в компанию того, кто хотел один, — давление, а не помощь.
+ *
+ * Точный пресет — ?preset=: комната создаётся в один тап с тем же настроением,
+ * вопрос, на который человек уже ответил, второй раз не задаётся. Точного нет —
+ * ?hint=: экран выбора открывается с отмеченным похожим (nearestRoomPreset), и
+ * комнату создаёт только тап хоста. Оба ключа едут через вход (roomQuery в
+ * lib/destination).
+ */
+export function roomBridgeHref(mood: Mood | null | undefined): string | null {
+  if (mood?.social !== 'friends') return null
+  const exact = roomPresetOf(mood)
+  if (exact) return `/room/new?preset=${exact.key}`
+  const near = nearestRoomPreset(mood)
+  return near ? `/room/new?hint=${near.key}` : null
+}
+
+/**
+ * Что /room/new делает с адресом, по которому пришли: create — пресет, с
+ * которым комната создаётся сразу, без вопроса; hint — плитка, которая только
+ * отмечается «похоже на твоё».
+ *
+ * Разбор вынесен сюда, а не оставлен в странице, чтобы главное обещание моста
+ * стерёг тест: ?hint= НИКОГДА не создаёт комнату сам. Правка вида «preset ??
+ * hint» в странице молча выдала бы хосту вечер, которого он не выбирал, — а
+ * здесь её поймает lib/presets.test.ts. Выбранное важнее похожего: при годном
+ * preset подсказка не читается вовсе. Чужие ключи — null, как у
+ * roomPresetByKey.
+ */
+export function roomArrival(query: URLSearchParams): { create: RoomPreset | null; hint: RoomPreset | null } {
+  const create = roomPresetByKey(query.get('preset'))
+  return { create, hint: create ? null : roomPresetByKey(query.get('hint')) }
+}
+
 /**
  * Адрес выдачи — в одном месте.
  *

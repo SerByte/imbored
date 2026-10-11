@@ -22,7 +22,9 @@ import {
   getOlderSnapshotMinutes,
   countLiked,
   getWishlist,
+  latestMajorPatchSince,
 } from '@/lib/db'
+import { PATCH_SINCE_LEAD, wallPatchPairs } from '@/lib/comeback'
 import {
   buildLibraryView,
   dayKey,
@@ -33,7 +35,9 @@ import {
   libraryPage,
   parseLibraryFilter,
   parseLibraryPage,
+  parseLibraryQuery,
   pickForgotten,
+  searchLibraryView,
   SHELF_EMPTY,
   wallState,
 } from '@/lib/forgotten'
@@ -45,6 +49,9 @@ import { tagWeightFrom } from '@/lib/tagweight'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
+import { LibrarySearch } from '@/components/LibrarySearch'
+import { RailToCurrent } from '@/components/RailToCurrent'
+import { StatusLine } from '@/components/StatusLine'
 import { plural } from '@/lib/plural'
 import { dateLabel } from '@/lib/freshness'
 import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
@@ -82,6 +89,9 @@ const EVENINGS_SHOWN = 12
 /** С какого числа сверенных советов показывать честную долю */
 const EVENINGS_HONEST_MIN = 3
 
+/** С какого размера библиотеки над стеной стоит поиск */
+const SEARCH_FROM = 12
+
 /** Сколько постеров в мозаике героя: пять колонок по три на широком экране */
 const MOSAIC = 15
 
@@ -101,6 +111,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   const db = await getDb()
   const query = await props.searchParams
   const filter = parseLibraryFilter(query.state)
+  const q = parseLibraryQuery(query.q)
   /*
    * Независимые чтения — одним заходом, а не лесенкой.
    *
@@ -269,7 +280,29 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // нераспакованные» обязаны назвать одно и то же число.
   const untouched = view.counts.untouched
   // Порция полки, а не вся полка: см. LIBRARY_PAGE_SIZE в lib/forgotten.ts
-  const wall = libraryPage(view.games, parseLibraryPage(query.page))
+  // Поиск отбирает внутри полки; сводка выше и деньги — по-прежнему по всему
+  const found = searchLibraryView(view, games, metaOf, now, q)
+  const wall = libraryPage(found.games, parseLibraryPage(query.page))
+  const stateOf = (g: (typeof wall.shown)[number]) => wallState(g, metas.get(g.appid), now, timeHidden)
+  /*
+   * «Обновлялась» у заброшенных плиток порции — один обход по парам игра —
+   * последний запуск (latestMajorPatchSince), и только когда такие плитки
+   * есть. Пары отдаёт wallPatchPairs, и она же держит правило: метка —
+   * производная от даты последнего запуска, поэтому только writer-сессии и не
+   * при скрытом времени. Иначе пар нет, запроса нет, и в HTML нечему утечь.
+   *
+   * БЕЗ await. Пары зависят от метаданных (порядок, поиск, фильтр), так что
+   * запрос встал бы третьей ступенью лесенки выше — ещё один обход в TTFB
+   * почти каждого захода владельца со старыми играми, ради декоративной
+   * метки. Промис уходит в <Suspense> у плитки (RefreshedPill): стена приходит
+   * первым HTML, метка догружается стримом. Сбой запроса — просто без меток:
+   * отказ базы здесь не повод ронять страницу.
+   */
+  const patchPairs = wallPatchPairs(wall.shown, stateOf, { hidden: timeHidden, writer })
+  const updatedP = patchPairs.length
+    ? latestMajorPatchSince(db, patchPairs).catch(() => new Map<number, string>())
+    : null
+  const mayRefresh = new Set(patchPairs.map(([appid]) => appid))
   const shelf = pickForgotten(
     // «Больше не показывать» — и здесь: полка тоже совет
     forgottenCandidates(games, metaOf, bannedAll),
@@ -493,12 +526,17 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   {plural(backlog.unplayedCount, 'игра уже твоя', 'игры уже твои', 'игр уже твои')} —
                   попробовать можно прямо сейчас
                 </div>
+                {/* Оговорка — только когда она правда: «не меньше … — цена
+                    известна у 8 из 8» спорило само с собой */}
                 <div className="text-xs text-dim mt-1">
                   {/* Валюта — региона суммы (backlogValue), а не угаданная:
                       цены других регионов в неё не входят вовсе */}
-                  Вместе не меньше{' '}
+                  {backlog.pricedCount < backlog.unplayedCount ? 'Вместе не меньше' : 'Вместе'}{' '}
                   <span className="tabular-nums">{formatPrice(backlog.cents, backlog.cc, { whole: true })}</span>{' '}
-                  {byPrices(backlog.cc)} — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}
+                  {byPrices(backlog.cc)}
+                  {backlog.pricedCount < backlog.unplayedCount
+                    ? ` — цена известна у ${backlog.pricedCount} из ${backlog.unplayedCount}`
+                    : null}
                 </div>
               </div>
               {/* Не в общий опрос про настроение: карточка про несыгранное —
@@ -653,6 +691,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           функции на один просмотр ради фильтров, которые откроют один раз.
           id — цель ссылки с полки «запечатанного»: приводить к фильтру,
           не показав самих чипсов, значит приводить в никуда. */}
+      {/* Поиск — от дюжины игр: на меньшей библиотеке вся стена и так в
+          одном экране, и поле было бы лишним словом над ней */}
+      {games.length >= SEARCH_FROM && <LibrarySearch filter={view.filter} q={q} />}
+
       {games.length > 0 && !timeHidden && (
       /* Пилюлями, лентой на телефоне. Полоса липкая: смузер теперь живёт
          только на главной, и sticky здесь снова держится (.lib-filters).
@@ -660,18 +702,25 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
          (.chip-rail) растворяла бы и фон с размытием, и стена карточек
          проступала бы по краям полосы. */
       <div id="wall" className="lib-filters">
-        <div className="chip-rail lib-filters-rail">
+        <div id="wall-rail" className="chip-rail lib-filters-rail">
           {LIBRARY_FILTERS.map((f) => (
             <Link
               key={f.id}
-              href={libraryHref(f.id)}
+              href={libraryHref(f.id, 1, q)}
+              // Без него Next прокручивал к верху страницы: чипсы стоят экраном
+              // ниже героя, и после нажатия человек оказывался над заголовком
+              // «Твоя библиотека», а новая полка — за нижним краем (замер на
+              // 1440×900: полоса чипсов уезжала с 241 px на 1041). Тот же довод,
+              // что у «Показать ещё» ниже.
+              scroll={false}
               prefetch={false}
               aria-current={f.id === filter ? 'page' : undefined}
               className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
             >
-              {f.label} <span className="tabular-nums opacity-70">{view.counts[f.id]}</span>
+              {f.label} <span className="tabular-nums opacity-70">{found.counts[f.id]}</span>
             </Link>
           ))}
+          <RailToCurrent railId="wall-rail" current={filter} />
         </div>
       </div>
       )}
@@ -680,14 +729,39 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           полка, и без него человек с ?state=active получил бы два сообщения
           сразу — «за две недели ты не запускал ничего» поверх «Steam не отдал
           ни одной игры». */}
-      {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && (
+      {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && !q && (
         <p className="text-dim text-sm">{SHELF_EMPTY[view.filter]}</p>
+      )}
+
+      {/* Ничего не нашлось — своим сообщением, а не сообщением пустой полки:
+          «заброшенных нет» было бы неправдой, их просто нет с таким именем.
+          StatusLine стоит всегда (lib/liveregion.test.ts): страница
+          перерисовывается на каждую букву поиска, и область, рождённая вместе
+          с текстом, звучала бы не везде. Ссылка сброса — вне области: живую
+          строку читают целиком, а не нажимают. */}
+      <StatusLine
+        className="text-dim text-sm"
+        text={
+          q && found.games.length === 0
+            ? view.filter === 'all' || found.counts.all === 0
+              ? `Ничего не нашлось по «${q}».`
+              : `На этой полке «${q}» нет — поищи на соседних: счётчики на чипсах показывают, где.`
+            : null
+        }
+      />
+      {q && found.games.length === 0 && (
+        <Link href={libraryHref(view.filter)} scroll={false} prefetch={false} className="tap link-more -mt-1 mb-4">
+          Сбросить поиск
+          <Icon name="close" size={14} />
+        </Link>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-6">
         {wall.shown.map((g) => {
-          const state = wallState(g, metas.get(g.appid), now, timeHidden)
+          const state = stateOf(g)
           const label = STATE_LABEL[state]
+          // Только кандидат: подтвердит ли патч, скажет стрим (RefreshedPill)
+          const refreshable = updatedP !== null && state === 'comeback' && mayRefresh.has(g.appid)
           const hours = Math.round(g.playtimeForever / 60)
           return (
             /*
@@ -724,12 +798,32 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                     {/* При скрытом времени — без числа: «0 ч» на каждой плитке
                         было бы неправдой, а «скрыто» сорок восемь раз подряд —
                         шумом; это сказано один раз, в шапке */}
+                    {/* self-start у кандидата в «обновлялась»: узкой плитке
+                        метка уходит второй строкой, и часы по центру двух
+                        строк встали бы между «заброшена» и меткой, а не
+                        вровень с первой */}
                     {!timeHidden && (
-                      <span className="tabular-nums">
+                      <span className={`tabular-nums ${refreshable ? 'self-start' : ''}`}>
                         {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
                       </span>
                     )}
-                    {label.text && <span className={`truncate ${label.cls}`}>{label.text}</span>}
+                    {/* «Обновлялась» — рядом с «заброшена», а не вместо: состояние
+                        то же, метка добавляет к нему факт о самой игре. Без
+                        ссылки на патч — вся плитка уже ссылка, а <a> в <a>
+                        невалиден; патчи ждут на /game в «Что нового». Узкой
+                        плитке телефона метка уходит второй строкой (flex-wrap),
+                        а не обрезает «заброшена» до «забр…» */}
+                    {label.text &&
+                      (refreshable ? (
+                        <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 self-start">
+                          <span className={`truncate ${label.cls}`}>{label.text}</span>
+                          <Suspense fallback={null}>
+                            <RefreshedPill updated={updatedP} appid={g.appid} />
+                          </Suspense>
+                        </span>
+                      ) : (
+                        <span className={`truncate ${label.cls}`}>{label.text}</span>
+                      ))}
                   </>
                 }
               />
@@ -750,7 +844,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {wall.nextPage !== null && (
         <div className="mt-8 flex justify-center">
           <Link
-            href={libraryHref(view.filter, wall.nextPage)}
+            href={libraryHref(view.filter, wall.nextPage, q)}
             scroll={false}
             prefetch={false}
             className="btn-glass"
@@ -789,6 +883,30 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       <SignOut verified={Boolean(session?.verified)} />
       </div>
     </div>
+  )
+}
+
+/**
+ * Метка «обновлялась» у заброшенной плитки — догружается стримом (см.
+ * updatedP в LibraryPage): ждёт общий на порцию запрос и рисует пилюлю, только
+ * если подтверждённый крупный патч после последнего запуска нашёлся.
+ */
+async function RefreshedPill({
+  updated,
+  appid,
+}: {
+  updated: Promise<ReadonlyMap<number, string>>
+  appid: number
+}) {
+  if (!(await updated).has(appid)) return null
+  return (
+    <span
+      className="shrink-0 rounded-full border border-edge px-1.5 text-[11px] leading-4 text-ink"
+      // Та же формулировка, что в причине на /play и в «Игре дня» (patchSentence)
+      title={`${PATCH_SINCE_LEAD}.`}
+    >
+      обновлялась
+    </span>
   )
 }
 

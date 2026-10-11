@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { buildCandidates } from '@/lib/candidates'
-import { dailyCardView, pickContext, storeCardView } from '@/lib/cards'
+import { comebackPatches, dailyCardView, pickContext, storeCardView } from '@/lib/cards'
 import {
   dailyHeroAppids,
+  dailyReasonBase,
   dayKey,
   dayStartSec,
   parseDailySelection,
@@ -10,6 +11,7 @@ import {
   pickDailyPool,
   pickOwnAlternate,
   publicPick,
+  yesterdayLine,
   type DailyAlternate,
   type DailySelection,
 } from '@/lib/daily'
@@ -22,7 +24,7 @@ import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { sharedTasteTags } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
-import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import type { GameMeta, ScoredCandidate } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
@@ -44,8 +46,12 @@ const DAILY_WINDOW_SEC = 3600
  */
 
 export async function GET(req: Request) {
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  // Крупный патч после последнего запуска — производная от даты запуска:
+  // в запись он ложится всегда, а в ответ — только writer-сессии (dailyReasonBase)
+  const writer = isWriter(session)
 
   const db = await getDb()
   const now = nowSec()
@@ -75,11 +81,21 @@ export async function GET(req: Request) {
   // Обычный запрос тратит лимит в любом случае — запись и гейт читаются
   // одним заходом. «Только если уже выбрано» — по очереди: его промах лимит
   // не тратит (см. ниже), значит гейт там нельзя звать заранее.
-  const [rawStored, early] = await Promise.all([
+  //
+  // Запись за вчера — тем же заходом: она нужна и отбору (исключение
+  // вчерашнего героя, см. selectDaily), и ответу (строка «Вчера была: …»,
+  // yesterdayLine). Минус сутки секундами — и есть вчера: перевода часов в
+  // Москве нет. Она ещё в базе: крон подметает только то, что старше
+  // вчерашнего (sweepDailyPicks), а сброс после бана, «надоела» и «Не
+  // сегодня» стирает сегодняшнюю (forgetDailyPick). Вчерашнюю — только бан
+  // и «надоела» про её же героя: ссылка на скрытую игру строкой не нужна.
+  const [rawStored, rawYesterday, early] = await Promise.all([
     getDailyPick(db, steamid, dateStr),
+    getDailyPick(db, steamid, dayKey(now - 86_400)),
     cachedOnly ? Promise.resolve(null) : dailyGate(),
   ])
   const stored = parseDailySelection(rawStored)
+  const yesterday = parseDailySelection(rawYesterday)
 
   /*
    * ?cached=1 — «только если уже выбрано».
@@ -90,8 +106,8 @@ export async function GET(req: Request) {
    * в daily_picks. Промах — 204 без отбора: страница прогреет каталог и
    * спросит обычным запросом.
    *
-   * Промах не тратит лимит частоты: он стоит одного чтения по первичному
-   * ключу, как сама проверка лимита, а следующий за ним обычный запрос своё
+   * Промах не тратит лимит частоты: он стоит двух чтений по первичному
+   * ключу (сегодня и вчера), а следующий за ним обычный запрос своё
    * отметит. Иначе каждый первый заход дня списывал бы два обращения из десяти.
    */
   if (!stored && cachedOnly) {
@@ -101,12 +117,13 @@ export async function GET(req: Request) {
   const gate = early ?? (await dailyGate())
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
-  const selection = stored ?? (await selectDaily(db, steamid, dateStr, now))
+  const selection = stored ?? (await selectDaily(db, steamid, dateStr, now, yesterday))
   if (selection === NO_LIBRARY) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
   if (!selection) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
   if (!stored) await saveDailyPick(db, steamid, dateStr, selection, now)
 
-  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, via, hideUrgency, alt } = selection
+  const { pick, shelf, hoursPlayed, sharedTags, via, hideUrgency, alt } = selection
+  const reasonBase = dailyReasonBase(selection, writer)
 
   // Цены обновляем ДО того, как пишется текст: и хвост причины, и подпись
   // под ценой называют одну и ту же сумму, а расходиться им нельзя.
@@ -135,18 +152,22 @@ export async function GET(req: Request) {
         via,
       }),
       // «Отправить другу» (/pick) — основа причины, без свежего ценового хвоста
+      // и без факта о патче даже у writer: «С твоего последнего захода…» на
+      // публичной странице получатель прочтёт про себя, а дату запуска она
+      // выдаст любому (lib/comeback.ts). Поэтому selection.reasonBase, а не
+      // dailyReasonBase
       ...shareView(sessionSecret(), {
         steamid,
         appid: pick.appid,
         source: pick.source,
-        text: shareText(reasonBase, ''),
+        text: shareText(selection.reasonBase, ''),
       }),
     },
     discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
     // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
     ownAlternate: alt
       ? {
-          ...alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency),
+          ...alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency, writer),
           ...shareView(sessionSecret(), {
             steamid,
             appid: alt.pick.appid,
@@ -157,13 +178,23 @@ export async function GET(req: Request) {
       : null,
     // Из того же dateStr, что и ключ записи — см. dayLabel.
     dateLabel: dayLabel(dateStr),
+    // «Вчера была: …» — из вчерашней записи, без сети; null — строки нет
+    // (см. yesterdayLine: нет записи, нет имени или вчерашняя снова на экране;
+    // скрытую сегодня стирает /api/feedback вместе с записью)
+    yesterday: yesterdayLine(yesterday, selection),
   })
 }
 
 /** Запасная своя — той же карточкой, что герой: цена и хвост причины свежие */
-function alternateView(alt: DailyAlternate, meta: GameMeta | undefined, now: number, hideUrgency: boolean) {
+function alternateView(
+  alt: DailyAlternate,
+  meta: GameMeta | undefined,
+  now: number,
+  hideUrgency: boolean,
+  writer: boolean,
+) {
   return dailyCardView(alt.pick, meta, now, {
-    reason: alt.reasonBase + reasonPrice(alt.pick.source, meta, now, hideUrgency),
+    reason: dailyReasonBase(alt, writer) + reasonPrice(alt.pick.source, meta, now, hideUrgency),
     sharedTags: alt.sharedTags,
     hoursPlayed: alt.hoursPlayed,
     hideUrgency,
@@ -186,6 +217,7 @@ async function selectDaily(
   steamid: string,
   dateStr: string,
   now: number,
+  yesterday: DailySelection | null,
 ): Promise<DailySelection | null | typeof NO_LIBRARY> {
   // Конвейер тот же, что у /play (lib/candidates.ts): настроения у страницы
   // нет, знакомого и оси тоже, а из пауз — только «надоела»: «не сейчас» на
@@ -193,68 +225,80 @@ async function selectDaily(
   // сегодня «Не сегодня» — другое дело: отбор, пересчитанный после него, не
   // имеет права вернуть ту же игру до полуночи
   //
-  // Запись за вчера — тем же заходом: вчерашний герой сегодня героем не
-  // станет (avoid у pickDaily). Она ещё в базе: крон подметает только то,
-  // что старше вчерашнего (sweepDailyPicks), а сброс после бана, «надоела» и
-  // «Не сегодня» стирает лишь сегодняшнюю (forgetDailyPick). Минус сутки
-  // секундами — и есть вчера: перевода часов в Москве нет. Записи нет или
-  // она не разобралась — выбор без исключения, как раньше.
-  const [set, yesterday] = await Promise.all([
-    buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
-      nowSec: now,
-      cooldownKinds: ['tired'],
-      notnowSince: dayStartSec(now),
-    }),
-    getDailyPick(db, steamid, dayKey(now - 86_400)),
-  ])
+  // yesterday — запись за вчера, её читает GET тем же заходом, что и
+  // сегодняшнюю: вчерашний герой сегодня героем не станет (avoid у
+  // pickDaily). Записи нет или она не разобралась — выбор без исключения,
+  // как раньше.
+  const set = await buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
+    nowSec: now,
+    cooldownKinds: ['tired'],
+    notnowSince: dayStartSec(now),
+  })
   if (set === 'nolibrary') return NO_LIBRARY
   if (set === 'nocandidates') return null
   const { own, discovery, profile, tagWeight, metaOf } = set
 
   const seed = `${steamid}:${dateStr}`
-  const avoid = dailyHeroAppids(parseDailySelection(yesterday))
+  const avoid = dailyHeroAppids(yesterday)
   const pick = pickDaily(pickDailyPool(own, discovery, seed), seed, avoid)!
 
   // Полка находок — всегда из каталога, даже когда герой уже оттуда: одна и та
   // же игра дважды на экране выглядит сбоем, а не рекомендацией
   const shelf = discovery.filter((c) => c.appid !== pick.appid).slice(0, DISCOVERY_CARDS)
 
-  // Тот же контекст причины, что в основной выдаче: своя игра, на которую эта
-  // похожа, вместо тегов, свои часы у заброшенной и срок распродажи только
-  // тем, у кого нераспакованного немного. Цены здесь не обновляются — это
-  // делает GET на каждом заходе.
-  const ctx = pickContext(set)
-  const hideUrgency = ctx.hideUrgency
-
-  /** Герой — в запись: публичные поля, часы, причина без цены и отметки чипсов */
-  const describe = (c: ScoredCandidate): DailyAlternate => {
-    const reason =
-      heuristicPicks([c], metaOf, 1, now, profile, {
-        tagWeight,
-        anchorOf: ctx.anchorOf,
-        hoursOf: ctx.hoursOf,
-        hideUrgency,
-        playtimeHidden: set.playtimeHidden,
-      })[0]?.reason ?? ''
-    // В запись уходит причина БЕЗ ценового хвоста: heuristicPicks клеит его
-    // последним (reasonPrice), и на каждом заходе он пересчитывается по свежей
-    // цене. Хвост тут считается по тем же метаданным, что и сама причина, —
-    // поэтому срез всегда попадает ровно по шву.
-    const tail = reasonPrice(c.source, metaOf(c.appid), now, hideUrgency)
-    const meta = metaOf(c.appid)
-    return {
-      pick: publicPick(c),
-      hoursPlayed: ctx.hoursOf(c.appid),
-      reasonBase: tail && reason.endsWith(tail) ? reason.slice(0, -tail.length) : reason,
-      sharedTags: meta ? sharedTasteTags(profile, meta, tagWeight) : [],
-      via: ctx.anchorOf(c.appid),
-    }
-  }
-
   // Магазинный день — и своя наготове, тем же сидом из своего пула: кто
   // сегодня покупать не собирался, получает свою по нажатию, а не уходит
   // в обычный подбор
   const alternate = pickOwnAlternate(own, discovery, seed, avoid)
+
+  // Тот же контекст причины, что в основной выдаче: своя игра, на которую эта
+  // похожа, вместо тегов, свои часы у заброшенной и срок распродажи только
+  // тем, у кого нераспакованного немного. Цены здесь не обновляются — это
+  // делает GET на каждом заходе.
+  //
+  // Крупный патч после последнего запуска — только у двух, чья причина
+  // пишется (герой и запасная своя): один запрос, и то лишь если среди них
+  // есть заброшенная с датой. Факт уезжает в запись на сутки, как и сам
+  // выбор, но отдельным полем reasonPatched: запись общая для всех сессий
+  // профиля, а видеть его вправе только writer (см. DailySelection). Сбой
+  // базы на этом чтении отбор не роняет: comebackPatches отдаёт пустую карту,
+  // и день выбирается с прежней причиной
+  const patches = await comebackPatches(db, set, alternate ? [pick, alternate] : [pick])
+  const ctx = pickContext(set, set.metaOf, patches)
+  const hideUrgency = ctx.hideUrgency
+
+  /** Герой — в запись: публичные поля, часы, причина без цены и отметки чипсов */
+  const describe = (c: ScoredCandidate): DailyAlternate => {
+    const reasonOf = (patchOf?: (appid: number) => string | null) => {
+      const reason =
+        heuristicPicks([c], metaOf, 1, now, profile, {
+          tagWeight,
+          anchorOf: ctx.anchorOf,
+          hoursOf: ctx.hoursOf,
+          hideUrgency,
+          playtimeHidden: set.playtimeHidden,
+          patchOf,
+        })[0]?.reason ?? ''
+      // В запись уходит причина БЕЗ ценового хвоста: heuristicPicks клеит его
+      // последним (reasonPrice), и на каждом заходе он пересчитывается по
+      // свежей цене. Хвост тут считается по тем же метаданным, что и сама
+      // причина, — поэтому срез всегда попадает ровно по шву.
+      const tail = reasonPrice(c.source, metaOf(c.appid), now, hideUrgency)
+      return tail && reason.endsWith(tail) ? reason.slice(0, -tail.length) : reason
+    }
+    const reasonBase = reasonOf()
+    // Вторая причина — только когда факт есть и фразу поменял: иначе поля нет
+    const reasonPatched = ctx.patchOf(c.appid) ? reasonOf(ctx.patchOf) : reasonBase
+    const meta = metaOf(c.appid)
+    return {
+      pick: publicPick(c),
+      hoursPlayed: ctx.hoursOf(c.appid),
+      reasonBase,
+      ...(reasonPatched !== reasonBase ? { reasonPatched } : {}),
+      sharedTags: meta ? sharedTasteTags(profile, meta, tagWeight) : [],
+      via: ctx.anchorOf(c.appid),
+    }
+  }
 
   return {
     ...describe(pick),

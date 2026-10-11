@@ -74,7 +74,7 @@ export default function SupportPage() {
         <div className="text-center flex flex-col items-center gap-4 anim-reveal">
           <LogoMark size={48} happy />
           <h1 className="font-display text-display-md">
-            imbored бесплатен. И останется таким.
+            imbored бесплатен. И&nbsp;останется таким.
           </h1>
           <p className="text-dim leading-relaxed max-w-md">
             Подбор, пати, совместимость, портрет и итоги года — бесплатны навсегда, без рекламы в

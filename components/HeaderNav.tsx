@@ -36,6 +36,15 @@ import { isNavActive, navPrefetch } from '@/lib/nav'
  * ней пять пунктов против шести, и «Совместимость» просто пропала бы. Тот же
  * зазор стоит у <nav> в app/layout.tsx — менять вместе.
  *
+ * Одного зазора оказалось мало: «Премьера» сделала подписи полужирными, а
+ * логотип вырос до 121 px. Замер на 768 с gap-3.5 и text-sm: справа 597 px
+ * при доступных 607, запас 10 px — а полоса прокрутки десктопного окна
+ * съедает 15, и меню налезало бы на логотип. Поэтому на md ещё и кегль
+ * 13 px (у <nav> в app/layout.tsx), у ряда с темой gap-3: справа 563 px,
+ * запас 44 px (29 при полосе прокрутки). С lg — прежние text-sm и gap-6.
+ * whitespace-nowrap — чтобы нехватка ширины, если снова случится, не
+ * ломала подпись пополам.
+ *
  * Подписи — в LinkPending. /whatsnew и /compat динамические и без
  * loading.tsx (каркас прятал страницу в первом ответе, см.
  * lib/firstpaint.test.ts), так что переход на них ждёт сервер, и до ответа
@@ -49,8 +58,8 @@ import { isNavActive, navPrefetch } from '@/lib/nav'
  * запаса 23 px, и седьмая подпись унесла бы пункты на вторую строку. На
  * планшете хаб остаётся в подвале и в пути над названием на карточке игры.
  * Подсвечен и на карточке игры (/game): это та же витрина. «Каталог», а не
- * «Игры»: «Игры» в нижней панели — это библиотека, и одно слово вело бы в
- * два разных места.
+ * «Игры»: в нижней панели библиотека — «Мои игры», и голое «Игры» рядом
+ * вело бы одним словом в два разных места.
  */
 const ITEMS = [
   { href: '/daily', label: 'Игра дня' },
@@ -71,7 +80,7 @@ export function HeaderNav() {
         const active = isNavActive(pathname, item.href, 'also' in item ? item.also : [])
         const props = {
           'aria-current': active ? ('page' as const) : undefined,
-          className: `tap transition-colors ${'wide' in item ? 'hidden lg:inline' : ''} ${active ? 'text-ink font-extrabold' : 'font-semibold hover:text-ink'}`,
+          className: `tap whitespace-nowrap transition-colors ${'wide' in item ? 'hidden lg:inline' : ''} ${active ? 'text-ink font-extrabold' : 'font-semibold hover:text-ink'}`,
           children: <LinkPending>{item.label}</LinkPending>,
         }
         return 'pick' in item ? (

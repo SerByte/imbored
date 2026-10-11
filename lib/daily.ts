@@ -196,6 +196,8 @@ export type DailyAlternate = {
   hoursPlayed: number | null
   /** Причина без ценового хвоста, как у героя */
   reasonBase: string
+  /** Та же причина с крупным патчем после последнего запуска: см. DailySelection */
+  reasonPatched?: string
   sharedTags: string[]
   /**
    * Своя игра, на которую эта похожа. Её арт — фон героя у игры не из Steam,
@@ -226,6 +228,14 @@ export type DailySelection = {
   hoursPlayed: number | null
   /** Причина без ценового хвоста; хвост — reasonPrice на каждом заходе */
   reasonBase: string
+  /**
+   * Та же причина, но с фактом «с твоего последнего захода вышло крупное
+   * обновление» (lib/comeback.ts); нет поля — факта нет. Отдельным полем, а
+   * не внутри reasonBase: запись одна на steamid, её читают все сессии этого
+   * профиля, а факт — производная от даты последнего запуска и положен только
+   * writer-сессии. Какую из двух отдать, решает GET (dailyReasonBase).
+   */
+  reasonPatched?: string
   sharedTags: string[]
   via: OwnAnchor | null
   hideUrgency: boolean
@@ -255,12 +265,35 @@ function parseAnchor(raw: unknown): OwnAnchor | null {
 
 function parseAlternate(raw: unknown): DailyAlternate | null {
   if (!raw || typeof raw !== 'object') return null
-  const { pick, hoursPlayed, reasonBase, sharedTags, via } = raw as Record<string, unknown>
+  const { pick, hoursPlayed, reasonBase, reasonPatched, sharedTags, via } = raw as Record<string, unknown>
   const chosen = parseChosen(pick)
   if (!chosen) return null
   if (hoursPlayed !== null && typeof hoursPlayed !== 'number') return null
   if (typeof reasonBase !== 'string' || !isTags(sharedTags)) return null
-  return { pick: chosen, hoursPlayed, reasonBase, sharedTags, via: parseAnchor(via) }
+  return {
+    pick: chosen,
+    hoursPlayed,
+    reasonBase,
+    ...patchedField(reasonPatched),
+    sharedTags,
+    via: parseAnchor(via),
+  }
+}
+
+/** Причина с патчем необязательна: битая или пустая — просто без неё */
+function patchedField(raw: unknown): { reasonPatched?: string } {
+  return typeof raw === 'string' && raw ? { reasonPatched: raw } : {}
+}
+
+/**
+ * Какую основу причины отдать сессии: с патчем — только writer-сессии (см.
+ * DailySelection.reasonPatched), остальным и записям без поля — прежнюю.
+ */
+export function dailyReasonBase(
+  sel: Pick<DailyAlternate, 'reasonBase' | 'reasonPatched'>,
+  writer: boolean,
+): string {
+  return writer && sel.reasonPatched ? sel.reasonPatched : sel.reasonBase
 }
 
 /**
@@ -274,10 +307,8 @@ function parseAlternate(raw: unknown): DailyAlternate | null {
  */
 export function parseDailySelection(raw: unknown): DailySelection | null {
   if (!raw || typeof raw !== 'object') return null
-  const { pick, shelf, hoursPlayed, reasonBase, sharedTags, via, hideUrgency, alt } = raw as Record<
-    string,
-    unknown
-  >
+  const { pick, shelf, hoursPlayed, reasonBase, reasonPatched, sharedTags, via, hideUrgency, alt } =
+    raw as Record<string, unknown>
   const parsedPick = parseChosen(pick)
   if (!parsedPick) return null
   if (!Array.isArray(shelf)) return null
@@ -296,6 +327,7 @@ export function parseDailySelection(raw: unknown): DailySelection | null {
     shelf: parsedShelf,
     hoursPlayed,
     reasonBase,
+    ...patchedField(reasonPatched),
     sharedTags,
     via: parseAnchor(via),
     hideUrgency,
@@ -315,4 +347,46 @@ export function parseDailySelection(raw: unknown): DailySelection | null {
 export function dailyHeroAppids(sel: DailySelection | null): number[] {
   if (!sel) return []
   return sel.alt ? [sel.pick.appid, sel.alt.pick.appid] : [sel.pick.appid]
+}
+
+/** «Вчера была: …» под героем /daily — ссылкой на страницу игры */
+export type DailyYesterday = { appid: number; name: string }
+
+/**
+ * Вчерашняя игра дня — одной тихой строкой под сегодняшней.
+ *
+ * Источник — запись daily_picks за вчера по тому же dayKey (московские
+ * сутки), что и сегодняшняя; имя — из самой записи: выбор хранит publicPick
+ * с названием, и ни база метаданных, ни сеть ради строки не нужны.
+ *
+ * Честная оговорка: запись дня хранит ПОСЛЕДНЕГО героя. «Не сегодня» про
+ * героя стирает запись, и отбор пишет замену, — значит, «вчера была» здесь
+ * та, на которой вчерашний день закончился, а не та, что стояла утром.
+ * Для строки «что было вчера» это приемлемо: отложенную вчера человек сам
+ * отодвинул, и напоминать о ней незачем. Запасная своя (alt) сюда не
+ * попадает: героем её делало только нажатие, а какое — запись не знает.
+ *
+ * null — строки нет: записи за вчера нет (новый человек, крон подмёл, запись
+ * не разобралась), имени нет (пустое после trim), или вчерашняя сегодня снова
+ * на экране — героем, запасной своей (pickDaily исключает вчерашних, но
+ * повторяет, когда выбирать больше не из чего) или карточкой полки находок.
+ * Полка — частый случай, а не редкий: после магазинного дня вчерашний герой
+ * пришёл из верхушки каталога, а полка — та же верхушка без сегодняшнего
+ * героя и без avoid. «Вчера была X» рядом с той же X читалось бы как сбой.
+ *
+ * Бан и «надоела» здесь не проверяются, и запроса ради них нет: /api/feedback
+ * на них стирает и вчерашнюю запись, если её герой — эта игра (см. там). Нет
+ * записи — нет и строки, в обычном ответе и при ?cached=1 одинаково.
+ */
+export function yesterdayLine(
+  yesterday: DailySelection | null,
+  today: DailySelection,
+): DailyYesterday | null {
+  if (!yesterday) return null
+  const { appid, name } = yesterday.pick
+  const title = name.trim()
+  if (!title) return null
+  if (dailyHeroAppids(today).includes(appid)) return null
+  if (today.shelf.some((c) => c.appid === appid)) return null
+  return { appid, name: title }
 }

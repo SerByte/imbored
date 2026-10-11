@@ -1,6 +1,7 @@
 import { clip, DESCRIPTION_MAX } from './clip'
 import { hashString, mulberry32 } from './daily'
 import {
+  gamesByDeveloper,
   getGamePageRow,
   getGameNews,
   getNeighbors,
@@ -10,10 +11,13 @@ import {
   type FeedItem,
   type SimilarGame,
   type StoredNews,
+  type StudioGame,
 } from './db'
+import { collapseEditions, editionKey } from './editions'
 import { logSwallowed } from './errlog'
 import { characterTrait, entryTrait, sessionTrait, type GameTrait } from './gametraits'
 import { distinctiveTags } from './hook'
+import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { NEIGHBORS_K } from './neighbors'
 import { plural } from './plural'
@@ -52,6 +56,12 @@ export type GamePageData = {
    * не прошёл порог. Строку из него собирает gameTraits.
    */
   hook: string[] | null
+  /**
+   * «Ещё у <студии>»: строка текстовых ссылок под «Похожими» (studioLine).
+   * null — строки нет: у студии одна игра, корпоративный каталог, всё уже на
+   * полке «Похожие», или страница чужого магазина.
+   */
+  studio: StudioLine | null
 }
 
 /**
@@ -114,8 +124,8 @@ export type ReviewFacts = {
  *
  * Слово при этом берётся только из сводки. Числа — факт площадки, и мы их
  * пересказываем; словесная шкала — её суждение, и придумывать его за неё
- * нельзя. Без сводки рядом с кольцом остаётся «из N отзывов — за», и этого
- * достаточно: процент уже стоит внутри кольца.
+ * нельзя. Без сводки рядом с кольцом остаётся «положительных из N отзывов», и
+ * этого достаточно: процент уже стоит внутри кольца.
  */
 export function reviewFacts(
   meta: Pick<GameMeta, 'reviewsPercent' | 'reviewsTotal'>,
@@ -264,6 +274,78 @@ export async function nearGames(
     tag,
     basis: 'tag',
   }
+}
+
+/**
+ * Больше стольких живых игр у студии — строки нет. Supergiant, Klei, Amanita,
+ * Zachtronics укладываются в десяток, а у Square Enix, CAPCOM и Ubisoft в
+ * каталоге десятки игр: на странице NieR строка «Ещё у Square Enix» позвала бы
+ * в FINAL FANTASY XIV Online, и это был бы список издательства, а не почерк
+ * авторов. Число игр считается ДО фильтров, включая саму страницу: вопрос
+ * «корпорация ли это» — про студию, а не про то, что от неё осталось на полке.
+ */
+export const STUDIO_MAX_GAMES = 12
+
+/** Меньше двух названий — не строка «ещё», а одна ссылка, которой хватает героя */
+export const STUDIO_MIN_SHOWN = 2
+
+/** Сколько названий в строке: одна строка текста, не сетка, и кнопка ниже не уезжает */
+export const STUDIO_SHOWN = 4
+
+export type StudioLine = {
+  /** Как в подписи героя — та же строка games.developer, только без краевых пробелов */
+  developer: string
+  games: Array<{ appid: number; name: string }>
+}
+
+/**
+ * «Ещё у <студии>: A · B · C» под полкой «Похожие» — чистая часть: что из игр
+ * студии (gamesByDeveloper) стоит назвать на этой странице.
+ *
+ * Отсев по порядку причин:
+ *   • чужой магазин (appid < 0) и игра без разработчика — строки нет вовсе;
+ *   • у студии больше STUDIO_MAX_GAMES живых игр — корпоративный каталог;
+ *   • сама страница и её издания (editionKey): «Ещё у CD PROJEKT RED: The
+ *     Witcher 3: Wild Hunt — Complete Edition» на странице The Witcher 3 —
+ *     это та же игра в другой коробке;
+ *   • мусор по названию (looksLikeJunkName): саундтрек или демо студии живым
+ *     в пуле бывает, а советовать его как «ещё игру» — нет;
+ *   • то, что уже стоит в «Похожих», по appid и по изданию: дважды на одной
+ *     странице одна игра — место, потраченное впустую, а у студий с сильной
+ *     серией соседи и так её игры (у Hades первый сосед — Hades II);
+ *   • издания между собой схлопываются (collapseEditions), побеждает первый
+ *     по отзывам — тот же, что и так стоит левее, порядок не двигается.
+ *
+ * Порядок пересчитывается здесь, а не берётся из запроса: отзывы по убыванию,
+ * затем appid. Страница живёт в ISR неделю и обязана быть той же байт в байт,
+ * пока не поменялись данные, — от порядка строк на входе вывод зависеть не
+ * должен.
+ */
+export function studioLine(
+  page: Pick<GameMeta, 'appid' | 'name' | 'developer'>,
+  candidates: readonly StudioGame[],
+  similar: ReadonlyArray<Pick<SimilarGame, 'appid' | 'name'>>,
+): StudioLine | null {
+  const developer = page.developer?.trim()
+  if (page.appid < 0 || !developer) return null
+  if (candidates.length > STUDIO_MAX_GAMES) return null
+
+  const pageKey = editionKey(page.name)
+  const shownIds = new Set(similar.map((g) => g.appid))
+  const shownKeys = new Set(similar.map((g) => editionKey(g.name)).filter(Boolean))
+  const kept = [...candidates]
+    .sort((a, b) => b.reviewsTotal - a.reviewsTotal || a.appid - b.appid)
+    .filter((g) => {
+      if (g.appid === page.appid || g.appid <= 0 || shownIds.has(g.appid)) return false
+      if (looksLikeJunkName(g.name)) return false
+      const key = editionKey(g.name)
+      return !key || (key !== pageKey && !shownKeys.has(key))
+    })
+  // Внутри группы изданий побеждает первый: вход уже отсортирован по отзывам
+  const games = collapseEditions(kept, (g) => g.name, () => 1)
+    .slice(0, STUDIO_SHOWN)
+    .map(({ appid, name }) => ({ appid, name }))
+  return games.length >= STUDIO_MIN_SHOWN ? { developer, games } : null
 }
 
 /**
@@ -522,15 +604,23 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
       prosCons: null,
       news: [],
       ...(await similarOf()),
+      studio: null,
     }
   }
 
   const reviewsSummary = строка.reviewsSummary as GamePageData['reviewsSummary']
   const stored = строка.prosCons as GamePageData['prosCons']
-  const [news, shelf] = await Promise.all([
+  // Игры студии — параллельно с полкой, а отсев — после неё: строка не
+  // повторяет того, что уже стоит в «Похожих». Лимит на одну больше порога —
+  // так studioLine узнаёт корпоративный каталог, не читая его целиком
+  const [news, shelf, studioGames] = await Promise.all([
     getGameNews(db, appid, 8).then((rows) => rows.map(cardNews)),
     similarOf(),
+    meta.developer?.trim()
+      ? gamesByDeveloper(db, meta.developer, STUDIO_MAX_GAMES + 1)
+      : Promise.resolve([]),
   ])
+  const studio = studioLine(meta, studioGames, shelf.similar)
 
   /*
    * Наружу отдаём ТОЛЬКО собранное моделью.
@@ -552,5 +642,5 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    */
   const prosCons = stored?.source === 'claude' ? stored : null
 
-  return { meta, reviewsSummary, prosCons, news, ...shelf }
+  return { meta, reviewsSummary, prosCons, news, ...shelf, studio }
 }

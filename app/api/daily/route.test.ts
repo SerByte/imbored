@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
-import { freshDb, post, signIn, signOut } from '@/lib/testing/route'
+import { PATCH_SINCE_LEAD } from '@/lib/comeback'
+import { resetSwallowed } from '@/lib/errlog'
+import {
+  getDailyPick,
+  saveDailyPick,
+  saveLibrarySnapshot,
+  setNewsDigest,
+  upsertGamesMeta,
+  upsertNewsItems,
+  type Db,
+} from '@/lib/db'
+import { breakDbOn, freshDb, post, signIn, signInAs, signOut, STEAMID_OF, type SessionKind } from '@/lib/testing/route'
 import { POST as feedback } from '../feedback/route'
 import type { GameMeta, LibraryGame } from '@/lib/types'
 import { pickShareOk } from '@/lib/pickshare'
@@ -8,6 +18,12 @@ import { sessionSecret } from '@/lib/server'
 import { GET } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
+// Бан в /api/feedback сбрасывает кэш портрета, а настоящий revalidateTag вне
+// сервера Next бросает; здесь важен только сброс записей дня
+vi.mock('next/cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/cache')>()),
+  revalidateTag: () => {},
+}))
 
 /**
  * /api/daily — записанный выбор дня, настоящим роутом на базе в памяти.
@@ -229,5 +245,258 @@ describe('/api/daily: «Не сегодня»', () => {
     await notNow(other, 'play')
     expect(await countRows(db, 'daily_picks')).toBe(1)
     expect(await pickOf('?cached=1')).toBe(first)
+  })
+})
+
+/**
+ * «Вчера была: …» — вчерашняя запись дня тем же ключом суток (dayKey), что и
+ * сегодняшняя, в обоих ответах: обычном и «только записанное». Имя — из
+ * записи: сеть в тестах закрыта, и строка обязана обходиться без неё.
+ */
+describe('/api/daily: «Вчера была»', () => {
+  const DAY_MS = 86_400_000
+  type Body = { pick: { appid: number }; yesterday: { appid: number; name: string } | null }
+  const body = async (query = '') => (await (await get(query)).json()) as Body
+
+  test('вчера была игра дня — она в ответе, и при ?cached=1 тоже', async () => {
+    vi.setSystemTime(NOON_MSK - DAY_MS)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(Date.now() / 1000))
+    const before = (await body()).pick.appid
+
+    vi.setSystemTime(NOON_MSK)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    const today = await body()
+    expect(today.pick.appid).not.toBe(before)
+    expect(today.yesterday).toEqual({ appid: before, name: `Игра ${before}` })
+    expect((await body('?cached=1')).yesterday).toEqual({ appid: before, name: `Игра ${before}` })
+  })
+
+  test('вчерашней записи нет — null, а не пустая строка', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    expect((await body()).yesterday).toBeNull()
+    expect((await body('?cached=1')).yesterday).toBeNull()
+  })
+
+  test('вчерашняя совпадает с сегодняшней — null: «вчера была» над той же игрой читается как сбой', async () => {
+    const now = Math.floor(NOON_MSK / 1000)
+    await seedLibrary(db, [10, 11, 12, 13], now)
+    const today = (await body()).pick.appid
+    // Вчерашняя запись — копия сегодняшней: так бывает, когда, кроме
+    // вчерашней, выбирать не из чего (pickDaily повторяет, а не пустеет)
+    await saveDailyPick(db, STEAMID, '2026-09-22', await getDailyPick(db, STEAMID, '2026-09-23'), now)
+    const cached = await body('?cached=1')
+    expect(cached.pick.appid).toBe(today)
+    expect(cached.yesterday).toBeNull()
+  })
+
+  /**
+   * Скрытая сегодня вчерашняя — строки нет. Бан и «надоела» стирают
+   * сегодняшнюю запись, а вчерашнюю — только если её герой и есть эта игра
+   * (/api/feedback): иначе «Вчера была: X →» вела бы на игру, которую человек
+   * только что попросил не показывать.
+   */
+  test.each([
+    ['бан', { action: 'banned' }],
+    ['«надоела»', { action: 'skipped', reason: 'tired' }],
+  ])('вчерашнюю сегодня скрыли (%s) — строки нет, и при ?cached=1 тоже', async (_, fb) => {
+    vi.setSystemTime(NOON_MSK - DAY_MS)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(Date.now() / 1000))
+    const before = (await body()).pick.appid
+
+    vi.setSystemTime(NOON_MSK)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    expect((await body()).yesterday?.appid).toBe(before)
+
+    await feedback(post('/api/feedback', { appid: before, ...fb, ctx: { source: 'play' } }))
+    const after = await body()
+    expect(after.pick.appid).not.toBe(before)
+    expect(after.yesterday).toBeNull()
+    expect((await body('?cached=1')).yesterday).toBeNull()
+  })
+
+  test('скрыли другую игру — вчерашняя запись цела, строка на месте', async () => {
+    vi.setSystemTime(NOON_MSK - DAY_MS)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(Date.now() / 1000))
+    const before = (await body()).pick.appid
+
+    vi.setSystemTime(NOON_MSK)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    const other = [10, 11, 12, 13].find((id) => id !== before)!
+    await feedback(post('/api/feedback', { appid: other, action: 'banned', ctx: { source: 'play' } }))
+    expect(await getDailyPick(db, STEAMID, '2026-09-22')).not.toBeNull()
+    expect((await body()).yesterday?.appid).toBe(before)
+  })
+
+  test('вчера было «Не сегодня» — в строке замена: запись дня хранит последнего героя', async () => {
+    vi.setSystemTime(NOON_MSK - DAY_MS)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(Date.now() / 1000))
+    const first = (await body()).pick.appid
+    await feedback(
+      post('/api/feedback', { appid: first, action: 'skipped', reason: 'notnow', ctx: { source: 'daily' } }),
+    )
+    const second = (await body()).pick.appid
+    expect(second).not.toBe(first)
+
+    vi.setSystemTime(NOON_MSK)
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    expect((await body()).yesterday?.appid).toBe(second)
+  })
+})
+
+/**
+ * «С твоего последнего захода вышло крупное обновление» в «Игре дня».
+ *
+ * Запись дня одна на steamid и общая для всех его сессий: факт лежит в ней
+ * отдельным полем (reasonPatched), а GET отдаёт его только writer
+ * (dailyReasonBase). Здесь — склейка настоящим роутом: кто видит фразу, что
+ * уходит в «Отправить другу» и что обрыв базы на чтении патча не роняет
+ * отбор дня.
+ */
+describe('/api/daily: крупный патч с последнего захода', () => {
+  const DAY = 86_400
+  const STALE = 620
+  const TLDR = 'Добавили новый биом и переделали бои с боссами'
+  type Body = { pick: { appid: number; source: string; reason: string; share?: { text: string } } }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** Одна своя — заброшенная с датой запуска, и патч после неё */
+  async function setup(kind: SessionKind): Promise<void> {
+    const steamid = await signInAs(db, kind)
+    const now = Math.floor(NOON_MSK / 1000)
+    await upsertGamesMeta(db, [meta(STALE, TAGS.slice(0, 3), now)], now)
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      [{ ...game(STALE, 40), lastPlayed: now - 200 * DAY }],
+      now,
+    )
+    await upsertNewsItems(
+      db,
+      [
+        {
+          appid: STALE,
+          gid: 'major',
+          title: 'Обновление',
+          url: `https://store.steampowered.com/news/app/${STALE}/view/1`,
+          publishedAt: now - 30 * DAY,
+          kind: 'patch',
+          scale: 'major',
+          blocks: [{ kind: 'p', runs: [{ text: 'правки' }] }],
+          bodyHash: 'h1',
+          rank: 5000,
+        },
+      ],
+      now,
+    )
+    await setNewsDigest(db, STALE, 'major', { tldr: TLDR, scale: 'major' }, now)
+  }
+
+  async function dailyPick(): Promise<Body['pick']> {
+    const res = await get()
+    expect(res.status).toBe(200)
+    const { pick } = (await res.json()) as Body
+    expect(pick.appid).toBe(STALE)
+    expect(pick.source).toBe('comeback')
+    return pick
+  }
+
+  test('сессия по вставленной ссылке — прежняя фраза, хотя факт в записи есть', async () => {
+    await setup('claimed')
+    const pick = await dailyPick()
+    expect(pick.reason).not.toContain(PATCH_SINCE_LEAD)
+    expect(pick.reason).toContain('вернись и проверь')
+    expect(pick.share!.text).not.toContain(PATCH_SINCE_LEAD)
+    // Запись общая для всех сессий профиля — факт в ней лежит отдельным полем
+    const stored = (await getDailyPick(db, STEAMID_OF.claimed, '2026-09-23')) as { reasonPatched?: string }
+    expect(stored.reasonPatched).toContain(PATCH_SINCE_LEAD)
+  })
+
+  test.each(['openid', 'demo'] as const)('writer (%s) — фраза в причине, но не в «Отправить другу»', async (kind) => {
+    await setup(kind)
+    const pick = await dailyPick()
+    expect(pick.reason).toContain(PATCH_SINCE_LEAD)
+    expect(pick.reason).toContain('новый биом')
+    // По ссылке уходит основа без факта: получатель прочёл бы его про себя
+    expect(pick.share!.text).not.toContain(PATCH_SINCE_LEAD)
+    expect(pick.share!.text).not.toContain('новый биом')
+    expect(pick.share!.text).toContain('вернись и проверь')
+  })
+
+  /**
+   * «Сегодня хочу из своего» — та же развилка у запасной своей. Отбор делает
+   * её редко (магазинный день раз в три), поэтому запись собрана руками: так
+   * роут проверяется на обоих путях — alternateView (причина по writer) и
+   * shareView запасной (всегда основа без факта).
+   */
+  describe('запасная своя на магазинный день', () => {
+    const HERO = 9001
+    const ALT_BASE = `У тебя в «Игра ${STALE}» уже 40 ч — вернись и проверь, как она сейчас.`
+    const ALT_PATCHED = `У тебя в «Игра ${STALE}» уже 40 ч. ${PATCH_SINCE_LEAD}: ${TLDR}.`
+    type AltBody = { ownAlternate: { appid: number; reason: string; share?: { text: string } } | null }
+
+    async function seedStoreDay(kind: SessionKind): Promise<AltBody['ownAlternate']> {
+      const steamid = await signInAs(db, kind)
+      const now = Math.floor(NOON_MSK / 1000)
+      await upsertGamesMeta(db, [meta(HERO, TAGS.slice(0, 3), now), meta(STALE, TAGS.slice(0, 3), now)], now)
+      await saveDailyPick(
+        db,
+        steamid,
+        '2026-09-23',
+        {
+          pick: { appid: HERO, name: `Игра ${HERO}`, source: 'new' },
+          shelf: [],
+          hoursPlayed: null,
+          reasonBase: 'Теги твои, а в библиотеке её нет.',
+          sharedTags: [],
+          via: null,
+          hideUrgency: false,
+          alt: {
+            pick: { appid: STALE, name: `Игра ${STALE}`, source: 'comeback' },
+            hoursPlayed: 40,
+            reasonBase: ALT_BASE,
+            reasonPatched: ALT_PATCHED,
+            sharedTags: [],
+            via: null,
+          },
+        },
+        now,
+      )
+      const res = await get()
+      expect(res.status).toBe(200)
+      const { ownAlternate } = (await res.json()) as AltBody
+      expect(ownAlternate?.appid).toBe(STALE)
+      return ownAlternate
+    }
+
+    test('сессия по вставленной ссылке — ни в причине, ни в «Отправить другу»', async () => {
+      const alt = (await seedStoreDay('claimed'))!
+      expect(alt.reason).toContain('вернись и проверь')
+      expect(alt.reason).not.toContain(PATCH_SINCE_LEAD)
+      expect(alt.share!.text).toBe(ALT_BASE)
+    })
+
+    test.each(['openid', 'demo'] as const)('writer (%s) — факт в причине, по ссылке основа без него', async (kind) => {
+      const alt = (await seedStoreDay(kind))!
+      expect(alt.reason).toContain(PATCH_SINCE_LEAD)
+      expect(alt.reason).toContain('новый биом')
+      expect(alt.share!.text).toBe(ALT_BASE)
+      expect(alt.share!.text).not.toContain('новый биом')
+    })
+  })
+
+  test('обрыв базы на чтении патча — отбор дня собирается без факта, сбой в логе', async () => {
+    await setup('openid')
+    // logSwallowed глушит повтор того же where на минуту: без сброса строка
+    // зависела бы от того, не залогировал ли её раньше другой тест файла
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    breakDbOn(db, 'FROM news_items')
+    const pick = await dailyPick()
+    expect(pick.reason).not.toContain(PATCH_SINCE_LEAD)
+    expect(pick.reason).toContain('вернись и проверь')
+    expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('cards:comeback-patches')
   })
 })

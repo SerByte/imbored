@@ -201,13 +201,27 @@ const read = (file: string) => strip(fs.readFileSync(path.join(ROOT, file), 'utf
  *
  * Место опознаётся по началу попытки (start), а не по номеру строки; от него
  * до первого await обязан стоять каждый сброс из reset.
+ *
+ * Половина правды, если отказ бывает и без await: сброс и новый отказ в одном
+ * обработчике React склеивает в одно обновление, и текст снова не меняется.
+ * Так было у «Сообщить, когда сойдёмся»: после первого отказа браузер помнит
+ * 'denied', запрос не шёл, и второй отказ ставился синхронно. Для таких мест
+ * fail — новый отказ, который обязан стоять ПОСЛЕ первого await.
  */
-const REPEAT: Array<{ file: string; start: string; reset: string[] }> = [
+const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: string[] }> = [
   // голос колоды: отказ возвращает карту в голову, и следующий свайп — повтор
   { file: 'app/room/[id]/page.tsx', start: 'async function vote(', reset: ['setVoteFailed(false)'] },
   { file: 'app/room/[id]/page.tsx', start: 'async function join()', reset: ['setJoinError(null)'] },
   { file: 'app/room/[id]/page.tsx', start: 'async function joinAsDemoFriend()', reset: ['setJoinError(null)'] },
   { file: 'app/room/[id]/page.tsx', start: 'async function takeLeader()', reset: ['setLeaderMiss(null)'] },
+  // повторное нажатие после отказа в разрешении — тот же отказ тем же текстом;
+  // браузер помнит отказ, и без await между ними повтор склеился бы со сбросом
+  {
+    file: 'components/room/MatchNotify.tsx',
+    start: 'async function toggle()',
+    reset: ['setMiss(null)'],
+    fail: ['setMiss(permission)'],
+  },
   // переключатели и кнопки под героем — один путь, отказ говорит то место, откуда нажали
   {
     file: 'app/play/page.tsx',
@@ -226,7 +240,7 @@ const REPEAT: Array<{ file: string; start: string; reset: string[] }> = [
 
 describe('повтор отказа звучит', () => {
   test('отказ, который повторяется, гаснет в начале попытки — до первого await', () => {
-    for (const { file, start, reset } of REPEAT) {
+    for (const { file, start, reset, fail = [] } of REPEAT) {
       const code = read(file)
       const at = code.indexOf(start)
       expect(at, `${file}: «${start}» не найдено — сторож ослеп`).toBeGreaterThan(-1)
@@ -236,6 +250,10 @@ describe('повтор отказа звучит', () => {
       const head = code.slice(at, until)
       for (const r of reset) {
         expect(head, `${file} — ${start}: ${r} до первого await, иначе второй такой же отказ промолчит`).toContain(r)
+      }
+      for (const f of fail) {
+        expect(head, `${file} — ${start}: ${f} до первого await склеится со сбросом`).not.toContain(f)
+        expect(code.indexOf(f, until), `${file} — ${start}: ${f} не найдено — сторож ослеп`).toBeGreaterThan(until)
       }
     }
   })

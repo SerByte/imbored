@@ -129,6 +129,13 @@ async function seed(): Promise<void> {
     await upsertGameMeta(db, game(appid), T0)
     await replaceGameTags(db, appid, [{ tag: 'FPS', weight: 900 }])
   }
+  // «Ещё у Valve»: в «Похожие» не попадают — тега FPS в game_tags у них нет
+  for (const [appid, name] of [
+    [400, 'Portal'],
+    [620, 'Portal 2'],
+  ] as const) {
+    await upsertGameMeta(db, game(appid, { name, developer: 'Valve' }), T0)
+  }
   await setGameJson(db, APPID, 'reviews_summary_json', {
     scoreDesc: 'Very Positive',
     totalPositive: 900,
@@ -230,6 +237,18 @@ describe('кэш карточки игры', () => {
     // Строка цены — внутри ShownUntil со сроком конца акции
     const text = JSON.stringify(page)
     expect(text).toContain(`"island":"ShownUntil","key":null,"props":{"untilSec":${T0 + 5 * DAY}`)
+  })
+
+  test('«Ещё у Valve» — одна строка текстовых ссылок, без обложек и prefetch', async () => {
+    await seed()
+    const page = flight(await GamePage(params))
+    expect(textOf(page)).toContain('Ещё у Valve: Portal · Portal 2')
+    const text = JSON.stringify(page)
+    for (const appid of [400, 620]) {
+      expect(text).toContain(`{"island":"Link","key":null,"props":{"href":"/game/${appid}","prefetch":false`)
+      // ни плитки, ни арта — только название
+      expect(text).not.toContain(`"appid":${appid}`)
+    }
   })
 
   test('онлайн — прошедшим временем: «сейчас» из недельного кэша не бывает правдой', async () => {

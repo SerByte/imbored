@@ -102,18 +102,20 @@ describe('голос портрета', () => {
   })
 
   test('заголовок нераспакованного согласуется с числом', () => {
-    expect(unplayedHeading(1, 'them')).toBe('игра так и не запущена')
-    expect(unplayedHeading(3, 'them')).toBe('игры так и не запущены')
-    expect(unplayedHeading(12, 'them')).toBe('игр так и не запущено')
-    expect(unplayedHeading(21, 'you')).toBe('игра ты так и не запустил')
-    expect(unplayedHeading(5, 'you')).toBe('игр ты так и не запустил')
+    expect(unplayedHeading(1, 'them')).toBe('игра почти не тронута')
+    expect(unplayedHeading(3, 'them')).toBe('игры почти не тронуты')
+    expect(unplayedHeading(12, 'them')).toBe('игр почти не тронуто')
+    // винительный: «21 игру ты почти не трогал», а не «21 игра ты…»
+    expect(unplayedHeading(21, 'you')).toBe('игру ты почти не трогал')
+    expect(unplayedHeading(3, 'you')).toBe('игры ты почти не трогал')
+    expect(unplayedHeading(5, 'you')).toBe('игр ты почти не трогал')
   })
 
   test('запасной текст гостю — о владельце, с теми же числами', () => {
     const text = portraitFallbackText('Аня', ARCH, FACTS, 'them')
     expect(text).toBe(
       'Аня на 46% строитель и на 30% стратег. За плечами 4 404 часа в 22 играх, ' +
-        'а 5 игр так и не распаковано. «Factorio» забрала 41% всей игровой жизни — и, ' +
+        'а 5 игр почти не тронуто. «Factorio» забрала 41% всей игровой жизни — и, ' +
         'кажется, не собирается отдавать.',
     )
   })
@@ -139,7 +141,7 @@ test('страница портрета не держит фраз «на ты»
     'твоей игровой жизни',
     'ты однолюб',
     'ты провёл не один',
-    'ты так и не запустил',
+    'ты почти не трогал',
     'Медиана твоей',
     'function fallbackText',
   ]) {

@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { NeedSteam } from '@/components/NeedSteam'
 import { useShareLink } from '@/components/ShareLink'
@@ -11,6 +11,7 @@ import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
 import { StatusLine } from '@/components/StatusLine'
 import { Icon } from '@/components/Icon'
+import { Notice } from '@/components/Notice'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
@@ -18,11 +19,19 @@ import { claimVote, deckStuck, voteMiss, voteSignal } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
 import type { Mood } from '@/lib/types'
-import { matchLine, ROOM_MAX_MEMBERS, type RoomMemberView } from '@/lib/room'
+import {
+  awaitingOthers,
+  matchLine,
+  ROOM_MAX_MEMBERS,
+  roomTabTitle,
+  type RoomMemberView,
+  waitsInBackground,
+} from '@/lib/room'
 import { plural } from '@/lib/plural'
 import { roomPresetOf } from '@/lib/presets'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
-import { nextPollStep } from '@/lib/roompoll'
+import { HIDDEN_POLL_CAP_MS, hiddenPollDelay, nextPollStep } from '@/lib/roompoll'
+import { announceMatch } from '@/components/room/MatchNotify'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { roomShareUrl } from '@/lib/roomshare'
 import { track } from '@/lib/track'
@@ -128,6 +137,18 @@ const POLL_TIMEOUT_MS = 8_000
 /** Пол по частоте для догрузки лайков — см. докблок у эффекта */
 const LIKES_MIN_GAP_MS = 12_000
 
+/**
+ * Видна ли вкладка — как внешнее хранилище, чтобы эффекты колоды и лайков
+ * догнали отложенное при возвращении. Функции на модуле: useSyncExternalStore требует
+ * стабильные. На сервере вкладка «видна» — там эффектов нет вовсе.
+ */
+function subscribeVisibility(onChange: () => void) {
+  document.addEventListener('visibilitychange', onChange)
+  return () => document.removeEventListener('visibilitychange', onChange)
+}
+const readVisible = () => document.visibilityState === 'visible'
+const serverVisible = () => true
+
 export default function RoomPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
@@ -163,6 +184,9 @@ export default function RoomPage() {
   const [deckTotal, setDeckTotal] = useState(0)
   const [deckVoted, setDeckVoted] = useState(0)
   const [deckFailed, setDeckFailed] = useState(false)
+  // Отказ по потолку частоты (429) — не поломка: «на нашей стороне» и
+  // «попробуй ещё раз» сразу же упёрлись бы в тот же потолок
+  const [deckLimited, setDeckLimited] = useState(false)
   /*
    * Запрос колоды уже в полёте.
    *
@@ -216,6 +240,21 @@ export default function RoomPage() {
    * Открыл ссылку на уже сошедшуюся комнату — новости нет (matchLine в lib/room).
    */
   const [sawOpen, setSawOpen] = useState(false)
+  /** Матч пришёл в скрытую вкладку, и её с тех пор не открывали — «●» в заголовке */
+  const [unseen, setUnseen] = useState(false)
+  /**
+   * Зеркало «есть что узнать из фона» (waitsInBackground в lib/room) для
+   * опроса. Эффект опроса держит в замыкании lastChangeAt и счёт отказов;
+   * зависимость от этого флага пересоздавала бы его на каждом конце колоды и
+   * сбрасывала бы и то и другое. Ref он читает на каждом тике.
+   */
+  const waitingRef = useRef(false)
+  /**
+   * Матч вызвал сам человек: его последний голос или его «Берём». Снаружи
+   * такой матч приходит тем же refresh, что и чужой, и без флага нажавший
+   * получил бы уведомление о собственном нажатии (matchNoticeDue в lib/room).
+   */
+  const selfCaused = useRef(false)
   const deckKey = useRef('')
   const likesKey = useRef('')
   const likesAt = useRef(0)
@@ -256,6 +295,9 @@ export default function RoomPage() {
       const next = (await res.json()) as RoomState
       setState(next)
       if (next.room.status === 'open') setSawOpen(true)
+      // Матч застал вкладку скрытой — метка непрочитанного в заголовке
+      // (roomTabTitle); снимает её возвращение на вкладку
+      if (next.room.status === 'matched' && document.visibilityState !== 'visible') setUnseen(true)
       return { ok: true, state: next }
     },
     [roomId],
@@ -280,33 +322,65 @@ export default function RoomPage() {
     let lastKey = ''
     /** Отказов подряд. Сбрасывается первым же успешным ответом. */
     let fails = 0
+    /** С какого момента вкладка скрыта — для потолка фонового опроса */
+    let hiddenSince = Date.now()
+    /** Когда ушёл последний запрос — фон считает свою минуту от него */
+    let askedAt = 0
 
     /**
      * `slow` — не оптимизация, а вежливость: когда сервер отвечает отказом,
      * долбиться в него каждые 2.5 секунды значит добавлять нагрузки ровно
-     * тому, кто уже не справляется.
+     * тому, кто уже не справляется. `ms` — явный срок, у фонового опроса.
      */
-    const arm = (slow = false) => {
+    const arm = (slow = false, ms?: number) => {
       if (stopped) return
       window.clearTimeout(timer)
       const idle = Date.now() - lastChangeAt > POLL_IDLE_AFTER_MS
-      timer = window.setTimeout(() => void tick(), slow || idle ? POLL_SLOW_MS : POLL_FAST_MS)
+      timer = window.setTimeout(() => void tick(), ms ?? (slow || idle ? POLL_SLOW_MS : POLL_FAST_MS))
     }
 
     const tick = async (force = false) => {
       if (stopped) return
-      // В фоне ничего не переспрашиваем: вкладка, забытая на ночь, стоила бы
-      // миллионов прочитанных строк и не показала бы никому ни одной.
+      if (inFlight) {
+        arm()
+        return
+      }
+      // В фоне по умолчанию ничего не переспрашиваем: вкладка, забытая на ночь,
+      // стоила бы миллионов прочитанных строк и не показала бы никому ни одной.
+      // Исключение одно — своя колода кончилась, а комната ещё может сойтись
+      // без него (waitsInBackground в lib/room): тогда раз в минуту и не дольше
+      // часа (hiddenPollDelay в lib/roompoll). После часа цепочка таймеров
+      // обрывается, и её поднимает onVisibility.
       //
       // Первый запрос — исключение и делается всегда: ссылку на комнату
       // открывают из чата в фоновой вкладке, и без него человек, переключившись
       // на неё, упирался бы в спиннер вместо готовой страницы. Это ровно один
-      // запрос, тот самый, который превращает спиннер в содержимое.
-      if ((!force && document.visibilityState !== 'visible') || inFlight) {
-        arm()
-        return
+      // запрос, тот самый, который превращает спиннер в содержимое. Первую
+      // колоду участнику эффект колоды ниже грузит по той же причине и тоже
+      // из фона — дальнейшие её перечитывания ждут видимой вкладки.
+      if (!force && document.visibilityState !== 'visible') {
+        const every = hiddenPollDelay({
+          waiting: waitingRef.current,
+          hiddenForMs: Date.now() - hiddenSince,
+        })
+        if (every === null) {
+          // Цепочка не рвётся, пока не вышел час: ждать можно начать и в
+          // скрытой вкладке — ссылку открыли в фоне, колода приехала пустой
+          // уже после первого тика, — и без холостого тика флаг, поднятый
+          // позже, никто бы не прочёл до возвращения на вкладку. Холостой тик
+          // запросов не шлёт, это только таймер. После часа — спать до onVisibility.
+          if (Date.now() - hiddenSince < HIDDEN_POLL_CAP_MS) arm(true)
+          return
+        }
+        // Отказ тоже считается запросом: сбой в фоне не ускоряет опрос
+        const left = every - (Date.now() - askedAt)
+        if (left > 0) {
+          arm(false, left)
+          return
+        }
       }
 
+      askedAt = Date.now()
       const ac = new AbortController()
       inFlight = ac
       const cap = window.setTimeout(() => ac.abort(), POLL_TIMEOUT_MS)
@@ -352,7 +426,11 @@ export default function RoomPage() {
     }
 
     const onVisibility = () => {
-      if (document.visibilityState !== 'visible' || stopped) return
+      if (document.visibilityState !== 'visible') {
+        hiddenSince = Date.now()
+        return
+      }
+      if (stopped) return
       void tick()
     }
 
@@ -373,6 +451,7 @@ export default function RoomPage() {
     try {
       const res = await fetch(`/api/room/${roomId}/deck`)
       if (!res.ok) {
+        setDeckLimited(res.status === 429)
         setDeckFailed(true)
         return
       }
@@ -403,6 +482,7 @@ export default function RoomPage() {
       setHasMore(data.hasMore)
       setLocalVotes(0)
     } catch {
+      setDeckLimited(false)
       setDeckFailed(true)
     } finally {
       deckInFlight.current = false
@@ -424,11 +504,40 @@ export default function RoomPage() {
     ? `${state.members.length}:${state.room.deckRound}`
     : ''
 
+  /*
+   * Колода перечитывается только в видимой вкладке — тем же правилом, что лайки
+   * ниже; первая колода — исключение (см. конец докблока).
+   *
+   * Скрытая ждущая вкладка опрашивает комнату раз в минуту (hiddenPollDelay в
+   * lib/roompoll), и новый участник или новый раунд меняют deckWant прямо в
+   * фоне. Грузи мы колоду тогда же, любой 429 или обрыв фонового запроса
+   * выставлял бы deckFailed, а guard ниже по нему не повторяет: вернувшийся
+   * человек видел «Не получилось загрузить игры» или «Слишком часто» вместо
+   * колоды — из-за запроса, о котором он не просил и который никто не видел.
+   *
+   * Поэтому скрытая вкладка ключ не трогает, и первый видимый рендер (visible
+   * в зависимостях) догружает колоду одним запросом. Сбрасывать deckFailed на
+   * возврате было бы хуже: ключ к тому времени уже равен deckWant, эффект не
+   * перезапустился бы, и человек остался бы со стухшей колодой или пустыми
+   * руками, уже без кнопки «ещё раз», — а фоновый запрос всё равно тратил бы
+   * rate_limits впустую. Пока колода нового раунда не догружена, пусто на
+   * руках не значит «отсвайпал»: ни «ждём остальных», ни фоновый опрос
+   * (deckBehind в lib/room, waitArgs ниже).
+   *
+   * Исключение — самая первая колода (ключ ещё пуст), тем же правилом, что
+   * первый запрос опроса: ссылку на комнату открывают из чата в фоновой
+   * вкладке, и участник, переключившись на неё, должен увидеть колоду, а не
+   * спиннер на её месте. Этот запрос человек и просил, открыв ссылку, и он
+   * один: следующие сдвиги ключа в фоне снова ждут видимости.
+   */
+  const visible = useSyncExternalStore(subscribeVisibility, readVisible, serverVisible)
+
   useEffect(() => {
     if (!deckWant || deckKey.current === deckWant || deckFailed) return
+    if (!visible && deckKey.current !== '') return
     deckKey.current = deckWant
     void loadDeck()
-  }, [deckWant, deckFailed, loadDeck])
+  }, [deckWant, visible, deckFailed, loadDeck])
 
   /*
    * Самолечение колоды: на руках пусто, а сервер говорит, что человек не
@@ -442,6 +551,11 @@ export default function RoomPage() {
    * Один раз на ключ колоды, как и сама загрузка: если сервер и после
    * перечитывания ничего не отдаст (свои голоса в пути вычёркиваются из
    * ответа — см. votedLocally), второй круг вернёт то же самое.
+   *
+   * И тоже только из видимой вкладки: новый раунд, поднятый соседом, делает
+   * ждущего «застрявшим» ровно на фоновом опросе, и перечитывание ушло бы в
+   * фон с тем же риском запереть колоду на deckFailed. Скрытая вкладка ключ
+   * лечения не трогает — первый видимый рендер решит заново.
    */
   const healKey = useRef('')
   const stuck = deckStuck({
@@ -451,10 +565,10 @@ export default function RoomPage() {
   })
 
   useEffect(() => {
-    if (!stuck || !deckWant || healKey.current === deckWant) return
+    if (!stuck || !deckWant || !visible || healKey.current === deckWant) return
     healKey.current = deckWant
     void loadDeck()
-  }, [stuck, deckWant, loadDeck])
+  }, [stuck, deckWant, visible, loadDeck])
 
   /*
    * Добор раунда. finally обязателен, и вот чем он оплачен.
@@ -518,9 +632,41 @@ export default function RoomPage() {
    * отложенный запрос, и последнее состояние доезжает всегда. Ставится он
    * только если не стоит — иначе каждый тик отодвигал бы срок, и на непрерывно
    * свайпающей пати запрос не ушёл бы вообще ни разу.
+   *
+   * И только из видимой вкладки. Скрытая ждущая вкладка опрашивает комнату раз
+   * в минуту (hiddenPollDelay в lib/roompoll), и чужие голоса двигают votesKey
+   * почти каждым ответом — пол в 12 секунд против минутного шага не срабатывал
+   * бы никогда, и к каждому фоновому GET комнаты добавлялся бы /likes: запись
+   * в rate_limits, roomVotes по всей комнате и метаданные игр — ради блока «вы
+   * близки», которого никто не видит. Скрытая вкладка ключ не трогает, и
+   * первый же видимый рендер (visible в зависимостях) догоняет последнее
+   * состояние одним запросом. Хвостовой таймер, сработавший в фоне, делает
+   * то же: сбрасывает ключ и ждёт возвращения.
    */
   const waiting = Boolean(state?.isMember) && cards !== null && cards.length === 0
   const votesKey = state ? state.members.map((m) => `${m.id}${m.votes}`).join(',') : ''
+  /*
+   * Кого и зачем ждём — теми же правилами, что экран ожидания (waitingMode в
+   * lib/room, pending в components/room/RoomWaiting): фон опрашивает комнату,
+   * только если из него есть что узнать, а заголовок «Ждём остальных» стоит,
+   * только пока кто-то и правда свайпает.
+   *
+   * deckSize — чтобы скрытая вкладка, которой сосед поднял раунд, не ждала:
+   * колода нового раунда догрузится только по возвращении (эффект колоды
+   * выше), и до тех пор пусто на руках не значит «отсвайпал» (deckBehind).
+   */
+  const waitArgs = {
+    waiting,
+    memberCount: state?.members.length ?? 0,
+    deckTotal,
+    myVotes: state?.members.find((m) => m.me)?.votes ?? 0,
+    deckSize: state?.room.deckSize ?? null,
+  }
+  const bgWait = waitsInBackground(waitArgs)
+  const awaiting = awaitingOthers({
+    ...waitArgs,
+    othersSwiping: state ? state.members.filter((m) => !m.me && !m.done).length : 0,
+  })
 
   const loadLikes = useCallback(async () => {
     try {
@@ -534,12 +680,16 @@ export default function RoomPage() {
   }, [roomId])
 
   useEffect(() => {
-    if (!waiting || likesKey.current === votesKey) return
+    if (!waiting || !visible || likesKey.current === votesKey) return
     likesKey.current = votesKey
 
     const fire = () => {
-      likesAt.current = Date.now()
       likesTimer.current = null
+      if (document.visibilityState !== 'visible') {
+        likesKey.current = ''
+        return
+      }
+      likesAt.current = Date.now()
       void loadLikes()
     }
 
@@ -549,7 +699,7 @@ export default function RoomPage() {
       return
     }
     if (likesTimer.current === null) likesTimer.current = window.setTimeout(fire, left)
-  }, [waiting, votesKey, loadLikes])
+  }, [waiting, visible, votesKey, loadLikes])
 
   // Снятие таймера — отдельным эффектом с пустыми зависимостями. Верни мы
   // уборку из эффекта выше, она срабатывала бы на КАЖДОЙ смене votesKey и
@@ -560,6 +710,80 @@ export default function RoomPage() {
     },
     [],
   )
+
+  useEffect(() => {
+    waitingRef.current = bgWait
+  }, [bgWait])
+
+  // Вернулся на вкладку — матч увиден, точка в заголовке снимается. Отдельно
+  // от опроса: на матче опрос остановлен и своего слушателя уже снял
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') setUnseen(false)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
+
+  /*
+   * Заголовок вкладки: «ждём остальных» и «сошлись» (roomTabTitle в lib/room).
+   *
+   * Серверный заголовок ставит React из generateMetadata, а этот пишется
+   * императивно, поэтому возвращать исходный вслепую нельзя. Уборка при уходе
+   * со страницы может сработать уже ПОСЛЕ того, как Next поставил заголовок
+   * следующей страницы, — и слепой возврат затёр бы его заголовком комнаты.
+   * Возвращаем, только если document.title всё ещё наш. То же, когда
+   * состояние перестало быть нашим (добрали раунд — снова свайпает).
+   */
+  const tabTitle = state
+    ? roomTabTitle({
+        roomId,
+        status: state.room.status,
+        isMember: state.isMember,
+        awaiting,
+        sawOpen,
+        unseen,
+        matchedName: state.matchedGame?.name ?? null,
+      })
+    : null
+  const titleOwn = useRef<{ original: string; ours: string } | null>(null)
+
+  useEffect(() => {
+    const own = titleOwn.current
+    if (tabTitle === null) {
+      if (own && document.title === own.ours) document.title = own.original
+      titleOwn.current = null
+      return
+    }
+    // Исходный — тот, что стоял до нас; наш прошлый заголовок исходным не бывает
+    const original = own && document.title === own.ours ? own.original : document.title
+    document.title = tabTitle
+    titleOwn.current = { original, ours: tabTitle }
+  }, [tabTitle])
+
+  useEffect(
+    () => () => {
+      const own = titleOwn.current
+      if (own && document.title === own.ours) document.title = own.original
+    },
+    [],
+  )
+
+  /*
+   * Уведомление о матче — одно на комнату и только тому, кто просил
+   * (components/room/MatchNotify). Условия новости — те же, что у matchLine:
+   * своим, с игрой, и комната была открыта на глазах у этого экрана.
+   */
+  const matchNews =
+    state?.isMember && sawOpen && state.room.status === 'matched'
+      ? (state.matchedGame?.name ?? null)
+      : null
+  const announced = useRef(false)
+  useEffect(() => {
+    if (!matchNews || announced.current) return
+    announced.current = true
+    announceMatch({ name: matchNews, roomId, selfCaused: selfCaused.current })
+  }, [matchNews, roomId])
 
   // Открыл чужую комнату по приглашению — шаг воронки, раз на заход: экран
   // приглашения перерисовывается каждым опросом
@@ -714,7 +938,11 @@ export default function RoomPage() {
       if (res.ok) {
         const data = (await res.json()) as { matched: number | null }
         setVoteFailed(false)
-        if (data.matched !== null) void refresh()
+        if (data.matched !== null) {
+          // Матч сошёлся на этом голосе — новость для остальных, не для него
+          selfCaused.current = true
+          void refresh()
+        }
         return
       }
       status = res.status
@@ -782,6 +1010,8 @@ export default function RoomPage() {
         body: JSON.stringify({ appid: leader.appid }),
       })
       const data = res.ok ? {} : ((await res.json().catch(() => ({}))) as { error?: string })
+      // «matched» — комнату свели до этого нажатия, матч чужой
+      if (res.ok) selfCaused.current = true
       if (res.ok || data.error === 'matched') {
         // Матч уже записан: сбой этого чтения — не отказ «Берём», его
         // подхватит обычный опрос
@@ -842,13 +1072,18 @@ export default function RoomPage() {
 
   if (notFound) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-        <p className="font-display text-display-sm">Такой комнаты нет</p>
-        <Link href="/room/new" className="tap link-more">
+      <Notice
+        title="Такой комнаты нет"
+        body="Код с опечаткой или комната уже закрылась. Новая собирается за минуту — и ссылку на неё можно сразу кинуть своим."
+      >
+        <Link href="/room/new" className="btn-ember px-6 py-3">
           Создать свою
-          <Icon name="arrow" size={16} />
         </Link>
-      </div>
+        <Link href="/rooms" className="btn-glass">
+          <Icon name="users" size={18} />
+          Подсесть к открытой пати
+        </Link>
+      </Notice>
     )
   }
 
@@ -1117,12 +1352,30 @@ export default function RoomPage() {
             заходят так же, как по ссылке. Молчаливое нажатие читалось бы как
             сломанная кнопка.
           */}
+          {/*
+            На телефоне подписи короче, и это не косметика. Полные две кнопки
+            не влезают в строку на 390 px и встают в два ряда — замер: карта
+            колоды начиналась на 329 px вместо 277, и кнопки голоса уходили
+            под нижнюю панель (на 19 px на 390×844, на 113 на 375×667). Высота
+            карты (.room-page .deck-stack) считается от шапки в один ряд.
+          */}
           <button onClick={copyLink} className="btn-glass py-3 text-sm">
-            {share.label('Скопировать ссылку для друзей', {
-              icon: 'link',
-              native: 'Отправить ссылку друзьям',
-              manual: 'Не вышло — продиктуй код',
-            })}
+            {share.label(
+              <>
+                <span className="md:hidden">Ссылка для друзей</span>
+                <span className="hidden md:inline">Скопировать ссылку для друзей</span>
+              </>,
+              {
+                icon: 'link',
+                native: (
+                  <>
+                    <span className="md:hidden">Позвать друзей</span>
+                    <span className="hidden md:inline">Отправить ссылку друзьям</span>
+                  </>
+                ),
+                manual: 'Не вышло — продиктуй код',
+              },
+            )}
           </button>
           {/* Живая область — рядом с кнопкой: внутри она стала бы частью её имени */}
           {share.status}
@@ -1152,7 +1405,14 @@ export default function RoomPage() {
               title="Открытая комната видна на доске «Пати» — к вам смогут подсесть"
             >
               <Icon name={state.room.isPublic ? 'check' : 'users'} size={16} />
-              {state.room.isPublic ? 'На доске' : 'Показать на доске'}
+              {state.room.isPublic ? (
+                'На доске'
+              ) : (
+                <>
+                  <span className="md:hidden">На доску</span>
+                  <span className="hidden md:inline">Показать на доске</span>
+                </>
+              )}
             </button>
           ) : state.room.isPublic ? (
             <span
@@ -1174,10 +1434,15 @@ export default function RoomPage() {
               key={m.id}
               className={`pill cursor-default text-xs ${m.me ? 'is-on' : 'text-dim'}`}
             >
-              {m.name}
-              {m.me ? ' (ты)' : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
-              {/* было прибито строкой: «1 голосов», «2 голосов» */}
-              {plural(m.votes, 'голос', 'голоса', 'голосов')}
+              {/* Одной строкой в одном span: .pill — inline-flex с gap, и
+                  голые куски текста вокруг числа становились отдельными
+                  флекс-элементами, получая gap поверх пробела: «·  0  голосов» */}
+              <span>
+                {m.name}
+                {m.me ? ' (ты)' : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
+                {/* было прибито строкой: «1 голосов», «2 голосов» */}
+                {plural(m.votes, 'голос', 'голоса', 'голосов')}
+              </span>
             </span>
           ))}
         </div>
@@ -1185,8 +1450,14 @@ export default function RoomPage() {
 
       {deckFailed ? (
         <div className="panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
-          <p className="font-semibold">Не получилось загрузить игры</p>
-          <p className="text-dim text-sm">Скорее всего, это на нашей стороне.</p>
+          <p className="font-semibold">
+            {deckLimited ? 'Слишком часто' : 'Не получилось загрузить игры'}
+          </p>
+          <p className="text-dim text-sm">
+            {deckLimited
+              ? 'Колоду запрашивали много раз подряд, и на это стоит потолок. Подожди минуту и попробуй снова.'
+              : 'Скорее всего, это на нашей стороне.'}
+          </p>
           <button
             onClick={() => void loadDeck()}
             className="btn-ember px-6 py-3 self-center"

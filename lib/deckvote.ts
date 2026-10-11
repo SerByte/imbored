@@ -136,3 +136,69 @@ export function deckPosition(
 export function deckCardLine(pos: { n: number; total: number | null }, name: string): string {
   return pos.total === null ? `Карта ${pos.n}: ${name}` : `Карта ${pos.n} из ${pos.total}: ${name}`
 }
+
+/**
+ * ГОЛОС СТРЕЛКОЙ: → — «да», ← — «нет».
+ *
+ * С клавиатуры колоду можно было листать только кнопками: Tab до «Играем!»,
+ * Enter, и так двадцать раз. Жест на телефоне — одно движение на карту, а на
+ * десктопе самый быстрый путь требовал сначала найти кнопку фокусом. Стрелки —
+ * тот же язык, что у жеста: вправо — да, влево — нет.
+ *
+ * Стрелка голосует, только когда её больше никто не ждёт:
+ *   • ownArrows — фокус там, где стрелки уже чьи-то: поле ввода, карусель
+ *     скриншотов, радиогруппа, диалог. Отнять у них стрелку — сломать их;
+ *   • onScreen — колода в экране. Человек, уехавший вниз к полке
+ *     «Приглянулось», иначе голосовал бы за карту, которой не видит;
+ *   • repeat — зажатая клавиша не пролистывает колоду очередью;
+ *   • модификаторы — Alt+← это «Назад» браузера, Shift+стрелки выделяют текст;
+ *   • defaultPrevented — стрелку уже обработал кто-то ниже по дереву.
+ *
+ * null — это не голос, и событие остаётся тому, кому адресовано.
+ */
+export type DeckKeyEvent = {
+  key: string
+  altKey: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+  shiftKey: boolean
+  repeat: boolean
+  defaultPrevented: boolean
+  ownArrows: boolean
+  onScreen: boolean
+}
+
+export function deckKeyVote(e: DeckKeyEvent): boolean | null {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return null
+  if (e.defaultPrevented || e.repeat || e.ownArrows || !e.onScreen) return null
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return null
+  return e.key === 'ArrowRight'
+}
+
+/**
+ * Где стрелки уже заняты — см. ownArrows у deckKeyVote. Карусель скриншотов
+ * (components/morph) помечена aria-roledescription, лайтбокс — aria-modal.
+ */
+export const OWN_ARROWS_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="slider"]',
+  '[role="radiogroup"]',
+  '[role="tablist"]',
+  '[role="listbox"]',
+  '[role="menu"]',
+  '[role="dialog"]',
+  '[aria-modal="true"]',
+  '[aria-roledescription]',
+].join(', ')
+
+/**
+ * Видна ли колода: хотя бы 120 px карты между верхом и низом окна. Меньше —
+ * это край карты под шапкой или над нижней панелью, по нему не понять, за
+ * какую игру голос.
+ */
+export function deckOnScreen(box: { top: number; bottom: number }, viewportH: number): boolean {
+  return Math.min(box.bottom, viewportH) - Math.max(box.top, 0) >= 120
+}

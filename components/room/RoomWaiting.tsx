@@ -9,6 +9,7 @@ import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { AloneInvite, RoomEscapeHatch } from './AloneInvite'
 import { LeaderPick } from './LeaderPick'
+import { MatchNotifyToggle } from './MatchNotify'
 import { type LikedGame, MyLikesRail, NearMissList } from './LikesStrips'
 import { MemberRoster } from './MemberRoster'
 import { PartyTrivia } from './PartyTrivia'
@@ -210,6 +211,17 @@ export function RoomWaiting({
             isHost={isHost}
             onRemove={onRemoveMember}
           />
+          {/*
+            Под ростером: он отвечает «кого ждём», переключатель — «а если я
+            отойду». Только в этом режиме: в комнате на одного матча не будет,
+            а при пустой колоде — не из чего. И только пока матч ещё может
+            прийти без этого человека: кто-то свайпает или есть лидер, которого
+            возьмёт сосед. Когда все отсвайпали и лидера нет, голоса записаны и
+            не сошлись — «сообщим» обещало бы сигнал, которого не будет (то же
+            враньё, что rosterHint убрал из-под ростера). Сам прячется там, где
+            уведомление со страницы не работает (телефоны, pageNotices в lib/room).
+          */}
+          {(pending.length > 0 || offer) && <MatchNotifyToggle />}
           <NearMissList near={near} />
           <MyLikesRail games={myLikes} />
         </>
