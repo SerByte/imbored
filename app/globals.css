@@ -909,6 +909,40 @@ textarea:focus-visible {
   z-index: 1;
 }
 
+/*
+ * ШИРИНА СТРАНИЦЫ — ШИРИНА ЭКРАНА, И ДЕРЖИТ ЕЁ ЭТО ПРАВИЛО, А НЕ <body>.
+ *
+ * Световые слои сцен главной (.hero-glow, .pain-shutter, .pain-key,
+ * .engine-glow, .rep-glow, .money-glow, веер .fan-poster) стоят на
+ * отрицательных inset и шире колонки — так свет не обрывается краем. Под
+ * смузером их прятала его обёртка: fixed и overflow: hidden. Без смузера —
+ * «уменьшить движение», первые секунды до его чанка, чанк не приехал —
+ * главная обязана быть обычным документом, и тут выяснилось, что обрезать
+ * выход вбок некому.
+ *
+ * overflow-x-hidden у <body> не обрезает ничего: пока у <html> overflow
+ * видимый, значение body уходит на вьюпорт, а мобильный Chromium растягивает
+ * layout viewport до ширины содержимого, что бы на вьюпорте ни стояло.
+ * Замер, 390×844 с «уменьшить движение»: документ 552 px, innerWidth 552 ×
+ * 1195, и все fixed легли по этой коробке — переключатель темы на x = 492,
+ * нижняя панель на y = 1145, оба за краем экрана. body { overflow-x: clip }
+ * не меняет ровно ничего (замерено): оно тоже уходит на вьюпорт.
+ *
+ * Поэтому обрез — на первом элементе, чей overflow никуда не уходит: на
+ * обёртке содержимого всех страниц сразу, а не на одной главной, чтобы
+ * следующий широкий свет на любой странице не повторил того же.
+ *
+ * clip, а не hidden: hidden делает элемент контейнером прокрутки, и
+ * position: sticky внутри (фильтры /library) прилипал бы к нему, то есть не
+ * прилипал вовсе; закрепления ScrollTrigger на нём тоже бы споткнулись. clip
+ * режет и только. Под смузером правило перебивает его собственный инлайн
+ * overflow: visible — там режет обёртка, и это ровно то, что было. Сторож —
+ * lib/smoothfixed.test.ts.
+ */
+#smooth-content {
+  overflow-x: clip;
+}
+
 .landing {
   background: transparent;
 }
@@ -1328,10 +1362,25 @@ textarea:focus-visible {
 .hero-cue-arrow {
   font-size: 15px;
   line-height: 1;
-  /* Качается только стрелка, не вся строка: у .hero-cue уже есть свой
-     transform (translateX(-50%) центрует её), и второй ключевой кадр на том же
-     элементе сбил бы центровку в первом же кадре. */
-  animation: hero-cue-bob 2.6s var(--ease-glow) infinite;
+}
+/* Качается только стрелка, не вся строка: у .hero-cue уже есть свой
+   transform (translateX(-50%) центрует её), и второй ключевой кадр на том же
+   элементе сбил бы центровку в первом же кадре.
+   Два качка по 2.2 с, а не бесконечно: 4.4 с укладываются в AUTO_MOTION
+   (lib/motion.ts, WCAG 2.2.2). Стрелка качалась, пока открыта главная, —
+   самоходное движение без конца и без паузы рядом с текстом первого экрана.
+   Подсказка «листай» нужна в первые секунды; дальше она просто стоит.
+   Качка идёт с is-live, а не с первой отрисовки. Вход героя
+   (components/landing/scenes/Hero.tsx) после гидрации прячет подсказку
+   через gsap.from и проявляет на 0.9 + DUR.base с: при гидрации на третьей
+   секунде, обычной для среднего телефона, 4.4 с качки кончались раньше, чем
+   подсказка снова видна, — стрелка качалась в серверном кадре, пропадала и
+   возвращалась стоящей. is-live ставит тот же таймлайн, когда подсказка
+   проявилась. Нет входа — скрытая вкладка, «уменьшить движение», нет
+   скриптов — стрелка просто стоит, подсказка от этого не пропадает.
+   Сторож — lib/motion.test.ts. */
+.hero-cue.is-live .hero-cue-arrow {
+  animation: hero-cue-bob 2.2s var(--ease-glow) 2;
 }
 @keyframes hero-cue-bob {
   0%,
@@ -1343,7 +1392,8 @@ textarea:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hero-cue-arrow {
+  .hero-cue-arrow,
+  .hero-cue.is-live .hero-cue-arrow {
     animation: none;
   }
 }
@@ -3256,12 +3306,26 @@ textarea:focus-visible {
   }
 }
 
+/*
+ * Кен-бёрнс встаёт за 4.5 с, а не ползёт двадцать — WCAG 2.2.2, см.
+ * AUTO_MOTION в lib/motion.ts. Арт героя /play и /daily лежит под названием
+ * игры, и двадцатисекундный наезд был самоходным движением под главным
+ * текстом страницы. Конечный масштаб 1.02 — столько старый наезд
+ * (ease-out до 1.06 за 20 с) успевал за первые 4.5 с: теперь он доходит
+ * туда же и встаёт, а остальные 4 % его хвоста отрезаны. Трогается он
+ * живее прежнего — 0.0076 против 0.0052 в секунду, — и иначе не выйдет:
+ * кривая, которая успевает встать за 4.5 с, обязана начинать быстрее почти
+ * прямого начала двадцатисекундной. С концом 1.03 он трогался бы в 2.2
+ * раза быстрее прежнего, а не в полтора. Запас под параллакс даёт scale у
+ * .hero-layer, а не этот наезд.
+ * Сторож — lib/motion.test.ts.
+ */
 @keyframes kenburns {
   from {
     transform: scale(1);
   }
   to {
-    transform: scale(1.06);
+    transform: scale(1.02);
   }
 }
 
@@ -3272,7 +3336,7 @@ textarea:focus-visible {
   animation: rise 0.45s ease-out both;
 }
 .anim-kenburns {
-  animation: kenburns 20s ease-out both;
+  animation: kenburns 4.5s ease-out both;
 }
 
 @keyframes pulse-dot {
@@ -3312,12 +3376,20 @@ textarea:focus-visible {
   }
 }
 
+/*
+ * Отключения стоят ПОСЛЕ своих базовых правил, и это не порядок ради порядка.
+ * @media специфичности не добавляет: при равном селекторе побеждает тот, кто
+ * ниже. .anim-page-in и .anim-breathe раньше числились в этом списке, а их
+ * базовые правила стоят ниже — и под «уменьшить движение» каждая смена
+ * страницы всё равно въезжала, а фон комнаты дышал по кругу (замер на /quiz:
+ * page-in 0.18s и breathe 12s infinite при matchMedia reduce = true). Их
+ * отключения переехали под сами правила. Сторож — lib/motion.test.ts.
+ */
 @media (prefers-reduced-motion: reduce) {
   .anim-reveal,
   .anim-rise,
   .anim-kenburns,
-  .anim-pulse-dot,
-  .anim-page-in {
+  .anim-pulse-dot {
     animation: none;
   }
 
@@ -3325,9 +3397,6 @@ textarea:focus-visible {
      при явно выключенной анимации. */
   .glass-hover:hover {
     transform: none;
-  }
-  .anim-breathe {
-    animation: none;
   }
   *,
   *::before,
@@ -3352,6 +3421,45 @@ textarea:focus-visible {
 
 .anim-breathe {
   animation: breathe 12s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-breathe {
+    animation: none;
+  }
+}
+
+/*
+ * ВЫДОХ: СВЕТ AMBIENT ОПУСКАЕТСЯ ИЗ ВДОХА В ПОКОЙ И СТОИТ.
+ *
+ * Дыхание по кругу (.anim-breathe) позволено только экранам ожидания — там
+ * оно и есть знак, что работа идёт (ALLOWED в lib/motion.test.ts). На /quiz
+ * фон за вопросами дышал весь квиз: самоходное движение без конца рядом с
+ * текстом, который читают и на который отвечают, — WCAG 2.2.2, AUTO_MOTION в
+ * lib/motion.ts. Здесь от дыхания остаётся один выдох при входе: 4.5 с от
+ * пика вдоха (scale 1.08, как у breathe) до покоя.
+ *
+ * Конец — ровно состояние без анимации: scale 1, прозрачность не тронута
+ * (у breathe она ходит 0.85–1, и после конца прыгнула бы к 1). Поэтому
+ * fill-mode не нужен, и по окончании ничего не перескакивает.
+ */
+@keyframes exhale {
+  from {
+    transform: scale(1.08);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.anim-exhale {
+  animation: exhale 4.5s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-exhale {
+    animation: none;
+  }
 }
 
 /*
@@ -4450,6 +4558,28 @@ img[data-art-fade][data-loaded] {
  * Совместимость (app/compat/[steamid]): две ленты постеров навстречу друг
  * другу — механика .pwall, но две строки и в верхней части шапки, чтобы
  * текст внизу стоял на ровном. Скрим — сверху прозрачный, к тексту фон.
+ *
+ * ЛЕНТЫ ТРОГАЮТСЯ И ВСТАЮТ — WCAG 2.2.2, см. AUTO_MOTION в lib/motion.ts.
+ * Петлёй на 90 и 110 с они ехали за процентом и вердиктом, пока открыта
+ * ссылка, и остановить их было нечем, кроме системного «уменьшить
+ * движение». У стены ожидания (.pwall в WarmupScreen) петля остаётся: там
+ * она и есть знак, что подбор идёт, и живёт ровно столько, сколько он.
+ * Здесь страница уже готова, и фон обязан встать сам.
+ *
+ * Партитура — как у ленты главной (autoMotion в lib/motion.ts): две секунды
+ * прежним ходом (50 % ряда за 90 и 110 с — 0.556 и 0.455 %/с), затем 2.5 с
+ * торможения до нуля по smoothstep. Ключевой кадр делит 4.5 с в точке 2 с
+ * (44.444 %). Скорость второго отрезка — 1 − smoothstep, путь — её интеграл,
+ * P(k) = 2k − 2k³ + k⁴ в долях отрезка; кривая ниже держит его точнее 1 %.
+ * Начальный наклон у неё 2 — ровно прежний ход (за отрезок проходится
+ * половина того, что прошлось бы без торможения), а ускорение на стыке
+ * нулевое: три первые точки Безье на одной прямой. Так торможение
+ * начинается мягко, а не углом, — тот же довод, по которому лента
+ * отказалась от прямой. Сторож — lib/motion.test.ts.
+ *
+ * Ряд задвоен в разметке не зря и теперь: сдвиг меньше двух процентов, но
+ * одного прохода из десяти постеров широкому экрану не хватает на ширину
+ * сетки.
  */
 .cwall .pwall-grid {
   inset: -18% -30% 30%;
@@ -4457,10 +4587,39 @@ img[data-art-fade][data-loaded] {
   transform: rotate(-6deg);
 }
 .cwall .pwall-row {
-  animation-duration: 90s;
+  animation: cwall-drift-left 4.5s both;
 }
+/* Целиком, а не одно имя: длительность иначе решал бы порядок правил —
+   .pwall-row:nth-child(2) ставит свои 150 с с той же специфичностью, что у
+   .cwall .pwall-row выше */
 .cwall .pwall-row:nth-child(2) {
-  animation-duration: 110s;
+  animation: cwall-drift-right 4.5s both;
+}
+@keyframes cwall-drift-left {
+  0% {
+    transform: translateX(0);
+    animation-timing-function: linear;
+  }
+  44.444% {
+    transform: translateX(-1.111%);
+    animation-timing-function: cubic-bezier(0.335, 0.67, 0.5, 1);
+  }
+  100% {
+    transform: translateX(-1.806%);
+  }
+}
+@keyframes cwall-drift-right {
+  0% {
+    transform: translateX(-1.477%);
+    animation-timing-function: linear;
+  }
+  44.444% {
+    transform: translateX(-0.568%);
+    animation-timing-function: cubic-bezier(0.335, 0.67, 0.5, 1);
+  }
+  100% {
+    transform: translateX(0);
+  }
 }
 .cwall-poster {
   height: clamp(170px, 27vh, 270px);
@@ -4522,9 +4681,21 @@ img[data-art-fade][data-loaded] {
   background: color-mix(in srgb, var(--ember) 16%, transparent);
 }
 
+/*
+ * Отключение перечисляет каждый селектор, который ставит анимации имя, а не
+ * один .pwall-row: @media специфичности не добавляет, и более точное правило
+ * выигрывает у него свои свойства. .pwall-row:nth-child(2) возвращал имя
+ * pwall-right, длительность приходила с ним же, и второй ряд стены ожидания
+ * под «уменьшить движение» всё равно ехал — один проход на 150 с. У стены
+ * совместимости .cwall .pwall-row ставит анимацию целиком и перебил бы
+ * .pwall-row вовсе. Сторож — lib/motion.test.ts.
+ */
 @media (prefers-reduced-motion: reduce) {
   .pwall,
   .pwall-row,
+  .pwall-row:nth-child(2),
+  .cwall .pwall-row,
+  .cwall .pwall-row:nth-child(2),
   .warmup-chosen-poster,
   .warmup-chosen-line {
     animation: none;
@@ -4752,6 +4923,29 @@ img[data-art-fade][data-loaded] {
     translate: 0;
   }
 }
+/*
+ * ИМЯ ШАПКИ — ТОЛЬКО НА ВРЕМЯ ПЕРЕХОДА.
+ *
+ * Шапка стояла с именем site-header всегда, инлайном в app/layout.tsx. А в
+ * Chromium элемент с view-transition-name — Backdrop Root: backdrop-filter
+ * его потомков видит только нарисованное внутри него, не страницу позади.
+ * Стекло .site-chrome-bar (blur 24px) и .site-chrome-fade размывали пустоту,
+ * и под шапкой резко читались строки страницы — оставался один тон. Замер
+ * полосами под шапкой на /support (data-chrome="page"): с именем полосы
+ * видны сквозь стекло, без него размыты. Регресс пришёл вместе с переходами
+ * с общим элементом, поверх уже работавшего стекла.
+ *
+ * :active-view-transition держится с вызова startViewTransition до конца
+ * перехода, так что снимок старого состояния имя уже видит, и правила ниже
+ * работают как раньше. На ~0.4 с перехода размытия нет — как и было; в
+ * покое оно возвращается. Движок без этого псевдокласса выбросит правило
+ * целиком: шапка уедет в снимок корня и просто перетечёт сама в себя.
+ * Нижней панели (site-tabbar) это не касается: размытия у неё нет.
+ * Сторож — lib/backdrop.test.ts.
+ */
+:root:active-view-transition body > header {
+  view-transition-name: site-header;
+}
 ::view-transition-group(site-header),
 ::view-transition-group(site-tabbar) {
   z-index: 100;
@@ -4796,6 +4990,13 @@ img[data-art-fade][data-loaded] {
  */
 .anim-page-in {
   animation: page-in var(--dur-fast) var(--ease-out);
+}
+
+/* Под самим правилом, а не в общем списке выше: там оно ему проигрывало. */
+@media (prefers-reduced-motion: reduce) {
+  .anim-page-in {
+    animation: none;
+  }
 }
 
 /*

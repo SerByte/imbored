@@ -206,7 +206,11 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         было нельзя ни на одной странице: /rooms и /quiz показали то же самое.
 
         На <body> остаётся только запрет горизонтальной прокрутки — он и
-        правда обязан быть на самом внешнем элементе.
+        правда обязан быть на самом внешнем элементе. Но это именно запрет
+        прокрутки, а не обрез: значение body уходит на вьюпорт, и мобильный
+        Chromium всё равно растягивает layout viewport до ширины содержимого,
+        унося за край шапку и нижнюю панель. Режет #smooth-content — почему и
+        что было, в globals.css рядом с #smooth-wrapper.
       */}
       <body className="min-h-full font-sans overflow-x-hidden">
         {/* Хэша в CSP у скрипта темы нет и не будет: он выключил бы
@@ -235,8 +239,12 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
           К содержанию
         </a>
         {/* Своё имя перехода: при сдвиге страницы шапка стоит на месте — она
-            точка опоры, по которой видно, что уехало содержимое, а не экран */}
-        <header className="fixed top-0 inset-x-0 z-50" style={{ viewTransitionName: 'site-header' }}>
+            точка опоры, по которой видно, что уехало содержимое, а не экран.
+            Имя ставит globals.css и только на время перехода
+            (:active-view-transition): постоянное имя делало шапку Backdrop
+            Root, и стекло .site-chrome ниже перестало размывать страницу —
+            подробно у ::view-transition-group(site-header). */}
+        <header className="fixed top-0 inset-x-0 z-50">
           {/*
             Затемнение — отдельным слоем под содержимым, а не фоном самой шапки.
 

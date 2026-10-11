@@ -169,6 +169,10 @@ export function GameShots({ images, name }: { images: string[]; name: string }) 
               label={`Скриншоты — ${name}`}
               onChange={setCurrent}
               onActivate={() => setOpen(current)}
+              // Лайтбокс накрывает слайдер, но с экрана его не убирает:
+              // наблюдатели видимости ничего не замечают, и без paused дрейф
+              // и автолистание рисовались бы под затемнением с размытием
+              paused={open !== null}
             />
           </div>
         )}

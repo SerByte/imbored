@@ -70,6 +70,17 @@ export function Lightbox({
   const pressRef = useRef<{ x: number; y: number; id: number } | null>(null)
   /** Нажатие закончилось свайпом: следующий за ним click — не «закрыть». */
   const swipedRef = useRef(false)
+  /**
+   * Нажатие началось на самом оверлее, после того как он открылся.
+   *
+   * click без такого нажатия — чужой: его жест начался ДО окна. Ровно так
+   * слайдер на таче закрывал кадр, открытый из pointerup, тем же касанием —
+   * click приходил после touchend и находил целью уже затемнение (замер и
+   * основная правка — в components/morph/MorphSlider.tsx, tapPending). Здесь
+   * вторая линия: любой будущий открыватель, сработавший раньше click, не
+   * повторит той же вспышки. Не зависит от many — закрытию свайп не нужен.
+   */
+  const pressedHereRef = useRef(false)
   const isOpen = index !== null
   const many = images.length > 1
 
@@ -101,6 +112,9 @@ export function Lightbox({
    */
   useEffect(() => {
     if (!isOpen) return
+    // Нажатие прошлого открытия (крестик гасит свой click и флаг не снимает)
+    // не должно засчитаться жесту, который открыл окно сейчас
+    pressedHereRef.current = false
     const previously = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const overlay = overlayRef.current
     const children = Array.from(document.body.children).filter(
@@ -176,6 +190,7 @@ export function Lightbox({
             */
             onPointerDown={(e) => {
               swipedRef.current = false
+              pressedHereRef.current = true
               pressRef.current = many ? { x: e.clientX, y: e.clientY, id: e.pointerId } : null
             }}
             onPointerUp={(e) => {
@@ -191,6 +206,9 @@ export function Lightbox({
               pressRef.current = null
             }}
             onClick={() => {
+              // Click жеста, начатого до окна, — не «закрыть» (см. pressedHereRef)
+              if (!pressedHereRef.current) return
+              pressedHereRef.current = false
               // Мышью свайп кончается кликом по фону — это листание, а не закрытие
               if (swipedRef.current) {
                 swipedRef.current = false
