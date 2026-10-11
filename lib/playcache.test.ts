@@ -68,7 +68,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
     deal: {
       picks: [pick(10), pick(20), pick(30)],
       discoveries: [pick(40)],
-      continueGame: { appid: 570, name: 'Dota 2', recentHours: 3 },
+      continueGame: { appid: 570, name: 'Dota 2', recentHours: 3, finishable: false },
       engine: 'heuristic',
       lean: 'fresh',
       scope: 'library',
@@ -102,6 +102,16 @@ describe('playCacheKey', () => {
   test('тот же запрос — тот же ключ', () => {
     const q = { mood: { ...NEUTRAL_MOOD }, focus: null, roulette: false, lean: null } as const
     expect(playCacheKey(q)).toBe(KEY)
+  })
+
+  // /play?…&seed= — «похожие на X» со страницы игры. Обычная выдача того же
+  // настроения, запомненная минуту назад, не должна встать на их место
+  test('затравка с адреса меняет ключ; без неё ключ прежний — старые записи узнаются', () => {
+    const base = { mood: NEUTRAL_MOOD, focus: null, roulette: false, lean: null } as const
+    expect(playCacheKey({ ...base, seed: 1145360 })).not.toBe(KEY)
+    expect(playCacheKey({ ...base, seed: 1145360 })).not.toBe(playCacheKey({ ...base, seed: 620 }))
+    expect(playCacheKey({ ...base, seed: null })).toBe(KEY)
+    expect(KEY).toBe('medium.chill.solo|||')
   })
 })
 
@@ -177,6 +187,19 @@ describe('parsePlayCache', () => {
     })
   })
 
+  test('«Уже прошёл» у строки «Продолжить» переживает запись; запись до поля — без кнопки', () => {
+    const e = entry()
+    const done = { ...e, deal: { ...e.deal, continueGame: { appid: 367520, name: 'Hollow Knight', recentHours: 4, finishable: true } } }
+    expect(parsePlayCache(JSON.parse(JSON.stringify(done)))?.deal.continueGame?.finishable).toBe(true)
+    const old = { ...e, deal: { ...e.deal, continueGame: { appid: 367520, name: 'Hollow Knight', recentHours: 4 } } }
+    expect(parsePlayCache(old)?.deal.continueGame).toEqual({
+      appid: 367520,
+      name: 'Hollow Knight',
+      recentHours: 4,
+      finishable: false,
+    })
+  })
+
   test('запись до затравки и мусор в ней — обычная выдача, запись жива', () => {
     const old: Record<string, unknown> = { ...entry().deal }
     delete old.seed
@@ -242,6 +265,15 @@ describe('restoreDeal', () => {
   test('забанен сам герой — на экран первая из оставшихся', () => {
     const back = restoreDeal(entry(), { ...q, banned: new Set([20]) })
     expect(back?.deal.picks[back.index].appid).toBe(10)
+  })
+
+  // «Уже прошёл» у «Продолжить» или на странице игры, куда ушли «Подробнее»:
+  // после «Назад» пройденная игра не зовёт продолжить себя
+  test('строка «Продолжить» уходит вместе с баном, выдача остаётся', () => {
+    const back = restoreDeal(entry(), { ...q, banned: new Set([570]) })
+    expect(back?.deal.continueGame).toBeNull()
+    expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 20, 30])
+    expect(restoreDeal(entry(), q)?.deal.continueGame?.appid).toBe(570)
   })
 
   test('забанено всё — восстанавливать нечего', () => {

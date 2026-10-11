@@ -499,6 +499,68 @@ describe('/api/recommend: затравка seed', () => {
       expect(((await res.json()) as { seed: unknown }).seed, JSON.stringify(seed)).toBeNull()
     }
   })
+
+  // Затравка теперь приходит и адресом — со страницы игры. Соседей не нашлось
+  // у знакомой игры — экран отказа /play называет её, а не говорит общими
+  // словами «подбирать не из чего»
+  test('у знакомой затравки без соседей — 409 nocandidates с её именем', async () => {
+    await seededLibrary()
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    // без тегов соседей нет ни готовых, ни по полке тега
+    await upsertGamesMeta(db, [{ appid: 30, name: 'Одинокая', tags: {}, genres: [], categories: [2] }], nowSec())
+    const res = await POST(post('/api/recommend', { mood: MOOD, seed: 30 }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'nocandidates', seed: { appid: 30, name: 'Одинокая' } })
+  })
+})
+
+/**
+ * «Уже прошёл» у строки «Продолжить» — только у игры с финалом. Решает
+ * сервер по мете (continueView): клиент тегов не видит.
+ */
+describe('/api/recommend: строка «Продолжить»', () => {
+  async function playing(tags: Record<string, number>) {
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      [
+        { appid: 40, name: 'Доигрываемая', playtimeForever: 900, playtime2Weeks: 300 },
+        ...[41, 42, 43].map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      ],
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      [
+        { appid: 40, name: 'Доигрываемая', tags, genres: [], categories: [2] },
+        ...[41, 42, 43].map((appid) => ({
+          appid,
+          name: `Игра ${appid}`,
+          tags: { Puzzle: 100, Casual: 60 },
+          genres: [],
+          categories: [2],
+        })),
+      ],
+      now,
+    )
+    const res = await POST(post('/api/recommend', { mood: MOOD, scope: 'library' }))
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { continue: unknown }).continue
+  }
+
+  test('у игры с финалом — finishable', async () => {
+    expect(await playing({ Metroidvania: 100, Atmospheric: 50 })).toMatchObject({
+      appid: 40,
+      name: 'Доигрываемая',
+      finishable: true,
+    })
+  })
+
+  test('у песочницы — нет: её не проходят', async () => {
+    expect(await playing({ Sandbox: 100, Survival: 50 })).toMatchObject({ appid: 40, finishable: false })
+  })
 })
 
 /*

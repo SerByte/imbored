@@ -256,14 +256,26 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['app/play/page.tsx', /next\.nudge !== 'different'\s+if \(same \|\| switching\) return/]],
   },
   {
+    // «Попробовать снова» и «Подобрать без «похожих»» — один повтор
     file: 'app/play/page.tsx',
     expr: 'retrying',
-    guards: [['app/play/page.tsx', /const retry = useCallback\(async \(\) => \{\s*if \(retrying\) return/]],
+    guards: [
+      [
+        'app/play/page.tsx',
+        /const retry = useCallback\(async \(withSeed: number \| null = askSeed\) => \{\s*if \(retrying\) return/,
+      ],
+    ],
   },
   {
     file: 'app/play/page.tsx',
     expr: 'banning',
     guards: [['app/play/page.tsx', /onClick=\{async \(\) => \{\s*if \(banning\) return/]],
+  },
+  {
+    // «Уже прошёл» у строки «Продолжить»
+    file: 'app/play/page.tsx',
+    expr: 'finishing',
+    guards: [['app/play/page.tsx', /const finishCont = async \(\) => \{\s*if \(finishing \|\| !cont\) return/]],
   },
   {
     file: 'app/explore/page.tsx',
@@ -339,6 +351,12 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     file: 'components/PrivacyHelp.tsx',
     expr: 'retrying',
     guards: [['components/landing/ConnectCard.tsx', /function recheckProfile\(\) \{\s*if \(!input \|\| busy !== null\) return/]],
+  },
+  {
+    // «Уже прошёл» в «Твоих вечерах» и на странице игры
+    file: 'components/MarkFinished.tsx',
+    expr: "state === 'busy'",
+    guards: [['components/MarkFinished.tsx', /async function mark\(\) \{\s*if \(state === 'busy'\) return/]],
   },
   {
     file: 'components/SharePick.tsx',

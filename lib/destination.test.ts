@@ -283,6 +283,21 @@ describe('ответы квиза переживают вход', () => {
     expect(loginTarget(query(steamLoginFor(QUIZ)))).toBe(QUIZ)
   })
 
+  // «Похожее на X — под моё настроение» со страницы игры: гость проходит квиз,
+  // /play разворачивает его на вход — и после входа выдача обязана быть
+  // соседями X, а не обычной
+  test('затравка «Как «X», но…» переживает вход, мусор в ней — нет', () => {
+    const seeded = playHref({ time: 'short', vibe: 'chill', social: 'solo' }, { lean: 'fresh', seed: 1145360 })
+    expect(destinationUrl(seeded)).toBe(seeded)
+    const next = query(bounceTo('/play', query(seeded))).get('next')
+    expect(loginTarget(new URLSearchParams(loginCarry(new URLSearchParams({ next: next ?? '' }))))).toBe(seeded)
+    expect(loginTarget(query(steamLoginFor(seeded)))).toBe(seeded)
+    expect(destinationUrl('/play?seed=-12')).toBe('/play?seed=-12')
+    for (const junk of ['0', '12abc', '1e3', '', '9007199254740993']) {
+      expect(destinationUrl(`/play?seed=${junk}`), junk).toBe('/play')
+    }
+  })
+
   test('/play без строки запроса — как раньше', () => {
     expect(bounceTo('/play', new URLSearchParams())).toBe('/?next=%2Fplay')
     expect(bounceTo('/play', null)).toBe('/?next=%2Fplay')

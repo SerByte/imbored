@@ -339,7 +339,10 @@ describe('/play: пути вокруг выдачи', () => {
    */
   test('выдача, доехавшая после ухода со страницы, не показывается и не считается', () => {
     const reveal = between('async function reveal()', 'async function run()')
-    expect(reveal).toMatch(/await fetchPicks\(\{ scope, lean \}, ac\.signal\)\s*if \(ac\.signal\.aborted\) return false/)
+    // seed — затравка с адреса (/play?…&seed=): первая выдача уходит с ней
+    expect(reveal).toMatch(
+      /await fetchPicks\(\{ scope, lean, seed: askSeed \}, ac\.signal\)\s*if \(ac\.signal\.aborted\) return false/,
+    )
     const fetchBody = between('const fetchPicks = useCallback(', 'const applyDeal')
     const left = fetchBody.indexOf('if (signal?.aborted)')
     expect(left).toBeGreaterThan(fetchBody.indexOf('await fetch('))
@@ -520,7 +523,38 @@ describe('/play: пути вокруг выдачи', () => {
 
   test('«Изменить настроение» не снимает «нераспакованное»', () => {
     expect(code).not.toMatch(/href="\/quiz"|push\('\/quiz'\)/)
-    expect(code.split('quizHref(focus)').length - 1).toBeGreaterThanOrEqual(3)
+    // Вторым аргументом может ехать затравка «Как «X», но…» — фокус от этого
+    // не перестаёт быть первым
+    expect(code.match(/quizHref\(focus\b/g) ?? []).toHaveLength(3)
+  })
+
+  /*
+   * «Похожие на X» переживают смену настроения: «Изменить настроение» у
+   * выдачи из соседей и на экране отказа везёт затравку в квиз. На экране
+   * отказа — ту, что спрошена адресом (выдачи с эхом там нет), на выдаче —
+   * ту, под которую она собрана.
+   */
+  /*
+   * «Уже прошёл» у строки «Продолжить»: тот же бан с причиной done, что у
+   * героя, с её слотом в снимке, — только у игры с финалом и не сессии по
+   * ссылке. Отмеченная зовёт дальше в духе себя тем же reshape, что «Как
+   * «X», но…», и фокус уносит на героя, если выдача встала.
+   */
+  test('«Уже прошёл» у «Продолжить»: бан done со слотом continue и дорога дальше', () => {
+    expect(code).toMatch(/\{cont\.finishable && !readOnly && \(\s*<button\b/)
+    const fin = code.slice(code.indexOf('const finishCont = async'), code.indexOf("say(playLine({ kind: 'ban', name: c.name, done: true }))"))
+    expect(fin).toContain("await sendFeedback(c.appid, 'banned', 'done', ctxOf(null, 'continue'))")
+    expect(fin).toContain('rememberBan(c.appid, Date.now())')
+    expect(code).toMatch(
+      /if \(await reshape\(\{ scope, lean, seed: cont\.appid, nudge: keptNudge \}, 'hero'\)\) \{\s*focusHero\(false\)/,
+    )
+    // экран выгорания не зовёт продолжить только что пройденное
+    expect(code).toContain('cont: !!cont && cont.appid !== contDone')
+  })
+
+  test('«Изменить настроение» везёт затравку туда, где она есть', () => {
+    expect(code).toContain('quizHref(focus, askSeed)')
+    expect(code).toContain('quizHref(focus, seedAppid)')
   })
 
   /*

@@ -1,5 +1,6 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { GameCardBody } from '@/components/GameCard'
@@ -11,6 +12,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { latestWins } from '@/lib/latestwins'
 import type { OutcomeVerdict } from '@/lib/outcome'
 import { plural } from '@/lib/plural'
+import { quizHref } from '@/lib/presets'
 import { isNeedSteam } from '@/lib/writer'
 
 /** Один совет на полке — всё уже посчитано на сервере (app/library/page.tsx) */
@@ -31,7 +33,23 @@ export type EveningItem = {
   owned: boolean
   /** Магазин игры не из Steam; null — Steam */
   storeUrl: string | null
+  /** У игры есть финал (isReplayable наоборот) — её можно отметить «Уже прошёл» */
+  finishable: boolean
+  /** Уже отмечена пройденной (listBanned, done) — кнопки нет, есть слово */
+  finished: boolean
 }
+
+/*
+ * «Уже прошёл» — отдельным чанком, а не в первой загрузке /library: она
+ * упирается в бюджет веса (bundle-budget.json, потолок 590 КБ при 589
+ * занятых), а кнопка нужна лишь у вечеров, сыгранных всерьёз, и тому, кто
+ * до них доскроллил. ssr: false — до гидратации она всё равно ничего не
+ * умеет, а чанк догружается сразу после неё. Страница игры берёт её
+ * статически: там запас веса есть (OwnedLaunch).
+ */
+const MarkFinished = dynamic(() => import('@/components/MarkFinished').then((m) => m.MarkFinished), {
+  ssr: false,
+})
 
 /** Одна игра может быть посоветована дважды — в разные окна */
 const keyOf = (i: Pick<EveningItem, 'appid' | 'shownAt'>) => `${i.appid}:${i.shownAt}`
@@ -52,6 +70,12 @@ const VERDICTS: Array<{ key: Exclude<OutcomeVerdict, 'dismissed'>; label: string
  * пор человек их не видел вовсе — они жили только в отчёте. Здесь же ответ
  * на «как тебе?» можно дать или поменять, а к игре — вернуться одним
  * нажатием.
+ *
+ * Сыгранное всерьёз здесь же можно отметить «Уже прошёл» (components/
+ * MarkFinished) — игру, которую человек прошёл, раньше закрыть было негде,
+ * кроме героя /play. Только у игры с финалом: песочницу и Dota 2 не
+ * «проходят». А у того, что зацепило, — «Ещё в этом духе»: выдача из соседей
+ * этой игры под настроение, которое спросит квиз (quizHref с затравкой).
  *
  * Ответ меняется оптимистично, а уходит по одному запросу на игру за раз
  * (lib/latestwins): два быстрых нажатия, отправленные разом, доезжали в любом
@@ -188,6 +212,37 @@ export function Evenings({
                 <p aria-hidden className="text-[11px] text-danger">
                   Не вышло — попробуй ещё раз
                 </p>
+              )}
+              {/*
+                «Уже прошёл» — от сыгранного всерьёз, независимо от ответа: и
+                «так себе» бывает пройденным. Условие на ряд не завязано на
+                ответ, чтобы смена «Зацепило» ↔ «Так себе» не сбрасывала
+                отметку, сделанную минуту назад. «Ещё в этом духе» — только у
+                того, что зацепило: звать за похожим на «так себе» незачем.
+              */}
+              {((item.playedEnough && item.finishable) || verdict === 'hooked') && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                  {item.playedEnough &&
+                    item.finishable &&
+                    (item.finished ? (
+                      <span className="text-dim">Пройдено</span>
+                    ) : (
+                      !readOnly && (
+                        <MarkFinished
+                          appid={item.appid}
+                          name={item.name}
+                          from="library"
+                          onDenied={() => setDenied(true)}
+                          className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-60"
+                        />
+                      )
+                    ))}
+                  {verdict === 'hooked' && (
+                    <Link href={quizHref(null, item.appid)} className="tap link-more">
+                      Ещё в этом духе<span className="sr-only">: похожие на «{item.name}»</span>
+                    </Link>
+                  )}
+                </div>
               )}
               {item.owned && item.appid > 0 ? (
                 <SteamLaunch

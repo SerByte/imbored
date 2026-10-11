@@ -86,6 +86,26 @@ describe('экраны отказа', () => {
     }
   })
 
+  /*
+   * «Как «X», но…» приходит и адресом — со страницы игры за похожими на неё.
+   * Общий nocandidates («смени настроение или верни из бана») для неё —
+   * чужой совет: соседей под это настроение просто нет. Экран называет X
+   * (имя роут кладёт в тело отказа) и предлагает выдачу без затравки —
+   * отдельным запросом, а не повтором того же.
+   */
+  test('/play: отказ выдачи «в духе X» называет X и ведёт к выдаче без неё', () => {
+    const page = read('app', 'play', 'page.tsx')
+    expect(page).toMatch(/reason === 'nocandidates' && askSeed !== null\s*\? seedFail\(failSeed\)/)
+    const fn = page.slice(page.indexOf('function seedFail('), page.indexOf('const RECOMMEND_WAIT_MS'))
+    expect(fn, 'повтор того же запроса вернёт тот же отказ').toContain('retry: false')
+    expect(fn).toContain('«${name}»')
+    expect(page).toContain("setFailSeed(parseSeedRef(d?.seed)?.name ?? null)")
+    expect(page).toMatch(/onClick=\{\(\) => void retry\(null\)\}/)
+    expect(read('app', 'api', 'recommend', 'route.ts')).toMatch(
+      /error: 'nocandidates', \.\.\.\(seedName \? \{ seed: \{ appid: seed, name: seedName \} \} : \{\}\)/,
+    )
+  })
+
   test('/explore: повтор не предлагается там, где он вернёт тот же ответ', () => {
     const page = read('app', 'explore', 'page.tsx')
     // у каждого кода, где повтор — тупик, свой разбор, а не FAIL_UNKNOWN

@@ -241,3 +241,53 @@ describe('/library: личное владельца — только тому, �
     expect(shelf).not.toContain(SEALED_BANNED)
   })
 })
+
+/**
+ * «Уже прошёл» в «Твоих вечерах» (components/Evenings): решают сервер и его
+ * чтения, островок только рисует. Игра с финалом — кнопка; песочница — нет,
+ * её не «проходят»; уже пройденная (последний бан с причиной 'done', то же
+ * чтение, что полка «Пройдено») — слово вместо кнопки.
+ */
+describe('/library: «Уже прошёл» у вечеров', () => {
+  const RPG = 950
+  const SANDBOX = 951
+  const DONE = 952
+
+  async function evenings() {
+    const steamid = await signInAs(db, 'openid')
+    const now = nowSec()
+    await upsertGamesMeta(
+      db,
+      [
+        { appid: RPG, name: 'С титрами', tags: { RPG: 100, 'Story Rich': 50 }, genres: [], categories: [2] },
+        { appid: SANDBOX, name: 'Без конца', tags: { Sandbox: 100, Survival: 50 }, genres: [], categories: [2] },
+        { appid: DONE, name: 'Пройденная', tags: { Metroidvania: 100 }, genres: [], categories: [2] },
+      ],
+      now,
+    )
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      [RPG, SANDBOX, DONE].map((appid) => ({ appid, name: `#${appid}`, playtimeForever: 600, playtime2Weeks: 0 })),
+      now - 3600,
+    )
+    for (const appid of [RPG, SANDBOX, DONE]) {
+      await recordOutcome(db, { steamid, appid, source: null, launched: true }, now - 600)
+    }
+    await logFeedback(db, { steamid, appid: DONE, action: 'banned', reason: 'done' }, now - 60)
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/library'>)
+    const [props] = propsOf(tree, Evenings)
+    const items = props.items as Array<{ appid: number; finishable: boolean; finished: boolean }>
+    return new Map(items.map((i) => [i.appid, { finishable: i.finishable, finished: i.finished }]))
+  }
+
+  test('кнопка — у игры с финалом; у песочницы нет; пройденная знает, что пройдена', async () => {
+    const got = await evenings()
+    expect(got.get(RPG)).toEqual({ finishable: true, finished: false })
+    expect(got.get(SANDBOX)).toEqual({ finishable: false, finished: false })
+    expect(got.get(DONE)).toEqual({ finishable: true, finished: true })
+  })
+})

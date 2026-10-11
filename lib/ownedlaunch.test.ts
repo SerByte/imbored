@@ -32,6 +32,21 @@ describe('кнопка запуска', () => {
     expect(src).toMatch(/!owns\.owned\)\s*return null/)
   })
 
+  /*
+   * «Уже прошёл» рядом с «Запустить» — тот же островок и тот же ответ
+   * владения, ничего в разметке ISR. Плюс два условия: сессия может писать
+   * (по вставленной ссылке бан не записать — и кнопка не должна обещать
+   * обратного) и у игры есть финал (у Dota 2 «пройти» нечего).
+   */
+  test('«Уже прошёл» на странице игры — владельцу-писателю и только у игры с финалом', () => {
+    const src = code(read('components', 'OwnedLaunch.tsx'))
+    const tail = src.slice(src.indexOf('!owns.owned) return null'))
+    expect(tail).toMatch(/\{finishable && writer === true && \(\s*<MarkFinished\b/)
+    expect(tail).toContain('from="game"')
+    const page = code(read('app', 'game', '[appid]', 'page.tsx'))
+    expect(page).toMatch(/<OwnedLaunch[^>]*finishable=\{!isReplayable\(meta\)\}/)
+  })
+
   test('в церемонии матча запуск — только ветка владельца', () => {
     const src = code(read('components', 'MatchCeremony.tsx'))
     const launches = [...src.matchAll(/<SteamLaunch\b/g)]

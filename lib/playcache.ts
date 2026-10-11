@@ -77,21 +77,30 @@ export type PlayCache = {
 
 /**
  * Ключ запроса — всё, что задаёт выдачу из адреса: настроение, «нераспакованное»,
- * рулетка и ось. Источник («Только моё») и ось, переключённые уже на выдаче, в
- * ключ не входят: они живут в самой записи, и после «Назад» человек вернётся
- * к тому, на что переключил, а не к тому, с чего начал.
+ * рулетка, ось и затравка «Как «X», но…». Источник («Только моё»), ось и
+ * затравка, переключённые уже на выдаче, в ключ не входят: они живут в самой
+ * записи, и после «Назад» человек вернётся к тому, на что переключил, а не к
+ * тому, с чего начал.
+ *
+ * Затравка с адреса (/play?…&seed=, см. parseSeedParam) — в ключе: без неё
+ * обычная выдача, запомненная минуту назад, вставала бы на месте «похожих на
+ * X», о которых человек только что попросил со страницы игры. Пятой частью и
+ * только когда она есть: ключ без затравки — тот же, что до неё, и записи,
+ * уже лежащие во вкладках, по-прежнему узнаются.
  */
 export function playCacheKey(q: {
   mood: Mood
   focus: Focus | null
   roulette: boolean
   lean: Lean | null
+  seed?: number | null
 }): string {
   return [
     `${q.mood.time}.${q.mood.vibe}.${q.mood.social}`,
     q.focus ?? '',
     q.roulette ? 'roulette' : '',
     q.lean ?? '',
+    ...(q.seed ? [String(q.seed)] : []),
   ].join('|')
 }
 
@@ -121,7 +130,9 @@ function parseContinue(x: unknown): ContinueGame | null | undefined {
   if (!x || typeof x !== 'object') return undefined
   const c = x as Record<string, unknown>
   if (!isInt(c.appid) || !isStr(c.name) || typeof c.recentHours !== 'number') return undefined
-  return { appid: c.appid, name: c.name, recentHours: c.recentHours }
+  // Записи до «Уже прошёл» у строки «Продолжить» поля не несут — кнопки у них
+  // нет: промолчать лучше, чем предложить «пройти» Dota 2
+  return { appid: c.appid, name: c.name, recentHours: c.recentHours, finishable: c.finishable === true }
 }
 
 function parseDeal(x: unknown): Deal | null {
@@ -195,6 +206,10 @@ export type RestoredDeal = {
 /**
  * Запись → выдача на экран, или null, если восстанавливать нечего: другой
  * запрос, другой человек, срок вышел, или всё, что в ней было, уже в бане.
+ *
+ * Строка «Продолжить» фильтруется тем же списком: «Уже прошёл» ставят и у
+ * неё, и на странице игры, куда уходят «Подробнее», — и после «Назад»
+ * пройденная игра звала бы продолжить себя ещё пятнадцать минут.
  */
 export function restoreDeal(
   entry: PlayCache | null,
@@ -202,12 +217,18 @@ export function restoreDeal(
 ): RestoredDeal | null {
   if (!entry || !q.viewer || entry.viewer !== q.viewer) return null
   if (!hasFreshDeal(entry, q.key, q.nowMs)) return null
-  const keep = (p: PlayPick) => !q.banned.has(p.appid)
+  const keep = (p: { appid: number }) => !q.banned.has(p.appid)
   const picks = entry.deal.picks.filter(keep)
   if (!picks.length) return null
   const index = Math.max(0, picks.findIndex((p) => p.appid === entry.hero))
+  const cont = entry.deal.continueGame
   return {
-    deal: { ...entry.deal, picks, discoveries: entry.deal.discoveries.filter(keep) },
+    deal: {
+      ...entry.deal,
+      picks,
+      discoveries: entry.deal.discoveries.filter(keep),
+      continueGame: cont && keep(cont) ? cont : null,
+    },
     index,
     liked: entry.liked,
     at: entry.at,

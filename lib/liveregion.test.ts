@@ -234,6 +234,8 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
     reset: ['setHeroMiss(null)', 'setSwitchMiss(null)'],
   },
   { file: 'app/play/page.tsx', start: 'if (banning) return', reset: ['setBanFailed(null)'] },
+  // «Уже прошёл» у строки «Продолжить» — та же строка отказа, по appid
+  { file: 'app/play/page.tsx', start: 'const finishCont = async', reset: ['setBanFailed(null)'] },
   // «Обновить выдачу» говорит отказ той же строкой под героем, что и кнопки под ним
   { file: 'app/play/page.tsx', start: 'onRefresh={async () => {', reset: ['setHeroMiss(null)'] },
   { file: 'app/daily/page.tsx', start: 'const notToday = async', reset: ['setRerollMiss(null)'] },
@@ -246,6 +248,7 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   { file: 'components/LikedShelf.tsx', start: 'async function unlike(', reset: ['setFailed(null)'] },
   { file: 'components/Evenings.tsx', start: 'async function answer(', reset: ['setFailed(null)'] },
   // здесь отказ — фаза состояния, и гасит его фаза «делаю»
+  { file: 'components/MarkFinished.tsx', start: 'async function mark()', reset: ["setState('busy')"] },
   { file: 'components/SharePick.tsx', start: 'async function create()', reset: ["setState({ at, phase: 'busy' })"] },
 ]
 
