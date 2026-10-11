@@ -43,4 +43,21 @@ describe('полки скрытого и пройденного', () => {
   test('пройденное не обесцвечивается — серой остаётся только полка скрытого', () => {
     expect(CODE).toMatch(/dim=\{shelf === 'hidden'\}/)
   })
+
+  /*
+   * Полки — из пропа, а не из копии в состоянии. «Уже прошёл» в «Твоих
+   * вечерах» на той же странице зовёт router.refresh(), и копия, снятая с
+   * первой разметки, новой пройденной игры не видела: вернуть её было не с
+   * чего до перезагрузки. Снятое здесь прячет множество поверх пропа, а
+   * забывает его новый проп, где игры уже нет, — иначе снятая и отмеченная
+   * снова игра так и не вернулась бы на полку.
+   */
+  test('полки выводятся из пропа: refresh приносит новую игру', () => {
+    expect(CODE).not.toMatch(/useState\(games\)\s*const \[failed/)
+    expect(CODE).not.toMatch(/setItems\(/)
+    expect(CODE).toMatch(/const items = games\.filter\(\(g\) => !removed\.has\(g\.appid\)\)/)
+    expect(CODE).toMatch(/if \(seen !== games\) \{\s*setSeen\(games\)/)
+    const prune = CODE.slice(CODE.indexOf('if (seen !== games) {'), CODE.indexOf('const items = games'))
+    expect(prune, 'снятое забывается, когда сервер его больше не отдаёт').toMatch(/present\.has\(id\)/)
+  })
 })

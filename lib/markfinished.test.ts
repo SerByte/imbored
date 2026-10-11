@@ -63,6 +63,11 @@ describe('«Уже прошёл» вне выдачи', () => {
     expect(CODE).toContain('href={quizHref(null, appid)}')
   })
 
+  // onDone — только записанной отметке: отказ и needsteam полку «Пройдено» не меняют
+  test('onDone зовётся только после записанной отметки', () => {
+    expect(CODE).toMatch(/setState\(next\)\s*if \(next === 'done'\) onDone\?\.\(\)/)
+  })
+
   /*
    * /library упирается в бюджет веса первой загрузки (bundle-budget.json):
    * кнопка, нужная лишь у сыгранных всерьёз вечеров, едет туда отдельным
@@ -73,5 +78,35 @@ describe('«Уже прошёл» вне выдачи', () => {
     const evenings = fs.readFileSync(path.join(__dirname, '..', 'components', 'Evenings.tsx'), 'utf8')
     expect(evenings).not.toMatch(/^import[^\n]*MarkFinished/m)
     expect(evenings).toMatch(/dynamic\(\(\) => import\('@\/components\/MarkFinished'\)/)
+  })
+
+  /*
+   * Строка отказа MarkFinished стоит в карточке ленты, а пустая она sr-only —
+   * то есть absolute. Без позиционированного предка её содержащий блок —
+   * начальный, выше ленты с горизонтальной прокруткой: у дальней карточки
+   * узел выпадал из обрезки ленты и раздвигал страницу вбок.
+   */
+  test('в «Твоих вечерах» карточка — relative: пустая строка отказа не выпадает из ленты', () => {
+    const evenings = fs.readFileSync(path.join(__dirname, '..', 'components', 'Evenings.tsx'), 'utf8')
+    const li = evenings.match(/<li key=\{key\} className="([^"]*)"/)
+    expect(li, 'карточка ленты не найдена — сторож ослеп').not.toBeNull()
+    expect(li![1].split(/\s+/)).toContain('relative')
+  })
+
+  /*
+   * После отметки в «Твоих вечерах» полка «Пройдено» ниже на той же странице
+   * обязана её показать: кнопка обещает «вернуть можно в библиотеке». Полка
+   * серверная — её приносит router.refresh(). А карточка, на которой
+   * нажимали, держит свой MarkFinished: на его строке стоит фокус, и слово
+   * «Пройдено» из пересчитанного item.finished уронило бы его в body.
+   */
+  test('в «Твоих вечерах» отметка пересчитывает страницу и не роняет фокус', () => {
+    const evenings = fs
+      .readFileSync(path.join(__dirname, '..', 'components', 'Evenings.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(evenings).toMatch(
+      /onDone=\{\(\) => \{\s*setMarked\(\(m\) => new Set\(m\)\.add\(key\)\)\s*startTransition\(\(\) => router\.refresh\(\)\)/,
+    )
+    expect(evenings).toMatch(/item\.finished && !marked\.has\(key\) \?/)
   })
 })

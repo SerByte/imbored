@@ -35,16 +35,23 @@ import { writerStore } from '@/lib/writer'
  * мерой, что у строки «Продолжить» на /play (isReplayable): у Dota 2 кнопки
  * нет. Разметка ISR от этого не меняется — всё дорисовывает островок.
  * Кнопка — и на телефоне: отметка не запуск, протокол ей не нужен.
+ *
+ * follow — звать ли после отметки «Дальше — в духе X». Решает страница, той
+ * же полкой, что и ссылку «Похожее на X» внизу (data.similar): у игры без
+ * соседей обе вели бы к экрану «похожих не нашлось», и две дороги на одной
+ * странице спорили бы — нижняя честно спрятана, а эта звала бы туда же.
  */
 export function OwnedLaunch({
   appid,
   name,
   finishable,
+  follow,
   className = '',
 }: {
   appid: number
   name: string
   finishable: boolean
+  follow: boolean
   className?: string
 }) {
   const writer = useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)
@@ -76,7 +83,7 @@ export function OwnedLaunch({
           appid={appid}
           name={name}
           from="game"
-          follow
+          follow={follow}
           onDenied={() => writerStore.set(false)}
           className={className}
         />

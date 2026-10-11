@@ -47,6 +47,22 @@ describe('кнопка запуска', () => {
     expect(page).toMatch(/<OwnedLaunch[^>]*finishable=\{!isReplayable\(meta\)\}/)
   })
 
+  /*
+   * «Дальше — в духе X» после отметки — только там, где у игры есть соседи:
+   * та же полка, что прячет ссылку «Похожее на X» внизу страницы. Без неё
+   * дорога вела бы к экрану «похожих не нашлось», и две ссылки одной
+   * страницы спорили бы друг с другом.
+   */
+  test('«Дальше — в духе X» на странице игры — по той же полке соседей, что ссылка внизу', () => {
+    const src = code(read('components', 'OwnedLaunch.tsx'))
+    const tail = src.slice(src.indexOf('!owns.owned) return null'))
+    expect(tail).toContain('follow={follow}')
+    expect(tail).not.toMatch(/\sfollow\s/)
+    const page = code(read('app', 'game', '[appid]', 'page.tsx'))
+    expect(page).toMatch(/<OwnedLaunch[^>]*follow=\{data\.similar\.length > 0\}/)
+    expect(page).toMatch(/\{data\.similar\.length > 0 && \(\s*<Link href=\{quizHref\(null, appid\)\}/)
+  })
+
   test('в церемонии матча запуск — только ветка владельца', () => {
     const src = code(read('components', 'MatchCeremony.tsx'))
     const launches = [...src.matchAll(/<SteamLaunch\b/g)]

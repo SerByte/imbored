@@ -629,6 +629,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       appid={appid}
                       name={meta.name}
                       finishable={!isReplayable(meta)}
+                      follow={data.similar.length > 0}
                       className="btn-glass"
                     />
                   )}
@@ -859,7 +860,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             этой игры. Адрес один на всех — разметка ISR не зависит от того,
             кто смотрит. Только там, где соседи есть, — по той же полке,
             из которой их берёт и выдача (nearGames): без неё ссылка вела бы
-            к экрану «похожих не нашлось».
+            к экрану «похожих не нашлось». Той же мерой решается и «Дальше — в
+            духе X» после «Уже прошёл» наверху (OwnedLaunch, follow).
           */}
           {data.similar.length > 0 && (
             <Link href={quizHref(null, appid)} className="tap link-more">

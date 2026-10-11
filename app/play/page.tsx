@@ -387,12 +387,14 @@ function Player({ say }: { say: (line: string) => void }) {
    * Раньше адреса у затравки не было вовсе: «хочу как Hades» было
    * невыполнимо, пока Hades сам не выпадет героем. Теперь в выдачу «в духе X»
    * ведут страница игры, «Уже прошёл» и «Твои вечера» — через квиз
-   * (quizHref). Адрес — это вход, а не второй переключатель: с него уходит
-   * первая выдача, «Попробовать снова» и «Подобрать заново», а дальше
-   * затравка живёт в эхе (seed выше) и меняется кнопками под героем, как
-   * раньше. В рулетке и «нераспакованном» её нет — по той же причине, по
-   * которой там нет кнопки «Как «X», но…». null — без затравки, в том числе
-   * после «Подобрать без «похожих»» на экране отказа.
+   * (quizHref). Адрес — это вход, а не второй переключатель: с него уходят
+   * первая выдача и «Попробовать снова», а дальше затравка живёт в эхе (seed
+   * выше) и меняется кнопками под героем, как раньше. «Подобрать заново»
+   * перед новым заходом ставит сюда затравку выдачи на экране (redeal) —
+   * как источник и ось, она едет с тем, на что человек переключил. В рулетке
+   * и «нераспакованном» её нет — по той же причине, по которой там нет кнопки
+   * «Как «X», но…». null — без затравки, в том числе после «Подобрать без
+   * «похожих»» на экране отказа.
    */
   const [askSeed, setAskSeed] = useState(() =>
     roulette || focus ? null : parseSeedParam(search.get('seed')),
@@ -514,6 +516,13 @@ function Player({ say }: { say: (line: string) => void }) {
    */
   const heroEl = useRef<HTMLElement | null>(null)
   const wantHeroFocus = useRef(false)
+  /*
+   * То же разовое «забери фокус» — для строки «Продолжить» после «Уже
+   * прошёл» (contFocus ниже). Объявлено здесь, а не рядом: любое действие,
+   * которое отдаёт фокус герою, отменяет и его — иначе отметка, доехавшая в
+   * пятый пропуск, отняла бы фокус у героя, вернувшегося с экрана выгорания.
+   */
+  const wantContFocus = useRef(false)
   const heroRef = useCallback((el: HTMLElement | null) => {
     heroEl.current = el
     if (!el || !wantHeroFocus.current) return
@@ -521,6 +530,7 @@ function Player({ say }: { say: (line: string) => void }) {
     el.focus({ preventScroll: true })
   }, [])
   const focusHero = useCallback((sameHero: boolean) => {
+    wantContFocus.current = false
     const el = heroEl.current
     if (sameHero && el) el.focus({ preventScroll: true })
     else wantHeroFocus.current = true
@@ -1066,14 +1076,23 @@ function Player({ say }: { say: (line: string) => void }) {
     void run()
     return () => ac.abort()
     // round — «Подобрать заново»; остальное из строки запроса и в рамках
-    // страницы неизменно. askSeed меняется только на экране отказа, а
-    // дальше в этот путь ведёт «Подобрать заново» — он и перечитает её
+    // страницы неизменно. askSeed меняется на экране отказа и в самом
+    // «Подобрать заново» (redeal ставит её тем же рендером, что и round), а
+    // в этот путь ведёт только он — он её и перечитает
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round])
 
   /*
    * «Подобрать заново» у выдачи с прошлого захода: забыть её и пройти путь
    * первого захода — прогрев, если метка не свежая, и новый запрос выдачи.
+   *
+   * Затравка — та, под которую собрана выдача на экране, а не та, что в
+   * адресе: источник и ось новый заход и так берёт с экрана (восстановленная
+   * запись их помнит, см. playCacheKey), и затравка обязана ехать с ними.
+   * Иначе /play?…&seed=Hades → «Вернуть обычную выдачу» → «Подробнее» →
+   * «Назад» → «Подобрать заново» возвращало «похожих на Hades», от которых
+   * человек только что отказался, а затравка, выбранная на выдаче, наоборот
+   * пропадала. В рулетке и «нераспакованном» её нет, как и у адреса (askSeed).
    */
   const redeal = useCallback(() => {
     playCacheStore.set(null)
@@ -1087,11 +1106,13 @@ function Player({ say }: { say: (line: string) => void }) {
     setLimitedFor(null)
     setReason(null)
     setPhase('prepare')
+    // Тем же рендером, что и round: эффект первого захода прочтёт уже её
+    setAskSeed(roulette || focus ? null : (seed?.appid ?? null))
     // Кнопка уходит вместе с выдачей — фокус заберёт заголовок нового героя
     focusHero(false)
     roundNow.current += 1
     setRound(roundNow.current)
-  }, [focusHero])
+  }, [focusHero, seed, roulette, focus])
 
   /** Смена режима: тот же прогрев, другой вопрос к движку — и выдача с начала */
   /*
@@ -1166,9 +1187,13 @@ function Player({ say }: { say: (line: string) => void }) {
    * источника значило бы выбросить и ту выдачу, о которой спросили. from —
    * где сказать об отказе: у переключателей или у кнопок под героем.
    *
-   * Отдаёт, встала ли новая выдача: «Дальше — в духе X» у пройденной игры
-   * уходит из разметки вместе с ней, и фокус ему надо унести на героя — а
-   * переключателю, который остаётся на месте, не надо.
+   * Отдаёт appid героя новой выдачи, null — выдача прежняя. «Дальше — в духе
+   * X» у пройденной игры уходит из разметки вместе с ней, и фокус ему надо
+   * унести на героя — а переключателю, который остаётся на месте, не надо.
+   * Именно appid, а не «встала»: герой новой выдачи бывает тем же (соседи X
+   * часто начинаются с похожего на X героя), тогда заголовок не
+   * перемонтируется, и ждать его ref-колбэка — потерять фокус в body, как
+   * «Обновить выдачу» до focusHero(now.appid !== was).
    */
   const seedAppid = seed?.appid ?? null
   const keptNudge = nudge === 'different' ? null : nudge
@@ -1182,7 +1207,7 @@ function Player({ say }: { say: (line: string) => void }) {
         exclude?: number[]
       },
       from: 'switch' | 'hero' = 'switch',
-    ) => {
+    ): Promise<number | null> => {
       // «Что-то другое» повторяется: каждое нажатие — новый срез
       const same =
         next.scope === scope &&
@@ -1190,7 +1215,7 @@ function Player({ say }: { say: (line: string) => void }) {
         next.seed === seedAppid &&
         next.nudge === nudge &&
         next.nudge !== 'different'
-      if (same || switching) return false
+      if (same || switching) return null
       // Прежний отказ этого места гаснет с новой попыткой: второй потолок
       // частоты подряд — тот же switchLine, и живая область, где текст не
       // изменился, промолчала бы — нажатие осталось бы без отклика вовсе
@@ -1202,22 +1227,22 @@ function Player({ say }: { say: (line: string) => void }) {
       try {
         const got = await fetchPicks(next)
         // Пока шёл запрос, нажали «Подобрать заново»: ни выдача, ни отказ к экрану не относятся
-        if (roundNow.current !== ofRound) return false
+        if (roundNow.current !== ofRound) return null
         if ('miss' in got) {
           // Выдача прежняя — и об этом надо сказать, а не просто отжать кнопку:
           // чаще всего это потолок частоты, и у него есть срок (switchLine)
           const line = switchLine(got)
           if (from === 'hero') setHeroMiss(line)
           else setSwitchMiss(line)
-          return false
+          return null
         }
-        const hero = applyDeal(got)
+        const hero = got.picks[applyDeal(got)]
         // Фокус не трогаем: нажатый переключатель остаётся на месте, и
         // человек, может быть, нажмёт соседний. Сказать надо только, что
         // герой наверху сменился.
-        const name = got.picks[hero].name
+        const name = hero.name
         say(playLine(got.seed ? { kind: 'seed', name, seed: got.seed.name } : { kind: 'reshape', name }))
-        return true
+        return hero.appid
       } finally {
         // finally, а не строка после await: оборванная сеть оставляла бы
         // переключатель навсегда заблокированным, и починить это можно было бы
@@ -1311,16 +1336,23 @@ function Player({ say }: { say: (line: string) => void }) {
    * прошёл» жил только у героя, а героем она не бывает — активное в
    * кандидаты не идёт, оно стоит здесь, строкой. Тот же бан с причиной
    * 'done', что у героя, и по тем же правилам: ждёт ответа сервера, отказ
-   * говорит строкой под панелью (banFailed — по appid, на героя не
-   * переедет), а соседние вкладки узнают о нём из rememberBan. Только у
-   * игры с финалом (finishable — решает сервер по тегам): Dota 2 не «проходят».
+   * говорит строкой под панелью, а соседние вкладки узнают о нём из
+   * rememberBan. Только у игры с финалом (finishable — решает сервер по
+   * тегам): Dota 2 не «проходят».
    *
    * Свой флаг, а не banning: бан героя и этот идут независимо, и кнопка героя
-   * не должна говорить «Отмечаю…», пока отмечается чужая игра. После ответа
-   * панель говорит «пройдена» и зовёт дальше — в духе этой игры
+   * не должна говорить «Отмечаю…», пока отмечается чужая игра. И свой отказ,
+   * а не banFailed: общий гасил бы чужую строку — «Уже прошёл» здесь молча
+   * стирал «не получилось убрать игру насовсем» у героя, хотя тот бан так и
+   * не записан, а повтор бана героя — отказ этой панели. По appid, как и
+   * banFailed: новая выдача приносит другую «Продолжить», и строка про
+   * прежнюю на неё не переезжает.
+   *
+   * После ответа панель говорит «пройдена» и зовёт дальше — в духе этой игры
    * (contDone, «Как «X», но…» без адреса, тем же reshape).
    */
   const [finishing, setFinishing] = useState(false)
+  const [contFailed, setContFailed] = useState<number | null>(null)
   /** appid игры из «Продолжить», только что отмеченной пройденной */
   const [contDone, setContDone] = useState<number | null>(null)
   const finishCont = async () => {
@@ -1329,18 +1361,33 @@ function Player({ say }: { say: (line: string) => void }) {
     // Ответ про игру дан: «не зацепило?» про неё уже не спрашиваем
     forgetLaunch(c.appid)
     setFinishing(true)
-    setBanFailed(null)
+    setContFailed(null)
     const ok = await sendFeedback(c.appid, 'banned', 'done', ctxOf(null, 'continue'))
     setFinishing(false)
     if (!ok) {
       // Отказ по правам — не «нажми ещё раз»: кнопка уже спряталась
-      if (writerStore.get() !== false) setBanFailed(c.appid)
+      if (writerStore.get() !== false) setContFailed(c.appid)
       return
     }
     rememberBan(c.appid, Date.now())
+    // «Уже прошёл» уходит из разметки — фокус встанет на то, что её сменит
+    wantContFocus.current = true
     setContDone(c.appid)
     say(playLine({ kind: 'ban', name: c.name, done: true }))
   }
+  /*
+   * Фокус на строку «пройдена» — разово, по нажатию, а не при каждом
+   * монтировании: панель уходит вместе с экраном выгорания и возвращается
+   * тем же коммитом, что и новый заголовок героя, и ref-колбэк, стоящий ниже
+   * героя по дереву, отнимал бы фокус у героя (focusHero) каждый раз. Флаг
+   * ставит удачный finishCont, снимает первый же узел, который его забрал,
+   * — или focusHero, если фокус к тому времени понадобился герою.
+   */
+  const contFocus = useCallback((el: HTMLElement | null) => {
+    if (!el || !wantContFocus.current) return
+    wantContFocus.current = false
+    el.focus({ preventScroll: true })
+  }, [])
 
   /*
    * «Отправить другу» — до ранних возвратов: хук. Герой тот же, что ниже
@@ -2435,25 +2482,39 @@ function Player({ say }: { say: (line: string) => void }) {
           <div className="panel-lift px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
             {contDone === cont.appid ? (
               <>
-                <span className="text-dim">
+                {/* Выдача на экране уже «похожие на X» — пройденная игра и
+                    есть её затравка (pickContinue затравку не исключает, а
+                    сама она в соседи не идёт). «Дальше» тогда звал бы тот же
+                    запрос, и reshape отбрасывал бы его как «то же самое»:
+                    кнопка, которая молча ничего не делает. Остаётся строка —
+                    и фокус, ушедший с «Уже прошёл», забирает она */}
+                <span
+                  ref={cont.appid === seedAppid ? contFocus : undefined}
+                  tabIndex={cont.appid === seedAppid ? -1 : undefined}
+                  className="text-dim outline-none"
+                >
                   <span className="font-extrabold text-ink">«{cont.name}»</span> пройдена — больше не
                   предложу
                 </span>
                 {/* «Уже прошёл» ушла из-под пальца — фокус встаёт сюда. Удачная
-                    выдача уносит и эту кнопку, и фокус едет на нового героя */}
-                <button
-                  ref={focusOnMount}
-                  type="button"
-                  onClick={async () => {
-                    if (await reshape({ scope, lean, seed: cont.appid, nudge: keptNudge }, 'hero')) {
-                      focusHero(false)
-                    }
-                  }}
-                  aria-disabled={switching}
-                  className="tap font-extrabold text-ember-text hover:underline cursor-pointer aria-disabled:opacity-50"
-                >
-                  Дальше — в духе «{cont.name}»
-                </button>
+                    выдача уносит и эту кнопку: фокус едет на героя — на
+                    нового, когда тот смонтируется, или сразу на нынешний,
+                    если герой остался тем же (reshape отдаёт его appid) */}
+                {cont.appid !== seedAppid && (
+                  <button
+                    ref={contFocus}
+                    type="button"
+                    onClick={async () => {
+                      const was = pick.appid
+                      const hero = await reshape({ scope, lean, seed: cont.appid, nudge: keptNudge }, 'hero')
+                      if (hero !== null) focusHero(hero === was)
+                    }}
+                    aria-disabled={switching}
+                    className="tap font-extrabold text-ember-text hover:underline cursor-pointer aria-disabled:opacity-50"
+                  >
+                    Дальше — в духе «{cont.name}»
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -2492,7 +2553,7 @@ function Player({ say }: { say: (line: string) => void }) {
           {/* Отказ «Уже прошёл» — под панелью, тем же приёмом, что у героя:
               строка стоит всегда, меняется только текст */}
           <StatusLine
-            text={banFailed === cont.appid ? DONE_MISS : null}
+            text={contFailed === cont.appid ? DONE_MISS : null}
             className="mt-2 text-sm text-danger"
           />
         </div>

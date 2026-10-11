@@ -529,12 +529,6 @@ describe('/play: пути вокруг выдачи', () => {
   })
 
   /*
-   * «Похожие на X» переживают смену настроения: «Изменить настроение» у
-   * выдачи из соседей и на экране отказа везёт затравку в квиз. На экране
-   * отказа — ту, что спрошена адресом (выдачи с эхом там нет), на выдаче —
-   * ту, под которую она собрана.
-   */
-  /*
    * «Уже прошёл» у строки «Продолжить»: тот же бан с причиной done, что у
    * героя, с её слотом в снимке, — только у игры с финалом и не сессии по
    * ссылке. Отмеченная зовёт дальше в духе себя тем же reshape, что «Как
@@ -546,12 +540,75 @@ describe('/play: пути вокруг выдачи', () => {
     expect(fin).toContain("await sendFeedback(c.appid, 'banned', 'done', ctxOf(null, 'continue'))")
     expect(fin).toContain('rememberBan(c.appid, Date.now())')
     expect(code).toMatch(
-      /if \(await reshape\(\{ scope, lean, seed: cont\.appid, nudge: keptNudge \}, 'hero'\)\) \{\s*focusHero\(false\)/,
+      /const was = pick\.appid\s*const hero = await reshape\(\{ scope, lean, seed: cont\.appid, nudge: keptNudge \}, 'hero'\)\s*if \(hero !== null\) focusHero\(hero === was\)/,
     )
     // экран выгорания не зовёт продолжить только что пройденное
     expect(code).toContain('cont: !!cont && cont.appid !== contDone')
   })
 
+  /*
+   * Пройденная «Продолжить» бывает затравкой выдачи на экране: pickContinue
+   * затравку не исключает, а в соседи она не идёт — «Ещё в этом духе» у
+   * доигрываемой игры приводит ровно сюда. «Дальше — в духе X» звал бы тот
+   * же запрос, reshape отбрасывал бы его как «то же самое», и кнопка молча
+   * не делала бы ничего. Её нет — фокус с ушедшей «Уже прошёл» забирает
+   * строка «пройдена».
+   */
+  test('«Дальше — в духе X» не стоит у выдачи, уже собранной в духе X', () => {
+    const done = code.slice(code.indexOf('{contDone === cont.appid ? ('), code.indexOf('Дальше — в духе «{cont.name}»'))
+    expect(done).toMatch(/ref=\{cont\.appid === seedAppid \? contFocus : undefined\}\s*tabIndex=\{cont\.appid === seedAppid \? -1 : undefined\}/)
+    expect(done).toMatch(/\{cont\.appid !== seedAppid && \(\s*<button\s+ref=\{contFocus\}/)
+  })
+
+  /*
+   * Фокус на строку «пройдена» — по нажатию, а не при каждом монтировании:
+   * панель уходит с экраном выгорания и возвращается тем же коммитом, что и
+   * заголовок героя, и ref-колбэк ниже по дереву отнимал бы фокус у героя.
+   * Флаг ставит только удачная отметка, а любое «фокус герою» его снимает.
+   */
+  test('строка «пройдена» берёт фокус разово, и герой его перебивает', () => {
+    expect(code).not.toMatch(/ref=\{focusOnMount\}[^>]*>\s*Дальше — в духе/)
+    const fin = code.slice(code.indexOf('const finishCont = async'), code.indexOf('const contFocus = useCallback('))
+    const ok = fin.indexOf('rememberBan(c.appid')
+    expect(ok).toBeGreaterThan(-1)
+    expect(fin.indexOf('wantContFocus.current = true')).toBeGreaterThan(ok)
+    expect(code).toMatch(
+      /const contFocus = useCallback\(\(el: HTMLElement \| null\) => \{\s*if \(!el \|\| !wantContFocus\.current\) return\s*wantContFocus\.current = false/,
+    )
+    expect(code).toMatch(/const focusHero = useCallback\(\(sameHero: boolean\) => \{\s*wantContFocus\.current = false/)
+  })
+
+  /*
+   * Отказ «Уже прошёл» у «Продолжить» и отказ бана героя — разные строки:
+   * общий banFailed гасил чужую, и «не получилось убрать насовсем» у героя
+   * молча пропадало от нажатия в панели, хотя тот бан так и не записан.
+   */
+  test('отказ «Уже прошёл» у «Продолжить» — своя строка, а не banFailed героя', () => {
+    const fin = code.slice(code.indexOf('const finishCont = async'), code.indexOf('const contFocus = useCallback('))
+    expect(fin).not.toContain('setBanFailed')
+    expect(fin).toContain('setContFailed(c.appid)')
+    expect(code).toContain('text={contFailed === cont.appid ? DONE_MISS : null}')
+  })
+
+  /*
+   * «Подобрать заново» — новый заход за тем, что на экране: источник и ось
+   * он берёт из восстановленной записи, и затравка обязана ехать с ними, а
+   * не из адреса. Иначе снятые «похожие на X» возвращались, а выбранные на
+   * выдаче пропадали (playCacheKey: переключённое живёт в записи).
+   */
+  test('«Подобрать заново» берёт затравку выдачи на экране, а не адреса', () => {
+    const redeal = between('const redeal = useCallback(', 'const [retrying, setRetrying]')
+    const set = redeal.indexOf('setAskSeed(roulette || focus ? null : (seed?.appid ?? null))')
+    expect(set).toBeGreaterThan(-1)
+    expect(set).toBeLessThan(redeal.indexOf('setRound(roundNow.current)'))
+  })
+
+  /*
+   * «Похожие на X» переживают смену настроения: «Изменить настроение» у
+   * выдачи из соседей и на экране отказа везёт затравку в квиз. На экране
+   * отказа — ту, что спрошена адресом (выдачи с эхом там нет), на выдаче —
+   * ту, под которую она собрана.
+   */
   test('«Изменить настроение» везёт затравку туда, где она есть', () => {
     expect(code).toContain('quizHref(focus, askSeed)')
     expect(code).toContain('quizHref(focus, seedAppid)')

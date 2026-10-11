@@ -41,6 +41,7 @@ export function MarkFinished({
   name,
   from,
   onDenied,
+  onDone,
   follow = false,
   className,
 }: {
@@ -49,6 +50,13 @@ export function MarkFinished({
   from: Extract<CtxSource, 'library' | 'game'>
   /** Сессия только читает (needsteam): кнопку прячет тот, кто её поставил */
   onDenied: () => void
+  /**
+   * Отметка записана. Для страницы, где рядом лежит то, что от неё меняется:
+   * на /library — полка «Пройдено» (Evenings зовёт router.refresh). Узел
+   * этой кнопки её владелец обязан держать смонтированным: на нём стоит
+   * фокус, а строка «Пройдено» вместо него уронила бы его в body.
+   */
+  onDone?: () => void
   /** Звать «Дальше — в духе X» после отметки; где такая ссылка уже стоит рядом — нет */
   follow?: boolean
   className: string
@@ -77,6 +85,7 @@ export function MarkFinished({
       // сеть — тот же отказ, что и пятисотка: строка ниже, кнопка на месте
     }
     setState(next)
+    if (next === 'done') onDone?.()
   }
 
   return (
