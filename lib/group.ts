@@ -38,7 +38,19 @@ export type GroupCard = {
   tags: string[]
   store?: string
   storeUrl?: string
+  /** Подпись под названием — только у закреплённой первой карты (PINNED_REASON) */
+  reason?: string
 }
+
+/**
+ * Подпись первой карты, в которую звали («Позвать в эту игру»).
+ *
+ * Без имени: рука хоста в комнате переходит (ROOM_HEIR_ORDER), и «предложил
+ * Серёга» соврало бы, когда Серёга уже ушёл. Вторая фраза — чтобы карта не
+ * читалась решением, принятым за всех: это предложение, и «не хочу» по нему
+ * ведёт в обычную колоду, а не в тупик.
+ */
+export const PINNED_REASON = 'В неё и звали. Не хочется — дальше обычная колода'
 
 /**
  * Колода для свайп-матча пати: сначала общие мультиплеерные игры,
@@ -61,6 +73,19 @@ export type GroupCard = {
  * (semanticsMultiplier). Общие игры по-прежнему идут раньше недостающих:
  * настроение переставляет карты внутри этих групп, а не между ними. null и
  * отсутствие — скор до бита прежний.
+ *
+ * pinned — игра, в которую звали (rooms.seed_appid, «Позвать в эту игру»).
+ * Она первая у всех, мимо «общие раньше» и мимо скора: ради неё комнату и
+ * создавали. Но правила колоды для неё те же, что для любой карты:
+ *   • бан хоть кого-то из участников сильнее закрепления — карты нет вовсе;
+ *   • в колоду идёт только то, во что играют вместе (isMultiplayerMeta);
+ *   • издание: закреплённая разбирается ПЕРВОЙ и держит свой ключ, поэтому
+ *     другое издание той же игры — даже общее — в колоду не попадает. Звали
+ *     в это издание, и матч обязан случиться на нём.
+ * Мету закреплённой роут кладёт в metaOf сам: её может не быть ни в одной
+ * библиотеке, ни в пуле. Нет меты — нет и карты, колода прежняя. limit
+ * считает и её, и колода на больший limit по-прежнему продолжает меньшую:
+ * первая карта первая в каждом раунде.
  */
 export function buildGroupDeck(args: {
   members: GroupMember[]
@@ -70,8 +95,18 @@ export function buildGroupDeck(args: {
   banned?: ReadonlySet<number>
   tagWeight?: TagWeight | null
   mood?: Mood | null
+  pinned?: number | null
 }): GroupCard[] {
-  const { members, metaOf, extraPool, limit, banned, tagWeight = null, mood = null } = args
+  const {
+    members,
+    metaOf,
+    extraPool,
+    limit,
+    banned,
+    tagWeight = null,
+    mood = null,
+    pinned = null,
+  } = args
   if (!members.length) return []
 
   // суммарный вкус пати
@@ -142,19 +177,30 @@ export function buildGroupDeck(args: {
   const seenKeys = new Set<string>()
   const cards: GroupCard[] = []
 
-  const take = (meta: GameMeta): boolean => {
-    if (banned?.has(meta.appid)) return false
+  // Отбор одной карты: бан, издание, «не дважды». Карту не кладёт — это
+  // решает зовущий: закреплённая встаёт вне сортировки
+  const claim = (meta: GameMeta): GroupCard | null => {
+    if (banned?.has(meta.appid)) return null
     const key = editionKey(meta.name)
-    if (key && seenKeys.has(key)) return false
+    if (key && seenKeys.has(key)) return null
     seen.add(meta.appid)
     if (key) seenKeys.add(key)
-    cards.push(toCard(meta))
-    return true
+    return toCard(meta)
   }
+  const take = (meta: GameMeta): void => {
+    const card = claim(meta)
+    if (card) cards.push(card)
+  }
+
+  // Закреплённая — раньше всех циклов: так её издание занимает ключ первым
+  const pinnedMeta = pinned !== null ? metaOf(pinned) : undefined
+  const lead = pinnedMeta && isMultiplayerMeta(pinnedMeta) ? claim(pinnedMeta) : null
 
   // общие игры всех участников
   for (const [appid, owning] of owners) {
-    if (owning.size !== members.length) continue
+    // seen — ради закреплённой: у названия без ключа издания (editionKey
+    // пустой) только он не даст общей игре встать второй раз
+    if (owning.size !== members.length || seen.has(appid)) continue
     const meta = metaOf(appid)
     if (!meta || !isMultiplayerMeta(meta)) continue
     take(meta)
@@ -168,7 +214,6 @@ export function buildGroupDeck(args: {
     take(meta)
   }
 
-  return cards
-    .sort((a, b) => Number(b.ownedByAll) - Number(a.ownedByAll) || b.score - a.score)
-    .slice(0, limit)
+  cards.sort((a, b) => Number(b.ownedByAll) - Number(a.ownedByAll) || b.score - a.score)
+  return (lead ? [{ ...lead, reason: PINNED_REASON }, ...cards] : cards).slice(0, limit)
 }

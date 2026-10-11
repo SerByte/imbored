@@ -32,7 +32,9 @@ import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { OG_SITE } from '@/lib/site'
 import { plural } from '@/lib/plural'
+import { roomSeedHref } from '@/lib/presets'
 import { refundEligible } from '@/lib/refund'
+import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
@@ -636,6 +638,29 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 <Icon name="play" size={16} />
                 Обзоры на YouTube
               </a>
+              {/*
+                «Позвать в эту игру» — комната с ней первой картой
+                (roomSeedHref). Карточку игры чаще всего открывают, чтобы
+                скинуть друзьям, и «го в неё?» уходило в чат голой ссылкой на
+                Steam: дальше договаривались словами. Теперь та же ссылка —
+                пати с артом и колодой на случай, если не зайдёт.
+
+                Только у игры, которую комната возьмёт (seedable в
+                lib/roomseed): сетевая, живая, не вытесненная преемником.
+                Живая — для компании, а не только для одного: у сетевой игры
+                с одиночной кампанией и пустыми серверами вердикта выше нет,
+                а колода пати её снимет. У мёртвой кнопки нет и так — звать в
+                пустой матчмейкинг значит спорить с вердиктом выше. Сессии странице знать не нужно:
+                адрес один на всех, ISR не тронут; свой бан хоста проверит уже
+                создание комнаты. Стекло, а не заливка: главное действие здесь —
+                магазин, пати — второе.
+              */}
+              {seedable(meta) && (
+                <Link href={roomSeedHref(appid)} prefetch={false} className="btn-glass">
+                  <Icon name="users" size={16} />
+                  Позвать в эту игру
+                </Link>
+              )}
               {/* Бесплатная игра тоже получает плашку. Условие было «цена больше
                   нуля», и у free-to-play — а это Dota, CS2, Warframe, то есть
                   верх каталога по онлайну — в герое не оказывалось ни цены, ни

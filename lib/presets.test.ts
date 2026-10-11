@@ -10,6 +10,8 @@ import {
   roomBridgeHref,
   roomPresetByKey,
   roomPresetOf,
+  roomSeedHref,
+  roomSeedOf,
   VIBE_PRESETS,
 } from './presets'
 import { parseFocus } from './recommend'
@@ -261,5 +263,27 @@ describe('roomArrival', () => {
     expect(arrive('preset=rage&hint=talk')).toEqual({ create: null, hint: roomPresetByKey('talk') })
     expect(arrive('hint=__proto__')).toEqual({ create: null, hint: null })
     expect(arrive('')).toEqual({ create: null, hint: null })
+  })
+})
+
+/**
+ * «Позвать в эту игру»: appid первой карты едет в адресе /room/new?game=.
+ * Адрес приходит откуда угодно — из чата, из закладки, — поэтому разбор
+ * строгий: только положительное целое без хвостов. Всё остальное — «без
+ * игры», а не ошибка: комната создаётся как обычно.
+ */
+describe('игра, в которую зовут', () => {
+  test('адрес и разбор — один договор', () => {
+    for (const appid of [10, 548430, 2_147_483_647]) {
+      const href = roomSeedHref(appid)
+      expect(href, String(appid)).toBe(`/room/new?game=${appid}`)
+      expect(roomSeedOf(new URL(href, 'https://imbored.test').searchParams.get('game'))).toBe(appid)
+    }
+  })
+
+  test('мусор — null: ноль, минус, дробь, хвосты, экспонента, слишком длинное', () => {
+    for (const raw of [null, undefined, '', '0', '-570', '570.5', '570abc', ' 570', '0570', '1e5', '0x10', '2147483648', '99999999999']) {
+      expect(roomSeedOf(raw), String(raw)).toBeNull()
+    }
   })
 })

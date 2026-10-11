@@ -201,6 +201,36 @@ export function roomArrival(query: URLSearchParams): { create: RoomPreset | null
   return { create, hint: create ? null : roomPresetByKey(query.get('hint')) }
 }
 
+/** Потолок appid: столбец INTEGER и JSON-массив выдержат больше, но у Steam таких нет */
+const SEED_MAX = 2_147_483_647
+
+/**
+ * Игра, в которую зовут, из адреса /room/new?game= — либо null.
+ *
+ * «Позвать в эту игру» стоит там, где на экране уже есть конкретная игра для
+ * компании: выбор, которым поделились (/pick), общие игры на /compat, карточка
+ * игры. Раньше все три вели на голый /room/new, и игра терялась по дороге —
+ * друзьям уходила ссылка на «выбрать игру на вечер», а «го в X?» писали в чат
+ * отдельно.
+ *
+ * Разбор строгий — только десятичное положительное целое, без нулей впереди и
+ * хвостов: адрес приходит из чата и закладок, а через вход он едет в next
+ * (roomQuery в lib/destination). Отрицательных нет намеренно: это кураторские
+ * игры других магазинов, у них нет ни страницы /game, ни арта Steam для
+ * карточки приглашения. Есть ли игра в каталоге и играют ли в неё вместе,
+ * решает сервер (roomSeed в lib/roomseed): здесь — только форма.
+ */
+export function roomSeedOf(raw: string | null | undefined): number | null {
+  if (!raw || !/^[1-9]\d{0,9}$/.test(raw)) return null
+  const appid = Number(raw)
+  return appid <= SEED_MAX ? appid : null
+}
+
+/** Адрес «Позвать в эту игру» — один на все три места, откуда зовут */
+export function roomSeedHref(appid: number): string {
+  return `/room/new?game=${appid}`
+}
+
 /**
  * Адрес выдачи — в одном месте.
  *

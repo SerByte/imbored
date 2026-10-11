@@ -12,6 +12,7 @@ import {
   type SkipReason,
 } from './feedbackkinds'
 import { isDeadReason } from './liveness'
+import { parseMood } from './mood'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { minutesHidden, playtimeHidden } from './playtime'
@@ -145,6 +146,8 @@ CREATE INDEX IF NOT EXISTS idx_feedback_steamid ON feedback (steamid, created_at
 -- крутится по rotationSlot(id комнаты, created_at), поэтому колода у всех одна
 -- и та же и не меняется со сменой недели.
 -- Знаменатель «12 из 20» в ростере ожидания берётся отсюда.
+-- seed_appid — игра, в которую звали («Позвать в эту игру»): первая карта
+-- колоды и строка приглашения. NULL — комнату создали без неё.
 CREATE TABLE IF NOT EXISTS rooms (
   id TEXT PRIMARY KEY,
   created_by TEXT NOT NULL,
@@ -154,6 +157,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   is_public INTEGER NOT NULL DEFAULT 0,
   deck_round INTEGER NOT NULL DEFAULT 0,
   deck_size INTEGER,
+  seed_appid INTEGER,
   created_at INTEGER NOT NULL
 );
 -- writer — членство заведено пишущей сессией (вход через Steam или демо,
@@ -716,7 +720,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 8
+export const CURRENT_SCHEMA_V = 9
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -799,6 +803,12 @@ export const ADDED_COLUMNS = [
   // открытым, как было, а не запирается перед владельцем. Комната живёт
   // вечер, так что бэкфилл не нужен
   ['room_members', 'writer INTEGER NOT NULL DEFAULT 0'],
+  // Игра, в которую звали («Позвать в эту игру»): первая карта колоды
+  // (pinned в buildGroupDeck) и строка приглашения. Человека в ней нет —
+  // только appid; уходит вместе со строкой комнаты, то есть и уборкой по
+  // сроку (sweepStale), и forgetUser хоста. NULL у старых строк — комната без
+  // предложенной игры, ровно какой она и была
+  ['rooms', 'seed_appid INTEGER'],
 ] as const
 
 /**
@@ -1522,6 +1532,8 @@ export type Room = {
   deckRound: number
   /** сколько карт в текущей колоде; null — колоду ещё никто не запрашивал */
   deckSize: number | null
+  /** игра, в которую звали при создании, — первая карта колоды; нет — комната без неё */
+  seedAppid?: number
   createdAt: number
 }
 
@@ -1537,14 +1549,27 @@ export type RoomMember = {
   writer: boolean
 }
 
+/**
+ * seedAppid сюда приходит уже проверенным (roomSeed в lib/roomseed): игра есть
+ * в каталоге, в неё играют вместе, и хост её не банил. Слой базы этого не
+ * перепроверяет — так же, как не разбирает настроение.
+ */
 export async function createRoom(
   db: Db,
-  room: { id: string; steamid: string; mood?: Mood },
+  room: { id: string; steamid: string; mood?: Mood; seedAppid?: number },
   nowSec: number,
 ): Promise<void> {
   await db.execute({
-    sql: 'INSERT INTO rooms (id, created_by, mood_json, status, created_at) VALUES (?, ?, ?, ?, ?)',
-    args: [room.id, room.steamid, room.mood ? JSON.stringify(room.mood) : null, 'open', nowSec],
+    sql: `INSERT INTO rooms (id, created_by, mood_json, status, seed_appid, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [
+      room.id,
+      room.steamid,
+      room.mood ? JSON.stringify(room.mood) : null,
+      'open',
+      room.seedAppid ?? null,
+      nowSec,
+    ],
   })
 }
 
@@ -1560,6 +1585,7 @@ export async function getRoom(db: Db, id: string): Promise<Room | null> {
         is_public: number
         deck_round: number | null
         deck_size: number | null
+        seed_appid: number | null
         created_at: number
       }
     | undefined
@@ -1573,6 +1599,7 @@ export async function getRoom(db: Db, id: string): Promise<Room | null> {
     isPublic: row.is_public === 1,
     deckRound: row.deck_round ?? 0,
     deckSize: row.deck_size ?? null,
+    ...(row.seed_appid !== null ? { seedAppid: row.seed_appid } : {}),
     createdAt: row.created_at,
   }
 }
@@ -2188,6 +2215,12 @@ export type PublicRoomListing = {
   id: string
   createdAt: number
   memberNames: string[]
+  /**
+   * Настроение, которое хост выбрал при создании; null — комната без него или
+   * строка битая. Через parseMood, тем же сторожем, что и тело запроса
+   * создания: доска публичная, и показать на ней можно только разобранное.
+   */
+  mood: Mood | null
 }
 
 const PUBLIC_ROOM_MAX_AGE_SEC = 86_400
@@ -2286,7 +2319,8 @@ export async function sweepDailyPicks(db: Db, keepFromDay: string): Promise<void
 /** Доска «ищут игроков»: открытые публичные комнаты за последние сутки (один запрос) */
 export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoomListing[]> {
   const res = await db.execute({
-    sql: `SELECT r.id AS id, r.created_at AS created_at, m.steamid AS steamid, m.persona_name AS persona_name
+    sql: `SELECT r.id AS id, r.created_at AS created_at, r.mood_json AS mood_json,
+                 m.steamid AS steamid, m.persona_name AS persona_name
           FROM rooms r
           LEFT JOIN room_members m ON m.room_id = r.id
           WHERE r.is_public = 1 AND r.status = 'open' AND r.created_at > ?
@@ -2300,13 +2334,21 @@ export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoo
   for (const raw of res.rows as unknown as Array<{
     id: string
     created_at: number
+    mood_json: string | null
     steamid: string | null
     persona_name: string | null
   }>) {
     let room = byRoom.get(raw.id)
     if (!room) {
       if (byRoom.size >= PUBLIC_ROOM_LIMIT) continue
-      room = { id: raw.id, createdAt: raw.created_at, memberNames: [] }
+      // Разбор — один раз на комнату, а не на каждую строку участника. Битый
+      // JSON — null (parseJsonLoose): одна испорченная строка не гасит доску
+      room = {
+        id: raw.id,
+        createdAt: raw.created_at,
+        memberNames: [],
+        mood: parseMood(parseJsonLoose(raw.mood_json)),
+      }
       byRoom.set(raw.id, room)
     }
     if (raw.steamid) {

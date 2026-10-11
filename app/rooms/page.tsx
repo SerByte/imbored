@@ -60,7 +60,17 @@ const ROOMS_ART: readonly FanGame[] = [
   { appid: 892970, name: 'Valheim' },
 ]
 
-type Listing = { id: string; memberNames: string[]; minutesAgo: number }
+/**
+ * preset — на какой вечер зовут (/api/rooms/public). null — у комнаты нет
+ * пресета; у ответа старого сервера посреди выкладки поля нет вовсе, и
+ * строка просто без него.
+ */
+type Listing = {
+  id: string
+  memberNames: string[]
+  minutesAgo: number
+  preset?: { label: string; emoji: string } | null
+}
 
 type Board = { rooms: Listing[]; fresh: Set<string> }
 
@@ -288,7 +298,16 @@ export default function RoomsBoardPage() {
                         Пустой состав называем словами: это ответ на вопрос «к
                         кому я подсяду».
                       */}
+                      {/* Вечер первым: «подсесть ли мне сюда» решает то,
+                          на что зовут, раньше, чем то, кто там сидит.
+                          Эмодзи скринридеру не читаем — название и так
+                          говорит то же */}
                       <div className="text-sm text-dim mt-0.5">
+                        {r.preset && (
+                          <>
+                            <span aria-hidden>{r.preset.emoji}</span> {r.preset.label} ·{' '}
+                          </>
+                        )}
                         {r.memberNames.length ? `${r.memberNames.join(', ')} · ` : 'пока никого · '}
                         {minutesAgoLabel(r.minutesAgo)}
                       </div>

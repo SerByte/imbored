@@ -1,8 +1,16 @@
 import type { InStatement } from '@libsql/client'
+import Link from 'next/link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { GameArt } from '@/components/GameArt'
+import { Magnet } from '@/components/Magnet'
+import { SplitHeading } from '@/components/SplitHeading'
 import { saveLibrarySnapshot, upsertGamesMeta, upsertUser, type Db } from '@/lib/db'
+import { roomSeedHref } from '@/lib/presets'
+import { flight, islandsOf, textOf } from '@/lib/testing/flight'
 import { hiddenLibrary, hiddenLibraryMetas } from '@/lib/testing/hiddenlibrary'
 import { freshDb, params, signIn } from '@/lib/testing/route'
+import type { GameMeta } from '@/lib/types'
+import { CopyCompatLink } from '../CopyCompatLink'
 import CompatPage, { generateMetadata } from './page'
 
 /**
@@ -125,5 +133,50 @@ describe('/compat/[steamid]: владелец ссылки — один раз �
     expect(reads.snapshots).toEqual([OWNER])
     expect(reads.personas).toEqual([OWNER])
     expect(reads.metas).toBe(1)
+  })
+})
+
+/**
+ * «Позвать в эту игру» под общими играми. Глазу «эта игра» — карточка над
+ * ссылкой, а скринридеру их ничего не связывает: соседний div — не абзац, не
+ * пункт списка и не ячейка. В списке ссылок полка звучала одинаковыми
+ * «Позвать в эту игру», и какая куда зовёт, было не понять (WCAG 2.4.4).
+ * Здесь настоящая страница сравнения на базе в памяти, раскрытая до
+ * островков (lib/testing/flight).
+ */
+describe('/compat/[steamid]: «Позвать в эту игру» называет свою игру', () => {
+  const ISLANDS = new Map<unknown, string>([
+    [Link, 'Link'],
+    [GameArt, 'GameArt'],
+    [Magnet, 'Magnet'],
+    [SplitHeading, 'SplitHeading'],
+    [CopyCompatLink, 'CopyCompatLink'],
+  ])
+  const coop = (appid: number, name: string): GameMeta => ({
+    appid,
+    name,
+    tags: { 'Co-op': 100 },
+    genres: [],
+    categories: [1, 9],
+  })
+  const SHARED = [coop(2001, 'Deep Rock Galactic'), coop(2002, 'Valheim'), coop(2003, 'Raft')]
+
+  test('у каждой ссылки — имя своей игры, и видимый текст в нём первым', async () => {
+    await upsertGamesMeta(db, SHARED, NOW)
+    const owned = SHARED.map((g) => ({ appid: g.appid, name: g.name, playtimeForever: 600, playtime2Weeks: 0 }))
+    await saveLibrarySnapshot(db, OWNER, [...hiddenLibrary(12), ...owned], NOW)
+    await saveLibrarySnapshot(db, VIEWER, owned, NOW)
+    await signIn(db, VIEWER, { verified: true })
+
+    const page = flight(await CompatPage(params({ steamid: OWNER })), ISLANDS)
+    const invites = islandsOf(page, 'Link').filter((l) => String(l.href).startsWith('/room/new?'))
+    expect(invites.map((l) => l.href).sort()).toEqual(SHARED.map((g) => roomSeedHref(g.appid)).sort())
+    for (const l of invites) {
+      const name = SHARED.find((g) => roomSeedHref(g.appid) === l.href)?.name
+      expect(l['aria-label']).toBe(`Позвать в эту игру — «${name}»`)
+      // Голосовое управление ищет ссылку по написанному на ней (WCAG 2.5.3):
+      // видимый текст прежний, и имя с него начинается
+      expect(textOf(l.children).trim()).toBe('Позвать в эту игру')
+    }
   })
 })

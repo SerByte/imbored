@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { createRoom, joinRoom, type Db } from '@/lib/db'
+import { createRoom, joinRoom, setRoomMatched, upsertGameMeta, type Db } from '@/lib/db'
 import { inviteCopy } from '@/lib/roominvite'
 import { PEEK_LIMIT } from '@/lib/roompeek'
 import { nowSec } from '@/lib/server'
 import { freshDb, params } from '@/lib/testing/route'
 import { GET as peekApi } from '../../api/room/[id]/route'
-import { loadRoomInviteForPage } from './invite'
+import { loadRoomInvite, loadRoomInviteForPage } from './invite'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -59,5 +59,50 @@ describe('приглашение в пати: потолок на заголов
       params({ id: ROOM }),
     )
     expect(res.status).toBe(429)
+  })
+})
+
+/**
+ * Что приглашение знает о вечере: настроение (пресет хоста) и игру, в которую
+ * звали. Обе вещи и так видит любой вошедший — в шапке комнаты и первой
+ * картой, — так что превью не выдаёт ничего сверх того, что откроет ссылка.
+ */
+describe('приглашение в пати: настроение и игра, в которую звали', () => {
+  const HOST = '76561190000000002'
+
+  async function room(id: string, extra: Partial<Parameters<typeof createRoom>[1]>) {
+    await createRoom(db, { id, steamid: HOST, ...extra }, nowSec())
+    await joinRoom(db, id, HOST, 'Аня', nowSec())
+  }
+
+  test('пресет — названием, а не осями; своё настроение без пресета — null', async () => {
+    await room('MOOD22', { mood: { time: 'short', vibe: 'engaged', social: 'friends' } })
+    expect(await loadRoomInvite('MOOD22')).toMatchObject({ preset: 'Пара быстрых каток', seedName: null })
+    // «коротко и спокойно» пресета не имеет — называть его чужим именем нельзя
+    await room('MOOD23', { mood: { time: 'short', vibe: 'chill', social: 'friends' } })
+    expect(await loadRoomInvite('MOOD23')).toMatchObject({ preset: null })
+    // комната старше выбора настроения
+    expect(await loadRoomInvite(ROOM)).toMatchObject({ preset: null, seedName: null })
+  })
+
+  test('игра, в которую звали, — имя и арт для карточки', async () => {
+    const drg = { appid: 548430, name: 'Deep Rock Galactic', tags: { 'Co-op': 100 }, genres: [], categories: [1, 9] }
+    await upsertGameMeta(db, drg, nowSec())
+    await room('SEED22', { seedAppid: 548430 })
+    const invite = await loadRoomInvite('SEED22')
+    expect(invite).toMatchObject({ seedName: 'Deep Rock Galactic', seedArt: { appid: 548430 } })
+    expect(inviteCopy('SEED22', invite).title).toBe('Аня зовёт в «Deep Rock Galactic» · пати SEED22')
+
+    // после матча говорит игра матча, а предложенная молчит
+    await upsertGameMeta(db, { ...drg, appid: 570, name: 'Dota 2' }, nowSec())
+    await setRoomMatched(db, 'SEED22', 570)
+    expect(inviteCopy('SEED22', await loadRoomInvite('SEED22')).title).toBe('Пати SEED22 сошлась на «Dota 2»')
+  })
+
+  test('игры уже нет в каталоге — приглашение без неё, а не с пустыми кавычками', async () => {
+    await room('SEED23', { seedAppid: 999999 })
+    const invite = await loadRoomInvite('SEED23')
+    expect(invite).toMatchObject({ seedName: null })
+    expect(inviteCopy('SEED23', invite).title).toBe('Аня зовёт в пати SEED23')
   })
 })
