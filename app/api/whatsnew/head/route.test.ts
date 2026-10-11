@@ -74,7 +74,9 @@ describe('/api/whatsnew/head: общая часть — из кэша стран
 
     expect(await head()).toEqual({ showPopular: true, keys: ['570:5700', '440:4400'] })
     // тот же ключ кэша, что у страницы и feed.xml: иначе это другая запись,
-    // и регенерируется она независимо
+    // и регенерируется она независимо. Аргументы — половина ключа; вторую
+    // (текст колбэка, разный у app-route и app-rsc) сторожит
+    // lib/whatsnewcache.test.ts — здесь cachedMajorFeed подменён целиком
     expect(cachedMajorFeed).toHaveBeenCalledWith(FEED_LIMIT, FEED_RANK_FLOOR)
   })
 

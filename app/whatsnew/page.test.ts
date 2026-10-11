@@ -15,7 +15,8 @@ vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
 // unstable_cache вне сервера Next не работает, а кэш здесь и не предмет
 // проверки: общая лента читается из той же базы напрямую. Что голова ленты
-// обязана идти через ЭТОТ ЖЕ кэш — сторожит app/api/whatsnew/head/route.test.ts.
+// обязана идти через ЭТОТ ЖЕ кэш — сторожит app/api/whatsnew/head/route.test.ts,
+// а что это одна запись на оба слоя сборки, а не две, — lib/whatsnewcache.test.ts.
 vi.mock('@/lib/whatsnewcache', async (importOriginal) => {
   const { getMajorFeed } = await import('@/lib/db')
   const { getDb } = await import('@/lib/server')

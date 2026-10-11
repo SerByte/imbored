@@ -6054,7 +6054,8 @@ async function withBodies(db: Db, head: FeedHeadItem[]): Promise<StoredNews[]> {
  * и есть голова плюс тела. Плашка «N новых» (/api/whatsnew/head) считает ровно
  * те ключи, что страница потом покажет, — раньше это держалось на двух копиях
  * одного предиката. Совпадение во времени держит уже кэш: опрос берёт общую
- * часть из той же записи cachedMajorFeed, что и страница (lib/whatsnewcache).
+ * часть из той же записи cachedMajorFeed, что и страница (lib/whatsnewcache;
+ * одна запись на два слоя сборки — благодаря связанному колбэку, см. там).
  */
 export async function getMajorFeed(
   db: Db,

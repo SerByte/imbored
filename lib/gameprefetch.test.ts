@@ -19,6 +19,12 @@ import { GameLink } from '../components/GameLink'
  * /games выключили префетч каждый своей строкой. Поэтому здесь разбор
  * исходников: у каждой <Link> на карточку решение о префетче записано явно,
  * либо это GameLink, либо место в списке ниже — с причиной.
+ *
+ * «На карточку» разбор узнаёт в трёх видах: адрес шаблоном прямо в href
+ * (href={`/game/${appid}`}), вызовом gamePagePath(…) и переменной того же
+ * файла, в которую положили одно из двух (const gameHref = `/game/${…}`).
+ * Адрес, приехавший пропсом или из другого модуля, отсюда не виден — такой
+ * Link и есть повод взять GameLink.
  */
 
 const ROOT = path.join(__dirname, '..')
@@ -43,6 +49,11 @@ const DEFAULT_PREFETCH: Record<string, { links: number; why: string }> = {
     links: 1,
     why: 'полка 404 — верх каталога (topCatalogGames), он пререндерен и лежит в кэше: записи ISR нет',
   },
+  'app/game/[appid]/news/[gid]/page.tsx': {
+    links: 2,
+    why:
+      'страница патча: «назад» в шапке и «Всё об игре» внизу — обе на карточку своей же игры, главный выход со страницы; адрес один, а клиентский кэш префетча ключуется адресом (docs: prefetching.md, Client cache) — запрос тоже один',
+  },
   'app/explore/page.tsx': {
     links: 1,
     why:
@@ -55,7 +66,16 @@ function code(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 }
 
-/** Конец открывающего тега — с учётом {} и строк внутри атрибутов */
+/**
+ * Конец открывающего тега — с учётом {} и строк внутри атрибутов.
+ *
+ * Строка открывается на любой глубине, а не только внутри {}: значение
+ * атрибута в кавычках лежит на нулевой, и `>` в нём — className="[&>svg]:…"
+ * у Tailwind, aria-label="a > b" — иначе обрывал тег раньше href, и ссылка
+ * молча выпадала из проверки. Апостроф и обратная кавычка на нулевой глубине
+ * открывающего тега бывают только краями строки, так что ложных строк это
+ * не заводит.
+ */
 function tagEnd(src: string, i: number): number {
   let depth = 0
   let q: string | null = null
@@ -65,7 +85,7 @@ function tagEnd(src: string, i: number): number {
       if (c === q) q = null
       continue
     }
-    if (depth > 0 && (c === '"' || c === "'" || c === '`')) q = c
+    if (c === '"' || c === "'" || c === '`') q = c
     else if (c === '{') depth++
     else if (c === '}') depth--
     else if (c === '>' && depth === 0) return j
@@ -83,22 +103,37 @@ function sources(dir: string): string[] {
   return out
 }
 
-/** Ссылка на саму карточку: /game/${…} и ничего после — страницы патчей не в счёт */
-const CARD_HREF = /\bhref=\{`\/game\/\$\{[^}`]+\}`\}/
+/**
+ * Адрес самой карточки: /game/${…} и ничего после — страницы патчей не в
+ * счёт. Шаблоном или через gamePagePath (lib/gamecache).
+ */
+const CARD_PATH = /`\/game\/\$\{[^}`]+\}`|gamePagePath\([^)]*\)/.source
+
+/** href={…} прямо с адресом карточки */
+const CARD_HREF = new RegExp(String.raw`\bhref=\{\s*(?:${CARD_PATH})\s*\}`)
+
+/** const gameHref = `/game/${…}` — переменная, которую потом отдают в href */
+const CARD_VAR = new RegExp(String.raw`\b(?:const|let)\s+(\w+)\s*(?::\s*string\s*)?=\s*(?:${CARD_PATH})`, 'g')
 
 type Found = { file: string; tag: string; prefetch: boolean }
 
-function cardLinks(): Found[] {
+/** Ссылки на карточку в одном исходнике — уже без комментариев (см. code) */
+function cardLinksIn(file: string, src: string): Found[] {
+  const vars = new Set([...src.matchAll(CARD_VAR)].map((m) => m[1]))
   const found: Found[] = []
-  for (const file of [...sources('app'), ...sources('components')]) {
-    const src = code(fs.readFileSync(path.join(ROOT, file), 'utf8'))
-    for (const m of src.matchAll(/<Link\b/g)) {
-      const tag = src.slice(m.index, tagEnd(src, m.index) + 1)
-      if (!CARD_HREF.test(tag)) continue
-      found.push({ file, tag: tag.replace(/\s+/g, ' ').slice(0, 90), prefetch: /\bprefetch=/.test(tag) })
-    }
+  for (const m of src.matchAll(/<Link\b/g)) {
+    const tag = src.slice(m.index, tagEnd(src, m.index) + 1)
+    const ref = /\bhref=\{\s*(\w+)\s*\}/.exec(tag)
+    if (!CARD_HREF.test(tag) && !(ref && vars.has(ref[1]))) continue
+    found.push({ file, tag: tag.replace(/\s+/g, ' ').slice(0, 90), prefetch: /\bprefetch=/.test(tag) })
   }
   return found
+}
+
+function cardLinks(): Found[] {
+  return [...sources('app'), ...sources('components')].flatMap((file) =>
+    cardLinksIn(file, code(fs.readFileSync(path.join(ROOT, file), 'utf8'))),
+  )
 }
 
 describe('ссылки на карточку игры', () => {
@@ -134,6 +169,24 @@ describe('ссылки на карточку игры', () => {
     expect(uses('components/LikedShelf.tsx')).toBe(1)
     expect(uses('components/BannedShelf.tsx')).toBe(1)
     expect(uses('components/whatsnew/PatchRow.tsx')).toBe(2)
+  })
+
+  test('сторож не слепой: `>` в строке атрибута не обрывает тег, адрес из переменной узнаётся', () => {
+    const src = [
+      'const gameHref = `/game/${item.appid}`',
+      'const patchHref = `/game/${item.appid}/news/${gid}`',
+      '<Link className="[&>svg]:size-4" href={`/game/${id}`}>a</Link>',
+      '<Link aria-label="a > b" href={`/game/${id}`} prefetch={false}>b</Link>',
+      "<Link title='x > y' href={gamePagePath(id)}>c</Link>",
+      '<Link href={gameHref} transitionTypes={["nav-back"]}>d</Link>',
+      '<Link href={patchHref}>e</Link>',
+      '<Link href={`/game/${id}/news/${gid}`}>f</Link>',
+    ].join('\n')
+    const found = cardLinksIn('x.tsx', src)
+    // Страницы патчей — и шаблоном, и через переменную — не карточка
+    expect(found.map((f) => f.prefetch)).toEqual([false, true, false, false])
+    expect(found[0].tag).toContain('[&>svg]:size-4')
+    expect(found[3].tag).toContain('href={gameHref}')
   })
 
   test('GameLink — это Link на карточку с выключенным префетчем, остальное как есть', () => {
