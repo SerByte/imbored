@@ -41,7 +41,7 @@ import {
   SHELF_EMPTY,
   wallState,
 } from '@/lib/forgotten'
-import type { LibraryTileState } from '@/lib/recommend'
+import { isReplayable, type LibraryTileState } from '@/lib/recommend'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
 import { byPrices, formatPrice } from '@/lib/steamregion'
@@ -245,6 +245,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Доля от трёх сверенных советов и больше: «сыграно в 100%» по одному — шум
   const honest = eveningsTotal.checked >= EVENINGS_HONEST_MIN
   const ownedNow = new Set(games.map((g) => g.appid))
+  // Уже пройденное — из того же чтения, что полка «Пройдено»: кнопки «Уже
+  // прошёл» у вечера с такой игрой нет, есть слово (components/Evenings)
+  const doneNow = new Set(banned.filter((b) => b.done).map((b) => b.appid))
   const eveningItems: EveningItem[] = shownEvenings.map((e) => {
     const meta = metas.get(e.appid)
     return {
@@ -267,6 +270,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       verdict: e.verdict,
       owned: ownedNow.has(e.appid),
       storeUrl: meta?.storeUrl ?? null,
+      // Мера та же, что у «Продолжить» на /play (continueView): без меты — не знаем
+      finishable: !!meta && !isReplayable(meta),
+      finished: doneNow.has(e.appid),
     }
   })
 

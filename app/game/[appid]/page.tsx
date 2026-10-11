@@ -32,7 +32,8 @@ import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { OG_SITE } from '@/lib/site'
 import { plural } from '@/lib/plural'
-import { roomSeedHref } from '@/lib/presets'
+import { quizHref, roomSeedHref } from '@/lib/presets'
+import { isReplayable } from '@/lib/recommend'
 import { refundEligible } from '@/lib/refund'
 import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
@@ -625,7 +626,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     Страница в Steam
                   </a>
                   {!verdict && (
-                    <OwnedLaunch appid={appid} className="btn-glass" />
+                    <OwnedLaunch
+                      appid={appid}
+                      name={meta.name}
+                      finishable={!isReplayable(meta)}
+                      follow={data.similar.length > 0}
+                      className="btn-glass"
+                    />
                   )}
                 </>
               )}
@@ -859,13 +866,33 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           Ember тут не спорит с «Страница в Steam»: та кнопка лежит пятью
           экранами выше, и на своём месте каждая единственная.
         */}
-        <div>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
           {/* btn-ember — тот же класс и размер, что у «Страница в Steam» выше:
               вид парадной кнопки на сайте один, и своя заливка здесь
               разъехалась бы с ним на первой же правке. */}
           <Link href="/quiz" className="btn-ember px-6 py-3">
             Подобрать игру под настроение <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
           </Link>
+          {/*
+            «Как «X», но…» отсюда. Человек, дочитавший карточку, часто хочет
+            не эту игру, а такую же — а до сих пор «похожие» были только
+            шестью ссылками на другие карточки, и под настроение их было не
+            подобрать: затравка жила лишь кнопкой у героя /play, то есть
+            «хочу как Hades» не работало, пока Hades сам не выпадет героем.
+            Ссылка ведёт в квиз с затравкой (quizHref): настроение спросит он,
+            гость пройдёт через вход как обычно, и выдача будет из соседей
+            этой игры. Адрес один на всех — разметка ISR не зависит от того,
+            кто смотрит. Только там, где соседи есть, — по той же полке,
+            из которой их берёт и выдача (nearGames): без неё ссылка вела бы
+            к экрану «похожих не нашлось». Той же мерой решается и «Дальше — в
+            духе X» после «Уже прошёл» наверху (OwnedLaunch, follow).
+          */}
+          {data.similar.length > 0 && (
+            <Link href={quizHref(null, appid)} className="tap link-more">
+              Похожее на «{meta.name}» — под моё настроение
+              <Icon name="arrow" size={16} />
+            </Link>
+          )}
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { LEANS, NEUTRAL_MOOD, parseLean, parseMood } from './mood'
 import {
+  parseSeedParam,
   playHref,
   presetHref,
   quizHref,
@@ -76,8 +77,35 @@ describe('playHref', () => {
   })
 
   test('null и отсутствие опций в адрес не попадают', () => {
-    const got = read(playHref(NEUTRAL_MOOD, { lean: null, focus: null, roulette: false }))
+    const got = read(playHref(NEUTRAL_MOOD, { lean: null, focus: null, roulette: false, seed: null }))
     expect(got.keys).toEqual(['time', 'vibe', 'social'])
+  })
+
+  // «Как «X», но…» с адреса: затравка встаёт в самый хвост, после оси, —
+  // адреса без неё не меняются ни на символ, и разбирается она обратно тем же
+  // правилом, что читает /play
+  test('затравка — в хвост, и разбирается обратно в тот же appid', () => {
+    const href = playHref(NEUTRAL_MOOD, { lean: 'fresh', seed: 1145360 })
+    expect(href).toBe('/play?time=medium&vibe=chill&social=solo&lean=fresh&seed=1145360')
+    expect(parseSeedParam(new URL(href, 'https://imbored.test').searchParams.get('seed'))).toBe(1145360)
+    // у записей чужих магазинов appid отрицательные — соседи по тегу есть и у них
+    expect(read(playHref(NEUTRAL_MOOD, { seed: -12 })).keys).toEqual(['time', 'vibe', 'social', 'seed'])
+    expect(playHref(NEUTRAL_MOOD, { seed: 0 })).toBe('/play?time=medium&vibe=chill&social=solo')
+  })
+})
+
+describe('parseSeedParam', () => {
+  test('ненулевое целое — затравка, отрицательное тоже', () => {
+    expect(parseSeedParam('620')).toBe(620)
+    expect(parseSeedParam('-3')).toBe(-3)
+  })
+
+  test('всё, из чего Number() что-то вытянул бы, — не затравка', () => {
+    for (const raw of [null, undefined, '', '0', '-0', '012', '+12', ' 12', '12 ', '1e3', '1.5', '0x1f', '12abc', 'abc']) {
+      expect(parseSeedParam(raw), JSON.stringify(raw)).toBeNull()
+    }
+    // за пределом безопасного целого appid уже не тот, что прислали
+    expect(parseSeedParam('9007199254740993')).toBeNull()
   })
 })
 
@@ -95,6 +123,16 @@ describe('quizHref', () => {
   test('фокус едет в квиз тем же параметром, что квиз читает', () => {
     expect(quizHref('untouched')).toBe('/quiz?from=untouched')
     expect(new URL(quizHref('untouched'), 'https://imbored.cc').searchParams.get('from')).toBe('untouched')
+  })
+
+  // «Похожее на X — под моё настроение» со страницы игры и из библиотеки, и
+  // «Изменить настроение» у выдачи «в духе X»: затравка едет тем же параметром,
+  // что квиз отдаёт в playHref
+  test('затравка едет в квиз; при фокусе — нет: тот вопрос уже задан', () => {
+    expect(quizHref(null, 620)).toBe('/quiz?seed=620')
+    expect(parseSeedParam(new URL(quizHref(null, -7), 'https://imbored.cc').searchParams.get('seed'))).toBe(-7)
+    expect(quizHref(null, null)).toBe('/quiz')
+    expect(quizHref('untouched', 620)).toBe('/quiz?from=untouched')
   })
 })
 

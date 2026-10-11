@@ -1,7 +1,9 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { Eyebrow } from '@/components/Labels'
 import { NeedSteam } from '@/components/NeedSteam'
@@ -11,6 +13,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { latestWins } from '@/lib/latestwins'
 import type { OutcomeVerdict } from '@/lib/outcome'
 import { plural } from '@/lib/plural'
+import { quizHref } from '@/lib/presets'
 import { isNeedSteam } from '@/lib/writer'
 
 /** Один совет на полке — всё уже посчитано на сервере (app/library/page.tsx) */
@@ -31,7 +34,23 @@ export type EveningItem = {
   owned: boolean
   /** Магазин игры не из Steam; null — Steam */
   storeUrl: string | null
+  /** У игры есть финал (isReplayable наоборот) — её можно отметить «Уже прошёл» */
+  finishable: boolean
+  /** Уже отмечена пройденной (listBanned, done) — кнопки нет, есть слово */
+  finished: boolean
 }
+
+/*
+ * «Уже прошёл» — отдельным чанком, а не в первой загрузке /library: она
+ * упирается в бюджет веса (bundle-budget.json, потолок 590 КБ при 589
+ * занятых), а кнопка нужна лишь у вечеров, сыгранных всерьёз, и тому, кто
+ * до них доскроллил. ssr: false — до гидратации она всё равно ничего не
+ * умеет, а чанк догружается сразу после неё. Страница игры берёт её
+ * статически: там запас веса есть (OwnedLaunch).
+ */
+const MarkFinished = dynamic(() => import('@/components/MarkFinished').then((m) => m.MarkFinished), {
+  ssr: false,
+})
 
 /** Одна игра может быть посоветована дважды — в разные окна */
 const keyOf = (i: Pick<EveningItem, 'appid' | 'shownAt'>) => `${i.appid}:${i.shownAt}`
@@ -52,6 +71,20 @@ const VERDICTS: Array<{ key: Exclude<OutcomeVerdict, 'dismissed'>; label: string
  * пор человек их не видел вовсе — они жили только в отчёте. Здесь же ответ
  * на «как тебе?» можно дать или поменять, а к игре — вернуться одним
  * нажатием.
+ *
+ * Сыгранное всерьёз здесь же можно отметить «Уже прошёл» (components/
+ * MarkFinished) — игру, которую человек прошёл, раньше закрыть было негде,
+ * кроме героя /play. Только у игры с финалом: песочницу и Dota 2 не
+ * «проходят». А у того, что зацепило, — «Ещё в этом духе»: выдача из соседей
+ * этой игры под настроение, которое спросит квиз (quizHref с затравкой).
+ *
+ * Отметка тут же зовёт router.refresh(): полка «Пройдено» ниже на этой же
+ * странице (components/BannedShelf) серверная, и без пересчёта игра легла бы
+ * на неё только после перезагрузки — а кнопка обещает «вернуть можно в
+ * библиотеке, на полке «Пройдено»», и человек уже здесь. Пересчёт приносит
+ * и item.finished у этой карточки — но её MarkFinished остаётся на месте
+ * (marked): на его строке «Пройдено — больше не предложу» стоит фокус, и
+ * слово «Пройдено» вместо неё уронило бы его в body.
  *
  * Ответ меняется оптимистично, а уходит по одному запросу на игру за раз
  * (lib/latestwins): два быстрых нажатия, отправленные разом, доезжали в любом
@@ -74,6 +107,14 @@ export function Evenings({
   const [verdicts, setVerdicts] = useState(() => new Map(items.map((i) => [keyOf(i), i.verdict])))
   const [denied, setDenied] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
+  /**
+   * Карточки, отмеченные «Уже прошёл» здесь и сейчас. По ключу карточки, а
+   * не по игре: одну игру советуют и дважды (keyOf), и у второй её карточки
+   * после пересчёта честно встаёт «Пройдено», а не вторая такая же кнопка.
+   */
+  const [marked, setMarked] = useState<ReadonlySet<string>>(() => new Set())
+  const router = useRouter()
+  const [, startTransition] = useTransition()
   const readOnly = !writer || denied
   const missed = failed === null ? undefined : items.find((i) => keyOf(i) === failed)
   // Что сервер точно принял — по ключу, поверх item.verdict из разметки. Откат
@@ -135,13 +176,18 @@ export function Evenings({
         )}
       </p>
       {/*
-        Отказ скринридеру говорит одна строка на всю полку, а не строка под
-        карточкой. Живая область стоит в разметке всегда, пустой (область,
+        Отказ ответа скринридеру говорит одна строка на всю полку, а не строка
+        под карточкой. Живая область стоит в разметке всегда, пустой (область,
         вставленная вместе с текстом, звучит не везде), а пустая она sr-only —
-        то есть absolute. У ленты с горизонтальной прокруткой и у карточки нет
-        position, и такой узел у дальней карточки выпадал бы из обрезки ленты
-        за край экрана. Название игры — в самой строке: фокус остаётся на
-        кнопке ответа, и «не вышло» без названия было бы ни о чём.
+        то есть absolute. У ленты с горизонтальной прокруткой position нет, и
+        такой узел, чей содержащий блок выше ленты, у дальней карточки выпадал
+        бы из её обрезки за край экрана — и раздвигал бы страницу. Название
+        игры — в самой строке: фокус остаётся на кнопке ответа, и «не вышло»
+        без названия было бы ни о чём.
+
+        У «Уже прошёл» строка отказа своя, внутри карточки (MarkFinished), и
+        поэтому карточка — relative: пустой sr-only узел встаёт в неё и
+        обрезается лентой вместе с ней.
       */}
       <StatusLine
         text={missed ? `Не вышло — ответ про «${missed.name}» не сохранился. Попробуй ещё раз.` : null}
@@ -152,7 +198,7 @@ export function Evenings({
           const key = keyOf(item)
           const verdict = verdicts.get(key) ?? null
           return (
-            <li key={key} className="flex flex-col gap-3">
+            <li key={key} className="relative flex flex-col gap-3">
               <Link href={`/game/${item.appid}`} prefetch={false} className="game-card block">
                 <GameCardBody
                   appid={item.appid}
@@ -188,6 +234,41 @@ export function Evenings({
                 <p aria-hidden className="text-[11px] text-danger">
                   Не вышло — попробуй ещё раз
                 </p>
+              )}
+              {/*
+                «Уже прошёл» — от сыгранного всерьёз, независимо от ответа: и
+                «так себе» бывает пройденным. Условие на ряд не завязано на
+                ответ, чтобы смена «Зацепило» ↔ «Так себе» не сбрасывала
+                отметку, сделанную минуту назад. «Ещё в этом духе» — только у
+                того, что зацепило: звать за похожим на «так себе» незачем.
+              */}
+              {((item.playedEnough && item.finishable) || verdict === 'hooked') && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                  {item.playedEnough &&
+                    item.finishable &&
+                    (item.finished && !marked.has(key) ? (
+                      <span className="text-dim">Пройдено</span>
+                    ) : (
+                      !readOnly && (
+                        <MarkFinished
+                          appid={item.appid}
+                          name={item.name}
+                          from="library"
+                          onDenied={() => setDenied(true)}
+                          onDone={() => {
+                            setMarked((m) => new Set(m).add(key))
+                            startTransition(() => router.refresh())
+                          }}
+                          className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-60"
+                        />
+                      )
+                    ))}
+                  {verdict === 'hooked' && (
+                    <Link href={quizHref(null, item.appid)} className="tap link-more">
+                      Ещё в этом духе<span className="sr-only">: похожие на «{item.name}»</span>
+                    </Link>
+                  )}
+                </div>
               )}
               {item.owned && item.appid > 0 ? (
                 <SteamLaunch

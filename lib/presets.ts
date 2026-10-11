@@ -241,30 +241,62 @@ export function roomSeedHref(appid: number): string {
  * на выдачу без «нет сил».
  *
  * Порядок параметров — прежний (настроение, roulette, from): адреса, которые
- * уже лежат в истории и закладках, не меняются. lean — в хвост.
+ * уже лежат в истории и закладках, не меняются. lean — в хвост, seed — за ним.
+ *
+ * seed — «Как «X», но…» с адреса: соседи игры X под это настроение (см.
+ * parseSeedParam). Ноль и null в адрес не попадают — это «без затравки».
  */
 export function playHref(
   mood: Mood,
-  opts: { lean?: Lean | null; focus?: Focus | null; roulette?: boolean } = {},
+  opts: { lean?: Lean | null; focus?: Focus | null; roulette?: boolean; seed?: number | null } = {},
 ): string {
   const q = new URLSearchParams({ time: mood.time, vibe: mood.vibe, social: mood.social })
   if (opts.roulette) q.set('roulette', '1')
   if (opts.focus) q.set('from', opts.focus)
   if (opts.lean) q.set('lean', opts.lean)
+  if (opts.seed) q.set('seed', String(opts.seed))
   return `/play?${q.toString()}`
 }
 
 /**
- * Адрес квиза с выдачи — «Изменить настроение».
+ * «Как «X», но…» из адреса — appid игры, на соседей которой сужается выдача.
+ *
+ * Раньше у затравки адреса не было вовсе: это был шаг по уже показанной
+ * выдаче, и «хочу что-то как Hades» оставалось невыполнимым, пока Hades сам
+ * не выпадет героем. Теперь в выдачу «в духе X» ведут страница игры, «Уже
+ * прошёл» и «Твои вечера» — адресом /quiz?seed= и дальше /play?…&seed=.
+ *
+ * Разбор строгий, по тому же правилу, что parseSeed на сервере (lib/recommend):
+ * ненулевое безопасное целое, отрицательное тоже — у записей чужих магазинов
+ * appid меньше нуля. Только запись без мусора: «12abc», «1e3», «+12», «012» и
+ * пробелы — null, а не что-то, что Number() из них вытянет. Модуль без
+ * зависимостей: его читают лендинг, proxy.ts (через lib/destination) и квиз,
+ * и тянуть ради одной проверки движок рекомендаций туда незачем.
+ */
+export function parseSeedParam(raw: string | null | undefined): number | null {
+  if (!raw || !/^-?[1-9]\d*$/.test(raw)) return null
+  const n = Number(raw)
+  return Number.isSafeInteger(n) ? n : null
+}
+
+/**
+ * Адрес квиза — «Изменить настроение» с выдачи и вход в «Как «X», но…» извне.
  *
  * Фокус «нераспакованное» живёт только в адресе, и голый /quiz снимал его
  * молча: человек просил сменить настроение, а получал выдачу с магазином и
  * наигранным, и ничто не говорило, что фильтр пропал. Квиз читает фокус из
  * своего адреса (from) и несёт его в playHref. Шапка и PickLink ведут на голый
  * /quiz намеренно: это и есть выход из фокуса.
+ *
+ * seed — так же: «похожие на X» переживают смену настроения, а страница игры
+ * и полки библиотеки зовут сюда с одной затравкой — настроение спросит квиз,
+ * а гость пройдёт через него и вход как обычно. Вместе с фокусом затравка не
+ * едет: «нераспакованное» уже задало вопрос, и соседи X его бы не услышали
+ * (та же развилка, что у кнопки «Как «X», но…» на /play).
  */
-export function quizHref(focus: Focus | null): string {
-  return focus ? `/quiz?from=${focus}` : '/quiz'
+export function quizHref(focus: Focus | null, seed?: number | null): string {
+  if (focus) return `/quiz?from=${focus}`
+  return seed ? `/quiz?seed=${seed}` : '/quiz'
 }
 
 /** Пресет — это обычный адрес выдачи, ровно тот же, что строит /quiz. */

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { assignEdges } from '@/lib/badges'
 import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
-import { getHeroMedia } from '@/lib/db'
+import { getGamesMetaLite, getHeroMedia } from '@/lib/db'
 import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
 import { llmDailyCap, takeLlmBudgetForIp } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -164,7 +164,20 @@ export async function POST(req: Request) {
     exclude: nudge === 'different' ? parseExclude(body.exclude) : [],
   })
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
-  if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
+  if (set === 'nocandidates') {
+    /*
+     * «Как «X», но…» приходит и адресом — со страницы игры, из «Уже прошёл» и
+     * из библиотеки, — и экран отказа обязан сказать, ЧЬИХ соседей не нашлось:
+     * «подбирать не из чего» у выдачи, которую просили «в духе Hades», звучит
+     * как поломка. Имя — одним чтением и только на этом отказе. Незнакомой
+     * затравке назвать нечего — тогда поля нет, и экран скажет общими словами.
+     */
+    const seedName = seed === null ? undefined : (await getGamesMetaLite(db, [seed])).get(seed)?.name
+    return NextResponse.json(
+      { error: 'nocandidates', ...(seedName ? { seed: { appid: seed, name: seedName } } : {}) },
+      { status: 409 },
+    )
+  }
   const { games, libMetas, profile, tagWeight, cooldown, banned, candidates, actual, discovery, heroPool } =
     set
   const seedRef = set.seed
@@ -355,8 +368,10 @@ export async function POST(req: Request) {
     // Эхо подталкивания: какой чипс под героем нажат. null — без него, в том
     // числе при мусоре в поле
     nudge,
-    // Строка «Продолжить» или null — /play сам решает, где её не показывать
-    continue: cont ? continueView(cont) : null,
+    // Строка «Продолжить» или null — /play сам решает, где её не показывать.
+    // Мета у неё есть всегда (pickContinue без неё не выбирает): по ней
+    // finishable — ставить ли рядом «Уже прошёл»
+    continue: cont ? continueView(cont, libMetas.get(cont.appid)) : null,
     // Время скрыто настройками Steam (lib/playtime.ts): /play говорит об этом
     // строкой и подсказывает, как открыть, — иначе свои карточки «Из твоей
     // библиотеки» без единого часа выглядели бы сбоем

@@ -2284,12 +2284,33 @@ describe('pickContinue', () => {
     const metas = new Map(DEMO_METAS.map((m) => [m.appid, m]))
     const got = pickContinue(demoLibrary(NOW), (id) => metas.get(id), none, none)
     expect(got?.name).toBe('Dota 2')
-    expect(continueView(got!)).toEqual({ appid: 570, name: 'Dota 2', recentHours: 6 })
+    // MOBA финала не имеет — «Уже прошёл» рядом с ней было бы предложением, которого нет
+    expect(continueView(got!, metas.get(570))).toEqual({
+      appid: 570,
+      name: 'Dota 2',
+      recentHours: 6,
+      finishable: false,
+    })
   })
 
   test('continueView округляет минуты до часов', () => {
-    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 20 })).recentHours).toBe(0)
-    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 95 })).recentHours).toBe(2)
+    const m = meta(1, { Action: 10 })
+    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 20 }), m).recentHours).toBe(0)
+    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 95 }), m).recentHours).toBe(2)
+  })
+
+  /*
+   * «Уже прошёл» у строки «Продолжить» — только у того, что проходится. Мера
+   * та же, что у знакомого (isReplayable): песочница, рогалик и соревновательный
+   * мультиплеер не кончаются, а у одиночной игры с титрами — кончаются.
+   */
+  test('finishable — у игры с финалом; песочница, рогалик, PvP и игра без меты — нет', () => {
+    const g = game({ appid: 1, name: 'X', playtime2Weeks: 120 })
+    expect(continueView(g, meta(1, { Metroidvania: 50, Atmospheric: 40 })).finishable).toBe(true)
+    expect(continueView(g, meta(1, { Sandbox: 50 })).finishable).toBe(false)
+    expect(continueView(g, meta(1, { Roguelite: 50 })).finishable).toBe(false)
+    expect(continueView(g, meta(1, { Action: 50 }, [1, 49])).finishable).toBe(false)
+    expect(continueView(g, undefined).finishable).toBe(false)
   })
 })
 

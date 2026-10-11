@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
+import { MarkFinished } from '@/components/MarkFinished'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { writerStore } from '@/lib/writer'
 
@@ -25,8 +26,34 @@ import { writerStore } from '@/lib/writer'
  *
  * На тач-устройствах не рисуется вовсе: steam://run там не работает, а ссылка
  * на магазин уже рядом (mobileLabel={null}, см. SteamLaunch).
+ *
+ * Рядом с запуском — «Уже прошёл» (components/MarkFinished): своя игра на
+ * своей странице и есть то место, где её только что прошли, а закрыть её
+ * было негде, кроме героя /play. Только владельцу, по тому же ответу, — и
+ * только сессии, которой можно писать (writer === true; по вставленной
+ * ссылке бан не записать). finishable решает сервер по тегам игры, той же
+ * мерой, что у строки «Продолжить» на /play (isReplayable): у Dota 2 кнопки
+ * нет. Разметка ISR от этого не меняется — всё дорисовывает островок.
+ * Кнопка — и на телефоне: отметка не запуск, протокол ей не нужен.
+ *
+ * follow — звать ли после отметки «Дальше — в духе X». Решает страница, той
+ * же полкой, что и ссылку «Похожее на X» внизу (data.similar): у игры без
+ * соседей обе вели бы к экрану «похожих не нашлось», и две дороги на одной
+ * странице спорили бы — нижняя честно спрятана, а эта звала бы туда же.
  */
-export function OwnedLaunch({ appid, className = '' }: { appid: number; className?: string }) {
+export function OwnedLaunch({
+  appid,
+  name,
+  finishable,
+  follow,
+  className = '',
+}: {
+  appid: number
+  name: string
+  finishable: boolean
+  follow: boolean
+  className?: string
+}) {
   const writer = useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)
   const hasSession = writer !== null
   // appid рядом с ответом: при переходе на соседнюю карточку старое «да» не
@@ -48,5 +75,19 @@ export function OwnedLaunch({ appid, className = '' }: { appid: number; classNam
   }, [appid, hasSession])
 
   if (!owns || owns.appid !== appid || !owns.owned) return null
-  return <SteamLaunch appid={appid} label="Запустить" mobileLabel={null} icon className={className} />
+  return (
+    <>
+      <SteamLaunch appid={appid} label="Запустить" mobileLabel={null} icon className={className} />
+      {finishable && writer === true && (
+        <MarkFinished
+          appid={appid}
+          name={name}
+          from="game"
+          follow={follow}
+          onDenied={() => writerStore.set(false)}
+          className={className}
+        />
+      )}
+    </>
+  )
 }

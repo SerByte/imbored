@@ -16,7 +16,7 @@ import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
 import { hasFreshWarm, warmMarkStore } from '@/lib/playcache'
 import { timeHiddenStore } from '@/lib/playtime'
-import { playHref, VIBE_PRESETS } from '@/lib/presets'
+import { parseSeedParam, playHref, VIBE_PRESETS } from '@/lib/presets'
 import { STEPS } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
 import type { Focus } from '@/lib/recommend'
@@ -179,6 +179,18 @@ function Quiz() {
     () => (new URLSearchParams(search).get('from') === 'untouched' ? 'untouched' : null),
     [search],
   )
+  /*
+   * «Как «X», но…» извне выдачи: со страницы игры, из «Твоих вечеров» и с
+   * экрана отказа /play приходят с ?seed=<appid> (quizHref). Квиз спрашивает
+   * настроение как обычно и несёт затравку в адрес выдачи — соседи X под
+   * сказанное. Тот же отложенный разбор, что у фокуса: в адрес она попадает
+   * только по нажатию. С фокусом не едет — у «нераспакованного» вопрос уже
+   * задан (quizHref).
+   */
+  const seed = useMemo(
+    () => (focus ? null : parseSeedParam(new URLSearchParams(search).get('seed'))),
+    [search, focus],
+  )
   // Скрыто ли время в Steam — с прошлой выдачи на этом устройстве (lib/playtime)
   const timeHidden =
     useSyncExternalStore(timeHiddenStore.subscribe, timeHiddenStore.get, timeHiddenStore.server) === true
@@ -283,10 +295,10 @@ function Quiz() {
       // Любой уход на выдачу — финал квиза, пресет или рулетка
       track('quiz_done')
       router.push(
-        playHref(mood, { roulette: opts.roulette, focus: opts.focus ?? focus, lean: opts.lean }),
+        playHref(mood, { roulette: opts.roulette, focus: opts.focus ?? focus, lean: opts.lean, seed }),
       )
     },
-    [focus, router],
+    [focus, seed, router],
   )
 
   function pick(value: string) {
@@ -379,7 +391,11 @@ function Quiz() {
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
             <span className="text-xs text-faint">
-              {focus ? 'Только нераспакованное — одним тапом:' : 'Одним тапом:'}
+              {focus
+                ? 'Только нераспакованное — одним тапом:'
+                : seed
+                  ? 'Похожее на выбранную игру — одним тапом:'
+                  : 'Одним тапом:'}
             </span>
             {/*
               На телефоне пилюли едут одной лентой, а не переносятся.
@@ -424,28 +440,36 @@ function Quiz() {
                   {p.label}
                 </button>
               ))}
-              <button
-                onClick={() => {
-                  // Время — из прошлого настроения, если оно свежее: сколько у
-                  // человека есть минут, — не то, что стоит отдавать на волю
-                  // случая. Бросок — во всём остальном.
-                  const last = freshLastMood(lastMoodStore.get(), Math.floor(Date.now() / 1000))
-                  go(
-                    {
-                      time:
-                        last?.mood.time ??
-                        (['short', 'medium', 'long'] as const)[Math.floor(Math.random() * 3)],
-                      vibe: (['chill', 'engaged'] as const)[Math.floor(Math.random() * 2)],
-                      social: 'solo',
-                    },
-                    { roulette: true },
-                  )
-                }}
-                className="pill shrink-0 py-3 text-ember-text"
-              >
-                <Icon name="dice" size={16} />
-                Мне повезёт
-              </button>
+              {/*
+                С затравкой «Как «X», но…» броска и «нераспакованного» нет:
+                подпись над рядом обещает похожее на X, а обе кнопки уводят
+                в выдачу, где затравки не бывает (askSeed на /play) — они
+                молча отменили бы то, о чём человек пришёл просить.
+              */}
+              {!seed && (
+                <button
+                  onClick={() => {
+                    // Время — из прошлого настроения, если оно свежее: сколько у
+                    // человека есть минут, — не то, что стоит отдавать на волю
+                    // случая. Бросок — во всём остальном.
+                    const last = freshLastMood(lastMoodStore.get(), Math.floor(Date.now() / 1000))
+                    go(
+                      {
+                        time:
+                          last?.mood.time ??
+                          (['short', 'medium', 'long'] as const)[Math.floor(Math.random() * 3)],
+                        vibe: (['chill', 'engaged'] as const)[Math.floor(Math.random() * 2)],
+                        social: 'solo',
+                      },
+                      { roulette: true },
+                    )
+                  }}
+                  className="pill shrink-0 py-3 text-ember-text"
+                >
+                  <Icon name="dice" size={16} />
+                  Мне повезёт
+                </button>
+              )}
               {/*
                 Кнопки нет, когда фокус УЖЕ включён — то есть когда сюда
                 пришли с /library по «Все нераспакованные →». Там она не
@@ -456,7 +480,7 @@ function Quiz() {
               {/* При скрытом в Steam времени нетронутого не узнать: сервер
                   отдаёт на этот фокус всё своё, и подпись говорит, что
                   приедет (timeHiddenStore — признак с прошлой выдачи) */}
-              {!focus && (
+              {!focus && !seed && (
                 <button
                   onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
                   className="pill shrink-0 py-3 text-ember-text"

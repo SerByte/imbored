@@ -883,11 +883,24 @@ export function pickContinue(
   return best
 }
 
-/** Что уходит на клиент для строки «Продолжить»: часы за две недели, а не минуты */
-export type ContinueGame = { appid: number; name: string; recentHours: number }
+/**
+ * Что уходит на клиент для строки «Продолжить»: часы за две недели, а не минуты.
+ *
+ * finishable — у игры есть финал (isReplayable наоборот), и рядом с
+ * «Продолжить» стоит «Уже прошёл». Игру, которую человек как раз доигрывает,
+ * закрыть было негде: «Уже прошёл» жил только у героя, а героем она не бывает
+ * — активное в кандидаты не идёт. Dota 2 и Factorio не «проходят», и кнопка у
+ * них была бы предложением, которого нет. Без меты — false: не знаем — молчим.
+ */
+export type ContinueGame = { appid: number; name: string; recentHours: number; finishable: boolean }
 
-export function continueView(g: LibraryGame): ContinueGame {
-  return { appid: g.appid, name: g.name, recentHours: Math.round(g.playtime2Weeks / 60) }
+export function continueView(g: LibraryGame, meta: GameMeta | undefined): ContinueGame {
+  return {
+    appid: g.appid,
+    name: g.name,
+    recentHours: Math.round(g.playtime2Weeks / 60),
+    finishable: !!meta && !isReplayable(meta),
+  }
 }
 
 /**

@@ -19,14 +19,14 @@
  *
  * Хвост запроса едет тоже, но так же по списку — см. destinationUrl.
  *
- * Импорты — разбор настроения из lib/mood и пресеты комнаты из lib/presets, у
- * которых самих зависимостей нет (у presets они только типовые): модуль
+ * Импорты — разбор настроения из lib/mood, пресеты комнаты и разбор затравки
+ * из lib/presets, у которых самих зависимостей нет (у presets они только типовые): модуль
  * читают и серверные страницы, и клиентский лендинг, и роут возврата из
  * Steam, и proxy.ts.
  */
 
 import { parseLean, parseMood } from './mood'
-import { roomPresetByKey, roomSeedOf } from './presets'
+import { parseSeedParam, roomPresetByKey, roomSeedOf } from './presets'
 
 export type Destination = {
   /** Что сказать на лендинге вместо общего обещания продукта. */
@@ -79,6 +79,11 @@ export const DESTINATIONS: Record<string, Destination> = {
  * одной, и половина настроения в адресе стала бы словами, которых человек
  * не говорил. Порядок параметров тот же, что у playHref (lib/presets), —
  * адрес, собранный квизом, проходит сюда без изменений.
+ *
+ * Затравка «Как «X», но…» (seed) — тоже: гость шёл со страницы игры за
+ * похожими на неё, и после входа выдача обязана быть ими, а не обычной.
+ * Разбор — parseSeedParam из того же lib/presets: lib/recommend сюда не
+ * тянем, модуль читают лендинг и proxy.ts.
  */
 function playQuery(src: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams()
@@ -94,6 +99,8 @@ function playQuery(src: URLSearchParams): URLSearchParams {
   if (src.get('from') === 'untouched') out.set('from', 'untouched')
   const lean = parseLean(src.get('lean'))
   if (lean) out.set('lean', lean)
+  const seed = parseSeedParam(src.get('seed'))
+  if (seed !== null) out.set('seed', String(seed))
   return out
 }
 
