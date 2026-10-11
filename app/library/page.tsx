@@ -22,6 +22,7 @@ import {
   getOlderSnapshotMinutes,
   countLiked,
   getWishlist,
+  getFeedLink,
   latestMajorPatchSince,
 } from '@/lib/db'
 import { PATCH_SINCE_LEAD, wallPatchPairs } from '@/lib/comeback'
@@ -166,8 +167,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * хочет купить, — его дело, а не того, у кого есть ссылка на профиль. Одна
    * строка по ключу; Steam, если строка протухла, зовёт уже полка
    * (WishlistShelf), и страницу он не держит.
+   *
+   * Есть ли RSS-ссылка — только у вошедшего через Steam: ровно ему SignOut
+   * предлагает «выйти везде», а это гасит и ссылку, и подтверждение обязано
+   * об этом сказать. Одна строка по первичному ключу.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older, wishlist] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older, wishlist, feedLink] = await Promise.all([
     getLatestSnapshot(db, steamid),
     writer ? listBanned(db, steamid) : [],
     bannedAppids(db, steamid),
@@ -183,6 +188,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     getOlderSnapshotMinutes(db, steamid),
     // «Из желаемого подешевело» — последний прочитанный список
     writer ? getWishlist(db, steamid) : null,
+    session?.verified ? getFeedLink(db, steamid) : null,
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -944,7 +950,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           показать в ней состояние входа, корневому лэйауту пришлось бы читать
           куки — а это сделало бы динамическими все страницы разом, включая
           кэшируемые /game/[appid]. Библиотека и так force-dynamic. */}
-      <SignOut verified={Boolean(session?.verified)} />
+      <SignOut verified={Boolean(session?.verified)} feedLink={feedLink !== null} />
       </div>
     </div>
   )

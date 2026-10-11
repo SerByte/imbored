@@ -24,8 +24,12 @@ export type RssChannel = {
   title: string
   /** Абсолютный адрес страницы, которую лента повторяет */
   link: string
-  /** Абсолютный адрес самой ленты — для atom:link rel=self */
-  self: string
+  /**
+   * Абсолютный адрес самой ленты — для atom:link rel=self. Нет — нет и
+   * atom:link: у личной ленты адрес — секретная ссылка (lib/feedlink), и
+   * повторять её в теле канала незачем — ридер знает, откуда взял ленту.
+   */
+  self?: string
   description: string
   items: readonly RssItem[]
   /** Секунды: время сборки ленты */
@@ -58,13 +62,16 @@ export function rssFeed(ch: RssChannel): string {
     </item>`,
     )
     .join('\n')
+  const self =
+    ch.self === undefined
+      ? ''
+      : `    <atom:link href="${escapeXml(ch.self)}" rel="self" type="application/rss+xml" />\n`
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>${escapeXml(ch.title)}</title>
     <link>${escapeXml(ch.link)}</link>
-    <atom:link href="${escapeXml(ch.self)}" rel="self" type="application/rss+xml" />
-    <description>${escapeXml(ch.description)}</description>
+${self}    <description>${escapeXml(ch.description)}</description>
     <language>ru</language>
     <lastBuildDate>${rfc822(ch.builtAt)}</lastBuildDate>
 ${items}

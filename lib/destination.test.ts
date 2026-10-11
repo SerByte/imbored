@@ -210,12 +210,28 @@ describe('вход через Steam помнит, куда человек шёл
 describe('вход через Steam из подсказки возвращает на место', () => {
   const back = (href: string) => loginTarget(new URLSearchParams(href.split('?')[1] ?? ''))
 
-  test('выдача, библиотека, новая комната и своя комната', () => {
-    for (const where of ['/play', '/library', '/room/new', '/room/ABC234']) {
+  test('выдача, библиотека, новая комната, своя комната и лента патчей', () => {
+    for (const where of ['/play', '/library', '/room/new', '/room/ABC234', '/whatsnew']) {
       const href = steamLoginFor(where)
       expect(href.startsWith('/api/auth/steam'), where).toBe(true)
       expect(back(href), where).toBe(where)
     }
+  })
+
+  /*
+   * Секретную ссылку на RSS выпускает только вошедший через Steam, и сессия
+   * по ссылке на профиль получает на /whatsnew строку «Войти через Steam».
+   * Голый вход уводил после возврата на /quiz — прочь от ссылки, ради которой
+   * входили.
+   */
+  test('лента патчей: next=/whatsnew переживает вход и отказ, вкладка — нет', () => {
+    expect(steamLoginFor('/whatsnew')).toBe('/api/auth/steam?next=%2Fwhatsnew')
+    // Отказ входа (?error=private) везёт то же, что и старт: loginCarry
+    expect(loginCarry(new URLSearchParams('next=%2Fwhatsnew&error=private')).toString()).toBe(
+      'next=%2Fwhatsnew',
+    )
+    // Хвоста у ленты нет: ?feed=popular — та же страница, и через вход не едет
+    expect(steamLoginFor('/whatsnew?feed=popular')).toBe('/api/auth/steam?next=%2Fwhatsnew')
   })
 
   test('комната едет кодом, а не адресом', () => {

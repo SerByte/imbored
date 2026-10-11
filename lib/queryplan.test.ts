@@ -27,6 +27,9 @@ import {
   getSharedPick,
   getLibraryBaselines,
   getOlderSnapshotMinutes,
+  getLatestSnapshotMinutes,
+  feedLinkOwner,
+  issueFeedLink,
   listExploreLiked,
   listLiked,
   countLiked,
@@ -362,6 +365,23 @@ const CASES: Case[] = [
     indexes: ['idx_snapshots_steamid'],
     sortFree: false,
   },
+  // Личная RSS-лента (app/whatsnew/feed/[token]): её опрашивает ридер, а не
+  // человек, по нескольку раз в час. Последний снимок — тем же индексом, что
+  // прошлые, сортировка — тот же тай-брейк по id среди трёх строк человека
+  {
+    name: 'лента в ридере: минуты последнего снимка',
+    run: (db) => getLatestSnapshotMinutes(db, '76561198000000001'),
+    indexes: ['idx_snapshots_steamid'],
+    sortFree: false,
+  },
+  // Владелец ссылки — по отпечатку ключа: UNIQUE на token_hash и есть
+  // индекс поиска. Мимо него каждый опрос любой ленты читал бы все ссылки
+  {
+    name: 'лента в ридере: владелец ссылки по отпечатку',
+    run: (db) => feedLinkOwner(db, 'a'.repeat(64)),
+    indexes: ['sqlite_autoindex_feed_links_2'],
+    sortFree: true,
+  },
   // «Сравнили с тобой» — строки владельца по индексу (owner, at) в его же
   // порядке, ник — по первичному ключу users
   {
@@ -414,12 +434,6 @@ const CASES: Case[] = [
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },
-  {
-    name: 'выйти на всех устройствах',
-    run: (db) => revokeAllSessions(db, '76561198000000001', NOW),
-    indexes: ['idx_sessions_steamid'],
-    sortFree: true,
-  },
 ]
 
 describe('планы запросов', () => {
@@ -444,6 +458,38 @@ describe('планы запросов', () => {
   }
 
   /*
+   * «Выйти на всех устройствах» — не в CASES: та же пачка гасит и ссылку на
+   * RSS-ленту, а её строка ищется по первичному ключу WITHOUT ROWID-таблицы,
+   * и такой план зовётся «USING PRIMARY KEY», без имени индекса.
+   */
+  test('выйти на всех устройствах: сессии по индексу, ссылка на ленту — по ключу', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) => revokeAllSessions(spy, '76561198000000001', NOW))
+    const plans = await Promise.all(issued.map((q) => planOf(db, q)))
+    for (const plan of plans) expect(bareScans(plan), plan.join(' | ')).toEqual([])
+    const all = plans.map((p) => p.join(' | '))
+    expect(all.some((p) => p.includes('INDEX idx_sessions_steamid')), all.join(' || ')).toBe(true)
+    expect(all.some((p) => p.includes('SEARCH feed_links USING PRIMARY KEY (steamid=?)')), all.join(' || ')).toBe(true)
+  })
+
+  /*
+   * Выпуск ссылки сверяет отзыв своей сессии и читает прежнюю ссылку — оба
+   * по первичным ключам. Скан sessions здесь стоил бы каждому нажатию
+   * «Получить ссылку» прохода по всем входам всех людей.
+   */
+  test('выпуск ссылки на ленту: сессия и прежняя ссылка — по первичным ключам', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) =>
+      issueFeedLink(spy, { steamid: '76561198000000001', sid: 'sid', tokenHash: 'a'.repeat(64), nowSec: NOW, replace: false }),
+    )
+    expect(issued).toHaveLength(1)
+    const where = (await planOf(db, issued[0]!)).join(' | ')
+    expect(bareScans(await planOf(db, issued[0]!)), where).toEqual([])
+    expect(where).toContain('SEARCH sessions USING PRIMARY KEY (sid=?)')
+    expect(where).toContain('SEARCH feed_links USING PRIMARY KEY (steamid=?)')
+  })
+
+  /*
    * Суточная уборка в CASES не входит: сессии и комнаты она читает полным
    * сканом, и это осознанно — раз в сутки, по таблицам, которые она же и
    * держит короткими. А вот демо-личности ищутся среди ВСЕХ людей, и тут
@@ -455,7 +501,10 @@ describe('планы запросов', () => {
     const demo = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter((q) =>
       q.sql.includes("GLOB '000*'"),
     )
-    expect(demo.length).toBe(6)
+    // Четыре таблицы личности, сессии и users — шесть. Седьмая — feed_links: ссылка на
+    // личную ленту уходит вместе с демо-личностью, и её строка ищется тем же
+    // предикатом — по первичному ключу, а не проходом по всем ссылкам
+    expect(demo.length).toBe(7)
     for (const q of demo) {
       const plan = await planOf(db, q)
       const where = plan.join(' | ')
@@ -605,8 +654,9 @@ describe('планы запросов', () => {
     )
     const partial = res.rows.map((r) => String(r.name)).sort()
     // Индекс уборки снимков проверяется отдельным тестом выше: его запрос —
-    // UPDATE внутри пачки sweepStale, и в CASES он не ложится
-    const covered = new Set([...CASES.flatMap((c) => c.indexes), 'idx_feedback_ctx'])
+    // UPDATE внутри пачки sweepStale, и в CASES он не ложится. Так же и
+    // idx_sessions_steamid: «выйти везде» — пачка вместе с ссылкой на ленту
+    const covered = new Set([...CASES.flatMap((c) => c.indexes), 'idx_feedback_ctx', 'idx_sessions_steamid'])
     expect(partial.filter((name) => !covered.has(name))).toEqual([])
   })
 })

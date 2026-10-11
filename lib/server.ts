@@ -267,7 +267,19 @@ export function isWriter(session: Pick<Resolved, 'steamid' | 'verified'>): boole
   return session.verified || isDemoId(session.steamid)
 }
 
-export type WriterGate = { ok: true; steamid: string } | { ok: false; response: NextResponse }
+export type WriterGate =
+  | {
+      ok: true
+      steamid: string
+      /**
+       * Строка сессии — для записи, которой мало решения на входе: состояние
+       * сессии кэшируется на процесс (REVOKE_CACHE_SEC в lib/sessions), и
+       * выдающая постоянный доступ ручка сверяет отзыв по этой строке в самой
+       * записи (issueFeedLink в lib/db)
+       */
+      sid: string
+    }
+  | { ok: false; response: NextResponse }
 
 /**
  * Вход в пишущий роут: кто пришёл и вправе ли он писать.
@@ -287,7 +299,7 @@ export async function requireWriter(): Promise<WriterGate> {
   if (!isWriter(session)) {
     return { ok: false, response: NextResponse.json({ error: 'needsteam' }, { status: 403 }) }
   }
-  return { ok: true, steamid: session.steamid }
+  return { ok: true, steamid: session.steamid, sid: session.sid }
 }
 
 /**

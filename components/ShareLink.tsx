@@ -73,9 +73,17 @@ function copyFallback(url: string): boolean {
  * what — чем делятся, для счётчика share (lib/track). Обязательный и первый:
  * без него все кнопки сайта ложились в одну строку share_click:direct, и
  * новая кнопка, забывшая его, теперь не соберётся, а не потеряется в общей.
+ *
+ * what = null — ссылка, которой НЕ делятся, а кладут к себе: секретная
+ * ссылка на личную RSS-ленту (components/whatsnew/FeedLink). Ей не нужна
+ * системная панель — она предлагает отправить адрес людям, — и счётчик
+ * share: это не «поделился», и воронка «поделился → пришли» считала бы его
+ * зря. Буфер, запасной путь и отклик «Скопировано» — те же, что у всех.
+ * null, а не флаг рядом: решение «делиться или копировать себе» — то же
+ * обязательное первое слово, и забыть его так же нельзя.
  */
 export function useShareLink(
-  what: ShareKind,
+  what: ShareKind | null,
   getUrl: () => string,
   title: string,
   text: string,
@@ -83,7 +91,8 @@ export function useShareLink(
   onManual?: () => void,
 ) {
   const [state, setState] = useState<ShareState>('idle')
-  const native = useSyncExternalStore(subscribeCoarse, readCoarse, () => false)
+  const coarse = useSyncExternalStore(subscribeCoarse, readCoarse, () => false)
+  const native = coarse && what !== null
   /*
    * Один таймер на кнопку. Раньше каждое нажатие ставило свой setTimeout, и
    * второе нажатие через секунду гасило «Скопировано» раньше срока — первым
@@ -101,7 +110,7 @@ export function useShareLink(
     const url = getUrl()
     if (!url) return
     // Намерение поделиться — шаг воронки, чем бы ни кончилась панель
-    trackShare(what)
+    if (what) trackShare(what)
     if (native) {
       try {
         await navigator.share({ title, text, url })

@@ -380,6 +380,17 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     ],
   },
   {
+    // «Получить ссылку» / «Выпустить новую», «Отключить» и «Отмена» у RSS по
+    // секретной ссылке: каждая кнопка гасит повтор сама, по busy
+    file: 'components/whatsnew/FeedLink.tsx',
+    expr: 'busy !== null',
+    guards: [
+      ['components/whatsnew/FeedLink.tsx', /function onPrimary\(\) \{\s*if \(busy !== null\) return/],
+      ['components/whatsnew/FeedLink.tsx', /function onOff\(\) \{\s*if \(busy !== null\) return/],
+      ['components/whatsnew/FeedLink.tsx', /function onCancel\(\) \{\s*if \(busy !== null\) return/],
+    ],
+  },
+  {
     file: 'components/whatsnew/FeedWatch.tsx',
     expr: 'pending',
     guards: [['components/whatsnew/FeedWatch.tsx', /onClick=\{\(\) => \{\s*if \(pending\) return/]],
