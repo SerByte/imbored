@@ -141,4 +141,33 @@ describe('страница /explore', () => {
     expect(page).toMatch(/setLiked\(\(l\) => putBack\(l, card, before\)\)/)
     expect(page).not.toMatch(/setLiked\(before\)/)
   })
+
+  /**
+   * 401 на «Попробовать снова»: show уже запустил router.replace, но сигнал
+   * страницы ещё цел, и finally возвращал retrying в false — строка статуса
+   * получала текст отказа обратно и объявляла его под уход на вход, а
+   * эффект фокуса уносил потерянный фокус на заголовок отказа.
+   */
+  test('повтор, упёршийся в конец сессии, не объявляет отказ под уход на вход', () => {
+    const from = page.indexOf('const show = useCallback(')
+    const show = page.slice(from, page.indexOf('useEffect(', from))
+    expect(show, 'show не найден — сторож ослеп').toMatch(/router\.replace\(bounceTo\('\/explore'\)\)/)
+    expect(show).toMatch(
+      /if \(res\.status === 401\) \{[^}]*router\.replace\(bounceTo\('\/explore'\)\)\s*return 'gone'/,
+    )
+    const retry = page.slice(page.indexOf('const retry = async'), page.indexOf('const vote = '))
+    expect(retry, 'retry не найден — сторож ослеп').toMatch(/gone = \(await show\(res, ac\.signal\)\) === 'gone'/)
+    expect(retry).toMatch(/finally \{\s*if \(!ac\.signal\.aborted && !gone\) setRetrying\(false\)/)
+  })
+
+  /**
+   * Где полка, говорит её имя, а не направление: с md полка стоит колонкой
+   * справа, и «лежит ниже» отправляло вниз, под пустую панель.
+   */
+  test('конец колоды называет полку, а не сторону', () => {
+    const from = page.indexOf('Колода кончилась')
+    const end = page.slice(from, page.indexOf('<button', from))
+    expect(end,'панель «Колода кончилась» не найдена — сторож ослеп').toContain('на полке «Приглянулось»')
+    expect(end).not.toMatch(/ниже|выше|справа|слева/)
+  })
 })

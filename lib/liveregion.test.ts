@@ -313,6 +313,17 @@ describe('экран отказа /explore объявляется', () => {
       expect(code.slice(r.index), at).toMatch(/^return \(\s*<>\s*\{status\}/)
     }
   })
+
+  /**
+   * Вторая половина REPEAT для «Попробовать снова». Там стережётся только
+   * место: setRetrying(true) до первого await. Но гасит строку не он, а
+   * `&& !retrying` в её тексте — без него повтор того же отказа снова
+   * молчал бы, а место в REPEAT оставалось бы верным.
+   */
+  test('на время повтора строка статуса гаснет', () => {
+    const code = read('app/explore/page.tsx')
+    expect(code).toMatch(/const status = \(\s*<StatusLine text=\{phase === 'error' && !retrying \?/)
+  })
 })
 
 /**

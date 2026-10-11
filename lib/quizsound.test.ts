@@ -209,4 +209,19 @@ describe('SoundToggle', () => {
       vi.doUnmock('./quizsound')
     }
   })
+
+  /**
+   * Кнопка — inline-flex с gap-1.5. Голые «Звук» и <span aria-hidden> выкл.</span>
+   * становились двумя флекс-элементами: пробел в начале span схлопывался как
+   * пробел в начале строки, и между словами вставал зазор 6 px вместо пробела.
+   * Разметка этого не покажет — проверяется форма: после иконки ровно один
+   * элемент, и голого текста рядом с ним нет.
+   */
+  test('подпись — один флекс-элемент: пробел между «Звук» и «выкл.» не съедает gap', async () => {
+    vi.resetModules()
+    const { SoundToggle } = await import('../components/SoundToggle')
+    const html = renderToStaticMarkup(createElement(SoundToggle))
+    const label = html.slice(html.indexOf('</svg>') + '</svg>'.length, html.lastIndexOf('</button>'))
+    expect(label).toMatch(/^<span>Звук<span aria-hidden="true"> выкл\.<\/span><\/span>$/)
+  })
 })

@@ -158,13 +158,16 @@ export default function ExplorePage() {
   /**
    * Ответ /api/explore — на экран. 401 — на вход; прочий отказ — в экран
    * отказа, а у «Ещё колоду» (onMiss) — строкой под кнопкой.
+   *
+   * 'gone' — страница уже уезжает на вход, и возвращать на экран вызывающему
+   * нечего (см. retry). Иначе null.
    */
   const show = useCallback(
     async (
       res: Response,
       signal: AbortSignal,
       onMiss?: (code: string | null) => void,
-    ): Promise<void> => {
+    ): Promise<'gone' | null> => {
       if (!res.ok) {
         const code = await res
           .json()
@@ -175,15 +178,15 @@ export default function ExplorePage() {
         // /explore назад было не уйти, к квизу или чужому пику тоже
         if (res.status === 401) {
           if (!signal.aborted) router.replace(bounceTo('/explore'))
-          return
+          return 'gone'
         }
         if (onMiss) {
           onMiss(code)
-          return
+          return null
         }
         setReason(code)
         setPhase('error')
-        return
+        return null
       }
       setRedealMiss(null)
       const data = (await res.json()) as { cards: ExploreCard[]; liked: ShelfCard[]; nowSec: number }
@@ -197,6 +200,7 @@ export default function ExplorePage() {
       setLiked((local) => mergeShelf(local, data.liked.filter((c) => !removed.current.has(c.appid))))
       setReason(null)
       setPhase('ok')
+      return null
     },
     [router],
   )
@@ -286,20 +290,29 @@ export default function ExplorePage() {
    * заголовок экрана (эффект ниже). Удача — как у «Ещё колоду»: нажатая с
    * клавиатуры кнопка уходит вместе с экраном, и фокус берёт «Интересно»
    * первой карты.
+   *
+   * Сессия кончилась, пока экран стоял (401, show отдаёт 'gone'), — экран так
+   * и остаётся в «Пробую…» до ухода. Сигнал страницы в этот миг ещё цел:
+   * router.replace только запущен, — и без этой проверки строка статуса
+   * получила бы текст обратно и объявила отказ, которого нет, под уже
+   * начатый уход на вход, а эффект фокуса унёс бы потерянный фокус на
+   * заголовок отказа. Та же сделка, что у промаха 'gone' на /play: ни
+   * голоса, ни экрана отказа.
    */
   const retry = async (keyboard: boolean) => {
     if (retrying) return
     const ac = new AbortController()
     redealing.current = ac
     setRetrying(true)
+    let gone = false
     try {
       const res = await fetch('/api/explore', { signal: exploreSignal(ac.signal) })
       setDealFocus(keyboard && focusAdrift(document, failBox.current))
-      await show(res, ac.signal)
+      gone = (await show(res, ac.signal)) === 'gone'
     } catch {
       if (!ac.signal.aborted) setReason(null)
     } finally {
-      if (!ac.signal.aborted) setRetrying(false)
+      if (!ac.signal.aborted && !gone) setRetrying(false)
     }
   }
 
@@ -524,10 +537,13 @@ export default function ExplorePage() {
             Колода кончилась
           </h2>
           {/* «На полке», а не «ниже»: с md полка стоит колонкой справа, и под
-              панелью пусто — направление верно только на телефоне */}
+              панелью пусто — направление верно только на телефоне. «Всё, что
+              зацепило» — в пару к «Ничего не зацепило» и без второго
+              «приглянул-» рядом с именем полки; «любую игру», а не «любую»:
+              без существительного «любую» не с чем согласовать */}
           <p className="text-sm text-dim max-w-md leading-relaxed">
             {liked.length
-              ? 'Приглянувшееся — на полке «Приглянулось»: открой любую, там и трейлер, и кадры, и цена.'
+              ? 'Всё, что зацепило, — на полке «Приглянулось»: открой любую игру — там и трейлер, и кадры, и цена.'
               : 'Ничего не зацепило — это тоже ответ. Можно взять ещё колоду или подобрать под настроение.'}
           </p>
           <div className="flex flex-wrap justify-center items-center gap-4">
