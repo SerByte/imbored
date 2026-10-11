@@ -229,6 +229,8 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
     reset: ['setHeroMiss(null)', 'setSwitchMiss(null)'],
   },
   { file: 'app/play/page.tsx', start: 'if (banning) return', reset: ['setBanFailed(null)'] },
+  // «Обновить выдачу» говорит отказ той же строкой под героем, что и кнопки под ним
+  { file: 'app/play/page.tsx', start: 'onRefresh={async () => {', reset: ['setHeroMiss(null)'] },
   { file: 'app/daily/page.tsx', start: 'const notToday = async', reset: ['setRerollMiss(null)'] },
   { file: 'app/explore/page.tsx', start: 'const unlike = async', reset: ['setUnlikeMiss(null)'] },
   // «Ещё колоду» под потолком частоты: второй 429 — тот же текст под кнопкой

@@ -224,6 +224,19 @@ export function playHref(
   return `/play?${q.toString()}`
 }
 
+/**
+ * Адрес квиза с выдачи — «Изменить настроение».
+ *
+ * Фокус «нераспакованное» живёт только в адресе, и голый /quiz снимал его
+ * молча: человек просил сменить настроение, а получал выдачу с магазином и
+ * наигранным, и ничто не говорило, что фильтр пропал. Квиз читает фокус из
+ * своего адреса (from) и несёт его в playHref. Шапка и PickLink ведут на голый
+ * /quiz намеренно: это и есть выход из фокуса.
+ */
+export function quizHref(focus: Focus | null): string {
+  return focus ? `/quiz?from=${focus}` : '/quiz'
+}
+
 /** Пресет — это обычный адрес выдачи, ровно тот же, что строит /quiz. */
 export function presetHref(p: VibePreset): string {
   return playHref(p.mood, { lean: p.lean })
