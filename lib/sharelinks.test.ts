@@ -47,11 +47,11 @@ describe('ссылки, которыми делятся', () => {
       if (file === 'components/ShareLink.tsx') continue
       const code = withoutComments(src)
       if (!/useShareLink\(|<ShareLinkField\b/.test(code)) continue
-      // copyOnly — ссылка, которую кладут к себе, а не отправляют людям:
-      // секретная RSS-лента (components/whatsnew/FeedLink). ref у ключа был
-      // бы неправдой — с ним ходил бы ридер на каждом опросе, а не человек,
+      // useShareLink(null, …) — ссылка, которую кладут к себе, а не отправляют
+      // людям: секретная RSS-лента (components/whatsnew/FeedLink). ref у ключа
+      // был бы неправдой — с ним ходил бы ридер на каждом опросе, а не человек,
       // пришедший по приглашению
-      if (/copyOnly: true/.test(code)) continue
+      if (/useShareLink\(\s*null\b/.test(code)) continue
       sharing++
       if (!/withRef\(|\w+ShareUrl\(/.test(code)) offenders.push(file)
     }
@@ -223,6 +223,7 @@ describe('телеметрия шаринга', () => {
     'app/portrait/[steamid]/year/page.tsx': 'year',
     'components/SharePick.tsx': 'pick',
     'components/PatchShare.tsx': 'patch',
+    'components/room/MatchShare.tsx': 'match',
   }
 
   test('каждая кнопка передаёт своё «что», а не соседское', () => {
@@ -291,6 +292,8 @@ function shareKinds(file: string, src: string): string[] {
   const kinds: string[] = []
   for (const n of nodesOf(file, src)) {
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'useShareLink') {
+      // null — ссылку кладут к себе, а не отправляют (FeedLink): это не шаринг
+      if (n.arguments[0]?.kind === ts.SyntaxKind.NullKeyword) continue
       kinds.push(literal(n.arguments[0]))
     } else if (
       (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
