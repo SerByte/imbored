@@ -31,6 +31,13 @@ export type PlayEvent =
   | { kind: 'ban'; name: string; done: boolean; next: string }
   /** Появился ряд причин «Почему не то?» */
   | { kind: 'ask' }
+  /**
+   * Экран ошибки: выдача не собралась. Он подменяет экран ожидания целиком, и
+   * говорившая там строка прогресса уходит вместе с ним — без этой строки отказ
+   * рисовался молча. Заголовок и абзац вместе: одно «Библиотека не доехала»
+   * не говорит, что с этим делать.
+   */
+  | { kind: 'fail'; title: string; text: string }
 
 export function playLine(e: PlayEvent): string {
   switch (e.kind) {
@@ -52,6 +59,8 @@ export function playLine(e: PlayEvent): string {
       return `${e.done ? `«${e.name}» отмечена пройденной` : `«${e.name}» больше не покажу`}. Следующая игра: «${e.next}»`
     case 'ask':
       return 'Почему не то? Выбери причину или пропусти'
+    case 'fail':
+      return `${e.title}. ${e.text}`
   }
 }
 

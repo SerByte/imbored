@@ -3,6 +3,7 @@ import { LEANS, NEUTRAL_MOOD, parseLean, parseMood } from './mood'
 import {
   playHref,
   presetHref,
+  quizHref,
   nearestRoomPreset,
   ROOM_PRESETS,
   roomArrival,
@@ -75,6 +76,23 @@ describe('playHref', () => {
   test('null и отсутствие опций в адрес не попадают', () => {
     const got = read(playHref(NEUTRAL_MOOD, { lean: null, focus: null, roulette: false }))
     expect(got.keys).toEqual(['time', 'vibe', 'social'])
+  })
+})
+
+/**
+ * «Изменить настроение» с выдачи «нераспакованного». Фокус живёт только в
+ * адресе (?from=untouched), и голый /quiz снимал его молча: человек менял
+ * настроение, а получал обычную выдачу с магазином и наигранным — без слова о
+ * том, что фильтр пропал. Квиз читает фокус из своего адреса и несёт дальше.
+ */
+describe('quizHref', () => {
+  test('без фокуса — голый квиз', () => {
+    expect(quizHref(null)).toBe('/quiz')
+  })
+
+  test('фокус едет в квиз тем же параметром, что квиз читает', () => {
+    expect(quizHref('untouched')).toBe('/quiz?from=untouched')
+    expect(new URL(quizHref('untouched'), 'https://imbored.cc').searchParams.get('from')).toBe('untouched')
   })
 })
 
