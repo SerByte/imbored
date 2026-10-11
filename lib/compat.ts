@@ -1,5 +1,5 @@
 import { CONTENT_WARNING_TAGS } from './hook'
-import { playtimeHidden } from './playtime'
+import { playedWords, playtimeHidden } from './playtime'
 import { buildTagProfile } from './recommend'
 import { cosine, rarityOf, rarityScale } from './tagweight'
 import type { GameMeta, LibraryGame } from './types'
@@ -8,11 +8,14 @@ export type Compatibility = {
   /** 0–100, близость вкусов; см. tasteCosine */
   percent: number
   /**
-   * Самые наигранные из общих, не больше COMMON_SHOWN. Часы null — время этой
-   * стороны скрыто настройками Steam (lib/playtime.ts): «0 ч» против часов
-   * друга было бы сказано про галочку, а не про человека.
+   * Самые наигранные из общих, не больше COMMON_SHOWN. Время — в МИНУТАХ, а
+   * не в округлённых часах: из часов игра на 25 минут была «0 ч», то есть
+   * неотличима от незапущенной, и у пары «25 и 10 минут» строка читалась
+   * «никто не играл». Подпись решает страница (playedShort).
+   * null — время этой стороны скрыто настройками Steam (lib/playtime.ts):
+   * «0 ч» против часов друга было бы сказано про галочку, а не про человека.
    */
-  commonGames: Array<{ appid: number; name: string; hoursA: number | null; hoursB: number | null }>
+  commonGames: Array<{ appid: number; name: string; minutesA: number | null; minutesB: number | null }>
   /**
    * Размер ВСЕГО пересечения, а не показанного среза.
    *
@@ -22,8 +25,14 @@ export type Compatibility = {
    * тоже делается здесь.
    */
   commonTotal: number
-  /** Часы обоих по всему пересечению, а не по срезу; скрытая сторона — ноль */
-  commonHours: number
+  /**
+   * Минуты обоих по всему пересечению, а не по срезу; скрытая сторона — ноль.
+   * Округляется сумма, а не каждая строка: десять игр по 20 минут — это три
+   * часа, а не десять раз по нулю. И округляет уже подпись (commonTimeLine):
+   * здесь жили готовые часы, и пересечение «20 мин | 5 мин» получало итог
+   * «Вместе в них — 0 часов» — строки говорили одно, заголовок над ними другое.
+   */
+  commonMinutes: number
   sharedTags: string[]
   /** Время скрыто настройками Steam — у каждой стороны своё (lib/playtime.ts) */
   timeHiddenA: boolean
@@ -181,7 +190,9 @@ export function compatibility(
   const timeHiddenB = playtimeHidden(libB)
 
   const byAppidB = new Map(libB.map((g) => [g.appid, g]))
-  const both = (g: { hoursA: number | null; hoursB: number | null }) => (g.hoursA ?? 0) + (g.hoursB ?? 0)
+  // По минутам: по часам 25 минут и ноль сортировались вровень
+  const both = (g: { minutesA: number | null; minutesB: number | null }) =>
+    (g.minutesA ?? 0) + (g.minutesB ?? 0)
   const allCommon = libA
     .filter((g) => byAppidB.has(g.appid))
     .map((g) => {
@@ -189,15 +200,15 @@ export function compatibility(
       return {
         appid: g.appid,
         name: g.name,
-        hoursA: timeHiddenA ? null : Math.round(g.playtimeForever / 60),
-        hoursB: timeHiddenB ? null : Math.round(other.playtimeForever / 60),
+        minutesA: timeHiddenA ? null : g.playtimeForever,
+        minutesB: timeHiddenB ? null : other.playtimeForever,
       }
     })
     .sort((a, b) => both(b) - both(a))
 
   // Счётчик и сумма — по всему пересечению, до среза: см. Compatibility.commonTotal
   const commonTotal = allCommon.length
-  const commonHours = allCommon.reduce((sum, g) => sum + both(g), 0)
+  const commonMinutes = allCommon.reduce((sum, g) => sum + both(g), 0)
   const commonGames = allCommon.slice(0, COMMON_SHOWN)
 
   /*
@@ -222,7 +233,7 @@ export function compatibility(
     .sort((a, b) => weightOf(b) - weightOf(a))
     .slice(0, 6)
 
-  return { percent, commonGames, commonTotal, commonHours, sharedTags, timeHiddenA, timeHiddenB }
+  return { percent, commonGames, commonTotal, commonMinutes, sharedTags, timeHiddenA, timeHiddenB }
 }
 
 /**
@@ -279,4 +290,25 @@ export function verdict(percent: number): string {
   if (percent >= 40) return 'Есть о чём поиграть вместе'
   if (percent >= 20) return 'Разные, но это даже интересно'
   return 'Противоположности. Притянетесь?'
+}
+
+/**
+ * Подзаголовок «Общие игры»: сколько в них наиграно. «Вместе» — только когда
+ * время известно у обоих. Скрыто у одного (lib/playtime.ts) — сумма была бы
+ * часами второго, выданными за общие; скрыто у обоих — считать нечего.
+ *
+ * Сумма — playedWords: меньше получаса — минутами, как строки под ним
+ * (playedShort). Иначе над «20 мин | 5 мин» стояло «Вместе в них — 0 часов».
+ */
+export function commonTimeLine(d: {
+  commonMinutes: number
+  otherName: string
+  myTimeHidden: boolean
+  otherTimeHidden: boolean
+}): string {
+  const spent = playedWords(d.commonMinutes)
+  if (d.myTimeHidden && d.otherTimeHidden) return 'Время в играх скрыто у обоих — сравниваем только сами игры.'
+  if (d.myTimeHidden) return `У ${d.otherName} в них — ${spent}, твоё время скрыто.`
+  if (d.otherTimeHidden) return `У тебя в них — ${spent}, время ${d.otherName} скрыто.`
+  return `Вместе в них — ${spent}.`
 }

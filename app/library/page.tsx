@@ -60,7 +60,7 @@ import { Evenings, type EveningItem } from '@/components/Evenings'
 import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
 import { pickSnapshotDelta } from '@/lib/libdelta'
-import { playtimeHidden } from '@/lib/playtime'
+import { playedShort, playtimeHidden } from '@/lib/playtime'
 import { WishlistShelf } from './WishlistShelf'
 
 export const metadata = {
@@ -787,7 +787,6 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           const label = STATE_LABEL[state]
           // Только кандидат: подтвердит ли патч, скажет стрим (RefreshedPill)
           const refreshable = updatedP !== null && state === 'comeback' && mayRefresh.has(g.appid)
-          const hours = Math.round(g.playtimeForever / 60)
           return (
             /*
               Без префетча: плитка попадает в экран при прокрутке, и каждая
@@ -829,7 +828,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                         вровень с первой */}
                     {!timeHidden && (
                       <span className={`tabular-nums ${refreshable ? 'self-start' : ''}`}>
-                        {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
+                        {playedShort(g.playtimeForever)}
                       </span>
                     )}
                     {/* «Обновлялась» — рядом с «заброшена», а не вместо: состояние

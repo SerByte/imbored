@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { gamesCaption, hoursCaption, unplayedCaption } from './factcaptions'
+import { gamesCaption, hoursCaption, playedFact, unplayedCaption } from './factcaptions'
 
 /**
  * Сторож согласования в трёх числах портрета.
@@ -59,6 +59,37 @@ describe('подписи под числами портрета', () => {
       for (const frozen of ['"игр в библиотеке"', '"часов сыграно"', '"почти не тронуты"']) {
         expect(code, `${rel}: подпись снова вписана строкой — ${frozen}`).not.toContain(frozen)
       }
+    }
+  })
+})
+
+/**
+ * Герой портрета говорил «0 часов сыграно» над «Куда ушло время», где та же
+ * игра подписана «20 мин»: часы округлялись раньше, чем решали подпись.
+ */
+describe('сколько сыграно — playedFact', () => {
+  test('меньше получаса — минуты, и подпись согласована с ними', () => {
+    expect(playedFact(20)).toEqual({ value: 20, caption: 'минут сыграно' })
+    expect(playedFact(1)).toEqual({ value: 1, caption: 'минута сыграна' })
+    expect(playedFact(22)).toEqual({ value: 22, caption: 'минуты сыграно' })
+  })
+
+  test('от получаса — часы, та же подпись, что у hoursCaption', () => {
+    expect(playedFact(30)).toEqual({ value: 1, caption: 'час сыгран' })
+    expect(playedFact(450 * 60)).toEqual({ value: 450, caption: hoursCaption(450) })
+  })
+
+  test('ноль — «0 часов»: в библиотеке ничего не запускали', () => {
+    expect(playedFact(0)).toEqual({ value: 0, caption: 'часов сыграно' })
+  })
+
+  test('герой и карточка считают часы из минут через неё', () => {
+    for (const rel of ['app/portrait/[steamid]/page.tsx', 'app/portrait/[steamid]/share-card.tsx']) {
+      const src = fs.readFileSync(path.join(ROOT, rel), 'utf8')
+      expect(src, `${rel}: часы снова готовыми — «0 часов» у библиотеки на 20 минут`).toMatch(
+        /playedFact\((wrapped|data)\.totalMinutes\)/,
+      )
+      expect(src, rel).not.toContain('totalHours')
     }
   })
 })

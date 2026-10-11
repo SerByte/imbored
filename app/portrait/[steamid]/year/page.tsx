@@ -61,10 +61,11 @@ export async function generateMetadata({
   const { steamid } = await params
   if (!/^\d{17}$/.test(steamid)) return {}
 
-  const snapshot = await snapshotOf(steamid)
+  // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
+  const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
   if (!snapshot) return { title: 'Итоги года', robots: { index: false } }
 
-  const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
+  const name = persona ?? `Игрок ${steamid.slice(-4)}`
   const title = `Итоги года — ${name}`
   const description =
     'Сколько наиграно за год, какие игры впервые запущены и какие появились в библиотеке — по снимкам Steam.'
@@ -161,10 +162,17 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
     )
   }
 
+  // Ник и сессия от итогов не зависят — ждутся вместе с ними, а не после
+  // (тот же довод, что у портрета). После проверки снапшота: без него ответ —
+  // заглушка, и заранее начатые чтения были бы оплачены зря
   const ip = clientIp(await headers())
-  const loaded = await loadYear(steamid, snapshot, ip, nowSec())
-  const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
-  const isMine = (await currentSteamId()) === steamid
+  const [loaded, persona, me] = await Promise.all([
+    loadYear(steamid, snapshot, ip, nowSec()),
+    personaOf(steamid),
+    currentSteamId(),
+  ])
+  const name = persona ?? `Игрок ${steamid.slice(-4)}`
+  const isMine = me === steamid
 
   if (loaded === null || loaded === 'limited') {
     return (

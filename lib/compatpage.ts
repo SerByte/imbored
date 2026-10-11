@@ -38,8 +38,11 @@ export type ArtRef = {
   art: GameArtUrls | null
 }
 
-/** Часы null — время этой стороны скрыто настройками Steam (см. Compatibility) */
-export type CompatGame = ArtRef & { hoursA: number | null; hoursB: number | null }
+/**
+ * Минуты, а не часы: подпись «25 мин» вместо «0 ч» (см. Compatibility).
+ * null — время этой стороны скрыто настройками Steam.
+ */
+export type CompatGame = ArtRef & { minutesA: number | null; minutesB: number | null }
 
 export type CompatPick = ArtRef & {
   ownedByAll: boolean
@@ -62,7 +65,8 @@ export type CompatResult = {
   commonGames: CompatGame[]
   /** всё пересечение, а не показанный срез */
   commonTotal: number
-  commonHours: number
+  /** минуты, не часы: подпись округляет сама (commonTimeLine в lib/compat) */
+  commonMinutes: number
   sharedTags: string[]
   /** есть у обоих — во что сесть сегодня */
   playNow: CompatPick[]
@@ -389,8 +393,8 @@ export async function loadCompat(
   const picks = actual.map(toPick)
   const commonGames = compat.commonGames.map((g) => ({
     ...artRef(g.appid, g.name, metas.get(g.appid)),
-    hoursA: g.hoursA,
-    hoursB: g.hoursB,
+    minutesA: g.minutesA,
+    minutesB: g.minutesB,
   }))
 
   return {
@@ -399,7 +403,7 @@ export async function loadCompat(
       percent: compat.percent,
       commonGames,
       commonTotal: compat.commonTotal,
-      commonHours: compat.commonHours,
+      commonMinutes: compat.commonMinutes,
       sharedTags: compat.sharedTags,
       playNow: picks.filter((p) => p.ownedByAll).slice(0, SHELF),
       playLater: picks.filter((p) => !p.ownedByAll).slice(0, SHELF),

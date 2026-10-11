@@ -146,6 +146,45 @@ describe('/api/outcome: ответ', () => {
     expect((await listFeedback(db, steamid)).filter((f) => f.action === 'liked')).toHaveLength(1)
   })
 
+  /*
+   * Обратный порядок: сначала «Зацепило» в ответе, через час — «Зашло»
+   * кнопкой на /play или /daily. Суточный дедуп глотал кнопку («уже есть
+   * зашло»), и единственной строкой оставалась строка ответа — смена ответа
+   * на «Так себе» забирала её, а с ней и «Зашло», сказанное отдельно.
+   */
+  test('«Зашло» кнопкой после «Зацепило» в ответе переживает смену ответа', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const shownAt = await played(steamid)
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'hooked' }))
+    await logFeedback(db, { steamid, appid: 620, action: 'liked' }, nowSec() + 3600)
+    await POST(post('/api/outcome', { appid: 620, shownAt, verdict: 'meh' }))
+    expect((await listLiked(db, steamid)).map((g) => g.appid)).toEqual([620])
+  })
+
+  /*
+   * Два ответа разом — с двух вкладок или двух устройств. Чтение прежнего
+   * ответа и запись нового шли разными запросами: оба читали «ответа нет»,
+   * «Зацепило» заводило «зашло», а «Так себе», не видя прежнего «Зацепило»,
+   * его не забирало. Ответ оставался «Так себе», игра — на полке «Зашло», и
+   * никакая следующая смена ответа этого уже не чинила.
+   */
+  test.each([
+    ['hooked', 'meh'],
+    ['meh', 'hooked'],
+  ] as const)('ответы «%s» и «%s» разом: «зашло» есть ровно при «Зацепило»', async (first, second) => {
+    const steamid = await signInAs(db, 'openid')
+    const shownAt = await played(steamid)
+    const res = await Promise.all([
+      POST(post('/api/outcome', { appid: 620, shownAt, verdict: first })),
+      POST(post('/api/outcome', { appid: 620, shownAt, verdict: second })),
+    ])
+    expect(res.map((r) => r.status)).toEqual([200, 200])
+    const row = await db.execute({ sql: 'SELECT verdict FROM outcomes WHERE steamid = ?', args: [steamid] })
+    const verdict = row.rows[0]?.verdict
+    const liked = (await listFeedback(db, steamid)).filter((f) => f.action === 'liked')
+    expect(liked, `ответ ${String(verdict)}`).toHaveLength(verdict === 'hooked' ? 1 : 0)
+  })
+
   test('«Закрыть» из забытой вкладки настоящий ответ не стирает', async () => {
     const steamid = await signInAs(db, 'openid')
     const shownAt = await played(steamid)

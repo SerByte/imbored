@@ -77,6 +77,23 @@ for (const page of PAGES) {
       expect(src).toMatch(page.key)
     })
 
+    /*
+     * Ник, сессия и (у портрета) записанный текст от модели не зависят — им
+     * нужен только steamid. Цепочкой «модель → ник → сессия → текст» каждый
+     * заход по чужой ссылке, даже из прогретого кэша, платил лишние один-два
+     * последовательных похода в Turso до первого байта.
+     */
+    test('чтения, не зависящие от модели, идут вместе с ней, а не после', () => {
+      const loader = page.title === 'итоги года' ? 'loadYear' : 'loadModel'
+      const all = src.match(/= await Promise\.all\(\[\s*([\s\S]*?)\]\)/g) ?? []
+      const batch = all.find((b) => b.includes(`${loader}(`))
+      expect(batch, `${loader} должен ждаться в Promise.all`).toBeDefined()
+      for (const fn of ['personaOf(steamid)', 'currentSteamId()']) expect(batch).toContain(fn)
+      if (loader === 'loadModel') expect(batch).toContain('getUserPortrait(')
+      // и метаданные: снапшот с ником — вместе
+      expect(src).toMatch(/await Promise\.all\(\[snapshotOf\(steamid\), personaOf\(steamid\)\]\)/)
+    })
+
     test('снапшот и ник читаются один раз на запрос, общие для метаданных и страницы', () => {
       for (const fn of ['getLatestSnapshot', 'getPersonaName']) {
         const calls = [...src.matchAll(new RegExp(`${fn}\\(`, 'g'))]
