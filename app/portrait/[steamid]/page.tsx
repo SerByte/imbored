@@ -10,6 +10,7 @@ import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { ShareLinkField } from '@/components/ShareLink'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Eyebrow, eyebrow } from '@/components/Labels'
@@ -505,9 +506,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {wrapped.top.map((g, i) => (
               <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
                 <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-                <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+                <GameLink appid={g.appid} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
                   <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
-                </Link>
+                </GameLink>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">{g.name}</div>
                   <div className="mt-1.5 h-1.5 rounded-full bg-track overflow-hidden">
@@ -592,7 +593,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <div className="mb-12 grid grid-cols-3 gap-3 md:gap-4">
               {evidence.map((g, i) => (
                 <m.div key={g.appid} {...inView(i)}>
-                  <Link href={`/game/${g.appid}`} className="game-card block">
+                  <GameLink appid={g.appid} className="game-card block">
                     {/* grid-cols-3 без порогов — треть экрана на любой ширине */}
                     <GameCardBody
                       appid={g.appid}
@@ -601,7 +602,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                       art={model.covers[g.appid]?.art ?? null}
                       sizes="33vw"
                     />
-                  </Link>
+                  </GameLink>
                 </m.div>
               ))}
             </div>
@@ -686,9 +687,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           {purgatory.length > 0 && (
             <div className="mt-10 grid grid-cols-3 md:grid-cols-6 gap-2">
               {purgatory.map((g) => (
-                <Link
+                <GameLink
                   key={g.appid}
-                  href={`/game/${g.appid}`}
+                  appid={g.appid}
                   aria-label={g.name}
                   // library-tile уже обесцвечивает обложку в покое нулём JS —
                   // ровно то, что здесь нужно по смыслу
@@ -696,7 +697,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 >
                   {/* grid-cols-3 md:grid-cols-6 */}
                   <span className="card-thumb">{cover(g, '(min-width: 768px) 17vw, 33vw')}</span>
-                </Link>
+                </GameLink>
               ))}
             </div>
           )}
@@ -706,14 +707,14 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <m.div {...inView()} className="mt-12 flex flex-col items-start gap-3">
               <p className="text-sm text-dim">Если решишься — начни с этой:</p>
               <Magnet>
-                <Link
-                  href={`/game/${starter.appid}`}
+                <GameLink
+                  appid={starter.appid}
                   className="panel-lift game-card no-lift flex items-center gap-4 p-2 pr-5"
                 >
                   <span className="card-thumb w-40 shrink-0">{cover(starter, '160px')}</span>
                   <span className="font-extrabold tracking-[-0.01em]">{starter.name}</span>
                   <Icon name="arrow" size={18} className="text-dim" />
-                </Link>
+                </GameLink>
               </Magnet>
             </m.div>
           )}
@@ -858,9 +859,9 @@ function YearBlock({
           {year.top.slice(0, 3).map((g, i) => (
             <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
               <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-              <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+              <GameLink appid={g.appid} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
                 <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
-              </Link>
+              </GameLink>
               <div className="min-w-0 flex-1 truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">
                 {g.name}
               </div>

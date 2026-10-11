@@ -39,6 +39,7 @@ import { tagRu } from '@/lib/tagsru'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 
 /**
@@ -760,7 +761,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
         {/* Похожие: единственная перелинковка между пятью тысячами карточек.
             До неё страница была тупиком — из поиска сюда приходили и упирались
-            в ссылку на /play, которая гостя разворачивала на лендинг. */}
+            в ссылку на /play, которая гостя разворачивала на лендинг.
+            Соседи — в основном хвост каталога вне PRERENDER_TOP, поэтому
+            GameLink без префетча: шесть холодных рендеров с записью ISR на
+            каждый просмотр карточки, до которой доскроллили, — не цена за
+            шесть ссылок, по которым уйдут в лучшем случае по одной. */}
         {data.similar.length > 0 && (
           <section>
             <SectionLabel className="mb-4">
@@ -768,9 +773,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             </SectionLabel>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
               {data.similar.map((g) => (
-                <Link
+                <GameLink
                   key={g.appid}
-                  href={`/game/${g.appid}`}
+                  appid={g.appid}
                   transitionTypes={['nav-forward']}
                   className="game-card block"
                 >
@@ -790,7 +795,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       ) : undefined
                     }
                   />
-                </Link>
+                </GameLink>
               ))}
             </div>
             {/* Под сеткой, внутри её секции: отдельная секция добавила бы ещё

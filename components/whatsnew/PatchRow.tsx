@@ -4,6 +4,7 @@ import { AnimatePresence, m } from 'framer-motion'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { GameLink } from '@/components/GameLink'
 import { NewsBody } from '@/components/NewsBody'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import type { FeedItem } from '@/lib/db'
@@ -272,15 +273,15 @@ export function PatchRow({
         <div className="-mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pb-6 pl-[108px] text-sm md:pl-[192px]">
           <PriceTag priceFinal={price} cc={priceCc} unsold={unsold} discount={discount} isFree={meta?.isFree} />
           <DiscountEnds discount={discount} />
-          <Link
-            href={`/game/${item.appid}`}
+          <GameLink
+            appid={item.appid}
             // -my-1.5 гасит собственную высоту: палец получает свои 44 пикселя,
             // а ритм строки не меняется
             className="-my-1.5 inline-flex items-center gap-1.5 py-1.5 font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
             Открыть игру
             <Icon name="arrow" size={16} />
-          </Link>
+          </GameLink>
         </div>
       ) : null}
 
@@ -333,12 +334,12 @@ export function PatchRow({
                 >
                   Отдельной страницей
                 </Link>
-                <Link
-                  href={`/game/${item.appid}`}
+                <GameLink
+                  appid={item.appid}
                   className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                 >
                   Все патчи игры
-                </Link>
+                </GameLink>
                 <a
                   href={item.url}
                   target="_blank"

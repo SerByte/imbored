@@ -2,10 +2,10 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { NeedSteam } from '@/components/NeedSteam'
 import { StatusLine } from '@/components/StatusLine'
 import type { GameArtUrls } from '@/lib/art'
@@ -205,7 +205,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
             >
               {/* Ссылка и кнопка — соседи, а не вложенные: интерактив внутри
                   интерактива не кликается и не читается скринридером */}
-              <Link href={`/game/${g.appid}`} className="game-card block">
+              <GameLink appid={g.appid} className="game-card block">
                 <GameCardBody
                   appid={g.appid}
                   name={g.name}
@@ -215,7 +215,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
                   // Обесцвечено только скрытое: пройденное — не изгнанное
                   dim={shelf === 'hidden'}
                 />
-              </Link>
+              </GameLink>
               {!readOnly && (
                 /*
                   У каждой кнопки своё имя. Видимый текст один на всю полку, и

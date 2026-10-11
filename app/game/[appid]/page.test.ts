@@ -251,6 +251,20 @@ describe('кэш карточки игры', () => {
     }
   })
 
+  test('«Похожие» — без префетча, но с переходом вглубь', async () => {
+    // Соседи — в основном хвост каталога вне PRERENDER_TOP: с префетчем по
+    // умолчанию каждая карточка, до «Похожих» которой доскроллили, будила бы
+    // шесть холодных рендеров с записью ISR (components/GameLink)
+    await seed()
+    const links = islandsOf(flight(await GamePage(params)), 'Link').filter((l) =>
+      /^\/game\/1\d$/.test(String(l.href)),
+    )
+    expect(links.length).toBeGreaterThan(0)
+    for (const l of links) {
+      expect(l).toMatchObject({ prefetch: false, transitionTypes: ['nav-forward'] })
+    }
+  })
+
   test('в островки GameArt уезжают только ссылки варианта card', async () => {
     // Герой и «Похожие» рисуют арт вариантом card: он читает header, header2x
     // и capsule. library_hero и hero_2x ехали в RSC и в HTML каждой из пяти
