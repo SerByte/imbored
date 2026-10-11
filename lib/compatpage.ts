@@ -7,13 +7,13 @@ import {
   getGamesMetaLite,
   getLatestSnapshot,
   getPersonaName,
-  loadTagStats,
   type Db,
 } from './db'
 import { type Discount, discountView, trustedPrice } from './discount'
 import { buildGroupDeck } from './group'
 import { playtimeHidden } from './playtime'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
+import { tagStatsFor } from './tagstats'
 import type { GameMeta, LibraryGame } from './types'
 
 /**
@@ -291,7 +291,8 @@ export async function loadCompat(
   // нужен. Статистика тегов и размер пула — тем же кругом, см. выше
   const [metas, tagStats, poolSize] = await Promise.all([
     getGamesMetaLite(db, [...new Set([...mySnap.games, ...otherSnap.games].map((g) => g.appid))]),
-    loadTagStats(db),
+    // Карта тегов — с памятью на процесс (lib/tagstats): меняется только с заливкой
+    tagStatsFor(db, now),
     getPoolSize(db),
   ])
   // Каталог держим ОТДЕЛЬНО от библиотек. metaOf он нужен весь — для арта, цены

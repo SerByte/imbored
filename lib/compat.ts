@@ -1,3 +1,4 @@
+import { CONTENT_WARNING_TAGS } from './hook'
 import { playtimeHidden } from './playtime'
 import { buildTagProfile } from './recommend'
 import { cosine, rarityOf, rarityScale } from './tagweight'
@@ -205,12 +206,19 @@ export function compatibility(
    * «У вас общее: Singleplayer, Action» — не наблюдение, а описание каталога:
    * эти теги есть у половины игр. Взвешивание поднимает наверх то, что двоих
    * действительно роднит, даже если наиграно там меньше.
+   *
+   * Предупреждения о контенте (CONTENT_WARNING_TAGS в lib/hook) в общее не
+   * идут: «Что вас роднит» на /compat — страница, которой делятся, и
+   * «Нагота» там не наблюдение о двоих. А редкость тянет её как раз наверх:
+   * Nudity стоит у трёх процентов каталога, и у двух игроков Witcher, BG3 и
+   * Cyberpunk она выходила в шестёрку, а то и первой — выделенным чипсом.
+   * Отсев до среза: освободившееся место занимает следующий настоящий тег.
    */
   const weightOf = (tag: string) =>
     Math.min(profileA[tag], profileB[tag]) * (top ? rarityOf(tag, tagStats, top) : 1)
 
   const sharedTags = Object.keys(profileA)
-    .filter((tag) => (profileB[tag] ?? 0) > 0 && profileA[tag] > 0)
+    .filter((tag) => (profileB[tag] ?? 0) > 0 && profileA[tag] > 0 && !CONTENT_WARNING_TAGS.has(tag))
     .sort((a, b) => weightOf(b) - weightOf(a))
     .slice(0, 6)
 

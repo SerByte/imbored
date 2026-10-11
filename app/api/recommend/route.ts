@@ -16,6 +16,7 @@ import {
 } from '@/lib/ratelimit'
 import {
   continueView,
+  hasTaste,
   parseFocus,
   parseScope,
   parseSeed,
@@ -297,8 +298,11 @@ export async function POST(req: Request) {
         reviewsPercent: meta?.reviewsPercent,
       }
     }),
-    // Пустой профиль — вкус посчитан популярностью, хвалить им нечестно
-    { taste: Object.keys(profile).length > 0 },
+    // Пустой профиль — вкус посчитан популярностью, хвалить им нечестно.
+    // Пустой — по hasTaste, тем же правилом, что выбрало популярность в
+    // скоринге: профиль из нулей после скипа «не тот жанр» иначе получил бы
+    // «Ближе всего к вкусу» за число, которое вкусом не было
+    { taste: hasTaste(profile) },
   )
 
   // Кадры и трейлер — только у пятёрки (heroMediaView). Читаются отдельно, по

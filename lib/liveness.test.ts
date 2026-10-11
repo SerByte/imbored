@@ -93,6 +93,22 @@ describe('judgeLiveness: контекст соло или компания', () 
     // а публичные серверы без людей — по-прежнему приговор
     expect(judgeLiveness({ categories: [1], ccu: 200 }, 'party').alive).toBe(false)
   })
+
+  /*
+   * Тот же довод — и для коопа с одиночной кампанией. playMode ставит
+   * одиночный режим первым (он нужен соло-контексту), и игра с [2, 1, 9, 38]
+   * в компании падала мимо правила коопа на порог мирового онлайна: Deep Rock
+   * с его тысячами проходил, а диванный кооп с сотней игроков на весь мир
+   * пропадал из колоды комнаты, где он есть у всех.
+   */
+  test('кооп с одиночной кампанией в компании тоже не гейтится онлайном', () => {
+    expect(judgeLiveness({ ...DEEP_ROCK, ccu: 50 }, 'party').alive).toBe(true)
+    // только локальный кооп: Steam онлайна у таких почти не видит
+    expect(judgeLiveness({ categories: [2, 24, 39], ccu: 0 }, 'party').alive).toBe(true)
+    // одиночная плюс публичные серверы без коопа — порог на месте
+    expect(judgeLiveness(CONDITION_ZERO, 'party').reason).toBe('dead-multiplayer')
+    expect(judgeLiveness({ categories: [2, 1, 36], ccu: 120 }, 'party').alive).toBe(false)
+  })
 })
 
 describe('filterPlayable', () => {

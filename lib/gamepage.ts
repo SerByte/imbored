@@ -5,7 +5,6 @@ import {
   getGamePageRow,
   getGameNews,
   getNeighbors,
-  loadTagStats,
   topGamesByTag,
   type Db,
   type FeedItem,
@@ -23,6 +22,7 @@ import { NEIGHBORS_K } from './neighbors'
 import { plural } from './plural'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
+import { tagStatsFor } from './tagstats'
 import { tagRu } from './tagsru'
 import { rarityOf, rarityScale, tagWeightFrom } from './tagweight'
 import { isRussianText } from './textlang'
@@ -351,30 +351,21 @@ export function studioLine(
 /**
  * Карта тегов каталога для выбора тега полки — с памятью на процесс.
  *
- * loadTagStats читает всю таблицу tags, около 430 строк, а карточка — самая
- * массовая страница: пять тысяч адресов в карте сайта, у каждой ещё и
- * OG-картинка. Без памяти один проход краулера стоил бы больше двух миллионов
- * прочитанных строк Turso ради карты, которая меняется только с заливкой
- * каталога. Шесть часов — с запасом короче недели, на которую кэшируется сама
- * страница.
+ * Карточка — самая массовая страница: пять тысяч адресов в карте сайта, у
+ * каждой ещё и OG-картинка. Без памяти один проход краулера стоил бы больше
+ * двух миллионов прочитанных строк Turso ради карты, которая меняется только
+ * с заливкой каталога. Память общая с горячими путями подбора — lib/tagstats.
  *
- * Ключ — сам клиент базы: в проде он один на процесс (lib/server), а тесты с
- * базой в памяти не видят чужих карт. Сбой чтения не кэшируется и страницу не
- * роняет — полка просто подбирается по-старому.
+ * Сбой чтения страницу не роняет: tagStatsFor без запомненной карты бросает
+ * (подбору молчаливая пустая карта вредна), а здесь это null — полка просто
+ * подбирается по-старому.
  */
-const TAG_STATS_TTL_SEC = 6 * 3600
-const tagStatsMemo = new WeakMap<Db, { at: number; stats: Map<string, number> }>()
-
-async function tagStatsFor(db: Db, nowSec: number): Promise<Map<string, number> | null> {
-  const hit = tagStatsMemo.get(db)
-  if (hit && nowSec - hit.at < TAG_STATS_TTL_SEC) return hit.stats
+async function pageTagStats(db: Db, nowSec: number): Promise<Map<string, number> | null> {
   try {
-    const stats = await loadTagStats(db)
-    tagStatsMemo.set(db, { at: nowSec, stats })
-    return stats
+    return await tagStatsFor(db, nowSec)
   } catch (err) {
     logSwallowed('gamepage:tagstats', err)
-    return hit?.stats ?? null
+    return null
   }
 }
 
@@ -581,10 +572,10 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   //
   // Карта тегов — только когда теги есть: игре без них ни полку, ни «Чем
   // выделяется» не собрать всё равно, и читать ради неё нечего. Одна на оба
-  // потребителя; tagStatsFor не бросает — сбой чтения даёт null
+  // потребителя; pageTagStats не бросает — сбой чтения даёт null
   const hasTags = Object.keys(meta.tags ?? {}).length > 0
   const statsOf = hasTags
-    ? tagStatsFor(db, Math.floor(Date.now() / 1000))
+    ? pageTagStats(db, Math.floor(Date.now() / 1000))
     : Promise.resolve(null)
   const similarOf = async (): Promise<Pick<GamePageData, 'similar' | 'similarTag' | 'hook'>> => {
     const [stats, near] = await Promise.all([statsOf, nearGames(db, meta, statsOf)])

@@ -5,7 +5,6 @@ import {
   getLatestSnapshot,
   getPoolSize,
   listFeedback,
-  loadTagStats,
   type Db,
   type FeedbackRow,
 } from './db'
@@ -31,6 +30,7 @@ import {
   type NudgeTilt,
   type Scope,
 } from './recommend'
+import { tagStatsFor } from './tagstats'
 import { tagWeightFrom, type TagWeight } from './tagweight'
 import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
 
@@ -180,7 +180,9 @@ export async function buildCandidates(
     getLatestSnapshot(db, steamid),
     bannedAppids(db, steamid),
     listFeedback(db, steamid, 300),
-    loadTagStats(db),
+    // С памятью на процесс: вся таблица тегов на каждый подбор — четыре сотни
+    // строк Turso за карту, которая меняется только с заливкой (lib/tagstats)
+    tagStatsFor(db, now),
     getPoolSize(db),
   ])
   if (!snapshot) return 'nolibrary'
@@ -334,6 +336,9 @@ export async function buildCandidates(
     nudge: tilt,
     moodless: opts.moodless,
     playtimeHidden: timeHidden,
+    // Фокус — до среза: иначе нетронутые, далёкие от вкуса, срезались ещё до
+    // applyFocus ниже, и его пол отдавал наигранное (см. focusFirst)
+    focus: opts.focus ?? null,
   })
   if (!candidates.length) return 'nocandidates'
 

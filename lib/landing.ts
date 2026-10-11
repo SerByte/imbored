@@ -7,6 +7,7 @@ import {
   PICK_COUNT,
   scoreCandidates,
   splitBySource,
+  topTags,
 } from './recommend'
 import { SOURCE_BADGE } from './sources'
 import { tagRu } from './tagsru'
@@ -65,7 +66,7 @@ export type LandingCard = {
   name: string
   /** Подпись источника продукта: «Пора вернуться», «Открыл и закрыл»… */
   badge: string
-  /** Подписи тегов, уже по-русски (см. topTags ниже) */
+  /** Подписи тегов, уже по-русски (см. demoTags ниже) */
   tags: string[]
   headerImage: string | null
   art: GameArtUrls | null
@@ -96,18 +97,20 @@ function moodOf(key: MoodKey): Mood {
 }
 
 /**
- * Топ-4 тега игры по голосам — тот же отбор, что у выдачи и карточки игры.
+ * Главные теги демо-карточки — topTags из lib/recommend, тот же отбор, что у
+ * чипсов выдачи, «Игры дня» и колоды пати. Своя копия здесь уже разошлась с
+ * ним: предупреждения о контенте (CONTENT_WARNING_TAGS) выдача отсеивает до
+ * среза, а копия — нет, и демо-игра с Gore показала бы на главной чипс,
+ * которого настоящая выдача не покажет. Сейчас в DEMO_METAS таких тегов нет,
+ * но правило одно, и держится оно одной функцией.
  *
  * Сразу русскими подписями (tagRu), и это исключение из правила «переводить
  * на месте вывода»: главная рисует их клиентским компонентом, и перевод там
  * положил бы словарь тегов в бандл самой лёгкой страницы сайта. Здесь теги —
  * уже только подпись: ни с чем их дальше не сравнивают.
  */
-function topTags(appid: number, metaOf: (id: number) => (typeof DEMO_METAS)[number] | undefined): string[] {
-  return Object.entries(metaOf(appid)?.tags ?? {})
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4)
-    .map(([t]) => tagRu(t))
+function demoTags(appid: number, metaOf: (id: number) => (typeof DEMO_METAS)[number] | undefined): string[] {
+  return topTags(metaOf(appid)).map(tagRu)
 }
 
 /**
@@ -145,7 +148,7 @@ export function landingDemo(nowSec: number): LandingDemo {
       appid: p.appid,
       name: p.name,
       badge: SOURCE_BADGE[p.source],
-      tags: topTags(p.appid, metaOf),
+      tags: demoTags(p.appid, metaOf),
       headerImage: metaOf(p.appid)?.headerImage ?? null,
       art: metaOf(p.appid)?.art ?? null,
     }))

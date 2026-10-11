@@ -121,6 +121,92 @@ describe('buildCandidates', () => {
   })
 
   /*
+   * Фокус — до среза тридцатки, а не после. Скоринг ранжировал всю
+   * библиотеку и резал её до CANDIDATE_LIMIT, из которых двенадцать мест ещё
+   * и держал каталогу; applyFocus стоял уже за отсечкой. У человека с сорока
+   * наигранными рогаликами и шестью нетронутыми не своего жанра нетронутые до
+   * фокуса не доживали, пол applyFocus срабатывал на пустом месте — и на
+   * «покажи то, во что я не играл» приходило «У тебя в X уже 50 ч».
+   */
+  test('«нераспакованное» находит нетронутые, даже когда наигранное ближе к вкусу', async () => {
+    const db = await freshDb()
+    const comeback = Array.from({ length: 40 }, (_, i) => 100 + i)
+    const untouched = Array.from({ length: 6 }, (_, i) => 200 + i)
+    const pool = Array.from({ length: 20 }, (_, i) => 300 + i)
+    await upsertGamesMeta(
+      db,
+      [
+        ...comeback.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 80 })),
+        ...untouched.map((id) => meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 })),
+        ...pool.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 70 })),
+      ],
+      NOW,
+    )
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [
+        // 50 ч и год без запуска — «пора вернуться»
+        ...comeback.map((id) => ({ ...game(id, 50), lastPlayed: NOW - 365 * 86_400 })),
+        ...untouched.map((id) => game(id, 0)),
+      ],
+      NOW,
+    )
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'library', {
+      nowSec: NOW,
+      focus: 'untouched',
+    })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.own.map((c) => c.appid).sort((a, b) => a - b)).toEqual(untouched)
+    expect(set.own.every((c) => c.source === 'untouched')).toBe(true)
+    expect(set.heroPool).toEqual(set.own)
+  })
+
+  /*
+   * Очередь на срез повторяет ступени пола applyFocus: нетронутые, за ними
+   * бэклог, потом всё остальное. Нетронутых до среза четыре — больше пола,
+   * — но двух выкидывает живость: меньше тридцати отзывов, ассет-флип, обычное
+   * дело для игр из бандлов. Если за нетронутыми в очереди шли сорок
+   * наигранных по скору, бэклог вне вкуса до среза не доживал, пол applyFocus
+   * расширять было нечем — и /play показывал две карточки при живом бэклоге.
+   */
+  test('«нераспакованное» держит бэклог за нетронутыми, если живость их выкинет', async () => {
+    const db = await freshDb()
+    const comeback = Array.from({ length: 40 }, (_, i) => 100 + i)
+    const live = [200, 201]
+    const flips = [202, 203]
+    const backlog = [400, 401, 402]
+    await upsertGamesMeta(
+      db,
+      [
+        ...comeback.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 80 })),
+        ...live.map((id) => meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 })),
+        ...flips.map((id) => ({ ...meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 }), reviewsTotal: 12 })),
+        ...backlog.map((id) => meta(id, { Racing: 100, Sports: 70 })),
+      ],
+      NOW,
+    )
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [
+        ...comeback.map((id) => ({ ...game(id, 50), lastPlayed: NOW - 365 * 86_400 })),
+        ...[...live, ...flips].map((id) => game(id, 0)),
+        // Полчаса — «открыл и закрыл»
+        ...backlog.map((id) => game(id, 0.5)),
+      ],
+      NOW,
+    )
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'library', {
+      nowSec: NOW,
+      focus: 'untouched',
+    })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.own.map((c) => c.appid).sort((a, b) => a - b)).toEqual([...live, ...backlog])
+    expect(set.own.some((c) => c.source === 'comeback')).toBe(false)
+  })
+
+  /*
    * Время скрыто в Steam (lib/playtime.ts): 20 игр, у всех нули. Признак
    * считается здесь один раз по всей библиотеке и едет дальше — в скоринг и
    * маршрутам; вкус собран поровну, а не пуст.

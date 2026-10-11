@@ -1,6 +1,7 @@
 import { discountOf } from './discount'
 import { editionKey } from './editions'
 import { entryCost } from './entry'
+import { CONTENT_WARNING_TAGS, GENERIC_TAGS } from './hook'
 import { isJunk } from './junk'
 import { VIBE_TAGS, type Lean } from './mood'
 import { playtimeHidden } from './playtime'
@@ -182,9 +183,19 @@ export function normalizedTags(meta: GameMeta): Record<string, number> {
  * Главные теги игры — по числу голосов, n штук. Чипсы карточки выдачи,
  * «Игры дня» и колоды пати: одна мера на все три места, иначе одна и та же
  * игра показывала бы в разных местах разные теги. Нет меты — пусто.
+ *
+ * Предупреждения о контенте (CONTENT_WARNING_TAGS в lib/hook) в главные не
+ * идут, и место занимает следующий тег. Ряд под героем отвечает «что это за
+ * игра», а «Нагота» — не ответ: у Cyberpunk 2077 она стоит третьей по
+ * голосам, и /daily читался «Киберпанк · Открытый мир · Нагота · Ролевая
+ * игра» — тот же ряд уезжает на карту колоды пати, к друзьям на экран.
+ * Отсев — до среза, а не после: иначе в ряду стало бы три чипса вместо
+ * четырёх. Страница игры этим правилом не пользуется: её восемь тегов
+ * повторяют Steam, и там предупреждение — справка, а не довод.
  */
 export function topTags(meta: GameMeta | undefined, n = 4): string[] {
   return Object.entries(meta?.tags ?? {})
+    .filter(([t]) => !CONTENT_WARNING_TAGS.has(t))
     .sort((a, b) => b[1] - a[1])
     .slice(0, n)
     .map(([t]) => t)
@@ -538,6 +549,38 @@ export function applyFocus<T extends { source: CandidateSource }>(
 }
 
 /**
+ * Фокус для среза: своё в очереди по ступеням пола applyFocus — нетронутые,
+ * бэклог, остальное следом.
+ *
+ * scoreCandidates режет своё по скору, а applyFocus стоял только за срезом
+ * (lib/candidates). У человека с сорока наигранными рогаликами и шестью
+ * нетронутыми не своего жанра тридцатка доставалась рогаликам целиком: пол
+ * applyFocus «нетронутых меньше трёх» срабатывал не потому, что их нет, а
+ * потому, что их отрезали, — и на «покажи то, во что я не играл» приходило
+ * «У тебя в X уже 50 ч». А модели промпт при этом говорил, что все кандидаты
+ * ни разу не запущены.
+ *
+ * Очередь, а не фильтр: окончательный отбор остаётся за applyFocus после
+ * filterActual, и его пол должен найти за нетронутыми бэклог, если живость
+ * выкинет нетронутые. Отфильтруй здесь — и мёртвый мультиплеер среди трёх
+ * нетронутых оставил бы выдачу без единой своей игры.
+ *
+ * Поэтому очередь повторяет ступени самого пола — нетронутые, бэклог, всё
+ * остальное, — а не «то, что applyFocus пропустит сейчас, и хвост по скору».
+ * С хвостом по скору при четырёх нетронутых впереди стояли только они: бэклог
+ * вне вкуса шёл наравне с сорока наигранными, и тридцатка срезала его
+ * целиком. Живость выкидывала два ассет-флипа из бандла, пол находил две
+ * нетронутые и ни одного бэклога — и /play показывал две карточки при живом
+ * бэклоге. Сортировка устойчивая: внутри ступени порядок прежний, по скору;
+ * итог среза всё равно сортируется заново.
+ */
+function focusFirst<T extends { source: CandidateSource }>(own: T[], focus: Focus | null): T[] {
+  if (focus !== 'untouched') return own
+  const step = (c: T) => (c.source === 'untouched' ? 0 : c.source === 'backlog' ? 1 : 2)
+  return [...own].sort((a, b) => step(a) - step(b))
+}
+
+/**
  * Не больше max кандидатов одного источника; порядок сохраняется, лишние —
  * хвост этого источника — выпадают.
  *
@@ -571,6 +614,26 @@ const SHARED_TAGS = 3
  * Теги игры, которые уже есть во вкусе игрока, — по убыванию вклада в
  * совпадение.
  *
+ * Предупреждения о контенте (CONTENT_WARNING_TAGS) сюда не попадают никогда —
+ * ни с картой редкости, ни без неё. Список метит чипсы зелёной точкой
+ * «есть в твоих играх» и кормит причину, и «Нагота» не годится ни туда, ни
+ * туда. А карта редкости тянет её как раз наверх: Nudity стоит у трёх
+ * процентов каталога, и у игрока Witcher и BG3 первой отметкой под Cyberpunk
+ * горела бы именно она. Отсев — до среза SHARED_TAGS: освободившееся место
+ * занимает следующий настоящий тег.
+ *
+ * Общие теги (GENERIC_TAGS: Indie, Singleplayer, Co-op) здесь остаются, и это
+ * решение, а не недосмотр. Отметка на чипсе утверждает ровно «есть в твоих
+ * играх» — так её и озвучивает components/TagChips.tsx, — и Indie у
+ * человека, наигравшего сотни часов в инди, там буквально есть. Под «совпадает
+ * с твоим вкусом» общий тег не прошёл бы: это уже утверждение про человека, а
+ * про Indie оно описывало бы каталог. Поэтому сильное утверждение остаётся
+ * только за причиной («это очень твоё»), и общие теги она отсекает сама
+ * (matchedTags в lib/llm), после этого списка: названное словами остаётся
+ * подмножеством отмеченного. Отсеять их здесь значило бы снять отметку и с
+ * «Стратегии» у стратега: GENERIC_TAGS — список для «фишки», в нём жанры
+ * Steam целиком. Порядок без карты держит прежним и lib/recommend.test.ts.
+ *
  * Отдельной функцией, а не строкой внутри explainMatch, потому что спрашивают
  * об этом ДВА экрана, и оба показывают ответ человеку. Выдача берёт список
  * через explainMatch (там же процент и вайб), «Игре дня» нужны только теги:
@@ -593,7 +656,7 @@ export function sharedTasteTags(
 ): string[] {
   const norm = normalizedTags(meta)
   return Object.entries(norm)
-    .filter(([tag]) => (profile[tag] ?? 0) > 0)
+    .filter(([tag]) => (profile[tag] ?? 0) > 0 && !CONTENT_WARNING_TAGS.has(tag))
     .map(([tag, v]) => {
       const raw = (profile[tag] ?? 0) * v
       return { tag, raw, weighted: tagWeight ? raw * tagWeight(tag) ** 2 : raw }
@@ -605,6 +668,26 @@ export function sharedTasteTags(
     .map((x) => x.tag)
 }
 
+/**
+ * Есть ли у профиля вкус: хоть один положительный вес.
+ *
+ * Не число ключей. Скип «не тот жанр» и «слишком сложная» прижимают теги игры
+ * к нулю (applyFeedbackToProfile) и тем самым заводят ключи даже в пустом
+ * профиле: у человека, чья библиотека — нули минут, один скип давал
+ * { Roguelike: 0, Indie: 0 }. По числу ключей это «вкус есть» — и скоринг
+ * уходил с популярности на косинус с нулевым вектором: ноль у всех, настроение
+ * и скидка ничего не двигали, а /play писал «совпадение со вкусом 0%».
+ *
+ * Ключи с нулями при этом не удаляются: «штраф не уводит в минус» держит их
+ * на нуле, и так же они ничего не весят во всех остальных местах —
+ * sharedTasteTags и pickQueryTags и без того берут только положительные.
+ * Чинится чтение, а не запись. NaN — не вкус: сравнение с ним ложно.
+ */
+export function hasTaste(profile: Record<string, number>): boolean {
+  for (const v of Object.values(profile)) if (v > 0) return true
+  return false
+}
+
 /** Прозрачность выдачи: из чего сложился скоринг этой игры */
 export function explainMatch(
   profile: Record<string, number>,
@@ -612,7 +695,8 @@ export function explainMatch(
   mood: Mood,
   tagWeight: TagWeight | null = null,
 ): MatchExplanation {
-  const profileEmpty = Object.keys(profile).length === 0
+  // Профиль из нулей — тоже пустой: «совпадение 0%» было бы про пустоту (hasTaste)
+  const profileEmpty = !hasTaste(profile)
   const norm = normalizedTags(meta)
   // Процент — тем же взвешенным косинусом, что и порядок выдачи: число,
   // расходящееся с настоящим порядком, объясняло бы чужую выдачу
@@ -1397,7 +1481,10 @@ export type NudgeTilt = {
   sourceWeight?: Readonly<Partial<Record<CandidateSource, number>>> | null
   /** Прибавка к настроению за теги — часть mood (moodMultiplier) */
   tagBoost?: Readonly<Record<string, number>> | null
-  /** Главные теги уже показанного: совпадение с главными тегами кандидата — ×SIMILAR_PENALTY */
+  /**
+   * Главные теги уже показанного (mainTags: тройка по голосам без общих):
+   * совпадение с главными тегами кандидата — ×SIMILAR_PENALTY
+   */
   seenTags?: ReadonlySet<string> | null
 }
 
@@ -1423,25 +1510,50 @@ function hasAnyTag(meta: GameMeta, list: readonly string[]): boolean {
 
 /**
  * «Что-то другое»: похожее на показанное — ×0.8, а не фильтр. Похожесть — по
- * трём главным тегам (topTags): у двух рогаликов общий Indie ещё ничего не
+ * трём главным тегам (mainTags): у двух рогаликов общий Indie ещё ничего не
  * значит, а общий главный тег — уже «то же самое».
  */
 const SIMILAR_PENALTY = 0.8
 const SIMILAR_TOP = 3
+
+/**
+ * Главные теги для похожести: первая тройка по голосам минус общие
+ * (GENERIC_TAGS в lib/hook — жанры Steam, режимы, похвала, стиль «вообще»).
+ *
+ * Самые голосуемые теги Steam — как раз общие: замер по копии каталога — у
+ * шести игр из десяти в первой тройке стоит Action, Adventure, Indie, RPG,
+ * Strategy, Simulation, Casual, Singleplayer или Multiplayer, у тысячи с
+ * лишним — один только Action. Пять-десять показанных карточек накрывали
+ * этими словами почти весь пул, и ×0.8 ложилось на любого кандидата с Action,
+ * похож он на показанное или нет. Ровно то, от чего предупреждал докблок
+ * выше: общий Indie — ещё не «то же самое».
+ *
+ * Сначала тройка, потом отсев — не наоборот. Отсев до среза дотягивался бы в
+ * хвост тегов игры: у игры с тройкой «Action, Adventure, Indie» главными
+ * стали бы четвёртый-шестой теги, и штраф ловил бы совпадения, о которых
+ * показанное не говорит. Тройка из одних общих тегов даёт пустой список —
+ * такую игру похожестью не меряем вовсе.
+ *
+ * Одна функция на обе стороны: и показанное (seenTagsOf), и кандидат
+ * (nudgeMultiplier) — иначе одна сторона сравнивала бы жанры, другая нет.
+ */
+function mainTags(meta: GameMeta): string[] {
+  return topTags(meta, SIMILAR_TOP).filter((t) => !GENERIC_TAGS.has(t))
+}
 
 /** Часть nudge скора: наклон источника и штраф похожести; без подталкивания 1 */
 export function nudgeMultiplier(meta: GameMeta, source: CandidateSource, tilt: NudgeTilt | null): number {
   if (!tilt) return 1
   let mult = tilt.sourceWeight?.[source] ?? 1
   const seen = tilt.seenTags
-  if (seen?.size && topTags(meta, SIMILAR_TOP).some((t) => seen.has(t))) mult *= SIMILAR_PENALTY
+  if (seen?.size && mainTags(meta).some((t) => seen.has(t))) mult *= SIMILAR_PENALTY
   return mult
 }
 
-/** Главные теги уже показанного — для штрафа похожести «Что-то другое» */
+/** Главные теги уже показанного (mainTags) — для штрафа похожести «Что-то другое» */
 export function seenTagsOf(metas: Iterable<GameMeta>): Set<string> {
   const out = new Set<string>()
-  for (const m of metas) for (const t of topTags(m, SIMILAR_TOP)) out.add(t)
+  for (const m of metas) for (const t of mainTags(m)) out.add(t)
   return out
 }
 
@@ -1533,13 +1645,19 @@ export function scoreCandidates(args: {
    * брошенной, ни любимой.
    */
   playtimeHidden?: boolean
+  /**
+   * «Покажи только нераспакованное» (applyFocus). Здесь — не фильтр, а
+   * очередь на срез: см. focusFirst. null и отсутствие — ровно прежний срез.
+   */
+  focus?: Focus | null
 }): ScoredCandidate[] {
   const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
   type Scored = ScoredCandidate & { parts: ScoreParts }
   const out: Scored[] = []
   // Скрытые паузой — отдельно: они нужны только полу ниже
   const hidden: Scored[] = []
-  const profileEmpty = Object.keys(profile).length === 0
+  // Не по числу ключей: скип «не тот жанр» заводит их нулями (hasTaste)
+  const profileEmpty = !hasTaste(profile)
   // Профиль взвешивается один раз на весь запрос, а не на каждого кандидата
   const tasteOf = weightedCosineTo(profile, args.tagWeight ?? null)
   const lean = args.lean ?? null
@@ -1660,12 +1778,20 @@ export function scoreCandidates(args: {
   }
 
   const ranked = out.sort((a, b) => b.score - a.score)
-  const { own, discovery } = splitBySource(ranked)
+  const split = splitBySource(ranked)
+  const focus = args.focus ?? null
+  const own = focusFirst(split.own, focus)
+  const discovery = split.discovery
   // Каждая сторона добирает то, что не выбрала другая, поэтому длина результата
   // остаётся min(limit, всего кандидатов) — ровно как до появления брони.
+  //
+  // При фокусе брони нет: каталог тогда не доходит ни до главной выдачи, ни
+  // до нижнего блока (маршрут гасит его и ставит scope 'library'), и двенадцать
+  // забронированных мест просто отнимались у своего. Добирать пустое каталог
+  // по-прежнему может — у человека без своих кандидатов.
   const discoveryTake = Math.min(
     discovery.length,
-    Math.max(limit - own.length, Math.round(limit * DISCOVERY_SHARE)),
+    Math.max(limit - own.length, focus ? 0 : Math.round(limit * DISCOVERY_SHARE)),
   )
   return [...own.slice(0, limit - discoveryTake), ...discovery.slice(0, discoveryTake)].sort(
     (a, b) => b.score - a.score,
