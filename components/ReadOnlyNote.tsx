@@ -6,7 +6,7 @@ import { Portal } from '@/components/Portal'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
 import { READONLY_NOTE_EVENT, takeReadOnlyNote } from '@/lib/readonlynote'
-import { overlaps, takeFocus } from '@/lib/skiplink'
+import { overlaps, takeFocus, withFocusRing } from '@/lib/skiplink'
 
 /**
  * Записка «это режим просмотра» — один раз после входа по ссылке
@@ -34,6 +34,12 @@ import { overlaps, takeFocus } from '@/lib/skiplink'
  * под неё, закрывается Escape, не двигая фокус, а «Понятно» отдаёт фокус
  * <main>: иначе размонтированная кнопка роняла его в body. Сказанное ею не
  * пропадает: текст уже прочитан живой областью выше.
+ *
+ * Уходит она только от фокуса с клавиатуры (:focus-visible): 2.4.11 — про
+ * него, а фокус от клика или тапа прятал бы одноразовую записку у того, кто
+ * её не закрывал. На /quiz ответ кликом переводит фокус на заголовок
+ * следующего вопроса (stepHeadRef), и он стоит ровно под запиской; на
+ * Android тап по широкой плитке, задевшей её краем, тоже даёт focusin.
  */
 export function ReadOnlyNote() {
   const [shown, setShown] = useState(false)
@@ -75,6 +81,12 @@ export function ReadOnlyNote() {
      * поставили. Замер — кадром позже: focusin приходит раньше, чем браузер
      * докрутит элемент к линии scroll-padding, и прямоугольник в самом
      * событии ещё старый.
+     *
+     * Только фокус с клавиатуры — :focus-visible, как у смузера
+     * (SmoothScrollImpl, onFocusIn). Программный фокус наследует это от
+     * прошлого: после Enter заголовок вопроса :focus-visible, после клика —
+     * нет. И с кольцом, а не голой рамкой: кнопка вплотную под запиской
+     * прячет под неё верх своего кольца (withFocusRing).
      */
     let raf = 0
     const onFocus = (e: FocusEvent) => {
@@ -84,7 +96,8 @@ export function ReadOnlyNote() {
       raf = requestAnimationFrame(() => {
         const at = document.activeElement
         if (!(at instanceof Element) || at === document.body || note.contains(at)) return
-        if (overlaps(at.getBoundingClientRect(), note.getBoundingClientRect())) setShown(false)
+        if (!at.matches(':focus-visible')) return
+        if (overlaps(withFocusRing(at.getBoundingClientRect()), note.getBoundingClientRect())) setShown(false)
       })
     }
     document.addEventListener('keydown', onKey)

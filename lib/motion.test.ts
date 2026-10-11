@@ -27,7 +27,8 @@ import {
  * Два источника одного числа дрейфуют молча; этот тест делает дрейф красным.
  */
 
-const CSS = fs.readFileSync(path.join(__dirname, '..', 'app', 'globals.css'), 'utf8')
+const ROOT = path.join(__dirname, '..')
+const CSS = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
 
 function cssToken(name: string): string {
   const m = CSS.match(new RegExp(`${name}:\\s*([^;]+);`))
@@ -161,8 +162,6 @@ describe('самоходный фон встаёт сам', () => {
  * repeat: -1 и без остановки — ровно так, как приехала лента.
  */
 describe('самоходный фон подключён к autoMotion', () => {
-  const ROOT = path.join(__dirname, '..')
-
   /** Комментарии гасятся: докблоки цитируют и repeat: -1, и само правило. */
   const strip = (src: string) =>
     src
@@ -386,6 +385,41 @@ describe('«уменьшить движение» не перебито прав
   })
 })
 
+/** Код без комментариев: докблоки рассказывают, почему чего-то здесь нет */
+const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '')
+
+/** Все .tsx из app/ и components/ — путь от корня и код без комментариев */
+function uiFiles(): Array<{ rel: string; src: string }> {
+  const walk = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) return walk(full)
+      return /\.tsx$/.test(e.name) ? [full] : []
+    })
+  return [...walk(path.join(ROOT, 'app')), ...walk(path.join(ROOT, 'components'))].map((file) => ({
+    rel: path.relative(ROOT, file).split(path.sep).join('/'),
+    src: stripComments(fs.readFileSync(file, 'utf8')),
+  }))
+}
+
+/**
+ * cubic-bezier(x1, y1, x2, y2) как функция y(x), как её считает браузер: x(t)
+ * у допустимой кривой монотонна, и t ищется делением пополам.
+ */
+function cubicBezier(x1: number, y1: number, x2: number, y2: number): (x: number) => number {
+  const at = (a: number, b: number, t: number) => 3 * (1 - t) * (1 - t) * t * a + 3 * (1 - t) * t * t * b + t * t * t
+  return (x) => {
+    let lo = 0
+    let hi = 1
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2
+      if (at(x1, x2, mid) < x) lo = mid
+      else hi = mid
+    }
+    return at(y1, y2, (lo + hi) / 2)
+  }
+}
+
 /** Имена всех @keyframes файла: по ним в сокращении animation видно имя */
 function keyframeNames(css: string): Set<string> {
   return new Set([...css.matchAll(/@keyframes\s+([\w-]+)/g)].map((m) => m[1]))
@@ -459,8 +493,17 @@ describe('самоходная анимация в CSS встаёт сама', (
     '.pwall-row:nth-child(2)': 'второй ряд той же стены ожидания',
     '.pwall-row:nth-child(3)': 'третий ряд той же стены ожидания',
     '.anim-breathe':
-      'заливка Ambient на экранах ожидания: ни знака, ни картинки — свет, вдох за 12 с на грани заметности',
+      'заливка Ambient на экранах ожидания — прогрев, колесо /play, комната в одиночку (BREATHING ниже): ни знака, ни картинки — свет, вдох за 12 с на грани заметности',
   }
+
+  /**
+   * Где дыхание по кругу позволено: файл — экран ожидания или содержит его.
+   * В app/play/page.tsx это фаза spin, в RoomWaiting — комната в одиночку.
+   * /quiz дышал тем же классом молча: фон за вопросами шёл по кругу весь
+   * квиз, хотя причина в ALLOWED говорила «экраны ожидания». Там теперь
+   * .anim-exhale — один выдох при входе.
+   */
+  const BREATHING = ['app/play/page.tsx', 'components/WarmupScreen.tsx', 'components/room/RoomWaiting.tsx']
 
   test('разбор времени видит длительность, задержку, повторы и бесконечность', () => {
     expect(animationSpan([['animation', 'kenburns 20s ease-out both']])).toBe(20_000)
@@ -499,6 +542,16 @@ describe('самоходная анимация в CSS встаёт сама', (
     }
   })
 
+  test('дыхание по кругу — только на экранах ожидания', () => {
+    const users = uiFiles()
+      .filter(({ src }) => /\banim-breathe(?![\w-])/.test(src))
+      .map(({ rel }) => rel)
+      .sort()
+    expect(users, 'фон дышит по кругу там, где читают и отвечают, — возьми .anim-exhale').toEqual(
+      [...BREATHING].sort(),
+    )
+  })
+
   /**
    * Морф героя /play и /daily — тот же самоходный фон, только в TS. Его
    * «один круг» из трёх кадров по семь секунд был ~27 с движения под
@@ -519,6 +572,114 @@ describe('самоходная анимация в CSS встаёт сама', (
     )
     // Меньше секунды слайдер паузу не делает (Math.max(autoplayDelay, 1))
     expect((Math.max(delay, 1) + duration) * 1000).toBeLessThanOrEqual(TOTAL)
+  })
+})
+
+/**
+ * Концы и торможения CSS-движения сверены с самой партитурой, а не со
+ * словами в докблоках.
+ *
+ * Докблоки globals.css обещали больше, чем делали числа: стена совместимости
+ * «как у ленты главной» тормозила по прямой (cubic-bezier квадратичного
+ * ease-out), которую autoMotion отверг именно за угол скорости; кен-бёрнс
+ * «как раньше за 4.5 с» вставал на 1.03, куда старый наезд доходил к 6.9 с;
+ * стрелка подсказки отрабатывала свои два качка, пока вход героя держал её
+ * невидимой. Каждое обещание здесь — число.
+ */
+describe('CSS-движение держит партитуру AUTO_MOTION', () => {
+  const TOTAL = AUTO_MOTION.holdMs + AUTO_MOTION.fadeMs
+  const rules = cssRules(CSS)
+  const frames = (name: string) => rules.filter((r) => r.at.includes(`@keyframes ${name}`))
+  const decl = (r: CssRule | undefined, prop: string) => r?.decls.find(([p]) => p === prop)?.[1] ?? ''
+
+  test('cubic-bezier считается как в браузере', () => {
+    const ease = cubicBezier(0.25, 0.1, 0.25, 1)
+    expect(ease(0)).toBeCloseTo(0, 6)
+    expect(ease(1)).toBeCloseTo(1, 6)
+    expect(ease(0.5)).toBeCloseTo(0.8024, 3)
+    expect(cubicBezier(0, 0, 1, 1)(0.3)).toBeCloseTo(0.3, 6)
+  })
+
+  /**
+   * Путь ленты за торможение — интеграл её множителя скорости, в долях всего
+   * пути торможения. Считается численно от самой autoMotion, а не выписанной
+   * формулой: поменяют кривую там — разойдётся здесь.
+   */
+  const STEPS = 2000
+  const speed = (k: number) => autoMotion(AUTO_MOTION.holdMs + k * AUTO_MOTION.fadeMs)
+  const travelled = Array.from({ length: STEPS + 1 }, () => 0)
+  for (let i = 1; i <= STEPS; i++) {
+    travelled[i] = travelled[i - 1] + (speed((i - 1) / STEPS) + speed(i / STEPS)) / (2 * STEPS)
+  }
+  /** Путь торможения в долях того, что прошлось бы за то же время полным ходом */
+  const share = travelled[STEPS]
+
+  for (const name of ['cwall-drift-left', 'cwall-drift-right']) {
+    test(`${name}: прежний ход, затем торможение ленты главной`, () => {
+      const kf = frames(name)
+      const at = (sel: string) => kf.find((r) => r.selectors.includes(sel))
+      const x = (sel: string) => Number(decl(at(sel), 'transform').match(/translateX\((-?[\d.]+)%?\)/)?.[1] ?? NaN)
+      const split = kf.map((r) => r.selectors[0]).find((sel) => sel !== '0%' && sel !== '100%') ?? ''
+
+      // Стык — ровно конец полного хода
+      expect(parseFloat(split) / 100).toBeCloseTo(AUTO_MOTION.holdMs / TOTAL, 4)
+      expect(decl(at('0%'), 'animation-timing-function')).toBe('linear')
+
+      // Путь торможения — доля share от того, что прошлось бы прежним ходом
+      const hold = x(split) - x('0%')
+      const brake = x('100%') - x(split)
+      expect(brake / hold).toBeCloseTo((share * AUTO_MOTION.fadeMs) / AUTO_MOTION.holdMs, 2)
+
+      const m = decl(at(split), 'animation-timing-function').match(
+        /cubic-bezier\(([\d.]+),\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)\)/,
+      )
+      expect(m, `${name}: у отрезка торможения нет cubic-bezier`).toBeTruthy()
+      const [x1, y1, x2, y2] = m!.slice(1).map(Number)
+      const curve = cubicBezier(x1, y1, x2, y2)
+
+      // Кривая — путь smoothstep-торможения
+      let worst = 0
+      for (let i = 0; i <= STEPS; i += 10) worst = Math.max(worst, Math.abs(curve(i / STEPS) - travelled[i] / share))
+      expect(worst, 'торможение стены разошлось с autoMotion').toBeLessThan(0.01)
+      // Скорость на стыке не прыгает: начальный наклон — прежний ход
+      expect(y1 / x1).toBeCloseTo(1 / share, 1)
+      // И ускорение на стыке нулевое: P0, P1, P2 на одной прямой
+      expect(y2 / x2).toBeCloseTo(y1 / x1, 1)
+      // Встаёт, а не обрывается: в конце скорость ноль
+      expect(y2).toBe(1)
+    })
+  }
+
+  test('кен-бёрнс встаёт там, где старый наезд был к концу AUTO_MOTION', () => {
+    const run = decl(
+      rules.find((r) => r.selectors.includes('.anim-kenburns')),
+      'animation',
+    )
+    expect(animationSpan([['animation', run]])).toBe(TOTAL)
+    const to = frames('kenburns').find((r) => r.selectors.includes('to'))
+    const end = Number(decl(to, 'transform').match(/scale\(([\d.]+)\)/)?.[1])
+    // Прежний: kenburns 20s ease-out до scale(1.06); ease-out — cubic-bezier(0, 0, 0.58, 1)
+    const before = 1 + 0.06 * cubicBezier(0, 0, 0.58, 1)(TOTAL / 20_000)
+    expect(
+      Math.abs(end - before),
+      `scale(${end}), а старый наезд к ${TOTAL / 1000} с был на ${before.toFixed(4)}`,
+    ).toBeLessThan(0.002)
+  })
+
+  test('стрелка подсказки качается с проявления подсказки, а не с первой отрисовки', () => {
+    const bob = rules.filter(
+      (r) =>
+        !r.at.some((a) => REDUCE.test(a)) &&
+        r.decls.some(([p, v]) => p === 'animation' && /\bhero-cue-bob\b/.test(v)),
+    )
+    expect(bob.flatMap((r) => r.selectors)).toEqual(['.hero-cue.is-live .hero-cue-arrow'])
+    const hero = stripComments(
+      fs.readFileSync(path.join(ROOT, 'components', 'landing', 'scenes', 'Hero.tsx'), 'utf8'),
+    )
+    // is-live ставит тот же таймлайн входа, что проявляет подсказку на 0.9, — когда она проявилась
+    expect(hero).toMatch(
+      /\.from\('\[data-hero-cue\]', \{ opacity: 0, duration: DUR\.base[^}]*\}, 0\.9\)\s*\.call\(\(\) => root\.querySelector\('\[data-hero-cue\]'\)\?\.classList\.add\('is-live'\), \[\], 0\.9 \+ DUR\.base\)/,
+    )
   })
 })
 
@@ -587,24 +748,9 @@ describe('«уменьшить движение» не перебито селе
  * motion-safe:.
  */
 describe('анимация из утилит Tailwind не обходит «уменьшить движение»', () => {
-  const ROOT = path.join(__dirname, '..')
-  function walk(dir: string): string[] {
-    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-      const full = path.join(dir, e.name)
-      if (e.isDirectory()) return walk(full)
-      return /\.tsx$/.test(e.name) ? [full] : []
-    })
-  }
-
   test('animate-* только с motion-safe:', () => {
-    const files = [...walk(path.join(ROOT, 'app')), ...walk(path.join(ROOT, 'components'))]
-    const offenders = files.flatMap((file) => {
-      const rel = path.relative(ROOT, file).split(path.sep).join('/')
-      // Комментарии гасятся: докблоки рассказывают, почему утилиты здесь нет
-      const src = fs
-        .readFileSync(file, 'utf8')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/^\s*\/\/[^\n]*/gm, '')
+    // Комментарии гасятся (uiFiles): докблоки рассказывают, почему утилиты здесь нет
+    const offenders = uiFiles().flatMap(({ rel, src }) => {
       return [...src.matchAll(/(^|[\s"'`{])([\w:-]*:)?animate-(?:pulse|spin|ping|bounce)\b/g)]
         .filter((m) => !(m[2] ?? '').includes('motion-safe:'))
         .map((m) => `${rel}: ${m[0].trim()}`)

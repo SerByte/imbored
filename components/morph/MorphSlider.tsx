@@ -42,6 +42,11 @@
  * 10. Дрейф под «уменьшить движение» — ноль. В шейдере он не смотрел на
  *    uReduce, и кадр на /game покачивался бесконечно и у того, кто движения
  *    не просил.
+ * 11. Дрейф стоит и без зрителя на экране: под лайтбоксом (paused) и после
+ *    «Паузы». Сцена под полноэкранным оверлеем для наблюдателя видимости
+ *    остаётся на экране, и после открытия лайтбокса на /game канвас снова
+ *    рисовал кадр на каждый vsync под затемнением с размытием. А «Пауза»
+ *    гасила автолистание, но не дрейф — самоходное движение без конца.
  */
 
 import { tweenValue, type Tween } from './tween'
@@ -88,6 +93,14 @@ export interface MorphSliderProps {
   onChange?: (index: number) => void
   /** Клик по сцене без протяжки: у слайдера нет своего действия, решает родитель */
   onActivate?: () => void
+  /**
+   * Сцену накрыли — на /game её же лайтбоксом. Кадр стоит: ни дрейфа, ни
+   * автолистания. Свой наблюдатель видимости этого не узнает: оверлей поверх
+   * страницы сцену с экрана не убирает, и под затемнением с backdrop-filter
+   * канвас отдавал бы новый кадр на каждый vsync — ровно та перерисовка
+   * слоёв размытия, ради которой петля рисует по требованию.
+   */
+  paused?: boolean
 }
 
 interface EngineOptions {
@@ -335,8 +348,11 @@ class MorphEngine {
   private raf = 0
   /** Контекст потерян или движок разобран: кадров больше не просим */
   private dead = false
-  /** Сцена на экране — дрейф без зрителя не рисуем (IntersectionObserver в компоненте) */
-  private visible = true
+  /**
+   * На сцену смотрят — дрейф рисуется. Не смотрят, если она ушла с экрана,
+   * её накрыл лайтбокс или нажата «Пауза»: решает компонент (setWatched).
+   */
+  private watched = true
   /** Кадр, который сейчас в tNext: его текстура может доехать позже перехода */
   private nextIndex: number
   /**
@@ -486,13 +502,17 @@ class MorphEngine {
 
   /** Кадр следующего тика будет другим — значит, его стоит рисовать */
   private moving(): boolean {
-    return this.animating || this.dragging || (this.visible && this.drift(this.getOptions()) > 0)
+    return this.animating || this.dragging || (this.watched && this.drift(this.getOptions()) > 0)
   }
 
-  /** Сцена ушла с экрана или вернулась — дрейф без зрителя не рисуем */
-  setVisible(visible: boolean): void {
-    this.visible = visible
-    if (visible) this.invalidate()
+  /**
+   * Зритель ушёл или вернулся — дрейф без зрителя не рисуем. Униформы не
+   * трогаются: кадр просто стоит, а время шейдера копится только по
+   * нарисованным кадрам, так что дрейф продолжится с того же места.
+   */
+  setWatched(watched: boolean): void {
+    this.watched = watched
+    if (watched) this.invalidate()
   }
 
   /*
@@ -730,6 +750,7 @@ export default function MorphSlider({
   label = 'Слайдер',
   onChange,
   onActivate,
+  paused = false,
 }: MorphSliderProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<MorphEngine | null>(null)
@@ -744,6 +765,21 @@ export default function MorphSlider({
    * Вернуть автолистание можно той же кнопкой.
    */
   const [stopped, setStopped] = useState(false)
+
+  /**
+   * Дрейф стоит не только за краем экрана. Накрыта сцена (paused) — кадр
+   * никто не видит. Нажата «Пауза» (stopped) — её обещание по WCAG 2.2.2
+   * про всё самоходное движение сцены, а дрейф — тоже движение без конца;
+   * прежде «Пауза» гасила автолистание, а кадр продолжал покачиваться.
+   * stopped ставит и ручной переход: кто выбрал кадр, тот его и рассматривает.
+   *
+   * Последний ответ наблюдателя видимости держит ref: наблюдатель живёт в
+   * эффекте движка, а «стоять» меняется пропсом и состоянием. До первого
+   * ответа — «на экране», как и у самого движка.
+   */
+  const still = paused || stopped
+  const seenRef = useRef(true)
+  const stillRef = useRef(still)
 
   // Настройки и колбэки живут в ref: эффекты движка и указателя ставятся один
   // раз, и новый объект пропсов не должен их пересоздавать.
@@ -811,6 +847,9 @@ export default function MorphSlider({
     })
     engineRef.current = engine
     setIndex(startIndex)
+    // Движок пересобран, пока сцена стоит (новые items на повороте телефона
+    // под открытым лайтбоксом), — новый тоже стоит
+    engine.setWatched(seenRef.current && !stillRef.current)
 
     /*
      * Ушла сцена с экрана — дрейф не рисуется. Здесь, а не пропом от
@@ -818,7 +857,10 @@ export default function MorphSlider({
      * автоплей, а кадры движка — забота самого слайдера. visibilitychange не
      * нужен: в фоновой вкладке rAF не приходит и так.
      */
-    const io = new IntersectionObserver(([entry]) => engine.setVisible(entry.isIntersecting))
+    const io = new IntersectionObserver(([entry]) => {
+      seenRef.current = entry.isIntersecting
+      engine.setWatched(entry.isIntersecting && !stillRef.current)
+    })
     io.observe(containerRef.current)
 
     return () => {
@@ -827,6 +869,11 @@ export default function MorphSlider({
       engineRef.current = null
     }
   }, [items, startIndex, dprCap])
+
+  useEffect(() => {
+    stillRef.current = still
+    engineRef.current?.setWatched(seenRef.current && !still)
+  }, [still])
 
   // Ручной переход — это и есть «хватит листать за меня» (см. stopped)
   const handleNext = useCallback(() => {
@@ -839,13 +886,13 @@ export default function MorphSlider({
   }, [])
 
   useEffect(() => {
-    if (!autoplay || hovering || focused || stopped) return undefined
+    if (!autoplay || paused || hovering || focused || stopped) return undefined
     const id = window.setTimeout(
       () => engineRef.current?.next(),
       Math.max(autoplayDelay, 1) * 1000,
     )
     return () => window.clearTimeout(id)
-  }, [autoplay, autoplayDelay, hovering, focused, stopped, index])
+  }, [autoplay, autoplayDelay, paused, hovering, focused, stopped, index])
 
   useEffect(() => {
     const el = containerRef.current

@@ -99,6 +99,13 @@ export function Hero() {
           .from('[data-hero-lede]', { y: 12, opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.42)
           .from('[data-hero-card]', { y: 18, opacity: 0, duration: DUR.slow, ease: EASE_GSAP }, 0.56)
           .from('[data-hero-cue]', { opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.9)
+          /*
+           * Стрелка подсказки качается с этого мига, а не с первой
+           * отрисовки: её два качка (4.4 с, AUTO_MOTION) иначе кончались
+           * раньше, чем гидрация и вход возвращали подсказку на экран.
+           * Почему так — у .hero-cue-arrow в globals.css.
+           */
+          .call(() => root.querySelector('[data-hero-cue]')?.classList.add('is-live'), [], 0.9 + DUR.base)
       }
 
       /*

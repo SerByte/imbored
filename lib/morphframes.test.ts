@@ -45,7 +45,7 @@ describe('кадры слайдера — по требованию', () => {
     const moving = method(/private moving\(\): boolean \{/)
     expect(moving).toMatch(/this\.animating/)
     expect(moving).toMatch(/this\.dragging/)
-    expect(moving, 'дрейф без зрителя рисовать незачем').toMatch(/this\.visible && this\.drift\(/)
+    expect(moving, 'дрейф без зрителя рисовать незачем').toMatch(/this\.watched && this\.drift\(/)
   })
 
   test('конструктор не заводит петлю мимо invalidate', () => {
@@ -65,7 +65,7 @@ describe('кадры слайдера — по требованию', () => {
       /beginDrag\(\): boolean \{/,
       /endDrag\(\): void \{/,
       /private commit\(target: number\): void \{/,
-      /setVisible\(visible: boolean\): void \{/,
+      /setWatched\(watched: boolean\): void \{/,
     ]) {
       expect(method(sig), String(sig)).toMatch(/this\.invalidate\(\)/)
     }
@@ -80,8 +80,40 @@ describe('кадры слайдера — по требованию', () => {
   })
 
   test('видимость сцены доходит до движка', () => {
-    expect(src).toMatch(/new IntersectionObserver\(\(\[entry\]\) => engine\.setVisible\(entry\.isIntersecting\)\)/)
+    expect(src).toMatch(/seenRef\.current = entry\.isIntersecting/)
+    expect(src).toMatch(/engine\.setWatched\(entry\.isIntersecting && !stillRef\.current\)/)
     expect(src).toMatch(/io\.disconnect\(\)/)
+  })
+
+  /**
+   * Сцена под лайтбоксом для наблюдателя видимости остаётся на экране: оверлей
+   * лежит поверх страницы и её не сдвигает. После тапа по кадру на /game
+   * канвас снова рисовал дрейф на каждый vsync — под затемнением с
+   * backdrop-filter, то есть ровно с той перерисовкой слоёв размытия, ради
+   * которой петля рисует по требованию. И «Пауза» гасила автолистание, но не
+   * дрейф: кадр продолжал покачиваться у того, кто движение остановил.
+   */
+  test('под лайтбоксом и после «Паузы» дрейф стоит', () => {
+    expect(src).toMatch(/const still = paused \|\| stopped/)
+    expect(src).toMatch(/engineRef\.current\?\.setWatched\(seenRef\.current && !still\)/)
+    expect(src).toMatch(/\}, \[still\]\)/)
+    // Движок, пересобранный под лайтбоксом, тоже стоит
+    expect(src).toMatch(/engine\.setWatched\(seenRef\.current && !stillRef\.current\)/)
+  })
+
+  test('под лайтбоксом не листает и автоплей', () => {
+    expect(src).toMatch(/if \(!autoplay \|\| paused \|\|/)
+    expect(src).toMatch(/\[autoplay, autoplayDelay, paused,/)
+  })
+
+  test('страница игры ставит слайдер на паузу, пока открыт лайтбокс', () => {
+    const shots = fs
+      .readFileSync(path.join(ROOT, 'components', 'GameShots.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/[^\n]*/gm, '')
+    const at = shots.indexOf('<MorphSlider')
+    expect(at).toBeGreaterThan(-1)
+    expect(shots.slice(at, shots.indexOf('/>', at))).toMatch(/\bpaused=\{open !== null\}/)
   })
 
   /**

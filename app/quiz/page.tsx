@@ -359,8 +359,9 @@ function Quiz() {
 
   return (
     <div className="relative flex-1 flex flex-col items-center justify-center px-5 py-24 overflow-hidden">
-      {/* Фон дышит — тот же приём, что на экране ожидания и «Игре дня» */}
-      <Ambient className="anim-breathe" />
+      {/* Фон делает один выдох и встаёт: дыхание по кругу — знак ожидания
+          (прогрев, колесо), а квиз читают и отвечают. См. .anim-exhale */}
+      <Ambient className="anim-exhale" />
 
       {/* Тумблер вне центральной колонки: композиция экрана не меняется, а
           звук всё равно нужно чем-то включать. */}

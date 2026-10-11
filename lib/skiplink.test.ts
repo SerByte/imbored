@@ -1,7 +1,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { focusBand, HEADER_CLEARANCE, NAV_GAP, needsReveal, overlaps, takeFocus, type FocusTarget } from './skiplink'
+import {
+  FOCUS_RING,
+  focusBand,
+  HEADER_CLEARANCE,
+  NAV_GAP,
+  needsReveal,
+  overlaps,
+  takeFocus,
+  withFocusRing,
+  type FocusTarget,
+} from './skiplink'
 
 /**
  * Сторож «К содержанию» и фокуса под панелями.
@@ -174,6 +184,13 @@ describe('подключение', () => {
  * Теперь: Escape закрывает её, не двигая фокус (исключение самого критерия
  * для содержимого, которое убирается без переноса фокуса); фокус, вставший
  * под неё, её убирает; «Понятно» отдаёт фокус <main>, а не body.
+ *
+ * Убирает только фокус с клавиатуры (:focus-visible). Первая версия уходила
+ * от любого: на /quiz ответ кликом переводит фокус на заголовок следующего
+ * вопроса прямо под запиской, и одноразовая записка пропадала после первого
+ * же ответа у человека, который её не закрывал и кольца не видел. И
+ * сравнивается рамка с кольцом: кнопка вплотную под запиской по голой рамке
+ * «не перекрыта», а верх её кольца — под ней.
  */
 describe('записка «Режим просмотра» не прячет фокус', () => {
   const box = (top: number, bottom: number, left = 0, right = 100) => ({ top, bottom, left, right })
@@ -186,6 +203,38 @@ describe('записка «Режим просмотра» не прячет ф�
     expect(overlaps(box(80, 210, 400, 1000), box(100, 140, 0, 400))).toBe(false)
   })
 
+  test('кольцо фокуса считается: кнопка вплотную под запиской перекрыта', () => {
+    const note = box(80, 210)
+    const flush = box(210, 250)
+    expect(overlaps(flush, note), 'голая рамка кольца не знает').toBe(false)
+    expect(overlaps(withFocusRing(flush), note)).toBe(true)
+    // Кольцо целиком ниже записки — повода уходить нет
+    expect(overlaps(withFocusRing(box(210 + FOCUS_RING, 250)), note)).toBe(false)
+    expect(withFocusRing(box(100, 140, 10, 50))).toEqual({
+      top: 100 - FOCUS_RING,
+      bottom: 140 + FOCUS_RING,
+      left: 10 - FOCUS_RING,
+      right: 50 + FOCUS_RING,
+    })
+  })
+
+  /**
+   * Подложка кольца — box-shadow от рамки элемента, а не от линии outline:
+   * она лежит в тех же пикселях, что отступ и линия. Прежний докблок NAV_GAP
+   * складывал их в 8 px «вокруг элемента», и эта ошибка ушла бы в замер
+   * записки. Константа обязана совпадать с самим правилом.
+   */
+  test('FOCUS_RING — ровно то, на сколько кольцо :focus-visible выходит за рамку', () => {
+    const css = read('app/globals.css')
+    const block = css.match(/^:focus-visible \{([^}]*)\}/m)?.[1] ?? ''
+    const width = Number(block.match(/outline:\s*(\d+)px/)?.[1] ?? NaN)
+    const offset = Number(block.match(/outline-offset:\s*(\d+)px/)?.[1] ?? NaN)
+    const spread = Number(block.match(/box-shadow:\s*0 0 0 (\d+)px/)?.[1] ?? NaN)
+    expect([width, offset, spread].every(Number.isFinite), 'правило :focus-visible не разобрано').toBe(true)
+    expect(FOCUS_RING).toBe(Math.max(offset + width, spread))
+    expect(NAV_GAP, 'зазор над панелью меньше самого кольца').toBeGreaterThanOrEqual(FOCUS_RING)
+  })
+
   const note = code(read('components/ReadOnlyNote.tsx'))
 
   test('Escape закрывает записку', () => {
@@ -196,8 +245,15 @@ describe('записка «Режим просмотра» не прячет ф�
 
   test('фокус, вставший под записку, её убирает', () => {
     expect(note).toMatch(/addEventListener\('focusin'/)
-    expect(note).toMatch(/overlaps\(/)
+    expect(note).toMatch(/overlaps\(withFocusRing\(at\.getBoundingClientRect\(\)\)/)
     expect(note).toMatch(/removeEventListener\('focusin'/)
+  })
+
+  test('уходит только от фокуса с клавиатуры', () => {
+    expect(note, 'фокус от клика на /quiz прятал записку после первого ответа').toMatch(
+      /if \(!at\.matches\(':focus-visible'\)\) return/,
+    )
+    expect(note.indexOf(":focus-visible')")).toBeLessThan(note.indexOf('overlaps('))
   })
 
   test('«Понятно» отдаёт фокус <main>, а не body', () => {
