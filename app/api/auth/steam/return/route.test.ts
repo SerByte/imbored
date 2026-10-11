@@ -62,6 +62,9 @@ describe('возврат из Steam с приглашением', () => {
     const me = members.find((m) => m.steamid === STEAMID)
     expect(me, 'вошёл через Steam, а в комнате его нет — нужен ещё один клик').toBeDefined()
     expect(me?.personaName).toBe('Аня')
+    // Членство помнит доказанный вход: ссылка на этот профиль за него в
+    // комнате больше не действует (lib/roomseat)
+    expect(me?.writer).toBe(true)
   })
 
   test('комнаты нет — вход всё равно состоялся, а комната скажет сама', async () => {

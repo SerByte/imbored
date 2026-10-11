@@ -334,6 +334,12 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     expr: 'revealed',
     guards: [['components/room/PartyTrivia.tsx', /onClick=\{\(\) => \{\s*if \(revealed\) return\s*setChosen\(i\)/]],
   },
+  {
+    // «Пустить обратно» после ✕: в пути — ждём ответа, снят — снимать нечего
+    file: 'app/room/[id]/page.tsx',
+    expr: 'undoLocked',
+    guards: [['app/room/[id]/page.tsx', /async function unkick\(\) \{\s*if \(!kicked \|\| undoLocked\) return/]],
+  },
 ]
 
 describe('aria-disabled — не декорация: повтор гасит обработчик', () => {

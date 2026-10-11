@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { memberLabel } from '@/lib/room'
 import { getLatestSnapshot, getRoom, roomMembers } from '@/lib/db'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { buildTrivia, loadTriviaCatalog } from '@/lib/trivia'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf, seatRefusal } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const MAX_ROUND = 9
@@ -36,28 +37,32 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  const writer = isWriter(session)
 
   const db = await getDb()
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Тот же вход, что у остальных роутов участника (lib/roomseat)
+  const seat = seatOf(members, steamid, writer)
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
-  if (!members.some((m) => m.steamid === steamid)) {
-    return NextResponse.json({ error: 'notmember' }, { status: 403 })
-  }
+  const refusal = seatRefusal(seat)
+  if (refusal) return refusal
 
   // После проверки членства — как у соседнего /deck: чужие попытки уже отсечены
-  // 403 выше, тратить на них строки ограничителя незачем.
+  // 403 выше, тратить на них строки ограничителя незачем. Счёт по сессии, а
+  // не по профилю: почему и почему без потолка адреса — lib/roomseat.
   const gate = await checkRate(db, {
     bucket: 'room-trivia',
-    id: steamid,
+    id: personalRateId(session, writer),
     limit: TRIVIA_LIMIT,
     windowSec: TRIVIA_WINDOW_SEC,
     nowSec: nowSec(),

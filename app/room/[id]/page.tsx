@@ -73,6 +73,13 @@ type RoomState = {
   members: RoomMemberView[]
   hasSession: boolean
   isMember: boolean
+  /**
+   * Сессия по ссылке на профиль, который сидит в комнате со входом через
+   * Steam: действовать за него она не может (lib/roomseat), «Войти в комнату»
+   * ей откажет — поможет только вход через Steam. Необязательное: старый
+   * сервер поля не присылал.
+   */
+  needSteam?: boolean
   matchedGame: {
     appid: number
     name: string
@@ -228,12 +235,28 @@ export default function RoomPage() {
   /** Добор раунда не удался — кнопка обязана вернуться нажимаемой */
   const [pullFailed, setPullFailed] = useState(false)
   /**
-   * Хост вошёл по вставленной ссылке: вывесить комнату на доску ему нельзя
-   * (403 needsteam, см. requireWriter в lib/server). Создать такую комнату он
-   * уже не может, но созданные раньше живы, и их переключатель молча не
-   * срабатывал бы — отсюда строка о входе через Steam.
+   * Хост вошёл по вставленной ссылке: вывесить комнату на доску и убрать
+   * другого ему нельзя (403 needsteam, см. requireWriter в lib/server и
+   * leave/route.ts). Создать такую комнату он не может, но хостом по ссылке
+   * становятся — рука переходит к участнику по ссылке, когда хост уходит, а
+   * вошедших через Steam в комнате нет (removeRoomMember), — и переключатель
+   * с крестиком молча не срабатывали бы. Отсюда строка о входе через Steam.
    */
   const [publicDenied, setPublicDenied] = useState(false)
+  /**
+   * Кого хост только что убрал ✕ — для «Пустить обратно».
+   *
+   * Убранный не входит обратно полчаса (ROOM_KICK_SEC в lib/room), а ✕ —
+   * маленький крестик рядом с ником, и промах по соседней строке стоил другу
+   * тех же получаса. Строка живёт, пока хост на странице и пока убранный не
+   * вернулся в ростер: дальше отменять нечего. id — тот же memberKey, каким
+   * его убирали, — сервер сверит его с отметками комнаты (leave/route.ts).
+   */
+  const [kicked, setKicked] = useState<{
+    id: string
+    name: string
+    phase: 'shown' | 'busy' | 'failed' | 'done'
+  } | null>(null)
   /**
    * Комната была открыта на глазах у этого экрана. Матч, пришедший после, —
    * новость: о нём говорит строка matchStatus, а церемония забирает фокус.
@@ -805,9 +828,15 @@ export default function RoomPage() {
    */
   function joinFailure(status: number, code: string | null): string {
     if (status === 404) return 'Такой комнаты уже нет — попроси новую ссылку.'
-    // 409 бывает двух видов: комната сошлась или мест нет — различает код
+    // 409 бывает трёх видов: комната сошлась, мест нет или хост убрал — различает код
     if (code === 'full')
       return `В пати уже ${ROOM_MAX_MEMBERS} ${plural(ROOM_MAX_MEMBERS, 'человек', 'человека', 'человек')}, больше не помещается. Собери свою.`
+    // ROOM_KICK_SEC в lib/room: срок считается от того, как убрали, а не от нажатия
+    if (code === 'kicked')
+      return 'Хост убрал тебя из этой пати. Вернуться получится через полчаса после этого — или раньше, если хост пустит обратно. А пока можно собрать свою.'
+    // Профиль сидит в комнате со входом через Steam, а здесь — ссылка (lib/roomseat)
+    if (code === 'needsteam')
+      return 'Этот профиль уже в пати со входом через Steam. Ссылка не доказывает, что профиль твой, — войди через Steam и здесь.'
     if (status === 409) return 'Эта пати уже договорилась об игре — попроси новую ссылку.'
     if (status === 401) return 'Сессия истекла — подключи библиотеку заново, и вернём тебя сюда.'
     if (status === 429) return 'Слишком много попыток подряд. Подожди немного и попробуй снова.'
@@ -1043,19 +1072,63 @@ export default function RoomPage() {
    * Наружу уходит ХЕШ участника, не steamid: см. шапку lib/room.ts.
    */
   async function removeMember(memberId?: string) {
+    // Прежний отказ гаснет до запроса: второй такой же иначе промолчал бы
+    // (components/StatusLine) — область в шапке меняет только содержимое
+    setPublicDenied(false)
+    const name = memberId ? state?.members.find((m) => m.id === memberId)?.name : undefined
     const res = await fetch(`/api/room/${roomId}/leave`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(memberId ? { memberId } : {}),
     }).catch(() => null)
+    // Убрать другого — право хоста со входом через Steam (leave/route.ts).
+    // Хост по ссылке бывает: рука переходит к участнику по ссылке, когда
+    // хост уходит. Ему — та же строка, что у доски, а не молча погасший крестик
+    if (res && (await isNeedSteam(res))) {
+      writerStore.set(false)
+      setPublicDenied(true)
+      return
+    }
     if (!res?.ok) return
     // Ушёл сам — на доску, там есть куда подсесть. Убрал другого — остаёмся
     // и перечитываем: матч мог стать достижим прямо этим действием.
-    if (memberId) void refresh()
-    else router.push('/rooms')
+    if (memberId) {
+      setKicked({ id: memberId, name: name ?? 'участник', phase: 'shown' })
+      void refresh()
+    } else router.push('/rooms')
+  }
+
+  /** Повтор гасит unkick: в пути — ждём ответа, снят — снимать нечего */
+  const undoLocked = kicked?.phase === 'busy' || kicked?.phase === 'done'
+
+  /**
+   * «Пустить обратно» — снять с убранного запрет на возвращение.
+   *
+   * В ростер это его не сажает: войти — его дело, «Войти в комнату» у него
+   * на экране. needsteam — та же строка в шапке, что у ✕: права те же.
+   */
+  async function unkick() {
+    if (!kicked || undoLocked) return
+    const { id } = kicked
+    setKicked({ ...kicked, phase: 'busy' })
+    setPublicDenied(false)
+    const res = await fetch(`/api/room/${roomId}/leave`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unkick: id }),
+    }).catch(() => null)
+    const denied = res !== null && (await isNeedSteam(res))
+    if (denied) {
+      writerStore.set(false)
+      setPublicDenied(true)
+    }
+    // Ответ мог прийти, когда строка уже про другого убранного
+    const phase = denied ? 'shown' : res?.ok ? 'done' : 'failed'
+    setKicked((k) => (k?.id === id ? { ...k, phase } : k))
   }
 
   async function togglePublic() {
+    setPublicDenied(false)
     const res = await fetch(`/api/room/${roomId}/public`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1228,18 +1301,27 @@ export default function RoomPage() {
           */}
           <p className="text-dim text-sm">
             Комната <span className="font-mono text-ink">{roomId}</span>.{' '}
-            {state.hasSession
-              ? 'Библиотека уже подключена — осталось войти и свайпать, во что готов играть.'
-              : 'Подключи свою библиотеку — и свайпай, во что готов играть.'}{' '}
-            Совпадёте — будет матч.
+            {state.needSteam
+              ? 'Этот профиль уже в пати — со входом через Steam. Здесь ты зашёл по ссылке, а она не доказывает, что профиль твой: войди через Steam и здесь, и продолжишь с того же места.'
+              : state.hasSession
+                ? 'Библиотека уже подключена — осталось войти и свайпать, во что готов играть. Совпадёте — будет матч.'
+                : 'Подключи свою библиотеку — и свайпай, во что готов играть. Совпадёте — будет матч.'}
           </p>
           {/*
             aria-disabled, а не disabled, у обеих дверей: на отказе экран
             остаётся, строка ниже говорит почему, и нажатая кнопка обязана
             удержать фокус — disabled ронял его в body на всё время запроса.
             Повтор гасят сами join и joinAsDemoFriend (по busy).
+
+            needSteam — первой веткой: «Войти в комнату» такой сессии откажет
+            (lib/roomseat), и кнопка, отвечающая отказом, хуже честной двери.
+            Возврат из Steam сам посадит в комнату и поднимет членство.
           */}
-          {state.hasSession ? (
+          {state.needSteam ? (
+            <a href={`/api/auth/steam?join=${roomId}`} className="btn-ember is-block py-3">
+              Войти через Steam
+            </a>
+          ) : state.hasSession ? (
             <button
               onClick={join}
               aria-disabled={busy}
@@ -1284,6 +1366,39 @@ export default function RoomPage() {
 
   // ---- ЛОББИ + СВАЙП ----
   const card = cards?.[0]
+
+  /*
+   * «Пустить обратно» — под ростером, откуда нажат ✕ (RoomWaiting ставит её
+   * и под приглашением, если ✕ убрал последнего, кроме хоста). Пропадает,
+   * когда убранный снова в ростере: отменять уже нечего.
+   *
+   * Имя после двоеточия, а глагол — без рода: «убрали», «сможет». Ник из
+   * Steam не склоняется и рода не выдаёт (тот же довод — в LikesStrips).
+   */
+  const kickShown = kicked && !state.members.some((m) => m.id === kicked.id) ? kicked : null
+  const kickUndo = kickShown ? (
+    <p className="relative flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-faint">
+      <span>
+        {kickShown.phase === 'done'
+          ? `${kickShown.name} сможет войти сразу.`
+          : `Убрали из пати: ${kickShown.name}. Войти снова получится через полчаса.`}
+      </span>
+      <button
+        type="button"
+        onClick={() => void unkick()}
+        aria-disabled={undoLocked}
+        className="tap tap-tight text-ember-text hover:underline cursor-pointer aria-disabled:opacity-60 aria-disabled:no-underline"
+      >
+        {kickShown.phase === 'busy'
+          ? 'Пускаю…'
+          : kickShown.phase === 'done'
+            ? 'Пустили обратно'
+            : kickShown.phase === 'failed'
+              ? 'Не дошло — нажми ещё раз'
+              : 'Пустить обратно'}
+      </button>
+    </p>
+  ) : null
   // Прогресс приходит с сервера (он один знает, сколько карт осталось после
   // фильтра актуальности), но свайп обязан двигать полосу мгновенно, а опрос
   // отстаёт на пару секунд
@@ -1425,7 +1540,16 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {publicDenied && <NeedSteam from={`/room/${roomId}`} className="-mt-3" />}
+      {/*
+        Отказ ✕, «Пустить обратно» и доски хосту по ссылке. Живая область
+        стоит всегда, меняется только содержимое (components/StatusLine): иначе
+        отказ ✕, нажатого внизу экрана, не слышал бы никто — а глазом строку
+        в шапке не видно, пока не прокрутишь. Когда ростер научится говорить
+        отказы рядом с собой, строке место там.
+      */}
+      <div role="status" className={publicDenied ? '-mt-3' : 'sr-only'}>
+        {publicDenied && <NeedSteam from={`/room/${roomId}`} why="host" />}
+      </div>
 
       {card && (
         <div className="flex flex-wrap gap-2">
@@ -1494,6 +1618,7 @@ export default function RoomPage() {
           onTakeLeader={() => void takeLeader()}
           onRemoveMember={(memberId) => void removeMember(memberId)}
           onLeave={() => void removeMember()}
+          kickUndo={kickUndo}
           hasMore={hasMore}
           pulling={pulling}
           pullFailed={pullFailed}

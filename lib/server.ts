@@ -256,6 +256,11 @@ export async function currentSteamId(): Promise<string | null> {
  * Поставь по умолчанию «подтверждена» — и каждый, кто раньше вставил чужую
  * ссылку, сохранил бы право записи на год. Цена — честному человеку один раз
  * войти через Steam.
+ *
+ * В комнатах то же правило работает тоньше, потому что входят в них и по
+ * ссылке. Членство помнит, заведено ли оно пишущей сессией, и такое членство
+ * действует только от пишущей (lib/roomseat). Убрать из пати другого — тоже
+ * только пишущей, как и вывесить её на доску.
  */
 export function isWriter(session: Pick<Resolved, 'steamid' | 'verified'>): boolean {
   return session.verified || isDemoId(session.steamid)
@@ -268,8 +273,10 @@ export type WriterGate = { ok: true; steamid: string } | { ok: false; response: 
  *
  * 401 nosession — гостю, как и раньше. 403 needsteam — сессии, которой
  * писать нельзя (isWriter): страницы по этому коду показывают строку «войди
- * через Steam», а не экран ошибки. Голос и вход в комнату сюда НЕ ходят —
- * они живут внутри комнаты и профиль не трогают.
+ * через Steam», а не экран ошибки. Голос и вход в комнату сюда НЕ ходят: в
+ * пати подключаются и своей ссылкой. Но от имени участника, вошедшего через
+ * Steam, ссылка на его профиль не действует — это решает seatOf в
+ * lib/roomseat тем же кодом needsteam.
  */
 export async function requireWriter(): Promise<WriterGate> {
   const session = await currentSession()

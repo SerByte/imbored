@@ -39,7 +39,10 @@ import {
   pruneNewsForApp,
   releaseLease,
   repairGameJson,
+  liftRoomKick,
+  raiseRoomSeat,
   removeRoomMember,
+  roomKickedSince,
   reviveGoneNewsPoll,
   setGameDescriptions,
   setGamesMedia,
@@ -143,6 +146,7 @@ import {
   saveWishlist,
   type GameRow,
 } from './db'
+import { ROOM_KICK_SEC } from './room'
 import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
 import { FEEDBACK_ACTIONS } from './feedbackkinds'
@@ -1059,6 +1063,46 @@ describe('db', () => {
     expect((await roomMembers(db, 'MTC001')).map((m) => m.steamid)).toEqual(['a', 'b'])
   })
 
+  test('членство помнит вход с доказательством, и повторный вход его не снимает', async () => {
+    // Сессия по ссылке на профиль участника не должна действовать за него,
+    // если он сам вошёл через Steam (lib/roomseat). Перезаход по ссылке —
+    // свой или чужой — признак не сбрасывает, перезаход через Steam ставит.
+    const db = await freshDb()
+    await createRoom(db, { id: 'WRT001', steamid: 'a' }, NOW)
+    await joinRoom(db, 'WRT001', 'a', 'A', NOW, { writer: true })
+    await joinRoom(db, 'WRT001', 'b', 'B', NOW)
+    const writerOf = async (id: string) =>
+      (await roomMembers(db, 'WRT001')).find((m) => m.steamid === id)?.writer
+
+    expect(await writerOf('a')).toBe(true)
+    expect(await writerOf('b')).toBe(false)
+    expect(await joinRoom(db, 'WRT001', 'a', 'A', NOW + 1)).toBe('joined')
+    expect(await writerOf('a')).toBe(true)
+    await joinRoom(db, 'WRT001', 'b', 'B', NOW + 1, { writer: true })
+    expect(await writerOf('b')).toBe(true)
+    // повторный вход по-прежнему освежает ник и время, а не дублирует строку
+    expect(await roomMembers(db, 'WRT001')).toEqual([
+      { steamid: 'a', personaName: 'A', joinedAt: NOW + 1, writer: true },
+      { steamid: 'b', personaName: 'B', joinedAt: NOW + 1, writer: true },
+    ])
+  })
+
+  test('убранный хостом не входит, пока не выйдет срок; ушедший сам — входит', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'KCK001', steamid: 'a' }, NOW)
+    for (const s of ['a', 'b', 'c']) await joinRoom(db, 'KCK001', s, s, NOW)
+    await removeRoomMember(db, 'KCK001', 'b', { kickedAt: NOW })
+    await removeRoomMember(db, 'KCK001', 'c')
+
+    expect(await joinRoom(db, 'KCK001', 'b', 'b', NOW + 60)).toBe('kicked')
+    expect(await joinRoom(db, 'KCK001', 'c', 'c', NOW + 60)).toBe('joined')
+    expect(await joinRoom(db, 'KCK001', 'b', 'b', NOW + ROOM_KICK_SEC + 1)).toBe('joined')
+    // срок — у этой комнаты: в соседнюю убранный входит как все
+    await createRoom(db, { id: 'KCK002', steamid: 'a' }, NOW)
+    await removeRoomMember(db, 'KCK001', 'b', { kickedAt: NOW + ROOM_KICK_SEC + 2 })
+    expect(await joinRoom(db, 'KCK002', 'b', 'b', NOW + ROOM_KICK_SEC + 3)).toBe('joined')
+  })
+
   test('порядок участников определён даже при совпавшей секунде входа', async () => {
     const db = await freshDb()
     await createRoom(db, { id: 'TIE001', steamid: 'zzz' }, NOW)
@@ -1221,6 +1265,23 @@ describe('db', () => {
     expect((await roomVotes(db, 'DCK001')).map((r) => r.appid)).toEqual([620])
     // размер колоды пишется той же пачкой
     expect((await getRoom(db, 'DCK001'))?.deckSize).toBe(2)
+  })
+
+  test('голос из свайпа отдаётся один раз: повтор — да, переголосование — нет', async () => {
+    // Переголосование было зондом: «нет» на карту, перечитать «вы почти
+    // совпали» и сравнить счёт — и видно, кто за эту карту (likes/route.ts).
+    // Повтор того же голоса после обрыва сети обязан остаться безобидным,
+    // поэтому ответ true, а не отказ: запись просто не меняется.
+    const db = await freshDb()
+    await createRoom(db, { id: 'DCK005', steamid: 'a' }, NOW)
+    await issueRoomDeck(db, 'DCK005', [570])
+    const vote = (v: 0 | 1, at: number) =>
+      castDeckVote(db, { roomId: 'DCK005', steamid: 'a', appid: 570, vote: v, legacy: false }, at)
+
+    expect(await vote(1, NOW)).toBe(true)
+    expect(await vote(1, NOW + 1)).toBe(true)
+    expect(await vote(0, NOW + 2)).toBe(true)
+    expect(await roomVotes(db, 'DCK005')).toEqual([{ steamid: 'a', appid: 570, vote: 1, createdAt: NOW }])
   })
 
   test('колода копится: карта из прежней выдачи остаётся голосуемой', async () => {
@@ -2189,6 +2250,51 @@ describe('removeRoomMember', () => {
     expect((await roomVotes(db, 'ROOM01')).map((v) => v.steamid)).toEqual(['a'])
   })
 
+  test('ушёл хост — хозяином становится первый в ростере', async () => {
+    // Без передачи комната оставалась без единственной руки, которая убирает
+    // застрявшего: created_by указывал на ушедшего, и ✕ в ростере не было ни у кого
+    const db = await freshDb()
+    await createRoom(db, { id: 'HST001', steamid: 'h' }, NOW)
+    await joinRoom(db, 'HST001', 'h', 'H', NOW)
+    await joinRoom(db, 'HST001', 'z', 'Z', NOW + 1)
+    await joinRoom(db, 'HST001', 'y', 'Y', NOW + 2)
+
+    // убрать другого — хозяин тот же
+    await removeRoomMember(db, 'HST001', 'y', { kickedAt: NOW + 3 })
+    expect((await getRoom(db, 'HST001'))?.createdBy).toBe('h')
+
+    await joinRoom(db, 'HST001', 'a', 'A', NOW + 4)
+    // первым вошёл z — он и хозяин, хотя a «меньше» по steamid
+    await removeRoomMember(db, 'HST001', 'h')
+    expect((await getRoom(db, 'HST001'))?.createdBy).toBe('z')
+    await removeRoomMember(db, 'HST001', 'z')
+    expect((await getRoom(db, 'HST001'))?.createdBy).toBe('a')
+    // последний вышел — передавать некому, created_by NOT NULL остаётся прежним
+    expect(await removeRoomMember(db, 'HST001', 'a')).toBe(true)
+    expect((await getRoom(db, 'HST001'))?.createdBy).toBe('a')
+  })
+
+  test('наследник — сначала вошедший пишущей сессией, потом по времени входа', async () => {
+    // Убрать застрявшего может только хост со входом через Steam, а друзья
+    // входят по ссылке. Первый по времени вход давал наследника, чей ✕
+    // отвечал needsteam, хотя рядом сидел тот, кто мог убрать сразу
+    const db = await freshDb()
+    await createRoom(db, { id: 'HST002', steamid: 'h' }, NOW)
+    await joinRoom(db, 'HST002', 'h', 'H', NOW, { writer: true })
+    await joinRoom(db, 'HST002', 'z', 'Z', NOW + 1)
+    await joinRoom(db, 'HST002', 'y', 'Y', NOW + 2, { writer: true })
+    await joinRoom(db, 'HST002', 'x', 'X', NOW + 3, { writer: true })
+
+    await removeRoomMember(db, 'HST002', 'h')
+    // y — первый из пишущих, хотя z вошёл раньше
+    expect((await getRoom(db, 'HST002'))?.createdBy).toBe('y')
+    await removeRoomMember(db, 'HST002', 'y')
+    expect((await getRoom(db, 'HST002'))?.createdBy).toBe('x')
+    // пишущих не осталось — первый в ростере
+    await removeRoomMember(db, 'HST002', 'x')
+    expect((await getRoom(db, 'HST002'))?.createdBy).toBe('z')
+  })
+
   test('повторный вызов безобиден', async () => {
     const db = await freshDb()
     await room(db, 'ROOM02', ['a'])
@@ -2292,6 +2398,77 @@ describe('removeRoomMember', () => {
     expect(await findRoomMatch(db, 'ROOM04')).toBeNull()
   })
 })
+
+describe('joinRoom: комната без хозяина', () => {
+  test('ушёл последний — руку получает следующий вошедший', async () => {
+    // Пустая открытая комната стоит на доске, и без передачи при входе её
+    // заполняли бы люди, среди которых хоста нет: ✕ не рисуется никому
+    const db = await freshDb()
+    await createRoom(db, { id: 'EMP001', steamid: 'h' }, NOW)
+    await joinRoom(db, 'EMP001', 'h', 'H', NOW, { writer: true })
+    await removeRoomMember(db, 'EMP001', 'h')
+    expect((await getRoom(db, 'EMP001'))?.createdBy).toBe('h')
+
+    expect(await joinRoom(db, 'EMP001', 'b', 'B', NOW + 1)).toBe('joined')
+    expect((await getRoom(db, 'EMP001'))?.createdBy).toBe('b')
+    // хозяин в комнате — следующий вход руку не трогает, и пишущий тоже
+    await joinRoom(db, 'EMP001', 'c', 'C', NOW + 2, { writer: true })
+    expect((await getRoom(db, 'EMP001'))?.createdBy).toBe('b')
+  })
+
+  test('вход самого хозяина и отказ «мест нет» руку не трогают', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'EMP002', steamid: 'h' }, NOW)
+    expect(await joinRoom(db, 'EMP002', 'h', 'H', NOW)).toBe('joined')
+    expect((await getRoom(db, 'EMP002'))?.createdBy).toBe('h')
+
+    // Комната, хозяин которой ушёл до того, как рука научилась переходить:
+    // created_by — на ушедшем, а места кончились. Отказ ничего не пишет
+    await db.execute("UPDATE rooms SET created_by = 'gone' WHERE id = 'EMP002'")
+    expect(await joinRoom(db, 'EMP002', 'x', 'X', NOW + 1, { maxMembers: 1 })).toBe('full')
+    expect((await getRoom(db, 'EMP002'))?.createdBy).toBe('gone')
+    // а свой перезаход руку чинит — по тому же порядку, что у ухода хоста
+    await joinRoom(db, 'EMP002', 'h', 'H', NOW + 2)
+    expect((await getRoom(db, 'EMP002'))?.createdBy).toBe('h')
+  })
+})
+
+describe('room_kicks: срок и отмена', () => {
+  test('roomKickedSince видит только действующие отметки, liftRoomKick снимает одну', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'KCK001', steamid: 'h' }, NOW)
+    for (const m of ['h', 'a', 'b']) await joinRoom(db, 'KCK001', m, m, NOW)
+    await removeRoomMember(db, 'KCK001', 'a', { kickedAt: NOW - 100 })
+    await removeRoomMember(db, 'KCK001', 'b', { kickedAt: NOW })
+
+    expect((await roomKickedSince(db, 'KCK001', NOW - 50)).sort()).toEqual(['b'])
+    expect((await roomKickedSince(db, 'KCK001', NOW - 200)).sort()).toEqual(['a', 'b'])
+
+    expect(await liftRoomKick(db, 'KCK001', 'b')).toBe(true)
+    expect(await liftRoomKick(db, 'KCK001', 'b')).toBe(false) // повтор безобиден
+    expect(await joinRoom(db, 'KCK001', 'b', 'b', NOW + 1)).toBe('joined')
+  })
+})
+
+describe('raiseRoomSeat', () => {
+  test('поднимает членство по ссылке до пишущего, поднятое и чужое не трогает', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'RSE001', steamid: 'h' }, NOW)
+    await joinRoom(db, 'RSE001', 'h', 'H', NOW, { writer: true })
+    await joinRoom(db, 'RSE001', 'l', 'L', NOW)
+    await joinRoom(db, 'RSE001', 'm', 'M', NOW)
+
+    await raiseRoomSeat(db, 'RSE001', 'l')
+    await raiseRoomSeat(db, 'RSE001', 'h')
+    await raiseRoomSeat(db, 'RSE001', 'nobody')
+    expect((await roomMembers(db, 'RSE001')).map((m) => [m.steamid, m.writer])).toEqual([
+      ['h', true],
+      ['l', true],
+      ['m', false],
+    ])
+  })
+})
+
 describe('upsertNewsItems', () => {
   test('пишет пост и читает его обратно', async () => {
     const db = await freshDb()
@@ -3113,6 +3290,12 @@ describe('forgetUser: удаление по запросу', () => {
     await castRoomVote(db, 'FRROOM', ME, 620, 1, NOW)
     await castRoomVote(db, 'FRROOM', FRIEND, 620, 0, NOW)
 
+    // Ещё одна чужая комната, откуда его убрали: отметка о том — тоже его след
+    await createRoom(db, { id: 'KKROOM', steamid: FRIEND }, NOW)
+    await joinRoom(db, 'KKROOM', FRIEND, 'Friend', NOW)
+    await joinRoom(db, 'KKROOM', ME, 'Me', NOW)
+    await removeRoomMember(db, 'KKROOM', ME, { kickedAt: NOW })
+
     // Данные друга, которые удаление трогать не имеет права
     await upsertUser(db, { steamid: FRIEND, personaName: 'Friend' }, NOW)
     await recordCompatView(db, { owner: FRIEND, viewer: THIRD, percent: 40 }, NOW)
@@ -3452,11 +3635,13 @@ describe('sweepStale: суточная уборка', () => {
       await joinRoom(db, id, REAL, 'Живой', at)
       await issueRoomDeck(db, id, [570])
       await castRoomVote(db, id, REAL, 570, 1, at)
+      await joinRoom(db, id, `${REAL.slice(0, -1)}9`, 'Убранный', at)
+      await removeRoomMember(db, id, `${REAL.slice(0, -1)}9`, { kickedAt: at })
     }
 
     expect((await sweepStale(db, NOW)).rooms).toBe(1)
     expect(await getRoom(db, 'OLD001')).toBeNull()
-    for (const table of ['room_members', 'room_votes', 'room_deck']) {
+    for (const table of ['room_members', 'room_votes', 'room_deck', 'room_kicks']) {
       const res = await db.execute(`SELECT room_id FROM ${table}`)
       expect(res.rows.map((r) => r.room_id), table).toEqual(['NEW001'])
     }
@@ -3669,8 +3854,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 7,
-      columns: 37,
+      version: 8,
+      columns: 38,
     })
   })
 })

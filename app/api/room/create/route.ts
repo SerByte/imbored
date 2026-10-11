@@ -47,7 +47,10 @@ export async function POST(req: Request) {
   await createRoom(db, { id, steamid, ...(mood ? { mood } : {}) }, now)
 
   const name = await getPersonaName(db, steamid)
-  await joinRoom(db, id, steamid, name ?? undefined, now)
+  // Хост — пишущая сессия по определению (requireWriter выше), и его членство
+  // это помнит: чужая ссылка на профиль хоста за него в комнате не действует
+  // (lib/roomseat)
+  await joinRoom(db, id, steamid, name ?? undefined, now, { writer: true })
 
   return NextResponse.json({ roomId: id })
 }
