@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { InStatement } from '@libsql/client'
 import { getGamesMeta, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from '@/lib/db'
+import { META_MAX_AGE_SEC } from '@/lib/catalog'
 import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
 import { freshDb, signIn } from '@/lib/testing/route'
@@ -184,24 +185,98 @@ describe('/api/prepare: тёплый каталог', () => {
     // Чарты Steam для бедного пула — мимо: пул в тесте пуст, а ходить некуда
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
 
-    const freshness: string[] = []
-    const spy = new Proxy(db, {
-      get(target, prop, receiver) {
-        if (prop !== 'execute') return Reflect.get(target, prop, receiver)
-        return (q: InStatement) => {
-          const sql = (typeof q === 'string' ? q : q.sql).replace(/\s+/g, ' ')
-          // getStaleAppids: свежесть строк каталога по списку appid
-          if (/FROM games WHERE appid IN \(SELECT value FROM json_each\(\?\)\)/.test(sql) && sql.includes('art_json')) {
-            freshness.push(sql)
-          }
-          return target.execute(q)
-        }
-      },
-    })
-    ;(globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }).__imboredDb = Promise.resolve(spy)
+    const freshness = watchFreshness(db)
 
     const res = await POST()
     expect(await res.json()).toMatchObject({ remaining: 0, stalled: false })
     expect(freshness).toHaveLength(1)
+  })
+})
+
+/** Один вопрос о свежести каталога (getStaleAppids): какие appid и с какой границы. */
+type FreshnessAsk = { appids: number[]; cutoff: number }
+
+/**
+ * Подменяет базу, которую отдаст getDb(), на ту же, но с записью каждого
+ * вопроса getStaleAppids — списка appid и границы `updated_at >= ?`.
+ */
+function watchFreshness(db: Db): FreshnessAsk[] {
+  const asks: FreshnessAsk[] = []
+  const spy = new Proxy(db, {
+    get(target, prop) {
+      if (prop !== 'execute') {
+        // Привязка к самой базе: у клиента libsql приватные поля, и batch,
+        // вызванный на прокси, падает (холодный прогрев пишет пачкой)
+        const value: unknown = Reflect.get(target, prop, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+      return (q: InStatement) => {
+        const sql = (typeof q === 'string' ? q : q.sql).replace(/\s+/g, ' ')
+        // getStaleAppids: свежесть строк каталога по списку appid
+        if (
+          typeof q !== 'string' &&
+          /FROM games WHERE appid IN \(SELECT value FROM json_each\(\?\)\)/.test(sql) &&
+          sql.includes('art_json')
+        ) {
+          const args = q.args as unknown[]
+          asks.push({ appids: JSON.parse(String(args[0])) as number[], cutoff: Number(args[1]) })
+        }
+        return target.execute(q)
+      }
+    },
+  })
+  ;(globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }).__imboredDb = Promise.resolve(spy)
+  return asks
+}
+
+/**
+ * Холодная библиотека — первый заход человека, у которого каталог ещё пуст.
+ *
+ * Прогрев отбирает протухшее сам и отдаёт ensureMeta только отобранное, а
+ * значит, две вещи держатся только договорённостью, которую ничто не
+ * проверяло бы: что отбор и ensureMeta судят о свежести одним сроком, и что
+ * ensureMeta перепроверяет пачку, которую возьмёт, а не всю протухшую часть.
+ */
+describe('/api/prepare: холодная библиотека', () => {
+  // Больше пачки GetItems (BATCH = 200): за один вызов прогреется не всё
+  const BIG = Array.from({ length: 250 }, (_, i) => ({
+    appid: 10_000 + i,
+    name: `Игра ${i}`,
+    playtimeForever: i,
+    playtime2Weeks: 0,
+  }))
+
+  beforeEach(async () => {
+    // Позже засеянного в общем beforeEach — getLatestSnapshot возьмёт этот
+    await saveLibrarySnapshot(db, STEAMID, BIG, nowSec())
+    vi.stubGlobal('fetch', steamUp)
+  })
+
+  test('ensureMeta перепроверяет только свою пачку, остаток считается по всей протухшей части', async () => {
+    const asks = watchFreshness(db)
+
+    const res = await POST()
+    expect(await res.json()).toMatchObject({ remaining: BIG.length - 200, stalled: false })
+    // Отбор по всей библиотеке, перепроверка пачки, остаток. Без среза второй
+    // вопрос вёз бы все 250 — у полутора тысяч игр это полторы тысячи строк
+    // ради первых двухсот
+    expect(asks.map((a) => a.appids.length)).toEqual([BIG.length, 200, BIG.length])
+    // Пачка — голова отбора, в порядке плана прогрева
+    expect(asks[1].appids).toEqual(asks[0].appids.slice(0, 200))
+  })
+
+  test('отбор и ensureMeta судят о свежести одним сроком — META_MAX_AGE_SEC каталога', async () => {
+    const asks = watchFreshness(db)
+    const before = nowSec()
+
+    await POST()
+    const after = nowSec()
+    expect(asks.length).toBeGreaterThanOrEqual(2)
+    // Своя копия срока в маршруте, разойдись она с каталожной, дала бы здесь
+    // две разные границы: строки между ними отбор прятал бы от ensureMeta
+    for (const { cutoff } of asks) {
+      expect(cutoff).toBeGreaterThanOrEqual(before - META_MAX_AGE_SEC)
+      expect(cutoff).toBeLessThanOrEqual(after - META_MAX_AGE_SEC)
+    }
   })
 })

@@ -1,5 +1,5 @@
 import { after, NextResponse } from 'next/server'
-import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
+import { ensureMeta, fetchMostPlayed, META_MAX_AGE_SEC } from '@/lib/catalog'
 import { sliceDeadline } from '@/lib/cron'
 import { refreshDeals } from '@/lib/deals'
 import { logSwallowed } from '@/lib/errlog'
@@ -34,7 +34,6 @@ import { libraryWall } from '@/lib/warmup'
  */
 export const maxDuration = 60
 
-const META_MAX_AGE_SEC = 14 * 86_400
 // GetItems берёт до 200 игр за один запрос, поэтому прогрев укладывается
 // в один-два вызова вместо восьмидесяти, как было с поштучным SteamSpy
 const BATCH = 200
@@ -166,17 +165,25 @@ export async function POST() {
    * второй был лишним проходом по каждой строке библиотеки и лишним кругом
    * перед remaining: 0, которого ждёт подбор.
    *
-   * ensureMeta получает уже протухшую часть — в порядке buildWarmPlan, потому
-   * что getStaleAppids фильтрует, не переставляя, — и сам перепроверяет только
-   * её. Остаток после записи считает база, а не арифметика «протухло минус
-   * записано», и тоже по этой части: остальное было свежим мгновение назад, а
-   * срок у метаданных — две недели.
+   * Срок здесь — META_MAX_AGE_SEC самого ensureMeta, а не своя копия: отбор
+   * идёт ДО него, и всё, что отбор счёл свежим, ensureMeta уже не увидит.
+   * Разойдись сроки — короче в каталоге, длиннее тут, — и строки между ними
+   * не освежались бы никогда, а остаток честно показывал бы ноль.
+   *
+   * ensureMeta получает голову протухшей части — ровно пачку, которую он
+   * возьмёт (maxFetch и так режет до BATCH), в порядке buildWarmPlan, потому
+   * что getStaleAppids фильтрует, не переставляя. Свою перепроверку он делает
+   * только по этой пачке: со всей протухшей частью холодная библиотека в
+   * полторы тысячи игр перечитывала бы её целиком ради первых двухсот.
+   * Остаток после записи считает база, а не арифметика «протухло минус
+   * записано», — по всей протухшей части: остальное было свежим мгновение
+   * назад, а срок у метаданных — две недели.
    */
   const stale = await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())
   let fetched = true
   let remaining = 0
   if (stale.length) {
-    fetched = await ensureMeta(db, stale, { maxFetch: BATCH, names })
+    fetched = await ensureMeta(db, stale.slice(0, BATCH), { maxFetch: BATCH, names })
     remaining = (await getStaleAppids(db, stale, META_MAX_AGE_SEC, nowSec())).length
   }
 
