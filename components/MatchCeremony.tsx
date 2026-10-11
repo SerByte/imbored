@@ -10,8 +10,9 @@ import { GameArt } from '@/components/GameArt'
 import { LogoMark } from '@/components/Logo'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
-import { PriceTag } from '@/components/PriceTag'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { MatchOwners } from '@/components/room/MatchOwners'
+import { MatchShare } from '@/components/room/MatchShare'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { focusAdrift } from '@/lib/focushandoff'
@@ -31,6 +32,7 @@ gsap.registerPlugin(useGSAP)
 export function MatchCeremony({
   game,
   memberCount,
+  roomId,
   takeFocus = false,
 }: {
   game: {
@@ -44,6 +46,8 @@ export function MatchCeremony({
     ownedByMe?: boolean | null
     /** сколько участников за; null — не знаем (смотрит не участник) */
     forCount?: number | null
+    /** у кого из остальных её нет — метки ростера; null — не знаем */
+    missingFor?: string[] | null
     isFree?: boolean
     priceFinal?: number | null
     /** регион магазина цены; null — цены нет */
@@ -53,6 +57,8 @@ export function MatchCeremony({
     discount?: Discount | null
   }
   memberCount: number
+  /** код комнаты — для «Поделиться» (components/room/MatchShare) */
+  roomId: string
   /**
    * Церемония пришла на место комнаты на глазах у этого экрана (sawOpen на
    * странице комнаты), а не открыта ссылкой на сошедшуюся комнату.
@@ -238,24 +244,17 @@ export function MatchCeremony({
               </a>
             )}
           </Magnet>
-          {/* Разделитель — только при цене: без неё « · » повис бы в конце */}
-          {game.ownedByMe === false && (
-            <p className="text-sm text-dim">
-              У тебя её пока нет
-              {(game.isFree || game.unsold || (game.priceFinal ?? null) !== null) && (
-                <>
-                  {' · '}
-                  <PriceTag
-                    priceFinal={game.priceFinal ?? null}
-                    cc={game.priceCc ?? null}
-                    unsold={game.unsold}
-                    isFree={game.isFree}
-                    discount={game.discount}
-                  />
-                </>
-              )}
-            </p>
-          )}
+          {/* Кому её не хватает — всей комнате, не только тому, у кого нет:
+              иначе остальные зовут в войс и ждут (components/room/MatchOwners) */}
+          <MatchOwners game={game} />
+          {/* Весть «сошлись» — в общий чат, тем, кто опоздал к выбору. Ниже
+              магазина и строк о цене: сначала играть, потом рассказывать */}
+          <MatchShare
+            roomId={roomId}
+            name={game.name}
+            forCount={forCount}
+            memberCount={memberCount}
+          />
         </div>
 
         {/*

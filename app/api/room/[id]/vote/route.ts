@@ -3,6 +3,7 @@ import { castDeckVote, findRoomMatch, getRoom, raiseRoomSeat, roomMembers, setRo
 import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
+import { forgetRoomCard } from '@/lib/roomcard'
 import { peekGate } from '@/lib/roompeek'
 import { seatOf, seatRefusal, seatToRaise } from '@/lib/roomseat'
 
@@ -102,6 +103,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   let matched: number | null = null
   const candidate = await findRoomMatch(db, id)
   if (candidate !== null) matched = await setRoomMatched(db, id, candidate)
+  // Комната сошлась — билет-приглашение в кэше карточки устарел (lib/roomcard)
+  if (matched !== null) forgetRoomCard(id)
 
   return NextResponse.json({ matched })
 }

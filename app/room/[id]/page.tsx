@@ -135,6 +135,8 @@ type RoomState = {
     ownedByMe: boolean | null
     /** сколько участников за; null — смотрит не участник */
     forCount: number | null
+    /** у кого из остальных её нет; null — не участник, нет поля — старый сервер */
+    missingFor?: string[] | null
     isFree: boolean
     priceFinal: number | null
     /** регион магазина цены — её валюта (lib/steamregion) */
@@ -1585,6 +1587,7 @@ export default function RoomPage() {
         <MatchCeremony
           game={state.matchedGame}
           memberCount={state.members.length}
+          roomId={roomId}
           takeFocus={sawOpen}
         />
       </>
