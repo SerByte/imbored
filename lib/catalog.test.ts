@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { createClient } from '@libsql/client'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { getGameMeta, migrateDb, upsertGameMeta } from './db'
 import {
   fetchAppDetails,
@@ -17,8 +17,20 @@ import {
   fetchTagDictionary,
   ensureMeta,
   parseStoreDescriptions,
+  resetTagDictCache,
 } from './catalog'
 import type { GameMeta } from './types'
+
+/*
+ * Словарь тегов кэшируется на модуле. Без сброса тест языков получал словарь,
+ * оставленный прогревом медиа ниже по файлу, и проходил только потому, что
+ * объявлен выше него: перемешай порядок (--sequence.shuffle.tests) — и он
+ * краснел, читаясь как поломка кэша. Сброс на уровне файла, а не одного
+ * describe: прогрев, ensureMeta и регион тоже ходят за словарём.
+ */
+beforeEach(() => {
+  resetTagDictCache()
+})
 
 const APPDETAILS_RESPONSE = {
   '620': {

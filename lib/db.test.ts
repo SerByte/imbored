@@ -17,6 +17,7 @@ import {
   claimNewsPollBatch,
   countIngest,
   countNewsPollDue,
+  countNewsPollMissing,
   DIGEST_LEASE,
   enrollNewsPoll,
   flushPollResults,
@@ -2472,6 +2473,41 @@ describe('очередь опроса', () => {
     expect((await claimNewsPollBatch(db, NOW + 4000, 10)).map((t) => t.appid)).toEqual([730])
   })
 
+  test('предпросмотр постановки ничего не пишет и сходится с настоящей постановкой', async () => {
+    // news:sync --dry-run обещает «ничего не пишем», а раньше ставил топ
+    // каталога в очередь по-настоящему. Теперь он считает чтением — и числа
+    // обязаны совпасть с тем, что сделал бы прогон без флага
+    const db = await freshDb()
+    // С разбросом: 100 встаёт на NOW + 100 и к claimAt ещё не готова
+    await enrollNewsPoll(db, [100, 2, 3], 1, NOW)
+    await enrollNewsPoll(db, [4], 0, NOW, 0)
+    await flushPollResults(db, [{ appid: 3, status: 'gone', nextAt: NOW, failCount: 3 }], NOW)
+    const claimAt = NOW + 60
+    const rows = async () =>
+      Number((await db.execute('SELECT COUNT(*) AS n FROM news_poll')).rows[0].n)
+
+    // Повторы, мусор и уже стоящие (в том числе похороненная 3) — не новые
+    const top = [100, 3, 4, 5, 6, 6, -7, 0]
+    const before = await rows()
+    const fresh = await countNewsPollMissing(db, top)
+    const due = (await countNewsPollDue(db, claimAt)) + fresh
+    expect(fresh).toBe(2)
+    expect(await rows()).toBe(before)
+
+    await enrollNewsPoll(db, top, 1, NOW, 0)
+    expect(await rows()).toBe(before + fresh)
+    expect(await countNewsPollDue(db, claimAt)).toBe(due)
+  })
+
+  test('предпросмотр постановки считает и за пределом одного запроса', async () => {
+    // enrollNewsPoll пишет пачками по двести; счёт обязан видеть все пачки
+    const db = await freshDb()
+    const ids = Array.from({ length: 450 }, (_, i) => i + 1)
+    await enrollNewsPoll(db, ids.slice(0, 300), 1, NOW)
+    expect(await countNewsPollMissing(db, ids)).toBe(150)
+    expect(await countNewsPollMissing(db, [])).toBe(0)
+  })
+
   test('gone выпадает из очереди', async () => {
     const db = await freshDb()
     await enrollNewsPoll(db, [730], 1, NOW)
@@ -3745,17 +3781,46 @@ describe('превью и продовая база', () => {
     expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
   })
 
-  test('если пересобирать нечего, превью версию пишет: пропущенного шага нет', async () => {
+  /*
+   * Раньше здесь было обратное: «пересобирать нечего — пропущенного шага нет,
+   * версию пишем». Это правда только для набора колонок САМОЙ ветки. Версия —
+   * голое число, общее для всех веток, а доверяет ей уже другой код: две
+   * ветки, независимо поднявшие 7 → 8, или ветка, дописавшая колонку после
+   * своего превью, на проде увидели бы «уже 8» и не выполнили бы свои ALTER
+   * никогда — каждый холодный старт падал бы на «no such column». Версию
+   * пишет только тот, кому можно всё, то есть прод после мержа.
+   */
+  test('превью без своей базы версию не пишет, даже если пересобирать нечего', async () => {
     const db = await freshDb()
     await db.execute("DELETE FROM catalog_meta WHERE key = 'schema_v'")
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       await migrateDb(db, PREVIEW)
+      // Молча: пропущен не шаг, а только отметка о нём
       expect(warn).not.toHaveBeenCalled()
     } finally {
       warn.mockRestore()
     }
+    expect(await getCatalogMeta(db, 'schema_v')).toBeNull()
+
+    // Первый старт прода после мержа доводит и отмечает сам
+    await migrateDb(db, { VERCEL_ENV: 'production' })
     expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+  })
+
+  test('превью без своей базы колонки всё же добавляет: ALTER ничего не стирает', async () => {
+    // Без версии превью повторяет ALTER-цикл на каждом холодном старте, и это
+    // цена страховки: один pragma_table_info и чтение sqlite_master. Зато код
+    // ветки работает на тех колонках, которые ему нужны
+    const db = await freshDb()
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'schema_v'")
+    await db.execute('ALTER TABLE games DROP COLUMN store_hidden')
+    await migrateDb(db, PREVIEW)
+    const cols = (await db.execute("SELECT name FROM pragma_table_info('games')")).rows.map((r) =>
+      String(r.name),
+    )
+    expect(cols).toContain('store_hidden')
+    expect(await getCatalogMeta(db, 'schema_v')).toBeNull()
   })
 })
 

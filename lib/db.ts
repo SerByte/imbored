@@ -899,10 +899,14 @@ export const PREVIEW_OWN_DB_ENV = 'PREVIEW_OWN_DB'
  * ревью. Откатили ветку, а схема и строки остались. Правильная защита —
  * отдельная база у превью, и её заводит владелец (DEPLOY.md, раздел о
  * превью). Эта проверка — страховка на случай, если переменные снова
- * разъедутся: превью без явного «база своя» ничего не пересобирает.
+ * разъедутся: превью без явного «база своя» ничего не пересобирает и не
+ * пишет версию схемы (почему и без пересборки — см. конец migrateDb).
  *
  * Прод, локальная разработка и скрипты не затронуты: VERCEL_ENV там
- * 'production' или его нет вовсе.
+ * 'production' или его нет вовсе. Обратная сторона: скрипт, запущенный из
+ * ветки с адресом прода, мигрирует прод схемой этой ветки — и это так
+ * задумано для скриптов, которые пишут. Пути, которые только смотрят
+ * (--dry-run, отчёты), открывают облако без migrateDb: см. scripts/opendb.ts.
  *
  * Бэкфиллы производных колонок сюда не относятся: они считают значения из
  * уже лежащих данных и повторяются без потерь.
@@ -1063,13 +1067,25 @@ export async function migrateDb(
   }
 
   if (upgrade) {
-    if (await rebuildFeedbackCheck(db, destructiveMigrationsAllowed(env))) {
+    const allowed = destructiveMigrationsAllowed(env)
+    const rebuilt = await rebuildFeedbackCheck(db, allowed)
+    if (rebuilt && allowed) {
       // Последней: версия пишется, только когда всё выше прошло. Оборвись
       // миграция на полпути — следующий старт повторит её целиком.
       await db.execute({
         sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
         args: [SCHEMA_V_KEY, String(CURRENT_SCHEMA_V)],
       })
+    } else if (rebuilt) {
+      // Превью на продовой базе, и пересобирать нечего, — версию всё равно
+      // НЕ пишем. Она голое число, общее для всех веток: «пропущенного шага
+      // нет» верно лишь для набора колонок ЭТОЙ ветки. Другая ветка, тоже
+      // поднявшая версию до того же числа (или эта же, дописавшая колонку
+      // после своего превью), на проде прочла бы «уже доведено» и не
+      // выполнила бы свои ALTER никогда. Отметку ставит прод после мержа, а
+      // превью до тех пор повторяет ALTER-цикл на каждом холодном старте —
+      // один pragma_table_info и чтение sqlite_master. Молча: ничего не
+      // пропущено, кроме самой отметки.
     } else {
       // Версию НЕ пишем. Если это продовая база под превью, первый же старт
       // прода после мержа увидит старую версию и пересоберёт таблицу сам.
@@ -6115,6 +6131,19 @@ export async function pruneNewsForApp(db: Db, appid: number, keep = 30): Promise
 
 /* ---------- очередь опроса новостей ---------- */
 
+/** Строк news_poll на один запрос постановки и её предпросмотра */
+const NEWS_POLL_CHUNK = 200
+
+/**
+ * Какие appid постановка вообще примет: целые положительные, без повторов,
+ * не больше 1200. Один отбор на двоих — enrollNewsPoll и её предпросмотр
+ * (countNewsPollMissing), — иначе предпросмотр разошёлся бы с постановкой
+ * при первой же правке фильтра.
+ */
+function newsPollIds(appids: number[]): number[] {
+  return [...new Set(appids.filter((a) => Number.isInteger(a) && a > 0))].slice(0, 1200)
+}
+
 /**
  * Ставит игры в очередь. next_at задаётся СРАЗУ и с детерминированным
  * разбросом по appid: иначе вся библиотека станет доступной одной секундой и
@@ -6135,13 +6164,12 @@ export async function enrollNewsPoll(
   nowSec: number,
   jitterSec = 3600,
 ): Promise<number> {
-  const ids = [...new Set(appids.filter((a) => Number.isInteger(a) && a > 0))].slice(0, 1200)
+  const ids = newsPollIds(appids)
   if (!ids.length) return 0
-  const CHUNK = 200
   let written = 0
-  for (let i = 0; i < ids.length; i += CHUNK) {
+  for (let i = 0; i < ids.length; i += NEWS_POLL_CHUNK) {
     const res = await db.batch(
-      ids.slice(i, i + CHUNK).map((appid) => ({
+      ids.slice(i, i + NEWS_POLL_CHUNK).map((appid) => ({
         sql: `INSERT INTO news_poll (appid, tier, next_at, enrolled_at)
               VALUES (?, ?, ?, ?)
               ON CONFLICT(appid) DO UPDATE SET tier = excluded.tier
@@ -6153,6 +6181,29 @@ export async function enrollNewsPoll(
     written += res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
   }
   return written
+}
+
+/**
+ * Сколько из appids enrollNewsPoll поставила бы в очередь заново — чтением,
+ * ничего не записывая. Для `news:sync --dry-run`: он обещает «ничего не
+ * пишем», а раньше ради своих чисел ставил топ каталога в очередь
+ * по-настоящему (см. scripts/sync-news.ts).
+ *
+ * Уже стоящие не считаются, похороненные (gone) тоже: постановка их не
+ * воскрешает, а только поднимает tier.
+ */
+export async function countNewsPollMissing(db: Db, appids: number[]): Promise<number> {
+  const ids = newsPollIds(appids)
+  let known = 0
+  for (let i = 0; i < ids.length; i += NEWS_POLL_CHUNK) {
+    const chunk = ids.slice(i, i + NEWS_POLL_CHUNK)
+    const res = await db.execute({
+      sql: `SELECT COUNT(*) AS n FROM news_poll WHERE appid IN (${placeholders(chunk.length)})`,
+      args: chunk,
+    })
+    known += Number((res.rows[0] as unknown as { n: number })?.n ?? 0)
+  }
+  return ids.length - known
 }
 
 /**

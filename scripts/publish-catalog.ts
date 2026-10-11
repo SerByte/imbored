@@ -1,7 +1,7 @@
 /**
  * Заливка готового каталога из локальной базы в облако.
  *
- *   npm run catalog:publish -- --dry-run     показать, что поедет
+ *   npm run catalog:publish -- --dry-run     показать, что поедет (облако только читается)
  *   npm run catalog:publish                  залить
  *
  * Зачем отдельный скрипт, если есть catalog:promote. Промоут считает вердикты
@@ -51,7 +51,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { migrateDb, rebuildTagStats, repairGameJson } from '../lib/db'
+import { CURRENT_SCHEMA_V, getCatalogMeta, rebuildTagStats, repairGameJson } from '../lib/db'
+import { openCloud } from './opendb'
 import { buildSetList, presentCols, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
 
 /** Строк в одном батче. Больше — риск упереться в лимит запроса libsql. */
@@ -79,12 +80,18 @@ function openLocal(): Client {
   return createClient({ url: `file:${file}` })
 }
 
-async function openRemote(): Promise<Client> {
+/**
+ * Облако-приёмник. Настоящая заливка доводит его схему до схемы ветки: без
+ * колонок ветки (price_cc, store_hidden) INSERT ниже не пройдёт. --dry-run
+ * открывает его без миграций (readOnly, см. openCloud): «показать, что
+ * поедет» не имеет права ничего менять на проде, а счёт ниже читает только
+ * games и game_tags, которые там есть всегда.
+ */
+async function openRemote({ readOnly }: { readOnly: boolean }): Promise<Client> {
   const url = process.env.TURSO_DATABASE_URL
   if (!url) throw new Error('нужен TURSO_DATABASE_URL — это скрипт заливки в облако')
-  console.log(`приёмник: Turso`)
-  const db = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN })
-  return migrateDb(db)
+  console.log(readOnly ? 'приёмник: Turso, только чтение' : 'приёмник: Turso')
+  return openCloud(url, process.env.TURSO_AUTH_TOKEN, { readOnly })
 }
 
 async function main() {
@@ -95,7 +102,7 @@ async function main() {
   const refusal = publishRefusal(await repairGameJson(local, { dryRun: true }))
   if (refusal) throw new Error(refusal)
 
-  const remote = await openRemote()
+  const remote = await openRemote({ readOnly: dryRun })
 
   const count = async (db: Client, t: string) =>
     Number((await db.execute(`SELECT COUNT(*) n FROM ${t}`)).rows[0].n)
@@ -115,6 +122,15 @@ async function main() {
     `тегов ${src.tags.toLocaleString('ru-RU')}`)
 
   if (dryRun) {
+    // Миграцию, которую сделает настоящий прогон, видно заранее: это шаг на
+    // проде, и бэкап перед ним снимают до заливки, а не после
+    const v = Number((await getCatalogMeta(remote, 'schema_v')) ?? 0)
+    if (!(v >= CURRENT_SCHEMA_V)) {
+      console.log(
+        `\nсхема в облаке v${v}, у этой ветки v${CURRENT_SCHEMA_V}: ` +
+          'заливка сначала доведёт её миграциями ветки',
+      )
+    }
     console.log('\n--dry-run: ничего не записано')
     return
   }

@@ -238,7 +238,11 @@ describe('публикация каталога: битые JSON-колонки 
     const main = src.slice(src.indexOf('async function main'))
     const guard = main.indexOf('repairGameJson(local, { dryRun: true })')
     expect(guard, 'publish-catalog больше не проверяет форму JSON').toBeGreaterThan(-1)
-    expect(guard).toBeLessThan(main.indexOf('await openRemote()'))
+    // Без закрывающей скобки: облако открывается с флагом { readOnly: dryRun }
+    // (--dry-run — без миграций, см. scripts/opendb.test.ts)
+    const remote = main.indexOf('await openRemote(')
+    expect(remote, 'подключение к облаку в main не найдено').toBeGreaterThan(-1)
+    expect(guard).toBeLessThan(remote)
   })
 })
 
