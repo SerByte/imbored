@@ -7,6 +7,7 @@ import { MatchOwners, type MatchOwnersGame } from '../components/room/MatchOwner
 import { MatchShare } from '../components/room/MatchShare'
 import { matchShareCopy, matchShareUrl } from './matchshare'
 import { formatPrice } from './steamregion'
+import { storeLink } from './stores'
 
 /**
  * Экран матча — то, что на нём делают после «Это матч!».
@@ -99,7 +100,8 @@ describe('кому не хватает игры — на экране матча
     expect(html).toContain('Нет у: <span class="text-ink">Дима, Саша</span>')
     expect(html).toContain(PRICE)
     expect(html).not.toContain('У тебя её пока нет')
-    // подарок — со страницы игры в магазине: там «Купить в подарок»
+    // подарок — через страницу игры в магазине: «В корзину», а «в подарок»
+    // выбирается уже в корзине
     expect(html).toMatch(/<a href="https:\/\/store\.steampowered\.com\/app\/1091500\/"[^>]*>Подарить — в магазине Steam<\/a>/)
   })
 
@@ -137,6 +139,15 @@ describe('кому не хватает игры — на экране матча
     expect(html).not.toContain('Подарить')
   })
 
+  test('ноль в цене без isFree — тоже «бесплатно», и тоже без «Подарить»', () => {
+    // раздача «забери навсегда»: price_final 0 при скидке 100 %, is_free не
+    // тронут. Ценник по тому же правилу говорит «бесплатно» — а подарок рядом
+    // с «бесплатно» предлагал бы купить то, что раздают
+    const html = draw({ isFree: false, priceFinal: 0 })
+    expect(html).toContain('бесплатно')
+    expect(html).not.toContain('Подарить')
+  })
+
   test('не продаётся в магазине региона — подарить её там тоже нельзя', () => {
     const html = draw({ unsold: true })
     expect(html).toContain('не продаётся')
@@ -152,6 +163,59 @@ describe('кому не хватает игры — на экране матча
   test('владение не знаем (нет снапшота) — подарок не предлагаем', () => {
     // CTA такому и так ведёт в магазин; «Подарить» рядом — догадка о его библиотеке
     expect(draw({ ownedByMe: null })).not.toContain('Подарить')
+  })
+})
+
+/**
+ * Весть «Играем в X» уходит тем, кто опоздал к выбору, — а они в комнате не
+ * участники и попадают на экран «Эта пати уже договорилась». Ссылки на игру
+ * там не было: только своя комната и чужие пати, хотя другу, которому
+ * сказали «играем в X», чаще всего надо её купить или поставить.
+ */
+describe('не участник на сошедшейся комнате — где взять игру', () => {
+  test('игра Steam — её страница в магазине', () => {
+    expect(storeLink({ appid: 620, store: null, storeUrl: null })).toEqual({
+      href: 'https://store.steampowered.com/app/620/',
+      where: 'Steam',
+    })
+  })
+
+  test('игра другого магазина — его ссылка и его имя', () => {
+    expect(storeLink({ appid: -3, store: 'epic', storeUrl: 'https://store.epicgames.com/x' })).toEqual({
+      href: 'https://store.epicgames.com/x',
+      where: 'Epic Games',
+    })
+    // магазин без метки — не выдуманное имя, а просто «в магазине»
+    expect(storeLink({ appid: -4, store: 'gog', storeUrl: 'https://gog.com/x' })?.where).toBe('магазине')
+  })
+
+  test('чужой магазин без ссылки — молчим, а не ведём на /app/-3/', () => {
+    expect(storeLink({ appid: -3, store: 'epic', storeUrl: null })).toBeNull()
+  })
+
+  test('экран берёт ссылку из того же правила и ставит её над абзацем о закрытой комнате', () => {
+    const room = code('app/room/[id]/page.tsx')
+    const start = room.indexOf("state.room.status === 'matched' && state.matchedGame && !state.isMember")
+    expect(start).toBeGreaterThan(-1)
+    const screen = room.slice(start, room.indexOf('<MatchCeremony', start))
+    expect(screen).toMatch(/const shop = storeLink\(state\.matchedGame\)/)
+    expect(screen).toMatch(
+      /<a\s+href=\{shop\.href\}\s+target="_blank"\s+rel="noreferrer"[^>]*>\s*Открыть «\{state\.matchedGame\.name\}» в \{shop\.where\}\s*<\/a>/,
+    )
+    // тихая ссылка под заголовком, а главная кнопка — по-прежнему своя комната
+    const h1 = screen.indexOf('</h1>')
+    const link = screen.indexOf('href={shop.href}')
+    const own = screen.indexOf('href="/room/new"')
+    expect(h1).toBeGreaterThan(-1)
+    expect(link).toBeGreaterThan(h1)
+    expect(own).toBeGreaterThan(link)
+    const anchor = screen.slice(screen.lastIndexOf('<a', link), screen.indexOf('</a>', link))
+    expect(anchor).toContain('text-dim')
+    expect(anchor).not.toMatch(/btn-/)
+  })
+
+  test('запасной экран матча отвечает на «где взять» тем же правилом', () => {
+    expect(code('components/room/CeremonyBoundary.tsx')).toMatch(/const link = storeLink\(game\)/)
   })
 })
 
