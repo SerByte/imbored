@@ -67,6 +67,9 @@ export async function POST() {
   const db = await getDb()
   const now = nowSec()
 
+  // Лимит — до снапшота и намеренно не одним Promise.all с ним: ради круга к
+  // базе каждый отказ 429 зацикленного клиента тянул бы games_json — блоб на
+  // сотни килобайт, — ровно тот случай, от которого лимит и стоит
   const gate = await checkRate(db, {
     bucket: 'prepare',
     id: steamid,
@@ -154,8 +157,28 @@ export async function POST() {
   // метаданных навсегда (см. докблок там).
   const wanted = buildWarmPlan(games, steamPool.slice(0, 60))
 
-  const fetched = await ensureMeta(db, wanted, { maxFetch: BATCH, names })
-  const remaining = (await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())).length
+  /*
+   * Свежесть набора — один вопрос к базе, а не два подряд.
+   *
+   * Раньше её спрашивал ensureMeta, и сразу следом тем же списком — подсчёт
+   * остатка. На тёплом каталоге — а это почти каждый вызов: прогрев зовут
+   * все заходы в /play, /daily, /explore и /library — оба ответа пустые, и
+   * второй был лишним проходом по каждой строке библиотеки и лишним кругом
+   * перед remaining: 0, которого ждёт подбор.
+   *
+   * ensureMeta получает уже протухшую часть — в порядке buildWarmPlan, потому
+   * что getStaleAppids фильтрует, не переставляя, — и сам перепроверяет только
+   * её. Остаток после записи считает база, а не арифметика «протухло минус
+   * записано», и тоже по этой части: остальное было свежим мгновение назад, а
+   * срок у метаданных — две недели.
+   */
+  const stale = await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())
+  let fetched = true
+  let remaining = 0
+  if (stale.length) {
+    fetched = await ensureMeta(db, stale, { maxFetch: BATCH, names })
+    remaining = (await getStaleAppids(db, stale, META_MAX_AGE_SEC, nowSec())).length
+  }
 
   /*
    * Онлайн и цены — ПОСЛЕ ответа.

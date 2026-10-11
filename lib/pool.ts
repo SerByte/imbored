@@ -163,7 +163,7 @@ export async function fetchDiscoveryPool(db: Db, q: DiscoveryQuery): Promise<Gam
   for (const tag of q.tags) args.push(tag, perTag, offset)
   args.push(mpOnly, banned, limit)
 
-  const res = await db.execute({
+  const tasteQuery = db.execute({
     // Фильтр живости здесь такой же, как в холодном старте выше, и это не
     // дублирование ради симметрии: без него мёртвые и переехавшие в сиквел
     // игры попадали в выдачу всем, у кого есть профиль вкуса, — то есть почти
@@ -180,18 +180,25 @@ export async function fetchDiscoveryPool(db: Db, q: DiscoveryQuery): Promise<Gam
           ORDER BY b.w DESC LIMIT ?`,
     args,
   })
-  const byTaste = (res.rows as unknown as GameRow[]).map((r) => rowToMeta(r))
-  if (!q.wildcard) return byTaste
 
-  // Добор вне вкуса. Идёт ПОСЛЕ основного пула и без обрезки по limit: это
-  // не «ещё немного похожего», а единственная дверь наружу из своих же тегов,
-  // и срезать её вместе с хвостом ранжирования значило бы не добавить ничего.
+  /*
+   * Добор вне вкуса. В ответе стоит ПОСЛЕ основного пула и без обрезки по
+   * limit: это не «ещё немного похожего», а единственная дверь наружу из своих
+   * же тегов, и срезать её вместе с хвостом ранжирования значило бы не
+   * добавить ничего.
+   *
+   * Запрос уходит ВМЕСТЕ со вкусовым, а не за ним: ни одно его условие от
+   * вкусового ответа не зависит, seen ниже только фильтрует готовое. Стоя в
+   * очереди, он добавлял круг к Turso (~35 мс, lib/candidates.ts) каждой
+   * выдаче /play, игре дня и колоде /explore — wildcard у них всегда.
+   */
+  const notableQuery = q.wildcard
+    ? fetchNotable(db, { limit: q.wildcard, offset: (q.rotation ?? 0) * q.wildcard, mpOnly, banned })
+    : null
+  const [res, notable] = await Promise.all([tasteQuery, notableQuery])
+  const byTaste = (res.rows as unknown as GameRow[]).map((r) => rowToMeta(r))
+  if (!notable) return byTaste
+
   const seen = new Set(byTaste.map((m) => m.appid))
-  const notable = await fetchNotable(db, {
-    limit: q.wildcard,
-    offset: (q.rotation ?? 0) * q.wildcard,
-    mpOnly,
-    banned,
-  })
   return [...byTaste, ...notable.filter((m) => !seen.has(m.appid))]
 }

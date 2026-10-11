@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { getGamesMeta, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
+import type { InStatement } from '@libsql/client'
+import { getGamesMeta, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from '@/lib/db'
 import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
 import { freshDb, signIn } from '@/lib/testing/route'
@@ -148,5 +149,59 @@ describe('/api/prepare: онлайн после ответа', () => {
     await POST()
     const res = await db.execute('SELECT COUNT(*) AS n FROM games WHERE appid < 0')
     expect(Number(res.rows[0].n)).toBe(0)
+  })
+})
+
+/**
+ * Тёплый каталог — обычный случай: прогрев зовут каждый заход в /play,
+ * /daily, /explore и /library, предразогрев квиза и ConnectCard главной, и
+ * почти всегда вся библиотека уже прогрета.
+ *
+ * Свежесть библиотеки читалась дважды подряд одним и тем же списком: внутри
+ * ensureMeta и сразу следом — ради остатка, который на тёплом каталоге ноль
+ * без всякого второго вопроса. Это лишний проход по каждой строке библиотеки
+ * (Turso считает их в счёт) и лишний круг перед remaining: 0, которого ждёт
+ * подбор.
+ */
+describe('/api/prepare: тёплый каталог', () => {
+  test('свежесть библиотеки спрашивается один раз', async () => {
+    const now = nowSec()
+    // Прогреты, одиночные и с замеренной ценой: работе после ответа нечего
+    // делать в Steam, и в сеть она не уйдёт и после конца теста
+    await upsertGamesMeta(
+      db,
+      LIBRARY.map((g) => ({
+        appid: g.appid,
+        name: g.name,
+        tags: { Puzzle: 10 },
+        genres: [],
+        categories: [2],
+        art: { header: `https://cdn.example/${g.appid}.jpg` },
+      })),
+      now,
+    )
+    await updateGamePrices(db, LIBRARY.map((g) => ({ appid: g.appid, priceFinal: 999, priceInitial: 999 })), now)
+    // Чарты Steam для бедного пула — мимо: пул в тесте пуст, а ходить некуда
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+
+    const freshness: string[] = []
+    const spy = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== 'execute') return Reflect.get(target, prop, receiver)
+        return (q: InStatement) => {
+          const sql = (typeof q === 'string' ? q : q.sql).replace(/\s+/g, ' ')
+          // getStaleAppids: свежесть строк каталога по списку appid
+          if (/FROM games WHERE appid IN \(SELECT value FROM json_each\(\?\)\)/.test(sql) && sql.includes('art_json')) {
+            freshness.push(sql)
+          }
+          return target.execute(q)
+        }
+      },
+    })
+    ;(globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }).__imboredDb = Promise.resolve(spy)
+
+    const res = await POST()
+    expect(await res.json()).toMatchObject({ remaining: 0, stalled: false })
+    expect(freshness).toHaveLength(1)
   })
 })

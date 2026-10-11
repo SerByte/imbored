@@ -3,7 +3,6 @@ import * as m from 'framer-motion/m'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { after } from 'next/server'
-import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
@@ -19,8 +18,8 @@ import {
   type CompatInvite,
   type CompatPick,
   type CompatResult,
+  inviteOnce,
   loadCompat,
-  loadCompatInvite,
 } from '@/lib/compatpage'
 import { reconnectHref } from '@/lib/destination'
 import { plural } from '@/lib/plural'
@@ -39,12 +38,6 @@ export const dynamic = 'force-dynamic'
 const STEAMID = /^\d{17}$/
 
 /**
- * Приглашение читают и generateMetadata, и сама страница. cache() на время
- * запроса — тот же приём, что на карточке игры (app/game/[appid]/page.tsx).
- */
-const inviteOnce = cache(loadCompatInvite)
-
-/**
  * Без этого ссылка на совместимость разворачивалась в мессенджерах общим
  * заголовком сайта и вообще без картинки — при том что весь смысл страницы в
  * том, чтобы её кинуть другому.
@@ -61,6 +54,8 @@ export async function generateMetadata({
   const { steamid } = await params
   if (!STEAMID.test(steamid)) return {}
 
+  // Приглашение на время запроса — общее с телом страницы: loadCompat берёт
+  // тот же промис, и снапшот владельца ссылки читается один раз (inviteOnce)
   const invite = await inviteOnce(await getDb(), steamid)
   if (!invite) return { title: 'Совместимость', robots: { index: false } }
 
