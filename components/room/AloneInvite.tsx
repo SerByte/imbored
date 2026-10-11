@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { ShareLinkInput, type ShareLink } from '@/components/ShareLink'
 import { FlapCode } from '@/components/FlapCode'
 import { Eyebrow } from '@/components/Labels'
+import { StatusLine } from '@/components/StatusLine'
 import { roomShareUrl } from '@/lib/roomshare'
 
 /**
@@ -26,6 +27,8 @@ export function AloneInvite({
   share,
   onTogglePublic,
   headRef,
+  publicBusy,
+  publicMiss,
 }: {
   roomId: string
   isHost: boolean
@@ -35,6 +38,10 @@ export function AloneInvite({
   onTogglePublic: () => void
   /** заголовок — цель фокуса, когда колода ушла из-под пальцев (RoomWaiting) */
   headRef: Ref<HTMLHeadingElement>
+  /** переключение доски в пути — повтор гасит togglePublic на странице */
+  publicBusy: boolean
+  /** почему доска не переключилась; null — отказа нет */
+  publicMiss: string | null
 }) {
   /*
    * Поле со ссылкой — после первого отказа буфера и насовсем. Раньше оно
@@ -91,7 +98,8 @@ export function AloneInvite({
           <button
             onClick={onTogglePublic}
             aria-pressed={isPublic}
-            className="action-tile"
+            aria-disabled={publicBusy}
+            className="action-tile aria-disabled:opacity-40"
           >
             <span className="flex items-center gap-2 font-extrabold">
               {isPublic ? (
@@ -116,6 +124,12 @@ export function AloneInvite({
           </div>
         )}
       </div>
+      {/*
+        Отказ переключателя доски — здесь, под плиткой: верхние кнопки шапки,
+        у которых своя такая строка, при AloneInvite спрятаны. Стоит всегда,
+        текст приходит изменением — см. components/StatusLine.
+      */}
+      <StatusLine text={publicMiss} className="relative text-center text-sm text-danger" />
 
       {/*
         Копирование в буфер может не сработать: небезопасный origin, отказ в

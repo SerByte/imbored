@@ -8,6 +8,8 @@ import {
   deckCardLine,
   deckPosition,
   deckStuck,
+  deckSwipeVote,
+  pollCaughtUp,
   VOTE_TIMEOUT_MS,
   voteMiss,
   voteSignal,
@@ -92,6 +94,84 @@ describe('застрявшая колода', () => {
   test('без размера колоды признака конца нет — «не дошёл» ничего не значит', () => {
     expect(deckStuck({ left: 0, meDone: false, deckSize: 0 })).toBe(false)
     expect(deckStuck({ left: 0, meDone: false, deckSize: null })).toBe(false)
+  })
+})
+
+/**
+ * Застрявшей колоду можно назвать, только когда опрос догнал свои голоса.
+ *
+ * Сразу после последнего свайпа на руках пусто, а done в последнем снимке
+ * ещё false: голос в пути, и опрос о нём не знает. deckStuck в эту секунду
+ * истинно на КАЖДОМ штатном конце колоды, и самолечение уходило полной
+ * пересборкой /deck — самого дорогого маршрута — у каждого участника в каждом
+ * раунде, тратя заодно единственное лечение на ключ.
+ */
+describe('опрос догнал свои голоса', () => {
+  test('голос в пути — снимок о нём не знает', () => {
+    expect(pollCaughtUp({ votesInFlight: 1, askedAt: 2_000, votesSettledAt: 1_000 })).toBe(false)
+  })
+
+  test('снимок запрошен до ответа на последний голос — тоже не знает', () => {
+    expect(
+      pollCaughtUp({ votesInFlight: 0, askedAt: 1_000, votesSettledAt: 1_500 }),
+      'опрос, ушедший раньше ответа голоса, звал лечение на штатном конце колоды',
+    ).toBe(false)
+  })
+
+  test('снимок запрошен после ответа на последний голос — знает', () => {
+    expect(pollCaughtUp({ votesInFlight: 0, askedAt: 1_501, votesSettledAt: 1_500 })).toBe(true)
+  })
+
+  test('та же миллисекунда — ещё не знает: подождать один опрос дешевле, чем пересобрать колоду', () => {
+    expect(pollCaughtUp({ votesInFlight: 0, askedAt: 1_500, votesSettledAt: 1_500 })).toBe(false)
+  })
+
+  test('голосов ещё не было — любой снимок свежий', () => {
+    expect(pollCaughtUp({ votesInFlight: 0, askedAt: 1, votesSettledAt: 0 })).toBe(true)
+  })
+})
+
+/**
+ * Голос жестом. Скорость у framer-motion — за последние 100 мс движения, и
+ * быстрый возврат пальца к центру легко даёт больше 500 px/с В ДРУГУЮ
+ * сторону от остаточного смещения. Раньше порог проходил по скорости, а
+ * сторона бралась по смещению — и отмена голосовала за ту сторону, от
+ * которой палец уходил. Голос не отменить, а «да» последнего несогласного
+ * сводит матч сразу.
+ *
+ * Числа — замеры жестов с getVelocity framer-motion.
+ */
+describe('голос жестом', () => {
+  test('быстрый возврат к центру — отмена, а не голос', () => {
+    expect(deckSwipeVote(20, -1300), 'дёрнул вправо и передумал — записалось «Играем!»').toBeNull()
+    expect(deckSwipeVote(20, -520)).toBeNull()
+    expect(deckSwipeVote(-20, 1300), 'зеркально — записалось «Не хочу»').toBeNull()
+  })
+
+  test('за порогом, но палец резко уходит назад — тоже отмена, и уж точно не другая сторона', () => {
+    expect(deckSwipeVote(153, -917)).toBeNull()
+  })
+
+  test('отмена, перелетевшая центр, не голосует за противоположную сторону', () => {
+    expect(deckSwipeVote(-5, -1033)).toBeNull()
+  })
+
+  test('настоящий щелчок в одну сторону — голос этой стороны', () => {
+    expect(deckSwipeVote(74, 889)).toBe(true)
+    expect(deckSwipeVote(40, 900)).toBe(true)
+    expect(deckSwipeVote(-58, -875)).toBe(false)
+  })
+
+  test('медленный увод за порог — голос по смещению', () => {
+    expect(deckSwipeVote(130, 162)).toBe(true)
+    expect(deckSwipeVote(150, 0)).toBe(true)
+    expect(deckSwipeVote(-140, -20)).toBe(false)
+  })
+
+  test('мало и медленно, или вовсе без смещения — карта возвращается', () => {
+    expect(deckSwipeVote(50, 100)).toBeNull()
+    expect(deckSwipeVote(0, 900)).toBeNull()
+    expect(deckSwipeVote(0, 0)).toBeNull()
   })
 })
 

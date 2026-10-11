@@ -4,12 +4,14 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
+import { focusAdrift } from '@/lib/focushandoff'
 import { ROOM_PRESETS, roomArrival, type RoomPreset } from '@/lib/presets'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { Icon } from '@/components/Icon'
 import { eyebrow } from '@/components/Labels'
 import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { Spinner } from '@/components/Spinner'
+import { StatusLine } from '@/components/StatusLine'
 import { useSearch } from '@/components/useSearch'
 
 /**
@@ -161,8 +163,41 @@ export default function NewRoomPage() {
     void send(back)
   }, [back, send])
 
+  /*
+   * ЭКРАН ОТКАЗА ЗАБИРАЕТ ФОКУС, А ПОПЫТКА — ГОЛОС.
+   *
+   * Тап по плитке меняет весь экран на спиннер, и плитка уходит вместе с
+   * фокусом — он падал в body. Потом спиннер так же целиком сменялся на «Не
+   * получилось создать комнату» или «Слишком много комнат подряд», и
+   * скринридер не говорил ни слова: живой области на этом пути не было, фокус
+   * никуда не переезжал. Человек не знал, что попытка кончилась отказом.
+   *
+   * Заголовок отказа забирает фокус — и объявляет себя сам. Только после
+   * попытки (тап или возврат со входа с ?preset=): экран входа, показанный
+   * сразу при заходе (writer уже false), — не новость, и фокус у только что
+   * открывшего страницу не отнимается. И только потерянный (focusAdrift):
+   * стоящего в шапке отказ не трогает. Колбэк стабилен по picked — иначе
+   * каждый рендер переподключал бы ref и забирал фокус снова.
+   *
+   * Сама попытка звучит строкой status: она стоит первым ребёнком фрагмента
+   * во всех return и переживает подмену экранов (React сверяет по месту), а
+   * спиннер с role="status" рождается вместе со своим экраном и звучит не
+   * везде (components/StatusLine).
+   */
+  const focusFailure = useCallback(
+    (el: HTMLHeadingElement | null) => {
+      if (el && (picked !== null || started.current) && focusAdrift(document)) el.focus()
+    },
+    [picked],
+  )
+  const status = (
+    <StatusLine text={view === 'creating' ? 'Создаю комнату для пати…' : null} className="sr-only" />
+  )
+
   if (view === 'choosing') {
     return (
+      <>
+      {status}
       <div className="flex-1 flex items-center justify-center px-5 py-24">
         <div className="max-w-3xl w-full flex flex-col gap-8 anim-reveal">
           <div className="text-center flex flex-col items-center gap-2">
@@ -204,23 +239,32 @@ export default function NewRoomPage() {
           </Link>
         </div>
       </div>
+      </>
     )
   }
 
   if (view === 'creating') {
     return (
+      <>
+      {status}
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-5">
         <Spinner />
-        <p className="text-dim text-sm">Создаю комнату для пати…</p>
+        {/* aria-hidden: эту строку скринридеру говорит status выше */}
+        <p aria-hidden className="text-dim text-sm">Создаю комнату для пати…</p>
       </div>
+      </>
     )
   }
 
   if (view === 'needsteam') {
     return (
+      <>
+      {status}
       <div className="flex-1 flex items-center justify-center px-5 py-24">
         <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5 anim-reveal">
-          <h1 className="font-display text-display-sm">Комнату создаёт вошедший через Steam</h1>
+          <h1 ref={focusFailure} tabIndex={-1} className="font-display text-display-sm">
+            Комнату создаёт вошедший через Steam
+          </h1>
           <p className="text-dim text-sm leading-relaxed">
             Ссылка на профиль не доказывает, что профиль твой. По ней можно смотреть подборки и
             голосовать в чужих пати, а создавать свои и сохранять оценки — после входа.
@@ -246,13 +290,16 @@ export default function NewRoomPage() {
           </Link>
         </div>
       </div>
+      </>
     )
   }
 
   return (
+    <>
+    {status}
     <div className="flex-1 flex items-center justify-center px-5 py-24">
       <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5 anim-reveal">
-        <h1 className="font-display text-display-sm">
+        <h1 ref={focusFailure} tabIndex={-1} className="font-display text-display-sm">
           {view === 'busy' ? 'Слишком много комнат подряд' : 'Не получилось создать комнату'}
         </h1>
         <p className="text-dim text-sm leading-relaxed">
@@ -273,5 +320,6 @@ export default function NewRoomPage() {
         </Link>
       </div>
     </div>
+    </>
   )
 }

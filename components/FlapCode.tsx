@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 /**
  * Алфавит ДОЛЖЕН совпадать с генератором кодов в app/api/room/create/route.ts.
@@ -14,7 +14,7 @@ const STAGGER_MS = 60
 /**
  * Код комнаты, который набирается как на табло вылетов.
  *
- * Доска пати буквально и есть табло: она опрашивается каждые 5 секунд, строки
+ * Доска пати буквально и есть табло: она опрашивается каждые 8 секунд, строки
  * появляются и исчезают, а содержимое — «рейсы, на которые можно подсесть».
  * Код при этом — самая функциональная строка в приложении: его диктуют другу
  * вслух и вставляют в чат.
@@ -26,7 +26,23 @@ export function FlapCode({ code, animate = true }: { code: string; animate?: boo
   // Начальное состояние — уже готовый код. Так он виден и при выключенном JS,
   // и при reduced-motion, и при любом сбое: створки только перекрывают готовое.
   const [shown, setShown] = useState(code)
-  const timers = useRef<number[]>([])
+  /*
+   * Пока анимации нет, на экране сам код, а не последний кадр створок.
+   *
+   * Кадры анимации пишутся в shown по ходу: ещё не стартовавшие колонки —
+   * пробел, крутящиеся — случайный глиф. Прерви её до последнего шага — и
+   * уборка эффекта снимала таймеры, а новый эффект при animate={false}
+   * выходил сразу: shown так и оставался «QM    » вместо «FCPK8G», пока строка
+   * жива. Так и бывало на доске: открытая в фоне вкладка крутит створки
+   * таймерами раз в секунду (около 11 с вместо 1.3), а возвращение на неё
+   * перечитывает доску, и следующий ответ снимает со строк animate. Код, который
+   * диктуют другу, оставался на экране неправильным — верны были только
+   * sr-only и ссылка.
+   *
+   * Выводом в рендере, а не setShown(code) в раннем return эффекта: setState в
+   * теле эффекта линтер справедливо называет каскадным рендером.
+   */
+  const display = animate ? shown : code
 
   useEffect(() => {
     if (!animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
@@ -52,12 +68,14 @@ export function FlapCode({ code, animate = true }: { code: string; animate?: boo
       handles.push(kick)
     })
 
-    timers.current = handles
     return () => {
       handles.forEach((t) => {
         window.clearInterval(t)
         window.clearTimeout(t)
       })
+      // Прерванный прогон не оставляет кадр и тому, кто снова включит animate:
+      // до первого шага нового прогона виден код, а не обрывок старого
+      setShown(code)
     }
   }, [code, animate])
 
@@ -77,7 +95,7 @@ export function FlapCode({ code, animate = true }: { code: string; animate?: boo
             className="inline-block min-w-[0.72em] text-center"
             style={{ fontVariantNumeric: 'tabular-nums' }}
           >
-            {shown[i] ?? ' '}
+            {display[i] ?? ' '}
           </span>
         ))}
       </span>

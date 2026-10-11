@@ -6,6 +6,7 @@ import {
   HIDDEN_POLL_MS,
   hiddenPollDelay,
   nextPollStep,
+  snapshotFate,
   STALE_AFTER_FAILS,
 } from './roompoll'
 
@@ -82,6 +83,43 @@ describe('решение опроса комнаты', () => {
   test('терминальные исходы не оставляют обещания повтора', () => {
     expect(nextPollStep({ ok: false, gone: true }, 5).stale).toBe(false)
     expect(nextPollStep({ ok: true, status: 'matched' }, 5).stale).toBe(false)
+  })
+})
+
+/**
+ * Сторож порядка снимков комнаты.
+ *
+ * Защита опроса от наложения (inFlight) накрывала только его собственные
+ * запросы, а refresh зовут ещё «Ещё 20 игр», вход, голос, «Берём», ✕ хоста и
+ * переключатель доски. Побеждал тот ответ, что пришёл последним, даже если
+ * прочитан раньше: счётчики ростера ехали назад, а снимок «open», прочитанный
+ * до матча и пришедший после него, ставил комнату обратно в ожидание — при
+ * уже остановленном опросе навсегда.
+ */
+describe('порядок снимков комнаты', () => {
+  const open = (seq: number) => ({ seq, status: 'open' })
+  const matched = (seq: number) => ({ seq, status: 'matched' })
+
+  test('первый снимок встаёт всегда', () => {
+    expect(snapshotFate({ seq: 1, status: 'open', shown: null })).toBe('apply')
+  })
+
+  test('более старый снимок не затирает более новый', () => {
+    expect(snapshotFate({ seq: 3, status: 'open', shown: open(5) }), 'ростер поехал бы назад').toBe('keep')
+    expect(snapshotFate({ seq: 6, status: 'open', shown: open(5) })).toBe('apply')
+  })
+
+  test('матч терминален: никакой «open» его не сменит, даже с номером новее', () => {
+    expect(
+      snapshotFate({ seq: 4, status: 'open', shown: matched(5) }),
+      'запоздавший снимок вернул бы ожидание при остановленном опросе',
+    ).toBe('keep')
+    expect(snapshotFate({ seq: 9, status: 'open', shown: matched(5) })).toBe('keep')
+  })
+
+  test('матч встаёт и со старым номером: иначе опрос остановился бы на открытой комнате', () => {
+    expect(snapshotFate({ seq: 4, status: 'matched', shown: open(5) })).toBe('apply')
+    expect(snapshotFate({ seq: 6, status: 'matched', shown: matched(5) })).toBe('apply')
   })
 })
 

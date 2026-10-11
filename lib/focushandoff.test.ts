@@ -198,3 +198,57 @@ describe('пати: матч и экран ожидания', () => {
     expect(alone[0]).toMatch(/ref=\{headRef\} tabIndex=\{-1\}/)
   })
 })
+
+/**
+ * Пати и её двери: шаги, на которых нажатая кнопка уходит вместе со своим
+ * куском экрана. «Дальше» и «Ещё раунд» в викторине, ✕ хоста в ростере,
+ * прерывание викторины опросом, экран отказа на месте спиннера в /room/new —
+ * везде фокус падал в body, и клавиатура начинала со страницы сверху.
+ */
+describe('пати: нажатая кнопка уходит — фокус остаётся на экране', () => {
+  test('викторина: шаг отдаёт фокус голове панели — вопросу, итогу или загрузке', () => {
+    const trivia = read('components/room/PartyTrivia.tsx')
+    const heads = tags(trivia, 'p').filter((t) => /ref=\{headRef\}/.test(t))
+    // загрузка, отказ/пусто, вопрос и итог раунда — взаимоисключающие
+    expect(heads.length).toBe(4)
+    for (const t of heads) expect(t).toMatch(/tabIndex=\{-1\}/)
+    expect(heads.some((t) => /id="trivia-q"/.test(t)), 'вопрос — не цель фокуса').toBe(true)
+    // и «Дальше», и «Ещё раунд» просят фокус до смены вопроса
+    expect(trivia).toMatch(/onClick=\{\(\) => \{\s*wantFocus\.current = true\s*setAt\(\(n\) => n \+ 1\)/)
+    expect(trivia).toMatch(/onClick=\{\(\) => \{\s*wantFocus\.current = true\s*const next = round \+ 1/)
+    expect(trivia).toMatch(/\}, \[at, questions\]\)/)
+  })
+
+  test('викторина: прерывание отдаёт фокус переключателю — только из панели или потерянный', () => {
+    const trivia = read('components/room/PartyTrivia.tsx')
+    expect(trivia).toMatch(/if \(interrupted && focusAdrift\(document, panelRef\.current\)\) toggleRef\.current\?\.focus\(\)/)
+    expect(trivia).toMatch(/<m\.div\s+ref=\{panelRef\}\s+id="trivia-body"/)
+  })
+
+  test('ростер: ✕ отдаёт фокус соседней ✕ или заголовку «Кто где»', () => {
+    const roster = read('components/room/MemberRoster.tsx')
+    const h2 = tags(roster, 'h2')
+    expect(h2.length).toBe(1)
+    expect(h2[0]).toMatch(/ref=\{headRef\} tabIndex=\{-1\}/)
+    // фокус берётся, только когда строки и правда не стало, и только потерянный
+    expect(roster).toMatch(/if \(!focusAdrift\(document, listRef\.current\)\) return/)
+    expect(roster).toMatch(/<ul ref=\{listRef\}/)
+  })
+
+  test('экран ожидания: смена режима под фокусом отдаёт его новому заголовку', () => {
+    const waiting = read('components/room/RoomWaiting.tsx')
+    expect(waiting).toMatch(/if \(focusAdrift\(document\)\) headRef\.current\?\.focus\(\)\s*\}, \[mode\]\)/)
+  })
+
+  test('/room/new: экран отказа на месте спиннера забирает фокус заголовком', () => {
+    const fresh = read('app/room/new/page.tsx')
+    const h1 = tags(fresh, 'h1')
+    // выбор настроения — без переноса: это первый экран, фокус у открывшего не отнимаем
+    expect(h1.filter((t) => /ref=\{focusFailure\} tabIndex=\{-1\}/.test(t)).length).toBe(2)
+    expect(fresh).toMatch(/\(picked !== null \|\| started\.current\) && focusAdrift\(document\)\) el\.focus\(\)/)
+    // строка попытки переживает подмену экранов: первая во всех return
+    const returns = [...fresh.matchAll(/\breturn \(/g)]
+    expect(returns.length).toBe(4)
+    for (const r of returns) expect(fresh.slice(r.index), String(r.index)).toMatch(/^return \(\s*<>\s*\{status\}/)
+  })
+})

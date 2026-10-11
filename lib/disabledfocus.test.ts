@@ -295,6 +295,31 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['app/room/[id]/page.tsx', /async function pullMore\(\) \{\s*if \(pulling\) return/]],
   },
   {
+    // «Выйти из пати»; ✕ хоста — тем же обработчиком, см. MemberRoster ниже
+    file: 'components/room/RoomWaiting.tsx',
+    expr: 'leaving',
+    guards: [['app/room/[id]/page.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/]],
+  },
+  {
+    file: 'components/room/MemberRoster.tsx',
+    expr: 'removing',
+    guards: [
+      ['components/room/MemberRoster.tsx', /const remove = \(id: string\) => \{\s*if \(removing \|\| !onRemove\) return/],
+      ['app/room/[id]/page.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/],
+    ],
+  },
+  {
+    // переключатель доски в шапке и плитка «Пустить чужих» — один обработчик
+    file: 'app/room/[id]/page.tsx',
+    expr: 'publicBusy',
+    guards: [['app/room/[id]/page.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
+  },
+  {
+    file: 'components/room/AloneInvite.tsx',
+    expr: 'publicBusy',
+    guards: [['app/room/[id]/page.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
+  },
+  {
     // главная кнопка вошедшего, демо без Steam и обе кнопки формы
     file: 'components/landing/ConnectCard.tsx',
     expr: 'busy !== null',
