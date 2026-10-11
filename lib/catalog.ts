@@ -623,7 +623,16 @@ export async function fetchMostPlayed(fetchFn: typeof fetch = fetch): Promise<nu
   }
 }
 
-const META_MAX_AGE_SEC = 14 * 86_400
+/**
+ * Срок годности метаданных каталога — один на ensureMeta и /api/prepare.
+ *
+ * Экспортирован, потому что прогрев отбирает протухшее ДО ensureMeta и
+ * отдаёт ему только отобранное. Своя копия в маршруте — тихая ловушка: срок
+ * здесь укоротили бы до недели, а маршрут со старыми двумя неделями не отдал
+ * бы ensureMeta строк возрастом от семи до четырнадцати дней — без ошибки и
+ * с remaining: 0.
+ */
+export const META_MAX_AGE_SEC = 14 * 86_400
 
 /**
  * Догружает метаданные (GetItems + при необходимости appdetails) для appid'ов,
