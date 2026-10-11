@@ -319,10 +319,14 @@ describe('кадры и трейлеры из GetItems', () => {
     expect(metas.find((m) => m.appid === 730)?.trailer).toBeDefined()
   })
 
-  test('fetchStoreMedia: только два флага и только игры, у которых что-то нашлось', async () => {
+  test('fetchStoreMedia: только флаги карточки и только игры, у которых что-то нашлось', async () => {
     const rec = recording(MEDIA_RESPONSE)
     const got = await fetchStoreMedia([730, 70, -5], { fetchFn: rec.fetchFn })
-    expect(rec.requests).toEqual([{ include_screenshots: true, include_trailers: true }])
+    // Кадры, трейлеры и языки — и ничего из прогрева: ни тегов, ни арта, ни
+    // цены. Языки едут тем же запросом, см. STORE_MEDIA_DATA_REQUEST
+    expect(rec.requests).toEqual([
+      { include_screenshots: true, include_trailers: true, include_supported_languages: true },
+    ])
     expect(got.get(730)?.trailer?.poster).toMatch(/movie_full\.jpg/)
     expect(got.get(70)?.trailer).toBeUndefined()
     expect(got.get(70)?.screenshots?.length).toBeGreaterThan(0)
@@ -343,6 +347,133 @@ describe('кадры и трейлеры из GetItems', () => {
     expect(got.size).toBe(0)
     expect(parseStoreMedia(null).size).toBe(0)
     expect(parseStoreMedia({ response: { store_items: 'нет' } }).size).toBe(0)
+  })
+})
+
+/** Настоящий ответ GetItems с языками: CS2, Hades, Cyberpunk 2077, Apex, Balatro */
+const LANGUAGES_RESPONSE: unknown = JSON.parse(
+  readFileSync(path.join(__dirname, '__fixtures__', 'getitems-languages.json'), 'utf8'),
+)
+
+describe('русский язык из GetItems', () => {
+  const ruOf = (json: unknown) =>
+    new Map(parseStoreItems(json, TAG_NAMES).map((m) => [m.appid, m.ruLang]))
+
+  test('ступень — самое сильное из трёх отметок Steam', () => {
+    const ru = ruOf(LANGUAGES_RESPONSE)
+    // CS2: русский интерфейс без озвучки и субтитров
+    expect(ru.get(730)).toBe(1)
+    // Hades: субтитры, озвучка только английская
+    expect(ru.get(1145360)).toBe(2)
+    // Cyberpunk 2077: полная озвучка и субтитры
+    expect(ru.get(1091500)).toBe(3)
+    // Apex Legends: озвучка без субтитров — всё равно озвучка
+    expect(ru.get(1172470)).toBe(3)
+    // Balatro: двенадцать языков, русского среди них нет — это ответ, а не «не знаем»
+    expect(ru.get(2379780)).toBe(0)
+  })
+
+  test('без флага языков поля нет вовсе — «не знаем», а не «нет русского»', () => {
+    // Прогрев языков не просит: ноль здесь стёр бы известное и повесил бы
+    // «Без русского» на игру с полной озвучкой
+    const m = parseStoreItems(GETITEMS_RESPONSE, TAG_NAMES)[0]
+    expect(m).not.toHaveProperty('ruLang')
+  })
+
+  test('русский — только elanguage 8; номер 8 в дополнительных языках — другой язык', () => {
+    // У Factorio в ответе есть и { elanguage: 8 }, и { elanguage: -1,
+    // eadditionallanguage: 8 }: у дополнительных языков своя нумерация
+    const item = (langs: unknown) => ({
+      response: { store_items: [{ appid: 5, visible: true, name: 'X', supported_languages: langs }] },
+    })
+    const only = [
+      { elanguage: 0, eadditionallanguage: -1, supported: true, full_audio: true, subtitles: true },
+      { elanguage: -1, eadditionallanguage: 8, supported: true, full_audio: true, subtitles: true },
+    ]
+    expect(ruOf(item(only)).get(5)).toBe(0)
+  })
+
+  test('пустой список и мусор — «не знаем»; русский без единой отметки — «нет»', () => {
+    const item = (langs: unknown) => ({
+      response: { store_items: [{ appid: 5, visible: true, name: 'X', supported_languages: langs }] },
+    })
+    // Пустой список ничего не утверждает: судить «русского нет» не по чему
+    expect(ruOf(item([])).get(5)).toBeUndefined()
+    expect(ruOf(item('нет')).get(5)).toBeUndefined()
+    expect(ruOf(item([null, 7])).get(5)).toBeUndefined()
+    expect(
+      ruOf(
+        item([
+          { elanguage: 0, supported: true },
+          { elanguage: 8, supported: false, full_audio: false, subtitles: false },
+        ]),
+      ).get(5),
+    ).toBe(0)
+  })
+
+  test('карточка и промоут просят языки, прогрев — нет: +46% к его ответу', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const fetchFn = (async (url: string) => {
+      if (String(url).includes('populartags')) {
+        return new Response(JSON.stringify([{ tagid: 19, name: 'Action' }]), { status: 200 })
+      }
+      const input = new URL(String(url)).searchParams.get('input_json') ?? '{}'
+      requests.push((JSON.parse(input) as { data_request: Record<string, unknown> }).data_request)
+      return new Response(JSON.stringify(LANGUAGES_RESPONSE), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await fetchStoreItems([730], { fetchFn })
+    expect(requests[0]).not.toHaveProperty('include_supported_languages')
+
+    const promoted = await fetchStoreItems([730, 1145360], { fetchFn, media: true })
+    expect(requests[1]).toMatchObject({ include_supported_languages: true, include_assets: true })
+    expect(promoted.find((m) => m.appid === 1145360)?.ruLang).toBe(2)
+
+    const media = await fetchStoreMedia([730, 2379780], { fetchFn })
+    expect(requests[2]).toMatchObject({ include_supported_languages: true })
+    // У этих игр в ответе ни кадров, ни трейлера — но язык есть, и это повод
+    // записать строку: ноль у Balatro тоже знание
+    expect(media.get(730)).toEqual({ ruLang: 1 })
+    expect(media.get(2379780)).toEqual({ ruLang: 0 })
+  })
+})
+
+describe('русский язык из appdetails', () => {
+  const withLangs = (supported_languages: unknown) =>
+    parseAppDetails(
+      { '9': { success: true, data: { type: 'game', name: 'X', supported_languages } } },
+      9,
+    )
+
+  test('звёздочка у русского — полная озвучка', () => {
+    // Строка Cyberpunk 2077 с l=russian, как её отдаёт fetchAppDetails
+    const s =
+      'английский<strong>*</strong>, французский<strong>*</strong>, русский<strong>*</strong>, ' +
+      'китайский (упр.)<strong>*</strong>, украинский<br><strong>*</strong>озвучивание доступно на этих языках'
+    expect(withLangs(s)?.ruLang).toBe(3)
+  })
+
+  test('русского в списке нет — «нет»; белорусский русским не считается', () => {
+    // Balatro
+    expect(withLangs('английский, французский, японский, польский, китайский (трад.)')?.ruLang).toBe(0)
+    expect(withLangs('английский, белорусский<strong>*</strong>, украинский')?.ruLang).toBe(0)
+  })
+
+  test('русский без звёздочки — не знаем: appdetails не отличает интерфейс от субтитров', () => {
+    // Hades: в GetItems у русского субтитры, а здесь та же строка была бы и у
+    // CS2 с одним интерфейсом. Догадка «1» затёрла бы точную «2» из GetItems
+    // при слиянии в кроне карточек — молчание её сохраняет
+    const s =
+      'английский<strong>*</strong>, французский, русский, японский<br><strong>*</strong>озвучивание доступно на этих языках'
+    expect(withLangs(s)).not.toHaveProperty('ruLang')
+  })
+
+  test('английская локаль тоже читается; пусто и мусор — не знаем', () => {
+    expect(withLangs('English<strong>*</strong>, Russian<strong>*</strong>')?.ruLang).toBe(3)
+    expect(withLangs('English, German')?.ruLang).toBe(0)
+    expect(withLangs('')).not.toHaveProperty('ruLang')
+    expect(withLangs(42)).not.toHaveProperty('ruLang')
+    expect(withLangs(undefined)).not.toHaveProperty('ruLang')
   })
 })
 
@@ -507,6 +638,16 @@ describe('mergeMeta', () => {
   test('без предыдущей записи возвращает свежую как есть', () => {
     const fresh = { appid: 1, name: 'X', tags: {}, genres: [], categories: [] }
     expect(mergeMeta(null, fresh)).toEqual(fresh)
+  })
+
+  test('русский: ответ без языков известное не стирает, ответ с языками — побеждает', () => {
+    const known: GameMeta = { ...existing, ruLang: 3 }
+    // прогрев языков не просит — поля в свежей записи нет
+    expect(mergeMeta(known, { appid: 620, name: 'Portal 2', tags: {}, genres: [], categories: [] }).ruLang).toBe(3)
+    // ноль — это ответ Steam («русского нет»), а не пустота
+    expect(
+      mergeMeta(known, { appid: 620, name: 'Portal 2', tags: {}, genres: [], categories: [], ruLang: 0 }).ruLang,
+    ).toBe(0)
   })
 
   describe('описание: русское не заменяется нерусским', () => {

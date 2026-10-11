@@ -1,5 +1,5 @@
 /**
- * Доливка трейлеров и кадров в пул каталога.
+ * Доливка трейлеров, кадров и русского языка в пул каталога.
  *
  *   npm run catalog:media -- --limit=6000
  *   npm run catalog:media -- --dry
@@ -10,10 +10,16 @@
  * верха каталога — ровно у тех игр, которые чаще всего становятся героями, —
  * появлялись бы по одной карточке в день до весны.
  *
- * Проход дешёвый: один GetItems на двести игр, только два include-флага, без
+ * Проход дешёвый: один GetItems на двести игр, только три include-флага, без
  * тегов, арта и цены. Весь пул — три десятка запросов.
  *
- * Пишет ДВЕ колонки узким UPDATE (setGamesMedia) и не трогает updated_at —
+ * Русский язык (ru_lang) — третьим флагом того же запроса, и ради него проход
+ * нужен даже каталогу, где кадры и трейлеры уже есть: крон карточек вернётся
+ * к обогащённой игре только через полгода, а прогрев язык не просит
+ * (STORE_MEDIA_DATA_REQUEST в lib/catalog). До этого прохода карточки и
+ * выдача о русском молчат — «не знаем», а не «нет».
+ *
+ * Пишет ТРИ колонки узким UPDATE (setGamesMedia) и не трогает updated_at —
  * почему, там же. Пустое не затирает: игра без трейлера в Steam остаётся с
  * прежними кадрами и попадёт в выборку и в следующий раз — трейлер может
  * появиться позже.
@@ -41,7 +47,7 @@ async function main() {
   const db = await openDb()
 
   const target = await gamesMissingMedia(db, limit)
-  console.log(`в пуле без трейлера или кадров: ${target.length}`)
+  console.log(`в пуле без трейлера, кадров или языка: ${target.length}`)
   if (dry) {
     console.log('--dry: ничего не пишем')
     return
@@ -49,6 +55,7 @@ async function main() {
 
   let сТрейлером = 0
   let сКадрами = 0
+  let сЯзыком = 0
   let записано = 0
   for (let i = 0; i < target.length; i += STORE_ITEMS_BATCH) {
     const chunk = target.slice(i, i + STORE_ITEMS_BATCH)
@@ -57,6 +64,7 @@ async function main() {
       const rows = [...got].map(([appid, media]) => ({ appid, ...media }))
       сТрейлером += rows.filter((r) => r.trailer).length
       сКадрами += rows.filter((r) => r.screenshots?.length).length
+      сЯзыком += rows.filter((r) => r.ruLang !== undefined).length
       записано += await setGamesMedia(db, rows)
     } catch (err) {
       // Осечка пачки не фатальна: её игры остались без медиа и попадут в
@@ -67,7 +75,7 @@ async function main() {
     if (i + STORE_ITEMS_BATCH < target.length) await sleep(STORE_PACE_MS)
   }
   console.log(
-    `\nзаписано строк: ${записано}; нашёлся трейлер: ${сТрейлером}, кадры: ${сКадрами}`,
+    `\nзаписано строк: ${записано}; нашёлся трейлер: ${сТрейлером}, кадры: ${сКадрами}, язык: ${сЯзыком}`,
   )
 }
 

@@ -14,7 +14,7 @@ import {
 } from './db'
 import { collapseEditions, editionKey } from './editions'
 import { logSwallowed } from './errlog'
-import { characterTrait, entryTrait, sessionTrait, type GameTrait } from './gametraits'
+import { characterTrait, entryTrait, languageTrait, sessionTrait, type GameTrait } from './gametraits'
 import { distinctiveTags } from './hook'
 import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
@@ -516,14 +516,20 @@ export function hookTrait(hook: readonly string[] | null): GameTrait | null {
 /**
  * Строки фактов карточки по порядку; пустой список — блока нет вовсе.
  *
- * Чем выделяется → сессия → вход → характер. Всё без модели и только то, что
- * знаем: сессия и характер — из уверенной семантики, вход — из числа, которое
- * назвали отзывы. «Можно бросить в любой момент» здесь нет намеренно: этот
- * признак семантика берёт только из тегов (canStopAnytime), и на публичной
- * карточке он был бы жанровым приором, выданным за факт об игре.
+ * Чем выделяется → сессия → вход → характер → русский. Всё без модели и
+ * только то, что знаем: сессия и характер — из уверенной семантики, вход — из
+ * числа, которое назвали отзывы, русский — из отметок Steam (languageTrait).
+ * «Можно бросить в любой момент» здесь нет намеренно: этот признак семантика
+ * берёт только из тегов (canStopAnytime), и на публичной карточке он был бы
+ * жанровым приором, выданным за факт об игре.
+ *
+ * Русский — последним: первые четыре строки про то, как в неё играется, а
+ * язык — про то, можно ли в неё сесть вообще. Строке с русским соответствует
+ * inLanguage в микроразметке (lib/jsonld); у «нет» поля там нет — других
+ * языков игры мы не знаем.
  */
 export function gameTraits(
-  meta: Pick<GameMeta, 'semantics' | 'categories'> & Partial<Pick<GameMeta, 'tags'>>,
+  meta: Pick<GameMeta, 'semantics' | 'categories'> & Partial<Pick<GameMeta, 'tags' | 'ruLang'>>,
   hook: readonly string[] | null,
 ): GameTrait[] {
   return [
@@ -531,6 +537,7 @@ export function gameTraits(
     sessionTrait(meta),
     entryTrait({ tags: meta.tags ?? {}, semantics: meta.semantics }),
     characterTrait(meta),
+    languageTrait(meta),
   ].filter((t): t is GameTrait => t !== null)
 }
 

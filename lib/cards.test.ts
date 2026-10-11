@@ -93,6 +93,22 @@ describe('cardView', () => {
   test('без меты — пустые поля, а не падение', () => {
     const card = cardView({ appid: 30, name: 'Игра 30', source: 'new', reason: '' }, ctx)
     expect(card).toMatchObject({ headerImage: null, tags: [], signals: null, discount: null, refund: false })
+    expect(card.russian).toBeNull()
+  })
+
+  test('русский — готовой фразой с сервера, у своей и у покупки; не знаем — null', () => {
+    const c = pickContext(
+      set(
+        [meta(10, { ruLang: 3 }), meta(20, { ruLang: 0 }), meta(30)],
+        [{ appid: 10, name: 'Игра 10', playtimeForever: 150, playtime2Weeks: 0 }],
+      ),
+    )
+    // Своя тоже: «хватит ли сил на вечер» у сюжетной игры без русского — другой ответ
+    expect(cardView({ appid: 10, name: 'Игра 10', source: 'backlog', reason: '' }, c).russian).toBe('русская озвучка')
+    // На полке покупок «без русского» — довод против покупки, и он честный
+    expect(cardView({ appid: 20, name: 'Игра 20', source: 'new', reason: '' }, c).russian).toBe('без русского')
+    // До прохода крона или доливки медиа поля нет — и строки нет
+    expect(cardView({ appid: 30, name: 'Игра 30', source: 'new', reason: '' }, c).russian).toBeNull()
   })
 })
 
@@ -101,6 +117,15 @@ describe('storeCardView и dailyCardView', () => {
     const tile = storeCardView({ appid: 20, name: 'Игра 20' }, meta(20), NOW, false)
     expect(tile.discount?.percent).toBe(50)
     expect(Object.keys(tile)).not.toContain('refund')
+  })
+
+  test('плитка полки «Игры дня» говорит о русском, как полка покупок /play', () => {
+    const c = { appid: 20, name: 'Игра 20' }
+    expect(storeCardView(c, meta(20, { ruLang: 0 }), NOW, false).russian).toBe('без русского')
+    expect(storeCardView(c, meta(20, { ruLang: 2 }), NOW, false).russian).toBe('русские субтитры')
+    // До прохода крона или доливки медиа поля нет — и строки нет, а не «без русского»
+    expect(storeCardView(c, meta(20), NOW, false).russian).toBeNull()
+    expect(storeCardView(c, undefined, NOW, false).russian).toBeNull()
   })
 
   test('герой дня из своего — без скидки; из каталога — со скидкой и теми же тегами', () => {
@@ -120,6 +145,14 @@ describe('storeCardView и dailyCardView', () => {
     const without = dailyCardView({ appid: 10, name: 'Игра 10', source: 'untouched' }, meta(10), NOW, day)
     expect(withClip.trailer).toEqual(trailer)
     expect(without.trailer).toBeNull()
+  })
+
+  test('русский у героя дня — та же фраза, что у героя /play', () => {
+    const day = { reason: 'r', sharedTags: [], hoursPlayed: null, hideUrgency: false }
+    const pick = { appid: 20, name: 'Игра 20', source: 'new' as const }
+    expect(dailyCardView(pick, meta(20, { ruLang: 2 }), NOW, day).russian).toBe('русские субтитры')
+    expect(dailyCardView(pick, meta(20), NOW, day).russian).toBeNull()
+    expect(dailyCardView(pick, undefined, NOW, day).russian).toBeNull()
   })
 
   test('ориентир героя дня — из записи, у старой записи явный null', () => {

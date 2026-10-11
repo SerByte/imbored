@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { reviewsBrief } from './gametraits'
+import { languageTrait, reviewsBrief, ruLangLine } from './gametraits'
 
 /**
  * Строку сессии берут клиентские экраны — герой /play и колода пати, — поэтому
@@ -59,5 +59,29 @@ describe('reviewsBrief', () => {
     expect(reviewsBrief(90, 0)).toBeNull()
     expect(reviewsBrief(Number.NaN, 100)).toBeNull()
     expect(reviewsBrief(140, 100)?.short).toBe('100% из 100')
+  })
+})
+
+describe('русский язык', () => {
+  test('одной фразой — самое сильное, что назвал Steam', () => {
+    expect(ruLangLine(3)).toBe('русская озвучка')
+    expect(ruLangLine(2)).toBe('русские субтитры')
+    expect(ruLangLine(1)).toBe('русский интерфейс')
+    expect(ruLangLine(0)).toBe('без русского')
+  })
+
+  test('не знаем — молчим: «без русского» по пустоте было бы выдумкой', () => {
+    // Язык привозят крон карточек и доливка медиа, прогрев его не просит —
+    // до их прохода у большинства игр поля нет, и это не «нет русского»
+    expect(ruLangLine(undefined)).toBeNull()
+    expect(ruLangLine(null)).toBeNull()
+    expect(languageTrait({})).toBeNull()
+  })
+
+  test('строка карточки называет источник: это заявление издателя в Steam', () => {
+    expect(languageTrait({ ruLang: 3 })).toEqual({ label: 'Русский', value: 'полная озвучка — по данным Steam' })
+    expect(languageTrait({ ruLang: 2 })).toEqual({ label: 'Русский', value: 'субтитры — по данным Steam' })
+    expect(languageTrait({ ruLang: 1 })).toEqual({ label: 'Русский', value: 'интерфейс — по данным Steam' })
+    expect(languageTrait({ ruLang: 0 })).toEqual({ label: 'Русский', value: 'нет — по данным Steam' })
   })
 })

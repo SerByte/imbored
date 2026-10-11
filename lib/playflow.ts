@@ -36,11 +36,11 @@ export type PickSignals =
 
 /**
  * Поля карточки, которых нет у выдачи, сохранённой на устройстве раньше, чем
- * они появились (lib/playcache.ts): длина захода, цена входа, отзывы. Тип
- * обязан признать, что их может не быть, — иначе страница читала бы
+ * они появились (lib/playcache.ts): длина захода, цена входа, отзывы, русский
+ * язык. Тип обязан признать, что их может не быть, — иначе страница читала бы
  * undefined как null.
  */
-type LateField = 'session' | 'entry' | 'reviewsPercent' | 'reviewsTotal'
+type LateField = 'session' | 'entry' | 'reviewsPercent' | 'reviewsTotal' | 'russian'
 
 /**
  * Карточка выдачи — ровно то, что отдаёт /api/recommend: тип выведен из

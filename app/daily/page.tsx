@@ -559,7 +559,8 @@ export default function DailyPage() {
           {/* max-w-xl — край, по которому .hero-scrim держит контраст */}
           <div className="max-w-xl flex flex-col gap-4">
             {/*
-              На телефоне здесь остаётся только дата.
+              На телефоне здесь остаются дата, магазин и русский — поведенческие
+              подписи прячутся.
 
               Три плашки делили 375 пикселей натрое, и подпись не влезала ни в
               одну: «ИГРА ДНЯ · 15 / АВГУСТА», «Открыл и / закрыл», «1 ч /
@@ -574,6 +575,8 @@ export default function DailyPage() {
 
               Магазин — исключение и остаётся: он в том же слоте, но нигде больше
               не сказан, а «игра не в Steam» это то, что нужно знать до клика.
+              Русский — по той же причине: «без русского» абзац не пересказывает,
+              а знать это нужно до клика. Одной строкой без переноса внутри.
 
               flex-wrap — страховка: даже если подписи однажды подрастут, плашки
               встанут в столбик целиком, а не сломаются внутри себя.
@@ -591,6 +594,7 @@ export default function DailyPage() {
                   {hero.hoursPlayed} ч наиграно
                 </span>
               )}
+              {hero.russian && <span className="whitespace-nowrap text-dim">{hero.russian}</span>}
               <PlayersNow ccu={hero.ccu} ccuAt={hero.ccuAt} nowSec={nowSec} />
             </div>
 
@@ -880,6 +884,9 @@ export default function DailyPage() {
                     </>
                   }
                 />
+                {/* Как на полке покупок /play: перед покупкой «без русского»
+                    весит не меньше цены. Не знаем — строки нет */}
+                {c.russian && <span className="text-xs text-faint mt-1 block px-0.5">{c.russian}</span>}
               </a>
             ))}
           </div>

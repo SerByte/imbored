@@ -43,6 +43,16 @@ function ld(over: Partial<GameMeta> = {}) {
 }
 
 describe('gameJsonLd', () => {
+  test('русский в игре есть — inLanguage ru; нет или не знаем — поля нет', () => {
+    // Карточка в это же время показывает строку «Русский: …» (languageTrait):
+    // разметка говорит то же, что видно, и не больше
+    expect(ld({ ruLang: 1 }).inLanguage).toBe('ru')
+    expect(ld({ ruLang: 3 }).inLanguage).toBe('ru')
+    // «нет» — не повод назвать другой язык: остальных мы не храним
+    expect(ld({ ruLang: 0 })).not.toHaveProperty('inLanguage')
+    expect(ld()).not.toHaveProperty('inLanguage')
+  })
+
   test('минимальная карточка — это VideoGame с адресом страницы', () => {
     const out = ld()
     expect(out['@context']).toBe('https://schema.org')

@@ -342,3 +342,40 @@ describe('публикация каталога: регион цены', () => {
     expect(list).toContain("'store_hidden'")
   })
 })
+
+describe('публикация каталога: русский язык', () => {
+  const cols = ['appid', 'name', 'ru_lang', 'updated_at'] as const
+
+  /** Облако с языком `было`, поверх — локальная строка с языком `едет` */
+  async function заливаем(было: number | null, едет: number | null) {
+    const db = await createDb(':memory:')
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (1, 'Игра', ?, 0)`,
+      args: [было],
+    })
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (1, 'Игра', ?, 1)
+            ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+      args: [едет],
+    })
+    return (await db.execute('SELECT ru_lang AS r FROM games')).rows[0].r
+  }
+
+  test('язык из облака переживает каталог без него — его привёз крон карточек', async () => {
+    expect(await заливаем(3, null)).toBe(3)
+  })
+
+  test('язык из каталога едет, ноль — тоже: «русского нет» — ответ, а не пустота', async () => {
+    // Промоут просит языки вместе с кадрами (fetchStoreItems с media)
+    expect(await заливаем(null, 2)).toBe(2)
+    expect(await заливаем(2, 0)).toBe(0)
+  })
+
+  test('каталог старше колонки едет без неё; заливка её везёт', () => {
+    const список = ['appid', 'name', 'ru_lang'] as const
+    expect(presentCols(список, new Set(['appid', 'name']))).toEqual(['appid', 'name'])
+    const src = readFileSync('scripts/publish-catalog.ts', 'utf8')
+    const list = src.slice(src.indexOf('const COLS = ['), src.indexOf('] as const', src.indexOf('const COLS = [')))
+    expect(list).toContain("'ru_lang'")
+  })
+})

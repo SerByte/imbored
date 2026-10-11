@@ -1949,6 +1949,10 @@ function Player({ say }: { say: (line: string) => void }) {
                     {pick.session.label.toLowerCase()} {pick.session.value}
                   </span>
                 )}
+                {/* «русские субтитры» / «без русского» — готовой фразой с
+                    сервера (ruLangLine в lib/gametraits, считается в
+                    lib/cards): не знаем — молчим */}
+                {pick.russian && <span className="text-dim">{pick.russian}</span>}
                 {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo)}</span>}
                 <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
               </m.div>
@@ -2943,6 +2947,8 @@ function Player({ say }: { say: (line: string) => void }) {
                               <span className="sr-only">{reviews.full}</span>
                             </span>
                           )}
+                          {/* Перед покупкой «без русского» весит не меньше отзывов */}
+                          {p.russian && <span className="text-xs text-faint mt-1 block">{p.russian}</span>}
                         </span>
                       </m.a>
                     )
