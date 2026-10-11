@@ -30,6 +30,7 @@ import { countPageEnrichDue, createDb, STEAM_LEASE } from '../lib/db'
 import { llmAvailable } from '../lib/llm'
 import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, PAGE_REDO_AFTER_SEC, runPageSlice } from '../lib/pagejob'
 import { withLease } from './lease'
+import { openCloud } from './opendb'
 
 /** Карточек за срез. Каждая — два запроса к store.steampowered.com,
  *  а лимитер держит 1.7 с между ними: срез это примерно минута. */
@@ -41,11 +42,15 @@ function arg(name: string): string | undefined {
 }
 const flag = (name: string) => process.argv.includes(`--${name}`)
 
-async function openDb() {
+/**
+ * readOnly — для --dry-run: облако без миграций (см. openCloud). Счёт очереди
+ * читает page_at и page_tries, а они на проде есть давно
+ */
+async function openDb({ readOnly = false }: { readOnly?: boolean } = {}) {
   const remote = process.env.TURSO_DATABASE_URL
   if (remote) {
-    console.log('база: Turso (облако)')
-    return createDb(remote, process.env.TURSO_AUTH_TOKEN)
+    console.log(readOnly ? 'база: Turso (облако), только чтение' : 'база: Turso (облако)')
+    return openCloud(remote, process.env.TURSO_AUTH_TOKEN, { readOnly })
   }
   const dir = path.join(process.cwd(), 'data')
   fs.mkdirSync(dir, { recursive: true })
@@ -59,7 +64,7 @@ async function main() {
   const noLlm = flag('no-llm')
   const maxGames = Number(arg('limit') ?? Number.POSITIVE_INFINITY)
 
-  const db = await openDb()
+  const db = await openDb({ readOnly: dryRun })
   const now = Math.floor(Date.now() / 1000)
 
   // Счётчик обязан видеть ту же очередь, что и выборка в runPageSlice: там

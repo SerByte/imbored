@@ -334,6 +334,16 @@ export type TagLang = 'english' | 'russian'
 const tagDictCache = new Map<TagLang, { at: number; map: Map<number, string> }>()
 
 /**
+ * Только для тестов: кэш словаря живёт на модуле, срок у него по настоящим
+ * часам, и иначе он течёт между случаями. Словарь, который положил в кэш
+ * один тест (прогрев медиа отвечает {19: 'Action'}), другой получал вместо
+ * своего, и итог зависел от порядка тестов в файле.
+ */
+export function resetTagDictCache(): void {
+  tagDictCache.clear()
+}
+
+/**
  * Словарь тегов Steam. По умолчанию английский: ключи тегов используются в
  * скоринге (VIBE_TAGS в lib/mood.ts, HARDCORE_TAGS в lib/recommend.ts) и в
  * портрете, они английские.
