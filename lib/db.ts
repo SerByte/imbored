@@ -4416,23 +4416,29 @@ export async function updateCatalogSignals(
  * Двойной клик, «Зашло» после «Запустить», перезагрузка выдачи — всё это один
  * и тот же сигнал, а не пять. Сутки, а не навсегда: запустить любимую игру
  * через неделю снова — уже новое событие.
+ *
+ * «Зашло» из ответа на вопрос (ctx intent 'ask': «Зацепило» в «как тебе?» и
+ * в «Не зацепило?») и «Зашло» кнопкой схлопываются только каждое со своим.
+ * Ответ забирает своё «зашло», когда его меняют (answerOutcome), а кнопку —
+ * нет: это отдельное слово человека. Схлопнутые в одну строку, они делили бы
+ * её судьбу, и «Зашло», нажатое через час после «Зацепило», пропадало вместе
+ * с ответом. Лишняя строка вкусу не вредит: профиль, полка «Зашло» и счётчики
+ * сводят оценки к одной на игру.
  */
 const FEEDBACK_DEDUP_SEC = 86_400
 
-export async function logFeedback(
-  db: Db,
-  entry: {
-    steamid: string
-    appid: number
-    action: FeedbackAction
-    reason?: SkipReason
-    mood?: Mood
-    /** Снимок выдачи (lib/feedbackctx) — уже разобранный белым списком */
-    ctx?: FeedbackCtx
-  },
-  nowSec: number,
-): Promise<void> {
-  const args = [
+type FeedbackEntry = {
+  steamid: string
+  appid: number
+  action: FeedbackAction
+  reason?: SkipReason
+  mood?: Mood
+  /** Снимок выдачи (lib/feedbackctx) — уже разобранный белым списком */
+  ctx?: FeedbackCtx
+}
+
+function feedbackArgs(entry: FeedbackEntry, nowSec: number) {
+  return [
     entry.steamid,
     entry.appid,
     entry.action,
@@ -4441,38 +4447,65 @@ export async function logFeedback(
     nowSec,
     entry.ctx ? JSON.stringify(entry.ctx) : null,
   ]
+}
+
+/**
+ * Положительный сигнал («зашло», запуск) с суточным дедупом — одним условным
+ * INSERT, а не SELECT и INSERT: между ними успел бы проскочить второй клик.
+ *
+ * Повтор — только если между ним и прежней строкой не было скипа. Запуск
+ * после «не сейчас» — уже не повтор, а новый ответ: cooldownOf снимает паузу
+ * лишь тёплой строкой НОВЕЕ скипа, и молча проглоченный запуск оставил бы
+ * игру отложенной на трое суток, пока человек в неё играет. «Крутить ещё»
+ * ответом про игру не считается — как и в cooldownOf. Строка из ответа на
+ * вопрос и строка кнопкой — разные (см. FEEDBACK_DEDUP_SEC).
+ *
+ * when — ещё одно условие вставки: им ответ «как тебе?» (answerOutcome)
+ * пишет «зашло» в той же пачке, что и сам ответ, и тем же текстом дедупа.
+ */
+function positiveFeedbackInsert(
+  entry: FeedbackEntry,
+  nowSec: number,
+  when?: { sql: string; args: Array<string | number | null> },
+): InStatement {
+  return {
+    sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at, ctx_json)
+          SELECT ?, ?, ?, ?, ?, ?, ?
+          WHERE NOT EXISTS (
+            SELECT 1 FROM feedback f
+            WHERE f.steamid = ? AND f.appid = ? AND f.action = ? AND f.created_at > ?
+              AND (json_extract(f.ctx_json, '$.intent') IS 'ask') = (? IS 'ask')
+              AND NOT EXISTS (
+                SELECT 1 FROM feedback s
+                WHERE s.steamid = f.steamid AND s.appid = f.appid
+                  AND s.action = 'skipped' AND s.reason IS NOT 'spin'
+                  AND s.created_at >= f.created_at
+              )
+          )${when ? ` AND ${when.sql}` : ''}`,
+    args: [
+      ...feedbackArgs(entry, nowSec),
+      entry.steamid,
+      entry.appid,
+      entry.action,
+      nowSec - FEEDBACK_DEDUP_SEC,
+      entry.ctx?.intent ?? null,
+      ...(when?.args ?? []),
+    ],
+  }
+}
+
+export async function logFeedback(db: Db, entry: FeedbackEntry, nowSec: number): Promise<void> {
   // Скипы, открытия и баны пишутся как есть: у них своя история (причина,
-  // время, снятие бана), и схлопывать её незачем. Дедуп — только для положительных сигналов,
-  // которые копятся от повторных нажатий. Одним условным INSERT, а не SELECT
-  // и INSERT: между ними успел бы проскочить второй клик.
-  //
-  // Повтор — только если между ним и прежней строкой не было скипа. Запуск
-  // после «не сейчас» — уже не повтор, а новый ответ: cooldownOf снимает паузу
-  // лишь тёплой строкой НОВЕЕ скипа, и молча проглоченный запуск оставил бы
-  // игру отложенной на трое суток, пока человек в неё играет. «Крутить ещё»
-  // ответом про игру не считается — как и в cooldownOf.
+  // время, снятие бана), и схлопывать её незачем. Дедуп — только для
+  // положительных сигналов, которые копятся от повторных нажатий
   if (entry.action === 'liked' || entry.action === 'launched') {
-    await db.execute({
-      sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at, ctx_json)
-            SELECT ?, ?, ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (
-              SELECT 1 FROM feedback f
-              WHERE f.steamid = ? AND f.appid = ? AND f.action = ? AND f.created_at > ?
-                AND NOT EXISTS (
-                  SELECT 1 FROM feedback s
-                  WHERE s.steamid = f.steamid AND s.appid = f.appid
-                    AND s.action = 'skipped' AND s.reason IS NOT 'spin'
-                    AND s.created_at >= f.created_at
-                )
-            )`,
-      args: [...args, entry.steamid, entry.appid, entry.action, nowSec - FEEDBACK_DEDUP_SEC],
-    })
+    await db.execute(positiveFeedbackInsert(entry, nowSec))
     return
   }
   await db.execute({
     sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at, ctx_json)
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args,
+    args: feedbackArgs(entry, nowSec),
   })
 }
 
@@ -5025,57 +5058,78 @@ export async function listEvenings(
 
 /**
  * Ответ на «как тебе?» — первый или исправленный (ответ можно поменять в
- * «Твоих вечерах» на /library). changed — ответ изменился; false — строки
- * нет или ответ тот же: повтор с соседней вкладки ничего не пишет, и роут не
- * заводит лишнее «зашло». was — прежний ответ: роуту он нужен, чтобы забрать
- * «зашло», заведённое прежним «Зацепило».
+ * «Твоих вечерах» на /library) — вместе с тем, что он значит для вкуса.
+ * changed — ответ изменился; false — строки нет или ответ тот же: повтор с
+ * соседней вкладки ничего не пишет. was — прежний ответ.
  *
  * «Закрыть» ('dismissed') — не ответ, а отказ отвечать, и настоящий ответ он
  * не переписывает: иначе всплывашка, забытая в соседней вкладке, стирала бы
  * «Зацепило», данное в «Твоих вечерах». Сам 'dismissed' ответом переписать
  * можно.
  *
- * Чтение и запись — двумя запросами, а не одним: SQLite в RETURNING отдаёт
- * новые значения, а не прежние. Гонка двух ответов одной строки безвредна —
- * второй просто прочтёт первый как прежний.
+ * Для вкуса:
+ *  - стал «Зацепило» — оценка «зашло» (ctx intent 'ask'), та же, что у
+ *    «Зацепило» в «Не зацепило?»: вкус её слышит. «Так себе» — только ответ
+ *    для отчёта: сыгранные часы уже сказали своё, а «не тот жанр» человек не
+ *    говорил;
+ *  - был «Зацепило» и стал другим ответом — его «зашло» уходит, иначе смена
+ *    ответа не меняла бы подбор, а игра оставалась бы на полке «Зашло».
+ *    Только его: «Зашло», нажатое на /play или /daily, — отдельное слово
+ *    человека (intent у него не 'ask', и дедуп его со строкой ответа не
+ *    склеивает — FEEDBACK_DEDUP_SEC). created_at не раньше совета — «зашло» по
+ *    вопросу о прошлом совете этой же игры не трогается.
+ *
+ * ОДНОЙ ПАЧКОЙ В ТРАНЗАКЦИИ НА ЗАПИСЬ, а не чтение, запись и правка оценок
+ * отдельными запросами. Отдельными два ответа разом (две вкладки, два
+ * устройства: «Зацепило» и «Так себе») оба читали «ответа нет»: «Зацепило»
+ * заводило «зашло», а «Так себе», не видя прежнего «Зацепило», его не
+ * забирало. Ответ оставался «Так себе», игра — на полке «Зашло», и следующая
+ * смена ответа этого уже не чинила: она видела прежним «Так себе». В пачке
+ * ответы встают в очередь, а удаление и вставка стоят ДО обновления и
+ * читают ответ, каким он был до этого: условие на EXISTS по outcomes — то же
+ * «был „Зацепило“» и «стал „Зацепило“», что раньше решал роут по was.
+ * db.transaction() здесь не годится: после неё клиент открывает новое
+ * соединение, а у ':memory:' тестов это пустая база (см. createDb).
  */
-export async function setOutcomeVerdict(
+export async function answerOutcome(
   db: Db,
-  steamid: string,
-  appid: number,
-  shownAt: number,
-  verdict: OutcomeVerdict,
+  a: { steamid: string; appid: number; shownAt: number; verdict: OutcomeVerdict },
+  nowSec: number,
 ): Promise<{ changed: boolean; was: string | null }> {
-  const before = await db.execute({
-    sql: 'SELECT verdict FROM outcomes WHERE steamid = ? AND appid = ? AND shown_at = ?',
-    args: [steamid, appid, shownAt],
-  })
-  const row = before.rows[0] as unknown as { verdict: string | null } | undefined
-  if (!row) return { changed: false, was: null }
-  const was = row.verdict === null ? null : String(row.verdict)
-  const res = await db.execute({
-    sql: `UPDATE outcomes SET verdict = ?1
-           WHERE steamid = ?2 AND appid = ?3 AND shown_at = ?4
-             AND (verdict IS NULL OR (?1 <> 'dismissed' AND verdict <> ?1))`,
-    args: [verdict, steamid, appid, shownAt],
-  })
-  return { changed: Number(res.rowsAffected) > 0, was }
-}
-
-/**
- * Забрать «зашло», которое завёл ответ «Зацепило» на «как тебе?» (роут
- * /api/outcome, ctx intent 'ask'), когда ответ поменяли. Только его: «Зашло»,
- * нажатое на /play или /daily, — отдельное слово человека, и смена ответа
- * про вечер его не отменяет. created_at не раньше совета — «зашло» по
- * вопросу о прошлом совете этой же игры не трогается.
- */
-export async function unlikeAsked(db: Db, steamid: string, appid: number, sinceSec: number): Promise<void> {
-  await db.execute({
-    sql: `DELETE FROM feedback
-           WHERE steamid = ? AND appid = ? AND action = 'liked' AND created_at >= ?
-             AND json_extract(ctx_json, '$.intent') IS 'ask'`,
-    args: [steamid, appid, sinceSec],
-  })
+  const row = `SELECT 1 FROM outcomes o WHERE o.steamid = ? AND o.appid = ? AND o.shown_at = ?`
+  const key = [a.steamid, a.appid, a.shownAt]
+  const [before, , , updated] = await db.batch(
+    [
+      { sql: 'SELECT verdict FROM outcomes WHERE steamid = ? AND appid = ? AND shown_at = ?', args: key },
+      // был «Зацепило», стал другим ответом (не «Закрыть»: он ответ не переписывает)
+      {
+        sql: `DELETE FROM feedback
+               WHERE steamid = ? AND appid = ? AND action = 'liked' AND created_at >= ?
+                 AND json_extract(ctx_json, '$.intent') IS 'ask'
+                 AND ? NOT IN ('hooked', 'dismissed')
+                 AND EXISTS (${row} AND o.verdict = 'hooked')`,
+        args: [a.steamid, a.appid, a.shownAt, a.verdict, ...key],
+      },
+      // стал «Зацепило» — из любого другого ответа или из молчания
+      positiveFeedbackInsert(
+        { steamid: a.steamid, appid: a.appid, action: 'liked', ctx: { intent: 'ask' } },
+        nowSec,
+        { sql: `? = 'hooked' AND EXISTS (${row} AND o.verdict IS NOT 'hooked')`, args: [a.verdict, ...key] },
+      ),
+      {
+        sql: `UPDATE outcomes SET verdict = ?1
+               WHERE steamid = ?2 AND appid = ?3 AND shown_at = ?4
+                 AND (verdict IS NULL OR (?1 <> 'dismissed' AND verdict <> ?1))`,
+        args: [a.verdict, ...key],
+      },
+    ],
+    'write',
+  )
+  const prev = before?.rows[0] as unknown as { verdict: string | null } | undefined
+  return {
+    changed: Number(updated?.rowsAffected ?? 0) > 0,
+    was: prev?.verdict === null || prev?.verdict === undefined ? null : String(prev.verdict),
+  }
 }
 
 /* ---------- кто сравнился с тобой ---------- */

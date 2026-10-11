@@ -102,7 +102,7 @@ import {
   getSharedPick,
   listCompatViews,
   COMPAT_VIEW_TTL_SEC,
-  setOutcomeVerdict,
+  answerOutcome,
   setRoomDeckSize,
   setGameJson,
   getLovedFor,
@@ -144,7 +144,7 @@ import {
 import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
 import { FEEDBACK_ACTIONS } from './feedbackkinds'
-import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC } from './outcome'
+import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, type OutcomeVerdict } from './outcome'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
@@ -1506,6 +1506,25 @@ describe('db', () => {
     // через сутки после ПОСЛЕДНЕЙ записанной строки — уже новое событие
     await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 86_401)
     expect(await count('u1', 'liked')).toBe(2)
+  })
+
+  /*
+   * «Зашло» из ответа на вопрос (intent 'ask') и «Зашло» кнопкой — разные
+   * слова человека: первое забирает смена ответа (answerOutcome), второе —
+   * нет. Схлопнутые в одну строку, они делили бы её судьбу, и кнопка, нажатая
+   * после ответа, пропадала вместе с ним. Внутри своего рода дедуп прежний.
+   */
+  test('«зашло» из ответа и «зашло» кнопкой схлопываются только каждое со своим', async () => {
+    const db = await freshDb()
+    const ask = { intent: 'ask' } as const
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked', ctx: ask }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 3600)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 3700)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked', ctx: ask }, NOW + 3800)
+    const rows = await db.execute(
+      "SELECT json_extract(ctx_json, '$.intent') AS intent FROM feedback WHERE action = 'liked' ORDER BY id",
+    )
+    expect(rows.rows.map((r) => r.intent)).toEqual(['ask', null])
   })
 
   test('запуск после скипа пишется, даже если за сутки уже был: он снимает паузу', async () => {
@@ -4189,32 +4208,37 @@ describe('исход совета', () => {
       minutes: 200,
       bought: true,
     })
+    // Ответ пишет answerOutcome — вместе со следом во вкусе, одной пачкой
+    // (раньше setOutcomeVerdict писал только ответ, а «зашло» добавлял роут);
+    // changed и was здесь те же, что были
+    const answer = (appid: number, shownAt: number, verdict: OutcomeVerdict) =>
+      answerOutcome(db, { steamid: ME, appid, shownAt, verdict }, NOW)
     // Ответили — следующий по свежести
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toEqual({ changed: true, was: null })
+    expect(await answer(999, NOW - 2 * DAY, 'meh')).toEqual({ changed: true, was: null })
     expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 90, bought: false })
     // Ответ можно поменять («Твои вечера» на /library), а тот же ответ
-    // повтором ничего не пишет — роуту это говорит, что «зашло» заводить незачем
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'meh')).toEqual({ changed: false, was: 'meh' })
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'hooked')).toEqual({ changed: true, was: 'meh' })
+    // повтором ничего не пишет — и «зашло» второй раз не заводит
+    expect(await answer(999, NOW - 2 * DAY, 'meh')).toEqual({ changed: false, was: 'meh' })
+    expect(await answer(999, NOW - 2 * DAY, 'hooked')).toEqual({ changed: true, was: 'meh' })
     // «Закрыть» из забытой всплывашки настоящий ответ не стирает
-    expect(await setOutcomeVerdict(db, ME, 999, NOW - 2 * DAY, 'dismissed')).toEqual({
+    expect(await answer(999, NOW - 2 * DAY, 'dismissed')).toEqual({
       changed: false,
       was: 'hooked',
     })
     expect((await outcomeRows(db)).find((r) => r.appid === 999)?.verdict).toBe('hooked')
     // Спрашивать об отвеченном по-прежнему незачем
     expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620 })
-    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'dismissed')).toEqual({
+    expect(await answer(620, NOW - 3 * DAY + 1, 'dismissed')).toEqual({
       changed: true,
       was: null,
     })
     // а отказ отвечать ответом переписать можно
-    expect(await setOutcomeVerdict(db, ME, 620, NOW - 3 * DAY + 1, 'meh')).toEqual({
+    expect(await answer(620, NOW - 3 * DAY + 1, 'meh')).toEqual({
       changed: true,
       was: 'dismissed',
     })
     // строки нет — ничего не изменилось
-    expect(await setOutcomeVerdict(db, ME, 12_345, NOW, 'hooked')).toEqual({ changed: false, was: null })
+    expect(await answer(12_345, NOW, 'hooked')).toEqual({ changed: false, was: null })
     expect(await pendingOutcomeAsk(db, ME, NOW)).toBeNull()
   })
 

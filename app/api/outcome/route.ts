@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { logFeedback, pendingOutcomeAsk, setOutcomeVerdict, unlikeAsked } from '@/lib/db'
+import { answerOutcome, pendingOutcomeAsk } from '@/lib/db'
 import { isOutcomeVerdict } from '@/lib/outcome'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSession, getDb, isWriter, nowSec, requireWriter } from '@/lib/server'
@@ -69,18 +69,9 @@ export async function POST(req: Request) {
   })
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
-  const { changed, was } = await setOutcomeVerdict(db, steamid, appid, shownAt, verdict)
-  // «Зацепило» после часов настоящей игры — та же оценка, что «Зацепило» в
-  // вопросе после запуска (StopAsk на /play): вкус её слышит. «Так себе» —
-  // только ответ для отчёта: сыгранные часы уже сказали своё, а «не тот
-  // жанр» человек не говорил
-  if (changed && verdict === 'hooked') {
-    await logFeedback(db, { steamid, appid, action: 'liked', ctx: { intent: 'ask' } }, now)
-  }
-  // Передумал — «зашло», заведённое прежним «Зацепило», уходит вместе с ним:
-  // иначе смена ответа не меняла бы подбор, а игра оставалась бы на полке «Зашло»
-  if (changed && was === 'hooked' && verdict !== 'hooked') {
-    await unlikeAsked(db, steamid, appid, shownAt)
-  }
+  // Ответ и его след во вкусе — одной пачкой: «Зацепило» заводит «зашло»,
+  // смена ответа с «Зацепило» его забирает. Раздельные запросы двух ответов
+  // разом (две вкладки) оставляли «зашло» при ответе «Так себе» (answerOutcome)
+  await answerOutcome(db, { steamid, appid, shownAt, verdict }, now)
   return NextResponse.json({ ok: true })
 }
