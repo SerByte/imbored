@@ -38,7 +38,7 @@ export function MatchShare({
   const [manual, setManual] = useState<string | null>(null)
   const urlOf = () => matchShareUrl(window.location.origin, roomId)
   const { title, text } = matchShareCopy({ name, forCount, memberCount })
-  const share = useShareLink(urlOf, title, text, () => setManual(urlOf()))
+  const share = useShareLink('match', urlOf, title, text, () => setManual(urlOf()))
 
   return (
     <>
