@@ -1361,8 +1361,8 @@ describe('карта сайта', () => {
     await addGame(db, 30, 100)
     await markPageEnriched(db, 20, NOW + 500)
     await db.execute({
-      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, created_at, updated_at)
-            VALUES (30, 'g1', 't', 'u', ?, ?, ?)`,
+      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, kind, created_at, updated_at)
+            VALUES (30, 'g1', 't', 'u', ?, 'patch', ?, ?)`,
       args: [NOW + 900, NOW, NOW],
     })
 
@@ -1372,6 +1372,21 @@ describe('карта сайта', () => {
       { appid: 20, updatedAt: NOW + 500 },
       { appid: 30, updatedAt: NOW + 900 },
     ])
+  })
+
+  test('распродажа или анонс lastmod карточки не двигают: карточка показывает только патчи', async () => {
+    // news_items хранит и kind='news' — распродажи, ивенты, девлоги. На
+    // карточке их нет (getGameNews берёт только патчи), и сдвинутый ими
+    // lastmod был бы обещанием перемены, которой на странице нет
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await db.execute({
+      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, kind, created_at, updated_at)
+            VALUES (10, 'sale', 'Weekend Deal', 'u', ?, 'news', ?, ?)`,
+      args: [NOW + 2000, NOW, NOW],
+    })
+
+    expect(await sitemapGames(db, 10)).toEqual([{ appid: 10, updatedAt: NOW }])
   })
 
   test('игры без тегов в карту не попадают: страница была бы пустой', async () => {

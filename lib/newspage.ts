@@ -13,7 +13,8 @@
  * читают островки ленты и карточки, чтобы построить ссылку.
  */
 import { clip, DESCRIPTION_MAX } from './clip'
-import { stripGameName } from './patchtitle'
+import { dateLabel } from './freshness'
+import { stripGameName, withoutGameName } from './patchtitle'
 import { blocksToText, type NewsBlock } from './steamhtml'
 import { withRef } from './track'
 
@@ -66,11 +67,43 @@ export function newsHeading(title: string, gameName: string | null | undefined):
  * Имя игры впереди, потому что с ним приходит запрос («обновление CS2…»), а
  * заголовок Steam начинается с него лишь у каждого пятого поста (замер в
  * lib/patchtitle: 19 из 107) — остальные вида «Патч 2.31» сами по себе
- * ничего не называют.
+ * ничего не называют. Впереди — только если его нет в самом заголовке:
+ * «Counter-Strike 2: Обновление Counter-Strike 2» — это одно имя дважды.
+ *
+ * «Есть в заголовке» — С УЧЁТОМ РЕГИСТРА, как пишется имя собственное. Многие
+ * игры названы обычными словами — Control, Inside, Raft, Prey, Thief, — и без
+ * регистра «Improved control options» сходил за заголовок с именем игры:
+ * <title>, og:title, карточка «Поделиться» и RSS теряли «Control:» впереди,
+ * то есть ровно то, с чего начинается запрос. Что остаётся неразличимым —
+ * заголовок, где С Заглавной Каждое Слово («Improved Control Options»): там
+ * слово от имени не отличить, и имя впереди не повторяется. Цифрам и дате
+ * регистр по-прежнему не важен — их решает rest.
+ *
+ * ДАТА — КОГДА ЗАГОЛОВОК ПАТЧИ ИГРЫ НЕ РАЗЛИЧАЕТ. Valve выпускает каждое
+ * обновление CS2 под одной строкой «Обновление Counter-Strike 2»: в локальной
+ * базе их восемнадцать подряд, и все страницы патчей верхней игры каталога (а
+ * значит, и верха карты сайта) получали один <title>, og:title и заголовок в
+ * RSS. В выдаче и ридерах это выглядело одной страницей, повторённой много
+ * раз, и Google такие заголовки переписывает сам. Признак «различает» — цифра в
+ * заголовке без названия игры: номер версии («Патч 2.31») или дата («Release
+ * Notes for 9/25/2026») — а «2» из «Counter-Strike 2» версией не является.
+ * Дата — та же, что на карточке патча (dateLabel с годом, зона закреплена).
+ *
+ * publishedAt необязателен: без него заголовок прежний. h1, крошки и
+ * headline статьи дату не получают — под h1 она и так стоит строкой
+ * (NewsDate), а у статьи есть datePublished.
  */
-export function newsPageTitle(title: string, gameName: string | null | undefined): string {
+export function newsPageTitle(
+  title: string,
+  gameName: string | null | undefined,
+  publishedAt?: number,
+): string {
   const heading = newsHeading(title, gameName)
-  return gameName ? `${gameName}: ${heading} — что изменилось` : `${heading} — что изменилось`
+  const rest = withoutGameName(heading, gameName)
+  const spelled = withoutGameName(heading, gameName, { caseSensitive: true }) !== heading
+  const named = gameName && !spelled ? `${gameName}: ${heading}` : heading
+  const dated = publishedAt !== undefined && !/\d/.test(rest)
+  return `${named}${dated ? ` от ${dateLabel(publishedAt, { year: true })}` : ''} — что изменилось`
 }
 
 /**

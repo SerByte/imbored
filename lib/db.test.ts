@@ -2530,6 +2530,30 @@ describe('upsertNewsItems', () => {
     expect((await getGameNews(db, 730))[0].rank).toBe(0)
     expect(await getMajorFeed(db)).toEqual([])
   })
+
+  /*
+   * rank переписывается у всех свежих постов игры после каждой недельной
+   * сверки отзывов (lib/catalogsignals), а страница патча вес не показывает.
+   * updated_at при этом двигался, и с ним lastmod в карте сайта — каждую
+   * неделю у страниц, не изменившихся ни на байт. Ровно тот шум, после
+   * которого Google перестаёт верить lastmod всего сайта (см. sitemapGames).
+   */
+  test('переписанный один вес не двигает lastmod патча в карте сайта, а заголовок — двигает', async () => {
+    const db = await freshDb()
+    const DAY = 86_400
+    await upsertNewsItems(db, [newsItem({ publishedAt: NOW - DAY })], NOW)
+    await setNewsDigest(db, 730, '1', { tldr: 'коротко', scale: 'major' }, NOW + 50)
+    const changedAt = async () => (await sitemapNews(db, NOW - 90 * DAY, 10))[0]?.changedAt
+
+    // неделя спустя у CS2 сдвинулись отзывы — строка переписана ради rank
+    expect(await upsertNewsItems(db, [newsItem({ publishedAt: NOW - DAY, rank: 9000 })], NOW + 7 * DAY)).toBe(1)
+    expect((await getGameNews(db, 730))[0].rank).toBe(9000)
+    expect(await changedAt()).toBe(NOW + 50)
+
+    // издатель поправил заголовок — его видно в h1 и <title>, страница другая
+    await upsertNewsItems(db, [newsItem({ publishedAt: NOW - DAY, rank: 9000, title: 'Обновление 2' })], NOW + 8 * DAY)
+    expect(await changedAt()).toBe(NOW + 8 * DAY)
+  })
 })
 
 describe('ленты', () => {

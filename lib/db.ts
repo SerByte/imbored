@@ -3919,6 +3919,15 @@ export async function claimPageEnrichBatch(
  * размазаны по времени: обогащение карточки (page_at — появляются скриншоты,
  * вердикт отзывов и pros/cons) и новый патчноут (published_at). Их и берём.
  *
+ * Патчноут — именно kind = 'patch', то есть ровно то, что карточка рисует
+ * (getGameNews). news_items хранит и распродажи, ивенты, анонсы (kind =
+ * 'news'), и без фильтра каждая «Weekend Deal» двигала lastmod карточки, на
+ * которой её нет, — тот же шум, от которого правило выше и защищает. Цена
+ * фильтра: kind в idx_news_app не входит, но MAX по индексу (appid,
+ * published_at DESC) SQLite обрывает на первой подходящей строке (проверено
+ * по байткоду: Goto после AggStep), то есть читает посты от свежего до
+ * первого патча — у игры без патчей не больше NEWS_KEEP (30), раз в сутки.
+ *
  * ПРЕДЕЛ, честно: разных значений стало 88 вместо 19, но крупнейшая группа
  * по-прежнему 5586 адресов. Иначе и быть не может — у этих карточек с прошлой
  * заливки правда ничего не менялось, ни обогащения, ни патчей. Настоящая
@@ -3935,7 +3944,8 @@ export async function sitemapGames(
                  MAX(
                    g.updated_at,
                    COALESCE(g.page_at, 0),
-                   COALESCE((SELECT MAX(n.published_at) FROM news_items n WHERE n.appid = g.appid), 0)
+                   COALESCE((SELECT MAX(n.published_at) FROM news_items n
+                             WHERE n.appid = g.appid AND n.kind = 'patch'), 0)
                  ) AS updated_at
           FROM games g
           -- живая игра с алиасом таблицы: подзапрос по news_items требует
@@ -6040,6 +6050,14 @@ function onePerGame<T extends { appid: number }>(rows: T[], limit: number): T[] 
  *
  * Пересказ Claude сбрасывается ТОЛЬКО когда изменилось тело (body_hash) —
  * иначе за один и тот же патч платили бы каждые сутки.
+ *
+ * updated_at — «страница патча изменилась»: тело, заголовок или вид поста.
+ * Строку переписывает и один сдвинувшийся вес (rank — после каждой
+ * недельной сверки отзывов, у всех свежих постов игры), но его страница не
+ * показывает, и отметка тогда остаётся прежней. Иначе lastmod патчей в карте
+ * сайта (sitemapNews) прыгал бы раз в неделю у страниц, не изменившихся ни
+ * на байт, — шум, после которого Google перестаёт верить lastmod всего
+ * сайта (см. sitemapGames).
  */
 export async function upsertNewsItems(
   db: Db,
@@ -6062,7 +6080,12 @@ export async function upsertNewsItems(
             -- что свежее значение всегда вернее. Иначе игра, умершая после
             -- попадания в ленту, застревала бы в ней навсегда
             rank = excluded.rank,
-            updated_at = excluded.updated_at,
+            -- SET читает старую строку, как и CASE ниже: один вес — не
+            -- перемена страницы (см. докблок)
+            updated_at = CASE WHEN news_items.body_hash IS excluded.body_hash
+                                AND news_items.title IS excluded.title
+                                AND news_items.kind IS excluded.kind
+                              THEN news_items.updated_at ELSE excluded.updated_at END,
             scale = CASE WHEN news_items.body_hash IS excluded.body_hash
                          THEN news_items.scale ELSE excluded.scale END,
             tldr = CASE WHEN news_items.body_hash IS excluded.body_hash
@@ -6243,8 +6266,10 @@ export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promi
  * в поиске. tldr IS NOT NULL — своё у страницы только пересказ: без него это
  * копия поста Steam, и страница стоит с noindex (lib/newspage).
  *
- * changed_at — когда страница последний раз менялась по существу: тело
- * (updated_at) или пересказ (tldr_at).
+ * changed_at — когда страница последний раз менялась по существу: тело,
+ * заголовок или вид поста (updated_at) или пересказ (tldr_at). Переписанный
+ * один вес (rank) updated_at не двигает — upsertNewsItems: страница его не
+ * показывает.
  */
 export async function sitemapNews(
   db: Db,

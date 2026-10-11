@@ -148,8 +148,9 @@ export function PatchRow({
   const heading = stripGameName(item.title, name)
   // Заголовок из Steam обычно английский («Patch 0.5.1 Has Been Released»),
   // а страница — lang="ru": без пометки его читают русским голосом. Пересказ
-  // ниже наш и русский — пометки не получает. См. lib/textlang.
-  const headingLang = textLang(heading)
+  // ниже наш и русский — пометки не получает. Название игры в подсчёт не
+  // входит: «Обновление Counter-Strike 2» — русский заголовок. См. lib/textlang.
+  const headingLang = textLang(heading, name)
   // null — страницы нет в поиске (без пересказа, игра вне каталога — это
   // бывает в личной ленте): заголовок тогда просто текст, см. indexedNewsPath
   const href = indexedNewsPath(item)
