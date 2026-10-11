@@ -389,4 +389,19 @@ describe('«Позвать в эту игру»', () => {
     expect(await partyLinks(10)).toEqual([])
     expect(await partyLinks(11)).toEqual([])
   })
+
+  /*
+   * Каталог её не хоронит: alive — соло-вердикт, а одиночная кампания в соло
+   * прощает любой онлайн, поэтому и вердикта «мёртвая» на странице нет. А
+   * колода пати судит заново (filterActual → judgeLiveness 'party') и при
+   * сотне игроков на весь мир сетевую игру без коопа снимает. Кнопка звала
+   * бы в карту, которой в комнате не окажется. Кооп с той же сотней — с
+   * кнопкой: в него садятся со своими, и онлайн колода у него не спрашивает.
+   */
+  test('PvP с одиночной кампанией и пустыми серверами — кнопки нет; кооп при той же сотне — есть', async () => {
+    await upsertGameMeta(db, game(21, { categories: [2, 1, 49, 36], ccu: 100 }), T0)
+    await upsertGameMeta(db, game(22, { categories: [2, 1, 9], ccu: 100 }), T0)
+    expect(await partyLinks(21)).toEqual([])
+    expect(await partyLinks(22)).toEqual([roomSeedHref(22)])
+  })
 })

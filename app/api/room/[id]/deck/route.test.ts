@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   createRoom,
+  getGamesMetaLite,
   joinRoom,
   logFeedback,
   roomVotes,
@@ -11,6 +12,7 @@ import {
 } from '@/lib/db'
 import { PINNED_REASON } from '@/lib/group'
 import { rotationSlot } from '@/lib/pool'
+import { seedable } from '@/lib/roomseed'
 import { nowSec } from '@/lib/server'
 import { freshDb, params, post, signInAs } from '@/lib/testing/route'
 import type { GameMeta, LibraryGame, Mood } from '@/lib/types'
@@ -301,5 +303,43 @@ describe('/api/room/[id]/deck: игра, в которую звали', () => {
     await seededRoom()
     await logFeedback(db, { steamid: FRIEND, appid: DRG.appid, action: 'banned' }, nowSec())
     expect((await cardsNow()).map((c) => c.appid)).not.toContain(DRG.appid)
+  })
+})
+
+/**
+ * Кнопка и колода — одна мерка. seedable (lib/roomseed) решает, звать ли «в
+ * эту игру» и брать ли её первой картой, а колода — увидит ли её кто-нибудь:
+ * закреплённую filterActual снимает, как любую. Каталог судит живость в
+ * соло-контексте, колода — в контексте пати, и разошлись они ровно на этих
+ * формах: сетевая с одиночной кампанией при пустых серверах и мультиплеер
+ * только по тегам. Приглашение звало в X, а X в колоде не было ни у кого.
+ *
+ * Комната здесь закреплена напрямую (createRoom с seedAppid), мимо проверки
+ * создания: проверяется не она, а то, что колода с ней согласна. Ожидание
+ * записано явно — иначе тест прошёл бы и тогда, когда обе стороны
+ * одинаково отбрасывают всё.
+ */
+describe('/api/room/[id]/deck: закреплённая первая ровно тогда, когда её берёт seedable', () => {
+  const shapes: Array<[string, GameMeta, boolean]> = [
+    ['кооп с одиночной кампанией и сотней игроков', { ...meta(901, 'Кооп'), categories: [2, 1, 9], ccu: 100 }, true],
+    ['сетевая с одиночной кампанией, людно', { ...meta(902, 'PvP людная'), categories: [2, 1], ccu: 5000 }, true],
+    ['сетевая с одиночной кампанией, пустые серверы', { ...meta(903, 'PvP пустая'), categories: [2, 1, 49, 36], ccu: 100 }, false],
+    ['без категорий, мультиплеер только по тегам', { ...meta(904, 'По тегам'), categories: [], tags: { 'Online Co-Op': 500 } }, false],
+  ]
+
+  test.each(shapes)('%s', async (_, seed, first) => {
+    const now = nowSec()
+    const me = await signInAs(db, 'openid')
+    for (const g of [DOTA, PORTAL, seed]) await upsertGameMeta(db, g, now)
+    await createRoom(db, { id: ROOM, steamid: me, seedAppid: seed.appid }, now)
+    for (const steamid of [me, FRIEND]) {
+      await joinRoom(db, ROOM, steamid, undefined, now)
+      await saveLibrarySnapshot(db, steamid, owned(DOTA, PORTAL), now)
+    }
+    // Мета — та, что лежит в базе: её и читают создание комнаты, и колода
+    const stored = (await getGamesMetaLite(db, [seed.appid])).get(seed.appid)
+    expect(stored && seedable(stored)).toBe(first)
+    const { cards } = (await (await get()).json()) as { cards: Array<{ appid: number }> }
+    expect(cards[0]?.appid === seed.appid).toBe(first)
   })
 })

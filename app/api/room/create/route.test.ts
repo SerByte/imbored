@@ -110,6 +110,36 @@ describe('/api/room/create: игра, в которую зовут', () => {
     expect((await create({ game: 80 }))?.seedAppid).toBeUndefined()
   })
 
+  /*
+   * Живая для одного — ещё не живая для компании. alive в каталоге посчитан
+   * в соло-контексте, а колода пати судит игру заново (filterActual →
+   * judgeLiveness 'party'). Сетевую игру с одиночной кампанией и сотней
+   * игроков на весь мир каталог не хоронит, а колода снимает
+   * ('dead-multiplayer'); игру без категорий мультиплеером делают только
+   * теги, а колода судит по категориям ('solo-only'). Взятая первой картой,
+   * любая из них оставалась бы только в приглашении: «Аня зовёт в «X»» с
+   * артом X — и ни у кого в колоде.
+   *
+   * Кооп с той же сотней игроков — первая карта: в него садятся со своими,
+   * и мировой онлайн колода у него не спрашивает. Людная PvP — тоже: мерка
+   * та же, что у колоды, а не строже неё.
+   */
+  test('живая только для одного — не первая карта; кооп и людная PvP — первая', async () => {
+    const refused = [
+      game(30, 'Сетевая с кампанией, пустые серверы', [2, 1], { ccu: 100 }),
+      game(31, 'PvP с кампанией, пустые серверы', [2, 1, 49, 36], { ccu: 100 }),
+      game(32, 'Без категорий, кооп по тегам', [], { tags: { 'Online Co-Op': 500 } }),
+    ]
+    const taken = [
+      game(33, 'Сетевая с кампанией, людно', [2, 1], { ccu: 5000 }),
+      game(34, 'Кооп с кампанией, сотня игроков', [2, 1, 9], { ccu: 100 }),
+    ]
+    for (const g of [...refused, ...taken]) await upsertGameMeta(db, g, nowSec())
+    await signInAs(db, 'openid')
+    for (const g of refused) expect((await create({ game: g.appid }))?.seedAppid, g.name).toBeUndefined()
+    for (const g of taken) expect((await create({ game: g.appid }))?.seedAppid, g.name).toBe(g.appid)
+  })
+
   test('скрытая создателем («Больше не показывать») — не первая карта', async () => {
     const me = await signInAs(db, 'openid')
     await logFeedback(db, { steamid: me, appid: 548430, action: 'banned' }, nowSec())

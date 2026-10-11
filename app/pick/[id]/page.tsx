@@ -129,7 +129,8 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
               звали, терялась по дороге. Мерка та же, что у создания комнаты
               (seedable): игру другого магазина, мёртвую или вытесненную
               комната первой картой не возьмёт — тогда и ссылка прежняя, без
-              обещания «в эту игру» */}
+              обещания «в эту игру». Как и игру без категорий Steam, которую
+              сюда пустили теги: колода пати судит по категориям */}
           {isMultiplayerMeta(meta) && (
             <Link
               href={seedable(meta) ? roomSeedHref(meta.appid) : '/room/new'}

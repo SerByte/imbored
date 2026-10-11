@@ -1,4 +1,5 @@
 import { bannedAppidsOf, getGamesMetaLite, type Db } from './db'
+import { judgeLiveness } from './liveness'
 import { roomSeedOf } from './presets'
 import { isMultiplayerMeta } from './recommend'
 import type { GameMeta } from './types'
@@ -10,13 +11,42 @@ import type { GameMeta } from './types'
  * эту игру» по той же мерке, по которой создание комнаты игру возьмёт, —
  * иначе кнопка звала бы в игру, которую комната молча отбросит. Почему каждое
  * условие — см. roomSeed ниже.
+ *
+ * Живость — дважды, и это не повтор. alive в строке каталога посчитан
+ * офлайн-курацией в соло-контексте (promote-catalog зовёт judgeLiveness без
+ * второго аргумента), а колода комнаты судит ту же игру в контексте пати
+ * (filterActual(…, 'party')). Это разные вердикты: соло прощает всё, где
+ * есть одиночный режим, а пати — нет. Сетевая игра с одиночной кампанией и
+ * без коопа ([2, 1], [2, 1, 49, 36]) в соло жива при любом онлайне, а в
+ * пати при ста игроках на весь мир — 'dead-multiplayer'. Игра без категорий,
+ * но с тегом «Online Co-Op», проходит isMultiplayerMeta по тегам, а пати её
+ * не берёт вовсе ('solo-only': колода судит по категориям). Без второй
+ * проверки обе становились первой картой: приглашение звало «в X» с артом X,
+ * колода закрепляла X — и filterActual снимал её, едва рядом оставалась
+ * любая другая карта. Названную в приглашении игру не видел никто.
+ *
+ * Сигналы — те же пять полей, что колода отдаёт judgeLiveness (filterPlayable),
+ * из той же строки каталога: мерка совпадает до поля, а не «похоже».
+ * isMultiplayerMeta остаётся рядом, хотя пати-проверка его покрывает: это
+ * отдельный шаг колоды (buildGroupDeck), и вычеркни его когда-нибудь из
+ * judgeLiveness — кнопка не должна разойтись с колодой молча.
  */
 export function seedable(meta: GameMeta): boolean {
   return (
     meta.appid > 0 &&
     isMultiplayerMeta(meta) &&
     meta.alive !== false &&
-    meta.supersededBy === undefined
+    meta.supersededBy === undefined &&
+    judgeLiveness(
+      {
+        categories: meta.categories,
+        ccu: meta.ccu,
+        reviews30d: meta.reviews30d,
+        reviewsTotal: meta.reviewsTotal,
+        reviewsPercent: meta.reviewsPercent,
+      },
+      'party',
+    ).alive
   )
 }
 
@@ -37,6 +67,10 @@ export function seedable(meta: GameMeta): boolean {
  *     которой нет;
  *   • её не похоронила офлайн-курация: мёртвую и вытесненную преемником
  *     колода отсеет сама (filterActual), а звать в неё — то же враньё;
+ *   • она жива для компании, а не только для одного — тем судом, которым
+ *     колода пати её и снимет (judgeLiveness в контексте 'party', см.
+ *     seedable): соло-вердикт каталога пропускает сетевую игру с пустыми
+ *     серверами, если у неё есть одиночная кампания;
  *   • зовущий её не скрывал («Больше не показывать»). Бан хоть кого-то из
  *     участников сильнее закрепления (buildGroupDeck), и свой бан хоста убрал
  *     бы карту у всех — приглашение звало бы в игру, которой в колоде нет.

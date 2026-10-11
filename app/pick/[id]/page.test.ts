@@ -4,7 +4,7 @@ import { GameArt } from '@/components/GameArt'
 import { createSharedPick, upsertGameMeta, type Db } from '@/lib/db'
 import { roomSeedHref } from '@/lib/presets'
 import { nowSec } from '@/lib/server'
-import { flight as flightOf, islandsOf } from '@/lib/testing/flight'
+import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
 import PickPage from './page'
@@ -71,12 +71,23 @@ const partyLinks = async (params: { params: Promise<{ id: string }> }) =>
 describe('«Позвать в пати» — только у игры, в которую играют вместе', () => {
   test('кооп по категориям Steam — ссылка есть', async () => {
     const params = await share('abcdefghjkmn', game(10, { categories: [2, 9] }))
-    expect((await partyLinks(params)).map((l) => l.href)).toEqual([roomSeedHref(10)])
+    const links = await partyLinks(params)
+    expect(links.map((l) => l.href)).toEqual([roomSeedHref(10)])
+    expect(textOf(links[0]?.children)).toBe('Позвать в эту игру')
   })
 
-  test('без категорий — по тегам, как у колоды комнаты', async () => {
+  /*
+   * Пати — по тегам, как у колоды комнаты (isMultiplayerMeta). Но первой
+   * картой такую комната не возьмёт: живость для компании колода судит по
+   * категориям (filterActual → judgeLiveness 'party' → 'solo-only') и
+   * сняла бы закреплённую. Поэтому ссылка — в пати, без обещания «в эту
+   * игру»: иначе приглашение звало бы в карту, которой в колоде нет.
+   */
+  test('без категорий — пати по тегам, но без игры первой картой', async () => {
     const params = await share('bcdefghjkmnp', game(11, { tags: { 'Online Co-Op': 500 } }))
-    expect((await partyLinks(params)).map((l) => l.href)).toEqual([roomSeedHref(11)])
+    const links = await partyLinks(params)
+    expect(links.map((l) => l.href)).toEqual(['/room/new'])
+    expect(textOf(links[0]?.children)).toBe('Позвать в пати')
   })
 
   test('одиночная — ссылки нет, остальные двери на месте', async () => {

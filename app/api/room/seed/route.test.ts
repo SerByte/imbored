@@ -42,6 +42,13 @@ describe('/api/room/seed', () => {
     }
   })
 
+  test('сетевая с одиночной кампанией и пустыми серверами — 404: колода пати её снимет', async () => {
+    // Каталог такую не хоронит (его alive — соло-вердикт), а строка «Первой
+    // картой — …» обещала бы карту, которую filterActual уберёт (lib/roomseed)
+    await upsertGameMeta(db, { appid: 80, name: 'Condition Zero', tags: { FPS: 100 }, genres: [], categories: [2, 1], ccu: 100 }, nowSec())
+    expect((await ask('80')).status).toBe(404)
+  })
+
   test('скрытая смотрящим — 404: создание комнаты её тоже не возьмёт', async () => {
     const me = await signInAs(db, 'openid')
     await logFeedback(db, { steamid: me, appid: 548430, action: 'banned' }, nowSec())
