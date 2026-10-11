@@ -158,9 +158,11 @@ describe('/api/cron/news', () => {
     expect(kicked).toEqual([`${BASE}/api/cron/pages`])
   })
 
-  test('пинок ждёт соседа не дольше срока функции', async () => {
+  test('пинок из хвоста уходит с сигналом отмены', async () => {
     // Сосед на холодном старте не должен держать хвост до maxDuration: после
-    // хвоста Next сбрасывает карточки и ленту, накопленные за запуск
+    // хвоста Next сбрасывает карточки и ленту, накопленные за запуск. Сам
+    // сигнал у пинка есть всегда (KICK_TIMEOUT_MS в kickCron), поэтому что
+    // его срок — срок функции, проверяет не этот тест, а следующий
     await digestFresh()
     const сигналы: unknown[] = []
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
@@ -172,6 +174,32 @@ describe('/api/cron/news', () => {
     await settled()
     expect(kicked).toEqual([`${BASE}/api/cron/pages`])
     expect(сигналы[0]).toBeInstanceOf(AbortSignal)
+  })
+
+  test('срок пинка — срок функции минус запас на сброс кэша', async () => {
+    // Пинку нужно окно KICK_MIN_MS (2 с) до срока, а срок — maxDuration минус
+    // KICK_RESERVE_MS (5 с): порог — семь секунд до конца функции. За восемь
+    // секунд сосед ещё пинается, за шесть — уже нет. Без срока из роута (или
+    // с другим запасом) пинок ушёл бы в обоих случаях
+    const дойтиДо = (sec: number) => {
+      vi.mocked(runNewsSlice).mockImplementationOnce(async (...a) => {
+        vi.setSystemTime((T0 + sec) * 1000)
+        const real = (await vi.importActual<typeof import('@/lib/newsjob')>('@/lib/newsjob')).runNewsSlice
+        return real(...a)
+      })
+    }
+    await digestFresh()
+    дойтиДо(292)
+    await ask()
+    await settled()
+    expect(kicked).toEqual([`${BASE}/api/cron/pages`])
+
+    kicked.length = 0
+    vi.setSystemTime(T0 * 1000)
+    дойтиДо(294)
+    await ask()
+    await settled()
+    expect(kicked).toEqual([])
   })
 
   test('запуск дошёл до хвоста впритык к сроку — соседей не пинает', async () => {
