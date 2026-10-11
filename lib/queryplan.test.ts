@@ -35,6 +35,7 @@ import {
   listPublicRooms,
   migrateDb,
   revokeAllSessions,
+  searchIndexGames,
   sitemapGames,
   sitemapNews,
   freshlyDigestedPatches,
@@ -297,6 +298,14 @@ const CASES: Case[] = [
     name: 'игры для карты сайта',
     run: (db) => sitemapGames(db, 5000),
     indexes: ['idx_games_pool', 'idx_news_app'],
+    sortFree: true,
+  },
+  // Индекс «Найти игру»: весь живой каталог по порядку частичного индекса,
+  // без сортировки — раз в сутки на ISR, но и раз в сутки скан games не нужен
+  {
+    name: 'индекс поиска по каталогу',
+    run: (db) => searchIndexGames(db, 10_000),
+    indexes: ['idx_games_pool'],
     sortFree: true,
   },
   // Отсечки по возрасту в запросе нет — см. catalogSignalsQueue: иначе при

@@ -119,6 +119,7 @@ import {
   unlikeGame,
   updateGamePrices,
   topCatalogGames,
+  searchIndexGames,
   topGamesByTags,
   upsertGameMeta,
   upsertGamesMeta,
@@ -3212,6 +3213,31 @@ describe('мёртвые игры и общая лента', () => {
       })
     }
     expect(await topCatalogGames(db, 2)).toHaveLength(2)
+  })
+
+  /*
+   * Индекс «Найти игру» (app/search-index.json): каждая игра, у которой есть
+   * своя карточка, — те же, что в карте сайта. Арт не нужен (в отличие от
+   * полки 404): найти по названию человек вправе и игру без обложки.
+   */
+  test('индекс поиска: живые с карточкой, по числу отзывов, и арт не нужен', async () => {
+    const db = await freshDb()
+    const put = async (appid: number, reviews: number, set: string) => {
+      await upsertGameMeta(db, { ...META, appid, name: `Игра ${appid}`, reviewsTotal: reviews }, NOW)
+      await db.execute({ sql: `UPDATE games SET ${set} WHERE appid = ?`, args: [appid] })
+    }
+    await put(10, 100, 'alive = 1, tag_count = 3, superseded_by = NULL, header_image = NULL')
+    await put(20, 900, 'alive = 1, tag_count = 3, superseded_by = NULL')
+    await put(30, 5000, 'alive = 0, tag_count = 3, superseded_by = NULL') // мёртвая
+    await put(40, 4000, 'alive = 1, tag_count = 0, superseded_by = NULL') // заглушка без тегов
+    await put(50, 3000, 'alive = 1, tag_count = 3, superseded_by = 20') // отдана сиквелу
+    await put(-60, 8000, 'alive = 1, tag_count = 3, superseded_by = NULL') // чужой магазин
+
+    expect(await searchIndexGames(db, 100)).toEqual([
+      { appid: 20, name: 'Игра 20' },
+      { appid: 10, name: 'Игра 10' },
+    ])
+    expect(await searchIndexGames(db, 1)).toEqual([{ appid: 20, name: 'Игра 20' }])
   })
 })
 

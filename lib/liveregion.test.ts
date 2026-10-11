@@ -247,6 +247,13 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   { file: 'components/Evenings.tsx', start: 'async function answer(', reset: ['setFailed(null)'] },
   // здесь отказ — фаза состояния, и гасит его фаза «делаю»
   { file: 'components/SharePick.tsx', start: 'async function create()', reset: ["setState({ at, phase: 'busy' })"] },
+  // «Попробовать снова» в окне поиска: индекс каталога снова не доехал — тот
+  // же текст в строке статуса. Фаза индекса живёт в хранилище, а не в окне
+  {
+    file: 'lib/catalogindex.ts',
+    start: 'export async function requestCatalogIndex()',
+    reset: ["set({ phase: 'loading', entries: [] })"],
+  },
 ]
 
 describe('повтор отказа звучит', () => {

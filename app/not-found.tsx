@@ -4,6 +4,7 @@ import { Ambient } from '@/components/Ambient'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
+import { SearchLauncher } from '@/components/SearchLauncher'
 import { topCatalogGames } from '@/lib/db'
 import { dayKey } from '@/lib/forgotten'
 import { hashString, mulberry32 } from '@/lib/daily'
@@ -20,8 +21,15 @@ import { getDb } from '@/lib/server'
  * случаях человек шёл ЗА ИГРОЙ. Текст это и обещал — «зато есть, во что
  * поиграть», — но страница не давала ничего, кроме кнопки «Подобрать игру»,
  * которая гостя без подключённой библиотеки разворачивает на лендинг. Полка
- * из настоящих карточек каталога — единственное, что здесь можно предложить
- * прямо, без входа и без объяснений.
+ * из настоящих карточек каталога — то, что здесь можно предложить прямо, без
+ * входа и без объяснений.
+ *
+ * А раз шёл за игрой — первая створка «Найти игру по названию»
+ * (components/SearchLauncher): переизданную игру или адрес с опечаткой
+ * человек находит по первым буквам названия, без входа так же. Строка
+ * стоит в первой загрузке КАЖДОЙ страницы (эта 404 — граница not-found
+ * корневого лэйаута), поэтому она — та же кнопка, что в шапке, а не свой
+ * компонент: замер в докблоке SearchLauncher.
  *
  * Заодно это разводит 404 и экран ошибки, которые до сих пор были одной и той
  * же центрированной стеклянной карточкой. Разводит не оформлением, а
@@ -107,6 +115,12 @@ export default async function NotFound() {
           <p className="max-w-md leading-relaxed text-dim">
             Ссылка битая или игру убрали из каталога. Бывает — зато есть, во что поиграть.
           </p>
+        </div>
+
+        {/* Шёл за игрой — найди её по названию: переиздание или опечатка в
+            адресе обычно находятся с первых букв */}
+        <div className="flex w-full justify-center anim-rise">
+          <SearchLauncher variant="field" />
         </div>
 
         <div className="flex flex-wrap justify-center gap-3 anim-rise">
