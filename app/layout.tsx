@@ -276,7 +276,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <LogoMark size={28} />
               <Wordmark />
             </Link>
-            <div className="flex items-center gap-5">
+            <div className="flex items-center gap-3 lg:gap-5">
               {/*
                 Тема — рядом с навигацией, а не в ней. Внутри <nav> она делала
                 из шапки на телефоне ориентир «навигация» из одной кнопки
@@ -288,7 +288,11 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
                 «Разделами» рядом с нижней панелью. Имя у них одно и то же
                 намеренно — это одно меню, и на экране всегда ровно одно из двух.
               */}
-              <nav aria-label="Разделы" className="hidden md:flex items-center gap-3.5 lg:gap-6 text-sm text-dim">
+              {/* Кегль и зазоры на md уже, чем на lg — и у меню, и у ряда с
+                  темой (gap-3 выше): на 768 с полосой прокрутки шесть подписей
+                  при text-sm не влезали, и три пункта ломались в две строки
+                  (подробно — в components/HeaderNav.tsx). Менять вместе. */}
+              <nav aria-label="Разделы" className="hidden md:flex items-center gap-3.5 lg:gap-6 text-[13px] lg:text-sm text-dim">
                 <HeaderNav />
               </nav>
               <ThemeToggle />

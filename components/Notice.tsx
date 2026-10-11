@@ -1,7 +1,7 @@
 import { Ambient } from '@/components/Ambient'
 import { Eyebrow } from '@/components/Labels'
 import type { ArtRef } from '@/lib/compatpage'
-import { CoverWall } from './CoverStrip'
+import { CoverWall } from '@/app/compat/[steamid]/CoverStrip'
 
 /**
  * Общая шапка для всех экранов без результата.
@@ -18,15 +18,27 @@ import { CoverWall } from './CoverStrip'
  * (свои игры на «это твоя ссылка»), фон — две ленты постеров; нет — мягкое
  * пятно Ambient.
  *
- * Серверный компонент: своей интерактивности у него нет, а кнопки приезжают
- * через children — в том числе клиентские.
+ * Своей интерактивности нет, а кнопки приезжают через children — в том
+ * числе клиентские. hooks нет, поэтому годится и в серверном, и в
+ * клиентском компоненте (комната — клиентская).
+ *
+ * Жил в app/compat как CompatNotice, и довод выше остался в пределах одного
+ * раздела: портрет с «игрок не подключал библиотеку» и комната с «такой
+ * комнаты нет» рисовали то же самое голой строкой посреди пустоты — ровно то
+ * расхождение, от которого эта оболочка спасала совместимость. Теперь она
+ * общая, а надзаголовок — пропс: «Совместимость» на портрете и в комнате
+ * называла бы чужой раздел. Ленты постеров (CoverWall) остались в
+ * app/compat — это фон шапки совместимости, Notice его только одалживает.
  */
-export function CompatNotice({
+export function Notice({
+  eyebrow,
   title,
   body,
   games,
   children,
 }: {
+  /** раздел над заголовком: «Совместимость», «Портрет игрока», «Пати» */
+  eyebrow: string
   title: string
   body: string
   /** обложки для фона; нет — пятно Ambient */
@@ -46,7 +58,7 @@ export function CompatNotice({
       )}
       <div aria-hidden className="grain" />
       <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-32">
-        <Eyebrow className="mb-3">Совместимость</Eyebrow>
+        <Eyebrow className="mb-3">{eyebrow}</Eyebrow>
         <h1 className="max-w-2xl font-display text-display-md">{title}</h1>
         <p className="mt-4 max-w-xl leading-relaxed text-dim">{body}</p>
         {children && <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">{children}</div>}

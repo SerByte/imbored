@@ -159,8 +159,10 @@ export function Compat({ demo }: { demo: LandingDemo }) {
 
       <div className="compat-grid">
         <div className="min-w-0">
-          <h2 className="font-display text-display-md" style={{ maxWidth: '21ch' }}>
-            Сравним библиотеки по-настоящему, а не по анкете
+          {/* «по-настоящему» одним куском: браузер рвал его на дефисе, и
+              строка кончалась на «по-» */}
+          <h2 className="font-display text-display-md text-balance" style={{ maxWidth: '21ch' }}>
+            Сравним библиотеки <span className="whitespace-nowrap">по-настоящему</span>, а&nbsp;не по анкете
           </h2>
 
           <div className="stacks">

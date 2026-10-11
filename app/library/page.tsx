@@ -33,7 +33,9 @@ import {
   libraryPage,
   parseLibraryFilter,
   parseLibraryPage,
+  parseLibraryQuery,
   pickForgotten,
+  searchLibraryView,
   SHELF_EMPTY,
   wallState,
 } from '@/lib/forgotten'
@@ -45,6 +47,10 @@ import { tagWeightFrom } from '@/lib/tagweight'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
 import { LinkPending } from '@/components/LinkPending'
+import { LibrarySearch } from '@/components/LibrarySearch'
+import { RailToCurrent } from '@/components/RailToCurrent'
+import { ShelfToStart } from '@/components/ShelfToStart'
+import { StatusLine } from '@/components/StatusLine'
 import { plural } from '@/lib/plural'
 import { dateLabel } from '@/lib/freshness'
 import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
@@ -82,6 +88,9 @@ const EVENINGS_SHOWN = 12
 /** С какого числа сверенных советов показывать честную долю */
 const EVENINGS_HONEST_MIN = 3
 
+/** С какого размера библиотеки над стеной стоит поиск */
+const SEARCH_FROM = 12
+
 /** Сколько постеров в мозаике героя: пять колонок по три на широком экране */
 const MOSAIC = 15
 
@@ -101,6 +110,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   const db = await getDb()
   const query = await props.searchParams
   const filter = parseLibraryFilter(query.state)
+  const asked = parseLibraryQuery(query.q)
   /*
    * Независимые чтения — одним заходом, а не лесенкой.
    *
@@ -171,6 +181,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Сводка, деньги и прогрев считаются по ВСЕЙ библиотеке, а не по выбранной
   // полке: иначе числа в шапке прыгали бы вслед за фильтром
   const games = snapshot.games
+  // Запрос — только там, где стоит поле (SEARCH_FROM). Иначе ?q= из
+  // набранного руками адреса или старой ссылки молча сужал бы стену и
+  // счётчики чипсов, чипсы несли бы его дальше, а показать запрос и сбросить
+  // его было бы негде: «Сбросить поиск» появляется, только когда не нашлось
+  // ничего. Поле не рисуется условием от самого q и по той же причине:
+  // стёр запрос — и поле исчезло бы из-под пальцев, уронив фокус в body.
+  const q = games.length >= SEARCH_FROM ? asked : ''
   const totalHours = Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   // Время скрыто настройками Steam (lib/playtime.ts): часы, «ни разу не
   // запускал» и минуты после советов — нули галочки, а не факты
@@ -269,7 +286,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // нераспакованные» обязаны назвать одно и то же число.
   const untouched = view.counts.untouched
   // Порция полки, а не вся полка: см. LIBRARY_PAGE_SIZE в lib/forgotten.ts
-  const wall = libraryPage(view.games, parseLibraryPage(query.page))
+  // Поиск отбирает внутри полки; сводка выше и деньги — по-прежнему по всему
+  const found = searchLibraryView(view, games, metaOf, now, q)
+  const wall = libraryPage(found.games, parseLibraryPage(query.page))
   const shelf = pickForgotten(
     // «Больше не показывать» — и здесь: полка тоже совет
     forgottenCandidates(games, metaOf, bannedAll),
@@ -493,12 +512,24 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   {plural(backlog.unplayedCount, 'игра уже твоя', 'игры уже твои', 'игр уже твои')} —
                   попробовать можно прямо сейчас
                 </div>
+                {/* Оговорка — только когда она правда: «не меньше … — цена
+                    известна у 8 из 8» спорило само с собой */}
                 <div className="text-xs text-dim mt-1">
                   {/* Валюта — региона суммы (backlogValue), а не угаданная:
                       цены других регионов в неё не входят вовсе */}
-                  Вместе не меньше{' '}
-                  <span className="tabular-nums">{formatPrice(backlog.cents, backlog.cc, { whole: true })}</span>{' '}
-                  {byPrices(backlog.cc)} — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}
+                  {backlog.pricedCount < backlog.unplayedCount ? (
+                    <>
+                      Вместе не меньше{' '}
+                      <span className="tabular-nums">{formatPrice(backlog.cents, backlog.cc, { whole: true })}</span>{' '}
+                      {byPrices(backlog.cc)} — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}
+                    </>
+                  ) : (
+                    <>
+                      Вместе —{' '}
+                      <span className="tabular-nums">{formatPrice(backlog.cents, backlog.cc, { whole: true })}</span>{' '}
+                      {byPrices(backlog.cc)}
+                    </>
+                  )}
                 </div>
               </div>
               {/* Не в общий опрос про настроение: карточка про несыгранное —
@@ -647,6 +678,14 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         </section>
       )}
 
+      {/* Поиск — от дюжины игр: на меньшей библиотеке вся стена и так в
+          одном экране, и поле было бы лишним словом над ней (и запрос без
+          поля не применяется — см. q выше). При скрытом времени поле
+          остаётся: полок нет, а имя игры Steam отдаёт всегда. filter —
+          показанная полка (view.filter), а не спрошенная: при скрытом
+          времени это всегда «Все». */}
+      {games.length >= SEARCH_FROM && <LibrarySearch filter={view.filter} q={q} />}
+
       {/* Чипсы — обычные ссылки: страница и так force-dynamic, а сетка
           обязана остаться серверной и без обработчиков. Префетча у них нет:
           каждый чипс — эта же динамическая страница, то есть пять вызовов
@@ -660,19 +699,31 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
          (.chip-rail) растворяла бы и фон с размытием, и стена карточек
          проступала бы по краям полосы. */
       <div id="wall" className="lib-filters">
-        <div className="chip-rail lib-filters-rail">
+        {/* id у ленты свой: #wall — подложка и цель ссылки с полки
+            «запечатанного», а прокручивается вбок именно лента */}
+        <div id="wall-rail" className="chip-rail lib-filters-rail">
           {LIBRARY_FILTERS.map((f) => (
             <Link
               key={f.id}
-              href={libraryHref(f.id)}
+              href={libraryHref(f.id, 1, q)}
+              // Без него Next прокручивал к верху страницы: чипсы стоят экраном
+              // ниже героя, и после нажатия человек оказывался над заголовком
+              // «Твоя библиотека», а новая полка — за нижним краем (замер на
+              // 1440×900: полоса чипсов уезжала с 241 px на 1041). Тот же довод,
+              // что у «Показать ещё» ниже. Полоса при этом липкая, и чипс,
+              // нажатый из глубины стены, оставил бы человека посреди новой
+              // полки, — к её началу тогда докручивает ShelfToStart ниже.
+              scroll={false}
               prefetch={false}
               aria-current={f.id === filter ? 'page' : undefined}
               className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
             >
-              {f.label} <span className="tabular-nums opacity-70">{view.counts[f.id]}</span>
+              {f.label} <span className="tabular-nums opacity-70">{found.counts[f.id]}</span>
             </Link>
           ))}
         </div>
+        <RailToCurrent railId="wall-rail" current={filter} />
+        <ShelfToStart barId="wall" shelf={filter} />
       </div>
       )}
 
@@ -680,9 +731,38 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           полка, и без него человек с ?state=active получил бы два сообщения
           сразу — «за две недели ты не запускал ничего» поверх «Steam не отдал
           ни одной игры». */}
-      {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && (
+      {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && !q && (
         <p className="text-dim text-sm">{SHELF_EMPTY[view.filter]}</p>
       )}
+
+      {/* Ничего не нашлось — своим сообщением, а не сообщением пустой полки:
+          «заброшенных нет» было бы неправдой, их просто нет с таким именем.
+          StatusLine стоит всегда: поле поиска перерисовывает страницу на
+          месте, и объявится смена текста, а не появление абзаца (см.
+          components/StatusLine).
+
+          Нашлось — тоже словами, но только скринридеру: глазу видно, что
+          стена сменилась, а скринридеру без этой строки поиск молчал бы —
+          сработал ли и сколько нашлось. Строка та же, а не вторая рядом:
+          обе — ответ на один запрос, и переход «нашлись три» → «ничего»
+          звучит сменой текста. */}
+      <StatusLine
+        className={q && found.games.length === 0 ? 'text-dim text-sm' : 'sr-only'}
+        text={
+          q && found.games.length > 0 ? (
+            `По «${q}»${view.filter === 'all' ? '' : ' на этой полке'} ${plural(found.games.length, 'нашлась', 'нашлись', 'нашлось')} ${found.games.length} ${plural(found.games.length, 'игра', 'игры', 'игр')}`
+          ) : q && found.games.length === 0 ? (
+            <>
+              {view.filter === 'all' || found.counts.all === 0
+                ? <>Ничего не нашлось по «{q}».</>
+                : <>На этой полке «{q}» нет — поищи на соседних: счётчики на чипсах показывают, где.</>}{' '}
+              <Link href={libraryHref(view.filter)} scroll={false} prefetch={false} className="tap link-more">
+                Сбросить поиск
+              </Link>
+            </>
+          ) : null
+        }
+      />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-6">
         {wall.shown.map((g) => {
@@ -750,7 +830,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {wall.nextPage !== null && (
         <div className="mt-8 flex justify-center">
           <Link
-            href={libraryHref(view.filter, wall.nextPage)}
+            href={libraryHref(view.filter, wall.nextPage, q)}
             scroll={false}
             prefetch={false}
             className="btn-glass"

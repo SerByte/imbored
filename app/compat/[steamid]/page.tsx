@@ -29,7 +29,7 @@ import { logSwallowed } from '@/lib/errlog'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { CopyCompatLink } from '../CopyCompatLink'
-import { CompatNotice } from './CompatNotice'
+import { Notice } from '@/components/Notice'
 import { CoverWall } from './CoverStrip'
 import { Eyebrow, SectionTitle } from '@/components/Labels'
 import type { ArtRef } from '@/lib/compatpage'
@@ -272,7 +272,8 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
     // Фон — свои же игры: приглашение уже посчитано для метаданных (cache)
     const own = await inviteOnce(db, other)
     return (
-      <CompatNotice
+      <Notice
+        eyebrow="Совместимость"
         title="Это твоя собственная ссылка"
         body="Кинь её кому-нибудь другому — сервис сравнит ваши библиотеки и покажет, во что вам зайти вместе."
         games={own?.topGames}
@@ -282,22 +283,23 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           Посмотреть свой портрет
           <Icon name="arrow" size={16} />
         </Link>
-      </CompatNotice>
+      </Notice>
     )
   }
 
   if (state.kind === 'noprofile') {
     return (
-      <CompatNotice
+      <Notice
+        eyebrow="Совместимость"
         title={`${state.otherName ?? 'Этот игрок'} ещё не подключал библиотеку`}
-        body="Сравнивать пока не с чем. Можно кинуть ему свою ссылку — тогда сравнение соберётся с его стороны."
+        body="Сравнивать пока не с чем. Можно кинуть в ответ свою ссылку — сравнение соберётся, когда по ней подключат библиотеку."
       >
         {me && <CopyCompatLink steamid={me} className="btn-ember px-6 py-3" label="Моя ссылка совместимости" />}
         <Link href="/compat" className="tap link-more">
           <Icon name="arrow" size={16} className="rotate-180" />
           К своей ссылке
         </Link>
-      </CompatNotice>
+      </Notice>
     )
   }
 
@@ -506,7 +508,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           </Magnet>
           <CopyOwn steamid={d.me} inline />
           <Link href={`/portrait/${d.other}`} className="tap link-more p-2">
-            Портрет {d.otherName}
+            {/* «Портрет Демо-игрок» не склонялось: ник — не слово, и падеж
+                ему даёт только приложение «игрока», как в заголовке портрета */}
+            Портрет игрока {d.otherName}
             <Icon name="arrow" size={16} />
           </Link>
           {/* Что осталось после этого экрана — говорится здесь же, а не в политике */}

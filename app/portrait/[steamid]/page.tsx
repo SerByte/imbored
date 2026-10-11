@@ -54,6 +54,7 @@ import { tagWeightFrom } from '@/lib/tagweight'
 import type { LibraryGame } from '@/lib/types'
 import { Icon } from '@/components/Icon'
 import { withRef } from '@/lib/track'
+import { Notice } from '@/components/Notice'
 
 export const dynamic = 'force-dynamic'
 
@@ -278,13 +279,15 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const snapshot = await snapshotOf(steamid)
   if (!snapshot) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-        <p className="text-lg">Этот игрок ещё не подключал библиотеку к imbored.</p>
-        <Link href={reconnectHref()} className="tap link-more">
+      <Notice
+        eyebrow="Портрет игрока"
+        title="Портрета пока нет"
+        body="Этот игрок ещё не подключал библиотеку к imbored — рисовать не из чего. Свой портрет собирается за минуту."
+      >
+        <Link href={reconnectHref()} className="btn-ember px-6 py-3">
           Подключить свою
-          <Icon name="arrow" size={16} />
         </Link>
-      </div>
+      </Notice>
     )
   }
 
@@ -477,8 +480,10 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           </dl>
           {wrapped.days > 0 && (
             <p className="mt-6 text-dim text-sm md:text-base">
+              {/* «Дней», а не «суток»: у «суток» нет формы на 21, 31, 101 —
+                  выходило «31 полных суток» */}
               Это <span className="tabular-nums text-ink">{wrapped.days.toLocaleString('ru-RU')}</span>{' '}
-              полных суток за экраном.
+              {plural(wrapped.days, 'полный день', 'полных дня', 'полных дней')} за экраном.
             </p>
           )}
           {!complete && (
@@ -648,11 +653,16 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           <m.div {...inView(2)} className="mt-4 flex flex-wrap gap-x-8 gap-y-2 text-dim text-sm">
             {backlog.pricedCount > 0 && (
               <p>
-                В них лежит не меньше{' '}
+                {/* «Не меньше» и «цена известна у 8 из 8» — только при
+                    неполном счёте, как в карточке бэклога на /library */}
+                {backlog.pricedCount < backlog.unplayedCount ? 'В них лежит не меньше' : 'В них лежит'}{' '}
                 <span className="tabular-nums text-ember-text">
                   {formatPrice(backlog.cents, backlog.cc, { whole: true })}
                 </span>{' '}
-                {byPrices(backlog.cc)} — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}.
+                {byPrices(backlog.cc)}
+                {backlog.pricedCount < backlog.unplayedCount
+                  ? ` — цена известна у ${backlog.pricedCount} из ${backlog.unplayedCount}.`
+                  : '.'}
               </p>
             )}
             {/* Шутки про бургеры обращаются к владельцу («их бы ты доел») —
@@ -752,7 +762,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             href={`/compat/${steamid}`}
             className="btn-ember px-6 py-3"
           >
-            Сравнить с ним свои вкусы
+            {/* Без «с ним»: кто за ником, мы не знаем, а угаданный род
+                ошибается в половине случаев */}
+            Сравнить вкусы
           </Link>
         )}
         {/*

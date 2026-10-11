@@ -11,6 +11,7 @@ import { RoomWaiting } from '@/components/room/RoomWaiting'
 import { Spinner } from '@/components/Spinner'
 import { StatusLine } from '@/components/StatusLine'
 import { Icon } from '@/components/Icon'
+import { Notice } from '@/components/Notice'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
@@ -163,6 +164,9 @@ export default function RoomPage() {
   const [deckTotal, setDeckTotal] = useState(0)
   const [deckVoted, setDeckVoted] = useState(0)
   const [deckFailed, setDeckFailed] = useState(false)
+  // Отказ по потолку частоты (429) — не поломка: «на нашей стороне» и
+  // «попробуй ещё раз» сразу же упёрлись бы в тот же потолок
+  const [deckLimited, setDeckLimited] = useState(false)
   /*
    * Запрос колоды уже в полёте.
    *
@@ -373,6 +377,7 @@ export default function RoomPage() {
     try {
       const res = await fetch(`/api/room/${roomId}/deck`)
       if (!res.ok) {
+        setDeckLimited(res.status === 429)
         setDeckFailed(true)
         return
       }
@@ -403,6 +408,7 @@ export default function RoomPage() {
       setHasMore(data.hasMore)
       setLocalVotes(0)
     } catch {
+      setDeckLimited(false)
       setDeckFailed(true)
     } finally {
       deckInFlight.current = false
@@ -842,13 +848,19 @@ export default function RoomPage() {
 
   if (notFound) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-        <p className="font-display text-display-sm">Такой комнаты нет</p>
-        <Link href="/room/new" className="tap link-more">
+      <Notice
+        eyebrow="Пати"
+        title="Такой комнаты нет"
+        body="Код с опечаткой или комната уже закрылась. Новая собирается за минуту — и ссылку на неё можно сразу кинуть своим."
+      >
+        <Link href="/room/new" className="btn-ember px-6 py-3">
           Создать свою
+        </Link>
+        <Link href="/rooms" className="tap link-more">
+          Подсесть к открытой пати
           <Icon name="arrow" size={16} />
         </Link>
-      </div>
+      </Notice>
     )
   }
 
@@ -1117,12 +1129,30 @@ export default function RoomPage() {
             заходят так же, как по ссылке. Молчаливое нажатие читалось бы как
             сломанная кнопка.
           */}
+          {/*
+            На телефоне подписи короче, и это не косметика. Полные две кнопки
+            не влезают в строку на 390 px и встают в два ряда — замер: карта
+            колоды начиналась на 329 px вместо 277, и кнопки голоса уходили
+            под нижнюю панель (на 19 px на 390×844, на 113 на 375×667). Высота
+            карты (.room-page .deck-stack) считается от шапки в один ряд.
+          */}
           <button onClick={copyLink} className="btn-glass py-3 text-sm">
-            {share.label('Скопировать ссылку для друзей', {
-              icon: 'link',
-              native: 'Отправить ссылку друзьям',
-              manual: 'Не вышло — продиктуй код',
-            })}
+            {share.label(
+              <>
+                <span className="md:hidden">Ссылка для друзей</span>
+                <span className="hidden md:inline">Скопировать ссылку для друзей</span>
+              </>,
+              {
+                icon: 'link',
+                native: (
+                  <>
+                    <span className="md:hidden">Позвать друзей</span>
+                    <span className="hidden md:inline">Отправить ссылку друзьям</span>
+                  </>
+                ),
+                manual: 'Не вышло — продиктуй код',
+              },
+            )}
           </button>
           {/* Живая область — рядом с кнопкой: внутри она стала бы частью её имени */}
           {share.status}
@@ -1152,7 +1182,14 @@ export default function RoomPage() {
               title="Открытая комната видна на доске «Пати» — к вам смогут подсесть"
             >
               <Icon name={state.room.isPublic ? 'check' : 'users'} size={16} />
-              {state.room.isPublic ? 'На доске' : 'Показать на доске'}
+              {state.room.isPublic ? (
+                'На доске'
+              ) : (
+                <>
+                  <span className="md:hidden">На доску</span>
+                  <span className="hidden md:inline">Показать на доске</span>
+                </>
+              )}
             </button>
           ) : state.room.isPublic ? (
             <span
@@ -1174,10 +1211,15 @@ export default function RoomPage() {
               key={m.id}
               className={`pill cursor-default text-xs ${m.me ? 'is-on' : 'text-dim'}`}
             >
-              {m.name}
-              {m.me ? ' (ты)' : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
-              {/* было прибито строкой: «1 голосов», «2 голосов» */}
-              {plural(m.votes, 'голос', 'голоса', 'голосов')}
+              {/* Одной строкой в одном span: .pill — inline-flex с gap, и
+                  голые куски текста вокруг числа становились отдельными
+                  флекс-элементами, получая gap поверх пробела: «·  0  голосов» */}
+              <span>
+                {m.name}
+                {m.me ? ' (ты)' : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
+                {/* было прибито строкой: «1 голосов», «2 голосов» */}
+                {plural(m.votes, 'голос', 'голоса', 'голосов')}
+              </span>
             </span>
           ))}
         </div>
@@ -1185,8 +1227,14 @@ export default function RoomPage() {
 
       {deckFailed ? (
         <div className="panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
-          <p className="font-semibold">Не получилось загрузить игры</p>
-          <p className="text-dim text-sm">Скорее всего, это на нашей стороне.</p>
+          <p className="font-semibold">
+            {deckLimited ? 'Слишком часто' : 'Не получилось загрузить игры'}
+          </p>
+          <p className="text-dim text-sm">
+            {deckLimited
+              ? 'Колоду запрашивали много раз подряд, и на это стоит потолок. Подожди минуту и попробуй снова.'
+              : 'Скорее всего, это на нашей стороне.'}
+          </p>
           <button
             onClick={() => void loadDeck()}
             className="btn-ember px-6 py-3 self-center"

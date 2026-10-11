@@ -113,7 +113,11 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
     .map(([t]) => tagRu(t))
 
   const lines = [
-    facts ? `${facts.percent}% из ${ogNum(facts.total)} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за` : null,
+    // «— за» в хвосте читалось как обрубленная фраза — та же правка, что на
+    // самой странице игры
+    facts
+      ? `${facts.percent}% положительных из ${ogNum(facts.total)} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')}`
+      : null,
     tags.length ? tags.join(' · ') : null,
   ].filter(Boolean) as string[]
 

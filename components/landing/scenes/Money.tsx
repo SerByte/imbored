@@ -62,15 +62,19 @@ export function Money() {
         Ударение на тезисе, а не на всей фразе. Заголовок держал четыре строки
         ровным белым, и главное в нём — «доверие не продаётся» — весило столько
         же, сколько служебное «Мы не продаём места в выдаче».
+
+        Неразрывные пробелы — после «в», «а», «И» и перед тире: на телефоне
+        заголовок ломался «места в / выдаче», «Рекомендация / — это доверие, а /
+        доверие», и строка то кончалась предлогом, то начиналась с тире.
       */}
-      <h2 className="font-display text-display-md" style={{ maxWidth: '20ch' }} data-money-line>
-        Мы не продаём места в выдаче. Рекомендация — это доверие,{' '}
-        <span className="text-ember-text">а доверие не продаётся</span>.
+      <h2 className="font-display text-display-md text-balance" style={{ maxWidth: '20ch' }} data-money-line>
+        Мы не продаём места в&nbsp;выдаче. Рекомендация&nbsp;— это доверие,{' '}
+        <span className="text-ember-text">а&nbsp;доверие не продаётся</span>.
       </h2>
 
       <ul className="money-list">
         <li data-money-item>Рекламы в подборе нет.</li>
-        <li data-money-item>imbored бесплатен. И останется таким.</li>
+        <li data-money-item>imbored бесплатен. И&nbsp;останется таким.</li>
         <li data-money-item>Скидка — наклон, а не сортировка.</li>
       </ul>
 

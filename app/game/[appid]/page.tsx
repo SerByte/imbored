@@ -437,8 +437,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
               Слово — только из сводки. Проценты и количество мы пересказываем,
               а словесную шкалу Steam придумывать за неё нельзя; без сводки
-              рядом с кольцом остаётся «из N отзывов — за», и этого хватает —
-              процент уже стоит внутри кольца.
+              рядом с кольцом остаётся «положительных из N отзывов», и этого
+              хватает — процент уже стоит внутри кольца.
             */}
             {facts && (
               <div className="flex items-center gap-3.5 text-sm">
@@ -455,8 +455,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       {SCORE_RU[facts.label] ?? facts.label}
                     </span>
                   )}
+                  {/* Было «из N отзывов — за»: «за» здесь значило «голосов
+                      за», но читалось как обрубленное «за …» — будто строку
+                      срезало на полуслове. Со словом Steam процент уже назван
+                      дважды (кольцо и шкала), без него — называем сами. */}
                   <span className="tabular-nums text-dim text-xs">
-                    из {facts.total.toLocaleString('ru-RU')} {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за
+                    {facts.label ? 'из' : 'положительных из'} {facts.total.toLocaleString('ru-RU')}{' '}
+                    {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')}
                   </span>
                 </div>
               </div>

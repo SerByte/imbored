@@ -34,7 +34,10 @@ const ITEMS = [
   { href: '/quiz', label: 'Подбор', icon: 'spark', also: ['/play'], pick: true },
   { href: '/rooms', label: 'Пати', icon: 'users', also: ['/room'] },
   { href: '/whatsnew', label: 'Новое', icon: 'news' },
-  { href: '/library', label: 'Игры', icon: 'grid' },
+  // «Мои игры», а не «Игры»: голое «Игры» читалось как каталог — а каталог
+  // на сайте есть: «Каталог» в шапке и «Игры по жанрам» (/games) в подвале.
+  // По длине как «Игра дня», в колонку на 360px влезает.
+  { href: '/library', label: 'Мои игры', icon: 'grid' },
 ] satisfies Array<{ href: string; label: string; icon: IconName; also?: string[]; pick?: boolean }>
 
 export function MobileNav() {
