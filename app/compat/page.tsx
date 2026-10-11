@@ -69,6 +69,7 @@ export default async function CompatHubPage() {
 
         <div className="anim-rise" style={{ animationDelay: '80ms' }}>
           <ShareLinkField
+            what="compat"
             url={url}
             label="Твоя ссылка на сравнение совместимости"
             title="Совместимость вкусов — imbored"

@@ -868,6 +868,24 @@ WHERE kind = 'event' AND key NOT GLOB 'return:*' AND hour >= unixepoch() - 7 * 8
 GROUP BY key ORDER BY key;
 ```
 
+У «поделился» и «скачал карточку» вторая половина ключа — `что.источник`:
+`share:<что>.<источник>`, где «что» — `room`, `compat`, `portrait`, `year`,
+`pick`, `patch` или `match`, и `card_download:<portrait|year>.<источник>`
+(`lib/track.ts`). Источник — откуда пришёл тот, кто делится: `share:compat.compat`
+рядом с `ref_open:compat` — это петля сравнения, сколько пришедших по чужой
+ссылке отдали свою. Строки `share_click:*` — старое имя того же шага, где все
+кнопки ложились одной строкой; после выкладки их шлют только вкладки со старым
+бандлом, а выпуск спустя сервер перестаёт их принимать.
+
+```sql
+-- чем делятся за неделю
+SELECT substr(key, 1, instr(key, '.') - 1) AS what, SUM(count)
+FROM telemetry_hourly
+WHERE kind = 'event' AND (key GLOB 'share:*' OR key GLOB 'card_download:*')
+  AND hour >= unixepoch() - 7 * 86400
+GROUP BY what ORDER BY 2 DESC;
+```
+
 Отказы `/api/recommend` по потолку частоты — в той же выборке:
 `ratelimited:recommend` — человек упёрся в свои 20 подборов за 10 минут
 (вошедший через Steam — один на все устройства, сессия по ссылке — каждая сама

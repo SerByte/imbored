@@ -2,14 +2,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  CARD_KINDS,
   captureRef,
   currentSource,
   eventKey,
   parseRef,
   parseTrackEvent,
+  SHARE_KINDS,
   stepKey,
   track,
+  trackCardDownload,
   TRACK_PATH,
+  trackShare,
   trackWait,
   WAIT_BUCKETS,
   WAIT_PATHS,
@@ -44,8 +48,107 @@ describe('разбор маяка', () => {
   })
 
   test('ключ счётчика — событие:источник', () => {
-    expect(eventKey('share_click', 'portrait')).toBe('share_click:portrait')
+    expect(eventKey('launch_click', 'portrait')).toBe('launch_click:portrait')
     expect(eventKey('connect_ok', 'openid')).toBe('connect_ok:openid')
+  })
+})
+
+/**
+ * «Поделился» и «скачал карточку» — ЧЕМ, а не только откуда пришёл тот, кто
+ * делится. share_click нёс одну вторую половину — источник вкладки, — и
+ * комната, сравнение, портрет, выбор и патч ложились одной строкой
+ * share_click:direct: по таблице нельзя было сказать, работает ли хоть одна
+ * из кнопок. Ключ у них — «событие:что.источник», оба из закрытых списков.
+ */
+describe('чем поделились', () => {
+  test('шаринг — ключ «share:что.источник»', () => {
+    const step = parseTrackEvent({ event: 'share', what: 'room', source: 'compat' })
+    expect(step).toEqual({ event: 'share', source: 'compat', what: 'room' })
+    expect(stepKey(step!)).toBe('share:room.compat')
+    expect(stepKey(parseTrackEvent({ event: 'share', what: 'patch' })!)).toBe('share:patch.direct')
+  })
+
+  // Итоги года — отдельная страница со своей ссылкой, хоть метка у неё и
+  // портретная; экран матча — своя кнопка в пати. Без них в списке такие
+  // маяки отбрасывались бы как чужие.
+  test('каждое «что» из списка принимается, и год с матчем в нём есть', () => {
+    expect(SHARE_KINDS).toEqual(
+      expect.arrayContaining(['room', 'compat', 'portrait', 'year', 'pick', 'patch', 'match']),
+    )
+    for (const what of SHARE_KINDS) {
+      expect(stepKey(parseTrackEvent({ event: 'share', what })!)).toBe(`share:${what}.direct`)
+    }
+  })
+
+  test.each([
+    ['без «что»', {}],
+    ['чужое «что»', { what: 'steam' }],
+    ['метка площадки, а не то, чем делятся', { what: 'dtf' }],
+    ['SteamID', { what: '76561197960287930' }],
+    ['число', { what: 7 }],
+  ])('share %s — не принимается', (_name, extra) => {
+    expect(parseTrackEvent({ event: 'share', source: 'room', ...extra })).toBeNull()
+  })
+
+  test('скачанная карточка — «card_download:что.источник», только портрет и год', () => {
+    expect(CARD_KINDS).toEqual(['portrait', 'year'])
+    const step = parseTrackEvent({ event: 'card_download', what: 'year', source: 'portrait' })
+    expect(step).toEqual({ event: 'card_download', source: 'portrait', what: 'year' })
+    expect(stepKey(step!)).toBe('card_download:year.portrait')
+    expect(parseTrackEvent({ event: 'card_download', what: 'room' })).toBeNull()
+    expect(parseTrackEvent({ event: 'card_download' })).toBeNull()
+  })
+
+  test('«что» у другого шага игнорируется', () => {
+    expect(parseTrackEvent({ event: 'launch_click', what: 'room' })).toEqual({
+      event: 'launch_click',
+      source: 'direct',
+    })
+  })
+
+  /*
+   * Вкладки, открытые до выкладки, держат старый бандл и шлют share_click с
+   * источником ещё какое-то время. Сервер его принимает (один выпуск, потом
+   * имя уходит из CLIENT_EVENTS), но новый код его не шлёт: строки
+   * share_click:* и share:* не должны смешиваться в одном смысле.
+   */
+  test('старый share_click ещё принимается, но новый код его не шлёт', () => {
+    expect(stepKey(parseTrackEvent({ event: 'share_click', source: 'compat' })!)).toBe('share_click:compat')
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (/\.tsx?$/.test(e.name) && !/\.test\./.test(e.name)) {
+          const code = fs
+            .readFileSync(p, 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+          if (/track\(\s*'share_click'/.test(code)) offenders.push(p)
+        }
+      }
+    }
+    for (const dir of ['app', 'components', 'lib']) walk(path.join(__dirname, '..', dir))
+    expect(offenders).toEqual([])
+    // Не зовётся: проверка — для tsc, а маяк из теста уходить не должен
+    // @ts-expect-error старое имя отправке закрыто — только trackShare с «что»
+    const legacy = () => track('share_click')
+    expect(typeof legacy).toBe('function')
+  })
+
+  /*
+   * Вторая половина — по событию, как у pick_wait: tsc не пропускает пару,
+   * которая легла бы в таблицу строкой, которую никто не ждёт.
+   */
+  test('ключ шаринга — только share с «что.источник»', () => {
+    expect(eventKey('share', 'year.tg')).toBe('share:year.tg')
+    expect(eventKey('card_download', 'portrait.direct')).toBe('card_download:portrait.direct')
+    // @ts-expect-error у шаринга вторая половина — «что.источник», а не источник
+    eventKey('share', 'direct')
+    // @ts-expect-error карточку скачивают только у портрета и года
+    eventKey('card_download', 'room.direct')
+    // @ts-expect-error у простого шага — источник, а не «что.источник»
+    eventKey('launch_click', 'room.direct')
   })
 })
 
@@ -205,6 +308,22 @@ describe('браузер', () => {
     b.store.set('imbored-ref', 'portrait')
     track('launch_click')
     expect(await b.bodies()).toEqual([{ event: 'launch_click', source: 'portrait' }])
+  })
+
+  test('шаринг и скачивание уходят с «что» и источником вкладки и проходят разбор сервера', async () => {
+    const b = browser()
+    b.store.set('imbored-ref', 'compat')
+    trackShare('compat')
+    trackCardDownload('year')
+    const bodies = await b.bodies()
+    expect(bodies).toEqual([
+      { event: 'share', source: 'compat', what: 'compat' },
+      { event: 'card_download', source: 'compat', what: 'year' },
+    ])
+    expect(bodies.map((body) => stepKey(parseTrackEvent(body)!))).toEqual([
+      'share:compat.compat',
+      'card_download:year.compat',
+    ])
   })
 
   test('ожидание уходит корзиной, а не числом, и проходит разбор сервера', async () => {

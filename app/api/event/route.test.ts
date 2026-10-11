@@ -63,6 +63,27 @@ describe('/api/event', () => {
     )
   })
 
+  // Чем поделились и какую карточку скачали (lib/track, share и
+  // card_download): вторая часть ключа — «что.источник», и без «что» из
+  // списка маяк не считается — «поделился неизвестно чем» и есть та строка
+  // share_click:direct, от которой эти шаги уходят
+  test('шаринг и скачивание — плюс один к «событие:что.источник»', async () => {
+    expect((await send({ event: 'share', what: 'room' })).status).toBe(204)
+    expect((await send({ event: 'share', what: 'year', source: 'compat' })).status).toBe(204)
+    expect((await send({ event: 'share', what: 'year', source: 'compat' })).status).toBe(204)
+    expect((await send({ event: 'card_download', what: 'portrait' })).status).toBe(204)
+    expect((await send({ event: 'share' })).status).toBe(204)
+    expect((await send({ event: 'share', what: '76561197960287930' })).status).toBe(204)
+    expect((await send({ event: 'card_download', what: 'room' })).status).toBe(204)
+    await vi.waitFor(async () =>
+      expect(await counted()).toEqual([
+        ['card_download:portrait.direct', 1],
+        ['share:room.direct', 1],
+        ['share:year.compat', 2],
+      ]),
+    )
+  })
+
   // Потолок в памяти, а не в rate_limits: адрес рядом с числом шагов не
   // должен оседать в базе даже до суточной уборки
   test('адрес в базу не пишется', async () => {
@@ -71,10 +92,12 @@ describe('/api/event', () => {
     expect(JSON.stringify(rows.rows)).not.toContain('192.0.2.44')
   })
 
+  // Шаг — живой share, а не старый share_click: тот принимается последний
+  // выпуск, и с его уходом из списка тест молча мерил бы не потолок, а отказ
   test('один адрес упирается в потолок, соседний — нет', async () => {
     let last = 0
-    for (let i = 0; i < 61; i++) last = (await send({ event: 'share_click' }, '198.51.100.9')).status
+    for (let i = 0; i < 61; i++) last = (await send({ event: 'share', what: 'room' }, '198.51.100.9')).status
     expect(last).toBe(429)
-    expect((await send({ event: 'share_click' }, '198.51.100.10')).status).toBe(204)
+    expect((await send({ event: 'share', what: 'room' }, '198.51.100.10')).status).toBe(204)
   })
 })
