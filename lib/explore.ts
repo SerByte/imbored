@@ -13,6 +13,8 @@
  * не считается промахом подбора (lib/db: listFeedback, feedbackStats).
  *
  * Модуль чистый: колода собирается из готовых кандидатов (lib/candidates).
+ * Здесь же правила страницы, которые проверяются без браузера: потолок
+ * ожидания колоды и откат «Убрать» на полке.
  */
 
 import type { CandidateSource } from './types'
@@ -72,4 +74,54 @@ export function exploredAppids(
   nowSec: number,
 ): number[] {
   return rows.filter((r) => r.liked || nowSec - r.at < EXPLORE_PASS_SEC).map((r) => r.appid)
+}
+
+/**
+ * Сколько ждать /api/explore. Модели в роуте нет: худший живой ответ —
+ * холодный старт, чтения базы и цены, это секунды. Потолок — по той же
+ * причине, что RECOMMEND_WAIT_MS у /play: без него повисшее соединение
+ * (телефон сменил сеть) держало «Собираю колоду…», а у «Ещё колоду» —
+ * кнопку в «Собираю…» столько, сколько браузер держит соединение, и выйти
+ * можно было только перезагрузкой.
+ */
+export const EXPLORE_WAIT_MS = 20_000
+
+/**
+ * Сигнал запроса колоды: ушла страница или запрос вышел за потолок.
+ *
+ * Страница решает по своему сигналу (page), а не по этому: обрыв по потолку
+ * — сбой, и ему экран отказа или строка под кнопкой, а уход — молчание. Свой
+ * таймер на AbortController страницы этого бы не различил: потолок читался
+ * бы как уход, и экран остался бы на прогреве навсегда.
+ *
+ * AbortSignal.any есть не во всех живых браузерах (Safari до 17.4), а
+ * исключение здесь уронило бы саму колоду — там остаётся сигнал страницы
+ * без потолка: тот же выбор, что у callSignal в lib/warmup.
+ */
+export function exploreSignal(page: AbortSignal, ms = EXPLORE_WAIT_MS): AbortSignal {
+  if (typeof AbortSignal.any !== 'function' || typeof AbortSignal.timeout !== 'function') return page
+  return AbortSignal.any([page, AbortSignal.timeout(ms)])
+}
+
+/**
+ * Отказ «Убрать» на полке «Приглянулось»: вернуть одну плитку, а не снимок
+ * полки на момент нажатия.
+ *
+ * Снимок стирал всё, что случилось за время запроса: плитку, которую
+ * «Интересно» положило на полку (и сервер уже записал), и уход соседней,
+ * убранной вторым «Убрать», — она воскресала, хотя оставалась в списке
+ * убранного. Так же откатывает components/LikedShelf.
+ *
+ * Плитка встаёт перед ближайшим нижним соседом из before (полка в момент
+ * нажатия), который ещё на полке; не осталось ни одного — в конец. Потолок
+ * EXPLORE_SHELF_MAX здесь не режет: лишняя на миг плитка безвредна, его
+ * вернёт следующая сборка полки, а обрезанная ушла бы вместе со строкой
+ * отказа, которая ищет её название.
+ */
+export function putBack<T extends { appid: number }>(shelf: T[], card: T, before: readonly T[]): T[] {
+  if (shelf.some((c) => c.appid === card.appid)) return shelf
+  const at = before.findIndex((c) => c.appid === card.appid)
+  const next = at < 0 ? undefined : before.slice(at + 1).find((b) => shelf.some((c) => c.appid === b.appid))
+  const i = next ? shelf.findIndex((c) => c.appid === next.appid) : shelf.length
+  return [...shelf.slice(0, i), card, ...shelf.slice(i)]
 }

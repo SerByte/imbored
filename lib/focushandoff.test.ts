@@ -145,6 +145,26 @@ describe('/explore: колода уходит — фокус остаётся н
     expect(redeal.indexOf('await show(res')).toBeGreaterThan(decide)
     expect(page).toMatch(/<div ref=\{deckEnd\} className="panel-lift/)
   })
+
+  /**
+   * Экран отказа встаёт на место прогрева или уносит нажатую «Попробовать
+   * снова» (повтор пришёл с другой причиной, у которой повтора нет), и фокус
+   * оказывается в body. Тогда его забирает заголовок отказа — следующий Tab
+   * ведёт к кнопке экрана, а не в начало шапки. Если человек стоит где-то
+   * сам, фокус остаётся при нём: об отказе скажет строка статуса.
+   */
+  test('экран отказа: заголовок забирает потерянный фокус', () => {
+    expect(page).toMatch(/<h1 ref=\{failHead\} tabIndex=\{-1\}[^>]*>\s*\{fail\.title\}/)
+    expect(page).toMatch(/if \(focusAdrift\(document\)\) failHead\.current\?\.focus\(\)/)
+  })
+
+  test('удачный повтор отдаёт фокус новой колоде — как «Ещё колоду»', () => {
+    const retry = page.slice(page.indexOf('const retry = async (keyboard: boolean)'))
+    const decide = retry.indexOf('setDealFocus(keyboard && focusAdrift(document, failBox.current))')
+    expect(decide, 'решение о фокусе после повтора пропало').toBeGreaterThan(-1)
+    expect(retry.indexOf("await fetch('/api/explore'")).toBeLessThan(decide)
+    expect(retry.indexOf('await show(res')).toBeGreaterThan(decide)
+  })
 })
 
 describe('пати: матч и экран ожидания', () => {

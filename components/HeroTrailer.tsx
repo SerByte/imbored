@@ -79,12 +79,17 @@ export function HeroTrailer({ trailer }: { trailer: Trailer | null | undefined }
           <source src={trailer.mp4} type="video/mp4" />
         </video>
       </div>
+      {/* Имя постоянное, состояние — в aria-pressed, как у «Пауза» в
+          MorphSlider. Имя переворачивалось вместе с состоянием, и остановленный
+          ролик звучал «Включить фоновое видео, нажата»: нажатым объявлялось
+          «включить», и человек жал ещё раз, чтобы «выключить», — запуская
+          ролик. Подсказка мыши (title) по-прежнему называет действие. */}
       {playing && (
         <button
           type="button"
           onClick={() => setStopped(!stopped)}
           aria-pressed={stopped}
-          aria-label={stopped ? 'Включить фоновое видео' : 'Остановить фоновое видео'}
+          aria-label="Пауза фонового видео"
           title={stopped ? 'Включить фоновое видео' : 'Остановить фоновое видео'}
           className="btn-circle hero-trailer-toggle"
         >

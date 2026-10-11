@@ -231,6 +231,10 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   { file: 'app/play/page.tsx', start: 'if (banning) return', reset: ['setBanFailed(null)'] },
   { file: 'app/daily/page.tsx', start: 'const notToday = async', reset: ['setRerollMiss(null)'] },
   { file: 'app/explore/page.tsx', start: 'const unlike = async', reset: ['setUnlikeMiss(null)'] },
+  // «Ещё колоду» под потолком частоты: второй 429 — тот же текст под кнопкой
+  { file: 'app/explore/page.tsx', start: 'const redeal = async', reset: ['setRedealMiss(null)'] },
+  // «Попробовать снова» на экране отказа: строка экрана гаснет на время попытки
+  { file: 'app/explore/page.tsx', start: 'const retry = async', reset: ['setRetrying(true)'] },
   { file: 'components/BannedShelf.tsx', start: 'async function unban(', reset: ['setFailed(null)'] },
   { file: 'components/LikedShelf.tsx', start: 'async function unlike(', reset: ['setFailed(null)'] },
   { file: 'components/Evenings.tsx', start: 'async function answer(', reset: ['setFailed(null)'] },
@@ -283,6 +287,69 @@ describe('строка отказа полок /library — одним узло�
         expect(code.slice(r.index), at).toMatch(/^return \(\s*<>\s*\{miss\}/)
       }
     }
+  })
+})
+
+/**
+ * Экран отказа /explore — одним узлом через смену фазы.
+ *
+ * Фаза отказа подменяет экран целиком: WarmupScreen уходит вместе со своей
+ * живой строкой прогресса, и «Библиотека не доехала» вставала молча — ни
+ * одна область в DOM не меняла текст. Строка статуса стоит первым ребёнком
+ * фрагмента во всех трёх return (прогрев, отказ, колода) и переживает
+ * подмену по той же причине, что строка полок выше: React сверяет детей по
+ * месту.
+ */
+describe('экран отказа /explore объявляется', () => {
+  test('строка статуса стоит первой в каждом return страницы', () => {
+    const code = read('app/explore/page.tsx')
+    expect(code, 'status — это StatusLine').toMatch(/const status = \(\s*<StatusLine\b/)
+    // return разметки, а не `return () => ac.abort()` эффекта
+    const returns = [...code.matchAll(/\breturn \((?=\s*<)/g)]
+    // прогрев, отказ, колода; меньше — разбор ослеп или фаз стало меньше
+    expect(returns.length).toBeGreaterThanOrEqual(3)
+    for (const r of returns) {
+      const at = `app/explore/page.tsx:${code.slice(0, r.index).split('\n').length}`
+      expect(code.slice(r.index), at).toMatch(/^return \(\s*<>\s*\{status\}/)
+    }
+  })
+
+  /**
+   * Вторая половина REPEAT для «Попробовать снова». Там стережётся только
+   * место: setRetrying(true) до первого await. Но гасит строку не он, а
+   * `&& !retrying` в её тексте — без него повтор того же отказа снова
+   * молчал бы, а место в REPEAT оставалось бы верным.
+   */
+  test('на время повтора строка статуса гаснет', () => {
+    const code = read('app/explore/page.tsx')
+    expect(code).toMatch(/const status = \(\s*<StatusLine text=\{phase === 'error' && !retrying \?/)
+  })
+})
+
+/**
+ * «Вопрос N из 3» в квизе — в заголовке шага, а не в живой области под ним.
+ *
+ * Строка role="status" стояла внутри <m.div key={step.key}>: каждый шаг
+ * монтировал новую область уже с текстом «Вопрос 2 из 3» — случай «key у
+ * предка» из ГРАНИЦЫ выше, который правило не видит. Звучал только первый
+ * шаг, а видимая подпись над шагом aria-hidden. Заголовок шага и так
+ * получает фокус при смене шага (stepHeadRef), и номер в его имени слышен
+ * везде, без гонки живой строки с переездом фокуса.
+ */
+describe('квиз: номер вопроса звучит', () => {
+  const code = read('app/quiz/page.tsx')
+  const at = code.indexOf('key={step.key}')
+  const step = code.slice(at, code.indexOf('</m.div>', at))
+
+  test('под ключом шага нет живой области', () => {
+    expect(at, 'шаг квиза не найден — сторож ослеп').toBeGreaterThan(-1)
+    expect(regions(step, 'app/quiz/page.tsx').map((r) => r.tag)).toEqual([])
+  })
+
+  test('номер вопроса — в имени заголовка, на который переезжает фокус', () => {
+    expect(step).toMatch(
+      /<m\.h1\s+ref=\{stepHeadRef\}[^>]*>\s*<span className="sr-only">\s*Вопрос \{stepIndex \+ 1\} из \{STEPS\.length\}\.(?:\s|\{' '\})*<\/span>\s*\{step\.question\}\s*<\/m\.h1>/,
+    )
   })
 })
 
