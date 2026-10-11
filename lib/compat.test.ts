@@ -42,7 +42,9 @@ describe('compatibility', () => {
     const b = [lib(1, 80), lib(2, 50)]
     const out = compatibility(a, b, metaOf, TAG_STATS)
     expect(out.percent).toBe(100)
-    expect(out.commonGames[0]).toEqual({ appid: 1, name: 'g1', hoursA: 100, hoursB: 80 })
+    // Минуты, а не округлённые часы: из часов «0 ч» у игры на 25 минут не
+    // отличить от незапущенной (см. тест про полчаса ниже)
+    expect(out.commonGames[0]).toEqual({ appid: 1, name: 'g1', minutesA: 6000, minutesB: 4800 })
     expect(out.commonGames).toHaveLength(2)
   })
 
@@ -72,6 +74,18 @@ describe('compatibility', () => {
     const b = [lib(1, 10), lib(3, 400)]
     const out = compatibility(a, b, metaOf, TAG_STATS)
     expect(out.commonGames[0].appid).toBe(3)
+  })
+
+  test('меньше получаса — не ноль: минуты строки есть, и она выше незапущенной', () => {
+    const mins = (appid: number, m: number): LibraryGame => ({ ...lib(appid, 0), playtimeForever: m })
+    // appid 2 — общая, но не запущенная никем; 1 — по 25 и 10 минут
+    const out = compatibility([mins(2, 0), mins(1, 25)], [mins(2, 0), mins(1, 10)], metaOf, TAG_STATS)
+    expect(out.commonGames.map((g) => [g.appid, g.minutesA, g.minutesB])).toEqual([
+      [1, 25, 10],
+      [2, 0, 0],
+    ])
+    // «вместе» — из суммы минут: 35 минут — это «1 час», а не два раза по «0 ч»
+    expect(out.commonHours).toBe(1)
   })
 
   test('пустые библиотеки не роняют', () => {
@@ -115,7 +129,7 @@ describe('скрытое время в Steam', () => {
     const out = compatibility(hiddenLibrary(), open, both, TAG_STATS)
     expect(out.timeHiddenA).toBe(true)
     expect(out.timeHiddenB).toBe(false)
-    expect(out.commonGames).toEqual([{ appid: 1002, name: 'Игра 1002', hoursA: null, hoursB: 50 }])
+    expect(out.commonGames).toEqual([{ appid: 1002, name: 'Игра 1002', minutesA: null, minutesB: 3000 }])
     // «вместе» — только известные часы
     expect(out.commonHours).toBe(50)
     // профиль скрытой стороны не пуст — общие темы находятся
@@ -125,7 +139,7 @@ describe('скрытое время в Steam', () => {
   test('у обоих скрыто — часов нет ни у кого, общие игры на месте', () => {
     const out = compatibility(hiddenLibrary(), hiddenLibrary(12), both, TAG_STATS)
     expect(out.commonTotal).toBe(12)
-    expect(out.commonGames.every((g) => g.hoursA === null && g.hoursB === null)).toBe(true)
+    expect(out.commonGames.every((g) => g.minutesA === null && g.minutesB === null)).toBe(true)
     expect(out.commonHours).toBe(0)
   })
 

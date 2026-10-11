@@ -3,7 +3,13 @@ import path from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { demoLibrary, demoLibrary2 } from './demo'
 import { minutesByApp } from './libdelta'
-import { HIDDEN_PLAYTIME_MIN_GAMES, minutesHidden, playtimeHidden, timeHiddenStore } from './playtime'
+import {
+  HIDDEN_PLAYTIME_MIN_GAMES,
+  minutesHidden,
+  playedShort,
+  playtimeHidden,
+  timeHiddenStore,
+} from './playtime'
 import { hiddenLibrary } from './testing/hiddenlibrary'
 
 const NOW = 1_780_000_000
@@ -97,6 +103,39 @@ describe('строка о скрытом времени', () => {
     expect(play).toMatch(/timeHiddenStore\.fresh\(\)\s*\?\s*'Ищу в твоей библиотеке…'/)
     expect(code('app/quiz/page.tsx')).toMatch(/timeHidden \? 'Из своей библиотеки' : 'Ни разу не запускал'/)
     expect(code('components/SignOut.tsx')).toContain('timeHiddenStore.set(null)')
+  })
+})
+
+/**
+ * «0 ч» рядом с непустой полосой — неправда: игру запускали, просто меньше
+ * получаса. /library это уже знала, а портрет и /compat — шеринговые
+ * страницы — писали ноль, и на /compat «0 ч | 0 ч» читалось «никто не играл».
+ */
+describe('playedShort', () => {
+  test('меньше получаса — минуты, а не «0 ч»', () => {
+    expect(playedShort(20)).toBe('20 мин')
+    expect(playedShort(1)).toBe('1 мин')
+    expect(playedShort(29)).toBe('29 мин')
+  })
+
+  test('от получаса — округлённые часы, как раньше', () => {
+    expect(playedShort(30)).toBe('1 ч')
+    expect(playedShort(6000)).toBe('100 ч')
+    // тысячи — с разрядами, как у прежней подписи через toLocaleString
+    expect(playedShort(1234 * 60)).toBe(`${(1234).toLocaleString('ru-RU')} ч`)
+  })
+
+  test('ноль — честные «0 ч»: игра в пересечении есть, но её не запускали', () => {
+    expect(playedShort(0)).toBe('0 ч')
+  })
+
+  test('портрет и /compat подписывают часы через неё, а не «{hours} ч»', () => {
+    const ROOT = path.join(__dirname, '..')
+    const portrait = fs.readFileSync(path.join(ROOT, 'app/portrait/[steamid]/page.tsx'), 'utf8')
+    const compat = fs.readFileSync(path.join(ROOT, 'app/compat/[steamid]/page.tsx'), 'utf8')
+    expect(portrait).toContain('{playedShort(g.minutes)}')
+    expect(portrait).not.toMatch(/g\.hours\.toLocaleString\('ru-RU'\)\} ч/)
+    expect(compat).toMatch(/playedShort\(m\)/)
   })
 })
 

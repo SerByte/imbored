@@ -24,6 +24,7 @@ import {
 } from '@/lib/compatpage'
 import { reconnectHref } from '@/lib/destination'
 import { plural } from '@/lib/plural'
+import { playedShort } from '@/lib/playtime'
 import { recordCompatView } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
@@ -130,30 +131,34 @@ function uniq(games: ArtRef[]): ArtRef[] {
  * часов расплющила бы Stardew 58/50 в две невидимые чёрточки, а вопрос строки
  * не «насколько эта игра больше остальных» (на это отвечает порядок сортировки),
  * а «кто из вас двоих здесь ветеран».
+ *
+ * Считается в МИНУТАХ: из округлённых часов пара «25 и 10 минут» выходила
+ * «0 ч | 0 ч» без единой полосы — будто никто не запускал. Подпись —
+ * playedShort: меньше получаса — минуты, как у плиток /library.
  */
-function HoursSplit({ hoursA, hoursB }: { hoursA: number | null; hoursB: number | null }) {
+function HoursSplit({ minutesA, minutesB }: { minutesA: number | null; minutesB: number | null }) {
   // Время скрыто у обоих (lib/playtime.ts) — сравнивать нечего, строка без счёта
-  if (hoursA === null && hoursB === null) return null
-  const max = Math.max(hoursA ?? 0, hoursB ?? 0)
+  if (minutesA === null && minutesB === null) return null
+  const max = Math.max(minutesA ?? 0, minutesB ?? 0)
   // У скрытой стороны полосы нет вовсе: пустая полоса читалась бы нулём
-  const share = (h: number | null) => (max && h ? `${(h / max) * 100}%` : '0%')
-  const label = (h: number | null) => (h === null ? 'скрыто' : `${ru(h)} ч`)
+  const share = (m: number | null) => (max && m ? `${(m / max) * 100}%` : '0%')
+  const label = (m: number | null) => (m === null ? 'скрыто' : playedShort(m))
 
   return (
     <div className="flex items-center gap-2">
       <span className="w-14 shrink-0 text-right tabular-nums text-[11px] text-dim">
-        {label(hoursA)}
+        {label(minutesA)}
       </span>
       <div aria-hidden className="flex h-1.5 flex-1 items-center">
         <div className="flex flex-1 justify-end">
-          <div className="h-1.5 rounded-l-full bg-ember" style={{ width: share(hoursA) }} />
+          <div className="h-1.5 rounded-l-full bg-ember" style={{ width: share(minutesA) }} />
         </div>
         <div className="flex-1">
-          <div className="h-1.5 rounded-r-full bg-info" style={{ width: share(hoursB) }} />
+          <div className="h-1.5 rounded-r-full bg-info" style={{ width: share(minutesB) }} />
         </div>
       </div>
       <span className="w-14 shrink-0 tabular-nums text-[11px] text-dim">
-        {label(hoursB)}
+        {label(minutesB)}
       </span>
     </div>
   )
@@ -177,7 +182,7 @@ function CommonRow({ game }: { game: CompatGame }) {
           и truncate не срабатывает вовсе */}
       <span className="flex min-w-0 flex-1 flex-col gap-2">
         <span className="truncate text-[15px] font-extrabold tracking-[-0.01em]">{game.name}</span>
-        <HoursSplit hoursA={game.hoursA} hoursB={game.hoursB} />
+        <HoursSplit minutesA={game.minutesA} minutesB={game.minutesB} />
       </span>
     </Link>
   )

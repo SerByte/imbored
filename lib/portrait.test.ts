@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { buildPortrait } from './portrait'
+import { buildWrapped } from './wrapped'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -88,6 +89,28 @@ describe('buildPortrait', () => {
     expect(p.facts.totalHours).toBe(400)
     expect(p.facts.unplayedCount).toBe(1)
     expect(p.facts.topGame).toEqual({ appid: 1, name: 'g1', hours: 300, sharePercent: 75 })
+  })
+
+  test('доля топ-игры считается от минут, а не от округлённых часов — больше 100% не бывает', () => {
+    // 85 минут на всю библиотеку: totalHours округляется до 1, и деление
+    // 85/60 на 1 давало «142% всего времени» на карточке, которая уходит в чаты
+    const tiny: LibraryGame = { appid: 1, name: 'g1', playtimeForever: 85, playtime2Weeks: 0 }
+    const p = buildPortrait([tiny, lib(2, 0)], metaOf)
+    expect(p.facts.topGame?.sharePercent).toBe(100)
+    expect(p.facts.topGame?.sharePercent).toBe(
+      buildWrapped([tiny, lib(2, 0)], metaOf).top[0].sharePercent,
+    )
+    // 60 + 25 минут: честные 71%, а не 100% от «1 ч»
+    const two = buildPortrait(
+      [{ ...tiny, playtimeForever: 60 }, { ...tiny, appid: 2, name: 'g2', playtimeForever: 25 }],
+      metaOf,
+    )
+    expect(two.facts.topGame?.sharePercent).toBe(71)
+  })
+
+  test('библиотека меньше получаса — топ-игры нет, как и раньше («0 ч (100%)» не пишем)', () => {
+    const tiny: LibraryGame = { appid: 1, name: 'g1', playtimeForever: 20, playtime2Weeks: 0 }
+    expect(buildPortrait([tiny], metaOf).facts.topGame).toBeNull()
   })
 
   test('саундтрек в бэклог портрета не входит — число то же, что у buildWrapped', () => {

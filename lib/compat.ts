@@ -7,11 +7,14 @@ export type Compatibility = {
   /** 0–100, близость вкусов; см. tasteCosine */
   percent: number
   /**
-   * Самые наигранные из общих, не больше COMMON_SHOWN. Часы null — время этой
-   * стороны скрыто настройками Steam (lib/playtime.ts): «0 ч» против часов
-   * друга было бы сказано про галочку, а не про человека.
+   * Самые наигранные из общих, не больше COMMON_SHOWN. Время — в МИНУТАХ, а
+   * не в округлённых часах: из часов игра на 25 минут была «0 ч», то есть
+   * неотличима от незапущенной, и у пары «25 и 10 минут» строка читалась
+   * «никто не играл». Подпись решает страница (playedShort).
+   * null — время этой стороны скрыто настройками Steam (lib/playtime.ts):
+   * «0 ч» против часов друга было бы сказано про галочку, а не про человека.
    */
-  commonGames: Array<{ appid: number; name: string; hoursA: number | null; hoursB: number | null }>
+  commonGames: Array<{ appid: number; name: string; minutesA: number | null; minutesB: number | null }>
   /**
    * Размер ВСЕГО пересечения, а не показанного среза.
    *
@@ -21,7 +24,11 @@ export type Compatibility = {
    * тоже делается здесь.
    */
   commonTotal: number
-  /** Часы обоих по всему пересечению, а не по срезу; скрытая сторона — ноль */
+  /**
+   * Часы обоих по всему пересечению, а не по срезу; скрытая сторона — ноль.
+   * Округляется сумма минут, а не каждая строка: десять игр по 20 минут —
+   * это три часа, а не десять раз по нулю.
+   */
   commonHours: number
   sharedTags: string[]
   /** Время скрыто настройками Steam — у каждой стороны своё (lib/playtime.ts) */
@@ -180,7 +187,9 @@ export function compatibility(
   const timeHiddenB = playtimeHidden(libB)
 
   const byAppidB = new Map(libB.map((g) => [g.appid, g]))
-  const both = (g: { hoursA: number | null; hoursB: number | null }) => (g.hoursA ?? 0) + (g.hoursB ?? 0)
+  // По минутам: по часам 25 минут и ноль сортировались вровень
+  const both = (g: { minutesA: number | null; minutesB: number | null }) =>
+    (g.minutesA ?? 0) + (g.minutesB ?? 0)
   const allCommon = libA
     .filter((g) => byAppidB.has(g.appid))
     .map((g) => {
@@ -188,15 +197,15 @@ export function compatibility(
       return {
         appid: g.appid,
         name: g.name,
-        hoursA: timeHiddenA ? null : Math.round(g.playtimeForever / 60),
-        hoursB: timeHiddenB ? null : Math.round(other.playtimeForever / 60),
+        minutesA: timeHiddenA ? null : g.playtimeForever,
+        minutesB: timeHiddenB ? null : other.playtimeForever,
       }
     })
     .sort((a, b) => both(b) - both(a))
 
   // Счётчик и сумма — по всему пересечению, до среза: см. Compatibility.commonTotal
   const commonTotal = allCommon.length
-  const commonHours = allCommon.reduce((sum, g) => sum + both(g), 0)
+  const commonHours = Math.round(allCommon.reduce((sum, g) => sum + both(g), 0) / 60)
   const commonGames = allCommon.slice(0, COMMON_SHOWN)
 
   /*

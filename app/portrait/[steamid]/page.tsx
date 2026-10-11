@@ -33,7 +33,7 @@ import { dateLabel } from '@/lib/freshness'
 import { playedLine } from '@/lib/outcome'
 import { pickYearWindow, yearEyebrow, yearsToRead, type WrappedYear } from '@/lib/wrapped'
 import { plural } from '@/lib/plural'
-import { playtimeHidden } from '@/lib/playtime'
+import { playedShort, playtimeHidden } from '@/lib/playtime'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { buildPortraitModel, portraitTag, type PortraitModel } from '@/lib/portraitmodel'
 import {
@@ -123,10 +123,11 @@ export async function generateMetadata({
   const { steamid } = await params
   if (!/^\d{17}$/.test(steamid)) return {}
 
-  const snapshot = await snapshotOf(steamid)
+  // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
+  const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
   if (!snapshot) return { title: 'Портрет игрока', robots: { index: false } }
 
-  const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
+  const name = persona ?? `Игрок ${steamid.slice(-4)}`
   const hours = Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   const games = snapshot.games.length
   const title = `Портрет игрока ${name}`
@@ -256,8 +257,12 @@ async function loadModel(
     // v4 — признак скрытого времени (wrapped.playtimeHidden): запись v3 без него
     // сутки показывала бы «0 часов» и «Чистилище» на всю библиотеку.
     // v5 — сумма бэклога несёт свой регион (backlog.cc): запись v4 после смены
-    // STEAM_STORE_CC сутки рисовала бы долларовые центы знаком рубля
-    ['portrait-model:v5', steamid, String(snapshot.takenAt)],
+    // STEAM_STORE_CC сутки рисовала бы долларовые центы знаком рубля.
+    // v6 — у игр топа есть минуты (WrappedGame.minutes): запись v5 без них
+    // сутки подписывала бы всю «Куда ушло время» как «0 ч». Заодно доля
+    // топ-игры из минут и «полные дни» вниз — без смены ключа запись v5
+    // сутки держала бы «142%» и «1 полный день» за 12 часов
+    ['portrait-model:v6', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
   try {
@@ -290,8 +295,25 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     )
   }
 
+  /*
+   * Ник, сессия и записанный текст портрета от модели не зависят — им нужен
+   * только steamid, — поэтому ждутся вместе с ней. Цепочкой «модель → ник →
+   * сессия → текст» каждый заход по чужой ссылке, даже из прогретого кэша,
+   * платил лишние последовательные походы в Turso до первого байта.
+   * После проверки снапшота, а не до: без снапшота страница отвечает
+   * заглушкой, и заранее начатые чтения были бы оплачены зря (а их отказ —
+   * необработанным отклонением промиса).
+   * Текст НЕ читается внутри кэша модели: он меняется без снапшота
+   * (setUserPortrait ниже), и замыкание кэша заморозило бы его.
+   */
   const ip = clientIp(await headers())
-  const { model, complete } = await loadModel(steamid, snapshot, ip, now)
+  const db = await getDb()
+  const [{ model, complete }, persona, me, cached] = await Promise.all([
+    loadModel(steamid, snapshot, ip, now),
+    personaOf(steamid),
+    currentSteamId(),
+    getUserPortrait(db, steamid),
+  ])
   const { portrait, wrapped, backlog, headline, evidence, starter, mosaic, purgatory } = model
   // Число вынимается из фразы, чтобы остаться моноширинным, как все числа
   const equivalent = (() => {
@@ -300,14 +322,13 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     const [before, after] = eq.text.split('{n}')
     return { count: eq.count, before, after }
   })()
-  const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
+  const name = persona ?? `Игрок ${steamid.slice(-4)}`
 
   /*
    * Свой портрет или чужой — от этого зависит голос страницы (lib/portraitvoice).
    * Владельцу она говорит «ты», гостю по ссылке — о владельце. Раньше «ты»
    * слышали все, и друг над ником «Аня» читал «80% твоей игровой жизни».
    */
-  const me = await currentSteamId()
   const isMine = me === steamid
   const voice: PortraitVoice = isMine ? 'you' : 'them'
   const fallbackText = () => portraitFallbackText(name, portrait.archetypes, portrait.facts, voice)
@@ -336,9 +357,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
    * Модель-шаблон (complete: false) к Claude не ходит вовсе: архетипов у неё
    * нет, и записанный по ней текст заморозил бы пустой портрет до смены снапшота.
    */
-  const db = await getDb()
   let text: string
-  const cached = await getUserPortrait(db, steamid)
   // Снапшот тот же — но текст про «0 часов», записанный до того, как промпт
   // узнал о скрытом времени, не годится и при нём (PORTRAIT_TEXT_V)
   if (cached && portraitTextFresh(cached, snapshot.takenAt, portrait.facts.playtimeHidden)) {
@@ -520,8 +539,10 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                     />
                   </div>
                 </div>
+                {/* Минуты, а не округлённые часы: игра на 20 минут была «0 ч»
+                    рядом с непустой полосой (playedShort) */}
                 <span className="shrink-0 text-sm font-bold tabular-nums text-dim">
-                  {g.hours.toLocaleString('ru-RU')} ч
+                  {playedShort(g.minutes)}
                 </span>
               </m.div>
             ))}
