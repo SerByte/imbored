@@ -170,7 +170,8 @@ CREATE TABLE IF NOT EXISTS room_members (
 /*
  * Кого хост убрал из комнаты и когда — чтобы убранный не вошёл обратно сразу
  * же (joinRoom, ROOM_KICK_SEC в lib/room). Уход сам по себе сюда не пишется:
- * вышедший возвращается когда хочет.
+ * вышедший возвращается когда хочет. Раньше срока отметку снимает хост
+ * («Пустить обратно», liftRoomKick).
  */
 CREATE TABLE IF NOT EXISTS room_kicks (
   room_id TEXT NOT NULL,
@@ -1522,6 +1523,18 @@ export type JoinResult = 'joined' | 'notfound' | 'closed' | 'full' | 'kicked'
  * (lib/room). Проверяется отдельным чтением, а не условием вставки: иначе
  * rowsAffected = 0 не отличил бы «убран» от «мест нет», а сказать человеку
  * надо разное.
+ *
+ * Хозяина в комнате нет — вход передаёт руку (ROOM_HEIR_ORDER), той же пачкой,
+ * что и сама вставка. removeRoomMember передаёт её, только когда в комнате
+ * кто-то остался: ушёл последний — created_by так и указывает на ушедшего. А
+ * пустая открытая комната стоит на доске «Пати» (listPublicRooms считает
+ * места, а не людей), незнакомцы её заполняют, и хоста среди них нет: ✕ не
+ * рисуется никому, и один ушедший в AFK снова запирает и матч, и «Берём». Та
+ * же передача чинит комнаты, хозяин которых ушёл ещё до того, как рука
+ * научилась переходить.
+ *
+ * Условие — «вошедший теперь в комнате, а хозяина в ней нет»: отказ «мест
+ * нет» руку не трогает, а вход самого хозяина — тем более.
  */
 export async function joinRoom(
   db: Db,
@@ -1568,27 +1581,42 @@ export async function joinRoom(
    * только поднимать (MAX). WHERE у SELECT обязателен и сам по себе: без него
    * SQLite читал бы ON CONFLICT как часть выборки.
    */
-  const res = await db.execute({
-    sql: `INSERT INTO room_members (room_id, steamid, persona_name, joined_at, writer)
-          SELECT ?, ?, ?, ?, ?
-          WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = ? AND steamid = ?)
-             OR (SELECT COUNT(*) FROM room_members WHERE room_id = ?) < ?
-          ON CONFLICT (room_id, steamid) DO UPDATE SET
-            persona_name = excluded.persona_name,
-            joined_at = excluded.joined_at,
-            writer = MAX(room_members.writer, excluded.writer)`,
-    args: [
-      roomId,
-      steamid,
-      personaName ?? null,
-      nowSec,
-      opts.writer ? 1 : 0,
-      roomId,
-      steamid,
-      roomId,
-      opts.maxMembers ?? ROOM_MAX_MEMBERS,
+  const [res] = await db.batch(
+    [
+      {
+        sql: `INSERT INTO room_members (room_id, steamid, persona_name, joined_at, writer)
+              SELECT ?, ?, ?, ?, ?
+              WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = ? AND steamid = ?)
+                 OR (SELECT COUNT(*) FROM room_members WHERE room_id = ?) < ?
+              ON CONFLICT (room_id, steamid) DO UPDATE SET
+                persona_name = excluded.persona_name,
+                joined_at = excluded.joined_at,
+                writer = MAX(room_members.writer, excluded.writer)`,
+        args: [
+          roomId,
+          steamid,
+          personaName ?? null,
+          nowSec,
+          opts.writer ? 1 : 0,
+          roomId,
+          steamid,
+          roomId,
+          opts.maxMembers ?? ROOM_MAX_MEMBERS,
+        ],
+      },
+      {
+        sql: `UPDATE rooms SET created_by = (
+                SELECT steamid FROM room_members WHERE room_id = ?1
+                 ORDER BY ${ROOM_HEIR_ORDER} LIMIT 1)
+              WHERE id = ?1
+                AND EXISTS (SELECT 1 FROM room_members WHERE room_id = ?1 AND steamid = ?2)
+                AND NOT EXISTS (
+                  SELECT 1 FROM room_members WHERE room_id = ?1 AND steamid = rooms.created_by)`,
+        args: [roomId, steamid],
+      },
     ],
-  })
+    'write',
+  )
   return res.rowsAffected > 0 ? 'joined' : 'full'
 }
 
@@ -1637,6 +1665,76 @@ export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]>
 }
 
 /**
+ * К кому переходит рука хоста — порядок наследника для removeRoomMember и
+ * joinRoom.
+ *
+ * Сначала вошедшие пишущей сессией (writer: Steam или демо), и только потом —
+ * по времени входа. Хозяйские права — убрать застрявшего и вывесить на доску —
+ * требуют пишущей сессии (leave/route.ts, public/route.ts), а большинство
+ * друзей входит по ссылке (README, lib/roomseat). Первый по времени входа
+ * наследник чаще всего оказывался участником по ссылке, чей ✕ отвечал
+ * needsteam, — хотя рядом сидел вошедший через Steam, который убрал бы
+ * застрявшего сразу. Передача, которая не снимает тупик, а только просит
+ * ещё один вход, — половина передачи.
+ *
+ * Второе следствие того же порядка: перезаход освежает joined_at (UPSERT в
+ * joinRoom), и тот, кто только что поднял членство «Войти через Steam»,
+ * уезжал в конец очереди. Признак writer его оттуда возвращает.
+ *
+ * steamid последним — та же добивка, что у roomMembers: двое, вошедшие в
+ * одну секунду, иначе шли бы в порядке, который нам никто не обещал.
+ */
+const ROOM_HEIR_ORDER = 'writer DESC, joined_at ASC, steamid ASC'
+
+/**
+ * Кого хост убрал из комнаты и кто ещё не может вернуться: отметка новее
+ * sinceSec (обычно nowSec − ROOM_KICK_SEC). Только steamid — наружу они не
+ * уходят: хост называет убранного memberKey, сопоставление в leave/route.ts.
+ */
+export async function roomKickedSince(db: Db, roomId: string, sinceSec: number): Promise<string[]> {
+  const res = await db.execute({
+    sql: 'SELECT steamid FROM room_kicks WHERE room_id = ? AND kicked_at > ?',
+    args: [roomId, sinceSec],
+  })
+  return res.rows.map((r) => r.steamid as string)
+}
+
+/**
+ * Снять запрет на возвращение — «Пустить обратно» у хоста (leave/route.ts).
+ *
+ * Без него ✕ стоил другу полчаса за дверью, которые не мог отменить никто:
+ * промах по соседней строке, по маленькому крестику рядом с ником — и
+ * вернувшийся слышал «хост убрал тебя». false — отметки не было: снимать
+ * нечего, и это не ошибка.
+ */
+export async function liftRoomKick(db: Db, roomId: string, steamid: string): Promise<boolean> {
+  const res = await db.execute({
+    sql: 'DELETE FROM room_kicks WHERE room_id = ? AND steamid = ?',
+    args: [roomId, steamid],
+  })
+  return res.rowsAffected > 0
+}
+
+/**
+ * Поднять членство до пишущего — тому, кто вошёл в пати по ссылке, а потом
+ * через Steam где-то ещё (не «Войти через Steam» с приглашения и не с
+ * ?join=, где это делает joinRoom).
+ *
+ * Зовут роуты колоды и голоса, когда пишущая сессия действует за членство,
+ * заведённое по ссылке (seatToRaise в lib/roomseat): страница комнаты грузит
+ * колоду при каждом заходе, так что первый же заход после входа через Steam
+ * членство и поднимает. Опрос комнаты этого не делает: он идёт каждые 2.5
+ * секунды у каждого и обязан оставаться чтением. Запись — однажды на
+ * членство: условие writer = 0 делает повтор пустым, а роут его и не позовёт.
+ */
+export async function raiseRoomSeat(db: Db, roomId: string, steamid: string): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE room_members SET writer = 1 WHERE room_id = ? AND steamid = ? AND writer = 0',
+    args: [roomId, steamid],
+  })
+}
+
+/**
  * Убрать участника из комнаты — вместе с его голосами.
  *
  * Голоса удаляются ОБЯЗАТЕЛЬНО, и это не уборка, а корректность.
@@ -1658,8 +1756,8 @@ export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]>
  * которой joinRoom не пустит его обратно ROOM_KICK_SEC (lib/room). Ушедшему
  * самому отметка не пишется никогда — вернуться он может сразу.
  *
- * Ушёл хост — хозяином комнаты становится тот, кто вошёл раньше всех из
- * оставшихся (первая строка ростера, тот же порядок, что у roomMembers).
+ * Ушёл хост — хозяином комнаты становится следующий по ROOM_HEIR_ORDER:
+ * первый из вошедших через Steam (или демо), а нет таких — первый в ростере.
  * Без этого рука хоста уходила вместе с ним: created_by указывал на
  * ушедшего, убрать застрявшего не мог никто, и один закрывший вкладку
  * запирал комнату навсегда — ровно то, ради чего «убрать» и заводилось.
@@ -1668,7 +1766,8 @@ export async function roomMembers(db: Db, roomId: string): Promise<RoomMember[]>
  *     убравший другого, остаётся хостом;
  *   • EXISTS — если ушёл последний, передавать некому, а подзапрос дал бы
  *     NULL в NOT NULL-колонку и уронил бы всю пачку: последний не смог бы
- *     выйти. Комната тогда остаётся за прежним хозяином, как и было.
+ *     выйти. Комната тогда остаётся за прежним хозяином, пока кто-нибудь не
+ *     войдёт: вход в комнату без хозяина передаёт руку сам (joinRoom).
  * В той же пачке, что и удаление: два ухода разом не оставят комнату
  * хозяину, который уже вышел, — цепочка уходов передаёт руку по очереди.
  */
@@ -1709,7 +1808,7 @@ export async function removeRoomMember(
       {
         sql: `UPDATE rooms SET created_by = (
                 SELECT steamid FROM room_members WHERE room_id = ?
-                 ORDER BY joined_at ASC, steamid ASC LIMIT 1)
+                 ORDER BY ${ROOM_HEIR_ORDER} LIMIT 1)
               WHERE id = ? AND created_by = ?
                 AND EXISTS (SELECT 1 FROM room_members WHERE room_id = ?)`,
         args: [roomId, roomId, steamid, roomId],
@@ -5364,8 +5463,9 @@ export async function getSharedPick(db: Db, id: string, sinceSec: number): Promi
  *
  * Комнаты, где игрок хозяин, уходят целиком, вместе с чужими участниками и
  * голосами в них. Хозяин — создатель или тот, к кому перешла рука ушедшего
- * хоста (removeRoomMember). Хозяин — часть самой комнаты: обезличить его значит
- * оставить комнату без хозяина, из которой никто не сможет убрать участника
+ * хоста (removeRoomMember, joinRoom). Хозяин — часть самой комнаты:
+ * обезличить его значит оставить комнату без хозяина, из которой никто не
+ * сможет убрать участника
  * (leave/route.ts сверяет право по createdBy). Комната живёт один вечер, и
  * потеря чужих свайпов в ней дешевле недоудалённого человека. Поэтому голоса
  * и участники идут раньше rooms: находятся они по rooms.created_by.

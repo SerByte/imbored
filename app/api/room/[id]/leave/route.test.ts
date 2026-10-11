@@ -21,6 +21,7 @@ const ROOM = 'ABC234'
 const HOST = '76561190000000001'
 const DIMA = '76561190000000002'
 const SASHA = '76561190000000003'
+const PETYA = '76561190000000004'
 
 let db: Db
 
@@ -129,6 +130,67 @@ describe('/api/room/[id]/leave: убранный не возвращается �
 })
 
 /**
+ * «Пустить обратно» — отмена ✕ рукой хоста.
+ *
+ * ✕ — маленький крестик рядом с ником, и промах по соседней строке стоил
+ * другу получаса за дверью, которые не мог снять никто. Права на отмену —
+ * те же, что на сам ✕; ключ — тот же memberKey, хотя в ростере убранного уже
+ * нет.
+ */
+describe('/api/room/[id]/leave: «Пустить обратно»', () => {
+  const rejoin = () => join(post(`/api/room/${ROOM}/join`), params({ id: ROOM }))
+  const sashaKey = () => memberKey(sessionSecret(), ROOM, SASHA)
+
+  async function kickSasha() {
+    await signIn(db, HOST, { verified: true })
+    expect((await leave({ memberId: sashaKey() })).status).toBe(200)
+  }
+
+  test('хост снимает запрет — убранный входит сразу', async () => {
+    await kickSasha()
+    const res = await leave({ unkick: sashaKey() })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, lifted: true })
+    // Отмена запрета в ростер не сажает: войти — дело самого человека
+    expect(await ids()).not.toContain(SASHA)
+
+    await signIn(db, SASHA)
+    expect((await rejoin()).status).toBe(200)
+    expect(await ids()).toContain(SASHA)
+  })
+
+  test('не хост и хост по ссылке запрет не снимают', async () => {
+    await kickSasha()
+    await signIn(db, DIMA, { verified: true })
+    const notHost = await leave({ unkick: sashaKey() })
+    expect(notHost.status).toBe(403)
+    expect(await notHost.json()).toEqual({ error: 'nothost' })
+
+    await signIn(db, HOST)
+    const byLink = await leave({ unkick: sashaKey() })
+    expect(byLink.status).toBe(403)
+    expect(await byLink.json()).toEqual({ error: 'needsteam' })
+
+    await signIn(db, SASHA)
+    expect((await rejoin()).status).toBe(409)
+  })
+
+  test('чужой ключ, steamid вместо ключа или вышедший срок — снимать нечего, не ошибка', async () => {
+    await kickSasha()
+    for (const unkick of [memberKey(sessionSecret(), ROOM, DIMA), SASHA, 'мусор']) {
+      const res = await leave({ unkick })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ ok: true, lifted: false })
+    }
+    // Срок вышел — отметка уже не держит, и отменять нечего
+    await db.execute({ sql: 'UPDATE room_kicks SET kicked_at = kicked_at - ?', args: [ROOM_KICK_SEC + 1] })
+    expect(await (await leave({ unkick: sashaKey() })).json()).toEqual({ ok: true, lifted: false })
+    // а участников отмена не трогает вовсе
+    expect(await ids()).toEqual([HOST, DIMA])
+  })
+})
+
+/**
  * Хост ушёл — рука хоста переходит к тому, кто вошёл раньше всех.
  *
  * Иначе комната оставалась без единственного способа убрать застрявшего:
@@ -136,7 +198,7 @@ describe('/api/room/[id]/leave: убранный не возвращается �
  * закрывший вкладку запирал и матч, и «Берём» навсегда.
  */
 describe('/api/room/[id]/leave: хост уходит', () => {
-  test('хостом становится первый в ростере — и может убрать застрявшего', async () => {
+  test('все вошли по ссылке — хостом становится первый в ростере', async () => {
     await signIn(db, HOST, { verified: true })
     expect((await leave()).status).toBe(200)
     // Вошли в одну секунду — порядок ростера решает steamid (roomMembers)
@@ -146,6 +208,21 @@ describe('/api/room/[id]/leave: хост уходит', () => {
     const res = await leave({ memberId: memberKey(sessionSecret(), ROOM, SASHA) })
     expect(await res.json()).toMatchObject({ removed: true })
     expect(await ids()).toEqual([DIMA])
+  })
+
+  test('рука — тому, кто может ею пользоваться: вошедший через Steam раньше первого по ссылке', async () => {
+    // Дима раньше Саши в ростере, но вошёл по ссылке: убрать застрявшего
+    // он не может (needsteam), а Саша, вошедший через Steam, — сразу. Первым
+    // по времени входа наследник просил бы ещё один вход, а не снимал тупик
+    await joinRoom(db, ROOM, SASHA, undefined, nowSec(), { writer: true })
+    await signIn(db, HOST, { verified: true })
+    expect((await leave()).status).toBe(200)
+    expect((await getRoom(db, ROOM))?.createdBy).toBe(SASHA)
+
+    await signIn(db, SASHA, { verified: true })
+    const res = await leave({ memberId: memberKey(sessionSecret(), ROOM, DIMA) })
+    expect(await res.json()).toMatchObject({ removed: true })
+    expect(await ids()).toEqual([SASHA])
   })
 
   test('хост убирает другого — хозяин комнаты прежний', async () => {
@@ -164,5 +241,30 @@ describe('/api/room/[id]/leave: хост уходит', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ removed: true, left: 0 })
     expect((await getRoom(db, ROOM))?.createdBy).toBe(HOST)
+  })
+
+  test('хост ушёл последним — руку получает следующий вошедший, и ✕ у него работает', async () => {
+    // Пустая открытая комната стоит на доске «Пати», и незнакомцы её
+    // заполняют. Без передачи при входе хоста среди них не было бы: ✕ не
+    // рисуется никому, и один ушедший в AFK запирает матч навсегда
+    for (const s of [DIMA, SASHA, HOST]) {
+      await signIn(db, s, s === HOST ? { verified: true } : {})
+      await leave()
+    }
+    const rejoin = () => join(post(`/api/room/${ROOM}/join`), params({ id: ROOM }))
+
+    await signIn(db, PETYA, { verified: true })
+    expect((await rejoin()).status).toBe(200)
+    expect((await getRoom(db, ROOM))?.createdBy).toBe(PETYA)
+
+    // Следующий вошедший руку уже не забирает: хозяин в комнате
+    await signIn(db, DIMA)
+    expect((await rejoin()).status).toBe(200)
+    expect((await getRoom(db, ROOM))?.createdBy).toBe(PETYA)
+
+    await signIn(db, PETYA, { verified: true })
+    const res = await leave({ memberId: memberKey(sessionSecret(), ROOM, DIMA) })
+    expect(await res.json()).toMatchObject({ removed: true })
+    expect(await ids()).toEqual([PETYA])
   })
 })

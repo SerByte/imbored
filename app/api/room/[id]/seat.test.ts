@@ -156,6 +156,43 @@ describe('гость по ссылке', () => {
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: 'needsteam' })
   })
+
+  /*
+   * Вошёл через Steam не с приглашения, а где-то ещё — со строки на /play.
+   * «Войти в комнату» он не нажимал (он и так в ней), и членство оставалось
+   * заведённым по ссылке: чужая ссылка на его профиль голосовала бы за него
+   * и дальше. Поднимает первый же заход — колода, — а если колода уже на
+   * руках, то голос.
+   */
+  for (const [name, first] of [
+    ['колода', () => deck(get('/deck'), ctx())],
+    ['голос', () => vote(post(at('/vote'), { appid: 570, vote: true }), ctx())],
+  ] as const) {
+    test(`вошёл через Steam где-то ещё — членство поднимает ${name} в комнате`, async () => {
+      await alicesRoom()
+      await signIn(db, BOB)
+      expect((await join(post(at('/join')), ctx())).status).toBe(200)
+
+      await signIn(db, BOB, { verified: true })
+      expect((await first()).status).toBe(200)
+      expect((await roomMembers(db, ROOM)).find((m) => m.steamid === BOB)?.writer).toBe(true)
+
+      await signIn(db, BOB)
+      const res = await vote(post(at('/vote'), { appid: 620, vote: true }), ctx())
+      expect(res.status).toBe(403)
+      expect(await res.json()).toEqual({ error: 'needsteam' })
+    })
+  }
+
+  test('опрос комнаты членство не поднимает: он только читает', async () => {
+    await alicesRoom()
+    await signIn(db, BOB)
+    expect((await join(post(at('/join')), ctx())).status).toBe(200)
+
+    await signIn(db, BOB, { verified: true })
+    expect((await peek(get(''), ctx())).status).toBe(200)
+    expect((await roomMembers(db, ROOM)).find((m) => m.steamid === BOB)?.writer).toBe(false)
+  })
 })
 
 /**

@@ -77,4 +77,25 @@ describe('/api/room/[id]/likes: почти-совпадения', () => {
     expect((await roomVotes(db, ROOM)).find((v) => v.steamid === me && v.appid === 570)?.vote).toBe(1)
     expect(await near()).toEqual(before)
   })
+
+  test('колоду пересобрали — «нет» на новую карту расклад не двигает', async () => {
+    // «Дошёл» считается по размеру ПОСЛЕДНЕЙ колоды, а голос принимается за
+    // любую карту, которую комнате раздавали. Вошёл новый человек, колоду
+    // пересобрали другими картами того же размера — и отсвайпавший первую
+    // «дошёл», держа на руках три свежих зонда. По 800 Дима и Саша за, а я
+    // нет: без onlyMine этот расклад стоял бы в блоке как «ждём тебя», и «нет»
+    // на 800 убрало бы его — то есть назвало бы, кто за 800.
+    await party()
+    for (const appid of [570, 620, 730]) await swipe(appid, appid === 570)
+    await issueRoomDeck(db, ROOM, [800, 801, 802])
+    for (const s of [DIMA, SASHA]) await castRoomVote(db, ROOM, s, 800, 1, nowSec())
+
+    const before = await near()
+    // только свой расклад по 570; «ждём тебя» по 800 не приходит вовсе
+    expect(before).toMatchObject([{ meFor: true, mePending: false, games: 1 }])
+    expect(before.some((n) => n.mePending)).toBe(false)
+
+    expect((await swipe(800, false)).status).toBe(200)
+    expect(await near()).toEqual(before)
+  })
 })

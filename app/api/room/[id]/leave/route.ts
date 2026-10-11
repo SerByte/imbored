@@ -1,5 +1,14 @@
 import { NextResponse } from 'next/server'
-import { findRoomMatch, getRoom, removeRoomMember, roomMembers, setRoomMatched } from '@/lib/db'
+import {
+  findRoomMatch,
+  getRoom,
+  liftRoomKick,
+  removeRoomMember,
+  roomKickedSince,
+  roomMembers,
+  setRoomMatched,
+} from '@/lib/db'
+import { ROOM_KICK_SEC } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
 import { currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
@@ -26,9 +35,14 @@ const ROOM_ID_RE = /^[A-Z0-9]{6}$/
  *
  * Убранный хостом не входит обратно ROOM_KICK_SEC (lib/room): иначе рука
  * хоста действовала только на ушедшего в AFK, а тролль с доски нажимал
- * «Войти» и снова запирал единогласие. Ушёл хост сам — рука переходит к тому,
- * кто вошёл раньше всех (removeRoomMember): без неё комната снова запиралась
- * первым же закрывшим вкладку.
+ * «Войти» и снова запирал единогласие. Ушёл хост сам — рука переходит к
+ * следующему (removeRoomMember): без неё комната снова запиралась первым же
+ * закрывшим вкладку.
+ *
+ * Третье действие того же маршрута — { unkick: memberId }: хост снимает
+ * запрет с того, кого убрал («Пустить обратно» на странице). Полчаса за
+ * дверью — цена ✕, и без отмены её платил и друг, по чьей строке хост просто
+ * промахнулся.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
@@ -61,10 +75,33 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
    * Заодно это сужает вход: подобранный ключ бесполезен — он сверяется со
    * списком участников ЭТОЙ комнаты, и ничем, кроме удаления из неё, не станет.
    */
-  const body = (await readJsonObject(req)) as { memberId?: unknown }
+  const body = (await readJsonObject(req)) as { memberId?: unknown; unkick?: unknown }
   const memberId = typeof body.memberId === 'string' ? body.memberId : null
-
   const secret = sessionSecret()
+
+  /*
+   * «Пустить обратно»: снять запрет на возвращение с убранного.
+   *
+   * Права — ровно те же, что у самого ✕ (ниже): хост, и со входом через
+   * Steam. Убранного в ростере уже нет, поэтому ключ сверяется не с
+   * участниками, а с отметками этой комнаты, которые ещё действуют, — тем же
+   * memberKey, каким хост его и убирал. Подобранный ключ так же бесполезен:
+   * он снимет разве что запрет в этой комнате, и только руками её хоста.
+   *
+   * Обратно в ростер не сажает: войти — дело самого человека, «Войти в
+   * комнату» у него на экране. Голоса его стёрты ещё ✕ (removeRoomMember),
+   * и вернуть их нечем.
+   */
+  if (typeof body.unkick === 'string') {
+    if (room.createdBy !== steamid) return NextResponse.json({ error: 'nothost' }, { status: 403 })
+    if (!writer) return NextResponse.json({ error: 'needsteam' }, { status: 403 })
+    const kicked = await roomKickedSince(db, id, nowSec() - ROOM_KICK_SEC)
+    const who = kicked.find((s) => memberKey(secret, id, s) === body.unkick)
+    // Отметки нет или срок вышел — снимать нечего, и это не ошибка
+    const lifted = who ? await liftRoomKick(db, id, who) : false
+    return NextResponse.json({ ok: true, lifted })
+  }
+
   const target = memberId
     ? (members.find((m) => memberKey(secret, id, m.steamid) === memberId)?.steamid ?? null)
     : steamid

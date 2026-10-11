@@ -59,7 +59,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 
   // После проверки членства — как у соседнего /deck: чужие попытки уже отсечены
   // 403 выше, тратить на них строки ограничителя незачем. Счёт по сессии, а
-  // не по профилю — lib/roomseat.
+  // не по профилю: почему и почему без потолка адреса — lib/roomseat.
   const gate = await checkRate(db, {
     bucket: 'room-trivia',
     id: personalRateId(session, writer),

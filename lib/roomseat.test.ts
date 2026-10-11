@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { seatOf, seatRefusal } from './roomseat'
+import { seatOf, seatRefusal, seatToRaise } from './roomseat'
 
 /**
  * Таблица истинности одного правила: членство, заведённое пишущей сессией,
@@ -25,6 +25,28 @@ describe('seatOf', () => {
   test('не в комнате — none, кем бы ни пришёл', () => {
     expect(seatOf(members, 'stranger', true)).toBe('none')
     expect(seatOf(members, 'stranger', false)).toBe('none')
+  })
+})
+
+/**
+ * Когда членство поднимать: пишущая сессия на членстве по ссылке — и только
+ * тогда. Остальные случаи не пишут ничего: поднятое не поднимают дважды,
+ * ссылка не поднимает ничего, а не-участника поднимать некуда.
+ */
+describe('seatToRaise', () => {
+  const members = [
+    { steamid: 'steam', writer: true },
+    { steamid: 'link', writer: false },
+  ]
+
+  test('вошёл по ссылке, пришёл через Steam — поднять', () => {
+    expect(seatToRaise(members, 'link', true)).toBe(true)
+  })
+
+  test('уже поднято, сессия по ссылке или не участник — не трогать', () => {
+    expect(seatToRaise(members, 'steam', true)).toBe(false)
+    expect(seatToRaise(members, 'link', false)).toBe(false)
+    expect(seatToRaise(members, 'stranger', true)).toBe(false)
   })
 })
 

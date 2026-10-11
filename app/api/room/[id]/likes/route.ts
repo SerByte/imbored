@@ -55,7 +55,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const refusal = seatRefusal(seat)
   if (refusal) return refusal
 
-  // Счёт по сессии, а не по профилю — lib/roomseat
+  // Счёт по сессии, а не по профилю: почему и почему без потолка адреса —
+  // lib/roomseat
   const gate = await checkRate(db, {
     bucket: 'room-likes',
     id: personalRateId(session, writer),
@@ -73,6 +74,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       name: memberLabel(id, m.steamid, m.personaName),
     })),
     me: steamid,
+    // Только расклады, где ты уже «за», — почему, см. ниже и lib/roomlikes
+    onlyMine: true,
   })
 
   // Лидер голосов — только когда все отсвайпали (см. pickLeader): тогда
@@ -106,6 +109,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
    * Честный экран этого не замечает: /likes зовут, когда рука пуста (экран
    * ожидания), то есть когда колода и так пройдена. memberDone — то же
    * определение «дошёл», что у ростера и у лидера голосов.
+   *
+   * И одного «дошёл» мало: оно считает свои голоса против размера последней
+   * колоды, а колоду пересобирают при входе нового человека. Отсвайпавший
+   * первую остаётся «дошедшим» с новыми картами на руках, и каждая — снова
+   * зонд. Его закрывает onlyMine выше: расклады «ждём тебя» не приходят
+   * вовсе, а у своих раскладов «нет» на чужую карту ничего не двигает. Заодно
+   * ушло «ждём тебя» про карты, которых у человека в руке уже нет.
    */
   const myVotes = votes.filter((v) => v.steamid === steamid).length
   const nearShown = memberDone(myVotes, room.deckSize) ? near : []

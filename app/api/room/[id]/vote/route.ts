@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
-import { castDeckVote, findRoomMatch, getRoom, roomMembers, setRoomMatched } from '@/lib/db'
+import { castDeckVote, findRoomMatch, getRoom, raiseRoomSeat, roomMembers, setRoomMatched } from '@/lib/db'
 import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
 import { peekGate } from '@/lib/roompeek'
-import { seatOf, seatRefusal } from '@/lib/roomseat'
+import { seatOf, seatRefusal, seatToRaise } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -72,6 +72,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   ) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }
+
+  // Обычно членство поднимает колода (deck/route.ts). Но вошедший по ссылке
+  // мог войти через Steam в соседней вкладке и свайпать дальше уже
+  // разданную: кука общая, колоду никто не перечитал. Тогда — здесь, однажды
+  // (lib/roomseat)
+  if (seatToRaise(members, steamid, writer)) await raiseRoomSeat(db, id, steamid)
 
   // Голос — только за карту, которую комнате раздали. Лимит выше держит
   // скорость, а не объём: без этой проверки участник публичной комнаты

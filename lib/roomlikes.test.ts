@@ -113,6 +113,41 @@ describe('buildLikes: почти совпали', () => {
     expect(near[1].forNames).toHaveLength(2)
   })
 
+  test('onlyMine: только расклады, где я «за», — и отсев до среза в maxNear', () => {
+    // «Ждём тебя» — это зонд: «нет» на такую карту убирает её расклад, и по
+    // упавшему счёту видно, кто за неё (lib/roomlikes, likes/route.ts)
+    const four: MemberRef[] = [...MEMBERS, { steamid: 'kat', name: 'Катя' }]
+    const votes = [
+      // три расклада «ждём тебя», и у каждого больше «за», чем у моего
+      vote('dima', 100, 1),
+      vote('sasha', 100, 1),
+      vote('kat', 100, 1),
+      vote('dima', 200, 1),
+      vote('sasha', 200, 1),
+      vote('dima', 300, 1),
+      vote('kat', 300, 1),
+      // мой — двое за
+      vote('me', 400, 1),
+      vote('dima', 400, 1),
+    ]
+    const all = buildLikes({ votes, members: four, me: 'me', maxNear: 1 }).near
+    expect(all[0].mePending).toBe(true)
+
+    const mine = buildLikes({ votes, members: four, me: 'me', maxNear: 1, onlyMine: true }).near
+    expect(mine).toHaveLength(1)
+    expect(mine[0]).toMatchObject({ meFor: true, forNames: ['Ты', 'Дима'] })
+
+    // «нет» на чужую карту — мой блок тот же
+    const after = buildLikes({
+      votes: [...votes, vote('me', 200, 0)],
+      members: four,
+      me: 'me',
+      maxNear: 1,
+      onlyMine: true,
+    }).near
+    expect(after).toEqual(mine)
+  })
+
   test('в комнате на одного почти-совпадений не бывает', () => {
     const solo: MemberRef[] = [{ steamid: 'me', name: 'Ты' }]
     const votes = [vote('me', 570, 1)]

@@ -11,6 +11,7 @@ import {
   issueRoomDeck,
   loadTagStats,
   myVotedAppids,
+  raiseRoomSeat,
   roomMembers,
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
@@ -23,7 +24,7 @@ import { buildTagProfile } from '@/lib/recommend'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { tagWeightFrom } from '@/lib/tagweight'
 import { peekGate } from '@/lib/roompeek'
-import { seatOf, seatRefusal } from '@/lib/roomseat'
+import { seatOf, seatRefusal, seatToRaise } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const DECK_SIZE = 20
@@ -87,8 +88,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 
   // После проверки членства: до неё маршрут и так закрыт сессией и
   // существованием комнаты, а тратить строки ограничителя на чужие попытки
-  // незачем — их отсекает 403 выше. Счёт по сессии, а не по профилю —
-  // lib/roomseat.
+  // незачем — их отсекает 403 выше. Счёт по сессии, а не по профилю: почему
+  // и почему без потолка адреса даже на самой дорогой ручке — lib/roomseat.
   const gate = await checkRate(db, {
     bucket: 'room-deck',
     id: personalRateId(session, writer),
@@ -97,6 +98,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     nowSec: nowSec(),
   })
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
+
+  // Вошёл в пати по ссылке, а сейчас пришёл через Steam — членство отныне
+  // его, и чужая ссылка за него больше не действует. Колоду страница грузит
+  // при каждом заходе, так что поднимает первый же заход (lib/roomseat)
+  if (seatToRaise(members, steamid, writer)) await raiseRoomSeat(db, id, steamid)
 
   // Баны — тем же заходом, что и библиотеки: обоим нужен только состав.
   // Объединение по всем участникам, а не баны смотрящего: колода одна на

@@ -75,7 +75,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const refusal = seatRefusal(seat)
   if (refusal) return refusal
 
-  // Счёт по сессии, а не по профилю — lib/roomseat
+  // Счёт по сессии, а не по профилю: почему и почему без потолка адреса —
+  // lib/roomseat
   const gate = await checkRate(db, {
     bucket: 'room-leader',
     id: personalRateId(session, writer),

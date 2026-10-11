@@ -1,7 +1,7 @@
 'use client'
 
 import type { ShareLink } from '@/components/ShareLink'
-import { useEffect, useRef } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { StatusLine } from '@/components/StatusLine'
 import { plural } from '@/lib/plural'
@@ -48,6 +48,7 @@ export function RoomWaiting({
   onTogglePublic,
   onRemoveMember,
   onLeave,
+  kickUndo = null,
 }: {
   roomId: string
   isHost: boolean
@@ -75,6 +76,13 @@ export function RoomWaiting({
   /** убрать участника (хост) или выйти самому — см. app/api/room/[id]/leave */
   onRemoveMember: (memberId: string) => void
   onLeave: () => void
+  /**
+   * «Пустить обратно» после ✕ — строка от страницы (app/room/[id]/page).
+   * Стоит под ростером, а если ✕ убрал последнего, кроме хоста, и экран
+   * сменился приглашением, — под приглашением: в пати на двоих случайное
+   * касание ✕ уводит весь ростер, и отмена не должна уходить вместе с ним.
+   */
+  kickUndo?: ReactNode
 }) {
   const headRef = useRef<HTMLHeadingElement>(null)
   const me = members.find((m) => m.me)
@@ -142,6 +150,7 @@ export function RoomWaiting({
           headRef={headRef}
         />
       )}
+      {mode === 'alone' && kickUndo}
 
       {/* Свои лайки нужны и в одиночестве: они и есть ответ на «а не зря ли
           я всё это листал» — голоса записаны и ждут второго человека */}
@@ -211,6 +220,7 @@ export function RoomWaiting({
             isHost={isHost}
             onRemove={onRemoveMember}
           />
+          {kickUndo}
           {/*
             Под ростером: он отвечает «кого ждём», переключатель — «а если я
             отойду». Только в этом режиме: в комнате на одного матча не будет,
