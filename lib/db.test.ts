@@ -2424,6 +2424,26 @@ describe('очередь опроса', () => {
     expect(await countNewsPollDue(db, NOW - 1)).toBe(0)
   })
 
+  test('сбой очереди не роняет сохранение: снапшот уже записан, вход состоится', async () => {
+    // Оба входа (/api/auth/steam/return и /api/connect) зовут сохранение до
+    // выдачи куки: брось оно из-за личной ленты «Что нового» — человек увидел
+    // бы отказ входа при уже записанной библиотеке
+    const db = await freshDb()
+    const batch = db.batch.bind(db)
+    vi.spyOn(db, 'batch').mockImplementation(async (stmts, mode) => {
+      const first = stmts[0]
+      const sql = typeof first === 'string' ? first : Array.isArray(first) ? first[0] : first?.sql
+      if (sql?.includes('news_poll')) throw new Error('SQLITE_BUSY: turso мигнул')
+      return batch(stmts, mode)
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await expect(saveLibrarySnapshot(db, 'u1', LIB, NOW)).resolves.toBeUndefined()
+    expect((await getLatestSnapshot(db, 'u1'))?.games).toEqual(LIB)
+    // проглочено не молча: в логе видно, что очередь не пополнилась
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('очередь новостей'))).toBe(true)
+    warn.mockRestore()
+  })
+
   test('аренда двигает курсор до сети — хвост очереди не голодает', async () => {
     const db = await freshDb()
     await enrollNewsPoll(db, [1, 2, 3], 0, NOW)
