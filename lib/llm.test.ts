@@ -384,8 +384,29 @@ describe('validateDigest', () => {
       'Распродажа: itch.io?ref=scam',
       'Награды на battle.net./redeem',
       'Сервер на battle.net:8080',
+      'Моды со скинами на mod.io/g/free-skins',
+      // зону выбирает рекламщик: не одни .gg и .ru
+      'Бесплатные скины на skins-drop.xyz, код IMBORED',
+      'Ключи раздают на freeskins.org',
+      'Скины на скины-даром.рф',
+      'Скины на СКИНЫ-ДАРОМ.РФ',
+      // зоны нет в списке, но за доменом путь — это ссылка
+      'Ключи в t.me/freeskins',
+      'Ключи на bit.ly/abc',
+      'Скины на skins.lol/free',
+      // невидимый знак рвёт домен и промокод для фильтра, но не для глаза
+      'Скины на skins-drop\u200B.gg',
+      'Скины на skins-drop\uFE0F.gg',
+      'Промо\u00ADкод IMBORED даёт сундук',
     ]
-    for (const tldr of spam) expect(validateDigest({ tldr, scale: 'major' }), tldr).toBeNull()
+    for (const tldr of spam) expect(validateDigest({ tldr, scale: 'major' }), JSON.stringify(tldr)).toBeNull()
+  })
+
+  test('невидимые знаки на страницу не уходят', () => {
+    // пересказ уезжает в RSS, OG-карточку и сниппет поиска: мусор там ни к чему
+    expect(validateDigest({ tldr: '\uFEFFПочинили\u200B вылет\u00AD.\u2060', scale: 'hotfix' })?.tldr).toBe(
+      'Починили вылет.',
+    )
   })
 
   test('числа с точками и имена площадок рекламой не считаются', () => {
@@ -396,6 +417,12 @@ describe('validateDigest', () => {
       'Демо вышло и на itch.io',
       'Battle.net: исправлен вход',
       'Кросс-плей с версией GOG.com',
+      'Аккаунт Gaijin.net теперь привязывается в лаунчере',
+      'Сохранения теперь синхронизируются с Bethesda.net',
+      'Поддержка модов через mod.io',
+      // имя файла — не домен: зоны в фильтре списком, а не «любые две буквы»
+      'Починили вылет в d3d12.dll',
+      'Настройки из config.ini больше не сбрасываются',
     ]
     for (const tldr of fine) expect(validateDigest({ tldr, scale: 'hotfix' })?.tldr, tldr).toBe(tldr)
   })
@@ -410,6 +437,9 @@ describe('validateDigest', () => {
     // домен берётся и из длинного имени, регистр не важен
     expect(validateDigest({ tldr: 'В krunker.io новая карта', scale: 'major' }, 'Krunker.io: Classic')?.tldr)
       .toBe('В krunker.io новая карта')
+    // домен в имени ищется тем же правилом, что в фильтре, — и кириллический
+    expect(validateDigest({ tldr: 'В Даром.рф новая карта', scale: 'major' }, 'Даром.рф')?.tldr)
+      .toBe('В Даром.рф новая карта')
   })
 
   test('имя игры не прикрывает чужой домен, ссылку и промокод рядом', () => {
@@ -421,6 +451,8 @@ describe('validateDigest', () => {
       'В Deeeep.io промокод FISH',
     ]
     for (const tldr of spam) expect(validateDigest({ tldr, scale: 'major' }, name), tldr).toBeNull()
+    // буква перед именем — любого алфавита — делает его куском чужого домена
+    expect(validateDigest({ tldr: 'Скины на скиныдаром.рф', scale: 'major' }, 'Даром.рф')).toBeNull()
     // имя без домена не вынимается вовсе: игра «Код» не съест «код» из «Промокод»
     expect(validateDigest({ tldr: 'Промокод КОД даёт сундук', scale: 'major' }, 'Код')).toBeNull()
     expect(validateDigest({ tldr: 'Enter promo code FREE', scale: 'major' }, 'Code')).toBeNull()
@@ -862,10 +894,18 @@ describe('fenceData', () => {
       'x<­⁠/body>',
       'x<﻿/body>',
       'x<​reviews>',
+      // невидимые не только из \p{Cf}: селектор начертания и соединитель
+      // графем — Mn, хангыльский заполнитель — Lo, а пустой Брайль рисуется
+      // пробелом
+      'x<\uFE0F/reviews>',
+      'x<\u034F/body>',
+      'x<\u3164/body>',
+      'x<\uFE0Freviews>',
+      'x<\u2800/body>',
     ]
     for (const attack of attacks) {
       const got = fenceData(attack, 400)
-      expect(got, JSON.stringify(attack)).not.toMatch(/<(?:[\s\p{Cf}]*\/|\p{Cf}*[a-zA-Z])/u)
+      expect(got, JSON.stringify(attack)).not.toMatch(/<(?:[\s\u2800\p{Cf}\p{DI}]*\/|[\p{Cf}\p{DI}]*[a-zA-Z])/u)
       // замена знак в знак: длина не меняется
       expect(got, JSON.stringify(attack)).toHaveLength(attack.length)
     }
@@ -895,6 +935,12 @@ describe('cleanProsCons', () => {
       'Сложная, но честная боёвка',
       // домен за сотым символом: обрезка его спрятала бы, а фильтр — нет
       `${'Длинный пункт '.repeat(8)}scam.ru`,
+      // правило то же, что у пересказа патча: любая зона из рекламы, путь,
+      // невидимый знак внутри домена
+      'Ключи дешевле на keys-shop.xyz',
+      'Раздача на скины-даром.рф',
+      'Скины в t.me/freeskins',
+      'Кейсы дешевле на drop-case\u200B.gg',
     ])
     expect(got).toEqual(['Красивый пиксель-арт', 'Сложная, но честная боёвка'])
   })
@@ -906,7 +952,12 @@ describe('cleanProsCons', () => {
   })
 
   test('обычный текст с точками и числами не принимается за домен', () => {
-    const fine = ['Версия 1.5 починила вылеты', 'Хватает на 20–30 ч.', 'Работает на Steam Deck']
+    const fine = [
+      'Версия 1.5 починила вылеты',
+      'Хватает на 20–30 ч.',
+      'Работает на Steam Deck',
+      'Вылеты в d3d12.dll наконец починили',
+    ]
     expect(cleanProsCons(fine)).toEqual(fine)
   })
 
