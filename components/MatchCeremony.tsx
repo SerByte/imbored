@@ -15,6 +15,7 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { focusAdrift } from '@/lib/focushandoff'
+import { matchByLeader } from '@/lib/room'
 import { STORE_LABEL } from '@/lib/stores'
 
 gsap.registerPlugin(useGSAP)
@@ -64,9 +65,10 @@ export function MatchCeremony({
    * единогласия не было, и комната согласилась на игру, за которую не меньше
    * половины. «Все в комнате хотят одного и того же» здесь неправда — поэтому
    * другой заголовок и честный счёт. Имён нет и тут: только сколько.
+   * Правило одно с запасным экраном (matchByLeader в lib/room).
    */
   const forCount = game.forCount ?? null
-  const byLeader = forCount !== null && forCount < memberCount
+  const byLeader = matchByLeader(forCount, memberCount)
 
   /*
    * ФОКУС — НА «ЭТО МАТЧ!», НО ТОЛЬКО ПОТЕРЯННЫЙ.
@@ -146,7 +148,7 @@ export function MatchCeremony({
             в одно слово — буквальная картинка того, что сейчас произошло. */}
         <EchoTitle
           text={byLeader ? 'Договорились!' : 'Это матч!'}
-          ghosts={byLeader ? forCount : memberCount}
+          ghosts={byLeader ? (forCount ?? memberCount) : memberCount}
           className="font-display text-display-lg"
           headRef={titleRef}
         />

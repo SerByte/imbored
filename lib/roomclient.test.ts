@@ -56,11 +56,12 @@ const room = read('app/room/[id]/page.tsx')
  * страница помнила каждую отсвайпанную карту и после повторного входа
  * колоду не перечитывала: ключ «состав:раунд» возвращался к прежнему. Карты
  * со стёртыми голосами отсеивались из каждого /deck — комната вставала
- * навсегда, до перезагрузки у удалённого.
+ * навсегда, до перезагрузки у удалённого. Вернуться можно и из второй
+ * вкладки — тогда своя кнопка входа в этой не нажимается вовсе.
  */
 describe('повторный вход после удаления — колода с нуля', () => {
   test('сброс забывает всё, что колода помнит', () => {
-    const reset = body(room, 'const resetDeck = () =>')
+    const reset = body(room, 'const resetDeck = useCallback(')
     for (const step of [
       'votedLocally.current.clear()',
       "deckKey.current = ''",
@@ -82,6 +83,23 @@ describe('повторный вход после удаления — колод
       expect(reset, `${start}: колода не сбрасывается — карты со стёртыми голосами не вернутся`).toBeGreaterThan(ok)
       expect(reset, `${start}: сброс после перечитывания разъедется с новым ключом`).toBeLessThan(refresh)
     }
+  })
+
+  test('снимок, где членство прервалось, сбрасывает колоду — вход из другой вкладки её не застанет', () => {
+    const refresh = body(room, 'const refresh = useCallback(')
+    const keep = refresh.indexOf("fate === 'keep') return")
+    const lapse = refresh.indexOf('membershipLapsed(')
+    const reset = refresh.indexOf('resetDeck()')
+    expect(lapse, 'удаление видит только своя кнопка входа — вход из второй вкладки оставит колоду стухшей').toBeGreaterThan(keep)
+    expect(reset).toBeGreaterThan(lapse)
+    expect(reset, 'сброс после setState — первый рендер участника увидит старый ключ').toBeLessThan(
+      refresh.indexOf('setState(next)'),
+    )
+    // сброс — зависимость refresh, а тот — опроса: новый сброс на каждом
+    // рендере перезапускал бы опрос
+    const after = (start: string) => room.slice(room.indexOf(start) + body(room, start).length)
+    expect(after('const resetDeck = useCallback(')).toMatch(/^, \[\]\)/)
+    expect(after('const refresh = useCallback(')).toMatch(/^,\s*\[roomId, resetDeck\],\s*\)/)
   })
 })
 
@@ -198,7 +216,7 @@ describe('матч переживает не пришедший кусок це�
 
   test('отказ куска — запасной экран матча, а не поломка', () => {
     expect(CeremonyBoundary.getDerivedStateFromError()).toEqual({ failed: true })
-    const boundary = new CeremonyBoundary({ game, takeFocus: false, children: 'церемония' })
+    const boundary = new CeremonyBoundary({ game, memberCount: 2, takeFocus: false, children: 'церемония' })
     expect(boundary.render(), 'без отказа граница — прозрачна').toBe('церемония')
     boundary.state = { failed: true }
     const shown = boundary.render() as ReactElement
@@ -206,18 +224,48 @@ describe('матч переживает не пришедший кусок це�
   })
 
   test('запасной экран: что выбрали, где взять и честный повтор', () => {
-    const html = renderToStaticMarkup(createElement(CeremonyFallback, { game, takeFocus: false }))
+    const html = renderToStaticMarkup(createElement(CeremonyFallback, { game, memberCount: 2, takeFocus: false }))
     expect(html).toMatch(/<h1 tabindex="-1"[^>]*>Это матч: «Portal 2»<\/h1>/)
     expect(html).toContain('href="https://store.steampowered.com/app/620/"')
     expect(html).toContain('Обновить страницу')
     const epic = renderToStaticMarkup(
       createElement(CeremonyFallback, {
         game: { ...game, store: 'epic', storeUrl: 'https://store.epicgames.com/x' },
+        memberCount: 2,
         takeFocus: false,
       }),
     )
     expect(epic).toContain('href="https://store.epicgames.com/x"')
     expect(epic).toContain('Открыть в Epic Games')
+  })
+
+  test('матч, взятый лидером, и на запасном экране — «Договорились», а не «Это матч»', () => {
+    // «все хотят одного и того же» здесь неправда — церемония её не говорит, и запасной экран тоже
+    const html = renderToStaticMarkup(
+      createElement(CeremonyFallback, { game: { ...game, forCount: 3 }, memberCount: 4, takeFocus: false }),
+    )
+    expect(html).toMatch(/<h1 tabindex="-1"[^>]*>Договорились: «Portal 2»<\/h1>/)
+    expect(html).toContain('3 из 4 за')
+    expect(html).not.toContain('Это матч')
+    // все за — обычный матч
+    const all = renderToStaticMarkup(
+      createElement(CeremonyFallback, { game: { ...game, forCount: 4 }, memberCount: 4, takeFocus: false }),
+    )
+    expect(all).toContain('Это матч: «Portal 2»')
+  })
+
+  test('граница знает счёт голосов, а заголовок не отнимает фокус на каждом рендере', () => {
+    expect(room).toMatch(/<CeremonyBoundary[^>]*memberCount=\{props\.memberCount\}/)
+    const boundary = read('components/room/CeremonyBoundary.tsx')
+    // колбэк в разметке новый на каждом рендере — React зовёт его снова, и
+    // возврат на вкладку снова тянул бы фокус из body в заголовок
+    expect(boundary).toMatch(
+      /const head = useCallback\(\s*\(el: HTMLHeadingElement \| null\) => \{\s*if \(el && takeFocus && focusAdrift\(document\)\) el\.focus\(\)\s*\},\s*\[takeFocus\],?\s*\)/,
+    )
+    expect(boundary).toMatch(/<h1 ref=\{head\} tabIndex=\{-1\}/)
+    // одно правило «за не все» на церемонию и запасной экран
+    expect(boundary).toMatch(/matchByLeader\(forCount, memberCount\)/)
+    expect(read('components/MatchCeremony.tsx')).toMatch(/const byLeader = matchByLeader\(forCount, memberCount\)/)
   })
 })
 
@@ -272,5 +320,66 @@ describe('гость видит, что его ник на доске', () => {
     expect(badge).toContain('Ты на доске')
     expect(badge).toContain('твой ник виден')
     expect(badge, 'смысл снова живёт в title — на телефоне его не видно').not.toMatch(/\stitle=/)
+  })
+})
+
+/**
+ * Выход, ✕ хоста и доска держат флаг «в пути», который гасит повтор, — а
+ * запросы под ним не имели срока. Телефон сменил Wi-Fi на LTE, запрос повис,
+ * и кнопки оставались aria-disabled пустышками без строки отказа.
+ */
+describe('кнопки комнаты не висят на повисшем запросе', () => {
+  const remove = body(room, 'async function removeMember(')
+  const toggle = body(room, 'async function togglePublic()')
+
+  test('у POST выхода, ✕ и доски — потолок', () => {
+    for (const [name, fn] of [
+      ['removeMember', remove],
+      ['togglePublic', toggle],
+    ] as const) {
+      const at = fn.indexOf('await fetch(')
+      expect(at, `${name}: запрос не найден — сторож ослеп`).toBeGreaterThan(-1)
+      // опции запроса — до первой строки после него: тело само содержит «{})»
+      const post = fn.slice(at, fn.indexOf('\n      if (', at))
+      expect(post, `${name}: повисший POST держит флаг «в пути» до сдачи браузера`).toMatch(
+        /signal: cappedSignal\(POLL_TIMEOUT_MS\),\s*\}\)$/,
+      )
+    }
+  })
+
+  test('✕ отпускает флаг сразу после POST — перечитывание никто не ждёт', () => {
+    expect(remove, 'await refresh держал «Выйти из пати» и все ✕ на втором, не ограниченном запросе').not.toMatch(
+      /await refresh\(/,
+    )
+    expect(remove).toMatch(/if \(memberId\) void refresh\(\)\.catch\(/)
+  })
+
+  test('доска ждёт свой снимок, но тоже с потолком', () => {
+    expect(toggle).toMatch(/await refresh\(cappedSignal\(POLL_TIMEOUT_MS\)\)\.catch\(/)
+  })
+})
+
+/**
+ * Строки отказа гасли только со следующей попыткой: звали нажать ✕ у
+ * ушедшего, говорили «доска не переключилась» под переключённой доской.
+ * Решение — roomMissText (lib/room, под тестом); здесь — что страница
+ * хранит отказ вместе с его предметом и выводит строку через него.
+ */
+describe('отказ кнопки комнаты гаснет, когда перестал быть правдой', () => {
+  test('отказ помнит, кого убирали и какой была доска', () => {
+    const remove = body(room, 'async function removeMember(')
+    expect(remove).toMatch(/setLeaveMiss\(\{ text: leaveFailure\(res\.status, !memberId\), deck, memberId \}\)/)
+    const toggle = body(room, 'async function togglePublic()')
+    expect(toggle).toMatch(/wasPublic: was/)
+    expect(toggle).toMatch(/body: JSON\.stringify\(\{ public: !was \}\)/)
+  })
+
+  test('на экран обе строки идут через roomMissText', () => {
+    expect(room).toMatch(/const publicMissText = roomMissText\(publicMiss, missNow\)/)
+    expect(room).toMatch(/const leaveMissText = roomMissText\(leaveMiss, missNow\)/)
+    expect(room).toMatch(/leaveMiss=\{leaveMissText\}/)
+    expect(room).toMatch(/publicMiss=\{publicMissText\}/)
+    // ключ экрана — тот же, что у колоды: новый раунд или гость гасят строку
+    expect(room).toMatch(/const missNow = \{ deck: deckWant,/)
   })
 })

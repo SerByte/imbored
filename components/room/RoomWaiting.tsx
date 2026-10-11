@@ -51,6 +51,7 @@ export function RoomWaiting({
   onLeave,
   leaving,
   leaveMiss,
+  missedMember,
   publicBusy,
   publicMiss,
 }: {
@@ -82,8 +83,10 @@ export function RoomWaiting({
   onLeave: () => void
   /** выход или удаление в пути — см. removeMember на странице */
   leaving: boolean
-  /** почему не вышло выйти или убрать; null — отказа нет */
+  /** почему не вышло выйти или убрать; null — отказа нет или он уже неправда */
   leaveMiss: string | null
+  /** чья ✕ отказала последней — ростер забывает перенос фокуса с неё */
+  missedMember: string | null
   /** переключение доски в пути — см. togglePublic на странице */
   publicBusy: boolean
   /** почему доска не переключилась; null — отказа нет (строка — в AloneInvite) */
@@ -240,6 +243,7 @@ export function RoomWaiting({
             isHost={isHost}
             onRemove={onRemoveMember}
             removing={leaving}
+            missed={missedMember}
           />
           {/*
             Под ростером: он отвечает «кого ждём», переключатель — «а если я

@@ -230,9 +230,22 @@ describe('пати: нажатая кнопка уходит — фокус ос
     const h2 = tags(roster, 'h2')
     expect(h2.length).toBe(1)
     expect(h2[0]).toMatch(/ref=\{headRef\} tabIndex=\{-1\}/)
-    // фокус берётся, только когда строки и правда не стало, и только потерянный
-    expect(roster).toMatch(/if \(!focusAdrift\(document, listRef\.current\)\) return/)
-    expect(roster).toMatch(/<ul ref=\{listRef\}/)
+    // фокус берётся, только когда строки и правда не стало, и только потерянный:
+    // в body или на ✕ уходящей строки. Дом — эта ✕, а не весь список: на ✕
+    // соседа хост мог уйти сам, и Enter, нажатый ради неё, убрал бы другого
+    expect(roster).toMatch(/if \(!focusAdrift\(document, removeButtons\.current\.get\(h\.gone\)\)\) return/)
+    expect(roster, 'дом переноса — снова весь список').not.toMatch(/focusAdrift\(document, listRef/)
+  })
+
+  test('ростер: перенос ждёт, пока строка уйдёт, и забывается только на отказе этой ✕', () => {
+    const roster = read('components/room/MemberRoster.tsx')
+    // флаг «в пути» держится ровно на POST, а ростер без строки приносит
+    // следующий снимок — перенос не может забываться по removing
+    expect(roster).toMatch(/if \(missed === h\.gone\) handoff\.current = null/)
+    expect(roster).toMatch(/\}, \[members, missed\]\)/)
+    const rosters = tags(read('components/room/RoomWaiting.tsx'), 'MemberRoster')
+    expect(rosters.some((t) => /\sisHost=\{isHost\}/.test(t) && /\smissed=\{missedMember\}/.test(t))).toBe(true)
+    expect(read('app/room/[id]/page.tsx')).toMatch(/missedMember=\{leaveMiss\?\.memberId \?\? null\}/)
   })
 
   test('экран ожидания: смена режима под фокусом отдаёт его новому заголовку', () => {

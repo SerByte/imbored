@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  cappedSignal,
   claimVote,
   deckKeyVote,
   type DeckKeyEvent,
@@ -9,6 +10,7 @@ import {
   deckPosition,
   deckStuck,
   deckSwipeVote,
+  membershipLapsed,
   pollCaughtUp,
   VOTE_TIMEOUT_MS,
   voteMiss,
@@ -70,6 +72,56 @@ describe('разбор отказа голоса', () => {
     expect(signal, 'повисший POST держал бы карту «улетевшей» навсегда').toBeInstanceOf(AbortSignal)
     expect(signal?.aborted).toBe(false)
     expect(VOTE_TIMEOUT_MS).toBeGreaterThan(0)
+  })
+
+  test('потолок общий для кнопок комнаты: повисший запрос отменяется и становится отказом', async () => {
+    // выход, ✕ хоста и доска держат флаг «в пути» — без потолка он висел бы до сдачи браузера
+    const signal = cappedSignal(5)
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal?.aborted).toBe(false)
+    await new Promise((r) => setTimeout(r, 30))
+    expect(signal?.aborted, 'потолок не сработал — кнопка осталась бы мёртвой').toBe(true)
+  })
+})
+
+/**
+ * Хост убрал участника — сервер стёр все его голоса, а вкладка помнила
+ * отсвайпанное. Вернулся он из второй вкладки — эта следующим опросом снова
+ * видела себя участником с прежним ключом колоды и колоду не перечитывала:
+ * карты со стёртыми голосами отсеивались навсегда, комната вставала.
+ */
+describe('членство прервалось между снимками — память колоды с нуля', () => {
+  const member = (myVotes: number) => ({ isMember: true, myVotes })
+  const outsider = { isMember: false, myVotes: null }
+
+  test('участник → не участник: удаление видно прямо', () => {
+    expect(membershipLapsed({ seq: 5, shown: { seq: 4, ...member(7) }, next: outsider })).toBe(true)
+  })
+
+  test('свои голоса убыли: было удаление и вход из другой вкладки, а «не участник» эта не застала', () => {
+    expect(
+      membershipLapsed({ seq: 5, shown: { seq: 4, ...member(7) }, next: member(0) }),
+      'ключ «состав:раунд» прежний — колода со стёртыми голосами не перечитается',
+    ).toBe(true)
+  })
+
+  test('голоса растут или стоят — членство непрерывно, колоду не трогаем', () => {
+    expect(membershipLapsed({ seq: 5, shown: { seq: 4, ...member(7) }, next: member(7) })).toBe(false)
+    expect(membershipLapsed({ seq: 5, shown: { seq: 4, ...member(7) }, next: member(9) })).toBe(false)
+  })
+
+  test('не участник → участник — это вход, его сбрасывает сам вход', () => {
+    expect(membershipLapsed({ seq: 5, shown: { seq: 4, ...outsider }, next: member(0) })).toBe(false)
+  })
+
+  test('первый снимок — сравнивать не с чем', () => {
+    expect(membershipLapsed({ seq: 1, shown: null, next: outsider })).toBe(false)
+  })
+
+  test('снимок старше показанного — прошлое, а не новость', () => {
+    // так встаёт снимок с матчем, прочитанный до показанного (snapshotFate)
+    expect(membershipLapsed({ seq: 3, shown: { seq: 4, ...member(7) }, next: outsider })).toBe(false)
+    expect(membershipLapsed({ seq: 3, shown: { seq: 4, ...member(7) }, next: member(6) })).toBe(false)
   })
 })
 

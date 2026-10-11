@@ -217,7 +217,7 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   // выход и ✕ хоста, переключатель доски, добор раунда: на моргнувшей связи
   // второй тап — тот же отказ тем же текстом
   { file: 'app/room/[id]/page.tsx', start: 'async function removeMember(', reset: ['setLeaveMiss(null)'] },
-  { file: 'app/room/[id]/page.tsx', start: 'async function togglePublic()', reset: ['setPublicMiss(false)'] },
+  { file: 'app/room/[id]/page.tsx', start: 'async function togglePublic()', reset: ['setPublicMiss(null)'] },
   { file: 'app/room/[id]/page.tsx', start: 'async function pullMore()', reset: ['setPullFailed(false)'] },
   // повторное нажатие после отказа в разрешении — тот же отказ тем же текстом;
   // браузер помнит отказ, и без await между ними повтор склеился бы со сбросом

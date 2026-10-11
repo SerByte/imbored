@@ -23,7 +23,16 @@ import { Notice } from '@/components/Notice'
 import { SwipeDeck } from '@/components/SwipeDeck'
 import type { LikedGame } from '@/components/room/LikesStrips'
 import type { GameArtUrls } from '@/lib/art'
-import { claimVote, deckStuck, pollCaughtUp, voteMiss, voteSignal } from '@/lib/deckvote'
+import {
+  cappedSignal,
+  claimVote,
+  deckStuck,
+  type MembershipView,
+  membershipLapsed,
+  pollCaughtUp,
+  voteMiss,
+  voteSignal,
+} from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
 import type { Mood } from '@/lib/types'
@@ -31,6 +40,8 @@ import {
   awaitingOthers,
   matchLine,
   ROOM_MAX_MEMBERS,
+  type RoomMiss,
+  roomMissText,
   roomTabTitle,
   type RoomMemberView,
   waitsInBackground,
@@ -81,7 +92,11 @@ const loadCeremony = () => import('@/components/MatchCeremony')
 const LazyCeremony = dynamic(() => loadCeremony().then((m) => m.MatchCeremony), { ssr: false })
 function MatchCeremony(props: ComponentProps<typeof LazyCeremony>) {
   return (
-    <CeremonyBoundary game={props.game} takeFocus={props.takeFocus ?? false}>
+    <CeremonyBoundary
+      game={props.game}
+      memberCount={props.memberCount}
+      takeFocus={props.takeFocus ?? false}
+    >
       <LazyCeremony {...props} />
     </CeremonyBoundary>
   )
@@ -132,6 +147,11 @@ function deckKeyOf(s: RoomState | null): string {
   return s?.isMember ? `${s.members.length}:${s.room.deckRound}` : ''
 }
 
+/** Своё членство в снимке — для membershipLapsed (lib/deckvote) */
+function membershipOf(s: RoomState): MembershipView {
+  return { isMember: s.isMember, myVotes: s.members.find((m) => m.me)?.votes ?? null }
+}
+
 /** Ответ /likes: свои «играем», почти-совпадения и лидер голосов */
 type Likes = { mine: LikedGame[]; near: NearMiss[]; leader: LeaderOffer | null }
 
@@ -170,6 +190,10 @@ const POLL_IDLE_AFTER_MS = 60_000
  *
  * Своим таймером на тот же AbortController, а не AbortSignal.any: того нет в
  * Safari до 17.4, и на нём опрос падал бы в catch на каждом тике.
+ *
+ * Тот же потолок — у выхода, ✕ хоста и переключателя доски (cappedSignal в
+ * lib/deckvote): их флаги «в пути» гасят повтор, и повисший запрос держал бы
+ * кнопку мёртвой без строки отказа.
  */
 const POLL_TIMEOUT_MS = 8_000
 /** Пол по частоте для догрузки лайков — см. докблок у эффекта */
@@ -288,11 +312,15 @@ export default function RoomPage() {
    * молчали — `.catch(() => null)` и `if (!res?.ok) return`, — и не гасили
    * повтор: двойной тап по ✕ слал два POST. Правило продукта то же, что у
    * «Берём» и «Ещё 20 игр»: отказ виден и слышен, повтор гасит обработчик.
+   *
+   * Отказ хранится вместе с тем, при чём он случился (RoomMiss), а на экран
+   * выводится roomMissText: строка гаснет, когда перестала быть правдой, а не
+   * только со следующей попыткой.
    */
   const [leaving, setLeaving] = useState(false)
-  const [leaveMiss, setLeaveMiss] = useState<string | null>(null)
+  const [leaveMiss, setLeaveMiss] = useState<RoomMiss | null>(null)
   const [publicBusy, setPublicBusy] = useState(false)
-  const [publicMiss, setPublicMiss] = useState(false)
+  const [publicMiss, setPublicMiss] = useState<RoomMiss | null>(null)
   /**
    * Комната была открыта на глазах у этого экрана. Матч, пришедший после, —
    * новость: о нём говорит строка matchStatus, а церемония забирает фокус.
@@ -334,6 +362,53 @@ export default function RoomPage() {
   const likesKey = useRef('')
   const likesAt = useRef(0)
   const likesTimer = useRef<number | null>(null)
+
+  /** Ключ колоды, на котором уже было самолечение, — см. эффект самолечения */
+  const healKey = useRef('')
+
+  /*
+   * КОЛОДА С НУЛЯ — КОГДА ЧЛЕНСТВО ПРЕРВАЛОСЬ.
+   *
+   * Хост убирает участника вместе со ВСЕМИ его голосами (removeRoomMember
+   * стирает room_votes одной пачкой с членством), а страница этого не знала.
+   * votedLocally помнил каждую отсвайпанную карту, страница не
+   * перемонтируется, и после повторного входа ключ колоды возвращался ровно
+   * к прежнему «состав:раунд» — колода не перечитывалась. Человек доигрывал
+   * свои остатки, а карты, чьи голоса стёрты, приходили в каждом /deck и
+   * каждом самолечении — и отсеивались votedLocally. Итог: у него «ждём
+   * ещё одного», у остальных он «ещё свайпает» навсегда, единогласие по этим
+   * картам невозможно, а «Берём» ждёт, пока отсвайпают все. Помогала только
+   * перезагрузка.
+   *
+   * Поэтому сброс забывает всё, что колода помнит: следующий эффект видит
+   * пустой ключ, грузит её как первую и получает целиком — с картами, чьи
+   * голоса стёрты.
+   *
+   * Зовут его два места. Главное — refresh, как только снимок показал, что
+   * членство прервалось (membershipLapsed в lib/deckvote): вернуться можно
+   * не только своей кнопкой, но и из второй вкладки или с телефона той же
+   * сессии — тогда эта вкладка просто снова видит себя участником, и без
+   * сброса на опросе комната вставала так же. Второе — обе двери входа на
+   * экране приглашения, страховкой: вход, который опрос не застал вовсе. На
+   * первом входе сброс ничего не меняет. Голос, ушедший до удаления, вернётся
+   * отказом 403 и вычеркнет из уже пустого набора — безвредно.
+   *
+   * useCallback без зависимостей: только рефы и сеттеры, а refresh, который
+   * его зовёт, — зависимость опроса, и новый сброс на каждом рендере
+   * перезапускал бы опрос.
+   */
+  const resetDeck = useCallback(() => {
+    votedLocally.current.clear()
+    deckKey.current = ''
+    healKey.current = ''
+    setCards(null)
+    setLocalVotes(0)
+    setDeckVoted(0)
+    setDeckTotal(0)
+    setDeckFailed(false)
+    setDeckLimited(false)
+    setVoteFailed(false)
+  }, [])
 
   /**
    * ОТВЕТ РАЗБИРАЕТСЯ НА ТРИ ИСХОДА, А НЕ НА ДВА.
@@ -381,6 +456,17 @@ export default function RoomPage() {
         shown: shown && { seq: shown.seq, status: shown.state.room.status },
       })
       if (shown && fate === 'keep') return { ok: true, state: shown.state }
+      // Хост убрал, а вернулись, может быть, уже из другой вкладки — память
+      // колоды с нуля, см. resetDeck
+      if (
+        membershipLapsed({
+          seq,
+          shown: shown && { seq: shown.seq, ...membershipOf(shown.state) },
+          next: membershipOf(next),
+        })
+      ) {
+        resetDeck()
+      }
       shownSnap.current = { seq, state: next }
       setState(next)
       setCaughtUp(
@@ -396,7 +482,7 @@ export default function RoomPage() {
       if (next.room.status === 'matched' && document.visibilityState !== 'visible') setUnseen(true)
       return { ok: true, state: next }
     },
-    [roomId],
+    [roomId, resetDeck],
   )
 
   /**
@@ -664,7 +750,6 @@ export default function RoomPage() {
    * лечение на ключ уходило на ложную тревогу. Настоящая потеря голоса
    * дожидается ближайшего опроса после ответа на него: done там всё ещё false.
    */
-  const healKey = useRef('')
   const stuck =
     caughtUp &&
     deckStuck({
@@ -966,41 +1051,6 @@ export default function RoomPage() {
   }
 
   /*
-   * КОЛОДА С НУЛЯ — ПОСЛЕ ПОВТОРНОГО ВХОДА.
-   *
-   * Хост убирает участника вместе со ВСЕМИ его голосами (removeRoomMember
-   * стирает room_votes одной пачкой с членством), а страница этого не знала.
-   * votedLocally помнил каждую отсвайпанную карту, страница не
-   * перемонтируется, и после «Войти в комнату» ключ колоды возвращался ровно
-   * к прежнему «состав:раунд» — колода не перечитывалась. Человек доигрывал
-   * свои остатки, а карты, чьи голоса стёрты, приходили в каждом /deck и
-   * каждом самолечении — и отсеивались votedLocally. Итог: у него «ждём
-   * ещё одного», у остальных он «ещё свайпает» навсегда, единогласие по этим
-   * картам невозможно, а «Берём» ждёт, пока отсвайпают все. Помогала только
-   * перезагрузка.
-   *
-   * Поэтому вход сбрасывает всё, что колода помнит: следующий эффект видит
-   * пустой ключ, грузит её как первую и получает целиком — с картами, чьи
-   * голоса стёрты. Другого пути из не-участника обратно в участники у этого
-   * экземпляра страницы нет: обе двери — на экране приглашения, а 401 голоса
-   * уводит на вход со сменой страницы. На первом входе сброс ничего не меняет.
-   * Голос, ушедший до удаления, вернётся отказом 403 и вычеркнет из уже
-   * пустого набора — безвредно.
-   */
-  const resetDeck = () => {
-    votedLocally.current.clear()
-    deckKey.current = ''
-    healKey.current = ''
-    setCards(null)
-    setLocalVotes(0)
-    setDeckVoted(0)
-    setDeckTotal(0)
-    setDeckFailed(false)
-    setDeckLimited(false)
-    setVoteFailed(false)
-  }
-
-  /*
    * То же, что join, плюс демо-библиотека первым шагом.
    *
    * Ответ /api/connect проверяется, а не выбрасывается. Раньше он
@@ -1160,9 +1210,10 @@ export default function RoomPage() {
       case 'removed':
         // 403 — хост убрал из комнаты. Карта не возвращается: голосовать
         // здесь больше нельзя, а опрос покажет экран приглашения. Сервер при
-        // этом стёр ВСЕ голоса участника, не только этот, — поэтому повторный
-        // вход сбрасывает набор и колоду целиком (resetDeck). Здесь — только
-        // этот голос: его нет, и счётчик его не держит.
+        // этом стёр ВСЕ голоса участника, не только этот, — поэтому снимок
+        // без членства, который принесёт refresh ниже, сбрасывает набор и
+        // колоду целиком (resetDeck). Здесь — только этот голос: его нет, и
+        // счётчик его не держит.
         votedLocally.current.delete(card.appid)
         setLocalVotes((v) => Math.max(0, v - 1))
         setVoteFailed(false)
@@ -1239,30 +1290,41 @@ export default function RoomPage() {
    * уверенный, что вышел, оставался в знаменателе единогласия. Повтор, пока
    * запрос в пути, гасит leaving; прежний отказ гаснет до первого await —
    * иначе второй такой же промолчал бы (components/StatusLine). Сервер
-   * повтор и так прощает (повторный выход — не ошибка), так что флаг — ради
-   * честного вида кнопок, а не ради данных.
+   * повтор и так прощает (повторный выход — не ошибка, повторное ✕ по
+   * ушедшему — removed: false), так что флаг — ради честного вида кнопок, а
+   * не ради данных.
+   *
+   * Поэтому флаг держится ровно на POST и не дольше. У запроса потолок
+   * (cappedSignal): без него повисший POST оставлял «Выйти из пати» и все ✕
+   * aria-disabled пустышками без строки отказа. Перечитывание после ✕ никто
+   * не ждёт: раньше await здесь держал leaving до нового ростера только ради
+   * переноса фокуса в MemberRoster, а тот теперь сам держит перенос, пока
+   * строка на месте, и забывает его на отказе этой ✕ (missedMember).
    */
   async function removeMember(memberId?: string) {
     if (leaving) return
     setLeaving(true)
     setLeaveMiss(null)
+    // Экран, на котором нажали: отказ живёт, пока он тот же (roomMissText)
+    const deck = deckKeyOf(state)
     try {
       const res = await fetch(`/api/room/${roomId}/leave`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(memberId ? { memberId } : {}),
+        signal: cappedSignal(POLL_TIMEOUT_MS),
       })
       if (!res.ok) {
-        setLeaveMiss(leaveFailure(res.status, !memberId))
+        setLeaveMiss({ text: leaveFailure(res.status, !memberId), deck, memberId })
         return
       }
       // Ушёл сам — на доску, там есть куда подсесть. Убрал другого — остаёмся
       // и перечитываем: матч мог стать достижим прямо этим действием. Сбой
       // этого чтения — не отказ удаления: его подхватит обычный опрос
-      if (memberId) await refresh().catch(() => null)
+      if (memberId) void refresh().catch(() => null)
       else router.push('/rooms')
     } catch {
-      setLeaveMiss(leaveFailure(0, !memberId))
+      setLeaveMiss({ text: leaveFailure(0, !memberId), deck, memberId })
     } finally {
       setLeaving(false)
     }
@@ -1275,31 +1337,44 @@ export default function RoomPage() {
    * плиткой, потому что кнопки шапки тогда спрятаны. needsteam — своя строка
    * о входе (NeedSteam). Перечитываем и после отказа: переключатель рисует
    * то, что на сервере, а не то, что нажали.
+   *
+   * Перечитывание здесь ждут — в отличие от ✕: следующее нажатие шлёт
+   * «противоположное тому, что на экране», и переключатель, отпущенный до
+   * нового снимка, на быстром втором тапе отправил бы то же значение ещё раз
+   * вместо обратного. Но у обоих запросов потолок (cappedSignal): без него
+   * повисший POST или GET держал publicBusy, и тумблер был aria-disabled
+   * пустышкой без строки отказа, пока браузер сам не сдастся.
    */
   async function togglePublic() {
     if (publicBusy) return
     setPublicBusy(true)
-    setPublicMiss(false)
+    setPublicMiss(null)
+    const was = state?.room.isPublic ?? false
+    const miss: RoomMiss = {
+      text: 'Доска не переключилась — проверь связь и нажми ещё раз.',
+      deck: deckKeyOf(state),
+      wasPublic: was,
+    }
     try {
       const res = await fetch(`/api/room/${roomId}/public`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ public: !state?.room.isPublic }),
+        body: JSON.stringify({ public: !was }),
+        signal: cappedSignal(POLL_TIMEOUT_MS),
       })
       if (await isNeedSteam(res)) {
         writerStore.set(false)
         setPublicDenied(true)
         return
       }
-      if (!res.ok) setPublicMiss(true)
-      await refresh().catch(() => null)
+      if (!res.ok) setPublicMiss(miss)
+      await refresh(cappedSignal(POLL_TIMEOUT_MS)).catch(() => null)
     } catch {
-      setPublicMiss(true)
+      setPublicMiss(miss)
     } finally {
       setPublicBusy(false)
     }
   }
-
 
   if (notFound) {
     return (
@@ -1523,7 +1598,10 @@ export default function RoomPage() {
   // Ровно то условие, при котором ниже рендерится RoomWaiting с AloneInvite:
   // колода загружена и пуста, а waitingMode отдаёт 'alone'
   const aloneInvite = alone && !deckFailed && cards !== null && !card
-  const publicMissText = publicMiss ? 'Доска не переключилась — проверь связь и нажми ещё раз.' : null
+  // Отказы кнопок — пока они правда (roomMissText в lib/room)
+  const missNow = { deck: deckWant, members: state.members, isPublic: state.room.isPublic }
+  const publicMissText = roomMissText(publicMiss, missNow)
+  const leaveMissText = roomMissText(leaveMiss, missNow)
   const moodPreset = roomPresetOf(state.room.mood)
 
   return (
@@ -1753,7 +1831,8 @@ export default function RoomPage() {
           onRemoveMember={(memberId) => void removeMember(memberId)}
           onLeave={() => void removeMember()}
           leaving={leaving}
-          leaveMiss={leaveMiss}
+          leaveMiss={leaveMissText}
+          missedMember={leaveMiss?.memberId ?? null}
           publicBusy={publicBusy}
           publicMiss={publicMissText}
           hasMore={hasMore}

@@ -27,6 +27,7 @@ export function MemberRoster({
   isHost = false,
   onRemove,
   removing = false,
+  missed = null,
 }: {
   members: RoomMemberView[]
   deckSize: number | null
@@ -37,6 +38,8 @@ export function MemberRoster({
   onRemove?: (memberId: string) => void
   /** запрос выхода или удаления в пути — повтор гасит removeMember на странице */
   removing?: boolean
+  /** чья ✕ отказала последней; null — отказа нет */
+  missed?: string | null
 }) {
   const reduce = useReducedMotion()
   const doneCount = members.filter((member) => member.done).length
@@ -49,15 +52,22 @@ export function MemberRoster({
    * клавиатуры, убрав одного застрявшего, начинал со страницы сверху. Теперь
    * перед удалением запоминается, кому фокус достанется: ✕ следующей строки,
    * иначе предыдущей, иначе заголовок «Кто где». Отдаётся он, когда строки
-   * действительно не стало, и только потерянный (focusAdrift): уходящая
-   * строка ещё в списке на время выхода, поэтому фокус в ней — тоже потерян.
-   * Отказ оставляет строку и фокус на её ✕ — тогда перенос просто забывается.
+   * действительно не стало, и только потерянный (focusAdrift): в body или
+   * всё ещё на ✕ уходящей строки — она в DOM на время анимации выхода.
+   * Домом служит именно эта ✕, а не весь список: пока запрос в пути, хост
+   * может сам уйти Tab'ом на ✕ другой строки — и фокус, отнятый у неё,
+   * переехал бы на ✕ соседа убранного: Enter, нажатый ради одного, убрал бы
+   * другого.
+   *
+   * Перенос ждёт, пока строка на месте: POST прошёл, а ростер без неё
+   * приносит только следующий снимок, и флага «в пути» (removing) на это
+   * время уже нет — он держится ровно на POST. Забывается перенос на отказе
+   * этой ✕ (missed): строка остаётся, фокус — на её ✕.
    *
    * Убрали последнего, кроме себя, — список уходит целиком вместе с режимом;
    * фокус тогда забирает заголовок нового режима (смена режима в RoomWaiting).
    */
   const headRef = useRef<HTMLHeadingElement>(null)
-  const listRef = useRef<HTMLUListElement>(null)
   const removeButtons = useRef(new Map<string, HTMLButtonElement>())
   const handoff = useRef<{ gone: string; to: string | null } | null>(null)
 
@@ -65,14 +75,14 @@ export function MemberRoster({
     const h = handoff.current
     if (!h) return
     if (members.some((member) => member.id === h.gone)) {
-      if (!removing) handoff.current = null
+      if (missed === h.gone) handoff.current = null
       return
     }
     handoff.current = null
-    if (!focusAdrift(document, listRef.current)) return
+    if (!focusAdrift(document, removeButtons.current.get(h.gone))) return
     const next = h.to ? removeButtons.current.get(h.to) : undefined
     ;(next ?? headRef.current)?.focus()
-  }, [members, removing])
+  }, [members, missed])
 
   const remove = (id: string) => {
     if (removing || !onRemove) return
@@ -95,7 +105,7 @@ export function MemberRoster({
 
       {/* layout — фича domMax, её догружает MotionMax */}
       <MotionMax>
-        <ul ref={listRef} className="flex flex-col gap-3">
+        <ul className="flex flex-col gap-3">
           <AnimatePresence initial={false}>
             {members.map((member) => {
               // Голосов может оказаться больше, чем карт: колода пересобирается
