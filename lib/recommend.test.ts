@@ -18,6 +18,7 @@ import {
   entryMultiplier,
   explainMatch,
   familiarWeight,
+  hasTaste,
   hideUrgencyFor,
   isReplayable,
   isUnplayed,
@@ -43,6 +44,7 @@ import {
   semanticsMultiplier,
   sharedTasteTags,
   splitBySource,
+  topTags,
   URGENCY_UNTOUCHED_MAX,
   type Cooldown,
 } from './recommend'
@@ -471,6 +473,51 @@ describe('sharedTasteTags и вес редкости', () => {
   })
 })
 
+/**
+ * Предупреждение о контенте — не главный тег игры и не вкус.
+ *
+ * Поймано на /daily: после «Не сегодня» героем встал Cyberpunk 2077, и ряд
+ * под названием читался «Киберпанк · Открытый мир · Нагота · Ролевая игра» —
+ * те же чипсы уезжают на карту колоды пати, то есть на экран, который видят
+ * друзья. А редкость тянет такие теги наверх списка совпавших: Nudity стоит у
+ * трёх процентов каталога, и у игрока Witcher зелёной точкой горела бы именно она.
+ */
+describe('предупреждения о контенте в чипсах и совпавших тегах', () => {
+  // Числа — из карты тегов каталога: Singleplayer у половины игр, Nudity у 176
+  const stats = new Map<string, number>([
+    ['Singleplayer', 3031],
+    ['RPG', 1353],
+    ['Story Rich', 1237],
+    ['Open World', 981],
+    ['Cyberpunk', 300],
+    ['Nudity', 176],
+  ])
+  // Голоса как у Cyberpunk 2077: Nudity — в первой четвёрке
+  const cyberpunk = meta(1091500, {
+    'Open World': 6100,
+    Cyberpunk: 5600,
+    Nudity: 5000,
+    RPG: 4900,
+    'Story Rich': 4500,
+  })
+
+  test('topTags пропускает предупреждение, и место занимает следующий тег', () => {
+    expect(topTags(cyberpunk)).toEqual(['Open World', 'Cyberpunk', 'RPG', 'Story Rich'])
+  })
+
+  test('sharedTasteTags не отмечает Nudity, даже когда редкость тянет её наверх', () => {
+    // Профиль игрока Witcher и BG3: Nudity в нём есть — она стоит у тех игр
+    const profile = { RPG: 20, 'Story Rich': 15, 'Open World': 10, Nudity: 10, Cyberpunk: 5 }
+    for (const w of [tagWeightFrom(stats), null]) {
+      const tags = sharedTasteTags(profile, cyberpunk, w)
+      expect(tags).not.toContain('Nudity')
+      // Место не пропадает: его занимает следующий настоящий тег
+      expect(tags).toHaveLength(3)
+    }
+    expect(sharedTasteTags(profile, cyberpunk, tagWeightFrom(stats))[0]).toBe('Cyberpunk')
+  })
+})
+
 describe('explainMatch', () => {
   test('полное совпадение — 100% и общий тег', () => {
     const m = meta(1, { Roguelike: 100 })
@@ -497,6 +544,67 @@ describe('explainMatch', () => {
     const out = explainMatch({ Action: 1 }, m, { time: 'medium', vibe: 'chill', social: 'solo' })
     expect(out.moodTags).toContain('Relaxing')
     expect(out.moodTags).not.toContain('Action')
+  })
+})
+
+/**
+ * Профиль из одних нулей — это пустой профиль, а не вкус.
+ *
+ * Скип «не тот жанр» пишет Math.max(… , 0) по каждому тегу игры и тем самым
+ * заводит ключи даже в пустом профиле: у человека с библиотекой из нулевых
+ * минут один такой скип давал { Roguelike: 0, Indie: 0 }. Проверка «вкус
+ * есть» считала ключи — и скоринг уходил с популярности на косинус с
+ * нулевым вектором: у всех кандидатов ровно 0, настроение и скидка ничего не
+ * двигали, а /play писал «совпадение со вкусом 0%».
+ */
+describe('вкус из одних нулей — отсутствие вкуса', () => {
+  const pool = [
+    meta(101, { Relaxing: 100, Cozy: 80 }),
+    meta(102, { 'Souls-like': 100, Difficult: 90 }),
+    meta(103, { Roguelike: 100, Indie: 60 }),
+  ]
+  const metaOf = (id: number) => pool.find((m) => m.appid === id)
+  const genreSkip: FeedbackRow = {
+    steamid: 'u',
+    appid: 103,
+    action: 'skipped',
+    reason: 'genre',
+    createdAt: NOW,
+  }
+  const zeroed = applyFeedbackToProfile({}, [genreSkip], metaOf)
+  const run = (profile: Record<string, number>, vibe: Mood['vibe']) =>
+    scoreCandidates({
+      profile,
+      library: [],
+      metaOf,
+      newPool: pool,
+      mood: { time: 'medium', vibe, social: 'solo' },
+      nowSec: NOW,
+    }).map((c) => [c.appid, c.score])
+
+  test('hasTaste: вкус — это хоть один положительный вес', () => {
+    expect(hasTaste({})).toBe(false)
+    expect(hasTaste({ A: 0 })).toBe(false)
+    expect(hasTaste({ A: Number.NaN })).toBe(false)
+    expect(hasTaste({ A: 0, B: 0.1 })).toBe(true)
+  })
+
+  test('скип «не тот жанр» на пустом профиле оставляет запасной скоринг популярностью', () => {
+    // Ключи с нулями заводятся — правило «штраф не уводит в минус» держит их
+    // на нуле, а не удаляет (тест «не уводит в минус» выше). Чинится чтение
+    expect(zeroed).toEqual({ Roguelike: 0, Indie: 0 })
+    for (const vibe of ['chill', 'engaged'] as const) {
+      expect(run(zeroed, vibe)).toEqual(run({}, vibe))
+    }
+    // И настроение снова решает: под «расслабиться» и «напрячься» — разные первые
+    expect(run(zeroed, 'chill')[0][0]).toBe(101)
+    expect(run(zeroed, 'engaged')[0][0]).toBe(102)
+  })
+
+  test('explainMatch на профиле из нулей — без процента, как у пустого', () => {
+    const mood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+    expect(explainMatch(zeroed, pool[2], mood).matchPercent).toBeNull()
+    expect(explainMatch({ Roguelike: 0 }, pool[0], mood).matchPercent).toBeNull()
   })
 })
 
@@ -1840,6 +1948,55 @@ describe('applyFocus', () => {
   })
 })
 
+/**
+ * Фокус в скоринге — очередь на срез, а не фильтр: нетронутые, далёкие от
+ * вкуса, не должны срезаться раньше, чем applyFocus их увидит. Бронь каталога
+ * при фокусе снята: маршрут каталог тогда не показывает вовсе.
+ */
+describe('scoreCandidates и фокус «нераспакованное»', () => {
+  const comeback = Array.from({ length: 40 }, (_, i) => 100 + i)
+  const untouched = Array.from({ length: 6 }, (_, i) => 200 + i)
+  const metas = new Map<number, GameMeta>([
+    ...comeback.map((id) => [id, meta(id, { Roguelike: 100, 'Deck Building': 80 })] as const),
+    ...untouched.map((id) => [id, meta(id, { Puzzle: 100, Casual: 60 })] as const),
+  ])
+  const library = [
+    ...comeback.map((appid) => game({ appid, playtimeForever: 3000, lastPlayed: NOW - 365 * DAY })),
+    ...untouched.map((appid) => game({ appid })),
+  ]
+  const newPool = Array.from({ length: 20 }, (_, i) => meta(300 + i, { Roguelike: 100 }))
+  const run = (focus?: 'untouched' | null) =>
+    scoreCandidates({
+      profile: { Roguelike: 10, 'Deck Building': 8, Puzzle: 0.1 },
+      library,
+      metaOf: (id) => metas.get(id),
+      newPool,
+      mood: NEUTRAL_MOOD,
+      nowSec: NOW,
+      limit: 30,
+      ...(focus !== undefined ? { focus } : {}),
+    })
+
+  test('без фокуса нетронутые срезаются: на этом и ловили баг', () => {
+    expect(run().some((c) => c.source === 'untouched')).toBe(false)
+  })
+
+  test('с фокусом все нетронутые доживают до среза, а каталогу места не держат', () => {
+    const got = run('untouched')
+    expect(got.filter((c) => c.source === 'untouched').map((c) => c.appid).sort((a, b) => a - b)).toEqual(
+      untouched,
+    )
+    expect(got.some((c) => c.source === 'new')).toBe(false)
+    expect(got).toHaveLength(30)
+    // итог по-прежнему отсортирован по скору
+    expect(got.map((c) => c.score)).toEqual([...got.map((c) => c.score)].sort((a, b) => b - a))
+  })
+
+  test('null — ровно прежний срез, до бита', () => {
+    expect(run(null)).toEqual(run())
+  })
+})
+
 describe('parseFocus', () => {
   test('только known-значение проходит', () => {
     expect(parseFocus('untouched')).toBe('untouched')
@@ -2535,14 +2692,42 @@ describe('подталкивания (nudge)', () => {
     expect(got.get(2)!.parts!.mood).toBe(plain.get(2)!.parts!.mood)
   })
 
+  /*
+   * Показанное здесь было «Strategy, Indie, Action» — тройка целиком из
+   * GENERIC_TAGS, и после правки ниже похожесть по ней не считается вовсе.
+   * Поэтому главный тег показанного — Puzzle, а pool[0] со Strategy и Indie
+   * теперь ровно тот случай, что штраф больше не задевает.
+   */
   test('«Что-то другое»: похожее на показанное главными тегами — ×0.8', () => {
     expect(planNudge('different', baseMood, 'all').reroll).toBe(true)
-    const seen = seenTagsOf([meta(50, { Strategy: 100, Indie: 10, Action: 5, Puzzle: 1 })])
-    expect([...seen]).toEqual(['Strategy', 'Indie', 'Action'])
-    expect(nudgeMultiplier(pool[0], 'new', { seenTags: seen })).toBeCloseTo(0.8)
-    expect(nudgeMultiplier(pool[1], 'new', { seenTags: seen })).toBe(1)
+    const seen = seenTagsOf([meta(50, { Puzzle: 100, Indie: 10, Action: 5, Strategy: 1 })])
+    expect([...seen]).toEqual(['Puzzle'])
+    expect(nudgeMultiplier(pool[1], 'new', { seenTags: seen })).toBeCloseTo(0.8)
+    expect(nudgeMultiplier(pool[0], 'new', { seenTags: seen })).toBe(1)
     const got = byId(run(baseMood, { seenTags: seen }))
-    expect(got.get(100)!.parts!.nudge).toBeCloseTo(0.8)
+    expect(got.get(101)!.parts!.nudge).toBeCloseTo(0.8)
+  })
+
+  /*
+   * Самые голосуемые теги Steam — жанры и режимы: Action стоит в первой
+   * тройке у тысячи игр каталога. Пять показанных рогаликов с [Action,
+   * Roguelike, Indie] штрафовали открытый мир с [Action, RPG, Open World] за
+   * общий Action — и не трогали рогалик, у которого тройка [Roguelite, Pixel
+   * Graphics, Difficult]. Подталкивание уводило от слова Action, а не от того,
+   * что на экране.
+   */
+  test('«Что-то другое»: общий жанр или режим в главных тегах — ещё не «то же самое»', () => {
+    const seen = seenTagsOf([
+      meta(60, { Action: 100, Roguelike: 90, Indie: 80 }),
+      meta(61, { Multiplayer: 100, Roguelike: 70, Action: 60 }),
+    ])
+    expect([...seen]).toEqual(['Roguelike'])
+    const openWorld = meta(62, { Action: 100, RPG: 90, 'Open World': 80 })
+    const coop = meta(63, { Multiplayer: 100, Indie: 90, Survival: 80 })
+    const rogue = meta(64, { Roguelike: 100, 'Pixel Graphics': 60, Difficult: 50 })
+    expect(nudgeMultiplier(openWorld, 'new', { seenTags: seen })).toBe(1)
+    expect(nudgeMultiplier(coop, 'new', { seenTags: seen })).toBe(1)
+    expect(nudgeMultiplier(rogue, 'new', { seenTags: seen })).toBeCloseTo(0.8)
   })
 
   test('часть nudge входит в произведение у каждого подталкивания', () => {

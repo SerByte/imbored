@@ -419,8 +419,11 @@ describe('причина называет теги игрока, а не поп�
   const shooter: GameMeta = {
     appid: 42,
     name: 'Loud Shooter',
-    // MOBA — самый частый тег игры, но во вкусе игрока его нет
-    tags: { MOBA: 1000, Competitive: 300, Atmospheric: 20 },
+    // MOBA — самый частый тег игры, но во вкусе игрока его нет. Третий тег —
+    // Tactical, а не прежний Atmospheric: тот — похвала из GENERIC_TAGS, и
+    // причина его больше не называет вовсе (см. «причина не называет общие
+    // теги вкусом» ниже), а здесь проверяется порядок, а не отбор
+    tags: { MOBA: 1000, Competitive: 300, Tactical: 20 },
     genres: [],
     categories: [2],
   }
@@ -428,7 +431,7 @@ describe('причина называет теги игрока, а не поп�
   const cand: ScoredCandidate[] = [{ appid: 42, name: 'Loud Shooter', source: 'new', score: 0.9 }]
 
   test('самый популярный тег игры в причину не попадает, если его нет во вкусе', () => {
-    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Competitive: 1, Atmospheric: 0.4 })
+    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Competitive: 1, Tactical: 0.4 })
     expect(pick.reason).toContain(tagRu('Competitive'))
     expect(pick.reason).not.toContain(tagRu('MOBA'))
   })
@@ -451,24 +454,20 @@ describe('причина называет теги игрока, а не поп�
   /*
    * Порядок — произведение двух величин, и обе обязательны. Только вкус
    * поставил бы вперёд тег, который у игрока в топе, но к самой игре имеет
-   * отношение по касательной: «Atmospheric» с двадцатью голосами из тысячи
+   * отношение по касательной: «Tactical» с двадцатью голосами из тысячи
    * трёхсот — не то, за что эту игру выбирают. Только голоса Steam — это
    * ровно то, что здесь чинилось.
    */
   test('вес во вкусе двигает тег вперёд', () => {
-    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Atmospheric: 100, Competitive: 1 })
-    expect(pick.reason.indexOf(tagRu('Atmospheric'))).toBeGreaterThan(-1)
-    expect(pick.reason.indexOf(tagRu('Atmospheric'))).toBeLessThan(
-      pick.reason.indexOf(tagRu('Competitive')),
-    )
+    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Tactical: 100, Competitive: 1 })
+    expect(pick.reason.indexOf(tagRu('Tactical'))).toBeGreaterThan(-1)
+    expect(pick.reason.indexOf(tagRu('Tactical'))).toBeLessThan(pick.reason.indexOf(tagRu('Competitive')))
   })
 
   test('но краевой для игры тег не обгоняет центральный на малой разнице', () => {
-    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Atmospheric: 10, Competitive: 1 })
+    const [pick] = heuristicPicks(cand, metaShooter, 1, NOW, { Tactical: 10, Competitive: 1 })
     expect(pick.reason.indexOf(tagRu('Competitive'))).toBeGreaterThan(-1)
-    expect(pick.reason.indexOf(tagRu('Competitive'))).toBeLessThan(
-      pick.reason.indexOf(tagRu('Atmospheric')),
-    )
+    expect(pick.reason.indexOf(tagRu('Competitive'))).toBeLessThan(pick.reason.indexOf(tagRu('Tactical')))
   })
 })
 
@@ -496,9 +495,19 @@ describe('причина называет характерный тег, а не
     ['Automation', 100],
   ])
 
-  test('без карты — прежние два частотных тега', () => {
+  /*
+   * Здесь стояло «без карты — прежние два частотных тега» с ожиданием «(Инди,
+   * Экшен)». Порядок без карты и правда прежний — по сырому вкладу, его держит
+   * lib/recommend.test.ts на sharedTasteTags и чипсах. Но называть Indie и
+   * Action вкусом в причине нельзя ни с картой, ни без: это описание каталога,
+   * ровно то, против чего этот блок и написан. Без карты общий тег отсекает
+   * список GENERIC_TAGS — ему редкость не нужна.
+   */
+  test('без карты порядок сырой, но общие теги вкусом не названы', () => {
     const [pick] = heuristicPicks(cand, () => factory, 1, NOW, profile)
-    expect(pick.reason).toContain(`(${tagRu('Indie')}, ${tagRu('Action')})`)
+    expect(pick.reason).toContain(`(${tagRu('Automation')})`)
+    expect(pick.reason).not.toContain(tagRu('Indie'))
+    expect(pick.reason).not.toContain(tagRu('Action'))
   })
 
   test('с картой редкий тег назван первым', () => {
@@ -507,6 +516,95 @@ describe('причина называет характерный тег, а не
     })
     expect(pick.reason).toContain(`(${tagRu('Automation')}`)
     expect(pick.reason).not.toContain(tagRu('Indie'))
+  })
+})
+
+/**
+ * Общий тег — не вкус, сколько бы его ни было в профиле.
+ *
+ * Живые строки демо: «а теги (Для одного игрока, Инди) твои» и «Теги (Для
+ * нескольких игроков, Песочница) по-прежнему в твоём вкусе». Совпадение там
+ * буквальное — эти теги есть в любом профиле, — но фраза утверждает про
+ * человека, а описывает половину каталога. Вес редкости только переставлял
+ * их в конец: когда характерных общих тегов меньше двух, пустые места
+ * занимали они же.
+ */
+describe('причина не называет общие теги вкусом', () => {
+  // Числа — из карты тегов каталога: Singleplayer самый частый, его вес ноль
+  const stats = new Map<string, number>([
+    ['Singleplayer', 3031],
+    ['Indie', 1750],
+    ['Multiplayer', 1708],
+    ['Puzzle', 732],
+    ['Sandbox', 704],
+    ['Survival', 538],
+    ['Cyberpunk', 300],
+    ['Nudity', 176],
+  ])
+  const profile = { Singleplayer: 40, Indie: 30, Action: 25, Multiplayer: 20, Sandbox: 5 }
+  const one = (appid: number, name: string, source: ScoredCandidate['source']): ScoredCandidate[] => [
+    { appid, name, source, score: 0.9 },
+  ]
+  const withMap = { tagWeight: tagWeightFrom(stats) }
+
+  test('бэклог, у которого со вкусом общие только Singleplayer и Indie, — без предложения про вкус', () => {
+    const puzzle: GameMeta = {
+      appid: 7,
+      name: 'Tiny Puzzle',
+      tags: { Indie: 100, Singleplayer: 90, Puzzle: 80 },
+      genres: [],
+      categories: [2],
+    }
+    const plain = 'Ты открыл «Tiny Puzzle» и закрыл, не разобравшись. Дай ей второй заход.'
+    for (const opts of [withMap, {}]) {
+      const [pick] = heuristicPicks(one(7, 'Tiny Puzzle', 'backlog'), () => puzzle, 1, NOW, profile, opts)
+      expect(pick.reason).toBe(plain)
+    }
+  })
+
+  test('из общего с профилем у заброшенной остаётся только характерное', () => {
+    const sandbox: GameMeta = {
+      appid: 8,
+      name: 'Dig Deep',
+      tags: { Multiplayer: 100, Sandbox: 90, Survival: 80 },
+      genres: [],
+      categories: [2, 1],
+    }
+    for (const opts of [withMap, {}]) {
+      const [pick] = heuristicPicks(one(8, 'Dig Deep', 'comeback'), () => sandbox, 1, NOW, profile, opts)
+      expect(pick.reason).toContain(`Теги (${tagRu('Sandbox')}) по-прежнему в твоём вкусе`)
+      expect(pick.reason).not.toContain(tagRu('Multiplayer'))
+    }
+  })
+
+  test('тег, которого нет в карте редкости, вкусом не назван: утверждать по нему нечего', () => {
+    const odd: GameMeta = {
+      appid: 9,
+      name: 'Odd One',
+      tags: { 'Unknown Tag': 100, Puzzle: 50 },
+      genres: [],
+      categories: [2],
+    }
+    const taste = { 'Unknown Tag': 50, Puzzle: 1 }
+    const [pick] = heuristicPicks(one(9, 'Odd One', 'untouched'), () => odd, 1, NOW, taste, withMap)
+    expect(pick.reason).toContain(`По тегам (${tagRu('Puzzle')})`)
+    expect(pick.reason).not.toContain('Unknown Tag')
+  })
+
+  test('предупреждение о контенте вкусом не называется, даже редкое', () => {
+    const cyberpunk: GameMeta = {
+      appid: 10,
+      name: 'Neon City',
+      tags: { Cyberpunk: 100, Nudity: 90 },
+      genres: [],
+      categories: [2],
+    }
+    const fan = { Nudity: 10, Cyberpunk: 5 }
+    for (const opts of [withMap, {}]) {
+      const [pick] = heuristicPicks(one(10, 'Neon City', 'new'), () => cyberpunk, 1, NOW, fan, opts)
+      expect(pick.reason).toContain(tagRu('Cyberpunk'))
+      expect(pick.reason).not.toContain(tagRu('Nudity'))
+    }
   })
 })
 
@@ -752,6 +850,56 @@ describe('скрытое время в Steam', () => {
       expect(prompt).not.toContain('0 часов всего')
       expect(prompt).not.toContain('так и не запущены')
     })
+  })
+})
+
+/**
+ * Фокус «нераспакованное» в промпте модели: просьба передаётся всегда, а
+ * утверждение о кандидатах — только когда оно верно.
+ */
+describe('промпт модели: фокус «нераспакованное»', () => {
+  let key: string | undefined
+  beforeEach(() => {
+    key = process.env.ANTHROPIC_API_KEY
+    process.env.ANTHROPIC_API_KEY = 'test-key'
+    create.mockReset()
+    create.mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }] })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    if (key === undefined) delete process.env.ANTHROPIC_API_KEY
+    else process.env.ANTHROPIC_API_KEY = key
+    vi.restoreAllMocks()
+  })
+  const promptOf = () => create.mock.calls[0][0].messages[0].content as string
+
+  /*
+   * «Все кандидаты — игры, которые он ни разу не запускал» — утверждение о
+   * кандидатах, а не пересказ просьбы. Когда пол applyFocus добрал бэклогом
+   * (нетронутых меньше трёх), рядом с ним стояла строка «[открыл и закрыл]»,
+   * и модель получала противоречие вместо факта.
+   */
+  test('«нераспакованное»: «все ни разу не запускал» — только когда это правда', async () => {
+    const lib = [{ appid: 77, name: 'Old', playtimeForever: 600, playtime2Weeks: 0 }]
+    const ALL_CLAIM = 'Все кандидаты — игры, которые он ни разу не запускал'
+    const untouched: ScoredCandidate[] = [
+      { appid: 1, name: 'Backlog Gem', source: 'untouched', score: 0.9 },
+      { appid: 4, name: 'Backlog Two', source: 'untouched', score: 0.6 },
+    ]
+    await claudePicks({ candidates: untouched, metaOf, library: lib, mood: MOOD, focus: 'untouched' })
+    expect(promptOf()).toContain(ALL_CLAIM)
+
+    create.mockClear()
+    const widened: ScoredCandidate[] = [
+      ...untouched,
+      { appid: 2, name: 'Old Flame', source: 'backlog', score: 0.5 },
+    ]
+    await claudePicks({ candidates: widened, metaOf, library: lib, mood: MOOD, focus: 'untouched' })
+    const prompt = promptOf()
+    expect(prompt).not.toContain(ALL_CLAIM)
+    // просьба всё равно передана: сперва нетронутое, покупок не советовать
+    expect(prompt).toContain('то, во что ещё не играл')
+    expect(prompt).not.toContain('помечена «новая, не куплена»')
   })
 })
 

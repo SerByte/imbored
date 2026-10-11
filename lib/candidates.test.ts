@@ -121,6 +121,48 @@ describe('buildCandidates', () => {
   })
 
   /*
+   * Фокус — до среза тридцатки, а не после. Скоринг ранжировал всю
+   * библиотеку и резал её до CANDIDATE_LIMIT, из которых двенадцать мест ещё
+   * и держал каталогу; applyFocus стоял уже за отсечкой. У человека с сорока
+   * наигранными рогаликами и шестью нетронутыми не своего жанра нетронутые до
+   * фокуса не доживали, пол applyFocus срабатывал на пустом месте — и на
+   * «покажи то, во что я не играл» приходило «У тебя в X уже 50 ч».
+   */
+  test('«нераспакованное» находит нетронутые, даже когда наигранное ближе к вкусу', async () => {
+    const db = await freshDb()
+    const comeback = Array.from({ length: 40 }, (_, i) => 100 + i)
+    const untouched = Array.from({ length: 6 }, (_, i) => 200 + i)
+    const pool = Array.from({ length: 20 }, (_, i) => 300 + i)
+    await upsertGamesMeta(
+      db,
+      [
+        ...comeback.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 80 })),
+        ...untouched.map((id) => meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 })),
+        ...pool.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 70 })),
+      ],
+      NOW,
+    )
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [
+        // 50 ч и год без запуска — «пора вернуться»
+        ...comeback.map((id) => ({ ...game(id, 50), lastPlayed: NOW - 365 * 86_400 })),
+        ...untouched.map((id) => game(id, 0)),
+      ],
+      NOW,
+    )
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'library', {
+      nowSec: NOW,
+      focus: 'untouched',
+    })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.own.map((c) => c.appid).sort((a, b) => a - b)).toEqual(untouched)
+    expect(set.own.every((c) => c.source === 'untouched')).toBe(true)
+    expect(set.heroPool).toEqual(set.own)
+  })
+
+  /*
    * Время скрыто в Steam (lib/playtime.ts): 20 игр, у всех нули. Признак
    * считается здесь один раз по всей библиотеке и едет дальше — в скоринг и
    * маршрутам; вкус собран поровну, а не пуст.

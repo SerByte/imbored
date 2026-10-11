@@ -64,6 +64,36 @@ describe('backlogValue', () => {
     expect(out).toEqual({ cents: 1999, pricedCount: 1, unplayedCount: 1, cc: 'us' })
   })
 
+  /*
+   * Сгоревшая скидка: price_final при заявленной скидке — акционное число, и
+   * когда акция кончилась, это уже не цена игры (trustedPrice в lib/discount).
+   * У Heavy Rain так стояло $0.99 при настоящих $19.99 — сумма бэклога
+   * занижалась, а «цена известна у N» считала игру, у которой /game цену не
+   * показывает вовсе.
+   */
+  test('сгоревшая скидка — цена неизвестна: ни в сумме, ни в «цена известна у N»', () => {
+    const stale = { ...meta(1, 99), priceInitial: 1999, discountPercent: 95, discountEndsAt: NOW - 86_400 }
+    expect(backlogValue([game(1, 0)], () => stale, NOW)).toEqual({
+      cents: 0,
+      pricedCount: 0,
+      unplayedCount: 1,
+      cc: 'us',
+    })
+    // и полная цена не подставляется: «кончилась» и «продлена» отсюда неразличимы
+    const old = { ...meta(2, 1000), discountPercent: 50, priceAt: NOW - 3 * 86_400 }
+    expect(backlogValue([game(2, 0)], () => old, NOW).cents).toBe(0)
+  })
+
+  test('живая скидка — цена акции и есть цена сегодня', () => {
+    const live = { ...meta(1, 99), priceInitial: 1999, discountPercent: 95, discountEndsAt: NOW + 86_400 }
+    expect(backlogValue([game(1, 0)], () => live, NOW)).toEqual({
+      cents: 99,
+      pricedCount: 1,
+      unplayedCount: 1,
+      cc: 'us',
+    })
+  })
+
   test('мёртвая сетевая игра — бэклог: деньги за неё правда потрачены', () => {
     const metas = new Map([[1, { ...meta(1, 1499), signalsAt: NOW, alive: false }]])
     expect(backlogValue([game(1, 0)], (id) => metas.get(id), NOW)).toEqual({

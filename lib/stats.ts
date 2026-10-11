@@ -1,3 +1,4 @@
+import { trustedPrice } from './discount'
 import { looksLikeNonGame } from './junk'
 import { playtimeHidden } from './playtime'
 import { plural } from './plural'
@@ -24,6 +25,13 @@ import type { GameMeta, LibraryGame } from './types'
  * Steam стоит 59,99 $, по курсу это под пять тысяч рублей, а в российском —
  * 1 999 ₽; пересчитанная сумма — деньги, которых никто не платил. Пока каталог
  * переоценивается после смены региона, растёт не сумма, а «цена известна у N».
+ *
+ * Цена — trustedPrice, а не сырой price_final: при сгоревшей скидке это
+ * акционное число без акции (у Heavy Rain $0.99 при $19.99), и сумма бэклога
+ * занижалась бы на его разницу, расходясь с карточкой игры, которая ту же
+ * цену не показывает вовсе. Такая игра — «цена неизвестна», и снижает «цена
+ * известна у N»; полную цену вместо неё не подставляем — см. докблок
+ * trustedPrice.
  */
 export function backlogValue(
   library: LibraryGame[],
@@ -40,8 +48,8 @@ export function backlogValue(
     const meta = metaOf(g.appid)
     if (looksLikeNonGame(g, meta)) continue
     unplayedCount++
-    const price = meta?.priceFinal
-    if (price !== undefined && price > 0 && (meta?.priceCc ?? LEGACY_PRICE_CC) === cc) {
+    const price = meta ? trustedPrice(meta, nowSec) : null
+    if (price !== null && price > 0 && (meta?.priceCc ?? LEGACY_PRICE_CC) === cc) {
       cents += price
       pricedCount++
     }

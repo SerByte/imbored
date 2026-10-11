@@ -6,13 +6,13 @@ import {
   getGamesMetaLite,
   getLatestSnapshot,
   getPersonaName,
-  loadTagStats,
   type Db,
 } from './db'
 import { type Discount, discountView, trustedPrice } from './discount'
 import { buildGroupDeck } from './group'
 import { playtimeHidden } from './playtime'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
+import { tagStatsFor } from './tagstats'
 import type { GameMeta } from './types'
 
 /**
@@ -219,7 +219,8 @@ export async function loadCompat(
   const poolByAppid = new Map<number, GameMeta>()
   const metaOf = (appid: number): GameMeta | undefined => metas.get(appid) ?? poolByAppid.get(appid)
 
-  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
+  // Карта тегов — с памятью на процесс (lib/tagstats): меняется только с заливкой
+  const [tagStats, poolSize] = await Promise.all([tagStatsFor(db, now), getPoolSize(db)])
   const compat = compatibility(mySnap.games, otherSnap.games, metaOf, tagStats)
 
   // Сумма двух профилей, а не профиль склейки: см. pairTasteProfile

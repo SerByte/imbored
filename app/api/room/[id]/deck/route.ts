@@ -9,7 +9,6 @@ import {
   getLatestSnapshot,
   getRoom,
   issueRoomDeck,
-  loadTagStats,
   myVotedAppids,
   roomMembers,
 } from '@/lib/db'
@@ -21,6 +20,7 @@ import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildTagProfile } from '@/lib/recommend'
 import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { tagStatsFor } from '@/lib/tagstats'
 import { tagWeightFrom } from '@/lib/tagweight'
 import { peekGate } from '@/lib/roompeek'
 
@@ -30,9 +30,10 @@ const DECK_SIZE = 20
 /**
  * Потолок на сборку колоды — самой дорогой операции приложения.
  *
- * Один вызов это: loadTagStats по всей таблице тегов, fetchDiscoveryPool на
- * дюжину тегов, снапшот библиотеки каждого участника, getGamesMeta по
- * объединению этих библиотек и запись setRoomDeckSize. Для сравнения,
+ * Один вызов это: fetchDiscoveryPool на дюжину тегов, снапшот библиотеки
+ * каждого участника, getGamesMeta по объединению этих библиотек и запись
+ * setRoomDeckSize. Карта тегов каталога (вся таблица tags) в эту цену больше
+ * не входит — она с памятью на процесс (lib/tagstats). Для сравнения,
  * /api/daily с сопоставимой ценой ограничен десятью вызовами в час — а
  * здесь не было ничего.
  *
@@ -120,7 +121,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
   }
   const now = nowSec()
-  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
+  const [tagStats, poolSize] = await Promise.all([tagStatsFor(db, now), getPoolSize(db)])
   // Свои голоса не зависят от пула — тянем их тем же заходом, а не после.
   const [extraPool, voted] = await Promise.all([
     fetchDiscoveryPool(db, {
