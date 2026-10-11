@@ -73,11 +73,23 @@ function nameSource(name: string): string {
  * схлопнутыми пробелами: newsPageTitle узнаёт «имя в заголовке есть» по
  * тому, что текст изменился, и «Hotfix  notes» с двойным пробелом иначе
  * терял название игры впереди <title>.
+ *
+ * Регистр по умолчанию не важен: цифрам и языку всё равно, как издатель
+ * написал имя, — «PORTAL 2» тоже не версия и не английская фраза.
+ * caseSensitive — для одного вопроса: стоит ли в заголовке именно имя, а не
+ * обычное слово, которым игра названа (newsPageTitle).
  */
-export function withoutGameName(text: string, gameName: string | null | undefined): string {
+export function withoutGameName(
+  text: string,
+  gameName: string | null | undefined,
+  opts: { caseSensitive?: boolean } = {},
+): string {
   const name = (gameName ?? '').trim()
   if (!text || !name) return text
-  const re = new RegExp(`(?<![\\p{L}\\p{N}])${nameSource(name)}(?![\\p{L}\\p{N}])`, 'giu')
+  const re = new RegExp(
+    `(?<![\\p{L}\\p{N}])${nameSource(name)}(?![\\p{L}\\p{N}])`,
+    opts.caseSensitive ? 'gu' : 'giu',
+  )
   let found = false
   const rest = text.replace(re, () => {
     found = true

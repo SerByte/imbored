@@ -70,6 +70,15 @@ export function newsHeading(title: string, gameName: string | null | undefined):
  * ничего не называют. Впереди — только если его нет в самом заголовке:
  * «Counter-Strike 2: Обновление Counter-Strike 2» — это одно имя дважды.
  *
+ * «Есть в заголовке» — С УЧЁТОМ РЕГИСТРА, как пишется имя собственное. Многие
+ * игры названы обычными словами — Control, Inside, Raft, Prey, Thief, — и без
+ * регистра «Improved control options» сходил за заголовок с именем игры:
+ * <title>, og:title, карточка «Поделиться» и RSS теряли «Control:» впереди,
+ * то есть ровно то, с чего начинается запрос. Что остаётся неразличимым —
+ * заголовок, где С Заглавной Каждое Слово («Improved Control Options»): там
+ * слово от имени не отличить, и имя впереди не повторяется. Цифрам и дате
+ * регистр по-прежнему не важен — их решает rest.
+ *
  * ДАТА — КОГДА ЗАГОЛОВОК ПАТЧИ ИГРЫ НЕ РАЗЛИЧАЕТ. Valve выпускает каждое
  * обновление CS2 под одной строкой «Обновление Counter-Strike 2»: в локальной
  * базе их восемнадцать подряд, и все страницы патчей верхней игры каталога (а
@@ -91,7 +100,8 @@ export function newsPageTitle(
 ): string {
   const heading = newsHeading(title, gameName)
   const rest = withoutGameName(heading, gameName)
-  const named = gameName && rest === heading ? `${gameName}: ${heading}` : heading
+  const spelled = withoutGameName(heading, gameName, { caseSensitive: true }) !== heading
+  const named = gameName && !spelled ? `${gameName}: ${heading}` : heading
   const dated = publishedAt !== undefined && !/\d/.test(rest)
   return `${named}${dated ? ` от ${dateLabel(publishedAt, { year: true })}` : ''} — что изменилось`
 }

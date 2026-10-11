@@ -106,6 +106,18 @@ describe('заголовок патча', () => {
       'Cyberpunk 2077: Hotfix  notes 2.1 — что изменилось',
     )
   })
+
+  test('обычное слово, совпавшее с названием игры, именем не считается', () => {
+    // «control» здесь — про управление, а не про игру: без учёта регистра
+    // заголовок сходил за «имя уже есть», и «Control:» пропадал из <title>
+    expect(newsPageTitle('Improved control options', 'Control', AUG3)).toBe(
+      'Control: Improved control options от 3 августа 2026 г. — что изменилось',
+    )
+    // имя, написанное как имя, по-прежнему не повторяется
+    expect(newsPageTitle('Обновление Counter-Strike 2', 'Counter-Strike 2', AUG3)).toBe(
+      'Обновление Counter-Strike 2 от 3 августа 2026 г. — что изменилось',
+    )
+  })
 })
 
 describe('описание патча', () => {

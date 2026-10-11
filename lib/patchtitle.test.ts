@@ -77,6 +77,16 @@ describe('текст без названия игры — где бы оно н�
     expect(withoutGameName('PORTAL 2 update for portal 2', 'Portal 2')).toBe('update for')
   })
 
+  test('с caseSensitive убирается только имя, написанное как имя', () => {
+    // для вопроса «есть ли игра в заголовке»: «control» у игры Control — слово
+    expect(withoutGameName('Improved control options', 'Control', { caseSensitive: true })).toBe(
+      'Improved control options',
+    )
+    expect(withoutGameName('Обновление Counter-Strike 2', 'Counter-Strike 2', { caseSensitive: true })).toBe(
+      'Обновление',
+    )
+  })
+
   test('часть другого слова — не название', () => {
     expect(withoutGameName('Rusty Update', 'Rust')).toBe('Rusty Update')
     expect(withoutGameName('Update for Rust', 'Rust')).toBe('Update for')
