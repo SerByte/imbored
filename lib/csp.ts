@@ -1,3 +1,4 @@
+import { maskPath } from './errlog'
 import { STEAM_IMG_DOMAINS } from './steamhtml'
 import { STEAM_MEDIA_DOMAIN } from './trailer'
 
@@ -157,14 +158,26 @@ export type CspViolation = {
   blocked: string
   /** Раздел сайта, а не адрес: /game/…, а не /game/730 */
   page: string
-  /** Файл, из которого шла попытка, без строки запроса */
+  /** Файл, из которого шла попытка, без строки запроса и с масками пути */
   source?: string
   line?: number
-  disposition?: string
+  disposition?: 'enforce' | 'report'
 }
 
 /** Больше нарушений из одного тела не разбираем: это уже не отчёт, а мусор. */
 const MAX_PER_BODY = 20
+
+/**
+ * Потолки полей. Тело отчёта пишет кто угодно, и без них одно поле в 60 КБ
+ * становилось одной строкой лога в 60 КБ — тридцать раз в минуту на инстанс
+ * (createLogThrottle режет число строк, а не их длину). Самая длинная
+ * настоящая директива, require-trusted-types-for, — 25 знаков; origin
+ * длиннее двухсот не бывает у хоста, которому стоило бы что-то разрешать.
+ */
+const DIRECTIVE_MAX = 40
+const FIELD_MAX = 200
+/** Первый сегмент страницы — имя раздела: /game, /room, /whatsnew. */
+const PAGE_SEGMENT_MAX = 60
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
 
@@ -177,12 +190,15 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v 
  */
 function blockedOf(raw: string | undefined): string {
   if (!raw) return 'unknown'
-  if (/^[a-z-]+$/i.test(raw)) return raw.toLowerCase() // inline, eval, data, blob, wasm-eval
+  // inline, eval, data, blob, wasm-eval
+  if (/^[a-z-]+$/i.test(raw)) return raw.toLowerCase().slice(0, FIELD_MAX)
   try {
     const u = new URL(raw)
-    return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'wss:' || u.protocol === 'ws:'
-      ? u.origin
-      : u.protocol.replace(/:$/, '')
+    return (
+      u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'wss:' || u.protocol === 'ws:'
+        ? u.origin
+        : u.protocol.replace(/:$/, '')
+    ).slice(0, FIELD_MAX)
   } catch {
     return 'other'
   }
@@ -199,19 +215,30 @@ function pageOf(raw: string | undefined): string {
   try {
     const parts = new URL(raw).pathname.split('/').filter(Boolean)
     if (parts.length === 0) return '/'
-    return `/${parts[0]}${parts.length > 1 ? '/…' : ''}`
+    return `/${parts[0].slice(0, PAGE_SEGMENT_MAX)}${parts.length > 1 ? '/…' : ''}`
   } catch {
     return 'unknown'
   }
 }
 
+/**
+ * Файл, откуда шла попытка: origin и путь, но путь — под масками maskPath.
+ *
+ * Для инлайн-кода (а это чаще всего расширения, которые зовут eval прямо в
+ * странице) и для вставок парсера браузер кладёт сюда адрес САМОГО документа.
+ * pageOf свой адрес режет до раздела, а этот без масок вёз бы в лог ровно то,
+ * что там срезано: код комнаты (а он — доступ), id выбора, чужой steamid.
+ * Маски те же, что в отчётах об ошибках браузера (lib/clienterr.ts) — /privacy
+ * обещает одно и то же про оба лога. Заодно одно нарушение из разных комнат
+ * даёт один violationKey, и прореживание снова схлопывает его в одну строку.
+ */
 function sourceOf(raw: string | undefined): string | undefined {
   if (!raw) return undefined
   try {
     const u = new URL(raw)
     return u.protocol === 'http:' || u.protocol === 'https:'
-      ? `${u.origin}${u.pathname}`.slice(0, 200)
-      : u.protocol.replace(/:$/, '')
+      ? `${u.origin}${maskPath(u.pathname)}`.slice(0, FIELD_MAX)
+      : u.protocol.replace(/:$/, '').slice(0, FIELD_MAX)
   } catch {
     return undefined
   }
@@ -227,7 +254,7 @@ function violationOf(fields: {
 }): CspViolation | null {
   // violated-directive в старом формате — вся директива со значениями
   const directive = fields.directive?.split(' ')[0]
-  if (!directive || !/^[a-z-]+$/.test(directive)) return null
+  if (!directive || directive.length > DIRECTIVE_MAX || !/^[a-z-]+$/.test(directive)) return null
   const line = typeof fields.line === 'number' && Number.isFinite(fields.line) ? fields.line : undefined
   const source = sourceOf(fields.source)
   return {
@@ -236,7 +263,10 @@ function violationOf(fields: {
     page: pageOf(fields.document),
     ...(source ? { source } : {}),
     ...(line !== undefined ? { line } : {}),
-    ...(fields.disposition ? { disposition: fields.disposition } : {}),
+    // Значений у поля два; всё прочее — не браузер, и в лог оно не едет
+    ...(fields.disposition === 'enforce' || fields.disposition === 'report'
+      ? { disposition: fields.disposition }
+      : {}),
   }
 }
 

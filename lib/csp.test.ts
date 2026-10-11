@@ -223,6 +223,77 @@ describe('parseCspReports', () => {
     }))
     expect(parseCspReports(many)).toHaveLength(20)
   })
+
+  // Для инлайн-кода и вставок парсера браузер кладёт в source-file адрес
+  // самого документа — а в нём код комнаты, id выбора или чужой steamid.
+  test('файл-источник — адрес документа: код комнаты и steamid под масками', () => {
+    const [room] = parseCspReports({
+      'csp-report': {
+        'document-uri': 'https://imbored.cc/room/ABC123?join=ABC123',
+        'effective-directive': 'script-src',
+        'blocked-uri': 'eval',
+        'source-file': 'https://imbored.cc/room/ABC123',
+      },
+    })
+    expect(room.source).toBe('https://imbored.cc/room/:id')
+    const [compat] = parseCspReports([
+      {
+        type: 'csp-violation',
+        body: {
+          documentURL: 'https://imbored.cc/compat/76561198000000001',
+          effectiveDirective: 'script-src',
+          blockedURL: 'inline',
+          sourceFile: 'https://imbored.cc/compat/76561198000000001',
+        },
+      },
+    ])
+    expect(compat.source).toBe('https://imbored.cc/compat/:steamid')
+    const [pick] = parseCspReports({
+      'csp-report': {
+        'effective-directive': 'script-src',
+        'blocked-uri': 'eval',
+        'source-file': 'https://imbored.cc/pick/q7Zx9',
+      },
+    })
+    expect(pick.source).toBe('https://imbored.cc/pick/:id')
+  })
+
+  test('одно нарушение из разных комнат — один ключ прореживания', () => {
+    const report = (code: string) =>
+      parseCspReports({
+        'csp-report': {
+          'effective-directive': 'script-src',
+          'blocked-uri': 'eval',
+          'source-file': `https://imbored.cc/room/${code}`,
+        },
+      })[0]
+    expect(violationKey(report('ABC123'))).toBe(violationKey(report('XYZ789')))
+  })
+
+  test('поля отчёта ограничены: длинное не едет в лог целиком', () => {
+    const base = { 'document-uri': 'https://imbored.cc/', 'blocked-uri': 'eval' }
+    // disposition бывает только enforce или report, прочее отбрасывается
+    const [long] = parseCspReports({
+      'csp-report': { ...base, 'effective-directive': 'script-src', disposition: 'x'.repeat(1000) },
+    })
+    expect(long).not.toHaveProperty('disposition')
+    const [enforce] = parseCspReports({
+      'csp-report': { ...base, 'effective-directive': 'script-src', disposition: 'enforce' },
+    })
+    expect(enforce.disposition).toBe('enforce')
+    // выдуманная директива в пять тысяч букв — не директива
+    expect(parseCspReports({ 'csp-report': { ...base, 'effective-directive': 'a'.repeat(5000) } })).toEqual([])
+    // «ключевое слово» вместо адреса и первый сегмент страницы — с потолком
+    const [huge] = parseCspReports({
+      'csp-report': {
+        'effective-directive': 'img-src',
+        'blocked-uri': 'b'.repeat(5000),
+        'document-uri': `https://imbored.cc/${'p'.repeat(5000)}`,
+      },
+    })
+    expect(huge.blocked.length).toBeLessThanOrEqual(200)
+    expect(huge.page.length).toBeLessThanOrEqual(80)
+  })
 })
 
 describe('прореживание лога', () => {

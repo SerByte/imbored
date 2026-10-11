@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
-import { kickCron, kickFailLine, linksToday, openRun, runChain } from '@/lib/chain'
+import { KICK_RESERVE_MS, kickCron, kickFailLine, linksToday, openRun, runChain } from '@/lib/chain'
 import { dayKey } from '@/lib/daily'
 import {
   CRON_JOBS,
@@ -123,7 +123,7 @@ export async function GET(req: Request) {
          */
         if ((totals.inserted ?? 0) > 0) revalidateTag(NEWS_MAJOR_TAG, 'max')
 
-        await kickNeighbours(db)
+        await kickNeighbours(db, hardLeftMs)
 
         /*
          * Проба ключа Steam Web API (lib/steamprobe): раз в час, отсюда же —
@@ -197,10 +197,17 @@ async function dailyChores(db: Db): Promise<void> {
  * Пинок — один HTTP-запрос к соседнему роуту, а не звено: см. kickCron.
  * Своим try: чтение отметок — сетевой вызов к Turso, а исключение здесь не
  * должно лишить запуск пробы ключа ниже.
+ *
+ * Срок у пинков общий — жёсткий срок функции минус KICK_RESERVE_MS: запуск во
+ * все шесть звеньев доходит сюда с дюжиной секунд в запасе, и сосед на
+ * холодном старте не должен съесть их до maxDuration — тогда инстанс снимут
+ * раньше, чем Next сбросит карточки и ленту, накопленные за запуск. Срок —
+ * момент, а не остаток: второй пинок получает то, что оставил первый.
  */
-async function kickNeighbours(db: Db): Promise<void> {
+async function kickNeighbours(db: Db, hardLeftMs: () => number): Promise<void> {
   const secret = process.env.CRON_SECRET
   if (!secret) return
+  const deadlineAt = Date.now() + hardLeftMs() - KICK_RESERVE_MS
   try {
     const now = nowSec()
     const пинки: Array<{ cron: CronJob; надо: boolean }> = [
@@ -218,7 +225,7 @@ async function kickNeighbours(db: Db): Promise<void> {
     ]
     for (const { cron, надо } of пинки) {
       if (!надо) continue
-      const пинок = await kickCron(`${appBaseUrl()}/api/cron/${cron}`, secret)
+      const пинок = await kickCron(`${appBaseUrl()}/api/cron/${cron}`, secret, { deadlineAt })
       if (!пинок.ok) console.error(kickFailLine({ cron, reason: пинок.reason }))
     }
   } catch (err) {

@@ -354,10 +354,33 @@ export function chainEndLine(e: {
 
 const RETRY_DELAY_MS = 1500
 
-/** Пауза, вынесена ради теста: он не должен ждать полторы секунды. */
+/**
+ * Потолок одного запроса пинка. Соседний роут отвечает 202 после getDb и
+ * openRun — на холодном старте и медленном Turso это секунды, но не десятки:
+ * дольше висит уже не старт, а авария, и ждать её незачем.
+ */
+const KICK_TIMEOUT_MS = 30_000
+
+/** Меньше этого окна запрос не начинаем: на холодный сосед его не хватит. */
+const KICK_MIN_MS = 2_000
+
+/**
+ * Сколько оставить от жёсткого срока функции ПОСЛЕ пинков. Когда колбэк
+ * after() закончится, Next ещё сбрасывает накопленные за запуск
+ * revalidatePath/revalidateTag (withExecuteRevalidates) — это запросы к кэшу,
+ * и им нужно время до того, как инстанс снимут на maxDuration.
+ */
+export const KICK_RESERVE_MS = 5_000
+
 export type KickOpts = {
   fetchFn?: typeof fetch
+  /** Пауза, вынесена ради теста: он не должен ждать полторы секунды. */
   delayMs?: number
+  /**
+   * Момент (Date.now()), к которому пинок обязан кончиться со всеми
+   * попытками и паузой. Без него — только KICK_TIMEOUT_MS на запрос.
+   */
+  deadlineAt?: number
 }
 
 export type KickResult = { ok: true } | { ok: false; reason: string }
@@ -385,20 +408,42 @@ export type KickResult = { ok: true } | { ok: false; reason: string }
  * Второй пинок тогда упёрся бы в его аренду — вреда нет, но нет и толку, а
  * отказ сети к собственному хосту за полторы секунды не проходит.
  *
+ * СО СРОКОМ. Пинок живёт в хвосте крона (onEnd в runChain), а после хвоста
+ * Next сбрасывает всё, что запуск накопил в revalidatePath и revalidateTag.
+ * Без таймаута запрос к соседу, застрявшему на холодном старте или медленном
+ * Turso, ждал бы до maxDuration: инстанс снимают, и сброс карточек и ленты за
+ * весь запуск не случается — они живут в ISR ещё неделю со старым списком
+ * патчей. Поэтому у каждого запроса AbortSignal.timeout — до KICK_TIMEOUT_MS,
+ * но не дальше deadlineAt; нет окна на запрос — пинка нет, нет окна на паузу
+ * и второй запрос — отдаём первый ответ. Таймаут — тот же отказ сети: запрос
+ * мог дойти, и повтора нет.
+ *
  * Не бросает никогда: пинок не имеет права уронить конец запуска.
  */
 export async function kickCron(url: string, secret: string, opts: KickOpts = {}): Promise<KickResult> {
   const fetchFn = opts.fetchFn ?? fetch
   const delayMs = opts.delayMs ?? RETRY_DELAY_MS
+  const left = () => (opts.deadlineAt ?? Infinity) - Date.now()
+  let ответ = ''
 
   for (let попытка = 0; попытка < 2; попытка++) {
-    if (попытка) await new Promise((r) => setTimeout(r, delayMs))
+    if (попытка) {
+      if (left() < delayMs + KICK_MIN_MS) return { ok: false, reason: ответ }
+      await new Promise((r) => setTimeout(r, delayMs))
+    } else if (left() < KICK_MIN_MS) {
+      return { ok: false, reason: 'нет времени' }
+    }
     try {
-      const res = await fetchFn(url, { headers: { 'x-cron-secret': secret } })
+      const res = await fetchFn(url, {
+        headers: { 'x-cron-secret': secret },
+        signal: AbortSignal.timeout(Math.max(0, Math.floor(Math.min(KICK_TIMEOUT_MS, left())))),
+      })
       if (res.ok) return { ok: true }
       // Ответ пришёл — работы крон не начал. Второй заход безопасен.
-      if (попытка) return { ok: false, reason: `HTTP ${res.status}` }
+      ответ = `HTTP ${res.status}`
+      if (попытка) return { ok: false, reason: ответ }
     } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') return { ok: false, reason: 'таймаут' }
       return { ok: false, reason: err instanceof Error ? err.message.slice(0, 120) : 'сеть' }
     }
   }

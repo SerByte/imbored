@@ -158,6 +158,39 @@ describe('/api/cron/news', () => {
     expect(kicked).toEqual([`${BASE}/api/cron/pages`])
   })
 
+  test('пинок ждёт соседа не дольше срока функции', async () => {
+    // Сосед на холодном старте не должен держать хвост до maxDuration: после
+    // хвоста Next сбрасывает карточки и ленту, накопленные за запуск
+    await digestFresh()
+    const сигналы: unknown[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      kicked.push(url)
+      сигналы.push(init?.signal)
+      return new Response(JSON.stringify({ started: true }), { status: 202 })
+    })
+    await ask()
+    await settled()
+    expect(kicked).toEqual([`${BASE}/api/cron/pages`])
+    expect(сигналы[0]).toBeInstanceOf(AbortSignal)
+  })
+
+  test('запуск дошёл до хвоста впритык к сроку — соседей не пинает', async () => {
+    // Звено отработало почти все пять минут: до maxDuration три секунды, и
+    // их место — сбросу кэша, а не ожиданию соседа
+    await digestFresh()
+    const real = (await vi.importActual<typeof import('@/lib/newsjob')>('@/lib/newsjob')).runNewsSlice
+    vi.mocked(runNewsSlice).mockImplementationOnce(async (...a) => {
+      vi.setSystemTime((T0 + 297) * 1000)
+      return real(...a)
+    })
+    await ask()
+    await settled()
+    expect(kicked).toEqual([])
+    // а сам запуск при этом кончился как обычно
+    const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.news.lastKey)) ?? '{}') as Record<string, unknown>
+    expect(mark).toMatchObject({ links: 1, ended: 'done' })
+  })
+
   test('пересказы молчат дольше трёх часов — пинает и их', async () => {
     await ask()
     await settled()

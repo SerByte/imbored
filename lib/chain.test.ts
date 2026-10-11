@@ -495,6 +495,68 @@ describe('пинок соседнего крона', () => {
       kickCron('http://x', 's', { delayMs: 0, fetchFn: async () => { throw 'строка, не Error' } }),
     ).resolves.toMatchObject({ ok: false })
   })
+
+  /*
+   * Пинок стоит в хвосте крона, после которого Next сбрасывает накопленные за
+   * запуск revalidatePath/revalidateTag. Повиснет сосед до maxDuration —
+   * инстанс снимут, и сброс карточек за весь запуск пропадёт.
+   */
+  test('запрос пинка несёт сигнал отмены — и со сроком, и без него', async () => {
+    const сигналы: unknown[] = []
+    const fetchFn = async (_url: RequestInfo | URL, init?: RequestInit) => {
+      сигналы.push(init?.signal)
+      return ОТВЕТ(202)
+    }
+    await kickCron('http://x/api/cron/pages', 's', { delayMs: 0, fetchFn })
+    await kickCron('http://x/api/cron/pages', 's', { delayMs: 0, fetchFn, deadlineAt: Date.now() + 60_000 })
+    expect(сигналы).toHaveLength(2)
+    for (const s of сигналы) {
+      expect(s).toBeInstanceOf(AbortSignal)
+      expect((s as AbortSignal).aborted).toBe(false)
+    }
+  })
+
+  test('срок вызова на исходе — пинок не начинается', async () => {
+    let звонков = 0
+    const итог = await kickCron('http://x/api/cron/pages', 's', {
+      delayMs: 0,
+      deadlineAt: Date.now() + 500,
+      fetchFn: async () => {
+        звонков++
+        return ОТВЕТ(202)
+      },
+    })
+    expect(звонков).toBe(0)
+    expect(итог).toEqual({ ok: false, reason: 'нет времени' })
+  })
+
+  test('таймаут — как отказ сети: без повтора, и причина названа', async () => {
+    let звонков = 0
+    const итог = await kickCron('http://x/api/cron/pages', 's', {
+      delayMs: 0,
+      fetchFn: async () => {
+        звонков++
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+      },
+    })
+    expect(звонков).toBe(1)
+    expect(итог).toEqual({ ok: false, reason: 'таймаут' })
+  })
+
+  test('на паузу и повтор срока не хватает — отдаём первый ответ, не ждём', async () => {
+    let звонков = 0
+    const итог = await kickCron('http://x/api/cron/pages', 's', {
+      // пауза настоящая: дойди дело до неё, тест ждал бы полторы секунды
+      delayMs: 1500,
+      deadlineAt: Date.now() + 3000,
+      fetchFn: async () => {
+        звонков++
+        return ОТВЕТ(503)
+      },
+    })
+    expect(звонков).toBe(1)
+    expect(итог).toEqual({ ok: false, reason: 'HTTP 503' })
+  })
 })
 
 describe('строки для логов', () => {
