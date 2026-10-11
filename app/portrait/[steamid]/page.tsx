@@ -28,7 +28,7 @@ import { claudePortraitText, llmAvailable } from '@/lib/llm'
 import { takeLlmBudget } from '@/lib/llmcap'
 import { reconnectHref } from '@/lib/destination'
 import { OG_SITE } from '@/lib/site'
-import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
+import { gamesCaption, playedFact, unplayedCaption } from '@/lib/factcaptions'
 import { dateLabel } from '@/lib/freshness'
 import { playedLine } from '@/lib/outcome'
 import { pickYearWindow, yearEyebrow, yearsToRead, type WrappedYear } from '@/lib/wrapped'
@@ -261,7 +261,9 @@ async function loadModel(
     // v6 — у игр топа есть минуты (WrappedGame.minutes): запись v5 без них
     // сутки подписывала бы всю «Куда ушло время» как «0 ч». Заодно доля
     // топ-игры из минут и «полные дни» вниз — без смены ключа запись v5
-    // сутки держала бы «142%» и «1 полный день» за 12 часов
+    // сутки держала бы «142%» и «1 полный день» за 12 часов. И всё наигранное —
+    // минутами (Wrapped.totalMinutes, а не готовые часы): запись без поля
+    // отдала бы герою undefined вместо «0 часов»
     ['portrait-model:v6', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
@@ -486,7 +488,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               </div>
             ) : (
               <>
-                <Fact value={wrapped.totalHours} caption={hoursCaption(wrapped.totalHours)} delay={360} />
+                {/* Меньше получаса на всю библиотеку — минутами (playedFact):
+                    «0 часов» стояло над «Куда ушло время» с «20 мин» */}
+                <Fact {...playedFact(wrapped.totalMinutes)} delay={360} />
                 <Fact
                   value={wrapped.unplayedCount}
                   caption={unplayedCaption(wrapped.unplayedCount)}

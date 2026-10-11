@@ -5,7 +5,7 @@ import { CANVAS_TALL, CANVAS_WIDE, WALL_TALL, WALL_WIDE } from '@/lib/ogwall'
 import { buildPortrait } from '@/lib/portrait'
 import { getDb } from '@/lib/server'
 import { buildWrapped } from '@/lib/wrapped'
-import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
+import { gamesCaption, playedFact, unplayedCaption } from '@/lib/factcaptions'
 
 /**
  * Общая начинка для двух картинок: OG-превью 1200×630 и скачиваемой карточки
@@ -22,7 +22,8 @@ export const fonts = ogFonts
 
 export type CardData = {
   name: string
-  totalHours: number
+  /** Минуты, а не часы: подпись решает playedFact, как у героя портрета */
+  totalMinutes: number
   gamesCount: number
   unplayedCount: number
   archetypes: string[]
@@ -63,7 +64,7 @@ export async function loadCardData(steamid: string): Promise<CardData | null> {
 
   return {
     name: (await getPersonaName(db, steamid)) ?? `Игрок ${steamid.slice(-4)}`,
-    totalHours: wrapped.totalHours,
+    totalMinutes: wrapped.totalMinutes,
     gamesCount: wrapped.gamesCount,
     unplayedCount: wrapped.unplayedCount,
     archetypes: portrait.archetypes.filter((a) => a.known).slice(0, 2).map((a) => a.label),
@@ -88,6 +89,7 @@ const num = ogNum
  * в чате читалась как таблица, а не как чей-то портрет.
  */
 export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
+  const played = playedFact(data.totalMinutes)
   return (
     <div
       style={{
@@ -149,7 +151,7 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
           </div>
         ) : (
           <div style={{ display: 'flex' }}>
-            <Stat value={num(data.totalHours)} caption={hoursCaption(data.totalHours)} wide={wide} />
+            <Stat value={num(played.value)} caption={played.caption} wide={wide} />
             <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount)} wide={wide} />
             <Stat
               value={num(data.unplayedCount)}

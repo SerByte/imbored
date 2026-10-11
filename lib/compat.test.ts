@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { COMMON_SHOWN, compatibility, pairTasteProfile, tasteCosine, verdict } from './compat'
+import { COMMON_SHOWN, commonTimeLine, compatibility, pairTasteProfile, tasteCosine, verdict } from './compat'
 import { buildTagProfile } from './recommend'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
@@ -18,6 +18,9 @@ const METAS = new Map<number, GameMeta>([
   [3, meta(3, { MOBA: 100 })],
 ])
 const metaOf = (id: number) => METAS.get(id)
+
+/** Пара, где время открыто у обоих, — для подписи commonTimeLine */
+const OPEN_PAIR = { otherName: 'mira', myTimeHidden: false, otherTimeHidden: false }
 
 /**
  * Карта тегов с реальными пропорциями каталога: Singleplayer больше чем у
@@ -84,8 +87,24 @@ describe('compatibility', () => {
       [1, 25, 10],
       [2, 0, 0],
     ])
-    // «вместе» — из суммы минут: 35 минут — это «1 час», а не два раза по «0 ч»
-    expect(out.commonHours).toBe(1)
+    // «вместе» — сумма минут, а не сумма округлённых строк: 35 минут — это
+    // «1 час», а не два раза по «0 ч»
+    expect(out.commonMinutes).toBe(35)
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: out.commonMinutes })).toBe('Вместе в них — 1 час.')
+  })
+
+  /**
+   * Строки уже говорили «20 мин | 5 мин», а итог над ними — «Вместе в них —
+   * 0 часов»: сумму округляли до часов раньше, чем решали, как её подписать.
+   * До правки строк оба нуля хотя бы совпадали; после — страница спорила сама
+   * с собой.
+   */
+  test('всё пересечение меньше получаса — итог в минутах, как строки под ним', () => {
+    const mins = (appid: number, m: number): LibraryGame => ({ ...lib(appid, 0), playtimeForever: m })
+    const out = compatibility([mins(1, 20)], [mins(1, 5)], metaOf, TAG_STATS)
+    expect(out.commonGames.map((g) => [g.minutesA, g.minutesB])).toEqual([[20, 5]])
+    expect(out.commonMinutes).toBe(25)
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: out.commonMinutes })).toBe('Вместе в них — 25 минут.')
   })
 
   test('пустые библиотеки не роняют', () => {
@@ -93,7 +112,7 @@ describe('compatibility', () => {
     expect(out.percent).toBe(0)
     expect(out.commonGames).toEqual([])
     expect(out.commonTotal).toBe(0)
-    expect(out.commonHours).toBe(0)
+    expect(out.commonMinutes).toBe(0)
     expect(out.sharedTags).toEqual([])
   })
 
@@ -109,8 +128,8 @@ describe('compatibility', () => {
 
     expect(out.commonGames).toHaveLength(COMMON_SHOWN)
     expect(out.commonTotal).toBe(12)
-    // 10+20+…+120 у первого, 5×12 у второго — включая две игры вне среза
-    expect(out.commonHours).toBe(780 + 60)
+    // 10+20+…+120 часов у первого, 5×12 у второго — включая две игры вне среза
+    expect(out.commonMinutes).toBe((780 + 60) * 60)
   })
 })
 
@@ -131,7 +150,7 @@ describe('скрытое время в Steam', () => {
     expect(out.timeHiddenB).toBe(false)
     expect(out.commonGames).toEqual([{ appid: 1002, name: 'Игра 1002', minutesA: null, minutesB: 3000 }])
     // «вместе» — только известные часы
-    expect(out.commonHours).toBe(50)
+    expect(out.commonMinutes).toBe(50 * 60)
     // профиль скрытой стороны не пуст — общие темы находятся
     expect(out.sharedTags).toContain('Story Rich')
   })
@@ -140,7 +159,7 @@ describe('скрытое время в Steam', () => {
     const out = compatibility(hiddenLibrary(), hiddenLibrary(12), both, TAG_STATS)
     expect(out.commonTotal).toBe(12)
     expect(out.commonGames.every((g) => g.minutesA === null && g.minutesB === null)).toBe(true)
-    expect(out.commonHours).toBe(0)
+    expect(out.commonMinutes).toBe(0)
   })
 
   test('вкус пары — сумма профилей: скрытая половина не пропадает', () => {
@@ -169,6 +188,42 @@ const STEPS = [
   'Отличная пара для коопа',
   'Вы буквально один человек',
 ]
+
+/**
+ * Подзаголовок «Общие игры». Сумма — playedWords: те же полчаса порога, что у
+ * строк (playedShort), иначе итог и строки под ним расходятся.
+ */
+describe('commonTimeLine', () => {
+  test('часы склоняются, тысячи — с разрядами', () => {
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 3 * 60 })).toBe('Вместе в них — 3 часа.')
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 1234 * 60 })).toBe(
+      `Вместе в них — ${(1234).toLocaleString('ru-RU')} часа.`,
+    )
+  })
+
+  test('меньше получаса — минуты; ни одной минуты — честные «0 часов»', () => {
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 1 })).toBe('Вместе в них — 1 минута.')
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 29 })).toBe('Вместе в них — 29 минут.')
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 30 })).toBe('Вместе в них — 1 час.')
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 0 })).toBe('Вместе в них — 0 часов.')
+  })
+
+  /** Рядом со строкой «скрыто | 20 мин» — те же 20 минут, а не «0 часов» */
+  test('время скрыто у одного — сумма второго, тоже минутами', () => {
+    expect(commonTimeLine({ ...OPEN_PAIR, myTimeHidden: true, commonMinutes: 20 })).toBe(
+      'У mira в них — 20 минут, твоё время скрыто.',
+    )
+    expect(commonTimeLine({ ...OPEN_PAIR, otherTimeHidden: true, commonMinutes: 20 })).toBe(
+      'У тебя в них — 20 минут, время mira скрыто.',
+    )
+  })
+
+  test('скрыто у обоих — без суммы', () => {
+    expect(commonTimeLine({ otherName: 'mira', myTimeHidden: true, otherTimeHidden: true, commonMinutes: 0 })).toBe(
+      'Время в играх скрыто у обоих — сравниваем только сами игры.',
+    )
+  })
+})
 
 describe('verdict', () => {
   /**

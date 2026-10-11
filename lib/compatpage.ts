@@ -63,7 +63,8 @@ export type CompatResult = {
   commonGames: CompatGame[]
   /** всё пересечение, а не показанный срез */
   commonTotal: number
-  commonHours: number
+  /** минуты, не часы: подпись округляет сама (commonTimeLine в lib/compat) */
+  commonMinutes: number
   sharedTags: string[]
   /** есть у обоих — во что сесть сегодня */
   playNow: CompatPick[]
@@ -321,7 +322,7 @@ export async function loadCompat(
       percent: compat.percent,
       commonGames,
       commonTotal: compat.commonTotal,
-      commonHours: compat.commonHours,
+      commonMinutes: compat.commonMinutes,
       sharedTags: compat.sharedTags,
       playNow: picks.filter((p) => p.ownedByAll).slice(0, SHELF),
       playLater: picks.filter((p) => !p.ownedByAll).slice(0, SHELF),

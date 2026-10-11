@@ -10,7 +10,7 @@ import { Icon } from '@/components/Icon'
 import { Magnet } from '@/components/Magnet'
 import { DiscountCorner, PriceTag } from '@/components/PriceTag'
 import { SplitHeading } from '@/components/SplitHeading'
-import { verdict } from '@/lib/compat'
+import { commonTimeLine, verdict } from '@/lib/compat'
 import { tagRu } from '@/lib/tagsru'
 import { OG_SITE } from '@/lib/site'
 import {
@@ -18,7 +18,6 @@ import {
   type CompatGame,
   type CompatInvite,
   type CompatPick,
-  type CompatResult,
   loadCompat,
   loadCompatInvite,
 } from '@/lib/compatpage'
@@ -446,7 +445,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         <m.section {...inView(1)}>
           {d.commonTotal > 0 ? (
             <>
-              <SectionTitle sub={commonHoursLine(d)} className="mb-4">
+              <SectionTitle sub={commonTimeLine(d)} className="mb-4">
                 Общие игры
               </SectionTitle>
               {/* Легенда заодно подписывает колонки: какое число чьё, иначе
@@ -526,21 +525,6 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
       </div>
     </div>
   )
-}
-
-/**
- * «Вместе в них — N часов» — только когда часы известны у обоих. Время скрыто
- * у одного (lib/playtime.ts) — сумма была бы часами второго, выданными за
- * общие; скрыто у обоих — считать нечего.
- */
-function commonHoursLine(
-  d: Pick<CompatResult, 'commonHours' | 'myName' | 'otherName' | 'myTimeHidden' | 'otherTimeHidden'>,
-): string {
-  const hours = `${ru(d.commonHours)} ${plural(d.commonHours, 'час', 'часа', 'часов')}`
-  if (d.myTimeHidden && d.otherTimeHidden) return 'Время в играх скрыто у обоих — сравниваем только сами игры.'
-  if (d.myTimeHidden) return `У ${d.otherName} в них — ${hours}, твоё время скрыто.`
-  if (d.otherTimeHidden) return `У тебя в них — ${hours}, время ${d.otherName} скрыто.`
-  return `Вместе в них — ${hours}.`
 }
 
 /** Шапка приглашения: то же лицо, что и на карточке для мессенджера */

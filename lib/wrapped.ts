@@ -50,7 +50,12 @@ export type Wrapped = {
    * нулей говорит «время скрыто».
    */
   playtimeHidden: boolean
-  totalHours: number
+  /**
+   * Всё наигранное — сырыми минутами, а не часами: часы округляет подпись
+   * (playedFact в lib/factcaptions). Из готовых часов библиотека на двадцать
+   * минут была «0 часов» над «Куда ушло время» с теми же «20 мин».
+   */
+  totalMinutes: number
   /**
    * Целые сутки за экраном — округление ВНИЗ, из сырых минут. Страница пишет
    * «N полных дней»: округление к ближайшему выдавало «1 полный день» за 12
@@ -89,7 +94,6 @@ type MetaOf = (appid: number) => GameMeta | undefined
 
 export function buildWrapped(library: LibraryGame[], metaOf: MetaOf): Wrapped {
   const totalMinutes = library.reduce((s, g) => s + g.playtimeForever, 0)
-  const totalHours = Math.round(totalMinutes / 60)
 
   const played = library
     .filter((g) => g.playtimeForever > 0)
@@ -141,7 +145,7 @@ export function buildWrapped(library: LibraryGame[], metaOf: MetaOf): Wrapped {
   return {
     gamesCount: library.length,
     playtimeHidden: hidden,
-    totalHours,
+    totalMinutes,
     days: Math.floor(totalMinutes / 1440),
     era: buildEra(played, metaOf, totalMinutes),
     unplayedCount: unplayed.length,

@@ -45,7 +45,7 @@ describe('buildWrapped — числа', () => {
   test('часы, сутки, количество игр', () => {
     const w = buildWrapped([lib(1, 300), lib(2, 100), lib(3, 50)], metaOf)
     expect(w.gamesCount).toBe(3)
-    expect(w.totalHours).toBe(450)
+    expect(w.totalMinutes).toBe(450 * 60)
     // 450 ч = 18 д 18 ч: страница пишет «полных дней», значит вниз
     expect(w.days).toBe(18)
   })
@@ -126,7 +126,7 @@ describe('buildWrapped — деградация', () => {
   test('пустая библиотека не роняет и не даёт NaN', () => {
     const w = buildWrapped([], metaOf)
     expect(w.gamesCount).toBe(0)
-    expect(w.totalHours).toBe(0)
+    expect(w.totalMinutes).toBe(0)
     expect(w.days).toBe(0)
     expect(w.pareto80).toBe(0)
     expect(w.concentration).toBe(0)
@@ -136,7 +136,7 @@ describe('buildWrapped — деградация', () => {
 
   test('нулевые часы у всех игр не дают NaN и не делят на ноль', () => {
     const w = buildWrapped([lib(1, 0), lib(2, 0)], metaOf)
-    expect(w.totalHours).toBe(0)
+    expect(w.totalMinutes).toBe(0)
     expect(w.concentration).toBe(0)
     expect(w.pareto80).toBe(0)
     expect(w.top).toEqual([])

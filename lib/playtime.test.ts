@@ -7,6 +7,7 @@ import {
   HIDDEN_PLAYTIME_MIN_GAMES,
   minutesHidden,
   playedShort,
+  playedWords,
   playtimeHidden,
   timeHiddenStore,
 } from './playtime'
@@ -129,13 +130,44 @@ describe('playedShort', () => {
     expect(playedShort(0)).toBe('0 ч')
   })
 
-  test('портрет и /compat подписывают часы через неё, а не «{hours} ч»', () => {
+  /**
+   * /library держала своё правило по месту и уже разошлась: «1234 ч» без
+   * разрядов против «1 234 ч» портрета. Одно правило — одна функция.
+   */
+  test('портрет, /compat и плитки /library подписывают часы через неё, а не «{hours} ч»', () => {
     const ROOT = path.join(__dirname, '..')
     const portrait = fs.readFileSync(path.join(ROOT, 'app/portrait/[steamid]/page.tsx'), 'utf8')
     const compat = fs.readFileSync(path.join(ROOT, 'app/compat/[steamid]/page.tsx'), 'utf8')
+    const library = fs.readFileSync(path.join(ROOT, 'app/library/page.tsx'), 'utf8')
     expect(portrait).toContain('{playedShort(g.minutes)}')
     expect(portrait).not.toMatch(/g\.hours\.toLocaleString\('ru-RU'\)\} ч/)
     expect(compat).toMatch(/playedShort\(m\)/)
+    expect(library).toContain('{playedShort(g.playtimeForever)}')
+    expect(library).not.toMatch(/`\$\{hours\} ч`/)
+    expect(library).not.toMatch(/\} мин`/)
+  })
+})
+
+/**
+ * Итог прозой над строками playedShort: порог обязан быть тем же, иначе над
+ * «20 мин | 5 мин» стоит «Вместе в них — 0 часов».
+ */
+describe('playedWords', () => {
+  test('меньше получаса — минуты со склонением', () => {
+    expect(playedWords(25)).toBe('25 минут')
+    expect(playedWords(1)).toBe('1 минута')
+    expect(playedWords(22)).toBe('22 минуты')
+    expect(playedWords(29)).toBe('29 минут')
+  })
+
+  test('от получаса — округлённые часы, тысячи с разрядами', () => {
+    expect(playedWords(30)).toBe('1 час')
+    expect(playedWords(3 * 60)).toBe('3 часа')
+    expect(playedWords(1235 * 60)).toBe(`${(1235).toLocaleString('ru-RU')} часов`)
+  })
+
+  test('ноль — «0 часов»: общие игры есть, их не запускали', () => {
+    expect(playedWords(0)).toBe('0 часов')
   })
 })
 

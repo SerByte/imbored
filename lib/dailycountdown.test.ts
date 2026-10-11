@@ -39,7 +39,8 @@ describe('отсчёт до следующей игры дня', () => {
     expect(html).not.toContain('Следующая через')
     expect(html).toContain('Игра дня сменилась')
     expect(html).toMatch(/<button type="button"[^>]*>Показать<\/button>/)
-    // aria-disabled, а не disabled — сторож lib/disabledfocus.test.ts
+    // без disabled: кнопка рабочая всегда, а disabled ловит сторож
+    // lib/disabledfocus.test.ts
     expect(html).not.toMatch(/\sdisabled/)
   })
 })

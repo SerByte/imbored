@@ -46,7 +46,7 @@ describe('совместимость при скрытом времени', () =
     expect(state.data).toMatchObject({ myTimeHidden: true, otherTimeHidden: false, commonTotal: 12 })
     expect(state.data.commonGames.every((g) => g.minutesA === null && (g.minutesB ?? 0) > 0)).toBe(true)
     // «вместе» — только часы второго
-    expect(state.data.commonHours).toBe(Math.round((12 * 13 * 120) / 2 / 60))
+    expect(state.data.commonMinutes).toBe((12 * 13 * 120) / 2)
   })
 })
 
