@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createElement, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import ts from 'typescript'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { CardDownload } from '../components/CardDownload'
 import { useShareLink, type ShareLink } from '../components/ShareLink'
@@ -66,8 +67,9 @@ describe('ссылки, которыми делятся', () => {
  *
  * Кнопка слала share_click с одним источником вкладки, и все кнопки сайта —
  * комната, сравнение, портрет, итоги года, выбор, патч — ложились одной
- * строкой. Здесь — что нажатие уходит с тем «что», которое дала кнопка, и что
- * скачивание карточки тоже доходит до счётчика.
+ * строкой. Здесь — что нажатие уходит с тем «что», которое дала кнопка, что
+ * кнопка даёт своё «что», а не соседское, что скачивание карточки тоже доходит
+ * до счётчика и что политика называет каждое «что».
  */
 describe('телеметрия шаринга', () => {
   afterEach(() => {
@@ -148,29 +150,150 @@ describe('телеметрия шаринга', () => {
   /*
    * Политика перечисляет считаемые шаги поимённо (как «Где взять?» в
    * lib/linkhelp.test.ts): новый счётчик, которого в ней нет, делает её
-   * неправдой. И «что» здесь — тоже новое знание о нажатии, его надо назвать.
+   * неправдой. И «что» здесь — тоже новое знание о нажатии, его надо назвать,
+   * причём каждое: share:match.* считается, даже если кнопки матча ещё нет, и
+   * общая фраза «вместе с тем, чем поделились» с неполным списком после неё
+   * врала бы так же, как молчание. Слова — Record по ShareKind: новое «что» не
+   * соберётся (tsc), пока ему не дали слово, а без слова в политике упадёт
+   * здесь.
    */
+  const SHARE_WORDS: Record<ShareKind, string> = {
+    room: 'пати',
+    compat: 'сравнением',
+    portrait: 'портретом',
+    year: 'итогами года',
+    pick: 'выбором',
+    patch: 'патчем',
+    match: 'матчем',
+  }
+
   test('/privacy называет, что «Поделиться» считается с тем, чем, и «Скачать карточку»', () => {
     const policy = fs.readFileSync(path.join(ROOT, 'app', 'privacy', 'page.tsx'), 'utf8').replace(/\s+/g, ' ')
-    expect(policy).toMatch(/Ещё мы считаем несколько шагов:[^.]*«Поделиться» — вместе с тем, чем поделились/)
-    expect(policy).toMatch(/Ещё мы считаем несколько шагов:[^.]*«Скачать карточку»/)
+    const steps = policy.match(/Ещё мы считаем несколько шагов:[^.]*/)?.[0] ?? ''
+    expect(steps).toMatch(/«Скачать карточку»/)
+    // Только сам список после двоеточия: «пати» есть в абзаце и у приглашения
+    const shared = steps.match(/«Поделиться» — вместе с тем, чем поделились:([^—]*)—/)?.[1] ?? ''
+    expect(shared, 'список «чем поделились» не нашёлся — сторож ослеп').not.toBe('')
+    expect(SHARE_KINDS.filter((what) => !shared.includes(SHARE_WORDS[what]))).toEqual([])
   })
 
   /*
    * Новая ссылка «скачать» мимо CardDownload снова не считалась бы — ровно
-   * то, что было с обеими карточками. Проверка текстовая: тег, к которому
-   * относится атрибут download.
+   * то, что было с обеими карточками.
    */
   test('каждая ссылка с download — через CardDownload', () => {
-    const tags: string[] = []
-    for (const [file, src] of sources()) {
-      const code = withoutComments(src)
-      for (const hit of code.matchAll(/\sdownload[=\s]/g)) {
-        const open = code.lastIndexOf('<', hit.index)
-        tags.push(`${file}: ${code.slice(open + 1).match(/^[\w.]+/)?.[0] ?? '?'}`)
-      }
-    }
+    const tags = sources().flatMap(([file, src]) => downloadTags(file, src).map((tag) => `${file}: ${tag}`))
     expect(tags.length, 'ни одной ссылки «скачать» не найдено — сторож ослеп').toBeGreaterThanOrEqual(2)
     expect(tags.filter((t) => !t.endsWith(': CardDownload'))).toEqual([])
   })
+
+  // Сторож выше слеп ровно настолько, насколько слеп его разбор: булев
+  // download перед «>» — та самая несчитанная ссылка, а одноимённая
+  // переменная — не ссылка вовсе и не должна валить прогон чужим тегом
+  test('download видится атрибутом любого вида и только атрибутом', () => {
+    const src = [
+      'const download = true',
+      'const a = <a href="/x.png" download>x</a>',
+      'const b = <a href="/y.png" download/>',
+      'const c = <m.a download={name} />',
+      'save({ download })',
+    ].join('\n')
+    expect(downloadTags('x.tsx', src)).toEqual(['a', 'a', 'm.a'])
+  })
+
+  /*
+   * Кто чем делится. tsc требует «что» у каждой кнопки, но не проверяет, то
+   * ли оно: PatchShare с 'pick' собрался бы, тесты выше прошли бы, а строки,
+   * ради которых счётчик и разделён, снова смешались бы — молча и под чужими
+   * именами. Поэтому у каждого файла, который делится или отдаёт карточку,
+   * здесь записано его «что»; новый файл (экран матча — с 'match') попадает
+   * в список руками, и всё, что он передаёт, обязано быть строкой-литералом:
+   * переменную текстом не проверить.
+   */
+  const SHARERS: Record<string, ShareKind> = {
+    'app/room/[id]/page.tsx': 'room',
+    'app/compat/CopyCompatLink.tsx': 'compat',
+    'app/compat/page.tsx': 'compat',
+    'app/portrait/[steamid]/page.tsx': 'portrait',
+    'app/portrait/[steamid]/year/page.tsx': 'year',
+    'components/SharePick.tsx': 'pick',
+    'components/PatchShare.tsx': 'patch',
+  }
+
+  test('каждая кнопка передаёт своё «что», а не соседское', () => {
+    const found: Record<string, string[]> = {}
+    for (const [file, src] of sources()) {
+      // Там сами useShareLink и ShareLinkField: «что» они только передают дальше
+      if (file === 'components/ShareLink.tsx') continue
+      const kinds = shareKinds(file, src)
+      if (kinds.length) found[file] = kinds
+    }
+    const wrong = Object.entries(found).flatMap(([file, kinds]) =>
+      kinds.filter((what) => what !== SHARERS[file]).map((what) => `${file}: ${what}`),
+    )
+    expect(wrong, 'чужое «что», не литерал или файл не записан в SHARERS').toEqual([])
+    expect(Object.keys(found).sort(), 'запись в SHARERS без кнопки — сторож смотрит мимо').toEqual(
+      Object.keys(SHARERS).sort(),
+    )
+  })
+
+  test('«что» снимается со всех трёх мест и только литералом', () => {
+    const src = [
+      "const a = useShareLink('room', url, t, x)",
+      "const b = useShareLink(kind, url, t, x)",
+      'const c = <ShareLinkField what="compat" url={u} label="" title="" text="" />',
+      "const d = <CardDownload what={'year'} href={h} />",
+      'const e = <CardDownload what={kind} href={h} />',
+    ].join('\n')
+    expect(shareKinds('x.tsx', src)).toEqual(['room', '?', 'compat', 'year', '?'])
+  })
 })
+
+/**
+ * Дерево файла для сторожей, которым мало регулярки: атрибут JSX надо
+ * отличать от одноимённой переменной, а булев download без значения — видеть.
+ * Комментарии в дерево не попадают сами.
+ */
+function nodesOf(file: string, src: string): ts.Node[] {
+  const kind = file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  const out: ts.Node[] = []
+  const walk = (node: ts.Node) => {
+    out.push(node)
+    ts.forEachChild(node, walk)
+  }
+  walk(ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, kind))
+  return out
+}
+
+/** Теги, у которых стоит атрибут download, — в порядке файла */
+function downloadTags(file: string, src: string): string[] {
+  if (!src.includes('download')) return []
+  return nodesOf(file, src)
+    .filter((n): n is ts.JsxAttribute => ts.isJsxAttribute(n) && n.name.getText() === 'download')
+    .map((attr) => attr.parent.parent.tagName.getText())
+}
+
+/**
+ * «Что» каждой кнопки файла: первый аргумент useShareLink и атрибут what у
+ * ShareLinkField и CardDownload. Не строка-литерал — '?'.
+ */
+function shareKinds(file: string, src: string): string[] {
+  if (!/useShareLink|ShareLinkField|CardDownload/.test(src)) return []
+  const literal = (expr: ts.Node | undefined): string => {
+    if (expr && ts.isJsxExpression(expr)) return literal(expr.expression)
+    return expr && ts.isStringLiteralLike(expr) ? expr.text : '?'
+  }
+  const kinds: string[] = []
+  for (const n of nodesOf(file, src)) {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'useShareLink') {
+      kinds.push(literal(n.arguments[0]))
+    } else if (
+      (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
+      ['ShareLinkField', 'CardDownload'].includes(n.tagName.getText())
+    ) {
+      const what = n.attributes.properties.find((p) => ts.isJsxAttribute(p) && p.name.getText() === 'what')
+      kinds.push(literal(what && ts.isJsxAttribute(what) ? what.initializer : undefined))
+    }
+  }
+  return kinds
+}

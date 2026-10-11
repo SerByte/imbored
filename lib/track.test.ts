@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { telemetryKey } from './telemetry'
 import {
   CARD_KINDS,
   captureRef,
@@ -8,6 +9,7 @@ import {
   eventKey,
   parseRef,
   parseTrackEvent,
+  REF_SOURCES,
   SHARE_KINDS,
   stepKey,
   track,
@@ -149,6 +151,24 @@ describe('чем поделились', () => {
     eventKey('card_download', 'room.direct')
     // @ts-expect-error у простого шага — источник, а не «что.источник»
     eventKey('launch_click', 'room.direct')
+  })
+
+  /*
+   * Граница ключей из lib/track («что» × источник) — пересчётом по спискам,
+   * а не числом: новая метка в REF_SOURCES или новая кнопка в SHARE_KINDS
+   * двигает её сама, и записанное число в комментарии тихо врало бы. Каждый
+   * ключ здесь достижим настоящим маяком (разбор сервера, а не сборка руками)
+   * и проходит алфавит счётчиков: иначе строка молча легла бы как 'other'.
+   */
+  test('ключей шаринга — ровно «что» × источник, и каждый проходит в таблицу как есть', () => {
+    const sources = [...REF_SOURCES, 'direct']
+    const keysOf = (event: 'share' | 'card_download', kinds: readonly string[]) =>
+      new Set(kinds.flatMap((what) => sources.map((source) => stepKey(parseTrackEvent({ event, what, source })!))))
+    const shares = keysOf('share', SHARE_KINDS)
+    const cards = keysOf('card_download', CARD_KINDS)
+    expect(shares.size).toBe(SHARE_KINDS.length * sources.length)
+    expect(cards.size).toBe(CARD_KINDS.length * sources.length)
+    for (const key of [...shares, ...cards]) expect(telemetryKey(key)).toBe(key)
   })
 })
 
