@@ -1,9 +1,10 @@
 'use client'
 
 import { AnimatePresence, m } from 'framer-motion'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
@@ -31,6 +32,7 @@ import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
+import { planLine, type EveningPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { reviewsBrief } from '@/lib/gametraits'
@@ -287,6 +289,53 @@ const CHOSEN_MS = 1300
  */
 const LEAVE_MS = 320
 
+/*
+ * «Сыграю вечером на ПК» (lib/eveningplan.ts) — лениво: строка нужна только
+ * своей игре и только под пальцем, а маршрут стоит у потолка бюджета первой
+ * загрузки (bundle-budget.json). Рантайм next/dynamic здесь уже есть — его
+ * везёт HeroShots, так что обёртка стоит десятки байт, а не килобайт.
+ */
+const TonightButton = dynamic(() => import('@/components/TonightButton').then((m) => m.TonightButton), {
+  ssr: false,
+})
+
+/**
+ * Строка с запуском под героем — «Продолжить» и план на вечер
+ * (lib/eveningplan.ts). Одна разметка на обе: вид у них один, а /play стоит у
+ * потолка бюджета (bundle-budget.json), и вторая копия классов весила бы
+ * столько же, сколько сама строка. fineOnly — только там, где кнопка
+ * запускает (pointer-fine, признак развилки SteamLaunch): без кнопки строка
+ * плана была бы упрёком, а не дверью.
+ */
+function LaunchRow({
+  appid,
+  label,
+  fineOnly = false,
+  onLaunch,
+  children,
+}: {
+  appid: number
+  label: string
+  fineOnly?: boolean
+  onLaunch: () => void
+  children: ReactNode
+}) {
+  return (
+    <div className={`mx-auto w-full max-w-6xl px-safe pt-8${fineOnly ? ' hidden pointer-fine:block' : ''}`}>
+      <div className="panel-lift px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+        <span className="text-dim">{children}</span>
+        <SteamLaunch
+          appid={appid}
+          label={label}
+          mobileLabel={fineOnly ? null : undefined}
+          onClick={onLaunch}
+          className="tap font-extrabold text-ember-text hover:underline"
+        />
+      </div>
+    </div>
+  )
+}
+
 function Player({ say }: { say: (line: string) => void }) {
   const router = useRouter()
   const search = useSearchParams()
@@ -335,6 +384,8 @@ function Player({ say }: { say: (line: string) => void }) {
   const [discoveries, setDiscoveries] = useState<Pick[]>([])
   /** То, во что он играет сейчас (pickContinue): строка под героем, не карточка */
   const [continueGame, setContinueGame] = useState<ContinueGame | null>(null)
+  /** План на вечер (lib/eveningplan.ts): поставленное на загрузку — строкой с запуском */
+  const [plan, setPlan] = useState<EveningPlan | null>(null)
   /** Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера, строка над «Продолжить» */
   const [timeHidden, setTimeHidden] = useState(false)
   const [index, setIndex] = useState(0)
@@ -730,6 +781,7 @@ function Player({ say }: { say: (line: string) => void }) {
       setPicks(deal.picks)
       setDiscoveries(deal.discoveries)
       setContinueGame(deal.continueGame)
+      setPlan(deal.plan)
       setTimeHidden(deal.playtimeHidden)
       // И на устройство: /quiz и строка ожидания узнают признак до ответа
       timeHiddenStore.set(deal.playtimeHidden ? true : null)
@@ -785,11 +837,12 @@ function Player({ say }: { say: (line: string) => void }) {
         nowSec: meta.nowSec,
         viewer: meta.viewer,
         playtimeHidden: timeHidden,
+        plan,
       },
       hero: picks[Math.min(index, picks.length - 1)].appid,
       liked: [...liked],
     })
-  }, [phase, picks, discoveries, continueGame, timeHidden, engine, lean, scope, seed, nudge, index, liked, cacheKey])
+  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, nudge, index, liked, cacheKey])
 
   useEffect(() => {
     /*
@@ -2213,6 +2266,19 @@ function Player({ say }: { say: (line: string) => void }) {
                   />
                 </m.p>
               )}
+              {/* Своя игра на телефоне — «Сыграю вечером на ПК»: запустить её
+                  отсюда нельзя, а вечером на компьютере она вернётся строкой
+                  над «Продолжить» (lib/eveningplan.ts). План, а не оценка.
+                  Кнопка сама прячется на компьютере и у не пишущей сессии —
+                  поэтому без обёртки: пустой узел в колонке героя всё равно
+                  взял бы себе зазор gap-4 */}
+              {pick.source !== 'new' && !pick.storeUrl && (
+                <TonightButton
+                  key={pick.appid}
+                  name={pick.name}
+                  onPlan={() => sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'tonight'))}
+                />
+              )}
               {/*
                 «Как «X», но…» — соседи этой игры (готовые из game_neighbors,
                 а до их заливки — по тегу полки) под то же настроение. Шаг по
@@ -2314,28 +2380,39 @@ function Player({ say }: { say: (line: string) => void }) {
         </div>
       )}
 
+      {/* План на вечер (lib/eveningplan.ts) — игра, которую человек сам
+          поставил на загрузку или отложил с телефона. Строкой над
+          «Продолжить» и тем же видом: это его решение, а не наша карточка.
+          Только там, где кнопка запускает (pointer-fine — признак развилки
+          SteamLaunch): на телефоне запускать нечем, и строка без кнопки была
+          бы упрёком. Не в рулетке и не когда план и есть герой — у героя свой
+          «Запустить». Запуск пишется как у «Продолжить», со слотом plan: он
+          закрывает план и заводит исход совета («Твои вечера»). */}
+      {plan && !roulette && plan.appid !== pick.appid && (
+        <LaunchRow
+          appid={plan.appid}
+          label="Запустить"
+          fineOnly
+          onLaunch={() => void sendFeedback(plan.appid, 'launched', undefined, ctxOf(null, 'plan', 'launch'))}
+        >
+          {planLine(plan)}
+        </LaunchRow>
+      )}
+
       {/* «Продолжить» — то, во что он играет сейчас. Строкой, а не карточкой:
           это не рекомендация, и спорить с героем за место ей незачем. В
           рулетке её нет — там весь смысл в броске. */}
       {cont && !roulette && (
-        <div className="mx-auto w-full max-w-6xl px-safe pt-8">
-          <div className="panel-lift px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
-            <span className="text-dim">
-              Или продолжи <span className="font-extrabold text-ink">«{cont.name}»</span>
-              {cont.recentHours > 0 && (
-                <span className="tabular-nums text-faint"> · {cont.recentHours} ч за две недели</span>
-              )}
-            </span>
-            <SteamLaunch
-              appid={cont.appid}
-              label="Продолжить"
-              onClick={() =>
-                void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))
-              }
-              className="tap font-extrabold text-ember-text hover:underline"
-            />
-          </div>
-        </div>
+        <LaunchRow
+          appid={cont.appid}
+          label="Продолжить"
+          onLaunch={() => void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))}
+        >
+          Или продолжи <span className="font-extrabold text-ink">«{cont.name}»</span>
+          {cont.recentHours > 0 && (
+            <span className="tabular-nums text-faint"> · {cont.recentHours} ч за две недели</span>
+          )}
+        </LaunchRow>
       )}
 
       {!roulette && (

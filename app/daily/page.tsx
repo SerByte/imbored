@@ -1,5 +1,6 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -126,6 +127,16 @@ type DailyResponse = {
   yesterday?: DailyYesterday | null
   nowSec: number
 }
+
+/*
+ * «Сыграю вечером на ПК» (lib/eveningplan.ts) — лениво: строка нужна только
+ * своей игре и только под пальцем, а маршрут стоит у потолка бюджета первой
+ * загрузки (bundle-budget.json). Рантайм next/dynamic здесь уже есть — его
+ * везёт HeroShots, так что обёртка стоит десятки байт, а не килобайт.
+ */
+const TonightButton = dynamic(() => import('@/components/TonightButton').then((m) => m.TonightButton), {
+  ssr: false,
+})
 
 /**
  * Отзыв об игре дня. Тот же роут и та же дисциплина, что у sendFeedback на
@@ -721,6 +732,15 @@ export default function DailyPage() {
                   className="tap hover:text-ink transition-colors"
                 />
               </p>
+            )}
+            {/* Своя на телефоне — «Сыграю вечером на ПК»: игра дня, выбранная
+                в дороге, вечером ждёт на компьютере (lib/eveningplan.ts) */}
+            {hero.source !== 'new' && !hero.storeUrl && (
+              <TonightButton
+                key={hero.appid}
+                name={hero.name}
+                onPlan={() => sendFeedback(hero.appid, 'opened', undefined, ctxOf(hero, 'tonight'))}
+              />
             )}
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
               <Link href="/quiz" className="tap link-more">

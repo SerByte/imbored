@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { saveLibrarySnapshot, type Db } from '@/lib/db'
+import { logFeedback, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
 import { nowSec } from '@/lib/server'
 import { freshDb, signInAs, signOut } from '@/lib/testing/route'
 import type { LibraryGame } from '@/lib/types'
@@ -82,6 +82,49 @@ describe('/api/session/owns', () => {
     const me = await signInAs(db, 'openid')
     await saveLibrarySnapshot(db, me, lib(730), nowSec())
     expect(await owned(-12)).toBe(false)
+  })
+
+  /*
+   * «План на вечер» (lib/eveningplan.ts): живая строка главной ведёт сюда, на
+   * страницу игры, и запуск отсюда обязан закрыть план — иначе строка
+   * «Ставил на загрузку — запустить?» висела бы и после сыгранного вечера.
+   * Признак едет тем же ответом, а не вторым запросом, и без кэша: после
+   * запуска он перестаёт быть правдой.
+   */
+  test('у игры живой план — plan: true и без кэша; у соседней — обычный ответ', async () => {
+    const me = await signInAs(db, 'openid')
+    await saveLibrarySnapshot(db, me, lib(570, 730), nowSec())
+    await upsertGamesMeta(db, [{ appid: 730, name: 'Игра 730', tags: {}, genres: [], categories: [] }], nowSec())
+    await logFeedback(
+      db,
+      { steamid: me, appid: 730, action: 'opened', ctx: { source: 'daily', intent: 'tonight' } },
+      nowSec() - 60,
+    )
+    // Более свежий план другой игры не прячет план этой
+    await upsertGamesMeta(db, [{ appid: 570, name: 'Игра 570', tags: {}, genres: [], categories: [] }], nowSec())
+    await logFeedback(
+      db,
+      { steamid: me, appid: 570, action: 'opened', ctx: { source: 'play', intent: 'install' } },
+      nowSec() - 30,
+    )
+    const res = await ask(730)
+    expect(await res.json()).toEqual({ owned: true, plan: true })
+    expect(res.headers.get('cache-control')).toBe('private, no-store')
+    // запуск закрыл план — дальше обычный ответ
+    await logFeedback(db, { steamid: me, appid: 730, action: 'launched' }, nowSec())
+    expect(await (await ask(730)).json()).toEqual({ owned: true })
+  })
+
+  test.each(['claimed', 'demo'] as const)('%s — плана не видит: запуск не её план закрыл бы', async (kind) => {
+    const me = await signInAs(db, kind)
+    await saveLibrarySnapshot(db, me, lib(730), nowSec())
+    await upsertGamesMeta(db, [{ appid: 730, name: 'Игра 730', tags: {}, genres: [], categories: [] }], nowSec())
+    await logFeedback(
+      db,
+      { steamid: me, appid: 730, action: 'opened', ctx: { source: 'play', intent: 'install' } },
+      nowSec() - 60,
+    )
+    expect(await (await ask(730)).json()).toEqual({ owned: true })
   })
 
   test('сессия по вставленной ссылке тоже спрашивает: это чтение, а не запись', async () => {

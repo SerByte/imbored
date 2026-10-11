@@ -22,6 +22,7 @@ import type { HeroMediaView, PickCard, ScoreView, ShareView } from './cards'
 import { parseLean, type Lean } from './mood'
 import { parseNudge, type Nudge } from './nudge'
 import { plural } from './plural'
+import { parseEveningPlan, type EveningPlan } from './eveningplan'
 import type { ContinueGame, MatchExplanation, Scope } from './recommend'
 
 /**
@@ -111,6 +112,11 @@ export type Deal = {
    * лучше, чем заявить о ней без повода.
    */
   playtimeHidden: boolean
+  /**
+   * План на вечер (lib/eveningplan.ts) — строка с запуском над «Продолжить».
+   * null — плана нет, сессия не пишущая или сервер старой версии.
+   */
+  plan: EveningPlan | null
 }
 
 /**
@@ -130,6 +136,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     nowSec?: unknown
     viewer?: unknown
     playtimeHidden?: unknown
+    plan?: unknown
   }
   if (!Array.isArray(d.picks) || d.picks.length === 0) return null
   return {
@@ -144,6 +151,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     nowSec: typeof d.nowSec === 'number' && Number.isFinite(d.nowSec) ? d.nowSec : 0,
     viewer: typeof d.viewer === 'string' && d.viewer ? d.viewer : null,
     playtimeHidden: d.playtimeHidden === true,
+    plan: parseEveningPlan(d.plan),
   }
 }
 

@@ -65,6 +65,16 @@ describe('dealFrom', () => {
     }
   })
 
+  // План на вечер (lib/eveningplan.ts) — только у пишущей сессии; у старого
+  // сервера и при мусоре плана нет, и строка над «Продолжить» не рисуется
+  test('план на вечер — из ответа, мусор и его отсутствие — null', () => {
+    const plan = { appid: 1145360, name: 'Hades', intent: 'install' }
+    expect(dealFrom({ picks: [pick], nowSec: 1, plan }, 'all')?.plan).toEqual(plan)
+    for (const bad of [undefined, null, 'Hades', { ...plan, intent: 'details' }]) {
+      expect(dealFrom({ picks: [pick], nowSec: 1, plan: bad }, 'all')?.plan, JSON.stringify(bad)).toBeNull()
+    }
+  })
+
   test('мусор в оси — «без оси», а не строка, которой нет среди кнопок', () => {
     expect(dealFrom({ picks: [pick], lean: 'sideways', nowSec: 1 }, 'all')?.lean).toBeNull()
   })

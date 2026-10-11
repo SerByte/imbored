@@ -31,9 +31,11 @@ export const CTX_SOURCES = ['play', 'daily'] as const
 /**
  * Где стояла карточка. hero — герой, до которого дошли «дальше» или с
  * которого выдача началась; picked — герой, выбранный из «Ещё вариантов»;
- * discovery — полка «Нет в библиотеке»; continue — строка «Продолжить».
+ * discovery — полка «Нет в библиотеке»; continue — строка «Продолжить»;
+ * plan — запуск по плану на вечер (lib/eveningplan.ts): строкой на /play или
+ * со страницы игры, куда ведёт живая строка главной.
  */
-export const CTX_SLOTS = ['hero', 'picked', 'discovery', 'continue'] as const
+export const CTX_SLOTS = ['hero', 'picked', 'discovery', 'continue', 'plan'] as const
 
 export const CTX_ENGINES = ['claude', 'heuristic'] as const
 
@@ -48,9 +50,11 @@ export const CTX_VARIANTS = ['roulette', 'untouched', 'seed'] as const
  * details — карточка игры на сайте;
  * install — «Поставить на загрузку» (steam://install): план, а не оценка,
  *           вкус и паузы его не видят (listFeedback);
- * ask     — ответ на вопрос после запуска («Не зацепило?»).
+ * ask     — ответ на вопрос после запуска («Не зацепило?»);
+ * tonight — «Сыграю вечером на ПК» с телефона: тоже план, как install, и
+ *           оба возвращаются вечером одной строкой (lib/eveningplan.ts).
  */
-export const CTX_INTENTS = ['launch', 'store', 'details', 'install', 'ask'] as const
+export const CTX_INTENTS = ['launch', 'store', 'details', 'install', 'ask', 'tonight'] as const
 
 export type CtxSource = (typeof CTX_SOURCES)[number]
 export type CtxSlot = (typeof CTX_SLOTS)[number]

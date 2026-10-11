@@ -82,6 +82,7 @@ import {
   getStaleAppids,
   getUserPortrait,
   insertMissingGamesMeta,
+  latestEveningPlan,
   joinRoom,
   listBanned,
   listExplore,
@@ -151,6 +152,7 @@ import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
 import { FEEDBACK_ACTIONS } from './feedbackkinds'
 import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, type OutcomeVerdict } from './outcome'
+import { PLAN_TTL_SEC } from './eveningplan'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
@@ -1709,6 +1711,20 @@ describe('db', () => {
     // сами строки в базе — отчёт их читает
     const all = await db.execute("SELECT COUNT(*) AS n FROM feedback WHERE ctx_json LIKE '%install%'")
     expect(Number(all.rows[0].n)).toBe(2)
+  })
+
+  // «Сыграю вечером на ПК» с телефона — тот же план: им человек говорит
+  // «потом», а не «зашло», и паузу «не сейчас» он не отменяет
+  test('«Сыграю вечером» — тоже план: ни в окне вкуса, ни снятием паузы', async () => {
+    const db = await freshDb()
+    const tonight = { source: 'daily' as const, intent: 'tonight' as const }
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped', reason: 'notnow' }, NOW)
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'opened', ctx: tonight }, NOW + 60)
+    await logFeedback(db, { steamid: 'u1', appid: 620, action: 'opened', ctx: tonight }, NOW + 60)
+
+    const rows = await listFeedback(db, 'u1')
+    expect(rows.map((r) => [r.appid, r.action])).toEqual([[570, 'skipped']])
+    expect(cooldownOf(rows, NOW + 120).get(570)?.kind).toBe('notnow')
   })
 
   test('listExplore: последний свайп решает, свежие сверху, бан сильнее полки', async () => {
@@ -3731,6 +3747,43 @@ describe('sweepStale: суточная уборка', () => {
     // Повтор — ничего: стёртое выпало из частичного индекса
     expect((await sweepStale(db, NOW)).ctx).toBe(0)
   })
+
+  /*
+   * План на вечер — 'opened' со снимком intent: только снимок и отличает его
+   * от открытой карточки. Обнули уборка снимок, как у оценок, — через
+   * девяносто дней «поставил на загрузку» стал бы «открыл карточку», вошёл
+   * бы в окно вкуса (listFeedback) и снимал бы паузы. Поэтому план уходит
+   * целиком: ни вкусу, ни напоминанию он к этому сроку не нужен.
+   */
+  test('план на вечер старше девяноста дней уходит целиком, а не становится открытием карточки', async () => {
+    const db = await freshDb()
+    const old = NOW - FEEDBACK_CTX_TTL_SEC - DAY
+    for (const [appid, intent] of [
+      [620, 'install'],
+      [570, 'tonight'],
+      [440, 'details'],
+    ] as const) {
+      await logFeedback(db, { steamid: REAL, appid, action: 'opened', ctx: { source: 'play', intent } }, old)
+    }
+    // свежий план живёт, как и любой свежий снимок
+    await logFeedback(
+      db,
+      { steamid: REAL, appid: 730, action: 'opened', ctx: { source: 'play', intent: 'install' } },
+      NOW - DAY,
+    )
+
+    // снимок карточки стёрт, планы ушли целиком, а счёт снимков — без них
+    expect((await sweepStale(db, NOW)).ctx).toBe(1)
+    const rows = await db.execute({
+      sql: 'SELECT appid, ctx_json IS NULL AS bare FROM feedback WHERE steamid = ? ORDER BY appid',
+      args: [REAL],
+    })
+    expect(rows.rows.map((r) => [Number(r.appid), Number(r.bare)])).toEqual([
+      [440, 1],
+      [730, 0],
+    ])
+    expect((await listFeedback(db, REAL)).map((r) => r.appid)).toEqual([440])
+  })
 })
 
 /**
@@ -4500,6 +4553,101 @@ describe('семантика игр', () => {
  * Исход совета (lib/outcome.ts): запуск пишет минуты до, следующий снапшот —
  * минуты после, и по заметно сыгранному спрашивают «как тебе?».
  */
+/**
+ * «План на вечер» (lib/eveningplan.ts): игра, поставленная на загрузку или
+ * отложенная с телефона, возвращается одной строкой, пока план жив.
+ */
+describe('план на вечер', () => {
+  const ME = '76561198000000001'
+  const HOUR = 3600
+
+  const plan = (db: Db, appid: number, intent: 'install' | 'tonight', at: number) =>
+    logFeedback(db, { steamid: ME, appid, action: 'opened', ctx: { source: 'play', intent } }, at)
+
+  async function withGames(): Promise<Db> {
+    const db = await freshDb()
+    await upsertGamesMeta(
+      db,
+      [620, 570, 440].map((appid) => ({ ...META, appid, name: `Игра ${appid}` })),
+      NOW,
+    )
+    return db
+  }
+
+  test('самый свежий план за полтора дня — с именем из каталога и тем, что это был за план', async () => {
+    const db = await withGames()
+    expect(await latestEveningPlan(db, ME, NOW)).toBeNull()
+    await plan(db, 620, 'install', NOW - 3 * HOUR)
+    await plan(db, 570, 'tonight', NOW - 2 * HOUR)
+    expect(await latestEveningPlan(db, ME, NOW)).toEqual({ appid: 570, name: 'Игра 570', intent: 'tonight' })
+    // Срок — от самого плана: полтора дня, и не секундой дольше
+    // (прежний план старше и истёк ещё раньше — возвращаться не к чему)
+    expect(await latestEveningPlan(db, ME, NOW - 2 * HOUR + PLAN_TTL_SEC)).toMatchObject({ appid: 570 })
+    expect(await latestEveningPlan(db, ME, NOW - 2 * HOUR + PLAN_TTL_SEC + 1)).toBeNull()
+  })
+
+  test('сказанное позже закрывает план: запуск, бан, пропуск; бросок рулетки — нет', async () => {
+    const db = await withGames()
+    await plan(db, 620, 'install', NOW - HOUR)
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'skipped', reason: 'spin' }, NOW - HOUR + 60)
+    // «Зашло» и открытая карточка — не «передумал»: план стоит
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'liked' }, NOW - HOUR + 70)
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'opened' }, NOW - HOUR + 80)
+    expect(await latestEveningPlan(db, ME, NOW)).toMatchObject({ appid: 620 })
+
+    for (const [i, closing] of [
+      { action: 'launched' as const },
+      { action: 'banned' as const },
+      { action: 'skipped' as const, reason: 'notnow' as const },
+      { action: 'skipped' as const, reason: 'genre' as const },
+    ].entries()) {
+      const appid = 10_000 + i
+      await upsertGamesMeta(db, [{ ...META, appid, name: `Игра ${appid}` }], NOW)
+      await plan(db, appid, 'tonight', NOW - 30 * 60)
+      expect(await latestEveningPlan(db, ME, NOW), JSON.stringify(closing)).toMatchObject({ appid })
+      await logFeedback(db, { steamid: ME, appid, ...closing }, NOW - 30 * 60)
+      // Закрытый — уже не «самый свежий»: строка возвращается к прежнему живому
+      expect(await latestEveningPlan(db, ME, NOW), JSON.stringify(closing)).toMatchObject({ appid: 620 })
+    }
+  })
+
+  // Запуск со страницы игры закрывает план именно этой игры (/api/session/owns),
+  // даже когда в живой строке стоит другой, более свежий
+  test('план конкретной игры находится и не самым свежим', async () => {
+    const db = await withGames()
+    await plan(db, 620, 'install', NOW - 2 * HOUR)
+    await plan(db, 570, 'tonight', NOW - HOUR)
+    expect(await latestEveningPlan(db, ME, NOW, 620)).toEqual({ appid: 620, name: 'Игра 620', intent: 'install' })
+    expect(await latestEveningPlan(db, ME, NOW, 440)).toBeNull()
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched' }, NOW)
+    expect(await latestEveningPlan(db, ME, NOW, 620)).toBeNull()
+    expect(await latestEveningPlan(db, ME, NOW)).toMatchObject({ appid: 570 })
+  })
+
+  test('новый план той же игры после закрытого — снова план', async () => {
+    const db = await withGames()
+    await plan(db, 620, 'install', NOW - 2 * HOUR)
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched' }, NOW - HOUR)
+    expect(await latestEveningPlan(db, ME, NOW)).toBeNull()
+    await plan(db, 620, 'tonight', NOW - 60)
+    expect(await latestEveningPlan(db, ME, NOW)).toEqual({ appid: 620, name: 'Игра 620', intent: 'tonight' })
+  })
+
+  test('не план: обычное открытие, чужой план и игра без строки в каталоге', async () => {
+    const db = await withGames()
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'opened', ctx: { intent: 'details' } }, NOW)
+    await logFeedback(db, { steamid: ME, appid: 570, action: 'opened' }, NOW)
+    await logFeedback(
+      db,
+      { steamid: '76561198000000002', appid: 440, action: 'opened', ctx: { intent: 'install' } },
+      NOW,
+    )
+    // строки в каталоге нет — «Ставил «Игра 999» на загрузку» хуже, чем молчать
+    await plan(db, 999, 'install', NOW)
+    expect(await latestEveningPlan(db, ME, NOW)).toBeNull()
+  })
+})
+
 describe('исход совета', () => {
   const ME = '76561198000000001'
   const DAY = 86_400
@@ -4600,7 +4748,7 @@ describe('исход совета', () => {
     expect(await outcomeRows(db)).toHaveLength(2)
   })
 
-  test('свежий снапшот дописывает минуты после и покупку, строки за окном не трогает', async () => {
+  test('свежий снапшот дописывает минуты после и покупку, сверенные строки за окном не трогает', async () => {
     const db = await freshDb()
     await saveLibrarySnapshot(db, ME, LIB, NOW - 20 * DAY)
     await launch(db, 620, NOW - 20 * DAY + 60)
@@ -4618,8 +4766,10 @@ describe('исход совета', () => {
     await saveLibrarySnapshot(db, ME, fresh, NOW)
     const rows = await outcomeRows(db)
     expect(rows.map((r) => [r.appid, r.shownAt, r.before, r.after, r.owned, r.checkedAt])).toEqual([
-      // старая строка — за окном, её никто не сверяет
-      [620, NOW - 20 * DAY + 60, 30, null, null, null],
+      // Старая строка — за окном. Между советом и снапшотом NOW − DAY их не
+      // было вовсе, и её один раз сверил первый снапшот после паузы (поздняя
+      // сверка, fillOutcomesFromSnapshot); свежий её уже не переписывает
+      [620, NOW - 20 * DAY + 60, 30, 30, 1, NOW - DAY],
       [620, NOW - DAY + 60, 30, 150, 1, NOW],
       [888, NOW - DAY + 60, null, null, 0, NOW],
       [999, NOW - DAY + 60, null, 45, 1, NOW],
@@ -4790,6 +4940,118 @@ describe('исход совета', () => {
     await saveLibrarySnapshot(db, ME, [{ ...LIB[1]!, playtimeForever: 500 }], NOW - 19 * DAY)
     expect(await pendingOutcomeAsk(db, ME, NOW - 19 * DAY)).not.toBeNull()
     expect(await pendingOutcomeAsk(db, ME, NOW)).toBeNull()
+  })
+
+  /*
+   * ПОЗДНЯЯ СВЕРКА. Снапшот пишется, только когда человек заходит, и у того,
+   * кто пропал дольше окна, советы так и висели «ещё не сверяли» до уборки
+   * через девяносто дней: «Твои вечера» не говорили ему ничего, а «как
+   * тебе?» не спрашивали именно вернувшегося.
+   */
+  test('долгая пауза: совет старше окна сверяет первый снапшот после возвращения — один раз', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 30 * DAY)
+    await launch(db, 620, NOW - 30 * DAY + 60)
+    // Вернулся через месяц: в Portal 2 за это время прибавилось три часа
+    const back = LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 30 + 180 } : g))
+    await saveLibrarySnapshot(db, ME, back, NOW - DAY)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 30, after: 210, owned: 1, checkedAt: NOW - DAY })
+    expect((await listEvenings(db, ME, NOW - 90 * DAY))[0]).toMatchObject({
+      minutes: 180,
+      late: true,
+      checkedAt: NOW - DAY,
+    })
+
+    // Следующий снапшот её не переписывает: поздняя сверка — разовое
+    // закрытие старого совета, а не новое окно для него
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      back.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 900 } : g)),
+      NOW,
+    )
+    expect((await outcomeRows(db))[0]).toMatchObject({ after: 210, checkedAt: NOW - DAY })
+  })
+
+  test('сверенная в окне строка поздней сверкой не переписывается, а старше срока хранения — не сверяется', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 30 * DAY)
+    await launch(db, 620, NOW - 30 * DAY + 60)
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 29 * DAY)
+    // Старше срока хранения и ни разу не сверена: доживёт до суточной уборки,
+    // но сверять её незачем — её и так сотрут
+    await launch(db, 570, NOW - OUTCOME_TTL_SEC - DAY)
+    expect(await fillOutcomesFromSnapshot(db, ME, LIB, NOW)).toBe(0)
+    expect((await outcomeRows(db)).map((r) => [r.appid, r.checkedAt])).toEqual([
+      [570, null],
+      [620, NOW - 29 * DAY],
+    ])
+  })
+
+  // Скрытое время у вернувшегося: правило перебазировки то же, что в окне,
+  // — иначе поздняя сверка приписала бы совету все часы за жизнь
+  test('поздняя сверка после скрытого времени тоже перебазируется', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [META], NOW)
+    const hidden = [...hiddenLibrary(), { ...LIB[1]!, playtimeForever: 0 }]
+    await saveLibrarySnapshot(db, ME, hidden, NOW - 40 * DAY)
+    await launch(db, 620, NOW - 40 * DAY + 60)
+    const open = hidden.map((g) => ({ ...g, playtimeForever: g.appid === 620 ? 30_000 : 600 }))
+    await saveLibrarySnapshot(db, ME, open, NOW - DAY)
+    expect((await outcomeRows(db))[0]).toMatchObject({ before: 30_000, after: null, checkedAt: null })
+    expect(await pendingOutcomeAsk(db, ME, NOW - DAY)).toBeNull()
+
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      open.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 30_090 } : g)),
+      NOW,
+    )
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 620, minutes: 90, late: true })
+  })
+
+  /*
+   * Вопрос про старый совет — один раз, в сутки после поздней сверки: это
+   * новость для обоих, а не напоминание о прошлом месяце. Дальше ответить
+   * можно только в «Твоих вечерах» (тот же закон, что «за окном не
+   * спрашиваем» выше).
+   */
+  test('поздняя сверка: «как тебе?» — в сутки после неё, свежий совет в окне важнее', async () => {
+    const db = await freshDb()
+    await upsertGamesMeta(db, [620, 999].map((appid) => ({ ...META, appid, name: `Игра ${appid}` })), NOW)
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 30 * DAY)
+    await launch(db, 620, NOW - 30 * DAY + 60)
+    const checkedAt = NOW - DAY / 2
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      LIB.map((g) => (g.appid === 620 ? { ...g, playtimeForever: 30 + 120 } : g)),
+      checkedAt,
+    )
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toEqual({
+      appid: 620,
+      name: 'Игра 620',
+      shownAt: NOW - 30 * DAY + 60,
+      minutes: 120,
+      bought: false,
+      late: true,
+    })
+    expect(await pendingOutcomeAsk(db, ME, checkedAt + DAY)).not.toBeNull()
+    expect(await pendingOutcomeAsk(db, ME, checkedAt + DAY + 1)).toBeNull()
+
+    // Совет в окне, уже сыгранный, — спрашиваем про него, поздний ждёт
+    await recordOutcome(db, { steamid: ME, appid: 999, source: 'new', launched: false }, checkedAt + 60)
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [
+        { ...LIB[1]!, playtimeForever: 150 },
+        { appid: 999, name: 'Игра 999', playtimeForever: 60, playtime2Weeks: 60 },
+      ],
+      NOW,
+    )
+    expect(await pendingOutcomeAsk(db, ME, NOW)).toMatchObject({ appid: 999 })
+    expect(await pendingOutcomeAsk(db, ME, NOW)).not.toHaveProperty('late')
   })
 
   test('уборка стирает исходы старше девяноста дней', async () => {

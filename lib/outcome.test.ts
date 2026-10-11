@@ -1,12 +1,15 @@
 import { describe, expect, test } from 'vitest'
 import {
   OUTCOME_PLAYED_MIN,
+  OUTCOME_WINDOW_SEC,
+  askableNow,
   isOutcomeVerdict,
   outcomeQuestion,
   parseOutcomeAsk,
   playedEnough,
   playedLine,
   eveningFrom,
+  eveningPlayed,
   eveningsSummary,
 } from './outcome'
 
@@ -34,6 +37,17 @@ describe('outcomeQuestion', () => {
       '«Hades»: взял и наиграл 45 мин. Как тебе?',
     )
   })
+
+  // Поздняя сверка (fillOutcomesFromSnapshot): минуты набежали за всю паузу,
+  // и вопрос говорит, откуда они, а не делает вид, что прошла пара дней
+  test('после долгой паузы — «пока тебя не было»', () => {
+    expect(outcomeQuestion({ name: 'Hades', minutes: 300, bought: false, late: true })).toBe(
+      'Пока тебя не было: «Hades» — 5 ч после нашего совета. Как тебе?',
+    )
+    expect(outcomeQuestion({ name: 'Hades', minutes: 45, bought: true, late: true })).toBe(
+      'Пока тебя не было: взял «Hades» и наиграл 45 мин. Как тебе?',
+    )
+  })
 })
 
 describe('parseOutcomeAsk', () => {
@@ -42,6 +56,9 @@ describe('parseOutcomeAsk', () => {
   test('годный ответ — как есть', () => {
     expect(parseOutcomeAsk(ok)).toEqual(ok)
     expect(parseOutcomeAsk({ ...ok, bought: 'да' })).toEqual({ ...ok, bought: false })
+    // Пометка поздней сверки — только настоящим true: обычный вопрос без поля
+    expect(parseOutcomeAsk({ ...ok, late: true })).toEqual({ ...ok, late: true })
+    expect(parseOutcomeAsk({ ...ok, late: 'да' })).toEqual(ok)
   })
 
   test('мусор — не вопрос: про «игру undefined» спрашивать хуже, чем молчать', () => {
@@ -110,6 +127,55 @@ describe('Твои вечера', () => {
       eveningFrom(row({ minutesAfter: 105 })), // 5 — открыл и закрыл
       eveningFrom(row({ checkedAt: null })), // неизвестно
     ]
-    expect(eveningsSummary(list)).toEqual({ checked: 2, played: 1, minutes: 95 })
+    expect(eveningsSummary(list)).toEqual({ checked: 2, played: 1, minutes: 95, lateMinutes: 0 })
+  })
+
+  /*
+   * Поздняя сверка — сверка после окна: человек пропал дольше двух недель, и
+   * минуты набежали за всю паузу. Признак выводится из самих отметок, без
+   * колонки в схеме: в окне строку сверяют только снапшоты моложе окна.
+   */
+  const late = (over: Partial<Parameters<typeof eveningFrom>[0]> = {}) =>
+    row({ checkedAt: 1_760_000_000 + OUTCOME_WINDOW_SEC + 7 * 86_400, ...over })
+
+  test('сверено позже окна — late; на краю окна — ещё нет', () => {
+    expect(eveningFrom(late())).toMatchObject({ late: true, minutes: 90 })
+    expect(eveningFrom(row({ checkedAt: 1_760_000_000 + OUTCOME_WINDOW_SEC })).late).toBe(false)
+    expect(eveningFrom(row({ checkedAt: null })).late).toBe(false)
+  })
+
+  // Доля за две недели и минуты за пять — разные меры: поздние в долю не
+  // идут и считаются отдельной строкой
+  test('сводка: поздние — не в доле, а отдельными минутами', () => {
+    const list = [
+      eveningFrom(row({ minutesAfter: 130 })), // 30 в окне
+      eveningFrom(late({ minutesAfter: 400 })), // 300 за паузу
+      eveningFrom(late({ minutesAfter: 100 })), // ноль за паузу
+    ]
+    expect(eveningsSummary(list)).toEqual({ checked: 1, played: 1, minutes: 30, lateMinutes: 300 })
+  })
+
+  test('подпись на полке: сколько, а у поздней — за какой срок', () => {
+    expect(eveningPlayed(eveningFrom(row()))).toBe('1 ч 30 мин')
+    // три недели от совета до сверки: минуты набежали не за окно в две
+    expect(eveningPlayed(eveningFrom(late()))).toBe('1 ч 30 мин за 3 нед.')
+    expect(eveningPlayed(eveningFrom(late({ minutesAfter: 100 })))).toBe('открыл и закрыл')
+    expect(eveningPlayed(eveningFrom(row({ minutesAfter: 100, launchedAt: null })))).toBe('не запускал')
+    expect(eveningPlayed(eveningFrom(row({ checkedAt: null })))).toBe('ещё не сверяли')
+  })
+
+  // То же правило, что у pendingOutcomeAsk: на что ведёт «Как тебе X?», на то
+  // на полке должны быть кнопки ответа
+  test('askableNow — в окне совета или в сутки после поздней сверки', () => {
+    const shown = 1_760_000_000
+    const fresh = eveningFrom(row())
+    expect(askableNow(fresh, shown + OUTCOME_WINDOW_SEC)).toBe(true)
+    expect(askableNow(fresh, shown + OUTCOME_WINDOW_SEC + 1)).toBe(false)
+    expect(askableNow({ ...fresh, verdict: 'meh' }, shown)).toBe(false)
+    expect(askableNow(eveningFrom(row({ minutesAfter: 105 })), shown)).toBe(false)
+
+    const checked = shown + OUTCOME_WINDOW_SEC + 7 * 86_400
+    expect(askableNow(eveningFrom(late()), checked + 86_400)).toBe(true)
+    expect(askableNow(eveningFrom(late()), checked + 86_400 + 1)).toBe(false)
   })
 })

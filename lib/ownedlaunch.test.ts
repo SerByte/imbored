@@ -70,4 +70,31 @@ describe('кнопка запуска', () => {
     const tag = src.slice(src.lastIndexOf('<m.p', at), at)
     expect(tag).toMatch(/\bhidden pointer-fine:block\b/)
   })
+
+  /*
+   * План на вечер (lib/eveningplan.ts) стоит на той же развилке с двух
+   * сторон: «Сыграю вечером на ПК» — там, где запустить нельзя, а строка
+   * плана с «Запустить» на /play — там, где можно. Перепутай признак — и
+   * компьютер получит кнопку «на ПК», а телефон строку без кнопки.
+   */
+  test('план на вечер: «Сыграю вечером» — под пальцем, строка с запуском — под мышью', () => {
+    const tonight = code(read('components', 'TonightButton.tsx'))
+    expect(tonight).toMatch(/className="pointer-fine:hidden\b/)
+    expect(tonight, 'обещание только тому, чьё нажатие запишется').toMatch(/writer !== true \|\| demo\) return null/)
+
+    const play = code(read('app', 'play', 'page.tsx'))
+    const at = play.indexOf('{planLine(plan)}')
+    expect(at).toBeGreaterThan(-1)
+    // строка плана — LaunchRow с fineOnly, а fineOnly — это тот самый признак
+    expect(play.slice(play.lastIndexOf('<LaunchRow', at), at)).toMatch(/\bfineOnly\b/)
+    expect(play).toMatch(/fineOnly \? ' hidden pointer-fine:block' : ''/)
+  })
+
+  // Запуск со страницы игры пишется только по плану: без него это не совет,
+  // а своя игра, и исход совета ему заводить не с чего
+  test('OwnedLaunch пишет запуск только по биту plan', () => {
+    const src = code(read('components', 'OwnedLaunch.tsx'))
+    expect(src).toMatch(/onLaunch=\{\s*owns\.plan\s*\?/)
+    expect(src).toContain("ctx: { slot: 'plan', intent: 'launch' }")
+  })
 })

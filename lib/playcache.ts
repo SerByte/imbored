@@ -36,6 +36,7 @@
  * если есть что восстанавливать.
  */
 
+import { parseEveningPlan } from './eveningplan'
 import { createLocalStore } from './localstore'
 import { parseLean, type Lean } from './mood'
 import { parseNudge } from './nudge'
@@ -149,6 +150,9 @@ function parseDeal(x: unknown): Deal | null {
     viewer: d.viewer,
     // Записи до строки о скрытом времени — выдача без неё
     playtimeHidden: d.playtimeHidden === true,
+    // Записи до плана на вечер — тоже: строка сбоку, и терять ради неё всю
+    // выдачу (прогрев заново) было бы дороже, чем её саму
+    plan: parseEveningPlan(d.plan),
   }
 }
 

@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { saveDailyPick, sweepStale, upsertGamesMeta, upsertUser, type Db } from '@/lib/db'
+import { logFeedback, saveDailyPick, sweepStale, upsertGamesMeta, upsertUser, type Db } from '@/lib/db'
 import { dayKey } from '@/lib/daily'
 import { SESSION_COOKIE, sessionSecret } from '@/lib/server'
 import { verifySessionV2 } from '@/lib/session'
@@ -159,11 +159,11 @@ describe('/api/session/touch', () => {
     }
   })
 
-  test('card=1 у пишущей сессии — живая строка: игра дня и «как тебе?»', async () => {
+  test('card=1 у пишущей сессии — живая строка: игра дня, план на вечер и «как тебе?»', async () => {
     const steamid = await signInAs(db, 'openid')
     // Пока сказать нечего — поле есть, но пустое: карточка покажет дверь в библиотеку
     const empty = await (await POST(post('/api/session/touch?card=1'))).json()
-    expect(empty.live).toEqual({ daily: null, ask: null })
+    expect(empty.live).toEqual({ daily: null, plan: null, ask: null })
 
     await saveDailyPick(
       db,
@@ -180,6 +180,12 @@ describe('/api/session/touch', () => {
       T0,
     )
     await upsertGamesMeta(db, [{ appid: 1145360, name: 'Hades', tags: {}, genres: [], categories: [] }], T0)
+    // Поставил на загрузку с /play час назад — план на вечер (latestEveningPlan)
+    await logFeedback(
+      db,
+      { steamid, appid: 1145360, action: 'opened', ctx: { source: 'play', intent: 'install' } },
+      T0 - 3600,
+    )
     // Совет два дня назад, сверен, сыграно 135 минут, ответа нет — pendingOutcomeAsk
     await db.execute({
       sql: `INSERT INTO outcomes (steamid, appid, source, shown_at, minutes_before, minutes_after, owned_after, checked_at)
@@ -189,6 +195,7 @@ describe('/api/session/touch', () => {
     const card = await (await POST(post('/api/session/touch?card=1'))).json()
     expect(card.live).toEqual({
       daily: { appid: 620, name: 'Portal 2' },
+      plan: { appid: 1145360, name: 'Hades', intent: 'install' },
       ask: { appid: 1145360, name: 'Hades', shownAt: T0 - 2 * 86_400, minutes: 135, bought: false },
     })
     // Остальным страницам живая строка не нужна — и в базу за ней не ходят

@@ -55,7 +55,14 @@ import { ShelfToStart } from '@/components/ShelfToStart'
 import { StatusLine } from '@/components/StatusLine'
 import { plural } from '@/lib/plural'
 import { dateLabel } from '@/lib/freshness'
-import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
+import {
+  askableNow,
+  eveningPlayed,
+  eveningsSummary,
+  OUTCOME_TTL_SEC,
+  playedEnough,
+  playedLine,
+} from '@/lib/outcome'
 import { Evenings, type EveningItem } from '@/components/Evenings'
 import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
@@ -202,12 +209,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
   // библиотеке не встретится, но обложка на полку нужна.
   // Узкой выборкой: скриншоты на этой странице не показываются нигде
-  // Свежие двенадцать — и, сверх них, каждый несверенный ответом совет из окна
-  // вопроса: на него ведёт «Как тебе X?» с главной и из OutcomeAsk, и ответить
-  // должно быть где, даже если после него было ещё двенадцать советов
-  const askable = (e: (typeof evenings)[number]) =>
-    e.verdict === null && playedEnough(e.minutes) && e.shownAt >= nowSec() - OUTCOME_WINDOW_SEC
-  const shownEvenings = evenings.filter((e, i) => i < EVENINGS_SHOWN || askable(e))
+  // Свежие двенадцать — и, сверх них, каждый совет, о котором сейчас можно
+  // спросить (askableNow — правило pendingOutcomeAsk): на него ведёт «Как
+  // тебе X?» с главной и из OutcomeAsk, и ответить должно быть где, даже если
+  // после него было ещё двенадцать советов. Поздняя сверка — совет месячной
+  // давности, и без этого вернувшийся не нашёл бы его на полке вовсе
+  const shownEvenings = evenings.filter((e, i) => i < EVENINGS_SHOWN || askableNow(e, nowSec()))
   const metas = await getGamesMetaLite(db, [
     ...new Set([
       ...games.map((g) => g.appid),
@@ -242,6 +249,49 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Сводка — по всем советам окна, полка — по свежим (EVENINGS_SHOWN). При
   // скрытом времени сверять нечем: сверенные раньше нули — не «не запускал»
   const eveningsTotal = eveningsSummary(timeHidden ? [] : evenings)
+  /*
+   * Подпись над полкой «Твои вечера» — здесь, а не в клиентском Evenings:
+   * разметка в пропсах едет в RSC, а не в JS маршрута, а /library стоит у
+   * потолка бюджета (bundle-budget.json).
+   *
+   * Каждая ветка обещает только то, что случится. «Минуты подтянутся» — пока
+   * есть несверенный совет и время открыто: следующий снапшот сверит его, даже
+   * если человек пропадал дольше окна (поздняя сверка). При скрытом времени —
+   * не подтянутся, пока Steam его не покажет. Поздние минуты — отдельной
+   * фразой: в долю они не идут (eveningsSummary), и молча выкинуть то, что
+   * человек наиграл по совету, пока его не было, было бы нечестно в другую
+   * сторону.
+   */
+  const lateHours = eveningsTotal.lateMinutes > 0 ? playedLine(eveningsTotal.lateMinutes) : null
+  const eveningsLead =
+    eveningsTotal.checked > 0 ? (
+      <>
+        Наиграно после наших советов:{' '}
+        <span className="text-ink tabular-nums">{playedLine(eveningsTotal.minutes)}</span>. Всерьёз, от
+        пятнадцати минут, — в <span className="tabular-nums">{eveningsTotal.played}</span> из{' '}
+        <span className="tabular-nums">{eveningsTotal.checked}</span>{' '}
+        {plural(eveningsTotal.checked, 'совета', 'советов', 'советов')}.
+        {lateHours && (
+          <>
+            {' '}
+            Ещё <span className="text-ink tabular-nums">{lateHours}</span> набежало, пока тебя не было, — их
+            мы сверили позже и в долю не считаем.
+          </>
+        )}
+      </>
+    ) : lateHours ? (
+      <>
+        Пока тебя не было, после наших советов набежало{' '}
+        <span className="text-ink tabular-nums">{lateHours}</span> — сверили по первому снимку библиотеки
+        после возвращения.
+      </>
+    ) : timeHidden ? (
+      'Что мы советовали и что из этого вышло. Минуты появятся, когда Steam снова покажет время игры.'
+    ) : evenings.some((e) => e.minutes === null) ? (
+      'Что мы советовали и что из этого вышло. Минуты подтянутся со следующим снимком библиотеки.'
+    ) : (
+      'Что мы советовали и что из этого вышло.'
+    )
   // Доля от трёх сверенных советов и больше: «сыграно в 100%» по одному — шум
   const honest = eveningsTotal.checked >= EVENINGS_HONEST_MIN
   const ownedNow = new Set(games.map((g) => g.appid))
@@ -254,15 +304,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
       date: dateLabel(e.shownAt),
-      played: timeHidden
-        ? 'время скрыто'
-        : e.minutes === null
-          ? 'ещё не сверяли'
-          : e.minutes === 0
-            ? e.launched
-              ? 'открыл и закрыл'
-              : 'не запускал'
-            : playedLine(e.minutes),
+      played: timeHidden ? 'время скрыто' : eveningPlayed(e),
       playedEnough: playedEnough(e.minutes),
       verdict: e.verdict,
       owned: ownedNow.has(e.appid),
@@ -603,15 +645,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {!writer && <NeedSteam from="/library" why="see" className="mb-12 max-w-md" />}
 
       {eveningItems.length > 0 && (
-        <Evenings
-          items={eveningItems}
-          summary={{
-            checked: eveningsTotal.checked,
-            played: eveningsTotal.played,
-            hours: playedLine(eveningsTotal.minutes),
-          }}
-          writer={writer}
-        />
+        <Evenings items={eveningItems} lead={eveningsLead} writer={writer} />
       )}
 
       {shelf.length > 0 && (

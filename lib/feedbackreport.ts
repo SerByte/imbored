@@ -127,6 +127,11 @@ export type OutcomeReportRow = {
   ownedAfter: boolean | null
   /** Сверен ли со снапшотом после совета */
   checked: boolean
+  /**
+   * Сверен поздно — первым снапшотом после паузы дольше окна (Evening.late в
+   * lib/outcome.ts): минуты за всю паузу, а не за две недели
+   */
+  late?: boolean
   verdict: string | null
 }
 
@@ -134,8 +139,10 @@ export type OutcomeLine = {
   key: string
   /** Советов, принятых в работу */
   total: number
-  /** Из них уже сверены со снапшотом — только по ним доли что-то значат */
+  /** Из них сверены со снапшотом в окне — только по ним доли что-то значат */
   checked: number
+  /** Сверены поздно: в «всего», но не в доле — мерка у них другая */
+  late: number
   /** Сыграно не меньше OUTCOME_PLAYED_MIN после совета */
   played: number
   /** Игры не было до совета, а теперь она в библиотеке */
@@ -154,6 +161,11 @@ export type OutcomeAxis = (typeof OUTCOME_AXES)[number]
 /**
  * Сводка исходов по оси. Доли считаются от сверенных: несверенный совет не
  * «не сыграл», а «ещё неизвестно» — снапшот после него не приходил.
+ *
+ * Поздняя сверка (fillOutcomesFromSnapshot) — в доле тоже не участвует: её
+ * минуты набежали за всю паузу человека, и источник, которому повезло с
+ * пропавшими на месяц, выглядел бы сильнее. Ответы на «как тебе?» у таких
+ * строк считаются как есть — это слово человека, а не мерка времени.
  */
 export function outcomeStats(rows: readonly OutcomeReportRow[], axis: OutcomeAxis): OutcomeLine[] {
   const groups = new Map<string, OutcomeReportRow[]>()
@@ -164,7 +176,7 @@ export function outcomeStats(rows: readonly OutcomeReportRow[], axis: OutcomeAxi
   }
   return [...groups]
     .map(([key, list]) => {
-      const checked = list.filter((r) => r.checked)
+      const checked = list.filter((r) => r.checked && !r.late)
       const deltas = checked
         .map((r) => (r.minutesAfter === null ? null : r.minutesAfter - (r.minutesBefore ?? 0)))
         .filter((d): d is number => d !== null && playedEnough(d))
@@ -174,6 +186,7 @@ export function outcomeStats(rows: readonly OutcomeReportRow[], axis: OutcomeAxi
         key,
         total: list.length,
         checked: checked.length,
+        late: list.filter((r) => r.checked && r.late).length,
         played: deltas.length,
         bought: checked.filter((r) => r.minutesBefore === null && r.ownedAfter === true).length,
         medianMinutes: mid ?? null,
@@ -192,9 +205,10 @@ export function formatOutcomes(axis: string, lines: readonly OutcomeLine[]): str
     const share = l.checked ? `${Math.round((l.played / l.checked) * 100)}%`.padStart(4) : '   —'
     const median = l.medianMinutes === null ? '' : `, медиана ${playedLine(l.medianMinutes)}`
     const thin = l.checked > 0 && l.checked < MIN_RATED ? '  (мало данных)' : ''
+    const late = l.late ? `, сверено поздно ${l.late}` : ''
     out.push(
       `  ${l.key.padEnd(10)} ${share} сыграли  ` +
-        `${l.played} из ${l.checked} сверенных (всего ${l.total})${median}; ` +
+        `${l.played} из ${l.checked} сверенных (всего ${l.total}${late})${median}; ` +
         `купили ${l.bought}; «зацепило» ${l.hooked}, «так себе» ${l.meh}${thin}`,
     )
   }
