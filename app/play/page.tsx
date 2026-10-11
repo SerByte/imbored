@@ -3,7 +3,7 @@
 import { AnimatePresence, m } from 'framer-motion'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
@@ -21,8 +21,9 @@ import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
-import { SteamLaunch } from '@/components/SteamLaunch'
+import { SteamLaunch, type LaunchVia } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
+import { TonightButton, useWarmTonight } from '@/components/TonightLazy'
 import { WarmupScreen, type ChosenGame } from '@/components/WarmupScreen'
 import { HeroTitle } from '@/components/HeroTitle'
 import { HeroTrailer } from '@/components/HeroTrailer'
@@ -31,6 +32,7 @@ import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
+import { closesPlan, planBeside, planLine, type EveningPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { reviewsBrief } from '@/lib/gametraits'
@@ -309,6 +311,54 @@ const CHOSEN_MS = 1300
  */
 const LEAVE_MS = 320
 
+/**
+ * Строка с запуском под героем — «Продолжить» и план на вечер
+ * (lib/eveningplan.ts). Одна разметка на обе: вид у них один, а /play стоит у
+ * потолка бюджета (bundle-budget.json), и вторая копия классов весила бы
+ * столько же, сколько сама строка. fineOnly — только там, где кнопка
+ * запускает (pointer-fine, признак развилки SteamLaunch): без кнопки строка
+ * плана была бы упрёком, а не дверью. onLaunch получает ветку нажатия
+ * (launchIntent ниже).
+ */
+function LaunchRow({
+  appid,
+  label,
+  fineOnly = false,
+  onLaunch,
+  children,
+}: {
+  appid: number
+  label: string
+  fineOnly?: boolean
+  onLaunch: (via: LaunchVia) => void
+  children: ReactNode
+}) {
+  return (
+    <div className={`mx-auto w-full max-w-6xl px-safe pt-8${fineOnly ? ' hidden pointer-fine:block' : ''}`}>
+      <div className="panel-lift px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+        <span className="text-dim">{children}</span>
+        <SteamLaunch
+          appid={appid}
+          label={label}
+          mobileLabel={fineOnly ? null : undefined}
+          onClick={onLaunch}
+          className="tap font-extrabold text-ember-text hover:underline"
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Чем было нажатие «Запустить» у своей — для снимка к оценке: steam://run —
+ * запуск, «Открыть в Steam» под пальцем — переход в магазин. Оценка у обоих
+ * 'launched' (исход совета заводят оба), но магазинная — не запуск, и план на
+ * вечер она не закрывает: на телефоне её жмут как раз после «Сыграю вечером
+ * на ПК», чтобы поставить игру на загрузку из приложения Steam
+ * (lib/eveningplan.ts, closesPlan).
+ */
+const launchIntent = (via: LaunchVia): CtxIntent => (via === 'store' ? 'store' : 'launch')
+
 function Player({ say }: { say: (line: string) => void }) {
   const router = useRouter()
   const search = useSearchParams()
@@ -357,6 +407,10 @@ function Player({ say }: { say: (line: string) => void }) {
   const [discoveries, setDiscoveries] = useState<Pick[]>([])
   /** То, во что он играет сейчас (pickContinue): строка под героем, не карточка */
   const [continueGame, setContinueGame] = useState<ContinueGame | null>(null)
+  /** План на вечер (lib/eveningplan.ts): поставленное на загрузку — строкой с запуском */
+  const [plan, setPlan] = useState<EveningPlan | null>(null)
+  // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
+  useWarmTonight()
   /** Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера, строка над «Продолжить» */
   const [timeHidden, setTimeHidden] = useState(false)
   const [index, setIndex] = useState(0)
@@ -584,6 +638,15 @@ function Player({ say }: { say: (line: string) => void }) {
             // и говорит строкой, почему, — вместо «не получилось, нажми ещё
             // раз», после которого не получится никогда.
             if (await isNeedSteam(r)) writerStore.set(false)
+            // Оценка, закрывшая план на вечер на сервере, закрывает и строку
+            // плана (closesPlan — то же правило, что у latestEveningPlan):
+            // иначе она висела бы до новой выдачи и переживала бы уход в
+            // записи выдачи (lib/playcache). Только записанная — незаписанная
+            // план не закрыла. Функцией, а не по plan: замыкание у
+            // sendFeedback — от первого рендера
+            if (r.ok && closesPlan(action, reason, ctx?.intent)) {
+              setPlan((p) => (p?.appid === appid ? null : p))
+            }
             return r.ok
           })
           // Промис намеренно не отклоняется: вызывающий, которому исход не
@@ -781,6 +844,7 @@ function Player({ say }: { say: (line: string) => void }) {
       setPicks(deal.picks)
       setDiscoveries(deal.discoveries)
       setContinueGame(deal.continueGame)
+      setPlan(deal.plan)
       setTimeHidden(deal.playtimeHidden)
       // И на устройство: /quiz и строка ожидания узнают признак до ответа
       timeHiddenStore.set(deal.playtimeHidden ? true : null)
@@ -836,11 +900,12 @@ function Player({ say }: { say: (line: string) => void }) {
         nowSec: meta.nowSec,
         viewer: meta.viewer,
         playtimeHidden: timeHidden,
+        plan,
       },
       hero: picks[Math.min(index, picks.length - 1)].appid,
       liked: [...liked],
     })
-  }, [phase, picks, discoveries, continueGame, timeHidden, engine, lean, scope, seed, nudge, index, liked, cacheKey])
+  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, nudge, index, liked, cacheKey])
 
   useEffect(() => {
     /*
@@ -1636,6 +1701,8 @@ function Player({ say }: { say: (line: string) => void }) {
 
   const pick = picks[Math.min(index, picks.length - 1)]
   const others = picks.filter((p) => p.appid !== pick.appid)
+  /** Строка плана на вечер — если его игры ещё нет на экране (planBeside) */
+  const planRow = roulette ? null : planBeside(plan, [pick.appid, cont?.appid])
   /*
    * «Уже прошёл» вместо безымянного бана — у заброшенного и знакомого, то
    * есть у того, во что он уже играл. Без достижений не отличить «прошёл» от
@@ -2063,9 +2130,10 @@ function Player({ say }: { say: (line: string) => void }) {
                   <SteamLaunch
                     appid={pick.appid}
                     // Запуск — не «Зашло»: раньше он писался как liked, и точность
-                    // подбора на /library росла от любого клика
-                    onClick={() =>
-                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroFrom, 'launch'))
+                    // подбора на /library росла от любого клика. Под пальцем это
+                    // магазин, а не запуск (launchIntent): план на вечер цел
+                    onClick={(via) =>
+                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroFrom, launchIntent(via)))
                     }
                     // Засекаем только настоящий запуск: через десять минут
                     // вернувшегося спросим, зацепило ли (см. StopAsk)
@@ -2371,6 +2439,19 @@ function Player({ say }: { say: (line: string) => void }) {
                   />
                 </m.p>
               )}
+              {/* Своя игра на телефоне — «Сыграю вечером на ПК»: запустить её
+                  отсюда нельзя, а вечером на компьютере она вернётся строкой
+                  над «Продолжить» (lib/eveningplan.ts). План, а не оценка.
+                  Кнопка сама прячется на компьютере и у не пишущей сессии —
+                  поэтому без обёртки: пустой узел в колонке героя всё равно
+                  взял бы себе зазор gap-4 */}
+              {pick.source !== 'new' && !pick.storeUrl && (
+                <TonightButton
+                  key={pick.appid}
+                  name={pick.name}
+                  onPlan={() => sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'tonight'))}
+                />
+              )}
               {/*
                 «Как «X», но…» — соседи этой игры (готовые из game_neighbors,
                 а до их заливки — по тегу полки) под то же настроение. Шаг по
@@ -2474,6 +2555,32 @@ function Player({ say }: { say: (line: string) => void }) {
         </div>
       )}
 
+      {/* План на вечер (lib/eveningplan.ts) — игра, которую человек сам
+          поставил на загрузку или отложил с телефона. Строкой над
+          «Продолжить» и тем же видом: это его решение, а не наша карточка.
+          Только там, где кнопка запускает (pointer-fine — признак развилки
+          SteamLaunch): на телефоне запускать нечем, и строка без кнопки была
+          бы упрёком. Не в рулетке и не когда игра плана уже на экране — у
+          героя свой «Запустить», у «Продолжить» свой (planBeside). Запуск
+          пишется как у «Продолжить», со слотом plan: он закрывает план и
+          заводит исход совета («Твои вечера»). Записанный — убирает и строку
+          (closesPlan в sendFeedback), поэтому фокус с её кнопки сразу
+          переезжает к герою, как после любого ответа: иначе он упал бы в
+          body вместе со строкой. */}
+      {planRow && (
+        <LaunchRow
+          appid={planRow.appid}
+          label="Запустить"
+          fineOnly
+          onLaunch={() => {
+            focusHero(true)
+            void sendFeedback(planRow.appid, 'launched', undefined, ctxOf(null, 'plan', 'launch'))
+          }}
+        >
+          {planLine(planRow)}
+        </LaunchRow>
+      )}
+
       {/* «Продолжить» — то, во что он играет сейчас. Строкой, а не карточкой:
           это не рекомендация, и спорить с героем за место ей незачем. В
           рулетке её нет — там весь смысл в броске. */}
@@ -2541,8 +2648,8 @@ function Player({ say }: { say: (line: string) => void }) {
                   <SteamLaunch
                     appid={cont.appid}
                     label="Продолжить"
-                    onClick={() =>
-                      void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))
+                    onClick={(via) =>
+                      void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', launchIntent(via)))
                     }
                     className="tap font-extrabold text-ember-text hover:underline"
                   />

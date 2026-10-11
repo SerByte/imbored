@@ -19,6 +19,37 @@ describe('живая строка карточки на главной', () => {
     })
   })
 
+  /*
+   * План на вечер (lib/eveningplan.ts) — между вопросом и игрой дня: «как
+   * тебе?» бывает редко и нужен подбору, а план — решение самого человека,
+   * и оно важнее того, что сегодня выбрали за него. Ведёт на страницу игры:
+   * «Запустить» там дорисовывает владельцу OwnedLaunch и закрывает план. Но
+   * только под мышью — поэтому строка не спрашивает «запустить?»: на
+   * телефоне она вела бы к странице без такой кнопки.
+   */
+  test('план на вечер — после вопроса, раньше игры дня, и ведёт к игре', () => {
+    const plan = { appid: 1145360, name: 'Hades', intent: 'install' }
+    const daily = { appid: 620, name: 'Portal 2' }
+    expect(liveLineFrom({ ask: null, plan, daily })).toEqual({
+      href: '/game/1145360',
+      text: 'Ставил «Hades» на загрузку — ждёт тебя',
+    })
+    expect(liveLineFrom({ plan: { ...plan, intent: 'tonight' } })?.text).toBe(
+      'Отложил «Hades» на вечер — ждёт тебя',
+    )
+    const ask = { appid: 570, name: 'Dota 2', shownAt: 1_700_000_000, minutes: 135, bought: false }
+    expect(liveLineFrom({ ask, plan, daily }).href).toBe('/library#evenings')
+    // битый план — дальше по порядку, а не пустая строка
+    expect(liveLineFrom({ plan: { ...plan, name: '' }, daily }).href).toBe('/daily')
+  })
+
+  test('строка плана не обещает запуска, которого на телефоне нет', () => {
+    for (const intent of ['install', 'tonight']) {
+      const { text } = liveLineFrom({ plan: { appid: 1145360, name: 'Hades', intent } })
+      expect(text, intent).not.toMatch(/запуст/i)
+    }
+  })
+
   test('игра дня уже выбрана — ссылка на /daily', () => {
     expect(liveLineFrom({ ask: null, daily: { appid: 620, name: 'Portal 2' } })).toEqual({
       href: '/daily',

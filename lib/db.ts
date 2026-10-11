@@ -16,7 +16,9 @@ import { parseMood } from './mood'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { minutesHidden, playtimeHidden } from './playtime'
+import { PLAN_INTENTS_SQL, PLAN_TTL_SEC, type EveningPlan, type PlanIntent } from './eveningplan'
 import {
+  OUTCOME_LATE_ASK_SEC,
   OUTCOME_PLAYED_MIN,
   OUTCOME_TTL_SEC,
   OUTCOME_WINDOW_SEC,
@@ -2422,7 +2424,8 @@ export async function saveLibrarySnapshot(
     'write',
   )
 
-  // Исход советов последних двух недель — по этому же снапшоту. Здесь, а не в
+  // Исход советов последних двух недель (и несверенных старых — поздняя
+  // сверка) — по этому же снапшоту. Здесь, а не в
   // одном из маршрутов: свежая библиотека приходит тремя дорогами (прогрев,
   // вход через Steam, подключение по ссылке), и сверка нужна после каждой.
   // Отказ сверки снапшот не отменяет: он уже записан, а исход доделает
@@ -4892,6 +4895,20 @@ function feedbackArgs(entry: FeedbackEntry, nowSec: number) {
  * ответом про игру не считается — как и в cooldownOf. Строка из ответа на
  * вопрос и строка кнопкой — разные (см. FEEDBACK_DEDUP_SEC).
  *
+ * Запуск после плана на вечер (lib/eveningplan.ts) — тоже не повтор:
+ * latestEveningPlan закрывает план только строкой запуска НОВЕЕ плана, и
+ * проглоченный запуск оставлял бы «Ставил «X» на загрузку» на главной и на
+ * /play до конца срока, хотя человек уже сыграл. А бывает это обычным
+ * вечером: «Запустить» у героя в девять, через минуту «Поставь на загрузку»
+ * (игра не стояла) — и запуск по плану назавтра в восемь попадал в сутки
+ * первого. Лишний запуск на план вкусу не вредит: профиль сводит оценки к
+ * последней на (игру, действие).
+ *
+ * И переход в магазин под пальцем ('launched' с intent 'store': «Открыть в
+ * Steam» у своей на телефоне) схлопывается только с такими же. Он план не
+ * закрывает, а настоящий запуск вечером на компьютере — закрывает, и
+ * проглоти его дедуп за дневное касание телефона — план бы так и висел.
+ *
  * when — ещё одно условие вставки: им ответ «как тебе?» (answerOutcome)
  * пишет «зашло» в той же пачке, что и сам ответ, и тем же текстом дедупа.
  */
@@ -4907,11 +4924,16 @@ function positiveFeedbackInsert(
             SELECT 1 FROM feedback f
             WHERE f.steamid = ? AND f.appid = ? AND f.action = ? AND f.created_at > ?
               AND (json_extract(f.ctx_json, '$.intent') IS 'ask') = (? IS 'ask')
+              AND (json_extract(f.ctx_json, '$.intent') IS 'store') = (? IS 'store')
               AND NOT EXISTS (
                 SELECT 1 FROM feedback s
                 WHERE s.steamid = f.steamid AND s.appid = f.appid
-                  AND s.action = 'skipped' AND s.reason IS NOT 'spin'
                   AND s.created_at >= f.created_at
+                  AND (
+                    (s.action = 'skipped' AND s.reason IS NOT 'spin')
+                    OR (f.action = 'launched' AND s.action = 'opened'
+                        AND json_extract(s.ctx_json, '$.intent') IN (${PLAN_INTENTS_SQL}))
+                  )
               )
           )${when ? ` AND ${when.sql}` : ''}`,
     args: [
@@ -4920,6 +4942,7 @@ function positiveFeedbackInsert(
       entry.appid,
       entry.action,
       nowSec - FEEDBACK_DEDUP_SEC,
+      entry.ctx?.intent ?? null,
       entry.ctx?.intent ?? null,
       ...(when?.args ?? []),
     ],
@@ -4958,18 +4981,19 @@ export async function logFeedback(db: Db, entry: FeedbackEntry, nowSec: number):
  * исследователь не повторяет сам (listExplore). «Интересно» ('opened') в окне
  * остаётся: это тот же слабый сигнал вкуса, что открытая карточка.
  *
- * «Поставить на загрузку» ('opened' со снимком intent 'install') — тоже мимо:
- * это план на вечер, а не оценка. Отфильтровать его позже, в
- * applyFeedbackToProfile, было бы мало: там строки схлопываются до последней
- * на (игру, действие), и загрузка вытеснила бы настоящее открытие карточки
- * той же игры. А паузу «не сейчас» она снимала бы в cooldownOf.
+ * «Поставить на загрузку» и «Сыграю вечером» ('opened' со снимком intent
+ * 'install' или 'tonight', lib/eveningplan.ts) — тоже мимо: это план на
+ * вечер, а не оценка. Отфильтровать его позже, в applyFeedbackToProfile,
+ * было бы мало: там строки схлопываются до последней на (игру, действие), и
+ * загрузка вытеснила бы настоящее открытие карточки той же игры. А паузу «не
+ * сейчас» она снимала бы в cooldownOf. Читает план только latestEveningPlan.
  */
 export async function listFeedback(db: Db, steamid: string, limit = 500): Promise<FeedbackRow[]> {
   const res = await db.execute({
     sql: `SELECT steamid, appid, action, reason, mood_json, created_at FROM feedback
           WHERE steamid = ? AND reason IS NOT 'spin'
             AND NOT (action = 'skipped' AND reason IS 'explore')
-            AND NOT (action = 'opened' AND json_extract(ctx_json, '$.intent') IS 'install')
+            AND NOT (action = 'opened' AND COALESCE(json_extract(ctx_json, '$.intent') IN (${PLAN_INTENTS_SQL}), 0))
           ORDER BY created_at DESC, id DESC LIMIT ?`,
     args: [steamid, limit],
   })
@@ -5238,6 +5262,66 @@ export async function unlikeGame(db: Db, steamid: string, appid: number): Promis
   })
 }
 
+/* ---------- план на вечер ---------- */
+
+/**
+ * «План на вечер» (lib/eveningplan.ts): самая свежая игра, которую человек
+ * поставил на загрузку или отложил с телефона, — если план ещё жив.
+ *
+ * Жив — моложе PLAN_TTL_SEC и не закрыт тем, что сказано позже про ту же
+ * игру: запуском (сыграл — напоминать не о чем), баном или пропуском с любой
+ * причиной («не сейчас», «надоела», «не мой жанр» — передумал). Бросок
+ * рулетки ('spin') план не закрывает: это кубик, а не решение. «Зашло» и
+ * открытая карточка — тоже: это не «передумал». Позже — по id, а не по
+ * секундам: запуск в ту же секунду, что и план, всё равно случился после.
+ *
+ * Запуск — настоящий: «Открыть в Steam» у своей на телефоне пишется
+ * 'launched' с intent 'store' (исход совета ему нужен), но открывает он
+ * страницу магазина, а не игру. А это ровно то, что делают после «Сыграю
+ * вечером на ПК» — ставят игру на загрузку из приложения Steam, — и такой
+ * «запуск» убивал бы только что поставленный план. Правило то же, что у
+ * closesPlan в lib/eveningplan.ts: по нему /play убирает строку плана, не
+ * дожидаясь сервера, и разъехаться они не должны (lib/db.test.ts).
+ *
+ * Имя — из каталога, как у pendingOutcomeAsk: игры там нет — и плана нет,
+ * строка «Ставил «Игра 123» на загрузку» хуже, чем никакой. Чтение — по
+ * idx_feedback_steamid: свои строки за полтора дня, и «закрыт ли позже» —
+ * тот же индекс от времени плана, а не вся история человека
+ * (lib/queryplan.test.ts).
+ *
+ * appid — живой план именно этой игры, даже если он не самый свежий: запуск
+ * со страницы игры обязан закрыть её план (/api/session/owns), а не только
+ * тот, что сейчас стоит в живой строке.
+ */
+export async function latestEveningPlan(
+  db: Db,
+  steamid: string,
+  nowSec: number,
+  appid: number | null = null,
+): Promise<EveningPlan | null> {
+  const res = await db.execute({
+    sql: `SELECT f.appid AS appid, g.name AS name, json_extract(f.ctx_json, '$.intent') AS intent
+            FROM feedback f JOIN games g ON g.appid = f.appid
+           WHERE f.steamid = ?1 AND f.created_at >= ?2 AND f.action = 'opened'
+             AND (?3 IS NULL OR f.appid = ?3)
+             AND json_extract(f.ctx_json, '$.intent') IN (${PLAN_INTENTS_SQL})
+             AND NOT EXISTS (
+               SELECT 1 FROM feedback l
+                WHERE l.steamid = ?1 AND l.created_at >= f.created_at
+                  AND l.appid = f.appid AND l.id > f.id
+                  AND (
+                    (l.action = 'launched' AND json_extract(l.ctx_json, '$.intent') IS NOT 'store')
+                    OR l.action = 'banned'
+                    OR (l.action = 'skipped' AND l.reason IS NOT 'spin')
+                  )
+             )
+           ORDER BY f.created_at DESC, f.id DESC LIMIT 1`,
+    args: [steamid, nowSec - PLAN_TTL_SEC, appid],
+  })
+  const row = res.rows[0] as unknown as { appid: number; name: string; intent: PlanIntent } | undefined
+  return row ? { appid: Number(row.appid), name: String(row.name), intent: row.intent } : null
+}
+
 /* ---------- исход совета ---------- */
 
 /**
@@ -5313,6 +5397,16 @@ export async function recordOutcome(
  * Свежий снапшот → минуты после у советов последних двух недель. Отдаёт,
  * сколько строк сверено.
  *
+ * ПОЗДНЯЯ СВЕРКА. Снапшот пишется, только когда человек заходит, и у того,
+ * кто пропал дольше окна, строки так и оставались «ещё не сверяли» до
+ * уборки через OUTCOME_TTL_SEC: «Твои вечера» не говорили вернувшемуся
+ * ничего, а «как тебе?» не спрашивали именно его. Поэтому старше окна
+ * сверяются и строки без отметки сверки — первым снапшотом после паузы и
+ * один раз: после UPDATE отметка стоит, и следующий снапшот их уже не
+ * выбирает. Минуты в такой строке — за всю паузу, и что она поздняя,
+ * видно по самим отметкам (Evening.late в lib/outcome.ts): в честную долю
+ * она не идёт. Старше срока хранения не сверяем — её сотрёт уборка.
+ *
  * Строки моложе снапшота не трогаются: совет, данный в ту же секунду, ещё не
  * успел ни во что превратиться. Минуты перезаписываются каждым снапшотом окна
  * — в строке всегда последнее, что известно. Игры нет в библиотеке —
@@ -5351,8 +5445,9 @@ export async function fillOutcomesFromSnapshot(
   if (playtimeHidden(games)) return 0
   const res = await db.execute({
     sql: `SELECT appid, shown_at, minutes_before, minutes_after, checked_at FROM outcomes
-           WHERE steamid = ? AND shown_at >= ? AND shown_at < ?`,
-    args: [steamid, nowSec - OUTCOME_WINDOW_SEC, nowSec],
+           WHERE steamid = ? AND shown_at < ?
+             AND (shown_at >= ? OR (checked_at IS NULL AND shown_at >= ?))`,
+    args: [steamid, nowSec, nowSec - OUTCOME_WINDOW_SEC, nowSec - OUTCOME_TTL_SEC],
   })
   if (!res.rows.length) return 0
   const byAppid = new Map(games.map((g) => [g.appid, g]))
@@ -5420,6 +5515,13 @@ async function snapshotTimeHiddenBefore(db: Db, steamid: string, nowSec: number)
  * О чём спросить «как тебе?»: самый свежий совет из окна, по которому снапшот
  * уже показал заметную игру (OUTCOME_PLAYED_MIN), а ответа ещё нет.
  *
+ * Совет старше окна — только после поздней сверки (fillOutcomesFromSnapshot)
+ * и только сутки с неё (OUTCOME_LATE_ASK_SEC): вернувшийся узнаёт свой
+ * результат в первый же заход, а не получает вопрос о прошлом месяце каждый
+ * раз. Свежие советы окна идут первыми — сортировка по shown_at. Правило
+ * повторяет askableNow в lib/outcome.ts: на что ведёт вопрос, на то на
+ * полке /library есть кнопки ответа.
+ *
  * Имя — из каталога: снапшот ради одного названия читать незачем, а игры
  * библиотеки прогрев в games заводит. Игры там нет — не спрашиваем про неё
  * вовсе: вопрос про «игру без названия» хуже, чем никакого.
@@ -5430,26 +5532,42 @@ export async function pendingOutcomeAsk(
   nowSec: number,
 ): Promise<OutcomeAsk | null> {
   const res = await db.execute({
-    sql: `SELECT o.appid AS appid, o.shown_at AS shown_at, o.minutes_before AS before_min,
-                 o.minutes_after AS after_min, g.name AS name
+    sql: `SELECT o.appid AS appid, o.shown_at AS shown_at, o.checked_at AS checked_at,
+                 o.minutes_before AS before_min, o.minutes_after AS after_min, g.name AS name
             FROM outcomes o JOIN games g ON g.appid = o.appid
-           WHERE o.steamid = ? AND o.shown_at >= ? AND o.verdict IS NULL
+           WHERE o.steamid = ?1 AND o.verdict IS NULL
              AND o.checked_at IS NOT NULL AND o.minutes_after IS NOT NULL
-             AND o.minutes_after - COALESCE(o.minutes_before, 0) >= ?
+             AND o.minutes_after - COALESCE(o.minutes_before, 0) >= ?2
+             AND (o.shown_at >= ?3 OR (o.checked_at >= ?4 AND o.checked_at - o.shown_at > ?5))
            ORDER BY o.shown_at DESC LIMIT 1`,
-    args: [steamid, nowSec - OUTCOME_WINDOW_SEC, OUTCOME_PLAYED_MIN],
+    args: [
+      steamid,
+      OUTCOME_PLAYED_MIN,
+      nowSec - OUTCOME_WINDOW_SEC,
+      nowSec - OUTCOME_LATE_ASK_SEC,
+      OUTCOME_WINDOW_SEC,
+    ],
   })
   const row = res.rows[0] as unknown as
-    | { appid: number; shown_at: number; before_min: number | null; after_min: number; name: string }
+    | {
+        appid: number
+        shown_at: number
+        checked_at: number
+        before_min: number | null
+        after_min: number
+        name: string
+      }
     | undefined
   if (!row) return null
   const before = row.before_min === null ? null : Number(row.before_min)
+  const shownAt = Number(row.shown_at)
   return {
     appid: Number(row.appid),
     name: String(row.name),
-    shownAt: Number(row.shown_at),
+    shownAt,
     minutes: Number(row.after_min) - (before ?? 0),
     bought: before === null,
+    ...(Number(row.checked_at) - shownAt > OUTCOME_WINDOW_SEC ? { late: true as const } : {}),
   }
 }
 
@@ -5910,7 +6028,9 @@ export const COMPAT_VIEW_TTL_SEC = 90 * 86_400
  *     и отметками «убран хостом».
  *     Опоздавший по старой ссылке увидит «Такой комнаты нет».
  *   • Снимки выдачи у оценок старше FEEDBACK_CTX_TTL_SEC: колонка обнуляется,
- *     оценка остаётся — по ней считается вкус.
+ *     оценка остаётся — по ней считается вкус. План на вечер того же
+ *     возраста уходит целиком: от открытой карточки его отличает только
+ *     снимок, и без него план вошёл бы во вкус и снимал бы паузы.
  *   • Исходы советов старше OUTCOME_TTL_SEC — целиком: вкус их не читает.
  *   • Отметки сравнений старше COMPAT_VIEW_TTL_SEC.
  *   • Выборы, которыми поделились, старше SHARED_PICK_TTL_SEC.
@@ -5922,7 +6042,7 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
   const demoCutoff = nowSec - DEMO_TTL_SEC
   const demo = [demoCutoff, demoCutoff - SESSION_TOUCH_AFTER_SEC, demoCutoff]
   const roomCutoff = nowSec - ROOM_TTL_SEC
-  const [, , , , sessions, demos, , , , , rooms, ctx, outcomes, compat, picks] = await db.batch(
+  const [, , , , sessions, demos, , , , , rooms, , ctx, outcomes, compat, picks] = await db.batch(
     [
       ...['feedback', 'daily_picks', 'library_snapshots', 'library_baselines'].map((table) => ({
         sql: `DELETE FROM ${table} WHERE ${STALE_DEMO}`,
@@ -5943,7 +6063,13 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
       { sql: `DELETE FROM room_kicks WHERE ${OLD_ROOM}`, args: [roomCutoff] },
       { sql: 'DELETE FROM rooms WHERE created_at < ?', args: [roomCutoff] },
       // Условие дословно повторяет предикат idx_feedback_ctx — иначе SQLite
-      // частичный индекс не возьмёт (lib/queryplan.test.ts)
+      // частичный индекс не возьмёт (lib/queryplan.test.ts). План на вечер —
+      // раньше обнуления и целиком: без снимка он стал бы «открыл карточку»
+      {
+        sql: `DELETE FROM feedback WHERE ctx_json IS NOT NULL AND created_at < ?
+                AND action = 'opened' AND json_extract(ctx_json, '$.intent') IN (${PLAN_INTENTS_SQL})`,
+        args: [nowSec - FEEDBACK_CTX_TTL_SEC],
+      },
       {
         sql: 'UPDATE feedback SET ctx_json = NULL WHERE ctx_json IS NOT NULL AND created_at < ?',
         args: [nowSec - FEEDBACK_CTX_TTL_SEC],

@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useRef, useState, useTransition } from 'react'
+import { useRef, useState, useTransition, type ReactNode } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { Eyebrow } from '@/components/Labels'
 import { NeedSteam } from '@/components/NeedSteam'
@@ -12,7 +12,6 @@ import { SteamLaunch } from '@/components/SteamLaunch'
 import type { GameArtUrls } from '@/lib/art'
 import { latestWins } from '@/lib/latestwins'
 import type { OutcomeVerdict } from '@/lib/outcome'
-import { plural } from '@/lib/plural'
 import { quizHref } from '@/lib/presets'
 import { isNeedSteam } from '@/lib/writer'
 
@@ -25,7 +24,7 @@ export type EveningItem = {
   art: GameArtUrls | null
   /** «12 сентября» — дата совета */
   date: string
-  /** «2 ч 10 мин», «не запускал», «ещё не сверяли» */
+  /** «2 ч 10 мин», «5 ч за 6 нед.» (поздняя сверка), «не запускал», «ещё не сверяли» */
   played: string
   /** Сыграно заметно — только тогда есть смысл спрашивать «как тебе» */
   playedEnough: boolean
@@ -94,14 +93,18 @@ const VERDICTS: Array<{ key: Exclude<OutcomeVerdict, 'dismissed'>; label: string
  * показываются вовсе: /library не читает для неё listEvenings (writer ? … в
  * app/library/page.tsx, сторож lib/ownerreads.test.ts) и этот компонент не
  * рисует — на его месте строка NeedSteam why="see".
+ *
+ * Подпись над полкой (lead) — готовой разметкой с сервера: сводка, поздние
+ * минуты и что ещё подтянется считаются там, а текст в пропсах не весит в JS
+ * маршрута.
  */
 export function Evenings({
   items,
-  summary,
+  lead,
   writer,
 }: {
   items: EveningItem[]
-  summary: { checked: number; played: number; hours: string }
+  lead: ReactNode
   writer: boolean
 }) {
   const [verdicts, setVerdicts] = useState(() => new Map(items.map((i) => [keyOf(i), i.verdict])))
@@ -163,18 +166,7 @@ export function Evenings({
       <h2 id="evenings-title" className="font-display text-display-sm">
         Твои вечера
       </h2>
-      <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-        {summary.checked > 0 ? (
-          <>
-            Наиграно после наших советов: <span className="text-ink tabular-nums">{summary.hours}</span>.
-            Всерьёз, от пятнадцати минут, — в <span className="tabular-nums">{summary.played}</span> из{' '}
-            <span className="tabular-nums">{summary.checked}</span>{' '}
-            {plural(summary.checked, 'совета', 'советов', 'советов')}.
-          </>
-        ) : (
-          'Что мы советовали и что из этого вышло. Минуты подтянутся со следующим снимком библиотеки.'
-        )}
-      </p>
+      <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">{lead}</p>
       {/*
         Отказ ответа скринридеру говорит одна строка на всю полку, а не строка
         под карточкой. Живая область стоит в разметке всегда, пустой (область,

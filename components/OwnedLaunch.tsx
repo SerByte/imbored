@@ -3,7 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { MarkFinished } from '@/components/MarkFinished'
 import { SteamLaunch } from '@/components/SteamLaunch'
-import { writerStore } from '@/lib/writer'
+import { isNeedSteam, writerStore } from '@/lib/writer'
 
 /**
  * «Запустить» — только тому, у кого игра есть.
@@ -40,6 +40,13 @@ import { writerStore } from '@/lib/writer'
  * же полкой, что и ссылку «Похожее на X» внизу (data.similar): у игры без
  * соседей обе вели бы к экрану «похожих не нашлось», и две дороги на одной
  * странице спорили бы — нижняя честно спрятана, а эта звала бы туда же.
+ *
+ * План на вечер (lib/eveningplan.ts). Живая строка главной «Ставил «X» на
+ * загрузку — ждёт тебя» ведёт сюда, и запуск отсюда обязан закрыть план —
+ * иначе строка висела бы и после сыгранного вечера. Тот же ответ owns
+ * говорит plan: true, и тогда нажатие пишет запуск так же, как строка плана
+ * на /play (слот plan): план закрыт, исход совета заведён. Без плана запуск
+ * отсюда по-прежнему ничего не пишет — это не совет, а своя игра.
  */
 export function OwnedLaunch({
   appid,
@@ -58,15 +65,15 @@ export function OwnedLaunch({
   const hasSession = writer !== null
   // appid рядом с ответом: при переходе на соседнюю карточку старое «да» не
   // должно мелькнуть у новой игры, пока едет её ответ
-  const [owns, setOwns] = useState<{ appid: number; owned: boolean } | null>(null)
+  const [owns, setOwns] = useState<{ appid: number; owned: boolean; plan: boolean } | null>(null)
 
   useEffect(() => {
     if (!hasSession) return
     let live = true
     fetch(`/api/session/owns?appid=${appid}`)
-      .then((r) => (r.ok ? (r.json() as Promise<{ owned?: unknown }>) : null))
+      .then((r) => (r.ok ? (r.json() as Promise<{ owned?: unknown; plan?: unknown }>) : null))
       .then((d) => {
-        if (live && d) setOwns({ appid, owned: d.owned === true })
+        if (live && d) setOwns({ appid, owned: d.owned === true, plan: d.plan === true })
       })
       .catch(() => {})
     return () => {
@@ -77,7 +84,31 @@ export function OwnedLaunch({
   if (!owns || owns.appid !== appid || !owns.owned) return null
   return (
     <>
-      <SteamLaunch appid={appid} label="Запустить" mobileLabel={null} icon className={className} />
+      <SteamLaunch
+        appid={appid}
+        label="Запустить"
+        mobileLabel={null}
+        icon
+        className={className}
+        onLaunch={
+          owns.plan
+            ? () =>
+                // Отправил и забыл, как оценки на /play: потерянный запуск — это
+                // строка плана, провисевшая до конца срока, а не сбой. needsteam —
+                // права сменились, пока страница была открыта: страница узнаёт,
+                // что сессия только читает (lib/writer)
+                void fetch('/api/feedback', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ appid, action: 'launched', ctx: { slot: 'plan', intent: 'launch' } }),
+                })
+                  .then(async (r) => {
+                    if (await isNeedSteam(r)) writerStore.set(false)
+                  })
+                  .catch(() => {})
+            : undefined
+        }
+      />
       {finishable && writer === true && (
         <MarkFinished
           appid={appid}

@@ -20,6 +20,7 @@ import {
   latestMajorPatchSince,
   PATCH_SINCE_MAX,
   getNeighbors,
+  latestEveningPlan,
   listEvenings,
   listCompatViews,
   findSharedPick,
@@ -392,6 +393,18 @@ const CASES: Case[] = [
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },
+  /*
+   * «План на вечер» — на каждый заход главной (живая строка) и на каждую
+   * выдачу /play. Свои строки за полтора дня по idx_feedback_steamid, и
+   * «закрыт ли план позже» — тот же индекс от времени плана, а не все оценки
+   * человека. Сортировка по id внутри ничьих секунд — по тем же строкам.
+   */
+  {
+    name: 'план на вечер',
+    run: (db) => latestEveningPlan(db, '76561198000000001', NOW),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
   {
     name: 'выйти на всех устройствах',
     run: (db) => revokeAllSessions(db, '76561198000000001', NOW),
@@ -453,14 +466,18 @@ describe('планы запросов', () => {
    */
   test('уборка снимков выдачи идёт по частичному индексу, а не по всему фидбеку', async () => {
     const db = await createDb(':memory:')
-    const ctx = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter((q) =>
-      q.sql.includes('ctx_json = NULL'),
+    // Снимок обнуляется, а план на вечер уходит целиком (lib/eveningplan.ts) —
+    // оба прохода по тому же частичному индексу
+    const ctx = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter(
+      (q) => q.sql.includes('ctx_json = NULL') || /DELETE FROM feedback\b[\s\S]*intent/.test(q.sql),
     )
-    expect(ctx).toHaveLength(1)
-    const plan = await planOf(db, ctx[0]!)
-    const where = plan.join(' | ')
-    expect(bareScans(plan), where).toEqual([])
-    expect(where).toContain('idx_feedback_ctx')
+    expect(ctx).toHaveLength(2)
+    for (const q of ctx) {
+      const plan = await planOf(db, q)
+      const where = plan.join(' | ')
+      expect(bareScans(plan), where).toEqual([])
+      expect(where).toContain('idx_feedback_ctx')
+    }
   })
 
   test('личная лента: окно свежести — граница диапазона индекса, а не фильтр после него', async () => {

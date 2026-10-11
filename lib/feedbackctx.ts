@@ -36,9 +36,11 @@ export const CTX_SOURCES = ['play', 'daily', 'library', 'game'] as const
 /**
  * Где стояла карточка. hero — герой, до которого дошли «дальше» или с
  * которого выдача началась; picked — герой, выбранный из «Ещё вариантов»;
- * discovery — полка «Нет в библиотеке»; continue — строка «Продолжить».
+ * discovery — полка «Нет в библиотеке»; continue — строка «Продолжить»;
+ * plan — запуск по плану на вечер (lib/eveningplan.ts): строкой на /play или
+ * со страницы игры, куда ведёт живая строка главной.
  */
-export const CTX_SLOTS = ['hero', 'picked', 'discovery', 'continue'] as const
+export const CTX_SLOTS = ['hero', 'picked', 'discovery', 'continue', 'plan'] as const
 
 export const CTX_ENGINES = ['claude', 'heuristic'] as const
 
@@ -49,13 +51,17 @@ export const CTX_VARIANTS = ['roulette', 'untouched', 'seed'] as const
  * Что значило нажатие, когда одного действия мало.
  *
  * launch  — запуск (steam://run или своя игра в чужом магазине);
- * store   — переход в магазин за не купленной игрой;
+ * store   — переход в магазин за не купленной игрой; у 'launched' — «Открыть
+ *           в Steam» у своей под пальцем (мобильная ветка SteamLaunch):
+ *           страница игры, а не игра, и план на вечер он не закрывает;
  * details — карточка игры на сайте;
  * install — «Поставить на загрузку» (steam://install): план, а не оценка,
  *           вкус и паузы его не видят (listFeedback);
- * ask     — ответ на вопрос после запуска («Не зацепило?»).
+ * ask     — ответ на вопрос после запуска («Не зацепило?»);
+ * tonight — «Сыграю вечером на ПК» с телефона: тоже план, как install, и
+ *           оба возвращаются вечером одной строкой (lib/eveningplan.ts).
  */
-export const CTX_INTENTS = ['launch', 'store', 'details', 'install', 'ask'] as const
+export const CTX_INTENTS = ['launch', 'store', 'details', 'install', 'ask', 'tonight'] as const
 
 export type CtxSource = (typeof CTX_SOURCES)[number]
 export type CtxSlot = (typeof CTX_SLOTS)[number]

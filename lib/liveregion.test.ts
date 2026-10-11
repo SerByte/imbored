@@ -247,6 +247,8 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   { file: 'components/BannedShelf.tsx', start: 'async function unban(', reset: ['setFailed(null)'] },
   { file: 'components/LikedShelf.tsx', start: 'async function unlike(', reset: ['setFailed(null)'] },
   { file: 'components/Evenings.tsx', start: 'async function answer(', reset: ['setFailed(null)'] },
+  // «Сыграю вечером на ПК»: на моргнувшей связи второй тап — тот же отказ тем же текстом
+  { file: 'components/TonightButton.tsx', start: 'async function plan()', reset: ['setDone(null)'] },
   // здесь отказ — фаза состояния, и гасит его фаза «делаю»
   { file: 'components/MarkFinished.tsx', start: 'async function mark()', reset: ["setState('busy')"] },
   { file: 'components/SharePick.tsx', start: 'async function create()', reset: ["setState({ at, phase: 'busy' })"] },

@@ -77,6 +77,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
       nowSec: Math.floor(NOW / 1000),
       viewer: ME,
       playtimeHidden: false,
+      plan: { appid: 1145360, name: 'Hades', intent: 'tonight' },
     },
     hero: 20,
     liked: [10],
@@ -128,6 +129,16 @@ describe('parsePlayCache', () => {
     const old: Record<string, unknown> = { ...e.deal }
     delete old.playtimeHidden
     expect(parsePlayCache({ ...e, deal: old })?.deal.playtimeHidden).toBe(false)
+  })
+
+  // Запись до плана на вечер — выдача без него, а не битая запись: план —
+  // строка сбоку, и прогрев заново ради неё был бы дороже, чем её потеря
+  test('план на вечер переживает запись; запись без него — выдача без плана', () => {
+    const e = entry()
+    const old: Record<string, unknown> = { ...e.deal }
+    delete old.plan
+    expect(parsePlayCache({ ...e, deal: old })?.deal.plan).toBeNull()
+    expect(parsePlayCache({ ...e, deal: { ...e.deal, plan: { appid: 0 } } })?.deal.plan).toBeNull()
   })
 
   test('запись прошлой версии сайта не узнаётся', () => {

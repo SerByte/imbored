@@ -23,6 +23,7 @@ import { RefundNote } from '@/components/RefundNote'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
+import { TonightButton, useWarmTonight } from '@/components/TonightLazy'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
 import type { DailyYesterday } from '@/lib/daily'
@@ -205,6 +206,8 @@ export default function DailyPage() {
     useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
   /** Демо-личность: над героем полоса «это чужая демо-библиотека» (DemoBar) */
   const demo = useDemoSession()
+  // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
+  useWarmTonight()
   /**
    * Запуск с этой вкладки, про который пора спросить «не зацепило?» (см.
    * lib/launchmemo.ts) — тот же снимок, что на /play. Про какую игру
@@ -648,9 +651,17 @@ export default function DailyPage() {
                 <SteamLaunch
                   appid={hero.appid}
                   // Запуск — не «Зашло»: как и на /play, он же заводит исход
-                  // совета, который сверят со следующим снапшотом
-                  onClick={() =>
-                    void sendFeedback(hero.appid, 'launched', undefined, ctxOf(hero, 'launch'))
+                  // совета, который сверят со следующим снапшотом. Под пальцем
+                  // это магазин, а не запуск: план на вечер он не закрывает
+                  // (lib/eveningplan.ts) — на телефоне его жмут как раз после
+                  // «Сыграю вечером на ПК», ставить игру на загрузку
+                  onClick={(via) =>
+                    void sendFeedback(
+                      hero.appid,
+                      'launched',
+                      undefined,
+                      ctxOf(hero, via === 'store' ? 'store' : 'launch'),
+                    )
                   }
                   // Засекаем только настоящий запуск: через десять минут
                   // вернувшегося спросим, зацепило ли (см. StopAsk выше)
@@ -721,6 +732,15 @@ export default function DailyPage() {
                   className="tap hover:text-ink transition-colors"
                 />
               </p>
+            )}
+            {/* Своя на телефоне — «Сыграю вечером на ПК»: игра дня, выбранная
+                в дороге, вечером ждёт на компьютере (lib/eveningplan.ts) */}
+            {hero.source !== 'new' && !hero.storeUrl && (
+              <TonightButton
+                key={hero.appid}
+                name={hero.name}
+                onPlan={() => sendFeedback(hero.appid, 'opened', undefined, ctxOf(hero, 'tonight'))}
+              />
             )}
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
               <Link href="/quiz" className="tap link-more">

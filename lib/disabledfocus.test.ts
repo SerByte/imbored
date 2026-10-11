@@ -364,6 +364,12 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['components/SharePick.tsx', /async function create\(\) \{\s*if \(current\?\.phase === 'busy'\) return/]],
   },
   {
+    // «Сыграю вечером на ПК»: записанный план второй раз не пишется
+    file: 'components/TonightButton.tsx',
+    expr: 'done === true',
+    guards: [['components/TonightButton.tsx', /async function plan\(\) \{\s*if \(done\) return/]],
+  },
+  {
     // «Выйти», «Да, везде», «Отмена» и «Выйти на всех устройствах»
     file: 'components/SignOut.tsx',
     expr: 'busy !== null',

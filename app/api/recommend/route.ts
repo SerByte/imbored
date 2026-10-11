@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { assignEdges } from '@/lib/badges'
 import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
-import { getGamesMetaLite, getHeroMedia } from '@/lib/db'
+import { getGamesMetaLite, getHeroMedia, latestEveningPlan } from '@/lib/db'
+import { logSwallowed } from '@/lib/errlog'
 import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
 import { llmDailyCap, takeLlmBudgetForIp } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -321,10 +322,23 @@ export async function POST(req: Request) {
   // Кадры и трейлер — только у пятёрки (heroMediaView). Читаются отдельно, по
   // пятёрке: метаданные конвейера узкие, без блобов. Заодно кадры получает и
   // герой из каталога — строки пула скриншотов не несут.
-  const media = await getHeroMedia(
-    db,
-    picks.map((p) => p.appid),
-  )
+  //
+  // Рядом, тем же заходом, — план на вечер (lib/eveningplan.ts): поставленное
+  // на загрузку /play показывает строкой с запуском над «Продолжить». Только
+  // пишущей сессии не из демо — план её же нажатие. Отказ чтения выдачу не
+  // срывает: план — строка сбоку
+  const [media, eveningPlan] = await Promise.all([
+    getHeroMedia(
+      db,
+      picks.map((p) => p.appid),
+    ),
+    isWriter(session) && !isDemoId(steamid)
+      ? latestEveningPlan(db, steamid, now).catch((err: unknown) => {
+          logSwallowed('recommend:plan', err)
+          return null
+        })
+      : null,
+  ])
 
   return NextResponse.json({
     // Серверные часы к ответу: по ним PlayersNow решает, имеет ли право
@@ -372,6 +386,8 @@ export async function POST(req: Request) {
     // Мета у неё есть всегда (pickContinue без неё не выбирает): по ней
     // finishable — ставить ли рядом «Уже прошёл»
     continue: cont ? continueView(cont, libMetas.get(cont.appid)) : null,
+    // План на вечер или null — строка с запуском над «Продолжить»
+    plan: eveningPlan,
     // Время скрыто настройками Steam (lib/playtime.ts): /play говорит об этом
     // строкой и подсказывает, как открыть, — иначе свои карточки «Из твоей
     // библиотеки» без единого часа выглядели бы сбоем

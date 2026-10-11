@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { PATCH_SINCE_LEAD } from '@/lib/comeback'
 import { resetSwallowed } from '@/lib/errlog'
 import {
+  logFeedback,
   saveLibrarySnapshot,
   setNewsDigest,
   upsertGamesMeta,
@@ -862,5 +863,69 @@ describe('/api/recommend: крупный патч с последнего зах
     expect(card.reason).not.toContain(PATCH_SINCE_LEAD)
     expect(card.reason).toContain('вернись и проверь')
     expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('cards:comeback-patches')
+  })
+})
+
+/**
+ * «План на вечер» (lib/eveningplan.ts): поставленная на загрузку игра
+ * приходит с выдачей, и /play рисует над «Продолжить» строку с запуском.
+ * Только пишущей сессии не из демо — это её же нажатие.
+ */
+describe('/api/recommend: план на вечер', () => {
+  const PLANNED = 620
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  async function setup(kind: SessionKind): Promise<void> {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    const steamid = await signInAs(db, kind)
+    const now = nowSec()
+    const ids = [PLANNED, 413150, 105600, 646570]
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      ids.map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      ids.map((appid) => ({ appid, name: `Игра ${appid}`, tags: { Puzzle: 100 }, genres: [], categories: [2] })),
+      now,
+    )
+    await logFeedback(
+      db,
+      { steamid, appid: PLANNED, action: 'opened', ctx: { source: 'play', intent: 'install' } },
+      now - 3600,
+    )
+  }
+
+  async function planOf(): Promise<unknown> {
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { plan?: unknown }).plan
+  }
+
+  test('вошедший через Steam — план с именем и тем, что это был за план', async () => {
+    await setup('openid')
+    expect(await planOf()).toEqual({ appid: PLANNED, name: `Игра ${PLANNED}`, intent: 'install' })
+  })
+
+  test.each(['claimed', 'demo'] as const)('%s — плана нет: не её нажатие или не её вечер', async (kind) => {
+    await setup(kind)
+    expect(await planOf()).toBeNull()
+  })
+
+  test('обрыв базы на чтении плана — выдача собирается без него', async () => {
+    await setup('openid')
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    breakDbOn(db, 'FROM feedback f JOIN games g')
+    expect(await planOf()).toBeNull()
+    expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('recommend:plan')
   })
 })

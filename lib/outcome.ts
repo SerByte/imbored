@@ -14,11 +14,24 @@
  * спрашивают «как тебе?» (OutcomeAsk) — ответ ложится в verdict. Отчёт
  * (scripts/feedback-report.ts) сводит всё это по источникам и слотам.
  *
+ * Снапшот пишется, только когда человек заходит. Кто пропал дольше окна, у
+ * того совет сверяет первый снапшот после возвращения — один раз (поздняя
+ * сверка, late): минуты в ней набежали за всю паузу, поэтому в честную долю
+ * она не идёт, а на полке и в вопросе подписана сроком.
+ *
  * Модуль клиентский: здесь сроки, ответы и подписи, база — в lib/db.ts.
  */
 
 /** Сколько после совета снапшоты ещё дописывают минуты: две недели */
 export const OUTCOME_WINDOW_SEC = 14 * 86_400
+
+/**
+ * Сколько поздняя сверка ждёт ответа на «как тебе?»: сутки с самой сверки.
+ * Это новость для обоих — первый заход после паузы, — а не напоминание о
+ * совете прошлого месяца каждый раз, как человек откроет сайт. Дальше
+ * ответить можно только в «Твоих вечерах».
+ */
+export const OUTCOME_LATE_ASK_SEC = 86_400
 
 /**
  * Сколько живёт строка исхода. Три месяца — как снимок выдачи в фидбеке
@@ -56,6 +69,11 @@ export type OutcomeAsk = {
   minutes: number
   /** Игры до совета не было, а теперь она в библиотеке */
   bought: boolean
+  /**
+   * Сверено после окна — первым снапшотом после долгой паузы: минуты
+   * набежали за всю паузу. Поле есть только у такого вопроса.
+   */
+  late?: true
 }
 
 /** Ответ GET /api/outcome на клиенте: проверка формы, а не приведение типом */
@@ -72,6 +90,7 @@ export function parseOutcomeAsk(raw: unknown): OutcomeAsk | null {
     shownAt: r.shownAt,
     minutes: Math.round(r.minutes),
     bought: r.bought === true,
+    ...(r.late === true ? { late: true as const } : {}),
   }
 }
 
@@ -90,9 +109,18 @@ export function playedLine(minutes: number): string {
   return rest ? `${h} ч ${rest} мин` : `${h} ч`
 }
 
-/** Вопрос целиком — одна строка на /play и /daily */
-export function outcomeQuestion(ask: Pick<OutcomeAsk, 'name' | 'minutes' | 'bought'>): string {
+/**
+ * Вопрос целиком — одна строка на /play и /daily. После поздней сверки он
+ * говорит, откуда столько: «с тех пор, как мы её предложили» про месяц
+ * назад звучало бы так, будто прошла пара дней.
+ */
+export function outcomeQuestion(ask: Pick<OutcomeAsk, 'name' | 'minutes' | 'bought' | 'late'>): string {
   const played = playedLine(ask.minutes)
+  if (ask.late) {
+    return ask.bought
+      ? `Пока тебя не было: взял «${ask.name}» и наиграл ${played}. Как тебе?`
+      : `Пока тебя не было: «${ask.name}» — ${played} после нашего совета. Как тебе?`
+  }
   return ask.bought
     ? `«${ask.name}»: взял и наиграл ${played}. Как тебе?`
     : `«${ask.name}»: ${played} с тех пор, как мы её предложили. Как тебе?`
@@ -121,6 +149,15 @@ export type Evening = {
   /** Игры не было, когда советовали, — и она появилась */
   bought: boolean
   verdict: OutcomeVerdict | null
+  /** Когда сверили; null — ещё нет */
+  checkedAt: number | null
+  /**
+   * Сверено позже окна — первым снапшотом после долгой паузы, и минуты
+   * набежали за всю паузу. Отметки в схеме нет: в окне строку сверяют только
+   * снапшоты, снятые не позже shownAt + OUTCOME_WINDOW_SEC
+   * (fillOutcomesFromSnapshot), так что сверка позже бывает только поздней.
+   */
+  late: boolean
 }
 
 /** Строка из outcomes в Evening. Минуты — прирост за окно своего совета, не меньше нуля. */
@@ -148,7 +185,38 @@ export function eveningFrom(row: {
     minutes,
     bought: row.minutesBefore === null && row.ownedAfter === 1,
     verdict: isOutcomeVerdict(row.verdict) ? row.verdict : null,
+    checkedAt: row.checkedAt,
+    late: row.checkedAt !== null && row.checkedAt - row.shownAt > OUTCOME_WINDOW_SEC,
   }
+}
+
+/**
+ * Подпись сыгранного на полке «Твои вечера». У поздней сверки — со сроком:
+ * «5 ч за 6 нед.» честнее голых «5 ч» рядом с советами, которые мерили
+ * двумя неделями. У нуля срок не нужен: «не запускал» за месяц — всё ещё
+ * «не запускал».
+ */
+export function eveningPlayed(
+  e: Pick<Evening, 'minutes' | 'launched' | 'late' | 'shownAt' | 'checkedAt'>,
+): string {
+  if (e.minutes === null) return 'ещё не сверяли'
+  if (e.minutes === 0) return e.launched ? 'открыл и закрыл' : 'не запускал'
+  const played = playedLine(e.minutes)
+  if (!e.late || e.checkedAt === null) return played
+  return `${played} за ${Math.round((e.checkedAt - e.shownAt) / (7 * 86_400))} нед.`
+}
+
+/**
+ * Можно ли сейчас спросить «как тебе?» про этот совет — то же правило, что у
+ * pendingOutcomeAsk (lib/db.ts): сыграно заметно, ответа нет, и совет в окне
+ * либо поздняя сверка не старше суток. /library по нему держит на полке
+ * совет, на который ведёт вопрос, даже если он не из двенадцати свежих.
+ */
+export function askableNow(e: Evening, nowSec: number): boolean {
+  if (e.verdict !== null || !playedEnough(e.minutes)) return false
+  return e.late
+    ? e.checkedAt !== null && e.checkedAt >= nowSec - OUTCOME_LATE_ASK_SEC
+    : e.shownAt >= nowSec - OUTCOME_WINDOW_SEC
 }
 
 /**
@@ -157,16 +225,30 @@ export function eveningFrom(row: {
  * что в lib/feedbackreport.ts). Часы — сумма приростов, каждый в окне своего
  * совета, поэтому одна и та же игра, посоветованная дважды, не считается
  * дважды за одни минуты.
+ *
+ * Поздние сверки в долю и в часы не идут: их минуты набежали за всю паузу,
+ * и пропавший на месяц поднимал бы долю одним снапшотом. Их минуты —
+ * отдельным числом (lateMinutes), /library говорит о них своей фразой.
  */
-export function eveningsSummary(list: Evening[]): { checked: number; played: number; minutes: number } {
+export function eveningsSummary(list: Evening[]): {
+  checked: number
+  played: number
+  minutes: number
+  lateMinutes: number
+} {
   let checked = 0
   let played = 0
   let minutes = 0
+  let lateMinutes = 0
   for (const e of list) {
     if (e.minutes === null) continue
+    if (e.late) {
+      lateMinutes += e.minutes
+      continue
+    }
     checked++
     minutes += e.minutes
     if (playedEnough(e.minutes)) played++
   }
-  return { checked, played, minutes }
+  return { checked, played, minutes, lateMinutes }
 }

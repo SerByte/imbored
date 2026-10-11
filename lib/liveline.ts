@@ -1,3 +1,4 @@
+import { parseEveningPlan, planLine } from './eveningplan'
 import { parseOutcomeAsk, playedLine } from './outcome'
 
 /**
@@ -11,8 +12,9 @@ import { parseOutcomeAsk, playedLine } from './outcome'
  * одна и в одну строку: новости не растят карточку.
  *
  * Порядок — по цене вопроса. «Как тебе?» бывает редко и нужен подбору;
- * игра дня уже выбрана — напоминание о том, что ждёт; остальное — дверь
- * в «Твои вечера».
+ * план на вечер (lib/eveningplan.ts) — решение самого человека, и оно
+ * важнее того, что сегодня выбрали за него; игра дня уже выбрана —
+ * напоминание о том, что ждёт; остальное — дверь в «Твои вечера».
  */
 export type LiveLine = { href: string; text: string }
 
@@ -26,7 +28,7 @@ export const LIVE_DEFAULT: LiveLine = {
 /** Поле live из ответа touch — проверкой формы, а не приведением типом */
 export function liveLineFrom(raw: unknown): LiveLine {
   if (!raw || typeof raw !== 'object') return LIVE_DEFAULT
-  const { ask, daily } = raw as Record<string, unknown>
+  const { ask, plan, daily } = raw as Record<string, unknown>
   const question = parseOutcomeAsk(ask)
   if (question) {
     return {
@@ -34,6 +36,16 @@ export function liveLineFrom(raw: unknown): LiveLine {
       href: '/library#evenings',
       text: `Как тебе «${question.name}»? ${playedLine(question.minutes)} после совета`,
     }
+  }
+  const planned = parseEveningPlan(plan)
+  if (planned) {
+    // На страницу игры, а не прямо в steam://: строка стоит и на телефоне, а
+    // «Запустить» там дорисовывает владельцу OwnedLaunch — и этот запуск
+    // закрывает план (plan в /api/session/owns). Без «запустить?»: на
+    // телефоне OwnedLaunch не рисуется вовсе (steam:// там мёртв), и вопрос
+    // вёл бы к странице без такой кнопки — тот же упрёк, от которого строку
+    // плана на /play прячет pointer-fine. «Ждёт» правда на обоих устройствах
+    return { href: `/game/${planned.appid}`, text: `${planLine(planned)} — ждёт тебя` }
   }
   if (daily && typeof daily === 'object') {
     const { appid, name } = daily as Record<string, unknown>
