@@ -3,7 +3,6 @@ import * as m from 'framer-motion/m'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { after } from 'next/server'
-import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
@@ -17,10 +16,12 @@ import {
   COMMON_SHOWN,
   type CompatGame,
   type CompatInvite,
+  type CompatInviteHead,
   type CompatPick,
   type CompatResult,
   loadCompat,
   loadCompatInvite,
+  loadInviteHead,
 } from '@/lib/compatpage'
 import { reconnectHref } from '@/lib/destination'
 import { plural } from '@/lib/plural'
@@ -39,12 +40,6 @@ export const dynamic = 'force-dynamic'
 const STEAMID = /^\d{17}$/
 
 /**
- * Приглашение читают и generateMetadata, и сама страница. cache() на время
- * запроса — тот же приём, что на карточке игры (app/game/[appid]/page.tsx).
- */
-const inviteOnce = cache(loadCompatInvite)
-
-/**
  * Без этого ссылка на совместимость разворачивалась в мессенджерах общим
  * заголовком сайта и вообще без картинки — при том что весь смысл страницы в
  * том, чтобы её кинуть другому.
@@ -61,7 +56,10 @@ export async function generateMetadata({
   const { steamid } = await params
   if (!STEAMID.test(steamid)) return {}
 
-  const invite = await inviteOnce(await getDb(), steamid)
+  // Только голова приглашения: обложек превью не показывает. Снапшот и ник
+  // владельца — общие с телом страницы на любом пути (память запроса в
+  // lib/compatpage), обложки же метаданным не нужны, и вошедший за них не платит
+  const invite = await loadInviteHead(await getDb(), steamid)
   if (!invite) return { title: 'Совместимость', robots: { index: false } }
 
   const title = `${invite.name} зовёт сравнить библиотеки`
@@ -105,7 +103,7 @@ const ru = (n: number) => n.toLocaleString('ru-RU')
  * скрыто настройками Steam (lib/playtime.ts) — слово вместо числа: «0 часов»
  * было бы сказано про галочку, а не про человека, и ушло бы в каждый чат.
  */
-function inviteHours(invite: Pick<CompatInvite, 'totalHours' | 'playtimeHidden'>): string {
+function inviteHours(invite: Pick<CompatInviteHead, 'totalHours' | 'playtimeHidden'>): string {
   return invite.playtimeHidden
     ? 'время скрыто'
     : `${ru(invite.totalHours)} ${plural(invite.totalHours, 'час', 'часа', 'часов')}`
@@ -269,8 +267,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
     session !== null && isWriter(session) && !isDemoId(session.steamid) && !isDemoId(other)
 
   if (state.kind === 'self') {
-    // Фон — свои же игры: приглашение уже посчитано для метаданных (cache)
-    const own = await inviteOnce(db, other)
+    // Фон — свои же игры. Снапшот и ник уже прочитаны для метаданных (память
+    // запроса), новое чтение одно — обложки
+    const own = await loadCompatInvite(db, other)
     return (
       <CompatNotice
         title="Это твоя собственная ссылка"

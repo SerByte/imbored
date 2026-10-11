@@ -4298,7 +4298,20 @@ export async function loadTagStats(db: Db): Promise<Map<string, number>> {
   return out
 }
 
-/** appid'ы, которых нет в кэше или чьи метаданные старше maxAgeSec (один запрос) */
+/**
+ * appid'ы, которых нет в кэше или чьи метаданные старше maxAgeSec (один запрос).
+ *
+ * Свежесть решает сама база, и обратно едут одни appid свежих строк. Раньше
+ * сюда ехал art_json каждой строки — до семи полных URL ассетов Steam на
+ * игру — только ради проверки «не пустой ли». Спрашивает /api/prepare про всю
+ * библиотеку на каждом заходе в /play, /daily, /explore и /library, и у
+ * человека с полутора тысячами игр это был мегабайт с лишним JSON из Turso,
+ * разобранный ради одного бита на строку.
+ *
+ * Условие то же, что было в JS: `nowSec - updated_at <= maxAgeSec` — это
+ * `updated_at >= nowSec - maxAgeSec`, а «арт есть» — не NULL и не пустая
+ * строка. '{}' («искали и не нашли») — непустая строка, то есть свежая.
+ */
 export async function getStaleAppids(
   db: Db,
   appids: number[],
@@ -4307,20 +4320,14 @@ export async function getStaleAppids(
 ): Promise<number[]> {
   if (!appids.length) return []
   const res = await db.execute({
-    sql: `SELECT appid, updated_at, art_json FROM games WHERE ${APPIDS_IN}`,
-    args: [JSON.stringify(appids)],
-  })
-  const fresh = new Set<number>()
-  for (const r of res.rows as unknown as Array<{
-    appid: number
-    updated_at: number
-    art_json: string | null
-  }>) {
     // Строка без резолвленного арта считается протухшей независимо от возраста:
     // иначе игры, прогретые до появления art_json, остались бы с одной мелкой
     // обложкой до истечения TTL
-    if (nowSec - r.updated_at <= maxAgeSec && r.art_json) fresh.add(r.appid)
-  }
+    sql: `SELECT appid FROM games WHERE ${APPIDS_IN}
+            AND updated_at >= ? AND art_json IS NOT NULL AND art_json <> ''`,
+    args: [JSON.stringify(appids), nowSec - maxAgeSec],
+  })
+  const fresh = new Set((res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid))
   return appids.filter((appid) => !fresh.has(appid))
 }
 

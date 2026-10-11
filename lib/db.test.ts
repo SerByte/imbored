@@ -1857,6 +1857,41 @@ describe('db', () => {
     expect(stale.sort()).toEqual([111, 730])
   })
 
+  test('getStaleAppids не везёт art_json: свежесть решает база', async () => {
+    // Ответ нужен ради одного бита «арт есть», а блоб — до семи полных URL
+    // ассетов Steam на игру. /api/prepare спрашивает про всю библиотеку на
+    // каждом заходе в /play, /daily, /explore и /library: у человека с
+    // полутора тысячами игр это мегабайт с лишним JSON из Turso ради нуля
+    const db = await freshDb()
+    const art = { header: 'https://cdn/h.jpg', capsule: 'https://cdn/c.jpg', hero: 'https://cdn/x.jpg' }
+    await upsertGameMeta(db, { ...META, art }, NOW)
+    const columns: string[] = []
+    const spy = {
+      execute: async (q: InStatement) => {
+        const res = await db.execute(q)
+        columns.push(...res.columns)
+        return res
+      },
+    } as unknown as Db
+    expect(await getStaleAppids(spy, [620, 111], 86_400, NOW)).toEqual([111])
+    expect(columns).not.toContain('art_json')
+  })
+
+  test('getStaleAppids: граница срока и пустой арт — как прежде в JS', async () => {
+    const db = await freshDb()
+    const art = { header: 'https://cdn/h.jpg' }
+    // Ровно на сроке — ещё свежая (было nowSec - updated_at <= maxAgeSec)
+    await upsertGameMeta(db, { ...META, art }, NOW - 86_400)
+    // На секунду старше — протухла
+    await upsertGameMeta(db, { ...META, appid: 730, name: 'CS2', art }, NOW - 86_401)
+    // Пустая строка вместо арта — как null: арта нет, строка догружается.
+    // А '{}' — «искали, не нашли» — свежая (тест про пустой арт выше)
+    await upsertGameMeta(db, { ...META, appid: 570, name: 'Dota 2', art }, NOW)
+    await db.execute("UPDATE games SET art_json = '' WHERE appid = 570")
+    // Порядок и повторы входа сохраняются: прогрев режет пачку по этому порядку
+    expect(await getStaleAppids(db, [730, 620, 570, 111, 730], 86_400, NOW)).toEqual([730, 570, 111, 730])
+  })
+
   test('upsertUser не плодит дубликатов', async () => {
     const db = await freshDb()
     await upsertUser(db, { steamid: 'u1', personaName: 'A' }, NOW)
