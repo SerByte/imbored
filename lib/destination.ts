@@ -26,7 +26,7 @@
  */
 
 import { parseLean, parseMood } from './mood'
-import { roomPresetByKey } from './presets'
+import { roomPresetByKey, roomSeedOf } from './presets'
 
 export type Destination = {
   /** Что сказать на лендинге вместо общего обещания продукта. */
@@ -108,13 +108,20 @@ function playQuery(src: URLSearchParams): URLSearchParams {
  * вход наравне с preset — иначе гость, развёрнутый на вход, вернулся бы к
  * выбору без отметки. Вместе с preset не едет: выбранное перекрывает
  * подсказку, комната всё равно создастся сразу.
+ *
+ * game — игра, в которую звали («Позвать в эту игру», roomSeedOf в
+ * lib/presets): гость со страницы игры уходит на вход, и после входа комната
+ * обязана создаться с ней первой картой. Едет рядом с любым из двух ключей —
+ * это другой вопрос, не «какой вечер», а «с чего начать».
  */
 function roomQuery(src: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams()
   const preset = roomPresetByKey(src.get('preset'))
   const hint = roomPresetByKey(src.get('hint'))
+  const seed = roomSeedOf(src.get('game'))
   if (preset) out.set('preset', preset.key)
   else if (hint) out.set('hint', hint.key)
+  if (seed !== null) out.set('game', String(seed))
   return out
 }
 

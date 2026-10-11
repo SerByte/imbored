@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
-import { ROOM_PRESETS, roomArrival, type RoomPreset } from '@/lib/presets'
+import { ROOM_PRESETS, roomArrival, roomSeedOf, type RoomPreset } from '@/lib/presets'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { Icon } from '@/components/Icon'
 import { eyebrow } from '@/components/Labels'
@@ -50,6 +50,14 @@ import { useSearch } from '@/components/useSearch'
  * человек не выбирал, без способа поправить. Порядок плиток не меняется —
  * отметка, а не перестановка. С ?preset= подсказка не читается: выбранное
  * важнее похожего.
+ *
+ * ?game= — «Позвать в эту игру» (со страницы игры, с /pick и с /compat): игра
+ * едет в тело запроса и становится первой картой комнаты. Над плитками —
+ * строка «Первой картой — …», чтобы хост видел, что игра доехала, прежде чем
+ * выбрать вечер. Имя спрашивается у /api/room/seed — той же проверкой, что и
+ * создание, — поэтому строка не обещает игру, которую комната не возьмёт.
+ * Сервер не ответил — строки нет, а игра всё равно едет: решает создание.
+ * Через вход игра едет вместе с настроением (roomQuery в lib/destination).
  */
 
 /*
@@ -79,6 +87,19 @@ const PRESET_ART: Record<string, readonly FanGame[]> = {
 }
 type Phase = 'choosing' | 'creating' | 'failed' | 'busy' | 'needsteam'
 
+/**
+ * Хвост адреса /room/new для возврата через вход: выбранный пресет либо
+ * подсказка, и игра, в которую зовут. Что из этого доедет, решает roomQuery в
+ * lib/destination — здесь только сборка, без второго разбора.
+ */
+function arrivalQuery(preset: string | null, hint: string | null, game: number | null): URLSearchParams {
+  const q = new URLSearchParams()
+  if (preset) q.set('preset', preset)
+  else if (hint) q.set('hint', hint)
+  if (game !== null) q.set('game', String(game))
+  return q
+}
+
 export default function NewRoomPage() {
   const router = useRouter()
   const [phase, setPhase] = useState<Phase>('choosing')
@@ -96,8 +117,13 @@ export default function NewRoomPage() {
    */
   const search = useSearch()
   /* back создаёт комнату сразу, hint — только отметка на плитке (lib/presets) */
-  const { create: back, hint } = roomArrival(new URLSearchParams(search))
+  const query = new URLSearchParams(search)
+  const { create: back, hint } = roomArrival(query)
   const preset = picked ?? back ?? ROOM_PRESETS[0]
+  /* игра, в которую зовут (?game=); имя — когда сервер подтвердил её */
+  const game = roomSeedOf(query.get('game'))
+  const [seed, setSeed] = useState<{ appid: number; name: string } | null>(null)
+  const seedName = seed && seed.appid === game ? seed.name : null
   /*
    * Сессия по ссылке на профиль комнату не создаст — это уже известно, если
    * другая страница документа получила needsteam (lib/writer). Раньше человек
@@ -109,15 +135,15 @@ export default function NewRoomPage() {
     phase !== 'choosing' ? phase : writer === false ? 'needsteam' : back ? 'creating' : 'choosing'
 
   const send = useCallback(
-    async (p: RoomPreset) => {
+    async (p: RoomPreset, g: number | null) => {
       try {
         const res = await fetch('/api/room/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mood: p.mood }),
+          body: JSON.stringify({ mood: p.mood, game: g ?? undefined }),
         })
         if (res.status === 401) {
-          router.push(bounceTo('/room/new', new URLSearchParams({ preset: p.key })))
+          router.push(bounceTo('/room/new', arrivalQuery(p.key, null, g)))
           return
         }
         // Своя ветка у 429: «попробуй ещё раз» — вредный совет, когда упёрся в
@@ -152,16 +178,33 @@ export default function NewRoomPage() {
   const create = (p: RoomPreset) => {
     setPicked(p)
     setPhase('creating')
-    void send(p)
+    void send(p, game)
   }
 
   // Вернулся со входа с уже выбранным настроением — создаём сразу. Один раз:
-  // повтор после отказа — кнопкой, с тем же пресетом
+  // повтор после отказа — кнопкой, с тем же пресетом. Игра — из того же снимка
+  // адреса, что и back: пустой кадр гидратации сюда не доходит (!back)
   useEffect(() => {
     if (!back || started.current || writerStore.get() === false) return
     started.current = true
-    void send(back)
-  }, [back, send])
+    void send(back, game)
+  }, [back, game, send])
+
+  // Имя игры, в которую зовут, — для строки над плитками. setSeed только в
+  // ответе, не в теле эффекта; отказ и сбой — строки просто нет
+  useEffect(() => {
+    if (game === null) return
+    const ac = new AbortController()
+    const stop = () => ac.abort()
+    fetch(`/api/room/seed?game=${game}`, { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { appid: number; name: string } | null) => d && setSeed(d))
+      .catch(() => {})
+    // Не «return () => …»: сторож фокуса (lib/focushandoff.test) считает
+    // каждый «return (» в этом файле экраном, который обязан начинаться со
+    // строки status
+    return stop
+  }, [game])
 
   /*
    * ЭКРАН ОТКАЗА ЗАБИРАЕТ ФОКУС, А ПОПЫТКА — ГОЛОС.
@@ -207,6 +250,11 @@ export default function NewRoomPage() {
               зайдёт в комнату.
               {hint && ` Ровно такого вечера, как в подборе, здесь нет — похожий, «${hint.label}», отмечен ниже, но выбирать тебе.`}
             </p>
+            {seedName && (
+              <p className="max-w-md text-sm leading-relaxed">
+                Первой картой — «{seedName}». Не зайдёт — дальше обычная колода.
+              </p>
+            )}
           </div>
           {/* Плитки с веером, как ответы квиза: постеры — примеры того, во
               что компания уходит с этим настроением, а не сама колода */}
@@ -271,14 +319,10 @@ export default function NewRoomPage() {
           </p>
           {/* Настроение — в адрес, только если его правда выбрали: экран входа
               бывает и до выбора, и тогда после входа ждёт выбор, а не комната
-              с настроением по умолчанию */}
+              с настроением по умолчанию. Игра едет в любом случае */}
           <a
             href={steamLoginFor(
-              picked || back
-                ? `/room/new?preset=${preset.key}`
-                : hint
-                  ? `/room/new?hint=${hint.key}`
-                  : '/room/new',
+              `/room/new?${arrivalQuery(picked || back ? preset.key : null, hint?.key ?? null, game)}`,
             )}
             className="btn-ember is-block py-3"
           >

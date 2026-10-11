@@ -356,6 +356,28 @@ describe('настроение комнаты переживает вход', ()
     expect(destinationUrl('/play?hint=talk')).toBe('/play')
   })
 
+  /*
+   * «Позвать в эту игру»: гость со страницы игры жмёт кнопку, его разворачивает
+   * на вход, и после входа комната обязана создаться с той же игрой первой
+   * картой, а не без неё.
+   */
+  test('предложенная игра доезжает через вход — одна и вместе с настроением', () => {
+    for (const here of ['/room/new?game=548430', '/room/new?preset=quick&game=548430', '/room/new?hint=talk&game=892970']) {
+      expect(destinationUrl(here), here).toBe(here)
+      expect(loginTarget(query(steamLoginFor(here))), here).toBe(here)
+      const landing = bounceTo('/room/new', new URLSearchParams(here.split('?')[1]))
+      expect(loginTarget(query(landing)), here).toBe(here)
+    }
+  })
+
+  test('чужая игра в адресе отбрасывается, остальное доезжает', () => {
+    expect(destinationUrl('/room/new?game=-1')).toBe('/room/new')
+    expect(destinationUrl('/room/new?game=abc&preset=quick')).toBe('/room/new?preset=quick')
+    expect(destinationUrl('/room/new?game=570%2F..%2F..')).toBe('/room/new')
+    // игра комнаты выдаче не хвост
+    expect(destinationUrl('/play?game=570')).toBe('/play')
+  })
+
   test('каждый мост с /play переживает вход без изменений', () => {
     for (const time of ['short', 'medium', 'long'] as const) {
       for (const vibe of ['chill', 'engaged'] as const) {

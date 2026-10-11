@@ -119,9 +119,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     bannedAppidsOf(db, members.map((m) => m.steamid)),
   ])
 
-  // Метаданные библиотек участников, а не всего каталога
+  // Метаданные библиотек участников, а не всего каталога. Плюс игра, в
+  // которую звали (rooms.seed_appid): её может не быть ни у кого и не
+  // оказаться в пуле, а колоде нужна её мета — тем же запросом, не вторым
   const ownedIds = [...new Set(libraries.flatMap((l) => l.library.map((g) => g.appid)))]
-  const metas = await getGamesMetaLite(db, ownedIds)
+  const metas = await getGamesMetaLite(
+    db,
+    room.seedAppid !== undefined ? [...ownedIds, room.seedAppid] : ownedIds,
+  )
   const metaOf = (appid: number) => metas.get(appid)
 
   // Общий вкус пати — по нему добираем то, чего нет ни у кого.
@@ -171,6 +176,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     // из базы разбирается тем же сторожем, что и тело запроса создания, — у
     // старой или битой строки настроения просто нет, и колода прежняя
     mood: parseMood(room.mood),
+    // «Позвать в эту игру»: первая карта у всех, с подписью. Баны, издание и
+    // «только мультиплеер» buildGroupDeck проверяет и для неё. Ниже её, как
+    // любую карту, может снять filterActual, а проголосованную — shown
+    pinned: room.seedAppid ?? null,
   })
 
   // Колода собирается из библиотек участников, а они офлайн-фильтры каталога

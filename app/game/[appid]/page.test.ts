@@ -19,6 +19,7 @@ import {
   type StoredNews,
 } from '@/lib/db'
 import { GAME_PAGE_REVALIDATE_SEC, PRERENDER_TOP } from '@/lib/gamecache'
+import { roomSeedHref } from '@/lib/presets'
 import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
@@ -354,5 +355,38 @@ describe('замещённая игра', () => {
     expect(meta.robots).toEqual({ index: false, follow: true })
     expect(meta.alternates?.canonical).toBe('/game/10')
     expect(meta.openGraph?.url).toBe('/game/10')
+  })
+})
+
+/**
+ * «Позвать в эту игру»: карточку игры чаще всего открывают, чтобы скинуть
+ * друзьям, и «го в неё?» уходило в чат голой ссылкой. Кнопка ведёт в комнату
+ * с этой игрой первой картой — но только у той, которую комната возьмёт
+ * (seedable в lib/roomseed). Адрес один на всех: про сессию страница не знает,
+ * и ISR от кнопки не меняется.
+ */
+describe('«Позвать в эту игру»', () => {
+  const partyLinks = async (appid: number) =>
+    islandsOf(flight(await GamePage({ params: Promise.resolve({ appid: String(appid) }) })), 'Link')
+      .map((l) => String(l.href))
+      .filter((href) => href.startsWith('/room/'))
+
+  test('сетевая игра — ссылка на комнату с ней первой картой', async () => {
+    await upsertGameMeta(db, game(APPID), T0)
+    expect(await partyLinks(APPID)).toEqual([roomSeedHref(APPID)])
+  })
+
+  test('одиночная — кнопки нет: колода пати её не раздаст', async () => {
+    await upsertGameMeta(db, game(20, { categories: [2], tags: { RPG: 900 } }), T0)
+    expect(await partyLinks(20)).toEqual([])
+  })
+
+  test('вытесненная преемником и похороненная каталогом — кнопки нет', async () => {
+    await upsertGameMeta(db, game(10, { name: 'Counter-Strike' }), T0)
+    await upsertGameMeta(db, game(11, { name: 'Мёртвый сетевой' }), T0)
+    await db.execute({ sql: 'UPDATE games SET superseded_by = ?, signals_at = ? WHERE appid = 10', args: [APPID, T0] })
+    await db.execute({ sql: 'UPDATE games SET alive = 0, signals_at = ? WHERE appid = 11', args: [T0] })
+    expect(await partyLinks(10)).toEqual([])
+    expect(await partyLinks(11)).toEqual([])
   })
 })

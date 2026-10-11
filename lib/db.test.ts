@@ -155,7 +155,7 @@ import { OTHER_STORE_GAMES } from './otherstores'
 import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
 import { hiddenLibrary } from './testing/hiddenlibrary'
-import type { GameMeta, GameSemantics, LibraryGame } from './types'
+import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
 
 const NOW = 1_700_000_000
 
@@ -1051,6 +1051,21 @@ describe('db', () => {
     expect(await roomMembers(db, 'ABC123')).toHaveLength(2)
   })
 
+  /**
+   * «Позвать в эту игру»: комната помнит игру, с которой её создали, — первую
+   * карту колоды и строку приглашения. Комнаты без неё (и все старые) читаются
+   * без поля, как matchedAppid до матча.
+   */
+  test('комната помнит предложенную игру; без неё поля нет', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'SED001', steamid: 'host', seedAppid: 548430 }, NOW)
+    await createRoom(db, { id: 'SED002', steamid: 'host' }, NOW)
+    expect((await getRoom(db, 'SED001'))?.seedAppid).toBe(548430)
+    const plain = await getRoom(db, 'SED002')
+    expect(plain).not.toBeNull()
+    expect(plain && 'seedAppid' in plain).toBe(false)
+  })
+
   test('в сматченную комнату новых не пускают, своих — пускают', async () => {
     const db = await freshDb()
     await createRoom(db, { id: 'MTC001', steamid: 'a' }, NOW)
@@ -1146,9 +1161,35 @@ describe('db', () => {
     const board = await listPublicRooms(db, NOW)
     expect(board.map((r) => r.id)).toEqual(['PUB001'])
     expect(board[0].memberNames).toEqual(['Аня'])
+    // настроения у комнаты нет — так и говорим, а не выдумываем
+    expect(board[0].mood).toBeNull()
 
     await setRoomPublic(db, 'PUB001', false)
     expect(await listPublicRooms(db, NOW)).toEqual([])
+  })
+
+  /**
+   * Доска показывает, на какой вечер зовут: «⚡ Пара быстрых каток» — ответ
+   * на вопрос незнакомца «подсесть ли мне сюда». Настроение — той же строкой
+   * запроса, без второго похода в базу.
+   */
+  test('доска везёт настроение комнаты; битое — null, а не падение доски', async () => {
+    const db = await freshDb()
+    const quick: Mood = { time: 'short', vibe: 'engaged', social: 'friends' }
+    await createRoom(db, { id: 'MOOD01', steamid: 'a', mood: quick }, NOW)
+    await createRoom(db, { id: 'MOOD02', steamid: 'b' }, NOW - 1)
+    await createRoom(db, { id: 'MOOD03', steamid: 'c' }, NOW - 2)
+    for (const id of ['MOOD01', 'MOOD02', 'MOOD03']) await setRoomPublic(db, id, true)
+    // руками: так строку не запишет ни один роут, но одна испорченная строка
+    // не должна гасить всю доску
+    await db.execute({ sql: "UPDATE rooms SET mood_json = '{битое' WHERE id = 'MOOD03'", args: [] })
+
+    const board = await listPublicRooms(db, NOW)
+    expect(board.map((r) => [r.id, r.mood])).toEqual([
+      ['MOOD01', quick],
+      ['MOOD02', null],
+      ['MOOD03', null],
+    ])
   })
 
   test('голоса: матч только когда ВСЕ за одну игру', async () => {
@@ -3906,14 +3947,37 @@ describe('версия схемы', () => {
     expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
   })
 
+  /**
+   * Так выглядит прод в первый холодный старт с «Позвать в эту игру»: версия
+   * 8 записана, комнаты живут, колонки нет. Без подъёма версии ALTER сюда не
+   * доехал бы никогда, и первое же создание комнаты падало бы на INSERT.
+   */
+  test('прод на v8 получает seed_appid, живые комнаты читаются как были', async () => {
+    const db = await freshDb()
+    await db.execute('ALTER TABLE rooms DROP COLUMN seed_appid')
+    await db.execute("UPDATE catalog_meta SET value = '8' WHERE key = 'schema_v'")
+    await db.execute(
+      "INSERT INTO rooms (id, created_by, status, created_at) VALUES ('LIVE01', 'a', 'open', 1)",
+    )
+    await migrateDb(db)
+
+    expect((await columnsOf(db)).has('rooms.seed_appid')).toBe(true)
+    const live = await getRoom(db, 'LIVE01')
+    expect(live?.status).toBe('open')
+    expect(live && 'seedAppid' in live).toBe(false)
+    await createRoom(db, { id: 'SEED01', steamid: 'b', seedAppid: 892970 }, NOW)
+    expect((await getRoom(db, 'SEED01'))?.seedAppid).toBe(892970)
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+  })
+
   test('новая колонка без новой версии схемы не проскочит', () => {
     // На живой базе версия уже записана, и колонка, добавленная без подъёма
     // CURRENT_SCHEMA_V, туда не доедет никогда, а все остальные тесты гоняют
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 8,
-      columns: 38,
+      version: 9,
+      columns: 39,
     })
   })
 })

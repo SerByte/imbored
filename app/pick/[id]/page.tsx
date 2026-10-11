@@ -9,6 +9,8 @@ import { Eyebrow } from '@/components/Labels'
 import { dayKey } from '@/lib/daily'
 import { dayLabel } from '@/lib/freshness'
 import { isMultiplayerMeta } from '@/lib/recommend'
+import { roomSeedHref } from '@/lib/presets'
+import { seedable } from '@/lib/roomseed'
 import { pickCopy, quoted } from '@/lib/sharedpick'
 import { OG_SITE } from '@/lib/site'
 import { loadSharedPick } from './load'
@@ -121,10 +123,20 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
           )}
           {/* Пати — только у игры, в которую играют вместе: у одиночной
               «позвать в пати» обещало бы то, чего игра не умеет. Та же
-              мерка, что у колоды комнаты (isMultiplayerMeta) */}
+              мерка, что у колоды комнаты (isMultiplayerMeta).
+              Комната — сразу с этой игрой первой картой (roomSeedHref):
+              раньше ссылка вела на голый /room/new, и игра, ради которой
+              звали, терялась по дороге. Мерка та же, что у создания комнаты
+              (seedable): игру другого магазина, мёртвую или вытесненную
+              комната первой картой не возьмёт — тогда и ссылка прежняя, без
+              обещания «в эту игру» */}
           {isMultiplayerMeta(meta) && (
-            <Link href="/room/new" prefetch={false} className="tap link-more">
-              Позвать в пати
+            <Link
+              href={seedable(meta) ? roomSeedHref(meta.appid) : '/room/new'}
+              prefetch={false}
+              className="tap link-more"
+            >
+              {seedable(meta) ? 'Позвать в эту игру' : 'Позвать в пати'}
               <Icon name="arrow" size={16} />
             </Link>
           )}

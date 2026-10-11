@@ -24,6 +24,7 @@ import {
   loadInviteHead,
 } from '@/lib/compatpage'
 import { reconnectHref } from '@/lib/destination'
+import { roomSeedHref } from '@/lib/presets'
 import { plural } from '@/lib/plural'
 import { playedShort } from '@/lib/playtime'
 import { recordCompatView } from '@/lib/db'
@@ -226,16 +227,31 @@ function PickCard({ pick }: { pick: CompatPick }) {
   )
 }
 
+/**
+ * invite — «Позвать в эту игру» под каждой карточкой: комната сразу с ней
+ * первой картой (roomSeedHref). Только у полки «есть у обоих»: это ровно то,
+ * во что вдвоём можно зайти сегодня, и самое частое, что после сравнения
+ * пишут в чат, — «го в X?». Раньше единственной дорогой в пати была общая
+ * кнопка внизу, и игра, которую человек только что увидел, терялась по
+ * дороге. У полки «на будущее» ссылки нет: звать в игру, которую обоим ещё
+ * покупать, — не приглашение на вечер.
+ *
+ * Ссылка — рядом с карточкой, а не внутри: карточка сама ссылка на игру, а
+ * ссылка в ссылке — невалидная разметка. Зазор держит py-2 самой ссылки:
+ * зона пальца .tap (44px) тогда не наползает на карточку над ней.
+ */
 function Shelf({
   kicker,
   hint,
   picks,
   index,
+  invite = false,
 }: {
   kicker: string
   hint: string
   picks: CompatPick[]
   index: number
+  invite?: boolean
 }) {
   if (!picks.length) return null
   return (
@@ -244,9 +260,23 @@ function Shelf({
         {kicker}
       </SectionTitle>
       <div className="grid grid-cols-2 gap-x-4 gap-y-6 md:grid-cols-3">
-        {picks.map((p) => (
-          <PickCard key={p.appid} pick={p} />
-        ))}
+        {picks.map((p) =>
+          invite && p.appid > 0 ? (
+            <div key={p.appid} className="flex flex-col gap-1">
+              <PickCard pick={p} />
+              <Link
+                href={roomSeedHref(p.appid)}
+                prefetch={false}
+                className="tap link-more self-start py-2"
+              >
+                Позвать в эту игру
+                <Icon name="arrow" size={14} />
+              </Link>
+            </div>
+          ) : (
+            <PickCard key={p.appid} pick={p} />
+          ),
+        )}
       </div>
     </m.section>
   )
@@ -488,6 +518,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           hint="Есть у обоих, живое и рассчитано на компанию."
           picks={d.playNow}
           index={2}
+          invite
         />
         <Shelf
           kicker="Нет ни у кого — на будущее"

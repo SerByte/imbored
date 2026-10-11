@@ -180,6 +180,8 @@ type Card = {
   tags: string[]
   store?: string
   storeUrl?: string
+  /** Подпись первой карты «Позвать в эту игру» (PINNED_REASON в lib/group) — рисует SwipeDeck */
+  reason?: string
 }
 
 /** Обычный темп опроса и замедленный — когда в комнате давно ничего не двигается */

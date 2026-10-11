@@ -9,6 +9,7 @@ import {
   upsertGameMeta,
   type Db,
 } from '@/lib/db'
+import { PINNED_REASON } from '@/lib/group'
 import { rotationSlot } from '@/lib/pool'
 import { nowSec } from '@/lib/server'
 import { freshDb, params, post, signInAs } from '@/lib/testing/route'
@@ -253,5 +254,52 @@ describe('/api/room/[id]/deck: настроение комнаты', () => {
     const res = await get()
     expect(res.status).toBe(200)
     expect((await order()).sort()).toEqual([30, 31])
+  })
+})
+
+/**
+ * «Позвать в эту игру»: комнату создали со страницы игры, и эта игра — первая
+ * карта у всех, даже если её нет ни в одной библиотеке и в пул она не попала.
+ * Голос за неё принимается: она в розданном (room_deck), как любая карта.
+ */
+describe('/api/room/[id]/deck: игра, в которую звали', () => {
+  const DRG = meta(548430, 'Deep Rock Galactic')
+
+  async function seededRoom() {
+    const now = nowSec()
+    const me = await signInAs(db, 'openid')
+    for (const g of [DOTA, PORTAL, DRG]) await upsertGameMeta(db, g, now)
+    await createRoom(db, { id: ROOM, steamid: me, seedAppid: DRG.appid }, now)
+    for (const steamid of [me, FRIEND]) {
+      await joinRoom(db, ROOM, steamid, undefined, now)
+      // DRG нет ни у кого — колода сама поставила бы её после общих
+      await saveLibrarySnapshot(db, steamid, owned(DOTA, PORTAL), now)
+    }
+    return me
+  }
+
+  type Card = { appid: number; reason?: string; ownedByAll: boolean }
+  const cardsNow = async () => ((await (await get()).json()) as { cards: Card[] }).cards
+
+  test('первой картой, с подписью, и голос за неё принимается', async () => {
+    await seededRoom()
+    const cards = await cardsNow()
+    expect(cards[0]).toMatchObject({ appid: DRG.appid, reason: PINNED_REASON, ownedByAll: false })
+    expect(cards.slice(1).map((c) => c.appid).sort()).toEqual([570, 620])
+    expect(cards.filter((c) => c.reason)).toHaveLength(1)
+    expect((await swipe(DRG.appid)).status).toBe(200)
+  })
+
+  test('проголосованная — уходит из руки, как любая карта', async () => {
+    await seededRoom()
+    await cardsNow()
+    await swipe(DRG.appid)
+    expect((await cardsNow()).map((c) => c.appid)).not.toContain(DRG.appid)
+  })
+
+  test('вошёл тот, кто её скрыл, — карты нет ни у кого', async () => {
+    await seededRoom()
+    await logFeedback(db, { steamid: FRIEND, appid: DRG.appid, action: 'banned' }, nowSec())
+    expect((await cardsNow()).map((c) => c.appid)).not.toContain(DRG.appid)
   })
 })
