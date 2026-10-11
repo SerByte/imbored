@@ -238,6 +238,7 @@ export default function RoomPage() {
   // Адрес комнаты без хвоста своей страницы: window.location.href уносил бы
   // и чужие метки из адреса того, кто делится
   const share = useShareLink(
+    'room',
     () => roomShareUrl(window.location.origin, roomId),
     `Пати ${roomId} — imbored`,
     'Выберем игру на вечер вместе',

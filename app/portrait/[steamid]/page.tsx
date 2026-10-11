@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache, type ReactNode } from 'react'
 import { BlurBand } from '@/components/BlurBand'
+import { CardDownload } from '@/components/CardDownload'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
@@ -768,8 +769,10 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         </m.figure>
 
         {/* Превью — обычная картинка на тот же роут, что и скачивание: каждый
-            лишний рендер satori заново тянет обложки со Steam. */}
-        <m.a
+            лишний рендер satori заново тянет обложки со Steam. Поэтому
+            скачивание считается нажатием (CardDownload), а не на роуте. */}
+        <CardDownload
+          what="portrait"
           {...inView(1)}
           href={`/portrait/${steamid}/card.png`}
           download={`imbored-${steamid}.png`}
@@ -785,7 +788,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             />
           </span>
           <span className="link-more mt-3">Скачать карточку</span>
-        </m.a>
+        </CardDownload>
 
         {!isMine && (
           <Link
@@ -810,6 +813,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               По этой ссылке увидят твой портрет и смогут проверить совместимость.
             </p>
             <ShareLinkField
+              what="portrait"
               url={withRef(`${appBaseUrl()}/portrait/${steamid}`, 'portrait')}
               label="Ссылка на твой портрет игрока"
               title={`Портрет игрока ${name} — imbored`}

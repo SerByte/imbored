@@ -39,6 +39,7 @@ export function CopyCompatLink({
 }) {
   const router = useRouter()
   const share = useShareLink(
+    'compat',
     () => withRef(`${window.location.origin}/compat/${steamid}`, 'compat'),
     TITLE,
     TEXT,

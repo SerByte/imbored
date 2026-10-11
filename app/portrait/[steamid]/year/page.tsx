@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache, type ReactNode } from 'react'
 import { BlurBand } from '@/components/BlurBand'
+import { CardDownload } from '@/components/CardDownload'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { GameLink } from '@/components/GameLink'
@@ -366,8 +367,10 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
       {/* ——— 5. Финал ——— */}
       <section className="relative mx-auto flex w-full max-w-2xl flex-col items-center gap-8 px-safe pb-24 pt-8 text-center">
         {/* Превью — картинка на тот же роут, что и скачивание: лишний рендер
-            satori заново тянул бы постеры со Steam */}
-        <a
+            satori заново тянул бы постеры со Steam. Поэтому скачивание
+            считается нажатием (CardDownload), а не на роуте */}
+        <CardDownload
+          what="year"
           href={`/portrait/${steamid}/year/card.png`}
           download={`imbored-${steamid}-${year.year}.png`}
           className="game-card block w-56"
@@ -382,7 +385,7 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
             />
           </span>
           <span className="link-more mt-3">Скачать карточку</span>
-        </a>
+        </CardDownload>
         <Link href={`/portrait/${steamid}`} prefetch={false} className="tap link-more">
           <Icon name="arrow" size={16} className="rotate-180" />
           {isMine ? 'К своему портрету' : `К портрету игрока ${name}`}
@@ -391,6 +394,7 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
           <div className="flex w-full flex-col gap-2.5 text-left">
             <p className="text-xs text-dim">По этой ссылке увидят твои итоги года и смогут открыть портрет.</p>
             <ShareLinkField
+              what="year"
               url={withRef(`${appBaseUrl()}/portrait/${steamid}/year`, 'portrait')}
               label="Ссылка на твои итоги года"
               title={`Итоги года ${name} — imbored`}

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { Icon, type IconName } from '@/components/Icon'
-import { track } from '@/lib/track'
+import { trackShare, type ShareKind } from '@/lib/track'
 
 export type ShareState = 'idle' | 'done' | 'manual'
 
@@ -69,8 +69,13 @@ function copyFallback(url: string): boolean {
  * Адрес приходит функцией, а не строкой: у кнопки на странице результата его
  * можно узнать только из window, а трогать window при рендере нельзя. Функция
  * зовётся в момент нажатия, когда window заведомо есть.
+ *
+ * what — чем делятся, для счётчика share (lib/track). Обязательный и первый:
+ * без него все кнопки сайта ложились в одну строку share_click:direct, и
+ * новая кнопка, забывшая его, теперь не соберётся, а не потеряется в общей.
  */
 export function useShareLink(
+  what: ShareKind,
   getUrl: () => string,
   title: string,
   text: string,
@@ -96,7 +101,7 @@ export function useShareLink(
     const url = getUrl()
     if (!url) return
     // Намерение поделиться — шаг воронки, чем бы ни кончилась панель
-    track('share_click')
+    trackShare(what)
     if (native) {
       try {
         await navigator.share({ title, text, url })
@@ -203,11 +208,14 @@ function ShareMark({ icon, size = 16, children }: { icon?: IconName; size?: numb
  * и два поля на странице получали один и тот же id.
  */
 export function ShareLinkField({
+  what,
   url,
   label,
   title,
   text,
 }: {
+  /** чем делятся — для счётчика share (см. useShareLink) */
+  what: ShareKind
   url: string
   /** подпись поля для скринридера: видимой подписи здесь нет по месту */
   label: string
@@ -215,7 +223,7 @@ export function ShareLinkField({
   text: string
 }) {
   const ref = useRef<HTMLInputElement>(null)
-  const share = useShareLink(() => url, title, text, () => {
+  const share = useShareLink(what, () => url, title, text, () => {
     ref.current?.focus()
     ref.current?.select()
   })

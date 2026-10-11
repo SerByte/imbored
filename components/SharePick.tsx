@@ -55,7 +55,7 @@ export function useSharePick(
   }, [hero?.appid])
   const title = `«${hero?.name ?? ''}» — imbored`
   const text = kind === 'daily' ? 'Моя игра дня от imbored' : 'imbored выбрал мне игру на вечер'
-  const share = useShareLink(() => urlRef.current, title, text)
+  const share = useShareLink('pick', () => urlRef.current, title, text)
 
   if (!hero?.share) return { button: null, panel: null }
   const pick = hero
@@ -166,7 +166,13 @@ export function useSharePick(
     <>
       {current?.phase === 'ready' && (
         <div className="flex w-full max-w-xl flex-col gap-1.5">
-          <ShareLinkField url={current.url} label={`Ссылка на выбор «${pick.name}»`} title={title} text={text} />
+          <ShareLinkField
+            what="pick"
+            url={current.url}
+            label={`Ссылка на выбор «${pick.name}»`}
+            title={title}
+            text={text}
+          />
           {/* Что уйдёт по ссылке — сказано тут же, а не только в политике */}
           <p className="text-xs text-faint">По ссылке — игра и это объяснение, как здесь, но без имени профиля.</p>
         </div>

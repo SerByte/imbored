@@ -7,8 +7,9 @@ import { parseTrackEvent, stepKey, TRACK_MAX_BODY } from '@/lib/track'
  * Приёмник шагов воронки (lib/track.ts).
  *
  * Каждый маяк — плюс один к числу за час «событие:источник» в
- * telemetry_hourly. Ни сессии, ни адреса страницы, ни браузера: воронка
- * видна как отношение чисел, без пути конкретного человека.
+ * telemetry_hourly (у pick_wait вместо источника — корзина ожидания, у share
+ * и card_download — «что.источник»). Ни сессии, ни адреса страницы, ни
+ * браузера: воронка видна как отношение чисел, без пути конкретного человека.
  *
  * Потолок по адресу — чтобы один скрипт не накрутил счётчики и не жёг
  * записи Turso: живой человек за десять минут делает единицы шагов. Потолок
@@ -44,7 +45,8 @@ export async function POST(req: Request) {
   })
   if (!allowed) return new Response(null, { status: 429 })
 
-  // У pick_wait вторая часть ключа — корзина ожидания, а не источник (lib/track)
+  // Вторая часть ключа — источник; у pick_wait — корзина ожидания, у share и
+  // card_download — «что.источник» (stepKey в lib/track)
   recordTelemetryLater('event', stepKey(step))
   return new Response(null, { status: 204 })
 }
