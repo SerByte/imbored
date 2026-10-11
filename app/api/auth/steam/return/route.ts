@@ -137,9 +137,12 @@ export async function GET(req: NextRequest) {
      * сработал. Это главная воронка пати.
      *
      * Код — из loginCarry, то есть проверенный. Вход в комнату открыт любой
-     * сессии (голос живёт внутри комнаты и профиль не трогает), а эта к тому
-     * же доказана Steam. Отказ глотаем: вход уже состоялся, а страница
-     * комнаты сама покажет, что с ней — нет её, уже договорилась, — и
+     * сессии, а эта к тому же доказана Steam — и членство это запоминает
+     * (writer): дальше за него в комнате действует только пишущая сессия, а
+     * не любая ссылка на тот же профиль (lib/roomseat). Тем же путём человек,
+     * вошедший в пати по ссылке, поднимает своё членство, нажав «Войти через
+     * Steam». Отказ глотаем: вход уже состоялся, а страница комнаты сама
+     * покажет, что с ней — нет её, уже договорилась, хост убрал, — и
      * предложит войти вручную.
      */
     const join = loginCarry(params).get('join')
@@ -147,7 +150,7 @@ export async function GET(req: NextRequest) {
       // Был ли уже в комнате — для воронки, как в /api/room/[id]/join:
       // хозяин, перелогинившийся по своей же ссылке, новым входом не считается
       const before = await roomMembers(db, join).catch(() => null)
-      const joined = await joinRoom(db, join, steamid, summary?.personaName, now).catch((err: unknown) => {
+      const joined = await joinRoom(db, join, steamid, summary?.personaName, now, { writer: true }).catch((err: unknown) => {
         logSwallowed('auth/return:join', err)
         return null
       })

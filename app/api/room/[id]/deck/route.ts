@@ -18,11 +18,12 @@ import { sessionTrait } from '@/lib/gametraits'
 import { buildGroupDeck } from '@/lib/group'
 import { parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildTagProfile } from '@/lib/recommend'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { tagWeightFrom } from '@/lib/tagweight'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf, seatRefusal } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const DECK_SIZE = 20
@@ -52,8 +53,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  const writer = isWriter(session)
 
   const db = await getDb()
   /*
@@ -69,23 +72,26 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
    * приходит из адреса, по которому участник уже стоит, так что это редкость.
    */
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Колода без своих голосов — это и чужие голоса: какие карты участник уже
+  // отсвайпал. За вошедшего через Steam её не берёт чужая ссылка (lib/roomseat)
+  const seat = seatOf(members, steamid, writer)
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
-  if (!members.some((m) => m.steamid === steamid)) {
-    return NextResponse.json({ error: 'notmember' }, { status: 403 })
-  }
+  const refusal = seatRefusal(seat)
+  if (refusal) return refusal
 
   // После проверки членства: до неё маршрут и так закрыт сессией и
   // существованием комнаты, а тратить строки ограничителя на чужие попытки
-  // незачем — их отсекает 403 выше.
+  // незачем — их отсекает 403 выше. Счёт по сессии, а не по профилю —
+  // lib/roomseat.
   const gate = await checkRate(db, {
     bucket: 'room-deck',
-    id: steamid,
+    id: personalRateId(session, writer),
     limit: DECK_LIMIT,
     windowSec: DECK_WINDOW_SEC,
     nowSec: nowSec(),

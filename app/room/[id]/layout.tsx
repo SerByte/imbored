@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
+import { headers } from 'next/headers'
 import { inviteCopy } from '@/lib/roominvite'
 import { OG_SITE } from '@/lib/site'
-import { loadRoomInvite, ROOM_ID_RE } from './invite'
+import { loadRoomInviteForPage, ROOM_ID_RE } from './invite'
 import { MotionLazy } from '@/components/motion/MotionLazy'
 
 /**
@@ -34,8 +35,11 @@ export async function generateMetadata({
   }
 
   // После матча — какая игра и куда идти дальше, без комнаты — нейтрально:
-  // три состояния разобраны в inviteCopy
-  const { title, description } = inviteCopy(code, await loadRoomInvite(code))
+  // три состояния разобраны в inviteCopy. С потолком room-peek по адресу:
+  // заголовок — та же проверка существования кода, что и API комнаты
+  // (lib/roompeek). headers() режим рендера не меняет: страница и так
+  // собирается на каждый запрос — generateStaticParams у неё нет
+  const { title, description } = inviteCopy(code, await loadRoomInviteForPage(code, await headers()))
 
   // Код — в верхнем регистре: /room/abc234 и /room/ABC234 — одна комната
   const url = `/room/${code}`

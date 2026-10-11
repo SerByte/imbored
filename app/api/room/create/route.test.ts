@@ -39,6 +39,9 @@ describe('/api/room/create', () => {
       const { roomId } = (await res.json()) as { roomId: string }
       expect((await getRoom(db, roomId))?.createdBy, kind).toBe(steamid)
       expect((await roomMembers(db, roomId)).map((m) => m.steamid), kind).toEqual([steamid])
+      // Членство хоста помнит пишущий вход: ссылка на его профиль за хоста
+      // в комнате не действует (lib/roomseat)
+      expect((await roomMembers(db, roomId))[0]?.writer, kind).toBe(true)
     }
   })
 })

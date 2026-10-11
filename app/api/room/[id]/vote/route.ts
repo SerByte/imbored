@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { castDeckVote, findRoomMatch, getRoom, roomMembers, setRoomMatched } from '@/lib/db'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf, seatRefusal } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -18,14 +19,20 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  const writer = isWriter(session)
 
   const db = await getDb()
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Голосует участник — и только тот, от чьего имени сессия вправе действовать
+  // (lib/roomseat): чужая ссылка на профиль вошедшего через Steam за него не
+  // голосует, ни добирая единогласие до матча, ни «нет» на чужую любимую игру
+  const seat = seatOf(members, steamid, writer)
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
@@ -41,15 +48,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     )
   }
 
-  if (!members.some((m) => m.steamid === steamid)) {
-    return NextResponse.json({ error: 'notmember' }, { status: 403 })
-  }
+  const refusal = seatRefusal(seat)
+  if (refusal) return refusal
 
   // Свайп — самая частая запись в приложении. Сто двадцать в минуту это
-  // вдвое быстрее самого быстрого живого свайпа.
+  // вдвое быстрее самого быстрого живого свайпа. Счёт — по сессии, а не по
+  // профилю: почему и почему без потолка адреса — lib/roomseat
   const gate = await checkRate(db, {
     bucket: 'room-vote',
-    id: steamid,
+    id: personalRateId(session, writer),
     limit: 120,
     windowSec: 60,
     nowSec: nowSec(),

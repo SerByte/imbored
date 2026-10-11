@@ -58,6 +58,8 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
 export default async function Image({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const code = id.toUpperCase()
+  // Без потолка room-peek, в отличие от заголовка страницы, — сознательно:
+  // headers() выбил бы карточку из ISR. Почему это терпимо — lib/roompeek
   const invite = ROOM_ID_RE.test(code) ? await loadRoomInvite(code) : null
   // Те же три состояния, что у заголовка страницы: ждёт, сошлась, неизвестна
   const { eyebrow, headline, foot } = inviteCopy(code, invite)

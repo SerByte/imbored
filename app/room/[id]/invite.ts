@@ -1,5 +1,6 @@
 import { getGamesMetaLite, getRoom, roomMembers } from '@/lib/db'
 import type { RoomInvite } from '@/lib/roominvite'
+import { peekAllowed } from '@/lib/roompeek'
 import { getDb } from '@/lib/server'
 
 /**
@@ -45,4 +46,31 @@ export async function loadRoomInvite(id: string): Promise<RoomInvite | null> {
     // осмысленным, а не пятисоткой у краулера.
     return null
   }
+}
+
+/**
+ * То же — для заголовка страницы, с потолком room-peek по адресу.
+ *
+ * Заголовок отвечает по-разному на живую комнату и на несуществующую, то есть
+ * это та же проверка существования кода, что у /api/room/[id], и платит она
+ * тем же счётчиком (lib/roompeek). Списывается ДО чтения комнаты: промах
+ * обязан стоить столько же, сколько попадание. Сверх потолка — null, то есть
+ * нейтральное «Пати КОД», неотличимое от комнаты, которой нет; краулер
+ * мессенджера, упёршийся в потолок, получит ту же нейтральную карточку, а не
+ * ошибку.
+ *
+ * Сессия по-прежнему не читается, поэтому платят и участники, открывшие свою
+ * комнату: одна единица за загрузку страницы против опроса раз в 2,5 секунды,
+ * под который потолок и считался. Сбой счётчика не прячет приглашение:
+ * checkRate при недоступной базе пропускает, а дальше молчащую базу ловит
+ * loadRoomInvite.
+ */
+export async function loadRoomInviteForPage(id: string, headers: Headers): Promise<RoomInvite | null> {
+  if (!ROOM_ID_RE.test(id)) return null
+  try {
+    if (!(await peekAllowed(await getDb(), headers)).ok) return null
+  } catch {
+    // getDb не поднялся — loadRoomInvite ниже ответит тем же null сам
+  }
+  return loadRoomInvite(id)
 }

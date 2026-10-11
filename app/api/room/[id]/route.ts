@@ -12,8 +12,9 @@ import {
 import { discountView, trustedPrice } from '@/lib/discount'
 import { parseMood } from '@/lib/mood'
 import { PEEK_LIMIT, PEEK_WINDOW_SEC } from '@/lib/roompeek'
+import { seatOf } from '@/lib/roomseat'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -57,13 +58,22 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
    * Цена промаха — три лишних чтения у несуществующей комнаты. В опросе
    * такого не бывает по определению: клиент уже стоит на её странице.
    */
-  const [room, steamid, members, counts] = await Promise.all([
+  const [room, session, members, counts] = await Promise.all([
     getRoom(db, id),
-    currentSteamId(),
+    currentSession(),
     roomMembers(db, id),
     roomVoteCounts(db, id),
   ])
-  const isMember = steamid ? members.some((m) => m.steamid === steamid) : false
+  const steamid = session?.steamid ?? null
+  /*
+   * Участник — тот, от чьего имени эта сессия вправе действовать (lib/roomseat).
+   * Ссылка на профиль того, кто сам вошёл через Steam, видит комнату как
+   * не-участник: роуты участника ей всё равно откажут needsteam, а экран
+   * колоды, где каждый жест отказывает, хуже честного «войди через Steam».
+   * needSteam говорит странице, почему «Войти в комнату» здесь не поможет.
+   */
+  const seat = session ? seatOf(members, session.steamid, isWriter(session)) : 'none'
+  const isMember = seat === 'member'
 
   // До ответа 404: промах перебора обязан стоить так же, как попадание, иначе
   // потолок считал бы только найденные комнаты. Участников не трогаем — их
@@ -117,7 +127,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       // lib/roomkey. Им же хост называет, кого убрать (leave/route.ts)
       id: memberKey(secret, id, m.steamid),
       name: memberLabel(id, m.steamid, m.personaName),
-      me: m.steamid === steamid,
+      // «(ты)» — у того, за кого сессия действует; не-участнику по чужой
+      // ссылке чужая строка своей не становится
+      me: isMember && m.steamid === steamid,
       votes,
       // То же определение, по которому предлагается лидер голосов (memberDone)
       done: memberDone(votes, room.deckSize),
@@ -141,6 +153,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     members: memberViews,
     hasSession: Boolean(steamid),
     isMember,
+    needSteam: seat === 'needsteam',
     matchedGame: matchedMeta
       ? {
           appid: matchedMeta.appid,

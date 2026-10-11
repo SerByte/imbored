@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { findRoomMatch, getRoom, removeRoomMember, roomMembers, setRoomMatched } from '@/lib/db'
 import { memberKey } from '@/lib/roomkey'
-import { currentSteamId, getDb, sessionSecret } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -22,19 +23,28 @@ const ROOM_ID_RE = /^[A-Z0-9]{6}$/
  * Матч пересчитывается сразу. Иначе оставшимся, которые всё отсвайпали, нужно
  * было бы проголосовать ещё раз, чтобы что-то сдвинулось, — а свайпать больше
  * нечего.
+ *
+ * Убранный хостом не входит обратно ROOM_KICK_SEC (lib/room): иначе рука
+ * хоста действовала только на ушедшего в AFK, а тролль с доски нажимал
+ * «Войти» и снова запирал единогласие. Ушёл хост сам — рука переходит к тому,
+ * кто вошёл раньше всех (removeRoomMember): без неё комната снова запиралась
+ * первым же закрывшим вкладку.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  const writer = isWriter(session)
 
   const db = await getDb()
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  const seat = seatOf(members, steamid, writer)
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
@@ -66,12 +76,30 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   // Себя убрать может кто угодно, чужого — только хост. Право проверяем по
   // room.createdBy, а не по «первый в списке»: список меняется.
-  if (target !== steamid && room.createdBy !== steamid) {
+  const kick = target !== steamid
+  if (kick && room.createdBy !== steamid) {
     return NextResponse.json({ error: 'nothost' }, { status: 403 })
+  }
+  // Убрать другого — управление комнатой, как и вывесить её на доску
+  // (public/route.ts), и без доказательства владения не делается. Сессию на
+  // профиль хоста /api/connect выдаёт любому, кто знает его ссылку, — и тот
+  // убирал бы людей из чужой пати. Хост, создавший комнату, всегда пишущий
+  // (create — через requireWriter); отказ видит лишь хост по ссылке — тот,
+  // кому рука перешла от ушедшего, или вернувшийся по ссылке, — и страница
+  // говорит ему «войди через Steam».
+  if (kick && !writer) {
+    return NextResponse.json({ error: 'needsteam' }, { status: 403 })
+  }
+  // Себя — тоже от своего имени: чужая ссылка на профиль участника, который
+  // вошёл через Steam, не уводит его из пати вместе со всеми голосами
+  // (lib/roomseat). Не-участнику отвечаем как раньше, ниже: убирать нечего.
+  if (!kick && seat === 'needsteam') {
+    return NextResponse.json({ error: 'needsteam' }, { status: 403 })
   }
 
   // Повторный вызов безобиден: ушедшего уже нет, отвечать ошибкой не за что.
-  const removed = await removeRoomMember(db, id, target)
+  // Убранный хостом получает отметку — вернуться сразу он не сможет.
+  const removed = await removeRoomMember(db, id, target, kick ? { kickedAt: nowSec() } : {})
 
   let matched = room.status === 'matched' ? (room.matchedAppid ?? null) : null
   if (removed && room.status === 'open') {

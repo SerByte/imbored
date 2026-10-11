@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
-import { memberLabel } from '@/lib/room'
+import { memberDone, memberLabel } from '@/lib/room'
 import { getGamesMetaLite, getRoom, roomMembers, roomVotes } from '@/lib/db'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildLikes, pickLeader, type LeaderOffer } from '@/lib/roomlikes'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf, seatRefusal } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -33,26 +34,31 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  const writer = isWriter(session)
 
   const db = await getDb()
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // «Твои играем» — по именам игр, то есть чужие голоса для того, кто взял
+  // ссылку на профиль участника, вошедшего через Steam (lib/roomseat)
+  const seat = seatOf(members, steamid, writer)
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
-  if (!members.some((m) => m.steamid === steamid)) {
-    return NextResponse.json({ error: 'notmember' }, { status: 403 })
-  }
+  const refusal = seatRefusal(seat)
+  if (refusal) return refusal
 
+  // Счёт по сессии, а не по профилю — lib/roomseat
   const gate = await checkRate(db, {
     bucket: 'room-likes',
-    id: steamid,
+    id: personalRateId(session, writer),
     limit: LIKES_LIMIT,
     windowSec: LIKES_WINDOW_SEC,
     nowSec: nowSec(),
@@ -87,6 +93,23 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const mine = mineAppids.map(view)
   const offer: LeaderOffer | null = leader ? { ...leader, ...view(leader.appid) } : null
 
-  // near уходит как есть: в нём нет ни appid, ни названий — см. lib/roomlikes.ts
-  return NextResponse.json({ mine, near, leader: offer, memberCount: members.length })
+  /*
+   * «Вы почти совпали» — только тому, кто сам дошёл до конца колоды.
+   *
+   * Названий в near нет (lib/roomlikes.ts), но одного этого мало: блок
+   * группирует карты по раскладу «кто за, кого ждём», а свой голос смотрящего
+   * этот расклад двигает. «Нет» на карту, перечитать, сравнить счёт игр — и
+   * за два десятка кругов видно, кто за какую игру, незнакомцу с доски в том
+   * числе. Дошедший до конца свои голоса уже отдал, а отданный голос не
+   * меняется (castDeckVote), — двигать расклад ему нечем.
+   *
+   * Честный экран этого не замечает: /likes зовут, когда рука пуста (экран
+   * ожидания), то есть когда колода и так пройдена. memberDone — то же
+   * определение «дошёл», что у ростера и у лидера голосов.
+   */
+  const myVotes = votes.filter((v) => v.steamid === steamid).length
+  const nearShown = memberDone(myVotes, room.deckSize) ? near : []
+
+  // near уходит без appid и названий — см. lib/roomlikes.ts
+  return NextResponse.json({ mine, near: nearShown, leader: offer, memberCount: members.length })
 }
