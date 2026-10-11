@@ -4,10 +4,16 @@ import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getHeroMedia } from '@/lib/db'
 import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
-import { takeLlmBudget } from '@/lib/llmcap'
+import { llmDailyCap, takeLlmBudgetForIp } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
 import { parseExclude, parseNudge, planNudge } from '@/lib/nudge'
-import { checkRate, checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
+import {
+  checkRate,
+  checkRatesInOrder,
+  clientIp,
+  personalRateId,
+  rateLimitedResponse,
+} from '@/lib/ratelimit'
 import {
   continueView,
   parseFocus,
@@ -47,9 +53,17 @@ const FAMILIAR_CAP_ASKED = 3
  * ограничителя цикл «получить демо-сессию → запросить подборку» превращается
  * в чужой счёт за токены, и заметить это можно было бы только по биллингу.
  *
- * Считаем по обеим осям сразу. Один steamid — про человека, который завис на
- * кнопке «ещё»; один IP — про скрипт, который чеканит новые демо-личности
- * (они одноразовые, см. demoSteamId, и лимит по steamid ему не преграда).
+ * Считаем по обеим осям сразу. Личный потолок — про человека, который завис
+ * на кнопке «ещё»; один IP — про скрипт, который чеканит новые демо-личности
+ * и сессии по ссылке (они одноразовые, см. demoSteamId, и личный потолок ему
+ * не преграда).
+ *
+ * Личный — не «на steamid». Один steamid давно не значит одного человека:
+ * сессию по ссылке /api/connect выдаёт на любой публичный профиль, и общий
+ * счётчик позволял чужому двадцатью запросами запирать владельцу /play окно
+ * за окном. Writer считается по steamid (один человек на всех своих
+ * устройствах), сессия по ссылке — сама по себе: personalRateId в
+ * lib/ratelimit.
  *
  * Отказ здесь именно 429, а не тихий откат на эвристику. Эвристика существует
  * для СБОЯ модели, и подменять ею отказ по лимиту значит скрыть от честного
@@ -66,6 +80,10 @@ const RECOMMEND_IP_LIMIT = 60
  * чтобы увидеть, как это работает, и шаблонное объяснение на первом же экране
  * обесценивает весь путь. Но и бесконечно крутить чужую библиотеку за наши
  * токены незачем — после пары подборок «вау» уже случилось.
+ *
+ * Квота на личность, а демо-личность новая на каждый демо-вход без куки, —
+ * скрипт её обходит. От скрипта бюджет модели стережёт доля адреса
+ * (llmIpDailyLimit в lib/llmcap), общая для демо и сессий по ссылке.
  */
 const DEMO_LLM_LIMIT = 2
 const DEMO_LLM_WINDOW_SEC = 86_400
@@ -109,7 +127,12 @@ export async function POST(req: Request) {
   const gate = await checkRatesInOrder(
     db,
     [
-      { bucket: 'recommend', id: steamid, limit: RECOMMEND_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
+      {
+        bucket: 'recommend',
+        id: personalRateId(session, isWriter(session)),
+        limit: RECOMMEND_LIMIT,
+        windowSec: RECOMMEND_WINDOW_SEC,
+      },
       { bucket: 'recommend-ip', id: ip, limit: RECOMMEND_IP_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
     ],
     now,
@@ -158,18 +181,31 @@ export async function POST(req: Request) {
   const { metaNow, anchorOf, hoursOf, hideUrgency, patchOf } = ctx
 
   // Демо-личность получает настоящую подборку, но считанное число раз в сутки —
-  // дальше та же выдача собирается эвристикой. Проверка идёт последней, уже
-  // после того как пул собран: она должна тратить квоту только тогда, когда
-  // вызов модели реально состоялся бы.
+  // дальше та же выдача собирается эвристикой. Проверка идёт уже после того,
+  // как пул собран: она должна тратить квоту только тогда, когда вызов модели
+  // реально состоялся бы. Поэтому сперва всё, что решается без записи, —
+  // есть из чего выбирать, есть ключ и модель не выключена нулём
+  // (LLM_DAILY_CAP=0): раньше демо-квота списывалась и без них, и гость мог
+  // потерять свою пару настоящих подборок на шаблонах — а включи владелец
+  // модель обратно в тот же день, гости, заходившие при выключенной, сутки
+  // получали бы эвристику.
   //
   // Выдача из соседей («Как «X», но…») и по подталкиванию к модели не ходит
   // вовсе: правило владельца — никакого нового расхода на модель, а это новые
   // поводы её звать. Эвристика с якорем и причинами по тегам здесь и так
-  // говорит по делу. Условия про затравку и подталкивание стоят в && первыми:
-  // такой запрос не тратит и демо-квоту.
+  // говорит по делу. Такой запрос не тратит ни одной квоты ниже.
+  const wantsModel =
+    seedRef === null && nudge === null && heroPool.length > 0 && llmAvailable() && llmDailyCap() > 0
+
+  // Дальше — по очереди, как в checkRatesInOrder: личная квота демо, доля
+  // адреса в суточном бюджете, сам бюджет (lib/llmcap, takeLlmBudgetForIp).
+  // Доля адреса — потому что потолки подбора выше стерегут Turso, а не
+  // модель: шестьдесят подборов на адрес за десять минут выбрали бы общий
+  // бюджет суток за часы, и до полуночи модель молчала бы для всех. Отказ на
+  // любом шаге — та же выдача эвристикой, без 429: это не личный потолок
+  // человека на подборы, и отказывать ему не за что.
   const llmAllowed =
-    seedRef === null &&
-    nudge === null &&
+    wantsModel &&
     (!isDemoId(steamid) ||
       (
         await checkRate(db, {
@@ -179,13 +215,11 @@ export async function POST(req: Request) {
           windowSec: DEMO_LLM_WINDOW_SEC,
           nowSec: now,
         })
-      ).ok)
+      ).ok) &&
+    (await takeLlmBudgetForIp(db, ip, now))
 
-  // Общий суточный бюджет модели (lib/llmcap) — самым последним: берётся,
-  // только когда вызов точно состоится. Выбран — та же выдача эвристикой, без
-  // 429: это не личный потолок человека, и отказывать ему не за что.
   const fromClaude =
-    heroPool.length && llmAllowed && llmAvailable() && (await takeLlmBudget(db, now))
+    llmAllowed
       ? await claudePicks({
           candidates: heroPool,
           metaOf: metaNow,

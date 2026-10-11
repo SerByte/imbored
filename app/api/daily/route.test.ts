@@ -14,7 +14,8 @@ import { breakDbOn, freshDb, post, signIn, signInAs, signOut, STEAMID_OF, type S
 import { POST as feedback } from '../feedback/route'
 import type { GameMeta, LibraryGame } from '@/lib/types'
 import { pickShareOk } from '@/lib/pickshare'
-import { sessionSecret } from '@/lib/server'
+import { SESSION_COOKIE, sessionSecret } from '@/lib/server'
+import { setTestCookie } from '@/lib/testing/headers'
 import { GET } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -112,10 +113,12 @@ describe('/api/daily: записанный выбор дня', () => {
     expect(res.status).toBe(204)
     expect(await countRows(db, 'daily_picks')).toBe(0)
     expect(await countRows(db, 'rate_limits')).toBe(0)
-    // а обычный запрос следом — и считает, и пишет, и отмечается в лимите
+    // а обычный запрос следом — и считает, и пишет, и отмечается в лимите.
+    // Строк лимита две: личный потолок и потолок адреса (DAILY_IP_LIMIT) —
+    // промах не тронул ни того, ни другого
     expect((await get()).status).toBe(200)
     expect(await countRows(db, 'daily_picks')).toBe(1)
-    expect(await countRows(db, 'rate_limits')).toBe(1)
+    expect(await countRows(db, 'rate_limits')).toBe(2)
   })
 
   test('промах без библиотеки — тоже 204: про библиотеку скажет обычный запрос', async () => {
@@ -199,6 +202,74 @@ describe('/api/daily: записанный выбор дня', () => {
  * следующий отбор эту игру до полуночи не вернёт. «Не сейчас» про любую
  * другую игру выбор дня не трогает — ради этого запись и заведена.
  */
+/*
+ * Потолок частоты. Личный — на того, кто спрашивает (personalRateId в
+ * lib/ratelimit): сессию по ссылке /api/connect выдаёт на любой публичный
+ * профиль, и общий на steamid счётчик позволял чужому десятью запросами
+ * запереть владельцу /daily на час. А раз сессия по ссылке — свой счётчик,
+ * рядом обязан стоять потолок адреса: иначе свежие сессии с одного адреса
+ * множили бы отборы по восемьсот строк Turso.
+ */
+describe('/api/daily: потолок частоты', () => {
+  const getFrom = (ip: string, query = '') =>
+    GET(new Request(`http://localhost/api/daily${query}`, { headers: { 'x-forwarded-for': ip } }))
+
+  test('чужая сессия по ссылке выбрала свой потолок — владельцу игра дня не заперта', async () => {
+    const owner = await signIn(db, STEAMID, { verified: true })
+    // Чужой вставил ссылку на тот же профиль — кука теперь его. Библиотеки
+    // нет: каждый пропущенный запрос — 409, но в потолок засчитан
+    await signIn(db, STEAMID)
+    for (let i = 0; i < 10; i++) expect((await getFrom('198.51.100.1')).status).toBe(409)
+    expect((await getFrom('198.51.100.1')).status).toBe(429)
+    setTestCookie(SESSION_COOKIE, owner.token)
+    expect((await getFrom('203.0.113.7')).status).toBe(409)
+  })
+
+  test('вошедший через Steam на двух устройствах — потолок один', async () => {
+    const phone = await signIn(db, STEAMID, { verified: true })
+    // Кука теперь «ноутбука»: весь потолок выбран с него
+    await signIn(db, STEAMID, { verified: true })
+    for (let i = 0; i < 10; i++) expect((await getFrom('203.0.113.7')).status).toBe(409)
+    setTestCookie(SESSION_COOKIE, phone.token)
+    expect((await getFrom('203.0.113.8')).status).toBe(429)
+  })
+
+  test('свежие сессии по ссылке с одного адреса упираются в потолок адреса', async () => {
+    // Три сессии по десять — ровно потолок адреса; четвёртой с того же
+    // адреса отказ, хотя её личный потолок нетронут
+    for (let s = 0; s < 3; s++) {
+      await signIn(db, STEAMID)
+      for (let i = 0; i < 10; i++) expect((await getFrom('198.51.100.1')).status).toBe(409)
+    }
+    await signIn(db, STEAMID)
+    expect((await getFrom('198.51.100.1')).status).toBe(429)
+    // Соседний адрес не задет
+    expect((await getFrom('198.51.100.2')).status).toBe(409)
+  })
+
+  /*
+   * Адрес платит только за отбор. Запись дня общая для всех сессий профиля,
+   * и заход в неё свежей сессией не размножить — а тратя потолок адреса на
+   * каждом заходе, общий NAT запирал бы игру дня всем за ним.
+   */
+  test('заход в уже выбранную игру дня потолок адреса не тратит', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    expect((await getFrom('198.51.100.1')).status).toBe(200)
+    // Сорок заходов с того же адреса — больше потолка адреса, но все в
+    // записанную игру: четыре сессии по ссылке по десять, у каждой свой
+    // личный потолок; обычные вперемешку с «только если уже выбрано»
+    for (let n = 0; n < 4; n++) {
+      await signIn(db, STEAMID)
+      for (let i = 0; i < 10; i++) {
+        const res = await getFrom('198.51.100.1', i % 2 ? '?cached=1' : '')
+        expect(res.status, `сессия ${n + 1}, заход ${i + 1}`).toBe(200)
+      }
+    }
+    const byIp = await db.execute("SELECT count FROM rate_limits WHERE key LIKE 'daily-ip:%'")
+    expect(byIp.rows.map((r) => Number(r.count))).toEqual([1])
+  })
+})
+
 describe('/api/daily: «Не сегодня»', () => {
   const pickOf = async (query = '') =>
     ((await (await get(query)).json()) as { pick: { appid: number } }).pick.appid

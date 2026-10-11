@@ -25,7 +25,7 @@ import {
   setUserPortrait,
 } from '@/lib/db'
 import { claudePortraitText, llmAvailable } from '@/lib/llm'
-import { takeLlmBudget } from '@/lib/llmcap'
+import { takeLlmBudgetForIp } from '@/lib/llmcap'
 import { reconnectHref } from '@/lib/destination'
 import { OG_SITE } from '@/lib/site'
 import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
@@ -366,9 +366,14 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     ).every((v) => v.ok)
 
     // Общий суточный бюджет модели — после личных потолков: иначе его тратили
-    // бы и отказанные запросы (lib/llmcap)
+    // бы и отказанные запросы (lib/llmcap). И через долю адреса, общую с
+    // подбором: потолок адреса выше — десять холодных портретов за десять
+    // минут — стережёт ключ от перебора steamid, а не суточный бюджет. Это
+    // до полутора тысяч вызовов в сутки с одного адреса, и снимки чужих
+    // публичных профилей через /api/connect выбирали бы LLM_DAILY_CAP за всех.
+    // Доля выбрана — тот же шаблон, что и при отказе по потолку
     const written =
-      allowed && llmAvailable() && (await takeLlmBudget(db, now))
+      allowed && llmAvailable() && (await takeLlmBudgetForIp(db, ip, now))
         ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
         : null
     text = written ?? fallbackText()

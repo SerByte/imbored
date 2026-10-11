@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { logFeedback, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from '@/lib/db'
 import { EXPLORE_DECK } from '@/lib/explore'
-import { nowSec } from '@/lib/server'
+import { SESSION_COOKIE, nowSec } from '@/lib/server'
+import { setTestCookie } from '@/lib/testing/headers'
 import { freshDb, signIn, signInAs } from '@/lib/testing/route'
 import { GET } from './route'
 
@@ -205,5 +206,47 @@ describe('/api/explore', () => {
     const shown = body.cards.map((c) => c.appid)
     expect(shown).not.toContain(20)
     expect(shown).not.toContain(10)
+  })
+})
+
+/*
+ * Потолок частоты. Личный — на того, кто спрашивает (personalRateId в
+ * lib/ratelimit): сессию по ссылке /api/connect выдаёт на любой публичный
+ * профиль, и общий на steamid счётчик позволял чужому двадцатью запросами
+ * запереть владельцу колоду на всё окно.
+ */
+describe('/api/explore: потолок частоты', () => {
+  const T0 = 1_760_000_000
+
+  // Окно фиксированное, по часам: граница окна посреди теста обнулила бы счёт
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0 * 1000)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const getFrom = (ip: string) =>
+    GET(new Request('http://localhost/api/explore', { headers: { 'x-forwarded-for': ip } }))
+
+  test('чужая сессия по ссылке выбрала свой потолок — владельцу колода не заперта', async () => {
+    const owner = await signIn(db, STEAMID, { verified: true })
+    // Чужой вставил ссылку на тот же профиль — кука теперь его. Библиотеки
+    // нет: каждый пропущенный запрос — 409, но в потолок засчитан
+    await signIn(db, STEAMID)
+    for (let i = 0; i < 20; i++) expect((await getFrom('198.51.100.1')).status).toBe(409)
+    expect((await getFrom('198.51.100.1')).status).toBe(429)
+    setTestCookie(SESSION_COOKIE, owner.token)
+    expect((await getFrom('203.0.113.7')).status).toBe(409)
+  })
+
+  test('вошедший через Steam на двух устройствах — потолок один', async () => {
+    const phone = await signIn(db, STEAMID, { verified: true })
+    await signIn(db, STEAMID, { verified: true })
+    for (let i = 0; i < 20; i++) expect((await getFrom('203.0.113.7')).status).toBe(409)
+    setTestCookie(SESSION_COOKIE, phone.token)
+    expect((await getFrom('203.0.113.8')).status).toBe(429)
   })
 })
