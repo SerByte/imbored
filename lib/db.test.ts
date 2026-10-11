@@ -276,14 +276,14 @@ describe('db', () => {
       expect(media.has(570)).toBe(false)
     })
 
-    test('setGamesMedia пишет две колонки, пустое не затирает, updated_at не двигает', async () => {
+    test('setGamesMedia пишет кадры, трейлер и язык, пустое не затирает, updated_at не двигает', async () => {
       const db = await freshDb()
       await upsertGameMeta(db, { ...META, reviewsTotal: 10 }, NOW)
       await upsertGameMeta(db, { ...META, appid: 730, screenshots: undefined, reviewsTotal: 20 }, NOW)
       const shots = ['https://shared.steamstatic.com/store_item_assets/steam/apps/730/ss_a.1920x1080.jpg?t=1']
 
       const n = await setGamesMedia(db, [
-        { appid: 730, screenshots: shots, trailer: TRAILER },
+        { appid: 730, screenshots: shots, trailer: TRAILER, ruLang: 1 },
         // у 620 в ответе ничего — строку не трогаем вовсе
         { appid: 620 },
         // игры нет в games — не создаём
@@ -293,12 +293,14 @@ describe('db', () => {
       const cs2 = await getGameMeta(db, 730)
       expect(cs2?.screenshots).toEqual(shots)
       expect(cs2?.trailer).toEqual(TRAILER)
+      expect(cs2?.ruLang).toBe(1)
       expect(await getGameMeta(db, 999)).toBeNull()
 
-      // второй проход без трейлера и с пустыми кадрами прежнее не стирает
+      // второй проход без трейлера, без языка и с пустыми кадрами прежнее не стирает
       await setGamesMedia(db, [{ appid: 730, screenshots: [] }])
       expect((await getGameMeta(db, 730))?.trailer).toEqual(TRAILER)
       expect((await getGameMeta(db, 730))?.screenshots).toEqual(shots)
+      expect((await getGameMeta(db, 730))?.ruLang).toBe(1)
 
       const r = await db.execute('SELECT updated_at FROM games WHERE appid = 730')
       expect(Number(r.rows[0].updated_at)).toBe(NOW)

@@ -301,6 +301,11 @@ export type ScoreView = ReturnType<typeof scoreView>
 /**
  * Плитка магазина — полка находок «Игры дня». Полка всегда из каталога,
  * поэтому скидка у каждой, а строки про возврат у плитки нет: она про героя.
+ *
+ * Русский — та же фраза, что на плитке полки покупок /play (cardView): там и
+ * здесь одно решение «присмотреться к покупке», и «без русского» перед ним
+ * весит не меньше цены. Отзывов на этой плитке нет, а русский есть — он
+ * короче и решает раньше. null — не знаем, и строки нет.
  */
 export function storeCardView(
   c: { appid: number; name: string },
@@ -313,6 +318,7 @@ export function storeCardView(
     name: c.name,
     ...shopView(meta, now),
     discount: buyView(meta, 'new', now, hideUrgency).discount,
+    russian: ruLangLine(meta?.ruLang),
   }
 }
 

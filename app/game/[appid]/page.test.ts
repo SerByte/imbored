@@ -324,7 +324,7 @@ describe('микроразметка говорит не больше стран
     expect(video.offers).toMatchObject({ '@type': 'Offer', price: '19.99' })
   })
 
-  test('русский: строка на странице и inLanguage в разметке — одним условием', async () => {
+  test('русский: строка — при любом ответе Steam, inLanguage — только при «есть»', async () => {
     await upsertGameMeta(db, game(APPID, { ruLang: 2 }), T0)
     let page = flight(await GamePage(params))
     expect(textOf(page)).toContain('субтитры — по данным Steam')

@@ -119,6 +119,15 @@ describe('storeCardView и dailyCardView', () => {
     expect(Object.keys(tile)).not.toContain('refund')
   })
 
+  test('плитка полки «Игры дня» говорит о русском, как полка покупок /play', () => {
+    const c = { appid: 20, name: 'Игра 20' }
+    expect(storeCardView(c, meta(20, { ruLang: 0 }), NOW, false).russian).toBe('без русского')
+    expect(storeCardView(c, meta(20, { ruLang: 2 }), NOW, false).russian).toBe('русские субтитры')
+    // До прохода крона или доливки медиа поля нет — и строки нет, а не «без русского»
+    expect(storeCardView(c, meta(20), NOW, false).russian).toBeNull()
+    expect(storeCardView(c, undefined, NOW, false).russian).toBeNull()
+  })
+
   test('герой дня из своего — без скидки; из каталога — со скидкой и теми же тегами', () => {
     const day = { reason: 'r', sharedTags: ['Puzzle'], hoursPlayed: null, hideUrgency: false }
     const own = dailyCardView({ appid: 10, name: 'Игра 10', source: 'untouched' }, meta(10), NOW, day)

@@ -1725,7 +1725,8 @@ function Player({ say }: { say: (line: string) => void }) {
                   </span>
                 )}
                 {/* «русские субтитры» / «без русского» — готовой фразой с
-                    сервера (ruLangLine в lib/cards): не знаем — молчим */}
+                    сервера (ruLangLine в lib/gametraits, считается в
+                    lib/cards): не знаем — молчим */}
                 {pick.russian && <span className="text-dim">{pick.russian}</span>}
                 {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo)}</span>}
                 <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
