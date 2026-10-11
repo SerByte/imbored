@@ -781,25 +781,56 @@ export const ADDED_COLUMNS = [
 ] as const
 
 /**
+ * Разовые шаги migrateDb под своим флагом в catalog_meta — и что каждый из
+ * них делает с базой, словами для pendingMigrations.
+ *
+ * Флаги читаются (readMigrationFlags) по ключам ИМЕННО этого списка, поэтому
+ * новый разовый шаг без строки здесь не заведёшь: флага, которого здесь нет,
+ * migrateDb не увидит никогда, и шаг повторялся бы на каждом старте. Так шаг
+ * попадает и в предпросмотр catalog:publish -- --dry-run, хотя версию схемы
+ * он, как и соседи, не поднимает.
+ */
+const ONE_OFF_STEPS = {
+  [DERIVED_BACKFILL_KEY]: 'бэкфилл tag_count и is_multiplayer: два UPDATE по всей games',
+  [OTHER_STORES_SEED_KEY]: 'досев кураторского пула других магазинов в games',
+  [PAGE_TRIES_BACKFILL_KEY]: 'пометка карточек без данных (page_tries): UPDATE по всей games',
+  [REPAIR_TAGS_KEY]: 'починка дважды закодированных JSON-колонок: ПЕРЕЗАПИСЬ строк games',
+  [NEWS_RANK_FIX_KEY]: 'обнуление веса патчей вне каталога: UPDATE по news_items',
+} as const
+
+/**
  * Флаги миграций одним запросом.
  *
  * Раньше каждый флаг бэкфилла читался своим SELECT'ом — лишние походы в базу
  * на каждом старте ради ответа, который почти всегда «уже сделано».
  */
 async function readMigrationFlags(db: Db): Promise<Map<string, string>> {
-  const keys = [
-    SCHEMA_V_KEY,
-    DERIVED_BACKFILL_KEY,
-    PAGE_TRIES_BACKFILL_KEY,
-    NEWS_RANK_FIX_KEY,
-    OTHER_STORES_SEED_KEY,
-    REPAIR_TAGS_KEY,
-  ]
+  const keys = [SCHEMA_V_KEY, ...Object.keys(ONE_OFF_STEPS)]
   const res = await db.execute({
     sql: `SELECT key, value FROM catalog_meta WHERE key IN (${placeholders(keys.length)})`,
     args: keys,
   })
   return new Map(res.rows.map((r) => [String(r.key), String(r.value)]))
+}
+
+/**
+ * Какие колонки из ADDED_COLUMNS в базе уже есть — одним запросом по всем
+ * таблицам сразу, как «таблица.колонка». null — сервер не пустил табличную
+ * функцию pragma_table_info, и узнать это нечем (см. addMissingColumns).
+ */
+async function presentAddedColumns(db: Db): Promise<Set<string> | null> {
+  const tables = [...new Set(ADDED_COLUMNS.map(([table]) => table))]
+  try {
+    const res = await db.execute({
+      sql: `SELECT m.name AS tbl, p.name AS col
+              FROM sqlite_master m, pragma_table_info(m.name) p
+             WHERE m.type = 'table' AND m.name IN (${placeholders(tables.length)})`,
+      args: tables,
+    })
+    return new Set(res.rows.map((r) => `${r.tbl}.${r.col}`))
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -812,20 +843,7 @@ async function readMigrationFlags(db: Db): Promise<Map<string, string>> {
  * после неё будет записана версия схемы.
  */
 async function addMissingColumns(db: Db): Promise<void> {
-  const tables = [...new Set(ADDED_COLUMNS.map(([table]) => table))]
-  let have: Set<string> | null = null
-  try {
-    const res = await db.execute({
-      sql: `SELECT m.name AS tbl, p.name AS col
-              FROM sqlite_master m, pragma_table_info(m.name) p
-             WHERE m.type = 'table' AND m.name IN (${placeholders(tables.length)})`,
-      args: tables,
-    })
-    have = new Set(res.rows.map((r) => `${r.tbl}.${r.col}`))
-  } catch {
-    have = null
-  }
-
+  const have = await presentAddedColumns(db)
   for (const [table, col] of ADDED_COLUMNS) {
     if (have?.has(`${table}.${col.split(' ')[0]}`)) continue
     try {
@@ -938,8 +956,19 @@ export async function migrateDb(
   const flags = await readMigrationFlags(db)
   // «не меньше», а не «меньше»: мусор вместо числа тоже означает «доводить»
   const upgrade = !(Number(flags.get(SCHEMA_V_KEY) ?? 0) >= CURRENT_SCHEMA_V)
+  const allowed = destructiveMigrationsAllowed(env)
 
-  if (upgrade) await addMissingColumns(db)
+  // Пересборка feedback — сразу за ALTER-циклом (ей нужен полный набор
+  // колонок) и ДО блока каталога. DROP TABLE уносит с собой индексы таблицы,
+  // и idx_feedback_ctx, созданный блоком ниже ещё на старой таблице, пропадал
+  // до следующего холодного старта: так это и было, пока пересборка стояла в
+  // конце. Нашёл это предпросмотр (pendingMigrations) — после migrateDb он
+  // видел недостающий индекс.
+  let rebuilt = true
+  if (upgrade) {
+    await addMissingColumns(db)
+    rebuilt = await rebuildFeedbackCheck(db, allowed)
+  }
 
   // строго после ALTER-цикла: частичный индекс ссылается на новые колонки
   await db.executeMultiple(SCHEMA_CATALOG)
@@ -1031,7 +1060,7 @@ export async function migrateDb(
    * Под флагом по той же причине, что и бэкфиллы выше: это полнотабличный
    * проход по games, а Turso считает прочитанные строки.
    */
-  if (!flags.has(REPAIR_TAGS_KEY) && destructiveMigrationsAllowed(env)) {
+  if (!flags.has(REPAIR_TAGS_KEY) && allowed) {
     const repaired = await repairGameJson(db)
     if (repaired.length) {
       console.warn(
@@ -1067,8 +1096,6 @@ export async function migrateDb(
   }
 
   if (upgrade) {
-    const allowed = destructiveMigrationsAllowed(env)
-    const rebuilt = await rebuildFeedbackCheck(db, allowed)
     if (rebuilt && allowed) {
       // Последней: версия пишется, только когда всё выше прошло. Оборвись
       // миграция на полпути — следующий старт повторит её целиком.
@@ -1103,6 +1130,97 @@ export async function migrateDb(
   }
 
   return db
+}
+
+/**
+ * Что migrateDb(db, env, opts) сделала бы с этой базой — не делая ничего.
+ * Строка на шаг, по-русски, для печати; пустой список — миграции нечего
+ * менять.
+ *
+ * ЗАЧЕМ. catalog:publish -- --dry-run открывает облако без миграций
+ * (scripts/opendb.ts), а настоящая заливка из ветки первым делом доводит
+ * прод до схемы этой ветки — и бэкап снимают до неё. Одной версии схемы мало,
+ * чтобы это предсказать: разовые шаги идут под своими флагами (ONE_OFF_STEPS,
+ * среди них починка JSON-колонок, которая перезаписывает строки games), а
+ * новые таблицы и индексы — под CREATE … IF NOT EXISTS вовсе без версии.
+ * Ветка, заведшая такой шаг по образцу соседей, версию не поднимает, и
+ * сверка одной версии промолчала бы ровно о той записи в прод, ради которой
+ * смотрят предпросмотр.
+ *
+ * Условия шагов те же, что в migrateDb: досев пула — только с seedContent,
+ * починка JSON-колонок, пересборка feedback и отметка версии — только там,
+ * где destructiveMigrationsAllowed. Что migrateDb на этой базе пропустит,
+ * того и здесь нет; сторожит это тест «после migrateDb ждать нечего».
+ *
+ * Только чтение: sqlite_master, колонки (pragma_table_info) и флаги в
+ * catalog_meta. Не видно двух вещей, которых не видит и сама migrateDb:
+ * индекса со сменённым определением под прежним именем (ПРАВИЛО ДЛЯ
+ * ИНДЕКСОВ у SCHEMA_CATALOG) и колонки, добавленной без подъёма версии
+ * (сторож «новая колонка без новой версии схемы» в lib/db.test.ts).
+ */
+export async function pendingMigrations(
+  db: Db,
+  env: Record<string, string | undefined> = process.env,
+  opts: MigrateOptions = {},
+): Promise<string[]> {
+  const allowed = destructiveMigrationsAllowed(env)
+  const master = await db.execute(
+    "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'index')",
+  )
+  const objects = new Map(master.rows.map((r) => [`${r.type} ${r.name}`, r.sql]))
+  const pending: string[] = []
+
+  // Таблицы и индексы всех трёх блоков схемы. Комментарии срезаются: в них
+  // встречается «CREATE INDEX IF NOT EXISTS», разорванный переносом строки
+  const ddl = [SCHEMA, SCHEMA_NEWS, SCHEMA_CATALOG].join('\n').replace(/--[^\n]*/g, '')
+  const stmt = /\b(CREATE|DROP)\s+(?:UNIQUE\s+)?(TABLE|INDEX)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(\w+)/gi
+  for (const [, verb, kind, name] of ddl.matchAll(stmt)) {
+    const exists = objects.has(`${kind.toLowerCase()} ${name}`)
+    const table = kind.toUpperCase() === 'TABLE'
+    if (verb.toUpperCase() === 'CREATE' && !exists) {
+      pending.push(`${table ? 'новая таблица' : 'новый индекс'}: ${name}`)
+    }
+    if (verb.toUpperCase() === 'DROP' && exists) {
+      pending.push(`снимается ${table ? 'таблица' : 'индекс'}: ${name}`)
+    }
+  }
+
+  // Флагов нет вовсе, если нет catalog_meta: её создаст первый же блок SCHEMA
+  const flags = objects.has('table catalog_meta')
+    ? await readMigrationFlags(db)
+    : new Map<string, string>()
+
+  // То же сравнение, что в migrateDb: мусор вместо числа тоже значит «доводить»
+  const v = flags.get(SCHEMA_V_KEY)
+  if (!(Number(v ?? 0) >= CURRENT_SCHEMA_V)) {
+    const have = await presentAddedColumns(db)
+    if (!have) {
+      pending.push('ALTER TABLE: все колонки из ADDED_COLUMNS, которых нет (состав не узнать)')
+    } else {
+      for (const [table, col] of ADDED_COLUMNS) {
+        const name = `${table}.${col.split(' ')[0]}`
+        // Таблицы ещё нет — о ней уже сказано строкой «новая таблица» выше,
+        // и перечислять её колонки поштучно значило бы утопить в них главное
+        if (objects.has(`table ${table}`) && !have.has(name)) pending.push(`новая колонка: ${name}`)
+      }
+    }
+    // Таблицы нет — её создаст SCHEMA уже с новым CHECK, пересобирать нечего
+    const feedbackSql = objects.get('table feedback')
+    if (allowed && feedbackCheckStale(feedbackSql == null ? undefined : String(feedbackSql))) {
+      pending.push('пересборка feedback под новый CHECK: DROP и RENAME таблицы')
+    }
+    if (allowed) {
+      pending.push(`версия схемы: ${v == null ? 'не записана' : `v${v}`} → v${CURRENT_SCHEMA_V}`)
+    }
+  }
+
+  for (const [key, what] of Object.entries(ONE_OFF_STEPS)) {
+    if (flags.has(key)) continue
+    if (key === OTHER_STORES_SEED_KEY && !opts.seedContent) continue
+    if (key === REPAIR_TAGS_KEY && !allowed) continue
+    pending.push(`${key}: ${what}`)
+  }
+  return pending
 }
 
 /* ---------- сессии ---------- */

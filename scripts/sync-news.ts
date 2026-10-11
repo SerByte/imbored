@@ -30,6 +30,7 @@ import {
   topCatalogAppids,
 } from '../lib/db'
 import { runNewsSlice } from '../lib/newsjob'
+import { plural } from '../lib/plural'
 import { withLease } from './lease'
 import { openCloud } from './opendb'
 
@@ -37,6 +38,15 @@ import { openCloud } from './opendb'
  *  запросами — тот же лимитер, что у appreviews и appdetails. */
 const SLICE = 20
 const ENROLL_PER = 200
+
+/**
+ * «3 игры из 200» — сколько игр топа встало в очередь заново. Одна фраза у
+ * прогона и у --dry-run, со склонением: «встали бы в очередь 1 игр» читалось
+ * как опечатка в выводе, которому положено быть точным.
+ */
+const enrolled = (fresh: number, of: number) =>
+  `${fresh.toLocaleString('ru-RU')} ${plural(fresh, 'игру', 'игры', 'игр')} ` +
+  `из ${of.toLocaleString('ru-RU')}`
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
@@ -169,10 +179,7 @@ async function main() {
   if (dryRun) {
     const fresh = await countNewsPollMissing(db, top)
     const due = (await countNewsPollDue(db, claimAt)) + fresh
-    console.log(
-      `каталог: встали бы в очередь ${fresh.toLocaleString('ru-RU')} игр ` +
-        `из ${top.length.toLocaleString('ru-RU')}`,
-    )
+    console.log(`каталог: поставили бы в очередь ${enrolled(fresh, top.length)}`)
     console.log(`к опросу готово: ${due.toLocaleString('ru-RU')}`)
     console.log('\n--dry-run: сеть не трогаем, ничего не пишем')
     if (enrollOnly) return
@@ -182,9 +189,13 @@ async function main() {
   }
 
   // jitter = 0: ручной прогон должен начать работу сразу, а не ждать час,
-  // пока разъедется детерминированный разброс, нужный крону
-  await enrollNewsPoll(db, top, 1, now, 0)
-  console.log(`каталог: поставлено в очередь ${top.length.toLocaleString('ru-RU')} игр`)
+  // пока разъедется детерминированный разброс, нужный крону.
+  //
+  // Вернётся число именно новых строк: уже стоящим постановка с tier 1 ничего
+  // не меняет (приоритет она только поднимает, а выше единицы — только 0), и
+  // счёт сходится с countNewsPollMissing у --dry-run выше
+  const fresh = await enrollNewsPoll(db, top, 1, now, 0)
+  console.log(`каталог: поставили в очередь ${enrolled(fresh, top.length)}`)
 
   const due = await countNewsPollDue(db, claimAt)
   console.log(`к опросу готово: ${due.toLocaleString('ru-RU')}`)
@@ -236,7 +247,7 @@ async function main() {
         }
         const mins = Math.round((Date.now() - startedAt) / 60_000)
         console.log(
-          `${polled.toLocaleString('ru-RU')} игр\tзаписей: ${inserted}\tпересказов: ${digested}\t${mins} мин`,
+          `игр: ${polled.toLocaleString('ru-RU')}\tзаписей: ${inserted}\tпересказов: ${digested}\t${mins} мин`,
         )
         if (!res.hasMore) break
       }

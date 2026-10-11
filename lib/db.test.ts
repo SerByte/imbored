@@ -89,6 +89,7 @@ import {
   listPublicRooms,
   logFeedback,
   migrateDb,
+  pendingMigrations,
   myVotedAppids,
   roomMembers,
   roomVoteCounts,
@@ -3821,6 +3822,201 @@ describe('превью и продовая база', () => {
     )
     expect(cols).toContain('store_hidden')
     expect(await getCatalogMeta(db, 'schema_v')).toBeNull()
+  })
+})
+
+/**
+ * Предпросмотр миграции для catalog:publish -- --dry-run: облако там открыто
+ * без миграций, а настоящая заливка из ветки первым делом доводит прод до
+ * схемы ветки. Сверка одной версии схемы молчала о разовых шагах под своими
+ * флагами и о новых индексах — их заводят, не поднимая версию.
+ */
+describe('предпросмотр миграции', () => {
+  const PREVIEW = { VERCEL_ENV: 'preview' }
+
+  /** Обёртка, которая роняет любую запись: предпросмотру можно только SELECT */
+  function readOnly(db: Db): Db {
+    return {
+      execute: (q: InStatement) => {
+        const sql = typeof q === 'string' ? q : q.sql
+        if (!/^\s*SELECT\b/i.test(sql)) throw new Error(`запись из предпросмотра: ${sql}`)
+        return db.execute(q)
+      },
+      executeMultiple: (sql: string) => {
+        throw new Error(`executeMultiple из предпросмотра: ${sql.slice(0, 60)}`)
+      },
+      batch: () => {
+        throw new Error('batch из предпросмотра')
+      },
+    } as unknown as Db
+  }
+
+  /** feedback с узким CHECK и games до ALTER-списка — так выглядит старый прод */
+  async function oldDb(): Promise<Db> {
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(`
+      CREATE TABLE feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        steamid TEXT NOT NULL,
+        appid INTEGER NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('liked','skipped','opened','banned')),
+        reason TEXT,
+        mood_json TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE games (
+        appid INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        tags_json TEXT NOT NULL DEFAULT '{}',
+        genres_json TEXT NOT NULL DEFAULT '[]',
+        categories_json TEXT NOT NULL DEFAULT '[]',
+        short_description TEXT,
+        header_image TEXT,
+        screenshots_json TEXT,
+        is_free INTEGER,
+        price_final INTEGER,
+        release_date TEXT,
+        median_forever INTEGER,
+        store TEXT,
+        store_url TEXT,
+        reviews_summary_json TEXT,
+        pros_cons_json TEXT,
+        updated_at INTEGER NOT NULL
+      );`)
+    return db
+  }
+
+  /** migrateDb без её строки в лог о пропущенной пересборке у превью */
+  async function migrateQuiet(db: Db, env: Record<string, string>, opts: Parameters<typeof migrateDb>[2]) {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await migrateDb(db, env, opts)
+    } finally {
+      warn.mockRestore()
+    }
+  }
+
+  test('доведённой базе ждать нечего', async () => {
+    expect(await pendingMigrations(await freshDb(), {})).toEqual([])
+  })
+
+  test('после migrateDb ждать нечего — при любом окружении и опциях', async () => {
+    // Сторож того, что условия шагов у предпросмотра те же, что у migrateDb:
+    // разъедутся — предпросмотр пообещает шаг, которого миграция не сделает,
+    // или промолчит о сделанном
+    const envs = [{}, PREVIEW, { ...PREVIEW, [PREVIEW_OWN_DB_ENV]: '1' }, { VERCEL_ENV: 'production' }]
+    for (const env of envs) {
+      for (const opts of [{}, { seedContent: true }]) {
+        for (const make of [oldDb, () => Promise.resolve(createClient({ url: ':memory:' }))]) {
+          const db = await make()
+          expect((await pendingMigrations(db, env, opts)).length).toBeGreaterThan(0)
+          await migrateQuiet(db, env, opts)
+          expect(await pendingMigrations(db, env, opts), JSON.stringify({ env, opts })).toEqual([])
+        }
+      }
+    }
+  })
+
+  test('разовый шаг виден без подъёма версии — тот, ради которого снимают бэкап', async () => {
+    const db = await freshDb()
+    await db.execute("DELETE FROM catalog_meta WHERE key IN ('repair_tags_v1', 'derived_backfilled_v1')")
+    const pending = await pendingMigrations(db, {})
+    expect(pending).toEqual([
+      expect.stringMatching(/^derived_backfilled_v1: /),
+      expect.stringMatching(/^repair_tags_v1: .*ПЕРЕЗАПИСЬ строк games/),
+    ])
+    // Превью без своей базы починку пропускает — пропускает её и предпросмотр
+    expect(await pendingMigrations(db, PREVIEW)).toEqual([
+      expect.stringMatching(/^derived_backfilled_v1: /),
+    ])
+  })
+
+  test('досев пула — только для базы приложения, как в migrateDb', async () => {
+    const db = await freshDb() // создана без seedContent: флага досева нет
+    expect(await pendingMigrations(db, {})).toEqual([])
+    expect(await pendingMigrations(db, {}, { seedContent: true })).toEqual([
+      expect.stringMatching(/^other_stores_seeded_v1: /),
+    ])
+  })
+
+  test('каждый флаг, который пишет migrateDb, предпросмотр называет', async () => {
+    // Новый разовый шаг без строки в ONE_OFF_STEPS здесь и упадёт: его флаг
+    // окажется в catalog_meta, а в предпросмотре его не будет
+    const db = createClient({ url: ':memory:' })
+    await migrateDb(db, {}, { seedContent: true })
+    const keys = (await db.execute("SELECT key FROM catalog_meta WHERE key != 'schema_v'")).rows.map(
+      (r) => String(r.key),
+    )
+    expect(keys.length).toBeGreaterThan(0)
+    await db.execute("DELETE FROM catalog_meta WHERE key != 'schema_v'")
+    const pending = await pendingMigrations(db, {}, { seedContent: true })
+    for (const key of keys) {
+      expect(pending.some((p) => p.startsWith(`${key}: `)), key).toBe(true)
+    }
+  })
+
+  test('новый индекс виден без подъёма версии, снимаемый — тоже', async () => {
+    // CREATE INDEX IF NOT EXISTS выполняется на каждом старте, версия ему не
+    // нужна (ПРАВИЛО ДЛЯ ИНДЕКСОВ), а на большой таблице это запись в прод
+    const db = await freshDb()
+    await db.execute('DROP INDEX idx_games_deal_until')
+    await db.execute('CREATE INDEX idx_news_tldr ON news_items (published_at)')
+    expect(await pendingMigrations(db, {})).toEqual([
+      'снимается индекс: idx_news_tldr',
+      'новый индекс: idx_games_deal_until',
+    ])
+    await migrateDb(db, {})
+    expect(await pendingMigrations(db, {})).toEqual([])
+  })
+
+  test('отставшая версия: недостающие колонки, пересборка feedback и отметка', async () => {
+    const db = await oldDb()
+    const pending = await pendingMigrations(db, {})
+    expect(pending).toContain('новая таблица: catalog_meta')
+    expect(pending).toContain('новая колонка: games.price_cc')
+    expect(pending).toContain('новая колонка: feedback.ctx_json')
+    // store и store_url в старой games уже были; колонки rooms приедут вместе
+    // с самой таблицей, поштучно их не перечисляем
+    expect(pending).not.toContain('новая колонка: games.store')
+    expect(pending).toContain('новая таблица: rooms')
+    expect(pending.some((p) => p.startsWith('новая колонка: rooms.'))).toBe(false)
+    expect(pending).toContain('пересборка feedback под новый CHECK: DROP и RENAME таблицы')
+    expect(pending).toContain(`версия схемы: не записана → v${CURRENT_SCHEMA_V}`)
+
+    // Превью без своей базы колонки добавит, а таблицу и версию не тронет
+    const preview = await pendingMigrations(db, PREVIEW)
+    expect(preview).toContain('новая колонка: games.price_cc')
+    expect(preview.some((p) => p.startsWith('пересборка feedback'))).toBe(false)
+    expect(preview.some((p) => p.startsWith('версия схемы'))).toBe(false)
+  })
+
+  test('пересборка feedback не уносит idx_feedback_ctx', async () => {
+    // DROP TABLE снимает и индексы таблицы. Пока пересборка шла после блока
+    // каталога, индекс, созданный им на старой таблице, пропадал до
+    // следующего холодного старта — это и увидел предпросмотр
+    const db = await oldDb()
+    await migrateDb(db, {})
+    const idx = await db.execute(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'feedback'",
+    )
+    expect(idx.rows.map((r) => String(r.name)).sort()).toEqual(['idx_feedback_ctx', 'idx_feedback_steamid'])
+  })
+
+  test('записанная версия показывается как есть', async () => {
+    const db = await freshDb()
+    await db.execute("UPDATE catalog_meta SET value = '6' WHERE key = 'schema_v'")
+    expect(await pendingMigrations(db, {})).toEqual([`версия схемы: v6 → v${CURRENT_SCHEMA_V}`])
+  })
+
+  test('только чтение: ни одной записи даже в пустую базу', async () => {
+    // Ради этого всё и затевалось: предпросмотр смотрит на прод
+    for (const db of [await oldDb(), createClient({ url: ':memory:' }), await freshDb()]) {
+      const before = (await db.execute('SELECT type, name, sql FROM sqlite_master ORDER BY name')).rows
+      await pendingMigrations(readOnly(db), {}, { seedContent: true })
+      expect((await db.execute('SELECT type, name, sql FROM sqlite_master ORDER BY name')).rows).toEqual(
+        before,
+      )
+    }
   })
 })
 

@@ -51,7 +51,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { CURRENT_SCHEMA_V, getCatalogMeta, rebuildTagStats, repairGameJson } from '../lib/db'
+import { pendingMigrations, rebuildTagStats, repairGameJson } from '../lib/db'
 import { openCloud } from './opendb'
 import { buildSetList, presentCols, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
 
@@ -122,14 +122,16 @@ async function main() {
     `тегов ${src.tags.toLocaleString('ru-RU')}`)
 
   if (dryRun) {
-    // Миграцию, которую сделает настоящий прогон, видно заранее: это шаг на
-    // проде, и бэкап перед ним снимают до заливки, а не после
-    const v = Number((await getCatalogMeta(remote, 'schema_v')) ?? 0)
-    if (!(v >= CURRENT_SCHEMA_V)) {
-      console.log(
-        `\nсхема в облаке v${v}, у этой ветки v${CURRENT_SCHEMA_V}: ` +
-          'заливка сначала доведёт её миграциями ветки',
-      )
+    // Миграцию, которую сделает настоящий прогон, видно заранее: это запись
+    // в прод, и бэкап перед ней снимают до заливки, а не после. Не одна
+    // версия схемы: разовые шаги под своими флагами (починка JSON-колонок
+    // переписывает строки games) и новые индексы версию не поднимают — см.
+    // pendingMigrations. Окружение и опции те же, с какими её позовёт
+    // createDb настоящего прогона
+    const pending = await pendingMigrations(remote)
+    if (pending.length) {
+      console.log('\nзаливка сначала доведёт облако до схемы этой ветки — бэкап до неё:')
+      for (const step of pending) console.log(`  - ${step}`)
     }
     console.log('\n--dry-run: ничего не записано')
     return
