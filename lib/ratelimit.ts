@@ -88,7 +88,7 @@ function memoryHits(key: string): number {
 /**
  * Потолок только в памяти инстанса — для ручек, где адрес незачем хранить.
  *
- * checkRate пишет адрес в rate_limits до суточной уборки: для входа и
+ * checkRate пишет адрес в rate_limits до конца окна и уборки за ним: для входа и
  * подбора это честная плата за общий на все инстансы потолок. Счётчикам
  * воронки (/api/event, начало входа) такая точность не нужна — им надо лишь,
  * чтобы один скрипт не жёг записи Turso без предела, — а адрес рядом с числом
@@ -117,7 +117,8 @@ export function resetRateMemory(): void {
  */
 export async function checkRate(db: Db, o: RateOptions): Promise<RateVerdict> {
   const key = keyFor(o)
-  const retryAfterSec = windowStart(o.nowSec, o.windowSec) + o.windowSec - o.nowSec
+  const windowEnd = windowStart(o.nowSec, o.windowSec) + o.windowSec
+  const retryAfterSec = windowEnd - o.nowSec
 
   // Префильтр срабатывает, когда с этого инстанса в базу ушло уже десять
   // потолков: первый отказ к тому времени выдала она. Или она лежит — и тогда
@@ -129,10 +130,14 @@ export async function checkRate(db: Db, o: RateOptions): Promise<RateVerdict> {
       sql: `INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 1, ?)
             ON CONFLICT(key) DO UPDATE SET count = count + 1
             RETURNING count`,
-      // Живём вдвое дольше окна: подметание идёт из суточного блока крона
-      //  новостей (app/api/cron/news), и строка,
-      // умершая ровно в конце окна, всё равно дождалась бы его.
-      args: [key, o.nowSec + o.windowSec * 2],
+      // Строка живёт ровно до конца своего окна: ключ содержит номер окна,
+      // и после его конца она на счёт уже не влияет. Подметает её каждый
+      // запуск крона новостей (sweepRateLimits) — значит, адрес лежит в базе
+      // не дольше своего окна и ещё часа. Раньше срок был «вдвое дольше окна
+      // от первой записи», и суточной доле адреса в бюджете модели
+      // (lib/llmcap) это давало до трёх суток — мимо обещания «не позже чем
+      // через двое суток» на /privacy.
+      args: [key, windowEnd],
     })
     const count = Number(res.rows[0]?.count ?? 0)
     // Счёт в базе общий на все инстансы, поэтому «первый» — один на окно, а
@@ -160,7 +165,16 @@ export async function rateUsage(db: Db, o: RateOptions): Promise<number> {
   }
 }
 
-/** Подметание истёкших окон. Зовётся из крона, никогда — из запроса */
+/**
+ * Подметание истёкших окон. Зовётся из крона новостей на каждом запуске
+ * (onEnd в app/api/cron/news), никогда — из запроса.
+ *
+ * Каждый запуск, а не раз в сутки, — из-за обещания на /privacy: счётчик по
+ * адресу стирается не позже чем через двое суток. Суточная доля адреса в
+ * бюджете модели живёт до конца суток UTC, и при суточной уборке строка,
+ * записанная сразу после полуночи, ждала бы её до сорока девяти часов. Цена
+ * — один DELETE в час по таблице, в которой теперь лежат лишь живые окна.
+ */
 export async function sweepRateLimits(db: Db, nowSec: number): Promise<void> {
   try {
     await db.execute({ sql: 'DELETE FROM rate_limits WHERE expires_at < ?', args: [nowSec] })

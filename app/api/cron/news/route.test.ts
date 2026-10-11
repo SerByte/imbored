@@ -133,6 +133,28 @@ describe('/api/cron/news', () => {
     expect(kicked).toEqual([`${BASE}/api/cron/pages`])
   })
 
+  /*
+   * Окна ограничителя частоты подметаются каждым запуском, а не в суточном
+   * блоке. Суточная доля адреса в бюджете модели (lib/llmcap) живёт до конца
+   * суток UTC, и при уборке раз в сутки адрес лежал бы в базе дольше двух
+   * суток, обещанных на /privacy.
+   */
+  test('истёкшие окна ограничителя уходят и в запуске без суточных дел', async () => {
+    await digestFresh()
+    // Суточный блок отработал минуту назад — этот запуск его пропускает
+    await setCatalogMeta(db, 'news_enrolled_at', String(T0 - 60))
+    const today = Math.floor(T0 / 86_400) * 86_400
+    await db.execute({
+      sql: 'INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 1, ?), (?, 1, ?)',
+      args: [`llm-ip:198.51.100.1:${today - 86_400}`, today, `llm-ip:198.51.100.1:${today}`, today + 86_400],
+    })
+    await ask()
+    await settled()
+    expect(await getCatalogMeta(db, SWEEP_KEY)).toBeNull()
+    const left = await db.execute("SELECT key FROM rate_limits WHERE key LIKE 'llm-ip:%'")
+    expect(left.rows.map((r) => String(r.key))).toEqual([`llm-ip:198.51.100.1:${today}`])
+  })
+
   test('потолок выбран — карточек не пинает до полуночи UTC', async () => {
     await digestFresh()
     await runChain({

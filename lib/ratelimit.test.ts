@@ -157,11 +157,28 @@ test('rateUsage показывает счёт, не увеличивая его'
 test('подметание убирает истёкшие окна и не трогает живые', async () => {
   const db = await freshDb()
   await checkRate(db, base)
+  // Окно base — минута от 1 699 999 980: кончается на NOW + 40
+  const end = Math.floor(NOW / 60) * 60 + 60
   await sweepRateLimits(db, NOW + 10)
   expect(await rateUsage(db, base)).toBe(1)
-  // строка живёт два окна, поэтому истекает после NOW + 120
-  await sweepRateLimits(db, NOW + 200)
+  await sweepRateLimits(db, end)
+  expect(await rateUsage(db, base)).toBe(1)
+  // Строка живёт до конца своего окна, а не «вдвое дольше от первой записи»:
+  // адрес в ней — ровно на срок, пока он что-то считает (обещание на /privacy)
+  await sweepRateLimits(db, end + 1)
   expect(await rateUsage(db, base)).toBe(0)
+})
+
+test('срок строки — конец её окна, когда бы ни пришла первая запись', async () => {
+  const db = await freshDb()
+  const day = { bucket: 'test-day', id: 'a', limit: 3, windowSec: 86_400 }
+  const start = Math.floor(NOW / 86_400) * 86_400
+  // Первая запись — сразу после полуночи UTC: прежний срок «двое суток от
+  // неё» уводил строку за конец следующих суток
+  await checkRate(db, { ...day, nowSec: start + 1 })
+  await checkRate(db, { ...day, nowSec: start + 86_000 })
+  const res = await db.execute("SELECT expires_at FROM rate_limits WHERE key LIKE 'test-day:%'")
+  expect(res.rows.map((r) => Number(r.expires_at))).toEqual([start + 86_400])
 })
 
 /*

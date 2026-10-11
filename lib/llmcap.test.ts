@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDb, type Db } from './db'
 import {
@@ -136,10 +138,55 @@ describe('takeLlmBudgetForIp', () => {
     expect((await db.execute('SELECT COUNT(*) AS n FROM rate_limits')).rows[0].n).toBe(0)
   })
 
+  // /privacy обещает: счётчик по адресу стирается не позже чем через двое
+  // суток. Строка доли живёт до конца своих суток UTC, а не «двое суток от
+  // первой записи», — иначе с суточной уборкой выходило до трёх
+  test('адрес в доле лежит до конца суток UTC, когда бы ни пришёл первый вызов', async () => {
+    vi.stubEnv('LLM_DAILY_CAP', '100')
+    const db = await createDb(':memory:')
+    const day = Math.floor(T0 / 86_400) * 86_400
+    await takeLlmBudgetForIp(db, '198.51.100.1', day + 1)
+    const res = await db.execute("SELECT expires_at FROM rate_limits WHERE key LIKE 'llm-ip:%'")
+    expect(res.rows.map((r) => Number(r.expires_at))).toEqual([day + 86_400])
+  })
+
   // Доля открыта при сбое учёта (checkRate), бюджет закрыт — и в сумме «нет»
   test('недоступный учёт — закрыто', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const broken = { execute: () => Promise.reject(new Error('turso down')) } as unknown as Db
     expect(await takeLlmBudgetForIp(broken, '198.51.100.1', T0)).toBe(false)
+  })
+})
+
+/**
+ * Сторож дверей. Посетитель доходит до модели через подбор и портрет, и обе
+ * двери обязаны брать бюджет через долю адреса: прямой takeLlmBudget из
+ * запроса — ровно та дыра, которой скрипт с одного адреса выбирал сутки за
+ * всех. Напрямую берут только кроны (app/api/cron, lib/newsjob, lib/pagejob):
+ * адреса у них нет, а свои потолки звеньев есть.
+ */
+describe('takeLlmBudget из запроса', () => {
+  const ROOT = path.join(__dirname, '..')
+  const direct: string[] = []
+  const viaIp: string[] = []
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`
+      if (e.isDirectory()) {
+        if (rel !== 'app/api/cron') walk(rel)
+      } else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) {
+        const src = fs.readFileSync(path.join(ROOT, rel), 'utf8')
+        if (/\btakeLlmBudget\(/.test(src)) direct.push(rel)
+        if (/\btakeLlmBudgetForIp\(/.test(src)) viaIp.push(rel)
+      }
+    }
+  }
+  walk('app')
+
+  test('подбор и портрет — через долю адреса, напрямую — никто', () => {
+    expect(viaIp, 'двери к модели не найдены — сторож ослеп').toEqual(
+      expect.arrayContaining(['app/api/recommend/route.ts', 'app/portrait/[steamid]/page.tsx']),
+    )
+    expect(direct, 'запрос берёт общий бюджет мимо доли адреса').toEqual([])
   })
 })

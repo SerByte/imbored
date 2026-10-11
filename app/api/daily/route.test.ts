@@ -211,8 +211,8 @@ describe('/api/daily: записанный выбор дня', () => {
  * множили бы отборы по восемьсот строк Turso.
  */
 describe('/api/daily: потолок частоты', () => {
-  const getFrom = (ip: string) =>
-    GET(new Request('http://localhost/api/daily', { headers: { 'x-forwarded-for': ip } }))
+  const getFrom = (ip: string, query = '') =>
+    GET(new Request(`http://localhost/api/daily${query}`, { headers: { 'x-forwarded-for': ip } }))
 
   test('чужая сессия по ссылке выбрала свой потолок — владельцу игра дня не заперта', async () => {
     const owner = await signIn(db, STEAMID, { verified: true })
@@ -245,6 +245,28 @@ describe('/api/daily: потолок частоты', () => {
     expect((await getFrom('198.51.100.1')).status).toBe(429)
     // Соседний адрес не задет
     expect((await getFrom('198.51.100.2')).status).toBe(409)
+  })
+
+  /*
+   * Адрес платит только за отбор. Запись дня общая для всех сессий профиля,
+   * и заход в неё свежей сессией не размножить — а тратя потолок адреса на
+   * каждом заходе, общий NAT запирал бы игру дня всем за ним.
+   */
+  test('заход в уже выбранную игру дня потолок адреса не тратит', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    expect((await getFrom('198.51.100.1')).status).toBe(200)
+    // Сорок заходов с того же адреса — больше потолка адреса, но все в
+    // записанную игру: четыре сессии по ссылке по десять, у каждой свой
+    // личный потолок; обычные вперемешку с «только если уже выбрано»
+    for (let n = 0; n < 4; n++) {
+      await signIn(db, STEAMID)
+      for (let i = 0; i < 10; i++) {
+        const res = await getFrom('198.51.100.1', i % 2 ? '?cached=1' : '')
+        expect(res.status, `сессия ${n + 1}, заход ${i + 1}`).toBe(200)
+      }
+    }
+    const byIp = await db.execute("SELECT count FROM rate_limits WHERE key LIKE 'daily-ip:%'")
+    expect(byIp.rows.map((r) => Number(r.count))).toEqual([1])
   })
 })
 

@@ -4,7 +4,7 @@ import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getHeroMedia } from '@/lib/db'
 import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
-import { takeLlmBudgetForIp } from '@/lib/llmcap'
+import { llmDailyCap, takeLlmBudgetForIp } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
 import { parseExclude, parseNudge, planNudge } from '@/lib/nudge'
 import {
@@ -184,14 +184,18 @@ export async function POST(req: Request) {
   // дальше та же выдача собирается эвристикой. Проверка идёт уже после того,
   // как пул собран: она должна тратить квоту только тогда, когда вызов модели
   // реально состоялся бы. Поэтому сперва всё, что решается без записи, —
-  // есть из чего выбирать и есть ключ: раньше демо-квота списывалась и без
-  // них, и гость мог потерять свою пару настоящих подборок на шаблонах.
+  // есть из чего выбирать, есть ключ и модель не выключена нулём
+  // (LLM_DAILY_CAP=0): раньше демо-квота списывалась и без них, и гость мог
+  // потерять свою пару настоящих подборок на шаблонах — а включи владелец
+  // модель обратно в тот же день, гости, заходившие при выключенной, сутки
+  // получали бы эвристику.
   //
   // Выдача из соседей («Как «X», но…») и по подталкиванию к модели не ходит
   // вовсе: правило владельца — никакого нового расхода на модель, а это новые
   // поводы её звать. Эвристика с якорем и причинами по тегам здесь и так
   // говорит по делу. Такой запрос не тратит ни одной квоты ниже.
-  const wantsModel = seedRef === null && nudge === null && heroPool.length > 0 && llmAvailable()
+  const wantsModel =
+    seedRef === null && nudge === null && heroPool.length > 0 && llmAvailable() && llmDailyCap() > 0
 
   // Дальше — по очереди, как в checkRatesInOrder: личная квота демо, доля
   // адреса в суточном бюджете, сам бюджет (lib/llmcap, takeLlmBudgetForIp).

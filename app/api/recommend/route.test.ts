@@ -385,6 +385,56 @@ describe('/api/recommend: семантика в карточке', () => {
   })
 })
 
+/** Своя 10 — затравка; соседи: свои 11, 12 и каталог 20…24; мимо: своя 13 и каталог 25 */
+const NEAR = [11, 12, 20, 21, 22, 23, 24]
+
+/**
+ * Библиотека с соседями затравки и ключ модели — для затравки и для доли
+ * адреса в бюджете модели. Возвращает список адресов, куда ходил fetch: по
+ * нему видно, звали ли Anthropic.
+ */
+async function seededLibrary(): Promise<string[]> {
+  // Ключ модели есть: без затравки маршрут пошёл бы в Anthropic
+  vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+  const calls: string[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: unknown) => {
+      calls.push(input instanceof Request ? input.url : String(input))
+      return new Response('', { status: 404 })
+    }),
+  )
+  await signIn(db, STEAMID, { verified: true })
+  const now = nowSec()
+  await saveLibrarySnapshot(
+    db,
+    STEAMID,
+    [10, 11, 12, 13].map((appid) => ({
+      appid,
+      name: `Игра ${appid}`,
+      playtimeForever: appid === 10 ? 3000 : 0,
+      playtime2Weeks: 0,
+    })),
+    now,
+  )
+  await upsertGamesMeta(
+    db,
+    [10, 11, 12, 13, 20, 21, 22, 23, 24, 25].map((appid) => ({
+      appid,
+      name: `Игра ${appid}`,
+      tags: { Puzzle: 100, Casual: 60 },
+      genres: [],
+      categories: [2],
+    })),
+    now,
+  )
+  await upsertNeighbors(
+    db,
+    new Map([[10, NEAR.map((neighbor, i) => ({ neighbor, score: 0.9 - i / 100, shared: ['Puzzle'] }))]]),
+  )
+  return calls
+}
+
 /**
  * «Как «X», но…»: выдача из соседей одной игры. Кандидаты — только соседи
  * (свои и из каталога), модель не зовётся ни при каком ключе, а эхо seed
@@ -396,53 +446,8 @@ describe('/api/recommend: затравка seed', () => {
     vi.unstubAllEnvs()
   })
 
-  /** Своя 10 — затравка; соседи: свои 11, 12 и каталог 20…24; мимо: своя 13 и каталог 25 */
-  const NEAR = [11, 12, 20, 21, 22, 23, 24]
-
-  async function setup(): Promise<string[]> {
-    // Ключ модели есть: без затравки маршрут пошёл бы в Anthropic
-    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
-    const calls: string[] = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: unknown) => {
-        calls.push(input instanceof Request ? input.url : String(input))
-        return new Response('', { status: 404 })
-      }),
-    )
-    await signIn(db, STEAMID, { verified: true })
-    const now = nowSec()
-    await saveLibrarySnapshot(
-      db,
-      STEAMID,
-      [10, 11, 12, 13].map((appid) => ({
-        appid,
-        name: `Игра ${appid}`,
-        playtimeForever: appid === 10 ? 3000 : 0,
-        playtime2Weeks: 0,
-      })),
-      now,
-    )
-    await upsertGamesMeta(
-      db,
-      [10, 11, 12, 13, 20, 21, 22, 23, 24, 25].map((appid) => ({
-        appid,
-        name: `Игра ${appid}`,
-        tags: { Puzzle: 100, Casual: 60 },
-        genres: [],
-        categories: [2],
-      })),
-      now,
-    )
-    await upsertNeighbors(
-      db,
-      new Map([[10, NEAR.map((neighbor, i) => ({ neighbor, score: 0.9 - i / 100, shared: ['Puzzle'] }))]]),
-    )
-    return calls
-  }
-
   test('кандидаты — только соседи затравки, эхо seed, модель не зовётся', async () => {
-    const calls = await setup()
+    const calls = await seededLibrary()
     const res = await POST(post('/api/recommend', { mood: MOOD, seed: 10 }))
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
@@ -460,7 +465,7 @@ describe('/api/recommend: затравка seed', () => {
   })
 
   test('без затравки тот же запрос идёт к модели — значит, тест выше что-то проверяет', async () => {
-    const calls = await setup()
+    const calls = await seededLibrary()
     const res = await POST(post('/api/recommend', { mood: MOOD }))
     expect(res.status).toBe(200)
     expect(((await res.json()) as { seed: unknown }).seed).toBeNull()
@@ -470,7 +475,7 @@ describe('/api/recommend: затравка seed', () => {
   // Общий суточный бюджет модели (lib/llmcap): выбран — та же выдача
   // эвристикой, без 429 и без похода в Anthropic
   test('суточный бюджет модели выбран — эвристика, модель не зовётся', async () => {
-    const calls = await setup()
+    const calls = await seededLibrary()
     vi.stubEnv('LLM_DAILY_CAP', '0')
     const res = await POST(post('/api/recommend', { mood: MOOD }))
     expect(res.status).toBe(200)
@@ -480,14 +485,49 @@ describe('/api/recommend: затравка seed', () => {
     expect(calls.filter((u) => u.includes('anthropic'))).toEqual([])
   })
 
-  /*
-   * Доля одного адреса в суточном бюджете (llmIpDailyLimit в lib/llmcap).
-   * Без неё скрипт с одного адреса с тремя сессиями по ссылке выбирал весь
-   * LLM_DAILY_CAP за несколько часов, и до полуночи UTC модель молчала для
-   * всех — и для подбора, и для пересказов патчей.
-   */
+  test('незнакомая затравка — 409 nocandidates, мусор в поле — обычная выдача', async () => {
+    await seededLibrary()
+    // здесь модель не проверяем — без ключа обычная выдача не шумит отказами
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    const unknown = await POST(post('/api/recommend', { mood: MOOD, seed: 999 }))
+    expect(unknown.status).toBe(409)
+    expect(await unknown.json()).toEqual({ error: 'nocandidates' })
+
+    for (const seed of ['10', 1.5, 0, null]) {
+      const res = await POST(post('/api/recommend', { mood: MOOD, seed }))
+      expect(res.status, JSON.stringify(seed)).toBe(200)
+      expect(((await res.json()) as { seed: unknown }).seed, JSON.stringify(seed)).toBeNull()
+    }
+  })
+})
+
+/*
+ * Доля одного адреса в суточном бюджете модели (llmIpDailyLimit в
+ * lib/llmcap) и демо-квота перед ней. Без доли скрипт с одного адреса с
+ * тремя сессиями по ссылке выбирал весь LLM_DAILY_CAP за несколько часов, и
+ * до полуночи UTC модель молчала для всех — и для подбора, и для пересказов
+ * патчей. А квоту демо — пару настоящих подборок в сутки — тратить запросом,
+ * по которому модель всё равно не позвали бы, значит отдать гостю шаблон
+ * там, где модель могла бы ответить.
+ */
+describe('/api/recommend: доля адреса в бюджете модели', () => {
+  const T0 = 1_760_000_000
+
+  // Окно доли — сутки UTC: полночь посреди теста обнулила бы счёт, и запрос
+  // сверх доли снова дошёл бы до модели
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0 * 1000)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
   test('адрес выбрал свою долю бюджета модели — эвристика без 429, соседний адрес идёт к модели', async () => {
-    const calls = await setup()
+    const calls = await seededLibrary()
     vi.stubEnv('LLM_DAILY_CAP', '100')
     const share = llmIpDailyLimit()
     const toModel = () => calls.filter((u) => u.includes('anthropic')).length
@@ -504,12 +544,8 @@ describe('/api/recommend: затравка seed', () => {
     expect((await askFrom('203.0.113.9')).modelCalled).toBe(true)
   })
 
-  // Квота демо — пара настоящих подборок в сутки. Тратить её запросом, по
-  // которому модель всё равно не позвали бы (ключа нет), значит отдать гостю
-  // шаблон там, где модель могла бы ответить
-  test('демо без ключа модели не тратит ни свою пару вызовов, ни долю адреса', async () => {
-    await setup()
-    vi.stubEnv('ANTHROPIC_API_KEY', '')
+  /** Демо-личность с той же библиотекой: модель ей положена, но квотой */
+  async function demoWithLibrary(): Promise<void> {
     const demo = await signInAs(db, 'demo')
     await saveLibrarySnapshot(
       db,
@@ -517,26 +553,36 @@ describe('/api/recommend: затравка seed', () => {
       [10, 11, 12, 13].map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
       nowSec(),
     )
+  }
+
+  async function llmRows(): Promise<string[]> {
+    const keys = (await db.execute('SELECT key FROM rate_limits')).rows.map((r) => String(r.key))
+    return keys.filter((k) => k.startsWith('llm-'))
+  }
+
+  test('демо без ключа модели не тратит ни свою пару вызовов, ни долю адреса', async () => {
+    await seededLibrary()
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    await demoWithLibrary()
     const res = await POST(post('/api/recommend', { mood: MOOD }))
     expect(res.status).toBe(200)
     expect(((await res.json()) as { engine: string }).engine).toBe('heuristic')
-    const keys = (await db.execute('SELECT key FROM rate_limits')).rows.map((r) => String(r.key))
-    expect(keys.filter((k) => k.startsWith('llm-'))).toEqual([])
+    expect(await llmRows()).toEqual([])
   })
 
-  test('незнакомая затравка — 409 nocandidates, мусор в поле — обычная выдача', async () => {
-    await setup()
-    // здесь модель не проверяем — без ключа обычная выдача не шумит отказами
-    vi.stubEnv('ANTHROPIC_API_KEY', '')
-    const unknown = await POST(post('/api/recommend', { mood: MOOD, seed: 999 }))
-    expect(unknown.status).toBe(409)
-    expect(await unknown.json()).toEqual({ error: 'nocandidates' })
-
-    for (const seed of ['10', 1.5, 0, null]) {
-      const res = await POST(post('/api/recommend', { mood: MOOD, seed }))
-      expect(res.status, JSON.stringify(seed)).toBe(200)
-      expect(((await res.json()) as { seed: unknown }).seed, JSON.stringify(seed)).toBeNull()
-    }
+  // Модель выключена нулём (DEPLOY.md: LLM_DAILY_CAP=0), а ключ на месте.
+  // Раньше демо-квота списывалась до того, как бюджет говорил «нет», и гость,
+  // зашедший при выключенной модели, после её включения в тот же день сутки
+  // получал бы эвристику
+  test('демо при выключенной модели (LLM_DAILY_CAP=0) квоту не тратит, хотя ключ есть', async () => {
+    const calls = await seededLibrary()
+    vi.stubEnv('LLM_DAILY_CAP', '0')
+    await demoWithLibrary()
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { engine: string }).engine).toBe('heuristic')
+    expect(calls.filter((u) => u.includes('anthropic'))).toEqual([])
+    expect(await llmRows()).toEqual([])
   })
 })
 

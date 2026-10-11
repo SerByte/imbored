@@ -20,7 +20,7 @@ import { refreshDealsWithin } from '@/lib/deals'
 import { dayLabel } from '@/lib/freshness'
 import { heuristicPicks, reasonPrice } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
-import { checkRatesInOrder, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRate, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { sharedTasteTags } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
@@ -44,8 +44,15 @@ const DISCOVERY_CARDS = 3
  *
  * А раз сессия по ссылке — свой счётчик, рядом стоит потолок адреса: без него
  * свежие сессии с одного адреса (/api/connect чеканит их до сорока восьми в
- * час) множили бы обращения. Втрое выше личного — как у /api/recommend и
- * /api/explore: соседям по NAT своя игра дня нужна так же.
+ * час) множили бы отборы. Но только отборы: запись дня одна на steamid и
+ * общая для всех его сессий (daily_picks), а попадание в неё — два чтения по
+ * первичному ключу и цены — свежей сессией не размножить. Поэтому адрес
+ * платит лишь за отбор, а заход в уже выбранную игру дня и ?cached=1 его
+ * потолок не трогают. Иначе общий NAT — мобильный оператор, общежитие,
+ * офис — тридцатью обычными заходами в час запирал бы игру дня всем за ним,
+ * вошедшим через Steam тоже. Тридцать отборов в час — втрое выше личного,
+ * как у /api/recommend и /api/explore: соседям по NAT своя игра дня нужна
+ * так же.
  */
 const DAILY_LIMIT = 10
 const DAILY_IP_LIMIT = 30
@@ -82,20 +89,18 @@ export async function GET(req: Request) {
    */
   const dateStr = dayKey(now)
   const cachedOnly = new URL(req.url).searchParams.get('cached') === '1'
-  // Личный гейт первым: отказанный по нему запрос не съедает потолок адреса
-  const ip = clientIp(req.headers)
-  const dailyGate = () =>
-    checkRatesInOrder(
-      db,
-      [
-        { bucket: 'daily', id: personalRateId(session, writer), limit: DAILY_LIMIT, windowSec: DAILY_WINDOW_SEC },
-        { bucket: 'daily-ip', id: ip, limit: DAILY_IP_LIMIT, windowSec: DAILY_WINDOW_SEC },
-      ],
-      now,
-    )
-  // Обычный запрос тратит лимит в любом случае — запись и гейт читаются
-  // одним заходом. «Только если уже выбрано» — по очереди: его промах лимит
-  // не тратит (см. ниже), значит гейт там нельзя звать заранее.
+  const personalGate = () =>
+    checkRate(db, {
+      bucket: 'daily',
+      id: personalRateId(session, writer),
+      limit: DAILY_LIMIT,
+      windowSec: DAILY_WINDOW_SEC,
+      nowSec: now,
+    })
+  // Обычный запрос тратит личный лимит в любом случае — запись и гейт
+  // читаются одним заходом. «Только если уже выбрано» — по очереди: его
+  // промах лимит не тратит (см. ниже), значит гейт там нельзя звать заранее.
+  // Потолок адреса — позже и не всегда: только перед отбором (см. ниже).
   //
   // Запись за вчера — тем же заходом: она нужна и отбору (исключение
   // вчерашнего героя, см. selectDaily), и ответу (строка «Вчера была: …»,
@@ -107,7 +112,7 @@ export async function GET(req: Request) {
   const [rawStored, rawYesterday, early] = await Promise.all([
     getDailyPick(db, steamid, dateStr),
     getDailyPick(db, steamid, dayKey(now - 86_400)),
-    cachedOnly ? Promise.resolve(null) : dailyGate(),
+    cachedOnly ? Promise.resolve(null) : personalGate(),
   ])
   const stored = parseDailySelection(rawStored)
   const yesterday = parseDailySelection(rawYesterday)
@@ -129,8 +134,26 @@ export async function GET(req: Request) {
     return new NextResponse(null, { status: 204 })
   }
 
-  const gate = early ?? (await dailyGate())
+  const gate = early ?? (await personalGate())
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
+
+  /*
+   * Потолок адреса — только когда впереди отбор: размножить свежими сессиями
+   * можно лишь его (см. DAILY_IP_LIMIT). После личного, как в
+   * checkRatesInOrder: отказанный по личному потолку запрос место соседей по
+   * адресу не съедает. Параллельные запросы по свежему steamid все видят
+   * пустую запись и все проходят здесь — значит, гонка потолок не обходит.
+   */
+  if (!stored) {
+    const byIp = await checkRate(db, {
+      bucket: 'daily-ip',
+      id: clientIp(req.headers),
+      limit: DAILY_IP_LIMIT,
+      windowSec: DAILY_WINDOW_SEC,
+      nowSec: now,
+    })
+    if (!byIp.ok) return rateLimitedResponse(byIp.retryAfterSec)
+  }
 
   const selection = stored ?? (await selectDaily(db, steamid, dateStr, now, yesterday))
   if (selection === NO_LIBRARY) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
