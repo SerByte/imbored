@@ -35,7 +35,7 @@ const ITEMS = [
   { href: '/rooms', label: 'Пати', icon: 'users', also: ['/room'] },
   { href: '/whatsnew', label: 'Новое', icon: 'news' },
   // «Мои игры», а не «Игры»: голое «Игры» читалось как каталог — а каталог
-  // на сайте есть и называется «Игры по жанрам» (/games, ссылка в подвале).
+  // на сайте есть: «Каталог» в шапке и «Игры по жанрам» (/games) в подвале.
   // По длине как «Игра дня», в колонку на 360px влезает.
   { href: '/library', label: 'Мои игры', icon: 'grid' },
 ] satisfies Array<{ href: string; label: string; icon: IconName; also?: string[]; pick?: boolean }>

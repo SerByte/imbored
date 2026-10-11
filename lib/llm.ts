@@ -757,7 +757,10 @@ export async function claudePortraitText(args: {
     : ''
   const hours = facts.playtimeHidden
     ? 'время в играх, похоже, скрыто настройками Steam — про часы и незапущенное не пиши ничего.'
-    : `${facts.totalHours} часов всего, почти не тронутых игр (меньше двух часов в каждой) — ${facts.unplayedCount}.`
+    : // unplayedCount собран по isUnplayed — меньше двух часов, а не ноль
+      // минут. «Так и не запущены» модель повторяла дословно про игры, где
+      // наиграно по часу; граница названа прямо, чтобы ей не было что домысливать.
+      `${facts.totalHours} часов всего, почти не тронутых игр (меньше двух часов в каждой) — ${facts.unplayedCount}.`
   try {
     const raw = await claudeStructured({
       where: 'claudePortraitText',

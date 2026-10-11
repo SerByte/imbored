@@ -3627,7 +3627,9 @@ html:has(.lib-filters) {
   border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
   background: color-mix(in srgb, var(--ink) 7%, transparent);
   color: var(--ink);
-  font-size: 0.9375rem;
+  /* 16 px, не 15: Safari на iPhone приближает страницу, когда фокус
+     получает поле мельче 16 px, — как у .join input */
+  font-size: 1rem;
   font-weight: 500;
   transition:
     border-color var(--dur-base) var(--ease-out),

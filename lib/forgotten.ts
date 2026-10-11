@@ -252,8 +252,16 @@ export function parseLibraryQuery(raw: string | string[] | undefined): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, LIBRARY_QUERY_MAX)
 }
 
-/** Название и запрос в одном виде: строчные, ё→е, только буквы и цифры через пробел. */
-export function normalizeTitle(s: string): string {
+/**
+ * Название и запрос в одном виде: строчные, ё→е, без диакритики, только буквы
+ * и цифры через пробел.
+ *
+ * Не normalizeTitle из lib/series: тот срезает издания («… Game of the Year
+ * Edition»), чтобы склеивать серии, а поиску срезанное нужно — человек
+ * вправе искать «goty» или «deluxe» у себя в библиотеке. Отсюда и другое имя:
+ * два экспорта normalizeTitle с разным смыслом путали бы автоимпорт.
+ */
+export function foldTitle(s: string): string {
   return s
     .toLowerCase()
     .replace(/ё/g, 'е')
@@ -265,9 +273,9 @@ export function normalizeTitle(s: string): string {
 
 /** Подходит ли название: каждое слово запроса — часть названия. Пустой запрос — всё. */
 export function matchesTitle(name: string, q: string): boolean {
-  const words = normalizeTitle(q).split(' ').filter(Boolean)
+  const words = foldTitle(q).split(' ').filter(Boolean)
   if (words.length === 0) return true
-  const title = normalizeTitle(name)
+  const title = foldTitle(name)
   return words.every((w) => title.includes(w))
 }
 
@@ -287,7 +295,7 @@ export function searchLibraryView(
   nowSec: number,
   q: string,
 ): LibraryView {
-  if (!normalizeTitle(q)) return view
+  if (!foldTitle(q)) return view
   // Та же поправка на скрытое время, что у buildLibraryView: иначе чипсы с
   // запросом разошлись бы с чипсами без него
   const hidden = playtimeHidden(library)

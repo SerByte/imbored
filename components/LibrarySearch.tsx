@@ -7,7 +7,10 @@ import type { LibraryFilter } from '@/lib/forgotten'
 import { LIBRARY_QUERY_MAX, libraryHref } from '@/lib/libraryhref'
 
 /** Пауза после последней клавиши: запрос уходит, когда человек перестал печатать */
-const DEBOUNCE_MS = 280
+const DEBOUNCE_MS = 500
+
+/** С какой длины запрос уходит сам, по паузе. Enter отправляет любой */
+const MIN_TYPED = 2
 
 /**
  * Поле поиска над стеной /library.
@@ -23,6 +26,21 @@ const DEBOUNCE_MS = 280
  *
  * Поле переживает перерисовку: оно — клиентский островок на том же месте
  * дерева, поэтому фокус и набранное не сбрасываются, пока сервер отвечает.
+ *
+ * КАЖДЫЙ ЗАПРОС — ЦЕЛАЯ СТРАНИЦА. /library force-dynamic, и replace
+ * перерисовывает её всю: десяток чтений базы разом и метаданные по всей
+ * библиотеке, у коллекционера — тысячи строк. Это тот же счёт, из-за которого
+ * у чипсов нет префетча (их комментарий в app/library/page.tsx), только тут
+ * он платится на каждой паузе в наборе. Поэтому запрос уходит реже:
+ *  - пауза — полсекунды, а не 280 мс: чем она короче, тем чаще запрос уходит
+ *    посреди слова, а каждый такой — целая страница;
+ *  - тот же запрос второй раз не уходит. Сверка — с последним отправленным
+ *    (sent) после нормализации: пробел в конце, набрал и стёр до прежнего —
+ *    это прежний запрос, и страница уже его показывает;
+ *  - одна буква по паузе — ещё не поиск: под «a» подходит полбиблиотеки, а
+ *    платится полная перерисовка. Пока в поле меньше MIN_TYPED знаков, полка
+ *    целая — и если стёр до одной буквы, она тоже возвращается целой. Enter
+ *    отправляет как есть: это уже просьба, а не пауза.
  */
 export function LibrarySearch({ filter, q }: { filter: LibraryFilter; q: string }) {
   const router = useRouter()
@@ -30,11 +48,58 @@ export function LibrarySearch({ filter, q }: { filter: LibraryFilter; q: string 
   const [pending, startTransition] = useTransition()
   const timer = useRef<number | undefined>(undefined)
 
-  useEffect(() => () => window.clearTimeout(timer.current), [])
+  /*
+   * Запрос в адресе может смениться не отсюда: «Сбросить поиск» под стеной —
+   * обычная ссылка без ?q=. Поле при этом держало бы старое «portal» над уже
+   * полной полкой. Поэтому чужой q переписывает поле, а свой — нет: эхо
+   * собственного запроса пришло бы нормализованным («portal » → «portal»)
+   * и съело бы пробел, который человек только что набрал. Свой — это
+   * последний отправленный (sent). Сверка во время рендера, а не в эффекте:
+   * react-hooks/set-state-in-effect у проекта — ошибка, и лишнего кадра со
+   * старым текстом так тоже нет.
+   */
+  const [sent, setSent] = useState(q)
+  const [seenQ, setSeenQ] = useState(q)
+  const [foreign, setForeign] = useState(0)
+  if (q !== seenQ) {
+    setSeenQ(q)
+    if (q !== sent) {
+      setSent(q)
+      setValue(q)
+      setForeign((n) => n + 1)
+    }
+  }
 
-  const go = (next: string) => {
+  /*
+   * Чужой q гасит и отложенную отправку. Таймер держит go из того рендера,
+   * где его завели, — со старым sent и старым набранным: набрал «portalxy»
+   * и в те же полсекунды нажал «Сбросить поиск» или «Назад» — поле уже
+   * пустое, а таймер отправил бы «portalxy» поверх сброса. Сброс отменён, и
+   * пришедший q совпал бы с sent: стена отобрана, а поле так и стоит пустым.
+   * Эхо собственного запроса таймер не трогает — иначе пропали бы буквы,
+   * набранные уже после отправки. Гасит cleanup эффекта по счётчику чужих q
+   * (и размонтирование), а не сам рендер: в рендере побочных действий нет.
+   */
+  useEffect(() => () => window.clearTimeout(timer.current), [foreign])
+
+  /*
+   * Полка для отправки — последняя показанная, а не та, при которой завели
+   * таймер. Чипс переносит свой q (libraryHref), чужим для поля он не
+   * считается, и таймер живёт дальше; со старой полкой в замыкании нажатый
+   * в те же полсекунды чипс откатился бы назад вместе с запросом.
+   */
+  const shelf = useRef(filter)
+  useEffect(() => {
+    shelf.current = filter
+  }, [filter])
+
+  const go = (next: string, typed = false) => {
     window.clearTimeout(timer.current)
-    const href = libraryHref(filter, 1, next.replace(/\s+/g, ' ').trim())
+    const norm = next.replace(/\s+/g, ' ').trim()
+    const query = typed && norm.length < MIN_TYPED ? '' : norm
+    if (query === sent) return
+    setSent(query)
+    const href = libraryHref(shelf.current, 1, query)
     startTransition(() => router.replace(href, { scroll: false }))
   }
 
@@ -70,7 +135,7 @@ export function LibrarySearch({ filter, q }: { filter: LibraryFilter; q: string 
           const next = e.target.value
           setValue(next)
           window.clearTimeout(timer.current)
-          timer.current = window.setTimeout(() => go(next), DEBOUNCE_MS)
+          timer.current = window.setTimeout(() => go(next, true), DEBOUNCE_MS)
         }}
         onKeyDown={(e) => {
           // Esc очищает поле — и полку вместе с ним, как крестик type="search"

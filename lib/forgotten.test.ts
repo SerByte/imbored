@@ -7,7 +7,7 @@ import {
   libraryHref,
   libraryPage,
   matchesTitle,
-  normalizeTitle,
+  foldTitle,
   parseLibraryQuery,
   searchLibraryView,
   parseLibraryFilter,
@@ -467,7 +467,7 @@ describe('поиск по стене /library', () => {
     expect(matchesTitle('Counter-Strike 2', 'counterstrike')).toBe(false)
     expect(matchesTitle('Counter-Strike 2', 'counter strike')).toBe(true)
     expect(matchesTitle('Pokémon Legends', 'pokemon')).toBe(true)
-    expect(normalizeTitle('  Half‑Life: Alyx ')).toBe('half life alyx')
+    expect(foldTitle('  Half‑Life: Alyx ')).toBe('half life alyx')
   })
 
   test('пустой запрос — это вся полка', () => {
@@ -505,5 +505,19 @@ describe('поиск по стене /library', () => {
   test('адрес полки хранит запрос, а смена полки его не стирает', () => {
     expect(libraryHref('all', 1, 'portal')).toBe('/library?q=portal')
     expect(libraryHref('comeback', 2, 'portal 2')).toBe('/library?state=comeback&q=portal+2&page=2')
+  })
+
+  test('время скрыто: поиск остаётся на «Все», и найденное не делится по нулям', () => {
+    // Поиск пришёл на ветку, где buildLibraryView уже знает скрытое время:
+    // без hidden в счётчиках найденного «Не распакованы» снова назвала бы
+    // запечатанной каждую игру, а полка {...view} потеряла бы view.filter
+    const hidden = hiddenLibrary()
+    const metas = new Map(hidden.map((g) => [g.appid, meta(g.appid)]))
+    const of = (id: number) => metas.get(id)
+    const view = buildLibraryView(hidden, of, 'untouched', NOW)
+    const found = searchLibraryView(view, hidden, of, NOW, 'игра 1001')
+    expect(found.filter).toBe('all')
+    expect(found.games.map((g) => g.appid)).toEqual([1001])
+    expect(found.counts).toEqual({ all: 1, untouched: 0, unplayed: 0, comeback: 0, active: 0 })
   })
 })

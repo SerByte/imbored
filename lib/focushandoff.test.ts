@@ -123,9 +123,12 @@ describe('/explore: колода уходит — фокус остаётся н
   })
 
   test('голос с клавиатуры по последней карте отдаёт фокус этому заголовку', () => {
-    // колода сообщает, чем голосовали; страница знает, что карта последняя
-    // card — голос стрелкой идёт той же функцией (commitCard), что и кнопкой
-    expect(deck).toMatch(/onVote\((?:top|card), yes, keyboard\)/)
+    // колода сообщает, чем голосовали; страница знает, что карта последняя.
+    // Кнопки, жест и стрелки (deckKeyVote в lib/deckvote) голосуют через один
+    // commitCard: стрелке нужна карта из колоды в момент нажатия, а не top
+    // рендера, — поэтому сообщение странице живёт там, а commit его зовёт
+    expect(deck).toMatch(/onVote\(card, yes, keyboard\)/)
+    expect(deck).toMatch(/const commit = \(yes: boolean, keyboard: boolean\) => commitCard\(top, yes, keyboard\)/)
     expect(page).toMatch(/if \(keyboard && cards\.length === 1\) pendingFocus\.current = 'end'/)
     expect(page).toMatch(/target === 'end'\s*\?\s*deckEndHead\.current/)
   })

@@ -137,8 +137,8 @@ export default function SupportPage() {
         )}
 
         <p className="text-xs text-faint text-center">
-          Принцип-табу: мы никогда не продаём места в выдаче. Рекомендация — это доверие,
-          а доверие не продаётся.
+          Принцип-табу: мы никогда не продаём места в&nbsp;выдаче. Рекомендация&nbsp;— это доверие,
+          а&nbsp;доверие не продаётся.
         </p>
 
         <div className="text-center">
