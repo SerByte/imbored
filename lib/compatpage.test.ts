@@ -1,6 +1,6 @@
 import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
-import { loadCompat, loadCompatInvite } from './compatpage'
+import { loadCompat, loadCompatInvite, loadInviteHead } from './compatpage'
 import { migrateDb, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from './db'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import { roundsOf } from './testing/rounds'
@@ -121,6 +121,20 @@ describe('совместимость: круги к базе', () => {
     // Метаданные игр — одним чтением: объединение двух библиотек
     const metaReads = log.filter((e) => e.sql.startsWith('SELECT g.appid'))
     expect(metaReads, JSON.stringify(log, null, 1)).toHaveLength(1)
+  })
+
+  test('голова приглашения — то же приглашение без обложек, и за метаданными игр не ходит', async () => {
+    // Её читает generateMetadata на каждом заходе, в том числе у вошедшего,
+    // чей экран обложек приглашения не показывает вовсе
+    const base = await freshDb()
+    await seed(base)
+    const { db, log } = roundsOf(base)
+    const head = await loadInviteHead(db, OPEN)
+    const { topGames, ...rest } = (await loadCompatInvite(base, OPEN))!
+    expect(topGames).toHaveLength(5)
+    expect(head).toEqual(rest)
+    expect(log.filter((e) => e.sql.startsWith('SELECT g.appid')), JSON.stringify(log, null, 1)).toEqual([])
+    expect(await loadInviteHead(db, '76561198000000034')).toBeNull()
   })
 
   test('гость и человек без библиотеки видят то же приглашение', async () => {

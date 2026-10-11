@@ -16,10 +16,12 @@ import {
   COMMON_SHOWN,
   type CompatGame,
   type CompatInvite,
+  type CompatInviteHead,
   type CompatPick,
   type CompatResult,
-  inviteOnce,
   loadCompat,
+  loadCompatInvite,
+  loadInviteHead,
 } from '@/lib/compatpage'
 import { reconnectHref } from '@/lib/destination'
 import { plural } from '@/lib/plural'
@@ -54,9 +56,10 @@ export async function generateMetadata({
   const { steamid } = await params
   if (!STEAMID.test(steamid)) return {}
 
-  // Приглашение на время запроса — общее с телом страницы: loadCompat берёт
-  // тот же промис, и снапшот владельца ссылки читается один раз (inviteOnce)
-  const invite = await inviteOnce(await getDb(), steamid)
+  // Только голова приглашения: обложек превью не показывает. Снапшот и ник
+  // владельца — общие с телом страницы на любом пути (память запроса в
+  // lib/compatpage), обложки же метаданным не нужны, и вошедший за них не платит
+  const invite = await loadInviteHead(await getDb(), steamid)
   if (!invite) return { title: 'Совместимость', robots: { index: false } }
 
   const title = `${invite.name} зовёт сравнить библиотеки`
@@ -100,7 +103,7 @@ const ru = (n: number) => n.toLocaleString('ru-RU')
  * скрыто настройками Steam (lib/playtime.ts) — слово вместо числа: «0 часов»
  * было бы сказано про галочку, а не про человека, и ушло бы в каждый чат.
  */
-function inviteHours(invite: Pick<CompatInvite, 'totalHours' | 'playtimeHidden'>): string {
+function inviteHours(invite: Pick<CompatInviteHead, 'totalHours' | 'playtimeHidden'>): string {
   return invite.playtimeHidden
     ? 'время скрыто'
     : `${ru(invite.totalHours)} ${plural(invite.totalHours, 'час', 'часа', 'часов')}`
@@ -264,8 +267,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
     session !== null && isWriter(session) && !isDemoId(session.steamid) && !isDemoId(other)
 
   if (state.kind === 'self') {
-    // Фон — свои же игры: приглашение уже посчитано для метаданных (cache)
-    const own = await inviteOnce(db, other)
+    // Фон — свои же игры. Снапшот и ник уже прочитаны для метаданных (память
+    // запроса), новое чтение одно — обложки
+    const own = await loadCompatInvite(db, other)
     return (
       <CompatNotice
         title="Это твоя собственная ссылка"

@@ -79,8 +79,11 @@ export type CompatResult = {
   otherTimeHidden: boolean
 }
 
-/** Что можно показать про владельца ссылки, ничего не зная о зрителе */
-export type CompatInvite = {
+/**
+ * Владелец ссылки без обложек — всё, что про него говорят снапшот и ник.
+ * Превью в чате ничего сверх этого не показывает (см. loadInviteHead)
+ */
+export type CompatInviteHead = {
   steamid: string
   name: string
   gamesCount: number
@@ -90,8 +93,10 @@ export type CompatInvite = {
    * превью, герое и карточке — «время скрыто», как у портрета
    */
   playtimeHidden: boolean
-  topGames: ArtRef[]
 }
+
+/** Что можно показать про владельца ссылки, ничего не зная о зрителе */
+export type CompatInvite = CompatInviteHead & { topGames: ArtRef[] }
 
 export type CompatState =
   | { kind: 'ok'; data: CompatResult }
@@ -127,8 +132,8 @@ function artRef(appid: number, name: string, meta: GameMeta | undefined): ArtRef
 /*
  * Снапшот и ник — один раз на запрос.
  *
- * Их читают и generateMetadata (через inviteOnce), и тело страницы, и раньше
- * тело читало их само — в обход памяти запроса. Страница объявлена
+ * Их читают и generateMetadata (через loadInviteHead), и тело страницы, и
+ * раньше тело читало их само — в обход памяти запроса. Страница объявлена
  * force-dynamic, и каждый заход по ссылке совместимости — а гость по
  * разосланной ссылке и есть её главный путь — тянул из Turso games_json
  * владельца дважды: у большой библиотеки это блоб на сотни килобайт. Вместе с
@@ -164,18 +169,38 @@ export function nameOf(steamid: string, stored: string | null): string {
 }
 
 /**
+ * Снапшот и ник владельца ссылки — одним кругом и через память запроса.
+ *
+ * Ник — вместе со снапшотом, а не после: от снапшота он не зависит. Без
+ * снапшота он прочитан зря, но странице он тогда как раз и нужен — «X ещё не
+ * подключал библиотеку».
+ */
+function readOwner(db: Db, steamid: string) {
+  return Promise.all([snapshotOnce(db, steamid), personaOnce(db, steamid)])
+}
+
+function inviteHead(steamid: string, games: LibraryGame[], stored: string | null): CompatInviteHead {
+  return {
+    steamid,
+    name: nameOf(steamid, stored),
+    gamesCount: games.length,
+    totalHours: Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60),
+    playtimeHidden: playtimeHidden(games),
+  }
+}
+
+/**
  * Владелец ссылки — то, что видно и без входа.
  *
  * Отсюда живут три вещи, которые обязаны работать для незалогиненного:
- * generateMetadata, OG-картинка и сам экран приглашения. Все три описывают
- * ТОГО, КТО КИНУЛ ССЫЛКУ, а не того, кто её открыл: иначе одна ссылка
- * разворачивалась бы в каждом чате по-разному, а превью показывало бы того, чья
- * сессия случайно оказалась у краулера.
+ * generateMetadata (ему хватает головы, см. loadInviteHead), OG-картинка и сам
+ * экран приглашения. Все три описывают ТОГО, КТО КИНУЛ ССЫЛКУ, а не того, кто
+ * её открыл: иначе одна ссылка разворачивалась бы в каждом чате по-разному, а
+ * превью показывало бы того, чья сессия случайно оказалась у краулера.
  *
- * Снапшот и ник — через память запроса (snapshotOnce), поэтому тело страницы,
- * которое тоже их читает, второй раз за ними не ходит. Раньше ради этого сюда
- * передавали уже прочитанный снапшот, но так дубль снимался только внутри
- * тела: generateMetadata всё равно читал всё своё.
+ * Снапшот и ник — через память запроса (snapshotOnce), поэтому ни метаданные,
+ * ни тело страницы второй раз за ними не ходят. Своё чтение здесь одно —
+ * обложки, и платят за него только экраны и карточка, которые их показывают.
  */
 export async function loadCompatInvite(
   db: Db,
@@ -183,36 +208,36 @@ export async function loadCompatInvite(
   /** Сколько самых наигранных взять: странице — ленту, карточке — стену */
   opts: { top?: number } = {},
 ): Promise<CompatInvite | null> {
-  // Ник — вместе со снапшотом, а не после обложек: ни от того, ни от другого
-  // он не зависит. Без снапшота он прочитан зря, но странице он тогда как раз
-  // и нужен — «X ещё не подключал библиотеку»
-  const [snapshot, stored] = await Promise.all([
-    snapshotOnce(db, steamid),
-    personaOnce(db, steamid),
-  ])
+  const [snapshot, stored] = await readOwner(db, steamid)
   if (!snapshot) return null
 
   const top = topPlayed(snapshot.games, opts.top ?? HERO_ART)
   const metas = await getGamesMetaLite(db, top.map((g) => g.appid))
 
   return {
-    steamid,
-    name: nameOf(steamid, stored),
-    gamesCount: snapshot.games.length,
-    totalHours: Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60),
-    playtimeHidden: playtimeHidden(snapshot.games),
+    ...inviteHead(steamid, snapshot.games, stored),
     topGames: top.map((g) => artRef(g.appid, g.name, metas.get(g.appid))),
   }
 }
 
 /**
- * Приглашение на время запроса — одно на generateMetadata и тело страницы.
+ * Голова приглашения — для generateMetadata: превью в чате говорит имя, число
+ * игр и часы, а обложек в нём нет (картинку рисует opengraph-image.tsx).
  *
- * Живёт здесь, а не в page.tsx, потому что тело берёт его изнутри loadCompat:
- * обёртка у них обязана быть общей. Звать — ровно с двумя аргументами:
- * третий, даже undefined, — другой ключ памяти, и общий промис потеряется.
+ * Пока метаданные брали приглашение целиком, вошедший с библиотекой платил за
+ * обложки пяти самых наигранных игр владельца, которых ему не показывает
+ * никто: его экран — посчитанное сравнение, и герой там красится из
+ * метаданных обеих библиотек. Выходило два чтения метаданных игр на заход
+ * вместо одного. Теперь обложки читает только тело страницы — и только на
+ * тех экранах, где лента есть.
+ *
+ * Снапшот и ник у головы и у тела страницы — общие промисы (snapshotOnce) на
+ * любом пути: у гостя, у вошедшего, на своей ссылке.
  */
-export const inviteOnce = cache(loadCompatInvite)
+export async function loadInviteHead(db: Db, steamid: string): Promise<CompatInviteHead | null> {
+  const [snapshot, stored] = await readOwner(db, steamid)
+  return snapshot ? inviteHead(steamid, snapshot.games, stored) : null
+}
 
 export async function loadCompat(
   db: Db,
@@ -251,10 +276,10 @@ export async function loadCompat(
   if (!otherSnap) return { kind: 'noprofile', otherName: otherStored }
 
   // Гость и человек без своей библиотеки видят одно и то же — кто зовёт и во
-  // что он играет. Это ровно приглашение generateMetadata: в запросе здесь
-  // тот же промис (inviteOnce), без единого нового чтения
+  // что он играет. Снапшот и ник владельца в запросе уже прочитаны
+  // (snapshotOnce) — новое чтение здесь одно: обложки ленты
   if (!me || !mySnap) {
-    const invite = await inviteOnce(db, other)
+    const invite = await loadCompatInvite(db, other)
     if (!invite) return { kind: 'noprofile', otherName: otherStored }
     return me ? { kind: 'nolibrary', invite } : { kind: 'noauth', invite }
   }

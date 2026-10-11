@@ -111,5 +111,19 @@ describe('/compat/[steamid]: владелец ссылки — один раз �
     expect(reads.snapshots.filter((s) => s === OWNER)).toHaveLength(1)
     expect(reads.snapshots.filter((s) => s === VIEWER)).toHaveLength(1)
     expect(reads.personas.filter((s) => s === OWNER)).toHaveLength(1)
+    // Метаданные игр — одним чтением, объединением двух библиотек. Обложки
+    // приглашения превью не нужны, а экран посчитанного сравнения красит героя
+    // из того же объединения: раньше их читали метаданные страницы — вторым
+    // чтением на каждый такой заход
+    expect(reads.metas).toBe(1)
+  })
+
+  test('своя ссылка: обложки фона читаются один раз — телом, не метаданными', async () => {
+    await signIn(db, OWNER, { verified: true })
+    const reads = countReads()
+    await visit(OWNER)
+    expect(reads.snapshots).toEqual([OWNER])
+    expect(reads.personas).toEqual([OWNER])
+    expect(reads.metas).toBe(1)
   })
 })
