@@ -376,9 +376,10 @@ CREATE INDEX IF NOT EXISTS idx_compat_views_at ON compat_views (at);
  * свой: её гасит «Выйти на всех устройствах», которому строка users нужна
  * целой (sessions_from).
  *
- * Пишет только пишущая сессия (requireWriter). Уходит по «Отключить», при
- * «Выйти на всех устройствах», с уборкой демо (sweepStale) и по запросу
- * (forgetUser). /privacy, разделы 01 и 06.
+ * Пишет только пишущая сессия (requireWriter), и только не отозванная
+ * (issueFeedLink). Уходит по «Отключить», при «Выйти на всех устройствах» —
+ * той же пачкой, что и сессии (revokeAllSessions), — с уборкой демо
+ * (sweepStale) и по запросу (forgetUser). /privacy, разделы 01 и 06.
  */
 CREATE TABLE IF NOT EXISTS feed_links (
   steamid TEXT PRIMARY KEY,
@@ -1363,24 +1364,42 @@ export async function revokeSession(db: Db, sid: string, nowSec: number): Promis
 }
 
 /**
- * Погасить все устройства игрока.
+ * Погасить все устройства игрока — и секретную ссылку на его RSS-ленту.
  *
- * Двумя действиями, и второе обязательно: UPDATE достаёт только те сессии, чьи
- * строки существуют, а sessions_from накрывает и те, что не записались. Без
- * него «выйти везде» тихо промахивалось бы мимо ровно тех сессий, из-за
- * которых его и нажимают.
+ * Сессии гасятся двумя действиями, и второе обязательно: UPDATE достаёт
+ * только те сессии, чьи строки существуют, а sessions_from накрывает и те,
+ * что не записались. Без него «выйти везде» тихо промахивалось бы мимо ровно
+ * тех сессий, из-за которых его и нажимают.
+ *
+ * Ссылка на ленту (feed_links) — тоже доступ, выпущенный из сессии, и ридеру
+ * кука не нужна: выпусти её тот, кто сидел в чужой сессии, она пережила бы
+ * отзыв всех входов. Поэтому она уходит здесь же, а не отдельным вызовом у
+ * роута: «везде» не может забыть о ней ни в одном месте, откуда его зовут.
+ *
+ * ОДНОЙ ПАЧКОЙ В ТРАНЗАКЦИИ НА ЗАПИСЬ. Отдельными запросами сбой между ними
+ * оставлял ссылку живой после отозванных сессий, а ответ роута выхода
+ * revoked: false никто не читает. И пачка же закрывает гонку с выпуском:
+ * issueFeedLink проверяет отзыв своей сессии в той же записи, что и пишет, —
+ * выпуск встаёт либо до этой пачки (и ссылку сносит DELETE ниже), либо после
+ * (и видит revoked_at).
  */
 export async function revokeAllSessions(db: Db, steamid: string, nowSec: number): Promise<void> {
-  await db.execute({
-    sql: 'UPDATE sessions SET revoked_at = ? WHERE steamid = ? AND revoked_at IS NULL',
-    args: [nowSec, steamid],
-  })
-  await db.execute({
-    sql: `INSERT INTO users (steamid, created_at, last_seen_at, sessions_from)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(steamid) DO UPDATE SET sessions_from = excluded.sessions_from`,
-    args: [steamid, nowSec, nowSec, nowSec],
-  })
+  await db.batch(
+    [
+      {
+        sql: 'UPDATE sessions SET revoked_at = ? WHERE steamid = ? AND revoked_at IS NULL',
+        args: [nowSec, steamid],
+      },
+      {
+        sql: `INSERT INTO users (steamid, created_at, last_seen_at, sessions_from)
+              VALUES (?, ?, ?, ?)
+              ON CONFLICT(steamid) DO UPDATE SET sessions_from = excluded.sessions_from`,
+        args: [steamid, nowSec, nowSec, nowSec],
+      },
+      { sql: 'DELETE FROM feed_links WHERE steamid = ?', args: [steamid] },
+    ],
+    'write',
+  )
 }
 
 /* ---------- пользователи ---------- */
@@ -5727,20 +5746,78 @@ export async function getSharedPick(db: Db, id: string, sinceSec: number): Promi
 /* ---------- личная RSS-лента: секретная ссылка ---------- */
 
 /**
+ * Чем кончился выпуск ссылки (issueFeedLink):
+ *   issued  — отпечаток нового ключа записан, прежняя ссылка погасла;
+ *   exists  — ссылка уже есть, а заменить её не просили: не записано ничего;
+ *   revoked — сессия, которая выпускает, уже отозвана: не записано ничего.
+ */
+export type FeedLinkIssue = { kind: 'issued' } | { kind: 'exists'; createdAt: number } | { kind: 'revoked' }
+
+/**
  * Выпустить ссылку или перевыпустить: отпечаток нового ключа встаёт на место
  * прежнего одной записью. Перевыпуск — и есть отзыв старой ссылки: отдельного
  * «отозвать, потом выпустить» нет, и окна, когда работают обе, тоже.
  *
  * Принимает отпечаток, а не ключ: ключ до базы не доезжает вовсе (lib/feedlink).
+ *
+ * ОТЗЫВ СЕССИИ ПРОВЕРЯЕТСЯ ЗДЕСЬ, А НЕ ТОЛЬКО У ВХОДА В РОУТ. Состояние
+ * сессии кэшируется на процесс (REVOKE_CACHE_SEC в lib/sessions), а
+ * forgetSessionCache после «Выйти на всех устройствах» чистит кэш только
+ * того экземпляра, что обслужил выход. Тот, кто сидит в чужой сессии и
+ * держит её тёплой на соседнем экземпляре, минуту после отзыва ещё проходит
+ * requireWriter. Любая другая запись в эту минуту — разовая, а ссылка —
+ * постоянный доступ, которому кука уже не нужна: выпущенная в это окно, она
+ * пережила бы отзыв навсегда. Поэтому вставка стоит под условием «строка этой
+ * сессии не отозвана» в той же записи, а revokeAllSessions гасит ссылки той
+ * же пачкой, что и сессии: из двух записей какая-то идёт первой, и обе
+ * очерёдности кончаются без живой ссылки. У подтверждённой сессии строка
+ * есть всегда — признак verified читается из неё, — так что мимо условия
+ * не пройти. Демо без строки (Turso моргнула на выдаче) условие пропускает,
+ * но «выйти везде» демо и не дано.
+ *
+ * ЗАМЕНА — ТОЛЬКО ПО ПРОСЬБЕ (replace). Страница судит о том, есть ли
+ * ссылка, по своему первому кадру, а он бывает старым: «назад» достаёт
+ * /whatsnew из роутерного кэша, вторая вкладка открыта до выпуска. Без
+ * replace такая страница одним нажатием «Получить ссылку» молча гасила бы
+ * ссылку, которую человек только что положил в ридер. Поэтому без просьбы
+ * существующая строка не трогается, и ответ — её дата: страница спросит
+ * подтверждение уже по правде.
+ *
+ * Состояние до записи читается той же пачкой в транзакции на запись: оно
+ * ровно то, по которому решала вставка, — между ними никто не вклинится.
+ * Отозванной сессии дата чужой ссылки не отдаётся: revoked проверяется первым.
  */
-export async function setFeedLink(db: Db, steamid: string, tokenHash: string, nowSec: number): Promise<void> {
-  await db.execute({
-    sql: `INSERT INTO feed_links (steamid, token_hash, created_at) VALUES (?, ?, ?)
-          ON CONFLICT(steamid) DO UPDATE SET
-            token_hash = excluded.token_hash,
-            created_at = excluded.created_at`,
-    args: [steamid, tokenHash, nowSec],
-  })
+export async function issueFeedLink(
+  db: Db,
+  link: { steamid: string; sid: string; tokenHash: string; nowSec: number; replace: boolean },
+): Promise<FeedLinkIssue> {
+  const revoked = 'SELECT 1 FROM sessions WHERE sid = ? AND revoked_at IS NOT NULL'
+  const [before, written] = await db.batch(
+    [
+      {
+        sql: `SELECT EXISTS (${revoked}) AS revoked,
+                     (SELECT created_at FROM feed_links WHERE steamid = ?) AS created_at`,
+        args: [link.sid, link.steamid],
+      },
+      {
+        // WHERE у SELECT обязателен и сам по себе: без него SQLite читал бы
+        // ON CONFLICT как часть выборки (как в joinRoom)
+        sql: `INSERT INTO feed_links (steamid, token_hash, created_at)
+              SELECT ?, ?, ?
+              WHERE NOT EXISTS (${revoked})
+              ON CONFLICT(steamid) DO UPDATE SET
+                token_hash = excluded.token_hash,
+                created_at = excluded.created_at
+              WHERE ?`,
+        args: [link.steamid, link.tokenHash, link.nowSec, link.sid, link.replace ? 1 : 0],
+      },
+    ],
+    'write',
+  )
+  const state = before?.rows[0] as unknown as { revoked: number; created_at: number | null } | undefined
+  if (Number(state?.revoked)) return { kind: 'revoked' }
+  if (Number(written?.rowsAffected ?? 0) > 0) return { kind: 'issued' }
+  return { kind: 'exists', createdAt: Number(state?.created_at) }
 }
 
 /** Отключить ссылку. Нечего отключать — не ошибка: итог тот же. */

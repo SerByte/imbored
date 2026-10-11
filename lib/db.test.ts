@@ -144,7 +144,8 @@ import {
   getWishlist,
   rowToMeta,
   saveWishlist,
-  setFeedLink,
+  issueFeedLink,
+  revokeAllSessions,
   dropFeedLink,
   feedLinkOwner,
   getFeedLink,
@@ -168,6 +169,15 @@ const NOW = 1_700_000_000
 /** Свежая in-memory база на каждый тест */
 function freshDb() {
   return createDb(':memory:')
+}
+
+/**
+ * Выпустить RSS-ссылку по ключу — как роут после подтверждения: с заменой и
+ * от сессии, чьей строки нет (значит, и отзыва нет). Отзыв и отказ без
+ * замены проверяет describe «feed_links» своими вызовами issueFeedLink.
+ */
+function giveFeedLink(db: Db, steamid: string, key: string, at: number) {
+  return issueFeedLink(db, { steamid, sid: 'sid-feed', tokenHash: feedTokenHash(key), nowSec: at, replace: true })
 }
 
 const LIB: LibraryGame[] = [
@@ -3360,7 +3370,7 @@ describe('forgetUser: удаление по запросу', () => {
       NOW,
     )
     // Секретная ссылка на личную RSS-ленту — отпечаток ключа (lib/feedlink)
-    await setFeedLink(db, ME, feedTokenHash(MY_FEED_KEY), NOW)
+    await giveFeedLink(db, ME, MY_FEED_KEY, NOW)
 
     // Своя комната: друг в ней тоже голосовал
     await createRoom(db, { id: 'MYROOM', steamid: ME }, NOW)
@@ -3393,7 +3403,7 @@ describe('forgetUser: удаление по запросу', () => {
     )
     await logFeedback(db, { steamid: FRIEND, appid: 570, action: 'liked' }, NOW)
     await saveLibrarySnapshot(db, FRIEND, LIB, NOW)
-    await setFeedLink(db, FRIEND, feedTokenHash(FRIEND_FEED_KEY), NOW)
+    await giveFeedLink(db, FRIEND, FRIEND_FEED_KEY, NOW)
     return db
   }
 
@@ -3511,7 +3521,7 @@ describe('feed_links: секретная ссылка на ленту', () => {
   test('владелец находится по отпечатку, а сам ключ в базе не лежит', async () => {
     const db = await freshDb()
     const key = newFeedToken()
-    await setFeedLink(db, ME, feedTokenHash(key), NOW)
+    expect(await giveFeedLink(db, ME, key, NOW)).toEqual({ kind: 'issued' })
 
     expect(await feedLinkOwner(db, feedTokenHash(key))).toBe(ME)
     expect(await getFeedLink(db, ME)).toEqual({ createdAt: NOW })
@@ -3526,8 +3536,8 @@ describe('feed_links: секретная ссылка на ленту', () => {
     const db = await freshDb()
     const first = newFeedToken()
     const second = newFeedToken()
-    await setFeedLink(db, ME, feedTokenHash(first), NOW)
-    await setFeedLink(db, ME, feedTokenHash(second), NOW + 60)
+    await giveFeedLink(db, ME, first, NOW)
+    expect(await giveFeedLink(db, ME, second, NOW + 60)).toEqual({ kind: 'issued' })
 
     expect(await feedLinkOwner(db, feedTokenHash(first))).toBeNull()
     expect(await feedLinkOwner(db, feedTokenHash(second))).toBe(ME)
@@ -3541,8 +3551,8 @@ describe('feed_links: секретная ссылка на ленту', () => {
     const db = await freshDb()
     const mine = newFeedToken()
     const theirs = newFeedToken()
-    await setFeedLink(db, ME, feedTokenHash(mine), NOW)
-    await setFeedLink(db, OTHER, feedTokenHash(theirs), NOW)
+    await giveFeedLink(db, ME, mine, NOW)
+    await giveFeedLink(db, OTHER, theirs, NOW)
 
     await dropFeedLink(db, ME)
     await dropFeedLink(db, ME)
@@ -3554,9 +3564,111 @@ describe('feed_links: секретная ссылка на ленту', () => {
   test('по запросу «удалить всё» ссылка перестаёт открываться', async () => {
     const db = await freshDb()
     const key = newFeedToken()
-    await setFeedLink(db, ME, feedTokenHash(key), NOW)
+    await giveFeedLink(db, ME, key, NOW)
     await forgetUser(db, ME)
     expect(await feedLinkOwner(db, feedTokenHash(key))).toBeNull()
+  })
+
+  /**
+   * Страница судит о ссылке по своему первому кадру, а он бывает старым:
+   * «назад» из роутерного кэша, вторая вкладка. «Получить ссылку» с такого
+   * кадра не просит замены — и живая ссылка в ридере обязана уцелеть.
+   */
+  test('без просьбы заменить существующая ссылка цела, ответ — её дата', async () => {
+    const db = await freshDb()
+    const kept = newFeedToken()
+    const stray = newFeedToken()
+    await giveFeedLink(db, ME, kept, NOW)
+
+    const res = await issueFeedLink(db, {
+      steamid: ME,
+      sid: 'sid-feed',
+      tokenHash: feedTokenHash(stray),
+      nowSec: NOW + 60,
+      replace: false,
+    })
+    expect(res).toEqual({ kind: 'exists', createdAt: NOW })
+    expect(await feedLinkOwner(db, feedTokenHash(kept))).toBe(ME)
+    expect(await feedLinkOwner(db, feedTokenHash(stray))).toBeNull()
+    expect(await getFeedLink(db, ME)).toEqual({ createdAt: NOW })
+  })
+
+  test('без просьбы заменить, но и без ссылки — просто выпуск', async () => {
+    const db = await freshDb()
+    const key = newFeedToken()
+    const res = await issueFeedLink(db, {
+      steamid: ME,
+      sid: 'sid-feed',
+      tokenHash: feedTokenHash(key),
+      nowSec: NOW,
+      replace: false,
+    })
+    expect(res).toEqual({ kind: 'issued' })
+    expect(await feedLinkOwner(db, feedTokenHash(key))).toBe(ME)
+  })
+
+  /**
+   * Состояние сессии кэшируется на процесс минуту, и «выйти везде» на одном
+   * экземпляре не чистит кэш другого: там отозванная сессия ещё проходит
+   * requireWriter. Ссылка, выпущенная в это окно, пережила бы отзыв навсегда —
+   * ридеру кука не нужна. Поэтому отзыв сверяется в самой записи.
+   */
+  test('отозванная сессия ссылку не выпускает и чужую не заменяет', async () => {
+    const db = await freshDb()
+    await createSession(db, { sid: 'sid-thief', steamid: ME, verified: true }, NOW)
+    const before = newFeedToken()
+    await issueFeedLink(db, { steamid: ME, sid: 'sid-thief', tokenHash: feedTokenHash(before), nowSec: NOW, replace: true })
+
+    await revokeAllSessions(db, ME, NOW + 10)
+    // «Везде» сносит и выпущенную до отзыва — той же пачкой, что и сессии
+    expect(await feedLinkOwner(db, feedTokenHash(before))).toBeNull()
+
+    const after = newFeedToken()
+    for (const replace of [true, false]) {
+      const res = await issueFeedLink(db, {
+        steamid: ME,
+        sid: 'sid-thief',
+        tokenHash: feedTokenHash(after),
+        nowSec: NOW + 20,
+        replace,
+      })
+      expect(res, `replace: ${replace}`).toEqual({ kind: 'revoked' })
+    }
+    expect(await getFeedLink(db, ME)).toBeNull()
+
+    // Отказ — по строке ЭТОЙ сессии: новый вход после «везде» выпускает как обычно
+    await createSession(db, { sid: 'sid-fresh', steamid: ME, verified: true }, NOW + 30)
+    const fresh = newFeedToken()
+    expect(
+      await issueFeedLink(db, { steamid: ME, sid: 'sid-fresh', tokenHash: feedTokenHash(fresh), nowSec: NOW + 30, replace: false }),
+    ).toEqual({ kind: 'issued' })
+  })
+
+  test('отозванная сессия не узнаёт и даты чужой ссылки', async () => {
+    const db = await freshDb()
+    await createSession(db, { sid: 'sid-old', steamid: ME, verified: true }, NOW)
+    await revokeSession(db, 'sid-old', NOW + 1)
+    // Ссылку выпустил новый вход, а старый всё ещё в кэше где-то рядом
+    await giveFeedLink(db, ME, newFeedToken(), NOW + 2)
+    const res = await issueFeedLink(db, {
+      steamid: ME,
+      sid: 'sid-old',
+      tokenHash: feedTokenHash(newFeedToken()),
+      nowSec: NOW + 3,
+      replace: false,
+    })
+    expect(res).toEqual({ kind: 'revoked' })
+  })
+
+  test('«выйти везде» гасит ссылку только своего человека', async () => {
+    const db = await freshDb()
+    const mine = newFeedToken()
+    const theirs = newFeedToken()
+    await giveFeedLink(db, ME, mine, NOW)
+    await giveFeedLink(db, OTHER, theirs, NOW)
+    await revokeAllSessions(db, ME, NOW + 1)
+    expect(await feedLinkOwner(db, feedTokenHash(mine))).toBeNull()
+    expect(await feedLinkOwner(db, feedTokenHash(theirs))).toBe(OTHER)
   })
 })
 
@@ -3692,7 +3804,7 @@ describe('sweepStale: суточная уборка', () => {
     await logFeedback(db, { steamid, appid: 570, action: 'skipped' }, at)
     await saveDailyPick(db, steamid, '2023-11-06', { appid: 570 }, at)
     // Демо — пишущая сессия, и RSS-ссылку себе выпустить может
-    await setFeedLink(db, steamid, feedTokenHash(newFeedToken()), at)
+    await giveFeedLink(db, steamid, newFeedToken(), at)
   }
 
   test('демо, от которого неделю нет вестей, уходит целиком', async () => {

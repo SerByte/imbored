@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { dropFeedLink, revokeAllSessions, revokeSession } from '@/lib/db'
+import { revokeAllSessions, revokeSession } from '@/lib/db'
 import { SESSION_COOKIE, currentSession, getDb, nowSec, sessionCookieOptions } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
 
@@ -27,9 +27,11 @@ import { forgetSessionCache } from '@/lib/sessions'
  * «Везде» гасит и секретную ссылку на личную RSS-ленту (lib/feedlink). Жмут
  * его, когда доступ мог утечь, — и обязан он достать в том числе то, о чём
  * мы не знаем. Ссылку мог выпустить именно тот, кто сидел в чужой сессии, и
- * она пережила бы отзыв всех входов: ридеру кука не нужна. Цена — честному
- * человеку выпустить ссылку заново; об этом сказано рядом с самой ссылкой
- * на /whatsnew. Обычный выход её не трогает: ридер — не это устройство.
+ * она пережила бы отзыв всех входов: ридеру кука не нужна. Гасит её сам
+ * revokeAllSessions, одной пачкой с сессиями, — см. его докблок. Цена —
+ * честному человеку выпустить ссылку заново; об этом сказано рядом с самой
+ * ссылкой на /whatsnew и в подтверждении «Выйти на всех устройствах?»
+ * (components/SignOut). Обычный выход её не трогает: ридер — не это устройство.
  */
 export async function POST(req: Request) {
   const session = await currentSession()
@@ -46,8 +48,9 @@ export async function POST(req: Request) {
     try {
       const db = await getDb()
       if (all) {
+        // Ссылку на ленту гасит та же пачка, что и сессии: сбой посередине
+        // не оставит её живой при ответе «вышел везде»
         await revokeAllSessions(db, session.steamid, now)
-        await dropFeedLink(db, session.steamid)
       } else {
         await revokeSession(db, session.sid, now)
       }

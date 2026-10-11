@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   dropFeedLink,
   forgetUser,
+  issueFeedLink,
   saveLibrarySnapshot,
-  setFeedLink,
   upsertGameMeta,
   upsertNewsItems,
   upsertUser,
@@ -33,6 +33,11 @@ const NICK = 'Тайный Ник'
 let db: Db
 let me: string
 let key: string
+
+/** Выпустить ссылку на ключ — как роут после подтверждения замены */
+function give(k: string, at: number) {
+  return issueFeedLink(db, { steamid: me, sid: 'sid-feed', tokenHash: feedTokenHash(k), nowSec: at, replace: true })
+}
 
 function game(appid: number): GameMeta {
   return { appid, name: `Игра ${appid}`, tags: { Action: 100 }, genres: [], categories: [] }
@@ -82,7 +87,7 @@ beforeEach(async () => {
     NOW - 60,
   )
   key = newFeedToken()
-  await setFeedLink(db, me, feedTokenHash(key), NOW)
+  await give(key, NOW)
   // Ридер ходит без нашей куки — лента обязана открываться и так
   signOut()
 })
@@ -151,7 +156,7 @@ describe('/whatsnew/feed/[token]: ключ', () => {
 
   test('перевыпуск, отключение и «удалить всё» гасят ссылку сразу', async () => {
     const next = newFeedToken()
-    await setFeedLink(db, me, feedTokenHash(next), NOW + 1)
+    await give(next, NOW + 1)
     expect((await poll(key)).status).toBe(404)
     expect((await poll(next)).status).toBe(200)
 
@@ -159,7 +164,7 @@ describe('/whatsnew/feed/[token]: ключ', () => {
     expect((await poll(next)).status).toBe(404)
 
     const again = newFeedToken()
-    await setFeedLink(db, me, feedTokenHash(again), NOW + 2)
+    await give(again, NOW + 2)
     await forgetUser(db, me)
     expect((await poll(again)).status).toBe(404)
   })

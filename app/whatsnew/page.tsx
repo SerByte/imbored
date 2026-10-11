@@ -14,6 +14,7 @@ import {
   getLatestSnapshot,
   withoutBody,
 } from '@/lib/db'
+import { steamLoginFor } from '@/lib/destination'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
 import { plural } from '@/lib/plural'
@@ -104,17 +105,24 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
    * Стоит на обеих вкладках и даже на пустой странице: включённую ссылку
    * обязано быть где отключить, что бы ни показывала лента сегодня. Самой
    * ссылки сервер не знает — только есть ли она и с какого дня.
+   *
+   * verified — обещать «Выйти на всех устройствах» как второй выключатель
+   * можно только тому, у кого эта кнопка есть: демо пишет, но выхода везде у
+   * него нет (components/SignOut), и ссылку его выход не трогает.
+   *
+   * «Войти через Steam» — со steamLoginFor: после входа человек обязан
+   * вернуться сюда, к ссылке, ради которой входил, а не попасть на квиз.
    */
   const writer = session !== null && isWriter(session)
   const feedLink = writer ? await getFeedLink(db, session.steamid) : null
   const rss = !session ? null : writer ? (
-    <FeedLink since={feedLink?.createdAt ?? null} />
+    <FeedLink since={feedLink?.createdAt ?? null} verified={session.verified} />
   ) : (
     <p className="border-t border-rule pt-8 text-sm text-dim">
       Получать патчи своих игр в ридер по секретной ссылке может вошедший через Steam: ссылка
       на профиль не доказывает, что профиль твой.{' '}
       <a
-        href="/api/auth/steam"
+        href={steamLoginFor('/whatsnew')}
         className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
       >
         Войти через Steam

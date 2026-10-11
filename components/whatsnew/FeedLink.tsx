@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useRef, useState, type ReactNode } from 'react'
 import { ShareLinkInput, useShareLink } from '@/components/ShareLink'
 import { StatusLine } from '@/components/StatusLine'
+import { steamLoginFor } from '@/lib/destination'
+import { issueReply } from '@/lib/feedlinkreply'
 import { focusAdrift } from '@/lib/focushandoff'
 import { dateLabel } from '@/lib/freshness'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -15,6 +17,14 @@ type Phase =
   | { kind: 'on'; since: number }
   /** Только что выпущена: адрес виден один раз, до ухода со страницы */
   | { kind: 'shown'; url: string }
+
+/**
+ * Что сейчас переспрашивается. issue — человек сам нажал «Выпустить новую»;
+ * found — нажал «Получить ссылку», а сервер ответил, что ссылка уже есть
+ * (409 exists): кнопка та же «Да, выпустить новую», но строка сначала
+ * объясняет, откуда взялась ссылка, которой эта вкладка не видела.
+ */
+type Confirm = 'issue' | 'found' | 'off'
 
 /**
  * «RSS по секретной ссылке» внизу /whatsnew: выпустить, скопировать,
@@ -33,14 +43,27 @@ type Phase =
  * — та же кнопка со словом «Да»: нажатая кнопка остаётся в DOM, и фокус с
  * неё никуда не падает (у SignOut подтверждение подменяет кнопку целиком).
  *
+ * Есть ли ссылка, эта строка знает по первому кадру, а он бывает старым:
+ * «назад» с патча достаёт /whatsnew из роутерного кэша, вторая вкладка
+ * открыта до выпуска. Поэтому «Получить ссылку» без подтверждения просит
+ * сервер выпустить, НЕ заменяя (replace: false), и на «уже есть» строка
+ * показывает ту ссылку и переспрашивает. replace: true уходит только с
+ * «Да, выпустить новую» — то есть после того, как человек видел, что рвёт.
+ *
+ * Строку «Отключается и кнопкой «Выйти на всех устройствах»» видит только
+ * вошедший через Steam (verified): у демо такой кнопки нет (SignOut), и его
+ * выход ссылку не трогает — обещать ему этот выключатель было бы враньём.
+ *
  * Буфер — общий useShareLink, но copyOnly: без панели «Поделиться» и без
  * шага share_click. Эту ссылку не отправляют людям, её кладут в свой ридер;
  * а ?ref= у неё нет по той же причине — это ключ, а не приглашение.
  */
-export function FeedLink({ since }: { since: number | null }) {
+export function FeedLink({ since, verified }: { since: number | null; verified: boolean }) {
   const [phase, setPhase] = useState<Phase>(since === null ? { kind: 'off' } : { kind: 'on', since })
   const [busy, setBusy] = useState<'issue' | 'off' | null>(null)
-  const [confirm, setConfirm] = useState<'issue' | 'off' | null>(null)
+  const [confirm, setConfirm] = useState<Confirm | null>(null)
+  /** Переспрашиваем про замену — с какого бы нажатия ни пришли */
+  const asking = confirm === 'issue' || confirm === 'found'
   const [miss, setMiss] = useState<ReactNode>(null)
   /**
    * Что сказать скринридеру об удаче. Отказы звучат своей строкой, а удача
@@ -72,7 +95,8 @@ export function FeedLink({ since }: { since: number | null }) {
       return (
         <>
           Ссылку выпускает вошедший через Steam —{' '}
-          <a href="/api/auth/steam" className="tap tap-tight underline underline-offset-4">
+          {/* Вход вернёт сюда же, к ссылке, а не на квиз (steamLoginFor) */}
+          <a href={steamLoginFor('/whatsnew')} className="tap tap-tight underline underline-offset-4">
             войди
           </a>
           .
@@ -97,7 +121,8 @@ export function FeedLink({ since }: { since: number | null }) {
     return res.ok ? null : 'Не получилось — нажми ещё раз.'
   }
 
-  async function issue() {
+  /** replace — человек подтвердил, что старая ссылка погаснет */
+  async function issue(replace: boolean) {
     // Прежний отказ гаснет до запроса: второй такой же иначе промолчал бы
     // (components/StatusLine, REPEAT в lib/liveregion.test.ts)
     setMiss(null)
@@ -105,15 +130,26 @@ export function FeedLink({ since }: { since: number | null }) {
     setConfirm(null)
     setBusy('issue')
     try {
-      const res = await fetch('/api/whatsnew/feedlink', { method: 'POST' })
+      const res = await fetch('/api/whatsnew/feedlink', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ replace }),
+      })
+      const reply = await issueReply(res)
+      if (reply.kind === 'exists') {
+        // Ссылка цела — эта вкладка её просто не видела. Показываем её и
+        // переспрашиваем: кнопка та же, фокус на ней и остаётся
+        setPhase({ kind: 'on', since: reply.since })
+        setConfirm('found')
+        return
+      }
       const failure = await refusal(res)
       if (failure) {
         setMiss(failure)
         return
       }
-      const data = (await res.json().catch(() => null)) as { path?: unknown } | null
-      if (typeof data?.path !== 'string') throw new Error('без пути')
-      setPhase({ kind: 'shown', url: `${window.location.origin}${data.path}` })
+      if (reply.kind !== 'shown') throw new Error('без пути')
+      setPhase({ kind: 'shown', url: `${window.location.origin}${reply.path}` })
       setSaid('Ссылка готова — она в поле выше и показывается один раз.')
     } catch {
       setMiss('Не получилось — нажми ещё раз.')
@@ -150,9 +186,14 @@ export function FeedLink({ since }: { since: number | null }) {
 
   function onPrimary() {
     if (busy !== null) return
-    // Ссылки нет — рвать нечего, спрашивать незачем
-    if (phase.kind === 'off' || confirm === 'issue') {
-      void issue()
+    // Ссылки нет, насколько видно отсюда, — спрашивать незачем. Но и рвать
+    // вслепую нельзя: без replace сервер существующую не тронет (409 exists)
+    if (phase.kind === 'off') {
+      void issue(false)
+      return
+    }
+    if (asking) {
+      void issue(true)
       return
     }
     setMiss(null)
@@ -181,7 +222,7 @@ export function FeedLink({ since }: { since: number | null }) {
       ? 'Выпускаю…'
       : phase.kind === 'off'
         ? 'Получить ссылку'
-        : confirm === 'issue'
+        : asking
           ? 'Да, выпустить новую'
           : 'Выпустить новую'
 
@@ -253,18 +294,20 @@ export function FeedLink({ since }: { since: number | null }) {
       {/* Обе строки стоят всегда — меняется только текст (components/StatusLine) */}
       <StatusLine
         text={
-          confirm === 'issue'
-            ? 'Старая ссылка перестанет работать — ридер придётся настроить заново.'
-            : confirm === 'off'
-              ? 'Ридер перестанет получать ленту.'
-              : null
+          confirm === 'found'
+            ? 'Ссылка уже есть — выпущена раньше. Новая заменит её: старая перестанет работать, ридер придётся настроить заново.'
+            : confirm === 'issue'
+              ? 'Старая ссылка перестанет работать — ридер придётся настроить заново.'
+              : confirm === 'off'
+                ? 'Ридер перестанет получать ленту.'
+                : null
         }
         className="text-sm text-ink"
       />
       <StatusLine text={miss} className="text-sm text-danger" />
       <StatusLine text={said} className="sr-only" />
 
-      {phase.kind !== 'off' ? (
+      {verified && phase.kind !== 'off' ? (
         <p className="text-xs text-faint">Отключается и кнопкой «Выйти на всех устройствах».</p>
       ) : null}
     </section>

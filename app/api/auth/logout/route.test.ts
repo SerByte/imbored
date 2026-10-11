@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { feedLinkOwner, setFeedLink, type Db } from '@/lib/db'
+import { feedLinkOwner, issueFeedLink, type Db } from '@/lib/db'
 import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
 import { SESSION_COOKIE, currentSession } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
@@ -42,7 +42,7 @@ const cleared = (res: Response) =>
 /** Выпустить человеку RSS-ссылку — вернуть отпечаток её ключа */
 async function feedLink(steamid: string): Promise<string> {
   const hash = feedTokenHash(newFeedToken())
-  await setFeedLink(db, steamid, hash, T0)
+  await issueFeedLink(db, { steamid, sid: 'sid-feed', tokenHash: hash, nowSec: T0, replace: true })
   return hash
 }
 

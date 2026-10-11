@@ -22,8 +22,16 @@ import { forgetSessionHint } from '@/lib/sessionhint'
  *
  * Вместо кнопки — строка о том, что для этого нужно. Она действенная: вход
  * через Steam доступен в один клик и даёт право сразу.
+ *
+ * «Везде» гасит и секретную ссылку на RSS-ленту (revokeAllSessions в
+ * lib/db): ссылка — тоже доступ, выпущенный из сессии. Жмут же «везде» и
+ * просто чтобы прибрать старые устройства, и тогда ридер или телеграм-бот
+ * молча переставал бы получать патчи, а предупреждение стояло бы мелким
+ * шрифтом на /whatsnew, где человека сейчас нет. Поэтому подтверждение
+ * говорит об этом в момент нажатия — когда ссылка есть (feedLink): тому, у
+ * кого её нет, лишняя оговорка про RSS только мешала бы понять вопрос.
  */
-export function SignOut({ verified }: { verified: boolean }) {
+export function SignOut({ verified, feedLink = false }: { verified: boolean; feedLink?: boolean }) {
   const router = useRouter()
   const [busy, setBusy] = useState<'one' | 'all' | null>(null)
   const [confirmAll, setConfirmAll] = useState(false)
@@ -72,8 +80,10 @@ export function SignOut({ verified }: { verified: boolean }) {
         {busy === 'one' ? 'Выхожу…' : 'Выйти'}
       </button>
       {confirmAll && verified ? (
-        <span className="flex items-center gap-3 text-dim">
-          Выйти на всех устройствах?
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-dim">
+          {feedLink
+            ? 'Выйти на всех устройствах? Ссылка на RSS тоже перестанет работать.'
+            : 'Выйти на всех устройствах?'}
           <button
             type="button"
             onClick={() => void out(true)}

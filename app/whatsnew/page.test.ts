@@ -7,8 +7,8 @@ import { FeedWatch } from '@/components/whatsnew/FeedWatch'
 import { PatchRow } from '@/components/whatsnew/PatchRow'
 import { Stage } from '@/components/whatsnew/Stage'
 import {
+  issueFeedLink,
   saveLibrarySnapshot,
-  setFeedLink,
   upsertGameMeta,
   upsertNewsItems,
   type Db,
@@ -189,7 +189,10 @@ describe('/whatsnew: RSS по секретной ссылке', () => {
     signOut()
     if (kind) {
       const steamid = await signInAs(db, kind)
-      if (link) await setFeedLink(db, steamid, feedTokenHash(link), NOW - DAY)
+      if (link) {
+        const tokenHash = feedTokenHash(link)
+        await issueFeedLink(db, { steamid, sid: 'sid-feed', tokenHash, nowSec: NOW - DAY, replace: true })
+      }
     }
     const tree = flight(
       await WhatsNewPage({
@@ -204,21 +207,27 @@ describe('/whatsnew: RSS по секретной ссылке', () => {
   test('вошедший через Steam со ссылкой: есть и с какого дня — но не сама ссылка', async () => {
     const key = newFeedToken()
     const { tree, rss } = await page('openid', key)
-    expect(rss).toEqual([{ island: 'FeedLink', since: NOW - DAY }])
+    expect(rss).toEqual([{ island: 'FeedLink', since: NOW - DAY, verified: true }])
     expect(JSON.stringify(tree)).not.toContain(key)
     expect(JSON.stringify(tree)).not.toContain(feedTokenHash(key))
   })
 
+  /*
+   * verified — обещать второй выключатель «Выйти на всех устройствах» можно
+   * только тому, у кого эта кнопка есть: у демо её нет (components/SignOut)
+   */
   test('вошедший через Steam без ссылки и демо — кнопка выпуска', async () => {
-    expect((await page('openid')).rss).toEqual([{ island: 'FeedLink', since: null }])
+    expect((await page('openid')).rss).toEqual([{ island: 'FeedLink', since: null, verified: true }])
     db = await freshDb()
-    expect((await page('demo')).rss).toEqual([{ island: 'FeedLink', since: null }])
+    expect((await page('demo')).rss).toEqual([{ island: 'FeedLink', since: null, verified: false }])
   })
 
   test('сессия по ссылке на профиль — без кнопок, со строкой о входе через Steam', async () => {
     const { tree, rss } = await page('claimed')
     expect(rss).toEqual([])
     expect(textOf(tree)).toContain('может вошедший через Steam')
+    // Вход возвращает сюда, к ссылке, ради которой входили, а не на квиз
+    expect(JSON.stringify(tree)).toContain('"/api/auth/steam?next=%2Fwhatsnew"')
   })
 
   test('гость — ничего: личной ленты у него нет', async () => {

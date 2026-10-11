@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { feedLinkOwner, getFeedLink, type Db } from '@/lib/db'
+import { feedLinkOwner, getFeedLink, revokeAllSessions, type Db } from '@/lib/db'
 import { FEED_LINK_LIMIT, feedTokenHash } from '@/lib/feedlink'
-import { freshDb, signInAs, signOut } from '@/lib/testing/route'
+import { issueReply } from '@/lib/feedlinkreply'
+import { currentSession } from '@/lib/server'
+import { freshDb, post, signInAs, signOut } from '@/lib/testing/route'
 import { DELETE, POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -9,9 +11,10 @@ vi.mock('next/headers', () => import('@/lib/testing/headers'))
 /**
  * Выпуск, перевыпуск и отключение секретной ссылки на личную RSS-ленту.
  *
- * Обещания: выпускает только пишущая сессия (вход через Steam или демо —
- * requireWriter), ключ показывается один раз и в базу не попадает,
- * перевыпуск гасит прежнюю ссылку, а ответ с ключом нигде не кэшируется.
+ * Обещания: выпускает только пишущая и не отозванная сессия (вход через
+ * Steam или демо — requireWriter, отзыв — в самой записи), ключ показывается
+ * один раз и в базу не попадает, перевыпуск гасит прежнюю ссылку только по
+ * просьбе, а ответ с ключом нигде не кэшируется.
  */
 
 const T0 = 1_760_000_000
@@ -28,9 +31,11 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-// Тела у ручки нет: кто и что — из сессии. Межсайтовый POST/DELETE отсекает
-// proxy.ts по Origin ещё до роута (lib/origin.test.ts)
-const issue = () => POST()
+// Кто — из сессии, в теле только просьба заменить. Межсайтовый POST/DELETE
+// отсекает proxy.ts по Origin ещё до роута (lib/origin.test.ts)
+const issue = (body: unknown = { replace: false }) => POST(post('/api/whatsnew/feedlink', body))
+/** «Да, выпустить новую»: человек видел, что старая погаснет */
+const reissue = () => issue({ replace: true })
 const disable = () => DELETE()
 
 /** Ключ из ответа на выпуск — последний сегмент пути */
@@ -65,6 +70,7 @@ describe('/api/whatsnew/feedlink: кто выпускает', () => {
     const res = await issue()
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: 'needsteam' })
+    expect((await reissue()).status).toBe(403)
     expect((await disable()).status).toBe(403)
     expect(await linkRows()).toBe(0)
   })
@@ -78,6 +84,33 @@ describe('/api/whatsnew/feedlink: кто выпускает', () => {
     const demo = await signInAs(db, 'demo')
     expect((await issue()).status).toBe(200)
     expect(await getFeedLink(db, demo)).toEqual({ createdAt: T0 })
+  })
+
+  /**
+   * Состояние сессии кэшируется на процесс минуту, а «Выйти на всех
+   * устройствах» чистит кэш только того экземпляра, что обслужил выход. На
+   * соседнем тот, кто сидит в чужой сессии, ещё проходит requireWriter — и
+   * ссылка, выпущенная в это окно, пережила бы отзыв навсегда: ридеру кука
+   * не нужна. Здесь «соседний экземпляр» — отзыв прямо в базе, мимо
+   * forgetSessionCache.
+   */
+  test('отозванная сессия из тёплого кэша ссылку не выпускает — 401, ссылки нет', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const before = await keyOf(await issue())
+
+    await revokeAllSessions(db, steamid, T0 + 1)
+    // Окно настоящее: кэш ещё считает сессию живой
+    expect(await currentSession()).not.toBeNull()
+
+    for (const send of [issue, reissue]) {
+      const res = await send()
+      expect(res.status).toBe(401)
+      expect(await res.json()).toEqual({ error: 'nosession' })
+      expect(res.headers.get('Cache-Control') ?? '').toContain('no-store')
+    }
+    expect(await feedLinkOwner(db, feedTokenHash(before))).toBeNull()
+    expect(await getFeedLink(db, steamid)).toBeNull()
+    expect(await linkRows()).toBe(0)
   })
 })
 
@@ -99,15 +132,46 @@ describe('/api/whatsnew/feedlink: ключ', () => {
     expect(cc).toContain('private')
   })
 
-  test('перевыпуск: новый ключ, прежняя ссылка больше не открывает', async () => {
+  test('перевыпуск по просьбе: новый ключ, прежняя ссылка больше не открывает', async () => {
     const steamid = await signInAs(db, 'openid')
     const first = await keyOf(await issue())
-    const second = await keyOf(await issue())
+    const second = await keyOf(await reissue())
 
     expect(second).not.toBe(first)
     expect(await feedLinkOwner(db, feedTokenHash(first))).toBeNull()
     expect(await feedLinkOwner(db, feedTokenHash(second))).toBe(steamid)
     expect(await linkRows()).toBe(1)
+  })
+
+  /**
+   * Страница знает о ссылке по своему первому кадру, а он бывает старым:
+   * «назад» с патча достаёт /whatsnew из роутерного кэша без ссылки, вторая
+   * вкладка открыта до выпуска. «Получить ссылку» оттуда не просит замены —
+   * и ссылка, которую человек только что положил в ридер, обязана уцелеть.
+   */
+  test('без просьбы заменить — 409 exists с датой живой ссылки, ничего не записано', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const kept = await keyOf(await issue())
+
+    vi.setSystemTime((T0 + 600) * 1000)
+    // Пустое тело, мусор и replace не-true — всё это «не просили»
+    for (const body of [{ replace: false }, {}, 'не json', { replace: 'true' }, { replace: 1 }]) {
+      const res = await issue(body)
+      expect(res.status, JSON.stringify(body)).toBe(409)
+      expect(await res.json()).toEqual({ error: 'exists', since: T0 })
+      expect(res.headers.get('Cache-Control') ?? '').toContain('no-store')
+    }
+    expect(await feedLinkOwner(db, feedTokenHash(kept))).toBe(steamid)
+    expect(await getFeedLink(db, steamid)).toEqual({ createdAt: T0 })
+    expect(await linkRows()).toBe(1)
+  })
+
+  /** Разбор, которым строка FeedLink узнаёт «уже есть», читает ровно этот ответ */
+  test('ответ 409 узнаёт клиентский разбор — страница переспросит, а не скажет «не получилось»', async () => {
+    await signInAs(db, 'openid')
+    await issue()
+    expect(await issueReply(await issue())).toEqual({ kind: 'exists', since: T0 })
+    expect((await issueReply(await reissue())).kind).toBe('shown')
   })
 
   test('отключение: ссылка гаснет, повтор — тоже 200', async () => {
@@ -120,22 +184,39 @@ describe('/api/whatsnew/feedlink: ключ', () => {
     expect(await feedLinkOwner(db, feedTokenHash(key))).toBeNull()
     expect(await getFeedLink(db, steamid)).toBeNull()
     expect((await disable()).status).toBe(200)
+    // После отключения «Получить ссылку» выпускает без всякой просьбы
+    expect((await issue()).status).toBe(200)
   })
 })
 
 describe('/api/whatsnew/feedlink: потолок частоты', () => {
-  test('выпуск и отключение делят один потолок на человека; сверх — 429 с Retry-After', async () => {
+  test('выпуск — под потолком на человека; сверх — 429 с Retry-After', async () => {
     const steamid = await signInAs(db, 'openid')
-    for (let i = 0; i < FEED_LINK_LIMIT - 1; i++) expect((await issue()).status).toBe(200)
-    expect((await disable()).status).toBe(200)
+    for (let i = 0; i < FEED_LINK_LIMIT; i++) expect((await reissue()).status).toBe(200)
 
-    const over = await issue()
+    const over = await reissue()
     expect(over.status).toBe(429)
     expect(Number(over.headers.get('Retry-After'))).toBeGreaterThan(0)
-    expect((await disable()).status).toBe(429)
 
     // Счётчик ключуется steamid — forgetUser находит его по ':' + steamid + ':'
     const keys = await db.execute("SELECT key FROM rate_limits WHERE key LIKE 'feedlink:%'")
     expect(keys.rows.map((r) => String(r.key)).every((k) => k.includes(`:${steamid}:`))).toBe(true)
+  })
+
+  /**
+   * Отключение — сама защита: ссылка утекла, и гасят её сейчас. С общим
+   * потолком тот, кто сидит в чужой сессии, десятком выпусков запирал бы
+   * владельцу «Отключить» на час.
+   */
+  test('отключение потолком не заперто: выпуски выбрали потолок, а «Отключить» всё равно гасит ссылку', async () => {
+    const steamid = await signInAs(db, 'openid')
+    for (let i = 0; i < FEED_LINK_LIMIT + 3; i++) await reissue()
+    expect((await reissue()).status).toBe(429)
+    expect(await getFeedLink(db, steamid)).not.toBeNull()
+
+    const res = await disable()
+    expect(res.status).toBe(200)
+    expect(await getFeedLink(db, steamid)).toBeNull()
+    for (let i = 0; i < FEED_LINK_LIMIT; i++) expect((await disable()).status).toBe(200)
   })
 })

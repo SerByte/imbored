@@ -6,7 +6,17 @@ import { Evenings } from '@/components/Evenings'
 import { GameCardBody } from '@/components/GameCard'
 import { LikedShelf } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
-import { logFeedback, recordOutcome, saveLibrarySnapshot, saveWishlist, upsertGamesMeta, type Db } from '@/lib/db'
+import { SignOut } from '@/components/SignOut'
+import {
+  issueFeedLink,
+  logFeedback,
+  recordOutcome,
+  saveLibrarySnapshot,
+  saveWishlist,
+  upsertGamesMeta,
+  type Db,
+} from '@/lib/db'
+import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
 import { nowSec } from '@/lib/server'
 import { freshDb, signInAs, STEAMID_OF, type SessionKind } from '@/lib/testing/route'
 import LibraryPage from './page'
@@ -239,5 +249,40 @@ describe('/library: личное владельца — только тому, �
     const shelf = sealedShelf(await render(kind))
     expect(shelf.sort()).toEqual(SEALED)
     expect(shelf).not.toContain(SEALED_BANNED)
+  })
+})
+
+/**
+ * «Выйти на всех устройствах» гасит и секретную ссылку на RSS-ленту
+ * (revokeAllSessions). Жмут его и просто прибраться в старых устройствах —
+ * и подтверждение обязано сказать про ридер в момент нажатия, а не мелким
+ * шрифтом на /whatsnew. Страница говорит SignOut, есть ли ссылка.
+ */
+describe('/library: выход везде знает про RSS-ссылку', () => {
+  async function signOutProps(kind: SessionKind, withLink: boolean) {
+    const steamid = await signInAs(db, kind)
+    await seed(steamid)
+    if (withLink) {
+      const tokenHash = feedTokenHash(newFeedToken())
+      await issueFeedLink(db, { steamid, sid: 'sid-feed', tokenHash, nowSec: nowSec(), replace: true })
+    }
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/library'>)
+    return propsOf(tree, SignOut)
+  }
+
+  test('вошедший через Steam со ссылкой — подтверждение скажет про RSS', async () => {
+    expect(await signOutProps('openid', true)).toEqual([{ verified: true, feedLink: true }])
+  })
+
+  test('без ссылки — обычный вопрос', async () => {
+    expect(await signOutProps('openid', false)).toEqual([{ verified: true, feedLink: false }])
+  })
+
+  // Выхода везде у демо и у сессии по ссылке нет — и ссылку им незачем читать
+  test.each<SessionKind>(['demo', 'claimed'])('%s — без выхода везде ссылка не читается', async (kind) => {
+    expect(await signOutProps(kind, true)).toEqual([{ verified: false, feedLink: false }])
   })
 })
