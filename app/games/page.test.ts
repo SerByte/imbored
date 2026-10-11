@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
+import { SearchLauncher } from '@/components/SearchLauncher'
 import { replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
 import { flight as flightOf, islandsOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
@@ -21,10 +22,14 @@ vi.mock('next/headers', () => import('@/lib/testing/headers'))
  * сериализует Next.
  */
 
-/** GameArt — в списке, чтобы его возвращение было видно, а не роняло тест */
+/**
+ * GameArt — в списке, чтобы его возвращение было видно, а не роняло тест.
+ * SearchLauncher — строка «Найти игру по названию» над полками.
+ */
 const ISLANDS = new Map<unknown, string>([
   [Link, 'Link'],
   [GameArt, 'GameArt'],
+  [SearchLauncher, 'SearchLauncher'],
 ])
 const flight = (node: unknown) => flightOf(node, ISLANDS)
 
@@ -70,6 +75,17 @@ describe('хаб /games', () => {
     expect(text).toContain('https://cdn.example/1/header.jpg')
     expect(text).not.toContain('hero.jpg')
     expect(text).not.toContain('hero_2x.jpg')
+  })
+
+  /*
+   * Двенадцать игр на жанр из тысяч: за конкретной игрой хаб отправляет в
+   * поиск по названию. Строкой, а не значком: значок в шапке на планшете
+   * спрятан (нет места), и строка на хабе — его поиск.
+   */
+  test('над полками — строка поиска по названию', async () => {
+    expect(islandsOf(flight(await GamesHubPage()), 'SearchLauncher')).toEqual([
+      { island: 'SearchLauncher', variant: 'field' },
+    ])
   })
 
   test('первые капсулы первой полки грузятся сразу, остальные лениво', async () => {

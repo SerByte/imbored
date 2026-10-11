@@ -4079,6 +4079,38 @@ export async function topCatalogGames(db: Db, limit: number): Promise<SimilarGam
 }
 
 /**
+ * Индекс «Найти игру» (app/search-index.json): номер и название каждой игры,
+ * у которой есть своя карточка.
+ *
+ * Тот же отбор и порядок, что у sitemapGames: живые, с тегами, appid > 0, по
+ * убыванию отзывов. Порядок здесь — не красота: индекс едет без ранга, и
+ * поиск при равном совпадении ставит выше того, кто стоит в нём раньше
+ * (lib/catalogsearch). Арта не требуем, в отличие от topCatalogGames: полка
+ * 404 из заглушек полкой не выглядит, а по названию человек вправе найти и
+ * игру без обложки — её карточка открывается так же.
+ *
+ * Читает частичный idx_games_pool по порядку и обрывается на LIMIT — весь
+ * живой каталог, раз в сутки (ISR маршрута). Сторож плана —
+ * lib/queryplan.test.ts.
+ */
+export async function searchIndexGames(
+  db: Db,
+  limit: number,
+): Promise<Array<{ appid: number; name: string }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, name FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; name: string }>).map((r) => ({
+    appid: Number(r.appid),
+    name: String(r.name),
+  }))
+}
+
+/**
  * Кандидаты полок хаба /games: по каждому тегу — верх по числу отзывов среди
  * игр, у которых этот тег весит не меньше minWeight. Одним запросом на все
  * теги; какая игра на какую полку встанет, решает assembleHub (lib/gamehub).

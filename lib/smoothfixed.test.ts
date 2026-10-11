@@ -45,6 +45,10 @@ const OUTSIDE: Array<{ file: string; why: string }> = [
     file: 'components/ShareLink.tsx',
     why: 'поле-однодневка для копирования создаётся руками и добавляется прямо в document.body',
   },
+  {
+    file: 'components/SearchLauncher.tsx',
+    why: 'подставка клавиатуры (holdKeyboard) — то же поле-однодневка: создаётся руками прямо в document.body',
+  },
 ]
 
 /** Признак фиксированного слоя: утилита `fixed`, в том числе с вариантом. */

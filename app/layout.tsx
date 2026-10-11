@@ -11,6 +11,7 @@ import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
 import { ReadOnlyNote } from '@/components/ReadOnlyNote'
 import { RefCapture } from '@/components/RefCapture'
+import { SearchLauncher } from '@/components/SearchLauncher'
 import { SessionKeeper } from '@/components/SessionKeeper'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
@@ -302,6 +303,11 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <nav aria-label="Разделы" className="hidden md:flex items-center gap-3.5 lg:gap-6 text-[13px] lg:text-sm text-dim">
                 <HeaderNav />
               </nav>
+              {/* «Найти игру» — рядом с темой и тоже не в меню: это действие,
+                  а не раздел. Кнопка лёгкая, окно поиска — отдельным чанком
+                  (components/SearchLauncher); на md её нет — не влезает
+                  (замер в components/HeaderNav.tsx) */}
+              <SearchLauncher />
               <ThemeToggle />
             </div>
           </div>

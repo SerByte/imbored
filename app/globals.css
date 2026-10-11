@@ -3771,6 +3771,38 @@ html:has(.lib-filters) {
     opacity: 0.5;
   }
 }
+/*
+ * Строка «Найти игру по названию» на /games и 404 (components/SearchLauncher,
+ * вид field): кнопка, которая выглядит полем и открывает окно поиска по
+ * каталогу. Материал — как у поля поиска по библиотеке выше.
+ *
+ * Классом, а не утилитами в разметке: кнопка стоит в шапке каждой страницы,
+ * и строка утилит ехала бы в первую загрузку JS каждой страницы, а /room/[id]
+ * и /quiz стоят у потолка bundle-budget.json. CSS в тот бюджет не входит.
+ */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 28rem;
+  min-height: 48px;
+  padding-inline: 1rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--dim);
+  font-weight: 500;
+  text-align: left;
+  cursor: text;
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out);
+}
+.search-field:hover {
+  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
+  color: var(--ink);
+}
 /* Бейдж состояния на арте: контурный, как «Из бэклога» в макете */
 .lib-badge {
   position: absolute;

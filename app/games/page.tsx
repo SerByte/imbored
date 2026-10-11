@@ -2,6 +2,7 @@ import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import Link from 'next/link'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
+import { SearchLauncher } from '@/components/SearchLauncher'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { topGamesByTags } from '@/lib/db'
 import {
@@ -76,6 +77,11 @@ export default async function GamesHubPage() {
             списка тегов. Порядок — по числу отзывов в Steam, и каждая игра стоит только на
             одной полке: под каждым жанром свои находки, а не одни и те же хиты.
           </p>
+          {/* Полки показывают по двенадцать игр на жанр, а в каталоге их
+              тысячи: тот, кто пришёл за конкретной, ищет её по названию,
+              а не листает тридцать полок. Окно поиска и индекс едут, только
+              когда поиск открыли (components/SearchLauncher) */}
+          <SearchLauncher variant="field" />
         </header>
 
         {shelves.length > 0 ? (

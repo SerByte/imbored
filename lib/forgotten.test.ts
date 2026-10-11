@@ -6,8 +6,6 @@ import {
   LIBRARY_PAGE_SIZE,
   libraryHref,
   libraryPage,
-  matchesTitle,
-  foldTitle,
   parseLibraryQuery,
   searchLibraryView,
   parseLibraryFilter,
@@ -453,26 +451,6 @@ describe('поиск по стене /library', () => {
     expect(parseLibraryQuery(['a', 'b'])).toBe('')
     expect(parseLibraryQuery('  portal   2 ')).toBe('portal 2')
     expect(parseLibraryQuery('x'.repeat(200))).toHaveLength(60)
-  })
-
-  test('слова запроса ищутся в любом порядке', () => {
-    const w3 = 'The Witcher® 3: Wild Hunt'
-    expect(matchesTitle(w3, 'witcher 3')).toBe(true)
-    expect(matchesTitle(w3, 'hunt witcher')).toBe(true)
-    expect(matchesTitle(w3, 'witcher 2')).toBe(false)
-  })
-
-  test('регистр, ё и знаки не мешают', () => {
-    expect(matchesTitle('Ёлки-палки: ИГРА™', 'елки палки игра')).toBe(true)
-    expect(matchesTitle('Counter-Strike 2', 'counterstrike')).toBe(false)
-    expect(matchesTitle('Counter-Strike 2', 'counter strike')).toBe(true)
-    expect(matchesTitle('Pokémon Legends', 'pokemon')).toBe(true)
-    expect(foldTitle('  Half‑Life: Alyx ')).toBe('half life alyx')
-  })
-
-  test('пустой запрос — это вся полка', () => {
-    expect(matchesTitle('Dota 2', '')).toBe(true)
-    expect(matchesTitle('Dota 2', ' : — ')).toBe(true)
   })
 
   const lib = [
