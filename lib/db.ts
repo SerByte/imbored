@@ -5976,12 +5976,26 @@ export async function getMajorFeedHead(
   return onePerGame((res.rows as unknown as HeadRow[]).map(rowToHead), limit)
 }
 
-/** Голова личной ленты: крупные патчи по играм библиотеки. */
+/**
+ * Голова личной ленты: крупные патчи по играм библиотеки.
+ *
+ * since — нижняя граница даты, включительно. Запрос идёт по idx_news_app
+ * диапазоном на каждую игру, слияние диапазонов по дате — сортировкой, и
+ * LIMIT чтения здесь НЕ останавливает: без нижней границы диапазон каждой
+ * игры дочитывается до конца ретенции (NEWS_KEEP в lib/newsjob — до тридцати
+ * постов всех видов), то есть до девяти тысяч строк на библиотеку в
+ * LIBRARY_CAP игр на каждый опрос плашки «N новых», — ради того, чтобы
+ * resolveWhatsNew выбросил всё старше трёх месяцев уже в памяти. С границей
+ * диапазон кончается на окне: по выгрузке прода это пять строк на игру вместо
+ * двенадцати. Без since — вся история, как раньше (так её читают тесты и
+ * всё, кому окно не нужно).
+ */
 export async function getFeedHeadForApps(
   db: Db,
   appids: number[],
   limit = 30,
   before?: number,
+  since?: number,
 ): Promise<FeedHeadItem[]> {
   const ids = appids.filter((a) => a > 0).slice(0, 400)
   if (!ids.length) return []
@@ -5989,8 +6003,9 @@ export async function getFeedHeadForApps(
     sql: `SELECT ${HEAD_COLS} FROM news_items
           WHERE appid IN (${placeholders(ids.length)})
             AND kind = 'patch' AND scale = 'major' AND published_at < ?
+            AND published_at >= ?
           ORDER BY published_at DESC LIMIT ?`,
-    args: [...ids, before ?? 2_000_000_000, limit * OVERFETCH],
+    args: [...ids, before ?? 2_000_000_000, since ?? 0, limit * OVERFETCH],
   })
   return onePerGame((res.rows as unknown as HeadRow[]).map(rowToHead), limit)
 }
@@ -6038,7 +6053,8 @@ async function withBodies(db: Db, head: FeedHeadItem[]): Promise<StoredNews[]> {
  * Заодно голова и лента совпадают не по договорённости, а по построению: лента
  * и есть голова плюс тела. Плашка «N новых» (/api/whatsnew/head) считает ровно
  * те ключи, что страница потом покажет, — раньше это держалось на двух копиях
- * одного предиката.
+ * одного предиката. Совпадение во времени держит уже кэш: опрос берёт общую
+ * часть из той же записи cachedMajorFeed, что и страница (lib/whatsnewcache).
  */
 export async function getMajorFeed(
   db: Db,
@@ -6048,14 +6064,18 @@ export async function getMajorFeed(
   return withBodies(db, await getMajorFeedHead(db, limit, opts))
 }
 
-/** Личная лента: крупные патчи по играм библиотеки. Те же две фазы. */
+/**
+ * Личная лента: крупные патчи по играм библиотеки. Те же две фазы и та же
+ * нижняя граница since, что у головы (см. getFeedHeadForApps).
+ */
 export async function getFeedForApps(
   db: Db,
   appids: number[],
   limit = 30,
   before?: number,
+  since?: number,
 ): Promise<StoredNews[]> {
-  return withBodies(db, await getFeedHeadForApps(db, appids, limit, before))
+  return withBodies(db, await getFeedHeadForApps(db, appids, limit, before, since))
 }
 
 /**

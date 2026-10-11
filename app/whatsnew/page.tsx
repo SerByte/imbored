@@ -76,12 +76,12 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   // опрос головы ленты из /api/whatsnew/head — своими словами он разошёлся бы
   // с ней в первый же день, когда у человека появится личный патч.
   const now = nowSec()
-  const { items, showPopular, hasMine, mineCount } = await resolveWhatsNew({
+  const { items, showPopular, hasMine, mineCount, owned } = await resolveWhatsNew({
     steamid,
     wantsPopular,
     nowSec: now,
     snapshot: (id) => getLatestSnapshot(db, id),
-    forApps: (appids, limit) => getFeedForApps(db, appids, limit),
+    forApps: (appids, limit, since) => getFeedForApps(db, appids, limit, undefined, since),
     // Общая лента — из кэша: она одна на всех и переживает посетителя.
     // Личная ветка выше остаётся живой, разрез идёт ровно по этому шву.
     major: (limit, minRank) => cachedMajorFeed(limit, minRank),
@@ -217,6 +217,12 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
 
           {rest.map((item) => {
             const meta = metas.get(item.appid)
+            // Цена и ссылка на игру — только чужим играм общей ленты: в своей
+            // библиотеке покупать нечего. Вкладка «популярное» сама по себе
+            // не значит «не твоё» — на ней стоят и твои игры, если их патчат
+            // (Deep Rock Galactic на 60 часов шёл с ценой 29,99 $). Правило
+            // то же, что у полок /explore: своё — без цены.
+            const buying = showPopular && !owned.has(item.appid)
             return (
               <PatchRow
                 key={`${item.appid}:${item.gid}`}
@@ -224,13 +230,11 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                 meta={feedMeta(meta)}
                 nowSec={now}
                 changes={countChanges(item.blocks)}
-                // Цена и ссылка на игру — только в общей ленте: в своей
-                // библиотеке покупать нечего
-                discovery={showPopular}
-                discount={showPopular && meta ? discountView(meta, now) : null}
-                price={showPopular && meta ? trustedPrice(meta, now) : null}
-                priceCc={showPopular ? (meta?.priceCc ?? null) : null}
-                unsold={showPopular && meta?.storeHidden === true}
+                discovery={buying}
+                discount={buying && meta ? discountView(meta, now) : null}
+                price={buying && meta ? trustedPrice(meta, now) : null}
+                priceCc={buying ? (meta?.priceCc ?? null) : null}
+                unsold={buying && meta?.storeHidden === true}
               />
             )
           })}
@@ -256,6 +260,10 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
 
               {topup.map((item) => {
                 const meta = metas.get(item.appid)
+                // Это чужие игры — цена и ссылка на страницу тут уместны.
+                // Свои resolveWhatsNew в добивку уже не пускает; проверка здесь
+                // — страховка, чтобы цена на своё не держалась на одном месте.
+                const buying = !owned.has(item.appid)
                 return (
                   <PatchRow
                     key={`${item.appid}:${item.gid}`}
@@ -263,12 +271,11 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                     meta={feedMeta(meta)}
                     nowSec={now}
                     changes={countChanges(item.blocks)}
-                    // Это чужие игры — цена и ссылка на страницу тут уместны
-                    discovery
-                    discount={meta ? discountView(meta, now) : null}
-                    price={meta ? trustedPrice(meta, now) : null}
-                    priceCc={meta?.priceCc ?? null}
-                    unsold={meta?.storeHidden === true}
+                    discovery={buying}
+                    discount={buying && meta ? discountView(meta, now) : null}
+                    price={buying && meta ? trustedPrice(meta, now) : null}
+                    priceCc={buying ? (meta?.priceCc ?? null) : null}
+                    unsold={buying && meta?.storeHidden === true}
                   />
                 )
               })}

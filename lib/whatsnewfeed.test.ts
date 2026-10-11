@@ -11,7 +11,10 @@ const game = (appid: number, playtimeForever: number) => ({ appid, playtimeForev
 const item = (appid: number, daysAgo: number) => ({ appid, publishedAt: NOW - daysAgo * DAY })
 
 function stubs(opts: { mine?: ReturnType<typeof item>[]; major?: ReturnType<typeof item>[] } = {}) {
-  const forApps = vi.fn(async (_ids: number[], limit: number) => (opts.mine ?? []).slice(0, limit))
+  const forApps = vi.fn(async (_ids: number[], limit: number, since: number) => {
+    void since // нижнюю границу заглушка не применяет — её проверяет отдельный тест
+    return (opts.mine ?? []).slice(0, limit)
+  })
   const major = vi.fn(async (limit: number, minRank: number) => {
     void minRank // заглушка порог не применяет — его проверяет отдельный тест
     return (opts.major ?? []).slice(0, limit)
@@ -147,6 +150,26 @@ describe('resolveWhatsNew: добивка из общей', () => {
     })
   })
 
+  test('личная лента просит у базы только окно свежести, а не всю историю', async () => {
+    // Старше MINE_FRESH_SEC в личный блок не идёт ничего, а без нижней
+    // границы база дочитывала по idx_news_app все ≤30 постов каждой из трёхсот
+    // игр, чтобы фильтр выше выбросил их в памяти. Граница включительная —
+    // ровно как у фильтра: патч ровно на пороге ещё свой.
+    const s = stubs({ mine: [item(10, 1)], major: [item(90, 0)] })
+    await resolveWhatsNew({ steamid: '765', wantsPopular: false, ...s })
+    expect(s.forApps.mock.calls[0]![2]).toBe(NOW - MINE_FRESH_SEC)
+
+    // и на общей вкладке, где личная спрашивается одной строкой ради hasMine
+    const p = stubs({ mine: [item(10, 1)], major: [item(90, 0)] })
+    await resolveWhatsNew({ steamid: '765', wantsPopular: true, ...p })
+    expect(p.forApps.mock.calls[0]![2]).toBe(NOW - MINE_FRESH_SEC)
+
+    // настроенный порог едет туда же
+    const c = stubs({ mine: [item(10, 1)], major: [item(90, 0)] })
+    await resolveWhatsNew({ steamid: '765', wantsPopular: false, ...c, freshSec: 300 * DAY })
+    expect(c.forApps.mock.calls[0]![2]).toBe(NOW - 300 * DAY)
+  })
+
   test('порог свежести настраивается', async () => {
     const s = stubs({ mine: [item(10, 200)], major: [item(90, 0)] })
     const res = await resolveWhatsNew({
@@ -165,6 +188,48 @@ describe('resolveWhatsNew: добивка из общей', () => {
     await resolveWhatsNew({ steamid: '765', wantsPopular: false, ...s, limit: 5 })
     // 5 мест минус 2 своих = 3 нужных, но пересечения могут съесть часть
     expect(s.major.mock.calls[0]![0]).toBeGreaterThan(3)
+  })
+
+  test('своя игра, не попавшая в личный блок, в добивку «чужих» не идёт', async () => {
+    // Наблюдали вживую: Portal 2 и Factorio из библиотеки стояли под «Ещё в
+    // популярных играх» с ценой и «Открыть игру», Celeste — со скидкой −75 %.
+    // Из личного блока такие игры выпадают законно: последний крупный патч
+    // старше трёх месяцев или игра за капом LIBRARY_CAP (несыгранное из
+    // бандлов в большой библиотеке). Но чужими они от этого не становятся.
+    const mine = [item(10, 20)]
+    const major = [item(440, 0), item(91, 1), item(92, 2)]
+    const s = stubs({ mine, major })
+
+    const res = await resolveWhatsNew({ steamid: '765', wantsPopular: false, ...s, limit: 3 })
+
+    // 440 есть в снапшоте (см. stubs), в личный блок он не попал
+    expect(res.items.map((i) => i.appid)).toEqual([10, 91, 92])
+    expect(res.mineCount).toBe(1)
+  })
+})
+
+describe('resolveWhatsNew: что из ленты уже твоё', () => {
+  test('вошедшему отдаёт всю библиотеку снапшота, а не только личный блок', async () => {
+    const s = stubs({ mine: [item(10, 1)], major: [item(90, 0)] })
+    const res = await resolveWhatsNew({ steamid: '765', wantsPopular: false, ...s })
+    expect([...res.owned].sort((a, b) => a - b)).toEqual([440, 730])
+  })
+
+  test('гостю и тому, у кого снапшота нет, — пустое множество', async () => {
+    const guest = stubs({ major: [item(90, 0)] })
+    expect((await resolveWhatsNew({ steamid: null, wantsPopular: false, ...guest })).owned.size).toBe(0)
+
+    const none = stubs({ major: [item(90, 0)] })
+    none.snapshot.mockResolvedValueOnce(null as never)
+    expect((await resolveWhatsNew({ steamid: '765', wantsPopular: false, ...none })).owned.size).toBe(0)
+  })
+
+  test('общая вкладка свои игры НЕ выкидывает: крупный патч в них — тоже новость', async () => {
+    // Своё здесь теряет только цену (это решает страница), а не место в ленте
+    const s = stubs({ mine: [item(10, 1)], major: [item(730, 0), item(90, 1)] })
+    const res = await resolveWhatsNew({ steamid: '765', wantsPopular: true, ...s })
+    expect(res.items.map((i) => i.appid)).toEqual([730, 90])
+    expect(res.owned.has(730)).toBe(true)
   })
 })
 
