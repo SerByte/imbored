@@ -163,6 +163,50 @@ describe('buildCandidates', () => {
   })
 
   /*
+   * Очередь на срез повторяет ступени пола applyFocus: нетронутые, за ними
+   * бэклог, потом всё остальное. Нетронутых до среза четыре — больше пола,
+   * — но двух выкидывает живость: меньше тридцати отзывов, ассет-флип, обычное
+   * дело для игр из бандлов. Если за нетронутыми в очереди шли сорок
+   * наигранных по скору, бэклог вне вкуса до среза не доживал, пол applyFocus
+   * расширять было нечем — и /play показывал две карточки при живом бэклоге.
+   */
+  test('«нераспакованное» держит бэклог за нетронутыми, если живость их выкинет', async () => {
+    const db = await freshDb()
+    const comeback = Array.from({ length: 40 }, (_, i) => 100 + i)
+    const live = [200, 201]
+    const flips = [202, 203]
+    const backlog = [400, 401, 402]
+    await upsertGamesMeta(
+      db,
+      [
+        ...comeback.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 80 })),
+        ...live.map((id) => meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 })),
+        ...flips.map((id) => ({ ...meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 }), reviewsTotal: 12 })),
+        ...backlog.map((id) => meta(id, { Racing: 100, Sports: 70 })),
+      ],
+      NOW,
+    )
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [
+        ...comeback.map((id) => ({ ...game(id, 50), lastPlayed: NOW - 365 * 86_400 })),
+        ...[...live, ...flips].map((id) => game(id, 0)),
+        // Полчаса — «открыл и закрыл»
+        ...backlog.map((id) => game(id, 0.5)),
+      ],
+      NOW,
+    )
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'library', {
+      nowSec: NOW,
+      focus: 'untouched',
+    })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.own.map((c) => c.appid).sort((a, b) => a - b)).toEqual([...live, ...backlog])
+    expect(set.own.some((c) => c.source === 'comeback')).toBe(false)
+  })
+
+  /*
    * Время скрыто в Steam (lib/playtime.ts): 20 игр, у всех нули. Признак
    * считается здесь один раз по всей библиотеке и едет дальше — в скоринг и
    * маршрутам; вкус собран поровну, а не пуст.

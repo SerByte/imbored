@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest'
+import { DEMO_METAS } from './demo'
 import { landingDemo, MOOD_KEYS, type MoodKey } from './landing'
+import { topTags } from './recommend'
+import { tagRu } from './tagsru'
 
 /**
  * Сторож демо-выдачи главной.
@@ -90,6 +93,20 @@ describe('демо-выдача главной', () => {
     for (const card of demo.picks['chill:solo']) {
       expect(card.badge.length).toBeGreaterThan(3)
       expect(card.tags.length).toBeGreaterThan(0)
+    }
+  })
+
+  /*
+   * Чипсы демо — те же, что показала бы настоящая выдача: topTags из
+   * lib/recommend, а не своя копия отбора. Копия уже расходилась с ним —
+   * предупреждения о контенте выдача отсеивает до среза, а она нет.
+   */
+  test('теги карточки — тот же отбор, что у чипсов выдачи', () => {
+    const metas = new Map(DEMO_METAS.map((m) => [m.appid, m]))
+    for (const key of MOOD_KEYS) {
+      for (const card of demo.picks[key]) {
+        expect(card.tags, `${key}: ${card.name}`).toEqual(topTags(metas.get(card.appid)).map(tagRu))
+      }
     }
   })
 

@@ -67,6 +67,30 @@ describe('compatibility', () => {
     expect(out.sharedTags).toContain('Story Rich')
   })
 
+  /*
+   * «Что вас роднит» на /compat — страница, которой делятся. Nudity стоит у
+   * трёх процентов каталога, и вес редкости выносил её в шестёрку, а то и
+   * первой: у двоих игроков Witcher и Cyberpunk выделенным чипсом горела
+   * «Нагота». Отсев — до среза: шестым встаёт следующий настоящий тег.
+   */
+  test('предупреждение о контенте в общее не идёт, его место занимает следующий тег', () => {
+    const rpg = meta(10, {
+      'Open World': 100,
+      'Story Rich': 95,
+      RPG: 90,
+      Fantasy: 85,
+      Adventure: 80,
+      Singleplayer: 75,
+      Nudity: 70,
+    })
+    const stats = new Map([...TAG_STATS, ['Open World', 900], ['Fantasy', 1000], ['Nudity', 176]])
+    const out = compatibility([lib(10, 100)], [lib(10, 80)], (id) => (id === 10 ? rpg : undefined), stats)
+    expect(out.sharedTags).not.toContain('Nudity')
+    expect(out.sharedTags).toHaveLength(6)
+    // Самый частый тег — последний по весу; с Nudity в списке он выпадал за срез
+    expect(out.sharedTags[5]).toBe('Singleplayer')
+  })
+
   test('общие игры сортируются по суммарным часам', () => {
     const a = [lib(1, 10), lib(3, 500)]
     const b = [lib(1, 10), lib(3, 400)]

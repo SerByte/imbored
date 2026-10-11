@@ -446,7 +446,7 @@ describe('причина называет теги игрока, а не поп�
 
   test('без профиля предложение про вкус не пишется вовсе', () => {
     const [pick] = heuristicPicks(cand, metaShooter, 1, NOW)
-    expect(pick.reason).not.toContain('совпадают с тем')
+    expect(pick.reason).not.toMatch(/совпада(?:ет|ют) с тем/)
     expect(pick.reason).not.toContain(tagRu('MOBA'))
     expect(pick.reason.length).toBeGreaterThan(10)
   })
@@ -572,7 +572,7 @@ describe('причина не называет общие теги вкусом'
     }
     for (const opts of [withMap, {}]) {
       const [pick] = heuristicPicks(one(8, 'Dig Deep', 'comeback'), () => sandbox, 1, NOW, profile, opts)
-      expect(pick.reason).toContain(`Теги (${tagRu('Sandbox')}) по-прежнему в твоём вкусе`)
+      expect(pick.reason).toContain(`Тег (${tagRu('Sandbox')}) по-прежнему в твоём вкусе`)
       expect(pick.reason).not.toContain(tagRu('Multiplayer'))
     }
   })
@@ -605,6 +605,43 @@ describe('причина не называет общие теги вкусом'
       expect(pick.reason).toContain(tagRu('Cyberpunk'))
       expect(pick.reason).not.toContain(tagRu('Nudity'))
     }
+  })
+})
+
+/**
+ * Число тегов в причине согласовано с фразой вокруг них.
+ *
+ * Шаблоны были написаны во множественном числе, и пока второе место почти
+ * всегда занимал общий тег, один тег оставался краевым случаем. С отсевом
+ * общих он стал обычным, и причина заговорила «Теги (Песочница) по-прежнему
+ * в твоём вкусе» и «а теги (Инди) твои». «По тегам (…)» — «судя по тегам» —
+ * верно при любом числе и остаётся как есть.
+ */
+describe('причина согласует число с тегами', () => {
+  const sandbox: GameMeta = {
+    appid: 11,
+    name: 'Dig Deep',
+    tags: { Sandbox: 100, Survival: 80, Crafting: 60 },
+    genres: [],
+    categories: [2],
+  }
+  const one = { Sandbox: 5 }
+  const two = { Sandbox: 5, Survival: 3 }
+  const s = tagRu('Sandbox')
+  const both = `${tagRu('Sandbox')}, ${tagRu('Survival')}`
+  const cases: Array<[ScoredCandidate['source'], string, string]> = [
+    ['untouched', `По тегам (${s}) это очень твоё`, `По тегам (${both}) это очень твоё`],
+    ['backlog', `— а тег (${s}) твой.`, `— а теги (${both}) твои.`],
+    ['comeback', `. Тег (${s}) по-прежнему в твоём вкусе`, `. Теги (${both}) по-прежнему в твоём вкусе`],
+    ['owned', `а по тегам (${s}) это очень твоё.`, `а по тегам (${both}) это очень твоё.`],
+    ['new', `но её тег (${s}) совпадает с тем,`, `но её теги (${both}) совпадают с тем,`],
+  ]
+  test.each(cases)('%s: один тег и два', (source, single, plural) => {
+    const cand: ScoredCandidate[] = [{ appid: 11, name: 'Dig Deep', source, score: 0.9 }]
+    const [a] = heuristicPicks(cand, () => sandbox, 1, NOW, one)
+    expect(a.reason).toContain(single)
+    const [b] = heuristicPicks(cand, () => sandbox, 1, NOW, two)
+    expect(b.reason).toContain(plural)
   })
 })
 
@@ -759,11 +796,11 @@ describe('скрытое время в Steam', () => {
     const cand: ScoredCandidate[] = [{ appid: 3, name: 'Shiny New', source: 'new', score: 0.9 }]
     const [hidden] = heuristicPicks(cand, metaOf, 1, NOW, { Puzzle: 1 }, { playtimeHidden: true })
     expect(hidden.reason).toBe(
-      '«Shiny New» в твоей библиотеке нет, но её теги (Головоломка) совпадают с тем, что в ней уже есть.',
+      '«Shiny New» в твоей библиотеке нет, но её тег (Головоломка) совпадает с тем, что в ней уже есть.',
     )
     expect(hidden.reason).not.toMatch(/играешь/)
     const [open] = heuristicPicks(cand, metaOf, 1, NOW, { Puzzle: 1 })
-    expect(open.reason).toContain('совпадают с тем, во что ты играешь больше всего')
+    expect(open.reason).toContain('совпадает с тем, во что ты играешь больше всего')
   })
 
   describe('промпт модели', () => {
