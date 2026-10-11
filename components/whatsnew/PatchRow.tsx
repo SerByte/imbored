@@ -309,12 +309,15 @@ export function PatchRow({
                 </p>
               ) : (
                 /* Скелет ровно на высоту абзаца: без него панель раскрывается
-                   в пустоту и тут же дёргается, когда тело приезжает. */
+                   в пустоту и тут же дёргается, когда тело приезжает. .skel, а
+                   не animate-pulse Tailwind: у утилиты нет покоя под «уменьшить
+                   движение», и полосы пульсировали у того, кто движения не
+                   просил. Сторож — lib/motion.test.ts. */
                 <div aria-hidden className="flex flex-col gap-2.5">
                   {[92, 100, 78].map((w, i) => (
                     <span
                       key={i}
-                      className="h-3.5 animate-pulse rounded-full bg-ink/10"
+                      className="skel h-3.5 rounded-full"
                       style={{ width: `${w}%` }}
                     />
                   ))}

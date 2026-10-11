@@ -60,6 +60,20 @@ export function needsReveal(rect: Rect, band: Band): boolean {
   return rect.top < band.top || rect.bottom > band.bottom
 }
 
+type Box = { top: number; bottom: number; left: number; right: number }
+
+/**
+ * Закрывает ли один прямоугольник другой хоть частью.
+ *
+ * Нужен плавающей записке «Режим просмотра» (components/ReadOnlyNote): она
+ * стоит ровно на линии, куда браузер ставит элемент, прокрученный к фокусу, и
+ * фокус под ней — повод ей уйти. Касание краем не в счёт: кнопка, которая
+ * стоит вплотную под запиской, видна целиком вместе с кольцом фокуса.
+ */
+export function overlaps(a: Box, b: Box): boolean {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+}
+
 /** То, что нужно от элемента, чтобы перенести на него фокус. */
 export type FocusTarget = {
   tabIndex: number

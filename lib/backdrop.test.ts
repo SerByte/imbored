@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { readAppCss } from './testing/css'
 
@@ -75,5 +77,45 @@ describe('размытие подложки', () => {
     expect(block, '.glass без backdrop-filter — это уже не стекло').toMatch(
       /backdrop-filter:\s*blur\(/,
     )
+  })
+})
+
+/**
+ * Стекло шапки не сидит внутри элемента с постоянным именем перехода.
+ *
+ * В Chromium элемент с view-transition-name — Backdrop Root: backdrop-filter
+ * его потомков видит только то, что нарисовано внутри него, а не страницу
+ * позади. <header> носил имя site-header постоянно, инлайном, и размытие
+ * .site-chrome-bar и .site-chrome-fade умерло: под шапкой резко читались
+ * строки страницы, оставался один тон. Замер полосами под шапкой на /support
+ * (1280×800, data-chrome="page"): с именем полосы видны сквозь стекло, с
+ * header.style.viewTransitionName = 'none' — размыты.
+ *
+ * Имя нужно только на время перехода — чтобы шапка не ехала вместе со
+ * страницей. Поэтому оно стоит под :active-view-transition: есть с вызова
+ * startViewTransition (снимок старого состояния его уже видит), нет в покое.
+ */
+describe('стекло шапки видит страницу', () => {
+  const ROOT = path.join(__dirname, '..')
+  const layout = fs
+    .readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+
+  test('у <header> нет постоянного имени перехода', () => {
+    const header = layout.match(/<header\b[^>]*>/)?.[0]
+    expect(header, '<header> в app/layout.tsx не найден').toBeTruthy()
+    expect(header, 'постоянное имя делает шапку Backdrop Root, и стекло перестаёт размывать страницу').not.toMatch(
+      /viewTransitionName/,
+    )
+  })
+
+  test('имя site-header ставится только на время перехода', () => {
+    const decls = [...GLOBALS.matchAll(/([^{}]+)\{[^{}]*view-transition-name:\s*site-header\b/g)].map((m) =>
+      m[1].trim(),
+    )
+    expect(decls.length, 'без имени шапка уедет вместе со страницей при переходе').toBeGreaterThan(0)
+    for (const sel of decls) {
+      expect(sel, 'имя вне перехода снова убьёт размытие стекла').toMatch(/:active-view-transition\b/)
+    }
   })
 })

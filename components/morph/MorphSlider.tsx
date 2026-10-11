@@ -13,6 +13,8 @@
  * 2. Появились onChange и onActivate. Первый нужен родителю, чтобы знать
  *    текущий кадр (движок и так считает его внутри, наружу это просто не было
  *    выведено); второй отличает клик от протяжки — на нём держится лайтбокс.
+ *    Зовётся из click, а не из pointerup: иначе на таче click того же
+ *    касания попадал в только что открытый оверлей и закрывал его (tapPending).
  * 3. goToIndex вместо шага на единицу. В исходнике клик по точке делал
  *    goTo(i > index ? 1 : -1), то есть листал ровно на один кадр: шестая точка
  *    уводила на вторую. Теперь переход идёт к выбранному кадру по кратчайшей
@@ -30,6 +32,16 @@
  *    обещал то, чего не было. Зона попадания — 24×24 (см. .dot::before).
  * 8. Переход ведёт свой твин на rAF (./tween), а не gsap: ради одного числа
  *    ядро gsap ехало на /play, /daily и /game. Имена кривых прежние.
+ * 9. Кадр рисуется по требованию, а не на каждом rAF (см. MorphEngine.invalidate).
+ *    В исходнике петля крутилась, пока слайдер смонтирован, и герой /play и
+ *    /daily после своего единственного перехода перерисовывал одинаковый
+ *    полноэкранный кадр 60–120 раз в секунду — а над ним пять слоёв
+ *    backdrop-filter и зерно с mix-blend, которые компоновщик пересчитывал
+ *    вместе с каждым новым кадром канваса. Слайдер страницы игры так же
+ *    рисовал дрейф, уехав за край экрана.
+ * 10. Дрейф под «уменьшить движение» — ноль. В шейдере он не смотрел на
+ *    uReduce, и кадр на /game покачивался бесконечно и у того, кто движения
+ *    не просил.
  */
 
 import { tweenValue, type Tween } from './tween'
@@ -319,7 +331,23 @@ class MorphEngine {
   private textures: Texture[]
   private sizes: [number, number][]
   private resizeObserver: ResizeObserver
+  /** Запрошенный кадр; 0 — петля стоит */
   private raf = 0
+  /** Контекст потерян или движок разобран: кадров больше не просим */
+  private dead = false
+  /** Сцена на экране — дрейф без зрителя не рисуем (IntersectionObserver в компоненте) */
+  private visible = true
+  /** Кадр, который сейчас в tNext: его текстура может доехать позже перехода */
+  private nextIndex: number
+  /**
+   * Время шейдера, с, — копится только по нарисованным кадрам. Абсолютное
+   * время rAF после остановки дало бы скачок шума и дрейфа на первом же кадре
+   * после паузы; так кадр продолжается с того места, где встал. Приём тот же,
+   * что у снега (snowTime в components/PixelSnow.tsx).
+   */
+  private clock = 0
+  /** Метка прошлого нарисованного кадра; 0 — петля только что проснулась */
+  private last = 0
   private boundLoop: (t: number) => void
   private boundContextLost: (e: Event) => void
 
@@ -331,6 +359,9 @@ class MorphEngine {
     this.reducedMotion = config.reducedMotion
     this.current = config.startIndex
     this.shownIndex = config.startIndex
+    this.nextIndex = config.startIndex
+    // До resize(): он уже просит кадр
+    this.boundLoop = this.loop.bind(this)
 
     this.renderer = new Renderer({
       alpha: false,
@@ -365,7 +396,7 @@ class MorphEngine {
         uIntensity: { value: opts.intensity },
         uScale: { value: opts.scale },
         uAberration: { value: opts.aberration },
-        uDrift: { value: opts.drift },
+        uDrift: { value: this.drift(opts) },
         uTime: { value: 0 },
         uReduce: { value: this.reducedMotion ? 1 : 0 },
         uPointer: { value: [0.5, 0.5] },
@@ -383,9 +414,6 @@ class MorphEngine {
     this.resize()
 
     this.loadTextures()
-
-    this.boundLoop = this.loop.bind(this)
-    this.raf = requestAnimationFrame(this.boundLoop)
   }
 
   private loadTextures(): void {
@@ -394,6 +422,7 @@ class MorphEngine {
       img.crossOrigin = 'anonymous'
       img.src = item.image
       img.onload = () => {
+        if (this.dead) return
         const texture = new Texture(this.gl, { generateMipmaps: false })
         texture.image = img
         this.textures[index] = texture
@@ -402,6 +431,14 @@ class MorphEngine {
           this.program.uniforms.tCurrent.value = texture
           this.program.uniforms.uCurrentSize.value = this.sizes[index]
         }
+        // tNext держал серую заглушку этого кадра: в покое шейдер тает её
+        // крапинами там, где шум ниже порога, а в переходе, начатом раньше
+        // загрузки, перетекал бы в серое до самого конца
+        if (index === this.nextIndex) {
+          this.program.uniforms.tNext.value = texture
+          this.program.uniforms.uNextSize.value = this.sizes[index]
+        }
+        this.invalidate()
       }
       img.onerror = () => {}
     })
@@ -413,6 +450,15 @@ class MorphEngine {
     const h = Math.max(rect.height, 1)
     this.renderer.setSize(w, h)
     this.program.uniforms.uResolution.value = [this.gl.canvas.width, this.gl.canvas.height]
+    // setSize стирает холст, а вставший слайдер сам уже не перерисуется:
+    // без этого кадра поворот телефона или спрятавшаяся адресная строка
+    // оставляли бы пустой канвас (то же у снега, PixelSnow.tsx)
+    this.invalidate()
+  }
+
+  /** Дрейф, который шейдер получит на деле: под «уменьшить движение» его нет */
+  private drift(opts: EngineOptions): number {
+    return this.reducedMotion ? 0 : opts.drift
   }
 
   private syncOptions(): void {
@@ -421,15 +467,52 @@ class MorphEngine {
     this.program.uniforms.uIntensity.value = opts.intensity
     this.program.uniforms.uScale.value = opts.scale
     this.program.uniforms.uAberration.value = opts.aberration
-    this.program.uniforms.uDrift.value = opts.drift
+    this.program.uniforms.uDrift.value = this.drift(opts)
     this.program.uniforms.uOverlay.value = hexToRgb(opts.overlayColor)
   }
 
+  /**
+   * Попросить кадр. Петля сама решит, рисовать ли дальше (см. moving);
+   * повторный вызов до кадра ничего не добавляет.
+   *
+   * Зовут все, кто меняет картинку в покое: доехавшая текстура, resize,
+   * начало перехода и протяжки, отпущенный палец, смена настроек. Твин
+   * перехода двигает uProgress своим rAF, а рисует его эта петля — поэтому
+   * run() и endDrag() будят её сами, а держит animating до commit.
+   */
+  invalidate(): void {
+    if (!this.raf && !this.dead) this.raf = requestAnimationFrame(this.boundLoop)
+  }
+
+  /** Кадр следующего тика будет другим — значит, его стоит рисовать */
+  private moving(): boolean {
+    return this.animating || this.dragging || (this.visible && this.drift(this.getOptions()) > 0)
+  }
+
+  /** Сцена ушла с экрана или вернулась — дрейф без зрителя не рисуем */
+  setVisible(visible: boolean): void {
+    this.visible = visible
+    if (visible) this.invalidate()
+  }
+
+  /*
+   * Сначала рисуем, потом решаем, нужен ли следующий кадр. Порядок важен:
+   * commit() снимает animating и сбрасывает uProgress в том же кадре, где
+   * твин дошёл до конца, и последний кадр обязан показать уже новый кадр в
+   * покое, а не застыть на p ≈ 1.
+   */
   private loop(t: number): void {
-    this.program.uniforms.uTime.value = t * 0.001
+    this.raf = 0
+    // Шаг не длиннее 50 мс: после фоновой вкладки или сна петли время
+    // продолжается, а не прыгает
+    const dt = this.last ? Math.min(t - this.last, 50) : 16
+    this.last = t
+    this.clock += dt * 0.001
+    this.program.uniforms.uTime.value = this.clock
     if (!this.dragging && !this.animating) this.syncOptions()
     this.renderer.render({ scene: this.mesh })
-    this.raf = requestAnimationFrame(this.boundLoop)
+    if (this.moving()) this.invalidate()
+    else this.last = 0
   }
 
   private wrap(i: number): number {
@@ -444,6 +527,7 @@ class MorphEngine {
     this.program.uniforms.tNext.value = this.textures[target]
     this.program.uniforms.uNextSize.value = this.sizes[target]
     this.program.uniforms.uDir.value = dir
+    this.nextIndex = target
   }
 
   private prepareNext(dir: number): number {
@@ -465,6 +549,7 @@ class MorphEngine {
       ease: opts.ease,
       onComplete: () => this.commit(target),
     })
+    this.invalidate()
   }
 
   goTo(dir: number): void {
@@ -513,6 +598,9 @@ class MorphEngine {
     this.animating = false
     this.tween = null
     this.announce(target)
+    // Петля и так дорисует этот кадр (см. loop), но дешевле попросить, чем
+    // держать в голове порядок двух rAF в одном тике
+    this.invalidate()
   }
 
   next(): void {
@@ -532,6 +620,7 @@ class MorphEngine {
     this.dragging = true
     this.dragDir = 0
     this.syncOptions()
+    this.invalidate()
     return true
   }
 
@@ -558,6 +647,9 @@ class MorphEngine {
   endDrag(): void {
     if (!this.dragging) return
     this.dragging = false
+    // И при протяжке, которая никуда не ушла: петля, жившая ради dragging,
+    // дорисует покой и встанет
+    this.invalidate()
     const p = this.program.uniforms.uProgress.value as number
     if (this.dragDir === 0) return
     const target = this.wrap(this.current + this.dragDir)
@@ -580,18 +672,28 @@ class MorphEngine {
         onComplete: () => {
           this.animating = false
           this.tween = null
+          this.invalidate()
         },
       })
     }
   }
 
+  /**
+   * Восстановления контекста движок не умеет, поэтому потеря — конец: ни
+   * поздний onload текстуры, ни автоплей больше не просят кадров у мёртвого
+   * контекста.
+   */
   private onContextLost(e: Event): void {
     e.preventDefault()
+    this.dead = true
     cancelAnimationFrame(this.raf)
+    this.raf = 0
   }
 
   destroy(): void {
+    this.dead = true
     cancelAnimationFrame(this.raf)
+    this.raf = 0
     if (this.tween) this.tween.kill()
     this.resizeObserver.disconnect()
     this.canvas.removeEventListener('webglcontextlost', this.boundContextLost)
@@ -670,7 +772,7 @@ export default function MorphSlider({
   useEffect(() => {
     onChangeRef.current = onChange
     onActivateRef.current = onActivate
-    optsRef.current = {
+    const next: EngineOptions = {
       transition,
       duration,
       ease,
@@ -680,6 +782,14 @@ export default function MorphSlider({
       drift,
       overlayColor,
       loop,
+    }
+    const prev = optsRef.current
+    optsRef.current = next
+    // Петля рисует по требованию: новые цвет или сила без кадра не дошли бы
+    // до экрана. Сверка, а не кадр на каждый рендер — компонент
+    // перерисовывается и от наведения, и от фокуса
+    if ((Object.keys(next) as (keyof EngineOptions)[]).some((k) => next[k] !== prev[k])) {
+      engineRef.current?.invalidate()
     }
   })
 
@@ -702,7 +812,17 @@ export default function MorphSlider({
     engineRef.current = engine
     setIndex(startIndex)
 
+    /*
+     * Ушла сцена с экрана — дрейф не рисуется. Здесь, а не пропом от
+     * родителя: у HeroShots и GameShots свои наблюдатели, но они держат
+     * автоплей, а кадры движка — забота самого слайдера. visibilitychange не
+     * нужен: в фоновой вкладке rAF не приходит и так.
+     */
+    const io = new IntersectionObserver(([entry]) => engine.setVisible(entry.isIntersecting))
+    io.observe(containerRef.current)
+
     return () => {
+      io.disconnect()
       engine.destroy()
       engineRef.current = null
     }
@@ -737,6 +857,22 @@ export default function MorphSlider({
     let pressed = false
     let moved = false
     let active = false
+    /**
+     * Нажатие кончилось касанием, а не протяжкой — ждём его click.
+     *
+     * Открывать прямо из pointerup нельзя, и это замер, а не осторожность. На
+     * таче браузер шлёт click ПОСЛЕ touchend и цель ищет в тот момент; React к
+     * тому времени уже смонтировал оверлей лайтбокса, click падал на затемнение
+     * и закрывал окно. /game/730, 390×844 с тачем: pointerdown по канвасу →
+     * pointerup → click по «bg-black/85» → диалогов ноль, окно мигало на один
+     * кадр. Мышью не воспроизводилось: её click целится по pointerdown и
+     * pointerup, то есть в слайдер.
+     *
+     * Флаг, а не просто click: протяжка мышью под захватом указателя тоже
+     * кончается click по сцене, и открывать по нему кадр нельзя. Свайп
+     * пальцем и прокрутка click не дают вовсе.
+     */
+    let tapPending = false
 
     const onDown = (e: PointerEvent) => {
       const rect = el.getBoundingClientRect()
@@ -746,6 +882,7 @@ export default function MorphSlider({
       downAt = e.timeStamp
       pressed = true
       moved = false
+      tapPending = false
       const px = (e.clientX - rect.left) / rect.width
       const py = (e.clientY - rect.top) / rect.height
       engineRef.current?.setPointer(px, 1 - py)
@@ -771,19 +908,15 @@ export default function MorphSlider({
     const onUp = (e: PointerEvent) => {
       if (!pressed) return
       pressed = false
-      const tap = !moved && e.timeStamp - downAt < TAP_MS
+      // Само открытие — в onClick ниже, см. tapPending
+      tapPending = !moved && e.timeStamp - downAt < TAP_MS
       if (active) {
         active = false
         engineRef.current?.endDrag()
       }
-      if (tap && onActivateRef.current) {
-        // Открыл кадр крупно — рассматривает, и слайдер под лайтбоксом
-        // не должен уехать на другой
-        setStopped(true)
-        onActivateRef.current()
-      }
     }
     const onCancel = () => {
+      tapPending = false
       if (!pressed) return
       pressed = false
       if (active) {
@@ -791,17 +924,28 @@ export default function MorphSlider({
         engineRef.current?.endDrag()
       }
     }
+    const onClick = () => {
+      if (!tapPending) return
+      tapPending = false
+      if (!onActivateRef.current) return
+      // Открыл кадр крупно — рассматривает, и слайдер под лайтбоксом
+      // не должен уехать на другой
+      setStopped(true)
+      onActivateRef.current()
+    }
 
     el.addEventListener('pointerdown', onDown)
     el.addEventListener('pointermove', onMove)
     el.addEventListener('pointerup', onUp)
     el.addEventListener('pointercancel', onCancel)
+    el.addEventListener('click', onClick)
 
     return () => {
       el.removeEventListener('pointerdown', onDown)
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', onUp)
       el.removeEventListener('pointercancel', onCancel)
+      el.removeEventListener('click', onClick)
     }
   }, [])
 

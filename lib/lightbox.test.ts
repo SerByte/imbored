@@ -82,6 +82,47 @@ describe('лайтбокс модальный на деле', () => {
     expect(src).toContain('swipeStep(')
   })
 
+  /**
+   * Касание, открывшее кадр, не закрывает его.
+   *
+   * Слайдер открывал лайтбокс из pointerup, а на таче браузер шлёт click
+   * ПОСЛЕ touchend и цель ищет в этот момент — оверлей к тому времени уже
+   * смонтирован, click падал на затемнение и закрывал окно. Замер на /game/730,
+   * 390×844 с тачем: pointerdown CANVAS → pointerup → click по
+   * «absolute inset-0 bg-black/85» → диалогов 0. Мышью не воспроизводится:
+   * её click целится по pointerdown/pointerup, то есть в слайдер.
+   */
+  test('слайдер открывает кадр по click, а не по pointerup', () => {
+    const slider = code('components/morph/MorphSlider.tsx')
+    const up = slider.match(/const onUp = \(e: PointerEvent\) => \{([\s\S]*?)\n {4}\}\n/)
+    expect(up, 'обработчик onUp не найден').toBeTruthy()
+    expect(
+      up![1],
+      'из pointerup лайтбокс открывается раньше click, и click того же касания падает на оверлей',
+    ).not.toContain('onActivateRef.current()')
+    const click = slider.match(/const onClick = \(\) => \{([\s\S]*?)\n {4}\}\n/)
+    expect(click, 'обработчика click у сцены нет').toBeTruthy()
+    expect(click![1]).toContain('onActivateRef.current()')
+    expect(slider).toMatch(/el\.addEventListener\('click', onClick\)/)
+    expect(slider).toMatch(/el\.removeEventListener\('click', onClick\)/)
+  })
+
+  /**
+   * Вторая линия — у самого лайтбокса: фон закрывает окно, только если нажатие
+   * началось на нём. Любой будущий открыватель, который сработает раньше
+   * click, иначе повторит ту же вспышку на одном кадре.
+   */
+  test('фон закрывает окно, только если нажатие началось на нём', () => {
+    const down = src.match(/onPointerDown=\{\(e\) => \{([\s\S]*?)\n {12}\}\}/)
+    const click = src.match(/onClick=\{\(\) => \{([\s\S]*?)\n {12}\}\}/)
+    expect(down, 'onPointerDown у оверлея не найден').toBeTruthy()
+    expect(click, 'onClick у оверлея не найден').toBeTruthy()
+    expect(down![1]).toMatch(/pressedHereRef\.current = true/)
+    expect(click![1], 'click без своего нажатия — чужой, закрывать по нему нельзя').toMatch(
+      /if \(!pressedHereRef\.current\) return/,
+    )
+  })
+
   test('смузер приносит лайтбоксу свою паузу', () => {
     const impl = code('components/SmoothScrollImpl.tsx')
     expect(impl).toMatch(/registerScrollPauser\(\(paused\) => live\.paused\(paused\)\)/)
