@@ -180,3 +180,76 @@ describe('/api/room/[id]: сматченная игра и владение', ()
     expect(await matched()).toMatchObject({ ownedByMe: null })
   })
 })
+
+/**
+ * «Нет у: Дима, Саша» — всей комнате, а не только тому, у кого нет.
+ *
+ * Церемония знала владение одного смотрящего, и о том, что у Димы игры нет,
+ * знал только Дима: остальные звали в войс и ждали. Колода уже показывает
+ * каждому «Нет у: имя» на каждой карте — экран матча называет тех же людей
+ * теми же метками, и больше ничего.
+ */
+describe('/api/room/[id]: кому не хватает сошедшейся игры', () => {
+  const GAME = 1091500
+  // steamid больше, чем у друга: вошли одной секундой, и ростер добивает порядок по нему
+  const SASHA = '76561197960288001'
+  type Missing = { matchedGame: { ownedByMe: boolean | null; missingFor?: string[] | null } | null }
+  const matched = async () => ((await (await peek()).json()) as Missing).matchedGame
+  // Метка участника без ника — memberLabel: четыре знака хеша, не steamid
+  const SASHA_LABEL = `Игрок ${hashString(ROOM + SASHA).toString(36).slice(0, 4)}`
+
+  /**
+   * Хост с игрой, друг без неё (ник «Дима»), Саша без ника и без игры. Каждый
+   * вошёл со своим снапшотом — кроме тех, кого тест оставит без него.
+   */
+  async function party(opts: { sashaSnapshot?: boolean } = {}): Promise<string> {
+    const now = nowSec()
+    const host = await signInAs(db, 'openid')
+    await createRoom(db, { id: ROOM, steamid: host }, now)
+    await joinRoom(db, ROOM, host, 'Хост', now)
+    await joinRoom(db, ROOM, FRIEND, 'Дима', now)
+    await joinRoom(db, ROOM, SASHA, undefined, now)
+    await upsertGameMeta(
+      db,
+      { appid: GAME, name: 'Игра', tags: { 'Co-op': 100 }, genres: [], categories: [1], priceFinal: 5999 },
+      now,
+    )
+    const own = (appid: number) => [{ appid, name: `Игра ${appid}`, playtimeForever: 60, playtime2Weeks: 0 }]
+    await saveLibrarySnapshot(db, host, own(GAME), now)
+    await saveLibrarySnapshot(db, FRIEND, own(570), now)
+    if (opts.sashaSnapshot !== false) await saveLibrarySnapshot(db, SASHA, own(570), now)
+    await setRoomMatched(db, ROOM, GAME)
+    return host
+  }
+
+  test('владельцу — те, у кого нет, теми же метками, что в ростере и колоде', async () => {
+    await party()
+    expect(await matched()).toMatchObject({ ownedByMe: true, missingFor: ['Дима', SASHA_LABEL] })
+  })
+
+  test('тому, у кого нет, — свои «нет» отдельно, в списке только остальные', async () => {
+    await party()
+    await signIn(db, FRIEND)
+    expect(await matched()).toMatchObject({ ownedByMe: false, missingFor: [SASHA_LABEL] })
+  })
+
+  test('без снапшота библиотеки — «не знаем», а не «нет»: в список не попадает', async () => {
+    await party({ sashaSnapshot: false })
+    expect(await matched()).toMatchObject({ missingFor: ['Дима'] })
+  })
+
+  test('ни steamid, ни их хвостов — только метки', async () => {
+    await party()
+    const json = JSON.stringify(await matched())
+    expect(json).not.toMatch(/\d{17}/)
+    for (const sid of [FRIEND, SASHA]) expect(json).not.toContain(sid.slice(-4))
+  })
+
+  test('не участнику — ничего: состав чужой пати по ссылке не раздаётся', async () => {
+    await party()
+    signOut()
+    expect((await matched())?.missingFor ?? null).toBeNull()
+    await signInAs(db, 'demo')
+    expect((await matched())?.missingFor ?? null).toBeNull()
+  })
+})

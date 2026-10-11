@@ -53,6 +53,7 @@ import { HIDDEN_POLL_CAP_MS, hiddenPollDelay, nextPollStep, snapshotFate } from 
 import { announceMatch } from '@/components/room/MatchNotify'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { roomShareUrl } from '@/lib/roomshare'
+import { storeLink } from '@/lib/stores'
 import { track } from '@/lib/track'
 
 /*
@@ -135,6 +136,8 @@ type RoomState = {
     ownedByMe: boolean | null
     /** сколько участников за; null — смотрит не участник */
     forCount: number | null
+    /** у кого из остальных её нет; null — не участник, нет поля — старый сервер */
+    missingFor?: string[] | null
     isFree: boolean
     priceFinal: number | null
     /** регион магазина цены — её валюта (lib/steamregion) */
@@ -1555,8 +1558,18 @@ export default function RoomPage() {
    * хотят играть в одно и то же» и «Зови всех в войс — договорились же» —
    * чужой праздник на игре, которой у него может и не быть. Войти он уже не
    * может (join отвечает 409), поэтому ему — что случилось и куда дальше.
+   *
+   * И где взять игру. Сюда же приходит весть «Играем в X» с экрана матча
+   * (components/room/MatchShare, ref=match) — тем, кто опоздал к выбору, — и
+   * такому другу чаще всего надо её купить или поставить. Без ссылки на игру
+   * экран предлагал ему только свою комнату и чужие пати: не тот следующий
+   * шаг ровно для того, кому весть и кидали. Ссылка тихая, над абзацем, а не
+   * второй кнопкой: открывший старое приглашение пришёл выбирать, и ему
+   * по-прежнему главное — своя комната. Сверх названия из заголовка она
+   * ничего не раскрывает: адрес магазина API отдаёт и не участнику.
    */
   if (state.room.status === 'matched' && state.matchedGame && !state.isMember) {
+    const shop = storeLink(state.matchedGame)
     return (
       <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
         <Ambient />
@@ -1564,6 +1577,16 @@ export default function RoomPage() {
           <h1 className="font-display text-display-sm">
             Эта пати уже договорилась: «{state.matchedGame.name}»
           </h1>
+          {shop && (
+            <a
+              href={shop.href}
+              target="_blank"
+              rel="noreferrer"
+              className="tap text-sm text-dim hover:text-ink transition-colors"
+            >
+              Открыть «{state.matchedGame.name}» в {shop.where}
+            </a>
+          )}
           <p className="text-dim text-sm">
             Комната <span className="font-mono text-ink">{roomId}</span> сошлась, и новых людей в
             неё уже не пускают. Собери свою — или подсядь к тем, кто ещё выбирает.
@@ -1586,6 +1609,7 @@ export default function RoomPage() {
         <MatchCeremony
           game={state.matchedGame}
           memberCount={state.members.length}
+          roomId={roomId}
           takeFocus={sawOpen}
         />
       </>

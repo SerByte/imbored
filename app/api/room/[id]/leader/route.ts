@@ -4,6 +4,7 @@ import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { pickLeader } from '@/lib/roomlikes'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
+import { forgetRoomCard } from '@/lib/roomcard'
 import { peekGate } from '@/lib/roompeek'
 import { seatOf, seatRefusal } from '@/lib/roomseat'
 
@@ -98,5 +99,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const matched = await setRoomMatched(db, id, appid)
+  // Комната сошлась — билет-приглашение в кэше карточки устарел (lib/roomcard)
+  if (matched !== null) forgetRoomCard(id)
   return NextResponse.json({ matched })
 }

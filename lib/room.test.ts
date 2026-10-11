@@ -6,6 +6,7 @@ import {
   matchLine,
   matchNoticeDue,
   memberLabel,
+  missingNames,
   pageNotices,
   parseRoomCode,
   roomMissText,
@@ -324,6 +325,50 @@ describe('matchByLeader', () => {
     // не участнику сервер счёт не отдаёт
     expect(matchByLeader(null, 4)).toBe(false)
     expect(matchByLeader(undefined, 4)).toBe(false)
+  })
+})
+
+/**
+ * «Нет у: Дима, Саша» на экране матча. Церемония говорила «У тебя её пока
+ * нет» только тому, у кого нет, — остальные не знали, кого ждать, и пати
+ * вставала, едва договорившись.
+ */
+describe('missingNames: кому из остальных не хватает сошедшейся игры', () => {
+  test('только те, у кого её точно нет, в порядке ростера', () => {
+    expect(
+      missingNames([
+        { label: 'Дима', owns: false, me: false },
+        { label: 'Петя', owns: true, me: false },
+        { label: 'Саша', owns: false, me: false },
+      ]),
+    ).toEqual(['Дима', 'Саша'])
+  })
+
+  test('себя не называет: про себя говорит своя строка «У тебя её пока нет»', () => {
+    expect(
+      missingNames([
+        { label: 'Я', owns: false, me: true },
+        { label: 'Дима', owns: false, me: false },
+      ]),
+    ).toEqual(['Дима'])
+  })
+
+  test('«не знаем» — не «нет»: без снапшота библиотеки человек не попадает в список', () => {
+    expect(
+      missingNames([
+        { label: 'Дима', owns: null, me: false },
+        { label: 'Саша', owns: true, me: false },
+      ]),
+    ).toEqual([])
+  })
+
+  test('одинаковые имена — оба: два демо-друга — два человека', () => {
+    expect(
+      missingNames([
+        { label: 'Демо-друг', owns: false, me: false },
+        { label: 'Демо-друг', owns: false, me: false },
+      ]),
+    ).toEqual(['Демо-друг', 'Демо-друг'])
   })
 })
 

@@ -273,6 +273,13 @@ describe('метка ref', () => {
     expect(parseRef(null)).toBeNull()
   })
 
+  test('«Поделиться» с экрана матча — своя метка, не «room»', () => {
+    // Ссылка та же комната, но приглашением она уже не зовёт: по общей метке
+    // не отличить, приводит ли людей зов в пати или весть «сошлись»
+    expect(parseRef('match')).toBe('match')
+    expect(withRef('https://imbored.cc/room/ABC234', 'match')).toBe('https://imbored.cc/room/ABC234?ref=match')
+  })
+
   test('withRef ставит метку и не трогает остальное', () => {
     expect(withRef('https://imbored.cc/compat/76561197960287930', 'compat')).toBe(
       'https://imbored.cc/compat/76561197960287930?ref=compat',

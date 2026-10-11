@@ -12,6 +12,7 @@ import { ROOM_KICK_SEC } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
 import { currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
+import { forgetRoomCard } from '@/lib/roomcard'
 import { peekGate } from '@/lib/roompeek'
 import { seatOf } from '@/lib/roomseat'
 
@@ -143,6 +144,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // Как и в голосовании: наружу — записанный матч, а не свой кандидат.
     const candidate = await findRoomMatch(db, id)
     if (candidate !== null) matched = await setRoomMatched(db, id, candidate)
+    // Сошлась уходом несогласного — билет в кэше карточки устарел (lib/roomcard).
+    // Уход из уже сошедшейся комнаты сюда не попадает: там сброшено при матче
+    if (matched !== null) forgetRoomCard(id)
   }
 
   return NextResponse.json({

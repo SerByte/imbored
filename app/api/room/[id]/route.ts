@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { memberDone, memberLabel } from '@/lib/room'
+import { memberDone, memberLabel, missingNames } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
 import {
   getGameMeta,
@@ -104,15 +104,26 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   // лидером голосов (leader/route.ts), и церемония обязана сказать «3 из 4»,
   // а не «все хотят одного». Чужому, кто зашёл по ссылке, счёт голосов
   // комнаты ни к чему.
+  //
+  // Владение — у КАЖДОГО участника, а не только у смотрящего: экран матча
+  // говорит всей комнате «Нет у: Дима, Саша» (missingNames в lib/room), а
+  // не одному Диме «у тебя её нет». По точечному чтению на участника, их не
+  // больше восьми (ROOM_MAX_MEMBERS), и платит за это не опрос: на матче он
+  // останавливается (nextPollStep в lib/roompoll), так что это один заход на
+  // загрузку страницы. Своё владение берётся из того же ответа.
   const matchedAppid = room.status === 'matched' ? room.matchedAppid : undefined
-  const [matchedMeta, ownedByMe, forCount] =
+  const [matchedMeta, owns, forCount] =
     matchedAppid !== undefined
       ? await Promise.all([
           getGameMeta(db, matchedAppid),
-          steamid && isMember && matchedAppid > 0 ? snapshotOwns(db, steamid, matchedAppid) : null,
+          isMember && matchedAppid > 0
+            ? Promise.all(members.map((m) => snapshotOwns(db, m.steamid, matchedAppid)))
+            : null,
           isMember ? roomForCount(db, id, matchedAppid) : null,
         ])
       : [null, null, null]
+  const mine = members.findIndex((m) => m.steamid === steamid)
+  const ownedByMe = owns && mine >= 0 ? owns[mine] : null
   const now = nowSec()
 
   const secret = sessionSecret()
@@ -164,6 +175,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           storeUrl: matchedMeta.storeUrl ?? null,
           ownedByMe,
           forCount,
+          // Кому из остальных её не хватает — метками ростера и колоды
+          // (memberLabel), не steamid. Не участнику — null: у кого в чужой
+          // пати чего нет, открытая ссылка не раздаёт — как и счёт голосов
+          missingFor: isMember
+            ? missingNames(
+                memberViews.map((v, i) => ({ label: v.name, owns: owns?.[i] ?? null, me: v.me })),
+              )
+            : null,
           // Цена — тому, кому покупать: те же правила, что у колоды (trustedPrice,
           // «бесплатно» сильнее цены)
           isFree: matchedMeta.isFree === true,

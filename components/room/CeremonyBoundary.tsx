@@ -4,7 +4,7 @@ import { Component, type ReactNode, useCallback } from 'react'
 import { focusAdrift } from '@/lib/focushandoff'
 import { clientErrorCode, reportClientError } from '@/lib/clienterr'
 import { matchByLeader } from '@/lib/room'
-import { STORE_LABEL } from '@/lib/stores'
+import { storeLink } from '@/lib/stores'
 
 /** Что нужно запасному экрану матча — подмножество matchedGame комнаты */
 export type CeremonyGame = {
@@ -98,8 +98,7 @@ export function CeremonyFallback({
   )
   const forCount = game.forCount ?? null
   const byLeader = matchByLeader(forCount, memberCount)
-  const href = game.storeUrl ?? `https://store.steampowered.com/app/${game.appid}/`
-  const where = game.storeUrl ? (STORE_LABEL[game.store ?? ''] ?? 'магазине') : 'Steam'
+  const link = storeLink(game)
   return (
     <div className="flex-1 flex items-center justify-center px-5 py-24">
       <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5">
@@ -111,9 +110,11 @@ export function CeremonyFallback({
             ? `Не единогласно, но ${forCount} из ${memberCount} за. Праздничный экран не загрузился — а игра выбрана, зови всех в войс.`
             : 'Праздничный экран не загрузился, но договорились вы по-настоящему — зови всех в войс.'}
         </p>
-        <a href={href} target="_blank" rel="noreferrer" className="btn-ember is-block py-3">
-          Открыть в {where}
-        </a>
+        {link && (
+          <a href={link.href} target="_blank" rel="noreferrer" className="btn-ember is-block py-3">
+            Открыть в {link.where}
+          </a>
+        )}
         <button
           type="button"
           onClick={() => window.location.reload()}
