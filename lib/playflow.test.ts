@@ -415,6 +415,22 @@ describe('/play: пути вокруг выдачи', () => {
     expect(ban).toContain('setAskReason(false)')
   })
 
+  /*
+   * Пятый пропуск за время запроса открывает экран выгорания, не трогая
+   * индекса, а «Подобрать заново» — экран ожидания со старой пятёркой в
+   * состоянии. Герой по индексу — всё ещё забаненная, но его не видно: «больше
+   * не покажу, следующая игра: …» назвало бы карточку, которой на экране нет.
+   */
+  test('бан, доехавший без героя на экране, только убирает игру из выдачи', () => {
+    expect(code).toMatch(/useRef\(\{ picks, index, phase \}\)/)
+    expect(code).toMatch(/live\.current = \{ picks, index, phase \}/)
+    const ban = between('if (banning) return', 'aria-disabled={banning}')
+    const gate = ban.indexOf("live.current.phase !== 'reveal'")
+    expect(gate, 'фаза читается свежей, а не из замыкания клика').toBeGreaterThan(-1)
+    expect(gate).toBeLessThan(ban.indexOf('say('))
+    expect(gate).toBeLessThan(ban.indexOf('focusHero(false)'))
+  })
+
   test('«Изменить настроение» не снимает «нераспакованное»', () => {
     expect(code).not.toMatch(/href="\/quiz"|push\('\/quiz'\)/)
     expect(code.split('quizHref(focus)').length - 1).toBeGreaterThanOrEqual(3)
@@ -443,5 +459,21 @@ describe('/play: пути вокруг выдачи', () => {
     expect(names.length).toBeGreaterThanOrEqual(4)
     for (const name of names) expect(name).toMatch(/^'Скры(ть насовсем|ваю)/)
     expect(ban).toContain("'Скрыть насовсем: больше никогда не показывать эту игру'")
+  })
+
+  /*
+   * С md ряд героя стоял в одну линию шириной в своё содержимое, а секция
+   * героя режет всё, что вылезло (overflow-hidden). Замер на планшете: в 768px
+   * у игры из магазина со скидкой за край уходили «Подробнее», «Зашло»,
+   * «Отправить» и бан, в 820px — пилюля «Скрыть насовсем». Ряд шире своей
+   * колонки — можно, шире экрана — нельзя: там он переносится, как на телефоне.
+   */
+  test('ряд кнопок героя не уходит за край экрана', () => {
+    const row = code.match(/className="([^"]*)"\s*>\s*\{pick\.source === 'new' \|\| pick\.storeUrl/)
+    expect(row, 'ряд кнопок героя не найден — сторож ослеп').not.toBeNull()
+    const cls = row![1].split(/\s+/)
+    expect(cls).toContain('flex-wrap')
+    expect(cls).not.toContain('md:flex-nowrap')
+    expect(cls.some((c) => /^md:max-w-\[calc\(100vw-/.test(c)), 'потолок — ширина экрана без полей').toBe(true)
   })
 })

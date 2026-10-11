@@ -545,12 +545,12 @@ function Player({ say }: { say: (line: string) => void }) {
    * результат после await. Экран на время запроса не заперт (lib/playflow,
    * afterBan), и замыкание клика к ответу сервера видит пятёрку и героя,
    * которых уже нет. Эффектом, а не присваиванием в рендере: ref, тронутый
-   * рендером, React вправе не увидеть.
+   * рендером, React вправе не увидеть. Фаза — там же: виден ли герой вообще.
    */
-  const live = useRef({ picks, index })
+  const live = useRef({ picks, index, phase })
   useEffect(() => {
-    live.current = { picks, index }
-  }, [picks, index])
+    live.current = { picks, index, phase }
+  }, [picks, index, phase])
 
   /**
    * Запрос выдачи. Отдельно от прогрева: переключение режима повторяет только
@@ -1824,8 +1824,16 @@ function Player({ say }: { say: (line: string) => void }) {
             ) : (
               <>
               {/* С md ряд в одну линию и может быть шире колонки текста: кнопки
-                  несут свою подложку, и край скрима им не нужен */}
-              <m.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2 md:w-max md:flex-nowrap">
+                  несут свою подложку, и край скрима им не нужен. Но не шире
+                  экрана без полей: секция героя режет вылезшее (overflow-hidden),
+                  и под запретом переноса планшет в 768px терял за краем
+                  «Подробнее», «Зашло» и бан у игры из магазина со скидкой, а в
+                  820px — пилюлю «Скрыть насовсем». Влез — одна линия, как была;
+                  не влез — перенос, как на телефоне. */}
+              <m.div
+                variants={STEP}
+                className="flex flex-wrap items-center gap-3 mt-2 md:w-max md:max-w-[calc(100vw-2.5rem)]"
+              >
                 {pick.source === 'new' || pick.storeUrl ? (
                   // Игры нет в библиотеке — «Запустить» для неё кнопка-обманка:
                   // steam://run у не купленной игры не делает ничего. Ведём
@@ -1993,7 +2001,8 @@ function Player({ say }: { say: (line: string) => void }) {
                       // Выдача — сегодняшняя, а не из замыкания клика: пока шёл
                       // запрос, человек мог пролистать дальше или выбрать
                       // карточку, и героя увело бы на соседа забаненной
-                      const after = afterBan({ ...live.current, banned: pick.appid })
+                      const now = live.current
+                      const after = afterBan({ picks: now.picks, index: now.index, banned: pick.appid })
                       if (after.empty) {
                         router.push(quizHref(focus))
                         return
@@ -2002,6 +2011,12 @@ function Player({ say }: { say: (line: string) => void }) {
                       setIndex(after.index)
                       // Герой уже другой — он и остаётся, сказать и перенести нечего
                       if (!after.heroGone) return
+                      // Героя не видно вовсе: пятый пропуск за время запроса
+                      // открыл экран выгорания (индекс он не трогает), а
+                      // «Подобрать заново» — экран ожидания. «Следующая игра: …»
+                      // назвала бы карточку, которой на экране нет. Игра просто
+                      // уходит из выдачи — экран, который на виду, говорит за себя сам
+                      if (live.current.phase !== 'reveal') return
                       setHeroFrom('hero')
                       // «Почему не то?», открытое у этой игры, пока бан шёл, не
                       // переезжает на следующую: фокус встал бы на её «Не тот
