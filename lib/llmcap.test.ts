@@ -1,6 +1,17 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDb, type Db } from './db'
-import { llmBudgetLeft, llmBudgetUsed, llmDailyCap, LLM_DAILY_CAP_DEFAULT, takeLlmBudget } from './llmcap'
+import {
+  llmBudgetLeft,
+  llmBudgetUsed,
+  llmDailyCap,
+  llmIpDailyLimit,
+  LLM_DAILY_CAP_DEFAULT,
+  LLM_IP_MIN,
+  LLM_IP_SHARE,
+  takeLlmBudget,
+  takeLlmBudgetForIp,
+} from './llmcap'
+import { resetRateMemory } from './ratelimit'
 
 const T0 = 1_760_000_000
 
@@ -71,5 +82,64 @@ describe('takeLlmBudget', () => {
     const keys = (await db.execute('SELECT key FROM rate_limits')).rows.map((r) => String(r.key))
     expect(keys).toHaveLength(1)
     expect(keys[0]).toMatch(/^llm-daily:all:\d+$/)
+  })
+})
+
+/*
+ * Доля одного адреса в суточном бюджете. Без неё один скрипт с одного адреса
+ * выбирал весь LLM_DAILY_CAP, и модель до полуночи UTC молчала для всех.
+ */
+describe('llmIpDailyLimit', () => {
+  test('пять процентов бюджета, вверх, но не меньше десяти', () => {
+    expect(llmIpDailyLimit({})).toBe(Math.ceil(LLM_DAILY_CAP_DEFAULT * LLM_IP_SHARE))
+    expect(llmIpDailyLimit({ LLM_DAILY_CAP: '1010' })).toBe(51)
+    expect(llmIpDailyLimit({ LLM_DAILY_CAP: '150' })).toBe(LLM_IP_MIN)
+    expect(llmIpDailyLimit({ LLM_DAILY_CAP: '0' })).toBe(LLM_IP_MIN)
+  })
+})
+
+describe('takeLlmBudgetForIp', () => {
+  beforeEach(() => {
+    resetRateMemory()
+  })
+
+  test('адрес выбрал долю — нет, соседний — да; отказ общий бюджет не тратит', async () => {
+    vi.stubEnv('LLM_DAILY_CAP', '100')
+    const db = await createDb(':memory:')
+    const share = llmIpDailyLimit()
+    for (let i = 0; i < share; i++) expect(await takeLlmBudgetForIp(db, '198.51.100.1', T0 + i)).toBe(true)
+    expect(await takeLlmBudgetForIp(db, '198.51.100.1', T0 + share)).toBe(false)
+    expect(await takeLlmBudgetForIp(db, '198.51.100.2', T0 + share)).toBe(true)
+    expect(await llmBudgetUsed(db, T0)).toBe(share + 1)
+  })
+
+  test('доля — на сутки UTC, как и общий бюджет', async () => {
+    vi.stubEnv('LLM_DAILY_CAP', '100')
+    const db = await createDb(':memory:')
+    const day = Math.floor(T0 / 86_400) * 86_400
+    for (let i = 0; i < llmIpDailyLimit(); i++) await takeLlmBudgetForIp(db, '198.51.100.1', day + 10)
+    expect(await takeLlmBudgetForIp(db, '198.51.100.1', day + 86_399)).toBe(false)
+    expect(await takeLlmBudgetForIp(db, '198.51.100.1', day + 86_400)).toBe(true)
+  })
+
+  test('общий бюджет выбран — нет, хотя доля адреса цела', async () => {
+    vi.stubEnv('LLM_DAILY_CAP', '1')
+    const db = await createDb(':memory:')
+    expect(await takeLlmBudgetForIp(db, '198.51.100.1', T0)).toBe(true)
+    expect(await takeLlmBudgetForIp(db, '198.51.100.2', T0)).toBe(false)
+  })
+
+  test('модель выключена нулём — ни доли, ни бюджета: в базу не пишем', async () => {
+    vi.stubEnv('LLM_DAILY_CAP', '0')
+    const db = await createDb(':memory:')
+    expect(await takeLlmBudgetForIp(db, '198.51.100.1', T0)).toBe(false)
+    expect((await db.execute('SELECT COUNT(*) AS n FROM rate_limits')).rows[0].n).toBe(0)
+  })
+
+  // Доля открыта при сбое учёта (checkRate), бюджет закрыт — и в сумме «нет»
+  test('недоступный учёт — закрыто', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const broken = { execute: () => Promise.reject(new Error('turso down')) } as unknown as Db
+    expect(await takeLlmBudgetForIp(broken, '198.51.100.1', T0)).toBe(false)
   })
 })

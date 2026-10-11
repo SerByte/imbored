@@ -13,12 +13,13 @@ import {
   upsertGamesMeta,
 } from '@/lib/db'
 import { playtimeHidden } from '@/lib/playtime'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRatesInOrder, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { isUntouched } from '@/lib/recommend'
 import {
-  currentSteamId,
+  currentSession,
   getDb,
   isDemoId,
+  isWriter,
   nowSec,
   steamApiKey,
 } from '@/lib/server'
@@ -50,30 +51,52 @@ const POOL_LIMIT = 200
  * WARMUP_MAX_CALLS в lib/warmup.ts), поэтому лимит обязан этот сценарий
  * пропускать целиком и с запасом. Ловит он другое: второй параллельный прогрев
  * из соседней вкладки и клиента, который из-за ошибки крутит цикл без конца.
+ *
+ * Личный потолок — на того, кто спрашивает, а не на steamid (personalRateId в
+ * lib/ratelimit). Сессию по ссылке выдают на любой публичный профиль, и при
+ * общем счётчике чужой запирал владельцу прогрев — а без прогрева не
+ * открываются ни /play, ни /daily. Writer делит потолок между своими
+ * устройствами, сессия по ссылке считается сама по себе.
+ *
+ * А раз сессия по ссылке — свой счётчик, рядом стоит потолок адреса: каждый
+ * вызов — пачка GetItems в Steam, и свежие сессии с одного адреса множили бы
+ * её без предела. Втрое выше личного, как у подбора: за общим NAT прогрев
+ * может идти у нескольких человек разом.
  */
 const PREPARE_LIMIT = 200
+const PREPARE_IP_LIMIT = 600
 const PREPARE_WINDOW_SEC = 300
 
 /**
  * Пошагово прогревает каталог метаданных под библиотеку пользователя.
  * Клиент вызывает в цикле, пока remaining > 0 (каждый вызов ~10 сек).
  */
-export async function POST() {
+export async function POST(req: Request) {
   // Первой строкой: бюджет работы после ответа считается от начала вызова
   const startedAt = Date.now()
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  // Сессия целиком, а не один steamid: личному потолку нужны её строка и
+  // происхождение (personalRateId). Всё остальное — по steamid, как прежде
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
 
   const db = await getDb()
   const now = nowSec()
 
-  const gate = await checkRate(db, {
-    bucket: 'prepare',
-    id: steamid,
-    limit: PREPARE_LIMIT,
-    windowSec: PREPARE_WINDOW_SEC,
-    nowSec: now,
-  })
+  // Личный гейт первым: отказанный по нему запрос не съедает потолок адреса
+  const gate = await checkRatesInOrder(
+    db,
+    [
+      {
+        bucket: 'prepare',
+        id: personalRateId(session, isWriter(session)),
+        limit: PREPARE_LIMIT,
+        windowSec: PREPARE_WINDOW_SEC,
+      },
+      { bucket: 'prepare-ip', id: clientIp(req.headers), limit: PREPARE_IP_LIMIT, windowSec: PREPARE_WINDOW_SEC },
+    ],
+    now,
+  )
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const snapshot = await getLatestSnapshot(db, steamid)

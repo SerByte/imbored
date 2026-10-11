@@ -10,8 +10,10 @@ import {
   upsertSemantics,
   type Db,
 } from '@/lib/db'
+import { llmIpDailyLimit } from '@/lib/llmcap'
 import { pickShareOk } from '@/lib/pickshare'
-import { nowSec, sessionSecret } from '@/lib/server'
+import { SESSION_COOKIE, nowSec, sessionSecret } from '@/lib/server'
+import { setTestCookie } from '@/lib/testing/headers'
 import { HERO_SLIDES } from '@/lib/shots'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { SCORE_FACTORS, type GameSemantics } from '@/lib/types'
@@ -127,6 +129,42 @@ describe('/api/recommend: потолок частоты', () => {
     // Соседний адрес не задет
     expect((await ask('203.0.113.8')).status).toBe(409)
     await vi.waitFor(async () => expect(await counted()).toEqual([['ratelimited:recommend-ip', 1]]))
+  })
+
+  /*
+   * Личный потолок — не «на steamid», а на того, кто спрашивает
+   * (personalRateId в lib/ratelimit). Сессию по ссылке /api/connect выдаёт на
+   * любой публичный профиль, и при общем на steamid счётчике чужой человек
+   * двадцатью запросами в начале окна запирал владельцу /play на всё окно.
+   */
+  test('чужая сессия по ссылке выбрала свой потолок — владельцу подбор не заперт', async () => {
+    const owner = await signIn(db, STEAMID, { verified: true })
+    // Чужой вставил ссылку на тот же профиль — кука теперь его
+    await signIn(db, STEAMID)
+    for (let i = 0; i < 20; i++) expect((await ask('198.51.100.1')).status).toBe(409)
+    expect((await ask('198.51.100.1')).status).toBe(429)
+    // Владелец со своего адреса: дальше потолка, к библиотеке (её нет — 409)
+    setTestCookie(SESSION_COOKIE, owner.token)
+    expect((await ask('203.0.113.7')).status).toBe(409)
+  })
+
+  test('две сессии по ссылке на один профиль — у каждой свой потолок', async () => {
+    // Владелец сам вошёл по ссылке, как входит большинство: чужая ссылка на
+    // его профиль не делит с ним счёт так же, как не делит с вошедшим через Steam
+    const mine = await signIn(db, STEAMID)
+    await signIn(db, STEAMID)
+    for (let i = 0; i < 20; i++) expect((await ask('198.51.100.1')).status).toBe(409)
+    expect((await ask('198.51.100.1')).status).toBe(429)
+    setTestCookie(SESSION_COOKIE, mine.token)
+    expect((await ask('203.0.113.7')).status).toBe(409)
+  })
+
+  test('вошедший через Steam на двух устройствах — потолок один: это один человек', async () => {
+    const phone = await signIn(db, STEAMID, { verified: true })
+    await signIn(db, STEAMID, { verified: true })
+    for (let i = 0; i < 20; i++) expect((await ask()).status).toBe(409)
+    setTestCookie(SESSION_COOKIE, phone.token)
+    expect((await ask('203.0.113.8')).status).toBe(429)
   })
 })
 
@@ -440,6 +478,50 @@ describe('/api/recommend: затравка seed', () => {
     expect(body.picks.length).toBeGreaterThan(0)
     expect(body.engine).toBe('heuristic')
     expect(calls.filter((u) => u.includes('anthropic'))).toEqual([])
+  })
+
+  /*
+   * Доля одного адреса в суточном бюджете (llmIpDailyLimit в lib/llmcap).
+   * Без неё скрипт с одного адреса с тремя сессиями по ссылке выбирал весь
+   * LLM_DAILY_CAP за несколько часов, и до полуночи UTC модель молчала для
+   * всех — и для подбора, и для пересказов патчей.
+   */
+  test('адрес выбрал свою долю бюджета модели — эвристика без 429, соседний адрес идёт к модели', async () => {
+    const calls = await setup()
+    vi.stubEnv('LLM_DAILY_CAP', '100')
+    const share = llmIpDailyLimit()
+    const toModel = () => calls.filter((u) => u.includes('anthropic')).length
+    const askFrom = async (ip: string) => {
+      const before = toModel()
+      const res = await POST(post('/api/recommend', { mood: MOOD }, { 'x-forwarded-for': ip }))
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { picks: unknown[]; engine: string }
+      expect(body.picks.length).toBeGreaterThan(0)
+      return { modelCalled: toModel() > before, engine: body.engine }
+    }
+    for (let i = 0; i < share; i++) expect((await askFrom('198.51.100.1')).modelCalled, `запрос ${i + 1}`).toBe(true)
+    expect(await askFrom('198.51.100.1')).toEqual({ modelCalled: false, engine: 'heuristic' })
+    expect((await askFrom('203.0.113.9')).modelCalled).toBe(true)
+  })
+
+  // Квота демо — пара настоящих подборок в сутки. Тратить её запросом, по
+  // которому модель всё равно не позвали бы (ключа нет), значит отдать гостю
+  // шаблон там, где модель могла бы ответить
+  test('демо без ключа модели не тратит ни свою пару вызовов, ни долю адреса', async () => {
+    await setup()
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    const demo = await signInAs(db, 'demo')
+    await saveLibrarySnapshot(
+      db,
+      demo,
+      [10, 11, 12, 13].map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      nowSec(),
+    )
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { engine: string }).engine).toBe('heuristic')
+    const keys = (await db.execute('SELECT key FROM rate_limits')).rows.map((r) => String(r.key))
+    expect(keys.filter((k) => k.startsWith('llm-'))).toEqual([])
   })
 
   test('незнакомая затравка — 409 nocandidates, мусор в поле — обычная выдача', async () => {

@@ -20,7 +20,7 @@ import { refreshDealsWithin } from '@/lib/deals'
 import { dayLabel } from '@/lib/freshness'
 import { heuristicPicks, reasonPrice } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRatesInOrder, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { sharedTasteTags } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
@@ -35,8 +35,20 @@ const DISCOVERY_CARDS = 3
  * Turso: снапшот, метаданные библиотеки, фидбек, статистика тегов и пул на
  * четыре сотни кандидатов. Десяти обращений в час хватает и на перезагрузки, и
  * на несколько устройств, но не на цикл.
+ *
+ * Личный потолок — на того, кто спрашивает, а не на steamid (personalRateId
+ * в lib/ratelimit). «Несколько устройств» — это writer: вошедший через Steam
+ * делит десятку между телефоном и ноутбуком. Сессия по ссылке считается сама
+ * по себе: её выдают на любой публичный профиль, и при общем счётчике чужой
+ * десятью запросами запирал владельцу /daily на час, час за часом.
+ *
+ * А раз сессия по ссылке — свой счётчик, рядом стоит потолок адреса: без него
+ * свежие сессии с одного адреса (/api/connect чеканит их до сорока восьми в
+ * час) множили бы обращения. Втрое выше личного — как у /api/recommend и
+ * /api/explore: соседям по NAT своя игра дня нужна так же.
  */
 const DAILY_LIMIT = 10
+const DAILY_IP_LIMIT = 30
 const DAILY_WINDOW_SEC = 3600
 
 /*
@@ -70,14 +82,17 @@ export async function GET(req: Request) {
    */
   const dateStr = dayKey(now)
   const cachedOnly = new URL(req.url).searchParams.get('cached') === '1'
+  // Личный гейт первым: отказанный по нему запрос не съедает потолок адреса
+  const ip = clientIp(req.headers)
   const dailyGate = () =>
-    checkRate(db, {
-      bucket: 'daily',
-      id: steamid,
-      limit: DAILY_LIMIT,
-      windowSec: DAILY_WINDOW_SEC,
-      nowSec: now,
-    })
+    checkRatesInOrder(
+      db,
+      [
+        { bucket: 'daily', id: personalRateId(session, writer), limit: DAILY_LIMIT, windowSec: DAILY_WINDOW_SEC },
+        { bucket: 'daily-ip', id: ip, limit: DAILY_IP_LIMIT, windowSec: DAILY_WINDOW_SEC },
+      ],
+      now,
+    )
   // Обычный запрос тратит лимит в любом случае — запись и гейт читаются
   // одним заходом. «Только если уже выбрано» — по очереди: его промах лимит
   // не тратит (см. ниже), значит гейт там нельзя звать заранее.

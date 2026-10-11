@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { getGamesMeta, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
 import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
+import { SESSION_COOKIE } from '@/lib/server'
+import { setTestCookie } from '@/lib/testing/headers'
 import { freshDb, signIn } from '@/lib/testing/route'
 import { POST } from './route'
 
@@ -46,6 +48,10 @@ const steamUp = vi.fn(async (url: string) => {
 /** Steam, который нас ограничивает. */
 const steamLimited = vi.fn(async () => new Response('', { status: 429 }))
 
+/** Вызов прогрева; адрес — для потолка адреса (PREPARE_IP_LIMIT) */
+const prepare = (ip = '203.0.113.7') =>
+  POST(new Request('http://localhost/api/prepare', { method: 'POST', headers: { 'x-forwarded-for': ip } }))
+
 let db: Db
 
 beforeEach(async () => {
@@ -64,7 +70,7 @@ afterEach(() => {
 describe('/api/prepare: stalled', () => {
   test('Steam ограничивает — остаток прежний и stalled: true', async () => {
     vi.stubGlobal('fetch', steamLimited)
-    const res = await POST()
+    const res = await prepare()
     expect(res.status).toBe(200)
     const body = (await res.json()) as { remaining: number; stalled: boolean }
     expect(body.remaining).toBeGreaterThan(0)
@@ -75,7 +81,7 @@ describe('/api/prepare: stalled', () => {
     resetSwallowed()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.stubGlobal('fetch', steamLimited)
-    await POST()
+    await prepare()
     const lines = warn.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
     warn.mockRestore()
     expect(lines).toContainEqual(
@@ -85,7 +91,7 @@ describe('/api/prepare: stalled', () => {
 
   test('Steam отвечает — работа движется и stalled: false', async () => {
     vi.stubGlobal('fetch', steamUp)
-    const res = await POST()
+    const res = await prepare()
     const body = (await res.json()) as { remaining: number; stalled: boolean }
     expect(body.stalled).toBe(false)
     expect(body.remaining).toBe(0)
@@ -131,7 +137,7 @@ describe('/api/prepare: онлайн после ответа', () => {
     )
 
     const answered = await Promise.race([
-      POST().then((res) => res.json() as Promise<{ remaining: number }>),
+      prepare().then((res) => res.json() as Promise<{ remaining: number }>),
       new Promise<'ждёт Steam'>((r) => setTimeout(() => r('ждёт Steam'), 4_000)),
     ])
     expect(answered).toEqual(expect.objectContaining({ remaining: 0 }))
@@ -145,8 +151,53 @@ describe('/api/prepare: онлайн после ответа', () => {
 
   test('кураторский пул других магазинов прогрев больше не сеет', async () => {
     vi.stubGlobal('fetch', steamUp)
-    await POST()
+    await prepare()
     const res = await db.execute('SELECT COUNT(*) AS n FROM games WHERE appid < 0')
     expect(Number(res.rows[0].n)).toBe(0)
+  })
+})
+
+/*
+ * Потолок частоты. Личный — на того, кто спрашивает (personalRateId в
+ * lib/ratelimit): сессию по ссылке /api/connect выдаёт на любой публичный
+ * профиль, и общий на steamid счётчик позволял чужому запереть владельцу
+ * прогрев, а с ним /play и /daily. А раз сессия по ссылке — свой счётчик,
+ * рядом обязан стоять потолок адреса: иначе свежие сессии с одного адреса
+ * множили бы пачки GetItems в Steam.
+ *
+ * Профиль здесь — без снапшота: каждый пропущенный вызов — дешёвый 409, но в
+ * потолок засчитан.
+ */
+describe('/api/prepare: потолок частоты', () => {
+  const OTHER = '76561197960287939'
+  const T0 = 1_760_000_000
+
+  // Окно фиксированное, по часам: граница окна посреди теста обнулила бы счёт
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0 * 1000)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('чужая сессия по ссылке выбрала свой потолок — владельцу прогрев не заперт', async () => {
+    const owner = await signIn(db, OTHER, { verified: true })
+    await signIn(db, OTHER)
+    for (let i = 0; i < 200; i++) expect((await prepare('198.51.100.1')).status).toBe(409)
+    expect((await prepare('198.51.100.1')).status).toBe(429)
+    setTestCookie(SESSION_COOKIE, owner.token)
+    expect((await prepare('203.0.113.7')).status).toBe(409)
+  })
+
+  test('свежие сессии по ссылке с одного адреса упираются в потолок адреса', async () => {
+    for (let s = 0; s < 3; s++) {
+      await signIn(db, OTHER)
+      for (let i = 0; i < 200; i++) expect((await prepare('198.51.100.1')).status).toBe(409)
+    }
+    await signIn(db, OTHER)
+    expect((await prepare('198.51.100.1')).status).toBe(429)
+    expect((await prepare('198.51.100.2')).status).toBe(409)
   })
 })
