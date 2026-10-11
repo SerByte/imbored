@@ -41,8 +41,11 @@ export function liveLineFrom(raw: unknown): LiveLine {
   if (planned) {
     // На страницу игры, а не прямо в steam://: строка стоит и на телефоне, а
     // «Запустить» там дорисовывает владельцу OwnedLaunch — и этот запуск
-    // закрывает план (plan в /api/session/owns)
-    return { href: `/game/${planned.appid}`, text: `${planLine(planned)} — запустить?` }
+    // закрывает план (plan в /api/session/owns). Без «запустить?»: на
+    // телефоне OwnedLaunch не рисуется вовсе (steam:// там мёртв), и вопрос
+    // вёл бы к странице без такой кнопки — тот же упрёк, от которого строку
+    // плана на /play прячет pointer-fine. «Ждёт» правда на обоих устройствах
+    return { href: `/game/${planned.appid}`, text: `${planLine(planned)} — ждёт тебя` }
   }
   if (daily && typeof daily === 'object') {
     const { appid, name } = daily as Record<string, unknown>

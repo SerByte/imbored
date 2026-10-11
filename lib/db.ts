@@ -4853,6 +4853,20 @@ function feedbackArgs(entry: FeedbackEntry, nowSec: number) {
  * ответом про игру не считается — как и в cooldownOf. Строка из ответа на
  * вопрос и строка кнопкой — разные (см. FEEDBACK_DEDUP_SEC).
  *
+ * Запуск после плана на вечер (lib/eveningplan.ts) — тоже не повтор:
+ * latestEveningPlan закрывает план только строкой запуска НОВЕЕ плана, и
+ * проглоченный запуск оставлял бы «Ставил «X» на загрузку» на главной и на
+ * /play до конца срока, хотя человек уже сыграл. А бывает это обычным
+ * вечером: «Запустить» у героя в девять, через минуту «Поставь на загрузку»
+ * (игра не стояла) — и запуск по плану назавтра в восемь попадал в сутки
+ * первого. Лишний запуск на план вкусу не вредит: профиль сводит оценки к
+ * последней на (игру, действие).
+ *
+ * И переход в магазин под пальцем ('launched' с intent 'store': «Открыть в
+ * Steam» у своей на телефоне) схлопывается только с такими же. Он план не
+ * закрывает, а настоящий запуск вечером на компьютере — закрывает, и
+ * проглоти его дедуп за дневное касание телефона — план бы так и висел.
+ *
  * when — ещё одно условие вставки: им ответ «как тебе?» (answerOutcome)
  * пишет «зашло» в той же пачке, что и сам ответ, и тем же текстом дедупа.
  */
@@ -4868,11 +4882,16 @@ function positiveFeedbackInsert(
             SELECT 1 FROM feedback f
             WHERE f.steamid = ? AND f.appid = ? AND f.action = ? AND f.created_at > ?
               AND (json_extract(f.ctx_json, '$.intent') IS 'ask') = (? IS 'ask')
+              AND (json_extract(f.ctx_json, '$.intent') IS 'store') = (? IS 'store')
               AND NOT EXISTS (
                 SELECT 1 FROM feedback s
                 WHERE s.steamid = f.steamid AND s.appid = f.appid
-                  AND s.action = 'skipped' AND s.reason IS NOT 'spin'
                   AND s.created_at >= f.created_at
+                  AND (
+                    (s.action = 'skipped' AND s.reason IS NOT 'spin')
+                    OR (f.action = 'launched' AND s.action = 'opened'
+                        AND json_extract(s.ctx_json, '$.intent') IN (${PLAN_INTENTS_SQL}))
+                  )
               )
           )${when ? ` AND ${when.sql}` : ''}`,
     args: [
@@ -4881,6 +4900,7 @@ function positiveFeedbackInsert(
       entry.appid,
       entry.action,
       nowSec - FEEDBACK_DEDUP_SEC,
+      entry.ctx?.intent ?? null,
       entry.ctx?.intent ?? null,
       ...(when?.args ?? []),
     ],
@@ -5213,6 +5233,14 @@ export async function unlikeGame(db: Db, steamid: string, appid: number): Promis
  * открытая карточка — тоже: это не «передумал». Позже — по id, а не по
  * секундам: запуск в ту же секунду, что и план, всё равно случился после.
  *
+ * Запуск — настоящий: «Открыть в Steam» у своей на телефоне пишется
+ * 'launched' с intent 'store' (исход совета ему нужен), но открывает он
+ * страницу магазина, а не игру. А это ровно то, что делают после «Сыграю
+ * вечером на ПК» — ставят игру на загрузку из приложения Steam, — и такой
+ * «запуск» убивал бы только что поставленный план. Правило то же, что у
+ * closesPlan в lib/eveningplan.ts: по нему /play убирает строку плана, не
+ * дожидаясь сервера, и разъехаться они не должны (lib/db.test.ts).
+ *
  * Имя — из каталога, как у pendingOutcomeAsk: игры там нет — и плана нет,
  * строка «Ставил «Игра 123» на загрузку» хуже, чем никакой. Чтение — по
  * idx_feedback_steamid: свои строки за полтора дня, и «закрыт ли позже» —
@@ -5239,7 +5267,11 @@ export async function latestEveningPlan(
                SELECT 1 FROM feedback l
                 WHERE l.steamid = ?1 AND l.created_at >= f.created_at
                   AND l.appid = f.appid AND l.id > f.id
-                  AND (l.action IN ('launched', 'banned') OR (l.action = 'skipped' AND l.reason IS NOT 'spin'))
+                  AND (
+                    (l.action = 'launched' AND json_extract(l.ctx_json, '$.intent') IS NOT 'store')
+                    OR l.action = 'banned'
+                    OR (l.action = 'skipped' AND l.reason IS NOT 'spin')
+                  )
              )
            ORDER BY f.created_at DESC, f.id DESC LIMIT 1`,
     args: [steamid, nowSec - PLAN_TTL_SEC, appid],

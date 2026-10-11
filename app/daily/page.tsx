@@ -1,6 +1,5 @@
 'use client'
 
-import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -24,6 +23,7 @@ import { RefundNote } from '@/components/RefundNote'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
+import { TonightButton, useWarmTonight } from '@/components/TonightLazy'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
 import type { DailyYesterday } from '@/lib/daily'
@@ -128,16 +128,6 @@ type DailyResponse = {
   nowSec: number
 }
 
-/*
- * «Сыграю вечером на ПК» (lib/eveningplan.ts) — лениво: строка нужна только
- * своей игре и только под пальцем, а маршрут стоит у потолка бюджета первой
- * загрузки (bundle-budget.json). Рантайм next/dynamic здесь уже есть — его
- * везёт HeroShots, так что обёртка стоит десятки байт, а не килобайт.
- */
-const TonightButton = dynamic(() => import('@/components/TonightButton').then((m) => m.TonightButton), {
-  ssr: false,
-})
-
 /**
  * Отзыв об игре дня. Тот же роут и та же дисциплина, что у sendFeedback на
  * /play: промис не отклоняется, needsteam переводит страницу в режим чтения —
@@ -216,6 +206,8 @@ export default function DailyPage() {
     useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
   /** Демо-личность: над героем полоса «это чужая демо-библиотека» (DemoBar) */
   const demo = useDemoSession()
+  // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
+  useWarmTonight()
   /**
    * Запуск с этой вкладки, про который пора спросить «не зацепило?» (см.
    * lib/launchmemo.ts) — тот же снимок, что на /play. Про какую игру
@@ -659,9 +651,17 @@ export default function DailyPage() {
                 <SteamLaunch
                   appid={hero.appid}
                   // Запуск — не «Зашло»: как и на /play, он же заводит исход
-                  // совета, который сверят со следующим снапшотом
-                  onClick={() =>
-                    void sendFeedback(hero.appid, 'launched', undefined, ctxOf(hero, 'launch'))
+                  // совета, который сверят со следующим снапшотом. Под пальцем
+                  // это магазин, а не запуск: план на вечер он не закрывает
+                  // (lib/eveningplan.ts) — на телефоне его жмут как раз после
+                  // «Сыграю вечером на ПК», ставить игру на загрузку
+                  onClick={(via) =>
+                    void sendFeedback(
+                      hero.appid,
+                      'launched',
+                      undefined,
+                      ctxOf(hero, via === 'store' ? 'store' : 'launch'),
+                    )
                   }
                   // Засекаем только настоящий запуск: через десять минут
                   // вернувшегося спросим, зацепило ли (см. StopAsk выше)

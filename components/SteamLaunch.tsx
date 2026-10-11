@@ -3,6 +3,9 @@
 import { Icon } from '@/components/Icon'
 import { track } from '@/lib/track'
 
+/** Какой веткой нажата кнопка: steam:// или магазин под пальцем (см. onClick) */
+export type LaunchVia = 'steam' | 'store'
+
 /**
  * Кнопка «играть».
  *
@@ -40,6 +43,12 @@ import { track } from '@/lib/track'
  * спрашивать «не зацепило?» того, кто на телефоне всего лишь открыл страницу
  * магазина, — спрашивать про игру, в которую он не играл.
  *
+ * onClick получает ветку: 'steam' — ссылка steam://, 'store' — магазин под
+ * пальцем. Оценку пишут оба нажатия, но магазинное — с intent 'store': оно
+ * не запуск, и плана на вечер не закрывает (lib/eveningplan.ts). А нажимают
+ * его как раз после «Сыграю вечером на ПК» — поставить игру на загрузку из
+ * приложения Steam, о чём и говорит строка про загрузку ниже.
+ *
  * mobileLabel={null} — на тач-устройстве кнопки нет вовсе. Это для мест, где
  * ссылка на магазин уже стоит рядом (страница игры): там мобильная ветка
  * была бы её точной копией.
@@ -69,7 +78,7 @@ export function SteamLaunch({
   mode?: 'run' | 'install'
   label?: string
   mobileLabel?: string | null
-  onClick?: () => void
+  onClick?: (via: LaunchVia) => void
   onLaunch?: () => void
   /**
    * Треугольник «играть» перед подписью — у главной кнопки героя. Только у
@@ -83,7 +92,7 @@ export function SteamLaunch({
       <a
         href={`steam://${mode}/${appid}`}
         onClick={() => {
-          onClick?.()
+          onClick?.('steam')
           if (mode === 'run') onLaunch?.()
           track('launch_click')
         }}
@@ -101,7 +110,7 @@ export function SteamLaunch({
             target="_blank"
             rel="noreferrer"
             onClick={() => {
-              onClick?.()
+              onClick?.('store')
               track('launch_click')
             }}
             className={`inline-block pointer-fine:hidden ${className}`}

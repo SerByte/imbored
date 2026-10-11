@@ -150,9 +150,10 @@ import {
 import { ROOM_KICK_SEC } from './room'
 import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
-import { FEEDBACK_ACTIONS } from './feedbackkinds'
+import { FEEDBACK_ACTIONS, type FeedbackAction, type SkipReason } from './feedbackkinds'
+import type { CtxIntent } from './feedbackctx'
 import { OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, type OutcomeVerdict } from './outcome'
-import { PLAN_TTL_SEC } from './eveningplan'
+import { PLAN_TTL_SEC, closesPlan } from './eveningplan'
 import { OTHER_STORE_GAMES } from './otherstores'
 import { deriveSemantics } from './semantics'
 import { SESSION_TOUCH_AFTER_SEC } from './sessions'
@@ -4550,10 +4551,6 @@ describe('семантика игр', () => {
 })
 
 /**
- * Исход совета (lib/outcome.ts): запуск пишет минуты до, следующий снапшот —
- * минуты после, и по заметно сыгранному спрашивают «как тебе?».
- */
-/**
  * «План на вечер» (lib/eveningplan.ts): игра, поставленная на загрузку или
  * отложенная с телефона, возвращается одной строкой, пока план жив.
  */
@@ -4624,13 +4621,111 @@ describe('план на вечер', () => {
     expect(await latestEveningPlan(db, ME, NOW)).toMatchObject({ appid: 570 })
   })
 
-  test('новый план той же игры после закрытого — снова план', async () => {
+  test('новый план той же игры после закрытого — снова план, и его закрывает второй запуск', async () => {
     const db = await withGames()
     await plan(db, 620, 'install', NOW - 2 * HOUR)
     await logFeedback(db, { steamid: ME, appid: 620, action: 'launched' }, NOW - HOUR)
     expect(await latestEveningPlan(db, ME, NOW)).toBeNull()
     await plan(db, 620, 'tonight', NOW - 60)
     expect(await latestEveningPlan(db, ME, NOW)).toEqual({ appid: 620, name: 'Игра 620', intent: 'tonight' })
+    // Тот же вечер, первый запуск — меньше суток назад: дедуп запусков
+    // проглотил бы второй, и план висел бы до конца срока
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched' }, NOW)
+    expect(await latestEveningPlan(db, ME, NOW)).toBeNull()
+  })
+
+  /*
+   * Обычный вечер: «Запустить» у героя в девять, игра не стояла — Steam
+   * предложил её поставить, и через минуту «Поставь на загрузку». Назавтра в
+   * семь — «Запустить» по плану. Первый запуск меньше суток назад, и без
+   * сброса дедупа планом второй не записался бы: план не закрыт, «Ставил «X»
+   * на загрузку» висит на главной, пока человек в неё играет.
+   */
+  test('запуск после плана пишется, даже если за сутки уже был: иначе план не закрыть', async () => {
+    const db = await withGames()
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched' }, NOW - 22 * HOUR)
+    await plan(db, 620, 'install', NOW - 22 * HOUR + 60)
+    expect(await latestEveningPlan(db, ME, NOW)).toMatchObject({ appid: 620 })
+    await logFeedback(
+      db,
+      { steamid: ME, appid: 620, action: 'launched', ctx: { slot: 'plan', intent: 'launch' } },
+      NOW,
+    )
+    expect(await latestEveningPlan(db, ME, NOW)).toBeNull()
+    // Плана между ними нет — повтор схлопывается, как и прежде
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched' }, NOW + 60)
+    const launches = await db.execute("SELECT id FROM feedback WHERE action = 'launched'")
+    expect(launches.rows).toHaveLength(2)
+  })
+
+  /*
+   * «Сыграю вечером на ПК», потом «Открыть в Steam» — поставить игру на
+   * загрузку из приложения, как и советует строка под героем. Магазинное
+   * касание пишется 'launched' (исход совета), но с intent 'store': план оно
+   * не закрывает. А настоящий запуск вечером на компьютере — закрывает, хотя
+   * касание было меньше суток назад: свой дедуп у каждого.
+   */
+  test('«Открыть в Steam» с телефона план не закрывает, а вечерний запуск после него — закрывает', async () => {
+    const db = await withGames()
+    await plan(db, 620, 'tonight', NOW - 10 * HOUR)
+    const store = { source: 'play', slot: 'hero', intent: 'store' } as const
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched', ctx: store }, NOW - 10 * HOUR + 30)
+    expect(await latestEveningPlan(db, ME, NOW)).toEqual({ appid: 620, name: 'Игра 620', intent: 'tonight' })
+    // Повторное касание — тот же переход, дедуп прежний
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched', ctx: store }, NOW - 10 * HOUR + 90)
+    await logFeedback(
+      db,
+      { steamid: ME, appid: 620, action: 'launched', ctx: { source: 'play', slot: 'plan', intent: 'launch' } },
+      NOW,
+    )
+    expect(await latestEveningPlan(db, ME, NOW)).toBeNull()
+    const rows = await db.execute(
+      "SELECT json_extract(ctx_json, '$.intent') AS intent FROM feedback WHERE action = 'launched' ORDER BY id",
+    )
+    expect(rows.rows.map((r) => r.intent)).toEqual(['store', 'launch'])
+  })
+
+  /*
+   * /play убирает строку плана сам, едва оценка записана (closesPlan), а
+   * сервер решает по SQL latestEveningPlan. Разъедутся — строка либо
+   * пропадёт у живого плана, либо останется у закрытого. Поэтому каждой
+   * парой против базы.
+   */
+  test('closesPlan и latestEveningPlan закрывают план одним и тем же', async () => {
+    const db = await withGames()
+    const cases: Array<{ action: FeedbackAction; reason?: SkipReason; intent?: CtxIntent }> = [
+      { action: 'launched' },
+      { action: 'launched', intent: 'launch' },
+      { action: 'launched', intent: 'store' },
+      { action: 'banned' },
+      { action: 'banned', reason: 'done' },
+      { action: 'skipped' },
+      { action: 'skipped', reason: 'notnow' },
+      { action: 'skipped', reason: 'tired' },
+      { action: 'skipped', reason: 'spin' },
+      { action: 'skipped', reason: 'explore' },
+      { action: 'liked' },
+      { action: 'opened' },
+      { action: 'opened', intent: 'details' },
+    ]
+    for (const [i, c] of cases.entries()) {
+      const appid = 20_000 + i
+      await upsertGamesMeta(db, [{ ...META, appid, name: `Игра ${appid}` }], NOW)
+      await plan(db, appid, 'install', NOW - HOUR)
+      await logFeedback(
+        db,
+        {
+          steamid: ME,
+          appid,
+          action: c.action,
+          ...(c.reason ? { reason: c.reason } : {}),
+          ...(c.intent ? { ctx: { intent: c.intent } } : {}),
+        },
+        NOW - HOUR + 60,
+      )
+      const closed = (await latestEveningPlan(db, ME, NOW, appid)) === null
+      expect(closed, JSON.stringify(c)).toBe(closesPlan(c.action, c.reason, c.intent))
+    }
   })
 
   test('не план: обычное открытие, чужой план и игра без строки в каталоге', async () => {
@@ -4648,6 +4743,10 @@ describe('план на вечер', () => {
   })
 })
 
+/**
+ * Исход совета (lib/outcome.ts): запуск пишет минуты до, следующий снапшот —
+ * минуты после, и по заметно сыгранному спрашивают «как тебе?».
+ */
 describe('исход совета', () => {
   const ME = '76561198000000001'
   const DAY = 86_400

@@ -1,7 +1,6 @@
 'use client'
 
 import { AnimatePresence, m } from 'framer-motion'
-import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -22,8 +21,9 @@ import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
 import { DiscountCorner, DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
-import { SteamLaunch } from '@/components/SteamLaunch'
+import { SteamLaunch, type LaunchVia } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
+import { TonightButton, useWarmTonight } from '@/components/TonightLazy'
 import { WarmupScreen, type ChosenGame } from '@/components/WarmupScreen'
 import { HeroTitle } from '@/components/HeroTitle'
 import { HeroTrailer } from '@/components/HeroTrailer'
@@ -32,7 +32,7 @@ import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
-import { planLine, type EveningPlan } from '@/lib/eveningplan'
+import { closesPlan, planBeside, planLine, type EveningPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { reviewsBrief } from '@/lib/gametraits'
@@ -289,23 +289,14 @@ const CHOSEN_MS = 1300
  */
 const LEAVE_MS = 320
 
-/*
- * «Сыграю вечером на ПК» (lib/eveningplan.ts) — лениво: строка нужна только
- * своей игре и только под пальцем, а маршрут стоит у потолка бюджета первой
- * загрузки (bundle-budget.json). Рантайм next/dynamic здесь уже есть — его
- * везёт HeroShots, так что обёртка стоит десятки байт, а не килобайт.
- */
-const TonightButton = dynamic(() => import('@/components/TonightButton').then((m) => m.TonightButton), {
-  ssr: false,
-})
-
 /**
  * Строка с запуском под героем — «Продолжить» и план на вечер
  * (lib/eveningplan.ts). Одна разметка на обе: вид у них один, а /play стоит у
  * потолка бюджета (bundle-budget.json), и вторая копия классов весила бы
  * столько же, сколько сама строка. fineOnly — только там, где кнопка
  * запускает (pointer-fine, признак развилки SteamLaunch): без кнопки строка
- * плана была бы упрёком, а не дверью.
+ * плана была бы упрёком, а не дверью. onLaunch получает ветку нажатия
+ * (launchIntent ниже).
  */
 function LaunchRow({
   appid,
@@ -317,7 +308,7 @@ function LaunchRow({
   appid: number
   label: string
   fineOnly?: boolean
-  onLaunch: () => void
+  onLaunch: (via: LaunchVia) => void
   children: ReactNode
 }) {
   return (
@@ -335,6 +326,16 @@ function LaunchRow({
     </div>
   )
 }
+
+/**
+ * Чем было нажатие «Запустить» у своей — для снимка к оценке: steam://run —
+ * запуск, «Открыть в Steam» под пальцем — переход в магазин. Оценка у обоих
+ * 'launched' (исход совета заводят оба), но магазинная — не запуск, и план на
+ * вечер она не закрывает: на телефоне её жмут как раз после «Сыграю вечером
+ * на ПК», чтобы поставить игру на загрузку из приложения Steam
+ * (lib/eveningplan.ts, closesPlan).
+ */
+const launchIntent = (via: LaunchVia): CtxIntent => (via === 'store' ? 'store' : 'launch')
 
 function Player({ say }: { say: (line: string) => void }) {
   const router = useRouter()
@@ -386,6 +387,8 @@ function Player({ say }: { say: (line: string) => void }) {
   const [continueGame, setContinueGame] = useState<ContinueGame | null>(null)
   /** План на вечер (lib/eveningplan.ts): поставленное на загрузку — строкой с запуском */
   const [plan, setPlan] = useState<EveningPlan | null>(null)
+  // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
+  useWarmTonight()
   /** Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера, строка над «Продолжить» */
   const [timeHidden, setTimeHidden] = useState(false)
   const [index, setIndex] = useState(0)
@@ -584,6 +587,15 @@ function Player({ say }: { say: (line: string) => void }) {
             // и говорит строкой, почему, — вместо «не получилось, нажми ещё
             // раз», после которого не получится никогда.
             if (await isNeedSteam(r)) writerStore.set(false)
+            // Оценка, закрывшая план на вечер на сервере, закрывает и строку
+            // плана (closesPlan — то же правило, что у latestEveningPlan):
+            // иначе она висела бы до новой выдачи и переживала бы уход в
+            // записи выдачи (lib/playcache). Только записанная — незаписанная
+            // план не закрыла. Функцией, а не по plan: замыкание у
+            // sendFeedback — от первого рендера
+            if (r.ok && closesPlan(action, reason, ctx?.intent)) {
+              setPlan((p) => (p?.appid === appid ? null : p))
+            }
             return r.ok
           })
           // Промис намеренно не отклоняется: вызывающий, которому исход не
@@ -1532,6 +1544,8 @@ function Player({ say }: { say: (line: string) => void }) {
 
   const pick = picks[Math.min(index, picks.length - 1)]
   const others = picks.filter((p) => p.appid !== pick.appid)
+  /** Строка плана на вечер — если его игры ещё нет на экране (planBeside) */
+  const planRow = roulette ? null : planBeside(plan, [pick.appid, cont?.appid])
   /*
    * «Уже прошёл» вместо безымянного бана — у заброшенного и знакомого, то
    * есть у того, во что он уже играл. Без достижений не отличить «прошёл» от
@@ -1958,9 +1972,10 @@ function Player({ say }: { say: (line: string) => void }) {
                   <SteamLaunch
                     appid={pick.appid}
                     // Запуск — не «Зашло»: раньше он писался как liked, и точность
-                    // подбора на /library росла от любого клика
-                    onClick={() =>
-                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroFrom, 'launch'))
+                    // подбора на /library росла от любого клика. Под пальцем это
+                    // магазин, а не запуск (launchIntent): план на вечер цел
+                    onClick={(via) =>
+                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroFrom, launchIntent(via)))
                     }
                     // Засекаем только настоящий запуск: через десять минут
                     // вернувшегося спросим, зацепило ли (см. StopAsk)
@@ -2385,17 +2400,24 @@ function Player({ say }: { say: (line: string) => void }) {
           «Продолжить» и тем же видом: это его решение, а не наша карточка.
           Только там, где кнопка запускает (pointer-fine — признак развилки
           SteamLaunch): на телефоне запускать нечем, и строка без кнопки была
-          бы упрёком. Не в рулетке и не когда план и есть герой — у героя свой
-          «Запустить». Запуск пишется как у «Продолжить», со слотом plan: он
-          закрывает план и заводит исход совета («Твои вечера»). */}
-      {plan && !roulette && plan.appid !== pick.appid && (
+          бы упрёком. Не в рулетке и не когда игра плана уже на экране — у
+          героя свой «Запустить», у «Продолжить» свой (planBeside). Запуск
+          пишется как у «Продолжить», со слотом plan: он закрывает план и
+          заводит исход совета («Твои вечера»). Записанный — убирает и строку
+          (closesPlan в sendFeedback), поэтому фокус с её кнопки сразу
+          переезжает к герою, как после любого ответа: иначе он упал бы в
+          body вместе со строкой. */}
+      {planRow && (
         <LaunchRow
-          appid={plan.appid}
+          appid={planRow.appid}
           label="Запустить"
           fineOnly
-          onLaunch={() => void sendFeedback(plan.appid, 'launched', undefined, ctxOf(null, 'plan', 'launch'))}
+          onLaunch={() => {
+            focusHero(true)
+            void sendFeedback(planRow.appid, 'launched', undefined, ctxOf(null, 'plan', 'launch'))
+          }}
         >
-          {planLine(plan)}
+          {planLine(planRow)}
         </LaunchRow>
       )}
 
@@ -2406,7 +2428,9 @@ function Player({ say }: { say: (line: string) => void }) {
         <LaunchRow
           appid={cont.appid}
           label="Продолжить"
-          onLaunch={() => void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))}
+          onLaunch={(via) =>
+            void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', launchIntent(via)))
+          }
         >
           Или продолжи <span className="font-extrabold text-ink">«{cont.name}»</span>
           {cont.recentHours > 0 && (
