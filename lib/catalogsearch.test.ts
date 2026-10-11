@@ -59,6 +59,21 @@ describe('индекс каталога: провод и чтение', () => {
     const got = readSearchIndex({ ids: [1, 1.5, -3, 4, 5], names: ['A', 'B', 'C', 7, 'E'] })
     expect(got?.map((e) => e.appid)).toEqual([1, 5])
   })
+
+  /*
+   * Пустой индекс отдаёт сборка без базы (app/search-index.json), и ISR
+   * держит его до суток. Прочитанный как «каталог пуст», он сутки отвечал бы
+   * «Ничего не нашлось» на «Dota 2»; как отказ — это «Каталог не загрузился»
+   * с кнопкой повтора.
+   */
+  test('пустой индекс — null, как сломанный: живого каталога без игр не бывает', () => {
+    expect(readSearchIndex({ ids: [], names: [] })).toBeNull()
+  })
+
+  test('индекс из одних битых строк — тоже null, а не пустой каталог', () => {
+    expect(readSearchIndex({ ids: [-1, 0, 2.5], names: ['A', 'B', 'C'] })).toBeNull()
+    expect(readSearchIndex({ ids: [7], names: ['  ™ '] })).toBeNull()
+  })
 })
 
 describe('поиск по каталогу', () => {
@@ -156,6 +171,24 @@ describe('запрос, набранный не в той раскладке', (
     const r = searchCatalog(index('Half-Life 2'), 'да')
     expect(r.games).toEqual([])
     expect(r.layout).toBeNull()
+  })
+
+  /*
+   * Подсказку видят и слышат в строке статуса: «… по «baldur s gate»» —
+   * свёртка без апострофа — выглядела опечаткой ровно там, где сказано, что
+   * искали. Сопоставление по-прежнему свёрнутое.
+   */
+  test('раскладку называют как набрано — с апострофом и дефисом, а не свёрнутой', () => {
+    const baldur = searchCatalog(index("Baldur's Gate 3"), 'ифдвгкэы пфеу')
+    expect(names(baldur)).toEqual(["Baldur's Gate 3"])
+    expect(baldur.layout).toBe("baldur's gate")
+    const halfLife = searchCatalog(index('Half-Life 2'), 'рфда-дшау')
+    expect(names(halfLife)).toEqual(['Half-Life 2'])
+    expect(halfLife.layout).toBe('half-life')
+  })
+
+  test('лишние пробелы в названной раскладке схлопнуты', () => {
+    expect(searchCatalog(index('The Witcher 3: Wild Hunt'), '  цшесрук   3 ').layout).toBe('witcher 3')
   })
 
   test('раскладка не названа, если найденное пришло без неё', () => {

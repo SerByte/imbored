@@ -53,11 +53,37 @@ describe('индекс каталога едет по требованию и о
   })
 })
 
+/*
+ * У Safari до 16 (iOS 15) нет AbortSignal.timeout. Прямой вызов бросал
+ * TypeError внутри try, и каждая попытка — повтор тоже — кончалась «Каталог
+ * не загрузился — проверь связь»: поиск на таких телефонах был мёртв
+ * навсегда и винил связь.
+ */
+describe('браузер без AbortSignal.timeout', () => {
+  test('индекс всё равно приезжает — без потолка, а не с исключением', async () => {
+    const fetch = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => ok(WIRE))
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('AbortSignal', { prototype: AbortSignal.prototype })
+    await requestCatalogIndex()
+    expect(getCatalogIndex().phase).toBe('ready')
+    expect(fetch.mock.calls[0][1]?.signal).toBeUndefined()
+  })
+
+  test('где timeout есть — у запроса потолок', async () => {
+    const fetch = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => ok(WIRE))
+    vi.stubGlobal('fetch', fetch)
+    await requestCatalogIndex()
+    expect(fetch.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)
+  })
+})
+
 describe('отказ и повтор', () => {
   test.each([
     ['ответ не 2xx', async () => new Response('нет', { status: 503 })],
     ['сеть упала', async () => Promise.reject(new TypeError('Failed to fetch'))],
     ['не индекс (страница ошибки вместо JSON)', async () => ok({ html: '<!doctype html>' })],
+    // сборка без базы собирает пустой индекс, ISR держит его до суток
+    ['пустой индекс', async () => ok({ ids: [], names: [] })],
   ])('%s — фаза failed, а не вечное «загружаю»', async (_, impl) => {
     vi.stubGlobal('fetch', vi.fn(impl))
     await requestCatalogIndex()

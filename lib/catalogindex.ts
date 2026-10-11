@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { readSearchIndex, SEARCH_INDEX_PATH, type SearchEntry, type SearchPhase } from './catalogsearch'
+import { cappedSignal } from './deckvote'
 
 /**
  * Индекс каталога в браузере: едет по первой просьбе и живёт до конца вкладки.
@@ -25,6 +26,13 @@ const IDLE: CatalogIndex = { phase: 'idle', entries: [] }
  * Сколько ждать индекс. ~64 КБ — секунда на 3G и несколько на плохой связи;
  * дольше — и строка «Загружаю каталог…» висела бы вечно, а кнопки повтора
  * человек так и не увидел бы.
+ *
+ * Потолок — через cappedSignal (lib/deckvote, модуль без импортов: чанк окна
+ * он не утяжелит), а не AbortSignal.timeout напрямую. У Safari до 16 (iOS 15)
+ * timeout нет, вызов бросал TypeError внутри try — и каждая попытка, повтор
+ * тоже, кончалась «Каталог не загрузился — проверь связь»: поиск на таких
+ * телефонах был мёртв навсегда, а винил связь. Без timeout запрос идёт без
+ * потолка — хуже, чем с ним, но индекс приезжает.
  */
 const INDEX_WAIT_MS = 20_000
 
@@ -55,13 +63,14 @@ export function subscribeCatalogIndex(onChange: () => void): () => void {
  *
  * Не JSON индекса — тоже отказ: вместо него может приехать страница ошибки
  * хостинга, и пустой поиск выглядел бы как «ничего не нашлось» на любой
- * запрос, а не как поломка, которую можно повторить.
+ * запрос, а не как поломка, которую можно повторить. Пустой индекс — отказ
+ * по той же причине (readSearchIndex отдаёт на него null).
  */
 export async function requestCatalogIndex(): Promise<void> {
   if (state.phase === 'loading' || state.phase === 'ready') return
   set({ phase: 'loading', entries: [] })
   try {
-    const res = await fetch(SEARCH_INDEX_PATH, { signal: AbortSignal.timeout(INDEX_WAIT_MS) })
+    const res = await fetch(SEARCH_INDEX_PATH, { signal: cappedSignal(INDEX_WAIT_MS) })
     if (!res.ok) throw new Error(`индекс каталога: HTTP ${res.status}`)
     const entries = readSearchIndex(await res.json())
     if (!entries) throw new Error('индекс каталога: не та форма')

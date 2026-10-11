@@ -54,17 +54,25 @@ const EMPTY: never[] = []
  */
 export function CatalogSearch({
   opener,
+  seed = '',
   onClose,
 }: {
   /** Кнопка, открывшая окно: на неё возвращается фокус */
   opener: RefObject<HTMLElement | null>
+  /**
+   * С чем окно открывается: набранное в подставку, пока чанк окна ехал
+   * (holdKeyboard в components/SearchLauncher), — клавиатура уже стояла
+   */
+  seed?: string
   onClose: () => void
 }) {
   const router = useRouter()
   const index = useCatalogIndex()
-  const [query, setQuery] = useState('')
+  // Потолок длины — как у поля: у подставки maxLength нет
+  const [query, setQuery] = useState(seed.slice(0, SEARCH_QUERY_MAX))
   const [active, setActive] = useState(-1)
   const overlayRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   /** Нажатие началось на затемнении — только тогда click по нему закрывает окно */
   const pressedScrim = useRef(false)
@@ -107,6 +115,11 @@ export function CatalogSearch({
    * обратно и фокус на кнопку-открывашку. Сначала фокус в поле, потом inert:
    * открывашка стоит в фоне, и инертность сбросила бы фокус с неё в <body>.
    * Порядок в очистке — как у Lightbox: в инертный узел фокус не встаёт.
+   *
+   * Если окно приехало чанком после нажатия, фокус в этот миг стоит в
+   * подставке кнопки (holdKeyboard в components/SearchLauncher): переход
+   * из поля в поле держит клавиатуру iPhone поднятой, хоть он и вне жеста, а
+   * подставка уходит по своему blur — до того, как фон станет инертным.
    */
   useEffect(() => {
     inputRef.current?.focus()
@@ -126,6 +139,27 @@ export function CatalogSearch({
       if (back?.isConnected) back.focus({ preventScroll: true })
     }
   }, [opener])
+
+  /*
+   * Высота окна — по видимой части экрана, а не по 100dvh. Клавиатура
+   * телефона dvh не уменьшает — ни на iPhone, ни в Chrome на Android по
+   * умолчанию (interactive-widget=resizes-visual), — и окно ростом «в экран»
+   * уходило низом под неё: поле, строка статуса и восемь строк по 44 px —
+   * ~470 px, а над клавиатурой у iPhone видно ~400–450, у SE — ~290.
+   * Последние строки стояли за клавиатурой, и список не листался: до
+   * потолка высоты окно не дорастало. visualViewport клавиатуру знает: его
+   * высота — в --vvh окна, потолок считается от неё, и список листается
+   * над клавиатурой. Без visualViewport (старые браузеры) — прежний 100dvh.
+   */
+  useEffect(() => {
+    const viewport = window.visualViewport
+    const panel = panelRef.current
+    if (!viewport || !panel) return
+    const fit = () => panel.style.setProperty('--vvh', `${viewport.height}px`)
+    fit()
+    viewport.addEventListener('resize', fit)
+    return () => viewport.removeEventListener('resize', fit)
+  }, [])
 
   // Выбранная стрелками строка — в видимой части списка
   useEffect(() => {
@@ -188,11 +222,14 @@ export function CatalogSearch({
         }}
       >
         <div aria-hidden className="pointer-events-none absolute inset-0 bg-black/60 backdrop-blur-sm" />
+        {/* Потолок высоты — видимая часть экрана (--vvh, эффект выше) за
+            вычетом отступа сверху, как у затемнения, и 1rem снизу */}
         <div
+          ref={panelRef}
           role="dialog"
           aria-modal="true"
           aria-label="Найти игру"
-          className="panel-lift anim-rise relative flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col self-start p-2"
+          className="panel-lift anim-rise relative flex max-h-[calc(var(--vvh,100dvh)-max(1rem,env(safe-area-inset-top))-1rem)] w-full max-w-xl flex-col self-start p-2 sm:max-h-[calc(var(--vvh,100dvh)-12vh-1rem)]"
         >
           <form
             role="search"
