@@ -111,9 +111,10 @@ async function main() {
   const searchPricesFit = priceRegion() === 'us'
   for (let i = 0; i < queue.length; i += STORE_BATCH) {
     const chunk = queue.slice(i, i + STORE_BATCH)
-    // media: кадры и трейлер тем же запросом. Ответ втрое тяжелее, но это
-    // офлайн-скрипт, а игра, прошедшая промоут, сразу приходит в пул с
-    // «20 секундами геймплея» — без ожидания крона карточек (lib/pagejob)
+    // media: кадры, трейлер и языки тем же запросом. Ответ втрое тяжелее, но
+    // это офлайн-скрипт, а игра, прошедшая промоут, сразу приходит в пул с
+    // «20 секундами геймплея» и с русским на карточке — без ожидания крона
+    // карточек (lib/pagejob)
     const fetched = await withRetry(`батч ${i}`, () =>
       fetchStoreItems(
         chunk.map((r) => r.appid),

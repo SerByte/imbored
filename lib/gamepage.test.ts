@@ -768,6 +768,18 @@ describe('«Чем выделяется» и длина сессии', () => {
     expect(traits.map((t) => t.label)).toEqual(['Чем выделяется', 'Сессия'])
   })
 
+  test('русский — последней строкой и только когда Steam про него ответил', () => {
+    const traits = gameTraits({ categories: SOLO, semantics: semantics({}), ruLang: 2 }, ['Automation'])
+    expect(traits.map((t) => t.label)).toEqual(['Чем выделяется', 'Сессия', 'Русский'])
+    expect(traits.at(-1)?.value).toBe('субтитры — по данным Steam')
+    // «нет» — тоже ответ, и он нужен читателю не меньше «озвучки»
+    expect(gameTraits({ categories: SOLO, ruLang: 0 }, null)).toEqual([
+      { label: 'Русский', value: 'нет — по данным Steam' },
+    ])
+    // не знаем — строки нет: блок фактов не появляется ради пустоты
+    expect(gameTraits({ categories: SOLO }, null)).toEqual([])
+  })
+
   test('карточка читает семантику и характерные теги тем же чтением строки', async () => {
     const db = await withDb()
     await upsertGameMeta(

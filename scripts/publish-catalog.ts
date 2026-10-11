@@ -22,7 +22,9 @@
  * genres_json приходят из appdetails, то есть их наполняет крон страниц, а не
  * промоут: замер на 20 августа — локально ноль и ноль на 6000 игр, в проде 126
  * и 126, ровно столько, сколько карточек успел обогатить крон. trailer_json —
- * туда же: его привозят крон карточек, промоут и доливка медиа.
+ * туда же: его привозят крон карточек, промоут и доливка медиа. И ru_lang —
+ * русский язык приезжает тем же запросом, что трейлер, только пустота у него —
+ * NULL, а ноль — ответ «русского нет» (keepKnownSql в lib/db).
  *
  * Заливка списком колонок затирала эти 126 пустотой. И это хуже, чем звучит:
  * page_at сюда не входит, значит отметка «карточка обогащена» переживала
@@ -68,7 +70,7 @@ const COLS = [
   'median_forever', 'store', 'store_url', 'updated_at', 'art_json', 'release_year',
   'developer', 'publisher', 'reviews_total', 'reviews_percent', 'reviews_30d',
   'ccu', 'ccu_at', 'signals_at', 'tag_count', 'is_multiplayer', 'alive',
-  'dead_reason', 'superseded_by', 'trailer_json',
+  'dead_reason', 'superseded_by', 'trailer_json', 'ru_lang',
 ] as const
 
 function openLocal(): Client {
@@ -138,7 +140,7 @@ async function main() {
   }
 
   // ---- games ----
-  // Поздние колонки (trailer_json, price_cc, store_hidden) — только если
+  // Поздние колонки (trailer_json, price_cc, store_hidden, ru_lang) — только если
   // локальный каталог их знает: заливка его не мигрирует, см. presentCols.
   // Без price_cc не едет и цена — вся её группа
   const haveCols = new Set(

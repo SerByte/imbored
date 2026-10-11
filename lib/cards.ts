@@ -8,7 +8,7 @@ import { entryCost, showsEntry } from './entry'
 import { logSwallowed } from './errlog'
 import { partsView } from './feedbackctx'
 import { isRussianText } from './gamepage'
-import { sessionTrait } from './gametraits'
+import { ruLangLine, sessionTrait } from './gametraits'
 import type { Pick as LlmPick } from './llm'
 import {
   buildAnchorFinder,
@@ -244,6 +244,12 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     // Цена входа (lib/entry) — только у того, что человек ещё не осваивал:
     // у своей наигранной про вход говорит причина, а не отдельная строка
     entry: meta && showsEntry(p.source) ? entryCost(meta) : null,
+    // «Русские субтитры» / «Без русского» — по отметкам Steam (ruLangLine),
+    // у своей и у покупки: сюжетная игра без русского — другой вечер, а на
+    // полке покупок это довод «за» или «против». Готовой фразой, а не
+    // ступенью: клиенту /play таблица подписей в бандле ни к чему. null —
+    // не знаем, и строки нет
+    russian: ruLangLine(meta?.ruLang),
     // «92% из 48 тыс.» на плитке полки покупок: те же числа, по которым
     // confidenceMultiplier решил, насколько новинке верить
     reviewsPercent: meta?.reviewsPercent ?? null,
@@ -344,6 +350,8 @@ export function dailyCardView(
     trailer: meta?.trailer ?? null,
     ccu: meta?.ccu ?? null,
     ccuAt: meta?.ccuAt ?? null,
+    // Та же фраза о русском, что у героя /play (cardView); null — не знаем
+    russian: ruLangLine(meta?.ruLang),
     tags: topTags(meta),
     // Чипсы совпавших тегов помечаются на экране, и метка обязана считаться
     // там же, где лежит профиль вкуса, — то есть в отборе; здесь она из

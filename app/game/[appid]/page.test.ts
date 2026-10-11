@@ -324,6 +324,27 @@ describe('микроразметка говорит не больше стран
     expect(video.offers).toMatchObject({ '@type': 'Offer', price: '19.99' })
   })
 
+  test('русский: строка на странице и inLanguage в разметке — одним условием', async () => {
+    await upsertGameMeta(db, game(APPID, { ruLang: 2 }), T0)
+    let page = flight(await GamePage(params))
+    expect(textOf(page)).toContain('субтитры — по данным Steam')
+    expect(jsonLdOf(page)[0].inLanguage).toBe('ru')
+
+    // «русского нет» — строка есть, а языка в разметке нет: других мы не знаем
+    await upsertGameMeta(db, game(APPID, { ruLang: 0 }), T0)
+    page = flight(await GamePage(params))
+    expect(textOf(page)).toContain('нет — по данным Steam')
+    expect(jsonLdOf(page)[0]).not.toHaveProperty('inLanguage')
+  })
+
+  test('русский неизвестен — ни строки, ни разметки', async () => {
+    // Так у большинства карточек, пока крон или доливка медиа не принесли язык
+    await upsertGameMeta(db, game(APPID), T0)
+    const page = flight(await GamePage(params))
+    expect(textOf(page)).not.toContain('по данным Steam')
+    expect(jsonLdOf(page)[0]).not.toHaveProperty('inLanguage')
+  })
+
   test('оценки Steam в разметке нет, хотя кольцо на странице её показывает', async () => {
     // Чужие оценки размечать нельзя (правила Google для review snippet) —
     // см. докблок lib/jsonld. Кольцо — видимое, ему это правило не мешает

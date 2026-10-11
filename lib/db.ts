@@ -32,7 +32,7 @@ import { isMultiplayerCategories, MULTIPLAYER_CATEGORY_SQL } from './steamcats'
 import { LEGACY_PRICE_CC, priceRegion } from './steamregion'
 import type { NewsBlock } from './steamhtml'
 import { readTrailer, type Trailer } from './trailer'
-import type { CandidateSource, GameMeta, GameSemantics, LibraryGame, Mood } from './types'
+import type { CandidateSource, GameMeta, GameSemantics, LibraryGame, Mood, RuLang } from './types'
 
 /** Соединение с БД: локальный файл в dev, Turso в проде — API одинаковый */
 export type Db = Client
@@ -716,7 +716,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 8
+export const CURRENT_SCHEMA_V = 9
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -799,6 +799,11 @@ export const ADDED_COLUMNS = [
   // открытым, как было, а не запирается перед владельцем. Комната живёт
   // вечер, так что бэкфилл не нужен
   ['room_members', 'writer INTEGER NOT NULL DEFAULT 0'],
+  // Русский в игре по данным Steam: 3 озвучка, 2 субтитры, 1 интерфейс,
+  // 0 нет (RuLang в lib/types). NULL — не знаем: язык привозят крон карточек,
+  // промоут и доливка медиа, прогрев его не просит (lib/catalog). Пустое не
+  // затирает известное — COALESCE в апсерте и в setGamesMedia
+  ['games', 'ru_lang INTEGER'],
 ] as const
 
 /**
@@ -2611,8 +2616,8 @@ const GAME_INSERT = `INSERT INTO games (appid, name, tags_json, genres_json, cat
             release_year, developer, publisher, reviews_total, reviews_percent, reviews_30d,
             ccu, ccu_at, tag_count, is_multiplayer,
             price_initial, discount_percent, discount_ends_at, price_at, trailer_json, updated_at,
-            price_cc, store_hidden)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            price_cc, store_hidden, ru_lang)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 /**
  * Что делать с уже лежащей строкой: 'update' — переписать (обычный апсерт),
@@ -2640,6 +2645,16 @@ type OnConflict = 'update' | 'keep'
  */
 export function keepFilledSql(col: string): string {
   return `CASE WHEN excluded.${col} IS NULL OR excluded.${col} IN ('', '[]') THEN games.${col} ELSE excluded.${col} END`
+}
+
+/**
+ * Ответ-число, которое просят не все писатели (русский язык, ru_lang): NULL —
+ * «не спрашивали» и прежнего не трогает, любое число — свежий ответ Steam и
+ * едет, ноль тоже. keepFilledSql тут не годится по смыслу: у неё пустота —
+ * это ещё и '' с '[]', а ноль у языка — знание «русского нет».
+ */
+export function keepKnownSql(col: string): string {
+  return `COALESCE(excluded.${col}, games.${col})`
 }
 
 /**
@@ -2716,6 +2731,9 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
             store_hidden = ${newerMeasureSql('store_hidden', 'price_at')},
             price_at = ${newerMeasureSql('price_at', 'price_at')},
             trailer_json = ${keepFilledSql('trailer_json')},
+            -- Язык просят не все: прогрев без него, appdetails знает только
+            -- озвучку и «нет». Без ответа — прежний, ноль — тоже ответ
+            ru_lang = ${keepKnownSql('ru_lang')},
             updated_at = excluded.updated_at`,
     args: [
       meta.appid,
@@ -2756,6 +2774,7 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
       // lib/deals); без него NULL, то есть LEGACY_PRICE_CC
       meta.priceCc ?? null,
       meta.storeHidden ? 1 : 0,
+      meta.ruLang ?? null,
     ],
   }
 }
@@ -3037,6 +3056,8 @@ export type GameRow = {
   superseded_by: number | null
   /** В узкой выборке (GAME_LITE_COLUMNS_G) колонки нет: причина нужна только /game */
   dead_reason?: string | null
+  /** Колонка из ALTER-цикла, как price_cc: у строки старше неё поля нет */
+  ru_lang?: number | null
   /**
    * game_semantics.json через SEMANTICS_JOIN. Есть только у выборок пачкой;
    * одиночные чтения (getGameMeta, страница игры) таблицу не джойнят.
@@ -3121,6 +3142,11 @@ export function rowToMeta(row: GameRow, cc: string = priceRegion()): GameMeta {
   }
   if (row.developer !== null && row.developer !== undefined) meta.developer = row.developer
   if (row.publisher !== null && row.publisher !== undefined) meta.publisher = row.publisher
+  // Только известная ступень: число мимо 0…3 — «не знаем», а не подпись
+  // наугад; «Без русского» у игры с озвучкой хуже, чем молчание
+  if (row.ru_lang === 0 || row.ru_lang === 1 || row.ru_lang === 2 || row.ru_lang === 3) {
+    meta.ruLang = row.ru_lang
+  }
   // Вердикт офлайн-курации: тот же класс потери, что был у developer выше.
   // Читается только целиком: alive лежит в колонке с DEFAULT 1, поэтому сам по
   // себе означает лишь «не помечена мёртвой», а не «проверена». Настоящий
@@ -3494,6 +3520,9 @@ const GAME_LITE_COLS = [
   'store', 'store_url', 'art_json', 'ccu', 'ccu_at', 'reviews_30d', 'reviews_total',
   'reviews_percent', 'release_year', 'developer', 'publisher', 'signals_at', 'alive',
   'superseded_by',
+  // ru_lang — одно число, а нужен он именно здесь: полка покупок и герой /play
+  // читают мету этой выборкой (подбор, пул открытий)
+  'ru_lang',
 ] as const
 
 /**
@@ -3560,12 +3589,13 @@ export async function getHeroMedia(db: Db, appids: number[]): Promise<Map<number
 }
 
 /**
- * Кадры и трейлер — узким UPDATE, не трогая остальной строки.
+ * Кадры, трейлер и русский язык — узким UPDATE, не трогая остальной строки.
  *
  * Для крона карточек и доливки медиа: у них на руках только ответ GetItems с
- * кадрами, а upsertGameMeta переписал бы цену, арт и сигналы тем, что лежит
- * в объекте у вызывающего. Правило пустоты то же, что у апсерта
- * (keepFilledSql): нет кадров или трейлера в ответе — прежние остаются.
+ * кадрами и языками, а upsertGameMeta переписал бы цену, арт и сигналы тем,
+ * что лежит в объекте у вызывающего. Правило пустоты то же, что у апсерта
+ * (keepFilledSql, COALESCE у языка): нет кадров, трейлера или языка в ответе —
+ * прежние остаются. Ноль языка — не пустота: «русского нет» тоже пишется.
  *
  * updated_at не трогаем по той же причине, что setGameDescriptions: это
  * lastmod карты сайта, а доливка медиа по всему каталогу — не повод сказать
@@ -3575,19 +3605,21 @@ export async function getHeroMedia(db: Db, appids: number[]): Promise<Map<number
  */
 export async function setGamesMedia(
   db: Db,
-  rows: ReadonlyArray<{ appid: number; screenshots?: string[]; trailer?: Trailer }>,
+  rows: ReadonlyArray<{ appid: number; screenshots?: string[]; trailer?: Trailer; ruLang?: RuLang }>,
 ): Promise<number> {
-  const writes = rows.filter((r) => r.screenshots?.length || r.trailer)
+  const writes = rows.filter((r) => r.screenshots?.length || r.trailer || r.ruLang !== undefined)
   if (!writes.length) return 0
   const res = await db.batch(
     writes.map((r) => ({
       sql: `UPDATE games SET
               screenshots_json = COALESCE(?, screenshots_json),
-              trailer_json = COALESCE(?, trailer_json)
+              trailer_json = COALESCE(?, trailer_json),
+              ru_lang = COALESCE(?, ru_lang)
             WHERE appid = ?`,
       args: [
         r.screenshots?.length ? JSON.stringify(r.screenshots) : null,
         r.trailer ? JSON.stringify(r.trailer) : null,
+        r.ruLang ?? null,
         r.appid,
       ],
     })),
@@ -3597,20 +3629,26 @@ export async function setGamesMedia(
 }
 
 /**
- * Игры пула, которым не хватает трейлера или кадров, — для доливки медиа
- * (scripts/backfill-media.ts). Верх каталога первым: его страницы и герои
- * видят чаще.
+ * Игры пула, которым не хватает трейлера, кадров или языка, — для доливки
+ * медиа (scripts/backfill-media.ts). Верх каталога первым: его страницы и
+ * герои видят чаще.
  *
  * Игра без трейлера в Steam останется в выборке и в следующий прогон — так
  * же, как описание без русского перевода у catalog:descriptions: трейлер у
  * игры может появиться позже, а лишний вопрос стоит одного места в пачке.
+ *
+ * Язык — тем же запросом GetItems (STORE_MEDIA_DATA_REQUEST в lib/catalog), и
+ * без него в выборке крон карточек довёз бы русский до уже обогащённых игр
+ * только через полгода (PAGE_MAX_AGE_SEC): у них page_at стоит, и в очередь
+ * они не вернутся. Языки нужны прежде всего им — это верх каталога.
  */
 export async function gamesMissingMedia(db: Db, limit: number): Promise<number[]> {
   const res = await db.execute({
     sql: `SELECT appid FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
             AND (trailer_json IS NULL
-              OR screenshots_json IS NULL OR screenshots_json IN ('', '[]'))
+              OR screenshots_json IS NULL OR screenshots_json IN ('', '[]')
+              OR ru_lang IS NULL)
           ORDER BY reviews_total DESC
           LIMIT ?`,
     args: [limit],

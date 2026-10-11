@@ -93,6 +93,22 @@ describe('cardView', () => {
   test('без меты — пустые поля, а не падение', () => {
     const card = cardView({ appid: 30, name: 'Игра 30', source: 'new', reason: '' }, ctx)
     expect(card).toMatchObject({ headerImage: null, tags: [], signals: null, discount: null, refund: false })
+    expect(card.russian).toBeNull()
+  })
+
+  test('русский — готовой фразой с сервера, у своей и у покупки; не знаем — null', () => {
+    const c = pickContext(
+      set(
+        [meta(10, { ruLang: 3 }), meta(20, { ruLang: 0 }), meta(30)],
+        [{ appid: 10, name: 'Игра 10', playtimeForever: 150, playtime2Weeks: 0 }],
+      ),
+    )
+    // Своя тоже: «хватит ли сил на вечер» у сюжетной игры без русского — другой ответ
+    expect(cardView({ appid: 10, name: 'Игра 10', source: 'backlog', reason: '' }, c).russian).toBe('русская озвучка')
+    // На полке покупок «без русского» — довод против покупки, и он честный
+    expect(cardView({ appid: 20, name: 'Игра 20', source: 'new', reason: '' }, c).russian).toBe('без русского')
+    // До прохода крона или доливки медиа поля нет — и строки нет
+    expect(cardView({ appid: 30, name: 'Игра 30', source: 'new', reason: '' }, c).russian).toBeNull()
   })
 })
 
@@ -120,6 +136,14 @@ describe('storeCardView и dailyCardView', () => {
     const without = dailyCardView({ appid: 10, name: 'Игра 10', source: 'untouched' }, meta(10), NOW, day)
     expect(withClip.trailer).toEqual(trailer)
     expect(without.trailer).toBeNull()
+  })
+
+  test('русский у героя дня — та же фраза, что у героя /play', () => {
+    const day = { reason: 'r', sharedTags: [], hoursPlayed: null, hideUrgency: false }
+    const pick = { appid: 20, name: 'Игра 20', source: 'new' as const }
+    expect(dailyCardView(pick, meta(20, { ruLang: 2 }), NOW, day).russian).toBe('русские субтитры')
+    expect(dailyCardView(pick, meta(20), NOW, day).russian).toBeNull()
+    expect(dailyCardView(pick, undefined, NOW, day).russian).toBeNull()
   })
 
   test('ориентир героя дня — из записи, у старой записи явный null', () => {

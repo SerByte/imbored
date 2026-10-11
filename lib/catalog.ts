@@ -11,7 +11,7 @@ import {
   type StoreTrailers,
   type Trailer,
 } from './trailer'
-import type { GameMeta } from './types'
+import type { GameMeta, RuLang } from './types'
 
 type AppDetailsData = {
   type?: string
@@ -25,6 +25,44 @@ type AppDetailsData = {
   categories?: Array<{ id?: number }>
   price_overview?: { currency?: string; final?: number; initial?: number; discount_percent?: number }
   release_date?: { date?: string }
+  /** HTML-строка языков на языке запроса (l=russian), см. appDetailsRuLang */
+  supported_languages?: unknown
+}
+
+/**
+ * Русский из строки языков appdetails — только то, что она говорит наверняка.
+ *
+ * Строка — HTML на языке запроса: «английский<strong>*</strong>, русский,
+ * японский<br><strong>*</strong>озвучивание доступно на этих языках».
+ * Звёздочка — полная озвучка, а интерфейс от субтитров эта строка не отличает
+ * вовсе: у Hades (субтитры) и у CS2 (один интерфейс) русский в ней стоит
+ * одинаково, без звёздочки.
+ *
+ * Поэтому ответов два, а не три: звёздочка — 3, русского в непустом списке
+ * нет — 0. Русский без звёздочки — undefined, и это не потеря, а защита: крон
+ * карточек сначала пишет точную ступень из GetItems (setGamesMedia), а потом
+ * сливает поверх неё ответ appdetails (mergeMeta). Догадка «1» затёрла бы там
+ * точную «2». Строка — страховка на случай, когда пачка GetItems не пришла, и
+ * говорит ровно то, что знает.
+ *
+ * Слово сравнивается целиком, а не подстрокой: «белорусский» содержит
+ * «русский». Английская локаль («Russian») — на случай, если запрос сменит l.
+ */
+function appDetailsRuLang(html: unknown): RuLang | undefined {
+  if (typeof html !== 'string') return undefined
+  // Сноска про звёздочку живёт после <br> — в список языков она не входит
+  const list = html.split(/<br\s*\/?>/i)[0]
+  const langs = list
+    .split(',')
+    .map((part) => ({
+      name: part.replace(/<[^>]*>/g, '').replace(/\*/g, '').trim().toLowerCase(),
+      audio: part.includes('*'),
+    }))
+    .filter((l) => l.name)
+  if (!langs.length) return undefined
+  const ru = langs.find((l) => l.name === 'русский' || l.name === 'russian')
+  if (!ru) return 0
+  return ru.audio ? 3 : undefined
 }
 
 /**
@@ -72,6 +110,8 @@ export function parseAppDetails(json: unknown, appid: number, cc: string = META_
     meta.storeHidden = false
   }
   if (d.release_date?.date) meta.releaseDate = d.release_date.date
+  const ru = appDetailsRuLang(d.supported_languages)
+  if (ru !== undefined) meta.ruLang = ru
   return meta
 }
 
@@ -105,6 +145,44 @@ type StoreItem = {
   screenshots?: StoreScreenshots
   /** только с include_trailers */
   trailers?: StoreTrailers
+  /** только с include_supported_languages — см. ruLangOf */
+  supported_languages?: unknown
+}
+
+/** Номер русского в ELanguage Steam */
+const RU_ELANGUAGE = 8
+
+/**
+ * Ступень русского (RuLang в lib/types) из списка языков GetItems.
+ *
+ * Элемент списка — { elanguage, eadditionallanguage, supported, full_audio,
+ * subtitles }; supported — столбец «Интерфейс» на странице магазина. Русский —
+ * только elanguage 8: у языков вне основного перечня elanguage -1 и своя
+ * нумерация в eadditionallanguage, и восьмёрка там — другой язык (у Factorio
+ * в одном ответе стоят обе записи).
+ *
+ * Замер на двухстах играх верха каталога (октябрь 2026): у 34 русская
+ * озвучка с субтитрами, у 7 озвучка без субтитров, у 78 субтитры, у 45 один
+ * интерфейс, у 36 русского нет вовсе. Записей русского, где supported:false, а
+ * субтитры или озвучка есть, не встретилось ни одной — но ступень берёт любую
+ * отметку, а не одну supported.
+ *
+ * undefined — «не знаем»: поля нет (языков не просили), список пуст или не
+ * разобрался. Пустой список ничего не утверждает, и «Без русского» по нему
+ * было бы выдумкой.
+ */
+function ruLangOf(list: unknown): RuLang | undefined {
+  if (!Array.isArray(list)) return undefined
+  const entries = list.filter(
+    (x): x is { elanguage?: unknown; supported?: unknown; full_audio?: unknown; subtitles?: unknown } =>
+      typeof x === 'object' && x !== null,
+  )
+  if (!entries.length) return undefined
+  const ru = entries.find((x) => x.elanguage === RU_ELANGUAGE)
+  if (!ru) return 0
+  if (ru.full_audio === true) return 3
+  if (ru.subtitles === true) return 2
+  return ru.supported === true ? 1 : 0
 }
 
 /**
@@ -227,8 +305,8 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
     if (it.is_free !== undefined) meta.isFree = it.is_free
     Object.assign(meta, parsePurchaseOption(it.best_purchase_option))
     if (it.release?.steam_release_date) meta.releaseDate = isoDate(it.release.steam_release_date)
-    // Кадры и трейлер приходят, только если их просили (fetchStoreItems с
-    // media). Пустое не пишем: без поля mergeMeta и апсерт сберегут то, что
+    // Кадры, трейлер и языки приходят, только если их просили (fetchStoreItems
+    // с media). Пустое не пишем: без поля mergeMeta и апсерт сберегут то, что
     // уже привезли appdetails или прошлый обход
     Object.assign(meta, mediaOf(it))
     out.push(meta)
@@ -236,8 +314,14 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
   return out
 }
 
-/** Кадры и трейлер одной игры из ответа GetItems — только то, что нашлось */
-export type StoreMedia = { screenshots?: string[]; trailer?: Trailer }
+/**
+ * Кадры, трейлер и русский язык одной игры из ответа GetItems — только то,
+ * что нашлось. Языки живут здесь, рядом с медиа, по той же причине, что и
+ * медиа: это то, что нужно карточке и не нужно прогреву (см.
+ * STORE_MEDIA_DATA_REQUEST). ruLang 0 — тоже находка: Steam ответил, что
+ * русского нет.
+ */
+export type StoreMedia = { screenshots?: string[]; trailer?: Trailer; ruLang?: RuLang }
 
 function mediaOf(it: StoreItem): StoreMedia {
   const out: StoreMedia = {}
@@ -245,12 +329,14 @@ function mediaOf(it: StoreItem): StoreMedia {
   if (shots.length) out.screenshots = shots
   const trailer = parseStoreTrailer(it.trailers)
   if (trailer) out.trailer = trailer
+  const ru = ruLangOf(it.supported_languages)
+  if (ru !== undefined) out.ruLang = ru
   return out
 }
 
 /**
- * appid -> кадры и трейлер. Игры, у которых не нашлось ни того ни другого, в
- * карту не попадают: писать им нечего.
+ * appid -> кадры, трейлер и язык. Игры, у которых не нашлось ничего из этого,
+ * в карту не попадают: писать им нечего.
  */
 export function parseStoreMedia(json: unknown): Map<number, StoreMedia> {
   const items = (json as { response?: { store_items?: StoreItem[] } })?.response?.store_items
@@ -260,18 +346,19 @@ export function parseStoreMedia(json: unknown): Map<number, StoreMedia> {
     const appid = it?.appid ?? it?.id
     if (!appid || !it.visible) continue
     const media = mediaOf(it)
-    if (media.screenshots || media.trailer) out.set(appid, media)
+    if (media.screenshots || media.trailer || media.ruLang !== undefined) out.set(appid, media)
   }
   return out
 }
 
 /**
  * Свежие данные побеждают, но накопленное не теряется: GetItems не отдаёт
- * жанры и медиану наигранного, а кадры и трейлер — только когда их просили
- * (прогрев не просит, см. STORE_MEDIA_DATA_REQUEST). `upsertGameMeta`
+ * жанры и медиану наигранного, а кадры, трейлер и языки — только когда их
+ * просили (прогрев не просит, см. STORE_MEDIA_DATA_REQUEST). `upsertGameMeta`
  * перезаписывает строку целиком — без слияния лёгкий ответ стёр бы уже
- * загруженное. Трейлер отдельной строки не требует: у свежей записи без него
- * поля нет вовсе, и спред оставляет прежний.
+ * загруженное. Трейлер и русский язык отдельной строки не требуют: у свежей
+ * записи без них поля нет вовсе, и спред оставляет прежние. Ноль русского —
+ * ответ, а не пустота, и он побеждает, как любое свежее знание.
  */
 export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta): GameMeta {
   if (!existing) return fresh
@@ -379,7 +466,7 @@ export async function fetchStoreItems(
   opts: {
     fetchFn?: typeof fetch
     tagNames?: Map<number, string>
-    /** кадры и трейлер тем же запросом — втрое тяжелее, см. STORE_MEDIA_DATA_REQUEST */
+    /** кадры, трейлер и языки тем же запросом — втрое тяжелее, см. STORE_MEDIA_DATA_REQUEST */
     media?: boolean
   } = {},
 ): Promise<GameMeta[]> {
@@ -516,15 +603,27 @@ const STORE_ITEMS_DATA_REQUEST = {
  * Поэтому просят их те, кто и так ходит за карточкой: промоут каталога
  * (fetchStoreItems с media), крон карточек — отдельной пачкой по своему срезу
  * (fetchStoreMedia в lib/pagejob) — и разовая доливка scripts/backfill-media.
+ *
+ * Языки (русский на карточке и в выдаче, ruLangOf) — третьим флагом сюда же,
+ * и по той же причине. Замер на тех же двухстах играх, октябрь 2026: обычный
+ * ответ прогрева — 552 КБ, с языками — 807 КБ, на 46% тяжелее: у CS2 в
+ * списке 29 языков по пять полей. Прогреву язык ни к чему — подбор по нему
+ * не фильтрует, — а карточке, герою выдачи и полке покупок он нужен там же,
+ * где кадры. Отдельным запросом в кроне карточек это был бы ещё один поход
+ * в GetItems на каждое звено ради двадцати строк.
  */
-const STORE_MEDIA_DATA_REQUEST = { include_screenshots: true, include_trailers: true }
+const STORE_MEDIA_DATA_REQUEST = {
+  include_screenshots: true,
+  include_trailers: true,
+  include_supported_languages: true,
+}
 
 /** Сколько миллисекунд таймаута на игру: ответ с медиа втрое тяжелее обычного */
 const MEDIA_MS_PER_APP = 300
 
 /**
- * Кадры и трейлеры для пачки игр — без тегов, арта и цены. Для тех, кто пишет
- * их узким UPDATE (setGamesMedia), не трогая остальной строки.
+ * Кадры, трейлеры и языки для пачки игр — без тегов, арта и цены. Для тех,
+ * кто пишет их узким UPDATE (setGamesMedia), не трогая остальной строки.
  */
 export async function fetchStoreMedia(
   appids: number[],

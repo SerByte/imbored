@@ -69,6 +69,7 @@ import {
   findRoomMatch,
   getGameJson,
   getGameMeta,
+  getGamePageRow,
   getHeroMedia,
   parseIdList,
   parseSemantics,
@@ -304,15 +305,75 @@ describe('db', () => {
       expect(await setGamesMedia(db, [])).toBe(0)
     })
 
-    test('gamesMissingMedia: пул без трейлера или кадров, верх каталога первым', async () => {
+    test('gamesMissingMedia: пул без трейлера, кадров или языков, верх каталога первым', async () => {
       const db = await freshDb()
-      await upsertGameMeta(db, { ...META, appid: 1, reviewsTotal: 10, trailer: TRAILER }, NOW)
-      await upsertGameMeta(db, { ...META, appid: 2, reviewsTotal: 30 }, NOW)
-      await upsertGameMeta(db, { ...META, appid: 3, reviewsTotal: 20, screenshots: [], trailer: TRAILER }, NOW)
+      // всё есть, включая русский — доливать нечего
+      await upsertGameMeta(db, { ...META, appid: 1, reviewsTotal: 10, trailer: TRAILER, ruLang: 2 }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 2, reviewsTotal: 30, ruLang: 0 }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 3, reviewsTotal: 20, screenshots: [], trailer: TRAILER, ruLang: 1 }, NOW)
       // не пул: без тегов — в выборку не попадает
       await upsertGameMeta(db, { ...META, appid: 4, reviewsTotal: 99, tags: {} }, NOW)
-      expect(await gamesMissingMedia(db, 10)).toEqual([2, 3])
+      // кадры и трейлер есть, языка нет: доливка медиа теперь привозит и его
+      // (тот же запрос GetItems), иначе русский у верха каталога появлялся бы
+      // по карточке за звено крона
+      await upsertGameMeta(db, { ...META, appid: 5, reviewsTotal: 15, trailer: TRAILER }, NOW)
+      expect(await gamesMissingMedia(db, 10)).toEqual([2, 3, 5])
       expect(await gamesMissingMedia(db, 1)).toEqual([2])
+    })
+  })
+
+  describe('русский язык', () => {
+    test('апсерт пишет ступень и ноль, обе выборки её читают', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, ruLang: 2 }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 730, ruLang: 0 }, NOW)
+      expect((await getGameMeta(db, 620))?.ruLang).toBe(2)
+      // ноль — «русского нет», а не пустота: он обязан доехать до выдачи
+      expect((await getGameMeta(db, 730))?.ruLang).toBe(0)
+      // узкая выборка — это /play и пул открытий: полке покупок язык нужен там
+      expect((await getGamesMetaLite(db, [620])).get(620)?.ruLang).toBe(2)
+      expect((await getGamesMetaLite(db, [730])).get(730)?.ruLang).toBe(0)
+      expect((await getGamePageRow(db, 620))?.meta.ruLang).toBe(2)
+    })
+
+    test('запись без языка — прогрев, appdetails без звёздочки — известный не стирает', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, ruLang: 3 }, NOW)
+      await upsertGameMeta(db, { ...META, name: 'Portal 2 (новое имя)' }, NOW + 1)
+      const after = await getGameMeta(db, 620)
+      expect(after?.name).toBe('Portal 2 (новое имя)')
+      expect(after?.ruLang).toBe(3)
+      // а свежий ответ Steam побеждает, ноль в том числе
+      await upsertGameMeta(db, { ...META, ruLang: 0 }, NOW + 2)
+      expect((await getGameMeta(db, 620))?.ruLang).toBe(0)
+    })
+
+    test('незнакомое число в колонке — «не знаем», а не подпись наугад', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, META, NOW)
+      expect(await getGameMeta(db, 620)).not.toHaveProperty('ruLang')
+      await db.execute('UPDATE games SET ru_lang = 7 WHERE appid = 620')
+      expect(await getGameMeta(db, 620)).not.toHaveProperty('ruLang')
+    })
+
+    test('setGamesMedia пишет и язык: ноль тоже, отсутствие не стирает', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, appid: 730, screenshots: undefined }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 570, screenshots: undefined }, NOW)
+      // у 570 в ответе ни кадров, ни трейлера — только язык, и строку пишем
+      const n = await setGamesMedia(db, [
+        { appid: 730, ruLang: 1 },
+        { appid: 570, ruLang: 0 },
+      ])
+      expect(n).toBe(2)
+      expect((await getGameMeta(db, 730))?.ruLang).toBe(1)
+      expect((await getGameMeta(db, 570))?.ruLang).toBe(0)
+      // второй проход без языка — кадры приехали, язык прежний
+      const shots = ['https://shared.steamstatic.com/store_item_assets/steam/apps/730/ss_a.1920x1080.jpg?t=1']
+      await setGamesMedia(db, [{ appid: 730, screenshots: shots }])
+      expect((await getGameMeta(db, 730))?.ruLang).toBe(1)
+      const r = await db.execute('SELECT updated_at FROM games WHERE appid = 730')
+      expect(Number(r.rows[0].updated_at)).toBe(NOW)
     })
   })
 
@@ -3912,8 +3973,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 8,
-      columns: 38,
+      version: 9,
+      columns: 39,
     })
   })
 })

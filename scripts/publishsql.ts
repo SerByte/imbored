@@ -1,4 +1,4 @@
-import { keepFilledSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
+import { keepFilledSql, keepKnownSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
 import { plural } from '../lib/plural'
 
 /**
@@ -68,6 +68,10 @@ export function buildSetList(cols: readonly string[]): string {
     .map((c) => {
       if (ОТ_ОБОГАЩЕНИЯ.has(c)) return `${c} = ${keepFilledSql(c)}`
       if (c === 'short_description') return `${c} = ${keepRussianSql(c)}`
+      // Русский язык в облаке привозят крон карточек и доливка медиа, а
+      // локальный каталог знает его только у игр, прошедших промоут после
+      // появления колонки. NULL отсюда — «не спрашивали», а не «русского нет»
+      if (c === 'ru_lang') return `${c} = ${keepKnownSql(c)}`
       // Отметки нет в списке колонок — excluded.<отметка> равен NULL, и
       // локальный замер считается безотметочным, то есть старше любого
       // датированного облачного. Для отзывов это и нужно (см. ПО_ОТМЕТКЕ)
@@ -87,7 +91,7 @@ export function buildSetList(cols: readonly string[]): string {
  * SELECT trailer_json «no such column» и уронил всю заливку ради колонки,
  * которую в нём всё равно нечем было заполнить.
  */
-const ПОЗДНИЕ = new Set(['trailer_json', 'price_cc', 'store_hidden'])
+const ПОЗДНИЕ = new Set(['trailer_json', 'price_cc', 'store_hidden', 'ru_lang'])
 
 /** Колонки замера цены — вся группа отметки price_at, включая её саму */
 const ЦЕНОВЫЕ = new Set(Object.keys(ПО_ОТМЕТКЕ).filter((c) => ПО_ОТМЕТКЕ[c] === 'price_at'))

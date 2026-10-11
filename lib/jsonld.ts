@@ -50,6 +50,8 @@ export type GameLd = {
   genre?: string[]
   playMode?: string[]
   datePublished?: string
+  /** 'ru' — только когда Steam отметил русский; см. gameJsonLd */
+  inLanguage?: 'ru'
   author?: Org
   publisher?: Org
   offers?: {
@@ -147,6 +149,16 @@ export function gameJsonLd({
   // разбирать её обратно в ISO незачем — releaseYear уже разобран каталогом,
   // а голый год schema.org принимает как частичный ISO 8601.
   if (meta.releaseYear) ld.datePublished = String(meta.releaseYear)
+  /*
+   * Русский в игре — тем же условием, что строка «Русский: …» на странице
+   * (languageTrait в lib/gametraits): любая отметка Steam — интерфейс,
+   * субтитры или озвучка — значит, что содержимое игры есть по-русски.
+   *
+   * Только 'ru' и только при «есть». Остальные языки игры мы не храним, а
+   * «русского нет» не повод назвать какой-то другой: inLanguage со списком
+   * наугад был бы ровно той разметкой, которая говорит больше страницы.
+   */
+  if (meta.ruLang !== undefined && meta.ruLang > 0) ld.inLanguage = 'ru'
   if (meta.developer) ld.author = { '@type': 'Organization', name: meta.developer }
   if (meta.publisher) ld.publisher = { '@type': 'Organization', name: meta.publisher }
 

@@ -727,6 +727,28 @@ describe('кадры и трейлер — одной пачкой GetItems на
     expect((await getGamesMeta(db, [10])).get(10)?.screenshots).toEqual(SHOTS)
   })
 
+  test('русский из пачки GetItems переживает запись карточки из appdetails', async () => {
+    // appdetails про русский без озвучки молчит (appDetailsRuLang в
+    // lib/catalog): слияние обязано сберечь точную ступень, записанную до него
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 90)
+    await runPageSlice(
+      db,
+      stubs({
+        fetchMediaFn: async () =>
+          new Map([
+            [10, { ruLang: 2 as const }],
+            [20, { ruLang: 0 as const }],
+          ]),
+      }),
+    )
+    const metas = await getGamesMeta(db, [10, 20])
+    expect(metas.get(10)?.ruLang).toBe(2)
+    // «русского нет» — тоже ответ, и он доезжает
+    expect(metas.get(20)?.ruLang).toBe(0)
+  })
+
   test('отказ GetItems — не блок Steam: срез идёт дальше и наполняет карточки', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)
