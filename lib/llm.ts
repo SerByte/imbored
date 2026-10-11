@@ -122,15 +122,24 @@ export function cronClientOptions(budgetMs?: number): { timeout: number; maxRetr
  * длиннее («</reviews data-x="…">») проходил нетронутым. Как и тег, у
  * которого обрезка по длине отняла последнюю скобку: «…</reviews» модель
  * читает как закрытую ограду не хуже. Поэтому второй проход меняет каждую
- * оставшуюся «<» перед буквой или «/» на «‹» — закрывающего тега из такого
- * уже не собрать, какой бы он ни был длины. Замена знак в знак: длина после
- * обрезки не растёт, и оба прохода линейны.
+ * оставшуюся «<» перед «/» или буквой на «‹» — закрывающего тега из такого
+ * уже не собрать, какой бы он ни был длины.
+ *
+ * «Перед» — не обязательно вплотную. «<​/reviews>» с нулевым пробелом на
+ * глаз (и для модели) — тот же тег, а тело патча раскодировано из сущностей,
+ * так что &#8203; набирает любой издатель. Поэтому до «/» второй проход
+ * пропускает пробелы, переводы строк и невидимые знаки (\p{Cf}: нулевой
+ * пробел, мягкий перенос, BOM, метки направления) — «< /reviews>» и
+ * «</ reviews>» гаснут так же. До буквы — только невидимые: «a < b» —
+ * математика, а не тег. Замена знак в знак: длина после обрезки не растёт.
+ * Оба прохода линейны: просмотр вперёд от «<» не заходит за следующую «<»,
+ * так что каждый пробел между ними читается не больше двух раз.
  */
 export function fenceData(s: string, max: number): string {
   return s
     .slice(0, max)
     .replace(/<\/?[a-zA-Z][^>]{0,60}>/g, ' ')
-    .replace(/<(?=\/?[a-zA-Z])/g, '‹')
+    .replace(/<(?=[\s\p{Cf}]*\/|\p{Cf}*[a-zA-Z])/gu, '‹')
 }
 
 /**
@@ -529,9 +538,12 @@ ${lines.join('\n')}
  * пересказу патча ничего из этого не нужно, поэтому такой текст не чинится,
  * а выбрасывается целиком. Одно правило на pros/cons и на пересказ патча
  * (validateDigest): в обоих модель пересказывает текст посторонних людей.
+ *
+ * Что считается доменом, вынесено в DOMAIN: тем же правилом validateDigest
+ * ищет домен в имени самой игры, и разъехаться эти два места не должны.
  */
-const MODEL_SPAM =
-  /https?:|www\.|\b[a-z0-9-]+\.(?:com|ru|gg|io|net)\b|@|промо-?код|promo\s*code/i
+const DOMAIN = String.raw`[a-z0-9-]+\.(?:com|ru|gg|io|net)`
+const MODEL_SPAM = new RegExp(String.raw`https?:|www\.|\b${DOMAIN}\b|@|промо-?код|promo\s*code`, 'i')
 
 /** Дубли сравниваем без регистра, лишних пробелов и точки в конце. */
 function prosConsKey(s: string): string {
@@ -674,15 +686,33 @@ export function trimTldr(s: string, max = 200): string {
 }
 
 /**
- * Площадки, чьё имя пишется как домен. В пересказе патча это имя, а не ссылка:
- * «вход через Battle.net», «аккаунт Wargaming.net», «демо на itch.io» —
- * патчноуты игр Blizzard и Wargaming без них не обходятся, и MODEL_SPAM
- * выбрасывал бы такой пересказ целиком. Перед проверкой имя вынимается, но
- * только отдельно стоящее: «skins-battle.net» и «battle.net.ru» — чужие домены,
- * и знакомое имя внутри них проверку не отменяет. Точка в конце фразы
- * («…через Battle.net.») доменом не считается.
+ * Имена-домены, стоящие в тексте сами по себе, а не куском адреса. Перед
+ * проверкой на MODEL_SPAM такое имя вынимается — но только отдельно стоящее,
+ * иначе знакомое имя прикрыло бы чужую ссылку вокруг себя:
+ *   — слева нельзя буквы, цифры, точки и дефиса: «skins-battle.net» — чужой
+ *     домен;
+ *   — справа то же плюс путь, запрос, якорь и порт: «battle.net.ru»,
+ *     «itch.io/jam/free-skins», «itch.io?ref=…», «battle.net:8080» — уже
+ *     ссылки, а страницы itch.io/jam, /profile, /post пишет кто угодно.
+ *     Сюда же точка, за которой адрес продолжается («battle.net./redeem»);
+ *   — точка в конце фразы и двоеточие перед текстом («…через Battle.net.»,
+ *     «Battle.net: исправлен вход») — не адрес, имя вынимается.
  */
-const PLATFORM_NAMES = /(?<![\w.-])(?:battle\.net|wargaming\.net|itch\.io)(?![\w-]|\.\w)/gi
+function standaloneNames(names: readonly string[]): RegExp {
+  const alt = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  return new RegExp(String.raw`(?<![\w.-])(?:${alt})(?![\w/?#-]|\.[\w/?#]|:\d)`, 'gi')
+}
+
+/**
+ * Площадки, чьё имя пишется как домен. В пересказе патча это имя, а не ссылка:
+ * «вход через Battle.net», «аккаунт Wargaming.net», «демо на itch.io»,
+ * «кросс-плей с версией GOG.com» — патчноуты игр Blizzard и Wargaming без них
+ * не обходятся, и MODEL_SPAM выбрасывал бы такой пересказ целиком.
+ */
+const PLATFORM_NAMES = standaloneNames(['battle.net', 'wargaming.net', 'itch.io', 'gog.com'])
+
+/** Домен внутри имени игры: «Deeeep.io», «Taming.io», «Krunker.io: Classic» */
+const DOMAIN_IN_NAME = new RegExp(String.raw`\b${DOMAIN}\b`, 'gi')
 
 /**
  * Чистая проверка ответа модели — тестируется без сети, как validatePicks.
@@ -700,14 +730,30 @@ const PLATFORM_NAMES = /(?<![\w.-])(?:battle\.net|wargaming\.net|itch\.io)(?![\w
  *
  * Проверка — ДО trimTldr, по той же причине, что в cleanProsCons: домен,
  * отрезанный на двухсотом символе, фильтр уже не узнал бы.
+ *
+ * gameName — ради игр, чьё имя само пишется доменом: жанр .io в Steam
+ * («Deeeep.io», «Taming.io»). Пересказ их патча естественно называет игру, и
+ * без этого MODEL_SPAM браковал бы его каждый раз: три платных вызова на
+ * запись, а в итоге ни пересказа, ни индексации, ни причины вернуться на /play.
+ * Вынимается не имя целиком, а только домены из него, и только отдельно
+ * стоящие (standaloneNames). Целое имя опасно: игра «Код» вынула бы «код» из
+ * «Промокод», а игра «Code» — из «promo code», и реклама прошла бы. Домен из
+ * имени игры ничего нового не рекламирует — имя и так стоит в заголовке
+ * каждой поверхности, куда уезжает пересказ.
  */
-export function validateDigest(raw: unknown): { tldr: string; scale: NewsScale } | null {
+export function validateDigest(
+  raw: unknown,
+  gameName = '',
+): { tldr: string; scale: NewsScale } | null {
   const o = raw as { tldr?: unknown; scale?: unknown }
   const tldr = typeof o?.tldr === 'string' ? o.tldr.trim() : ''
   const scale = o?.scale
   if (!tldr) return null
   if (scale !== 'major' && scale !== 'hotfix') return null
-  if (MODEL_SPAM.test(tldr.replace(PLATFORM_NAMES, ' '))) return null
+  let checked = tldr.replace(PLATFORM_NAMES, ' ')
+  const own = gameName.match(DOMAIN_IN_NAME)
+  if (own) checked = checked.replace(standaloneNames(own), ' ')
+  if (MODEL_SPAM.test(checked)) return null
   return { tldr: trimTldr(tldr), scale }
 }
 
@@ -756,7 +802,7 @@ scale — "major", если это крупное обновление: новы
       maxTokens: 800,
       clientOpts: cronClientOptions(budgetMs),
     })
-    return validateDigest(raw)
+    return validateDigest(raw, gameName)
   } catch (e) {
     rethrowIfSystemic(e)
     return null
