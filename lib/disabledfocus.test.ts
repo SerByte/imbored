@@ -271,6 +271,12 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['app/explore/page.tsx', /const redeal = async \(keyboard: boolean\) => \{\s*if \(dealing\) return/]],
   },
   {
+    // «Попробовать снова» на экране отказа /explore
+    file: 'app/explore/page.tsx',
+    expr: 'retrying',
+    guards: [['app/explore/page.tsx', /const retry = async \(keyboard: boolean\) => \{\s*if \(retrying\) return/]],
+  },
+  {
     // «Войти в комнату» и «Демо-друг»
     file: 'app/room/[id]/page.tsx',
     expr: 'busy',

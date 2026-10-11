@@ -1,5 +1,15 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { EXPLORE_DECK, EXPLORE_PASS_SEC, exploreDeck, exploredAppids } from './explore'
+import {
+  EXPLORE_DECK,
+  EXPLORE_PASS_SEC,
+  EXPLORE_WAIT_MS,
+  exploreDeck,
+  exploreSignal,
+  exploredAppids,
+  putBack,
+} from './explore'
 import type { CandidateSource } from './types'
 
 const c = (appid: number, source: CandidateSource, score: number) => ({ appid, source, score })
@@ -32,5 +42,103 @@ describe('exploredAppids', () => {
       { appid: 3, at: NOW - EXPLORE_PASS_SEC - 1, liked: false },
     ]
     expect(exploredAppids(rows, NOW)).toEqual([1, 2])
+  })
+})
+
+describe('putBack: отказ «Убрать» возвращает одну плитку, а не снимок полки', () => {
+  const t = (appid: number) => ({ appid })
+  const ids = (l: Array<{ appid: number }>) => l.map((x) => x.appid)
+  // полка в момент нажатия «Убрать» на плитке 2
+  const before = [t(1), t(2), t(3), t(4)]
+
+  test('полка за время запроса не менялась — плитка встаёт на своё место', () => {
+    expect(ids(putBack([t(1), t(3), t(4)], t(2), before))).toEqual([1, 2, 3, 4])
+  })
+
+  test('пока запрос шёл, «Интересно» положило новую — она остаётся', () => {
+    // снимок вернул бы [1, 2, 3, 4] и стёр бы 9, хотя сервер её уже записал
+    expect(ids(putBack([t(9), t(1), t(3), t(4)], t(2), before))).toEqual([9, 1, 2, 3, 4])
+  })
+
+  test('соседа убрали вторым «Убрать» — он не воскресает', () => {
+    expect(ids(putBack([t(1), t(4)], t(2), before))).toEqual([1, 2, 4])
+    // ушли все нижние соседи — плитка встаёт в конец
+    expect(ids(putBack([t(1)], t(3), before))).toEqual([1, 3])
+  })
+
+  test('плитка уже на полке — та же полка, без второй копии', () => {
+    const shelf = [t(1), t(2)]
+    expect(putBack(shelf, t(2), before)).toBe(shelf)
+  })
+})
+
+describe('exploreSignal: потолок ожидания колоды', () => {
+  test('уход со страницы отменяет запрос', () => {
+    const page = new AbortController()
+    const s = exploreSignal(page.signal)
+    expect(s.aborted).toBe(false)
+    page.abort()
+    expect(s.aborted).toBe(true)
+  })
+
+  test('повисший запрос обрывается потолком, а сигнал страницы остаётся целым', async () => {
+    const page = new AbortController()
+    const s = exploreSignal(page.signal, 5)
+    if (!s.aborted) await new Promise((r) => s.addEventListener('abort', r, { once: true }))
+    expect((s.reason as DOMException).name).toBe('TimeoutError')
+    // По этой разнице страница и отличает обрыв от ухода: экран отказа — только на обрыве
+    expect(page.signal.aborted).toBe(false)
+  })
+
+  test('без AbortSignal.any (Safari до 17.4) — сигнал страницы, а не исключение', () => {
+    const any = AbortSignal.any
+    Reflect.set(AbortSignal, 'any', undefined)
+    try {
+      const page = new AbortController()
+      expect(exploreSignal(page.signal)).toBe(page.signal)
+    } finally {
+      Reflect.set(AbortSignal, 'any', any)
+    }
+  })
+
+  test('потолок — с запасом над живым ответом, но не браузерные минуты', () => {
+    expect(EXPLORE_WAIT_MS).toBeGreaterThanOrEqual(10_000)
+    expect(EXPLORE_WAIT_MS).toBeLessThanOrEqual(30_000)
+  })
+})
+
+/**
+ * Страница /explore — исходником, как в lib/focushandoff.test.ts: без
+ * браузера ни историю, ни повисшее соединение не увидеть, а возвращается
+ * каждая поломка одной правкой.
+ */
+describe('страница /explore', () => {
+  /** Комментарии гасятся пробелами: докблоки цитируют сами правила */
+  const page = fs
+    .readFileSync(path.join(__dirname, '..', 'app', 'explore', 'page.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:])(\/\/[^\n]*)/g, (_, pre: string, c: string) => pre + ' '.repeat(c.length))
+
+  test('разворот на вход заменяет запись истории, а не добавляет новую', () => {
+    // С push история была [..., /quiz, /explore, /?next=…]: «Назад» с лендинга
+    // открывал /explore, тот снова получал 401 и снова уводил на лендинг, — и
+    // назад дальше /explore было не уйти. Запись без сессии мертва, её не жалко
+    expect(page).toMatch(/router\.replace\(bounceTo\('\/explore'\)\)/)
+    expect(page).not.toMatch(/router\.push\(bounceTo\(/)
+  })
+
+  test('каждый запрос колоды — с потолком ожидания', () => {
+    const calls = page.match(/fetch\('\/api\/explore'[^)]*\)/g) ?? []
+    expect(calls.length, 'запросы колоды не найдены — сторож ослеп').toBeGreaterThanOrEqual(2)
+    for (const c of calls) {
+      expect(c, 'без потолка повисшее соединение держит «Собираю…», пока его держит браузер').toMatch(
+        /signal: exploreSignal\(/,
+      )
+    }
+  })
+
+  test('отказ «Убрать» возвращает одну плитку, а не снимок полки', () => {
+    expect(page).toMatch(/setLiked\(\(l\) => putBack\(l, card, before\)\)/)
+    expect(page).not.toMatch(/setLiked\(before\)/)
   })
 })

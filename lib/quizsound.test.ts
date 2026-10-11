@@ -1,3 +1,5 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { isSoundOn, setSoundOn, soundOffSnapshot, subscribeSound } from './quizsound'
 
@@ -106,5 +108,105 @@ describe('soundOffSnapshot', () => {
     // Ровно то, что рендерит сервер: иначе гидратация разошлась бы у того,
     // кто звук уже включал.
     expect(soundOffSnapshot()).toBe(false)
+  })
+})
+
+/**
+ * Хранилище не приняло выбор — он живёт в памяти вкладки до перезагрузки.
+ *
+ * Модуль помнит непринятый выбор в своём состоянии, поэтому каждый тест здесь
+ * берёт свежую копию модуля: иначе выбор одного теста протекал бы в другой.
+ */
+describe('хранилище не приняло выбор', () => {
+  const fresh = async () => {
+    vi.resetModules()
+    return import('./quizsound')
+  }
+
+  test('запрещённое хранилище: тумблер всё равно переключается', async () => {
+    // Сайт с запрещёнными данными: бросают и getItem, и setItem. isSoundOn
+    // перечитывал хранилище, ловил исключение и отвечал «выключено» — подпись
+    // кнопки не менялась, и звук не играл никогда
+    withStorage('throws')
+    const quiz = await fresh()
+    quiz.setSoundOn(true)
+    expect(quiz.isSoundOn()).toBe(true)
+    quiz.setSoundOn(false)
+    expect(quiz.isSoundOn()).toBe(false)
+  })
+
+  test('запись бросает, а чтение работает — верх берёт выбор, а не прежнее значение', async () => {
+    // Переполненное хранилище: setItem бросает, getItem отдаёт старое «off»
+    const s = memoryStorage()
+    s.map.set('imbored-quiz-sound', 'off')
+    withStorage({
+      getItem: s.getItem,
+      setItem: () => {
+        throw new Error('квота')
+      },
+    })
+    const quiz = await fresh()
+    quiz.setSoundOn(true)
+    expect(quiz.isSoundOn()).toBe(true)
+  })
+
+  test('хранилище снова принимает — правда опять в нём', async () => {
+    // Иначе память вкладки заслонила бы выбор, сделанный в соседней вкладке
+    const s = memoryStorage()
+    let broken = true
+    withStorage({
+      getItem: s.getItem,
+      setItem: (k, v) => {
+        if (broken) throw new Error('квота')
+        s.setItem(k, v)
+      },
+    })
+    const quiz = await fresh()
+    quiz.setSoundOn(true)
+    broken = false
+    quiz.setSoundOn(false)
+    expect(quiz.isSoundOn()).toBe(false)
+    s.map.set('imbored-quiz-sound', 'on') // выбор соседней вкладки
+    expect(quiz.isSoundOn()).toBe(true)
+  })
+})
+
+/**
+ * Имя тумблера постоянное, состояние — в aria-pressed, как у «Пауза» в
+ * MorphSlider. Подпись «Звук выкл.» вместе с aria-pressed звучала «Звук
+ * выкл., не нажата»: два отрицания об одном, и не понять, состояние это или
+ * действие. Для глаза подпись прежняя — «вкл./выкл.» в aria-hidden.
+ */
+describe('SoundToggle', () => {
+  /** Имя кнопки — её текст без aria-hidden */
+  const name = (html: string) =>
+    html.replace(/<(svg|span)\b[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/\1>/g, '').replace(/<[^>]+>/g, '')
+  const seen = (html: string) => html.replace(/<[^>]+>/g, '')
+
+  test('выключенный: имя «Звук», состояние — «не нажата»', async () => {
+    vi.resetModules()
+    const { SoundToggle } = await import('../components/SoundToggle')
+    const html = renderToStaticMarkup(createElement(SoundToggle))
+    expect(html).toMatch(/aria-pressed="false"/)
+    expect(name(html)).toBe('Звук')
+    expect(seen(html)).toBe('Звук выкл.')
+  })
+
+  test('включённый: то же имя, «нажата»', async () => {
+    // Сервер звука не знает (soundOffSnapshot) — включённый снимок подставляем
+    vi.resetModules()
+    vi.doMock('./quizsound', async (orig) => ({
+      ...(await orig<typeof import('./quizsound')>()),
+      soundOffSnapshot: () => true,
+    }))
+    try {
+      const { SoundToggle } = await import('../components/SoundToggle')
+      const html = renderToStaticMarkup(createElement(SoundToggle))
+      expect(html).toMatch(/aria-pressed="true"/)
+      expect(name(html)).toBe('Звук')
+      expect(seen(html)).toBe('Звук вкл.')
+    } finally {
+      vi.doUnmock('./quizsound')
+    }
   })
 })
