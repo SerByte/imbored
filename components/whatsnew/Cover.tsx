@@ -58,7 +58,18 @@ export function Cover({
   // уходит вверх, и это одинаково работает на любой высоте экрана
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end start'] })
 
-  // Хуки зовём безусловно — правила хуков; отключаем движение на применении
+  // Хуки зовём безусловно — правила хуков; отключаем движение на применении.
+  //
+  // Отключаем ЗНАЧЕНИЯМИ, а не самим style. useReducedMotion на сервере —
+  // null, а у читателя с reduce — true уже на гидратирующем рендере, так что
+  // style={reduced ? undefined : …} давал на сервере style="transform:none",
+  // а на клиенте никакого: расхождение атрибутов на каждом таком заходе, React
+  // его не чинит. Те же ключи со статическими y: 0, scale: 1, opacity: 1
+  // framer печатает ровно так же, как начальную точку параллакса, а двигать
+  // статические числа нечему. reduced за жизнь компонента не меняется
+  // (framer читает его один раз), поэтому значение не подменяется на лету.
+  // Сторож — lib/reducedhydration.test.ts; тот же приём «сервер и первый
+  // рендер клиента рисуют одно» — у components/landing/scenes/Engine.tsx.
   const artY = useTransform(scrollYProgress, [0, 1], ['0%', '18%'])
   const artScale = useTransform(scrollYProgress, [0, 1], [1, 1.12])
   const stillY = useTransform(scrollYProgress, [0, 1], ['0%', '-26%'])
@@ -80,7 +91,7 @@ export function Cover({
       <m.div
         aria-hidden
         className="absolute inset-0"
-        style={reduced ? undefined : { y: artY, scale: artScale }}
+        style={{ y: reduced ? 0 : artY, scale: reduced ? 1 : artScale }}
       >
         <GameArt
           appid={item.appid}
@@ -125,7 +136,7 @@ export function Cover({
               : 'grid gap-10'
           }
         >
-          <m.div style={reduced ? undefined : { y: textY, opacity: textFade }}>
+          <m.div style={{ y: reduced ? 0 : textY, opacity: reduced ? 1 : textFade }}>
             {/* Заголовок страницы, а не игры: h1 обязан говорить, где ты, даже
                 когда на весь экран стоит чужое название. Игра идёт следом h2.
                 Метка ленты живёт здесь же: переключатель остался экраном ниже,
@@ -216,7 +227,7 @@ export function Cover({
             <m.figure
               aria-hidden
               className="hidden md:block"
-              style={reduced ? undefined : { y: stillY }}
+              style={{ y: reduced ? 0 : stillY }}
             >
               {/*
                 lazy, а не eager, и это про телефон.

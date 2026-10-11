@@ -71,6 +71,16 @@ export type FeedChoice<T> = {
    * На общей вкладке равно длине списка.
    */
   mineCount: number
+  /**
+   * Все appid библиотеки по снапшоту, без капа LIBRARY_CAP; гостю — пусто.
+   *
+   * «Не в личном блоке» не значит «не твоя»: из блока игра выпадает, когда её
+   * последний крупный патч старше MINE_FRESH_SEC или она за капом (несыгранное
+   * из бандлов в большой библиотеке). Страница по этому множеству решает,
+   * показывать ли строке цену и «Открыть игру», — своё не продают. Снапшот и
+   * так читается здесь ради личной ленты, второй раз страница его не просит.
+   */
+  owned: ReadonlySet<number>
 }
 
 /**
@@ -87,7 +97,12 @@ export async function resolveWhatsNew<T extends { appid: number; publishedAt: nu
   wantsPopular: boolean
   nowSec: number
   snapshot: (steamid: string) => Promise<{ games: LibraryLike[] } | null>
-  forApps: (appids: number[], limit: number) => Promise<T[]>
+  /**
+   * since — нижняя граница даты, включительно: старше окна свежести в личный
+   * блок не идёт ничего, и отсечь это обязана база, а не фильтр в памяти
+   * (почему — getFeedHeadForApps). Фильтр ниже остаётся страховкой.
+   */
+  forApps: (appids: number[], limit: number, since: number) => Promise<T[]>
   major: (limit: number, minRank: number) => Promise<T[]>
   limit?: number
   libraryCap?: number
@@ -100,13 +115,21 @@ export async function resolveWhatsNew<T extends { appid: number; publishedAt: nu
   const freshSec = opts.freshSec ?? MINE_FRESH_SEC
 
   let mine: T[] = []
+  let owned: ReadonlySet<number> = new Set()
   if (opts.steamid) {
     const snap = await opts.snapshot(opts.steamid)
+    owned = new Set(snap?.games.map((g) => g.appid) ?? [])
     if (snap?.games.length) {
       // На общей вкладке личная лента нужна ради одного ответа — «есть ли она
-      // вообще». Просить под это тридцать записей значит прочитать сто
-      // двадцать строк и выбросить их.
-      mine = await opts.forApps(topLibraryAppids(snap.games, cap), opts.wantsPopular ? 1 : limit)
+      // вообще». Просить под это тридцать записей значит дочитать тела
+      // тридцати патчей (getFeedForApps) и выбросить их. Строк индекса LIMIT
+      // не экономит — слияние диапазонов игр идёт сортировкой, — их держит
+      // в узде нижняя граница по окну свежести.
+      mine = await opts.forApps(
+        topLibraryAppids(snap.games, cap),
+        opts.wantsPopular ? 1 : limit,
+        opts.nowSec - freshSec,
+      )
     }
   }
 
@@ -133,22 +156,39 @@ export async function resolveWhatsNew<T extends { appid: number; publishedAt: nu
   // три месяца не набралось ничего, показываем общую целиком — ровно как
   // гостю, у которого библиотеки нет вовсе.
   if (opts.wantsPopular || !fresh.length) {
+    // Свои игры отсюда НЕ выкидываются: это общая лента, и крупный патч в
+    // твоей игре на ней — такая же новость. Своё теряет только цену, и решает
+    // это страница по owned.
     const items = await opts.major(limit, floor)
-    return { items, showPopular: true, hasMine, mineCount: items.length }
+    return { items, showPopular: true, hasMine, mineCount: items.length, owned }
   }
 
   if (fresh.length >= limit) {
-    return { items: fresh.slice(0, limit), showPopular: false, hasMine, mineCount: limit }
+    return { items: fresh.slice(0, limit), showPopular: false, hasMine, mineCount: limit, owned }
   }
 
-  // Добираем из общей, выбрасывая игры, которые уже показаны выше: одна и та
-  // же игра дважды в одной ленте выглядит поломкой, а не полнотой. Просим с
-  // запасом ровно на возможные пересечения.
+  /*
+   * Добираем из общей, выбрасывая ВСЕ игры библиотеки, а не только показанные
+   * выше. Под границей «Ещё в популярных играх» страница обещает чужие игры и
+   * рисует им цену; своя игра там — это скидка на то, что уже куплено, и
+   * патч, который трёхмесячный порог личного блока как раз прятал.
+   *
+   * Показанные выше по построению входят в owned, но проверка на них остаётся
+   * своей строкой: «одна игра дважды в ленте» — другое правило, и держаться
+   * оно не должно на том, откуда forApps взял свои appid.
+   *
+   * Запас прежний — на пересечения с личным блоком. Своих популярных игр в
+   * выборке может оказаться больше, и добивка выйдет на пару строк короче;
+   * поднимать limit ради них значит плодить ключи cachedMajorFeed (см. его
+   * докблок про горячие limit'ы).
+   */
   const seen = new Set(fresh.map((i) => i.appid))
   const pop = await opts.major(limit + fresh.length, floor)
-  const topup = pop.filter((i) => !seen.has(i.appid)).slice(0, limit - fresh.length)
+  const topup = pop
+    .filter((i) => !seen.has(i.appid) && !owned.has(i.appid))
+    .slice(0, limit - fresh.length)
 
-  return { items: [...fresh, ...topup], showPopular: false, hasMine, mineCount: fresh.length }
+  return { items: [...fresh, ...topup], showPopular: false, hasMine, mineCount: fresh.length, owned }
 }
 
 /**

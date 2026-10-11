@@ -19,7 +19,7 @@ import {
   type StoredNews,
 } from '@/lib/db'
 import { GAME_PAGE_REVALIDATE_SEC, PRERENDER_TOP } from '@/lib/gamecache'
-import { flight as flightOf, textOf } from '@/lib/testing/flight'
+import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
 import GamePage, { generateMetadata, generateStaticParams, revalidate } from './page'
@@ -248,6 +248,35 @@ describe('кэш карточки игры', () => {
       expect(text).toContain(`{"island":"Link","key":null,"props":{"href":"/game/${appid}","prefetch":false`)
       // ни плитки, ни арта — только название
       expect(text).not.toContain(`"appid":${appid}`)
+    }
+  })
+
+  test('«Похожие» — без префетча, но с переходом вглубь', async () => {
+    // Соседи — в основном хвост каталога вне PRERENDER_TOP: с префетчем по
+    // умолчанию каждая карточка, до «Похожих» которой доскроллили, будила бы
+    // шесть холодных рендеров с записью ISR (components/GameLink)
+    await seed()
+    const links = islandsOf(flight(await GamePage(params)), 'Link').filter((l) =>
+      /^\/game\/1\d$/.test(String(l.href)),
+    )
+    expect(links.length).toBeGreaterThan(0)
+    for (const l of links) {
+      expect(l).toMatchObject({ prefetch: false, transitionTypes: ['nav-forward'] })
+    }
+  })
+
+  test('в островки GameArt уезжают только ссылки варианта card', async () => {
+    // Герой и «Похожие» рисуют арт вариантом card: он читает header, header2x
+    // и capsule. library_hero и hero_2x ехали в RSC и в HTML каждой из пяти
+    // тысяч карточек мёртвым грузом — по ~380 символов на игру (lib/art,
+    // trimArt «нужна на границе с клиентом»).
+    await seed()
+    const arts = islandsOf(flight(await GamePage(params)), 'GameArt')
+    // две картинки героя и шесть соседей — сторож не слепой
+    expect(arts.length).toBeGreaterThanOrEqual(8)
+    for (const a of arts) {
+      expect(a.variant ?? 'card').toBe('card')
+      expect(Object.keys((a.art as object | null) ?? {}).sort()).toEqual(['capsule', 'header', 'header2x'])
     }
   })
 

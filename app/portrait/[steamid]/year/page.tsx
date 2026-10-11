@@ -8,6 +8,7 @@ import { cache, type ReactNode } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { Eyebrow, eyebrow } from '@/components/Labels'
 import { ShareLinkField } from '@/components/ShareLink'
@@ -289,7 +290,7 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
             {year.top.map((g, i) => (
               <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
                 <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-                <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+                <GameLink appid={g.appid} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
                   <span className="card-thumb">
                     <GameArt
                       appid={g.appid}
@@ -299,7 +300,7 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
                       className="w-full aspect-[460/215] object-cover"
                     />
                   </span>
-                </Link>
+                </GameLink>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">
                     {g.name}
@@ -436,7 +437,7 @@ function YearShelf({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {games.map((g, i) => (
           <m.div key={g.appid} {...inView(i % 6)}>
-            <Link href={`/game/${g.appid}`} className="game-card block">
+            <GameLink appid={g.appid} className="game-card block">
               <GameCardBody
                 appid={g.appid}
                 name={g.name}
@@ -444,7 +445,7 @@ function YearShelf({
                 sizes="(min-width: 1024px) 17vw, (min-width: 640px) 33vw, 50vw"
                 meta={<span className="truncate tabular-nums">{g.meta}</span>}
               />
-            </Link>
+            </GameLink>
           </m.div>
         ))}
       </div>

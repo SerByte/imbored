@@ -51,6 +51,7 @@ import {
 import { PRICE_TRUST_SEC } from './discount'
 import { fetchDiscoveryPool } from './pool'
 import { loadTriviaCatalog } from './trivia'
+import { MINE_FRESH_SEC } from './whatsnewfeed'
 
 /**
  * Частичные индексы и запросы, которые на них держатся.
@@ -66,6 +67,8 @@ import { loadTriviaCatalog } from './trivia'
  */
 
 const NOW = 1_700_000_000
+/** Окно свежести личной ленты — с ним её зовут страница и опрос */
+const FRESH = MINE_FRESH_SEC
 
 type Issued = { sql: string; args: InArgs }
 
@@ -166,17 +169,19 @@ const CASES: Case[] = [
     sortFree: true,
   },
   // Личная лента: несколько appid — несколько диапазонов idx_news_app, их
-  // слияние по дате требует сортировки, но строк там не больше, чем патчей у
-  // четырёхсот игр библиотеки за окно ленты.
+  // слияние по дате требует сортировки, и LIMIT чтение не останавливает.
+  // Объём сортировки держит нижняя граница since — окно свежести личного
+  // блока (MINE_FRESH_SEC): постов у LIBRARY_CAP игр за три месяца, а не за
+  // всю ретенцию. Что граница правда входит в диапазон — тест ниже.
   {
     name: 'личная лента',
-    run: async (db) => getFeedForApps(await withPatches(db), [730, 570]),
+    run: async (db) => getFeedForApps(await withPatches(db), [730, 570], 30, undefined, NOW - FRESH),
     indexes: ['idx_news_app', NEWS_PK],
     sortFree: false,
   },
   {
     name: 'голова личной ленты',
-    run: (db) => getFeedHeadForApps(db, [730, 570]),
+    run: (db) => getFeedHeadForApps(db, [730, 570], 30, undefined, NOW - FRESH),
     indexes: ['idx_news_app'],
     sortFree: false,
   },
@@ -456,6 +461,23 @@ describe('планы запросов', () => {
     const where = plan.join(' | ')
     expect(bareScans(plan), where).toEqual([])
     expect(where).toContain('idx_feedback_ctx')
+  })
+
+  test('личная лента: окно свежести — граница диапазона индекса, а не фильтр после него', async () => {
+    // Без нижней границы диапазон idx_news_app каждой игры дочитывался до
+    // конца ретенции, и сортировка перебирала все ≤30 постов трёхсот игр на
+    // каждый опрос плашки «N новых». Остаточный фильтр по дате выглядел бы в
+    // плане так же «по индексу» — поэтому проверяется сама граница поиска.
+    const db = await createDb(':memory:')
+    for (const run of [
+      (spy: Db) => getFeedHeadForApps(spy, [730, 570], 30, undefined, NOW - FRESH),
+      async (spy: Db) => getFeedForApps(await withPatches(spy), [730, 570], 30, undefined, NOW - FRESH),
+    ]) {
+      const head = (await statementsOf(db, run)).filter((q) => q.sql.includes('appid IN'))
+      expect(head).toHaveLength(1)
+      const where = (await planOf(db, head[0]!)).join(' | ')
+      expect(where).toContain('idx_news_app (appid=? AND published_at>? AND published_at<?)')
+    }
   })
 
   /*

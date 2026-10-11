@@ -15,6 +15,7 @@ import { RefundNote } from '@/components/RefundNote'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { sitemapGames } from '@/lib/db'
 import { discountTrustedUntil, discountView, trustedPrice } from '@/lib/discount'
+import { trimArt } from '@/lib/art'
 import { PRERENDER_TOP, prerenderAtBuild } from '@/lib/gamecache'
 import { HUB_GENRES, hubPath, primaryGenre } from '@/lib/gamehub'
 import { byline } from '@/lib/byline'
@@ -38,6 +39,7 @@ import { tagRu } from '@/lib/tagsru'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 
 /**
@@ -294,6 +296,17 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   // Главный жанр — путь над названием и в крошках разметки (одно и то же)
   const genreTag = primaryGenre(meta.tags)
   const genre = genreTag ? { tag: genreTag, title: HUB_GENRES[genreTag].title, path: hubPath(genreTag)! } : null
+  /*
+   * Арт героя — срезанный под card: обе его картинки рисуют этот вариант и
+   * читают header, header2x и capsule. GameArt — клиентский островок, так что
+   * meta.art целиком уезжал в RSC и в HTML недельного кэша каждой карточки
+   * вместе с library_hero, hero_2x и постерами, которых никто не запросит.
+   *
+   * Один объект на обе картинки, а не trimArt(meta.art) в каждой: Flight
+   * сериализует общий объект один раз и дальше ссылается на него, а два
+   * отдельных среза уехали бы двумя копиями.
+   */
+  const coverArt = trimArt(meta.art)
 
   return (
     <div className="flex-1">
@@ -362,7 +375,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           appid={meta.appid}
           name=""
           headerImage={meta.headerImage ?? null}
-          art={meta.art}
+          art={coverArt}
           sizes="(min-width: 1024px) 380px, 100vw"
           eager
           fetchPriority="high"
@@ -409,7 +422,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               appid={meta.appid}
               name={meta.name}
               headerImage={meta.headerImage ?? null}
-              art={meta.art}
+              art={coverArt}
               sizes="(min-width: 1024px) 380px, 100vw"
               eager
               fetchPriority="high"
@@ -753,7 +766,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
         {/* Похожие: единственная перелинковка между пятью тысячами карточек.
             До неё страница была тупиком — из поиска сюда приходили и упирались
-            в ссылку на /play, которая гостя разворачивала на лендинг. */}
+            в ссылку на /play, которая гостя разворачивала на лендинг.
+            Соседи — в основном хвост каталога вне PRERENDER_TOP, поэтому
+            GameLink без префетча: шесть холодных рендеров с записью ISR на
+            каждый просмотр карточки, до которой доскроллили, — не цена за
+            шесть ссылок, по которым уйдут в лучшем случае по одной. */}
         {data.similar.length > 0 && (
           <section>
             <SectionLabel className="mb-4">
@@ -761,9 +778,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             </SectionLabel>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
               {data.similar.map((g) => (
-                <Link
+                <GameLink
                   key={g.appid}
-                  href={`/game/${g.appid}`}
+                  appid={g.appid}
                   transitionTypes={['nav-forward']}
                   className="game-card block"
                 >
@@ -772,7 +789,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     appid={g.appid}
                     name={g.name}
                     headerImage={g.headerImage}
-                    art={g.art}
+                    // плитка — вариант card: hero и постеры ей не нужны
+                    art={trimArt(g.art)}
                     sizes="(min-width: 768px) 33vw, 50vw"
                     /* Чем похожи — у готовых соседей: заголовок блока у них без
                        тега, и без этой строки «похожие» было бы голословным */
@@ -782,7 +800,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       ) : undefined
                     }
                   />
-                </Link>
+                </GameLink>
               ))}
             </div>
             {/* Под сеткой, внутри её секции: отдельная секция добавила бы ещё

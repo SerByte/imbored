@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation'
 import { after } from 'next/server'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { Magnet } from '@/components/Magnet'
 import { DiscountCorner, PriceTag } from '@/components/PriceTag'
@@ -163,7 +164,7 @@ function HoursSplit({ minutesA, minutesB }: { minutesA: number | null; minutesB:
 
 function CommonRow({ game }: { game: CompatGame }) {
   return (
-    <Link href={`/game/${game.appid}`} className="common-row game-card">
+    <GameLink appid={game.appid} className="common-row game-card">
       <span className="card-thumb aspect-[460/215] w-[112px] shrink-0 md:w-[136px]">
         <GameArt
           appid={game.appid}
@@ -181,13 +182,13 @@ function CommonRow({ game }: { game: CompatGame }) {
         <span className="truncate text-[15px] font-extrabold tracking-[-0.01em]">{game.name}</span>
         <HoursSplit minutesA={game.minutesA} minutesB={game.minutesB} />
       </span>
-    </Link>
+    </GameLink>
   )
 }
 
 function PickCard({ pick }: { pick: CompatPick }) {
   return (
-    <Link href={`/game/${pick.appid}`} className="game-card block">
+    <GameLink appid={pick.appid} className="game-card block">
       <GameCardBody
         appid={pick.appid}
         name={pick.name}
@@ -221,7 +222,7 @@ function PickCard({ pick }: { pick: CompatPick }) {
           )
         }
       />
-    </Link>
+    </GameLink>
   )
 }
 

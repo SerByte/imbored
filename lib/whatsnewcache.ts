@@ -27,6 +27,13 @@ import { getDb } from './server'
  * после обновления страницы не появится (см. докблок роута). Лишние записи в
  * кэше дешевле этого риска: горячих limit'ов на практике два-три.
  *
+ * По той же причине голова ленты читает ЭТУ ЖЕ функцию, а не базу и не свой
+ * отдельный кэш: совпадать со страницей ей нужно и во времени. Две записи
+ * stale-while-revalidate перегенерируются независимо, и плашка снова обещала
+ * бы патч, которого router.refresh() ещё не покажет. Одна функция — ещё не
+ * одна запись: голова и страница собираются в разных слоях, и запись у них
+ * общая только потому, что колбэк связан через bind (см. cachedMajorFeed).
+ *
  * unstable_cache, а не "use cache". Директива требует либо
  * experimental.useCache (само помечено устаревшим), либо cacheComponents,
  * который включает PPR на всё приложение — а у нас восемь сегментов
@@ -46,14 +53,42 @@ export const NEWS_MAJOR_TAG = 'news:major'
  */
 const MAJOR_TTL_SEC = 600
 
+async function loadMajorFeed(limit: number, minRank: number): Promise<StoredNews[]> {
+  // getDb внутри кэшируемой функции — можно: она не читает ни cookies, ни
+  // headers. Передать db аргументом было бы нельзя: аргументы участвуют в
+  // ключе, а объект соединения в ключ не сериализуется.
+  const db = await getDb()
+  return getMajorFeed(db, limit, { minRank })
+}
+
+/**
+ * Колбэк — связанная копия (bind), а не стрелка на месте. Это и держит
+ * «одну запись» из докблока выше.
+ *
+ * unstable_cache строит ключ из ТЕКСТА функции: `${cb.toString()}-${keyParts}`
+ * плюс аргументы (next/dist/server/web/spec-extension/unstable-cache.js;
+ * docs 04-functions/unstable_cache.md: «the stringified version of your
+ * function»). А текст у одной и той же стрелки разный в разных слоях сборки.
+ * Turbopack собирает модуль отдельно для app-route (голова, feed.xml) и для
+ * app-rsc (страница) и подставляет в тело слой-зависимые имена импортов:
+ * в dev `…$5b$app$2d$route$5d$…["getDb"]` против `…$5b$app$2d$rsc$5d$…`, а два
+ * чанка app-rsc расходятся ещё и между собой. В проде минификатор называет
+ * параметры как придётся: `async(e,t)=>{let a=await (0,l.getDb)()…` в одном
+ * чанке и `async(a,b)=>{let c=await (0,f.getDb)()…` в другом. Итог —
+ * два независимых ключа под одним тегом: голова и страница жили в разных
+ * записях stale-while-revalidate, и плашка «N новых» снова обгоняла клик.
+ *
+ * У связанной функции toString() — `function () { [native code] }` в любом
+ * слое и чанке, так что ключ держится только на keyParts и аргументах.
+ * Отсюда два обязательства. keyParts уникальны на весь проект: текст функции
+ * больше не разводит два кэша с одинаковыми keyParts. И версию в keyParts
+ * (`:v1`) поднимать руками, когда меняется форма результата: раньше ключ
+ * сам менялся вместе с текстом колбэка на каждой сборке, теперь он стабилен
+ * между деплоями, и запись старой формы прожила бы до своего TTL.
+ * Стрелку сюда не возвращать — это сторожит lib/whatsnewcache.test.ts.
+ */
 export const cachedMajorFeed = unstable_cache(
-  async (limit: number, minRank: number): Promise<StoredNews[]> => {
-    // getDb внутри кэшируемой функции — можно: она не читает ни cookies, ни
-    // headers. Передать db аргументом было бы нельзя: аргументы участвуют в
-    // ключе, а объект соединения в ключ не сериализуется.
-    const db = await getDb()
-    return getMajorFeed(db, limit, { minRank })
-  },
+  loadMajorFeed.bind(null),
   ['whatsnew:major:v1'],
   { tags: [NEWS_MAJOR_TAG], revalidate: MAJOR_TTL_SEC },
 )

@@ -2868,6 +2868,21 @@ describe('очередь опроса', () => {
     expect(head.map((h) => `${h.appid}:${h.gid}`)).toEqual(full.map((f) => `${f.appid}:${f.gid}`))
   })
 
+  test('нижняя граница since отсекает старое и в голове, и в ленте — включительно', async () => {
+    // Личная лента старше трёх месяцев никому не нужна (MINE_FRESH_SEC), и
+    // отсечь её обязана база: иначе каждый диапазон idx_news_app читается до
+    // конца ретенции. Граница включительная, как у фильтра свежести.
+    const db = await freshDb()
+    await seedFeed(db)
+    const ids = [730, 570, 440]
+    const head = await getFeedHeadForApps(db, ids, 30, undefined, NOW - 200)
+    expect(head.map((h) => `${h.appid}:${h.gid}`)).toEqual(['730:свежий', '570:1'])
+    const full = await getFeedForApps(db, ids, 30, undefined, NOW - 200)
+    expect(full.map((f) => `${f.appid}:${f.gid}`)).toEqual(['730:свежий', '570:1'])
+    // без since — вся история, как раньше
+    expect(await getFeedHeadForApps(db, ids, 30)).toHaveLength(3)
+  })
+
   test('порог популярности действует на голову так же, как на ленту', async () => {
     const db = await freshDb()
     await seedFeed(db)
