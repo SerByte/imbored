@@ -29,6 +29,16 @@ describe('playLine', () => {
     expect(line).toContain('Следующая игра: «Terraria»')
   })
 
+  /*
+   * Бан ждёт сервера, и к ответу на экране мог стоять другой герой, экран
+   * выгорания или ожидания. Там «Следующая игра: …» назвала бы не то, что
+   * видно, а молчание оставило бы необратимое действие без подтверждения.
+   */
+  test('бан без героя на виду говорит только, что записано', () => {
+    expect(playLine({ kind: 'ban', name: 'Dota 2', done: false })).toBe('«Dota 2» больше не покажу')
+    expect(playLine({ kind: 'ban', name: 'Portal 2', done: true })).toBe('«Portal 2» отмечена пройденной')
+  })
+
   test('«Уже прошёл» — не «больше не покажу»: игра кончилась, а не разонравилась', () => {
     const line = playLine({ kind: 'ban', name: 'Portal 2', done: true, next: 'Hades' })
     expect(line).toContain('«Portal 2» отмечена пройденной')

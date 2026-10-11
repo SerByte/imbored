@@ -248,6 +248,14 @@ describe('экран выгорания', () => {
     }
     expect(burnoutInvite(null)).toBe('Можно просто закрыть Steam, и это тоже победа.')
   })
+
+  // «Можно просто продолжить… а можно просто закрыть Steam» над кнопкой
+  // «Просто продолжить «Dota 2»» — одно слово трижды подряд
+  test('«просто» в абзаце не больше одного раза', () => {
+    for (const o of ['familiar', 'continue', 'cozy', null] as const) {
+      expect(burnoutInvite(o).match(/просто/gi) ?? [], String(o)).toHaveLength(1)
+    }
+  })
 })
 
 /**
@@ -281,8 +289,10 @@ describe('/play применяет новую выдачу одной функц
       .filter(({ line }) => /fetchPicks\(\{|fetchPicks\(next\)/.test(line))
     // первая выдача, «Попробовать снова», переключатели, «Обновить выдачу»
     expect(calls.length).toBeGreaterThanOrEqual(4)
+    // Окно — с запасом на проверки между ответом и выдачей (уход со страницы,
+    // «Подобрать заново» за время запроса, разбор отказа)
     for (const { i } of calls) {
-      expect(lines.slice(i, i + 10).join('\n'), `app/play/page.tsx:${i + 1}`).toContain('applyDeal(')
+      expect(lines.slice(i, i + 14).join('\n'), `app/play/page.tsx:${i + 1}`).toContain('applyDeal(')
     }
   })
 
@@ -335,6 +345,15 @@ describe('/play: пути вокруг выдачи', () => {
     expect(left).toBeGreaterThan(fetchBody.indexOf('await fetch('))
     expect(left).toBeLessThan(fetchBody.indexOf('res.status === 429'))
     expect(left).toBeLessThan(fetchBody.indexOf('router.replace('))
+    // Проверка сигнала стоит до await тела, а разворот шёл после него: уход,
+    // пока читалось тело отказа, всё равно уводил на вход с чужой страницы
+    const failed = fetchBody.slice(fetchBody.indexOf('if (!res.ok)'))
+    expect(failed.indexOf('res.status === 401'), '401 — до чтения тела').toBeGreaterThan(-1)
+    expect(failed.indexOf('res.status === 401')).toBeLessThan(failed.indexOf('.json()'))
+    // и причина отказа, прочитанная после ухода, никуда не пишется
+    const read = failed.slice(failed.indexOf('.json()'))
+    expect(read.indexOf('if (signal?.aborted)'), 'сигнал после тела отказа').toBeGreaterThan(-1)
+    expect(read.indexOf('if (signal?.aborted)')).toBeLessThan(read.indexOf('setReason('))
   })
 
   /*
@@ -345,12 +364,47 @@ describe('/play: пути вокруг выдачи', () => {
    */
   test('конец догрева видит выдачу на экране и гасит плашку перед своей', () => {
     const run = between('async function run()', 'void run()')
-    expect(run).toMatch(/const revealed =[^\n]*dealMeta\.current !== null/)
+    const revealed = run.slice(run.indexOf('const revealed ='), run.indexOf('if (ac.signal.aborted)', run.indexOf('const revealed =')))
+    expect(revealed).toContain('dealMeta.current !== null')
+    /*
+     * dealMeta — «applyDeal был», а не «выдача видна». Ответ пересборки,
+     * доехавший на экран ожидания после «Подобрать заново», ставил его, не
+     * трогая фазы, и догрев, кончившийся без onYield, выходил с экраном
+     * ожидания навсегда. Одного dealMeta мало — нужна и фаза.
+     */
+    expect(revealed).toMatch(/\(dealMeta\.current !== null && live\.current\.phase !== 'prepare'\)/)
+    expect(revealed.split('dealMeta.current').length - 1, 'dealMeta нигде не стоит один').toBe(1)
     const tail = run.slice(run.lastIndexOf('if (revealed) {'))
     const own = tail.indexOf('await reveal()')
     const off = tail.indexOf("setWarming('off')", tail.indexOf('return'))
     expect(off, 'плашка гаснет до последней выдачи').toBeGreaterThan(-1)
     expect(off).toBeLessThan(own)
+  })
+
+  /*
+   * Пересборка или «Обновить выдачу» на выдаче с прошлого захода, и, пока шёл
+   * запрос, — «Подобрать заново». Ответ доезжал на экран ожидания и клал туда
+   * выдачу, от которой отказались, а отказ — строку под героем и плашку
+   * «Обновить» нового захода.
+   */
+  test('ответ, начатый до «Подобрать заново», после него не применяется', () => {
+    const redeal = between('const redeal = useCallback(', '}, [')
+    expect(redeal).toMatch(/roundNow\.current \+= 1\s*setRound\(roundNow\.current\)/)
+    expect(code.split('setRound(').length - 1, 'номер захода растёт только в redeal').toBe(1)
+    for (const [from, to] of [
+      ['const reshape = useCallback(', 'const nudgeTo'],
+      ['onRefresh={async () => {', 'onDismiss='],
+    ]) {
+      const body = between(from, to)
+      const asked = body.indexOf('= roundNow.current')
+      const sent = body.indexOf('await fetchPicks(')
+      const stale = body.indexOf('if (roundNow.current !== ')
+      expect(asked, `${from}: номер захода берётся до запроса`).toBeGreaterThan(-1)
+      expect(asked).toBeLessThan(sent)
+      expect(stale, `${from}: и сверяется после`).toBeGreaterThan(sent)
+      expect(stale).toBeLessThan(body.indexOf("if ('miss' in got)"))
+      expect(stale).toBeLessThan(body.indexOf('applyDeal('))
+    }
   })
 
   test('«Попробовать снова»: удача отдаёт фокус герою, неудача звучит', () => {
@@ -402,6 +456,18 @@ describe('/play: пути вокруг выдачи', () => {
     expect(refresh).toContain('setHeroMiss(switchLine(got))')
   })
 
+  /*
+   * Плашка догрева живёт над героем и жмётся и при открытом «Почему не то?», а
+   * строка отказа стояла в ветке «иначе» этого ряда — размонтированная. 429
+   * «Обновить выдачу» не звучал и не был виден, а потом молча всплывал.
+   */
+  test('строка отказа под героем стоит и при открытом ряде причин', () => {
+    expect(code.split('<StatusLine text={heroMiss}').length - 1).toBe(1)
+    // сразу за концом тернарника askReason, а не внутри его ветки
+    // ({} — след вырезанного JSX-комментария над строкой)
+    expect(code).toMatch(/<\/>\s*\)\}\s*(?:\{\}\s*)?<StatusLine text=\{heroMiss\}[^>]*\/>\s*<\/div>/)
+  })
+
   // «Скрыть» уходит вместе с плашкой, и фокус без присмотра падал в body
   test('«Скрыть» у плашки догрева отдаёт фокус герою', () => {
     expect(between('onDismiss=', '/>')).toContain('focusHero(true)')
@@ -425,10 +491,31 @@ describe('/play: пути вокруг выдачи', () => {
     expect(code).toMatch(/useRef\(\{ picks, index, phase \}\)/)
     expect(code).toMatch(/live\.current = \{ picks, index, phase \}/)
     const ban = between('if (banning) return', 'aria-disabled={banning}')
-    const gate = ban.indexOf("live.current.phase !== 'reveal'")
-    expect(gate, 'фаза читается свежей, а не из замыкания клика').toBeGreaterThan(-1)
-    expect(gate).toBeLessThan(ban.indexOf('say('))
+    expect(ban, 'фаза читается свежей, а не из замыкания клика').toContain('const now = live.current')
+    const gate = ban.indexOf("now.phase !== 'reveal'")
+    expect(gate).toBeGreaterThan(-1)
+    expect(gate).toBeLessThan(ban.indexOf('next: after.picks'))
     expect(gate).toBeLessThan(ban.indexOf('focusHero(false)'))
+  })
+
+  /*
+   * Тихие выходы обработчика бана — «герой уже другой» и «героя не видно» —
+   * не говорили ничего, и скринридер так и не слышал, что необратимое
+   * действие записано. А пустой остаток выдачи уводил в квиз и с экрана
+   * ожидания после «Подобрать заново» — бросая новую выдачу, которую
+   * человек только что попросил.
+   */
+  test('бан звучит и без героя на виду, а с экрана ожидания в квиз не уводит', () => {
+    const ban = between('if (banning) return', 'aria-disabled={banning}')
+    const tail = ban.slice(ban.indexOf('rememberBan('))
+    expect(tail).toContain("const told = playLine({ kind: 'ban', name: pick.name, done: finished })")
+    expect(tail).not.toMatch(/if \(!after\.heroGone\) return|phase !== 'reveal'\) return/)
+    const quiet = tail.slice(tail.indexOf("if (!after.heroGone || now.phase !== 'reveal') {"))
+    expect(quiet).toMatch(/^if \(!after\.heroGone \|\| now\.phase !== 'reveal'\) \{\s*say\(told\)\s*return/)
+    const empty = tail.slice(tail.indexOf('if (after.empty)'), tail.indexOf('setPicks('))
+    expect(empty).toMatch(
+      /if \(now\.phase === 'prepare' \|\| now\.phase === 'error'\) say\(told\)\s*else router\.push\(quizHref\(focus\)\)/,
+    )
   })
 
   test('«Изменить настроение» не снимает «нераспакованное»', () => {
@@ -474,6 +561,19 @@ describe('/play: пути вокруг выдачи', () => {
     const cls = row![1].split(/\s+/)
     expect(cls).toContain('flex-wrap')
     expect(cls).not.toContain('md:flex-nowrap')
-    expect(cls.some((c) => /^md:max-w-\[calc\(100vw-/.test(c)), 'потолок — ширина экрана без полей').toBe(true)
+    const cap = cls.find((c) => /^md:max-w-\[calc\(100vw-/.test(c))
+    expect(cap, 'потолок — ширина экрана без полей').toBeDefined()
+    /*
+     * Поля — те же, что у контейнера героя (px-safe), а не 2 × 1.25rem: iPhone
+     * в ландшафте шире md, вырез даёт полю ~47px, и потолок 100vw − 2.5rem
+     * пускал ряд на 7px за край экрана (на Pro Max — на 19px). Сверяем с самой
+     * утилитой: поменяют поле — потолок обязан пойти за ним.
+     */
+    const css = fs.readFileSync(path.join(__dirname, '..', 'app', 'globals.css'), 'utf8')
+    const safe = css.match(/@utility px-safe \{([^}]*)\}/)
+    expect(safe, '@utility px-safe не найдена — сторож ослеп').not.toBeNull()
+    const gutters = [...safe![1].matchAll(/padding-(?:left|right):\s*([^;]+);/g)].map((m) => m[1].replace(/\s+/g, ''))
+    expect(gutters).toHaveLength(2)
+    for (const g of gutters) expect(cap, g).toContain(`-${g}`)
   })
 })
