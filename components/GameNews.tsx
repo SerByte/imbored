@@ -116,8 +116,9 @@ function Row({
 
   // Название игры — заголовок всей страницы; в заголовке патча оно лишнее.
   const heading = stripGameName(item.title, name)
-  // Английский заголовок — с lang="en", как в ленте (PatchRow, lib/textlang)
-  const headingLang = textLang(heading)
+  // Английский заголовок — с lang="en", как в ленте (PatchRow, lib/textlang);
+  // название игры — имя собственное, в подсчёт языка не входит
+  const headingLang = textLang(heading, name)
   // null — страницы нет в поиске (хотфикс без пересказа, игра вне каталога):
   // заголовок тогда просто текст, см. indexedNewsPath
   const href = indexedNewsPath(item)

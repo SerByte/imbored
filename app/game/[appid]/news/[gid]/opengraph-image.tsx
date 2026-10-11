@@ -21,8 +21,16 @@ export const contentType = 'image/png'
  *
  * Сутки кэша, как у страницы. Пустой generateStaticParams регистрирует
  * сегмент (без него revalidate мёртв, см. app/room/[id]/opengraph-image.tsx):
- * постов тысячи, карточка рисуется по первому запросу. Поста нет или база
- * молчит — нейтральная карточка, а не ошибка у краулера.
+ * постов тысячи, карточка рисуется по первому запросу. Поста нет —
+ * нейтральная карточка, а не ошибка у краулера.
+ *
+ * А вот ошибка базы НЕ ловится, и это не то же самое, что «поста нет».
+ * Стоял try/catch, и одна осечка Turso при перегенерации заменяла заголовок
+ * с пересказом нейтральной карточкой на сутки. Брошенная ошибка оставляет в
+ * кэше прошлую (docs: incremental-static-regeneration, «Handling uncaught
+ * exceptions»); пятисотку увидит лишь краулер, первым попросивший ещё не
+ * закэшированную карточку во время сбоя, — и она не кэшируется. Сторож —
+ * og.test.ts рядом.
  */
 export const revalidate = 86_400
 
@@ -32,12 +40,7 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
 
 export default async function Image({ params }: { params: Promise<{ appid: string; gid: string }> }) {
   const { appid, gid } = await params
-  let page: Awaited<ReturnType<typeof loadPatch>> = null
-  try {
-    page = await loadPatch(appid, gid)
-  } catch {
-    page = null
-  }
+  const page = await loadPatch(appid, gid)
   const item = page?.item ?? null
   const game = page?.game ?? null
   // Арт не дотянулся (чужой CDN, таймаут) — тёмная карточка со свечением

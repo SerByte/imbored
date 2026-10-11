@@ -3,7 +3,7 @@ import { ogFonts, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { PosterWall, postersOf, WallShade, WALL_POSTERS } from '@/lib/ogcard'
 import { CANVAS_WIDE, WALL_WIDE } from '@/lib/ogwall'
 import { plural } from '@/lib/plural'
-import { loadGenre, type Genre } from './load'
+import { loadGenre } from './load'
 
 export const alt = 'Жанр — imbored'
 export const size = { width: 1200, height: 630 }
@@ -17,6 +17,14 @@ export const contentType = 'image/png'
  * generateStaticParams регистрирует сегмент — без него revalidate не значит
  * ничего (см. app/room/[id]/opengraph-image.tsx); карточки рисуются по
  * первому запросу, а не на сборке, где базы может не быть.
+ *
+ * Ошибка базы НЕ ловится. Стоял try/catch с карточкой без стены: одна осечка
+ * Turso при перегенерации — и вместо постеров роглайков сутки висела общая
+ * «Игры по жанрам». Брошенная ошибка оставляет в кэше прошлую карточку
+ * (docs: incremental-static-regeneration, «Handling uncaught exceptions»).
+ * Цена — пятисотка тому краулеру, который первым просит ещё не
+ * закэшированную карточку во время сбоя; она не кэшируется, и следующий
+ * запрос рисует заново. Сторож — og.test.ts рядом.
  */
 export const revalidate = 86_400
 
@@ -26,13 +34,8 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
 
 export default async function Image({ params }: { params: Promise<{ tag: string }> }) {
   const { tag } = await params
-  // База молчит — карточка без стены, но с названием, а не ошибка у краулера
-  let genre: Genre | null = null
-  try {
-    genre = await loadGenre(tag)
-  } catch {
-    genre = null
-  }
+  // null — незнакомый адрес: карточка без стены, с общим заголовком
+  const genre = await loadGenre(tag)
   const games = genre?.games ?? []
   const byId = new Map(games.map((g) => [g.appid, g]))
   const posters = await postersOf(games.slice(0, WALL_POSTERS), (id) => byId.get(id))

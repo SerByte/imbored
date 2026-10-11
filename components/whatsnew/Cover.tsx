@@ -164,7 +164,7 @@ export function Cover({
             {/* Заголовок патча — текст издателя, обычно английский: lang
                 по большинству букв, как у строк ленты (lib/textlang) */}
             <p
-              lang={textLang(item.title)}
+              lang={textLang(item.title, name)}
               className="mt-5 max-w-xl text-lg font-medium leading-snug text-ink/90 md:text-xl"
             >
               {item.title}

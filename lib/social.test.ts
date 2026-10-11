@@ -101,6 +101,9 @@ describe('превью в мессенджерах', () => {
       'app/privacy/page.tsx': '/privacy',
       'app/support/page.tsx': '/support',
       'app/daily/layout.tsx': '/daily',
+      // квиз открыт краулеру и идёт в выдачу: canonical сворачивает в него
+      // /quiz?from=untouched и прочие хвосты (lib/robots)
+      'app/quiz/layout.tsx': '/quiz',
     }
     for (const [file, url] of Object.entries(own)) {
       expect(read(file), file).toMatch(new RegExp(`export const generateMetadata = ownAddress\\('${url}'`))

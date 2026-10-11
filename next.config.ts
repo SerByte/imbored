@@ -9,8 +9,9 @@ const nextConfig: NextConfig = {
     return [
       // Заголовки безопасности и CSP в режиме отчёта; почему так — в lib/csp.ts
       { source: "/:path*", headers: securityHeaders(cspMode(process.env)) },
-      // noindex на личных страницах и их карточках; почему заголовком, а не
-      // Disallow в robots.txt, — в lib/robots.ts
+      // noindex на личных страницах, их карточках и открытых заглушках шапки
+      // (/daily, /rooms); почему заголовком, а не Disallow в robots.txt, — в
+      // lib/robots.ts
       ...noindexHeaders(),
     ];
   },

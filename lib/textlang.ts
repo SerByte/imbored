@@ -9,14 +9,16 @@
  *
  * Отдельным модулем, а не в lib/gamepage, где правило родилось: gamepage тянет
  * базу, errlog и серверные модули, а признак нужен и клиентским строкам ленты
- * патчей (PatchRow, GameNews). Здесь зависимостей нет вовсе, и gamepage только
- * реэкспортирует.
+ * патчей (PatchRow, GameNews). Из зависимостей — только lib/patchtitle, такой
+ * же чистый и клиентобезопасный, и gamepage только реэкспортирует.
  *
  * Это не hasCyrillic из lib/cyrillic («есть ли что беречь» — хватает одной
  * буквы) и не detectLang из lib/news («есть ли по-русски хоть что-то для
  * пересказа» — хватает доли в 15 %). Здесь вопрос «каким голосом читать», и
  * отвечает на него большинство букв.
  */
+
+import { withoutGameName } from './patchtitle'
 
 function letters(text: string): { cyr: number; lat: number } {
   return {
@@ -52,9 +54,23 @@ export function isRussianText(text: string | null | undefined): boolean {
  *
  * Короткие технические заголовки вроде «Hotfix 9.0.1» WCAG из 3.1.2 и так
  * исключает, но пометка им не вредит: английский голос прочтёт их вернее.
+ *
+ * gameName — название игры, которое в подсчёт НЕ входит. Это имя
+ * собственное (их WCAG 3.1.2 из правила исключает), а букв у него много:
+ * Valve пишет локализованные заголовки как «Обновление Counter-Strike 2», и
+ * 13 латинских букв названия перевешивали 10 русских — русский h1 на каждом
+ * патче верхней игры каталога уходил английским голосом, то есть ровно та
+ * ошибка, от которой модуль защищает, только в обратную сторону. Вызывающие
+ * название знают: им же newsHeading и stripGameName срезают его на показе.
+ * Если после вычета букв не осталось вовсе (заголовок — одно название),
+ * считаем по целому тексту, как без него.
  */
-export function textLang(text: string | null | undefined): 'en' | undefined {
+export function textLang(
+  text: string | null | undefined,
+  gameName?: string | null,
+): 'en' | undefined {
   if (!text) return undefined
-  const { cyr, lat } = letters(text)
+  const rest = letters(withoutGameName(text, gameName))
+  const { cyr, lat } = rest.cyr + rest.lat > 0 ? rest : letters(text)
   return lat > cyr ? 'en' : undefined
 }

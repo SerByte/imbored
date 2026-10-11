@@ -2,7 +2,7 @@ import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match'
 import { describe, expect, test } from 'vitest'
 import robots from '../app/robots'
 import nextConfig from '../next.config'
-import { noindexHeaders, PERSONAL_PREFIXES, ROBOTS_DISALLOW } from './robots'
+import { noindexHeaders, NOINDEX_PAGES, PERSONAL_PREFIXES, ROBOTS_DISALLOW } from './robots'
 
 /**
  * Сопоставление robots.txt по спецификации Google (RFC 9309 плюс * и $):
@@ -65,17 +65,30 @@ describe('robots.txt', () => {
     for (const url of [
       '/portrait',
       '/compat',
-      '/rooms',
       '/room/new',
       '/play',
       '/play?time=short',
       '/explore',
-      '/quiz',
       '/library',
-      '/daily',
       '/api/prepare',
     ]) {
       expect(allowed(rules, url), url).toBe(false)
+    }
+  })
+
+  /**
+   * Шапка ссылается на /quiz, /daily и /rooms с каждой из шести тысяч
+   * страниц, а /quiz — ещё и единственная кнопка в продукт на каждой карточке
+   * игры. Закрытый адрес с такой перелинковкой Google индексирует голым, без
+   * заголовка и сниппета («Indexed, though blocked by robots.txt») — главная
+   * страница конверсии в выдаче выглядела пустой. Каждый из трёх — один
+   * адрес без вариантов в серверной разметке, так что бюджет обхода они не
+   * съедают.
+   */
+  test('ссылки шапки открыты краулеру: /quiz, /daily, /rooms', () => {
+    const rules = rulesOf()
+    for (const url of ['/quiz', '/daily', '/rooms']) {
+      expect(allowed(rules, url), url).toBe(true)
     }
   })
 
@@ -130,10 +143,31 @@ describe('noindex заголовком', () => {
     }
   })
 
+  /**
+   * /daily гостю отдаёт заглушку «Изучаю твою библиотеку…», /rooms —
+   * объяснение и пустую доску (живые комнаты приезжают из /api, а он
+   * закрыт). Открыты они ради того, чтобы краулер увидел noindex, а не ради
+   * выдачи.
+   */
+  test('открытые заглушки шапки — с noindex заголовком, /quiz — без', () => {
+    expect([...NOINDEX_PAGES]).toEqual(['/daily', '/rooms'])
+    expect(noindexed('/daily')).toBe(true)
+    expect(noindexed('/rooms')).toBe(true)
+    // квиз гостю показывает первый вопрос целиком — ему место в выдаче
+    expect(noindexed('/quiz')).toBe(false)
+    // точным адресом: соседей по префиксу не задевает
+    expect(noindexed('/dailyx')).toBe(false)
+    expect(noindexed('/roomsx')).toBe(false)
+  })
+
+  test('правило /room/:path* не задевает /rooms — у того своё, точное', () => {
+    expect(getPathMatch('/room/:path*')('/rooms')).toBe(false)
+  })
+
   test('не задевает соседей и открытые разделы', () => {
     for (const url of [
       '/',
-      '/rooms',
+      '/quiz',
       '/game/730',
       '/game/730/news/5123894512345',
       '/games',
@@ -148,9 +182,9 @@ describe('noindex заголовком', () => {
 
   test('next.config отдаёт эти правила', async () => {
     const rules = await nextConfig.headers!()
-    for (const prefix of PERSONAL_PREFIXES) {
-      const rule = rules.find((r) => r.source === `${prefix}/:path*`)
-      expect(rule, prefix).toBeDefined()
+    for (const source of [...PERSONAL_PREFIXES.map((p) => `${p}/:path*`), ...NOINDEX_PAGES]) {
+      const rule = rules.find((r) => r.source === source)
+      expect(rule, source).toBeDefined()
       expect(rule!.headers).toContainEqual({ key: 'X-Robots-Tag', value: 'noindex' })
     }
   })

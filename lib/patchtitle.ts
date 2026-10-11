@@ -33,7 +33,7 @@ export function stripGameName(title: string, gameName: string): string {
   const name = (gameName ?? '').trim()
   if (!t || !name) return t
 
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+  const escaped = nameSource(name)
   /*
    * Заглядывание вперёд обязательно. Без него игра «Rust» срезала бы четыре
    * буквы у «Rusty Update» и оставляла «y Update»: совпадение по префиксу — не
@@ -45,6 +45,35 @@ export function stripGameName(title: string, gameName: string): string {
   // Заголовок был ровно названием игры — оставляем как есть, иначе строка пуста
   if (!rest || rest === t) return t
   return capitalizeWord(rest)
+}
+
+/** Название игры как исходник регулярки: буквально, пробелы — любой длины */
+function nameSource(name: string): string {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+}
+
+/**
+ * Текст без названия игры — где бы оно в нём ни стояло, сколько бы раз ни
+ * повторялось. Для показа не годится (там срезается только ведущее, см.
+ * stripGameName), годится для вопросов О заголовке.
+ *
+ * Valve пишет каждое обновление CS2 одной строкой «Обновление Counter-Strike
+ * 2» — название в конце, и stripGameName его законно не трогает. Но два
+ * решения о заголовке обязаны название не замечать:
+ *   - <title> страницы патча (newsPageTitle): есть ли в заголовке номер
+ *     версии, или без даты все патчи игры называются одинаково, — «2» из
+ *     названия версией не считается; и не повторить ли имя игры впереди;
+ *   - язык заголовка (textLang): имя собственное в латинице перевешивало
+ *     русские слова, и русский заголовок уходил английским голосом.
+ *
+ * Граница — не буква и не цифра с обеих сторон, по той же причине, что
+ * заглядывание вперёд у stripGameName: «Rust» не вырезается из «Rusty».
+ */
+export function withoutGameName(text: string, gameName: string | null | undefined): string {
+  const name = (gameName ?? '').trim()
+  if (!text || !name) return text
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])${nameSource(name)}(?![\\p{L}\\p{N}])`, 'giu')
+  return text.replace(re, ' ').replace(/\s+/g, ' ').trim()
 }
 
 /**

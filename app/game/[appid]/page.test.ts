@@ -258,3 +258,72 @@ describe('кэш карточки игры', () => {
     expect(text).not.toContain('сейчас играют')
   })
 })
+
+/** JSON-LD страницы, как он уходит в HTML: первый <script type="application/ld+json"> */
+function jsonLdOf(page: unknown): Array<Record<string, unknown>> {
+  let html: string | undefined
+  const walk = (node: unknown): void => {
+    if (html !== undefined || !node || typeof node !== 'object') return
+    const inner = (node as { dangerouslySetInnerHTML?: { __html?: unknown } }).dangerouslySetInnerHTML
+    if (typeof inner?.__html === 'string') {
+      html = inner.__html
+      return
+    }
+    for (const v of Object.values(node)) walk(v)
+  }
+  walk(page)
+  expect(html, 'ld+json на странице не найден').toBeDefined()
+  return JSON.parse(html!) as Array<Record<string, unknown>>
+}
+
+describe('микроразметка говорит не больше страницы', () => {
+  test('ноль без «бесплатно»: ни строки цены у героя, ни Offer в разметке', async () => {
+    // Так лежат делисты вроде Ori and the Blind Forest: поиск магазина отдал
+    // «0», is_free пуст. Герой молчит о цене — значит, и выдача не должна
+    // услышать «бесплатно, в наличии»
+    await upsertGameMeta(db, game(APPID, { name: 'Ori', priceFinal: 0 }), T0)
+    const page = flight(await GamePage(params))
+    expect(textOf(page)).not.toContain('бесплатно')
+    const [video] = jsonLdOf(page)
+    expect(video['@type']).toBe('VideoGame')
+    expect(video).not.toHaveProperty('offers')
+  })
+
+  test('сторож не слепой: настоящая цена — и на странице, и в Offer', async () => {
+    await upsertGameMeta(db, game(APPID, { priceFinal: 1999, priceInitial: 1999, priceAt: T0 }), T0)
+    const [video] = jsonLdOf(flight(await GamePage(params)))
+    expect(video.offers).toMatchObject({ '@type': 'Offer', price: '19.99' })
+  })
+
+  test('оценки Steam в разметке нет, хотя кольцо на странице её показывает', async () => {
+    // Чужие оценки размечать нельзя (правила Google для review snippet) —
+    // см. докблок lib/jsonld. Кольцо — видимое, ему это правило не мешает
+    await seed()
+    const page = flight(await GamePage(params))
+    expect(JSON.stringify(jsonLdOf(page))).not.toContain('aggregateRating')
+    expect(JSON.stringify(page)).toContain('"island":"ProgressRing"')
+  })
+})
+
+describe('замещённая игра', () => {
+  /*
+   * /game/10 (Counter-Strike 1.6) — не дубликат /game/730: другие отзывы,
+   * описание и цена. canonical на чужую игру Google к такой странице не
+   * применит, а вместе с noindex это два противоречащих сигнала. og:url на
+   * преемника хуже того: VK и Facebook строят карточку по og:url, и ссылка на
+   * старую игру разворачивалась в чате карточкой сиквела.
+   */
+  test('noindex — да, но canonical и og:url — свои, а не преемника', async () => {
+    await upsertGameMeta(db, game(10, { name: 'Counter-Strike' }), T0)
+    // Вердикт курации читается целиком, по signals_at (rowToMeta) — как его
+    // и пишет promote-catalog, одним UPDATE
+    await db.execute({
+      sql: 'UPDATE games SET superseded_by = ?, signals_at = ? WHERE appid = ?',
+      args: [APPID, T0, 10],
+    })
+    const meta = await generateMetadata({ params: Promise.resolve({ appid: '10' }) })
+    expect(meta.robots).toEqual({ index: false, follow: true })
+    expect(meta.alternates?.canonical).toBe('/game/10')
+    expect(meta.openGraph?.url).toBe('/game/10')
+  })
+})

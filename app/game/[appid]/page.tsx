@@ -143,9 +143,17 @@ export async function generateMetadata({
    * это страницы-сироты, живущие только по прямой ссылке. Соседний lib/junk
    * прячет ровно эти записи от выдачи, а поиск про них ничего не знал.
    *
-   * Шесть замещённых опаснее прочих: это дубликаты страницы-преемника
-   * (/game/10 против /game/730) с self-canonical. Им canonical переставляется
-   * на преемника — тогда вес ссылки достаётся живой странице, а не близнецу.
+   * Шесть замещённых (/game/10 при живой /game/730) стоят с noindex, как
+   * прочие мёртвые, но canonical и og:url у них СВОИ. Стоял canonical на
+   * преемника — «это дубликат, вес отдай живой». Только это не дубликат:
+   * другая игра, другие отзывы, описание и цена. canonical между разными
+   * страницами Google не применяет, а в паре с noindex это два спорящих
+   * сигнала — переноса веса не случалось. og:url на преемника был хуже
+   * бесполезного: VK и Facebook строят карточку по og:url, а не по присланной
+   * ссылке (см. ownAddress в lib/site), и ссылка на Counter-Strike 1.6
+   * разворачивалась в чате карточкой CS2. 308 на преемника тоже не выход:
+   * сюда приходят из портрета и библиотеки ради той игры, в которую человек
+   * играл. Сторож — app/game/[appid]/page.test.ts.
    *
    * Безтеговые сюда же, и раньше их не было: докблок считал их частью тех же
    * 191, а условие ловило 187. Разница видна на самой странице. Замер на
@@ -162,18 +170,17 @@ export async function generateMetadata({
     meta.alive === false ||
     meta.supersededBy !== undefined ||
     Object.keys(meta.tags).length === 0
-  const canonicalUrl = meta.supersededBy !== undefined ? `/game/${meta.supersededBy}` : canonical
 
   return {
     title: `${meta.name} — стоит ли играть`,
     description,
-    alternates: { canonical: canonicalUrl },
+    alternates: { canonical },
     ...(мёртвая ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
       ...OG_SITE,
       title: `${meta.name} — стоит ли играть`,
       description,
-      url: canonicalUrl,
+      url: canonical,
       type: 'article',
     },
     twitter: {
@@ -308,10 +315,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           __html: ldScript([
             gameJsonLd({
               meta,
-              // Та же оценка, что рисует кольцо ниже: у сводки она есть не у
-              // всех карточек, и без запасного источника (reviewFacts)
-              // aggregateRating доставался лишь малой доле страниц
-              rating: facts,
+              // Оценки (facts) здесь нет намеренно: доля отзывов — Steam, а
+              // чужие оценки размечать нельзя. Почему — докблок lib/jsonld
               baseUrl: appBaseUrl(),
               // Та же валюта, что на ценнике: цену другого региона rowToMeta
               // сюда не пропускает, и Offer без неё не строится вовсе

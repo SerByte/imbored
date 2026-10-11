@@ -49,6 +49,28 @@ describe('textLang', () => {
     expect(textLang(undefined)).toBeUndefined()
   })
 
+  /**
+   * Название игры — имя собственное, и WCAG 3.1.2 имена собственные из
+   * правила исключает. А букв у него много: в «Обновление Counter-Strike 2»
+   * латиницы 13 против 10 кириллических, и русский заголовок Valve уезжал
+   * английским голосом — на всех патчах верхней игры каталога.
+   */
+  test('название игры в подсчёт не входит', () => {
+    expect(textLang('Обновление Counter-Strike 2', 'Counter-Strike 2')).toBeUndefined()
+    expect(textLang('Обновление Team Fortress 2', 'Team Fortress 2')).toBeUndefined()
+    // английское остаётся английским и без названия
+    expect(textLang('Counter-Strike 2 Update', 'Counter-Strike 2')).toBe('en')
+    expect(textLang('Patch 0.5.1 Has Been Released', 'Satisfactory')).toBe('en')
+    // без названия правило прежнее — ради этого его и передают
+    expect(textLang('Обновление Counter-Strike 2')).toBe('en')
+  })
+
+  test('заголовок из одного названия — решает само название', () => {
+    // букв после вычета не осталось — считаем, как без него
+    expect(textLang('Counter-Strike 2', 'Counter-Strike 2')).toBe('en')
+    expect(textLang('Мор', 'Мор')).toBeUndefined()
+  })
+
   test('согласован с isRussianText: русское никогда не помечается en', () => {
     for (const text of ['Станьте вором в VR!', 'Hotfix для VR', 'Ёж и Щука', 'Rise, Tarnished', 'FPS фпс']) {
       if (isRussianText(text)) expect(textLang(text), text).toBeUndefined()
@@ -129,6 +151,17 @@ describe('заголовок патча несёт свой lang', () => {
       )
     }
     expect(src, `${file}: lang считается правилом lib/textlang`).toContain('textLang(')
+  })
+
+  /**
+   * Язык заголовка считается без названия игры (второй аргумент textLang):
+   * иначе «Обновление Counter-Strike 2» уходит английским голосом. Вызов с
+   * одним аргументом здесь — вернувшийся дефект, а не стиль.
+   */
+  test.each([...new Set(HEADINGS.map((h) => h.file))])('%s: textLang знает название игры', (file) => {
+    const calls = [...code(file).matchAll(/textLang\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].map((m) => m[1])
+    expect(calls.length, `${file}: вызов textLang не найден`).toBeGreaterThan(0)
+    for (const args of calls) expect(args, `${file}: textLang(${args}) без названия игры`).toContain(',')
   })
 
   test('тело патча идёт через NewsBody, а он ставит lang сам', () => {

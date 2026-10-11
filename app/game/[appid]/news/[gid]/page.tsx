@@ -51,7 +51,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   if (!page) return {}
   const { item, game } = page
 
-  const title = newsPageTitle(item.title, game?.name)
+  // С датой, если заголовок патчи игры не различает: у CS2 все они —
+  // «Обновление Counter-Strike 2» (см. newsPageTitle)
+  const title = newsPageTitle(item.title, game?.name, item.publishedAt)
   const description = newsDescription(item, game?.name)
   const canonical = newsPath(item.appid, item.gid)
   /*
@@ -145,8 +147,10 @@ export default async function PatchPage({ params }: Params) {
           {/* Заголовок и тело — текст издателя, обычно английский, а
               страница — lang="ru". Без пометки скринридер читал бы латиницу
               русским голосом (WCAG 3.1.2), см. lib/textlang. Тело помечает
-              NewsBody сам; пересказ «Коротко» наш и русский — без пометки. */}
-          <h1 lang={textLang(heading)} className="font-display text-display-md">
+              NewsBody сам; пересказ «Коротко» наш и русский — без пометки.
+              Название игры в подсчёт не входит: «Обновление Counter-Strike 2»
+              — русский заголовок с именем собственным, а не английский. */}
+          <h1 lang={textLang(heading, game?.name)} className="font-display text-display-md">
             {heading}
           </h1>
           <div className="flex flex-wrap items-center gap-3">
@@ -202,7 +206,7 @@ export default async function PatchPage({ params }: Params) {
           <PatchShare
             appid={item.appid}
             gid={item.gid}
-            title={newsPageTitle(item.title, game?.name)}
+            title={newsPageTitle(item.title, game?.name, item.publishedAt)}
           />
           <a
             href={item.url}
@@ -228,7 +232,7 @@ export default async function PatchPage({ params }: Params) {
                       href={newsPath(item.appid, o.gid)}
                       className="flex items-baseline justify-between gap-4 py-3 text-sm transition-opacity hover:opacity-70"
                     >
-                      <span lang={textLang(title)} className="min-w-0 truncate">
+                      <span lang={textLang(title, game?.name)} className="min-w-0 truncate">
                         {title}
                       </span>
                       <NewsDate at={o.publishedAt} className="shrink-0" />
