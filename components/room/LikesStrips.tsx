@@ -26,9 +26,17 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
     <section className="relative flex flex-col gap-2.5">
       <SectionLabel as="h3">Вы почти совпали</SectionLabel>
       <ul className="flex flex-col gap-2">
+        {/*
+          Ключ — место в списке, а не имена. Имена не уникальны: каждый
+          «Демо-друг» зовётся одинаково (см. ростер в app/api/room/[id]/route.ts),
+          и расклады {хост, Д1 | Д2} и {хост, Д2 | Д1} давали один ключ «Аня,
+          Демо-друг|Демо-друг» — React на опросе ронял или дублировал строки.
+          Группы сервер различает по steamid, но наружу их не отдаёт (lib/roomkey),
+          а у строки нет ни состояния, ни анимации: позиционный ключ здесь верен.
+        */}
         {near.map((n, i) => (
           <li
-            key={`${n.forNames.join()}|${n.pendingNames.join()}`}
+            key={i}
             className="rounded-(--radius-card) bg-surface px-4 py-3 text-sm flex flex-wrap items-baseline gap-x-1.5 gap-y-1"
           >
             {/*

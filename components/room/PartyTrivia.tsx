@@ -2,9 +2,10 @@
 
 import { Icon } from '@/components/Icon'
 import { AnimatePresence, m } from 'framer-motion'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { StatusLine } from '@/components/StatusLine'
+import { focusAdrift } from '@/lib/focushandoff'
 import type { TriviaQuestion } from '@/lib/trivia'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -47,6 +48,51 @@ export function PartyTrivia({
   const [interrupted, setInterrupted] = useState(false)
   /** Вопросы не пришли — не «кончились»: отказ или сеть, а не край викторины */
   const [failed, setFailed] = useState(false)
+
+  /*
+   * ФОКУС НЕ ПАДАЕТ В BODY НИ НА ОДНОМ ШАГЕ.
+   *
+   * Ответ держит фокус на выбранном варианте (aria-disabled, см. ниже), и с
+   * него Tab доходит до «Дальше». Следующий шаг ронял его снова: «Дальше»
+   * живёт в ряду, который появляется с ответом, и нажатие убирает ряд вместе
+   * с собой; у нового вопроса новые кнопки, и фокус никто не брал. Следующий
+   * Tab начинался со ссылки «к содержимому» в начале документа, а новый
+   * вопрос не звучал вовсе. «Ещё раунд» так же уходит вместе с итогом.
+   *
+   * Поэтому нажатие «Дальше» и «Ещё раунд» просит фокус (wantFocus), а
+   * забирает его строка-голова панели, какая сейчас на экране: вопрос, итог
+   * раунда, «Придумываю вопросы…» или отказ. Они взаимоисключающие, и ref
+   * один. Вопрос, а не первый вариант: удержанный или повторный Enter с
+   * «Дальше» иначе ответил бы на следующий вопрос сразу. Эффектом по [at,
+   * questions], а не ref-колбэком: абзац вопроса между вопросами тот же самый,
+   * и колбэк второй раз не позвался бы.
+   *
+   * Голова — не живая область: её объявляет сам фокус (сторож —
+   * lib/liveregion.test.ts, «цель фокуса — не живая область»).
+   */
+  const headRef = useRef<HTMLParagraphElement>(null)
+  const wantFocus = useRef(false)
+  useEffect(() => {
+    if (!wantFocus.current || !headRef.current) return
+    // пока вопросы грузятся, фокус ждёт на «Придумываю…» и переедет на вопрос
+    if (questions !== null) wantFocus.current = false
+    headRef.current.focus()
+  }, [at, questions])
+
+  /*
+   * Прерывание сворачивает панель под человеком: опрос принёс настоящее (см.
+   * правило 3 в докблоке компонента), и ответ, в котором стоял фокус, уходит
+   * вместе с панелью. Фокус переезжает на переключатель — он и скажет
+   * interruptNote и «свёрнуто». Только если фокус был в панели или уже
+   * потерян: стоящего на «Ещё 20 игр» или «Выйти» новость не трогает. Панель
+   * ещё в DOM — AnimatePresence держит её на время выхода, — поэтому
+   * focusAdrift видит фокус внутри неё.
+   */
+  const panelRef = useRef<HTMLDivElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (interrupted && focusAdrift(document, panelRef.current)) toggleRef.current?.focus()
+  }, [interrupted])
 
   // Состояние, производное от пропсов, — во время рендера, как в GameArt:
   // эффект здесь дал бы лишний кадр с раскрытой панелью поверх новости
@@ -96,6 +142,7 @@ export function PartyTrivia({
   return (
     <div className="relative mt-auto">
       <button
+        ref={toggleRef}
         onClick={() => {
           // Загрузка висит на клике, а не на эффекте: вопросы нужны ровно
           // тогда, когда панель раскрыли, и это событие, а не синхронизация
@@ -125,6 +172,7 @@ export function PartyTrivia({
       <AnimatePresence initial={false}>
         {open && (
           <m.div
+            ref={panelRef}
             id="trivia-body"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
@@ -133,7 +181,11 @@ export function PartyTrivia({
             className="overflow-hidden"
           >
             <div className="panel-lift mt-3 p-5 flex flex-col gap-4">
-              {questions === null && <p className="text-sm text-faint">Придумываю вопросы…</p>}
+              {questions === null && (
+                <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
+                  Придумываю вопросы…
+                </p>
+              )}
 
               {/*
                 Три разных пустоты — три разные строки. «Зато свайпать можно
@@ -142,7 +194,7 @@ export function PartyTrivia({
                 роут отдаёт пустой список намеренно — вопросы не повторяются.
               */}
               {questions !== null && questions.length === 0 && (
-                <p className="text-sm text-faint">
+                <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
                   {failed
                     ? 'Вопросы не загрузились — попробуй чуть позже.'
                     : round > 0
@@ -153,7 +205,7 @@ export function PartyTrivia({
 
               {q && (
                 <>
-                  <p id="trivia-q" className="text-sm font-medium">
+                  <p ref={headRef} id="trivia-q" tabIndex={-1} className="text-sm font-medium">
                     {q.prompt}
                   </p>
 
@@ -229,6 +281,7 @@ export function PartyTrivia({
                       </p>
                       <button
                         onClick={() => {
+                          wantFocus.current = true
                           setAt((n) => n + 1)
                           setChosen(null)
                         }}
@@ -243,13 +296,14 @@ export function PartyTrivia({
 
               {done && (
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-sm text-faint">
+                  <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
                     <span className="tabular-nums">{score}</span> из{' '}
                     <span className="tabular-nums">{questions.length}</span>. Ну, время
                     прошло.
                   </p>
                   <button
                     onClick={() => {
+                      wantFocus.current = true
                       const next = round + 1
                       setRound(next)
                       setQuestions(null)

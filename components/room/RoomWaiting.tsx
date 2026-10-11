@@ -4,6 +4,7 @@ import type { ShareLink } from '@/components/ShareLink'
 import { type ReactNode, useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { StatusLine } from '@/components/StatusLine'
+import { focusAdrift } from '@/lib/focushandoff'
 import { plural } from '@/lib/plural'
 import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
@@ -49,6 +50,11 @@ export function RoomWaiting({
   onRemoveMember,
   onLeave,
   kickUndo = null,
+  leaving,
+  leaveMiss,
+  missedMember,
+  publicBusy,
+  publicMiss,
 }: {
   roomId: string
   isHost: boolean
@@ -83,6 +89,16 @@ export function RoomWaiting({
    * касание ✕ уводит весь ростер, и отмена не должна уходить вместе с ним.
    */
   kickUndo?: ReactNode
+  /** выход или удаление в пути — см. removeMember на странице */
+  leaving: boolean
+  /** почему не вышло выйти или убрать; null — отказа нет или он уже неправда */
+  leaveMiss: string | null
+  /** чья ✕ отказала последней — ростер забывает перенос фокуса с неё */
+  missedMember: string | null
+  /** переключение доски в пути — см. togglePublic на странице */
+  publicBusy: boolean
+  /** почему доска не переключилась; null — отказа нет (строка — в AloneInvite) */
+  publicMiss: string | null
 }) {
   const headRef = useRef<HTMLHeadingElement>(null)
   const me = members.find((m) => m.me)
@@ -108,6 +124,20 @@ export function RoomWaiting({
     if (!cameFromDeck) return
     headRef.current?.focus()
   }, [cameFromDeck])
+
+  /*
+   * Смена режима под фокусом. Хост убрал последнего, кроме себя, — ростер
+   * уходит вместе с режимом 'others', и ✕ в фокусе падал в body; зашёл
+   * первый гость — AloneInvite уходит вместе с нажатой «Позвать своих».
+   * Заголовок нового режима забирает фокус, только потерянный: стоящего в
+   * шапке смена режима не трогает. Первый рендер — не смена.
+   */
+  const modeShown = useRef(mode)
+  useEffect(() => {
+    if (modeShown.current === mode) return
+    modeShown.current = mode
+    if (focusAdrift(document)) headRef.current?.focus()
+  }, [mode])
 
   const pending = members.filter((m) => !m.done && !m.me)
   const doneCount = members.filter((m) => m.done).length
@@ -148,6 +178,8 @@ export function RoomWaiting({
           share={share}
           onTogglePublic={onTogglePublic}
           headRef={headRef}
+          publicBusy={publicBusy}
+          publicMiss={publicMiss}
         />
       )}
       {mode === 'alone' && kickUndo}
@@ -219,6 +251,8 @@ export function RoomWaiting({
             })}
             isHost={isHost}
             onRemove={onRemoveMember}
+            removing={leaving}
+            missed={missedMember}
           />
           {kickUndo}
           {/*
@@ -303,13 +337,24 @@ export function RoomWaiting({
           Рядом с «подсесть к другим» намеренно: это одно и то же движение —
           «мне тут не сюда».
         */}
+        {/* aria-disabled, а не disabled: на отказе фокус обязан остаться на
+            кнопке. Повтор гасит onLeave (removeMember — по leaving) */}
         <button
           type="button"
           onClick={onLeave}
-          className="tap text-sm text-faint hover:text-danger transition-colors cursor-pointer"
+          aria-disabled={leaving}
+          className="tap text-sm text-faint hover:text-danger transition-colors cursor-pointer aria-disabled:opacity-40"
         >
           Выйти из пати
         </button>
+        {/*
+          Отказ выхода и ✕ хоста. Раньше оба молчали: на моргнувшей связи
+          «Выйти из пати» не меняло на экране ничего, и человек, уверенный,
+          что вышел, оставался в знаменателе единогласия. Строка стоит всегда,
+          пустая — вне раскладки (sr-only), с текстом — отдельной строкой ряда:
+          живая область, вставленная вместе с отказом, звучит не везде.
+        */}
+        <StatusLine text={leaveMiss} className="basis-full text-sm text-danger text-right" />
       </div>
     </section>
   )

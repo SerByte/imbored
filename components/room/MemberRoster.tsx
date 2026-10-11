@@ -2,7 +2,9 @@
 
 import { Icon } from '@/components/Icon'
 import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
+import { useEffect, useRef } from 'react'
 import { MotionMax } from '@/components/motion/MotionMax'
+import { focusAdrift } from '@/lib/focushandoff'
 import type { RoomMemberView } from '@/lib/room'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -24,6 +26,8 @@ export function MemberRoster({
   hint = null,
   isHost = false,
   onRemove,
+  removing = false,
+  missed = null,
 }: {
   members: RoomMemberView[]
   deckSize: number | null
@@ -32,14 +36,68 @@ export function MemberRoster({
   /** хост может убрать застрявшего — см. app/api/room/[id]/leave */
   isHost?: boolean
   onRemove?: (memberId: string) => void
+  /** запрос выхода или удаления в пути — повтор гасит removeMember на странице */
+  removing?: boolean
+  /** чья ✕ отказала последней; null — отказа нет */
+  missed?: string | null
 }) {
   const reduce = useReducedMotion()
   const doneCount = members.filter((member) => member.done).length
 
+  /*
+   * ✕ УНОСИТ ФОКУС ВМЕСТЕ СО СТРОКОЙ.
+   *
+   * Кнопка стоит в строке того, кого убирают: после успеха опрос его уже не
+   * приносит, AnimatePresence уводит строку, и фокус падал в body — хост с
+   * клавиатуры, убрав одного застрявшего, начинал со страницы сверху. Теперь
+   * перед удалением запоминается, кому фокус достанется: ✕ следующей строки,
+   * иначе предыдущей, иначе заголовок «Кто где». Отдаётся он, когда строки
+   * действительно не стало, и только потерянный (focusAdrift): в body или
+   * всё ещё на ✕ уходящей строки — она в DOM на время анимации выхода.
+   * Домом служит именно эта ✕, а не весь список: пока запрос в пути, хост
+   * может сам уйти Tab'ом на ✕ другой строки — и фокус, отнятый у неё,
+   * переехал бы на ✕ соседа убранного: Enter, нажатый ради одного, убрал бы
+   * другого.
+   *
+   * Перенос ждёт, пока строка на месте: POST прошёл, а ростер без неё
+   * приносит только следующий снимок, и флага «в пути» (removing) на это
+   * время уже нет — он держится ровно на POST. Забывается перенос на отказе
+   * этой ✕ (missed): строка остаётся, фокус — на её ✕.
+   *
+   * Убрали последнего, кроме себя, — список уходит целиком вместе с режимом;
+   * фокус тогда забирает заголовок нового режима (смена режима в RoomWaiting).
+   */
+  const headRef = useRef<HTMLHeadingElement>(null)
+  const removeButtons = useRef(new Map<string, HTMLButtonElement>())
+  const handoff = useRef<{ gone: string; to: string | null } | null>(null)
+
+  useEffect(() => {
+    const h = handoff.current
+    if (!h) return
+    if (members.some((member) => member.id === h.gone)) {
+      if (missed === h.gone) handoff.current = null
+      return
+    }
+    handoff.current = null
+    if (!focusAdrift(document, removeButtons.current.get(h.gone))) return
+    const next = h.to ? removeButtons.current.get(h.to) : undefined
+    ;(next ?? headRef.current)?.focus()
+  }, [members, missed])
+
+  const remove = (id: string) => {
+    if (removing || !onRemove) return
+    const others = members.filter((member) => !member.me)
+    const at = others.findIndex((member) => member.id === id)
+    handoff.current = { gone: id, to: others[at + 1]?.id ?? others[at - 1]?.id ?? null }
+    onRemove(id)
+  }
+
   return (
     <div className="relative panel-lift p-5 sm:p-6 flex flex-col gap-4">
       <div className="flex items-baseline justify-between gap-3">
-        <h2 className="font-display text-display-xs">Кто где</h2>
+        <h2 ref={headRef} tabIndex={-1} className="font-display text-display-xs">
+          Кто где
+        </h2>
         <span aria-hidden className="text-xs text-faint tabular-nums shrink-0">
           {doneCount}/{members.length}
         </span>
@@ -138,10 +196,21 @@ export function MemberRoster({
                   {isHost && !member.me && onRemove ? (
                     <button
                       type="button"
-                      onClick={() => onRemove(member.id)}
+                      ref={(el) => {
+                        if (!el) return
+                        removeButtons.current.set(member.id, el)
+                        return () => {
+                          removeButtons.current.delete(member.id)
+                        }
+                      }}
+                      onClick={() => remove(member.id)}
+                      // aria-disabled, а не disabled: фокус остаётся на ✕, пока
+                      // запрос в пути, а на отказе — и после (строку отказа
+                      // пишет RoomWaiting внизу экрана)
+                      aria-disabled={removing}
                       title={`Убрать ${member.name} из пати`}
                       aria-label={`Убрать ${member.name} из пати`}
-                      className="tap tap-tight shrink-0 -my-1.5 px-1.5 py-1.5 text-xs text-faint hover:text-danger transition-colors cursor-pointer"
+                      className="tap tap-tight shrink-0 -my-1.5 px-1.5 py-1.5 text-xs text-faint hover:text-danger transition-colors cursor-pointer aria-disabled:opacity-40"
                     >
                       <Icon name="close" size={14} />
                     </button>

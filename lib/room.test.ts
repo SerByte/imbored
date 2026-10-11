@@ -2,11 +2,13 @@ import { describe, expect, test } from 'vitest'
 import {
   awaitingOthers,
   deckBehind,
+  matchByLeader,
   matchLine,
   matchNoticeDue,
   memberLabel,
   pageNotices,
   parseRoomCode,
+  roomMissText,
   roomTabTitle,
   rosterHint,
   waitingMode,
@@ -306,5 +308,58 @@ describe('matchLine', () => {
     // чужому рисуется «эта пати уже договорилась», а не церемония
     expect(matchLine({ sawOpen: true, ...matched, isMember: false })).toBeNull()
     expect(matchLine({ sawOpen: true, ...matched, game: null })).toBeNull()
+  })
+})
+
+describe('matchByLeader', () => {
+  test('за игру не все — «Договорились», а не «Это матч!»', () => {
+    expect(matchByLeader(3, 4)).toBe(true)
+  })
+
+  test('все за — единогласный матч', () => {
+    expect(matchByLeader(4, 4)).toBe(false)
+  })
+
+  test('счёта нет — единогласия не отрицаем', () => {
+    // не участнику сервер счёт не отдаёт
+    expect(matchByLeader(null, 4)).toBe(false)
+    expect(matchByLeader(undefined, 4)).toBe(false)
+  })
+})
+
+/**
+ * Строка отказа гасла только со следующей попыткой и переживала то, о чём
+ * говорила: звала нажать ✕ у ушедшего, говорила «доска не переключилась»
+ * под переключённой доской, а после нового раунда монтировалась заново со
+ * старым текстом.
+ */
+describe('roomMissText: отказ кнопки комнаты — пока он правда', () => {
+  const members = [{ id: 'a' }, { id: 'b' }]
+  const now = { deck: '2:0', members, isPublic: false }
+
+  test('отказа нет — строки нет', () => {
+    expect(roomMissText(null, now)).toBeNull()
+  })
+
+  test('отказ выхода стоит, пока экран тот же', () => {
+    expect(roomMissText({ text: 'Выйти не получилось', deck: '2:0' }, now)).toBe('Выйти не получилось')
+  })
+
+  test('✕ отказала, а участника уже нет — строка не зовёт нажать пропавшую ✕', () => {
+    const miss = { text: 'Убрать из пати не получилось', deck: '2:0', memberId: 'b' }
+    expect(roomMissText(miss, now)).toBe('Убрать из пати не получилось')
+    expect(roomMissText(miss, { ...now, members: [{ id: 'a' }] }), 'ушёл сам или ответ потерялся').toBeNull()
+  })
+
+  test('доска не переключилась — пока опрос не показал её переключённой', () => {
+    const miss = { text: 'Доска не переключилась', deck: '2:0', wasPublic: false }
+    expect(roomMissText(miss, now)).toBe('Доска не переключилась')
+    expect(roomMissText(miss, { ...now, isPublic: true }), 'POST прошёл, ответ потерялся').toBeNull()
+  })
+
+  test('новый раунд или новый гость — экран ожидания уже другой, старый отказ не монтируется', () => {
+    const miss = { text: 'Выйти не получилось', deck: '2:0' }
+    expect(roomMissText(miss, { ...now, deck: '2:1' })).toBeNull()
+    expect(roomMissText(miss, { ...now, deck: '3:0' })).toBeNull()
   })
 })

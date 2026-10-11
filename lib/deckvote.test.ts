@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  cappedSignal,
   claimVote,
   deckKeyVote,
   type DeckKeyEvent,
@@ -8,6 +9,9 @@ import {
   deckCardLine,
   deckPosition,
   deckStuck,
+  deckSwipeVote,
+  membershipLapsed,
+  pollCaughtUp,
   VOTE_TIMEOUT_MS,
   voteMiss,
   voteSignal,
@@ -69,6 +73,56 @@ describe('разбор отказа голоса', () => {
     expect(signal?.aborted).toBe(false)
     expect(VOTE_TIMEOUT_MS).toBeGreaterThan(0)
   })
+
+  test('потолок общий для кнопок комнаты: повисший запрос отменяется и становится отказом', async () => {
+    // выход, ✕ хоста и доска держат флаг «в пути» — без потолка он висел бы до сдачи браузера
+    const signal = cappedSignal(5)
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal?.aborted).toBe(false)
+    await new Promise((r) => setTimeout(r, 30))
+    expect(signal?.aborted, 'потолок не сработал — кнопка осталась бы мёртвой').toBe(true)
+  })
+})
+
+/**
+ * Хост убрал участника — сервер стёр все его голоса, а вкладка помнила
+ * отсвайпанное. Вернулся он из второй вкладки — эта следующим опросом снова
+ * видела себя участником с прежним ключом колоды и колоду не перечитывала:
+ * карты со стёртыми голосами отсеивались навсегда, комната вставала.
+ */
+describe('членство прервалось между снимками — память колоды с нуля', () => {
+  const member = (myVotes: number) => ({ isMember: true, myVotes })
+  const outsider = { isMember: false, myVotes: null }
+
+  test('участник → не участник: удаление видно прямо', () => {
+    expect(membershipLapsed({ seq: 5, shown: { seq: 4, ...member(7) }, next: outsider })).toBe(true)
+  })
+
+  test('свои голоса убыли: было удаление и вход из другой вкладки, а «не участник» эта не застала', () => {
+    expect(
+      membershipLapsed({ seq: 5, shown: { seq: 4, ...member(7) }, next: member(0) }),
+      'ключ «состав:раунд» прежний — колода со стёртыми голосами не перечитается',
+    ).toBe(true)
+  })
+
+  test('голоса растут или стоят — членство непрерывно, колоду не трогаем', () => {
+    expect(membershipLapsed({ seq: 5, shown: { seq: 4, ...member(7) }, next: member(7) })).toBe(false)
+    expect(membershipLapsed({ seq: 5, shown: { seq: 4, ...member(7) }, next: member(9) })).toBe(false)
+  })
+
+  test('не участник → участник — это вход, его сбрасывает сам вход', () => {
+    expect(membershipLapsed({ seq: 5, shown: { seq: 4, ...outsider }, next: member(0) })).toBe(false)
+  })
+
+  test('первый снимок — сравнивать не с чем', () => {
+    expect(membershipLapsed({ seq: 1, shown: null, next: outsider })).toBe(false)
+  })
+
+  test('снимок старше показанного — прошлое, а не новость', () => {
+    // так встаёт снимок с матчем, прочитанный до показанного (snapshotFate)
+    expect(membershipLapsed({ seq: 3, shown: { seq: 4, ...member(7) }, next: outsider })).toBe(false)
+    expect(membershipLapsed({ seq: 3, shown: { seq: 4, ...member(7) }, next: member(6) })).toBe(false)
+  })
 })
 
 describe('застрявшая колода', () => {
@@ -92,6 +146,84 @@ describe('застрявшая колода', () => {
   test('без размера колоды признака конца нет — «не дошёл» ничего не значит', () => {
     expect(deckStuck({ left: 0, meDone: false, deckSize: 0 })).toBe(false)
     expect(deckStuck({ left: 0, meDone: false, deckSize: null })).toBe(false)
+  })
+})
+
+/**
+ * Застрявшей колоду можно назвать, только когда опрос догнал свои голоса.
+ *
+ * Сразу после последнего свайпа на руках пусто, а done в последнем снимке
+ * ещё false: голос в пути, и опрос о нём не знает. deckStuck в эту секунду
+ * истинно на КАЖДОМ штатном конце колоды, и самолечение уходило полной
+ * пересборкой /deck — самого дорогого маршрута — у каждого участника в каждом
+ * раунде, тратя заодно единственное лечение на ключ.
+ */
+describe('опрос догнал свои голоса', () => {
+  test('голос в пути — снимок о нём не знает', () => {
+    expect(pollCaughtUp({ votesInFlight: 1, askedAt: 2_000, votesSettledAt: 1_000 })).toBe(false)
+  })
+
+  test('снимок запрошен до ответа на последний голос — тоже не знает', () => {
+    expect(
+      pollCaughtUp({ votesInFlight: 0, askedAt: 1_000, votesSettledAt: 1_500 }),
+      'опрос, ушедший раньше ответа голоса, звал лечение на штатном конце колоды',
+    ).toBe(false)
+  })
+
+  test('снимок запрошен после ответа на последний голос — знает', () => {
+    expect(pollCaughtUp({ votesInFlight: 0, askedAt: 1_501, votesSettledAt: 1_500 })).toBe(true)
+  })
+
+  test('та же миллисекунда — ещё не знает: подождать один опрос дешевле, чем пересобрать колоду', () => {
+    expect(pollCaughtUp({ votesInFlight: 0, askedAt: 1_500, votesSettledAt: 1_500 })).toBe(false)
+  })
+
+  test('голосов ещё не было — любой снимок свежий', () => {
+    expect(pollCaughtUp({ votesInFlight: 0, askedAt: 1, votesSettledAt: 0 })).toBe(true)
+  })
+})
+
+/**
+ * Голос жестом. Скорость у framer-motion — за последние 100 мс движения, и
+ * быстрый возврат пальца к центру легко даёт больше 500 px/с В ДРУГУЮ
+ * сторону от остаточного смещения. Раньше порог проходил по скорости, а
+ * сторона бралась по смещению — и отмена голосовала за ту сторону, от
+ * которой палец уходил. Голос не отменить, а «да» последнего несогласного
+ * сводит матч сразу.
+ *
+ * Числа — замеры жестов с getVelocity framer-motion.
+ */
+describe('голос жестом', () => {
+  test('быстрый возврат к центру — отмена, а не голос', () => {
+    expect(deckSwipeVote(20, -1300), 'дёрнул вправо и передумал — записалось «Играем!»').toBeNull()
+    expect(deckSwipeVote(20, -520)).toBeNull()
+    expect(deckSwipeVote(-20, 1300), 'зеркально — записалось «Не хочу»').toBeNull()
+  })
+
+  test('за порогом, но палец резко уходит назад — тоже отмена, и уж точно не другая сторона', () => {
+    expect(deckSwipeVote(153, -917)).toBeNull()
+  })
+
+  test('отмена, перелетевшая центр, не голосует за противоположную сторону', () => {
+    expect(deckSwipeVote(-5, -1033)).toBeNull()
+  })
+
+  test('настоящий щелчок в одну сторону — голос этой стороны', () => {
+    expect(deckSwipeVote(74, 889)).toBe(true)
+    expect(deckSwipeVote(40, 900)).toBe(true)
+    expect(deckSwipeVote(-58, -875)).toBe(false)
+  })
+
+  test('медленный увод за порог — голос по смещению', () => {
+    expect(deckSwipeVote(130, 162)).toBe(true)
+    expect(deckSwipeVote(150, 0)).toBe(true)
+    expect(deckSwipeVote(-140, -20)).toBe(false)
+  })
+
+  test('мало и медленно, или вовсе без смещения — карта возвращается', () => {
+    expect(deckSwipeVote(50, 100)).toBeNull()
+    expect(deckSwipeVote(0, 900)).toBeNull()
+    expect(deckSwipeVote(0, 0)).toBeNull()
   })
 })
 

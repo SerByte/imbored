@@ -19,6 +19,7 @@ import {
   deckKeyVote,
   deckOnScreen,
   deckPosition,
+  deckSwipeVote,
   OWN_ARROWS_SELECTOR,
 } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
@@ -194,10 +195,11 @@ function TopCard({
       variants={FLY}
       exit="gone"
       transition={{ duration: 0.35, ease: EASE }}
+      // Сторону и сам факт голоса решает deckSwipeVote (lib/deckvote): быстрый
+      // возврат пальца к центру — отмена, а не голос за сторону, от которой он уходил
       onDragEnd={(_, info) => {
-        const passed = Math.abs(info.offset.x) > 110 || Math.abs(info.velocity.x) > 500
-        if (!passed) return
-        send(info.offset.x > 0, false)
+        const yes = deckSwipeVote(info.offset.x, info.velocity.x)
+        if (yes !== null) send(yes, false)
       }}
     >
       {/*
