@@ -144,8 +144,14 @@ import {
   getWishlist,
   rowToMeta,
   saveWishlist,
+  setFeedLink,
+  dropFeedLink,
+  feedLinkOwner,
+  getFeedLink,
+  getLatestSnapshotMinutes,
   type GameRow,
 } from './db'
+import { feedTokenHash, newFeedToken } from './feedlink'
 import { ROOM_KICK_SEC } from './room'
 import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
@@ -195,6 +201,24 @@ describe('db', () => {
     expect(snap?.takenAt).toBe(NOW)
     expect(snap?.games).toEqual([LIB[0]])
     expect(await getLatestSnapshot(db, 'unknown')).toBeNull()
+  })
+
+  /**
+   * Личная RSS-лента берёт из библиотеки только вход topLibraryAppids — и
+   * обязана брать его из того же снимка, что страница: иначе ридер и
+   * /whatsnew разошлись бы составом игр.
+   */
+  test('минуты последнего снимка — те же игры и часы, что в снимке, без блоба', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, '765611', [LIB[0]], NOW - 100)
+    await saveLibrarySnapshot(db, '765611', LIB, NOW)
+    const light = await getLatestSnapshotMinutes(db, '765611')
+    const full = await getLatestSnapshot(db, '765611')
+    expect(light?.takenAt).toBe(NOW)
+    const byApp = (games: Array<{ appid: number; playtimeForever: number }>) =>
+      games.map((g) => [g.appid, g.playtimeForever]).sort((a, b) => a[0]! - b[0]!)
+    expect(byApp(light!.games)).toEqual(byApp(full!.games))
+    expect(await getLatestSnapshotMinutes(db, 'unknown')).toBeNull()
   })
 
   test('описания: отдаются с текстом, переписываются поштучно, остальное не трогают', async () => {
@@ -3303,6 +3327,9 @@ describe('forgetUser: удаление по запросу', () => {
   const ME = '76561198000000001'
   const FRIEND = '76561198000000002'
   const THIRD = '76561198000000003'
+  /** Ключи личных RSS-лент: в базе — их отпечатки */
+  const MY_FEED_KEY = newFeedToken()
+  const FRIEND_FEED_KEY = newFeedToken()
 
   /** Игрок, у которого есть строка в каждой таблице, где вообще бывают люди */
   async function populated() {
@@ -3332,6 +3359,8 @@ describe('forgetUser: удаление по запросу', () => {
       { id: 'mepick234567', createdBy: ME, appid: 570, source: 'comeback', kind: 'play', reason: 'Вернись.' },
       NOW,
     )
+    // Секретная ссылка на личную RSS-ленту — отпечаток ключа (lib/feedlink)
+    await setFeedLink(db, ME, feedTokenHash(MY_FEED_KEY), NOW)
 
     // Своя комната: друг в ней тоже голосовал
     await createRoom(db, { id: 'MYROOM', steamid: ME }, NOW)
@@ -3364,6 +3393,7 @@ describe('forgetUser: удаление по запросу', () => {
     )
     await logFeedback(db, { steamid: FRIEND, appid: 570, action: 'liked' }, NOW)
     await saveLibrarySnapshot(db, FRIEND, LIB, NOW)
+    await setFeedLink(db, FRIEND, feedTokenHash(FRIEND_FEED_KEY), NOW)
     return db
   }
 
@@ -3428,6 +3458,9 @@ describe('forgetUser: удаление по запросу', () => {
     // Его ссылка на выбор перестала открываться, ссылка друга — открывается
     expect(await getSharedPick(db, 'mepick234567', 0)).toBeNull()
     expect(await getSharedPick(db, 'frpick234567', 0)).not.toBeNull()
+    // Его RSS-ссылка больше не открывает ничего, ссылка друга — открывает
+    expect(await feedLinkOwner(db, feedTokenHash(MY_FEED_KEY))).toBeNull()
+    expect(await feedLinkOwner(db, feedTokenHash(FRIEND_FEED_KEY))).toBe(FRIEND)
   })
 
   test('предпросмотр считает ровно то, что удалится', async () => {
@@ -3464,6 +3497,66 @@ describe('forgetUser: удаление по запросу', () => {
     }
     expect(personal.length).toBeGreaterThan(5)
     for (const table of personal) expect(FORGET_TABLES, table).toContain(table)
+  })
+})
+
+/**
+ * Секретная ссылка на личную RSS-ленту (lib/feedlink): в базе — только
+ * отпечаток, ссылка на человека одна, и отзыв действует сразу.
+ */
+describe('feed_links: секретная ссылка на ленту', () => {
+  const ME = '76561198000000001'
+  const OTHER = '76561198000000002'
+
+  test('владелец находится по отпечатку, а сам ключ в базе не лежит', async () => {
+    const db = await freshDb()
+    const key = newFeedToken()
+    await setFeedLink(db, ME, feedTokenHash(key), NOW)
+
+    expect(await feedLinkOwner(db, feedTokenHash(key))).toBe(ME)
+    expect(await getFeedLink(db, ME)).toEqual({ createdAt: NOW })
+    // Ни в одной ячейке таблицы нет ключа: утёкшая база ссылок не даёт
+    const cells = await db.execute('SELECT * FROM feed_links')
+    expect(JSON.stringify(cells.rows)).not.toContain(key)
+    // Ключ вместо отпечатка — не находка: сверяется только отпечаток
+    expect(await feedLinkOwner(db, key)).toBeNull()
+  })
+
+  test('перевыпуск: старая ссылка перестаёт открывать в ту же секунду', async () => {
+    const db = await freshDb()
+    const first = newFeedToken()
+    const second = newFeedToken()
+    await setFeedLink(db, ME, feedTokenHash(first), NOW)
+    await setFeedLink(db, ME, feedTokenHash(second), NOW + 60)
+
+    expect(await feedLinkOwner(db, feedTokenHash(first))).toBeNull()
+    expect(await feedLinkOwner(db, feedTokenHash(second))).toBe(ME)
+    // Строка одна — у человека не копятся живые ссылки
+    const n = await db.execute({ sql: 'SELECT COUNT(*) AS n FROM feed_links WHERE steamid = ?', args: [ME] })
+    expect(Number(n.rows[0]?.n)).toBe(1)
+    expect(await getFeedLink(db, ME)).toEqual({ createdAt: NOW + 60 })
+  })
+
+  test('отключение: ссылка больше не открывает, повтор — не ошибка, чужая цела', async () => {
+    const db = await freshDb()
+    const mine = newFeedToken()
+    const theirs = newFeedToken()
+    await setFeedLink(db, ME, feedTokenHash(mine), NOW)
+    await setFeedLink(db, OTHER, feedTokenHash(theirs), NOW)
+
+    await dropFeedLink(db, ME)
+    await dropFeedLink(db, ME)
+    expect(await feedLinkOwner(db, feedTokenHash(mine))).toBeNull()
+    expect(await getFeedLink(db, ME)).toBeNull()
+    expect(await feedLinkOwner(db, feedTokenHash(theirs))).toBe(OTHER)
+  })
+
+  test('по запросу «удалить всё» ссылка перестаёт открываться', async () => {
+    const db = await freshDb()
+    const key = newFeedToken()
+    await setFeedLink(db, ME, feedTokenHash(key), NOW)
+    await forgetUser(db, ME)
+    expect(await feedLinkOwner(db, feedTokenHash(key))).toBeNull()
   })
 })
 
@@ -3579,6 +3672,7 @@ describe('sweepStale: суточная уборка', () => {
       'library_baselines',
       'feedback',
       'daily_picks',
+      'feed_links',
     ]
     for (const table of tables) {
       const res = await db.execute({
@@ -3597,6 +3691,8 @@ describe('sweepStale: суточная уборка', () => {
     await saveLibrarySnapshot(db, steamid, LIB, at)
     await logFeedback(db, { steamid, appid: 570, action: 'skipped' }, at)
     await saveDailyPick(db, steamid, '2023-11-06', { appid: 570 }, at)
+    // Демо — пишущая сессия, и RSS-ссылку себе выпустить может
+    await setFeedLink(db, steamid, feedTokenHash(newFeedToken()), at)
   }
 
   test('демо, от которого неделю нет вестей, уходит целиком', async () => {

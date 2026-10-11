@@ -26,6 +26,8 @@ import {
   getSharedPick,
   getLibraryBaselines,
   getOlderSnapshotMinutes,
+  getLatestSnapshotMinutes,
+  feedLinkOwner,
   listExploreLiked,
   listLiked,
   countLiked,
@@ -352,6 +354,23 @@ const CASES: Case[] = [
     indexes: ['idx_snapshots_steamid'],
     sortFree: false,
   },
+  // Личная RSS-лента (app/whatsnew/feed/[token]): её опрашивает ридер, а не
+  // человек, по нескольку раз в час. Последний снимок — тем же индексом, что
+  // прошлые, сортировка — тот же тай-брейк по id среди трёх строк человека
+  {
+    name: 'лента в ридере: минуты последнего снимка',
+    run: (db) => getLatestSnapshotMinutes(db, '76561198000000001'),
+    indexes: ['idx_snapshots_steamid'],
+    sortFree: false,
+  },
+  // Владелец ссылки — по отпечатку ключа: UNIQUE на token_hash и есть
+  // индекс поиска. Мимо него каждый опрос любой ленты читал бы все ссылки
+  {
+    name: 'лента в ридере: владелец ссылки по отпечатку',
+    run: (db) => feedLinkOwner(db, 'a'.repeat(64)),
+    indexes: ['sqlite_autoindex_feed_links_2'],
+    sortFree: true,
+  },
   // «Сравнили с тобой» — строки владельца по индексу (owner, at) в его же
   // порядке, ник — по первичному ключу users
   {
@@ -433,7 +452,10 @@ describe('планы запросов', () => {
     const demo = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter((q) =>
       q.sql.includes("GLOB '000*'"),
     )
-    expect(demo.length).toBe(6)
+    // Четыре таблицы личности, сессии и users — шесть. Седьмая — feed_links: ссылка на
+    // личную ленту уходит вместе с демо-личностью, и её строка ищется тем же
+    // предикатом — по первичному ключу, а не проходом по всем ссылкам
+    expect(demo.length).toBe(7)
     for (const q of demo) {
       const plan = await planOf(db, q)
       const where = plan.join(' | ')

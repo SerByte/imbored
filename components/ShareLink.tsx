@@ -69,6 +69,12 @@ function copyFallback(url: string): boolean {
  * Адрес приходит функцией, а не строкой: у кнопки на странице результата его
  * можно узнать только из window, а трогать window при рендере нельзя. Функция
  * зовётся в момент нажатия, когда window заведомо есть.
+ *
+ * copyOnly — ссылка, которой НЕ делятся, а кладут к себе: секретная ссылка
+ * на личную RSS-ленту (components/whatsnew/FeedLink). Ей не нужна системная
+ * панель — она предлагает отправить адрес людям, — и шаг share_click: это не
+ * «поделился», и воронка «поделился → пришли» считала бы его зря. Буфер,
+ * запасной путь и отклик «Скопировано» — те же, что у всех.
  */
 export function useShareLink(
   getUrl: () => string,
@@ -76,9 +82,11 @@ export function useShareLink(
   text: string,
   /** Показать ссылку человеку, когда скопировать не вышло ни одним способом. */
   onManual?: () => void,
+  opts: { copyOnly?: boolean } = {},
 ) {
   const [state, setState] = useState<ShareState>('idle')
-  const native = useSyncExternalStore(subscribeCoarse, readCoarse, () => false)
+  const coarse = useSyncExternalStore(subscribeCoarse, readCoarse, () => false)
+  const native = coarse && !opts.copyOnly
   /*
    * Один таймер на кнопку. Раньше каждое нажатие ставило свой setTimeout, и
    * второе нажатие через секунду гасило «Скопировано» раньше срока — первым
@@ -96,7 +104,7 @@ export function useShareLink(
     const url = getUrl()
     if (!url) return
     // Намерение поделиться — шаг воронки, чем бы ни кончилась панель
-    track('share_click')
+    if (!opts.copyOnly) track('share_click')
     if (native) {
       try {
         await navigator.share({ title, text, url })

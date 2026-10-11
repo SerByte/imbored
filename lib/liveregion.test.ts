@@ -247,6 +247,10 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   { file: 'components/Evenings.tsx', start: 'async function answer(', reset: ['setFailed(null)'] },
   // здесь отказ — фаза состояния, и гасит его фаза «делаю»
   { file: 'components/SharePick.tsx', start: 'async function create()', reset: ["setState({ at, phase: 'busy' })"] },
+  // RSS по секретной ссылке: второй 429 на «Выпустить новую» — тот же текст;
+  // удача («Ссылка готова», «Ссылка отключена») гаснет тем же порядком
+  { file: 'components/whatsnew/FeedLink.tsx', start: 'async function issue()', reset: ['setMiss(null)', "setSaid('')"] },
+  { file: 'components/whatsnew/FeedLink.tsx', start: 'async function disable()', reset: ['setMiss(null)', "setSaid('')"] },
 ]
 
 describe('повтор отказа звучит', () => {

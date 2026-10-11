@@ -44,6 +44,17 @@ describe('rssFeed', () => {
     expect(feed).toContain('<description>Поправили &lt;баланс&gt; AWP.</description>')
   })
 
+  /**
+   * Адрес личной ленты — секретная ссылка (lib/feedlink). Ридер её и так
+   * знает, а повторять ключ в теле значило бы отдать его каждому, кому
+   * ридер или бот покажет содержимое канала.
+   */
+  test('без self — канал без atom:link: адрес личной ленты в теле не повторяется', () => {
+    const own = rssFeed({ title: 't', link: 'l', description: 'd', builtAt: 0, items: [] })
+    expect(own).not.toContain('<atom:link')
+    expect(own).toContain('<link>l</link>')
+  })
+
   test('пустая лента — всё ещё валидный канал', () => {
     const empty = rssFeed({ title: 't', link: 'l', self: 's', description: 'd', builtAt: 0, items: [] })
     expect(empty).toContain('<channel>')

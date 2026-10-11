@@ -2,12 +2,14 @@ import Link from 'next/link'
 import { Icon } from '@/components/Icon'
 import { LinkPending } from '@/components/LinkPending'
 import { Cover } from '@/components/whatsnew/Cover'
+import { FeedLink } from '@/components/whatsnew/FeedLink'
 import { FeedWatch } from '@/components/whatsnew/FeedWatch'
 import { PatchRow } from '@/components/whatsnew/PatchRow'
 import { Stage } from '@/components/whatsnew/Stage'
 import { artCandidates } from '@/lib/art'
 import {
   getFeedForApps,
+  getFeedLink,
   getGamesMetaLite,
   getLatestSnapshot,
   withoutBody,
@@ -15,7 +17,7 @@ import {
 import { discountView, trustedPrice } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
 import { plural } from '@/lib/plural'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { ownAddress } from '@/lib/site'
 import { countChanges } from '@/lib/steamhtml'
 import { cachedMajorFeed } from '@/lib/whatsnewcache'
@@ -67,7 +69,8 @@ export const generateMetadata = ownAddress('/whatsnew', {
  */
 export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   const wantsPopular = (await props.searchParams).feed === 'popular'
-  const steamid = await currentSteamId()
+  const session = await currentSession()
+  const steamid = session?.steamid ?? null
   const db = await getDb()
 
   // Гость и тот, по чьим играм ничего не приезжало, видят общую ленту без
@@ -92,6 +95,33 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
     items.map((i) => i.appid),
   )
 
+  /*
+   * Секретная ссылка на личную RSS-ленту — только у пишущей сессии: ключ
+   * даёт постоянный доступ к ленте патчей твоих игр, и выпускать его тому,
+   * кто владения профилем не доказал, нельзя (app/api/whatsnew/feedlink).
+   * Сессии по ссылке на профиль — строка о том, что для этого нужно.
+   *
+   * Стоит на обеих вкладках и даже на пустой странице: включённую ссылку
+   * обязано быть где отключить, что бы ни показывала лента сегодня. Самой
+   * ссылки сервер не знает — только есть ли она и с какого дня.
+   */
+  const writer = session !== null && isWriter(session)
+  const feedLink = writer ? await getFeedLink(db, session.steamid) : null
+  const rss = !session ? null : writer ? (
+    <FeedLink since={feedLink?.createdAt ?? null} />
+  ) : (
+    <p className="border-t border-rule pt-8 text-sm text-dim">
+      Получать патчи своих игр в ридер по секретной ссылке может вошедший через Steam: ссылка
+      на профиль не доказывает, что профиль твой.{' '}
+      <a
+        href="/api/auth/steam"
+        className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+      >
+        Войти через Steam
+      </a>
+    </p>
+  )
+
   // Обложка берётся ТОЛЬКО из личного блока: добивка свежее (0–8 дней против
   // 15+ у библиотеки), и на вкладке «в твоих играх» она встала бы обложкой,
   // подсунув чужую игру под заголовок про твои.
@@ -112,6 +142,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
         <Link href="/quiz" className="btn-ember mt-2 px-6 py-3">
           А пока подобрать игру <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
         </Link>
+        {rss ? <div className="mt-12 w-full max-w-2xl text-left">{rss}</div> : null}
       </div>
     )
   }
@@ -281,6 +312,8 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
               })}
             </>
           ) : null}
+
+          {rss ? <div className="mt-16">{rss}</div> : null}
         </div>
       </Stage>
     </div>

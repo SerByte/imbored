@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Db } from '@/lib/db'
+import { feedLinkOwner, setFeedLink, type Db } from '@/lib/db'
+import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
 import { SESSION_COOKIE, currentSession } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
 import { setTestCookie } from '@/lib/testing/headers'
@@ -13,6 +14,9 @@ vi.mock('next/headers', () => import('@/lib/testing/headers'))
  * трогает только это устройство, а «везде» — только у доказанного входа
  * через Steam (иначе чужой по ссылке на профиль выкидывал бы владельца со
  * всех устройств).
+ *
+ * «Везде» гасит и секретную ссылку на личную RSS-ленту: её жмут, когда
+ * доступ мог утечь, а ссылка — тоже доступ, выпущенный из сессии.
  */
 
 const T0 = 1_760_000_000
@@ -34,6 +38,13 @@ const logout = (all = false) => POST(post(`/api/auth/logout${all ? '?scope=all' 
 /** Кука сессии в ответе погашена */
 const cleared = (res: Response) =>
   res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=;`) && /Max-Age=0/i.test(c))
+
+/** Выпустить человеку RSS-ссылку — вернуть отпечаток её ключа */
+async function feedLink(steamid: string): Promise<string> {
+  const hash = feedTokenHash(newFeedToken())
+  await setFeedLink(db, steamid, hash, T0)
+  return hash
+}
 
 /** Жива ли сессия с этим токеном — как её увидел бы следующий запрос */
 async function alive(token: string): Promise<boolean> {
@@ -64,11 +75,14 @@ describe('/api/auth/logout', () => {
   test('обычный выход гасит только это устройство', async () => {
     const phone = await signIn(db, STEAMID_OF.openid, { verified: true })
     const laptop = await signIn(db, STEAMID_OF.openid, { verified: true })
+    const rss = await feedLink(STEAMID_OF.openid)
     const res = await logout()
     expect(await res.json()).toEqual({ ok: true })
     expect(cleared(res)).toBe(true)
     expect(await alive(laptop.token)).toBe(false)
     expect(await alive(phone.token)).toBe(true)
+    // Ридер — не это устройство: обычный выход подписку не рвёт
+    expect(await feedLinkOwner(db, rss)).toBe(STEAMID_OF.openid)
   })
 
   test('«везде» у входа через Steam гасит все устройства и старые токены', async () => {
@@ -82,10 +96,20 @@ describe('/api/auth/logout', () => {
     expect(await sessionsFrom(STEAMID_OF.openid)).not.toBeNull()
   })
 
+  test('«везде» гасит и RSS-ссылку: её мог выпустить тот, из-за кого жмут «везде»', async () => {
+    const rss = await feedLink(STEAMID_OF.openid)
+    await signIn(db, STEAMID_OF.openid, { verified: true })
+    expect(await (await logout(true)).json()).toEqual({ ok: true })
+    expect(await feedLinkOwner(db, rss)).toBeNull()
+  })
+
   test('«везде» у сессии по ссылке и у демо — только это устройство, и сказано прямо', async () => {
     for (const kind of ['claimed', 'demo'] as const) {
       const steamid = STEAMID_OF[kind]
       const other = await signIn(db, steamid)
+      // Ссылку владельца сессия по ссылке на профиль не гасит: иначе чужой
+      // рвал бы ему подписку тем же перевёртышем прав, что и выход везде
+      const rss = await feedLink(steamid)
       await signInAs(db, kind)
       const res = await logout(true)
       const body = (await res.json()) as { scope?: string; reason?: string }
@@ -95,6 +119,7 @@ describe('/api/auth/logout', () => {
       expect(cleared(res)).toBe(true)
       expect(await alive(other.token)).toBe(true)
       expect(await sessionsFrom(steamid)).toBeNull()
+      expect(await feedLinkOwner(db, rss)).toBe(steamid)
     }
   })
 })

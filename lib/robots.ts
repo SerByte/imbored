@@ -56,6 +56,25 @@ export const PERSONAL_PREFIXES = ['/portrait', '/compat', '/room', '/pick'] as c
 export const NOINDEX_PAGES = ['/daily', '/rooms'] as const
 
 /**
+ * Секретные адреса: личная RSS-лента по ключу (app/whatsnew/feed/[token]).
+ *
+ * Отдельно от PERSONAL_PREFIXES, потому что обещание другое. Личные страницы
+ * сделаны, чтобы их пересылали, — у них карточки для превью. Секретная
+ * лента — чтобы её НЕ пересылали: адрес и есть пропуск к ленте патчей твоих
+ * игр. Ссылок на неё нет нигде, но утечь адрес может, и тогда выдаче
+ * нельзя показывать ни ленту, ни голый адрес с ключом.
+ *
+ * Механика та же, что у личных: в robots.txt открыто, noindex — заголовком
+ * на всём под префиксом. Disallow был бы хуже ровно здесь: закрытый адрес
+ * Google индексирует голым, по тексту внешней ссылки, — вместе с ключом.
+ * Роут ставит тот же заголовок и сам, на ленте и на отказе.
+ *
+ * Правило /whatsnew/feed/:path* не задевает /whatsnew/feed.xml — общая
+ * лента в соседнем сегменте и остаётся в выдаче (lib/robots.test.ts).
+ */
+export const SECRET_PREFIXES = ['/whatsnew/feed'] as const
+
+/**
  * Что закрыто в robots.txt.
  *
  *   • /api/ — работа, а не контент. /api/prepare и /api/recommend вдобавок
@@ -101,8 +120,8 @@ export const ROBOTS_DISALLOW = [
 ] as const
 
 /**
- * Заголовки для next.config.ts: noindex на всём под личными префиксами и на
- * открытых заглушках шапки (NOINDEX_PAGES).
+ * Заголовки для next.config.ts: noindex на всём под личными и секретными
+ * префиксами и на открытых заглушках шапки (NOINDEX_PAGES).
  *
  * Источник /<префикс>/:path* в Next покрывает и сам префикс, и всё под ним,
  * но не соседей: /room/:path* не задевает /rooms. Заглушки — точным адресом,
@@ -114,7 +133,10 @@ export function noindexHeaders(): Array<{
 }> {
   const noindex = () => [{ key: 'X-Robots-Tag', value: 'noindex' }]
   return [
-    ...PERSONAL_PREFIXES.map((prefix) => ({ source: `${prefix}/:path*`, headers: noindex() })),
+    ...[...PERSONAL_PREFIXES, ...SECRET_PREFIXES].map((prefix) => ({
+      source: `${prefix}/:path*`,
+      headers: noindex(),
+    })),
     ...NOINDEX_PAGES.map((source) => ({ source, headers: noindex() })),
   ]
 }

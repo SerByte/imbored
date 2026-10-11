@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { revokeAllSessions, revokeSession } from '@/lib/db'
+import { dropFeedLink, revokeAllSessions, revokeSession } from '@/lib/db'
 import { SESSION_COOKIE, currentSession, getDb, nowSec, sessionCookieOptions } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
 
@@ -23,6 +23,13 @@ import { forgetSessionCache } from '@/lib/sessions'
  * Неподтверждённой сессии остаётся обычный выход: гасится ЕЁ ЖЕ кука и её
  * строка. Это ровно то, на что она имеет право, — и ответ говорит правду,
  * а не делает вид, что погасил чужие устройства.
+ *
+ * «Везде» гасит и секретную ссылку на личную RSS-ленту (lib/feedlink). Жмут
+ * его, когда доступ мог утечь, — и обязан он достать в том числе то, о чём
+ * мы не знаем. Ссылку мог выпустить именно тот, кто сидел в чужой сессии, и
+ * она пережила бы отзыв всех входов: ридеру кука не нужна. Цена — честному
+ * человеку выпустить ссылку заново; об этом сказано рядом с самой ссылкой
+ * на /whatsnew. Обычный выход её не трогает: ридер — не это устройство.
  */
 export async function POST(req: Request) {
   const session = await currentSession()
@@ -40,6 +47,7 @@ export async function POST(req: Request) {
       const db = await getDb()
       if (all) {
         await revokeAllSessions(db, session.steamid, now)
+        await dropFeedLink(db, session.steamid)
       } else {
         await revokeSession(db, session.sid, now)
       }

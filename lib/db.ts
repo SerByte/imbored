@@ -362,6 +362,30 @@ CREATE INDEX IF NOT EXISTS idx_compat_views_owner_at ON compat_views (owner, at)
 CREATE INDEX IF NOT EXISTS idx_compat_views_viewer ON compat_views (viewer);
 CREATE INDEX IF NOT EXISTS idx_compat_views_at ON compat_views (at);
 /*
+ * Секретная ссылка на личную RSS-ленту (/whatsnew/feed/<ключ>, lib/feedlink).
+ *
+ * Самого ключа здесь нет — только его sha256: ключ показывается человеку
+ * один раз, в ответе на выпуск. Строка на человека: перевыпуск заменяет
+ * отпечаток, и старая ссылка перестаёт работать в ту же секунду. UNIQUE на
+ * отпечатке — и индекс поиска владельца по ключу, и гарантия, что один
+ * ключ не откроет двух лент.
+ *
+ * Отдельной таблицей, а не колонкой users: колонка — это подъём версии схемы
+ * (ADDED_COLUMNS) и частичный индекс по ней, а новая таблица доезжает до
+ * живой базы сама, блоком CREATE … IF NOT EXISTS. И жизненный цикл у ссылки
+ * свой: её гасит «Выйти на всех устройствах», которому строка users нужна
+ * целой (sessions_from).
+ *
+ * Пишет только пишущая сессия (requireWriter). Уходит по «Отключить», при
+ * «Выйти на всех устройствах», с уборкой демо (sweepStale) и по запросу
+ * (forgetUser). /privacy, разделы 01 и 06.
+ */
+CREATE TABLE IF NOT EXISTS feed_links (
+  steamid TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+) WITHOUT ROWID;
+/*
  * Служебные ключи: курсоры крона, аренды, счётчики каталога и флаги миграций.
  * Здесь, а не в SCHEMA_CATALOG рядом с остальным каталогом: migrateDb читает
  * из неё версию схемы ДО ALTER-цикла, чтобы решить, нужен ли он вообще.
@@ -2525,6 +2549,36 @@ export async function getOlderSnapshotMinutes(
     takenAt: Number(r.taken_at),
     minutes: minutesFromPairs(r.pairs),
   }))
+}
+
+/**
+ * Последний снимок библиотеки — только парами [appid, минуты], без блоба.
+ *
+ * Для личной RSS-ленты (app/whatsnew/feed/[token]): ей из библиотеки нужен
+ * ровно вход topLibraryAppids — какие игры и сколько в них наиграно, — а
+ * опрашивает её ридер, а не человек, по нескольку раз в час. Везти ради
+ * этого games_json большой библиотеки (сотни килобайт, см. snapshotOwns) на
+ * каждый опрос — та же цена, от которой ушла getOlderSnapshotMinutes.
+ *
+ * Сортировка с тай-брейком по id — та же, что у getLatestSnapshot: снимок
+ * выбирается тот же, что увидела бы страница.
+ */
+export async function getLatestSnapshotMinutes(
+  db: Db,
+  steamid: string,
+): Promise<{ takenAt: number; games: Array<{ appid: number; playtimeForever: number }> } | null> {
+  const res = await db.execute({
+    sql: `SELECT taken_at, ${SNAPSHOT_MINUTE_PAIRS} AS pairs
+          FROM library_snapshots WHERE steamid = ?
+          ORDER BY taken_at DESC, id DESC LIMIT 1`,
+    args: [steamid],
+  })
+  const row = res.rows[0] as unknown as { taken_at: number; pairs: string | null } | undefined
+  if (!row) return null
+  return {
+    takenAt: Number(row.taken_at),
+    games: [...minutesFromPairs(row.pairs)].map(([appid, playtimeForever]) => ({ appid, playtimeForever })),
+  }
 }
 
 /**
@@ -5670,6 +5724,57 @@ export async function getSharedPick(db: Db, id: string, sinceSec: number): Promi
   }
 }
 
+/* ---------- личная RSS-лента: секретная ссылка ---------- */
+
+/**
+ * Выпустить ссылку или перевыпустить: отпечаток нового ключа встаёт на место
+ * прежнего одной записью. Перевыпуск — и есть отзыв старой ссылки: отдельного
+ * «отозвать, потом выпустить» нет, и окна, когда работают обе, тоже.
+ *
+ * Принимает отпечаток, а не ключ: ключ до базы не доезжает вовсе (lib/feedlink).
+ */
+export async function setFeedLink(db: Db, steamid: string, tokenHash: string, nowSec: number): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO feed_links (steamid, token_hash, created_at) VALUES (?, ?, ?)
+          ON CONFLICT(steamid) DO UPDATE SET
+            token_hash = excluded.token_hash,
+            created_at = excluded.created_at`,
+    args: [steamid, tokenHash, nowSec],
+  })
+}
+
+/** Отключить ссылку. Нечего отключать — не ошибка: итог тот же. */
+export async function dropFeedLink(db: Db, steamid: string): Promise<void> {
+  await db.execute({ sql: 'DELETE FROM feed_links WHERE steamid = ?', args: [steamid] })
+}
+
+/**
+ * Чья лента открывается этим ключом — по отпечатку. null — ключа нет:
+ * не выпускали, перевыпустили, отключили или забыли человека.
+ */
+export async function feedLinkOwner(db: Db, tokenHash: string): Promise<string | null> {
+  const res = await db.execute({
+    sql: 'SELECT steamid FROM feed_links WHERE token_hash = ?',
+    args: [tokenHash],
+  })
+  const row = res.rows[0] as unknown as { steamid: string } | undefined
+  return row ? String(row.steamid) : null
+}
+
+/**
+ * Есть ли у человека ссылка и с какого дня — для строки на /whatsnew.
+ * Отпечаток наружу не отдаётся: показать по нему ссылку снова нельзя, и
+ * странице он ни к чему.
+ */
+export async function getFeedLink(db: Db, steamid: string): Promise<{ createdAt: number } | null> {
+  const res = await db.execute({
+    sql: 'SELECT created_at FROM feed_links WHERE steamid = ?',
+    args: [steamid],
+  })
+  const row = res.rows[0] as unknown as { created_at: number } | undefined
+  return row ? { createdAt: Number(row.created_at) } : null
+}
+
 /* ---------- удаление по запросу ---------- */
 
 /**
@@ -5726,6 +5831,9 @@ const USER_ROWS = [
   // сравнивал его» — след человека в чужом хабе тоже его след
   { table: 'compat_views', where: 'owner = ? OR viewer = ?' },
   { table: 'shared_picks', where: 'created_by = ?' },
+  // Ссылка на личную ленту: после удаления она обязана перестать открываться,
+  // а не отдавать пустую ленту человеку, которого больше нет
+  { table: 'feed_links', where: 'steamid = ?' },
   { table: 'daily_picks', where: 'steamid = ?' },
   { table: 'library_snapshots', where: 'steamid = ?' },
   { table: 'library_baselines', where: 'steamid = ?' },
@@ -5861,6 +5969,7 @@ export const COMPAT_VIEW_TTL_SEC = 90 * 86_400
  *     sessions, library_snapshots, library_baselines, — и ни одна не
  *     удалялась: один адрес под потолком /api/connect выпускал больше тысячи
  *     личностей в сутки, и данные живых людей тонули в демо-строках.
+ *     Ссылка на личную RSS-ленту уходит вместе с личностью.
  *   • Сессии, чей вход истёк у всех токенов, — с запасом, см.
  *     SESSION_SWEEP_MARGIN_SEC. Надгробия моложе этого остаются: отзыв обязан
  *     отличаться от «строки нет».
@@ -5880,9 +5989,13 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
   const demoCutoff = nowSec - DEMO_TTL_SEC
   const demo = [demoCutoff, demoCutoff - SESSION_TOUCH_AFTER_SEC, demoCutoff]
   const roomCutoff = nowSec - ROOM_TTL_SEC
-  const [, , , , sessions, demos, , , , , rooms, ctx, outcomes, compat, picks] = await db.batch(
+  // Ссылка на ленту у демо — его же: личность уходит, и ссылке открывать
+  // больше нечего. Опрос ленты признаком жизни не считается: ридер ходит
+  // сам, без человека, и держал бы брошенную демо-личность вечно
+  const demoTables = ['feedback', 'daily_picks', 'library_snapshots', 'library_baselines', 'feed_links']
+  const swept = await db.batch(
     [
-      ...['feedback', 'daily_picks', 'library_snapshots', 'library_baselines'].map((table) => ({
+      ...demoTables.map((table) => ({
         sql: `DELETE FROM ${table} WHERE ${STALE_DEMO}`,
         args: demo,
       })),
@@ -5914,6 +6027,9 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
     ],
     'write',
   )
+  // Отсчёт — от конца списка демо-таблиц, а не дырами в деструктуризации:
+  // новая таблица в demoTables сдвинула бы все отчёты на одну
+  const [sessions, demos, , , , , rooms, ctx, outcomes, compat, picks] = swept.slice(demoTables.length)
   return {
     demos: Number(demos?.rowsAffected ?? 0),
     sessions: Number(sessions?.rowsAffected ?? 0),

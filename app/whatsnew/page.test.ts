@@ -2,12 +2,21 @@ import Link from 'next/link'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LinkPending } from '@/components/LinkPending'
 import { Cover } from '@/components/whatsnew/Cover'
+import { FeedLink } from '@/components/whatsnew/FeedLink'
 import { FeedWatch } from '@/components/whatsnew/FeedWatch'
 import { PatchRow } from '@/components/whatsnew/PatchRow'
 import { Stage } from '@/components/whatsnew/Stage'
-import { saveLibrarySnapshot, upsertGameMeta, upsertNewsItems, type Db, type StoredNews } from '@/lib/db'
-import { flight, islandsOf } from '@/lib/testing/flight'
-import { freshDb, signInAs } from '@/lib/testing/route'
+import {
+  saveLibrarySnapshot,
+  setFeedLink,
+  upsertGameMeta,
+  upsertNewsItems,
+  type Db,
+  type StoredNews,
+} from '@/lib/db'
+import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
+import { flight, islandsOf, textOf } from '@/lib/testing/flight'
+import { freshDb, signInAs, signOut, type SessionKind } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
 import WhatsNewPage from './page'
 
@@ -48,6 +57,10 @@ const ISLANDS = new Map<unknown, string>([
   [Link, 'Link'],
   [LinkPending, 'LinkPending'],
   [Cover, 'Cover'],
+  // Строка «RSS по секретной ссылке» — клиентская: выпуск, копирование и
+  // отключение живут на кнопках. Без неё в списке flight раскрыл бы её
+  // вызовом с хуками и уронил тест
+  [FeedLink, 'FeedLink'],
   [FeedWatch, 'FeedWatch'],
   [PatchRow, 'PatchRow'],
   [Stage, 'Stage'],
@@ -158,5 +171,59 @@ describe('/whatsnew: своё не продаётся', () => {
     for (const appid of [440, 570]) {
       expect(byApp.get(appid)).toMatchObject({ discovery: true, price: 999 })
     }
+  })
+})
+
+/**
+ * Строка «RSS по секретной ссылке» внизу ленты.
+ *
+ * Выпускать ключ может только пишущая сессия (requireWriter): ключ — это
+ * постоянный доступ к ленте патчей твоих игр. Страница знает о ссылке лишь
+ * то, что она есть и с какого дня: сам ключ сервер не хранит, и в разметку
+ * он не попадает ни при каких обстоятельствах.
+ */
+describe('/whatsnew: RSS по секретной ссылке', () => {
+  async function page(kind: SessionKind | null, link?: string) {
+    await upsertGameMeta(db, game(570), NOW)
+    await upsertNewsItems(db, [patch(570, 1, 900_000), patch(440, 2, 300_000)], NOW)
+    signOut()
+    if (kind) {
+      const steamid = await signInAs(db, kind)
+      if (link) await setFeedLink(db, steamid, feedTokenHash(link), NOW - DAY)
+    }
+    const tree = flight(
+      await WhatsNewPage({
+        params: Promise.resolve({}),
+        searchParams: Promise.resolve({}),
+      } as PageProps<'/whatsnew'>),
+      ISLANDS,
+    )
+    return { tree, rss: islandsOf(tree, 'FeedLink') }
+  }
+
+  test('вошедший через Steam со ссылкой: есть и с какого дня — но не сама ссылка', async () => {
+    const key = newFeedToken()
+    const { tree, rss } = await page('openid', key)
+    expect(rss).toEqual([{ island: 'FeedLink', since: NOW - DAY }])
+    expect(JSON.stringify(tree)).not.toContain(key)
+    expect(JSON.stringify(tree)).not.toContain(feedTokenHash(key))
+  })
+
+  test('вошедший через Steam без ссылки и демо — кнопка выпуска', async () => {
+    expect((await page('openid')).rss).toEqual([{ island: 'FeedLink', since: null }])
+    db = await freshDb()
+    expect((await page('demo')).rss).toEqual([{ island: 'FeedLink', since: null }])
+  })
+
+  test('сессия по ссылке на профиль — без кнопок, со строкой о входе через Steam', async () => {
+    const { tree, rss } = await page('claimed')
+    expect(rss).toEqual([])
+    expect(textOf(tree)).toContain('может вошедший через Steam')
+  })
+
+  test('гость — ничего: личной ленты у него нет', async () => {
+    const { tree, rss } = await page(null)
+    expect(rss).toEqual([])
+    expect(textOf(tree)).not.toContain('секретной ссылке')
   })
 })

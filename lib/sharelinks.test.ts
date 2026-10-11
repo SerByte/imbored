@@ -41,6 +41,11 @@ describe('ссылки, которыми делятся', () => {
       if (file === 'components/ShareLink.tsx') continue
       const code = withoutComments(src)
       if (!/useShareLink\(|<ShareLinkField\b/.test(code)) continue
+      // copyOnly — ссылка, которую кладут к себе, а не отправляют людям:
+      // секретная RSS-лента (components/whatsnew/FeedLink). ref у ключа был
+      // бы неправдой — с ним ходил бы ридер на каждом опросе, а не человек,
+      // пришедший по приглашению
+      if (/copyOnly: true/.test(code)) continue
       sharing++
       if (!/withRef\(|\w+ShareUrl\(/.test(code)) offenders.push(file)
     }
