@@ -68,12 +68,22 @@ function nameSource(name: string): string {
  *
  * Граница — не буква и не цифра с обеих сторон, по той же причине, что
  * заглядывание вперёд у stripGameName: «Rust» не вырезается из «Rusty».
+ *
+ * Названия нет — текст возвращается ТЕМ ЖЕ, байт в байт, а не со
+ * схлопнутыми пробелами: newsPageTitle узнаёт «имя в заголовке есть» по
+ * тому, что текст изменился, и «Hotfix  notes» с двойным пробелом иначе
+ * терял название игры впереди <title>.
  */
 export function withoutGameName(text: string, gameName: string | null | undefined): string {
   const name = (gameName ?? '').trim()
   if (!text || !name) return text
   const re = new RegExp(`(?<![\\p{L}\\p{N}])${nameSource(name)}(?![\\p{L}\\p{N}])`, 'giu')
-  return text.replace(re, ' ').replace(/\s+/g, ' ').trim()
+  let found = false
+  const rest = text.replace(re, () => {
+    found = true
+    return ' '
+  })
+  return found ? rest.replace(/\s+/g, ' ').trim() : text
 }
 
 /**

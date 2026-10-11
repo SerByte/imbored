@@ -87,4 +87,10 @@ describe('текст без названия игры — где бы оно н�
     expect(withoutGameName('Патч 2.31', '  ')).toBe('Патч 2.31')
     expect(withoutGameName('', 'Portal 2')).toBe('')
   })
+
+  test('названия в тексте нет — текст возвращается нетронутым, пробелы как были', () => {
+    // newsPageTitle узнаёт «имя в заголовке есть» по тому, что текст
+    // изменился, — схлопнутый пробел не должен сходить за найденное имя
+    expect(withoutGameName('Hotfix  notes ', 'Cyberpunk 2077')).toBe('Hotfix  notes ')
+  })
 })
