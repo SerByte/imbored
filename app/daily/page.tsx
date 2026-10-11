@@ -325,51 +325,81 @@ export default function DailyPage() {
   // «Отправить другу» — хук, поэтому до ранних возвратов; герой тот же, что ниже
   const sharePick = useSharePick(ownDay && alternate ? alternate : pick, 'daily')
 
+  const failed = phase === 'error' || (phase === 'ok' && !pick)
+  const fail = FAIL[reason ?? ''] ?? FAIL_UNKNOWN
+  /*
+   * Одна живая строка на всю страницу.
+   *
+   * Отказ здесь — не строка у кнопки, а целый экран вместо экрана прогрева, и
+   * WarmupScreen уносит с собой единственную говорившую область — свою строку
+   * прогресса. «Библиотека не доехала» или «Слишком часто» появлялись в
+   * тишине: человек со скринридером слышал прогрев, а потом ничего, и об отказе
+   * узнавал, только обойдя страницу. Область, рождённая вместе с экраном
+   * отказа, звучит не везде (components/StatusLine), поэтому у прогрева и
+   * отказа она стоит первым ребёнком фрагмента: React сверяет её по месту как
+   * один узел, и смена экрана меняет в ней только текст.
+   *
+   * У героя она в его разметке, на месте прежней строки said (смена героя по
+   * «Не сегодня» и «Сегодня хочу из своего»): к герою приходят только с
+   * прогрева, и там строка рождается пустой — раньше своего текста. Сторож —
+   * lib/liveregion.test.ts.
+   */
+  const status = (
+    <StatusLine text={failed ? `${fail.title}. ${fail.text}` : said} className="sr-only" />
+  )
+
   if (phase === 'loading') {
-    return <WarmupScreen progress={prep} message={message} />
+    return (
+      <>
+        {status}
+        <WarmupScreen progress={prep} message={message} />
+      </>
+    )
   }
 
-  if (phase === 'error' || !pick) {
-    const fail = FAIL[reason ?? ''] ?? FAIL_UNKNOWN
+  if (failed || !pick) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
-        <p className="text-lg">{fail.title}</p>
-        <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
+      <>
+        {status}
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
+          <p className="text-lg">{fail.title}</p>
+          <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
 
-        {/* Шаги про настройки Steam — только там, где библиотека и правда не
-            доехала. Панель общая с карточкой подключения, пустой библиотекой и
-            отказом подбора: четыре копии инструкции по чужому интерфейсу
-            разъехались бы на первой же правке. */}
-        {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
-        {reason === 'nolibrary' && (
-          <div className="max-w-md text-left">
-            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/daily')} />
-          </div>
-        )}
+          {/* Шаги про настройки Steam — только там, где библиотека и правда не
+              доехала. Панель общая с карточкой подключения, пустой библиотекой и
+              отказом подбора: четыре копии инструкции по чужому интерфейсу
+              разъехались бы на первой же правке. */}
+          {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
+          {reason === 'nolibrary' && (
+            <div className="max-w-md text-left">
+              <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/daily')} />
+            </div>
+          )}
 
-        {/* Кандидатов нет — вернуть игры из бана можно только в библиотеке. */}
-        {reason === 'nocandidates' && (
-          <Link href="/library" className="tap link-more">
-            Посмотреть библиотеку
-            <Icon name="arrow" size={16} />
-          </Link>
-        )}
+          {/* Кандидатов нет — вернуть игры из бана можно только в библиотеке. */}
+          {reason === 'nocandidates' && (
+            <Link href="/library" className="tap link-more">
+              Посмотреть библиотеку
+              <Icon name="arrow" size={16} />
+            </Link>
+          )}
 
-        {/* Обычный подбор предлагается везде, КРОМЕ случая без библиотеки: там
-            он упрётся ровно в ту же причину, и совет был бы тупиком. */}
-        {reason !== 'nolibrary' && (
-          <Link href="/quiz" className="tap link-more">
-            Обычный подбор
-            <Icon name="arrow" size={16} />
-          </Link>
-        )}
+          {/* Обычный подбор предлагается везде, КРОМЕ случая без библиотеки: там
+              он упрётся ровно в ту же причину, и совет был бы тупиком. */}
+          {reason !== 'nolibrary' && (
+            <Link href="/quiz" className="tap link-more">
+              Обычный подбор
+              <Icon name="arrow" size={16} />
+            </Link>
+          )}
 
-        {reason === 'nolibrary' && (
-          <Link href={reconnectHref()} className="btn-ember px-6 py-3">
-            Подключить заново
-          </Link>
-        )}
-      </div>
+          {reason === 'nolibrary' && (
+            <Link href={reconnectHref()} className="btn-ember px-6 py-3">
+              Подключить заново
+            </Link>
+          )}
+        </div>
+      </>
     )
   }
 
@@ -480,10 +510,13 @@ export default function DailyPage() {
       {/* «Как тебе?» после сыгранного по прошлому совету (lib/outcome.ts) —
           раз в сутки, общий порог с /play, и только когда «Не зацепило?»
           молчит: два вопроса разом — анкета */}
-      <OutcomeAsk paused={!!stopDue} />
-      <p role="status" className="sr-only">
-        {said}
-      </p>
+      {/* Ответ уносит плашку вместе с нажатой кнопкой — фокус берёт герой,
+          как после «Не зацепило?» (герой от ответа не меняется) */}
+      <OutcomeAsk paused={!!stopDue} onDone={focusHero} />
+      {/* Та же строка, что на прогреве и отказе (status выше): здесь в ней
+          смена героя. Узел другой — до героя страница доходит только с
+          прогрева, и строка рождается пустой, раньше своего текста */}
+      {status}
       {/* key — герой сменился («Не сегодня», «Сегодня хочу из своего»):
           кадры и заголовок начинаются заново, а не доигрывают прошлую игру */}
       <section

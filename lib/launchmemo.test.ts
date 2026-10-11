@@ -318,4 +318,17 @@ describe('/daily запоминает запуск и спрашивает пр�
       expect(code(read(file))).toMatch(/<OutcomeAsk\s+paused=\{!!stopDue\}/)
     },
   )
+
+  /*
+   * «Как тебе?» — тоже плашка порталом, и тоже уходит вместе с нажатой
+   * «Зацепило», «Так себе» или «Закрыть». На /play onDone был с первого дня, а
+   * /daily рисовала вопрос без него: фокус падал в body, и следующий Tab
+   * начинался со ссылки «к содержимому».
+   */
+  test.each(['app/play/page.tsx', 'app/daily/page.tsx'])(
+    '%s: ответ на «Как тебе?» отдаёт фокус герою',
+    (file) => {
+      expect(code(read(file))).toMatch(/<OutcomeAsk\s+paused=\{!!stopDue\}[^>]*\sonDone=\{[^}]*focusHero\b/)
+    },
+  )
 })

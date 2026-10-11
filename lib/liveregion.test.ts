@@ -287,6 +287,48 @@ describe('строка отказа полок /library — одним узло�
 })
 
 /**
+ * Отказ игры дня — одним узлом с экрана прогрева.
+ *
+ * Отказ на /daily — не строка рядом с кнопкой, а ЦЕЛЫЙ ЭКРАН вместо экрана
+ * прогрева: WarmupScreen уходит, и вместе с ним единственная говорившая
+ * область — его строка прогресса. «Библиотека не доехала», «Слишком часто»
+ * появлялись в тишине: человек со скринридером слышал прогрев, а потом
+ * ничего. Область, рождённая вместе с экраном отказа, не спасла бы (правило
+ * выше), поэтому у прогрева и отказа она стоит первым ребёнком фрагмента, и
+ * React сверяет её по месту как один узел — тот же приём, что у полок
+ * /library ниже. Герой несёт ту же строку в своей разметке: к нему приходят
+ * только с прогрева, и строка рождается пустой.
+ */
+describe('/daily: отказ объявляет строка, которая стоит с прогрева', () => {
+  const code = read('app/daily/page.tsx')
+  const page = code.slice(code.indexOf('export default function DailyPage'))
+
+  test('в строке — отказ, а на герое — смена героя', () => {
+    expect(code).toMatch(
+      /const status = \(\s*<StatusLine\s+text=\{failed \? `\$\{fail\.title\}\. \$\{fail\.text\}` : said\}/,
+    )
+  })
+
+  test('прогрев и отказ начинаются с {status} — один узел на смену экрана', () => {
+    const loading = page.indexOf("if (phase === 'loading') {")
+    const failing = page.indexOf('if (failed || !pick) {')
+    expect(loading, 'ветка прогрева не найдена — сторож ослеп').toBeGreaterThan(-1)
+    expect(failing, 'ветка отказа не найдена — сторож ослеп').toBeGreaterThan(loading)
+    for (const at of [loading, failing]) {
+      const branch = page.slice(at, page.indexOf('\n  }\n', at))
+      expect(branch).toMatch(/\breturn \(\s*<>\s*\{status\}/)
+    }
+    // ранний return без скобок (`return <WarmupScreen …/>`) обошёл бы правило
+    expect(page).not.toMatch(/\breturn </)
+  })
+
+  test('у героя — та же строка, а не вторая область рядом', () => {
+    expect([...page.matchAll(/\{status\}/g)]).toHaveLength(3)
+    expect(page).not.toMatch(/role="status"/)
+  })
+})
+
+/**
  * Само правило — на примерах. Сторож выше зелёный и тогда, когда разбор
  * ослеп: здесь видно, что он ловит каждую форму условия и не трогает
  * законные.
