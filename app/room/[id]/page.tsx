@@ -13,6 +13,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { GameArt } from '@/components/GameArt'
 import { NeedSteam } from '@/components/NeedSteam'
 import { useShareLink } from '@/components/ShareLink'
 import { CeremonyBoundary } from '@/components/room/CeremonyBoundary'
@@ -52,6 +53,7 @@ import {
 } from '@/lib/room'
 import { plural } from '@/lib/plural'
 import { roomPresetOf } from '@/lib/presets'
+import type { InviteDoor } from '@/lib/roominvite'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { HIDDEN_POLL_CAP_MS, hiddenPollDelay, nextPollStep, snapshotFate } from '@/lib/roompoll'
 import { announceMatch } from '@/components/room/MatchNotify'
@@ -131,6 +133,12 @@ type RoomState = {
    * сервер поля не присылал.
    */
   needSteam?: boolean
+  /**
+   * Экран приглашения — готовыми строками, теми же словами, что карточка в
+   * чате (inviteDoor в lib/roominvite). Только не-участнику открытой комнаты;
+   * null и отсутствие — экран прежний.
+   */
+  invite?: InviteDoor | null
   matchedGame: {
     appid: number
     name: string
@@ -1732,13 +1740,53 @@ export default function RoomPage() {
     )
   }
 
+  /*
+   * Настроение выбирал хост при создании, и колода собрана под него. Одна
+   * строка на шапку комнаты и на экран приглашения: друг, которому в чате
+   * пришло «Серёга зовёт: пара быстрых каток», обязан увидеть тот же вечер
+   * и до входа, а не узнать о нём уже над колодой.
+   */
+  const moodPreset = roomPresetOf(state.room.mood)
+  const moodLine = moodPreset && (
+    <p className="text-xs text-dim mt-0.5">
+      <span aria-hidden>{moodPreset.emoji}</span> {moodPreset.label}
+    </p>
+  )
+
   // ---- НЕ УЧАСТНИК ----
   if (!state.isMember) {
+    /*
+     * Экран говорит то же, что карточка в чате: кто зовёт, на какой вечер,
+     * кто уже здесь и во что звали. Раньше здесь были только «Тебя зовут» и
+     * код — то, ради чего друг нажал карточку, экран забывал ровно в минуту
+     * решения. Строки собирает сервер (inviteDoor): страница стоит у потолка
+     * первой загрузки, и её скрипт только расставляет их. Нет строк (старый
+     * ответ, needSteam) — прежний заголовок.
+     */
+    const door = state.invite
     return (
       <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
         <Ambient />
         <div className="relative max-w-md w-full panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
-          <h1 className="font-display text-display-sm">Тебя зовут выбрать игру на вечер</h1>
+          <h1 className="font-display text-display-sm">{door?.title ?? 'Тебя зовут выбрать игру на вечер'}</h1>
+          {moodLine}
+          {/* Карта, с которой начнётся колода, — картинкой, как фон превью.
+              Без арта — одна строка: заглушка с названием повторила бы его */}
+          {door?.seed && (
+            <div className="flex items-center gap-3 text-left text-sm">
+              <GameArt
+                appid={door.seed.appid}
+                name={door.seed.name}
+                headerImage={door.seed.headerImage}
+                art={door.seed.art}
+                sizes="96px"
+                fallback={null}
+                className="w-24 shrink-0 rounded-md"
+              />
+              {door.seed.line}
+            </div>
+          )}
+          {door?.here && <p className="text-sm">{door.here}</p>}
           {/*
             С сессией библиотека уже подключена, и «подключи» над кнопкой
             «Войти в комнату» читалось так, будто вход не сработал. Сюда с
@@ -1871,7 +1919,6 @@ export default function RoomPage() {
   const missNow = { deck: deckWant, members: state.members, isPublic: state.room.isPublic }
   const publicMissText = roomMissText(publicMiss, missNow)
   const leaveMissText = roomMissText(leaveMiss, missNow)
-  const moodPreset = roomPresetOf(state.room.mood)
 
   return (
     <>
@@ -1887,12 +1934,8 @@ export default function RoomPage() {
           <p className="text-xs text-dim mt-0.5">
             {alone ? 'Матч нужен минимум вдвоём' : 'Совпадут голоса всех — будет матч'}
           </p>
-          {/* Настроение выбирал хост при создании, и колода собрана под него */}
-          {moodPreset && (
-            <p className="text-xs text-dim mt-0.5">
-              <span aria-hidden>{moodPreset.emoji}</span> {moodPreset.label}
-            </p>
-          )}
+          {/* Настроение — той же строкой, что на экране приглашения (moodLine) */}
+          {moodLine}
         </div>
         {/*
           Кнопки прячутся, когда внизу уже стоит AloneInvite.

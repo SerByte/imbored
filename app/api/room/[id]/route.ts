@@ -3,6 +3,7 @@ import { memberDone, memberLabel, missingNames } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
 import {
   getGameMeta,
+  getGamesMetaLite,
   getRoom,
   roomForCount,
   roomMembers,
@@ -10,7 +11,9 @@ import {
   snapshotOwns,
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
+import { logSwallowed } from '@/lib/errlog'
 import { parseMood } from '@/lib/mood'
+import { inviteDoor, type InviteDoor } from '@/lib/roominvite'
 import { PEEK_LIMIT, PEEK_WINDOW_SEC } from '@/lib/roompeek'
 import { seatOf } from '@/lib/roomseat'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
@@ -74,6 +77,31 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
    */
   const seat = session ? seatOf(members, session.steamid, isWriter(session)) : 'none'
   const isMember = seat === 'member'
+
+  /*
+   * Кому экран приглашения (inviteDoor ниже) — решается уже здесь, чтобы
+   * мета игры, в которую звали, читалась ВМЕСТЕ с потолком room-peek, а не
+   * после него. Её платит каждый опрос не-участника открытой комнаты с
+   * затравкой — раз в 2,5 секунды, в тишине раз в 6, — и последовательным
+   * она добавляла бы ему ещё один поход в Turso (см. «одним заходом» выше).
+   * Цена параллельности — одно узкое чтение у запроса, которому потолок
+   * откажет, и его не бывает у перебора: несуществующая комната не открыта.
+   *
+   * Чтение украшающее и потому не роковое: упало — экран без картинки игры,
+   * а не 500 на весь опрос, после которого гость видел бы «Связь потеряна»
+   * вместо приглашения.
+   */
+  const door = !isMember && seat !== 'needsteam' && room?.status === 'open'
+  const seedAppid = door ? room.seedAppid : undefined
+  const seedRead =
+    seedAppid !== undefined
+      ? getGamesMetaLite(db, [seedAppid])
+          .then((metas) => metas.get(seedAppid))
+          .catch((err: unknown) => {
+            logSwallowed('room:door-seed', err)
+            return undefined
+          })
+      : undefined
 
   // До ответа 404: промах перебора обязан стоить так же, как попадание, иначе
   // потолок считал бы только найденные комнаты. Участников не трогаем — их
@@ -147,6 +175,37 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
   })
 
+  /*
+   * Экран приглашения — тем же языком, что карточка в чате (inviteDoor в
+   * lib/roominvite): кто зовёт, кто уже здесь и игра, в которую звали.
+   *
+   * Только не-участнику открытой комнаты: участнику это его шапка и ростер,
+   * а после матча не-участнику показывают, на чём сошлись. И не сессии по
+   * ссылке на профиль, который уже сидит здесь (needSteam): это не
+   * приглашение, а «войди через Steam и здесь», и «Серёга зовёт» вышло бы
+   * самому Серёге. Опрос участников — горячий путь — не платит ничего: мета
+   * игры читается только для этого экрана (door выше), вместе с потолком
+   * room-peek, который этот путь и закрывает.
+   *
+   * Ник хоста — personaName, как у превью (loadRoomInvite), а «Уже здесь» —
+   * метками ростера: те же имена, что человек увидит, войдя. Ни steamid, ни
+   * ключей участников в строки не попадает. Участнику поля нет вовсе, а не
+   * null: его ответ — опрос раз в 2,5 секунды, и он остаётся прежним до байта.
+   */
+  let invite: InviteDoor | null = null
+  if (door) {
+    const seed = await seedRead
+    const host = members.find((m) => m.steamid === room.createdBy)
+    const hostFirst = host ? [host, ...members.filter((m) => m !== host)] : members
+    invite = inviteDoor({
+      host: host?.personaName ?? null,
+      names: hostFirst.map((m) => memberLabel(id, m.steamid, m.personaName)),
+      seed: seed
+        ? { appid: seed.appid, name: seed.name, headerImage: seed.headerImage ?? null, art: seed.art ?? null }
+        : null,
+    })
+  }
+
   return NextResponse.json({
     room: {
       id: room.id,
@@ -165,6 +224,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     hasSession: Boolean(steamid),
     isMember,
     needSteam: seat === 'needsteam',
+    ...(invite ? { invite } : {}),
     matchedGame: matchedMeta
       ? {
           appid: matchedMeta.appid,

@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import type { InStatement } from '@libsql/client'
 import { hashString } from '@/lib/daily'
 import {
   createRoom,
@@ -10,8 +11,9 @@ import {
   upsertGameMeta,
   type Db,
 } from '@/lib/db'
+import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
-import { freshDb, params, post, signIn, signInAs, signOut } from '@/lib/testing/route'
+import { breakDbOn, freshDb, params, post, signIn, signInAs, signOut } from '@/lib/testing/route'
 import { POST as join } from './join/route'
 import { POST as leave } from './leave/route'
 import { GET } from './route'
@@ -251,5 +253,155 @@ describe('/api/room/[id]: кому не хватает сошедшейся иг
     expect((await matched())?.missingFor ?? null).toBeNull()
     await signInAs(db, 'demo')
     expect((await matched())?.missingFor ?? null).toBeNull()
+  })
+})
+
+/**
+ * Экран приглашения говорит то же, что карточка в чате: кто зовёт, во что и
+ * кто уже внутри (inviteDoor в lib/roominvite). Только тому, кто ещё не
+ * вошёл, и только пока комната открыта: участнику это шапка и ростер, а
+ * после матча не-участнику показывают другое — на чём сошлись.
+ */
+describe('/api/room/[id]: экран приглашения', () => {
+  const VALHEIM = 892970
+  type Door = {
+    invite?: {
+      title: string
+      here: string | null
+      seed: { appid: number; name: string; line: string } | null
+    } | null
+  }
+  const door = async () => ((await (await peek()).json()) as Door).invite ?? null
+
+  // console.warn и execute подменяют тесты на обрыв и на порядок чтений
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** Хост «Серёга» позвал в Valheim, «Аня» уже внутри */
+  async function seeded(): Promise<string> {
+    const now = nowSec()
+    const host = await signInAs(db, 'openid')
+    await upsertGameMeta(
+      db,
+      { appid: VALHEIM, name: 'Valheim', tags: { 'Co-op': 100 }, genres: [], categories: [1, 9] },
+      now,
+    )
+    await createRoom(db, { id: ROOM, steamid: host, seedAppid: VALHEIM }, now)
+    await joinRoom(db, ROOM, host, 'Серёга', now)
+    await joinRoom(db, ROOM, FRIEND, 'Аня', now)
+    return host
+  }
+
+  test('гостю — кто зовёт, кто здесь и игра, в которую звали', async () => {
+    await seeded()
+    signOut()
+    expect(await door()).toMatchObject({
+      title: 'Серёга зовёт выбрать игру на вечер',
+      here: 'Уже здесь: Серёга и Аня',
+      seed: {
+        appid: VALHEIM,
+        name: 'Valheim',
+        line: 'Первой картой — «Valheim»; не зайдёт — дальше колода из ваших библиотек.',
+      },
+    })
+  })
+
+  test('чужой сессии — то же самое, и ни steamid, ни их хвостов', async () => {
+    await seeded()
+    await signInAs(db, 'demo')
+    const got = await door()
+    expect(got?.title).toBe('Серёга зовёт выбрать игру на вечер')
+    const json = JSON.stringify(got)
+    expect(json).not.toMatch(/\d{17}/)
+    expect(json).not.toContain(FRIEND.slice(-4))
+  })
+
+  test('без игры — без картинки, остальное на месте', async () => {
+    await hosted()
+    signOut()
+    const got = await door()
+    expect(got?.seed).toBeNull()
+    // хост без ника — безлично, а в «Уже здесь» оба — метками ростера
+    expect(got?.title).toBe('Тебя зовут выбрать игру на вечер')
+    expect(got?.here).toMatch(/^Уже здесь: Игрок \w{1,4} и Игрок \w{1,4}$/)
+  })
+
+  test('участнику — ничего: у него шапка комнаты и ростер, а опрос прежний до байта', async () => {
+    await seeded()
+    expect('invite' in ((await (await peek()).json()) as object)).toBe(false)
+  })
+
+  /*
+   * Сессия по ссылке на профиль, который сидит здесь со входом через Steam
+   * (needSteam, lib/roomseat): ей не приглашение, а «войди через Steam и
+   * здесь» — и «Серёга зовёт» вышло бы самому Серёге.
+   */
+  test('свой профиль по ссылке — не приглашение', async () => {
+    const now = nowSec()
+    await createRoom(db, { id: ROOM, steamid: FRIEND }, now)
+    await joinRoom(db, ROOM, FRIEND, 'Серёга', now, { writer: true })
+    await signIn(db, FRIEND)
+    const json = (await (await peek()).json()) as Door & { needSteam: boolean }
+    expect(json.needSteam).toBe(true)
+    expect(json.invite ?? null).toBeNull()
+  })
+
+  test('после матча — ничего: не-участнику там говорят, на чём сошлись', async () => {
+    await seeded()
+    await setRoomMatched(db, ROOM, VALHEIM)
+    signOut()
+    expect(await door()).toBeNull()
+  })
+  /*
+   * Картинка игры на экране — украшение. Упало её чтение — экран без неё,
+   * а не 500 на весь опрос: гость видел бы «Связь потеряна» вместо «Серёга
+   * зовёт».
+   */
+  test('обрыв базы на мете игры — экран без картинки, а не 500', async () => {
+    await seeded()
+    signOut()
+    // logSwallowed глушит повтор того же where на минуту: без сброса строка
+    // зависела бы от того, не залогировал ли её раньше другой тест файла
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    breakDbOn(db, 'FROM games g')
+    const res = await peek()
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as Door).invite).toMatchObject({
+      title: 'Серёга зовёт выбрать игру на вечер',
+      here: 'Уже здесь: Серёга и Аня',
+      seed: null,
+    })
+    expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('room:door-seed')
+  })
+
+  /*
+   * Опрос не-участника — раз в 2,5 секунды, и каждый последовательный поход
+   * в Turso стоит ему десятки-сотни миллисекунд. Мета игры уходит в базу
+   * вместе с потолком room-peek: пока потолок не ответил, она уже в пути.
+   */
+  test('мета игры читается вместе с потолком, а не после него', async () => {
+    await seeded()
+    signOut()
+    const execute = db.execute.bind(db)
+    let release!: () => void
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    const issued: string[] = []
+    vi.spyOn(db, 'execute').mockImplementation((async (stmt: InStatement) => {
+      const sql = typeof stmt === 'string' ? stmt : stmt.sql
+      issued.push(sql)
+      if (sql.includes('rate_limits')) await held
+      return execute(stmt)
+    }) as typeof execute)
+
+    const res = peek()
+    // потолок держим: мета обязана уйти в базу, не дожидаясь его ответа
+    await vi.waitFor(() => expect(issued.some((s) => s.includes('rate_limits'))).toBe(true))
+    await vi.waitFor(() => expect(issued.some((s) => s.includes('FROM games g'))).toBe(true))
+    release()
+    expect(((await (await res).json()) as Door).invite?.seed?.name).toBe('Valheim')
   })
 })
