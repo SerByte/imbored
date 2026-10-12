@@ -6205,8 +6205,19 @@ describe('регион цены', () => {
 describe('список желаемого', () => {
   const ME = '76561198000000001'
 
-  test('пишется целиком и заменяет прежний: истории нет', async () => {
+  /**
+   * Список пишется только рядом со снимком библиотеки (saveWishlist): полку
+   * зовёт /library, а она без снимка отправляет подключаться. Тесты записи
+   * начинают с подключённого — как и настоящая полка.
+   */
+  async function connected(...steamids: string[]): Promise<Db> {
     const db = await freshDb()
+    for (const id of steamids) await saveLibrarySnapshot(db, id, LIB, NOW - 3600)
+    return db
+  }
+
+  test('пишется целиком и заменяет прежний: истории нет', async () => {
+    const db = await connected(ME)
     expect(await getWishlist(db, ME)).toBeNull()
     await saveWishlist(db, ME, [1086940, 1145360], NOW)
     expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW, closed: false, appids: [1086940, 1145360] })
@@ -6215,14 +6226,14 @@ describe('список желаемого', () => {
   })
 
   test('закрытый список — тоже ответ: пишется без игр', async () => {
-    const db = await freshDb()
+    const db = await connected(ME)
     await saveWishlist(db, ME, [620], NOW)
     await saveWishlist(db, ME, 'closed', NOW + 60)
     expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW + 60, closed: true, appids: [] })
   })
 
   test('не больше WISHLIST_KEPT игр и только номера — без дат', async () => {
-    const db = await freshDb()
+    const db = await connected(ME)
     await saveWishlist(db, ME, Array.from({ length: 250 }, (_, i) => i + 1), NOW)
     expect((await getWishlist(db, ME))?.appids).toHaveLength(200)
     const cols = await db.execute('PRAGMA table_info(wishlists)')
@@ -6230,13 +6241,44 @@ describe('список желаемого', () => {
   })
 
   test('forgetUser уносит и его, чужой остаётся', async () => {
-    const db = await freshDb()
     const FRIEND = '76561198000000002'
+    const db = await connected(ME, FRIEND)
     await saveWishlist(db, ME, [620], NOW)
     await saveWishlist(db, FRIEND, [730], NOW)
     expect(FORGET_TABLES).toContain('wishlists')
     await forgetUser(db, ME)
     expect(await getWishlist(db, ME)).toBeNull()
     expect((await getWishlist(db, FRIEND))?.appids).toEqual([730])
+  })
+
+  /*
+   * Протухший список /library перечитывает в after(): страница ждёт Steam
+   * DEFAULT_WAIT_MS, а ответ доезжает и пишется ещё секунды спустя. Кнопка
+   * «Удалить всё обо мне» на той же странице, и удаление, прошедшее в эти
+   * секунды, стирало строку wishlists, а запись без условия заводила её
+   * заново — вечную: wishlists не убирает ни одна уборка, только forgetUser.
+   * Теперь запись — только пока жив снимок: удаление уносит его той же
+   * пачкой, что и список.
+   */
+  test('список, дочитанный после «Удалить всё обо мне», строку не возвращает', async () => {
+    const db = await connected(ME)
+    await forgetUser(db, ME, { signOutFrom: NOW })
+
+    await saveWishlist(db, ME, [1086940, 1145360], NOW + 5)
+    expect(await getWishlist(db, ME)).toBeNull()
+    const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
+    expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
+
+    // Вернулся и подключился заново — список снова пишется как обычно
+    await saveLibrarySnapshot(db, ME, LIB, NOW + 10)
+    await saveWishlist(db, ME, [620], NOW + 20)
+    expect((await getWishlist(db, ME))?.appids).toEqual([620])
+  })
+
+  test('без снимка не пишется вовсе: ни открытый, ни закрытый', async () => {
+    const db = await connected('76561198000000002')
+    await saveWishlist(db, ME, [620], NOW)
+    await saveWishlist(db, ME, 'closed', NOW + 60)
+    expect(await getWishlist(db, ME)).toBeNull()
   })
 })

@@ -276,7 +276,9 @@ CREATE TABLE IF NOT EXISTS daily_picks (
  *
  * Читает и пишет только сессия, доказавшая владение профилем (isWriter), не
  * демо. Модели список не уходит и в скоринге не участвует. По запросу —
- * forgetUser; /privacy, разделы 01 и 06.
+ * forgetUser; /privacy, разделы 01 и 06. Уборка строку не трогает, поэтому
+ * пишется она только рядом с живым снимком библиотеки — почему, у
+ * saveWishlist.
  */
 CREATE TABLE IF NOT EXISTS wishlists (
   steamid TEXT PRIMARY KEY,
@@ -2868,6 +2870,21 @@ export type WishlistRow = { takenAt: number; closed: boolean; appids: number[] }
  * Записать список целиком — вместо прежнего, истории нет (см. схему). Закрытый
  * список тоже пишется: ответ «закрыт» избавляет от похода в Steam на каждый
  * заход до конца срока строки.
+ *
+ * НО ТОЛЬКО ПРИ ЖИВОМ СНИМКЕ. Протухший список полка /library перечитывает в
+ * after() (refreshWishlistWithin): страница ждёт Steam пару секунд, а ответ
+ * доезжает и пишется ещё до десяти секунд спустя. «Удалить всё обо мне»
+ * (forgetUser) — кнопка на той же странице — в эти секунды стирало строку,
+ * а UPSERT заводил её заново: SteamID и чего человек хочет купить у того,
+ * кому сказали «всё удалено». wishlists не убирает ни одна уборка — только
+ * forgetUser, — и такая строка жила бы вечно. Условие — в той же записи, как
+ * у текста портрета (setUserPortrait): снимки и список удаление уносит одной
+ * пачкой, так что запись либо успевает до неё и уходит вместе со всем, либо
+ * идёт после и не находит снимка. Живому человеку условие ничего не стоит:
+ * без снимка /library отправляет подключаться, и полка не зовётся вовсе.
+ *
+ * WHERE у SELECT нужен и ради разбора: без него ON CONFLICT после SELECT
+ * SQLite читает как ON у соединения.
  */
 export async function saveWishlist(
   db: Db,
@@ -2877,10 +2894,12 @@ export async function saveWishlist(
 ): Promise<void> {
   const appids = list === 'closed' ? [] : list.slice(0, WISHLIST_KEPT)
   await db.execute({
-    sql: `INSERT INTO wishlists (steamid, taken_at, closed, appids_json) VALUES (?, ?, ?, ?)
+    sql: `INSERT INTO wishlists (steamid, taken_at, closed, appids_json)
+          SELECT ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM library_snapshots WHERE steamid = ?)
           ON CONFLICT(steamid) DO UPDATE SET
             taken_at = excluded.taken_at, closed = excluded.closed, appids_json = excluded.appids_json`,
-    args: [steamid, nowSec, list === 'closed' ? 1 : 0, JSON.stringify(appids)],
+    args: [steamid, nowSec, list === 'closed' ? 1 : 0, JSON.stringify(appids), steamid],
   })
 }
 

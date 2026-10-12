@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
-import { createDb, getWishlist, saveWishlist } from './db'
+import { countUserRows, createDb, forgetUser, getWishlist, saveLibrarySnapshot, saveWishlist } from './db'
 import { PRICE_TRUST_SEC } from './discount'
 import type { GameMeta } from './types'
 import {
@@ -105,6 +105,21 @@ describe('wishlistStale', () => {
 })
 
 describe('refreshWishlist', () => {
+  /**
+   * Полку зовёт только /library со снимком, и список пишется только рядом с
+   * ним (saveWishlist) — тесты начинают с подключённого
+   */
+  async function connected() {
+    const db = await createDb(':memory:')
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [{ appid: 570, name: 'Dota 2', playtimeForever: 600, playtime2Weeks: 0 }],
+      NOW - DAY,
+    )
+    return db
+  }
+
   function steam(body: unknown, init: { status?: number; eresult?: string } = {}) {
     let calls = 0
     const fetchFn = (async () => {
@@ -118,20 +133,20 @@ describe('refreshWishlist', () => {
   }
 
   test('прочитанный список пишется и возвращается', async () => {
-    const db = await createDb(':memory:')
+    const db = await connected()
     const got = await refreshWishlist(db, ME, NOW, steam({ response: { items: [{ appid: 1086940, priority: 1 }] } }))
     expect(got).toEqual({ takenAt: NOW, closed: false, appids: [1086940] })
     expect(await getWishlist(db, ME)).toEqual(got)
   })
 
   test('закрытый — тоже пишется: до конца срока в Steam не ходим', async () => {
-    const db = await createDb(':memory:')
+    const db = await connected()
     await refreshWishlist(db, ME, NOW, steam({ response: {} }, { eresult: '15' }))
     expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW, closed: true, appids: [] })
   })
 
   test('сбой Steam ничего не пишет и держит паузу, а не долбит с частотой заходов', async () => {
-    const db = await createDb(':memory:')
+    const db = await connected()
     await saveWishlist(db, ME, [620], NOW - WISHLIST_MAX_AGE_SEC - 1)
     const down = steam({}, { status: 429 })
     expect(await refreshWishlist(db, ME, NOW, down)).toBeNull()
@@ -146,7 +161,7 @@ describe('refreshWishlist', () => {
   })
 
   test('сбой, спрятанный в X-eresult при 200, — тоже сбой: пустым списком не ложится', async () => {
-    const db = await createDb(':memory:')
+    const db = await connected()
     await saveWishlist(db, ME, [620], NOW - WISHLIST_MAX_AGE_SEC - 1)
     // 20 — ServiceUnavailable: тело то же, что у пустого открытого списка
     expect(await refreshWishlist(db, ME, NOW, steam({ response: {} }, { eresult: '20' }))).toBeNull()
@@ -154,7 +169,7 @@ describe('refreshWishlist', () => {
   })
 
   test('с потолком ожидания: не успел — null, но ответ всё равно доезжает', async () => {
-    const db = await createDb(':memory:')
+    const db = await connected()
     let release!: () => void
     const slow = (async () => {
       await new Promise<void>((r) => {
@@ -169,6 +184,33 @@ describe('refreshWishlist', () => {
     release()
     await new Promise((r) => setTimeout(r, 20))
     expect((await getWishlist(db, ME))?.appids).toEqual([620])
+  })
+
+  /*
+   * Не успевший к сроку ответ пишется в after() — секунды спустя, а кнопка
+   * «Удалить всё обо мне» на той же /library. Удаление, прошедшее, пока Steam
+   * отвечал, не должно получить вслед вечную строку wishlists: запись идёт
+   * только при живом снимке, а его удаление унесло.
+   */
+  test('ответ, доехавший после «Удалить всё обо мне», не пишется', async () => {
+    const db = await connected()
+    let release!: () => void
+    const slow = (async () => {
+      await new Promise<void>((r) => {
+        release = r
+      })
+      return new Response(JSON.stringify({ response: { items: [{ appid: 620, priority: 1 }] } }), {
+        status: 200,
+        headers: { 'x-eresult': '1' },
+      })
+    }) as unknown as typeof fetch
+    expect(await refreshWishlistWithin(db, ME, NOW, 10, { fetchFn: slow })).toBeNull()
+    await forgetUser(db, ME, { signOutFrom: NOW + 1 })
+    release()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(await getWishlist(db, ME)).toBeNull()
+    const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
+    expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
   })
 })
 
