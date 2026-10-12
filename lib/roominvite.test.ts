@@ -202,6 +202,47 @@ describe('экран приглашения', () => {
     expect(d.here).toBe('Уже здесь: Серёга и Очень-очень длинный…')
   })
 
+  /*
+   * Ник в заголовке — одно слово без пробелов, и h1 его не переносит: на
+   * телефоне в 390 px «xXx_DarkLordOfTheNight_2009» уезжал за рамку панели
+   * и обрезался краем экрана. Режет сервер тем же потолком, что «Уже здесь».
+   */
+  test('длинный ник хоста режется и в заголовке', () => {
+    const host = 'xXx_DarkLordOfTheNight_2009_xXx!'
+    expect(Array.from(host)).toHaveLength(32) // потолок ника в Steam
+    const d = inviteDoor({ host, names: [host, 'Аня'], seed: null })
+    expect(d.title).toBe('xXx_DarkLordOfTheNi… зовёт выбрать игру на вечер')
+    // тем же потолком, что в «Уже здесь»: один ник — одно написание
+    expect(d.here).toBe('Уже здесь: xXx_DarkLordOfTheNi… и Аня')
+    // ник ровно в потолок — целиком
+    expect(inviteDoor({ host: 'xXx_DarkLordOfTheNig', names: ['Аня'], seed: null }).title).toBe(
+      'xXx_DarkLordOfTheNig зовёт выбрать игру на вечер',
+    )
+  })
+
+  /*
+   * Эмодзи за пределами BMP — пара суррогатов, и срез по единицам UTF-16
+   * рвал её: «Уже здесь» показывал «�» на нике, который и резать-то было не
+   * за что — двадцать знаков ровно.
+   */
+  test('эмодзи в нике не рвётся пополам и не считается за два знака', () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    const fits = 'xXx_Sn1per_King_xX🔥🔥' // 20 знаков, 22 единицы UTF-16
+    const d = inviteDoor({ host: fits, names: [fits, 'Аня'], seed: null })
+    expect(d.title).toBe(`${fits} зовёт выбрать игру на вечер`)
+    expect(d.here).toBe(`Уже здесь: ${fits} и Аня`)
+
+    const long = 'xXx_Sn1per_King_xX🔥🔥🔥'
+    const cut = inviteDoor({ host: long, names: [long, 'Аня'], seed: null })
+    expect(cut.title).toBe('xXx_Sn1per_King_xX🔥… зовёт выбрать игру на вечер')
+    for (const s of [cut.title, cut.here]) expect(s).not.toMatch(lone)
+
+    // карточка в чате режет ник на восемнадцати — тоже знаками
+    const card = inviteCopy('ABC234', { ...open, host: 'Серёга_Убийца_Дра🔥🔥' })
+    expect(card.headline).toBe('Серёга_Убийца_Дра🔥 зовёт выбрать игру на вечер')
+    expect(card.headline).not.toMatch(lone)
+  })
+
   test('игра, в которую звали, — той же фразой, что в описании превью', () => {
     const d = inviteDoor({ host: 'Серёга', names: ['Серёга'], seed: valheim })
     expect(d.seed).toEqual({ ...valheim, line: 'Первой картой — «Valheim»; не зайдёт — дальше колода из ваших библиотек.' })

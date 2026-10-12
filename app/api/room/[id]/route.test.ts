@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import type { InStatement } from '@libsql/client'
 import { hashString } from '@/lib/daily'
 import {
   createRoom,
@@ -10,8 +11,9 @@ import {
   upsertGameMeta,
   type Db,
 } from '@/lib/db'
+import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
-import { freshDb, params, post, signIn, signInAs, signOut } from '@/lib/testing/route'
+import { breakDbOn, freshDb, params, post, signIn, signInAs, signOut } from '@/lib/testing/route'
 import { POST as join } from './join/route'
 import { POST as leave } from './leave/route'
 import { GET } from './route'
@@ -271,6 +273,11 @@ describe('/api/room/[id]: экран приглашения', () => {
   }
   const door = async () => ((await (await peek()).json()) as Door).invite ?? null
 
+  // console.warn и execute подменяют тесты на обрыв и на порядок чтений
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   /** Хост «Серёга» позвал в Valheim, «Аня» уже внутри */
   async function seeded(): Promise<string> {
     const now = nowSec()
@@ -345,5 +352,56 @@ describe('/api/room/[id]: экран приглашения', () => {
     await setRoomMatched(db, ROOM, VALHEIM)
     signOut()
     expect(await door()).toBeNull()
+  })
+  /*
+   * Картинка игры на экране — украшение. Упало её чтение — экран без неё,
+   * а не 500 на весь опрос: гость видел бы «Связь потеряна» вместо «Серёга
+   * зовёт».
+   */
+  test('обрыв базы на мете игры — экран без картинки, а не 500', async () => {
+    await seeded()
+    signOut()
+    // logSwallowed глушит повтор того же where на минуту: без сброса строка
+    // зависела бы от того, не залогировал ли её раньше другой тест файла
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    breakDbOn(db, 'FROM games g')
+    const res = await peek()
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as Door).invite).toMatchObject({
+      title: 'Серёга зовёт выбрать игру на вечер',
+      here: 'Уже здесь: Серёга и Аня',
+      seed: null,
+    })
+    expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('room:door-seed')
+  })
+
+  /*
+   * Опрос не-участника — раз в 2,5 секунды, и каждый последовательный поход
+   * в Turso стоит ему десятки-сотни миллисекунд. Мета игры уходит в базу
+   * вместе с потолком room-peek: пока потолок не ответил, она уже в пути.
+   */
+  test('мета игры читается вместе с потолком, а не после него', async () => {
+    await seeded()
+    signOut()
+    const execute = db.execute.bind(db)
+    let release!: () => void
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    const issued: string[] = []
+    vi.spyOn(db, 'execute').mockImplementation((async (stmt: InStatement) => {
+      const sql = typeof stmt === 'string' ? stmt : stmt.sql
+      issued.push(sql)
+      if (sql.includes('rate_limits')) await held
+      return execute(stmt)
+    }) as typeof execute)
+
+    const res = peek()
+    // потолок держим: мета обязана уйти в базу, не дожидаясь его ответа
+    await vi.waitFor(() => expect(issued.some((s) => s.includes('rate_limits'))).toBe(true))
+    await vi.waitFor(() => expect(issued.some((s) => s.includes('FROM games g'))).toBe(true))
+    release()
+    expect(((await (await res).json()) as Door).invite?.seed?.name).toBe('Valheim')
   })
 })
