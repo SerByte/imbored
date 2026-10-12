@@ -53,8 +53,8 @@ export const TonightButton = lazyIsland(() => loadTonight().catch(tonightFailed)
  * requestIdleCallback (Safari) — таймером. .catch обязателен: не пришедший
  * кусок — не ошибка страницы (её поймал бы instrumentation-client как
  * unhandledrejection), а пустое место, которое и так покажет загрузчик. И
- * без отчёта: прогрев — догадка наперёд, а отказ, который человек увидит,
- * отчитает загрузчик, когда кнопку попросят на самом деле.
+ * без отчёта: прогрев — догадка наперёд, а об отказе, который человек
+ * увидит, отчитается загрузчик, когда кнопку попросят на самом деле.
  */
 export function useWarmTonight() {
   useEffect(() => {
