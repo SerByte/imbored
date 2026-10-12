@@ -2274,11 +2274,21 @@ export async function myVotedAppids(
   return new Set((res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid))
 }
 
-export async function setRoomPublic(db: Db, roomId: string, isPublic: boolean): Promise<void> {
-  await db.execute({
-    sql: 'UPDATE rooms SET is_public = ? WHERE id = ?',
-    args: [isPublic ? 1 : 0, roomId],
+/**
+ * Вывесить комнату на доску или снять. Отдаёт, изменилось ли что-то.
+ *
+ * Пишет, только если значение и правда другое: Turso считает записанные
+ * строки, а UPDATE без этого условия переписывал бы строку и тем же
+ * is_public — на двойной тап, на переключатель из двух вкладок, на каждый
+ * круг скрипта. Тот же приём, что у upsertNeighbors.
+ */
+export async function setRoomPublic(db: Db, roomId: string, isPublic: boolean): Promise<boolean> {
+  const v = isPublic ? 1 : 0
+  const res = await db.execute({
+    sql: 'UPDATE rooms SET is_public = ? WHERE id = ? AND is_public <> ?',
+    args: [v, roomId, v],
   })
+  return res.rowsAffected > 0
 }
 
 export type PublicRoomListing = {
@@ -5375,11 +5385,13 @@ export async function listExplore(
  * учитывать в каждом месте, где бан фильтрует выдачу. Пропадает только запрет —
  * лайки, скипы и открытия этой игры остаются на месте.
  */
-export async function unbanGame(db: Db, steamid: string, appid: number): Promise<void> {
-  await db.execute({
+export async function unbanGame(db: Db, steamid: string, appid: number): Promise<boolean> {
+  const res = await db.execute({
     sql: "DELETE FROM feedback WHERE steamid = ? AND appid = ? AND action = 'banned'",
     args: [steamid, appid],
   })
+  // Было ли что снимать: роуту по пустому снятию незачем сбрасывать кэш портрета
+  return res.rowsAffected > 0
 }
 
 /**

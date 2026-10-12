@@ -1270,6 +1270,24 @@ describe('db', () => {
     expect(await listPublicRooms(db, NOW)).toEqual([])
   })
 
+  /*
+   * Повтор того же значения строку не пишет: Turso считает записанные строки,
+   * а UPDATE без условия переписал бы её и с тем же is_public. Двойной тап и
+   * переключатель, нажатый из двух вкладок, — ноль записей.
+   */
+  test('setRoomPublic: то же значение второй раз — ничего не записано', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'PUB002', steamid: 'a' }, NOW)
+    expect(await setRoomPublic(db, 'PUB002', false)).toBe(false)
+    expect(await setRoomPublic(db, 'PUB002', true)).toBe(true)
+    expect(await setRoomPublic(db, 'PUB002', true)).toBe(false)
+    expect((await getRoom(db, 'PUB002'))?.isPublic).toBe(true)
+    expect(await setRoomPublic(db, 'PUB002', false)).toBe(true)
+    expect((await getRoom(db, 'PUB002'))?.isPublic).toBe(false)
+    // комнаты нет — тоже «ничего»
+    expect(await setRoomPublic(db, 'NOROOM', true)).toBe(false)
+  })
+
   /**
    * Доска показывает, на какой вечер зовут: «⚡ Пара быстрых каток» — ответ
    * на вопрос незнакомца «подсесть ли мне сюда». Настроение — той же строкой
@@ -1979,9 +1997,17 @@ describe('db', () => {
     expect([...(await bannedAppids(db, 'u2'))]).toEqual([570])
   })
 
-  test('unbanGame на несуществующем бане молчит', async () => {
+  /*
+   * Молчит — значит не бросает. Ответ «снято ли что-то» нужен роуту: сброс
+   * кэша портрета по пустому снятию — работа впустую на каждый повтор
+   * (app/api/unban).
+   */
+  test('unbanGame на несуществующем бане молчит и говорит, что снимать было нечего', async () => {
     const db = await freshDb()
-    await expect(unbanGame(db, 'u1', 12_345)).resolves.toBeUndefined()
+    await expect(unbanGame(db, 'u1', 12_345)).resolves.toBe(false)
+    await logFeedback(db, { steamid: 'u1', appid: 12_345, action: 'banned' }, NOW)
+    await expect(unbanGame(db, 'u1', 12_345)).resolves.toBe(true)
+    await expect(unbanGame(db, 'u1', 12_345)).resolves.toBe(false)
   })
 
   test('listExploreLiked: только последний свайп «Интересно», без потолка listExplore', async () => {
