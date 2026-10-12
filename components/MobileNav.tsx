@@ -112,7 +112,10 @@ export function MobileNav() {
       // То же имя, что у меню в шапке: это одно меню, на телефоне оно здесь,
       // на десктопе там, и на экране всегда ровно одно из двух
       aria-label="Разделы"
-      className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-edge"
+      // site-tabbar — метка для globals.css: на странице, тёмной целиком
+      // (главная, /whatsnew, церемония матча), панель берёт токены зоны, как
+      // подвал, а не стоит молочной полосой под тёмным (lib/chrome.test.ts)
+      className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-edge site-tabbar"
       style={{
         background: 'color-mix(in srgb, var(--bg) 94%, transparent)',
         paddingBottom: 'env(safe-area-inset-bottom)',

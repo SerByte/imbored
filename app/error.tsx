@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect } from 'react'
 import { LogoMark } from '@/components/Logo'
-import { clientErrorCode, reportClientError } from '@/lib/clienterr'
+import { clientErrorCode, isChunkLoadError, reportClientError } from '@/lib/clienterr'
 
 /**
  * Граница ошибок приложения. До этого любое исключение в серверном компоненте
@@ -23,6 +23,14 @@ import { clientErrorCode, reportClientError } from '@/lib/clienterr'
  * onRequestError. У клиентской digest нет: код считается из самой ошибки
  * (clientErrorCode), и тот же код уходит в отчёт на /api/clienterr — иначе
  * падение в компоненте /play или /room не видел бы никто, кроме человека.
+ *
+ * НЕ ПРИШЁЛ КУСОК КОДА — КНОПКА ПЕРЕЗАГРУЖАЕТ, А НЕ ПОВТОРЯЕТ. retry
+ * перерисовывает тот же React.lazy, а он помнит отказ и бросает его снова;
+ * «На главную» — клиентский переход, и если кусок был главной, он
+ * монтируется заново и падает так же. Человек жал обе кнопки и стоял на том
+ * же экране. Перезагрузка тянет свежий HTML со ссылками на куски текущей
+ * сборки (lib/clienterr, isChunkLoadError). Только по нажатию — зациклиться
+ * ей не на чем.
  */
 export default function Error({
   error,
@@ -32,6 +40,7 @@ export default function Error({
   retry: () => void
 }) {
   const code = error.digest ?? clientErrorCode(error)
+  const stale = isChunkLoadError(error)
 
   useEffect(() => {
     console.error(error)
@@ -49,10 +58,10 @@ export default function Error({
           Скорее всего, это на нашей стороне. Можно попробовать ещё раз — обычно помогает.
         </p>
         <button
-          onClick={() => retry()}
+          onClick={() => (stale ? window.location.reload() : retry())}
           className="btn-ember is-block py-3"
         >
-          Попробовать снова
+          {stale ? 'Обновить страницу' : 'Попробовать снова'}
         </button>
         <Link href="/" className="tap text-sm text-dim hover:text-ink transition-colors">
           На главную

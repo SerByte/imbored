@@ -338,6 +338,32 @@ describe('главная', () => {
     ).toEqual([...inMarkup].sort())
   })
 
+  /**
+   * СВЕТ НЕ ОБРЫВАЕТСЯ КРАЕМ — И СНИЗУ ТОЖЕ.
+   *
+   * Слои света сцен стоят на отрицательных inset, чтобы свет не резался
+   * краем (докблок у #smooth-wrapper в globals.css). Но у двух слоёв градиент
+   * доходил до нижней кромки коробки и резался ею: у «О деньгах» тёмная
+   * полоса под сноской о Valve обрывалась ровной линией над подвалом, у
+   * «Что здесь ещё есть» — синеватое пятно под карточками. Замер на 1440×900,
+   * ступень средней яркости строки на кромке: −3.9 и −4.0, после маски —
+   * в пределах шума ленты под ней. Подбирать inset бесполезно: проценты
+   * градиента растут вместе с коробкой, а зазор до конца сцены зависит от
+   * высоты окна. Держит маска, гаснущая к низу слоя.
+   */
+  test('свет «О деньгах» и полки разделов гаснет к нижней кромке маской', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const layer of ['.money-glow', '.rep-glow']) {
+      const body = new RegExp(`\\n\\${layer} \\{([^}]*)\\}`).exec(css)?.[1]
+      expect(body, `${layer}: правило не найдено — сторож ослеп`).toBeDefined()
+      for (const prop of ['-webkit-mask-image', 'mask-image']) {
+        expect(body, `${layer}: ${prop}`).toMatch(
+          new RegExp(`(^|[;\\s])${prop}:\\s*linear-gradient\\(to top, transparent, #000 \\d+%\\)`),
+        )
+      }
+    }
+  })
+
   test('фолбэк и карточка держат одну высоту из одного места', () => {
     const fallback = fs.readFileSync(path.join(LANDING, 'ConnectFallback.tsx'), 'utf8')
     const card = fs.readFileSync(path.join(LANDING, 'ConnectCard.tsx'), 'utf8')

@@ -2,6 +2,7 @@ import { DEMO_METAS, demoLibrary, demoLibrary2 } from './demo'
 import { filterActual } from './actual'
 import { heuristicPicks } from './llm'
 import {
+  buildAnchorFinder,
   buildTagProfile,
   mixHeroPool,
   PICK_COUNT,
@@ -33,12 +34,21 @@ import type { Mood } from './types'
  *
  * ЧЕГО В ЭТИХ ДАННЫХ НЕТ И БЫТЬ НЕ ДОЛЖНО:
  *
- *   reason — все четыре шаблона причины (lib/llm.ts, SOURCE_TEMPLATES)
+ *   reason — шаблоны причины продукта (lib/llm.ts, SOURCE_TEMPLATES)
  *     обращаются к человеку на «ты» и говорят про ЕГО библиотеку: «ты не
  *     запускал», «ты открыл и закрыл». Гостю это прямая неправда — библиотека
  *     чужая. Правило обеспечено формой данных, а не дисциплиной: поля нет.
  *   priceFinal и discount — цена демо-игры к настоящему магазину отношения не
  *     имеет, а ценник на лендинге читается как предложение купить.
+ *
+ * ЧТО ЕСТЬ ВМЕСТО ПРИЧИНЫ: `why` у первой карточки — та же причина в третьем
+ * лице, про демо-игрока (heuristicPicks с voice: 'them', THEM_TEMPLATES).
+ * Первая строка главной обещает «Одна игра. И почему именно она», а до входа
+ * «почему» показать было нечем — и главное отличие продукта от списка игр
+ * гость не видел, пока не отдаст библиотеку. Доводы настоящие: якорь и часы
+ * считаются из демо-библиотеки так же, как у вошедшего (lib/cards.ts), только
+ * без «ты», без цены и без пересказа патча. Только у первой: она и есть
+ * «одна игра», а пять причин в колонке не поместились бы в закреплённую сцену.
  *
  * ОСЕЙ ДВЕ, А НЕ ТРИ, и это замер, а не вкус. Вопросов в подборе три, но на
  * библиотеке из 22 игр ось времени почти не двигает выдачу: TIME_FIT даёт
@@ -70,6 +80,11 @@ export type LandingCard = {
   tags: string[]
   headerImage: string | null
   art: GameArtUrls | null
+  /**
+   * Почему она первая — причина в третьем лице, только у первой карточки
+   * (см. докблок выше: «ЧТО ЕСТЬ ВМЕСТО ПРИЧИНЫ»).
+   */
+  why?: string
 }
 
 export type LandingWallGame = {
@@ -126,6 +141,22 @@ export function landingDemo(nowSec: number): LandingDemo {
   const profile = buildTagProfile(library, metaOf)
   const owned = new Set(library.map((g) => g.appid))
   const newPool = DEMO_METAS.filter((m) => !owned.has(m.appid))
+  // Якорь и часы — как у вошедшего (lib/cards.ts), только из демо-библиотеки.
+  // Карты редкости тегов у гостя нет (её строит каталог) — сырой косинус, как
+  // в замере порога якоря (ANCHOR_MIN_SIM, lib/recommend.ts).
+  const findAnchor = buildAnchorFinder(library, metaOf, null)
+  const minutes = new Map(library.map((g) => [g.appid, g.playtimeForever]))
+  const reasonOpts = {
+    voice: 'them' as const,
+    anchorOf: (appid: number) => {
+      const meta = metaOf(appid)
+      return meta ? findAnchor(meta) : null
+    },
+    hoursOf: (appid: number) => {
+      const m = minutes.get(appid)
+      return m === undefined ? null : Math.round(m / 60)
+    },
+  }
 
   const picks = {} as Record<MoodKey, LandingCard[]>
   for (const key of MOOD_KEYS) {
@@ -142,15 +173,16 @@ export function landingDemo(nowSec: number): LandingDemo {
     // Контекст живости — 'solo' | 'party', а не значение mood.social
     const fresh = filterActual(scored, metas, mood.social === 'friends' ? 'party' : 'solo')
     const { own, discovery } = splitBySource(fresh)
-    const chosen = heuristicPicks(mixHeroPool(own, discovery), metaOf, PICK_COUNT, nowSec, profile)
+    const chosen = heuristicPicks(mixHeroPool(own, discovery), metaOf, PICK_COUNT, nowSec, profile, reasonOpts)
 
-    picks[key] = chosen.map((p) => ({
+    picks[key] = chosen.map((p, i) => ({
       appid: p.appid,
       name: p.name,
       badge: SOURCE_BADGE[p.source],
       tags: demoTags(p.appid, metaOf),
       headerImage: metaOf(p.appid)?.headerImage ?? null,
       art: metaOf(p.appid)?.art ?? null,
+      ...(i === 0 ? { why: p.reason } : {}),
     }))
   }
 

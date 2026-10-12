@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { clientErrorCode, reportClientError } from '@/lib/clienterr'
+import { clientErrorCode, isChunkLoadError, reportClientError } from '@/lib/clienterr'
 import {
   BG,
   DIM,
@@ -41,6 +41,10 @@ import {
  * повторного запроса, то есть из того же payload, который только что упал.
  * Кнопка выглядела бы нажатой и не сделала бы ничего.
  *
+ * Не пришёл кусок кода — кнопка перезагружает страницу, а не повторяет:
+ * повтор перерисует тот же lazy, который помнит отказ (подробно — в
+ * app/error.tsx и у isChunkLoadError в lib/clienterr).
+ *
  * Код и отчёт — как в app/error.tsx: у клиентской ошибки digest нет, код
  * считается из неё самой и уходит в /api/clienterr. lib/clienterr — чистый
  * модуль без стилей и без React, упасть второй раз ему не на чем.
@@ -53,6 +57,7 @@ export default function GlobalError({
   retry: () => void
 }) {
   const code = error.digest ?? clientErrorCode(error)
+  const stale = isChunkLoadError(error)
 
   useEffect(() => {
     if (!error.digest) {
@@ -89,6 +94,11 @@ export default function GlobalError({
             .ge-btn { background: ${LIGHT_EMBER} !important; color: ${LIGHT_BG} !important }
             .ge-plate { fill: ${LIGHT_INK} !important }
             .ge-glyph { fill: ${LIGHT_BG} !important; stroke: ${LIGHT_BG} !important }
+            /* Кольцо фокуса — третий потребитель --ember, как в globals.css.
+               Оно стоит с отступом, то есть на фоне страницы, а не на кнопке:
+               белое на молочном давало ~1.08:1, и фокуса с клавиатуры не было
+               видно вовсе. !important — базовое правило ниже по тексту. */
+            .ge-btn:focus-visible, .ge-link:focus-visible { outline-color: ${LIGHT_EMBER} !important }
           }
           .ge-btn { transition: opacity .15s ease }
           .ge-btn:hover { opacity: .88 }
@@ -127,7 +137,7 @@ export default function GlobalError({
 
           <button
             type="button"
-            onClick={() => retry()}
+            onClick={() => (stale ? window.location.reload() : retry())}
             className="ge-btn"
             style={{
               width: '100%',
@@ -142,7 +152,7 @@ export default function GlobalError({
               cursor: 'pointer',
             }}
           >
-            Попробовать снова
+            {stale ? 'Обновить страницу' : 'Попробовать снова'}
           </button>
 
           {/*

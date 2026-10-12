@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { applyStoredTheme, STORAGE_KEY } from '../components/ThemeToggle'
+import { applyStoredTheme, saveTheme, STORAGE_KEY } from '../components/ThemeToggle'
 import { syncThemeColor, THEME_COLOR } from './themecolor'
 
 /**
@@ -155,5 +155,44 @@ describe('сохранённая тема — и там, где скрипт т�
     expect(at, 'эффект разметки не найден — тема на 404 снова тёмная').toBeGreaterThan(-1)
     const effect = src.slice(at, src.indexOf('}, [])', at))
     expect(effect).toMatch(/if \(applyStoredTheme\(document\.documentElement, \(\) => localStorage\)\) syncThemeColor\(\)/)
+  })
+})
+
+/**
+ * Выбор темы запоминается, а запрет хранилища — не авария.
+ *
+ * Чтение темы стояло в try с самого начала (скрипт темы, applyStoredTheme), а
+ * запись в toggle() — нет. При «не сохранять данные сайтов» в Chrome или
+ * запрете кук в Firefox бросает уже само обращение к localStorage: тема на
+ * экране менялась, а исключение уходило из обработчика клика в window.onerror
+ * и оттуда отчётом в /api/clienterr — на каждое нажатие, про известное и
+ * безвредное. Тема просто не запомнится до перезагрузки.
+ */
+describe('запись выбора темы', () => {
+  test('выбор уходит в хранилище под тем же ключом, что читает скрипт темы', () => {
+    const saved = new Map<string, string>()
+    saveTheme('light', () => ({ setItem: (k: string, v: string) => void saved.set(k, v) }))
+    expect(saved.get(STORAGE_KEY)).toBe('light')
+  })
+
+  test('хранилище бросает уже на обращении — переключение не бросает', () => {
+    const blocked = () => {
+      throw new Error('SecurityError: The operation is insecure.')
+    }
+    expect(() => saveTheme('dark', blocked)).not.toThrow()
+    const full = () => ({
+      setItem: () => {
+        throw new Error('QuotaExceededError')
+      },
+    })
+    expect(() => saveTheme('light', full)).not.toThrow()
+  })
+
+  test('toggle пишет только через saveTheme — голого localStorage.setItem в нём нет', () => {
+    const src = code('components/ThemeToggle.tsx')
+    const at = src.indexOf('function toggle()')
+    const body = src.slice(at, src.indexOf('\n  }\n', at))
+    expect(body).toMatch(/saveTheme\(next, \(\) => localStorage\)/)
+    expect(body).not.toMatch(/localStorage\.setItem/)
   })
 })

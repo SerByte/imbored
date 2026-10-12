@@ -13,8 +13,12 @@ import { clientErrorCode, reportClientError } from '@/lib/clienterr'
  * на островки — −3.7 КБ каждая, вместе с самим островком).
  * Островкам здесь от него нужно одно: не рисоваться до гидратации и догрузить
  * чанк сразу после, а /play, /daily и /library стоят у потолка
- * bundle-budget.json. Комната (app/room/[id]) и страница игры (GameShots)
- * остаются на next/dynamic: там у куска своя граница отказа и предзагрузка.
+ * bundle-budget.json. Плавная прокрутка главной (components/SmoothScroll) —
+ * тоже островок: её отказ уводил всю главную в экран ошибки. Комната
+ * (app/room/[id]) остаётся на next/dynamic — там у куска своя граница отказа
+ * (CeremonyBoundary) и предзагрузка; страница игры (GameShots) — тоже, но
+ * своей границы у неё нет: её отказ ловит app/error.tsx и предлагает
+ * перезагрузку (isChunkLoadError в lib/clienterr).
  *
  * Ведёт себя как next/dynamic с ssr: false:
  *  - на сервере и пока чанк в пути — пусто, разметка гидратации совпадает;

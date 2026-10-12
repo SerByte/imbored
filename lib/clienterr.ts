@@ -56,7 +56,8 @@ export type ClientErrorReport = {
    * search (окно «Найти игру», components/SearchLauncher — загрузчик свой,
    * а вид отчёта тот же), readonly-note (тело записки «Режим просмотра»,
    * components/ReadOnlyNote), backstage (закулисье, components/BackstageLazy
-   * — только отказ кода, а не доставки: isChunkLoadError ниже).
+   * — только отказ кода, а не доставки: isChunkLoadError ниже), smooth
+   * (плавная прокрутка главной, components/SmoothScroll).
    */
   island?: string
 }
@@ -89,7 +90,8 @@ function thrownParts(err: unknown): { name?: string; message?: string; stack?: s
 }
 
 /** Отказ доставки чанка — текстом, если имя по дороге потерялось: Turbopack и webpack */
-const CHUNK_LOAD_RE = /^Failed to load chunk |^Loading (?:CSS )?chunk \S+ failed/
+const CHUNK_LOAD_RE =
+  /Failed to load chunk|Loading (?:CSS )?chunk \S+ failed|dynamically imported module|Importing a module script failed/i
 
 /**
  * Не доехал ли чанк — в отличие от чанка, который доехал и упал своим кодом.
@@ -105,6 +107,12 @@ const CHUNK_LOAD_RE = /^Failed to load chunk |^Loading (?:CSS )?chunk \S+ failed
  * И причину (cause), на пару звеньев: отказ доставки, завёрнутый кем-то по
  * дороге, остаётся отказом доставки — так его отдаёт, например, мокер модулей
  * в тестах (lib/backstage.test.ts).
+ *
+ * Второй спрашивающий — экраны ошибки (app/error.tsx, app/global-error.tsx):
+ * такой отказ не лечится ни retry, ни клиентским переходом — React.lazy и
+ * сборщик помнят отказ, — помогает только перезагрузка со свежим HTML
+ * (сторож — lib/chunkreload.test.ts). Тексты в выражении — и для import()
+ * без обёртки сборщика: так его отказ формулируют Chrome, Firefox и Safari.
  */
 export function isChunkLoadError(err: unknown): boolean {
   let at: unknown = err
