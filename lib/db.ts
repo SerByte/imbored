@@ -581,6 +581,21 @@ CREATE INDEX IF NOT EXISTS idx_rooms_public ON rooms (created_at DESC)
 -- него сама. Здесь, а не в SCHEMA: ctx_json у старых баз приезжает ALTER'ом.
 CREATE INDEX IF NOT EXISTS idx_feedback_ctx ON feedback (created_at)
   WHERE ctx_json IS NOT NULL;
+
+-- Баны одного человека по играм. «Пройдена ли» (isFinished) спрашивают на
+-- каждый заход страницы своей игры, без кэша, и по idx_feedback_steamid
+-- ответ «нет» — обычный, у своей игры бана нет — стоил прохода по ВСЕЙ
+-- истории оценок человека: строки feedback не стираются, уборка обнуляет
+-- только снимки. Здесь это поиск по (steamid, appid) среди одних банов, а
+-- у полки «Пройдено» (listBanned), отсева выдачи (bannedAppids) и «Снова
+-- предлагать» (unbanGame) — только баны человека, а не все его оценки.
+-- Строк в индексе — по бану, остальные действия его не трогают. Предикат
+-- повторяет литерал action = 'banned' этих запросов ДОСЛОВНО. Здесь, а не в
+-- SCHEMA рядом с idx_feedback_steamid: блок идёт после пересборки feedback
+-- (rebuildFeedbackCheck), и её DROP TABLE не уносит индекс до следующего
+-- холодного старта — та же причина, что у idx_feedback_ctx.
+CREATE INDEX IF NOT EXISTS idx_feedback_banned ON feedback (steamid, appid, created_at DESC)
+  WHERE action = 'banned';
 `
 
 /**
@@ -5271,8 +5286,12 @@ export async function listBanned(
  * в одну секунду различает порядок записи.
  *
  * Для страницы игры (/api/session/owns): «Уже прошёл» рядом с «Запустить»
- * не предлагается второй раз той, что уже лежит на полке. Свои строки по
- * idx_feedback_steamid от свежих к старым — до первой строки бана этой игры.
+ * не предлагается второй раз той, что уже лежит на полке. Зовут на каждый
+ * заход своей игры, без кэша, и обычный ответ — «нет»: бана у своей игры
+ * нет. Поэтому — idx_feedback_banned, поиск по (steamid, appid) среди одних
+ * банов. По idx_feedback_steamid такое «нет» читало бы всю историю оценок
+ * человека: строку бана, на которой чтение остановилось бы, искать негде.
+ * Доупорядочить по id остаётся баны одной игры — обычно одну строку.
  */
 export async function isFinished(db: Db, steamid: string, appid: number): Promise<boolean> {
   const res = await db.execute({

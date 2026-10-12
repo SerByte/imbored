@@ -43,10 +43,14 @@ describe('кнопка запуска', () => {
     const tail = src.slice(src.indexOf('!owns.owned) return null'))
     // Уже пройденной — слово, а не кнопка второй раз (бит done из того же
     // ответа владения): иначе после перезагрузки «Уже прошёл» возвращалась,
-    // хотя игра лежит на полке «Пройдено», и каждое нажатие писало новый бан
+    // хотя игра лежит на полке «Пройдено», и каждое нажатие писало новый бан.
+    // Слово — та же строка, что после нажатия (FinishedNote), с той же
+    // дорогой дальше и без захвата фокуса: своя копия разметки здесь уже
+    // теряла «Дальше — в духе X» (lib/markfinished.test.ts)
     expect(tail).toMatch(
-      /\{finishable &&\s*writer === true &&\s*\(owns\.done \? \(\s*<span className="[^"]*">Пройдено — больше не предложу<\/span>\s*\) : \(\s*<MarkFinished\b/,
+      /\{finishable &&\s*writer === true &&\s*\(owns\.done \? \(\s*<FinishedNote appid=\{appid\} name=\{name\} follow=\{follow\} \/>\s*\) : \(\s*<MarkFinished\b/,
     )
+    expect(tail, 'своя копия строки «Пройдено» вернулась в OwnedLaunch').not.toContain('Пройдено — больше не предложу')
     expect(src).toContain('done: d.done === true')
     expect(tail).toContain('from="game"')
     const page = code(read('app', 'game', '[appid]', 'page.tsx'))

@@ -28,8 +28,11 @@ import { CANDIDATE_SOURCES, SCORE_FACTORS, type CandidateSource, type ScoreParts
 /**
  * Откуда оценка: основная выдача, «Игра дня» — и два места вне выдачи, где
  * игра перед глазами и её можно отметить пройденной: «Твои вечера» в
- * библиотеке (library) и страница игры (game). Слота и частей скора у них
- * нет — карточка там не из подбора.
+ * библиотеке (library) и страница игры (game). Частей скора у них нет —
+ * карточка там не из подбора, — и слота тоже, кроме одного случая: запуск
+ * игры живого плана на вечер пишется со слотом plan (components/Evenings —
+ * { source: 'library', slot: 'plan' }; со страницы игры components/OwnedLaunch
+ * пишет slot plan без source).
  */
 export const CTX_SOURCES = ['play', 'daily', 'library', 'game'] as const
 
@@ -37,8 +40,9 @@ export const CTX_SOURCES = ['play', 'daily', 'library', 'game'] as const
  * Где стояла карточка. hero — герой, до которого дошли «дальше» или с
  * которого выдача началась; picked — герой, выбранный из «Ещё вариантов»;
  * discovery — полка «Нет в библиотеке»; continue — строка «Продолжить»;
- * plan — запуск по плану на вечер (lib/eveningplan.ts): строкой на /play или
- * со страницы игры, куда ведёт живая строка главной.
+ * plan — запуск по плану на вечер (lib/eveningplan.ts): строкой на /play, со
+ * страницы игры, куда ведёт живая строка главной (components/OwnedLaunch),
+ * или из «Твоих вечеров» (components/Evenings).
  */
 export const CTX_SLOTS = ['hero', 'picked', 'discovery', 'continue', 'plan'] as const
 

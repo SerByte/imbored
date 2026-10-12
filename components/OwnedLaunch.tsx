@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { MarkFinished } from '@/components/MarkFinished'
+import { FinishedNote, MarkFinished } from '@/components/MarkFinished'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -40,8 +40,11 @@ import { isNeedSteam, writerStore } from '@/lib/writer'
  * в «Твоих вечерах». Отметка жила только в состоянии островка, и после
  * перезагрузки «Уже прошёл» возвращалась к игре с полки «Пройдено» — не
  * понять, сохранилось ли, а повторное нажатие писало ещё одну строку бана.
- * done решает только ответ при монтировании: после нажатия MarkFinished
- * остаётся на месте — на его строке «Пройдено» стоит фокус.
+ * Слово — та же строка, что MarkFinished ставит после нажатия (FinishedNote),
+ * с той же «Дальше — в духе X» при follow: одно состояние не должно выглядеть
+ * по-разному до перезагрузки и после. Только без фокуса — его тут никто не
+ * терял. done решает только ответ при монтировании: после нажатия
+ * MarkFinished остаётся на месте — на его строке «Пройдено» стоит фокус.
  *
  * follow — звать ли после отметки «Дальше — в духе X». Решает страница, той
  * же полкой, что и ссылку «Похожее на X» внизу (data.similar): у игры без
@@ -119,7 +122,7 @@ export function OwnedLaunch({
       {finishable &&
         writer === true &&
         (owns.done ? (
-          <span className="self-center text-sm text-dim">Пройдено — больше не предложу</span>
+          <FinishedNote appid={appid} name={name} follow={follow} />
         ) : (
           <MarkFinished
             appid={appid}

@@ -4703,16 +4703,22 @@ describe('предпросмотр миграции', () => {
     expect(preview.some((p) => p.startsWith('версия схемы'))).toBe(false)
   })
 
-  test('пересборка feedback не уносит idx_feedback_ctx', async () => {
+  test('пересборка feedback не уносит idx_feedback_ctx и idx_feedback_banned', async () => {
     // DROP TABLE снимает и индексы таблицы. Пока пересборка шла после блока
     // каталога, индекс, созданный им на старой таблице, пропадал до
-    // следующего холодного старта — это и увидел предпросмотр
+    // следующего холодного старта — это и увидел предпросмотр. Индекс банов
+    // стоит в том же блоке по той же причине: в SCHEMA его снесла бы
+    // пересборка, и «пройдена ли» до следующего старта читала бы всю историю
     const db = await oldDb()
     await migrateDb(db, {})
     const idx = await db.execute(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'feedback'",
     )
-    expect(idx.rows.map((r) => String(r.name)).sort()).toEqual(['idx_feedback_ctx', 'idx_feedback_steamid'])
+    expect(idx.rows.map((r) => String(r.name)).sort()).toEqual([
+      'idx_feedback_banned',
+      'idx_feedback_ctx',
+      'idx_feedback_steamid',
+    ])
   })
 
   test('записанная версия показывается как есть', async () => {

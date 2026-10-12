@@ -3,7 +3,8 @@ import path from 'node:path'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
-import { MarkFinished } from '../components/MarkFinished'
+import { FinishedNote, MarkFinished } from '../components/MarkFinished'
+import { quizHref } from './presets'
 
 /**
  * «Уже прошёл» вне /play — в «Твоих вечерах» и на странице игры
@@ -61,6 +62,37 @@ describe('«Уже прошёл» вне выдачи', () => {
 
   test('дальше — в духе этой игры: квиз с затравкой', () => {
     expect(CODE).toContain('href={quizHref(null, appid)}')
+  })
+
+  /*
+   * Строка «Пройдено» одна на обе дороги к этому состоянию: после нажатия
+   * (MarkFinished) и при загрузке уже пройденной (OwnedLaunch по done). У
+   * второй была своя копия без «Дальше — в духе X», и одно и то же состояние
+   * до перезагрузки звало дальше, а после — нет.
+   */
+  test('строка «Пройдено» при follow зовёт дальше, без follow — нет', () => {
+    const note = (follow: boolean) =>
+      renderToStaticMarkup(createElement(FinishedNote, { appid: 367520, name: 'Hollow Knight', follow }))
+    const href = quizHref(null, 367520).replace(/&/g, '&amp;')
+    expect(note(true)).toContain('Пройдено — больше не предложу · ')
+    expect(note(true)).toContain(`<a class="tap text-ember-text hover:underline" href="${href}">Дальше — в духе «Hollow Knight»</a>`)
+    expect(note(false)).toContain('Пройдено — больше не предложу')
+    expect(note(false)).not.toContain('<a ')
+    expect(CODE).toMatch(/state === 'done' \? \(\s*<FinishedNote appid=\{appid\} name=\{name\} follow=\{follow\} focus \/>/)
+  })
+
+  // Фокус забирает только строка, сменившая нажатую кнопку: нарисованная при
+  // загрузке страницы игры увела бы его с того, что человек читал
+  test('строка «Пройдено» без focus не забирает фокус и не встаёт в порядок обхода', () => {
+    const out = renderToStaticMarkup(
+      createElement(FinishedNote, { appid: 367520, name: 'Hollow Knight', follow: false }),
+    )
+    expect(out).not.toContain('tabindex')
+    const focused = renderToStaticMarkup(
+      createElement(FinishedNote, { appid: 367520, name: 'Hollow Knight', follow: false, focus: true }),
+    )
+    expect(focused).toContain('tabindex="-1"')
+    expect(CODE).toMatch(/ref=\{focus \? grab : undefined\}/)
   })
 
   // onDone — только записанной отметке: отказ и needsteam полку «Пройдено» не меняют
