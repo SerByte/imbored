@@ -160,8 +160,9 @@ export default function ExplorePage() {
    */
   const votedIds = useRef(new Set<number>())
   /**
-   * Последнее «Мимо» — под колодой кнопка «Вернуть «X»» (undo). Одно, а не
-   * стопка: отмена — про промах пальцем секунду назад, а не листание назад.
+   * Последнее «Мимо» — у колоды кнопка «Вернуть «X»» (undo; на телефоне над
+   * ней, с md под ней — см. undoButton). Одно, а не стопка: отмена — про
+   * промах пальцем секунду назад, а не листание назад.
    */
   const [lastSkip, setLastSkip] = useState<ExploreCard | null>(null)
   /**
@@ -580,6 +581,17 @@ export default function ExplorePage() {
   const top = cards[0]
   // Откат уже вернул плитку на полку — название берётся оттуда
   const unlikeMissName = unlikeMiss === null ? undefined : liked.find((c) => c.appid === unlikeMiss)?.name
+  /*
+    «Вернуть «X»» — одна кнопка в двух местах колонки колоды: над колодой на
+    телефоне и под ней с md (почему — у самих мест). Видна всегда только одна:
+    вторая — display: none, и скринридер с Tab'ом её не встречают.
+  */
+  const undoButton = lastSkip && (
+    <button type="button" onClick={(e) => undo(e.detail === 0)} className="tap link-more max-w-full">
+      <Icon name="back" size={14} />
+      <span className="min-w-0 truncate">Вернуть «{lastSkip.name}»</span>
+    </button>
+  )
 
   return (
     <>
@@ -589,8 +601,17 @@ export default function ExplorePage() {
       справа — постер 2:3 во всю ширину прежней колонки был бы выше окна.
       Порядок в разметке прежний (заголовок, колода, полка): на телефоне
       колонка одна, и скринридер читает то же, что видит глаз.
+
+      max-md:content-start — ряды на телефоне по содержимому. Сетка — flex-1
+      и на высоком экране выше содержимого, а ряды auto делили свободное
+      место поровну: верх колоды стоял ниже заголовка не на gap-8, а на gap-8
+      и долю остатка — и сдвигался от любой перемены колонки или числа рядов.
+      Первое «Интересно» ставит полку третьим рядом, и кнопки голоса на
+      390×844 прыгали под пальцем на 19 px вверх (648–708 → 629–689); так же
+      прыгали они и от прежней строки «Вернуть» под колодой. С md ряды
+      заданы явно (auto и 1fr), и остаток забирает 1fr.
     */}
-    <div className="flex-1 mx-auto w-full max-w-6xl px-safe pt-28 pb-16 grid gap-8 md:grid-cols-[minmax(0,440px)_minmax(0,1fr)] md:grid-rows-[auto_1fr] md:gap-x-14">
+    <div className="flex-1 mx-auto w-full max-w-6xl px-safe pt-28 pb-16 grid max-md:content-start gap-8 md:grid-cols-[minmax(0,440px)_minmax(0,1fr)] md:grid-rows-[auto_1fr] md:gap-x-14">
       <div className="flex flex-col gap-2 md:col-start-2 md:row-start-1 md:pt-4">
         <h1 className="font-display text-display-sm">Полистать без обязательств</h1>
         <p className="text-sm text-dim leading-relaxed">
@@ -605,7 +626,34 @@ export default function ExplorePage() {
         {readOnly && <NeedSteam from="/explore" />}
       </div>
 
-      <div className="md:col-start-1 md:row-start-1 md:row-span-2">
+      {/*
+        min-w-0 — для длинного имени в «Вернуть «X»». Колонка на телефоне —
+        неявная auto сетки, и без него не уже содержимого: имя в одну строку
+        (nowrap) раздвигало её на свою ширину. «Вернуть «Warhammer 40,000:
+        Dawn of War - Definitive Edition»» на 360×740 делало колонку 444 px
+        вместо 320 — и карта уезжала за правый край. С ним имя обрезается.
+      */}
+      <div className="explore-deck min-w-0 md:col-start-1 md:row-start-1 md:row-span-2">
+      {/*
+        На телефоне «Вернуть» — НАД колодой. Под ней нижняя панель, и строка
+        под картой уходила под неё везде, где высоты не хватало: на iPhone в
+        Safari, на SE, на Android шириной 360 и у иконки на домашнем экране
+        (замеры — у .deck-stack в globals.css). Верх колоды стоит сразу под
+        заголовком, и строка над ним видна без прокрутки везде, где без
+        прокрутки достаётся и сам «Мимо», — на портретных телефонах из
+        замеров. Где «Мимо» и так ниже края — короткие 320×568 и 375×548,
+        телефон боком уже 768 (667×375, 740×360: карта на полу 380 выше
+        самого экрана), — прокрутка к нему уносит верх колоды со строкой под
+        шапку сайта, и за отменой листают обратно вверх. Прежняя строка под
+        колодой там тоже стояла за краем. Карта, пока строка видна, короче
+        ровно на её ряд (.explore-deck:has(> .skip-undo)), и низ карты с
+        кнопками голоса не сдвигается под пальцем; поэтому строка — прямой
+        ребёнок колонки: обёртка вокруг неё (хоть для анимации появления)
+        молча выключит это правило. Ряд — один: флекс держит его ровно в
+        высоту кнопки, без строчного «хвоста» под ней, а длинное имя
+        обрезается многоточием (min-w-0 выше).
+      */}
+      {undoButton && <p className="skip-undo mb-3 flex justify-center md:hidden">{undoButton}</p>}
       {top ? (
         <SwipeDeck
           key={undone}
@@ -657,20 +705,15 @@ export default function ExplorePage() {
           </p>
         </div>
       )}
-      {/* Под колодой и под «Колода кончилась» — одно место: последняя карта
-          тоже бывает промахом, и её кнопка не переезжает, когда колода
-          уходит. Строка «снова в колоде» стоит всегда: вернувшаяся карта
-          в последнем случае встаёт новой колодой, и её собственная живая
-          строка рождается вместе с текстом (components/StatusLine) */}
+      {/* Под колодой и под «Колода кончилась» — одно место (на телефоне так
+          же над ними, см. выше): последняя карта тоже бывает промахом, и её
+          кнопка не переезжает, когда колода уходит. С md нижней панели нет,
+          и строка стоит под картой — там, куда смотрят после голоса.
+          Строка «снова в колоде» стоит всегда: вернувшаяся карта в последнем
+          случае встаёт новой колодой, и её собственная живая строка
+          рождается вместе с текстом (components/StatusLine) */}
       <StatusLine text={said} className="sr-only" />
-      {lastSkip && (
-        <p className="mt-4 text-center">
-          <button type="button" onClick={(e) => undo(e.detail === 0)} className="tap link-more max-w-full">
-            <Icon name="back" size={14} />
-            <span className="min-w-0 truncate">Вернуть «{lastSkip.name}»</span>
-          </button>
-        </p>
-      )}
+      {undoButton && <p className="mt-4 text-center max-md:hidden">{undoButton}</p>}
       </div>
 
       {(liked.length > 0 || shelfTouched) && (
