@@ -44,7 +44,7 @@ import { SOURCE_BADGE, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
-import { inTurn, undoLike } from '@/lib/unlike'
+import { sendLike, undoLike } from '@/lib/unlike'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { SectionLabel } from '@/components/Labels'
 import { TagChips } from '@/components/TagChips'
@@ -509,8 +509,8 @@ export default function DailyPage() {
     // само сердце (onClick ниже), а не ответ на вопрос
     if (liked.has(hero.appid)) return
     setLiked(new Set(liked).add(hero.appid))
-    // В очереди записей игры (lib/unlike): снятие следом не обгонит вставку
-    void inTurn(hero.appid, () => sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero, intent)))
+    // В очереди записей игры (lib/unlike): снятие не обгонит вставку и снимет лишь её строку
+    void sendLike('daily', hero.appid, { ctx: ctxOf(hero, intent) })
   }
 
   /*
@@ -739,7 +739,7 @@ export default function DailyPage() {
                   // той же, что у «Не сегодня», и сердце горит снова. Имя
                   // кнопки не меняется — тумблер называет aria-pressed, а
                   // обратимость видна в подсказке
-                  onClick={() => (liked.has(hero.appid) ? void undoLike(hero, setLiked, setRerollMiss) : like())}
+                  onClick={() => (liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss) : like())}
                   aria-pressed={liked.has(hero.appid)}
                   title={liked.has(hero.appid) ? 'Зашло — нажми, чтобы снять' : 'Зашло'}
                   className="btn-circle"

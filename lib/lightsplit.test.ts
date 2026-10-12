@@ -137,9 +137,14 @@ describe('выход без загруженного модуля выдачи',
    * зарегистрированы, и в памяти вкладки выдачи нет. Стереть их ключи —
    * ровно то, что сделал бы их set(null).
    */
-  test('стирает все три записи по ключам', async () => {
+  test('стирает все записи по ключам — и строки «Зашло» сердца героя', async () => {
     vi.resetModules()
-    const session = fakeStorage({ 'imbored.play.deal': '{}', 'imbored.play.warm': '{}', other: '1' })
+    const session = fakeStorage({
+      'imbored.play.deal': '{}',
+      'imbored.play.warm': '{}',
+      'imbored.like.rows': '{"play:620":7}',
+      other: '1',
+    })
     const local = fakeStorage({ 'imbored.play.bans': '[]', other: '1' })
     vi.stubGlobal('sessionStorage', session.area)
     vi.stubGlobal('localStorage', local.area)

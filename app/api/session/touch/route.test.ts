@@ -301,6 +301,38 @@ describe('/api/session/touch', () => {
     expect((await live()).daily).toEqual({ appid: 2, name: 'Головоломка' })
   })
 
+  /*
+   * Герой годится фильтру, а причина общей записи — нет: её писал профиль
+   * телефона, и «По тегам (Соревновательная)…» /daily этому браузеру не
+   * покажет — отберёт заново (dailyRecord). Строка обязана судить так же,
+   * иначе пообещает «уже выбрана» игру, которой на /daily не окажется.
+   */
+  test('card=1: общая запись, чья причина называет запретный тег вкусом, в живую строку не попадает', async () => {
+    const steamid = await signInAs(db, 'openid')
+    await saveDailyPick(
+      db,
+      steamid,
+      dayKey(T0),
+      {
+        pick: { appid: 3, name: 'Пасьянс', source: 'untouched' },
+        shelf: [],
+        hoursPlayed: null,
+        reasonBase: '«Пасьянс» ты не запускал ни разу — ноль минут. По тегам (Соревновательная) это очень твоё.',
+        sharedTags: ['Competitive'],
+        hideUrgency: false,
+      },
+      T0,
+    )
+    // Competitive шестым: пятёрку главных тегов он не задевает, герой годится
+    const tags = { Puzzle: 600, Cozy: 500, 'Card Game': 400, Relaxing: 300, Casual: 200, Competitive: 100 }
+    await upsertGamesMeta(db, [{ appid: 3, name: 'Пасьянс', tags, genres: [], categories: [] }], T0)
+    const live = async () => (await (await POST(post('/api/session/touch?card=1'))).json()).live
+
+    expect((await live()).daily).toEqual({ appid: 3, name: 'Пасьянс' })
+    setTestCookie(MUTE_COOKIE, 'pvp')
+    expect((await live()).daily).toBeNull()
+  })
+
   test('демо и вход по ссылке живой строки не получают', async () => {
     for (const kind of ['demo', 'claimed'] as const) {
       await signInAs(db, kind)

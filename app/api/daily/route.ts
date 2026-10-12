@@ -22,7 +22,7 @@ import { heuristicPicks, reasonPrice } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import type { MutePreset } from '@/lib/mutetags'
-import { mutedHit, sharedTasteTags } from '@/lib/recommend'
+import { mutedHit, namesMutedTaste, sharedTasteTags } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
 import { currentMutes, currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
@@ -116,8 +116,9 @@ export async function GET(req: Request) {
   // «Не предлагать» (lib/mutetags.ts) — у браузера, а запись дня одна на
   // профиль: её мог выбрать телефон без фильтра. Обе записи читает
   // dailyRecord (lib/dailyrecord.ts): общая, если её герой не под фильтром
-  // этого браузера, иначе выбранная под фильтром рядом с ней, иначе — отбор
-  // заново, уже с фильтром. Он ляжет рядом, а общая останется как была:
+  // этого браузера и причина не называет запретный тег вкусом (её писал
+  // профиль телефона), иначе выбранная под фильтром рядом с ней, иначе —
+  // отбор заново, уже с фильтром. Он ляжет рядом, а общая останется как была:
   // переписанная, она сменила бы игру телефону посреди дня. Платит такой
   // отбор, как любой, — личным потолком и потолком адреса; ?cached=1 честно
   // отвечает «не выбрано». Вчерашняя — так же: «Вчера была: …» и avoid
@@ -194,10 +195,13 @@ export async function GET(req: Request) {
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid)
 
   // Запись могла выбрать сессия без фильтра этого браузера (см. выше): полка
-  // и запасная своя под ним не показываются. Мета у них уже прочитана — цены
+  // и запасная своя под ним не показываются. Мета у них уже прочитана — цены.
+  // У запасной своей ещё и причина, написанная тем же чужим профилем: героя
+  // с такой dailyRecord отбирает заново, а запасная отбора не стоит — её,
+  // назвавшую запретный тег вкусом, просто не показываем
   const shown = (appid: number) => !mutedHit(metaNow(appid), mutes)
   const shownShelf = shelf.filter((c) => shown(c.appid))
-  const shownAlt = alt && shown(alt.pick.appid) ? alt : null
+  const shownAlt = alt && shown(alt.pick.appid) && !namesMutedTaste(alt, mutes) ? alt : null
 
   const reason = reasonBase + reasonPrice(pick.source, metaNow(pick.appid), now, hideUrgency)
 

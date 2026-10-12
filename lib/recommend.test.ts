@@ -32,6 +32,7 @@ import {
   moodWordsOf,
   mutedHit,
   mutedTaste,
+  namesMutedTaste,
   neutralParts,
   normalizedTags,
   nudgeMultiplier,
@@ -52,12 +53,22 @@ import {
   type Cooldown,
 } from './recommend'
 import { DEMO_METAS, demoLibrary } from './demo'
+import { GENERIC_TAGS } from './hook'
 import { LEANS, NEUTRAL_MOOD, type Lean } from './mood'
-import { parseMutes } from './mutetags'
+import { heuristicPicks } from './llm'
+import { MUTES, parseMutes } from './mutetags'
 import { NUDGES, planNudge } from './nudge'
+import { tagRu } from './tagsru'
 import { tagWeightFrom } from './tagweight'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
-import type { GameMeta, GameSemantics, LibraryGame, Mood, ScoredCandidate } from './types'
+import {
+  CANDIDATE_SOURCES,
+  type GameMeta,
+  type GameSemantics,
+  type LibraryGame,
+  type Mood,
+  type ScoredCandidate,
+} from './types'
 
 const NOW = 1_700_000_000
 const DAY = 86_400
@@ -2932,6 +2943,106 @@ describe('«Не предлагать»: mutedTaste', () => {
 
   test('весь вкус был запретным — вкуса нет, и движок честно идёт по популярности', () => {
     expect(hasTaste(mutedTaste({ Horror: 2, 'Psychological Horror': 1 }, parseMutes('horror')))).toBe(false)
+  })
+})
+
+/*
+ * Причина, написанная заранее чужим профилем (запись игры дня), — называет
+ * ли она запретный тег вкусом. Судится текст записи, суженный отметками
+ * sharedTasteTags: отметки одни шире причины — под якорем она тегов не
+ * называет, и браузер платил бы отбором заново за игру, на которой
+ * запретного ни слова. Общие теги причина не называет никогда, и отбор
+ * заново ради «Раннего доступа» в отметках был бы платой ни за что.
+ */
+describe('«Не предлагать»: namesMutedTaste', () => {
+  /** Причина «по тегам» — как её пишет шаблон нетронутой (matchedTags в lib/llm) */
+  const byTags = (tags: string[]) =>
+    `«Пасьянс» ты не запускал ни разу — ноль минут. По тегам (${tags.map(tagRu).join(', ')}) это очень твоё; ` +
+    'сегодня хороший день это исправить.'
+  /** Та же нетронутая с якорем: своя игра встаёт вместо тегов */
+  const anchored =
+    '«Пасьянс» ты не запускал ни разу — ноль минут, а ближе всего она к «Stardew Valley», где у тебя 40 ч. ' +
+    'Сегодня хороший день это исправить.'
+  const pvp = parseMutes('pvp')
+
+  test('запретный тег в отметках и в причине — да, хоть третьим', () => {
+    const tags = ['Puzzle', 'Cozy', 'Competitive']
+    expect(namesMutedTaste({ sharedTags: tags, reasonBase: byTags(tags) }, pvp)).toBe(true)
+    const anime = { sharedTags: ['Anime'], reasonBase: byTags(['Anime']) }
+    expect(namesMutedTaste(anime, parseMutes('horror.anime'))).toBe(true)
+  })
+
+  test('запретный тег в отметках, а причина с якорем его не называет — нет', () => {
+    expect(namesMutedTaste({ sharedTags: ['Puzzle', 'Competitive'], reasonBase: anchored }, pvp)).toBe(false)
+  })
+
+  /*
+   * Запись хранит две причины: с патчем — для writer-сессии, без — для
+   * остальных (dailyReasonBase). Годность записи одна на браузер, и судятся
+   * обе.
+   */
+  test('называет хоть одна из двух причин записи — да', () => {
+    const sharedTags = ['Puzzle', 'Competitive']
+    expect(namesMutedTaste({ sharedTags, reasonBase: byTags(sharedTags), reasonPatched: anchored }, pvp)).toBe(true)
+    expect(namesMutedTaste({ sharedTags, reasonBase: anchored, reasonPatched: byTags(sharedTags) }, pvp)).toBe(true)
+    expect(namesMutedTaste({ sharedTags, reasonBase: anchored, reasonPatched: anchored }, pvp)).toBe(false)
+  })
+
+  test('общий тег под фильтром причина не называет — нет', () => {
+    const tags = ['Puzzle', 'Early Access', 'Massively Multiplayer']
+    expect(namesMutedTaste({ sharedTags: tags, reasonBase: byTags(tags) }, parseMutes('early.mmo'))).toBe(false)
+    expect(namesMutedTaste({ sharedTags: ['VR'], reasonBase: byTags(['VR']) }, parseMutes('vr'))).toBe(false)
+  })
+
+  test('без набора, без запретного в отметках — нет', () => {
+    const competitive = { sharedTags: ['Competitive'], reasonBase: byTags(['Competitive']) }
+    expect(namesMutedTaste(competitive, [])).toBe(false)
+    const cozy = { sharedTags: ['Puzzle', 'Cozy'], reasonBase: byTags(['Puzzle', 'Cozy']) }
+    expect(namesMutedTaste(cozy, parseMutes('pvp.horror'))).toBe(false)
+    // подпись в тексте, но не вкусом: отметок нет — и судить нечего
+    expect(namesMutedTaste({ sharedTags: [], reasonBase: byTags(['Competitive']) }, pvp)).toBe(false)
+  })
+
+  /*
+   * Договор с причиной (matchedTags в lib/llm): по каждому тегу каждого
+   * набора, каждому источнику, с якорем и без — да ровно тогда, когда
+   * причина правда называет его вкусом. Шире — браузер платил бы отбором
+   * заново за игру, которую ему можно показать (так было, пока судились одни
+   * отметки: /api/daily даёт anchorOf, и якорь вставал вместо тегов); уже —
+   * «По тегам (Соревновательная)» стояло бы у того, кто их запретил. Тег
+   * шестым: героем такая игра фильтр проходит (mutedHit).
+   */
+  test('да — ровно когда причина называет тег; по всем тегам, источникам, с якорем и без', () => {
+    const rest = ['Puzzle', 'Cozy', 'Farming Sim', 'Card Game', 'Relaxing']
+    const anchor = { appid: 1, name: 'Stardew Valley', hours: 40 }
+    let silent = 0
+    for (const preset of MUTES) {
+      for (const tag of preset.tags) {
+        const meta: GameMeta = {
+          appid: 9,
+          name: 'Пасьянс',
+          tags: Object.fromEntries([...rest, tag].map((t, i) => [t, 600 - i * 100])),
+          genres: [],
+          categories: [],
+        }
+        const profile = { [tag]: 1 }
+        const sharedTags = sharedTasteTags(profile, meta)
+        for (const source of CANDIDATE_SOURCES) {
+          for (const anchorOf of [undefined, () => anchor]) {
+            const candidate = { appid: 9, name: 'Пасьянс', source, score: 1 }
+            const [pick] = heuristicPicks([candidate], () => meta, 1, 0, profile, { anchorOf })
+            const named = pick.reason.includes(`(${tagRu(tag)})`)
+            if (!named && sharedTags.includes(tag) && !GENERIC_TAGS.has(tag)) silent++
+            expect(
+              namesMutedTaste({ sharedTags, reasonBase: pick.reason }, [preset]),
+              `${tag}, ${source}${anchorOf ? ', с якорем' : ''}`,
+            ).toBe(named)
+          }
+        }
+      }
+    }
+    // предпосылка: запретное в отметках при молчащей причине правда бывает
+    expect(silent).toBeGreaterThan(0)
   })
 })
 

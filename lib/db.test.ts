@@ -2119,6 +2119,51 @@ describe('db', () => {
     await expect(unlikeGame(db, 'u1', 12_345)).resolves.toBeUndefined()
   })
 
+  /*
+   * Сердце героя /play и /daily не знает о прежних «зашло»: оно гаснет с
+   * каждой выдачей, и игра, которую лайкнули на прошлой неделе, приходит
+   * героем с пустым сердцем. Нажал по ошибке и снял — на сервере должно
+   * остаться ровно то, что было до двух нажатий. Поэтому снятие у героя
+   * несёт строку, которую легло его «Зашло» (logFeedback её отдаёт), и
+   * удаляет только её.
+   */
+  test('logFeedback отдаёт id легшей строки; суточный повтор — null', async () => {
+    const db = await freshDb()
+    const first = await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW)
+    expect(first).toEqual(expect.any(Number))
+    expect(await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW + 60)).toBeNull()
+    const next = await logFeedback(db, { steamid: 'u1', appid: 620, action: 'liked' }, NOW + 60)
+    expect(next).toBeGreaterThan(first!)
+    // и у записи без дедупа — тоже её строка
+    expect(await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped' }, NOW + 70)).toBeGreaterThan(next!)
+  })
+
+  test('unlikeGame со строкой снимает только её: «зашло» недельной давности на месте', async () => {
+    const db = await freshDb()
+    await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW - 7 * 86_400)
+    const tap = await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW)
+    expect(tap).not.toBeNull()
+
+    await unlikeGame(db, 'u1', 570, tap!)
+
+    expect(await listLiked(db, 'u1')).toEqual([{ appid: 570, at: NOW - 7 * 86_400 }])
+  })
+
+  test('unlikeGame со строкой чужой игры, чужого профиля или не «зашло» — ничего не трогает', async () => {
+    const db = await freshDb()
+    const mine = await logFeedback(db, { steamid: 'u1', appid: 570, action: 'liked' }, NOW)
+    const skip = await logFeedback(db, { steamid: 'u1', appid: 570, action: 'skipped' }, NOW + 1)
+    const theirs = await logFeedback(db, { steamid: 'u2', appid: 570, action: 'liked' }, NOW + 2)
+
+    await unlikeGame(db, 'u1', 620, mine!)
+    await unlikeGame(db, 'u1', 570, theirs!)
+    await unlikeGame(db, 'u1', 570, skip!)
+
+    expect(await listLiked(db, 'u1')).toEqual([{ appid: 570, at: NOW }])
+    expect(await listLiked(db, 'u2')).toEqual([{ appid: 570, at: NOW + 2 }])
+    expect((await listFeedback(db, 'u1', 50)).map((f) => f.action).sort()).toEqual(['liked', 'skipped'])
+  })
+
   test('фидбек логируется и читается по пользователю', async () => {
     const db = await freshDb()
     await logFeedback(

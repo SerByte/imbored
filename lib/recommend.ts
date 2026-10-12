@@ -9,6 +9,7 @@ import type { MutePreset } from './mutetags'
 import { playtimeHidden } from './playtime'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
 import { isMultiplayerCategories } from './steamcats'
+import { tagRu } from './tagsru'
 import {
   cosine,
   cosineOf,
@@ -259,6 +260,52 @@ export function mutedTaste(
   if (!mutes.length) return profile
   const muted = new Set(mutes.flatMap((p) => p.tags))
   return Object.fromEntries(Object.entries(profile).filter(([tag]) => !muted.has(tag)))
+}
+
+/**
+ * Называет ли причина записи вкусом тег «Не предлагать» — то, что
+ * mutedTaste обещает вкусом не называть.
+ *
+ * Нужна там, где причина написана заранее и чужим профилем: игру дня
+ * (lib/dailyrecord.ts) мог выбрать телефон без фильтра, и «По тегам
+ * (Соревновательная) это очень твоё» стояло бы под героем у того, кто
+ * соревновательные запретил. Герой при этом годится — mutedHit судит по
+ * пятёрке главных тегов, а причина берёт общий со вкусом тег откуда угодно,
+ * хоть шестым. Перестроить фразу на месте нечем: в записи лежит готовый
+ * текст, а не то, из чего он собран (профиль, вес редкости, скрытое время),
+ * и шаблонов шесть.
+ *
+ * Судит по тексту записи, суженному отметками sharedTasteTags: запретный
+ * тег из отметок, и причина правда пишет его русскую подпись. Одних
+ * отметок мало — причина называет теги не всегда. Своя игра, похожая на
+ * кандидата, встаёт в неё вместо тегов («…а ближе всего она к «Y»…» у
+ * нетронутой, начатой, своей и новой), знакомая тегов не называет вовсе, а
+ * заброшенная с крупным патчем говорит о патче. Якорь у /api/daily — частое
+ * дело (тот же anchorOf, что у /play), и по одним отметкам браузер с
+ * фильтром отбирал бы заново — платя потолками и получая другую игру дня,
+ * чем телефон, — хотя на экране запретного не было ни слова.
+ *
+ * Ответ полный и без профиля: каждый тег, что называет причина, есть в
+ * отметках (matchedTags в lib/llm берёт из того же списка) и написан тем
+ * же tagRu. Ложное совпадение подстрокой (имя игры) стоит лишь отбора
+ * заново — той цены, что прежде платила любая отметка. Судятся обе
+ * причины записи, с патчем и без: какую увидит эта сессия, решает GET
+ * (dailyReasonBase), а годность записи — одна на браузер. Общие теги
+ * (GENERIC_TAGS) пропускаются — причина их не называет никогда, а «Ранний
+ * доступ» в отметках глубоко под героем не стоит браузеру отбора заново.
+ * Предупреждений о контенте в отметках не бывает вовсе. Без набора — false
+ * сразу.
+ */
+export function namesMutedTaste(
+  written: { sharedTags: readonly string[]; reasonBase: string; reasonPatched?: string },
+  mutes: readonly MutePreset[],
+): boolean {
+  if (!mutes.length) return false
+  const muted = new Set(mutes.flatMap((p) => p.tags))
+  const reasons = [written.reasonBase, written.reasonPatched ?? '']
+  return written.sharedTags.some(
+    (t) => muted.has(t) && !GENERIC_TAGS.has(t) && reasons.some((r) => r.includes(tagRu(t))),
+  )
 }
 
 /**

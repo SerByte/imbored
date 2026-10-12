@@ -5199,7 +5199,7 @@ function positiveFeedbackInsert(
   entry: FeedbackEntry,
   nowSec: number,
   when?: { sql: string; args: Array<string | number | null> },
-): InStatement {
+): { sql: string; args: Array<string | number | null> } {
   return {
     sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at, ctx_json)
           SELECT ?, ?, ?, ?, ?, ?, ?
@@ -5232,19 +5232,32 @@ function positiveFeedbackInsert(
   }
 }
 
-export async function logFeedback(db: Db, entry: FeedbackEntry, nowSec: number): Promise<void> {
+/**
+ * Записать оценку. Отдаёт id легшей строки, null — суточный повтор, который
+ * проглотил дедуп (только у «зашло» и запуска, см. positiveFeedbackInsert).
+ *
+ * id нужен снятию «Зашло» у героя /play и /daily (lib/unlike): оно удаляет
+ * ровно ту строку, что легла от нажатия, и ничего, если не легло ничего, —
+ * сердце героя о прежних «зашло» этой игры не знает (unlikeGame). RETURNING,
+ * а не lastInsertRowid: у вставки, которую дедуп не пустил, тот отдаёт id
+ * прежней вставки соединения, — а здесь «ничего не легло» должно читаться
+ * как null, а не как чужая строка.
+ */
+export async function logFeedback(db: Db, entry: FeedbackEntry, nowSec: number): Promise<number | null> {
   // Скипы, открытия и баны пишутся как есть: у них своя история (причина,
   // время, снятие бана), и схлопывать её незачем. Дедуп — только для
   // положительных сигналов, которые копятся от повторных нажатий
-  if (entry.action === 'liked' || entry.action === 'launched') {
-    await db.execute(positiveFeedbackInsert(entry, nowSec))
-    return
-  }
-  await db.execute({
-    sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at, ctx_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: feedbackArgs(entry, nowSec),
-  })
+  const insert =
+    entry.action === 'liked' || entry.action === 'launched'
+      ? positiveFeedbackInsert(entry, nowSec)
+      : {
+          sql: `INSERT INTO feedback (steamid, appid, action, reason, mood_json, created_at, ctx_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          args: feedbackArgs(entry, nowSec),
+        }
+  const res = await db.execute({ ...insert, sql: `${insert.sql} RETURNING id` })
+  const row = res.rows[0] as unknown as { id: number | bigint } | undefined
+  return row ? Number(row.id) : null
 }
 
 /**
@@ -5559,17 +5572,40 @@ export async function countLiked(db: Db, steamid: string): Promise<number> {
 }
 
 /**
- * Снять «зашло». DELETE всех строк liked этой игры — как unbanGame: оценка
- * одной игры лежит несколькими строками (logFeedback склеивает повторы только
- * в пределах суток), и оставь хоть одну — подбор помнил бы её по-прежнему.
+ * Снять «зашло».
+ *
+ * Без row — полка /library (components/LikedShelf): DELETE всех строк liked
+ * этой игры, как unbanGame. Полка показывает то, что помнит сервер
+ * (listLiked), а оценка одной игры лежит несколькими строками (logFeedback
+ * склеивает повторы только в пределах суток): оставь хоть одну — подбор
+ * помнил бы её по-прежнему.
+ *
+ * С row — второе нажатие сердца у героя /play и /daily (lib/unlike): только
+ * эта строка, которую легло первое. Сердце героя — состояние экрана, а не
+ * сервера: оно гаснет с каждой выдачей, ни /api/recommend, ни /api/daily не
+ * говорят, лайкнута ли игра, а «зашло» тянет вкус к её же тегам (LIKE_BOOST
+ * в lib/recommend) — она и возвращается. Игра, которой «Зашло» сказали на
+ * прошлой неделе (или «Зацепило» на «как тебе?»), приходит героем с пустым
+ * сердцем; нажал по ошибке, снял — и снятие всего стирало бы и прежнее
+ * «зашло», молча: сердце выглядит как до нажатий, а игра уходит с полки и
+ * из вкуса. Чужая строка (другой профиль, игра или действие) под условием
+ * не найдётся — удалять нечего.
+ *
  * Остальное — скипы, открытия, запуски, бан — остаётся на месте. Ответ на
  * «как тебе?» живёт в outcomes и тоже не трогается.
  */
-export async function unlikeGame(db: Db, steamid: string, appid: number): Promise<void> {
-  await db.execute({
-    sql: "DELETE FROM feedback WHERE steamid = ? AND appid = ? AND action = 'liked'",
-    args: [steamid, appid],
-  })
+export async function unlikeGame(db: Db, steamid: string, appid: number, row?: number): Promise<void> {
+  await db.execute(
+    row === undefined
+      ? {
+          sql: "DELETE FROM feedback WHERE steamid = ? AND appid = ? AND action = 'liked'",
+          args: [steamid, appid],
+        }
+      : {
+          sql: "DELETE FROM feedback WHERE id = ? AND steamid = ? AND appid = ? AND action = 'liked'",
+          args: [row, steamid, appid],
+        },
+  )
 }
 
 /* ---------- план на вечер ---------- */

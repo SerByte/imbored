@@ -15,7 +15,7 @@
  * их хранилища здесь напрямую.
  */
 
-import { PLAY_DEAL_KEY } from './planforget'
+import { LIKE_ROWS_KEY, PLAY_DEAL_KEY } from './planforget'
 import { warmMarkStore } from './warmmark'
 import { forgetPrewarm } from './warmup'
 
@@ -58,6 +58,12 @@ function wipe(store: Forgettable | null, key: string, area: () => Storage): void
  */
 export function forgetPlay(): void {
   wipe(deal, PLAY_DEAL_KEY, () => sessionStorage)
+  // И строки «Зашло», легшие от сердца героя (lib/unlike): по ним видно, что
+  // вышедшему понравилось. Модуль читает ключ на каждом снятии, и стереть
+  // ключ — достаточно. Его память — лишь когда хранилище не читается, и
+  // строк чужого профиля следующему вошедшему всё равно не снять: unlikeGame
+  // удаляет по steamid
+  wipe(null, LIKE_ROWS_KEY, () => sessionStorage)
   warmMarkStore.set(null)
   wipe(bans, PLAY_BANS_KEY, () => localStorage)
   // И ответ прогрева, начатого квизом (lib/warmup): он про вышедшего, а

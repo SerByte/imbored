@@ -367,6 +367,176 @@ describe('/api/daily: «Не предлагать»', () => {
     expect(body.pick.appid).not.toBe(mine)
     expect(body.yesterday?.appid).toBe(mine)
   })
+
+  /*
+   * Герой, годный фильтру, — ещё не годная запись. Причину в неё написала
+   * сессия, которая выбирала, — по своему профилю, без фильтра этого
+   * браузера, и «По тегам (Соревновательная) это очень твоё» осталось бы на
+   * экране того, кто соревновательные запретил: mutedHit судит по пятёрке
+   * главных тегов, а причина берёт общий тег вкуса откуда угодно. Отбор под
+   * фильтром строит причину из профиля без запретного (mutedTaste) — у него
+   * этот тег назвать нечем.
+   */
+  describe('причина общей записи называет запретный тег вкусом', () => {
+    /** Соревновательный тег шестым: пятёрку главных (MAIN_TOP) он не задевает */
+    const DEEP = ['Puzzle', 'Cozy', 'Farming Sim', 'Card Game', 'Relaxing', 'Competitive']
+    const reasonOf = async (query = '') =>
+      ((await (await get(query)).json()) as { pick: { reason: string } }).pick.reason
+
+    /*
+     * Вкус — из двух игр, где Competitive главный; в них играют прямо сейчас,
+     * поэтому героем дня они сами не станут. Нетронутые четыре делят с этим
+     * вкусом ровно один тег — шестой, — и причина называет именно его.
+     */
+    async function seedTaste(top: string[], deep: string[]) {
+      const at = now()
+      await upsertGamesMeta(
+        db,
+        [meta(1, top, at), meta(2, top, at), ...[10, 11, 12, 13].map((id) => meta(id, deep, at))],
+        at,
+      )
+      await saveLibrarySnapshot(
+        db,
+        STEAMID,
+        [
+          { ...game(1, 40), playtime2Weeks: 300 },
+          { ...game(2, 25), playtime2Weeks: 300 },
+          ...[10, 11, 12, 13].map((id) => game(id, 0)),
+        ],
+        at,
+      )
+    }
+
+    test('204, отбор под фильтром ложится рядом и запретного не называет, общая на месте', async () => {
+      await seedTaste(['Competitive', 'Tactical', 'Shooter'], DEEP)
+      const morningReason = await reasonOf()
+      const morning = await stored('2026-09-23')
+      // предпосылка: телефон без фильтра правда записал запретное вкусом
+      expect(morningReason).toContain('Соревновательн')
+
+      setTestCookie(MUTE_COOKIE, 'pvp')
+      expect((await get('?cached=1')).status).toBe(204)
+      expect(await reasonOf()).not.toContain('Соревновательн')
+      expect(await stored('2026-09-23')).toBe(morning)
+      expect(await stored('2026-09-23~mute')).not.toBeNull()
+      // и следующий заход — из записи рядом, без отбора: она годится фильтру
+      expect((await get('?cached=1')).status).toBe(200)
+
+      // Телефон без фильтра свою причину не теряет
+      setTestCookie(MUTE_COOKIE, '')
+      expect(await reasonOf('?cached=1')).toBe(morningReason)
+    })
+
+    /*
+     * Общие теги (GENERIC_TAGS) причина не называет никогда (matchedTags в
+     * lib/llm), даже запретные: «Ранний доступ» в отметках чипсов глубоко под
+     * героем — не повод тратить на браузер отбор в восемьсот строк и давать
+     * ему другую игру дня, чем телефону.
+     */
+    test('общий тег под фильтром причина не называет — общая запись годится', async () => {
+      await seedTaste(
+        ['Early Access', 'Tactical', 'Shooter'],
+        ['Puzzle', 'Cozy', 'Farming Sim', 'Card Game', 'Relaxing', 'Early Access'],
+      )
+      const morning = (await (await get()).json()) as { pick: { appid: number; sharedTags: string[] } }
+      // предпосылка: запретный тег правда лежит в записи — в отметках чипсов
+      expect(morning.pick.sharedTags).toContain('Early Access')
+
+      setTestCookie(MUTE_COOKIE, 'early')
+      expect(await pickOf('?cached=1')).toBe(morning.pick.appid)
+      expect(await countRows(db, 'daily_picks')).toBe(1)
+    })
+
+    /*
+     * Запасная своя — та же запись и та же беда, но отбора она не стоит: её,
+     * как и запасную под фильтром, просто не показываем.
+     */
+    test('запасная своя, чья причина называет запретный тег, не показывается', async () => {
+      const at = now()
+      await upsertGamesMeta(db, [meta(10, DEEP, at), meta(11, DEEP, at)], at)
+      await saveDailyPick(
+        db,
+        STEAMID,
+        '2026-09-23',
+        {
+          pick: { appid: 10, name: 'Игра 10', source: 'new' },
+          shelf: [],
+          hoursPlayed: null,
+          reasonBase: '«Игра 10» в твоей библиотеке нет.',
+          sharedTags: [],
+          via: null,
+          hideUrgency: false,
+          alt: {
+            pick: { appid: 11, name: 'Игра 11', source: 'untouched' },
+            hoursPlayed: 0,
+            reasonBase: '«Игра 11» ты не запускал ни разу — ноль минут. По тегам (Соревновательная) это очень твоё.',
+            sharedTags: ['Competitive'],
+            via: null,
+          },
+        },
+        at,
+      )
+      const altOf = async () =>
+        ((await (await get('?cached=1')).json()) as { pick: { appid: number }; ownAlternate: { appid: number } | null })
+
+      expect((await altOf()).ownAlternate?.appid).toBe(11)
+      setTestCookie(MUTE_COOKIE, 'pvp')
+      const filtered = await altOf()
+      expect(filtered.pick.appid).toBe(10)
+      expect(filtered.ownAlternate).toBeNull()
+      expect(await countRows(db, 'daily_picks')).toBe(1)
+    })
+
+    /*
+     * Отметки — ещё не причина. Своя игра, на которую герой похож, встаёт в
+     * причину вместо тегов (anchorOf у describe — тот же, что у /play), и
+     * Competitive в отметках чипсов на экране не звучит. Запись годится:
+     * браузер с фильтром видит ту же игру дня, что телефон, — без отбора
+     * заново, без потолков, и запасная своя с якорем тоже на месте.
+     */
+    test('причина с якорем запретного не называет — общая запись годится, хоть Competitive и в отметках', async () => {
+      const at = now()
+      await upsertGamesMeta(db, [meta(10, DEEP, at), meta(11, DEEP, at)], at)
+      const via = { appid: 1, name: 'Игра 1', hours: 40 }
+      await saveDailyPick(
+        db,
+        STEAMID,
+        '2026-09-23',
+        {
+          pick: { appid: 10, name: 'Игра 10', source: 'new' },
+          shelf: [],
+          hoursPlayed: null,
+          reasonBase: '«Игра 10» в твоей библиотеке нет, но ближе всего она к «Игра 1», где у тебя 40 ч.',
+          sharedTags: ['Competitive'],
+          via,
+          hideUrgency: false,
+          alt: {
+            pick: { appid: 11, name: 'Игра 11', source: 'untouched' },
+            hoursPlayed: 0,
+            reasonBase:
+              '«Игра 11» ты не запускал ни разу — ноль минут, а ближе всего она к «Игра 1», где у тебя 40 ч. ' +
+              'Сегодня хороший день это исправить.',
+            sharedTags: ['Competitive'],
+            via,
+          },
+        },
+        at,
+      )
+
+      setTestCookie(MUTE_COOKIE, 'pvp')
+      const res = await get('?cached=1')
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { pick: { appid: number }; ownAlternate: { appid: number } | null }
+      expect(body.pick.appid).toBe(10)
+      expect(body.ownAlternate?.appid).toBe(11)
+      // и обычный заход — та же запись, без отбора рядом
+      expect(await pickOf()).toBe(10)
+      expect(await countRows(db, 'daily_picks')).toBe(1)
+      // одна строка лимита — личный потолок попадания; потолок адреса
+      // платит только отбор заново, а его не было
+      expect(await countRows(db, 'rate_limits')).toBe(1)
+    })
+  })
 })
 
 /**
