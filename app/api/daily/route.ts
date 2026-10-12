@@ -201,7 +201,7 @@ export async function GET(req: Request) {
   // назвавшую запретный тег вкусом, просто не показываем
   const shown = (appid: number) => !mutedHit(metaNow(appid), mutes)
   const shownShelf = shelf.filter((c) => shown(c.appid))
-  const shownAlt = alt && shown(alt.pick.appid) && !namesMutedTaste(alt.sharedTags, mutes) ? alt : null
+  const shownAlt = alt && shown(alt.pick.appid) && !namesMutedTaste(alt, mutes) ? alt : null
 
   const reason = reasonBase + reasonPrice(pick.source, metaNow(pick.appid), now, hideUrgency)
 

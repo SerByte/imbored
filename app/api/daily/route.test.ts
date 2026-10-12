@@ -486,6 +486,56 @@ describe('/api/daily: «Не предлагать»', () => {
       expect(filtered.ownAlternate).toBeNull()
       expect(await countRows(db, 'daily_picks')).toBe(1)
     })
+
+    /*
+     * Отметки — ещё не причина. Своя игра, на которую герой похож, встаёт в
+     * причину вместо тегов (anchorOf у describe — тот же, что у /play), и
+     * Competitive в отметках чипсов на экране не звучит. Запись годится:
+     * браузер с фильтром видит ту же игру дня, что телефон, — без отбора
+     * заново, без потолков, и запасная своя с якорем тоже на месте.
+     */
+    test('причина с якорем запретного не называет — общая запись годится, хоть Competitive и в отметках', async () => {
+      const at = now()
+      await upsertGamesMeta(db, [meta(10, DEEP, at), meta(11, DEEP, at)], at)
+      const via = { appid: 1, name: 'Игра 1', hours: 40 }
+      await saveDailyPick(
+        db,
+        STEAMID,
+        '2026-09-23',
+        {
+          pick: { appid: 10, name: 'Игра 10', source: 'new' },
+          shelf: [],
+          hoursPlayed: null,
+          reasonBase: '«Игра 10» в твоей библиотеке нет, но ближе всего она к «Игра 1», где у тебя 40 ч.',
+          sharedTags: ['Competitive'],
+          via,
+          hideUrgency: false,
+          alt: {
+            pick: { appid: 11, name: 'Игра 11', source: 'untouched' },
+            hoursPlayed: 0,
+            reasonBase:
+              '«Игра 11» ты не запускал ни разу — ноль минут, а ближе всего она к «Игра 1», где у тебя 40 ч. ' +
+              'Сегодня хороший день это исправить.',
+            sharedTags: ['Competitive'],
+            via,
+          },
+        },
+        at,
+      )
+
+      setTestCookie(MUTE_COOKIE, 'pvp')
+      const res = await get('?cached=1')
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { pick: { appid: number }; ownAlternate: { appid: number } | null }
+      expect(body.pick.appid).toBe(10)
+      expect(body.ownAlternate?.appid).toBe(11)
+      // и обычный заход — та же запись, без отбора рядом
+      expect(await pickOf()).toBe(10)
+      expect(await countRows(db, 'daily_picks')).toBe(1)
+      // одна строка лимита — личный потолок попадания; потолок адреса
+      // платит только отбор заново, а его не было
+      expect(await countRows(db, 'rate_limits')).toBe(1)
+    })
   })
 })
 

@@ -23,9 +23,12 @@ import { mutedHit, namesMutedTaste } from './recommend'
  * называет запретный тег вкусом (namesMutedTaste в lib/recommend): её
  * написала сессия, которая выбирала, по своему профилю, и под годным
  * героем — запретное шестым тегом — стояло бы «По тегам (Соревновательная)
- * это очень твоё» у того, кто соревновательные запретил. Отбор заново под
- * фильтром пишет причину из профиля без запретного (mutedTaste), так что
- * его запись годится сразу и по кругу не ходит. Цена — та, что в
+ * это очень твоё» у того, кто соревновательные запретил. Судится сам текст,
+ * а не одни отметки тегов: причина с якорем («ближе всего она к «Y»…»)
+ * тегов не называет, и запись с ней годится: запретного на экране нет, и
+ * отбор заново отнял бы у браузера ту же игру, что у телефона. Отбор
+ * заново под фильтром пишет причину из профиля без запретного (mutedTaste),
+ * так что его запись годится сразу и по кругу не ходит. Цена — та, что в
  * mutedDayKey: браузер с фильтром получает свою игру дня чуть чаще.
  *
  * Без фильтра — ровно прежнее: одно чтение общей, своя не читается. С
@@ -60,7 +63,7 @@ export async function dailyRecord(
   if (!heroes.length) return { selection: null, key: day }
   const metas = await getGamesMetaLite(db, [...new Set(heroes)])
   const fits = (s: DailySelection | null): s is DailySelection =>
-    s !== null && !mutedHit(metas.get(s.pick.appid), mutes) && !namesMutedTaste(s.sharedTags, mutes)
+    s !== null && !mutedHit(metas.get(s.pick.appid), mutes) && !namesMutedTaste(s, mutes)
   if (fits(shared)) return { selection: shared, key: day }
   if (fits(own)) return { selection: own, key: ownKey }
   return { selection: null, key: shared ? ownKey : day }

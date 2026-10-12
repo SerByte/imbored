@@ -197,6 +197,11 @@ describe('undoLike: второе нажатие «Зашло» у героя', (
     expect(like).toHaveBeenCalledTimes(1)
   })
 
+  /*
+   * Второе «Зашло» сервер не вставит: строка 77 пережила сорванное снятие, и
+   * дедуп проглотит новое в неё — ответ row: null. Снимать второму снятию её
+   * же: иначе сердце погасло бы без запроса, а «зашло» осталось на полке.
+   */
   test('снял, зажёг и снова снял: сбой первого снятия не зажигает погашенное последним', async () => {
     await tapped()
     const first = gate<Response>()
@@ -204,8 +209,7 @@ describe('undoLike: второе нажатие «Зашло» у героя', (
     const p = page([appid])
     const undone = undoLike('play', { appid, name: 'Hades' }, p.setLiked, p.say)
     p.setLiked((prev) => new Set(prev).add(appid))
-    // второе «Зашло» ляжет своей строкой — её и снимет второе снятие
-    fetchMock.mockResolvedValueOnce(json(200, { ok: true, row: 78 }))
+    fetchMock.mockResolvedValueOnce(json(200, { ok: true, row: null }))
     void sendLike('play', appid, { ctx: { source: 'play' } })
     const again = undoLike('play', { appid, name: 'Hades' }, p.setLiked, p.say)
     expect(p.liked().has(appid)).toBe(false)
@@ -216,7 +220,7 @@ describe('undoLike: второе нажатие «Зашло» у героя', (
     expect(p.said).toEqual([null, null])
     expect(bodies('/api/unlike')).toEqual([
       { appid, row: 77 },
-      { appid, row: 78 },
+      { appid, row: 77 },
     ])
   })
 
@@ -343,6 +347,65 @@ describe('снятие у героя — только строка своего 
       { appid, row: 77 },
       { appid, row: 77 },
     ])
+  })
+
+  /*
+   * Снятие сорвалось — строка 77 на сервере жива. «Зашло» следом дедуп
+   * проглатывает в неё же (row: null), и это не «ничего не легло», а «легло
+   * в 77»: её следующее снятие и снимает. Сбой самого «Зашло» — то же: 77
+   * жива всё равно. Отметка живёт до удачного снятия или новой строки —
+   * дальше дедуп снова значит «прежнее, не трогать».
+   */
+  test('«Зашло» за сорванным снятием, проглоченное дедупом, снимается строкой, которую снять не вышло', async () => {
+    await tapped(77)
+    fetchMock.mockResolvedValueOnce(json(500, {}))
+    expect(await sendUnlike(appid, 'play')).toBe('fail')
+    await tapped(null)
+    expect(await sendUnlike(appid, 'play')).toBe('ok')
+    // снята — дальше дедуп снова значит «прежнее»: снимать нечего
+    await tapped(null)
+    expect(await sendUnlike(appid, 'play')).toBe('ok')
+    expect(bodies('/api/unlike')).toEqual([
+      { appid, row: 77 },
+      { appid, row: 77 },
+    ])
+  })
+
+  test('сбой «Зашло» за сорванным снятием строку тоже не стирает', async () => {
+    await tapped(77)
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    expect(await sendUnlike(appid, 'play')).toBe('fail')
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await sendLike('play', appid, { ctx: { source: 'play' } })
+    expect(await sendUnlike(appid, 'play')).toBe('ok')
+    expect(bodies('/api/unlike')).toEqual([
+      { appid, row: 77 },
+      { appid, row: 77 },
+    ])
+  })
+
+  test('новая строка за сорванным снятием отметку снимает: следующий дедуп — снова «прежнее»', async () => {
+    await tapped(77)
+    fetchMock.mockResolvedValueOnce(json(500, {}))
+    await sendUnlike(appid, 'play')
+    // прежнюю всё-таки удалили (ответ потерялся) — легла новая
+    await tapped(78)
+    await sendUnlike(appid, 'play')
+    await tapped(null)
+    await sendUnlike(appid, 'play')
+    expect(bodies('/api/unlike')).toEqual([
+      { appid, row: 77 },
+      { appid, row: 78 },
+    ])
+  })
+
+  test('сорванное снятие одного сердца чужое «Зашло» не держит', async () => {
+    await tapped(77, 'play')
+    fetchMock.mockResolvedValueOnce(json(500, {}))
+    await sendUnlike(appid, 'play')
+    await tapped(null, 'daily')
+    expect(await sendUnlike(appid, 'daily')).toBe('ok')
+    expect(bodies('/api/unlike')).toEqual([{ appid, row: 77 }])
   })
 
   test('полка снимает всё «зашло» игры — без строки, даже когда сердце помнит свою', async () => {
