@@ -235,7 +235,9 @@ describe('записка «Режим просмотра» не прячет ф�
     expect(NAV_GAP, 'зазор над панелью меньше самого кольца').toBeGreaterThanOrEqual(FOCUS_RING)
   })
 
-  const note = code(read('components/ReadOnlyNote.tsx'))
+  // Поведение панели живёт в теле записки: components/ReadOnlyNote — лёгкая
+  // оболочка лэйаута, которая везёт тело чанком (lib/sharedchunk.test.ts)
+  const note = code(read('components/ReadOnlyNoteBox.tsx'))
 
   test('Escape закрывает записку', () => {
     expect(note).toMatch(/addEventListener\('keydown'/)

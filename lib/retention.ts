@@ -152,6 +152,13 @@ export function cohortHour(createdAt: number): number {
  * Зовёт /api/session/touch: туда приходят все страницы — SessionKeeper на
  * каждой, кроме главной, а главная сама (ConnectCard, card=1) и /play
  * (lib/playcache). Бросает — ловит вызывающий.
+ *
+ * SessionKeeper едет закулисьем, в простое после гидратации
+ * (components/BackstageLazy): возврат на любую страницу, кроме главной,
+ * закрытый раньше, чем оно приехало, не посчитан — если в тот же день не
+ * было другого захода.
+ * Главная зовёт touch сама и считает всех; /play — только когда
+ * восстанавливает выдачу.
  */
 export async function markReturn(
   db: Db,

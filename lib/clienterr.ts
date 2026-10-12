@@ -54,7 +54,9 @@ export type ClientErrorReport = {
    * называет чанк по хешу, а хеш меняется с каждым деплоем; тег — имя, по
    * которому отказ ищется в логе: mark-finished, hero-slider, snow, tonight,
    * search (окно «Найти игру», components/SearchLauncher — загрузчик свой,
-   * а вид отчёта тот же).
+   * а вид отчёта тот же), readonly-note (тело записки «Режим просмотра»,
+   * components/ReadOnlyNote), backstage (закулисье, components/BackstageLazy
+   * — только отказ кода, а не доставки: isChunkLoadError ниже).
    */
   island?: string
 }
@@ -84,6 +86,34 @@ function thrownParts(err: unknown): { name?: string; message?: string; stack?: s
   }
   if (err === undefined) return {}
   return { message: String(err) }
+}
+
+/** Отказ доставки чанка — текстом, если имя по дороге потерялось: Turbopack и webpack */
+const CHUNK_LOAD_RE = /^Failed to load chunk |^Loading (?:CSS )?chunk \S+ failed/
+
+/**
+ * Не доехал ли чанк — в отличие от чанка, который доехал и упал своим кодом.
+ *
+ * Различать нужно тому, кто об отказе доставки молчит, а об отказе кода —
+ * нет (components/BackstageLazy). Доставку роняют сеть и деплой, сменивший
+ * хеши, и чинить там нечего. Код, бросивший при вычислении модуля, — наша
+ * поломка, и она повторяется у каждого, кто открыл страницу этим браузером.
+ *
+ * Рантайм Turbopack (Next 16) бросает ChunkLoadError «Failed to load chunk
+ * … from module …», webpack — ChunkLoadError «Loading chunk … failed.».
+ * Имя смотрим первым, текст — на случай, если имя по дороге потерялось.
+ * И причину (cause), на пару звеньев: отказ доставки, завёрнутый кем-то по
+ * дороге, остаётся отказом доставки — так его отдаёт, например, мокер модулей
+ * в тестах (lib/backstage.test.ts).
+ */
+export function isChunkLoadError(err: unknown): boolean {
+  let at: unknown = err
+  for (let depth = 0; depth < 3 && at; depth++) {
+    const { name, message = '' } = thrownParts(at)
+    if (name === 'ChunkLoadError' || CHUNK_LOAD_RE.test(message)) return true
+    at = typeof at === 'object' ? (at as { cause?: unknown }).cause : undefined
+  }
+  return false
 }
 
 function cleanStack(stack: string | undefined): string | undefined {
