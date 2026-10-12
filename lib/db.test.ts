@@ -33,6 +33,7 @@ import {
   getFeedHeadForApps,
   getMajorFeed,
   getMajorFeedHead,
+  getRssFeedForApps,
   getUnsummarized,
   latestMajorPatchSince,
   PATCH_SINCE_MAX,
@@ -3122,6 +3123,29 @@ describe('очередь опроса', () => {
         [730, 'cs'],
       ],
     ])
+  })
+
+  /**
+   * Ридер опрашивает личную ленту до шестидесяти раз в час на ссылку, а
+   * описание записи — пересказ, если он есть (newsDescription): тело нужно
+   * только патчу без пересказа. Возить все тридцать тел на каждый опрос —
+   * сотни килобайт из Turso и тридцать JSON.parse ради строки в 180 знаков.
+   */
+  test('лента для ридера: тело — только у патча без пересказа, ключи и порядок — как у ленты', async () => {
+    const db = await freshDb()
+    await seedFeed(db)
+    await setNewsDigest(db, 730, 'свежий', { tldr: 'Починили дым', scale: 'major' }, NOW)
+    const ids = [730, 570, 440]
+    const rss = await getRssFeedForApps(db, ids, 30)
+    const full = await getFeedForApps(db, ids, 30)
+    expect(rss.map((n) => `${n.appid}:${n.gid}`)).toEqual(full.map((n) => `${n.appid}:${n.gid}`))
+    const told = rss.find((n) => n.gid === 'свежий')
+    expect(told?.tldr).toBe('Починили дым')
+    expect(told?.blocks).toEqual([])
+    // у остальных пересказа нет — тело на месте, описанию есть из чего взяться
+    for (const n of rss.filter((n) => n.gid !== 'свежий')) expect(n.blocks, n.gid).toEqual(NEWS_BASE.blocks)
+    // since — та же граница, что у getFeedForApps
+    expect((await getRssFeedForApps(db, ids, 30, undefined, NOW - 200)).map((n) => n.gid)).toEqual(['свежий', '1'])
   })
 
   test('пустая голова — без второго запроса', async () => {

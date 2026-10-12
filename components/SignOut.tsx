@@ -1,10 +1,14 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { StatusLine } from '@/components/StatusLine'
+import { steamLoginFor } from '@/lib/destination'
+import { focusAdrift } from '@/lib/focushandoff'
 import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
+import { signOutReply, type SignOutReply } from '@/lib/signoutreply'
 
 /**
  * Выход. Раньше его не было вовсе: сменить или сбросить вход можно было только
@@ -30,21 +34,61 @@ import { forgetSessionHint } from '@/lib/sessionhint'
  * шрифтом на /whatsnew, где человека сейчас нет. Поэтому подтверждение
  * говорит об этом в момент нажатия — когда ссылка есть (feedLink): тому, у
  * кого её нет, лишняя оговорка про RSS только мешала бы понять вопрос.
+ *
+ * ОТВЕТ ЧИТАЕТСЯ (lib/signoutreply). «Везде» сервер может сделать не до
+ * конца — база не записала отзыв или не прочла состояние сессии, — и тогда
+ * кука погашена, а остальные входы и ссылка живы. Кнопка раньше уводила на
+ * главную и в этом случае: человек, жавший «везде» из-за утечки, уходил
+ * уверенным, что чужой отрезан. Теперь на месте кнопок — строка, что вышло
+ * только здесь, и вход через Steam, после которого «везде» можно повторить:
+ * без входа повторять нечем, кука уже погашена. На главную такая строка не
+ * уводит, и refresh не зовётся: отрисованная заново /library развернула бы
+ * вышедшего на лендинг вместе со строкой. Прежние кадры роутерного кэша
+ * показали бы ему его же библиотеку — на его же устройстве.
  */
 export function SignOut({ verified, feedLink = false }: { verified: boolean; feedLink?: boolean }) {
   const router = useRouter()
   const [busy, setBusy] = useState<'one' | 'all' | null>(null)
   const [confirmAll, setConfirmAll] = useState(false)
+  /** «Везде» сделано не до конца: это устройство вышло, и кнопки выхода ему больше ни к чему */
+  const [partial, setPartial] = useState(false)
+  const [miss, setMiss] = useState<ReactNode>(null)
+  const homeRef = useRef<HTMLDivElement>(null)
+  const retryRef = useRef<HTMLAnchorElement>(null)
+
+  /*
+   * Нажатая «Да, везде» уходит вместе с кнопками — фокус не должен упасть в
+   * body: встаёт на вход, которым «везде» и повторяется. Только потерянный
+   * (focusAdrift) — ушедший с кнопкой или ещё в блоке выхода.
+   *
+   * Эффектом, а не requestAnimationFrame в out(), как у «Отключить» в
+   * FeedLink. Там цель стоит всегда, а здесь ссылка рождается этим же
+   * обновлением. Оно пришло после await fetch, вне события, и React рендерит
+   * его отдельной задачей планировщика: кадр, если он подоспел раньше, искал
+   * бы ссылку, которой ещё нет, — и фокус падал бы в body вместе с кнопкой.
+   * Эффект идёт после коммита: ссылка уже в DOM, кнопки уже нет.
+   */
+  useEffect(() => {
+    if (partial && focusAdrift(document, homeRef.current)) retryRef.current?.focus()
+  }, [partial])
 
   async function out(all: boolean) {
     if (busy !== null) return
+    // Прежний отказ гаснет до запроса: второй такой же иначе промолчал бы
+    // (components/StatusLine, REPEAT в lib/liveregion.test.ts)
+    setMiss(null)
     setBusy(all ? 'all' : 'one')
+    let reply: SignOutReply
     try {
-      await fetch(`/api/auth/logout${all ? '?scope=all' : ''}`, { method: 'POST' })
+      reply = await signOutReply(all, await fetch(`/api/auth/logout${all ? '?scope=all' : ''}`, { method: 'POST' }))
     } catch {
-      // Кука гасится ответом сервера; если запрос не дошёл, уходить с
-      // экрана нечестно — вернём кнопки и дадим нажать снова.
+      reply = 'failed'
+    }
+    if (reply === 'failed') {
+      // Кука гасится ответом сервера; если запрос не дошёл или ответил не
+      // роут, уходить с экрана нечестно — вернём кнопки и дадим нажать снова.
       setBusy(null)
+      setMiss('Не получилось выйти — нажми ещё раз.')
       return
     }
     // Забыть, что здесь кто-то был. Без этой строки выход уводит на главную,
@@ -57,6 +101,29 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
     forgetPlay()
     // Его «время скрыто» (lib/playtime) — не про следующего на этом устройстве
     timeHiddenStore.set(null)
+    if (reply === 'partial') {
+      // Здесь вышел — кука погашена, и всё стёртое выше стёрто по праву. А
+      // «везде» не сделано: сказать это и дать повторить (докблок выше)
+      setPartial(true)
+      setBusy(null)
+      setMiss(
+        <>
+          Здесь ты вышел, а на остальных устройствах выйти не получилось
+          {feedLink ? ' — и ссылка на RSS ещё работает' : ''}.{' '}
+          {/* next=/library: вход вернёт сюда, к кнопке «везде» */}
+          <a
+            ref={retryRef}
+            href={steamLoginFor('/library')}
+            className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2"
+          >
+            Войди через Steam
+          </a>{' '}
+          и нажми «Выйти на всех устройствах» ещё раз.
+        </>,
+      )
+      // Фокус переезжает на вход эффектом выше — после того, как строка встанет
+      return
+    }
     // refresh обязателен и идёт после перехода: страницы уже отрендерены с
     // прежней сессией, и без сброса роутерного кэша клиент показал бы их
     // из памяти — с библиотекой человека, который только что вышел.
@@ -71,62 +138,69 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
    * сверху. Второе нажатие гасят обработчики — по busy.
    */
   return (
-    <div className="mt-10 pt-6 border-t border-edge flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-      <button
-        type="button"
-        onClick={() => void out(false)}
-        aria-disabled={busy !== null}
-        className="tap tap-tight text-dim hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
-      >
-        {busy === 'one' ? 'Выхожу…' : 'Выйти'}
-      </button>
-      {confirmAll && verified ? (
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-dim">
-          {feedLink
-            ? 'Выйти на всех устройствах? Ссылка на RSS тоже перестанет работать.'
-            : 'Выйти на всех устройствах?'}
+    <div ref={homeRef} className="mt-10 pt-6 border-t border-edge flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+      {partial ? null : (
+        <>
           <button
             type="button"
-            onClick={() => void out(true)}
+            onClick={() => void out(false)}
             aria-disabled={busy !== null}
-            className="tap tap-tight text-danger hover:brightness-110 transition aria-disabled:opacity-40 cursor-pointer"
+            className="tap tap-tight text-dim hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
           >
-            {busy === 'all' ? 'Выхожу…' : 'Да, везде'}
+            {busy === 'one' ? 'Выхожу…' : 'Выйти'}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (busy !== null) return
-              setConfirmAll(false)
-            }}
-            aria-disabled={busy !== null}
-            className="tap tap-tight hover:text-ink transition-colors cursor-pointer"
-          >
-            Отмена
-          </button>
-        </span>
-      ) : verified ? (
-        <button
-          type="button"
-          onClick={() => {
-            if (busy !== null) return
-            setConfirmAll(true)
-          }}
-          aria-disabled={busy !== null}
-          className="tap tap-tight text-faint hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
-        >
-          Выйти на всех устройствах
-        </button>
-      ) : (
-        <span className="text-faint">
-          Выход на всех устройствах — после{' '}
-          {/* next=/library: после входа человек возвращается туда, где
-              нажимал, и кнопка «везде» уже на месте */}
-          <a href="/api/auth/steam?next=%2Flibrary" className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2">
-            входа через Steam
-          </a>
-        </span>
+          {confirmAll && verified ? (
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-dim">
+              {feedLink
+                ? 'Выйти на всех устройствах? Ссылка на RSS тоже перестанет работать.'
+                : 'Выйти на всех устройствах?'}
+              <button
+                type="button"
+                onClick={() => void out(true)}
+                aria-disabled={busy !== null}
+                className="tap tap-tight text-danger hover:brightness-110 transition aria-disabled:opacity-40 cursor-pointer"
+              >
+                {busy === 'all' ? 'Выхожу…' : 'Да, везде'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (busy !== null) return
+                  setConfirmAll(false)
+                }}
+                aria-disabled={busy !== null}
+                className="tap tap-tight hover:text-ink transition-colors cursor-pointer"
+              >
+                Отмена
+              </button>
+            </span>
+          ) : verified ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (busy !== null) return
+                setConfirmAll(true)
+              }}
+              aria-disabled={busy !== null}
+              className="tap tap-tight text-faint hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
+            >
+              Выйти на всех устройствах
+            </button>
+          ) : (
+            <span className="text-faint">
+              Выход на всех устройствах — после{' '}
+              {/* next=/library: после входа человек возвращается туда, где
+                  нажимал, и кнопка «везде» уже на месте */}
+              <a href="/api/auth/steam?next=%2Flibrary" className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2">
+                входа через Steam
+              </a>
+            </span>
+          )}
+        </>
       )}
+      {/* Стоит всегда, меняется только текст (components/StatusLine): отказ
+          звучит и при кнопках, и на их месте */}
+      <StatusLine text={miss} className={partial ? 'basis-full text-dim' : 'basis-full text-danger'} />
     </div>
   )
 }

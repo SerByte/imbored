@@ -263,6 +263,8 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   // удача («Ссылка готова», «Ссылка отключена») гаснет тем же порядком
   { file: 'components/whatsnew/FeedLink.tsx', start: 'async function issue(replace: boolean)', reset: ['setMiss(null)', "setSaid('')"] },
   { file: 'components/whatsnew/FeedLink.tsx', start: 'async function disable()', reset: ['setMiss(null)', "setSaid('')"] },
+  // «Выйти» на моргнувшей связи: второй обрыв — то же «Не получилось выйти»
+  { file: 'components/SignOut.tsx', start: 'async function out(all: boolean)', reset: ['setMiss(null)'] },
 ]
 
 describe('повтор отказа звучит', () => {

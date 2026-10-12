@@ -155,3 +155,30 @@ export function breakDbOn(db: Db, sqlPart: string): void {
   })
   globalStore.__imboredDb = Promise.resolve(broken)
 }
+
+/**
+ * Подслушать базу: ответ каждого execute уходит в listen вместе с текстом
+ * запроса, а роут получает ту же базу и те же строки. Так проверяется не
+ * только ЧТО роут ответил, но и что он ради этого читал, — например, не возил
+ * ли тела патчей, которые ответу не нужны (app/whatsnew/feed/[token]).
+ *
+ * Зовётся после freshDb и засева: подменяет то, что отдаст getDb().
+ */
+export function listenDb(db: Db, listen: (sql: string, rows: Record<string, unknown>[]) => void): void {
+  const sqlOf = (stmt: unknown) =>
+    typeof stmt === 'string' ? stmt : ((stmt as { sql?: string } | null)?.sql ?? '')
+  const heard = new Proxy(db, {
+    get(target, key) {
+      if (key === 'execute') {
+        return async (stmt: unknown, ...rest: unknown[]) => {
+          const res = (await (target.execute as (...a: unknown[]) => Promise<{ rows: unknown[] }>)(stmt, ...rest))
+          listen(sqlOf(stmt), res.rows as Record<string, unknown>[])
+          return res
+        }
+      }
+      const value: unknown = Reflect.get(target, key, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  globalStore.__imboredDb = Promise.resolve(heard)
+}

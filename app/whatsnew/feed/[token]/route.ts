@@ -1,4 +1,4 @@
-import { getFeedForApps, getGamesMetaLite, getLatestSnapshotMinutes, feedLinkOwner } from '@/lib/db'
+import { feedLinkOwner, getGamesMetaLite, getLatestSnapshotMinutes, getRssFeedForApps } from '@/lib/db'
 import { FEED_POLL_LIMIT, FEED_POLL_WINDOW_SEC, feedTokenHash, isFeedToken } from '@/lib/feedlink'
 import { newsDescription, newsPageTitle, newsPath } from '@/lib/newspage'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
@@ -40,8 +40,10 @@ import { resolveWhatsNew } from '@/lib/whatsnewfeed'
  *
  * ЦЕНА ОПРОСА. Каждый опрос будит функцию — CDN мы сознательно не даём,
  * — поэтому он стоит как можно меньше: снимок библиотеки — парами [appid,
- * минуты] вместо блоба (getLatestSnapshotMinutes), к Steam ничего не ходит,
- * и потолок на ссылку (FEED_POLL_LIMIT) отсекает утёкшую ссылку под скриптом.
+ * минуты] вместо блоба (getLatestSnapshotMinutes), тела патчей — только у
+ * тех, чьё описание без них не собрать, то есть без пересказа
+ * (getRssFeedForApps), к Steam ничего не ходит, и потолок на ссылку
+ * (FEED_POLL_LIMIT) отсекает утёкшую ссылку под скриптом.
  * Потолок — по steamid владельца: под этим ключом forgetUser найдёт счётчик.
  *
  * Журнал запросов хостинга видит путь, а с ним и ключ, — как у любой
@@ -91,7 +93,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ token: string 
     wantsPopular: false,
     nowSec: now,
     snapshot: (id) => getLatestSnapshotMinutes(db, id),
-    forApps: (appids, limit, since) => getFeedForApps(db, appids, limit, undefined, since),
+    forApps: (appids, limit, since) => getRssFeedForApps(db, appids, limit, undefined, since),
     // Добивки нет: в ридер идёт только личный блок — см. докблок
     major: async () => [],
   })

@@ -235,6 +235,11 @@ export function clientIp(headers: Headers): string {
  * rate_limits по ':' + steamid + ':' (USER_ROWS в lib/db), и потолки чужих
  * сессий на удалённый профиль уходят вместе с остальным. С ключом writer
  * такой не совпадёт: у того сразу за steamid идёт номер окна.
+ *
+ * Каждый потолок по SteamID — этот или голый steamid — назван в /privacy,
+ * раздел 06, вместе с номером сессии: в базе лежит идентификатор человека, и
+ * политика обязана это сказать. Новый такой bucket без слова там уронит
+ * сторож (BY_STEAMID в lib/policy.test.ts).
  */
 export function personalRateId(session: { steamid: string; sid: string }, writer: boolean): string {
   return writer ? session.steamid : `${session.steamid}:${session.sid}`

@@ -4,6 +4,7 @@ import {
   forgetUser,
   issueFeedLink,
   saveLibrarySnapshot,
+  setNewsDigest,
   upsertGameMeta,
   upsertNewsItems,
   upsertUser,
@@ -11,7 +12,7 @@ import {
   type StoredNews,
 } from '@/lib/db'
 import { FEED_POLL_LIMIT, feedTokenHash, newFeedToken } from '@/lib/feedlink'
-import { breakDbOn, freshDb, params, signInAs, signOut } from '@/lib/testing/route'
+import { breakDbOn, freshDb, listenDb, params, signInAs, signOut } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
 import { GET } from './route'
 
@@ -110,6 +111,24 @@ describe('/whatsnew/feed/[token]: что в ленте', () => {
     expect(xml).not.toContain('/game/730/')
     expect(xml).not.toContain('/game/570/')
     expect(xml.match(/<item>/g)).toHaveLength(1)
+  })
+
+  /**
+   * ЦЕНА ОПРОСА (докблок роута): описание записи — пересказ, если он есть, и
+   * тело патча ради него не нужно. Ридер ходит до шестидесяти раз в час, и
+   * тридцать тел на каждый опрос — сотни килобайт из Turso ради строк,
+   * которые в ленту не попадут.
+   */
+  test('у патча с пересказом описание — пересказ, а тело из базы не едет', async () => {
+    await setNewsDigest(db, 620, '6200', { tldr: 'Коротко: починили всё.', scale: 'major' }, NOW)
+    const bodies: unknown[] = []
+    listenDb(db, (_sql, rows) => {
+      for (const r of rows) if ('blocks_json' in r) bodies.push(r.blocks_json)
+    })
+    const xml = await (await poll(key)).text()
+    expect(xml).toContain('<description>Коротко: починили всё.</description>')
+    expect(xml).not.toContain('Починили всё в 620')
+    expect(bodies).toEqual(['[]'])
   })
 
   test('в ленте нет ни SteamID, ни имени профиля, ни самого ключа', async () => {
