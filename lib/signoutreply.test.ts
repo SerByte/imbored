@@ -94,4 +94,23 @@ describe('SignOut: ответ выхода решает, уходить ли с 
     expect(branch).toContain("href={steamLoginFor('/library')}")
     expect(branch).not.toContain('router.')
   })
+
+  /*
+   * Ссылка входа рождается тем же обновлением, что и partial, а оно пришло
+   * после await и рендерится задачей планировщика. Кадр (requestAnimationFrame)
+   * мог подоспеть раньше коммита: ссылки ещё нет, фокус остаётся на «Да,
+   * везде» и падает в body вместе с ней. Эффект по partial идёт после
+   * коммита — тот же приём, что у прерывания викторины в PartyTrivia.
+   */
+  test('partial отдаёт фокус входу эффектом после коммита, а не кадром из out()', () => {
+    const at = src.indexOf("if (reply === 'partial') {")
+    const branch = src.slice(at, src.indexOf("router.replace('/')"))
+    expect(branch).not.toContain('requestAnimationFrame')
+    expect(branch).not.toContain('.focus(')
+    expect(src).toMatch(
+      /useEffect\(\(\) => \{\s*if \(partial && focusAdrift\(document, homeRef\.current\)\) retryRef\.current\?\.focus\(\)\s*\}, \[partial\]\)/,
+    )
+    // цель — та самая ссылка входа из строки partial
+    expect(branch).toMatch(/<a\s+ref=\{retryRef\}\s+href=\{steamLoginFor\('\/library'\)\}/)
+  })
 })

@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
@@ -56,6 +56,22 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
   const homeRef = useRef<HTMLDivElement>(null)
   const retryRef = useRef<HTMLAnchorElement>(null)
 
+  /*
+   * Нажатая «Да, везде» уходит вместе с кнопками — фокус не должен упасть в
+   * body: встаёт на вход, которым «везде» и повторяется. Только потерянный
+   * (focusAdrift) — ушедший с кнопкой или ещё в блоке выхода.
+   *
+   * Эффектом, а не requestAnimationFrame в out(), как у «Отключить» в
+   * FeedLink. Там цель стоит всегда, а здесь ссылка рождается этим же
+   * обновлением. Оно пришло после await fetch, вне события, и React рендерит
+   * его отдельной задачей планировщика: кадр, если он подоспел раньше, искал
+   * бы ссылку, которой ещё нет, — и фокус падал бы в body вместе с кнопкой.
+   * Эффект идёт после коммита: ссылка уже в DOM, кнопки уже нет.
+   */
+  useEffect(() => {
+    if (partial && focusAdrift(document, homeRef.current)) retryRef.current?.focus()
+  }, [partial])
+
   async function out(all: boolean) {
     if (busy !== null) return
     // Прежний отказ гаснет до запроса: второй такой же иначе промолчал бы
@@ -105,11 +121,7 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
           и нажми «Выйти на всех устройствах» ещё раз.
         </>,
       )
-      // Нажатая «Да, везде» уходит вместе с кнопками — фокус не должен упасть
-      // в body: встаёт на вход, которым «везде» и повторяется
-      requestAnimationFrame(() => {
-        if (focusAdrift(document, homeRef.current)) retryRef.current?.focus()
-      })
+      // Фокус переезжает на вход эффектом выше — после того, как строка встанет
       return
     }
     // refresh обязателен и идёт после перехода: страницы уже отрендерены с
