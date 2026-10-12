@@ -91,7 +91,7 @@ function thrownParts(err: unknown): { name?: string; message?: string; stack?: s
 
 /** Отказ доставки чанка — текстом, если имя по дороге потерялось: Turbopack и webpack */
 const CHUNK_LOAD_RE =
-  /Failed to load chunk|Loading (?:CSS )?chunk \S+ failed|dynamically imported module|Importing a module script failed/i
+  /^(?:Failed to load chunk |Loading (?:CSS )?chunk \S+ failed|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed)/i
 
 /**
  * Не доехал ли чанк — в отличие от чанка, который доехал и упал своим кодом.
@@ -113,10 +113,12 @@ const CHUNK_LOAD_RE =
  * сборщик помнят отказ, — помогает только перезагрузка со свежим HTML
  * (сторож — lib/chunkreload.test.ts). Тексты в выражении — и для import()
  * без обёртки сборщика: так его отказ формулируют Chrome, Firefox и Safari.
+ * Текст сверяется с началом сообщения, а голая строка отказом не считается:
+ * «chunk» посреди чужого текста или строка, брошенная кодом, — не доставка.
  */
 export function isChunkLoadError(err: unknown): boolean {
   let at: unknown = err
-  for (let depth = 0; depth < 3 && at; depth++) {
+  for (let depth = 0; depth < 3 && at && typeof at === 'object'; depth++) {
     const { name, message = '' } = thrownParts(at)
     if (name === 'ChunkLoadError' || CHUNK_LOAD_RE.test(message)) return true
     at = typeof at === 'object' ? (at as { cause?: unknown }).cause : undefined
