@@ -9,7 +9,8 @@ import {
   upsertUser,
   type Db,
 } from '@/lib/db'
-import { dayKey } from '@/lib/daily'
+import { dayKey, mutedDayKey } from '@/lib/daily'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { SESSION_COOKIE, currentSession, sessionSecret } from '@/lib/server'
 import { verifySessionV2 } from '@/lib/session'
 import { SESSION_TOUCH_AFTER_SEC } from '@/lib/sessions'
@@ -259,6 +260,45 @@ describe('/api/session/touch', () => {
     // Остальным страницам живая строка не нужна — и в базу за ней не ходят
     const plain = await (await POST(post('/api/session/touch'))).json()
     expect(plain).not.toHaveProperty('live')
+  })
+
+  /*
+   * «Не предлагать» (lib/mutetags.ts) — кука браузера, а запись дня одна на
+   * профиль: её мог выбрать телефон без фильтра. Строка «Игра дня уже
+   * выбрана — «X»» не называет игру под фильтром этого браузера: /daily её
+   * ему не покажет, а «без прогрева» обернулось бы прогревом и другой игрой.
+   * Выбранная под фильтром рядом с общей (mutedDayKey) — называется.
+   */
+  test('card=1: игра дня под «Не предлагать» этого браузера в живую строку не попадает', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const record = (appid: number, name: string) => ({
+      pick: { appid, name, source: 'untouched' },
+      shelf: [],
+      hoursPlayed: null,
+      reasonBase: 'Причина.',
+      sharedTags: [],
+      hideUrgency: false,
+    })
+    await saveDailyPick(db, steamid, dayKey(T0), record(1, 'Хоррор'), T0)
+    await upsertGamesMeta(
+      db,
+      [
+        { appid: 1, name: 'Хоррор', tags: { Horror: 500, Puzzle: 300 }, genres: [], categories: [] },
+        { appid: 2, name: 'Головоломка', tags: { Puzzle: 500 }, genres: [], categories: [] },
+      ],
+      T0,
+    )
+    const live = async () => (await (await POST(post('/api/session/touch?card=1'))).json()).live
+
+    // без фильтра — общая запись как есть
+    expect((await live()).daily).toEqual({ appid: 1, name: 'Хоррор' })
+
+    setTestCookie(MUTE_COOKIE, 'horror')
+    expect((await live()).daily).toBeNull()
+
+    // /daily этого браузера отобрал себе другую — её строка и называет
+    await saveDailyPick(db, steamid, mutedDayKey(dayKey(T0)), record(2, 'Головоломка'), T0)
+    expect((await live()).daily).toEqual({ appid: 2, name: 'Головоломка' })
   })
 
   test('демо и вход по ссылке живой строки не получают', async () => {

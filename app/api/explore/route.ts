@@ -6,7 +6,7 @@ import { EXPLORE_SHELF_MAX, exploreDeck, exploredAppids } from '@/lib/explore'
 import { heuristicPicks } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRatesInOrder, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
+import { currentMutes, currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 
 /*
  * Колода исследователя (/explore, lib/explore.ts): пятнадцать карт своего и
@@ -48,6 +48,7 @@ export async function GET(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
+  const mutes = await currentMutes()
 
   /*
    * Гейты и прочитанное — параллельно, а не лесенкой.
@@ -95,11 +96,16 @@ export async function GET(req: Request) {
       // Полка — сверх двухсот свайпов listExplore: старое «Интересно» лежит
       // на полке и в колоду второй раз не сдаётся
       exclude: [...new Set([...exploredAppids(explored, now), ...likedIds])],
+      // «Не предлагать» — кукой этого браузера (lib/mutetags.ts). Полку
+      // «Приглянулось» не трогает: её он собрал сам, это не совет
+      muted: mutes,
     }),
     getGamesMetaLite(db, likedIds),
   ])
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
   if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
+  // Листать было бы что, но всё — под «Не предлагать» (FAIL.muted на /explore)
+  if (set === 'allmuted') return NextResponse.json({ error: 'muted' }, { status: 409 })
 
   const deck = exploreDeck(set.own, set.discovery)
   // Цены — до причин: шаблон называет скидку, а карта — ценник (buildPickContext).

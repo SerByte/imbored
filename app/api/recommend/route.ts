@@ -18,6 +18,7 @@ import {
 import {
   continueView,
   hasTaste,
+  mutedHit,
   parseFocus,
   parseScope,
   parseSeed,
@@ -26,7 +27,7 @@ import {
 } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
-import { currentSession, getDb, isDemoId, isWriter, nowSec, sessionSecret } from '@/lib/server'
+import { currentMutes, currentSession, getDb, isDemoId, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from '@/lib/types'
 import { readJsonObject } from '@/lib/reqbody'
@@ -123,6 +124,7 @@ export async function POST(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
+  const mutes = await currentMutes()
 
   // Личный гейт первым: отказанный по нему запрос не съедает потолок адреса
   const ip = clientIp(req.headers)
@@ -163,8 +165,15 @@ export async function POST(req: Request) {
     // Что уже на экране — только «Что-то другое»: остальным подталкиваниям
     // показанная игра, подошедшая под поправку, не помеха
     exclude: nudge === 'different' ? parseExclude(body.exclude) : [],
+    // «Не предлагать» — кукой этого браузера (lib/mutetags.ts): /play стоит
+    // у потолка бюджета и ради фильтра не везёт ни байта
+    muted: mutes,
   })
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
+  // Кандидаты были, но все — под «Не предлагать»: совет — ослабить фильтр, а
+  // не «верни что-нибудь из бана» (FAIL.muted на /play). Затравку тут не
+  // называем: пусто не потому, что у X нет соседей
+  if (set === 'allmuted') return NextResponse.json({ error: 'muted' }, { status: 409 })
   if (set === 'nocandidates') {
     /*
      * «Как «X», но…» приходит и адресом — со страницы игры, из «Уже прошёл» и
@@ -287,11 +296,17 @@ export async function POST(req: Request) {
   // «Продолжить «X»» — то, во что он играет сейчас: строкой под героем, а не
   // шестой карточкой. Отложенное и надоевшее не предлагаем — пауза, взятая
   // минуту назад, тоже ответ, и «продолжи то, что надоело» его бы не услышало.
+  // И то, что под «Не предлагать»: «Продолжить» — тоже совет, а фильтр
+  // обещает «никогда». Судим только сыгранное за две недели — других
+  // pickContinue не берёт, и сортировать теги всей библиотеки незачем
   const paused = [...cooldown].filter(([, c]) => c.mult < 1).map(([appid]) => appid)
+  const mutedNow = mutes.length
+    ? games.filter((g) => g.playtime2Weeks > 0 && mutedHit(libMetas.get(g.appid), mutes)).map((g) => g.appid)
+    : []
   const cont = pickContinue(
     games,
     (id) => libMetas.get(id),
-    new Set([...banned, ...paused]),
+    new Set([...banned, ...paused, ...mutedNow]),
     inPicks,
   )
 

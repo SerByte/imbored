@@ -161,6 +161,7 @@ import {
 } from './db'
 import { feedTokenHash, newFeedToken } from './feedlink'
 import { ROOM_KICK_SEC } from './room'
+import { mutedDayKey } from './daily'
 import { seedDemo } from './demo'
 import { SHARED_PICK_TTL_SEC } from './sharedpick'
 import { FEEDBACK_ACTIONS, type FeedbackAction, type SkipReason } from './feedbackkinds'
@@ -1033,6 +1034,33 @@ describe('db', () => {
     await forgetDailyPick(db, 'S1', '2026-08-19')
     expect(await getDailyPick(db, 'S1', '2026-08-19')).toBeNull()
     expect(await getDailyPick(db, 'S1', '2026-08-18')).toEqual({ v: 'вчера' })
+  })
+
+  test('игра дня: сброс по нескольким ключам — общая и под фильтром одним запросом', async () => {
+    const db = await freshDb()
+    await saveDailyPick(db, 'S1', '2026-08-19', { v: 'общая' }, NOW)
+    await saveDailyPick(db, 'S1', mutedDayKey('2026-08-19'), { v: 'под фильтром' }, NOW)
+    await saveDailyPick(db, 'S1', '2026-08-18', { v: 'вчера' }, NOW)
+    await forgetDailyPick(db, 'S1', ['2026-08-19', mutedDayKey('2026-08-19')])
+    expect(await getDailyPick(db, 'S1', '2026-08-19')).toBeNull()
+    expect(await getDailyPick(db, 'S1', mutedDayKey('2026-08-19'))).toBeNull()
+    expect(await getDailyPick(db, 'S1', '2026-08-18')).toEqual({ v: 'вчера' })
+    // пустой список — ничего не стирает и в базу не ходит
+    await forgetDailyPick(db, 'S1', [])
+    expect(await getDailyPick(db, 'S1', '2026-08-18')).toEqual({ v: 'вчера' })
+  })
+
+  // Запись под «Не предлагать» живёт ключом «день~mute»: уборка сравнивает
+  // строки, и суффикс не должен ни продлить её, ни снести раньше своих суток
+  test('подметание уносит записи под фильтром вместе с их сутками', async () => {
+    const db = await freshDb()
+    for (const day of ['2026-08-17', '2026-08-18', '2026-08-19']) {
+      await saveDailyPick(db, 'S1', mutedDayKey(day), { v: day }, NOW)
+    }
+    await sweepDailyPicks(db, '2026-08-18')
+    expect(await getDailyPick(db, 'S1', mutedDayKey('2026-08-17'))).toBeNull()
+    expect(await getDailyPick(db, 'S1', mutedDayKey('2026-08-18'))).toEqual({ v: '2026-08-18' })
+    expect(await getDailyPick(db, 'S1', mutedDayKey('2026-08-19'))).toEqual({ v: '2026-08-19' })
   })
 
   test('подметание игр дня убирает прошлые дни и не трогает текущий', async () => {

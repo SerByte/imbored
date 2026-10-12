@@ -2416,19 +2416,33 @@ export async function saveDailyPick(
  * «Не сегодня» про героя. Исключение — бан и «надоела» про самого
  * вчерашнего героя: /api/feedback тогда зовёт сброс и для вчерашнего дня,
  * иначе /daily показывал бы скрытую игру строкой «Вчера была: …».
+ *
+ * Ключей бывает несколько: у суток, кроме общей записи, может быть выбранная
+ * под «Не предлагать» (mutedDayKey в lib/daily), и бан стирает обе разом —
+ * одним запросом, а не двумя.
  */
-export async function forgetDailyPick(db: Db, steamid: string, day: string): Promise<void> {
+export async function forgetDailyPick(
+  db: Db,
+  steamid: string,
+  days: string | readonly string[],
+): Promise<void> {
+  const keys = typeof days === 'string' ? [days] : days
+  if (!keys.length) return
   try {
     await db.execute({
-      sql: 'DELETE FROM daily_picks WHERE steamid = ? AND day = ?',
-      args: [steamid, day],
+      sql: `DELETE FROM daily_picks WHERE steamid = ? AND day IN (${keys.map(() => '?').join(', ')})`,
+      args: [steamid, ...keys],
     })
   } catch (e) {
     console.warn('daily pick не сброшен', e)
   }
 }
 
-/** Подметание вчерашних выборов. Зовётся из крона, никогда — из запроса */
+/**
+ * Подметание вчерашних выборов. Зовётся из крона, никогда — из запроса.
+ * Записи под «Не предлагать» («2026-09-23~mute», mutedDayKey в lib/daily)
+ * сравнение строк уносит вместе с их сутками, отдельного прохода не нужно.
+ */
 export async function sweepDailyPicks(db: Db, keepFromDay: string): Promise<void> {
   await db.execute({ sql: 'DELETE FROM daily_picks WHERE day < ?', args: [keepFromDay] })
 }

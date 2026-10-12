@@ -7,6 +7,7 @@ import { Ambient } from '@/components/Ambient'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Icon, type IconName } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
+import { MuteTags } from '@/components/MuteTags'
 import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { SoundToggle } from '@/components/SoundToggle'
 import { SpotlightCard } from '@/components/SpotlightCard'
@@ -642,6 +643,13 @@ function Quiz() {
             Назад
           </button>
         )}
+
+        {/* «Не предлагать» (components/MuteTags) — на каждом шаге, а не только
+            на первом с ярлыками: выдачу он режет любую, и кто дошёл до третьего
+            вопроса, не должен возвращаться к первому, чтобы убрать хорроры.
+            Последним — это не вопрос о вечере, и в порядке обхода он не стоит
+            между вопросом и ответами */}
+        <MuteTags />
       </div>
     </div>
   )

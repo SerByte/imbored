@@ -86,6 +86,12 @@ const FAIL: Record<string, { title: string; text: string }> = {
     title: 'Слишком часто',
     text: 'Игру дня запрашивали много раз подряд, и на это стоит потолок. Загляни через несколько минут — а пока можно подобрать игру под настроение.',
   },
+  // Выбрать было бы из чего, но всё — под «Не предлагать» (lib/mutetags.ts).
+  // Фильтр живёт на квизе, куда ведёт «Обычный подбор» под текстом
+  muted: {
+    title: 'Всё под «Не предлагать»',
+    text: 'Игра дня выбирается из того, что осталось после «Не предлагать», — а не осталось ничего. Фильтр меняется на экране настроения.',
+  },
 }
 
 /** Сеть, пятисотка, оборванный ответ. */
@@ -170,7 +176,10 @@ export default function DailyPage() {
   const [dateLabel, setDateLabel] = useState('')
   const [yesterday, setYesterday] = useState<DailyYesterday | null>(null)
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
-  /** Код отказа из тела ответа: nolibrary, nocandidates или null. */
+  /**
+   * Код отказа из тела ответа: nolibrary, nocandidates, muted (всё под «Не
+   * предлагать», lib/mutetags.ts) или null.
+   */
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')
@@ -468,10 +477,14 @@ export default function DailyPage() {
           .json()
           .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
           .catch(() => null)
+        // muted — другая была бы, но всё остальное под «Не предлагать»
+        // (lib/mutetags.ts): «обнови позже» тут не поможет, поможет фильтр
         setRerollMiss(
           code === 'nocandidates'
             ? 'Отложили. Другой игры на сегодня не нашлось — загляни завтра.'
-            : 'Отложили, но другую подобрать не вышло — обнови страницу чуть позже.',
+            : code === 'muted'
+              ? 'Отложили. Остальное на сегодня — под «Не предлагать»: фильтр меняется на экране настроения.'
+              : 'Отложили, но другую подобрать не вышло — обнови страницу чуть позже.',
         )
         return
       }

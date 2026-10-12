@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { logFeedback, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from '@/lib/db'
 import { EXPLORE_DECK } from '@/lib/explore'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { SESSION_COOKIE, nowSec } from '@/lib/server'
 import { setTestCookie } from '@/lib/testing/headers'
 import { freshDb, signIn, signInAs } from '@/lib/testing/route'
@@ -206,6 +207,66 @@ describe('/api/explore', () => {
     const shown = body.cards.map((c) => c.appid)
     expect(shown).not.toContain(20)
     expect(shown).not.toContain(10)
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts) — кукой браузера, тем же конвейером, что
+ * у /play: колода без того, что запрещено. Полка «Приглянулось» фильтром не
+ * режется — её он собрал сам, это не совет.
+ */
+describe('/api/explore: «Не предлагать»', () => {
+  /** Половина своего и каталога — аниме */
+  async function seedAnime(): Promise<number[]> {
+    await seed()
+    const anime = [...OWN.slice(0, 5), ...SHOP.slice(0, 5)]
+    await upsertGamesMeta(
+      db,
+      anime.map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Anime: 120, Puzzle: 100, Casual: 60 },
+        genres: [],
+        categories: [2],
+      })),
+      nowSec(),
+    )
+    return anime
+  }
+
+  test('колода без запрещённого, полка — как была', async () => {
+    await signIn(db, STEAMID, { verified: true })
+    const anime = await seedAnime()
+    await logFeedback(db, { steamid: STEAMID, appid: anime[5], action: 'opened', reason: 'explore' }, nowSec() - 60)
+    const plain = ((await (await get()).json()) as Body).cards.map((c) => c.appid)
+    // без куки аниме в колоде есть — значит, проверка ниже что-то проверяет
+    expect(plain.some((id) => anime.includes(id))).toBe(true)
+
+    setTestCookie(MUTE_COOKIE, 'anime')
+    const body = (await (await get()).json()) as Body
+    expect(body.cards.length).toBeGreaterThan(0)
+    for (const c of body.cards) expect(anime, `${c.appid}`).not.toContain(c.appid)
+    expect(body.liked.map((l) => l.appid)).toEqual([anime[5]])
+  })
+
+  test('всё под фильтром — 409 muted', async () => {
+    await signIn(db, STEAMID, { verified: true })
+    await seed()
+    setTestCookie(MUTE_COOKIE, 'anime')
+    await upsertGamesMeta(
+      db,
+      [1, ...OWN, ...SHOP].map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Anime: 120, Puzzle: 100 },
+        genres: [],
+        categories: [2],
+      })),
+      nowSec(),
+    )
+    const res = await get()
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'muted' })
   })
 })
 

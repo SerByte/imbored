@@ -47,6 +47,12 @@ const FAIL: Record<string, { title: string; text: string }> = {
     title: 'Слишком часто',
     text: 'Колода собирается из всей библиотеки, и на это стоит потолок. Вернись через несколько минут.',
   },
+  // Листать было бы что, но всё — под «Не предлагать» (lib/mutetags.ts).
+  // Фильтр живёт на квизе, куда ведёт «Подобрать под настроение» под текстом
+  muted: {
+    title: 'Всё под «Не предлагать»',
+    text: 'Всё, что легло бы в колоду, попало под «Не предлагать». Фильтр меняется на экране настроения.',
+  },
 }
 
 /**
@@ -90,7 +96,10 @@ function shelfOf(card: DeckCard): ShelfCard {
 export default function ExplorePage() {
   const router = useRouter()
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
-  /** Код отказа из тела ответа: nolibrary, nocandidates, ratelimited или null. */
+  /**
+   * Код отказа из тела ответа: nolibrary, nocandidates, muted (всё под «Не
+   * предлагать», lib/mutetags.ts), ratelimited или null.
+   */
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')

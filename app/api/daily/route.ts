@@ -6,7 +6,6 @@ import {
   dailyReasonBase,
   dayKey,
   dayStartSec,
-  parseDailySelection,
   pickDaily,
   pickDailyPool,
   pickOwnAlternate,
@@ -15,16 +14,18 @@ import {
   type DailyAlternate,
   type DailySelection,
 } from '@/lib/daily'
-import { getDailyPick, getGamesMeta, saveDailyPick } from '@/lib/db'
+import { dailyRecord } from '@/lib/dailyrecord'
+import { getGamesMeta, saveDailyPick } from '@/lib/db'
 import { refreshDealsWithin } from '@/lib/deals'
 import { dayLabel } from '@/lib/freshness'
 import { heuristicPicks, reasonPrice } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
-import { sharedTasteTags } from '@/lib/recommend'
+import type { MutePreset } from '@/lib/mutetags'
+import { mutedHit, sharedTasteTags } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
-import { currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
+import { currentMutes, currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import type { GameMeta, ScoredCandidate } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
@@ -44,8 +45,9 @@ const DISCOVERY_CARDS = 3
  *
  * А раз сессия по ссылке — свой счётчик, рядом стоит потолок адреса: без него
  * свежие сессии с одного адреса (/api/connect чеканит их до сорока восьми в
- * час) множили бы отборы. Но только отборы: запись дня одна на steamid и
- * общая для всех его сессий (daily_picks), а попадание в неё — два чтения по
+ * час) множили бы отборы. Но только отборы: запись дня — на steamid и
+ * общая для всех его сессий (daily_picks; выбранная под «Не предлагать» —
+ * тоже, см. mutedDayKey в lib/daily), а попадание в неё — пара чтений по
  * первичному ключу и цены — свежей сессией не размножить. Поэтому адрес
  * платит лишь за отбор, а заход в уже выбранную игру дня и ?cached=1 его
  * потолок не трогают. Иначе общий NAT — мобильный оператор, общежитие,
@@ -74,6 +76,7 @@ export async function GET(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
+  const mutes = await currentMutes()
 
   /*
    * Выбор дня — из записи, если она уже есть.
@@ -109,13 +112,25 @@ export async function GET(req: Request) {
   // вчерашнего (sweepDailyPicks), а сброс после бана, «надоела» и «Не
   // сегодня» стирает сегодняшнюю (forgetDailyPick). Вчерашнюю — только бан
   // и «надоела» про её же героя: ссылка на скрытую игру строкой не нужна.
-  const [rawStored, rawYesterday, early] = await Promise.all([
-    getDailyPick(db, steamid, dateStr),
-    getDailyPick(db, steamid, dayKey(now - 86_400)),
+  //
+  // «Не предлагать» (lib/mutetags.ts) — у браузера, а запись дня одна на
+  // профиль: её мог выбрать телефон без фильтра. Обе записи читает
+  // dailyRecord (lib/dailyrecord.ts): общая, если её герой не под фильтром
+  // этого браузера, иначе выбранная под фильтром рядом с ней, иначе — отбор
+  // заново, уже с фильтром. Он ляжет рядом, а общая останется как была:
+  // переписанная, она сменила бы игру телефону посреди дня. Платит такой
+  // отбор, как любой, — личным потолком и потолком адреса; ?cached=1 честно
+  // отвечает «не выбрано». Вчерашняя — так же: «Вчера была: …» и avoid
+  // берут ту из вчерашних, что годится его фильтру, — её он вчера и видел.
+  // Без фильтра — ровно прежние два чтения; с ним — по два на сутки и мета
+  // героев, всё по первичным ключам. Запасная своя и полка под фильтром
+  // отбора не стоят: их просто не показываем (shownShelf и shownAlt ниже).
+  const [today, { selection: yesterday }, early] = await Promise.all([
+    dailyRecord(db, steamid, dateStr, mutes),
+    dailyRecord(db, steamid, dayKey(now - 86_400), mutes),
     cachedOnly ? Promise.resolve(null) : personalGate(),
   ])
-  const stored = parseDailySelection(rawStored)
-  const yesterday = parseDailySelection(rawYesterday)
+  const stored = today.selection
 
   /*
    * ?cached=1 — «только если уже выбрано».
@@ -127,8 +142,9 @@ export async function GET(req: Request) {
    * спросит обычным запросом.
    *
    * Промах не тратит лимит частоты: он стоит двух чтений по первичному
-   * ключу (сегодня и вчера), а следующий за ним обычный запрос своё
-   * отметит. Иначе каждый первый заход дня списывал бы два обращения из десяти.
+   * ключу (сегодня и вчера; с «Не предлагать» — четырёх и меты героев), а
+   * следующий за ним обычный запрос своё отметит. Иначе каждый первый заход
+   * дня списывал бы два обращения из десяти.
    */
   if (!stored && cachedOnly) {
     return new NextResponse(null, { status: 204 })
@@ -155,10 +171,12 @@ export async function GET(req: Request) {
     if (!byIp.ok) return rateLimitedResponse(byIp.retryAfterSec)
   }
 
-  const selection = stored ?? (await selectDaily(db, steamid, dateStr, now, yesterday))
+  const selection = stored ?? (await selectDaily(db, steamid, dateStr, now, yesterday, mutes))
   if (selection === NO_LIBRARY) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
+  // Выбрать было бы из чего, но всё — под «Не предлагать» (FAIL.muted на /daily)
+  if (selection === ALL_MUTED) return NextResponse.json({ error: 'muted' }, { status: 409 })
   if (!selection) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
-  if (!stored) await saveDailyPick(db, steamid, dateStr, selection, now)
+  if (!stored) await saveDailyPick(db, steamid, today.key, selection, now)
 
   const { pick, shelf, hoursPlayed, sharedTags, via, hideUrgency, alt } = selection
   const reasonBase = dailyReasonBase(selection, writer)
@@ -174,6 +192,12 @@ export async function GET(req: Request) {
   await refreshDealsWithin(db, pricedIds, now)
   const priced = await getGamesMeta(db, pricedIds)
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid)
+
+  // Запись могла выбрать сессия без фильтра этого браузера (см. выше): полка
+  // и запасная своя под ним не показываются. Мета у них уже прочитана — цены
+  const shown = (appid: number) => !mutedHit(metaNow(appid), mutes)
+  const shownShelf = shelf.filter((c) => shown(c.appid))
+  const shownAlt = alt && shown(alt.pick.appid) ? alt : null
 
   const reason = reasonBase + reasonPrice(pick.source, metaNow(pick.appid), now, hideUrgency)
 
@@ -201,16 +225,16 @@ export async function GET(req: Request) {
         text: shareText(selection.reasonBase, ''),
       }),
     },
-    discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
+    discoveries: shownShelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
     // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
-    ownAlternate: alt
+    ownAlternate: shownAlt
       ? {
-          ...alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency, writer),
+          ...alternateView(shownAlt, metaNow(shownAlt.pick.appid), now, hideUrgency, writer),
           ...shareView(sessionSecret(), {
             steamid,
-            appid: alt.pick.appid,
-            source: alt.pick.source,
-            text: shareText(alt.reasonBase, ''),
+            appid: shownAlt.pick.appid,
+            source: shownAlt.pick.source,
+            text: shareText(shownAlt.reasonBase, ''),
           }),
         }
       : null,
@@ -242,6 +266,8 @@ function alternateView(
 
 /** Отличаем «библиотеки нет» от «кандидатов нет»: у них разные коды ответа */
 const NO_LIBRARY = Symbol('nolibrary')
+/** И «кандидаты были, но все под «Не предлагать»» — свой совет, свой код */
+const ALL_MUTED = Symbol('allmuted')
 
 /**
  * Собственно отбор — всё, что стоит дорого и на сутки не меняется.
@@ -256,7 +282,8 @@ async function selectDaily(
   dateStr: string,
   now: number,
   yesterday: DailySelection | null,
-): Promise<DailySelection | null | typeof NO_LIBRARY> {
+  mutes: readonly MutePreset[],
+): Promise<DailySelection | null | typeof NO_LIBRARY | typeof ALL_MUTED> {
   // Конвейер тот же, что у /play (lib/candidates.ts): настроения у страницы
   // нет, знакомого и оси тоже, а из пауз — только «надоела»: «не сейчас» на
   // /play посреди дня иначе сменило бы игру, выбранную на сутки. Сказанное
@@ -267,12 +294,18 @@ async function selectDaily(
   // сегодняшнюю: вчерашний герой сегодня героем не станет (avoid у
   // pickDaily). Записи нет или она не разобралась — выбор без исключения,
   // как раньше.
+  //
+  // mutes — «Не предлагать» браузера, который спросил (lib/mutetags.ts).
+  // Сид — по dateStr, а не по ключу записи: под фильтром отбор тот же, минус
+  // запретное, и куда он ляжет (dailyRecord), выбора не меняет
   const set = await buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
     nowSec: now,
     cooldownKinds: ['tired'],
     notnowSince: dayStartSec(now),
+    muted: mutes,
   })
   if (set === 'nolibrary') return NO_LIBRARY
+  if (set === 'allmuted') return ALL_MUTED
   if (set === 'nocandidates') return null
   const { own, discovery, profile, tagWeight, metaOf } = set
 

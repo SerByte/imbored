@@ -1,6 +1,6 @@
 import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
-import { dailyHeroAppids, dayKey, parseDailySelection } from '@/lib/daily'
+import { dailyHeroAppids, dayKey, mutedDayKey, parseDailySelection } from '@/lib/daily'
 import { forgetDailyPick, getDailyPick, logFeedback, recordOutcome } from '@/lib/db'
 import { parseFeedbackCtx } from '@/lib/feedbackctx'
 import { logSwallowed } from '@/lib/errlog'
@@ -122,24 +122,34 @@ export async function POST(req: Request) {
   // запись охраняла тоже — этим жертвуем: повтор своей лучше ссылки на
   // скрытую. Совпадение только с героем: запасная в строку не идёт (см.
   // yesterdayLine), и стирать ради неё незачем.
+  //
+  // У суток две записи — общая и выбранная под «Не предлагать» (mutedDayKey
+  // в lib/daily): бан стирает обе, а остальное — ту, чей герой совпал. Какой
+  // из них пользуется браузер, здесь не важно: сказанное про игру одной
+  // записи не должно менять игру дня тем, кто видит другую.
   const day = dayKey(now)
+  /** Ключи записей суток d, где эта игра — герой (с withAlt — или запасная своя) */
+  const heroOf = async (d: string, withAlt: boolean): Promise<string[]> => {
+    const keys = [d, mutedDayKey(d)]
+    const records = await Promise.all(keys.map((k) => getDailyPick(db, steamid, k)))
+    return keys.filter((_, i) => {
+      const sel = parseDailySelection(records[i])
+      return withAlt ? dailyHeroAppids(sel).includes(appid) : sel?.pick.appid === appid
+    })
+  }
   if (action === 'banned' || reason === 'tired') {
-    const yesterdayDay = dayKey(now - 86_400)
     const [, yesterday] = await Promise.all([
-      forgetDailyPick(db, steamid, day),
-      getDailyPick(db, steamid, yesterdayDay),
+      forgetDailyPick(db, steamid, [day, mutedDayKey(day)]),
+      heroOf(dayKey(now - 86_400), false),
     ])
-    if (parseDailySelection(yesterday)?.pick.appid === appid) {
-      await forgetDailyPick(db, steamid, yesterdayDay)
-    }
+    await forgetDailyPick(db, steamid, yesterday)
   }
   // «Не сегодня» — только если сказано про героя дня или запасную свою: тогда
   // отбор пересчитается без неё (notnowSince в /api/daily). Про любую другую
   // игру запись не трогаем — иначе «не сейчас» на /play перетасовывало бы
   // выбор, обещанный на сутки
   else if (reason === 'notnow') {
-    const today = parseDailySelection(await getDailyPick(db, steamid, day))
-    if (dailyHeroAppids(today).includes(appid)) await forgetDailyPick(db, steamid, day)
+    await forgetDailyPick(db, steamid, await heroOf(day, true))
   }
   // Модель портрета кэшируется по снапшоту, а бан снапшот не меняет: без
   // сброса «начни с этой» на портрете указывала бы на скрытую игру до

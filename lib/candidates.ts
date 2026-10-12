@@ -21,6 +21,7 @@ import {
   capSource,
   cooldownOf,
   mixHeroPool,
+  mutedTaste,
   scoreCandidates,
   seenTagsOf,
   splitBySource,
@@ -30,6 +31,7 @@ import {
   type NudgeTilt,
   type Scope,
 } from './recommend'
+import type { MutePreset } from './mutetags'
 import { tagStatsFor } from './tagstats'
 import { tagWeightFrom, type TagWeight } from './tagweight'
 import type { GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
@@ -112,6 +114,12 @@ export type CandidateOpts = {
   notnowSince?: number
   /** Без настроения — колода исследователя (scoreCandidates, moodless) */
   moodless?: boolean
+  /**
+   * «Не предлагать» этого браузера (lib/mutetags.ts): отсев внутри скоринга,
+   * как у банов, — и для своего, и для каталога, и для соседей затравки.
+   * Маршрут берёт его из куки (currentMutes в lib/server).
+   */
+  muted?: readonly MutePreset[]
 }
 
 /**
@@ -129,6 +137,7 @@ export type CandidateSet = {
   feedback: FeedbackRow[]
   banned: Set<number>
   cooldown: Map<number, Cooldown>
+  /** Профиль вкуса — без тегов «Не предлагать» (mutedTaste в lib/recommend) */
   profile: Record<string, number>
   tagWeight: TagWeight | null
   /**
@@ -151,7 +160,13 @@ export type CandidateSet = {
   heroPool: ScoredCandidate[]
 }
 
-export type CandidateMiss = 'nolibrary' | 'nocandidates'
+/**
+ * Отказы конвейера. allmuted — кандидатов нет ИЗ-ЗА «Не предлагать»: без
+ * фильтра они бы были. Отдельным кодом, потому что совет у него свой — снять
+ * часть фильтра, а не «верни что-нибудь из бана»: кто запретил хорроры и
+ * пришёл за «похожими на Phasmophobia», бана не ставил.
+ */
+export type CandidateMiss = 'nolibrary' | 'nocandidates' | 'allmuted'
 
 export async function buildCandidates(
   db: Db,
@@ -233,11 +248,14 @@ export async function buildCandidates(
   const metaOf = (appid: number): GameMeta | undefined =>
     libMetas.get(appid) ?? poolByAppid.get(appid)
 
-  // профиль вкуса с поправкой на историю «зашло»/«не то»
-  const profile = applyFeedbackToProfile(
-    buildTagProfile(games, (id) => libMetas.get(id)),
-    feedback,
-    metaOf,
+  // профиль вкуса с поправкой на историю «зашло»/«не то» — и без тегов «Не
+  // предлагать»: иначе пул каталога спрашивался бы по запретным тегам, а
+  // скоринг тянул бы к играм, где они стоят в хвосте (mutedTaste). Этот же
+  // профиль уходит маршрутам — причинам выдачи и промпту модели
+  const muted = opts.muted ?? []
+  const profile = mutedTaste(
+    applyFeedbackToProfile(buildTagProfile(games, (id) => libMetas.get(id)), feedback, metaOf),
+    muted,
   )
 
   // Вес редкости тегов: объяснение называет характерное («Automation»), а не
@@ -309,7 +327,7 @@ export async function buildCandidates(
     seenTags: reroll ? seenTagsOf(shownMetas.values()) : null,
   }
 
-  const candidates = scoreCandidates({
+  const scoring: Parameters<typeof scoreCandidates>[0] = {
     profile,
     // При затравке — только свои игры из её соседей; профиль вкуса, якоря и
     // «Продолжить» по-прежнему считаются по всей библиотеке
@@ -339,8 +357,17 @@ export async function buildCandidates(
     // Фокус — до среза: иначе нетронутые, далёкие от вкуса, срезались ещё до
     // applyFocus ниже, и его пол отдавал наигранное (см. focusFirst)
     focus: opts.focus ?? null,
-  })
-  if (!candidates.length) return 'nocandidates'
+  }
+  const candidates = scoreCandidates({ ...scoring, muted })
+  if (!candidates.length) {
+    /*
+     * Пусто — из-за фильтра «Не предлагать» или само по себе? Ответ решает
+     * совет на экране, а спросить проще всего у того же скоринга без фильтра:
+     * чистый расчёт по уже прочитанному, без единого запроса к базе, и только
+     * на отказе у того, кто фильтр поставил.
+     */
+    return muted.length && scoreCandidates(scoring).length ? 'allmuted' : 'nocandidates'
+  }
 
   // Игры из библиотеки не проходят офлайн-фильтры каталога — считаем здесь.
   // «С друзьями» судим строже: в компанию не годится то, во что вместе не сесть.
