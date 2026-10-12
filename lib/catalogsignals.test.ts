@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
   CCU_FRESH_SEC,
+  fetchStoreReviews,
   parseStoreReviews,
   refreshCatalogSignals,
   SIGNALS_MAX_AGE_SEC,
@@ -74,6 +75,36 @@ describe('parseStoreReviews', () => {
     expect(parseStoreReviews(null).size).toBe(0)
     expect(parseStoreReviews({ response: {} }).size).toBe(0)
     expect(parseStoreReviews({ response: { store_items: [{ reviews: {} }] } }).size).toBe(0)
+  })
+})
+
+/**
+ * Разбор прощает мусор, а запрос — нет: 200 с пустым response и кодом сбоя в
+ * X-eresult (см. fetchWishlist в lib/steam.ts) прочитался бы как «Steam
+ * промолчал про всех», и пачка получила бы отметку сверки без чисел — на
+ * неделю мимо очереди. Исключение же сверка уже умеет: blocked, без отметок.
+ */
+describe('fetchStoreReviews', () => {
+  test('200 с пустым response и X-eresult — исключение', async () => {
+    const fail = (async () =>
+      new Response(JSON.stringify({ response: {} }), { status: 200, headers: { 'x-eresult': '2' } })) as unknown as typeof fetch
+    await expect(fetchStoreReviews([730], fail)).rejects.toThrow('eresult 2')
+  })
+
+  test('без заголовка, но и без store_items — тоже исключение', async () => {
+    const empty = (async () => new Response(JSON.stringify({ response: {} }), { status: 200 })) as unknown as typeof fetch
+    await expect(fetchStoreReviews([730], empty)).rejects.toThrow('store_items')
+  })
+
+  test('пустой список на непустой запрос — исключение: настоящий ответ называет каждый appid', async () => {
+    const none = (async () =>
+      new Response(JSON.stringify({ response: { store_items: [] } }), { status: 200 })) as unknown as typeof fetch
+    await expect(fetchStoreReviews([730, 570], none)).rejects.toThrow('store_items')
+  })
+
+  test('настоящий ответ разбирается как прежде', async () => {
+    const live = (async () => new Response(JSON.stringify(LIVE), { status: 200, headers: { 'x-eresult': '1' } })) as unknown as typeof fetch
+    expect((await fetchStoreReviews([730], live)).get(730)).toEqual({ total: 2620088, percent: 85 })
   })
 })
 

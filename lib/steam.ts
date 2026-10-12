@@ -22,10 +22,40 @@ function transientStatus(status: number): boolean {
   return status >= 500 || status === 429
 }
 
-/** Таймаут (наш AbortSignal.timeout) или обрыв — тоже из тех, что проходят сами. */
+/**
+ * Коды сети, с которыми fetch из Node (undici) рвёт запрос и которые проходят
+ * сами: сброс и обрыв сокета, разовый сбой DNS, таймаут соединения.
+ * ENOTFOUND сюда не входит намеренно: «нет такого хоста» за секунду паузы не
+ * появится, и повтор был бы просто ожиданием.
+ */
+const NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+])
+
+/**
+ * Таймаут или обрыв — тоже из тех, что проходят сами.
+ *
+ * Таймаут — наш AbortSignal.timeout, он бросает TimeoutError. Обрыв у undici
+ * выглядит иначе: TypeError('fetch failed'), а у недочитанного тела —
+ * TypeError('terminated'), и что случилось, говорит только cause.code. Раньше
+ * здесь проверялось одно имя, и обрыв не повторялся вовсе, хотя повтор ради
+ * него и писался. TypeError без такого кода (кривой адрес, ошибка в нашем
+ * коде) — не сбой Steam: повтор вернул бы то же.
+ */
 function transientError(err: unknown): boolean {
   const name = (err as { name?: unknown } | null)?.name
-  return name === 'TimeoutError' || name === 'AbortError'
+  if (name === 'TimeoutError' || name === 'AbortError') return true
+  const code = (err as { cause?: { code?: unknown } | null } | null)?.cause?.code
+  return err instanceof TypeError && typeof code === 'string' && NETWORK_CODES.has(code)
 }
 
 async function steamApiGet(
@@ -59,7 +89,20 @@ async function steamApiGet(
       }
       throw err
     }
-    if (res.ok) return res.json()
+    if (res.ok) {
+      // Тело читается тут же и тоже под повтором: обрыв на середине ответа —
+      // тот же обрыв, что и до заголовков. Битый JSON (страница-заглушка с
+      // кодом 200) повтором не лечится и уходит наверх как был
+      try {
+        return await res.json()
+      } catch (err) {
+        if (retry && transientError(err)) {
+          await pause(opts.retryDelayMs ?? 1000)
+          continue
+        }
+        throw err
+      }
+    }
     if (retry && transientStatus(res.status)) {
       // Непрочитанное тело держит соединение до сборки мусора
       await res.body?.cancel().catch(() => {})

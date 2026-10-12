@@ -78,6 +78,27 @@ describe('verifyAssertion', () => {
     expect(await verifyAssertion(assertion(), EXPECTED, fn, NOW)).toBeNull()
   })
 
+  /*
+   * Отказ Steam — это 200 с is_valid:false. 503 на техработах по вторникам,
+   * 502 от края, 429 — не отказ, а «Steam сейчас не отвечает»: бросок, и
+   * маршрут скажет человеку подождать, а не «Steam не подтвердил вход» —
+   * после которого тот сразу повторяет вход в тот же сбой.
+   */
+  test.each([503, 502, 429])('HTTP %i — бросок «не достучались», а не отказ', async (status) => {
+    const fn = (async () => new Response('Service Unavailable', { status })) as typeof fetch
+    await expect(verifyAssertion(assertion(), EXPECTED, fn, NOW)).rejects.toThrow(`HTTP ${status}`)
+  })
+
+  test('прочий 4xx — по-прежнему отказ', async () => {
+    const fn = (async () => new Response('Forbidden', { status: 403 })) as typeof fetch
+    expect(await verifyAssertion(assertion(), EXPECTED, fn, NOW)).toBeNull()
+  })
+
+  test('200 без is_valid вовсе (страница-заглушка) — бросок: вердикта Steam не дал', async () => {
+    const fn = (async () => new Response('<html><body>Steam is down for maintenance</body></html>')) as typeof fetch
+    await expect(verifyAssertion(assertion(), EXPECTED, fn, NOW)).rejects.toThrow('is_valid')
+  })
+
   test('дубль claimed_id отклоняется, даже если Steam говорит is_valid:true', async () => {
     // Мы читаем первое значение, а Steam может подтвердить второе. Тогда чужой
     // подписанный ассерт удостоверил бы steamid жертвы.
