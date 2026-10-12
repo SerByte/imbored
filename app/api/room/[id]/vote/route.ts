@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
-import { castDeckVote, findRoomMatch, getRoom, roomMembers, setRoomMatched } from '@/lib/db'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { castDeckVote, findRoomMatch, getRoom, raiseRoomSeat, roomMembers, setRoomMatched } from '@/lib/db'
+import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
+import { forgetRoomCard } from '@/lib/roomcard'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf, seatRefusal, seatToRaise } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -18,14 +20,20 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  const writer = isWriter(session)
 
   const db = await getDb()
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Голосует участник — и только тот, от чьего имени сессия вправе действовать
+  // (lib/roomseat): чужая ссылка на профиль вошедшего через Steam за него не
+  // голосует, ни добирая единогласие до матча, ни «нет» на чужую любимую игру
+  const seat = seatOf(members, steamid, writer)
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
@@ -41,15 +49,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     )
   }
 
-  if (!members.some((m) => m.steamid === steamid)) {
-    return NextResponse.json({ error: 'notmember' }, { status: 403 })
-  }
+  const refusal = seatRefusal(seat)
+  if (refusal) return refusal
 
   // Свайп — самая частая запись в приложении. Сто двадцать в минуту это
-  // вдвое быстрее самого быстрого живого свайпа.
+  // вдвое быстрее самого быстрого живого свайпа. Счёт — по сессии, а не по
+  // профилю: почему и почему без потолка адреса — lib/roomseat
   const gate = await checkRate(db, {
     bucket: 'room-vote',
-    id: steamid,
+    id: personalRateId(session, writer),
     limit: 120,
     windowSec: 60,
     nowSec: nowSec(),
@@ -65,6 +73,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   ) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }
+
+  // Обычно членство поднимает колода (deck/route.ts). Но вошедший по ссылке
+  // мог войти через Steam в соседней вкладке и свайпать дальше уже
+  // разданную: кука общая, колоду никто не перечитал. Тогда — здесь, однажды
+  // (lib/roomseat)
+  if (seatToRaise(members, steamid, writer)) await raiseRoomSeat(db, id, steamid)
 
   // Голос — только за карту, которую комнате раздали. Лимит выше держит
   // скорость, а не объём: без этой проверки участник публичной комнаты
@@ -89,6 +103,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   let matched: number | null = null
   const candidate = await findRoomMatch(db, id)
   if (candidate !== null) matched = await setRoomMatched(db, id, candidate)
+  // Комната сошлась — билет-приглашение в кэше карточки устарел (lib/roomcard)
+  if (matched !== null) forgetRoomCard(id)
 
   return NextResponse.json({ matched })
 }

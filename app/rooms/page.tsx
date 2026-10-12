@@ -15,6 +15,7 @@ import { StatusLine } from '@/components/StatusLine'
 import { SectionLabel } from '@/components/Labels'
 import {
   afterBoardAnswer,
+  BOARD_TIMEOUT_MS,
   boardDelayMs,
   boardKey,
   boardStale,
@@ -60,7 +61,17 @@ const ROOMS_ART: readonly FanGame[] = [
   { appid: 892970, name: 'Valheim' },
 ]
 
-type Listing = { id: string; memberNames: string[]; minutesAgo: number }
+/**
+ * preset — на какой вечер зовут (/api/rooms/public). null — у комнаты нет
+ * пресета; у ответа старого сервера посреди выкладки поля нет вовсе, и
+ * строка просто без него.
+ */
+type Listing = {
+  id: string
+  memberNames: string[]
+  minutesAgo: number
+  preset?: { label: string; emoji: string } | null
+}
 
 type Board = { rooms: Listing[]; fresh: Set<string> }
 
@@ -126,6 +137,10 @@ export default function RoomsBoardPage() {
 
       const ac = new AbortController()
       inFlight = ac
+      // Потолок на тот же контроллер, что гасит уход со страницы: без него
+      // повисший запрос держал inFlight, и тик выше только перевзводился, не
+      // считая отказа (BOARD_TIMEOUT_MS в lib/boardpoll).
+      const cap = window.setTimeout(() => ac.abort(), BOARD_TIMEOUT_MS)
       try {
         const res = await fetch('/api/rooms/public', { signal: ac.signal })
         if (!res.ok) throw new Error(String(res.status))
@@ -142,10 +157,12 @@ export default function RoomsBoardPage() {
         // Раньше здесь был ранний return без try: любой сетевой сбой отклонял
         // промис внутри void load(), board навсегда оставался null, и человек
         // смотрел на спиннер до перезагрузки страницы. Отменённый при уходе
-        // со страницы запрос попадает сюда же и молча выходит по stopped.
+        // со страницы запрос попадает сюда же и молча выходит по stopped, а
+        // отменённый истёкшим потолком — считается отказом, как обрыв.
         if (stopped) return
         poll = afterBoardAnswer(poll, { ok: false })
       } finally {
+        window.clearTimeout(cap)
         if (inFlight === ac) inFlight = null
       }
       setFails(poll.fails)
@@ -254,10 +271,14 @@ export default function RoomsBoardPage() {
             <span aria-hidden className="grid size-12 place-items-center rounded-full bg-ink/10">
               <Icon name="users" size={22} />
             </span>
-            {/* Совет «создай свою» тому, кто создать не может, — тупик */}
+            {/* Совет «создай свою» тому, кто создать не может, — тупик.
+                Действие названо словами, а не подписью кнопки: в комнате она
+                «На доску» на телефоне, «Показать на доске» с md и «Пустить
+                чужих» на плитке AloneInvite, — цитата любой из них врёт
+                на двух других экранах. */}
             {readOnly
               ? 'Сейчас открытых комнат нет — загляни чуть позже.'
-              : 'Сейчас открытых комнат нет. Создай свою и нажми «Показать на доске» — сюда придут.'}
+              : 'Сейчас открытых комнат нет. Создай свою и выставь её на доску — сюда придут.'}
           </div>
         ) : (
           // layout — фича domMax, её догружает MotionMax
@@ -288,7 +309,16 @@ export default function RoomsBoardPage() {
                         Пустой состав называем словами: это ответ на вопрос «к
                         кому я подсяду».
                       */}
+                      {/* Вечер первым: «подсесть ли мне сюда» решает то,
+                          на что зовут, раньше, чем то, кто там сидит.
+                          Эмодзи скринридеру не читаем — название и так
+                          говорит то же */}
                       <div className="text-sm text-dim mt-0.5">
+                        {r.preset && (
+                          <>
+                            <span aria-hidden>{r.preset.emoji}</span> {r.preset.label} ·{' '}
+                          </>
+                        )}
                         {r.memberNames.length ? `${r.memberNames.join(', ')} · ` : 'пока никого · '}
                         {minutesAgoLabel(r.minutesAgo)}
                       </div>

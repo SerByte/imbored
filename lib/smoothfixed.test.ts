@@ -45,6 +45,10 @@ const OUTSIDE: Array<{ file: string; why: string }> = [
     file: 'components/ShareLink.tsx',
     why: 'поле-однодневка для копирования создаётся руками и добавляется прямо в document.body',
   },
+  {
+    file: 'components/SearchLauncher.tsx',
+    why: 'подставка клавиатуры (holdKeyboard) — то же поле-однодневка: создаётся руками прямо в document.body',
+  },
 ]
 
 /** Признак фиксированного слоя: утилита `fixed`, в том числе с вариантом. */
@@ -175,5 +179,34 @@ describe('фиксированные слои под плавной прокру
       zOf('#smooth-content'),
       'z-index на #smooth-content бесполезен: он заперт внутри контекста наложения обёртки. Поднимать надо обёртку',
     ).toBeNull()
+  })
+
+  /**
+   * Горизонтальный обрез стоит ВНУТРИ документа, а не на <body>.
+   *
+   * overflow-x-hidden у <body> не обрезает ничего: при видимом overflow у
+   * <html> значение body уходит на вьюпорт, а мобильный Chromium растягивает
+   * layout viewport до ширины содержимого, что бы на вьюпорте ни стояло.
+   * Замер на главной под «уменьшить движение», 390×844: световые слои сцен
+   * с отрицательными inset дали документу 552 px, innerWidth стал 552, а
+   * шапка и нижняя панель — fixed — легли по этой ширине: переключатель темы
+   * на x = 492, панель на y = 1145, оба за краем экрана. Подмена на
+   * body { overflow-x: clip } не меняет ничего — замерено тем же прогоном.
+   *
+   * clip, а не hidden: hidden делает элемент контейнером прокрутки и гасит
+   * position: sticky у всего внутри (фильтры /library).
+   */
+  test('горизонтальный выход обрезан на #smooth-content, а не только на <body>', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+    const at = css.indexOf('#smooth-content {')
+    expect(at, 'правила #smooth-content в globals.css нет').toBeGreaterThan(-1)
+    const block = css.slice(at, css.indexOf('}', at))
+    expect(
+      block,
+      'без обреза декоративный свет сцен расширяет страницу на телефоне, и шапка с нижней панелью уезжают за экран',
+    ).toMatch(/overflow-x:\s*clip\s*;/)
+    expect(block, 'hidden сделает обёртку контейнером прокрутки и убьёт sticky').not.toMatch(
+      /overflow(?:-x)?:\s*hidden/,
+    )
   })
 })

@@ -18,14 +18,17 @@ import { StatusLine } from '@/components/StatusLine'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PrivacyHelp } from '@/components/PrivacyHelp'
-import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { DiscountCorner, DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SeasonalSnow } from '@/components/SeasonalSnow'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
+import { TonightButton, useWarmTonight } from '@/components/TonightLazy'
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
+import type { DailyYesterday } from '@/lib/daily'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
+import { closesPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import {
@@ -36,10 +39,12 @@ import {
   rememberLaunch,
   subscribeDueLaunch,
 } from '@/lib/launchmemo'
+import { forgetPlanned } from '@/lib/planforget'
 import { SOURCE_BADGE, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { sendLike, undoLike } from '@/lib/unlike'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { SectionLabel } from '@/components/Labels'
 import { TagChips } from '@/components/TagChips'
@@ -68,6 +73,24 @@ const FAIL: Record<string, { title: string; text: string }> = {
   nocandidates: {
     title: 'Выбирать не из чего',
     text: 'В библиотеке не осталось игр, из которых можно собрать игру дня: возможно, всё подходящее уехало в бан.',
+  },
+  /*
+   * Потолки частоты /api/daily: десять запросов в час на человека и тридцать
+   * отборов в час на адрес — заход в уже выбранную игру дня адрес не тратит
+   * (DAILY_IP_LIMIT в app/api/daily/route.ts). Без этой строки 429 уходил в
+   * FAIL_UNKNOWN и страница говорила «что-то сломалось по дороге» — неправда:
+   * не сломалось ничего, и через несколько минут всё заработает. /play и
+   * /explore этот случай уже различали, здесь его просто не было.
+   */
+  ratelimited: {
+    title: 'Слишком часто',
+    text: 'Игру дня запрашивали много раз подряд, и на это стоит потолок. Загляни через несколько минут — а пока можно подобрать игру под настроение.',
+  },
+  // Выбрать было бы из чего, но всё — под «Не предлагать» (lib/mutetags.ts).
+  // Фильтр живёт на квизе, куда ведёт «Обычный подбор» под текстом
+  muted: {
+    title: 'Всё под «Не предлагать»',
+    text: 'Игра дня выбирается из того, что осталось после «Не предлагать», — а не осталось ничего. Фильтр меняется на экране настроения.',
   },
 }
 
@@ -109,6 +132,8 @@ type DailyResponse = {
   /** Своя на магазинный день — «Сегодня хочу из своего»; null — не магазинный */
   ownAlternate?: DailyHero | null
   dateLabel: string
+  /** «Вчера была: …» — вчерашняя игра дня (lib/daily yesterdayLine); null — строки нет */
+  yesterday?: DailyYesterday | null
   nowSec: number
 }
 
@@ -116,6 +141,11 @@ type DailyResponse = {
  * Отзыв об игре дня. Тот же роут и та же дисциплина, что у sendFeedback на
  * /play: промис не отклоняется, needsteam переводит страницу в режим чтения —
  * «Зашло» и «Не сегодня» прячутся, и на их месте строка о входе через Steam.
+ *
+ * Запуск и «Не сегодня» закрывают план на вечер (closesPlan) — и тот, что
+ * поставлен на /play: игра дня бывает своей, отложенной там минуту назад.
+ * Выдача /play на устройстве её тогда больше не держит отложенной
+ * (lib/planforget): «не то» у неё там снова спросят.
  */
 async function sendFeedback(
   appid: number,
@@ -131,6 +161,7 @@ async function sendFeedback(
       body: JSON.stringify({ appid, action, ...(reason ? { reason } : {}), ctx }),
     })
     if (await isNeedSteam(r)) writerStore.set(false)
+    else if (r.ok && closesPlan(action, reason, ctx.intent)) forgetPlanned(appid)
     return r.ok
   } catch {
     return false
@@ -143,8 +174,12 @@ export default function DailyPage() {
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
   const [nowSec, setNowSec] = useState(0)
   const [dateLabel, setDateLabel] = useState('')
+  const [yesterday, setYesterday] = useState<DailyYesterday | null>(null)
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
-  /** Код отказа из тела ответа: nolibrary, nocandidates или null. */
+  /**
+   * Код отказа из тела ответа: nolibrary, nocandidates, muted (всё под «Не
+   * предлагать», lib/mutetags.ts) или null.
+   */
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')
@@ -154,7 +189,10 @@ export default function DailyPage() {
   const [liked, setLiked] = useState<Set<number>>(new Set())
   /** «Не сегодня» ушло, и страница ждёт другую игру */
   const [rerolling, setRerolling] = useState(false)
-  /** Почему другую подобрать не вышло — строкой под кнопками; null — нечего сказать */
+  /**
+   * Почему не вышло действие у героя — строкой под кнопками: «Не сегодня» не
+   * подобрало другую или «Зашло» не снялось (lib/unlike). null — нечего сказать
+   */
   const [rerollMiss, setRerollMiss] = useState<string | null>(null)
   /** Что сказать скринридеру о смене героя — живая строка стоит с первого кадра */
   const [said, setSaid] = useState('')
@@ -189,6 +227,8 @@ export default function DailyPage() {
     useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server) === false
   /** Демо-личность: над героем полоса «это чужая демо-библиотека» (DemoBar) */
   const demo = useDemoSession()
+  // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
+  useWarmTonight()
   /**
    * Запуск с этой вкладки, про который пора спросить «не зацепило?» (см.
    * lib/launchmemo.ts) — тот же снимок, что на /play. Про какую игру
@@ -206,6 +246,7 @@ export default function DailyPage() {
     setAlternate(data.ownAlternate ?? null)
     setOwnDay(false)
     setDateLabel(data.dateLabel)
+    setYesterday(data.yesterday ?? null)
     setPhase('ok')
   }
 
@@ -234,8 +275,12 @@ export default function DailyPage() {
           .catch(() => null)
         // Сессия отвалилась: человеку нужен вход, а не объяснение. Если
         // человек уже ушёл сам, уводить его с новой страницы нельзя.
+        // replace, а не push: запись /daily без сессии мертва, и «Назад» с
+        // лендинга открывал её снова — 401 — и снова уводил на лендинг. Гость,
+        // зашедший сюда из сцены «Игра дня» или навигации, не мог уйти
+        // «Назад» дальше /daily (так же было у /play и /explore)
         if (res.status === 401) {
-          if (!signal.aborted) router.push(bounceTo('/daily'))
+          if (!signal.aborted) router.replace(bounceTo('/daily'))
           return
         }
         setReason(code)
@@ -288,7 +333,8 @@ export default function DailyPage() {
       })
       if (warm === 'aborted') return
       if (warm === 'unauthorized') {
-        router.push(bounceTo('/daily'))
+        // replace — по той же причине, что в show
+        router.replace(bounceTo('/daily'))
         return
       }
       if (warm === 'error') {
@@ -310,51 +356,81 @@ export default function DailyPage() {
   // «Отправить другу» — хук, поэтому до ранних возвратов; герой тот же, что ниже
   const sharePick = useSharePick(ownDay && alternate ? alternate : pick, 'daily')
 
+  const failed = phase === 'error' || (phase === 'ok' && !pick)
+  const fail = FAIL[reason ?? ''] ?? FAIL_UNKNOWN
+  /*
+   * Одна живая строка на всю страницу.
+   *
+   * Отказ здесь — не строка у кнопки, а целый экран вместо экрана прогрева, и
+   * WarmupScreen уносит с собой единственную говорившую область — свою строку
+   * прогресса. «Библиотека не доехала» или «Слишком часто» появлялись в
+   * тишине: человек со скринридером слышал прогрев, а потом ничего, и об отказе
+   * узнавал, только обойдя страницу. Область, рождённая вместе с экраном
+   * отказа, звучит не везде (components/StatusLine), поэтому у прогрева и
+   * отказа она стоит первым ребёнком фрагмента: React сверяет её по месту как
+   * один узел, и смена экрана меняет в ней только текст.
+   *
+   * У героя она в его разметке, на месте прежней строки said (смена героя по
+   * «Не сегодня» и «Сегодня хочу из своего»): к герою приходят только с
+   * прогрева, и там строка рождается пустой — раньше своего текста. Сторож —
+   * lib/liveregion.test.ts.
+   */
+  const status = (
+    <StatusLine text={failed ? `${fail.title}. ${fail.text}` : said} className="sr-only" />
+  )
+
   if (phase === 'loading') {
-    return <WarmupScreen progress={prep} message={message} />
+    return (
+      <>
+        {status}
+        <WarmupScreen progress={prep} message={message} />
+      </>
+    )
   }
 
-  if (phase === 'error' || !pick) {
-    const fail = FAIL[reason ?? ''] ?? FAIL_UNKNOWN
+  if (failed || !pick) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
-        <p className="text-lg">{fail.title}</p>
-        <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
+      <>
+        {status}
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
+          <p className="text-lg">{fail.title}</p>
+          <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
 
-        {/* Шаги про настройки Steam — только там, где библиотека и правда не
-            доехала. Панель общая с карточкой подключения, пустой библиотекой и
-            отказом подбора: четыре копии инструкции по чужому интерфейсу
-            разъехались бы на первой же правке. */}
-        {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
-        {reason === 'nolibrary' && (
-          <div className="max-w-md text-left">
-            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/daily')} />
-          </div>
-        )}
+          {/* Шаги про настройки Steam — только там, где библиотека и правда не
+              доехала. Панель общая с карточкой подключения, пустой библиотекой и
+              отказом подбора: четыре копии инструкции по чужому интерфейсу
+              разъехались бы на первой же правке. */}
+          {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
+          {reason === 'nolibrary' && (
+            <div className="max-w-md text-left">
+              <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/daily')} />
+            </div>
+          )}
 
-        {/* Кандидатов нет — вернуть игры из бана можно только в библиотеке. */}
-        {reason === 'nocandidates' && (
-          <Link href="/library" className="tap link-more">
-            Посмотреть библиотеку
-            <Icon name="arrow" size={16} />
-          </Link>
-        )}
+          {/* Кандидатов нет — вернуть игры из бана можно только в библиотеке. */}
+          {reason === 'nocandidates' && (
+            <Link href="/library" className="tap link-more">
+              Посмотреть библиотеку
+              <Icon name="arrow" size={16} />
+            </Link>
+          )}
 
-        {/* Обычный подбор предлагается везде, КРОМЕ случая без библиотеки: там
-            он упрётся ровно в ту же причину, и совет был бы тупиком. */}
-        {reason !== 'nolibrary' && (
-          <Link href="/quiz" className="tap link-more">
-            Обычный подбор
-            <Icon name="arrow" size={16} />
-          </Link>
-        )}
+          {/* Обычный подбор предлагается везде, КРОМЕ случая без библиотеки: там
+              он упрётся ровно в ту же причину, и совет был бы тупиком. */}
+          {reason !== 'nolibrary' && (
+            <Link href="/quiz" className="tap link-more">
+              Обычный подбор
+              <Icon name="arrow" size={16} />
+            </Link>
+          )}
 
-        {reason === 'nolibrary' && (
-          <Link href={reconnectHref()} className="btn-ember px-6 py-3">
-            Подключить заново
-          </Link>
-        )}
-      </div>
+          {reason === 'nolibrary' && (
+            <Link href={reconnectHref()} className="btn-ember px-6 py-3">
+              Подключить заново
+            </Link>
+          )}
+        </div>
+      </>
     )
   }
 
@@ -401,10 +477,14 @@ export default function DailyPage() {
           .json()
           .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
           .catch(() => null)
+        // muted — другая была бы, но всё остальное под «Не предлагать»
+        // (lib/mutetags.ts): «обнови позже» тут не поможет, поможет фильтр
         setRerollMiss(
           code === 'nocandidates'
             ? 'Отложили. Другой игры на сегодня не нашлось — загляни завтра.'
-            : 'Отложили, но другую подобрать не вышло — обнови страницу чуть позже.',
+            : code === 'muted'
+              ? 'Отложили. Остальное на сегодня — под «Не предлагать»: фильтр меняется на экране настроения.'
+              : 'Отложили, но другую подобрать не вышло — обнови страницу чуть позже.',
         )
         return
       }
@@ -425,10 +505,12 @@ export default function DailyPage() {
   const like = (intent?: CtxIntent) => {
     // «Зашло» после запуска — уже ответ на «не зацепило?», даже повторное
     forgetLaunch(hero.appid)
-    // Повторное нажатие — не второе «зашло»: кнопка уже горит
+    // «Зацепило» при горящем сердце — не второе «зашло». Снимает его только
+    // само сердце (onClick ниже), а не ответ на вопрос
     if (liked.has(hero.appid)) return
     setLiked(new Set(liked).add(hero.appid))
-    void sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero, intent))
+    // В очереди записей игры (lib/unlike): снятие не обгонит вставку и снимет лишь её строку
+    void sendLike('daily', hero.appid, { ctx: ctxOf(hero, intent) })
   }
 
   /*
@@ -465,10 +547,13 @@ export default function DailyPage() {
       {/* «Как тебе?» после сыгранного по прошлому совету (lib/outcome.ts) —
           раз в сутки, общий порог с /play, и только когда «Не зацепило?»
           молчит: два вопроса разом — анкета */}
-      <OutcomeAsk paused={!!stopDue} />
-      <p role="status" className="sr-only">
-        {said}
-      </p>
+      {/* Ответ уносит плашку вместе с нажатой кнопкой — фокус берёт герой,
+          как после «Не зацепило?» (герой от ответа не меняется) */}
+      <OutcomeAsk paused={!!stopDue} onDone={focusHero} />
+      {/* Та же строка, что на прогреве и отказе (status выше): здесь в ней
+          смена героя. Узел другой — до героя страница доходит только с
+          прогрева, и строка рождается пустой, раньше своего текста */}
+      {status}
       {/* key — герой сменился («Не сегодня», «Сегодня хочу из своего»):
           кадры и заголовок начинаются заново, а не доигрывают прошлую игру */}
       <section
@@ -506,7 +591,8 @@ export default function DailyPage() {
           {/* max-w-xl — край, по которому .hero-scrim держит контраст */}
           <div className="max-w-xl flex flex-col gap-4">
             {/*
-              На телефоне здесь остаётся только дата.
+              На телефоне здесь остаются дата, магазин и русский — поведенческие
+              подписи прячутся.
 
               Три плашки делили 375 пикселей натрое, и подпись не влезала ни в
               одну: «ИГРА ДНЯ · 15 / АВГУСТА», «Открыл и / закрыл», «1 ч /
@@ -521,6 +607,8 @@ export default function DailyPage() {
 
               Магазин — исключение и остаётся: он в том же слоте, но нигде больше
               не сказан, а «игра не в Steam» это то, что нужно знать до клика.
+              Русский — по той же причине: «без русского» абзац не пересказывает,
+              а знать это нужно до клика. Одной строкой без переноса внутри.
 
               flex-wrap — страховка: даже если подписи однажды подрастут, плашки
               встанут в столбик целиком, а не сломаются внутри себя.
@@ -538,6 +626,7 @@ export default function DailyPage() {
                   {hero.hoursPlayed} ч наиграно
                 </span>
               )}
+              {hero.russian && <span className="whitespace-nowrap text-dim">{hero.russian}</span>}
               <PlayersNow ccu={hero.ccu} ccuAt={hero.ccuAt} nowSec={nowSec} />
             </div>
 
@@ -598,9 +687,17 @@ export default function DailyPage() {
                 <SteamLaunch
                   appid={hero.appid}
                   // Запуск — не «Зашло»: как и на /play, он же заводит исход
-                  // совета, который сверят со следующим снапшотом
-                  onClick={() =>
-                    void sendFeedback(hero.appid, 'launched', undefined, ctxOf(hero, 'launch'))
+                  // совета, который сверят со следующим снапшотом. Под пальцем
+                  // это магазин, а не запуск: план на вечер он не закрывает
+                  // (lib/eveningplan.ts) — на телефоне его жмут как раз после
+                  // «Сыграю вечером на ПК», ставить игру на загрузку
+                  onClick={(via) =>
+                    void sendFeedback(
+                      hero.appid,
+                      'launched',
+                      undefined,
+                      ctxOf(hero, via === 'store' ? 'store' : 'launch'),
+                    )
                   }
                   // Засекаем только настоящий запуск: через десять минут
                   // вернувшегося спросим, зацепило ли (см. StopAsk выше)
@@ -637,9 +734,14 @@ export default function DailyPage() {
               {!readOnly && (
                 <button
                   type="button"
-                  onClick={() => like()}
+                  // Второе нажатие снимает «Зашло» — тем же /api/unlike, что
+                  // полка /library (lib/unlike). Отказ — строкой под кнопками,
+                  // той же, что у «Не сегодня», и сердце горит снова. Имя
+                  // кнопки не меняется — тумблер называет aria-pressed, а
+                  // обратимость видна в подсказке
+                  onClick={() => (liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss) : like())}
                   aria-pressed={liked.has(hero.appid)}
-                  title={liked.has(hero.appid) ? 'Зашло — учтём в подборе' : 'Зашло'}
+                  title={liked.has(hero.appid) ? 'Зашло — нажми, чтобы снять' : 'Зашло'}
                   className="btn-circle"
                 >
                   <Icon name={liked.has(hero.appid) ? 'check' : 'heart'} size={20} />
@@ -651,9 +753,10 @@ export default function DailyPage() {
             </div>
             {readOnly && <NeedSteam from="/daily" why="launch" className="-mt-1" />}
             {!readOnly && sharePick.panel}
-            {/* Отказ «Не сегодня» — в строке, которая стоит всегда: notToday
-                сбрасывает прежний, и новый приходит изменением текста —
-                такое скринридер объявит (components/StatusLine) */}
+            {/* Отказ «Не сегодня» и снятия «Зашло» — в строке, которая стоит
+                всегда: notToday и undoLike сбрасывают прежний, и новый
+                приходит изменением текста — такое скринридер объявит
+                (components/StatusLine) */}
             <StatusLine text={rerollMiss} className="-mt-1 text-sm text-dim" />
             {/* Своя нетронутая или заброшенная (и любая своя при скрытом
                 времени) скорее всего не установлена — поставить на загрузку
@@ -671,6 +774,15 @@ export default function DailyPage() {
                   className="tap hover:text-ink transition-colors"
                 />
               </p>
+            )}
+            {/* Своя на телефоне — «Сыграю вечером на ПК»: игра дня, выбранная
+                в дороге, вечером ждёт на компьютере (lib/eveningplan.ts) */}
+            {hero.source !== 'new' && !hero.storeUrl && (
+              <TonightButton
+                key={hero.appid}
+                name={hero.name}
+                onPlan={() => sendFeedback(hero.appid, 'opened', undefined, ctxOf(hero, 'tonight'))}
+              />
             )}
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
               <Link href="/quiz" className="tap link-more">
@@ -701,11 +813,17 @@ export default function DailyPage() {
               <div className="flex flex-wrap items-baseline gap-3">
                 <PriceTag
                   priceFinal={hero.priceFinal}
+                  cc={hero.priceCc}
+                  unsold={hero.unsold}
                   discount={hero.discount}
                   isFree={hero.isFree}
                   size="hero"
                 />
                 <DiscountEnds discount={hero.discount} />
+                {/* Чья цена — рядом с ней: у KZ и СНГ-доллара она другая */}
+                {hero.priceFinal !== null && !hero.isFree && !hero.unsold && (
+                  <PriceWhere cc={hero.priceCc} />
+                )}
               </div>
             )}
             {hero.refund && <RefundNote />}
@@ -721,6 +839,30 @@ export default function DailyPage() {
                   : 'Одна игра на день.'}
               </span>
             </p>
+            {/*
+              «Вчера была: …» — сразу под отсчётом до следующей: одна строка
+              про соседние дни, тише всего остального в герое. Без архива,
+              статусов и «вернуть»: это память, а не вторая рекомендация, и
+              отзыв о ней не шлётся — героем она сегодня не была. Сервер уже
+              отсеял пустое имя, повтор сегодняшней и скрытую сегодня
+              (yesterdayLine, сброс в /api/feedback). Без prefetch, как
+              StudioLinks на странице игры: строку видят все, а идут по ней
+              редко, и полная выборка статичной /game на каждый заход — лишняя.
+            */}
+            {yesterday && (
+              <p className="-mt-2 text-xs text-faint">
+                {/* Ссылка строчная, не inline-flex: длинное название
+                    переносится внутри строки, а &nbsp; держат его начало при
+                    «Вчера была:» и стрелку при последнем слове */}
+                Вчера была:&nbsp;<Link
+                  href={`/game/${yesterday.appid}`}
+                  prefetch={false}
+                  className="tap font-semibold text-dim transition-colors hover:text-ink"
+                >
+                  {yesterday.name}&nbsp;<Icon name="arrow" size={12} className="inline align-[-0.1em]" />
+                </Link>
+              </p>
+            )}
           </div>
         </div>
       </section>
@@ -770,6 +912,8 @@ export default function DailyPage() {
                       <span className="truncate">{c.store ? (STORE_LABEL[c.store] ?? c.store) : 'Steam'}</span>
                       <PriceTag
                         priceFinal={c.priceFinal}
+                        cc={c.priceCc}
+                        unsold={c.unsold}
                         discount={c.discount}
                         isFree={c.isFree}
                         showPercent={false}
@@ -778,6 +922,9 @@ export default function DailyPage() {
                     </>
                   }
                 />
+                {/* Как на полке покупок /play: перед покупкой «без русского»
+                    весит не меньше цены. Не знаем — строки нет */}
+                {c.russian && <span className="text-xs text-faint mt-1 block px-0.5">{c.russian}</span>}
               </a>
             ))}
           </div>

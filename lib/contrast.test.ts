@@ -268,6 +268,18 @@ describe('контраст палитры', () => {
         expect(contrast(resolve(t, '--dim'), bg)).toBeGreaterThanOrEqual(AA)
         expect(contrast(resolve(t, '--ink'), bg)).toBeGreaterThanOrEqual(AA)
       })
+
+      /*
+       * В шапке есть и красное: отказ поиска — лупа и строка под ней
+       * (.search-miss, components/SearchLauncher). Строка стоит на --bg
+       * шапки, а без своего --danger у зоны на светлой теме он оставался
+       * светлотемным #b4231f — тёмно-красным по почти чёрному.
+       */
+      test(`${chrome.name}: отказ поиска в шапке читается на её фоне`, () => {
+        const t = block(chrome.selector)
+        expect(contrast(resolve(t, '--danger'), resolve(t, '--bg'))).toBeGreaterThanOrEqual(AA)
+        expect(contrast(resolve(t, '--danger'), chrome.zoneBg())).toBeGreaterThanOrEqual(AA)
+      })
     }
 
     /*

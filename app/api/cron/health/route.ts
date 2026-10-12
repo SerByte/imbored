@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
+import { linksToday } from '@/lib/chain'
 import {
   CRON_JOBS,
   cronAuthorized,
+  pagesDailyLinks,
   sliceHealth,
   steamKeyHealth,
   SWEEP_KEY,
@@ -9,6 +11,7 @@ import {
   type SliceHealth,
 } from '@/lib/cron'
 import { getCatalogMeta } from '@/lib/db'
+import { llmAvailable } from '@/lib/llm'
 import { llmBudgetUsed, llmDailyCap } from '@/lib/llmcap'
 import { getDb, nowSec } from '@/lib/server'
 import { STEAM_PROBE_KEY } from '@/lib/steamprobe'
@@ -21,7 +24,7 @@ export const dynamic = 'force-dynamic'
  *
  * Воркфлоу в .github/workflows/cron.yml проверял только код первого ответа
  * news и digest, а это 202 ДО after(), то есть до всякой работы: упавший срез,
- * оборванная цепочка и крон карточек, который вообще не пришёл, выглядели
+ * снятый по сроку запуск и крон карточек, который вообще не пришёл, выглядели
  * снаружи одинаково зелёными. Узнавали по пустым карточкам неделями позже.
  *
  * 503 — если хоть один крон нездоров (правила в sliceHealth, lib/cron.ts).
@@ -29,7 +32,7 @@ export const dynamic = 'force-dynamic'
  *
  * Кроме кронов — две проверки того, что кроны сами не покажут:
  *   • steamKey — живой ли ключ Steam Web API. Сам ключ health не трогает:
- *     пробу раз в час делает конец цепочки новостей (lib/steamprobe.ts), здесь
+ *     пробу раз в час делает конец запуска новостей (lib/steamprobe.ts), здесь
  *     читается её отметка;
  *   • sweep — прошла ли суточная уборка (sweepStale в кроне новостей) за
  *     последние 48 часов. Упавшая уборка пишет только в console.error, а
@@ -45,6 +48,10 @@ export const dynamic = 'force-dynamic'
  * llm — справка, а не проверка: сколько вызовов модели потрачено сегодня из
  * суточного бюджета (lib/llmcap). Выбранный бюджет — не авария, сервис
  * отвечает эвристикой, поэтому 503 он не даёт.
+ *
+ * pagesLinks — тоже справка: сколько звеньев карточек прошло за сутки UTC из
+ * суточного потолка (pagesDailyLinks в lib/cron). Выбранный потолок — норма:
+ * карточки ждут полуночи, 503 он не даёт.
  *
  * Только чтение: точечные SELECT по catalog_meta и rate_limits, ни одной
  * записи, ни одного похода в Steam или к модели. Закрыт тем же секретом, что
@@ -78,11 +85,12 @@ export async function GET(req: Request) {
   }
 
   const newsPaused = (await getCatalogMeta(db, CRON_JOBS.news.pausedKey)) === '1'
-  const [probe, sweep, used, errors] = await Promise.all([
+  const [probe, sweep, used, errors, pagesLinks] = await Promise.all([
     getCatalogMeta(db, STEAM_PROBE_KEY),
     getCatalogMeta(db, SWEEP_KEY),
     llmBudgetUsed(db, now),
     telemetryCount(db, 'server-error', now - 3600).catch(() => null),
+    linksToday(db, 'pages', now),
   ])
   const checks = {
     steamKey: steamKeyHealth(probe, now, STEAM_PROBE_STALE_SEC, newsPaused),
@@ -95,7 +103,13 @@ export async function GET(req: Request) {
 
   const ok = Object.values(jobs).every((j) => j.ok) && Object.values(checks).every((c) => c.ok)
   return NextResponse.json(
-    { ok, jobs, checks, llm: { used, cap: llmDailyCap() } },
+    {
+      ok,
+      jobs,
+      checks,
+      llm: { used, cap: llmDailyCap() },
+      pagesLinks: { used: pagesLinks, cap: pagesDailyLinks({ llmCap: llmDailyCap(), llmOn: llmAvailable() }) },
+    },
     { status: ok ? 200 : 503, headers: { 'cache-control': 'no-store' } },
   )
 }

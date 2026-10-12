@@ -6,7 +6,7 @@ import {
   upsertSemantics,
   type Db,
 } from '../lib/db'
-import { deriveSemantics, MIN_REVIEWS } from '../lib/semantics'
+import { deriveSemantics, MIN_PLAYED_REVIEWS, MIN_REVIEWS, PLAYED_SINCE } from '../lib/semantics'
 import type { GameMeta, GameSemantics } from '../lib/types'
 import { BLOCKED_RUN, buildTagPrior, publishSemantics, reviewPass, reviewQueue } from './semanticsbuild'
 
@@ -152,6 +152,94 @@ describe('проход по отзывам', () => {
     })
 
     expect(res).toEqual({ answered: 3, withReviews: 3, failed: 3, stopped: 'done' })
+  })
+})
+
+describe('разовый догон «Наиграли»', () => {
+  const DAY = 86_400
+  /** Запись по отзывам, разобранным до «Наиграли»: played в ней нет */
+  const OLD_REVIEWS: GameSemantics = {
+    ...deriveSemantics(ROGUELITE, null),
+    n: 40,
+    basis: 'tags+reviews',
+    confidence: 0.6,
+  }
+
+  async function playedOf(db: Db, appid: number): Promise<unknown> {
+    const res = await db.execute({ sql: 'SELECT json FROM game_semantics WHERE appid = ?', args: [appid] })
+    return (JSON.parse(String(res.rows[0].json)) as GameSemantics).played ?? null
+  }
+
+  test('в очередь — только запись по отзывам без played, разобранная до отсечки', async () => {
+    const db = await freshDb()
+    for (const [appid, total] of [[10, 900], [20, 800], [30, 700], [40, 600]]) await addGame(db, appid, total)
+    await upsertSemantics(db, [
+      // разобрана до «Наиграли» — хваливших не считали: догоняем
+      { appid: 10, semantics: OLD_REVIEWS, computedAt: PLAYED_SINCE - DAY, reviewsAt: PLAYED_SINCE - DAY },
+      // разобрана после — played нет, потому что хваливших с временем мало: не догоняем
+      { appid: 20, semantics: OLD_REVIEWS, computedAt: PLAYED_SINCE + DAY, reviewsAt: PLAYED_SINCE + DAY },
+      // played уже есть — догонять нечего
+      {
+        appid: 30,
+        semantics: { ...OLD_REVIEWS, played: { posMedianMin: 600, posN: 45 } },
+        computedAt: PLAYED_SINCE - DAY,
+        reviewsAt: PLAYED_SINCE - DAY,
+      },
+      // по тегам: отзывов не хватило сдвинуть оси, played без них не пишется
+      {
+        appid: 40,
+        semantics: deriveSemantics(ROGUELITE, null),
+        computedAt: PLAYED_SINCE - DAY,
+        reviewsAt: PLAYED_SINCE - DAY,
+      },
+    ])
+
+    expect((await reviewQueue(db, 10)).map((g) => g.appid)).toEqual([10])
+  })
+
+  test('после похода игра уходит из очереди — и с наигранным, и тонкая', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await addGame(db, 20, 800)
+    await upsertSemantics(
+      db,
+      [10, 20].map((appid) => ({
+        appid,
+        semantics: OLD_REVIEWS,
+        computedAt: PLAYED_SINCE - DAY,
+        reviewsAt: PLAYED_SINCE - DAY,
+      })),
+    )
+    const спрошено: number[] = []
+    const fetchRaw = async (appid: number) => {
+      спрошено.push(appid)
+      // у 10 хваливших с временем хватает, у 20 их меньше порога
+      return reviewsJson(appid === 10 ? MIN_PLAYED_REVIEWS + 5 : MIN_REVIEWS + 2)
+    }
+
+    const at = PLAYED_SINCE + DAY
+    expect(await reviewPass(db, { limit: 10, now: () => at, fetchRaw })).toMatchObject({ answered: 2 })
+    expect(await playedOf(db, 10)).toEqual({ posMedianMin: 300, posN: MIN_PLAYED_REVIEWS + 5 })
+    expect(await playedOf(db, 20)).toBeNull()
+
+    expect(await reviewQueue(db, 10)).toEqual([])
+    await reviewPass(db, { limit: 10, now: () => at + DAY, fetchRaw })
+    expect(спрошено).toEqual([10, 20])
+  })
+
+  test('Steam отдал меньше отзывов, чем раньше: запись не откатывается, а игра всё равно уходит из очереди', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await upsertSemantics(db, [
+      { appid: 10, semantics: OLD_REVIEWS, computedAt: PLAYED_SINCE - DAY, reviewsAt: PLAYED_SINCE - DAY },
+    ])
+
+    const at = PLAYED_SINCE + DAY
+    // два отзыва — меньше MIN_REVIEWS: приор по тегам, и upsertSemantics его поверх не пишет
+    await reviewPass(db, { limit: 10, now: () => at, fetchRaw: async () => reviewsJson(2) })
+
+    expect(await basisOf(db, 10)).toEqual({ basis: 'tags+reviews', reviewsAt: at })
+    expect(await reviewQueue(db, 10)).toEqual([])
   })
 })
 

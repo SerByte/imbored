@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { PLAN_HOLD_MS } from './eveningplan'
 import { NEUTRAL_MOOD } from './mood'
 import {
   PLAY_CACHE_TTL_MS,
@@ -7,6 +8,7 @@ import {
   forgetPlay,
   hasFreshDeal,
   hasFreshWarm,
+  heldPlanned,
   parsePlayCache,
   parseRecentBans,
   parseWarmMark,
@@ -23,6 +25,8 @@ import {
   withBan,
   type PlayCache,
 } from './playcache'
+import { unkeyDeal } from './mutetags'
+import { forgetPlanned } from './planforget'
 import type { PlayPick } from './playflow'
 import { runWarmup, startPrewarm } from './warmup'
 
@@ -47,6 +51,8 @@ function pick(appid: number, name = `Game ${appid}`): PlayPick {
     store: null,
     storeUrl: null,
     priceFinal: null,
+    priceCc: null,
+    unsold: false,
     isFree: null,
     discount: null,
     signals: null,
@@ -66,7 +72,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
     deal: {
       picks: [pick(10), pick(20), pick(30)],
       discoveries: [pick(40)],
-      continueGame: { appid: 570, name: 'Dota 2', recentHours: 3 },
+      continueGame: { appid: 570, name: 'Dota 2', recentHours: 3, finishable: false },
       engine: 'heuristic',
       lean: 'fresh',
       scope: 'library',
@@ -75,9 +81,12 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
       nowSec: Math.floor(NOW / 1000),
       viewer: ME,
       playtimeHidden: false,
+      plan: { appid: 1145360, name: 'Hades', intent: 'tonight' },
     },
     hero: 20,
     liked: [10],
+    planned: [],
+    seenAt: NOW,
     ...over,
   }
 }
@@ -101,6 +110,16 @@ describe('playCacheKey', () => {
     const q = { mood: { ...NEUTRAL_MOOD }, focus: null, roulette: false, lean: null } as const
     expect(playCacheKey(q)).toBe(KEY)
   })
+
+  // /play?…&seed= — «похожие на X» со страницы игры. Обычная выдача того же
+  // настроения, запомненная минуту назад, не должна встать на их место
+  test('затравка с адреса меняет ключ; без неё ключ прежний — старые записи узнаются', () => {
+    const base = { mood: NEUTRAL_MOOD, focus: null, roulette: false, lean: null } as const
+    expect(playCacheKey({ ...base, seed: 1145360 })).not.toBe(KEY)
+    expect(playCacheKey({ ...base, seed: 1145360 })).not.toBe(playCacheKey({ ...base, seed: 620 }))
+    expect(playCacheKey({ ...base, seed: null })).toBe(KEY)
+    expect(KEY).toBe('medium.chill.solo|||')
+  })
 })
 
 describe('parsePlayCache', () => {
@@ -118,9 +137,67 @@ describe('parsePlayCache', () => {
     expect(parsePlayCache({ ...e, deal: old })?.deal.playtimeHidden).toBe(false)
   })
 
+  // Запись до плана на вечер — выдача без него, а не битая запись: план —
+  // строка сбоку, и прогрев заново ради неё был бы дороже, чем её потеря
+  test('план на вечер переживает запись; запись без него — выдача без плана', () => {
+    const e = entry()
+    const old: Record<string, unknown> = { ...e.deal }
+    delete old.plan
+    expect(parsePlayCache({ ...e, deal: old })?.deal.plan).toBeNull()
+    expect(parsePlayCache({ ...e, deal: { ...e.deal, plan: { appid: 0 } } })?.deal.plan).toBeNull()
+  })
+
+  /*
+   * Отложенные на вечер в этом заходе (app/play: «Не то — дальше» у них
+   * листает без пропуска) едут с выдачей: иначе «Подробнее» → «Назад» их
+   * забывал, и пропуск закрывал план через минуту после того, как он
+   * поставлен. Запись до этого поля — выдача без отложенных, а не битая
+   * запись: версия та же, и прогрев заново ради пустого списка не нужен.
+   */
+  test('отложенные на вечер переживают запись; запись без них — пустой список', () => {
+    const e = entry({ planned: [20, 1145360] })
+    expect(parsePlayCache(JSON.parse(JSON.stringify(e)))?.planned).toEqual([20, 1145360])
+    const old: Record<string, unknown> = { ...e }
+    delete old.planned
+    expect(parsePlayCache(old)?.planned).toEqual([])
+    // мусор — поштучно и без потери выдачи: план не стоит прогрева заново
+    expect(parsePlayCache({ ...e, planned: 'all' })?.planned).toEqual([])
+    expect(parsePlayCache({ ...e, planned: ['20', 30, 1.5] })?.planned).toEqual([30])
+  })
+
+  /*
+   * Когда выдачу последний раз видели на экране — срок отложенных
+   * (heldPlanned), а не приход выдачи. Запись до этого поля и мусор в нём —
+   * приход выдачи: срок у списка тот же час, только от at, а запись цела и
+   * версия та же — прогрев заново ради одной метки дороже её самой.
+   */
+  test('время последнего показа переживает запись; без него и с мусором — приход выдачи', () => {
+    const e = entry({ at: NOW - 20 * 60_000, seenAt: NOW - 60_000, planned: [20] })
+    expect(parsePlayCache(JSON.parse(JSON.stringify(e)))?.seenAt).toBe(NOW - 60_000)
+    const old: Record<string, unknown> = { ...e }
+    delete old.seenAt
+    expect(parsePlayCache(old)?.seenAt).toBe(NOW - 20 * 60_000)
+    for (const seenAt of ['вчера', String(NOW), null, Infinity, NaN]) {
+      expect(parsePlayCache({ ...e, seenAt })?.seenAt, String(seenAt)).toBe(NOW - 20 * 60_000)
+    }
+  })
+
   test('запись прошлой версии сайта не узнаётся', () => {
     expect(parsePlayCache({ ...entry(), v: 0 })).toBeNull()
     expect(parsePlayCache({ ...entry(), v: undefined })).toBeNull()
+  })
+
+  test('карточка без региона цены (версия 1) не узнаётся: у её ценника нет валюты', () => {
+    expect(PLAY_CACHE_VERSION).toBe(2)
+    const e = entry()
+    const bare = (p: PlayPick) => {
+      const rest: Record<string, unknown> = { ...p }
+      delete rest.priceCc
+      delete rest.unsold
+      return rest
+    }
+    const v1 = { ...e, v: 1, deal: { ...e.deal, picks: e.deal.picks.map(bare) } }
+    expect(parsePlayCache(JSON.parse(JSON.stringify(v1)))).toBeNull()
   })
 
   test('одна битая карточка — вся запись мимо', () => {
@@ -159,6 +236,19 @@ describe('parsePlayCache', () => {
     expect(parsePlayCache(JSON.parse(JSON.stringify(seeded)))?.deal.seed).toEqual({
       appid: 1145360,
       name: 'Hades',
+    })
+  })
+
+  test('«Уже прошёл» у строки «Продолжить» переживает запись; запись до поля — без кнопки', () => {
+    const e = entry()
+    const done = { ...e, deal: { ...e.deal, continueGame: { appid: 367520, name: 'Hollow Knight', recentHours: 4, finishable: true } } }
+    expect(parsePlayCache(JSON.parse(JSON.stringify(done)))?.deal.continueGame?.finishable).toBe(true)
+    const old = { ...e, deal: { ...e.deal, continueGame: { appid: 367520, name: 'Hollow Knight', recentHours: 4 } } }
+    expect(parsePlayCache(old)?.deal.continueGame).toEqual({
+      appid: 367520,
+      name: 'Hollow Knight',
+      recentHours: 4,
+      finishable: false,
     })
   })
 
@@ -229,12 +319,117 @@ describe('restoreDeal', () => {
     expect(back?.deal.picks[back.index].appid).toBe(10)
   })
 
+  // «Уже прошёл» у «Продолжить» или на странице игры, куда ушли «Подробнее»:
+  // после «Назад» пройденная игра не зовёт продолжить себя
+  test('строка «Продолжить» уходит вместе с баном, выдача остаётся', () => {
+    const back = restoreDeal(entry(), { ...q, banned: new Set([570]) })
+    expect(back?.deal.continueGame).toBeNull()
+    expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 20, 30])
+    expect(restoreDeal(entry(), q)?.deal.continueGame?.appid).toBe(570)
+  })
+
+  /*
+   * Бан закрывает и план на вечер (closesPlan): «Подробнее» у героя, который
+   * и есть план, → «Уже прошёл» на странице игры → «Назад». Герой ушёл из
+   * выдачи, planBeside его строку больше не прячет — и «Ставил «X» на
+   * загрузку · Запустить» звал бы в игру, которую только что назвали
+   * пройденной, а нажатие писало бы ей новый исход.
+   */
+  test('строка плана на вечер уходит вместе с баном, выдача и «Продолжить» остаются', () => {
+    const back = restoreDeal(entry(), { ...q, banned: new Set([1145360]) })
+    expect(back?.deal.plan).toBeNull()
+    expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 20, 30])
+    expect(back?.deal.continueGame?.appid).toBe(570)
+    expect(restoreDeal(entry(), q)?.deal.plan?.appid).toBe(1145360)
+    // план — тот же герой: уходят оба, на экран следующая карточка
+    const same = entry({ deal: { ...entry().deal, plan: { appid: 20, name: 'Игра 20', intent: 'install' } } })
+    const gone = restoreDeal(same, { ...q, banned: new Set([20]) })
+    expect(gone?.deal.plan).toBeNull()
+    expect(gone?.deal.picks[gone.index].appid).toBe(10)
+  })
+
+  /*
+   * «Сыграю вечером на ПК» → «Подробнее» → «Назад»: герой, отложенный на
+   * вечер, возвращается отложенным, и «Не то — дальше» у него по-прежнему
+   * листает, а не пишет пропуск, закрывающий план. Забаненный — уже нет:
+   * бан план и так закрыл (closesPlan), а «не то» у него не спросят вовсе.
+   */
+  test('отложенные на вечер возвращаются с выдачей, забаненные — нет', () => {
+    expect(restoreDeal(entry({ planned: [20, 30] }), q)?.planned).toEqual([20, 30])
+    expect(restoreDeal(entry({ planned: [20, 30] }), { ...q, banned: new Set([30]) })?.planned).toEqual([20])
+    expect(restoreDeal(entry(), q)?.planned).toEqual([])
+  })
+
   test('забанено всё — восстанавливать нечего', () => {
     expect(restoreDeal(entry(), { ...q, banned: new Set([10, 20, 30]) })).toBeNull()
   })
 
   test('нет записи — нет и выдачи', () => {
     expect(restoreDeal(null, q)).toBeNull()
+  })
+})
+
+/*
+ * «Поставь на загрузку» у своей → «Изменить настроение» → квиз → /play с
+ * другим настроением. Новое монтирование, другой ключ: restoreDeal выдачу
+ * не вернёт — а отложенные из той же записи обязаны доехать до новой
+ * выдачи. Иначе первая же новая выдача ложилась поверх единственной записи
+ * с пустым списком, и своя игра, пришедшая героем снова, на «Не то —
+ * дальше» → «Просто не сейчас» закрывала план, поставленный минуту назад.
+ */
+describe('heldPlanned', () => {
+  const q = { nowMs: NOW + 60_000, banned: NO_BANS }
+  const mood = playCacheKey({ mood: { ...NEUTRAL_MOOD, vibe: 'engaged' }, focus: null, roulette: false, lean: null })
+
+  test('запись другого настроения выдачу не вернёт, а отложенные отдаст — с тем, чьи они', () => {
+    const e = entry({ planned: [20, 1145360] })
+    expect(restoreDeal(e, { ...q, key: mood, viewer: ME })).toBeNull()
+    expect(heldPlanned(e, q)).toEqual({ viewer: ME, appids: [20, 1145360] })
+  })
+
+  /*
+   * Срок списка — от последнего показа выдачи (seenAt), а не от её прихода
+   * (at). Выдача пришла в 19:00, человек листал её и в 19:14 нажал «Сыграю
+   * вечером на ПК» у своей X; в 19:15:40 — ⓘ и «Назад». Выдача старше
+   * пятнадцати минут (цены и онлайн уже не те), restoreDeal её не вернёт, —
+   * а отложенную минуту назад игру список обязан донести до новой: та
+   * приходит героем снова (знакомые свои повторяются), и «Не то — дальше» →
+   * «Просто не сейчас» закрывал план, поставленный минуту назад. Тот же
+   * ключ, то же монтирование заново — что и у «Изменить настроение».
+   */
+  test('выдача устарела, а план ставили минуту назад — список доезжает до новой', () => {
+    const e = entry({ at: NOW - 20 * 60_000, seenAt: NOW - 60_000, planned: [20] })
+    expect(restoreDeal(e, { ...q, key: KEY, viewer: ME, nowMs: NOW })).toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW })).toEqual({ viewer: ME, appids: [20] })
+    // и под другим ключом — так же
+    expect(restoreDeal(e, { ...q, key: mood, viewer: ME, nowMs: NOW })).toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW })?.appids).toEqual([20])
+  })
+
+  test('выдачу не видели больше часа — уже не этот заход', () => {
+    expect(PLAN_HOLD_MS).toBe(60 * 60_000)
+    expect(PLAN_HOLD_MS).toBeGreaterThan(PLAY_CACHE_TTL_MS)
+    const e = entry({ planned: [20] })
+    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAN_HOLD_MS })).not.toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAN_HOLD_MS + 1 })).toBeNull()
+    // запись до поля — срок тот же час, только от прихода выдачи: за
+    // пятнадцать минут (прежний срок от at) список уже не умирает
+    const old: Record<string, unknown> = { ...entry({ at: NOW - PLAN_HOLD_MS - 1, planned: [20] }) }
+    delete old.seenAt
+    expect(heldPlanned(parsePlayCache(old), { ...q, nowMs: NOW })).toBeNull()
+    const recent: Record<string, unknown> = { ...entry({ at: NOW - 20 * 60_000, planned: [20] }) }
+    delete recent.seenAt
+    expect(heldPlanned(parsePlayCache(recent), { ...q, nowMs: NOW })?.appids).toEqual([20])
+  })
+
+  test('забаненные не едут: бан план уже закрыл', () => {
+    expect(heldPlanned(entry({ planned: [20, 30] }), { ...q, banned: new Set([30]) })?.appids).toEqual([20])
+    expect(heldPlanned(entry({ planned: [20] }), { ...q, banned: new Set([20]) })).toBeNull()
+  })
+
+  test('нести нечего — null, а не пустой список', () => {
+    expect(heldPlanned(entry(), q)).toBeNull()
+    expect(heldPlanned(null, q)).toBeNull()
   })
 })
 
@@ -405,6 +600,53 @@ describe('хранилища', () => {
       banned: readRecentBans(NOW + 1000),
     })
     expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 30])
+  })
+
+  /*
+   * План закрыт на странице игры («Запустить» по биту plan) — lib/planforget
+   * вычёркивает игру из записи по ключу, мимо модуля выдачи. Модуль в этом
+   * документе уже загружен (пришли с /play без перезагрузки) и держит в
+   * памяти прежнюю копию; /play при монтировании читает запись из
+   * хранилища (fresh) — и видит правку, а правленая запись по-прежнему
+   * узнаётся целиком.
+   */
+  test('отложенная, чей план закрыт не на /play, после «Назад» уже не отложена и не строка плана', () => {
+    const session = fakeStorage()
+    vi.stubGlobal('sessionStorage', session.area)
+    playCacheStore.set(entry({ planned: [20, 30] }))
+
+    forgetPlanned(20)
+
+    const back = restoreDeal(playCacheStore.fresh(), { key: KEY, viewer: ME, nowMs: NOW + 1000, banned: NO_BANS })
+    expect(back?.planned).toEqual([30])
+    expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 20, 30])
+    expect(back?.liked).toEqual([10])
+    expect(back?.deal.plan?.appid).toBe(1145360)
+
+    // запуск плана из строки — та уходит, а выдача остаётся узнанной целиком
+    forgetPlanned(1145360)
+    const after = restoreDeal(playCacheStore.fresh(), { key: KEY, viewer: ME, nowMs: NOW + 1000, banned: NO_BANS })
+    expect(after?.deal.plan).toBeNull()
+    expect(after?.deal.continueGame?.appid).toBe(570)
+    expect(after?.planned).toEqual([30])
+  })
+
+  /*
+   * «Не предлагать» сменили на квизе (unkeyDeal в lib/mutetags): выдача,
+   * собранная без фильтра, после «Назад» не возвращается — а отложенные на
+   * вечер едут к новой, как при смене настроения.
+   */
+  test('после смены «Не предлагать» выдача не узнаётся, а отложенные на вечер — едут', () => {
+    const session = fakeStorage()
+    vi.stubGlobal('sessionStorage', session.area)
+    playCacheStore.set(entry({ planned: [20] }))
+    const q = { key: KEY, viewer: ME, nowMs: NOW + 1000, banned: NO_BANS }
+    expect(restoreDeal(playCacheStore.fresh(), q)).not.toBeNull()
+
+    unkeyDeal()
+
+    expect(restoreDeal(playCacheStore.fresh(), q)).toBeNull()
+    expect(heldPlanned(playCacheStore.fresh(), q)).toEqual({ viewer: ME, appids: [20] })
   })
 
   test('свой бан дописывается к хранилищу и не стирает бан соседней вкладки', () => {

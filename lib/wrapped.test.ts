@@ -45,8 +45,17 @@ describe('buildWrapped — числа', () => {
   test('часы, сутки, количество игр', () => {
     const w = buildWrapped([lib(1, 300), lib(2, 100), lib(3, 50)], metaOf)
     expect(w.gamesCount).toBe(3)
-    expect(w.totalHours).toBe(450)
-    expect(w.days).toBe(19) // 450/24 = 18.75
+    expect(w.totalMinutes).toBe(450 * 60)
+    // 450 ч = 18 д 18 ч: страница пишет «полных дней», значит вниз
+    expect(w.days).toBe(18)
+  })
+
+  test('«полные сутки» — целые сутки из сырых минут: 12 часов — ещё не день', () => {
+    // Math.round(12/24) давал «1 полный день за экраном»
+    expect(buildWrapped([lib(1, 12)], metaOf).days).toBe(0)
+    // 23,5 ч округлённые часы превращали в 24 и в те же «полные» сутки
+    expect(buildWrapped([lib(1, 23.5)], metaOf).days).toBe(0)
+    expect(buildWrapped([lib(1, 24)], metaOf).days).toBe(1)
   })
 
   test('правило 80/20: сколько игр набирают 80% времени', () => {
@@ -68,6 +77,13 @@ describe('buildWrapped — числа', () => {
     expect(w.top.map((g) => g.appid)).toEqual([2, 4, 3, 5, 6])
     expect(w.top[0].hours).toBe(90)
     expect(w.top[0].sharePercent).toBe(33) // 90 из 270
+  })
+
+  test('в топе есть сырые минуты: игре на 20 минут подпись не «0 ч»', () => {
+    const w = buildWrapped([lib(1, 300), { ...lib(2, 0), playtimeForever: 20 }], metaOf)
+    expect(w.top.map((g) => g.minutes)).toEqual([18_000, 20])
+    // часы остаются округлёнными — их форма прежняя
+    expect(w.top[1].hours).toBe(0)
   })
 
   test('непройденное: меньше двух часов и без активности за две недели', () => {
@@ -110,7 +126,7 @@ describe('buildWrapped — деградация', () => {
   test('пустая библиотека не роняет и не даёт NaN', () => {
     const w = buildWrapped([], metaOf)
     expect(w.gamesCount).toBe(0)
-    expect(w.totalHours).toBe(0)
+    expect(w.totalMinutes).toBe(0)
     expect(w.days).toBe(0)
     expect(w.pareto80).toBe(0)
     expect(w.concentration).toBe(0)
@@ -120,7 +136,7 @@ describe('buildWrapped — деградация', () => {
 
   test('нулевые часы у всех игр не дают NaN и не делят на ноль', () => {
     const w = buildWrapped([lib(1, 0), lib(2, 0)], metaOf)
-    expect(w.totalHours).toBe(0)
+    expect(w.totalMinutes).toBe(0)
     expect(w.concentration).toBe(0)
     expect(w.pareto80).toBe(0)
     expect(w.top).toEqual([])

@@ -14,57 +14,50 @@
  * СПИСОК, а не свободный путь. Соблазн принять произвольный ?next= велик, но
  * это открытый редирект: достаточно прислать /?next=//зло.example, и лендинг
  * своими руками уведёт человека наружу. Набор мест, откуда разворачивают,
- * закрытый и известен целиком — значит и список закрытый. Заодно к каждому
- * адресу здесь же лежит его текст, и они не могут разъехаться.
+ * закрытый и известен целиком — значит и список закрытый. Тексты к адресам
+ * лежат рядом, в lib/destinationtext.ts, и разъехаться со списком им не даёт
+ * тип (satisfies там).
  *
  * Хвост запроса едет тоже, но так же по списку — см. destinationUrl.
  *
- * Импорты — разбор настроения из lib/mood и пресеты комнаты из lib/presets, у
- * которых самих зависимостей нет (у presets они только типовые): модуль
+ * Импорты — разбор настроения из lib/mood, пресеты комнаты и разбор затравки
+ * из lib/presets, у которых самих зависимостей нет (у presets они только типовые): модуль
  * читают и серверные страницы, и клиентский лендинг, и роут возврата из
  * Steam, и proxy.ts.
  */
 
 import { parseLean, parseMood } from './mood'
-import { roomPresetByKey } from './presets'
+import { parseSeedParam, roomPresetByKey, roomSeedOf } from './presets'
 
-export type Destination = {
-  /** Что сказать на лендинге вместо общего обещания продукта. */
-  promise: string
-  /** Что написать на кнопке: она обязана называть, куда ведёт. */
-  action: string
-}
+/**
+ * Места назначения — закрытый список (см. выше). Тексты лендинга к ним — в
+ * lib/destinationtext.ts, отдельно: здесь только адреса, потому что проверку
+ * адреса читают страницы, которые разворачивают гостя или зовут войти, и
+ * записка «Режим просмотра» (components/ReadOnlyNoteBox → steamLoginFor), а
+ * тексты нужны одному лендингу. В корневом лэйауте модуля больше нет — тело
+ * записки едет чанком (lib/sharedchunk.test.ts).
+ *
+ * /whatsnew гостя не разворачивает — общая лента открыта всем. Здесь он ради
+ * возврата из входа через Steam: секретную ссылку на RSS выпускает только
+ * вошедший через Steam, и подсказка «войди» у ссылки (steamLoginFor) обязана
+ * вернуть туда, где человек её просил, а не на квиз.
+ */
+export const DESTINATION_PATHS = [
+  '/library',
+  '/daily',
+  '/play',
+  '/explore',
+  '/portrait',
+  '/compat',
+  '/room/new',
+  '/whatsnew',
+] as const
 
-export const DESTINATIONS: Record<string, Destination> = {
-  '/library': {
-    promise: 'Подключи Steam — и увидишь всю свою библиотеку одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
-    action: 'Открыть библиотеку',
-  },
-  '/daily': {
-    promise: 'Игра дня выбирается из твоей библиотеки — подключи Steam, и она появится.',
-    action: 'Показать игру дня',
-  },
-  '/play': {
-    promise: 'Одна игра под твоё состояние из твоей же библиотеки — подключи Steam, и выберем.',
-    action: 'Подобрать игру',
-  },
-  '/explore': {
-    promise: 'Колода из твоей библиотеки и магазина — листай без обязательств. Подключи Steam, и соберём её.',
-    action: 'Полистать игры',
-  },
-  '/portrait': {
-    promise: 'Портрет игрока строится по твоей библиотеке и наигранным часам — подключи Steam.',
-    action: 'Собрать портрет',
-  },
-  '/compat': {
-    promise: 'Подключи Steam — и получишь ссылку, по которой сравнишь вкусы с кем угодно.',
-    action: 'Получить ссылку',
-  },
-  '/room/new': {
-    promise: 'Комната собирается из ваших библиотек — подключи свою, и создадим её.',
-    action: 'Создать комнату',
-  },
-}
+export type DestinationPath = (typeof DESTINATION_PATHS)[number]
+
+/** includes, а не ключ объекта: у списка нет наследованных toString и __proto__ */
+const isDestination = (path: string): path is DestinationPath =>
+  (DESTINATION_PATHS as readonly string[]).includes(path)
 
 /**
  * Что из строки запроса выдачи едет через вход.
@@ -79,6 +72,11 @@ export const DESTINATIONS: Record<string, Destination> = {
  * одной, и половина настроения в адресе стала бы словами, которых человек
  * не говорил. Порядок параметров тот же, что у playHref (lib/presets), —
  * адрес, собранный квизом, проходит сюда без изменений.
+ *
+ * Затравка «Как «X», но…» (seed) — тоже: гость шёл со страницы игры за
+ * похожими на неё, и после входа выдача обязана быть ими, а не обычной.
+ * Разбор — parseSeedParam из того же lib/presets: lib/recommend сюда не
+ * тянем, модуль читают лендинг и proxy.ts.
  */
 function playQuery(src: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams()
@@ -94,6 +92,8 @@ function playQuery(src: URLSearchParams): URLSearchParams {
   if (src.get('from') === 'untouched') out.set('from', 'untouched')
   const lean = parseLean(src.get('lean'))
   if (lean) out.set('lean', lean)
+  const seed = parseSeedParam(src.get('seed'))
+  if (seed !== null) out.set('seed', String(seed))
   return out
 }
 
@@ -102,11 +102,26 @@ function playQuery(src: URLSearchParams): URLSearchParams {
  * настроение, ключом пресета (ROOM_PRESETS). Хост выбирал его до того, как
  * его развернуло на вход, и после входа комната создаётся сразу с ним — а не
  * заново с вопросом, на который он уже ответил. Чужой ключ отбрасывается.
+ *
+ * hint — подсказка с /play (roomBridgeHref в lib/presets): точного пресета под
+ * настроение выдачи нет, и экран выбора лишь отмечает похожий. Едет через
+ * вход наравне с preset — иначе гость, развёрнутый на вход, вернулся бы к
+ * выбору без отметки. Вместе с preset не едет: выбранное перекрывает
+ * подсказку, комната всё равно создастся сразу.
+ *
+ * game — игра, в которую звали («Позвать в эту игру», roomSeedOf в
+ * lib/presets): гость со страницы игры уходит на вход, и после входа комната
+ * обязана создаться с ней первой картой. Едет рядом с любым из двух ключей —
+ * это другой вопрос, не «какой вечер», а «с чего начать».
  */
 function roomQuery(src: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams()
   const preset = roomPresetByKey(src.get('preset'))
+  const hint = roomPresetByKey(src.get('hint'))
+  const seed = roomSeedOf(src.get('game'))
   if (preset) out.set('preset', preset.key)
+  else if (hint) out.set('hint', hint.key)
+  if (seed !== null) out.set('game', String(seed))
   return out
 }
 
@@ -119,7 +134,7 @@ const QUERY_OF: Record<string, (src: URLSearchParams) => URLSearchParams> = {
 /**
  * Проверенный адрес назначения вместе с разрешённым хвостом запроса либо null.
  *
- * Путь — строго из DESTINATIONS, хвост — только у /play и /room/new и только
+ * Путь — строго из DESTINATION_PATHS, хвост — только у /play и /room/new и только
  * их параметры (playQuery, roomQuery). У остальных мест хвоста нет, и мусор в
  * нём отбрасывается, а не губит весь адрес: человек всё равно шёл в
  * библиотеку. Результат собирается заново из проверенного, поэтому его можно
@@ -129,13 +144,13 @@ export function destinationUrl(raw: string | null | undefined): string | null {
   if (!raw) return null
   const cut = raw.indexOf('?')
   const path = cut < 0 ? raw : raw.slice(0, cut)
-  if (!Object.hasOwn(DESTINATIONS, path)) return null
+  if (!isDestination(path)) return null
   const tail = Object.hasOwn(QUERY_OF, path) ? QUERY_OF[path] : null
   const query = cut >= 0 && tail ? tail(new URLSearchParams(raw.slice(cut + 1))) : null
   return query?.size ? `${path}?${query}` : path
 }
 
-/** Место назначения — ключ DESTINATIONS — из адреса, в том числе с хвостом, либо null. */
+/** Место назначения — из DESTINATION_PATHS — из адреса, в том числе с хвостом, либо null. */
 export function destinationPath(raw: string | null | undefined): string | null {
   const url = destinationUrl(raw)
   return url === null ? null : url.split('?', 1)[0]
@@ -148,7 +163,7 @@ export function destinationPath(raw: string | null | undefined): string | null {
  * настроение квиза, а не одно только «шёл в выдачу».
  */
 export function bounceTo(
-  path: keyof typeof DESTINATIONS | string,
+  path: DestinationPath | string,
   search?: { toString(): string } | null,
 ): string {
   const query = search?.toString() ?? ''
@@ -216,7 +231,7 @@ export function loginCarry(search: URLSearchParams): URLSearchParams {
  * Нужна сессии, которой писать нельзя (вошла по вставленной ссылке, см.
  * isWriter в lib/server): подсказка «войди через Steam» обязана вести не на
  * квиз, а обратно — на ту же выдачу, в ту же библиотеку, в ту же комнату.
- * Путь комнаты едет как join, место из DESTINATIONS — как next (у выдачи —
+ * Путь комнаты едет как join, место из DESTINATION_PATHS — как next (у выдачи —
  * вместе с настроением, см. destinationUrl); остальное пустым входом:
  * произвольный адрес в next не пропустит loginCarry, и обещать возврат туда
  * было бы враньём.

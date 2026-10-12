@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { advanceRoomDeckRound, getRoom, roomMembers } from '@/lib/db'
-import { currentSteamId, getDb } from '@/lib/server'
+import { currentSession, getDb, isWriter } from '@/lib/server'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf, seatRefusal } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -20,22 +21,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
 
   const db = await getDb()
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Раунд поднимает участник — от своего имени (lib/roomseat)
+  const seat = seatOf(members, session.steamid, isWriter(session))
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
 
-  if (!members.some((m) => m.steamid === steamid)) {
-    return NextResponse.json({ error: 'notmember' }, { status: 403 })
-  }
+  const refusal = seatRefusal(seat)
+  if (refusal) return refusal
 
   if (room.deckRound >= MAX_ROUND) {
     return NextResponse.json({ deckRound: room.deckRound, maxed: true })

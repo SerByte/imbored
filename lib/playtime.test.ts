@@ -3,7 +3,14 @@ import path from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { demoLibrary, demoLibrary2 } from './demo'
 import { minutesByApp } from './libdelta'
-import { HIDDEN_PLAYTIME_MIN_GAMES, minutesHidden, playtimeHidden, timeHiddenStore } from './playtime'
+import {
+  HIDDEN_PLAYTIME_MIN_GAMES,
+  minutesHidden,
+  playedShort,
+  playedWords,
+  playtimeHidden,
+  timeHiddenStore,
+} from './playtime'
 import { hiddenLibrary } from './testing/hiddenlibrary'
 
 const NOW = 1_780_000_000
@@ -97,6 +104,70 @@ describe('строка о скрытом времени', () => {
     expect(play).toMatch(/timeHiddenStore\.fresh\(\)\s*\?\s*'Ищу в твоей библиотеке…'/)
     expect(code('app/quiz/page.tsx')).toMatch(/timeHidden \? 'Из своей библиотеки' : 'Ни разу не запускал'/)
     expect(code('components/SignOut.tsx')).toContain('timeHiddenStore.set(null)')
+  })
+})
+
+/**
+ * «0 ч» рядом с непустой полосой — неправда: игру запускали, просто меньше
+ * получаса. /library это уже знала, а портрет и /compat — шеринговые
+ * страницы — писали ноль, и на /compat «0 ч | 0 ч» читалось «никто не играл».
+ */
+describe('playedShort', () => {
+  test('меньше получаса — минуты, а не «0 ч»', () => {
+    expect(playedShort(20)).toBe('20 мин')
+    expect(playedShort(1)).toBe('1 мин')
+    expect(playedShort(29)).toBe('29 мин')
+  })
+
+  test('от получаса — округлённые часы, как раньше', () => {
+    expect(playedShort(30)).toBe('1 ч')
+    expect(playedShort(6000)).toBe('100 ч')
+    // тысячи — с разрядами, как у прежней подписи через toLocaleString
+    expect(playedShort(1234 * 60)).toBe(`${(1234).toLocaleString('ru-RU')} ч`)
+  })
+
+  test('ноль — честные «0 ч»: игра в пересечении есть, но её не запускали', () => {
+    expect(playedShort(0)).toBe('0 ч')
+  })
+
+  /**
+   * /library держала своё правило по месту и уже разошлась: «1234 ч» без
+   * разрядов против «1 234 ч» портрета. Одно правило — одна функция.
+   */
+  test('портрет, /compat и плитки /library подписывают часы через неё, а не «{hours} ч»', () => {
+    const ROOT = path.join(__dirname, '..')
+    const portrait = fs.readFileSync(path.join(ROOT, 'app/portrait/[steamid]/page.tsx'), 'utf8')
+    const compat = fs.readFileSync(path.join(ROOT, 'app/compat/[steamid]/page.tsx'), 'utf8')
+    const library = fs.readFileSync(path.join(ROOT, 'app/library/page.tsx'), 'utf8')
+    expect(portrait).toContain('{playedShort(g.minutes)}')
+    expect(portrait).not.toMatch(/g\.hours\.toLocaleString\('ru-RU'\)\} ч/)
+    expect(compat).toMatch(/playedShort\(m\)/)
+    expect(library).toContain('{playedShort(g.playtimeForever)}')
+    expect(library).not.toMatch(/`\$\{hours\} ч`/)
+    expect(library).not.toMatch(/\} мин`/)
+  })
+})
+
+/**
+ * Итог прозой над строками playedShort: порог обязан быть тем же, иначе над
+ * «20 мин | 5 мин» стоит «Вместе в них — 0 часов».
+ */
+describe('playedWords', () => {
+  test('меньше получаса — минуты со склонением', () => {
+    expect(playedWords(25)).toBe('25 минут')
+    expect(playedWords(1)).toBe('1 минута')
+    expect(playedWords(22)).toBe('22 минуты')
+    expect(playedWords(29)).toBe('29 минут')
+  })
+
+  test('от получаса — округлённые часы, тысячи с разрядами', () => {
+    expect(playedWords(30)).toBe('1 час')
+    expect(playedWords(3 * 60)).toBe('3 часа')
+    expect(playedWords(1235 * 60)).toBe(`${(1235).toLocaleString('ru-RU')} часов`)
+  })
+
+  test('ноль — «0 часов»: общие игры есть, их не запускали', () => {
+    expect(playedWords(0)).toBe('0 часов')
   })
 })
 

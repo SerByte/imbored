@@ -6,8 +6,10 @@ import {
   claimNewsPollBatch,
   countNewsPollDue,
   createDb,
+  dealsEndedBetween,
   getFeedForApps,
   getFeedHeadForApps,
+  getGamePageRows,
   getGamePatchHeads,
   getHeroMedia,
   getLovedFor,
@@ -15,13 +17,25 @@ import {
   getGamesMetaLite,
   getMajorFeed,
   getMajorFeedHead,
+  getRssFeedForApps,
+  latestMajorPatchSince,
+  PATCH_SINCE_MAX,
   getNeighbors,
+  latestEveningPlan,
+  livePlanAppids,
+  isFinished,
+  bannedAppids,
+  listBanned,
+  unbanGame,
   listEvenings,
   listCompatViews,
   findSharedPick,
   getSharedPick,
   getLibraryBaselines,
   getOlderSnapshotMinutes,
+  getLatestSnapshotMinutes,
+  feedLinkOwner,
+  issueFeedLink,
   listExploreLiked,
   listLiked,
   countLiked,
@@ -31,9 +45,11 @@ import {
   listPublicRooms,
   migrateDb,
   revokeAllSessions,
+  searchIndexGames,
   sitemapGames,
   sitemapNews,
   freshlyDigestedPatches,
+  gamesByDeveloper,
   getStaleAppids,
   stalePriceAppids,
   sweepStale,
@@ -43,8 +59,10 @@ import {
   upsertNewsItems,
   type Db,
 } from './db'
+import { PRICE_TRUST_SEC } from './discount'
 import { fetchDiscoveryPool } from './pool'
 import { loadTriviaCatalog } from './trivia'
+import { MINE_FRESH_SEC } from './whatsnewfeed'
 
 /**
  * Частичные индексы и запросы, которые на них держатся.
@@ -60,6 +78,8 @@ import { loadTriviaCatalog } from './trivia'
  */
 
 const NOW = 1_700_000_000
+/** Окно свежести личной ленты — с ним её зовут страница и опрос */
+const FRESH = MINE_FRESH_SEC
 
 type Issued = { sql: string; args: InArgs }
 
@@ -160,17 +180,26 @@ const CASES: Case[] = [
     sortFree: true,
   },
   // Личная лента: несколько appid — несколько диапазонов idx_news_app, их
-  // слияние по дате требует сортировки, но строк там не больше, чем патчей у
-  // четырёхсот игр библиотеки за окно ленты.
+  // слияние по дате требует сортировки, и LIMIT чтение не останавливает.
+  // Объём сортировки держит нижняя граница since — окно свежести личного
+  // блока (MINE_FRESH_SEC): постов у LIBRARY_CAP игр за три месяца, а не за
+  // всю ретенцию. Что граница правда входит в диапазон — тест ниже.
   {
     name: 'личная лента',
-    run: async (db) => getFeedForApps(await withPatches(db), [730, 570]),
+    run: async (db) => getFeedForApps(await withPatches(db), [730, 570], 30, undefined, NOW - FRESH),
+    indexes: ['idx_news_app', NEWS_PK],
+    sortFree: false,
+  },
+  // Лента для ридера — та же личная лента, другой лишь список столбцов тел
+  {
+    name: 'личная лента для ридера',
+    run: async (db) => getRssFeedForApps(await withPatches(db), [730, 570], 30, undefined, NOW - FRESH),
     indexes: ['idx_news_app', NEWS_PK],
     sortFree: false,
   },
   {
     name: 'голова личной ленты',
-    run: (db) => getFeedHeadForApps(db, [730, 570]),
+    run: (db) => getFeedHeadForApps(db, [730, 570], 30, undefined, NOW - FRESH),
     indexes: ['idx_news_app'],
     sortFree: false,
   },
@@ -196,6 +225,32 @@ const CASES: Case[] = [
     name: 'заголовки патчей игры',
     run: (db) => getGamePatchHeads(db, 730, 7),
     indexes: ['idx_news_app'],
+    sortFree: true,
+  },
+  // Причина заброшенной игры и метка «обновлялась»: на каждую пару игра —
+  // момент последнего запуска один скалярный подзапрос по частичному
+  // idx_news_app_major (appid=? AND published_at>?), свежий первым из индекса,
+  // и LIMIT 1 читает одну строку. По idx_news_app он дочитывал бы всю историю
+  // игры после давнего запуска, если в ней нет пересказанного крупного патча
+  {
+    name: 'свежий крупный патч после последнего запуска',
+    run: async (db) =>
+      latestMajorPatchSince(await withPatches(db), [
+        [730, NOW - 86_400],
+        [570, NOW - 86_400],
+      ]),
+    indexes: ['idx_news_app_major'],
+    sortFree: true,
+  },
+  // Пар больше потолка одного запроса — порции одним batch, план тот же
+  {
+    name: 'свежий крупный патч после последнего запуска, порциями',
+    run: async (db) =>
+      latestMajorPatchSince(
+        await withPatches(db),
+        Array.from({ length: PATCH_SINCE_MAX + 5 }, (_, i) => [i + 1, NOW - 86_400] as const),
+      ),
+    indexes: ['idx_news_app_major'],
     sortFree: true,
   },
   // Страница патча: пост по первичному ключу, игра — по своему
@@ -262,6 +317,14 @@ const CASES: Case[] = [
     indexes: ['idx_games_pool', 'idx_news_app'],
     sortFree: true,
   },
+  // Индекс «Найти игру»: весь живой каталог по порядку частичного индекса,
+  // без сортировки — раз в сутки на ISR, но и раз в сутки скан games не нужен
+  {
+    name: 'индекс поиска по каталогу',
+    run: (db) => searchIndexGames(db, 10_000),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
   // Отсечки по возрасту в запросе нет — см. catalogSignalsQueue: иначе при
   // пустой очереди SQLite читал бы весь пул
   {
@@ -270,24 +333,44 @@ const CASES: Case[] = [
     indexes: ['idx_games_reviews_at'],
     sortFree: true,
   },
-  // Баны участников пати: по диапазону индекса на каждого участника. DISTINCT
-  // сортирует только найденные строки этих людей, а не таблицу.
+  // «Ещё у этой студии» на карточке: диапазон developer=? частичного индекса,
+  // порядок — отзывы и appid (rowid, которым индекс кончается сам), и чтение
+  // обрывает LIMIT. Скан games здесь — весь каталог на каждую из пяти тысяч
+  // карточек карты сайта
+  {
+    name: 'игры студии',
+    run: (db) => gamesByDeveloper(db, 'Supergiant Games', 13),
+    indexes: ['idx_games_developer'],
+    sortFree: true,
+  },
+  // Погасшие скидки для сброса карточек (revalidateEndedDeals): диапазон
+  // индекса по выражению DEAL_UNTIL — только скидки, погасшие в окне, а не
+  // проход по всем скидкам каталога
+  {
+    name: 'погасшие скидки',
+    run: (db) => dealsEndedBetween(db, NOW - 86_400, NOW),
+    indexes: ['idx_games_deal_until'],
+    sortFree: true,
+  },
+  // Баны участников пати: по диапазону частичного индекса банов на каждого
+  // участника. DISTINCT сортирует только баны этих людей, а не таблицу.
   {
     name: 'баны участников пати',
     run: (db) => bannedAppidsOf(db, ['76561198000000001', '76561198000000002']),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_banned'],
     sortFree: false,
   },
-  // Колода исследователя: строки одного человека по индексу, и бан — тоже по
-  // нему. GROUP BY сортирует только найденные строки этого человека.
+  // Колода исследователя: строки одного человека по индексу, а его баны —
+  // по частичному индексу банов. GROUP BY сортирует только найденные строки
+  // этого человека.
   {
     name: 'пролистанное в колоде исследователя',
     run: (db) => listExplore(db, '76561198000000001'),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_steamid', 'idx_feedback_banned'],
     sortFree: false,
   },
   // Полка «Приглянулось» и полка «Зашло» — тот же разговор: строки одного
-  // человека по индексу, GROUP BY сортирует только их
+  // человека по индексу, баны — по индексу банов, GROUP BY сортирует только их
   // Прежние снимки одного человека — по индексу; сортировка — тай-брейк по
   // id среди не больше трёх его строк, а json_each — по одному блобу
   {
@@ -295,6 +378,23 @@ const CASES: Case[] = [
     run: (db) => getOlderSnapshotMinutes(db, '76561198000000001'),
     indexes: ['idx_snapshots_steamid'],
     sortFree: false,
+  },
+  // Личная RSS-лента (app/whatsnew/feed/[token]): её опрашивает ридер, а не
+  // человек, по нескольку раз в час. Последний снимок — тем же индексом, что
+  // прошлые, сортировка — тот же тай-брейк по id среди трёх строк человека
+  {
+    name: 'лента в ридере: минуты последнего снимка',
+    run: (db) => getLatestSnapshotMinutes(db, '76561198000000001'),
+    indexes: ['idx_snapshots_steamid'],
+    sortFree: false,
+  },
+  // Владелец ссылки — по отпечатку ключа: UNIQUE на token_hash и есть
+  // индекс поиска. Мимо него каждый опрос любой ленты читал бы все ссылки
+  {
+    name: 'лента в ридере: владелец ссылки по отпечатку',
+    run: (db) => feedLinkOwner(db, 'a'.repeat(64)),
+    indexes: ['sqlite_autoindex_feed_links_2'],
+    sortFree: true,
   },
   // «Сравнили с тобой» — строки владельца по индексу (owner, at) в его же
   // порядке, ник — по первичному ключу users
@@ -321,25 +421,78 @@ const CASES: Case[] = [
   {
     name: 'полка «Приглянулось»',
     run: (db) => listExploreLiked(db, '76561198000000001', 120),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_steamid', 'idx_feedback_banned'],
     sortFree: false,
   },
   {
     name: 'полка «Зашло»',
     run: (db) => listLiked(db, '76561198000000001'),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_steamid', 'idx_feedback_banned'],
     sortFree: false,
   },
   {
     name: 'счёт «Зашло»',
     run: (db) => countLiked(db, '76561198000000001'),
+    indexes: ['idx_feedback_steamid', 'idx_feedback_banned'],
+    sortFree: false,
+  },
+  /*
+   * «План на вечер» — на каждый заход главной (живая строка) и на каждую
+   * выдачу /play. Свои строки за полтора дня по idx_feedback_steamid, и
+   * «закрыт ли план позже» — тот же индекс от времени плана, а не все оценки
+   * человека. Сортировка по id внутри ничьих секунд — по тем же строкам.
+   */
+  {
+    name: 'план на вечер',
+    run: (db) => latestEveningPlan(db, '76561198000000001', NOW),
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },
+  // Все живые планы — на каждый заход /library («Твои вечера»): те же свои
+  // строки за полтора дня, только без LIMIT 1 и без каталога
   {
-    name: 'выйти на всех устройствах',
-    run: (db) => revokeAllSessions(db, '76561198000000001', NOW),
-    indexes: ['idx_sessions_steamid'],
+    name: 'живые планы на вечер',
+    run: (db) => livePlanAppids(db, '76561198000000001', NOW),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  /*
+   * «Пройдена ли» — на каждый заход страницы своей игры у пишущей сессии
+   * (/api/session/owns, без кэша), и обычный ответ — «нет». По
+   * idx_feedback_steamid это «нет» читало всю историю оценок человека:
+   * строки бана этой игры, на которой чтение остановилось бы, у своей игры
+   * нет. Частичный индекс банов ищет по (steamid, appid); доупорядочить по
+   * id остаётся баны одной игры.
+   */
+  {
+    name: 'пройдена ли игра',
+    run: (db) => isFinished(db, '76561198000000001', 620),
+    indexes: ['idx_feedback_banned'],
+    sortFree: false,
+  },
+  // Отсев банов — на каждую выдачу /play (lib/candidates) и на /library:
+  // только баны человека, а не все его оценки, и DISTINCT приходит из
+  // порядка индекса (steamid, appid)
+  {
+    name: 'баны человека для отсева выдачи',
+    run: (db) => bannedAppids(db, '76561198000000001'),
+    indexes: ['idx_feedback_banned'],
+    sortFree: true,
+  },
+  // Полка «Скрытые» и «Пройдено» на /library: GROUP BY по appid — из
+  // индекса, сортировка по дате — среди банов одного человека
+  {
+    name: 'полка банов',
+    run: (db) => listBanned(db, '76561198000000001'),
+    indexes: ['idx_feedback_banned'],
+    sortFree: false,
+  },
+  // «Снова предлагать»: стираются баны одной игры, найденные поиском по
+  // индексу, а не проходом по оценкам человека
+  {
+    name: '«Снова предлагать»',
+    run: (db) => unbanGame(db, '76561198000000001', 620),
+    indexes: ['idx_feedback_banned'],
     sortFree: true,
   },
 ]
@@ -366,6 +519,39 @@ describe('планы запросов', () => {
   }
 
   /*
+   * «Выйти на всех устройствах» — не в CASES: та же пачка гасит и ссылку на
+   * RSS-ленту, а её строка ищется по первичному ключу WITHOUT ROWID-таблицы,
+   * и такой план зовётся «USING PRIMARY KEY», без имени индекса.
+   */
+  test('выйти на всех устройствах: сессии по индексу, ссылка на ленту — по ключу', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) => revokeAllSessions(spy, { steamid: '76561198000000001', sid: 'sid' }, NOW))
+    const plans = await Promise.all(issued.map((q) => planOf(db, q)))
+    for (const plan of plans) expect(bareScans(plan), plan.join(' | ')).toEqual([])
+    const all = plans.map((p) => p.join(' | '))
+    expect(all.some((p) => p.includes('INDEX idx_sessions_steamid')), all.join(' || ')).toBe(true)
+    expect(all.some((p) => p.includes('SEARCH feed_links USING PRIMARY KEY (steamid=?)')), all.join(' || ')).toBe(true)
+  })
+
+  /*
+   * Выпуск ссылки сверяет отзыв своей сессии, отметку удаления и читает
+   * прежнюю ссылку — всё по первичным ключам. Скан sessions здесь стоил бы
+   * каждому нажатию «Получить ссылку» прохода по всем входам всех людей.
+   */
+  test('выпуск ссылки на ленту: сессия, отметка удаления и прежняя ссылка — по первичным ключам', async () => {
+    const db = await createDb(':memory:')
+    const issued = await statementsOf(db, (spy) =>
+      issueFeedLink(spy, { steamid: '76561198000000001', sid: 'sid', tokenHash: 'a'.repeat(64), nowSec: NOW, replace: false }),
+    )
+    expect(issued).toHaveLength(1)
+    const where = (await planOf(db, issued[0]!)).join(' | ')
+    expect(bareScans(await planOf(db, issued[0]!)), where).toEqual([])
+    expect(where).toContain('SEARCH sessions USING PRIMARY KEY (sid=?)')
+    expect(where).toContain('SEARCH forget_marks USING PRIMARY KEY (steamid=?)')
+    expect(where).toContain('SEARCH feed_links USING PRIMARY KEY (steamid=?)')
+  })
+
+  /*
    * Суточная уборка в CASES не входит: сессии и комнаты она читает полным
    * сканом, и это осознанно — раз в сутки, по таблицам, которые она же и
    * держит короткими. А вот демо-личности ищутся среди ВСЕХ людей, и тут
@@ -377,7 +563,10 @@ describe('планы запросов', () => {
     const demo = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter((q) =>
       q.sql.includes("GLOB '000*'"),
     )
-    expect(demo.length).toBe(6)
+    // Четыре таблицы личности, сессии и users — шесть. Седьмая — feed_links: ссылка на
+    // личную ленту уходит вместе с демо-личностью, и её строка ищется тем же
+    // предикатом — по первичному ключу, а не проходом по всем ссылкам
+    expect(demo.length).toBe(7)
     for (const q of demo) {
       const plan = await planOf(db, q)
       const where = plan.join(' | ')
@@ -397,14 +586,36 @@ describe('планы запросов', () => {
    */
   test('уборка снимков выдачи идёт по частичному индексу, а не по всему фидбеку', async () => {
     const db = await createDb(':memory:')
-    const ctx = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter((q) =>
-      q.sql.includes('ctx_json = NULL'),
+    // Снимок обнуляется, а план на вечер уходит целиком (lib/eveningplan.ts) —
+    // оба прохода по тому же частичному индексу
+    const ctx = (await statementsOf(db, (spy) => sweepStale(spy, NOW))).filter(
+      (q) => q.sql.includes('ctx_json = NULL') || /DELETE FROM feedback\b[\s\S]*intent/.test(q.sql),
     )
-    expect(ctx).toHaveLength(1)
-    const plan = await planOf(db, ctx[0]!)
-    const where = plan.join(' | ')
-    expect(bareScans(plan), where).toEqual([])
-    expect(where).toContain('idx_feedback_ctx')
+    expect(ctx).toHaveLength(2)
+    for (const q of ctx) {
+      const plan = await planOf(db, q)
+      const where = plan.join(' | ')
+      expect(bareScans(plan), where).toEqual([])
+      expect(where).toContain('idx_feedback_ctx')
+    }
+  })
+
+  test('личная лента: окно свежести — граница диапазона индекса, а не фильтр после него', async () => {
+    // Без нижней границы диапазон idx_news_app каждой игры дочитывался до
+    // конца ретенции, и сортировка перебирала все ≤30 постов трёхсот игр на
+    // каждый опрос плашки «N новых». Остаточный фильтр по дате выглядел бы в
+    // плане так же «по индексу» — поэтому проверяется сама граница поиска.
+    const db = await createDb(':memory:')
+    for (const run of [
+      (spy: Db) => getFeedHeadForApps(spy, [730, 570], 30, undefined, NOW - FRESH),
+      async (spy: Db) => getFeedForApps(await withPatches(spy), [730, 570], 30, undefined, NOW - FRESH),
+      async (spy: Db) => getRssFeedForApps(await withPatches(spy), [730, 570], 30, undefined, NOW - FRESH),
+    ]) {
+      const head = (await statementsOf(db, run)).filter((q) => q.sql.includes('appid IN'))
+      expect(head).toHaveLength(1)
+      const where = (await planOf(db, head[0]!)).join(' | ')
+      expect(where).toContain('idx_news_app (appid=? AND published_at>? AND published_at<?)')
+    }
   })
 
   /*
@@ -506,8 +717,9 @@ describe('планы запросов', () => {
     )
     const partial = res.rows.map((r) => String(r.name)).sort()
     // Индекс уборки снимков проверяется отдельным тестом выше: его запрос —
-    // UPDATE внутри пачки sweepStale, и в CASES он не ложится
-    const covered = new Set([...CASES.flatMap((c) => c.indexes), 'idx_feedback_ctx'])
+    // UPDATE внутри пачки sweepStale, и в CASES он не ложится. Так же и
+    // idx_sessions_steamid: «выйти везде» — пачка вместе с ссылкой на ленту
+    const covered = new Set([...CASES.flatMap((c) => c.indexes), 'idx_feedback_ctx', 'idx_sessions_steamid'])
     expect(partial.filter((name) => !covered.has(name))).toEqual([])
   })
 })
@@ -527,14 +739,20 @@ describe('планы запросов', () => {
  */
 describe('выборки по списку appid', () => {
   const IDS = [730, 570, 620]
-  const WITH_SEMANTICS = new Set(['getGamesMeta', 'getGamesMetaLite'])
+  const WITH_SEMANTICS = new Set(['getGamesMeta', 'getGamesMetaLite', 'getGamePageRows'])
   const LIST_READS: Array<[string, (db: Db) => Promise<unknown>]> = [
     ['getGamesMeta', (db) => getGamesMeta(db, IDS)],
     ['getGamesMetaLite', (db) => getGamesMetaLite(db, IDS)],
+    ['getGamePageRows', (db) => getGamePageRows(db, IDS)],
     ['getHeroMedia', (db) => getHeroMedia(db, IDS)],
     ['getLovedFor', (db) => getLovedFor(db, IDS)],
     ['getStaleAppids', (db) => getStaleAppids(db, IDS, 86_400, NOW)],
     ['stalePriceAppids', (db) => stalePriceAppids(db, IDS, 3600, NOW)],
+    // вариант сверки каталога: лишнее OR в условии не должно сбить план
+    [
+      'stalePriceAppids со скрытыми',
+      (db) => stalePriceAppids(db, IDS, Number.MAX_SAFE_INTEGER, NOW, 200, 'us', { hidden: true }),
+    ],
   ]
 
   for (const [name, run] of LIST_READS) {
@@ -554,6 +772,19 @@ describe('выборки по списку appid', () => {
 })
 
 describe('смена определения индекса', () => {
+  test('idx_games_deal_until построен на нынешнем PRICE_TRUST_SEC', async () => {
+    // Число вписано в определение индекса (DEAL_UNTIL в lib/db), и живая база
+    // держит индекс со старым числом, сколько бы его ни меняли: CREATE INDEX
+    // IF NOT EXISTS смотрит только на имя. Сменил PRICE_TRUST_SEC — дай
+    // индексу новое имя (…_v2), положи DROP INDEX IF EXISTS старого перед
+    // созданием и только потом поправь число здесь. Иначе выборка погасших
+    // скидок молча уйдёт в полный скан games.
+    expect(PRICE_TRUST_SEC, 'сменил PRICE_TRUST_SEC — переименуй idx_games_deal_until').toBe(129_600)
+    const db = await createDb(':memory:')
+    const res = await db.execute("SELECT sql FROM sqlite_master WHERE name = 'idx_games_deal_until'")
+    expect(String(res.rows[0]?.sql)).toContain(`price_at + ${PRICE_TRUST_SEC}`)
+  })
+
   /**
    * Так выглядела живая база: индекс с прежним предикатом «scale IS NULL»
    * пережил его смену, потому что CREATE INDEX IF NOT EXISTS смотрит только

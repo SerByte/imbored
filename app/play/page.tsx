@@ -3,7 +3,7 @@
 import { AnimatePresence, m } from 'framer-motion'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
 import { ClickSpark } from '@/components/ClickSpark'
@@ -18,11 +18,12 @@ import { StatusLine } from '@/components/StatusLine'
 import { OutcomeAsk } from '@/components/OutcomeAsk'
 import { PlayersNow } from '@/components/PlayersNow'
 import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
-import { DiscountCorner, DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { DiscountCorner, DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
 import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
-import { SteamLaunch } from '@/components/SteamLaunch'
+import { SteamLaunch, type LaunchVia } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
+import { heroTail, TonightButton, useWarmTonight } from '@/components/TonightLazy'
 import { WarmupScreen, type ChosenGame } from '@/components/WarmupScreen'
 import { HeroTitle } from '@/components/HeroTitle'
 import { HeroTrailer } from '@/components/HeroTrailer'
@@ -31,6 +32,7 @@ import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
+import { closesPlan, planBeside, planLine, writesPlan, type EveningPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { reviewsBrief } from '@/lib/gametraits'
@@ -50,9 +52,13 @@ import { EASE } from '@/lib/motion'
 import {
   BURNOUT_AFTER_SKIPS,
   FRESH_TURN,
+  afterBan,
+  burnoutInvite,
+  burnoutOffer,
   dealFrom,
   landingIndex,
   nextStep,
+  parseSeedRef,
   switchLine,
   type Deal,
   type Miss,
@@ -63,6 +69,7 @@ import {
   PLAY_CACHE_VERSION,
   hasFreshDeal,
   hasFreshWarm,
+  heldPlanned,
   playCacheKey,
   playCacheStore,
   readRecentBans,
@@ -73,6 +80,7 @@ import {
   whoAmI,
 } from '@/lib/playcache'
 import { timeHiddenStore } from '@/lib/playtime'
+import { parseSeedParam, quizHref, roomBridgeHref } from '@/lib/presets'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources'
@@ -80,6 +88,7 @@ import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { isDemoId } from '@/lib/demoid'
+import { focusAdrift } from '@/lib/focushandoff'
 import type { Mood } from '@/lib/types'
 import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
@@ -210,8 +219,9 @@ const STEP = {
 /**
  * ПОЧЕМУ ВЫДАЧА НЕ СОБРАЛАСЬ — РАЗНЫМИ СЛОВАМИ, А НЕ ОДНИМИ.
  *
- * /api/recommend отвечает четырьмя разными отказами: нет сессии, не разобрать
- * настроение, нет снимка библиотеки, кандидатов не осталось. Клиент до этой
+ * /api/recommend отвечает пятью разными отказами: нет сессии, не разобрать
+ * настроение, нет снимка библиотеки, кандидатов не осталось и кандидаты
+ * были, но все под «Не предлагать» (muted, lib/mutetags.ts). Клиент до этой
  * правки различал ровно один случай — потолок частоты (429), — а все прочие
  * сводил к `!res.ok` и показывал одну и ту же строку:
  *
@@ -226,24 +236,72 @@ const STEP = {
  *
  * `retry` — не оформление: кнопка повтора показывается там, где повтор может
  * помочь, и не показывается там, где он гарантированно вернёт тот же ответ.
+ * Флаг — согласие, а не отказ: retry: true ставят только там, где повтор
+ * помогает (FAIL_UNKNOWN и потолок частоты), а без флага кнопки нет. Так
+ * забытый флаг не нарисует повтор, обречённый на тот же 409, — и не везёт
+ * в каждой строке «retry: false»: /play стоит у потолка бюджета
+ * (bundle-budget.json), и девять байт на разбор там в счёт.
+ *
+ * `seedless` — второй выход тем же согласием: та же выдача без затравки
+ * («Подобрать без «похожих»»). У отказа «в духе X», где соседей X под это
+ * настроение нет (seedFail), и у «Всё под «Не предлагать»», где соседи есть,
+ * но все под фильтром при любом настроении. Кнопка встаёт, только если
+ * затравка и правда была: «Не предлагать» бывает и у обычной выдачи.
  */
-const FAIL: Record<string, { title: string; text: string; retry: boolean }> = {
+type FailCard = { title: string; text: string; retry?: boolean; seedless?: boolean }
+
+const FAIL: Record<string, FailCard> = {
   nocandidates: {
     title: 'Подбирать не из чего',
     text: 'Под это настроение не прошла ни одна игра: часть могла уехать в бан, часть не годится под запрос. Смени настроение или верни что-нибудь из бана.',
-    retry: false,
   },
   nolibrary: {
     title: 'Библиотека не доехала',
     text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
-    retry: false,
   },
   badmood: {
     title: 'Настроение не разобрать',
     text: 'Адрес пришёл с непонятными параметрами — собери запрос заново.',
-    retry: false,
+  },
+  // Кандидаты были, но все под «Не предлагать» (lib/mutetags.ts): «верни
+  // из бана» тут чужой совет. Фильтр живёт на квизе — туда ведёт «Изменить
+  // настроение» под текстом, а «Посмотреть библиотеку» не встаёт: банов нет.
+  // «Смени настроение» здесь нет намеренно: у «Как «X», но…» соседи X под
+  // фильтром при любом настроении, и выход там — «Подобрать без «похожих»».
+  // Коротко — ради потолка /play (bundle-budget.json): что случилось, говорит
+  // заголовок, где чинится — текст, а ссылка «Изменить настроение» под ним
+  // ведёт на квиз, где фильтр и стоит
+  muted: {
+    title: 'Всё под «Не предлагать»',
+    text: 'Фильтр — по ссылке.',
+    seedless: true,
   },
 }
+
+/**
+ * nocandidates у выдачи «в духе X», спрошенной адресом (askSeed в Player).
+ *
+ * Общий текст здесь врёт дважды: «смени настроение или верни из бана» —
+ * не те советы, когда человек пришёл со страницы игры за похожими на неё, а
+ * соседей под это настроение просто не нашлось. Экран называет X (имя — из
+ * тела отказа) и предлагает то, что поможет: подобрать без «похожих» —
+ * кнопкой под текстом — или сменить настроение, сохранив затравку. Повтор
+ * того же запроса вернёт тот же отказ — без retry, как у nocandidates.
+ */
+function seedFail(name: string | null): FailCard {
+  return {
+    title: 'Похожих не нашлось',
+    text: `Под это настроение не прошла ни одна игра, похожая на ${name ? `«${name}»` : 'выбранную'}. Можно подобрать без «похожих» или сменить настроение.`,
+    seedless: true,
+  }
+}
+
+/**
+ * Отказ «Уже прошёл» — у героя и у строки «Продолжить» одними словами, но
+ * со своей игрой: обе кнопки бывают на экране разом, и «не получилось
+ * отметить игру» не говорило, какую. Слова — те же, что у components/MarkFinished.
+ */
+const DONE_MISS = (name: string) => `Не получилось отметить «${name}» пройденной — нажми ещё раз.`
 
 /**
  * Сколько ждать /api/recommend. С запасом над худшим живым ответом: восемь
@@ -282,6 +340,54 @@ const CHOSEN_MS = 1300
  */
 const LEAVE_MS = 320
 
+/**
+ * Строка с запуском под героем — «Продолжить» и план на вечер
+ * (lib/eveningplan.ts). Одна разметка на обе: вид у них один, а /play стоит у
+ * потолка бюджета (bundle-budget.json), и вторая копия классов весила бы
+ * столько же, сколько сама строка. fineOnly — только там, где кнопка
+ * запускает (pointer-fine, признак развилки SteamLaunch): без кнопки строка
+ * плана была бы упрёком, а не дверью. onLaunch получает ветку нажатия
+ * (launchIntent ниже).
+ */
+function LaunchRow({
+  appid,
+  label,
+  fineOnly = false,
+  onLaunch,
+  children,
+}: {
+  appid: number
+  label: string
+  fineOnly?: boolean
+  onLaunch: (via: LaunchVia) => void
+  children: ReactNode
+}) {
+  return (
+    <div className={`mx-auto w-full max-w-6xl px-safe pt-8${fineOnly ? ' hidden pointer-fine:block' : ''}`}>
+      <div className="panel-lift px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+        <span className="text-dim">{children}</span>
+        <SteamLaunch
+          appid={appid}
+          label={label}
+          mobileLabel={fineOnly ? null : undefined}
+          onClick={onLaunch}
+          className="tap font-extrabold text-ember-text hover:underline"
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Чем было нажатие «Запустить» у своей — для снимка к оценке: steam://run —
+ * запуск, «Открыть в Steam» под пальцем — переход в магазин. Оценка у обоих
+ * 'launched' (исход совета заводят оба), но магазинная — не запуск, и план на
+ * вечер она не закрывает: на телефоне её жмут как раз после «Сыграю вечером
+ * на ПК», чтобы поставить игру на загрузку из приложения Steam
+ * (lib/eveningplan.ts, closesPlan).
+ */
+const launchIntent = (via: LaunchVia): CtxIntent => (via === 'store' ? 'store' : 'launch')
+
 function Player({ say }: { say: (line: string) => void }) {
   const router = useRouter()
   const search = useSearchParams()
@@ -312,7 +418,10 @@ function Player({ say }: { say: (line: string) => void }) {
    * назвать срок, а не отправить «попробуй через минуту» при окне в десять.
    */
   const [limitedFor, setLimitedFor] = useState<number | null>(null)
-  /** Код отказа из тела ответа: nocandidates, nolibrary, badmood или null. */
+  /**
+   * Код отказа из тела ответа: nocandidates, nolibrary, badmood, muted (всё
+   * под «Не предлагать», lib/mutetags.ts) или null.
+   */
   const [reason, setReason] = useState<string | null>(null)
   const [progress, setProgress] = useState<string>(PREPARE_MESSAGE)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
@@ -330,6 +439,42 @@ function Player({ say }: { say: (line: string) => void }) {
   const [discoveries, setDiscoveries] = useState<Pick[]>([])
   /** То, во что он играет сейчас (pickContinue): строка под героем, не карточка */
   const [continueGame, setContinueGame] = useState<ContinueGame | null>(null)
+  /** План на вечер (lib/eveningplan.ts): поставленное на загрузку — строкой с запуском */
+  const [plan, setPlan] = useState<EveningPlan | null>(null)
+  /**
+   * Игры, отложенные на вечер в этом заходе («Поставь на загрузку», «Сыграю
+   * вечером на ПК») и записанные сервером. «Не то — дальше» у такого героя —
+   * шаг по выдаче, а не «передумал»: листает без вопроса о причине и без
+   * пропуска, который закрыл бы план (writesPlan, closesPlan). План, уже
+   * закрытый здесь же (запустил с героя), отсюда уходит: после запуска «не
+   * то» — снова ответ, и причину у него спросят.
+   *
+   * Состояние, а не ref, — и едет с выдачей в запись на устройстве
+   * (lib/playcache, planned). «Подробнее» → «Назад» и перезагрузка
+   * возвращают ту же выдачу, но на новом монтировании, и ref пустел вместе
+   * с прошлым: «Не то — дальше» у героя, отложенного минуту назад, снова
+   * спрашивал причину, и «Просто не сейчас» закрывал план. А
+   * эффект записи выдачи видит только состояние: ref, тронутый после
+   * «Сыграю вечером», в запись не попадал, если следующим нажатием было ⓘ.
+   * Массив, а не Set: в записи он и так массив, а игр в нём — по пальцам.
+   *
+   * Заход — это вкладка, а не настроение. «Изменить настроение» → квиз →
+   * /play — новое монтирование под другим ключом, и выдачу не вернуть, но
+   * отложенные того же человека едут в новую выдачу (heldOver ниже), пока
+   * заход жив — час с последнего показа выдачи, сколько бы ни было ей
+   * самой (seenAt в lib/playcache). И наоборот: план, закрытый не здесь, —
+   * запуском со страницы игры, из «Твоих вечеров», с «Игры дня», — из
+   * записи вычёркивает lib/planforget, и «не то» у такой игры снова спросят.
+   */
+  const [planned, setPlanned] = useState<number[]>([])
+  /**
+   * Отложенные из записи, которую не вернули (heldPlanned в lib/playcache), —
+   * ждут первую новую выдачу и сливаются в planned, если она того же
+   * человека. Ref: рисовать по нему нечего, а читает его один applyDeal.
+   */
+  const heldOver = useRef<{ viewer: string; appids: number[] } | null>(null)
+  // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
+  useWarmTonight()
   /** Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера, строка над «Продолжить» */
   const [timeHidden, setTimeHidden] = useState(false)
   const [index, setIndex] = useState(0)
@@ -349,10 +494,31 @@ function Player({ say }: { say: (line: string) => void }) {
   const [lean, setLean] = useState<Lean | null>(() => parseLean(search.get('lean')))
   /**
    * «Как «X», но…» — соседи какой игры на экране. Только из эха выдачи
-   * (applyDeal): адреса у затравки нет, это шаг по уже показанной выдаче,
+   * (applyDeal), как и ось: кнопки и подпись обязаны говорить, подо что
+   * собрана выдача на экране. Шаг по уже показанной выдаче — без адреса,
    * как переключатели. null — обычная выдача.
    */
   const [seed, setSeed] = useState<SeedRef | null>(null)
+  /**
+   * Затравка, с которой ИДТИ за выдачей, — адресом (/play?…&seed=).
+   *
+   * Раньше адреса у затравки не было вовсе: «хочу как Hades» было
+   * невыполнимо, пока Hades сам не выпадет героем. Теперь в выдачу «в духе X»
+   * ведут страница игры, «Уже прошёл» и «Твои вечера» — через квиз
+   * (quizHref). Адрес — это вход, а не второй переключатель: с него уходят
+   * первая выдача и «Попробовать снова», а дальше затравка живёт в эхе (seed
+   * выше) и меняется кнопками под героем, как раньше. «Подобрать заново»
+   * перед новым заходом ставит сюда затравку выдачи на экране (redeal) —
+   * как источник и ось, она едет с тем, на что человек переключил. В рулетке
+   * и «нераспакованном» её нет — по той же причине, по которой там нет кнопки
+   * «Как «X», но…». null — без затравки, в том числе после «Подобрать без
+   * «похожих»» на экране отказа.
+   */
+  const [askSeed, setAskSeed] = useState(() =>
+    roulette || focus ? null : parseSeedParam(search.get('seed')),
+  )
+  /** Чьих соседей не нашлось — имя из тела отказа nocandidates, для экрана отказа */
+  const [failSeed, setFailSeed] = useState<string | null>(null)
   /**
    * Подталкивание под героем (lib/nudge.ts), под которое собрана выдача на
    * экране, — тоже только из эха. null — обычная выдача.
@@ -376,12 +542,24 @@ function Player({ say }: { say: (line: string) => void }) {
    * выдачу под ключом нового настроения.
    */
   const [cacheKey] = useState(() =>
-    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')) }),
+    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')), seed: askSeed }),
   )
   /** На экране выдача с прошлого захода — рядом «Подобрать заново» */
   const [restored, setRestored] = useState(false)
   /** Номер захода за выдачей: «Подобрать заново» запускает путь первого захода снова */
   const [round, setRound] = useState(0)
+  /**
+   * Тот же номер — для ответов, которые доезжают после await.
+   *
+   * Пересборка и «Обновить выдачу», начатые на выдаче с прошлого захода,
+   * доезжали уже после «Подобрать заново» — на экран ожидания нового захода —
+   * и клали туда выдачу, от которой человек только что отказался. Фазу они не
+   * трогают, и экран ожидания мог так и остаться висеть (см. revealed в run).
+   * Ref, а не состояние: замыканию обработчика нужен номер не на момент клика,
+   * а сейчас. Растёт в redeal синхронно, до любого рендера, и round берёт
+   * значение у него — разойтись им негде.
+   */
+  const roundNow = useRef(0)
   /**
    * Откуда выдача на экране: когда пришла (часы клиента), по каким серверным
    * часам и для кого. Нужна только записи на устройстве, в разметку не идёт.
@@ -456,6 +634,13 @@ function Player({ say }: { say: (line: string) => void }) {
    */
   const heroEl = useRef<HTMLElement | null>(null)
   const wantHeroFocus = useRef(false)
+  /*
+   * То же разовое «забери фокус» — для строки «Продолжить» после «Уже
+   * прошёл» (contFocus ниже). Объявлено здесь, а не рядом: любое действие,
+   * которое отдаёт фокус герою, отменяет и его — иначе отметка, доехавшая в
+   * пятый пропуск, отняла бы фокус у героя, вернувшегося с экрана выгорания.
+   */
+  const wantContFocus = useRef(false)
   const heroRef = useCallback((el: HTMLElement | null) => {
     heroEl.current = el
     if (!el || !wantHeroFocus.current) return
@@ -463,6 +648,7 @@ function Player({ say }: { say: (line: string) => void }) {
     el.focus({ preventScroll: true })
   }, [])
   const focusHero = useCallback((sameHero: boolean) => {
+    wantContFocus.current = false
     const el = heroEl.current
     if (sameHero && el) el.focus({ preventScroll: true })
     else wantHeroFocus.current = true
@@ -516,6 +702,17 @@ function Player({ say }: { say: (line: string) => void }) {
             // и говорит строкой, почему, — вместо «не получилось, нажми ещё
             // раз», после которого не получится никогда.
             if (await isNeedSteam(r)) writerStore.set(false)
+            // Оценка, закрывшая план на вечер на сервере, закрывает и строку
+            // плана (closesPlan — то же правило, что у latestEveningPlan):
+            // иначе она висела бы до новой выдачи и переживала бы уход в
+            // записи выдачи (lib/playcache). Только записанная — незаписанная
+            // план не закрыла. Функцией, а не по plan: замыкание у
+            // sendFeedback — от первого рендера
+            if (r.ok && closesPlan(action, reason, ctx?.intent)) {
+              setPlan((p) => (p?.appid === appid ? null : p))
+              setPlanned((a) => (a.includes(appid) ? a.filter((x) => x !== appid) : a))
+            }
+            if (r.ok && writesPlan(action, ctx?.intent)) setPlanned((a) => (a.includes(appid) ? a : [...a, appid]))
             return r.ok
           })
           // Промис намеренно не отклоняется: вызывающий, которому исход не
@@ -529,12 +726,38 @@ function Player({ say }: { say: (line: string) => void }) {
   )
 
   /**
+   * «Зашло» — в очереди записей игры (sendLike в lib/unlike): снятие тем же
+   * сердцем через полсекунды не обгонит эту вставку на сервере, а новое
+   * «Зашло» сразу после снятия — запоздалый DELETE. Там же запоминается
+   * строка, которую оно легло: снятие у героя удаляет только её, а не
+   * прежние «зашло» игры, которых сердце не показывало. Едет ленивым куском
+   * героя (heroTail, components/HeroTail): /play у потолка бюджета. Не
+   * пришёл кусок — оценка уходит сразу, как до очереди: учебный сигнал не
+   * теряется из-за куска, который нужен только для отмены.
+   */
+  const sendLike = (appid: number, ctx: FeedbackCtx) => {
+    const send = () => sendFeedback(appid, 'liked', undefined, ctx)
+    void heroTail().then((t) => t.sendLike('play', appid, { mood, ctx }), send)
+  }
+
+  /**
    * Бан ждёт подтверждения сервера — см. докблок sendFeedback выше.
    * banFailed хранит appid, а не флаг: строка об отказе относится к той
    * карточке, на которой случилась, и не должна переехать на следующую.
    */
   const [banning, setBanning] = useState(false)
   const [banFailed, setBanFailed] = useState<number | null>(null)
+  /**
+   * Выдача, какой она стоит на экране сейчас, — для бана, который применяет
+   * результат после await. Экран на время запроса не заперт (lib/playflow,
+   * afterBan), и замыкание клика к ответу сервера видит пятёрку и героя,
+   * которых уже нет. Эффектом, а не присваиванием в рендере: ref, тронутый
+   * рендером, React вправе не увидеть. Фаза — там же: виден ли герой вообще.
+   */
+  const live = useRef({ picks, index, phase })
+  useEffect(() => {
+    live.current = { picks, index, phase }
+  }, [picks, index, phase])
 
   /**
    * Запрос выдачи. Отдельно от прогрева: переключение режима повторяет только
@@ -544,16 +767,25 @@ function Player({ say }: { say: (line: string) => void }) {
    * Отказ — не голый null, а причина (Miss): экрану ошибки хватает limitedFor
    * и reason ниже, а переключателю на живой выдаче их не прочитать — к строке
    * после await состояние ещё не обновится.
+   *
+   * signal — уход со страницы (первая выдача, run ниже). Запрос он не рвёт:
+   * роут его не слушает, и место в потолке частоты уже занято, — а свой срок
+   * ожидания держит AbortSignal.timeout. Он запрещает ответу, доехавшему после
+   * ухода, что-либо делать: поздний 401 разворачивал бы на вход человека уже с
+   * другой страницы, а поздний отказ писал бы причину в никуда.
    */
   const fetchPicks = useCallback(
-    async (next: {
-      scope: Scope
-      lean: Lean | null
-      seed?: number | null
-      nudge?: Nudge | null
-      /** Что уже на экране — нужно только «Что-то другое» */
-      exclude?: number[]
-    }): Promise<Deal | Miss> => {
+    async (
+      next: {
+        scope: Scope
+        lean: Lean | null
+        seed?: number | null
+        nudge?: Nudge | null
+        /** Что уже на экране — нужно только «Что-то другое» */
+        exclude?: number[]
+      },
+      signal?: AbortSignal,
+    ): Promise<Deal | Miss> => {
       // try/catch, а не голый await: оборванная сеть на этом шаге всплывала из
       // async-функции и оставляла экран в вечном «Подбираю…» — тот же класс
       // ошибки, что был в цикле прогрева до переезда в lib/warmup.ts.
@@ -579,37 +811,64 @@ function Player({ say }: { say: (line: string) => void }) {
           // уходит в catch ниже и показывает экран с кнопкой повтора.
           signal: AbortSignal.timeout(RECOMMEND_WAIT_MS),
         })
+        if (signal?.aborted) return { miss: 'gone' }
         if (res.status === 429) {
           const wait = Number(res.headers.get('Retry-After') ?? 0)
           const waitSec = Number.isFinite(wait) && wait > 0 ? wait : null
           setLimitedFor(waitSec)
           return { miss: 'limited', waitSec }
         }
-        setLimitedFor(null)
+        /*
+         * Прочие отказы сбрасывают потолок частоты вместе со своей причиной —
+         * после последнего await, а не сразу за 429. Экран ошибки читает
+         * потолок первым, и сброс до чтения тела на время повтора менял под
+         * «Пробую…» «Слишком часто» на чужой отказ, а теперь ещё и объявлял бы
+         * его (эффект экрана ошибки ниже). Удачной выдаче сбрасывать нечего:
+         * limitedFor читает только экран ошибки, а туда без нового отказа —
+         * со своими полями — не попасть.
+         */
         if (!res.ok) {
-          /*
-           * Код причины читается ИЗ ТЕЛА, а не выводится из статуса: под 409
-           * живут два разных отказа — «нет снимка библиотеки» и «кандидатов не
-           * осталось», — и советы у них противоположные.
-           */
-          const code = await res
-            .json()
-            .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
-            .catch(() => null)
           // Сессия отвалилась — экран с текстом здесь не нужен вовсе: человеку
           // нужен вход, а не объяснение. Тот же приём, что при обрыве сессии в
           // фоновом прогреве несколькими строками ниже. Строка запроса едет
           // с разворотом: без неё гость, прошедший квиз, после входа получал
           // выдачу по дефолтному настроению (см. destinationUrl).
+          // replace, а не push: запись /play без сессии мертва, и «Назад» с
+          // лендинга вернул бы сюда — за новым 401 и новым разворотом. Гость с
+          // квиза не мог уйти «Назад» дальше /play. Так же поступает серверный
+          // redirect() у хабов.
+          // До чтения тела, а не после: статус уже известен, а await тела —
+          // ещё одно окно, за которое человек успевал уйти, и разворот на вход
+          // догонял его на чужой странице мимо проверки сигнала выше.
           if (res.status === 401) {
-            router.push(bounceTo('/play', search))
+            router.replace(bounceTo('/play', search))
             return { miss: 'gone' }
           }
+          /*
+           * Код причины читается ИЗ ТЕЛА, а не выводится из статуса: под 409
+           * живут два разных отказа — «нет снимка библиотеки» и «кандидатов не
+           * осталось», — и советы у них противоположные. Там же — чьих соседей
+           * не нашлось у «Как «X», но…» (seed у nocandidates, см. роут).
+           */
+          const d = (await res.json().catch(() => null)) as { error?: unknown; seed?: unknown } | null
+          const code = d && typeof d.error === 'string' ? d.error : null
+          // Ушёл, пока читалось тело, — причину писать уже некуда
+          if (signal?.aborted) return { miss: 'gone' }
+          setLimitedFor(null)
           setReason(code)
+          setFailSeed(parseSeedRef(d?.seed)?.name ?? null)
           return { miss: 'failed', code }
         }
-        const deal = dealFrom(await res.json(), next.scope)
-        if (!deal) return { miss: 'failed', code: null }
+        const body: unknown = await res.json()
+        // То же для удачи: пустой ответ писал бы причину в никуда, а
+        // собравшаяся выдача — прошлое настроение тому, кто её не увидел
+        if (signal?.aborted) return { miss: 'gone' }
+        const deal = dealFrom(body, next.scope)
+        if (!deal) {
+          setLimitedFor(null)
+          setReason(null)
+          return { miss: 'failed', code: null }
+        }
         /*
          * Прошлое настроение для «Подобрать» в шапке (lib/lastmood.ts) — только
          * после выдачи, которая собралась, и только сказанное им самим:
@@ -627,8 +886,11 @@ function Player({ say }: { say: (line: string) => void }) {
         // Причину обязательно СБРАСЫВАЕМ, а не оставляем как есть: сюда
         // приходит оборванная сеть, и без сброса повтор после отказа
         // «кандидатов нет» показал бы ту же карточку с тем же советом, хотя
-        // на этот раз не доехал запрос.
+        // на этот раз не доехал запрос. Потолок частоты — тоже: срок из
+        // прошлого Retry-After к этому запросу не относится, а экран ошибки
+        // читает его первым и продолжал бы говорить «Слишком часто».
         setReason(null)
+        setLimitedFor(null)
         return { miss: 'failed', code: null }
       }
     },
@@ -653,16 +915,21 @@ function Player({ say }: { say: (line: string) => void }) {
    * героя — вызывающему он нужен сразу, а состояние обновится к рендеру.
    *
    * Пятая дверь — выдача с прошлого захода (back): та же функция, только герой,
-   * время и «Зашло» — сохранённые, а не новые.
+   * время, «Зашло» и отложенные на вечер — сохранённые, а не новые. У новой
+   * выдачи отложенные остаются прежними: план стоит, пока его не закрыли, и
+   * герой, вернувшийся следующей пятёркой, по-прежнему отложен. Первая новая
+   * выдача после монтирования добирает их и из записи другого настроения
+   * (heldOver) — здесь, а не в reveal: выдачу приносит и «Попробовать снова».
    */
   const applyDeal = useCallback(
-    (deal: Deal, back?: { index: number; at: number; liked: number[] }): number => {
+    (deal: Deal, back?: { index: number; at: number; liked: number[]; planned: number[] }): number => {
       const hero = back ? back.index : landingIndex(deal.picks.length, roulette)
       const at = back ? back.at : Date.now()
       dealMeta.current = { at, nowSec: deal.nowSec, viewer: deal.viewer }
       setPicks(deal.picks)
       setDiscoveries(deal.discoveries)
       setContinueGame(deal.continueGame)
+      setPlan(deal.plan)
       setTimeHidden(deal.playtimeHidden)
       // И на устройство: /quiz и строка ожидания узнают признак до ответа
       timeHiddenStore.set(deal.playtimeHidden ? true : null)
@@ -682,7 +949,15 @@ function Player({ say }: { say: (line: string) => void }) {
       setShowWhy(FRESH_TURN.showWhy)
       setSkipCount(FRESH_TURN.skipCount)
       setRestored(!!back)
-      if (back) setLiked(new Set(back.liked))
+      if (back) {
+        setLiked(new Set(back.liked))
+        setPlanned(back.planned)
+      } else if (heldOver.current) {
+        const held = heldOver.current
+        heldOver.current = null
+        // Чужая запись (вход сменился) — её отложенные не про этого человека
+        if (held.viewer === deal.viewer) setPlanned((a) => [...a, ...held.appids.filter((x) => !a.includes(x))])
+      }
       // Выдача пришла — прежний отказ переключателя больше не про неё
       setSwitchMiss(null)
       setHeroMiss(null)
@@ -718,11 +993,16 @@ function Player({ say }: { say: (line: string) => void }) {
         nowSec: meta.nowSec,
         viewer: meta.viewer,
         playtimeHidden: timeHidden,
+        plan,
       },
       hero: picks[Math.min(index, picks.length - 1)].appid,
       liked: [...liked],
+      planned,
+      // Выдача на экране сейчас — заход жив, и отложенным отсчёт с нуля
+      // (heldPlanned): время выдачи (meta.at) старит цены, а не план
+      seenAt: Date.now(),
     })
-  }, [phase, picks, discoveries, continueGame, timeHidden, engine, lean, scope, seed, nudge, index, liked, cacheKey])
+  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, nudge, index, liked, planned, cacheKey])
 
   useEffect(() => {
     /*
@@ -755,9 +1035,18 @@ function Player({ say }: { say: (line: string) => void }) {
             ? 'Ищу в твоей библиотеке…'
             : 'Ищу то, что ты ни разу не запускал…',
       )
-      const got = await fetchPicks({ scope, lean })
+      /*
+       * Ушёл со страницы, пока модель думала, — ответ всё равно доезжает:
+       * fetchPicks слушает только свой срок. Проверка сразу за await, до
+       * applyDeal и счётчиков: pick_shown и долгий pick_wait тому, кто карточки
+       * не увидел, рисовали бы брошенное ожидание удачным — а ровно брошенное
+       * pick_wait и должен показывать.
+       */
+      const got = await fetchPicks({ scope, lean, seed: askSeed }, ac.signal)
+      if (ac.signal.aborted) return false
       if ('miss' in got) {
-        setPhase('error')
+        // 401 уже разворачивает на вход: экран «не получилось» по дороге не нужен
+        if (got.miss !== 'gone') setPhase('error')
         return false
       }
       const at = applyDeal(got)
@@ -810,20 +1099,22 @@ function Player({ say }: { say: (line: string) => void }) {
        * «не знаю» ведёт обычным путём — лишний прогрев лучше чужой выдачи.
        */
       warmAtReveal.current = 0
-      const entry = playCacheStore.get()
+      // Из хранилища, а не из памяти вкладки: запись правят и мимо модуля
+      // выдачи (lib/planforget), пока /play не смонтирована
+      const entry = playCacheStore.fresh()
       const mark = warmMarkStore.get()
       const viewer =
         hasFreshDeal(entry, cacheKey, Date.now()) || hasFreshWarm(mark, Date.now())
           ? await whoAmI(ac.signal)
           : null
       if (ac.signal.aborted) return
-      const back = restoreDeal(entry, {
-        key: cacheKey,
-        viewer,
-        nowMs: Date.now(),
-        // Бан из соседней вкладки этой записи не видел
-        banned: readRecentBans(Date.now()),
-      })
+      // Бан из соседней вкладки этой записи не видел
+      const banned = readRecentBans(Date.now())
+      const back = restoreDeal(entry, { key: cacheKey, viewer, nowMs: Date.now(), banned })
+      // Выдачу не вернули — другое настроение, вход не узнан, выдача старше
+      // пятнадцати минут, — а отложенные из той же записи ждут новую
+      // (heldOver): их срок — от последнего показа, а не от прихода выдачи
+      heldOver.current = back ? null : heldPlanned(entry, { nowMs: Date.now(), banned })
       if (back) {
         applyDeal(back.deal, back)
         setPhase('reveal')
@@ -885,13 +1176,37 @@ function Player({ say }: { say: (line: string) => void }) {
       // Страница ушла: ни выдачу, ни разворот на вход показывать уже некому
       if (warm === 'aborted') return
 
-      const revealed = back !== null || (revealing ? await revealing : false)
+      /*
+       * Выдача на экране — откуда бы она ни пришла. Не только с прошлого захода
+       * и не только из onYield: первая выдача под догревом могла не собраться
+       * (429, кандидатов из четверти каталога не набралось), а «Попробовать
+       * снова» взяло свою, пока догрев шёл дальше. Цикл о ней не знал и
+       * подменял её новой под рукой — сбрасывая «Почему не то?» и тратя ещё
+       * одно место в потолке частоты. Читается после await: повтор, доехавший
+       * за время догрева, тоже считается.
+       *
+       * dealMeta сам по себе — «applyDeal был», а не «выдача видна»: его ставит
+       * любая выдача, и «Подобрать заново» его обнуляет, но ответ, доехавший
+       * после этого на экран ожидания, ставил его снова, а фазу не трогал.
+       * Догрев, закончившийся без onYield, принимал это за показанную выдачу и
+       * выходил — и экран ожидания висел до перезагрузки, а 401 и сбой догрева
+       * не разворачивали и не показывали ошибку. Такие ответы теперь
+       * отбрасываются (roundNow), а здесь видна ли выдача, решает и фаза: на
+       * экране ожидания её нет, что бы ни лежало в dealMeta.
+       */
+      const revealed =
+        back !== null ||
+        (revealing ? await revealing : false) ||
+        (dealMeta.current !== null && live.current.phase !== 'prepare')
+      // Ушёл, пока доезжала первая выдача, — разворачивать на вход уже некого
+      if (ac.signal.aborted) return
 
       if (warm === 'unauthorized') {
         // Сессия отвалилась во время ФОНОВОГО догрева — карточки на экране уже
         // есть и работают. Выкидывать с них на лендинг незачем: человек упрётся
         // в это при следующем действии и там же увидит внятную причину.
-        if (!revealed) router.push(bounceTo('/play', search))
+        // replace — по той же причине, что в fetchPicks: мёртвая запись /play.
+        if (!revealed) router.replace(bounceTo('/play', search))
         setWarming('off')
         return
       }
@@ -914,19 +1229,34 @@ function Player({ say }: { say: (line: string) => void }) {
         if (warm === 'done' && warmedAll) markWarm()
         return
       }
+      // На экране ничего: первая выдача под догревом не собралась, и висит
+      // экран ошибки. Плашка «Дочитываю библиотеку» стояла бы над следующей
+      // выдачей вечно — 'running' здесь больше никто не снимет, — а эта
+      // собирается на каталоге, догретом до конца, и «Обновить» под ней нечего.
+      setWarming('off')
       if ((await reveal()) && warm === 'done' && warmedAll) markWarm()
     }
 
     void run()
     return () => ac.abort()
     // round — «Подобрать заново»; остальное из строки запроса и в рамках
-    // страницы неизменно
+    // страницы неизменно. askSeed меняется на экране отказа и в самом
+    // «Подобрать заново» (redeal ставит её тем же рендером, что и round), а
+    // в этот путь ведёт только он — он её и перечитает
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round])
 
   /*
    * «Подобрать заново» у выдачи с прошлого захода: забыть её и пройти путь
    * первого захода — прогрев, если метка не свежая, и новый запрос выдачи.
+   *
+   * Затравка — та, под которую собрана выдача на экране, а не та, что в
+   * адресе: источник и ось новый заход и так берёт с экрана (восстановленная
+   * запись их помнит, см. playCacheKey), и затравка обязана ехать с ними.
+   * Иначе /play?…&seed=Hades → «Вернуть обычную выдачу» → «Подробнее» →
+   * «Назад» → «Подобрать заново» возвращало «похожих на Hades», от которых
+   * человек только что отказался, а затравка, выбранная на выдаче, наоборот
+   * пропадала. В рулетке и «нераспакованном» её нет, как и у адреса (askSeed).
    */
   const redeal = useCallback(() => {
     playCacheStore.set(null)
@@ -935,11 +1265,18 @@ function Player({ say }: { say: (line: string) => void }) {
     setWarming('off')
     setPrep(null)
     setProgress(PREPARE_MESSAGE)
+    // Отказ прошлой выдачи — не про эту: 429 переключателя на восстановленной
+    // выдаче иначе встретил бы экраном «Слишком часто» сбой прогрева нового захода
+    setLimitedFor(null)
+    setReason(null)
     setPhase('prepare')
+    // Тем же рендером, что и round: эффект первого захода прочтёт уже её
+    setAskSeed(roulette || focus ? null : (seed?.appid ?? null))
     // Кнопка уходит вместе с выдачей — фокус заберёт заголовок нового героя
     focusHero(false)
-    setRound((r) => r + 1)
-  }, [focusHero])
+    roundNow.current += 1
+    setRound(roundNow.current)
+  }, [focusHero, seed, roulette, focus])
 
   /** Смена режима: тот же прогрев, другой вопрос к движку — и выдача с начала */
   /*
@@ -955,22 +1292,54 @@ function Player({ say }: { say: (line: string) => void }) {
    * но не то, что написано.
    *
    * Неудача оставляет экран как есть: он и так про неудачу, а мигать с него
-   * некуда. Поэтому никакого setPhase в ветке !got.
+   * некуда. Поэтому никакого setPhase в ветке !got. Но молчать ей нельзя:
+   * кнопка всего лишь вернула себе прежнюю подпись, а смену имени кнопки в
+   * фокусе скринридер не объявляет. Говорит экран ошибки (failTick ниже).
    */
   const [retrying, setRetrying] = useState(false)
-  const retry = useCallback(async () => {
+  /**
+   * Сколько повторов не сменили экран ошибки. Тот же отказ — тот же текст, и
+   * объявление экрана, завязанное на текст, второй раз промолчало бы: счётчик
+   * меняется на каждой неудаче, а freshLine делает строку новой.
+   */
+  const [failTick, setFailTick] = useState(0)
+  /**
+   * Неудача повтора могла убрать саму кнопку: новый отказ — «кандидатов нет»
+   * или «библиотека не доехала», где повтор не предлагается. Фокус тогда в
+   * body, и его забирает заголовок экрана. Только по нажатию: у того, кто
+   * экран ошибки получил, ничего не нажимая, фокус не отбираем.
+   */
+  const wantFailFocus = useRef(false)
+  /*
+   * withSeed — с какой затравкой повторять. По умолчанию — с той, что
+   * спрошена адресом; «Подобрать без «похожих»» на экране отказа зовёт с null
+   * и снимает её насовсем: «Подобрать заново» потом её не вернёт. Снимает
+   * после ответа, а не до: экран отказа читает askSeed, и на время запроса
+   * он подменился бы общим текстом, а нажатая кнопка ушла бы из-под фокуса.
+   */
+  const retry = useCallback(async (withSeed: number | null = askSeed) => {
     if (retrying) return
     setRetrying(true)
     try {
-      const got = await fetchPicks({ scope, lean })
-      if ('miss' in got) return
+      const got = await fetchPicks({ scope, lean, seed: withSeed })
+      setAskSeed(withSeed)
+      if ('miss' in got) {
+        // 401 — страница уже уходит на вход, говорить некому
+        if (got.miss === 'gone') return
+        wantFailFocus.current = true
+        setFailTick((t) => t + 1)
+        return
+      }
       applyDeal(got)
+      // Кнопка уходит вместе с экраном ошибки, и фокус без присмотра упал бы
+      // в body — его заберёт заголовок нового героя (в рулетке — после барабана)
+      focusHero(false)
       setPhase(roulette ? 'spin' : 'reveal')
       if (!roulette) say(playLine({ kind: 'reveal', name: got.picks[0].name }))
     } finally {
       setRetrying(false)
     }
-  }, [retrying, fetchPicks, applyDeal, scope, lean, roulette, say])
+  }, [retrying, askSeed, fetchPicks, applyDeal, scope, lean, roulette, say, focusHero])
 
   /*
    * Переключатели уже показанной выдачи: источник, ось состояния, затравка
@@ -981,6 +1350,19 @@ function Player({ say }: { say: (line: string) => void }) {
    * новый срез без того, что было на экране, — и повторять его при смене
    * источника значило бы выбросить и ту выдачу, о которой спросили. from —
    * где сказать об отказе: у переключателей или у кнопок под героем.
+   *
+   * Отдаёт appid героя новой выдачи, null — выдача прежняя. Фокус reshape
+   * не трогает, его несёт вызывающий — по тому, где стоит кнопка.
+   * Переключатели источника и оси (from 'switch') живут вне секции героя и
+   * остаются на месте: фокус с них уносить незачем. А всё, что зовёт с
+   * 'hero', уходит из разметки: «Как «X», но…», «Вернуть обычную выдачу» и
+   * пилюли подталкиваний — в секции героя, а она ключом appid
+   * перемонтируется с каждым новым героем; «Дальше — в духе X» — вместе с
+   * пройденной игрой. Им фокус надо унести на героя, иначе он падает в body
+   * (ФОКУС ТУДА, ГДЕ ИДЁТ ДЕЙСТВИЕ выше). Именно appid, а не «встала»: герой
+   * новой выдачи бывает тем же (соседи X часто начинаются с похожего на X
+   * героя), тогда заголовок не перемонтируется, и ждать его ref-колбэка —
+   * потерять фокус в body, как «Обновить выдачу» до focusHero(now.appid !== was).
    */
   const seedAppid = seed?.appid ?? null
   const keptNudge = nudge === 'different' ? null : nudge
@@ -994,7 +1376,7 @@ function Player({ say }: { say: (line: string) => void }) {
         exclude?: number[]
       },
       from: 'switch' | 'hero' = 'switch',
-    ) => {
+    ): Promise<number | null> => {
       // «Что-то другое» повторяется: каждое нажатие — новый срез
       const same =
         next.scope === scope &&
@@ -1002,7 +1384,7 @@ function Player({ say }: { say: (line: string) => void }) {
         next.seed === seedAppid &&
         next.nudge === nudge &&
         next.nudge !== 'different'
-      if (same || switching) return
+      if (same || switching) return null
       // Прежний отказ этого места гаснет с новой попыткой: второй потолок
       // частоты подряд — тот же switchLine, и живая область, где текст не
       // изменился, промолчала бы — нажатие осталось бы без отклика вовсе
@@ -1010,22 +1392,27 @@ function Player({ say }: { say: (line: string) => void }) {
       if (from === 'hero') setHeroMiss(null)
       else setSwitchMiss(null)
       setSwitching(true)
+      const ofRound = roundNow.current
       try {
         const got = await fetchPicks(next)
+        // Пока шёл запрос, нажали «Подобрать заново»: ни выдача, ни отказ к экрану не относятся
+        if (roundNow.current !== ofRound) return null
         if ('miss' in got) {
           // Выдача прежняя — и об этом надо сказать, а не просто отжать кнопку:
           // чаще всего это потолок частоты, и у него есть срок (switchLine)
           const line = switchLine(got)
           if (from === 'hero') setHeroMiss(line)
           else setSwitchMiss(line)
-          return
+          return null
         }
-        const hero = applyDeal(got)
-        // Фокус не трогаем: нажатый переключатель остаётся на месте, и
-        // человек, может быть, нажмёт соседний. Сказать надо только, что
-        // герой наверху сменился.
-        const name = got.picks[hero].name
+        const hero = got.picks[applyDeal(got)]
+        // Фокус здесь не трогаем: нажатый переключатель остаётся на месте, и
+        // человек, может быть, нажмёт соседний, а кнопкам в секции героя его
+        // переносит вызывающий по appid ниже. Сказать надо только, что герой
+        // наверху сменился.
+        const name = hero.name
         say(playLine(got.seed ? { kind: 'seed', name, seed: got.seed.name } : { kind: 'reshape', name }))
+        return hero.appid
       } finally {
         // finally, а не строка после await: оборванная сеть оставляла бы
         // переключатель навсегда заблокированным, и починить это можно было бы
@@ -1044,9 +1431,9 @@ function Player({ say }: { say: (line: string) => void }) {
    * заброшенному, поэтому и переключатель источника покажет «Только моё», а
    * отжатое вернёт «Любые игры».
    */
-  const nudgeTo = (n: Nudge) => {
+  const nudgeTo = async (n: Nudge, was: number) => {
     const off = nudge === n && n !== 'different'
-    void reshape(
+    const hero = await reshape(
       {
         scope: n === 'familiar' ? (off ? 'all' : 'library') : scope,
         lean,
@@ -1056,6 +1443,10 @@ function Player({ say }: { say: (line: string) => void }) {
       },
       'hero',
     )
+    // Пилюли — в секции героя: новый герой уносит их с собой, и фокус едет
+    // на его заголовок (reshape). Тот же герой — нажатая пилюля на месте и
+    // фокус держит; взведённый зря флаг отнял бы его у героя потом
+    if (hero !== null && hero !== was) focusHero(false)
   }
 
   const advance = useCallback(
@@ -1113,10 +1504,109 @@ function Player({ say }: { say: (line: string) => void }) {
   })
 
   /*
+   * «УЖЕ ПРОШЁЛ» У СТРОКИ «ПРОДОЛЖИТЬ».
+   *
+   * Игру, которую человек как раз доигрывает, закрыть было негде: «Уже
+   * прошёл» жил только у героя, а героем она не бывает — активное в
+   * кандидаты не идёт, оно стоит здесь, строкой. Тот же бан с причиной
+   * 'done', что у героя, и по тем же правилам: ждёт ответа сервера, отказ
+   * говорит строкой под панелью, а соседние вкладки узнают о нём из
+   * rememberBan. Только у игры с финалом (finishable — решает сервер по
+   * тегам): Dota 2 не «проходят».
+   *
+   * Свой флаг, а не banning: бан героя и этот идут независимо, и кнопка героя
+   * не должна говорить «Отмечаю…», пока отмечается чужая игра. И свой отказ,
+   * а не banFailed: общий гасил бы чужую строку — «Уже прошёл» здесь молча
+   * стирал «не получилось убрать игру насовсем» у героя, хотя тот бан так и
+   * не записан, а повтор бана героя — отказ этой панели. По appid, как и
+   * banFailed: новая выдача приносит другую «Продолжить», и строка про
+   * прежнюю на неё не переезжает.
+   *
+   * После ответа панель говорит «пройдена» и зовёт дальше — в духе этой игры
+   * (contDone, «Как «X», но…» без адреса, тем же reshape).
+   */
+  const [finishing, setFinishing] = useState(false)
+  const [contFailed, setContFailed] = useState<number | null>(null)
+  /** appid игры из «Продолжить», только что отмеченной пройденной */
+  const [contDone, setContDone] = useState<number | null>(null)
+  const finishCont = async () => {
+    if (finishing || !cont) return
+    const c = cont
+    // Ответ про игру дан: «не зацепило?» про неё уже не спрашиваем
+    forgetLaunch(c.appid)
+    setFinishing(true)
+    setContFailed(null)
+    const ok = await sendFeedback(c.appid, 'banned', 'done', ctxOf(null, 'continue'))
+    setFinishing(false)
+    if (!ok) {
+      // Отказ по правам — не «нажми ещё раз»: кнопка уже спряталась
+      if (writerStore.get() !== false) setContFailed(c.appid)
+      return
+    }
+    rememberBan(c.appid, Date.now())
+    // «Уже прошёл» уходит из разметки — фокус встанет на то, что её сменит
+    wantContFocus.current = true
+    setContDone(c.appid)
+    say(playLine({ kind: 'ban', name: c.name, done: true }))
+  }
+  /*
+   * Фокус на строку «пройдена» — разово, по нажатию, а не при каждом
+   * монтировании: панель уходит вместе с экраном выгорания и возвращается
+   * тем же коммитом, что и новый заголовок героя, и ref-колбэк, стоящий ниже
+   * героя по дереву, отнимал бы фокус у героя (focusHero) каждый раз. Флаг
+   * ставит удачный finishCont, снимает первый же узел, который его забрал,
+   * — или focusHero, если фокус к тому времени понадобился герою.
+   */
+  const contFocus = useCallback((el: HTMLElement | null) => {
+    if (!el || !wantContFocus.current) return
+    wantContFocus.current = false
+    el.focus({ preventScroll: true })
+  }, [])
+
+  /*
    * «Отправить другу» — до ранних возвратов: хук. Герой тот же, что ниже
    * (pick), просто посчитан раньше; пустой выдачи хук не боится.
    */
   const sharePick = useSharePick(picks[Math.min(index, picks.length - 1)], 'play')
+
+  /*
+   * Почему выдача не собралась — один расчёт на экран ошибки и на его
+   * объявление ниже. Потолок частоты остаётся отдельной веткой: у него есть
+   * СРОК, и назвать его точнее, чем «через минуту», может только Retry-After.
+   */
+  const fail =
+    limitedFor !== null
+      ? {
+          title: 'Слишком часто',
+          text: `Подбор — дорогая операция, и на неё стоит потолок. Вернись через ${Math.ceil(limitedFor / 60)} ${plural(Math.ceil(limitedFor / 60), 'минуту', 'минуты', 'минут')}.`,
+          // Повтор остаётся: окно бывает и десятисекундным, и тогда
+          // единственной дорогой назад была бы перезагрузка страницы.
+          retry: true,
+        }
+      : reason === 'nocandidates' && askSeed !== null
+        ? seedFail(failSeed)
+        : (FAIL[reason ?? ''] ?? FAIL_UNKNOWN)
+
+  /*
+   * ЭКРАН ОШИБКИ ЗВУЧИТ.
+   *
+   * Он подменяет экран ожидания целиком, и единственная говорившая область —
+   * строка прогресса WarmupScreen — уходит вместе с ним. Человек со
+   * скринридером слышал «Изучаю библиотеку…», а потом тишину: «Steam прячет
+   * библиотеку» рисовалась молча, и о провале он узнавал, только обойдя
+   * страницу. Теперь отказ говорит область страницы (PlayPage) — она живёт с
+   * первого кадра и переживает любую смену фазы. Эффектом, а не строкой у
+   * каждого setPhase('error'): к этому кадру reason и limitedFor уже на месте,
+   * а в обработчике после await их ещё не прочитать.
+   */
+  const failHead = useRef<HTMLHeadingElement | null>(null)
+  useEffect(() => {
+    if (phase !== 'error') return
+    say(playLine({ kind: 'fail', title: fail.title, text: fail.text }))
+    if (!wantFailFocus.current) return
+    wantFailFocus.current = false
+    if (focusAdrift(document)) failHead.current?.focus({ preventScroll: true })
+  }, [phase, failTick, fail.title, fail.text, say])
 
   if (phase === 'prepare') {
     return (
@@ -1147,24 +1637,13 @@ function Player({ say }: { say: (line: string) => void }) {
   }
 
   if (phase === 'error') {
-    /*
-     * Потолок частоты остаётся отдельной веткой: у него есть СРОК, и назвать
-     * его точнее, чем «через минуту», может только Retry-After.
-     */
-    const fail =
-      limitedFor !== null
-        ? {
-            title: 'Слишком часто',
-            text: `Подбор — дорогая операция, и на неё стоит потолок. Вернись через ${Math.ceil(limitedFor / 60)} ${plural(Math.ceil(limitedFor / 60), 'минуту', 'минуты', 'минут')}.`,
-            // Повтор остаётся: окно бывает и десятисекундным, и тогда
-            // единственной дорогой назад была бы перезагрузка страницы.
-            retry: true,
-          }
-        : (FAIL[reason ?? ''] ?? FAIL_UNKNOWN)
-
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
-        <p className="text-lg">{fail.title}</p>
+        {/* Заголовок — цель фокуса, когда неудачный повтор убрал саму кнопку
+            (эффект выше). Ролей на нём нет: его объявляет фокус */}
+        <h1 ref={failHead} tabIndex={-1} className="text-lg outline-none">
+          {fail.title}
+        </h1>
         <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
 
         {/* Шаги про настройки Steam — только там, где библиотека и правда не
@@ -1193,12 +1672,30 @@ function Player({ say }: { say: (line: string) => void }) {
             {retrying ? 'Пробую…' : 'Попробовать снова'}
           </button>
         )}
+        {/* Соседей X под это настроение нет — та же выдача без затравки, тем
+            же повтором и с той же защитой от второго нажатия. Не повтор того
+            же запроса: этот вернул бы тот же отказ (seedFail). И когда соседи
+            есть, но все под «Не предлагать» (muted): смена настроения их не
+            вернёт — затравка едет в квиз вместе с ним (quizHref). Карточка
+            потолка частоты этого выхода не несёт: запрос без затравки упрётся
+            в тот же потолок */}
+        {fail.seedless && askSeed !== null && (
+          <button
+            onClick={() => void retry(null)}
+            aria-disabled={retrying}
+            className="btn-ember px-6 py-3"
+          >
+            {retrying ? 'Подбираю…' : 'Подобрать без «похожих»'}
+          </button>
+        )}
 
         {/* Прежний адрес кнопки остаётся доступен — но под своим именем.
             Кроме случая, когда библиотеки нет вовсе: менять там настроение
-            нечему, и ссылка была бы предложением заняться ерундой. */}
+            нечему, и ссылка была бы предложением заняться ерундой.
+            Затравка с адреса едет в квиз: «похожие на X» переживают смену
+            настроения (quizHref) */}
         {reason !== 'nolibrary' && (
-          <Link href="/quiz" className="tap link-more">
+          <Link href={quizHref(focus, askSeed)} className="tap link-more">
             Изменить настроение
             <Icon name="arrow" size={16} />
           </Link>
@@ -1229,10 +1726,18 @@ function Player({ say }: { say: (line: string) => void }) {
      * он и так играет сейчас, — сразу запуском, а не ещё одной карточкой. И
      * только потом «уютное» по тегам (COZY_TAGS из lib/mood — спокойная ось
      * движка): Casual на обложке ещё не значит, что в игру легко войти.
+     *
+     * Абзац и кнопка — из одного offer (lib/playflow, burnoutInvite): абзац
+     * всегда звал «на 20 минут во что-то уютное», а кнопкой под ним бывало
+     * «Просто продолжить «Dota 2»». И без запасной «последней из пятёрки» у
+     * уютного: «она спокойная» у игры без единого спокойного тега — обещание,
+     * которого игра не сдержит. Нечего предложить — кнопки нет, а «Всё равно
+     * листать» и «На сегодня всё» остаются.
      */
     const familiar = picks.find((p) => p.source === 'familiar')
-    const cozy =
-      picks.find((p) => p.tags.some((t) => COZY_TAGS.includes(t))) ?? picks[picks.length - 1]
+    const cozy = picks.find((p) => p.tags.some((t) => COZY_TAGS.includes(t)))
+    // Только что пройденную «Продолжить» не предлагаем и здесь
+    const offer = burnoutOffer({ familiar: !!familiar, cont: !!cont && cont.appid !== contDone, cozy: !!cozy })
     // Экран выгорания уходит целиком вместе с нажатой кнопкой — фокус едет
     // на заголовок героя, когда тот смонтируется
     const showPick = (p: Pick) => {
@@ -1255,24 +1760,26 @@ function Player({ say }: { say: (line: string) => void }) {
           <p className="text-dim leading-relaxed">
             Ты пролистал уже {BURNOUT_AFTER_SKIPS}{' '}
             {plural(BURNOUT_AFTER_SKIPS, 'игру', 'игры', 'игр')} — дело, скорее всего, не в играх. Это
-            нормально. Можно зайти на 20 минут во что-то уютное… а можно просто закрыть Steam, и
-            это тоже победа.
+            нормально. {burnoutInvite(offer)}
           </p>
-          {familiar ? (
+          {offer === 'familiar' && familiar ? (
             <button onClick={() => showPick(familiar)} className="btn-ember is-block py-3">
               Ладно, покажи «{familiar.name}» — там всё знакомо
             </button>
-          ) : cont ? (
+          ) : offer === 'continue' && cont ? (
             <SteamLaunch
               appid={cont.appid}
               label={`Просто продолжить «${cont.name}»`}
               mobileLabel={`Открыть «${cont.name}» в Steam`}
-              onClick={() =>
-                void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))
+              // По ветке нажатия, как у строки «Продолжить»: под пальцем это
+              // магазин, а не запуск, и план на вечер он не закрывает (launchIntent)
+              onClick={(via) =>
+                void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', launchIntent(via)))
               }
               className="btn-ember is-block py-3"
             />
           ) : (
+            offer === 'cozy' &&
             cozy && (
               <button onClick={() => showPick(cozy)} className="btn-ember is-block py-3">
                 Ладно, покажи «{cozy.name}» — она спокойная
@@ -1309,6 +1816,8 @@ function Player({ say }: { say: (line: string) => void }) {
 
   const pick = picks[Math.min(index, picks.length - 1)]
   const others = picks.filter((p) => p.appid !== pick.appid)
+  /** Строка плана на вечер — если его игры ещё нет на экране (planBeside) */
+  const planRow = roulette ? null : planBeside(plan, [pick.appid, cont?.appid])
   /*
    * «Уже прошёл» вместо безымянного бана — у заброшенного и знакомого, то
    * есть у того, во что он уже играл. Без достижений не отличить «прошёл» от
@@ -1316,6 +1825,8 @@ function Player({ say }: { say: (line: string) => void }) {
    * 'done': игра не разонравилась — она кончилась, и вкус о ней не спорит.
    */
   const finished = pick.source === 'comeback' || pick.source === 'familiar'
+  /** Сердце героя горит: «Зашло» поставлено, и второе нажатие его снимет */
+  const heartOn = liked.has(pick.appid)
   /*
    * Своя игра, которую не проходил, — бан убирает её «с полки», и подпись
    * говорит прямо: бросать игры нормально. Купленное и недопройденное
@@ -1368,6 +1879,17 @@ function Player({ say }: { say: (line: string) => void }) {
    * слова нельзя.
    */
   const caption = askedMood ? moodCaption(mood) : ''
+  /*
+   * Мост в пати — только когда человек сам сказал «с друзьями»: выдача выше
+   * собрана из одной его библиотеки, а комната учтёт библиотеки всех. Ссылкой
+   * в этой же строке, последней, а не кнопкой у героя:
+   * это другой путь, а не действие над игрой, и выбор одной игры он не
+   * перебивает. Адрес — lib/presets: точный пресет создаёт комнату в один тап,
+   * без точного /room/new только отмечает похожий. prefetch выключен, как у
+   * «Позвать в эту игру» на /pick: путь редкий, и грузить его с каждой выдачей
+   * незачем.
+   */
+  const party = askedMood ? roomBridgeHref(mood) : null
   const changeMood = (
     <div className="mt-8 flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1 text-sm">
       {caption && <span className="text-faint">{caption}</span>}
@@ -1382,7 +1904,9 @@ function Player({ say }: { say: (line: string) => void }) {
           Подобрать заново
         </button>
       )}
-      <Link href="/quiz" className="tap link-more">
+      {/* Только настроение: «нераспакованное» и «похожие на X» едут в квиз
+          и обратно (quizHref) — затравка та, под которую собрана выдача */}
+      <Link href={quizHref(focus, seedAppid)} className="tap link-more">
         Изменить настроение
         <Icon name="arrow" size={16} />
       </Link>
@@ -1391,6 +1915,14 @@ function Player({ say }: { say: (line: string) => void }) {
         Просто полистать
         <Icon name="arrow" size={16} />
       </Link>
+      {/* Мост в пати — последним: пара «подпись → Изменить настроение» не
+          разрывается, а другой путь стоит тихо в хвосте строки */}
+      {party && (
+        <Link href={party} prefetch={false} className="tap link-more">
+          Позвать друзей выбрать вместе
+          <Icon name="arrow" size={16} />
+        </Link>
+      )}
     </div>
   )
 
@@ -1417,7 +1949,7 @@ function Player({ say }: { say: (line: string) => void }) {
           if (!liked.has(stopDue.appid)) {
             setLiked(new Set(liked).add(stopDue.appid))
             const asked = picks.find((p) => p.appid === stopDue.appid) ?? null
-            void sendFeedback(stopDue.appid, 'liked', undefined, ctxOf(asked, undefined, 'ask'))
+            sendLike(stopDue.appid, ctxOf(asked, undefined, 'ask'))
           }
           launchMemoStore.set(null)
           focusHero(true)
@@ -1433,20 +1965,46 @@ function Player({ say }: { say: (line: string) => void }) {
       <WarmStrip
         state={stopDue || outcomeShown ? 'off' : warming}
         remaining={prep?.remaining ?? 0}
-        onRefresh={() => {
+        /*
+          Свой запрос, а не reshape: тот отбросил бы его как «то же самое» —
+          источник, ось, затравка и подталкивание совпадают с экраном. Но по
+          его правилам: подталкивание переживает пересчёт (keptNudge — раньше
+          «Покороче» молча отжималось), идущая пересборка не перебивается, а
+          отказ говорит строкой под героем — там, куда уже ушёл фокус. Кнопка
+          возвращается: на 429 повторить через пару минут больше негде.
+        */
+        onRefresh={async () => {
+          if (switching) return
           setWarming('off')
           // Плашка уходит вместе с кнопкой: фокус сразу на героя, а если
           // пересчёт его сменит — на нового, когда тот смонтируется
           focusHero(true)
           const was = pick.appid
-          void fetchPicks({ scope, lean, seed: seedAppid }).then((got) => {
-            if ('miss' in got) return
+          const ofRound = roundNow.current
+          setHeroMiss(null)
+          setSwitching(true)
+          try {
+            const got = await fetchPicks({ scope, lean, seed: seedAppid, nudge: keptNudge })
+            // «Подобрать заново» за время запроса — как у reshape: ответ не про этот экран
+            if (roundNow.current !== ofRound) return
+            if ('miss' in got) {
+              setHeroMiss(switchLine(got))
+              if (got.miss !== 'gone') setWarming('ready')
+              return
+            }
             const now = got.picks[applyDeal(got)]
             say(playLine({ kind: 'refresh', name: now.name }))
             if (now.appid !== was) focusHero(false)
-          })
+          } finally {
+            setSwitching(false)
+          }
         }}
-        onDismiss={() => setWarming('off')}
+        // «Скрыть» уходит вместе с плашкой, и фокус без присмотра упал бы в
+        // body — отдаём его герою, как после «Обновить выдачу»
+        onDismiss={() => {
+          setWarming('off')
+          focusHero(true)
+        }}
       />
       <AnimatePresence mode="wait" custom={dir}>
         <m.section
@@ -1508,6 +2066,10 @@ function Player({ say }: { say: (line: string) => void }) {
                     {pick.session.label.toLowerCase()} {pick.session.value}
                   </span>
                 )}
+                {/* «русские субтитры» / «без русского» — готовой фразой с
+                    сервера (ruLangLine в lib/gametraits, считается в
+                    lib/cards): не знаем — молчим */}
+                {pick.russian && <span className="text-dim">{pick.russian}</span>}
                 {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo)}</span>}
                 <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
               </m.div>
@@ -1646,8 +2208,20 @@ function Player({ say }: { say: (line: string) => void }) {
             ) : (
               <>
               {/* С md ряд в одну линию и может быть шире колонки текста: кнопки
-                  несут свою подложку, и край скрима им не нужен */}
-              <m.div variants={STEP} className="flex flex-wrap items-center gap-3 mt-2 md:w-max md:flex-nowrap">
+                  несут свою подложку, и край скрима им не нужен. Но не шире
+                  экрана без полей: секция героя режет вылезшее (overflow-hidden),
+                  и под запретом переноса планшет в 768px терял за краем
+                  «Подробнее», «Зашло» и бан у игры из магазина со скидкой, а в
+                  820px — пилюлю «Скрыть насовсем». Влез — одна линия, как была;
+                  не влез — перенос, как на телефоне.
+                  Поля — те же, что у контейнера (px-safe), а не 2 × 1.25rem:
+                  iPhone в ландшафте шире md, и вырез там даёт полю ~47px.
+                  Потолок в 100vw − 2.5rem пускал ряд от x = 47 до 851 при
+                  ширине 844 — за край и под вырез. */}
+              <m.div
+                variants={STEP}
+                className="flex flex-wrap items-center gap-3 mt-2 md:w-max md:max-w-[calc(100vw-max(1.25rem,env(safe-area-inset-left))-max(1.25rem,env(safe-area-inset-right)))]"
+              >
                 {pick.source === 'new' || pick.storeUrl ? (
                   // Игры нет в библиотеке — «Запустить» для неё кнопка-обманка:
                   // steam://run у не купленной игры не делает ничего. Ведём
@@ -1677,9 +2251,10 @@ function Player({ say }: { say: (line: string) => void }) {
                   <SteamLaunch
                     appid={pick.appid}
                     // Запуск — не «Зашло»: раньше он писался как liked, и точность
-                    // подбора на /library росла от любого клика
-                    onClick={() =>
-                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroFrom, 'launch'))
+                    // подбора на /library росла от любого клика. Под пальцем это
+                    // магазин, а не запуск (launchIntent): план на вечер цел
+                    onClick={(via) =>
+                      void sendFeedback(pick.appid, 'launched', undefined, ctxOf(pick, heroFrom, launchIntent(via)))
                     }
                     // Засекаем только настоящий запуск: через десять минут
                     // вернувшегося спросим, зацепило ли (см. StopAsk)
@@ -1688,7 +2263,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     className="btn-ember px-6 py-3"
                   />
                 )}
-                {pick.source === 'new' && (pick.priceFinal !== null || pick.isFree) && (
+                {pick.source === 'new' && (pick.priceFinal !== null || pick.isFree || pick.unsold) && (
                   <a
                     href={storeHref(pick)}
                     target="_blank"
@@ -1697,6 +2272,8 @@ function Player({ say }: { say: (line: string) => void }) {
                   >
                     <PriceTag
                       priceFinal={pick.priceFinal}
+                      cc={pick.priceCc}
+                      unsold={pick.unsold}
                       discount={pick.discount}
                       isFree={pick.isFree}
                       size="hero"
@@ -1724,9 +2301,11 @@ function Player({ say }: { say: (line: string) => void }) {
                   </Magnet>
                 ) : (
                   <button
-                    // Причину спрашивать не у кого записать — просто листаем
+                    // Причину спрашивать не у кого записать — просто листаем.
+                    // И у героя, только что отложенного на вечер: это шаг по
+                    // выдаче, а пропуск закрыл бы план (planned)
                     onClick={() => {
-                      if (readOnly) {
+                      if (readOnly || planned.includes(pick.appid)) {
                         advance(index)
                         return
                       }
@@ -1755,21 +2334,34 @@ function Player({ say }: { say: (line: string) => void }) {
                 {!readOnly && (
                   <button
                     onClick={() => {
-                      // «Зашло» после запуска — уже ответ на «не зацепило?», даже
-                      // повторное: спрашивать про неё больше незачем
+                      // Второе нажатие снимает «Зашло» — тем же /api/unlike,
+                      // что полка /library (lib/unlike, ленивым куском героя
+                      // heroTail): ошибочное сердце забирается там, где
+                      // поставлено, — ровно строка этого нажатия, а не
+                      // прежние «зашло» игры. Отказ — строкой под героем
+                      // (heroMiss), и сердце горит снова. Не пришёл кусок
+                      // (деплой сменил хеш, а вкладка старая; на компьютере
+                      // его никто не прогревал) — снятия не было, сердце
+                      // горит как горело, и та же строка говорит, что
+                      // делать: молча нажатие было бы мёртвым. Коротко —
+                      // /play у самого потолка bundle-budget.json; отчёт о
+                      // куске шлёт островок «Сыграю вечером»
+                      // (components/TonightLazy)
+                      if (heartOn) return void heroTail().then((t) => t.undoLike('play', pick, setLiked, setHeroMiss), () => setHeroMiss('Обнови страницу'))
+                      // «Зашло» после запуска — уже ответ на «не зацепило?»:
+                      // спрашивать про неё больше незачем
                       forgetLaunch(pick.appid)
-                      // Повторное нажатие — не второе «зашло»: кнопка уже горит
-                      if (liked.has(pick.appid)) return
                       setLiked(new Set(liked).add(pick.appid))
-                      void sendFeedback(pick.appid, 'liked', undefined, ctxOf(pick, heroFrom))
+                      sendLike(pick.appid, ctxOf(pick, heroFrom))
                     }}
                     // Круг с сердцем, как «в мой список» у стриминга; подпись
-                    // для скринридера — та же, что была текстом кнопки
-                    aria-pressed={liked.has(pick.appid)}
-                    title={liked.has(pick.appid) ? 'Зашло — учтём в подборе' : 'Зашло'}
+                    // для скринридера — та же, что была текстом кнопки, и
+                    // не меняется с нажатием: тумблер называет aria-pressed
+                    aria-pressed={heartOn}
+                    title={heartOn ? 'Зашло — нажми, чтобы снять' : 'Зашло'}
                     className="btn-circle"
                   >
-                    <Icon name={liked.has(pick.appid) ? 'check' : 'heart'} size={20} />
+                    <Icon name={heartOn ? 'check' : 'heart'} size={20} />
                     <span className="sr-only">Зашло</span>
                   </button>
                 )}
@@ -1810,18 +2402,54 @@ function Player({ say }: { say: (line: string) => void }) {
                       // Соседняя вкладка держит свою запись выдачи и про этот
                       // бан не знает — список недавних банов общий на все
                       rememberBan(pick.appid, Date.now())
-                      const rest = picks.filter((p) => p.appid !== pick.appid)
-                      if (!rest.length) {
-                        router.push('/quiz')
+                      // Выдача — сегодняшняя, а не из замыкания клика: пока шёл
+                      // запрос, человек мог пролистать дальше или выбрать
+                      // карточку, и героя увело бы на соседа забаненной
+                      const now = live.current
+                      const after = afterBan({ picks: now.picks, index: now.index, banned: pick.appid })
+                      // Что бан записан, звучит всегда — и там, где на экране
+                      // менять нечего: действие необратимо, и молча оно
+                      // выглядит не дошедшим. Без «следующей игры» (lib/announce)
+                      const told = playLine({ kind: 'ban', name: pick.name, done: finished })
+                      if (after.empty) {
+                        /*
+                          «Подобрать заново» за время запроса: на экране ожидания
+                          (или ошибки нового захода) старой выдачи уже не видно,
+                          и вот-вот придёт новая — та, о которой человек и
+                          попросил. Уводить его в квиз из-за опустевшей прежней
+                          значило бы бросить её на полпути.
+                        */
+                        if (now.phase === 'prepare' || now.phase === 'error') say(told)
+                        else router.push(quizHref(focus))
                         return
                       }
-                      const to = Math.min(index, rest.length - 1)
-                      setPicks(rest)
-                      setIndex(to)
+                      setPicks(after.picks)
+                      setIndex(after.index)
+                      /*
+                        Герой уже другой — он и остаётся, переносить нечего. Или
+                        героя не видно вовсе: пятый пропуск за время запроса
+                        открыл экран выгорания (индекс он не трогает), а
+                        «Подобрать заново» — экран ожидания. «Следующая игра: …»
+                        назвала бы карточку, которой на экране нет; игра просто
+                        уходит из выдачи, а фокус остаётся, где был.
+                      */
+                      if (!after.heroGone || now.phase !== 'reveal') {
+                        say(told)
+                        return
+                      }
                       setHeroFrom('hero')
+                      // «Почему не то?», открытое у этой игры, пока бан шёл, не
+                      // переезжает на следующую: фокус встал бы на её «Не тот
+                      // жанр», и Enter записал бы пропуск игре, которую не отвергали
+                      setAskReason(false)
                       setShowWhy(false)
                       say(
-                        playLine({ kind: 'ban', name: pick.name, done: finished, next: rest[to].name }),
+                        playLine({
+                          kind: 'ban',
+                          name: pick.name,
+                          done: finished,
+                          next: after.picks[after.index].name,
+                        }),
                       )
                       focusHero(false)
                     }}
@@ -1838,26 +2466,54 @@ function Player({ say }: { say: (line: string) => void }) {
                           ? 'Убрать с полки. Бросать игры — нормально'
                           : 'Больше не показывать эту игру'
                     }
-                    className={finished ? 'btn-glass aria-disabled:opacity-60' : 'btn-circle aria-disabled:opacity-60'}
+                    className={
+                      finished
+                        ? 'btn-glass aria-disabled:opacity-60'
+                        : 'btn-circle pointer-coarse:w-auto pointer-coarse:grid-flow-col pointer-coarse:gap-2 pointer-coarse:px-4 aria-disabled:opacity-60'
+                    }
                   >
                     {/*
                       Раньше здесь стояла голая эмодзи. Доступного имени у кнопки
                       не было вовсе (title им не является), а рядом с «Не то —
                       дальше» её смысл не читался и глазами: обе кнопки убирают
                       игру с экрана, но одна на сегодня, а другая навсегда.
-                      Эмодзи спрятана от скринридера, текст объясняет разницу.
+
+                      Разницу объясняли title и текст для скринридера — то есть
+                      никому из тех, кто смотрит на телефон: подсказки под
+                      пальцем не бывает, и безымянный перечёркнутый глаз
+                      нажимали как «пропустить». Под пальцем круг становится
+                      пилюлей со словами «Скрыть насовсем» — тем же словом, что
+                      полка «Скрытые» в библиотеке, откуда её вернуть. Под
+                      курсором остаётся круг: там есть title, а ряд с md стоит в
+                      одну линию. Имя кнопки начинается с видимых слов (WCAG
+                      2.5.3): голосом её зовут тем, что видно, — поэтому видимая
+                      подпись спрятана от скринридера, а полную говорит sr-only.
+
+                      «Уже прошёл» — с игрой в имени, тоже после видимых слов:
+                      у строки «Продолжить» ниже бывает своя такая же кнопка
+                      другой игры, и в списке кнопок два одинаковых имени не
+                      различить (DONE_MISS).
                     */}
                     {finished ? (
-                      banning ? 'Отмечаю…' : 'Уже прошёл'
+                      banning ? (
+                        'Отмечаю…'
+                      ) : (
+                        <>
+                          Уже прошёл<span className="sr-only"> «{pick.name}»</span>
+                        </>
+                      )
                     ) : (
                       <>
                         <Icon name="hide" size={20} />
+                        <span aria-hidden className="hidden pointer-coarse:inline text-sm font-bold">
+                          {banning ? 'Скрываю…' : 'Скрыть насовсем'}
+                        </span>
                         <span className="sr-only">
                           {banning
-                            ? 'Убираю навсегда…'
+                            ? 'Скрываю насовсем…'
                             : owned
-                              ? 'Убрать с полки насовсем. Бросать игры — нормально'
-                              : 'Больше никогда не показывать эту игру'}
+                              ? 'Скрыть насовсем: убрать с полки. Бросать игры — нормально'
+                              : 'Скрыть насовсем: больше никогда не показывать эту игру'}
                         </span>
                       </>
                     )}
@@ -1879,11 +2535,20 @@ function Player({ say }: { say: (line: string) => void }) {
                   banFailed !== pick.appid
                     ? null
                     : finished
-                      ? 'Не получилось отметить игру пройденной — нажми ещё раз.'
+                      ? DONE_MISS(pick.name)
                       : 'Не получилось убрать игру насовсем — нажми ещё раз.'
                 }
                 className="-mt-1 text-sm text-danger"
               />
+              {/* Чья это цена — под кнопкой с ней: русскоязычный аккаунт не
+                  обязательно российский, и у KZ или СНГ-доллара она другая.
+                  Только у цены: «бесплатно» и «не продаётся…» регион уже
+                  называют сами. */}
+              {pick.source === 'new' && pick.priceFinal !== null && !pick.isFree && !pick.unsold && (
+                <m.div variants={STEP} className="-mt-1">
+                  <PriceWhere cc={pick.priceCc} />
+                </m.div>
+              )}
               {/* Под ценой — «а если не зайдёт»: покупка перестаёт быть ставкой.
                   Только у платного, вышедшего и из Steam — решает сервер. */}
               {pick.refund && (
@@ -1921,13 +2586,30 @@ function Player({ say }: { say: (line: string) => void }) {
                   />
                 </m.p>
               )}
+              {/* Своя игра на телефоне — «Сыграю вечером на ПК»: запустить её
+                  отсюда нельзя, а вечером на компьютере она вернётся строкой
+                  над «Продолжить» (lib/eveningplan.ts). План, а не оценка.
+                  Кнопка сама прячется на компьютере и у не пишущей сессии —
+                  поэтому без обёртки: пустой узел в колонке героя всё равно
+                  взял бы себе зазор gap-4. Отложенный в этом заходе — и после
+                  «Подробнее» → «Назад» — встаёт уже отложенным (planned) */}
+              {pick.source !== 'new' && !pick.storeUrl && (
+                <TonightButton
+                  key={pick.appid}
+                  initialDone={planned.includes(pick.appid)}
+                  name={pick.name}
+                  onPlan={() => sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'tonight'))}
+                />
+              )}
               {/*
                 «Как «X», но…» — соседи этой игры (готовые из game_neighbors,
                 а до их заливки — по тегу полки) под то же настроение. Шаг по
                 выдаче, как переключатели ниже: без адреса и без прогрева. В
                 рулетке его нет — там смысл в броске, в «нераспакованном» тоже:
                 вопрос там уже задан, и соседи его не услышали бы. У выдачи из
-                соседей — подпись, чьи они, и дорога обратно.
+                соседей — подпись, чьи они, и дорога обратно. Та же выдача
+                приходит и адресом — со страницы игры и из библиотеки (askSeed):
+                подпись и «Вернуть обычную выдачу» у неё те же.
               */}
               {(seed || (!roulette && !focus && pick.tags.length > 0)) && (
                 <m.div
@@ -1938,9 +2620,14 @@ function Player({ say }: { say: (line: string) => void }) {
                   {!roulette && !focus && pick.tags.length > 0 && (
                     <button
                       type="button"
-                      onClick={() =>
-                        void reshape({ scope, lean, seed: pick.appid, nudge: keptNudge }, 'hero')
-                      }
+                      // Затравка — сам герой, а в своих соседях он не бывает:
+                      // удача почти всегда приводит другого, и кнопка уходит
+                      // вместе со старым героем — фокус едет на нового (reshape)
+                      onClick={async () => {
+                        const was = pick.appid
+                        const hero = await reshape({ scope, lean, seed: pick.appid, nudge: keptNudge }, 'hero')
+                        if (hero !== null && hero !== was) focusHero(false)
+                      }}
                       aria-disabled={switching}
                       title="Похожие на эту игру — под то же настроение"
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
@@ -1951,7 +2638,13 @@ function Player({ say }: { say: (line: string) => void }) {
                   {seed && (
                     <button
                       type="button"
-                      onClick={() => void reshape({ scope, lean, seed: null, nudge: keptNudge }, 'hero')}
+                      // Уходит при любой удаче, даже с тем же героем: затравки
+                      // больше нет. Тогда фокус — на заголовок нынешнего сразу
+                      onClick={async () => {
+                        const was = pick.appid
+                        const hero = await reshape({ scope, lean, seed: null, nudge: keptNudge }, 'hero')
+                        if (hero !== null) focusHero(hero === was)
+                      }}
                       aria-disabled={switching}
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
                     >
@@ -1966,19 +2659,28 @@ function Player({ say }: { say: (line: string) => void }) {
                 тем же правилам: не в рулетке и не в «нераспакованном» —
                 вопрос там уже задан. Пилюлями, как ось состояния ниже, и с
                 тем же зазором gap-3: зоны .tap соседей не перекрываются.
+
+                У ряда своя видимая подпись, и она же имя группы. Без неё «Как
+                «Factorio», но…» с многоточием стояло прямо над пилюлями и
+                читалось их началом — «как Factorio, но покороче», — а
+                подталкивания затравку не берут (nudgeTo несёт только уже
+                выбранную): «Покороче» отдавало игру, с Factorio не связанную.
               */}
               {!roulette && !focus && (
                 <m.div
                   variants={STEP}
                   role="group"
-                  aria-label="Подправить выдачу"
+                  aria-labelledby="play-nudge-label"
                   className="flex flex-wrap items-center gap-3 text-xs"
                 >
+                  <span id="play-nudge-label" className="text-faint">
+                    Подправить выдачу:
+                  </span>
                   {NUDGES.map((n) => (
                     <button
                       key={n}
                       type="button"
-                      onClick={() => nudgeTo(n)}
+                      onClick={() => void nudgeTo(n, pick.appid)}
                       aria-disabled={switching}
                       // «Что-то другое» — действие, а не переключатель: у
                       // повторяемого нажатия нет «нажатого» состояния
@@ -1990,11 +2692,15 @@ function Player({ say }: { say: (line: string) => void }) {
                   ))}
                 </m.div>
               )}
-              {/* Отказ «Как «X», но…» и подталкиваний — тем же приёмом: строка
-                  стоит всегда, а меняется в ней только текст */}
-              <StatusLine text={heroMiss} className="-mt-1 text-sm text-danger" />
               </>
             )}
+            {/* Отказ «Как «X», но…», подталкиваний и «Обновить выдачу» — тем же
+                приёмом: строка стоит всегда, а меняется в ней только текст.
+                Снаружи ряда «Почему не то?», а не в его ветке «иначе»: плашка
+                догрева живёт над героем и жмётся и при открытом ряде, а 429
+                «Обновить выдачу» в размонтированную строку не звучал вовсе —
+                и потом молча всплывал, когда ряд закрывался. */}
+            <StatusLine text={heroMiss} className="-mt-1 text-sm text-danger" />
             </div>
           </m.div>
         </m.section>
@@ -2009,27 +2715,123 @@ function Player({ say }: { say: (line: string) => void }) {
         </div>
       )}
 
+      {/* План на вечер (lib/eveningplan.ts) — игра, которую человек сам
+          поставил на загрузку или отложил с телефона. Строкой над
+          «Продолжить» и тем же видом: это его решение, а не наша карточка.
+          Только там, где кнопка запускает (pointer-fine — признак развилки
+          SteamLaunch): на телефоне запускать нечем, и строка без кнопки была
+          бы упрёком. Не в рулетке и не когда игра плана уже на экране — у
+          героя свой «Запустить», у «Продолжить» свой (planBeside). Запуск
+          пишется как у «Продолжить», со слотом plan: он закрывает план и
+          заводит исход совета («Твои вечера»). Записанный — убирает и строку
+          (closesPlan в sendFeedback), поэтому фокус с её кнопки сразу
+          переезжает к герою, как после любого ответа: иначе он упал бы в
+          body вместе со строкой. */}
+      {planRow && (
+        <LaunchRow
+          appid={planRow.appid}
+          label="Запустить"
+          fineOnly
+          onLaunch={() => {
+            focusHero(true)
+            void sendFeedback(planRow.appid, 'launched', undefined, ctxOf(null, 'plan', 'launch'))
+          }}
+        >
+          {planLine(planRow)}
+        </LaunchRow>
+      )}
+
       {/* «Продолжить» — то, во что он играет сейчас. Строкой, а не карточкой:
           это не рекомендация, и спорить с героем за место ей незачем. В
           рулетке её нет — там весь смысл в броске. */}
       {cont && !roulette && (
         <div className="mx-auto w-full max-w-6xl px-safe pt-8">
           <div className="panel-lift px-4 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
-            <span className="text-dim">
-              Или продолжи <span className="font-extrabold text-ink">«{cont.name}»</span>
-              {cont.recentHours > 0 && (
-                <span className="tabular-nums text-faint"> · {cont.recentHours} ч за две недели</span>
-              )}
-            </span>
-            <SteamLaunch
-              appid={cont.appid}
-              label="Продолжить"
-              onClick={() =>
-                void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))
-              }
-              className="tap font-extrabold text-ember-text hover:underline"
-            />
+            {contDone === cont.appid ? (
+              <>
+                {/* Выдача на экране уже «похожие на X» — пройденная игра и
+                    есть её затравка (pickContinue затравку не исключает, а
+                    сама она в соседи не идёт). «Дальше» тогда звал бы тот же
+                    запрос, и reshape отбрасывал бы его как «то же самое»:
+                    кнопка, которая молча ничего не делает. Остаётся строка —
+                    и фокус, ушедший с «Уже прошёл», забирает она */}
+                <span
+                  ref={cont.appid === seedAppid ? contFocus : undefined}
+                  tabIndex={cont.appid === seedAppid ? -1 : undefined}
+                  className="text-dim outline-none"
+                >
+                  <span className="font-extrabold text-ink">«{cont.name}»</span> пройдена — больше не
+                  предложу
+                </span>
+                {/* «Уже прошёл» ушла из-под пальца — фокус встаёт сюда. Удачная
+                    выдача уносит и эту кнопку: фокус едет на героя — на
+                    нового, когда тот смонтируется, или сразу на нынешний,
+                    если герой остался тем же (reshape отдаёт его appid) */}
+                {cont.appid !== seedAppid && (
+                  <button
+                    ref={contFocus}
+                    type="button"
+                    onClick={async () => {
+                      const was = pick.appid
+                      const hero = await reshape({ scope, lean, seed: cont.appid, nudge: keptNudge }, 'hero')
+                      if (hero !== null) focusHero(hero === was)
+                    }}
+                    aria-disabled={switching}
+                    className="tap font-extrabold text-ember-text hover:underline cursor-pointer aria-disabled:opacity-50"
+                  >
+                    Дальше — в духе «{cont.name}»
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="text-dim">
+                  Или продолжи <span className="font-extrabold text-ink">«{cont.name}»</span>
+                  {cont.recentHours > 0 && (
+                    <span className="tabular-nums text-faint"> · {cont.recentHours} ч за две недели</span>
+                  )}
+                </span>
+                <span className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                  {/* Сессии только для чтения бан не записать — кнопки нет,
+                      как и у героя. Игра в имени — после видимых слов (WCAG
+                      2.5.3): своего заголовка у панели нет, по заголовкам
+                      кнопка стоит под h1 героя, а у героя бывает своя «Уже
+                      прошёл» — без игры их не различить (DONE_MISS) */}
+                  {cont.finishable && !readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => void finishCont()}
+                      aria-disabled={finishing}
+                      title="Прошёл — больше не предлагать"
+                      className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-60"
+                    >
+                      {finishing ? (
+                        'Отмечаю…'
+                      ) : (
+                        <>
+                          Уже прошёл<span className="sr-only"> «{cont.name}»</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                  <SteamLaunch
+                    appid={cont.appid}
+                    label="Продолжить"
+                    onClick={(via) =>
+                      void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', launchIntent(via)))
+                    }
+                    className="tap font-extrabold text-ember-text hover:underline"
+                  />
+                </span>
+              </>
+            )}
           </div>
+          {/* Отказ «Уже прошёл» — под панелью, тем же приёмом, что у героя:
+              строка стоит всегда, меняется только текст */}
+          <StatusLine
+            text={contFailed === cont.appid ? DONE_MISS(cont.name) : null}
+            className="mt-2 text-sm text-danger"
+          />
         </div>
       )}
 
@@ -2050,7 +2852,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 {focus
                   ? `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} ${timeHidden ? 'из твоей библиотеки' : 'из нераспакованного'}`
                   : seed
-                    ? `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')}, похожих на «${seed.name}»`
+                    ? `Не то? Ещё ${others.length} ${plural(others.length, 'вариант, похожий', 'варианта, похожих', 'вариантов, похожих')} на «${seed.name}»`
                     : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}
                 {/* Иконка — для глаза: состояние уже в aria-expanded */}
                 <Icon name={moreOpen ? 'up' : 'down'} className="inline-block align-[-0.12em]" />
@@ -2183,7 +2985,12 @@ function Player({ say }: { say: (line: string) => void }) {
                       sizes="(min-width: 768px) 25vw, 50vw"
                       corner={<DiscountCorner discount={p.discount} />}
                       meta={
-                        <>
+                        /* Своя строка с переносом внутри общей строки плитки:
+                           подпись и цена не делят 163px телефона пополам — не
+                           влезли вдвоём, цена уходит строкой ниже, а подпись
+                           остаётся целой. Скидочная пара цен заняла бы почти всю
+                           ширину, и обрезалась бы даже «По вкусу». */
+                        <span className="flex w-full min-w-0 flex-wrap items-center justify-between gap-x-2">
                           {/* Преимущество важнее источника: «откуда» видно и по
                               герою, а «чем лучше соседних» — только здесь */}
                           <span className={`truncate ${p.edge ? 'text-ember-text' : ''}`}>
@@ -2198,13 +3005,15 @@ function Player({ say }: { say: (line: string) => void }) {
                           {p.source === 'new' && (
                             <PriceTag
                               priceFinal={p.priceFinal}
+                              cc={p.priceCc}
+                              unsold={p.unsold}
                               discount={p.discount}
                               isFree={p.isFree}
                               showPercent={false}
                               className="shrink-0"
                             />
                           )}
-                        </>
+                        </span>
                       }
                     />
                   </m.button>
@@ -2285,6 +3094,8 @@ function Player({ say }: { say: (line: string) => void }) {
                               </span>
                               <PriceTag
                                 priceFinal={p.priceFinal}
+                                cc={p.priceCc}
+                                unsold={p.unsold}
                                 discount={p.discount}
                                 isFree={p.isFree}
                                 showPercent={false}
@@ -2301,6 +3112,8 @@ function Player({ say }: { say: (line: string) => void }) {
                               <span className="sr-only">{reviews.full}</span>
                             </span>
                           )}
+                          {/* Перед покупкой «без русского» весит не меньше отзывов */}
+                          {p.russian && <span className="text-xs text-faint mt-1 block">{p.russian}</span>}
                         </span>
                       </m.a>
                     )

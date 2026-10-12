@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { logFeedback, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from '@/lib/db'
 import { EXPLORE_DECK } from '@/lib/explore'
-import { nowSec } from '@/lib/server'
+import { MUTE_COOKIE } from '@/lib/mutetags'
+import { SESSION_COOKIE, nowSec } from '@/lib/server'
+import { setTestCookie } from '@/lib/testing/headers'
 import { freshDb, signIn, signInAs } from '@/lib/testing/route'
 import { GET } from './route'
 
@@ -125,6 +127,8 @@ describe('/api/explore', () => {
         owned: false,
         isFree: false,
         priceFinal: null,
+        priceCc: null,
+        unsold: false,
         discount: null,
       },
     ])
@@ -203,5 +207,107 @@ describe('/api/explore', () => {
     const shown = body.cards.map((c) => c.appid)
     expect(shown).not.toContain(20)
     expect(shown).not.toContain(10)
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts) — кукой браузера, тем же конвейером, что
+ * у /play: колода без того, что запрещено. Полка «Приглянулось» фильтром не
+ * режется — её он собрал сам, это не совет.
+ */
+describe('/api/explore: «Не предлагать»', () => {
+  /** Половина своего и каталога — аниме */
+  async function seedAnime(): Promise<number[]> {
+    await seed()
+    const anime = [...OWN.slice(0, 5), ...SHOP.slice(0, 5)]
+    await upsertGamesMeta(
+      db,
+      anime.map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Anime: 120, Puzzle: 100, Casual: 60 },
+        genres: [],
+        categories: [2],
+      })),
+      nowSec(),
+    )
+    return anime
+  }
+
+  test('колода без запрещённого, полка — как была', async () => {
+    await signIn(db, STEAMID, { verified: true })
+    const anime = await seedAnime()
+    await logFeedback(db, { steamid: STEAMID, appid: anime[5], action: 'opened', reason: 'explore' }, nowSec() - 60)
+    const plain = ((await (await get()).json()) as Body).cards.map((c) => c.appid)
+    // без куки аниме в колоде есть — значит, проверка ниже что-то проверяет
+    expect(plain.some((id) => anime.includes(id))).toBe(true)
+
+    setTestCookie(MUTE_COOKIE, 'anime')
+    const body = (await (await get()).json()) as Body
+    expect(body.cards.length).toBeGreaterThan(0)
+    for (const c of body.cards) expect(anime, `${c.appid}`).not.toContain(c.appid)
+    expect(body.liked.map((l) => l.appid)).toEqual([anime[5]])
+  })
+
+  test('всё под фильтром — 409 muted', async () => {
+    await signIn(db, STEAMID, { verified: true })
+    await seed()
+    setTestCookie(MUTE_COOKIE, 'anime')
+    await upsertGamesMeta(
+      db,
+      [1, ...OWN, ...SHOP].map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Anime: 120, Puzzle: 100 },
+        genres: [],
+        categories: [2],
+      })),
+      nowSec(),
+    )
+    const res = await get()
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'muted' })
+  })
+})
+
+/*
+ * Потолок частоты. Личный — на того, кто спрашивает (personalRateId в
+ * lib/ratelimit): сессию по ссылке /api/connect выдаёт на любой публичный
+ * профиль, и общий на steamid счётчик позволял чужому двадцатью запросами
+ * запереть владельцу колоду на всё окно.
+ */
+describe('/api/explore: потолок частоты', () => {
+  const T0 = 1_760_000_000
+
+  // Окно фиксированное, по часам: граница окна посреди теста обнулила бы счёт
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0 * 1000)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const getFrom = (ip: string) =>
+    GET(new Request('http://localhost/api/explore', { headers: { 'x-forwarded-for': ip } }))
+
+  test('чужая сессия по ссылке выбрала свой потолок — владельцу колода не заперта', async () => {
+    const owner = await signIn(db, STEAMID, { verified: true })
+    // Чужой вставил ссылку на тот же профиль — кука теперь его. Библиотеки
+    // нет: каждый пропущенный запрос — 409, но в потолок засчитан
+    await signIn(db, STEAMID)
+    for (let i = 0; i < 20; i++) expect((await getFrom('198.51.100.1')).status).toBe(409)
+    expect((await getFrom('198.51.100.1')).status).toBe(429)
+    setTestCookie(SESSION_COOKIE, owner.token)
+    expect((await getFrom('203.0.113.7')).status).toBe(409)
+  })
+
+  test('вошедший через Steam на двух устройствах — потолок один', async () => {
+    const phone = await signIn(db, STEAMID, { verified: true })
+    await signIn(db, STEAMID, { verified: true })
+    for (let i = 0; i < 20; i++) expect((await getFrom('203.0.113.7')).status).toBe(409)
+    setTestCookie(SESSION_COOKIE, phone.token)
+    expect((await getFrom('203.0.113.8')).status).toBe(429)
   })
 })

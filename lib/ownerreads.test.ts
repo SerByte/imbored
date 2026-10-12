@@ -3,8 +3,8 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 /**
- * Сторож личного: оценки, скрытое, вечера и «Приглянулось» читаются в
- * продукте только за проверкой isWriter (lib/server).
+ * Сторож личного: оценки, скрытое, вечера, «Приглянулось» и список
+ * желаемого читаются в продукте только за проверкой isWriter (lib/server).
  *
  * Пишет всё это лишь сессия, доказавшая владение профилем через Steam, или
  * демо. Сессию по вставленной ссылке /api/connect выдаёт на любой публичный
@@ -26,7 +26,17 @@ const code = (src: string) =>
   src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
 /** Чтения, результат которых — личное владельца, выводимое как есть */
-const OWNER_READS = ['listBanned', 'feedbackStats', 'listEvenings', 'listLiked', 'countLiked', 'listExploreLiked']
+const OWNER_READS = [
+  'listBanned',
+  'feedbackStats',
+  'listEvenings',
+  'listLiked',
+  'countLiked',
+  'listExploreLiked',
+  // Список желаемого: что человек хочет купить, — тоже его, а не того, у
+  // кого есть ссылка на профиль
+  'getWishlist',
+]
 const CALL = new RegExp(`\\b(${OWNER_READS.join('|')})\\(`, 'g')
 
 /** Каждый вызов личного чтения в продукте: файл и то, что стоит перед ним */
@@ -58,9 +68,9 @@ describe('личное владельца — только за isWriter', () =>
       'app/api/explore/route.ts',
       'app/library/page.tsx',
     ])
-    // Все пять чтений /library — иначе сторож ослеп на одном из них
+    // Все шесть чтений /library — иначе сторож ослеп на одном из них
     expect(found.filter((c) => c.file === 'app/library/page.tsx').map((c) => c.name).sort()).toEqual(
-      ['countLiked', 'feedbackStats', 'listBanned', 'listEvenings', 'listLiked'],
+      ['countLiked', 'feedbackStats', 'getWishlist', 'listBanned', 'listEvenings', 'listLiked'],
     )
   })
 

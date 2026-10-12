@@ -1,3 +1,4 @@
+import { cache } from 'react'
 import { filterActual } from './actual'
 import type { GameArtUrls } from './art'
 import { COMMON_SHOWN, compatibility, pairTasteProfile } from './compat'
@@ -6,14 +7,14 @@ import {
   getGamesMetaLite,
   getLatestSnapshot,
   getPersonaName,
-  loadTagStats,
   type Db,
 } from './db'
 import { type Discount, discountView, trustedPrice } from './discount'
 import { buildGroupDeck } from './group'
 import { playtimeHidden } from './playtime'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
-import type { GameMeta } from './types'
+import { tagStatsFor } from './tagstats'
+import type { GameMeta, LibraryGame } from './types'
 
 /**
  * Данные страницы совместимости. ТОЛЬКО ЧТЕНИЕ ИЗ БАЗЫ — как в lib/gamepage.ts.
@@ -26,7 +27,8 @@ import type { GameMeta } from './types'
  *
  * Ни cookies, ни nowSec отсюда не читаются: и то и другое приходит аргументом.
  * Так модуль остаётся тестируемым и годится для OG-картинки, которая кэшируется
- * и обязана быть свободна от запроса.
+ * и обязана быть свободна от запроса. cache() из react этому не мешает: вне
+ * рендера он просто зовёт функцию (см. snapshotOnce ниже).
  */
 
 export type ArtRef = {
@@ -36,14 +38,21 @@ export type ArtRef = {
   art: GameArtUrls | null
 }
 
-/** Часы null — время этой стороны скрыто настройками Steam (см. Compatibility) */
-export type CompatGame = ArtRef & { hoursA: number | null; hoursB: number | null }
+/**
+ * Минуты, а не часы: подпись «25 мин» вместо «0 ч» (см. Compatibility).
+ * null — время этой стороны скрыто настройками Steam.
+ */
+export type CompatGame = ArtRef & { minutesA: number | null; minutesB: number | null }
 
 export type CompatPick = ArtRef & {
   ownedByAll: boolean
   /** имена тех, у кого игры нет */
   missingFor: string[]
   priceFinal?: number
+  /** регион магазина цены (lib/steamregion) — её валюта */
+  priceCc?: string
+  /** «не продаётся в российском Steam» */
+  unsold?: boolean
   /** бесплатная — цены у неё нет, см. GroupCard.isFree */
   isFree?: boolean
   discount: Discount | null
@@ -56,7 +65,8 @@ export type CompatResult = {
   commonGames: CompatGame[]
   /** всё пересечение, а не показанный срез */
   commonTotal: number
-  commonHours: number
+  /** минуты, не часы: подпись округляет сама (commonTimeLine в lib/compat) */
+  commonMinutes: number
   sharedTags: string[]
   /** есть у обоих — во что сесть сегодня */
   playNow: CompatPick[]
@@ -73,8 +83,11 @@ export type CompatResult = {
   otherTimeHidden: boolean
 }
 
-/** Что можно показать про владельца ссылки, ничего не зная о зрителе */
-export type CompatInvite = {
+/**
+ * Владелец ссылки без обложек — всё, что про него говорят снапшот и ник.
+ * Превью в чате ничего сверх этого не показывает (см. loadInviteHead)
+ */
+export type CompatInviteHead = {
   steamid: string
   name: string
   gamesCount: number
@@ -84,8 +97,10 @@ export type CompatInvite = {
    * превью, герое и карточке — «время скрыто», как у портрета
    */
   playtimeHidden: boolean
-  topGames: ArtRef[]
 }
+
+/** Что можно показать про владельца ссылки, ничего не зная о зрителе */
+export type CompatInvite = CompatInviteHead & { topGames: ArtRef[] }
 
 export type CompatState =
   | { kind: 'ok'; data: CompatResult }
@@ -118,63 +133,114 @@ function artRef(appid: number, name: string, meta: GameMeta | undefined): ArtRef
   return { appid, name, headerImage: meta?.headerImage ?? null, art: meta?.art ?? null }
 }
 
+/*
+ * Снапшот и ник — один раз на запрос.
+ *
+ * Их читают и generateMetadata (через loadInviteHead), и тело страницы, и
+ * раньше тело читало их само — в обход памяти запроса. Страница объявлена
+ * force-dynamic, и каждый заход по ссылке совместимости — а гость по
+ * разосланной ссылке и есть её главный путь — тянул из Turso games_json
+ * владельца дважды: у большой библиотеки это блоб на сотни килобайт. Вместе с
+ * ним дважды читались ник и обложки приглашения.
+ *
+ * cache() живёт ровно один запрос — тот же приём, что на портрете
+ * (app/portrait/[steamid]/page.tsx). Вне рендера — в тестах, в OG-картинке —
+ * это сквозной вызов, и модуль остаётся свободным от запроса.
+ *
+ * Обёртки — здесь, а не в lib/db: чтение снапшота, закэшированное для всех,
+ * отдало бы старое тому, кто в одном рендере пишет снапшот и тут же читает.
+ */
+const snapshotOnce = cache(getLatestSnapshot)
+const personaOnce = cache(getPersonaName)
+
+/**
+ * Самые наигранные, по убыванию времени; appid 0 и ниже — не игры Steam.
+ *
+ * При скрытом времени сортировать не по чему, и стена — библиотека как есть,
+ * как у карточки портрета: сортировка устойчивая, а подписи «самые
+ * наигранные» у стены нет.
+ */
+function topPlayed(games: LibraryGame[], n: number): LibraryGame[] {
+  return [...games]
+    .filter((g) => g.appid > 0)
+    .sort((a, b) => b.playtimeForever - a.playtimeForever)
+    .slice(0, n)
+}
+
 /** Ник или «Игрок 1234» — одно на страницу сравнения, карточку и хаб */
 export function nameOf(steamid: string, stored: string | null): string {
   return stored ?? `Игрок ${steamid.slice(-4)}`
 }
 
 /**
+ * Снапшот и ник владельца ссылки — одним кругом и через память запроса.
+ *
+ * Ник — вместе со снапшотом, а не после: от снапшота он не зависит. Без
+ * снапшота он прочитан зря, но странице он тогда как раз и нужен — «X ещё не
+ * подключал библиотеку».
+ */
+function readOwner(db: Db, steamid: string) {
+  return Promise.all([snapshotOnce(db, steamid), personaOnce(db, steamid)])
+}
+
+function inviteHead(steamid: string, games: LibraryGame[], stored: string | null): CompatInviteHead {
+  return {
+    steamid,
+    name: nameOf(steamid, stored),
+    gamesCount: games.length,
+    totalHours: Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60),
+    playtimeHidden: playtimeHidden(games),
+  }
+}
+
+/**
  * Владелец ссылки — то, что видно и без входа.
  *
  * Отсюда живут три вещи, которые обязаны работать для незалогиненного:
- * generateMetadata, OG-картинка и сам экран приглашения. Все три описывают
- * ТОГО, КТО КИНУЛ ССЫЛКУ, а не того, кто её открыл: иначе одна ссылка
- * разворачивалась бы в каждом чате по-разному, а превью показывало бы того, чья
- * сессия случайно оказалась у краулера.
- */
-/*
- * Снапшот можно передать снаружи, и это не украшение.
+ * generateMetadata (ему хватает головы, см. loadInviteHead), OG-картинка и сам
+ * экран приглашения. Все три описывают ТОГО, КТО КИНУЛ ССЫЛКУ, а не того, кто
+ * её открыл: иначе одна ссылка разворачивалась бы в каждом чате по-разному, а
+ * превью показывало бы того, чья сессия случайно оказалась у краулера.
  *
- * loadCompat читает снапшот того, кто зовёт, СВОИМ запросом — ему нужно решить,
- * есть ли профиль вообще, — а потом звал сюда, и здесь читался тот же снапшот
- * второй раз. Это не лишняя строка, а лишний games_json: у человека с большой
- * библиотекой это блоб на тысячу игр, прочитанный дважды за один рендер
- * страницы, которая объявлена force-dynamic и кэша не имеет.
- *
- * Тип выведен из самой getLatestSnapshot, а не выписан рядом: разъехаться
- * этим двум нельзя, а отдельного экспортируемого имени у него нет.
- *
- * undefined означает «не передавали, читай сам» — этим и живут два других
- * вызывающих, generateMetadata и og-картинка, у которых своего снапшота нет.
- * Явный null отличается от него намеренно: он означает «читали, нет его», и
- * повторять запрос ради того же ответа незачем.
+ * Снапшот и ник — через память запроса (snapshotOnce), поэтому ни метаданные,
+ * ни тело страницы второй раз за ними не ходят. Своё чтение здесь одно —
+ * обложки, и платят за него только экраны и карточка, которые их показывают.
  */
 export async function loadCompatInvite(
   db: Db,
   steamid: string,
-  known?: Awaited<ReturnType<typeof getLatestSnapshot>>,
   /** Сколько самых наигранных взять: странице — ленту, карточке — стену */
   opts: { top?: number } = {},
 ): Promise<CompatInvite | null> {
-  const snapshot = known === undefined ? await getLatestSnapshot(db, steamid) : known
+  const [snapshot, stored] = await readOwner(db, steamid)
   if (!snapshot) return null
 
-  // При скрытом времени сортировать не по чему, и стена — библиотека как
-  // есть, как у карточки портрета: подписи «самые наигранные» у стены нет
-  const top = [...snapshot.games]
-    .filter((g) => g.appid > 0)
-    .sort((a, b) => b.playtimeForever - a.playtimeForever)
-    .slice(0, opts.top ?? HERO_ART)
+  const top = topPlayed(snapshot.games, opts.top ?? HERO_ART)
   const metas = await getGamesMetaLite(db, top.map((g) => g.appid))
 
   return {
-    steamid,
-    name: nameOf(steamid, await getPersonaName(db, steamid)),
-    gamesCount: snapshot.games.length,
-    totalHours: Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60),
-    playtimeHidden: playtimeHidden(snapshot.games),
+    ...inviteHead(steamid, snapshot.games, stored),
     topGames: top.map((g) => artRef(g.appid, g.name, metas.get(g.appid))),
   }
+}
+
+/**
+ * Голова приглашения — для generateMetadata: превью в чате говорит имя, число
+ * игр и часы, а обложек в нём нет (картинку рисует opengraph-image.tsx).
+ *
+ * Пока метаданные брали приглашение целиком, вошедший с библиотекой платил за
+ * обложки пяти самых наигранных игр владельца, которых ему не показывает
+ * никто: его экран — посчитанное сравнение, и герой там красится из
+ * метаданных обеих библиотек. Выходило два чтения метаданных игр на заход
+ * вместо одного. Теперь обложки читает только тело страницы — и только на
+ * тех экранах, где лента есть.
+ *
+ * Снапшот и ник у головы и у тела страницы — общие промисы (snapshotOnce) на
+ * любом пути: у гостя, у вошедшего, на своей ссылке.
+ */
+export async function loadInviteHead(db: Db, steamid: string): Promise<CompatInviteHead | null> {
+  const [snapshot, stored] = await readOwner(db, steamid)
+  return snapshot ? inviteHead(steamid, snapshot.games, stored) : null
 }
 
 export async function loadCompat(
@@ -186,28 +252,52 @@ export async function loadCompat(
   // Своя же ссылка — отвечаем до единого запроса к базе
   if (me && me === other) return { kind: 'self' }
 
-  const otherSnap = await getLatestSnapshot(db, other)
-  if (!otherSnap) {
-    return { kind: 'noprofile', otherName: await getPersonaName(db, other) }
+  /*
+   * Три круга к базе, а не лесенка из восьми.
+   *
+   * Раньше каждое чтение ждало предыдущего: снапшот другого, обложки
+   * приглашения, его ник, свой снапшот, свой ник, метаданные библиотек,
+   * статистика тегов, пул каталога — около трёхсот миллисекунд одной только
+   * задержки Turso (~35 мс на круг, lib/candidates.ts) до первого расчёта, и
+   * всё это время человек смотрел на loading.tsx. Зависят друг от друга
+   * только три ступени: люди → метаданные их библиотек → каталожный пул по
+   * профилю пары.
+   *
+   * Статистика тегов и размер пула не про людей вовсе, но идут вторым кругом,
+   * рядом с метаданными, а не первым: гостю и человеку без библиотеки они не
+   * нужны, а круг от этого не удлиняется.
+   *
+   * Цена размена записана: вошедший, открывший ссылку человека без профиля,
+   * зря читает свои снапшот и ник. Случай редкий и молчаливый, задержку же
+   * видит каждый — тот же размен, что в buildCandidates (lib/candidates.ts).
+   */
+  const [otherSnap, otherStored, mySnap, myStored] = await Promise.all([
+    snapshotOnce(db, other),
+    personaOnce(db, other),
+    me ? snapshotOnce(db, me) : null,
+    me ? personaOnce(db, me) : null,
+  ])
+  if (!otherSnap) return { kind: 'noprofile', otherName: otherStored }
+
+  // Гость и человек без своей библиотеки видят одно и то же — кто зовёт и во
+  // что он играет. Снапшот и ник владельца в запросе уже прочитаны
+  // (snapshotOnce) — новое чтение здесь одно: обложки ленты
+  if (!me || !mySnap) {
+    const invite = await loadCompatInvite(db, other)
+    if (!invite) return { kind: 'noprofile', otherName: otherStored }
+    return me ? { kind: 'nolibrary', invite } : { kind: 'noauth', invite }
   }
 
-  // Приглашение нужно обоим экранам без результата, поэтому считается до
-  // проверки сессии: и гостю, и тому, у кого нет своей библиотеки, показываем
-  // одно и то же — кто зовёт и во что он играет
-  // Снапшот уже прочитан строкой выше — второй раз за ним не ходим
-  const invite = await loadCompatInvite(db, other, otherSnap)
-  if (!invite) return { kind: 'noprofile', otherName: null }
-  if (!me) return { kind: 'noauth', invite }
+  const myName = nameOf(me, myStored)
+  const otherName = nameOf(other, otherStored)
 
-  const mySnap = await getLatestSnapshot(db, me)
-  if (!mySnap) return { kind: 'nolibrary', invite }
-
-  const myName = nameOf(me, await getPersonaName(db, me))
-  const otherName = invite.name
-
-  // Совместимость считается по двум библиотекам — весь каталог для этого не нужен
-  const metas = await getGamesMetaLite(db, [
-    ...new Set([...mySnap.games, ...otherSnap.games].map((g) => g.appid)),
+  // Совместимость считается по двум библиотекам — весь каталог для этого не
+  // нужен. Статистика тегов и размер пула — тем же кругом, см. выше
+  const [metas, tagStats, poolSize] = await Promise.all([
+    getGamesMetaLite(db, [...new Set([...mySnap.games, ...otherSnap.games].map((g) => g.appid))]),
+    // Карта тегов — с памятью на процесс (lib/tagstats): меняется только с заливкой
+    tagStatsFor(db, now),
+    getPoolSize(db),
   ])
   // Каталог держим ОТДЕЛЬНО от библиотек. metaOf он нужен весь — для арта, цены
   // и второго прохода колоды, — а расчёту серий только в той части, что реально
@@ -215,7 +305,6 @@ export async function loadCompat(
   const poolByAppid = new Map<number, GameMeta>()
   const metaOf = (appid: number): GameMeta | undefined => metas.get(appid) ?? poolByAppid.get(appid)
 
-  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
   const compat = compatibility(mySnap.games, otherSnap.games, metaOf, tagStats)
 
   // Сумма двух профилей, а не профиль склейки: см. pairTasteProfile
@@ -276,6 +365,11 @@ export async function loadCompat(
     // полка «на будущее» показывала её как цену игры — $14.99 за бесплатную.
     const бесплатная = meta?.isFree ?? c.isFree ?? false
     const цена = бесплатная ? null : meta ? trustedPrice(meta, now) : (c.priceFinal ?? null)
+    // Регион и «не продаётся» — той же меты, что и цена; без меты — с карты колоды
+    const регион = meta ? meta.priceCc : c.priceCc
+    // И у бесплатной: рядом с isFree ответ выбирает PriceTag, и «не продаётся»
+    // у него первым — Warzone бесплатна в US, а магазин RU её не показывает
+    const нетВРегионе = meta ? meta.storeHidden === true : c.unsold === true
     return {
       ...artRef(c.appid, c.name, meta),
       ownedByAll: c.ownedByAll,
@@ -286,6 +380,8 @@ export async function loadCompat(
       // будущее» показывала его как обычную цену, расходясь с карточкой той же
       // игры на /game и со строкой выдачи на /play.
       ...(цена !== null ? { priceFinal: цена } : {}),
+      ...(регион ? { priceCc: регион } : {}),
+      ...(нетВРегионе ? { unsold: true } : {}),
       // Скидка нужна только там, где кому-то придётся покупать: у общей игры
       // цена в разговоре не участвует, у бесплатной — тем более
       discount: meta && !c.ownedByAll && !бесплатная ? discountView(meta, now) : null,
@@ -297,8 +393,8 @@ export async function loadCompat(
   const picks = actual.map(toPick)
   const commonGames = compat.commonGames.map((g) => ({
     ...artRef(g.appid, g.name, metas.get(g.appid)),
-    hoursA: g.hoursA,
-    hoursB: g.hoursB,
+    minutesA: g.minutesA,
+    minutesB: g.minutesB,
   }))
 
   return {
@@ -307,12 +403,17 @@ export async function loadCompat(
       percent: compat.percent,
       commonGames,
       commonTotal: compat.commonTotal,
-      commonHours: compat.commonHours,
+      commonMinutes: compat.commonMinutes,
       sharedTags: compat.sharedTags,
       playNow: picks.filter((p) => p.ownedByAll).slice(0, SHELF),
       playLater: picks.filter((p) => !p.ownedByAll).slice(0, SHELF),
-      // Пустое пересечение — не повод показывать чёрный прямоугольник
-      heroGames: commonGames.length ? commonGames.slice(0, HERO_ART) : invite.topGames,
+      // Пустое пересечение — не повод показывать чёрный прямоугольник: топ
+      // другого, как в приглашении. Его метаданные уже в metas — это
+      // объединение обеих библиотек, — и отдельный запрос за пятью обложками
+      // встал бы лишним кругом
+      heroGames: commonGames.length
+        ? commonGames.slice(0, HERO_ART)
+        : topPlayed(otherSnap.games, HERO_ART).map((g) => artRef(g.appid, g.name, metas.get(g.appid))),
       me,
       myName,
       other,

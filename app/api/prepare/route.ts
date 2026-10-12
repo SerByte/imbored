@@ -1,5 +1,5 @@
 import { after, NextResponse } from 'next/server'
-import { ensureMeta, fetchMostPlayed } from '@/lib/catalog'
+import { ensureMeta, fetchMostPlayed, META_MAX_AGE_SEC } from '@/lib/catalog'
 import { sliceDeadline } from '@/lib/cron'
 import { refreshDeals } from '@/lib/deals'
 import { logSwallowed } from '@/lib/errlog'
@@ -13,12 +13,13 @@ import {
   upsertGamesMeta,
 } from '@/lib/db'
 import { playtimeHidden } from '@/lib/playtime'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRatesInOrder, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { isUntouched } from '@/lib/recommend'
 import {
-  currentSteamId,
+  currentSession,
   getDb,
   isDemoId,
+  isWriter,
   nowSec,
   steamApiKey,
 } from '@/lib/server'
@@ -34,7 +35,6 @@ import { libraryWall } from '@/lib/warmup'
  */
 export const maxDuration = 60
 
-const META_MAX_AGE_SEC = 14 * 86_400
 // GetItems берёт до 200 игр за один запрос, поэтому прогрев укладывается
 // в один-два вызова вместо восьмидесяти, как было с поштучным SteamSpy
 const BATCH = 200
@@ -44,36 +44,63 @@ const PRICE_BATCH = 100
 const POOL_LIMIT = 200
 
 /**
- * Потолок здесь не про злоупотребление, а про зацикливание.
+ * Потолков два, и ловят они разное.
  *
- * Прогрев ЗАКОННО зовёт эту ручку до восьмидесяти раз подряд (см.
- * WARMUP_MAX_CALLS в lib/warmup.ts), поэтому лимит обязан этот сценарий
- * пропускать целиком и с запасом. Ловит он другое: второй параллельный прогрев
- * из соседней вкладки и клиента, который из-за ошибки крутит цикл без конца.
+ * Личный — не про злоупотребление, а про зацикливание. Прогрев ЗАКОННО зовёт
+ * эту ручку до восьмидесяти раз подряд (см. WARMUP_MAX_CALLS в
+ * lib/warmup.ts), поэтому лимит обязан этот сценарий пропускать целиком и с
+ * запасом. Ловит он другое: второй параллельный прогрев из соседней вкладки и
+ * клиента, который из-за ошибки крутит цикл без конца.
+ *
+ * Считается он на того, кто спрашивает, а не на steamid (personalRateId в
+ * lib/ratelimit). Сессию по ссылке выдают на любой публичный профиль, и при
+ * общем счётчике чужой запирал владельцу прогрев — а без прогрева не
+ * открываются ни /play, ни /daily. Writer делит потолок между своими
+ * устройствами, сессия по ссылке считается сама по себе.
+ *
+ * Потолок адреса — уже про злоупотребление. Раз сессия по ссылке — свой
+ * счётчик, свежий личный потолок чеканится вместе с ней (/api/connect), а
+ * каждый вызов — пачка GetItems в Steam: без потолка адреса сессии с одного
+ * адреса множили бы её без предела. Втрое выше личного, как у подбора: за
+ * общим NAT прогрев может идти у нескольких человек разом.
  */
 const PREPARE_LIMIT = 200
+const PREPARE_IP_LIMIT = 600
 const PREPARE_WINDOW_SEC = 300
 
 /**
  * Пошагово прогревает каталог метаданных под библиотеку пользователя.
  * Клиент вызывает в цикле, пока remaining > 0 (каждый вызов ~10 сек).
  */
-export async function POST() {
+export async function POST(req: Request) {
   // Первой строкой: бюджет работы после ответа считается от начала вызова
   const startedAt = Date.now()
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  // Сессия целиком, а не один steamid: личному потолку нужны её строка и
+  // происхождение (personalRateId). Всё остальное — по steamid, как прежде
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
 
   const db = await getDb()
   const now = nowSec()
 
-  const gate = await checkRate(db, {
-    bucket: 'prepare',
-    id: steamid,
-    limit: PREPARE_LIMIT,
-    windowSec: PREPARE_WINDOW_SEC,
-    nowSec: now,
-  })
+  // Лимит — до снапшота и намеренно не одним Promise.all с ним: ради круга к
+  // базе каждый отказ 429 зацикленного клиента тянул бы games_json — блоб на
+  // сотни килобайт, — ровно тот случай, от которого лимит и стоит.
+  // Личный гейт первым: отказанный по нему запрос не съедает потолок адреса
+  const gate = await checkRatesInOrder(
+    db,
+    [
+      {
+        bucket: 'prepare',
+        id: personalRateId(session, isWriter(session)),
+        limit: PREPARE_LIMIT,
+        windowSec: PREPARE_WINDOW_SEC,
+      },
+      { bucket: 'prepare-ip', id: clientIp(req.headers), limit: PREPARE_IP_LIMIT, windowSec: PREPARE_WINDOW_SEC },
+    ],
+    now,
+  )
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   const snapshot = await getLatestSnapshot(db, steamid)
@@ -154,8 +181,36 @@ export async function POST() {
   // метаданных навсегда (см. докблок там).
   const wanted = buildWarmPlan(games, steamPool.slice(0, 60))
 
-  const fetched = await ensureMeta(db, wanted, { maxFetch: BATCH, names })
-  const remaining = (await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())).length
+  /*
+   * Свежесть набора — один вопрос к базе, а не два подряд.
+   *
+   * Раньше её спрашивал ensureMeta, и сразу следом тем же списком — подсчёт
+   * остатка. На тёплом каталоге — а это почти каждый вызов: прогрев зовут
+   * все заходы в /play, /daily, /explore и /library — оба ответа пустые, и
+   * второй был лишним проходом по каждой строке библиотеки и лишним кругом
+   * перед remaining: 0, которого ждёт подбор.
+   *
+   * Срок здесь — META_MAX_AGE_SEC самого ensureMeta, а не своя копия: отбор
+   * идёт ДО него, и всё, что отбор счёл свежим, ensureMeta уже не увидит.
+   * Разойдись сроки — короче в каталоге, длиннее тут, — и строки между ними
+   * не освежались бы никогда, а остаток честно показывал бы ноль.
+   *
+   * ensureMeta получает голову протухшей части — ровно пачку, которую он
+   * возьмёт (maxFetch и так режет до BATCH), в порядке buildWarmPlan, потому
+   * что getStaleAppids фильтрует, не переставляя. Свою перепроверку он делает
+   * только по этой пачке: со всей протухшей частью холодная библиотека в
+   * полторы тысячи игр перечитывала бы её целиком ради первых двухсот.
+   * Остаток после записи считает база, а не арифметика «протухло минус
+   * записано», — по всей протухшей части: остальное было свежим мгновение
+   * назад, а срок у метаданных — две недели.
+   */
+  const stale = await getStaleAppids(db, wanted, META_MAX_AGE_SEC, nowSec())
+  let fetched = true
+  let remaining = 0
+  if (stale.length) {
+    fetched = await ensureMeta(db, stale.slice(0, BATCH), { maxFetch: BATCH, names })
+    remaining = (await getStaleAppids(db, stale, META_MAX_AGE_SEC, nowSec())).length
+  }
 
   /*
    * Онлайн и цены — ПОСЛЕ ответа.
@@ -232,7 +287,11 @@ async function refreshLibrary(
   })
   if (!fresh || fresh === 'private' || !fresh.length) return snapshot.games
 
-  await saveLibrarySnapshot(db, steamid, fresh, now)
+  // Только поверх того снимка, что прочитан в начале: «Удалить всё обо мне»,
+  // нажатое, пока Steam отвечал, иначе получило бы снимок и годовую отметку
+  // обратно (replaces в saveLibrarySnapshot). Не легло — прогрев всё равно
+  // идёт по свежему списку: он греет каталог, а не человека
+  await saveLibrarySnapshot(db, steamid, fresh, now, { replaces: snapshot.takenAt })
   return fresh
 }
 

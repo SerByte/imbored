@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { revokeAllSessions, revokeSession } from '@/lib/db'
-import { SESSION_COOKIE, currentSession, getDb, nowSec, sessionCookieOptions } from '@/lib/server'
+import { clearDeviceCookies, currentSession, getDb, nowSec } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
 
 /**
@@ -23,6 +23,15 @@ import { forgetSessionCache } from '@/lib/sessions'
  * Неподтверждённой сессии остаётся обычный выход: гасится ЕЁ ЖЕ кука и её
  * строка. Это ровно то, на что она имеет право, — и ответ говорит правду,
  * а не делает вид, что погасил чужие устройства.
+ *
+ * «Везде» гасит и секретную ссылку на личную RSS-ленту (lib/feedlink). Жмут
+ * его, когда доступ мог утечь, — и обязан он достать в том числе то, о чём
+ * мы не знаем. Ссылку мог выпустить именно тот, кто сидел в чужой сессии, и
+ * она пережила бы отзыв всех входов: ридеру кука не нужна. Гасит её сам
+ * revokeAllSessions, одной пачкой с сессиями, — см. его докблок. Цена —
+ * честному человеку выпустить ссылку заново; об этом сказано рядом с самой
+ * ссылкой на /whatsnew и в подтверждении «Выйти на всех устройствах?»
+ * (components/SignOut). Обычный выход её не трогает: ридер — не это устройство.
  */
 export async function POST(req: Request) {
   const session = await currentSession()
@@ -31,15 +40,21 @@ export async function POST(req: Request) {
 
   const res = NextResponse.json({ ok: true })
   // Куку гасим ВСЕГДА и первым делом: даже если сессии уже нет и гасить в базе
-  // нечего, человек нажал «выйти» и обязан выйти.
-  res.cookies.set(SESSION_COOKIE, '', { ...sessionCookieOptions(), maxAge: 0 })
+  // нечего, человек нажал «выйти» и обязан выйти. А с ней и «Не предлагать»
+  // (lib/mutetags.ts): фильтр — про человека, а не про устройство. Тем же
+  // помощником, что и «Удалить всё обо мне», — чтобы списки не разъехались
+  clearDeviceCookies(res)
 
   if (session) {
     const now = nowSec()
     try {
       const db = await getDb()
       if (all) {
-        await revokeAllSessions(db, session.steamid, now)
+        // Ссылку на ленту гасит та же пачка, что и сессии: сбой посередине
+        // не оставит её живой при ответе «вышел везде». Сессия целиком, а не
+        // один steamid: забытой «Удалить всё обо мне», но ещё живой в кэше,
+        // пачка не даст завести users заново (см. revokeAllSessions)
+        await revokeAllSessions(db, session, now)
       } else {
         await revokeSession(db, session.sid, now)
       }

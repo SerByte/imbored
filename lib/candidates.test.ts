@@ -1,8 +1,9 @@
-import { createClient } from '@libsql/client'
+import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { buildCandidates } from './candidates'
-import { logFeedback, migrateDb, saveLibrarySnapshot, upsertGamesMeta, type Db } from './db'
+import { logFeedback, migrateDb, saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, type Db } from './db'
 import { NEUTRAL_MOOD } from './mood'
+import { parseMutes } from './mutetags'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -121,6 +122,92 @@ describe('buildCandidates', () => {
   })
 
   /*
+   * Фокус — до среза тридцатки, а не после. Скоринг ранжировал всю
+   * библиотеку и резал её до CANDIDATE_LIMIT, из которых двенадцать мест ещё
+   * и держал каталогу; applyFocus стоял уже за отсечкой. У человека с сорока
+   * наигранными рогаликами и шестью нетронутыми не своего жанра нетронутые до
+   * фокуса не доживали, пол applyFocus срабатывал на пустом месте — и на
+   * «покажи то, во что я не играл» приходило «У тебя в X уже 50 ч».
+   */
+  test('«нераспакованное» находит нетронутые, даже когда наигранное ближе к вкусу', async () => {
+    const db = await freshDb()
+    const comeback = Array.from({ length: 40 }, (_, i) => 100 + i)
+    const untouched = Array.from({ length: 6 }, (_, i) => 200 + i)
+    const pool = Array.from({ length: 20 }, (_, i) => 300 + i)
+    await upsertGamesMeta(
+      db,
+      [
+        ...comeback.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 80 })),
+        ...untouched.map((id) => meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 })),
+        ...pool.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 70 })),
+      ],
+      NOW,
+    )
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [
+        // 50 ч и год без запуска — «пора вернуться»
+        ...comeback.map((id) => ({ ...game(id, 50), lastPlayed: NOW - 365 * 86_400 })),
+        ...untouched.map((id) => game(id, 0)),
+      ],
+      NOW,
+    )
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'library', {
+      nowSec: NOW,
+      focus: 'untouched',
+    })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.own.map((c) => c.appid).sort((a, b) => a - b)).toEqual(untouched)
+    expect(set.own.every((c) => c.source === 'untouched')).toBe(true)
+    expect(set.heroPool).toEqual(set.own)
+  })
+
+  /*
+   * Очередь на срез повторяет ступени пола applyFocus: нетронутые, за ними
+   * бэклог, потом всё остальное. Нетронутых до среза четыре — больше пола,
+   * — но двух выкидывает живость: меньше тридцати отзывов, ассет-флип, обычное
+   * дело для игр из бандлов. Если за нетронутыми в очереди шли сорок
+   * наигранных по скору, бэклог вне вкуса до среза не доживал, пол applyFocus
+   * расширять было нечем — и /play показывал две карточки при живом бэклоге.
+   */
+  test('«нераспакованное» держит бэклог за нетронутыми, если живость их выкинет', async () => {
+    const db = await freshDb()
+    const comeback = Array.from({ length: 40 }, (_, i) => 100 + i)
+    const live = [200, 201]
+    const flips = [202, 203]
+    const backlog = [400, 401, 402]
+    await upsertGamesMeta(
+      db,
+      [
+        ...comeback.map((id) => meta(id, { Roguelike: 100, 'Deck Building': 80 })),
+        ...live.map((id) => meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 })),
+        ...flips.map((id) => ({ ...meta(id, { Puzzle: 100, Casual: 60, Roguelike: 10 }), reviewsTotal: 12 })),
+        ...backlog.map((id) => meta(id, { Racing: 100, Sports: 70 })),
+      ],
+      NOW,
+    )
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [
+        ...comeback.map((id) => ({ ...game(id, 50), lastPlayed: NOW - 365 * 86_400 })),
+        ...[...live, ...flips].map((id) => game(id, 0)),
+        // Полчаса — «открыл и закрыл»
+        ...backlog.map((id) => game(id, 0.5)),
+      ],
+      NOW,
+    )
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'library', {
+      nowSec: NOW,
+      focus: 'untouched',
+    })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.own.map((c) => c.appid).sort((a, b) => a - b)).toEqual([...live, ...backlog])
+    expect(set.own.some((c) => c.source === 'comeback')).toBe(false)
+  })
+
+  /*
    * Время скрыто в Steam (lib/playtime.ts): 20 игр, у всех нули. Признак
    * считается здесь один раз по всей библиотеке и едет дальше — в скоринг и
    * маршрутам; вкус собран поровну, а не пуст.
@@ -154,5 +241,164 @@ describe('buildCandidates', () => {
     if (typeof set === 'string') throw new Error(set)
     expect(set.playtimeHidden).toBe(false)
     expect(set.candidates.some((c) => c.source === 'owned')).toBe(false)
+  })
+})
+
+/**
+ * «Не продаётся в российском Steam» — не покупка: советовать купить то, чего в
+ * магазине региона нет, значит дать совет, который не исполнить. В одиночную
+ * выдачу такая игра не попадает; признак ставит замер цены (updateGamePrices).
+ */
+describe('buildCandidates: игры, которых нет в магазине региона', () => {
+  async function newOnes(db: Db): Promise<number[]> {
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW })
+    if (typeof set === 'string') throw new Error(set)
+    return set.candidates.filter((c) => c.source === 'new').map((c) => c.appid)
+  }
+
+  test('скрытая регионом игра каталога не становится покупкой', async () => {
+    const db = await freshDb()
+    await seed(db)
+    // та же игра, пока магазин её продаёт, — в покупках есть
+    expect(await newOnes(db)).toContain(99)
+
+    await db.execute({
+      sql: "UPDATE games SET store_hidden = 1, price_cc = 'us', price_at = ? WHERE appid = 99",
+      args: [NOW],
+    })
+    expect(await newOnes(db)).not.toContain(99)
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts) — один отсев на все три выдачи: /play,
+ * «Игру дня» и колоду «Полистать» собирает этот конвейер. Отказ «всё под
+ * фильтром» — свой код: совет у него другой, чем у «всё в бане».
+ */
+describe('buildCandidates: «Не предлагать»', () => {
+  const horror = parseMutes('horror')
+
+  /** Те же восемь своих и каталог, но 10, 11 и находка 98 — хорроры */
+  async function seedHorror(db: Db): Promise<void> {
+    await seed(db)
+    await upsertGamesMeta(
+      db,
+      [meta(10, { Horror: 120, Puzzle: 100 }), meta(11, { Horror: 120, Puzzle: 100 }), meta(98, { Horror: 100, Automation: 90 })],
+      NOW,
+    )
+  }
+
+  test('хорроры не доходят ни до своего, ни до каталога', async () => {
+    const db = await freshDb()
+    await seedHorror(db)
+    const plain = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW })
+    if (typeof plain === 'string') throw new Error(plain)
+    // без фильтра они в кандидатах — значит, проверка ниже что-то проверяет
+    expect(plain.candidates.map((c) => c.appid)).toEqual(expect.arrayContaining([10, 11, 98]))
+
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, muted: horror })
+    if (typeof set === 'string') throw new Error(set)
+    const ids = set.candidates.map((c) => c.appid)
+    expect(ids).not.toContain(10)
+    expect(ids).not.toContain(11)
+    expect(ids).not.toContain(98)
+    expect(ids).toEqual(expect.arrayContaining([12, 13, 99]))
+  })
+
+  test('«Как «X», но…» — соседи X под фильтром тоже уходят', async () => {
+    const db = await freshDb()
+    await seedHorror(db)
+    await upsertNeighbors(
+      db,
+      new Map([
+        [1, [10, 11, 12, 13, 98, 99].map((neighbor, i) => ({ neighbor, score: 0.9 - i / 10, shared: ['Puzzle'] }))],
+      ]),
+    )
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, seed: 1, muted: horror })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.seed?.appid).toBe(1)
+    expect(set.candidates.map((c) => c.appid).sort((a, b) => a - b)).toEqual([12, 13, 99])
+  })
+
+  test('всё под фильтром — allmuted, а не nocandidates', async () => {
+    const db = await freshDb()
+    await seedHorror(db)
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', {
+      nowSec: NOW,
+      muted: parseMutes('horror.mmo'),
+      // всё, что не хоррор, — на экране: «Что-то другое» его не повторит
+      exclude: [1, 2, 12, 13, 14, 15, 99],
+    })
+    expect(set).toBe('allmuted')
+  })
+
+  // Пусто из-за банов, а фильтр стоит рядом и ничего не решил: совет тот же,
+  // что без фильтра, — «верни что-нибудь из бана»
+  test('пусто из-за банов — nocandidates и с фильтром', async () => {
+    const db = await freshDb()
+    await seedHorror(db)
+    for (const appid of [1, 2, 10, 11, 12, 13, 14, 15, 98, 99]) {
+      await logFeedback(db, { steamid: ME, appid, action: 'banned' }, NOW - 60)
+    }
+    expect(await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, muted: horror })).toBe(
+      'nocandidates',
+    )
+  })
+
+  /*
+   * Запретный тег — не вопрос к каталогу. Пул спрашивается по весомейшим
+   * тегам профиля (pickQueryTags в lib/pool), по ветке на тег, и у того, кто
+   * запретил свой же главный жанр, ветки Horror приносили почти одни игры,
+   * где хоррор — главный: их выбрасывал отсев, и каталог держался на одном
+   * доборе. Без запретных тегов места пула занимают следующие теги профиля, а
+   * вкус не тянет к играм, где запретный тег стоит в хвосте.
+   */
+  test('пул каталога спрашивается без запретных тегов, и вкус их не помнит', async () => {
+    const db = await freshDb()
+    // наигранное — хорроры с головоломкой третьим тегом; нетронутая 12 — просто головоломка
+    await upsertGamesMeta(
+      db,
+      [
+        ...[1, 2, 10, 11].map((id) => meta(id, { Horror: 100, 'Psychological Horror': 80, Puzzle: 60 })),
+        meta(12, { Puzzle: 100 }),
+      ],
+      NOW,
+    )
+    await saveLibrarySnapshot(db, ME, [game(1, 40), game(2, 25), game(10, 0), game(11, 0), game(12, 0)], NOW)
+
+    /** Теги, по которым конвейер спросил пул каталога (ветки game_tags) */
+    const askedTags = async (muted: ReturnType<typeof parseMutes>) => {
+      const tags = new Set<unknown>()
+      const spy = new Proxy(db, {
+        get(target, prop) {
+          if (prop === 'execute') {
+            return (stmt: InStatement) => {
+              if (typeof stmt === 'object' && /FROM game_tags/.test(stmt.sql) && Array.isArray(stmt.args)) {
+                for (const a of stmt.args) if (typeof a === 'string' && /^[A-Z]/.test(a)) tags.add(a)
+              }
+              return target.execute(stmt)
+            }
+          }
+          const v = Reflect.get(target, prop, target)
+          return typeof v === 'function' ? v.bind(target) : v
+        },
+      })
+      const set = await buildCandidates(spy, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, muted })
+      if (typeof set === 'string') throw new Error(set)
+      return { tags, profile: set.profile }
+    }
+
+    // без фильтра хоррор — первый вопрос к каталогу: проверка ниже что-то проверяет
+    const plain = await askedTags([])
+    expect(plain.tags).toContain('Horror')
+    expect(plain.profile.Horror).toBeGreaterThan(0)
+
+    const muted = await askedTags(horror)
+    expect(muted.tags).toContain('Puzzle')
+    for (const t of ['Horror', 'Psychological Horror']) {
+      expect(muted.tags, t).not.toContain(t)
+      expect(muted.profile, t).not.toHaveProperty(t)
+    }
+    expect(muted.profile.Puzzle).toBeGreaterThan(0)
   })
 })

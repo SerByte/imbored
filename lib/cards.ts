@@ -1,12 +1,14 @@
 import type { PickEdge } from './badges'
 import type { CandidateSet } from './candidates'
 import { refreshDealsWithin } from './deals'
-import { getGamesMetaLite, type Db, type HeroMedia } from './db'
+import { comebackPatchPairs } from './comeback'
+import { getGamesMetaLite, latestMajorPatchSince, type Db, type HeroMedia } from './db'
 import { discountView, trustedPrice } from './discount'
 import { entryCost, showsEntry } from './entry'
+import { logSwallowed } from './errlog'
 import { partsView } from './feedbackctx'
 import { isRussianText } from './gamepage'
-import { sessionTrait } from './gametraits'
+import { ruLangLine, sessionTrait } from './gametraits'
 import type { Pick as LlmPick } from './llm'
 import {
   buildAnchorFinder,
@@ -59,6 +61,11 @@ export type PickContext = {
    * причине, ни под ценой: «успей купить» ему не помощь, а ещё одна покупка.
    */
   hideUrgency: boolean
+  /**
+   * Пересказ крупного патча, вышедшего после последнего запуска заброшенной
+   * игры (lib/comeback.ts); null — факта нет, и причина говорит по-старому.
+   */
+  patchOf: (appid: number) => string | null
 }
 
 /**
@@ -72,6 +79,7 @@ export type PickContext = {
 export function pickContext(
   set: CandidateSet,
   metaNow: (appid: number) => GameMeta | undefined = set.metaOf,
+  patches: ReadonlyMap<number, string> = new Map(),
 ): PickContext {
   const { games, libMetas, tagWeight, banned } = set
   const findAnchor = buildAnchorFinder(games, (id) => libMetas.get(id), tagWeight, banned)
@@ -92,6 +100,36 @@ export function pickContext(
       return lib ? Math.round(lib.playtimeForever / 60) : null
     },
     hideUrgency: hideUrgencyFor(games, (id) => libMetas.get(id)),
+    patchOf: (appid) => patches.get(appid) ?? null,
+  }
+}
+
+/**
+ * Крупные патчи после последнего запуска — у заброшенных из cands, одним
+ * обходом к базе (latestMajorPatchSince). Нет ни одной заброшенной с датой —
+ * нет и запроса: у выдачи при скрытом времени он не стоит ничего.
+ *
+ * Вызывающий сам решает, вправе ли сессия этот факт видеть: он производный от
+ * даты последнего запуска (см. lib/comeback.ts).
+ *
+ * Сбой базы здесь не бросает, а даёт пустую карту. Факт о патче — украшение
+ * причины, а не её основа: без него шаблон говорит по-старому («вернись и
+ * проверь»). Проброшенный обрыв Turso ронял бы 500-й всю выдачу /play и
+ * «Игру дня» ради одной фразы, которую и так можно не сказать. Сбой не
+ * молчит — строка в логе (logSwallowed), как у соседних фолбэков.
+ */
+export async function comebackPatches(
+  db: Db,
+  set: CandidateSet,
+  cands: ReadonlyArray<{ appid: number; source: CandidateSource }>,
+): Promise<Map<number, string>> {
+  const pairs = comebackPatchPairs(cands, set.games, set.playtimeHidden)
+  if (!pairs.length) return new Map()
+  try {
+    return await latestMajorPatchSince(db, pairs)
+  } catch (err) {
+    logSwallowed('cards:comeback-patches', err, { pairs: pairs.length })
+    return new Map()
   }
 }
 
@@ -105,15 +143,32 @@ export function pickContext(
  *
  * Без свежих цен перечитывать незачем: мета пула — та же узкая выборка тем же
  * маппером (lib/pool), и отличаться от getGamesMetaLite ей больше нечем.
+ *
+ * opts.patches — грузить ли крупные патчи у заброшенных (comebackPatches).
+ * По умолчанию нет: «Открытия» (/api/explore) тоже зовут этот контекст, и
+ * заброшенные в их колоде бывают, но причину про патч они не пишут — запрос
+ * там был бы чтением ради выброса на каждом свайпе. Включает его только
+ * /api/recommend, и только writer-сессии.
  */
 export async function buildPickContext(
   db: Db,
   set: CandidateSet,
   pricedIds: number[],
+  opts: { patches?: boolean } = {},
 ): Promise<PickContext> {
-  const refreshed = await refreshDealsWithin(db, pricedIds, set.now)
+  // Патчи — у тех же, кто может попасть на экран, и тем же заходом, что цены:
+  // друг от друга они не зависят. Источник берётся из пула героя (он и
+  // решает, заброшенная ли)
+  const onScreen = () => {
+    const byId = new Map([...set.candidates, ...set.heroPool].map((c) => [c.appid, c]))
+    return pricedIds.flatMap((id) => byId.get(id) ?? [])
+  }
+  const [refreshed, patches] = await Promise.all([
+    refreshDealsWithin(db, pricedIds, set.now),
+    opts.patches ? comebackPatches(db, set, onScreen()) : new Map<number, string>(),
+  ])
   const priced = refreshed ? await getGamesMetaLite(db, pricedIds) : new Map<number, GameMeta>()
-  return pickContext(set, (appid) => priced.get(appid) ?? set.metaOf(appid))
+  return pickContext(set, (appid) => priced.get(appid) ?? set.metaOf(appid), patches)
 }
 
 /** Картинка, магазин и цена — общее у всех карточек, от героя до плитки полки */
@@ -126,6 +181,11 @@ function shopView(meta: GameMeta | undefined, now: number) {
     store: meta?.store ?? null,
     storeUrl: meta?.storeUrl ?? null,
     priceFinal: meta ? trustedPrice(meta, now) : null,
+    // Регион цены едет рядом с ней: валюту знает только он (lib/steamregion),
+    // а клиентскому ценнику до STEAM_STORE_CC не дотянуться
+    priceCc: meta?.priceCc ?? null,
+    // «Не продаётся в российском Steam» — вместо цены, а не вместе с ней
+    unsold: meta?.storeHidden === true,
     isFree: meta?.isFree ?? null,
   }
 }
@@ -184,6 +244,12 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     // Цена входа (lib/entry) — только у того, что человек ещё не осваивал:
     // у своей наигранной про вход говорит причина, а не отдельная строка
     entry: meta && showsEntry(p.source) ? entryCost(meta) : null,
+    // «Русские субтитры» / «Без русского» — по отметкам Steam (ruLangLine),
+    // у своей и у покупки: сюжетная игра без русского — другой вечер, а на
+    // полке покупок это довод «за» или «против». Готовой фразой, а не
+    // ступенью: клиенту /play таблица подписей в бандле ни к чему. null —
+    // не знаем, и строки нет
+    russian: ruLangLine(meta?.ruLang),
     // «92% из 48 тыс.» на плитке полки покупок: те же числа, по которым
     // confidenceMultiplier решил, насколько новинке верить
     reviewsPercent: meta?.reviewsPercent ?? null,
@@ -235,6 +301,11 @@ export type ScoreView = ReturnType<typeof scoreView>
 /**
  * Плитка магазина — полка находок «Игры дня». Полка всегда из каталога,
  * поэтому скидка у каждой, а строки про возврат у плитки нет: она про героя.
+ *
+ * Русский — та же фраза, что на плитке полки покупок /play (cardView): там и
+ * здесь одно решение «присмотреться к покупке», и «без русского» перед ним
+ * весит не меньше цены. Отзывов на этой плитке нет, а русский есть — он
+ * короче и решает раньше. null — не знаем, и строки нет.
  */
 export function storeCardView(
   c: { appid: number; name: string },
@@ -247,6 +318,7 @@ export function storeCardView(
     name: c.name,
     ...shopView(meta, now),
     discount: buyView(meta, 'new', now, hideUrgency).discount,
+    russian: ruLangLine(meta?.ruLang),
   }
 }
 
@@ -284,6 +356,8 @@ export function dailyCardView(
     trailer: meta?.trailer ?? null,
     ccu: meta?.ccu ?? null,
     ccuAt: meta?.ccuAt ?? null,
+    // Та же фраза о русском, что у героя /play (cardView); null — не знаем
+    russian: ruLangLine(meta?.ruLang),
     tags: topTags(meta),
     // Чипсы совпавших тегов помечаются на экране, и метка обязана считаться
     // там же, где лежит профиль вкуса, — то есть в отборе; здесь она из
@@ -321,6 +395,8 @@ export function exploreCardView(p: LlmPick, ctx: PickContext) {
       : shop.priceFinal !== null
         ? { priceFinal: shop.priceFinal }
         : {}),
+    priceCc: shop.priceCc,
+    unsold: shop.unsold,
     discount: buyView(meta, p.source, ctx.now, ctx.hideUrgency).discount,
     headerImage: shop.headerImage,
     art: shop.art,
@@ -361,6 +437,8 @@ export function shelfCardView(meta: GameMeta, opts: { now: number; owned: boolea
     owned: opts.owned,
     isFree: buying && shop.isFree === true,
     priceFinal: buying && !shop.isFree ? shop.priceFinal : null,
+    priceCc: buying ? shop.priceCc : null,
+    unsold: buying && shop.unsold,
     discount: buyView(meta, buying ? 'new' : 'familiar', opts.now, opts.hideUrgency).discount,
   }
 }

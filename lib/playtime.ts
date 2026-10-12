@@ -1,4 +1,5 @@
 import { createLocalStore } from './localstore'
+import { plural } from './plural'
 import type { LibraryGame } from './types'
 
 /**
@@ -47,6 +48,40 @@ export function minutesHidden(minutes: ReadonlyMap<number, number>): boolean {
   if (minutes.size < HIDDEN_PLAYTIME_MIN_GAMES) return false
   for (const m of minutes.values()) if (m) return false
   return true
+}
+
+/**
+ * Наигранное одной короткой подписью — для узкой колонки рядом с полосой.
+ *
+ * Часы округляются, и игра на 20 минут превращалась в «0 ч» рядом с непустой
+ * полосой доли (портрет, «Куда ушло время»), а на /compat «0 ч | 0 ч» у общей
+ * игры читалось «никто из вас её не запускал». Поэтому меньше получаса —
+ * минуты; ноль остаётся «0 ч»: это правда про незапущенную игру.
+ * Ей же подписаны плитки /library: своя копия правила там уже разошлась
+ * с этой — писала «1234 ч» без разрядов.
+ * Длинное «3 ч 25 мин» — это playedLine (lib/outcome): в колонку w-14 оно
+ * не влезает.
+ */
+export function playedShort(minutes: number): string {
+  const hours = Math.round(minutes / 60)
+  if (hours > 0) return `${hours.toLocaleString('ru-RU')} ч`
+  return minutes > 0 ? `${Math.round(minutes)} мин` : '0 ч'
+}
+
+/**
+ * Сумма словами — для строки прозой: «Вместе в них — 3 часа», «— 25 минут».
+ *
+ * Порог тот же, что у playedShort, и по той же причине. Сумма округлялась до
+ * часов, и у пары, где на всё пересечение «20 мин | 5 мин», строка над ними
+ * говорила «Вместе в них — 0 часов»: строки уже не врали, а итог под
+ * заголовком — по-прежнему. Ноль остаётся «0 часов»: общие игры есть, но их
+ * никто не запускал.
+ */
+export function playedWords(minutes: number): string {
+  const hours = Math.round(minutes / 60)
+  const rest = Math.round(minutes)
+  if (hours === 0 && rest > 0) return `${rest} ${plural(rest, 'минута', 'минуты', 'минут')}`
+  return `${hours.toLocaleString('ru-RU')} ${plural(hours, 'час', 'часа', 'часов')}`
 }
 
 /**

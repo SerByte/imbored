@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { blocksToText, decodeEntities, parseSteamHtml, stripBbcode } from './steamhtml'
+import { blocksToText, countChanges, decodeEntities, parseSteamHtml, stripBbcode } from './steamhtml'
 
 /**
  * Тело новости — недоверенный HTML от издателя игры. Проверяем не только то,
@@ -46,6 +46,63 @@ describe('parseSteamHtml: разметка Steam', () => {
   test('классы bb_* и прочие атрибуты не утекают наружу', () => {
     expect(JSON.stringify(blocks)).not.toContain('bb_')
     expect(JSON.stringify(blocks)).not.toContain('target')
+  })
+})
+
+/**
+ * Вложенные списки. Steam рисует [list][*]…[list][*]…[/list][/list] как
+ * <ul><li>…<ul>…</ul></li>…</ul>, и разбор закрывал ВНЕШНИЙ список на
+ * открытии внутреннего: всё после внутреннего </ul> выпадало из списка — в
+ * разметке с <p> пункты становились абзацами, а в голой <li>текст каждый
+ * следующий <li> выбрасывал текст предыдущего. «N правок» (countChanges),
+ * лента /whatsnew и промпт сводки теряли пункты молча.
+ */
+describe('parseSteamHtml: вложенные списки', () => {
+  const texts = (b: ReturnType<typeof parseSteamHtml>[number]) =>
+    b.kind === 'ul' ? b.items.map((i) => i.map((r) => r.text).join('')) : null
+  const SIX = ['Weapons', 'AK nerf', 'M4 buff', 'Maps: fixed A', 'Maps: fixed B', 'Audio: fixed C']
+
+  test('разметка Steam (<li><p>): все шесть пунктов в одном списке, абзац после — абзац', () => {
+    const blocks = parseSteamHtml(
+      '<ul class="bb_ul"><li><p class="bb_paragraph">Weapons</p><ul class="bb_ul"><li><p class="bb_paragraph">AK nerf</p></li><li><p class="bb_paragraph">M4 buff</p></li></ul></li>' +
+        '<li><p class="bb_paragraph">Maps: fixed A</p></li><li><p class="bb_paragraph">Maps: fixed B</p></li><li><p class="bb_paragraph">Audio: fixed C</p></li></ul>' +
+        '<p class="bb_paragraph">after</p>',
+    )
+    expect(blocks.map((b) => b.kind)).toEqual(['ul', 'p'])
+    expect(texts(blocks[0])).toEqual(SIX)
+    expect(countChanges(blocks)).toBe(6)
+  })
+
+  test('голые <li>текст: ни один пункт не пропадает', () => {
+    const blocks = parseSteamHtml(
+      '<ul><li>Weapons<ul><li>AK nerf</li><li>M4 buff</li></ul></li><li>Maps: fixed A</li><li>Maps: fixed B</li><li>Audio: fixed C</li></ul>',
+    )
+    expect(blocks).toHaveLength(1)
+    expect(texts(blocks[0])).toEqual(SIX)
+    expect(countChanges(blocks)).toBe(6)
+    expect(blocksToText(blocks)).toContain('• Maps: fixed A')
+  })
+
+  test('<li> без закрывающих и текст после внутреннего </ul> — отдельный пункт', () => {
+    const blocks = parseSteamHtml('<ul><li>A<ul><li>A1<li>A2</ul>tail<li>B</ul>')
+    expect(blocks).toHaveLength(1)
+    expect(texts(blocks[0])).toEqual(['A', 'A1', 'A2', 'tail', 'B'])
+  })
+
+  test('два уровня, <ol> внутри <ul>: внешний закрывается только своим </ul>', () => {
+    const blocks = parseSteamHtml(
+      '<ul><li>1<ul><li>1.1<ol><li>1.1.1</li></ol></li><li>1.2</li></ul></li><li>2</li></ul><ul><li>X</li></ul>',
+    )
+    expect(blocks.map(texts)).toEqual([['1', '1.1', '1.1.1', '1.2', '2'], ['X']])
+  })
+
+  test('лишний </ul> вне списка ничего не ломает', () => {
+    expect(parseSteamHtml('<p>a</p></ul><p>b</p><ul><li>c</li></ul></ul><p>d</p>')).toEqual([
+      { kind: 'p', runs: [{ text: 'a' }] },
+      { kind: 'p', runs: [{ text: 'b' }] },
+      { kind: 'ul', items: [[{ text: 'c' }]] },
+      { kind: 'p', runs: [{ text: 'd' }] },
+    ])
   })
 })
 

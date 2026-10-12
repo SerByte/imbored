@@ -1,4 +1,5 @@
 import type { MetadataRoute } from 'next'
+import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { sitemapGames, sitemapNews } from '@/lib/db'
 import { HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { newsPath, SITEMAP_NEWS_MAX, SITEMAP_NEWS_WINDOW_SEC } from '@/lib/newspage'
@@ -45,12 +46,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
      * Выбор игры дня считается по ЛИЧНОЙ библиотеке, то есть страница
      * состояния сессии.
      *
-     * Правило для этого класса уже записано в lib/robots.ts: «/play, /quiz,
-     * /library — состояние сессии, а не страница… краулер индексировал бы
-     * редирект». /daily от них ничем не отличается, кроме того, что его сюда
-     * по недосмотру продвинули.
+     * Правило для этого класса записано в lib/robots.ts: /daily краулеру
+     * открыт ровно затем, чтобы увидеть noindex (NOINDEX_PAGES), — в карту
+     * ему тем более незачем. То же у /rooms.
      */
     { url: url('/whatsnew'), changeFrequency: 'daily', priority: 0.8 },
+    /*
+     * /quiz — наоборот: гость видит первый вопрос целиком, и это главная
+     * точка входа в продукт, на которую ведёт каждая карточка игры. Он
+     * открыт краулеру и идёт в выдачу со своим canonical (lib/robots,
+     * app/quiz/layout.tsx). Ниже хаба жанров: квиз один и не меняется.
+     */
+    { url: url('/quiz'), changeFrequency: 'monthly', priority: 0.6 },
     // Хаб жанров: единственная страница, которая ссылается на карточки пачкой
     // (см. app/games/page.tsx). Полки меняются медленно — верх по отзывам
     // стоит неделями, — отсюда weekly, а не daily.
@@ -65,29 +72,44 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: url('/privacy'), changeFrequency: 'yearly', priority: 0.2 },
   ]
 
-  // Падать из-за базы здесь нельзя, и try/catch обязан накрывать getDb() тоже:
-  // он бросает сам, когда в продакшен-окружении не задан TURSO_DATABASE_URL, —
-  // а этот файл пререндерится на сборке, то есть незакрытый вызов роняет весь
-  // build, а не одну карту сайта. Без карты проект живёт; с пятисотой на
-  // /sitemap.xml поисковик перестаёт доверять и уже известным адресам.
+  /*
+   * Ошибка базы глотается ТОЛЬКО НА СБОРКЕ, как у хаба игр (loadHub в
+   * app/games/page.tsx) и RSS (app/whatsnew/feed.xml).
+   *
+   * На сборке файл пререндерится, а getDb() бросает сам, когда в
+   * продакшен-окружении не задан TURSO_DATABASE_URL, — незакрытый вызов
+   * уронил бы весь build, а не одну карту. Поэтому try накрывает и getDb().
+   *
+   * При перегенерации — наоборот, ошибка уходит наружу намеренно. Карта живёт
+   * на ISR сутки, и упавшая перегенерация оставляет в кэше ПРОШЛУЮ карту, а
+   * Next повторит её следующим запросом (docs: incremental-static-
+   * regeneration, «Handling uncaught exceptions»). Пойманная же записывала в
+   * кэш то, что успело собраться: одна осечка Turso в момент суточной
+   * перегенерации — и Googlebot, Bing и Яндекс сутки забирали карту из
+   * тридцати статических адресов вместо шести тысяч. Довод «пятисотка на
+   * /sitemap.xml подорвёт доверие» к ISR не относится: пятисотки нет,
+   * отдаётся прошлая версия. Сторож — app/sitemap.test.ts.
+   */
   let games: Awaited<ReturnType<typeof sitemapGames>> = []
   try {
     games = await sitemapGames(await getDb(), MAX_GAMES)
   } catch (err) {
-    console.error('sitemap: каталог недоступен, отдаём только статические адреса', err)
+    if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) throw err
+    console.error('sitemap: каталог недоступен на сборке, отдаём только статические адреса —', String(err))
   }
 
   /*
-   * Страницы пересказов патчей — отдельной выборкой и отдельным try: упавшая
-   * выборка патчей не должна уносить с собой пять тысяч карточек игр. Только
-   * крупные, с пересказом, у живых игр и за девяносто дней — что и почему, в
-   * lib/newspage и у sitemapNews.
+   * Страницы пересказов патчей — отдельной выборкой и отдельным try: на
+   * сборке упавшая выборка патчей не должна уносить с собой пять тысяч
+   * карточек игр. Только крупные, с пересказом, у живых игр и за девяносто
+   * дней — что и почему, в lib/newspage и у sitemapNews.
    */
   let news: Awaited<ReturnType<typeof sitemapNews>> = []
   try {
     news = await sitemapNews(await getDb(), nowSec() - SITEMAP_NEWS_WINDOW_SEC, SITEMAP_NEWS_MAX)
   } catch (err) {
-    console.error('sitemap: патчи недоступны, отдаём без них', err)
+    if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) throw err
+    console.error('sitemap: патчи недоступны на сборке, отдаём без них —', String(err))
   }
 
   return [

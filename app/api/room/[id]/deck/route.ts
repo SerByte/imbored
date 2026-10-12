@@ -9,8 +9,8 @@ import {
   getLatestSnapshot,
   getRoom,
   issueRoomDeck,
-  loadTagStats,
   myVotedAppids,
+  raiseRoomSeat,
   roomMembers,
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
@@ -18,11 +18,13 @@ import { sessionTrait } from '@/lib/gametraits'
 import { buildGroupDeck } from '@/lib/group'
 import { parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildTagProfile } from '@/lib/recommend'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
+import { tagStatsFor } from '@/lib/tagstats'
 import { tagWeightFrom } from '@/lib/tagweight'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf, seatRefusal, seatToRaise } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 const DECK_SIZE = 20
@@ -30,9 +32,10 @@ const DECK_SIZE = 20
 /**
  * Потолок на сборку колоды — самой дорогой операции приложения.
  *
- * Один вызов это: loadTagStats по всей таблице тегов, fetchDiscoveryPool на
- * дюжину тегов, снапшот библиотеки каждого участника, getGamesMeta по
- * объединению этих библиотек и запись setRoomDeckSize. Для сравнения,
+ * Один вызов это: fetchDiscoveryPool на дюжину тегов, снапшот библиотеки
+ * каждого участника, getGamesMeta по объединению этих библиотек и запись
+ * setRoomDeckSize. Карта тегов каталога (вся таблица tags) в эту цену больше
+ * не входит — она с памятью на процесс (lib/tagstats). Для сравнения,
  * /api/daily с сопоставимой ценой ограничен десятью вызовами в час — а
  * здесь не было ничего.
  *
@@ -52,8 +55,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
+  const writer = isWriter(session)
 
   const db = await getDb()
   /*
@@ -69,28 +74,36 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
    * приходит из адреса, по которому участник уже стоит, так что это редкость.
    */
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  // Колода без своих голосов — это и чужие голоса: какие карты участник уже
+  // отсвайпал. За вошедшего через Steam её не берёт чужая ссылка (lib/roomseat)
+  const seat = seatOf(members, steamid, writer)
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
   if (!room) return NextResponse.json({ error: 'notfound' }, { status: 404 })
-  if (!members.some((m) => m.steamid === steamid)) {
-    return NextResponse.json({ error: 'notmember' }, { status: 403 })
-  }
+  const refusal = seatRefusal(seat)
+  if (refusal) return refusal
 
   // После проверки членства: до неё маршрут и так закрыт сессией и
   // существованием комнаты, а тратить строки ограничителя на чужие попытки
-  // незачем — их отсекает 403 выше.
+  // незачем — их отсекает 403 выше. Счёт по сессии, а не по профилю: почему
+  // и почему без потолка адреса даже на самой дорогой ручке — lib/roomseat.
   const gate = await checkRate(db, {
     bucket: 'room-deck',
-    id: steamid,
+    id: personalRateId(session, writer),
     limit: DECK_LIMIT,
     windowSec: DECK_WINDOW_SEC,
     nowSec: nowSec(),
   })
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
+
+  // Вошёл в пати по ссылке, а сейчас пришёл через Steam — членство отныне
+  // его, и чужая ссылка за него больше не действует. Колоду страница грузит
+  // при каждом заходе, так что поднимает первый же заход (lib/roomseat)
+  if (seatToRaise(members, steamid, writer)) await raiseRoomSeat(db, id, steamid)
 
   // Баны — тем же заходом, что и библиотеки: обоим нужен только состав.
   // Объединение по всем участникам, а не баны смотрящего: колода одна на
@@ -106,9 +119,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     bannedAppidsOf(db, members.map((m) => m.steamid)),
   ])
 
-  // Метаданные библиотек участников, а не всего каталога
+  // Метаданные библиотек участников, а не всего каталога. Плюс игра, в
+  // которую звали (rooms.seed_appid): её может не быть ни у кого и не
+  // оказаться в пуле, а колоде нужна её мета — тем же запросом, не вторым
   const ownedIds = [...new Set(libraries.flatMap((l) => l.library.map((g) => g.appid)))]
-  const metas = await getGamesMetaLite(db, ownedIds)
+  const metas = await getGamesMetaLite(
+    db,
+    room.seedAppid !== undefined ? [...ownedIds, room.seedAppid] : ownedIds,
+  )
   const metaOf = (appid: number) => metas.get(appid)
 
   // Общий вкус пати — по нему добираем то, чего нет ни у кого.
@@ -120,7 +138,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
   }
   const now = nowSec()
-  const [tagStats, poolSize] = await Promise.all([loadTagStats(db), getPoolSize(db)])
+  const [tagStats, poolSize] = await Promise.all([tagStatsFor(db, now), getPoolSize(db)])
   // Свои голоса не зависят от пула — тянем их тем же заходом, а не после.
   const [extraPool, voted] = await Promise.all([
     fetchDiscoveryPool(db, {
@@ -158,6 +176,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     // из базы разбирается тем же сторожем, что и тело запроса создания, — у
     // старой или битой строки настроения просто нет, и колода прежняя
     mood: parseMood(room.mood),
+    // «Позвать в эту игру»: первая карта у всех, с подписью. Баны, издание и
+    // «только мультиплеер» buildGroupDeck проверяет и для неё. Ниже её, как
+    // любую карту, может снять filterActual, а проголосованную — shown
+    pinned: room.seedAppid ?? null,
   })
 
   // Колода собирается из библиотек участников, а они офлайн-фильтры каталога
@@ -192,6 +214,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       // У бесплатной цены нет: price_final у неё — чужая редакция (Prime у
       // CS2), и пересчёт отсюда вернул бы в карточку то, что убрал buildGroupDeck
       priceFinal: c.isFree ? undefined : meta ? trustedPrice(meta, now) : c.priceFinal,
+      // Регион и «не продаётся» — из той же свежей меты, что и цена: замер
+      // выше мог переоценить карту в другом регионе
+      priceCc: meta ? (meta.priceCc ?? null) : (c.priceCc ?? null),
+      // и у бесплатной — см. unsold в buildGroupDeck (lib/group)
+      unsold: meta ? meta.storeHidden === true : c.unsold === true,
       art: meta?.art ?? null,
       ccu: meta?.ccu ?? null,
       ccuAt: meta?.ccuAt ?? null,

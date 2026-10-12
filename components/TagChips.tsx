@@ -26,10 +26,20 @@ import { tagRu } from '@/lib/tagsru'
  * контраста уже считает по разметке (lib/contrast.test.ts): пара
  * «--ember-text на bg-ember/20» проверена в обеих темах.
  *
+ * Утверждает отметка «есть в твоих играх», и не больше. Отмечает она
+ * sharedTasteTags (lib/recommend.ts): теги игры с положительным весом во
+ * вкусе игрока. Общие теги (Indie, Singleplayer) там остаются — у любителя
+ * инди Indie в его играх буквально есть. Но «совпадает с твоим вкусом» — уже
+ * утверждение про человека, и про Indie оно описывало бы каталог: скринридер
+ * читал «Для одного игрока — совпадает с твоим вкусом» ровно там, где причина
+ * (matchedTags в lib/llm.ts) этот тег вкусом называть отказывается. Подпись
+ * для озвучки говорит то, что правда про каждый отмеченный тег; утверждение
+ * про вкус — дело причины, и правило у неё строже.
+ *
  * Теги приходят английскими ключами, и совпадение сверяется по ним же —
  * по-русски только подпись (tagRu, lib/tagsru.ts). Переведи ключ раньше, и
- * отметка «совпадает с твоим вкусом» не нашла бы ни одного тега: профиль
- * вкуса собран из английских.
+ * отметка «есть в твоих играх» не нашла бы ни одного тега: профиль вкуса
+ * собран из английских.
  */
 export function TagChips({
   tags,
@@ -37,7 +47,7 @@ export function TagChips({
   className = '',
 }: {
   tags: string[]
-  /** Теги, которые уже есть во вкусе игрока — lib/recommend.ts, sharedTasteTags */
+  /** Теги игры с положительным весом во вкусе игрока — lib/recommend.ts, sharedTasteTags */
   matched?: string[]
   className?: string
 }) {
@@ -47,15 +57,23 @@ export function TagChips({
   /*
    * «Премьера»: строкой через точку, как жанры под названием у стриминга, а
    * не россыпью пилюль. Пилюли спорили с кнопками героя за вес — теперь
-   * кнопка одна выглядит кнопкой. Совпавший с твоим вкусом тег — ярче и с
-   * зелёной точкой, той же, что у источника выдачи.
+   * кнопка одна выглядит кнопкой. Тег, который есть в твоих играх, — ярче и
+   * с зелёной точкой, той же, что у источника выдачи.
+   */
+  /*
+   * Разделитель висит СЛЕВА от пункта, в зазоре между пунктами, а не внутри
+   * него. Внутри он переносился вместе с тегом и открывал новую строку:
+   * «Исследования · Космос · Тайна / · Глубокий сюжет» — точка в начале
+   * строки ничего не разделяет. Теперь у пункта, с которого начинается
+   * строка, точка оказывается левее края списка, и overflow-hidden её
+   * срезает; между пунктами одной строки она стоит как раньше.
    */
   return (
-    <ul className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${className}`}>
+    <ul className={`flex flex-wrap items-center gap-x-4 gap-y-1 overflow-hidden text-sm ${className}`}>
       {tags.map((t, i) => (
-        <li key={t} className="flex items-center gap-2">
+        <li key={t} className="relative flex items-center">
           {i > 0 && (
-            <span aria-hidden className="text-faint">
+            <span aria-hidden className="absolute right-full mr-1.5 text-faint">
               ·
             </span>
           )}
@@ -63,7 +81,7 @@ export function TagChips({
             <span className="inline-flex items-center gap-1.5 font-bold text-ink">
               <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-ember-text" />
               {tagRu(t)}
-              <span className="sr-only"> — совпадает с твоим вкусом</span>
+              <span className="sr-only"> — есть в твоих играх</span>
             </span>
           ) : (
             <span className="font-medium text-dim">{tagRu(t)}</span>

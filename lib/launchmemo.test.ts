@@ -232,7 +232,11 @@ describe('/play забывает запуск, когда на героя отв
       .map((line, i) => ({ line, i }))
       .filter(
         ({ line }) =>
-          /sendFeedback\(pick\.appid, '(liked|skipped|banned)'/.test(line) && !line.includes("'spin'"),
+          // «Зашло» уходит через sendLike — в очереди записей игры (lib/unlike).
+          // Его снятие тем же сердцем — не ответ про игру, а отказ от ответа:
+          // запуск оно не забывает, и строки sendLike в нём нет
+          /sendFeedback\(pick\.appid, '(liked|skipped|banned)'|sendLike\(pick\.appid,/.test(line) &&
+          !line.includes("'spin'"),
       )
     // Причины скипа, «пропустить», «Зашло», бан
     expect(rated.length).toBeGreaterThanOrEqual(4)
@@ -288,7 +292,9 @@ describe('/daily запоминает запуск и спрашивает пр�
     const lines = DAILY.split('\n')
     const rated = lines
       .map((line, i) => ({ line, i }))
-      .filter(({ line }) => /sendFeedback\(hero\.appid, '(liked|skipped|banned)'/.test(line))
+      // «Зашло» уходит через sendLike — в очереди записей игры и со своей
+      // строкой (lib/unlike), как на /play
+      .filter(({ line }) => /sendFeedback\(hero\.appid, '(liked|skipped|banned)'|sendLike\('daily', hero\.appid,/.test(line))
     // «Не сегодня» (оно же «дай другую» из вопроса) и «Зашло» (оно же «Зацепило»)
     expect(rated.length).toBeGreaterThanOrEqual(2)
     for (const { i } of rated) {
@@ -316,6 +322,19 @@ describe('/daily запоминает запуск и спрашивает пр�
     '%s: «Как тебе?» ждёт, пока на экране «Не зацепило?»',
     (file) => {
       expect(code(read(file))).toMatch(/<OutcomeAsk\s+paused=\{!!stopDue\}/)
+    },
+  )
+
+  /*
+   * «Как тебе?» — тоже плашка порталом, и тоже уходит вместе с нажатой
+   * «Зацепило», «Так себе» или «Закрыть». На /play onDone был с первого дня, а
+   * /daily рисовала вопрос без него: фокус падал в body, и следующий Tab
+   * начинался со ссылки «к содержимому».
+   */
+  test.each(['app/play/page.tsx', 'app/daily/page.tsx'])(
+    '%s: ответ на «Как тебе?» отдаёт фокус герою',
+    (file) => {
+      expect(code(read(file))).toMatch(/<OutcomeAsk\s+paused=\{!!stopDue\}[^>]*\sonDone=\{[^}]*focusHero\b/)
     },
   )
 })

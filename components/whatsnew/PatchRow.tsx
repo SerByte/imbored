@@ -4,6 +4,7 @@ import { AnimatePresence, m } from 'framer-motion'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { GameLink } from '@/components/GameLink'
 import { NewsBody } from '@/components/NewsBody'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import type { FeedItem } from '@/lib/db'
@@ -52,9 +53,11 @@ const HOVER_INTENT_MS = 120
  * data-wash отдаёт Stage ссылку на арт для фоновой заливки, data-live он же
  * проставляет обратно, когда строка попадает в центр экрана.
  *
- * discovery включается только в общей ленте: там речь о чужих играх, и путь
- * «интересная обнова → а что это вообще за игра» обязан быть виден сразу, не
- * из-под раскрытого патча.
+ * discovery включается только у чужих игр — в общей ленте и в добивке под
+ * личной: там путь «интересная обнова → а что это вообще за игра» обязан быть
+ * виден сразу, не из-под раскрытого патча. Своей игре из библиотеки строка
+ * цены не нужна, даже на общей вкладке: покупать там нечего (решает страница
+ * по owned из resolveWhatsNew).
  */
 export function PatchRow({
   item,
@@ -64,6 +67,8 @@ export function PatchRow({
   discovery = false,
   discount = null,
   price = null,
+  priceCc = null,
+  unsold = false,
 }: {
   item: FeedItem
   meta?: FeedMeta
@@ -79,6 +84,10 @@ export function PatchRow({
    * акции. См. trustedPrice.
    */
   price?: number | null
+  /** регион магазина цены (lib/steamregion) — её валюта; с сервера, как и цена */
+  priceCc?: string | null
+  /** магазин региона игру не показывает */
+  unsold?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [blocks, setBlocks] = useState<NewsBlock[] | null>(null)
@@ -142,8 +151,9 @@ export function PatchRow({
   const heading = stripGameName(item.title, name)
   // Заголовок из Steam обычно английский («Patch 0.5.1 Has Been Released»),
   // а страница — lang="ru": без пометки его читают русским голосом. Пересказ
-  // ниже наш и русский — пометки не получает. См. lib/textlang.
-  const headingLang = textLang(heading)
+  // ниже наш и русский — пометки не получает. Название игры в подсчёт не
+  // входит: «Обновление Counter-Strike 2» — русский заголовок. См. lib/textlang.
+  const headingLang = textLang(heading, name)
   // null — страницы нет в поиске (без пересказа, игра вне каталога — это
   // бывает в личной ленте): заголовок тогда просто текст, см. indexedNewsPath
   const href = indexedNewsPath(item)
@@ -262,17 +272,17 @@ export function PatchRow({
       */}
       {discovery ? (
         <div className="-mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pb-6 pl-[108px] text-sm md:pl-[192px]">
-          <PriceTag priceFinal={price} discount={discount} isFree={meta?.isFree} />
+          <PriceTag priceFinal={price} cc={priceCc} unsold={unsold} discount={discount} isFree={meta?.isFree} />
           <DiscountEnds discount={discount} />
-          <Link
-            href={`/game/${item.appid}`}
+          <GameLink
+            appid={item.appid}
             // -my-1.5 гасит собственную высоту: палец получает свои 44 пикселя,
             // а ритм строки не меняется
             className="-my-1.5 inline-flex items-center gap-1.5 py-1.5 font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
             Открыть игру
             <Icon name="arrow" size={16} />
-          </Link>
+          </GameLink>
         </div>
       ) : null}
 
@@ -303,12 +313,15 @@ export function PatchRow({
                 </p>
               ) : (
                 /* Скелет ровно на высоту абзаца: без него панель раскрывается
-                   в пустоту и тут же дёргается, когда тело приезжает. */
+                   в пустоту и тут же дёргается, когда тело приезжает. .skel, а
+                   не animate-pulse Tailwind: у утилиты нет покоя под «уменьшить
+                   движение», и полосы пульсировали у того, кто движения не
+                   просил. Сторож — lib/motion.test.ts. */
                 <div aria-hidden className="flex flex-col gap-2.5">
                   {[92, 100, 78].map((w, i) => (
                     <span
                       key={i}
-                      className="h-3.5 animate-pulse rounded-full bg-ink/10"
+                      className="skel h-3.5 rounded-full"
                       style={{ width: `${w}%` }}
                     />
                   ))}
@@ -325,12 +338,12 @@ export function PatchRow({
                 >
                   Отдельной страницей
                 </Link>
-                <Link
-                  href={`/game/${item.appid}`}
+                <GameLink
+                  appid={item.appid}
                   className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                 >
                   Все патчи игры
-                </Link>
+                </GameLink>
                 <a
                   href={item.url}
                   target="_blank"

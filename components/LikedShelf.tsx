@@ -2,16 +2,16 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { NeedSteam } from '@/components/NeedSteam'
 import { StatusLine } from '@/components/StatusLine'
 import type { GameArtUrls } from '@/lib/art'
 import { Eyebrow } from '@/components/Labels'
 import { plural } from '@/lib/plural'
-import { isNeedSteam } from '@/lib/writer'
+import { sendUnlike } from '@/lib/unlike'
 
 export type LikedGame = {
   appid: number
@@ -98,27 +98,26 @@ export function LikedShelf({
     setFailed(null)
     pendingFocus.current = neighbour ? neighbour.appid : 'empty'
     setRemoved((prev) => new Set(prev).add(appid))
-    try {
-      const res = await fetch('/api/unlike', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ appid }),
-      })
-      if (await isNeedSteam(res)) {
-        // Не «попробуй ещё раз»: не получится. Кнопок больше нет — фокус на заголовок
-        pendingFocus.current = 'heading'
-        restore(appid)
-        setDenied(true)
-        return
-      }
-      if (!res.ok) throw new Error(String(res.status))
-      startTransition(() => router.refresh())
-    } catch {
-      // Плитка встаёт на своё место: порядок задаёт сервер, а не клиент
-      pendingFocus.current = appid
+    // Тот же запрос, что у сердца героя /play и /daily (lib/unlike): одна
+    // очередь записей на игру, если та же вкладка там только что жала «Зашло».
+    // Без сердца — снимается всё «зашло» игры: полка показывает то, что
+    // помнит сервер, а не одно нажатие
+    const res = await sendUnlike(appid)
+    if (res === 'needsteam') {
+      // Не «попробуй ещё раз»: не получится. Кнопок больше нет — фокус на заголовок
+      pendingFocus.current = 'heading'
       restore(appid)
-      setFailed(appid)
+      setDenied(true)
+      return
     }
+    if (res === 'ok') {
+      startTransition(() => router.refresh())
+      return
+    }
+    // Плитка встаёт на своё место: порядок задаёт сервер, а не клиент
+    pendingFocus.current = appid
+    restore(appid)
+    setFailed(appid)
   }
 
   if (items.length === 0 && !touched) return null
@@ -178,7 +177,7 @@ export function LikedShelf({
                   transition={{ duration: 0.22 }}
                   className="flex flex-col"
                 >
-                  <Link href={`/game/${g.appid}`} className="game-card block">
+                  <GameLink appid={g.appid} className="game-card block">
                     <GameCardBody
                       appid={g.appid}
                       name={g.name}
@@ -186,7 +185,7 @@ export function LikedShelf({
                       art={g.art}
                       sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
                     />
-                  </Link>
+                  </GameLink>
                   {!readOnly && (
                     // Своё имя у каждой кнопки: видимый текст один на всю полку
                     <button

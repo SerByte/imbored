@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { Icon, type IconName } from '@/components/Icon'
-import { track } from '@/lib/track'
+import { trackShare, type ShareKind } from '@/lib/track'
 
 export type ShareState = 'idle' | 'done' | 'manual'
 
@@ -69,8 +69,21 @@ function copyFallback(url: string): boolean {
  * Адрес приходит функцией, а не строкой: у кнопки на странице результата его
  * можно узнать только из window, а трогать window при рендере нельзя. Функция
  * зовётся в момент нажатия, когда window заведомо есть.
+ *
+ * what — чем делятся, для счётчика share (lib/track). Обязательный и первый:
+ * без него все кнопки сайта ложились в одну строку share_click:direct, и
+ * новая кнопка, забывшая его, теперь не соберётся, а не потеряется в общей.
+ *
+ * what = null — ссылка, которой НЕ делятся, а кладут к себе: секретная
+ * ссылка на личную RSS-ленту (components/whatsnew/FeedLink). Ей не нужна
+ * системная панель — она предлагает отправить адрес людям, — и счётчик
+ * share: это не «поделился», и воронка «поделился → пришли» считала бы его
+ * зря. Буфер, запасной путь и отклик «Скопировано» — те же, что у всех.
+ * null, а не флаг рядом: решение «делиться или копировать себе» — то же
+ * обязательное первое слово, и забыть его так же нельзя.
  */
 export function useShareLink(
+  what: ShareKind | null,
   getUrl: () => string,
   title: string,
   text: string,
@@ -78,7 +91,8 @@ export function useShareLink(
   onManual?: () => void,
 ) {
   const [state, setState] = useState<ShareState>('idle')
-  const native = useSyncExternalStore(subscribeCoarse, readCoarse, () => false)
+  const coarse = useSyncExternalStore(subscribeCoarse, readCoarse, () => false)
+  const native = coarse && what !== null
   /*
    * Один таймер на кнопку. Раньше каждое нажатие ставило свой setTimeout, и
    * второе нажатие через секунду гасило «Скопировано» раньше срока — первым
@@ -92,11 +106,16 @@ export function useShareLink(
     timer.current = setTimeout(() => setState('idle'), ms)
   }
 
-  async function run() {
+  /**
+   * track: false — нажатие уже посчитано раньше: это второй шаг того же
+   * намерения (ShareLinkField с counted). Панель и буфер — те же, меняется
+   * только маяк: what по-прежнему решает, открывать ли системную панель.
+   */
+  async function run({ track = true }: { track?: boolean } = {}) {
     const url = getUrl()
     if (!url) return
     // Намерение поделиться — шаг воронки, чем бы ни кончилась панель
-    track('share_click')
+    if (what && track) trackShare(what)
     if (native) {
       try {
         await navigator.share({ title, text, url })
@@ -201,29 +220,52 @@ function ShareMark({ icon, size = 16, children }: { icon?: IconName; size?: numb
  *
  * id — из useId, а не из хвоста адреса: у всех ссылок хвост теперь «?ref=…»,
  * и два поля на странице получали один и тот же id.
+ *
+ * counted — нажатие, которое сделало эту ссылку, уже посчитано там, где её
+ * сделали (components/SharePick), и первое нажатие здесь — второй шаг того
+ * же намерения, а не новое «поделился»: на iOS попытка поделиться после
+ * ответа сервера не проходит (нужен свежий жест), и без кнопки поля ссылка не
+ * ушла бы вовсе. Считалось оно вторым share — и каждая отправка выбора с
+ * iOS лежала в счётчике дважды, а на десктопе дважды — каждый, кто после
+ * автокопирования нажал «Скопировать» ещё раз. Следующие нажатия — уже
+ * новые отправки и считаются, как у всех. Помнит поле это до размонтирования,
+ * поэтому новой ссылке — новое поле (key по адресу у того, кто его ставит).
  */
 export function ShareLinkField({
+  what,
   url,
   label,
   title,
   text,
+  counted = false,
 }: {
+  /** чем делятся — для счётчика share (см. useShareLink) */
+  what: ShareKind
   url: string
   /** подпись поля для скринридера: видимой подписи здесь нет по месту */
   label: string
   title: string
   text: string
+  /** нажатие, сделавшее ссылку, уже посчитано: первое нажатие здесь — его второй шаг */
+  counted?: boolean
 }) {
   const ref = useRef<HTMLInputElement>(null)
-  const share = useShareLink(() => url, title, text, () => {
+  const share = useShareLink(what, () => url, title, text, () => {
     ref.current?.focus()
     ref.current?.select()
   })
+  // Первое нажатие ещё впереди и уже посчитано — только при counted
+  const firstCounted = useRef(counted)
+  const press = () => {
+    const track = !firstCounted.current
+    firstCounted.current = false
+    void share.run({ track })
+  }
 
   return (
     <div className="join is-link">
       <ShareLinkInput url={url} label={label} inputRef={ref} />
-      <button type="button" onClick={() => void share.run()} className="btn-ember is-block whitespace-nowrap px-5">
+      <button type="button" onClick={press} className="btn-ember is-block whitespace-nowrap px-5">
         {share.label('Скопировать', { native: 'Отправить', manual: 'Скопируй вручную' })}
       </button>
       {share.status}

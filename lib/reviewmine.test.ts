@@ -226,7 +226,13 @@ describe('mineReviews', () => {
     const m = mineReviews([])
     expect(m.n).toBe(0)
     expect(m.timeToFunHours).toBeNull()
-    expect(m.playtime).toEqual({ total: 0, medianPosMin: null, medianNegMin: null, negShortShare: null })
+    expect(m.playtime).toEqual({
+      total: 0,
+      posTimed: 0,
+      medianPosMin: null,
+      medianNegMin: null,
+      negShortShare: null,
+    })
     for (const lane of LANES) {
       expect(m.lanes[lane]).toEqual({ count: 0, weighted: 0, share: 0, sharePos: 0, shareNeg: 0 })
     }
@@ -274,6 +280,35 @@ describe('mineReviews', () => {
     expect(m.playtime.medianPosMin).toBe(300)
     expect(m.playtime.medianNegMin).toBe(245)
     expect(m.playtime.negShortShare).toBe(0.5)
+    expect(m.playtime.posTimed).toBe(3)
+  })
+
+  test('ноль минут — «Steam не назвал», а не «не играл»: в медианы и долю коротких негативов не идёт', () => {
+    // filter=all сортирует по полезности и поднимает наверх отзывы, у которых
+    // поля наигранного нет; parseReviewsRaw сводит его к нулю. Нулями медиана
+    // хваливших съехала бы со ста часов на ноль, а пустые негативы числились бы
+    // бросившими в первый час
+    const m = mineReviews([
+      review('a', { id: '1', playtimeAtReview: 6000 }),
+      review('b', { id: '2', playtimeAtReview: 0 }),
+      review('c', { id: '3', playtimeAtReview: 0 }),
+      review('d', { id: '4', votedUp: false, playtimeAtReview: 0 }),
+      review('e', { id: '5', votedUp: false, playtimeAtReview: 600 }),
+    ])
+    expect(m.playtime.total).toBe(5)
+    expect(m.playtime.posTimed).toBe(1)
+    expect(m.playtime.medianPosMin).toBe(6000)
+    expect(m.playtime.medianNegMin).toBe(600)
+    expect(m.playtime.negShortShare).toBe(0)
+
+    const blank = mineReviews([review('a', { playtimeAtReview: 0 }), review('b', { votedUp: false, playtimeAtReview: 0 })])
+    expect(blank.playtime).toEqual({
+      total: 2,
+      posTimed: 0,
+      medianPosMin: null,
+      medianNegMin: null,
+      negShortShare: null,
+    })
   })
 
   test('детерминизм: тот же вход — тот же выход до бита', () => {

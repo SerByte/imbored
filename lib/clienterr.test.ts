@@ -7,6 +7,7 @@ import {
   buildClientReport,
   clientErrorCode,
   createReportGate,
+  isChunkLoadError,
   parseClientReport,
   reportKey,
 } from './clienterr'
@@ -113,6 +114,63 @@ describe('buildClientReport', () => {
     expect(r?.message.length).toBeLessThanOrEqual(300)
     expect(r?.code).toBeUndefined()
   })
+
+  /*
+   * Отказ чанка островка (components/lazyIsland): текст называет чанк по
+   * хешу, а хеш меняется с каждым деплоем и ни о чём не говорит. Тег — имя
+   * островка: по нему отказ «Уже прошёл» после деплоя ищется в логе как
+   * mark-finished, а не как 0f3a9c.js.
+   */
+  test('отказ островка несёт его тег; не тег — мимо', () => {
+    const err = new Error('Failed to load chunk /_next/static/chunks/0f3a9c.js from module 41234')
+    const r = buildClientReport({ kind: 'boundary', error: err, island: 'mark-finished', href: 'https://imbored.cc/library' })
+    expect(r).toMatchObject({ kind: 'boundary', island: 'mark-finished', page: '/library' })
+    for (const island of ['', 'Mark Finished', '<script>', '-snow', 'x'.repeat(40)]) {
+      expect(buildClientReport({ kind: 'boundary', error: err, island, href: HREF }), island).not.toHaveProperty('island')
+    }
+  })
+})
+
+/*
+ * Отказ доставки чанка против отказа его кода. Закулисье
+ * (components/BackstageLazy) о первом молчит — сеть и деплой, чинить нечего, —
+ * а о втором отчитывается: это наша поломка у каждого с тем же браузером.
+ */
+describe('isChunkLoadError', () => {
+  const named = (message: string) => Object.assign(new Error(message), { name: 'ChunkLoadError' })
+  const TURBOPACK = 'Failed to load chunk /_next/static/chunks/0f3a9c.js from module 41234'
+  const WEBPACK = 'Loading chunk 812 failed.\n(error: https://imbored.cc/_next/static/chunks/812.js)'
+
+  test('рантайм Turbopack и webpack: по имени и по тексту', () => {
+    expect(isChunkLoadError(named(TURBOPACK))).toBe(true)
+    expect(isChunkLoadError(named(WEBPACK))).toBe(true)
+    // имя потерялось по дороге — узнаётся текстом
+    expect(isChunkLoadError(new Error(TURBOPACK))).toBe(true)
+    expect(isChunkLoadError(new Error(WEBPACK))).toBe(true)
+    expect(isChunkLoadError(new Error('Loading CSS chunk 77 failed.\n(/_next/static/css/77.css)'))).toBe(true)
+    expect(isChunkLoadError({ name: 'ChunkLoadError', message: 'x' }), 'не Error, а похожее').toBe(true)
+  })
+
+  test('завёрнутый в чужую ошибку — всё ещё отказ доставки', () => {
+    const wrapped = new Error('[vitest] There was an error when mocking a module.', { cause: named(TURBOPACK) })
+    expect(isChunkLoadError(wrapped)).toBe(true)
+  })
+
+  test('код, упавший при вычислении, — не отказ доставки', () => {
+    expect(isChunkLoadError(boom())).toBe(false)
+    expect(isChunkLoadError(new SyntaxError('Unexpected token')), 'синтаксис доехавшего чанка').toBe(false)
+    expect(isChunkLoadError(new Error('wrapper', { cause: boom() }))).toBe(false)
+    // слово chunk посреди чужого текста — не повод молчать
+    expect(isChunkLoadError(new Error('Cannot read chunk size: Failed to load chunk metadata'))).toBe(false)
+  })
+
+  test('не падает на чём угодно и на петле причин', () => {
+    const loop = new Error('loop')
+    ;(loop as { cause?: unknown }).cause = loop
+    for (const x of [undefined, null, 0, '', 'строка', 42, {}, [], loop]) {
+      expect(isChunkLoadError(x), String(x)).toBe(false)
+    }
+  })
 })
 
 describe('clientErrorCode', () => {
@@ -147,6 +205,16 @@ describe('parseClientReport', () => {
   test('честный отчёт проходит как есть', () => {
     const r = buildClientReport({ kind: 'boundary', error: boom(), href: HREF, code: 'c0abc123' })
     expect(parseClientReport(JSON.parse(JSON.stringify(r)))).toEqual(r)
+  })
+
+  test('тег островка доходит до лога, а не тег — нет', () => {
+    const r = buildClientReport({ kind: 'boundary', error: boom(), href: HREF, island: 'hero-slider' })
+    expect(parseClientReport(JSON.parse(JSON.stringify(r)))).toEqual(r)
+    expect(parseClientReport({ kind: 'boundary', message: 'x', page: '/play', island: '<img src=x>' })).toEqual({
+      kind: 'boundary',
+      message: 'x',
+      page: '/play',
+    })
   })
 
   /*
@@ -231,6 +299,14 @@ describe('отсечка повторов', () => {
     const other = buildClientReport({ kind: 'error', error: boom(), href: 'https://imbored.cc/room/BBBBBB' })!
     expect(reportKey(r)).toBe(reportKey(other))
   })
+
+  // Два островка на одной странице (/daily: слайдер героя и снег) с одним и
+  // тем же текстом отказа — две поломки, а не одна
+  test('островок — тоже место', () => {
+    const at = (island: string) =>
+      buildClientReport({ kind: 'boundary', error: new TypeError('Load failed'), island, href: 'https://imbored.cc/daily' })!
+    expect(reportKey(at('hero-slider'))).not.toBe(reportKey(at('snow')))
+  })
 })
 
 /**
@@ -255,6 +331,30 @@ describe('проводка', () => {
       // код больше не прячется за error.digest &&
       expect(src, file).not.toMatch(/error\.digest\s*&&/)
     }
+  })
+
+  /*
+   * Тег — второй аргумент lazyIsland, и без него не соберётся. Но тег с
+   * заглавной или пробелом отчёт молча отбросит, а один тег у двух островков
+   * склеит их отказы в логе — поэтому сторож читает все вызовы.
+   */
+  test('у каждого островка свой тег, и отчёт его пропускает', () => {
+    const tags: string[] = []
+    for (const dir of ['app', 'components']) {
+      for (const file of fs.readdirSync(path.join(ROOT, dir), { recursive: true, encoding: 'utf8' })) {
+        if (!file.endsWith('.tsx') || path.basename(file) === 'lazyIsland.tsx') continue
+        const src = read(dir, file).replace(/\/\*[\s\S]*?\*\//g, '')
+        for (const [, args] of src.matchAll(/\blazyIsland(?:<[^>]*>)?\(([\s\S]*?)\)\r?\n/g)) {
+          const tag = /'([^']*)',?\s*$/.exec(args)?.[1] ?? `${file}: тега нет`
+          const report = buildClientReport({ kind: 'boundary', error: new Error('x'), island: tag, href: HREF })
+          expect(report?.island, `${dir}/${file}`).toBe(tag)
+          tags.push(tag)
+        }
+      }
+    }
+    // без этого сторож мог бы быть зелёным вхолостую
+    expect(tags.length).toBeGreaterThanOrEqual(4)
+    expect(new Set(tags).size, tags.join(', ')).toBe(tags.length)
   })
 
   test('приёмник живёт по тому адресу, куда шлёт браузер', () => {

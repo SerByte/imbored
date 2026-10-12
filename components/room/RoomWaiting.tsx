@@ -1,14 +1,16 @@
 'use client'
 
 import type { ShareLink } from '@/components/ShareLink'
-import { useEffect, useRef } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { StatusLine } from '@/components/StatusLine'
+import { focusAdrift } from '@/lib/focushandoff'
 import { plural } from '@/lib/plural'
 import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { AloneInvite, RoomEscapeHatch } from './AloneInvite'
 import { LeaderPick } from './LeaderPick'
+import { MatchNotifyToggle } from './MatchNotify'
 import { type LikedGame, MyLikesRail, NearMissList } from './LikesStrips'
 import { MemberRoster } from './MemberRoster'
 import { PartyTrivia } from './PartyTrivia'
@@ -47,6 +49,12 @@ export function RoomWaiting({
   onTogglePublic,
   onRemoveMember,
   onLeave,
+  kickUndo = null,
+  leaving,
+  leaveMiss,
+  missedMember,
+  publicBusy,
+  publicMiss,
 }: {
   roomId: string
   isHost: boolean
@@ -74,6 +82,25 @@ export function RoomWaiting({
   /** убрать участника (хост) или выйти самому — см. app/api/room/[id]/leave */
   onRemoveMember: (memberId: string) => void
   onLeave: () => void
+  /**
+   * «Пустить обратно» после ✕ — строка от страницы (app/room/[id]/page).
+   * Стоит под ростером, а если ✕ убрал последнего, кроме хоста, и экран
+   * сменился приглашением, — под приглашением: в пати на двоих случайное
+   * касание ✕ уводит весь ростер, и отмена не должна уходить вместе с ним.
+   * Уходит и весь этот экран — меньший состав приносит новую колоду, — тогда
+   * строку над колодой ставит страница (waitingShown там).
+   */
+  kickUndo?: ReactNode
+  /** выход или удаление в пути — см. removeMember на странице */
+  leaving: boolean
+  /** почему не вышло выйти или убрать; null — отказа нет или он уже неправда */
+  leaveMiss: string | null
+  /** чья ✕ отказала последней — ростер забывает перенос фокуса с неё */
+  missedMember: string | null
+  /** переключение доски в пути — см. togglePublic на странице */
+  publicBusy: boolean
+  /** почему доска не переключилась; null — отказа нет (строка — в AloneInvite) */
+  publicMiss: string | null
 }) {
   const headRef = useRef<HTMLHeadingElement>(null)
   const me = members.find((m) => m.me)
@@ -99,6 +126,20 @@ export function RoomWaiting({
     if (!cameFromDeck) return
     headRef.current?.focus()
   }, [cameFromDeck])
+
+  /*
+   * Смена режима под фокусом. Хост убрал последнего, кроме себя, — ростер
+   * уходит вместе с режимом 'others', и ✕ в фокусе падал в body; зашёл
+   * первый гость — AloneInvite уходит вместе с нажатой «Позвать своих».
+   * Заголовок нового режима забирает фокус, только потерянный: стоящего в
+   * шапке смена режима не трогает. Первый рендер — не смена.
+   */
+  const modeShown = useRef(mode)
+  useEffect(() => {
+    if (modeShown.current === mode) return
+    modeShown.current = mode
+    if (focusAdrift(document)) headRef.current?.focus()
+  }, [mode])
 
   const pending = members.filter((m) => !m.done && !m.me)
   const doneCount = members.filter((m) => m.done).length
@@ -139,8 +180,11 @@ export function RoomWaiting({
           share={share}
           onTogglePublic={onTogglePublic}
           headRef={headRef}
+          publicBusy={publicBusy}
+          publicMiss={publicMiss}
         />
       )}
+      {mode === 'alone' && kickUndo}
 
       {/* Свои лайки нужны и в одиночестве: они и есть ответ на «а не зря ли
           я всё это листал» — голоса записаны и ждут второго человека */}
@@ -209,7 +253,21 @@ export function RoomWaiting({
             })}
             isHost={isHost}
             onRemove={onRemoveMember}
+            removing={leaving}
+            missed={missedMember}
           />
+          {kickUndo}
+          {/*
+            Под ростером: он отвечает «кого ждём», переключатель — «а если я
+            отойду». Только в этом режиме: в комнате на одного матча не будет,
+            а при пустой колоде — не из чего. И только пока матч ещё может
+            прийти без этого человека: кто-то свайпает или есть лидер, которого
+            возьмёт сосед. Когда все отсвайпали и лидера нет, голоса записаны и
+            не сошлись — «сообщим» обещало бы сигнал, которого не будет (то же
+            враньё, что rosterHint убрал из-под ростера). Сам прячется там, где
+            уведомление со страницы не работает (телефоны, pageNotices в lib/room).
+          */}
+          {(pending.length > 0 || offer) && <MatchNotifyToggle />}
           <NearMissList near={near} />
           <MyLikesRail games={myLikes} />
         </>
@@ -281,13 +339,24 @@ export function RoomWaiting({
           Рядом с «подсесть к другим» намеренно: это одно и то же движение —
           «мне тут не сюда».
         */}
+        {/* aria-disabled, а не disabled: на отказе фокус обязан остаться на
+            кнопке. Повтор гасит onLeave (removeMember — по leaving) */}
         <button
           type="button"
           onClick={onLeave}
-          className="tap text-sm text-faint hover:text-danger transition-colors cursor-pointer"
+          aria-disabled={leaving}
+          className="tap text-sm text-faint hover:text-danger transition-colors cursor-pointer aria-disabled:opacity-40"
         >
           Выйти из пати
         </button>
+        {/*
+          Отказ выхода и ✕ хоста. Раньше оба молчали: на моргнувшей связи
+          «Выйти из пати» не меняло на экране ничего, и человек, уверенный,
+          что вышел, оставался в знаменателе единогласия. Строка стоит всегда,
+          пустая — вне раскладки (sr-only), с текстом — отдельной строкой ряда:
+          живая область, вставленная вместе с отказом, звучит не везде.
+        */}
+        <StatusLine text={leaveMiss} className="basis-full text-sm text-danger text-right" />
       </div>
     </section>
   )

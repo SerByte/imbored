@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { buildGroupDeck } from './group'
+import { buildGroupDeck, PINNED_REASON } from './group'
 import { buildTagProfile, normalizedTags } from './recommend'
 import { cosine, tagWeightFrom } from './tagweight'
 import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
@@ -97,6 +97,25 @@ describe('buildGroupDeck', () => {
     const card = deck.find((c) => c.appid === 730)
     expect(card?.isFree).toBe(true)
     expect(card).not.toHaveProperty('priceFinal')
+  })
+
+  test('регион цены едет в карту; «не продаётся» пати не прячет, а подписывает', () => {
+    // В пати речь об общей библиотеке, а не о покупке: тем, у кого игры нет,
+    // честнее прочитать «нет в российском Steam», чем не увидеть её вовсе
+    const rub: GameMeta = { ...meta(40, { 'Co-op': 100 }, MP, 199_900), priceCc: 'ru' }
+    const hidden: GameMeta = { ...meta(41, { 'Co-op': 100 }, MP), priceCc: 'ru', storeHidden: true }
+    const deck = buildGroupDeck({ members: MEMBERS, metaOf, extraPool: [rub, hidden], limit: 10 })
+    expect(deck.find((c) => c.appid === 40)).toMatchObject({ priceFinal: 199_900, priceCc: 'ru' })
+    expect(deck.find((c) => c.appid === 40)).not.toHaveProperty('unsold')
+    expect(deck.find((c) => c.appid === 41)).toMatchObject({ priceCc: 'ru', unsold: true })
+  })
+
+  test('«не продаётся» не гасится бесплатностью: карта везёт оба признака', () => {
+    // Warzone бесплатна в US, а российский Steam её не показывает. Что сказать,
+    // решает строка колоды (SwipeDeck): «нет в российском Steam» первым
+    const warzone: GameMeta = { ...meta(1962663, { 'Co-op': 100 }, MP), isFree: true, priceCc: 'ru', storeHidden: true }
+    const deck = buildGroupDeck({ members: MEMBERS, metaOf, extraPool: [warzone], limit: 10 })
+    expect(deck.find((c) => c.appid === 1962663)).toMatchObject({ isFree: true, priceCc: 'ru', unsold: true })
   })
 
   test('у платной игры признака бесплатности нет вовсе', () => {
@@ -314,6 +333,73 @@ describe('buildGroupDeck', () => {
       })
       expect(deck.map((c) => c.appid)).toEqual([50, 51])
       expect(deck[1].score).toBeLessThan(deck[0].score)
+    })
+  })
+
+  /**
+   * «Позвать в эту игру»: хост создал комнату со страницы игры, и эта игра —
+   * первая карта у всех. Остальная колода — как была: «не хочу» по первой
+   * карте просто ведёт дальше.
+   */
+  describe('предложенная первая карта', () => {
+    const args = { members: MEMBERS, metaOf, extraPool: [METAS.get(3)!, METAS.get(4)!], limit: 10 }
+    // 4 — ни у кого нет, по вкусу пати не первая: без закрепления она после общих
+    const pinnedArgs = { ...args, pinned: 4 }
+
+    test('идёт первой, мимо порядка «общие раньше» и скора, и подписана', () => {
+      const plain = buildGroupDeck(args)
+      expect(plain[0].appid).not.toBe(4)
+      const deck = buildGroupDeck(pinnedArgs)
+      expect(deck[0]).toMatchObject({ appid: 4, ownedByAll: false, reason: PINNED_REASON })
+      // кому её не хватает — честно, как у любой карты
+      expect(deck[0].missingFor.sort()).toEqual(['Аня', 'Боря'])
+      // остальная колода — та же и в том же порядке, без второй копии
+      expect(deck.slice(1)).toEqual(plain.filter((c) => c.appid !== 4))
+      // подпись — только у закреплённой
+      expect(deck.slice(1).every((c) => c.reason === undefined)).toBe(true)
+    })
+
+    test('общая игра, закреплённая первой, — одна карта, а не две', () => {
+      const deck = buildGroupDeck({ ...args, pinned: 5 })
+      expect(deck[0]).toMatchObject({ appid: 5, ownedByAll: true, reason: PINNED_REASON })
+      expect(deck.filter((c) => c.appid === 5)).toHaveLength(1)
+    })
+
+    test('«Больше не показывать» сильнее закрепления: забаненной нет вовсе', () => {
+      const banned = new Set([4])
+      expect(buildGroupDeck({ ...pinnedArgs, banned })).toEqual(buildGroupDeck({ ...args, banned }))
+    })
+
+    test('одиночная и неизвестная игра не закрепляются — колода прежняя', () => {
+      const plain = buildGroupDeck(args)
+      expect(buildGroupDeck({ ...args, pinned: 2 })).toEqual(plain)
+      expect(buildGroupDeck({ ...args, pinned: 999 })).toEqual(plain)
+      expect(buildGroupDeck({ ...args, pinned: null })).toEqual(plain)
+    })
+
+    test('закреплённое издание держит ключ: другое издание той же игры в колоду не идёт', () => {
+      // У обоих есть VR-издание, а звали в обычное: карта одна — та, в которую звали
+      const vr: GameMeta = { appid: 11, name: 'Deep Rock Galactic VR Edition', tags: { 'Co-op': 100 }, genres: [], categories: MP }
+      const base: GameMeta = { appid: 10, name: 'Deep Rock Galactic', tags: { 'Co-op': 100 }, genres: [], categories: MP }
+      const metas = new Map([vr, base].map((g) => [g.appid, g]))
+      const members = MEMBERS.map((m) => ({ ...m, library: [...m.library, lib(11)] }))
+      const deck = buildGroupDeck({
+        members,
+        metaOf: (id) => metas.get(id) ?? metaOf(id),
+        extraPool: [],
+        limit: 10,
+        pinned: 10,
+      })
+      expect(deck[0].appid).toBe(10)
+      expect(deck.map((c) => c.appid)).not.toContain(11)
+    })
+
+    test('limit считает и её, а колода на больший limit продолжает меньшую', () => {
+      const small = buildGroupDeck({ ...pinnedArgs, limit: 2 })
+      const big = buildGroupDeck({ ...pinnedArgs, limit: 10 })
+      expect(small).toHaveLength(2)
+      expect(small[0].appid).toBe(4)
+      expect(big.slice(0, 2)).toEqual(small)
     })
   })
 })

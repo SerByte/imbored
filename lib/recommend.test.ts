@@ -18,7 +18,9 @@ import {
   entryMultiplier,
   explainMatch,
   familiarWeight,
+  hasTaste,
   hideUrgencyFor,
+  isEndless,
   isReplayable,
   isUnplayed,
   isUntouched,
@@ -28,6 +30,9 @@ import {
   mixHeroPool,
   moodFitAxes,
   moodWordsOf,
+  mutedHit,
+  mutedTaste,
+  namesMutedTaste,
   neutralParts,
   normalizedTags,
   nudgeMultiplier,
@@ -43,15 +48,27 @@ import {
   semanticsMultiplier,
   sharedTasteTags,
   splitBySource,
+  topTags,
   URGENCY_UNTOUCHED_MAX,
   type Cooldown,
 } from './recommend'
 import { DEMO_METAS, demoLibrary } from './demo'
+import { GENERIC_TAGS } from './hook'
 import { LEANS, NEUTRAL_MOOD, type Lean } from './mood'
+import { heuristicPicks } from './llm'
+import { MUTES, parseMutes } from './mutetags'
 import { NUDGES, planNudge } from './nudge'
+import { tagRu } from './tagsru'
 import { tagWeightFrom } from './tagweight'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
-import type { GameMeta, GameSemantics, LibraryGame, Mood, ScoredCandidate } from './types'
+import {
+  CANDIDATE_SOURCES,
+  type GameMeta,
+  type GameSemantics,
+  type LibraryGame,
+  type Mood,
+  type ScoredCandidate,
+} from './types'
 
 const NOW = 1_700_000_000
 const DAY = 86_400
@@ -471,6 +488,51 @@ describe('sharedTasteTags и вес редкости', () => {
   })
 })
 
+/**
+ * Предупреждение о контенте — не главный тег игры и не вкус.
+ *
+ * Поймано на /daily: после «Не сегодня» героем встал Cyberpunk 2077, и ряд
+ * под названием читался «Киберпанк · Открытый мир · Нагота · Ролевая игра» —
+ * те же чипсы уезжают на карту колоды пати, то есть на экран, который видят
+ * друзья. А редкость тянет такие теги наверх списка совпавших: Nudity стоит у
+ * трёх процентов каталога, и у игрока Witcher зелёной точкой горела бы именно она.
+ */
+describe('предупреждения о контенте в чипсах и совпавших тегах', () => {
+  // Числа — из карты тегов каталога: Singleplayer у половины игр, Nudity у 176
+  const stats = new Map<string, number>([
+    ['Singleplayer', 3031],
+    ['RPG', 1353],
+    ['Story Rich', 1237],
+    ['Open World', 981],
+    ['Cyberpunk', 300],
+    ['Nudity', 176],
+  ])
+  // Голоса как у Cyberpunk 2077: Nudity — в первой четвёрке
+  const cyberpunk = meta(1091500, {
+    'Open World': 6100,
+    Cyberpunk: 5600,
+    Nudity: 5000,
+    RPG: 4900,
+    'Story Rich': 4500,
+  })
+
+  test('topTags пропускает предупреждение, и место занимает следующий тег', () => {
+    expect(topTags(cyberpunk)).toEqual(['Open World', 'Cyberpunk', 'RPG', 'Story Rich'])
+  })
+
+  test('sharedTasteTags не отмечает Nudity, даже когда редкость тянет её наверх', () => {
+    // Профиль игрока Witcher и BG3: Nudity в нём есть — она стоит у тех игр
+    const profile = { RPG: 20, 'Story Rich': 15, 'Open World': 10, Nudity: 10, Cyberpunk: 5 }
+    for (const w of [tagWeightFrom(stats), null]) {
+      const tags = sharedTasteTags(profile, cyberpunk, w)
+      expect(tags).not.toContain('Nudity')
+      // Место не пропадает: его занимает следующий настоящий тег
+      expect(tags).toHaveLength(3)
+    }
+    expect(sharedTasteTags(profile, cyberpunk, tagWeightFrom(stats))[0]).toBe('Cyberpunk')
+  })
+})
+
 describe('explainMatch', () => {
   test('полное совпадение — 100% и общий тег', () => {
     const m = meta(1, { Roguelike: 100 })
@@ -497,6 +559,67 @@ describe('explainMatch', () => {
     const out = explainMatch({ Action: 1 }, m, { time: 'medium', vibe: 'chill', social: 'solo' })
     expect(out.moodTags).toContain('Relaxing')
     expect(out.moodTags).not.toContain('Action')
+  })
+})
+
+/**
+ * Профиль из одних нулей — это пустой профиль, а не вкус.
+ *
+ * Скип «не тот жанр» пишет Math.max(… , 0) по каждому тегу игры и тем самым
+ * заводит ключи даже в пустом профиле: у человека с библиотекой из нулевых
+ * минут один такой скип давал { Roguelike: 0, Indie: 0 }. Проверка «вкус
+ * есть» считала ключи — и скоринг уходил с популярности на косинус с
+ * нулевым вектором: у всех кандидатов ровно 0, настроение и скидка ничего не
+ * двигали, а /play писал «совпадение со вкусом 0%».
+ */
+describe('вкус из одних нулей — отсутствие вкуса', () => {
+  const pool = [
+    meta(101, { Relaxing: 100, Cozy: 80 }),
+    meta(102, { 'Souls-like': 100, Difficult: 90 }),
+    meta(103, { Roguelike: 100, Indie: 60 }),
+  ]
+  const metaOf = (id: number) => pool.find((m) => m.appid === id)
+  const genreSkip: FeedbackRow = {
+    steamid: 'u',
+    appid: 103,
+    action: 'skipped',
+    reason: 'genre',
+    createdAt: NOW,
+  }
+  const zeroed = applyFeedbackToProfile({}, [genreSkip], metaOf)
+  const run = (profile: Record<string, number>, vibe: Mood['vibe']) =>
+    scoreCandidates({
+      profile,
+      library: [],
+      metaOf,
+      newPool: pool,
+      mood: { time: 'medium', vibe, social: 'solo' },
+      nowSec: NOW,
+    }).map((c) => [c.appid, c.score])
+
+  test('hasTaste: вкус — это хоть один положительный вес', () => {
+    expect(hasTaste({})).toBe(false)
+    expect(hasTaste({ A: 0 })).toBe(false)
+    expect(hasTaste({ A: Number.NaN })).toBe(false)
+    expect(hasTaste({ A: 0, B: 0.1 })).toBe(true)
+  })
+
+  test('скип «не тот жанр» на пустом профиле оставляет запасной скоринг популярностью', () => {
+    // Ключи с нулями заводятся — правило «штраф не уводит в минус» держит их
+    // на нуле, а не удаляет (тест «не уводит в минус» выше). Чинится чтение
+    expect(zeroed).toEqual({ Roguelike: 0, Indie: 0 })
+    for (const vibe of ['chill', 'engaged'] as const) {
+      expect(run(zeroed, vibe)).toEqual(run({}, vibe))
+    }
+    // И настроение снова решает: под «расслабиться» и «напрячься» — разные первые
+    expect(run(zeroed, 'chill')[0][0]).toBe(101)
+    expect(run(zeroed, 'engaged')[0][0]).toBe(102)
+  })
+
+  test('explainMatch на профиле из нулей — без процента, как у пустого', () => {
+    const mood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+    expect(explainMatch(zeroed, pool[2], mood).matchPercent).toBeNull()
+    expect(explainMatch({ Roguelike: 0 }, pool[0], mood).matchPercent).toBeNull()
   })
 })
 
@@ -1840,6 +1963,55 @@ describe('applyFocus', () => {
   })
 })
 
+/**
+ * Фокус в скоринге — очередь на срез, а не фильтр: нетронутые, далёкие от
+ * вкуса, не должны срезаться раньше, чем applyFocus их увидит. Бронь каталога
+ * при фокусе снята: маршрут каталог тогда не показывает вовсе.
+ */
+describe('scoreCandidates и фокус «нераспакованное»', () => {
+  const comeback = Array.from({ length: 40 }, (_, i) => 100 + i)
+  const untouched = Array.from({ length: 6 }, (_, i) => 200 + i)
+  const metas = new Map<number, GameMeta>([
+    ...comeback.map((id) => [id, meta(id, { Roguelike: 100, 'Deck Building': 80 })] as const),
+    ...untouched.map((id) => [id, meta(id, { Puzzle: 100, Casual: 60 })] as const),
+  ])
+  const library = [
+    ...comeback.map((appid) => game({ appid, playtimeForever: 3000, lastPlayed: NOW - 365 * DAY })),
+    ...untouched.map((appid) => game({ appid })),
+  ]
+  const newPool = Array.from({ length: 20 }, (_, i) => meta(300 + i, { Roguelike: 100 }))
+  const run = (focus?: 'untouched' | null) =>
+    scoreCandidates({
+      profile: { Roguelike: 10, 'Deck Building': 8, Puzzle: 0.1 },
+      library,
+      metaOf: (id) => metas.get(id),
+      newPool,
+      mood: NEUTRAL_MOOD,
+      nowSec: NOW,
+      limit: 30,
+      ...(focus !== undefined ? { focus } : {}),
+    })
+
+  test('без фокуса нетронутые срезаются: на этом и ловили баг', () => {
+    expect(run().some((c) => c.source === 'untouched')).toBe(false)
+  })
+
+  test('с фокусом все нетронутые доживают до среза, а каталогу места не держат', () => {
+    const got = run('untouched')
+    expect(got.filter((c) => c.source === 'untouched').map((c) => c.appid).sort((a, b) => a - b)).toEqual(
+      untouched,
+    )
+    expect(got.some((c) => c.source === 'new')).toBe(false)
+    expect(got).toHaveLength(30)
+    // итог по-прежнему отсортирован по скору
+    expect(got.map((c) => c.score)).toEqual([...got.map((c) => c.score)].sort((a, b) => b - a))
+  })
+
+  test('null — ровно прежний срез, до бита', () => {
+    expect(run(null)).toEqual(run())
+  })
+})
+
 describe('parseFocus', () => {
   test('только known-значение проходит', () => {
     expect(parseFocus('untouched')).toBe('untouched')
@@ -1882,6 +2054,32 @@ describe('знакомое любимое (familiar)', () => {
     test('без categories судит по тегам PvP — как isMultiplayerMeta', () => {
       expect(isReplayable(meta(7, { Shooter: 100, PvP: 50 }, []))).toBe(true)
       expect(isReplayable(meta(8, { Shooter: 100, 'Co-op': 50 }, []))).toBe(false)
+    })
+  })
+
+  describe('isEndless — без конца для строки «Наиграли»', () => {
+    test('PvP при одиночном режиме — не бесконечность, а isReplayable остаётся прежним', () => {
+      // Elden Ring: одиночная, Online PvP и кооп — кампания есть, строка нужна
+      const souls = meta(1, { 'Souls-like': 100, RPG: 80 }, [2, 36, 38])
+      expect(isEndless(souls)).toBe(false)
+      // «Уже прошёл» и совет знакомого решаются по-старому — это не побочный эффект строки
+      expect(isReplayable(souls)).toBe(true)
+    })
+
+    test('PvP без одиночного режима — бесконечность, как в isReplayable', () => {
+      expect(isEndless(meta(2, { FPS: 100 }, [1, 36, 49]))).toBe(true)
+      expect(isEndless(meta(3, { Action: 100 }, [38, 49]))).toBe(true)
+    })
+
+    test('теги без финала решают и при одиночном режиме; кооп с титрами — не бесконечность', () => {
+      expect(isEndless(meta(4, { Sandbox: 100 }, [2, 49]))).toBe(true)
+      expect(isEndless(meta(5, { Roguelite: 100 }))).toBe(true)
+      expect(isEndless(meta(6, { Puzzle: 100 }, [2, 1, 9, 38]))).toBe(false)
+    })
+
+    test('без categories режимов не знаем — PvP по тегам бесконечен, как в isReplayable', () => {
+      expect(isEndless(meta(7, { Shooter: 100, PvP: 50 }, []))).toBe(true)
+      expect(isEndless(meta(8, { RPG: 100, 'Story Rich': 50 }, []))).toBe(false)
     })
   })
 
@@ -2127,12 +2325,33 @@ describe('pickContinue', () => {
     const metas = new Map(DEMO_METAS.map((m) => [m.appid, m]))
     const got = pickContinue(demoLibrary(NOW), (id) => metas.get(id), none, none)
     expect(got?.name).toBe('Dota 2')
-    expect(continueView(got!)).toEqual({ appid: 570, name: 'Dota 2', recentHours: 6 })
+    // MOBA финала не имеет — «Уже прошёл» рядом с ней было бы предложением, которого нет
+    expect(continueView(got!, metas.get(570))).toEqual({
+      appid: 570,
+      name: 'Dota 2',
+      recentHours: 6,
+      finishable: false,
+    })
   })
 
   test('continueView округляет минуты до часов', () => {
-    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 20 })).recentHours).toBe(0)
-    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 95 })).recentHours).toBe(2)
+    const m = meta(1, { Action: 10 })
+    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 20 }), m).recentHours).toBe(0)
+    expect(continueView(game({ appid: 1, name: 'X', playtime2Weeks: 95 }), m).recentHours).toBe(2)
+  })
+
+  /*
+   * «Уже прошёл» у строки «Продолжить» — только у того, что проходится. Мера
+   * та же, что у знакомого (isReplayable): песочница, рогалик и соревновательный
+   * мультиплеер не кончаются, а у одиночной игры с титрами — кончаются.
+   */
+  test('finishable — у игры с финалом; песочница, рогалик, PvP и игра без меты — нет', () => {
+    const g = game({ appid: 1, name: 'X', playtime2Weeks: 120 })
+    expect(continueView(g, meta(1, { Metroidvania: 50, Atmospheric: 40 })).finishable).toBe(true)
+    expect(continueView(g, meta(1, { Sandbox: 50 })).finishable).toBe(false)
+    expect(continueView(g, meta(1, { Roguelite: 50 })).finishable).toBe(false)
+    expect(continueView(g, meta(1, { Action: 50 }, [1, 49])).finishable).toBe(false)
+    expect(continueView(g, undefined).finishable).toBe(false)
   })
 })
 
@@ -2535,14 +2754,42 @@ describe('подталкивания (nudge)', () => {
     expect(got.get(2)!.parts!.mood).toBe(plain.get(2)!.parts!.mood)
   })
 
+  /*
+   * Показанное здесь было «Strategy, Indie, Action» — тройка целиком из
+   * GENERIC_TAGS, и после правки ниже похожесть по ней не считается вовсе.
+   * Поэтому главный тег показанного — Puzzle, а pool[0] со Strategy и Indie
+   * теперь ровно тот случай, что штраф больше не задевает.
+   */
   test('«Что-то другое»: похожее на показанное главными тегами — ×0.8', () => {
     expect(planNudge('different', baseMood, 'all').reroll).toBe(true)
-    const seen = seenTagsOf([meta(50, { Strategy: 100, Indie: 10, Action: 5, Puzzle: 1 })])
-    expect([...seen]).toEqual(['Strategy', 'Indie', 'Action'])
-    expect(nudgeMultiplier(pool[0], 'new', { seenTags: seen })).toBeCloseTo(0.8)
-    expect(nudgeMultiplier(pool[1], 'new', { seenTags: seen })).toBe(1)
+    const seen = seenTagsOf([meta(50, { Puzzle: 100, Indie: 10, Action: 5, Strategy: 1 })])
+    expect([...seen]).toEqual(['Puzzle'])
+    expect(nudgeMultiplier(pool[1], 'new', { seenTags: seen })).toBeCloseTo(0.8)
+    expect(nudgeMultiplier(pool[0], 'new', { seenTags: seen })).toBe(1)
     const got = byId(run(baseMood, { seenTags: seen }))
-    expect(got.get(100)!.parts!.nudge).toBeCloseTo(0.8)
+    expect(got.get(101)!.parts!.nudge).toBeCloseTo(0.8)
+  })
+
+  /*
+   * Самые голосуемые теги Steam — жанры и режимы: Action стоит в первой
+   * тройке у тысячи игр каталога. Пять показанных рогаликов с [Action,
+   * Roguelike, Indie] штрафовали открытый мир с [Action, RPG, Open World] за
+   * общий Action — и не трогали рогалик, у которого тройка [Roguelite, Pixel
+   * Graphics, Difficult]. Подталкивание уводило от слова Action, а не от того,
+   * что на экране.
+   */
+  test('«Что-то другое»: общий жанр или режим в главных тегах — ещё не «то же самое»', () => {
+    const seen = seenTagsOf([
+      meta(60, { Action: 100, Roguelike: 90, Indie: 80 }),
+      meta(61, { Multiplayer: 100, Roguelike: 70, Action: 60 }),
+    ])
+    expect([...seen]).toEqual(['Roguelike'])
+    const openWorld = meta(62, { Action: 100, RPG: 90, 'Open World': 80 })
+    const coop = meta(63, { Multiplayer: 100, Indie: 90, Survival: 80 })
+    const rogue = meta(64, { Roguelike: 100, 'Pixel Graphics': 60, Difficult: 50 })
+    expect(nudgeMultiplier(openWorld, 'new', { seenTags: seen })).toBe(1)
+    expect(nudgeMultiplier(coop, 'new', { seenTags: seen })).toBe(1)
+    expect(nudgeMultiplier(rogue, 'new', { seenTags: seen })).toBeCloseTo(0.8)
   })
 
   test('часть nudge входит в произведение у каждого подталкивания', () => {
@@ -2597,5 +2844,254 @@ describe('без настроения (moodless)', () => {
 
   test('компания остаётся фильтром: одиночное ей не предлагается и без настроения', () => {
     expect(run({ ...tired, social: 'friends' }, true)).toEqual([])
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts): тег судится среди главных, а не среди
+ * всех. Цифры мест — из замеров по копии каталога в докблоках MUTES.
+ */
+describe('«Не предлагать»: mutedHit', () => {
+  const only = (...keys: string[]) => parseMutes(keys.join('.'))
+  /** Мета, где теги стоят ровно в переданном порядке голосов */
+  const ranked = (tags: string[], extra: Partial<GameMeta> = {}): GameMeta => ({
+    ...meta(1, Object.fromEntries(tags.map((t, i) => [t, 1000 - i * 10]))),
+    ...extra,
+  })
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => `Filler${i}`)
+
+  test('пусто и без меты — мимо', () => {
+    expect(mutedHit(ranked(['Horror']), [])).toBe(false)
+    expect(mutedHit(undefined, only('horror'))).toBe(false)
+  })
+
+  test('главный тег исключает, хвостовой — нет: у Kairo «Horror» тринадцатый', () => {
+    expect(mutedHit(ranked(['Horror', ...filler(10)]), only('horror'))).toBe(true)
+    expect(mutedHit(ranked([...filler(4), 'Psychological Horror']), only('horror'))).toBe(true)
+    expect(mutedHit(ranked([...filler(5), 'Survival Horror']), only('horror'))).toBe(false)
+    expect(mutedHit(ranked([...filler(12), 'Horror']), only('horror'))).toBe(false)
+  })
+
+  /*
+   * Ряд чипсов карточки пропускает предупреждения о контенте и отдаёт место
+   * следующим (topTags). Тег, который карточка покажет, обязан исключать, —
+   * даже если по голосам он шестой-седьмой.
+   */
+  test('тег, видимый чипсом карточки, исключает, сколько бы предупреждений ни стояло выше', () => {
+    const m = ranked(['Nudity', 'Gore', 'Sexual Content', ...filler(3), 'VR'])
+    expect(topTags(m)).toContain('VR')
+    expect(mutedHit(m, only('vr'))).toBe(true)
+  })
+
+  test('предупреждения о контенте — до десятого места среди всех тегов', () => {
+    // «Nudity» у The Witcher 3 восьмой
+    expect(mutedHit(ranked([...filler(7), 'Nudity']), only('lewd'))).toBe(true)
+    expect(mutedHit(ranked([...filler(10), 'Nudity']), only('lewd'))).toBe(false)
+    // и только своим набором: «откровенное» не судит кровь
+    expect(mutedHit(ranked(['Gore', ...filler(3)]), only('lewd'))).toBe(false)
+    expect(mutedHit(ranked(['Gore', ...filler(3)]), only('gore'))).toBe(true)
+  })
+
+  test('VR — по числу чипсов: пятый (Resident Evil 7) остаётся, четвёртый уходит', () => {
+    // HITMAN World of Assassination: VR четвёртый, шлем по желанию — и всё
+    // равно уходит: карточка показала бы «VR» чипсом (цена — в докблоке VR_TOP)
+    expect(mutedHit(ranked([...filler(3), 'VR']), only('vr'))).toBe(true)
+    // Resident Evil 7: VR пятый
+    expect(mutedHit(ranked([...filler(4), 'VR']), only('vr'))).toBe(false)
+  })
+
+  test('VR-версию с тегом ниже ловит имя, а VRChat — тег, а не слово', () => {
+    const tags = [...filler(4), 'VR']
+    expect(mutedHit(ranked(tags, { name: 'Sairento VR' }), only('vr'))).toBe(true)
+    expect(mutedHit(ranked(tags, { name: "Hellblade: Senua's Sacrifice VR Edition" }), only('vr'))).toBe(true)
+    expect(mutedHit(ranked([...filler(6)], { name: 'VRChat' }), only('vr'))).toBe(false)
+    expect(mutedHit(ranked(['VR', ...filler(6)], { name: 'VRChat' }), only('vr'))).toBe(true)
+  })
+
+  test('ранний доступ — жанр Steam решает и без тега, а тег у вышедшей игры — хвост', () => {
+    expect(mutedHit(ranked(filler(6), { genres: ['Экшены', 'Ранний доступ'] }), only('early'))).toBe(true)
+    // Rust: Early Access девятнадцатый, жанра нет — игра давно вышла
+    expect(mutedHit(ranked([...filler(18), 'Early Access']), only('early'))).toBe(false)
+    expect(mutedHit(ranked(['Early Access', ...filler(5)]), only('early'))).toBe(true)
+  })
+
+  test('несколько наборов — достаточно любого', () => {
+    const m = ranked(['Anime', ...filler(5)])
+    expect(mutedHit(m, only('horror'))).toBe(false)
+    expect(mutedHit(m, only('horror', 'anime'))).toBe(true)
+  })
+})
+
+/*
+ * Вкус без запретного: пул каталога спрашивается по тегам профиля, и
+ * запретный тег в нём — вопрос, ответ на который отсев всё равно выбросит
+ * (докблок mutedTaste). Вкус к хвостовому хоррору тоже не нужен тому, кто
+ * просил без хорроров.
+ */
+describe('«Не предлагать»: mutedTaste', () => {
+  test('теги наборов уходят из профиля целиком, остальное — как было', () => {
+    const profile = { Horror: 3, 'Survival Horror': 1, VR: 2, Puzzle: 1.5, Cozy: -0.5 }
+    expect(mutedTaste(profile, parseMutes('horror.vr'))).toEqual({ Puzzle: 1.5, Cozy: -0.5 })
+    // исходный профиль не тронут: его читают и другие
+    expect(profile.Horror).toBe(3)
+  })
+
+  test('без набора — тот же объект', () => {
+    const profile = { Horror: 1 }
+    expect(mutedTaste(profile, [])).toBe(profile)
+  })
+
+  test('весь вкус был запретным — вкуса нет, и движок честно идёт по популярности', () => {
+    expect(hasTaste(mutedTaste({ Horror: 2, 'Psychological Horror': 1 }, parseMutes('horror')))).toBe(false)
+  })
+})
+
+/*
+ * Причина, написанная заранее чужим профилем (запись игры дня), — называет
+ * ли она запретный тег вкусом. Судится текст записи, суженный отметками
+ * sharedTasteTags: отметки одни шире причины — под якорем она тегов не
+ * называет, и браузер платил бы отбором заново за игру, на которой
+ * запретного ни слова. Общие теги причина не называет никогда, и отбор
+ * заново ради «Раннего доступа» в отметках был бы платой ни за что.
+ */
+describe('«Не предлагать»: namesMutedTaste', () => {
+  /** Причина «по тегам» — как её пишет шаблон нетронутой (matchedTags в lib/llm) */
+  const byTags = (tags: string[]) =>
+    `«Пасьянс» ты не запускал ни разу — ноль минут. По тегам (${tags.map(tagRu).join(', ')}) это очень твоё; ` +
+    'сегодня хороший день это исправить.'
+  /** Та же нетронутая с якорем: своя игра встаёт вместо тегов */
+  const anchored =
+    '«Пасьянс» ты не запускал ни разу — ноль минут, а ближе всего она к «Stardew Valley», где у тебя 40 ч. ' +
+    'Сегодня хороший день это исправить.'
+  const pvp = parseMutes('pvp')
+
+  test('запретный тег в отметках и в причине — да, хоть третьим', () => {
+    const tags = ['Puzzle', 'Cozy', 'Competitive']
+    expect(namesMutedTaste({ sharedTags: tags, reasonBase: byTags(tags) }, pvp)).toBe(true)
+    const anime = { sharedTags: ['Anime'], reasonBase: byTags(['Anime']) }
+    expect(namesMutedTaste(anime, parseMutes('horror.anime'))).toBe(true)
+  })
+
+  test('запретный тег в отметках, а причина с якорем его не называет — нет', () => {
+    expect(namesMutedTaste({ sharedTags: ['Puzzle', 'Competitive'], reasonBase: anchored }, pvp)).toBe(false)
+  })
+
+  /*
+   * Запись хранит две причины: с патчем — для writer-сессии, без — для
+   * остальных (dailyReasonBase). Годность записи одна на браузер, и судятся
+   * обе.
+   */
+  test('называет хоть одна из двух причин записи — да', () => {
+    const sharedTags = ['Puzzle', 'Competitive']
+    expect(namesMutedTaste({ sharedTags, reasonBase: byTags(sharedTags), reasonPatched: anchored }, pvp)).toBe(true)
+    expect(namesMutedTaste({ sharedTags, reasonBase: anchored, reasonPatched: byTags(sharedTags) }, pvp)).toBe(true)
+    expect(namesMutedTaste({ sharedTags, reasonBase: anchored, reasonPatched: anchored }, pvp)).toBe(false)
+  })
+
+  test('общий тег под фильтром причина не называет — нет', () => {
+    const tags = ['Puzzle', 'Early Access', 'Massively Multiplayer']
+    expect(namesMutedTaste({ sharedTags: tags, reasonBase: byTags(tags) }, parseMutes('early.mmo'))).toBe(false)
+    expect(namesMutedTaste({ sharedTags: ['VR'], reasonBase: byTags(['VR']) }, parseMutes('vr'))).toBe(false)
+  })
+
+  test('без набора, без запретного в отметках — нет', () => {
+    const competitive = { sharedTags: ['Competitive'], reasonBase: byTags(['Competitive']) }
+    expect(namesMutedTaste(competitive, [])).toBe(false)
+    const cozy = { sharedTags: ['Puzzle', 'Cozy'], reasonBase: byTags(['Puzzle', 'Cozy']) }
+    expect(namesMutedTaste(cozy, parseMutes('pvp.horror'))).toBe(false)
+    // подпись в тексте, но не вкусом: отметок нет — и судить нечего
+    expect(namesMutedTaste({ sharedTags: [], reasonBase: byTags(['Competitive']) }, pvp)).toBe(false)
+  })
+
+  /*
+   * Договор с причиной (matchedTags в lib/llm): по каждому тегу каждого
+   * набора, каждому источнику, с якорем и без — да ровно тогда, когда
+   * причина правда называет его вкусом. Шире — браузер платил бы отбором
+   * заново за игру, которую ему можно показать (так было, пока судились одни
+   * отметки: /api/daily даёт anchorOf, и якорь вставал вместо тегов); уже —
+   * «По тегам (Соревновательная)» стояло бы у того, кто их запретил. Тег
+   * шестым: героем такая игра фильтр проходит (mutedHit).
+   */
+  test('да — ровно когда причина называет тег; по всем тегам, источникам, с якорем и без', () => {
+    const rest = ['Puzzle', 'Cozy', 'Farming Sim', 'Card Game', 'Relaxing']
+    const anchor = { appid: 1, name: 'Stardew Valley', hours: 40 }
+    let silent = 0
+    for (const preset of MUTES) {
+      for (const tag of preset.tags) {
+        const meta: GameMeta = {
+          appid: 9,
+          name: 'Пасьянс',
+          tags: Object.fromEntries([...rest, tag].map((t, i) => [t, 600 - i * 100])),
+          genres: [],
+          categories: [],
+        }
+        const profile = { [tag]: 1 }
+        const sharedTags = sharedTasteTags(profile, meta)
+        for (const source of CANDIDATE_SOURCES) {
+          for (const anchorOf of [undefined, () => anchor]) {
+            const candidate = { appid: 9, name: 'Пасьянс', source, score: 1 }
+            const [pick] = heuristicPicks([candidate], () => meta, 1, 0, profile, { anchorOf })
+            const named = pick.reason.includes(`(${tagRu(tag)})`)
+            if (!named && sharedTags.includes(tag) && !GENERIC_TAGS.has(tag)) silent++
+            expect(
+              namesMutedTaste({ sharedTags, reasonBase: pick.reason }, [preset]),
+              `${tag}, ${source}${anchorOf ? ', с якорем' : ''}`,
+            ).toBe(named)
+          }
+        }
+      }
+    }
+    // предпосылка: запретное в отметках при молчащей причине правда бывает
+    expect(silent).toBeGreaterThan(0)
+  })
+})
+
+describe('«Не предлагать» в scoreCandidates', () => {
+  const baseMood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+  const horror = parseMutes('horror')
+  // Шесть своих с убывающим вкусом: 1 и 2 — хорроры
+  const lib = [1, 2, 3, 4, 5, 6].map((appid) => game({ appid, playtimeForever: 10 }))
+  const metas = new Map(
+    lib.map((g) => [
+      g.appid,
+      meta(g.appid, { Action: 100, ...(g.appid <= 2 ? { Horror: 90 } : {}), Other: (g.appid - 1) * 30 }),
+    ]),
+  )
+  const run = (extra: Partial<Parameters<typeof scoreCandidates>[0]> = {}) =>
+    scoreCandidates({
+      profile: { Action: 1 },
+      library: lib,
+      metaOf: (id) => metas.get(id),
+      newPool: [],
+      mood: baseMood,
+      nowSec: NOW,
+      ...extra,
+    })
+
+  test('без набора и с пустым — ровно прежние скоры', () => {
+    expect(run({ muted: [] })).toEqual(run())
+  })
+
+  test('своё и каталог под фильтром уходят, и мест в limit не занимают', () => {
+    const pool = [meta(100, { Action: 100, Horror: 80 }), meta(101, { Action: 100 })]
+    const ids = run({ muted: horror, newPool: pool, limit: 4 }).map((c) => c.appid)
+    expect(ids).toHaveLength(4)
+    expect(ids).not.toContain(1)
+    expect(ids).not.toContain(2)
+    expect(ids).not.toContain(100)
+    expect(ids).toContain(101)
+  })
+
+  /*
+   * Пол паузы возвращает отложенное, когда своих меньше пятёрки. Хоррор,
+   * отложенный «не сейчас» до того, как хорроры запретили, не должен
+   * вернуться им: отсев стоит до пауз.
+   */
+  test('пол паузы не возвращает игру под фильтром', () => {
+    const paused = new Map(lib.map((g) => [g.appid, { mult: 0, kind: 'notnow' as const, at: NOW - 3600 }]))
+    const plain = run({ cooldown: paused }).map((c) => c.appid)
+    expect(plain).toContain(1)
+    const ids = run({ cooldown: paused, muted: horror }).map((c) => c.appid)
+    expect(ids).toEqual([3, 4, 5, 6])
   })
 })

@@ -1,10 +1,11 @@
 'use client'
 
-import { useSyncExternalStore } from 'react'
+import { useLayoutEffect, useSyncExternalStore } from 'react'
 import { syncThemeColor } from '@/lib/themecolor'
 import { Icon } from './Icon'
 
-const STORAGE_KEY = 'imbored-theme'
+/** Тот же ключ читает скрипт темы в app/layout.tsx (сторож — lib/themecolor.test.ts) */
+export const STORAGE_KEY = 'imbored-theme'
 
 /**
  * Источник правды — атрибут data-theme на <html>, а не состояние React.
@@ -38,8 +39,70 @@ function serverTheme(): 'dark' | 'light' {
   return 'dark'
 }
 
+/**
+ * Сохранённая светлая — на <html>, если атрибут туда ещё никто не поставил.
+ * true — поставили сейчас: обвязку браузера пора перекрасить.
+ *
+ * Обычно его ставит скрипт темы в app/layout.tsx, ещё при разборе документа.
+ * Но есть документ, где скрипт не исполняется вовсе: notFound() без Suspense
+ * над ним (/game/<нет такой>, /pick/<истёк>, патч, которого нет). Статус 404
+ * Next держит тем, что отдаёт пустую оболочку <html id="__next_error__">, а
+ * корневой лэйаут вместе со страницей 404 рисует уже браузер — createRoot, не
+ * гидратация (next/dist/client/app-index.js). <script>, созданный React на
+ * клиенте, не исполняется никогда; в dev об этом и пишет «Encountered a
+ * script tag». Тот, кто выбрал светлую, получал по мёртвой ссылке тёмную
+ * страницу и «тёмный» значок темы.
+ *
+ * Хранилище — функцией: в приватном режиме бросает уже само обращение к
+ * localStorage, и оно обязано стоять внутри try, как в скрипте темы.
+ */
+export function applyStoredTheme(
+  root: { dataset: DOMStringMap },
+  storage: () => Pick<Storage, 'getItem'>,
+): boolean {
+  if (root.dataset.theme) return false
+  try {
+    if (storage().getItem(STORAGE_KEY) !== 'light') return false
+  } catch {
+    return false
+  }
+  root.dataset.theme = 'light'
+  return true
+}
+
+/**
+ * Запомнить выбор темы — молча, если хранилище закрыто.
+ *
+ * Запрет данных сайта или приватный режим: бросает уже само обращение к
+ * localStorage, поэтому хранилище — функцией и внутри try, как при чтении
+ * (applyStoredTheme выше, скрипт темы в app/layout.tsx). Запись стояла
+ * голой: тема на экране менялась, а исключение уходило из обработчика клика
+ * в window.onerror и отчётом в /api/clienterr — на каждое нажатие, про
+ * известное и безвредное. Теперь выбор просто живёт до перезагрузки.
+ * Сторож — lib/themecolor.test.ts.
+ */
+export function saveTheme(next: 'dark' | 'light', storage: () => Pick<Storage, 'setItem'>): void {
+  try {
+    storage().setItem(STORAGE_KEY, next)
+  } catch {}
+}
+
 export function ThemeToggle() {
   const theme = useSyncExternalStore(subscribe, readTheme, serverTheme)
+
+  /*
+   * Тема для документа, который нарисовал браузер (applyStoredTheme выше).
+   * Переключатель — в шапке корневого лэйаута, то есть монтируется и там. Эффект
+   * разметки, а не обычный: идёт до первой отрисовки, тёмного кадра нет. Там,
+   * где скрипт темы отработал, атрибут уже стоит, и это пустая операция.
+   *
+   * Значок догоняет сам: подписка на атрибут ставится позже этого эффекта, но
+   * useSyncExternalStore после коммита сверяет снимок ещё раз и перерисует
+   * кнопку светлой.
+   */
+  useLayoutEffect(() => {
+    if (applyStoredTheme(document.documentElement, () => localStorage)) syncThemeColor()
+  }, [])
 
   function toggle() {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -49,7 +112,7 @@ export function ThemeToggle() {
     // Адресная строка — вслед за шапкой: над обычной страницей она сменила
     // цвет вместе с темой, над кино-зоной осталась тёмной (lib/themecolor)
     syncThemeColor()
-    localStorage.setItem(STORAGE_KEY, next)
+    saveTheme(next, () => localStorage)
   }
 
   return (

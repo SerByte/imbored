@@ -8,7 +8,7 @@ import {
 } from '../lib/db'
 import { mineReviews, parseReviewsRaw } from '../lib/reviewmine'
 import { fetchReviewsRaw } from '../lib/reviews'
-import { deriveSemantics, SEMANTICS_V } from '../lib/semantics'
+import { deriveSemantics, PLAYED_SINCE, SEMANTICS_V } from '../lib/semantics'
 
 /**
  * Работа semantics:build без обвязки командной строки: приор по тегам на весь
@@ -63,25 +63,48 @@ export async function buildTagPrior(db: Db, nowSec: number): Promise<{ games: nu
 }
 
 /**
- * Очередь за отзывами: живые игры, за чьими отзывами ещё не ходили (или
- * ходили под старую версию формата), — сверху каталога по числу отзывов.
+ * Кто ждёт отзывов — одно условие на очередь и на подсказку «ещё N» в
+ * scripts/build-semantics, чтобы они не разъехались, как когда-то выборка и
+ * счётчик карточек (pageDueSql в lib/db). Таблицы — games g и game_semantics s
+ * через LEFT JOIN.
  *
- * Игра, которой Steam ответил, но отзывов не хватило, сюда не возвращается:
- * у неё стоит reviews_at (см. upsertSemantics). Иначе каждый запуск порцией
- * начинался бы с одних и тех же тонких игр.
+ * Живые игры, за чьими отзывами ещё не ходили (или ходили под старую версию
+ * формата). Игра, которой Steam ответил, но отзывов не хватило, сюда не
+ * возвращается: у неё стоит reviews_at (см. upsertSemantics). Иначе каждый
+ * запуск порцией начинался бы с одних и тех же тонких игр.
+ *
+ * Исключение одно и разовое — «Наиграли» (GameSemantics.played). Запись по
+ * отзывам, разобранным до PLAYED_SINCE, его не знает: хваливших тогда не
+ * считали. Такая запись возвращается ровно один раз — после похода reviews_at
+ * встаёт позже отсечки (reviewPass ставит её, даже если запись не легла), и
+ * тонкая игра второй раз сюда не придёт. Запись по тегам не возвращается:
+ * played пишется только вместе с отзывами, сдвинувшими оси, и тонкой игре
+ * его взять неоткуда. Догнать верх каталога — владельцу:
+ * semantics:build --with-reviews --limit=500, затем --publish.
  */
+export function reviewDueSql(): { where: string; args: number[] } {
+  return {
+    where: `${ALIVE_POOL_G} AND g.appid > 0
+            AND (s.appid IS NULL OR s.reviews_at IS NULL OR s.v < ?
+                 OR (s.basis = 'tags+reviews' AND s.reviews_at < ?
+                     AND json_extract(s.json, '$.played') IS NULL))`,
+    args: [SEMANTICS_V, PLAYED_SINCE],
+  }
+}
+
+/** Очередь за отзывами (reviewDueSql) — сверху каталога по числу отзывов */
 export async function reviewQueue(
   db: Db,
   limit: number,
 ): Promise<Array<{ appid: number; tags: Record<string, number> }>> {
+  const due = reviewDueSql()
   const res = await db.execute({
     sql: `SELECT g.appid, g.tags_json FROM games g
           LEFT JOIN game_semantics s ON s.appid = g.appid
-          WHERE ${ALIVE_POOL_G} AND g.appid > 0
-            AND (s.appid IS NULL OR s.reviews_at IS NULL OR s.v < ?)
+          WHERE ${due.where}
           ORDER BY g.reviews_total DESC, g.appid
           LIMIT ?`,
-    args: [SEMANTICS_V, limit],
+    args: [...due.args, limit],
   })
   return (res.rows as unknown as Array<{ appid: number; tags_json: unknown }>).map((r) => ({
     appid: Number(r.appid),
@@ -147,6 +170,20 @@ export async function reviewPass(
     const semantics = deriveSemantics(tags, all ? mineReviews(all) : null)
     const at = now()
     await upsertSemantics(db, [{ appid, semantics, computedAt: at, reviewsAt: at }])
+    /*
+     * Отметку похода — и тогда, когда запись не легла. Так бывает у догона
+     * «Наиграли» (reviewDueSql): запись по отзывам вернулась в очередь, а
+     * Steam в этот раз отдал меньше отзывов, чем нужно сдвинуть оси, — или
+     * пустой ответ. Приор по тегам upsertSemantics поверх неё не пишет, и
+     * правильно, но вместе с записью не двигалась бы и reviews_at: игра
+     * стояла бы в голове очереди каждый запуск. reviews_at и значит «когда
+     * отзывы последний раз разбирались» (схема game_semantics в lib/db), а
+     * не «из каких отзывов запись».
+     */
+    await db.execute({
+      sql: 'UPDATE game_semantics SET reviews_at = ? WHERE appid = ? AND (reviews_at IS NULL OR reviews_at < ?)',
+      args: [at, appid, at],
+    })
     answered++
     if (semantics.basis === 'tags+reviews') withReviews++
     if (answered % 25 === 0) {

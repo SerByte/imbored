@@ -1,6 +1,6 @@
 'use client'
 
-import dynamic from 'next/dynamic'
+import { lazyIsland } from '@/components/lazyIsland'
 
 /**
  * Декабрьская пасхалка на «Игре дня».
@@ -8,7 +8,7 @@ import dynamic from 'next/dynamic'
  * Два гейта, и оба обязательны:
  *
  * 1. Месяц. Снег включается только в декабре — вне декабря компонент не
- *    рендерится, значит next/dynamic никогда не дёргает свой чанк и three
+ *    рендерится, значит островок никогда не просит свой чанк и three
  *    (~150 КБ gzip) не скачивается. Это единственная причина, по которой такую
  *    тяжёлую зависимость вообще можно себе позволить.
  * 2. prefers-reduced-motion. Снег — это движение по всему экрану, ровно то, на
@@ -19,9 +19,11 @@ import dynamic from 'next/dynamic'
  * останавливает по AUTO_MOTION из lib/motion.ts (WCAG 2.2.2 — фон, который
  * пошёл сам, обязан сам и встать).
  *
- * ssr: false — компонент лезет в WebGL, на сервере ему делать нечего.
+ * Только в браузере — компонент лезет в WebGL, на сервере ему делать нечего.
+ * Островком (components/lazyIsland), а не next/dynamic с ssr: false: /daily
+ * стоит у потолка бюджета первой загрузки, а рантайм next/dynamic — ~4 КБ.
  */
-const PixelSnow = dynamic(() => import('@/components/PixelSnow'), { ssr: false })
+const PixelSnow = lazyIsland(() => import('@/components/PixelSnow').then((m) => m.default), 'snow')
 
 export function SeasonalSnow() {
   const isDecember = new Date().getMonth() === 11

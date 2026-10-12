@@ -6,10 +6,21 @@ import { Evenings } from '@/components/Evenings'
 import { GameCardBody } from '@/components/GameCard'
 import { LikedShelf } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
-import { logFeedback, recordOutcome, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
+import { SignOut } from '@/components/SignOut'
+import {
+  issueFeedLink,
+  logFeedback,
+  recordOutcome,
+  saveLibrarySnapshot,
+  saveWishlist,
+  upsertGamesMeta,
+  type Db,
+} from '@/lib/db'
+import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
 import { nowSec } from '@/lib/server'
-import { freshDb, signInAs, type SessionKind } from '@/lib/testing/route'
+import { freshDb, signInAs, STEAMID_OF, type SessionKind } from '@/lib/testing/route'
 import LibraryPage from './page'
+import { WishlistShelf } from './WishlistShelf'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -39,6 +50,8 @@ const BANNED = 900
 const LIKED = 901
 const EVENING = 902
 const SKIPPED = 903
+/** Из списка желаемого владельца */
+const WISHED = 904
 
 const NAMES: Record<number, string> = {
   [PLAYED]: 'Альфа',
@@ -89,6 +102,8 @@ async function seed(steamid: string): Promise<void> {
   await logFeedback(db, { steamid, appid: LIKED, action: 'liked' }, now - 200)
   await logFeedback(db, { steamid, appid: SKIPPED, action: 'skipped' }, now - 100)
   await recordOutcome(db, { steamid, appid: EVENING, source: null, launched: true }, now - 60)
+  // Список желаемого — что человек хочет купить: тоже его личное
+  await saveWishlist(db, steamid, [WISHED], now - 30)
 }
 
 async function render(kind: SessionKind): Promise<ReactElement> {
@@ -163,6 +178,20 @@ describe('/library: личное владельца — только тому, �
     expect(propsOf(tree, NeedSteam).filter((p) => p.why === 'see')).toEqual([])
   })
 
+  test('вошедший через Steam получает полку желаемого с уже прочитанным списком', async () => {
+    const tree = await render('openid')
+    const shelves = propsOf(tree, WishlistShelf)
+    expect(shelves).toHaveLength(1)
+    expect(shelves[0].steamid).toBe(STEAMID_OF.openid)
+    expect((shelves[0].row as { appids: number[] }).appids).toEqual([WISHED])
+    // своё не предлагается купить: полка знает библиотеку
+    expect((shelves[0].owned as ReadonlySet<number>).has(PLAYED)).toBe(true)
+  })
+
+  test('у демо списка желаемого нет — и полки тоже: в Steam за ним не ходим', async () => {
+    expect(propsOf(await render('demo'), WishlistShelf)).toEqual([])
+  })
+
   test('сессия по ссылке — ни полок, ни вечеров, ни доли; вместо них строка о входе', async () => {
     const tree = await render('claimed')
 
@@ -173,6 +202,9 @@ describe('/library: личное владельца — только тому, �
     expect(liked.games).toEqual([])
     expect(liked.total).toBe(0)
     expect(propsOf(tree, Evenings)).toEqual([])
+    // Список желаемого не читается и не показывается: что человек хочет
+    // купить — не дело того, у кого есть ссылка на профиль
+    expect(propsOf(tree, WishlistShelf)).toEqual([])
 
     const all = strings(tree)
     for (const name of PRIVATE) {
@@ -217,5 +249,144 @@ describe('/library: личное владельца — только тому, �
     const shelf = sealedShelf(await render(kind))
     expect(shelf.sort()).toEqual(SEALED)
     expect(shelf).not.toContain(SEALED_BANNED)
+  })
+})
+
+/**
+ * «Уже прошёл» в «Твоих вечерах» (components/Evenings): решают сервер и его
+ * чтения, островок только рисует. Игра с финалом — кнопка; песочница — нет,
+ * её не «проходят»; уже пройденная (последний бан с причиной 'done', то же
+ * чтение, что полка «Пройдено») — слово вместо кнопки.
+ */
+describe('/library: «Уже прошёл» у вечеров', () => {
+  const RPG = 950
+  const SANDBOX = 951
+  const DONE = 952
+
+  async function evenings() {
+    const steamid = await signInAs(db, 'openid')
+    const now = nowSec()
+    await upsertGamesMeta(
+      db,
+      [
+        { appid: RPG, name: 'С титрами', tags: { RPG: 100, 'Story Rich': 50 }, genres: [], categories: [2] },
+        { appid: SANDBOX, name: 'Без конца', tags: { Sandbox: 100, Survival: 50 }, genres: [], categories: [2] },
+        { appid: DONE, name: 'Пройденная', tags: { Metroidvania: 100 }, genres: [], categories: [2] },
+      ],
+      now,
+    )
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      [RPG, SANDBOX, DONE].map((appid) => ({ appid, name: `#${appid}`, playtimeForever: 600, playtime2Weeks: 0 })),
+      now - 3600,
+    )
+    for (const appid of [RPG, SANDBOX, DONE]) {
+      await recordOutcome(db, { steamid, appid, source: null, launched: true }, now - 600)
+    }
+    await logFeedback(db, { steamid, appid: DONE, action: 'banned', reason: 'done' }, now - 60)
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/library'>)
+    const [props] = propsOf(tree, Evenings)
+    const items = props.items as Array<{ appid: number; finishable: boolean; finished: boolean }>
+    return new Map(items.map((i) => [i.appid, { finishable: i.finishable, finished: i.finished }]))
+  }
+
+  test('кнопка — у игры с финалом; у песочницы нет; пройденная знает, что пройдена', async () => {
+    const got = await evenings()
+    expect(got.get(RPG)).toEqual({ finishable: true, finished: false })
+    expect(got.get(SANDBOX)).toEqual({ finishable: false, finished: false })
+    expect(got.get(DONE)).toEqual({ finishable: true, finished: true })
+  })
+})
+
+/**
+ * План на вечер (lib/eveningplan.ts) закрывается запуском, а «Вернуться к
+ * ней» / «Запустить» в «Твоих вечерах» — запуск сайта, а не клиента Steam.
+ * Игра, которую советовали, запускали и потом поставили на загрузку, бывает
+ * и вечером, и планом; запущенная отсюда, она висела бы на главной «Ставил
+ * на загрузку — ждёт тебя» до конца срока. Какой план жив, решает сервер —
+ * тем же правилом (LIVE_PLAN в lib/db.ts), что живая строка, только читает
+ * все живые планы (livePlanAppids), а не один самый свежий; островок только
+ * пишет запуск по нему.
+ */
+describe('/library: план на вечер у «Твоих вечеров»', () => {
+  /** later — ещё один план, свежее и на игру не с полки: он и встал бы живой строкой */
+  async function plansOf(kind: SessionKind, planned: boolean, later = false) {
+    const steamid = await signInAs(db, kind)
+    await seed(steamid)
+    const plan = (appid: number, at: number) =>
+      logFeedback(db, { steamid, appid, action: 'opened', ctx: { source: 'play', intent: 'install' } }, at)
+    if (planned) await plan(EVENING, nowSec() - 3600)
+    if (later) await plan(PLAYED, nowSec() - 30)
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/library'>)
+    return propsOf(tree, Evenings).map((p) => p.plans)
+  }
+
+  test('живой план — его игра едет в «Твои вечера»; без плана — никого', async () => {
+    expect(await plansOf('openid', true)).toEqual([[EVENING]])
+    db = await freshDb()
+    expect(await plansOf('openid', false)).toEqual([[]])
+  })
+
+  /*
+   * Вчера «Сыграю вечером» у игры с полки, сегодня «Поставь на загрузку» у
+   * другой. Полке нужен план своей игры, а не самый свежий: по нему одному
+   * «Вернуться к ней» у старшей ничего не писал, и её план вставал живой
+   * строкой, едва закрывали свежий. Игры не с полки в пропсы не едут — им
+   * там нечего закрывать.
+   */
+  test('план игры с полки едет, даже когда свежее стоит другой', async () => {
+    expect(await plansOf('openid', true, true)).toEqual([[EVENING]])
+    db = await freshDb()
+    expect(await plansOf('openid', false, true)).toEqual([[]])
+  })
+
+  // Демо-библиотека чужая, и «вечером» у неё не наступает; сессии по ссылке
+  // вечеров нет вовсе
+  test('демо — без плана, сессия по ссылке — без полки', async () => {
+    expect(await plansOf('demo', true)).toEqual([[]])
+    db = await freshDb()
+    expect(await plansOf('claimed', true)).toEqual([])
+  })
+})
+
+/**
+ * «Выйти на всех устройствах» гасит и секретную ссылку на RSS-ленту
+ * (revokeAllSessions). Жмут его и просто прибраться в старых устройствах —
+ * и подтверждение обязано сказать про ридер в момент нажатия, а не мелким
+ * шрифтом на /whatsnew. Страница говорит SignOut, есть ли ссылка.
+ */
+describe('/library: выход везде знает про RSS-ссылку', () => {
+  async function signOutProps(kind: SessionKind, withLink: boolean) {
+    const steamid = await signInAs(db, kind)
+    await seed(steamid)
+    if (withLink) {
+      const tokenHash = feedTokenHash(newFeedToken())
+      await issueFeedLink(db, { steamid, sid: 'sid-feed', tokenHash, nowSec: nowSec(), replace: true })
+    }
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/library'>)
+    return propsOf(tree, SignOut)
+  }
+
+  test('вошедший через Steam со ссылкой — подтверждение скажет про RSS', async () => {
+    expect(await signOutProps('openid', true)).toEqual([{ verified: true, feedLink: true }])
+  })
+
+  test('без ссылки — обычный вопрос', async () => {
+    expect(await signOutProps('openid', false)).toEqual([{ verified: true, feedLink: false }])
+  })
+
+  // Выхода везде у демо и у сессии по ссылке нет — и ссылку им незачем читать
+  test.each<SessionKind>(['demo', 'claimed'])('%s — без выхода везде ссылка не читается', async (kind) => {
+    expect(await signOutProps(kind, true)).toEqual([{ verified: false, feedLink: false }])
   })
 })

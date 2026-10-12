@@ -231,6 +231,23 @@ describe('подпись у «Войти через Steam»', () => {
     expect(out).toContain('href="/privacy"')
   })
 
+  /*
+   * Вход через Steam читает и открытый список желаемого (fetchWishlist, полка
+   * на /library). Обещание у двери — ответ тому, кто колеблется, и «только
+   * список игр» рядом с ней было бы неправдой ровно в момент доверия. /privacy
+   * это чтение называет, но до неё колеблющийся доходит не всегда.
+   */
+  test('обещание у двери входа называет список желаемого, пока его читаем', () => {
+    const readsWishlist = code(read('lib/steam.ts')).includes('IWishlistService/GetWishlist')
+    expect(readsWishlist, 'желаемое больше не читаем — сними его и с подписей у дверей').toBe(true)
+    expect(note()).toContain('список желаемого')
+    // вторая дверь — приглашение сравниться на /compat
+    expect(code(read('app/compat/[steamid]/page.tsx')).replace(/\s+/g, ' ')).toMatch(
+      /Прочитаем [^.]*список желаемого/,
+    )
+    expect(hits(/только\s+список\s+игр/)).toEqual([])
+  })
+
   test('дверь Steam ссылается на фразу — и в фолбэке, и у гостя', () => {
     expect(code(read(FALLBACK))).toMatch(
       /href="\/api\/auth\/steam"\s+aria-describedby=\{PASSWORD_NOTE_ID\}/,
@@ -249,7 +266,7 @@ describe('подпись у «Войти через Steam»', () => {
   test('сноска одна на фолбэк и карточку', () => {
     expect(hits(/<AccessNote \/>/)).toEqual([`${CARD} — 1`, `${FALLBACK} — 1`])
     expect(hits(/Пароль вводишь на сайте Steam/)).toEqual([`${FALLBACK} — 1`])
-    expect(hits(/Читаем\s+только список игр/)).toEqual([`${FALLBACK} — 1`])
+    expect(hits(/Читаем\s+игры с часами/)).toEqual([`${FALLBACK} — 1`])
     // id фразы — в одном месте, дверь берёт его константой
     expect(hits(new RegExp(PASSWORD_NOTE_ID))).toEqual([`${FALLBACK} — 1`])
   })

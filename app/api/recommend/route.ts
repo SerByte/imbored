@@ -2,14 +2,23 @@ import { NextResponse } from 'next/server'
 import { assignEdges } from '@/lib/badges'
 import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
-import { getHeroMedia } from '@/lib/db'
+import { getGamesMetaLite, getHeroMedia, latestEveningPlan } from '@/lib/db'
+import { logSwallowed } from '@/lib/errlog'
 import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
-import { takeLlmBudget } from '@/lib/llmcap'
+import { llmDailyCap, takeLlmBudgetForIp } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
 import { parseExclude, parseNudge, planNudge } from '@/lib/nudge'
-import { checkRate, checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
+import {
+  checkRate,
+  checkRatesInOrder,
+  clientIp,
+  personalRateId,
+  rateLimitedResponse,
+} from '@/lib/ratelimit'
 import {
   continueView,
+  hasTaste,
+  mutedHit,
   parseFocus,
   parseScope,
   parseSeed,
@@ -18,7 +27,7 @@ import {
 } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
-import { currentSteamId, getDb, isDemoId, nowSec, sessionSecret } from '@/lib/server'
+import { currentMutes, currentSession, getDb, isDemoId, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from '@/lib/types'
 import { readJsonObject } from '@/lib/reqbody'
@@ -47,9 +56,17 @@ const FAMILIAR_CAP_ASKED = 3
  * ограничителя цикл «получить демо-сессию → запросить подборку» превращается
  * в чужой счёт за токены, и заметить это можно было бы только по биллингу.
  *
- * Считаем по обеим осям сразу. Один steamid — про человека, который завис на
- * кнопке «ещё»; один IP — про скрипт, который чеканит новые демо-личности
- * (они одноразовые, см. demoSteamId, и лимит по steamid ему не преграда).
+ * Считаем по обеим осям сразу. Личный потолок — про человека, который завис
+ * на кнопке «ещё»; один IP — про скрипт, который чеканит новые демо-личности
+ * и сессии по ссылке (они одноразовые, см. demoSteamId, и личный потолок ему
+ * не преграда).
+ *
+ * Личный — не «на steamid». Один steamid давно не значит одного человека:
+ * сессию по ссылке /api/connect выдаёт на любой публичный профиль, и общий
+ * счётчик позволял чужому двадцатью запросами запирать владельцу /play окно
+ * за окном. Writer считается по steamid (один человек на всех своих
+ * устройствах), сессия по ссылке — сама по себе: personalRateId в
+ * lib/ratelimit.
  *
  * Отказ здесь именно 429, а не тихий откат на эвристику. Эвристика существует
  * для СБОЯ модели, и подменять ею отказ по лимиту значит скрыть от честного
@@ -66,13 +83,18 @@ const RECOMMEND_IP_LIMIT = 60
  * чтобы увидеть, как это работает, и шаблонное объяснение на первом же экране
  * обесценивает весь путь. Но и бесконечно крутить чужую библиотеку за наши
  * токены незачем — после пары подборок «вау» уже случилось.
+ *
+ * Квота на личность, а демо-личность новая на каждый демо-вход без куки, —
+ * скрипт её обходит. От скрипта бюджет модели стережёт доля адреса
+ * (llmIpDailyLimit в lib/llmcap), общая для демо и сессий по ссылке.
  */
 const DEMO_LLM_LIMIT = 2
 const DEMO_LLM_WINDOW_SEC = 86_400
 
 export async function POST(req: Request) {
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const { steamid } = session
 
   const body = (await readJsonObject(req)) as {
     mood?: unknown
@@ -102,13 +124,19 @@ export async function POST(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
+  const mutes = await currentMutes()
 
   // Личный гейт первым: отказанный по нему запрос не съедает потолок адреса
   const ip = clientIp(req.headers)
   const gate = await checkRatesInOrder(
     db,
     [
-      { bucket: 'recommend', id: steamid, limit: RECOMMEND_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
+      {
+        bucket: 'recommend',
+        id: personalRateId(session, isWriter(session)),
+        limit: RECOMMEND_LIMIT,
+        windowSec: RECOMMEND_WINDOW_SEC,
+      },
       { bucket: 'recommend-ip', id: ip, limit: RECOMMEND_IP_LIMIT, windowSec: RECOMMEND_WINDOW_SEC },
     ],
     now,
@@ -137,34 +165,71 @@ export async function POST(req: Request) {
     // Что уже на экране — только «Что-то другое»: остальным подталкиваниям
     // показанная игра, подошедшая под поправку, не помеха
     exclude: nudge === 'different' ? parseExclude(body.exclude) : [],
+    // «Не предлагать» — кукой этого браузера (lib/mutetags.ts): /play стоит
+    // у потолка бюджета и ради фильтра не везёт ни байта
+    muted: mutes,
   })
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
-  if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
+  // Кандидаты были, но все — под «Не предлагать»: совет — ослабить фильтр, а
+  // не «верни что-нибудь из бана» (FAIL.muted на /play). Затравку тут не
+  // называем: пусто не потому, что у X нет соседей
+  if (set === 'allmuted') return NextResponse.json({ error: 'muted' }, { status: 409 })
+  if (set === 'nocandidates') {
+    /*
+     * «Как «X», но…» приходит и адресом — со страницы игры, из «Уже прошёл» и
+     * из библиотеки, — и экран отказа обязан сказать, ЧЬИХ соседей не нашлось:
+     * «подбирать не из чего» у выдачи, которую просили «в духе Hades», звучит
+     * как поломка. Имя — одним чтением и только на этом отказе. Незнакомой
+     * затравке назвать нечего — тогда поля нет, и экран скажет общими словами.
+     */
+    const seedName = seed === null ? undefined : (await getGamesMetaLite(db, [seed])).get(seed)?.name
+    return NextResponse.json(
+      { error: 'nocandidates', ...(seedName ? { seed: { appid: seed, name: seedName } } : {}) },
+      { status: 409 },
+    )
+  }
   const { games, libMetas, profile, tagWeight, cooldown, banned, candidates, actual, discovery, heroPool } =
     set
   const seedRef = set.seed
 
-  // Цены — до подбора, и по всем, кто может попасть на экран: см. buildPickContext
+  // Цены — до подбора, и по всем, кто может попасть на экран: см. buildPickContext.
+  // Крупный патч после последнего запуска — только writer-сессии: факт
+  // производный от даты запуска, а сессию по вставленной ссылке выдают на
+  // любой публичный профиль (lib/comeback.ts). Остальным и запроса нет
   const ctx = await buildPickContext(
     db,
     set,
     [...new Set([...heroPool, ...discovery].map((c) => c.appid))],
+    { patches: isWriter(session) },
   )
-  const { metaNow, anchorOf, hoursOf, hideUrgency } = ctx
+  const { metaNow, anchorOf, hoursOf, hideUrgency, patchOf } = ctx
 
   // Демо-личность получает настоящую подборку, но считанное число раз в сутки —
-  // дальше та же выдача собирается эвристикой. Проверка идёт последней, уже
-  // после того как пул собран: она должна тратить квоту только тогда, когда
-  // вызов модели реально состоялся бы.
+  // дальше та же выдача собирается эвристикой. Проверка идёт уже после того,
+  // как пул собран: она должна тратить квоту только тогда, когда вызов модели
+  // реально состоялся бы. Поэтому сперва всё, что решается без записи, —
+  // есть из чего выбирать, есть ключ и модель не выключена нулём
+  // (LLM_DAILY_CAP=0): раньше демо-квота списывалась и без них, и гость мог
+  // потерять свою пару настоящих подборок на шаблонах — а включи владелец
+  // модель обратно в тот же день, гости, заходившие при выключенной, сутки
+  // получали бы эвристику.
   //
   // Выдача из соседей («Как «X», но…») и по подталкиванию к модели не ходит
   // вовсе: правило владельца — никакого нового расхода на модель, а это новые
   // поводы её звать. Эвристика с якорем и причинами по тегам здесь и так
-  // говорит по делу. Условия про затравку и подталкивание стоят в && первыми:
-  // такой запрос не тратит и демо-квоту.
+  // говорит по делу. Такой запрос не тратит ни одной квоты ниже.
+  const wantsModel =
+    seedRef === null && nudge === null && heroPool.length > 0 && llmAvailable() && llmDailyCap() > 0
+
+  // Дальше — по очереди, как в checkRatesInOrder: личная квота демо, доля
+  // адреса в суточном бюджете, сам бюджет (lib/llmcap, takeLlmBudgetForIp).
+  // Доля адреса — потому что потолки подбора выше стерегут Turso, а не
+  // модель: шестьдесят подборов на адрес за десять минут выбрали бы общий
+  // бюджет суток за часы, и до полуночи модель молчала бы для всех. Отказ на
+  // любом шаге — та же выдача эвристикой, без 429: это не личный потолок
+  // человека на подборы, и отказывать ему не за что.
   const llmAllowed =
-    seedRef === null &&
-    nudge === null &&
+    wantsModel &&
     (!isDemoId(steamid) ||
       (
         await checkRate(db, {
@@ -174,13 +239,11 @@ export async function POST(req: Request) {
           windowSec: DEMO_LLM_WINDOW_SEC,
           nowSec: now,
         })
-      ).ok)
+      ).ok) &&
+    (await takeLlmBudgetForIp(db, ip, now))
 
-  // Общий суточный бюджет модели (lib/llmcap) — самым последним: берётся,
-  // только когда вызов точно состоится. Выбран — та же выдача эвристикой, без
-  // 429: это не личный потолок человека, и отказывать ему не за что.
   const fromClaude =
-    heroPool.length && llmAllowed && llmAvailable() && (await takeLlmBudget(db, now))
+    llmAllowed
       ? await claudePicks({
           candidates: heroPool,
           metaOf: metaNow,
@@ -192,6 +255,9 @@ export async function POST(req: Request) {
           lean,
           profile,
           tagWeight,
+          // «С твоего последнего захода вышло крупное обновление» — у
+          // заброшенных, где патч подтверждён моделью (lib/comeback.ts)
+          patchOf,
         })
       : null
   const byHeuristic = (pool: ScoredCandidate[], count: number) =>
@@ -204,6 +270,7 @@ export async function POST(req: Request) {
       guaranteed: mood.vibe === 'chill' || lean === 'familiar' ? CANDIDATE_SOURCES : undefined,
       hideUrgency,
       playtimeHidden: set.playtimeHidden,
+      patchOf,
     })
   // Модель могла вернуть меньше пятёрки (отсеяла validatePicks) — недостающее
   // добирает та же эвристика из кандидатов, которых модель не взяла
@@ -229,11 +296,17 @@ export async function POST(req: Request) {
   // «Продолжить «X»» — то, во что он играет сейчас: строкой под героем, а не
   // шестой карточкой. Отложенное и надоевшее не предлагаем — пауза, взятая
   // минуту назад, тоже ответ, и «продолжи то, что надоело» его бы не услышало.
+  // И то, что под «Не предлагать»: «Продолжить» — тоже совет, а фильтр
+  // обещает «никогда». Судим только сыгранное за две недели — других
+  // pickContinue не берёт, и сортировать теги всей библиотеки незачем
   const paused = [...cooldown].filter(([, c]) => c.mult < 1).map(([appid]) => appid)
+  const mutedNow = mutes.length
+    ? games.filter((g) => g.playtime2Weeks > 0 && mutedHit(libMetas.get(g.appid), mutes)).map((g) => g.appid)
+    : []
   const cont = pickContinue(
     games,
     (id) => libMetas.get(id),
-    new Set([...banned, ...paused]),
+    new Set([...banned, ...paused, ...mutedNow]),
     inPicks,
   )
 
@@ -254,17 +327,33 @@ export async function POST(req: Request) {
         reviewsPercent: meta?.reviewsPercent,
       }
     }),
-    // Пустой профиль — вкус посчитан популярностью, хвалить им нечестно
-    { taste: Object.keys(profile).length > 0 },
+    // Пустой профиль — вкус посчитан популярностью, хвалить им нечестно.
+    // Пустой — по hasTaste, тем же правилом, что выбрало популярность в
+    // скоринге: профиль из нулей после скипа «не тот жанр» иначе получил бы
+    // «Ближе всего к вкусу» за число, которое вкусом не было
+    { taste: hasTaste(profile) },
   )
 
   // Кадры и трейлер — только у пятёрки (heroMediaView). Читаются отдельно, по
   // пятёрке: метаданные конвейера узкие, без блобов. Заодно кадры получает и
   // герой из каталога — строки пула скриншотов не несут.
-  const media = await getHeroMedia(
-    db,
-    picks.map((p) => p.appid),
-  )
+  //
+  // Рядом, тем же заходом, — план на вечер (lib/eveningplan.ts): поставленное
+  // на загрузку /play показывает строкой с запуском над «Продолжить». Только
+  // пишущей сессии не из демо — план её же нажатие. Отказ чтения выдачу не
+  // срывает: план — строка сбоку
+  const [media, eveningPlan] = await Promise.all([
+    getHeroMedia(
+      db,
+      picks.map((p) => p.appid),
+    ),
+    isWriter(session) && !isDemoId(steamid)
+      ? latestEveningPlan(db, steamid, now).catch((err: unknown) => {
+          logSwallowed('recommend:plan', err)
+          return null
+        })
+      : null,
+  ])
 
   return NextResponse.json({
     // Серверные часы к ответу: по ним PlayersNow решает, имеет ли право
@@ -278,12 +367,19 @@ export async function POST(req: Request) {
       ...heroMediaView(media.get(p.appid)),
       ...scoreView(i, partsOf.get(p.appid)),
       // «Отправить другу» (/pick): текст без денег — ни хвоста шаблона, ни
-      // цены словами модели, — подписанный для этой сессии (lib/pickshare)
+      // цены словами модели, — подписанный для этой сессии (lib/pickshare).
+      // И без факта о патче: «С твоего последнего захода…» на публичной
+      // странице получатель прочтёт про себя, а дату запуска она выдаст
+      // любому (shareText, lib/comeback.ts)
       ...shareView(sessionSecret(), {
         steamid,
         appid: p.appid,
         source: p.source,
-        text: shareText(p.reason, reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency)),
+        text: shareText(
+          p.reason,
+          reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency),
+          patchOf(p.appid),
+        ),
       }),
     })),
     discoveries: discoveries.map((p, i) => ({
@@ -301,8 +397,12 @@ export async function POST(req: Request) {
     // Эхо подталкивания: какой чипс под героем нажат. null — без него, в том
     // числе при мусоре в поле
     nudge,
-    // Строка «Продолжить» или null — /play сам решает, где её не показывать
-    continue: cont ? continueView(cont) : null,
+    // Строка «Продолжить» или null — /play сам решает, где её не показывать.
+    // Мета у неё есть всегда (pickContinue без неё не выбирает): по ней
+    // finishable — ставить ли рядом «Уже прошёл»
+    continue: cont ? continueView(cont, libMetas.get(cont.appid)) : null,
+    // План на вечер или null — строка с запуском над «Продолжить»
+    plan: eveningPlan,
     // Время скрыто настройками Steam (lib/playtime.ts): /play говорит об этом
     // строкой и подсказывает, как открыть, — иначе свои карточки «Из твоей
     // библиотеки» без единого часа выглядели бы сбоем

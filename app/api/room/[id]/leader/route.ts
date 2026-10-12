@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getRoom, roomMembers, roomVotes, setRoomMatched } from '@/lib/db'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { pickLeader } from '@/lib/roomlikes'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
+import { forgetRoomCard } from '@/lib/roomcard'
 import { peekGate } from '@/lib/roompeek'
+import { seatOf, seatRefusal } from '@/lib/roomseat'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -29,8 +31,9 @@ const LEADER_WINDOW_SEC = 300
  * кнопка только подтверждает то, что правило уже выбрало. Хост к тому же
  * мог выйти, и тогда тупик остался бы без выхода вовсе.
  *
- * Сессии по ссылке — можно: это голос внутри комнаты, профиль он не трогает
- * (так же открыты join и vote, см. requireWriter в lib/server).
+ * Сессии по ссылке — можно, за своё членство: это голос внутри комнаты, и
+ * так же открыты join и vote. Но не за участника, который сам вошёл через
+ * Steam: от его имени действует только пишущая сессия (lib/roomseat).
  *
  * Лидер пересчитывается здесь, а не берётся на веру из запроса: клиент
  * присылает, КОГО он видел лидером, и если голоса сдвинулись (кто-то добрал
@@ -46,14 +49,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
 
-  const steamid = await currentSteamId()
-  if (!steamid) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const session = await currentSession()
+  if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
+  const writer = isWriter(session)
 
   const db = await getDb()
   const [room, members] = await Promise.all([getRoom(db, id), roomMembers(db, id)])
+  const seat = seatOf(members, session.steamid, writer)
   // Не-участник платит потолком просмотра (lib/roompeek): иначе этот роут —
   // открытая проверка, существует ли комната с таким кодом
-  if (!members.some((m) => m.steamid === steamid)) {
+  if (seat !== 'member') {
     const refused = await peekGate(db, req)
     if (refused) return refused
   }
@@ -68,13 +73,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     )
   }
 
-  if (!members.some((m) => m.steamid === steamid)) {
-    return NextResponse.json({ error: 'notmember' }, { status: 403 })
-  }
+  const refusal = seatRefusal(seat)
+  if (refusal) return refusal
 
+  // Счёт по сессии, а не по профилю: почему и почему без потолка адреса —
+  // lib/roomseat
   const gate = await checkRate(db, {
     bucket: 'room-leader',
-    id: steamid,
+    id: personalRateId(session, writer),
     limit: LEADER_LIMIT,
     windowSec: LEADER_WINDOW_SEC,
     nowSec: nowSec(),
@@ -93,5 +99,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const matched = await setRoomMatched(db, id, appid)
+  // Комната сошлась — билет-приглашение в кэше карточки устарел (lib/roomcard)
+  if (matched !== null) forgetRoomCard(id)
   return NextResponse.json({ matched })
 }

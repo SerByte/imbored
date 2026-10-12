@@ -6,6 +6,8 @@ import {
   LIBRARY_PAGE_SIZE,
   libraryHref,
   libraryPage,
+  parseLibraryQuery,
+  searchLibraryView,
   parseLibraryFilter,
   parseLibraryPage,
   pickForgotten,
@@ -440,5 +442,60 @@ describe('wallState', () => {
   test('не-игра, которую запускали недавно, остаётся «играешь сейчас»: это не бэклог', () => {
     const server = game({ appid: 14, name: 'Foo Dedicated Server', playtimeForever: 900, playtime2Weeks: 60 })
     expect(wallState(server, undefined, NOW)).toBe('active')
+  })
+})
+
+describe('поиск по стене /library', () => {
+  test('запрос из адреса: строка, без лишних пробелов, с потолком длины', () => {
+    expect(parseLibraryQuery(undefined)).toBe('')
+    expect(parseLibraryQuery(['a', 'b'])).toBe('')
+    expect(parseLibraryQuery('  portal   2 ')).toBe('portal 2')
+    expect(parseLibraryQuery('x'.repeat(200))).toHaveLength(60)
+  })
+
+  const lib = [
+    game({ appid: 1, name: 'Portal' }), // untouched
+    game({ appid: 2, name: 'Portal 2', playtimeForever: 900, lastPlayed: NOW - 300 * DAY }), // comeback
+    game({ appid: 3, name: 'Terraria', playtimeForever: 900, lastPlayed: NOW - 300 * DAY }), // comeback
+    game({ appid: 4, name: 'Dota 2', playtimeForever: 900, playtime2Weeks: 60 }), // active
+  ]
+  const metas = new Map(lib.map((g) => [g.appid, meta(g.appid, { name: g.name })]))
+  const of = (id: number) => metas.get(id)
+
+  test('с запросом полка и счётчики — по найденному', () => {
+    const view = buildLibraryView(lib, of, 'all', NOW)
+    const found = searchLibraryView(view, lib, of, NOW, 'portal')
+    expect(found.games.map((g) => g.appid).sort()).toEqual([1, 2])
+    // чипс говорит, где искомое: одна запечатанная, одна заброшенная, играющих нет
+    expect(found.counts).toEqual({ all: 2, untouched: 1, unplayed: 0, comeback: 1, active: 0 })
+  })
+
+  test('запрос работает внутри выбранной полки', () => {
+    const view = buildLibraryView(lib, of, 'comeback', NOW)
+    expect(searchLibraryView(view, lib, of, NOW, 'portal').games.map((g) => g.appid)).toEqual([2])
+  })
+
+  test('без запроса ничего не меняется', () => {
+    const view = buildLibraryView(lib, of, 'all', NOW)
+    expect(searchLibraryView(view, lib, of, NOW, '')).toBe(view)
+  })
+
+  test('адрес полки хранит запрос, а смена полки его не стирает', () => {
+    expect(libraryHref('all', 1, 'portal')).toBe('/library?q=portal')
+    expect(libraryHref('comeback', 2, 'portal 2')).toBe('/library?state=comeback&q=portal+2&page=2')
+  })
+
+  test('время скрыто: поиск остаётся на «Все», и найденное не делится по нулям', () => {
+    // Поиск пришёл на ветку, где buildLibraryView уже знает скрытое время:
+    // без hidden в счётчиках найденного «Не распакованы» снова назвала бы
+    // запечатанной каждую игру, а полка {...view} потеряла бы view.filter
+    const hidden = hiddenLibrary()
+    const metas = new Map(hidden.map((g) => [g.appid, meta(g.appid)]))
+    const of = (id: number) => metas.get(id)
+    const view = buildLibraryView(hidden, of, 'untouched', NOW)
+    const found = searchLibraryView(view, hidden, of, NOW, 'игра 1001')
+    expect(found.filter).toBe('all')
+    expect(found.games.map((g) => g.appid)).toEqual([1001])
+    expect(found.counts).toEqual({ all: 1, untouched: 0, unplayed: 0, comeback: 0, active: 0 })
   })
 })

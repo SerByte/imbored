@@ -1,8 +1,7 @@
-import { Analytics } from '@vercel/analytics/next'
-import { SpeedInsights } from '@vercel/speed-insights/next'
 import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono, Manrope } from 'next/font/google'
 import Link from 'next/link'
+import { Backstage } from '@/components/BackstageLazy'
 import { ChromeZone } from '@/components/ChromeZone'
 import { Footer } from '@/components/Footer'
 import { HeaderNav } from '@/components/HeaderNav'
@@ -11,7 +10,7 @@ import { MobileNav } from '@/components/MobileNav'
 import { MotionProvider } from '@/components/MotionProvider'
 import { ReadOnlyNote } from '@/components/ReadOnlyNote'
 import { RefCapture } from '@/components/RefCapture'
-import { SessionKeeper } from '@/components/SessionKeeper'
+import { SearchLauncher } from '@/components/SearchLauncher'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
@@ -206,12 +205,20 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         было нельзя ни на одной странице: /rooms и /quiz показали то же самое.
 
         На <body> остаётся только запрет горизонтальной прокрутки — он и
-        правда обязан быть на самом внешнем элементе.
+        правда обязан быть на самом внешнем элементе. Но это именно запрет
+        прокрутки, а не обрез: значение body уходит на вьюпорт, и мобильный
+        Chromium всё равно растягивает layout viewport до ширины содержимого,
+        унося за край шапку и нижнюю панель. Режет #smooth-content — почему и
+        что было, в globals.css рядом с #smooth-wrapper.
       */}
       <body className="min-h-full font-sans overflow-x-hidden">
         {/* Хэша в CSP у скрипта темы нет и не будет: он выключил бы
             'unsafe-inline', на котором живут инлайн-скрипты самого Next.
-            Подробно — в lib/csp.ts. */}
+            Подробно — в lib/csp.ts.
+            Исполняется он только в документе с сервера. 404 из notFound()
+            без Suspense (/game, /pick) приходит пустой оболочкой, и лэйаут
+            рисует браузер — такой <script> не исполняется; тему там ставит
+            ThemeToggle (applyStoredTheme). */}
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,
@@ -235,8 +242,12 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
           К содержанию
         </a>
         {/* Своё имя перехода: при сдвиге страницы шапка стоит на месте — она
-            точка опоры, по которой видно, что уехало содержимое, а не экран */}
-        <header className="fixed top-0 inset-x-0 z-50" style={{ viewTransitionName: 'site-header' }}>
+            точка опоры, по которой видно, что уехало содержимое, а не экран.
+            Имя ставит globals.css и только на время перехода
+            (:active-view-transition): постоянное имя делало шапку Backdrop
+            Root, и стекло .site-chrome ниже перестало размывать страницу —
+            подробно у ::view-transition-group(site-header). */}
+        <header className="fixed top-0 inset-x-0 z-50">
           {/*
             Затемнение — отдельным слоем под содержимым, а не фоном самой шапки.
 
@@ -276,7 +287,10 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <LogoMark size={28} />
               <Wordmark />
             </Link>
-            <div className="flex items-center gap-5">
+            {/* relative — опора строки отказа поиска под значком
+                (.search-miss в globals.css): правым краем она встаёт по
+                краю ряда, а не по краю экрана за полем px-safe */}
+            <div className="relative flex items-center gap-3 lg:gap-5">
               {/*
                 Тема — рядом с навигацией, а не в ней. Внутри <nav> она делала
                 из шапки на телефоне ориентир «навигация» из одной кнопки
@@ -288,9 +302,17 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
                 «Разделами» рядом с нижней панелью. Имя у них одно и то же
                 намеренно — это одно меню, и на экране всегда ровно одно из двух.
               */}
-              <nav aria-label="Разделы" className="hidden md:flex items-center gap-3.5 lg:gap-6 text-sm text-dim">
+              {/* Кегль на md уже, чем на lg: одного сужения зазоров оставляло
+                  на 768 запас в 10 px, а полоса прокрутки десктопного окна
+                  съедает 15 (подробно — в components/HeaderNav.tsx) */}
+              <nav aria-label="Разделы" className="hidden md:flex items-center gap-3.5 lg:gap-6 text-[13px] lg:text-sm text-dim">
                 <HeaderNav />
               </nav>
+              {/* «Найти игру» — рядом с темой и тоже не в меню: это действие,
+                  а не раздел. Кнопка лёгкая, окно поиска — отдельным чанком
+                  (components/SearchLauncher); на md её нет — не влезает
+                  (замер в components/HeaderNav.tsx) */}
+              <SearchLauncher />
               <ThemeToggle />
             </div>
           </div>
@@ -332,21 +354,18 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
           </div>
         </div>
         <MobileNav />
-        {/* Продлевает вход. Клиентский и без разметки: лэйаут кук не читает,
-            иначе весь сайт стал бы динамическим и ISR у /game/[appid] умер. */}
         {/* Ставит data-chrome на <html>, когда шапка уезжает с кино-зоны на
-            контент. Клиентский и без разметки — как SessionKeeper. */}
+            контент. Клиентский и без разметки — как закулисье ниже. */}
         <ChromeZone />
         {/* Плавная прокрутка — только у главной (app/page.tsx): закреплённые
             сцены есть только там, остальной сайт прокручивается нативно. */}
-        <SessionKeeper />
         <RefCapture />
         <ReadOnlyNote />
-        <Analytics />
-        {/* Полевые Web Vitals. На сайте, где LCP — это всегда чужая обложка со
-            steamstatic, синтетика меряет не то: реальный разброс дают чужой CDN
-            и чужая сеть, а не наш рендер. */}
-        <SpeedInsights />
+        {/* Закулисье: продление входа, аналитика и полевые Web Vitals — чанком,
+            в простое после гидратации (components/BackstageLazy). Клиентское
+            и без разметки: лэйаут кук не читает, иначе весь сайт стал бы
+            динамическим и ISR у /game/[appid] умер. */}
+        <Backstage />
       </body>
     </html>
   )

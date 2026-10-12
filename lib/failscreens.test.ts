@@ -65,20 +65,87 @@ describe('экраны отказа', () => {
   }
 
   /**
-   * Обратная половина сделки, и только для /play: там есть кнопка повтора, и
-   * она обязана отсутствовать там, где повтор гарантированно вернёт тот же
-   * ответ. У /daily повтора нет вовсе — проверять нечего.
+   * Обратная половина сделки — для /play и /explore: там есть кнопка
+   * повтора, и она обязана отсутствовать там, где повтор гарантированно
+   * вернёт тот же ответ. У /daily повтора нет вовсе — проверять нечего.
+   *
+   * Устроены они по-разному. У /play флаг — согласие в разборе кода
+   * (retry: true): у кода, где повтор — тупик, его нет вовсе. У /explore
+   * флага нет: кнопка стоит под условием fail === FAIL_UNKNOWN — отказом
+   * без кода (сеть, пятисотка, потолок ожидания), — а у 409 и 429 свои
+   * разборы, и до кнопки они не доходят.
    */
   test('/play: повтор не предлагается там, где он вернёт тот же ответ', () => {
     const page = read('app', 'play', 'page.tsx')
-    for (const code of ['nocandidates', 'nolibrary', 'badmood']) {
+    // muted: фильтр «Не предлагать» живёт в куке, и повтор с той же кукой
+    // вернёт тот же отказ — снять его можно только на квизе
+    for (const code of ['nocandidates', 'nolibrary', 'badmood', 'muted']) {
       const at = page.indexOf(`  ${code}: {`)
       expect(at, `нет разбора для ${code}`).toBeGreaterThan(-1)
       const block = page.slice(at, page.indexOf('},', at))
-      expect(block, `${code}: повтор вернёт тот же отказ, предлагать его нельзя`).toContain(
-        'retry: false',
+      expect(block, `${code}: повтор вернёт тот же отказ, предлагать его нельзя`).not.toMatch(
+        /retry: (?!false)/,
       )
     }
+  })
+
+  /*
+   * «Как «X», но…» приходит и адресом — со страницы игры за похожими на неё.
+   * Общий nocandidates («смени настроение или верни из бана») для неё —
+   * чужой совет: соседей под это настроение просто нет. Экран называет X
+   * (имя роут кладёт в тело отказа) и предлагает выдачу без затравки —
+   * отдельным запросом, а не повтором того же.
+   */
+  test('/play: отказ выдачи «в духе X» называет X и ведёт к выдаче без неё', () => {
+    const page = read('app', 'play', 'page.tsx')
+    expect(page).toMatch(/reason === 'nocandidates' && askSeed !== null\s*\? seedFail\(failSeed\)/)
+    const fn = page.slice(page.indexOf('function seedFail('), page.indexOf('const RECOMMEND_WAIT_MS'))
+    expect(fn, 'повтор того же запроса вернёт тот же отказ').not.toMatch(/retry: (?!false)/)
+    // флаг повтора — согласие: без него кнопки нет (FailCard)
+    expect(page).toContain('{fail.retry && (')
+    expect(fn).toContain('«${name}»')
+    expect(page).toContain("setFailSeed(parseSeedRef(d?.seed)?.name ?? null)")
+    expect(page).toMatch(/onClick=\{\(\) => void retry\(null\)\}/)
+    expect(read('app', 'api', 'recommend', 'route.ts')).toMatch(
+      /error: 'nocandidates', \.\.\.\(seedName \? \{ seed: \{ appid: seed, name: seedName \} \} : \{\}\)/,
+    )
+  })
+
+  /*
+   * Всё под «Не предлагать» у выдачи «в духе X»: соседи X под фильтром при
+   * любом настроении, а «Изменить настроение» везёт затравку в квиз
+   * (quizHref) — и вернёт тот же отказ. Выход тот же, что у nocandidates, —
+   * выдача без затравки, и текст карточки смену настроения не советует.
+   */
+  test('/play: всё под «Не предлагать» у «в духе X» — выход в выдачу без «похожих»', () => {
+    const page = read('app', 'play', 'page.tsx')
+    expect(page).toMatch(/\{fail\.seedless && askSeed !== null && \(\s*<button\s+onClick=\{\(\) => void retry\(null\)\}/)
+    const at = page.indexOf('  muted: {')
+    const muted = page.slice(at, page.indexOf('},', at))
+    expect(muted).toContain('seedless: true')
+    expect(muted).not.toMatch(/смени настроение/i)
+    // и у отказа «в духе X», где соседей нет, — тот же выход
+    const fn = page.slice(page.indexOf('function seedFail('), page.indexOf('const RECOMMEND_WAIT_MS'))
+    expect(fn).toContain('seedless: true')
+  })
+
+  test('/explore: повтор не предлагается там, где он вернёт тот же ответ', () => {
+    const page = read('app', 'explore', 'page.tsx')
+    // у каждого кода, где повтор — тупик, свой разбор, а не FAIL_UNKNOWN
+    for (const code of ['nocandidates', 'nolibrary', 'ratelimited']) {
+      expect(page, `нет разбора для ${code}`).toContain(`  ${code}: {`)
+    }
+    // FAIL_UNKNOWN — только для кода, которого в разборе нет
+    expect(page).toMatch(/const fail = FAIL\[reason \?\? ''\] \?\? FAIL_UNKNOWN\b/)
+    // кнопка повтора одна, и стоит она под FAIL_UNKNOWN
+    const calls = [...page.matchAll(/void retry\(/g)]
+    expect(calls.length, 'кнопок повтора не одна — у второй условие сторож не видит').toBe(1)
+    const gated = page.match(/\{fail === FAIL_UNKNOWN && \(\s*<button\b[\s\S]*?<\/button>\s*\)\}/)
+    expect(gated, 'кнопка повтора стоит не под fail === FAIL_UNKNOWN').not.toBeNull()
+    expect(
+      gated?.[0],
+      'повтор у 409 и 429 вернёт тот же ответ: предлагать его можно только отказу без кода',
+    ).toContain('void retry(')
   })
 })
 
@@ -119,6 +186,9 @@ describe('needsteam', () => {
   const pages = [
     ...walk('app', (f) => /\.tsx?$/.test(f) && !f.startsWith('app/api/') && !f.includes('.test.')),
     ...walk('components', (f) => /\.tsx?$/.test(f)),
+    // Клиентский модуль тоже бывает звонящим: снятие «Зашло» (lib/unlike) —
+    // один на полку /library и сердце героя /play и /daily
+    ...walk('lib', (f) => /\.ts$/.test(f) && !f.includes('.test.') && !f.startsWith('lib/testing/')),
   ]
 
   test('пишущие роуты найдены — иначе сторож ослеп', () => {

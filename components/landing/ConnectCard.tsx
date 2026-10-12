@@ -13,26 +13,22 @@ import {
   PASSWORD_NOTE_ID,
 } from '@/components/landing/ConnectFallback'
 import { LinkHelp, LinkHelpToggle, toggleLinkHelp } from '@/components/landing/LinkHelp'
-import { markSessionTouched } from '@/components/SessionKeeper'
-import { DESTINATIONS, destinationPath, destinationUrl } from '@/lib/destination'
-import {
-  lastMoodCaptionNow,
-  lastMoodCaptionServer,
-  lastMoodStore,
-  pickHrefNow,
-  pickHrefServer,
-  QUIZ_HREF,
-} from '@/lib/lastmood'
+import { destinationPath, destinationUrl } from '@/lib/destination'
+import { DESTINATIONS } from '@/lib/destinationtext'
+import { lastMoodStore, pickHrefNow, pickHrefServer, QUIZ_HREF } from '@/lib/lastmood'
+import { lastMoodCaptionNow, lastMoodCaptionServer } from '@/lib/lastmoodcaption'
 import { plural } from '@/lib/plural'
 import { presetHref, VIBE_PRESETS } from '@/lib/presets'
 import {
   getServerSessionHint,
   getSessionHint,
   hintFrom,
+  rememberGuest,
   rememberSession,
   subscribeSessionHint,
   type SessionHint,
 } from '@/lib/sessionhint'
+import { markSessionTouched } from '@/lib/sessiontouch'
 import { writerFrom, writerStore } from '@/lib/writer'
 import { forgetPrewarm } from '@/lib/warmup'
 import { announceReadOnly } from '@/lib/readonlynote'
@@ -209,9 +205,16 @@ export function ConnectCard() {
   )
 
   useEffect(() => {
-    const settle = (next: SessionHint | null) => {
+    /*
+     * guest — сервер ответил «гость», а не сбой (knownGuest в lib/sessionhint).
+     * SessionKeeper после главной в том же документе молчит, и гость,
+     * пришедший отсюда на квиз — самый частый путь, — узнаётся только здесь:
+     * квиз поведёт его прямо сюда, мимо экрана прогрева /play.
+     */
+    const settle = (next: SessionHint | null, guest = false) => {
       setSession(next ?? { authed: false, personaName: null })
-      rememberSession(next)
+      if (guest) rememberGuest()
+      else rememberSession(next)
     }
     markSessionTouched()
     fetch('/api/session/touch?card=1', { method: 'POST' })
@@ -224,7 +227,7 @@ export function ConnectCard() {
           writer?: boolean
           live?: unknown
         }
-        settle(d.authed ? hintFrom(d) : null)
+        settle(d.authed ? hintFrom(d) : null, d.authed === false)
         setLive(liveLineFrom(d.live))
         // SessionKeeper на главной молчит, так что признак записи берём здесь
         writerStore.set(writerFrom(d))
@@ -361,280 +364,313 @@ export function ConnectCard() {
         дёргается ровно в тот момент, когда в него целятся пальцем.
       */}
       <div className={`connect-card flex ${CONNECT_CARD_MIN_H} flex-col gap-4`}>
-        {view.authed ? (
-          <div className="flex flex-1 flex-col justify-center gap-4">
-            {/*
-              Демо называет себя прямо. Прежнее «С возвращением, Демо-игрок»
-              читалось как вход в свою библиотеку — и человек не понимал,
-              почему подбор предлагает чужие игры и куда вставить свою ссылку.
-            */}
-            {demo && (
-              <div>
-                <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">Ты в демо-режиме.</p>
-                <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
-                  Подбор идёт по чужой витрине. Вставь ссылку на свой профиль — и он пойдёт по
-                  твоей библиотеке.
-                </p>
-              </div>
-            )}
-            {!demo && (
-              <div>
-                <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">
-                  С возвращением
-                  {view.personaName ? (
-                    <>
-                      , <span className="font-semibold">{view.personaName}</span>
-                    </>
-                  ) : null}
-                  .
-                </p>
-                {/*
-                  Вход по ссылке — только просмотр, и об этом говорится здесь,
-                  до первого нажатия, а не спрятанными потом кнопками. Вход
-                  через Steam стоит в строке — тихая дверь внизу в этом случае
-                  убрана, чтобы не звать дважды. Строка добавляет карточке
-                  высоту только этой сессии (см. CONNECT_CARD_MIN_H).
-                */}
-                {readOnly && (
+        {/*
+          ОДНА ОБЁРТКА НА ОБЕ ВЕТКИ — РАДИ #connect-error.
+          Строка ошибки стоит под полем у обоих, и раньше каждая ветка
+          рисовала её у себя: у вошедшего — внутри колонки, у гостя — прямо в
+          карточке. Разные предки — разные узлы, и смена view.authed (подсказка
+          сессии, потом ответ touch) рожала живую область заново, уже с
+          текстом, — ровно то, от чего она отрисована всегда (см. её
+          комментарий ниже). Теперь у неё одно место: средний ребёнок этой
+          обёртки, между двумя тернарниками, — и React держит тот же узел. И
+          тег снова стоит прямо в разметке, а не в константе: сторож
+          lib/liveregion.test.ts видит его и проверит, что он не ветвь.
+
+          Обёртка меняет только класс. Вошедшему это прежняя колонка по
+          центру со своим gap-4; гостю — contents: его строки остаются
+          детьми самой карточки, с её зазором (на низком экране он у
+          .connect-card свой, 0.5rem), и раскладка гостя не сдвигается ни на
+          пиксель — по ней считан CONNECT_CARD_MIN_H.
+        */}
+        <div className={view.authed ? 'flex flex-1 flex-col justify-center gap-4' : 'contents'}>
+          {view.authed ? (
+            <>
+              {/*
+                Демо называет себя прямо. Прежнее «С возвращением, Демо-игрок»
+                читалось как вход в свою библиотеку — и человек не понимал,
+                почему подбор предлагает чужие игры и куда вставить свою ссылку.
+              */}
+              {demo && (
+                <div>
+                  <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">Ты в демо-режиме.</p>
                   <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
-                    Вход по ссылке — только просмотр: оценки и запуски не сохраняются.{' '}
-                    <a href={steamHref} className="tap tap-tight text-ember-text hover:underline">
-                      Войти через Steam
-                    </a>
-                    , чтобы сервис запоминал.
+                    Подбор идёт по чужой витрине. Вставь ссылку на свой профиль — и он пойдёт по
+                    твоей библиотеке.
                   </p>
-                )}
-                {/*
-                  Живая строка (lib/liveline): «как тебе?», готовая игра дня
-                  или дверь в «Твои вечера». Место держится с первого кадра,
-                  а текст — в одну строку с многоточием: ответ сервера
-                  меняет слова, но не высоту карточки.
-                */}
-                {!readOnly && (
-                  <p className="mt-1 max-w-md text-sm text-dim">
-                    <Link
-                      href={live.href}
-                      prefetch={false}
-                      className="tap tap-tight inline-flex max-w-full items-baseline gap-1.5 transition-colors hover:text-ink"
-                    >
-                      <span className="min-w-0 truncate">{live.text}</span>
-                      <span aria-hidden>→</span>
-                    </Link>
-                  </p>
-                )}
-              </div>
-            )}
-            <Magnet className="block w-full sm:w-auto sm:self-start">
-              <ClickSpark className="block w-full sm:w-auto">
-                {/*
-                  busy — пока уходит вход в комнату: второй клик слал бы его
-                  дважды. Гасит его обработчик, а кнопка выключена через
-                  aria-disabled: disabled выбросил бы фокус в body (см.
-                  rechecking выше)
-                */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (busy !== null) return
-                    setBusy('go')
-                    void go()
-                  }}
-                  aria-disabled={busy !== null}
-                  data-busy={busy === 'go' ? '' : undefined}
-                  className="btn-ember is-block px-8 text-base sm:w-auto"
-                >
-                  {action}
-                </button>
-              </ClickSpark>
-            </Magnet>
-
-            {/*
-              Подпись прошлого настроения — только когда кнопка ведёт в
-              выдачу мимо квиза. С назначением в адресе кнопка ведёт туда, и
-              настроение к ней отношения не имеет.
-            */}
-            {showPresets && moodLine && (
-              <p className="-mt-2 text-xs text-dim">
-                {moodLine} ·{' '}
-                <Link
-                  href={QUIZ_HREF}
-                  className="tap tap-tight underline decoration-edge hover:text-ink"
-                >
-                  Изменить
-                </Link>
-              </p>
-            )}
-
-            {/*
-              ПРЕСЕТЫ: ВЕРНУВШЕМУСЯ — ОДИН ТАП ДО ВЫДАЧИ.
-
-              До них карточка вошедшего была полой: коробка держит высоту под
-              гостевую форму (см. CONNECT_CARD_MIN_H), а внутри стояли три
-              элемента и двести пикселей пустоты. Лечить надо было не потолок —
-              он нужен, чтобы первый экран не дёргался при гидратации, — а
-              содержимое.
-
-              Ссылки, а не кнопки: адрес настоящий, и средняя кнопка мыши
-              обязана открывать выдачу в новой вкладке. Логика та же, что в
-              /quiz: пресет — это заранее известное состояние трёх вопросов.
-
-              Раскрытое поле пресеты убирает: человек пришёл сменить
-              библиотеку, и три двери в подбор по старой рядом с ним — шум,
-              который к тому же вытолкнул бы карточку за её потолок.
-            */}
-            {showPresets && !formShown && (
-              <div className="flex flex-col gap-2">
-                <Eyebrow>Или сразу</Eyebrow>
-                <div className="flex flex-wrap gap-2">
-                  {QUICK_PRESETS.map((p) => (
-                    <Link key={p.key} href={presetHref(p)} className="pill">
-                      {p.label}
-                    </Link>
-                  ))}
                 </div>
-              </div>
-            )}
+              )}
+              {!demo && (
+                <div>
+                  <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">
+                    С возвращением
+                    {view.personaName ? (
+                      <>
+                        , <span className="font-semibold">{view.personaName}</span>
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                  {/*
+                    Вход по ссылке — только просмотр, и об этом говорится здесь,
+                    до первого нажатия, а не спрятанными потом кнопками. Вход
+                    через Steam стоит в строке — тихая дверь внизу в этом случае
+                    убрана, чтобы не звать дважды. Строка добавляет карточке
+                    высоту только этой сессии (см. CONNECT_CARD_MIN_H).
+                  */}
+                  {readOnly && (
+                    <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
+                      Вход по ссылке — только просмотр: оценки и запуски не сохраняются.{' '}
+                      <a href={steamHref} className="tap tap-tight text-ember-text hover:underline">
+                        Войти через Steam
+                      </a>
+                      , чтобы сервис запоминал.
+                    </p>
+                  )}
+                  {/*
+                    Живая строка (lib/liveline): «как тебе?», готовая игра дня
+                    или дверь в «Твои вечера». Место держится с первого кадра,
+                    а текст — в одну строку с многоточием: ответ сервера
+                    меняет слова, но не высоту карточки.
+                  */}
+                  {!readOnly && (
+                    <p className="mt-1 max-w-md text-sm text-dim">
+                      <Link
+                        href={live.href}
+                        prefetch={false}
+                        className="tap tap-tight inline-flex max-w-full items-baseline gap-1.5 transition-colors hover:text-ink"
+                      >
+                        <span className="min-w-0 truncate">{live.text}</span>
+                        <span aria-hidden>→</span>
+                      </Link>
+                    </p>
+                  )}
+                </div>
+              )}
+              <Magnet className="block w-full sm:w-auto sm:self-start">
+                <ClickSpark className="block w-full sm:w-auto">
+                  {/*
+                    busy — пока уходит вход в комнату: второй клик слал бы его
+                    дважды. Гасит его обработчик, а кнопка выключена через
+                    aria-disabled: disabled выбросил бы фокус в body (см.
+                    rechecking выше)
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (busy !== null) return
+                      setBusy('go')
+                      void go()
+                    }}
+                    aria-disabled={busy !== null}
+                    data-busy={busy === 'go' ? '' : undefined}
+                    className="btn-ember is-block px-8 text-base sm:w-auto"
+                  >
+                    {action}
+                  </button>
+                </ClickSpark>
+              </Magnet>
 
-            {formShown && (
+              {/*
+                Подпись прошлого настроения — только когда кнопка ведёт в
+                выдачу мимо квиза. С назначением в адресе кнопка ведёт туда, и
+                настроение к ней отношения не имеет.
+              */}
+              {showPresets && moodLine && (
+                <p className="-mt-2 text-xs text-dim">
+                  {moodLine} ·{' '}
+                  <Link
+                    href={QUIZ_HREF}
+                    className="tap tap-tight underline decoration-edge hover:text-ink"
+                  >
+                    Изменить
+                  </Link>
+                </p>
+              )}
+
+              {/*
+                ПРЕСЕТЫ: ВЕРНУВШЕМУСЯ — ОДИН ТАП ДО ВЫДАЧИ.
+
+                До них карточка вошедшего была полой: коробка держит высоту под
+                гостевую форму (см. CONNECT_CARD_MIN_H), а внутри стояли три
+                элемента и двести пикселей пустоты. Лечить надо было не потолок —
+                он нужен, чтобы первый экран не дёргался при гидратации, — а
+                содержимое.
+
+                Ссылки, а не кнопки: адрес настоящий, и средняя кнопка мыши
+                обязана открывать выдачу в новой вкладке. Логика та же, что в
+                /quiz: пресет — это заранее известное состояние трёх вопросов.
+
+                Раскрытое поле пресеты убирает: человек пришёл сменить
+                библиотеку, и три двери в подбор по старой рядом с ним — шум,
+                который к тому же вытолкнул бы карточку за её потолок.
+              */}
+              {showPresets && !formShown && (
+                <div className="flex flex-col gap-2">
+                  <Eyebrow>Или сразу</Eyebrow>
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_PRESETS.map((p) => (
+                      <Link key={p.key} href={presetHref(p)} className="pill">
+                        {p.label}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {formShown && (
+                <ProfileForm
+                  value={input}
+                  onChange={setInput}
+                  invalid={inputError}
+                  busy={busy}
+                  autoFocus={focusField}
+                  submit="Подключить"
+                  primary={false}
+                  onSubmit={submitProfile}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              {/*
+                Надзаголовок: карточка начиналась прямо с поля ввода, шестью
+                элементами равного веса, и ни одна строка не говорила, что тут
+                вообще происходит. Тот же моноширинный язык, что у хлопушек
+                сцен ниже — первый экран и рассказ под ним говорят одним
+                шрифтом.
+              */}
               <ProfileForm
                 value={input}
                 onChange={setInput}
                 invalid={inputError}
                 busy={busy}
-                autoFocus={focusField}
-                submit="Подключить"
-                primary={false}
+                autoFocus={false}
+                submit={action}
+                primary
                 onSubmit={submitProfile}
               />
-            )}
+            </>
+          )}
+          {/*
+            СТРОКА ОШИБКИ ЕСТЬ И У `private`, И ЭТО ПОЧИНКА ЗАМЕРЕННОГО ДЕФЕКТА.
+            Раньше этот случай был из строки исключён: считалось, что подробная
+            панель ниже говорит всё сама. Замер показал, что не говорит — панель
+            уходит за нижний край на 145 px на телефоне и на 174 на десктопе, а в
+            ВИДИМОЙ части карточки не оставалось ни одного признака, что вход не
+            удался. То есть Steam разворачивал человека обратно, и он видел ровно ту
+            же карточку, что и до попытки.
 
-            {/*
-              Две тихие двери одной строкой: сменить библиотеку ссылкой и войти
-              через Steam. Столбиком они выталкивали карточку за её потолок
-              (CONNECT_CARD_MIN_H): на телефоне пресеты и так встают в три
-              ряда, и замер дал 402 px против 392, а с подписью настроения —
-              426. Карточка вошедшего появляется уже после гидратации, и
-              каждый лишний пиксель в ней сдвигает первый экран под пальцем.
+            Это тот самый дефект, ради которого карточку когда-то и перенесли в
+            первый экран (см. докблок наверху файла) — просто у одного состояния из
+            девяти он уцелел.
+          */}
+          {/*
+            Абзац отрисован всегда, пустым, — меняется только текст. Живая
+            область, вставленная в DOM уже с содержимым, звучит не во всех
+            связках (VoiceOver в Safari промолчит), и «Не нашли такой профиль»
+            мог не прозвучать вовсе. Пустой — sr-only: в потоке он дал бы лишний
+            зазор колонки. Он же описание поля (aria-describedby у #steam-profile).
+          */}
+          {/*
+            Строка ошибки стоит СРАЗУ ПОД ПОЛЕМ, внутри карточки, а не после неё.
+            После карточки она уезжала за её потолок (CONNECT_CARD_MIN_H): у гостя на
+            десктопе карточка 168 px в коробке 244, и «Не нашли такой профиль»
+            печаталось в 117 px под полем — через ссылки входа и сноску про доступ,
+            отдельно от того, к чему относится.
+          */}
+          <p
+            id="connect-error"
+            role="status"
+            className={error ? 'anim-rise text-sm text-danger' : 'sr-only'}
+          >
+            {error
+              ? error === 'ratelimited' && retryIn
+                ? `Слишком много попыток подряд. Попробуй снова через ${retryIn} ${plural(retryIn, 'минуту', 'минуты', 'минут')}.`
+                : (ERROR_TEXT[error] ?? 'Что-то пошло не так.')
+              : ''}
+          </p>
+          {view.authed ? (
+            <>
+              {/*
+                Две тихие двери одной строкой: сменить библиотеку ссылкой и войти
+                через Steam. Столбиком они выталкивали карточку за её потолок
+                (CONNECT_CARD_MIN_H): на телефоне пресеты и так встают в три
+                ряда, и замер дал 402 px против 392, а с подписью настроения —
+                426. Карточка вошедшего появляется уже после гидратации, и
+                каждый лишний пиксель в ней сдвигает первый экран под пальцем.
 
-              Вход через Steam остаётся на виду и в один клик: сменить аккаунт
-              должно быть возможно, а спрятанное под раскрывашку «сменить
-              аккаунт» ищут дольше, чем оно того стоит.
-            */}
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-              {!demo && (
-                <button
-                  type="button"
-                  aria-expanded={formOpen}
-                  onClick={() => {
-                    setFocusField(!formOpen)
-                    setFormOpen(!formOpen)
-                  }}
-                  className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
-                >
-                  Сменить библиотеку
-                </button>
-              )}
-              {!readOnly && (
+                Вход через Steam остаётся на виду и в один клик: сменить аккаунт
+                должно быть возможно, а спрятанное под раскрывашку «сменить
+                аккаунт» ищут дольше, чем оно того стоит.
+              */}
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                {!demo && (
+                  <button
+                    type="button"
+                    aria-expanded={formOpen}
+                    onClick={() => {
+                      setFocusField(!formOpen)
+                      setFormOpen(!formOpen)
+                    }}
+                    className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
+                  >
+                    Сменить библиотеку
+                  </button>
+                )}
+                {!readOnly && (
+                  <a
+                    href={steamHref}
+                    className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
+                  >
+                    Войти через Steam
+                  </a>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {/*
+                Две другие двери — строкой под пилюлей, как «Войти» под формой
+                стримингового героя: вход через Steam и демо. Раньше между ними
+                и полем стояла «или»-линейка и третья кнопка во всю ширину —
+                первый экран говорил тремя одинаково громкими голосами.
+
+                Подпись двери Steam — первая фраза сноски ниже: «пароль вводишь
+                на сайте Steam, мы его не видим». Глазом она стоит прямо под
+                ссылкой, а скринридеру её отдаёт aria-describedby — вместе с
+                именем двери, а не отдельной строкой после демо.
+              */}
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[15px] font-bold">
                 <a
                   href={steamHref}
-                  className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
+                  aria-describedby={PASSWORD_NOTE_ID}
+                  className="tap py-1 text-ink transition-colors hover:text-dim"
                 >
                   Войти через Steam
                 </a>
-              )}
-            </div>
-          </div>
-        ) : (
-          <>
-            {/*
-              Надзаголовок: карточка начиналась прямо с поля ввода, шестью
-              элементами равного веса, и ни одна строка не говорила, что тут
-              вообще происходит. Тот же моноширинный язык, что у хлопушек
-              сцен ниже — первый экран и рассказ под ним говорят одним
-              шрифтом.
-            */}
-            <ProfileForm
-              value={input}
-              onChange={setInput}
-              invalid={inputError}
-              busy={busy}
-              autoFocus={false}
-              submit={action}
-              primary
-              onSubmit={submitProfile}
-            />
-            {/*
-              Две другие двери — строкой под пилюлей, как «Войти» под формой
-              стримингового героя: вход через Steam и демо. Раньше между ними
-              и полем стояла «или»-линейка и третья кнопка во всю ширину —
-              первый экран говорил тремя одинаково громкими голосами.
-
-              Подпись двери Steam — первая фраза сноски ниже: «пароль вводишь
-              на сайте Steam, мы его не видим». Глазом она стоит прямо под
-              ссылкой, а скринридеру её отдаёт aria-describedby — вместе с
-              именем двери, а не отдельной строкой после демо.
-            */}
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[15px] font-bold">
-              <a
-                href={steamHref}
-                aria-describedby={PASSWORD_NOTE_ID}
-                className="tap py-1 text-ink transition-colors hover:text-dim"
-              >
-                Войти через Steam
-              </a>
-              <span aria-hidden className="text-faint">
-                ·
-              </span>
-              {/* Повтор гасит обработчик, а не disabled: отказ демо (потолок,
-                  сеть) оставляет карточку, и фокус обязан остаться здесь */}
-              <button
-                onClick={() => {
-                  if (busy !== null) return
-                  void connect(true)
-                }}
-                aria-disabled={busy !== null}
-                className="tap py-1 text-dim transition-colors hover:text-ink active:text-ember-text"
-              >
-                {busy === 'demo' ? 'Готовлю демо…' : 'Демо без Steam'}
-              </button>
-            </div>
-            {/* Сноска общая с фолбэком — подмена при гидратации не меняет в ней ни слова */}
-            <AccessNote />
-          </>
-        )}
+                <span aria-hidden className="text-faint">
+                  ·
+                </span>
+                {/* Повтор гасит обработчик, а не disabled: отказ демо (потолок,
+                    сеть) оставляет карточку, и фокус обязан остаться здесь */}
+                <button
+                  onClick={() => {
+                    if (busy !== null) return
+                    void connect(true)
+                  }}
+                  aria-disabled={busy !== null}
+                  className="tap py-1 text-dim transition-colors hover:text-ink active:text-ember-text"
+                >
+                  {busy === 'demo' ? 'Готовлю демо…' : 'Демо без Steam'}
+                </button>
+              </div>
+              {/* Сноска общая с фолбэком — подмена при гидратации не меняет в ней ни слова */}
+              <AccessNote />
+            </>
+          )}
+        </div>
       </div>
 
-      {/*
-        СТРОКА ОШИБКИ ЕСТЬ И У `private`, И ЭТО ПОЧИНКА ЗАМЕРЕННОГО ДЕФЕКТА.
-        Раньше этот случай был из строки исключён: считалось, что подробная
-        панель ниже говорит всё сама. Замер показал, что не говорит — панель
-        уходит за нижний край на 145 px на телефоне и на 174 на десктопе, а в
-        ВИДИМОЙ части карточки не оставалось ни одного признака, что вход не
-        удался. То есть Steam разворачивал человека обратно, и он видел ровно ту
-        же карточку, что и до попытки.
-
-        Это тот самый дефект, ради которого карточку когда-то и перенесли в
-        первый экран (см. докблок наверху файла) — просто у одного состояния из
-        девяти он уцелел.
-      */}
-      {/*
-        Абзац отрисован всегда, пустым, — меняется только текст. Живая
-        область, вставленная в DOM уже с содержимым, звучит не во всех
-        связках (VoiceOver в Safari промолчит), и «Не нашли такой профиль»
-        мог не прозвучать вовсе. Пустой — sr-only: в потоке он дал бы лишний
-        зазор колонки. Он же описание поля (aria-describedby у #steam-profile).
-      */}
-      <p
-        id="connect-error"
-        role="status"
-        className={error ? 'anim-rise text-sm text-danger' : 'sr-only'}
-      >
-        {error
-          ? error === 'ratelimited' && retryIn
-            ? `Слишком много попыток подряд. Попробуй снова через ${retryIn} ${plural(retryIn, 'минуту', 'минуты', 'минут')}.`
-            : (ERROR_TEXT[error] ?? 'Что-то пошло не так.')
-          : ''}
-      </p>
       {(error === 'private' || rechecking) && (
         <PrivacyHelp
           {...(recheckByForm

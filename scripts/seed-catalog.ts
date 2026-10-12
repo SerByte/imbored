@@ -16,6 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createDb, countIngest, getCatalogMeta, setCatalogMeta, upsertIngestRows } from '../lib/db'
 import { fetchSearchPage, SEARCH_PAGE_SIZE } from '../lib/ingest'
+import { openCloud } from './opendb'
 
 const CURSOR_KEY = 'search_start'
 /** Steam отдаёт 429 при бёрсте; на такой паузе полный обход занимает ~12 минут */
@@ -30,11 +31,12 @@ const flag = (name: string) => process.argv.includes(`--${name}`)
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-async function openDb() {
+/** readOnly — для --dry-run: облако без миграций, см. openCloud */
+async function openDb({ readOnly = false }: { readOnly?: boolean } = {}) {
   const remote = process.env.TURSO_DATABASE_URL
   if (remote) {
-    console.log('база: Turso (облако)')
-    return createDb(remote, process.env.TURSO_AUTH_TOKEN)
+    console.log(readOnly ? 'база: Turso (облако), только чтение' : 'база: Turso (облако)')
+    return openCloud(remote, process.env.TURSO_AUTH_TOKEN, { readOnly })
   }
   const dir = path.join(process.cwd(), 'data')
   fs.mkdirSync(dir, { recursive: true })
@@ -63,10 +65,13 @@ async function main() {
   const maxPages = Number(arg('pages') ?? Number.POSITIVE_INFINITY)
   const restart = flag('restart')
 
-  const db = await openDb()
-  if (restart) await setCatalogMeta(db, CURSOR_KEY, '0')
+  const db = await openDb({ readOnly: dryRun })
+  // С --dry-run сброс только изображается: показываем первую страницу, а
+  // курсор прерванного обхода остаётся, где был. Иначе «посмотреть»
+  // откатывало бы недоделанный обход к самому началу
+  if (restart && !dryRun) await setCatalogMeta(db, CURSOR_KEY, '0')
 
-  let start = Number((await getCatalogMeta(db, CURSOR_KEY)) ?? 0)
+  let start = restart ? 0 : Number((await getCatalogMeta(db, CURSOR_KEY)) ?? 0)
   if (!Number.isFinite(start) || start < 0) start = 0
 
   const first = await fetchSearchPage(start)

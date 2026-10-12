@@ -61,13 +61,15 @@ export default async function CompatHubPage() {
           <Eyebrow>Совместимость</Eyebrow>
           <h1 className="font-display text-display-md">Твоя ссылка на сравнение</h1>
           <p className="text-dim leading-relaxed">
-            Кинь её любому — сервис сравнит ваши библиотеки и наигранное время по-настоящему, а не
-            по анкете: процент совпадения вкусов, общие игры и во что вам зайти вместе.
+            Кинь её любому — сервис сравнит ваши библиотеки и наигранное время{' '}
+            <span className="whitespace-nowrap">по-настоящему</span>, а не по анкете: процент
+            совпадения вкусов, общие игры и во что вам зайти вместе.
           </p>
         </div>
 
         <div className="anim-rise" style={{ animationDelay: '80ms' }}>
           <ShareLinkField
+            what="compat"
             url={url}
             label="Твоя ссылка на сравнение совместимости"
             title="Совместимость вкусов — imbored"

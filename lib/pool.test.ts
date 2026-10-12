@@ -16,6 +16,7 @@ import {
 } from './db'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
 import { deriveSemantics } from './semantics'
+import { roundsOf } from './testing/rounds'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -201,6 +202,10 @@ describe('fetchDiscoveryPool', () => {
       discountPercent: 50,
       discountEndsAt: NOW + 86_400,
       priceAt: NOW,
+      // регион замера и «не продаётся» — тоже колонки, которые пул обязан
+      // довезти: без них скрытая регионом игра попала бы в покупки
+      priceCc: 'us',
+      storeHidden: true,
       releaseDate: '1 янв. 2020',
       medianForever: 600,
       releaseYear: 2020,
@@ -243,6 +248,20 @@ describe('fetchDiscoveryPool', () => {
     // нашёлся по тегу и не задваивается — добавка идёт хвостом, после вкуса.
     const widened = await fetchDiscoveryPool(db, { tags: ['Shooter'], limit: 10, wildcard: 3 })
     expect(widened.map((m) => m.appid)).toEqual([4, 3, 2])
+  })
+
+  test('wildcard не ждёт вкусового запроса: оба уходят одним кругом', async () => {
+    // Добор вне вкуса от вкусового пула не зависит ничем — seen только
+    // фильтрует готовый ответ. Стоя за ним в очереди, он добавлял круг к Turso
+    // каждой выдаче /play, игре дня и колоде /explore: wildcard у них всегда
+    const base = await freshDb()
+    await seed(base)
+    const { db, depth, log } = roundsOf(base)
+    const pool = await fetchDiscoveryPool(db, { tags: ['Shooter'], limit: 10, wildcard: 3 })
+    // Порядок прежний: сначала вкус, добор — хвостом
+    expect(pool.map((m) => m.appid)).toEqual([4, 3, 2])
+    expect(log).toHaveLength(2)
+    expect(depth(), JSON.stringify(log)).toBe(1)
   })
 
   test('wildcard не задваивает то, что уже нашлось по вкусу', async () => {

@@ -10,7 +10,10 @@
  * Ничего о человеке: ни SteamID, ни адреса, ни идентификатора вкладки.
  * Шаги не связываются между собой — воронка видна как отношение чисел, а не
  * как путь конкретного человека. Источник — из закрытого списка: по какой
- * общей ссылке пришли (сравнение, портрет, комната, выбор, патч), или 'direct'.
+ * общей ссылке пришли (сравнение, портрет, комната, выбор, патч, матч пати),
+ * или 'direct'. У трёх шагов вторая половина ключа другая, но тоже из
+ * закрытых списков: корзина ожидания (pick_wait), «что.источник» у
+ * «поделился» (share) и у «скачал карточку» (card_download).
  *
  * Модуль общий для браузера и сервера: сервер берёт отсюда разбор тела и
  * списки, браузер — отправку. Ни базы, ни next/server здесь быть не должно.
@@ -37,8 +40,25 @@ export const CLIENT_EVENTS = [
   'pick_wait',
   /** нажал «Запустить» / «Установить» */
   'launch_click',
-  /** поделился ссылкой (сравнение, портрет, комната) */
+  /**
+   * поделился ссылкой — нажал «Скопировать» / «Отправить», чем бы ни
+   * кончилась панель; вместо источника «что.источник» (см. SHARE_KINDS)
+   */
+  'share',
+  /**
+   * СТАРОЕ ИМЯ share, только на приём. Нёс один источник вкладки, и комната,
+   * сравнение, портрет, выбор и патч ложились одной строкой
+   * share_click:direct. Новый код его не шлёт (track его не берёт), а сервер
+   * принимает ещё выпуск: вкладки, открытые до выкладки, держат старый
+   * бандл. Выпуск спустя — убрать отсюда; строки share_click:* в таблице
+   * просто доживут свои 90 дней.
+   */
   'share_click',
+  /**
+   * нажал «Скачать карточку» у портрета или итогов года; вместо источника
+   * «что.источник» (см. CARD_KINDS)
+   */
+  'card_download',
   /** открыл чужую комнату по приглашению, ещё не войдя в неё */
   'invite_open',
   /** увидел полосу «это чужая демо-библиотека» — раз на страницу за документ */
@@ -66,8 +86,37 @@ export const SERVER_EVENTS = ['connect_start', 'connect_ok', 'demo_start', 'invi
 export type ServerEvent = (typeof SERVER_EVENTS)[number]
 export type Channel = 'openid' | 'link' | 'demo' | 'room' | 'login'
 
-/** Откуда пришли: закрытый список, ничего личного в значении */
-export const REF_SOURCES = ['compat', 'portrait', 'room', 'pick', 'patch'] as const
+/**
+ * Откуда пришли: закрытый список, ничего личного в значении.
+ *
+ * Первые шесть — общие ссылки самого сайта. Остальные — площадки, где сайт
+ * запускается постами: без своих меток переход с DTF или из Telegram
+ * считался бы прямым заходом, и по телеметрии нельзя было бы понять, какой
+ * пост вообще кого-то привёл.
+ *
+ * 'match' — «Поделиться» с экрана матча (components/room/MatchShare). Адрес
+ * тот же, что у приглашения, — комната, — но зовёт он уже не свайпать, а
+ * «мы сошлись на X»: под общей меткой 'room' не узнать, приводит ли людей
+ * сама весть о матче. Метка — только для телеметрии, превью она не
+ * обновляет: og:url комнаты — канонический /room/<код> без метки
+ * (app/room/[id]/layout.tsx), а VK и Facebook ключуют карточку по og:url, а
+ * не по присланному адресу (lib/site). Билет «зовёт свайпать» сменяется
+ * «сошлась» сбросом карточки в минуту матча — forgetRoomCard в lib/roomcard
+ * — и до мессенджера доходит, когда истечёт уже его собственный кэш.
+ */
+export const REF_SOURCES = [
+  'compat',
+  'portrait',
+  'room',
+  'pick',
+  'patch',
+  'match',
+  'dtf',
+  'pikabu',
+  'habr',
+  'vc',
+  'tg',
+] as const
 export type RefSource = (typeof REF_SOURCES)[number]
 export type Source = RefSource | 'direct'
 
@@ -134,15 +183,64 @@ export function waitBucket(ms: number): WaitBucket {
   return 'ge20'
 }
 
-/** Разобранный маяк. wait — только у pick_wait, и у него обязателен */
+/*
+ * ЧЕМ ПОДЕЛИЛИСЬ И КАКУЮ КАРТОЧКУ СКАЧАЛИ.
+ *
+ * share_click нёс одну вторую половину ключа — источник вкладки того, кто
+ * делится. Все кнопки «Поделиться» сайта ложились в одну строку (почти всегда
+ * share_click:direct), и по таблице нельзя было сказать, работает ли хоть
+ * одна из них: зовут ли в пати, кидают ли сравнение, отправляют ли выбор.
+ * А «Скачать карточку» у портрета и итогов года не считалась вовсе.
+ *
+ * Теперь у share и card_download вторая половина — «что.источник»: что
+ * отдали, из закрытого списка, и откуда пришёл тот, кто отдаёт. Источник не
+ * выброшен нарочно: share:compat.compat рядом с ref_open:compat — это петля
+ * сравнения (пришёл по чужой ссылке — отдал свою), ради которой оно и
+ * задумано. Ключей — не больше SHARE_KINDS × (REF_SOURCES + direct) и
+ * CARD_KINDS × (REF_SOURCES + direct): всё ещё закрытый список, ни одного
+ * значения о человеке. Числом не записано нарочно — списки растут (новая
+ * метка, новая кнопка), а lib/track.test.ts пересчитывает границу по ним.
+ *
+ * Имя новое, а не share_click с другим смыслом: старые строки в таблице
+ * живут 90 дней, и под одним именем рядом лежали бы «источник» и «что».
+ */
+
+/**
+ * Что отдали. Свой список, а не REF_SOURCES: метка ?ref= говорит, КУДА
+ * ведёт ссылка, а здесь — какая кнопка нажата. Итоги года ведут меткой
+ * портрета, но кнопка у них своя; у матча в пати своя кнопка на экране
+ * матча, хоть ссылка у неё и на комнату. А площадкам (dtf, tg…) здесь не
+ * место: ими делятся постами, а не кнопкой.
+ */
+export const SHARE_KINDS = ['room', 'compat', 'portrait', 'year', 'pick', 'patch', 'match'] as const
+export type ShareKind = (typeof SHARE_KINDS)[number]
+
+/** Какую карточку скачали: картинка card.png есть только у портрета и итогов года */
+export const CARD_KINDS = ['portrait', 'year'] as const
+export type CardKind = (typeof CARD_KINDS)[number]
+
+export type ShareLabel = `${ShareKind}.${Source}`
+export type CardLabel = `${CardKind}.${Source}`
+
+/** Шаги, у которых вторая половина ключа — не голый источник: у каждого своя отправка */
+type LabeledEvent = 'pick_wait' | 'share' | 'card_download'
+/** Шаги с голым источником во второй половине ключа */
+export type PlainEvent = Exclude<ClientEvent, LabeledEvent>
+
+/**
+ * Разобранный маяк. wait — только у pick_wait, what — только у share и
+ * card_download; у них обязательны
+ */
 export type TrackStep =
-  | { event: Exclude<ClientEvent, 'pick_wait'>; source: Source }
+  | { event: PlainEvent; source: Source }
   | { event: 'pick_wait'; source: Source; wait: WaitLabel }
+  | { event: 'share'; source: Source; what: ShareKind }
+  | { event: 'card_download'; source: Source; what: CardKind }
 
 /** Строгий разбор тела маяка на сервере: чужое — null */
 export function parseTrackEvent(body: unknown): TrackStep | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
-  const { event, source, wait } = body as { event?: unknown; source?: unknown; wait?: unknown }
+  const { event, source, wait, what } = body as { event?: unknown; source?: unknown; wait?: unknown; what?: unknown }
   if (typeof event !== 'string' || !(CLIENT_EVENTS as readonly string[]).includes(event)) return null
   const src = typeof source === 'string' ? parseRef(source) : null
   if (event === 'pick_wait') {
@@ -150,7 +248,17 @@ export function parseTrackEvent(body: unknown): TrackStep | null {
     if (typeof wait !== 'string' || !WAIT_LABELS.includes(wait)) return null
     return { event, source: src ?? 'direct', wait: wait as WaitLabel }
   }
-  return { event: event as Exclude<ClientEvent, 'pick_wait'>, source: src ?? 'direct' }
+  // «Поделился неизвестно чем» — ровно та строка share_click:direct, от
+  // которой эти шаги уходят: без «что» из своего списка маяк не считается
+  if (event === 'share') {
+    if (typeof what !== 'string' || !(SHARE_KINDS as readonly string[]).includes(what)) return null
+    return { event, source: src ?? 'direct', what: what as ShareKind }
+  }
+  if (event === 'card_download') {
+    if (typeof what !== 'string' || !(CARD_KINDS as readonly string[]).includes(what)) return null
+    return { event, source: src ?? 'direct', what: what as CardKind }
+  }
+  return { event: event as PlainEvent, source: src ?? 'direct' }
 }
 
 /**
@@ -160,16 +268,30 @@ export function parseTrackEvent(body: unknown): TrackStep | null {
  * пишет в таблицу тот ключ, что получил, и 'pick_shown:cold.lt2' или
  * 'pick_wait:direct' легли бы строками, которые никто не ждёт.
  */
-export function eventKey(event: Exclude<ClientEvent, 'pick_wait'>, source: Source): string
+export function eventKey(event: PlainEvent, source: Source): string
 export function eventKey(event: 'pick_wait', wait: WaitLabel): string
+export function eventKey(event: 'share', label: ShareLabel): string
+export function eventKey(event: 'card_download', label: CardLabel): string
 export function eventKey(event: ServerEvent, channel: Channel): string
 export function eventKey(event: string, second: string): string {
   return `${event}:${second}`
 }
 
-/** Ключ шага от браузера: у pick_wait вместо источника — корзина ожидания */
+/**
+ * Ключ шага от браузера: у pick_wait вместо источника — корзина ожидания, у
+ * share и card_download — «что.источник»
+ */
 export function stepKey(step: TrackStep): string {
-  return step.event === 'pick_wait' ? eventKey(step.event, step.wait) : eventKey(step.event, step.source)
+  switch (step.event) {
+    case 'pick_wait':
+      return eventKey(step.event, step.wait)
+    case 'share':
+      return eventKey(step.event, `${step.what}.${step.source}`)
+    case 'card_download':
+      return eventKey(step.event, `${step.what}.${step.source}`)
+    default:
+      return eventKey(step.event, step.source)
+  }
 }
 
 /* ─────────────────────────── браузер ─────────────────────────── */
@@ -220,10 +342,26 @@ export function captureRef(search: string): void {
  * закрытия вкладки. Запрос на свой же адрес — проверка Origin в proxy.ts
  * его пропускает (Sec-Fetch-Site: same-origin).
  *
- * pick_wait сюда не ходит: без корзины сервер его не примет — для него trackWait.
+ * pick_wait, share и card_download сюда не ходят: без своей метки сервер их
+ * не примет — для них trackWait, trackShare и trackCardDownload. Старый
+ * share_click закрыт тоже: его только принимают (см. CLIENT_EVENTS).
  */
-export function track(event: Exclude<ClientEvent, 'pick_wait'>): void {
+export function track(event: Exclude<PlainEvent, 'share_click'>): void {
   send({ event, source: currentSource() })
+}
+
+/**
+ * Отметить, что поделились, — и чем (share выше). Зовёт useShareLink
+ * (components/ShareLink) в момент нажатия; «что» у неё обязательный
+ * параметр, так что кнопка без него не соберётся.
+ */
+export function trackShare(what: ShareKind): void {
+  send({ event: 'share', source: currentSource(), what })
+}
+
+/** Отметить «Скачать карточку» (components/CardDownload) */
+export function trackCardDownload(what: CardKind): void {
+  send({ event: 'card_download', source: currentSource(), what })
 }
 
 /**

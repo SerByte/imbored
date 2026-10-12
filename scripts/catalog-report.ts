@@ -12,15 +12,22 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createDb, type Db } from '../lib/db'
+import { openCloud } from './opendb'
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
   return hit ? hit.slice(name.length + 3) : undefined
 }
 
+/**
+ * Отчёт только читает, поэтому облако — без миграций (см. openCloud): отчёт,
+ * запущенный из ветки, иначе довёл бы прод до её схемы. catalog_ingest на
+ * проде есть, хоть и пустой: его создаёт каждый холодный старт.
+ * Локальный каталог мигрирует как раньше — своя база.
+ */
 async function openDb(): Promise<Db> {
   const remote = process.env.TURSO_DATABASE_URL
-  if (remote) return createDb(remote, process.env.TURSO_AUTH_TOKEN)
+  if (remote) return openCloud(remote, process.env.TURSO_AUTH_TOKEN, { readOnly: true })
   const file = path.join(process.cwd(), 'data', 'catalog.db')
   if (!fs.existsSync(file)) throw new Error(`нет базы каталога: ${file}`)
   return createDb(`file:${file}`)

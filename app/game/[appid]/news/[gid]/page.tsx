@@ -25,8 +25,9 @@ import { loadPatch } from './load'
  * Страница одного патча: русский пересказ, тело поста и ссылка на оригинал.
  * Зачем свой адрес и что из этого идёт в поиск — в lib/newspage.
  *
- * Сутки на ISR, как у карточки игры: пост меняет только крон новостей, и
- * редко — тело правят раз-другой после публикации, пересказ пишется однажды.
+ * Сутки на ISR — свой срок, а не срок карточки игры (у той неделя и сброс из
+ * кронов, lib/gamecache): пост меняет только крон новостей, и редко — тело
+ * правят раз-другой после публикации, пересказ пишется однажды.
  */
 export const revalidate = 86_400
 
@@ -50,7 +51,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   if (!page) return {}
   const { item, game } = page
 
-  const title = newsPageTitle(item.title, game?.name)
+  // С датой, если заголовок патчи игры не различает: у CS2 все они —
+  // «Обновление Counter-Strike 2» (см. newsPageTitle)
+  const title = newsPageTitle(item.title, game?.name, item.publishedAt)
   const description = newsDescription(item, game?.name)
   const canonical = newsPath(item.appid, item.gid)
   /*
@@ -144,8 +147,10 @@ export default async function PatchPage({ params }: Params) {
           {/* Заголовок и тело — текст издателя, обычно английский, а
               страница — lang="ru". Без пометки скринридер читал бы латиницу
               русским голосом (WCAG 3.1.2), см. lib/textlang. Тело помечает
-              NewsBody сам; пересказ «Коротко» наш и русский — без пометки. */}
-          <h1 lang={textLang(heading)} className="font-display text-display-md">
+              NewsBody сам; пересказ «Коротко» наш и русский — без пометки.
+              Название игры в подсчёт не входит: «Обновление Counter-Strike 2»
+              — русский заголовок с именем собственным, а не английский. */}
+          <h1 lang={textLang(heading, game?.name)} className="font-display text-display-md">
             {heading}
           </h1>
           <div className="flex flex-wrap items-center gap-3">
@@ -201,7 +206,7 @@ export default async function PatchPage({ params }: Params) {
           <PatchShare
             appid={item.appid}
             gid={item.gid}
-            title={newsPageTitle(item.title, game?.name)}
+            title={newsPageTitle(item.title, game?.name, item.publishedAt)}
           />
           <a
             href={item.url}
@@ -212,6 +217,28 @@ export default async function PatchPage({ params }: Params) {
             Оригинал в Steam
           </a>
         </div>
+
+        {/*
+          Мост «а у меня?». Пересказ — то, чем здесь делятся (PatchShare), и
+          пришедший по ссылке читал о чужой игре, а нижняя строка вела только в
+          неё, в Steam и к её же патчам: что то же самое собирают по его
+          библиотеке, страница не говорила. Строка одна на всех и не знает,
+          кто смотрит, — страница в ISR, и куку она не читает (сторож в
+          page.test.ts). Гостю обещание не врёт: /whatsnew его не разворачивает,
+          а над общей лентой сам зовёт подключить Steam. «Крупные» — потому что
+          лента берёт только их; «твоих игр», а не «всех»: у ленты потолок
+          библиотеки (LIBRARY_CAP).
+        */}
+        <p className="text-sm leading-relaxed text-dim">
+          А что изменилось в твоих играх?{' '}
+          <Link
+            href="/whatsnew"
+            className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+          >
+            Что нового
+          </Link>{' '}
+          — крупные патчи твоей библиотеки одной лентой.
+        </p>
 
         {others.length > 0 && (
           <section>
@@ -227,7 +254,7 @@ export default async function PatchPage({ params }: Params) {
                       href={newsPath(item.appid, o.gid)}
                       className="flex items-baseline justify-between gap-4 py-3 text-sm transition-opacity hover:opacity-70"
                     >
-                      <span lang={textLang(title)} className="min-w-0 truncate">
+                      <span lang={textLang(title, game?.name)} className="min-w-0 truncate">
                         {title}
                       </span>
                       <NewsDate at={o.publishedAt} className="shrink-0" />

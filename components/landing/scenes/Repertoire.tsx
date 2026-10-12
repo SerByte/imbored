@@ -4,7 +4,9 @@ import gsap from 'gsap'
 import Link from 'next/link'
 import { Icon, type IconName } from '@/components/Icon'
 import { Stage } from '@/components/landing/Stage'
+import { LinkPending } from '@/components/LinkPending'
 import { PosterFan, type FanGame } from '@/components/PosterFan'
+import { navPrefetch } from '@/lib/nav'
 
 /**
  * СЦЕНА 5: ЧТО ЗДЕСЬ ЕЩЁ ЕСТЬ.
@@ -25,6 +27,15 @@ import { PosterFan, type FanGame } from '@/components/PosterFan'
  *
  * Строки короткие: в кино-сцене абзац на карточку не читается — его
  * проматывают.
+ *
+ * ПРЕФЕТЧ — ПО ПРАВИЛУ ОБВЯЗКИ (lib/nav, DYNAMIC_SECTIONS). Четыре карточки
+ * из шести ведут в разделы, которые собираются на каждый запрос, и Next
+ * префетчит ссылку, как только она входит в экран: каждый, кто докрутил
+ * главную до этой сцены, будил функции /compat, /library, /portrait и
+ * /whatsnew — гостю ради редиректов на вход, по которым он не пойдёт.
+ * Пауза перехода без префетча видна: название раздела мерцает, пока едет
+ * сервер (LinkPending), как в шапке и нижней панели. Сторож —
+ * lib/navprefetch.test.ts.
  */
 
 type Section = {
@@ -140,12 +151,14 @@ export function Repertoire() {
       <ul className="rep">
         {REPERTOIRE.map((item) => (
           <li key={item.href} data-rep-row>
-            <Link href={item.href} className="rep-card fan-host">
+            <Link href={item.href} prefetch={navPrefetch(item.href)} className="rep-card fan-host">
               <PosterFan games={item.art} />
               <span aria-hidden className="rep-icon">
                 <Icon name={item.icon} size={18} />
               </span>
-              <span className="rep-name">{item.name}</span>
+              <span className="rep-name">
+                <LinkPending>{item.name}</LinkPending>
+              </span>
               <span className="rep-line">{item.line}</span>
               <span aria-hidden className="rep-arrow">
                 <Icon name="arrow" size={18} />

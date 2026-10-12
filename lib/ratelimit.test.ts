@@ -1,10 +1,11 @@
 import { beforeEach, expect, test, vi } from 'vitest'
-import { createDb } from './db'
+import { createDb, forgetUser } from './db'
 import { resetSwallowed } from './errlog'
 import {
   checkRate,
   checkRatesInOrder,
   clientIp,
+  personalRateId,
   rateLimitedResponse,
   rateUsage,
   resetRateMemory,
@@ -156,11 +157,54 @@ test('rateUsage показывает счёт, не увеличивая его'
 test('подметание убирает истёкшие окна и не трогает живые', async () => {
   const db = await freshDb()
   await checkRate(db, base)
+  // Окно base — минута от 1 699 999 980: кончается на NOW + 40
+  const end = Math.floor(NOW / 60) * 60 + 60
   await sweepRateLimits(db, NOW + 10)
   expect(await rateUsage(db, base)).toBe(1)
-  // строка живёт два окна, поэтому истекает после NOW + 120
-  await sweepRateLimits(db, NOW + 200)
+  await sweepRateLimits(db, end)
+  expect(await rateUsage(db, base)).toBe(1)
+  // Строка живёт до конца своего окна, а не «вдвое дольше от первой записи»:
+  // адрес в ней — ровно на срок, пока он что-то считает (обещание на /privacy)
+  await sweepRateLimits(db, end + 1)
   expect(await rateUsage(db, base)).toBe(0)
+})
+
+test('срок строки — конец её окна, когда бы ни пришла первая запись', async () => {
+  const db = await freshDb()
+  const day = { bucket: 'test-day', id: 'a', limit: 3, windowSec: 86_400 }
+  const start = Math.floor(NOW / 86_400) * 86_400
+  // Первая запись — сразу после полуночи UTC: прежний срок «двое суток от
+  // неё» уводил строку за конец следующих суток
+  await checkRate(db, { ...day, nowSec: start + 1 })
+  await checkRate(db, { ...day, nowSec: start + 86_000 })
+  const res = await db.execute("SELECT expires_at FROM rate_limits WHERE key LIKE 'test-day:%'")
+  expect(res.rows.map((r) => Number(r.expires_at))).toEqual([start + 86_400])
+})
+
+/*
+ * Личный потолок (personalRateId): writer — один человек на всех своих
+ * устройствах, сессия по ссылке — только сама себе. Иначе чужая ссылка на
+ * профиль выедала потолок владельца.
+ */
+test('personalRateId: writer — по steamid, сессия по ссылке — по своей строке', () => {
+  const steamid = '76561197960287930'
+  const laptop = { steamid, sid: 'a'.repeat(32) }
+  const phone = { steamid, sid: 'b'.repeat(32) }
+  expect(personalRateId(laptop, true)).toBe(steamid)
+  expect(personalRateId(phone, true)).toBe(steamid)
+  expect(personalRateId(laptop, false)).not.toBe(personalRateId(phone, false))
+  expect(personalRateId(laptop, false)).not.toBe(personalRateId(laptop, true))
+})
+
+test('personalRateId: потолок сессии по ссылке уходит с forgetUser', async () => {
+  const db = await freshDb()
+  const steamid = '76561197960287930'
+  await checkRate(db, { ...base, id: personalRateId({ steamid, sid: 'c'.repeat(32) }, false) })
+  await checkRate(db, { ...base, id: personalRateId({ steamid, sid: 'c'.repeat(32) }, true) })
+  await checkRate(db, { ...base, id: '76561197960287931' })
+  await forgetUser(db, steamid)
+  const keys = (await db.execute('SELECT key FROM rate_limits')).rows.map((r) => String(r.key))
+  expect(keys).toEqual([expect.stringMatching(/^test:76561197960287931:\d+$/)])
 })
 
 test('clientIp берёт только первый хоп x-forwarded-for', () => {

@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   afterBoardAnswer,
@@ -5,6 +7,7 @@ import {
   BOARD_IDLE_AFTER,
   BOARD_IDLE_MS,
   BOARD_POLL_MS,
+  BOARD_TIMEOUT_MS,
   boardDelayMs,
   boardKey,
   boardStale,
@@ -93,5 +96,39 @@ describe('отпечаток доски', () => {
       return boardKey(rooms)
     }
     expect(at(1)).toBe(at(7))
+  })
+})
+
+/**
+ * Потолок одного запроса доски. Решение «сколько ждать ответа» — здесь,
+ * а таймер живёт в app/rooms/page.tsx, и выпадает он оттуда одной
+ * удалённой строкой: тогда повисший запрос (телефон сменил Wi-Fi на LTE,
+ * HTTP/2 замер) держал tick на перевзводе без счёта отказов — спиннер без
+ * «Попробовать снова», замёрзшая доска без «Доска не отвечает». Место вызова
+ * читается как текст, как в lib/roomclient.test.ts.
+ */
+describe('повисший запрос доски считается отказом', () => {
+  const src = fs
+    .readFileSync(path.join(__dirname, '..', 'app', 'rooms', 'page.tsx'), 'utf8')
+    // Комментарии гасятся: докблоки цитируют сами правила
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+
+  test('потолок не длиннее периода опроса: повисший запрос не переживает следующий тик', () => {
+    expect(BOARD_TIMEOUT_MS).toBeGreaterThan(0)
+    expect(BOARD_TIMEOUT_MS).toBeLessThanOrEqual(BOARD_POLL_MS)
+  })
+
+  test('запрос доски — под потолком на том же AbortController', () => {
+    // Тот же контроллер, что гасит уход со страницы, а не AbortSignal.any:
+    // его нет в Safari до 17.4 (докблок POLL_TIMEOUT_MS у комнаты)
+    expect(src).toMatch(
+      /inFlight = ac\s*const cap = window\.setTimeout\(\(\) => ac\.abort\(\), BOARD_TIMEOUT_MS\)\s*try \{/,
+    )
+    expect(src).not.toMatch(/AbortSignal\.(any|timeout)/)
+  })
+
+  test('потолок снимается в finally — и после ответа, и после отказа', () => {
+    expect(src).toMatch(/finally \{\s*window\.clearTimeout\(cap\)\s*if \(inFlight === ac\) inFlight = null/)
   })
 })

@@ -1,8 +1,9 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
+import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { clip } from '@/lib/clip'
 import { HUB_GENRES, HUB_MIN_SHELF, HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { genreBreadcrumbLd, genreItemListLd, ldScript } from '@/lib/jsonld'
@@ -25,6 +26,10 @@ import { loadGenre, type GenreGame } from './load'
  * Сутки на ISR, как у хаба: выборка та же и читает все игры тега выше порога.
  * Адресов ровно тридцать и они известны заранее — собираются на сборке, а
  * чужой адрес — 404 без вызова функции (dynamicParams = false).
+ *
+ * Карточки серверные (StaticGameCardBody) — по тому же доводу, что на хабе:
+ * сорок островков GameArt везли по объекту арта каждый, а страница живёт в
+ * ISR, и её вес — это ещё и ISR Writes.
  */
 export const revalidate = 86_400
 export const dynamicParams = false
@@ -117,8 +122,8 @@ export default async function GenrePage({ params }: Params) {
               <li key={g.appid} className="flex min-w-0 flex-col">
                 {/* Без префетча — как на хабе: сорок карточек в экране будили бы
                     функцию на каждую, по которой никто не пойдёт */}
-                <Link href={`/game/${g.appid}`} prefetch={false} className="game-card block">
-                  <GameCardBody
+                <GameLink appid={g.appid} className="game-card block">
+                  <StaticGameCardBody
                     appid={g.appid}
                     name={g.name}
                     headerImage={g.headerImage}
@@ -148,7 +153,7 @@ export default async function GenrePage({ params }: Params) {
                       )
                     }
                   />
-                </Link>
+                </GameLink>
                 <Why game={g} />
               </li>
             ))}

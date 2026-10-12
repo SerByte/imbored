@@ -9,14 +9,22 @@ import {
   type Variants,
 } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
 import { PlayersNow } from '@/components/PlayersNow'
 import type { GameArtUrls } from '@/lib/art'
-import { deckCardLine, deckPosition } from '@/lib/deckvote'
+import {
+  deckCardLine,
+  deckKeyVote,
+  deckOnScreen,
+  deckPosition,
+  deckSwipeVote,
+  OWN_ARROWS_SELECTOR,
+} from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
+import { formatPrice, notSoldShort } from '@/lib/steamregion'
 import { tagRu } from '@/lib/tagsru'
 
 export type DeckCard = {
@@ -25,6 +33,10 @@ export type DeckCard = {
   ownedByAll: boolean
   missingFor: string[]
   priceFinal?: number
+  /** регион магазина цены (lib/steamregion); без него цену не пишем — нет валюты */
+  priceCc?: string | null
+  /** магазин региона игру не показывает — «нет в российском Steam» */
+  unsold?: boolean
   /** бесплатная — цены нет, даже если она лежит в каталоге (см. GroupCard) */
   isFree?: boolean
   discount?: Discount | null
@@ -38,9 +50,12 @@ export type DeckCard = {
   store?: string
   storeUrl?: string
   /**
-   * Почему эта игра — только у колоды исследователя (/explore, exploreCardView):
-   * там колоду собрал подбор, и ему есть что сказать. В пати карту объясняет
-   * общий вкус комнаты, а не фраза.
+   * Почему эта игра — у колоды исследователя (/explore, exploreCardView): там
+   * колоду собрал подбор, и ему есть что сказать. В пати карту объясняет общий
+   * вкус комнаты, а не фраза, — кроме одной: первой карты комнаты, созданной
+   * «Позвать в эту игру» (PINNED_REASON в lib/group). Её объясняет не вкус, а
+   * то, что в неё звали, и строка приезжает с сервера готовой — клиенту пати
+   * она не стоит ни байта.
    */
   reason?: string
   /**
@@ -183,10 +198,11 @@ function TopCard({
       variants={FLY}
       exit="gone"
       transition={{ duration: 0.35, ease: EASE }}
+      // Сторону и сам факт голоса решает deckSwipeVote (lib/deckvote): быстрый
+      // возврат пальца к центру — отмена, а не голос за сторону, от которой он уходил
       onDragEnd={(_, info) => {
-        const passed = Math.abs(info.offset.x) > 110 || Math.abs(info.velocity.x) > 500
-        if (!passed) return
-        send(info.offset.x > 0, false)
+        const yes = deckSwipeVote(info.offset.x, info.velocity.x)
+        if (yes !== null) send(yes, false)
       }}
     >
       {/*
@@ -264,15 +280,20 @@ function TopCard({
                   1.52:1, то есть подпись была практически невидима */}
               <span className="rounded-full bg-info/10 text-info px-3 py-1 text-xs">
                 {alone ? 'Нет в твоей библиотеке' : `Нет у: ${card.missingFor.join(', ')}`}
-                {/* «бесплатно» первым, как в PriceTag: иначе у CS2 здесь
-                    стояла цена Prime — « · $15» за бесплатную игру */}
-                {card.isFree
-                  ? ' · бесплатно'
-                  : card.priceFinal !== undefined && card.priceFinal > 0
-                    ? ` · $${(card.priceFinal / 100).toFixed(0)}`
-                    : card.store
-                      ? ' · бесплатно/вне Steam'
-                      : ''}
+                {/* Порядок — как в PriceTag. «Нет в российском Steam» первым,
+                    даже раньше «бесплатно»: бесплатную игру, которую магазин
+                    региона не показывает, из него не взять. «Бесплатно» —
+                    раньше цены: иначе у CS2 здесь стояла цена Prime — « · $15»
+                    за бесплатную игру */}
+                {card.unsold && card.priceCc
+                  ? ` · ${notSoldShort(card.priceCc)}`
+                  : card.isFree
+                    ? ' · бесплатно'
+                    : typeof card.priceFinal === 'number' && card.priceFinal > 0 && card.priceCc
+                      ? ` · ${formatPrice(card.priceFinal, card.priceCc, { whole: true })}`
+                      : card.store
+                        ? ' · бесплатно/вне Steam'
+                        : ''}
               </span>
               {/* Скидка отдельной плашкой, а не внутри синей: там один токен
                   «кому не хватает», и зачёркнутая цена сломала бы его цельность */}
@@ -310,6 +331,7 @@ function TopCard({
             ref={noRef}
             type="button"
             onClick={(e) => send(false, e.detail === 0)}
+            aria-keyshortcuts="ArrowLeft"
             className="btn-glass w-full py-4 text-lg"
           >
             <Icon name="close" size={20} />
@@ -319,6 +341,7 @@ function TopCard({
             ref={yesRef}
             type="button"
             onClick={(e) => send(true, e.detail === 0)}
+            aria-keyshortcuts="ArrowRight"
             className="btn-ember is-block font-bold py-4 text-lg"
           >
             {labels.yes}
@@ -364,15 +387,55 @@ export function SwipeDeck({
   // Куда улетает верхняя карточка — и кнопкой, и жестом.
   const [flyOut, setFlyOut] = useState<Fly>(null)
   const [focusOn, setFocusOn] = useState<'yes' | 'no' | null>(initialFocus)
+  const stackRef = useRef<HTMLDivElement>(null)
+
+  const commitCard = (card: DeckCard, yes: boolean, keyboard: boolean) => {
+    setFlyOut(yes ? 'right' : 'left')
+    setFocusOn(keyboard ? (yes ? 'yes' : 'no') : null)
+    onVote(card, yes, keyboard)
+  }
+
+  /*
+   * Стрелки — тот же вылет, что у кнопок и жеста (правила — deckKeyVote в
+   * lib/deckvote). Слушатель на окне, а не на карте: до неё сначала пришлось
+   * бы дотабать, а весь смысл стрелок в том, чтобы не искать кнопку.
+   *
+   * Фокус переезжает на кнопку новой карты, только если он уже был внутри
+   * колоды — как у голоса Enter'ом. Иначе стрелка фокуса не трогает: человек,
+   * листающий стрелками, кнопок не касался, и рамка на «Играем!» появлялась
+   * бы из ниоткуда. Тот же признак уходит странице как keyboard: последняя
+   * карта уносит колоду, и фокус забирают, только если он был в ней (onVote).
+   */
+  const onArrow = useEffectEvent((e: KeyboardEvent) => {
+    const card = cards[0]
+    const stack = stackRef.current
+    if (!card || !stack) return
+    const target = e.target instanceof Element ? e.target : null
+    const yes = deckKeyVote({
+      key: e.key,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey,
+      repeat: e.repeat,
+      defaultPrevented: e.defaultPrevented,
+      ownArrows: Boolean(target?.closest(OWN_ARROWS_SELECTOR)),
+      onScreen: deckOnScreen(stack.getBoundingClientRect(), window.innerHeight),
+    })
+    if (yes === null) return
+    e.preventDefault()
+    commitCard(card, yes, stack.contains(document.activeElement))
+  })
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => onArrow(e)
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
+  }, [])
 
   const top = cards[0]
   if (!top) return null
 
-  const commit = (yes: boolean, keyboard: boolean) => {
-    setFlyOut(yes ? 'right' : 'left')
-    setFocusOn(keyboard ? (yes ? 'yes' : 'no') : null)
-    onVote(top, yes, keyboard)
-  }
+  const commit = (yes: boolean, keyboard: boolean) => commitCard(top, yes, keyboard)
 
   const pos = deckPosition(votedCount, deckTotal)
 
@@ -382,7 +445,7 @@ export function SwipeDeck({
     // альбомным кадром, и карта переставала быть обложкой
     <MotionMax>
       <div className="mx-auto flex w-full max-w-[460px] flex-col gap-4">
-        <div className="deck-stack relative">
+        <div ref={stackRef} className="deck-stack relative">
           {/* Задние карточки — только глубина, без содержимого и без обработчиков */}
           {cards.slice(1, DEPTH).map((c, i) => (
             <m.div
@@ -450,6 +513,26 @@ export function SwipeDeck({
             {pos.label}
           </span>
         </div>
+
+        {/*
+          Подсказка про стрелки — только там, где есть клавиатура с мышью
+          (pointer: fine). На телефоне её место занимал бы совет, которым нельзя
+          воспользоваться. aria-hidden: скринридеру клавиши названы в
+          aria-keyshortcuts у самих кнопок.
+        */}
+        <p
+          aria-hidden
+          className="hidden items-center justify-center gap-4 text-xs text-faint [@media(pointer:fine)]:flex"
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <kbd className="deck-kbd">←</kbd>
+            {labels.no}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <kbd className="deck-kbd">→</kbd>
+            {labels.yes}
+          </span>
+        </p>
       </div>
     </MotionMax>
   )

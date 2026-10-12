@@ -286,6 +286,9 @@
   --ember-text: #46d369;
   --on-ember: #050505;
   --faint: #85858c;
+  /* Отказ поиска у значка в шапке (.search-miss, components/SearchLauncher):
+     без своего --danger на светлой теме он был бы тёмно-красным по тёмному */
+  --danger: #ff8b8b;
   --edge: rgba(255, 255, 255, 0.1);
   --glass-bg: rgba(255, 255, 255, 0.08);
   color: var(--ink);
@@ -309,8 +312,16 @@
  * называется иначе только потому, что класс .media-dark носят и герои, и
  * полностраничные зоны. Отсюда отдельная метка: разметка заявляет «эта зона —
  * вся страница», CSS реагирует. Сторож — lib/chrome.test.ts.
+ *
+ * Нижняя панель телефона (.site-tabbar, components/MobileNav) — та же
+ * обвязка, и полоса та же: фиксированная внизу, на светлой теме она стояла
+ * молочными 52 px под тёмной главной на любой позиции прокрутки. Ей нужны
+ * только токены: поверхность панель красит сама, инлайном из --bg
+ * (color-mix 94%), и заливка из этого блока до неё не доходит — инлайн
+ * сильнее. --edge, --ink и --dim перекрашивают волосок, подписи и рамку.
  */
-:root:has(.media-full) body footer {
+:root:has(.media-full) body footer,
+:root:has(.media-full) body .site-tabbar {
   --bg: #050505;
   --ink: #f5f5f7;
   --dim: #a9a9ae;
@@ -325,7 +336,8 @@
 }
 
 :root:has(.whatsnew) body > header,
-:root:has(.whatsnew) body footer {
+:root:has(.whatsnew) body footer,
+:root:has(.whatsnew) body .site-tabbar {
   --bg: #050507;
   --header-fade: rgba(5, 5, 7, 0.85);
   --ink: #f5f5f7;
@@ -335,6 +347,8 @@
   --ember-text: #f5f5f7;
   --on-ember: #050507;
   --faint: #85858c;
+  /* то же, что у шапки кино-зоны выше: отказ поиска в шапке */
+  --danger: #ff8b8b;
   --edge: rgba(255, 255, 255, 0.08);
   --glass-bg: rgba(255, 255, 255, 0.06);
   color: var(--ink);
@@ -909,6 +923,40 @@ textarea:focus-visible {
   z-index: 1;
 }
 
+/*
+ * ШИРИНА СТРАНИЦЫ — ШИРИНА ЭКРАНА, И ДЕРЖИТ ЕЁ ЭТО ПРАВИЛО, А НЕ <body>.
+ *
+ * Световые слои сцен главной (.hero-glow, .pain-shutter, .pain-key,
+ * .engine-glow, .rep-glow, .money-glow, веер .fan-poster) стоят на
+ * отрицательных inset и шире колонки — так свет не обрывается краем. Под
+ * смузером их прятала его обёртка: fixed и overflow: hidden. Без смузера —
+ * «уменьшить движение», первые секунды до его чанка, чанк не приехал —
+ * главная обязана быть обычным документом, и тут выяснилось, что обрезать
+ * выход вбок некому.
+ *
+ * overflow-x-hidden у <body> не обрезает ничего: пока у <html> overflow
+ * видимый, значение body уходит на вьюпорт, а мобильный Chromium растягивает
+ * layout viewport до ширины содержимого, что бы на вьюпорте ни стояло.
+ * Замер, 390×844 с «уменьшить движение»: документ 552 px, innerWidth 552 ×
+ * 1195, и все fixed легли по этой коробке — переключатель темы на x = 492,
+ * нижняя панель на y = 1145, оба за краем экрана. body { overflow-x: clip }
+ * не меняет ровно ничего (замерено): оно тоже уходит на вьюпорт.
+ *
+ * Поэтому обрез — на первом элементе, чей overflow никуда не уходит: на
+ * обёртке содержимого всех страниц сразу, а не на одной главной, чтобы
+ * следующий широкий свет на любой странице не повторил того же.
+ *
+ * clip, а не hidden: hidden делает элемент контейнером прокрутки, и
+ * position: sticky внутри (фильтры /library) прилипал бы к нему, то есть не
+ * прилипал вовсе; закрепления ScrollTrigger на нём тоже бы споткнулись. clip
+ * режет и только. Под смузером правило перебивает его собственный инлайн
+ * overflow: visible — там режет обёртка, и это ровно то, что было. Сторож —
+ * lib/smoothfixed.test.ts.
+ */
+#smooth-content {
+  overflow-x: clip;
+}
+
 .landing {
   background: transparent;
 }
@@ -1328,10 +1376,25 @@ textarea:focus-visible {
 .hero-cue-arrow {
   font-size: 15px;
   line-height: 1;
-  /* Качается только стрелка, не вся строка: у .hero-cue уже есть свой
-     transform (translateX(-50%) центрует её), и второй ключевой кадр на том же
-     элементе сбил бы центровку в первом же кадре. */
-  animation: hero-cue-bob 2.6s var(--ease-glow) infinite;
+}
+/* Качается только стрелка, не вся строка: у .hero-cue уже есть свой
+   transform (translateX(-50%) центрует её), и второй ключевой кадр на том же
+   элементе сбил бы центровку в первом же кадре.
+   Два качка по 2.2 с, а не бесконечно: 4.4 с укладываются в AUTO_MOTION
+   (lib/motion.ts, WCAG 2.2.2). Стрелка качалась, пока открыта главная, —
+   самоходное движение без конца и без паузы рядом с текстом первого экрана.
+   Подсказка «листай» нужна в первые секунды; дальше она просто стоит.
+   Качка идёт с is-live, а не с первой отрисовки. Вход героя
+   (components/landing/scenes/Hero.tsx) после гидрации прячет подсказку
+   через gsap.from и проявляет на 0.9 + DUR.base с: при гидрации на третьей
+   секунде, обычной для среднего телефона, 4.4 с качки кончались раньше, чем
+   подсказка снова видна, — стрелка качалась в серверном кадре, пропадала и
+   возвращалась стоящей. is-live ставит тот же таймлайн, когда подсказка
+   проявилась. Нет входа — скрытая вкладка, «уменьшить движение», нет
+   скриптов — стрелка просто стоит, подсказка от этого не пропадает.
+   Сторож — lib/motion.test.ts. */
+.hero-cue.is-live .hero-cue-arrow {
+  animation: hero-cue-bob 2.2s var(--ease-glow) 2;
 }
 @keyframes hero-cue-bob {
   0%,
@@ -1343,7 +1406,8 @@ textarea:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hero-cue-arrow {
+  .hero-cue-arrow,
+  .hero-cue.is-live .hero-cue-arrow {
     animation: none;
   }
 }
@@ -2071,6 +2135,34 @@ textarea:focus-visible {
 }
 
 /*
+ * «Почему первая» под стеной (components/landing/scenes/Engine.tsx) — тем же
+ * кроссфейдом, что и пятёрка, и в одну ячейку сетки, а не абсолютом поверх
+ * первого набора: причины у наборов разной длины (у Factorio на фразу о
+ * возвращении к управлению длиннее, чем у Terraria), и колонка обязана
+ * держать высоту самой длинной, иначе подмена двигала бы всё, что ниже.
+ */
+.engine-whys {
+  display: grid;
+  margin-top: clamp(16px, 2.6vh, 26px);
+  max-width: 34rem;
+}
+.engine-why {
+  grid-area: 1 / 1;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.28s var(--ease-out),
+    visibility 0s linear 0.28s;
+}
+.engine-why.is-on {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 0.28s var(--ease-out),
+    visibility 0s;
+}
+
+/*
  * ПЯТЁРКА — ЭТО СПИСОК ПО РАНГУ, А НЕ ПЯТЬ ОДИНАКОВЫХ СТРОК.
  *
  * Главный дефект сцены был именно здесь. Порядок в пятёрке содержательный:
@@ -2647,6 +2739,17 @@ textarea:focus-visible {
       transparent 74%
     ),
     radial-gradient(46% 44% at 88% 86%, rgba(72, 116, 198, 0.12), transparent 74%);
+  /*
+   * НИЗ СЛОЯ ГАСНЕТ МАСКОЙ. Холодное пятно стоит на 86% высоты с радиусом
+   * 44% — то есть доходит до ~119% и обрезалось нижним краем слоя: под
+   * карточками «Что здесь ещё есть» по фону шла линейка — ровная кромка
+   * синеватой полосы (замер на 1440×900: ступень −4 в яркости строки на
+   * правой половине). Отрицательный inset тут не лечит: проценты градиента
+   * растут вместе с коробкой. Маска гасит низ коробки, а центр пятна (14% от
+   * низа) остаётся целым — «свет не обрывается краем» теперь и снизу.
+   */
+  -webkit-mask-image: linear-gradient(to top, transparent, #000 14%);
+  mask-image: linear-gradient(to top, transparent, #000 14%);
 }
 
 /* ── Сцена «О деньгах» ────────────────────────────────────────────────── */
@@ -2679,6 +2782,22 @@ textarea:focus-visible {
       color-mix(in srgb, var(--ember) 22%, transparent),
       transparent 74%
     );
+  /*
+   * НИЗ СЛОЯ ГАСНЕТ МАСКОЙ. Полоса под сноской темнее всего ровно у нижнего
+   * края слоя, а край стоит на ~60 px выше конца сцены: между ними лента
+   * светит в полную силу, и тёмная полоса обрывалась над подвалом ровной
+   * линией — последний экран главной, с «Наверх, к подключению», выглядел
+   * отрезанным. Тёплый разлив под возвратом обрезался той же кромкой.
+   *
+   * Маска, а не подбор inset: зазор до конца сцены зависит от высоты окна
+   * (центровка сцены), и вытянутый inset на ноутбуке в 768 px перелезал бы
+   * в подвал. 12% — нижний край текста сцены: при inset снизу −18% от
+   * высоты сцены он стоит на 0.18 / 1.40 ≈ 12.9% высоты слоя при любом окне.
+   * Выше 12% маска непрозрачна — подложка под сноской о Valve та же, что
+   * была; гаснет только хвост ниже текста.
+   */
+  -webkit-mask-image: linear-gradient(to top, transparent, #000 12%);
+  mask-image: linear-gradient(to top, transparent, #000 12%);
 }
 
 /*
@@ -2922,6 +3041,12 @@ textarea:focus-visible {
   .btn-glass[aria-pressed='true'] {
     color: var(--bg);
     background: var(--ink);
+  }
+  /* Наведение на нажатую: правило hover выше сильнее (0,3,0 против 0,2,0) и
+     перебивало заливку на 22% стекла, не трогая цвет, — подпись цвета фона
+     на почти прозрачной подложке пропадала. Нажатая темнеет от своей заливки */
+  .btn-glass[aria-pressed='true']:hover:not(:disabled, [aria-disabled='true']) {
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
   }
 
   .btn-circle {
@@ -3250,12 +3375,26 @@ textarea:focus-visible {
   }
 }
 
+/*
+ * Кен-бёрнс встаёт за 4.5 с, а не ползёт двадцать — WCAG 2.2.2, см.
+ * AUTO_MOTION в lib/motion.ts. Арт героя /play и /daily лежит под названием
+ * игры, и двадцатисекундный наезд был самоходным движением под главным
+ * текстом страницы. Конечный масштаб 1.02 — столько старый наезд
+ * (ease-out до 1.06 за 20 с) успевал за первые 4.5 с: теперь он доходит
+ * туда же и встаёт, а остальные 4 % его хвоста отрезаны. Трогается он
+ * живее прежнего — 0.0076 против 0.0052 в секунду, — и иначе не выйдет:
+ * кривая, которая успевает встать за 4.5 с, обязана начинать быстрее почти
+ * прямого начала двадцатисекундной. С концом 1.03 он трогался бы в 2.2
+ * раза быстрее прежнего, а не в полтора. Запас под параллакс даёт scale у
+ * .hero-layer, а не этот наезд.
+ * Сторож — lib/motion.test.ts.
+ */
 @keyframes kenburns {
   from {
     transform: scale(1);
   }
   to {
-    transform: scale(1.06);
+    transform: scale(1.02);
   }
 }
 
@@ -3266,7 +3405,7 @@ textarea:focus-visible {
   animation: rise 0.45s ease-out both;
 }
 .anim-kenburns {
-  animation: kenburns 20s ease-out both;
+  animation: kenburns 4.5s ease-out both;
 }
 
 @keyframes pulse-dot {
@@ -3306,12 +3445,88 @@ textarea:focus-visible {
   }
 }
 
+/*
+ * Плитка игры, по которой уже нажали, а /game ещё не приехала: внутри ссылки
+ * на время ожидания встаёт скрытый .tile-pending (components/TilePending).
+ *
+ * Знак — на самой обложке, слоем ::after, который у неё уже есть ради кромки:
+ * обложка гаснет на 18 %, и по нижнему краю ползёт полоска цвета ember. Мерцай
+ * плитка, как подпись шапки, — на телефоне под пальцем мигала бы вся
+ * картинка; гаснущая обложка с полоской читается как «грузится» и ничего не
+ * сдвигает. Полоска доходит до 90 % и встаёт: сколько ждать, неизвестно, и
+ * дошедшая до конца обещала бы, что вот-вот.
+ *
+ * Задержка — та же --dur-fast, что у .link-pending: быстрый переход не мигает
+ * вовсе. Ключевые кадры задают только начало (fill backwards): в паузе и до
+ * её конца обложка как обычно, дальше — к значениям правила.
+ *
+ * Без :has() (старые браузеры) правило не срабатывает, и плитка ведёт себя
+ * как раньше.
+ */
+.game-card:has(.tile-pending) .card-thumb::after {
+  background:
+    linear-gradient(var(--ember), var(--ember)) left bottom / 90% 2px no-repeat,
+    rgb(0 0 0 / 0.18);
+  animation:
+    tile-dim var(--dur-fast) var(--ease-out) var(--dur-fast) backwards,
+    tile-bar 1.2s var(--ease-out) var(--dur-fast) backwards;
+}
+
+@keyframes tile-dim {
+  from {
+    background-color: transparent;
+  }
+}
+
+@keyframes tile-bar {
+  from {
+    background-size:
+      0 2px,
+      auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Хода нет: после той же задержки обложка гаснет и полоска встаёт сразу на
+     90 % — нулевая длительность с задержкой держит начало ровно до неё. */
+  .game-card:has(.tile-pending) .card-thumb::after {
+    animation-duration: 0s;
+  }
+}
+
+/*
+ * На время перехода знака нет. «Похожие» на /game и полка /explore морфят
+ * обложку в героя (components/Morph), и имя перехода стоит на самой
+ * .card-thumb. Старый снимок браузер снимает прямо перед коммитом новой
+ * страницы, а useLinkStatus гаснет только в этом коммите — после ожидания
+ * дольше --dur-fast (а холодное «Похожие» ждёт всегда) в
+ * ::view-transition-old(game-…) уезжала погашенная обложка с полоской ember,
+ * и морф 420 мс растягивал её до героя. :active-view-transition держится с
+ * вызова startViewTransition, так что снимок видит обложку уже чистой — тот
+ * же расчёт, что у имени шапки (site-header ниже). Живую плитку под
+ * оверлеем всё равно не видно, а без морфа старый снимок корня просто
+ * уезжает без затемнения. Движок без этого псевдокласса выбросит правило, и
+ * снимок уедет с затемнением, как без него. Сторож — lib/tilepending.test.ts.
+ */
+:root:active-view-transition .game-card:has(.tile-pending) .card-thumb::after {
+  animation: none;
+  background: none;
+}
+
+/*
+ * Отключения стоят ПОСЛЕ своих базовых правил, и это не порядок ради порядка.
+ * @media специфичности не добавляет: при равном селекторе побеждает тот, кто
+ * ниже. .anim-page-in и .anim-breathe раньше числились в этом списке, а их
+ * базовые правила стоят ниже — и под «уменьшить движение» каждая смена
+ * страницы всё равно въезжала, а фон комнаты дышал по кругу (замер на /quiz:
+ * page-in 0.18s и breathe 12s infinite при matchMedia reduce = true). Их
+ * отключения переехали под сами правила. Сторож — lib/motion.test.ts.
+ */
 @media (prefers-reduced-motion: reduce) {
   .anim-reveal,
   .anim-rise,
   .anim-kenburns,
-  .anim-pulse-dot,
-  .anim-page-in {
+  .anim-pulse-dot {
     animation: none;
   }
 
@@ -3319,9 +3534,6 @@ textarea:focus-visible {
      при явно выключенной анимации. */
   .glass-hover:hover {
     transform: none;
-  }
-  .anim-breathe {
-    animation: none;
   }
   *,
   *::before,
@@ -3346,6 +3558,45 @@ textarea:focus-visible {
 
 .anim-breathe {
   animation: breathe 12s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-breathe {
+    animation: none;
+  }
+}
+
+/*
+ * ВЫДОХ: СВЕТ AMBIENT ОПУСКАЕТСЯ ИЗ ВДОХА В ПОКОЙ И СТОИТ.
+ *
+ * Дыхание по кругу (.anim-breathe) позволено только экранам ожидания — там
+ * оно и есть знак, что работа идёт (ALLOWED в lib/motion.test.ts). На /quiz
+ * фон за вопросами дышал весь квиз: самоходное движение без конца рядом с
+ * текстом, который читают и на который отвечают, — WCAG 2.2.2, AUTO_MOTION в
+ * lib/motion.ts. Здесь от дыхания остаётся один выдох при входе: 4.5 с от
+ * пика вдоха (scale 1.08, как у breathe) до покоя.
+ *
+ * Конец — ровно состояние без анимации: scale 1, прозрачность не тронута
+ * (у breathe она ходит 0.85–1, и после конца прыгнула бы к 1). Поэтому
+ * fill-mode не нужен, и по окончании ничего не перескакивает.
+ */
+@keyframes exhale {
+  from {
+    transform: scale(1.08);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.anim-exhale {
+  animation: exhale 4.5s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-exhale {
+    animation: none;
+  }
 }
 
 /*
@@ -3589,6 +3840,129 @@ textarea:focus-visible {
  */
 html:has(.lib-filters) {
   scroll-padding-top: calc(72px + 51px + 0.75rem);
+}
+/*
+ * Поиск по библиотеке (components/LibrarySearch): стеклянная строка того же
+ * материала, что вход на главной (.join), но ниже и тише — это инструмент
+ * над стеной, а не главное действие экрана. На телефоне во всю ширину, на
+ * десктопе — колонкой, чтобы не спорить с рядом чипсов под ней.
+ */
+.lib-search {
+  position: relative;
+  margin-bottom: 0.75rem;
+}
+/*
+ * Пилюля — само поле, а не обёртка вокруг него: общее :focus-visible рисует
+ * кольцо по контуру фокусируемого элемента, и только так оно обводит строку
+ * целиком, а не вложенный прямоугольник внутри неё. Лупа лежит поверх, в
+ * левом поле отступа.
+ */
+.lib-search svg {
+  position: absolute;
+  left: 0.875rem;
+  top: 50%;
+  translate: 0 -50%;
+  pointer-events: none;
+}
+.lib-search input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 1rem 0 2.625rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+  /* 16 px, не 15: Safari на iPhone приближает страницу, когда фокус
+     получает поле мельче 16 px, — как у .join input */
+  font-size: 1rem;
+  font-weight: 500;
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out);
+}
+.lib-search input:focus {
+  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.lib-search input::placeholder {
+  color: var(--dim);
+}
+/* Родной крестик очистки: в светлой теме он синий, чужой палитре цвет —
+   гасим до серого. Нажатие на него — то же событие input, поиск сбросится. */
+.lib-search input::-webkit-search-cancel-button {
+  filter: grayscale(1);
+  cursor: pointer;
+}
+/* Пока сервер отвечает — лупа дышит: знак, что поиск идёт, без спиннера */
+.lib-search[data-pending] svg {
+  animation: pulse-dot 1s var(--ease-glow) infinite;
+}
+@media (min-width: 768px) {
+  .lib-search {
+    max-width: 22rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lib-search[data-pending] svg {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+/*
+ * Строка «Найти игру по названию» на /games и 404 (components/SearchLauncher,
+ * вид field): кнопка, которая выглядит полем и открывает окно поиска по
+ * каталогу. Материал — как у поля поиска по библиотеке выше.
+ *
+ * Классом, а не утилитами в разметке: кнопка стоит в шапке каждой страницы,
+ * и строка утилит ехала бы в первую загрузку JS каждой страницы, а /room/[id]
+ * и /quiz стоят у потолка bundle-budget.json. CSS в тот бюджет не входит.
+ */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 28rem;
+  min-height: 48px;
+  padding-inline: 1rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--dim);
+  font-weight: 500;
+  text-align: left;
+  cursor: text;
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out);
+}
+.search-field:hover {
+  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
+  color: var(--ink);
+}
+/*
+ * «Поиск не загрузился — обнови страницу» под значком «Найти игру» в шапке
+ * (components/SearchLauncher, отказ чанка окна). У значка нет подписи, а
+ * title телефон не показывает — без видимой строки зрячий на телефоне видел
+ * только покрасневшую лупу. Стоит под значком, у правого края ряда шапки
+ * (ряд — relative, app/layout.tsx), на подложке фона: под шапкой проезжает
+ * что угодно, от героя до текста. Нажатий не перехватывает — это слова, а не
+ * цель. Классом по той же причине, что .search-field выше: строка утилит
+ * ехала бы в JS каждой страницы.
+ */
+.search-miss {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--danger);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  white-space: nowrap;
+  pointer-events: none;
 }
 /* Бейдж состояния на арте: контурный, как «Из бэклога» в макете */
 .lib-badge {
@@ -4025,16 +4399,71 @@ img[data-art-fade][data-loaded] {
 .room-page .deck-stack {
   --deck-h: clamp(440px, 100svh - 310px, 600px);
 }
+/* Минимум 330, а не 420: на 375×667 (iPhone SE) 420 перебивал формулу, и
+   карта кончалась на 80 px ниже верха нижней панели. Текст и кнопки карты
+   занимают около 280 px — постер под ними просто обрезается сильнее.
+   340 px сверху и снизу — это шапка комнаты в один ряд И состав над колодой
+   в один ряд (app/room/[id]/page.tsx): перенос любого из них уводит кнопки
+   голоса под нижнюю панель. */
 @media (max-width: 767px) {
   .room-page .deck-stack {
-    --deck-h: clamp(420px, 100svh - 340px, 560px);
+    --deck-h: clamp(330px, 100svh - 340px, 560px);
+  }
+  /* «Пустить обратно» над колодой (kick-undo в app/room/[id]/page.tsx)
+     сдвигает карту вниз и живёт, пока убранный не вернулся, — до конца
+     захода, если ✕ был нарочно. Без поправки кнопки голоса стояли под
+     панелью всё это время (765–825 при верхе панели 794 на 390×844).
+
+     Строка здесь — всегда один ряд, и поправка — ровно её цена: 16 px ряда
+     и 12 px отступа (gap-6 колонки минус -mt-3), 28. Переносом она стоила
+     от 28 до 60: длинный ник из Steam или «Не дошло — нажми ещё раз»
+     (inline-block, не рвётся) давали три ряда. Сдвинута на 28 и формула, и
+     пол (330 → 302): на 375×667 оба правила стоят на полу, и поправка в
+     одной формуле возвращала там 40 px из 60 — замер с двумя рядами давал
+     кнопки 550–610 при верхе панели 617, третий ряд уводил их под панель.
+     Текст и кнопки карты влезают и в 302 — постер уже. */
+  .room-page:has(.kick-undo) .deck-stack {
+    --deck-h: clamp(302px, 100svh - 368px, 560px);
+  }
+  /* Фраза обрезается многоточием, кнопка — никогда: отменять — её дело, а
+     скринридер прочтёт фразу целиком. Только над колодой: в RoomWaiting
+     строка под ростером и переносится, как раньше. По центру, а не по
+     базовой линии: у элемента с overflow: hidden браузеры по-разному берут
+     её, а высота строки у обоих одна. Зазор — gap, и ml-1 кнопки (отступ
+     для строки в потоке) здесь лишний. */
+  .kick-undo > p {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .kick-undo > p > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .kick-undo > p > button {
+    flex-shrink: 0;
+    margin-left: 0;
   }
 }
 /* Телефон: над колодой заголовок в четыре строки, под ней — нижняя панель.
-   Карта обязана кончаться над панелью, иначе кнопки голоса уходят под неё. */
+   Карта обязана кончаться над панелью, иначе кнопки голоса уходят под неё.
+
+   И не только кнопки: под колодой /explore после «Мимо» встаёт «Вернуть
+   «X»» (app/explore/page.tsx), и бюджет платит за её ряд — 16 px отступа
+   mt-4 и 21 строки text-sm, с запасом 40. Без него строка ложилась ровно
+   под панель: 797–818 при верхе панели 794 на 390×844, 869–890 при 865 на
+   412×915, — и отмена промаха была под пальцем, но не нажималась. Платит
+   всегда, а не через :has() только пока строка видна: тогда кнопки голоса
+   подпрыгивали бы на 40 px прямо под пальцем после первого «Мимо» и
+   опускались после «Интересно». Пол сдвинут на те же 40 (420 → 380): на
+   коротких экранах формула упирается в него, и поправка без пола там бы не
+   работала. Комнату правило не задевает — .room-page .deck-stack выше
+   точнее и задаёт свою высоту. */
 @media (max-width: 767px) {
   .deck-stack {
-    --deck-h: clamp(420px, 100svh - 340px, 600px);
+    --deck-h: clamp(380px, 100svh - 380px, 600px);
   }
 }
 /* Без position: задние карты стопки ставят absolute утилитой, а правило вне
@@ -4180,6 +4609,25 @@ img[data-art-fade][data-loaded] {
   font-weight: 800;
   line-height: 1.2;
   pointer-events: none;
+}
+
+/* Клавиша в подсказке под колодой (← «Не хочу» · → «Играем!»): тонкая рамка
+   цвета волоска, как у клавиши, а не пилюля — это справка, не кнопка. */
+.deck-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.375rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--edge);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--dim);
 }
 
 /*
@@ -4355,6 +4803,28 @@ img[data-art-fade][data-loaded] {
  * Совместимость (app/compat/[steamid]): две ленты постеров навстречу друг
  * другу — механика .pwall, но две строки и в верхней части шапки, чтобы
  * текст внизу стоял на ровном. Скрим — сверху прозрачный, к тексту фон.
+ *
+ * ЛЕНТЫ ТРОГАЮТСЯ И ВСТАЮТ — WCAG 2.2.2, см. AUTO_MOTION в lib/motion.ts.
+ * Петлёй на 90 и 110 с они ехали за процентом и вердиктом, пока открыта
+ * ссылка, и остановить их было нечем, кроме системного «уменьшить
+ * движение». У стены ожидания (.pwall в WarmupScreen) петля остаётся: там
+ * она и есть знак, что подбор идёт, и живёт ровно столько, сколько он.
+ * Здесь страница уже готова, и фон обязан встать сам.
+ *
+ * Партитура — как у ленты главной (autoMotion в lib/motion.ts): две секунды
+ * прежним ходом (50 % ряда за 90 и 110 с — 0.556 и 0.455 %/с), затем 2.5 с
+ * торможения до нуля по smoothstep. Ключевой кадр делит 4.5 с в точке 2 с
+ * (44.444 %). Скорость второго отрезка — 1 − smoothstep, путь — её интеграл,
+ * P(k) = 2k − 2k³ + k⁴ в долях отрезка; кривая ниже держит его точнее 1 %.
+ * Начальный наклон у неё 2 — ровно прежний ход (за отрезок проходится
+ * половина того, что прошлось бы без торможения), а ускорение на стыке
+ * нулевое: три первые точки Безье на одной прямой. Так торможение
+ * начинается мягко, а не углом, — тот же довод, по которому лента
+ * отказалась от прямой. Сторож — lib/motion.test.ts.
+ *
+ * Ряд задвоен в разметке не зря и теперь: сдвиг меньше двух процентов, но
+ * одного прохода из десяти постеров широкому экрану не хватает на ширину
+ * сетки.
  */
 .cwall .pwall-grid {
   inset: -18% -30% 30%;
@@ -4362,10 +4832,39 @@ img[data-art-fade][data-loaded] {
   transform: rotate(-6deg);
 }
 .cwall .pwall-row {
-  animation-duration: 90s;
+  animation: cwall-drift-left 4.5s both;
 }
+/* Целиком, а не одно имя: длительность иначе решал бы порядок правил —
+   .pwall-row:nth-child(2) ставит свои 150 с с той же специфичностью, что у
+   .cwall .pwall-row выше */
 .cwall .pwall-row:nth-child(2) {
-  animation-duration: 110s;
+  animation: cwall-drift-right 4.5s both;
+}
+@keyframes cwall-drift-left {
+  0% {
+    transform: translateX(0);
+    animation-timing-function: linear;
+  }
+  44.444% {
+    transform: translateX(-1.111%);
+    animation-timing-function: cubic-bezier(0.335, 0.67, 0.5, 1);
+  }
+  100% {
+    transform: translateX(-1.806%);
+  }
+}
+@keyframes cwall-drift-right {
+  0% {
+    transform: translateX(-1.477%);
+    animation-timing-function: linear;
+  }
+  44.444% {
+    transform: translateX(-0.568%);
+    animation-timing-function: cubic-bezier(0.335, 0.67, 0.5, 1);
+  }
+  100% {
+    transform: translateX(0);
+  }
 }
 .cwall-poster {
   height: clamp(170px, 27vh, 270px);
@@ -4427,9 +4926,21 @@ img[data-art-fade][data-loaded] {
   background: color-mix(in srgb, var(--ember) 16%, transparent);
 }
 
+/*
+ * Отключение перечисляет каждый селектор, который ставит анимации имя, а не
+ * один .pwall-row: @media специфичности не добавляет, и более точное правило
+ * выигрывает у него свои свойства. .pwall-row:nth-child(2) возвращал имя
+ * pwall-right, длительность приходила с ним же, и второй ряд стены ожидания
+ * под «уменьшить движение» всё равно ехал — один проход на 150 с. У стены
+ * совместимости .cwall .pwall-row ставит анимацию целиком и перебил бы
+ * .pwall-row вовсе. Сторож — lib/motion.test.ts.
+ */
 @media (prefers-reduced-motion: reduce) {
   .pwall,
   .pwall-row,
+  .pwall-row:nth-child(2),
+  .cwall .pwall-row,
+  .cwall .pwall-row:nth-child(2),
   .warmup-chosen-poster,
   .warmup-chosen-line {
     animation: none;
@@ -4460,6 +4971,15 @@ img[data-art-fade][data-loaded] {
   top: -5%;
   height: 58%;
 }
+/*
+ * Отмеченная плитка /room/new?hint=: похожий на настроение выдачи пресет.
+ * Кромка акцентом, а не заливка: это подсказка, а не выбор, и нажатой
+ * плитка выглядеть не должна. Смысл несёт и текст «похоже на твоё» внутри
+ * кнопки — цветом одним не обходимся.
+ */
+.quiz-tile.is-hinted {
+  border-color: color-mix(in srgb, var(--ember-text) 70%, transparent);
+}
 .quiz-scrim {
   position: absolute;
   inset: 0;
@@ -4477,10 +4997,19 @@ img[data-art-fade][data-loaded] {
     min-height: 124px;
     padding-right: 44%;
   }
+  /*
+   * Веер — от ШИРИНЫ плитки, а не от высоты. Было height: 104%, и это
+   * замкнутый круг: на узком экране подпись переносится, плитка растёт, веер
+   * растёт вместе с ней и шире наезжает на ту же подпись. Замер на /room/new:
+   * постеры заходили на текст на 79 px при 320, на 41 при 360 и на 12 при 390.
+   * 24% ширины держат левый постер правее колонки текста (padding-right 44%)
+   * при любой высоте плитки; низ веера по-прежнему уходит за край.
+   */
   .quiz-tile .fan {
-    right: 6%;
+    right: 5%;
     top: 14%;
-    height: 104%;
+    width: 24%;
+    height: auto;
   }
   .quiz-scrim {
     background: linear-gradient(
@@ -4639,6 +5168,29 @@ img[data-art-fade][data-loaded] {
     translate: 0;
   }
 }
+/*
+ * ИМЯ ШАПКИ — ТОЛЬКО НА ВРЕМЯ ПЕРЕХОДА.
+ *
+ * Шапка стояла с именем site-header всегда, инлайном в app/layout.tsx. А в
+ * Chromium элемент с view-transition-name — Backdrop Root: backdrop-filter
+ * его потомков видит только нарисованное внутри него, не страницу позади.
+ * Стекло .site-chrome-bar (blur 24px) и .site-chrome-fade размывали пустоту,
+ * и под шапкой резко читались строки страницы — оставался один тон. Замер
+ * полосами под шапкой на /support (data-chrome="page"): с именем полосы
+ * видны сквозь стекло, без него размыты. Регресс пришёл вместе с переходами
+ * с общим элементом, поверх уже работавшего стекла.
+ *
+ * :active-view-transition держится с вызова startViewTransition до конца
+ * перехода, так что снимок старого состояния имя уже видит, и правила ниже
+ * работают как раньше. На ~0.4 с перехода размытия нет — как и было; в
+ * покое оно возвращается. Движок без этого псевдокласса выбросит правило
+ * целиком: шапка уедет в снимок корня и просто перетечёт сама в себя.
+ * Нижней панели (site-tabbar) это не касается: размытия у неё нет.
+ * Сторож — lib/backdrop.test.ts.
+ */
+:root:active-view-transition body > header {
+  view-transition-name: site-header;
+}
 ::view-transition-group(site-header),
 ::view-transition-group(site-tabbar) {
   z-index: 100;
@@ -4683,6 +5235,13 @@ img[data-art-fade][data-loaded] {
  */
 .anim-page-in {
   animation: page-in var(--dur-fast) var(--ease-out);
+}
+
+/* Под самим правилом, а не в общем списке выше: там оно ему проигрывало. */
+@media (prefers-reduced-motion: reduce) {
+  .anim-page-in {
+    animation: none;
+  }
 }
 
 /*

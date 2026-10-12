@@ -59,6 +59,65 @@ describe('заголовок патча', () => {
     expect(newsPageTitle('Патч 2.31', 'Cyberpunk 2077')).toBe('Cyberpunk 2077: Патч 2.31 — что изменилось')
     expect(newsPageTitle('Патч 2.31', undefined)).toBe('Патч 2.31 — что изменилось')
   })
+
+  /**
+   * Valve выпускает каждое обновление CS2 под одним заголовком —
+   * «Обновление Counter-Strike 2», с названием в конце. Без даты все страницы
+   * патчей верхней игры каталога получали один и тот же <title> (в базе их
+   * восемнадцать подряд), и в выдаче и ридерах они выглядели одной страницей,
+   * повторённой много раз, — да ещё с названием дважды.
+   */
+  const AUG3 = Date.UTC(2026, 7, 3, 18) / 1000
+
+  test('заголовок без номера версии получает дату, название — один раз', () => {
+    expect(newsPageTitle('Обновление Counter-Strike 2', 'Counter-Strike 2', AUG3)).toBe(
+      'Обновление Counter-Strike 2 от 3 августа 2026 г. — что изменилось',
+    )
+    expect(newsPageTitle('Portal 2 - Update', 'Portal 2', AUG3)).toBe(
+      'Portal 2: Update от 3 августа 2026 г. — что изменилось',
+    )
+  })
+
+  test('цифры в самом заголовке различают его и так — даты не нужно', () => {
+    expect(newsPageTitle('Патч 2.31', 'Cyberpunk 2077', AUG3)).toBe('Cyberpunk 2077: Патч 2.31 — что изменилось')
+    expect(newsPageTitle('Counter-Strike 2: Release Notes for 9/25/2026', 'Counter-Strike 2', AUG3)).toBe(
+      'Counter-Strike 2: Release Notes for 9/25/2026 — что изменилось',
+    )
+  })
+
+  test('цифры названия игры версией не считаются', () => {
+    // «2» в Counter-Strike 2 — не номер патча: без даты заголовки снова совпали бы
+    expect(newsPageTitle('Counter-Strike 2', 'Counter-Strike 2', AUG3)).toBe(
+      'Counter-Strike 2 от 3 августа 2026 г. — что изменилось',
+    )
+  })
+
+  test('без даты публикации — как раньше', () => {
+    expect(newsPageTitle('Обновление Counter-Strike 2', 'Counter-Strike 2')).toBe(
+      'Обновление Counter-Strike 2 — что изменилось',
+    )
+  })
+
+  test('двойной пробел в заголовке издателя не съедает название игры впереди', () => {
+    // «есть ли имя в заголовке» решалось сравнением с текстом без имени, а
+    // тот выходил со схлопнутыми пробелами — и «Hotfix  notes», где имени
+    // нет вовсе, терял «Cyberpunk 2077:» в <title>
+    expect(newsPageTitle('Hotfix  notes 2.1', 'Cyberpunk 2077')).toBe(
+      'Cyberpunk 2077: Hotfix  notes 2.1 — что изменилось',
+    )
+  })
+
+  test('обычное слово, совпавшее с названием игры, именем не считается', () => {
+    // «control» здесь — про управление, а не про игру: без учёта регистра
+    // заголовок сходил за «имя уже есть», и «Control:» пропадал из <title>
+    expect(newsPageTitle('Improved control options', 'Control', AUG3)).toBe(
+      'Control: Improved control options от 3 августа 2026 г. — что изменилось',
+    )
+    // имя, написанное как имя, по-прежнему не повторяется
+    expect(newsPageTitle('Обновление Counter-Strike 2', 'Counter-Strike 2', AUG3)).toBe(
+      'Обновление Counter-Strike 2 от 3 августа 2026 г. — что изменилось',
+    )
+  })
 })
 
 describe('описание патча', () => {

@@ -1,11 +1,25 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, upsertSemantics, type Db } from '@/lib/db'
+import { PATCH_SINCE_LEAD } from '@/lib/comeback'
+import { resetSwallowed } from '@/lib/errlog'
+import {
+  logFeedback,
+  saveLibrarySnapshot,
+  setNewsDigest,
+  upsertGamesMeta,
+  upsertNeighbors,
+  upsertNewsItems,
+  upsertSemantics,
+  type Db,
+} from '@/lib/db'
+import { llmIpDailyLimit } from '@/lib/llmcap'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { pickShareOk } from '@/lib/pickshare'
-import { nowSec, sessionSecret } from '@/lib/server'
+import { SESSION_COOKIE, nowSec, sessionSecret } from '@/lib/server'
+import { setTestCookie } from '@/lib/testing/headers'
 import { HERO_SLIDES } from '@/lib/shots'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { SCORE_FACTORS, type GameSemantics } from '@/lib/types'
-import { freshDb, post, signIn } from '@/lib/testing/route'
+import { breakDbOn, freshDb, post, signIn, signInAs, type SessionKind } from '@/lib/testing/route'
 import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -117,6 +131,42 @@ describe('/api/recommend: потолок частоты', () => {
     // Соседний адрес не задет
     expect((await ask('203.0.113.8')).status).toBe(409)
     await vi.waitFor(async () => expect(await counted()).toEqual([['ratelimited:recommend-ip', 1]]))
+  })
+
+  /*
+   * Личный потолок — не «на steamid», а на того, кто спрашивает
+   * (personalRateId в lib/ratelimit). Сессию по ссылке /api/connect выдаёт на
+   * любой публичный профиль, и при общем на steamid счётчике чужой человек
+   * двадцатью запросами в начале окна запирал владельцу /play на всё окно.
+   */
+  test('чужая сессия по ссылке выбрала свой потолок — владельцу подбор не заперт', async () => {
+    const owner = await signIn(db, STEAMID, { verified: true })
+    // Чужой вставил ссылку на тот же профиль — кука теперь его
+    await signIn(db, STEAMID)
+    for (let i = 0; i < 20; i++) expect((await ask('198.51.100.1')).status).toBe(409)
+    expect((await ask('198.51.100.1')).status).toBe(429)
+    // Владелец со своего адреса: дальше потолка, к библиотеке (её нет — 409)
+    setTestCookie(SESSION_COOKIE, owner.token)
+    expect((await ask('203.0.113.7')).status).toBe(409)
+  })
+
+  test('две сессии по ссылке на один профиль — у каждой свой потолок', async () => {
+    // Владелец сам вошёл по ссылке, как входит большинство: чужая ссылка на
+    // его профиль не делит с ним счёт так же, как не делит с вошедшим через Steam
+    const mine = await signIn(db, STEAMID)
+    await signIn(db, STEAMID)
+    for (let i = 0; i < 20; i++) expect((await ask('198.51.100.1')).status).toBe(409)
+    expect((await ask('198.51.100.1')).status).toBe(429)
+    setTestCookie(SESSION_COOKIE, mine.token)
+    expect((await ask('203.0.113.7')).status).toBe(409)
+  })
+
+  test('вошедший через Steam на двух устройствах — потолок один: это один человек', async () => {
+    const phone = await signIn(db, STEAMID, { verified: true })
+    await signIn(db, STEAMID, { verified: true })
+    for (let i = 0; i < 20; i++) expect((await ask()).status).toBe(409)
+    setTestCookie(SESSION_COOKIE, phone.token)
+    expect((await ask('203.0.113.8')).status).toBe(429)
   })
 })
 
@@ -337,6 +387,56 @@ describe('/api/recommend: семантика в карточке', () => {
   })
 })
 
+/** Своя 10 — затравка; соседи: свои 11, 12 и каталог 20…24; мимо: своя 13 и каталог 25 */
+const NEAR = [11, 12, 20, 21, 22, 23, 24]
+
+/**
+ * Библиотека с соседями затравки и ключ модели — для затравки и для доли
+ * адреса в бюджете модели. Возвращает список адресов, куда ходил fetch: по
+ * нему видно, звали ли Anthropic.
+ */
+async function seededLibrary(): Promise<string[]> {
+  // Ключ модели есть: без затравки маршрут пошёл бы в Anthropic
+  vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+  const calls: string[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: unknown) => {
+      calls.push(input instanceof Request ? input.url : String(input))
+      return new Response('', { status: 404 })
+    }),
+  )
+  await signIn(db, STEAMID, { verified: true })
+  const now = nowSec()
+  await saveLibrarySnapshot(
+    db,
+    STEAMID,
+    [10, 11, 12, 13].map((appid) => ({
+      appid,
+      name: `Игра ${appid}`,
+      playtimeForever: appid === 10 ? 3000 : 0,
+      playtime2Weeks: 0,
+    })),
+    now,
+  )
+  await upsertGamesMeta(
+    db,
+    [10, 11, 12, 13, 20, 21, 22, 23, 24, 25].map((appid) => ({
+      appid,
+      name: `Игра ${appid}`,
+      tags: { Puzzle: 100, Casual: 60 },
+      genres: [],
+      categories: [2],
+    })),
+    now,
+  )
+  await upsertNeighbors(
+    db,
+    new Map([[10, NEAR.map((neighbor, i) => ({ neighbor, score: 0.9 - i / 100, shared: ['Puzzle'] }))]]),
+  )
+  return calls
+}
+
 /**
  * «Как «X», но…»: выдача из соседей одной игры. Кандидаты — только соседи
  * (свои и из каталога), модель не зовётся ни при каком ключе, а эхо seed
@@ -348,53 +448,8 @@ describe('/api/recommend: затравка seed', () => {
     vi.unstubAllEnvs()
   })
 
-  /** Своя 10 — затравка; соседи: свои 11, 12 и каталог 20…24; мимо: своя 13 и каталог 25 */
-  const NEAR = [11, 12, 20, 21, 22, 23, 24]
-
-  async function setup(): Promise<string[]> {
-    // Ключ модели есть: без затравки маршрут пошёл бы в Anthropic
-    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
-    const calls: string[] = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: unknown) => {
-        calls.push(input instanceof Request ? input.url : String(input))
-        return new Response('', { status: 404 })
-      }),
-    )
-    await signIn(db, STEAMID, { verified: true })
-    const now = nowSec()
-    await saveLibrarySnapshot(
-      db,
-      STEAMID,
-      [10, 11, 12, 13].map((appid) => ({
-        appid,
-        name: `Игра ${appid}`,
-        playtimeForever: appid === 10 ? 3000 : 0,
-        playtime2Weeks: 0,
-      })),
-      now,
-    )
-    await upsertGamesMeta(
-      db,
-      [10, 11, 12, 13, 20, 21, 22, 23, 24, 25].map((appid) => ({
-        appid,
-        name: `Игра ${appid}`,
-        tags: { Puzzle: 100, Casual: 60 },
-        genres: [],
-        categories: [2],
-      })),
-      now,
-    )
-    await upsertNeighbors(
-      db,
-      new Map([[10, NEAR.map((neighbor, i) => ({ neighbor, score: 0.9 - i / 100, shared: ['Puzzle'] }))]]),
-    )
-    return calls
-  }
-
   test('кандидаты — только соседи затравки, эхо seed, модель не зовётся', async () => {
-    const calls = await setup()
+    const calls = await seededLibrary()
     const res = await POST(post('/api/recommend', { mood: MOOD, seed: 10 }))
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
@@ -412,7 +467,7 @@ describe('/api/recommend: затравка seed', () => {
   })
 
   test('без затравки тот же запрос идёт к модели — значит, тест выше что-то проверяет', async () => {
-    const calls = await setup()
+    const calls = await seededLibrary()
     const res = await POST(post('/api/recommend', { mood: MOOD }))
     expect(res.status).toBe(200)
     expect(((await res.json()) as { seed: unknown }).seed).toBeNull()
@@ -422,7 +477,7 @@ describe('/api/recommend: затравка seed', () => {
   // Общий суточный бюджет модели (lib/llmcap): выбран — та же выдача
   // эвристикой, без 429 и без похода в Anthropic
   test('суточный бюджет модели выбран — эвристика, модель не зовётся', async () => {
-    const calls = await setup()
+    const calls = await seededLibrary()
     vi.stubEnv('LLM_DAILY_CAP', '0')
     const res = await POST(post('/api/recommend', { mood: MOOD }))
     expect(res.status).toBe(200)
@@ -433,7 +488,7 @@ describe('/api/recommend: затравка seed', () => {
   })
 
   test('незнакомая затравка — 409 nocandidates, мусор в поле — обычная выдача', async () => {
-    await setup()
+    await seededLibrary()
     // здесь модель не проверяем — без ключа обычная выдача не шумит отказами
     vi.stubEnv('ANTHROPIC_API_KEY', '')
     const unknown = await POST(post('/api/recommend', { mood: MOOD, seed: 999 }))
@@ -445,6 +500,153 @@ describe('/api/recommend: затравка seed', () => {
       expect(res.status, JSON.stringify(seed)).toBe(200)
       expect(((await res.json()) as { seed: unknown }).seed, JSON.stringify(seed)).toBeNull()
     }
+  })
+
+  // Затравка теперь приходит и адресом — со страницы игры. Соседей не нашлось
+  // у знакомой игры — экран отказа /play называет её, а не говорит общими
+  // словами «подбирать не из чего»
+  test('у знакомой затравки без соседей — 409 nocandidates с её именем', async () => {
+    await seededLibrary()
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    // без тегов соседей нет ни готовых, ни по полке тега
+    await upsertGamesMeta(db, [{ appid: 30, name: 'Одинокая', tags: {}, genres: [], categories: [2] }], nowSec())
+    const res = await POST(post('/api/recommend', { mood: MOOD, seed: 30 }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'nocandidates', seed: { appid: 30, name: 'Одинокая' } })
+  })
+})
+
+/**
+ * «Уже прошёл» у строки «Продолжить» — только у игры с финалом. Решает
+ * сервер по мете (continueView): клиент тегов не видит.
+ */
+describe('/api/recommend: строка «Продолжить»', () => {
+  async function playing(tags: Record<string, number>) {
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      [
+        { appid: 40, name: 'Доигрываемая', playtimeForever: 900, playtime2Weeks: 300 },
+        ...[41, 42, 43].map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      ],
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      [
+        { appid: 40, name: 'Доигрываемая', tags, genres: [], categories: [2] },
+        ...[41, 42, 43].map((appid) => ({
+          appid,
+          name: `Игра ${appid}`,
+          tags: { Puzzle: 100, Casual: 60 },
+          genres: [],
+          categories: [2],
+        })),
+      ],
+      now,
+    )
+    const res = await POST(post('/api/recommend', { mood: MOOD, scope: 'library' }))
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { continue: unknown }).continue
+  }
+
+  test('у игры с финалом — finishable', async () => {
+    expect(await playing({ Metroidvania: 100, Atmospheric: 50 })).toMatchObject({
+      appid: 40,
+      name: 'Доигрываемая',
+      finishable: true,
+    })
+  })
+
+  test('у песочницы — нет: её не проходят', async () => {
+    expect(await playing({ Sandbox: 100, Survival: 50 })).toMatchObject({ appid: 40, finishable: false })
+  })
+})
+
+/*
+ * Доля одного адреса в суточном бюджете модели (llmIpDailyLimit в
+ * lib/llmcap) и демо-квота перед ней. Без доли скрипт с одного адреса с
+ * тремя сессиями по ссылке выбирал весь LLM_DAILY_CAP за несколько часов, и
+ * до полуночи UTC модель молчала для всех — и для подбора, и для пересказов
+ * патчей. А квоту демо — пару настоящих подборок в сутки — тратить запросом,
+ * по которому модель всё равно не позвали бы, значит отдать гостю шаблон
+ * там, где модель могла бы ответить.
+ */
+describe('/api/recommend: доля адреса в бюджете модели', () => {
+  const T0 = 1_760_000_000
+
+  // Окно доли — сутки UTC: полночь посреди теста обнулила бы счёт, и запрос
+  // сверх доли снова дошёл бы до модели
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0 * 1000)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  test('адрес выбрал свою долю бюджета модели — эвристика без 429, соседний адрес идёт к модели', async () => {
+    const calls = await seededLibrary()
+    vi.stubEnv('LLM_DAILY_CAP', '100')
+    const share = llmIpDailyLimit()
+    const toModel = () => calls.filter((u) => u.includes('anthropic')).length
+    const askFrom = async (ip: string) => {
+      const before = toModel()
+      const res = await POST(post('/api/recommend', { mood: MOOD }, { 'x-forwarded-for': ip }))
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { picks: unknown[]; engine: string }
+      expect(body.picks.length).toBeGreaterThan(0)
+      return { modelCalled: toModel() > before, engine: body.engine }
+    }
+    for (let i = 0; i < share; i++) expect((await askFrom('198.51.100.1')).modelCalled, `запрос ${i + 1}`).toBe(true)
+    expect(await askFrom('198.51.100.1')).toEqual({ modelCalled: false, engine: 'heuristic' })
+    expect((await askFrom('203.0.113.9')).modelCalled).toBe(true)
+  })
+
+  /** Демо-личность с той же библиотекой: модель ей положена, но квотой */
+  async function demoWithLibrary(): Promise<void> {
+    const demo = await signInAs(db, 'demo')
+    await saveLibrarySnapshot(
+      db,
+      demo,
+      [10, 11, 12, 13].map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      nowSec(),
+    )
+  }
+
+  async function llmRows(): Promise<string[]> {
+    const keys = (await db.execute('SELECT key FROM rate_limits')).rows.map((r) => String(r.key))
+    return keys.filter((k) => k.startsWith('llm-'))
+  }
+
+  test('демо без ключа модели не тратит ни свою пару вызовов, ни долю адреса', async () => {
+    await seededLibrary()
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    await demoWithLibrary()
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { engine: string }).engine).toBe('heuristic')
+    expect(await llmRows()).toEqual([])
+  })
+
+  // Модель выключена нулём (DEPLOY.md: LLM_DAILY_CAP=0), а ключ на месте.
+  // Раньше демо-квота списывалась до того, как бюджет говорил «нет», и гость,
+  // зашедший при выключенной модели, после её включения в тот же день сутки
+  // получал бы эвристику
+  test('демо при выключенной модели (LLM_DAILY_CAP=0) квоту не тратит, хотя ключ есть', async () => {
+    const calls = await seededLibrary()
+    vi.stubEnv('LLM_DAILY_CAP', '0')
+    await demoWithLibrary()
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { engine: string }).engine).toBe('heuristic')
+    expect(calls.filter((u) => u.includes('anthropic'))).toEqual([])
+    expect(await llmRows()).toEqual([])
   })
 })
 
@@ -550,5 +752,282 @@ describe('/api/recommend: подталкивания', () => {
     const body = (await res.json()) as Body
     expect(body.scope).toBe('library')
     expect(body.picks.every((p) => p.source !== 'new')).toBe(true)
+  })
+})
+
+/**
+ * «С твоего последнего захода вышло крупное обновление» — настоящим роутом.
+ *
+ * Факт производный от даты последнего запуска, а её видит только writer:
+ * сессию по вставленной ссылке /api/connect выдаёт на любой публичный
+ * профиль (lib/comeback.ts). Чистые функции это уже стерегут; здесь — что
+ * роут их правильно склеил: кто получает фразу, что уходит в «Отправить
+ * другу» и что обрыв базы на чтении патча не роняет выдачу.
+ */
+describe('/api/recommend: крупный патч с последнего захода', () => {
+  const DAY = 86_400
+  /** Заброшенная с датой последнего запуска и патчем после неё */
+  const STALE = 620
+  const TLDR = 'Добавили новый биом и переделали бои с боссами'
+
+  type Body = { picks: Array<{ appid: number; source: string; reason: string; share?: { text: string } }> }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  async function setup(kind: SessionKind): Promise<void> {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    const steamid = await signInAs(db, kind)
+    const now = nowSec()
+    const ids = [STALE, 413150, 105600, 646570]
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      [
+        { appid: STALE, name: `Игра ${STALE}`, playtimeForever: 40 * 60, playtime2Weeks: 0, lastPlayed: now - 200 * DAY },
+        ...ids.slice(1).map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      ],
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      ids.map((appid) => ({
+        appid,
+        name: `Игра ${appid}`,
+        tags: { Puzzle: 100, Casual: 60 },
+        genres: [],
+        categories: [2],
+      })),
+      now,
+    )
+    await upsertNewsItems(
+      db,
+      [
+        {
+          appid: STALE,
+          gid: 'major',
+          title: 'Обновление',
+          url: `https://store.steampowered.com/news/app/${STALE}/view/1`,
+          publishedAt: now - 30 * DAY,
+          kind: 'patch',
+          scale: 'major',
+          blocks: [{ kind: 'p', runs: [{ text: 'правки' }] }],
+          bodyHash: 'h1',
+          rank: 5000,
+        },
+      ],
+      now,
+    )
+    await setNewsDigest(db, STALE, 'major', { tldr: TLDR, scale: 'major' }, now)
+  }
+
+  async function staleCard(): Promise<Body['picks'][number]> {
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const card = ((await res.json()) as Body).picks.find((p) => p.appid === STALE)
+    expect(card, 'заброшенная в выдаче').toBeDefined()
+    expect(card!.source).toBe('comeback')
+    return card!
+  }
+
+  test('сессия по вставленной ссылке — прежняя фраза, без факта', async () => {
+    await setup('claimed')
+    const card = await staleCard()
+    expect(card.reason).not.toContain(PATCH_SINCE_LEAD)
+    expect(card.reason).toContain('вернись и проверь')
+    expect(card.share!.text).not.toContain(PATCH_SINCE_LEAD)
+  })
+
+  test.each(['openid', 'demo'] as const)('writer (%s) — фраза в причине, но не в «Отправить другу»', async (kind) => {
+    await setup(kind)
+    const card = await staleCard()
+    expect(card.reason).toContain(PATCH_SINCE_LEAD)
+    expect(card.reason).toContain('новый биом')
+    // По ссылке уходит только то, что верно и для получателя
+    expect(card.share!.text).not.toContain(PATCH_SINCE_LEAD)
+    expect(card.share!.text).not.toContain('новый биом')
+    expect(card.share!.text).toContain(`«Игра ${STALE}»`)
+  })
+
+  test('обрыв базы на чтении патча — выдача собирается без факта, сбой в логе', async () => {
+    await setup('openid')
+    // logSwallowed глушит повтор того же where на минуту: без сброса строка
+    // зависела бы от того, не залогировал ли её раньше другой тест файла
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    breakDbOn(db, 'FROM news_items')
+    const card = await staleCard()
+    expect(card.reason).not.toContain(PATCH_SINCE_LEAD)
+    expect(card.reason).toContain('вернись и проверь')
+    expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('cards:comeback-patches')
+  })
+})
+
+/**
+ * «План на вечер» (lib/eveningplan.ts): поставленная на загрузку игра
+ * приходит с выдачей, и /play рисует над «Продолжить» строку с запуском.
+ * Только пишущей сессии не из демо — это её же нажатие.
+ */
+describe('/api/recommend: план на вечер', () => {
+  const PLANNED = 620
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  async function setup(kind: SessionKind): Promise<void> {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    const steamid = await signInAs(db, kind)
+    const now = nowSec()
+    const ids = [PLANNED, 413150, 105600, 646570]
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      ids.map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      ids.map((appid) => ({ appid, name: `Игра ${appid}`, tags: { Puzzle: 100 }, genres: [], categories: [2] })),
+      now,
+    )
+    await logFeedback(
+      db,
+      { steamid, appid: PLANNED, action: 'opened', ctx: { source: 'play', intent: 'install' } },
+      now - 3600,
+    )
+  }
+
+  async function planOf(): Promise<unknown> {
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { plan?: unknown }).plan
+  }
+
+  test('вошедший через Steam — план с именем и тем, что это был за план', async () => {
+    await setup('openid')
+    expect(await planOf()).toEqual({ appid: PLANNED, name: `Игра ${PLANNED}`, intent: 'install' })
+  })
+
+  test.each(['claimed', 'demo'] as const)('%s — плана нет: не её нажатие или не её вечер', async (kind) => {
+    await setup(kind)
+    expect(await planOf()).toBeNull()
+  })
+
+  test('обрыв базы на чтении плана — выдача собирается без него', async () => {
+    await setup('openid')
+    resetSwallowed()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    breakDbOn(db, 'FROM feedback f JOIN games g')
+    expect(await planOf()).toBeNull()
+    expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('recommend:plan')
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts) — кукой этого браузера: /play ради неё
+ * не везёт ни байта, браузер приносит её сам. Хоррор не доходит ни до
+ * пятёрки, ни до полки покупок, ни до строки «Продолжить»; всё под фильтром —
+ * свой отказ muted (FAIL.muted на /play), а не «верни что-нибудь из бана».
+ */
+describe('/api/recommend: «Не предлагать»', () => {
+  const HORRORS = [50, 51, 60]
+  const horrorMeta = (appid: number) => ({
+    appid,
+    name: `Хоррор ${appid}`,
+    tags: { Horror: 120, Puzzle: 100 },
+    genres: [],
+    categories: [2],
+  })
+
+  /** Своё: 50 — хоррор, в который играет сейчас, 51 — нетронутый хоррор; 60 — хоррор каталога */
+  async function library(others: number[]) {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    // ни одного похода наружу: цены и всё прочее — отказом
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 404 })),
+    )
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      [
+        { appid: 50, name: 'Хоррор 50', playtimeForever: 900, playtime2Weeks: 300 },
+        { appid: 51, name: 'Хоррор 51', playtimeForever: 0, playtime2Weeks: 0 },
+        ...others.map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      ],
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      [
+        ...HORRORS.map(horrorMeta),
+        ...others.map((appid) => ({
+          appid,
+          name: `Игра ${appid}`,
+          tags: { Puzzle: 100, Casual: 60 },
+          genres: [],
+          categories: [2],
+        })),
+      ],
+      now,
+    )
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  type Body = {
+    picks: Array<{ appid: number }>
+    discoveries: Array<{ appid: number }>
+    continue: { appid: number } | null
+  }
+
+  test('без куки хорроры в выдаче есть — значит, проверка ниже что-то проверяет', async () => {
+    await library([41, 42, 43])
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect([...body.picks, ...body.discoveries].map((p) => p.appid)).toEqual(expect.arrayContaining([51, 60]))
+    expect(body.continue?.appid).toBe(50)
+  })
+
+  test('с кукой хорроров нет ни в пятёрке, ни на полке, ни в «Продолжить»', async () => {
+    await library([41, 42, 43])
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    const shown = [...body.picks, ...body.discoveries].map((p) => p.appid)
+    expect(shown.length).toBeGreaterThan(0)
+    for (const appid of HORRORS) expect(shown).not.toContain(appid)
+    expect(body.continue).toBeNull()
+  })
+
+  test('мусор в куке — фильтра нет, а не отказ', async () => {
+    await library([41, 42, 43])
+    setTestCookie(MUTE_COOKIE, '<script>.__proto__')
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as Body).continue?.appid).toBe(50)
+  })
+
+  test('всё под фильтром — 409 muted, а не nocandidates', async () => {
+    await library([])
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'muted' })
   })
 })

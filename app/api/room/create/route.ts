@@ -5,6 +5,7 @@ import { parseMood } from '@/lib/mood'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, nowSec, requireWriter } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
+import { roomSeed } from '@/lib/roomseed'
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
   if (!writer.ok) return writer.response
   const { steamid } = writer
 
-  const body = (await readJsonObject(req)) as { mood?: unknown }
+  const body = (await readJsonObject(req)) as { mood?: unknown; game?: unknown }
   const mood = parseMood(body.mood) ?? undefined
 
   const db = await getDb()
@@ -41,13 +42,25 @@ export async function POST(req: Request) {
   })
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
+  // «Позвать в эту игру» — после ограничителя: проверка игры читает каталог и
+  // баны, и платить за неё отказу незачем. Негодная — комната без неё, без
+  // отказа (почему — lib/roomseed)
+  const seed = body.game === undefined ? null : await roomSeed(db, body.game, steamid)
+
   let id = genRoomId()
   for (let i = 0; i < 5 && (await getRoom(db, id)); i++) id = genRoomId()
 
-  await createRoom(db, { id, steamid, ...(mood ? { mood } : {}) }, now)
+  await createRoom(
+    db,
+    { id, steamid, ...(mood ? { mood } : {}), ...(seed ? { seedAppid: seed.appid } : {}) },
+    now,
+  )
 
   const name = await getPersonaName(db, steamid)
-  await joinRoom(db, id, steamid, name ?? undefined, now)
+  // Хост — пишущая сессия по определению (requireWriter выше), и его членство
+  // это помнит: чужая ссылка на профиль хоста за него в комнате не действует
+  // (lib/roomseat)
+  await joinRoom(db, id, steamid, name ?? undefined, now, { writer: true })
 
   return NextResponse.json({ roomId: id })
 }

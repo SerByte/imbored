@@ -54,18 +54,53 @@ describe('превью', () => {
   })
 })
 
-describe('сторож прокси Cloudflare', () => {
-  const cron = read('.github', 'workflows', 'cron.yml')
+const cron = read('.github', 'workflows', 'cron.yml')
 
-  // Текст job'а — после его ключа и до ключа следующего job'а (тот же отступ
-  // в два пробела) или до конца файла
-  const job = (name: string) => {
-    const at = cron.search(new RegExp(`^  ${name}:\\s*$`, 'm'))
-    expect(at, `job ${name} в cron.yml не найден`).toBeGreaterThan(-1)
-    const body = cron.slice(at + `  ${name}:`.length)
-    const next = body.search(/^ {2}[\w-]+:\s*$/m)
-    return next === -1 ? body : body.slice(0, next)
-  }
+// Текст job'а — после его ключа и до ключа следующего job'а (тот же отступ
+// в два пробела) или до конца файла
+const jobOf = (file: string, yml: string, name: string) => {
+  const at = yml.search(new RegExp(`^  ${name}:\\s*$`, 'm'))
+  expect(at, `job ${name} в ${file} не найден`).toBeGreaterThan(-1)
+  const body = yml.slice(at + `  ${name}:`.length)
+  const next = body.search(/^ {2}[\w-]+:\s*$/m)
+  return next === -1 ? body : body.slice(0, next)
+}
+const job = (name: string) => jobOf('cron.yml', cron, name)
+
+describe('CI', () => {
+  test('аудит зависимостей — последним шагом и при любом исходе прошлых, кроме отмены', () => {
+    // Advisory публикуют независимо от содержимого PR. Стоял аудит вторым
+    // шагом — и новое advisory прятало всё остальное: PR с настоящей ошибкой
+    // типов или упавшим тестом получал один красный «Аудит» и ни строчки от
+    // tsc, тестов и смоука. Последним он красит прогон так же, а скрыть уже
+    // ничего не может. !cancelled(), а не always(): прогон, отменённый
+    // пушем поверх (cancel-in-progress), аудит доигрывать не должен
+    const ci = read('.github', 'workflows', 'ci.yml')
+    const steps = jobOf('ci.yml', ci, 'check').split(/^ {6}- /m).slice(1)
+    const audit = steps.findIndex((st) => /npm audit\b/.test(st))
+    expect(audit, 'шаг с npm audit в ci.yml не найден').toBeGreaterThan(-1)
+    expect(audit, 'после аудита не должно быть шагов').toBe(steps.length - 1)
+    expect(steps[audit]).toMatch(/^\s*if: \$\{\{ !cancelled\(\) \}\}\s*$/m)
+    expect(steps[audit]).toContain('--audit-level=high')
+  })
+})
+
+describe('часовой прогон кронов', () => {
+  test('health — первым шагом, до пингов, а пинги идут при любом его ответе', () => {
+    // Health обязан читать итоги ПРОШЛОГО часа. Позови его после пингов — и
+    // он читал бы запуски, начатые секунды назад, и крон, падающий через раз,
+    // проскальзывал бы зелёным. А без always() красный health останавливал бы
+    // и сами очереди
+    const steps = job('ping').split(/^ {6}- name: /m).slice(1)
+    const names = steps.map((st) => st.slice(0, st.indexOf('\n')).trim())
+    expect(names[0]).toBe('Здоровье кронов')
+    expect(steps[0]).toContain('https://imbored.cc/api/cron/health')
+    expect(names.slice(1)).toEqual(['Пнуть /api/cron/news', 'Пнуть /api/cron/digest'])
+    for (const st of steps.slice(1)) expect(st).toMatch(/^\s*if: always\(\)\s*$/m)
+  })
+})
+
+describe('сторож прокси Cloudflare', () => {
   const skips = (name: string) => job(name).match(/^\s*if: github\.event\.schedule != '([^']+)'/m)?.[1]
 
   test('часовой прогон пропускает сторож, суточный — пинки, и строки те же, что в schedule', () => {

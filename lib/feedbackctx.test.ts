@@ -64,6 +64,15 @@ describe('parseFeedbackCtx', () => {
     expect(parseFeedbackCtx({ parts: [1, 2, 3] })).toBeNull()
   })
 
+  // «Уже прошёл» вне выдачи: в «Твоих вечерах» и на странице игры. Отчёт
+  // обязан отличать их от героя /play — иначе пройденное там читалось бы
+  // ответом на подбор, которого не было
+  test('источник — и библиотека, и страница игры', () => {
+    expect(parseFeedbackCtx({ source: 'library' })).toEqual({ source: 'library' })
+    expect(parseFeedbackCtx({ source: 'game' })).toEqual({ source: 'game' })
+    expect(parseFeedbackCtx({ source: 'portrait' })).toBeNull()
+  })
+
   test('не объект или ничего годного — null, и оценка пишется без снимка', () => {
     for (const raw of [null, undefined, 'play', 42, [], {}, { slot: 'x' }]) {
       expect(parseFeedbackCtx(raw), JSON.stringify(raw)).toBeNull()

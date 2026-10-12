@@ -1,11 +1,18 @@
 import { describe, expect, test } from 'vitest'
 import { LEANS, NEUTRAL_MOOD, parseLean, parseMood } from './mood'
 import {
+  parseSeedParam,
   playHref,
   presetHref,
+  quizHref,
+  nearestRoomPreset,
   ROOM_PRESETS,
+  roomArrival,
+  roomBridgeHref,
   roomPresetByKey,
   roomPresetOf,
+  roomSeedHref,
+  roomSeedOf,
   VIBE_PRESETS,
 } from './presets'
 import { parseFocus } from './recommend'
@@ -70,8 +77,62 @@ describe('playHref', () => {
   })
 
   test('null и отсутствие опций в адрес не попадают', () => {
-    const got = read(playHref(NEUTRAL_MOOD, { lean: null, focus: null, roulette: false }))
+    const got = read(playHref(NEUTRAL_MOOD, { lean: null, focus: null, roulette: false, seed: null }))
     expect(got.keys).toEqual(['time', 'vibe', 'social'])
+  })
+
+  // «Как «X», но…» с адреса: затравка встаёт в самый хвост, после оси, —
+  // адреса без неё не меняются ни на символ, и разбирается она обратно тем же
+  // правилом, что читает /play
+  test('затравка — в хвост, и разбирается обратно в тот же appid', () => {
+    const href = playHref(NEUTRAL_MOOD, { lean: 'fresh', seed: 1145360 })
+    expect(href).toBe('/play?time=medium&vibe=chill&social=solo&lean=fresh&seed=1145360')
+    expect(parseSeedParam(new URL(href, 'https://imbored.test').searchParams.get('seed'))).toBe(1145360)
+    // у записей чужих магазинов appid отрицательные — соседи по тегу есть и у них
+    expect(read(playHref(NEUTRAL_MOOD, { seed: -12 })).keys).toEqual(['time', 'vibe', 'social', 'seed'])
+    expect(playHref(NEUTRAL_MOOD, { seed: 0 })).toBe('/play?time=medium&vibe=chill&social=solo')
+  })
+})
+
+describe('parseSeedParam', () => {
+  test('ненулевое целое — затравка, отрицательное тоже', () => {
+    expect(parseSeedParam('620')).toBe(620)
+    expect(parseSeedParam('-3')).toBe(-3)
+  })
+
+  test('всё, из чего Number() что-то вытянул бы, — не затравка', () => {
+    for (const raw of [null, undefined, '', '0', '-0', '012', '+12', ' 12', '12 ', '1e3', '1.5', '0x1f', '12abc', 'abc']) {
+      expect(parseSeedParam(raw), JSON.stringify(raw)).toBeNull()
+    }
+    // за пределом безопасного целого appid уже не тот, что прислали
+    expect(parseSeedParam('9007199254740993')).toBeNull()
+  })
+})
+
+/**
+ * «Изменить настроение» с выдачи «нераспакованного». Фокус живёт только в
+ * адресе (?from=untouched), и голый /quiz снимал его молча: человек менял
+ * настроение, а получал обычную выдачу с магазином и наигранным — без слова о
+ * том, что фильтр пропал. Квиз читает фокус из своего адреса и несёт дальше.
+ */
+describe('quizHref', () => {
+  test('без фокуса — голый квиз', () => {
+    expect(quizHref(null)).toBe('/quiz')
+  })
+
+  test('фокус едет в квиз тем же параметром, что квиз читает', () => {
+    expect(quizHref('untouched')).toBe('/quiz?from=untouched')
+    expect(new URL(quizHref('untouched'), 'https://imbored.cc').searchParams.get('from')).toBe('untouched')
+  })
+
+  // «Похожее на X — под моё настроение» со страницы игры и из библиотеки, и
+  // «Изменить настроение» у выдачи «в духе X»: затравка едет тем же параметром,
+  // что квиз отдаёт в playHref
+  test('затравка едет в квиз; при фокусе — нет: тот вопрос уже задан', () => {
+    expect(quizHref(null, 620)).toBe('/quiz?seed=620')
+    expect(parseSeedParam(new URL(quizHref(null, -7), 'https://imbored.cc').searchParams.get('seed'))).toBe(-7)
+    expect(quizHref(null, null)).toBe('/quiz')
+    expect(quizHref('untouched', 620)).toBe('/quiz?from=untouched')
   })
 })
 
@@ -118,5 +179,149 @@ describe('ROOM_PRESETS', () => {
     expect(roomPresetOf(undefined)).toBeNull()
     // Комнаты «коротко и спокойно» в списке нет — и подписывать её нечем
     expect(roomPresetOf({ time: 'short', vibe: 'chill', social: 'friends' })).toBeNull()
+  })
+})
+
+const TIMES: readonly Mood['time'][] = ['short', 'medium', 'long']
+const VIBES: readonly Mood['vibe'][] = ['chill', 'engaged']
+const ALL_AXES = TIMES.flatMap((time) => VIBES.map((vibe) => ({ time, vibe })))
+
+/**
+ * Ближайший пресет — подсказка на экране выбора, а не молчаливая подмена.
+ * Стережём все шесть сочетаний time×vibe явной таблицей: смена меры
+ * (вайб дороже времени, ничья — в пользу короткого) обязана быть видна здесь,
+ * а не всплыть у хоста отмеченной не той плиткой.
+ */
+describe('nearestRoomPreset', () => {
+  const EXPECTED: Record<string, string> = {
+    'short|chill': 'talk', // спокойно важнее, чем «коротко»: быстрые катки — с вызовом
+    'short|engaged': 'quick',
+    'medium|chill': 'talk',
+    'medium|engaged': 'quick', // ничья quick/evening — короткий укладывается в час
+    'long|chill': 'cozy',
+    'long|engaged': 'evening',
+  }
+
+  test('каждое из шести сочетаний — своя явная строка таблицы', () => {
+    expect(ALL_AXES).toHaveLength(6)
+    for (const axes of ALL_AXES) {
+      const key = `${axes.time}|${axes.vibe}`
+      expect(nearestRoomPreset(axes)?.key, key).toBe(EXPECTED[key])
+    }
+  })
+
+  test('точный пресет, где он есть, — тот же, что у roomPresetOf', () => {
+    for (const axes of ALL_AXES) {
+      const exact = roomPresetOf({ ...axes, social: 'friends' })
+      if (exact) expect(nearestRoomPreset(axes), `${axes.time}|${axes.vibe}`).toBe(exact)
+    }
+  })
+
+  test('вайб не меняется никогда: спокойной компании — не соревнование', () => {
+    for (const axes of ALL_AXES) {
+      expect(nearestRoomPreset(axes)?.mood.vibe, `${axes.time}|${axes.vibe}`).toBe(axes.vibe)
+    }
+  })
+
+  test('чужие значения осей — null, а не случайный пресет', () => {
+    expect(nearestRoomPreset(null)).toBeNull()
+    expect(nearestRoomPreset(undefined)).toBeNull()
+    expect(nearestRoomPreset({ time: 'forever' as Mood['time'], vibe: 'chill' })).toBeNull()
+    expect(nearestRoomPreset({ time: 'short', vibe: 'rage' as Mood['vibe'] })).toBeNull()
+    expect(nearestRoomPreset({ time: '__proto__' as Mood['time'], vibe: 'chill' })).toBeNull()
+  })
+})
+
+/**
+ * Мост «Позвать друзей выбрать вместе» с /play. Главное обещание: комната
+ * создаётся в один тап ТОЛЬКО с тем настроением, которое человек назвал сам.
+ * Без точного пресета — подсказка (?hint=), и тогда в адресе нет preset,
+ * иначе /room/new создал бы комнату с чужим вечером.
+ */
+describe('roomBridgeHref', () => {
+  test('соло-настроению мост не предлагается', () => {
+    for (const axes of ALL_AXES) expect(roomBridgeHref({ ...axes, social: 'solo' })).toBeNull()
+    expect(roomBridgeHref(null)).toBeNull()
+    expect(roomBridgeHref(undefined)).toBeNull()
+  })
+
+  test('точный пресет — создание в один тап, и настроение комнаты — ровно выдачи', () => {
+    for (const axes of ALL_AXES) {
+      const mood: Mood = { ...axes, social: 'friends' }
+      const exact = roomPresetOf(mood)
+      if (!exact) continue
+      const href = roomBridgeHref(mood)
+      expect(href, exact.key).toBe(`/room/new?preset=${exact.key}`)
+      const got = roomPresetByKey(new URL(href!, 'https://imbored.test').searchParams.get('preset'))
+      expect(got?.mood, exact.key).toEqual(mood)
+    }
+  })
+
+  test('без точного — только подсказка: в адресе нет preset, и /room/new комнату сам не создаст', () => {
+    const gaps = ALL_AXES.filter((axes) => !roomPresetOf({ ...axes, social: 'friends' }))
+    expect(gaps.map((a) => `${a.time}|${a.vibe}`).sort()).toEqual(['medium|engaged', 'short|chill'])
+    for (const axes of gaps) {
+      const q = new URL(roomBridgeHref({ ...axes, social: 'friends' })!, 'https://imbored.test').searchParams
+      expect([...q.keys()], `${axes.time}|${axes.vibe}`).toEqual(['hint'])
+      expect(q.get('hint')).toBe(nearestRoomPreset(axes)?.key)
+      // тот же разбор, что у /room/new: создать не с чем, отмечен ближайший
+      const got = roomArrival(q)
+      expect(got.create, `${axes.time}|${axes.vibe}`).toBeNull()
+      expect(got.hint, `${axes.time}|${axes.vibe}`).toBe(nearestRoomPreset(axes))
+    }
+  })
+
+  test('чужие оси из адреса /play — без моста, а не hint=undefined', () => {
+    expect(roomBridgeHref({ time: 'forever' as Mood['time'], vibe: 'chill', social: 'friends' })).toBeNull()
+  })
+})
+
+/**
+ * Разбор адреса /room/new: create — комната сразу, hint — только отметка.
+ * Сторож главного обещания моста: подсказка сама комнату не создаёт никогда,
+ * а выбранный пресет подсказку перекрывает.
+ */
+describe('roomArrival', () => {
+  const arrive = (s: string) => roomArrival(new URLSearchParams(s))
+
+  test('?hint= без preset — отметка, но не создание, для каждого пресета', () => {
+    for (const p of ROOM_PRESETS) {
+      expect(arrive(`hint=${p.key}`), p.key).toEqual({ create: null, hint: p })
+    }
+  })
+
+  test('?preset= создаёт, а подсказку рядом не читает', () => {
+    for (const p of ROOM_PRESETS) {
+      expect(arrive(`preset=${p.key}`), p.key).toEqual({ create: p, hint: null })
+      expect(arrive(`preset=${p.key}&hint=talk`), p.key).toEqual({ create: p, hint: null })
+    }
+  })
+
+  test('чужой preset не создаёт и не губит годную подсказку; чужое — null', () => {
+    expect(arrive('preset=rage&hint=talk')).toEqual({ create: null, hint: roomPresetByKey('talk') })
+    expect(arrive('hint=__proto__')).toEqual({ create: null, hint: null })
+    expect(arrive('')).toEqual({ create: null, hint: null })
+  })
+})
+
+/**
+ * «Позвать в эту игру»: appid первой карты едет в адресе /room/new?game=.
+ * Адрес приходит откуда угодно — из чата, из закладки, — поэтому разбор
+ * строгий: только положительное целое без хвостов. Всё остальное — «без
+ * игры», а не ошибка: комната создаётся как обычно.
+ */
+describe('игра, в которую зовут', () => {
+  test('адрес и разбор — один договор', () => {
+    for (const appid of [10, 548430, 2_147_483_647]) {
+      const href = roomSeedHref(appid)
+      expect(href, String(appid)).toBe(`/room/new?game=${appid}`)
+      expect(roomSeedOf(new URL(href, 'https://imbored.test').searchParams.get('game'))).toBe(appid)
+    }
+  })
+
+  test('мусор — null: ноль, минус, дробь, хвосты, экспонента, слишком длинное', () => {
+    for (const raw of [null, undefined, '', '0', '-570', '570.5', '570abc', ' 570', '0570', '1e5', '0x10', '2147483648', '99999999999']) {
+      expect(roomSeedOf(raw), String(raw)).toBeNull()
+    }
   })
 })

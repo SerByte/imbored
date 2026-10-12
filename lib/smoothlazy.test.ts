@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
+import { code, reach, rel, ROOT } from './testing/importgraph'
 
 /**
  * Сторож веса: gsap едет только туда, где без него нельзя.
@@ -19,63 +20,13 @@ import { describe, expect, test } from 'vitest'
  * отрисуются, вес вернётся. Поэтому проверяется весь граф статических
  * импортов от лэйаута и от каждой страницы, а не один файл.
  *
- * Граф строится регуляркой по тексту, и это осознанное огрубление: `import
- * type` и динамический `import()` в бандл начальной загрузки не попадают и
- * пропускаются, всё остальное считается. Что обход вообще находит gsap,
- * проверяет отдельный тест — иначе сторож мог бы быть зелёным вхолостую.
+ * Граф строится регуляркой по тексту (lib/testing/importgraph), и это
+ * осознанное огрубление: `import type` и динамический `import()` в бандл
+ * начальной загрузки не попадают и пропускаются, всё остальное считается.
+ * Что обход вообще находит gsap, проверяет отдельный тест — иначе сторож мог
+ * бы быть зелёным вхолостую.
  */
 
-const ROOT = path.join(__dirname, '..')
-
-/** Код без комментариев: объяснение в докблоке не должно попадать под проверку. */
-function code(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '')
-}
-
-/**
- * Статические импорты и реэкспорты модуля, кроме `import type`/`export type`.
- * `[^'"]*?` намеренно тянется через переводы строк — многострочные импорты с
- * фигурными скобками так и выглядят.
- */
-const STATIC_IMPORT = /^\s*(?:import|export)\s+(?!type\b)(?:[^'";]*?\bfrom\s*)?['"]([^'"]+)['"]/gm
-
-function resolveLocal(from: string, spec: string): string | null {
-  let base: string
-  if (spec.startsWith('@/')) base = path.join(ROOT, spec.slice(2))
-  else if (spec.startsWith('.')) base = path.resolve(path.dirname(from), spec)
-  else return null
-  for (const ext of ['', '.tsx', '.ts', '/index.tsx', '/index.ts']) {
-    const p = base + ext
-    if (/\.tsx?$/.test(p) && fs.existsSync(p) && fs.statSync(p).isFile()) return p
-  }
-  return null
-}
-
-/** Все пакеты, до которых модуль дотягивается статическими импортами. */
-function reach(entry: string): { files: Set<string>; packages: Map<string, string> } {
-  const files = new Set<string>()
-  // пакет → первый файл, который его импортирует: чтобы сообщение называло виновника
-  const packages = new Map<string, string>()
-  const queue = [entry]
-  while (queue.length) {
-    const file = queue.pop() as string
-    if (files.has(file)) continue
-    files.add(file)
-    const src = code(fs.readFileSync(file, 'utf8'))
-    for (const m of src.matchAll(STATIC_IMPORT)) {
-      const spec = m[1]
-      if (spec.startsWith('@/') || spec.startsWith('.')) {
-        const local = resolveLocal(file, spec)
-        if (local) queue.push(local)
-        continue
-      }
-      if (!packages.has(spec)) packages.set(spec, rel(file))
-    }
-  }
-  return { files, packages }
-}
-
-const rel = (p: string) => path.relative(ROOT, p).split(path.sep).join('/')
 const isGsap = (spec: string) => spec === 'gsap' || spec.startsWith('gsap/') || spec.startsWith('@gsap/')
 
 describe('gsap не в начальном наборе каждой страницы', () => {
@@ -102,7 +53,7 @@ describe('gsap не в начальном наборе каждой страни
       .map(([spec, file]) => `${file} → ${spec}`)
     expect(
       offenders,
-      'gsap снова въехал в корневой лэйаут, то есть в скрипты КАЖДОЙ страницы. Догружай его через import() или next/dynamic, как components/SmoothScroll.tsx',
+      'gsap снова въехал в корневой лэйаут, то есть в скрипты КАЖДОЙ страницы. Догружай его отдельным куском, как components/SmoothScroll.tsx (lazyIsland)',
     ).toEqual([])
   })
 
@@ -141,6 +92,23 @@ describe('gsap не в начальном наборе каждой страни
     expect([...impl.packages.keys()].filter(isGsap)).toEqual(
       expect.arrayContaining(['gsap', 'gsap/ScrollSmoother', 'gsap/ScrollTrigger']),
     )
+  })
+
+  /**
+   * Отказ куска смузера не уводит главную в app/error.tsx.
+   *
+   * Смузер задуман необязательным: без него главная прокручивается нативно.
+   * Но next/dynamic — это React.lazy без своей границы, и не пришедший кусок
+   * (моргнула сеть на телефоне, деплой сменил хеши под старой вкладкой)
+   * бросал в границу сегмента: вся главная, с единственной карточкой входа,
+   * сменялась экраном «Что-то сломалось», где не помогали ни «Попробовать
+   * снова», ни «На главную» — lazy помнит отказ. lazyIsland ловит отказ сам,
+   * шлёт отчёт с тегом и рисует пустое место (lib/lazyisland.test.ts).
+   */
+  test('смузер грузится островком: отказ куска — нативная прокрутка, а не экран ошибки', () => {
+    const shim = code(fs.readFileSync(path.join(ROOT, 'components', 'SmoothScroll.tsx'), 'utf8'))
+    expect(shim, 'next/dynamic уводит отказ куска в app/error.tsx').not.toMatch(/from\s+['"]next\/dynamic['"]/)
+    expect(shim).toMatch(/lazyIsland\(\s*\(\)\s*=>\s*import\('\.\/SmoothScrollImpl'\)/)
   })
 
   /**

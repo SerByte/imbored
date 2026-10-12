@@ -1,12 +1,21 @@
 import { createHmac } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { saveDailyPick, sweepStale, upsertGamesMeta, upsertUser, type Db } from '@/lib/db'
-import { dayKey } from '@/lib/daily'
-import { SESSION_COOKIE, sessionSecret } from '@/lib/server'
+import {
+  forgetUser,
+  logFeedback,
+  saveDailyPick,
+  sweepStale,
+  upsertGamesMeta,
+  upsertUser,
+  type Db,
+} from '@/lib/db'
+import { dayKey, mutedDayKey } from '@/lib/daily'
+import { MUTE_COOKIE } from '@/lib/mutetags'
+import { SESSION_COOKIE, currentSession, sessionSecret } from '@/lib/server'
 import { verifySessionV2 } from '@/lib/session'
 import { SESSION_TOUCH_AFTER_SEC } from '@/lib/sessions'
 import { setTestCookie } from '@/lib/testing/headers'
-import { STEAMID_OF, freshDb, post, signIn, signInAs } from '@/lib/testing/route'
+import { STEAMID_OF, breakDbOn, freshDb, post, signIn, signInAs } from '@/lib/testing/route'
 import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -84,6 +93,56 @@ describe('/api/session/touch', () => {
     expect(renewed?.iat).toBe(T0 + SESSION_TOUCH_AFTER_SEC + 60)
   })
 
+  /*
+   * После «Удалить всё обо мне» строк сессий нет, и забытый телефон
+   * отсекает только время — отметка удаления (forget_marks) против iat его
+   * куки. Продление выдало бы той же куке новый iat, и она прожила бы ещё
+   * год: следующий её заход снова был бы «вошедшим». Поэтому продление
+   * решается только свежим чтением из базы — ни кэш соседнего экземпляра,
+   * ни fail-open при сбое базы его не дают.
+   */
+  describe('после удаления на другом устройстве старая кука не продлевается', () => {
+    const ME = STEAMID_OF.openid
+    const later = T0 + SESSION_TOUCH_AFTER_SEC + 60
+
+    test('по тёплому кэшу экземпляра, ещё не знающего об удалении', async () => {
+      await signIn(db, ME, { verified: true })
+      vi.setSystemTime(later * 1000)
+      // Экземпляр видел эту куку только что: в его кэше она жива
+      expect(await currentSession()).not.toBeNull()
+      // Удаление нажато на ноутбуке и прошло через соседний экземпляр — этот
+      // кэш никто не сбрасывал
+      await forgetUser(db, ME, { signOutFrom: later })
+      vi.setSystemTime((later + 1) * 1000)
+
+      const res = await POST(post('/api/session/touch'))
+      expect(await res.json()).toEqual({ authed: false })
+      expect(newCookie(res)).toBeNull()
+      // Следующий запрос с той же кукой — гость
+      expect(await currentSession()).toBeNull()
+    })
+
+    test('вслепую, пока база не отвечает на сверку', async () => {
+      await signIn(db, ME, { verified: true })
+      await forgetUser(db, ME, { signOutFrom: T0 + 60 })
+      vi.setSystemTime(later * 1000)
+      breakDbOn(db, 'LEFT JOIN forget_marks')
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const res = await POST(post('/api/session/touch'))
+        // Впустить в аварию можно — так устроены сессии (fail-open), — а
+        // продлить нельзя: отметки база сейчас не показала
+        expect(await res.json()).toMatchObject({ authed: true })
+        expect(newCookie(res)).toBeNull()
+      } finally {
+        warn.mockRestore()
+      }
+      // База вернулась — та же кука уже гость
+      ;(globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }).__imboredDb = Promise.resolve(db)
+      expect(await currentSession()).toBeNull()
+    })
+  })
+
   test('свежая кука не переставляется', async () => {
     await signIn(db, STEAMID_OF.openid, { verified: true })
     const res = await POST(post('/api/session/touch'))
@@ -159,11 +218,11 @@ describe('/api/session/touch', () => {
     }
   })
 
-  test('card=1 у пишущей сессии — живая строка: игра дня и «как тебе?»', async () => {
+  test('card=1 у пишущей сессии — живая строка: игра дня, план на вечер и «как тебе?»', async () => {
     const steamid = await signInAs(db, 'openid')
     // Пока сказать нечего — поле есть, но пустое: карточка покажет дверь в библиотеку
     const empty = await (await POST(post('/api/session/touch?card=1'))).json()
-    expect(empty.live).toEqual({ daily: null, ask: null })
+    expect(empty.live).toEqual({ daily: null, plan: null, ask: null })
 
     await saveDailyPick(
       db,
@@ -180,6 +239,12 @@ describe('/api/session/touch', () => {
       T0,
     )
     await upsertGamesMeta(db, [{ appid: 1145360, name: 'Hades', tags: {}, genres: [], categories: [] }], T0)
+    // Поставил на загрузку с /play час назад — план на вечер (latestEveningPlan)
+    await logFeedback(
+      db,
+      { steamid, appid: 1145360, action: 'opened', ctx: { source: 'play', intent: 'install' } },
+      T0 - 3600,
+    )
     // Совет два дня назад, сверен, сыграно 135 минут, ответа нет — pendingOutcomeAsk
     await db.execute({
       sql: `INSERT INTO outcomes (steamid, appid, source, shown_at, minutes_before, minutes_after, owned_after, checked_at)
@@ -189,11 +254,83 @@ describe('/api/session/touch', () => {
     const card = await (await POST(post('/api/session/touch?card=1'))).json()
     expect(card.live).toEqual({
       daily: { appid: 620, name: 'Portal 2' },
+      plan: { appid: 1145360, name: 'Hades', intent: 'install' },
       ask: { appid: 1145360, name: 'Hades', shownAt: T0 - 2 * 86_400, minutes: 135, bought: false },
     })
     // Остальным страницам живая строка не нужна — и в базу за ней не ходят
     const plain = await (await POST(post('/api/session/touch'))).json()
     expect(plain).not.toHaveProperty('live')
+  })
+
+  /*
+   * «Не предлагать» (lib/mutetags.ts) — кука браузера, а запись дня одна на
+   * профиль: её мог выбрать телефон без фильтра. Строка «Игра дня уже
+   * выбрана — «X»» не называет игру под фильтром этого браузера: /daily её
+   * ему не покажет, а «без прогрева» обернулось бы прогревом и другой игрой.
+   * Выбранная под фильтром рядом с общей (mutedDayKey) — называется.
+   */
+  test('card=1: игра дня под «Не предлагать» этого браузера в живую строку не попадает', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const record = (appid: number, name: string) => ({
+      pick: { appid, name, source: 'untouched' },
+      shelf: [],
+      hoursPlayed: null,
+      reasonBase: 'Причина.',
+      sharedTags: [],
+      hideUrgency: false,
+    })
+    await saveDailyPick(db, steamid, dayKey(T0), record(1, 'Хоррор'), T0)
+    await upsertGamesMeta(
+      db,
+      [
+        { appid: 1, name: 'Хоррор', tags: { Horror: 500, Puzzle: 300 }, genres: [], categories: [] },
+        { appid: 2, name: 'Головоломка', tags: { Puzzle: 500 }, genres: [], categories: [] },
+      ],
+      T0,
+    )
+    const live = async () => (await (await POST(post('/api/session/touch?card=1'))).json()).live
+
+    // без фильтра — общая запись как есть
+    expect((await live()).daily).toEqual({ appid: 1, name: 'Хоррор' })
+
+    setTestCookie(MUTE_COOKIE, 'horror')
+    expect((await live()).daily).toBeNull()
+
+    // /daily этого браузера отобрал себе другую — её строка и называет
+    await saveDailyPick(db, steamid, mutedDayKey(dayKey(T0)), record(2, 'Головоломка'), T0)
+    expect((await live()).daily).toEqual({ appid: 2, name: 'Головоломка' })
+  })
+
+  /*
+   * Герой годится фильтру, а причина общей записи — нет: её писал профиль
+   * телефона, и «По тегам (Соревновательная)…» /daily этому браузеру не
+   * покажет — отберёт заново (dailyRecord). Строка обязана судить так же,
+   * иначе пообещает «уже выбрана» игру, которой на /daily не окажется.
+   */
+  test('card=1: общая запись, чья причина называет запретный тег вкусом, в живую строку не попадает', async () => {
+    const steamid = await signInAs(db, 'openid')
+    await saveDailyPick(
+      db,
+      steamid,
+      dayKey(T0),
+      {
+        pick: { appid: 3, name: 'Пасьянс', source: 'untouched' },
+        shelf: [],
+        hoursPlayed: null,
+        reasonBase: '«Пасьянс» ты не запускал ни разу — ноль минут. По тегам (Соревновательная) это очень твоё.',
+        sharedTags: ['Competitive'],
+        hideUrgency: false,
+      },
+      T0,
+    )
+    // Competitive шестым: пятёрку главных тегов он не задевает, герой годится
+    const tags = { Puzzle: 600, Cozy: 500, 'Card Game': 400, Relaxing: 300, Casual: 200, Competitive: 100 }
+    await upsertGamesMeta(db, [{ appid: 3, name: 'Пасьянс', tags, genres: [], categories: [] }], T0)
+    const live = async () => (await (await POST(post('/api/session/touch?card=1'))).json()).live
+
+    expect((await live()).daily).toEqual({ appid: 3, name: 'Пасьянс' })
+    setTestCookie(MUTE_COOKIE, 'pvp')
+    expect((await live()).daily).toBeNull()
   })
 
   test('демо и вход по ссылке живой строки не получают', async () => {

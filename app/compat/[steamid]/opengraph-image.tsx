@@ -44,7 +44,7 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
 export default async function Image({ params }: { params: Promise<{ steamid: string }> }) {
   const { steamid } = await params
   const invite = /^\d{17}$/.test(steamid)
-    ? await loadCompatInvite(await getDb(), steamid, undefined, { top: WALL_POSTERS })
+    ? await loadCompatInvite(await getDb(), steamid, { top: WALL_POSTERS })
     : null
 
   if (!invite) {

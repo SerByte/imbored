@@ -37,7 +37,10 @@ export type Resolved = {
   steamid: string
   /** строка в таблице sessions — по ней гасят одно устройство */
   sid: string
-  /** куку пора переставить */
+  /**
+   * Куку пора переставить. Только по свежему и удавшемуся чтению из базы —
+   * почему, сказано в resolveSession.
+   */
   stale: boolean
   /**
    * Владение профилем доказано через Steam OpenID.
@@ -61,6 +64,15 @@ export type Resolved = {
    * isWriter и requireWriter в lib/server.
    */
   verified: boolean
+  /**
+   * Состояние сессии прочитано из базы — в этом запросе или кэшем не старше
+   * REVOKE_CACHE_SEC. false — база не ответила, и вход пущен на веру
+   * (fail-open): verified тогда false не потому, что владение не доказано, а
+   * потому, что о нём неизвестно ничего. Роуту, которому эта разница видна
+   * человеку, — отвечать «не получилось, нажми ещё раз», а не «войди через
+   * Steam»: вход в аварию не поможет (app/api/forget).
+   */
+  checked: boolean
 }
 
 export type Lookup = (sid: string, steamid: string) => Promise<SessionRow>
@@ -79,19 +91,32 @@ export function forgetSessionCache(): void {
  *
  * Бросок НЕ кэшируется: иначе одна секундная ошибка Turso означала бы минуту
  * слепоты к отзыву. Кэшируем только успешный ответ.
+ *
+ * fresh — мимо кэша: читается база, даже если в кэше свежее. Ответ кэш
+ * всё равно обновляет — у этой сессии, и только у неё: сбрасывать ради
+ * одного чтения кэш всем (forgetSessionCache) значило бы отдать любому
+ * запросу ручку, которая заставляет экземпляр ходить в базу на каждый вход.
+ *
+ * checked — ответ пришёл из базы (сейчас или из кэша), а не из fail-open.
  */
-async function stateOf(lookup: Lookup, sid: string, steamid: string, nowSec: number): Promise<SessionRow> {
-  const hit = cache.get(sid)
-  if (hit && nowSec - hit.at < REVOKE_CACHE_SEC) return hit.state
+async function stateOf(
+  lookup: Lookup,
+  sid: string,
+  steamid: string,
+  nowSec: number,
+  fresh: boolean,
+): Promise<{ state: SessionRow; checked: boolean }> {
+  const hit = fresh ? undefined : cache.get(sid)
+  if (hit && nowSec - hit.at < REVOKE_CACHE_SEC) return { state: hit.state, checked: true }
   try {
     const state = await lookup(sid, steamid)
     cache.set(sid, { at: nowSec, state })
-    return state
+    return { state, checked: true }
   } catch (err) {
     // fail-open, и намеренно без записи в кэш. Но со строкой лога: пока база
     // лежит, отзыв сессий не работает, и об этом надо знать не из жалобы
     logSwallowed('sessions:lookup', err)
-    return LIVE
+    return { state: LIVE, checked: false }
   }
 }
 
@@ -100,30 +125,51 @@ async function stateOf(lookup: Lookup, sid: string, steamid: string, nowSec: num
  *
  * Порядок проверок: сначала срок из самого токена (он не требует базы), потом
  * отзыв. Так падение базы не влияет на протухшие куки.
+ *
+ * fresh — сверить с базой мимо кэша (см. stateOf): для решений, которых не
+ * отменить, — удаления всех данных (app/api/forget).
+ *
+ * ПРОДЛЕНИЕ РЕШАЕТСЯ ТОЛЬКО СВЕЖИМ ЧТЕНИЕМ. Продление — единственное, что
+ * превращает старую куку в новую с другим iat, а отсечки по времени выдачи
+ * бьют именно по iat: users.sessions_from у «выйти везде» и отметка удаления
+ * (forget_marks) у «Удалить всё обо мне». Продли куку, выданную до отсечки, —
+ * и она пережила бы отсечку на год. У «выйти везде» за отсечкой стоит ещё и
+ * revoked_at на строке сессии, и его продлённая кука с тем же sid не обойдёт.
+ * У удаления строк нет вовсе — отсекает только время. Поэтому устаревшая
+ * кука сверяется с базой мимо кэша: кэш минутной давности не знает об
+ * отсечке, поставленной на соседнем экземпляре. Сбой этой сверки впускает
+ * (так устроен весь модуль), но продлевать не просит: продление подождёт
+ * следующего захода, а не случится вслепую. Цена — несколько чтений по
+ * первичному ключу раз в неделю на устройство, пока первый же
+ * /api/session/touch не переставит куку.
  */
 export async function resolveSession(opts: {
   token: string | undefined
   secret: string
   nowSec: number
   lookup: Lookup
+  fresh?: boolean
 }): Promise<Resolved | null> {
-  const { token, secret, nowSec, lookup } = opts
+  const { token, secret, nowSec, lookup, fresh = false } = opts
   if (!token) return null
 
   const v2 = verifySessionV2(token, secret)
   if (v2) {
     if (v2.exp <= nowSec) return null
-    const state = await stateOf(lookup, v2.sid, v2.steamid, nowSec)
+    const stale = nowSec - v2.iat > SESSION_TOUCH_AFTER_SEC
+    const { state, checked } = await stateOf(lookup, v2.sid, v2.steamid, nowSec, fresh || stale)
     if (state.revokedAt !== null) return null
     // демо-личность убрана, а кука живёт год — см. SessionRow.gone
     if (state.gone) return null
-    // «выйти везде» бьёт по времени выдачи: накрывает и те сессии, чьих строк нет
+    // «выйти везде» и удаление бьют по времени выдачи: накрывают и те сессии,
+    // чьих строк нет
     if (state.sessionsFrom !== null && v2.iat < state.sessionsFrom) return null
     return {
       steamid: v2.steamid,
       sid: v2.sid,
-      stale: nowSec - v2.iat > SESSION_TOUCH_AFTER_SEC,
+      stale: stale && checked,
       verified: state.verified,
+      checked,
     }
   }
 

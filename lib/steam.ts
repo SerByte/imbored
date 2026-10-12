@@ -22,10 +22,40 @@ function transientStatus(status: number): boolean {
   return status >= 500 || status === 429
 }
 
-/** Таймаут (наш AbortSignal.timeout) или обрыв — тоже из тех, что проходят сами. */
+/**
+ * Коды сети, с которыми fetch из Node (undici) рвёт запрос и которые проходят
+ * сами: сброс и обрыв сокета, разовый сбой DNS, таймаут соединения.
+ * ENOTFOUND сюда не входит намеренно: «нет такого хоста» за секунду паузы не
+ * появится, и повтор был бы просто ожиданием.
+ */
+const NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+])
+
+/**
+ * Таймаут или обрыв — тоже из тех, что проходят сами.
+ *
+ * Таймаут — наш AbortSignal.timeout, он бросает TimeoutError. Обрыв у undici
+ * выглядит иначе: TypeError('fetch failed'), а у недочитанного тела —
+ * TypeError('terminated'), и что случилось, говорит только cause.code. Раньше
+ * здесь проверялось одно имя, и обрыв не повторялся вовсе, хотя повтор ради
+ * него и писался. TypeError без такого кода (кривой адрес, ошибка в нашем
+ * коде) — не сбой Steam: повтор вернул бы то же.
+ */
 function transientError(err: unknown): boolean {
   const name = (err as { name?: unknown } | null)?.name
-  return name === 'TimeoutError' || name === 'AbortError'
+  if (name === 'TimeoutError' || name === 'AbortError') return true
+  const code = (err as { cause?: { code?: unknown } | null } | null)?.cause?.code
+  return err instanceof TypeError && typeof code === 'string' && NETWORK_CODES.has(code)
 }
 
 async function steamApiGet(
@@ -59,7 +89,20 @@ async function steamApiGet(
       }
       throw err
     }
-    if (res.ok) return res.json()
+    if (res.ok) {
+      // Тело читается тут же и тоже под повтором: обрыв на середине ответа —
+      // тот же обрыв, что и до заголовков. Битый JSON (страница-заглушка с
+      // кодом 200) повтором не лечится и уходит наверх как был
+      try {
+        return await res.json()
+      } catch (err) {
+        if (retry && transientError(err)) {
+          await pause(opts.retryDelayMs ?? 1000)
+          continue
+        }
+        throw err
+      }
+    }
     if (retry && transientStatus(res.status)) {
       // Непрочитанное тело держит соединение до сборки мусора
       await res.body?.cancel().catch(() => {})
@@ -245,4 +288,97 @@ export async function resolveProfile(
   }
   const steamid = await resolveVanity(parsed.value, opts)
   return steamid ? { steamid } : null
+}
+
+/* ---------- список желаемого ---------- */
+
+/**
+ * Сколько игр списка желаемого храним и смотрим. Двести — ровно одна пачка
+ * GetItems (STORE_ITEMS_BATCH) и одно чтение меты: полке нужны скидки из
+ * головы списка, а не весь хвост из тысячи игр, добавленных пять лет назад.
+ */
+export const WISHLIST_KEPT = 200
+
+type WishlistResponse = {
+  response?: { items?: Array<{ appid?: unknown; priority?: unknown; date_added?: unknown }> }
+}
+
+/**
+ * Порядок самого человека: сначала расставленные по приоритету (1, 2, 3…),
+ * потом нерасставленные (priority 0) — свежедобавленные первыми. Повтор и
+ * мусор выпадают, хвост за WISHLIST_KEPT — тоже.
+ */
+export function parseWishlist(json: unknown): number[] {
+  const items = (json as WishlistResponse)?.response?.items
+  if (!Array.isArray(items)) return []
+  const rows: Array<{ appid: number; priority: number; added: number }> = []
+  for (const it of items) {
+    const appid = it?.appid
+    if (typeof appid !== 'number' || !Number.isInteger(appid) || appid <= 0) continue
+    const priority = typeof it.priority === 'number' && it.priority > 0 ? it.priority : 0
+    const added = typeof it.date_added === 'number' ? it.date_added : 0
+    rows.push({ appid, priority, added })
+  }
+  rows.sort((a, b) => {
+    if ((a.priority > 0) !== (b.priority > 0)) return a.priority > 0 ? -1 : 1
+    if (a.priority !== b.priority) return a.priority - b.priority
+    return b.added - a.added
+  })
+  const out: number[] = []
+  const seen = new Set<number>()
+  for (const r of rows) {
+    if (seen.has(r.appid)) continue
+    seen.add(r.appid)
+    out.push(r.appid)
+    if (out.length >= WISHLIST_KEPT) break
+  }
+  return out
+}
+
+/** eresult Steam «всё хорошо» */
+const ERESULT_OK = '1'
+/** eresult Steam «доступ запрещён»: список закрыт настройками приватности */
+const ERESULT_ACCESS_DENIED = '15'
+
+/**
+ * Список желаемого из IWishlistService/GetWishlist — без ключа.
+ *
+ * Метод открытый, и ключ ему не нужен (проверено 28.09.2026): ключ в адресе
+ * ушёл бы в журналы Steam без всякой нужды, поэтому steamApiGet здесь не
+ * годится. Открытый список — 200 и items; закрытый — тоже 200, но с
+ * заголовком X-eresult: 15 и пустым response, и это ответ «закрыт», а не
+ * «пусто»: 'closed'. Публичный пустой — []. Кривой steamid — 400, любой не-2xx
+ * — исключение: вызывающий не должен записать сбой как «список пуст».
+ *
+ * Тем же 200 с пустым response сервисный метод отвечает и на свой сбой — Fail,
+ * Busy, ServiceUnavailable, Timeout различает только X-eresult. Прочитанный
+ * как [], такой ответ лёг бы в базу открытым пустым списком, и полка пропала
+ * бы на полсуток без строки в журнале. Поэтому любой код, кроме 1 и 15, —
+ * тоже исключение. Заголовка нет вовсе — верим телу: его отсутствие ещё не сбой.
+ *
+ * Повтора нет, в отличие от steamApiGet: там на кону вход человека, здесь —
+ * полка, которой просто не будет до следующего захода.
+ */
+export async function fetchWishlist(
+  steamid: string,
+  opts: { fetchFn?: typeof fetch } = {},
+): Promise<number[] | 'closed'> {
+  const fetchFn = opts.fetchFn ?? fetch
+  const url = new URL(`${API_BASE}/IWishlistService/GetWishlist/v1/`)
+  url.searchParams.set('steamid', steamid)
+  const res = await fetchFn(url.toString(), { signal: AbortSignal.timeout(10_000) })
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {})
+    throw new Error(`Steam API GetWishlist: HTTP ${res.status}`)
+  }
+  const eresult = res.headers.get('x-eresult')
+  if (eresult === ERESULT_ACCESS_DENIED) {
+    await res.body?.cancel().catch(() => {})
+    return 'closed'
+  }
+  if (eresult !== null && eresult !== ERESULT_OK) {
+    await res.body?.cancel().catch(() => {})
+    throw new Error(`Steam API GetWishlist: eresult ${eresult}`)
+  }
+  return parseWishlist(await res.json())
 }

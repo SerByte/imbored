@@ -1,5 +1,180 @@
 import { describe, expect, test } from 'vitest'
-import { matchLine, memberLabel, parseRoomCode, rosterHint, waitingMode } from './room'
+import {
+  awaitingOthers,
+  deckBehind,
+  kickHandoffDue,
+  matchByLeader,
+  matchLine,
+  matchNoticeDue,
+  memberLabel,
+  missingNames,
+  pageNotices,
+  parseRoomCode,
+  publicFailure,
+  roomMissText,
+  roomTabTitle,
+  rosterHint,
+  waitingMode,
+  waitsInBackground,
+} from './room'
+
+/**
+ * Сторож «ждём остальных». Фразу уже однажды убирали со страницы: в двух
+ * режимах ожидания из трёх она врала (WaitingMode). Заголовок вкладки и фон
+ * обязаны говорить то же, что экран.
+ */
+describe('кого ждём из фона', () => {
+  // отсвайпал своё, двое в комнате, сосед ещё свайпает
+  const base = { waiting: true, memberCount: 2, deckTotal: 20, myVotes: 20, othersSwiping: 1 }
+
+  test('кто-то ещё свайпает — ждём остальных', () => {
+    expect(awaitingOthers(base)).toBe(true)
+    expect(waitsInBackground(base)).toBe(true)
+  })
+
+  test('один в комнате — ждать некого: ни заголовка, ни опроса', () => {
+    expect(awaitingOthers({ ...base, memberCount: 1, othersSwiping: 0 })).toBe(false)
+    expect(waitsInBackground({ ...base, memberCount: 1 })).toBe(false)
+  })
+
+  test('колоды не было — ждать нечего: ни заголовка, ни опроса', () => {
+    expect(awaitingOthers({ ...base, deckTotal: 0, myVotes: 0 })).toBe(false)
+    expect(waitsInBackground({ ...base, deckTotal: 0, myVotes: 0 })).toBe(false)
+  })
+
+  test('все отсвайпали — не «ждём остальных», но чужое «Берём» фон ещё увидит', () => {
+    const allDone = { ...base, othersSwiping: 0 }
+    expect(awaitingOthers(allDone)).toBe(false)
+    expect(waitsInBackground(allDone)).toBe(true)
+  })
+
+  test('пока своя колода не кончилась — ни то ни другое', () => {
+    expect(awaitingOthers({ ...base, waiting: false })).toBe(false)
+    expect(waitsInBackground({ ...base, waiting: false })).toBe(false)
+  })
+
+  /*
+   * Сосед нажал «Ещё 20 игр», пока эта вкладка скрыта. Колоду нового раунда
+   * скрытая вкладка не грузит (app/room/[id]), и на руках пусто — но не
+   * потому, что всё отсвайпано. Двое таких ждущих видят друг друга «ещё
+   * свайпает»: с «ждём остальных» у обоих комната встала бы.
+   */
+  test('сосед поднял раунд, колода нового ещё не догружена — ни заголовка, ни фонового опроса', () => {
+    const behind = { ...base, deckSize: 40 }
+    expect(deckBehind(behind)).toBe(true)
+    expect(awaitingOthers(behind)).toBe(false)
+    expect(waitsInBackground(behind)).toBe(false)
+  })
+
+  test('колода догружена и отсвайпана — снова ждём', () => {
+    const caught = { ...base, deckTotal: 40, myVotes: 40, deckSize: 40 }
+    expect(deckBehind(caught)).toBe(false)
+    expect(awaitingOthers(caught)).toBe(true)
+    expect(waitsInBackground(caught)).toBe(true)
+  })
+
+  test('голос в пути после последнего свайпа (сервер ещё не видит done) — это не отставание, фон нужен', () => {
+    // deckStuck здесь истинно, но колода на руках актуальна: именно фоновый
+    // опрос принесёт done. Отключи его — скрытая вкладка ждала бы молча час
+    const inFlight = { ...base, myVotes: 19, deckSize: 20 }
+    expect(deckBehind(inFlight)).toBe(false)
+    expect(waitsInBackground(inFlight)).toBe(true)
+    expect(awaitingOthers(inFlight)).toBe(true)
+  })
+
+  test('серверная колода больше, но свои голоса её уже покрывают — свайпать нечего, не отставание', () => {
+    expect(deckBehind({ deckTotal: 20, myVotes: 40, deckSize: 40 })).toBe(false)
+  })
+
+  test('колоду ещё никто не запрашивал — отставания нет', () => {
+    expect(deckBehind({ deckTotal: 20, myVotes: 20, deckSize: null })).toBe(false)
+    expect(deckBehind({ deckTotal: 20, myVotes: 20 })).toBe(false)
+  })
+})
+
+describe('roomTabTitle', () => {
+  const open = {
+    roomId: 'ABC123',
+    status: 'open' as const,
+    isMember: true,
+    awaiting: false,
+    sawOpen: true,
+    unseen: false,
+    matchedName: null,
+  }
+  const matched = { ...open, status: 'matched' as const, matchedName: 'Hades' }
+
+  test('ждёт других, комната открыта — «ждём остальных» с кодом пати', () => {
+    expect(roomTabTitle({ ...open, awaiting: true })).toBe('Ждём остальных · Пати ABC123')
+  })
+
+  test('пока свайпает — заголовок не трогаем: прогресса на каждый голос нет', () => {
+    expect(roomTabTitle(open)).toBeNull()
+  })
+
+  test('матч, пришедший в скрытую вкладку, — с точкой; вернулся — без', () => {
+    expect(roomTabTitle({ ...matched, unseen: true })).toBe('● Сошлись: Hades')
+    expect(roomTabTitle(matched)).toBe('Сошлись: Hades')
+  })
+
+  test('открыл ссылку на уже сошедшуюся комнату — новости нет', () => {
+    expect(roomTabTitle({ ...matched, sawOpen: false, unseen: true })).toBeNull()
+  })
+
+  test('у не-участника заголовок не трогается ни в одном состоянии', () => {
+    // приглашение называется так, как его назвал сервер; чужой матч — не его новость
+    expect(roomTabTitle({ ...open, isMember: false, awaiting: true })).toBeNull()
+    expect(roomTabTitle({ ...matched, isMember: false, unseen: true })).toBeNull()
+  })
+
+  test('ни в одном состоянии нет «Берём» и счётчиков', () => {
+    for (const t of [roomTabTitle({ ...open, awaiting: true }), roomTabTitle({ ...matched, unseen: true })]) {
+      expect(t).not.toMatch(/Берём|\d+\s*\/\s*\d+|\?/)
+    }
+  })
+})
+
+describe('pageNotices', () => {
+  const desk = { hasNotification: true, uaMobile: undefined, coarsePointer: false }
+
+  test('десктоп с Notification — переключатель есть', () => {
+    expect(pageNotices(desk)).toBe(true)
+    expect(pageNotices({ ...desk, uaMobile: false })).toBe(true)
+  })
+
+  test('телефон — нет, даже если window.Notification определён', () => {
+    // Android Chrome: объект есть, а new Notification() без сервис-воркера бросает TypeError
+    expect(pageNotices({ ...desk, uaMobile: true })).toBe(false)
+    // iOS Safari не сообщает userAgentData — ловится по пальцу
+    expect(pageNotices({ ...desk, coarsePointer: true })).toBe(false)
+  })
+
+  test('без Notification — нет', () => {
+    expect(pageNotices({ ...desk, hasNotification: false })).toBe(false)
+  })
+})
+
+describe('matchNoticeDue', () => {
+  const due = { enabled: true, permission: 'granted' as const, visible: false, selfCaused: false }
+
+  test('включено, разрешено, вкладка скрыта, матч чужой — сообщаем', () => {
+    expect(matchNoticeDue(due)).toBe(true)
+  })
+
+  test('свой матч не уведомляет — даже из скрытой вкладки', () => {
+    expect(matchNoticeDue({ ...due, selfCaused: true })).toBe(false)
+  })
+
+  test('видимую вкладку уже заняла церемония', () => {
+    expect(matchNoticeDue({ ...due, visible: true })).toBe(false)
+  })
+
+  test('без согласия человека — никогда', () => {
+    expect(matchNoticeDue({ ...due, enabled: false })).toBe(false)
+    expect(matchNoticeDue({ ...due, permission: 'default' })).toBe(false)
+    expect(matchNoticeDue({ ...due, permission: 'denied' })).toBe(false)
+  })
+})
 
 describe('waitingMode', () => {
   test('один в комнате — «ты тут один», а не «ждём остальных»', () => {
@@ -136,5 +311,156 @@ describe('matchLine', () => {
     // чужому рисуется «эта пати уже договорилась», а не церемония
     expect(matchLine({ sawOpen: true, ...matched, isMember: false })).toBeNull()
     expect(matchLine({ sawOpen: true, ...matched, game: null })).toBeNull()
+  })
+})
+
+describe('matchByLeader', () => {
+  test('за игру не все — «Договорились», а не «Это матч!»', () => {
+    expect(matchByLeader(3, 4)).toBe(true)
+  })
+
+  test('все за — единогласный матч', () => {
+    expect(matchByLeader(4, 4)).toBe(false)
+  })
+
+  test('счёта нет — единогласия не отрицаем', () => {
+    // не участнику сервер счёт не отдаёт
+    expect(matchByLeader(null, 4)).toBe(false)
+    expect(matchByLeader(undefined, 4)).toBe(false)
+  })
+})
+
+/**
+ * «Нет у: Дима, Саша» на экране матча. Церемония говорила «У тебя её пока
+ * нет» только тому, у кого нет, — остальные не знали, кого ждать, и пати
+ * вставала, едва договорившись.
+ */
+describe('missingNames: кому из остальных не хватает сошедшейся игры', () => {
+  test('только те, у кого её точно нет, в порядке ростера', () => {
+    expect(
+      missingNames([
+        { label: 'Дима', owns: false, me: false },
+        { label: 'Петя', owns: true, me: false },
+        { label: 'Саша', owns: false, me: false },
+      ]),
+    ).toEqual(['Дима', 'Саша'])
+  })
+
+  test('себя не называет: про себя говорит своя строка «У тебя её пока нет»', () => {
+    expect(
+      missingNames([
+        { label: 'Я', owns: false, me: true },
+        { label: 'Дима', owns: false, me: false },
+      ]),
+    ).toEqual(['Дима'])
+  })
+
+  test('«не знаем» — не «нет»: без снапшота библиотеки человек не попадает в список', () => {
+    expect(
+      missingNames([
+        { label: 'Дима', owns: null, me: false },
+        { label: 'Саша', owns: true, me: false },
+      ]),
+    ).toEqual([])
+  })
+
+  test('одинаковые имена — оба: два демо-друга — два человека', () => {
+    expect(
+      missingNames([
+        { label: 'Демо-друг', owns: false, me: false },
+        { label: 'Демо-друг', owns: false, me: false },
+      ]),
+    ).toEqual(['Демо-друг', 'Демо-друг'])
+  })
+})
+
+/**
+ * Строка отказа гасла только со следующей попыткой и переживала то, о чём
+ * говорила: звала нажать ✕ у ушедшего, говорила «доска не переключилась»
+ * под переключённой доской, а после нового раунда монтировалась заново со
+ * старым текстом.
+ */
+describe('roomMissText: отказ кнопки комнаты — пока он правда', () => {
+  const members = [{ id: 'a' }, { id: 'b' }]
+  const now = { deck: '2:0', members, isPublic: false }
+
+  test('отказа нет — строки нет', () => {
+    expect(roomMissText(null, now)).toBeNull()
+  })
+
+  test('отказ выхода стоит, пока экран тот же', () => {
+    expect(roomMissText({ text: 'Выйти не получилось', deck: '2:0' }, now)).toBe('Выйти не получилось')
+  })
+
+  test('✕ отказала, а участника уже нет — строка не зовёт нажать пропавшую ✕', () => {
+    const miss = { text: 'Убрать из пати не получилось', deck: '2:0', memberId: 'b' }
+    expect(roomMissText(miss, now)).toBe('Убрать из пати не получилось')
+    expect(roomMissText(miss, { ...now, members: [{ id: 'a' }] }), 'ушёл сам или ответ потерялся').toBeNull()
+  })
+
+  test('доска не переключилась — пока опрос не показал её переключённой', () => {
+    const miss = { text: 'Доска не переключилась', deck: '2:0', wasPublic: false }
+    expect(roomMissText(miss, now)).toBe('Доска не переключилась')
+    expect(roomMissText(miss, { ...now, isPublic: true }), 'POST прошёл, ответ потерялся').toBeNull()
+  })
+
+  test('новый раунд или новый гость — экран ожидания уже другой, старый отказ не монтируется', () => {
+    const miss = { text: 'Выйти не получилось', deck: '2:0' }
+    expect(roomMissText(miss, { ...now, deck: '2:1' })).toBeNull()
+    expect(roomMissText(miss, { ...now, deck: '3:0' })).toBeNull()
+  })
+})
+
+/**
+ * У переключателя доски потолок частоты (public/route.ts), и 429 звал «нажми
+ * ещё раз» — каждый повтор упирался в тот же потолок до конца окна.
+ */
+describe('publicFailure: отказ переключателя доски', () => {
+  test('429 — просит подождать, а не нажать ещё раз', () => {
+    const text = publicFailure(429)
+    expect(text).toMatch(/подожди несколько минут/)
+    expect(text).not.toMatch(/проверь связь|нажми ещё раз/)
+  })
+
+  test('сеть, пятисотка и прочие отказы — прежняя строка «проверь связь»', () => {
+    for (const status of [0, 400, 404, 500, 503]) {
+      expect(publicFailure(status), String(status)).toBe('Доска не переключилась — проверь связь и нажми ещё раз.')
+    }
+  })
+})
+
+/**
+ * Строка «Пустить обратно» живёт весь заход, пока убранный не вернулся, а
+ * колоду на место экрана ожидания ставит не только ✕. Фокус забирала любая
+ * такая смена: «Ещё 20 игр» с клавиатуры переносил его на строку про ✕ — в
+ * 'done' на выключенную кнопку, в 'shown' на живую, и второй Enter по
+ * «Добираю…» снимал нарочный ✕.
+ */
+describe('kickHandoffDue: фокус на «Пустить обратно» — только с колодой от ✕', () => {
+  // ✕ нажали на экране троих в раунде 0
+  const ticket = { members: 3, round: 0 }
+
+  test('колода от ✕ — состав без убранного, тот же раунд: фокус на строку', () => {
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: 'shown' })).toBe(true)
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: 'failed' }), 'отмена не дошла — повторить').toBe(true)
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: 'busy' }), '«Пускаю…» нажата там же').toBe(true)
+  })
+
+  test('«Ещё 20 игр» или раунд соседа — мимо: квитанция ✕ без своей колоды до них доживает', () => {
+    expect(kickHandoffDue(ticket, { members: 2, round: 1, phase: 'shown' })).toBe(false)
+  })
+
+  test('отмена уже прошла — мимо: «Пустили обратно» выключена', () => {
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: 'done' })).toBe(false)
+  })
+
+  test('состав сдвинул не только ✕ — колода уже не от него', () => {
+    expect(kickHandoffDue(ticket, { members: 1, round: 0, phase: 'shown' }), 'ушёл кто-то ещё').toBe(false)
+    expect(kickHandoffDue(ticket, { members: 3, round: 0, phase: 'shown' }), 'кто-то вошёл').toBe(false)
+  })
+
+  test('квитанции нет или строки нет — фокус не трогаем', () => {
+    expect(kickHandoffDue(null, { members: 2, round: 0, phase: 'shown' })).toBe(false)
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: null })).toBe(false)
   })
 })

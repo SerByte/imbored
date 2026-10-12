@@ -910,7 +910,7 @@ describe('прогрев под квизом: проводка', () => {
     expect(code('components/landing/ConnectCard.tsx')).toMatch(
       /rememberSession\(hintFrom\(data\)\)\s*forgetPrewarm\(\)/,
     )
-    expect(code('lib/playcache.ts')).toMatch(/export function forgetPlay\(\): void \{[^}]*forgetPrewarm\(\)/)
+    expect(code('lib/playforget.ts')).toMatch(/export function forgetPlay\(\): void \{[^}]*forgetPrewarm\(\)/)
   })
 
   /*

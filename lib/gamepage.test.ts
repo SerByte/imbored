@@ -24,6 +24,9 @@ import {
   sessionTrait,
   SIMILAR_CANDIDATES,
   SIMILAR_SHOWN,
+  STUDIO_MAX_GAMES,
+  STUDIO_SHOWN,
+  studioLine,
   topTagOf,
 } from './gamepage'
 import { characterTrait, entryTrait } from './gametraits'
@@ -142,7 +145,7 @@ describe('topTagOf', () => {
   })
 
   test('при равных весах порядок не зависит от порядка ключей', () => {
-    // Страница кэшируется на сутки и пререндерится: блок «похожие» не имеет
+    // Страница кэшируется на неделю и пререндерится: блок «похожие» не имеет
     // права меняться от того, как Object.entries вернул ключи после пересборки
     const a = topTagOf(meta(1, { tags: { Zzz: 500, Aaa: 500 } }))
     const b = topTagOf(meta(1, { tags: { Aaa: 500, Zzz: 500 } }))
@@ -223,7 +226,7 @@ describe('pickSimilar', () => {
     expect(a).toHaveLength(SIMILAR_SHOWN)
     expect(new Set(a).size).toBe(SIMILAR_SHOWN)
     expect([...a].sort((x, y) => x - y)).toEqual(a)
-    // страница кэшируется на сутки: полка не должна прыгать между пересборками
+    // страница кэшируется на неделю: полка не должна прыгать между пересборками
     expect(pickSimilar(ranked, 1_593_500)).toEqual(a)
   })
 
@@ -765,6 +768,18 @@ describe('«Чем выделяется» и длина сессии', () => {
     expect(traits.map((t) => t.label)).toEqual(['Чем выделяется', 'Сессия'])
   })
 
+  test('русский — последней строкой и только когда Steam про него ответил', () => {
+    const traits = gameTraits({ categories: SOLO, semantics: semantics({}), ruLang: 2 }, ['Automation'])
+    expect(traits.map((t) => t.label)).toEqual(['Чем выделяется', 'Сессия', 'Русский'])
+    expect(traits.at(-1)?.value).toBe('субтитры — по данным Steam')
+    // «нет» — тоже ответ, и он нужен читателю не меньше «озвучки»
+    expect(gameTraits({ categories: SOLO, ruLang: 0 }, null)).toEqual([
+      { label: 'Русский', value: 'нет — по данным Steam' },
+    ])
+    // не знаем — строки нет: блок фактов не появляется ради пустоты
+    expect(gameTraits({ categories: SOLO }, null)).toEqual([])
+  })
+
   test('карточка читает семантику и характерные теги тем же чтением строки', async () => {
     const db = await withDb()
     await upsertGameMeta(
@@ -795,6 +810,21 @@ describe('«Чем выделяется» и длина сессии', () => {
       { label: 'Чем выделяется', value: `${tagRu('Automation')}, ${tagRu('Base Building')}` },
       { label: 'Сессия', value: 'на вечер' },
     ])
+  })
+
+  test('«Наиграли» приезжает на карточку тем же чтением строки, что и сессия', async () => {
+    const db = await withDb()
+    await upsertGameMeta(db, meta(72, { tags: { 'Story Rich': 900, Adventure: 500 }, categories: SOLO }), NOW)
+    await upsertSemantics(db, [
+      {
+        appid: 72,
+        semantics: { ...semantics({ minutes: 40 }), played: { posMedianMin: 7 * 60 + 20, posN: 55 } },
+        computedAt: NOW,
+      },
+    ])
+
+    const page = await loadGamePage(72)
+    expect(gameTraits(page!.meta, page!.hook)).toContainEqual({ label: 'Наиграли', value: '~8 ч — те, кто её хвалит' })
   })
 
   test('без карты тегов «Чем выделяется» молчит, а не называет самые частые', async () => {
@@ -865,5 +895,173 @@ describe('вход и характер', () => {
       'Вход',
       'Характер',
     ])
+  })
+
+  test('«Наиграли» — после входа, до характера и русского: время к времени', () => {
+    const all = sem({
+      axes: { challenge: 20, complexity: 50, pace: 50 },
+      timeToFun: { bucket: 'fast', hours: 0.4 },
+      played: { posMedianMin: 12 * 60, posN: 70 },
+    })
+    const traits = gameTraits({ categories: [2], tags: { Puzzle: 900 }, semantics: all, ruLang: 3 }, ['Puzzle'])
+    expect(traits.map((t) => t.label)).toEqual(['Чем выделяется', 'Сессия', 'Вход', 'Наиграли', 'Характер', 'Русский'])
+    expect(traits.find((t) => t.label === 'Наиграли')?.value).toBe('~12 ч — те, кто её хвалит')
+  })
+
+  test('у игры без финала «Наиграли» нет — ни по тегам, ни по соревновательным категориям', () => {
+    const long = sem({ played: { posMedianMin: 300 * 60, posN: 90 } })
+    const labels = (m: Parameters<typeof gameTraits>[0]) => gameTraits(m, null).map((t) => t.label)
+    // песочница: медиана хваливших — сотни часов, и это не длина игры
+    expect(labels({ categories: [2], tags: { Sandbox: 900 }, semantics: long })).not.toContain('Наиграли')
+    // Online PvP без одиночного режима — как у Dota 2
+    expect(labels({ categories: [1, 49], tags: { Action: 900 }, semantics: long })).not.toContain('Наиграли')
+    // та же семантика у сюжетной игры — строка есть
+    expect(labels({ categories: [2], tags: { 'Story Rich': 900 }, semantics: long })).toContain('Наиграли')
+  })
+
+  test('PvP рядом с одиночным режимом «Наиграли» не гасит — у Elden Ring вопрос про кампанию', () => {
+    const long = sem({ played: { posMedianMin: 90 * 60, posN: 90 } })
+    const labels = (m: Parameters<typeof gameTraits>[0]) => gameTraits(m, null).map((t) => t.label)
+    // одиночная + PvP: в неё можно сыграть и без арены — строка есть
+    expect(labels({ categories: [2, 49], tags: { 'Story Rich': 900 }, semantics: long })).toContain('Наиграли')
+    expect(labels({ categories: [2, 36, 38], tags: { 'Souls-like': 900 }, semantics: long })).toContain('Наиграли')
+    // PvP без одиночного — арена и есть игра: строки нет
+    expect(labels({ categories: [1, 49], tags: { 'Story Rich': 900 }, semantics: long })).not.toContain('Наиграли')
+    // тег без финала гасит строку и у одиночной игры с PvP
+    expect(labels({ categories: [2, 49], tags: { Survival: 900 }, semantics: long })).not.toContain('Наиграли')
+  })
+})
+
+/**
+ * «Ещё у <студии>» под полкой «Похожие» — строка текстовых ссылок. Правила,
+ * которые легко потерять правкой: корпоративный каталог молчит, одна игра —
+ * не строка, издания и уже показанное не повторяются, порядок не зависит от
+ * порядка входа (страница живёт в ISR неделю).
+ */
+describe('studioLine', () => {
+  const page = { appid: 1, name: 'Hades', developer: 'Supergiant Games' }
+  const g = (appid: number, name: string, reviewsTotal: number) => ({ appid, name, reviewsTotal })
+  const supergiant = [
+    g(1, 'Hades', 300_000),
+    g(2, 'Bastion', 60_000),
+    g(3, 'Transistor', 50_000),
+    g(4, 'Pyre', 20_000),
+  ]
+  const names = (line: ReturnType<typeof studioLine>) => line?.games.map((x) => x.name) ?? null
+
+  test('Hades: Bastion · Transistor · Pyre — по отзывам, без самой страницы', () => {
+    expect(studioLine(page, supergiant, [])).toEqual({
+      developer: 'Supergiant Games',
+      games: [
+        { appid: 2, name: 'Bastion' },
+        { appid: 3, name: 'Transistor' },
+        { appid: 4, name: 'Pyre' },
+      ],
+    })
+  })
+
+  test('больше двенадцати живых игр — корпоративный каталог, строки нет', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => g(i + 1, `Игра ${i + 1}`, 1000 - i))
+    expect(studioLine(page, many(STUDIO_MAX_GAMES), [])?.games).toHaveLength(STUDIO_SHOWN)
+    expect(studioLine(page, many(STUDIO_MAX_GAMES + 1), [])).toBeNull()
+  })
+
+  test('меньше двух названий после отсева — строки нет', () => {
+    expect(studioLine(page, supergiant.slice(0, 3), [])?.games).toHaveLength(2)
+    expect(studioLine(page, supergiant.slice(0, 2), [])).toBeNull()
+    // одна игра у студии — это сама страница
+    expect(studioLine(page, supergiant.slice(0, 1), [])).toBeNull()
+    expect(studioLine(page, [], [])).toBeNull()
+  })
+
+  test('издания страницы не выдают себя за «ещё игру», издания между собой схлопываются', () => {
+    const witcher = { appid: 292030, name: 'The Witcher 3: Wild Hunt', developer: 'CD PROJEKT RED' }
+    const line = studioLine(
+      witcher,
+      [
+        g(292030, 'The Witcher 3: Wild Hunt', 900_000),
+        g(499450, 'The Witcher 3: Wild Hunt - Game of the Year Edition', 50_000),
+        g(20900, 'The Witcher: Enhanced Edition', 60_000),
+        g(20901, 'The Witcher', 5_000),
+        g(20920, 'The Witcher 2: Assassins of Kings Enhanced Edition', 70_000),
+      ],
+      [],
+    )
+    // издание страницы выпало, из двух первых Witcher осталось самое обсуждаемое
+    expect(names(line)).toEqual(['The Witcher 2: Assassins of Kings Enhanced Edition', 'The Witcher: Enhanced Edition'])
+  })
+
+  test('то, что уже стоит в «Похожих», не повторяется — ни по appid, ни изданием', () => {
+    const similar = [
+      { appid: 2, name: 'Bastion' },
+      { appid: 77, name: 'Transistor Remastered' },
+    ]
+    expect(studioLine(page, supergiant, similar)).toBeNull()
+    expect(names(studioLine(page, [...supergiant, g(5, 'Hades II', 40_000)], similar))).toEqual(['Hades II', 'Pyre'])
+  })
+
+  test('саундтрек и демо студии — не игры, их не советуем', () => {
+    const line = studioLine(
+      page,
+      [...supergiant, g(9, 'Transistor - Original Soundtrack', 90_000), g(10, 'Pyre Demo', 80_000)],
+      [],
+    )
+    expect(names(line)).toEqual(['Bastion', 'Transistor', 'Pyre'])
+  })
+
+  test('порядок — отзывы, затем appid, от порядка входа не зависит', () => {
+    const tied = [g(1, 'Hades', 1), g(40, 'Д', 500), g(30, 'Г', 500), g(20, 'В', 900), g(10, 'Б', 500)]
+    const expected = ['В', 'Б', 'Г', 'Д']
+    expect(names(studioLine(page, tied, []))).toEqual(expected)
+    expect(names(studioLine(page, [...tied].reverse(), []))).toEqual(expected)
+    // и не больше четырёх названий
+    expect(names(studioLine(page, [...tied, g(50, 'Е', 100)], []))).toEqual(expected)
+  })
+
+  test('чужой магазин и игра без разработчика — строки нет', () => {
+    expect(studioLine({ ...page, appid: -7 }, supergiant, [])).toBeNull()
+    expect(studioLine({ ...page, developer: undefined }, supergiant, [])).toBeNull()
+    expect(studioLine({ ...page, developer: '  ' }, supergiant, [])).toBeNull()
+  })
+
+  test('на карточке: живые игры той же студии, без «Похожих», мёртвые и чужие не в счёт', async () => {
+    const db = await withDb()
+    const dev = { developer: 'Supergiant Games' }
+    await upsertGameMeta(db, meta(1, { name: 'Hades', tags: { Roguelike: 1000 }, reviewsTotal: 300_000, ...dev }), NOW)
+    await replaceGameTags(db, 1, [{ tag: 'Roguelike', weight: 1000 }])
+    // Hades II стоит в «Похожих» по тегу
+    await upsertGameMeta(db, meta(5, { name: 'Hades II', tags: { Roguelike: 1000 }, reviewsTotal: 90_000, ...dev }), NOW)
+    await replaceGameTags(db, 5, [{ tag: 'Roguelike', weight: 1000 }])
+    for (const [appid, name, reviewsTotal] of [
+      [2, 'Bastion', 60_000],
+      [3, 'Transistor', 50_000],
+      [4, 'Pyre', 20_000],
+    ] as Array<[number, string, number]>) {
+      await upsertGameMeta(db, meta(appid, { name, tags: { Action: 900 }, reviewsTotal, ...dev }), NOW)
+    }
+    await upsertGameMeta(db, meta(6, { name: 'Мёртвая', reviewsTotal: 99_000, ...dev }), NOW)
+    await db.execute('UPDATE games SET alive = 0 WHERE appid = 6')
+    await upsertGameMeta(db, meta(7, { name: 'Чужая', reviewsTotal: 99_000, developer: 'Klei' }), NOW)
+
+    const data = await loadGamePage(1)
+    expect(data?.similar.map((x) => x.appid)).toEqual([5])
+    expect(data?.studio).toEqual({
+      developer: 'Supergiant Games',
+      games: [
+        { appid: 2, name: 'Bastion' },
+        { appid: 3, name: 'Transistor' },
+        { appid: 4, name: 'Pyre' },
+      ],
+    })
+  })
+
+  test('на карточке: у студии тринадцать живых игр — строки нет', async () => {
+    const db = await withDb()
+    for (let appid = 1; appid <= STUDIO_MAX_GAMES + 1; appid++) {
+      await upsertGameMeta(db, meta(appid, { tags: { Action: 900 }, reviewsTotal: appid, developer: 'Square Enix' }), NOW)
+    }
+    expect((await loadGamePage(1))?.studio).toBeNull()
+    await db.execute('UPDATE games SET alive = 0 WHERE appid = 13')
+    expect((await loadGamePage(1))?.studio?.games).toHaveLength(STUDIO_SHOWN)
   })
 })

@@ -2,10 +2,10 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { NeedSteam } from '@/components/NeedSteam'
 import { StatusLine } from '@/components/StatusLine'
 import type { GameArtUrls } from '@/lib/art'
@@ -47,6 +47,12 @@ type FocusTarget = { appid: number } | { shelf: Shelf } | 'empty'
  * router.refresh() догоняет числа в шапке. Ждать круга до сервера, чтобы
  * увидеть результат нажатия, здесь незачем — операция идемпотентна.
  *
+ * Полки выводятся из пропа, а не из копии в состоянии (как у LikedShelf):
+ * router.refresh() зовёт не только эта полка. «Уже прошёл» в «Твоих
+ * вечерах» на этой же странице (components/Evenings) обещает «вернуть можно
+ * в библиотеке, на полке «Пройдено»» — а копия, снятая с первой разметки,
+ * новой игры не видела, и вернуть её было не с чего до перезагрузки.
+ *
  * writer — может ли сессия писать (isWriter в lib/server); страница знает
  * это сама, из той же сессии, по которой строит полки. Сессии по вставленной
  * ссылке скрытое не показывается вовсе: /library не читает для неё listBanned
@@ -58,10 +64,37 @@ type FocusTarget = { appid: number } | { shelf: Shelf } | 'empty'
  */
 export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: boolean }) {
   const router = useRouter()
-  const [items, setItems] = useState(games)
+  /*
+   * Снятое — множеством поверх пропа. Плитка уходит сразу, до ответа, а
+   * сервер присылает полку без неё только после router.refresh(): до тех пор
+   * её прячет это множество.
+   */
+  const [removed, setRemoved] = useState<ReadonlySet<number>>(() => new Set())
+  /*
+   * Сервер прислал полки заново — снятое, которого в них больше нет,
+   * забываем: прятать там уже нечего, а игра, снятая и отмеченная снова
+   * («Снова предлагать» здесь, потом «Уже прошёл» в «Твоих вечерах»), иначе
+   * так и не встала бы обратно на полку. Снятое, которое сервер ещё отдаёт
+   * (чужой refresh обогнал запрос), остаётся спрятанным. Прошлый проп — в
+   * состоянии, а не в эффекте: так React подстраивает состояние под новый
+   * проп без кадра, в котором видно старое.
+   */
+  const [seen, setSeen] = useState(games)
+  if (seen !== games) {
+    setSeen(games)
+    const present = new Set(games.map((g) => g.appid))
+    setRemoved((prev) =>
+      [...prev].every((id) => present.has(id)) ? prev : new Set([...prev].filter((id) => present.has(id))),
+    )
+  }
+  const items = games.filter((g) => !removed.has(g.appid))
   const [failed, setFailed] = useState<number | null>(null)
   const [denied, setDenied] = useState(false)
-  /** Хоть одну плитку уже вернули — пустая полка тогда говорит «всё вернулось», а не исчезает */
+  /**
+   * Хоть одну плитку уже вернули — пустая полка тогда говорит «всё
+   * вернулось», а не исчезает. Своим флагом, а не размером removed: снятое
+   * забывается, как только сервер пришлёт полку без него.
+   */
   const [touched, setTouched] = useState(false)
   const [, startTransition] = useTransition()
   const readOnly = !writer || denied
@@ -108,12 +141,19 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
     return items.some((g) => g.appid !== appid) ? { shelf: other } : 'empty'
   }
 
+  const restore = (appid: number) =>
+    setRemoved((prev) => {
+      const next = new Set(prev)
+      next.delete(appid)
+      return next
+    })
+
   async function unban(appid: number) {
-    const before = items
+    const from = items.find((g) => g.appid === appid)
     setFailed(null)
     setTouched(true)
     pendingFocus.current = focusAfter(appid)
-    setItems((prev) => prev.filter((g) => g.appid !== appid))
+    setRemoved((prev) => new Set(prev).add(appid))
     try {
       const res = await fetch('/api/unban', {
         method: 'POST',
@@ -124,20 +164,20 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
         // Не «попробуй ещё раз»: не получится. Плитка возвращается на место,
         // кнопки прячутся, и строка над полками объясняет почему. Кнопок
         // больше нет — фокус на заголовок той полки, откуда нажимали
-        const from = before.find((g) => g.appid === appid)
         pendingFocus.current = { shelf: from?.done ? 'done' : 'hidden' }
-        setItems(before)
+        restore(appid)
         setDenied(true)
         return
       }
       if (!res.ok) throw new Error(String(res.status))
       startTransition(() => router.refresh())
     } catch {
-      // Откат целиком, а не вставка одной плитки: порядок на полке задаёт
-      // сервер, и угадывать его на клиенте — способ разъехаться с ним.
+      // Плитка встаёт на своё место сама: порядок задаёт сервер (проп), и
+      // угадывать его на клиенте — способ разъехаться с ним. Откатывается
+      // только она: соседняя, вернутая тем временем успешно, не воскресает.
       // Фокус — обратно на ту же кнопку, рядом с ней строка про сбой
       pendingFocus.current = { appid }
-      setItems(before)
+      restore(appid)
       setFailed(appid)
     }
   }
@@ -169,8 +209,8 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
   /*
    * Всё вернули — полка не исчезает молча, а говорит об этом. Строка же
    * держит фокус: иначе после последней плитки он упал бы в body. И держится
-   * она и после router.refresh(): полки живут в своём состоянии, а не в
-   * пропе, который сервер пришлёт уже пустым.
+   * она и после router.refresh(), который пришлёт проп уже пустым: решает
+   * touched, а не проп.
    *
    * Живой области на ней нет намеренно: строка рождается вместе со своим
    * текстом, и объявляет её не роль, а фокус, который на неё переезжает.
@@ -205,7 +245,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
             >
               {/* Ссылка и кнопка — соседи, а не вложенные: интерактив внутри
                   интерактива не кликается и не читается скринридером */}
-              <Link href={`/game/${g.appid}`} className="game-card block">
+              <GameLink appid={g.appid} className="game-card block">
                 <GameCardBody
                   appid={g.appid}
                   name={g.name}
@@ -215,7 +255,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
                   // Обесцвечено только скрытое: пройденное — не изгнанное
                   dim={shelf === 'hidden'}
                 />
-              </Link>
+              </GameLink>
               {!readOnly && (
                 /*
                   У каждой кнопки своё имя. Видимый текст один на всю полку, и

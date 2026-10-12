@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
-import { memberDone, memberLabel } from '@/lib/room'
+import { memberDone, memberLabel, missingNames } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
 import {
   getGameMeta,
+  getGamesMetaLite,
   getRoom,
   roomForCount,
   roomMembers,
@@ -10,10 +11,13 @@ import {
   snapshotOwns,
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
+import { logSwallowed } from '@/lib/errlog'
 import { parseMood } from '@/lib/mood'
+import { inviteDoor, type InviteDoor } from '@/lib/roominvite'
 import { PEEK_LIMIT, PEEK_WINDOW_SEC } from '@/lib/roompeek'
+import { seatOf } from '@/lib/roomseat'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSteamId, getDb, nowSec, sessionSecret } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
 
 const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 
@@ -57,13 +61,47 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
    * Цена промаха — три лишних чтения у несуществующей комнаты. В опросе
    * такого не бывает по определению: клиент уже стоит на её странице.
    */
-  const [room, steamid, members, counts] = await Promise.all([
+  const [room, session, members, counts] = await Promise.all([
     getRoom(db, id),
-    currentSteamId(),
+    currentSession(),
     roomMembers(db, id),
     roomVoteCounts(db, id),
   ])
-  const isMember = steamid ? members.some((m) => m.steamid === steamid) : false
+  const steamid = session?.steamid ?? null
+  /*
+   * Участник — тот, от чьего имени эта сессия вправе действовать (lib/roomseat).
+   * Ссылка на профиль того, кто сам вошёл через Steam, видит комнату как
+   * не-участник: роуты участника ей всё равно откажут needsteam, а экран
+   * колоды, где каждый жест отказывает, хуже честного «войди через Steam».
+   * needSteam говорит странице, почему «Войти в комнату» здесь не поможет.
+   */
+  const seat = session ? seatOf(members, session.steamid, isWriter(session)) : 'none'
+  const isMember = seat === 'member'
+
+  /*
+   * Кому экран приглашения (inviteDoor ниже) — решается уже здесь, чтобы
+   * мета игры, в которую звали, читалась ВМЕСТЕ с потолком room-peek, а не
+   * после него. Её платит каждый опрос не-участника открытой комнаты с
+   * затравкой — раз в 2,5 секунды, в тишине раз в 6, — и последовательным
+   * она добавляла бы ему ещё один поход в Turso (см. «одним заходом» выше).
+   * Цена параллельности — одно узкое чтение у запроса, которому потолок
+   * откажет, и его не бывает у перебора: несуществующая комната не открыта.
+   *
+   * Чтение украшающее и потому не роковое: упало — экран без картинки игры,
+   * а не 500 на весь опрос, после которого гость видел бы «Связь потеряна»
+   * вместо приглашения.
+   */
+  const door = !isMember && seat !== 'needsteam' && room?.status === 'open'
+  const seedAppid = door ? room.seedAppid : undefined
+  const seedRead =
+    seedAppid !== undefined
+      ? getGamesMetaLite(db, [seedAppid])
+          .then((metas) => metas.get(seedAppid))
+          .catch((err: unknown) => {
+            logSwallowed('room:door-seed', err)
+            return undefined
+          })
+      : undefined
 
   // До ответа 404: промах перебора обязан стоить так же, как попадание, иначе
   // потолок считал бы только найденные комнаты. Участников не трогаем — их
@@ -94,15 +132,26 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   // лидером голосов (leader/route.ts), и церемония обязана сказать «3 из 4»,
   // а не «все хотят одного». Чужому, кто зашёл по ссылке, счёт голосов
   // комнаты ни к чему.
+  //
+  // Владение — у КАЖДОГО участника, а не только у смотрящего: экран матча
+  // говорит всей комнате «Нет у: Дима, Саша» (missingNames в lib/room), а
+  // не одному Диме «у тебя её нет». По точечному чтению на участника, их не
+  // больше восьми (ROOM_MAX_MEMBERS), и платит за это не опрос: на матче он
+  // останавливается (nextPollStep в lib/roompoll), так что это один заход на
+  // загрузку страницы. Своё владение берётся из того же ответа.
   const matchedAppid = room.status === 'matched' ? room.matchedAppid : undefined
-  const [matchedMeta, ownedByMe, forCount] =
+  const [matchedMeta, owns, forCount] =
     matchedAppid !== undefined
       ? await Promise.all([
           getGameMeta(db, matchedAppid),
-          steamid && isMember && matchedAppid > 0 ? snapshotOwns(db, steamid, matchedAppid) : null,
+          isMember && matchedAppid > 0
+            ? Promise.all(members.map((m) => snapshotOwns(db, m.steamid, matchedAppid)))
+            : null,
           isMember ? roomForCount(db, id, matchedAppid) : null,
         ])
       : [null, null, null]
+  const mine = members.findIndex((m) => m.steamid === steamid)
+  const ownedByMe = owns && mine >= 0 ? owns[mine] : null
   const now = nowSec()
 
   const secret = sessionSecret()
@@ -117,12 +166,45 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       // lib/roomkey. Им же хост называет, кого убрать (leave/route.ts)
       id: memberKey(secret, id, m.steamid),
       name: memberLabel(id, m.steamid, m.personaName),
-      me: m.steamid === steamid,
+      // «(ты)» — у того, за кого сессия действует; не-участнику по чужой
+      // ссылке чужая строка своей не становится
+      me: isMember && m.steamid === steamid,
       votes,
       // То же определение, по которому предлагается лидер голосов (memberDone)
       done: memberDone(votes, room.deckSize),
     }
   })
+
+  /*
+   * Экран приглашения — тем же языком, что карточка в чате (inviteDoor в
+   * lib/roominvite): кто зовёт, кто уже здесь и игра, в которую звали.
+   *
+   * Только не-участнику открытой комнаты: участнику это его шапка и ростер,
+   * а после матча не-участнику показывают, на чём сошлись. И не сессии по
+   * ссылке на профиль, который уже сидит здесь (needSteam): это не
+   * приглашение, а «войди через Steam и здесь», и «Серёга зовёт» вышло бы
+   * самому Серёге. Опрос участников — горячий путь — не платит ничего: мета
+   * игры читается только для этого экрана (door выше), вместе с потолком
+   * room-peek, который этот путь и закрывает.
+   *
+   * Ник хоста — personaName, как у превью (loadRoomInvite), а «Уже здесь» —
+   * метками ростера: те же имена, что человек увидит, войдя. Ни steamid, ни
+   * ключей участников в строки не попадает. Участнику поля нет вовсе, а не
+   * null: его ответ — опрос раз в 2,5 секунды, и он остаётся прежним до байта.
+   */
+  let invite: InviteDoor | null = null
+  if (door) {
+    const seed = await seedRead
+    const host = members.find((m) => m.steamid === room.createdBy)
+    const hostFirst = host ? [host, ...members.filter((m) => m !== host)] : members
+    invite = inviteDoor({
+      host: host?.personaName ?? null,
+      names: hostFirst.map((m) => memberLabel(id, m.steamid, m.personaName)),
+      seed: seed
+        ? { appid: seed.appid, name: seed.name, headerImage: seed.headerImage ?? null, art: seed.art ?? null }
+        : null,
+    })
+  }
 
   return NextResponse.json({
     room: {
@@ -141,6 +223,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     members: memberViews,
     hasSession: Boolean(steamid),
     isMember,
+    needSteam: seat === 'needsteam',
+    ...(invite ? { invite } : {}),
     matchedGame: matchedMeta
       ? {
           appid: matchedMeta.appid,
@@ -151,10 +235,22 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           storeUrl: matchedMeta.storeUrl ?? null,
           ownedByMe,
           forCount,
+          // Кому из остальных её не хватает — метками ростера и колоды
+          // (memberLabel), не steamid. Не участнику — null: у кого в чужой
+          // пати чего нет, открытая ссылка не раздаёт — как и счёт голосов
+          missingFor: isMember
+            ? missingNames(
+                memberViews.map((v, i) => ({ label: v.name, owns: owns?.[i] ?? null, me: v.me })),
+              )
+            : null,
           // Цена — тому, кому покупать: те же правила, что у колоды (trustedPrice,
           // «бесплатно» сильнее цены)
           isFree: matchedMeta.isFree === true,
           priceFinal: matchedMeta.isFree ? null : trustedPrice(matchedMeta, now),
+          priceCc: matchedMeta.priceCc ?? null,
+          // и у бесплатной: взять её в магазине региона нельзя всё равно, а
+          // рядом с isFree ответ выбирает PriceTag — «не продаётся» первым
+          unsold: matchedMeta.storeHidden === true,
           discount: matchedMeta.isFree ? null : discountView(matchedMeta, now),
         }
       : null,

@@ -22,8 +22,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }
 
-  await unbanGame(await getDb(), steamid, appid)
-  // Вернувшаяся игра снова может стать стартовой на портрете (см. /api/feedback)
-  revalidateTag(portraitTag(steamid), 'max')
+  // Вернувшаяся игра снова может стать стартовой на портрете (см. /api/feedback).
+  // Только когда бан и правда снят: пустое снятие портрет не меняет, а сброс
+  // на каждый повтор кнопки или круг скрипта — работа кэша впустую.
+  //
+  // Своего потолка у роута нет, и это не забыто: DELETE на повторе ничего не
+  // пишет, а снимать есть что лишь после бана — записи через /api/feedback с
+  // его потолками. Так что и сбросы кэша ограничены ими же
+  if (await unbanGame(await getDb(), steamid, appid)) revalidateTag(portraitTag(steamid), 'max')
   return NextResponse.json({ ok: true })
 }

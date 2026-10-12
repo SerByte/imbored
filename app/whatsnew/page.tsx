@@ -2,20 +2,23 @@ import Link from 'next/link'
 import { Icon } from '@/components/Icon'
 import { LinkPending } from '@/components/LinkPending'
 import { Cover } from '@/components/whatsnew/Cover'
+import { FeedLink } from '@/components/whatsnew/FeedLink'
 import { FeedWatch } from '@/components/whatsnew/FeedWatch'
 import { PatchRow } from '@/components/whatsnew/PatchRow'
 import { Stage } from '@/components/whatsnew/Stage'
 import { artCandidates } from '@/lib/art'
 import {
   getFeedForApps,
+  getFeedLink,
   getGamesMetaLite,
   getLatestSnapshot,
   withoutBody,
 } from '@/lib/db'
+import { steamLoginFor } from '@/lib/destination'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
 import { plural } from '@/lib/plural'
-import { currentSteamId, getDb, nowSec } from '@/lib/server'
+import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { ownAddress } from '@/lib/site'
 import { countChanges } from '@/lib/steamhtml'
 import { cachedMajorFeed } from '@/lib/whatsnewcache'
@@ -67,7 +70,8 @@ export const generateMetadata = ownAddress('/whatsnew', {
  */
 export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   const wantsPopular = (await props.searchParams).feed === 'popular'
-  const steamid = await currentSteamId()
+  const session = await currentSession()
+  const steamid = session?.steamid ?? null
   const db = await getDb()
 
   // Гость и тот, по чьим играм ничего не приезжало, видят общую ленту без
@@ -76,12 +80,12 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   // опрос головы ленты из /api/whatsnew/head — своими словами он разошёлся бы
   // с ней в первый же день, когда у человека появится личный патч.
   const now = nowSec()
-  const { items, showPopular, hasMine, mineCount } = await resolveWhatsNew({
+  const { items, showPopular, hasMine, mineCount, owned } = await resolveWhatsNew({
     steamid,
     wantsPopular,
     nowSec: now,
     snapshot: (id) => getLatestSnapshot(db, id),
-    forApps: (appids, limit) => getFeedForApps(db, appids, limit),
+    forApps: (appids, limit, since) => getFeedForApps(db, appids, limit, undefined, since),
     // Общая лента — из кэша: она одна на всех и переживает посетителя.
     // Личная ветка выше остаётся живой, разрез идёт ровно по этому шву.
     major: (limit, minRank) => cachedMajorFeed(limit, minRank),
@@ -90,6 +94,40 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   const metas = await getGamesMetaLite(
     db,
     items.map((i) => i.appid),
+  )
+
+  /*
+   * Секретная ссылка на личную RSS-ленту — только у пишущей сессии: ключ
+   * даёт постоянный доступ к ленте патчей твоих игр, и выпускать его тому,
+   * кто владения профилем не доказал, нельзя (app/api/whatsnew/feedlink).
+   * Сессии по ссылке на профиль — строка о том, что для этого нужно.
+   *
+   * Стоит на обеих вкладках и даже на пустой странице: включённую ссылку
+   * обязано быть где отключить, что бы ни показывала лента сегодня. Самой
+   * ссылки сервер не знает — только есть ли она и с какого дня.
+   *
+   * verified — обещать «Выйти на всех устройствах» как второй выключатель
+   * можно только тому, у кого эта кнопка есть: демо пишет, но выхода везде у
+   * него нет (components/SignOut), и ссылку его выход не трогает.
+   *
+   * «Войти через Steam» — со steamLoginFor: после входа человек обязан
+   * вернуться сюда, к ссылке, ради которой входил, а не попасть на квиз.
+   */
+  const writer = session !== null && isWriter(session)
+  const feedLink = writer ? await getFeedLink(db, session.steamid) : null
+  const rss = !session ? null : writer ? (
+    <FeedLink since={feedLink?.createdAt ?? null} verified={session.verified} />
+  ) : (
+    <p className="border-t border-rule pt-8 text-sm text-dim">
+      Получать патчи своих игр в ридер по секретной ссылке может вошедший через Steam: ссылка
+      на профиль не доказывает, что профиль твой.{' '}
+      <a
+        href={steamLoginFor('/whatsnew')}
+        className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+      >
+        Войти через Steam
+      </a>
+    </p>
   )
 
   // Обложка берётся ТОЛЬКО из личного блока: добивка свежее (0–8 дней против
@@ -112,6 +150,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
         <Link href="/quiz" className="btn-ember mt-2 px-6 py-3">
           А пока подобрать игру <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
         </Link>
+        {rss ? <div className="mt-12 w-full max-w-2xl text-left">{rss}</div> : null}
       </div>
     )
   }
@@ -217,6 +256,12 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
 
           {rest.map((item) => {
             const meta = metas.get(item.appid)
+            // Цена и ссылка на игру — только чужим играм общей ленты: в своей
+            // библиотеке покупать нечего. Вкладка «популярное» сама по себе
+            // не значит «не твоё» — на ней стоят и твои игры, если их патчат
+            // (Deep Rock Galactic на 60 часов шёл с ценой 29,99 $). Правило
+            // то же, что у полок /explore: своё — без цены.
+            const buying = showPopular && !owned.has(item.appid)
             return (
               <PatchRow
                 key={`${item.appid}:${item.gid}`}
@@ -224,11 +269,11 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                 meta={feedMeta(meta)}
                 nowSec={now}
                 changes={countChanges(item.blocks)}
-                // Цена и ссылка на игру — только в общей ленте: в своей
-                // библиотеке покупать нечего
-                discovery={showPopular}
-                discount={showPopular && meta ? discountView(meta, now) : null}
-                price={showPopular && meta ? trustedPrice(meta, now) : null}
+                discovery={buying}
+                discount={buying && meta ? discountView(meta, now) : null}
+                price={buying && meta ? trustedPrice(meta, now) : null}
+                priceCc={buying ? (meta?.priceCc ?? null) : null}
+                unsold={buying && meta?.storeHidden === true}
               />
             )
           })}
@@ -254,6 +299,10 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
 
               {topup.map((item) => {
                 const meta = metas.get(item.appid)
+                // Это чужие игры — цена и ссылка на страницу тут уместны.
+                // Свои resolveWhatsNew в добивку уже не пускает; проверка здесь
+                // — страховка, чтобы цена на своё не держалась на одном месте.
+                const buying = !owned.has(item.appid)
                 return (
                   <PatchRow
                     key={`${item.appid}:${item.gid}`}
@@ -261,15 +310,18 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
                     meta={feedMeta(meta)}
                     nowSec={now}
                     changes={countChanges(item.blocks)}
-                    // Это чужие игры — цена и ссылка на страницу тут уместны
-                    discovery
-                    discount={meta ? discountView(meta, now) : null}
-                    price={meta ? trustedPrice(meta, now) : null}
+                    discovery={buying}
+                    discount={buying && meta ? discountView(meta, now) : null}
+                    price={buying && meta ? trustedPrice(meta, now) : null}
+                    priceCc={buying ? (meta?.priceCc ?? null) : null}
+                    unsold={buying && meta?.storeHidden === true}
                   />
                 )
               })}
             </>
           ) : null}
+
+          {rss ? <div className="mt-16">{rss}</div> : null}
         </div>
       </Stage>
     </div>

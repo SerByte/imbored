@@ -17,9 +17,17 @@
 export const HEADER_CLEARANCE = 80
 
 /**
- * Зазор над нижней панелью. Кольцо фокуса — 2 px линии, 2 px отступа и 4 px
- * подложки (:focus-visible в globals.css), то есть 8 px вокруг элемента.
+ * Насколько кольцо фокуса выходит за рамку элемента.
+ *
+ * У :focus-visible в globals.css outline 2 px с отступом 2 px — линия лежит
+ * на 2–4 px от рамки. Подложка box-shadow 0 0 0 4px растёт от той же рамки,
+ * а не от линии: это тёмная полоса под светлой в тех же четырёх пикселях,
+ * а не ещё четыре снаружи. Итого 4. Число сверяет с правилом
+ * lib/skiplink.test.ts.
  */
+export const FOCUS_RING = 4
+
+/** Зазор над нижней панелью: кольцо фокуса и ещё столько же воздуха. */
 export const NAV_GAP = 8
 
 /** Полоса экрана, которую не закрывает ни шапка, ни нижняя панель. */
@@ -58,6 +66,38 @@ export function focusBand(innerHeight: number, nav: Rect | null): Band {
 export function needsReveal(rect: Rect, band: Band): boolean {
   if (rect.height > band.bottom - band.top) return false
   return rect.top < band.top || rect.bottom > band.bottom
+}
+
+type Box = { top: number; bottom: number; left: number; right: number }
+
+/**
+ * Закрывает ли один прямоугольник другой хоть частью.
+ *
+ * Нужен плавающей записке «Режим просмотра» (components/ReadOnlyNoteBox): она
+ * стоит ровно на линии, куда браузер ставит элемент, прокрученный к фокусу, и
+ * фокус под ней — повод ей уйти. Касание краем не в счёт — но только для
+ * прямоугольников, которые уже включают всё, что должно остаться видно. Рамка
+ * элемента в фокусе к ним не относится: см. withFocusRing.
+ */
+export function overlaps(a: Box, b: Box): boolean {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+}
+
+/**
+ * Рамка элемента вместе с кольцом фокуса.
+ *
+ * getBoundingClientRect кольца не знает: outline и box-shadow в рамку не
+ * входят. Кнопка, чей верх совпал с низом записки, по голой рамке «не
+ * перекрыта», а верхние четыре пикселя её кольца при этом лежат под
+ * запиской. Сравнивать с запиской надо то, что человек должен увидеть.
+ */
+export function withFocusRing(r: Box): Box {
+  return {
+    top: r.top - FOCUS_RING,
+    bottom: r.bottom + FOCUS_RING,
+    left: r.left - FOCUS_RING,
+    right: r.right + FOCUS_RING,
+  }
 }
 
 /** То, что нужно от элемента, чтобы перенести на него фокус. */

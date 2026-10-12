@@ -28,6 +28,10 @@ export const CLIENT_ERROR_PATH = '/api/clienterr'
  * error — window.onerror (исключение вне React: обработчик клика, таймер);
  * rejection — необработанный промис; boundary — исключение, пойманное
  * границей ошибок: до window оно уже не доходит, отчёт шлёт сама граница.
+ * Той же границей служит и островок (components/lazyIsland): отказ своего
+ * чанка он держит при себе — место пустое, страница цела, — и отчёт с тегом
+ * island шлёт сам. До островков тот же отказ ловила app/error.tsx, и вид
+ * в отчёте и в счёте за час остался прежним.
  */
 export type ClientErrorKind = 'error' | 'rejection' | 'boundary'
 
@@ -45,6 +49,17 @@ export type ClientErrorReport = {
   col?: number
   /** Тот же код, что человек видит на экране ошибки */
   code?: string
+  /**
+   * Островок (components/lazyIsland), чей чанк не пришёл. Текст отказа
+   * называет чанк по хешу, а хеш меняется с каждым деплоем; тег — имя, по
+   * которому отказ ищется в логе: mark-finished, hero-slider, snow, tonight,
+   * search (окно «Найти игру», components/SearchLauncher — загрузчик свой,
+   * а вид отчёта тот же), readonly-note (тело записки «Режим просмотра»,
+   * components/ReadOnlyNote), backstage (закулисье, components/BackstageLazy
+   * — только отказ кода, а не доставки: isChunkLoadError ниже), smooth
+   * (плавная прокрутка главной, components/SmoothScroll).
+   */
+  island?: string
 }
 
 const KINDS: readonly ClientErrorKind[] = ['error', 'rejection', 'boundary']
@@ -55,6 +70,8 @@ const STACK_MAX = 1200
 const SOURCE_MAX = 200
 const PAGE_MAX = 200
 const CODE_RE = /^[a-z0-9]{1,16}$/i
+/** Тег островка: латиница в нижнем регистре, цифры, дефис — и ничего, что пришлось бы маскировать */
+const ISLAND_RE = /^[a-z][a-z0-9-]{0,31}$/
 
 /** Больше тело не бывает: отчёт — пара сотен байт, с запасом на стек */
 export const CLIENT_ERROR_MAX_BODY = 8 * 1024
@@ -70,6 +87,43 @@ function thrownParts(err: unknown): { name?: string; message?: string; stack?: s
   }
   if (err === undefined) return {}
   return { message: String(err) }
+}
+
+/** Отказ доставки чанка — текстом, если имя по дороге потерялось: Turbopack и webpack */
+const CHUNK_LOAD_RE =
+  /^(?:Failed to load chunk |Loading (?:CSS )?chunk \S+ failed|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed)/i
+
+/**
+ * Не доехал ли чанк — в отличие от чанка, который доехал и упал своим кодом.
+ *
+ * Различать нужно тому, кто об отказе доставки молчит, а об отказе кода —
+ * нет (components/BackstageLazy). Доставку роняют сеть и деплой, сменивший
+ * хеши, и чинить там нечего. Код, бросивший при вычислении модуля, — наша
+ * поломка, и она повторяется у каждого, кто открыл страницу этим браузером.
+ *
+ * Рантайм Turbopack (Next 16) бросает ChunkLoadError «Failed to load chunk
+ * … from module …», webpack — ChunkLoadError «Loading chunk … failed.».
+ * Имя смотрим первым, текст — на случай, если имя по дороге потерялось.
+ * И причину (cause), на пару звеньев: отказ доставки, завёрнутый кем-то по
+ * дороге, остаётся отказом доставки — так его отдаёт, например, мокер модулей
+ * в тестах (lib/backstage.test.ts).
+ *
+ * Второй спрашивающий — экраны ошибки (app/error.tsx, app/global-error.tsx):
+ * такой отказ не лечится ни retry, ни клиентским переходом — React.lazy и
+ * сборщик помнят отказ, — помогает только перезагрузка со свежим HTML
+ * (сторож — lib/chunkreload.test.ts). Тексты в выражении — и для import()
+ * без обёртки сборщика: так его отказ формулируют Chrome, Firefox и Safari.
+ * Текст сверяется с началом сообщения, а голая строка отказом не считается:
+ * «chunk» посреди чужого текста или строка, брошенная кодом, — не доставка.
+ */
+export function isChunkLoadError(err: unknown): boolean {
+  let at: unknown = err
+  for (let depth = 0; depth < 3 && at && typeof at === 'object'; depth++) {
+    const { name, message = '' } = thrownParts(at)
+    if (name === 'ChunkLoadError' || CHUNK_LOAD_RE.test(message)) return true
+    at = typeof at === 'object' ? (at as { cause?: unknown }).cause : undefined
+  }
+  return false
 }
 
 function cleanStack(stack: string | undefined): string | undefined {
@@ -137,6 +191,8 @@ export type ClientErrorInput = {
   /** location.href — страница маскируется здесь же */
   href: string
   code?: string
+  /** Тег островка, чей чанк не пришёл (components/lazyIsland) */
+  island?: string
 }
 
 /**
@@ -163,6 +219,7 @@ export function buildClientReport(input: ClientErrorInput): ClientErrorReport | 
   const line = posInt(input.lineno)
   const col = posInt(input.colno)
   const code = input.code && CODE_RE.test(input.code) ? input.code : undefined
+  const island = input.island && ISLAND_RE.test(input.island) ? input.island : undefined
   return {
     kind: input.kind,
     message: scrubText(rawMessage).slice(0, MESSAGE_MAX),
@@ -173,12 +230,17 @@ export function buildClientReport(input: ClientErrorInput): ClientErrorReport | 
     ...(line !== undefined ? { line } : {}),
     ...(col !== undefined ? { col } : {}),
     ...(code ? { code } : {}),
+    ...(island ? { island } : {}),
   }
 }
 
-/** По этому ключу одинаковые отчёты схлопываются — и в браузере, и в логе */
+/**
+ * По этому ключу одинаковые отчёты схлопываются — и в браузере, и в логе.
+ * Островок — тоже место: «Load failed» у слайдера героя и у снега на одной
+ * /daily — две поломки, а не одна.
+ */
 export function reportKey(r: ClientErrorReport): string {
-  return `${r.kind}|${r.name ?? ''}|${r.message}|${r.source ?? ''}|${r.line ?? ''}`
+  return `${r.kind}|${r.name ?? ''}|${r.message}|${r.source ?? ''}|${r.line ?? ''}|${r.island ?? ''}`
 }
 
 /**
@@ -201,6 +263,7 @@ export function parseClientReport(body: unknown): ClientErrorReport | null {
   const line = posInt(b.line)
   const col = posInt(b.col)
   const code = typeof b.code === 'string' && CODE_RE.test(b.code) ? b.code : undefined
+  const island = typeof b.island === 'string' && ISLAND_RE.test(b.island) ? b.island : undefined
   return {
     kind,
     message,
@@ -211,6 +274,7 @@ export function parseClientReport(body: unknown): ClientErrorReport | null {
     ...(line !== undefined ? { line } : {}),
     ...(col !== undefined ? { col } : {}),
     ...(code ? { code } : {}),
+    ...(island ? { island } : {}),
   }
 }
 

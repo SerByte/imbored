@@ -5,8 +5,8 @@ import { getGamesMetaLite, listExplore, listExploreLiked } from '@/lib/db'
 import { EXPLORE_SHELF_MAX, exploreDeck, exploredAppids } from '@/lib/explore'
 import { heuristicPicks } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
-import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
-import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
+import { checkRatesInOrder, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
+import { currentMutes, currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 
 /*
  * Колода исследователя (/explore, lib/explore.ts): пятнадцать карт своего и
@@ -20,8 +20,13 @@ import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
  *
  * Потолки — те же, что у /api/recommend, и по той же причине: отбор стоит
  * столько же прочитанных строк Turso, а сессию бесплатно выдаёт демо-вход.
- * Считаем по обеим осям: steamid — про человека, который завис на «ещё
- * колоду», IP — про скрипт, который чеканит демо-личности.
+ * Считаем по обеим осям: личный — про человека, который завис на «ещё
+ * колоду», IP — про скрипт, который чеканит демо-личности и сессии по ссылке.
+ *
+ * Личный — не «на steamid»: сессию по ссылке выдают на любой публичный
+ * профиль, и общий счётчик позволял чужому запереть владельцу колоду на всё
+ * окно. Writer — по steamid, сессия по ссылке — сама по себе
+ * (personalRateId в lib/ratelimit).
  */
 const EXPLORE_LIMIT = 20
 const EXPLORE_WINDOW_SEC = 600
@@ -43,6 +48,7 @@ export async function GET(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
+  const mutes = await currentMutes()
 
   /*
    * Гейты и прочитанное — параллельно, а не лесенкой.
@@ -58,7 +64,12 @@ export async function GET(req: Request) {
     checkRatesInOrder(
       db,
       [
-        { bucket: 'explore', id: steamid, limit: EXPLORE_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
+        {
+          bucket: 'explore',
+          id: personalRateId(session, writer),
+          limit: EXPLORE_LIMIT,
+          windowSec: EXPLORE_WINDOW_SEC,
+        },
         { bucket: 'explore-ip', id: ip, limit: EXPLORE_IP_LIMIT, windowSec: EXPLORE_WINDOW_SEC },
       ],
       now,
@@ -85,11 +96,16 @@ export async function GET(req: Request) {
       // Полка — сверх двухсот свайпов listExplore: старое «Интересно» лежит
       // на полке и в колоду второй раз не сдаётся
       exclude: [...new Set([...exploredAppids(explored, now), ...likedIds])],
+      // «Не предлагать» — кукой этого браузера (lib/mutetags.ts). Полку
+      // «Приглянулось» не трогает: её он собрал сам, это не совет
+      muted: mutes,
     }),
     getGamesMetaLite(db, likedIds),
   ])
   if (set === 'nolibrary') return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
   if (set === 'nocandidates') return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
+  // Листать было бы что, но всё — под «Не предлагать» (FAIL.muted на /explore)
+  if (set === 'allmuted') return NextResponse.json({ error: 'muted' }, { status: 409 })
 
   const deck = exploreDeck(set.own, set.discovery)
   // Цены — до причин: шаблон называет скидку, а карта — ценник (buildPickContext).

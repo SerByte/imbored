@@ -1,7 +1,9 @@
 import { ImageResponse } from 'next/og'
-import { artCandidates } from '@/lib/art'
-import { loadGamePage, reviewFacts } from '@/lib/gamepage'
-import { ogFonts, ogNum, ogScrim, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
+import { getGamePageRow } from '@/lib/db'
+import { reviewFacts, type GamePageData } from '@/lib/gamepage'
+import { ogFonts, ogGlow, ogNum, ogScrim, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
+import { ogArt } from '@/lib/ogcard'
+import { getDb } from '@/lib/server'
 import { plural } from '@/lib/plural'
 import { tagRu } from '@/lib/tagsru'
 
@@ -24,6 +26,24 @@ export const contentType = 'image/png'
  * же кино, что и страница: арт во всю карточку, скрим снизу, текст на нём —
  * ровно та композиция, которую человек увидит, перейдя по ссылке.
  *
+ * АРТ — ЧЕРЕЗ ogArt, А НЕ АДРЕСОМ ДЛЯ SATORI. Здесь стоял первый адрес
+ * artCandidates(…, 'hero'), отданный в <img> как есть. Только у Steam-игры
+ * без резолвленного hero первым там всегда плоский library_hero.jpg, а он
+ * живой лишь у игр до перехода Valve на хэшированные пути (lib/art). Замер на
+ * деплое: у Five Nights at Freddy's (319510) он отвечает 404, и satori — у
+ * него свой fetch без таймаута — запоминал неудачу пустым местом: в чат
+ * уезжала тёмная карточка из одного текста на 47 КБ, на неделю кэша, хотя
+ * capsule и header у игры есть. Запасной `?? artCandidates(…)[0]` не
+ * срабатывал никогда: плоский путь не бывает undefined. ogArt — то же, что у
+ * карточек патча, выбора и пати: таймаут на попытку, только JPEG/PNG и
+ * следующий кандидат (hero → capsule → header), не больше трёх.
+ *
+ * Из базы — одна строка (getGamePageRow), а не loadGamePage: картинке нужны
+ * мета и сводка отзывов, а не соседи, патчи и игры студии. Ошибка базы НЕ
+ * ловится: при перегенерации ISR оставит прошлую карточку, а пойманная
+ * заменила бы её нейтральной на всю неделю (тот же довод, что у loadHub в
+ * app/games/page.tsx). Сторож — app/game/[appid]/og.test.ts.
+ *
  * ВЕС, честно: такая карточка выходит около мегабайта против 128 КБ у прежнего
  * header_2x.jpg из Steam. Это свойство формата, а не недосмотр — ImageResponse
  * отдаёт ТОЛЬКО PNG (проверено по докам установленного Next: satori плюс resvg,
@@ -37,10 +57,15 @@ export const contentType = 'image/png'
  * VK такой вес берут. Если жалобы придут (WhatsApp к размеру превью
  * придирчив) — уменьшать надо холст, а не качество исходника.
  *
- * Сутки жизни как у самой страницы: карточка читает те же данные из базы, и
- * расходиться им незачем.
+ * Неделя жизни, как у самой страницы (GAME_PAGE_REVALIDATE_SEC в
+ * lib/gamecache): картинка читает те же данные из базы, и расходиться им
+ * незачем. Здесь неделя важнее, чем у страницы: мегабайт PNG — это около
+ * ста двадцати блоков ISR Writes на каждую перегенерацию с новым выводом.
+ * Точечный сброс кронов (revalidateGamePages) картинку не трогает, и так
+ * задумано: ради чего кроны сбрасывают карточку — pros/cons, кадры, патчи, —
+ * того в картинке нет, а сдвинувшееся число отзывов доедет за неделю.
  */
-export const revalidate = 86_400
+export const revalidate = 604_800
 
 /**
  * Регистрирует сегмент в манифесте — без этого revalidate выше мёртв.
@@ -52,11 +77,12 @@ export const revalidate = 86_400
  * сюда не распространяется: картинка — отдельный маршрут, и регистрировать его
  * нужно отдельно.
  *
- * Пустой список намеренно, в отличие от страницы, которая предрендерит топ-500.
- * Здесь каждый элемент списка — это отрисованный на сборке PNG с тянущимся по
- * сети артом; пятьсот таких заняли бы сборку целиком ради картинок, которые
- * краулер и так прогреет при первой пересылке. dynamicParams по умолчанию true,
- * поэтому досоздание по требованию работает, а сутки кэша те же.
+ * Пустой список намеренно, в отличие от страницы, которая предрендерит верх
+ * каталога (PRERENDER_TOP в lib/gamecache). Здесь каждый элемент списка — это
+ * отрисованный на сборке PNG с тянущимся по сети артом и мегабайт ISR Writes
+ * на каждую сборку ради картинок, которые краулер и так прогреет при первой
+ * пересылке. dynamicParams по умолчанию true, поэтому досоздание по
+ * требованию работает, а неделя кэша та же.
  */
 export async function generateStaticParams(): Promise<Array<Record<string, string>>> {
   return []
@@ -65,9 +91,9 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
 export default async function Image({ params }: { params: Promise<{ appid: string }> }) {
   const { appid: raw } = await params
   const appid = Number(raw)
-  const data = Number.isInteger(appid) && appid !== 0 ? await loadGamePage(appid) : null
+  const row = Number.isInteger(appid) && appid !== 0 ? await getGamePageRow(await getDb(), appid) : null
 
-  if (!data) {
+  if (!row) {
     return new ImageResponse(
       (
         <div
@@ -91,11 +117,11 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
     )
   }
 
-  const { meta, reviewsSummary } = data
-  const art =
-    artCandidates({ appid: meta.appid, art: meta.art, headerImage: meta.headerImage }, 'hero')[0] ??
-    artCandidates({ appid: meta.appid, art: meta.art, headerImage: meta.headerImage })[0] ??
-    null
+  const { meta } = row
+  // Отзывы Steam есть только у Steam-игр — как в loadGamePage
+  const reviewsSummary = appid < 0 ? null : (row.reviewsSummary as GamePageData['reviewsSummary'])
+  // Data-URI или null: не дотянулся ни один кандидат — карточка со свечением
+  const art = await ogArt({ appid: meta.appid, art: meta.art, headerImage: meta.headerImage }, 'hero')
 
   // Тот же запасной источник, что и на самой странице: без него карточка 278
   // игр из тысячи уезжала в чат вообще без оценки.
@@ -107,7 +133,11 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
     .map(([t]) => tagRu(t))
 
   const lines = [
-    facts ? `${facts.percent}% из ${ogNum(facts.total)} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за` : null,
+    // «— за» в хвосте читалось как обрубленная фраза — та же правка, что на
+    // самой странице игры
+    facts
+      ? `${facts.percent}% положительных из ${ogNum(facts.total)} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')}`
+      : null,
     tags.length ? tags.join(' · ') : null,
   ].filter(Boolean) as string[]
 
@@ -120,6 +150,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
           display: 'flex',
           position: 'relative',
           background: OG_BG,
+          ...(art ? {} : { backgroundImage: ogGlow() }),
           color: OG_INK,
           fontFamily: 'Manrope',
         }}

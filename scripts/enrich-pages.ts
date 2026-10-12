@@ -7,14 +7,17 @@
  *   npm run pages:enrich -- --no-llm               только эвристика, без Claude
  *
  * Крон на Vercel делает ровно то же самое (lib/pagejob.ts), но у него потолок
- * 60 секунд на вызов, а внутри — пейсер Steam с шагом 1.7с на каждый из двух
- * запросов карточки. В предел это даёт 15 карточек за срез и 360 в сутки при
- * полной цепочке; на проде замерено меньше — пять звеньев, 49 карточек в
- * сутки (арифметика целиком в докблоке MAX_CHAIN). Пять тысяч ненаполненных
- * карточек при таком темпе это не две недели, а сотня дней.
+ * 300 секунд на вызов и суточный потолок звеньев (pagesDailyLinks в
+ * lib/cron.ts), а внутри — пейсер Steam с шагом 1.7с на каждый из двух
+ * запросов карточки. Звено в 48 секунд — это около четырнадцати карточек без
+ * модели и около восьми с ней; при LLM_DAILY_CAP=150 выходит до семидесяти
+ * карточек с моделью в сутки, а пока пересказы с бэклогом выбирают бюджет
+ * модели первыми — около тридцати (доля не резервируется, см. pagesDailyLinks).
+ * Пять тысяч ненаполненных карточек при таком темпе — не две недели, а два
+ * месяца с лишним.
  *
  * Массовый первый проход дешевле прогнать здесь: та же логика, без дедлайна и
- * без цепочки вызовов. Пейсер остаётся и тут — он про лимиты Steam, а не про
+ * без потолков крона. Пейсер остаётся и тут — он про лимиты Steam, а не про
  * Vercel, — но время не ограничено ничем.
  *
  * По умолчанию пишет в локальный data/imbored.db. Чтобы залить в облако,
@@ -27,6 +30,7 @@ import { countPageEnrichDue, createDb, STEAM_LEASE } from '../lib/db'
 import { llmAvailable } from '../lib/llm'
 import { PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, PAGE_REDO_AFTER_SEC, runPageSlice } from '../lib/pagejob'
 import { withLease } from './lease'
+import { openCloud } from './opendb'
 
 /** Карточек за срез. Каждая — два запроса к store.steampowered.com,
  *  а лимитер держит 1.7 с между ними: срез это примерно минута. */
@@ -38,11 +42,15 @@ function arg(name: string): string | undefined {
 }
 const flag = (name: string) => process.argv.includes(`--${name}`)
 
-async function openDb() {
+/**
+ * readOnly — для --dry-run: облако без миграций (см. openCloud). Счёт очереди
+ * читает page_at и page_tries, а они на проде есть давно
+ */
+async function openDb({ readOnly = false }: { readOnly?: boolean } = {}) {
   const remote = process.env.TURSO_DATABASE_URL
   if (remote) {
-    console.log('база: Turso (облако)')
-    return createDb(remote, process.env.TURSO_AUTH_TOKEN)
+    console.log(readOnly ? 'база: Turso (облако), только чтение' : 'база: Turso (облако)')
+    return openCloud(remote, process.env.TURSO_AUTH_TOKEN, { readOnly })
   }
   const dir = path.join(process.cwd(), 'data')
   fs.mkdirSync(dir, { recursive: true })
@@ -56,7 +64,7 @@ async function main() {
   const noLlm = flag('no-llm')
   const maxGames = Number(arg('limit') ?? Number.POSITIVE_INFINITY)
 
-  const db = await openDb()
+  const db = await openDb({ readOnly: dryRun })
   const now = Math.floor(Date.now() / 1000)
 
   // Счётчик обязан видеть ту же очередь, что и выборка в runPageSlice: там

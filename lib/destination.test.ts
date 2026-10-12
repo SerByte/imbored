@@ -3,7 +3,7 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   bounceTo,
-  DESTINATIONS,
+  DESTINATION_PATHS,
   destinationPath,
   destinationUrl,
   GUEST_BOUNCE,
@@ -13,7 +13,8 @@ import {
   reconnectHref,
   steamLoginFor,
 } from './destination'
-import { playHref, presetHref, ROOM_PRESETS, VIBE_PRESETS } from './presets'
+import { destinationPromise, DESTINATIONS } from './destinationtext'
+import { playHref, presetHref, ROOM_PRESETS, roomBridgeHref, VIBE_PRESETS } from './presets'
 
 /**
  * Сторож разворота гостя.
@@ -56,7 +57,7 @@ describe('разворот гостя на лендинг', () => {
   })
 
   test('свои адреса проходят и кодируются', () => {
-    for (const p of Object.keys(DESTINATIONS)) {
+    for (const p of DESTINATION_PATHS) {
       expect(destinationPath(p)).toBe(p)
       expect(bounceTo(p)).toBe(`/?next=${encodeURIComponent(p)}`)
     }
@@ -70,6 +71,15 @@ describe('разворот гостя на лендинг', () => {
     for (const key of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
       expect(destinationPath(key), `пропущен ${key}`).toBeNull()
     }
+  })
+
+  /**
+   * Адреса и тексты лендинга живут в разных модулях (тексты — не в первой
+   * загрузке каждой страницы, см. lib/destinationtext.ts). Тип satisfies там
+   * держит их вместе при сборке, а это — то же для тех, кто тип обойдёт.
+   */
+  test('текст есть ровно у каждого адреса — не больше и не меньше', () => {
+    expect(Object.keys(DESTINATIONS).sort()).toEqual([...DESTINATION_PATHS].sort())
   })
 
   test('у каждого адреса есть и обещание, и подпись кнопки', () => {
@@ -102,7 +112,18 @@ describe('разворот гостя на лендинг', () => {
           const src = fs.readFileSync(p, 'utf8')
           // SignOut разворачивает НАМЕРЕННО без назначения: человек только что
           // вышел, возвращать его туда, откуда он вышел, — бессмыслица.
+          // ForgetMe — по той же причине: после «Удалить всё обо мне» идти
+          // некуда, кроме главной. Но его разворот не молчит, пока перед ним
+          // стоит метка удаления: строку «всё удалено» зажигает она
+          // (lib/forgotnotice), а не адрес — /?forgot=1 жил бы в истории и
+          // звучал через месяц снова. Без метки — такой же нарушитель
           if (p.endsWith(path.join('components', 'SignOut.tsx'))) continue
+          if (
+            p.endsWith(path.join('components', 'ForgetMe.tsx')) &&
+            /markForgot\(\)\s*(?:\/\/.*\s*)*router\.replace\(\s*'\/'\s*\)/.test(src)
+          ) {
+            continue
+          }
           for (const m of src.matchAll(/(?:redirect|router\.(?:push|replace))\(\s*'\/'\s*\)/g)) {
             offenders.push(`${path.relative(ROOT, p)}: ${m[0]}`)
           }
@@ -140,12 +161,51 @@ describe('гость разворачивается до рендера', () => 
   })
 
   /**
-   * Прокси разворачивает только туда, где лендинг знает, что сказать: адрес без
-   * записи в DESTINATIONS bounceTo свёл бы к голому «/» — ровно то молчание,
+   * Прокси разворачивает только туда, где лендинг знает, что сказать: адрес не
+   * из DESTINATION_PATHS bounceTo свёл бы к голому «/» — ровно то молчание,
    * ради которого всё затевалось.
    */
   test('каждый хаб — место назначения лендинга', () => {
-    for (const p of GUEST_BOUNCE) expect(Object.hasOwn(DESTINATIONS, p), p).toBe(true)
+    for (const p of GUEST_BOUNCE) {
+      expect((DESTINATION_PATHS as readonly string[]).includes(p), p).toBe(true)
+      expect(Object.hasOwn(DESTINATIONS, p), `${p}: нет текста лендинга`).toBe(true)
+    }
+  })
+
+  /*
+   * Клиентские страницы разворачивают сами, после 401 от своего API, — и
+   * разворот обязан ЗАМЕНИТЬ их запись в истории, а не добавить лендинг
+   * поверх. С push история была [..., откуда пришёл, /daily, /?next=…]:
+   * «Назад» с лендинга открывал /daily, тот снова получал 401 и снова уводил
+   * на лендинг, стирая «вперёд». Гость не мог уйти «Назад» дальше /daily —
+   * к той странице, откуда пришёл. Запись без сессии мертва, её не жалко.
+   *
+   * /play и /explore чинили по отдельности, и /daily с тем же узором
+   * остался на push. Поэтому сторож — один на все три, со счётом мест:
+   * разворот на входе и разворот после прогрева у каждой свои.
+   *
+   * /room/new здесь нет намеренно: там разворот — ответ на «Создать
+   * комнату», а не на открытие страницы, и запись /room/new без ?preset=
+   * живая — «Назад» с лендинга возвращает к выбору настроения, а не в новый
+   * разворот.
+   */
+  test('клиентские страницы разворачивают гостя заменой записи, а не новой', () => {
+    /** Комментарии гасятся: докблоки цитируют сами правила */
+    const code = (file: string) =>
+      fs
+        .readFileSync(path.join(ROOT, 'app', file, 'page.tsx'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    const pages = [
+      ['play', "router.replace(bounceTo('/play', search))"],
+      ['explore', "router.replace(bounceTo('/explore'))"],
+      ['daily', "router.replace(bounceTo('/daily'))"],
+    ] as const
+    for (const [file, call] of pages) {
+      const src = code(file)
+      expect(src.match(/router\.push\(bounceTo\([^\n]*/g) ?? [], `app/${file}: разворот push'ем`).toEqual([])
+      expect(src.split(call).length - 1, `app/${file}: оба разворота — заменой`).toBe(2)
+    }
   })
 
   /**
@@ -210,12 +270,28 @@ describe('вход через Steam помнит, куда человек шёл
 describe('вход через Steam из подсказки возвращает на место', () => {
   const back = (href: string) => loginTarget(new URLSearchParams(href.split('?')[1] ?? ''))
 
-  test('выдача, библиотека, новая комната и своя комната', () => {
-    for (const where of ['/play', '/library', '/room/new', '/room/ABC234']) {
+  test('выдача, библиотека, новая комната, своя комната и лента патчей', () => {
+    for (const where of ['/play', '/library', '/room/new', '/room/ABC234', '/whatsnew']) {
       const href = steamLoginFor(where)
       expect(href.startsWith('/api/auth/steam'), where).toBe(true)
       expect(back(href), where).toBe(where)
     }
+  })
+
+  /*
+   * Секретную ссылку на RSS выпускает только вошедший через Steam, и сессия
+   * по ссылке на профиль получает на /whatsnew строку «Войти через Steam».
+   * Голый вход уводил после возврата на /quiz — прочь от ссылки, ради которой
+   * входили.
+   */
+  test('лента патчей: next=/whatsnew переживает вход и отказ, вкладка — нет', () => {
+    expect(steamLoginFor('/whatsnew')).toBe('/api/auth/steam?next=%2Fwhatsnew')
+    // Отказ входа (?error=private) везёт то же, что и старт: loginCarry
+    expect(loginCarry(new URLSearchParams('next=%2Fwhatsnew&error=private')).toString()).toBe(
+      'next=%2Fwhatsnew',
+    )
+    // Хвоста у ленты нет: ?feed=popular — та же страница, и через вход не едет
+    expect(steamLoginFor('/whatsnew?feed=popular')).toBe('/api/auth/steam?next=%2Fwhatsnew')
   })
 
   test('комната едет кодом, а не адресом', () => {
@@ -283,10 +359,124 @@ describe('ответы квиза переживают вход', () => {
     expect(loginTarget(query(steamLoginFor(QUIZ)))).toBe(QUIZ)
   })
 
+  // «Похожее на X — под моё настроение» со страницы игры: гость проходит квиз,
+  // /play разворачивает его на вход — и после входа выдача обязана быть
+  // соседями X, а не обычной
+  test('затравка «Как «X», но…» переживает вход, мусор в ней — нет', () => {
+    const seeded = playHref({ time: 'short', vibe: 'chill', social: 'solo' }, { lean: 'fresh', seed: 1145360 })
+    expect(destinationUrl(seeded)).toBe(seeded)
+    const next = query(bounceTo('/play', query(seeded))).get('next')
+    expect(loginTarget(new URLSearchParams(loginCarry(new URLSearchParams({ next: next ?? '' }))))).toBe(seeded)
+    expect(loginTarget(query(steamLoginFor(seeded)))).toBe(seeded)
+    expect(destinationUrl('/play?seed=-12')).toBe('/play?seed=-12')
+    for (const junk of ['0', '12abc', '1e3', '', '9007199254740993']) {
+      expect(destinationUrl(`/play?seed=${junk}`), junk).toBe('/play')
+    }
+  })
+
   test('/play без строки запроса — как раньше', () => {
     expect(bounceTo('/play', new URLSearchParams())).toBe('/?next=%2Fplay')
     expect(bounceTo('/play', null)).toBe('/?next=%2Fplay')
     expect(steamLoginFor('/play?')).toBe('/api/auth/steam?next=%2Fplay')
+  })
+})
+
+/**
+ * Квиз гостя кончается честным последним шагом.
+ *
+ * Гость отвечал на три вопроса, квиз вёл его на /play, тот показывал экран
+ * прогрева и через круг до сервера (401) разворачивал на лендинг — а
+ * лендинг встречал общим обещанием выдачи, как будто трёх ответов не было.
+ * Теперь квиз, знающий, что перед ним гость (knownGuest в lib/sessionhint),
+ * ведёт на лендинг сам, а лендинг повторяет сказанное: «Пара часов ·
+ * Расслабиться · Один — запомнили».
+ */
+describe('квиз гостя: сразу на лендинг, и лендинг помнит ответы', () => {
+  const query = (href: string) => new URLSearchParams(href.split('?')[1] ?? '')
+  const MOOD = { time: 'medium', vibe: 'chill', social: 'solo' } as const
+  /** Что увидит гость над заголовком после такого разворота */
+  const landingSays = (landing: string) => destinationPromise(destinationUrl(query(landing).get('next')))
+
+  /*
+   * Квиз разворачивает сам — и обязан развернуть ровно туда же, куда
+   * развернул бы /play: настроение, ось, затравка, рулетка и фокус едут
+   * через вход и после него собирают ту же выдачу.
+   */
+  test('разворот квиза — тот же адрес, что у /play, со всем запросом', () => {
+    for (const href of [
+      playHref(MOOD),
+      playHref({ time: 'short', vibe: 'engaged', social: 'friends' }, { lean: 'fresh' }),
+      playHref(MOOD, { seed: 1145360 }),
+      playHref(MOOD, { roulette: true }),
+      playHref(MOOD, { focus: 'untouched' }),
+      ...VIBE_PRESETS.map((p) => presetHref(p)),
+    ]) {
+      expect(bounceTo(href), href).toBe(bounceTo('/play', query(href)))
+      expect(loginTarget(query(bounceTo(href))), href).toBe(href)
+    }
+  })
+
+  test('ответы квиза — над заголовком лендинга', () => {
+    expect(landingSays(bounceTo(playHref(MOOD)))).toBe(
+      'Пара часов · Расслабиться · Один — запомнили. Остался последний шаг: подключи Steam, и выберем одну игру из твоей библиотеки.',
+    )
+    // ось и затравка ответ не отменяют: настроение сказано
+    const seeded = playHref({ time: 'long', vibe: 'engaged', social: 'friends' }, { lean: 'fresh', seed: 1145360 })
+    expect(landingSays(bounceTo(seeded))).toMatch(/^Весь вечер · Напрячься · С друзьями — запомнили\./)
+    for (const p of VIBE_PRESETS) {
+      expect(landingSays(bounceTo(presetHref(p))), p.label).toMatch(/ — запомнили\. /)
+    }
+  })
+
+  /*
+   * «Мне повезёт» и «Ни разу не запускал» настроение выбирают за человека —
+   * кубиком и дефолтом. «Запомнили» про то, чего он не говорил, было бы
+   * неправдой: им — общее обещание выдачи.
+   */
+  test('рулетка, «нераспакованное» и неполное настроение — общее обещание', () => {
+    const general = DESTINATIONS['/play'].promise
+    expect(landingSays(bounceTo(playHref(MOOD, { roulette: true })))).toBe(general)
+    expect(landingSays(bounceTo(playHref(MOOD, { focus: 'untouched' })))).toBe(general)
+    expect(destinationPromise('/play?time=short&vibe=chill')).toBe(general)
+    expect(destinationPromise('/play')).toBe(general)
+  })
+
+  test('остальные места — свои обещания, чужое — ничего', () => {
+    for (const p of DESTINATION_PATHS) expect(destinationPromise(p), p).toBe(DESTINATIONS[p].promise)
+    expect(destinationPromise('/room/new?preset=quick')).toBe(DESTINATIONS['/room/new'].promise)
+    for (const raw of [null, '', '/rooms', 'toString', '__proto__']) {
+      expect(destinationPromise(raw), String(raw)).toBeNull()
+    }
+  })
+
+  /** Исходники — без комментариев: докблоки цитируют сами правила */
+  const code = (...p: string[]) =>
+    fs
+      .readFileSync(path.join(ROOT, ...p), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+
+  test('квиз ведёт гостя на лендинг сам, остальных — в выдачу, как раньше', () => {
+    const quiz = code('app', 'quiz', 'page.tsx')
+    const go = quiz.slice(quiz.indexOf('const go = useCallback('), quiz.indexOf('function pick('))
+    expect(go).toMatch(/const href = playHref\(/)
+    // push, а не replace: запись квиза живая, «Назад» с лендинга — к ответам
+    expect(go).toMatch(/router\.push\(knownGuest\(\) \? bounceTo\(href\) : href\)/)
+    expect(go).toContain("track('quiz_done')")
+    // и говорит о последнем шаге заранее — только гостю наверняка, только
+    // после гидратации (снимок сервера — «не гость»), внизу первого шага
+    expect(quiz).toMatch(/const guest = useSyncExternalStore\(subscribeSessionHint, knownGuest, notGuest\)/)
+    expect(quiz).toMatch(/const notGuest = \(\) => false/)
+    expect(quiz).toMatch(/\{stepIndex === 0 && guest && \(\s*<p[^>]*>\s*Потом останется подключить библиотеку/)
+    // вне потока: строка, пришедшая с ответом touch, не двигает вопрос и плитки
+    const note = quiz.slice(quiz.indexOf('{stepIndex === 0 && guest && ('), quiz.indexOf('Потом останется'))
+    expect(note).toMatch(/className="absolute [^"]*\btop-full\b/)
+  })
+
+  test('лендинг берёт обещание у destinationPromise, а не у списка напрямую', () => {
+    const notice = code('components', 'landing', 'HeroNotice.tsx')
+    expect(notice).toMatch(/destinationPromise\(destinationUrl\(search\.get\('next'\)\)\)/)
+    expect(notice).not.toMatch(/\bDESTINATIONS\b/)
   })
 })
 
@@ -328,6 +518,65 @@ describe('настроение комнаты переживает вход', ()
   test('без выбора — как раньше', () => {
     expect(bounceTo('/room/new')).toBe('/?next=%2Froom%2Fnew')
     expect(steamLoginFor('/room/new')).toBe('/api/auth/steam?next=%2Froom%2Fnew')
+  })
+
+  /*
+   * Подсказка с /play (?hint=) — отмеченный похожий пресет на экране выбора.
+   * Без неё гость после входа вернулся бы к выбору без отметки, а мост обещал
+   * «похоже на твоё».
+   */
+  test('подсказка доезжает через лендинг и через Steam наравне с пресетом', () => {
+    for (const p of ROOM_PRESETS) {
+      const here = `/room/new?hint=${p.key}`
+      expect(destinationUrl(here), p.key).toBe(here)
+      const landing = bounceTo('/room/new', new URLSearchParams({ hint: p.key }))
+      expect(destinationPath(query(landing).get('next')), p.key).toBe('/room/new')
+      expect(loginTarget(query(landing)), p.key).toBe(here)
+      expect(loginTarget(query(steamLoginFor(here))), p.key).toBe(here)
+    }
+  })
+
+  test('чужая подсказка отбрасывается; выбранный пресет перекрывает подсказку', () => {
+    expect(destinationUrl('/room/new?hint=rage')).toBe('/room/new')
+    expect(destinationUrl('/room/new?hint=__proto__')).toBe('/room/new')
+    expect(destinationUrl('/room/new?hint=talk&preset=quick')).toBe('/room/new?preset=quick')
+    // чужой preset не губит годную подсказку
+    expect(destinationUrl('/room/new?preset=rage&hint=talk')).toBe('/room/new?hint=talk')
+    // подсказка комнаты выдаче не хвост
+    expect(destinationUrl('/play?hint=talk')).toBe('/play')
+  })
+
+  /*
+   * «Позвать в эту игру»: гость со страницы игры жмёт кнопку, его разворачивает
+   * на вход, и после входа комната обязана создаться с той же игрой первой
+   * картой, а не без неё.
+   */
+  test('предложенная игра доезжает через вход — одна и вместе с настроением', () => {
+    for (const here of ['/room/new?game=548430', '/room/new?preset=quick&game=548430', '/room/new?hint=talk&game=892970']) {
+      expect(destinationUrl(here), here).toBe(here)
+      expect(loginTarget(query(steamLoginFor(here))), here).toBe(here)
+      const landing = bounceTo('/room/new', new URLSearchParams(here.split('?')[1]))
+      expect(loginTarget(query(landing)), here).toBe(here)
+    }
+  })
+
+  test('чужая игра в адресе отбрасывается, остальное доезжает', () => {
+    expect(destinationUrl('/room/new?game=-1')).toBe('/room/new')
+    expect(destinationUrl('/room/new?game=abc&preset=quick')).toBe('/room/new?preset=quick')
+    expect(destinationUrl('/room/new?game=570%2F..%2F..')).toBe('/room/new')
+    // игра комнаты выдаче не хвост
+    expect(destinationUrl('/play?game=570')).toBe('/play')
+  })
+
+  test('каждый мост с /play переживает вход без изменений', () => {
+    for (const time of ['short', 'medium', 'long'] as const) {
+      for (const vibe of ['chill', 'engaged'] as const) {
+        const href = roomBridgeHref({ time, vibe, social: 'friends' })
+        expect(href, `${time}|${vibe}`).not.toBeNull()
+        expect(destinationUrl(href), `${time}|${vibe}`).toBe(href)
+        expect(loginTarget(query(steamLoginFor(href!))), `${time}|${vibe}`).toBe(href)
+      }
+    }
   })
 })
 

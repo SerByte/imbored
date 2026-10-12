@@ -176,7 +176,23 @@ export async function verifyAssertion(
     body: body.toString(),
     signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
   })
+  /*
+   * Отказ Steam — это 200 с is_valid:false. 5xx (техработы по вторникам, 502
+   * от края) и 429 — не отказ, а «Steam сейчас не отвечает», поэтому бросок:
+   * маршрут скажет человеку подождать минуту (?error=steam), а не «Steam не
+   * подтвердил вход» (?error=auth), с которым тот сразу повторил бы вход в тот
+   * же сбой. «HTTP 503» в тексте — для журнала: statusOf в lib/errlog берёт
+   * статус оттуда. Прочий 4xx — по-прежнему отказ: честный ассерт его не
+   * получает. Входа не даёт ни один из путей.
+   */
+  if (res.status >= 500 || res.status === 429) {
+    await res.body?.cancel().catch(() => {})
+    throw new Error(`check_authentication: HTTP ${res.status}`)
+  }
   if (!res.ok) return null
   const text = await res.text()
+  // Ответ без строки is_valid вовсе — страница-заглушка с кодом 200, а не
+  // вердикт: в ответе check_authentication это поле обязательно
+  if (!/is_valid\s*:/.test(text)) throw new Error('check_authentication: нет is_valid')
   return /is_valid\s*:\s*true/.test(text) ? steamid : null
 }

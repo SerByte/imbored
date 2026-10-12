@@ -6,10 +6,12 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache, type ReactNode } from 'react'
 import { BlurBand } from '@/components/BlurBand'
+import { CardDownload } from '@/components/CardDownload'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
 import { Magnet } from '@/components/Magnet'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { ShareLinkField } from '@/components/ShareLink'
 import { SplitHeading } from '@/components/SplitHeading'
 import { Eyebrow, eyebrow } from '@/components/Labels'
@@ -25,15 +27,15 @@ import {
   setUserPortrait,
 } from '@/lib/db'
 import { claudePortraitText, llmAvailable } from '@/lib/llm'
-import { takeLlmBudget } from '@/lib/llmcap'
+import { takeLlmBudgetForIp } from '@/lib/llmcap'
 import { reconnectHref } from '@/lib/destination'
 import { OG_SITE } from '@/lib/site'
-import { gamesCaption, hoursCaption, unplayedCaption } from '@/lib/factcaptions'
+import { gamesCaption, playedFact, unplayedCaption } from '@/lib/factcaptions'
 import { dateLabel } from '@/lib/freshness'
 import { playedLine } from '@/lib/outcome'
 import { pickYearWindow, yearEyebrow, yearsToRead, type WrappedYear } from '@/lib/wrapped'
 import { plural } from '@/lib/plural'
-import { playtimeHidden } from '@/lib/playtime'
+import { playedShort, playtimeHidden } from '@/lib/playtime'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { buildPortraitModel, portraitTag, type PortraitModel } from '@/lib/portraitmodel'
 import {
@@ -49,10 +51,12 @@ import {
 } from '@/lib/portraitvoice'
 import { appBaseUrl, currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent } from '@/lib/stats'
+import { byPrices, formatPrice } from '@/lib/steamregion'
 import { tagWeightFrom } from '@/lib/tagweight'
 import type { LibraryGame } from '@/lib/types'
 import { Icon } from '@/components/Icon'
 import { withRef } from '@/lib/track'
+import { Notice } from '@/components/Notice'
 
 export const dynamic = 'force-dynamic'
 
@@ -121,10 +125,11 @@ export async function generateMetadata({
   const { steamid } = await params
   if (!/^\d{17}$/.test(steamid)) return {}
 
-  const snapshot = await snapshotOf(steamid)
+  // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
+  const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
   if (!snapshot) return { title: 'Портрет игрока', robots: { index: false } }
 
-  const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
+  const name = persona ?? `Игрок ${steamid.slice(-4)}`
   const hours = Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   const games = snapshot.games.length
   const title = `Портрет игрока ${name}`
@@ -252,8 +257,16 @@ async function loadModel(
     },
     // v3 — в модели появились итоги года: запись v2 без них отдавалась бы сутки.
     // v4 — признак скрытого времени (wrapped.playtimeHidden): запись v3 без него
-    // сутки показывала бы «0 часов» и «Чистилище» на всю библиотеку
-    ['portrait-model:v4', steamid, String(snapshot.takenAt)],
+    // сутки показывала бы «0 часов» и «Чистилище» на всю библиотеку.
+    // v5 — сумма бэклога несёт свой регион (backlog.cc): запись v4 после смены
+    // STEAM_STORE_CC сутки рисовала бы долларовые центы знаком рубля.
+    // v6 — у игр топа есть минуты (WrappedGame.minutes): запись v5 без них
+    // сутки подписывала бы всю «Куда ушло время» как «0 ч». Заодно доля
+    // топ-игры из минут и «полные дни» вниз — без смены ключа запись v5
+    // сутки держала бы «142%» и «1 полный день» за 12 часов. И всё наигранное —
+    // минутами (Wrapped.totalMinutes, а не готовые часы): запись без поля
+    // отдала бы герою undefined вместо «0 часов»
+    ['portrait-model:v6', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
   try {
@@ -275,34 +288,51 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   const snapshot = await snapshotOf(steamid)
   if (!snapshot) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-        <p className="text-lg">Этот игрок ещё не подключал библиотеку к imbored.</p>
-        <Link href={reconnectHref()} className="tap link-more">
+      <Notice
+        title="Портрета пока нет"
+        body="Этот игрок ещё не подключал библиотеку к imbored — рисовать не из чего. Свой портрет собирается за минуту."
+      >
+        <Link href={reconnectHref()} className="btn-ember px-6 py-3">
           Подключить свою
-          <Icon name="arrow" size={16} />
         </Link>
-      </div>
+      </Notice>
     )
   }
 
+  /*
+   * Ник, сессия и записанный текст портрета от модели не зависят — им нужен
+   * только steamid, — поэтому ждутся вместе с ней. Цепочкой «модель → ник →
+   * сессия → текст» каждый заход по чужой ссылке, даже из прогретого кэша,
+   * платил лишние последовательные походы в Turso до первого байта.
+   * После проверки снапшота, а не до: без снапшота страница отвечает
+   * заглушкой, и заранее начатые чтения были бы оплачены зря (а их отказ —
+   * необработанным отклонением промиса).
+   * Текст НЕ читается внутри кэша модели: он меняется без снапшота
+   * (setUserPortrait ниже), и замыкание кэша заморозило бы его.
+   */
   const ip = clientIp(await headers())
-  const { model, complete } = await loadModel(steamid, snapshot, ip, now)
+  const db = await getDb()
+  const [{ model, complete }, persona, me, cached] = await Promise.all([
+    loadModel(steamid, snapshot, ip, now),
+    personaOf(steamid),
+    currentSteamId(),
+    getUserPortrait(db, steamid),
+  ])
   const { portrait, wrapped, backlog, headline, evidence, starter, mosaic, purgatory } = model
   // Число вынимается из фразы, чтобы остаться моноширинным, как все числа
   const equivalent = (() => {
-    const eq = backlogEquivalent(backlog.cents, steamid)
+    const eq = backlogEquivalent(backlog.cents, backlog.cc, steamid)
     if (!eq) return null
     const [before, after] = eq.text.split('{n}')
     return { count: eq.count, before, after }
   })()
-  const name = (await personaOf(steamid)) ?? `Игрок ${steamid.slice(-4)}`
+  const name = persona ?? `Игрок ${steamid.slice(-4)}`
 
   /*
    * Свой портрет или чужой — от этого зависит голос страницы (lib/portraitvoice).
    * Владельцу она говорит «ты», гостю по ссылке — о владельце. Раньше «ты»
    * слышали все, и друг над ником «Аня» читал «80% твоей игровой жизни».
    */
-  const me = await currentSteamId()
   const isMine = me === steamid
   const voice: PortraitVoice = isMine ? 'you' : 'them'
   const fallbackText = () => portraitFallbackText(name, portrait.archetypes, portrait.facts, voice)
@@ -331,9 +361,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
    * Модель-шаблон (complete: false) к Claude не ходит вовсе: архетипов у неё
    * нет, и записанный по ней текст заморозил бы пустой портрет до смены снапшота.
    */
-  const db = await getDb()
   let text: string
-  const cached = await getUserPortrait(db, steamid)
   // Снапшот тот же — но текст про «0 часов», записанный до того, как промпт
   // узнал о скрытом времени, не годится и при нём (PORTRAIT_TEXT_V)
   if (cached && portraitTextFresh(cached, snapshot.takenAt, portrait.facts.playtimeHidden)) {
@@ -361,9 +389,14 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     ).every((v) => v.ok)
 
     // Общий суточный бюджет модели — после личных потолков: иначе его тратили
-    // бы и отказанные запросы (lib/llmcap)
+    // бы и отказанные запросы (lib/llmcap). И через долю адреса, общую с
+    // подбором: потолок адреса выше — десять холодных портретов за десять
+    // минут — стережёт ключ от перебора steamid, а не суточный бюджет. Это
+    // до полутора тысяч вызовов в сутки с одного адреса, и снимки чужих
+    // публичных профилей через /api/connect выбирали бы LLM_DAILY_CAP за всех.
+    // Доля выбрана — тот же шаблон, что и при отказе по потолку
     const written =
-      allowed && llmAvailable() && (await takeLlmBudget(db, now))
+      allowed && llmAvailable() && (await takeLlmBudgetForIp(db, ip, now))
         ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
         : null
     text = written ?? fallbackText()
@@ -462,7 +495,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               </div>
             ) : (
               <>
-                <Fact value={wrapped.totalHours} caption={hoursCaption(wrapped.totalHours)} delay={360} />
+                {/* Меньше получаса на всю библиотеку — минутами (playedFact):
+                    «0 часов» стояло над «Куда ушло время» с «20 мин» */}
+                <Fact {...playedFact(wrapped.totalMinutes)} delay={360} />
                 <Fact
                   value={wrapped.unplayedCount}
                   caption={unplayedCaption(wrapped.unplayedCount)}
@@ -474,8 +509,10 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           </dl>
           {wrapped.days > 0 && (
             <p className="mt-6 text-dim text-sm md:text-base">
+              {/* «Дней», а не «суток»: у «суток» нет формы на 21, 31, 101 —
+                  выходило «31 полных суток» */}
               Это <span className="tabular-nums text-ink">{wrapped.days.toLocaleString('ru-RU')}</span>{' '}
-              полных суток за экраном.
+              {plural(wrapped.days, 'полный день', 'полных дня', 'полных дней')} за экраном.
             </p>
           )}
           {!complete && (
@@ -498,9 +535,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {wrapped.top.map((g, i) => (
               <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
                 <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-                <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+                <GameLink appid={g.appid} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
                   <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
-                </Link>
+                </GameLink>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">{g.name}</div>
                   <div className="mt-1.5 h-1.5 rounded-full bg-track overflow-hidden">
@@ -513,8 +550,10 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                     />
                   </div>
                 </div>
+                {/* Минуты, а не округлённые часы: игра на 20 минут была «0 ч»
+                    рядом с непустой полосой (playedShort) */}
                 <span className="shrink-0 text-sm font-bold tabular-nums text-dim">
-                  {g.hours.toLocaleString('ru-RU')} ч
+                  {playedShort(g.minutes)}
                 </span>
               </m.div>
             ))}
@@ -585,7 +624,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <div className="mb-12 grid grid-cols-3 gap-3 md:gap-4">
               {evidence.map((g, i) => (
                 <m.div key={g.appid} {...inView(i)}>
-                  <Link href={`/game/${g.appid}`} className="game-card block">
+                  <GameLink appid={g.appid} className="game-card block">
                     {/* grid-cols-3 без порогов — треть экрана на любой ширине */}
                     <GameCardBody
                       appid={g.appid}
@@ -594,7 +633,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                       art={model.covers[g.appid]?.art ?? null}
                       sizes="33vw"
                     />
-                  </Link>
+                  </GameLink>
                 </m.div>
               ))}
             </div>
@@ -645,11 +684,16 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           <m.div {...inView(2)} className="mt-4 flex flex-wrap gap-x-8 gap-y-2 text-dim text-sm">
             {backlog.pricedCount > 0 && (
               <p>
-                В них лежит не меньше{' '}
+                {/* «Не меньше» и «цена известна у 8 из 8» — только при
+                    неполном счёте, как в карточке бэклога на /library */}
+                {backlog.pricedCount < backlog.unplayedCount ? 'В них лежит не меньше' : 'В них лежит'}{' '}
                 <span className="tabular-nums text-ember-text">
-                  ${(backlog.cents / 100).toFixed(0)}
+                  {formatPrice(backlog.cents, backlog.cc, { whole: true })}
                 </span>{' '}
-                — цена известна у {backlog.pricedCount} из {backlog.unplayedCount}.
+                {byPrices(backlog.cc)}
+                {backlog.pricedCount < backlog.unplayedCount
+                  ? ` — цена известна у ${backlog.pricedCount} из ${backlog.unplayedCount}.`
+                  : '.'}
               </p>
             )}
             {/* Шутки про бургеры обращаются к владельцу («их бы ты доел») —
@@ -674,9 +718,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           {purgatory.length > 0 && (
             <div className="mt-10 grid grid-cols-3 md:grid-cols-6 gap-2">
               {purgatory.map((g) => (
-                <Link
+                <GameLink
                   key={g.appid}
-                  href={`/game/${g.appid}`}
+                  appid={g.appid}
                   aria-label={g.name}
                   // library-tile уже обесцвечивает обложку в покое нулём JS —
                   // ровно то, что здесь нужно по смыслу
@@ -684,7 +728,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 >
                   {/* grid-cols-3 md:grid-cols-6 */}
                   <span className="card-thumb">{cover(g, '(min-width: 768px) 17vw, 33vw')}</span>
-                </Link>
+                </GameLink>
               ))}
             </div>
           )}
@@ -694,14 +738,14 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <m.div {...inView()} className="mt-12 flex flex-col items-start gap-3">
               <p className="text-sm text-dim">Если решишься — начни с этой:</p>
               <Magnet>
-                <Link
-                  href={`/game/${starter.appid}`}
+                <GameLink
+                  appid={starter.appid}
                   className="panel-lift game-card no-lift flex items-center gap-4 p-2 pr-5"
                 >
                   <span className="card-thumb w-40 shrink-0">{cover(starter, '160px')}</span>
                   <span className="font-extrabold tracking-[-0.01em]">{starter.name}</span>
                   <Icon name="arrow" size={18} className="text-dim" />
-                </Link>
+                </GameLink>
               </Magnet>
             </m.div>
           )}
@@ -725,8 +769,10 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         </m.figure>
 
         {/* Превью — обычная картинка на тот же роут, что и скачивание: каждый
-            лишний рендер satori заново тянет обложки со Steam. */}
-        <m.a
+            лишний рендер satori заново тянет обложки со Steam. Поэтому
+            скачивание считается нажатием (CardDownload), а не на роуте. */}
+        <CardDownload
+          what="portrait"
           {...inView(1)}
           href={`/portrait/${steamid}/card.png`}
           download={`imbored-${steamid}.png`}
@@ -742,14 +788,16 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             />
           </span>
           <span className="link-more mt-3">Скачать карточку</span>
-        </m.a>
+        </CardDownload>
 
         {!isMine && (
           <Link
             href={`/compat/${steamid}`}
             className="btn-ember px-6 py-3"
           >
-            Сравнить с ним свои вкусы
+            {/* Без «с ним»: кто за ником, мы не знаем, а угаданный род
+                ошибается в половине случаев */}
+            Сравнить вкусы
           </Link>
         )}
         {/*
@@ -765,6 +813,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               По этой ссылке увидят твой портрет и смогут проверить совместимость.
             </p>
             <ShareLinkField
+              what="portrait"
               url={withRef(`${appBaseUrl()}/portrait/${steamid}`, 'portrait')}
               label="Ссылка на твой портрет игрока"
               title={`Портрет игрока ${name} — imbored`}
@@ -844,9 +893,9 @@ function YearBlock({
           {year.top.slice(0, 3).map((g, i) => (
             <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
               <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-              <Link href={`/game/${g.appid}`} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+              <GameLink appid={g.appid} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
                 <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
-              </Link>
+              </GameLink>
               <div className="min-w-0 flex-1 truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">
                 {g.name}
               </div>

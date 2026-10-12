@@ -46,6 +46,46 @@ const KEY = 'imbored.session-hint'
 let cache: SessionHint | null | undefined
 const listeners = new Set<() => void>()
 
+/**
+ * ГОСТЬ — СО СЛОВ СЕРВЕРА, НА ВРЕМЯ ОДНОГО ДОКУМЕНТА (knownGuest ниже).
+ *
+ * Подсказка помнит только вошедших: гость и «не знаем» в ней одинаково
+ * null. Квизу разница нужна (app/quiz, go): гостя последний ответ вёл на
+ * /play, тот показывал экран прогрева и через круг до сервера (401 у
+ * /api/prepare) разворачивал на лендинг. Зная, что перед ним гость, квиз
+ * ведёт на лендинг сам — к честному «осталось подключить».
+ *
+ * Только память, как признак записи (lib/writer), и только «гость»
+ * наверняка: ответ touch с authed: false, а не сбой сети. Сохранённый на
+ * устройстве, флаг пережил бы вход — и вошедший вместо выдачи попадал бы на
+ * лендинг; ошибиться в эту сторону дороже, чем пройти через /play по-старому.
+ *
+ * Гаснет с каждым входом, о котором этот документ знает:
+ *  - подключение на главной пишет подсказку (rememberSession);
+ *  - «Демо-друг (без Steam)» в комнате (app/room/[id], joinAsDemoFriend)
+ *    подсказки не пишет и гасит флаг сам (forgetGuest). Без этого гость,
+ *    пришедший по приглашению, после демо-друга шёл из шапки в квиз, и тот
+ *    уводил вошедшего на лендинг «подключать Steam»;
+ *  - ответ touch «вошёл» (settleSessionHint) — даже когда подсказки нет;
+ *  - вход через Steam в этой вкладке — новый документ.
+ *
+ * А о входе мимо себя документ сам не узнает. Steam возвращает туда,
+ * откуда шли (loginTarget в lib/destination), — чаще всего в квиз, а не на
+ * главную, и подсказки там никто не пишет, так что событие storage из
+ * соседней вкладки о таком входе не придёт. Поэтому флагу не верим, как
+ * только документ спрятали (watchHiding): войти где-то ещё — в соседней
+ * вкладке или уйдя в Steam и вернувшись «Назад» из bfcache, где память
+ * модуля цела, — почти всегда значит спрятать этот. Спрятали — снова «не
+ * знаем», путь через /play, как до флага. Не ловится одно: два окна рядом
+ * на большом экране и вход через Steam во втором. Тогда квиз первого уведёт
+ * на лендинг, где карточка по ответу touch узнает вошедшего и даст кнопку
+ * дальше, — лишний шаг, а не тупик.
+ */
+let guest = false
+
+/** Слежка за «документ спрятан» ставится один раз — с первым гостем */
+let watching = false
+
 /** Значение из чужих рук: пришло из localStorage, где его мог править кто угодно. */
 function parse(raw: string): SessionHint | null {
   try {
@@ -109,6 +149,8 @@ export function getServerSessionHint(): SessionHint | null {
 export function rememberSession(hint: SessionHint | null): void {
   const next = hint && hint.authed ? hint : null
   cache = next
+  // Вошёл — уже не гость (knownGuest): квиз поведёт в выдачу
+  if (next) guest = false
   try {
     if (next) localStorage.setItem(KEY, JSON.stringify(next))
     else localStorage.removeItem(KEY)
@@ -118,9 +160,66 @@ export function rememberSession(hint: SessionHint | null): void {
   for (const cb of [...listeners]) cb()
 }
 
-/** Для выхода: забыть, что здесь кто-то был. */
+/**
+ * Для выхода: забыть, что здесь кто-то был. Гостем не делает: выход «везде»
+ * бывает и недоделанным, а «не знаем» — это путь через /play, как раньше.
+ */
 export function forgetSessionHint(): void {
   rememberSession(null)
+}
+
+/**
+ * Сервер ответил «гость» (touch: authed: false): подсказку стереть и
+ * запомнить, что это известно наверняка. Сбой сети и пятисотка сюда не ведут
+ * — о сессии они не говорят ничего.
+ */
+export function rememberGuest(): void {
+  guest = true
+  watchHiding()
+  rememberSession(null)
+}
+
+/**
+ * Вошёл мимо подсказки — гостем этот документ больше не считается. Для
+ * входов, которые подсказку не пишут: демо-друг в комнате
+ * (app/room/[id], joinAsDemoFriend), ответ touch «вошёл» без подсказки
+ * (settleSessionHint), спрятанный документ (watchHiding). Подсказку не
+ * трогает: ни завести, ни стереть её отсюда нечем.
+ *
+ * Слушатели узнают: квиз по флагу говорит гостю заранее, что будет после
+ * ответов, и эта строка обязана погаснуть вместе с ним, а не врать до
+ * следующего рендера.
+ */
+export function forgetGuest(): void {
+  if (!guest) return
+  guest = false
+  for (const cb of [...listeners]) cb()
+}
+
+/**
+ * См. «ГОСТЬ» выше: вход, которого этот документ не видел, случается только
+ * пока он спрятан — в соседней вкладке или по дороге в Steam. visibilitychange
+ * ловит и то и другое; pagehide — на случай браузеров, что уводят страницу в
+ * bfcache, не сказав о скрытии. Один раз на документ и только у гостя:
+ * остальным следить незачем.
+ */
+function watchHiding(): void {
+  if (watching || typeof document === 'undefined') return
+  watching = true
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') forgetGuest()
+  })
+  window.addEventListener('pagehide', forgetGuest)
+}
+
+/**
+ * Гость наверняка: сервер так ответил в этом документе, документ с тех пор
+ * не прятали, и подсказки о входе не появилось. Подсказка — и из соседней
+ * вкладки (кука у вкладок общая), если там вошли через главную; вход через
+ * Steam её не пишет, его ловит слежка за скрытием (watchHiding).
+ */
+export function knownGuest(): boolean {
+  return guest && !getSessionHint()
 }
 
 /**
@@ -163,12 +262,21 @@ export function hintFrom(d: { personaName?: string | null; demo?: boolean; write
  * как подсказка и заводилась, чтобы не прыгало. Вход через Steam после входа
  * по ссылке — почти всегда тот же профиль; если чужой, ник поправит главная,
  * как поправляет любую смену профиля мимо неё: steamid в подсказке нет.
+ *
+ * Гостя отмечаем и без подсказки (rememberGuest): раньше сверка на нём
+ * молча выходила, а квизу, открытому гостем напрямую, только отсюда и
+ * узнать, что перед ним гость (knownGuest). И снимаем отметку по «вошёл» —
+ * тоже без подсказки: завести её отсюда нечем (ника в ответе нет), а
+ * вошедший, которого документ всё ещё считает гостем, ушёл бы из квиза на
+ * лендинг вместо выдачи.
  */
 export function settleSessionHint(body: unknown): void {
-  const hint = getSessionHint()
-  if (!hint || typeof body !== 'object' || body === null) return
+  if (typeof body !== 'object' || body === null) return
   const b = body as { authed?: unknown; steamid?: unknown; writer?: unknown }
-  if (b.authed === false) return forgetSessionHint()
+  if (b.authed === false) return rememberGuest()
+  if (b.authed === true) forgetGuest()
+  const hint = getSessionHint()
+  if (!hint) return
   if (b.authed !== true || typeof b.steamid !== 'string' || typeof b.writer !== 'boolean') return
   const demo = isDemoId(b.steamid)
   const sameSide = demo === (hint.demo === true)

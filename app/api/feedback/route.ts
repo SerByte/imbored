@@ -1,28 +1,45 @@
 import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
-import { dailyHeroAppids, dayKey, parseDailySelection } from '@/lib/daily'
+import { dailyHeroAppids, dayKey, mutedDayKey, parseDailySelection } from '@/lib/daily'
 import { forgetDailyPick, getDailyPick, logFeedback, recordOutcome } from '@/lib/db'
 import { parseFeedbackCtx } from '@/lib/feedbackctx'
 import { logSwallowed } from '@/lib/errlog'
 import { isFeedbackAction, isSkipReason } from '@/lib/feedbackkinds'
 import { parseMood } from '@/lib/mood'
 import { portraitTag } from '@/lib/portraitmodel'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, isDemoId, nowSec, requireWriter } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
 
 /*
- * Потолок на запись фидбека.
+ * Потолки на запись фидбека.
  *
  * Каждый вызов — строка в Turso, а сессию бесплатно выдаёт демо-вход, так что
  * без лимита ручка превращается в чужой счёт за записи. Сто двадцать за десять
  * минут — это клик каждые пять секунд без остановки: живой человек на /play
- * столько не нажимает даже в рулетке, а скрипт упирается быстро.
+ * столько не нажимает даже в рулетке.
  *
- * Клиент шлёт фидбек fire-and-forget и 429 не показывает: потерянная оценка
- * под флудом — не беда, в отличие от сорванной выдачи.
+ * Но личный потолок держит одну личность, а не скрипт. Демо-вход чеканит
+ * пишущие личности даром — новую на каждый /api/connect без куки, сорок восемь
+ * в час с адреса (CONNECT_LIMIT), — и живёт каждая, пока пишет (STALE_DEMO в
+ * lib/db): с одним личным потолком скрипт, копящий личности, писал бы оценки
+ * без края, и через сутки это были бы сотни тысяч строк в час. Поэтому второй
+ * гейт — по адресу: он единственная ось против такого скрипта, как у
+ * /api/pick. Втрое выше личного — соседям по квартире или мобильному NAT
+ * хватит и на троих, кто давит кнопки без остановки. Личный первым
+ * (checkRatesInOrder): отказ по нему не съедает потолок адреса соседей.
+ *
+ * Учебные сигналы (открыл, лайк, запуск) клиент шлёт fire-and-forget:
+ * потерянная под флудом оценка — не беда, в отличие от сорванной выдачи. Но
+ * бан, «Пройдено», «Не сегодня» на /daily и «Убрать» с полки /explore ждут
+ * ответа и на любой не-ok показывают строку отказа (sendFeedback на /play,
+ * components/MarkFinished, notToday на /daily, unlike на /explore). Отказ по
+ * адресу для них выглядит так же, как личный: выеденный соседями за тем же
+ * NAT адрес покажет её и тому, кто нажал раз, — потому и запас втрое (абзац
+ * выше).
  */
 const FEEDBACK_LIMIT = 120
+const FEEDBACK_IP_LIMIT = 360
 const FEEDBACK_WINDOW_SEC = 600
 
 export async function POST(req: Request) {
@@ -49,13 +66,14 @@ export async function POST(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
-  const gate = await checkRate(db, {
-    bucket: 'feedback',
-    id: steamid,
-    limit: FEEDBACK_LIMIT,
-    windowSec: FEEDBACK_WINDOW_SEC,
-    nowSec: now,
-  })
+  const gate = await checkRatesInOrder(
+    db,
+    [
+      { bucket: 'feedback', id: steamid, limit: FEEDBACK_LIMIT, windowSec: FEEDBACK_WINDOW_SEC },
+      { bucket: 'feedback-ip', id: clientIp(req.headers), limit: FEEDBACK_IP_LIMIT, windowSec: FEEDBACK_WINDOW_SEC },
+    ],
+    now,
+  )
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   // невалидные mood/reason/ctx не роняют фидбек — просто не сохраняются.
@@ -64,7 +82,7 @@ export async function POST(req: Request) {
   const mood = parseMood(body.mood)
   const reason = isSkipReason(body.reason) ? body.reason : null
   const ctx = parseFeedbackCtx(body.ctx)
-  await logFeedback(
+  const row = await logFeedback(
     db,
     {
       steamid,
@@ -95,20 +113,52 @@ export async function POST(req: Request) {
   }
   // Игра дня записана на сутки, но бан и «надоела» отбор обязан учесть сразу:
   // иначе убранная игра стояла бы героем до полуночи (см. forgetDailyPick)
+  //
+  // Вчерашняя запись стирается тоже — но только когда её герой и есть эта
+  // игра: по ней /daily пишет «Вчера была: X →», и без сброса ссылка на
+  // только что скрытую игру висела бы до полуночи. Потери для отбора нет:
+  // avoid у pickDaily охранял вчерашнего героя, а он и так вне кандидатов
+  // (бан — exclude, «надоела» — cooldownKinds). Запасную свою вчерашняя
+  // запись охраняла тоже — этим жертвуем: повтор своей лучше ссылки на
+  // скрытую. Совпадение только с героем: запасная в строку не идёт (см.
+  // yesterdayLine), и стирать ради неё незачем.
+  //
+  // У суток две записи — общая и выбранная под «Не предлагать» (mutedDayKey
+  // в lib/daily): бан стирает обе, а остальное — ту, чей герой совпал. Какой
+  // из них пользуется браузер, здесь не важно: сказанное про игру одной
+  // записи не должно менять игру дня тем, кто видит другую.
   const day = dayKey(now)
-  if (action === 'banned' || reason === 'tired') await forgetDailyPick(db, steamid, day)
+  /** Ключи записей суток d, где эта игра — герой (с withAlt — или запасная своя) */
+  const heroOf = async (d: string, withAlt: boolean): Promise<string[]> => {
+    const keys = [d, mutedDayKey(d)]
+    const records = await Promise.all(keys.map((k) => getDailyPick(db, steamid, k)))
+    return keys.filter((_, i) => {
+      const sel = parseDailySelection(records[i])
+      return withAlt ? dailyHeroAppids(sel).includes(appid) : sel?.pick.appid === appid
+    })
+  }
+  if (action === 'banned' || reason === 'tired') {
+    const [, yesterday] = await Promise.all([
+      forgetDailyPick(db, steamid, [day, mutedDayKey(day)]),
+      heroOf(dayKey(now - 86_400), false),
+    ])
+    await forgetDailyPick(db, steamid, yesterday)
+  }
   // «Не сегодня» — только если сказано про героя дня или запасную свою: тогда
   // отбор пересчитается без неё (notnowSince в /api/daily). Про любую другую
   // игру запись не трогаем — иначе «не сейчас» на /play перетасовывало бы
   // выбор, обещанный на сутки
   else if (reason === 'notnow') {
-    const today = parseDailySelection(await getDailyPick(db, steamid, day))
-    if (dailyHeroAppids(today).includes(appid)) await forgetDailyPick(db, steamid, day)
+    await forgetDailyPick(db, steamid, await heroOf(day, true))
   }
   // Модель портрета кэшируется по снапшоту, а бан снапшот не меняет: без
   // сброса «начни с этой» на портрете указывала бы на скрытую игру до
   // следующего снапшота. 'max' — следующий заход получит старую модель, пока
   // собирается новая: стартовая — не то, ради чего ждать сборку
   if (action === 'banned') revalidateTag(portraitTag(steamid), 'max')
-  return NextResponse.json({ ok: true })
+  // «Зашло» отвечает строкой, которую легло, — null, если суточный повтор
+  // его проглотил: второе нажатие сердца у героя снимает ровно её (lib/unlike,
+  // unlikeGame в lib/db), а не прежние «зашло» этой игры, о которых сердце
+  // не знает. Остальным действиям строка ни к чему
+  return NextResponse.json(action === 'liked' ? { ok: true, row } : { ok: true })
 }

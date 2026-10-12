@@ -22,7 +22,7 @@ const LINK = 'underline decoration-1 underline-offset-4'
 export function PatchShare({ appid, gid, title }: { appid: number; gid: string; title: string }) {
   const [manual, setManual] = useState<string | null>(null)
   const urlOf = () => patchShareUrl(window.location.origin, appid, gid)
-  const share = useShareLink(urlOf, title, 'Что изменилось — коротко по-русски', () => setManual(urlOf()))
+  const share = useShareLink('patch', urlOf, title, 'Что изменилось — коротко по-русски', () => setManual(urlOf()))
 
   return (
     <>

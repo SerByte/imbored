@@ -1,5 +1,39 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { nextPollStep, STALE_AFTER_FAILS } from './roompoll'
+import {
+  HIDDEN_POLL_CAP_MS,
+  HIDDEN_POLL_MS,
+  hiddenPollDelay,
+  nextPollStep,
+  snapshotFate,
+  STALE_AFTER_FAILS,
+} from './roompoll'
+
+/**
+ * Сторож фонового опроса. Скрытая вкладка спрашивает сервер только в одном
+ * состоянии и только ограниченное время — иначе вкладка, забытая на ночь,
+ * снова крутила бы запросы до утра, ради чего фон и молчал.
+ */
+describe('опрос скрытой вкладки', () => {
+  test('без ожидания фон молчит, как раньше', () => {
+    // свайпающему из фона нечего узнать: без его голосов матча не будет
+    expect(hiddenPollDelay({ waiting: false, hiddenForMs: 0 })).toBeNull()
+    expect(hiddenPollDelay({ waiting: false, hiddenForMs: 5 * 60_000 })).toBeNull()
+  })
+
+  test('ждущий спрашивает не чаще раза в минуту', () => {
+    expect(HIDDEN_POLL_MS, 'фон чаще минуты — это видимый опрос, только невидимый').toBeGreaterThanOrEqual(60_000)
+    expect(hiddenPollDelay({ waiting: true, hiddenForMs: 0 })).toBe(HIDDEN_POLL_MS)
+    expect(hiddenPollDelay({ waiting: true, hiddenForMs: 59 * 60_000 })).toBe(HIDDEN_POLL_MS)
+  })
+
+  test('час скрытия — потолок: дальше вкладка спит до возвращения', () => {
+    expect(HIDDEN_POLL_CAP_MS, 'потолок растянулся — вкладку снова забудут на ночь').toBeLessThanOrEqual(60 * 60_000)
+    expect(hiddenPollDelay({ waiting: true, hiddenForMs: HIDDEN_POLL_CAP_MS })).toBeNull()
+    expect(hiddenPollDelay({ waiting: true, hiddenForMs: 10 * 60 * 60_000 })).toBeNull()
+  })
+})
 
 /**
  * Сторож решения опроса комнаты.
@@ -49,5 +83,162 @@ describe('решение опроса комнаты', () => {
   test('терминальные исходы не оставляют обещания повтора', () => {
     expect(nextPollStep({ ok: false, gone: true }, 5).stale).toBe(false)
     expect(nextPollStep({ ok: true, status: 'matched' }, 5).stale).toBe(false)
+  })
+})
+
+/**
+ * Сторож порядка снимков комнаты.
+ *
+ * Защита опроса от наложения (inFlight) накрывала только его собственные
+ * запросы, а refresh зовут ещё «Ещё 20 игр», вход, голос, «Берём», ✕ хоста и
+ * переключатель доски. Побеждал тот ответ, что пришёл последним, даже если
+ * прочитан раньше: счётчики ростера ехали назад, а снимок «open», прочитанный
+ * до матча и пришедший после него, ставил комнату обратно в ожидание — при
+ * уже остановленном опросе навсегда.
+ */
+describe('порядок снимков комнаты', () => {
+  const open = (seq: number) => ({ seq, status: 'open' })
+  const matched = (seq: number) => ({ seq, status: 'matched' })
+
+  test('первый снимок встаёт всегда', () => {
+    expect(snapshotFate({ seq: 1, status: 'open', shown: null })).toBe('apply')
+  })
+
+  test('более старый снимок не затирает более новый', () => {
+    expect(snapshotFate({ seq: 3, status: 'open', shown: open(5) }), 'ростер поехал бы назад').toBe('keep')
+    expect(snapshotFate({ seq: 6, status: 'open', shown: open(5) })).toBe('apply')
+  })
+
+  test('матч терминален: никакой «open» его не сменит, даже с номером новее', () => {
+    expect(
+      snapshotFate({ seq: 4, status: 'open', shown: matched(5) }),
+      'запоздавший снимок вернул бы ожидание при остановленном опросе',
+    ).toBe('keep')
+    expect(snapshotFate({ seq: 9, status: 'open', shown: matched(5) })).toBe('keep')
+  })
+
+  test('матч встаёт и со старым номером: иначе опрос остановился бы на открытой комнате', () => {
+    expect(snapshotFate({ seq: 4, status: 'matched', shown: open(5) })).toBe('apply')
+    expect(snapshotFate({ seq: 6, status: 'matched', shown: matched(5) })).toBe('apply')
+  })
+})
+
+/**
+ * Сторож догрузок комнаты: скрытая вкладка ничего, кроме самого опроса, не спрашивает.
+ *
+ * Фоновый опрос ждущей вкладки (hiddenPollDelay) меняет состояние комнаты
+ * прямо в фоне: новый участник и новый раунд двигают ключ колоды, чужие
+ * голоса — ключ лайков. Эффект, который по такому сдвигу сразу идёт на
+ * сервер, превращает минутный опрос в пачку запросов, которых никто не
+ * увидит. С колодой хуже: 429 или обрыв фонового GET /deck выставляли
+ * deckFailed, эффект по нему не повторяет, и вернувшийся человек видел
+ * «Не получилось загрузить игры» вместо колоды.
+ *
+ * Логику эффекта в чистую функцию не вынести — она в порядке ранних return
+ * и ref-ключей, — поэтому разметка читается как текст: каждый эффект, который
+ * зовёт loadDeck или loadLikes, обязан выйти по !visible ДО того, как тронет
+ * свой ключ, и держать visible в зависимостях — иначе возвращение на вкладку
+ * его не перезапустит. Исключение одно и названо дословно: самая первая
+ * колода (deckKey ещё пуст) грузится и в фоне — ссылку открыли из чата в
+ * фоновой вкладке, и вернувшийся должен увидеть колоду, а не спиннер.
+ *
+ * Эффект ищется по любому вызову загрузчика, а не только по «void loadDeck()»:
+ * голый loadDeck() линтер пропускает (no-floating-promises не включён), как и
+ * обёртку в async-IIFE. В зависимостях стоит «loadDeck]», а не «loadDeck(»,
+ * так что лишнего фильтр не цепляет.
+ */
+describe('догрузки комнаты ждут видимой вкладки', () => {
+  const ROOT = path.join(__dirname, '..')
+  /** Комментарии гасятся: докблоки страницы цитируют сами правила */
+  const room = fs
+    .readFileSync(path.join(ROOT, 'app', 'room', '[id]', 'page.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+
+  /** Вызов useEffect(...) целиком — до парной скобки, строки пропускаются */
+  function effects(code: string): string[] {
+    const out: string[] = []
+    for (const m of code.matchAll(/\buseEffect\(/g)) {
+      let depth = 0
+      let q: string | null = null
+      for (let j = m.index + 'useEffect'.length; j < code.length; j++) {
+        const c = code[j]
+        if (q) {
+          if (c === q && code.charCodeAt(j - 1) !== 92) q = null
+          continue
+        }
+        if (c === '"' || c === "'" || c === '`') q = c
+        else if (c === '(') depth++
+        else if (c === ')' && --depth === 0) {
+          out.push(code.slice(m.index, j + 1))
+          break
+        }
+      }
+    }
+    return out
+  }
+
+  const loaders = effects(room).filter((e) => /\bload(Deck|Likes)\(/.test(e))
+
+  /** Единственная разрешённая оговорка к выходу по !visible — первая колода */
+  const FIRST_DECK = "!visible && deckKey.current !== ''"
+
+  /**
+   * Где эффект выходит по скрытой вкладке: условие раннего return, в котором
+   * !visible стоит отдельным слагаемым «или» (выход при любом прочем), либо
+   * ровно оговорка первой колоды — и только у эффекта колоды. -1 — не выходит.
+   */
+  function hiddenBail(e: string): number {
+    for (const m of e.matchAll(/if \(([^)]*)\) return/g)) {
+      const cond = m[1].replace(/\s+/g, ' ').trim()
+      const plain = cond.split('||').some((part) => part.trim() === '!visible')
+      const firstDeck = cond === FIRST_DECK && e.includes('deckKey.current = deckWant')
+      if (plain || firstDeck) return m.index
+    }
+    return -1
+  }
+
+  test('эффекты догрузки найдены — сторож не ослеп', () => {
+    // колода, её самолечение и лайки
+    expect(loaders.length).toBeGreaterThanOrEqual(3)
+    expect(loaders.some((e) => e.includes('deckKey.current = deckWant'))).toBe(true)
+    expect(loaders.some((e) => e.includes('healKey.current = deckWant'))).toBe(true)
+    expect(loaders.some((e) => e.includes('likesKey.current = votesKey'))).toBe(true)
+  })
+
+  test('скрытая вкладка выходит раньше, чем тронет ключ, и возвращение перезапускает эффект', () => {
+    for (const e of loaders) {
+      const head = e.split('\n').slice(0, 3).join(' ').replace(/\s+/g, ' ')
+      const bail = hiddenBail(e)
+      expect(bail, `эффект грузит и в скрытой вкладке: ${head}`).toBeGreaterThan(-1)
+      const key = e.search(/\b\w+Key\.current = /)
+      expect(key, `ключ не найден: ${head}`).toBeGreaterThan(-1)
+      expect(bail, `ключ взводится до проверки видимости: ${head}`).toBeLessThan(key)
+      const deps = e.match(/\[([^\]]*)\]\s*,?\s*\)$/)
+      expect(deps?.[1] ?? '', `visible не в зависимостях: ${head}`).toMatch(/\bvisible\b/)
+    }
+  })
+
+  test('оговорка первой колоды — только у эффекта колоды и только при пустом ключе', () => {
+    const deck = loaders.find((e) => e.includes('deckKey.current = deckWant'))!
+    expect(deck.replace(/\s+/g, ' ')).toContain(`if (${FIRST_DECK}) return`)
+    // самолечение и лайки выходят из скрытой вкладки без оговорок
+    for (const e of loaders.filter((x) => x !== deck)) {
+      expect(e.replace(/\s+/g, ' ')).not.toContain(FIRST_DECK)
+    }
+  })
+
+  /*
+   * Колоду нового раунда скрытая вкладка не грузит — значит, пусто на руках
+   * там не значит «отсвайпал». Без deckSize в аргументах ожидания deckBehind
+   * (lib/room) слеп, и двое ждущих в скрытых вкладках висели бы на «ждём
+   * остальных», видя друг друга «ещё свайпает».
+   */
+  test('ожидание знает серверный размер колоды — отставшая колода не «ждёт остальных»', () => {
+    const waitArgs = room.match(/const waitArgs = \{([^}]*)\}/)
+    expect(waitArgs, 'waitArgs не найден').not.toBeNull()
+    expect(waitArgs![1]).toMatch(/\bdeckSize:\s*state\?\.room\.deckSize\b/)
+    expect(room).toMatch(/\bwaitsInBackground\(waitArgs\)/)
+    expect(room).toMatch(/\bawaitingOthers\(\{\s*\.\.\.waitArgs\b/)
   })
 })

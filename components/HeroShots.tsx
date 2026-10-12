@@ -1,14 +1,21 @@
 'use client'
 
 import { useReducedMotion } from 'framer-motion'
-import dynamic from 'next/dynamic'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { HeroArt } from '@/components/HeroArt'
+import { lazyIsland } from '@/components/lazyIsland'
 import { webglAvailable } from '@/components/morph/gl'
 import type { GameArtUrls } from '@/lib/art'
 import { HERO_SLIDES, pickCoverShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
-const MorphSlider = dynamic(() => import('@/components/morph/MorphSlider'), { ssr: false })
+/*
+ * Слайдер с ogl — отдельным чанком и только в браузере. Островком
+ * (components/lazyIsland), а не next/dynamic: герой стоит на /play и /daily,
+ * у потолка бюджета первой загрузки (bundle-budget.json), а рантайм
+ * next/dynamic добавлял им ~4 КБ. Не пришёл чанк — герой остаётся артом, как
+ * и при любом другом сбое морфа (докблок ниже).
+ */
+const MorphSlider = lazyIsland(() => import('@/components/morph/MorphSlider').then((m) => m.default), 'hero-slider')
 
 /** Что удалось выяснить про среду; до первого замера — null */
 type Env = { gl: boolean; size: ShotSize }
@@ -115,17 +122,26 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [env, setEnv] = useState<Env | null>(null)
   const [visible, setVisible] = useState(false)
+  /** Первый кадр скачан — слайдер можно проявлять */
   const [ready, setReady] = useState(false)
+  /** Скачаны все кадры — можно и перетечь, не уходя в серую заглушку движка */
+  const [armed, setArmed] = useState(false)
   /**
-   * Сколько раз сменился кадр. Один круг — и морф встаёт на первом кадре.
+   * Сколько раз сменился кадр. Один переход — и морф встаёт.
    *
    * Фон под заголовком /play и /daily листался раз в семь секунд бесконечно,
    * а остановить его было нечем: слайдер здесь inert, без кнопок, и держит
    * его только prefers-reduced-motion. Движение дольше пяти секунд без
    * механизма паузы — провал WCAG 2.2.2 (Pause, Stop, Hide, уровень A), и
    * кнопка «Пауза» на фоне — лишний элемент в самом загруженном месте
-   * экрана. Один круг показывает игру в движении, а дальше под текстом
-   * лежит неподвижная картинка.
+   * экрана.
+   *
+   * Сначала это решал «один круг», но круг из трёх кадров по семь секунд с
+   * таянием по 2.2 — это переходы на 7-й, 16-й и 25-й секунде, около 27 с
+   * самоходного фона: та же граница, только дальше. Теперь переход один и
+   * укладывается в AUTO_MOTION (lib/motion.ts) от того кадра, когда морф
+   * проявился: секунда покоя и 2.2 с таяния. Игра показана в движении, а
+   * дальше под текстом лежит неподвижная картинка. Сторож — lib/motion.test.ts.
    */
   const [turns, setTurns] = useState(0)
 
@@ -157,7 +173,11 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
     return () => ro.disconnect()
   }, [])
 
-  /** Автоплей крутится, только пока герой на экране: ушёл — RAF засыпает */
+  /*
+   * Автоплей ждёт, пока герой на экране: уехавший герой не тратит свой
+   * единственный переход впустую. Кадры движок перестаёт рисовать сам, как
+   * только ничего не движется, — этот наблюдатель держит только автоплей.
+   */
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
@@ -174,27 +194,38 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
   )
 
   /*
-   * Первый кадр тянем сами и только после его загрузки проявляем слайдер.
+   * Кадры тянем сами и проявляем слайдер только после загрузки первого.
    *
    * Стартовая текстура движка — серый квадрат 4×4, поэтому голое монтирование
    * дало бы серую заливку на весь экран вместо арта на всё время закачки
    * трёхсоткилобайтного кадра. Обёртка при этом монтируется сразу, чтобы чанк
-   * с ogl и сама картинка ехали параллельно, а не по очереди.
+   * с ogl и сами картинки ехали параллельно, а не по очереди.
+   *
+   * Переход ждёт ВСЕ кадры (armed). Пока пауза перед ним была семь секунд,
+   * второй кадр успевал доехать сам; при секундной на медленной сети морф
+   * перетёк бы в ту же серую заглушку — и единственный переход героя был бы
+   * в серое. Не доехал второй кадр — переход не случится вовсе, герой
+   * останется первым кадром.
    *
    * crossOrigin обязателен и должен совпадать с тем, как грузит движок: иначе
    * запрос уйдёт в другом режиме CORS и кадр скачается дважды. Заодно onerror
    * закрывает чужие CDN без нужных заголовков — там слайдер просто не всплывёт.
    */
   useEffect(() => {
-    const first = items[0]?.image
-    if (!first) return
+    if (!items.length) return
     let alive = true
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => {
-      if (alive) setReady(true)
-    }
-    img.src = first
+    let left = items.length
+    items.forEach((item, i) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        if (!alive) return
+        if (i === 0) setReady(true)
+        left -= 1
+        if (left === 0) setArmed(true)
+      }
+      img.src = item.image
+    })
     return () => {
       alive = false
     }
@@ -227,9 +258,11 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
           scale={3}
           aberration={0.1}
           drift={0}
-          autoplay={visible && turns < shots.length}
+          autoplay={visible && armed && turns < 1}
           onChange={() => setTurns((t) => t + 1)}
-          autoplayDelay={7}
+          /* Секунда — меньше слайдер не даёт; она нужна, чтобы первый кадр
+             успел проявиться (700 мс) и побыть, прежде чем потечь */
+          autoplayDelay={1}
           loop
           /* под зерном, блюр-полосой и скримом разница в плотности не читается,
              а пикселей для тяжёлого шума в шейдере кратно меньше */

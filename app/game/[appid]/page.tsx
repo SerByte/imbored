@@ -1,19 +1,22 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { cache, Fragment } from 'react'
+import { cache, Fragment, type ReactNode } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameMorph } from '@/components/Morph'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
-import { DiscountEnds, PriceTag } from '@/components/PriceTag'
+import { DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
+import { ShownUntil } from '@/components/ShownUntil'
 import { Eyebrow, MetaLine } from '@/components/Labels'
 import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
 import { RefundNote } from '@/components/RefundNote'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { sitemapGames } from '@/lib/db'
-import { discountView, trustedPrice } from '@/lib/discount'
+import { discountTrustedUntil, discountView, trustedPrice } from '@/lib/discount'
+import { trimArt } from '@/lib/art'
+import { PRERENDER_TOP, prerenderAtBuild } from '@/lib/gamecache'
 import { HUB_GENRES, hubPath, primaryGenre } from '@/lib/gamehub'
 import { byline } from '@/lib/byline'
 import {
@@ -23,45 +26,72 @@ import {
   isRussianText,
   loadGamePage,
   reviewFacts,
+  type StudioLine,
 } from '@/lib/gamepage'
-import { currencyOf, gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
+import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
+import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { OG_SITE } from '@/lib/site'
 import { plural } from '@/lib/plural'
+import { quizHref, roomSeedHref } from '@/lib/presets'
+import { isReplayable } from '@/lib/recommend'
 import { refundEligible } from '@/lib/refund'
+import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 
 /**
- * Страница кэшируется на сутки вместо force-dynamic.
+ * Страница кэшируется на неделю вместо force-dynamic — GAME_PAGE_REVALIDATE_SEC
+ * в lib/gamecache, литералом, потому что Next читает его только так.
  *
- * Это стало возможным ровно потому, что loadGamePage больше не ходит в сеть:
- * пока карточка собиралась из appdetails, appreviews и Claude прямо на рендере,
- * кэшировать было нечего — каждый заход и был той самой работой. Теперь всё
- * тяжёлое наполняет крон (lib/pagejob.ts), а страница только читает базу,
- * поэтому сутки жизни кэша ничего не устаревают заметно.
+ * Кэш вообще стал возможен ровно потому, что loadGamePage больше не ходит в
+ * сеть: пока карточка собиралась из appdetails, appreviews и Claude прямо на
+ * рендере, кэшировать было нечего. Теперь всё тяжёлое наполняет крон
+ * (lib/pagejob.ts), а страница только читает базу.
+ *
+ * Неделя, а не сутки, — ради ISR Writes (лимит Hobby выбран, см.
+ * lib/gamecache). Свежесть при этом держат не часы, а события: кроны карточек,
+ * новостей и пересказов сбрасывают адрес сами, когда поменяли его данные
+ * (revalidateGamePages). По часам доезжает только медленное — сверка отзывов
+ * и онлайна раз в неделю (lib/catalogsignals), ей неделя и есть родной шаг.
+ *
+ * Неделя бесплатна, только пока вывод СТАБИЛЕН: перегенерация без новых
+ * данных обязана дать ту же страницу байт в байт, иначе Vercel пишет её
+ * заново. Поэтому в разметке нет ничего, что меняется от одних часов:
+ *   • онлайн — всегда прошедшим временем (PlayersNow ниже);
+ *   • срок скидки — датой, а не «осталось 2 дня» (discountView, calendar);
+ *   • в островок новостей едет только видимое (cardNews в lib/gamepage).
+ * Часы остаются только на порогах, которые назначили сами данные: конец
+ * скидки, выход игры. Конец скидки к тому же сбрасывает крон карточек
+ * (revalidateEndedDeals в lib/gamecache): строку цены клиент гасит сам, а
+ * Offer в JSON-LD иначе обещал бы акционную цену до конца недели. Сторож —
+ * app/game/[appid]/page.test.ts.
  */
-export const revalidate = 86_400
+export const revalidate = 604_800
 
 /**
  * Обязателен, и не ради предрендера.
  *
  * Без generateStaticParams динамический сегмент не попадает в dynamicRoutes
  * манифеста вовсе — то есть `revalidate` выше не значит ничего, и каждый заход
- * рендерится заново (проверено: Cache-Control приходил no-store). Отдаём топ
- * каталога, остальные appid досоздаются по требованию и кэшируются на те же
- * сутки: dynamicParams по умолчанию true.
+ * рендерится заново (проверено: Cache-Control приходил no-store). На продовой
+ * сборке отдаём верх каталога, остальные appid досоздаются по требованию и
+ * кэшируются на ту же неделю: dynamicParams по умолчанию true.
  *
- * Сборка не должна падать из-за базы: локально и в превью TURSO_DATABASE_URL
- * может быть не задан, и тогда предрендерить просто нечего.
+ * Везде, кроме прода, список пустой (prerenderAtBuild): каждая пререндеренная
+ * карточка — запись ISR на каждой сборке, и превью платили за это наравне с
+ * продом. Сколько и почему столько — PRERENDER_TOP.
+ *
+ * Сборка не должна падать из-за базы: локально TURSO_DATABASE_URL может быть
+ * не задан, и тогда предрендерить просто нечего.
  */
-const PRERENDER_TOP = 500
-
 export async function generateStaticParams(): Promise<Array<{ appid: string }>> {
+  if (!prerenderAtBuild()) return []
   try {
     const games = await sitemapGames(await getDb(), PRERENDER_TOP)
     return games.map((g) => ({ appid: String(g.appid) }))
@@ -118,9 +148,17 @@ export async function generateMetadata({
    * это страницы-сироты, живущие только по прямой ссылке. Соседний lib/junk
    * прячет ровно эти записи от выдачи, а поиск про них ничего не знал.
    *
-   * Шесть замещённых опаснее прочих: это дубликаты страницы-преемника
-   * (/game/10 против /game/730) с self-canonical. Им canonical переставляется
-   * на преемника — тогда вес ссылки достаётся живой странице, а не близнецу.
+   * Шесть замещённых (/game/10 при живой /game/730) стоят с noindex, как
+   * прочие мёртвые, но canonical и og:url у них СВОИ. Стоял canonical на
+   * преемника — «это дубликат, вес отдай живой». Только это не дубликат:
+   * другая игра, другие отзывы, описание и цена. canonical между разными
+   * страницами Google не применяет, а в паре с noindex это два спорящих
+   * сигнала — переноса веса не случалось. og:url на преемника был хуже
+   * бесполезного: VK и Facebook строят карточку по og:url, а не по присланной
+   * ссылке (см. ownAddress в lib/site), и ссылка на Counter-Strike 1.6
+   * разворачивалась в чате карточкой CS2. 308 на преемника тоже не выход:
+   * сюда приходят из портрета и библиотеки ради той игры, в которую человек
+   * играл. Сторож — app/game/[appid]/page.test.ts.
    *
    * Безтеговые сюда же, и раньше их не было: докблок считал их частью тех же
    * 191, а условие ловило 187. Разница видна на самой странице. Замер на
@@ -137,18 +175,17 @@ export async function generateMetadata({
     meta.alive === false ||
     meta.supersededBy !== undefined ||
     Object.keys(meta.tags).length === 0
-  const canonicalUrl = meta.supersededBy !== undefined ? `/game/${meta.supersededBy}` : canonical
 
   return {
     title: `${meta.name} — стоит ли играть`,
     description,
-    alternates: { canonical: canonicalUrl },
+    alternates: { canonical },
     ...(мёртвая ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
       ...OG_SITE,
       title: `${meta.name} — стоит ли играть`,
       description,
-      url: canonicalUrl,
+      url: canonical,
       type: 'article',
     },
     twitter: {
@@ -157,6 +194,54 @@ export async function generateMetadata({
       description,
     },
   }
+}
+
+/**
+ * Строка цены со сроком годности — только у скидки.
+ *
+ * Со скидкой вся строка — акционное число, и гаснет она вместе с акцией
+ * (discountTrustedUntil): страница из недельного кэша иначе обещала бы
+ * «−70%» после конца распродажи. Без скидки цене верим без срока
+ * (trustedPrice), и клиентский островок ей ни к чему. Разметку островок не
+ * трогает — её после конца скидки освежает крон карточек сбросом адреса
+ * (revalidateEndedDeals).
+ */
+function PriceLine({ until, children }: { until: number | null; children: ReactNode }) {
+  return until === null ? children : <ShownUntil untilSec={until}>{children}</ShownUntil>
+}
+
+/**
+ * «Ещё у Supergiant Games: Bastion · Transistor · Pyre» — что ещё сделали
+ * авторы. Какие игры и когда строки нет вовсе — studioLine в lib/gamepage.
+ *
+ * Строка текста, а не сетка карточек, и это про соседнюю кнопку: «Подобрать
+ * игру под настроение» — единственная ссылка страницы в продукт, и её уже
+ * поднимали с 96% глубины до половины. Ещё шесть обложек над ней утопили бы
+ * её обратно, а заодно стоили бы шести картинок на каждой из пяти тысяч
+ * карточек. Ссылки без prefetch: строку видят все, а идут по ней редко.
+ *
+ * Имя студии — ровно как в подписи героя: та же строка из базы, без
+ * «исправлений», которые разошлись бы с ней на той же странице.
+ */
+function StudioLinks({ studio, className = '' }: { studio: StudioLine; className?: string }) {
+  return (
+    <p className={`text-sm text-dim leading-relaxed ${className}`}>
+      Ещё у&nbsp;{studio.developer}:{' '}
+      {studio.games.map((g, i) => (
+        <Fragment key={g.appid}>
+          {i > 0 && ' · '}
+          <Link
+            href={`/game/${g.appid}`}
+            prefetch={false}
+            transitionTypes={['nav-forward']}
+            className="tap tap-tight text-ink/80 underline decoration-1 underline-offset-4 decoration-ink/30 transition-colors hover:text-ink hover:decoration-ink"
+          >
+            {g.name}
+          </Link>
+        </Fragment>
+      ))}
+    </p>
+  )
 }
 
 const SCORE_RU: Record<string, string> = {
@@ -188,7 +273,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
   const { meta, reviewsSummary, prosCons } = data
   const now = nowSec()
-  const deal = discountView(meta, now)
+  // Срок — датой: отсчёт «осталось 2 дня» менял бы страницу каждые сутки и
+  // врал бы из недельного кэша (см. докблок revalidate)
+  const deal = discountView(meta, now, { calendar: true })
+  // Страница переживёт скидку — после этого момента цену прячет клиент
+  const dealUntil = deal ? discountTrustedUntil(meta, now) : null
   // null — цене верить нечему (сгоревшая распродажа), см. trustedPrice. Плашку
   // тогда не рисуем вовсе: пустое стекло в герое хуже отсутствия цены.
   const price = trustedPrice(meta, now)
@@ -210,6 +299,17 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   // Главный жанр — путь над названием и в крошках разметки (одно и то же)
   const genreTag = primaryGenre(meta.tags)
   const genre = genreTag ? { tag: genreTag, title: HUB_GENRES[genreTag].title, path: hubPath(genreTag)! } : null
+  /*
+   * Арт героя — срезанный под card: обе его картинки рисуют этот вариант и
+   * читают header, header2x и capsule. GameArt — клиентский островок, так что
+   * meta.art целиком уезжал в RSC и в HTML недельного кэша каждой карточки
+   * вместе с library_hero, hero_2x и постерами, которых никто не запросит.
+   *
+   * Один объект на обе картинки, а не trimArt(meta.art) в каждой: Flight
+   * сериализует общий объект один раз и дальше ссылается на него, а два
+   * отдельных среза уехали бы двумя копиями.
+   */
+  const coverArt = trimArt(meta.art)
 
   return (
     <div className="flex-1">
@@ -231,12 +331,12 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           __html: ldScript([
             gameJsonLd({
               meta,
-              // Та же оценка, что рисует кольцо ниже: у сводки она есть не у
-              // всех карточек, и без запасного источника (reviewFacts)
-              // aggregateRating доставался лишь малой доле страниц
-              rating: facts,
+              // Оценки (facts) здесь нет намеренно: доля отзывов — Steam, а
+              // чужие оценки размечать нельзя. Почему — докблок lib/jsonld
               baseUrl: appBaseUrl(),
-              currency: currencyOf(process.env.STEAM_STORE_CC),
+              // Та же валюта, что на ценнике: цену другого региона rowToMeta
+              // сюда не пропускает, и Offer без неё не строится вовсе
+              currency: regionCurrency(priceRegion()),
               now,
             }),
             gameBreadcrumbLd({ meta, baseUrl: appBaseUrl(), genre }),
@@ -278,7 +378,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           appid={meta.appid}
           name=""
           headerImage={meta.headerImage ?? null}
-          art={meta.art}
+          art={coverArt}
           sizes="(min-width: 1024px) 380px, 100vw"
           eager
           fetchPriority="high"
@@ -325,7 +425,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               appid={meta.appid}
               name={meta.name}
               headerImage={meta.headerImage ?? null}
-              art={meta.art}
+              art={coverArt}
               sizes="(min-width: 1024px) 380px, 100vw"
               eager
               fetchPriority="high"
@@ -375,10 +475,12 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   им: у игры 2011 года бывает и двести тысяч человек, и двести.
 
                   Часы — не момент рендера, а последний момент, когда этот
-                  рендер ещё могут показать: страница живёт в кэше сутки
-                  (revalidate выше), и «сейчас», верное при сборке, к вечеру
+                  рендер ещё могут показать: страница живёт в кэше неделю
+                  (revalidate выше), и «сейчас», верное при сборке, через день
                   было бы тем же неправдивым утверждением, ради которого
-                  PlayersNow и спрашивает возраст замера.
+                  PlayersNow и спрашивает возраст замера. Замер свежее шести
+                  часов на неделю вперёд не бывает, так что здесь всегда
+                  «играли» и без пульса — и вывод от часов не зависит.
                 */}
                 <PlayersNow ccu={meta.ccu ?? null} ccuAt={meta.ccuAt} nowSec={now + revalidate} />
               </p>
@@ -391,8 +493,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
               Слово — только из сводки. Проценты и количество мы пересказываем,
               а словесную шкалу Steam придумывать за неё нельзя; без сводки
-              рядом с кольцом остаётся «из N отзывов — за», и этого хватает —
-              процент уже стоит внутри кольца.
+              рядом с кольцом остаётся «положительных из N отзывов», и этого
+              хватает — процент уже стоит внутри кольца.
             */}
             {facts && (
               <div className="flex items-center gap-3.5 text-sm">
@@ -409,8 +511,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       {SCORE_RU[facts.label] ?? facts.label}
                     </span>
                   )}
+                  {/* Было «из N отзывов — за»: «за» здесь значило «голосов
+                      за», но читалось как обрубленное «за …» — будто строку
+                      срезало на полуслове. Со словом Steam процент уже назван
+                      дважды (кольцо и шкала), без него — называем сами. */}
                   <span className="tabular-nums text-dim text-xs">
-                    из {facts.total.toLocaleString('ru-RU')} {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — за
+                    {facts.label ? 'из' : 'положительных из'} {facts.total.toLocaleString('ru-RU')}{' '}
+                    {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')}
                   </span>
                 </div>
               </div>
@@ -460,6 +567,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
               Строки нет, когда сказать честно нечего: общие теги, непрогретая
               карта тегов, семантика по одним тегам (см. SESSION_MIN_CONFIDENCE).
+              «Наиграли: ~8 ч — те, кто её хвалит» — из минут позитивных
+              отзывов, только когда крон карточек их разобрал и у игры есть
+              финал (lengthTrait). Последней — «Русский: …» по отметкам Steam
+              (languageTrait), и только когда Steam про язык ответил: «не
+              знаем» не равно «нет».
               dl, а не абзацы: это пары «подпись — значение», и скринридер
               читает их парами.
             */}
@@ -519,7 +631,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     Страница в Steam
                   </a>
                   {!verdict && (
-                    <OwnedLaunch appid={appid} className="btn-glass" />
+                    <OwnedLaunch
+                      appid={appid}
+                      name={meta.name}
+                      finishable={!isReplayable(meta)}
+                      follow={data.similar.length > 0}
+                      className="btn-glass"
+                    />
                   )}
                 </>
               )}
@@ -532,6 +650,29 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 <Icon name="play" size={16} />
                 Обзоры на YouTube
               </a>
+              {/*
+                «Позвать в эту игру» — комната с ней первой картой
+                (roomSeedHref). Карточку игры чаще всего открывают, чтобы
+                скинуть друзьям, и «го в неё?» уходило в чат голой ссылкой на
+                Steam: дальше договаривались словами. Теперь та же ссылка —
+                пати с артом и колодой на случай, если не зайдёт.
+
+                Только у игры, которую комната возьмёт (seedable в
+                lib/roomseed): сетевая, живая, не вытесненная преемником.
+                Живая — для компании, а не только для одного: у сетевой игры
+                с одиночной кампанией и пустыми серверами вердикта выше нет,
+                а колода пати её снимет. У мёртвой кнопки нет и так — звать в
+                пустой матчмейкинг значит спорить с вердиктом выше. Сессии странице знать не нужно:
+                адрес один на всех, ISR не тронут; свой бан хоста проверит уже
+                создание комнаты. Стекло, а не заливка: главное действие здесь —
+                магазин, пати — второе.
+              */}
+              {seedable(meta) && (
+                <Link href={roomSeedHref(appid)} prefetch={false} className="btn-glass">
+                  <Icon name="users" size={16} />
+                  Позвать в эту игру
+                </Link>
+              )}
               {/* Бесплатная игра тоже получает плашку. Условие было «цена больше
                   нуля», и у free-to-play — а это Dota, CS2, Warframe, то есть
                   верх каталога по онлайну — в герое не оказывалось ни цены, ни
@@ -539,18 +680,30 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   как «про цену мы ничего не знаем» — то есть ровно тот вопрос,
                   на который страница с заголовком «стоит ли играть» и должна
                   отвечать. PriceTag такой случай умел с самого начала. */}
-              {(meta.isFree || (price !== null && price > 0)) && (
-                // Цена — строкой рядом с кнопками, а не стеклянной плашкой их
-                // формы: в ряду кнопок плашка притворялась ещё одной кнопкой
-                <span className="flex items-center gap-2 px-1 text-sm">
-                  <PriceTag
-                    priceFinal={price}
-                    isFree={meta.isFree}
-                    discount={deal}
-                    size="hero"
-                  />
-                  <DiscountEnds discount={deal} />
-                </span>
+              {/* «Не продаётся в российском Steam» — тоже ответ на вопрос о
+                  цене, и плашка для него рисуется так же, как для цены */}
+              {(meta.isFree || meta.storeHidden || (price !== null && price > 0)) && (
+                <PriceLine until={dealUntil}>
+                  {/* Цена — строкой рядом с кнопками, а не стеклянной плашкой
+                      их формы: в ряду кнопок плашка притворялась ещё одной
+                      кнопкой */}
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm">
+                    <PriceTag
+                      priceFinal={price}
+                      cc={meta.priceCc ?? null}
+                      unsold={meta.storeHidden}
+                      isFree={meta.isFree}
+                      discount={deal}
+                      size="hero"
+                    />
+                    <DiscountEnds discount={deal} />
+                    {/* Чья это цена: у KZ и СНГ-доллара она другая. Только у
+                        цены — «бесплатно» и «не продаётся» говорят сами */}
+                    {!meta.isFree && !meta.storeHidden && price !== null && price > 0 && (
+                      <PriceWhere cc={meta.priceCc} />
+                    )}
+                  </span>
+                </PriceLine>
               )}
             </div>
             {refund && <RefundNote tone="neutral" />}
@@ -650,7 +803,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
 
         {/* Похожие: единственная перелинковка между пятью тысячами карточек.
             До неё страница была тупиком — из поиска сюда приходили и упирались
-            в ссылку на /play, которая гостя разворачивала на лендинг. */}
+            в ссылку на /play, которая гостя разворачивала на лендинг.
+            Соседи — в основном хвост каталога вне PRERENDER_TOP, поэтому
+            GameLink без префетча: шесть холодных рендеров с записью ISR на
+            каждый просмотр карточки, до которой доскроллили, — не цена за
+            шесть ссылок, по которым уйдут в лучшем случае по одной. */}
         {data.similar.length > 0 && (
           <section>
             <SectionLabel className="mb-4">
@@ -658,9 +815,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             </SectionLabel>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
               {data.similar.map((g) => (
-                <Link
+                <GameLink
                   key={g.appid}
-                  href={`/game/${g.appid}`}
+                  appid={g.appid}
                   transitionTypes={['nav-forward']}
                   className="game-card block"
                 >
@@ -669,7 +826,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     appid={g.appid}
                     name={g.name}
                     headerImage={g.headerImage}
-                    art={g.art}
+                    // плитка — вариант card: hero и постеры ей не нужны
+                    art={trimArt(g.art)}
                     sizes="(min-width: 768px) 33vw, 50vw"
                     /* Чем похожи — у готовых соседей: заголовок блока у них без
                        тега, и без этой строки «похожие» было бы голословным */
@@ -679,13 +837,18 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       ) : undefined
                     }
                   />
-                </Link>
+                </GameLink>
               ))}
             </div>
+            {/* Под сеткой, внутри её секции: отдельная секция добавила бы ещё
+                один межблочный отступ над кнопкой ниже */}
+            {data.studio && <StudioLinks studio={data.studio} className="mt-6" />}
           </section>
         )}
+        {/* Полки нет (у игры нет тегов), а игры студии есть — строка сама по себе */}
+        {data.similar.length === 0 && data.studio && <StudioLinks studio={data.studio} />}
 
-        {/* /quiz, а не /play: страница кэшируется на сутки и пререндерится, то
+        {/* /quiz, а не /play: страница кэшируется на неделю и пререндерится, то
             есть про сессию тут знать нечего. Гостя /play разворачивал на
             лендинг через экран прогрева, а квиз работает обоим — участник
             выбирает настроение и попадает в ту же выдачу. */}
@@ -708,13 +871,33 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           Ember тут не спорит с «Страница в Steam»: та кнопка лежит пятью
           экранами выше, и на своём месте каждая единственная.
         */}
-        <div>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
           {/* btn-ember — тот же класс и размер, что у «Страница в Steam» выше:
               вид парадной кнопки на сайте один, и своя заливка здесь
               разъехалась бы с ним на первой же правке. */}
           <Link href="/quiz" className="btn-ember px-6 py-3">
             Подобрать игру под настроение <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
           </Link>
+          {/*
+            «Как «X», но…» отсюда. Человек, дочитавший карточку, часто хочет
+            не эту игру, а такую же — а до сих пор «похожие» были только
+            шестью ссылками на другие карточки, и под настроение их было не
+            подобрать: затравка жила лишь кнопкой у героя /play, то есть
+            «хочу как Hades» не работало, пока Hades сам не выпадет героем.
+            Ссылка ведёт в квиз с затравкой (quizHref): настроение спросит он,
+            гость пройдёт через вход как обычно, и выдача будет из соседей
+            этой игры. Адрес один на всех — разметка ISR не зависит от того,
+            кто смотрит. Только там, где соседи есть, — по той же полке,
+            из которой их берёт и выдача (nearGames): без неё ссылка вела бы
+            к экрану «похожих не нашлось». Той же мерой решается и «Дальше — в
+            духе X» после «Уже прошёл» наверху (OwnedLaunch, follow).
+          */}
+          {data.similar.length > 0 && (
+            <Link href={quizHref(null, appid)} className="tap link-more">
+              Похожее на «{meta.name}» — под моё настроение
+              <Icon name="arrow" size={16} />
+            </Link>
+          )}
         </div>
       </div>
     </div>

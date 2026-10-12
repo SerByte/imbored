@@ -3,27 +3,30 @@ import * as m from 'framer-motion/m'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { after } from 'next/server'
-import { cache } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { Magnet } from '@/components/Magnet'
 import { DiscountCorner, PriceTag } from '@/components/PriceTag'
 import { SplitHeading } from '@/components/SplitHeading'
-import { verdict } from '@/lib/compat'
+import { commonTimeLine, verdict } from '@/lib/compat'
 import { tagRu } from '@/lib/tagsru'
 import { OG_SITE } from '@/lib/site'
 import {
   COMMON_SHOWN,
   type CompatGame,
   type CompatInvite,
+  type CompatInviteHead,
   type CompatPick,
-  type CompatResult,
   loadCompat,
   loadCompatInvite,
+  loadInviteHead,
 } from '@/lib/compatpage'
 import { reconnectHref } from '@/lib/destination'
+import { roomSeedHref } from '@/lib/presets'
 import { plural } from '@/lib/plural'
+import { playedShort } from '@/lib/playtime'
 import { recordCompatView } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
@@ -37,12 +40,6 @@ import type { ArtRef } from '@/lib/compatpage'
 export const dynamic = 'force-dynamic'
 
 const STEAMID = /^\d{17}$/
-
-/**
- * Приглашение читают и generateMetadata, и сама страница. cache() на время
- * запроса — тот же приём, что на карточке игры (app/game/[appid]/page.tsx).
- */
-const inviteOnce = cache(loadCompatInvite)
 
 /**
  * Без этого ссылка на совместимость разворачивалась в мессенджерах общим
@@ -61,7 +58,10 @@ export async function generateMetadata({
   const { steamid } = await params
   if (!STEAMID.test(steamid)) return {}
 
-  const invite = await inviteOnce(await getDb(), steamid)
+  // Только голова приглашения: обложек превью не показывает. Снапшот и ник
+  // владельца — общие с телом страницы на любом пути (память запроса в
+  // lib/compatpage), обложки же метаданным не нужны, и вошедший за них не платит
+  const invite = await loadInviteHead(await getDb(), steamid)
   if (!invite) return { title: 'Совместимость', robots: { index: false } }
 
   const title = `${invite.name} зовёт сравнить библиотеки`
@@ -105,7 +105,7 @@ const ru = (n: number) => n.toLocaleString('ru-RU')
  * скрыто настройками Steam (lib/playtime.ts) — слово вместо числа: «0 часов»
  * было бы сказано про галочку, а не про человека, и ушло бы в каждый чат.
  */
-function inviteHours(invite: Pick<CompatInvite, 'totalHours' | 'playtimeHidden'>): string {
+function inviteHours(invite: Pick<CompatInviteHead, 'totalHours' | 'playtimeHidden'>): string {
   return invite.playtimeHidden
     ? 'время скрыто'
     : `${ru(invite.totalHours)} ${plural(invite.totalHours, 'час', 'часа', 'часов')}`
@@ -130,30 +130,34 @@ function uniq(games: ArtRef[]): ArtRef[] {
  * часов расплющила бы Stardew 58/50 в две невидимые чёрточки, а вопрос строки
  * не «насколько эта игра больше остальных» (на это отвечает порядок сортировки),
  * а «кто из вас двоих здесь ветеран».
+ *
+ * Считается в МИНУТАХ: из округлённых часов пара «25 и 10 минут» выходила
+ * «0 ч | 0 ч» без единой полосы — будто никто не запускал. Подпись —
+ * playedShort: меньше получаса — минуты, как у плиток /library.
  */
-function HoursSplit({ hoursA, hoursB }: { hoursA: number | null; hoursB: number | null }) {
+function HoursSplit({ minutesA, minutesB }: { minutesA: number | null; minutesB: number | null }) {
   // Время скрыто у обоих (lib/playtime.ts) — сравнивать нечего, строка без счёта
-  if (hoursA === null && hoursB === null) return null
-  const max = Math.max(hoursA ?? 0, hoursB ?? 0)
+  if (minutesA === null && minutesB === null) return null
+  const max = Math.max(minutesA ?? 0, minutesB ?? 0)
   // У скрытой стороны полосы нет вовсе: пустая полоса читалась бы нулём
-  const share = (h: number | null) => (max && h ? `${(h / max) * 100}%` : '0%')
-  const label = (h: number | null) => (h === null ? 'скрыто' : `${ru(h)} ч`)
+  const share = (m: number | null) => (max && m ? `${(m / max) * 100}%` : '0%')
+  const label = (m: number | null) => (m === null ? 'скрыто' : playedShort(m))
 
   return (
     <div className="flex items-center gap-2">
       <span className="w-14 shrink-0 text-right tabular-nums text-[11px] text-dim">
-        {label(hoursA)}
+        {label(minutesA)}
       </span>
       <div aria-hidden className="flex h-1.5 flex-1 items-center">
         <div className="flex flex-1 justify-end">
-          <div className="h-1.5 rounded-l-full bg-ember" style={{ width: share(hoursA) }} />
+          <div className="h-1.5 rounded-l-full bg-ember" style={{ width: share(minutesA) }} />
         </div>
         <div className="flex-1">
-          <div className="h-1.5 rounded-r-full bg-info" style={{ width: share(hoursB) }} />
+          <div className="h-1.5 rounded-r-full bg-info" style={{ width: share(minutesB) }} />
         </div>
       </div>
       <span className="w-14 shrink-0 tabular-nums text-[11px] text-dim">
-        {label(hoursB)}
+        {label(minutesB)}
       </span>
     </div>
   )
@@ -161,7 +165,7 @@ function HoursSplit({ hoursA, hoursB }: { hoursA: number | null; hoursB: number 
 
 function CommonRow({ game }: { game: CompatGame }) {
   return (
-    <Link href={`/game/${game.appid}`} className="common-row game-card">
+    <GameLink appid={game.appid} className="common-row game-card">
       <span className="card-thumb aspect-[460/215] w-[112px] shrink-0 md:w-[136px]">
         <GameArt
           appid={game.appid}
@@ -177,15 +181,15 @@ function CommonRow({ game }: { game: CompatGame }) {
           и truncate не срабатывает вовсе */}
       <span className="flex min-w-0 flex-1 flex-col gap-2">
         <span className="truncate text-[15px] font-extrabold tracking-[-0.01em]">{game.name}</span>
-        <HoursSplit hoursA={game.hoursA} hoursB={game.hoursB} />
+        <HoursSplit minutesA={game.minutesA} minutesB={game.minutesB} />
       </span>
-    </Link>
+    </GameLink>
   )
 }
 
 function PickCard({ pick }: { pick: CompatPick }) {
   return (
-    <Link href={`/game/${pick.appid}`} className="game-card block">
+    <GameLink appid={pick.appid} className="game-card block">
       <GameCardBody
         appid={pick.appid}
         name={pick.name}
@@ -207,6 +211,8 @@ function PickCard({ pick }: { pick: CompatPick }) {
               <span className="flex shrink-0 items-center gap-2">
                 <PriceTag
                   priceFinal={pick.priceFinal ?? null}
+                  cc={pick.priceCc ?? null}
+                  unsold={pick.unsold}
                   isFree={pick.isFree}
                   discount={pick.discount}
                   showPercent={false}
@@ -217,20 +223,42 @@ function PickCard({ pick }: { pick: CompatPick }) {
           )
         }
       />
-    </Link>
+    </GameLink>
   )
 }
 
+/**
+ * invite — «Позвать в эту игру» под каждой карточкой: комната сразу с ней
+ * первой картой (roomSeedHref). Только у полки «есть у обоих»: это ровно то,
+ * во что вдвоём можно зайти сегодня, и самое частое, что после сравнения
+ * пишут в чат, — «го в X?». Раньше единственной дорогой в пати была общая
+ * кнопка внизу, и игра, которую человек только что увидел, терялась по
+ * дороге. У полки «на будущее» ссылки нет: звать в игру, которую обоим ещё
+ * покупать, — не приглашение на вечер.
+ *
+ * Ссылка — рядом с карточкой, а не внутри: карточка сама ссылка на игру, а
+ * ссылка в ссылке — невалидная разметка. Зазор держит py-2 самой ссылки:
+ * зона пальца .tap (44px) тогда не наползает на карточку над ней.
+ *
+ * Имя игры — в aria-label. Глазу «эта игра» — карточка над ссылкой, а
+ * скринридеру соседний div ничего не связывает: ни абзаца, ни пункта
+ * списка, ни ячейки. В списке ссылок полка звучала несколькими одинаковыми
+ * «Позвать в эту игру», и какая куда зовёт, не понять (WCAG 2.4.4). Видимый
+ * текст стоит в имени первым — голосовое управление находит ссылку по тому,
+ * что на ней написано (2.5.3).
+ */
 function Shelf({
   kicker,
   hint,
   picks,
   index,
+  invite = false,
 }: {
   kicker: string
   hint: string
   picks: CompatPick[]
   index: number
+  invite?: boolean
 }) {
   if (!picks.length) return null
   return (
@@ -239,9 +267,24 @@ function Shelf({
         {kicker}
       </SectionTitle>
       <div className="grid grid-cols-2 gap-x-4 gap-y-6 md:grid-cols-3">
-        {picks.map((p) => (
-          <PickCard key={p.appid} pick={p} />
-        ))}
+        {picks.map((p) =>
+          invite && p.appid > 0 ? (
+            <div key={p.appid} className="flex flex-col gap-1">
+              <PickCard pick={p} />
+              <Link
+                href={roomSeedHref(p.appid)}
+                prefetch={false}
+                aria-label={`Позвать в эту игру — «${p.name}»`}
+                className="tap link-more self-start py-2"
+              >
+                Позвать в эту игру
+                <Icon name="arrow" size={14} />
+              </Link>
+            </div>
+          ) : (
+            <PickCard key={p.appid} pick={p} />
+          ),
+        )}
       </div>
     </m.section>
   )
@@ -267,8 +310,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
     session !== null && isWriter(session) && !isDemoId(session.steamid) && !isDemoId(other)
 
   if (state.kind === 'self') {
-    // Фон — свои же игры: приглашение уже посчитано для метаданных (cache)
-    const own = await inviteOnce(db, other)
+    // Фон — свои же игры. Снапшот и ник уже прочитаны для метаданных (память
+    // запроса), новое чтение одно — обложки
+    const own = await loadCompatInvite(db, other)
     return (
       <CompatNotice
         title="Это твоя собственная ссылка"
@@ -288,7 +332,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
     return (
       <CompatNotice
         title={`${state.otherName ?? 'Этот игрок'} ещё не подключал библиотеку`}
-        body="Сравнивать пока не с чем. Можно кинуть ему свою ссылку — тогда сравнение соберётся с его стороны."
+        body="Сравнивать пока не с чем. Можно кинуть в ответ свою ссылку — сравнение соберётся, когда по ней подключат библиотеку."
       >
         {me && <CopyCompatLink steamid={me} className="btn-ember px-6 py-3" label="Моя ссылка совместимости" />}
         <Link href="/compat" className="tap link-more">
@@ -311,7 +355,8 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             <>
               <p className="text-sm leading-relaxed text-dim">
                 Подключи свою библиотеку — и увидите общий процент, общие игры и во что вам зайти
-                вместе. Прочитаем только список игр и часы, ничего не публикуем.
+                вместе. Прочитаем игры с часами и открытый список желаемого, ничего не
+                публикуем.
                 {/* Демо-личность отметок не получает (compat_views) — обещать ей нечего */}
                 {!isDemoId(other) && <> После входа через Steam {invite.name} увидит у себя, что вы сравнились.</>}
               </p>
@@ -438,7 +483,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         <m.section {...inView(1)}>
           {d.commonTotal > 0 ? (
             <>
-              <SectionTitle sub={commonHoursLine(d)} className="mb-4">
+              <SectionTitle sub={commonTimeLine(d)} className="mb-4">
                 Общие игры
               </SectionTitle>
               {/* Легенда заодно подписывает колонки: какое число чьё, иначе
@@ -481,6 +526,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           hint="Есть у обоих, живое и рассчитано на компанию."
           picks={d.playNow}
           index={2}
+          invite
         />
         <Shelf
           kicker="Нет ни у кого — на будущее"
@@ -503,7 +549,9 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           </Magnet>
           <CopyOwn steamid={d.me} inline />
           <Link href={`/portrait/${d.other}`} className="tap link-more p-2">
-            Портрет {d.otherName}
+            {/* «Портрет Демо-игрок» не склонялось: ник — не слово, и падеж
+                ему даёт только приложение «игрока», как в заголовке портрета */}
+            Портрет игрока {d.otherName}
             <Icon name="arrow" size={16} />
           </Link>
           {/* Что осталось после этого экрана — говорится здесь же, а не в политике */}
@@ -516,21 +564,6 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
       </div>
     </div>
   )
-}
-
-/**
- * «Вместе в них — N часов» — только когда часы известны у обоих. Время скрыто
- * у одного (lib/playtime.ts) — сумма была бы часами второго, выданными за
- * общие; скрыто у обоих — считать нечего.
- */
-function commonHoursLine(
-  d: Pick<CompatResult, 'commonHours' | 'myName' | 'otherName' | 'myTimeHidden' | 'otherTimeHidden'>,
-): string {
-  const hours = `${ru(d.commonHours)} ${plural(d.commonHours, 'час', 'часа', 'часов')}`
-  if (d.myTimeHidden && d.otherTimeHidden) return 'Время в играх скрыто у обоих — сравниваем только сами игры.'
-  if (d.myTimeHidden) return `У ${d.otherName} в них — ${hours}, твоё время скрыто.`
-  if (d.otherTimeHidden) return `У тебя в них — ${hours}, время ${d.otherName} скрыто.`
-  return `Вместе в них — ${hours}.`
 }
 
 /** Шапка приглашения: то же лицо, что и на карточке для мессенджера */

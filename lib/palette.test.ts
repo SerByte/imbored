@@ -83,6 +83,25 @@ describe('палитра вне CSS', () => {
     expect(src, 'retry перезапрашивает содержимое, reset — нет').toMatch(/retry/)
   })
 
+  /**
+   * Кольцо фокуса аварийного экрана — третий потребитель --ember, и в светлой
+   * схеме оно обязано перекраситься вместе с кнопкой. Стояло белым EMBER и в
+   * светлой: с отступом в 2 px кольцо лежит на молочном LIGHT_BG, ~1.08:1, —
+   * то есть у «Попробовать снова» и «На главную» фокуса с клавиатуры не было
+   * видно вовсе. В globals.css кольцо — var(--ember), и оно меняется само;
+   * здесь стилей нет, и перекрашивать приходится руками.
+   */
+  test('в светлой схеме аварийного экрана кольцо фокуса перекрашено', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'global-error.tsx'), 'utf8')
+    // Блок медиазапроса — до закрывающей скобки, стоящей одна на строке:
+    // правила внутри закрываются на своей же строке
+    const block = /@media \(prefers-color-scheme: light\) \{([\s\S]*?)\n\s*\}\s*\n/.exec(src)?.[1]
+    expect(block, 'светлой схемы нет — сторож ослеп').toBeDefined()
+    expect(block, 'кольцо фокуса в светлой схеме осталось белым на молочном').toMatch(
+      /focus-visible[^}]*outline-color:\s*\$\{LIGHT_EMBER\}/,
+    )
+  })
+
   test('границы ошибок используют retry, а не reset', () => {
     for (const file of ['app/error.tsx', 'app/global-error.tsx']) {
       const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8')

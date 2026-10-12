@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
@@ -20,7 +21,12 @@ import {
   listLiked,
   getOlderSnapshotMinutes,
   countLiked,
+  getWishlist,
+  getFeedLink,
+  livePlanAppids,
+  latestMajorPatchSince,
 } from '@/lib/db'
+import { PATCH_SINCE_LEAD, wallPatchPairs } from '@/lib/comeback'
 import {
   buildLibraryView,
   dayKey,
@@ -31,25 +37,41 @@ import {
   libraryPage,
   parseLibraryFilter,
   parseLibraryPage,
+  parseLibraryQuery,
   pickForgotten,
+  searchLibraryView,
   SHELF_EMPTY,
   wallState,
 } from '@/lib/forgotten'
-import type { LibraryTileState } from '@/lib/recommend'
+import { isReplayable, type LibraryTileState } from '@/lib/recommend'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { backlogValue } from '@/lib/stats'
+import { byPrices, formatPrice } from '@/lib/steamregion'
 import { tagWeightFrom } from '@/lib/tagweight'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
+import { GameLink } from '@/components/GameLink'
 import { LinkPending } from '@/components/LinkPending'
+import { LibrarySearch } from '@/components/LibrarySearch'
+import { RailToCurrent } from '@/components/RailToCurrent'
+import { ShelfToStart } from '@/components/ShelfToStart'
+import { StatusLine } from '@/components/StatusLine'
 import { plural } from '@/lib/plural'
 import { dateLabel } from '@/lib/freshness'
-import { eveningsSummary, OUTCOME_TTL_SEC, OUTCOME_WINDOW_SEC, playedEnough, playedLine } from '@/lib/outcome'
+import {
+  askableNow,
+  eveningPlayed,
+  eveningsSummary,
+  OUTCOME_TTL_SEC,
+  playedEnough,
+  playedLine,
+} from '@/lib/outcome'
 import { Evenings, type EveningItem } from '@/components/Evenings'
 import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
 import { pickSnapshotDelta } from '@/lib/libdelta'
-import { playtimeHidden } from '@/lib/playtime'
+import { playedShort, playtimeHidden } from '@/lib/playtime'
+import { WishlistShelf } from './WishlistShelf'
 
 export const metadata = {
   title: 'Библиотека',
@@ -78,6 +100,9 @@ const EVENINGS_SHOWN = 12
 /** С какого числа сверенных советов показывать честную долю */
 const EVENINGS_HONEST_MIN = 3
 
+/** С какого размера библиотеки над стеной стоит поиск */
+const SEARCH_FROM = 12
+
 /** Сколько постеров в мозаике героя: пять колонок по три на широком экране */
 const MOSAIC = 15
 
@@ -97,6 +122,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   const db = await getDb()
   const query = await props.searchParams
   const filter = parseLibraryFilter(query.state)
+  const asked = parseLibraryQuery(query.q)
   /*
    * Независимые чтения — одним заходом, а не лесенкой.
    *
@@ -125,7 +151,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * публичный профиль. Раньше такая сессия получала всё это целиком и только
    * без кнопок: чужой человек со ссылкой видел, что владелец скрыл и когда,
    * что ему «зашло», во что он играл после советов и как часто подбор
-   * попадал. Теперь эти пять чтений ей не делаются вовсе — пустое не утечёт
+   * попадал. Теперь эти чтения ей не делаются вовсе — пустое не утечёт
    * ни в HTML, ни в пропсы клиентских полок. Правило то же, что у GET
    * /api/outcome и «кто открыл» на /compat. Честному владельцу на втором
    * устройстве это стоит одного входа через Steam: вместо полок ему строка
@@ -138,8 +164,28 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * Карта тегов — только полке «Не распакованы»: из всей страницы по вкусу
    * ранжирует она одна, и читать четыре сотни строк tags на каждый заход ради
    * остальных полок незачем.
+   *
+   * Список желаемого — шестое личное чтение и за той же проверкой: что человек
+   * хочет купить, — его дело, а не того, у кого есть ссылка на профиль. Одна
+   * строка по ключу; Steam, если строка протухла, зовёт уже полка
+   * (WishlistShelf), и страницу он не держит.
+   *
+   * Есть ли RSS-ссылка — только у вошедшего через Steam: ровно ему SignOut
+   * предлагает «выйти везде», а это гасит и ссылку, и подтверждение обязано
+   * об этом сказать. Одна строка по первичному ключу.
+   *
+   * Живые планы на вечер (lib/eveningplan.ts) — тому же, кто их ставил:
+   * пишущей сессии не из демо, как и сама живая строка. Игра плана бывает и
+   * вечером на полке — советовали, запускали, потом поставили на загрузку, —
+   * и «Вернуться к ней» оттуда обязана закрыть план, как запуск со страницы
+   * игры (components/Evenings). План ЭТОЙ игры, даже не самый свежий
+   * (livePlanAppids, а не latestEveningPlan): вчерашний у одной и утренний у
+   * другой живут разом, и по одному свежему запуск старшей не писался — её
+   * план вставал живой строкой, едва закрывали свежий. Свои строки за
+   * полтора дня по индексу; отказ чтения — просто без плана, полка от него
+   * не зависит.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older, wishlist, feedLink, plans] = await Promise.all([
     getLatestSnapshot(db, steamid),
     writer ? listBanned(db, steamid) : [],
     bannedAppids(db, steamid),
@@ -153,6 +199,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     writer ? countLiked(db, steamid) : 0,
     // Прежние снимки парами [appid, минуты] — для строки «с прошлого снимка»
     getOlderSnapshotMinutes(db, steamid),
+    // «Из желаемого подешевело» — последний прочитанный список
+    writer ? getWishlist(db, steamid) : null,
+    session?.verified ? getFeedLink(db, steamid) : null,
+    writer && !isDemoId(steamid)
+      ? livePlanAppids(db, steamid, nowSec()).catch(() => new Set<number>())
+      : new Set<number>(),
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -160,6 +212,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Сводка, деньги и прогрев считаются по ВСЕЙ библиотеке, а не по выбранной
   // полке: иначе числа в шапке прыгали бы вслед за фильтром
   const games = snapshot.games
+  // Запрос — только там, где стоит поле (SEARCH_FROM). Иначе ?q= из
+  // набранного руками адреса или старой ссылки молча сужал бы стену и
+  // счётчики чипсов, чипсы несли бы его дальше, а показать запрос и сбросить
+  // его было бы негде: «Сбросить поиск» появляется, только когда не нашлось
+  // ничего. Поле не рисуется условием от самого q и по той же причине:
+  // стёр запрос — и поле исчезло бы из-под пальцев, уронив фокус в body.
+  const q = games.length >= SEARCH_FROM ? asked : ''
   const totalHours = Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   // Время скрыто настройками Steam (lib/playtime.ts): часы, «ни разу не
   // запускал» и минуты после советов — нули галочки, а не факты
@@ -172,12 +231,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // которой у тебя нет (герой /play бывает каталожным), поэтому её appid в
   // библиотеке не встретится, но обложка на полку нужна.
   // Узкой выборкой: скриншоты на этой странице не показываются нигде
-  // Свежие двенадцать — и, сверх них, каждый несверенный ответом совет из окна
-  // вопроса: на него ведёт «Как тебе X?» с главной и из OutcomeAsk, и ответить
-  // должно быть где, даже если после него было ещё двенадцать советов
-  const askable = (e: (typeof evenings)[number]) =>
-    e.verdict === null && playedEnough(e.minutes) && e.shownAt >= nowSec() - OUTCOME_WINDOW_SEC
-  const shownEvenings = evenings.filter((e, i) => i < EVENINGS_SHOWN || askable(e))
+  // Свежие двенадцать — и, сверх них, каждый совет, о котором сейчас можно
+  // спросить (askableNow — правило pendingOutcomeAsk): на него ведёт «Как
+  // тебе X?» с главной и из OutcomeAsk, и ответить должно быть где, даже если
+  // после него было ещё двенадцать советов. Поздняя сверка — совет месячной
+  // давности, и без этого вернувшийся не нашёл бы его на полке вовсе
+  const shownEvenings = evenings.filter((e, i) => i < EVENINGS_SHOWN || askableNow(e, nowSec()))
   const metas = await getGamesMetaLite(db, [
     ...new Set([
       ...games.map((g) => g.appid),
@@ -212,9 +271,55 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Сводка — по всем советам окна, полка — по свежим (EVENINGS_SHOWN). При
   // скрытом времени сверять нечем: сверенные раньше нули — не «не запускал»
   const eveningsTotal = eveningsSummary(timeHidden ? [] : evenings)
+  /*
+   * Подпись над полкой «Твои вечера» — здесь, а не в клиентском Evenings:
+   * разметка в пропсах едет в RSC, а не в JS маршрута, а /library стоит у
+   * потолка бюджета (bundle-budget.json).
+   *
+   * Каждая ветка обещает только то, что случится. «Минуты подтянутся» — пока
+   * есть несверенный совет и время открыто: следующий снапшот сверит его, даже
+   * если человек пропадал дольше окна (поздняя сверка). При скрытом времени —
+   * не подтянутся, пока Steam его не покажет. Поздние минуты — отдельной
+   * фразой: в долю они не идут (eveningsSummary), и молча выкинуть то, что
+   * человек наиграл по совету, пока его не было, было бы нечестно в другую
+   * сторону.
+   */
+  const lateHours = eveningsTotal.lateMinutes > 0 ? playedLine(eveningsTotal.lateMinutes) : null
+  const eveningsLead =
+    eveningsTotal.checked > 0 ? (
+      <>
+        Наиграно после наших советов:{' '}
+        <span className="text-ink tabular-nums">{playedLine(eveningsTotal.minutes)}</span>. Всерьёз, от
+        пятнадцати минут, — в <span className="tabular-nums">{eveningsTotal.played}</span> из{' '}
+        <span className="tabular-nums">{eveningsTotal.checked}</span>{' '}
+        {plural(eveningsTotal.checked, 'совета', 'советов', 'советов')}.
+        {lateHours && (
+          <>
+            {' '}
+            Ещё <span className="text-ink tabular-nums">{lateHours}</span> набежало, пока тебя не было, — их
+            мы сверили позже и в долю не считаем.
+          </>
+        )}
+      </>
+    ) : lateHours ? (
+      <>
+        Пока тебя не было, после наших советов набежало{' '}
+        <span className="text-ink tabular-nums">{lateHours}</span> — сверили по первому снимку библиотеки
+        после возвращения.
+      </>
+    ) : timeHidden ? (
+      'Что мы советовали и что из этого вышло. Минуты появятся, когда Steam снова покажет время игры.'
+    ) : evenings.some((e) => e.minutes === null) ? (
+      'Что мы советовали и что из этого вышло. Минуты подтянутся со следующим снимком библиотеки.'
+    ) : (
+      'Что мы советовали и что из этого вышло.'
+    )
   // Доля от трёх сверенных советов и больше: «сыграно в 100%» по одному — шум
   const honest = eveningsTotal.checked >= EVENINGS_HONEST_MIN
   const ownedNow = new Set(games.map((g) => g.appid))
+  // Уже пройденное — из того же чтения, что полка «Пройдено»: кнопки «Уже
+  // прошёл» у вечера с такой игрой нет, есть слово (components/Evenings)
+  const doneNow = new Set(banned.filter((b) => b.done).map((b) => b.appid))
   const eveningItems: EveningItem[] = shownEvenings.map((e) => {
     const meta = metas.get(e.appid)
     return {
@@ -224,21 +329,19 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
       date: dateLabel(e.shownAt),
-      played: timeHidden
-        ? 'время скрыто'
-        : e.minutes === null
-          ? 'ещё не сверяли'
-          : e.minutes === 0
-            ? e.launched
-              ? 'открыл и закрыл'
-              : 'не запускал'
-            : playedLine(e.minutes),
+      played: timeHidden ? 'время скрыто' : eveningPlayed(e),
       playedEnough: playedEnough(e.minutes),
       verdict: e.verdict,
       owned: ownedNow.has(e.appid),
       storeUrl: meta?.storeUrl ?? null,
+      // Мера та же, что у «Продолжить» на /play (continueView): без меты — не знаем
+      finishable: !!meta && !isReplayable(meta),
+      finished: doneNow.has(e.appid),
     }
   })
+  // Живые планы — только игр этой полки: закрывать с неё больше нечего, и в
+  // пропсы островка лишнее не едет. Без повторов: одну игру советуют и дважды
+  const eveningPlans = [...new Set(eveningItems.map((i) => i.appid))].filter((a) => plans.has(a))
 
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
@@ -258,7 +361,29 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // нераспакованные» обязаны назвать одно и то же число.
   const untouched = view.counts.untouched
   // Порция полки, а не вся полка: см. LIBRARY_PAGE_SIZE в lib/forgotten.ts
-  const wall = libraryPage(view.games, parseLibraryPage(query.page))
+  // Поиск отбирает внутри полки; сводка выше и деньги — по-прежнему по всему
+  const found = searchLibraryView(view, games, metaOf, now, q)
+  const wall = libraryPage(found.games, parseLibraryPage(query.page))
+  const stateOf = (g: (typeof wall.shown)[number]) => wallState(g, metas.get(g.appid), now, timeHidden)
+  /*
+   * «Обновлялась» у заброшенных плиток порции — один обход по парам игра —
+   * последний запуск (latestMajorPatchSince), и только когда такие плитки
+   * есть. Пары отдаёт wallPatchPairs, и она же держит правило: метка —
+   * производная от даты последнего запуска, поэтому только writer-сессии и не
+   * при скрытом времени. Иначе пар нет, запроса нет, и в HTML нечему утечь.
+   *
+   * БЕЗ await. Пары зависят от метаданных (порядок, поиск, фильтр), так что
+   * запрос встал бы третьей ступенью лесенки выше — ещё один обход в TTFB
+   * почти каждого захода владельца со старыми играми, ради декоративной
+   * метки. Промис уходит в <Suspense> у плитки (RefreshedPill): стена приходит
+   * первым HTML, метка догружается стримом. Сбой запроса — просто без меток:
+   * отказ базы здесь не повод ронять страницу.
+   */
+  const patchPairs = wallPatchPairs(wall.shown, stateOf, { hidden: timeHidden, writer })
+  const updatedP = patchPairs.length
+    ? latestMajorPatchSince(db, patchPairs).catch(() => new Map<number, string>())
+    : null
+  const mayRefresh = new Set(patchPairs.map(([appid]) => appid))
   const shelf = pickForgotten(
     // «Больше не показывать» — и здесь: полка тоже совет
     forgottenCandidates(games, metaOf, bannedAll),
@@ -482,10 +607,17 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   {plural(backlog.unplayedCount, 'игра уже твоя', 'игры уже твои', 'игр уже твои')} —
                   попробовать можно прямо сейчас
                 </div>
+                {/* Оговорка — только когда она правда: «не меньше … — цена
+                    известна у 8 из 8» спорило само с собой */}
                 <div className="text-xs text-dim mt-1">
-                  Вместе не меньше{' '}
-                  <span className="tabular-nums">${(backlog.cents / 100).toFixed(0)}</span> — цена
-                  известна у {backlog.pricedCount} из {backlog.unplayedCount}
+                  {/* Валюта — региона суммы (backlogValue), а не угаданная:
+                      цены других регионов в неё не входят вовсе */}
+                  {backlog.pricedCount < backlog.unplayedCount ? 'Вместе не меньше' : 'Вместе'}{' '}
+                  <span className="tabular-nums">{formatPrice(backlog.cents, backlog.cc, { whole: true })}</span>{' '}
+                  {byPrices(backlog.cc)}
+                  {backlog.pricedCount < backlog.unplayedCount
+                    ? ` — цена известна у ${backlog.pricedCount} из ${backlog.unplayedCount}`
+                    : null}
                 </div>
               </div>
               {/* Не в общий опрос про настроение: карточка про несыгранное —
@@ -544,15 +676,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {!writer && <NeedSteam from="/library" why="see" className="mb-12 max-w-md" />}
 
       {eveningItems.length > 0 && (
-        <Evenings
-          items={eveningItems}
-          summary={{
-            checked: eveningsTotal.checked,
-            played: eveningsTotal.played,
-            hours: playedLine(eveningsTotal.minutes),
-          }}
-          writer={writer}
-        />
+        <Evenings items={eveningItems} lead={eveningsLead} writer={writer} plans={eveningPlans} />
       )}
 
       {shelf.length > 0 && (
@@ -610,10 +734,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-6">
             {shelf.map((g) => (
-              <Link
+              <GameLink
                 key={g.appid}
-                href={`/game/${g.appid}`}
-                prefetch={false}
+                appid={g.appid}
                 className="game-card block"
               >
                 <GameCardBody
@@ -628,11 +751,19 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
                   corner={<span className="lib-badge badge-line">Запечатана</span>}
                 />
-              </Link>
+              </GameLink>
             ))}
           </div>
         </section>
       )}
+
+      {/* Поиск — от дюжины игр: на меньшей библиотеке вся стена и так в
+          одном экране, и поле было бы лишним словом над ней (и запрос без
+          поля не применяется — см. q выше). При скрытом времени поле
+          остаётся: полок нет, а имя игры Steam отдаёт всегда. filter —
+          показанная полка (view.filter), а не спрошенная: при скрытом
+          времени это всегда «Все». */}
+      {games.length >= SEARCH_FROM && <LibrarySearch filter={view.filter} q={q} />}
 
       {/* Чипсы — обычные ссылки: страница и так force-dynamic, а сетка
           обязана остаться серверной и без обработчиков. Префетча у них нет:
@@ -647,19 +778,31 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
          (.chip-rail) растворяла бы и фон с размытием, и стена карточек
          проступала бы по краям полосы. */
       <div id="wall" className="lib-filters">
-        <div className="chip-rail lib-filters-rail">
+        {/* id у ленты свой: #wall — подложка и цель ссылки с полки
+            «запечатанного», а прокручивается вбок именно лента */}
+        <div id="wall-rail" className="chip-rail lib-filters-rail">
           {LIBRARY_FILTERS.map((f) => (
             <Link
               key={f.id}
-              href={libraryHref(f.id)}
+              href={libraryHref(f.id, 1, q)}
+              // Без него Next прокручивал к верху страницы: чипсы стоят экраном
+              // ниже героя, и после нажатия человек оказывался над заголовком
+              // «Твоя библиотека», а новая полка — за нижним краем (замер на
+              // 1440×900: полоса чипсов уезжала с 241 px на 1041). Тот же довод,
+              // что у «Показать ещё» ниже. Полоса при этом липкая, и чипс,
+              // нажатый из глубины стены, оставил бы человека посреди новой
+              // полки, — к её началу тогда докручивает ShelfToStart ниже.
+              scroll={false}
               prefetch={false}
               aria-current={f.id === filter ? 'page' : undefined}
               className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
             >
-              {f.label} <span className="tabular-nums opacity-70">{view.counts[f.id]}</span>
+              {f.label} <span className="tabular-nums opacity-70">{found.counts[f.id]}</span>
             </Link>
           ))}
+          <RailToCurrent railId="wall-rail" current={filter} />
         </div>
+        <ShelfToStart barId="wall" shelf={filter} />
       </div>
       )}
 
@@ -667,27 +810,58 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           полка, и без него человек с ?state=active получил бы два сообщения
           сразу — «за две недели ты не запускал ничего» поверх «Steam не отдал
           ни одной игры». */}
-      {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && (
+      {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && !q && (
         <p className="text-dim text-sm">{SHELF_EMPTY[view.filter]}</p>
+      )}
+
+      {/* Ничего не нашлось — своим сообщением, а не сообщением пустой полки:
+          «заброшенных нет» было бы неправдой, их просто нет с таким именем.
+          StatusLine стоит всегда (lib/liveregion.test.ts): страница
+          перерисовывается на каждую букву поиска, и область, рождённая вместе
+          с текстом, звучала бы не везде. Ссылка сброса — вне области: живую
+          строку читают целиком, а не нажимают.
+
+          Нашлось — тоже словами, но только скринридеру: глазу видно, что
+          стена сменилась, а скринридеру без этой строки поиск молчал бы —
+          сработал ли и сколько нашлось. Строка та же, а не вторая рядом:
+          обе — ответ на один запрос, и переход «нашлись три» → «ничего»
+          звучит сменой текста. */}
+      <StatusLine
+        className={q && found.games.length === 0 ? 'text-dim text-sm' : 'sr-only'}
+        text={
+          !q
+            ? null
+            : found.games.length > 0
+              ? `По «${q}»${view.filter === 'all' ? '' : ' на этой полке'} ${plural(found.games.length, 'нашлась', 'нашлись', 'нашлось')} ${found.games.length} ${plural(found.games.length, 'игра', 'игры', 'игр')}.`
+              : view.filter === 'all' || found.counts.all === 0
+                ? `Ничего не нашлось по «${q}».`
+                : `На этой полке «${q}» нет — поищи на соседних: счётчики на чипсах показывают, где.`
+        }
+      />
+      {q && found.games.length === 0 && (
+        <Link href={libraryHref(view.filter)} scroll={false} prefetch={false} className="tap link-more -mt-1 mb-4">
+          Сбросить поиск
+          <Icon name="close" size={14} />
+        </Link>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-6">
         {wall.shown.map((g) => {
-          const state = wallState(g, metas.get(g.appid), now, timeHidden)
+          const state = stateOf(g)
           const label = STATE_LABEL[state]
-          const hours = Math.round(g.playtimeForever / 60)
+          // Только кандидат: подтвердит ли патч, скажет стрим (RefreshedPill)
+          const refreshable = updatedP !== null && state === 'comeback' && mayRefresh.has(g.appid)
           return (
             /*
-              Без префетча: плитка попадает в экран при прокрутке, и каждая
-              префетчила бы /game/<appid>. Игры вне заранее собранных страниц
-              рендерятся по требованию, то есть порция из 48 плиток — это до
-              48 рендеров с походами в базу ради страниц, куда человек
-              откроет одну.
+              Без префетча (GameLink): плитка попадает в экран при
+              прокрутке, и каждая префетчила бы /game/<appid>. Игры вне
+              заранее собранных страниц рендерятся по требованию, то есть
+              порция из 48 плиток — это до 48 рендеров с походами в базу ради
+              страниц, куда человек откроет одну.
             */
-            <Link
+            <GameLink
               key={g.appid}
-              href={`/game/${g.appid}`}
-              prefetch={false}
+              appid={g.appid}
               // Заброшенная приглушается обложкой, а не целиком: прозрачность
               // на всей плитке роняла и подпись под ней — на светлой теме до
               // 3.97:1 (axe, color-contrast)
@@ -711,16 +885,36 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                     {/* При скрытом времени — без числа: «0 ч» на каждой плитке
                         было бы неправдой, а «скрыто» сорок восемь раз подряд —
                         шумом; это сказано один раз, в шапке */}
+                    {/* self-start у кандидата в «обновлялась»: узкой плитке
+                        метка уходит второй строкой, и часы по центру двух
+                        строк встали бы между «заброшена» и меткой, а не
+                        вровень с первой */}
                     {!timeHidden && (
-                      <span className="tabular-nums">
-                        {hours > 0 ? `${hours} ч` : g.playtimeForever > 0 ? `${g.playtimeForever} мин` : '0 ч'}
+                      <span className={`tabular-nums ${refreshable ? 'self-start' : ''}`}>
+                        {playedShort(g.playtimeForever)}
                       </span>
                     )}
-                    {label.text && <span className={`truncate ${label.cls}`}>{label.text}</span>}
+                    {/* «Обновлялась» — рядом с «заброшена», а не вместо: состояние
+                        то же, метка добавляет к нему факт о самой игре. Без
+                        ссылки на патч — вся плитка уже ссылка, а <a> в <a>
+                        невалиден; патчи ждут на /game в «Что нового». Узкой
+                        плитке телефона метка уходит второй строкой (flex-wrap),
+                        а не обрезает «заброшена» до «забр…» */}
+                    {label.text &&
+                      (refreshable ? (
+                        <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 self-start">
+                          <span className={`truncate ${label.cls}`}>{label.text}</span>
+                          <Suspense fallback={null}>
+                            <RefreshedPill updated={updatedP} appid={g.appid} />
+                          </Suspense>
+                        </span>
+                      ) : (
+                        <span className={`truncate ${label.cls}`}>{label.text}</span>
+                      ))}
                   </>
                 }
               />
-            </Link>
+            </GameLink>
           )
         })}
       </div>
@@ -737,7 +931,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {wall.nextPage !== null && (
         <div className="mt-8 flex justify-center">
           <Link
-            href={libraryHref(view.filter, wall.nextPage)}
+            href={libraryHref(view.filter, wall.nextPage, q)}
             scroll={false}
             prefetch={false}
             className="btn-glass"
@@ -757,6 +951,15 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         {/* Сессии по ссылке полки приходят пустыми и не рисуются вовсе: строка
             о входе для неё стоит выше, на месте «Твоих вечеров» */}
         <LikedShelf games={likedGames} total={likedTotal} writer={writer} />
+        {/* Под «Зашло», над уборкой: страница по-прежнему начинается с «играй
+            в своё», а покупки — ниже всего своего. Под Suspense — Steam
+            страницу не держит. У демо списка нет, у сессии по ссылке он не
+            читается вовсе (writer выше) */}
+        {writer && !isDemoId(steamid) && (
+          <Suspense fallback={null}>
+            <WishlistShelf steamid={steamid} row={wishlist} owned={ownedNow} now={now} />
+          </Suspense>
+        )}
         <BannedShelf games={bannedGames} writer={writer} />
       </div>
 
@@ -764,9 +967,33 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           показать в ней состояние входа, корневому лэйауту пришлось бы читать
           куки — а это сделало бы динамическими все страницы разом, включая
           кэшируемые /game/[appid]. Библиотека и так force-dynamic. */}
-      <SignOut verified={Boolean(session?.verified)} />
+      <SignOut verified={Boolean(session?.verified)} feedLink={feedLink !== null} />
       </div>
     </div>
+  )
+}
+
+/**
+ * Метка «обновлялась» у заброшенной плитки — догружается стримом (см.
+ * updatedP в LibraryPage): ждёт общий на порцию запрос и рисует пилюлю, только
+ * если подтверждённый крупный патч после последнего запуска нашёлся.
+ */
+async function RefreshedPill({
+  updated,
+  appid,
+}: {
+  updated: Promise<ReadonlyMap<number, string>>
+  appid: number
+}) {
+  if (!(await updated).has(appid)) return null
+  return (
+    <span
+      className="shrink-0 rounded-full border border-edge px-1.5 text-[11px] leading-4 text-ink"
+      // Та же формулировка, что в причине на /play и в «Игре дня» (patchSentence)
+      title={`${PATCH_SINCE_LEAD}.`}
+    >
+      обновлялась
+    </span>
   )
 }
 

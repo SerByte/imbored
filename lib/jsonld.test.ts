@@ -10,8 +10,8 @@ import {
   websiteJsonLd,
 } from './jsonld'
 import { SITE_DESCRIPTION } from './site'
+import { regionCurrency } from './steamregion'
 import { tagRu } from './tagsru'
-import type { ReviewFacts } from './gamepage'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -33,12 +33,9 @@ function game(over: Partial<GameMeta> = {}): GameMeta {
   }
 }
 
-const RATING: ReviewFacts = { percent: 86, total: 100, label: 'Very Positive' }
-
-function ld(over: Partial<GameMeta> = {}, rating: ReviewFacts | null = RATING) {
+function ld(over: Partial<GameMeta> = {}) {
   return gameJsonLd({
     meta: game(over),
-    rating,
     baseUrl: BASE,
     currency: 'USD',
     now: NOW,
@@ -46,6 +43,16 @@ function ld(over: Partial<GameMeta> = {}, rating: ReviewFacts | null = RATING) {
 }
 
 describe('gameJsonLd', () => {
+  test('русский в игре есть — inLanguage ru; нет или не знаем — поля нет', () => {
+    // Карточка в это же время показывает строку «Русский: …» (languageTrait):
+    // разметка говорит то же, что видно, и не больше
+    expect(ld({ ruLang: 1 }).inLanguage).toBe('ru')
+    expect(ld({ ruLang: 3 }).inLanguage).toBe('ru')
+    // «нет» — не повод назвать другой язык: остальных мы не храним
+    expect(ld({ ruLang: 0 })).not.toHaveProperty('inLanguage')
+    expect(ld()).not.toHaveProperty('inLanguage')
+  })
+
   test('минимальная карточка — это VideoGame с адресом страницы', () => {
     const out = ld()
     expect(out['@context']).toBe('https://schema.org')
@@ -67,31 +74,15 @@ describe('gameJsonLd', () => {
     expect(ld({ art: undefined, headerImage: undefined }).image).toBeUndefined()
   })
 
-  test('оценка — тот же процент, что нарисован на странице', () => {
-    // 86 из 100 отзывов положительные: на странице кольцо показывает 86 %,
-    // и разметка обязана показывать ровно это же число.
-    expect(ld().aggregateRating).toEqual({
-      '@type': 'AggregateRating',
-      ratingValue: 86,
-      bestRating: 100,
-      worstRating: 0,
-      ratingCount: 100,
-    })
-  })
-
-  test('без отзывов блока оценки нет вовсе', () => {
-    expect(ld({}, null).aggregateRating).toBeUndefined()
-  })
-
-  test('оценка из каталога размечается так же, как из сводки', () => {
-    // 85,5 % карточек живут именно на этом источнике — см. reviewFacts.
-    expect(ld({}, { percent: 64, total: 5_000, label: null }).aggregateRating).toEqual({
-      '@type': 'AggregateRating',
-      ratingValue: 64,
-      bestRating: 100,
-      worstRating: 0,
-      ratingCount: 5_000,
-    })
+  test('оценки Steam в разметке нет — даже у игры с тысячами отзывов', () => {
+    // Доля положительных — отзывы Steam, а не наших посетителей. Правила
+    // Google для review snippet прямо запрещают размечать оценки, собранные
+    // на другом сайте; на пяти тысячах шаблонных страниц это узор ручной
+    // санкции за «spammy structured markup», которая снимает и крошки, и
+    // статьи патчей. Кольцо на странице остаётся — уходит только разметка.
+    const out = ld({ reviewsTotal: 120_000, reviewsPercent: 86 })
+    expect('aggregateRating' in out).toBe(false)
+    expect(JSON.stringify(out)).not.toMatch(/Rating|review/i)
   })
 
   test('цена без скидки едет как есть, в долларах', () => {
@@ -191,8 +182,51 @@ describe('gameJsonLd', () => {
     expect(ld({ isFree: true, priceFinal: undefined }).offers).toMatchObject({ price: '0.00' })
   })
 
+  test('валюта оффера — валюта региона цены: рубли размечаются рублями', () => {
+    const out = gameJsonLd({
+      meta: game({ appid: 1086940, priceFinal: 199_900, priceCc: 'ru' }),
+      baseUrl: BASE,
+      currency: regionCurrency('ru'),
+      now: NOW,
+    })
+    expect(out.offers).toMatchObject({ price: '1999.00', priceCurrency: 'RUB' })
+  })
+
+  test('«не продаётся в регионе» — оффера нет, даже бесплатного', () => {
+    // InStock про игру, которую в этом магазине не взять, был бы неправдой, а
+    // страница пишет «не продаётся в российском Steam»
+    expect(ld({ storeHidden: true, priceCc: 'ru' }).offers).toBeUndefined()
+    expect(ld({ storeHidden: true, isFree: true }).offers).toBeUndefined()
+  })
+
   test('про цену ничего не известно — оффера нет', () => {
     expect(ld().offers).toBeUndefined()
+  })
+
+  test('ноль без «бесплатно» — не цена, а её отсутствие: оффера нет', () => {
+    // Поиск магазина кладёт «0» в data-price-final игре, у которой цены нет
+    // вовсе (снята с продажи, делист): так в базе лежат Ori and the Blind
+    // Forest и Call of Duty, is_free у них пуст. Герой карточки такую цену не
+    // рисует (условие «price > 0» в app/game/[appid]/page.tsx), и разметка
+    // не вправе сказать больше — иначе в выдаче платная игра «бесплатна».
+    expect(ld({ priceFinal: 0 }).offers).toBeUndefined()
+    expect(
+      ld({ isFree: false, priceFinal: 0, priceInitial: 0, discountPercent: 0, priceAt: NOW }).offers,
+    ).toBeUndefined()
+  })
+
+  test('раздача −100% — оффера нет, как нет и строки цены у героя', () => {
+    // discountOf честно отдаёт такую скидку (finalCents 0), но страница
+    // прячет строку цены целиком — вместе с процентом и сроком. Разметка
+    // идёт за страницей, а не за скидкой
+    const out = ld({
+      priceFinal: 0,
+      priceInitial: 1999,
+      discountPercent: 100,
+      discountEndsAt: NOW + 86_400,
+      priceAt: NOW,
+    })
+    expect(out.offers).toBeUndefined()
   })
 
   test('чужой магазин уводит оффер на свою страницу', () => {
@@ -236,7 +270,7 @@ describe('gameJsonLd', () => {
   })
 
   test('genre из тегов упорядочен устойчиво: вес, потом имя', () => {
-    // Страница пререндерится и кэшируется на сутки — порядок ключей после
+    // Страница пререндерится и кэшируется на неделю — порядок ключей после
     // пересборки каталога не гарантирован, а разметка меняться не должна.
     // Имя — английский ключ: порядок решается до перевода
     expect(ld({ genres: [], tags: { Roguelike: 50, Action: 50, Indie: 90 } }).genre).toEqual(
@@ -276,7 +310,7 @@ describe('gameJsonLd', () => {
       releaseYear: undefined,
       developer: undefined,
       publisher: undefined,
-    }, null)
+    })
     expect(Object.values(out).every((v) => v !== undefined)).toBe(true)
   })
 })

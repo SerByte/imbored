@@ -201,13 +201,43 @@ const read = (file: string) => strip(fs.readFileSync(path.join(ROOT, file), 'utf
  *
  * Место опознаётся по началу попытки (start), а не по номеру строки; от него
  * до первого await обязан стоять каждый сброс из reset.
+ *
+ * Половина правды, если отказ бывает и без await: сброс и новый отказ в одном
+ * обработчике React склеивает в одно обновление, и текст снова не меняется.
+ * Так было у «Сообщить, когда сойдёмся»: после первого отказа браузер помнит
+ * 'denied', запрос не шёл, и второй отказ ставился синхронно. Для таких мест
+ * fail — новый отказ, который обязан стоять ПОСЛЕ первого await.
  */
-const REPEAT: Array<{ file: string; start: string; reset: string[] }> = [
+const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: string[] }> = [
   // голос колоды: отказ возвращает карту в голову, и следующий свайп — повтор
   { file: 'app/room/[id]/page.tsx', start: 'async function vote(', reset: ['setVoteFailed(false)'] },
   { file: 'app/room/[id]/page.tsx', start: 'async function join()', reset: ['setJoinError(null)'] },
   { file: 'app/room/[id]/page.tsx', start: 'async function joinAsDemoFriend()', reset: ['setJoinError(null)'] },
   { file: 'app/room/[id]/page.tsx', start: 'async function takeLeader()', reset: ['setLeaderMiss(null)'] },
+  // выход и ✕ хоста, переключатель доски, добор раунда: на моргнувшей связи
+  // второй тап — тот же отказ тем же текстом. Строку «войди через Steam»
+  // (publicDenied) делят все три кнопки хоста, и гасить её обязана каждая:
+  // слияние 35d0535 потеряло сброс у доски, и второй needsteam там молчал
+  {
+    file: 'app/room/[id]/page.tsx',
+    start: 'async function removeMember(',
+    reset: ['setLeaveMiss(null)', 'setPublicDenied(false)'],
+  },
+  {
+    file: 'app/room/[id]/page.tsx',
+    start: 'async function togglePublic()',
+    reset: ['setPublicMiss(null)', 'setPublicDenied(false)'],
+  },
+  { file: 'app/room/[id]/page.tsx', start: 'async function unkick()', reset: ['setPublicDenied(false)'] },
+  { file: 'app/room/[id]/page.tsx', start: 'async function pullMore()', reset: ['setPullFailed(false)'] },
+  // повторное нажатие после отказа в разрешении — тот же отказ тем же текстом;
+  // браузер помнит отказ, и без await между ними повтор склеился бы со сбросом
+  {
+    file: 'components/room/MatchNotify.tsx',
+    start: 'async function toggle()',
+    reset: ['setMiss(null)'],
+    fail: ['setMiss(permission)'],
+  },
   // переключатели и кнопки под героем — один путь, отказ говорит то место, откуда нажали
   {
     file: 'app/play/page.tsx',
@@ -215,18 +245,48 @@ const REPEAT: Array<{ file: string; start: string; reset: string[] }> = [
     reset: ['setHeroMiss(null)', 'setSwitchMiss(null)'],
   },
   { file: 'app/play/page.tsx', start: 'if (banning) return', reset: ['setBanFailed(null)'] },
+  // «Уже прошёл» у строки «Продолжить» — своя строка отказа, по appid
+  { file: 'app/play/page.tsx', start: 'const finishCont = async', reset: ['setContFailed(null)'] },
+  // «Обновить выдачу» говорит отказ той же строкой под героем, что и кнопки под ним
+  { file: 'app/play/page.tsx', start: 'onRefresh={async () => {', reset: ['setHeroMiss(null)'] },
   { file: 'app/daily/page.tsx', start: 'const notToday = async', reset: ['setRerollMiss(null)'] },
   { file: 'app/explore/page.tsx', start: 'const unlike = async', reset: ['setUnlikeMiss(null)'] },
+  // «Ещё колоду» под потолком частоты: второй 429 — тот же текст под кнопкой
+  { file: 'app/explore/page.tsx', start: 'const redeal = async', reset: ['setRedealMiss(null)'] },
+  // «Попробовать снова» на экране отказа: строка экрана гаснет на время попытки
+  { file: 'app/explore/page.tsx', start: 'const retry = async', reset: ['setRetrying(true)'] },
   { file: 'components/BannedShelf.tsx', start: 'async function unban(', reset: ['setFailed(null)'] },
   { file: 'components/LikedShelf.tsx', start: 'async function unlike(', reset: ['setFailed(null)'] },
+  // второе нажатие «Зашло» у героя /play и /daily: на моргнувшей связи
+  // повторный отказ — тот же текст в строке под героем
+  { file: 'lib/unlike.ts', start: 'export async function undoLike(', reset: ['say(null)'] },
   { file: 'components/Evenings.tsx', start: 'async function answer(', reset: ['setFailed(null)'] },
+  // «Сыграю вечером на ПК»: на моргнувшей связи второй тап — тот же отказ тем же текстом
+  { file: 'components/TonightButton.tsx', start: 'async function plan()', reset: ['setDone(null)'] },
   // здесь отказ — фаза состояния, и гасит его фаза «делаю»
+  { file: 'components/MarkFinished.tsx', start: 'async function mark()', reset: ["setState('busy')"] },
   { file: 'components/SharePick.tsx', start: 'async function create()', reset: ["setState({ at, phase: 'busy' })"] },
+  // «Попробовать снова» в окне поиска: индекс каталога снова не доехал — тот
+  // же текст в строке статуса. Фаза индекса живёт в хранилище, а не в окне
+  {
+    file: 'lib/catalogindex.ts',
+    start: 'export async function requestCatalogIndex()',
+    reset: ["set({ phase: 'loading', entries: [] })"],
+  },
+  // RSS по секретной ссылке: второй 429 на «Выпустить новую» — тот же текст;
+  // удача («Ссылка готова», «Ссылка отключена») гаснет тем же порядком
+  { file: 'components/whatsnew/FeedLink.tsx', start: 'async function issue(replace: boolean)', reset: ['setMiss(null)', "setSaid('')"] },
+  { file: 'components/whatsnew/FeedLink.tsx', start: 'async function disable()', reset: ['setMiss(null)', "setSaid('')"] },
+  // «Выйти» на моргнувшей связи: второй обрыв — то же «Не получилось выйти»
+  { file: 'components/SignOut.tsx', start: 'async function out(all: boolean)', reset: ['setMiss(null)'] },
+  // «Удалить всё обо мне»: второй сбой списка или удаления — тот же текст
+  { file: 'components/ForgetMe.tsx', start: 'async function ask()', reset: ['setMiss(null)'] },
+  { file: 'components/ForgetMe.tsx', start: 'async function erase()', reset: ['setMiss(null)'] },
 ]
 
 describe('повтор отказа звучит', () => {
   test('отказ, который повторяется, гаснет в начале попытки — до первого await', () => {
-    for (const { file, start, reset } of REPEAT) {
+    for (const { file, start, reset, fail = [] } of REPEAT) {
       const code = read(file)
       const at = code.indexOf(start)
       expect(at, `${file}: «${start}» не найдено — сторож ослеп`).toBeGreaterThan(-1)
@@ -236,6 +296,10 @@ describe('повтор отказа звучит', () => {
       const head = code.slice(at, until)
       for (const r of reset) {
         expect(head, `${file} — ${start}: ${r} до первого await, иначе второй такой же отказ промолчит`).toContain(r)
+      }
+      for (const f of fail) {
+        expect(head, `${file} — ${start}: ${f} до первого await склеится со сбросом`).not.toContain(f)
+        expect(code.indexOf(f, until), `${file} — ${start}: ${f} не найдено — сторож ослеп`).toBeGreaterThan(until)
       }
     }
   })
@@ -265,6 +329,111 @@ describe('строка отказа полок /library — одним узло�
         expect(code.slice(r.index), at).toMatch(/^return \(\s*<>\s*\{miss\}/)
       }
     }
+  })
+})
+
+/**
+ * Экран отказа /explore — одним узлом через смену фазы.
+ *
+ * Фаза отказа подменяет экран целиком: WarmupScreen уходит вместе со своей
+ * живой строкой прогресса, и «Библиотека не доехала» вставала молча — ни
+ * одна область в DOM не меняла текст. Строка статуса стоит первым ребёнком
+ * фрагмента во всех трёх return (прогрев, отказ, колода) и переживает
+ * подмену по той же причине, что строка полок выше: React сверяет детей по
+ * месту.
+ */
+describe('экран отказа /explore объявляется', () => {
+  test('строка статуса стоит первой в каждом return страницы', () => {
+    const code = read('app/explore/page.tsx')
+    expect(code, 'status — это StatusLine').toMatch(/const status = \(\s*<StatusLine\b/)
+    // return разметки, а не `return () => ac.abort()` эффекта
+    const returns = [...code.matchAll(/\breturn \((?=\s*<)/g)]
+    // прогрев, отказ, колода; меньше — разбор ослеп или фаз стало меньше
+    expect(returns.length).toBeGreaterThanOrEqual(3)
+    for (const r of returns) {
+      const at = `app/explore/page.tsx:${code.slice(0, r.index).split('\n').length}`
+      expect(code.slice(r.index), at).toMatch(/^return \(\s*<>\s*\{status\}/)
+    }
+  })
+
+  /**
+   * Вторая половина REPEAT для «Попробовать снова». Там стережётся только
+   * место: setRetrying(true) до первого await. Но гасит строку не он, а
+   * `&& !retrying` в её тексте — без него повтор того же отказа снова
+   * молчал бы, а место в REPEAT оставалось бы верным.
+   */
+  test('на время повтора строка статуса гаснет', () => {
+    const code = read('app/explore/page.tsx')
+    expect(code).toMatch(/const status = \(\s*<StatusLine text=\{phase === 'error' && !retrying \?/)
+  })
+})
+
+/**
+ * «Вопрос N из 3» в квизе — в заголовке шага, а не в живой области под ним.
+ *
+ * Строка role="status" стояла внутри <m.div key={step.key}>: каждый шаг
+ * монтировал новую область уже с текстом «Вопрос 2 из 3» — случай «key у
+ * предка» из ГРАНИЦЫ выше, который правило не видит. Звучал только первый
+ * шаг, а видимая подпись над шагом aria-hidden. Заголовок шага и так
+ * получает фокус при смене шага (stepHeadRef), и номер в его имени слышен
+ * везде, без гонки живой строки с переездом фокуса.
+ */
+describe('квиз: номер вопроса звучит', () => {
+  const code = read('app/quiz/page.tsx')
+  const at = code.indexOf('key={step.key}')
+  const step = code.slice(at, code.indexOf('</m.div>', at))
+
+  test('под ключом шага нет живой области', () => {
+    expect(at, 'шаг квиза не найден — сторож ослеп').toBeGreaterThan(-1)
+    expect(regions(step, 'app/quiz/page.tsx').map((r) => r.tag)).toEqual([])
+  })
+
+  test('номер вопроса — в имени заголовка, на который переезжает фокус', () => {
+    expect(step).toMatch(
+      /<m\.h1\s+ref=\{stepHeadRef\}[^>]*>\s*<span className="sr-only">\s*Вопрос \{stepIndex \+ 1\} из \{STEPS\.length\}\.(?:\s|\{' '\})*<\/span>\s*\{step\.question\}\s*<\/m\.h1>/,
+    )
+  })
+})
+
+/**
+ * Отказ игры дня — одним узлом с экрана прогрева.
+ *
+ * Отказ на /daily — не строка рядом с кнопкой, а ЦЕЛЫЙ ЭКРАН вместо экрана
+ * прогрева: WarmupScreen уходит, и вместе с ним единственная говорившая
+ * область — его строка прогресса. «Библиотека не доехала», «Слишком часто»
+ * появлялись в тишине: человек со скринридером слышал прогрев, а потом
+ * ничего. Область, рождённая вместе с экраном отказа, не спасла бы (правило
+ * выше), поэтому у прогрева и отказа она стоит первым ребёнком фрагмента, и
+ * React сверяет её по месту как один узел — тот же приём, что у полок
+ * /library выше. Герой несёт ту же строку в своей разметке: к нему приходят
+ * только с прогрева, и строка рождается пустой.
+ */
+describe('/daily: отказ объявляет строка, которая стоит с прогрева', () => {
+  const code = read('app/daily/page.tsx')
+  const page = code.slice(code.indexOf('export default function DailyPage'))
+
+  test('в строке — отказ, а на герое — смена героя', () => {
+    expect(code).toMatch(
+      /const status = \(\s*<StatusLine\s+text=\{failed \? `\$\{fail\.title\}\. \$\{fail\.text\}` : said\}/,
+    )
+  })
+
+  test('прогрев и отказ начинаются с {status} — один узел на смену экрана', () => {
+    const loading = page.indexOf("if (phase === 'loading') {")
+    const failing = page.indexOf('if (failed || !pick) {')
+    expect(loading, 'ветка прогрева не найдена — сторож ослеп').toBeGreaterThan(-1)
+    expect(failing, 'ветка отказа не найдена — сторож ослеп').toBeGreaterThan(loading)
+    for (const at of [loading, failing]) {
+      const branch = page.slice(at, page.indexOf('\n  }\n', at))
+      expect(branch).toMatch(/\breturn \(\s*<>\s*\{status\}/)
+    }
+    // ранний return без скобок (`return <WarmupScreen …/>`) обошёл бы правило
+    expect(page).not.toMatch(/\breturn </)
+  })
+
+  test('у героя — та же строка, а не вторая область рядом', () => {
+    expect([...page.matchAll(/\{status\}/g)]).toHaveLength(3)
+    expect(page).not.toMatch(/role="status"/)
   })
 })
 

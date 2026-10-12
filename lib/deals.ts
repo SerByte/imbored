@@ -2,6 +2,7 @@ import { after } from 'next/server'
 import { STORE_ITEMS_BATCH, callStoreItems, parsePurchaseOption, type PurchaseOption } from './catalog'
 import { stalePriceAppids, updateGamePrices, type Db, type PriceQuote } from './db'
 import { logSwallowed } from './errlog'
+import { priceRegion } from './steamregion'
 
 /**
  * Свежие цены и скидки.
@@ -14,16 +15,34 @@ import { logSwallowed } from './errlog'
  * Запрос тот же GetItems, но с пустым data_request: блок покупки приходит без
  * единого include-флага (проверено на живом ответе), поэтому обновление цен
  * стоит на порядок дешевле полного прогрева и берёт те же 200 игр за вызов.
+ *
+ * И это единственный запрос в Steam, который идёт в РЕГИОНЕ ЦЕН
+ * (priceRegion, lib/steamregion), а не метаданных: country_code задаёт и
+ * валюту, и то, продаётся ли игра там вообще.
  */
 
 /** Сколько замер цены считается свежим для планирования следующего */
 export const PRICE_MAX_AGE_SEC = 12 * 3600
 
 type PricesResponse = {
-  response?: { store_items?: Array<{ appid?: number; id?: number; best_purchase_option?: PurchaseOption }> }
+  response?: {
+    store_items?: Array<{
+      appid?: number
+      id?: number
+      visible?: boolean
+      best_purchase_option?: PurchaseOption
+    }>
+  }
 }
 
-/** Чистый разбор ответа — appid -> цена со скидкой */
+/**
+ * Чистый разбор ответа — appid -> цена со скидкой.
+ *
+ * visible:false — магазин региона игру не показывает: в российском Steam так
+ * отвечают Cyberpunk 2077 и The Witcher 3, в любом — снятая с продажи. Это
+ * тоже ответ, и он сильнее «цены нет»: котировка hidden, и витрина пишет «не
+ * продаётся в российском Steam» вместо того, чтобы молчать.
+ */
 export function parseStorePrices(json: unknown): Map<number, PriceQuote> {
   const items = (json as PricesResponse)?.response?.store_items
   const out = new Map<number, PriceQuote>()
@@ -31,6 +50,10 @@ export function parseStorePrices(json: unknown): Map<number, PriceQuote> {
   for (const it of items) {
     const appid = it.appid ?? it.id
     if (!appid) continue
+    if (it.visible === false) {
+      out.set(appid, { appid, hidden: true })
+      continue
+    }
     out.set(appid, { appid, ...parsePurchaseOption(it.best_purchase_option) })
   }
   return out
@@ -43,11 +66,13 @@ export function parseStorePrices(json: unknown): Map<number, PriceQuote> {
  */
 export async function fetchStorePrices(
   appids: number[],
-  opts: { fetchFn?: typeof fetch } = {},
+  opts: { fetchFn?: typeof fetch; cc?: string } = {},
 ): Promise<PriceQuote[]> {
   const positive = [...new Set(appids.filter((id) => id > 0))]
   if (!positive.length) return []
-  const { fetchFn = fetch } = opts
+  // Регион — снаружи: записать котировки обязан тот же регион, в котором их
+  // сняли, а не тот, что окажется в окружении к моменту записи
+  const { fetchFn = fetch, cc = priceRegion() } = opts
 
   const out: PriceQuote[] = []
   for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
@@ -56,7 +81,9 @@ export async function fetchStorePrices(
     // ожидания скромнее: на двух сотнях игр это 12 секунд вместо сорока.
     // Сорок здесь были бы не терпением, а способом упереться в лимит времени
     // самой функции — и не записать вообще ничего.
-    const byAppid = parseStorePrices(await callStoreItems(chunk, {}, fetchFn, PRICE_MS_PER_APP))
+    const byAppid = parseStorePrices(
+      await callStoreItems(chunk, {}, fetchFn, PRICE_MS_PER_APP, undefined, cc),
+    )
     for (const appid of chunk) out.push(byAppid.get(appid) ?? { appid })
   }
   return out
@@ -112,11 +139,13 @@ export async function refreshDeals(
 ): Promise<number> {
   const { maxFetch = STORE_ITEMS_BATCH, maxAgeSec = PRICE_MAX_AGE_SEC, fetchFn } = opts
   if (Date.now() < cooldownUntil) return 0
-  const stale = await stalePriceAppids(db, appids, maxAgeSec, nowSec, maxFetch)
+  // Один регион на весь проход: очередь, запрос и запись — про одни и те же цены
+  const cc = priceRegion()
+  const stale = await stalePriceAppids(db, appids, maxAgeSec, nowSec, maxFetch, cc)
   if (!stale.length) return 0
   try {
-    const quotes = await fetchStorePrices(stale, ...(fetchFn ? [{ fetchFn }] : []))
-    await updateGamePrices(db, quotes, nowSec)
+    const quotes = await fetchStorePrices(stale, { cc, ...(fetchFn ? { fetchFn } : {}) })
+    await updateGamePrices(db, quotes, nowSec, cc)
     return quotes.length
   } catch (err) {
     logSwallowed('deals:refresh', err, { batch: stale.length })

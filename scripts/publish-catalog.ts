@@ -1,7 +1,7 @@
 /**
  * Заливка готового каталога из локальной базы в облако.
  *
- *   npm run catalog:publish -- --dry-run     показать, что поедет
+ *   npm run catalog:publish -- --dry-run     показать, что поедет (облако только читается)
  *   npm run catalog:publish                  залить
  *
  * Зачем отдельный скрипт, если есть catalog:promote. Промоут считает вердикты
@@ -22,7 +22,12 @@
  * genres_json приходят из appdetails, то есть их наполняет крон страниц, а не
  * промоут: замер на 20 августа — локально ноль и ноль на 6000 игр, в проде 126
  * и 126, ровно столько, сколько карточек успел обогатить крон. trailer_json —
- * туда же: его привозят крон карточек, промоут и доливка медиа.
+ * туда же: его привозят крон карточек, промоут и доливка медиа. И ru_lang —
+ * русский язык приезжает тем же запросом, что трейлер, только пустота у него —
+ * NULL, а ноль — ответ «русского нет». У него правило строже: локальное число
+ * только заполняет облачный NULL, а известный в облаке язык заливка не трогает
+ * вовсе (fillUnknownSql в lib/db) — облако его перечитывает, а локальный —
+ * снимок дня промоута.
  *
  * Заливка списком колонок затирала эти 126 пустотой. И это хуже, чем звучит:
  * page_at сюда не входит, значит отметка «карточка обогащена» переживала
@@ -51,7 +56,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { migrateDb, rebuildTagStats, repairGameJson } from '../lib/db'
+import { pendingMigrations, rebuildTagStats, repairGameJson } from '../lib/db'
+import { openCloud } from './opendb'
 import { buildSetList, presentCols, publishRefusal, tagsSelectSql, TAGS_UPSERT_SQL } from './publishsql'
 
 /** Строк в одном батче. Больше — риск упереться в лимит запроса libsql. */
@@ -63,11 +69,11 @@ const flag = (name: string) => process.argv.includes(`--${name}`)
 const COLS = [
   'appid', 'name', 'tags_json', 'genres_json', 'categories_json', 'short_description',
   'header_image', 'screenshots_json', 'is_free', 'price_final', 'release_date',
-  'price_initial', 'discount_percent', 'discount_ends_at', 'price_at',
+  'price_initial', 'discount_percent', 'discount_ends_at', 'price_at', 'price_cc', 'store_hidden',
   'median_forever', 'store', 'store_url', 'updated_at', 'art_json', 'release_year',
   'developer', 'publisher', 'reviews_total', 'reviews_percent', 'reviews_30d',
   'ccu', 'ccu_at', 'signals_at', 'tag_count', 'is_multiplayer', 'alive',
-  'dead_reason', 'superseded_by', 'trailer_json',
+  'dead_reason', 'superseded_by', 'trailer_json', 'ru_lang',
 ] as const
 
 function openLocal(): Client {
@@ -79,12 +85,18 @@ function openLocal(): Client {
   return createClient({ url: `file:${file}` })
 }
 
-async function openRemote(): Promise<Client> {
+/**
+ * Облако-приёмник. Настоящая заливка доводит его схему до схемы ветки: без
+ * колонок ветки (price_cc, store_hidden) INSERT ниже не пройдёт. --dry-run
+ * открывает его без миграций (readOnly, см. openCloud): «показать, что
+ * поедет» не имеет права ничего менять на проде, а счёт ниже читает только
+ * games и game_tags, которые там есть всегда.
+ */
+async function openRemote({ readOnly }: { readOnly: boolean }): Promise<Client> {
   const url = process.env.TURSO_DATABASE_URL
   if (!url) throw new Error('нужен TURSO_DATABASE_URL — это скрипт заливки в облако')
-  console.log(`приёмник: Turso`)
-  const db = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN })
-  return migrateDb(db)
+  console.log(readOnly ? 'приёмник: Turso, только чтение' : 'приёмник: Turso')
+  return openCloud(url, process.env.TURSO_AUTH_TOKEN, { readOnly })
 }
 
 async function main() {
@@ -95,7 +107,7 @@ async function main() {
   const refusal = publishRefusal(await repairGameJson(local, { dryRun: true }))
   if (refusal) throw new Error(refusal)
 
-  const remote = await openRemote()
+  const remote = await openRemote({ readOnly: dryRun })
 
   const count = async (db: Client, t: string) =>
     Number((await db.execute(`SELECT COUNT(*) n FROM ${t}`)).rows[0].n)
@@ -115,13 +127,25 @@ async function main() {
     `тегов ${src.tags.toLocaleString('ru-RU')}`)
 
   if (dryRun) {
+    // Миграцию, которую сделает настоящий прогон, видно заранее: это запись
+    // в прод, и бэкап перед ней снимают до заливки, а не после. Не одна
+    // версия схемы: разовые шаги под своими флагами (починка JSON-колонок
+    // переписывает строки games) и новые индексы версию не поднимают — см.
+    // pendingMigrations. Окружение и опции те же, с какими её позовёт
+    // createDb настоящего прогона
+    const pending = await pendingMigrations(remote)
+    if (pending.length) {
+      console.log('\nзаливка сначала доведёт облако до схемы этой ветки — бэкап до неё:')
+      for (const step of pending) console.log(`  - ${step}`)
+    }
     console.log('\n--dry-run: ничего не записано')
     return
   }
 
   // ---- games ----
-  // Поздние колонки (trailer_json) — только если локальный каталог их знает:
-  // заливка его не мигрирует, см. presentCols
+  // Поздние колонки (trailer_json, price_cc, store_hidden, ru_lang) — только если
+  // локальный каталог их знает: заливка его не мигрирует, см. presentCols.
+  // Без price_cc не едет и цена — вся её группа
   const haveCols = new Set(
     (await local.execute("SELECT name FROM pragma_table_info('games')")).rows.map((r) =>
       String(r.name),
@@ -130,7 +154,12 @@ async function main() {
   const cols = presentCols(COLS, haveCols)
   if (cols.length < COLS.length) {
     const нет = COLS.filter((c) => !cols.includes(c))
-    console.log(`  в локальном каталоге нет ${нет.join(', ')} — эти колонки не поедут`)
+    const безРегиона = нет.filter((c) => haveCols.has(c))
+    const пропали = нет.filter((c) => !haveCols.has(c))
+    if (пропали.length) console.log(`  в локальном каталоге нет ${пропали.join(', ')} — эти колонки не поедут`)
+    if (безРегиона.length) {
+      console.log(`  цена без региона (price_cc) не едет: ${безРегиона.join(', ')} — облако перемеряет их само`)
+    }
   }
   /*
    * Поля, которые наполняет ОБОГАЩЕНИЕ, а не промоут: пустое локальное

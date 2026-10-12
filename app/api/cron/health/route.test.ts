@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { CRON_JOBS, LLM_DOWN_FRESH_SEC, PAGES_STALE_SEC, SWEEP_KEY } from '@/lib/cron'
-import { setCatalogMeta, type Db } from '@/lib/db'
+import { linksToday, runChain } from '@/lib/chain'
+import { CRON_JOBS, LLM_DOWN_FRESH_SEC, PAGES_STALE_SEC, RUN_LOST_SEC, SWEEP_KEY } from '@/lib/cron'
+import { DIGEST_LEASE, setCatalogMeta, STEAM_LEASE, type Db } from '@/lib/db'
 import { takeLlmBudget } from '@/lib/llmcap'
 import { bumpTelemetry, SERVER_ERRORS_LIMIT } from '@/lib/telemetry'
 import { STEAM_PROBE_KEY } from '@/lib/steamprobe'
@@ -40,7 +41,7 @@ const ask = (secret = SECRET) =>
  */
 async function allFresh(): Promise<void> {
   for (const job of Object.values(CRON_JOBS)) {
-    await setCatalogMeta(db, job.lastKey, JSON.stringify({ at: T0 - 60, chain: 0, hasMore: false }))
+    await setCatalogMeta(db, job.lastKey, JSON.stringify({ at: T0 - 60, links: 1, hasMore: false, ended: 'done' }))
   }
   await setCatalogMeta(db, STEAM_PROBE_KEY, JSON.stringify({ at: T0 - 600, ok: true }))
   await setCatalogMeta(db, SWEEP_KEY, JSON.stringify({ at: T0 - 20 * 3600, demos: 0, sessions: 0 }))
@@ -71,7 +72,7 @@ describe('/api/cron/health', () => {
     await setCatalogMeta(
       db,
       CRON_JOBS.pages.lastKey,
-      JSON.stringify({ at: T0 - PAGES_STALE_SEC - 1, chain: 4 }),
+      JSON.stringify({ at: T0 - PAGES_STALE_SEC - 1, links: 6, ended: 'daily' }),
     )
     const res = await ask()
     expect(res.status).toBe(503)
@@ -81,26 +82,66 @@ describe('/api/cron/health', () => {
     expect(body.jobs.news).toMatchObject({ ok: true })
   })
 
-  test('оборванная передача звена — 503 с причиной', async () => {
+  test('запуск сняли по сроку, не дав дописать итог, — 503 «снят»', async () => {
+    // Единственный путь, которым звенья внутри вызова умирают молча: звено
+    // вышло за срок, инстанс сняли, итоговой отметки нет
     await allFresh()
     await setCatalogMeta(
       db,
-      CRON_JOBS.digest.lastKey,
-      JSON.stringify({ at: T0 - 60, chain: 2, обрыв: 'HTTP 401' }),
+      CRON_JOBS.pages.lastKey,
+      JSON.stringify({ at: T0 - RUN_LOST_SEC, links: 3, enriched: 12, hasMore: true, stopped: 'budget' }),
     )
     const res = await ask()
     expect(res.status).toBe(503)
-    expect(((await res.json()) as { jobs: Record<string, unknown> }).jobs.digest).toEqual({
+    expect(((await res.json()) as { jobs: Record<string, unknown> }).jobs.pages).toEqual({
       ok: false,
-      problem: 'обрыв',
-      ageSec: 60,
-      detail: 'HTTP 401',
+      problem: 'снят',
+      ageSec: RUN_LOST_SEC,
+      detail: 'звеньев: 3',
     })
+  })
+
+  test('запуск идёт прямо сейчас — это не авария', async () => {
+    await allFresh()
+    await setCatalogMeta(db, CRON_JOBS.pages.lastKey, JSON.stringify({ at: T0 - 50, links: 2, enriched: 13 }))
+    expect((await ask()).status).toBe(200)
+  })
+
+  test('обрыв HTTP 508 из старой цепочки больше не валит проверку', async () => {
+    // Ровно эта отметка краснила health каждый день: самовызов со второго
+    // шага Vercel резал 508. Звеньев по HTTP больше нет, а старую отметку
+    // перезапишет первый же запуск
+    await allFresh()
+    await setCatalogMeta(
+      db,
+      CRON_JOBS.pages.lastKey,
+      JSON.stringify({ at: T0 - 600, chain: 1, claimed: 20, enriched: 14, stopped: 'budget', обрыв: 'HTTP 508' }),
+    )
+    expect((await ask()).status).toBe(200)
+  })
+
+  test('отметку, которую пишет цикл звеньев, health читает как есть', async () => {
+    // Не рукописная отметка, а настоящий runChain: разойдись формат записи с
+    // форматом чтения — и health молча ослеп бы
+    await allFresh()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await runChain({
+      db,
+      job: 'digest',
+      lease: { key: DIGEST_LEASE, holder: 'digest:test' },
+      startedAt: Date.now(),
+      maxDurationSec: 300,
+      maxLinks: 8,
+      link: async () => ({ digested: 3, hasMore: false, stopped: 'unavailable' as const, llm: 'down' as const, llmStatus: 402 }),
+      verdict: () => 'llm',
+    })
+    const body = (await (await ask()).json()) as { jobs: Record<string, unknown> }
+    expect(body.jobs.digest).toMatchObject({ ok: false, problem: 'модель недоступна', detail: 'HTTP 402' })
   })
 
   test('крон на паузе не валит проверку', async () => {
     await allFresh()
-    const weekAgo = JSON.stringify({ at: T0 - 86_400 * 7, chain: 0 })
+    const weekAgo = JSON.stringify({ at: T0 - 86_400 * 7, links: 1, ended: 'done' })
     await setCatalogMeta(db, CRON_JOBS.news.lastKey, weekAgo)
     await setCatalogMeta(db, CRON_JOBS.news.pausedKey, '1')
     const res = await ask()
@@ -116,7 +157,7 @@ describe('/api/cron/health', () => {
     await setCatalogMeta(
       db,
       CRON_JOBS.digest.lastKey,
-      JSON.stringify({ at: T0 - 60, chain: 0, digested: 0, hasMore: false, stopped: 'unavailable', llm: 'down', llmStatus: 402 }),
+      JSON.stringify({ at: T0 - 60, links: 1, ended: 'llm', digested: 0, hasMore: false, stopped: 'unavailable', llm: 'down', llmStatus: 402 }),
     )
     const res = await ask()
     expect(res.status).toBe(503)
@@ -132,7 +173,7 @@ describe('/api/cron/health', () => {
     await setCatalogMeta(
       db,
       CRON_JOBS.digest.lastKey,
-      JSON.stringify({ at: T0 - 60, chain: 0, digested: 0, hasMore: false, stopped: 'unavailable' }),
+      JSON.stringify({ at: T0 - 60, links: 1, ended: 'llm', digested: 0, hasMore: false, stopped: 'unavailable' }),
     )
     expect((await ask()).status).toBe(200)
   })
@@ -143,7 +184,7 @@ describe('/api/cron/health', () => {
     await setCatalogMeta(
       db,
       CRON_JOBS.pages.lastKey,
-      JSON.stringify({ at: T0 - LLM_DOWN_FRESH_SEC - 1, chain: 3, llm: 'down', llmStatus: null }),
+      JSON.stringify({ at: T0 - LLM_DOWN_FRESH_SEC - 1, links: 3, ended: 'daily', llm: 'down', llmStatus: null }),
     )
     expect((await ask()).status).toBe(200)
   })
@@ -196,6 +237,28 @@ describe('/api/cron/health', () => {
       steamKey: { ok: true, paused: true },
       sweep: { ok: true, paused: true },
     })
+  })
+
+  test('звенья карточек за сутки — справкой, без 503: выбранный потолок — норма', async () => {
+    await allFresh()
+    vi.stubEnv('LLM_DAILY_CAP', '150')
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test')
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await runChain({
+      db,
+      job: 'pages',
+      lease: { key: STEAM_LEASE, holder: 'pages:test' },
+      startedAt: Date.now(),
+      maxDurationSec: 300,
+      maxLinks: 20,
+      dailyCap: 9,
+      link: async () => ({ hasMore: true }),
+      verdict: () => null,
+    })
+    expect(await linksToday(db, 'pages', T0)).toBe(9)
+    const res = await ask()
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { pagesLinks: unknown }).pagesLinks).toEqual({ used: 9, cap: 9 })
   })
 
   test('расход модели за сутки — справкой, без 503', async () => {

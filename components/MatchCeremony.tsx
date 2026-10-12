@@ -10,11 +10,13 @@ import { GameArt } from '@/components/GameArt'
 import { LogoMark } from '@/components/Logo'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
-import { PriceTag } from '@/components/PriceTag'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { MatchOwners } from '@/components/room/MatchOwners'
+import { MatchShare } from '@/components/room/MatchShare'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { focusAdrift } from '@/lib/focushandoff'
+import { matchByLeader } from '@/lib/room'
 import { STORE_LABEL } from '@/lib/stores'
 
 gsap.registerPlugin(useGSAP)
@@ -30,6 +32,7 @@ gsap.registerPlugin(useGSAP)
 export function MatchCeremony({
   game,
   memberCount,
+  roomId,
   takeFocus = false,
 }: {
   game: {
@@ -43,11 +46,19 @@ export function MatchCeremony({
     ownedByMe?: boolean | null
     /** сколько участников за; null — не знаем (смотрит не участник) */
     forCount?: number | null
+    /** у кого из остальных её нет — метки ростера; null — не знаем */
+    missingFor?: string[] | null
     isFree?: boolean
     priceFinal?: number | null
+    /** регион магазина цены; null — цены нет */
+    priceCc?: string | null
+    /** «не продаётся в российском Steam» */
+    unsold?: boolean
     discount?: Discount | null
   }
   memberCount: number
+  /** код комнаты — для «Поделиться» (components/room/MatchShare) */
+  roomId: string
   /**
    * Церемония пришла на место комнаты на глазах у этого экрана (sawOpen на
    * странице комнаты), а не открыта ссылкой на сошедшуюся комнату.
@@ -60,9 +71,10 @@ export function MatchCeremony({
    * единогласия не было, и комната согласилась на игру, за которую не меньше
    * половины. «Все в комнате хотят одного и того же» здесь неправда — поэтому
    * другой заголовок и честный счёт. Имён нет и тут: только сколько.
+   * Правило одно с запасным экраном (matchByLeader в lib/room).
    */
   const forCount = game.forCount ?? null
-  const byLeader = forCount !== null && forCount < memberCount
+  const byLeader = matchByLeader(forCount, memberCount)
 
   /*
    * ФОКУС — НА «ЭТО МАТЧ!», НО ТОЛЬКО ПОТЕРЯННЫЙ.
@@ -142,7 +154,7 @@ export function MatchCeremony({
             в одно слово — буквальная картинка того, что сейчас произошло. */}
         <EchoTitle
           text={byLeader ? 'Договорились!' : 'Это матч!'}
-          ghosts={byLeader ? forCount : memberCount}
+          ghosts={byLeader ? (forCount ?? memberCount) : memberCount}
           className="font-display text-display-lg"
           headRef={titleRef}
         />
@@ -232,22 +244,17 @@ export function MatchCeremony({
               </a>
             )}
           </Magnet>
-          {/* Разделитель — только при цене: без неё « · » повис бы в конце */}
-          {game.ownedByMe === false && (
-            <p className="text-sm text-dim">
-              У тебя её пока нет
-              {(game.isFree || (game.priceFinal ?? null) !== null) && (
-                <>
-                  {' · '}
-                  <PriceTag
-                    priceFinal={game.priceFinal ?? null}
-                    isFree={game.isFree}
-                    discount={game.discount}
-                  />
-                </>
-              )}
-            </p>
-          )}
+          {/* Кому её не хватает — всей комнате, не только тому, у кого нет:
+              иначе остальные зовут в войс и ждут (components/room/MatchOwners) */}
+          <MatchOwners game={game} />
+          {/* Весть «сошлись» — в общий чат, тем, кто опоздал к выбору. Ниже
+              магазина и строк о цене: сначала играть, потом рассказывать */}
+          <MatchShare
+            roomId={roomId}
+            name={game.name}
+            forCount={forCount}
+            memberCount={memberCount}
+          />
         </div>
 
         {/*

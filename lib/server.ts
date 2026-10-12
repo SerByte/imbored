@@ -13,6 +13,7 @@ import {
 } from './sessions'
 import { SESSION_COOKIE } from './session'
 import { DEMO_PREFIX, isDemoId } from './demoid'
+import { MUTE_COOKIE, parseMutes, type MutePreset } from './mutetags'
 
 const globalStore = globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }
 
@@ -35,7 +36,8 @@ const globalStore = globalThis as typeof globalThis & { __imboredDb?: Promise<Db
  * Строка в логе — ради того, чтобы сбой был виден хоть где-то. Запрос, который
  * ждал этот промис, упадёт со своей ошибкой, но по ней не понять, что умерла
  * именно инициализация, а не его собственный SQL. А те, кто ошибку getDb
- * глотает (issueSession, sitemap), не оставили бы следа вовсе: следующий
+ * глотает молча (issueSession; карта сайта глотает только на сборке и пишет
+ * там свою строку — см. app/sitemap.ts), не оставили бы следа вовсе: следующий
  * запрос тихо подключится заново. Строка одна на попытку подключения, то есть
  * не чаще, чем падают сами запросы, — троттлить здесь нечего.
  */
@@ -168,6 +170,26 @@ export function sessionCookieOptions() {
   } as const
 }
 
+/**
+ * Погасить в ответе куки, которые принадлежат человеку, а не браузеру:
+ * сессию и «Не предлагать» (lib/mutetags.ts). Фильтр — про человека, и
+ * следующий вошедший на этом браузере молча получал бы выдачу без того, что
+ * запретил не он.
+ *
+ * Зовут оба пути, после которых человека на этом устройстве быть не должно:
+ * выход (app/api/auth/logout) и «Удалить всё обо мне» (app/api/forget).
+ * Одним помощником, а не строками в каждом роуте: так и было, и списки
+ * разъехались — выход научился гасить «Не предлагать», а удаление, которое
+ * обещает «то же, что выход, только везде», оставляло её ещё на год.
+ *
+ * Путь «Не предлагать» — тот же, с которым кука ставится (muteCookie):
+ * иначе браузер погасил бы соседку, а её оставил.
+ */
+export function clearDeviceCookies(res: NextResponse): void {
+  res.cookies.set(SESSION_COOKIE, '', { ...sessionCookieOptions(), maxAge: 0 })
+  res.cookies.set(MUTE_COOKIE, '', { path: '/', sameSite: 'lax', maxAge: 0 })
+}
+
 /** Кука со state на время входа через Steam — см. stateMatches в lib/steam-openid. */
 export const OIDC_COOKIE = 'imbored_oidc'
 
@@ -220,20 +242,35 @@ export { appBaseUrl } from './origin'
  * не могут в принципе: HTTP не разрешает Set-Cookie после начала стрима.
  * Поэтому продление живёт в единственном роуте /api/session/touch, а здесь
  * только читается флаг stale.
+ *
+ * fresh — сверить сессию с базой мимо кэша состояния (resolveSession): одно
+ * чтение по первичному ключу ради решения, которого не отменить, —
+ * удаления всех данных (app/api/forget).
  */
-export async function currentSession(): Promise<Resolved | null> {
+export async function currentSession(opts: { fresh?: boolean } = {}): Promise<Resolved | null> {
   const jar = await cookies()
   return resolveSession({
     token: jar.get(SESSION_COOKIE)?.value,
     secret: sessionSecret(),
     nowSec: nowSec(),
     lookup: async (sid, steamid) => getSessionState(await getDb(), sid, steamid),
+    fresh: opts.fresh === true,
   })
 }
 
 /** SteamID64 текущего пользователя из подписанной куки, либо null */
 export async function currentSteamId(): Promise<string | null> {
   return (await currentSession())?.steamid ?? null
+}
+
+/**
+ * «Не предлагать» этого браузера — из его куки (lib/mutetags.ts). Не
+ * подписана и не нужна подписью: это просьба того, кто спрашивает, о его же
+ * выдаче, и подделать её значит лишь урезать подбор самому себе. Разбор
+ * пускает только известные ключи.
+ */
+export async function currentMutes(): Promise<readonly MutePreset[]> {
+  return parseMutes((await cookies()).get(MUTE_COOKIE)?.value)
 }
 
 /**
@@ -256,20 +293,39 @@ export async function currentSteamId(): Promise<string | null> {
  * Поставь по умолчанию «подтверждена» — и каждый, кто раньше вставил чужую
  * ссылку, сохранил бы право записи на год. Цена — честному человеку один раз
  * войти через Steam.
+ *
+ * В комнатах то же правило работает тоньше, потому что входят в них и по
+ * ссылке. Членство помнит, заведено ли оно пишущей сессией, и такое членство
+ * действует только от пишущей (lib/roomseat). Убрать из пати другого — тоже
+ * только пишущей, как и вывесить её на доску.
  */
 export function isWriter(session: Pick<Resolved, 'steamid' | 'verified'>): boolean {
   return session.verified || isDemoId(session.steamid)
 }
 
-export type WriterGate = { ok: true; steamid: string } | { ok: false; response: NextResponse }
+export type WriterGate =
+  | {
+      ok: true
+      steamid: string
+      /**
+       * Строка сессии — для записи, которой мало решения на входе: состояние
+       * сессии кэшируется на процесс (REVOKE_CACHE_SEC в lib/sessions), и
+       * выдающая постоянный доступ ручка сверяет отзыв по этой строке в самой
+       * записи (issueFeedLink в lib/db)
+       */
+      sid: string
+    }
+  | { ok: false; response: NextResponse }
 
 /**
  * Вход в пишущий роут: кто пришёл и вправе ли он писать.
  *
  * 401 nosession — гостю, как и раньше. 403 needsteam — сессии, которой
  * писать нельзя (isWriter): страницы по этому коду показывают строку «войди
- * через Steam», а не экран ошибки. Голос и вход в комнату сюда НЕ ходят —
- * они живут внутри комнаты и профиль не трогают.
+ * через Steam», а не экран ошибки. Голос и вход в комнату сюда НЕ ходят: в
+ * пати подключаются и своей ссылкой. Но от имени участника, вошедшего через
+ * Steam, ссылка на его профиль не действует — это решает seatOf в
+ * lib/roomseat тем же кодом needsteam.
  */
 export async function requireWriter(): Promise<WriterGate> {
   const session = await currentSession()
@@ -279,7 +335,7 @@ export async function requireWriter(): Promise<WriterGate> {
   if (!isWriter(session)) {
     return { ok: false, response: NextResponse.json({ error: 'needsteam' }, { status: 403 }) }
   }
-  return { ok: true, steamid: session.steamid }
+  return { ok: true, steamid: session.steamid, sid: session.sid }
 }
 
 /**

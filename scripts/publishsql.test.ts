@@ -238,7 +238,11 @@ describe('публикация каталога: битые JSON-колонки 
     const main = src.slice(src.indexOf('async function main'))
     const guard = main.indexOf('repairGameJson(local, { dryRun: true })')
     expect(guard, 'publish-catalog больше не проверяет форму JSON').toBeGreaterThan(-1)
-    expect(guard).toBeLessThan(main.indexOf('await openRemote()'))
+    // Без закрывающей скобки: облако открывается с флагом { readOnly: dryRun }
+    // (--dry-run — без миграций, см. scripts/opendb.test.ts)
+    const remote = main.indexOf('await openRemote(')
+    expect(remote, 'подключение к облаку в main не найдено').toBeGreaterThan(-1)
+    expect(guard).toBeLessThan(remote)
   })
 })
 
@@ -274,5 +278,119 @@ describe('публикация каталога: словарь тегов', () 
     const r = await local.execute(tagsSelectSql(false))
     expect(r.rows[0].name_ru).toBeNull()
     await expect(local.execute(tagsSelectSql(true))).rejects.toThrow(/name_ru/)
+  })
+})
+
+/**
+ * Регион цены (lib/steamregion) — часть того же замера, что цена: едет только
+ * вместе с ней и по той же отметке. Иначе заливка положила бы локальные
+ * доллары под рублёвый price_cc облака.
+ */
+describe('публикация каталога: регион цены', () => {
+  const COLS_PRICE = [
+    'appid', 'name', 'price_final', 'price_initial', 'discount_percent', 'discount_ends_at',
+    'price_at', 'price_cc', 'store_hidden', 'updated_at',
+  ] as const
+  const ДЕНЬ = 1_790_000_000
+
+  async function заливаем(
+    облако: { price_final: number | null; price_cc: string | null; store_hidden: number; price_at: number },
+    локально: { price_final: number | null; price_cc: string | null; store_hidden: number; price_at: number },
+  ) {
+    const db = await createDb(':memory:')
+    const строка = (z: typeof облако) => [1, 'Игра', z.price_final, z.price_final, 0, null, z.price_at, z.price_cc, z.store_hidden, 0]
+    const marks = COLS_PRICE.map(() => '?').join(', ')
+    await db.execute({ sql: `INSERT INTO games (${COLS_PRICE.join(', ')}) VALUES (${marks})`, args: строка(облако) })
+    await db.execute({
+      sql: `INSERT INTO games (${COLS_PRICE.join(', ')}) VALUES (${marks})
+            ON CONFLICT(appid) DO UPDATE SET ${buildSetList(COLS_PRICE)}`,
+      args: строка(локально),
+    })
+    const r = await db.execute('SELECT price_final, price_cc, store_hidden, price_at FROM games')
+    return r.rows[0]
+  }
+
+  test('регион и «не продаётся» — в группе отметки price_at: старое локальное не трогает облачный замер', async () => {
+    const r = await заливаем(
+      { price_final: 199_900, price_cc: 'ru', store_hidden: 0, price_at: ДЕНЬ },
+      { price_final: 5999, price_cc: null, store_hidden: 0, price_at: ДЕНЬ - 86_400 },
+    )
+    expect(r).toMatchObject({ price_final: 199_900, price_cc: 'ru', price_at: ДЕНЬ })
+  })
+
+  test('свежее локальное едет целиком — цена вместе со своим регионом', async () => {
+    const r = await заливаем(
+      { price_final: 199_900, price_cc: 'ru', store_hidden: 1, price_at: ДЕНЬ - 86_400 },
+      { price_final: 5999, price_cc: 'us', store_hidden: 0, price_at: ДЕНЬ },
+    )
+    expect(r).toMatchObject({ price_final: 5999, price_cc: 'us', store_hidden: 0, price_at: ДЕНЬ })
+  })
+
+  test('каталог старше price_cc цену не везёт вовсе, всей группой', () => {
+    const cols = ['appid', 'name', 'price_final', 'price_initial', 'discount_percent', 'discount_ends_at',
+      'price_at', 'price_cc', 'store_hidden', 'ccu', 'updated_at'] as const
+    const старый = new Set(['appid', 'name', 'price_final', 'price_initial', 'discount_percent',
+      'discount_ends_at', 'price_at', 'ccu', 'updated_at'])
+    expect(presentCols(cols, старый)).toEqual(['appid', 'name', 'ccu', 'updated_at'])
+    expect(presentCols(cols, new Set(cols))).toEqual([...cols])
+  })
+
+  test('заливка везёт price_cc и store_hidden', () => {
+    const src = readFileSync('scripts/publish-catalog.ts', 'utf8')
+    const list = src.slice(src.indexOf('const COLS = ['), src.indexOf('] as const', src.indexOf('const COLS = [')))
+    expect(list).toContain("'price_cc'")
+    expect(list).toContain("'store_hidden'")
+  })
+})
+
+describe('публикация каталога: русский язык', () => {
+  const cols = ['appid', 'name', 'ru_lang', 'updated_at'] as const
+
+  /** Облако с языком `было`, поверх — локальная строка с языком `едет` */
+  async function заливаем(было: number | null, едет: number | null) {
+    const db = await createDb(':memory:')
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (1, 'Игра', ?, 0)`,
+      args: [было],
+    })
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (1, 'Игра', ?, 1)
+            ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+      args: [едет],
+    })
+    return (await db.execute('SELECT ru_lang AS r FROM games')).rows[0].r
+  }
+
+  test('язык из облака переживает каталог без него — его привёз крон карточек', async () => {
+    expect(await заливаем(3, null)).toBe(3)
+  })
+
+  test('язык из каталога заполняет пустоту облака, ноль — тоже: «русского нет» — ответ, а не пустота', async () => {
+    // Промоут просит языки вместе с кадрами (fetchStoreItems с media)
+    expect(await заливаем(null, 2)).toBe(2)
+    expect(await заливаем(null, 0)).toBe(0)
+  })
+
+  /*
+   * Локальный язык — снимок на момент промоута, а облачный перечитывают крон
+   * карточек и доливка медиа. Прежде заливка везла любое локальное число
+   * поверх облачного (было `(2, 0) → 0`): игра, промоутнутая в июле без
+   * русского, в сентябре получала субтитры, крон писал 2 — а октябрьская
+   * заливка возвращала 0, и карточка снова говорила «без русского». Не-NULL
+   * доливка медиа больше не перечитывает, так что неправда жила бы до
+   * следующего круга крона, полгода.
+   */
+  test('известный язык облака заливка не трогает — старое локальное «нет» не откатывает свежее «есть»', async () => {
+    expect(await заливаем(2, 0)).toBe(2)
+    expect(await заливаем(0, 3)).toBe(0)
+    expect(await заливаем(1, 1)).toBe(1)
+  })
+
+  test('каталог старше колонки едет без неё; заливка её везёт', () => {
+    const список = ['appid', 'name', 'ru_lang'] as const
+    expect(presentCols(список, new Set(['appid', 'name']))).toEqual(['appid', 'name'])
+    const src = readFileSync('scripts/publish-catalog.ts', 'utf8')
+    const list = src.slice(src.indexOf('const COLS = ['), src.indexOf('] as const', src.indexOf('const COLS = [')))
+    expect(list).toContain("'ru_lang'")
   })
 })

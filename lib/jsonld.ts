@@ -1,6 +1,5 @@
 import { discountOf, trustedPrice } from './discount'
 import { newsHeading, newsPath } from './newspage'
-import type { ReviewFacts } from './gamepage'
 import { OG_SITE, SITE_DESCRIPTION } from './site'
 import { STORE_LABEL } from './stores'
 import { tagRu } from './tagsru'
@@ -11,16 +10,24 @@ import type { GameMeta } from './types'
  *
  * Зачем вообще: пять тысяч страниц `/game/[appid]` — это весь органический
  * вход сайта (см. app/sitemap.ts, там пять служебных адресов и пять тысяч
- * игровых). У каждой из них уже есть то, ради чего Google рисует расширенный
- * сниппет — доля положительных отзывов, их число и цена, — но лежало это
- * только в вёрстке, то есть для робота не существовало. Звёзды и цена прямо в
- * выдаче стоят дороже любой правки самой страницы: они меняют не то, что
- * человек увидит после клика, а то, случится ли клик.
+ * игровых). Цена, жанры, разработчик и путь через жанр лежали только в
+ * вёрстке, то есть для робота не существовали. Цена прямо в выдаче стоит
+ * дороже любой правки самой страницы: она меняет не то, что человек увидит
+ * после клика, а то, случится ли клик.
+ *
+ * ОЦЕНКИ ЗДЕСЬ НЕТ, И ЭТО РЕШЕНИЕ, А НЕ ПРОПУСК. Был aggregateRating из доли
+ * положительных отзывов Steam — ради звёзд в выдаче. Но правила Google для
+ * review snippet прямо запрещают размечать оценки, собранные на другом сайте:
+ * рейтинг обязан приходить от посетителей самой страницы, а мы пересказываем
+ * Steam. Звёзд такая разметка не получает, а на пяти тысячах шаблонных
+ * страниц это ровно узор ручной санкции за «spammy structured markup» — она
+ * снимает расширенные сниппеты со всего сайта, вместе с крошками и статьями
+ * патчей. Кольцо отзывов на странице остаётся: правило про разметку, а не про
+ * видимое. Вернуть оценку можно будет только свою, собранную здесь же.
  *
  * Главное правило модуля — РАЗМЕТКА НЕ ГОВОРИТ БОЛЬШЕ, ЧЕМ СТРАНИЦА.
  * Расхождение видимого и размеченного Google считает нарушением и снимает
  * расширенный сниппет целиком, поэтому:
- *   - процент берётся тот же и округляется так же, как в positivePercent;
  *   - цена проходит через discountOf — ту же проверку срока годности замера,
  *     что и витрина, иначе в выдаче повисла бы скидка, которой на странице
  *     уже нет;
@@ -43,15 +50,10 @@ export type GameLd = {
   genre?: string[]
   playMode?: string[]
   datePublished?: string
+  /** 'ru' — только когда Steam отметил русский; см. gameJsonLd */
+  inLanguage?: 'ru'
   author?: Org
   publisher?: Org
-  aggregateRating?: {
-    '@type': 'AggregateRating'
-    ratingValue: number
-    bestRating: number
-    worstRating: number
-    ratingCount: number
-  }
   offers?: {
     '@type': 'Offer'
     price: string
@@ -74,11 +76,12 @@ const TAGS_AS_GENRE = 8
 
 export type GameLdInput = {
   meta: GameMeta
-  /** уже сведённая оценка — та же, что рисует кольцо на странице; см. reviewFacts */
-  rating: ReviewFacts | null
   /** абсолютный адрес сайта — schema.org требует полных ссылок */
   baseUrl: string
-  /** ISO 4217 региона цен; см. currencyOf */
+  /**
+   * ISO 4217 региона цен — regionCurrency(priceRegion()) из lib/steamregion.
+   * Цена в мете всегда этого региона: чужую rowToMeta не отдаёт вовсе.
+   */
   currency: string
   now: number
 }
@@ -87,7 +90,7 @@ export type GameLdInput = {
  * Категории Steam -> GamePlayMode схемы.
  *
  * Порядок задан здесь, а не приходит из meta.categories, и это важно: страница
- * кэшируется на сутки и пререндерится, а порядок категорий в ответе Steam
+ * кэшируется на неделю и пререндерится, а порядок категорий в ответе Steam
  * между пересборками каталога не гарантирован. Разметка не должна меняться от
  * того, в каком порядке они легли в базу.
  */
@@ -97,28 +100,8 @@ const PLAY_MODES: Array<[number[], string]> = [
   [[9, 38], 'CoOp'],
 ]
 
-/**
- * Steam-регион цен -> код валюты.
- *
- * Нужен только разметке: витрина рисует цену через formatPrice, который
- * доллар зашивает (модуль клиентский и до process.env не дотягивается).
- * Пока STEAM_STORE_CC не трогали, оба места говорят одно и то же; расходиться
- * они начнут ровно тогда, когда регион сменят — и чинить тогда придётся
- * formatPrice, а не это.
- */
-const CURRENCY: Record<string, string> = {
-  us: 'USD', ru: 'RUB', eu: 'EUR', de: 'EUR', fr: 'EUR', uk: 'GBP', gb: 'GBP',
-  ua: 'UAH', kz: 'KZT', tr: 'TRY', pl: 'PLN', br: 'BRL', jp: 'JPY', cn: 'CNY',
-  ca: 'CAD', au: 'AUD', in: 'INR',
-}
-
-export function currencyOf(cc: string | undefined): string {
-  return CURRENCY[(cc ?? '').toLowerCase()] ?? 'USD'
-}
-
 export function gameJsonLd({
   meta,
-  rating,
   baseUrl,
   currency,
   now,
@@ -143,7 +126,7 @@ export function gameJsonLd({
   // genre не появлялся бы вовсе там, где на странице стоит восемь чипсов.
   //
   // Тай-брейк по имени обязателен по той же причине, что и в topTagOf:
-  // страница пререндерится и кэшируется на сутки, а порядок ключей после
+  // страница пререндерится и кэшируется на неделю, а порядок ключей после
   // очередной пересборки каталога не гарантирован.
   //
   // Теги — русскими подписями (tagRu), как на чипсах: разметка обязана
@@ -166,22 +149,22 @@ export function gameJsonLd({
   // разбирать её обратно в ISO незачем — releaseYear уже разобран каталогом,
   // а голый год schema.org принимает как частичный ISO 8601.
   if (meta.releaseYear) ld.datePublished = String(meta.releaseYear)
+  /*
+   * Русский в игре — из той же ступени, что строка «Русский: …» на странице
+   * (languageTrait в lib/gametraits), но условия у них разные: строка — когда
+   * Steam ответил (в том числе «нет»), inLanguage — только когда ответ «есть».
+   * Любая отметка Steam — интерфейс, субтитры или озвучка — значит, что
+   * содержимое игры есть по-русски.
+   *
+   * При «нет» поля нет: других языков игры мы не храним, а «русского нет» не
+   * повод назвать какой-то другой — inLanguage со списком наугад был бы ровно
+   * той разметкой, которая говорит больше страницы.
+   */
+  if (meta.ruLang !== undefined && meta.ruLang > 0) ld.inLanguage = 'ru'
   if (meta.developer) ld.author = { '@type': 'Organization', name: meta.developer }
   if (meta.publisher) ld.publisher = { '@type': 'Organization', name: meta.publisher }
 
-  if (rating) {
-    ld.aggregateRating = {
-      '@type': 'AggregateRating',
-      // Шкала 0–100, а не пересчёт в пять звёзд: у нас доля положительных
-      // отзывов, а не средний балл. Google нормирует сам по bestRating и
-      // worstRating, и честная шкала ему для этого достаточна.
-      ratingValue: rating.percent,
-      bestRating: 100,
-      worstRating: 0,
-      ratingCount: rating.total,
-    }
-  }
-
+  // aggregateRating сюда не возвращать — почему, в докблоке модуля
   const offers = offersOf(meta, currency, now)
   if (offers) ld.offers = offers
 
@@ -189,6 +172,11 @@ export function gameJsonLd({
 }
 
 function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers'] {
+  // «Не продаётся в российском Steam» — предложения нет, в том числе
+  // бесплатного: InStock про игру, которую в этом регионе не взять, был бы
+  // неправдой. Видимое на странице говорит то же — PriceTag ставит «не
+  // продаётся» раньше «бесплатно» (lib/pricetag.test.ts)
+  if (meta.storeHidden) return undefined
   // Free-to-play приезжает без price_final вовсе — у Steam этого поля для
   // таких игр нет. Ноль здесь не догадка: страница в этом же случае рисует
   // «бесплатно», и разметка обязана говорить то же самое.
@@ -201,15 +189,37 @@ function offersOf(meta: GameMeta, currency: string, now: number): GameLd['offers
    * Rain в базе стояло $0.99 при настоящих $19.99. Показать такое человеку
    * плохо, а отдать поисковику — хуже: Offer живёт в индексе дольше страницы
    * и попадает в сниппет, по которому кликают.
+   *
+   * Проверка — на момент рендера, а карточка живёт в кэше неделю. Поэтому
+   * скидку, погасшую уже после рендера, из разметки убирает не она, а крон
+   * карточек: сбрасывает адрес, когда срок доверия вышел (revalidateEndedDeals
+   * в lib/gamecache).
    */
   const trusted = meta.isFree ? 0 : trustedPrice(meta, now)
   if (trusted === null) return undefined
+  /*
+   * Ноль без isFree — не «бесплатно», а «цены нет». Поиск магазина кладёт «0»
+   * в data-price-final игре, которую не продают вовсе (делист, снята с
+   * продажи): так в базе лежат Ori and the Blind Forest и Call of Duty, с
+   * пустым is_free. Герой страницы рисует строку цены только при
+   * `isFree || storeHidden || price > 0` (app/game/[appid]/page.tsx), то есть
+   * о таких играх молчит, — а разметка говорила «0.00, в наличии», и в выдаче
+   * платная игра выходила бесплатной.
+   *
+   * Сюда же раздача −100%: discountOf отдаёт её скидкой с finalCents 0, но
+   * страница по тому же условию прячет строку целиком, вместе с процентом и
+   * сроком. Разметка идёт за видимым, а не за скидкой. Совпадение двух сторон
+   * сторожит app/game/[appid]/page.test.ts на отрисованной странице.
+   */
+  if (!meta.isFree && trusted <= 0) return undefined
 
   const deal = discountOf(meta, now)
   /*
    * isFree СИЛЬНЕЕ цены, и порядок тут не вкусовой — он повторяет PriceTag,
    * который решает то же самое для страницы: `if (isFree || priceFinal === 0)`
-   * стоит у него первой строкой.
+   * стоит у него раньше цены, сразу за «не продаётся» (оно отсеяно выше).
+   * Ветка «priceFinal === 0» у PriceTag героя не касается: ноль без isFree
+   * до него не доходит — ни здесь (отсеян выше), ни на странице.
    *
    * Случай не выдуманный, он найден на живом деплое: у Counter-Strike 2 в
    * базе одновременно is_free = 1 и price_final = 1499 — это цена Prime, а

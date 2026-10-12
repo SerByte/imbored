@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { GameCardBody } from '@/components/GameCard'
+import { TilePending } from '@/components/TilePending'
 import { Icon } from '@/components/Icon'
 import { SectionLabel } from '@/components/Labels'
 import { NeedSteam } from '@/components/NeedSteam'
@@ -14,8 +15,15 @@ import { SwipeDeck, type DeckCard, type DeckLabels } from '@/components/SwipeDec
 import { WarmupScreen } from '@/components/WarmupScreen'
 import type { ExploreCard, ShelfCard } from '@/lib/cards'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
-import { EXPLORE_REASON, EXPLORE_SHELF_FOLD, EXPLORE_SHELF_MAX } from '@/lib/explore'
+import {
+  EXPLORE_REASON,
+  EXPLORE_SHELF_FOLD,
+  EXPLORE_SHELF_MAX,
+  exploreSignal,
+  putBack,
+} from '@/lib/explore'
 import { focusAdrift } from '@/lib/focushandoff'
+import { inTurn } from '@/lib/unlike'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -39,12 +47,22 @@ const FAIL: Record<string, { title: string; text: string }> = {
     title: 'Слишком часто',
     text: 'Колода собирается из всей библиотеки, и на это стоит потолок. Вернись через несколько минут.',
   },
+  // Листать было бы что, но всё — под «Не предлагать» (lib/mutetags.ts).
+  // Фильтр живёт на квизе, куда ведёт «Подобрать под настроение» под текстом
+  muted: {
+    title: 'Всё под «Не предлагать»',
+    text: 'Всё, что легло бы в колоду, попало под «Не предлагать». Фильтр меняется на экране настроения.',
+  },
 }
 
-/** Сеть, пятисотка, оборванный ответ. */
+/**
+ * Сеть, пятисотка, оборванный ответ, потолок ожидания (EXPLORE_WAIT_MS).
+ * Единственный отказ, у которого есть «Попробовать снова»: у остальных
+ * повтор вернёт тот же 409 или 429 (lib/failscreens.test.ts).
+ */
 const FAIL_UNKNOWN = {
   title: 'Не получилось собрать колоду',
-  text: 'Похоже, что-то сломалось по дороге. Попробуй зайти чуть позже.',
+  text: 'Похоже, что-то сломалось по дороге — попробуй ещё раз.',
 }
 
 /**
@@ -68,6 +86,9 @@ function shelfOf(card: DeckCard): ShelfCard {
     owned,
     isFree,
     priceFinal: owned || isFree ? null : (card.priceFinal ?? null),
+    priceCc: owned ? null : (card.priceCc ?? null),
+    // и у бесплатной: «не продаётся» PriceTag ставит раньше «бесплатно»
+    unsold: !owned && card.unsold === true,
     discount: owned ? null : (card.discount ?? null),
   }
 }
@@ -75,7 +96,10 @@ function shelfOf(card: DeckCard): ShelfCard {
 export default function ExplorePage() {
   const router = useRouter()
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
-  /** Код отказа из тела ответа: nolibrary, nocandidates, ratelimited или null. */
+  /**
+   * Код отказа из тела ответа: nolibrary, nocandidates, muted (всё под «Не
+   * предлагать», lib/mutetags.ts), ratelimited или null.
+   */
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')
@@ -89,9 +113,10 @@ export default function ExplorePage() {
   const [unlikeMiss, setUnlikeMiss] = useState<number | null>(null)
   /**
    * Фокус после ухода плитки: соседняя кнопка «Убрать» или строка «полка
-   * пуста». 'end' — заголовок «Колода кончилась» после голоса с клавиатуры.
+   * пуста». 'end' — заголовок «Колода кончилась» после голоса с клавиатуры,
+   * 'deck' — «Мимо» карты, которую вернули с клавиатуры (undo).
    */
-  const pendingFocus = useRef<number | 'empty' | 'end' | null>(null)
+  const pendingFocus = useRef<number | 'empty' | 'end' | 'deck' | null>(null)
   const unlikeButtons = useRef(new Map<number, HTMLButtonElement>())
   const shelfEmpty = useRef<HTMLParagraphElement>(null)
   /** Панель «Колода кончилась» и её заголовок — см. vote и redeal */
@@ -108,8 +133,13 @@ export default function ExplorePage() {
   const [nowSec, setNowSec] = useState(0)
   /** «Ещё колоду» едет — кнопка ждёт ответа */
   const [dealing, setDealing] = useState(false)
-  /** Запрос «Ещё колоду»: уход со страницы его отменяет */
+  /** «Попробовать снова» на экране отказа едет — см. retry */
+  const [retrying, setRetrying] = useState(false)
+  /** Запрос «Ещё колоду» или повтора с экрана отказа: уход со страницы его отменяет */
   const redealing = useRef<AbortController | null>(null)
+  /** Экран отказа и его заголовок — см. эффект фокуса и retry */
+  const failBox = useRef<HTMLDivElement>(null)
+  const failHead = useRef<HTMLHeadingElement>(null)
   /**
    * Почему «Ещё колоду» не собралась — строкой под кнопкой, а не экраном
    * отказа: полка «Приглянулось» на экране, и отнимать её из-за потолка
@@ -130,6 +160,18 @@ export default function ExplorePage() {
    */
   const votedIds = useRef(new Set<number>())
   /**
+   * Последнее «Мимо» — под колодой кнопка «Вернуть «X»» (undo). Одно, а не
+   * стопка: отмена — про промах пальцем секунду назад, а не листание назад.
+   */
+  const [lastSkip, setLastSkip] = useState<ExploreCard | null>(null)
+  /**
+   * Вернули карту — колода встаёт заново (key у SwipeDeck): вернувшаяся
+   * въезжает наверх своей анимацией появления, а не из-под улетающей соседки.
+   */
+  const [undone, setUndone] = useState(0)
+  /** Что сказать скринридеру о вернувшейся карте — строка стоит с первого кадра колоды */
+  const [said, setSaid] = useState('')
+  /**
    * Сессия только читает (lib/writer): колода листается и у неё, но на
    * устройстве — «Приглянулось» живёт до закрытия вкладки. Строка NeedSteam
    * говорит, почему и как это исправить.
@@ -140,33 +182,41 @@ export default function ExplorePage() {
   /**
    * Ответ /api/explore — на экран. 401 — на вход; прочий отказ — в экран
    * отказа, а у «Ещё колоду» (onMiss) — строкой под кнопкой.
+   *
+   * 'gone' — страница уже уезжает на вход, и возвращать на экран вызывающему
+   * нечего (см. retry). Иначе null.
    */
   const show = useCallback(
     async (
       res: Response,
       signal: AbortSignal,
       onMiss?: (code: string | null) => void,
-    ): Promise<void> => {
+    ): Promise<'gone' | null> => {
       if (!res.ok) {
         const code = await res
           .json()
           .then((d: { error?: unknown }) => (typeof d.error === 'string' ? d.error : null))
           .catch(() => null)
+        // replace, а не push: запись /explore без сессии мертва, и «Назад» с
+        // лендинга снова открывал её — 401 — и снова уводил на лендинг. Дальше
+        // /explore назад было не уйти, к квизу или чужому пику тоже
         if (res.status === 401) {
-          if (!signal.aborted) router.push(bounceTo('/explore'))
-          return
+          if (!signal.aborted) router.replace(bounceTo('/explore'))
+          return 'gone'
         }
         if (onMiss) {
           onMiss(code)
-          return
+          return null
         }
         setReason(code)
         setPhase('error')
-        return
+        return null
       }
       setRedealMiss(null)
       const data = (await res.json()) as { cards: ExploreCard[]; liked: ShelfCard[]; nowSec: number }
       votedIds.current = new Set()
+      // «Мимо» прежней колоды назад не вернуть: её уже нет на экране
+      setLastSkip(null)
       setNowSec(data.nowSec)
       setCards(data.cards)
       setDeckTotal(data.cards.length)
@@ -176,6 +226,7 @@ export default function ExplorePage() {
       setLiked((local) => mergeShelf(local, data.liked.filter((c) => !removed.current.has(c.appid))))
       setReason(null)
       setPhase('ok')
+      return null
     },
     [router],
   )
@@ -191,8 +242,9 @@ export default function ExplorePage() {
     const deal = async () => {
       setMessage('Собираю колоду…')
       try {
-        await show(await fetch('/api/explore', { signal }), signal)
+        await show(await fetch('/api/explore', { signal: exploreSignal(signal) }), signal)
       } catch {
+        // Потолок обрывает запрос, но не страницу: signal цел, и это отказ
         if (!signal.aborted) setPhase('error')
       }
     }
@@ -210,7 +262,8 @@ export default function ExplorePage() {
       })
       if (warm === 'aborted') return
       if (warm === 'unauthorized') {
-        if (!first) router.push(bounceTo('/explore'))
+        // replace — по той же причине, что в show
+        if (!first) router.replace(bounceTo('/explore'))
         return
       }
       if (warm === 'error' && !first) {
@@ -231,18 +284,61 @@ export default function ExplorePage() {
    */
   const redeal = async (keyboard: boolean) => {
     if (dealing) return
+    // Прежний отказ гаснет до запроса: второй 429 подряд — тот же текст, и
+    // строка под кнопкой промолчала бы (REPEAT в lib/liveregion.test.ts)
+    setRedealMiss(null)
     const ac = new AbortController()
     redealing.current = ac
     setDealing(true)
     const miss = (code: string | null) => setRedealMiss((FAIL[code ?? ''] ?? FAIL_UNKNOWN).text)
     try {
-      const res = await fetch('/api/explore', { signal: ac.signal })
+      const res = await fetch('/api/explore', { signal: exploreSignal(ac.signal) })
       setDealFocus(keyboard && focusAdrift(document, deckEnd.current))
       await show(res, ac.signal, miss)
     } catch {
+      // Решает сигнал страницы, а не запроса: обрыв по потолку — отказ, и
+      // кнопка возвращается, а не стоит в «Собираю…» до перезагрузки
       if (!ac.signal.aborted) miss(null)
     } finally {
       if (!ac.signal.aborted) setDealing(false)
+    }
+  }
+
+  /**
+   * «Попробовать снова» на экране отказа — только у FAIL_UNKNOWN. Тот же
+   * запрос, что у «Ещё колоду», и тоже без прогрева: колода собирается из
+   * того каталога, что уже есть.
+   *
+   * Неудача оставляет экран как есть, как у /play: кнопка на aria-disabled
+   * держит фокус, а строка статуса гаснет на время попытки (retrying) и
+   * возвращается — повтор того же отказа звучит. Отказ с другой причиной
+   * уносит кнопку (у потолка частоты повтора нет), и фокус забирает
+   * заголовок экрана (эффект ниже). Удача — как у «Ещё колоду»: нажатая с
+   * клавиатуры кнопка уходит вместе с экраном, и фокус берёт «Интересно»
+   * первой карты.
+   *
+   * Сессия кончилась, пока экран стоял (401, show отдаёт 'gone'), — экран так
+   * и остаётся в «Пробую…» до ухода. Сигнал страницы в этот миг ещё цел:
+   * router.replace только запущен, — и без этой проверки строка статуса
+   * получила бы текст обратно и объявила отказ, которого нет, под уже
+   * начатый уход на вход, а эффект фокуса унёс бы потерянный фокус на
+   * заголовок отказа. Та же сделка, что у промаха 'gone' на /play: ни
+   * голоса, ни экрана отказа.
+   */
+  const retry = async (keyboard: boolean) => {
+    if (retrying) return
+    const ac = new AbortController()
+    redealing.current = ac
+    setRetrying(true)
+    let gone = false
+    try {
+      const res = await fetch('/api/explore', { signal: exploreSignal(ac.signal) })
+      setDealFocus(keyboard && focusAdrift(document, failBox.current))
+      gone = (await show(res, ac.signal)) === 'gone'
+    } catch {
+      if (!ac.signal.aborted) setReason(null)
+    } finally {
+      if (!ac.signal.aborted && !gone) setRetrying(false)
     }
   }
 
@@ -252,10 +348,25 @@ export default function ExplorePage() {
    * оба с причиной explore. Отправка без ожидания, как учебные сигналы /play:
    * потерянный свайп не беда. Сессии только для чтения сервер ответит
    * needsteam — тогда страница перестаёт слать и листает на устройстве.
+   *
+   * Без ожидания — но в очереди записей игры (inTurn в lib/unlike), той же,
+   * что держит «Зашло» и его снятие на /play. Полка и колода читают
+   * ПОСЛЕДНИЙ свайп игры (listExploreLiked, listExplore), а «Мимо» →
+   * «Вернуть» → «Интересно» за секунду — два запроса и две функции:
+   * холодная или медленная запись «Мимо» легла бы в базу второй, и после
+   * перезагрузки игры не было бы ни на полке, ни в колоде неделю, хотя на
+   * экране она лежит на полке. В очереди «Интересно» уходит, только когда
+   * «Мимо» записано (или сорвалось), — порядок строк тот же, что у нажатий.
    */
   const vote = (card: DeckCard, yes: boolean, keyboard: boolean) => {
     if (votedIds.current.has(card.appid)) return
     votedIds.current.add(card.appid)
+    // Вернуть можно только последнее «Мимо»: следующий голос — уже решение
+    // дальше, и кнопка уходит вместе с ним. «Интересно» своей отмены здесь
+    // не ждёт — его забирает «Убрать» на полке
+    setLastSkip(yes ? null : (cards.find((c) => c.appid === card.appid) ?? null))
+    // Та же карта, вернутая второй раз, — тот же текст: без сброса строка промолчала бы
+    setSaid('')
     // Последняя карта уносит колоду целиком — вместе с кнопкой в фокусе и
     // живой областью, — и фокус падал в body. Голос с клавиатуры забирает
     // заголовок панели, вставшей на её место: он же и объявит, что случилось
@@ -267,19 +378,21 @@ export default function ExplorePage() {
       setLiked((l) => mergeShelf([shelfOf(card)], l))
     }
     if (writerStore.get() === false) return
-    void fetch('/api/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        appid: card.appid,
-        action: yes ? 'opened' : 'skipped',
-        reason: EXPLORE_REASON,
-      }),
-    })
-      .then(async (r) => {
-        if (await isNeedSteam(r)) writerStore.set(false)
+    void inTurn(card.appid, () =>
+      fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appid: card.appid,
+          action: yes ? 'opened' : 'skipped',
+          reason: EXPLORE_REASON,
+        }),
       })
-      .catch(() => {})
+        .then(async (r) => {
+          if (await isNeedSteam(r)) writerStore.set(false)
+        })
+        .catch(() => {}),
+    )
   }
 
   useEffect(() => {
@@ -291,15 +404,74 @@ export default function ExplorePage() {
         ? shelfEmpty.current
         : target === 'end'
           ? deckEndHead.current
-          : unlikeButtons.current.get(target)
+          : target === 'deck'
+            ? document.querySelector<HTMLElement>('.deck-stack button')
+            : unlikeButtons.current.get(target)
     el?.focus()
   })
 
   /**
+   * «Вернуть «X»» — последнее «Мимо» назад, наверх колоды, тем же номером.
+   *
+   * «Мимо» в колоде исследователя уводит карту из колоды на неделю
+   * (EXPLORE_PASS_SEC в lib/explore), и промах пальцем по соседней кнопке
+   * забирал её без обратного хода. Сервер отмену не пишет: listExplore и listExploreLiked
+   * читают ПОСЛЕДНИЙ свайп игры, так что новый голос по вернувшейся карте
+   * сам перекрывает «Мимо» — «Интересно» кладёт её на полку, как обычно.
+   * Последний он и в базе, а не только на экране: голос встаёт в очередь
+   * записей игры за ещё не доехавшим «Мимо» (inTurn, см. vote).
+   * Вернули и не голосовали — строка «Мимо» остаётся, и в следующую колоду
+   * карта не придёт неделю. Это честно: её видели и пролистали, а пока
+   * вкладка открыта, она лежит наверху колоды. Больше «Мимо» колоды не
+   * значит ничего: вкус его не читает (listFeedback), и план на вечер своей
+   * игры, попавшей в колоду, оно не закрывает (closesPlan в
+   * lib/eveningplan) — так что отменять на сервере нечего.
+   *
+   * Без таймера: кнопка живёт до следующего голоса или новой колоды. Гаснущая
+   * через восемь секунд отмена не дождалась бы того, кто идёт к ней Tab'ом
+   * или скринридером (WCAG 2.2.1).
+   *
+   * С клавиатуры фокус встаёт на «Мимо» вернувшейся карты — туда, где он был
+   * до промаха: нажатая кнопка уходит, и без этого фокус упал бы в body.
+   */
+  const undo = (keyboard: boolean) => {
+    const card = lastSkip
+    if (!card) return
+    votedIds.current.delete(card.appid)
+    setLastSkip(null)
+    setCards((cs) => [card, ...cs])
+    setVoted((v) => v - 1)
+    setUndone((n) => n + 1)
+    // Колода встаёт заново, но это не «новая колода»: фокус ей отдаёт undo, а не redeal
+    setDealFocus(false)
+    setSaid(`«${card.name}» снова в колоде`)
+    if (keyboard) pendingFocus.current = 'deck'
+  }
+
+  /**
+   * Экран отказа встал — на место прогрева или после повтора, унёсшего свою
+   * кнопку. Фокус, оказавшийся в body, забирает заголовок экрана: следующий
+   * Tab ведёт к его кнопке, а не в начало шапки. Человек стоит где-то сам —
+   * фокус остаётся при нём (lib/focushandoff), об отказе скажет строка
+   * статуса. Неудачный повтор той же причины фокус не трогает: кнопка на
+   * aria-disabled его удержала.
+   */
+  useEffect(() => {
+    if (phase !== 'error' || retrying) return
+    if (focusAdrift(document)) failHead.current?.focus()
+  }, [phase, reason, retrying])
+
+  /**
    * «Убрать» с полки — тот же свайп «Мимо», только запоздалый: listExploreLiked
    * смотрит на последний свайп, и он снимает игру с полки. Плитка уходит
-   * сразу; отказ сервера возвращает полку как была. Сессия только для
-   * чтения держит полку на устройстве — ей убирать можно без сервера.
+   * сразу; отказ сервера возвращает только её (putBack в lib/explore): за
+   * время запроса полка могла измениться, и снимок стёр бы чужие перемены.
+   * Сессия только для чтения держит полку на устройстве — ей убирать можно
+   * без сервера.
+   *
+   * Запись — в той же очереди игры, что и свайп (inTurn, см. vote): «Убрать»
+   * у карты, которую секунду назад отправили «Интересно», иначе мог лечь в
+   * базу раньше неё — и после перезагрузки убранная вернулась бы на полку.
    */
   const unlike = async (card: ShelfCard) => {
     const before = liked
@@ -312,11 +484,13 @@ export default function ExplorePage() {
     setLiked((l) => l.filter((c) => c.appid !== card.appid))
     if (writerStore.get() === false) return
     try {
-      const res = await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appid: card.appid, action: 'skipped', reason: EXPLORE_REASON }),
-      })
+      const res = await inTurn(card.appid, () =>
+        fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ appid: card.appid, action: 'skipped', reason: EXPLORE_REASON }),
+        }),
+      )
       if (await isNeedSteam(res)) {
         // Права кончились, пока страница была открыта: полка дальше живёт на
         // устройстве, и убранное остаётся убранным
@@ -327,38 +501,79 @@ export default function ExplorePage() {
     } catch {
       removed.current.delete(card.appid)
       pendingFocus.current = card.appid
-      setLiked(before)
+      setLiked((l) => putBack(l, card, before))
       setUnlikeMiss(card.appid)
     }
   }
 
+  const fail = FAIL[reason ?? ''] ?? FAIL_UNKNOWN
+
+  /*
+   * Строка статуса страницы — первым ребёнком фрагмента в каждом return.
+   *
+   * Отказ подменяет экран целиком: WarmupScreen уходит вместе со своей живой
+   * строкой прогресса, и «Библиотека не доехала» вставала молча — ни одна
+   * область в DOM не меняла текст. Эта стоит с первого кадра, пустая, и
+   * переживает подмену, потому что React сверяет детей по месту (сторож —
+   * lib/liveregion.test.ts). На время повтора она гаснет: тот же отказ
+   * второй раз подряд — тот же текст, и без паузы область промолчала бы.
+   */
+  const status = (
+    <StatusLine text={phase === 'error' && !retrying ? `${fail.title}. ${fail.text}` : null} className="sr-only" />
+  )
+
   if (phase === 'loading') {
-    return <WarmupScreen progress={prep} message={message} />
+    return (
+      <>
+        {status}
+        <WarmupScreen progress={prep} message={message} />
+      </>
+    )
   }
 
   if (phase === 'error') {
-    const fail = FAIL[reason ?? ''] ?? FAIL_UNKNOWN
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
-        <p className="text-lg">{fail.title}</p>
-        <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
-        {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
-        {reason === 'nolibrary' && (
-          <div className="max-w-md text-left">
-            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/explore')} />
-          </div>
-        )}
-        {reason === 'nolibrary' ? (
-          <Link href={reconnectHref()} className="btn-ember px-6 py-3">
-            Подключить заново
-          </Link>
-        ) : (
-          <Link href="/quiz" className="tap link-more">
-            Подобрать под настроение
-            <Icon name="arrow" size={16} />
-          </Link>
-        )}
-      </div>
+      <>
+        {status}
+        <div ref={failBox} className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
+          {/* Заголовок экрана, а не абзац: на него переезжает потерянный фокус
+              (эффект выше). Голос — у строки статуса, роли здесь нет. Кольцо
+              не снимается, как у «Колода кончилась»: оно показывает, куда
+              встал фокус (да и outline-none общее :focus-visible перебивает) */}
+          <h1 ref={failHead} tabIndex={-1} className="text-lg">
+            {fail.title}
+          </h1>
+          <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
+          {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
+          {reason === 'nolibrary' && (
+            <div className="max-w-md text-left">
+              <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/explore')} />
+            </div>
+          )}
+          {/* aria-disabled, а не disabled: неудача повтора оставляет экран как
+              есть, и фокус обязан остаться на кнопке. Повтор гасит сам retry */}
+          {fail === FAIL_UNKNOWN && (
+            <button
+              type="button"
+              onClick={(e) => void retry(e.detail === 0)}
+              aria-disabled={retrying}
+              className="tap cursor-pointer text-sm text-ember-text hover:underline aria-disabled:opacity-50"
+            >
+              {retrying ? 'Пробую…' : 'Попробовать снова'}
+            </button>
+          )}
+          {reason === 'nolibrary' ? (
+            <Link href={reconnectHref()} className="btn-ember px-6 py-3">
+              Подключить заново
+            </Link>
+          ) : (
+            <Link href="/quiz" className="tap link-more">
+              Подобрать под настроение
+              <Icon name="arrow" size={16} />
+            </Link>
+          )}
+        </div>
+      </>
     )
   }
 
@@ -367,12 +582,14 @@ export default function ExplorePage() {
   const unlikeMissName = unlikeMiss === null ? undefined : liked.find((c) => c.appid === unlikeMiss)?.name
 
   return (
-    /*
+    <>
+    {status}
+    {/*
       Две колонки с md: колода слева, заголовок и полка «Приглянулось»
       справа — постер 2:3 во всю ширину прежней колонки был бы выше окна.
       Порядок в разметке прежний (заголовок, колода, полка): на телефоне
       колонка одна, и скринридер читает то же, что видит глаз.
-    */
+    */}
     <div className="flex-1 mx-auto w-full max-w-6xl px-safe pt-28 pb-16 grid gap-8 md:grid-cols-[minmax(0,440px)_minmax(0,1fr)] md:grid-rows-[auto_1fr] md:gap-x-14">
       <div className="flex flex-col gap-2 md:col-start-2 md:row-start-1 md:pt-4">
         <h1 className="font-display text-display-sm">Полистать без обязательств</h1>
@@ -391,6 +608,7 @@ export default function ExplorePage() {
       <div className="md:col-start-1 md:row-start-1 md:row-span-2">
       {top ? (
         <SwipeDeck
+          key={undone}
           cards={cards}
           onVote={vote}
           votedCount={voted}
@@ -408,9 +626,14 @@ export default function ExplorePage() {
           <h2 ref={deckEndHead} tabIndex={-1} className="text-lg">
             Колода кончилась
           </h2>
+          {/* «На полке», а не «ниже»: с md полка стоит колонкой справа, и под
+              панелью пусто — направление верно только на телефоне. «Всё, что
+              зацепило» — в пару к «Ничего не зацепило» и без второго
+              «приглянул-» рядом с именем полки; «любую игру», а не «любую»:
+              без существительного «любую» не с чем согласовать */}
           <p className="text-sm text-dim max-w-md leading-relaxed">
             {liked.length
-              ? 'Приглянувшееся лежит ниже — открой любую, там и трейлер, и кадры, и цена.'
+              ? 'Всё, что зацепило, — на полке «Приглянулось»: открой любую игру — там и трейлер, и кадры, и цена.'
               : 'Ничего не зацепило — это тоже ответ. Можно взять ещё колоду или подобрать под настроение.'}
           </p>
           <div className="flex flex-wrap justify-center items-center gap-4">
@@ -433,6 +656,20 @@ export default function ExplorePage() {
             {redealMiss}
           </p>
         </div>
+      )}
+      {/* Под колодой и под «Колода кончилась» — одно место: последняя карта
+          тоже бывает промахом, и её кнопка не переезжает, когда колода
+          уходит. Строка «снова в колоде» стоит всегда: вернувшаяся карта
+          в последнем случае встаёт новой колодой, и её собственная живая
+          строка рождается вместе с текстом (components/StatusLine) */}
+      <StatusLine text={said} className="sr-only" />
+      {lastSkip && (
+        <p className="mt-4 text-center">
+          <button type="button" onClick={(e) => undo(e.detail === 0)} className="tap link-more max-w-full">
+            <Icon name="back" size={14} />
+            <span className="min-w-0 truncate">Вернуть «{lastSkip.name}»</span>
+          </button>
+        </p>
       )}
       </div>
 
@@ -485,6 +722,8 @@ export default function ExplorePage() {
                       ) : (
                         <PriceTag
                           priceFinal={c.priceFinal}
+                          cc={c.priceCc}
+                          unsold={c.unsold}
                           discount={c.discount}
                           isFree={c.isFree}
                           showPercent={false}
@@ -493,6 +732,10 @@ export default function ExplorePage() {
                       )
                     }
                   />
+                  {/* Префетч здесь оставлен (lib/gameprefetch.test.ts), но
+                      он может не успеть: тогда нажатая плитка ждёт так же,
+                      как у GameLink, и так же это показывает */}
+                  <TilePending />
                 </Link>
                 <button
                   type="button"
@@ -534,6 +777,7 @@ export default function ExplorePage() {
         </section>
       )}
     </div>
+    </>
   )
 }
 

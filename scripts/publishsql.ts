@@ -1,4 +1,4 @@
-import { keepFilledSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
+import { fillUnknownSql, keepFilledSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
 import { plural } from '../lib/plural'
 
 /**
@@ -19,6 +19,11 @@ const ПО_ОТМЕТКЕ: Readonly<Record<string, string>> = {
   price_initial: 'price_at',
   discount_percent: 'price_at',
   discount_ends_at: 'price_at',
+  // Регион и «не продаётся» — часть того же замера: едут только вместе с
+  // ценой, иначе рубли облака получили бы долларовый регион локального или
+  // наоборот (lib/steamregion)
+  price_cc: 'price_at',
+  store_hidden: 'price_at',
   price_at: 'price_at',
   ccu: 'ccu_at',
   ccu_at: 'ccu_at',
@@ -63,6 +68,19 @@ export function buildSetList(cols: readonly string[]): string {
     .map((c) => {
       if (ОТ_ОБОГАЩЕНИЯ.has(c)) return `${c} = ${keepFilledSql(c)}`
       if (c === 'short_description') return `${c} = ${keepRussianSql(c)}`
+      // Русский язык в облаке привозят крон карточек и доливка медиа, а
+      // локальный каталог знает его только у игр, прошедших промоут после
+      // появления колонки. NULL отсюда — «не спрашивали», а не «русского нет».
+      // И локальное число — снимок дня промоута: оно только заполняет пустоту
+      // облака, а известный там язык не трогает (fillUnknownSql в lib/db, там
+      // же — чем за это платим). Иначе промоутное «нет» откатывало бы свежее
+      // «субтитры» от крона, а доливка медиа перечитывает известный язык
+      // только у игр без трейлера или кадров — у остальных неправда жила бы
+      // до следующего круга крона, полгода. Заставить облако переспросить язык
+      // (скажем, после правки ruLangOf): UPDATE games SET ru_lang = NULL в
+      // облаке и catalog:media по нему же — локальный promote --redo с
+      // заливкой этого больше не сделает
+      if (c === 'ru_lang') return `${c} = ${fillUnknownSql(c)}`
       // Отметки нет в списке колонок — excluded.<отметка> равен NULL, и
       // локальный замер считается безотметочным, то есть старше любого
       // датированного облачного. Для отзывов это и нужно (см. ПО_ОТМЕТКЕ)
@@ -82,15 +100,25 @@ export function buildSetList(cols: readonly string[]): string {
  * SELECT trailer_json «no such column» и уронил всю заливку ради колонки,
  * которую в нём всё равно нечем было заполнить.
  */
-const ПОЗДНИЕ = new Set(['trailer_json'])
+const ПОЗДНИЕ = new Set(['trailer_json', 'price_cc', 'store_hidden', 'ru_lang'])
+
+/** Колонки замера цены — вся группа отметки price_at, включая её саму */
+const ЦЕНОВЫЕ = new Set(Object.keys(ПО_ОТМЕТКЕ).filter((c) => ПО_ОТМЕТКЕ[c] === 'price_at'))
 
 /**
  * Список колонок заливки под то, что есть в локальной games: поздние колонки
  * без пары в базе выпадают, остальные остаются всегда — пропавшая обычная
  * колонка должна ронять заливку, а не молча уезжать пустой.
+ *
+ * Цена без региона не едет вовсе, всей группой. Каталог старше колонки
+ * price_cc не знает, в чьей валюте его цены, а облако после смены
+ * STEAM_STORE_CC держит другие: поехав одна, price_final легла бы под чужой
+ * price_cc облака, и доллары подписались бы рублями. Облако цены перемеряет
+ * само (lib/deals, lib/catalogsignals), так что не потеряно ничего.
  */
 export function presentCols<T extends string>(cols: readonly T[], have: ReadonlySet<string>): T[] {
-  return cols.filter((c) => !ПОЗДНИЕ.has(c) || have.has(c))
+  const priced = have.has('price_cc')
+  return cols.filter((c) => (!ПОЗДНИЕ.has(c) || have.has(c)) && (priced || !ЦЕНОВЫЕ.has(c)))
 }
 
 /**

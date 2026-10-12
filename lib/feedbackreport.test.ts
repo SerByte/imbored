@@ -151,12 +151,24 @@ describe('outcomeStats', () => {
       key: 'untouched',
       total: 4,
       checked: 3,
+      late: 0,
       played: 2,
       bought: 0,
       medianMinutes: 40,
       hooked: 0,
       meh: 0,
     })
+  })
+
+  // Поздняя сверка — минуты за всю паузу, а не за две недели: в долю такие
+  // строки не идут, иначе пропавший на месяц поднимал бы её одним снапшотом
+  test('сверенные после окна — отдельно от доли', () => {
+    const [line] = outcomeStats(
+      [out({ minutesAfter: 30 + 120 }), out({ minutesAfter: 30 + 600, late: true, verdict: 'hooked' })],
+      'candidate',
+    )
+    expect(line).toMatchObject({ total: 2, checked: 1, late: 1, played: 1, medianMinutes: 120, hooked: 1 })
+    expect(formatOutcomes('candidate', [line!])[1]).toContain('сверено поздно 1')
   })
 
   test('покупка — игры не было до совета, а после она в библиотеке', () => {

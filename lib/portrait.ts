@@ -123,7 +123,8 @@ export function buildPortrait(
       }))
     : []
 
-  const totalHours = Math.round(library.reduce((s, g) => s + g.playtimeForever, 0) / 60)
+  const totalMinutes = library.reduce((s, g) => s + g.playtimeForever, 0)
+  const totalHours = Math.round(totalMinutes / 60)
   const hidden = playtimeHidden(library)
   // Та же граница, что у buildWrapped и backlogValue: саундтрек не бэклог.
   // При скрытом времени «так и не запущена» выглядит вся библиотека — не считаем
@@ -131,13 +132,18 @@ export function buildPortrait(
     ? 0
     : library.filter((g) => isUnplayed(g) && !looksLikeNonGame(g, metaOf(g.appid))).length
   const topLib = [...library].sort((a, b) => b.playtimeForever - a.playtimeForever)[0]
+  // Доля — из минут, как в buildWrapped: делитель из округлённых часов у
+  // маленькой библиотеки (85 мин → «1 ч») давал «142% всего времени» на
+  // карточке и в тексте портрета, пока полоса «Куда ушло время» той же
+  // страницы честно показывала 100%. Порог totalHours > 0 оставлен: меньше
+  // получаса на всю библиотеку — топ-игры нет, а не «0 ч (100%)».
   const topGame =
     topLib && topLib.playtimeForever > 0 && totalHours > 0
       ? {
           appid: topLib.appid,
           name: topLib.name,
           hours: Math.round(topLib.playtimeForever / 60),
-          sharePercent: Math.round((topLib.playtimeForever / 60 / totalHours) * 100),
+          sharePercent: Math.round((topLib.playtimeForever / totalMinutes) * 100),
         }
       : null
 

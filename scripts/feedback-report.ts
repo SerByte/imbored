@@ -35,6 +35,7 @@ import {
   type OutcomeReportRow,
   type ReportRow,
 } from '../lib/feedbackreport'
+import { OUTCOME_WINDOW_SEC } from '../lib/outcome'
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
@@ -101,7 +102,7 @@ async function main() {
 
   // Исходы — по индексу shown_at, тем же окном
   const out = await db.execute({
-    sql: `SELECT source, minutes_before, minutes_after, owned_after, checked_at, verdict, ctx_json
+    sql: `SELECT source, shown_at, minutes_before, minutes_after, owned_after, checked_at, verdict, ctx_json
             FROM outcomes WHERE shown_at >= ?
             ${withDemo ? '' : "AND steamid NOT GLOB '000*'"}`,
     args: [since],
@@ -121,6 +122,8 @@ async function main() {
       minutesAfter: num(r.minutes_after),
       ownedAfter: r.owned_after === null ? null : Number(r.owned_after) === 1,
       checked: r.checked_at !== null,
+      // Поздняя сверка — по тем же отметкам, что Evening.late (lib/outcome.ts)
+      late: r.checked_at !== null && Number(r.checked_at) - Number(r.shown_at) > OUTCOME_WINDOW_SEC,
       verdict: r.verdict === null ? null : String(r.verdict),
     }
   })

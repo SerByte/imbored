@@ -26,10 +26,20 @@
  * Что именно и почему удаляется, описано у forgetUser в lib/db.ts. Скрипт
  * только находит steamid и печатает счёт — список таблиц у него свой быть не
  * должен.
+ *
+ * Удаление то же, что у кнопки «Удалить всё обо мне» (app/api/forget), и так
+ * же выпускает человека со всех устройств (signOutFrom): без отметки
+ * удаления его старые куки по-прежнему пускали бы (см. таблицу forget_marks).
+ *
+ * Письмо часто приходит уже после кнопки. Тогда от человека осталась одна
+ * отметка удаления, и скрипт так и говорит: уже удалён, такого-то числа,
+ * применять нечего (hasUserRows в lib/db). Повтор с --apply ничего бы не
+ * удалил, а только переставил отметку позже — и SteamID пролежал бы в базе
+ * дольше обещанного.
  */
 
 import { createClient } from '@libsql/client'
-import { countUserRows, forgetUser, type ForgetReport } from '../lib/db'
+import { countUserRows, forgetMarkAt, forgetUser, hasUserRows, type ForgetReport } from '../lib/db'
 import { parseProfileInput, resolveVanity } from '../lib/steam'
 
 function openDb() {
@@ -85,8 +95,19 @@ async function main() {
   const found = await countUserRows(db, steamid)
   print('найдено строк:', found)
 
-  if (!found.some((r) => r.rows > 0)) {
-    console.log('\nо таком игроке в базе ничего нет — удалять нечего.')
+  if (!hasUserRows(found)) {
+    const at = await forgetMarkAt(db, steamid)
+    if (at === null) {
+      console.log('\nо таком игроке в базе ничего нет — удалять нечего.')
+      return
+    }
+    console.log(
+      `\nэтот игрок уже удалён — ${new Date(at * 1000).toISOString().slice(0, 10)} (UTC), кнопкой или по\n` +
+        'прошлому письму. В базе осталась только отметка удаления (forget_marks —\n' +
+        'SteamID и время), она уйдёт сама через год с месяцем. Применять нечего:\n' +
+        '--apply только переставил бы отметку позже. Можно отвечать, что всё удалено,\n' +
+        'кроме этой отметки, — так же, как говорят кнопка и /privacy, раздел 06.',
+    )
     return
   }
   if (!apply) {
@@ -99,9 +120,11 @@ async function main() {
   const picks = await db.execute({ sql: 'SELECT id FROM shared_picks WHERE created_by = ?', args: [steamid] })
   const pickIds = picks.rows.map((r) => String(r.id))
 
-  print('удалено строк:', await forgetUser(db, steamid))
+  print('удалено строк:', await forgetUser(db, steamid, { signOutFrom: Math.floor(Date.now() / 1000) }))
   console.log(
-    '\nГотово. Что осталось вне базы и отсюда не достаётся:\n' +
+    '\nГотово. Входы на всех устройствах погашены: в базе осталась только отметка\n' +
+      'удаления (forget_marks — SteamID и время), она уйдёт сама через год с месяцем.\n' +
+      'Что осталось вне базы и отсюда не достаётся:\n' +
       '  • картинки портрета, итогов года и сравнения (/portrait/<steamid>/card.png,\n' +
       '    /portrait/<steamid>/year/card.png, их opengraph-image и\n' +
       '    /compat/<steamid>/opengraph-image) живут в кэше Vercel до часа\n' +

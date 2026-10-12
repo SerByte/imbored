@@ -1,24 +1,36 @@
 import { clip, DESCRIPTION_MAX } from './clip'
 import { hashString, mulberry32 } from './daily'
 import {
+  gamesByDeveloper,
   getGamePageRow,
   getGameNews,
   getNeighbors,
-  loadTagStats,
   topGamesByTag,
-  withoutBody,
   type Db,
   type FeedItem,
   type SimilarGame,
+  type StoredNews,
+  type StudioGame,
 } from './db'
+import { collapseEditions, editionKey } from './editions'
 import { logSwallowed } from './errlog'
-import { characterTrait, entryTrait, sessionTrait, type GameTrait } from './gametraits'
+import {
+  characterTrait,
+  entryTrait,
+  languageTrait,
+  lengthTrait,
+  sessionTrait,
+  type GameTrait,
+} from './gametraits'
 import { distinctiveTags } from './hook'
+import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { NEIGHBORS_K } from './neighbors'
 import { plural } from './plural'
+import { isEndless } from './recommend'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
+import { tagStatsFor } from './tagstats'
 import { tagRu } from './tagsru'
 import { rarityOf, rarityScale, tagWeightFrom } from './tagweight'
 import { isRussianText } from './textlang'
@@ -32,8 +44,8 @@ export type GamePageData = {
     totalNegative: number
   } | null
   prosCons: ProsCons | null
-  /** без тел патчей — их отдаёт app/api/news по раскрытию, см. withoutBody */
-  news: FeedItem[]
+  /** без тел патчей — их отдаёт app/api/news по раскрытию; см. cardNews */
+  news: CardNews[]
   /**
    * «Похожие»: готовые соседи по всему вектору тегов (nearGames), а пока их
    * не залили — соседи по тегу полки (topTagOf, pickSimilar); пусто, если
@@ -52,6 +64,43 @@ export type GamePageData = {
    * не прошёл порог. Строку из него собирает gameTraits.
    */
   hook: string[] | null
+  /**
+   * «Ещё у <студии>»: строка текстовых ссылок под «Похожими» (studioLine).
+   * null — строки нет: у студии одна игра, корпоративный каталог, всё уже на
+   * полке «Похожие», или страница чужого магазина.
+   */
+  studio: StudioLine | null
+}
+
+/**
+ * Строка «Что нового» на карточке — ровно то, что рисует островок GameNews.
+ *
+ * Не FeedItem целиком (withoutBody), и дело не в байтах. Всё, что уходит в
+ * клиентский островок, лежит в RSC-части страницы, а страница живёт в ISR
+ * неделю и пишется заново, только если её вывод разошёлся с прошлым (см.
+ * lib/gamecache). У FeedItem есть поля, которые меняются без единой
+ * видимой перемены:
+ *   • rank — вес игры, max(отзывы, онлайн), переписывается у всех её постов
+ *     на каждом опросе, где сдвинулись отзывы (upsertNewsItems). Карточке из
+ *     него нужен один бит — в каталоге ли игра (indexedNewsPath: rank > 0);
+ *   • bodyHash и imageUrl — островок их не читает вовсе.
+ * С ними каждая перегенерация писала бы страницу заново из-за числа, которого
+ * на ней не видно.
+ */
+export type CardNews = Pick<FeedItem, 'appid' | 'gid' | 'title' | 'url' | 'publishedAt' | 'kind' | 'scale' | 'tldr' | 'rank'>
+
+export function cardNews(item: StoredNews): CardNews {
+  return {
+    appid: item.appid,
+    gid: item.gid,
+    title: item.title,
+    url: item.url,
+    publishedAt: item.publishedAt,
+    kind: item.kind,
+    scale: item.scale,
+    ...(item.tldr !== undefined ? { tldr: item.tldr } : {}),
+    rank: item.rank > 0 ? 1 : 0,
+  }
 }
 
 export type ReviewFacts = {
@@ -83,8 +132,8 @@ export type ReviewFacts = {
  *
  * Слово при этом берётся только из сводки. Числа — факт площадки, и мы их
  * пересказываем; словесная шкала — её суждение, и придумывать его за неё
- * нельзя. Без сводки рядом с кольцом остаётся «из N отзывов — за», и этого
- * достаточно: процент уже стоит внутри кольца.
+ * нельзя. Без сводки рядом с кольцом остаётся «положительных из N отзывов», и
+ * этого достаточно: процент уже стоит внутри кольца.
  */
 export function reviewFacts(
   meta: Pick<GameMeta, 'reviewsPercent' | 'reviewsTotal'>,
@@ -141,7 +190,7 @@ const SHELF_MIN_GAMES = SIMILAR_SHOWN + 1
  * Без карты (непрогретая база, сбой чтения) или когда все пять тегов
  * частотные — прежний порядок, первый по весу.
  *
- * Тай-брейк по имени обязателен: страница кэшируется на сутки и пререндерится,
+ * Тай-брейк по имени обязателен: страница кэшируется на неделю и пререндерится,
  * и блок «похожие» не должен меняться от того, в каком порядке Object.entries
  * вернул ключи после очередной пересборки каталога.
  */
@@ -183,7 +232,7 @@ export function topTagOf(meta: GameMeta, tagStats?: Map<string, number> | null):
  * 339. Равномерная выборка разносит чуть шире (3718 и 39), но чаще выкидывает
  * самых похожих.
  *
- * Сид — appid страницы, а не время: страница кэшируется на сутки, и полка не
+ * Сид — appid страницы, а не время: страница кэшируется на неделю, и полка не
  * должна меняться от пересборки к пересборке, пока не поменялись кандидаты.
  * Показываются выбранные в исходном порядке — самые характерные первыми.
  */
@@ -236,32 +285,95 @@ export async function nearGames(
 }
 
 /**
+ * Больше стольких живых игр у студии — строки нет. Supergiant, Klei, Amanita,
+ * Zachtronics укладываются в десяток, а у Square Enix, CAPCOM и Ubisoft в
+ * каталоге десятки игр: на странице NieR строка «Ещё у Square Enix» позвала бы
+ * в FINAL FANTASY XIV Online, и это был бы список издательства, а не почерк
+ * авторов. Число игр считается ДО фильтров, включая саму страницу: вопрос
+ * «корпорация ли это» — про студию, а не про то, что от неё осталось на полке.
+ */
+export const STUDIO_MAX_GAMES = 12
+
+/** Меньше двух названий — не строка «ещё», а одна ссылка, которой хватает героя */
+export const STUDIO_MIN_SHOWN = 2
+
+/** Сколько названий в строке: одна строка текста, не сетка, и кнопка ниже не уезжает */
+export const STUDIO_SHOWN = 4
+
+export type StudioLine = {
+  /** Как в подписи героя — та же строка games.developer, только без краевых пробелов */
+  developer: string
+  games: Array<{ appid: number; name: string }>
+}
+
+/**
+ * «Ещё у <студии>: A · B · C» под полкой «Похожие» — чистая часть: что из игр
+ * студии (gamesByDeveloper) стоит назвать на этой странице.
+ *
+ * Отсев по порядку причин:
+ *   • чужой магазин (appid < 0) и игра без разработчика — строки нет вовсе;
+ *   • у студии больше STUDIO_MAX_GAMES живых игр — корпоративный каталог;
+ *   • сама страница и её издания (editionKey): «Ещё у CD PROJEKT RED: The
+ *     Witcher 3: Wild Hunt — Complete Edition» на странице The Witcher 3 —
+ *     это та же игра в другой коробке;
+ *   • мусор по названию (looksLikeJunkName): саундтрек или демо студии живым
+ *     в пуле бывает, а советовать его как «ещё игру» — нет;
+ *   • то, что уже стоит в «Похожих», по appid и по изданию: дважды на одной
+ *     странице одна игра — место, потраченное впустую, а у студий с сильной
+ *     серией соседи и так её игры (у Hades первый сосед — Hades II);
+ *   • издания между собой схлопываются (collapseEditions), побеждает первый
+ *     по отзывам — тот же, что и так стоит левее, порядок не двигается.
+ *
+ * Порядок пересчитывается здесь, а не берётся из запроса: отзывы по убыванию,
+ * затем appid. Страница живёт в ISR неделю и обязана быть той же байт в байт,
+ * пока не поменялись данные, — от порядка строк на входе вывод зависеть не
+ * должен.
+ */
+export function studioLine(
+  page: Pick<GameMeta, 'appid' | 'name' | 'developer'>,
+  candidates: readonly StudioGame[],
+  similar: ReadonlyArray<Pick<SimilarGame, 'appid' | 'name'>>,
+): StudioLine | null {
+  const developer = page.developer?.trim()
+  if (page.appid < 0 || !developer) return null
+  if (candidates.length > STUDIO_MAX_GAMES) return null
+
+  const pageKey = editionKey(page.name)
+  const shownIds = new Set(similar.map((g) => g.appid))
+  const shownKeys = new Set(similar.map((g) => editionKey(g.name)).filter(Boolean))
+  const kept = [...candidates]
+    .sort((a, b) => b.reviewsTotal - a.reviewsTotal || a.appid - b.appid)
+    .filter((g) => {
+      if (g.appid === page.appid || g.appid <= 0 || shownIds.has(g.appid)) return false
+      if (looksLikeJunkName(g.name)) return false
+      const key = editionKey(g.name)
+      return !key || (key !== pageKey && !shownKeys.has(key))
+    })
+  // Внутри группы изданий побеждает первый: вход уже отсортирован по отзывам
+  const games = collapseEditions(kept, (g) => g.name, () => 1)
+    .slice(0, STUDIO_SHOWN)
+    .map(({ appid, name }) => ({ appid, name }))
+  return games.length >= STUDIO_MIN_SHOWN ? { developer, games } : null
+}
+
+/**
  * Карта тегов каталога для выбора тега полки — с памятью на процесс.
  *
- * loadTagStats читает всю таблицу tags, около 430 строк, а карточка — самая
- * массовая страница: пять тысяч адресов в карте сайта, у каждой ещё и
- * OG-картинка. Без памяти один проход краулера стоил бы больше двух миллионов
- * прочитанных строк Turso ради карты, которая меняется только с заливкой
- * каталога. Шесть часов — с запасом короче суток, на которые кэшируется сама
- * страница.
+ * Карточка — самая массовая страница: пять тысяч адресов в карте сайта, у
+ * каждой ещё и OG-картинка. Без памяти один проход краулера стоил бы больше
+ * двух миллионов прочитанных строк Turso ради карты, которая меняется только
+ * с заливкой каталога. Память общая с горячими путями подбора — lib/tagstats.
  *
- * Ключ — сам клиент базы: в проде он один на процесс (lib/server), а тесты с
- * базой в памяти не видят чужих карт. Сбой чтения не кэшируется и страницу не
- * роняет — полка просто подбирается по-старому.
+ * Сбой чтения страницу не роняет: tagStatsFor без запомненной карты бросает
+ * (подбору молчаливая пустая карта вредна), а здесь это null — полка просто
+ * подбирается по-старому.
  */
-const TAG_STATS_TTL_SEC = 6 * 3600
-const tagStatsMemo = new WeakMap<Db, { at: number; stats: Map<string, number> }>()
-
-async function tagStatsFor(db: Db, nowSec: number): Promise<Map<string, number> | null> {
-  const hit = tagStatsMemo.get(db)
-  if (hit && nowSec - hit.at < TAG_STATS_TTL_SEC) return hit.stats
+async function pageTagStats(db: Db, nowSec: number): Promise<Map<string, number> | null> {
   try {
-    const stats = await loadTagStats(db)
-    tagStatsMemo.set(db, { at: nowSec, stats })
-    return stats
+    return await tagStatsFor(db, nowSec)
   } catch (err) {
     logSwallowed('gamepage:tagstats', err)
-    return hit?.stats ?? null
+    return null
   }
 }
 
@@ -412,21 +524,35 @@ export function hookTrait(hook: readonly string[] | null): GameTrait | null {
 /**
  * Строки фактов карточки по порядку; пустой список — блока нет вовсе.
  *
- * Чем выделяется → сессия → вход → характер. Всё без модели и только то, что
- * знаем: сессия и характер — из уверенной семантики, вход — из числа, которое
- * назвали отзывы. «Можно бросить в любой момент» здесь нет намеренно: этот
- * признак семантика берёт только из тегов (canStopAnytime), и на публичной
- * карточке он был бы жанровым приором, выданным за факт об игре.
+ * Чем выделяется → сессия → вход → наиграли → характер → русский. Всё без
+ * модели и только то, что знаем: сессия и характер — из уверенной семантики,
+ * вход — из числа, которое назвали отзывы, наиграли — из минут хваливших
+ * (lengthTrait), русский — из отметок Steam (languageTrait).
+ * «Можно бросить в любой момент» здесь нет намеренно: этот признак семантика
+ * берёт только из тегов (canStopAnytime), и на публичной карточке он был бы
+ * жанровым приором, выданным за факт об игре.
+ *
+ * Три строки про время — подряд, от короткого к длинному: сколько длится
+ * заход, когда игра раскрывается, сколько наиграли те, кто её хвалит.
+ * Игре без конца «Наиграли» не пишем (isEndless, см. lengthTrait).
+ *
+ * Русский — последним: строки выше про то, как в неё играется, а язык — про
+ * то, можно ли в неё сесть вообще. Строке с русским соответствует
+ * inLanguage в микроразметке (lib/jsonld); у «нет» поля там нет — других
+ * языков игры мы не знаем.
  */
 export function gameTraits(
-  meta: Pick<GameMeta, 'semantics' | 'categories'> & Partial<Pick<GameMeta, 'tags'>>,
+  meta: Pick<GameMeta, 'semantics' | 'categories'> & Partial<Pick<GameMeta, 'tags' | 'ruLang'>>,
   hook: readonly string[] | null,
 ): GameTrait[] {
+  const tags = meta.tags ?? {}
   return [
     hookTrait(hook),
     sessionTrait(meta),
-    entryTrait({ tags: meta.tags ?? {}, semantics: meta.semantics }),
+    entryTrait({ tags, semantics: meta.semantics }),
+    lengthTrait(meta, { endless: isEndless({ tags, categories: meta.categories }) }),
     characterTrait(meta),
+    languageTrait(meta),
   ].filter((t): t is GameTrait => t !== null)
 }
 
@@ -468,10 +594,10 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   //
   // Карта тегов — только когда теги есть: игре без них ни полку, ни «Чем
   // выделяется» не собрать всё равно, и читать ради неё нечего. Одна на оба
-  // потребителя; tagStatsFor не бросает — сбой чтения даёт null
+  // потребителя; pageTagStats не бросает — сбой чтения даёт null
   const hasTags = Object.keys(meta.tags ?? {}).length > 0
   const statsOf = hasTags
-    ? tagStatsFor(db, Math.floor(Date.now() / 1000))
+    ? pageTagStats(db, Math.floor(Date.now() / 1000))
     : Promise.resolve(null)
   const similarOf = async (): Promise<Pick<GamePageData, 'similar' | 'similarTag' | 'hook'>> => {
     const [stats, near] = await Promise.all([statsOf, nearGames(db, meta, statsOf)])
@@ -491,15 +617,23 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
       prosCons: null,
       news: [],
       ...(await similarOf()),
+      studio: null,
     }
   }
 
   const reviewsSummary = строка.reviewsSummary as GamePageData['reviewsSummary']
   const stored = строка.prosCons as GamePageData['prosCons']
-  const [news, shelf] = await Promise.all([
-    getGameNews(db, appid, 8).then((rows) => rows.map(withoutBody)),
+  // Игры студии — параллельно с полкой, а отсев — после неё: строка не
+  // повторяет того, что уже стоит в «Похожих». Лимит на одну больше порога —
+  // так studioLine узнаёт корпоративный каталог, не читая его целиком
+  const [news, shelf, studioGames] = await Promise.all([
+    getGameNews(db, appid, 8).then((rows) => rows.map(cardNews)),
     similarOf(),
+    meta.developer?.trim()
+      ? gamesByDeveloper(db, meta.developer, STUDIO_MAX_GAMES + 1)
+      : Promise.resolve([]),
   ])
+  const studio = studioLine(meta, studioGames, shelf.similar)
 
   /*
    * Наружу отдаём ТОЛЬКО собранное моделью.
@@ -521,5 +655,5 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    */
   const prosCons = stored?.source === 'claude' ? stored : null
 
-  return { meta, reviewsSummary, prosCons, news, ...shelf }
+  return { meta, reviewsSummary, prosCons, news, ...shelf, studio }
 }

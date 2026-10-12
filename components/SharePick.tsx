@@ -18,7 +18,8 @@ type SharePickSource = {
 
 type State =
   | { at: number; phase: 'busy' }
-  | { at: number; phase: 'ready'; url: string }
+  /** counted — «Отправить другу» сам попробовал поделиться, и нажатие посчитано */
+  | { at: number; phase: 'ready'; url: string; counted: boolean }
   | { at: number; phase: 'failed'; message: ReactNode }
 
 /**
@@ -33,7 +34,9 @@ type State =
  * требуют свежего нажатия: после await iOS Safari отказывает обоим. Поэтому
  * после ответа попытка поделиться делается сразу — в Chrome и на Android
  * она проходит, — а поле со ссылкой показывается ВСЕГДА: в нём своя кнопка,
- * то есть второе, свежее нажатие.
+ * то есть второе, свежее нажатие. Счётчик share:pick видит в нём второй шаг
+ * того же намерения, а не новое «поделился» (counted у ShareLinkField):
+ * иначе каждая отправка с iOS ложилась бы в него дважды.
  *
  * Ответ сервера может прийти, когда на экране уже другая игра: «Не то —
  * дальше» и «Сегодня хочу из своего» не ждут запроса. Тогда он не трогает
@@ -55,7 +58,7 @@ export function useSharePick(
   }, [hero?.appid])
   const title = `«${hero?.name ?? ''}» — imbored`
   const text = kind === 'daily' ? 'Моя игра дня от imbored' : 'imbored выбрал мне игру на вечер'
-  const share = useShareLink(() => urlRef.current, title, text)
+  const share = useShareLink('pick', () => urlRef.current, title, text)
 
   if (!hero?.share) return { button: null, panel: null }
   const pick = hero
@@ -119,10 +122,12 @@ export function useSharePick(
       const data = (await res.json().catch(() => null)) as { id?: unknown } | null
       if (!res.ok || typeof data?.id !== 'string') throw new Error(String(res.status))
       const url = pickShareUrl(window.location.origin, data.id)
-      settle({ at, phase: 'ready', url })
       // Герой сменился, пока шёл запрос: в буфер ссылку не кладём молча —
-      // вернётся к этой игре, нажмёт, и ссылка уже будет готова
-      if (shownRef.current !== at) return
+      // вернётся к этой игре, нажмёт, и ссылка уже будет готова. И не
+      // считаем: первым «поделился» тогда станет нажатие в поле (counted)
+      const shown = shownRef.current === at
+      settle({ at, phase: 'ready', url, counted: shown })
+      if (!shown) return
       urlRef.current = url
       void share.run()
     } catch {
@@ -166,7 +171,21 @@ export function useSharePick(
     <>
       {current?.phase === 'ready' && (
         <div className="flex w-full max-w-xl flex-col gap-1.5">
-          <ShareLinkField url={current.url} label={`Ссылка на выбор «${pick.name}»`} title={title} text={text} />
+          {/*
+            counted: первое нажатие поля — второй шаг уже посчитанного «Отправить
+            другу» (на iOS без него ссылка не уйдёт), а не новое «поделился».
+            key — по адресу: новой ссылке героя — новое поле со своим первым
+            нажатием, а не израсходованное прежней (components/ShareLink).
+          */}
+          <ShareLinkField
+            key={current.url}
+            counted={current.counted}
+            what="pick"
+            url={current.url}
+            label={`Ссылка на выбор «${pick.name}»`}
+            title={title}
+            text={text}
+          />
           {/* Что уйдёт по ссылке — сказано тут же, а не только в политике */}
           <p className="text-xs text-faint">По ссылке — игра и это объяснение, как здесь, но без имени профиля.</p>
         </div>

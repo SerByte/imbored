@@ -51,7 +51,9 @@ export async function GET(): Promise<Response> {
     items: items.map((item) => {
       const game = names.get(item.appid)
       return {
-        title: newsPageTitle(item.title, game),
+        // С датой, как <title> страницы: одинаковые заголовки Valve в ридере
+        // сливались бы в один пост, повторённый много раз
+        title: newsPageTitle(item.title, game, item.publishedAt),
         link: `${base}${newsPath(item.appid, item.gid)}`,
         publishedAt: item.publishedAt,
         description: newsDescription(item, game),

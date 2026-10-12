@@ -1,5 +1,5 @@
 import { createClient } from '@libsql/client'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   PRICE_MAX_AGE_SEC,
   clearDealsCooldown,
@@ -7,8 +7,8 @@ import {
   parseStorePrices,
   refreshDeals,
 } from './deals'
-import { getGameMeta, migrateDb, upsertGameMeta, type Db } from './db'
-import { discountOf } from './discount'
+import { getGameMeta, migrateDb, stalePriceAppids, updateGamePrices, upsertGameMeta, type Db } from './db'
+import { discountOf, trustedPrice } from './discount'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -170,21 +170,32 @@ describe('refreshDeals', () => {
     expect(discountOf(stored!, NOW)).toBeNull()
   })
 
-  test('ответ без цены гасит скидку, но не стирает цену', async () => {
+  test('ответ без цены гасит скидку, но не стирает обычную цену', async () => {
     // Игра могла стать бесплатной, а могла быть скрыта регионом — с этой
     // стороны неразличимо. Обнулить цену бэклога из-за сбоя дороже.
     const db = await freshDb()
-    await upsertGameMeta(
-      db,
-      meta(730, { priceFinal: 1999, priceInitial: 3999, discountPercent: 50 }),
-      NOW,
-    )
-    await refreshDeals(db, [730], NOW, { fetchFn: fakeFetch(PRICES_RESPONSE) })
+    await upsertGameMeta(db, meta(42, { priceFinal: 1999, priceInitial: 1999, discountPercent: 0 }), NOW)
+    await refreshDeals(db, [42], NOW, { fetchFn: fakeFetch(PRICES_RESPONSE) })
 
-    const stored = await getGameMeta(db, 730)
+    const stored = await getGameMeta(db, 42)
     expect(stored?.priceFinal).toBe(1999)
     expect(stored?.discountPercent).toBeUndefined()
     expect(stored?.priceAt).toBe(NOW)
+  })
+
+  test('ответ без цены у игры на распродаже — «не знаю», а не акционная цена под видом обычной', async () => {
+    // Раньше здесь оставались 1999 при «было 3999», а скидка гасла: и
+    // trustedPrice рисовал 1999 обычной ценой. Правда тут одна — «не знаю»
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(730, { priceFinal: 1999, priceInitial: 3999, discountPercent: 50 }), NOW)
+    await refreshDeals(db, [730], NOW, { fetchFn: fakeFetch(PRICES_RESPONSE) })
+
+    const stored = await getGameMeta(db, 730)
+    expect(stored?.priceFinal).toBeUndefined()
+    expect(stored?.priceInitial).toBeUndefined()
+    expect(stored?.discountPercent).toBeUndefined()
+    expect(stored?.priceAt).toBe(NOW)
+    expect(trustedPrice(stored!, NOW)).toBeNull()
   })
 
   test('сетевая осечка не роняет подбор и не двигает отметку замера', async () => {
@@ -193,6 +204,55 @@ describe('refreshDeals', () => {
     expect(await refreshDeals(db, [1478500], NOW, { fetchFn: fakeFetch({}, 500) })).toBe(0)
     expect((await getGameMeta(db, 1478500))?.priceAt).toBeUndefined()
     clearDealsCooldown()
+  })
+
+  /**
+   * Сбой сервисного метода Steam — тоже 200: пустой response и код в
+   * X-eresult (см. fetchWishlist в lib/steam.ts). Прочитанный как ответ, он
+   * давал каждой игре пачки пустую котировку: «−75%» гасло посреди
+   * распродажи, price_at вставал на «сейчас» — и полсуток никто не перемерял.
+   */
+  test('200 с пустым response и X-eresult — сбой: скидка и отметка замера на месте', async () => {
+    const db = await freshDb()
+    const priceAt = NOW - PRICE_MAX_AGE_SEC - HOUR
+    await upsertGameMeta(
+      db,
+      meta(10, { priceFinal: 500, priceInitial: 2000, discountPercent: 75, discountEndsAt: NOW + 5 * 86_400, priceAt }),
+      NOW,
+    )
+    const busy = (async () =>
+      new Response(JSON.stringify({ response: {} }), { status: 200, headers: { 'x-eresult': '20' } })) as typeof fetch
+
+    expect(await refreshDeals(db, [10], NOW, { fetchFn: busy })).toBe(0)
+    const stored = await getGameMeta(db, 10)
+    expect(stored).toMatchObject({ priceFinal: 500, priceInitial: 2000, discountPercent: 75, discountEndsAt: NOW + 5 * 86_400, priceAt })
+    clearDealsCooldown()
+
+    // без заголовка, но и без store_items — тоже не ответ
+    const empty = (async () => new Response(JSON.stringify({ response: {} }), { status: 200 })) as typeof fetch
+    expect(await refreshDeals(db, [10], NOW, { fetchFn: empty })).toBe(0)
+    expect((await getGameMeta(db, 10))?.discountPercent).toBe(75)
+    clearDealsCooldown()
+  })
+
+  /**
+   * А вот пустой список — ответ. Герой дня или одна протухшая игра полки
+   * желаемого — запрос из одного appid, и снятая с продажи игра в нём
+   * приходит именно так: «промолчал про часть» и «про всю» здесь одно и то
+   * же. Сочти мы это сбоем, каждый заход бросал бы на ней, ставил бы паузу
+   * замеру всему процессу — и цены не обновлялись бы ни у кого.
+   */
+  test('пустой список на одну игру — «цены нет» с отметкой, без паузы на сбой', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(10, { priceFinal: 1999, priceInitial: 1999, discountPercent: 0 }), NOW)
+    await upsertGameMeta(db, meta(1478500, { priceFinal: 1999 }), NOW)
+
+    expect(await refreshDeals(db, [10], NOW, { fetchFn: fakeFetch({ response: { store_items: [] } }) })).toBe(1)
+    expect((await getGameMeta(db, 10))?.priceAt).toBe(NOW)
+
+    // паузы нет: замер другой игры идёт сразу
+    expect(await refreshDeals(db, [1478500], NOW, { fetchFn: fakeFetch(PRICES_RESPONSE) })).toBe(1)
+    expect((await getGameMeta(db, 1478500))?.discountPercent).toBe(25)
   })
 
   test('после сбоя выдерживаем паузу, а не долбим Steam с частотой посещений', async () => {
@@ -221,5 +281,167 @@ describe('refreshDeals', () => {
     }) as typeof fetch
     expect(await refreshDeals(db, [1, 2, 3], NOW, { fetchFn: spy })).toBe(0)
     expect(called).toBe(false)
+  })
+})
+
+/**
+ * Регион цен (lib/steamregion). Замер — единственный запрос в Steam, который
+ * идёт не в `us`, а в регион STEAM_STORE_CC: country_code задаёт и валюту, и
+ * то, продаётся ли игра там вообще.
+ */
+describe('регион цен', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    clearDealsCooldown()
+  })
+
+  /** Стаб GetItems, который помнит country_code каждого запроса */
+  function recording(body: unknown) {
+    const countries: string[] = []
+    const fetchFn = (async (url: string) => {
+      const input = new URL(String(url)).searchParams.get('input_json') ?? '{}'
+      countries.push((JSON.parse(input) as { context: { country_code: string } }).context.country_code)
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+    return { fetchFn, countries }
+  }
+
+  async function stored(db: Db, appid: number) {
+    const r = await db.execute({
+      sql: `SELECT price_final, price_initial, discount_percent, price_cc, store_hidden, price_at
+            FROM games WHERE appid = ?`,
+      args: [appid],
+    })
+    return r.rows[0]
+  }
+
+  test('в GetItems уходит country_code региона цен, и он же ложится в строку', async () => {
+    vi.stubEnv('STEAM_STORE_CC', 'ru')
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(1086940), NOW)
+    const rec = recording({
+      response: {
+        store_items: [
+          { appid: 1086940, visible: true, best_purchase_option: { final_price_in_cents: '199900' } },
+        ],
+      },
+    })
+    expect(await refreshDeals(db, [1086940], NOW, { fetchFn: rec.fetchFn })).toBe(1)
+    expect(rec.countries).toEqual(['RU'])
+    expect(await stored(db, 1086940)).toMatchObject({ price_final: 199_900, price_cc: 'ru', store_hidden: 0 })
+    expect((await getGameMeta(db, 1086940))?.priceFinal).toBe(199_900)
+  })
+
+  test('fetchStorePrices берёт регион из опций, а не из окружения', async () => {
+    const rec = recording({ response: { store_items: [] } })
+    await fetchStorePrices([1086940], { fetchFn: rec.fetchFn, cc: 'kz' })
+    expect(rec.countries).toEqual(['KZ'])
+  })
+
+  test('visible:false — «не продаётся в регионе», а не «цены нет»', () => {
+    // Живой ответ GetItems с country_code RU для Cyberpunk 2077 (28.09.2026)
+    const map = parseStorePrices({
+      response: { store_items: [{ item_type: 0, id: 1091500, success: 1, visible: false }] },
+    })
+    expect(map.get(1091500)).toEqual({ appid: 1091500, hidden: true })
+  })
+
+  test('updateGamePrices, цена есть: пишется с регионом, «не продаётся» гаснет', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(1), NOW)
+    await db.execute('UPDATE games SET store_hidden = 1 WHERE appid = 1')
+    await updateGamePrices(db, [{ appid: 1, priceFinal: 139_900, priceInitial: 199_900, discountPercent: 30 }], NOW, 'ru')
+    expect(await stored(db, 1)).toMatchObject({
+      price_final: 139_900,
+      price_initial: 199_900,
+      discount_percent: 30,
+      price_cc: 'ru',
+      store_hidden: 0,
+      price_at: NOW,
+    })
+  })
+
+  test('updateGamePrices, hidden: цена и скидка стираются, игра помечена', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(1, { priceFinal: 5999, priceInitial: 5999, discountPercent: 0 }), NOW)
+    await updateGamePrices(db, [{ appid: 1, hidden: true }], NOW, 'ru')
+    expect(await stored(db, 1)).toMatchObject({
+      price_final: null,
+      price_initial: null,
+      discount_percent: null,
+      price_cc: 'ru',
+      store_hidden: 1,
+      price_at: NOW,
+    })
+  })
+
+  /*
+   * Беречь можно только ОБЫЧНУЮ цену своего региона. Раньше здесь была
+   * закреплена и акционная: 1 399 ₽ при «было 1 999 ₽» оставались, а скидка
+   * гасла — и trustedPrice показывал 1 399 ₽ обычной ценой в герое, сумме
+   * бэклога и Offer микроразметки (его же Heavy Rain: $0.99 при $19.99).
+   * Повод не редкий: на распродаже «лучшим предложением» Steam часто
+   * называет бандл, и котировка приходит без цены (parsePurchaseOption).
+   */
+  test('updateGamePrices без блока покупки: обычную цену своего региона бережём, акционную и чужую — нет', async () => {
+    const db = await freshDb()
+    // своя: рублёвая цена со скидкой
+    await upsertGameMeta(db, meta(1, { priceCc: 'ru', priceFinal: 139_900, priceInitial: 199_900, discountPercent: 30, priceAt: NOW - 100 }), NOW)
+    // чужая: доллары из строки до смены региона (price_cc NULL — это us)
+    await upsertGameMeta(db, meta(2, { priceFinal: 5999, priceInitial: 5999, discountPercent: 0, priceAt: NOW - 100 }), NOW)
+    // своя обычная: без скидки
+    await upsertGameMeta(db, meta(3, { priceCc: 'ru', priceFinal: 199_900, priceInitial: 199_900, discountPercent: 0, priceAt: NOW - 100 }), NOW)
+    // своя, уже испорченная прежним правилом: скидки нет, а «было» выше «стало»
+    await upsertGameMeta(db, meta(4, { priceCc: 'ru', priceFinal: 139_900, priceInitial: 199_900, priceAt: NOW - 100 }), NOW)
+    await updateGamePrices(db, [{ appid: 1 }, { appid: 2 }, { appid: 3 }, { appid: 4 }], NOW, 'ru')
+    // «не знаю» — trustedPrice промолчит, а не назовёт акционную обычной
+    expect(await stored(db, 1)).toMatchObject({
+      price_final: null,
+      price_initial: null,
+      discount_percent: null,
+      price_cc: 'ru',
+      store_hidden: 0,
+      price_at: NOW,
+    })
+    expect(await stored(db, 3)).toMatchObject({
+      price_final: 199_900,
+      price_initial: 199_900,
+      discount_percent: null,
+      price_cc: 'ru',
+      price_at: NOW,
+    })
+    expect(await stored(db, 4)).toMatchObject({ price_final: null, price_initial: null })
+    // Оставшись под price_cc = ru, 5999 стали бы «59,99 ₽»
+    expect(await stored(db, 2)).toMatchObject({
+      price_final: null,
+      price_initial: null,
+      price_cc: 'ru',
+      price_at: NOW,
+    })
+  })
+
+  test('stalePriceAppids: цена чужого региона протухла при любом возрасте и идёт первой', async () => {
+    const db = await freshDb()
+    // свежая своя, давняя своя, свежая чужая (NULL — это us)
+    await upsertGameMeta(db, meta(1, { priceCc: 'ru', priceFinal: 1, priceAt: NOW - 60 }), NOW)
+    await upsertGameMeta(db, meta(2, { priceCc: 'ru', priceFinal: 1, priceAt: NOW - PRICE_MAX_AGE_SEC - 60 }), NOW)
+    await upsertGameMeta(db, meta(3, { priceFinal: 5999, priceAt: NOW - 60 }), NOW)
+    expect(await stalePriceAppids(db, [1, 2, 3], PRICE_MAX_AGE_SEC, NOW, 200, 'ru')).toEqual([3, 2])
+    // в своём регионе та же долларовая — свежая
+    expect(await stalePriceAppids(db, [3], PRICE_MAX_AGE_SEC, NOW, 200, 'us')).toEqual([])
+  })
+
+  test('stalePriceAppids с hidden: свежее «не продаётся» своего региона тоже в очереди', async () => {
+    const db = await freshDb()
+    // 1 — свежая своя цена; 2 — свежее «не продаётся» в ru; 3 — «не продаётся» в us
+    await upsertGameMeta(db, meta(1, { priceCc: 'ru', priceFinal: 1, priceAt: NOW - 60 }), NOW)
+    await upsertGameMeta(db, meta(2), NOW)
+    await upsertGameMeta(db, meta(3), NOW)
+    await updateGamePrices(db, [{ appid: 2, hidden: true }], NOW - 60, 'ru')
+    await updateGamePrices(db, [{ appid: 3, hidden: true }], NOW - 60, 'us')
+    // заходам людей скрытая строка протухает по сроку, как любая
+    expect(await stalePriceAppids(db, [1, 2], PRICE_MAX_AGE_SEC, NOW, 200, 'ru')).toEqual([])
+    // сверке — при любом возрасте; чужой регион протух и без флага
+    expect(await stalePriceAppids(db, [1, 2, 3], Number.MAX_SAFE_INTEGER, NOW, 200, 'ru', { hidden: true })).toEqual([3, 2])
   })
 })

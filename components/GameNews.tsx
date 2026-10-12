@@ -4,7 +4,7 @@ import { AnimatePresence, m } from 'framer-motion'
 import { MotionLazy } from '@/components/motion/MotionLazy'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { FeedItem } from '@/lib/db'
+import type { CardNews } from '@/lib/gamepage'
 import { indexedNewsPath, newsPath } from '@/lib/newspage'
 import type { NewsBlock } from '@/lib/steamhtml'
 import { NewsBody } from './NewsBody'
@@ -34,7 +34,7 @@ const EASE = [0.22, 1, 0.36, 1] as const
  */
 const HOVER_INTENT_MS = 120
 
-export function GameNews({ items, name }: { items: FeedItem[]; name: string }) {
+export function GameNews({ items, name }: { items: CardNews[]; name: string }) {
   /*
    * Свёрнуто всё, и это разворот прежнего решения.
    *
@@ -72,7 +72,7 @@ function Row({
   open,
   onToggle,
 }: {
-  item: FeedItem
+  item: CardNews
   name: string
   open: boolean
   onToggle: (gid: string | null) => void
@@ -116,8 +116,9 @@ function Row({
 
   // Название игры — заголовок всей страницы; в заголовке патча оно лишнее.
   const heading = stripGameName(item.title, name)
-  // Английский заголовок — с lang="en", как в ленте (PatchRow, lib/textlang)
-  const headingLang = textLang(heading)
+  // Английский заголовок — с lang="en", как в ленте (PatchRow, lib/textlang);
+  // название игры — имя собственное, в подсчёт языка не входит
+  const headingLang = textLang(heading, name)
   // null — страницы нет в поиске (хотфикс без пересказа, игра вне каталога):
   // заголовок тогда просто текст, см. indexedNewsPath
   const href = indexedNewsPath(item)
@@ -213,12 +214,15 @@ function Row({
                 </p>
               ) : (
                 /* Скелет ровно на высоту абзаца: без него панель раскрывается
-                   в пустоту и дёргается, когда тело приезжает. */
+                   в пустоту и дёргается, когда тело приезжает. .skel, а не
+                   animate-pulse Tailwind: у утилиты нет покоя под «уменьшить
+                   движение», и полосы пульсировали у того, кто движения не
+                   просил. Сторож — lib/motion.test.ts. */
                 <div aria-hidden className="flex flex-col gap-2.5">
                   {[92, 100, 78].map((w, i) => (
                     <span
                       key={i}
-                      className="h-3.5 animate-pulse rounded-full bg-ink/10"
+                      className="skel h-3.5 rounded-full"
                       style={{ width: `${w}%` }}
                     />
                   ))}

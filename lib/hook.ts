@@ -45,6 +45,29 @@ const STEAM_GENRES = [
   'Early Access',
 ]
 
+/**
+ * Предупреждения о контенте — не повод выбрать игру.
+ *
+ * Отдельным списком, а не строками внутри GENERIC_TAGS, потому что правило у
+ * них шире «фишки»: «Нагота» не годится ни в «Чем выделяется», ни в главные
+ * теги под героем (topTags в lib/recommend.ts) и на демо главной
+ * (lib/landing.ts), ни в отметку «есть в твоих играх» и причину
+ * (sharedTasteTags), ни в «Что вас роднит» на /compat (compatibility в
+ * lib/compat.ts). Редкость при этом тянет их наверх — Nudity стоит у трёх
+ * процентов каталога, — и без явного запрета у игрока Witcher и Cyberpunk
+ * зелёной точкой горела бы именно «Нагота». Список один: GENERIC_TAGS берёт
+ * его целиком.
+ */
+export const CONTENT_WARNING_TAGS: ReadonlySet<string> = new Set([
+  'Nudity',
+  'Sexual Content',
+  'Hentai',
+  'NSFW',
+  'Mature',
+  'Gore',
+  'Violent',
+])
+
 /** Теги, которые не бывают «фишкой», как бы редко они ни стояли */
 export const GENERIC_TAGS: ReadonlySet<string> = new Set([
   ...STEAM_GENRES,
@@ -99,13 +122,7 @@ export const GENERIC_TAGS: ReadonlySet<string> = new Set([
   'Mouse Only',
   'TrackIR',
   // предупреждения о контенте — не повод выбрать игру
-  'Nudity',
-  'Sexual Content',
-  'Hentai',
-  'NSFW',
-  'Mature',
-  'Gore',
-  'Violent',
+  ...CONTENT_WARNING_TAGS,
 ])
 
 /** Доля голосов главного тега игры, ниже которой тег считается хвостом */

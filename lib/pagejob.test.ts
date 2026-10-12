@@ -27,7 +27,7 @@ import {
   runPageSlice,
 } from './pagejob'
 import type { ReviewsResponse } from './reviews'
-import { MIN_REVIEWS } from './semantics'
+import { MIN_PLAYED_REVIEWS, MIN_REVIEWS } from './semantics'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -727,6 +727,28 @@ describe('кадры и трейлер — одной пачкой GetItems на
     expect((await getGamesMeta(db, [10])).get(10)?.screenshots).toEqual(SHOTS)
   })
 
+  test('русский из пачки GetItems переживает запись карточки из appdetails', async () => {
+    // appdetails про русский без озвучки молчит (appDetailsRuLang в
+    // lib/catalog): слияние обязано сберечь точную ступень, записанную до него
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 90)
+    await runPageSlice(
+      db,
+      stubs({
+        fetchMediaFn: async () =>
+          new Map([
+            [10, { ruLang: 2 as const }],
+            [20, { ruLang: 0 as const }],
+          ]),
+      }),
+    )
+    const metas = await getGamesMeta(db, [10, 20])
+    expect(metas.get(10)?.ruLang).toBe(2)
+    // «русского нет» — тоже ответ, и он доезжает
+    expect(metas.get(20)?.ruLang).toBe(0)
+  })
+
   test('отказ GetItems — не блок Steam: срез идёт дальше и наполняет карточки', async () => {
     const db = await freshDb()
     await addGame(db, 10, 100)
@@ -1226,6 +1248,34 @@ describe('семантика из уже полученных отзывов', (
     expect(await semanticsRow(db, 10)).toMatchObject({ basis: 'tags+reviews', computedAt: NOW })
   })
 
+  test('«Наиграли» — из того же ответа: минуты хваливших, и карточка с ними уходит на сброс', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    // Половина отзывов reviews() — позитивные: ровно MIN_PLAYED_REVIEWS хваливших
+    const played = (min: number) => {
+      const r = reviews(2 * MIN_PLAYED_REVIEWS)
+      for (const x of r.reviews) if (x.voted_up) x.author = { playtime_at_review: min, playtime_forever: min }
+      return r
+    }
+    await runPageSlice(db, stubs({ fetchReviewsRawFn: async () => played(600) }))
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.played).toEqual({
+      posMedianMin: 600,
+      posN: MIN_PLAYED_REVIEWS,
+    })
+
+    // Хвалившие наиграли вдвое больше, остальное в ответе то же: страница
+    // недельного кэша должна перегенерироваться ради одной строки «Наиграли»
+    await db.execute('UPDATE games SET page_at = NULL')
+    const res = await runPageSlice(db, stubs({ nowSec: NOW + 60, fetchReviewsRawFn: async () => played(1200) }))
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.played?.posMedianMin).toBe(1200)
+    expect(res.cards).toEqual([10])
+
+    // тот же ответ ещё раз — не перемена
+    await db.execute('UPDATE games SET page_at = NULL')
+    const again = await runPageSlice(db, stubs({ nowSec: NOW + 120, fetchReviewsRawFn: async () => played(1200) }))
+    expect(again.cards).toEqual([])
+  })
+
   test('сбой семантики не роняет карточку: скриншоты, pros/cons и отметка на месте', async () => {
     const db = await freshDb()
     await addRoguelite(db, 10)
@@ -1245,6 +1295,99 @@ describe('семантика из уже полученных отзывов', (
     expect(res.withSemantics).toBe(0)
     expect(await semanticsRow(db, 10)).toBeNull()
     expect(await queueState(db, 10)).toEqual({ pageAt: NOW, tries: 0 })
+  })
+})
+
+/**
+ * Какие карточки срез поменял — их роут сбрасывает в ISR (lib/gamecache).
+ *
+ * Страница живёт неделю, и сброс — это перегенерация при следующем заходе.
+ * Срез пишет всем безусловно (кадры пачкой, семантику, сводку), поэтому
+ * «трогал» здесь ничего не значит: считается строка до и после.
+ */
+describe('карточки, которые срез поменял', () => {
+  /** Ответ appdetails с ценой: срез датирует её замер (priceAt) каждый раз */
+  const priced = (appid: number) =>
+    meta(appid, { screenshots: ['a.jpg', 'b.jpg'], priceFinal: 1999, priceInitial: 1999, discountPercent: 0 })
+
+  test('новое содержимое — в списке; тот же ответ Steam ещё раз — нет', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 50)
+
+    const first = await runPageSlice(db, stubs({ fetchDetails: async (appid: number) => priced(appid) }))
+    expect(first.cards.sort()).toEqual([10, 20])
+
+    // Те же карточки снова в очереди, Steam и модель отвечают тем же, а замер
+    // цены — на час позже: метка другая, карточка та же
+    await db.execute('UPDATE games SET page_at = NULL')
+    const again = await runPageSlice(
+      db,
+      stubs({ nowSec: NOW + 3600, fetchDetails: async (appid: number) => priced(appid) }),
+    )
+    expect(again.claimed).toBe(2)
+    expect(again.cards).toEqual([])
+  })
+
+  test('поменялось видимое — сводка отзывов — только эта карточка', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 50)
+    await runPageSlice(db, stubs())
+    await db.execute('UPDATE games SET page_at = NULL')
+
+    const moved = reviews(6)
+    moved.query_summary!.total_positive = 950
+    const res = await runPageSlice(
+      db,
+      stubs({ fetchReviewsRawFn: async (appid: number) => (appid === 20 ? moved : reviews(6)) }),
+    )
+    expect(res.cards).toEqual([20])
+  })
+
+  test('скидка, которой поверили, — перемена, хотя в строке сдвинулась одна метка замера', async () => {
+    // priceAt в отпечатке заменён вердиктом доверия: сам он не виден, а
+    // «−50%», которое после свежего замера появилось на витрине, — видно
+    const db = await freshDb()
+    await upsertGameMeta(
+      db,
+      meta(10, { reviewsTotal: 100, priceFinal: 999, priceInitial: 1999, discountPercent: 50, priceAt: NOW - 30 * 86_400 }),
+      NOW,
+    )
+    await replaceGameTags(db, 10, [{ tag: 'Action', weight: 100 }])
+    const onSale = () => meta(10, { priceFinal: 999, priceInitial: 1999, discountPercent: 50 })
+    await runPageSlice(db, stubs({ fetchDetails: async () => onSale() }))
+    await db.execute('UPDATE games SET page_at = NULL, price_at = ?', [NOW - 30 * 86_400])
+
+    const res = await runPageSlice(db, stubs({ fetchDetails: async () => onSale() }))
+    expect(res.cards).toEqual([10])
+  })
+
+  test('та же скидка без срока, свежий замер — перемена: по замеру страница прячет цену', async () => {
+    // Вердикт тот же («−50%» и так на витрине), но срок, по которому
+    // ShownUntil гасит строку цены, — замер плюс PRICE_TRUST_SEC. Карточка,
+    // собранная по старому замеру, погасила бы ещё живую скидку раньше срока
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const onSale = () => meta(10, { priceFinal: 999, priceInitial: 1999, discountPercent: 50 })
+    await runPageSlice(db, stubs({ fetchDetails: async () => onSale() }))
+    await db.execute('UPDATE games SET page_at = NULL')
+
+    const res = await runPageSlice(db, stubs({ nowSec: NOW + 3600, fetchDetails: async () => onSale() }))
+    expect(res.cards).toEqual([10])
+  })
+
+  test('та же скидка со сроком от Steam, свежий замер — не перемена: срок назвал Steam', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const onSale = () =>
+      meta(10, { priceFinal: 999, priceInitial: 1999, discountPercent: 50, discountEndsAt: NOW + 5 * 86_400 })
+    await runPageSlice(db, stubs({ fetchDetails: async () => onSale() }))
+    await db.execute('UPDATE games SET page_at = NULL')
+
+    const res = await runPageSlice(db, stubs({ nowSec: NOW + 3600, fetchDetails: async () => onSale() }))
+    expect(res.claimed).toBe(1)
+    expect(res.cards).toEqual([])
   })
 })
 
@@ -1268,8 +1411,8 @@ describe('карта сайта', () => {
     await addGame(db, 30, 100)
     await markPageEnriched(db, 20, NOW + 500)
     await db.execute({
-      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, created_at, updated_at)
-            VALUES (30, 'g1', 't', 'u', ?, ?, ?)`,
+      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, kind, created_at, updated_at)
+            VALUES (30, 'g1', 't', 'u', ?, 'patch', ?, ?)`,
       args: [NOW + 900, NOW, NOW],
     })
 
@@ -1279,6 +1422,21 @@ describe('карта сайта', () => {
       { appid: 20, updatedAt: NOW + 500 },
       { appid: 30, updatedAt: NOW + 900 },
     ])
+  })
+
+  test('распродажа или анонс lastmod карточки не двигают: карточка показывает только патчи', async () => {
+    // news_items хранит и kind='news' — распродажи, ивенты, девлоги. На
+    // карточке их нет (getGameNews берёт только патчи), и сдвинутый ими
+    // lastmod был бы обещанием перемены, которой на странице нет
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await db.execute({
+      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, kind, created_at, updated_at)
+            VALUES (10, 'sale', 'Weekend Deal', 'u', ?, 'news', ?, ?)`,
+      args: [NOW + 2000, NOW, NOW],
+    })
+
+    expect(await sitemapGames(db, 10)).toEqual([{ appid: 10, updatedAt: NOW }])
   })
 
   test('игры без тегов в карту не попадают: страница была бы пустой', async () => {

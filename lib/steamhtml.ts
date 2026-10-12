@@ -192,6 +192,17 @@ export function parseSteamHtml(html: string, maxBlocks = 120): NewsBlock[] {
   let runs: Inline[] = []
   let heading = false
   let listItems: Inline[][] | null = null
+  /**
+   * Глубина открытых списков. Вложенный список не открывает своего блока:
+   * его пункты ложатся в ВНЕШНИЙ подряд, плоско. NewsBody рисует список
+   * плоским, а countChanges считает пункты — и потерять их хуже, чем
+   * потерять отступ. Закрывает блок только </ul> того же уровня, что его
+   * открыл; раньше первый же внутренний <ul> закрывал внешний, и всё после
+   * внутреннего </ul> выпадало из списка (см. тесты «вложенные списки»).
+   * Заголовок группы («Weapons») при этом тоже считается правкой — счёт
+   * выходит на одну больше на группу, а не на десятки меньше.
+   */
+  let listDepth = 0
   let bold = 0
   let href: string | undefined
 
@@ -259,6 +270,7 @@ export function parseSteamHtml(html: string, maxBlocks = 120): NewsBlock[] {
     closeItem()
     const items = listItems
     listItems = null
+    listDepth = 0
     if (items.length && !full()) blocks.push({ kind: 'ul', items })
   }
 
@@ -281,9 +293,15 @@ export function parseSteamHtml(html: string, maxBlocks = 120): NewsBlock[] {
           if (!full()) blocks.push({ kind: 'img', src })
         }
       } else if (LIST.has(n)) {
-        flushPara()
-        closeList()
-        listItems = []
+        if (listItems) {
+          // вложенный: дописываем текущий пункт, внешний список не закрываем
+          closeItem()
+          listDepth++
+        } else {
+          flushPara()
+          listItems = []
+          listDepth = 1
+        }
       } else if (n === 'li') {
         if (listItems) closeItem()
         else takeRuns()
@@ -299,8 +317,13 @@ export function parseSteamHtml(html: string, maxBlocks = 120): NewsBlock[] {
     }
 
     const n = tok.name
-    if (LIST.has(n)) closeList()
-    else if (n === 'li') closeItem()
+    if (LIST.has(n)) {
+      // Текст после внутреннего </ul> (<li>A<ul>…</ul>хвост) — свой пункт
+      if (listDepth > 1) {
+        closeItem()
+        listDepth--
+      } else closeList()
+    } else if (n === 'li') closeItem()
     else if (BOLD.has(n)) bold = Math.max(0, bold - 1)
     else if (n === 'a') href = undefined
     else if (BLOCK.has(n)) flushPara()

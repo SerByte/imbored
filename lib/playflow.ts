@@ -22,6 +22,7 @@ import type { HeroMediaView, PickCard, ScoreView, ShareView } from './cards'
 import { parseLean, type Lean } from './mood'
 import { parseNudge, type Nudge } from './nudge'
 import { plural } from './plural'
+import { parseEveningPlan, type EveningPlan } from './eveningplan'
 import type { ContinueGame, MatchExplanation, Scope } from './recommend'
 
 /**
@@ -35,11 +36,11 @@ export type PickSignals =
 
 /**
  * Поля карточки, которых нет у выдачи, сохранённой на устройстве раньше, чем
- * они появились (lib/playcache.ts): длина захода, цена входа, отзывы. Тип
- * обязан признать, что их может не быть, — иначе страница читала бы
+ * они появились (lib/playcache.ts): длина захода, цена входа, отзывы, русский
+ * язык. Тип обязан признать, что их может не быть, — иначе страница читала бы
  * undefined как null.
  */
-type LateField = 'session' | 'entry' | 'reviewsPercent' | 'reviewsTotal'
+type LateField = 'session' | 'entry' | 'reviewsPercent' | 'reviewsTotal' | 'russian'
 
 /**
  * Карточка выдачи — ровно то, что отдаёт /api/recommend: тип выведен из
@@ -111,6 +112,11 @@ export type Deal = {
    * лучше, чем заявить о ней без повода.
    */
   playtimeHidden: boolean
+  /**
+   * План на вечер (lib/eveningplan.ts) — строка с запуском над «Продолжить».
+   * null — плана нет, сессия не пишущая или сервер старой версии.
+   */
+  plan: EveningPlan | null
 }
 
 /**
@@ -130,6 +136,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     nowSec?: unknown
     viewer?: unknown
     playtimeHidden?: unknown
+    plan?: unknown
   }
   if (!Array.isArray(d.picks) || d.picks.length === 0) return null
   return {
@@ -144,6 +151,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     nowSec: typeof d.nowSec === 'number' && Number.isFinite(d.nowSec) ? d.nowSec : 0,
     viewer: typeof d.viewer === 'string' && d.viewer ? d.viewer : null,
     playtimeHidden: d.playtimeHidden === true,
+    plan: parseEveningPlan(d.plan),
   }
 }
 
@@ -154,7 +162,10 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
 export type Miss =
   /** 429 — потолок частоты; waitSec — из Retry-After, если он был */
   | { miss: 'limited'; waitSec: number | null }
-  /** 401 — сессии нет, страница уже уходит на вход, и говорить нечего */
+  /**
+   * Страница уходит, и говорить некому: 401 — разворот на вход, или человек
+   * ушёл сам, пока ответ был в пути (сигнал страницы, см. fetchPicks)
+   */
   | { miss: 'gone' }
   /** Отказ с кодом из тела, сеть, пустой ответ — выдача на экране прежняя */
   | { miss: 'failed'; code: string | null }
@@ -178,8 +189,13 @@ export function switchLine(m: Miss): string | null {
     case 'gone':
       return null
     case 'failed':
-      // Кандидатов не осталось — не сбой, и «попробуй ещё» тут не поможет
-      return m.code === 'nocandidates'
+      // Кандидатов не осталось — не сбой, и «попробуй ещё» тут не поможет.
+      // То же, когда не осталось из-за его же «Не предлагать» (muted,
+      // lib/mutetags.ts): «не получилось» звучало бы сбоем. Своей строки у
+      // muted нет ради веса — /play стоит у потолка бюджета, а «ничего не
+      // нашлось» правдиво и тут: фильтр он ставил сам, и экран отказа первой
+      // выдачи (FAIL.muted) называет его прямо
+      return m.code === 'nocandidates' || m.code === 'muted'
         ? 'Под это ничего не нашлось, выдача прежняя'
         : 'Не получилось переключить, выдача прежняя'
   }
@@ -263,4 +279,72 @@ export function nextStep(
   if (skipCount >= BURNOUT_AFTER_SKIPS) return { burnout: true, skipCount }
   const to = s.roulette ? weightedRandomIndex(s.length, s.from, random) : (s.from + 1) % s.length
   return { burnout: false, skipCount, to }
+}
+
+/**
+ * Выдача после бана — по тому, что на экране СЕЙЧАС.
+ *
+ * Бан ждёт ответа сервера (докблок sendFeedback в app/play/page.tsx), а
+ * остальной экран на это время не заперт, и запирать его незачем: жмут бан
+ * редко, а замирание выдачи на секунду плохой сети выглядело бы поломкой. Но
+ * за эту секунду человек успевал пролистать «дальше» или выбрать карточку из
+ * «Ещё вариантов», а обработчик потом применял индекс и пятёрку из замыкания
+ * клика: герой прыгал на соседа забаненной — игру, которую не выбирали.
+ *
+ * Поэтому решение принимается по свежему состоянию. Герой и есть забаненная —
+ * на её место встаёт следующая (heroGone, и вызывающий говорит об этом и
+ * переносит фокус). Герой уже другой — он и остаётся героем, из выдачи просто
+ * уходит забаненная. Выдача сменилась целиком и этой игры в ней нет — ничего не
+ * меняется. Что бан записан, вызывающий говорит во всех трёх случаях — без
+ * «следующей игры» там, где героя он не трогает (lib/announce, 'ban').
+ */
+export function afterBan<P extends { appid: number }>(s: {
+  picks: P[]
+  index: number
+  banned: number
+}): { empty: true } | { empty: false; picks: P[]; index: number; heroGone: boolean } {
+  const rest = s.picks.filter((p) => p.appid !== s.banned)
+  if (!rest.length) return { empty: true }
+  const hero = s.picks[Math.min(s.index, s.picks.length - 1)]
+  if (!hero || hero.appid === s.banned) {
+    return { empty: false, picks: rest, index: Math.min(s.index, rest.length - 1), heroGone: true }
+  }
+  return { empty: false, picks: rest, index: rest.indexOf(hero), heroGone: false }
+}
+
+/**
+ * Чем экран выгорания отвечает на «не игровой вечер» — по убыванию того,
+ * сколько сил это стоит: знакомое любимое (там нечего осваивать), то, во что он
+ * играет сейчас (сразу запуском), и только потом «уютное» по тегам. null —
+ * предложить нечего, остаются «Всё равно листать» и «На сегодня всё».
+ */
+export type BurnoutOffer = 'familiar' | 'continue' | 'cozy' | null
+
+export function burnoutOffer(has: { familiar: boolean; cont: boolean; cozy: boolean }): BurnoutOffer {
+  if (has.familiar) return 'familiar'
+  if (has.cont) return 'continue'
+  if (has.cozy) return 'cozy'
+  return null
+}
+
+const BURNOUT_INVITE: Record<NonNullable<BurnoutOffer>, string> = {
+  familiar: 'Можно ненадолго вернуться в знакомое',
+  // Без «просто»: оно уже есть в «а можно просто закрыть Steam» той же фразы и
+  // в кнопке под ней («Просто продолжить «Dota 2»») — трижды подряд
+  continue: 'Можно продолжить то, во что играешь сейчас',
+  cozy: 'Можно зайти на 20 минут во что-то уютное',
+}
+
+/**
+ * Абзац экрана выгорания зовёт туда же, куда кнопка под ним.
+ *
+ * Он всегда говорил «зайти на 20 минут во что-то уютное», а кнопка выбиралась
+ * цепочкой выше и чаще всего была «Просто продолжить «Dota 2»» — сорок минут
+ * рейтинга, ни двадцати минут, ни уюта. Теперь и текст, и кнопка — из одного
+ * BurnoutOffer, и разойтись им негде. «Закрыть Steam» остаётся всегда: это
+ * тоже ответ, и экран о нём.
+ */
+export function burnoutInvite(offer: BurnoutOffer): string {
+  const close = 'просто закрыть Steam, и это тоже победа.'
+  return offer ? `${BURNOUT_INVITE[offer]}… а можно ${close}` : `Можно ${close}`
 }

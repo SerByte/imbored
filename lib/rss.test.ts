@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { escapeXml, rssFeed } from './rss'
+import { blocksToText, decodeEntities, parseSteamHtml } from './steamhtml'
 
 describe('escapeXml', () => {
   test('пять символов XML и управляющие — не ломают документ', () => {
@@ -41,7 +42,43 @@ describe('rssFeed', () => {
     expect(feed).toContain('<title>Counter-Strike 2: AWP &amp; Mirage — что изменилось</title>')
     expect(feed).toContain('<guid isPermaLink="true">https://imbored.cc/game/730/news/5123894512345</guid>')
     expect(feed).toContain('<pubDate>Fri, 25 Sep 2026 18:00:00 GMT</pubDate>')
-    expect(feed).toContain('<description>Поправили &lt;баланс&gt; AWP.</description>')
+    // <description> — HTML (см. докблок rssFeed): текст экранирован дважды
+    expect(feed).toContain('<description>Поправили &amp;lt;баланс&amp;gt; AWP.</description>')
+  })
+
+  /**
+   * Ридер читает <description> в два слоя: XML снимает своё экранирование, а
+   * остаток он рисует как HTML (Feedly, Inoreader, NetNewsWire, телеграм-боты
+   * — и наш же разбор фида Steam, lib/news.ts: decodeEntities, потом
+   * parseSteamHtml). Экранированный один раз «<Enter>» во втором слое снова
+   * становился тегом, неизвестным — и пропадал из текста патча.
+   */
+  test('угловые скобки и & в описании ридер покажет текстом, а не съест как тег', () => {
+    const xml = rssFeed({
+      title: 't',
+      link: 'l',
+      description: 'd',
+      builtAt: 0,
+      items: [{ title: 'Fixed <Enter> & R&D', link: 'l', publishedAt: 0, description: 'Fixed <Enter> & R&D' }],
+    })
+    const desc = /<item>[\s\S]*<description>([\s\S]*?)<\/description>/.exec(xml)?.[1] ?? ''
+    expect(desc).toBe('Fixed &amp;lt;Enter&amp;gt; &amp;amp; R&amp;amp;D')
+    // так его прочтёт ридер: слой XML, затем HTML
+    expect(blocksToText(parseSteamHtml(decodeEntities(desc)))).toBe('Fixed <Enter> & R&D')
+    // А заголовок ридеры показывают текстом: второй слой в нём вылез бы
+    // наружу буквальным «&lt;» — он экранирован однажды, только для XML
+    expect(xml).toContain('<title>Fixed &lt;Enter&gt; &amp; R&amp;D</title>')
+  })
+
+  /**
+   * Адрес личной ленты — секретная ссылка (lib/feedlink). Ридер её и так
+   * знает, а повторять ключ в теле значило бы отдать его каждому, кому
+   * ридер или бот покажет содержимое канала.
+   */
+  test('без self — канал без atom:link: адрес личной ленты в теле не повторяется', () => {
+    const own = rssFeed({ title: 't', link: 'l', description: 'd', builtAt: 0, items: [] })
+    expect(own).not.toContain('<atom:link')
+    expect(own).toContain('<link>l</link>')
   })
 
   test('пустая лента — всё ещё валидный канал', () => {

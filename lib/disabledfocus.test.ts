@@ -256,9 +256,15 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['app/play/page.tsx', /next\.nudge !== 'different'\s+if \(same \|\| switching\) return/]],
   },
   {
+    // «Попробовать снова» и «Подобрать без «похожих»» — один повтор
     file: 'app/play/page.tsx',
     expr: 'retrying',
-    guards: [['app/play/page.tsx', /const retry = useCallback\(async \(\) => \{\s*if \(retrying\) return/]],
+    guards: [
+      [
+        'app/play/page.tsx',
+        /const retry = useCallback\(async \(withSeed: number \| null = askSeed\) => \{\s*if \(retrying\) return/,
+      ],
+    ],
   },
   {
     file: 'app/play/page.tsx',
@@ -266,9 +272,21 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['app/play/page.tsx', /onClick=\{async \(\) => \{\s*if \(banning\) return/]],
   },
   {
+    // «Уже прошёл» у строки «Продолжить»
+    file: 'app/play/page.tsx',
+    expr: 'finishing',
+    guards: [['app/play/page.tsx', /const finishCont = async \(\) => \{\s*if \(finishing \|\| !cont\) return/]],
+  },
+  {
     file: 'app/explore/page.tsx',
     expr: 'dealing',
     guards: [['app/explore/page.tsx', /const redeal = async \(keyboard: boolean\) => \{\s*if \(dealing\) return/]],
+  },
+  {
+    // «Попробовать снова» на экране отказа /explore
+    file: 'app/explore/page.tsx',
+    expr: 'retrying',
+    guards: [['app/explore/page.tsx', /const retry = async \(keyboard: boolean\) => \{\s*if \(retrying\) return/]],
   },
   {
     // «Войти в комнату» и «Демо-друг»
@@ -295,6 +313,31 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['app/room/[id]/page.tsx', /async function pullMore\(\) \{\s*if \(pulling\) return/]],
   },
   {
+    // «Выйти из пати»; ✕ хоста — тем же обработчиком, см. MemberRoster ниже
+    file: 'components/room/RoomWaiting.tsx',
+    expr: 'leaving',
+    guards: [['app/room/[id]/page.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/]],
+  },
+  {
+    file: 'components/room/MemberRoster.tsx',
+    expr: 'removing',
+    guards: [
+      ['components/room/MemberRoster.tsx', /const remove = \(id: string\) => \{\s*if \(removing \|\| !onRemove\) return/],
+      ['app/room/[id]/page.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/],
+    ],
+  },
+  {
+    // переключатель доски в шапке и плитка «Пустить чужих» — один обработчик
+    file: 'app/room/[id]/page.tsx',
+    expr: 'publicBusy',
+    guards: [['app/room/[id]/page.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
+  },
+  {
+    file: 'components/room/AloneInvite.tsx',
+    expr: 'publicBusy',
+    guards: [['app/room/[id]/page.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
+  },
+  {
     // главная кнопка вошедшего, демо без Steam и обе кнопки формы
     file: 'components/landing/ConnectCard.tsx',
     expr: 'busy !== null',
@@ -310,9 +353,21 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['components/landing/ConnectCard.tsx', /function recheckProfile\(\) \{\s*if \(!input \|\| busy !== null\) return/]],
   },
   {
+    // «Уже прошёл» в «Твоих вечерах» и на странице игры
+    file: 'components/MarkFinished.tsx',
+    expr: "state === 'busy'",
+    guards: [['components/MarkFinished.tsx', /async function mark\(\) \{\s*if \(state === 'busy'\) return/]],
+  },
+  {
     file: 'components/SharePick.tsx',
     expr: 'busy',
     guards: [['components/SharePick.tsx', /async function create\(\) \{\s*if \(current\?\.phase === 'busy'\) return/]],
+  },
+  {
+    // «Сыграю вечером на ПК»: записанный план второй раз не пишется
+    file: 'components/TonightButton.tsx',
+    expr: 'done === true',
+    guards: [['components/TonightButton.tsx', /async function plan\(\) \{\s*if \(done\) return/]],
   },
   {
     // «Выйти», «Да, везде», «Отмена» и «Выйти на всех устройствах»
@@ -325,6 +380,27 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     ],
   },
   {
+    // «Удалить всё обо мне», «Да, удалить всё» и «Отмена» под списком
+    file: 'components/ForgetMe.tsx',
+    expr: 'busy !== null',
+    guards: [
+      ['components/ForgetMe.tsx', /async function ask\(\) \{\s*if \(busy !== null\) return/],
+      ['components/ForgetMe.tsx', /async function erase\(\) \{\s*if \(busy !== null\) return/],
+      ['components/ForgetMe.tsx', /onClick=\{\(\) => \{\s*if \(busy !== null\) return\s*handoff\.current = 'open'/],
+    ],
+  },
+  {
+    // «Получить ссылку» / «Выпустить новую», «Отключить» и «Отмена» у RSS по
+    // секретной ссылке: каждая кнопка гасит повтор сама, по busy
+    file: 'components/whatsnew/FeedLink.tsx',
+    expr: 'busy !== null',
+    guards: [
+      ['components/whatsnew/FeedLink.tsx', /function onPrimary\(\) \{\s*if \(busy !== null\) return/],
+      ['components/whatsnew/FeedLink.tsx', /function onOff\(\) \{\s*if \(busy !== null\) return/],
+      ['components/whatsnew/FeedLink.tsx', /function onCancel\(\) \{\s*if \(busy !== null\) return/],
+    ],
+  },
+  {
     file: 'components/whatsnew/FeedWatch.tsx',
     expr: 'pending',
     guards: [['components/whatsnew/FeedWatch.tsx', /onClick=\{\(\) => \{\s*if \(pending\) return/]],
@@ -333,6 +409,12 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     file: 'components/room/PartyTrivia.tsx',
     expr: 'revealed',
     guards: [['components/room/PartyTrivia.tsx', /onClick=\{\(\) => \{\s*if \(revealed\) return\s*setChosen\(i\)/]],
+  },
+  {
+    // «Пустить обратно» после ✕: в пути — ждём ответа, снят — снимать нечего
+    file: 'app/room/[id]/page.tsx',
+    expr: 'undoLocked',
+    guards: [['app/room/[id]/page.tsx', /async function unkick\(\) \{\s*if \(!kicked \|\| undoLocked\) return/]],
   },
 ]
 
