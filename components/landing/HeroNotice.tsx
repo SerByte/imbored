@@ -38,12 +38,17 @@ export function HeroNotice() {
   const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
   const next = destinationPath(search.get('next'))
   const dest = next ? DESTINATIONS[next] : null
+  // Сюда уводит «Удалить всё обо мне» (components/ForgetMe). Без строки
+  // человек попадал бы на обычную главную гостя и не знал, сработало ли
+  const forgot = search.get('forgot') === '1'
 
-  const promise = joinTarget
-    ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
-    : compatTarget
-      ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
-      : (dest?.promise ?? null)
+  const promise = forgot
+    ? 'Готово — всё, что imbored о тебе хранил, удалено, а входы на всех устройствах погашены.'
+    : joinTarget
+      ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
+      : compatTarget
+        ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
+        : (dest?.promise ?? null)
 
   if (!promise) return null
 

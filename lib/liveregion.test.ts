@@ -276,6 +276,9 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   { file: 'components/whatsnew/FeedLink.tsx', start: 'async function disable()', reset: ['setMiss(null)', "setSaid('')"] },
   // «Выйти» на моргнувшей связи: второй обрыв — то же «Не получилось выйти»
   { file: 'components/SignOut.tsx', start: 'async function out(all: boolean)', reset: ['setMiss(null)'] },
+  // «Удалить всё обо мне»: второй сбой списка или удаления — тот же текст
+  { file: 'components/ForgetMe.tsx', start: 'async function ask()', reset: ['setMiss(null)'] },
+  { file: 'components/ForgetMe.tsx', start: 'async function erase()', reset: ['setMiss(null)'] },
 ]
 
 describe('повтор отказа звучит', () => {

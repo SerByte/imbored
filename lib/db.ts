@@ -393,6 +393,32 @@ CREATE TABLE IF NOT EXISTS feed_links (
   created_at INTEGER NOT NULL
 ) WITHOUT ROWID;
 /*
+ * Отметка удаления по запросу: SteamID и время, больше ничего.
+ *
+ * Единственное, что остаётся от человека после «Удалить всё обо мне», и
+ * нужна она ровно для «выйти везде». Авторитет входа — подпись куки (шапка
+ * sessions): кука, у которой нет строки, — «база не ответила», а не «вход
+ * отозван». Стёртые вместе со всем остальным sessions и users поэтому
+ * никого не выпускали: забытый телефон оставался внутри, и первый же его
+ * заход в /library разобрал бы библиотеку заново — удалённое вернулось бы
+ * само. Отметка работает как users.sessions_from: кука, выданная раньше
+ * неё, не пускает (getSessionState).
+ *
+ * Отдельной таблицей, а не строкой users: та — профиль, и строка с одним
+ * sessions_from выглядела бы как человек, у которого просто нет ника.
+ * Узнать такие строки для уборки можно было бы только проходом по всем
+ * людям, а здесь вся таблица — отметки.
+ *
+ * Живёт, пока может жить кука, выданная до неё: год срока и месяц запаса,
+ * как у строк сессий (sweepStale). Пишет её forgetUser с signOutFrom — роут
+ * app/api/forget и scripts/forget-user.ts; повторное удаление заменяет
+ * прежнюю (она в USER_ROWS). /privacy, раздел 06.
+ */
+CREATE TABLE IF NOT EXISTS forget_marks (
+  steamid TEXT PRIMARY KEY,
+  at INTEGER NOT NULL
+) WITHOUT ROWID;
+/*
  * Служебные ключи: курсоры крона, аренды, счётчики каталога и флаги миграций.
  * Здесь, а не в SCHEMA_CATALOG рядом с остальным каталогом: migrateDb читает
  * из неё версию схемы ДО ALTER-цикла, чтобы решить, нужен ли он вообще.
@@ -1314,7 +1340,12 @@ export type SessionRow = {
    */
   verified: boolean
   revokedAt: number | null
-  /** users.sessions_from — отсечка «выйти везде», общая на все устройства */
+  /**
+   * Отсечка, общая на все устройства: кука, выданная раньше, не пускает.
+   * Позднейшая из двух — users.sessions_from («выйти везде») и отметки
+   * удаления по запросу (forget_marks): после удаления строки users нет, и
+   * отсечку держит отметка.
+   */
   sessionsFrom: number | null
   /**
    * Личности за сессией больше нет: это демо, а его строки в users нет.
@@ -1351,16 +1382,20 @@ export async function getSessionState(
 ): Promise<SessionRow> {
   const res = await db.execute({
     sql: `SELECT s.revoked_at AS revoked_at, s.verified AS verified, u.sessions_from AS sessions_from,
+                 f.at AS forgot_at,
                  (q.steamid GLOB '000*' AND u.steamid IS NULL) AS gone
             FROM (SELECT ? AS sid, ? AS steamid) q
             LEFT JOIN sessions s ON s.sid = q.sid AND s.steamid = q.steamid
-            LEFT JOIN users u ON u.steamid = q.steamid`,
+            LEFT JOIN users u ON u.steamid = q.steamid
+            LEFT JOIN forget_marks f ON f.steamid = q.steamid`,
     args: [sid, steamid],
   })
   const row = res.rows[0]
+  // Позднейшая из отсечек; нет ни одной — null, как и раньше
+  const cuts = [row?.sessions_from, row?.forgot_at].filter((v) => v !== null && v !== undefined).map(Number)
   return {
     revokedAt: (row?.revoked_at as number | null) ?? null,
-    sessionsFrom: (row?.sessions_from as number | null) ?? null,
+    sessionsFrom: cuts.length > 0 ? Math.max(...cuts) : null,
     verified: Number(row?.verified ?? 0) === 1,
     gone: Number(row?.gone ?? 0) === 1,
   }
@@ -6204,7 +6239,8 @@ export async function getFeedLink(db: Db, steamid: string): Promise<{ createdAt:
 
 /**
  * Где лежат данные одного игрока. Один список и для удаления, и для
- * предпросмотра в scripts/forget-user.ts.
+ * предпросмотра — в scripts/forget-user.ts и в списке «что хранится» перед
+ * «Удалить всё обо мне» (app/api/forget, подписи — lib/forget).
  *
  * Список один намеренно. Если бы счёт и удаление держали свои копии условий,
  * первая же новая таблица попала бы только в одну из них, и предпросмотр
@@ -6222,8 +6258,10 @@ export async function getFeedLink(db: Db, steamid: string): Promise<{ createdAt:
  *
  * Сессии удаляются, хотя в остальном коде надгробия не убираются. Там отзыв
  * обязан отличаться от «строки нет», чтобы икота базы не разлогинивала людей.
- * Здесь человек сам попросил убрать всё; если он вернётся с прежней кукой,
- * это будет первый визит с чистого листа.
+ * Здесь человек сам попросил убрать всё — но «строки нет» по-прежнему значит
+ * «вход жив», и прежняя кука пускала бы его дальше. Выпускает со всех
+ * устройств не это удаление, а отметка, которую ставит forgetUser с
+ * signOutFrom (forget_marks).
  *
  * rate_limits: ключ устроен как bucket:id:окно (lib/ratelimit.ts), и id
  * бывает steamid. instr, а не LIKE: в LIKE `_` и `%` — подстановки.
@@ -6264,6 +6302,9 @@ const USER_ROWS = [
   { table: 'library_baselines', where: 'steamid = ?' },
   { table: 'wishlists', where: 'steamid = ?' },
   { table: 'sessions', where: 'steamid = ?' },
+  // Отметка прошлого удаления: человек вернулся и удаляется снова. С
+  // signOutFrom на её место встаёт новая (forgetUser)
+  { table: 'forget_marks', where: 'steamid = ?' },
   { table: 'users', where: 'steamid = ?' },
   { table: 'rate_limits', where: "instr(key, ':' || ? || ':') > 0" },
 ] as const
@@ -6284,6 +6325,26 @@ function userArgs(steamid: string, where: string): string[] {
   return Array.from({ length: where.split('?').length - 1 }, () => steamid)
 }
 
+/**
+ * Чьи картинки сбросить после удаления (forgetCardPaths в lib/forget):
+ * выборы, которыми он делился, и комнаты, где он хост. Читается ДО
+ * forgetUser — после него этих адресов уже не узнать, а карточки по ним ещё
+ * лежат в кэше.
+ */
+export async function forgetCardIds(db: Db, steamid: string): Promise<{ picks: string[]; rooms: string[] }> {
+  const [picks, rooms] = await db.batch(
+    [
+      { sql: 'SELECT id FROM shared_picks WHERE created_by = ?', args: [steamid] },
+      { sql: 'SELECT id FROM rooms WHERE created_by = ?', args: [steamid] },
+    ],
+    'read',
+  )
+  return {
+    picks: (picks?.rows ?? []).map((r) => String(r.id)),
+    rooms: (rooms?.rows ?? []).map((r) => String(r.id)),
+  }
+}
+
 /** Предпросмотр forgetUser: только читает */
 export async function countUserRows(db: Db, steamid: string): Promise<ForgetReport> {
   const res = await db.batch(
@@ -6297,20 +6358,37 @@ export async function countUserRows(db: Db, steamid: string): Promise<ForgetRepo
 }
 
 /**
- * Удалить всё, что хранится об игроке, — по запросу из /privacy, раздел 06.
+ * Удалить всё, что хранится об игроке, — по запросу из /privacy, раздел 06:
+ * кнопкой «Удалить всё обо мне» (app/api/forget) или по письму
+ * (scripts/forget-user.ts).
  *
  * Одной пачкой: либо ушло всё, либо ничего. Половинное удаление хуже любого
  * из двух: человеку ответили «удалили», а годовые отметки или голоса
  * остались, и искать их потом по уже пустым users никто не станет.
+ *
+ * signOutFrom — выпустить человека со всех устройств: той же пачкой, после
+ * всех DELETE, встаёт отметка удаления (forget_marks), и кука, выданная до
+ * этой секунды, больше не пускает. Без неё стёртые sessions и users никого
+ * не выпускали бы — почему, сказано у самой таблицы. Отметка в той же
+ * пачке, а не следом: сбой между ними оставил бы удалённого «вошедшим» на
+ * остальных устройствах, и их первый заход вернул бы удалённое. Оба
+ * настоящих удаления её ставят; без неё forgetUser не оставляет ничего — так
+ * его проверяет lib/db.test.ts.
  */
-export async function forgetUser(db: Db, steamid: string): Promise<ForgetReport> {
-  const res = await db.batch(
-    USER_ROWS.map((r) => ({
-      sql: `DELETE FROM ${r.table} WHERE ${r.where}`,
-      args: userArgs(steamid, r.where),
-    })),
-    'write',
-  )
+export async function forgetUser(
+  db: Db,
+  steamid: string,
+  opts: { signOutFrom?: number } = {},
+): Promise<ForgetReport> {
+  const deletes = USER_ROWS.map((r) => ({
+    sql: `DELETE FROM ${r.table} WHERE ${r.where}`,
+    args: userArgs(steamid, r.where),
+  }))
+  const mark =
+    opts.signOutFrom === undefined
+      ? []
+      : [{ sql: 'INSERT INTO forget_marks (steamid, at) VALUES (?, ?)', args: [steamid, opts.signOutFrom] }]
+  const res = await db.batch([...deletes, ...mark], 'write')
   return USER_ROWS.map((r, i) => ({ table: r.table, rows: Number(res[i]?.rowsAffected ?? 0) }))
 }
 
@@ -6408,6 +6486,8 @@ export const COMPAT_VIEW_TTL_SEC = 90 * 86_400
  *   • Исходы советов старше OUTCOME_TTL_SEC — целиком: вкус их не читает.
  *   • Отметки сравнений старше COMPAT_VIEW_TTL_SEC.
  *   • Выборы, которыми поделились, старше SHARED_PICK_TTL_SEC.
+ *   • Отметки удаления по запросу (forget_marks), когда истекла последняя
+ *     кука до них, — с тем же запасом, что у сессий.
  *
  * Одной пачкой: предикат демо опирается на users, поэтому users уходит
  * последней, а обрыв посередине не оставит личность без половины строк.
@@ -6457,6 +6537,13 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
       { sql: 'DELETE FROM outcomes WHERE shown_at < ?', args: [nowSec - OUTCOME_TTL_SEC] },
       { sql: 'DELETE FROM compat_views WHERE at < ?', args: [nowSec - COMPAT_VIEW_TTL_SEC] },
       { sql: 'DELETE FROM shared_picks WHERE created_at < ?', args: [nowSec - SHARED_PICK_TTL_SEC] },
+      // Отметка удаления по запросу отсекает куки, выданные до неё, — а самая
+      // поздняя из них истекает через год. Запас тот же, что у строк сессий.
+      // Последней: отчёт ниже читает пачку по местам
+      {
+        sql: 'DELETE FROM forget_marks WHERE at < ?',
+        args: [nowSec - SESSION_TTL_SEC - SESSION_SWEEP_MARGIN_SEC],
+      },
     ],
     'write',
   )

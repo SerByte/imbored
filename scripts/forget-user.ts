@@ -26,6 +26,11 @@
  * Что именно и почему удаляется, описано у forgetUser в lib/db.ts. Скрипт
  * только находит steamid и печатает счёт — список таблиц у него свой быть не
  * должен.
+ *
+ * Удаление то же, что у кнопки «Удалить всё обо мне» (app/api/forget), и так
+ * же выпускает человека со всех устройств (signOutFrom): без отметки
+ * удаления его старые куки по-прежнему пускали бы, и первый заход с
+ * забытого телефона разобрал бы библиотеку заново (см. таблицу forget_marks).
  */
 
 import { createClient } from '@libsql/client'
@@ -99,9 +104,11 @@ async function main() {
   const picks = await db.execute({ sql: 'SELECT id FROM shared_picks WHERE created_by = ?', args: [steamid] })
   const pickIds = picks.rows.map((r) => String(r.id))
 
-  print('удалено строк:', await forgetUser(db, steamid))
+  print('удалено строк:', await forgetUser(db, steamid, { signOutFrom: Math.floor(Date.now() / 1000) }))
   console.log(
-    '\nГотово. Что осталось вне базы и отсюда не достаётся:\n' +
+    '\nГотово. Входы на всех устройствах погашены: в базе осталась только отметка\n' +
+      'удаления (forget_marks — SteamID и время), она уйдёт сама через год с месяцем.\n' +
+      'Что осталось вне базы и отсюда не достаётся:\n' +
       '  • картинки портрета, итогов года и сравнения (/portrait/<steamid>/card.png,\n' +
       '    /portrait/<steamid>/year/card.png, их opengraph-image и\n' +
       '    /compat/<steamid>/opengraph-image) живут в кэше Vercel до часа\n' +
