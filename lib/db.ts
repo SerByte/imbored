@@ -581,6 +581,21 @@ CREATE INDEX IF NOT EXISTS idx_rooms_public ON rooms (created_at DESC)
 -- него сама. Здесь, а не в SCHEMA: ctx_json у старых баз приезжает ALTER'ом.
 CREATE INDEX IF NOT EXISTS idx_feedback_ctx ON feedback (created_at)
   WHERE ctx_json IS NOT NULL;
+
+-- Баны одного человека по играм. «Пройдена ли» (isFinished) спрашивают на
+-- каждый заход страницы своей игры, без кэша, и по idx_feedback_steamid
+-- ответ «нет» — обычный, у своей игры бана нет — стоил прохода по ВСЕЙ
+-- истории оценок человека: строки feedback не стираются, уборка обнуляет
+-- только снимки. Здесь это поиск по (steamid, appid) среди одних банов, а
+-- у полки «Пройдено» (listBanned), отсева выдачи (bannedAppids) и «Снова
+-- предлагать» (unbanGame) — только баны человека, а не все его оценки.
+-- Строк в индексе — по бану, остальные действия его не трогают. Предикат
+-- повторяет литерал action = 'banned' этих запросов ДОСЛОВНО. Здесь, а не в
+-- SCHEMA рядом с idx_feedback_steamid: блок идёт после пересборки feedback
+-- (rebuildFeedbackCheck), и её DROP TABLE не уносит индекс до следующего
+-- холодного старта — та же причина, что у idx_feedback_ctx.
+CREATE INDEX IF NOT EXISTS idx_feedback_banned ON feedback (steamid, appid, created_at DESC)
+  WHERE action = 'banned';
 `
 
 /**
@@ -5294,6 +5309,31 @@ export async function listBanned(
   )
 }
 
+/**
+ * Пройдена ли игра — то же правило, что у полки «Пройдено» (listBanned, done):
+ * последний бан этой игры поставлен кнопкой «Уже прошёл». Бан, переставленный
+ * другой кнопкой, — уже не «пройдено», снятый «Снова предлагать» (unbanGame
+ * стирает строки) — тоже. Последний — по (created_at, id): отметку и бан
+ * в одну секунду различает порядок записи.
+ *
+ * Для страницы игры (/api/session/owns): «Уже прошёл» рядом с «Запустить»
+ * не предлагается второй раз той, что уже лежит на полке. Зовут на каждый
+ * заход своей игры, без кэша, и обычный ответ — «нет»: бана у своей игры
+ * нет. Поэтому — idx_feedback_banned, поиск по (steamid, appid) среди одних
+ * банов. По idx_feedback_steamid такое «нет» читало бы всю историю оценок
+ * человека: строку бана, на которой чтение остановилось бы, искать негде.
+ * Доупорядочить по id остаётся баны одной игры — обычно одну строку.
+ */
+export async function isFinished(db: Db, steamid: string, appid: number): Promise<boolean> {
+  const res = await db.execute({
+    sql: `SELECT reason FROM feedback
+           WHERE steamid = ? AND appid = ? AND action = 'banned'
+           ORDER BY created_at DESC, id DESC LIMIT 1`,
+    args: [steamid, appid],
+  })
+  return (res.rows[0] as unknown as { reason: string | null } | undefined)?.reason === 'done'
+}
+
 /** Сколько игр колоды исследователя читается за раз — с запасом на полку и отсев */
 const EXPLORE_ROWS = 200
 
@@ -5448,6 +5488,10 @@ export async function unlikeGame(db: Db, steamid: string, appid: number): Promis
  * рулетки ('spin') план не закрывает: это кубик, а не решение. «Зашло» и
  * открытая карточка — тоже: это не «передумал». Позже — по id, а не по
  * секундам: запуск в ту же секунду, что и план, всё равно случился после.
+ * Окна «пропуск сразу после плана не в счёт» здесь нет нарочно: «Не то —
+ * дальше» у только что отложенного героя /play пропуском не пишет вовсе
+ * (writesPlan в lib/eveningplan.ts), а «Не сегодня» у «Игры дня» вслед за
+ * «Сыграю вечером» — честное «передумал».
  *
  * Запуск — настоящий: «Открыть в Steam» у своей на телефоне пишется
  * 'launched' с intent 'store' (исход совета ему нужен), но открывает он

@@ -287,6 +287,26 @@ describe('restoreDeal', () => {
     expect(restoreDeal(entry(), q)?.deal.continueGame?.appid).toBe(570)
   })
 
+  /*
+   * Бан закрывает и план на вечер (closesPlan): «Подробнее» у героя, который
+   * и есть план, → «Уже прошёл» на странице игры → «Назад». Герой ушёл из
+   * выдачи, planBeside его строку больше не прячет — и «Ставил «X» на
+   * загрузку · Запустить» звал бы в игру, которую только что назвали
+   * пройденной, а нажатие писало бы ей новый исход.
+   */
+  test('строка плана на вечер уходит вместе с баном, выдача и «Продолжить» остаются', () => {
+    const back = restoreDeal(entry(), { ...q, banned: new Set([1145360]) })
+    expect(back?.deal.plan).toBeNull()
+    expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 20, 30])
+    expect(back?.deal.continueGame?.appid).toBe(570)
+    expect(restoreDeal(entry(), q)?.deal.plan?.appid).toBe(1145360)
+    // план — тот же герой: уходят оба, на экран следующая карточка
+    const same = entry({ deal: { ...entry().deal, plan: { appid: 20, name: 'Игра 20', intent: 'install' } } })
+    const gone = restoreDeal(same, { ...q, banned: new Set([20]) })
+    expect(gone?.deal.plan).toBeNull()
+    expect(gone?.deal.picks[gone.index].appid).toBe(10)
+  })
+
   test('забанено всё — восстанавливать нечего', () => {
     expect(restoreDeal(entry(), { ...q, banned: new Set([10, 20, 30]) })).toBeNull()
   })

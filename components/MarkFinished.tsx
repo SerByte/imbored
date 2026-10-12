@@ -11,6 +11,48 @@ import { isNeedSteam } from '@/lib/writer'
 const grab = (el: HTMLElement | null) => el?.focus({ preventScroll: true })
 
 /**
+ * Строка «Пройдено» на месте кнопки — одна на обе дороги к этому состоянию:
+ * только что нажатую отметку (MarkFinished ниже) и уже лежащую на полке
+ * (страница игры по done из ответа владения, components/OwnedLaunch). Пока
+ * это были две копии, они разошлись: сразу после нажатия строка звала
+ * «Дальше — в духе X», а после перезагрузки то же состояние стояло без
+ * дороги дальше.
+ *
+ * focus — только у нажатой: кнопка, на которой стоял фокус, ушла из DOM.
+ * Строка, нарисованная при загрузке страницы, фокус не трогает — его там
+ * никто не терял.
+ */
+export function FinishedNote({
+  appid,
+  name,
+  follow,
+  focus = false,
+}: {
+  appid: number
+  name: string
+  follow: boolean
+  focus?: boolean
+}) {
+  return (
+    <span
+      ref={focus ? grab : undefined}
+      tabIndex={focus ? -1 : undefined}
+      className="self-center text-sm text-dim outline-none"
+    >
+      Пройдено — больше не предложу
+      {follow && (
+        <>
+          {' · '}
+          <Link href={quizHref(null, appid)} className="tap text-ember-text hover:underline">
+            Дальше — в духе «{name}»
+          </Link>
+        </>
+      )}
+    </span>
+  )
+}
+
+/**
  * «Уже прошёл» там, где игра перед глазами: «Твои вечера» в библиотеке и
  * страница игры.
  *
@@ -91,17 +133,7 @@ export function MarkFinished({
   return (
     <>
       {state === 'done' ? (
-        <span ref={grab} tabIndex={-1} className="self-center text-sm text-dim outline-none">
-          Пройдено — больше не предложу
-          {follow && (
-            <>
-              {' · '}
-              <Link href={quizHref(null, appid)} className="tap text-ember-text hover:underline">
-                Дальше — в духе «{name}»
-              </Link>
-            </>
-          )}
-        </span>
+        <FinishedNote appid={appid} name={name} follow={follow} focus />
       ) : (
         <button
           type="button"

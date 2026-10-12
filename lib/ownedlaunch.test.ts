@@ -41,7 +41,17 @@ describe('кнопка запуска', () => {
   test('«Уже прошёл» на странице игры — владельцу-писателю и только у игры с финалом', () => {
     const src = code(read('components', 'OwnedLaunch.tsx'))
     const tail = src.slice(src.indexOf('!owns.owned) return null'))
-    expect(tail).toMatch(/\{finishable && writer === true && \(\s*<MarkFinished\b/)
+    // Уже пройденной — слово, а не кнопка второй раз (бит done из того же
+    // ответа владения): иначе после перезагрузки «Уже прошёл» возвращалась,
+    // хотя игра лежит на полке «Пройдено», и каждое нажатие писало новый бан.
+    // Слово — та же строка, что после нажатия (FinishedNote), с той же
+    // дорогой дальше и без захвата фокуса: своя копия разметки здесь уже
+    // теряла «Дальше — в духе X» (lib/markfinished.test.ts)
+    expect(tail).toMatch(
+      /\{finishable &&\s*writer === true &&\s*\(owns\.done \? \(\s*<FinishedNote appid=\{appid\} name=\{name\} follow=\{follow\} \/>\s*\) : \(\s*<MarkFinished\b/,
+    )
+    expect(tail, 'своя копия строки «Пройдено» вернулась в OwnedLaunch').not.toContain('Пройдено — больше не предложу')
+    expect(src).toContain('done: d.done === true')
     expect(tail).toContain('from="game"')
     const page = code(read('app', 'game', '[appid]', 'page.tsx'))
     expect(page).toMatch(/<OwnedLaunch[^>]*finishable=\{!isReplayable\(meta\)\}/)
@@ -139,6 +149,12 @@ describe('кнопка запуска', () => {
     expect(play).toMatch(/onClick=\{\(via\) =>\s*void sendFeedback\(pick\.appid, 'launched', undefined, ctxOf\(pick, heroFrom, launchIntent\(via\)\)\)/)
     expect(play).toMatch(/sendFeedback\(cont\.appid, 'launched', undefined, ctxOf\(null, 'continue', launchIntent\(via\)\)\)/)
     expect(play, 'запуск своей с общим intent launch вернулся').not.toMatch(/ctxOf\(pick, heroFrom, 'launch'\)/)
+    // «Продолжить» запускают в двух местах: строкой под героем и с экрана
+    // выгорания («Просто продолжить «X»» — под пальцем «Открыть «X» в
+    // Steam»). Второе забыли при переводе на ветку нажатия, и магазинное
+    // касание там закрывало план на вечер, как настоящий запуск
+    expect(play, 'запуск «Продолжить» с общим intent launch вернулся').not.toMatch(/ctxOf\(null, 'continue', 'launch'\)/)
+    expect([...play.matchAll(/ctxOf\(null, 'continue', launchIntent\(via\)\)/g)]).toHaveLength(2)
 
     const daily = code(read('app', 'daily', 'page.tsx'))
     expect(daily).toMatch(/onClick=\{\(via\) =>[\s\S]{0,240}ctxOf\(hero, via === 'store' \? 'store' : 'launch'\)/)
@@ -160,6 +176,29 @@ describe('кнопка запуска', () => {
   })
 
   /*
+   * «Поставь на загрузку» или «Сыграю вечером на ПК» у героя, а потом «Не то
+   * — дальше» — посмотреть, что ещё есть. Пропуск («Просто не сейчас»,
+   * «пропустить») закрывает план (closesPlan), и обещание «будет ждать в
+   * подборке» умирало через секунду после того, как дано. Отложенного в этом
+   * заходе героя «дальше» листает, как сессия по ссылке: без вопроса о
+   * причине и без записи — ни пропуска, ни паузы на сутки-трое, прячущей
+   * игру как раз до вечера. Помнится только записанный план.
+   */
+  test('«Не то — дальше» у только что отложенного героя план не закрывает', () => {
+    const play = code(read('app', 'play', 'page.tsx'))
+    expect(play).toMatch(/if \(r\.ok && writesPlan\(action, ctx\?\.intent\)\) plannedHere\.current\.add\(appid\)/)
+    // закрытый план (запустил с героя) память отпускает: «не то» после
+    // запуска — снова ответ с причиной
+    expect(play).toMatch(
+      /if \(r\.ok && closesPlan\(action, reason, ctx\?\.intent\)\) \{\s*setPlan\([^\n]*\)\s*plannedHere\.current\.delete\(appid\)\s*\}/,
+    )
+    expect(play).toMatch(/if \(readOnly \|\| plannedHere\.current\.has\(pick\.appid\)\) \{\s*advance\(index\)\s*return\s*\}\s*setAskReason\(true\)/)
+    // оба нажатия плана идут через sendFeedback — и попадают в память выше
+    expect(play).toMatch(/sendFeedback\(pick\.appid, 'opened', undefined, ctxOf\(pick, heroFrom, 'install'\)\)/)
+    expect(play).toMatch(/onPlan=\{\(\) => sendFeedback\(pick\.appid, 'opened', undefined, ctxOf\(pick, heroFrom, 'tonight'\)\)\}/)
+  })
+
+  /*
    * «Сыграю вечером» приезжает отдельным куском, и впервые его просят, когда
    * своя игра встаёт героем, — иногда через полчаса после загрузки. Не
    * пришёл — React.lazy без своей границы уводил всю страницу в
@@ -175,6 +214,24 @@ describe('кнопка запуска', () => {
       expect(src, page.join('/')).toMatch(/\buseWarmTonight\(\)/)
       expect(src, `${page.join('/')}: кусок в обход загрузчика`).not.toContain("import('@/components/TonightButton')")
     }
+  })
+
+  /*
+   * «Вернуться к ней» / «Запустить» в «Твоих вечерах» — тоже запуск сайта.
+   * У игры плана он пишется так же, как со страницы игры (слот plan) и
+   * закрывает план; у остальных — по-прежнему ничего: это своя игра, и вкус
+   * от каждого нажатия на полке не должен меняться. onLaunch, а не onClick:
+   * «Открыть в Steam» под пальцем — магазин, и план он не закрывает.
+   */
+  test('«Твои вечера» пишут запуск только игре живого плана, и только настоящий', () => {
+    const src = code(read('components', 'Evenings.tsx'))
+    const launch = src.slice(src.indexOf('<SteamLaunch'), src.indexOf('/>', src.indexOf('<SteamLaunch')))
+    expect(launch).toMatch(/onLaunch=\{item\.appid === plan \? \(\) => closePlan\(item\.appid\) : undefined\}/)
+    expect(launch).not.toMatch(/\bonClick=/)
+    expect(src).toContain("ctx: { source: 'library', slot: 'plan', intent: 'launch' }")
+    const page = code(read('app', 'library', 'page.tsx'))
+    expect(page).toMatch(/writer && !isDemoId\(steamid\) \? latestEveningPlan\(db, steamid, nowSec\(\)\)\.catch\(\(\) => null\) : null/)
+    expect(page).toMatch(/<Evenings[^>]*plan=\{plan\?\.appid \?\? null\}/)
   })
 
   // Запуск со страницы игры пишется только по плану: без него это не совет,

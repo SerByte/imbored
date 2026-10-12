@@ -204,6 +204,12 @@ export type RestoredDeal = {
  * Строка «Продолжить» фильтруется тем же списком: «Уже прошёл» ставят и у
  * неё, и на странице игры, куда уходят «Подробнее», — и после «Назад»
  * пройденная игра звала бы продолжить себя ещё пятнадцать минут.
+ *
+ * И строка плана на вечер (lib/eveningplan.ts): бан закрывает план и на
+ * сервере (closesPlan), а план чаще всего и стоит героем, у которого жмут
+ * «Подробнее». Пока игра была героем, строку прятал planBeside; после
+ * «Назад» героя в выдаче нет — и без фильтра «Ставил «X» на загрузку ·
+ * Запустить» звал бы в игру, только что названную пройденной.
  */
 export function restoreDeal(
   entry: PlayCache | null,
@@ -216,12 +222,14 @@ export function restoreDeal(
   if (!picks.length) return null
   const index = Math.max(0, picks.findIndex((p) => p.appid === entry.hero))
   const cont = entry.deal.continueGame
+  const plan = entry.deal.plan
   return {
     deal: {
       ...entry.deal,
       picks,
       discoveries: entry.deal.discoveries.filter(keep),
       continueGame: cont && keep(cont) ? cont : null,
+      plan: plan && keep(plan) ? plan : null,
     },
     index,
     liked: entry.liked,

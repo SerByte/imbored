@@ -22,6 +22,10 @@ import {
   PATCH_SINCE_MAX,
   getNeighbors,
   latestEveningPlan,
+  isFinished,
+  bannedAppids,
+  listBanned,
+  unbanGame,
   listEvenings,
   listCompatViews,
   findSharedPick,
@@ -347,24 +351,25 @@ const CASES: Case[] = [
     indexes: ['idx_games_deal_until'],
     sortFree: true,
   },
-  // Баны участников пати: по диапазону индекса на каждого участника. DISTINCT
-  // сортирует только найденные строки этих людей, а не таблицу.
+  // Баны участников пати: по диапазону частичного индекса банов на каждого
+  // участника. DISTINCT сортирует только баны этих людей, а не таблицу.
   {
     name: 'баны участников пати',
     run: (db) => bannedAppidsOf(db, ['76561198000000001', '76561198000000002']),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_banned'],
     sortFree: false,
   },
-  // Колода исследователя: строки одного человека по индексу, и бан — тоже по
-  // нему. GROUP BY сортирует только найденные строки этого человека.
+  // Колода исследователя: строки одного человека по индексу, а его баны —
+  // по частичному индексу банов. GROUP BY сортирует только найденные строки
+  // этого человека.
   {
     name: 'пролистанное в колоде исследователя',
     run: (db) => listExplore(db, '76561198000000001'),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_steamid', 'idx_feedback_banned'],
     sortFree: false,
   },
   // Полка «Приглянулось» и полка «Зашло» — тот же разговор: строки одного
-  // человека по индексу, GROUP BY сортирует только их
+  // человека по индексу, баны — по индексу банов, GROUP BY сортирует только их
   // Прежние снимки одного человека — по индексу; сортировка — тай-брейк по
   // id среди не больше трёх его строк, а json_each — по одному блобу
   {
@@ -415,19 +420,19 @@ const CASES: Case[] = [
   {
     name: 'полка «Приглянулось»',
     run: (db) => listExploreLiked(db, '76561198000000001', 120),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_steamid', 'idx_feedback_banned'],
     sortFree: false,
   },
   {
     name: 'полка «Зашло»',
     run: (db) => listLiked(db, '76561198000000001'),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_steamid', 'idx_feedback_banned'],
     sortFree: false,
   },
   {
     name: 'счёт «Зашло»',
     run: (db) => countLiked(db, '76561198000000001'),
-    indexes: ['idx_feedback_steamid'],
+    indexes: ['idx_feedback_steamid', 'idx_feedback_banned'],
     sortFree: false,
   },
   /*
@@ -441,6 +446,45 @@ const CASES: Case[] = [
     run: (db) => latestEveningPlan(db, '76561198000000001', NOW),
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
+  },
+  /*
+   * «Пройдена ли» — на каждый заход страницы своей игры у пишущей сессии
+   * (/api/session/owns, без кэша), и обычный ответ — «нет». По
+   * idx_feedback_steamid это «нет» читало всю историю оценок человека:
+   * строки бана этой игры, на которой чтение остановилось бы, у своей игры
+   * нет. Частичный индекс банов ищет по (steamid, appid); доупорядочить по
+   * id остаётся баны одной игры.
+   */
+  {
+    name: 'пройдена ли игра',
+    run: (db) => isFinished(db, '76561198000000001', 620),
+    indexes: ['idx_feedback_banned'],
+    sortFree: false,
+  },
+  // Отсев банов — на каждую выдачу /play (lib/candidates) и на /library:
+  // только баны человека, а не все его оценки, и DISTINCT приходит из
+  // порядка индекса (steamid, appid)
+  {
+    name: 'баны человека для отсева выдачи',
+    run: (db) => bannedAppids(db, '76561198000000001'),
+    indexes: ['idx_feedback_banned'],
+    sortFree: true,
+  },
+  // Полка «Скрытые» и «Пройдено» на /library: GROUP BY по appid — из
+  // индекса, сортировка по дате — среди банов одного человека
+  {
+    name: 'полка банов',
+    run: (db) => listBanned(db, '76561198000000001'),
+    indexes: ['idx_feedback_banned'],
+    sortFree: false,
+  },
+  // «Снова предлагать»: стираются баны одной игры, найденные поиском по
+  // индексу, а не проходом по оценкам человека
+  {
+    name: '«Снова предлагать»',
+    run: (db) => unbanGame(db, '76561198000000001', 620),
+    indexes: ['idx_feedback_banned'],
+    sortFree: true,
   },
 ]
 

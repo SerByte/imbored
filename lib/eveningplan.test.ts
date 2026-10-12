@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'vitest'
 import { CTX_INTENTS } from './feedbackctx'
-import { PLAN_INTENTS, PLAN_INTENTS_SQL, closesPlan, parseEveningPlan, planBeside, planLine } from './eveningplan'
+import {
+  PLAN_INTENTS,
+  PLAN_INTENTS_SQL,
+  closesPlan,
+  parseEveningPlan,
+  planBeside,
+  planLine,
+  writesPlan,
+} from './eveningplan'
 
 describe('план на вечер', () => {
   test('годный план — как есть', () => {
@@ -48,6 +56,22 @@ describe('план на вечер', () => {
     expect(closesPlan('skipped', 'spin')).toBe(false)
     expect(closesPlan('liked')).toBe(false)
     expect(closesPlan('opened', null, 'details')).toBe(false)
+  })
+
+  /*
+   * План — то же, что читает обратно latestEveningPlan: 'opened' с intent
+   * плана. По нему /play помнит, что героя только что отложили, и «Не то —
+   * дальше» у него листает, не записывая пропуска, который закрыл бы план
+   * секундой позже (closesPlan).
+   */
+  test('план пишет только «открыл» с intent загрузки или вечера', () => {
+    expect(writesPlan('opened', 'install')).toBe(true)
+    expect(writesPlan('opened', 'tonight')).toBe(true)
+    expect(writesPlan('opened', 'details')).toBe(false)
+    expect(writesPlan('opened')).toBe(false)
+    expect(writesPlan('launched', 'launch')).toBe(false)
+    // intent плана у другой оценки — не план: сервер ищет только 'opened'
+    expect(writesPlan('skipped', 'tonight')).toBe(false)
   })
 
   /*

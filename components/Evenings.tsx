@@ -10,6 +10,7 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { StatusLine } from '@/components/StatusLine'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import type { GameArtUrls } from '@/lib/art'
+import { eveningKey as keyOf, keepOnShelf } from '@/lib/eveningshelf'
 import { latestWins } from '@/lib/latestwins'
 import type { OutcomeVerdict } from '@/lib/outcome'
 import { quizHref } from '@/lib/presets'
@@ -52,9 +53,6 @@ export type EveningItem = {
  */
 const MarkFinished = lazyIsland(() => import('@/components/MarkFinished').then((m) => m.MarkFinished), 'mark-finished')
 
-/** Одна игра может быть посоветована дважды — в разные окна */
-const keyOf = (i: Pick<EveningItem, 'appid' | 'shownAt'>) => `${i.appid}:${i.shownAt}`
-
 /** Чем кончился один POST ответа: denied — сессия только для чтения (needsteam) */
 type Sent = 'ok' | 'denied' | 'failed'
 
@@ -84,7 +82,10 @@ const VERDICTS: Array<{ key: Exclude<OutcomeVerdict, 'dismissed'>; label: string
  * библиотеке, на полке «Пройдено»», и человек уже здесь. Пересчёт приносит
  * и item.finished у этой карточки — но её MarkFinished остаётся на месте
  * (marked): на его строке «Пройдено — больше не предложу» стоит фокус, и
- * слово «Пройдено» вместо неё уронило бы его в body.
+ * слово «Пройдено» вместо неё уронило бы его в body. И сама карточка
+ * остаётся на полке (kept, lib/eveningshelf): сервер держит сверх двенадцати
+ * свежих только советы без ответа, и тринадцатый с «Зацепило» пересчёт
+ * снимал бы целиком — вместе со строкой, на которой фокус.
  *
  * Ответ меняется оптимистично, а уходит по одному запросу на игру за раз
  * (lib/latestwins): два быстрых нажатия, отправленные разом, доезжали в любом
@@ -98,15 +99,26 @@ const VERDICTS: Array<{ key: Exclude<OutcomeVerdict, 'dismissed'>; label: string
  * Подпись над полкой (lead) — готовой разметкой с сервера: сводка, поздние
  * минуты и что ещё подтянется считаются там, а текст в пропсах не весит в JS
  * маршрута.
+ *
+ * plan — appid живого плана на вечер (lib/eveningplan.ts), его читает
+ * сервер. План закрывается запуском, а «Вернуться к ней» здесь — запуск
+ * сайта: у игры плана он пишется так же, как со страницы игры (OwnedLaunch,
+ * слот plan), — иначе «Ставил «X» на загрузку — ждёт тебя» висела бы на
+ * главной и после сыгранного вечера. Только настоящий запуск (onLaunch):
+ * «Открыть в Steam» под пальцем — магазин, и план он не закрывает. У
+ * остальных карточек запуск по-прежнему не пишется: это своя игра, а не
+ * ответ на совет.
  */
 export function Evenings({
   items,
   lead,
   writer,
+  plan,
 }: {
   items: EveningItem[]
   lead: ReactNode
   writer: boolean
+  plan: number | null
 }) {
   const [verdicts, setVerdicts] = useState(() => new Map(items.map((i) => [keyOf(i), i.verdict])))
   const [denied, setDenied] = useState(false)
@@ -117,10 +129,19 @@ export function Evenings({
    * после пересчёта честно встаёт «Пройдено», а не вторая такая же кнопка.
    */
   const [marked, setMarked] = useState<ReadonlySet<string>>(() => new Set())
+  /**
+   * Карточки, тронутые здесь — ответом или отметкой, — снимком на момент
+   * нажатия: пересчёт страницы (router.refresh у отметки, WarmCatalog) их с
+   * полки уже не снимет (lib/eveningshelf). Отдельно от marked: ответ
+   * держит карточку, но кнопку «Уже прошёл» у пройденной не возвращает.
+   */
+  const [kept, setKept] = useState<ReadonlyMap<string, EveningItem>>(() => new Map())
+  const keep = (item: EveningItem) => setKept((m) => new Map(m).set(keyOf(item), item))
+  const shelf = keepOnShelf(items, kept)
   const router = useRouter()
   const [, startTransition] = useTransition()
   const readOnly = !writer || denied
-  const missed = failed === null ? undefined : items.find((i) => keyOf(i) === failed)
+  const missed = failed === null ? undefined : shelf.find((i) => keyOf(i) === failed)
   // Что сервер точно принял — по ключу, поверх item.verdict из разметки. Откат
   // отказа идёт сюда, а не к прошлому нажатию: при очереди оно могло так и не
   // уехать, и откат к нему показал бы ответ, которого в базе нет
@@ -147,10 +168,27 @@ export function Evenings({
     }
   }
 
+  /*
+   * Запуск игры плана. Отправил и забыл, как OwnedLaunch: потерянный —
+   * это строка плана до конца срока, а не сбой. needsteam — права сменились,
+   * пока страница была открыта: кнопки гаснут, как после отказа ответа
+   */
+  const closePlan = (appid: number) =>
+    void fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appid, action: 'launched', ctx: { source: 'library', slot: 'plan', intent: 'launch' } }),
+    })
+      .then(async (r) => {
+        if (await isNeedSteam(r)) setDenied(true)
+      })
+      .catch(() => {})
+
   async function answer(item: EveningItem, verdict: OutcomeVerdict) {
     const key = keyOf(item)
     if ((verdicts.get(key) ?? null) === verdict) return
     setFailed(null)
+    keep(item)
     setVerdicts((m) => new Map(m).set(key, verdict))
     // null — прошлый ответ про эту игру ещё в пути, этот уедет следом, и итог
     // скажет тот вызов, что начал полёт
@@ -187,7 +225,7 @@ export function Evenings({
         className="sr-only"
       />
       <ol className="shelf-rail">
-        {items.map((item) => {
+        {shelf.map((item) => {
           const key = keyOf(item)
           const verdict = verdicts.get(key) ?? null
           return (
@@ -250,6 +288,7 @@ export function Evenings({
                           onDenied={() => setDenied(true)}
                           onDone={() => {
                             setMarked((m) => new Set(m).add(key))
+                            keep(item)
                             startTransition(() => router.refresh())
                           }}
                           className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-60"
@@ -268,6 +307,7 @@ export function Evenings({
                   appid={item.appid}
                   label={item.playedEnough ? 'Вернуться к ней' : 'Запустить'}
                   mobileLabel="Открыть в Steam"
+                  onLaunch={item.appid === plan ? () => closePlan(item.appid) : undefined}
                   className="link-more tap self-start"
                 />
               ) : (

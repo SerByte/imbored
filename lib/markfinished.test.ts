@@ -3,7 +3,8 @@ import path from 'node:path'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
-import { MarkFinished } from '../components/MarkFinished'
+import { FinishedNote, MarkFinished } from '../components/MarkFinished'
+import { quizHref } from './presets'
 
 /**
  * «Уже прошёл» вне /play — в «Твоих вечерах» и на странице игры
@@ -63,6 +64,37 @@ describe('«Уже прошёл» вне выдачи', () => {
     expect(CODE).toContain('href={quizHref(null, appid)}')
   })
 
+  /*
+   * Строка «Пройдено» одна на обе дороги к этому состоянию: после нажатия
+   * (MarkFinished) и при загрузке уже пройденной (OwnedLaunch по done). У
+   * второй была своя копия без «Дальше — в духе X», и одно и то же состояние
+   * до перезагрузки звало дальше, а после — нет.
+   */
+  test('строка «Пройдено» при follow зовёт дальше, без follow — нет', () => {
+    const note = (follow: boolean) =>
+      renderToStaticMarkup(createElement(FinishedNote, { appid: 367520, name: 'Hollow Knight', follow }))
+    const href = quizHref(null, 367520).replace(/&/g, '&amp;')
+    expect(note(true)).toContain('Пройдено — больше не предложу · ')
+    expect(note(true)).toContain(`<a class="tap text-ember-text hover:underline" href="${href}">Дальше — в духе «Hollow Knight»</a>`)
+    expect(note(false)).toContain('Пройдено — больше не предложу')
+    expect(note(false)).not.toContain('<a ')
+    expect(CODE).toMatch(/state === 'done' \? \(\s*<FinishedNote appid=\{appid\} name=\{name\} follow=\{follow\} focus \/>/)
+  })
+
+  // Фокус забирает только строка, сменившая нажатую кнопку: нарисованная при
+  // загрузке страницы игры увела бы его с того, что человек читал
+  test('строка «Пройдено» без focus не забирает фокус и не встаёт в порядок обхода', () => {
+    const out = renderToStaticMarkup(
+      createElement(FinishedNote, { appid: 367520, name: 'Hollow Knight', follow: false }),
+    )
+    expect(out).not.toContain('tabindex')
+    const focused = renderToStaticMarkup(
+      createElement(FinishedNote, { appid: 367520, name: 'Hollow Knight', follow: false, focus: true }),
+    )
+    expect(focused).toContain('tabindex="-1"')
+    expect(CODE).toMatch(/ref=\{focus \? grab : undefined\}/)
+  })
+
   // onDone — только записанной отметке: отказ и needsteam полку «Пройдено» не меняют
   test('onDone зовётся только после записанной отметки', () => {
     expect(CODE).toMatch(/setState\(next\)\s*if \(next === 'done'\) onDone\?\.\(\)/)
@@ -110,9 +142,33 @@ describe('«Уже прошёл» вне выдачи', () => {
     const evenings = fs
       .readFileSync(path.join(__dirname, '..', 'components', 'Evenings.tsx'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
+    // keep(item) между отметкой и пересчётом — см. тест ниже
     expect(evenings).toMatch(
-      /onDone=\{\(\) => \{\s*setMarked\(\(m\) => new Set\(m\)\.add\(key\)\)\s*startTransition\(\(\) => router\.refresh\(\)\)/,
+      /onDone=\{\(\) => \{\s*setMarked\(\(m\) => new Set\(m\)\.add\(key\)\)\s*keep\(item\)\s*startTransition\(\(\) => router\.refresh\(\)\)/,
     )
     expect(evenings).toMatch(/item\.finished && !marked\.has\(key\) \?/)
+  })
+
+  /*
+   * Мало держать MarkFinished — надо, чтобы пересчёт не унёс саму карточку.
+   * Сервер ставит на полку двенадцать свежих советов и сверх них —
+   * спрашиваемые (askableNow); тринадцатый с только что данным «Зацепило»
+   * уже не спрашиваемый, и refresh после «Уже прошёл» снимал его с полки
+   * вместе со строкой, на которой стоял фокус. Поэтому полка — items плюс
+   * карточки, тронутые здесь (lib/eveningshelf), и строка отказа ищет игру
+   * там же.
+   */
+  test('в «Твоих вечерах» пересчёт не снимает с полки карточку, которую только что тронули', () => {
+    const evenings = fs
+      .readFileSync(path.join(__dirname, '..', 'components', 'Evenings.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    expect(evenings).toContain('const shelf = keepOnShelf(items, kept)')
+    expect(evenings).toContain('{shelf.map((item) => {')
+    expect(evenings).not.toContain('items.map((item) => {')
+    expect(evenings).toContain('shelf.find((i) => keyOf(i) === failed)')
+    // и ответ «как тебе?»: снятый со спрашиваемых, он уходил бы с первым же пересчётом
+    const answer = evenings.slice(evenings.indexOf('async function answer('), evenings.indexOf('return (\n'))
+    expect(answer).toMatch(/keep\(item\)/)
   })
 })

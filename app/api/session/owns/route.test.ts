@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { logFeedback, saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
+import { logFeedback, saveLibrarySnapshot, unbanGame, upsertGamesMeta, type Db } from '@/lib/db'
 import { nowSec } from '@/lib/server'
 import { freshDb, signInAs, signOut } from '@/lib/testing/route'
 import type { LibraryGame } from '@/lib/types'
@@ -48,13 +48,70 @@ describe('/api/session/owns', () => {
     expect((await ask('1.5')).status).toBe(400)
   })
 
-  test('игра в библиотеке — «да», ответ личный и живёт пять минут', async () => {
-    const me = await signInAs(db, 'openid')
+  /*
+   * Пять минут кэша — ответу, который меняет только новый снапшот: «нет» и
+   * «да» сессии по ссылке. «Да» пишущей сессии несёт ещё и биты, которые она
+   * меняет сама — «Уже прошёл» здесь или в «Твоих вечерах», «Снова
+   * предлагать» на /library, — и закэшированный ответ до отметки вернул бы
+   * кнопку на перезагрузке (тест «пройдена» ниже).
+   */
+  test('игра в библиотеке — «да», ответ личный; у сессии по ссылке живёт пять минут', async () => {
+    const me = await signInAs(db, 'claimed')
     await saveLibrarySnapshot(db, me, lib(570, 730), nowSec())
     const res = await ask(730)
     expect(await res.json()).toEqual({ owned: true })
     expect(res.headers.get('cache-control')).toBe('private, max-age=300')
     expect(res.headers.get('vary')).toBe('Cookie')
+  })
+
+  test('у пишущей сессии «да» без кэша, «нет» — те же пять минут', async () => {
+    const me = await signInAs(db, 'openid')
+    await saveLibrarySnapshot(db, me, lib(570, 730), nowSec())
+    const yes = await ask(730)
+    expect(await yes.json()).toEqual({ owned: true })
+    expect(yes.headers.get('cache-control')).toBe('private, no-store')
+    const no = await ask(440)
+    expect(await no.json()).toEqual({ owned: false })
+    expect(no.headers.get('cache-control')).toBe('private, max-age=300')
+    expect(no.headers.get('vary')).toBe('Cookie')
+  })
+
+  /*
+   * «Уже прошёл» на странице игры жил только в состоянии островка: после
+   * перезагрузки кнопка возвращалась, хотя игра уже лежит на полке
+   * «Пройдено», — человек не понимал, сохранилась ли отметка, и каждое
+   * повторное нажатие писало ещё одну строку бана. Решает последний бан, как
+   * у полки (listBanned): переставленный другой кнопкой — уже не «пройдено»,
+   * снятый «Снова предлагать» — тоже.
+   */
+  test.each(['openid', 'demo'] as const)('%s: пройденная — done: true, и решает последний бан', async (kind) => {
+    const me = await signInAs(db, kind)
+    await saveLibrarySnapshot(db, me, lib(730), nowSec())
+    await logFeedback(db, { steamid: me, appid: 730, action: 'banned', reason: 'done' }, nowSec() - 60)
+    const res = await ask(730)
+    expect(await res.json()).toEqual({ owned: true, done: true })
+    expect(res.headers.get('cache-control')).toBe('private, no-store')
+    await logFeedback(db, { steamid: me, appid: 730, action: 'banned' }, nowSec())
+    expect(await (await ask(730)).json()).toEqual({ owned: true })
+    await logFeedback(db, { steamid: me, appid: 730, action: 'banned', reason: 'done' }, nowSec() + 1)
+    expect(await (await ask(730)).json()).toEqual({ owned: true, done: true })
+    await unbanGame(db, me, 730)
+    expect(await (await ask(730)).json()).toEqual({ owned: true })
+  })
+
+  // Кнопки у сессии по ссылке нет — и спрашивать её бан незачем; у чужой
+  // игры кнопки нет тоже
+  test('сессии по ссылке и у не своей игры — без done', async () => {
+    const me = await signInAs(db, 'claimed')
+    await saveLibrarySnapshot(db, me, lib(730), nowSec())
+    await logFeedback(db, { steamid: me, appid: 730, action: 'banned', reason: 'done' }, nowSec() - 60)
+    await logFeedback(db, { steamid: me, appid: 440, action: 'banned', reason: 'done' }, nowSec() - 60)
+    expect(await (await ask(730)).json()).toEqual({ owned: true })
+    db = await freshDb()
+    const writer = await signInAs(db, 'openid')
+    await saveLibrarySnapshot(db, writer, lib(730), nowSec())
+    await logFeedback(db, { steamid: writer, appid: 440, action: 'banned', reason: 'done' }, nowSec() - 60)
+    expect(await (await ask(440)).json()).toEqual({ owned: false })
   })
 
   test('7300 в библиотеке — не повод сказать «да» про 730', async () => {
