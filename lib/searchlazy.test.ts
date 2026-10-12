@@ -51,11 +51,25 @@ describe('поиск по каталогу — чанком, а не в кажд
    * Кнопка — это кнопка: React и значок, которые и так есть в шапке
    * (переключатель темы). Любой новый статический импорт сюда — вес на
    * каждой странице; если он правда нужен, его место — в окне.
+   *
+   * Исключение одно и бесплатное: отчёт об отказе чанка (lib/clienterr и его
+   * маски lib/errlog). Оба и так в первой загрузке каждой страницы — их везёт
+   * instrumentation-client, — а без отчёта 404 куска после деплоя жил бы
+   * невидимым (докблок SearchLauncher). Модуль островка (components/lazyIsland)
+   * сюда не идёт: его в первой загрузке шапки нет.
    */
-  test('кнопка тянет только React и значок', () => {
+  test('кнопка тянет только React, значок и отчёт об отказе', () => {
     const { files, packages } = reach(LAUNCHER)
-    expect([...files].map(rel).sort()).toEqual(['components/Icon.tsx', 'components/SearchLauncher.tsx'])
+    expect([...files].map(rel).sort()).toEqual([
+      'components/Icon.tsx',
+      'components/SearchLauncher.tsx',
+      'lib/clienterr.ts',
+      'lib/errlog.ts',
+    ])
     expect([...packages.keys()]).toEqual(['react'])
+    // «бесплатное» — только пока их правда везёт instrumentation-client
+    const boot = [...reach(path.join(ROOT, 'instrumentation-client.ts')).files].map(rel)
+    expect(boot).toEqual(expect.arrayContaining(['lib/clienterr.ts', 'lib/errlog.ts']))
   })
 
 

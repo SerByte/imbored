@@ -134,7 +134,7 @@ export function inviteCopy(code: string, invite: RoomInvite | null): InviteCopy 
     description:
       (seed ? `Первой картой — «${seed}»; не зайдёт — дальше колода из ваших библиотек. ` : '') +
       `${inRoom(['человек уже в комнате', 'человека уже в комнате', 'человек уже в комнате'])}. ` +
-      'Подключи свою библиотеку Steam и свайпай, во что готов играть: совпадут голоса всех — будет матч.',
+      'Подключи свою библиотеку Steam и свайпай, во что не против сыграть: совпадут голоса всех — будет матч.',
     eyebrow: seed && preset ? `ПАТИ · ${preset.toUpperCase()}` : 'ПАТИ · ПРИГЛАШЕНИЕ',
     headline: seed
       ? `${callsCard} в «${clip(seed, CARD_NAME_MAX)}»`

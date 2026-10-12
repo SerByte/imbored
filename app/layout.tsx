@@ -216,7 +216,11 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       <body className="min-h-full font-sans overflow-x-hidden">
         {/* Хэша в CSP у скрипта темы нет и не будет: он выключил бы
             'unsafe-inline', на котором живут инлайн-скрипты самого Next.
-            Подробно — в lib/csp.ts. */}
+            Подробно — в lib/csp.ts.
+            Исполняется он только в документе с сервера. 404 из notFound()
+            без Suspense (/game, /pick) приходит пустой оболочкой, и лэйаут
+            рисует браузер — такой <script> не исполняется; тему там ставит
+            ThemeToggle (applyStoredTheme). */}
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,
@@ -285,7 +289,10 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <LogoMark size={28} />
               <Wordmark />
             </Link>
-            <div className="flex items-center gap-3 lg:gap-5">
+            {/* relative — опора строки отказа поиска под значком
+                (.search-miss в globals.css): правым краем она встаёт по
+                краю ряда, а не по краю экрана за полем px-safe */}
+            <div className="relative flex items-center gap-3 lg:gap-5">
               {/*
                 Тема — рядом с навигацией, а не в ней. Внутри <nav> она делала
                 из шапки на телефоне ориентир «навигация» из одной кнопки

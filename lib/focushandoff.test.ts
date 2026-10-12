@@ -285,3 +285,41 @@ describe('пати: нажатая кнопка уходит — фокус ос
     for (const r of returns) expect(fresh.slice(r.index), String(r.index)).toMatch(/^return \(\s*<>\s*\{status\}/)
   })
 })
+
+/*
+ * «Выйти на всех устройствах» спрашивает подтверждение, и вопрос встаёт НА
+ * МЕСТО нажатой кнопки: «Да, везде» и «Отмена» — новые узлы, а нажатая ушла
+ * из DOM. Фокус падал в body в обе стороны — и на вопросе, и на «Отмене», —
+ * клавиатура начинала со страницы сверху, а скринридер вопроса («Ссылка на
+ * RSS тоже перестанет работать») не слышал вовсе. У FeedLink подтверждение —
+ * та же кнопка, и вопроса там нет (докблок FeedLink).
+ */
+describe('выход «везде»: вопрос и «Отмена» не роняют фокус', () => {
+  const src = read('components/SignOut.tsx')
+  const buttons = tags(src, 'button')
+
+  test('«Да, везде» и «Выйти на всех устройствах» — цели переноса', () => {
+    expect(buttons.some((t) => /ref=\{yesRef\}/.test(t)), '«Да, везде» без ref').toBe(true)
+    expect(buttons.some((t) => /ref=\{allRef\}/.test(t)), '«Выйти на всех устройствах» без ref').toBe(true)
+  })
+
+  /*
+   * Перенос — после коммита, когда новый узел уже в DOM, и только по отметке
+   * нажатия: без неё эффект на монтировании забрал бы фокус у страницы (там
+   * он ещё в body — focusAdrift сказал бы «потерян»).
+   */
+  test('перенос — эффектом по confirmAll, по отметке нажатия и только потерянного фокуса', () => {
+    expect(src).toMatch(
+      /useEffect\(\(\) => \{\s*const to = handoff\.current\s*handoff\.current = null\s*if \(to && focusAdrift\(document, homeRef\.current\)\) \(to === 'yes' \? yesRef : allRef\)\.current\?\.focus\(\)\s*\}, \[confirmAll\]\)/,
+    )
+    expect(src).toMatch(/setConfirmAll\(true\)\s*handoff\.current = 'yes'/)
+    expect(src).toMatch(/setConfirmAll\(false\)\s*handoff\.current = 'all'/)
+  })
+
+  /** Фокус встаёт на «Да, везде» — и вопрос звучит вместе с ним */
+  test('вопрос — описание «Да, везде»', () => {
+    const yes = buttons.find((t) => /ref=\{yesRef\}/.test(t)) ?? ''
+    expect(yes).toMatch(/aria-describedby=\{askId\}/)
+    expect(src).toMatch(/<span id=\{askId\}>/)
+  })
+})

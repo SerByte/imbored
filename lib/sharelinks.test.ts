@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { CardDownload } from '../components/CardDownload'
-import { useShareLink, type ShareLink } from '../components/ShareLink'
+import { ShareLinkField, useShareLink, type ShareLink } from '../components/ShareLink'
 import { parseTrackEvent, SHARE_KINDS, stepKey, TRACK_PATH, type ShareKind } from './track'
 
 /**
@@ -118,6 +118,76 @@ describe('телеметрия шаринга', () => {
     const keys = beacons()
     for (const what of SHARE_KINDS) await shareOf(what).run()
     expect(await keys()).toEqual(SHARE_KINDS.map((what) => `share:${what}.direct`))
+  })
+
+  /**
+   * Поле со ссылкой, снятое с серверного рендера (как shareOf): вызов
+   * ShareLinkField внутри пробы даёт дерево с живым обработчиком кнопки.
+   */
+  function pressField(props: { counted?: boolean }): () => Promise<void> {
+    let tree: ReactElement<{ children: ReactElement[] }> | undefined
+    function Probe() {
+      tree = ShareLinkField({
+        what: 'pick',
+        url: 'https://imbored.cc/pick/abc?ref=pick',
+        label: 'Ссылка на выбор',
+        title: 'Выбор',
+        text: 'Вечер',
+        ...props,
+      }) as ReactElement<{ children: ReactElement[] }>
+      return null
+    }
+    renderToStaticMarkup(createElement(Probe))
+    const button = tree!.props.children.find((c) => c?.type === 'button') as ReactElement<{
+      onClick: () => void
+    }>
+    return async () => {
+      button.props.onClick()
+      // run() асинхронный: даём ему дойти до буфера
+      await vi.runAllTimersAsync()
+    }
+  }
+
+  /*
+   * «Отправить другу» сам делает ссылку и сам же пробует поделиться — это
+   * нажатие и посчитано. Поле со своей кнопкой под героем — второй шаг того
+   * же намерения: на iOS попытка после await не проходит, и без второго
+   * нажатия ссылка не уйдёт. Считалось оно вторым share:pick — и на iOS
+   * каждая отправка выбора лежала в счётчике дважды.
+   */
+  test('первое нажатие поля, чья ссылка уже посчитана, маяка не шлёт — следующие шлют', async () => {
+    vi.useFakeTimers()
+    const keys = beacons()
+    const press = pressField({ counted: true })
+    await press()
+    await press()
+    expect(await keys()).toEqual(['share:pick.direct'])
+  })
+
+  test('без counted каждое нажатие поля — своё «поделился»', async () => {
+    vi.useFakeTimers()
+    const keys = beacons()
+    const press = pressField({})
+    await press()
+    await press()
+    expect(await keys()).toEqual(['share:pick.direct', 'share:pick.direct'])
+  })
+
+  /*
+   * Поле выбора — с key по адресу: без него React оставил бы тот же экземпляр,
+   * когда у героя появилась новая ссылка, и «первое нажатие» досталось бы ей
+   * уже израсходованным. counted — только если «Отправить другу» сам
+   * попробовал поделиться: ответ, пришедший после смены героя, в буфер не
+   * идёт и не считается, и первое нажатие поля тогда — первое и есть.
+   */
+  test('SharePick отдаёт полю counted той попытки и key ссылки', () => {
+    const src = withoutComments(fs.readFileSync(path.join(ROOT, 'components', 'SharePick.tsx'), 'utf8'))
+    const field = src.slice(src.indexOf('<ShareLinkField'), src.indexOf('/>', src.indexOf('<ShareLinkField')))
+    expect(field).toContain('key={current.url}')
+    expect(field).toContain('counted={current.counted}')
+    expect(src).toMatch(/settle\(\{ at, phase: 'ready', url, counted: shown \}\)/)
+    expect(src).toMatch(/const shown = shownRef\.current === at/)
+    expect(src).toMatch(/if \(!shown\) return\s*urlRef\.current = url\s*void share\.run\(\)/)
   })
 
   test('без адреса — ни маяка, ни буфера', async () => {

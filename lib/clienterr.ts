@@ -52,7 +52,9 @@ export type ClientErrorReport = {
   /**
    * Островок (components/lazyIsland), чей чанк не пришёл. Текст отказа
    * называет чанк по хешу, а хеш меняется с каждым деплоем; тег — имя, по
-   * которому отказ ищется в логе: mark-finished, hero-slider, snow, tonight.
+   * которому отказ ищется в логе: mark-finished, hero-slider, snow, tonight,
+   * search (окно «Найти игру», components/SearchLauncher — загрузчик свой,
+   * а вид отчёта тот же).
    */
   island?: string
 }

@@ -2,8 +2,15 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { FinishedNote, MarkFinished } from '@/components/MarkFinished'
+import { NeedSteam } from '@/components/NeedSteam'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { focusAdrift } from '@/lib/focushandoff'
 import { isNeedSteam, writerStore } from '@/lib/writer'
+
+/** Строка на месте ушедшей кнопки забирает фокус — только потерянный (lib/focushandoff) */
+const takeLost = (el: HTMLElement | null) => {
+  if (el && focusAdrift(document)) el.focus({ preventScroll: true })
+}
 
 /**
  * «Запустить» — только тому, у кого игра есть.
@@ -57,6 +64,20 @@ import { isNeedSteam, writerStore } from '@/lib/writer'
  * говорит plan: true, и тогда нажатие пишет запуск так же, как строка плана
  * на /play (слот plan): план закрыт, исход совета заведён. Без плана запуск
  * отсюда по-прежнему ничего не пишет — это не совет, а своя игра.
+ *
+ * ОТКАЗ needsteam — СТРОКОЙ НА МЕСТЕ КНОПКИ. Права кончаются и при открытой
+ * странице: во второй вкладке вставили ссылку на профиль, и кука стала
+ * сессией только для чтения. Тогда «Уже прошёл» отвечает needsteam, и
+ * writerStore.set(false) прятал её — вместе с фокусом, без единого слова:
+ * «Отмечаю…», и кнопки нет, а зрячий мог решить, что игра отмечена. На /play
+ * то же говорит NeedSteam у героя, в «Твоих вечерах» — NeedSteam под полкой,
+ * а у страницы игры своей строки нет, и записка о просмотре (ReadOnlyNote)
+ * в старой вкладке не приходит. Поэтому строку ставит тот, кто прячет кнопку:
+ * why="save" — как под полкой «Твоих вечеров», у того же «Уже прошёл»; у
+ * запуска с планом — why="launch", как на /play. Фокус она забирает только за
+ * ушедшей «Уже прошёл»: «Запустить» на месте. Вход ведёт на квиз, а не сюда —
+ * страницы игры нет в закрытом списке возвратов (lib/destination), как и у
+ * ReadOnlyNote на ней; поэтому строка и не обещает «вернёшься сюда».
  */
 export function OwnedLaunch({
   appid,
@@ -76,6 +97,11 @@ export function OwnedLaunch({
   // appid рядом с ответом: при переходе на соседнюю карточку старое «да» не
   // должно мелькнуть у новой игры, пока едет её ответ
   const [owns, setOwns] = useState<{ appid: number; owned: boolean; plan: boolean; done: boolean } | null>(null)
+  // Сервер ответил needsteam (докблок выше): на чём — и для какой игры, как owns
+  const [denied, setDenied] = useState<{ appid: number; how: 'mark' | 'launch' } | null>(null)
+  // Строка — только этой игре и только пока сессия правда не пишет: вошёл
+  // через Steam в другой вкладке — кнопка вернётся, а строка уйдёт
+  const shownDenial = denied?.appid === appid && writer !== true ? denied.how : null
 
   useEffect(() => {
     if (!hasSession) return
@@ -113,7 +139,10 @@ export function OwnedLaunch({
                   body: JSON.stringify({ appid, action: 'launched', ctx: { slot: 'plan', intent: 'launch' } }),
                 })
                   .then(async (r) => {
-                    if (await isNeedSteam(r)) writerStore.set(false)
+                    if (await isNeedSteam(r)) {
+                      setDenied((d) => (d?.appid === appid ? d : { appid, how: 'launch' }))
+                      writerStore.set(false)
+                    }
                   })
                   .catch(() => {})
             : undefined
@@ -129,10 +158,28 @@ export function OwnedLaunch({
             name={name}
             from="game"
             follow={follow}
-            onDenied={() => writerStore.set(false)}
+            onDenied={() => {
+              setDenied({ appid, how: 'mark' })
+              writerStore.set(false)
+            }}
             className={className}
           />
         ))}
+      {/* basis-full — своей строкой посреди ряда кнопок страницы (flex-wrap,
+          app/game/[appid]): сразу за «Страницей в Steam» и «Запустить», на
+          месте ушедшей кнопки, а «Обзоры на YouTube» и «Позвать в эту игру»
+          встают строкой ниже. Не order-last под весь ряд: глазом строка
+          ушла бы вниз, а Tab и чтение — нет, и ссылка «войди через Steam»
+          получала бы фокус раньше YouTube, стоя после неё */}
+      {shownDenial && (
+        <div
+          ref={shownDenial === 'mark' ? takeLost : undefined}
+          tabIndex={shownDenial === 'mark' ? -1 : undefined}
+          className="basis-full outline-none"
+        >
+          <NeedSteam from={`/game/${appid}`} why={shownDenial === 'launch' ? 'launch' : 'save'} />
+        </div>
+      )}
     </>
   )
 }

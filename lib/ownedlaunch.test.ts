@@ -58,6 +58,67 @@ describe('кнопка запуска', () => {
   })
 
   /*
+   * Отказ needsteam на странице игры. Права кончились, пока страница была
+   * открыта (во второй вкладке вставили ссылку на профиль), и «Уже прошёл»
+   * пряталась вместе с фокусом: writerStore.set(false) снимал условие
+   * writer === true, кнопка уходила из DOM, фокус падал в body, а сказать
+   * «войди через Steam» было некому — на /play это делает NeedSteam у героя,
+   * в «Твоих вечерах» — NeedSteam под полкой, а здесь не было ничего. Зрячий
+   * мог решить, что игра отмечена.
+   */
+  test('needsteam на «Уже прошёл» и на запуске плана — строка NeedSteam на месте кнопки', () => {
+    const src = code(read('components', 'OwnedLaunch.tsx'))
+    const tail = src.slice(src.indexOf('!owns.owned) return null'))
+    // отказ запоминается тем, кто прячет кнопку, — вместе с appid, как owns
+    expect(src).toMatch(/onDenied=\{\(\) => \{\s*setDenied\(\{ appid, how: 'mark' \}\)\s*writerStore\.set\(false\)\s*\}\}/)
+    expect(src).toMatch(
+      /if \(await isNeedSteam\(r\)\) \{\s*setDenied\(\(d\) => \(d\?\.appid === appid \? d : \{ appid, how: 'launch' \}\)\)\s*writerStore\.set\(false\)\s*\}/,
+    )
+    // строка — своей ветвью после кнопки, а не правкой ветви кнопки (её форму держит тест выше)
+    expect(tail).toMatch(/\{shownDenial && \(\s*<div\b/)
+    expect(tail).toMatch(
+      /<NeedSteam from=\{`\/game\/\$\{appid\}`\} why=\{shownDenial === 'launch' \? 'launch' : 'save'\} \/>/,
+    )
+    // строка — только этой игре и только пока сессия правда не пишет
+    expect(src).toMatch(/const shownDenial = denied\?\.appid === appid && writer !== true \? denied\.how : null/)
+  })
+
+  /*
+   * Нажатая «Уже прошёл» ушла из DOM — фокус переезжает на строку, которая
+   * встала на её место, как на «Пройдено» после удачи (FinishedNote). Только
+   * потерянный: ответ пришёл после await, и человек мог уйти фокусом сам. На
+   * запуске фокус остаётся на «Запустить» — она на месте.
+   */
+  test('отказ отметки забирает потерянный фокус строкой, отказ запуска — нет', () => {
+    const src = code(read('components', 'OwnedLaunch.tsx'))
+    const tail = src.slice(src.indexOf('{shownDenial && ('))
+    const div = tail.slice(0, tail.indexOf('>') + 1)
+    expect(div).toMatch(/ref=\{shownDenial === 'mark' \? takeLost : undefined\}/)
+    expect(div).toMatch(/tabIndex=\{shownDenial === 'mark' \? -1 : undefined\}/)
+    expect(src).toMatch(/const takeLost = \(el: HTMLElement \| null\) => \{\s*if \(el && focusAdrift\(document\)\) el\.focus\(\{ preventScroll: true \}\)/)
+  })
+
+  /*
+   * OwnedLaunch стоит посреди ряда кнопок страницы (за ним — «Обзоры на
+   * YouTube» и «Позвать в эту игру»), и строка рвёт ряд на месте ушедшей
+   * кнопки. Увести её под весь ряд через order-last — значит развести экран
+   * с порядком Tab и чтения: ссылку «войди через Steam» фокус находил бы до
+   * YouTube, а глаз — после. Её место в разметке и есть её место на экране.
+   */
+  test('строка отказа — на месте кнопки и в разметке, и на экране: без order-*', () => {
+    const src = code(read('components', 'OwnedLaunch.tsx'))
+    const tail = src.slice(src.indexOf('{shownDenial && ('))
+    const div = tail.slice(0, tail.indexOf('>') + 1)
+    expect(div).toContain('className="basis-full outline-none"')
+    expect(div).not.toMatch(/\border-/)
+    // ряд, в котором она стоит, — тот самый: OwnedLaunch до YouTube и «Позвать»
+    const page = code(read('app', 'game', '[appid]', 'page.tsx'))
+    const owned = page.indexOf('<OwnedLaunch')
+    expect(owned).toBeGreaterThan(-1)
+    expect(owned).toBeLessThan(page.indexOf('Обзоры на YouTube'))
+  })
+
+  /*
    * «Дальше — в духе X» после отметки — только там, где у игры есть соседи:
    * та же полка, что прячет ссылку «Похожее на X» внизу страницы. Без неё
    * дорога вела бы к экрану «похожих не нашлось», и две ссылки одной
