@@ -32,7 +32,15 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   )
   const url = `/pick/${id.toLowerCase()}`
   return {
-    title,
+    /*
+     * Бренд уже в тексте — у пустого выбора и у «…imbored выбрал мне на
+     * вечер», — и корневой шаблон «%s · imbored» (app/layout.tsx) печатал
+     * его второй раз: протухшая ссылка друга стояла во вкладке и в истории
+     * «Выбор на вечер — imbored · imbored». absolute идёт мимо шаблона, и
+     * вкладка говорит ровно то же, что карточка в чате (pickCopy). У игры
+     * дня бренда в тексте нет — ей шаблон и нужен.
+     */
+    title: title.includes('imbored') ? { absolute: title } : title,
     description,
     alternates: { canonical: url },
     // В переписку — да, в поисковую выдачу — нет: это чья-то ссылка, а не

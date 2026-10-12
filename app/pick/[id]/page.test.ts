@@ -6,8 +6,9 @@ import { roomSeedHref } from '@/lib/presets'
 import { nowSec } from '@/lib/server'
 import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
+import type { PickKind } from '@/lib/sharedpick'
 import type { GameMeta } from '@/lib/types'
-import PickPage from './page'
+import PickPage, { generateMetadata } from './page'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -52,12 +53,16 @@ function game(appid: number, over: Partial<GameMeta>): GameMeta {
 }
 
 /** Выбор с этой игрой — id в алфавите SHARED_PICK_ID_RE */
-async function share(id: string, meta: GameMeta): Promise<{ params: Promise<{ id: string }> }> {
+async function share(
+  id: string,
+  meta: GameMeta,
+  kind: PickKind = 'play',
+): Promise<{ params: Promise<{ id: string }> }> {
   const now = nowSec()
   await upsertGameMeta(db, meta, now)
   await createSharedPick(
     db,
-    { id, createdBy: '76561198000000001', appid: meta.appid, source: 'owned', kind: 'play', reason: 'Потому что' },
+    { id, createdBy: '76561198000000001', appid: meta.appid, source: 'owned', kind, reason: 'Потому что' },
     now,
   )
   return { params: Promise.resolve({ id }) }
@@ -107,5 +112,36 @@ describe('«Позвать в пати» — только у игры, в кот
     const params = await share('defghjkmnpqr', game(13, { categories: [1, 9] }))
     await db.execute('UPDATE games SET alive = 0, signals_at = 1 WHERE appid = 13')
     expect((await partyLinks(params)).map((l) => l.href)).toEqual(['/room/new'])
+  })
+})
+
+/**
+ * Заголовок вкладки — с брендом ровно один раз.
+ *
+ * Корневой шаблон «%s · imbored» (app/layout.tsx) дописывает бренд к любой
+ * строке, а тексты pickCopy носят его сами: протухшая ссылка друга
+ * читалась во вкладке и в истории «Выбор на вечер — imbored · imbored» —
+ * на той самой странице, которая должна вернуть человека. Здесь — то, что
+ * Next сделает с заголовком: строка идёт через шаблон, { absolute } — мимо.
+ */
+describe('вкладка /pick не повторяет бренд', () => {
+  const tab = (title: unknown) =>
+    typeof title === 'string' ? `${title} · imbored` : (title as { absolute: string }).absolute
+
+  test('протухшая или чужая ссылка — «Выбор на вечер — imbored», без второго бренда', async () => {
+    const meta = await generateMetadata({ params: Promise.resolve({ id: 'zzzzzzzz' }) })
+    expect(tab(meta.title)).toBe('Выбор на вечер — imbored')
+    // Карточка в чате — та же строка: шаблон её не касается
+    expect(meta.openGraph?.title).toBe('Выбор на вечер — imbored')
+  })
+
+  test('живой выбор на вечер — бренд в самом тексте, и только там', async () => {
+    const meta = await generateMetadata(await share('efghjkmnpqrs', game(14, { name: 'Subnautica' })))
+    expect(tab(meta.title)).toBe('«Subnautica» — imbored выбрал мне на вечер')
+  })
+
+  test('игра дня — бренда в тексте нет, его дописывает шаблон', async () => {
+    const meta = await generateMetadata(await share('fghjkmnpqrst', game(15, { name: 'Hades' }), 'daily'))
+    expect(tab(meta.title)).toBe('«Hades» — моя игра дня · imbored')
   })
 })
