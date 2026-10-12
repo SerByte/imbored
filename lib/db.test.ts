@@ -3678,8 +3678,10 @@ describe('forgetUser: удаление по запросу', () => {
     await logFeedback(db, { steamid: ME, appid: 570, action: 'liked' }, NOW)
     await logFeedback(db, { steamid: ME, appid: 620, action: 'banned' }, NOW)
     await saveDailyPick(db, ME, '2023-11-14', { appid: 570 }, NOW)
-    // Список желаемого — последний прочитанный, одна строка на человека
-    await saveWishlist(db, ME, [1086940, 1145360], NOW)
+    // Список желаемого — последний прочитанный, одна строка на человека. От
+    // его живой сессии: отметка прошлого удаления стоит, и от сессии без
+    // строки список не лёг бы
+    await saveWishlist(db, { steamid: ME, sid: 'sid-me' }, [1086940, 1145360], NOW)
     await recordOutcome(db, { steamid: ME, appid: 570, source: 'comeback', launched: true }, NOW)
     await checkRate(db, { bucket: 'portrait', id: ME, limit: 10, windowSec: 60, nowSec: NOW })
     // Сравнения в обе стороны: он открыл ссылку друга и друг — его
@@ -6204,47 +6206,55 @@ describe('регион цены', () => {
 
 describe('список желаемого', () => {
   const ME = '76561198000000001'
+  const FRIEND = '76561198000000002'
+  const sidOf = (steamid: string) => `sid-${steamid}`
+  /** Сессия, открывшая /library: по её sid запись сверяет, не забыта ли она */
+  const MINE = { steamid: ME, sid: sidOf(ME) }
 
   /**
-   * Список пишется только рядом со снимком библиотеки (saveWishlist): полку
-   * зовёт /library, а она без снимка отправляет подключаться. Тесты записи
-   * начинают с подключённого — как и настоящая полка.
+   * Список пишет только незабытая сессия и только рядом со снимком
+   * библиотеки (saveWishlist): полку зовёт /library, а она без снимка
+   * отправляет подключаться. Тесты записи начинают с подключённого и
+   * вошедшего через Steam — как и настоящая полка.
    */
   async function connected(...steamids: string[]): Promise<Db> {
     const db = await freshDb()
-    for (const id of steamids) await saveLibrarySnapshot(db, id, LIB, NOW - 3600)
+    for (const id of steamids) {
+      await saveLibrarySnapshot(db, id, LIB, NOW - 3600)
+      await createSession(db, { sid: sidOf(id), steamid: id, verified: true }, NOW - 3600)
+    }
     return db
   }
 
   test('пишется целиком и заменяет прежний: истории нет', async () => {
     const db = await connected(ME)
     expect(await getWishlist(db, ME)).toBeNull()
-    await saveWishlist(db, ME, [1086940, 1145360], NOW)
+    expect(await saveWishlist(db, MINE, [1086940, 1145360], NOW)).toBe(true)
     expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW, closed: false, appids: [1086940, 1145360] })
-    await saveWishlist(db, ME, [620], NOW + 60)
+    // Замена — тоже «легла»: UPSERT поверх строки считается за запись
+    expect(await saveWishlist(db, MINE, [620], NOW + 60)).toBe(true)
     expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW + 60, closed: false, appids: [620] })
   })
 
   test('закрытый список — тоже ответ: пишется без игр', async () => {
     const db = await connected(ME)
-    await saveWishlist(db, ME, [620], NOW)
-    await saveWishlist(db, ME, 'closed', NOW + 60)
+    await saveWishlist(db, MINE, [620], NOW)
+    await saveWishlist(db, MINE, 'closed', NOW + 60)
     expect(await getWishlist(db, ME)).toEqual({ takenAt: NOW + 60, closed: true, appids: [] })
   })
 
   test('не больше WISHLIST_KEPT игр и только номера — без дат', async () => {
     const db = await connected(ME)
-    await saveWishlist(db, ME, Array.from({ length: 250 }, (_, i) => i + 1), NOW)
+    await saveWishlist(db, MINE, Array.from({ length: 250 }, (_, i) => i + 1), NOW)
     expect((await getWishlist(db, ME))?.appids).toHaveLength(200)
     const cols = await db.execute('PRAGMA table_info(wishlists)')
     expect(cols.rows.map((c) => c.name)).toEqual(['steamid', 'taken_at', 'closed', 'appids_json'])
   })
 
   test('forgetUser уносит и его, чужой остаётся', async () => {
-    const FRIEND = '76561198000000002'
     const db = await connected(ME, FRIEND)
-    await saveWishlist(db, ME, [620], NOW)
-    await saveWishlist(db, FRIEND, [730], NOW)
+    await saveWishlist(db, MINE, [620], NOW)
+    await saveWishlist(db, { steamid: FRIEND, sid: sidOf(FRIEND) }, [730], NOW)
     expect(FORGET_TABLES).toContain('wishlists')
     await forgetUser(db, ME)
     expect(await getWishlist(db, ME)).toBeNull()
@@ -6257,28 +6267,58 @@ describe('список желаемого', () => {
    * «Удалить всё обо мне» на той же странице, и удаление, прошедшее в эти
    * секунды, стирало строку wishlists, а запись без условия заводила её
    * заново — вечную: wishlists не убирает ни одна уборка, только forgetUser.
-   * Теперь запись — только пока жив снимок: удаление уносит его той же
-   * пачкой, что и список.
+   * Теперь запись сверяет, не забыта ли сессия, от чьего имени читали:
+   * удаление стирает её строку и ставит отметку той же пачкой, что уносит
+   * список.
    */
   test('список, дочитанный после «Удалить всё обо мне», строку не возвращает', async () => {
     const db = await connected(ME)
     await forgetUser(db, ME, { signOutFrom: NOW })
 
-    await saveWishlist(db, ME, [1086940, 1145360], NOW + 5)
+    expect(await saveWishlist(db, MINE, [1086940, 1145360], NOW + 5)).toBe(false)
     expect(await getWishlist(db, ME)).toBeNull()
     const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
     expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
 
-    // Вернулся и подключился заново — список снова пишется как обычно
+    // Вернулся и вошёл через Steam — новая сессия со своей строкой пишет как
+    // обычно
+    const again = { steamid: ME, sid: 'sid-again' }
     await saveLibrarySnapshot(db, ME, LIB, NOW + 10)
-    await saveWishlist(db, ME, [620], NOW + 20)
+    await createSession(db, { ...again, verified: true }, NOW + 10)
+    expect(await saveWishlist(db, again, [620], NOW + 20)).toBe(true)
+    expect((await getWishlist(db, ME))?.appids).toEqual([620])
+  })
+
+  /*
+   * Одного снимка мало: за те же секунды новый заводит и вход через Steam, и
+   * подключение по ссылке (/api/connect), а его делает любой, кто знает
+   * публичный профиль, — доказательства владения оно не просит. Список,
+   * прочитанный от сессии, которую удаление стёрло, рядом с таким снимком
+   * всё равно не ложится: иначе строка о том, чего человек хочет купить,
+   * вернулась бы к тому, кто сюда больше не приходил.
+   */
+  test('и рядом с чужим снимком, заведённым после удаления, — тоже нет', async () => {
+    const db = await connected(ME)
+    await forgetUser(db, ME, { signOutFrom: NOW })
+    await saveLibrarySnapshot(db, ME, LIB, NOW + 2)
+
+    expect(await saveWishlist(db, MINE, [1086940], NOW + 5)).toBe(false)
+    expect(await getWishlist(db, ME)).toBeNull()
+  })
+
+  test('без отметки удаления строка сессии не нужна: пишется как обычно', async () => {
+    // Строки нет и без удаления — Turso моргнула на выдаче. Забытой такая
+    // сессия не считается: без отметки условие ложно, как у issueFeedLink
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 3600)
+    expect(await saveWishlist(db, { steamid: ME, sid: 'sid-rowless' }, [620], NOW)).toBe(true)
     expect((await getWishlist(db, ME))?.appids).toEqual([620])
   })
 
   test('без снимка не пишется вовсе: ни открытый, ни закрытый', async () => {
-    const db = await connected('76561198000000002')
-    await saveWishlist(db, ME, [620], NOW)
-    await saveWishlist(db, ME, 'closed', NOW + 60)
+    const db = await connected(FRIEND)
+    expect(await saveWishlist(db, MINE, [620], NOW)).toBe(false)
+    expect(await saveWishlist(db, MINE, 'closed', NOW + 60)).toBe(false)
     expect(await getWishlist(db, ME)).toBeNull()
   })
 })
