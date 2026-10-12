@@ -52,6 +52,8 @@ let ownedHiccups = 0
 let owned: unknown = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
 /** steamcommunity.com не отвечает вовсе: check_authentication бросает, а не отказывает. */
 let openidDown = false
+/** Статус ответа check_authentication: 503 — техработы Steam, ответ есть, а вердикта нет. */
+let openidStatus = 200
 
 beforeEach(() => {
   process.env = { ...ENV, APP_BASE_URL: BASE, STEAM_API_KEY: 'k' }
@@ -59,12 +61,14 @@ beforeEach(() => {
   ownedStatus = 200
   ownedHiccups = 0
   openidDown = false
+  openidStatus = 200
   owned = { response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 30 }] } }
   vi.stubGlobal('fetch', async (input: string | URL) => {
     const url = String(input)
     asked.push(url)
     if (url.startsWith('https://steamcommunity.com/openid/login')) {
       if (openidDown) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+      if (openidStatus !== 200) return new Response('Service Unavailable', { status: openidStatus })
       return new Response('ns:http://specs.openid.net/auth/2.0\nis_valid:true\n')
     }
     if (url.includes('GetPlayerSummaries')) {
@@ -351,6 +355,24 @@ describe('сбой на входе оставляет строку лога', ()
       expect.objectContaining({ where: 'auth/return:openid', name: 'TimeoutError' }),
     ])
     expect(asked.some((u) => u.includes('GetOwnedGames'))).toBe(false)
+  })
+
+  /*
+   * Техработы Steam отвечают 503 — ответ есть, но это не «не подтвердил».
+   * Раньше любой не-2xx кончался ?error=auth, и человек, только что
+   * введший пароль и код Steam Guard, повторял вход прямо в тот же сбой.
+   */
+  test('OpenID отвечает 503 — error=steam, а не auth, со статусом в логе', async () => {
+    openidStatus = 503
+    const { returnTo, cookie } = await start('?next=%2Fdaily')
+    const res = await fromSteam(returnTo, cookie?.value ?? '')
+    expect(landing(res).searchParams.get('error')).toBe('steam')
+    expect(landing(res).searchParams.get('next')).toBe('/daily')
+    expect(logged()).toEqual([
+      expect.objectContaining({ where: 'auth/return:openid', status: 503 }),
+    ])
+    expect(asked.some((u) => u.includes('GetOwnedGames'))).toBe(false)
+    expect(res.cookies.get('imbored_session')).toBeUndefined()
   })
 
   test('подделка по-прежнему error=auth и в лог не пишется: это не сбой', async () => {

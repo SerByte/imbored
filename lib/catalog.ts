@@ -225,7 +225,10 @@ export type PriceInfo = {
  * Взять оттуда цену значит показать ценник другого товара, а взять скидку —
  * пообещать её на игру, которая в магазине стоит полную. Цена самой игры в
  * этом ответе не приходит вовсе, поэтому единственный правдивый ответ —
- * «не знаю»: цену подтянет appdetails при заходе на страницу игры.
+ * «не знаю». При регионе цен `us` цену подтянет appdetails при заходе на
+ * страницу игры; в любом другом appdetails цены не несёт (parseAppDetails),
+ * и она вернётся со следующей котировкой GetItems, где лучшим окажется не
+ * бандл. Прежняя акционная цена до тех пор не держится (updateGamePrices).
  */
 export function parsePurchaseOption(bpo: PurchaseOption | undefined | null): PriceInfo {
   if (!bpo) return {}
@@ -389,6 +392,25 @@ export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta
   if (hasCyrillic(existing.shortDescription) && !hasCyrillic(fresh.shortDescription)) {
     out.shortDescription = existing.shortDescription
   }
+  /*
+   * Замер без цены (priceAt есть, priceFinal нет — fetchStoreItems в регионе
+   * цен, когда блока покупки не пришло) гасит скидку нулём, а цену спред
+   * переносит из прежней записи. Обычную — пусть: правило то же, что в
+   * updateGamePrices. Но акционная («было» выше «стало») без скидки рядом —
+   * это trustedPrice, рисующий её обычной ценой, поэтому пара уходит целиком:
+   * «не знаю». Регион тут сверять не нужно: чужую цену rowToMeta прячет ещё
+   * при чтении existing.
+   */
+  if (
+    fresh.priceAt !== undefined &&
+    fresh.priceFinal === undefined &&
+    out.priceFinal !== undefined &&
+    out.priceInitial !== undefined &&
+    out.priceInitial > out.priceFinal
+  ) {
+    delete out.priceFinal
+    delete out.priceInitial
+  }
   return out
 }
 
@@ -453,7 +475,12 @@ export async function fetchTagDictionary(
   })
   if (!res.ok) throw new Error(`populartags/${lang}: HTTP ${res.status}`)
   const map = parseTagDictionary(await res.json())
-  if (map.size) tagDictCache.set(lang, { at: now, map })
+  // Пустой словарь — не «у Steam нет тегов», а сбой или заглушка вместо
+  // ответа. Отданный дальше, он записал бы пачке прогрева tags {} со
+  // свежестью на две недели — мимо всех таблиц подбора, как и пустой
+  // GetItems (см. callStoreItems). Исключение уводит ensureMeta в false.
+  if (!map.size) throw new Error(`populartags/${lang}: пустой словарь`)
+  tagDictCache.set(lang, { at: now, map })
   return map
 }
 
@@ -496,9 +523,10 @@ export async function fetchStoreItems(
         // Ответ без блока покупки — это тоже ответ: игра стала бесплатной или
         // снята с продажи. Промолчать здесь значит оставить в базе вчерашние
         // «−70%», которые mergeMeta бережно перенесёт в новую запись, а карточка
-        // покажет как действующую скидку. Цену при этом не трогаем — «Steam не
-        // назвал цену» и «игра подешевела до нуля» отсюда неразличимы, и то же
-        // правило действует в updateGamePrices.
+        // покажет как действующую скидку. Обычную цену при этом не трогаем —
+        // «Steam не назвал цену» и «игра подешевела до нуля» отсюда
+        // неразличимы, и то же правило действует в updateGamePrices. Акционную
+        // снимает mergeMeta: без скидки рядом она читалась бы обычной.
         if (meta.discountPercent === undefined) meta.discountPercent = 0
         meta.priceAt = at
         meta.priceCc = META_CC
@@ -641,6 +669,9 @@ export async function fetchStoreMedia(
   return out
 }
 
+/** eresult Steam «всё хорошо» — тот же, что в lib/steam.ts */
+const ERESULT_OK = '1'
+
 /**
  * Один вызов GetItems. Вынесен из fetchStoreItems, потому что тем же ручкой
  * ходит обновление цен (lib/deals) — но с пустым data_request: блок покупки
@@ -649,6 +680,27 @@ export async function fetchStoreMedia(
  *
  * cc — регион запроса. По умолчанию META_CC: метаданные и отзывы. Регион цен
  * передают только те, кто пришёл за ценой (fetchStorePrices).
+ *
+ * Ответом считается только тело со списком store_items. Сервисный метод Steam
+ * отвечает на свой сбой — Fail, Busy, ServiceUnavailable, Timeout — тем же
+ * 200 с пустым response, различает их только X-eresult (то же правило — в
+ * fetchWishlist, lib/steam.ts). Прочитанный как ответ, такой 200 значил «Steam
+ * промолчал про все двести», и каждый вызывающий записывал это надолго:
+ * замер цен гасил скидки и ставил отметку на полсуток, прогрев делал
+ * библиотеку заглушками со свежестью на две недели, сверка каталога метила
+ * пачку сверенной на неделю. Исключение же у всех них — давно отработанный
+ * путь «ничего не пишем».
+ *
+ * Пустой же список — ответ, а не сбой. Промолчать про игру Steam может
+ * (снята с продажи — см. fetchStorePrices), и на запрос из одного appid, а
+ * таких много: герой дня, одна протухшая игра полки желаемого, последняя
+ * игра прогрева, — «промолчал про часть пачки» и «про всю» неразличимы.
+ * Сочти мы его сбоем, такая игра стала бы вечным отказом без отметки: замер
+ * цен бросал бы на каждом заходе и ставил паузу всему процессу, прогрев
+ * навсегда застревал бы в stalled, а сверка каталога упиралась бы в blocked
+ * на той же пачке в голове очереди. Сбой от ответа отличают код в X-eresult
+ * и форма тела: у сбоя store_items нет вовсе, а не пустой список. Нет
+ * заголовка — верим телу, как и fetchWishlist.
  */
 export async function callStoreItems(
   appids: number[],
@@ -673,7 +725,15 @@ export async function callStoreItems(
   const res = await fetchFn(url, { signal: AbortSignal.timeout(timeout) })
   // лимит/сбой — исключение, чтобы вызывающий не закэшировал неудачу как «данных нет»
   if (!res.ok) throw new Error(`GetItems: HTTP ${res.status}`)
-  return res.json()
+  const eresult = res.headers.get('x-eresult')
+  if (eresult !== null && eresult !== ERESULT_OK) {
+    await res.body?.cancel().catch(() => {})
+    throw new Error(`GetItems: eresult ${eresult}`)
+  }
+  const json: unknown = await res.json()
+  const items = (json as { response?: { store_items?: unknown } } | null)?.response?.store_items
+  if (!Array.isArray(items)) throw new Error('GetItems: нет store_items')
+  return json
 }
 
 export async function fetchAppDetails(
@@ -739,8 +799,9 @@ export const META_MAX_AGE_SEC = 14 * 86_400
  * чтобы не подвешивать запрос пользователя.
  *
  * Возвращает false, если было что догружать, а записать не вышло: Steam не
- * отдал пачку или словарь тегов (429, сеть). Сбой по-прежнему не роняет
- * запрос, но и не молчит: /api/prepare отдаёт по нему stalled, и прогрев
+ * отдал пачку или словарь тегов (429, сеть, 200 без ответа — см.
+ * callStoreItems). Сбой по-прежнему не роняет запрос, но и не молчит:
+ * /api/prepare отдаёт по нему stalled, и прогрев
  * перестаёт спрашивать тот же остаток по кругу (см. WARMUP_STALL_LIMIT).
  */
 export async function ensureMeta(

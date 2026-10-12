@@ -204,6 +204,14 @@ describe('fetchTagDictionary', () => {
       'https://store.steampowered.com/tagdata/populartags/english',
     ])
   })
+
+  test('пустой словарь — исключение, а не «тегов нет»', async () => {
+    const empty = (async () => new Response('[]', { status: 200 })) as unknown as typeof fetch
+    await expect(fetchTagDictionary(empty)).rejects.toThrow('populartags/english')
+    // и не кэшируется: следующий заход спросит снова
+    const ok = (async () => new Response(JSON.stringify([{ tagid: 19, name: 'Action' }]))) as unknown as typeof fetch
+    expect((await fetchTagDictionary(ok)).get(19)).toBe('Action')
+  })
 })
 
 describe('parseStoreItems', () => {
@@ -723,8 +731,39 @@ describe('ensureMeta', () => {
     const stored = await getGameMeta(db, 730)
     expect(stored?.discountPercent).toBe(0)
     expect(stored?.isFree).toBe(true)
-    // цена остаётся: «Steam не назвал цену» и «игра подешевела» неразличимы
-    expect(stored?.priceFinal).toBe(300)
+    // 300 — АКЦИОННАЯ цена (было 1000): без скидки рядом trustedPrice показал
+    // бы её обычной, поэтому она уходит вместе со скидкой — «не знаю». Раньше
+    // здесь было закреплено priceFinal 300, то есть ровно эта подмена
+    expect(stored?.priceFinal).toBeUndefined()
+    expect(stored?.priceInitial).toBeUndefined()
+  })
+
+  test('ответ без блока покупки бережёт обычную цену: «не назвал» и «подешевела» неразличимы', async () => {
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    await upsertGameMeta(
+      db,
+      {
+        appid: 1145360,
+        name: 'Hades',
+        tags: { Action: 100 },
+        genres: [],
+        categories: [2],
+        priceFinal: 2499,
+        priceInitial: 2499,
+        discountPercent: 0,
+        priceAt: NOW - 20 * 86_400,
+        art: { header: 'https://example/1145360.jpg' },
+      },
+      NOW - 20 * 86_400,
+    )
+    // бандл «лучшим предложением» — parsePurchaseOption отдаёт {}
+    await ensureMeta(db, [1145360], {
+      fetchFn: storeStub([
+        { appid: 1145360, id: 1145360, name: 'Hades', visible: true, best_purchase_option: { bundleid: 1, final_price_in_cents: '3999' } },
+      ]),
+    })
+    const stored = await getGameMeta(db, 1145360)
+    expect(stored).toMatchObject({ priceFinal: 2499, priceInitial: 2499, discountPercent: 0 })
   })
 
   test('прогрев раз в две недели не кладёт английское описание поверх русского', async () => {
@@ -784,6 +823,93 @@ describe('ensureMeta', () => {
 
     // догружать нечего — это не сбой, даже если Steam сейчас лежит
     expect(await ensureMeta(db, [730], { fetchFn: limited })).toBe(true)
+  })
+
+  /**
+   * Сбой сервисного метода Steam приходит тем же 200: пустой response, а код —
+   * только в X-eresult (см. fetchWishlist в lib/steam.ts). Прочитанный как
+   * ответ, он значил «Steam не показывает ни одной из двухсот»: новые игры
+   * библиотеки ложились заглушками без тегов и категорий, старые «App N»
+   * оставались «App N», и всем им ставилась свежесть на две недели — а true
+   * гнал прогрев за следующей пачкой, так что за пару вызовов заглушками
+   * становилась вся библиотека.
+   */
+  test('200 с пустым response — сбой, а не «Steam их не показывает»: false и ни одной записи', async () => {
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    const old = NOW - 20 * 86_400
+    await upsertGameMeta(db, { appid: 730, name: 'App 730', tags: {}, genres: [], categories: [] }, old)
+    const emptyAnswer = (eresult: string | null) =>
+      (async (url: string) => {
+        if (String(url).includes('populartags')) {
+          return new Response(JSON.stringify([{ tagid: 19, name: 'Action' }]), { status: 200 })
+        }
+        const headers: Record<string, string> = eresult === null ? {} : { 'x-eresult': eresult }
+        return new Response(JSON.stringify({ response: {} }), { status: 200, headers })
+      }) as unknown as typeof fetch
+    const updatedAt = async (appid: number) =>
+      (await db.execute({ sql: 'SELECT updated_at FROM games WHERE appid = ?', args: [appid] })).rows[0]
+        ?.updated_at
+
+    // 20 — Busy: код сбоя есть, тело пустое
+    const names = new Map([[1145360, 'Hades']])
+    expect(await ensureMeta(db, [730, 1145360], { fetchFn: emptyAnswer('20'), names })).toBe(false)
+    expect(await getGameMeta(db, 1145360)).toBeNull()
+    expect(await updatedAt(730)).toBe(old)
+
+    // Заголовка нет, а store_items нет тоже: тело без списка — форма сбоя,
+    // а не ответа. «Никого не знаю» приходит списком, пусть и пустым (тест ниже)
+    expect(await ensureMeta(db, [730, 1145360], { fetchFn: emptyAnswer(null), names })).toBe(false)
+    expect(await getGameMeta(db, 1145360)).toBeNull()
+    expect(await updatedAt(730)).toBe(old)
+  })
+
+  /**
+   * Пустой список — ответ: Steam промолчал про игру (снята с продажи). На
+   * запрос из одной игры — последней в прогреве — «про часть пачки» и «про
+   * всю» одно и то же, и сочти мы это сбоем, ensureMeta отдавал бы false
+   * вечно: remaining > 0 навсегда, /api/prepare без цен и онлайна, прогрев
+   * у клиента всякий раз кончается stalled.
+   */
+  test('пустой список на одну игру — ответ: заглушка с отметкой, true', async () => {
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    const old = NOW - 20 * 86_400
+    await upsertGameMeta(db, { appid: 1145360, name: 'Hades', tags: {}, genres: [], categories: [] }, old)
+
+    expect(await ensureMeta(db, [1145360], { fetchFn: storeStub([]) })).toBe(true)
+    const row = await db.execute({ sql: 'SELECT updated_at FROM games WHERE appid = ?', args: [1145360] })
+    expect(Number(row.rows[0]?.updated_at)).toBeGreaterThan(old)
+    expect(await getGameMeta(db, 1145360)).toMatchObject({ name: 'Hades', art: {} })
+    // и из очереди прогрева она ушла: следующий заход в Steam не идёт вовсе
+    const limited = (async () => new Response('{}', { status: 429 })) as unknown as typeof fetch
+    expect(await ensureMeta(db, [1145360], { fetchFn: limited })).toBe(true)
+  })
+
+  test('X-eresult 1 — обычный ответ: строка пишется', async () => {
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    const fetchFn = (async (url: string) => {
+      if (String(url).includes('populartags')) {
+        return new Response(JSON.stringify([{ tagid: 19, name: 'Action' }]), { status: 200 })
+      }
+      const body = { response: { store_items: [{ appid: 730, id: 730, name: 'Counter-Strike 2', visible: true }] } }
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'x-eresult': '1' } })
+    }) as unknown as typeof fetch
+    expect(await ensureMeta(db, [730], { fetchFn })).toBe(true)
+    expect((await getGameMeta(db, 730))?.name).toBe('Counter-Strike 2')
+  })
+
+  /**
+   * Пустой словарь тегов — та же беда другой дорогой: игры легли бы с
+   * tags {} и свежестью на две недели, мимо всех таблиц подбора.
+   */
+  test('словарь тегов пришёл пустым — false и ни одной записи', async () => {
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    const fetchFn = (async (url: string) => {
+      if (String(url).includes('populartags')) return new Response('[]', { status: 200 })
+      const body = { response: { store_items: [{ appid: 730, id: 730, name: 'Counter-Strike 2', visible: true, tags: [{ tagid: 19, weight: 100 }] }] } }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+    expect(await ensureMeta(db, [730], { fetchFn })).toBe(false)
+    expect(await getGameMeta(db, 730)).toBeNull()
   })
 })
 

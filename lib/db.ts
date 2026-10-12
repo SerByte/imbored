@@ -4857,6 +4857,18 @@ export async function stalePriceAppids(
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }
 
+/**
+ * Лежащая цена переживает котировку без блока покупки, только если она своего
+ * региона (параметр — регион котировки) и ОБЫЧНАЯ: «было» не выше «стало».
+ *
+ * Акционная пара (price_initial > price_final) уходит в NULL целиком, и не
+ * только при живой скидке: строки, испорченные прежним правилом, лежат со
+ * скидкой NULL и той же парой, и следующий такой ответ их чинит. Подставить
+ * price_initial вместо акционной нельзя по той же причине, по какой этого не
+ * делает trustedPrice: «акция кончилась» и «продлена» отсюда неразличимы.
+ */
+const KEEP_OWN_REGULAR_PRICE = `${PRICE_CC} = ? AND (price_initial IS NULL OR price_initial <= price_final)`
+
 export type PriceQuote = {
   appid: number
   priceFinal?: number
@@ -4879,11 +4891,14 @@ export type PriceQuote = {
  *   • цена есть — пишется она, store_hidden гаснет;
  *   • hidden — магазин региона игру не показывает: цена и скидка стираются,
  *     store_hidden = 1, и витрина пишет «не продаётся в российском Steam»;
- *   • блока покупки нет (free-to-play, снято с продажи) — гасится скидка, но
- *     НЕ цена своего региона: «Steam не назвал цену» и «игра стала бесплатной»
- *     с этой стороны неразличимы, а обнулить цену бэклога из-за сбоя дороже,
- *     чем показать вчерашнюю. Цену чужого региона не держим: оставшись под
- *     новым price_cc, она стала бы долларами, подписанными рублями.
+ *   • блока покупки нет (free-to-play, снято с продажи, бандл «лучшим
+ *     предложением») — гасится скидка, но НЕ обычная цена своего региона:
+ *     «Steam не назвал цену» и «игра стала бесплатной» с этой стороны
+ *     неразличимы, а обнулить цену бэклога из-за сбоя дороже, чем показать
+ *     вчерашнюю. Цену чужого региона не держим: оставшись под новым price_cc,
+ *     она стала бы долларами, подписанными рублями. АКЦИОННУЮ не держим тоже
+ *     (KEEP_OWN_REGULAR_PRICE): без скидки рядом trustedPrice показал бы её
+ *     обычной ценой — тот самый Heavy Rain за $0.99 при $19.99.
  *
  * price_at ставится во всех трёх — иначе такие игры перезапрашивались бы на
  * каждом заходе.
@@ -4905,11 +4920,11 @@ export async function updateGamePrices(
         }
       : q.priceFinal === undefined
         ? {
-            // В SET все выражения видят строку ДО обновления: регион в CASE —
-            // прежний, а не тот, что пишется рядом
+            // В SET все выражения видят строку ДО обновления: регион и пара
+            // цен в CASE — прежние, а не те, что пишутся рядом
             sql: `UPDATE games SET
-                    price_final = CASE WHEN ${PRICE_CC} = ? THEN price_final END,
-                    price_initial = CASE WHEN ${PRICE_CC} = ? THEN price_initial END,
+                    price_final = CASE WHEN ${KEEP_OWN_REGULAR_PRICE} THEN price_final END,
+                    price_initial = CASE WHEN ${KEEP_OWN_REGULAR_PRICE} THEN price_initial END,
                     discount_percent = NULL, discount_ends_at = NULL, price_at = ?,
                     price_cc = ?, store_hidden = 0
                   WHERE appid = ?`,

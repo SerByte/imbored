@@ -305,6 +305,59 @@ describe('повтор на разовый сбой', () => {
     }
   })
 
+  /*
+   * Обрыв у fetch из Node (undici) — не TimeoutError, а TypeError('fetch
+   * failed') с кодом сети в cause. Повтор его не узнавал, хотя ради «обрыва»
+   * и писался: разовый ECONNRESET на GetOwnedGames после входа тратил
+   * одноразовый ассерт, и вход приходилось проходить заново.
+   */
+  const dropped = (code: string, message = 'fetch failed') =>
+    Object.assign(new TypeError(message), { cause: Object.assign(new Error(code), { code }) })
+
+  test('обрыв соединения (fetch failed с кодом сети в cause) повторяется', async () => {
+    for (const code of ['ECONNRESET', 'UND_ERR_SOCKET', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']) {
+      const { fn, calls } = script([dropped(code), GAMES])
+      const result = await fetchOwnedGames('76561197960287930', opts(fn))
+      expect(Array.isArray(result) && result.map((g) => g.appid), code).toEqual([620])
+      expect(calls(), code).toBe(2)
+    }
+  })
+
+  test('тело, оборванное на середине, — тоже обрыв: повтор', async () => {
+    let i = 0
+    const fn = (async () => {
+      i += 1
+      if (i === 1) {
+        // undici: тело не дочитано — TypeError('terminated') с UND_ERR_SOCKET
+        return {
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw dropped('UND_ERR_SOCKET', 'terminated')
+          },
+        } as unknown as Response
+      }
+      return new Response(JSON.stringify(GAMES), { status: 200 })
+    }) as FetchLike
+    const result = await fetchOwnedGames('76561197960287930', opts(fn))
+    expect(Array.isArray(result) && result.map((g) => g.appid)).toEqual([620])
+    expect(i).toBe(2)
+  })
+
+  test('нет такого хоста (ENOTFOUND) и битый JSON не повторяются: за секунду это не пройдёт', async () => {
+    const dns = script([dropped('ENOTFOUND'), GAMES])
+    await expect(fetchOwnedGames('76561197960287930', opts(dns.fn))).rejects.toThrow(/fetch failed/)
+    expect(dns.calls()).toBe(1)
+
+    let i = 0
+    const html = (async () => {
+      i += 1
+      return new Response('<html>техработы</html>', { status: 200 })
+    }) as FetchLike
+    await expect(fetchOwnedGames('76561197960287930', opts(html))).rejects.toThrow(SyntaxError)
+    expect(i).toBe(1)
+  })
+
   test('повтор ровно один: два сбоя подряд — отказ', async () => {
     const { fn, calls } = script([503, 503, GAMES])
     await expect(fetchOwnedGames('76561197960287930', opts(fn))).rejects.toThrow(/HTTP 503/)
