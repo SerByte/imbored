@@ -97,7 +97,13 @@ export function clearWishlistCooldown(): void {
 
 /**
  * Перечитать список из Steam и записать — закрытый тоже (saveWishlist).
- * Возвращает записанное; null — Steam не ответил или база не приняла.
+ * Возвращает записанное; null — Steam не ответил, база не приняла или
+ * запись не легла по условию saveWishlist: сессию, от чьего имени читали,
+ * забыло «Удалить всё обо мне», или снимка нет. Отказ по условию паузы не
+ * ставит — Steam-то ответил.
+ *
+ * session — тот, кто открыл /library: по его sid запись сверяет, не забыта
+ * ли сессия (см. saveWishlist).
  *
  * Сбой глотается: полки просто не будет до следующего захода. И выдерживается
  * пауза на процесс — без неё отказ Steam (лимит общих IP Vercel) повторялся бы
@@ -105,14 +111,14 @@ export function clearWishlistCooldown(): void {
  */
 export async function refreshWishlist(
   db: Db,
-  steamid: string,
+  session: { steamid: string; sid: string },
   nowSec: number,
   opts: { fetchFn?: typeof fetch } = {},
 ): Promise<WishlistRow | null> {
   if (Date.now() < cooldownUntil) return null
   try {
-    const list = await fetchWishlist(steamid, opts)
-    await saveWishlist(db, steamid, list, nowSec)
+    const list = await fetchWishlist(session.steamid, opts)
+    if (!(await saveWishlist(db, session, list, nowSec))) return null
     return list === 'closed'
       ? { takenAt: nowSec, closed: true, appids: [] }
       : { takenAt: nowSec, closed: false, appids: list }
@@ -131,15 +137,21 @@ export async function refreshWishlist(
  * полки), а ответ доедет в after() и запишется: следующий заход будет со
  * свежим. Ждать дольше нельзя — полка стоит ниже всего, ради чего открывают
  * библиотеку.
+ *
+ * Поздняя запись не вернёт и строку, стёртую «Удалить всё обо мне», — а
+ * кнопка на той же странице и вполне успевает, пока Steam отвечает: от
+ * сессии, забытой удалением, список не ляжет, даже если профиль за эти
+ * секунды подключили заново (условие — в saveWishlist). Ради этого сюда и
+ * приходит sid, а не один steamid.
  */
 export async function refreshWishlistWithin(
   db: Db,
-  steamid: string,
+  session: { steamid: string; sid: string },
   nowSec: number,
   waitMs = DEFAULT_WAIT_MS,
   opts: Parameters<typeof refreshWishlist>[3] = {},
 ): Promise<WishlistRow | null> {
-  const work = refreshWishlist(db, steamid, nowSec, opts)
+  const work = refreshWishlist(db, session, nowSec, opts)
   try {
     after(work)
   } catch {

@@ -110,14 +110,14 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // Сессия целиком, а не только steamid: SignOut ниже спрашивает, доказано ли
   // владение профилем — от этого зависит, предлагать ли «выйти везде».
   const session = await currentSession()
-  const steamid = session?.steamid ?? null
   // Гостя без куки разворачивает proxy.ts настоящим 307 ещё до рендера:
   // отсюда редирект ушёл бы статусом 200 — каркас loading.tsx к этому моменту
   // уже отдан. Здесь остаются протухшая и поддельная кука.
-  if (!steamid) redirect(bounceTo('/library'))
+  if (!session) redirect(bounceTo('/library'))
+  const { steamid } = session
   // Видеть оценки, скрытое и вечера — тому же, кто вправе их писать (isWriter):
   // см. докблок чтений ниже
-  const writer = session !== null && isWriter(session)
+  const writer = isWriter(session)
 
   const db = await getDb()
   const query = await props.searchParams
@@ -957,7 +957,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             читается вовсе (writer выше) */}
         {writer && !isDemoId(steamid) && (
           <Suspense fallback={null}>
-            <WishlistShelf steamid={steamid} row={wishlist} owned={ownedNow} now={now} />
+            <WishlistShelf steamid={steamid} sid={session.sid} row={wishlist} owned={ownedNow} now={now} />
           </Suspense>
         )}
         <BannedShelf games={bannedGames} writer={writer} />

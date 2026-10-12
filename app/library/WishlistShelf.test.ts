@@ -1,7 +1,7 @@
 import { isValidElement, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { upsertGamesMeta, type Db } from '@/lib/db'
+import { saveLibrarySnapshot, upsertGamesMeta, type Db } from '@/lib/db'
 import { resetSwallowed } from '@/lib/errlog'
 import { freshDb } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
@@ -17,6 +17,8 @@ vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
 const NOW = 1_790_000_000
 const ME = '76561198000000001'
+/** Сессия, открывшая /library: без отметки удаления её строка не нужна (saveWishlist) */
+const SID = 'sid-me'
 const NB = String.fromCharCode(0xa0)
 
 function game(appid: number, name: string, over: Partial<GameMeta> = {}): GameMeta {
@@ -54,6 +56,7 @@ beforeEach(async () => {
 async function shelf(owned: number[] = []): Promise<string> {
   const el = await WishlistShelf({
     steamid: ME,
+    sid: SID,
     row: { takenAt: NOW - 60, closed: false, appids: [1086940, 1091500, 620, 730] },
     owned: new Set(owned),
     now: NOW,
@@ -94,6 +97,7 @@ describe('WishlistShelf', () => {
     expect(await shelf([1086940])).toBe('')
     const closed = await WishlistShelf({
       steamid: ME,
+      sid: SID,
       row: { takenAt: NOW - 60, closed: true, appids: [] },
       owned: new Set(),
       now: NOW,
@@ -109,6 +113,7 @@ describe('WishlistShelf', () => {
     try {
       const el = await WishlistShelf({
         steamid: ME,
+        sid: SID,
         row: { takenAt: NOW - 60, closed: false, appids: [1086940] },
         owned: new Set(),
         now: NOW,
@@ -124,6 +129,14 @@ describe('WishlistShelf', () => {
 
 describe('WishlistShelf: протухшее перечитывается', () => {
   test('старый список — к Steam за новым, старые цены — за свежими, в регионе цен', async () => {
+    // Полку зовёт /library со снимком, и перечитанный список ложится только
+    // рядом с ним (saveWishlist) — не легший полка не показывает
+    await saveLibrarySnapshot(
+      db,
+      ME,
+      [{ appid: 570, name: 'Dota 2', playtimeForever: 600, playtime2Weeks: 0 }],
+      NOW - 3600,
+    )
     // Цена снята тринадцать часов назад, скидки тогда не было
     await upsertGamesMeta(
       db,
@@ -158,6 +171,7 @@ describe('WishlistShelf: протухшее перечитывается', () =>
     })
     const el = await WishlistShelf({
       steamid: ME,
+      sid: SID,
       row: { takenAt: NOW - 13 * 3600, closed: false, appids: [620] },
       owned: new Set(),
       now: NOW,
