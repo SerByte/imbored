@@ -1,10 +1,9 @@
 'use client'
 
-import Link from 'next/link'
 import { useRef, useState, type ReactNode } from 'react'
 import { ShareLinkInput, useShareLink } from '@/components/ShareLink'
 import { StatusLine } from '@/components/StatusLine'
-import { steamLoginFor } from '@/lib/destination'
+import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { issueReply } from '@/lib/feedlinkreply'
 import { focusAdrift } from '@/lib/focushandoff'
 import { dateLabel } from '@/lib/freshness'
@@ -53,6 +52,19 @@ type Confirm = 'issue' | 'found' | 'off'
  * Строку «Отключается и кнопкой «Выйти на всех устройствах»» видит только
  * вошедший через Steam (verified): у демо такой кнопки нет (SignOut), и его
  * выход ссылку не трогает — обещать ему этот выключатель было бы враньём.
+ *
+ * !verified здесь и значит «демо»: строку рисует только пишущая сессия, а
+ * пишет без verified одна демо-личность (isWriter в lib/server). Ей —
+ * свои слова. Библиотека у неё чужая, и «патчи твоих игр», «видит, какие
+ * игры у тебя есть» были неправдой. И ссылка живёт, пока жива личность:
+ * уборка (sweepStale в lib/db) сносит демо через неделю без вестей — новый
+ * демо-вход, продление сессии, оценка — и ссылку вместе с ним, а опросы
+ * ридера вестями не считаются, и правильно: ридер держал бы брошенную
+ * личность вечно. Выходит неделя-другая после последнего захода (продление
+ * сессии отмечается не чаще раза в неделю) — и ровно это строка и говорит,
+ * а рядом — вход через Steam, после которого лента своих игр. Выпуск демо не
+ * закрыт: попробовать ленту в ридере — законная часть демо, если сказано,
+ * сколько она проживёт.
  *
  * Буфер — общий useShareLink, но с what = null: без панели «Поделиться» и без
  * шага share_click. Эту ссылку не отправляют людям, её кладут в свой ридер;
@@ -107,9 +119,21 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
       return (
         <>
           Вход закончился —{' '}
-          <Link href="/" className="tap tap-tight underline underline-offset-4">
+          {/*
+            Вход вернёт сюда же, к ссылке, а не на квиз. Вошедшему через Steam
+            — сразу Steam: 401 бывает и после «Выйти на всех устройствах» с
+            другого устройства, и главная по тёплому кэшу сессии (минута,
+            REVOKE_CACHE_SEC) встретила бы его как вошедшего и вернула к тому
+            же 401, а свежий вход гасит старую сессию сам. Демо — через
+            главную с возвратом: там и демо, и Steam, а в Steam он не входил.
+            Обычный <a>, не Link: /api/auth/steam — роут, а не страница.
+          */}
+          <a
+            href={verified ? steamLoginFor('/whatsnew') : bounceTo('/whatsnew')}
+            className="tap tap-tight underline underline-offset-4"
+          >
             войди снова
-          </Link>
+          </a>
           .
         </>
       )
@@ -233,12 +257,28 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
       </h2>
       <p className="max-w-2xl text-sm leading-relaxed text-dim">
         {phase.kind === 'off'
-          ? 'Патчи твоих игр — в ридер или телеграм-бот, без захода сюда. Ссылка личная: кто её знает, видит, какие игры у тебя есть, — не публикуй её.'
+          ? verified
+            ? 'Патчи твоих игр — в ридер или телеграм-бот, без захода сюда. Ссылка личная: кто её знает, видит, какие игры у тебя есть, — не публикуй её.'
+            : 'Патчи игр демо-библиотеки — в ридер или телеграм-бот, без захода сюда.'
           : phase.kind === 'shown'
             ? 'Ссылка показывается один раз — сохрани её в ридере. Потеряешь — выпусти новую, старая перестанет работать.'
             : // dateLabel с годом кончается на «г.» — точка после него была бы второй
               `Ссылка выдана ${dateLabel(phase.since, { year: true })} — показать её снова нельзя: храним только отпечаток. Потерял — выпусти новую, старая перестанет работать.`}
       </p>
+      {/* Срок демо-ссылки — при любой фазе: и до выпуска, и когда её кладут в ридер (докблок) */}
+      {verified ? null : (
+        <p className="max-w-2xl text-sm leading-relaxed text-dim">
+          Ссылка живёт, пока жив демо-профиль: она перестанет работать через неделю-другую без заходов на
+          сайт. Лента своих игр — после{' '}
+          <a
+            href={steamLoginFor('/whatsnew')}
+            className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+          >
+            входа через Steam
+          </a>
+          .
+        </p>
+      )}
 
       {phase.kind === 'shown' ? (
         <div className="join is-link max-w-2xl">

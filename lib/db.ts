@@ -6929,11 +6929,15 @@ export async function getFeedHeadForApps(
  * Порядка соединение не обещает, поэтому он восстанавливается по голове.
  * Запись, пропавшая между фазами (ретенция подрезала хвост игры), просто
  * выпадает: показать на её месте нечего.
+ *
+ * bodies: 'untold' — тело только у патча без пересказа (NEWS_COLS_UNTOLD, см.
+ * getRssFeedForApps). Меняется лишь список столбцов: соединение и поиск по
+ * ключу те же, и сторож плана у обоих режимов один.
  */
-async function withBodies(db: Db, head: FeedHeadItem[]): Promise<StoredNews[]> {
+async function withBodies(db: Db, head: FeedHeadItem[], bodies: 'all' | 'untold' = 'all'): Promise<StoredNews[]> {
   if (!head.length) return []
   const res = await db.execute({
-    sql: `SELECT ${NEWS_COLS} FROM json_each(?) AS k
+    sql: `SELECT ${bodies === 'all' ? NEWS_COLS : NEWS_COLS_UNTOLD} FROM json_each(?) AS k
           CROSS JOIN news_items AS n
             ON n.appid = json_extract(k.value, '$[0]') AND n.gid = json_extract(k.value, '$[1]')`,
     args: [JSON.stringify(head.map((h) => [h.appid, h.gid]))],
@@ -6980,6 +6984,44 @@ export async function getFeedForApps(
   since?: number,
 ): Promise<StoredNews[]> {
   return withBodies(db, await getFeedHeadForApps(db, appids, limit, before, since))
+}
+
+/**
+ * NEWS_COLS, где тело едет только у патча без пересказа; у остальных вместо
+ * него пустой список, и rowToNews читает его как blocks = [].
+ *
+ * Условие — ровно то, при котором newsDescription идёт за телом: пересказ
+ * пустой или его нет. Пробелов в сохранённом пересказе не бывает —
+ * validateDigest (lib/llm) обрезает их до записи, — поэтому trim здесь не
+ * нужен, а пустая строка (rowToNews её пересказом не считает) учтена.
+ */
+const NEWS_COLS_UNTOLD = NEWS_COLS.replace(
+  'blocks_json',
+  "CASE WHEN COALESCE(tldr, '') = '' THEN blocks_json ELSE '[]' END AS blocks_json",
+)
+
+/**
+ * Личная лента для ридера (app/whatsnew/feed/[token]): те же ключи в том же
+ * порядке, что у getFeedForApps, но тело патча — только когда пересказа нет.
+ *
+ * Ридер берёт из записи заголовок и описание, а описание — пересказ, если он
+ * есть (newsDescription в lib/newspage): тело ему нужно лишь для патча без
+ * пересказа. Опрос ленты ходит до FEED_POLL_LIMIT раз в час на ссылку, без
+ * CDN впереди, и тридцать тел на каждый — сотни килобайт из Turso (замер
+ * /whatsnew на проде: 277 КБ) и тридцать JSON.parse ради строки в 180 знаков.
+ *
+ * Только для тех, кто отдаёт записи в newsDescription. Странице /whatsnew
+ * тела нужны всегда — по ним считается число изменений (countChanges), — и
+ * она читает getFeedForApps.
+ */
+export async function getRssFeedForApps(
+  db: Db,
+  appids: number[],
+  limit = 30,
+  before?: number,
+  since?: number,
+): Promise<StoredNews[]> {
+  return withBodies(db, await getFeedHeadForApps(db, appids, limit, before, since), 'untold')
 }
 
 /**

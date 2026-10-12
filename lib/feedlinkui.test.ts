@@ -4,6 +4,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { FeedLink } from '../components/whatsnew/FeedLink'
+import { bounceTo, steamLoginFor } from './destination'
 import { issueReply } from './feedlinkreply'
 import { dateLabel } from './freshness'
 
@@ -55,6 +56,33 @@ describe('FeedLink: первый кадр', () => {
     expect(html(SINCE, false)).not.toContain('Выйти на всех устройствах')
     expect(html(SINCE, false)).toContain('Отключить')
     expect(html(null, true)).not.toContain('Выйти на всех устройствах')
+  })
+
+  /**
+   * Демо-личность пишет и ссылку выпускает (requireWriter), но библиотека у
+   * неё чужая, а сама личность уходит уборкой через неделю без вестей
+   * (sweepStale в lib/db) — вместе со ссылкой: ридер её опросы признаком
+   * жизни не считает. Обещание «патчи твоих игр» и «видит, какие игры у тебя
+   * есть» было неправдой, а ридер через неделю-другую тихо получал 404.
+   */
+  test('демо: лента демо-библиотеки, срок жизни ссылки и вход через Steam за своей', () => {
+    // чья лента — говорится до выпуска, там же, где у вошедшего «твоих игр»
+    expect(html(null, false)).toContain('Патчи игр демо-библиотеки')
+    // а срок и вход за своей — при любой фазе: ссылку кладут в ридер уже выпущенной
+    for (const since of [null, SINCE]) {
+      const out = html(since, false)
+      expect(out, String(since)).toContain('пока жив демо-профиль')
+      expect(out, String(since)).toContain('перестанет работать через неделю-другую без заходов на сайт')
+      expect(out, String(since)).toContain('href="/api/auth/steam?next=%2Fwhatsnew"')
+      expect(out, String(since)).not.toContain('твоих игр')
+      expect(out, String(since)).not.toContain('какие игры у тебя есть')
+    }
+    // вошедшему через Steam — прежние слова: лента его, ссылка живёт до отзыва
+    const own = html(null, true)
+    expect(own).toContain('Патчи твоих игр')
+    expect(own).toContain('какие игры у тебя есть')
+    expect(own).not.toContain('демо')
+    expect(html(SINCE, true)).not.toContain('демо')
   })
 
   test('живые строки стоят с первого кадра — пустыми', () => {
@@ -117,6 +145,26 @@ describe('FeedLink: ответ на выпуск', () => {
     expect(src).toMatch(/if \(phase\.kind === 'off'\) \{\s*void issue\(false\)/)
     // и тело действительно несёт просьбу
     expect(src).toContain('body: JSON.stringify({ replace })')
+  })
+
+  /*
+   * «Вход закончился — войди снова» (401) обещает вход, а вёл на голую
+   * главную: после входа человек попадал на квиз, а не к ссылке, ради
+   * которой жал «Получить ссылку». Вошедшему через Steam — сразу вход через
+   * Steam: 401 приходит и после «Выйти на всех устройствах» с другого
+   * устройства, а главная по тёплому кэшу сессии встретила бы его как
+   * вошедшего и вернула к тому же 401. Демо — через главную с возвратом:
+   * там и демо, и Steam, а в Steam он и не входил.
+   */
+  test('«войди снова» после 401 возвращает на /whatsnew, а не на голую главную', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'whatsnew', 'FeedLink.tsx'), 'utf8')
+    expect(src).not.toMatch(/href=(?:"\/"|\{'\/'\})/)
+    const at = src.indexOf('if (res.status === 401) {')
+    expect(at).toBeGreaterThan(-1)
+    const branch = src.slice(at, src.indexOf('if (res.status === 429)', at))
+    expect(branch).toContain("href={verified ? steamLoginFor('/whatsnew') : bounceTo('/whatsnew')}")
+    expect(bounceTo('/whatsnew')).toBe('/?next=%2Fwhatsnew')
+    expect(steamLoginFor('/whatsnew')).toBe('/api/auth/steam?next=%2Fwhatsnew')
   })
 
   test('тело читается с копии — отказ потом разберёт isNeedSteam', async () => {

@@ -17,6 +17,7 @@ import {
   getGamesMetaLite,
   getMajorFeed,
   getMajorFeedHead,
+  getRssFeedForApps,
   latestMajorPatchSince,
   PATCH_SINCE_MAX,
   getNeighbors,
@@ -181,6 +182,13 @@ const CASES: Case[] = [
   {
     name: 'личная лента',
     run: async (db) => getFeedForApps(await withPatches(db), [730, 570], 30, undefined, NOW - FRESH),
+    indexes: ['idx_news_app', NEWS_PK],
+    sortFree: false,
+  },
+  // Лента для ридера — та же личная лента, другой лишь список столбцов тел
+  {
+    name: 'личная лента для ридера',
+    run: async (db) => getRssFeedForApps(await withPatches(db), [730, 570], 30, undefined, NOW - FRESH),
     indexes: ['idx_news_app', NEWS_PK],
     sortFree: false,
   },
@@ -547,6 +555,7 @@ describe('планы запросов', () => {
     for (const run of [
       (spy: Db) => getFeedHeadForApps(spy, [730, 570], 30, undefined, NOW - FRESH),
       async (spy: Db) => getFeedForApps(await withPatches(spy), [730, 570], 30, undefined, NOW - FRESH),
+      async (spy: Db) => getRssFeedForApps(await withPatches(spy), [730, 570], 30, undefined, NOW - FRESH),
     ]) {
       const head = (await statementsOf(db, run)).filter((q) => q.sql.includes('appid IN'))
       expect(head).toHaveLength(1)

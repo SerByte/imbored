@@ -9,6 +9,16 @@
  * Модуль чистый: строка из списка, без базы и без Next. Экранирование — своё:
  * заголовок патча приходит из Steam как есть, и «&» или «<» в нём сломали бы
  * документ целиком, а не одну запись.
+ *
+ * Слоёв экранирования у полей РАЗНОЕ число, и это не небрежность. <description>
+ * записи в RSS 2.0 — HTML («entity-encoded HTML is allowed» в спецификации), и
+ * ридеры — Feedly, Inoreader, NetNewsWire, телеграм-боты, наш же разбор фида
+ * Steam в lib/news.ts — снимают слой XML и рисуют остаток как HTML. Описание у
+ * нас — текст (пересказ или начало поста), поэтому оно экранируется дважды:
+ * сперва как текст HTML (htmlText), потом для XML. С одним слоем «Fixed <Enter>»
+ * доезжал до читателя как «Fixed » — ридер принимал <Enter> за неизвестный тег.
+ * <title> ридеры показывают текстом — второй слой вылез бы в нём буквальным
+ * «&lt;», — и он, как адреса и описание канала, экранируется только для XML.
  */
 
 export type RssItem = {
@@ -47,6 +57,15 @@ export function escapeXml(text: string): string {
     .replace(/'/g, '&apos;')
 }
 
+/**
+ * Текст в текст HTML: три знака, которые HTML прочёл бы разметкой или
+ * сущностью. &apos; не нужен — кавычка в тексте HTML ничего не значит, а
+ * ридеры эпохи HTML4 этой сущности не знают. Управляющие снимет escapeXml.
+ */
+function htmlText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 /** Дата по RFC 822, как требует RSS 2.0; toUTCString — ровно этот формат */
 const rfc822 = (sec: number) => new Date(sec * 1000).toUTCString()
 
@@ -58,7 +77,7 @@ export function rssFeed(ch: RssChannel): string {
       <link>${escapeXml(i.link)}</link>
       <guid isPermaLink="true">${escapeXml(i.link)}</guid>
       <pubDate>${rfc822(i.publishedAt)}</pubDate>
-      <description>${escapeXml(i.description)}</description>
+      <description>${escapeXml(htmlText(i.description))}</description>
     </item>`,
     )
     .join('\n')

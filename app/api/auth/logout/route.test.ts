@@ -3,8 +3,9 @@ import { feedLinkOwner, issueFeedLink, type Db } from '@/lib/db'
 import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
 import { SESSION_COOKIE, currentSession } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
+import { signOutReply } from '@/lib/signoutreply'
 import { setTestCookie } from '@/lib/testing/headers'
-import { STEAMID_OF, freshDb, post, signIn, signInAs, signOut } from '@/lib/testing/route'
+import { STEAMID_OF, breakDbOn, freshDb, post, signIn, signInAs, signOut } from '@/lib/testing/route'
 import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -51,6 +52,16 @@ async function alive(token: string): Promise<boolean> {
   setTestCookie(SESSION_COOKIE, token)
   forgetSessionCache()
   return (await currentSession()) !== null
+}
+
+/**
+ * Отметка отзыва строки сессии — прямо из базы. Жива ли сессия «глазами
+ * запроса» (alive) здесь не спросить: в тестах обрыва getDb отдаёт сломанную
+ * базу, и проверка состояния открылась бы на отказе.
+ */
+async function revokedAt(sid: string): Promise<unknown> {
+  const res = await db.execute({ sql: 'SELECT revoked_at FROM sessions WHERE sid = ?', args: [sid] })
+  return res.rows[0]?.revoked_at ?? null
 }
 
 async function sessionsFrom(steamid: string): Promise<unknown> {
@@ -101,6 +112,50 @@ describe('/api/auth/logout', () => {
     await signIn(db, STEAMID_OF.openid, { verified: true })
     expect(await (await logout(true)).json()).toEqual({ ok: true })
     expect(await feedLinkOwner(db, rss)).toBeNull()
+  })
+
+  /**
+   * Два пути, которыми «везде» делает меньше обещанного, — и оба обязаны
+   * быть видны в ответе: кнопка (components/SignOut) по нему решает, увести
+   * ли на главную, как после удачи, или сказать, что остальные устройства и
+   * ссылка на RSS живы (lib/signoutreply). Кука гасится в обоих: на этом
+   * устройстве человек вышел.
+   */
+  test('«везде», а база отзыв не записала — кука погашена, revoked: false, ссылка жива', async () => {
+    const phone = await signIn(db, STEAMID_OF.openid, { verified: true })
+    const rss = await feedLink(STEAMID_OF.openid)
+    const laptop = await signIn(db, STEAMID_OF.openid, { verified: true })
+    // пачка revokeAllSessions падает целиком — на её DELETE из feed_links
+    breakDbOn(db, 'feed_links')
+    const res = await logout(true)
+    expect(res.status).toBe(200)
+    expect(cleared(res)).toBe(true)
+    expect(await res.clone().json()).toEqual({ ok: true, revoked: false })
+    expect(await signOutReply(true, res)).toBe('partial')
+    // ни одна сессия не погашена, ссылка жива — ровно поэтому «вышел везде» не говорим
+    expect(await feedLinkOwner(db, rss)).toBe(STEAMID_OF.openid)
+    expect(await revokedAt(phone.sid)).toBeNull()
+    expect(await revokedAt(laptop.sid)).toBeNull()
+    expect(await sessionsFrom(STEAMID_OF.openid)).toBeNull()
+  })
+
+  test('«везде», а состояние сессии не прочлось — погашено это устройство, и сказано прямо', async () => {
+    const phone = await signIn(db, STEAMID_OF.openid, { verified: true })
+    const rss = await feedLink(STEAMID_OF.openid)
+    const laptop = await signIn(db, STEAMID_OF.openid, { verified: true })
+    // холодный экземпляр: кэша состояния нет, а чтение его падает — и
+    // сессия, открытая на отказе (LIVE в lib/sessions), не подтверждена
+    forgetSessionCache()
+    breakDbOn(db, 'LEFT JOIN sessions')
+    const res = await logout(true)
+    expect(cleared(res)).toBe(true)
+    expect(((await res.clone().json()) as { scope?: string }).scope).toBe('this-device')
+    expect(await signOutReply(true, res)).toBe('partial')
+    // погашено одно это устройство; остальные и ссылка живы
+    expect(await revokedAt(laptop.sid)).not.toBeNull()
+    expect(await revokedAt(phone.sid)).toBeNull()
+    expect(await sessionsFrom(STEAMID_OF.openid)).toBeNull()
+    expect(await feedLinkOwner(db, rss)).toBe(STEAMID_OF.openid)
   })
 
   test('«везде» у сессии по ссылке и у демо — только это устройство, и сказано прямо', async () => {
