@@ -1433,6 +1433,25 @@ export async function revokeSession(db: Db, sid: string, nowSec: number): Promis
 }
 
 /**
+ * Сессия забыта: «Удалить всё обо мне» (forgetUser) стёрло её строку, а
+ * отметка удаления стоит. Условие для записи, а не для чтения: кэш
+ * состояния сессий (REVOKE_CACHE_SEC) ещё минуту пускает такую сессию на
+ * соседнем экземпляре, и запись, которой она в эту минуту заведёт новую
+ * строку о человеке, пережила бы его удаление навсегда. Сверенное в самой
+ * записи, оно не зависит от очерёдности: та же пачка, что ставит отметку,
+ * стирает все строки сессий, выданных до неё, а вход после неё пишет свою
+ * (issueSession).
+ *
+ * Строки нет и без всякого удаления — у демо или когда Turso моргнула на
+ * выдаче, — и это по-прежнему не повод отказать: без отметки условие ложно.
+ *
+ * Один фрагмент на всех, кто пишет от имени сессии с тёплого кэша:
+ * revokeAllSessions и issueFeedLink. Аргументы — steamid, sid.
+ */
+const FORGOTTEN_SESSION = `(EXISTS (SELECT 1 FROM forget_marks WHERE steamid = ?)
+                            AND NOT EXISTS (SELECT 1 FROM sessions WHERE sid = ?))`
+
+/**
  * Погасить все устройства игрока — и секретную ссылку на его RSS-ленту.
  *
  * Сессии гасятся двумя действиями, и второе обязательно: UPDATE достаёт
@@ -1456,8 +1475,27 @@ export async function revokeSession(db: Db, sid: string, nowSec: number): Promis
  * issueFeedLink проверяет отзыв своей сессии в той же записи, что и пишет, —
  * выпуск встаёт либо до этой пачки (и ссылку сносит DELETE ниже), либо после
  * (и видит revoked_at).
+ *
+ * ЗАБЫТОЙ СЕССИИ ВЫХОДИТЬ НЕОТКУДА — и строки users она не заводит. Роут
+ * выхода верит минутному кэшу (REVOKE_CACHE_SEC), и телефон, чья сессия
+ * живёт в кэше соседнего экземпляра, проходит в «везде» и после «Удалить всё
+ * обо мне», нажатого на ноутбуке. UPSERT sessions_from без условия заводил
+ * тогда users заново — строку настоящего человека, которую уборка не
+ * трогает, — у того, кому только что сказали «останется только отметка». А
+ * гасить такой сессии нечего: отметка удаления уже отрезала всё, что выдано
+ * до неё. Поэтому вставка — под тем же условием, что у выпуска ссылки
+ * (FORGOTTEN_SESSION), в той же записи: удаление встаёт либо до пачки (и
+ * вставка не находит строки сессии при отметке), либо после (и уносит
+ * строку вместе со всем). Остальные две инструкции следа не оставляют —
+ * они только гасят и стирают. Вход после удаления пишет свою строку
+ * (issueSession), и его «везде» работает как обычно.
  */
-export async function revokeAllSessions(db: Db, steamid: string, nowSec: number): Promise<void> {
+export async function revokeAllSessions(
+  db: Db,
+  session: { steamid: string; sid: string },
+  nowSec: number,
+): Promise<void> {
+  const { steamid, sid } = session
   await db.batch(
     [
       {
@@ -1465,10 +1503,13 @@ export async function revokeAllSessions(db: Db, steamid: string, nowSec: number)
         args: [nowSec, steamid],
       },
       {
+        // WHERE у SELECT нужен и ради разбора: без него ON CONFLICT после
+        // SELECT SQLite читает как ON у соединения (как в joinRoom)
         sql: `INSERT INTO users (steamid, created_at, last_seen_at, sessions_from)
-              VALUES (?, ?, ?, ?)
+              SELECT ?, ?, ?, ?
+              WHERE NOT ${FORGOTTEN_SESSION}
               ON CONFLICT(steamid) DO UPDATE SET sessions_from = excluded.sessions_from`,
-        args: [steamid, nowSec, nowSec, nowSec],
+        args: [steamid, nowSec, nowSec, nowSec, steamid, sid],
       },
       { sql: 'DELETE FROM feed_links WHERE steamid = ?', args: [steamid] },
     ],
@@ -1601,19 +1642,38 @@ export async function markActiveDay(
 /** v — версия промпта, которым написан текст (PORTRAIT_TEXT_V в lib/portraitvoice) */
 export type PortraitCache = { takenAt: number; text: string; v?: number }
 
+/**
+ * Записать текст портрета — пока жив снимок, из которого он собран.
+ *
+ * UPSERT, а не UPDATE: без строки в users запись молча терялась, кэш не
+ * сохранялся и Claude дёргался заново на каждый рендер публичной страницы.
+ *
+ * НО ТОЛЬКО ПРИ СВОЁМ СНИМКЕ. Публичная /portrait/<id> читает снимок,
+ * секунды ждёт Claude и пишет уже потом. «Удалить всё обо мне» (forgetUser),
+ * прошедшее в эти секунды, стирало снимок и users, а UPSERT заводил users
+ * заново — с текстом про архетипы и главную игру человека, которому сказали
+ * «всё удалено». Строк людей без демо-префикса уборка не трогает, и такая
+ * жила бы вечно. Условие — в той же записи: снимок и users уходят одной
+ * пачкой (у удаления и у уборки демо), так что запись либо успевает до неё
+ * и уходит вместе со всем, либо после — и не находит снимка. Снимок,
+ * сменившийся новым за время рендера, тоже отказ: текст по старому всё
+ * равно устарел (portraitTextFresh сверяет takenAt).
+ *
+ * WHERE у SELECT нужен и ради разбора: без него ON CONFLICT после SELECT
+ * SQLite читает как ON у соединения.
+ */
 export async function setUserPortrait(
   db: Db,
   steamid: string,
   value: PortraitCache,
 ): Promise<void> {
-  // UPSERT, а не UPDATE: без строки в users запись молча терялась, кэш не
-  // сохранялся и Claude дёргался заново на каждый рендер публичной страницы
   const now = Math.floor(Date.now() / 1000)
   await db.execute({
     sql: `INSERT INTO users (steamid, portrait_json, created_at, last_seen_at)
-          VALUES (?, ?, ?, ?)
+          SELECT ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM library_snapshots WHERE steamid = ? AND taken_at = ?)
           ON CONFLICT(steamid) DO UPDATE SET portrait_json = excluded.portrait_json`,
-    args: [steamid, JSON.stringify(value), now, now],
+    args: [steamid, JSON.stringify(value), now, now, steamid, value.takenAt],
   })
 }
 
@@ -2503,16 +2563,55 @@ export function snapshotYear(nowSec: number): number {
   return new Date(nowSec * 1000).getUTCFullYear()
 }
 
+/**
+ * Записать свежий снимок библиотеки — с годовой отметкой, сверкой исходов и
+ * очередью новостей.
+ *
+ * replaces — takenAt снимка, который освежается (прогрев, /api/prepare).
+ * Прогрев читает снимок в начале запроса, потом секунды ждёт GetOwnedGames
+ * и только потом пишет. «Удалить всё обо мне» (forgetUser), прошедшее в эти
+ * секунды, — а /library зовёт прогрев при открытии, и кнопка удаления на
+ * ней же, — стирало снимки, и запись без условия заводила их заново,
+ * вместе с годовой отметкой. Строк людей без демо-префикса уборка не
+ * трогает, и по ним снова открывались бы /portrait/<id> и итоги года того,
+ * кому сказали «всё удалено». Сессия у него к тому времени мертва, а
+ * вечный след — жив.
+ *
+ * Поэтому с replaces свежий снимок и годовая отметка из него пишутся, только
+ * пока жив освежаемый, — в той же записи, как у текста портрета
+ * (setUserPortrait). Удаление уносит снимки одной пачкой: запись либо
+ * успевает до него и уходит вместе со всем, либо идёт после и не находит
+ * снимка. Первая отметка — копия последнего снимка — и так читает
+ * library_snapshots, а подрезка старых безвредна. Старый takenAt не равен
+ * новому (освежают только протухший — SNAPSHOT_MAX_AGE_SEC), так что
+ * условие значит одно и то же для каждой инструкции пачки. Снимок, не
+ * легший по условию, не сверяет исходы и не пополняет очередь: сверять
+ * нечего и не для кого.
+ *
+ * Вход через Steam и подключение по ссылке зовут без replaces: это новый
+ * вход, и после удаления он — новое начало, а не след прежнего.
+ */
 export async function saveLibrarySnapshot(
   db: Db,
   steamid: string,
   games: LibraryGame[],
   nowSec: number,
+  opts: { replaces?: number } = {},
 ): Promise<void> {
   const payload = JSON.stringify(games)
   const year = snapshotYear(nowSec)
+  // Освежаемый снимок ещё жив; без replaces — условия нет (WHERE 1).
+  // WHERE у SELECT нужен и ради разбора: без него ON CONFLICT после SELECT
+  // SQLite читает как ON у соединения
+  const alive =
+    opts.replaces === undefined
+      ? { sql: '1', args: [] as Array<string | number> }
+      : {
+          sql: 'EXISTS (SELECT 1 FROM library_snapshots WHERE steamid = ? AND taken_at = ?)',
+          args: [steamid, opts.replaces] as Array<string | number>,
+        }
 
-  await db.batch(
+  const [, , inserted] = await db.batch(
     [
       /*
        * Отметка года. Обе инструкции идут ДО вставки нового снапшота и обе с
@@ -2535,12 +2634,13 @@ export async function saveLibrarySnapshot(
       },
       {
         sql: `INSERT INTO library_baselines (steamid, year, taken_at, games_json)
-              VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-        args: [steamid, year, nowSec, payload],
+              SELECT ?, ?, ?, ? WHERE ${alive.sql} ON CONFLICT DO NOTHING`,
+        args: [steamid, year, nowSec, payload, ...alive.args],
       },
       {
-        sql: 'INSERT INTO library_snapshots (steamid, taken_at, games_json) VALUES (?, ?, ?)',
-        args: [steamid, nowSec, payload],
+        sql: `INSERT INTO library_snapshots (steamid, taken_at, games_json)
+              SELECT ?, ?, ? WHERE ${alive.sql}`,
+        args: [steamid, nowSec, payload, ...alive.args],
       },
       {
         sql: `DELETE FROM library_snapshots WHERE steamid = ? AND id NOT IN (
@@ -2552,6 +2652,8 @@ export async function saveLibrarySnapshot(
     ],
     'write',
   )
+  // Освежаемого снимка уже нет — человека удалили, пока Steam отвечал
+  if (opts.replaces !== undefined && Number(inserted?.rowsAffected ?? 0) === 0) return
 
   // Исход советов последних двух недель (и несверенных старых — поздняя
   // сверка) — по этому же снапшоту. Здесь, а не в
@@ -6245,6 +6347,20 @@ export type FeedLinkIssue = { kind: 'issued' } | { kind: 'exists'; createdAt: nu
  * не пройти. Демо без строки (Turso моргнула на выдаче) условие пропускает,
  * но «выйти везде» демо и не дано.
  *
+ * ЗАБЫТАЯ СЕССИЯ — ТОЖЕ ОТОЗВАННАЯ. «Удалить всё обо мне» (forgetUser)
+ * строки сессий не отзывает, а стирает, и одна проверка отзыва после него
+ * молчала: строки нет — нет и отзыва. Телефон, чья сессия минуту жила в
+ * кэше соседнего экземпляра, выпускал вечную ссылку, и SteamID снова лежал
+ * в базе у человека, которому сказали «всё удалено». Поэтому мертва и
+ * сессия без строки при отметке удаления (forget_marks; условие —
+ * FORGOTTEN_SESSION, общее с revokeAllSessions): та же пачка, что
+ * ставит отметку, стирает все строки, выданные до неё, а вход после неё
+ * пишет свою (issueSession) — без строки он не подтверждён и сюда не
+ * доходит. Отсечка та же, что у самой отметки в getSessionState, — «кука
+ * старше удаления не пускает», — только сверенная в самой записи, а не по
+ * минутному кэшу. Отметки нет — правило прежнее: строки нет у демо, и это не
+ * повод отказать.
+ *
  * ЗАМЕНА — ТОЛЬКО ПО ПРОСЬБЕ (replace). Страница судит о том, есть ли
  * ссылка, по своему первому кадру, а он бывает старым: «назад» достаёт
  * /whatsnew из роутерного кэша, вторая вкладка открыта до выпуска. Без
@@ -6261,25 +6377,29 @@ export async function issueFeedLink(
   db: Db,
   link: { steamid: string; sid: string; tokenHash: string; nowSec: number; replace: boolean },
 ): Promise<FeedLinkIssue> {
-  const revoked = 'SELECT 1 FROM sessions WHERE sid = ? AND revoked_at IS NOT NULL'
+  // Сессия мертва: её строка отозвана — или стёрта удалением по запросу
+  // (FORGOTTEN_SESSION; см. докблок). Аргументы — sid, steamid, sid
+  const dead = `(EXISTS (SELECT 1 FROM sessions WHERE sid = ? AND revoked_at IS NOT NULL)
+                 OR ${FORGOTTEN_SESSION})`
+  const deadArgs = [link.sid, link.steamid, link.sid]
   const [before, written] = await db.batch(
     [
       {
-        sql: `SELECT EXISTS (${revoked}) AS revoked,
+        sql: `SELECT ${dead} AS revoked,
                      (SELECT created_at FROM feed_links WHERE steamid = ?) AS created_at`,
-        args: [link.sid, link.steamid],
+        args: [...deadArgs, link.steamid],
       },
       {
         // WHERE у SELECT обязателен и сам по себе: без него SQLite читал бы
         // ON CONFLICT как часть выборки (как в joinRoom)
         sql: `INSERT INTO feed_links (steamid, token_hash, created_at)
               SELECT ?, ?, ?
-              WHERE NOT EXISTS (${revoked})
+              WHERE NOT ${dead}
               ON CONFLICT(steamid) DO UPDATE SET
                 token_hash = excluded.token_hash,
                 created_at = excluded.created_at
               WHERE ?`,
-        args: [link.steamid, link.tokenHash, link.nowSec, link.sid, link.replace ? 1 : 0],
+        args: [link.steamid, link.tokenHash, link.nowSec, ...deadArgs, link.replace ? 1 : 0],
       },
     ],
     'write',

@@ -170,6 +170,26 @@ export function sessionCookieOptions() {
   } as const
 }
 
+/**
+ * Погасить в ответе куки, которые принадлежат человеку, а не браузеру:
+ * сессию и «Не предлагать» (lib/mutetags.ts). Фильтр — про человека, и
+ * следующий вошедший на этом браузере молча получал бы выдачу без того, что
+ * запретил не он.
+ *
+ * Зовут оба пути, после которых человека на этом устройстве быть не должно:
+ * выход (app/api/auth/logout) и «Удалить всё обо мне» (app/api/forget).
+ * Одним помощником, а не строками в каждом роуте: так и было, и списки
+ * разъехались — выход научился гасить «Не предлагать», а удаление, которое
+ * обещает «то же, что выход, только везде», оставляло её ещё на год.
+ *
+ * Путь «Не предлагать» — тот же, с которым кука ставится (muteCookie):
+ * иначе браузер погасил бы соседку, а её оставил.
+ */
+export function clearDeviceCookies(res: NextResponse): void {
+  res.cookies.set(SESSION_COOKIE, '', { ...sessionCookieOptions(), maxAge: 0 })
+  res.cookies.set(MUTE_COOKIE, '', { path: '/', sameSite: 'lax', maxAge: 0 })
+}
+
 /** Кука со state на время входа через Steam — см. stateMatches в lib/steam-openid. */
 export const OIDC_COOKIE = 'imbored_oidc'
 

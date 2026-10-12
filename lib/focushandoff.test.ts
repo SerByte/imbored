@@ -381,3 +381,33 @@ describe('«Удалить всё обо мне»: фокус на безопа�
     expect(yes).not.toMatch(/\sref=/)
   })
 })
+
+/*
+ * После «Удалить всё обо мне» (components/ForgetMe) единственное
+ * подтверждение необратимого — строка «всё удалено» над заголовком главной
+ * (components/landing/HeroNotice). Нажатая «Да, удалить всё» уходит вместе с
+ * /library, фокус падает в body, а объявитель маршрутов Next читает только
+ * заголовок вкладки: скринридер не слышал, что удаление прошло, и искать
+ * ответ приходилось обходом героя. Строка забирает потерянный фокус —
+ * только потерянный: стоящий в шапке остаётся там. Живой областью она не
+ * становится — область, рождённая вместе с текстом, звучит не везде
+ * (докблок StatusLine), а цель фокуса живой быть не может (liveregion.test).
+ */
+describe('«всё удалено»: строка забирает потерянный фокус', () => {
+  const src = read('components/landing/HeroNotice.tsx')
+
+  test('строка — цель фокуса, но не живая область', () => {
+    const line = tags(src, 'p').find((t) => /ref=\{line\}/.test(t)) ?? ''
+    expect(line, 'строка без ref').not.toBe('')
+    expect(line).toMatch(/\stabIndex=\{-1\}/)
+    expect(line).not.toMatch(/\srole=|\saria-live=/)
+  })
+
+  test('перенос — эффектом по forgot и только потерянного фокуса, без прокрутки', () => {
+    expect(src).toMatch(
+      /useEffect\(\(\) => \{\s*if \(forgot && focusAdrift\(document\)\) line\.current\?\.focus\(\{ preventScroll: true \}\)\s*\}, \[forgot\]\)/,
+    )
+    // хуки — до раннего return: иначе их порядок менялся бы вместе со строкой
+    expect(src.indexOf('useEffect(')).toBeLessThan(src.indexOf('if (!promise) return null'))
+  })
+})

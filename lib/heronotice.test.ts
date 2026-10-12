@@ -52,6 +52,30 @@ describe('HeroNotice после удаления', () => {
     expect(html).toContain('входы на всех устройствах погашены')
   })
 
+  /*
+   * «Всё удалено» без оговорки спорило с отметкой удаления: SteamID и время
+   * живут ещё год и месяц (forget_marks). Строка говорит о ней теми же
+   * словами, что вопрос «Удалить всё?» и /privacy (lib/forget.test.ts).
+   */
+  test('и честно — про отметку удаления: что осталось и на сколько', () => {
+    state.forgot = true
+    const html = render()
+    expect(html).toContain('Осталась только отметка — SteamID и время удаления')
+    expect(html).toContain('Через год и месяц она сотрётся сама')
+  })
+
+  /*
+   * Строка — цель фокуса после удаления (lib/focushandoff.test.ts): иначе
+   * скринридер слышал только заголовок вкладки, а не «удалено». Не живая
+   * область: цель фокуса ею быть не может (lib/liveregion.test.ts).
+   */
+  test('строка принимает фокус программно и не объявляет себя живой областью', () => {
+    state.forgot = true
+    const html = render()
+    expect(html).toContain('tabindex="-1"')
+    expect(html).not.toMatch(/\srole=|aria-live/)
+  })
+
   test('без метки — прежнее поведение: гостю, пришедшему сам, пусто', () => {
     expect(render()).toBe('')
   })

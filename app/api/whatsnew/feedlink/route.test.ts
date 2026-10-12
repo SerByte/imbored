@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { feedLinkOwner, getFeedLink, revokeAllSessions, type Db } from '@/lib/db'
+import { countUserRows, feedLinkOwner, forgetUser, getFeedLink, revokeAllSessions, type Db } from '@/lib/db'
 import { FEED_LINK_LIMIT, feedTokenHash } from '@/lib/feedlink'
 import { issueReply } from '@/lib/feedlinkreply'
 import { currentSession } from '@/lib/server'
@@ -98,7 +98,7 @@ describe('/api/whatsnew/feedlink: кто выпускает', () => {
     const steamid = await signInAs(db, 'openid')
     const before = await keyOf(await issue())
 
-    await revokeAllSessions(db, steamid, T0 + 1)
+    await revokeAllSessions(db, { steamid, sid: (await currentSession())!.sid }, T0 + 1)
     // Окно настоящее: кэш ещё считает сессию живой
     expect(await currentSession()).not.toBeNull()
 
@@ -111,6 +111,34 @@ describe('/api/whatsnew/feedlink: кто выпускает', () => {
     expect(await feedLinkOwner(db, feedTokenHash(before))).toBeNull()
     expect(await getFeedLink(db, steamid)).toBeNull()
     expect(await linkRows()).toBe(0)
+  })
+
+  /*
+   * То же окно, но после «Удалить всё обо мне» на соседнем экземпляре. Оно
+   * строки сессий не отзывает, а стирает — и проверка «строка не отозвана»
+   * молчала: строки нет, отзыва тоже. Телефон с /whatsnew выпускал вечную
+   * ссылку, и SteamID снова лежал в базе после «всё удалено». Удаление здесь
+   * — прямо в базе, мимо forgetSessionCache, как его увидел бы соседний
+   * экземпляр.
+   */
+  test('сессия, удалившая всё на другом экземпляре, ссылку не выпускает — 401, в базе пусто', async () => {
+    const steamid = await signInAs(db, 'openid')
+    expect(await currentSession()).not.toBeNull()
+    await forgetUser(db, steamid, { signOutFrom: T0 + 1 })
+    vi.setSystemTime((T0 + 2) * 1000)
+    // Окно настоящее: кэш ещё считает сессию живой и пишущей
+    expect(await currentSession()).not.toBeNull()
+
+    for (const send of [issue, reissue]) {
+      const res = await send()
+      expect(res.status).toBe(401)
+      expect(await res.json()).toEqual({ error: 'nosession' })
+    }
+    expect(await linkRows()).toBe(0)
+    // От человека — отметка удаления и счётчик выпуска: он считается до
+    // записи и уходит уборкой после своего окна, как любой потолок
+    const left = (await countUserRows(db, steamid)).filter((r) => r.rows > 0)
+    expect(left.map((r) => r.table)).toEqual(['forget_marks', 'rate_limits'])
   })
 })
 

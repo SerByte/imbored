@@ -1,9 +1,10 @@
 'use client'
 
 import { useSearchParams } from 'next/navigation'
-import { useSyncExternalStore } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { destinationUrl } from '@/lib/destination'
 import { destinationPromise } from '@/lib/destinationtext'
+import { focusAdrift } from '@/lib/focushandoff'
 import { forgotServer, subscribeForgot, takeForgot } from '@/lib/forgotnotice'
 import { getServerSessionHint, getSessionHint, subscribeSessionHint } from '@/lib/sessionhint'
 
@@ -43,14 +44,35 @@ export function HeroNotice() {
   const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
   // Сюда уводит «Удалить всё обо мне» (components/ForgetMe). Без строки
   // человек попадал бы на обычную главную гостя и не знал, сработало ли.
-  // Зажигает её метка самого удаления, забранная один раз (lib/forgotnotice),
+  // Зажигает её метка самого удаления, забранная на один заход (lib/forgotnotice),
   // а не адрес: адрес оставался в истории и звучал бы снова и снова. И
   // никогда — рядом с «С возвращением»: вошедшему «входы погашены» врёт
   const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
   const forgot = useSyncExternalStore(subscribeForgot, takeForgot, forgotServer) && hint?.authed !== true
 
+  /*
+   * Строка «удалено» — единственное подтверждение необратимого, и
+   * скринридеру её никто не прочтёт сам: нажатая «Да, удалить всё» ушла
+   * вместе с /library, фокус упал в body, а объявитель маршрутов Next
+   * читает только заголовок вкладки. Поэтому строка забирает потерянный
+   * фокус (focusAdrift) — читалка встаёт на неё и произносит. Только
+   * потерянный: стоящего в шапке не дёргаем. Без прокрутки: наверх главную
+   * уже поставил роутер. Живой областью строка не стала — область,
+   * рождённая вместе с текстом, звучит не везде (докблок StatusLine).
+   * Хук — до раннего return: порядок хуков не зависит от строки
+   */
+  const line = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (forgot && focusAdrift(document)) line.current?.focus({ preventScroll: true })
+  }, [forgot])
+
+  // Об отметке удаления (forget_marks в lib/db) — честно и теми же словами,
+  // что в вопросе «Удалить всё?» (forgetSummary в lib/forget) и в /privacy:
+  // без неё «всё удалено» спорило бы с SteamID, который остаётся
   const promise = forgot
-    ? 'Готово — всё, что imbored о тебе хранил, удалено, а входы на всех устройствах погашены.'
+    ? 'Готово — всё, что imbored о тебе хранил, удалено, а входы на всех устройствах погашены. ' +
+      'Осталась только отметка — SteamID и время удаления: по ней старые входы больше не пускают. ' +
+      'Через год и месяц она сотрётся сама.'
     : joinTarget
       ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
       : compatTarget
@@ -60,7 +82,11 @@ export function HeroNotice() {
   if (!promise) return null
 
   return (
-    <p className="glass mb-6 max-w-md rounded-[14px] px-4 py-3 text-sm leading-relaxed text-ink">
+    <p
+      ref={line}
+      tabIndex={-1}
+      className="glass mb-6 max-w-md rounded-[14px] px-4 py-3 text-sm leading-relaxed text-ink"
+    >
       {promise}
     </p>
   )

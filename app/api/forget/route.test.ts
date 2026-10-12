@@ -4,6 +4,7 @@ import {
   createRoom,
   createSharedPick,
   FORGET_TABLES,
+  forgetUser,
   logFeedback,
   revokeAllSessions,
   saveLibrarySnapshot,
@@ -12,6 +13,7 @@ import {
 } from '@/lib/db'
 import { FORGET_IP_LIMIT } from '@/lib/forget'
 import { FORGET_CONFIRM } from '@/lib/forgetreply'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { portraitTag } from '@/lib/portraitmodel'
 import { SESSION_COOKIE, currentSession, sessionSecret } from '@/lib/server'
 import { forgetSessionCache, mintSession } from '@/lib/sessions'
@@ -70,6 +72,16 @@ const erase = (body: unknown = { confirm: FORGET_CONFIRM }) => POST(post('/api/f
 const cleared = (res: Response) =>
   res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=;`) && /Max-Age=0/i.test(c))
 
+/**
+ * Кука «Не предлагать» погашена — по тому же пути, с которым её ставит квиз.
+ * Тот же сторож, что у выхода (app/api/auth/logout/route.test.ts): гасят её
+ * оба одним помощником (clearDeviceCookies в lib/server)
+ */
+const mutesCleared = (res: Response) =>
+  res.headers
+    .getSetCookie()
+    .some((c) => c.startsWith(`${MUTE_COOKIE}=;`) && /Max-Age=0/i.test(c) && /Path=\/(;|$)/i.test(c))
+
 /** Сколько всего строк о человеке — тем же счётом, что у удаления */
 async function stored(steamid: string): Promise<number> {
   return (await countUserRows(db, steamid)).reduce((s, r) => s + r.rows, 0)
@@ -118,6 +130,9 @@ describe('/api/forget: кто вправе', () => {
     for (const res of [await preview(), await erase()]) {
       expect(res.status).toBe(403)
       expect(await res.json()).toEqual({ error: 'needsteam' })
+      // Сессия жива, удалено ничего не было — куки на месте
+      expect(cleared(res)).toBe(false)
+      expect(mutesCleared(res)).toBe(false)
     }
     expect(await stored(steamid)).toBe(before)
   })
@@ -151,6 +166,7 @@ describe('/api/forget: удаление', () => {
       expect(res.status, JSON.stringify(body)).toBe(400)
       expect(await res.json()).toEqual({ error: 'badinput' })
       expect(cleared(res)).toBe(false)
+      expect(mutesCleared(res)).toBe(false)
     }
     expect(await stored(ME)).toBe(before)
   })
@@ -169,6 +185,52 @@ describe('/api/forget: удаление', () => {
     const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
     expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
     expect(FORGET_TABLES).toContain('forget_marks')
+  })
+
+  /*
+   * «Не предлагать» (lib/mutetags.ts) — про человека, а не про браузер, и
+   * выход гасит её ровно поэтому: следующий вошедший на этом браузере молча
+   * получал бы выдачу без того, что запретил не он. Удаление — тот же выход,
+   * только везде, а раньше оно гасило одну куку сессии: на семейном
+   * компьютере «хорроры, VR» удалённого ещё год резали подбор следующему.
+   * Отказ не гасит ничего — удалено ничего не было.
+   */
+  test('гасит и «Не предлагать» — как выход; отказ её не трогает', async () => {
+    await signIn(db, ME, { verified: true })
+    await seed(ME)
+    setTestCookie(MUTE_COOKIE, 'horror.vr')
+
+    const refused = await erase({ confirm: 'yes' })
+    expect(refused.status).toBe(400)
+    expect(mutesCleared(refused)).toBe(false)
+
+    const res = await erase()
+    expect(res.status).toBe(200)
+    expect(mutesCleared(res)).toBe(true)
+    expect(cleared(res)).toBe(true)
+  })
+
+  /*
+   * Оборванный ответ (lib/forgetreply): удаление записалось, а ответ — и с
+   * ним Set-Cookie, гасящий «Не предлагать», — до браузера не дошёл. Повтор
+   * приходит уже без входа, и 401 раньше не гасил ничего: экран честно
+   * говорил «похоже, удаление уже прошло», а «хорроры, VR» удалённого ещё
+   * год резали подбор следующему на этом браузере. Входа здесь нет — гасить
+   * можно, как выход гасит «даже если сессии уже нет».
+   */
+  test('повтор после оборванного ответа — 401, и обе куки гаснут', async () => {
+    await signIn(db, ME, { verified: true })
+    await seed(ME)
+    setTestCookie(MUTE_COOKIE, 'horror.vr')
+    // Удаление прошло, а ответ потерялся
+    await forgetUser(db, ME, { signOutFrom: T0 + 1 })
+    vi.setSystemTime((T0 + 2) * 1000)
+
+    const res = await erase()
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'nosession' })
+    expect(mutesCleared(res)).toBe(true)
+    expect(cleared(res)).toBe(true)
   })
 
   /*
@@ -221,10 +283,10 @@ describe('/api/forget: удаление', () => {
    * с базой мимо кэша.
    */
   test('отозванная сессия из тёплого кэша не удаляет — 401, всё на месте', async () => {
-    await signIn(db, ME, { verified: true })
+    const { sid } = await signIn(db, ME, { verified: true })
     await seed(ME)
     expect(await currentSession()).not.toBeNull()
-    await revokeAllSessions(db, ME, T0 + 1)
+    await revokeAllSessions(db, { steamid: ME, sid }, T0 + 1)
     vi.setSystemTime((T0 + 2) * 1000)
     // Кэш ещё считает сессию живой — так её видел бы соседний экземпляр
     expect(await currentSession()).not.toBeNull()
@@ -253,6 +315,7 @@ describe('/api/forget: удаление', () => {
       expect(res.status).toBe(503)
       expect(await res.json()).toEqual({ error: 'failed' })
       expect(cleared(res)).toBe(false)
+      expect(mutesCleared(res)).toBe(false)
     }
     expect(await stored(ME)).toBe(before)
   })
@@ -331,6 +394,7 @@ describe('/api/forget: потолок попыток', () => {
     expect(limited.status).toBe(429)
     expect(await limited.json()).toEqual({ error: 'ratelimited' })
     expect(cleared(limited)).toBe(false)
+    expect(mutesCleared(limited)).toBe(false)
     expect(await stored(ME)).toBeGreaterThan(0)
   })
 })

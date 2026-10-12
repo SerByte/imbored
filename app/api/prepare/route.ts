@@ -287,7 +287,11 @@ async function refreshLibrary(
   })
   if (!fresh || fresh === 'private' || !fresh.length) return snapshot.games
 
-  await saveLibrarySnapshot(db, steamid, fresh, now)
+  // Только поверх того снимка, что прочитан в начале: «Удалить всё обо мне»,
+  // нажатое, пока Steam отвечал, иначе получило бы снимок и годовую отметку
+  // обратно (replaces в saveLibrarySnapshot). Не легло — прогрев всё равно
+  // идёт по свежему списку: он греет каталог, а не человека
+  await saveLibrarySnapshot(db, steamid, fresh, now, { replaces: snapshot.takenAt })
   return fresh
 }
 
