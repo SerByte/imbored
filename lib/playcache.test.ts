@@ -167,7 +167,7 @@ describe('parsePlayCache', () => {
   /*
    * Когда выдачу последний раз видели на экране — срок отложенных
    * (heldPlanned), а не приход выдачи. Запись до этого поля и мусор в нём —
-   * приход выдачи: список живёт не дольше, чем жил до поля, а запись цела и
+   * приход выдачи: срок у списка тот же час, только от at, а запись цела и
    * версия та же — прогрев заново ради одной метки дороже её самой.
    */
   test('время последнего показа переживает запись; без него и с мусором — приход выдачи', () => {
@@ -411,10 +411,14 @@ describe('heldPlanned', () => {
     const e = entry({ planned: [20] })
     expect(heldPlanned(e, { ...q, nowMs: NOW + PLAN_HOLD_MS })).not.toBeNull()
     expect(heldPlanned(e, { ...q, nowMs: NOW + PLAN_HOLD_MS + 1 })).toBeNull()
-    // запись до поля — срок от прихода выдачи
+    // запись до поля — срок тот же час, только от прихода выдачи: за
+    // пятнадцать минут (прежний срок от at) список уже не умирает
     const old: Record<string, unknown> = { ...entry({ at: NOW - PLAN_HOLD_MS - 1, planned: [20] }) }
     delete old.seenAt
     expect(heldPlanned(parsePlayCache(old), { ...q, nowMs: NOW })).toBeNull()
+    const recent: Record<string, unknown> = { ...entry({ at: NOW - 20 * 60_000, planned: [20] }) }
+    delete recent.seenAt
+    expect(heldPlanned(parsePlayCache(recent), { ...q, nowMs: NOW })?.appids).toEqual([20])
   })
 
   test('забаненные не едут: бан план уже закрыл', () => {

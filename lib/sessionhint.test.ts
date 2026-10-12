@@ -384,7 +384,7 @@ describe('гость наверняка', () => {
     expect(m.knownGuest()).toBe(false)
   })
 
-  // Кука у вкладок общая: вошёл в соседней — здесь уже не гость
+  // Кука у вкладок общая: вошёл в соседней через главную — здесь уже не гость
   test('подсказка из соседней вкладки — уже не гость', async () => {
     const store: Store = {}
     const storage = withStorageEvents(store)
@@ -409,6 +409,157 @@ describe('гость наверняка', () => {
     expect(src).toMatch(/settle\(d\.authed \? hintFrom\(d\) : null, d\.authed === false\)/)
     expect(src).toMatch(/if \(!r\.ok\) return settle\(null\)/)
     expect(src).toMatch(/\.catch\(\(\) => settle\(null\)\)/)
+  })
+
+  /** document и window с настоящими слушателями: прячем документ, уводим страницу */
+  function withHiding(store: Store) {
+    install(store)
+    const doc = { visibilityState: 'visible' as 'visible' | 'hidden' }
+    const on: Record<string, Array<() => void>> = {}
+    const add = (type: string, h: () => void) => {
+      ;(on[type] ??= []).push(h)
+    }
+    vi.stubGlobal('document', {
+      addEventListener: add,
+      get visibilityState() {
+        return doc.visibilityState
+      },
+    })
+    vi.stubGlobal('window', { addEventListener: add, removeEventListener: () => {} })
+    return {
+      count: (type: string) => on[type]?.length ?? 0,
+      show() {
+        doc.visibilityState = 'visible'
+        on.visibilitychange?.forEach((h) => h())
+      },
+      hide() {
+        doc.visibilityState = 'hidden'
+        on.visibilitychange?.forEach((h) => h())
+      },
+      pagehide: () => on.pagehide?.forEach((h) => h()),
+    }
+  }
+
+  /*
+   * Вход через Steam подсказки не пишет: возврат ведёт в квиз (loginTarget),
+   * а сверка там подсказку, которой нет, не заводит. Вошёл в соседней
+   * вкладке — storage сюда не придёт, и квиз этой вкладки увёл бы вошедшего
+   * на лендинг «подключать Steam». Войти где-то ещё, не спрятав этот
+   * документ, почти нельзя, — поэтому спрятанному флагу больше не верим.
+   */
+  test('документ спрятали — снова «не знаем», и квиз об этом узнаёт', async () => {
+    const page = withHiding({})
+    const m = await fresh()
+    let woke = 0
+    m.subscribeSessionHint(() => {
+      woke += 1
+    })
+    m.rememberGuest()
+    woke = 0
+    page.show()
+    expect(m.knownGuest(), 'показали — флаг на месте').toBe(true)
+    page.hide()
+    expect(m.knownGuest()).toBe(false)
+    expect(woke).toBe(1)
+    // гаснет насовсем: вернулись на вкладку — флаг сам не оживает
+    page.show()
+    expect(m.knownGuest()).toBe(false)
+  })
+
+  // Уход в Steam и «Назад» из bfcache: память модуля цела, документ тот же
+  test('pagehide — тоже: из bfcache флаг не возвращается', async () => {
+    const page = withHiding({})
+    const m = await fresh()
+    m.rememberGuest()
+    page.pagehide()
+    expect(m.knownGuest()).toBe(false)
+  })
+
+  test('слежка — одна на документ и только у гостя', async () => {
+    const page = withHiding({})
+    const m = await fresh()
+    m.rememberSession({ authed: true, personaName: 'Гоша' })
+    m.forgetSessionHint()
+    m.forgetGuest()
+    expect(page.count('visibilitychange'), 'не гость — следить незачем').toBe(0)
+    m.rememberGuest()
+    m.settleSessionHint({ authed: false })
+    m.rememberGuest()
+    expect(page.count('visibilitychange')).toBe(1)
+    expect(page.count('pagehide')).toBe(1)
+  })
+
+  /*
+   * touch ответил «вошёл», а подсказки нет (вход мимо главной): завести её
+   * сверке нечем, но и гостем этот документ больше не считается.
+   */
+  test('touch «вошёл» без подсказки гасит флаг, подсказку не заводит', async () => {
+    const store: Store = {}
+    install(store)
+    const m = await fresh()
+    m.rememberGuest()
+    m.settleSessionHint({ authed: true, steamid: '76561197960287930', writer: true })
+    expect(m.knownGuest()).toBe(false)
+    expect(m.getSessionHint()).toBeNull()
+    expect(store[KEY]).toBeUndefined()
+  })
+
+  /*
+   * forgetGuest — для входов без подсказки (демо-друг в комнате). Подсказку
+   * не трогает, слушателей будит, только если флаг и правда горел: лишний
+   * рендер квиза на каждом скрытии вкладки ни к чему.
+   */
+  test('forgetGuest гасит флаг, не трогая подсказку', async () => {
+    const store: Store = { [KEY]: JSON.stringify({ authed: true, personaName: 'Гоша' }) }
+    install(store)
+    const m = await fresh()
+    let woke = 0
+    m.subscribeSessionHint(() => {
+      woke += 1
+    })
+    m.forgetGuest()
+    expect(woke, 'гостем и не был — будить некого').toBe(0)
+    expect(store[KEY]).toBe(JSON.stringify({ authed: true, personaName: 'Гоша' }))
+
+    install({})
+    const g = await fresh()
+    g.rememberGuest()
+    g.forgetGuest()
+    expect(g.knownGuest()).toBe(false)
+    expect(g.getSessionHint()).toBeNull()
+  })
+
+  /*
+   * Каждый вход с клиента обязан погасить флаг: подсказкой (rememberSession —
+   * карточка главной) или напрямую (forgetGuest — демо-друг в комнате).
+   * Однажды комната входила молча, и гость, отмеченный touch из
+   * SessionKeeper, после «Демо-друг (без Steam)» шёл из шапки через квиз на
+   * лендинг «подключать Steam». Новый вход, забывший про флаг, должен падать
+   * здесь, а не у человека.
+   */
+  test('каждый вход через /api/connect с клиента гасит флаг гостя', () => {
+    const root = path.join(__dirname, '..')
+    const callers: string[] = []
+    for (const dir of ['app', 'components']) {
+      const files = fs.readdirSync(path.join(root, dir), { recursive: true, encoding: 'utf8' })
+      for (const rel of files) {
+        if (!/\.tsx?$/.test(rel) || /\.test\.tsx?$/.test(rel)) continue
+        const file = path.join(dir, rel).split(path.sep).join('/')
+        const src = fs.readFileSync(path.join(root, file), 'utf8')
+        for (const hit of src.matchAll(/fetch\(\s*['"`]\/api\/connect['"`?]/g)) {
+          callers.push(file)
+          // Тело того же обработчика — до следующего объявления функции
+          const rest = src.slice(hit.index)
+          const end = rest.search(/\n\s*(?:async\s+)?function\s/)
+          const body = end === -1 ? rest : rest.slice(0, end)
+          expect(body, file).toMatch(/\brememberSession\(|\bforgetGuest\(\)/)
+        }
+      }
+    }
+    // Сам поиск не пустой: оба известных входа нашлись
+    expect(callers).toEqual(
+      expect.arrayContaining(['app/room/[id]/page.tsx', 'components/landing/ConnectCard.tsx']),
+    )
   })
 })
 

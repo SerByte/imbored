@@ -215,8 +215,9 @@ export function parsePlayCache(raw: unknown): PlayCache | null {
     // Записи до этого поля — без отложенных, а не битые: версия та же, и
     // прогрев заново ради пустого списка дороже его самого. Мусор — поштучно
     planned: Array.isArray(r.planned) ? r.planned.filter(isInt) : [],
-    // Записи до него — приход выдачи: отложенные живут не дольше, чем жили
-    // до поля. Number.isFinite не приводит типы — строка и null не пройдут
+    // Записи до него — от прихода выдачи: срок тот же, что у новых
+    // (PLAN_HOLD_MS, час), только считается от at. Number.isFinite не
+    // приводит типы — строка и null не пройдут
     seenAt: Number.isFinite(r.seenAt) ? (r.seenAt as number) : r.at,
   }
 }
