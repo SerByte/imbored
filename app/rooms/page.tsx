@@ -15,6 +15,7 @@ import { StatusLine } from '@/components/StatusLine'
 import { SectionLabel } from '@/components/Labels'
 import {
   afterBoardAnswer,
+  BOARD_TIMEOUT_MS,
   boardDelayMs,
   boardKey,
   boardStale,
@@ -136,6 +137,10 @@ export default function RoomsBoardPage() {
 
       const ac = new AbortController()
       inFlight = ac
+      // Потолок на тот же контроллер, что гасит уход со страницы: без него
+      // повисший запрос держал inFlight, и тик выше только перевзводился, не
+      // считая отказа (BOARD_TIMEOUT_MS в lib/boardpoll).
+      const cap = window.setTimeout(() => ac.abort(), BOARD_TIMEOUT_MS)
       try {
         const res = await fetch('/api/rooms/public', { signal: ac.signal })
         if (!res.ok) throw new Error(String(res.status))
@@ -152,10 +157,12 @@ export default function RoomsBoardPage() {
         // Раньше здесь был ранний return без try: любой сетевой сбой отклонял
         // промис внутри void load(), board навсегда оставался null, и человек
         // смотрел на спиннер до перезагрузки страницы. Отменённый при уходе
-        // со страницы запрос попадает сюда же и молча выходит по stopped.
+        // со страницы запрос попадает сюда же и молча выходит по stopped, а
+        // отменённый истёкшим потолком — считается отказом, как обрыв.
         if (stopped) return
         poll = afterBoardAnswer(poll, { ok: false })
       } finally {
+        window.clearTimeout(cap)
         if (inFlight === ac) inFlight = null
       }
       setFails(poll.fails)
@@ -264,10 +271,14 @@ export default function RoomsBoardPage() {
             <span aria-hidden className="grid size-12 place-items-center rounded-full bg-ink/10">
               <Icon name="users" size={22} />
             </span>
-            {/* Совет «создай свою» тому, кто создать не может, — тупик */}
+            {/* Совет «создай свою» тому, кто создать не может, — тупик.
+                Действие названо словами, а не подписью кнопки: в комнате она
+                «На доску» на телефоне, «Показать на доске» с md и «Пустить
+                чужих» на плитке AloneInvite, — цитата любой из них врёт
+                на двух других экранах. */}
             {readOnly
               ? 'Сейчас открытых комнат нет — загляни чуть позже.'
-              : 'Сейчас открытых комнат нет. Создай свою и нажми «Показать на доске» — сюда придут.'}
+              : 'Сейчас открытых комнат нет. Создай свою и выставь её на доску — сюда придут.'}
           </div>
         ) : (
           // layout — фича domMax, её догружает MotionMax

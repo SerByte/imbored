@@ -75,6 +75,8 @@ describe('теги выводятся по-русски', () => {
     'lib/landing.ts',
     'lib/llm.ts',
     'lib/jsonld.ts',
+    // «Какого тега нет у…» в викторине пати — варианты ответа это теги
+    'lib/trivia.ts',
   ]
   for (const file of WHERE) {
     test(file, () => {

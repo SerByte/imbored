@@ -8,6 +8,7 @@ import {
   type TriviaCatalogGame,
   type TriviaParty,
 } from './trivia'
+import { tagRu } from './tagsru'
 import { hiddenLibrary } from './testing/hiddenlibrary'
 import type { LibraryGame } from './types'
 
@@ -111,16 +112,135 @@ describe('buildTrivia', () => {
     for (const q of qs.filter((x) => x.kind === 'nottag')) {
       const target = varied.find((g) => q.prompt.includes(g.name))!
       q.options.forEach((o, i) => {
-        const has = Object.keys(target.tags).includes(o.label)
+        // Варианты — подписи (tagRu), а теги игры — английские ключи:
+        // сравниваем подпись с подписями, как их видит человек
+        const has = Object.keys(target.tags).map(tagRu).includes(o.label)
         expect(has).toBe(i !== q.answer)
       })
     }
+  })
+
+  test('nottag: теги в вариантах — по-русски, как в колоде под викториной', () => {
+    // Ключи tags_json английские (lib/tagsru), и вопрос показывал «Action»
+    // и «Hack and Slash», пока карточка SwipeDeck ниже рисовала те же теги
+    // по-русски
+    const ru: TriviaCatalogGame[] = CATALOG.map((g) => ({
+      ...g,
+      tags: { Action: 90, RPG: 70, Strategy: 50, Indie: 30 },
+    }))
+    ru[0] = { ...ru[0], tags: { Puzzle: 90, Multiplayer: 70, 'Co-op': 50 } }
+    let seen = 0
+    for (let round = 0; round < 20; round++) {
+      for (const q of buildTrivia({ seed: `r:ru:${round}`, catalog: ru, party: [] })) {
+        if (q.kind !== 'nottag') continue
+        seen++
+        const labels = q.options.map((o) => o.label)
+        for (const key of ['Action', 'RPG', 'Strategy', 'Indie', 'Puzzle', 'Multiplayer', 'Co-op']) {
+          expect(labels, q.prompt).not.toContain(key)
+        }
+        expect(labels.every((l) => /[а-яё]/i.test(l)), labels.join(', ')).toBe(true)
+        // id — по английскому ключу: дедуп батча не зависит от словаря
+        expect(q.id).toMatch(/^nottag:\d+:[A-Za-z]/)
+      }
+    }
+    // иначе проверка выше прошла бы вхолостую
+    expect(seen).toBeGreaterThan(0)
+  })
+
+  test('nottag: два ключа с одной подписью не дают двух одинаковых вариантов', () => {
+    // «Dystopian » с пробелом лежит в tags_json как есть (lib/tagsru), а
+    // tagRu подписывает его так же, как «Dystopian»: такой «чужой» тег
+    // выглядел бы ровно как свой — два одинаковых варианта и два
+    // одинаковых key у кнопок PartyTrivia
+    const twin: TriviaCatalogGame[] = CATALOG.map((g, i) => ({
+      ...g,
+      tags: (i % 2
+        ? { 'Dystopian ': 90, Action: 70, RPG: 50 }
+        : { Dystopian: 90, Strategy: 70, Indie: 50 }) as Record<string, number>,
+    }))
+    let seen = 0
+    for (let round = 0; round < 20; round++) {
+      for (const q of buildTrivia({ seed: `r:twin:${round}`, catalog: twin, party: [] })) {
+        if (q.kind !== 'nottag') continue
+        seen++
+        // Как вариант увидит человек: подпись подписи — та же подпись, а
+        // ключ, просочившийся мимо перевода, — его подпись
+        const labels = q.options.map((o) => tagRu(o.label))
+        expect(new Set(labels).size, labels.join(', ')).toBe(labels.length)
+        const target = twin.find((g) => q.prompt.includes(`«${g.name}»`))!
+        const own = new Set(Object.keys(target.tags).map(tagRu))
+        expect(own.has(labels[q.answer]), `${q.prompt}: ${labels[q.answer]}`).toBe(false)
+      }
+    }
+    expect(seen).toBeGreaterThan(0)
   })
 
   test('hours: побеждает тот, кто наиграл больше', () => {
     const qs = buildTrivia({ seed: 'r:1:0', catalog: CATALOG, party: PARTY })
     for (const q of qs.filter((x) => x.kind === 'hours')) {
       expect(q.options[q.answer].label).toBe('Аня') // 300ч в Dota 2 против 20ч
+    }
+  })
+
+  /**
+   * Пати, где у двоих одна общая игра и наиграно ровно столько минут.
+   * Минутами, а не округлёнными часами (бывший hours()): ошибка жила
+   * в округлении до часа.
+   */
+  function duo(a: number, b: number): TriviaParty[] {
+    const one = (min: number): LibraryGame[] => [
+      { appid: 570, name: 'Dota 2', playtimeForever: min, playtime2Weeks: 0 },
+    ]
+    return [
+      { steamid: 'd', name: 'Дима', library: one(a) },
+      { steamid: 's', name: 'Саша', library: one(b) },
+    ]
+  }
+
+  /** Вопросы «у кого больше часов» за двадцать сидов */
+  function hoursQs(party: TriviaParty[]) {
+    return Array.from({ length: 20 }, (_, round) =>
+      buildTrivia({ seed: `r:h:${round}`, catalog: CATALOG, party }).filter((q) => q.kind === 'hours'),
+    ).flat()
+  }
+
+  test('hours: меньше часа у обоих — не вопрос, а монетка', () => {
+    // Часы округлялись до сравнения: 25 и 10 минут — «0 ч» и «0 ч», 0 ≥ 0 × 1.3,
+    // и «правильным» становился первый по порядку пати — в том числе тот, у
+    // кого минут меньше; разгадка гласила «Дима — 0 ч, Саша — 0 ч»
+    expect(hoursQs(duo(25, 10))).toEqual([])
+    expect(hoursQs(duo(10, 25))).toEqual([])
+    expect(hoursQs(duo(20, 20))).toEqual([])
+    // От получаса у лидера округление давало «1 ч» против «0 ч» и порог
+    // проходился: держит такую пару уже не он, а HOURS_MIN
+    expect(hoursQs(duo(45, 20))).toEqual([])
+    expect(hoursQs(duo(20, 59))).toEqual([])
+  })
+
+  test('hours: разрыв в 30% меряется минутами, а не округлёнными часами', () => {
+    // 150 и 135 минут округлялись в 3 и 2 часа и проходили порог, хотя на
+    // деле разница — 11%
+    expect(hoursQs(duo(150, 135))).toEqual([])
+  })
+
+  test('hours: разгадка — минутами там, где часов меньше десяти', () => {
+    const qs = hoursQs(duo(60, 89))
+    expect(qs.length).toBeGreaterThan(0)
+    for (const q of qs) {
+      expect(q.options[q.answer].label).toBe('Саша')
+      // «1 ч, 1 ч» после округления — снова ничья на экране
+      expect(q.reveal).toBe('Саша — 1 ч 29 мин, Дима — 1 ч')
+    }
+  })
+
+  test('hours: от десяти часов разгадка — целыми часами, ниже — с минутами', () => {
+    // 10 ч 15 мин у лидера — «10 ч»: на таком разрыве минуты лишние, а
+    // полтора часа у второго — «1 ч 30 мин», не округлённые «2 ч»
+    const qs = hoursQs(duo(90, 615))
+    expect(qs.length).toBeGreaterThan(0)
+    for (const q of qs) {
+      expect(q.options[q.answer].label).toBe('Саша')
+      expect(q.reveal).toBe('Саша — 10 ч, Дима — 1 ч 30 мин')
     }
   })
 

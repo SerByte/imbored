@@ -1,6 +1,8 @@
 import type { GameArtUrls } from './art'
 import { hashString, mulberry32 } from './daily'
 import { ALIVE_POOL, parseTagMap, type Db } from './db'
+import { playedLine } from './outcome'
+import { tagRu } from './tagsru'
 import type { LibraryGame } from './types'
 
 /**
@@ -50,8 +52,22 @@ const TRIVIA_SAMPLE = 40
 const TRIVIA_SLOTS = 8
 /** Онлайн сравниваем, только когда разрыв очевиден — иначе это монетка */
 const CCU_RATIO = 2
-/** Часы сравниваем с тем же принципом: 30% разницы, а не «почти поровну» */
+/**
+ * Часы сравниваем с тем же принципом: 30% разницы, а не «почти поровну».
+ * Разница меряется минутами: округлённые до часа 150 и 135 минут — это
+ * 3 и 2 часа, порог пройден, а на деле разрыв 11%.
+ */
 const HOURS_RATIO = 1.3
+/**
+ * Вопрос про часы — когда у лидера наиграно хотя бы час. Меньше часа у
+ * лидера — горстка минут у обоих: до получаса оба округлялись в «0 ч»
+ * (0 ≥ 0 × 1.3 — вопрос задавался, «правильным» был первый по порядку пати,
+ * хоть бы и с меньшим временем, а разгадка гласила «Дима — 0 ч, Саша — 0 ч»),
+ * до часа — «1 ч» против «0 ч» у 45 и 20 минут. Минуты вместо часов
+ * разводят такую пару честно, но разница в двадцать минут — всё равно
+ * монетка, а не вопрос о том, кто во что играет.
+ */
+const HOURS_MIN = 60
 
 /**
  * Выборка каталога для викторины: один запрос по частичному индексу
@@ -102,10 +118,6 @@ export async function loadTriviaCatalog(
   }))
 }
 
-function hours(g: LibraryGame): number {
-  return Math.round(g.playtimeForever / 60)
-}
-
 /** Перемешивание варианта ответа вместе с индексом правильного */
 function shuffled<T>(items: T[], correct: number, rnd: () => number): { items: T[]; answer: number } {
   const idx = items.map((_, i) => i)
@@ -143,21 +155,23 @@ export function buildTrivia(args: {
 
   const makeHours = (): TriviaQuestion | null => {
     if (party.length < 2) return null
-    const owner = new Map<number, Array<{ name: string; h: number; game: string }>>()
+    // Минуты, а не часы: округление до часа решало вопрос раньше порога —
+    // см. HOURS_RATIO и HOURS_MIN
+    const owner = new Map<number, Array<{ name: string; min: number; game: string }>>()
     for (const p of party) {
       for (const g of p.library) {
         if (!g.playtimeForever) continue
         const list = owner.get(g.appid) ?? []
-        list.push({ name: p.name, h: hours(g), game: g.name })
+        list.push({ name: p.name, min: g.playtimeForever, game: g.name })
         owner.set(g.appid, list)
       }
     }
     const shared = [...owner.values()].filter((l) => l.length >= 2)
     const chosen = pick(shared, rnd)
     if (!chosen) return null
-    const sorted = [...chosen].sort((a, b) => b.h - a.h)
-    // Без заметного разрыва это угадайка, а не вопрос
-    if (!(sorted[0].h >= sorted[1].h * HOURS_RATIO)) return null
+    const sorted = [...chosen].sort((a, b) => b.min - a.min)
+    // Без заметного разрыва или без часа у лидера это угадайка, а не вопрос
+    if (sorted[0].min < HOURS_MIN || !(sorted[0].min >= sorted[1].min * HOURS_RATIO)) return null
     const opts = sorted.slice(0, 2).map((x) => ({ label: x.name }))
     const s = shuffled(opts, 0, rnd)
     return {
@@ -166,7 +180,10 @@ export function buildTrivia(args: {
       prompt: `У кого больше часов в «${sorted[0].game}»?`,
       options: s.items,
       answer: s.answer,
-      reveal: sorted.map((x) => `${x.name} — ${x.h} ч`).join(', '),
+      // playedLine, а не часы: до десяти часов он точен до минуты («1 ч 29 мин»
+      // против «1 ч»), и округлённая разгадка не показывает ничью там, где
+      // её нет. Выше десяти часов порог 1.3 сам разводит подписи
+      reveal: sorted.map((x) => `${x.name} — ${playedLine(x.min)}`).join(', '),
     }
   }
 
@@ -257,21 +274,43 @@ export function buildTrivia(args: {
     }
   }
 
+  /**
+   * «Какого тега нет у игры». Теги выбираются и сравниваются английскими
+   * ключами tags_json, а в варианты идут подписями tagRu — на месте вывода,
+   * как везде (lib/tagsru): ключи здесь стояли как есть, и вопрос предлагал
+   * «Action Roguelike» и «Hack and Slash», пока карточка колоды под ним
+   * рисовала теги той же игры по-русски.
+   *
+   * Подпись у двух ключей бывает одна («Dystopian » с пробелом и «Dystopian»),
+   * поэтому свои варианты сводятся по подписи, а «чужой» отсеивается по
+   * подписям ВСЕХ своих тегов, не только трёх показанных: иначе он выглядел бы
+   * ровно как тег, который у игры есть, — и PartyTrivia получила бы два
+   * одинаковых key.
+   */
   const makeNotTag = (): TriviaQuestion | null => {
     const target = pick(
       catalog.filter((g) => Object.keys(g.tags).length >= 3),
       rnd,
     )
     if (!target) return null
-    const own = Object.entries(target.tags)
-      .sort((a, b) => b[1] - a[1])
-      .map(([t]) => t)
+    // Set хранит порядок вставки: подписи идут по весу тега, как раньше ключи
+    const ownLabels = new Set(
+      Object.entries(target.tags)
+        .sort((a, b) => b[1] - a[1])
+        .map(([t]) => tagRu(t)),
+    )
+    const shown = [...ownLabels].slice(0, 3)
+    if (shown.length < 3) return null
     const foreign = [
-      ...new Set(catalog.flatMap((g) => Object.keys(g.tags)).filter((t) => !(t in target.tags))),
+      ...new Set(
+        catalog
+          .flatMap((g) => Object.keys(g.tags))
+          .filter((t) => !(t in target.tags) && !ownLabels.has(tagRu(t))),
+      ),
     ]
     const wrong = pick(foreign, rnd)
     if (!wrong) return null
-    const opts = [{ label: wrong }, ...own.slice(0, 3).map((t) => ({ label: t }))]
+    const opts = [{ label: tagRu(wrong) }, ...shown.map((label) => ({ label }))]
     const s = shuffled(opts, 0, rnd)
     return {
       id: `nottag:${target.appid}:${wrong}`,

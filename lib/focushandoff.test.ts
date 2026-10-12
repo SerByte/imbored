@@ -268,6 +268,34 @@ describe('пати: нажатая кнопка уходит — фокус ос
     expect(read('app/room/[id]/page.tsx')).toMatch(/missedMember=\{leaveMiss\?\.memberId \?\? null\}/)
   })
 
+  /*
+   * «Войти в комнату» и «Демо-друг (без Steam)»: удачный вход уносит экран
+   * приглашения вместе с нажатой кнопкой, и на месте лобби с колодой фокус
+   * лежал в body — следующий Tab начинал с «К содержанию», а скринридер не
+   * слышал, что вход удался.
+   */
+  test('вход по приглашению отдаёт фокус заголовку лобби — после своего нажатия и только потерянный', () => {
+    const room = read('app/room/[id]/page.tsx')
+    const h1 = tags(room, 'h1').filter((t) => /ref=\{lobbyHead\}/.test(t))
+    expect(h1.length, 'заголовок «Пати …» — не цель фокуса').toBe(1)
+    expect(h1[0]).toMatch(/ref=\{lobbyHead\} tabIndex=\{-1\}/)
+    // Именно заголовок лобби: он стоит в return с колодой и называет экран
+    const lobby = room.slice(room.indexOf('<div className="room-page'))
+    expect(lobby.indexOf('<h1 ref={lobbyHead}'), 'цель ушла из лобби').toBeGreaterThan(-1)
+    // Перенос — по смене членства, по отметке нажатия, и только потерянного фокуса
+    expect(room).toMatch(
+      /if \(notMember \|\| !joinHandoff\.current\) return\s*joinHandoff\.current = false\s*if \(focusAdrift\(document\)\) lobbyHead\.current\?\.focus\(\)\s*\}, \[notMember\]\)/,
+    )
+    // Отметку ставят обе двери — до запроса: опрос может принести членство
+    // раньше ответа на вход, и экран уйдёт из-под кнопки ещё до него
+    for (const door of ['async function join()', 'async function joinAsDemoFriend()']) {
+      const at = room.indexOf(door)
+      expect(at, `${door} не найдено — сторож ослеп`).toBeGreaterThan(-1)
+      const fn = room.slice(at, room.indexOf('await fetch(', at))
+      expect(fn, door).toMatch(/joinHandoff\.current = true/)
+    }
+  })
+
   test('экран ожидания: смена режима под фокусом отдаёт его новому заголовку', () => {
     const waiting = read('components/room/RoomWaiting.tsx')
     expect(waiting).toMatch(/if \(focusAdrift\(document\)\) headRef\.current\?\.focus\(\)\s*\}, \[mode\]\)/)

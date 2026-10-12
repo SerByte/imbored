@@ -1052,6 +1052,30 @@ export default function RoomPage() {
   }, [notMember])
 
   /*
+   * Вошёл по приглашению — фокус на заголовок лобби «Пати …».
+   *
+   * Удачный вход уносит экран приглашения вместе с нажатой кнопкой («Войти в
+   * комнату», «Демо-друг»), и фокус падал в body: следующий Tab начинал с «К
+   * содержанию» и шапки, а скринридер не слышал, что вход удался, — matchStatus
+   * говорит только о матче. Заголовок называет новый экран, и это же ответ на
+   * нажатие. Нажатия aria-disabled держат фокус на отказе, а не на удаче.
+   *
+   * Отметка — нажатие ЭТОЙ вкладки, ставится до запроса: опрос может принести
+   * членство раньше ответа на вход, и экран уходит из-под кнопки ещё до него.
+   * Отказ её не снимает — экран приглашения остаётся, членство не меняется, и
+   * переносить нечего. Фокус берётся только потерянный (focusAdrift), как у
+   * RoomWaiting и церемонии. Сошлась комната к этой минуте — заголовка нет
+   * (ref пуст), фокус забирает церемония.
+   */
+  const joinHandoff = useRef(false)
+  const lobbyHead = useRef<HTMLHeadingElement>(null)
+  useEffect(() => {
+    if (notMember || !joinHandoff.current) return
+    joinHandoff.current = false
+    if (focusAdrift(document)) lobbyHead.current?.focus()
+  }, [notMember])
+
+  /*
    * На экране ли RoomWaiting — ровно та ветка разметки, где он стоит (ниже,
    * за колодой). Считается до ранних return ради эффекта под ним.
    */
@@ -1147,6 +1171,7 @@ export default function RoomPage() {
     if (busy) return
     setBusy(true)
     setJoinError(null)
+    joinHandoff.current = true
     try {
       const seed = await fetch('/api/connect', {
         method: 'POST',
@@ -1187,6 +1212,7 @@ export default function RoomPage() {
     if (busy) return
     setBusy(true)
     setJoinError(null)
+    joinHandoff.current = true
     try {
       const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
       if (!res.ok) {
@@ -1845,7 +1871,8 @@ export default function RoomPage() {
       {staleBadge}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="font-display text-display-sm">
+          {/* Цель фокуса после входа по приглашению — joinHandoff */}
+          <h1 ref={lobbyHead} tabIndex={-1} className="font-display text-display-sm">
             Пати <span className="font-mono text-ember-text">{roomId}</span>
           </h1>
           <p className="text-xs text-dim mt-0.5">
