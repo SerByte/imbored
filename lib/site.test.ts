@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { ResolvingMetadata } from 'next'
 import { describe, expect, test } from 'vitest'
-import { DESTINATIONS } from './destination'
+import { DESTINATIONS } from './destinationtext'
 import { OG_SITE, ownAddress } from './site'
 
 /** Родительская метадата в том виде, в каком её отдаёт Next: уже разобранная. */

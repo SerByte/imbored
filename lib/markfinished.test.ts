@@ -73,11 +73,17 @@ describe('«Уже прошёл» вне выдачи', () => {
    * кнопка, нужная лишь у сыгранных всерьёз вечеров, едет туда отдельным
    * чанком. Статический импорт вернул бы её в первую загрузку молча — сборка
    * прошла бы, а превышение всплыло бы только в CI.
+   *
+   * И не через next/dynamic: его рантайм на /library больше ничто не везёт,
+   * и обёртка ради кнопки весила вдвое больше самой кнопки (~4 КБ против 2).
    */
   test('в «Твоих вечерах» — отдельным чанком, а не в первой загрузке /library', () => {
     const evenings = fs.readFileSync(path.join(__dirname, '..', 'components', 'Evenings.tsx'), 'utf8')
     expect(evenings).not.toMatch(/^import[^\n]*MarkFinished/m)
-    expect(evenings).toMatch(/dynamic\(\(\) => import\('@\/components\/MarkFinished'\)/)
+    expect(evenings).toContain("import('@/components/MarkFinished')")
+    expect(evenings, 'next/dynamic вернулся в «Твои вечера» — это +4 КБ к /library').not.toContain(
+      "from 'next/dynamic'",
+    )
   })
 
   /*

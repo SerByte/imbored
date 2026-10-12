@@ -14,8 +14,9 @@
  * СПИСОК, а не свободный путь. Соблазн принять произвольный ?next= велик, но
  * это открытый редирект: достаточно прислать /?next=//зло.example, и лендинг
  * своими руками уведёт человека наружу. Набор мест, откуда разворачивают,
- * закрытый и известен целиком — значит и список закрытый. Заодно к каждому
- * адресу здесь же лежит его текст, и они не могут разъехаться.
+ * закрытый и известен целиком — значит и список закрытый. Тексты к адресам
+ * лежат рядом, в lib/destinationtext.ts, и разъехаться со списком им не даёт
+ * тип (satisfies там).
  *
  * Хвост запроса едет тоже, но так же по списку — см. destinationUrl.
  *
@@ -28,54 +29,33 @@
 import { parseLean, parseMood } from './mood'
 import { parseSeedParam, roomPresetByKey, roomSeedOf } from './presets'
 
-export type Destination = {
-  /** Что сказать на лендинге вместо общего обещания продукта. */
-  promise: string
-  /** Что написать на кнопке: она обязана называть, куда ведёт. */
-  action: string
-}
+/**
+ * Места назначения — закрытый список (см. выше). Тексты лендинга к ним — в
+ * lib/destinationtext.ts, отдельно: здесь только адреса, потому что проверку
+ * адреса читает корневой лэйаут (components/ReadOnlyNote → steamLoginFor), то
+ * есть первая загрузка каждой страницы, а тексты нужны одному лендингу.
+ *
+ * /whatsnew гостя не разворачивает — общая лента открыта всем. Здесь он ради
+ * возврата из входа через Steam: секретную ссылку на RSS выпускает только
+ * вошедший через Steam, и подсказка «войди» у ссылки (steamLoginFor) обязана
+ * вернуть туда, где человек её просил, а не на квиз.
+ */
+export const DESTINATION_PATHS = [
+  '/library',
+  '/daily',
+  '/play',
+  '/explore',
+  '/portrait',
+  '/compat',
+  '/room/new',
+  '/whatsnew',
+] as const
 
-export const DESTINATIONS: Record<string, Destination> = {
-  '/library': {
-    promise: 'Подключи Steam — и увидишь всю свою библиотеку одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
-    action: 'Открыть библиотеку',
-  },
-  '/daily': {
-    promise: 'Игра дня выбирается из твоей библиотеки — подключи Steam, и она появится.',
-    action: 'Показать игру дня',
-  },
-  '/play': {
-    promise: 'Одна игра под твоё состояние из твоей же библиотеки — подключи Steam, и выберем.',
-    action: 'Подобрать игру',
-  },
-  '/explore': {
-    promise: 'Колода из твоей библиотеки и магазина — листай без обязательств. Подключи Steam, и соберём её.',
-    action: 'Полистать игры',
-  },
-  '/portrait': {
-    promise: 'Портрет игрока строится по твоей библиотеке и наигранным часам — подключи Steam.',
-    action: 'Собрать портрет',
-  },
-  '/compat': {
-    promise: 'Подключи Steam — и получишь ссылку, по которой сравнишь вкусы с кем угодно.',
-    action: 'Получить ссылку',
-  },
-  '/room/new': {
-    promise: 'Комната собирается из ваших библиотек — подключи свою, и создадим её.',
-    action: 'Создать комнату',
-  },
-  /*
-   * /whatsnew гостя не разворачивает — общая лента открыта всем. Здесь он
-   * ради возврата из входа через Steam: секретную ссылку на RSS выпускает
-   * только вошедший через Steam, и подсказка «войди» у ссылки (steamLoginFor)
-   * обязана вернуть туда, где человек её просил, а не на квиз. Отказ входа
-   * (?error=private) везёт next на лендинг — отсюда и обещание.
-   */
-  '/whatsnew': {
-    promise: 'Подключи Steam — и «Что нового» покажет патчи твоих игр. Получать их в ридер по секретной ссылке можно после входа через Steam.',
-    action: 'Открыть ленту',
-  },
-}
+export type DestinationPath = (typeof DESTINATION_PATHS)[number]
+
+/** includes, а не ключ объекта: у списка нет наследованных toString и __proto__ */
+const isDestination = (path: string): path is DestinationPath =>
+  (DESTINATION_PATHS as readonly string[]).includes(path)
 
 /**
  * Что из строки запроса выдачи едет через вход.
@@ -152,7 +132,7 @@ const QUERY_OF: Record<string, (src: URLSearchParams) => URLSearchParams> = {
 /**
  * Проверенный адрес назначения вместе с разрешённым хвостом запроса либо null.
  *
- * Путь — строго из DESTINATIONS, хвост — только у /play и /room/new и только
+ * Путь — строго из DESTINATION_PATHS, хвост — только у /play и /room/new и только
  * их параметры (playQuery, roomQuery). У остальных мест хвоста нет, и мусор в
  * нём отбрасывается, а не губит весь адрес: человек всё равно шёл в
  * библиотеку. Результат собирается заново из проверенного, поэтому его можно
@@ -162,13 +142,13 @@ export function destinationUrl(raw: string | null | undefined): string | null {
   if (!raw) return null
   const cut = raw.indexOf('?')
   const path = cut < 0 ? raw : raw.slice(0, cut)
-  if (!Object.hasOwn(DESTINATIONS, path)) return null
+  if (!isDestination(path)) return null
   const tail = Object.hasOwn(QUERY_OF, path) ? QUERY_OF[path] : null
   const query = cut >= 0 && tail ? tail(new URLSearchParams(raw.slice(cut + 1))) : null
   return query?.size ? `${path}?${query}` : path
 }
 
-/** Место назначения — ключ DESTINATIONS — из адреса, в том числе с хвостом, либо null. */
+/** Место назначения — из DESTINATION_PATHS — из адреса, в том числе с хвостом, либо null. */
 export function destinationPath(raw: string | null | undefined): string | null {
   const url = destinationUrl(raw)
   return url === null ? null : url.split('?', 1)[0]
@@ -181,7 +161,7 @@ export function destinationPath(raw: string | null | undefined): string | null {
  * настроение квиза, а не одно только «шёл в выдачу».
  */
 export function bounceTo(
-  path: keyof typeof DESTINATIONS | string,
+  path: DestinationPath | string,
   search?: { toString(): string } | null,
 ): string {
   const query = search?.toString() ?? ''
@@ -249,7 +229,7 @@ export function loginCarry(search: URLSearchParams): URLSearchParams {
  * Нужна сессии, которой писать нельзя (вошла по вставленной ссылке, см.
  * isWriter в lib/server): подсказка «войди через Steam» обязана вести не на
  * квиз, а обратно — на ту же выдачу, в ту же библиотеку, в ту же комнату.
- * Путь комнаты едет как join, место из DESTINATIONS — как next (у выдачи —
+ * Путь комнаты едет как join, место из DESTINATION_PATHS — как next (у выдачи —
  * вместе с настроением, см. destinationUrl); остальное пустым входом:
  * произвольный адрес в next не пропустит loginCarry, и обещать возврат туда
  * было бы враньём.

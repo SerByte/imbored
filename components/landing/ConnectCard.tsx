@@ -14,7 +14,8 @@ import {
 } from '@/components/landing/ConnectFallback'
 import { LinkHelp, LinkHelpToggle, toggleLinkHelp } from '@/components/landing/LinkHelp'
 import { markSessionTouched } from '@/components/SessionKeeper'
-import { DESTINATIONS, destinationPath, destinationUrl } from '@/lib/destination'
+import { destinationPath, destinationUrl } from '@/lib/destination'
+import { DESTINATIONS } from '@/lib/destinationtext'
 import {
   lastMoodCaptionNow,
   lastMoodCaptionServer,

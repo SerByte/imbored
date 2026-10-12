@@ -1,7 +1,8 @@
 'use client'
 
 import { useSearchParams } from 'next/navigation'
-import { DESTINATIONS, destinationPath } from '@/lib/destination'
+import { destinationPath } from '@/lib/destination'
+import { DESTINATIONS } from '@/lib/destinationtext'
 
 /**
  * Строка намерения над заголовком: почему ты здесь, если пришёл не сам.
@@ -19,7 +20,7 @@ import { DESTINATIONS, destinationPath } from '@/lib/destination'
  * меньшинства. Появление строки сдвигает заголовок вниз ровно в тех случаях,
  * когда человеку и правда есть что сказать.
  *
- * Тексты обещаний берутся ТОЛЬКО из lib/destination.ts. Второй копии этих
+ * Тексты обещаний берутся ТОЛЬКО из lib/destinationtext.ts. Второй копии этих
  * фраз в проекте быть не должно: они уже разъезжались с адресами один раз.
  *
  * ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ — и то, и другое ушло вместе с переездом карточки в

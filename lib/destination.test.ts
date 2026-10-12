@@ -3,7 +3,7 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   bounceTo,
-  DESTINATIONS,
+  DESTINATION_PATHS,
   destinationPath,
   destinationUrl,
   GUEST_BOUNCE,
@@ -13,6 +13,7 @@ import {
   reconnectHref,
   steamLoginFor,
 } from './destination'
+import { DESTINATIONS } from './destinationtext'
 import { playHref, presetHref, ROOM_PRESETS, roomBridgeHref, VIBE_PRESETS } from './presets'
 
 /**
@@ -56,7 +57,7 @@ describe('разворот гостя на лендинг', () => {
   })
 
   test('свои адреса проходят и кодируются', () => {
-    for (const p of Object.keys(DESTINATIONS)) {
+    for (const p of DESTINATION_PATHS) {
       expect(destinationPath(p)).toBe(p)
       expect(bounceTo(p)).toBe(`/?next=${encodeURIComponent(p)}`)
     }
@@ -70,6 +71,15 @@ describe('разворот гостя на лендинг', () => {
     for (const key of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
       expect(destinationPath(key), `пропущен ${key}`).toBeNull()
     }
+  })
+
+  /**
+   * Адреса и тексты лендинга живут в разных модулях (тексты — не в первой
+   * загрузке каждой страницы, см. lib/destinationtext.ts). Тип satisfies там
+   * держит их вместе при сборке, а это — то же для тех, кто тип обойдёт.
+   */
+  test('текст есть ровно у каждого адреса — не больше и не меньше', () => {
+    expect(Object.keys(DESTINATIONS).sort()).toEqual([...DESTINATION_PATHS].sort())
   })
 
   test('у каждого адреса есть и обещание, и подпись кнопки', () => {
@@ -140,12 +150,15 @@ describe('гость разворачивается до рендера', () => 
   })
 
   /**
-   * Прокси разворачивает только туда, где лендинг знает, что сказать: адрес без
-   * записи в DESTINATIONS bounceTo свёл бы к голому «/» — ровно то молчание,
+   * Прокси разворачивает только туда, где лендинг знает, что сказать: адрес не
+   * из DESTINATION_PATHS bounceTo свёл бы к голому «/» — ровно то молчание,
    * ради которого всё затевалось.
    */
   test('каждый хаб — место назначения лендинга', () => {
-    for (const p of GUEST_BOUNCE) expect(Object.hasOwn(DESTINATIONS, p), p).toBe(true)
+    for (const p of GUEST_BOUNCE) {
+      expect((DESTINATION_PATHS as readonly string[]).includes(p), p).toBe(true)
+      expect(Object.hasOwn(DESTINATIONS, p), `${p}: нет текста лендинга`).toBe(true)
+    }
   })
 
   /**

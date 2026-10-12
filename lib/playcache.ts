@@ -20,7 +20,8 @@
  *   Метка прогрева (sessionStorage, 10 минут) — «/api/prepare сказал, что
  *   разбирать нечего». Пока она свежая, новый запрос выдачи идёт без прогрева:
  *   за десять минут каталог не устаревает (метаданные живут две недели, онлайн
- *   — шесть часов), а цикл прогрева на экране ожидания — это секунды.
+ *   — шесть часов), а цикл прогрева на экране ожидания — это секунды. Сама
+ *   метка — в lib/warmmark.ts (её читает и квиз), здесь — те же имена.
  *
  *   Недавние баны (localStorage, 15 минут) — единственное, что может сделать
  *   сохранённую выдачу неправдой. Бан в соседней вкладке ей не виден: у
@@ -43,13 +44,11 @@ import { parseNudge } from './nudge'
 import { parseSeedRef, type Deal, type PlayPick } from './playflow'
 import type { ContinueGame, Focus } from './recommend'
 import type { Mood } from './types'
-import { forgetPrewarm } from './warmup'
+import { forgetsWith, PLAY_BANS_KEY, PLAY_DEAL_KEY } from './playforget'
+import { fresh } from './warmmark'
 
 /** Сколько выдача считается «той же самой», мс */
 export const PLAY_CACHE_TTL_MS = 15 * 60_000
-
-/** Сколько метка «прогрев закончен» позволяет его пропускать, мс */
-export const WARM_MARK_TTL_MS = 10 * 60_000
 
 /**
  * Версия формы записи. Вкладка живёт через деплой, и запись прошлой версии
@@ -185,15 +184,6 @@ export function parsePlayCache(raw: unknown): PlayCache | null {
   return { v: PLAY_CACHE_VERSION, key: r.key, viewer: r.viewer, at: r.at, deal, hero: r.hero, liked: r.liked }
 }
 
-/**
- * Свежесть по часам клиента. Запись «из будущего» — тоже не свежая: часы
- * перевели назад, и сколько ей на самом деле, уже не узнать.
- */
-function fresh(at: number, nowMs: number, ttlMs: number): boolean {
-  const age = nowMs - at
-  return age >= -60_000 && age <= ttlMs
-}
-
 /** Есть ли вообще что восстанавливать под этот запрос — без вопроса, кто вошёл. */
 export function hasFreshDeal(entry: PlayCache | null, key: string, nowMs: number): boolean {
   return !!entry && entry.key === key && fresh(entry.at, nowMs, PLAY_CACHE_TTL_MS)
@@ -239,28 +229,13 @@ export function restoreDeal(
   }
 }
 
-export const playCacheStore = createLocalStore('imbored.play.deal', parsePlayCache, 'session')
+export const playCacheStore = createLocalStore(PLAY_DEAL_KEY, parsePlayCache, 'session')
 
-export type WarmMark = { viewer: string; at: number }
-
-export function parseWarmMark(raw: unknown): WarmMark | null {
-  if (!raw || typeof raw !== 'object') return null
-  const r = raw as Record<string, unknown>
-  if (!isStr(r.viewer) || !r.viewer || typeof r.at !== 'number' || !Number.isFinite(r.at)) return null
-  return { viewer: r.viewer, at: r.at }
-}
-
-/** Можно ли пропустить прогрев: он закончился недавно, и у этого же человека. */
-export function warmIsFresh(mark: WarmMark | null, viewer: string | null, nowMs: number): boolean {
-  return !!mark && !!viewer && mark.viewer === viewer && fresh(mark.at, nowMs, WARM_MARK_TTL_MS)
-}
-
-/** Свежая метка без вопроса, кто вошёл, — повод этот вопрос задать. */
-export function hasFreshWarm(mark: WarmMark | null, nowMs: number): boolean {
-  return !!mark && fresh(mark.at, nowMs, WARM_MARK_TTL_MS)
-}
-
-export const warmMarkStore = createLocalStore('imbored.play.warm', parseWarmMark, 'session')
+/*
+ * Метка прогрева живёт в lib/warmmark.ts: её читает и квиз, которому вся
+ * остальная выдача не нужна. Отсюда — те же имена, что и раньше.
+ */
+export { hasFreshWarm, parseWarmMark, WARM_MARK_TTL_MS, warmIsFresh, warmMarkStore, type WarmMark } from './warmmark'
 
 export type RecentBan = { appid: number; at: number }
 
@@ -299,7 +274,11 @@ export function recentlyBanned(list: RecentBan[] | null, nowMs: number): Set<num
  * «Назад» возвращал на экран, а следующий бан здесь, дописанный поверх
  * пустого кэша, стирал его и для всех остальных вкладок.
  */
-const recentBansStore = createLocalStore('imbored.play.bans', parseRecentBans, 'local')
+const recentBansStore = createLocalStore(PLAY_BANS_KEY, parseRecentBans, 'local')
+
+// Выход (lib/playforget) стирает эти хранилища, а не только их ключи: так
+// гаснет и то, что вкладка держит в памяти, и подписчики узнают
+forgetsWith({ deal: playCacheStore, bans: recentBansStore })
 
 /** Что убрано за последние пятнадцать минут — в любой вкладке, по хранилищу */
 export function readRecentBans(nowMs: number): Set<number> {
@@ -332,16 +311,9 @@ export async function whoAmI(signal?: AbortSignal, fetchFn: typeof fetch = fetch
   }
 }
 
-/**
- * Забыть всё про выдачу на этом устройстве — при выходе. Привязка к viewer и
- * так не даст показать её другому, но хранить подборку вышедшего человека
- * до закрытия вкладки незачем.
+/*
+ * Забыть всё про выдачу при выходе — forgetPlay в lib/playforget.ts: кнопке
+ * «Выйти» не нужен разбор выдачи, который лежит здесь. Отсюда — то же имя, а
+ * хранилища этого модуля выход стирает через forgetsWith выше.
  */
-export function forgetPlay(): void {
-  playCacheStore.set(null)
-  warmMarkStore.set(null)
-  recentBansStore.set(null)
-  // И ответ прогрева, начатого квизом (lib/warmup): он про вышедшего, а
-  // следующий вход в этом же документе забрал бы его первым кругом
-  forgetPrewarm()
-}
+export { forgetPlay } from './playforget'

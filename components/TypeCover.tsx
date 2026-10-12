@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { OTHER_STORE_GAMES, OTHER_STORE_GENRE } from '@/lib/otherstores'
+import { OTHER_STORE_GENRE, OTHER_STORE_OF } from '@/lib/storecover'
 import { STORE_LABEL, STORE_TINT, STORE_TINT_DEFAULT } from '@/lib/stores'
 
 /**
@@ -18,6 +18,9 @@ import { STORE_LABEL, STORE_TINT, STORE_TINT_DEFAULT } from '@/lib/stores'
  * Разметка без position: обложку зовут и с absolute (герой), и в потоке
  * (капсула, колода), а слои внутри складывает grid, а не абсолют.
  * aria-hidden — как alt="" у картинки: название рядом всегда написано текстом.
+ *
+ * Магазин и жанр — из lib/storecover, а не из пула lib/otherstores: обложка
+ * едет в первую загрузку почти каждого маршрута, а пул — карточки целиком.
  */
 export function TypeCover({
   appid,
@@ -33,8 +36,7 @@ export function TypeCover({
   /** Подложка под свечением — размытый арт игры-ориентира */
   children?: ReactNode
 }) {
-  const game = OTHER_STORE_GAMES.find((g) => g.appid === appid)
-  const store = game?.store
+  const store = OTHER_STORE_OF[appid]
   const tint = (store && STORE_TINT[store]) || STORE_TINT_DEFAULT
   const genre = OTHER_STORE_GENRE[appid]
   return (

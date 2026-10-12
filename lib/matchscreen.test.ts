@@ -7,7 +7,7 @@ import { MatchOwners, type MatchOwnersGame } from '../components/room/MatchOwner
 import { MatchShare } from '../components/room/MatchShare'
 import { matchShareCopy, matchShareUrl } from './matchshare'
 import { formatPrice } from './steamregion'
-import { storeLink } from './stores'
+import { storeLink } from './storelink'
 
 /**
  * Экран матча — то, что на нём делают после «Это матч!».

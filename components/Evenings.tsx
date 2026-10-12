@@ -1,11 +1,11 @@
 'use client'
 
-import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useRef, useState, useTransition, type ReactNode } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { Eyebrow } from '@/components/Labels'
+import { lazyIsland } from '@/components/lazyIsland'
 import { NeedSteam } from '@/components/NeedSteam'
 import { StatusLine } from '@/components/StatusLine'
 import { SteamLaunch } from '@/components/SteamLaunch'
@@ -41,15 +41,16 @@ export type EveningItem = {
 
 /*
  * «Уже прошёл» — отдельным чанком, а не в первой загрузке /library: она
- * упирается в бюджет веса (bundle-budget.json, потолок 590 КБ при 589
- * занятых), а кнопка нужна лишь у вечеров, сыгранных всерьёз, и тому, кто
- * до них доскроллил. ssr: false — до гидратации она всё равно ничего не
- * умеет, а чанк догружается сразу после неё. Страница игры берёт её
- * статически: там запас веса есть (OwnedLaunch).
+ * упирается в бюджет веса (bundle-budget.json), а кнопка нужна лишь у
+ * вечеров, сыгранных всерьёз, и тому, кто до них доскроллил. До гидратации
+ * она всё равно ничего не умеет, а чанк догружается сразу после неё.
+ * Страница игры берёт её статически: там запас веса есть (OwnedLaunch).
+ *
+ * Островком (components/lazyIsland), а не next/dynamic: рантайм next/dynamic
+ * на /library больше ничто не везёт, и обёртка ради кнопки в 2 КБ стоила
+ * ~4 КБ — вдвое дороже самой кнопки.
  */
-const MarkFinished = dynamic(() => import('@/components/MarkFinished').then((m) => m.MarkFinished), {
-  ssr: false,
-})
+const MarkFinished = lazyIsland(() => import('@/components/MarkFinished').then((m) => m.MarkFinished))
 
 /** Одна игра может быть посоветована дважды — в разные окна */
 const keyOf = (i: Pick<EveningItem, 'appid' | 'shownAt'>) => `${i.appid}:${i.shownAt}`

@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { forgetPlay } from '@/lib/playcache'
+import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
 
@@ -51,7 +51,8 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
     // а главная встречает вышедшего «С возвращением» — по подсказке, которую
     // никто не погасил.
     forgetSessionHint()
-    // И выдачу /play, которую вкладка держит пятнадцать минут (lib/playcache):
+    // И выдачу /play, которую вкладка держит пятнадцать минут (lib/playcache,
+    // стирает lib/playforget — без разбора выдачи в первой загрузке /library):
     // чужому входу её и так не покажут, но хранить подборку вышедшего незачем
     forgetPlay()
     // Его «время скрыто» (lib/playtime) — не про следующего на этом устройстве

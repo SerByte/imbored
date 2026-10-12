@@ -167,7 +167,7 @@ describe('кнопка запуска', () => {
    */
   test('«Сыграю вечером»: не пришедший кусок — пустое место, а не поломка страницы', () => {
     const lazy = code(read('components', 'TonightLazy.tsx'))
-    expect(lazy).toMatch(/dynamic\(\(\) => loadTonight\(\)\.catch\(/)
+    expect(lazy).toMatch(/lazyIsland\(\(\) => loadTonight\(\)\.catch\(/)
     expect(lazy).toMatch(/loadTonight\(\)\.catch\(\(\) => null\)/)
     for (const page of [['app', 'play', 'page.tsx'], ['app', 'daily', 'page.tsx']]) {
       const src = code(read(...page))

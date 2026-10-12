@@ -53,7 +53,7 @@ import { HIDDEN_POLL_CAP_MS, hiddenPollDelay, nextPollStep, snapshotFate } from 
 import { announceMatch } from '@/components/room/MatchNotify'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { roomShareUrl } from '@/lib/roomshare'
-import { storeLink } from '@/lib/stores'
+import { storeLink } from '@/lib/storelink'
 import { track } from '@/lib/track'
 
 /*

@@ -1,14 +1,21 @@
 'use client'
 
 import { useReducedMotion } from 'framer-motion'
-import dynamic from 'next/dynamic'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { HeroArt } from '@/components/HeroArt'
+import { lazyIsland } from '@/components/lazyIsland'
 import { webglAvailable } from '@/components/morph/gl'
 import type { GameArtUrls } from '@/lib/art'
 import { HERO_SLIDES, pickCoverShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
-const MorphSlider = dynamic(() => import('@/components/morph/MorphSlider'), { ssr: false })
+/*
+ * Слайдер с ogl — отдельным чанком и только в браузере. Островком
+ * (components/lazyIsland), а не next/dynamic: герой стоит на /play и /daily,
+ * у потолка бюджета первой загрузки (bundle-budget.json), а рантайм
+ * next/dynamic добавлял им ~4 КБ. Не пришёл чанк — герой остаётся артом, как
+ * и при любом другом сбое морфа (докблок ниже).
+ */
+const MorphSlider = lazyIsland(() => import('@/components/morph/MorphSlider').then((m) => m.default))
 
 /** Что удалось выяснить про среду; до первого замера — null */
 type Env = { gl: boolean; size: ShotSize }

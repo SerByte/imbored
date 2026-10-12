@@ -4,7 +4,7 @@ import { Component, type ReactNode, useCallback } from 'react'
 import { focusAdrift } from '@/lib/focushandoff'
 import { clientErrorCode, reportClientError } from '@/lib/clienterr'
 import { matchByLeader } from '@/lib/room'
-import { storeLink } from '@/lib/stores'
+import { storeLink } from '@/lib/storelink'
 
 /** Что нужно запасному экрану матча — подмножество matchedGame комнаты */
 export type CeremonyGame = {

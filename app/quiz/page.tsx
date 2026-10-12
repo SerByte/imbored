@@ -14,7 +14,7 @@ import { useSearch } from '@/components/useSearch'
 import { freshLastMood, lastMoodStore } from '@/lib/lastmood'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
-import { hasFreshWarm, warmMarkStore } from '@/lib/playcache'
+import { hasFreshWarm, warmMarkStore } from '@/lib/warmmark'
 import { timeHiddenStore } from '@/lib/playtime'
 import { parseSeedParam, playHref, VIBE_PRESETS } from '@/lib/presets'
 import { STEPS } from '@/lib/quiz'
@@ -259,7 +259,7 @@ function Quiz() {
    * подтверждает только ответ touch, и он приходит уже после монтирования.
    * Повторы безвредны — второй вызов, пока первый свежий, не уходит.
    *
-   * Свежая метка прогрева (lib/playcache) — повод не греть вовсе: /play её
+   * Свежая метка прогрева (lib/warmmark) — повод не греть вовсе: /play её
    * увидит и цикл пропустит, ответ квиза забрать будет некому.
    *
    * Подсказка сменилась — в соседней вкладке вышли или вошли другим
