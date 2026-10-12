@@ -23,9 +23,29 @@ const json = (status: number, body: unknown) =>
 let fetchMock: ReturnType<typeof vi.fn<(url: string, init?: RequestInit) => Promise<Response>>>
 let appid = 1000
 
+/**
+ * Хранилище вкладки на время теста. Своё, а не глобальное: sessionStorage в
+ * node есть только с 25-й версии, а CI собирает на 22-й (engines в
+ * package.json) — там глобала нет вовсе, и тест падал на уборке. Свежее на
+ * каждый тест — строки сердца не переходят к следующему.
+ */
+function tabStorage() {
+  const data: Record<string, string> = {}
+  return {
+    getItem: (k: string) => (Object.hasOwn(data, k) ? data[k] : null),
+    setItem: (k: string, v: string) => {
+      data[k] = v
+    },
+    removeItem: (k: string) => {
+      delete data[k]
+    },
+  }
+}
+
 beforeEach(() => {
   fetchMock = vi.fn(async () => json(200, { ok: true }))
   vi.stubGlobal('fetch', fetchMock)
+  vi.stubGlobal('sessionStorage', tabStorage())
   writerStore.set(null)
   // Очередь живёт в модуле на всю вкладку — каждый тест берёт свою игру
   appid += 1
@@ -33,9 +53,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  // Строки сердца живут в sessionStorage, а у node он настоящий и общий на
-  // процесс: тест не оставляет их следующему
-  sessionStorage.removeItem(LIKE_ROWS_KEY)
 })
 
 /**
