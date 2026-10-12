@@ -41,8 +41,8 @@
  * Точки акронима («S.T.A.L.K.E.R.») и дефис («Half-Life») — по-прежнему
  * разделитель: «half life» должно находить «Half-Life» с начала слов, а
  * «counter strike» — «Counter-Strike». Слитный набор («stalker»,
- * «halflife») ищет поиск каталога сам, по названию слитно (runs в
- * lib/catalogsearch), — у свёртки на это одного вида не хватит.
+ * «halflife») ищет поиск каталога сам, по названию слитно (tight и границы
+ * слов в lib/catalogsearch), — у свёртки на это одного вида не хватит.
  */
 export function foldTitle(s: string): string {
   return s

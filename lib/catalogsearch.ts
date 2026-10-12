@@ -66,35 +66,68 @@ export type SearchEntry = {
   /** foldTitle(name) с пробелом спереди: «начало слова» — это ' ' + слово */
   hay: string
   /**
-   * Название слитно от начала каждого своего слова, через «|»: «Half-Life 2» —
-   * «|halflife2|life2|2|», «S.T.A.L.K.E.R. 2» — «|stalker2|talker2|…|2|».
-   * «|» + слово запроса здесь — слово, которое начинается там же, где слово
-   * названия, но идёт дальше через его знаки и пробелы: «halflife»,
-   * «stalker», «spiderman». Ступени — у tierOf.
+   * Название слитно, без пробелов свёртки: «Half-Life 2» — «halflife2»,
+   * «S.T.A.L.K.E.R. 2» — «stalker2». По нему находится набранное слитно
+   * («halflife», «stalker», «spiderman») — с начал из words и spaced, см.
+   * tierOf.
    *
-   * Считается один раз при чтении индекса: ~256 тысяч знаков на 5816 игр и
-   * ещё ~94 тысячи у tight (замер по локальной копии каталога) — меньше
-   * мегабайта памяти вкладки, и только у той, где поиск открывали
-   * (lib/catalogindex).
-   */
-  runs: string
-  /**
-   * Название слитно целиком — первый отрезок runs: «Half-Life 2» —
-   * «halflife2». Сито tierOf: слово запроса, которого нет даже здесь, не
-   * подходит ни на одной ступени, а это почти все строки индекса на каждую
-   * клавишу. Без сита каждая из них сверялась с runs — вдвое длиннее hay — и
-   * поиск шёл втрое дольше прежнего (замер у searchCatalog).
+   * И оно же сито: слово запроса, которого нет даже здесь, не подходит ни на
+   * одной ступени, а это почти все строки индекса на каждую клавишу. Сверка
+   * по короткому tight — самая дешёвая, и остальное считается только у
+   * прошедших его.
    */
   tight: string
+  /**
+   * Где в tight начинаются слова свёртки — и через пробел, и через знак:
+   * «Half-Life 2» — [0, 4, 8], «To the Moon» — [0, 2, 5]. Граница слов
+   * запроса, набранного с начала названия, должна лечь на одно из них:
+   * «half life» ложится на 4, а «to t» в «Total War» — на 2, посреди «total».
+   */
+  words: number[]
+  /**
+   * Где в tight начинаются слова названия через ПРОБЕЛ: «S.T.A.L.K.E.R. 2:
+   * Heart of Chornobyl» — [0, 7, 8, 13, 15], «For The King» — [0, 3, 6].
+   * Внутри такого слова знаки названия слитный запрос проходит свободно
+   * («stalker», «halflife»), а через пробел — только ступенью 3 («dota2»), и
+   * начинается слитное только здесь, а не с буквы посреди акронима: «ker» —
+   * не «S.T.A.L.K.E.R.», «ear» — не «F.E.A.R.». Ступени — у tierOf.
+   *
+   * Оба массива считаются раз при чтении индекса (замер у readSearchIndex) и
+   * живут только во вкладке, где поиск открывали (lib/catalogindex).
+   */
+  spaced: number[]
 }
 
-/** runs для свёрнутого названия (см. SearchEntry) */
-function runsOf(folded: string): string {
-  const words = folded.split(' ')
-  let runs = '|'
-  for (let i = 0; i < words.length; i++) runs += `${words.slice(i).join('')}|`
-  return runs
+/** Где начинается каждый кусок, если их склеить подряд: ['half', 'life', '2'] — [0, 4, 8] */
+function startsOf(parts: string[]): number[] {
+  const out: number[] = []
+  let at = 0
+  for (const part of parts) {
+    if (!part) continue
+    out.push(at)
+    at += part.length
+  }
+  return out
 }
+
+/**
+ * spaced для названия (см. SearchEntry): каждое слово через пробел
+ * сворачивается отдельно, и его длина в tight — длина свёрнутого без
+ * пробелов. Свёртка посимвольная, так что куски в сумме дают ровно tight
+ * (сверено на всех 5816 названиях локальной копии каталога); слово, от
+ * которого свёртка не оставила ничего («-», «&», «™»), места в tight не
+ * занимает и начала не даёт.
+ *
+ * Слово из одних латинских букв и цифр — а таких 15 тысяч из 18 — свёртка
+ * в длине не меняет, и его не сворачивают: со свёрткой каждого слова spaced
+ * считался вдвое дольше (3 мс на 5816 названий против 1.5, Node, замер по
+ * локальной копии каталога).
+ */
+function spacedOf(name: string): number[] {
+  return startsOf(name.split(/\s+/).map((word) => (PLAIN.test(word) ? word : foldTitle(word).replace(/ /g, ''))))
+}
+
+const PLAIN = /^[a-z0-9]*$/i
 
 export type SearchHit = { appid: number; name: string }
 
@@ -144,6 +177,9 @@ export function encodeSearchIndex(rows: Array<{ appid: number; name: string }>):
  *
  * appid только положительный: у чужих магазинов id отрицательные, своей
  * карточки по такому адресу нет (выборка их и не отдаёт — это вторая линия).
+ *
+ * Свёртка и границы слов (SearchEntry) считаются здесь, раз на вкладку, а не
+ * на клавишу: ~7 мс на 5816 играх (Node, замер по локальной копии каталога).
  */
 export function readSearchIndex(body: unknown): SearchEntry[] | null {
   if (!body || typeof body !== 'object') return null
@@ -156,7 +192,15 @@ export function readSearchIndex(body: unknown): SearchEntry[] | null {
     if (!Number.isInteger(appid) || appid <= 0 || typeof name !== 'string') continue
     const folded = foldTitle(name)
     if (!folded) continue
-    out.push({ appid, name, hay: ` ${folded}`, runs: runsOf(folded), tight: folded.replace(/ /g, '') })
+    const words = folded.split(' ')
+    out.push({
+      appid,
+      name,
+      hay: ` ${folded}`,
+      tight: words.join(''),
+      words: startsOf(words),
+      spaced: spacedOf(name),
+    })
   }
   return out.length ? out : null
 }
@@ -186,29 +230,36 @@ export function fromRuLayout(q: string): string | null {
 const ON_SIGN_KEYS = new Set(Object.keys(RU_TO_QWERTY).filter((c) => !/[a-z]/.test(RU_TO_QWERTY[c])))
 
 /**
- * Распалось ли слово запроса в QWERTY на обрывки: знак, в который перешла
- * буква на его клавише, отрезал кусок короче трёх букв.
+ * Остались ли от запроса в QWERTY одни обрывки. alt — запрос в QWERTY
+ * свёрнутый: в нём нет ни одного слова от трёх букв, а в запросе есть буква
+ * на клавише знака (б ю ж х ъ э ё) — знак, в который она перешла, режет
+ * слово или стирается свёрткой вместе с буквой.
  *
  * Так выглядит не перепутанная раскладка, а русское слово: «баба» — «,f,f»,
- * то есть «f f», «ёжик» — «br», «эхо» — «j». Обрывок в одну-две буквы — начало
- * слова в сотнях названий, и строка статуса говорила «Нашлось 119 игр по
- * «,f,f»». Настоящее название, набранное не в той раскладке, на обрывки не
- * распадается: апостроф свёртка стирает («ифдвгкэы» — «baldurs»), а точка или
- * двоеточие стоят в конце длинного слова.
+ * то есть «f f», «ёжик» — «br», «эхо» — «j», «её» — «t». Обрывок в одну-две
+ * буквы — начало слова в сотнях названий, и строка статуса говорила «Нашлось
+ * 119 игр по «,f,f»».
  *
- * Обрывок — только то, что отрезал знак. Короткое слово целиком — не обрывок:
- * «ц» — первая клавиша «цшесрук», а «Ф» в «Ф Цфн Щге» — слово «A» из «A Way
- * Out», и оба ищутся. Проигрыш один и редкий: акроним с точками, набранный в
+ * Обрывки рядом со словом от трёх букв — не помеха, и такой запрос ищется.
+ * Знак в настоящих названиях стоит и после короткого слова — «Mr. Prepper»,
+ * «Plants vs. Zombies», «Warhammer 40,000», «S.T.A.L.K.E.R. 2: Heart of…», —
+ * а апостроф свёртка стирает вместе с буквой э, и короткое слово остаётся
+ * целым: «Шэь щт Щиыукмфешщт Вген» — «im on observation duty». Прежде
+ * хватало одного обрывка в любом слове, и все эти названия, набранные не в
+ * той раскладке, отвечали «Ничего не нашлось». Длинное слово сужает выдачу
+ * само: ступени раскладки (0–3) требуют, чтобы каждое слово запроса
+ * начиналось там, где слово названия, и случайное «zuf» из «баба яга» не
+ * начинает ни одного.
+ *
+ * Короткий запрос без знаковых букв — не обрывки: «ц» — первая клавиша
+ * «цшесрук», а «Ф» в «Ф Цфн Щге» — слово «A» из «A Way Out», и оба ищутся.
+ * Проигрыш — начало названия со знаком, пока длинного слова ещё нет: «Ькю»
+ * («mr.») молчит до «Ькю Зку» («mr pre»); и акроним с точками, набранный в
  * русской раскладке («АюУюФюКю»), — без точек («ауфк») он находится.
  */
-function brokenByLayout(query: string): boolean {
-  return query.split(/[^\p{L}\p{N}]+/u).some((word) => {
-    const lower = word.toLowerCase()
-    if (![...lower].some((c) => ON_SIGN_KEYS.has(c))) return false
-    return foldTitle(fromRuLayout(lower) ?? lower)
-      .split(' ')
-      .some((piece) => piece.length < 3)
-  })
+function brokenByLayout(query: string, alt: string): boolean {
+  if (alt.split(' ').some((word) => word.length >= 3)) return false
+  return [...query.toLowerCase()].some((c) => ON_SIGN_KEYS.has(c))
 }
 
 /**
@@ -216,27 +267,47 @@ function brokenByLayout(query: string): boolean {
  *
  *   0 — название целиком и есть запрос: «doom» → «DOOM», а не «DOOM Eternal»,
  *       у которого отзывов больше; «fear» → «F.E.A.R.»;
- *   1 — название начинается с запроса: человек набирает с начала;
+ *   1 — название начинается с запроса: человек набирает с начала (fromStart);
  *   2 — каждое слово запроса начинается там, где слово названия: «witcher 3»
  *       → «The Witcher 3: Wild Hunt», «spiderman» → «Marvel's Spider-Man»;
  *       или весь запрос слитно начинается там: «cyber punk» → «Cyberpunk
  *       2077», «s.t.a.l.k.e.r» → «Stalker Online»;
- *   3 — каждое слово запроса где-то в названии (matchesTitle, как на стене
+ *   3 — то же, но слитно через пробел названия: «dota2» → «Dota 2»,
+ *       «witcher3» → «The Witcher 3», «pay day 2» → «PAYDAY 2»;
+ *   4 — каждое слово запроса где-то в названии (matchesTitle, как на стене
  *       /library): «witch» → «Bewitched Forest».
  *
- * Ступени 0–2 — по runs, то есть знаки и пробелы НАЗВАНИЯ не считаются:
- * «stalker 2» → «S.T.A.L.K.E.R. 2», «halflife» → «Half-Life 2», «dota2» →
- * «Dota 2». Свёртка делает точки и дефис разделителем, и без этого набранное
- * слитно не находилось вовсе: «s t a l k e r» не содержит «stalker». Начало
- * слова запроса при этом — всегда начало слова названия: слитно — через знаки
- * СВОЕГО слова, а не с середины чужого, иначе «fear» нашёл бы «Cafe Arcade»
- * (слитно — «cafearcade»). Где слова названия и запроса совпадают, ступени
- * те же, что были у сравнения по hay с пробелами.
+ * ЗНАКИ НАЗВАНИЯ внутри его слова (между пробелами) не считаются ни на одной
+ * ступени: «stalker 2» → «S.T.A.L.K.E.R. 2» ступенью 1, «halflife» →
+ * «Half-Life 2» — тоже, «fear» → «F.E.A.R.» — ступенью 0. Свёртка делает
+ * точки и дефис разделителем, и без этого набранное слитно не находилось
+ * вовсе: «s t a l k e r» не содержит «stalker».
+ *
+ * ПРОБЕЛ НАЗВАНИЯ — считается: слитно через него — ступень 3, ниже любого
+ * настоящего начала слова. Иначе слово, набранное с начала, — самый частый
+ * набор — находило бы чужие названия, склеенные через пробел, наравне со
+ * своими и по отзывам выше них: «fort» — «For The King» над «Fort Solis»,
+ * «theme» — «The Messenger» над «Theme Park Manager», «them» — «Halo: The
+ * Master Chief Collection» над «…Save Them». Совсем без склейки через пробел
+ * не нашлись бы «dota2» и «witcher3».
+ *
+ * Слитно — только с начала слова через пробел (SearchEntry.spaced), а не с
+ * буквы посреди него: «ker» не находит «S.T.A.L.K.E.R.», «ear» — «F.E.A.R.»,
+ * «fear» — «Cafe Arcade» (слитно — «cafearcade»). Буква акронима — слово
+ * свёртки, но «ker» — хвост «stalker», а не начало чего-то в названии. Слово
+ * запроса, которое умещается в слово свёртки, по-прежнему ищется с любого
+ * его начала: «life» → «Half-Life», «man» → «Spider-Man», как по hay.
+ *
+ * Ступени 0–1 требуют ещё, чтобы граница слов запроса легла на границу слов
+ * названия (SearchEntry.words): «to t» — это «To the Moon», а не «Total War»,
+ * хотя слитно оба начинаются с «tot»; «a s» — «A Short Hike», а не
+ * «Assassin's Creed». Пробел запроса при этом вправе лечь на знак названия:
+ * «half life» — ступень 1 у «Half-Life 2».
  *
  * Знаки и пробелы ЗАПРОСА тоже не обязаны совпадать со знаками названия:
  * свёртка — с обеих сторон. Слитное название, набранное раздельно («cyber
  * punk», «pay day 2») или с точками («s.t.a.l.k.e.r»), находится запросом
- * слитно — но только ступенью 2 и только если по словам не нашлось. Иначе
+ * слитно — но только ступенью 2–3 и только если по словам не нашлось. Иначе
  * «dark s» — человек, набирающий «dark souls», — ставил бы рядом с ним
  * «Darksiders» (слитно — тоже «darks…»), а по отзывам и выше.
  *
@@ -246,14 +317,41 @@ function tierOf(e: SearchEntry, q: Wanted): number | null {
   // Сито (см. tight): каждое слово запроса — хотя бы где-то в названии слитно.
   // Это нужно любой ступени, а сверка по короткому tight — самая дешёвая
   if (!q.words.every((w) => e.tight.includes(w))) return null
-  if (q.starts.every((s) => e.runs.includes(s))) {
-    if (e.runs.startsWith(q.whole)) return 0
-    if (e.runs.startsWith(q.glued)) return 1
-    return 2
-  }
+  if (fromStart(e, q)) return e.tight === q.tight ? 0 : 1
+  const each = q.words.map((w, i) => (e.hay.includes(q.heads[i]) ? 2 : gluedTier(e, w)))
+  if (!each.includes(null)) return Math.max(...(each as number[]))
   // Запрос из одного слова слитно — он сам, и его уже сверили выше
-  if (q.words.length > 1 && e.runs.includes(q.glued)) return 2
-  return q.words.every((w) => e.hay.includes(w)) ? 3 : null
+  const glued = q.words.length > 1 ? gluedTier(e, q.tight) : null
+  if (glued !== null) return glued
+  return q.words.every((w) => e.hay.includes(w)) ? 4 : null
+}
+
+/**
+ * Набран ли запрос с начала названия (ступени 0–1, см. tierOf): название
+ * слитно начинается с запроса слитно, каждая граница слов запроса — на
+ * границе слов названия, а пробел названия внутри набранного — только там,
+ * где пробел запроса.
+ */
+function fromStart(e: SearchEntry, q: Wanted): boolean {
+  if (!e.tight.startsWith(q.tight)) return false
+  if (!q.cuts.every((at) => e.words.includes(at))) return false
+  return e.spaced.every((at) => at === 0 || at >= q.tight.length || q.cuts.includes(at))
+}
+
+/**
+ * Идёт ли s слитно с начала слова названия через пробел (см. tierOf): 2 —
+ * умещаясь в это слово, через его знаки («spiderman» в «Spider-Man»), 3 —
+ * дальше, через пробел («dota2» в «Dota 2»), null — ни с какого.
+ */
+function gluedTier(e: SearchEntry, s: string): 2 | 3 | null {
+  let tier: 3 | null = null
+  for (let i = 0; i < e.spaced.length; i++) {
+    const at = e.spaced[i]
+    if (!e.tight.startsWith(s, at)) continue
+    if (at + s.length <= (e.spaced[i + 1] ?? e.tight.length)) return 2
+    tier = 3
+  }
+  return tier
 }
 
 /**
@@ -261,20 +359,19 @@ function tierOf(e: SearchEntry, q: Wanted): number | null {
  * клавишу, а не на каждую из шести тысяч строк.
  */
 type Wanted = {
-  /** Слова запроса — для ступени 3, по hay */
+  /** Слова запроса — для сита (по tight) и ступени 4 (по hay) */
   words: string[]
-  /** «|» + каждое слово: слово названия начинается с него (runs) */
-  starts: string[]
-  /** «|» + запрос слитно: с него начинается слово названия */
-  glued: string
-  /** glued + «|»: название слитно целиком и есть запрос */
-  whole: string
+  /** ' ' + каждое слово: слово свёртки названия начинается с него (hay) */
+  heads: string[]
+  /** Запрос слитно */
+  tight: string
+  /** Где в tight запроса начинаются его слова, кроме первого: «to t» — [2] */
+  cuts: number[]
 }
 
 function wanted(folded: string): Wanted {
   const words = folded.split(' ')
-  const glued = `|${words.join('')}`
-  return { words, starts: words.map((w) => `|${w}`), glued, whole: `${glued}|` }
+  return { words, heads: words.map((w) => ` ${w}`), tight: words.join(''), cuts: startsOf(words).slice(1) }
 }
 
 /**
@@ -283,7 +380,7 @@ function wanted(folded: string): Wanted {
  */
 function collect(index: SearchEntry[], folded: string, limit: number, worst: number) {
   const q = wanted(folded)
-  const buckets: SearchEntry[][] = [[], [], [], []]
+  const buckets: SearchEntry[][] = [[], [], [], [], []]
   let total = 0
   for (const e of index) {
     const tier = tierOf(e, q)
@@ -308,25 +405,27 @@ function collect(index: SearchEntry[], folded: string, limit: number, worst: num
  * не перепутанная раскладка, и перевод добавлял к нему один шум. Раскладка —
  * спасение пустого ответа.
  *
- * И переведённый — только по началам слов (ступени 0–2): раскладку
+ * И переведённый — только по началам слов (ступени 0–3): раскладку
  * перепутали, но слово набирали с начала, а двухбуквенное «да» в QWERTY —
- * «lf», и оно сидит внутри «Half-Life». Запрос, распавшийся в QWERTY на
- * обрывки (brokenByLayout), не ищется вовсе: «баба» — это не «f f».
+ * «lf», и оно сидит внутри «Half-Life». Запрос, от которого в QWERTY
+ * остались одни обрывки (brokenByLayout), не ищется вовсе: «баба» — это не
+ * «f f».
  *
  * Проход по индексу на клавишу, второй — только при пустом первом: шесть
- * тысяч строк и несколько includes на каждую — доли миллисекунды (0.18 мс в
- * среднем на 5816 играх и запросах-префиксах, Node, замер по локальной копии
- * каталога; до runs было 0.21, с runs без сита tight — 0.6), отдельный
- * воркер или дебаунс здесь не нужны.
+ * тысяч строк и includes по короткому tight на каждую, а границы слов — лишь
+ * у прошедших его, — доли миллисекунды (0.17 мс в среднем на 5816 играх и
+ * запросах-префиксах, Node, замер по локальной копии каталога; прежнее
+ * сравнение по одному hay — 0.21). Отдельный воркер или дебаунс здесь не
+ * нужны.
  */
 export function searchCatalog(index: SearchEntry[], query: string, limit = SEARCH_SHOWN): SearchResult {
   const phrase = foldTitle(query)
   if (!phrase) return { games: [], total: 0, layout: null }
-  const typed = collect(index, phrase, limit, 3)
+  const typed = collect(index, phrase, limit, 4)
   const ru = typed.total ? null : fromRuLayout(query)
-  const alt = ru === null || brokenByLayout(query) ? '' : foldTitle(ru)
-  if (!alt || alt === phrase) return { ...typed, layout: null }
-  const viaLayout = collect(index, alt, limit, 2)
+  const alt = ru === null ? '' : foldTitle(ru)
+  if (!alt || alt === phrase || brokenByLayout(query, alt)) return { ...typed, layout: null }
+  const viaLayout = collect(index, alt, limit, 3)
   return {
     ...viaLayout,
     // Искали свёрнутым (alt), а называем — как набрано, с апострофами и дефисами

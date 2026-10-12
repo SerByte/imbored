@@ -70,6 +70,22 @@ describe('индекс каталога: провод и чтение', () => {
     expect(readSearchIndex({ ids: [], names: [] })).toBeNull()
   })
 
+  /*
+   * Границы слов считаются раз при чтении: words — все слова свёртки, spaced —
+   * только слова через пробел (ступени — у tierOf). Слова через пробел
+   * сворачиваются порознь и в сумме обязаны дать ровно tight, иначе начала
+   * съехали бы на чужие буквы; слово, от которого свёртка не оставила ничего
+   * («&»), начала не даёт.
+   */
+  test('границы слов: через пробел и через знак — порознь, и обе — по tight', () => {
+    const [stalker, mount] = index('S.T.A.L.K.E.R. 2: Heart of Chornobyl', 'Mount & Blade II: Bannerlord')
+    expect(stalker.tight).toBe('stalker2heartofchornobyl')
+    expect(stalker.words).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 13, 15])
+    expect(stalker.spaced).toEqual([0, 7, 8, 13, 15])
+    expect(mount.tight).toBe('mountbladeiibannerlord')
+    expect(mount.spaced).toEqual([0, 5, 10, 12])
+  })
+
   test('индекс из одних битых строк — тоже null, а не пустой каталог', () => {
     expect(readSearchIndex({ ids: [-1, 0, 2.5], names: ['A', 'B', 'C'] })).toBeNull()
     expect(readSearchIndex({ ids: [7], names: ['  ™ '] })).toBeNull()
@@ -199,6 +215,48 @@ describe('знаки внутри названия: набрано с ними, 
   })
 
   /*
+   * Пробел названия — не знак: слитно через него ищется, но ступенью ниже
+   * любого настоящего начала слова. Иначе слово, набранное с начала, — самый
+   * частый набор, — ставило бы рядом со своим названием чужое, склеенное
+   * через пробел («for the king» слитно начинается с «fort»), и по отзывам
+   * выше. Названия ниже — по убыванию отзывов, как в индексе.
+   */
+  test('слитно через пробел названия — ниже настоящего начала слова: «fort», «theme», «away»', () => {
+    const spaced = index(
+      'For The King',
+      'The Messenger',
+      'A Way Out',
+      'Team Fortress 2',
+      'Emily is Away',
+      'Fort Solis',
+      'Theme Park Manager',
+      'Away: The Survival Series',
+    )
+    const all = (q: string) => names(searchCatalog(spaced, q))
+    expect(all('fort')).toEqual(['Fort Solis', 'Team Fortress 2', 'For The King'])
+    expect(all('theme')).toEqual(['Theme Park Manager', 'The Messenger'])
+    expect(all('away')).toEqual(['Away: The Survival Series', 'Emily is Away', 'A Way Out'])
+    // Пробел запроса там же, где пробел названия, — это набор по словам, а не склейка
+    expect(all('for the')[0]).toBe('For The King')
+  })
+
+  /*
+   * Буква акронима — слово свёртки, но слитно с неё не начинают: «ker» —
+   * хвост «stalker», а не начало чего-то в «S.T.A.L.K.E.R.», и «ear» — не
+   * «F.E.A.R.». Слитно — только с начала слова через пробел. Слово запроса,
+   * умещающееся в слово свёртки, по-прежнему ищется с его начала и посреди
+   * дефиса: «life» → Half-Life, «man» → Spider-Man.
+   */
+  test('слитно — только с начала слова через пробел, а не с буквы посреди акронима', () => {
+    expect(all('ker')).toEqual([])
+    // «ear» — кусок «heart», ступенью «где-то внутри», а F.E.A.R. он не находит
+    expect(all('ear')).toEqual(['S.T.A.L.K.E.R. 2: Heart of Chornobyl'])
+    expect(all('talker')).toEqual([])
+    expect(all('life')).toEqual(['Half-Life 2', 'Half-Life: Alyx'])
+    expect(first('man')).toBe('Marvel’s Spider-Man Remastered')
+  })
+
+  /*
    * Слитно — значит через знаки СВОЕГО слова, а не с середины чужого:
    * «cafearcade» содержит «fear», но человек, набравший «fear», ищет не
    * «Cafe Arcade».
@@ -218,7 +276,7 @@ describe('знаки внутри названия: набрано с ними, 
    * Свёртка — с обеих сторон: знаки и пробелы не считаются и у ЗАПРОСА.
    * Слитное название, набранное раздельно или с точками, — «cyber punk»,
    * «pay day 2», «s.t.a.l.k.e.r», — иначе находилось только «где-то внутри»
-   * (ступень 3) и стояло под любым более популярным названием, где эти буквы
+   * (ступень 4) и стояло под любым более популярным названием, где эти буквы
    * просто встречаются: «Repay the Holiday 2» содержит и «pay», и «day».
    */
   test('слитное название, набранное раздельно или с точками, — выше случайных вхождений', () => {
@@ -240,11 +298,20 @@ describe('знаки внутри названия: набрано с ними, 
    * Но набранное по словам совпадение — выше слитного: «dark s» — это
    * человек, набирающий «dark souls», а не «Darksiders», даже если у
    * Darksiders отзывов больше. Слитный путь для запроса — запасной.
+   *
+   * И «с начала названия» — значит с началом каждого слова запроса на
+   * границе слов названия, а не только те же буквы подряд: «to t» и «Total
+   * War» слитно начинаются с «tot», но «to» в нём — не слово, а «t» стоит
+   * посреди «total». Это совпадение по словам (ступень 2), и «To the Moon»,
+   * набранное с начала, — выше, хоть у Total War отзывов и больше.
    */
   test('совпадение по словам запроса — выше совпадения слитно', () => {
     const dark = index('Darksiders Genesis', 'Away: The Survival Series', 'DARK SOULS™ III', 'A Way Out')
     expect(names(searchCatalog(dark, 'dark s'))).toEqual(['DARK SOULS™ III', 'Darksiders Genesis'])
     expect(names(searchCatalog(dark, 'a way'))).toEqual(['A Way Out', 'Away: The Survival Series'])
+    const start = index('Total War: WARHAMMER III', "Assassin's Creed Shadows", 'To the Moon', 'A Short Hike')
+    expect(names(searchCatalog(start, 'to t'))).toEqual(['To the Moon', 'Total War: WARHAMMER III'])
+    expect(names(searchCatalog(start, 'a s'))).toEqual(['A Short Hike', "Assassin's Creed Shadows"])
   })
 })
 
@@ -308,8 +375,8 @@ describe('запрос, набранный не в той раскладке', (
    * б, ю, ж, х, ъ стоят на клавишах знаков, э — апострофа, ё — обратной
    * кавычки. Русское слово с ними в QWERTY распадается на обрывки: «баба» —
    * «,f,f», то есть «f f», а «f» — начало слова в сотнях названий. Строка
-   * статуса при этом говорила «Нашлось 119 игр по «,f,f»». Обрывок короче трёх
-   * букв — не слово, набранное не в той раскладке, а след русского слова.
+   * статуса при этом говорила «Нашлось 119 игр по «,f,f»». Одни обрывки короче
+   * трёх букв — не слово, набранное не в той раскладке, а след русского слова.
    */
   test('русское слово, распавшееся в QWERTY на обрывки по 1–2 буквы, ничего не находит', () => {
     const catalog = index(
@@ -321,7 +388,8 @@ describe('запрос, набранный не в той раскладке', (
       'Killing Floor 2',
       'For The King',
     )
-    for (const q of ['баба', 'ёжик', 'эхо', 'бег', 'бабл', 'хаб']) {
+    // «баба яга» — «f f zuf»: слово от трёх букв есть, но ни одно название с него не начинается
+    for (const q of ['баба', 'ёжик', 'эхо', 'бег', 'бабл', 'хаб', 'её', 'баба яга']) {
       const r = searchCatalog(catalog, q)
       expect(r.games, q).toEqual([])
       expect(r.total, q).toBe(0)
@@ -331,9 +399,42 @@ describe('запрос, набранный не в той раскладке', (
   })
 
   /*
+   * Но обрывок рядом с длинным словом — не след русского слова: знак в
+   * настоящих названиях стоит и после короткого — «vs.», «Mr.», «40,000»,
+   * «2:», — а э на клавише апострофа стирается свёрткой, оставляя «I'm»
+   * словом «im». Прежде хватало одного обрывка в любом слове запроса, и все
+   * эти названия, набранные не в той раскладке, отвечали «Ничего не
+   * нашлось». Длинное слово сужает выдачу само: ступени раскладки требуют,
+   * чтобы каждое слово начиналось там, где слово названия.
+   */
+  test('знак после короткого слова названия — не обрывок, если в запросе есть длинное слово', () => {
+    const catalog = index(
+      'Warhammer 40,000: Space Marine 2',
+      'Plants vs. Zombies GOTY Edition',
+      'S.T.A.L.K.E.R. 2: Heart of Chornobyl',
+      "I'm on Observation Duty",
+      'Mr. Prepper',
+    )
+    const found = (q: string) => {
+      const r = searchCatalog(catalog, q)
+      return [names(r)[0], r.layout]
+    }
+    expect(found('Здфтеы мыю Ящьишуы')).toEqual(['Plants vs. Zombies GOTY Edition', 'plants vs. zombies'])
+    expect(found('Цфкрфььук 40б000')).toEqual(['Warhammer 40,000: Space Marine 2', 'warhammer 40,000'])
+    expect(found('Ькю Зкуззук')).toEqual(['Mr. Prepper', 'mr. prepper'])
+    expect(found('Шэь щт Щиыукмфешщт Вген')).toEqual(["I'm on Observation Duty", "i'm on observation duty"])
+    expect(found('Ыефдлук 2Ж Руфке ща Срщктщинд')).toEqual([
+      'S.T.A.L.K.E.R. 2: Heart of Chornobyl',
+      'stalker 2; heart of chornobyl',
+    ])
+    // Пока длинного слова нет, «Ькю» («mr.») — одни обрывки, как «баба»
+    expect(searchCatalog(catalog, 'Ькю').total).toBe(0)
+  })
+
+  /*
    * Короткое — не значит обрывок. «ц» — первая клавиша «цшесрук», «Ф» в
-   * «Ф Цфн Щге» — целое слово «A»: знаков в них нет, и они ищутся, как
-   * раньше. Обрывок — только то, что отрезал знак.
+   * «Ф Цфн Щге» — целое слово «A»: букв на клавишах знаков в них нет, и
+   * они ищутся, как раньше.
    */
   test('короткое слово без знаков — не обрывок: первая клавиша и «A Way Out» ищутся', () => {
     const catalog = index('The Witcher 3: Wild Hunt', 'A Way Out', 'I Am Bread')
