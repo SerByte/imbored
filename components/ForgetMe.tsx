@@ -5,7 +5,13 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
-import { FORGET_CONFIRM, forgetPreviewReply, forgetReply, type ForgetMiss } from '@/lib/forgetreply'
+import {
+  FORGET_CONFIRM,
+  forgetMissLine,
+  forgetPreviewReply,
+  forgetReply,
+  type ForgetMiss,
+} from '@/lib/forgetreply'
 import { markForgot } from '@/lib/forgotnotice'
 import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
@@ -14,8 +20,12 @@ import { forgetSessionHint } from '@/lib/sessionhint'
 /** Что показал сервер перед удалением: что хранится и что случится вместе с ним */
 type Asked = { items: string[]; effects: string[] }
 
-/** Отказ — словами; повтор уместен только там, где он что-то изменит */
-function missText(miss: ForgetMiss, step: 'ask' | 'erase'): ReactNode {
+/**
+ * Отказ — словами; повтор уместен только там, где он что-то изменит. Слова —
+ * в lib/forgetreply (forgetMissLine), под тестом; здесь только needsteam:
+ * ему нужна ссылка на вход
+ */
+function missText(miss: ForgetMiss | 'unknown', step: 'ask' | 'erase', lost: boolean): ReactNode {
   if (miss === 'needsteam') {
     return (
       <>
@@ -31,11 +41,7 @@ function missText(miss: ForgetMiss, step: 'ask' | 'erase'): ReactNode {
       </>
     )
   }
-  if (miss === 'ratelimited') return 'Слишком много попыток с этого адреса — попробуй через час.'
-  if (miss === 'gone') return 'Вход уже не действует — обнови страницу.'
-  return step === 'ask'
-    ? 'Не получилось узнать, что хранится, — нажми ещё раз.'
-    : 'Не получилось удалить — нажми ещё раз.'
+  return forgetMissLine(miss, step, lost)
 }
 
 /**
@@ -66,10 +72,21 @@ function missText(miss: ForgetMiss, step: 'ask' | 'erase'): ReactNode {
  * После удаления — то же, что после выхода (SignOut, out): стереть подсказку
  * о входе, выдачу /play и «время скрыто» на этом устройстве — и на главную
  * со строкой «всё удалено» (components/landing/HeroNotice). Строку зажигает
- * метка в этой вкладке, которую главная забирает один раз
+ * метка в этой вкладке, которую главная забирает на один заход
  * (lib/forgotnotice), а не адрес вроде /?forgot=1: тот жил бы в истории и
- * говорил «удалено» и вернувшемуся через месяц. Кука уже погашена ответом
- * сервера, остальные устройства — отметкой удаления.
+ * говорил «удалено» и вернувшемуся через месяц. Строка забирает потерянный
+ * фокус — иначе скринридер прочёл бы только заголовок вкладки, а не
+ * «удалено». Куки — сессия и «Не предлагать» — уже погашены ответом сервера
+ * тем же помощником, что у выхода (clearDeviceCookies в lib/server),
+ * остальные устройства — отметкой удаления.
+ *
+ * ОТВЕТ, КОТОРЫЙ НЕ ДОШЁЛ, — НЕ «НЕ ПОЛУЧИЛОСЬ». Пачка удаления могла
+ * записаться, а ответ потеряться (телефон, обрыв, тайм-аут платформы), и
+ * определённое «Не получилось удалить» тут врало бы. Такой исход —
+ * «неизвестно, прошло ли» (unknown в lib/forgetreply), и следующий «входа
+ * нет» звучит как «похоже, удаление уже прошло». «Всё удалено» с уходом на
+ * главную — по-прежнему только по { ok: true } от роута: «входа нет» бывает
+ * и после «Выйти на всех устройствах», нажатого в другом месте.
  *
  * Кнопки на время запроса — aria-disabled, а не disabled
  * (lib/disabledfocus.test.ts); повтор гасят обработчики — по busy.
@@ -84,6 +101,12 @@ export function ForgetMe() {
   const cancelRef = useRef<HTMLButtonElement>(null)
   /** Нажатый узел ушёл с подменой: куда отдать фокус после коммита */
   const handoff = useRef<'cancel' | 'open' | null>(null)
+  /**
+   * Ответ на прошлое «Да, удалить всё» не дошёл, и роут с тех пор не
+   * доказал, что вход жив: «входа нет» тогда, скорее всего, — то самое
+   * удаление (forgetMissLine)
+   */
+  const lost = useRef(false)
   const askId = useId()
 
   useEffect(() => {
@@ -105,7 +128,7 @@ export function ForgetMe() {
     }
     setBusy(null)
     if (reply.kind !== 'ok') {
-      setMiss(missText(reply.kind, 'ask'))
+      setMiss(missText(reply.kind, 'ask', lost.current))
       return
     }
     handoff.current = 'cancel'
@@ -126,13 +149,20 @@ export function ForgetMe() {
         }),
       )
     } catch {
-      reply = 'failed'
+      // Ответ не дошёл — запрос мог и дойти: пачка, может быть, уже записана
+      reply = 'unknown'
     }
     if (reply !== 'done') {
-      // Пачка удаления атомарна: отказ роута — не удалено ничего, и вопрос
-      // со списком остаётся, чтобы нажать ещё раз
+      // Пачка удаления атомарна: отказ самого роута — не удалено ничего. Ответ
+      // не роута (unknown) — неизвестно, прошло ли, и так и сказано. Вопрос со
+      // списком остаётся в обоих случаях, чтобы нажать ещё раз. Другой отказ
+      // роута, кроме «входа нет», снимает догадку «похоже, прошло»: вход,
+      // скорее всего, жив. Ошибиться так можно лишь в сторону слов о двух
+      // причинах, а не в сторону «удалено»
+      if (reply === 'unknown') lost.current = true
+      else if (reply !== 'gone') lost.current = false
       setBusy(null)
-      setMiss(missText(reply, 'erase'))
+      setMiss(missText(reply, 'erase', lost.current))
       return
     }
     // Здесь, как после выхода: следов прежнего входа на устройстве быть не

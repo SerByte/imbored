@@ -183,11 +183,13 @@ function freshDb() {
 
 /**
  * Выпустить RSS-ссылку по ключу — как роут после подтверждения: с заменой и
- * от сессии, чьей строки нет (значит, и отзыва нет). Отзыв и отказ без
- * замены проверяет describe «feed_links» своими вызовами issueFeedLink.
+ * по умолчанию от сессии, чьей строки нет (значит, и отзыва нет). Человеку с
+ * отметкой удаления так нельзя — сессия без строки у него забыта
+ * (issueFeedLink), — ему нужен sid живой сессии. Отзыв и отказ без замены
+ * проверяет describe «feed_links» своими вызовами issueFeedLink.
  */
-function giveFeedLink(db: Db, steamid: string, key: string, at: number) {
-  return issueFeedLink(db, { steamid, sid: 'sid-feed', tokenHash: feedTokenHash(key), nowSec: at, replace: true })
+function giveFeedLink(db: Db, steamid: string, key: string, at: number, sid = 'sid-feed') {
+  return issueFeedLink(db, { steamid, sid, tokenHash: feedTokenHash(key), nowSec: at, replace: true })
 }
 
 const LIB: LibraryGame[] = [
@@ -1158,10 +1160,53 @@ describe('db', () => {
   test('портрет кэшируется в users и читается', async () => {
     const db = await freshDb()
     await upsertUser(db, { steamid: 'u1', personaName: 'A' }, NOW)
+    // Текст пишется по снимку, из которого собран, — без снимка его не бывает
+    await saveLibrarySnapshot(db, 'u1', LIB, NOW)
     expect(await getUserPortrait(db, 'u1')).toBeNull()
     await setUserPortrait(db, 'u1', { takenAt: NOW, text: 'ты — легенда бэклога' })
     expect(await getUserPortrait(db, 'u1')).toEqual({ takenAt: NOW, text: 'ты — легенда бэклога' })
     expect(await getUserPortrait(db, 'nobody')).toBeNull()
+  })
+
+  /*
+   * Ради этого запись и стала UPSERT: снимок бывает без строки users, и
+   * UPDATE молча терял текст — Claude звался заново на каждый рендер.
+   */
+  test('портрет пишется и без строки users — снимок есть', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, 'u2', LIB, NOW)
+    await setUserPortrait(db, 'u2', { takenAt: NOW, text: 'портрет' })
+    expect(await getUserPortrait(db, 'u2')).toEqual({ takenAt: NOW, text: 'портрет' })
+  })
+
+  /*
+   * Публичная /portrait/<id> читает снимок, потом секунды ждёт Claude и
+   * только потом пишет текст. «Удалить всё обо мне», прошедшее в эти
+   * секунды, стирало и снимок, и users, а UPSERT заводил users заново — с
+   * текстом про архетипы и главную игру человека, которому сказали «всё
+   * удалено». Строки людей без демо-префикса уборка не трогает, и она жила
+   * бы вечно. Теперь запись — только пока жив снимок, из которого текст
+   * собран: удаление и уборка уносят снимок той же пачкой, что и users.
+   */
+  test('портрет, дописанный после «Удалить всё обо мне», строку users не возвращает', async () => {
+    const db = await freshDb()
+    const ME = '76561198000000001'
+    await upsertUser(db, { steamid: ME, personaName: 'Me' }, NOW)
+    await saveLibrarySnapshot(db, ME, LIB, NOW)
+    await forgetUser(db, ME, { signOutFrom: NOW + 5 })
+
+    await setUserPortrait(db, ME, { takenAt: NOW, text: 'портрет из прошлого' })
+    expect(await getUserPortrait(db, ME)).toBeNull()
+    const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
+    expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
+  })
+
+  test('портрет не по тому снимку не пишется', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: 'u3', personaName: 'C' }, NOW)
+    await saveLibrarySnapshot(db, 'u3', LIB, NOW)
+    await setUserPortrait(db, 'u3', { takenAt: NOW - 60, text: 'по снимку, которого нет' })
+    expect(await getUserPortrait(db, 'u3')).toBeNull()
   })
 
   test('комната: создание, вход, участники', async () => {
@@ -3576,7 +3621,6 @@ describe('forgetUser: удаление по запросу', () => {
     // удаления (forget_marks), и новое удаление обязано унести и её
     await forgetUser(db, ME, { signOutFrom: NOW - 500 * 86_400 })
     await upsertUser(db, { steamid: ME, personaName: 'Me', avatarUrl: 'https://a/me.jpg' }, NOW)
-    await setUserPortrait(db, ME, { takenAt: NOW, text: 'портрет' })
     // День последнего захода (lib/retention) — колонка users, уходит со строкой
     await markActiveDay(db, ME, '2023-11-15')
     await createSession(db, { sid: 'sid-me', steamid: ME, verified: true }, NOW)
@@ -3584,6 +3628,8 @@ describe('forgetUser: удаление по запросу', () => {
     // упоминала, и ровно их проще всего забыть при удалении руками.
     await saveLibrarySnapshot(db, ME, LIB, NOW - 400 * 86_400)
     await saveLibrarySnapshot(db, ME, LIB, NOW)
+    // Портрет — после снимка, из которого он собран: без снимка текст не пишется
+    await setUserPortrait(db, ME, { takenAt: NOW, text: 'портрет' })
     await logFeedback(db, { steamid: ME, appid: 570, action: 'liked' }, NOW)
     await logFeedback(db, { steamid: ME, appid: 620, action: 'banned' }, NOW)
     await saveDailyPick(db, ME, '2023-11-14', { appid: 570 }, NOW)
@@ -3600,8 +3646,10 @@ describe('forgetUser: удаление по запросу', () => {
       { id: 'mepick234567', createdBy: ME, appid: 570, source: 'comeback', kind: 'play', reason: 'Вернись.' },
       NOW,
     )
-    // Секретная ссылка на личную RSS-ленту — отпечаток ключа (lib/feedlink)
-    await giveFeedLink(db, ME, MY_FEED_KEY, NOW)
+    // Секретная ссылка на личную RSS-ленту — отпечаток ключа (lib/feedlink).
+    // От его живой сессии: отметка прошлого удаления стоит, и сессия без
+    // строки была бы для выпуска забытой
+    await giveFeedLink(db, ME, MY_FEED_KEY, NOW, 'sid-me')
 
     // Своя комната: друг в ней тоже голосовал
     await createRoom(db, { id: 'MYROOM', steamid: ME }, NOW)
@@ -3921,6 +3969,40 @@ describe('feed_links: секретная ссылка на ленту', () => {
     const fresh = newFeedToken()
     expect(
       await issueFeedLink(db, { steamid: ME, sid: 'sid-fresh', tokenHash: feedTokenHash(fresh), nowSec: NOW + 30, replace: false }),
+    ).toEqual({ kind: 'issued' })
+  })
+
+  /*
+   * «Удалить всё обо мне» строки сессий не отзывает, а стирает, и проверка
+   * «строка этой сессии не отозвана» после него молчала: строки нет — нет и
+   * отзыва. Телефон, чья сессия минуту жила в кэше соседнего экземпляра,
+   * выпускал вечную ссылку, и SteamID снова лежал в базе у человека, которому
+   * сказали «всё удалено». Забытый — тот, у кого стоит отметка удаления, а
+   * строки этой сессии нет: все строки, выданные до отметки, ушли той же
+   * пачкой, что встала она.
+   */
+  test('сессия, стёртая «Удалить всё обо мне», ссылку не выпускает — ни новую, ни на замену', async () => {
+    const db = await freshDb()
+    await createSession(db, { sid: 'sid-phone', steamid: ME, verified: true }, NOW)
+    await forgetUser(db, ME, { signOutFrom: NOW + 10 })
+
+    for (const replace of [true, false]) {
+      const res = await issueFeedLink(db, {
+        steamid: ME,
+        sid: 'sid-phone',
+        tokenHash: feedTokenHash(newFeedToken()),
+        nowSec: NOW + 20,
+        replace,
+      })
+      expect(res, `replace: ${replace}`).toEqual({ kind: 'revoked' })
+    }
+    const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
+    expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
+
+    // Вернулся и вошёл заново — его новая сессия со строкой выпускает как обычно
+    await createSession(db, { sid: 'sid-again', steamid: ME, verified: true }, NOW + 30)
+    expect(
+      await issueFeedLink(db, { steamid: ME, sid: 'sid-again', tokenHash: feedTokenHash(newFeedToken()), nowSec: NOW + 30, replace: false }),
     ).toEqual({ kind: 'issued' })
   })
 

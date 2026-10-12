@@ -20,6 +20,10 @@ const ME = '76561198000000001'
 const report = (n: number, over: Record<string, number> = {}): ForgetReport =>
   FORGET_TABLES.map((table) => ({ table, rows: over[table] ?? n }))
 
+/** Строка подтверждения про отметку удаления */
+const MARK_LINE =
+  'Останется только отметка — SteamID и время удаления: по ней старые входы на других устройствах больше не пускают. Через год и месяц она сотрётся сама.'
+
 describe('подписи таблиц', () => {
   test('у каждой таблицы удаления есть подпись или осознанное «не показывать»', () => {
     expect(Object.keys(FORGET_LABELS).sort()).toEqual([...FORGET_TABLES].sort())
@@ -60,8 +64,14 @@ describe('forgetSummary', () => {
     expect(items).toEqual([])
   })
 
-  test('последствия — только про то, что у человека есть; выход везде — всегда', () => {
-    expect(forgetSummary(report(0)).effects).toEqual(['Ты выйдешь на всех устройствах.'])
+  /*
+   * Отметка удаления (forget_marks) остаётся после кнопки всегда: SteamID и
+   * время, на год и месяц. /privacy, раздел 06, о ней говорил, а вопрос
+   * «Удалить всё?» — нет, и человек, решавший по списку, узнавал о ней разве
+   * что из запроса данных через год.
+   */
+  test('последствия — только про то, что у человека есть; выход везде и отметка удаления — всегда', () => {
+    expect(forgetSummary(report(0)).effects).toEqual(['Ты выйдешь на всех устройствах.', MARK_LINE])
     const all = forgetSummary(report(1)).effects
     expect(all).toEqual([
       'Портрет и итоги года по твоей ссылке перестанут открываться.',
@@ -71,7 +81,34 @@ describe('forgetSummary', () => {
       'Сравнения пропадут и у тех, с кем ты сравнивался.',
       'Ссылка на RSS перестанет работать.',
       'Ты выйдешь на всех устройствах.',
+      MARK_LINE,
     ])
+  })
+})
+
+/*
+ * Об отметке удаления говорят три места: вопрос «Удалить всё?» (выше),
+ * строка «всё удалено» на главной (components/landing/HeroNotice) и
+ * /privacy, раздел 06. Раньше два из них о ней молчали, и «всё удалено»
+ * спорило с SteamID, который на самом деле оставался. Одни и те же три
+ * факта — что остаётся, зачем и на сколько — обязаны стоять во всех трёх.
+ */
+describe('отметка удаления — одними словами везде, где о ней говорят', () => {
+  const ROOT = path.join(__dirname, '..')
+  const source = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\s+/g, ' ')
+  const places: Array<[string, string]> = [
+    ['подтверждение', MARK_LINE],
+    ['главная', source('components/landing/HeroNotice.tsx')],
+    ['/privacy', source('app/privacy/page.tsx')],
+  ]
+
+  test.each(places)('%s: что остаётся, зачем и на сколько', (_, text) => {
+    // что: SteamID и время, больше ничего
+    expect(text).toContain('SteamID и время удаления')
+    // зачем: старый вход по ней больше не пускает
+    expect(text).toMatch(/пускают|впускать/)
+    // на сколько: сама, через год и месяц
+    expect(text).toMatch(/через год и месяц/i)
   })
 })
 

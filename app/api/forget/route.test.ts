@@ -12,6 +12,7 @@ import {
 } from '@/lib/db'
 import { FORGET_IP_LIMIT } from '@/lib/forget'
 import { FORGET_CONFIRM } from '@/lib/forgetreply'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { portraitTag } from '@/lib/portraitmodel'
 import { SESSION_COOKIE, currentSession, sessionSecret } from '@/lib/server'
 import { forgetSessionCache, mintSession } from '@/lib/sessions'
@@ -69,6 +70,16 @@ const erase = (body: unknown = { confirm: FORGET_CONFIRM }) => POST(post('/api/f
 /** Кука сессии в ответе погашена */
 const cleared = (res: Response) =>
   res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=;`) && /Max-Age=0/i.test(c))
+
+/**
+ * Кука «Не предлагать» погашена — по тому же пути, с которым её ставит квиз.
+ * Тот же сторож, что у выхода (app/api/auth/logout/route.test.ts): гасят её
+ * оба одним помощником (clearDeviceCookies в lib/server)
+ */
+const mutesCleared = (res: Response) =>
+  res.headers
+    .getSetCookie()
+    .some((c) => c.startsWith(`${MUTE_COOKIE}=;`) && /Max-Age=0/i.test(c) && /Path=\/(;|$)/i.test(c))
 
 /** Сколько всего строк о человеке — тем же счётом, что у удаления */
 async function stored(steamid: string): Promise<number> {
@@ -151,6 +162,7 @@ describe('/api/forget: удаление', () => {
       expect(res.status, JSON.stringify(body)).toBe(400)
       expect(await res.json()).toEqual({ error: 'badinput' })
       expect(cleared(res)).toBe(false)
+      expect(mutesCleared(res)).toBe(false)
     }
     expect(await stored(ME)).toBe(before)
   })
@@ -169,6 +181,29 @@ describe('/api/forget: удаление', () => {
     const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
     expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
     expect(FORGET_TABLES).toContain('forget_marks')
+  })
+
+  /*
+   * «Не предлагать» (lib/mutetags.ts) — про человека, а не про браузер, и
+   * выход гасит её ровно поэтому: следующий вошедший на этом браузере молча
+   * получал бы выдачу без того, что запретил не он. Удаление — тот же выход,
+   * только везде, а раньше оно гасило одну куку сессии: на семейном
+   * компьютере «хорроры, VR» удалённого ещё год резали подбор следующему.
+   * Отказ не гасит ничего — удалено ничего не было.
+   */
+  test('гасит и «Не предлагать» — как выход; отказ её не трогает', async () => {
+    await signIn(db, ME, { verified: true })
+    await seed(ME)
+    setTestCookie(MUTE_COOKIE, 'horror.vr')
+
+    const refused = await erase({ confirm: 'yes' })
+    expect(refused.status).toBe(400)
+    expect(mutesCleared(refused)).toBe(false)
+
+    const res = await erase()
+    expect(res.status).toBe(200)
+    expect(mutesCleared(res)).toBe(true)
+    expect(cleared(res)).toBe(true)
   })
 
   /*
@@ -253,6 +288,7 @@ describe('/api/forget: удаление', () => {
       expect(res.status).toBe(503)
       expect(await res.json()).toEqual({ error: 'failed' })
       expect(cleared(res)).toBe(false)
+      expect(mutesCleared(res)).toBe(false)
     }
     expect(await stored(ME)).toBe(before)
   })
@@ -331,6 +367,7 @@ describe('/api/forget: потолок попыток', () => {
     expect(limited.status).toBe(429)
     expect(await limited.json()).toEqual({ error: 'ratelimited' })
     expect(cleared(limited)).toBe(false)
+    expect(mutesCleared(limited)).toBe(false)
     expect(await stored(ME)).toBeGreaterThan(0)
   })
 })

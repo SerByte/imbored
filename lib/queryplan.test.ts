@@ -534,11 +534,11 @@ describe('планы запросов', () => {
   })
 
   /*
-   * Выпуск ссылки сверяет отзыв своей сессии и читает прежнюю ссылку — оба
-   * по первичным ключам. Скан sessions здесь стоил бы каждому нажатию
-   * «Получить ссылку» прохода по всем входам всех людей.
+   * Выпуск ссылки сверяет отзыв своей сессии, отметку удаления и читает
+   * прежнюю ссылку — всё по первичным ключам. Скан sessions здесь стоил бы
+   * каждому нажатию «Получить ссылку» прохода по всем входам всех людей.
    */
-  test('выпуск ссылки на ленту: сессия и прежняя ссылка — по первичным ключам', async () => {
+  test('выпуск ссылки на ленту: сессия, отметка удаления и прежняя ссылка — по первичным ключам', async () => {
     const db = await createDb(':memory:')
     const issued = await statementsOf(db, (spy) =>
       issueFeedLink(spy, { steamid: '76561198000000001', sid: 'sid', tokenHash: 'a'.repeat(64), nowSec: NOW, replace: false }),
@@ -547,6 +547,7 @@ describe('планы запросов', () => {
     const where = (await planOf(db, issued[0]!)).join(' | ')
     expect(bareScans(await planOf(db, issued[0]!)), where).toEqual([])
     expect(where).toContain('SEARCH sessions USING PRIMARY KEY (sid=?)')
+    expect(where).toContain('SEARCH forget_marks USING PRIMARY KEY (steamid=?)')
     expect(where).toContain('SEARCH feed_links USING PRIMARY KEY (steamid=?)')
   })
 
