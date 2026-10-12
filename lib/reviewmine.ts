@@ -84,12 +84,21 @@ export type MinedReviews = {
   timeToFunHours: number | null
   /** сколько отзывов назвали такое число */
   timeToFunMentions: number
+  /**
+   * Наигранное на момент отзыва. Медианы и доля — только по отзывам, где
+   * Steam назвал наигранное (см. «ноль минут» в mineReviews).
+   */
   playtime: {
     /** все отзывы ответа, на любом языке */
     total: number
+    /**
+     * позитивных отзывов с названным наигранным — знаменатель medianPosMin;
+     * по нему lib/semantics решает, хватит ли их на «Наиграли» карточки
+     */
+    posTimed: number
     medianPosMin: number | null
     medianNegMin: number | null
-    /** доля негативов, написанных раньше двух часов игры; null — негативов нет */
+    /** доля негативов, написанных раньше двух часов игры; null — негативов с названным временем нет */
     negShortShare: number | null
   }
 }
@@ -656,8 +665,18 @@ export function mineReviews(reviews: readonly RawReview[]): MinedReviews {
     }),
   ) as Record<Lane, LaneStat>
 
-  const pos = reviews.filter((r) => r.votedUp).map((r) => r.playtimeAtReview)
-  const neg = reviews.filter((r) => !r.votedUp).map((r) => r.playtimeAtReview)
+  /*
+   * Ноль минут — это «Steam не назвал», а не «не играл»: playtime_at_review
+   * есть не в каждом отзыве, и parseReviewsRaw сводит пустое поле к нулю.
+   * Выборка крона (filter=all) отсортирована по полезности, а не по дате, и
+   * старые отзывы, у которых поля бывает нет, в ней обычное дело. Нулями
+   * медиана хваливших съезжала бы вниз — а это уже строка «Наиграли» на
+   * карточке игры, — и каждый такой негатив числился бы бросившим в первый
+   * час.
+   */
+  const timed = reviews.filter((r) => r.playtimeAtReview > 0)
+  const pos = timed.filter((r) => r.votedUp).map((r) => r.playtimeAtReview)
+  const neg = timed.filter((r) => !r.votedUp).map((r) => r.playtimeAtReview)
 
   return {
     n,
@@ -668,6 +687,7 @@ export function mineReviews(reviews: readonly RawReview[]): MinedReviews {
     timeToFunMentions: ttf.length,
     playtime: {
       total: reviews.length,
+      posTimed: pos.length,
       medianPosMin: median(pos),
       medianNegMin: median(neg),
       negShortShare: neg.length ? neg.filter((m) => m < SHORT_NEG_MIN).length / neg.length : null,

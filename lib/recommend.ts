@@ -1320,7 +1320,7 @@ const PVP_CATEGORIES = new Set([36, 49])
 /** Фолбэк, когда categories не загружены, — тот же приём, что в isMultiplayerMeta */
 const PVP_TAGS = ['PvP', 'Online PvP']
 
-export function isReplayable(meta: GameMeta): boolean {
+export function isReplayable(meta: Pick<GameMeta, 'tags' | 'categories'>): boolean {
   if (REPLAYABLE_TAGS.some((t) => t in meta.tags)) return true
   if (meta.categories.length) return meta.categories.some((c) => PVP_CATEGORIES.has(c))
   return PVP_TAGS.some((t) => t in meta.tags)

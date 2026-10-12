@@ -812,6 +812,21 @@ describe('«Чем выделяется» и длина сессии', () => {
     ])
   })
 
+  test('«Наиграли» приезжает на карточку тем же чтением строки, что и сессия', async () => {
+    const db = await withDb()
+    await upsertGameMeta(db, meta(72, { tags: { 'Story Rich': 900, Adventure: 500 }, categories: SOLO }), NOW)
+    await upsertSemantics(db, [
+      {
+        appid: 72,
+        semantics: { ...semantics({ minutes: 40 }), played: { posMedianMin: 7 * 60 + 20, posN: 55 } },
+        computedAt: NOW,
+      },
+    ])
+
+    const page = await loadGamePage(72)
+    expect(gameTraits(page!.meta, page!.hook)).toContainEqual({ label: 'Наиграли', value: '~8 ч — те, кто её хвалит' })
+  })
+
   test('без карты тегов «Чем выделяется» молчит, а не называет самые частые', async () => {
     const db = await withDb()
     await upsertGameMeta(db, meta(71, { tags: { Automation: 800 } }), NOW)
@@ -880,6 +895,28 @@ describe('вход и характер', () => {
       'Вход',
       'Характер',
     ])
+  })
+
+  test('«Наиграли» — после входа, до характера и русского: время к времени', () => {
+    const all = sem({
+      axes: { challenge: 20, complexity: 50, pace: 50 },
+      timeToFun: { bucket: 'fast', hours: 0.4 },
+      played: { posMedianMin: 12 * 60, posN: 70 },
+    })
+    const traits = gameTraits({ categories: [2], tags: { Puzzle: 900 }, semantics: all, ruLang: 3 }, ['Puzzle'])
+    expect(traits.map((t) => t.label)).toEqual(['Чем выделяется', 'Сессия', 'Вход', 'Наиграли', 'Характер', 'Русский'])
+    expect(traits.find((t) => t.label === 'Наиграли')?.value).toBe('~12 ч — те, кто её хвалит')
+  })
+
+  test('у игры без финала «Наиграли» нет — ни по тегам, ни по соревновательным категориям', () => {
+    const long = sem({ played: { posMedianMin: 300 * 60, posN: 90 } })
+    const labels = (m: Parameters<typeof gameTraits>[0]) => gameTraits(m, null).map((t) => t.label)
+    // песочница: медиана хваливших — сотни часов, и это не длина игры
+    expect(labels({ categories: [2], tags: { Sandbox: 900 }, semantics: long })).not.toContain('Наиграли')
+    // Online PvP без одиночного режима — как у Dota 2
+    expect(labels({ categories: [1, 49], tags: { Action: 900 }, semantics: long })).not.toContain('Наиграли')
+    // та же семантика у сюжетной игры — строка есть
+    expect(labels({ categories: [2], tags: { 'Story Rich': 900 }, semantics: long })).toContain('Наиграли')
   })
 })
 
