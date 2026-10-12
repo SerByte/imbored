@@ -114,7 +114,7 @@ describe('повисший запрос доски считается отказ
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
-  test('потолок короче периода опроса: повисший запрос не переживает следующий тик', () => {
+  test('потолок не длиннее периода опроса: повисший запрос не переживает следующий тик', () => {
     expect(BOARD_TIMEOUT_MS).toBeGreaterThan(0)
     expect(BOARD_TIMEOUT_MS).toBeLessThanOrEqual(BOARD_POLL_MS)
   })

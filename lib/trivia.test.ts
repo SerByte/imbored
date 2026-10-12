@@ -184,7 +184,8 @@ describe('buildTrivia', () => {
 
   /**
    * Пати, где у двоих одна общая игра и наиграно ровно столько минут.
-   * Минутами, а не часами lib(): ошибка жила в округлении до часа.
+   * Минутами, а не округлёнными часами (бывший hours()): ошибка жила
+   * в округлении до часа.
    */
   function duo(a: number, b: number): TriviaParty[] {
     const one = (min: number): LibraryGame[] => [
@@ -210,6 +211,10 @@ describe('buildTrivia', () => {
     expect(hoursQs(duo(25, 10))).toEqual([])
     expect(hoursQs(duo(10, 25))).toEqual([])
     expect(hoursQs(duo(20, 20))).toEqual([])
+    // От получаса у лидера округление давало «1 ч» против «0 ч» и порог
+    // проходился: держит такую пару уже не он, а HOURS_MIN
+    expect(hoursQs(duo(45, 20))).toEqual([])
+    expect(hoursQs(duo(20, 59))).toEqual([])
   })
 
   test('hours: разрыв в 30% меряется минутами, а не округлёнными часами', () => {
@@ -228,12 +233,15 @@ describe('buildTrivia', () => {
     }
   })
 
-  test('hours: первый по порядку пати с меньшим временем ответом не становится', () => {
-    for (const q of hoursQs(duo(90, 600))) {
+  test('hours: от десяти часов разгадка — целыми часами, ниже — с минутами', () => {
+    // 10 ч 15 мин у лидера — «10 ч»: на таком разрыве минуты лишние, а
+    // полтора часа у второго — «1 ч 30 мин», не округлённые «2 ч»
+    const qs = hoursQs(duo(90, 615))
+    expect(qs.length).toBeGreaterThan(0)
+    for (const q of qs) {
       expect(q.options[q.answer].label).toBe('Саша')
       expect(q.reveal).toBe('Саша — 10 ч, Дима — 1 ч 30 мин')
     }
-    expect(hoursQs(duo(90, 600)).length).toBeGreaterThan(0)
   })
 
   // Время скрыто в Steam (lib/playtime.ts): нули у всех игр — не топ и не
