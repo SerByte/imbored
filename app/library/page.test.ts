@@ -102,8 +102,9 @@ async function seed(steamid: string): Promise<void> {
   await logFeedback(db, { steamid, appid: LIKED, action: 'liked' }, now - 200)
   await logFeedback(db, { steamid, appid: SKIPPED, action: 'skipped' }, now - 100)
   await recordOutcome(db, { steamid, appid: EVENING, source: null, launched: true }, now - 60)
-  // Список желаемого — что человек хочет купить: тоже его личное
-  await saveWishlist(db, steamid, [WISHED], now - 30)
+  // Список желаемого — что человек хочет купить: тоже его личное. Отметки
+  // удаления нет, и строка сессии для записи не нужна (saveWishlist)
+  await saveWishlist(db, { steamid, sid: 'sid-seed' }, [WISHED], now - 30)
 }
 
 async function render(kind: SessionKind): Promise<ReactElement> {
@@ -183,6 +184,10 @@ describe('/library: личное владельца — только тому, �
     const shelves = propsOf(tree, WishlistShelf)
     expect(shelves).toHaveLength(1)
     expect(shelves[0].steamid).toBe(STEAMID_OF.openid)
+    // sid той самой сессии: по нему поздняя запись списка сверяет, не забыло
+    // ли её «Удалить всё обо мне» (saveWishlist)
+    const sids = await db.execute({ sql: 'SELECT sid FROM sessions WHERE steamid = ?', args: [STEAMID_OF.openid] })
+    expect(sids.rows.map((r) => r.sid)).toEqual([shelves[0].sid])
     expect((shelves[0].row as { appids: number[] }).appids).toEqual([WISHED])
     // своё не предлагается купить: полка знает библиотеку
     expect((shelves[0].owned as ReadonlySet<number>).has(PLAYED)).toBe(true)

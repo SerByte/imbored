@@ -276,7 +276,9 @@ CREATE TABLE IF NOT EXISTS daily_picks (
  *
  * Читает и пишет только сессия, доказавшая владение профилем (isWriter), не
  * демо. Модели список не уходит и в скоринге не участвует. По запросу —
- * forgetUser; /privacy, разделы 01 и 06.
+ * forgetUser; /privacy, разделы 01 и 06. Уборка строку не трогает, поэтому
+ * пишет её только незабытая сессия и только рядом с живым снимком
+ * библиотеки — почему, у saveWishlist.
  */
 CREATE TABLE IF NOT EXISTS wishlists (
   steamid TEXT PRIMARY KEY,
@@ -1446,7 +1448,8 @@ export async function revokeSession(db: Db, sid: string, nowSec: number): Promis
  * выдаче, — и это по-прежнему не повод отказать: без отметки условие ложно.
  *
  * Один фрагмент на всех, кто пишет от имени сессии с тёплого кэша:
- * revokeAllSessions и issueFeedLink. Аргументы — steamid, sid.
+ * revokeAllSessions, issueFeedLink и saveWishlist (список желаемого, который
+ * /library дочитывает уже после страницы). Аргументы — steamid, sid.
  */
 const FORGOTTEN_SESSION = `(EXISTS (SELECT 1 FROM forget_marks WHERE steamid = ?)
                             AND NOT EXISTS (SELECT 1 FROM sessions WHERE sid = ?))`
@@ -2867,21 +2870,59 @@ export type WishlistRow = { takenAt: number; closed: boolean; appids: number[] }
 /**
  * Записать список целиком — вместо прежнего, истории нет (см. схему). Закрытый
  * список тоже пишется: ответ «закрыт» избавляет от похода в Steam на каждый
- * заход до конца срока строки.
+ * заход до конца срока строки. Возвращает, легла ли запись: условия ниже
+ * отказывают молча, без исключения.
+ *
+ * НО ТОЛЬКО ОТ НЕЗАБЫТОЙ СЕССИИ И ПРИ ЖИВОМ СНИМКЕ. Протухший список полка
+ * /library перечитывает в after() (refreshWishlistWithin): страница ждёт
+ * Steam пару секунд, а ответ доезжает и пишется ещё до десяти секунд спустя.
+ * «Удалить всё обо мне» (forgetUser) — кнопка на той же странице — в эти
+ * секунды стирало строку, а UPSERT заводил её заново: SteamID и чего человек
+ * хочет купить у того, кому сказали «всё удалено». wishlists не убирает ни
+ * одна уборка — только forgetUser, — и такая строка жила бы вечно.
+ *
+ * Одного снимка для этого мало. Удаление уносит его той же пачкой, что и
+ * список, но новый снимок за те же секунды заводит и вход через Steam, и
+ * подключение по ссылке (/api/connect) — а его делает любой, кто знает
+ * публичный профиль. Запись, прочитанная до удаления, легла бы тогда рядом
+ * с чужим свежим снимком, от имени сессии, которой больше нет. Поэтому
+ * главное условие — сессия, от чьего имени читали, не забыта
+ * (FORGOTTEN_SESSION, как у issueFeedLink и revokeAllSessions): пачка
+ * удаления стирает строки всех сессий человека и ставит отметку, а вход
+ * после неё пишет свою строку. Сверенное в той же записи, оно не зависит ни
+ * от очерёдности, ни от часов: запись либо успевает до удаления и уходит
+ * вместе со всем, либо идёт после и находит свою сессию забытой — сколько
+ * бы снимков ни завели тем временем. Оно же держит и соседний экземпляр,
+ * который ещё минуту пускает забытую сессию по кэшу (REVOKE_CACHE_SEC):
+ * /library, открытая с неё уже после удаления, списка не запишет.
+ *
+ * Снимок — второе условие, на случай удаления без отметки (forgetUser без
+ * signOutFrom): без неё забытых сессий нет, и позднюю запись держит только
+ * он. Живому человеку оба ничего не стоят: без снимка /library отправляет
+ * подключаться и полку не зовёт, а у пишущей сессии не из демо строка есть
+ * всегда — признак verified читается из неё.
+ *
+ * WHERE у SELECT нужен и ради разбора: без него ON CONFLICT после SELECT
+ * SQLite читает как ON у соединения.
  */
 export async function saveWishlist(
   db: Db,
-  steamid: string,
+  session: { steamid: string; sid: string },
   list: readonly number[] | 'closed',
   nowSec: number,
-): Promise<void> {
+): Promise<boolean> {
+  const { steamid, sid } = session
   const appids = list === 'closed' ? [] : list.slice(0, WISHLIST_KEPT)
-  await db.execute({
-    sql: `INSERT INTO wishlists (steamid, taken_at, closed, appids_json) VALUES (?, ?, ?, ?)
+  const res = await db.execute({
+    sql: `INSERT INTO wishlists (steamid, taken_at, closed, appids_json)
+          SELECT ?, ?, ?, ?
+          WHERE NOT ${FORGOTTEN_SESSION}
+            AND EXISTS (SELECT 1 FROM library_snapshots WHERE steamid = ?)
           ON CONFLICT(steamid) DO UPDATE SET
             taken_at = excluded.taken_at, closed = excluded.closed, appids_json = excluded.appids_json`,
-    args: [steamid, nowSec, list === 'closed' ? 1 : 0, JSON.stringify(appids)],
+    args: [steamid, nowSec, list === 'closed' ? 1 : 0, JSON.stringify(appids), steamid, sid, steamid],
   })
+  return Number(res.rowsAffected) > 0
 }
 
 /** Список желаемого одним чтением по ключу; битый блоб — пустой список */

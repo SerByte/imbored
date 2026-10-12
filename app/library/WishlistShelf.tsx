@@ -18,6 +18,12 @@ import {
 
 type ShelfProps = {
   steamid: string
+  /**
+   * Сессия, открывшая страницу. Перечитанный список пишется в after(), уже
+   * после ответа, и запись сверяет по этому sid, не забыло ли её тем временем
+   * «Удалить всё обо мне» (saveWishlist в lib/db)
+   */
+  sid: string
   row: WishlistRow | null
   owned: ReadonlySet<number>
   now: number
@@ -108,10 +114,11 @@ export async function WishlistShelf(props: ShelfProps) {
 }
 
 /** Данные полки: список, мета и цены; пусто — полки нет */
-async function shelfDeals({ steamid, row, owned, now }: ShelfProps): Promise<WishlistDeal[]> {
+async function shelfDeals({ steamid, sid, row, owned, now }: ShelfProps): Promise<WishlistDeal[]> {
   const db = await getDb()
-  // Протух или не читали — перечитать; не успел Steam — обойдёмся прежним
-  const list = wishlistStale(row, now) ? ((await refreshWishlistWithin(db, steamid, now)) ?? row) : row
+  // Протух или не читали — перечитать; не успел Steam или запись не легла
+  // (saveWishlist) — обойдёмся прежним
+  const list = wishlistStale(row, now) ? ((await refreshWishlistWithin(db, { steamid, sid }, now)) ?? row) : row
   if (!list || list.closed || !list.appids.length) return []
 
   // Только игры, что уже есть в каталоге (games): мету остальным не догреваем,
