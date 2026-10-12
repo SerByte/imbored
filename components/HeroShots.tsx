@@ -15,7 +15,7 @@ import { HERO_SLIDES, pickCoverShotSize, shotUrl, type ShotSize } from '@/lib/sh
  * next/dynamic добавлял им ~4 КБ. Не пришёл чанк — герой остаётся артом, как
  * и при любом другом сбое морфа (докблок ниже).
  */
-const MorphSlider = lazyIsland(() => import('@/components/morph/MorphSlider').then((m) => m.default))
+const MorphSlider = lazyIsland(() => import('@/components/morph/MorphSlider').then((m) => m.default), 'hero-slider')
 
 /** Что удалось выяснить про среду; до первого замера — null */
 type Env = { gl: boolean; size: ShotSize }

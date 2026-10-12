@@ -28,6 +28,10 @@ export const CLIENT_ERROR_PATH = '/api/clienterr'
  * error — window.onerror (исключение вне React: обработчик клика, таймер);
  * rejection — необработанный промис; boundary — исключение, пойманное
  * границей ошибок: до window оно уже не доходит, отчёт шлёт сама граница.
+ * Той же границей служит и островок (components/lazyIsland): отказ своего
+ * чанка он держит при себе — место пустое, страница цела, — и отчёт с тегом
+ * island шлёт сам. До островков тот же отказ ловила app/error.tsx, и вид
+ * в отчёте и в счёте за час остался прежним.
  */
 export type ClientErrorKind = 'error' | 'rejection' | 'boundary'
 
@@ -45,6 +49,12 @@ export type ClientErrorReport = {
   col?: number
   /** Тот же код, что человек видит на экране ошибки */
   code?: string
+  /**
+   * Островок (components/lazyIsland), чей чанк не пришёл. Текст отказа
+   * называет чанк по хешу, а хеш меняется с каждым деплоем; тег — имя, по
+   * которому отказ ищется в логе: mark-finished, hero-slider, snow, tonight.
+   */
+  island?: string
 }
 
 const KINDS: readonly ClientErrorKind[] = ['error', 'rejection', 'boundary']
@@ -55,6 +65,8 @@ const STACK_MAX = 1200
 const SOURCE_MAX = 200
 const PAGE_MAX = 200
 const CODE_RE = /^[a-z0-9]{1,16}$/i
+/** Тег островка: латиница в нижнем регистре, цифры, дефис — и ничего, что пришлось бы маскировать */
+const ISLAND_RE = /^[a-z][a-z0-9-]{0,31}$/
 
 /** Больше тело не бывает: отчёт — пара сотен байт, с запасом на стек */
 export const CLIENT_ERROR_MAX_BODY = 8 * 1024
@@ -137,6 +149,8 @@ export type ClientErrorInput = {
   /** location.href — страница маскируется здесь же */
   href: string
   code?: string
+  /** Тег островка, чей чанк не пришёл (components/lazyIsland) */
+  island?: string
 }
 
 /**
@@ -163,6 +177,7 @@ export function buildClientReport(input: ClientErrorInput): ClientErrorReport | 
   const line = posInt(input.lineno)
   const col = posInt(input.colno)
   const code = input.code && CODE_RE.test(input.code) ? input.code : undefined
+  const island = input.island && ISLAND_RE.test(input.island) ? input.island : undefined
   return {
     kind: input.kind,
     message: scrubText(rawMessage).slice(0, MESSAGE_MAX),
@@ -173,12 +188,17 @@ export function buildClientReport(input: ClientErrorInput): ClientErrorReport | 
     ...(line !== undefined ? { line } : {}),
     ...(col !== undefined ? { col } : {}),
     ...(code ? { code } : {}),
+    ...(island ? { island } : {}),
   }
 }
 
-/** По этому ключу одинаковые отчёты схлопываются — и в браузере, и в логе */
+/**
+ * По этому ключу одинаковые отчёты схлопываются — и в браузере, и в логе.
+ * Островок — тоже место: «Load failed» у слайдера героя и у снега на одной
+ * /daily — две поломки, а не одна.
+ */
 export function reportKey(r: ClientErrorReport): string {
-  return `${r.kind}|${r.name ?? ''}|${r.message}|${r.source ?? ''}|${r.line ?? ''}`
+  return `${r.kind}|${r.name ?? ''}|${r.message}|${r.source ?? ''}|${r.line ?? ''}|${r.island ?? ''}`
 }
 
 /**
@@ -201,6 +221,7 @@ export function parseClientReport(body: unknown): ClientErrorReport | null {
   const line = posInt(b.line)
   const col = posInt(b.col)
   const code = typeof b.code === 'string' && CODE_RE.test(b.code) ? b.code : undefined
+  const island = typeof b.island === 'string' && ISLAND_RE.test(b.island) ? b.island : undefined
   return {
     kind,
     message,
@@ -211,6 +232,7 @@ export function parseClientReport(body: unknown): ClientErrorReport | null {
     ...(line !== undefined ? { line } : {}),
     ...(col !== undefined ? { col } : {}),
     ...(code ? { code } : {}),
+    ...(island ? { island } : {}),
   }
 }
 

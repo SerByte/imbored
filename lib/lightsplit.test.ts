@@ -76,7 +76,7 @@ describe('островок — как next/dynamic с ssr: false', () => {
       return createElement('b', null, 'островок')
     }
     const load = vi.fn(async () => Bold)
-    const Island = lazyIsland(load)
+    const Island = lazyIsland(load, 'test')
     expect(renderToStaticMarkup(createElement('p', null, createElement(Island)))).toBe('<p></p>')
     expect(load).not.toHaveBeenCalled()
   })

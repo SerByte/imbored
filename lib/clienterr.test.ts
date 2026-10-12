@@ -113,6 +113,21 @@ describe('buildClientReport', () => {
     expect(r?.message.length).toBeLessThanOrEqual(300)
     expect(r?.code).toBeUndefined()
   })
+
+  /*
+   * Отказ чанка островка (components/lazyIsland): текст называет чанк по
+   * хешу, а хеш меняется с каждым деплоем и ни о чём не говорит. Тег — имя
+   * островка: по нему отказ «Уже прошёл» после деплоя ищется в логе как
+   * mark-finished, а не как 0f3a9c.js.
+   */
+  test('отказ островка несёт его тег; не тег — мимо', () => {
+    const err = new Error('Failed to load chunk /_next/static/chunks/0f3a9c.js from module 41234')
+    const r = buildClientReport({ kind: 'boundary', error: err, island: 'mark-finished', href: 'https://imbored.cc/library' })
+    expect(r).toMatchObject({ kind: 'boundary', island: 'mark-finished', page: '/library' })
+    for (const island of ['', 'Mark Finished', '<script>', '-snow', 'x'.repeat(40)]) {
+      expect(buildClientReport({ kind: 'boundary', error: err, island, href: HREF }), island).not.toHaveProperty('island')
+    }
+  })
 })
 
 describe('clientErrorCode', () => {
@@ -147,6 +162,16 @@ describe('parseClientReport', () => {
   test('честный отчёт проходит как есть', () => {
     const r = buildClientReport({ kind: 'boundary', error: boom(), href: HREF, code: 'c0abc123' })
     expect(parseClientReport(JSON.parse(JSON.stringify(r)))).toEqual(r)
+  })
+
+  test('тег островка доходит до лога, а не тег — нет', () => {
+    const r = buildClientReport({ kind: 'boundary', error: boom(), href: HREF, island: 'hero-slider' })
+    expect(parseClientReport(JSON.parse(JSON.stringify(r)))).toEqual(r)
+    expect(parseClientReport({ kind: 'boundary', message: 'x', page: '/play', island: '<img src=x>' })).toEqual({
+      kind: 'boundary',
+      message: 'x',
+      page: '/play',
+    })
   })
 
   /*
@@ -231,6 +256,14 @@ describe('отсечка повторов', () => {
     const other = buildClientReport({ kind: 'error', error: boom(), href: 'https://imbored.cc/room/BBBBBB' })!
     expect(reportKey(r)).toBe(reportKey(other))
   })
+
+  // Два островка на одной странице (/daily: слайдер героя и снег) с одним и
+  // тем же текстом отказа — две поломки, а не одна
+  test('островок — тоже место', () => {
+    const at = (island: string) =>
+      buildClientReport({ kind: 'boundary', error: new TypeError('Load failed'), island, href: 'https://imbored.cc/daily' })!
+    expect(reportKey(at('hero-slider'))).not.toBe(reportKey(at('snow')))
+  })
 })
 
 /**
@@ -255,6 +288,30 @@ describe('проводка', () => {
       // код больше не прячется за error.digest &&
       expect(src, file).not.toMatch(/error\.digest\s*&&/)
     }
+  })
+
+  /*
+   * Тег — второй аргумент lazyIsland, и без него не соберётся. Но тег с
+   * заглавной или пробелом отчёт молча отбросит, а один тег у двух островков
+   * склеит их отказы в логе — поэтому сторож читает все вызовы.
+   */
+  test('у каждого островка свой тег, и отчёт его пропускает', () => {
+    const tags: string[] = []
+    for (const dir of ['app', 'components']) {
+      for (const file of fs.readdirSync(path.join(ROOT, dir), { recursive: true, encoding: 'utf8' })) {
+        if (!file.endsWith('.tsx') || path.basename(file) === 'lazyIsland.tsx') continue
+        const src = read(dir, file).replace(/\/\*[\s\S]*?\*\//g, '')
+        for (const [, args] of src.matchAll(/\blazyIsland(?:<[^>]*>)?\(([\s\S]*?)\)\r?\n/g)) {
+          const tag = /'([^']*)',?\s*$/.exec(args)?.[1] ?? `${file}: тега нет`
+          const report = buildClientReport({ kind: 'boundary', error: new Error('x'), island: tag, href: HREF })
+          expect(report?.island, `${dir}/${file}`).toBe(tag)
+          tags.push(tag)
+        }
+      }
+    }
+    // без этого сторож мог бы быть зелёным вхолостую
+    expect(tags.length).toBeGreaterThanOrEqual(4)
+    expect(new Set(tags).size, tags.join(', ')).toBe(tags.length)
   })
 
   test('приёмник живёт по тому адресу, куда шлёт браузер', () => {
