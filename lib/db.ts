@@ -5479,6 +5479,27 @@ export async function unlikeGame(db: Db, steamid: string, appid: number): Promis
 /* ---------- план на вечер ---------- */
 
 /**
+ * Строка feedback f — живой план человека ?1 не старше ?2 (секунды). Что
+ * значит «живой» — в докблоке latestEveningPlan ниже; условие одно на неё и
+ * livePlanAppids: двумя копиями они разъехались бы, и «Твои вечера» видели бы
+ * живым план, который живая строка уже считает закрытым, или наоборот. Что
+ * оно совпадает с closesPlan, проверяет lib/db.test.ts — каждой парой против
+ * обеих.
+ */
+const LIVE_PLAN = `f.steamid = ?1 AND f.created_at >= ?2 AND f.action = 'opened'
+             AND json_extract(f.ctx_json, '$.intent') IN (${PLAN_INTENTS_SQL})
+             AND NOT EXISTS (
+               SELECT 1 FROM feedback l
+                WHERE l.steamid = ?1 AND l.created_at >= f.created_at
+                  AND l.appid = f.appid AND l.id > f.id
+                  AND (
+                    (l.action = 'launched' AND json_extract(l.ctx_json, '$.intent') IS NOT 'store')
+                    OR l.action = 'banned'
+                    OR (l.action = 'skipped' AND l.reason IS NOT 'spin')
+                  )
+             )`
+
+/**
  * «План на вечер» (lib/eveningplan.ts): самая свежая игра, которую человек
  * поставил на загрузку или отложил с телефона, — если план ещё жив.
  *
@@ -5520,24 +5541,34 @@ export async function latestEveningPlan(
   const res = await db.execute({
     sql: `SELECT f.appid AS appid, g.name AS name, json_extract(f.ctx_json, '$.intent') AS intent
             FROM feedback f JOIN games g ON g.appid = f.appid
-           WHERE f.steamid = ?1 AND f.created_at >= ?2 AND f.action = 'opened'
+           WHERE ${LIVE_PLAN}
              AND (?3 IS NULL OR f.appid = ?3)
-             AND json_extract(f.ctx_json, '$.intent') IN (${PLAN_INTENTS_SQL})
-             AND NOT EXISTS (
-               SELECT 1 FROM feedback l
-                WHERE l.steamid = ?1 AND l.created_at >= f.created_at
-                  AND l.appid = f.appid AND l.id > f.id
-                  AND (
-                    (l.action = 'launched' AND json_extract(l.ctx_json, '$.intent') IS NOT 'store')
-                    OR l.action = 'banned'
-                    OR (l.action = 'skipped' AND l.reason IS NOT 'spin')
-                  )
-             )
            ORDER BY f.created_at DESC, f.id DESC LIMIT 1`,
     args: [steamid, nowSec - PLAN_TTL_SEC, appid],
   })
   const row = res.rows[0] as unknown as { appid: number; name: string; intent: PlanIntent } | undefined
   return row ? { appid: Number(row.appid), name: String(row.name), intent: row.intent } : null
+}
+
+/**
+ * Все игры с живым планом на вечер — не только самый свежий. Для «Твоих
+ * вечеров» (/library): «Вернуться к ней» — запуск сайта и закрывает план
+ * своей игры (components/Evenings), а живых планов бывает несколько —
+ * вчерашнее «Сыграю вечером» у одной, утреннее «Поставь на загрузку» у
+ * другой. По одному самому свежему запуск старшей не писался, её план
+ * стоял, и, едва закрыли свежий, главная звала «Отложил «A» на вечер —
+ * ждёт тебя» в игру, в которую уже вернулись.
+ *
+ * Правило — то же LIVE_PLAN, тем же индексом (lib/queryplan.test.ts), только
+ * без LIMIT 1 и без каталога: имя здесь не нужно, а карточка полки, у
+ * которой план ищут, и так стоит на каталожной игре.
+ */
+export async function livePlanAppids(db: Db, steamid: string, nowSec: number): Promise<Set<number>> {
+  const res = await db.execute({
+    sql: `SELECT DISTINCT f.appid AS appid FROM feedback f WHERE ${LIVE_PLAN}`,
+    args: [steamid, nowSec - PLAN_TTL_SEC],
+  })
+  return new Set(res.rows.map((r) => Number(r.appid)))
 }
 
 /* ---------- исход совета ---------- */

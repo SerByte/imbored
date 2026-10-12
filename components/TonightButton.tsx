@@ -24,6 +24,11 @@ import { writerStore } from '@/lib/writer'
  * — фокус упал бы в body. Что именно случилось, говорит строка статуса.
  * Вызывающий ставит key по игре: у следующего героя — свой план.
  *
+ * initialDone — игра уже отложена в этом заходе (app/play, planned):
+ * «Подробнее» → «Назад» монтирует кнопку заново, и без него она снова
+ * звала бы «Сыграю вечером на ПК», будто плана нет, — хотя «Не то —
+ * дальше» рядом уже листает героя как отложенного.
+ *
  * Компонент живёт на /play и /daily, а оба стоят у потолка бюджета
  * (bundle-budget.json): страницы грузят его лениво (components/TonightLazy —
  * там же прогрев и пустое место вместо поломки, если кусок не пришёл), и
@@ -31,11 +36,19 @@ import { writerStore } from '@/lib/writer'
  * пока первое в пути, пишет второй такой же план — безобидно: план не
  * оценка, и читается из него только самый свежий.
  */
-export function TonightButton({ name, onPlan }: { name: string; onPlan: () => Promise<boolean> }) {
+export function TonightButton({
+  name,
+  onPlan,
+  initialDone,
+}: {
+  name: string
+  onPlan: () => Promise<boolean>
+  initialDone?: boolean
+}) {
   const writer = useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)
   const demo = useDemoSession()
   /** null — не нажимали или запрос в пути; true — записано; false — не вышло */
-  const [done, setDone] = useState<boolean | null>(null)
+  const [done, setDone] = useState<boolean | null>(initialDone || null)
   if (writer !== true || demo) return null
 
   async function plan() {

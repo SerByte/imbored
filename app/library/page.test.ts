@@ -311,35 +311,46 @@ describe('/library: «Уже прошёл» у вечеров', () => {
  * тем же чтением, что живая строка; островок только пишет запуск по нему.
  */
 describe('/library: план на вечер у «Твоих вечеров»', () => {
-  async function planOf(kind: SessionKind, planned: boolean) {
+  /** later — ещё один план, свежее и на игру не с полки: он и встал бы живой строкой */
+  async function plansOf(kind: SessionKind, planned: boolean, later = false) {
     const steamid = await signInAs(db, kind)
     await seed(steamid)
-    if (planned) {
-      await logFeedback(
-        db,
-        { steamid, appid: EVENING, action: 'opened', ctx: { source: 'play', intent: 'install' } },
-        nowSec() - 30,
-      )
-    }
+    const plan = (appid: number, at: number) =>
+      logFeedback(db, { steamid, appid, action: 'opened', ctx: { source: 'play', intent: 'install' } }, at)
+    if (planned) await plan(EVENING, nowSec() - 3600)
+    if (later) await plan(PLAYED, nowSec() - 30)
     const tree = await LibraryPage({
       params: Promise.resolve({}),
       searchParams: Promise.resolve({}),
     } as PageProps<'/library'>)
-    return propsOf(tree, Evenings).map((p) => p.plan)
+    return propsOf(tree, Evenings).map((p) => p.plans)
   }
 
-  test('живой план — его игра едет в «Твои вечера»; без плана — null', async () => {
-    expect(await planOf('openid', true)).toEqual([EVENING])
+  test('живой план — его игра едет в «Твои вечера»; без плана — никого', async () => {
+    expect(await plansOf('openid', true)).toEqual([[EVENING]])
     db = await freshDb()
-    expect(await planOf('openid', false)).toEqual([null])
+    expect(await plansOf('openid', false)).toEqual([[]])
+  })
+
+  /*
+   * Вчера «Сыграю вечером» у игры с полки, сегодня «Поставь на загрузку» у
+   * другой. Полке нужен план своей игры, а не самый свежий: по нему одному
+   * «Вернуться к ней» у старшей ничего не писал, и её план вставал живой
+   * строкой, едва закрывали свежий. Игры не с полки в пропсы не едут — им
+   * там нечего закрывать.
+   */
+  test('план игры с полки едет, даже когда свежее стоит другой', async () => {
+    expect(await plansOf('openid', true, true)).toEqual([[EVENING]])
+    db = await freshDb()
+    expect(await plansOf('openid', false, true)).toEqual([[]])
   })
 
   // Демо-библиотека чужая, и «вечером» у неё не наступает; сессии по ссылке
   // вечеров нет вовсе
   test('демо — без плана, сессия по ссылке — без полки', async () => {
-    expect(await planOf('demo', true)).toEqual([null])
+    expect(await plansOf('demo', true)).toEqual([[]])
     db = await freshDb()
-    expect(await planOf('claimed', true)).toEqual([])
+    expect(await plansOf('claimed', true)).toEqual([])
   })
 })
 

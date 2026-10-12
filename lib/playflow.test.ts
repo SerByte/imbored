@@ -635,7 +635,26 @@ describe('/play: пути вокруг выдачи', () => {
     const fin = code.slice(code.indexOf('const finishCont = async'), code.indexOf('const contFocus = useCallback('))
     expect(fin).not.toContain('setBanFailed')
     expect(fin).toContain('setContFailed(c.appid)')
-    expect(code).toContain('text={contFailed === cont.appid ? DONE_MISS : null}')
+    expect(code).toContain('text={contFailed === cont.appid ? DONE_MISS(cont.name) : null}')
+  })
+
+  /*
+   * Две «Уже прошёл» на одном экране: у героя (заброшенного или знакомого) и
+   * у строки «Продолжить» — другой игры, pickContinue героя не повторяет.
+   * В списке кнопок скринридер читал два одинаковых имени, а у панели
+   * «Продолжить» своего заголовка нет — по заголовкам её кнопка стоит под h1
+   * героя. Нажимали её, думая, что отмечают героя, и навсегда отмечали
+   * другую игру; отказ «Не получилось отметить игру пройденной» тоже не
+   * говорил, какую. Игра — в имени (sr-only после видимых слов, WCAG 2.5.3)
+   * и в отказе: тот же приём, что у components/MarkFinished.
+   */
+  test('обе «Уже прошёл» называют свою игру — и в имени кнопки, и в отказе', () => {
+    expect(code).toMatch(/const DONE_MISS = \(name: string\) =>\s*`Не получилось отметить «\$\{name\}» пройденной — нажми ещё раз\.`/)
+    expect(code).toContain('Уже прошёл<span className="sr-only"> «{pick.name}»</span>')
+    expect(code).toContain('Уже прошёл<span className="sr-only"> «{cont.name}»</span>')
+    // голой подписи без игры не осталось ни у одной
+    expect(code).not.toContain("'Уже прошёл'")
+    expect(code).toMatch(/banFailed !== pick\.appid\s*\? null\s*: finished\s*\? DONE_MISS\(pick\.name\)/)
   })
 
   /*

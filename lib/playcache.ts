@@ -73,6 +73,13 @@ export type PlayCache = {
   hero: number
   /** «Зашло», уже нажатое в этой выдаче: без него кнопка погасла бы и записала оценку дважды */
   liked: number[]
+  /**
+   * Отложенные на вечер в этом заходе (writesPlan в lib/eveningplan.ts):
+   * «Не то — дальше» у такого героя листает без пропуска, который закрыл бы
+   * план. Без них «Подробнее» → «Назад» план забывал — и «Просто не сейчас»
+   * через минуту после «Сыграю вечером на ПК» его закрывал (app/play).
+   */
+  planned: number[]
 }
 
 /**
@@ -181,7 +188,18 @@ export function parsePlayCache(raw: unknown): PlayCache | null {
   if (!Array.isArray(r.liked) || !r.liked.every(isInt)) return null
   const deal = parseDeal(r.deal)
   if (!deal || deal.viewer !== r.viewer) return null
-  return { v: PLAY_CACHE_VERSION, key: r.key, viewer: r.viewer, at: r.at, deal, hero: r.hero, liked: r.liked }
+  return {
+    v: PLAY_CACHE_VERSION,
+    key: r.key,
+    viewer: r.viewer,
+    at: r.at,
+    deal,
+    hero: r.hero,
+    liked: r.liked,
+    // Записи до этого поля — без отложенных, а не битые: версия та же, и
+    // прогрев заново ради пустого списка дороже его самого. Мусор — поштучно
+    planned: Array.isArray(r.planned) ? r.planned.filter(isInt) : [],
+  }
 }
 
 /** Есть ли вообще что восстанавливать под этот запрос — без вопроса, кто вошёл. */
@@ -194,6 +212,8 @@ export type RestoredDeal = {
   /** Индекс героя в отфильтрованной выдаче */
   index: number
   liked: number[]
+  /** Отложенные на вечер в этом заходе, кроме забаненных — см. PlayCache.planned */
+  planned: number[]
   at: number
 }
 
@@ -210,6 +230,9 @@ export type RestoredDeal = {
  * «Подробнее». Пока игра была героем, строку прятал planBeside; после
  * «Назад» героя в выдаче нет — и без фильтра «Ставил «X» на загрузку ·
  * Запустить» звал бы в игру, только что названную пройденной.
+ *
+ * И отложенные на вечер (planned): бан их план уже закрыл, и «Не то —
+ * дальше» у забаненной спрашивать некому.
  */
 export function restoreDeal(
   entry: PlayCache | null,
@@ -233,6 +256,7 @@ export function restoreDeal(
     },
     index,
     liked: entry.liked,
+    planned: entry.planned.filter((a) => !q.banned.has(a)),
     at: entry.at,
   }
 }

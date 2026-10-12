@@ -81,6 +81,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
     },
     hero: 20,
     liked: [10],
+    planned: [],
     ...over,
   }
 }
@@ -139,6 +140,24 @@ describe('parsePlayCache', () => {
     delete old.plan
     expect(parsePlayCache({ ...e, deal: old })?.deal.plan).toBeNull()
     expect(parsePlayCache({ ...e, deal: { ...e.deal, plan: { appid: 0 } } })?.deal.plan).toBeNull()
+  })
+
+  /*
+   * Отложенные на вечер в этом заходе (app/play: «Не то — дальше» у них
+   * листает без пропуска) едут с выдачей: иначе «Подробнее» → «Назад» их
+   * забывал, и пропуск закрывал план через минуту после того, как он
+   * поставлен. Запись до этого поля — выдача без отложенных, а не битая
+   * запись: версия та же, и прогрев заново ради пустого списка не нужен.
+   */
+  test('отложенные на вечер переживают запись; запись без них — пустой список', () => {
+    const e = entry({ planned: [20, 1145360] })
+    expect(parsePlayCache(JSON.parse(JSON.stringify(e)))?.planned).toEqual([20, 1145360])
+    const old: Record<string, unknown> = { ...e }
+    delete old.planned
+    expect(parsePlayCache(old)?.planned).toEqual([])
+    // мусор — поштучно и без потери выдачи: план не стоит прогрева заново
+    expect(parsePlayCache({ ...e, planned: 'all' })?.planned).toEqual([])
+    expect(parsePlayCache({ ...e, planned: ['20', 30, 1.5] })?.planned).toEqual([30])
   })
 
   test('запись прошлой версии сайта не узнаётся', () => {
@@ -305,6 +324,18 @@ describe('restoreDeal', () => {
     const gone = restoreDeal(same, { ...q, banned: new Set([20]) })
     expect(gone?.deal.plan).toBeNull()
     expect(gone?.deal.picks[gone.index].appid).toBe(10)
+  })
+
+  /*
+   * «Сыграю вечером на ПК» → «Подробнее» → «Назад»: герой, отложенный на
+   * вечер, возвращается отложенным, и «Не то — дальше» у него по-прежнему
+   * листает, а не пишет пропуск, закрывающий план. Забаненный — уже нет:
+   * бан план и так закрыл (closesPlan), а «не то» у него не спросят вовсе.
+   */
+  test('отложенные на вечер возвращаются с выдачей, забаненные — нет', () => {
+    expect(restoreDeal(entry({ planned: [20, 30] }), q)?.planned).toEqual([20, 30])
+    expect(restoreDeal(entry({ planned: [20, 30] }), { ...q, banned: new Set([30]) })?.planned).toEqual([20])
+    expect(restoreDeal(entry(), q)?.planned).toEqual([])
   })
 
   test('забанено всё — восстанавливать нечего', () => {

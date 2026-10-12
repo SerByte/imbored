@@ -23,7 +23,7 @@ import {
   countLiked,
   getWishlist,
   getFeedLink,
-  latestEveningPlan,
+  livePlanAppids,
   latestMajorPatchSince,
 } from '@/lib/db'
 import { PATCH_SINCE_LEAD, wallPatchPairs } from '@/lib/comeback'
@@ -173,14 +173,18 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
    * предлагает «выйти везде», а это гасит и ссылку, и подтверждение обязано
    * об этом сказать. Одна строка по первичному ключу.
    *
-   * Живой план на вечер (lib/eveningplan.ts) — тому же, кто его ставил:
+   * Живые планы на вечер (lib/eveningplan.ts) — тому же, кто их ставил:
    * пишущей сессии не из демо, как и сама живая строка. Игра плана бывает и
    * вечером на полке — советовали, запускали, потом поставили на загрузку, —
    * и «Вернуться к ней» оттуда обязана закрыть план, как запуск со страницы
-   * игры (components/Evenings). Свои строки за полтора дня по индексу;
-   * отказ чтения — просто без плана, полка от него не зависит.
+   * игры (components/Evenings). План ЭТОЙ игры, даже не самый свежий
+   * (livePlanAppids, а не latestEveningPlan): вчерашний у одной и утренний у
+   * другой живут разом, и по одному свежему запуск старшей не писался — её
+   * план вставал живой строкой, едва закрывали свежий. Свои строки за
+   * полтора дня по индексу; отказ чтения — просто без плана, полка от него
+   * не зависит.
    */
-  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older, wishlist, feedLink, plan] = await Promise.all([
+  const [snapshot, banned, bannedAll, stats, tagStats, evenings, liked, likedTotal, older, wishlist, feedLink, plans] = await Promise.all([
     getLatestSnapshot(db, steamid),
     writer ? listBanned(db, steamid) : [],
     bannedAppids(db, steamid),
@@ -197,7 +201,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     // «Из желаемого подешевело» — последний прочитанный список
     writer ? getWishlist(db, steamid) : null,
     session?.verified ? getFeedLink(db, steamid) : null,
-    writer && !isDemoId(steamid) ? latestEveningPlan(db, steamid, nowSec()).catch(() => null) : null,
+    writer && !isDemoId(steamid)
+      ? livePlanAppids(db, steamid, nowSec()).catch(() => new Set<number>())
+      : new Set<number>(),
   ])
   if (!snapshot) redirect(bounceTo('/library'))
 
@@ -332,6 +338,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       finished: doneNow.has(e.appid),
     }
   })
+  // Живые планы — только игр этой полки: закрывать с неё больше нечего, и в
+  // пропсы островка лишнее не едет. Без повторов: одну игру советуют и дважды
+  const eveningPlans = [...new Set(eveningItems.map((i) => i.appid))].filter((a) => plans.has(a))
 
   // В библиотеку можно зайти в обход подбора: если обложек ещё нет — догреем
   const missingArt = games.filter((g) => !metas.get(g.appid)?.headerImage).length
@@ -666,7 +675,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {!writer && <NeedSteam from="/library" why="see" className="mb-12 max-w-md" />}
 
       {eveningItems.length > 0 && (
-        <Evenings items={eveningItems} lead={eveningsLead} writer={writer} plan={plan?.appid ?? null} />
+        <Evenings items={eveningItems} lead={eveningsLead} writer={writer} plans={eveningPlans} />
       )}
 
       {shelf.length > 0 && (

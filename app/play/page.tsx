@@ -271,8 +271,12 @@ function seedFail(name: string | null) {
   }
 }
 
-/** Отказ «Уже прошёл» — у героя и у строки «Продолжить» одними словами */
-const DONE_MISS = 'Не получилось отметить игру пройденной — нажми ещё раз.'
+/**
+ * Отказ «Уже прошёл» — у героя и у строки «Продолжить» одними словами, но
+ * со своей игрой: обе кнопки бывают на экране разом, и «не получилось
+ * отметить игру» не говорило, какую. Слова — те же, что у components/MarkFinished.
+ */
+const DONE_MISS = (name: string) => `Не получилось отметить «${name}» пройденной — нажми ещё раз.`
 
 /**
  * Сколько ждать /api/recommend. С запасом над худшим живым ответом: восемь
@@ -415,10 +419,18 @@ function Player({ say }: { say: (line: string) => void }) {
    * шаг по выдаче, а не «передумал»: листает без вопроса о причине и без
    * пропуска, который закрыл бы план (writesPlan, closesPlan). План, уже
    * закрытый здесь же (запустил с героя), отсюда уходит: после запуска «не
-   * то» — снова ответ, и причину у него спросят. Ref, а не состояние:
-   * рисовать по нему нечего, читает его только нажатие.
+   * то» — снова ответ, и причину у него спросят.
+   *
+   * Состояние, а не ref, — и едет с выдачей в запись на устройстве
+   * (lib/playcache, planned). «Подробнее» → «Назад» и перезагрузка
+   * возвращают ту же выдачу, но на новом монтировании, и ref пустел вместе
+   * с прошлым: «Не то — дальше» у героя, отложенного минуту назад, снова
+   * спрашивал причину, и «Просто не сейчас» закрывал план. А
+   * эффект записи выдачи видит только состояние: ref, тронутый после
+   * «Сыграю вечером», в запись не попадал, если следующим нажатием было ⓘ.
+   * Массив, а не Set: в записи он и так массив, а игр в нём — по пальцам.
    */
-  const plannedHere = useRef(new Set<number>())
+  const [planned, setPlanned] = useState<number[]>([])
   // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
   useWarmTonight()
   /** Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера, строка над «Продолжить» */
@@ -656,9 +668,9 @@ function Player({ say }: { say: (line: string) => void }) {
             // sendFeedback — от первого рендера
             if (r.ok && closesPlan(action, reason, ctx?.intent)) {
               setPlan((p) => (p?.appid === appid ? null : p))
-              plannedHere.current.delete(appid)
+              setPlanned((a) => (a.includes(appid) ? a.filter((x) => x !== appid) : a))
             }
-            if (r.ok && writesPlan(action, ctx?.intent)) plannedHere.current.add(appid)
+            if (r.ok && writesPlan(action, ctx?.intent)) setPlanned((a) => (a.includes(appid) ? a : [...a, appid]))
             return r.ok
           })
           // Промис намеренно не отклоняется: вызывающий, которому исход не
@@ -846,10 +858,12 @@ function Player({ say }: { say: (line: string) => void }) {
    * героя — вызывающему он нужен сразу, а состояние обновится к рендеру.
    *
    * Пятая дверь — выдача с прошлого захода (back): та же функция, только герой,
-   * время и «Зашло» — сохранённые, а не новые.
+   * время, «Зашло» и отложенные на вечер — сохранённые, а не новые. У новой
+   * выдачи отложенные остаются прежними: план стоит, пока его не закрыли, и
+   * герой, вернувшийся следующей пятёркой, по-прежнему отложен.
    */
   const applyDeal = useCallback(
-    (deal: Deal, back?: { index: number; at: number; liked: number[] }): number => {
+    (deal: Deal, back?: { index: number; at: number; liked: number[]; planned: number[] }): number => {
       const hero = back ? back.index : landingIndex(deal.picks.length, roulette)
       const at = back ? back.at : Date.now()
       dealMeta.current = { at, nowSec: deal.nowSec, viewer: deal.viewer }
@@ -876,7 +890,10 @@ function Player({ say }: { say: (line: string) => void }) {
       setShowWhy(FRESH_TURN.showWhy)
       setSkipCount(FRESH_TURN.skipCount)
       setRestored(!!back)
-      if (back) setLiked(new Set(back.liked))
+      if (back) {
+        setLiked(new Set(back.liked))
+        setPlanned(back.planned)
+      }
       // Выдача пришла — прежний отказ переключателя больше не про неё
       setSwitchMiss(null)
       setHeroMiss(null)
@@ -916,8 +933,9 @@ function Player({ say }: { say: (line: string) => void }) {
       },
       hero: picks[Math.min(index, picks.length - 1)].appid,
       liked: [...liked],
+      planned,
     })
-  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, nudge, index, liked, cacheKey])
+  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, nudge, index, liked, planned, cacheKey])
 
   useEffect(() => {
     /*
@@ -2210,9 +2228,9 @@ function Player({ say }: { say: (line: string) => void }) {
                   <button
                     // Причину спрашивать не у кого записать — просто листаем.
                     // И у героя, только что отложенного на вечер: это шаг по
-                    // выдаче, а пропуск закрыл бы план (plannedHere)
+                    // выдаче, а пропуск закрыл бы план (planned)
                     onClick={() => {
-                      if (readOnly || plannedHere.current.has(pick.appid)) {
+                      if (readOnly || planned.includes(pick.appid)) {
                         advance(index)
                         return
                       }
@@ -2382,9 +2400,20 @@ function Player({ say }: { say: (line: string) => void }) {
                       одну линию. Имя кнопки начинается с видимых слов (WCAG
                       2.5.3): голосом её зовут тем, что видно, — поэтому видимая
                       подпись спрятана от скринридера, а полную говорит sr-only.
+
+                      «Уже прошёл» — с игрой в имени, тоже после видимых слов:
+                      у строки «Продолжить» ниже бывает своя такая же кнопка
+                      другой игры, и в списке кнопок два одинаковых имени не
+                      различить (DONE_MISS).
                     */}
                     {finished ? (
-                      banning ? 'Отмечаю…' : 'Уже прошёл'
+                      banning ? (
+                        'Отмечаю…'
+                      ) : (
+                        <>
+                          Уже прошёл<span className="sr-only"> «{pick.name}»</span>
+                        </>
+                      )
                     ) : (
                       <>
                         <Icon name="hide" size={20} />
@@ -2418,7 +2447,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   banFailed !== pick.appid
                     ? null
                     : finished
-                      ? DONE_MISS
+                      ? DONE_MISS(pick.name)
                       : 'Не получилось убрать игру насовсем — нажми ещё раз.'
                 }
                 className="-mt-1 text-sm text-danger"
@@ -2474,10 +2503,12 @@ function Player({ say }: { say: (line: string) => void }) {
                   над «Продолжить» (lib/eveningplan.ts). План, а не оценка.
                   Кнопка сама прячется на компьютере и у не пишущей сессии —
                   поэтому без обёртки: пустой узел в колонке героя всё равно
-                  взял бы себе зазор gap-4 */}
+                  взял бы себе зазор gap-4. Отложенный в этом заходе — и после
+                  «Подробнее» → «Назад» — встаёт уже отложенным (planned) */}
               {pick.source !== 'new' && !pick.storeUrl && (
                 <TonightButton
                   key={pick.appid}
+                  initialDone={planned.includes(pick.appid)}
                   name={pick.name}
                   onPlan={() => sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'tonight'))}
                 />
@@ -2674,7 +2705,10 @@ function Player({ say }: { say: (line: string) => void }) {
                 </span>
                 <span className="flex flex-wrap items-center gap-x-5 gap-y-2">
                   {/* Сессии только для чтения бан не записать — кнопки нет,
-                      как и у героя */}
+                      как и у героя. Игра в имени — после видимых слов (WCAG
+                      2.5.3): своего заголовка у панели нет, по заголовкам
+                      кнопка стоит под h1 героя, а у героя бывает своя «Уже
+                      прошёл» — без игры их не различить (DONE_MISS) */}
                   {cont.finishable && !readOnly && (
                     <button
                       type="button"
@@ -2683,7 +2717,13 @@ function Player({ say }: { say: (line: string) => void }) {
                       title="Прошёл — больше не предлагать"
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-60"
                     >
-                      {finishing ? 'Отмечаю…' : 'Уже прошёл'}
+                      {finishing ? (
+                        'Отмечаю…'
+                      ) : (
+                        <>
+                          Уже прошёл<span className="sr-only"> «{cont.name}»</span>
+                        </>
+                      )}
                     </button>
                   )}
                   <SteamLaunch
@@ -2701,7 +2741,7 @@ function Player({ say }: { say: (line: string) => void }) {
           {/* Отказ «Уже прошёл» — под панелью, тем же приёмом, что у героя:
               строка стоит всегда, меняется только текст */}
           <StatusLine
-            text={contFailed === cont.appid ? DONE_MISS : null}
+            text={contFailed === cont.appid ? DONE_MISS(cont.name) : null}
             className="mt-2 text-sm text-danger"
           />
         </div>
