@@ -4,7 +4,9 @@ import { getDb, requireWriter } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
 
 /**
- * Снять «зашло» — кнопка на полке /library (components/LikedShelf).
+ * Снять «зашло» — кнопка на полке /library (components/LikedShelf) и второе
+ * нажатие сердца у героя /play и /daily. Клиент у них один — lib/unlike: он
+ * же ставит снятие в очередь за «Зашло» той же игры, ещё не доехавшим сюда.
  *
  * Отдельный роут по той же причине, что /api/unban: /api/feedback пишет
  * историю и остаётся append-only, а здесь строки удаляются. Права — те же,

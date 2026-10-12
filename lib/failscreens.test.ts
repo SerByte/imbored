@@ -163,6 +163,9 @@ describe('needsteam', () => {
   const pages = [
     ...walk('app', (f) => /\.tsx?$/.test(f) && !f.startsWith('app/api/') && !f.includes('.test.')),
     ...walk('components', (f) => /\.tsx?$/.test(f)),
+    // Клиентский модуль тоже бывает звонящим: снятие «Зашло» (lib/unlike) —
+    // один на полку /library и сердце героя /play и /daily
+    ...walk('lib', (f) => /\.ts$/.test(f) && !f.includes('.test.') && !f.startsWith('lib/testing/')),
   ]
 
   test('пишущие роуты найдены — иначе сторож ослеп', () => {

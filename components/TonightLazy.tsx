@@ -33,7 +33,17 @@ import type { TonightButton as Tonight } from '@/components/TonightButton'
  * Только там, где кнопка видна (не pointer: fine — тот же признак, что у её
  * pointer-fine:hidden): компьютеру он не нужен вовсе.
  */
-const loadTonight = () => import('@/components/TonightButton').then((m) => m.TonightButton)
+/**
+ * Кусок «хвоста героя» (components/HeroTail): «Сыграю вечером» и снятие
+ * «Зашло» для /play — один загрузчик в первой загрузке на оба, и прогрев
+ * ниже готовит к телефонному сердцу и его. Отказ куска отчитывает островок
+ * (tonightFailed), когда встаёт у своей игры. /play на снятии отказ глотает:
+ * снятия не было, сердце горит как горело — на экране правда, и отчёт о том
+ * же куске не множится.
+ */
+export const heroTail = () => import('@/components/HeroTail')
+
+const loadTonight = () => heroTail().then((m) => m.TonightButton)
 
 /** Кусок не пришёл: кнопки нет, а страница цела */
 function NoTonight() {

@@ -3,6 +3,7 @@ import path from 'node:path'
 import { isValidElement, type ReactElement } from 'react'
 import { describe, expect, test } from 'vitest'
 import { GameLink } from '../components/GameLink'
+import { TilePending } from '../components/TilePending'
 
 /**
  * Сторож префетча ссылок на карточку игры.
@@ -58,6 +59,19 @@ const DEFAULT_PREFETCH: Record<string, { links: number; why: string }> = {
     links: 1,
     why:
       'полка «Приглянулось» в колоде /explore: её видит один человек, до разворота не больше EXPLORE_SHELF_FOLD плиток, и это игры, которые он только что сам отметил «Интересно» — по ним и идут',
+  },
+}
+
+/**
+ * Плитки-ссылки на карточку, где знака ожидания (TilePending) нет нарочно, —
+ * и почему. Ключ — файл, значение — сколько таких плиток в нём.
+ */
+const WITHOUT_PENDING: Record<string, { tiles: number; why: string }> = {
+  'app/not-found.tsx': {
+    tiles: 1,
+    why:
+      'полка 404 — пререндеренный верх каталога с префетчем: переход мгновенный, и ожидания Next не показывает вовсе. ' +
+      'А not-found корня входит в каждый маршрут — клиентский лист ожидания лёг бы в первую загрузку всех страниц (+0,3 КБ, замер сборкой)',
   },
 }
 
@@ -130,6 +144,26 @@ function cardLinksIn(file: string, src: string): Found[] {
   return found
 }
 
+/**
+ * Плитки-ссылки на карточку без знака ожидания (TilePending): <Link> с
+ * классом game-card, в теле которой до </Link> нет <TilePending. Вложенных
+ * ссылок не бывает (<a> в <a> невалиден), так что первый </Link> — свой.
+ */
+function tilesWithoutPendingIn(src: string): string[] {
+  const vars = new Set([...src.matchAll(CARD_VAR)].map((v) => v[1]))
+  const out: string[] = []
+  for (const m of src.matchAll(/<Link\b/g)) {
+    const end = tagEnd(src, m.index)
+    const tag = src.slice(m.index, end + 1)
+    const ref = /\bhref=\{\s*(\w+)\s*\}/.exec(tag)
+    if (!CARD_HREF.test(tag) && !(ref && vars.has(ref[1]))) continue
+    if (!/\bgame-card\b/.test(tag)) continue
+    const body = src.slice(end + 1, src.indexOf('</Link>', end))
+    if (!/<TilePending\b/.test(body)) out.push(tag.replace(/\s+/g, ' ').slice(0, 90))
+  }
+  return out
+}
+
 function cardLinks(): Found[] {
   return [...sources('app'), ...sources('components')].flatMap((file) =>
     cardLinksIn(file, code(fs.readFileSync(path.join(ROOT, file), 'utf8'))),
@@ -187,6 +221,53 @@ describe('ссылки на карточку игры', () => {
     expect(found.map((f) => f.prefetch)).toEqual([false, true, false, false])
     expect(found[0].tag).toContain('[&>svg]:size-4')
     expect(found[3].tag).toContain('href={gameHref}')
+  })
+
+  /**
+   * У /game нет loading.tsx, и без префетча нажатая плитка ждёт сервер
+   * немой — до секунды холодного рендера ISR. Знак ожидания (TilePending)
+   * обязан стоять в каждой плитке-ссылке на карточку: GameLink кладёт его
+   * сам, а Link с префетчем по умолчанию (полка /explore) — руками, потому
+   * что префетч может не успеть. Плитка, собранная мимо обоих, снова
+   * молчала бы под пальцем. Исключения — в WITHOUT_PENDING, с причиной.
+   */
+  test('каждая плитка-ссылка на карточку показывает ожидание', () => {
+    const counted = new Map<string, number>()
+    const offenders = [...sources('app'), ...sources('components')].flatMap((file) => {
+      const tiles = tilesWithoutPendingIn(code(fs.readFileSync(path.join(ROOT, file), 'utf8')))
+      if (tiles.length) counted.set(file, tiles.length)
+      return WITHOUT_PENDING[file] ? [] : tiles.map((t) => `${file}: ${t}…`)
+    })
+    expect(
+      offenders,
+      'плитка game-card ведёт на /game/… без TilePending — возьми GameLink или положи <TilePending /> в ссылку',
+    ).toEqual([])
+    for (const [file, { tiles: want }] of Object.entries(WITHOUT_PENDING)) {
+      // Как у DEFAULT_PREFETCH: новая плитка не проскочит под чужой причиной
+      expect(counted.get(file) ?? 0, `${file}: плиток без знака ожидания`).toBe(want)
+    }
+  })
+
+  test('сторож ожидания не слепой: видит плитку без знака и тело до своего </Link>', () => {
+    const src = [
+      '<Link href={`/game/${a}`} className="game-card block"><Body /></Link>',
+      '<Link href={`/game/${b}`} className="game-card block"><Body /><TilePending /></Link>',
+      // не плитка — текстовой ссылке на ту же карточку знак не нужен
+      '<Link href={`/game/${c}`} className="tap link-more">Об игре</Link>',
+      '<Link href={`/game/${d}`} className="game-card block"><Body /></Link>',
+      '<p><TilePending /></p>',
+    ].join('\n')
+    const found = tilesWithoutPendingIn(src)
+    expect(found).toHaveLength(2)
+    expect(found[0]).toContain('${a}')
+    expect(found[1]).toContain('${d}')
+  })
+
+  test('GameLink кладёт знак ожидания последним ребёнком — после содержимого плитки', () => {
+    const el = GameLink({ appid: 730, className: 'game-card block', children: 'плитка' })
+    const kids = (el as ReactElement<{ children: unknown[] }>).props.children
+    expect(kids[0]).toBe('плитка')
+    expect(isValidElement(kids[1]) && kids[1].type).toBe(TilePending)
   })
 
   test('GameLink — это Link на карточку с выключенным префетчем, остальное как есть', () => {

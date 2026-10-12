@@ -1,5 +1,6 @@
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import Link from 'next/link'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
 import { SearchLauncher } from '@/components/SearchLauncher'
@@ -172,7 +173,7 @@ function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
                 вне пререндеренного верха (PRERENDER_TOP) при первом заходе
                 рендерятся функцией и читают базу — прокрутка хаба будила бы
                 её на каждую капсулу, по которой никто не пойдёт. */}
-            <Link href={`/game/${g.appid}`} prefetch={false} className="game-card block">
+            <GameLink appid={g.appid} className="game-card block">
               <StaticGameCardBody
                 appid={g.appid}
                 name={g.name}
@@ -181,7 +182,7 @@ function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
                 sizes="260px"
                 eager={eager && i < 5}
               />
-            </Link>
+            </GameLink>
           </li>
         ))}
       </ol>

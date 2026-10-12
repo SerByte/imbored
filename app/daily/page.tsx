@@ -44,6 +44,7 @@ import { SOURCE_BADGE, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { inTurn, undoLike } from '@/lib/unlike'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { SectionLabel } from '@/components/Labels'
 import { TagChips } from '@/components/TagChips'
@@ -179,7 +180,10 @@ export default function DailyPage() {
   const [liked, setLiked] = useState<Set<number>>(new Set())
   /** «Не сегодня» ушло, и страница ждёт другую игру */
   const [rerolling, setRerolling] = useState(false)
-  /** Почему другую подобрать не вышло — строкой под кнопками; null — нечего сказать */
+  /**
+   * Почему не вышло действие у героя — строкой под кнопками: «Не сегодня» не
+   * подобрало другую или «Зашло» не снялось (lib/unlike). null — нечего сказать
+   */
   const [rerollMiss, setRerollMiss] = useState<string | null>(null)
   /** Что сказать скринридеру о смене героя — живая строка стоит с первого кадра */
   const [said, setSaid] = useState('')
@@ -483,10 +487,12 @@ export default function DailyPage() {
   const like = (intent?: CtxIntent) => {
     // «Зашло» после запуска — уже ответ на «не зацепило?», даже повторное
     forgetLaunch(hero.appid)
-    // Повторное нажатие — не второе «зашло»: кнопка уже горит
+    // «Зацепило» при горящем сердце — не второе «зашло». Снимает его только
+    // само сердце (onClick ниже), а не ответ на вопрос
     if (liked.has(hero.appid)) return
     setLiked(new Set(liked).add(hero.appid))
-    void sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero, intent))
+    // В очереди записей игры (lib/unlike): снятие следом не обгонит вставку
+    void inTurn(hero.appid, () => sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero, intent)))
   }
 
   /*
@@ -710,9 +716,14 @@ export default function DailyPage() {
               {!readOnly && (
                 <button
                   type="button"
-                  onClick={() => like()}
+                  // Второе нажатие снимает «Зашло» — тем же /api/unlike, что
+                  // полка /library (lib/unlike). Отказ — строкой под кнопками,
+                  // той же, что у «Не сегодня», и сердце горит снова. Имя
+                  // кнопки не меняется — тумблер называет aria-pressed, а
+                  // обратимость видна в подсказке
+                  onClick={() => (liked.has(hero.appid) ? void undoLike(hero, setLiked, setRerollMiss) : like())}
                   aria-pressed={liked.has(hero.appid)}
-                  title={liked.has(hero.appid) ? 'Зашло — учтём в подборе' : 'Зашло'}
+                  title={liked.has(hero.appid) ? 'Зашло — нажми, чтобы снять' : 'Зашло'}
                   className="btn-circle"
                 >
                   <Icon name={liked.has(hero.appid) ? 'check' : 'heart'} size={20} />
@@ -724,9 +735,10 @@ export default function DailyPage() {
             </div>
             {readOnly && <NeedSteam from="/daily" why="launch" className="-mt-1" />}
             {!readOnly && sharePick.panel}
-            {/* Отказ «Не сегодня» — в строке, которая стоит всегда: notToday
-                сбрасывает прежний, и новый приходит изменением текста —
-                такое скринридер объявит (components/StatusLine) */}
+            {/* Отказ «Не сегодня» и снятия «Зашло» — в строке, которая стоит
+                всегда: notToday и undoLike сбрасывают прежний, и новый
+                приходит изменением текста — такое скринридер объявит
+                (components/StatusLine) */}
             <StatusLine text={rerollMiss} className="-mt-1 text-sm text-dim" />
             {/* Своя нетронутая или заброшенная (и любая своя при скрытом
                 времени) скорее всего не установлена — поставить на загрузку

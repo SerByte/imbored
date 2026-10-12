@@ -11,7 +11,7 @@ import { StatusLine } from '@/components/StatusLine'
 import type { GameArtUrls } from '@/lib/art'
 import { Eyebrow } from '@/components/Labels'
 import { plural } from '@/lib/plural'
-import { isNeedSteam } from '@/lib/writer'
+import { sendUnlike } from '@/lib/unlike'
 
 export type LikedGame = {
   appid: number
@@ -98,27 +98,24 @@ export function LikedShelf({
     setFailed(null)
     pendingFocus.current = neighbour ? neighbour.appid : 'empty'
     setRemoved((prev) => new Set(prev).add(appid))
-    try {
-      const res = await fetch('/api/unlike', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ appid }),
-      })
-      if (await isNeedSteam(res)) {
-        // Не «попробуй ещё раз»: не получится. Кнопок больше нет — фокус на заголовок
-        pendingFocus.current = 'heading'
-        restore(appid)
-        setDenied(true)
-        return
-      }
-      if (!res.ok) throw new Error(String(res.status))
-      startTransition(() => router.refresh())
-    } catch {
-      // Плитка встаёт на своё место: порядок задаёт сервер, а не клиент
-      pendingFocus.current = appid
+    // Тот же запрос, что у сердца героя /play и /daily (lib/unlike): одна
+    // очередь записей на игру, если та же вкладка там только что жала «Зашло»
+    const res = await sendUnlike(appid)
+    if (res === 'needsteam') {
+      // Не «попробуй ещё раз»: не получится. Кнопок больше нет — фокус на заголовок
+      pendingFocus.current = 'heading'
       restore(appid)
-      setFailed(appid)
+      setDenied(true)
+      return
     }
+    if (res === 'ok') {
+      startTransition(() => router.refresh())
+      return
+    }
+    // Плитка встаёт на своё место: порядок задаёт сервер, а не клиент
+    pendingFocus.current = appid
+    restore(appid)
+    setFailed(appid)
   }
 
   if (items.length === 0 && !touched) return null

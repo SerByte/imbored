@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { GameCardBody } from '@/components/GameCard'
+import { TilePending } from '@/components/TilePending'
 import { Icon } from '@/components/Icon'
 import { SectionLabel } from '@/components/Labels'
 import { NeedSteam } from '@/components/NeedSteam'
@@ -102,9 +103,10 @@ export default function ExplorePage() {
   const [unlikeMiss, setUnlikeMiss] = useState<number | null>(null)
   /**
    * Фокус после ухода плитки: соседняя кнопка «Убрать» или строка «полка
-   * пуста». 'end' — заголовок «Колода кончилась» после голоса с клавиатуры.
+   * пуста». 'end' — заголовок «Колода кончилась» после голоса с клавиатуры,
+   * 'deck' — «Мимо» карты, которую вернули с клавиатуры (undo).
    */
-  const pendingFocus = useRef<number | 'empty' | 'end' | null>(null)
+  const pendingFocus = useRef<number | 'empty' | 'end' | 'deck' | null>(null)
   const unlikeButtons = useRef(new Map<number, HTMLButtonElement>())
   const shelfEmpty = useRef<HTMLParagraphElement>(null)
   /** Панель «Колода кончилась» и её заголовок — см. vote и redeal */
@@ -147,6 +149,18 @@ export default function ExplorePage() {
    * второй Enter по ней отправил бы второй свайп той же игры (см. TopCard).
    */
   const votedIds = useRef(new Set<number>())
+  /**
+   * Последнее «Мимо» — под колодой кнопка «Вернуть «X»» (undo). Одно, а не
+   * стопка: отмена — про промах пальцем секунду назад, а не листание назад.
+   */
+  const [lastSkip, setLastSkip] = useState<ExploreCard | null>(null)
+  /**
+   * Вернули карту — колода встаёт заново (key у SwipeDeck): вернувшаяся
+   * въезжает наверх своей анимацией появления, а не из-под улетающей соседки.
+   */
+  const [undone, setUndone] = useState(0)
+  /** Что сказать скринридеру о вернувшейся карте — строка стоит с первого кадра колоды */
+  const [said, setSaid] = useState('')
   /**
    * Сессия только читает (lib/writer): колода листается и у неё, но на
    * устройстве — «Приглянулось» живёт до закрытия вкладки. Строка NeedSteam
@@ -191,6 +205,8 @@ export default function ExplorePage() {
       setRedealMiss(null)
       const data = (await res.json()) as { cards: ExploreCard[]; liked: ShelfCard[]; nowSec: number }
       votedIds.current = new Set()
+      // «Мимо» прежней колоды назад не вернуть: её уже нет на экране
+      setLastSkip(null)
       setNowSec(data.nowSec)
       setCards(data.cards)
       setDeckTotal(data.cards.length)
@@ -326,6 +342,12 @@ export default function ExplorePage() {
   const vote = (card: DeckCard, yes: boolean, keyboard: boolean) => {
     if (votedIds.current.has(card.appid)) return
     votedIds.current.add(card.appid)
+    // Вернуть можно только последнее «Мимо»: следующий голос — уже решение
+    // дальше, и кнопка уходит вместе с ним. «Интересно» своей отмены здесь
+    // не ждёт — его забирает «Убрать» на полке
+    setLastSkip(yes ? null : (cards.find((c) => c.appid === card.appid) ?? null))
+    // Та же карта, вернутая второй раз, — тот же текст: без сброса строка промолчала бы
+    setSaid('')
     // Последняя карта уносит колоду целиком — вместе с кнопкой в фокусе и
     // живой областью, — и фокус падал в body. Голос с клавиатуры забирает
     // заголовок панели, вставшей на её место: он же и объявит, что случилось
@@ -361,9 +383,45 @@ export default function ExplorePage() {
         ? shelfEmpty.current
         : target === 'end'
           ? deckEndHead.current
-          : unlikeButtons.current.get(target)
+          : target === 'deck'
+            ? document.querySelector<HTMLElement>('.deck-stack button')
+            : unlikeButtons.current.get(target)
     el?.focus()
   })
+
+  /**
+   * «Вернуть «X»» — последнее «Мимо» назад, наверх колоды, тем же номером.
+   *
+   * «Мимо» в колоде исследователя уводит карту из колоды на неделю
+   * (EXPLORE_PASS_SEC в lib/explore), и промах пальцем по соседней кнопке
+   * забирал её без обратного хода. Сервер отмену не пишет: listExplore и listExploreLiked
+   * читают ПОСЛЕДНИЙ свайп игры, так что новый голос по вернувшейся карте
+   * сам перекрывает «Мимо» — «Интересно» кладёт её на полку, как обычно.
+   * Вернули и не голосовали — строка «Мимо» остаётся, и в следующую колоду
+   * карта не придёт неделю. Это честно: её видели и пролистали, а пока
+   * вкладка открыта, она лежит наверху колоды. Вкус «Мимо» не трогает
+   * вовсе (listFeedback его не читает), так что отменять на сервере нечего.
+   *
+   * Без таймера: кнопка живёт до следующего голоса или новой колоды. Гаснущая
+   * через восемь секунд отмена не дождалась бы того, кто идёт к ней Tab'ом
+   * или скринридером (WCAG 2.2.1).
+   *
+   * С клавиатуры фокус встаёт на «Мимо» вернувшейся карты — туда, где он был
+   * до промаха: нажатая кнопка уходит, и без этого фокус упал бы в body.
+   */
+  const undo = (keyboard: boolean) => {
+    const card = lastSkip
+    if (!card) return
+    votedIds.current.delete(card.appid)
+    setLastSkip(null)
+    setCards((cs) => [card, ...cs])
+    setVoted((v) => v - 1)
+    setUndone((n) => n + 1)
+    // Колода встаёт заново, но это не «новая колода»: фокус ей отдаёт undo, а не redeal
+    setDealFocus(false)
+    setSaid(`«${card.name}» снова в колоде`)
+    if (keyboard) pendingFocus.current = 'deck'
+  }
 
   /**
    * Экран отказа встал — на место прогрева или после повтора, унёсшего свою
@@ -519,6 +577,7 @@ export default function ExplorePage() {
       <div className="md:col-start-1 md:row-start-1 md:row-span-2">
       {top ? (
         <SwipeDeck
+          key={undone}
           cards={cards}
           onVote={vote}
           votedCount={voted}
@@ -566,6 +625,20 @@ export default function ExplorePage() {
             {redealMiss}
           </p>
         </div>
+      )}
+      {/* Под колодой и под «Колода кончилась» — одно место: последняя карта
+          тоже бывает промахом, и её кнопка не переезжает, когда колода
+          уходит. Строка «снова в колоде» стоит всегда: вернувшаяся карта
+          в последнем случае встаёт новой колодой, и её собственная живая
+          строка рождается вместе с текстом (components/StatusLine) */}
+      <StatusLine text={said} className="sr-only" />
+      {lastSkip && (
+        <p className="mt-4 text-center">
+          <button type="button" onClick={(e) => undo(e.detail === 0)} className="tap link-more max-w-full">
+            <Icon name="back" size={14} />
+            <span className="min-w-0 truncate">Вернуть «{lastSkip.name}»</span>
+          </button>
+        </p>
       )}
       </div>
 
@@ -628,6 +701,10 @@ export default function ExplorePage() {
                       )
                     }
                   />
+                  {/* Префетч здесь оставлен (lib/gameprefetch.test.ts), но
+                      он может не успеть: тогда нажатая плитка ждёт так же,
+                      как у GameLink, и так же это показывает */}
+                  <TilePending />
                 </Link>
                 <button
                   type="button"

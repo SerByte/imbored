@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useRef, useState, useTransition, type ReactNode } from 'react'
 import { GameCardBody } from '@/components/GameCard'
+import { GameLink } from '@/components/GameLink'
 import { Eyebrow } from '@/components/Labels'
 import { lazyIsland } from '@/components/lazyIsland'
 import { NeedSteam } from '@/components/NeedSteam'
@@ -236,7 +237,7 @@ export function Evenings({
           const verdict = verdicts.get(key) ?? null
           return (
             <li key={key} className="relative flex flex-col gap-3">
-              <Link href={`/game/${item.appid}`} prefetch={false} className="game-card block">
+              <GameLink appid={item.appid} className="game-card block">
                 <GameCardBody
                   appid={item.appid}
                   name={item.name}
@@ -250,7 +251,7 @@ export function Evenings({
                     </>
                   }
                 />
-              </Link>
+              </GameLink>
               {item.playedEnough && !readOnly && (
                 <div role="group" aria-label={`Как тебе «${item.name}»?`} className="flex flex-wrap gap-2">
                   {VERDICTS.map((v) => (

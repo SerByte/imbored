@@ -304,9 +304,15 @@ describe('кнопка запуска', () => {
     expect(lazy).toMatch(/loadTonight\(\)\.catch\(\(\) => null\)/)
     for (const page of [['app', 'play', 'page.tsx'], ['app', 'daily', 'page.tsx']]) {
       const src = code(read(...page))
-      expect(src, page.join('/')).toContain("import { TonightButton, useWarmTonight } from '@/components/TonightLazy'")
+      // Рядом с островком /play берёт из того же модуля heroTail — загрузчик
+      // того же куска для снятия «Зашло» (components/HeroTail), поэтому имя
+      // в импорте не одно: проверяется, что оба нужных идут отсюда
+      expect(src, page.join('/')).toMatch(
+        /import \{ (?:heroTail, )?TonightButton, useWarmTonight \} from '@\/components\/TonightLazy'/,
+      )
       expect(src, page.join('/')).toMatch(/\buseWarmTonight\(\)/)
       expect(src, `${page.join('/')}: кусок в обход загрузчика`).not.toContain("import('@/components/TonightButton')")
+      expect(src, `${page.join('/')}: кусок в обход загрузчика`).not.toContain("import('@/components/HeroTail')")
     }
   })
 

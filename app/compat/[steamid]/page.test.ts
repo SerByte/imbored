@@ -2,6 +2,7 @@ import type { InStatement } from '@libsql/client'
 import Link from 'next/link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
+import { TilePending } from '@/components/TilePending'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
 import { saveLibrarySnapshot, upsertGamesMeta, upsertUser, type Db } from '@/lib/db'
@@ -151,6 +152,8 @@ describe('/compat/[steamid]: «Позвать в эту игру» называ�
     [Magnet, 'Magnet'],
     [SplitHeading, 'SplitHeading'],
     [CopyCompatLink, 'CopyCompatLink'],
+    // знак ожидания внутри плиток-ссылок на карточку (components/GameLink)
+    [TilePending, 'TilePending'],
   ])
   const coop = (appid: number, name: string): GameMeta => ({
     appid,
