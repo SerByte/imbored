@@ -235,6 +235,26 @@ describe('refreshDeals', () => {
     clearDealsCooldown()
   })
 
+  /**
+   * А вот пустой список — ответ. Герой дня или одна протухшая игра полки
+   * желаемого — запрос из одного appid, и снятая с продажи игра в нём
+   * приходит именно так: «промолчал про часть» и «про всю» здесь одно и то
+   * же. Сочти мы это сбоем, каждый заход бросал бы на ней, ставил бы паузу
+   * замеру всему процессу — и цены не обновлялись бы ни у кого.
+   */
+  test('пустой список на одну игру — «цены нет» с отметкой, без паузы на сбой', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(10, { priceFinal: 1999, priceInitial: 1999, discountPercent: 0 }), NOW)
+    await upsertGameMeta(db, meta(1478500, { priceFinal: 1999 }), NOW)
+
+    expect(await refreshDeals(db, [10], NOW, { fetchFn: fakeFetch({ response: { store_items: [] } }) })).toBe(1)
+    expect((await getGameMeta(db, 10))?.priceAt).toBe(NOW)
+
+    // паузы нет: замер другой игры идёт сразу
+    expect(await refreshDeals(db, [1478500], NOW, { fetchFn: fakeFetch(PRICES_RESPONSE) })).toBe(1)
+    expect((await getGameMeta(db, 1478500))?.discountPercent).toBe(25)
+  })
+
   test('после сбоя выдерживаем паузу, а не долбим Steam с частотой посещений', async () => {
     const db = await freshDb()
     await upsertGameMeta(db, meta(1478500, { priceFinal: 1999 }), NOW)
@@ -313,9 +333,7 @@ describe('регион цен', () => {
   })
 
   test('fetchStorePrices берёт регион из опций, а не из окружения', async () => {
-    // Ответ со своей игрой, а не пустой список: пустой на непустой запрос —
-    // теперь сбой (см. callStoreItems), а тест не о нём
-    const rec = recording({ response: { store_items: [{ appid: 1086940, visible: true }] } })
+    const rec = recording({ response: { store_items: [] } })
     await fetchStorePrices([1086940], { fetchFn: rec.fetchFn, cc: 'kz' })
     expect(rec.countries).toEqual(['KZ'])
   })

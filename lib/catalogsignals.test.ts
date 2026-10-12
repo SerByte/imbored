@@ -96,10 +96,14 @@ describe('fetchStoreReviews', () => {
     await expect(fetchStoreReviews([730], empty)).rejects.toThrow('store_items')
   })
 
-  test('пустой список на непустой запрос — исключение: настоящий ответ называет каждый appid', async () => {
+  test('пустой список — ответ «Steam промолчал про всех», а не сбой: пустая карта', async () => {
+    // Сочти его сбоем — пачка из снятых с продажи вечно стояла бы в голове
+    // очереди (reviews_at NULL идёт первым), и каждое звено кончалось бы
+    // blocked на ней же. Отметку молчавшим ставит updateCatalogSignals.
     const none = (async () =>
       new Response(JSON.stringify({ response: { store_items: [] } }), { status: 200 })) as unknown as typeof fetch
-    await expect(fetchStoreReviews([730, 570], none)).rejects.toThrow('store_items')
+    expect(await fetchStoreReviews([730], none)).toEqual(new Map())
+    expect(await fetchStoreReviews([730, 570], none)).toEqual(new Map())
   })
 
   test('настоящий ответ разбирается как прежде', async () => {

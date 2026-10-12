@@ -691,11 +691,16 @@ const ERESULT_OK = '1'
  * пачку сверенной на неделю. Исключение же у всех них — давно отработанный
  * путь «ничего не пишем».
  *
- * Пустой список на непустой запрос — тоже не ответ: настоящий успех
- * перечисляет каждый запрошенный appid, неизвестные и снятые с продажи —
- * visible:false. Промолчать про часть пачки Steam может, и это ответ про
- * них (fetchStorePrices пишет «цены нет»); промолчать про всю — нет.
- * Заголовка X-eresult нет вовсе — верим телу, как и fetchWishlist.
+ * Пустой же список — ответ, а не сбой. Промолчать про игру Steam может
+ * (снята с продажи — см. fetchStorePrices), и на запрос из одного appid, а
+ * таких много: герой дня, одна протухшая игра полки желаемого, последняя
+ * игра прогрева, — «промолчал про часть пачки» и «про всю» неразличимы.
+ * Сочти мы его сбоем, такая игра стала бы вечным отказом без отметки: замер
+ * цен бросал бы на каждом заходе и ставил паузу всему процессу, прогрев
+ * навсегда застревал бы в stalled, а сверка каталога упиралась бы в blocked
+ * на той же пачке в голове очереди. Сбой от ответа отличают код в X-eresult
+ * и форма тела: у сбоя store_items нет вовсе, а не пустой список. Нет
+ * заголовка — верим телу, как и fetchWishlist.
  */
 export async function callStoreItems(
   appids: number[],
@@ -727,9 +732,7 @@ export async function callStoreItems(
   }
   const json: unknown = await res.json()
   const items = (json as { response?: { store_items?: unknown } } | null)?.response?.store_items
-  if (!Array.isArray(items) || (appids.length > 0 && items.length === 0)) {
-    throw new Error('GetItems: нет store_items')
-  }
+  if (!Array.isArray(items)) throw new Error('GetItems: нет store_items')
   return json
 }
 

@@ -856,12 +856,32 @@ describe('ensureMeta', () => {
     expect(await getGameMeta(db, 1145360)).toBeNull()
     expect(await updatedAt(730)).toBe(old)
 
-    // Заголовка нет, а store_items нет тоже: настоящий ответ перечисляет
-    // каждый запрошенный appid (неизвестные — visible:false), так что пустое
-    // тело — не «никого нет», а «ответа нет»
+    // Заголовка нет, а store_items нет тоже: тело без списка — форма сбоя,
+    // а не ответа. «Никого не знаю» приходит списком, пусть и пустым (тест ниже)
     expect(await ensureMeta(db, [730, 1145360], { fetchFn: emptyAnswer(null), names })).toBe(false)
     expect(await getGameMeta(db, 1145360)).toBeNull()
     expect(await updatedAt(730)).toBe(old)
+  })
+
+  /**
+   * Пустой список — ответ: Steam промолчал про игру (снята с продажи). На
+   * запрос из одной игры — последней в прогреве — «про часть пачки» и «про
+   * всю» одно и то же, и сочти мы это сбоем, ensureMeta отдавал бы false
+   * вечно: remaining > 0 навсегда, /api/prepare без цен и онлайна, прогрев
+   * у клиента всякий раз кончается stalled.
+   */
+  test('пустой список на одну игру — ответ: заглушка с отметкой, true', async () => {
+    const db = await migrateDb(createClient({ url: ':memory:' }))
+    const old = NOW - 20 * 86_400
+    await upsertGameMeta(db, { appid: 1145360, name: 'Hades', tags: {}, genres: [], categories: [] }, old)
+
+    expect(await ensureMeta(db, [1145360], { fetchFn: storeStub([]) })).toBe(true)
+    const row = await db.execute({ sql: 'SELECT updated_at FROM games WHERE appid = ?', args: [1145360] })
+    expect(Number(row.rows[0]?.updated_at)).toBeGreaterThan(old)
+    expect(await getGameMeta(db, 1145360)).toMatchObject({ name: 'Hades', art: {} })
+    // и из очереди прогрева она ушла: следующий заход в Steam не идёт вовсе
+    const limited = (async () => new Response('{}', { status: 429 })) as unknown as typeof fetch
+    expect(await ensureMeta(db, [1145360], { fetchFn: limited })).toBe(true)
   })
 
   test('X-eresult 1 — обычный ответ: строка пишется', async () => {
