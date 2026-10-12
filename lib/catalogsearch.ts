@@ -65,6 +65,35 @@ export type SearchEntry = {
   name: string
   /** foldTitle(name) с пробелом спереди: «начало слова» — это ' ' + слово */
   hay: string
+  /**
+   * Название слитно от начала каждого своего слова, через «|»: «Half-Life 2» —
+   * «|halflife2|life2|2|», «S.T.A.L.K.E.R. 2» — «|stalker2|talker2|…|2|».
+   * «|» + слово запроса здесь — слово, которое начинается там же, где слово
+   * названия, но идёт дальше через его знаки и пробелы: «halflife»,
+   * «stalker», «spiderman». Ступени — у tierOf.
+   *
+   * Считается один раз при чтении индекса: ~256 тысяч знаков на 5816 игр и
+   * ещё ~94 тысячи у tight (замер по локальной копии каталога) — меньше
+   * мегабайта памяти вкладки, и только у той, где поиск открывали
+   * (lib/catalogindex).
+   */
+  runs: string
+  /**
+   * Название слитно целиком — первый отрезок runs: «Half-Life 2» —
+   * «halflife2». Сито tierOf: слово запроса, которого нет даже здесь, не
+   * подходит ни на одной ступени, а это почти все строки индекса на каждую
+   * клавишу. Без сита каждая из них сверялась с runs — вдвое длиннее hay — и
+   * поиск шёл втрое дольше прежнего (замер у searchCatalog).
+   */
+  tight: string
+}
+
+/** runs для свёрнутого названия (см. SearchEntry) */
+function runsOf(folded: string): string {
+  const words = folded.split(' ')
+  let runs = '|'
+  for (let i = 0; i < words.length; i++) runs += `${words.slice(i).join('')}|`
+  return runs
 }
 
 export type SearchHit = { appid: number; name: string }
@@ -75,11 +104,12 @@ export type SearchResult = {
   /** Сколько нашлось всего, а не сколько показано */
   total: number
   /**
-   * Запрос в QWERTY, если хоть что-то из показанного нашлось только по нему
-   * («цшесрук» → «witcher»). Иначе null: говорить о раскладке незачем.
+   * Запрос в QWERTY, если найденное нашлось по нему («цшесрук» → «witcher»):
+   * как набран, запрос не нашёл ничего (searchCatalog). Иначе null: говорить
+   * о раскладке незачем.
    *
    * Как набран, а не свёрнутый: его видят и слышат в строке статуса, и
-   * «ифдвгкэы пфеу» там — «baldur's gate», а не «baldur s gate» свёртки,
+   * «ифдвгкэы пфеу» там — «baldur's gate», а не «baldurs gate» свёртки,
    * похожее на опечатку ровно там, где говорят, что искали.
    */
   layout: string | null
@@ -126,7 +156,7 @@ export function readSearchIndex(body: unknown): SearchEntry[] | null {
     if (!Number.isInteger(appid) || appid <= 0 || typeof name !== 'string') continue
     const folded = foldTitle(name)
     if (!folded) continue
-    out.push({ appid, name, hay: ` ${folded}` })
+    out.push({ appid, name, hay: ` ${folded}`, runs: runsOf(folded), tight: folded.replace(/ /g, '') })
   }
   return out.length ? out : null
 }
@@ -138,7 +168,8 @@ export function readSearchIndex(body: unknown): SearchEntry[] | null {
  * в запросе нет русских букв, переводить нечего.
  *
  * Знаки на месте букв (б → «,», ж → «;», э → «'») тоже переводятся: свёртка
- * затем сделает из них разделитель, как у настоящего названия.
+ * затем сделает из них то же, что из знака настоящего названия, — апостроф
+ * сотрёт, остальное станет разделителем.
  */
 const RU_TO_QWERTY: Record<string, string> = {
   й: 'q', ц: 'w', у: 'e', к: 'r', е: 't', н: 'y', г: 'u', ш: 'i', щ: 'o', з: 'p', х: '[', ъ: ']',
@@ -151,80 +182,155 @@ export function fromRuLayout(q: string): string | null {
   return [...q].map((c) => RU_TO_QWERTY[c.toLowerCase()] ?? c.toLowerCase()).join('')
 }
 
+/** Русские буквы на клавишах знаков: б ю ж х ъ э ё */
+const ON_SIGN_KEYS = new Set(Object.keys(RU_TO_QWERTY).filter((c) => !/[a-z]/.test(RU_TO_QWERTY[c])))
+
+/**
+ * Распалось ли слово запроса в QWERTY на обрывки: знак, в который перешла
+ * буква на его клавише, отрезал кусок короче трёх букв.
+ *
+ * Так выглядит не перепутанная раскладка, а русское слово: «баба» — «,f,f»,
+ * то есть «f f», «ёжик» — «br», «эхо» — «j». Обрывок в одну-две буквы — начало
+ * слова в сотнях названий, и строка статуса говорила «Нашлось 119 игр по
+ * «,f,f»». Настоящее название, набранное не в той раскладке, на обрывки не
+ * распадается: апостроф свёртка стирает («ифдвгкэы» — «baldurs»), а точка или
+ * двоеточие стоят в конце длинного слова.
+ *
+ * Обрывок — только то, что отрезал знак. Короткое слово целиком — не обрывок:
+ * «ц» — первая клавиша «цшесрук», а «Ф» в «Ф Цфн Щге» — слово «A» из «A Way
+ * Out», и оба ищутся. Проигрыш один и редкий: акроним с точками, набранный в
+ * русской раскладке («АюУюФюКю»), — без точек («ауфк») он находится.
+ */
+function brokenByLayout(query: string): boolean {
+  return query.split(/[^\p{L}\p{N}]+/u).some((word) => {
+    const lower = word.toLowerCase()
+    if (![...lower].some((c) => ON_SIGN_KEYS.has(c))) return false
+    return foldTitle(fromRuLayout(lower) ?? lower)
+      .split(' ')
+      .some((piece) => piece.length < 3)
+  })
+}
+
 /**
  * Насколько хорошо название подходит запросу; меньше — лучше, null — не подходит.
- * phrase — свёрнутый запрос с пробелом спереди, как hay у строки индекса.
  *
  *   0 — название целиком и есть запрос: «doom» → «DOOM», а не «DOOM Eternal»,
- *       у которого отзывов больше;
+ *       у которого отзывов больше; «fear» → «F.E.A.R.»;
  *   1 — название начинается с запроса: человек набирает с начала;
- *   2 — каждое слово запроса — начало слова в названии: «witcher 3» →
- *       «The Witcher 3: Wild Hunt»;
+ *   2 — каждое слово запроса начинается там, где слово названия: «witcher 3»
+ *       → «The Witcher 3: Wild Hunt», «spiderman» → «Marvel's Spider-Man»;
+ *       или весь запрос слитно начинается там: «cyber punk» → «Cyberpunk
+ *       2077», «s.t.a.l.k.e.r» → «Stalker Online»;
  *   3 — каждое слово запроса где-то в названии (matchesTitle, как на стене
  *       /library): «witch» → «Bewitched Forest».
  *
+ * Ступени 0–2 — по runs, то есть знаки и пробелы НАЗВАНИЯ не считаются:
+ * «stalker 2» → «S.T.A.L.K.E.R. 2», «halflife» → «Half-Life 2», «dota2» →
+ * «Dota 2». Свёртка делает точки и дефис разделителем, и без этого набранное
+ * слитно не находилось вовсе: «s t a l k e r» не содержит «stalker». Начало
+ * слова запроса при этом — всегда начало слова названия: слитно — через знаки
+ * СВОЕГО слова, а не с середины чужого, иначе «fear» нашёл бы «Cafe Arcade»
+ * (слитно — «cafearcade»). Где слова названия и запроса совпадают, ступени
+ * те же, что были у сравнения по hay с пробелами.
+ *
+ * Знаки и пробелы ЗАПРОСА тоже не обязаны совпадать со знаками названия:
+ * свёртка — с обеих сторон. Слитное название, набранное раздельно («cyber
+ * punk», «pay day 2») или с точками («s.t.a.l.k.e.r»), находится запросом
+ * слитно — но только ступенью 2 и только если по словам не нашлось. Иначе
+ * «dark s» — человек, набирающий «dark souls», — ставил бы рядом с ним
+ * «Darksiders» (слитно — тоже «darks…»), а по отзывам и выше.
+ *
  * Внутри ступени — порядок индекса, то есть число отзывов.
  */
-function tierOf(hay: string, phrase: string, words: string[]): number | null {
-  if (!words.every((w) => hay.includes(w))) return null
-  if (hay === phrase) return 0
-  if (hay.startsWith(phrase)) return 1
-  if (words.every((w) => hay.includes(` ${w}`))) return 2
-  return 3
+function tierOf(e: SearchEntry, q: Wanted): number | null {
+  // Сито (см. tight): каждое слово запроса — хотя бы где-то в названии слитно.
+  // Это нужно любой ступени, а сверка по короткому tight — самая дешёвая
+  if (!q.words.every((w) => e.tight.includes(w))) return null
+  if (q.starts.every((s) => e.runs.includes(s))) {
+    if (e.runs.startsWith(q.whole)) return 0
+    if (e.runs.startsWith(q.glued)) return 1
+    return 2
+  }
+  // Запрос из одного слова слитно — он сам, и его уже сверили выше
+  if (q.words.length > 1 && e.runs.includes(q.glued)) return 2
+  return q.words.every((w) => e.hay.includes(w)) ? 3 : null
 }
 
-/** Ступеней прямого запроса; переведённый из раскладки встаёт следом за ними */
-const TIERS = 4
+/**
+ * Свёрнутый запрос в том виде, в каком его сверяет tierOf, — посчитан раз на
+ * клавишу, а не на каждую из шести тысяч строк.
+ */
+type Wanted = {
+  /** Слова запроса — для ступени 3, по hay */
+  words: string[]
+  /** «|» + каждое слово: слово названия начинается с него (runs) */
+  starts: string[]
+  /** «|» + запрос слитно: с него начинается слово названия */
+  glued: string
+  /** glued + «|»: название слитно целиком и есть запрос */
+  whole: string
+}
+
+function wanted(folded: string): Wanted {
+  const words = folded.split(' ')
+  const glued = `|${words.join('')}`
+  return { words, starts: words.map((w) => `|${w}`), glued, whole: `${glued}|` }
+}
+
+/**
+ * Один проход по индексу: первые limit по ступени не хуже worst, при равной
+ * ступени — по порядку индекса, и сколько нашлось всего.
+ */
+function collect(index: SearchEntry[], folded: string, limit: number, worst: number) {
+  const q = wanted(folded)
+  const buckets: SearchEntry[][] = [[], [], [], []]
+  let total = 0
+  for (const e of index) {
+    const tier = tierOf(e, q)
+    if (tier === null || tier > worst) continue
+    total++
+    if (buckets[tier].length < limit) buckets[tier].push(e)
+  }
+  const games = buckets
+    .flat()
+    .slice(0, limit)
+    .map((e) => ({ appid: e.appid, name: e.name }))
+  return { games, total }
+}
 
 /**
  * Поиск по индексу: первые limit по ступени совпадения, при равной — по
  * порядку индекса.
  *
- * Запрос в русской раскладке ищется дважды: как есть (русские названия в
- * каталоге есть) и переведённым в QWERTY. Переведённое встаёт ПОСЛЕ всего,
- * что нашлось как есть, и только по началам слов (ступени 0–2): раскладку
- * перепутали, но слово набирали с начала, а двухбуквенное «да» в QWERTY —
- * «lf», и оно сидит внутри «Half-Life».
+ * Запрос ищется как набран (русские названия в каталоге есть), а в QWERTY —
+ * только если как набран не нашлось НИЧЕГО. Прежде переведённый искали
+ * всегда и ставили следом за найденным, но запрос, который что-то нашёл, —
+ * не перепутанная раскладка, и перевод добавлял к нему один шум. Раскладка —
+ * спасение пустого ответа.
  *
- * Один проход по индексу на клавишу: шесть тысяч строк и несколько
- * includes на каждую — доли миллисекунды, отдельный воркер или дебаунс
- * здесь не нужны.
+ * И переведённый — только по началам слов (ступени 0–2): раскладку
+ * перепутали, но слово набирали с начала, а двухбуквенное «да» в QWERTY —
+ * «lf», и оно сидит внутри «Half-Life». Запрос, распавшийся в QWERTY на
+ * обрывки (brokenByLayout), не ищется вовсе: «баба» — это не «f f».
+ *
+ * Проход по индексу на клавишу, второй — только при пустом первом: шесть
+ * тысяч строк и несколько includes на каждую — доли миллисекунды (0.18 мс в
+ * среднем на 5816 играх и запросах-префиксах, Node, замер по локальной копии
+ * каталога; до runs было 0.21, с runs без сита tight — 0.6), отдельный
+ * воркер или дебаунс здесь не нужны.
  */
 export function searchCatalog(index: SearchEntry[], query: string, limit = SEARCH_SHOWN): SearchResult {
   const phrase = foldTitle(query)
   if (!phrase) return { games: [], total: 0, layout: null }
-  const words = phrase.split(' ')
-  const ru = fromRuLayout(query)
-  const alt = ru === null ? '' : foldTitle(ru)
-  const altWords = alt && alt !== phrase ? alt.split(' ') : null
-
-  const buckets: SearchEntry[][] = Array.from({ length: TIERS * 2 }, () => [])
-  let total = 0
-  for (const e of index) {
-    let tier = tierOf(e.hay, ` ${phrase}`, words)
-    if (tier === null && altWords) {
-      const t = tierOf(e.hay, ` ${alt}`, altWords)
-      if (t !== null && t < 3) tier = TIERS + t
-    }
-    if (tier === null) continue
-    total++
-    if (buckets[tier].length < limit) buckets[tier].push(e)
-  }
-
-  const picked: SearchEntry[] = []
-  let viaLayout = false
-  for (let t = 0; t < buckets.length && picked.length < limit; t++) {
-    for (const e of buckets[t]) {
-      if (picked.length >= limit) break
-      picked.push(e)
-      if (t >= TIERS) viaLayout = true
-    }
-  }
+  const typed = collect(index, phrase, limit, 3)
+  const ru = typed.total ? null : fromRuLayout(query)
+  const alt = ru === null || brokenByLayout(query) ? '' : foldTitle(ru)
+  if (!alt || alt === phrase) return { ...typed, layout: null }
+  const viaLayout = collect(index, alt, limit, 2)
   return {
-    games: picked.map((e) => ({ appid: e.appid, name: e.name })),
-    total,
+    ...viaLayout,
     // Искали свёрнутым (alt), а называем — как набрано, с апострофами и дефисами
-    layout: viaLayout && ru ? clean(ru) : null,
+    layout: viaLayout.total && ru ? clean(ru) : null,
   }
 }
 

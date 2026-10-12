@@ -13,9 +13,10 @@ import { Icon } from '@/components/Icon'
  * первую загрузку страницы не попадает ни то, ни другое: /room/[id], /quiz,
  * /library, /daily и /explore стоят у самого потолка bundle-budget.json, и
  * окно (8.8 КБ) их бы через него перевело. Сама кнопка — 1.0 КБ к первой
- * загрузке каждой страницы (замер сборкой, без сжатия), и ещё ~0.35 КБ —
- * подставка клавиатуры (holdKeyboard, замер esbuild --minify до и после):
- * у /room/[id] и /quiz после неё до потолка остаётся ~0.2 КБ. Что
+ * загрузке каждой страницы (замер сборкой, без сжатия), и ещё ~0.4 КБ —
+ * подставка клавиатуры (holdKeyboard: ~0.35 КБ сама и 52 байта — её имя и
+ * роль для скринридера; замер esbuild --minify до и после). Самый тесный
+ * маршрут — /room/[id], 648 КБ из 650 (замер сборкой после e6d275f). Что
  * статический импорт окна сюда не вернётся, сторожит lib/searchlazy.test.ts —
  * граф импортов от этого файла.
  *
@@ -76,13 +77,28 @@ const warm = () => {
 }
 
 /**
+ * Имя значка и подставки. Константой, а не двумя литералами: каждая копия
+ * кириллицы — ~20 байт в первой загрузке каждой страницы.
+ */
+const NAME = 'Найти игру'
+
+/**
  * Подставка для клавиатуры, пока чанк окна в пути (докблок выше): невидимое
  * поле, фокус в которое пришёл внутри жеста, — и iPhone поднимает клавиатуру
  * сразу, а не по второму тапу.
  *
  * 16 px, иначе Safari приблизит страницу (как у поля окна); не readonly —
  * у readonly клавиатуры нет; fixed у верхнего края — фокус ничего не
- * прокручивает. Скринридеру её нет: она живёт доли секунды до поля окна.
+ * прокручивает.
+ *
+ * Глазу её нет, скринридеру — есть, и так и должно быть. Прятать её
+ * aria-hidden нельзя: фокус в ней — вся её суть, а aria-hidden на элементе с
+ * фокусом Chrome не исполняет — пишет «Blocked aria-hidden…» и отдаёт
+ * скринридеру безымянное поле. На медленной связи чанк едет секунды, и
+ * человек слышал «поле редактирования» без имени, набирал в него, а фокус
+ * молча прыгал в окно. Поэтому подставка — то, чем станет: комбобокс поиска
+ * (поле окна — role="combobox"), свёрнутый — списка ещё нет, — с именем
+ * нажатой кнопки. Переход в поле окна звучит продолжением, а не сменой поля.
  *
  * Уходит сама, как только фокус ушёл: в поле окна — его забирает эффект
  * монтирования components/CatalogSearch, — или куда угодно ещё. Набранное в
@@ -94,7 +110,9 @@ const warm = () => {
  */
 export function holdKeyboard(): HTMLInputElement {
   const proxy = document.createElement('input')
-  proxy.setAttribute('aria-hidden', 'true')
+  proxy.setAttribute('role', 'combobox')
+  proxy.setAttribute('aria-expanded', 'false')
+  proxy.setAttribute('aria-label', NAME)
   proxy.style.cssText = 'position:fixed;top:0;opacity:0;font-size:16px'
   proxy.addEventListener('blur', () => proxy.remove())
   document.body.append(proxy)
@@ -116,8 +134,8 @@ export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field
         type="button"
         aria-haspopup="dialog"
         // У строки имя — её подпись; у значка подписи нет
-        aria-label={field ? undefined : 'Найти игру'}
-        title={field ? undefined : 'Найти игру'}
+        aria-label={field ? undefined : NAME}
+        title={field ? undefined : NAME}
         className={
           field
             ? 'search-field'

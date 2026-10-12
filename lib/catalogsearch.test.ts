@@ -137,6 +137,117 @@ describe('поиск по каталогу', () => {
   })
 })
 
+/*
+ * Знаки внутри названия — апостроф, точки акронима, дефис, двоеточие — свёртка
+ * делала разделителем, и набранное без них не находилось вовсе: «stalker 2»
+ * против « s t a l k e r 2 …», «halflife» против « half life 2». Статус при
+ * этом говорил «Ничего не нашлось», будто игры нет в каталоге, — на самых
+ * искомых названиях. Названия ниже — как в Steam, знак в знак.
+ */
+describe('знаки внутри названия: набрано с ними, без них или слитно', () => {
+  const catalog = index(
+    "Baldur's Gate 3",
+    'S.T.A.L.K.E.R. 2: Heart of Chornobyl',
+    "Garry's Mod",
+    'Half-Life 2',
+    'Counter-Strike 2',
+    'Marvel’s Spider-Man Remastered',
+    'Sid Meier’s Civilization® VI',
+    "Don't Starve Together",
+    'S.T.A.L.K.E.R.: Shadow of Chornobyl',
+    'Half-Life: Alyx',
+    "Baldur's Gate: Enhanced Edition",
+    'F.E.A.R.',
+    'Dota 2',
+    'Cafe Arcade',
+  )
+  const first = (q: string) => names(searchCatalog(catalog, q))[0]
+  const all = (q: string) => names(searchCatalog(catalog, q))
+
+  test("апостроф: «baldurs gate», «baldur’s gate» и «baldur's gate» — одно и то же", () => {
+    for (const q of ['baldurs gate', "baldur's gate", 'baldur’s gate', 'baldurs', 'baldur']) {
+      expect(all(q), q).toEqual(["Baldur's Gate 3", "Baldur's Gate: Enhanced Edition"])
+    }
+    expect(first('garrys mod')).toBe("Garry's Mod")
+    expect(first('sid meiers')).toBe('Sid Meier’s Civilization® VI')
+    expect(first('dont starve')).toBe("Don't Starve Together")
+  })
+
+  test('точки акронима: «stalker 2» находит S.T.A.L.K.E.R. 2, «stalker» — обе части', () => {
+    expect(first('stalker 2')).toBe('S.T.A.L.K.E.R. 2: Heart of Chornobyl')
+    expect(first('s.t.a.l.k.e.r. 2')).toBe('S.T.A.L.K.E.R. 2: Heart of Chornobyl')
+    expect(all('stalker')).toEqual(['S.T.A.L.K.E.R. 2: Heart of Chornobyl', 'S.T.A.L.K.E.R.: Shadow of Chornobyl'])
+    expect(all('stalker shadow')).toEqual(['S.T.A.L.K.E.R.: Shadow of Chornobyl'])
+  })
+
+  test('точное название, набранное без точек, — первым: «fear» → F.E.A.R.', () => {
+    expect(first('fear')).toBe('F.E.A.R.')
+  })
+
+  test('дефис: «halflife», «half life» и «half-life» находят Half-Life', () => {
+    for (const q of ['halflife', 'half life', 'half-life']) {
+      expect(all(q), q).toEqual(['Half-Life 2', 'Half-Life: Alyx'])
+    }
+    expect(first('halflife 2')).toBe('Half-Life 2')
+    expect(first('counterstrike')).toBe('Counter-Strike 2')
+    // Не с начала названия: слово запроса начинается там же, где «Spider»
+    expect(first('spiderman')).toBe('Marvel’s Spider-Man Remastered')
+  })
+
+  test('цифра слитно со словом: «dota2» — это Dota 2', () => {
+    expect(first('dota2')).toBe('Dota 2')
+  })
+
+  /*
+   * Слитно — значит через знаки СВОЕГО слова, а не с середины чужого:
+   * «cafearcade» содержит «fear», но человек, набравший «fear», ищет не
+   * «Cafe Arcade».
+   */
+  test('слитный запрос начинается с начала слова названия, а не с его середины', () => {
+    expect(all('fear')).toEqual(['F.E.A.R.'])
+    expect(all('lflife')).toEqual([])
+  })
+
+  test('нашлось — и статус не говорит «Ничего не нашлось»', () => {
+    for (const q of ['baldurs gate', 'stalker 2', 'garrys mod', 'halflife']) {
+      expect(searchStatus('ready', q, searchCatalog(catalog, q)), q).toMatch(/^Нашл/)
+    }
+  })
+
+  /*
+   * Свёртка — с обеих сторон: знаки и пробелы не считаются и у ЗАПРОСА.
+   * Слитное название, набранное раздельно или с точками, — «cyber punk»,
+   * «pay day 2», «s.t.a.l.k.e.r», — иначе находилось только «где-то внутри»
+   * (ступень 3) и стояло под любым более популярным названием, где эти буквы
+   * просто встречаются: «Repay the Holiday 2» содержит и «pay», и «day».
+   */
+  test('слитное название, набранное раздельно или с точками, — выше случайных вхождений', () => {
+    // Случайные вхождения — выше по отзывам: по ним и видно, что слитное — выше ступенью
+    const glued = index(
+      'Cyber Steampunk Racing',
+      'Cyberpunk 2077',
+      'Repay the Holiday 2',
+      'PAYDAY 2',
+      'Last Walker Stand',
+      'Stalker Online',
+    )
+    expect(names(searchCatalog(glued, 'cyber punk'))[0]).toBe('Cyberpunk 2077')
+    expect(names(searchCatalog(glued, 'pay day 2'))[0]).toBe('PAYDAY 2')
+    expect(names(searchCatalog(glued, 's.t.a.l.k.e.r'))[0]).toBe('Stalker Online')
+  })
+
+  /*
+   * Но набранное по словам совпадение — выше слитного: «dark s» — это
+   * человек, набирающий «dark souls», а не «Darksiders», даже если у
+   * Darksiders отзывов больше. Слитный путь для запроса — запасной.
+   */
+  test('совпадение по словам запроса — выше совпадения слитно', () => {
+    const dark = index('Darksiders Genesis', 'Away: The Survival Series', 'DARK SOULS™ III', 'A Way Out')
+    expect(names(searchCatalog(dark, 'dark s'))).toEqual(['DARK SOULS™ III', 'Darksiders Genesis'])
+    expect(names(searchCatalog(dark, 'a way'))).toEqual(['A Way Out', 'Away: The Survival Series'])
+  })
+})
+
 describe('запрос, набранный не в той раскладке', () => {
   test('ЙЦУКЕН переводится в QWERTY по клавишам', () => {
     expect(fromRuLayout('цшесрук')).toBe('witcher')
@@ -156,10 +267,81 @@ describe('запрос, набранный не в той раскладке', (
     expect(r.layout).toBe('witcher')
   })
 
-  test('русское название находится как есть, раскладка — только следом', () => {
+  /*
+   * Прежде раскладку искали всегда и ставили следом за найденным как есть:
+   * здесь — «Ёлки-палки», а за ней «Tkrb Simulator» («елки» в QWERTY —
+   * «tkrb»). Но запрос, нашедший что-то как набран, — не перепутанная
+   * раскладка, и перевод добавлял к нему только шум: обрывки по две буквы,
+   * которые сидят в начале слов сотен названий. Раскладка теперь — спасение
+   * пустого ответа, а не довесок к непустому.
+   */
+  test('нашлось как набрано — раскладку не пробуют', () => {
     const r = searchCatalog(index('Ёлки-палки', 'Tkrb Simulator'), 'елки')
-    // «елки» в QWERTY — «tkrb»: русское совпадение первым, раскладка за ним
-    expect(names(r)).toEqual(['Ёлки-палки', 'Tkrb Simulator'])
+    expect(names(r)).toEqual(['Ёлки-палки'])
+    expect(r.total).toBe(1)
+    expect(r.layout).toBeNull()
+  })
+
+  test('как набрано — ничего, тогда раскладка', () => {
+    const r = searchCatalog(index('Tkrb Simulator'), 'елки')
+    expect(names(r)).toEqual(['Tkrb Simulator'])
+    expect(r.layout).toBe('tkrb')
+  })
+
+  test('апостроф и точки в раскладке: «Пфккнэы Ьщв», «Вщтэе Ыефкму», «ыефдлук 2»', () => {
+    const catalog = index("Garry's Mod", "Don't Starve Together", 'S.T.A.L.K.E.R. 2: Heart of Chornobyl')
+    const garry = searchCatalog(catalog, 'Пфккнэы Ьщв')
+    expect(names(garry)).toEqual(["Garry's Mod"])
+    expect(garry.layout).toBe("garry's mod")
+    expect(names(searchCatalog(catalog, 'Вщтэе Ыефкму'))).toEqual(["Don't Starve Together"])
+    const stalker = searchCatalog(catalog, 'ыефдлук 2')
+    expect(names(stalker)).toEqual(['S.T.A.L.K.E.R. 2: Heart of Chornobyl'])
+    expect(stalker.layout).toBe('stalker 2')
+    // Раньше «ыефдлук» переводился в «stalker» — и всё равно не находил: точки
+    // акронима резали название на буквы
+    const bare = searchCatalog(catalog, 'ыефдлук')
+    expect(names(bare)).toEqual(['S.T.A.L.K.E.R. 2: Heart of Chornobyl'])
+    expect(bare.layout).toBe('stalker')
+  })
+
+  /*
+   * б, ю, ж, х, ъ стоят на клавишах знаков, э — апострофа, ё — обратной
+   * кавычки. Русское слово с ними в QWERTY распадается на обрывки: «баба» —
+   * «,f,f», то есть «f f», а «f» — начало слова в сотнях названий. Строка
+   * статуса при этом говорила «Нашлось 119 игр по «,f,f»». Обрывок короче трёх
+   * букв — не слово, набранное не в той раскладке, а след русского слова.
+   */
+  test('русское слово, распавшееся в QWERTY на обрывки по 1–2 буквы, ничего не находит', () => {
+    const catalog = index(
+      'Team Fortress 2',
+      'Fallout 4',
+      'Brawlhalla',
+      'Just Cause 3',
+      'TUNIC',
+      'Killing Floor 2',
+      'For The King',
+    )
+    for (const q of ['баба', 'ёжик', 'эхо', 'бег', 'бабл', 'хаб']) {
+      const r = searchCatalog(catalog, q)
+      expect(r.games, q).toEqual([])
+      expect(r.total, q).toBe(0)
+      expect(r.layout, q).toBeNull()
+      expect(searchStatus('ready', q, r), q).toBe('Ничего не нашлось. Названия здесь — как в Steam, обычно латиницей')
+    }
+  })
+
+  /*
+   * Короткое — не значит обрывок. «ц» — первая клавиша «цшесрук», «Ф» в
+   * «Ф Цфн Щге» — целое слово «A»: знаков в них нет, и они ищутся, как
+   * раньше. Обрывок — только то, что отрезал знак.
+   */
+  test('короткое слово без знаков — не обрывок: первая клавиша и «A Way Out» ищутся', () => {
+    const catalog = index('The Witcher 3: Wild Hunt', 'A Way Out', 'I Am Bread')
+    const w = searchCatalog(catalog, 'ц')
+    expect(names(w)).toEqual(['The Witcher 3: Wild Hunt', 'A Way Out'])
+    expect(w.layout).toBe('w')
+    expect(names(searchCatalog(catalog, 'Ф Цфн Щге'))).toEqual(['A Way Out'])
+    expect(names(searchCatalog(catalog, 'Ш Фь Икуфв'))).toEqual(['I Am Bread'])
   })
 
   /*
@@ -176,7 +358,8 @@ describe('запрос, набранный не в той раскладке', (
   /*
    * Подсказку видят и слышат в строке статуса: «… по «baldur s gate»» —
    * свёртка без апострофа — выглядела опечаткой ровно там, где сказано, что
-   * искали. Сопоставление по-прежнему свёрнутое.
+   * искали (сейчас свёртка дала бы «baldurs gate» — тоже не то, что набрано).
+   * Сопоставление по-прежнему свёрнутое.
    */
   test('раскладку называют как набрано — с апострофом и дефисом, а не свёрнутой', () => {
     const baldur = searchCatalog(index("Baldur's Gate 3"), 'ифдвгкэы пфеу')

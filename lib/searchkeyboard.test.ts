@@ -108,11 +108,37 @@ describe('подставка держит клавиатуру, пока чан�
     expect(css).not.toMatch(/display:none|visibility:hidden/)
   })
 
-  test('глазу, скринридеру и прокрутке её нет', () => {
+  test('глазу и прокрутке её нет', () => {
     const { proxy } = hold()
     expect(proxy.style.cssText.replace(/\s+/g, '')).toContain('position:fixed')
-    expect(proxy.attrs['aria-hidden']).toBe('true')
     expect(proxy.focusedWith).toEqual({ preventScroll: true })
+  })
+
+  /*
+   * Прежде подставка была aria-hidden. Но фокус в ней — сама её суть, а
+   * aria-hidden на элементе с фокусом Chrome не исполняет: пишет в консоль
+   * «Blocked aria-hidden…» и отдаёт скринридеру безымянное поле. Пока чанк
+   * окна едет (на медленной связи — секунды), человек слышал «поле
+   * редактирования» без имени, набирал в него — и фокус молча прыгал в окно.
+   *
+   * Теперь подставка — то же, чем станет: комбобокс поиска (поле окна —
+   * role="combobox", lib/catalogsearch.test.ts), свёрнутый, потому что списка
+   * ещё нет, с именем кнопки, которую только что нажали. Переход в поле окна
+   * звучит как продолжение, а не как смена элемента.
+   */
+  test('скринридеру — свёрнутый комбобокс «Найти игру», а не безымянное скрытое поле', () => {
+    const { proxy } = hold()
+    expect(proxy.attrs['aria-hidden'], 'aria-hidden на поле с фокусом Chrome не исполняет').toBeUndefined()
+    expect(proxy.attrs.role).toBe('combobox')
+    expect(proxy.attrs['aria-expanded']).toBe('false')
+    expect(proxy.attrs['aria-label']).toBe('Найти игру')
+  })
+
+  test('имя подставки — имя кнопки-значка: одна строка, а не две копии', () => {
+    const launcher = code(fs.readFileSync(path.join(ROOT, 'components', 'SearchLauncher.tsx'), 'utf8'))
+    expect(launcher.match(/'Найти игру'/g), 'строка имени одна — в константе').toHaveLength(1)
+    expect(launcher).toMatch(/aria-label=\{field \? undefined : NAME\}/)
+    expect(launcher).toMatch(/setAttribute\('aria-label', NAME\)/)
   })
 
   test('фокус ушёл — в поле окна или куда угодно — подставка уходит сама', () => {
