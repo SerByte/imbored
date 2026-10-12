@@ -121,6 +121,17 @@ export function Engine({ demo }: { demo: LandingDemo }) {
    * «никогда» — четыре видимые кнопки с кольцом фокуса, не делающие ничего.
    * Ровно то обещание отклика без отклика, которое запрещено в стилях
    * (см. [data-live='1'] .chip:active в globals.css).
+   *
+   * НАЖАТИЕ БЕЗ УКАЗАТЕЛЯ — ТОЖЕ НЕ «РАНО», и одного held для него мало.
+   * Экранный диктор нажимает кнопку, не проводя к ней клавиатурный фокус:
+   * VoiceOver (VO+Пробел), NVDA в режиме обзора (Enter), Switch Control —
+   * :focus-visible при этом может не загореться, held не встаёт, а прокрутка
+   * к чипу ставит закреплённую сцену туда же, около нуля. Такой click
+   * узнаётся по detail: это счёт нажатий указателя, и у click, рождённого
+   * клавиатурой или действием диктора, он 0, а у щелчка мыши и касания — 1 и
+   * больше. Поэтому pick пропускает нажатие с detail 0 при любом прогрессе
+   * (см. onClick у чипов), а правило «для мыши отказ честен» остаётся каким
+   * было.
    */
   const [held, setHeld] = useState(false)
   /**
@@ -140,9 +151,16 @@ export function Engine({ demo }: { demo: LandingDemo }) {
 
   const [vibe, social] = key.split(':') as ['chill' | 'engaged', 'solo' | 'friends']
   const chosen = new Set(demo.picks[key].map((c) => c.appid))
+  /*
+   * Блоки «Почему первая» — по РАЗНЫМ причинам, а не по ключам состояния.
+   * Почему — в разметке ниже, у data-whys.
+   */
+  const whys = [...new Set(ALL_KEYS.flatMap((k) => demo.picks[k][0]?.why ?? []))]
+  const whyNow = demo.picks[key][0]?.why
 
-  const pick = (next: MoodKey) => {
-    if (!live) return
+  /** nonPointer — click без указателя (detail 0): см. докблок held. */
+  const pick = (next: MoodKey, nonPointer = false) => {
+    if (!live && !nonPointer) return
     setKey(next)
   }
 
@@ -238,23 +256,34 @@ export function Engine({ demo }: { demo: LandingDemo }) {
             обычных окнах ноутбука и монитора с панелью закладок. Под стеной
             на десктопе пусто на ~160 px, и причина встаёт туда даром. На
             телефоне колонки идут одна под другой, и причина оказывается
-            прямо над переключателями: нажал — и видно, как она сменилась.
+            прямо над переключателями: сменил вайб — и видно, как она
+            сменилась.
 
-            Наборов четыре, в одной ячейке сетки, — как пятёрки: колонка
-            держит высоту самого длинного, и подмена не двигает ничего.
+            Блоки лежат в одной ячейке сетки, как пятёрки: колонка держит
+            высоту самого длинного, и подмена не двигает ничего.
+
+            БЛОК НА КАЖДУЮ РАЗНУЮ ПРИЧИНУ, А НЕ НА КАЖДОЕ СОСТОЯНИЕ, и это
+            тоже замер. Первая игра от компании почти не зависит: в демо-выдаче
+            «Один» и «С друзьями» дают одну и ту же первую (Terraria при
+            «Расслабиться», Factorio при «Напрячься») и одну и ту же причину.
+            Пока блоков было четыре по ключам, нажатие «Один ↔ С друзьями»
+            перекрещивало два одинаковых абзаца: старый гаснет 1 → 0, новый
+            загорается 0 → 1 за те же 0.28 с, и на середине суммарная
+            непрозрачность проседала до ~0.75. Причина и её надзаголовок
+            мигали, хотя не поменялось ничего, — а прямо над переключателями
+            мигание читается как смена, которой не было. С ключом по тексту
+            одинаковая причина — один и тот же элемент, и переходить ему
+            некуда.
           */}
           <div className="engine-whys" data-whys>
-            {ALL_KEYS.map((k) => {
-              const why = demo.picks[k][0]?.why
-              return why ? (
-                <div key={k} className={`engine-why${k === key ? ' is-on' : ''}`}>
-                  <Eyebrow tone="ember" className="mb-1.5">
-                    Почему первая
-                  </Eyebrow>
-                  <p className="text-sm leading-relaxed text-ink/90">{why}</p>
-                </div>
-              ) : null
-            })}
+            {whys.map((w) => (
+              <div key={w} className={`engine-why${w === whyNow ? ' is-on' : ''}`}>
+                <Eyebrow tone="ember" className="mb-1.5">
+                  Почему первая
+                </Eyebrow>
+                <p className="text-sm leading-relaxed text-ink/90">{w}</p>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -284,7 +313,7 @@ export function Engine({ demo }: { demo: LandingDemo }) {
                     type="button"
                     className="chip"
                     aria-pressed={vibe === o.value}
-                    onClick={() => pick(`${o.value}:${social}` as MoodKey)}
+                    onClick={(e) => pick(`${o.value}:${social}` as MoodKey, e.detail === 0)}
                   >
                     <b>{o.label}</b>
                     <i>{o.hint}</i>
@@ -301,7 +330,7 @@ export function Engine({ demo }: { demo: LandingDemo }) {
                     type="button"
                     className="chip"
                     aria-pressed={social === o.value}
-                    onClick={() => pick(`${vibe}:${o.value}` as MoodKey)}
+                    onClick={(e) => pick(`${vibe}:${o.value}` as MoodKey, e.detail === 0)}
                   >
                     <b>{o.label}</b>
                     <i>{o.hint}</i>
