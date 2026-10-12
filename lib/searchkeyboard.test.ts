@@ -204,16 +204,64 @@ describe('нажатие на «Найти игру»', () => {
     const miss = onClick.slice(onClick.indexOf('(err: unknown) =>'))
     expect(miss).toMatch(/reportClientError\(\{\s*kind: 'boundary',\s*error: err,\s*island: 'search'/)
     expect(miss).toContain('setMissed(true)')
-    const attempt = onClick.slice(onClick.indexOf('if (loaded)'), onClick.indexOf('const proxy = holdKeyboard()'))
+    const attempt = onClick.slice(0, onClick.indexOf('const proxy = holdKeyboard()'))
     expect(attempt).toContain('setMissed(false)')
   })
 
+  /*
+   * Отказ гас только на медленном пути. А чанк доезжает и без нажатия:
+   * фокус, вернувшийся на кнопку после отказа, сам запускает прогрев, и
+   * моргнувшая связь к нему уже вернулась. Следующее нажатие шло быстрым
+   * путём — окно открывалось, а строка-поле так и говорила «обнови
+   * страницу», значок — красным, до перезагрузки. Поэтому сброс стоит до
+   * развилки, и быстрый путь без него недостижим. Поведением то же — в
+   * lib/searchmiss.test.ts.
+   */
+  test('быстрый путь недостижим с прежним отказом: сброс — до развилки', () => {
+    const reset = onClick.indexOf('setMissed(false)')
+    expect(reset).toBeGreaterThan(-1)
+    expect(reset).toBeLessThan(onClick.indexOf('if (loaded)'))
+    // и ровно один: второй сброс после развилки — признак, что первый уехал
+    expect(onClick.match(/setMissed\(false\)/g)).toHaveLength(1)
+  })
+
+  test('приехавший прогрев гасит прежний отказ — и на готовом модуле тоже', () => {
+    expect(launcher).toMatch(/const warm = \(\) => loadDialog\(\)\.then\(\(\) => setMissed\(false\), \(\) => \{\}\)/)
+    // прогрев — в самой кнопке, где есть её setMissed, а не общей функцией модуля
+    expect(launcher.indexOf('const warm =')).toBeGreaterThan(launcher.indexOf('export function SearchLauncher'))
+  })
+
   test('строка отказа — живая область, которая стоит всегда; видна у строки-поля и в подсказке значка', () => {
-    expect(launcher).toMatch(/<span role="status" className="sr-only">\s*\{missed \? MISSED : ''\}\s*<\/span>/)
+    expect(launcher).toMatch(
+      /<span role="status" className=\{missed && !field \? 'search-miss' : 'sr-only'\}>\s*\{missed \? MISSED : ''\}\s*<\/span>/,
+    )
     expect(launcher).toMatch(/\{field && \(missed \? MISSED : 'Найти игру по названию'\)\}/)
     expect(launcher).toMatch(/title=\{field \? undefined : missed \? MISSED : NAME\}/)
     // текст отказа — одной константой: каждая копия кириллицы — байты каждой страницы
     expect(launcher.match(/'Поиск не загрузился — обнови страницу'/g)).toHaveLength(1)
+  })
+
+  /*
+   * title телефон не показывает, а в шапке телефона значок — главный вход в
+   * поиск: после деплоя зрячий видел моргнувшую клавиатуру и красную лупу, и
+   * ни слова о том, что делать. Строка под значком видима, стоит у правого
+   * края ряда шапки и не перехватывает нажатий по тому, что под шапкой.
+   */
+  test('у значка отказ виден строкой под ним, а не только в title', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+    const rule = css.slice(css.indexOf('.search-miss {'), css.indexOf('}', css.indexOf('.search-miss {')))
+    expect(rule).toContain('position: absolute')
+    expect(rule).toContain('top: 100%')
+    expect(rule).toContain('right: 0')
+    expect(rule).toContain('white-space: nowrap')
+    expect(rule).toContain('pointer-events: none')
+    // подложка — фон: под шапкой проезжает и герой, и текст
+    expect(rule).toContain('background: var(--bg)')
+    expect(rule).toContain('color: var(--danger)')
+    // опора строки — ряд значков шапки, а не край экрана за полем px-safe
+    const layout = code(fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8'))
+    const row = layout.slice(0, layout.indexOf('<SearchLauncher />'))
+    expect(row.slice(row.lastIndexOf('<div className="'))).toMatch(/^<div className="relative flex /)
   })
 
   /*

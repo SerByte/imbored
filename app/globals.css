@@ -286,6 +286,9 @@
   --ember-text: #46d369;
   --on-ember: #050505;
   --faint: #85858c;
+  /* Отказ поиска у значка в шапке (.search-miss, components/SearchLauncher):
+     без своего --danger на светлой теме он был бы тёмно-красным по тёмному */
+  --danger: #ff8b8b;
   --edge: rgba(255, 255, 255, 0.1);
   --glass-bg: rgba(255, 255, 255, 0.08);
   color: var(--ink);
@@ -335,6 +338,8 @@
   --ember-text: #f5f5f7;
   --on-ember: #050507;
   --faint: #85858c;
+  /* то же, что у шапки кино-зоны выше: отказ поиска в шапке */
+  --danger: #ff8b8b;
   --edge: rgba(255, 255, 255, 0.08);
   --glass-bg: rgba(255, 255, 255, 0.06);
   color: var(--ink);
@@ -3802,6 +3807,30 @@ html:has(.lib-filters) {
 .search-field:hover {
   border-color: color-mix(in srgb, var(--ink) 30%, transparent);
   color: var(--ink);
+}
+/*
+ * «Поиск не загрузился — обнови страницу» под значком «Найти игру» в шапке
+ * (components/SearchLauncher, отказ чанка окна). У значка нет подписи, а
+ * title телефон не показывает — без видимой строки зрячий на телефоне видел
+ * только покрасневшую лупу. Стоит под значком, у правого края ряда шапки
+ * (ряд — relative, app/layout.tsx), на подложке фона: под шапкой проезжает
+ * что угодно, от героя до текста. Нажатий не перехватывает — это слова, а не
+ * цель. Классом по той же причине, что .search-field выше: строка утилит
+ * ехала бы в JS каждой страницы.
+ */
+.search-miss {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--danger);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  white-space: nowrap;
+  pointer-events: none;
 }
 /* Бейдж состояния на арте: контурный, как «Из бэклога» в макете */
 .lib-badge {

@@ -289,7 +289,10 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
               <LogoMark size={28} />
               <Wordmark />
             </Link>
-            <div className="flex items-center gap-3 lg:gap-5">
+            {/* relative — опора строки отказа поиска под значком
+                (.search-miss в globals.css): правым краем она встаёт по
+                краю ряда, а не по краю экрана за полем px-safe */}
+            <div className="relative flex items-center gap-3 lg:gap-5">
               {/*
                 Тема — рядом с навигацией, а не в ней. Внутри <nav> она делала
                 из шапки на телефоне ориентир «навигация» из одной кнопки

@@ -99,6 +99,26 @@ describe('кнопка запуска', () => {
   })
 
   /*
+   * OwnedLaunch стоит посреди ряда кнопок страницы (за ним — «Обзоры на
+   * YouTube» и «Позвать в эту игру»), и строка рвёт ряд на месте ушедшей
+   * кнопки. Увести её под весь ряд через order-last — значит развести экран
+   * с порядком Tab и чтения: ссылку «войди через Steam» фокус находил бы до
+   * YouTube, а глаз — после. Её место в разметке и есть её место на экране.
+   */
+  test('строка отказа — на месте кнопки и в разметке, и на экране: без order-*', () => {
+    const src = code(read('components', 'OwnedLaunch.tsx'))
+    const tail = src.slice(src.indexOf('{shownDenial && ('))
+    const div = tail.slice(0, tail.indexOf('>') + 1)
+    expect(div).toContain('className="basis-full outline-none"')
+    expect(div).not.toMatch(/\border-/)
+    // ряд, в котором она стоит, — тот самый: OwnedLaunch до YouTube и «Позвать»
+    const page = code(read('app', 'game', '[appid]', 'page.tsx'))
+    const owned = page.indexOf('<OwnedLaunch')
+    expect(owned).toBeGreaterThan(-1)
+    expect(owned).toBeLessThan(page.indexOf('Обзоры на YouTube'))
+  })
+
+  /*
    * «Дальше — в духе X» после отметки — только там, где у игры есть соседи:
    * та же полка, что прячет ссылку «Похожее на X» внизу страницы. Без неё
    * дорога вела бы к экрану «похожих не нашлось», и две ссылки одной

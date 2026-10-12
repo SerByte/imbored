@@ -165,7 +165,12 @@ export function OwnedLaunch({
             className={className}
           />
         ))}
-      {/* basis-full — своей строкой под кнопками (ряд — flex-wrap) */}
+      {/* basis-full — своей строкой посреди ряда кнопок страницы (flex-wrap,
+          app/game/[appid]): сразу за «Страницей в Steam» и «Запустить», на
+          месте ушедшей кнопки, а «Обзоры на YouTube» и «Позвать в эту игру»
+          встают строкой ниже. Не order-last под весь ряд: глазом строка
+          ушла бы вниз, а Tab и чтение — нет, и ссылка «войди через Steam»
+          получала бы фокус раньше YouTube, стоя после неё */}
       {shownDenial && (
         <div
           ref={shownDenial === 'mark' ? takeLost : undefined}
