@@ -918,6 +918,18 @@ describe('вход и характер', () => {
     // та же семантика у сюжетной игры — строка есть
     expect(labels({ categories: [2], tags: { 'Story Rich': 900 }, semantics: long })).toContain('Наиграли')
   })
+
+  test('PvP рядом с одиночным режимом «Наиграли» не гасит — у Elden Ring вопрос про кампанию', () => {
+    const long = sem({ played: { posMedianMin: 90 * 60, posN: 90 } })
+    const labels = (m: Parameters<typeof gameTraits>[0]) => gameTraits(m, null).map((t) => t.label)
+    // одиночная + PvP: в неё можно сыграть и без арены — строка есть
+    expect(labels({ categories: [2, 49], tags: { 'Story Rich': 900 }, semantics: long })).toContain('Наиграли')
+    expect(labels({ categories: [2, 36, 38], tags: { 'Souls-like': 900 }, semantics: long })).toContain('Наиграли')
+    // PvP без одиночного — арена и есть игра: строки нет
+    expect(labels({ categories: [1, 49], tags: { 'Story Rich': 900 }, semantics: long })).not.toContain('Наиграли')
+    // тег без финала гасит строку и у одиночной игры с PvP
+    expect(labels({ categories: [2, 49], tags: { Survival: 900 }, semantics: long })).not.toContain('Наиграли')
+  })
 })
 
 /**

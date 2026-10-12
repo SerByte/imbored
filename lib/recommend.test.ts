@@ -20,6 +20,7 @@ import {
   familiarWeight,
   hasTaste,
   hideUrgencyFor,
+  isEndless,
   isReplayable,
   isUnplayed,
   isUntouched,
@@ -2039,6 +2040,32 @@ describe('знакомое любимое (familiar)', () => {
     test('без categories судит по тегам PvP — как isMultiplayerMeta', () => {
       expect(isReplayable(meta(7, { Shooter: 100, PvP: 50 }, []))).toBe(true)
       expect(isReplayable(meta(8, { Shooter: 100, 'Co-op': 50 }, []))).toBe(false)
+    })
+  })
+
+  describe('isEndless — без конца для строки «Наиграли»', () => {
+    test('PvP при одиночном режиме — не бесконечность, а isReplayable остаётся прежним', () => {
+      // Elden Ring: одиночная, Online PvP и кооп — кампания есть, строка нужна
+      const souls = meta(1, { 'Souls-like': 100, RPG: 80 }, [2, 36, 38])
+      expect(isEndless(souls)).toBe(false)
+      // «Уже прошёл» и совет знакомого решаются по-старому — это не побочный эффект строки
+      expect(isReplayable(souls)).toBe(true)
+    })
+
+    test('PvP без одиночного режима — бесконечность, как в isReplayable', () => {
+      expect(isEndless(meta(2, { FPS: 100 }, [1, 36, 49]))).toBe(true)
+      expect(isEndless(meta(3, { Action: 100 }, [38, 49]))).toBe(true)
+    })
+
+    test('теги без финала решают и при одиночном режиме; кооп с титрами — не бесконечность', () => {
+      expect(isEndless(meta(4, { Sandbox: 100 }, [2, 49]))).toBe(true)
+      expect(isEndless(meta(5, { Roguelite: 100 }))).toBe(true)
+      expect(isEndless(meta(6, { Puzzle: 100 }, [2, 1, 9, 38]))).toBe(false)
+    })
+
+    test('без categories режимов не знаем — PvP по тегам бесконечен, как в isReplayable', () => {
+      expect(isEndless(meta(7, { Shooter: 100, PvP: 50 }, []))).toBe(true)
+      expect(isEndless(meta(8, { RPG: 100, 'Story Rich': 50 }, []))).toBe(false)
     })
   })
 

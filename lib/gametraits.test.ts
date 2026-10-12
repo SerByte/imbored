@@ -99,12 +99,12 @@ describe('«Наиграли»', () => {
     basis: 'tags+reviews',
     ...(medianMin === null ? {} : { played: { posMedianMin: medianMin, posN: 60 } }),
   })
-  const words = (min: number) => lengthTrait({ semantics: sem(min) }, { replayable: false })?.value
+  const words = (min: number) => lengthTrait({ semantics: sem(min) }, { endless: false })?.value
 
   test('называет, чьё это время: тех, кто её хвалит, а не всех', () => {
     // выборка — самые полезные отзывы, и хвалившие наигрывают больше среднего:
     // «обычно столько играют» было бы неправдой
-    expect(lengthTrait({ semantics: sem(8 * 60) }, { replayable: false })).toEqual({
+    expect(lengthTrait({ semantics: sem(8 * 60) }, { endless: false })).toEqual({
       label: 'Наиграли',
       value: '~8 ч — те, кто её хвалит',
     })
@@ -131,12 +131,12 @@ describe('«Наиграли»', () => {
   })
 
   test('у игры без финала молчит: сотни часов в песочнице не отвечают «потяну ли»', () => {
-    expect(lengthTrait({ semantics: sem(300 * 60) }, { replayable: true })).toBeNull()
+    expect(lengthTrait({ semantics: sem(300 * 60) }, { endless: true })).toBeNull()
   })
 
   test('не знаем — молчим', () => {
     // до прохода крона карточек наигранного нет у большинства игр
-    expect(lengthTrait({}, { replayable: false })).toBeNull()
-    expect(lengthTrait({ semantics: sem(null) }, { replayable: false })).toBeNull()
+    expect(lengthTrait({}, { endless: false })).toBeNull()
+    expect(lengthTrait({ semantics: sem(null) }, { endless: false })).toBeNull()
   })
 })

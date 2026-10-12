@@ -27,7 +27,7 @@ import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { NEIGHBORS_K } from './neighbors'
 import { plural } from './plural'
-import { isReplayable } from './recommend'
+import { isEndless } from './recommend'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
 import { tagStatsFor } from './tagstats'
@@ -534,7 +534,7 @@ export function hookTrait(hook: readonly string[] | null): GameTrait | null {
  *
  * Три строки про время — подряд, от короткого к длинному: сколько длится
  * заход, когда игра раскрывается, сколько наиграли те, кто её хвалит.
- * Игре без финала «Наиграли» не пишем (isReplayable, см. lengthTrait).
+ * Игре без конца «Наиграли» не пишем (isEndless, см. lengthTrait).
  *
  * Русский — последним: строки выше про то, как в неё играется, а язык — про
  * то, можно ли в неё сесть вообще. Строке с русским соответствует
@@ -550,7 +550,7 @@ export function gameTraits(
     hookTrait(hook),
     sessionTrait(meta),
     entryTrait({ tags, semantics: meta.semantics }),
-    lengthTrait(meta, { replayable: isReplayable({ tags, categories: meta.categories }) }),
+    lengthTrait(meta, { endless: isEndless({ tags, categories: meta.categories }) }),
     characterTrait(meta),
     languageTrait(meta),
   ].filter((t): t is GameTrait => t !== null)

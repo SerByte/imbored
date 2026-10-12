@@ -3,6 +3,7 @@ import { editionKey } from './editions'
 import { entryCost } from './entry'
 import { CONTENT_WARNING_TAGS, GENERIC_TAGS } from './hook'
 import { isJunk } from './junk'
+import { playMode } from './liveness'
 import { VIBE_TAGS, type Lean } from './mood'
 import { playtimeHidden } from './playtime'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
@@ -1320,10 +1321,43 @@ const PVP_CATEGORIES = new Set([36, 49])
 /** Фолбэк, когда categories не загружены, — тот же приём, что в isMultiplayerMeta */
 const PVP_TAGS = ['PvP', 'Online PvP']
 
-export function isReplayable(meta: Pick<GameMeta, 'tags' | 'categories'>): boolean {
-  if (REPLAYABLE_TAGS.some((t) => t in meta.tags)) return true
+const hasReplayableTag = (tags: GameMeta['tags']) => REPLAYABLE_TAGS.some((t) => t in tags)
+
+function isPvp(meta: Pick<GameMeta, 'tags' | 'categories'>): boolean {
   if (meta.categories.length) return meta.categories.some((c) => PVP_CATEGORIES.has(c))
   return PVP_TAGS.some((t) => t in meta.tags)
+}
+
+export function isReplayable(meta: Pick<GameMeta, 'tags' | 'categories'>): boolean {
+  return hasReplayableTag(meta.tags) || isPvp(meta)
+}
+
+/**
+ * Нет конца, до которого игру наигрывают, — для строки «Наиграли» карточки
+ * (lengthTrait в lib/gametraits). То же, что isReplayable, только PvP уже:
+ * соревновательный режим делает игру бесконечной, лишь когда без него в неё
+ * не сыграть — нет одиночного режима (playMode не solo-capable, то же правило,
+ * что у «Матча» в sessionTrait).
+ *
+ * Иначе строка гасла ровно там, где её спрашивают чаще всего: у Elden Ring
+ * и Dark Souls III рядом с одиночной стоит Online PvP, и «сколько в ней
+ * наиграли» — вопрос про кампанию, а не про арену. Минуты хваливших у таких
+ * игр и арену в себя возьмут — поэтому строка и называет, чьё это время, а
+ * не обещает длину прохождения.
+ *
+ * isReplayable не сужен намеренно: он решает, советовать ли игру как
+ * знакомое и показывать ли «Уже прошёл», и у Elden Ring с её PvP эти ответы
+ * остаются прежними. Сузить и его — отдельное решение владельца, не побочный
+ * эффект строки.
+ *
+ * Без categories режимов не знаем — PvP по тегам считается бесконечным, как
+ * в isReplayable: «~30 ч» у соревновательного шутера было бы неправдой, а
+ * промолчать у сюжетной игры — всего лишь промолчать.
+ */
+export function isEndless(meta: Pick<GameMeta, 'tags' | 'categories'>): boolean {
+  if (hasReplayableTag(meta.tags)) return true
+  if (!meta.categories.length) return isPvp(meta)
+  return isPvp(meta) && playMode(meta.categories) !== 'solo-capable'
 }
 
 function fitsSocial(meta: GameMeta, mood: Mood): boolean {
