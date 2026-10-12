@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { FinishedNote, MarkFinished } from '@/components/MarkFinished'
 import { SteamLaunch } from '@/components/SteamLaunch'
+import { forgetPlanned } from '@/lib/planforget'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
 /**
@@ -57,6 +58,11 @@ import { isNeedSteam, writerStore } from '@/lib/writer'
  * говорит plan: true, и тогда нажатие пишет запуск так же, как строка плана
  * на /play (слот plan): план закрыт, исход совета заведён. Без плана запуск
  * отсюда по-прежнему ничего не пишет — это не совет, а своя игра.
+ *
+ * Закрытый план забывает и выдача /play на устройстве (lib/planforget): сюда
+ * чаще всего приходят из её ⓘ «Подробнее», и после «Назад» отложенный герой
+ * иначе листался бы «Не то — дальше» молча — без ответа про игру, которую
+ * только что запустили.
  */
 export function OwnedLaunch({
   appid,
@@ -114,6 +120,7 @@ export function OwnedLaunch({
                 })
                   .then(async (r) => {
                     if (await isNeedSteam(r)) writerStore.set(false)
+                    else if (r.ok) forgetPlanned(appid)
                   })
                   .catch(() => {})
             : undefined

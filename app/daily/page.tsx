@@ -28,6 +28,7 @@ import { WarmupScreen } from '@/components/WarmupScreen'
 import type { DailyPickCard, ShareView, StoreCard } from '@/lib/cards'
 import type { DailyYesterday } from '@/lib/daily'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
+import { closesPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import {
@@ -38,6 +39,7 @@ import {
   rememberLaunch,
   subscribeDueLaunch,
 } from '@/lib/launchmemo'
+import { forgetPlanned } from '@/lib/planforget'
 import { SOURCE_BADGE, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
@@ -132,6 +134,11 @@ type DailyResponse = {
  * Отзыв об игре дня. Тот же роут и та же дисциплина, что у sendFeedback на
  * /play: промис не отклоняется, needsteam переводит страницу в режим чтения —
  * «Зашло» и «Не сегодня» прячутся, и на их месте строка о входе через Steam.
+ *
+ * Запуск и «Не сегодня» закрывают план на вечер (closesPlan) — и тот, что
+ * поставлен на /play: игра дня бывает своей, отложенной там минуту назад.
+ * Выдача /play на устройстве её тогда больше не держит отложенной
+ * (lib/planforget): «не то» у неё там снова спросят.
  */
 async function sendFeedback(
   appid: number,
@@ -147,6 +154,7 @@ async function sendFeedback(
       body: JSON.stringify({ appid, action, ...(reason ? { reason } : {}), ctx }),
     })
     if (await isNeedSteam(r)) writerStore.set(false)
+    else if (r.ok && closesPlan(action, reason, ctx.intent)) forgetPlanned(appid)
     return r.ok
   } catch {
     return false

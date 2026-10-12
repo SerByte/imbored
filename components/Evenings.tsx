@@ -13,6 +13,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { eveningKey as keyOf, keepOnShelf } from '@/lib/eveningshelf'
 import { latestWins } from '@/lib/latestwins'
 import type { OutcomeVerdict } from '@/lib/outcome'
+import { forgetPlanned } from '@/lib/planforget'
 import { quizHref } from '@/lib/presets'
 import { isNeedSteam } from '@/lib/writer'
 
@@ -173,7 +174,9 @@ export function Evenings({
   /*
    * Запуск игры плана. Отправил и забыл, как OwnedLaunch: потерянный —
    * это строка плана до конца срока, а не сбой. needsteam — права сменились,
-   * пока страница была открыта: кнопки гаснут, как после отказа ответа
+   * пока страница была открыта: кнопки гаснут, как после отказа ответа.
+   * Записанный — закрыл план, и выдача /play на устройстве больше не держит
+   * игру отложенной (lib/planforget): «не то» у неё там снова спросят
    */
   const closePlan = (appid: number) =>
     void fetch('/api/feedback', {
@@ -183,6 +186,7 @@ export function Evenings({
     })
       .then(async (r) => {
         if (await isNeedSteam(r)) setDenied(true)
+        else if (r.ok) forgetPlanned(appid)
       })
       .catch(() => {})
 

@@ -15,11 +15,16 @@
  * их хранилища здесь напрямую.
  */
 
+import { PLAY_DEAL_KEY } from './planforget'
 import { warmMarkStore } from './warmmark'
 import { forgetPrewarm } from './warmup'
 
-/** Ключи записей выдачи — одни на lib/playcache и на стирание здесь */
-export const PLAY_DEAL_KEY = 'imbored.play.deal'
+/**
+ * Ключи записей выдачи — одни на lib/playcache и на стирание здесь. Ключ
+ * самой выдачи живёт в lib/planforget: его правят и страницы, которым этот
+ * модуль с прогревом за собой не нужен.
+ */
+export { PLAY_DEAL_KEY }
 export const PLAY_BANS_KEY = 'imbored.play.bans'
 
 type Forgettable = { set: (value: null) => void }

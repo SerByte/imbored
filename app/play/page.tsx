@@ -69,6 +69,7 @@ import {
   PLAY_CACHE_VERSION,
   hasFreshDeal,
   hasFreshWarm,
+  heldPlanned,
   playCacheKey,
   playCacheStore,
   readRecentBans,
@@ -429,8 +430,21 @@ function Player({ say }: { say: (line: string) => void }) {
    * эффект записи выдачи видит только состояние: ref, тронутый после
    * «Сыграю вечером», в запись не попадал, если следующим нажатием было ⓘ.
    * Массив, а не Set: в записи он и так массив, а игр в нём — по пальцам.
+   *
+   * Заход — это вкладка, а не настроение. «Изменить настроение» → квиз →
+   * /play — новое монтирование под другим ключом, и выдачу не вернуть, но
+   * отложенные из свежей записи того же человека едут в новую выдачу
+   * (heldOver ниже). И наоборот: план, закрытый не здесь, — запуском со
+   * страницы игры, из «Твоих вечеров», с «Игры дня», — из записи
+   * вычёркивает lib/planforget, и «не то» у такой игры снова спросят.
    */
   const [planned, setPlanned] = useState<number[]>([])
+  /**
+   * Отложенные из записи, которую не вернули (heldPlanned в lib/playcache), —
+   * ждут первую новую выдачу и сливаются в planned, если она того же
+   * человека. Ref: рисовать по нему нечего, а читает его один applyDeal.
+   */
+  const heldOver = useRef<{ viewer: string; appids: number[] } | null>(null)
   // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
   useWarmTonight()
   /** Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера, строка над «Продолжить» */
@@ -860,7 +874,9 @@ function Player({ say }: { say: (line: string) => void }) {
    * Пятая дверь — выдача с прошлого захода (back): та же функция, только герой,
    * время, «Зашло» и отложенные на вечер — сохранённые, а не новые. У новой
    * выдачи отложенные остаются прежними: план стоит, пока его не закрыли, и
-   * герой, вернувшийся следующей пятёркой, по-прежнему отложен.
+   * герой, вернувшийся следующей пятёркой, по-прежнему отложен. Первая новая
+   * выдача после монтирования добирает их и из записи другого настроения
+   * (heldOver) — здесь, а не в reveal: выдачу приносит и «Попробовать снова».
    */
   const applyDeal = useCallback(
     (deal: Deal, back?: { index: number; at: number; liked: number[]; planned: number[] }): number => {
@@ -893,6 +909,11 @@ function Player({ say }: { say: (line: string) => void }) {
       if (back) {
         setLiked(new Set(back.liked))
         setPlanned(back.planned)
+      } else if (heldOver.current) {
+        const held = heldOver.current
+        heldOver.current = null
+        // Чужая запись (вход сменился) — её отложенные не про этого человека
+        if (held.viewer === deal.viewer) setPlanned((a) => [...a, ...held.appids.filter((x) => !a.includes(x))])
       }
       // Выдача пришла — прежний отказ переключателя больше не про неё
       setSwitchMiss(null)
@@ -1032,20 +1053,21 @@ function Player({ say }: { say: (line: string) => void }) {
        * «не знаю» ведёт обычным путём — лишний прогрев лучше чужой выдачи.
        */
       warmAtReveal.current = 0
-      const entry = playCacheStore.get()
+      // Из хранилища, а не из памяти вкладки: запись правят и мимо модуля
+      // выдачи (lib/planforget), пока /play не смонтирована
+      const entry = playCacheStore.fresh()
       const mark = warmMarkStore.get()
       const viewer =
         hasFreshDeal(entry, cacheKey, Date.now()) || hasFreshWarm(mark, Date.now())
           ? await whoAmI(ac.signal)
           : null
       if (ac.signal.aborted) return
-      const back = restoreDeal(entry, {
-        key: cacheKey,
-        viewer,
-        nowMs: Date.now(),
-        // Бан из соседней вкладки этой записи не видел
-        banned: readRecentBans(Date.now()),
-      })
+      // Бан из соседней вкладки этой записи не видел
+      const banned = readRecentBans(Date.now())
+      const back = restoreDeal(entry, { key: cacheKey, viewer, nowMs: Date.now(), banned })
+      // Выдачу не вернули — другое настроение, вход не узнан, — а отложенные
+      // из той же записи ждут новую (heldOver)
+      heldOver.current = back ? null : heldPlanned(entry, { nowMs: Date.now(), banned })
       if (back) {
         applyDeal(back.deal, back)
         setPhase('reveal')

@@ -7,6 +7,7 @@ import {
   forgetPlay,
   hasFreshDeal,
   hasFreshWarm,
+  heldPlanned,
   parsePlayCache,
   parseRecentBans,
   parseWarmMark,
@@ -23,6 +24,7 @@ import {
   withBan,
   type PlayCache,
 } from './playcache'
+import { forgetPlanned } from './planforget'
 import type { PlayPick } from './playflow'
 import { runWarmup, startPrewarm } from './warmup'
 
@@ -347,6 +349,41 @@ describe('restoreDeal', () => {
   })
 })
 
+/*
+ * «Поставь на загрузку» у своей → «Изменить настроение» → квиз → /play с
+ * другим настроением. Новое монтирование, другой ключ: restoreDeal выдачу
+ * не вернёт — а отложенные из той же записи обязаны доехать до новой
+ * выдачи. Иначе первая же новая выдача ложилась поверх единственной записи
+ * с пустым списком, и своя игра, пришедшая героем снова, на «Не то —
+ * дальше» → «Просто не сейчас» закрывала план, поставленный минуту назад.
+ */
+describe('heldPlanned', () => {
+  const q = { nowMs: NOW + 60_000, banned: NO_BANS }
+  const mood = playCacheKey({ mood: { ...NEUTRAL_MOOD, vibe: 'engaged' }, focus: null, roulette: false, lean: null })
+
+  test('запись другого настроения выдачу не вернёт, а отложенные отдаст — с тем, чьи они', () => {
+    const e = entry({ planned: [20, 1145360] })
+    expect(restoreDeal(e, { ...q, key: mood, viewer: ME })).toBeNull()
+    expect(heldPlanned(e, q)).toEqual({ viewer: ME, appids: [20, 1145360] })
+  })
+
+  test('старше пятнадцати минут — уже не этот заход', () => {
+    const e = entry({ planned: [20] })
+    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAY_CACHE_TTL_MS })).not.toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAY_CACHE_TTL_MS + 1 })).toBeNull()
+  })
+
+  test('забаненные не едут: бан план уже закрыл', () => {
+    expect(heldPlanned(entry({ planned: [20, 30] }), { ...q, banned: new Set([30]) })?.appids).toEqual([20])
+    expect(heldPlanned(entry({ planned: [20] }), { ...q, banned: new Set([20]) })).toBeNull()
+  })
+
+  test('нести нечего — null, а не пустой список', () => {
+    expect(heldPlanned(entry(), q)).toBeNull()
+    expect(heldPlanned(null, q)).toBeNull()
+  })
+})
+
 describe('hasFreshDeal', () => {
   test('спрашивать, кто вошёл, стоит только при свежей записи того же запроса', () => {
     expect(hasFreshDeal(entry(), KEY, NOW + 1000)).toBe(true)
@@ -514,6 +551,35 @@ describe('хранилища', () => {
       banned: readRecentBans(NOW + 1000),
     })
     expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 30])
+  })
+
+  /*
+   * План закрыт на странице игры («Запустить» по биту plan) — lib/planforget
+   * вычёркивает игру из записи по ключу, мимо модуля выдачи. Модуль в этом
+   * документе уже загружен (пришли с /play без перезагрузки) и держит в
+   * памяти прежнюю копию; /play при монтировании читает запись из
+   * хранилища (fresh) — и видит правку, а правленая запись по-прежнему
+   * узнаётся целиком.
+   */
+  test('отложенная, чей план закрыт не на /play, после «Назад» уже не отложена и не строка плана', () => {
+    const session = fakeStorage()
+    vi.stubGlobal('sessionStorage', session.area)
+    playCacheStore.set(entry({ planned: [20, 30] }))
+
+    forgetPlanned(20)
+
+    const back = restoreDeal(playCacheStore.fresh(), { key: KEY, viewer: ME, nowMs: NOW + 1000, banned: NO_BANS })
+    expect(back?.planned).toEqual([30])
+    expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 20, 30])
+    expect(back?.liked).toEqual([10])
+    expect(back?.deal.plan?.appid).toBe(1145360)
+
+    // запуск плана из строки — та уходит, а выдача остаётся узнанной целиком
+    forgetPlanned(1145360)
+    const after = restoreDeal(playCacheStore.fresh(), { key: KEY, viewer: ME, nowMs: NOW + 1000, banned: NO_BANS })
+    expect(after?.deal.plan).toBeNull()
+    expect(after?.deal.continueGame?.appid).toBe(570)
+    expect(after?.planned).toEqual([30])
   })
 
   test('свой бан дописывается к хранилищу и не стирает бан соседней вкладки', () => {

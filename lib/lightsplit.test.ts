@@ -44,6 +44,26 @@ describe('модули не едут в первую загрузку ради �
     }
   })
 
+  /*
+   * План на вечер, закрытый не на /play, вычёркивается из записи выдачи
+   * (lib/planforget) — со страницы игры, из «Твоих вечеров» и с «Игры дня».
+   * Разбор выдачи ради этого им не нужен, а прогрев (lib/warmup, его везёт
+   * lib/playforget) странице игры и «Твоим вечерам» — тем более.
+   */
+  test('план, закрытый вне /play, правит выдачу, не разбирая её', () => {
+    expect(files('lib/planforget.ts'), 'у правки записи нет зависимостей').toEqual(['lib/planforget.ts'])
+    for (const island of ['components/OwnedLaunch.tsx', 'components/Evenings.tsx']) {
+      const got = files(island)
+      expect(got, island).toContain('lib/planforget.ts')
+      for (const heavy of ['lib/playcache.ts', 'lib/playflow.ts', 'lib/playforget.ts', 'lib/warmup.ts']) {
+        expect(got, `${heavy} снова в ${island}`).not.toContain(heavy)
+      }
+    }
+    const daily = files('app/daily/page.tsx')
+    expect(daily).toContain('lib/planforget.ts')
+    expect(daily, 'lib/playcache.ts в первой загрузке /daily').not.toContain('lib/playcache.ts')
+  })
+
   test('обложка знает магазин игры, не таща пул игр других магазинов', () => {
     const cover = files('components/TypeCover.tsx')
     expect(cover).toContain('lib/storecover.ts')
