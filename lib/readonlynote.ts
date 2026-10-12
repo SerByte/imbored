@@ -11,6 +11,10 @@
  * визит. Флажок стирается при показе — второй раз не всплывёт. Событие —
  * потому что карточка ведёт дальше клиентским переходом, и записка в
  * корневом лэйауте к этому моменту давно смонтирована.
+ *
+ * Показ — в два шага: сперва флажок смотрят, не забирая (peekReadOnlyNote),
+ * и везут тело записки чанком; забирают (takeReadOnlyNote), только когда
+ * тело приехало. Почему — в components/ReadOnlyNote.
  */
 const KEY = 'imbored.readonly-note'
 export const READONLY_NOTE_EVENT = 'imbored:readonly-note'
@@ -28,10 +32,22 @@ export function announceReadOnly(): void {
   }
 }
 
+/**
+ * Стоит ли флажок — не забирая его. Записку ещё нужно привезти, и чанк, не
+ * дошедший по дороге, не должен съесть одноразовое сообщение.
+ */
+export function peekReadOnlyNote(): boolean {
+  try {
+    return sessionStorage.getItem(KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 /** Забрать флажок: true — записку пора показать, и больше её не покажут */
 export function takeReadOnlyNote(): boolean {
+  if (!peekReadOnlyNote()) return false
   try {
-    if (sessionStorage.getItem(KEY) !== '1') return false
     sessionStorage.removeItem(KEY)
     return true
   } catch {

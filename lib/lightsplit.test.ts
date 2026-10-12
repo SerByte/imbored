@@ -21,11 +21,19 @@ import { reach, rel, ROOT } from './testing/importgraph'
 const files = (entry: string) => [...reach(path.join(ROOT, entry)).files].map(rel)
 
 describe('модули не едут в первую загрузку ради одного имени', () => {
-  test('корневой лэйаут проверяет адрес входа, но не везёт тексты лендинга', () => {
-    const layout = files('app/layout.tsx')
+  /*
+   * Адрес входа (lib/destination, steamLoginFor) читает записка «Режим
+   * просмотра». Раньше — прямо из корневого лэйаута, теперь — из своего тела,
+   * которое едет чанком (components/ReadOnlyNoteBox): в лэйауте нет ни
+   * адресов, ни тем более текстов лендинга (lib/sharedchunk.test.ts). Тексты
+   * не должны въехать и в тело: это 1.8 КБ кириллицы ради одного имени.
+   */
+  test('записка проверяет адрес входа, но не везёт тексты лендинга', () => {
+    const note = files('components/ReadOnlyNoteBox.tsx')
     // без этого сторож ниже мог бы быть зелёным вхолостую
-    expect(layout).toContain('lib/destination.ts')
-    expect(layout, 'тексты лендинга — 1.8 КБ кириллицы в каждой странице').not.toContain('lib/destinationtext.ts')
+    expect(note).toContain('lib/destination.ts')
+    expect(note, 'тексты лендинга — 1.8 КБ кириллицы в чанке записки').not.toContain('lib/destinationtext.ts')
+    expect(files('app/layout.tsx'), 'тексты лендинга — в каждой странице').not.toContain('lib/destinationtext.ts')
   })
 
   test('квиз читает метку прогрева, но не разбор сохранённой выдачи', () => {

@@ -2,8 +2,6 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   freshLastMood,
   LAST_MOOD_TTL_SEC,
-  lastMoodCaption,
-  lastMoodCaptionServer,
   lastMoodStore,
   parseLastMood,
   pickHref,
@@ -11,6 +9,7 @@ import {
   QUIZ_HREF,
   type LastMood,
 } from './lastmood'
+import { lastMoodCaption, lastMoodCaptionServer } from './lastmoodcaption'
 import { createLocalStore } from './localstore'
 import { LEANS, parseLean, parseMood } from './mood'
 import type { Mood } from './types'

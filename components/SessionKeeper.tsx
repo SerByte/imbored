@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation'
 import { useEffect } from 'react'
 import { settleSessionHint } from '@/lib/sessionhint'
+import { claimSessionTouch, forgetSessionTouch } from '@/lib/sessiontouch'
 import { writerFrom, writerStore } from '@/lib/writer'
 
 /**
@@ -12,11 +13,9 @@ import { writerFrom, writerStore } from '@/lib/writer'
  * разрешает Set-Cookie после начала стрима), поэтому продление живёт в роуте,
  * а позвать роут должен кто-то с клиента. Вот этот кто-то.
  *
- * Отметка «уже дёргали» держится В ПАМЯТИ модуля, а не в sessionStorage.
- * Разница не косметическая: sessionStorage переживает перезагрузки и умирает
- * только с вкладкой, а вкладка на телефоне не закрывается месяцами — флаг там
- * встал бы навсегда, и продление не случилось бы ни разу. Память модуля живёт
- * ровно столько, сколько документ, то есть именно то, что нужно.
+ * Отметка «уже дёргали» — одна на вкладку и общая с главной, которая зовёт
+ * touch сама: lib/sessiontouch (там же — почему в памяти, а не в
+ * sessionStorage).
  *
  * Плюс повтор по возвращении на вкладку: страница, открытая полгода назад и
  * ни разу не перезагруженная, иначе осталась бы с одним-единственным
@@ -28,16 +27,15 @@ import { writerFrom, writerStore } from '@/lib/writer'
  * подсказка о входе (settleSessionHint в lib/sessionhint): вход мимо главной
  * иначе оставлял бы на устройстве прежний вид входа — демо, вошедший через
  * Steam, продолжал бы видеть полосу «это чужая демо-библиотека».
+ *
+ * Стоит не в лэйауте, а в закулисье (components/Backstage): чанком, в простое
+ * после гидратации. Продление уходит на долю секунды позже, и на столько же
+ * позже приходят признак записи и сверка подсказки — до них страницы и так
+ * живут с «не знаем» (lib/writer), а правду скажет первый же отказ. Прогрев
+ * квиза у вернувшегося из Steam ждёт этого ответа (prewarmWanted в
+ * lib/warmup) и стартует на столько же позже — против секунд, за которые
+ * отвечают на три вопроса, это мало.
  */
-const AGAIN_AFTER_MS = 12 * 60 * 60 * 1000
-
-let lastTouch = 0
-
-/** Главная зовёт /api/session/touch сама (ей нужен ответ) — пусть не дублируется */
-export function markSessionTouched(): void {
-  lastTouch = Date.now()
-}
-
 export function SessionKeeper() {
   const pathname = usePathname()
 
@@ -46,8 +44,7 @@ export function SessionKeeper() {
     if (pathname === '/') return
 
     const touch = () => {
-      if (Date.now() - lastTouch < AGAIN_AFTER_MS) return
-      lastTouch = Date.now()
+      if (!claimSessionTouch()) return
       // Продление — это Set-Cookie, а не тело. Из тела нужны writer и — для
       // сверки подсказки о входе — authed и steamid (settleSessionHint: без
       // строкового steamid она молча ничего не делает, так что урезать их из
@@ -62,9 +59,7 @@ export function SessionKeeper() {
           writerStore.set(writerFrom(body))
           settleSessionHint(body)
         })
-        .catch(() => {
-          lastTouch = 0
-        })
+        .catch(forgetSessionTouch)
     }
 
     touch()

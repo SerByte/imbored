@@ -13,17 +13,10 @@ import {
   PASSWORD_NOTE_ID,
 } from '@/components/landing/ConnectFallback'
 import { LinkHelp, LinkHelpToggle, toggleLinkHelp } from '@/components/landing/LinkHelp'
-import { markSessionTouched } from '@/components/SessionKeeper'
 import { destinationPath, destinationUrl } from '@/lib/destination'
 import { DESTINATIONS } from '@/lib/destinationtext'
-import {
-  lastMoodCaptionNow,
-  lastMoodCaptionServer,
-  lastMoodStore,
-  pickHrefNow,
-  pickHrefServer,
-  QUIZ_HREF,
-} from '@/lib/lastmood'
+import { lastMoodStore, pickHrefNow, pickHrefServer, QUIZ_HREF } from '@/lib/lastmood'
+import { lastMoodCaptionNow, lastMoodCaptionServer } from '@/lib/lastmoodcaption'
 import { plural } from '@/lib/plural'
 import { presetHref, VIBE_PRESETS } from '@/lib/presets'
 import {
@@ -34,6 +27,7 @@ import {
   subscribeSessionHint,
   type SessionHint,
 } from '@/lib/sessionhint'
+import { markSessionTouched } from '@/lib/sessiontouch'
 import { writerFrom, writerStore } from '@/lib/writer'
 import { forgetPrewarm } from '@/lib/warmup'
 import { announceReadOnly } from '@/lib/readonlynote'

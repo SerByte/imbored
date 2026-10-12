@@ -1,8 +1,7 @@
-import { Analytics } from '@vercel/analytics/next'
-import { SpeedInsights } from '@vercel/speed-insights/next'
 import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono, Manrope } from 'next/font/google'
 import Link from 'next/link'
+import { Backstage } from '@/components/BackstageLazy'
 import { ChromeZone } from '@/components/ChromeZone'
 import { Footer } from '@/components/Footer'
 import { HeaderNav } from '@/components/HeaderNav'
@@ -12,7 +11,6 @@ import { MotionProvider } from '@/components/MotionProvider'
 import { ReadOnlyNote } from '@/components/ReadOnlyNote'
 import { RefCapture } from '@/components/RefCapture'
 import { SearchLauncher } from '@/components/SearchLauncher'
-import { SessionKeeper } from '@/components/SessionKeeper'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
 import { appBaseUrl } from '@/lib/server'
@@ -356,21 +354,18 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
           </div>
         </div>
         <MobileNav />
-        {/* Продлевает вход. Клиентский и без разметки: лэйаут кук не читает,
-            иначе весь сайт стал бы динамическим и ISR у /game/[appid] умер. */}
         {/* Ставит data-chrome на <html>, когда шапка уезжает с кино-зоны на
-            контент. Клиентский и без разметки — как SessionKeeper. */}
+            контент. Клиентский и без разметки — как закулисье ниже. */}
         <ChromeZone />
         {/* Плавная прокрутка — только у главной (app/page.tsx): закреплённые
             сцены есть только там, остальной сайт прокручивается нативно. */}
-        <SessionKeeper />
         <RefCapture />
         <ReadOnlyNote />
-        <Analytics />
-        {/* Полевые Web Vitals. На сайте, где LCP — это всегда чужая обложка со
-            steamstatic, синтетика меряет не то: реальный разброс дают чужой CDN
-            и чужая сеть, а не наш рендер. */}
-        <SpeedInsights />
+        {/* Закулисье: продление входа, аналитика и полевые Web Vitals — чанком,
+            в простое после гидратации (components/BackstageLazy). Клиентское
+            и без разметки: лэйаут кук не читает, иначе весь сайт стал бы
+            динамическим и ISR у /game/[appid] умер. */}
+        <Backstage />
       </body>
     </html>
   )
