@@ -50,6 +50,7 @@ import { byPrices, formatPrice } from '@/lib/steamregion'
 import { tagWeightFrom } from '@/lib/tagweight'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { Eyebrow } from '@/components/Labels'
+import { GameLink } from '@/components/GameLink'
 import { LinkPending } from '@/components/LinkPending'
 import { LibrarySearch } from '@/components/LibrarySearch'
 import { RailToCurrent } from '@/components/RailToCurrent'
@@ -733,10 +734,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-6">
             {shelf.map((g) => (
-              <Link
+              <GameLink
                 key={g.appid}
-                href={`/game/${g.appid}`}
-                prefetch={false}
+                appid={g.appid}
                 className="game-card block"
               >
                 <GameCardBody
@@ -751,7 +751,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
                   corner={<span className="lib-badge badge-line">Запечатана</span>}
                 />
-              </Link>
+              </GameLink>
             ))}
           </div>
         </section>
@@ -853,16 +853,15 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           const refreshable = updatedP !== null && state === 'comeback' && mayRefresh.has(g.appid)
           return (
             /*
-              Без префетча: плитка попадает в экран при прокрутке, и каждая
-              префетчила бы /game/<appid>. Игры вне заранее собранных страниц
-              рендерятся по требованию, то есть порция из 48 плиток — это до
-              48 рендеров с походами в базу ради страниц, куда человек
-              откроет одну.
+              Без префетча (GameLink): плитка попадает в экран при
+              прокрутке, и каждая префетчила бы /game/<appid>. Игры вне
+              заранее собранных страниц рендерятся по требованию, то есть
+              порция из 48 плиток — это до 48 рендеров с походами в базу ради
+              страниц, куда человек откроет одну.
             */
-            <Link
+            <GameLink
               key={g.appid}
-              href={`/game/${g.appid}`}
-              prefetch={false}
+              appid={g.appid}
               // Заброшенная приглушается обложкой, а не целиком: прозрачность
               // на всей плитке роняла и подпись под ней — на светлой теме до
               // 3.97:1 (axe, color-contrast)
@@ -915,7 +914,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   </>
                 }
               />
-            </Link>
+            </GameLink>
           )
         })}
       </div>

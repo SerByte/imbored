@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
 import { SearchLauncher } from '@/components/SearchLauncher'
+import { TilePending } from '@/components/TilePending'
 import { replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
 import { flight as flightOf, islandsOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
@@ -25,11 +26,13 @@ vi.mock('next/headers', () => import('@/lib/testing/headers'))
 /**
  * GameArt — в списке, чтобы его возвращение было видно, а не роняло тест.
  * SearchLauncher — строка «Найти игру по названию» над полками.
+ * TilePending — знак ожидания внутри каждой капсулы (components/GameLink).
  */
 const ISLANDS = new Map<unknown, string>([
   [Link, 'Link'],
   [GameArt, 'GameArt'],
   [SearchLauncher, 'SearchLauncher'],
+  [TilePending, 'TilePending'],
 ])
 const flight = (node: unknown) => flightOf(node, ISLANDS)
 

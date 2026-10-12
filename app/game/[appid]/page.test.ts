@@ -3,6 +3,7 @@ import path from 'node:path'
 import Link from 'next/link'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
+import { TilePending } from '@/components/TilePending'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
@@ -162,6 +163,8 @@ const ISLANDS = new Map<unknown, string>([
   [ProgressRing, 'ProgressRing'],
   [ShownUntil, 'ShownUntil'],
   [TrailerPreview, 'TrailerPreview'],
+  // знак ожидания в плитках «Похожих» (components/GameLink)
+  [TilePending, 'TilePending'],
 ])
 
 const flight = (node: unknown) => flightOf(node, ISLANDS)

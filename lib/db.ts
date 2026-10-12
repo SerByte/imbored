@@ -5577,7 +5577,7 @@ const LIVE_PLAN = `f.steamid = ?1 AND f.created_at >= ?2 AND f.action = 'opened'
                   AND (
                     (l.action = 'launched' AND json_extract(l.ctx_json, '$.intent') IS NOT 'store')
                     OR l.action = 'banned'
-                    OR (l.action = 'skipped' AND l.reason IS NOT 'spin')
+                    OR (l.action = 'skipped' AND l.reason IS NOT 'spin' AND l.reason IS NOT 'explore')
                   )
              )`
 
@@ -5588,7 +5588,9 @@ const LIVE_PLAN = `f.steamid = ?1 AND f.created_at >= ?2 AND f.action = 'opened'
  * Жив — моложе PLAN_TTL_SEC и не закрыт тем, что сказано позже про ту же
  * игру: запуском (сыграл — напоминать не о чем), баном или пропуском с любой
  * причиной («не сейчас», «надоела», «не мой жанр» — передумал). Бросок
- * рулетки ('spin') план не закрывает: это кубик, а не решение. «Зашло» и
+ * рулетки ('spin') план не закрывает: это кубик, а не решение. «Мимо» в
+ * колоде /explore ('explore') — тоже: листание без обязательств, в котором
+ * встречается и своя отложенная игра, а не ответ про неё. «Зашло» и
  * открытая карточка — тоже: это не «передумал». Позже — по id, а не по
  * секундам: запуск в ту же секунду, что и план, всё равно случился после.
  * Окна «пропуск сразу после плана не в счёт» здесь нет нарочно: «Не то —

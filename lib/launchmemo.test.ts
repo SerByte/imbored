@@ -232,7 +232,11 @@ describe('/play забывает запуск, когда на героя отв
       .map((line, i) => ({ line, i }))
       .filter(
         ({ line }) =>
-          /sendFeedback\(pick\.appid, '(liked|skipped|banned)'/.test(line) && !line.includes("'spin'"),
+          // «Зашло» уходит через sendLike — в очереди записей игры (lib/unlike).
+          // Его снятие тем же сердцем — не ответ про игру, а отказ от ответа:
+          // запуск оно не забывает, и строки sendLike в нём нет
+          /sendFeedback\(pick\.appid, '(liked|skipped|banned)'|sendLike\(pick\.appid,/.test(line) &&
+          !line.includes("'spin'"),
       )
     // Причины скипа, «пропустить», «Зашло», бан
     expect(rated.length).toBeGreaterThanOrEqual(4)

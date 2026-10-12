@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { clip } from '@/lib/clip'
@@ -121,7 +122,7 @@ export default async function GenrePage({ params }: Params) {
               <li key={g.appid} className="flex min-w-0 flex-col">
                 {/* Без префетча — как на хабе: сорок карточек в экране будили бы
                     функцию на каждую, по которой никто не пойдёт */}
-                <Link href={`/game/${g.appid}`} prefetch={false} className="game-card block">
+                <GameLink appid={g.appid} className="game-card block">
                   <StaticGameCardBody
                     appid={g.appid}
                     name={g.name}
@@ -152,7 +153,7 @@ export default async function GenrePage({ params }: Params) {
                       )
                     }
                   />
-                </Link>
+                </GameLink>
                 <Why game={g} />
               </li>
             ))}

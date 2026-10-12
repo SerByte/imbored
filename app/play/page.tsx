@@ -23,7 +23,7 @@ import { RefundNote } from '@/components/RefundNote'
 import { SpinWheel } from '@/components/SpinWheel'
 import { SteamLaunch, type LaunchVia } from '@/components/SteamLaunch'
 import { StopAsk } from '@/components/StopAsk'
-import { TonightButton, useWarmTonight } from '@/components/TonightLazy'
+import { heroTail, TonightButton, useWarmTonight } from '@/components/TonightLazy'
 import { WarmupScreen, type ChosenGame } from '@/components/WarmupScreen'
 import { HeroTitle } from '@/components/HeroTitle'
 import { HeroTrailer } from '@/components/HeroTrailer'
@@ -697,6 +697,19 @@ function Player({ say }: { say: (line: string) => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
+
+  /**
+   * «Зашло» — в очереди записей игры (inTurn в lib/unlike): снятие тем же
+   * сердцем через полсекунды не обгонит эту вставку на сервере, а новое
+   * «Зашло» сразу после снятия — запоздалый DELETE. Очередь едет ленивым
+   * куском героя (heroTail, components/HeroTail): /play у потолка бюджета.
+   * Не пришёл кусок — оценка уходит сразу, как до очереди: учебный сигнал
+   * не теряется из-за куска, который нужен только для отмены.
+   */
+  const sendLike = (appid: number, ctx: FeedbackCtx) => {
+    const send = () => sendFeedback(appid, 'liked', undefined, ctx)
+    void heroTail().then((t) => t.inTurn(appid, send), send)
+  }
 
   /**
    * Бан ждёт подтверждения сервера — см. докблок sendFeedback выше.
@@ -1779,6 +1792,8 @@ function Player({ say }: { say: (line: string) => void }) {
    * 'done': игра не разонравилась — она кончилась, и вкус о ней не спорит.
    */
   const finished = pick.source === 'comeback' || pick.source === 'familiar'
+  /** Сердце героя горит: «Зашло» поставлено, и второе нажатие его снимет */
+  const heartOn = liked.has(pick.appid)
   /*
    * Своя игра, которую не проходил, — бан убирает её «с полки», и подпись
    * говорит прямо: бросать игры нормально. Купленное и недопройденное
@@ -1901,7 +1916,7 @@ function Player({ say }: { say: (line: string) => void }) {
           if (!liked.has(stopDue.appid)) {
             setLiked(new Set(liked).add(stopDue.appid))
             const asked = picks.find((p) => p.appid === stopDue.appid) ?? null
-            void sendFeedback(stopDue.appid, 'liked', undefined, ctxOf(asked, undefined, 'ask'))
+            sendLike(stopDue.appid, ctxOf(asked, undefined, 'ask'))
           }
           launchMemoStore.set(null)
           focusHero(true)
@@ -2286,21 +2301,32 @@ function Player({ say }: { say: (line: string) => void }) {
                 {!readOnly && (
                   <button
                     onClick={() => {
-                      // «Зашло» после запуска — уже ответ на «не зацепило?», даже
-                      // повторное: спрашивать про неё больше незачем
+                      // Второе нажатие снимает «Зашло» — тем же /api/unlike,
+                      // что полка /library (lib/unlike, ленивым куском героя
+                      // heroTail): ошибочное сердце забирается там, где
+                      // поставлено. Отказ — строкой под героем (heroMiss), и
+                      // сердце горит снова. Не пришёл кусок (деплой сменил
+                      // хеш, а вкладка старая; на компьютере его никто не
+                      // прогревал) — снятия не было, сердце горит как горело,
+                      // и та же строка говорит, что делать: молча нажатие
+                      // было бы мёртвым. Коротко — /play у самого потолка
+                      // bundle-budget.json; отчёт о куске шлёт островок
+                      // «Сыграю вечером» (components/TonightLazy)
+                      if (heartOn) return void heroTail().then((t) => t.undoLike(pick, setLiked, setHeroMiss), () => setHeroMiss('Обнови страницу'))
+                      // «Зашло» после запуска — уже ответ на «не зацепило?»:
+                      // спрашивать про неё больше незачем
                       forgetLaunch(pick.appid)
-                      // Повторное нажатие — не второе «зашло»: кнопка уже горит
-                      if (liked.has(pick.appid)) return
                       setLiked(new Set(liked).add(pick.appid))
-                      void sendFeedback(pick.appid, 'liked', undefined, ctxOf(pick, heroFrom))
+                      sendLike(pick.appid, ctxOf(pick, heroFrom))
                     }}
                     // Круг с сердцем, как «в мой список» у стриминга; подпись
-                    // для скринридера — та же, что была текстом кнопки
-                    aria-pressed={liked.has(pick.appid)}
-                    title={liked.has(pick.appid) ? 'Зашло — учтём в подборе' : 'Зашло'}
+                    // для скринридера — та же, что была текстом кнопки, и
+                    // не меняется с нажатием: тумблер называет aria-pressed
+                    aria-pressed={heartOn}
+                    title={heartOn ? 'Зашло — нажми, чтобы снять' : 'Зашло'}
                     className="btn-circle"
                   >
-                    <Icon name={liked.has(pick.appid) ? 'check' : 'heart'} size={20} />
+                    <Icon name={heartOn ? 'check' : 'heart'} size={20} />
                     <span className="sr-only">Зашло</span>
                   </button>
                 )}

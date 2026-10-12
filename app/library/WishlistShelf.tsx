@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import { GameLink } from '@/components/GameLink'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
@@ -79,7 +79,7 @@ export async function WishlistShelf(props: ShelfProps) {
           двенадцать плиток — два ряда */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-6">
         {deals.map((d) => (
-          <Link key={d.appid} href={`/game/${d.appid}`} prefetch={false} className="game-card block">
+          <GameLink key={d.appid} appid={d.appid} className="game-card block">
             <GameCardBody
               appid={d.appid}
               name={d.name}
@@ -100,7 +100,7 @@ export async function WishlistShelf(props: ShelfProps) {
                 />
               }
             />
-          </Link>
+          </GameLink>
         ))}
       </div>
     </section>

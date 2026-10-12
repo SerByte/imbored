@@ -56,7 +56,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.doUnmock('@/components/TonightButton')
+  vi.doUnmock('@/components/HeroTail')
 })
 
 /*
@@ -109,11 +109,12 @@ describe('отказ чанка — пустое место и отчёт с т�
   /*
    * «Сыграю вечером» помнит отказ до перезагрузки и потому ловит его сам, в
    * загрузчике (components/TonightLazy): до островка отказ не доходит, и
-   * отчёт — оттуда же.
+   * отчёт — оттуда же. Кусок — «хвост героя» (components/HeroTail: кнопка и
+   * снятие «Зашло» для /play), его отказ здесь и подменяется.
    */
   test('«Сыграю вечером» ловит отказ сам — и всё равно отчитывается', async () => {
     const err = chunk404()
-    vi.doMock('@/components/TonightButton', () => {
+    vi.doMock('@/components/HeroTail', () => {
       throw err
     })
     vi.resetModules()

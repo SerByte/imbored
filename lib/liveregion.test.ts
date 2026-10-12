@@ -257,6 +257,9 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   { file: 'app/explore/page.tsx', start: 'const retry = async', reset: ['setRetrying(true)'] },
   { file: 'components/BannedShelf.tsx', start: 'async function unban(', reset: ['setFailed(null)'] },
   { file: 'components/LikedShelf.tsx', start: 'async function unlike(', reset: ['setFailed(null)'] },
+  // второе нажатие «Зашло» у героя /play и /daily: на моргнувшей связи
+  // повторный отказ — тот же текст в строке под героем
+  { file: 'lib/unlike.ts', start: 'export async function undoLike(', reset: ['say(null)'] },
   { file: 'components/Evenings.tsx', start: 'async function answer(', reset: ['setFailed(null)'] },
   // «Сыграю вечером на ПК»: на моргнувшей связи второй тап — тот же отказ тем же текстом
   { file: 'components/TonightButton.tsx', start: 'async function plan()', reset: ['setDone(null)'] },
