@@ -50,7 +50,7 @@ export type EveningItem = {
  * на /library больше ничто не везёт, и обёртка ради кнопки в 2 КБ стоила
  * ~4 КБ — вдвое дороже самой кнопки.
  */
-const MarkFinished = lazyIsland(() => import('@/components/MarkFinished').then((m) => m.MarkFinished))
+const MarkFinished = lazyIsland(() => import('@/components/MarkFinished').then((m) => m.MarkFinished), 'mark-finished')
 
 /** Одна игра может быть посоветована дважды — в разные окна */
 const keyOf = (i: Pick<EveningItem, 'appid' | 'shownAt'>) => `${i.appid}:${i.shownAt}`

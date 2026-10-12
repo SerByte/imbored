@@ -23,7 +23,7 @@ import { lazyIsland } from '@/components/lazyIsland'
  * Островком (components/lazyIsland), а не next/dynamic с ssr: false: /daily
  * стоит у потолка бюджета первой загрузки, а рантайм next/dynamic — ~4 КБ.
  */
-const PixelSnow = lazyIsland(() => import('@/components/PixelSnow').then((m) => m.default))
+const PixelSnow = lazyIsland(() => import('@/components/PixelSnow').then((m) => m.default), 'snow')
 
 export function SeasonalSnow() {
   const isDecember = new Date().getMonth() === 11

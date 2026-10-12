@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { lazyIsland } from '@/components/lazyIsland'
+import { lazyIsland, reportIslandFailure } from '@/components/lazyIsland'
 import type { TonightButton as Tonight } from '@/components/TonightButton'
 
 /*
@@ -23,7 +23,10 @@ import type { TonightButton as Tonight } from '@/components/TonightButton'
  * здесь — нечего. Поэтому без границы: отказ ловит сам загрузчик и отдаёт
  * пустой компонент. Кнопки нет, страница цела; «попробовать ещё раз» тут не
  * нужно — островок помнит пустой компонент до перезагрузки, как помнил бы и
- * кнопку.
+ * кнопку. До островка отказ так и не доходит, поэтому отчёт о нём шлёт сам
+ * загрузчик — тем же путём и с тем же тегом, что островок
+ * (reportIslandFailure): 404 куска после деплоя видно в логе, а не только
+ * по пропавшей кнопке.
  *
  * И прогрев (useWarmTonight): кусок качается в простое после загрузки, из
  * того же деплоя, что и страница, — к первой своей игре он уже лежит.
@@ -37,13 +40,21 @@ function NoTonight() {
   return null
 }
 
-export const TonightButton = lazyIsland(() => loadTonight().catch((): typeof Tonight => NoTonight))
+/** Отказ куска — пустое место до перезагрузки и отчёт, как у любого островка */
+function tonightFailed(err: unknown): typeof Tonight {
+  reportIslandFailure('tonight', err)
+  return NoTonight
+}
+
+export const TonightButton = lazyIsland(() => loadTonight().catch(tonightFailed), 'tonight')
 
 /**
  * Прогрев куска «Сыграю вечером» — см. докблок выше. В простое, а без
  * requestIdleCallback (Safari) — таймером. .catch обязателен: не пришедший
  * кусок — не ошибка страницы (её поймал бы instrumentation-client как
- * unhandledrejection), а пустое место, которое и так покажет загрузчик.
+ * unhandledrejection), а пустое место, которое и так покажет загрузчик. И
+ * без отчёта: прогрев — догадка наперёд, а об отказе, который человек
+ * увидит, отчитается загрузчик, когда кнопку попросят на самом деле.
  */
 export function useWarmTonight() {
   useEffect(() => {
