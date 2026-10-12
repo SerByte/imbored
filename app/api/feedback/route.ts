@@ -82,7 +82,7 @@ export async function POST(req: Request) {
   const mood = parseMood(body.mood)
   const reason = isSkipReason(body.reason) ? body.reason : null
   const ctx = parseFeedbackCtx(body.ctx)
-  await logFeedback(
+  const row = await logFeedback(
     db,
     {
       steamid,
@@ -156,5 +156,9 @@ export async function POST(req: Request) {
   // следующего снапшота. 'max' — следующий заход получит старую модель, пока
   // собирается новая: стартовая — не то, ради чего ждать сборку
   if (action === 'banned') revalidateTag(portraitTag(steamid), 'max')
-  return NextResponse.json({ ok: true })
+  // «Зашло» отвечает строкой, которую легло, — null, если суточный повтор
+  // его проглотил: второе нажатие сердца у героя снимает ровно её (lib/unlike,
+  // unlikeGame в lib/db), а не прежние «зашло» этой игры, о которых сердце
+  // не знает. Остальным действиям строка ни к чему
+  return NextResponse.json(action === 'liked' ? { ok: true, row } : { ok: true })
 }

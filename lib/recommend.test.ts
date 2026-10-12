@@ -32,6 +32,7 @@ import {
   moodWordsOf,
   mutedHit,
   mutedTaste,
+  namesMutedTaste,
   neutralParts,
   normalizedTags,
   nudgeMultiplier,
@@ -53,8 +54,10 @@ import {
 } from './recommend'
 import { DEMO_METAS, demoLibrary } from './demo'
 import { LEANS, NEUTRAL_MOOD, type Lean } from './mood'
-import { parseMutes } from './mutetags'
+import { heuristicPicks } from './llm'
+import { MUTES, parseMutes } from './mutetags'
 import { NUDGES, planNudge } from './nudge'
+import { tagRu } from './tagsru'
 import { tagWeightFrom } from './tagweight'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, GameSemantics, LibraryGame, Mood, ScoredCandidate } from './types'
@@ -2932,6 +2935,62 @@ describe('«Не предлагать»: mutedTaste', () => {
 
   test('весь вкус был запретным — вкуса нет, и движок честно идёт по популярности', () => {
     expect(hasTaste(mutedTaste({ Horror: 2, 'Psychological Horror': 1 }, parseMutes('horror')))).toBe(false)
+  })
+})
+
+/*
+ * Причина, написанная заранее чужим профилем (запись игры дня), — назовёт ли
+ * она запретный тег вкусом. Судится по отметкам sharedTasteTags, без текста:
+ * теги причины — их подмножество. Общие теги причина не называет никогда, и
+ * отбор заново ради «Раннего доступа» в отметках был бы платой ни за что.
+ */
+describe('«Не предлагать»: namesMutedTaste', () => {
+  test('запретный тег в отметках — да, хоть третьим', () => {
+    expect(namesMutedTaste(['Puzzle', 'Cozy', 'Competitive'], parseMutes('pvp'))).toBe(true)
+    expect(namesMutedTaste(['Anime'], parseMutes('horror.anime'))).toBe(true)
+  })
+
+  test('общий тег под фильтром причина не называет — нет', () => {
+    expect(namesMutedTaste(['Puzzle', 'Early Access', 'Massively Multiplayer'], parseMutes('early.mmo'))).toBe(false)
+    expect(namesMutedTaste(['VR'], parseMutes('vr'))).toBe(false)
+  })
+
+  test('без набора и без запретного — нет', () => {
+    expect(namesMutedTaste(['Competitive'], [])).toBe(false)
+    expect(namesMutedTaste(['Puzzle', 'Cozy'], parseMutes('pvp.horror'))).toBe(false)
+    expect(namesMutedTaste([], parseMutes('pvp'))).toBe(false)
+  })
+
+  /*
+   * Договор с причиной (matchedTags в lib/llm): по каждому тегу каждого
+   * набора — да ровно тогда, когда причина правда называет его вкусом.
+   * Шире — браузер платил бы отбором заново за игру, которую ему можно
+   * показать; уже — «По тегам (Соревновательная)» стояло бы у того, кто
+   * их запретил. Тег шестым: героем такая игра фильтр проходит (mutedHit).
+   */
+  test('да — ровно когда причина называет тег; по всем тегам всех наборов', () => {
+    const rest = ['Puzzle', 'Cozy', 'Farming Sim', 'Card Game', 'Relaxing']
+    for (const preset of MUTES) {
+      for (const tag of preset.tags) {
+        const meta: GameMeta = {
+          appid: 9,
+          name: 'Пасьянс',
+          tags: Object.fromEntries([...rest, tag].map((t, i) => [t, 600 - i * 100])),
+          genres: [],
+          categories: [],
+        }
+        const profile = { [tag]: 1 }
+        const [pick] = heuristicPicks(
+          [{ appid: 9, name: 'Пасьянс', source: 'untouched', score: 1 }],
+          () => meta,
+          1,
+          0,
+          profile,
+        )
+        const named = pick.reason.includes(`(${tagRu(tag)})`)
+        expect(namesMutedTaste(sharedTasteTags(profile, meta), [preset]), tag).toBe(named)
+      }
+    }
   })
 })
 

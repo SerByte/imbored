@@ -42,7 +42,7 @@ describe('«Зашло» у героя снимается тем же нажат
     // Не пришёл кусок (деплой сменил хеш, а вкладка старая) — не мёртвое
     // нажатие: та же строка под героем говорит, что делать
     expect(play).toContain(
-      flat("if (heartOn) return void heroTail().then((t) => t.undoLike(pick, setLiked, setHeroMiss), () => setHeroMiss('Обнови страницу'))"),
+      flat("if (heartOn) return void heroTail().then((t) => t.undoLike('play', pick, setLiked, setHeroMiss), () => setHeroMiss('Обнови страницу'))"),
     )
     // Кусок — тот, что уже грузит «Сыграю вечером»: своего загрузчика /play не заводит
     expect(play).not.toContain(flat("import('@/lib/unlike')"))
@@ -51,7 +51,7 @@ describe('«Зашло» у героя снимается тем же нажат
     expect(lazy).toContain(flat("export const heroTail = () => import('@/components/HeroTail')"))
     expect(lazy).toContain(flat('const loadTonight = () => heroTail().then((m) => m.TonightButton)'))
     const tail = flat(read('components/HeroTail.ts'))
-    expect(tail).toContain(flat("export { inTurn, undoLike } from '@/lib/unlike'"))
+    expect(tail).toContain(flat("export { inTurn, sendLike, undoLike } from '@/lib/unlike'"))
   })
 
   test('кусок героя отдаёт /play ту же очередь, что едет на /daily сразу', async () => {
@@ -60,12 +60,13 @@ describe('«Зашло» у героя снимается тем же нажат
     const unlike = await import('@/lib/unlike')
     // Один модуль на вкладку: «Зашло» с /daily и снятие с /play — одна очередь
     expect(tail.inTurn).toBe(unlike.inTurn)
+    expect(tail.sendLike).toBe(unlike.sendLike)
     expect(tail.undoLike).toBe(unlike.undoLike)
     expect(typeof tail.TonightButton).toBe('function')
   })
 
   test('/daily: нажатое сердце снимает «Зашло», отказ — строкой под кнопками героя', () => {
-    expect(daily).toContain(flat('liked.has(hero.appid) ? void undoLike(hero, setLiked, setRerollMiss) : like()'))
+    expect(daily).toContain(flat("liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss) : like()"))
     // «Зацепило» при горящем сердце его не снимает: like() молчит на повтор,
     // его зовёт и ответ на вопрос после запуска
     expect(daily).toMatch(/constlike=\(intent\?:CtxIntent\)=>\{forgetLaunch\(hero\.appid\)if\(liked\.has\(hero\.appid\)\)return/)
@@ -83,18 +84,28 @@ describe('«Зашло» у героя снимается тем же нажат
     }
   })
 
-  test('каждое «зашло» уходит в очереди записей игры — снятие его не обгонит', () => {
-    // /play: одна отправка — в sendLike, через inTurn из куска героя; не
-    // пришёл кусок — уходит сразу (send вторым аргументом then)
+  /*
+   * «Зашло» уходит через sendLike из lib/unlike, а не голым sendFeedback
+   * страницы: там оно встаёт в очередь записей игры и запоминает строку,
+   * которую легло, — её одну и снимает второе нажатие сердца того же героя
+   * ('play' или 'daily'), а не прежние «зашло» игры, которых сердце не
+   * показывало. Голая отправка снова снимала бы нечего — или, без строки,
+   * пришлось бы снимать всё.
+   */
+  test('каждое «зашло» уходит в очереди записей игры и со своей строкой — снятие его не обгонит', () => {
+    // /play: одна отправка — в sendLike, из куска героя; не пришёл кусок —
+    // уходит сразу (send вторым аргументом then), и снимать тогда нечем:
+    // undoLike едет тем же куском
     expect(play.match(/sendFeedback\([\w.]+,'liked'/g)).toHaveLength(1)
     expect(play).toContain(flat("const send = () => sendFeedback(appid, 'liked', undefined, ctx)"))
-    expect(play).toContain(flat('void heroTail().then((t) => t.inTurn(appid, send), send)'))
+    expect(play).toContain(flat("void heroTail().then((t) => t.sendLike('play', appid, { mood, ctx }), send)"))
     // и сердце, и «Зацепило» в «Не зацепило?» — через неё
     expect(play).toContain(flat('sendLike(pick.appid, ctxOf(pick, heroFrom))'))
     expect(play).toContain(flat("sendLike(stopDue.appid, ctxOf(asked, undefined, 'ask'))"))
-    // /daily: like() — единственная отправка, и она в очереди
-    expect(daily.match(/sendFeedback\([\w.]+,'liked'/g)).toHaveLength(1)
-    expect(daily).toContain(flat("void inTurn(hero.appid, () => sendFeedback(hero.appid, 'liked', undefined, ctxOf(hero, intent)))"))
+    // /daily: like() — единственная отправка, сразу через lib/unlike
+    expect(daily).not.toMatch(/sendFeedback\([\w.]+,'liked'/)
+    expect(daily.match(/sendLike\(/g)).toHaveLength(1)
+    expect(daily).toContain(flat("void sendLike('daily', hero.appid, { ctx: ctxOf(hero, intent) })"))
   })
 })
 
@@ -158,5 +169,30 @@ describe('«Мимо» в колоде /explore возвращается', () =>
     const top = deck.slice(deck.indexOf('function TopCard('), deck.indexOf('export function SwipeDeck('))
     expect(top.indexOf('ref={noRef}')).toBeGreaterThan(-1)
     expect(top.indexOf('ref={noRef}')).toBeLessThan(top.indexOf('ref={yesRef}'))
+  })
+
+  /*
+   * «Вернуть «X»» стоит под колодой, а под ней на телефоне — нижняя панель.
+   * Высота карты — бюджет от экрана (.deck-stack в телефонном блоке
+   * globals.css), и строка отмены обязана в него входить: без неё замер на
+   * 390×844 давал кнопку 797–818 при верхе панели 794, на 412×915 — 869–890
+   * при 865, и палец, промахнувшийся «Мимо», попадал в панель. Бюджет
+   * постоянный, а не только пока строка видна: :has() поднял бы кнопки
+   * голоса на её высоту прямо под пальцем после первого «Мимо».
+   */
+  test('на телефоне высота карты платит за ряд «Вернуть» — он не уходит под нижнюю панель', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app/globals.css'), 'utf8')
+    const at = css.search(/\n {2}\.deck-stack \{\s*--deck-h: clamp\(/)
+    expect(at, 'телефонное правило колоды не найдено — сторож ослеп').toBeGreaterThan(-1)
+    // правило — в телефонном блоке: на планшете и компьютере панели нет
+    expect(css.lastIndexOf('@media (max-width: 767px) {', at)).toBeGreaterThan(css.lastIndexOf('\n}\n', at))
+    // 40 px сверх прежних 340 — ряд строки (mt-4 16 и строка text-sm 21) и
+    // запас; пол сдвинут на столько же, иначе на коротких экранах поправки нет
+    expect(css.slice(at)).toMatch(/^\n {2}\.deck-stack \{\s*--deck-h: clamp\(380px, 100svh - 380px, 600px\);/)
+    // а бюджет — ровно один ряд: строка не переносится, имя обрезается
+    const undo = page.slice(page.indexOf('{lastSkip && ('), page.indexOf('</p>', page.indexOf('{lastSkip && (')))
+    expect(undo).toContain('<p className="mt-4 text-center">')
+    expect(undo).toContain('max-w-full')
+    expect(undo).toContain('<span className="min-w-0 truncate">')
   })
 })

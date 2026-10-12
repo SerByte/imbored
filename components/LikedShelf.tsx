@@ -99,7 +99,9 @@ export function LikedShelf({
     pendingFocus.current = neighbour ? neighbour.appid : 'empty'
     setRemoved((prev) => new Set(prev).add(appid))
     // Тот же запрос, что у сердца героя /play и /daily (lib/unlike): одна
-    // очередь записей на игру, если та же вкладка там только что жала «Зашло»
+    // очередь записей на игру, если та же вкладка там только что жала «Зашло».
+    // Без сердца — снимается всё «зашло» игры: полка показывает то, что
+    // помнит сервер, а не одно нажатие
     const res = await sendUnlike(appid)
     if (res === 'needsteam') {
       // Не «попробуй ещё раз»: не получится. Кнопок больше нет — фокус на заголовок

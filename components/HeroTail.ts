@@ -5,7 +5,8 @@
  * загрузку двух страниц у потолка bundle-budget.json:
  *  - «Сыграю вечером на ПК» (components/TonightButton) — островок, его
  *    грузит и прогревает components/TonightLazy;
- *  - снятие «Зашло» и очередь записей одной игры (lib/unlike) — для /play.
+ *  - «Зашло», его снятие и очередь записей одной игры (lib/unlike) — для
+ *    /play.
  *    Отдельный кусок стоил бы /play своего загрузчика в первой загрузке
  *    (~0,1 КБ при запасе меньше двух десятых), а этот загрузчик там уже
  *    есть. Заодно кусок прогрет на телефоне (useWarmTonight) — там, где
@@ -16,4 +17,4 @@
  * пришла она этим куском или нет.
  */
 export { TonightButton } from '@/components/TonightButton'
-export { inTurn, undoLike } from '@/lib/unlike'
+export { inTurn, sendLike, undoLike } from '@/lib/unlike'

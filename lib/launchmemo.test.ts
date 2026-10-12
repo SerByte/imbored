@@ -292,7 +292,9 @@ describe('/daily запоминает запуск и спрашивает пр�
     const lines = DAILY.split('\n')
     const rated = lines
       .map((line, i) => ({ line, i }))
-      .filter(({ line }) => /sendFeedback\(hero\.appid, '(liked|skipped|banned)'/.test(line))
+      // «Зашло» уходит через sendLike — в очереди записей игры и со своей
+      // строкой (lib/unlike), как на /play
+      .filter(({ line }) => /sendFeedback\(hero\.appid, '(liked|skipped|banned)'|sendLike\('daily', hero\.appid,/.test(line))
     // «Не сегодня» (оно же «дай другую» из вопроса) и «Зашло» (оно же «Зацепило»)
     expect(rated.length).toBeGreaterThanOrEqual(2)
     for (const { i } of rated) {
