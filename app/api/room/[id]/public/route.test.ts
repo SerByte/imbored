@@ -85,12 +85,18 @@ describe('/api/room/[id]/public: потолок', () => {
     expect((await getRoom(db, ROOM))?.isPublic).toBe(false)
   })
 
-  test('чужому — 403 nothost, и потолок хоста он не тратит', async () => {
+  /*
+   * Личный потолок считается по steamid звонящего, так что хозяйский чужой
+   * не потратит, где гейт ни стой. Потратить он мог бы свой личный и —
+   * главное — потолок адреса, общий с хостом из той же квартиры.
+   */
+  test('чужому — 403 nothost, и ни личного потолка, ни потолка адреса он не тратит', async () => {
     await hostAs('openid')
     await signInAs(db, 'demo')
     for (let i = 0; i < 25; i++) expect((await toggle(ROOM, true)).status).toBe(403)
-    const used = { bucket: 'room-public', id: STEAMID_OF.openid, limit: 20, windowSec: 600, nowSec: nowSec() }
-    expect(await rateUsage(db, used)).toBe(0)
+    const span = { limit: 20, windowSec: 600, nowSec: nowSec() }
+    expect(await rateUsage(db, { ...span, bucket: 'room-public', id: STEAMID_OF.demo })).toBe(0)
+    expect(await rateUsage(db, { ...span, bucket: 'room-public-ip', id: IP, limit: 60 })).toBe(0)
     expect((await getRoom(db, ROOM))?.isPublic).toBe(false)
   })
 

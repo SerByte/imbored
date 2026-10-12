@@ -42,6 +42,7 @@ import {
   kickHandoffDue,
   type KickTicket,
   matchLine,
+  publicFailure,
   ROOM_MAX_MEMBERS,
   type RoomMiss,
   roomMissText,
@@ -1462,8 +1463,9 @@ export default function RoomPage() {
    * падал необработанным отказом промиса, а кнопка не отвечала ничем.
    * Теперь строка (publicMiss): под шапкой, а при AloneInvite — под его
    * плиткой, потому что кнопки шапки тогда спрятаны. needsteam — своя строка
-   * о входе (NeedSteam). Перечитываем и после отказа: переключатель рисует
-   * то, что на сервере, а не то, что нажали.
+   * о входе (NeedSteam), 429 — своя строка о потолке частоты: «нажми ещё раз»
+   * упиралось бы в тот же потолок (publicFailure в lib/room). Перечитываем и
+   * после отказа: переключатель рисует то, что на сервере, а не то, что нажали.
    *
    * Перечитывание здесь ждут — в отличие от ✕: следующее нажатие шлёт
    * «противоположное тому, что на экране», и переключатель, отпущенный до
@@ -1482,11 +1484,10 @@ export default function RoomPage() {
     // бы над переключённой доской строку «войди через Steam»
     setPublicDenied(false)
     const was = state?.room.isPublic ?? false
-    const miss: RoomMiss = {
-      text: 'Доска не переключилась — проверь связь и нажми ещё раз.',
-      deck: deckKeyOf(state),
-      wasPublic: was,
-    }
+    // Экран — на минуту нажатия, текст — по ответу: 429 просит подождать, а
+    // не нажать ещё раз (publicFailure в lib/room)
+    const deck = deckKeyOf(state)
+    const missOf = (status: number): RoomMiss => ({ text: publicFailure(status), deck, wasPublic: was })
     try {
       const res = await fetch(`/api/room/${roomId}/public`, {
         method: 'POST',
@@ -1499,10 +1500,10 @@ export default function RoomPage() {
         setPublicDenied(true)
         return
       }
-      if (!res.ok) setPublicMiss(miss)
+      if (!res.ok) setPublicMiss(missOf(res.status))
       await refresh(cappedSignal(POLL_TIMEOUT_MS)).catch(() => null)
     } catch {
-      setPublicMiss(miss)
+      setPublicMiss(missOf(0))
     } finally {
       setPublicBusy(false)
     }
