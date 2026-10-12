@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { inviteCopy, NEW_ROOM_HINT, type RoomInvite } from './roominvite'
+import { DOOR_NAMES, inviteCopy, inviteDoor, NEW_ROOM_HINT, type RoomInvite } from './roominvite'
 
 const open: RoomInvite = {
   id: 'ABC234',
@@ -147,5 +147,65 @@ describe('превью приглашения в пати', () => {
   test('после матча предложенная игра молчит: говорит та, на которой сошлись', () => {
     const c = inviteCopy('ABC234', { ...matched, seedName: 'Valheim', preset: 'Весь вечер вместе' })
     expect(c).toEqual(inviteCopy('ABC234', matched))
+  })
+})
+
+/**
+ * Экран приглашения — то, на что человек попадает, нажав карточку в чате.
+ * Карточка говорила «Серёга зовёт в «Valheim»», «3 человека в комнате», а
+ * экран — «Тебя зовут выбрать игру на вечер» и код: кто зовёт, во что и кто
+ * уже внутри, забывалось ровно в минуту решения. Теперь экран говорит то же
+ * теми же словами.
+ */
+describe('экран приглашения', () => {
+  const valheim = { appid: 892970, name: 'Valheim', headerImage: null, art: null }
+
+  test('кто зовёт — тем же ником, что в превью; без ника — безлично', () => {
+    expect(inviteDoor({ host: 'Серёга', names: ['Серёга'], seed: null }).title).toBe(
+      'Серёга зовёт выбрать игру на вечер',
+    )
+    expect(inviteDoor({ host: null, names: ['Игрок 3f9a'], seed: null }).title).toBe(
+      'Тебя зовут выбрать игру на вечер',
+    )
+    // та же строка, что крупной строкой в карточке без настроения и игры
+    expect(inviteDoor({ host: 'Серёга', names: ['Серёга', 'Аня'], seed: null }).title).toBe(
+      inviteCopy('ABC234', open).headline,
+    )
+  })
+
+  test('кто уже здесь — хост первым, имена через запятую и «и»', () => {
+    expect(inviteDoor({ host: 'Серёга', names: ['Серёга', 'Аня'], seed: null }).here).toBe('Уже здесь: Серёга и Аня')
+    expect(inviteDoor({ host: 'Серёга', names: ['Серёга', 'Аня', 'Дима'], seed: null }).here).toBe(
+      'Уже здесь: Серёга, Аня и Дима',
+    )
+  })
+
+  test('больше трёх — остальные числом, без рода и склонения ника', () => {
+    const names = ['Серёга', 'Аня', 'Дима', 'Саша', 'Игрок 3f9a']
+    expect(DOOR_NAMES).toBe(3)
+    expect(inviteDoor({ host: 'Серёга', names, seed: null }).here).toBe('Уже здесь: Серёга, Аня, Дима и ещё 2')
+  })
+
+  test('один хост — заголовок его уже назвал, строки нет', () => {
+    expect(inviteDoor({ host: 'Серёга', names: ['Серёга'], seed: null }).here).toBeNull()
+  })
+
+  test('хост ушёл — зовут безлично, а здесь те, кто остался', () => {
+    const d = inviteDoor({ host: null, names: ['Аня'], seed: null })
+    expect(d.title).toBe('Тебя зовут выбрать игру на вечер')
+    expect(d.here).toBe('Уже здесь: Аня')
+    expect(inviteDoor({ host: null, names: [], seed: null }).here).toBeNull()
+  })
+
+  test('длинный ник режется: строка одна', () => {
+    const d = inviteDoor({ host: 'Серёга', names: ['Серёга', 'Очень-очень длинный ник игрока'], seed: null })
+    expect(d.here).toBe('Уже здесь: Серёга и Очень-очень длинный…')
+  })
+
+  test('игра, в которую звали, — той же фразой, что в описании превью', () => {
+    const d = inviteDoor({ host: 'Серёга', names: ['Серёга'], seed: valheim })
+    expect(d.seed).toEqual({ ...valheim, line: 'Первой картой — «Valheim»; не зайдёт — дальше колода из ваших библиотек.' })
+    expect(inviteCopy('ABC234', { ...open, seedName: 'Valheim' }).description.startsWith(d.seed!.line)).toBe(true)
+    expect(inviteDoor({ host: 'Серёга', names: ['Серёга'], seed: null }).seed).toBeNull()
   })
 })

@@ -218,6 +218,28 @@ export default async function PatchPage({ params }: Params) {
           </a>
         </div>
 
+        {/*
+          Мост «а у меня?». Пересказ — то, чем здесь делятся (PatchShare), и
+          пришедший по ссылке читал о чужой игре, а нижняя строка вела только в
+          неё, в Steam и к её же патчам: что то же самое собирают по его
+          библиотеке, страница не говорила. Строка одна на всех и не знает,
+          кто смотрит, — страница в ISR, и куку она не читает (сторож в
+          page.test.ts). Гостю обещание не врёт: /whatsnew его не разворачивает,
+          а над общей лентой сам зовёт подключить Steam. «Крупные» — потому что
+          лента берёт только их; «твоих игр», а не «всех»: у ленты потолок
+          библиотеки (LIBRARY_CAP).
+        */}
+        <p className="text-sm leading-relaxed text-dim">
+          А что изменилось в твоих играх?{' '}
+          <Link
+            href="/whatsnew"
+            className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
+          >
+            Что нового
+          </Link>{' '}
+          — крупные патчи твоей библиотеки одной лентой.
+        </p>
+
         {others.length > 0 && (
           <section>
             <SectionLabel as="h2" className="mb-2">

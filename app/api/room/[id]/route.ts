@@ -3,6 +3,7 @@ import { memberDone, memberLabel, missingNames } from '@/lib/room'
 import { memberKey } from '@/lib/roomkey'
 import {
   getGameMeta,
+  getGamesMetaLite,
   getRoom,
   roomForCount,
   roomMembers,
@@ -11,6 +12,7 @@ import {
 } from '@/lib/db'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { parseMood } from '@/lib/mood'
+import { inviteDoor, type InviteDoor } from '@/lib/roominvite'
 import { PEEK_LIMIT, PEEK_WINDOW_SEC } from '@/lib/roompeek'
 import { seatOf } from '@/lib/roomseat'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
@@ -147,6 +149,37 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
   })
 
+  /*
+   * Экран приглашения — тем же языком, что карточка в чате (inviteDoor в
+   * lib/roominvite): кто зовёт, кто уже здесь и игра, в которую звали.
+   *
+   * Только не-участнику открытой комнаты: участнику это его шапка и ростер,
+   * а после матча не-участнику показывают, на чём сошлись. И не сессии по
+   * ссылке на профиль, который уже сидит здесь (needSteam): это не
+   * приглашение, а «войди через Steam и здесь», и «Серёга зовёт» вышло бы
+   * самому Серёге. Опрос участников — горячий путь — не платит ничего: мета
+   * игры читается только здесь, а этот путь закрыт потолком room-peek выше.
+   *
+   * Ник хоста — personaName, как у превью (loadRoomInvite), а «Уже здесь» —
+   * метками ростера: те же имена, что человек увидит, войдя. Ни steamid, ни
+   * ключей участников в строки не попадает. Участнику поля нет вовсе, а не
+   * null: его ответ — опрос раз в 2,5 секунды, и он остаётся прежним до байта.
+   */
+  let invite: InviteDoor | null = null
+  if (!isMember && seat !== 'needsteam' && room.status === 'open') {
+    const seed =
+      room.seedAppid !== undefined ? (await getGamesMetaLite(db, [room.seedAppid])).get(room.seedAppid) : undefined
+    const host = members.find((m) => m.steamid === room.createdBy)
+    const hostFirst = host ? [host, ...members.filter((m) => m !== host)] : members
+    invite = inviteDoor({
+      host: host?.personaName ?? null,
+      names: hostFirst.map((m) => memberLabel(id, m.steamid, m.personaName)),
+      seed: seed
+        ? { appid: seed.appid, name: seed.name, headerImage: seed.headerImage ?? null, art: seed.art ?? null }
+        : null,
+    })
+  }
+
   return NextResponse.json({
     room: {
       id: room.id,
@@ -165,6 +198,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     hasSession: Boolean(steamid),
     isMember,
     needSteam: seat === 'needsteam',
+    ...(invite ? { invite } : {}),
     matchedGame: matchedMeta
       ? {
           appid: matchedMeta.appid,

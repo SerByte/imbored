@@ -253,3 +253,97 @@ describe('/api/room/[id]: кому не хватает сошедшейся иг
     expect((await matched())?.missingFor ?? null).toBeNull()
   })
 })
+
+/**
+ * Экран приглашения говорит то же, что карточка в чате: кто зовёт, во что и
+ * кто уже внутри (inviteDoor в lib/roominvite). Только тому, кто ещё не
+ * вошёл, и только пока комната открыта: участнику это шапка и ростер, а
+ * после матча не-участнику показывают другое — на чём сошлись.
+ */
+describe('/api/room/[id]: экран приглашения', () => {
+  const VALHEIM = 892970
+  type Door = {
+    invite?: {
+      title: string
+      here: string | null
+      seed: { appid: number; name: string; line: string } | null
+    } | null
+  }
+  const door = async () => ((await (await peek()).json()) as Door).invite ?? null
+
+  /** Хост «Серёга» позвал в Valheim, «Аня» уже внутри */
+  async function seeded(): Promise<string> {
+    const now = nowSec()
+    const host = await signInAs(db, 'openid')
+    await upsertGameMeta(
+      db,
+      { appid: VALHEIM, name: 'Valheim', tags: { 'Co-op': 100 }, genres: [], categories: [1, 9] },
+      now,
+    )
+    await createRoom(db, { id: ROOM, steamid: host, seedAppid: VALHEIM }, now)
+    await joinRoom(db, ROOM, host, 'Серёга', now)
+    await joinRoom(db, ROOM, FRIEND, 'Аня', now)
+    return host
+  }
+
+  test('гостю — кто зовёт, кто здесь и игра, в которую звали', async () => {
+    await seeded()
+    signOut()
+    expect(await door()).toMatchObject({
+      title: 'Серёга зовёт выбрать игру на вечер',
+      here: 'Уже здесь: Серёга и Аня',
+      seed: {
+        appid: VALHEIM,
+        name: 'Valheim',
+        line: 'Первой картой — «Valheim»; не зайдёт — дальше колода из ваших библиотек.',
+      },
+    })
+  })
+
+  test('чужой сессии — то же самое, и ни steamid, ни их хвостов', async () => {
+    await seeded()
+    await signInAs(db, 'demo')
+    const got = await door()
+    expect(got?.title).toBe('Серёга зовёт выбрать игру на вечер')
+    const json = JSON.stringify(got)
+    expect(json).not.toMatch(/\d{17}/)
+    expect(json).not.toContain(FRIEND.slice(-4))
+  })
+
+  test('без игры — без картинки, остальное на месте', async () => {
+    await hosted()
+    signOut()
+    const got = await door()
+    expect(got?.seed).toBeNull()
+    // хост без ника — безлично, а в «Уже здесь» оба — метками ростера
+    expect(got?.title).toBe('Тебя зовут выбрать игру на вечер')
+    expect(got?.here).toMatch(/^Уже здесь: Игрок \w{1,4} и Игрок \w{1,4}$/)
+  })
+
+  test('участнику — ничего: у него шапка комнаты и ростер, а опрос прежний до байта', async () => {
+    await seeded()
+    expect('invite' in ((await (await peek()).json()) as object)).toBe(false)
+  })
+
+  /*
+   * Сессия по ссылке на профиль, который сидит здесь со входом через Steam
+   * (needSteam, lib/roomseat): ей не приглашение, а «войди через Steam и
+   * здесь» — и «Серёга зовёт» вышло бы самому Серёге.
+   */
+  test('свой профиль по ссылке — не приглашение', async () => {
+    const now = nowSec()
+    await createRoom(db, { id: ROOM, steamid: FRIEND }, now)
+    await joinRoom(db, ROOM, FRIEND, 'Серёга', now, { writer: true })
+    await signIn(db, FRIEND)
+    const json = (await (await peek()).json()) as Door & { needSteam: boolean }
+    expect(json.needSteam).toBe(true)
+    expect(json.invite ?? null).toBeNull()
+  })
+
+  test('после матча — ничего: не-участнику там говорят, на чём сошлись', async () => {
+    await seeded()
+    await setRoomMatched(db, ROOM, VALHEIM)
+    signOut()
+    expect(await door()).toBeNull()
+  })
+})

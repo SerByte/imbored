@@ -9,11 +9,11 @@ import { Eyebrow } from '@/components/Labels'
 import { dayKey } from '@/lib/daily'
 import { dayLabel } from '@/lib/freshness'
 import { isMultiplayerMeta } from '@/lib/recommend'
-import { roomSeedHref } from '@/lib/presets'
+import { quizHref, roomSeedHref } from '@/lib/presets'
 import { seedable } from '@/lib/roomseed'
 import { pickCopy, quoted } from '@/lib/sharedpick'
 import { OG_SITE } from '@/lib/site'
-import { loadSharedPick } from './load'
+import { loadSharedPick, pickHasNear } from './load'
 
 /*
  * Одна точечная выборка по ключу и строка игры. Динамическая, а не ISR:
@@ -63,6 +63,7 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
   if (!got) notFound()
   const { pick, meta } = got
   const eyebrow = pick.kind === 'daily' ? 'Моя игра дня' : 'imbored выбрал мне на вечер'
+  const near = await pickHasNear(meta)
 
   return (
     <div className="flex-1">
@@ -105,9 +106,17 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
 
       <section className="mx-auto flex w-full max-w-6xl flex-col items-start gap-5 px-safe py-14">
         <h2 className="font-display text-display-sm">А тебе?</h2>
+        {/*
+          Сначала — чей это выбор. Адресат видел героя на весь экран и мог
+          прочесть его как совет себе, а игру выбирали по чужой библиотеке и
+          под чужой вечер. «Того, кто прислал», а не «чужой»: страница одна на
+          всех, и автор, открывший свою же ссылку, читает её тоже. «По твоей»,
+          а не «из твоей»: выдача берёт и игры магазина, которых в библиотеке
+          ещё нет (sourceLine выше).
+        */}
         <p className="max-w-md text-sm leading-relaxed text-dim">
-          imbored читает библиотеку Steam и выбирает одну игру на вечер — с объяснением, почему
-          она. Без Steam — есть демо, это минута.
+          Этот выбор — по библиотеке того, кто прислал ссылку. Тебе imbored выберет по твоей — одну
+          игру на вечер, с объяснением, почему она. Без Steam — есть демо, это минута.
         </p>
         <div className="flex flex-wrap items-center gap-4">
           {/* Квиз открыт любому: гостя он сам доведёт до входа или демо,
@@ -115,6 +124,22 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
           <Link href="/quiz" className="btn-ember px-6 py-3">
             Выбери мне игру
           </Link>
+          {/*
+            Мост от чужой игры к своей библиотеке. Голый /quiz выше начинает с
+            нуля, и игра, ради которой человек открыл ссылку, терялась. Здесь
+            она едет затравкой (quizHref): квиз спросит настроение, гость
+            пройдёт через вход — затравку несёт и он (playQuery в
+            lib/destination), — и выдача будет из соседей этой игры, под свой
+            вкус. Та же ссылка, что на странице игры, и по той же мерке: только
+            когда соседи есть (pickHasNear), иначе она вела бы к «похожих не
+            нашлось». Серверная ссылка, ни байта скрипта.
+          */}
+          {near && (
+            <Link href={quizHref(null, meta.appid)} className="tap link-more">
+              Похожее на «{meta.name}» — по моей библиотеке
+              <Icon name="arrow" size={16} />
+            </Link>
+          )}
           {meta.appid > 0 && (
             <Link href={`/game/${meta.appid}`} className="tap link-more">
               Об игре

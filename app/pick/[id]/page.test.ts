@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
-import { createSharedPick, upsertGameMeta, type Db } from '@/lib/db'
-import { roomSeedHref } from '@/lib/presets'
+import { createSharedPick, replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
+import { quizHref, roomSeedHref } from '@/lib/presets'
 import { nowSec } from '@/lib/server'
 import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
@@ -107,5 +107,45 @@ describe('«Позвать в пати» — только у игры, в кот
     const params = await share('defghjkmnpqr', game(13, { categories: [1, 9] }))
     await db.execute('UPDATE games SET alive = 0, signals_at = 1 WHERE appid = 13')
     expect((await partyLinks(params)).map((l) => l.href)).toEqual(['/room/new'])
+  })
+})
+
+/**
+ * Мост «а у меня?»: от чужого выбора — к своей библиотеке.
+ *
+ * «А тебе?» вёл на голый /quiz, и игра, которую человек только что видел,
+ * терялась: квиз начинался с нуля, будто страницы не было. Затравка уже
+ * умеет пережить и квиз, и вход (quizHref, playQuery в lib/destination) —
+ * страница игры зовёт ею же. Ссылка — только там, где у игры есть соседи
+ * (pickHasNear → nearGames): выдача с затравкой берёт кандидатов ровно
+ * оттуда, и без них ссылка вела бы к «похожих не нашлось».
+ */
+describe('«Похожее на «X» — по моей библиотеке»', () => {
+  const seedLinks = async (params: { params: Promise<{ id: string }> }, appid: number) =>
+    islandsOf(flightOf(await PickPage(params), ISLANDS), 'Link').filter(
+      (l) => l.href === quizHref(null, appid),
+    )
+
+  test('у игры есть соседи по тегу — ссылка в квиз с этой игрой затравкой', async () => {
+    const params = await share('efghjkmnpqrs', game(20, { name: 'Hades', tags: { Roguelike: 900 } }))
+    await upsertGameMeta(db, game(21, { tags: { Roguelike: 800 } }), nowSec())
+    await replaceGameTags(db, 21, [{ tag: 'Roguelike', weight: 800 }])
+    const links = await seedLinks(params, 20)
+    expect(links.map((l) => l.href)).toEqual(['/quiz?seed=20'])
+    expect(textOf(links[0]?.children)).toBe('Похожее на «Hades» — по моей библиотеке')
+    // Главная кнопка — по-прежнему голый квиз: ссылка рядом, а не вместо
+    expect(islandsOf(flightOf(await PickPage(params), ISLANDS), 'Link').map((l) => l.href)).toContain('/quiz')
+  })
+
+  test('соседей нет — ссылки нет, главная кнопка на месте', async () => {
+    // Тег есть, но других игр с ним в каталоге нет: полка по тегу пуста
+    const params = await share('fghjkmnpqrst', game(22, { tags: { Roguelike: 900 } }))
+    expect(await seedLinks(params, 22)).toHaveLength(0)
+    expect(islandsOf(flightOf(await PickPage(params), ISLANDS), 'Link').map((l) => l.href)).toContain('/quiz')
+  })
+
+  test('без тегов — соседей не ищем, ссылки нет', async () => {
+    const params = await share('ghjkmnpqrstu', game(23, {}))
+    expect(await seedLinks(params, 23)).toHaveLength(0)
   })
 })

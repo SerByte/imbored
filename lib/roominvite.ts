@@ -8,7 +8,8 @@ import { plural } from './plural'
  * Тексты живут здесь, а не в layout и opengraph-image комнаты: заголовок
  * страницы и карточка в чате обязаны говорить одно и то же, а по отдельности
  * они разъезжались уже на второй правке. Заодно здесь их можно проверить
- * тестом — роуты тянут базу и next/og.
+ * тестом — роуты тянут базу и next/og. Здесь же — экран приглашения
+ * (inviteDoor): человек, нажавший карточку, читает на нём те же слова.
  */
 
 export type RoomInvite = {
@@ -124,15 +125,15 @@ export function inviteCopy(code: string, invite: RoomInvite | null): InviteCopy 
   const { preset, seedName: seed } = invite
   // «Серёга зовёт» / «Тебя зовут» — в заголовке ник целиком (ширину держит
   // браузер), в карточке — восемнадцать знаков: строка стоит кеглем 44
-  const calls = invite.host ? `${invite.host} зовёт` : 'Тебя зовут'
-  const callsCard = invite.host ? `${invite.host.slice(0, 18)} зовёт` : 'Тебя зовут'
+  const calls = callsOf(invite.host)
+  const callsCard = callsOf(invite.host?.slice(0, 18) ?? null)
 
   return {
     title: seed
       ? `${calls} в «${seed}» · пати ${code}`
       : `${calls} в пати ${code}${preset ? ` · ${preset}` : ''}`,
     description:
-      (seed ? `Первой картой — «${seed}»; не зайдёт — дальше колода из ваших библиотек. ` : '') +
+      (seed ? `${seedOffer(seed)} ` : '') +
       `${inRoom(['человек уже в комнате', 'человека уже в комнате', 'человек уже в комнате'])}. ` +
       'Подключи свою библиотеку Steam и свайпай, во что не против сыграть: совпадут голоса всех — будет матч.',
     eyebrow: seed && preset ? `ПАТИ · ${preset.toUpperCase()}` : 'ПАТИ · ПРИГЛАШЕНИЕ',
@@ -142,5 +143,89 @@ export function inviteCopy(code: string, invite: RoomInvite | null): InviteCopy 
         ? `${callsCard}: ${preset.toLowerCase()}`
         : `${callsCard} выбрать игру на вечер`,
     foot: `${inRoom(['человек в комнате', 'человека в комнате', 'человек в комнате'])} · подключи библиотеку и свайпай`,
+  }
+}
+
+/** «Серёга зовёт» или безличное «Тебя зовут» — одно на превью и на экран приглашения */
+function callsOf(host: string | null): string {
+  return host ? `${host} зовёт` : 'Тебя зовут'
+}
+
+/**
+ * Игра, в которую звали, — как предложение, а не решение. Одной строкой на
+ * описание превью и экран приглашения: человек, нажавший карточку в чате,
+ * обязан прочесть на экране ту же фразу, что в превью.
+ */
+function seedOffer(name: string): string {
+  return `Первой картой — «${name}»; не зайдёт — дальше колода из ваших библиотек.`
+}
+
+/** Сколько имён назвать в «Уже здесь»: это строка, а не ростер */
+export const DOOR_NAMES = 3
+
+/** Потолок ника в «Уже здесь»: ник Steam бывает и в 32 знака, а строка одна */
+const DOOR_NAME_MAX = 20
+
+/** Игра, в которую звали, — с артом: на экране приглашения она стоит картинкой */
+export type DoorSeed = {
+  appid: number
+  name: string
+  headerImage: string | null
+  art: GameArtUrls | null
+}
+
+/**
+ * Экран приглашения — то, что видит открывший ссылку, пока не вошёл.
+ * Готовыми строками: страница комнаты стоит у потолка первой загрузки
+ * (bundle-budget.json), и слова собирает сервер, а не её скрипт.
+ */
+export type InviteDoor = {
+  /** «Серёга зовёт выбрать игру на вечер»; без ника хоста — «Тебя зовут…» */
+  title: string
+  /** «Уже здесь: Серёга, Аня и ещё 2»; null — в комнате один хост, и заголовок его уже назвал */
+  here: string | null
+  /** Игра, в которую звали, и та же фраза о ней, что в превью; null — без неё */
+  seed: (DoorSeed & { line: string }) | null
+}
+
+/**
+ * Экран приглашения говорит то же, что карточка в чате.
+ *
+ * Друг жал карточку «Серёга зовёт в «Valheim»» с «3 человека в комнате» — и
+ * попадал на «Тебя зовут выбрать игру на вечер» и код комнаты: кто зовёт, во
+ * что и кто уже внутри, экран забывал ровно в ту минуту, когда решается,
+ * войдёт ли человек. Теперь он называет то же самое теми же словами (callsOf,
+ * seedOffer) — и больше ничего: ни steamid, ни счёта голосов. Имена — метки
+ * ростера (memberLabel), их API и так отдаёт не участнику, а настроение
+ * страница рисует сама, тем же чипом, что в шапке комнаты.
+ *
+ * Хост в «Уже здесь» — первым, и только если рядом есть кто-то ещё: один
+ * хост — это заголовок, повторять его строкой ниже незачем. Без ника хоста
+ * (host null: Steam ника не отдал или хост ушёл) зовут безлично, как и
+ * превью, а здесь перечислены все, кто в комнате, — метками ростера. Имён —
+ * не больше трёх, остальные — числом: «и ещё 2» без существительного, рода и
+ * склонения ника.
+ */
+export function inviteDoor(args: {
+  /** ник хоста — personaName, как у превью; null — хост ушёл или Steam ника не отдал */
+  host: string | null
+  /** метки всех, кто в комнате, хост первым */
+  names: readonly string[]
+  seed: DoorSeed | null
+}): InviteDoor {
+  const { host, names, seed } = args
+  const shown = names.slice(0, DOOR_NAMES).map((n) => clip(n, DOOR_NAME_MAX))
+  const rest = names.length - shown.length
+  const list =
+    rest > 0
+      ? `${shown.join(', ')} и ещё ${rest}`
+      : shown.length > 1
+        ? `${shown.slice(0, -1).join(', ')} и ${shown[shown.length - 1]}`
+        : shown[0]
+  const onlyHost = host !== null && names.length === 1
+  return {
+    title: `${callsOf(host)} выбрать игру на вечер`,
+    here: list && !onlyHost ? `Уже здесь: ${list}` : null,
+    seed: seed ? { ...seed, line: seedOffer(seed.name) } : null,
   }
 }
