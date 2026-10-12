@@ -7,6 +7,7 @@ import {
   type ComponentProps,
   useCallback,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   useSyncExternalStore,
@@ -38,6 +39,8 @@ import type { GameTrait } from '@/lib/gametraits'
 import type { Mood } from '@/lib/types'
 import {
   awaitingOthers,
+  kickHandoffDue,
+  type KickTicket,
   matchLine,
   ROOM_MAX_MEMBERS,
   type RoomMiss,
@@ -1060,11 +1063,30 @@ export default function RoomPage() {
    * через пару секунд меньший состав приносит новую колоду, и весь экран
    * ожидания уходит из-под фокуса в body. Строка отмены в эту минуту встаёт
    * над колодой (kickUndo ниже) — ближайшее к тому, что человек делал.
-   * Только потерянный фокус и только когда строка есть: иначе ref пуст.
+   *
+   * Только ЭТА пересборка, а не любая смена экрана ожидания колодой (почему —
+   * kickHandoffDue в lib/room): ✕ оставляет квитанцию (undoHandoff) — экран,
+   * на котором нажали. Любая смена экрана ожидания её гасит, совпала она или
+   * нет: второго шанса у строки нет. Когда ✕ колоды не принёс (на оставшихся
+   * карт не нашлось), квитанция доживает до «Ещё 20 игр» — но раунд там уже
+   * другой. И только потерянный фокус, и только когда строка есть: иначе ref
+   * пуст.
    */
   const undoRef = useRef<HTMLButtonElement>(null)
+  const undoHandoff = useRef<KickTicket | null>(null)
+  const handOffUndo = useEffectEvent((waiting: boolean) => {
+    const ticket = undoHandoff.current
+    undoHandoff.current = null
+    if (waiting || !state) return
+    const due = kickHandoffDue(ticket, {
+      members: state.members.length,
+      round: state.room.deckRound,
+      phase: kicked?.phase ?? null,
+    })
+    if (due && focusAdrift(document)) undoRef.current?.focus()
+  })
   useEffect(() => {
-    if (!waitingShown && focusAdrift(document)) undoRef.current?.focus()
+    handOffUndo(waitingShown)
   }, [waitingShown])
 
   /*
@@ -1391,6 +1413,9 @@ export default function RoomPage() {
       // этого чтения — не отказ удаления: его подхватит обычный опрос
       if (memberId) {
         setKicked({ id: memberId, name: name ?? 'участник', phase: 'shown' })
+        // Квитанция фокуса (handOffUndo): экран, на котором нажали. state —
+        // снимок того рендера, и await его не сдвигает
+        if (state) undoHandoff.current = { members: state.members.length, round: state.room.deckRound }
         void refresh().catch(() => null)
       } else router.push('/rooms')
     } catch {
@@ -1765,14 +1790,17 @@ export default function RoomPage() {
    * Steam не склоняется и рода не выдаёт (тот же довод — в LikesStrips).
    */
   const kickShown = kicked && !state.members.some((m) => m.id === kicked.id) ? kicked : null
-  // Кнопка — в строку за фразой, а не флекс-элементом: флекс ставил её
-  // третьим рядом под переносом фразы, а над колодой на телефоне каждый ряд
-  // отнимается у карты (kick-undo в globals.css)
+  // Кнопка — в строку за фразой, а не флекс-элементом: флекс с переносом
+  // ставил её третьим рядом под переносом фразы. Над колодой на телефоне
+  // строка — ровно один ряд: фраза в своём span обрезается многоточием, а
+  // кнопка целиком (kick-undo в globals.css) — каждый ряд там отнят у карты
   const kickUndo = kickShown ? (
     <p className="relative text-xs text-faint">
-      {kickShown.phase === 'done'
-        ? `${kickShown.name} сможет войти сразу.`
-        : `Убрали из пати: ${kickShown.name}. Войти снова получится через полчаса.`}{' '}
+      <span>
+        {kickShown.phase === 'done'
+          ? `${kickShown.name} сможет войти сразу.`
+          : `Убрали из пати: ${kickShown.name}. Войти снова получится через полчаса.`}
+      </span>{' '}
       <button
         ref={undoRef}
         type="button"

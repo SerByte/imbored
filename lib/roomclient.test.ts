@@ -393,7 +393,33 @@ describe('«Пустить обратно» переживает колоду, �
 
   test('фокус, упавший с экрана ожидания, встаёт на «Пустить обратно»', () => {
     expect(room).toMatch(/ref=\{undoRef\}/)
-    expect(room).toMatch(/if \(!waitingShown && focusAdrift\(document\)\) undoRef\.current\?\.focus\(\)\s*\}, \[waitingShown\]\)/)
+    expect(room).toMatch(/useEffect\(\(\) => \{\s*handOffUndo\(waitingShown\)\s*\}, \[waitingShown\]\)/)
+    const handoff = body(room, 'const handOffUndo = useEffectEvent(')
+    expect(handoff).toMatch(/if \(due && focusAdrift\(document\)\) undoRef\.current\?\.focus\(\)/)
+    // единственный перенос на строку отмены — этот
+    expect(room.match(/undoRef\.current\?\.focus\(\)/g)).toHaveLength(1)
+  })
+
+  test('…но только с колодой, которую принёс сам ✕, и не на выключенную «Пустили обратно»', () => {
+    // Строка живёт весь заход, а экран ожидания сменяют и «Ещё 20 игр», и
+    // раунд соседа: фокус с «Добираю…» переезжал на строку про ✕ — в 'done'
+    // на мёртвую кнопку, в 'shown' на живую, и второй Enter снимал нарочный ✕
+    const handoff = body(room, 'const handOffUndo = useEffectEvent(')
+    // квитанция гаснет до первого return: любая смена экрана ожидания — её
+    // единственный шанс, и пережившая пустую колоду не дождётся чужой
+    const spent = handoff.indexOf('undoHandoff.current = null')
+    expect(spent, 'квитанция одноразовая').toBeGreaterThan(-1)
+    expect(spent).toBeLessThan(handoff.indexOf('return'))
+    // решение — чистое правило: состав без убранного, тот же раунд, не 'done'
+    expect(handoff).toMatch(
+      /kickHandoffDue\(ticket, \{\s*members: state\.members\.length,\s*round: state\.room\.deckRound,\s*phase: kicked\?\.phase \?\? null,?\s*\}\)/,
+    )
+    // квитанцию выписывает только удавшийся ✕ — не добор раунда и не опрос
+    expect(room.match(/undoHandoff\.current = \{/g)).toHaveLength(1)
+    const kick = body(room, 'async function removeMember(')
+    expect(kick).toMatch(
+      /setKicked\(\{ id: memberId[^\n]*\n\s*if \(state\) undoHandoff\.current = \{ members: state\.members\.length, round: state\.room\.deckRound \}/,
+    )
   })
 })
 
@@ -419,8 +445,27 @@ describe('над колодой на телефоне — не больше, ч�
   test('строка «Пустить обратно» над колодой отнимает у карты свою высоту', () => {
     const css = fs.readFileSync(path.join(ROOT, 'app/globals.css'), 'utf8')
     expect(css).toMatch(/\.room-page \.deck-stack \{\s*--deck-h: clamp\(330px, 100svh - 340px, 560px\);/)
-    // 64 = до трёх рядов строки (длинный ник) и её отступ
-    expect(css).toMatch(/\.room-page:has\(\.kick-undo\) \.deck-stack \{\s*--deck-h: clamp\(290px, 100svh - 404px, 560px\);/)
+    // 28 = один ряд строки (16) и её отступ (gap-6 минус -mt-3, 12) — и с
+    // формулы, и с пола: на 375×667 оба правила стоят на полу, и поправка в
+    // одной формуле возвращала там 40 из 60, которые стоили три ряда
+    expect(css).toMatch(/\.room-page:has\(\.kick-undo\) \.deck-stack \{\s*--deck-h: clamp\(302px, 100svh - 368px, 560px\);/)
+  })
+
+  test('…и эта высота — ровно один ряд: фраза обрезается, кнопка — нет', () => {
+    // Переносом строка стоила от одного до трёх рядов (длинный ник из Steam,
+    // «Не дошло — нажми ещё раз» не рвётся), а поправка у карты одна
+    const css = fs.readFileSync(path.join(ROOT, 'app/globals.css'), 'utf8')
+    const at = css.indexOf('.room-page:has(.kick-undo) .deck-stack')
+    const phone = css.lastIndexOf('@media (max-width: 767px)', at)
+    expect(phone, 'правила строки — в том же телефонном блоке, что и поправка').toBeGreaterThan(-1)
+    const block = css.slice(phone, css.indexOf('\n}\n', at))
+    expect(block).toMatch(/\.kick-undo > p \{[^}]*display: flex;/)
+    expect(block).toMatch(/\.kick-undo > p > span \{[^}]*min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/)
+    expect(block).toMatch(/\.kick-undo > p > button \{[^}]*flex-shrink: 0;/)
+    // а разметка даёт правилам их детей: фраза — в своём span, кнопка за ним
+    const at2 = room.indexOf('const kickUndo = kickShown ? (')
+    const line = room.slice(at2, room.indexOf(') : null', at2))
+    expect(line).toMatch(/<p className="[^"]*">\s*<span>\s*\{kickShown\.phase === 'done'[\s\S]*?<\/span>\{' '\}\s*<button\b/)
   })
 })
 
