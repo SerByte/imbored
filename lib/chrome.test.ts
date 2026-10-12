@@ -156,6 +156,40 @@ describe('обвязка над зонами', () => {
   })
 
   /**
+   * Нижняя панель телефона — тоже обвязка, и на странице, тёмной целиком, она
+   * обязана потемнеть вместе с подвалом.
+   *
+   * Панель фиксирована внизу и красит себя сама: color-mix(var(--bg) 94%)
+   * (components/MobileNav.tsx). --bg она берёт у :root, и правил, которые
+   * переносили бы на неё токены зоны, не было — только шапка и подвал. На
+   * 390×844 в светлой теме: главная, /whatsnew и церемония матча тёмные
+   * сверху донизу, а внизу молочная полоса в 52 px поверх тёмного — та самая
+   * «молочная полоса», которую докблок подвала в globals.css называет
+   * дефектом. И на любой позиции прокрутки: панель фиксирована.
+   *
+   * Только целиком тёмные зоны (.media-full и .whatsnew). Под героем
+   * .media-dark (/play, /daily, портрет) ниже начинается светлый контент, и
+   * панель там остаётся в теме страницы.
+   */
+  test('нижняя панель берёт токены зоны, тёмной целиком', () => {
+    for (const zone of ['media-full', 'whatsnew']) {
+      const rule = all.find((r) =>
+        r.selector.split(',').some((s) => new RegExp(`:root:has\\(\\.${zone}\\)\\s+body\\s+\\.site-tabbar$`).test(s.trim())),
+      )
+      expect(rule, `.${zone}: панель осталась молочной под тёмной страницей`).toBeDefined()
+      expect(rule!.body, `.${zone}: токены не переносятся`).toMatch(/--bg\s*:/)
+      expect(rule!.body).toMatch(/--ink\s*:/)
+      expect(rule!.body).toMatch(/--dim\s*:/)
+      expect(rule!.body).toMatch(/--edge\s*:/)
+    }
+    // Токены доходят до поверхности, только пока панель красит себя из --bg
+    // и носит метку, на которую смотрят правила
+    const nav = fs.readFileSync(path.join(ROOT, 'components', 'MobileNav.tsx'), 'utf8')
+    expect(nav).toContain("background: 'color-mix(in srgb, var(--bg) 94%, transparent)'")
+    expect(nav).toMatch(/className="md:hidden [^"]*\bsite-tabbar\b/)
+  })
+
+  /**
    * Слой в портале — не кино-зона, даже когда он тёмный.
    *
    * Правило шапки ищет .media-dark ГДЕ УГОДНО в документе (:root:has), а

@@ -70,6 +70,23 @@ export function applyStoredTheme(
   return true
 }
 
+/**
+ * Запомнить выбор темы — молча, если хранилище закрыто.
+ *
+ * Запрет данных сайта или приватный режим: бросает уже само обращение к
+ * localStorage, поэтому хранилище — функцией и внутри try, как при чтении
+ * (applyStoredTheme выше, скрипт темы в app/layout.tsx). Запись стояла
+ * голой: тема на экране менялась, а исключение уходило из обработчика клика
+ * в window.onerror и отчётом в /api/clienterr — на каждое нажатие, про
+ * известное и безвредное. Теперь выбор просто живёт до перезагрузки.
+ * Сторож — lib/themecolor.test.ts.
+ */
+export function saveTheme(next: 'dark' | 'light', storage: () => Pick<Storage, 'setItem'>): void {
+  try {
+    storage().setItem(STORAGE_KEY, next)
+  } catch {}
+}
+
 export function ThemeToggle() {
   const theme = useSyncExternalStore(subscribe, readTheme, serverTheme)
 
@@ -95,7 +112,7 @@ export function ThemeToggle() {
     // Адресная строка — вслед за шапкой: над обычной страницей она сменила
     // цвет вместе с темой, над кино-зоной осталась тёмной (lib/themecolor)
     syncThemeColor()
-    localStorage.setItem(STORAGE_KEY, next)
+    saveTheme(next, () => localStorage)
   }
 
   return (

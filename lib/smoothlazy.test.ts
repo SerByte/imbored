@@ -53,7 +53,7 @@ describe('gsap не в начальном наборе каждой страни
       .map(([spec, file]) => `${file} → ${spec}`)
     expect(
       offenders,
-      'gsap снова въехал в корневой лэйаут, то есть в скрипты КАЖДОЙ страницы. Догружай его через import() или next/dynamic, как components/SmoothScroll.tsx',
+      'gsap снова въехал в корневой лэйаут, то есть в скрипты КАЖДОЙ страницы. Догружай его отдельным куском, как components/SmoothScroll.tsx (lazyIsland)',
     ).toEqual([])
   })
 
@@ -92,6 +92,23 @@ describe('gsap не в начальном наборе каждой страни
     expect([...impl.packages.keys()].filter(isGsap)).toEqual(
       expect.arrayContaining(['gsap', 'gsap/ScrollSmoother', 'gsap/ScrollTrigger']),
     )
+  })
+
+  /**
+   * Отказ куска смузера не уводит главную в app/error.tsx.
+   *
+   * Смузер задуман необязательным: без него главная прокручивается нативно.
+   * Но next/dynamic — это React.lazy без своей границы, и не пришедший кусок
+   * (моргнула сеть на телефоне, деплой сменил хеши под старой вкладкой)
+   * бросал в границу сегмента: вся главная, с единственной карточкой входа,
+   * сменялась экраном «Что-то сломалось», где не помогали ни «Попробовать
+   * снова», ни «На главную» — lazy помнит отказ. lazyIsland ловит отказ сам,
+   * шлёт отчёт с тегом и рисует пустое место (lib/lazyisland.test.ts).
+   */
+  test('смузер грузится островком: отказ куска — нативная прокрутка, а не экран ошибки', () => {
+    const shim = code(fs.readFileSync(path.join(ROOT, 'components', 'SmoothScroll.tsx'), 'utf8'))
+    expect(shim, 'next/dynamic уводит отказ куска в app/error.tsx').not.toMatch(/from\s+['"]next\/dynamic['"]/)
+    expect(shim).toMatch(/lazyIsland\(\s*\(\)\s*=>\s*import\('\.\/SmoothScrollImpl'\)/)
   })
 
   /**

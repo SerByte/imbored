@@ -1540,3 +1540,96 @@ describe('заброшенная: крупное обновление после
     })
   })
 })
+
+/**
+ * Причина в третьем лице — для демо-выдачи главной (THEM_TEMPLATES).
+ *
+ * Главная обещает «почему именно она», а все шаблоны говорят «ты» и про
+ * библиотеку читателя — гостю это неправда, библиотека там чужая. Голос
+ * 'them' говорит про демо-игрока. Сторож перебирает КАЖДЫЙ источник в каждой
+ * ветке шаблона — с якорем, с одним и двумя тегами, без всего, с часами и
+ * без, с высоким порогом входа, — потому что «ты» пролезает ровно в той
+ * ветке, которую не проверили.
+ */
+describe('причина в третьем лице — для демо главной', () => {
+  /** «ты» во всех падежах и формах «твой», плюс повелительное «ты»-шаблонов */
+  const SECOND_PERSON =
+    /(^|[^а-яё])(ты|тебя|тебе|тобой|твой|твоя|твоё|твое|твои|твоих|твоим|твоими|твоей|твоего|твоему|твою|вернись|проверь|садись|играй|дай)([^а-яё]|$)/i
+  const tagMeta = (tags: Record<string, number>) => (appid: number): GameMeta => ({
+    appid,
+    name: 'Shapez',
+    tags,
+    genres: [],
+    categories: [2],
+    priceFinal: 1499,
+  })
+  const anchor = { appid: 1, name: 'Factorio', hours: 300 }
+  // Automation — высокий порог входа (lib/entry): у заброшенной появится фраза про управление
+  const variants: Array<{ what: string; meta: (appid: number) => GameMeta; profile: Record<string, number>; opts: object }> = [
+    { what: 'якорь', meta: tagMeta({ Puzzle: 100 }), profile: { Puzzle: 1 }, opts: { anchorOf: () => anchor, hoursOf: () => 42 } },
+    { what: 'один тег', meta: tagMeta({ Puzzle: 100 }), profile: { Puzzle: 1 }, opts: { hoursOf: () => 42 } },
+    {
+      what: 'два тега, высокий вход',
+      meta: tagMeta({ Puzzle: 100, Automation: 80 }),
+      profile: { Puzzle: 1, Automation: 1 },
+      opts: {},
+    },
+    { what: 'ничего', meta: tagMeta({}), profile: {}, opts: {} },
+    { what: 'скрытое время', meta: tagMeta({ Puzzle: 100 }), profile: { Puzzle: 1 }, opts: { playtimeHidden: true } },
+  ]
+
+  test('ни одна ветка ни одного источника не говорит «ты» — и называет игру', () => {
+    for (const source of CANDIDATE_SOURCES) {
+      for (const v of variants) {
+        const cand: ScoredCandidate[] = [{ appid: 7, name: 'Shapez', source, score: 0.9 }]
+        const [pick] = heuristicPicks(cand, v.meta, 1, NOW, v.profile, { ...v.opts, voice: 'them' })
+        expect(pick.reason, `${source} / ${v.what}: ${pick.reason}`).not.toMatch(SECOND_PERSON)
+        expect(pick.reason, `${source} / ${v.what}`).toContain('«Shapez»')
+        expect(pick.reason.length, `${source} / ${v.what}`).toBeLessThanOrEqual(REASON_MAX)
+      }
+    }
+  })
+
+  /*
+   * Сторож выше не вакуумный: тот же перебор в голосе по умолчанию «ты»
+   * находит в каждом источнике — то есть регулярка ловит то, что должна.
+   */
+  test('тот же перебор в голосе по умолчанию находит «ты» в каждом источнике', () => {
+    for (const source of CANDIDATE_SOURCES) {
+      const cand: ScoredCandidate[] = [{ appid: 7, name: 'Shapez', source, score: 0.9 }]
+      const [pick] = heuristicPicks(cand, variants[1].meta, 1, NOW, variants[1].profile, variants[1].opts)
+      expect(pick.reason, source).toMatch(SECOND_PERSON)
+    }
+  })
+
+  test('доводы те же: якорь, часы и цена входа — про демо-игрока', () => {
+    const one = (source: ScoredCandidate['source']): ScoredCandidate[] => [{ appid: 7, name: 'Shapez', source, score: 0.9 }]
+    const [near] = heuristicPicks(one('untouched'), variants[0].meta, 1, NOW, variants[0].profile, {
+      anchorOf: () => anchor,
+      voice: 'them',
+    })
+    expect(near.reason).toContain('ближе всего она к «Factorio», где у него 300 ч')
+    const [back] = heuristicPicks(one('comeback'), variants[2].meta, 1, NOW, variants[2].profile, {
+      hoursOf: () => 42,
+      voice: 'them',
+    })
+    expect(back.reason).toContain('У демо-игрока в «Shapez» уже 42 ч')
+    expect(back.reason).toMatch(/вспомнить управление/)
+  })
+
+  /*
+   * Ценника на главной нет (lib/landing.ts), и пересказа патча тоже: его
+   * вводная говорит «С твоего последнего захода», а ленты у демо-игрока нет.
+   */
+  test('без цены и без пересказа патча', () => {
+    const cand: ScoredCandidate[] = [{ appid: 7, name: 'Shapez', source: 'new', score: 0.9 }]
+    const [buy] = heuristicPicks(cand, variants[1].meta, 1, NOW, variants[1].profile, { voice: 'them' })
+    expect(buy.reason).not.toMatch(/\$|₽|Steam —/)
+    const patched: ScoredCandidate[] = [{ appid: 7, name: 'Shapez', source: 'comeback', score: 0.9 }]
+    const [back] = heuristicPicks(patched, variants[1].meta, 1, NOW, variants[1].profile, {
+      voice: 'them',
+      patchOf: () => 'Обновление «Space Age»: новые планеты, поезда между ними и переработанные рецепты.',
+    })
+    expect(back.reason).not.toMatch(/обновление|планеты/i)
+  })
+})

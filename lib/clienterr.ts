@@ -54,7 +54,8 @@ export type ClientErrorReport = {
    * называет чанк по хешу, а хеш меняется с каждым деплоем; тег — имя, по
    * которому отказ ищется в логе: mark-finished, hero-slider, snow, tonight,
    * search (окно «Найти игру», components/SearchLauncher — загрузчик свой,
-   * а вид отчёта тот же).
+   * а вид отчёта тот же), smooth (плавная прокрутка главной,
+   * components/SmoothScroll).
    */
   island?: string
 }
@@ -114,6 +115,29 @@ function pageOf(href: string): string {
 
 const posInt = (v: unknown): number | undefined =>
   typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 1e7 ? v : undefined
+
+/**
+ * Не пришёл кусок кода: чанк сборщика или модуль голого import().
+ *
+ * Такой отказ не лечится ни retry, ни клиентским переходом: React.lazy
+ * помнит отказ (components/room/CeremonyBoundary), сборщик — тоже, и
+ * повтор перерисовывает тот же lazy, который бросит то же. Помогает только
+ * перезагрузка: свежий HTML со ссылками на куски текущей сборки. Поэтому
+ * экраны ошибки (app/error.tsx, app/global-error.tsx) спрашивают отсюда,
+ * что предложить человеку. Сторож — lib/chunkreload.test.ts.
+ *
+ * Имя ChunkLoadError ставят и Turbopack («Failed to load chunk …»), и
+ * webpack («Loading chunk 712 failed.»). Тексты — на случай, когда имя
+ * потерялось по дороге, и для import() без обёртки сборщика: так его отказ
+ * формулируют Chrome, Firefox и Safari.
+ */
+const CHUNK_FAILURE =
+  /Failed to load chunk|Loading (?:CSS )?chunk \S+ failed|dynamically imported module|Importing a module script failed/i
+
+export function isChunkLoadError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  return err.name === 'ChunkLoadError' || CHUNK_FAILURE.test(err.message)
+}
 
 /**
  * Короткий код для экрана ошибки, когда digest нет.

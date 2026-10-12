@@ -27,6 +27,15 @@ const CHROME = [
   'components/Footer.tsx',
 ]
 
+/**
+ * Полка разделов главной (сцена «Что здесь ещё есть») — не обвязка, но
+ * главная — самая посещаемая страница сайта, и четыре из шести её карточек
+ * ведут в динамические разделы. Сторож смотрел только на обвязку, и полка
+ * будила /compat, /library, /portrait и /whatsnew у каждого, кто докрутил до
+ * пятой сцены, — гостю ради редиректов, по которым он не пойдёт.
+ */
+const HIGH_TRAFFIC = ['components/landing/scenes/Repertoire.tsx']
+
 /** Код без комментариев: объяснение правки не должно попадать под проверку. */
 function code(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\s*\}/g, '').replace(/^\s*\/\/[^\n]*/gm, '')
@@ -74,7 +83,7 @@ describe('навигация не будит динамические разде
   test('у каждой ссылки навигации на динамический раздел выключен префетч', () => {
     const offenders: string[] = []
     let links = 0
-    for (const file of CHROME) {
+    for (const file of [...CHROME, ...HIGH_TRAFFIC]) {
       const src = code(fs.readFileSync(path.join(ROOT, file), 'utf8'))
       // Тег целиком: [^>] тянется через переводы строк, а стрелок в атрибутах
       // ссылок навигации нет

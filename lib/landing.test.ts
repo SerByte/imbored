@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import { DEMO_METAS } from './demo'
 import { landingDemo, MOOD_KEYS, type MoodKey } from './landing'
+import { REASON_MAX } from './llm'
 import { topTags } from './recommend'
+import { SOURCE_BADGE } from './sources'
 import { tagRu } from './tagsru'
 
 /**
@@ -30,20 +32,34 @@ describe('демо-выдача главной', () => {
     }
   })
 
+  /*
+   * Покупка узнаётся по подписи источника — той самой, что стоит на карточке.
+   * Здесь стояла строка «Нет в твоей библиотеке», которой у источника new не
+   * было никогда (подпись — SOURCE_BADGE.new): оба сторожа ниже сравнивали с
+   * несуществующим и проходили вхолостую. Подпись — из того же словаря, а
+   * проверка «покупки вообще находятся» не даёт сторожу снова ослепнуть.
+   */
+  const BOUGHT = SOURCE_BADGE.new
+
+  test('сторож покупок видит покупки: в пятёрках они есть', () => {
+    const all = MOOD_KEYS.flatMap((key) => demo.picks[key])
+    expect(all.some((c) => c.badge === BOUGHT)).toBe(true)
+  })
+
   /**
    * Первая карточка — всегда своя игра. Это позиция продукта: «своё идёт
    * первым», и на лендинге она напечатана словами.
    */
   test('первой стоит игра из библиотеки, а не покупка', () => {
     for (const key of MOOD_KEYS) {
-      expect(demo.picks[key][0].badge, key).not.toBe('Нет в твоей библиотеке')
+      expect(demo.picks[key][0].badge, key).not.toBe(BOUGHT)
     }
   })
 
   /** MAX_NEW_PICKS = 2, и обеспечивает его mixHeroPool, а не скоринг. */
   test('покупок в пятёрке не больше двух', () => {
     for (const key of MOOD_KEYS) {
-      const bought = demo.picks[key].filter((c) => c.badge === 'Нет в твоей библиотеке')
+      const bought = demo.picks[key].filter((c) => c.badge === BOUGHT)
       expect(bought.length, key).toBeLessThanOrEqual(2)
     }
   })
@@ -111,15 +127,39 @@ describe('демо-выдача главной', () => {
   })
 
   /**
-   * Причины на лендинге нет и быть не может: все шаблоны обращаются на «ты» и
-   * говорят про библиотеку читателя, а библиотека здесь чужая. Правило
-   * держится формой данных — проверяем, что поле не завелось обратно.
+   * Причины «на ты» на лендинге нет и быть не может: шаблоны продукта
+   * обращаются к читателю и говорят про его библиотеку, а библиотека здесь
+   * чужая. Правило держится формой данных — проверяем, что поле не завелось
+   * обратно ни у одной карточки.
    */
   test('в карточке нет ни причины, ни цены', () => {
-    const card = demo.picks['chill:solo'][0] as Record<string, unknown>
-    expect(card.reason).toBeUndefined()
-    expect(card.priceFinal).toBeUndefined()
-    expect(card.discount).toBeUndefined()
+    for (const key of MOOD_KEYS) {
+      for (const c of demo.picks[key] as Array<Record<string, unknown>>) {
+        expect(c.reason, `${key}: ${c.name}`).toBeUndefined()
+        expect(c.priceFinal).toBeUndefined()
+        expect(c.discount).toBeUndefined()
+      }
+    }
+  })
+
+  /**
+   * «Почему именно она» — то, что обещает первая строка главной, — у первой
+   * карточки каждого состояния: та же причина, что дал бы продукт, но про
+   * демо-игрока. Ни «ты», ни «твой», ни повелительного «вернись»: гость читает
+   * про чужую библиотеку, и текст обязан это говорить.
+   */
+  test('у первой карточки — причина про демо-игрока, без «ты»; у остальных её нет', () => {
+    const YOU =
+      /(^|[^а-яё])(ты|тебя|тебе|тобой|твой|твоя|твоё|твое|твои|твоих|твоим|твоими|твоей|твоего|твоему|твою|вернись|проверь|садись|играй|дай)([^а-яё]|$)/i
+    for (const key of MOOD_KEYS) {
+      const [first, ...rest] = demo.picks[key]
+      expect(first.why, key).toBeTruthy()
+      expect(first.why!.length, key).toBeLessThanOrEqual(REASON_MAX)
+      expect(first.why, key).toContain(`«${first.name}»`)
+      expect(first.why, key).toMatch(/демо-игрок/)
+      expect(first.why, `${key}: ${first.why}`).not.toMatch(YOU)
+      for (const c of rest) expect(c.why, `${key}: ${c.name}`).toBeUndefined()
+    }
   })
 
   test('стена — это вся демо-библиотека', () => {

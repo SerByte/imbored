@@ -1152,6 +1152,80 @@ const SOURCE_TEMPLATES: Record<
 }
 
 /**
+ * ТА ЖЕ ПРИЧИНА В ТРЕТЬЕМ ЛИЦЕ — для демо-выдачи главной (lib/landing.ts).
+ *
+ * Главная обещает «Одна игра. И почему именно она» (components/landing/
+ * scenes/Hero.tsx), а показать «почему» до входа было нечем: шаблоны выше
+ * говорят «ты» и про ТВОЮ библиотеку, а библиотека на главной чужая — «ты не
+ * запускал» гостю прямая неправда. Поэтому причина там стояла вырезанной
+ * совсем, и главное отличие продукта до подключения не было видно.
+ *
+ * Здесь те же доводы — те же источники, якорь, часы, теги, цена входа, — но
+ * про демо-игрока: «у демо-игрока в «Terraria» уже 130 ч». Не перевод одной
+ * строки в другую, а параллельный набор, и его держит сторож: ни одна ветка
+ * ни одного источника не говорит «ты» (lib/llm.test.ts). Record, а не Partial:
+ * новый источник без своей строки здесь — красный tsc, а не пустая причина
+ * на главной.
+ *
+ * Двух вещей в этом голосе нет намеренно.
+ *   Пересказа патча: его вводная — «С твоего последнего захода…»
+ *     (PATCH_SINCE_LEAD), и ленты патчей у демо-игрока нет вовсе.
+ *   Цены (см. heuristicPicks): ценник на главной читается как предложение
+ *     купить, а цена демо-игры к магазину отношения не имеет (докблок
+ *     lib/landing.ts).
+ */
+function nearSentenceThem(a: OwnAnchor): string {
+  return `ближе всего она к «${a.name}», где у него ${a.hours} ч`
+}
+
+const THEM_TEMPLATES: Record<
+  CandidateSource,
+  (name: string, tags: ReasonTags | null, ctx: TemplateCtx) => string
+> = {
+  untouched: (name, tags, { anchor }) =>
+    anchor
+      ? `«${name}» демо-игрок не запускал ни разу — ноль минут, а ${nearSentenceThem(anchor)}. Самое время это исправить.`
+      : tags
+        ? `«${name}» демо-игрок не запускал ни разу — ноль минут. По тегам (${tags.text}) она очень в его вкусе; самое время это исправить.`
+        : `«${name}» демо-игрок не запускал ни разу — ноль минут. Самое время это исправить.`,
+  backlog: (name, tags, { anchor }) =>
+    anchor
+      ? `Демо-игрок открыл «${name}» и закрыл, не разобравшись, — а ${nearSentenceThem(anchor)}. Ей стоит дать второй заход.`
+      : tags
+        ? `Демо-игрок открыл «${name}» и закрыл, не разобравшись, — а ${tags.n === 1 ? `тег (${tags.text}) в его вкусе` : `теги (${tags.text}) в его вкусе`}. Ей стоит дать второй заход.`
+        : `Демо-игрок открыл «${name}» и закрыл, не разобравшись. Ей стоит дать второй заход.`,
+  // Часы — как опыт, а не как вложение, ровно как в шаблоне выше
+  comeback: (name, tags, { hours, entry }) => {
+    const known = hours ? `У демо-игрока в «${name}» уже ${hours} ч` : `«${name}» демо-игрок уже начинал`
+    const recall =
+      entry?.level === 'high'
+        ? ' Первые минут десять уйдут на то, чтобы вспомнить управление, — это нормально.'
+        : ''
+    return tags
+      ? `${known}. ${tags.n === 1 ? 'Тег' : 'Теги'} (${tags.text}) по-прежнему в его вкусе — пора вернуться и проверить, как оно теперь.${recall}`
+      : `${known} — пора вернуться и проверить, как оно теперь.${recall}`
+  },
+  familiar: (name, _tags, { hours }) =>
+    hours
+      ? `В «${name}» управление демо-игрок знает — у него там ${hours} ч. Осваивать ничего не надо: можно сразу играть.`
+      : `В «${name}» управление демо-игрок знает. Осваивать ничего не надо: можно сразу играть.`,
+  owned: (name, tags, { anchor }) =>
+    anchor
+      ? `«${name}» уже есть в библиотеке демо-игрока, а ${nearSentenceThem(anchor)}.`
+      : tags
+        ? `«${name}» уже есть в библиотеке демо-игрока, а по тегам (${tags.text}) она очень в его вкусе.`
+        : `«${name}» уже есть в библиотеке демо-игрока — покупать ничего не надо.`,
+  new: (name, tags, { anchor, playtimeHidden }) =>
+    anchor
+      ? `«${name}» в библиотеке демо-игрока нет, но ${nearSentenceThem(anchor)}.`
+      : tags
+        ? `«${name}» в библиотеке демо-игрока нет, но ${tags.n === 1 ? `её тег (${tags.text}) совпадает` : `её теги (${tags.text}) совпадают`} с ${
+            playtimeHidden ? 'тем, что в ней уже есть' : 'тем, во что он играет больше всего'
+          }.`
+        : `«${name}» в библиотеке демо-игрока нет.`,
+}
+
+/**
  * Хвост причины для не купленной игры: цена, а если идёт распродажа — то и она.
  *
  * Без него шаблон советовал бы покупку, умалчивая, что это покупка. У своих
@@ -1294,6 +1368,12 @@ export type HeuristicOptions = {
   playtimeHidden?: boolean
   /** Пересказ патча после последнего запуска заброшенной: см. TemplateCtx */
   patchOf?: (appid: number) => string | null
+  /**
+   * Чей голос у причины. 'you' (по умолчанию) — человеку про его библиотеку;
+   * 'them' — про демо-игрока, для главной (THEM_TEMPLATES): без «ты», без
+   * пересказа патча (patchOf не читается) и без ценового хвоста.
+   */
+  voice?: 'you' | 'them'
 }
 
 const DEFAULT_GUARANTEED: readonly CandidateSource[] = CANDIDATE_SOURCES.filter(
@@ -1367,9 +1447,12 @@ export function heuristicPicks(
     }
   }
   chosen.sort((a, b) => b.score - a.score)
+  const them = opts.voice === 'them'
+  const templates = them ? THEM_TEMPLATES : SOURCE_TEMPLATES
   return chosen.map((c) => {
     const meta = metaOf(c.appid)
-    const price = reasonPrice(c.source, meta, nowSec, opts.hideUrgency)
+    // Ценника на главной нет — см. THEM_TEMPLATES
+    const price = them ? '' : reasonPrice(c.source, meta, nowSec, opts.hideUrgency)
     return {
       appid: c.appid,
       name: c.name,
@@ -1391,12 +1474,12 @@ export function heuristicPicks(
        * человека ему же обратно.
        */
       reason:
-        SOURCE_TEMPLATES[c.source](c.name, matchedTags(meta, profile, tagWeight), {
+        templates[c.source](c.name, matchedTags(meta, profile, tagWeight), {
           anchor: opts.anchorOf?.(c.appid) ?? null,
           hours: opts.hoursOf?.(c.appid) ?? null,
           entry: meta ? entryCost(meta) : null,
           playtimeHidden: opts.playtimeHidden,
-          patch: opts.patchOf?.(c.appid) ?? null,
+          patch: them ? null : (opts.patchOf?.(c.appid) ?? null),
         }) + price,
     }
   })
