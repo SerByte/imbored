@@ -1,4 +1,4 @@
-import { keepFilledSql, keepKnownSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
+import { fillUnknownSql, keepFilledSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
 import { plural } from '../lib/plural'
 
 /**
@@ -70,8 +70,17 @@ export function buildSetList(cols: readonly string[]): string {
       if (c === 'short_description') return `${c} = ${keepRussianSql(c)}`
       // Русский язык в облаке привозят крон карточек и доливка медиа, а
       // локальный каталог знает его только у игр, прошедших промоут после
-      // появления колонки. NULL отсюда — «не спрашивали», а не «русского нет»
-      if (c === 'ru_lang') return `${c} = ${keepKnownSql(c)}`
+      // появления колонки. NULL отсюда — «не спрашивали», а не «русского нет».
+      // И локальное число — снимок дня промоута: оно только заполняет пустоту
+      // облака, а известный там язык не трогает (fillUnknownSql в lib/db, там
+      // же — чем за это платим). Иначе промоутное «нет» откатывало бы свежее
+      // «субтитры» от крона, а доливка медиа перечитывает известный язык
+      // только у игр без трейлера или кадров — у остальных неправда жила бы
+      // до следующего круга крона, полгода. Заставить облако переспросить язык
+      // (скажем, после правки ruLangOf): UPDATE games SET ru_lang = NULL в
+      // облаке и catalog:media по нему же — локальный promote --redo с
+      // заливкой этого больше не сделает
+      if (c === 'ru_lang') return `${c} = ${fillUnknownSql(c)}`
       // Отметки нет в списке колонок — excluded.<отметка> равен NULL, и
       // локальный замер считается безотметочным, то есть старше любого
       // датированного облачного. Для отзывов это и нужно (см. ПО_ОТМЕТКЕ)

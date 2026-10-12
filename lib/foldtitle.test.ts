@@ -46,6 +46,26 @@ describe('название и запрос в одном виде', () => {
     expect(foldTitle('ＦＵＬＬ ＷＩＤＴＨ')).toBe('full width')
   })
 
+  /*
+   * Апостроф стоит ВНУТРИ слова, а не между словами. Разделителем он резал
+   * «Baldur's» на «baldur s»: набранное без апострофа «baldurs gate» не
+   * находило ни игру в каталоге, ни игру на своей стене /library. Стёртый, он
+   * сводит к одному виду все три способа набора: «baldur's», «baldur’s» и
+   * «baldurs». ʼ (U+02BC) — особый случай: для \p{L} это буква, и без явного
+   * стирания она прилипала к слову.
+   */
+  test('апостроф — любой — стирается, а не режет слово надвое', () => {
+    expect(foldTitle("Baldur's Gate 3")).toBe('baldurs gate 3')
+    expect(foldTitle('Sid Meier’s Civilization® VI')).toBe('sid meiers civilization vi')
+    expect(foldTitle('Garryʼs Mod')).toBe('garrys mod')
+    expect(foldTitle('Don‘t Starve')).toBe('dont starve')
+    expect(foldTitle('Don`t Starve')).toBe('dont starve')
+    expect(foldTitle('Don´t Starve')).toBe('dont starve')
+    expect(matchesTitle("Garry's Mod", 'garrys mod')).toBe(true)
+    expect(matchesTitle("Garry's Mod", "garry's")).toBe(true)
+    expect(matchesTitle("Baldur's Gate 3", 'baldur’s gate')).toBe(true)
+  })
+
   test('ё и й сворачиваются у запроса и названия одинаково', () => {
     expect(foldTitle('Ёжик')).toBe(foldTitle('ежик'))
     expect(matchesTitle('Йога для котов', 'йога')).toBe(true)
