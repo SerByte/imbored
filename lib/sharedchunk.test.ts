@@ -37,14 +37,28 @@ import { code, reach, rel, ROOT } from './testing/importgraph'
  * отличает, поэтому список ниже — модули, до которых не дотягивается и
  * серверная часть лэйаута (lib/server и его соседи): иначе сторож краснел бы
  * не по делу.
+ *
+ * В первую загрузку каждого маршрута сборка кладёт не один лэйаут, а и
+ * корневые границы ошибок с шаблоном (app/error.tsx, app/global-error.tsx,
+ * app/template.tsx — SHELL ниже). Увезённое вернулось бы через них так же
+ * молча, поэтому сторож обходит всех четверых.
  */
 
 const LAYOUT = path.join(ROOT, 'app', 'layout.tsx')
 const files = (entry: string) => [...reach(path.join(ROOT, entry)).files].map(rel)
 const read = (file: string) => code(fs.readFileSync(path.join(ROOT, file), 'utf8'))
 
-/** Пакеты, которым место в чанке закулисья, а не в первой загрузке */
-const IDLE_PACKAGES = ['@vercel/analytics/next', '@vercel/speed-insights/next']
+/** Всё, что едет в первую загрузку каждого маршрута: лэйаут, корневые границы ошибок и шаблон */
+const SHELL = ['app/layout.tsx', 'app/error.tsx', 'app/global-error.tsx', 'app/template.tsx']
+
+/**
+ * Пакеты, которым место в чанке закулисья, а не в первой загрузке. Пакетом
+ * целиком, а не одним входом: '@vercel/analytics/react' или голый
+ * '@vercel/speed-insights' везут то же самое.
+ */
+const IDLE_PACKAGES = ['@vercel/analytics', '@vercel/speed-insights']
+const inPackage = (pkg: string) => (spec: string) => spec === pkg || spec.startsWith(`${pkg}/`)
+const idle = (spec: string) => IDLE_PACKAGES.some((pkg) => inPackage(pkg)(spec))
 
 /** Модули, которым место в своих чанках — закулисья, записки и главной */
 const LEFT = [
@@ -68,20 +82,32 @@ describe('общий фундамент: лэйаут не везёт того, 
   const layout = reach(LAYOUT)
   const layoutFiles = [...layout.files].map(rel)
 
-  test('аналитика и Web Vitals — не в статическом графе лэйаута', () => {
-    for (const pkg of IDLE_PACKAGES) {
-      expect(
-        layout.packages.get(pkg),
-        `${pkg} снова в первой загрузке каждой страницы — ставь его в components/Backstage.tsx`,
-      ).toBeUndefined()
-    }
+  // объединение графов всего, что едет в первую загрузку каждого маршрута
+  const shellFiles = new Set<string>()
+  const shellPackages = new Map<string, string>()
+  for (const entry of SHELL) {
+    const graph = reach(path.join(ROOT, entry))
+    for (const f of graph.files) shellFiles.add(rel(f))
+    for (const [pkg, by] of graph.packages) if (!shellPackages.has(pkg)) shellPackages.set(pkg, by)
+  }
+
+  test('аналитика и Web Vitals — не в статическом графе лэйаута и корневых границ', () => {
+    const back = [...shellPackages].filter(([pkg]) => idle(pkg)).map(([pkg, by]) => `${pkg} ← ${by}`)
+    expect(back, 'аналитика снова в первой загрузке каждой страницы — ставь её в components/Backstage.tsx').toEqual([])
   })
 
   test('продление входа, тело записки и квиз — тоже', () => {
     expect(
-      layoutFiles.filter((f) => LEFT.includes(f)),
+      [...shellFiles].filter((f) => LEFT.includes(f)),
       'модуль въехал в общий фундамент — догружай его через import(), как components/BackstageLazy.tsx и components/ReadOnlyNote.tsx',
     ).toEqual([])
+  })
+
+  test('сторож узнаёт пакет аналитики по любому входу', () => {
+    for (const pkg of IDLE_PACKAGES) {
+      for (const spec of [pkg, `${pkg}/next`, `${pkg}/react`]) expect(idle(spec), spec).toBe(true)
+    }
+    expect(idle('@vercel/analytics-extra'), 'чужой пакет с похожим именем').toBe(false)
   })
 
   /*
@@ -100,8 +126,10 @@ describe('общий фундамент: лэйаут не везёт того, 
       ]),
     )
 
+    for (const entry of SHELL) expect(shellFiles.has(entry), `${entry} — обход его не нашёл`).toBe(true)
+
     const backstage = reach(path.join(ROOT, 'components', 'Backstage.tsx'))
-    for (const pkg of IDLE_PACKAGES) expect(backstage.packages.has(pkg), pkg).toBe(true)
+    for (const pkg of IDLE_PACKAGES) expect([...backstage.packages.keys()].some(inPackage(pkg)), pkg).toBe(true)
     expect([...backstage.files].map(rel)).toEqual(
       expect.arrayContaining(['components/SessionKeeper.tsx', 'lib/sessionhint.ts', 'lib/writer.ts']),
     )

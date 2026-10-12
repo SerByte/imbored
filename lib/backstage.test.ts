@@ -5,7 +5,8 @@ import { reportClientError } from '@/lib/clienterr'
 
 /*
  * Закулисье (components/BackstageLazy): продление входа, аналитика и Web
- * Vitals — чанком, в простое после гидратации, и отказ чанка — молча.
+ * Vitals — чанком, в простое после гидратации; отказ доставки чанка — молча,
+ * отказ его кода — в отчёт.
  *
  * Островок просит чанк из подписки useSyncExternalStore, которой серверный
  * рендер не делает: здесь подписки копятся и «монтируются» руками, как в
@@ -28,7 +29,12 @@ vi.mock('react', async (importOriginal) => {
   }
 })
 
-vi.mock('@/lib/clienterr', () => ({ reportClientError: vi.fn(), clientErrorCode: () => 'c0chunk00' }))
+// isChunkLoadError — настоящий: что считать отказом доставки, решает он
+vi.mock('@/lib/clienterr', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/clienterr')>()),
+  reportClientError: vi.fn(),
+  clientErrorCode: () => 'c0chunk00',
+}))
 
 /** Тело закулисья, как его привёз бы чанк */
 function Body() {
@@ -110,13 +116,16 @@ describe('закулисье — после гидратации, в прост�
   })
 
   /*
-   * Чанк закулисья просят на КАЖДОМ документе, а не по нажатию: отказ после
-   * деплоя превратил бы в отчёт каждый просмотр в это окно. Видимого человек
-   * не теряет ничего — значит, и отчитываться не о чем.
+   * Чанк закулисья просят на КАЖДОМ документе, а не по нажатию: отказ
+   * доставки на моргнувшей сети или после деплоя превратил бы в отчёт каждый
+   * просмотр в это окно, а чинить там нечего.
    */
-  test('чанк не пришёл — пусто и молча, без отчёта островка', async () => {
+  test('чанк не доехал — пусто и молча, без отчёта островка', async () => {
     vi.doMock('@/components/Backstage', () => {
-      throw new Error('Failed to load chunk /_next/static/chunks/0f3a9c.js from module 41234')
+      // так бросает рантайм Turbopack: имя ChunkLoadError, текст — по чанку
+      throw Object.assign(new Error('Failed to load chunk /_next/static/chunks/0f3a9c.js from module 41234'), {
+        name: 'ChunkLoadError',
+      })
     })
     const Backstage = await island()
     renderToStaticMarkup(createElement(Backstage))
@@ -127,5 +136,32 @@ describe('закулисье — после гидратации, в прост�
     const Empty = stores[0].get() as ComponentType<object>
     expect(Empty).toBeTypeOf('function')
     expect(renderToStaticMarkup(createElement(Empty))).toBe('')
+  })
+
+  /*
+   * А чанк, который доехал и упал своим кодом, — наша поломка, и
+   * повторяется она у каждого с тем же браузером: пакет аналитики после
+   * обновления бросает при импорте в старом Safari. Человек при этом теряет
+   * видимое — «Запустить», «Уже прошёл», «Сыграю вечером», которые ждут
+   * признака записи из продления, — и до переезда в закулисье такой отказ
+   * ловил instrumentation-client. Молчать о нём нельзя.
+   */
+  test('чанк упал при вычислении — пусто, но отказ в отчёте с тегом закулисья', async () => {
+    const err = new TypeError("Cannot read properties of undefined (reading 'sendBeacon')")
+    vi.doMock('@/components/Backstage', () => {
+      throw err
+    })
+    const Backstage = await island()
+    renderToStaticMarkup(createElement(Backstage))
+    await settle()
+    idle[0]()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(reportClientError).toHaveBeenCalledTimes(1)
+    const [report] = vi.mocked(reportClientError).mock.calls[0]
+    expect(report).toMatchObject({ kind: 'boundary', island: 'backstage', href: 'https://imbored.cc/room/ABC234' })
+    // мокер модулей заворачивает брошенное в свою ошибку — сама поломка в cause
+    expect((report.error as Error).cause ?? report.error).toBe(err)
+    const Empty = stores[0].get() as ComponentType<object>
+    expect(renderToStaticMarkup(createElement(Empty)), 'страница цела').toBe('')
   })
 })

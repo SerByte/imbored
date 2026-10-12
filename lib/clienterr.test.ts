@@ -7,6 +7,7 @@ import {
   buildClientReport,
   clientErrorCode,
   createReportGate,
+  isChunkLoadError,
   parseClientReport,
   reportKey,
 } from './clienterr'
@@ -126,6 +127,48 @@ describe('buildClientReport', () => {
     expect(r).toMatchObject({ kind: 'boundary', island: 'mark-finished', page: '/library' })
     for (const island of ['', 'Mark Finished', '<script>', '-snow', 'x'.repeat(40)]) {
       expect(buildClientReport({ kind: 'boundary', error: err, island, href: HREF }), island).not.toHaveProperty('island')
+    }
+  })
+})
+
+/*
+ * Отказ доставки чанка против отказа его кода. Закулисье
+ * (components/BackstageLazy) о первом молчит — сеть и деплой, чинить нечего, —
+ * а о втором отчитывается: это наша поломка у каждого с тем же браузером.
+ */
+describe('isChunkLoadError', () => {
+  const named = (message: string) => Object.assign(new Error(message), { name: 'ChunkLoadError' })
+  const TURBOPACK = 'Failed to load chunk /_next/static/chunks/0f3a9c.js from module 41234'
+  const WEBPACK = 'Loading chunk 812 failed.\n(error: https://imbored.cc/_next/static/chunks/812.js)'
+
+  test('рантайм Turbopack и webpack: по имени и по тексту', () => {
+    expect(isChunkLoadError(named(TURBOPACK))).toBe(true)
+    expect(isChunkLoadError(named(WEBPACK))).toBe(true)
+    // имя потерялось по дороге — узнаётся текстом
+    expect(isChunkLoadError(new Error(TURBOPACK))).toBe(true)
+    expect(isChunkLoadError(new Error(WEBPACK))).toBe(true)
+    expect(isChunkLoadError(new Error('Loading CSS chunk 77 failed.\n(/_next/static/css/77.css)'))).toBe(true)
+    expect(isChunkLoadError({ name: 'ChunkLoadError', message: 'x' }), 'не Error, а похожее').toBe(true)
+  })
+
+  test('завёрнутый в чужую ошибку — всё ещё отказ доставки', () => {
+    const wrapped = new Error('[vitest] There was an error when mocking a module.', { cause: named(TURBOPACK) })
+    expect(isChunkLoadError(wrapped)).toBe(true)
+  })
+
+  test('код, упавший при вычислении, — не отказ доставки', () => {
+    expect(isChunkLoadError(boom())).toBe(false)
+    expect(isChunkLoadError(new SyntaxError('Unexpected token')), 'синтаксис доехавшего чанка').toBe(false)
+    expect(isChunkLoadError(new Error('wrapper', { cause: boom() }))).toBe(false)
+    // слово chunk посреди чужого текста — не повод молчать
+    expect(isChunkLoadError(new Error('Cannot read chunk size: Failed to load chunk metadata'))).toBe(false)
+  })
+
+  test('не падает на чём угодно и на петле причин', () => {
+    const loop = new Error('loop')
+    ;(loop as { cause?: unknown }).cause = loop
+    for (const x of [undefined, null, 0, '', 'строка', 42, {}, [], loop]) {
+      expect(isChunkLoadError(x), String(x)).toBe(false)
     }
   })
 })

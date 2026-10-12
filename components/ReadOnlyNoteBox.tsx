@@ -6,6 +6,7 @@ import { Portal } from '@/components/Portal'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
 import { overlaps, takeFocus, withFocusRing } from '@/lib/skiplink'
+import { writerStore } from '@/lib/writer'
 
 /**
  * Что записка говорит скринридеру. Живая область — не здесь, а в оболочке
@@ -14,6 +15,51 @@ import { overlaps, takeFocus, withFocusRing } from '@/lib/skiplink'
  * чтобы кириллица не лежала в первой загрузке каждой страницы.
  */
 export const READONLY_SAY = 'Режим просмотра: оценки, запуски и свои пати сохранятся после входа через Steam.'
+
+/**
+ * ПОКАЗЫВАТЬ ЛИ — РЕШАЕТ ПРИЗНАК ЗАПИСИ, а не один флажок (lib/writer).
+ *
+ * Флажок может пережить свой документ: тело записки не доехало, и он ждёт
+ * следующей попытки (lib/readonlynote). А следующий документ этой вкладки
+ * бывает возвратом из «Войти через Steam» — sessionStorage переживает и уход
+ * на steamcommunity.com. Человек уже пишет, а записка сказала бы ему «это
+ * режим просмотра», и живая область это зачитала бы.
+ *
+ * Поэтому оболочка (components/ReadOnlyNote) забирает флажок по вердикту:
+ * then(true) — сессия только читает, записку пора показать; then(false) —
+ * сессия пишет, записка — уже неправда. Пока признак не известен, вердикт
+ * ждёт ответа продления (SessionKeeper, на главной — карточка входа) или
+ * отказа needsteam. Обычный путь не ждёт ничего: карточка входа ставит
+ * признак false рядом с флажком, раньше, чем тело успевает доехать.
+ * Возвращает отписку.
+ */
+export function noteVerdict(then: (show: boolean) => void): () => void {
+  const known = writerStore.get()
+  if (known !== null) {
+    then(!known)
+    return () => {}
+  }
+  const off = writerStore.subscribe(() => {
+    const writer = writerStore.get()
+    if (writer === null) return
+    off()
+    then(!writer)
+  })
+  return off
+}
+
+/**
+ * Сессия начала писать, пока записка на экране, — hide. Записка стоит в
+ * лэйауте и переживает клиентские переходы, а права меняет вход через Steam в
+ * соседней вкладке: кука у вкладок общая, и первый же ответ продления здесь
+ * (карточка главной продлевает на каждом заходе) приносит writer: true —
+ * «это режим просмотра» стало бы неправдой. Возвращает отписку.
+ */
+export function hideOnWriter(hide: () => void): () => void {
+  return writerStore.subscribe(() => {
+    if (writerStore.get() === true) hide()
+  })
+}
 
 /**
  * Записка «это режим просмотра» — один раз после входа по ссылке
@@ -65,6 +111,9 @@ export function ReadOnlyNoteBox({ onHide }: { onHide: () => void }) {
     }
     onHide()
   }, [onHide])
+
+  // Вошёл через Steam в соседней вкладке — записка уходит, фокус из неё — в <main>
+  useEffect(() => hideOnWriter(dismiss), [dismiss])
 
   useEffect(() => {
     // Под открытым лайтбоксом записка инертна, и Escape принадлежит ему
