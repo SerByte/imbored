@@ -200,18 +200,27 @@ describe('/api/daily: записанный выбор дня', () => {
 
 /**
  * «Не предлагать» (lib/mutetags.ts) — кука браузера, а запись дня одна на
- * профиль: её мог выбрать телефон без фильтра. Герой записи под фильтром —
- * отбор заново, уже с фильтром, и запись перезаписывается; полка под
- * фильтром — просто не показывается.
+ * профиль: её мог выбрать телефон без фильтра. Герой общей записи под
+ * фильтром — отбор заново, уже с фильтром, и он ложится РЯДОМ с общей
+ * (mutedDayKey): переписанная, она сменила бы игру телефону посреди дня.
+ * Полка под фильтром — просто не показывается.
  */
 describe('/api/daily: «Не предлагать»', () => {
   const now = () => Math.floor(Date.now() / 1000)
-  type Body = { pick: { appid: number }; discoveries: Array<{ appid: number }> }
+  type Body = {
+    pick: { appid: number }
+    discoveries: Array<{ appid: number }>
+    yesterday: { appid: number } | null
+  }
   const horror = (appid: number) => meta(appid, ['Horror', 'Puzzle', 'Strategy'], now())
+  const vr = (appid: number) => meta(appid, ['VR', 'Puzzle', 'Strategy'], now())
+  const pickOf = async (query = '') => ((await (await get(query)).json()) as Body).pick.appid
+  const stored = async (day: string) =>
+    ((await getDailyPick(db, STEAMID, day)) as { pick: { appid: number } } | null)?.pick.appid ?? null
 
-  test('герой записи под фильтром — 204 на «только записанное», отбор заново и запись перезаписана', async () => {
+  test('герой общей записи под фильтром — 204, отбор заново ложится рядом, общая остаётся', async () => {
     await seedLibrary(db, [10, 11, 12, 13], now())
-    const morning = ((await (await get()).json()) as Body).pick.appid
+    const morning = await pickOf()
     // утренний герой оказался хоррором, а этот браузер хорроры запретил
     await upsertGamesMeta(db, [horror(morning)], now())
     setTestCookie(MUTE_COOKIE, 'horror')
@@ -221,20 +230,66 @@ describe('/api/daily: «Не предлагать»', () => {
     expect(res.status).toBe(200)
     const hero = ((await res.json()) as Body).pick.appid
     expect(hero).not.toBe(morning)
-    const stored = (await getDailyPick(db, STEAMID, '2026-09-23')) as { pick: { appid: number } }
-    expect(stored.pick.appid).toBe(hero)
+    expect(await stored('2026-09-23')).toBe(morning)
+    expect(await stored('2026-09-23~mute')).toBe(hero)
+    // и следующий заход этого браузера — уже из записи, без отбора
+    expect(await pickOf('?cached=1')).toBe(hero)
 
-    // Браузер без фильтра получает уже новую запись: для него это просто одна
-    // из годных игр дня, и отбора заново не нужно
+    // Телефон без фильтра свою утреннюю игру не теряет
     setTestCookie(MUTE_COOKIE, '')
-    expect(((await (await get('?cached=1')).json()) as Body).pick.appid).toBe(hero)
+    expect(await pickOf('?cached=1')).toBe(morning)
+  })
+
+  test('общая годится фильтру — она и показывается, запись рядом не заводится', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    const morning = await pickOf()
+    setTestCookie(MUTE_COOKIE, 'horror')
+    expect(await pickOf('?cached=1')).toBe(morning)
+    expect(await countRows(db, 'daily_picks')).toBe(1)
+  })
+
+  /*
+   * Запись рядом одна на все фильтры (ключ без наборов — сам фильтр в базу
+   * не пишется). Второй браузер с другим фильтром берёт её, если её герой
+   * годится и ему: без отбора, а значит, и без перезаписи.
+   */
+  test('второй фильтр берёт запись рядом, если её герой годится и ему', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    const morning = await pickOf()
+    // утренний герой — хоррор в VR: не годится ни одному из двух браузеров
+    await upsertGamesMeta(db, [meta(morning, ['Horror', 'VR', 'Puzzle'], now())], now())
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const mine = await pickOf()
+    expect(mine).not.toBe(morning)
+
+    setTestCookie(MUTE_COOKIE, 'vr')
+    expect(await pickOf('?cached=1')).toBe(mine)
+    setTestCookie(MUTE_COOKIE, 'horror')
+    expect(await pickOf('?cached=1')).toBe(mine)
+    expect(await stored('2026-09-23')).toBe(morning)
+  })
+
+  test('герой записи рядом попал под фильтр второго — тот отбирает себе, общая не тронута', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    const morning = await pickOf()
+    await upsertGamesMeta(db, [meta(morning, ['Horror', 'VR', 'Puzzle'], now())], now())
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const mine = await pickOf()
+    await upsertGamesMeta(db, [vr(mine)], now())
+
+    setTestCookie(MUTE_COOKIE, 'vr')
+    expect((await get('?cached=1')).status).toBe(204)
+    const theirs = await pickOf()
+    expect([morning, mine]).not.toContain(theirs)
+    expect(await stored('2026-09-23')).toBe(morning)
+    expect(await stored('2026-09-23~mute')).toBe(theirs)
   })
 
   test('без фильтра запись та же, даже когда её герой — хоррор', async () => {
     await seedLibrary(db, [10, 11, 12, 13], now())
-    const morning = ((await (await get()).json()) as Body).pick.appid
+    const morning = await pickOf()
     await upsertGamesMeta(db, [horror(morning)], now())
-    expect(((await (await get('?cached=1')).json()) as Body).pick.appid).toBe(morning)
+    expect(await pickOf('?cached=1')).toBe(morning)
   })
 
   test('полка записи под фильтром не показывается, а запись остаётся', async () => {
@@ -259,6 +314,58 @@ describe('/api/daily: «Не предлагать»', () => {
     const res = await get()
     expect(res.status).toBe(409)
     expect(await res.json()).toEqual({ error: 'muted' })
+  })
+
+  /*
+   * «Не сегодня» про героя записи рядом стирает её одну: общая — игра дня
+   * телефона, и сказанное о чужой ему игре её менять не должно. Бан стирает
+   * обе: исключение поменялось у всех.
+   */
+  test('«Не сегодня» про героя записи рядом — стирается она, общая на месте', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    const morning = await pickOf()
+    await upsertGamesMeta(db, [horror(morning)], now())
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const mine = await pickOf()
+
+    const said = await feedback(
+      post('/api/feedback', { appid: mine, action: 'skipped', reason: 'notnow', ctx: { source: 'daily' } }),
+    )
+    expect(said.status).toBe(200)
+    expect(await stored('2026-09-23~mute')).toBeNull()
+    expect(await stored('2026-09-23')).toBe(morning)
+    expect([morning, mine]).not.toContain(await pickOf())
+  })
+
+  test('бан стирает обе записи суток', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    const morning = await pickOf()
+    await upsertGamesMeta(db, [horror(morning)], now())
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const mine = await pickOf()
+    const other = [10, 11, 12, 13].find((id) => id !== morning && id !== mine)!
+    expect(await countRows(db, 'daily_picks')).toBe(2)
+
+    expect((await feedback(post('/api/feedback', { appid: other, action: 'banned' }))).status).toBe(200)
+    expect(await countRows(db, 'daily_picks')).toBe(0)
+  })
+
+  // «Вчера была: …» и исключение вчерашнего героя — по той записи, что этот
+  // браузер вчера и видел, а не по общей с хоррором, которой он не видел
+  test('вчерашняя — та, что видел этот браузер', async () => {
+    const DAY_MS = 86_400_000
+    vi.setSystemTime(NOON_MSK - DAY_MS)
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    const phone = await pickOf()
+    await upsertGamesMeta(db, [horror(phone)], now())
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const mine = await pickOf()
+    expect(mine).not.toBe(phone)
+
+    vi.setSystemTime(NOON_MSK)
+    const body = (await (await get()).json()) as Body
+    expect(body.pick.appid).not.toBe(mine)
+    expect(body.yesterday?.appid).toBe(mine)
   })
 })
 

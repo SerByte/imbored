@@ -3,7 +3,7 @@
   "defaultKb": 510,
   "routes": {
     "/": 680,
-    "/play": 681,
+    "/play": 680,
     "/room/[id]": 650,
     "/daily": 640,
     "/explore": 620,

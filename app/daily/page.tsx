@@ -175,7 +175,10 @@ export default function DailyPage() {
   const [dateLabel, setDateLabel] = useState('')
   const [yesterday, setYesterday] = useState<DailyYesterday | null>(null)
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
-  /** Код отказа из тела ответа: nolibrary, nocandidates или null. */
+  /**
+   * Код отказа из тела ответа: nolibrary, nocandidates, muted (всё под «Не
+   * предлагать», lib/mutetags.ts) или null.
+   */
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')

@@ -30,6 +30,7 @@ import {
   moodFitAxes,
   moodWordsOf,
   mutedHit,
+  mutedTaste,
   neutralParts,
   normalizedTags,
   nudgeMultiplier,
@@ -2853,7 +2854,9 @@ describe('«Не предлагать»: mutedHit', () => {
     expect(mutedHit(ranked(['Gore', ...filler(3)]), only('gore'))).toBe(true)
   })
 
-  test('VR — по числу чипсов: плоская игра с поддержкой шлема (VR пятый) остаётся', () => {
+  test('VR — по числу чипсов: пятый (Resident Evil 7) остаётся, четвёртый уходит', () => {
+    // HITMAN World of Assassination: VR четвёртый, шлем по желанию — и всё
+    // равно уходит: карточка показала бы «VR» чипсом (цена — в докблоке VR_TOP)
     expect(mutedHit(ranked([...filler(3), 'VR']), only('vr'))).toBe(true)
     // Resident Evil 7: VR пятый
     expect(mutedHit(ranked([...filler(4), 'VR']), only('vr'))).toBe(false)
@@ -2878,6 +2881,30 @@ describe('«Не предлагать»: mutedHit', () => {
     const m = ranked(['Anime', ...filler(5)])
     expect(mutedHit(m, only('horror'))).toBe(false)
     expect(mutedHit(m, only('horror', 'anime'))).toBe(true)
+  })
+})
+
+/*
+ * Вкус без запретного: пул каталога спрашивается по тегам профиля, и
+ * запретный тег в нём — вопрос, ответ на который отсев всё равно выбросит
+ * (докблок mutedTaste). Вкус к хвостовому хоррору тоже не нужен тому, кто
+ * просил без хорроров.
+ */
+describe('«Не предлагать»: mutedTaste', () => {
+  test('теги наборов уходят из профиля целиком, остальное — как было', () => {
+    const profile = { Horror: 3, 'Survival Horror': 1, VR: 2, Puzzle: 1.5, Cozy: -0.5 }
+    expect(mutedTaste(profile, parseMutes('horror.vr'))).toEqual({ Puzzle: 1.5, Cozy: -0.5 })
+    // исходный профиль не тронут: его читают и другие
+    expect(profile.Horror).toBe(3)
+  })
+
+  test('без набора — тот же объект', () => {
+    const profile = { Horror: 1 }
+    expect(mutedTaste(profile, [])).toBe(profile)
+  })
+
+  test('весь вкус был запретным — вкуса нет, и движок честно идёт по популярности', () => {
+    expect(hasTaste(mutedTaste({ Horror: 2, 'Psychological Horror': 1 }, parseMutes('horror')))).toBe(false)
   })
 })
 

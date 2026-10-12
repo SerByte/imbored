@@ -21,6 +21,7 @@ import {
   capSource,
   cooldownOf,
   mixHeroPool,
+  mutedTaste,
   scoreCandidates,
   seenTagsOf,
   splitBySource,
@@ -136,6 +137,7 @@ export type CandidateSet = {
   feedback: FeedbackRow[]
   banned: Set<number>
   cooldown: Map<number, Cooldown>
+  /** Профиль вкуса — без тегов «Не предлагать» (mutedTaste в lib/recommend) */
   profile: Record<string, number>
   tagWeight: TagWeight | null
   /**
@@ -246,11 +248,14 @@ export async function buildCandidates(
   const metaOf = (appid: number): GameMeta | undefined =>
     libMetas.get(appid) ?? poolByAppid.get(appid)
 
-  // профиль вкуса с поправкой на историю «зашло»/«не то»
-  const profile = applyFeedbackToProfile(
-    buildTagProfile(games, (id) => libMetas.get(id)),
-    feedback,
-    metaOf,
+  // профиль вкуса с поправкой на историю «зашло»/«не то» — и без тегов «Не
+  // предлагать»: иначе пул каталога спрашивался бы по запретным тегам, а
+  // скоринг тянул бы к играм, где они стоят в хвосте (mutedTaste). Этот же
+  // профиль уходит маршрутам — причинам выдачи и промпту модели
+  const muted = opts.muted ?? []
+  const profile = mutedTaste(
+    applyFeedbackToProfile(buildTagProfile(games, (id) => libMetas.get(id)), feedback, metaOf),
+    muted,
   )
 
   // Вес редкости тегов: объяснение называет характерное («Automation»), а не
@@ -353,7 +358,6 @@ export async function buildCandidates(
     // applyFocus ниже, и его пол отдавал наигранное (см. focusFirst)
     focus: opts.focus ?? null,
   }
-  const muted = opts.muted ?? []
   const candidates = scoreCandidates({ ...scoring, muted })
   if (!candidates.length) {
     /*

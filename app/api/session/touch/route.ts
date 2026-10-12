@@ -1,12 +1,15 @@
 import { after, NextResponse } from 'next/server'
-import { getDailyPick, getUserCard, latestEveningPlan, pendingOutcomeAsk, touchSession, type Db } from '@/lib/db'
-import { dayKey, parseDailySelection } from '@/lib/daily'
+import { getUserCard, latestEveningPlan, pendingOutcomeAsk, touchSession, type Db } from '@/lib/db'
+import { dayKey } from '@/lib/daily'
+import { dailyRecord } from '@/lib/dailyrecord'
 import type { EveningPlan } from '@/lib/eveningplan'
 import { logSwallowed } from '@/lib/errlog'
 import type { OutcomeAsk } from '@/lib/outcome'
+import type { MutePreset } from '@/lib/mutetags'
 import { markReturn } from '@/lib/retention'
 import {
   SESSION_COOKIE,
+  currentMutes,
   currentSession,
   getDb,
   isDemoId,
@@ -82,10 +85,13 @@ export async function POST(req: Request) {
   // план — нажатие самого владельца, и сессия по ссылке его не ставила.
   const wantCard = new URL(req.url).searchParams.get('card') === '1'
   const withLive = wantCard && isWriter(session) && !demo
+  // «Не предлагать» — кукой этого браузера: игра дня в живой строке та же,
+  // что откроется ему на /daily (см. liveOf)
+  const mutes = withLive ? await currentMutes() : []
   const [user, live] = wantCard
     ? await Promise.all([
         getUserCard(db, steamid).catch(() => ({ personaName: null, avatarUrl: null })),
-        withLive ? liveOf(db, steamid, now) : null,
+        withLive ? liveOf(db, steamid, now, mutes) : null,
       ])
     : [null, null]
   const card = user ? { ...user, demo, ...(withLive ? { live } : {}) } : null
@@ -103,11 +109,20 @@ export async function POST(req: Request) {
 }
 
 /**
- * Живое для карточки главной — три точечные выборки: строка daily_picks
- * этого дня, самый свежий несверенный совет (тот же pendingOutcomeAsk, что у
+ * Живое для карточки главной — три точечные выборки: запись игры дня этого
+ * дня, самый свежий несверенный совет (тот же pendingOutcomeAsk, что у
  * GET /api/outcome) и живой план на вечер (latestEveningPlan — свои оценки за
  * полтора дня по индексу). Разом, и каждая падает в null сама: приветствие
  * важнее живой строки.
+ *
+ * Игра дня — глазами этого браузера, с его «Не предлагать» (dailyRecord в
+ * lib/dailyrecord.ts, тот же, что у /api/daily). Общую запись мог выбрать
+ * телефон без фильтра, и строка «Игра дня уже выбрана — «X»» с хоррором у
+ * того, кто хорроры запретил, нарушала бы «никогда» — а /daily этого браузера
+ * X не покажет и, обещанное «без прогрева», начнёт с прогрева. Нет годной
+ * записи — строки про игру дня нет, карточка говорит своё (LIVE_DEFAULT).
+ * Цена — только у браузера с фильтром: вторая запись и мета героев, всё по
+ * первичным ключам.
  *
  * Патчей здесь нет намеренно: счёт «обновлений в твоих играх» читает весь
  * снапшот библиотеки и ленту по трёмстам играм (lib/whatsnewfeed), а этот
@@ -117,14 +132,15 @@ async function liveOf(
   db: Db,
   steamid: string,
   now: number,
+  mutes: readonly MutePreset[],
 ): Promise<{
   daily: { appid: number; name: string } | null
   plan: EveningPlan | null
   ask: OutcomeAsk | null
 }> {
   const [daily, plan, ask] = await Promise.all([
-    getDailyPick(db, steamid, dayKey(now))
-      .then((raw) => parseDailySelection(raw)?.pick ?? null)
+    dailyRecord(db, steamid, dayKey(now), mutes)
+      .then((r) => r.selection?.pick ?? null)
       .catch(() => null),
     latestEveningPlan(db, steamid, now).catch(() => null),
     pendingOutcomeAsk(db, steamid, now).catch(() => null),

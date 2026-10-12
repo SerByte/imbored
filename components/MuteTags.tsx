@@ -52,33 +52,35 @@ export function MuteTags() {
         <span className="truncate">{mutes.length ? `Не предлагать: ${muteSummary(mutes)}` : 'Чего не предлагать'}</span>
         <Icon name={open ? 'up' : 'down'} size={14} />
       </button>
-      {open && (
-        <div id={id} className="flex flex-col items-center gap-3">
-          {/* Имя группы — тот же вопрос, что на свёрнутой строке: фокус на
-              чипсе без него читался бы голым «Хорроры, переключатель» */}
-          <div role="group" aria-label="Не предлагать" className="flex flex-wrap justify-center gap-2">
-            {MUTES.map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                aria-pressed={mutes.includes(p)}
-                onClick={() => toggle(p.key)}
-                /* 44 px — стандарт продукта (докблок .tap). У ярлыков выше
-                   их добирает иконка при py-3, у этих чипсов иконки нет —
-                   замер дал 41, поэтому высота задана прямо. Зазор gap-2
-                   настоящий, и .tap со своей вылезающей зоной здесь не нужен */
-                className="pill min-h-11 py-3"
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-          <p className="max-w-md text-xs leading-relaxed text-faint">
-            По тегам Steam: игра уходит из подбора, игры дня и «Полистать», если такой тег среди её
-            главных. Помнит этот браузер, выход стирает.
-          </p>
+      {/* В разметке всегда, свёрнутое — через hidden: aria-controls кнопки
+          обязан указывать на существующий элемент (тот же приём, что у
+          components/landing/LinkHelp), а display: none не занимает во
+          флекс-колонке квиза ни строки, ни зазора */}
+      <div id={id} hidden={!open} className="flex flex-col items-center gap-3">
+        {/* Имя группы — тот же вопрос, что на свёрнутой строке: фокус на
+            чипсе без него читался бы голым «Хорроры, переключатель» */}
+        <div role="group" aria-label="Не предлагать" className="flex flex-wrap justify-center gap-2">
+          {MUTES.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              aria-pressed={mutes.includes(p)}
+              onClick={() => toggle(p.key)}
+              /* 44 px — стандарт продукта (докблок .tap). У ярлыков выше
+                 их добирает иконка при py-3, у этих чипсов иконки нет —
+                 замер дал 41, поэтому высота задана прямо. Зазор gap-2
+                 настоящий, и .tap со своей вылезающей зоной здесь не нужен */
+              className="pill min-h-11 py-3"
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
-      )}
+        <p className="max-w-md text-xs leading-relaxed text-faint">
+          По тегам Steam: игра уходит из подбора, игры дня и «Полистать», если такой тег среди её
+          главных. Помнит этот браузер, выход стирает.
+        </p>
+      </div>
     </div>
   )
 }

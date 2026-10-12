@@ -94,7 +94,10 @@ function shelfOf(card: DeckCard): ShelfCard {
 export default function ExplorePage() {
   const router = useRouter()
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
-  /** Код отказа из тела ответа: nolibrary, nocandidates, ratelimited или null. */
+  /**
+   * Код отказа из тела ответа: nolibrary, nocandidates, muted (всё под «Не
+   * предлагать», lib/mutetags.ts), ratelimited или null.
+   */
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   const [message, setMessage] = useState('Изучаю твою библиотеку…')

@@ -1,4 +1,7 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { MuteTags } from '../components/MuteTags'
 import { CONTENT_WARNING_TAGS } from './hook'
 import { CARD_TAGS, cookieValue, MUTE_COOKIE, muteCookie, MUTES, muteSummary, parseMutes } from './mutetags'
 import { topTags } from './recommend'
@@ -100,5 +103,24 @@ describe('наборы', () => {
       const warn = p.tags.filter((t) => CONTENT_WARNING_TAGS.has(t)).length
       expect([0, p.tags.length], p.key).toContain(warn)
     }
+  })
+})
+
+/*
+ * Раскрывашка на квизе: aria-controls кнопки обязан указывать на существующий
+ * элемент — и у свёрнутой тоже, иначе связь для скринридера ведёт в пустоту.
+ * Тот же приём, что у components/landing/LinkHelp: панель в разметке всегда,
+ * свёрнутая — через hidden. Серверный кадр — пустой выбор и свёрнуто: так
+ * квиз и гидратируется.
+ */
+describe('MuteTags', () => {
+  test('свёрнутая: aria-controls указывает на панель, которая есть в разметке и скрыта', () => {
+    const out = renderToStaticMarkup(createElement(MuteTags))
+    expect(out).toContain('aria-expanded="false"')
+    const controls = out.match(/aria-controls="([^"]+)"/)?.[1]
+    expect(controls, 'у кнопки нет aria-controls').toBeTruthy()
+    expect(out).toContain(`<div id="${controls}" hidden=""`)
+    // чипсы — внутри неё, а не где-то рядом
+    expect(out.slice(out.indexOf(`id="${controls}"`))).toContain('aria-pressed="false"')
   })
 })
