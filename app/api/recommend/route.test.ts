@@ -12,6 +12,7 @@ import {
   type Db,
 } from '@/lib/db'
 import { llmIpDailyLimit } from '@/lib/llmcap'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { pickShareOk } from '@/lib/pickshare'
 import { SESSION_COOKIE, nowSec, sessionSecret } from '@/lib/server'
 import { setTestCookie } from '@/lib/testing/headers'
@@ -927,5 +928,106 @@ describe('/api/recommend: план на вечер', () => {
     breakDbOn(db, 'FROM feedback f JOIN games g')
     expect(await planOf()).toBeNull()
     expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('recommend:plan')
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts) — кукой этого браузера: /play ради неё
+ * не везёт ни байта, браузер приносит её сам. Хоррор не доходит ни до
+ * пятёрки, ни до полки покупок, ни до строки «Продолжить»; всё под фильтром —
+ * свой отказ muted (FAIL.muted на /play), а не «верни что-нибудь из бана».
+ */
+describe('/api/recommend: «Не предлагать»', () => {
+  const HORRORS = [50, 51, 60]
+  const horrorMeta = (appid: number) => ({
+    appid,
+    name: `Хоррор ${appid}`,
+    tags: { Horror: 120, Puzzle: 100 },
+    genres: [],
+    categories: [2],
+  })
+
+  /** Своё: 50 — хоррор, в который играет сейчас, 51 — нетронутый хоррор; 60 — хоррор каталога */
+  async function library(others: number[]) {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    // ни одного похода наружу: цены и всё прочее — отказом
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 404 })),
+    )
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      [
+        { appid: 50, name: 'Хоррор 50', playtimeForever: 900, playtime2Weeks: 300 },
+        { appid: 51, name: 'Хоррор 51', playtimeForever: 0, playtime2Weeks: 0 },
+        ...others.map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      ],
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      [
+        ...HORRORS.map(horrorMeta),
+        ...others.map((appid) => ({
+          appid,
+          name: `Игра ${appid}`,
+          tags: { Puzzle: 100, Casual: 60 },
+          genres: [],
+          categories: [2],
+        })),
+      ],
+      now,
+    )
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  type Body = {
+    picks: Array<{ appid: number }>
+    discoveries: Array<{ appid: number }>
+    continue: { appid: number } | null
+  }
+
+  test('без куки хорроры в выдаче есть — значит, проверка ниже что-то проверяет', async () => {
+    await library([41, 42, 43])
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect([...body.picks, ...body.discoveries].map((p) => p.appid)).toEqual(expect.arrayContaining([51, 60]))
+    expect(body.continue?.appid).toBe(50)
+  })
+
+  test('с кукой хорроров нет ни в пятёрке, ни на полке, ни в «Продолжить»', async () => {
+    await library([41, 42, 43])
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    const shown = [...body.picks, ...body.discoveries].map((p) => p.appid)
+    expect(shown.length).toBeGreaterThan(0)
+    for (const appid of HORRORS) expect(shown).not.toContain(appid)
+    expect(body.continue).toBeNull()
+  })
+
+  test('мусор в куке — фильтра нет, а не отказ', async () => {
+    await library([41, 42, 43])
+    setTestCookie(MUTE_COOKIE, '<script>.__proto__')
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as Body).continue?.appid).toBe(50)
+  })
+
+  test('всё под фильтром — 409 muted, а не nocandidates', async () => {
+    await library([])
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'muted' })
   })
 })

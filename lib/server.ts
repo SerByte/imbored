@@ -13,6 +13,7 @@ import {
 } from './sessions'
 import { SESSION_COOKIE } from './session'
 import { DEMO_PREFIX, isDemoId } from './demoid'
+import { MUTE_COOKIE, parseMutes, type MutePreset } from './mutetags'
 
 const globalStore = globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }
 
@@ -235,6 +236,16 @@ export async function currentSession(): Promise<Resolved | null> {
 /** SteamID64 текущего пользователя из подписанной куки, либо null */
 export async function currentSteamId(): Promise<string | null> {
   return (await currentSession())?.steamid ?? null
+}
+
+/**
+ * «Не предлагать» этого браузера — из его куки (lib/mutetags.ts). Не
+ * подписана и не нужна подписью: это просьба того, кто спрашивает, о его же
+ * выдаче, и подделать её значит лишь урезать подбор самому себе. Разбор
+ * пускает только известные ключи.
+ */
+export async function currentMutes(): Promise<readonly MutePreset[]> {
+  return parseMutes((await cookies()).get(MUTE_COOKIE)?.value)
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   upsertNewsItems,
   type Db,
 } from '@/lib/db'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { breakDbOn, freshDb, post, signIn, signInAs, signOut, STEAMID_OF, type SessionKind } from '@/lib/testing/route'
 import { POST as feedback } from '../feedback/route'
 import type { GameMeta, LibraryGame } from '@/lib/types'
@@ -194,6 +195,70 @@ describe('/api/daily: записанный выбор дня', () => {
       expect(today, `день ${d}`).not.toBe(yesterday)
       yesterday = today
     }
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts) — кука браузера, а запись дня одна на
+ * профиль: её мог выбрать телефон без фильтра. Герой записи под фильтром —
+ * отбор заново, уже с фильтром, и запись перезаписывается; полка под
+ * фильтром — просто не показывается.
+ */
+describe('/api/daily: «Не предлагать»', () => {
+  const now = () => Math.floor(Date.now() / 1000)
+  type Body = { pick: { appid: number }; discoveries: Array<{ appid: number }> }
+  const horror = (appid: number) => meta(appid, ['Horror', 'Puzzle', 'Strategy'], now())
+
+  test('герой записи под фильтром — 204 на «только записанное», отбор заново и запись перезаписана', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    const morning = ((await (await get()).json()) as Body).pick.appid
+    // утренний герой оказался хоррором, а этот браузер хорроры запретил
+    await upsertGamesMeta(db, [horror(morning)], now())
+    setTestCookie(MUTE_COOKIE, 'horror')
+
+    expect((await get('?cached=1')).status).toBe(204)
+    const res = await get()
+    expect(res.status).toBe(200)
+    const hero = ((await res.json()) as Body).pick.appid
+    expect(hero).not.toBe(morning)
+    const stored = (await getDailyPick(db, STEAMID, '2026-09-23')) as { pick: { appid: number } }
+    expect(stored.pick.appid).toBe(hero)
+
+    // Браузер без фильтра получает уже новую запись: для него это просто одна
+    // из годных игр дня, и отбора заново не нужно
+    setTestCookie(MUTE_COOKIE, '')
+    expect(((await (await get('?cached=1')).json()) as Body).pick.appid).toBe(hero)
+  })
+
+  test('без фильтра запись та же, даже когда её герой — хоррор', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    const morning = ((await (await get()).json()) as Body).pick.appid
+    await upsertGamesMeta(db, [horror(morning)], now())
+    expect(((await (await get('?cached=1')).json()) as Body).pick.appid).toBe(morning)
+  })
+
+  test('полка записи под фильтром не показывается, а запись остаётся', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    // каталог для полки находок
+    await upsertGamesMeta(db, [30, 31, 32, 33, 34].map((id) => meta(id, TAGS.slice(0, 3), now())), now())
+    const first = (await (await get()).json()) as Body
+    const shelf = first.discoveries.map((d) => d.appid)
+    expect(shelf.length).toBeGreaterThan(1)
+    await upsertGamesMeta(db, [horror(shelf[0])], now())
+    setTestCookie(MUTE_COOKIE, 'horror')
+
+    const after = (await (await get()).json()) as Body
+    expect(after.pick.appid).toBe(first.pick.appid)
+    expect(after.discoveries.map((d) => d.appid)).toEqual(shelf.slice(1))
+  })
+
+  test('всё под фильтром — 409 muted', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], now())
+    await upsertGamesMeta(db, [1, 2, 10, 11, 12, 13].map(horror), now())
+    setTestCookie(MUTE_COOKIE, 'horror')
+    const res = await get()
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'muted' })
   })
 })
 

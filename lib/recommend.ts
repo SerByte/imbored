@@ -4,6 +4,7 @@ import { entryCost } from './entry'
 import { CONTENT_WARNING_TAGS, GENERIC_TAGS } from './hook'
 import { isJunk } from './junk'
 import { VIBE_TAGS, type Lean } from './mood'
+import type { MutePreset } from './mutetags'
 import { playtimeHidden } from './playtime'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
 import { isMultiplayerCategories } from './steamcats'
@@ -199,6 +200,36 @@ export function topTags(meta: GameMeta | undefined, n = 4): string[] {
     .sort((a, b) => b[1] - a[1])
     .slice(0, n)
     .map(([t]) => t)
+}
+
+/**
+ * Попадает ли игра под «Не предлагать» (lib/mutetags.ts).
+ *
+ * Тег судится среди главных, а не среди всех: хвост тегов Steam — шум
+ * единичных голосов (пороги и замеры — в докблоках MUTES). Главные — тем же
+ * порядком, что ряд чипсов карточки (topTags: по голосам, предупреждения о
+ * контенте пропущены), и это не совпадение, а условие: при top не меньше
+ * CARD_TAGS тег, который карточка показала бы чипсом, игру исключает. Иначе
+ * у Cyberpunk 2077 «Нагота» третьей по голосам сдвигала бы четвёртый чипс на
+ * пятое место, и «VR» под героем у того, кто просил без VR, читался бы
+ * сломанным обещанием. Сами предупреждения о контенте в ряд не попадают и
+ * судятся по месту среди всех тегов.
+ *
+ * Без набора — false сразу: сортировка тегов на каждого кандидата нужна
+ * только тому, кто фильтр поставил.
+ */
+export function mutedHit(meta: GameMeta | undefined, mutes: readonly MutePreset[]): boolean {
+  if (!meta || !mutes.length) return false
+  const byVotes = Object.entries(meta.tags ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([t]) => t)
+  const main = byVotes.filter((t) => !CONTENT_WARNING_TAGS.has(t))
+  return mutes.some(
+    (p) =>
+      p.tags.some((t) => (CONTENT_WARNING_TAGS.has(t) ? byVotes : main).slice(0, p.top).includes(t)) ||
+      (p.genres?.some((g) => (meta.genres ?? []).includes(g)) ?? false) ||
+      (p.name?.test(meta.name) ?? false),
+  )
 }
 
 /**
@@ -1663,8 +1694,17 @@ export function scoreCandidates(args: {
    * очередь на срез: см. focusFirst. null и отсутствие — ровно прежний срез.
    */
   focus?: Focus | null
+  /**
+   * «Не предлагать» (lib/mutetags.ts, mutedHit): отсев, как у банов, — до
+   * пауз и до среза. До пауз — потому что пол паузы ниже возвращает
+   * отложенное, когда своих не хватает на пятёрку, и хоррор, отложенный
+   * «не сейчас» до того, как хорроры запретили, вернулся бы им. До среза —
+   * чтобы отсеянные не занимали мест в limit, как не занимают их баны.
+   * Пусто и отсутствие — ровно прежние скоры.
+   */
+  muted?: readonly MutePreset[]
 }): ScoredCandidate[] {
-  const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown } = args
+  const { profile, library, metaOf, newPool, mood, nowSec, limit = 25, exclude, cooldown, muted } = args
   type Scored = ScoredCandidate & { parts: ScoreParts }
   const out: Scored[] = []
   // Скрытые паузой — отдельно: они нужны только полу ниже
@@ -1692,6 +1732,8 @@ export function scoreCandidates(args: {
     if (!fitsSocial(meta, mood)) return
     // Отсев подталкивания — до пауз: отсечённое не должно вернуться и полом
     if (tilt?.cut && cutByNudge(meta, tilt.cut)) return
+    // «Не предлагать» — по той же причине до пауз (см. muted выше)
+    if (muted && mutedHit(meta, muted)) return
     const pause = cooldown?.get(meta.appid)
     const tagMood = moodless ? 1 : moodMultiplier(meta, mood, tilt?.tagBoost ?? null)
     const parts: ScoreParts = {

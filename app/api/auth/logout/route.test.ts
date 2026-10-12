@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { feedLinkOwner, issueFeedLink, type Db } from '@/lib/db'
 import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { SESSION_COOKIE, currentSession } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
 import { signOutReply } from '@/lib/signoutreply'
@@ -39,6 +40,12 @@ const logout = (all = false) => POST(post(`/api/auth/logout${all ? '?scope=all' 
 /** Кука сессии в ответе погашена */
 const cleared = (res: Response) =>
   res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=;`) && /Max-Age=0/i.test(c))
+
+/** Кука «Не предлагать» погашена — по тому же пути, с которым её ставит квиз */
+const mutesCleared = (res: Response) =>
+  res.headers
+    .getSetCookie()
+    .some((c) => c.startsWith(`${MUTE_COOKIE}=;`) && /Max-Age=0/i.test(c) && /Path=\/(;|$)/i.test(c))
 
 /** Выпустить человеку RSS-ссылку — вернуть отпечаток её ключа */
 async function feedLink(steamid: string): Promise<string> {
@@ -81,6 +88,22 @@ describe('/api/auth/logout', () => {
     const junk = await logout()
     expect(junk.status).toBe(200)
     expect(cleared(junk)).toBe(true)
+  })
+
+  /*
+   * «Не предлагать» (lib/mutetags.ts) — про человека, а не про браузер:
+   * следующий вошедший молча получал бы выдачу без того, что запретил не он.
+   * Гасится на любом пути ответа — и на гостевом, и на том, что пересобирает
+   * ответ после сбоя базы.
+   */
+  test('выход гасит и «Не предлагать» — на любом пути ответа', async () => {
+    signOut()
+    expect(mutesCleared(await logout())).toBe(true)
+    await signIn(db, STEAMID_OF.openid, { verified: true })
+    expect(mutesCleared(await logout())).toBe(true)
+    await signIn(db, STEAMID_OF.openid, { verified: true })
+    breakDbOn(db, 'feed_links')
+    expect(mutesCleared(await logout(true))).toBe(true)
   })
 
   test('обычный выход гасит только это устройство', async () => {

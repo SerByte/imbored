@@ -1,8 +1,9 @@
 import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { buildCandidates } from './candidates'
-import { logFeedback, migrateDb, saveLibrarySnapshot, upsertGamesMeta, type Db } from './db'
+import { logFeedback, migrateDb, saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, type Db } from './db'
 import { NEUTRAL_MOOD } from './mood'
+import { parseMutes } from './mutetags'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -266,5 +267,81 @@ describe('buildCandidates: игры, которых нет в магазине �
       args: [NOW],
     })
     expect(await newOnes(db)).not.toContain(99)
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts) — один отсев на все три выдачи: /play,
+ * «Игру дня» и колоду «Полистать» собирает этот конвейер. Отказ «всё под
+ * фильтром» — свой код: совет у него другой, чем у «всё в бане».
+ */
+describe('buildCandidates: «Не предлагать»', () => {
+  const horror = parseMutes('horror')
+
+  /** Те же восемь своих и каталог, но 10, 11 и находка 98 — хорроры */
+  async function seedHorror(db: Db): Promise<void> {
+    await seed(db)
+    await upsertGamesMeta(
+      db,
+      [meta(10, { Horror: 120, Puzzle: 100 }), meta(11, { Horror: 120, Puzzle: 100 }), meta(98, { Horror: 100, Automation: 90 })],
+      NOW,
+    )
+  }
+
+  test('хорроры не доходят ни до своего, ни до каталога', async () => {
+    const db = await freshDb()
+    await seedHorror(db)
+    const plain = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW })
+    if (typeof plain === 'string') throw new Error(plain)
+    // без фильтра они в кандидатах — значит, проверка ниже что-то проверяет
+    expect(plain.candidates.map((c) => c.appid)).toEqual(expect.arrayContaining([10, 11, 98]))
+
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, muted: horror })
+    if (typeof set === 'string') throw new Error(set)
+    const ids = set.candidates.map((c) => c.appid)
+    expect(ids).not.toContain(10)
+    expect(ids).not.toContain(11)
+    expect(ids).not.toContain(98)
+    expect(ids).toEqual(expect.arrayContaining([12, 13, 99]))
+  })
+
+  test('«Как «X», но…» — соседи X под фильтром тоже уходят', async () => {
+    const db = await freshDb()
+    await seedHorror(db)
+    await upsertNeighbors(
+      db,
+      new Map([
+        [1, [10, 11, 12, 13, 98, 99].map((neighbor, i) => ({ neighbor, score: 0.9 - i / 10, shared: ['Puzzle'] }))],
+      ]),
+    )
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, seed: 1, muted: horror })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.seed?.appid).toBe(1)
+    expect(set.candidates.map((c) => c.appid).sort((a, b) => a - b)).toEqual([12, 13, 99])
+  })
+
+  test('всё под фильтром — allmuted, а не nocandidates', async () => {
+    const db = await freshDb()
+    await seedHorror(db)
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', {
+      nowSec: NOW,
+      muted: parseMutes('horror.mmo'),
+      // всё, что не хоррор, — на экране: «Что-то другое» его не повторит
+      exclude: [1, 2, 12, 13, 14, 15, 99],
+    })
+    expect(set).toBe('allmuted')
+  })
+
+  // Пусто из-за банов, а фильтр стоит рядом и ничего не решил: совет тот же,
+  // что без фильтра, — «верни что-нибудь из бана»
+  test('пусто из-за банов — nocandidates и с фильтром', async () => {
+    const db = await freshDb()
+    await seedHorror(db)
+    for (const appid of [1, 2, 10, 11, 12, 13, 14, 15, 98, 99]) {
+      await logFeedback(db, { steamid: ME, appid, action: 'banned' }, NOW - 60)
+    }
+    expect(await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, muted: horror })).toBe(
+      'nocandidates',
+    )
   })
 })

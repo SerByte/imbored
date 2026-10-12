@@ -15,16 +15,17 @@ import {
   type DailyAlternate,
   type DailySelection,
 } from '@/lib/daily'
-import { getDailyPick, getGamesMeta, saveDailyPick } from '@/lib/db'
+import { getDailyPick, getGamesMeta, getGamesMetaLite, saveDailyPick } from '@/lib/db'
 import { refreshDealsWithin } from '@/lib/deals'
 import { dayLabel } from '@/lib/freshness'
 import { heuristicPicks, reasonPrice } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
-import { sharedTasteTags } from '@/lib/recommend'
+import type { MutePreset } from '@/lib/mutetags'
+import { mutedHit, sharedTasteTags } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
 import { shareText } from '@/lib/sharedpick'
-import { currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
+import { currentMutes, currentSession, getDb, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import type { GameMeta, ScoredCandidate } from '@/lib/types'
 
 /** Сколько находок из каталога показываем полкой под героем */
@@ -74,6 +75,7 @@ export async function GET(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
+  const mutes = await currentMutes()
 
   /*
    * Выбор дня — из записи, если она уже есть.
@@ -114,8 +116,24 @@ export async function GET(req: Request) {
     getDailyPick(db, steamid, dayKey(now - 86_400)),
     cachedOnly ? Promise.resolve(null) : personalGate(),
   ])
-  const stored = parseDailySelection(rawStored)
+  let stored = parseDailySelection(rawStored)
   const yesterday = parseDailySelection(rawYesterday)
+
+  /*
+   * «Не предлагать» (lib/mutetags.ts) — у браузера, а запись дня одна на
+   * профиль и общая для всех его сессий: её мог выбрать телефон без фильтра.
+   * Герой записи под фильтром этого браузера — не его игра дня: запись
+   * считается пустой, и отбор ниже идёт заново, уже с фильтром, и
+   * перезаписывает её. Платит он, как любой отбор, — личным потолком и
+   * потолком адреса; ?cached=1 честно отвечает «не выбрано». Цена — одно
+   * чтение по первичному ключу, и только у того, кто фильтр поставил.
+   * Запасная своя и полка под фильтром отбора не стоят: их просто не
+   * показываем (shownShelf и shownAlt ниже).
+   */
+  if (stored && mutes.length) {
+    const heroId = stored.pick.appid
+    if (mutedHit((await getGamesMetaLite(db, [heroId])).get(heroId), mutes)) stored = null
+  }
 
   /*
    * ?cached=1 — «только если уже выбрано».
@@ -155,8 +173,10 @@ export async function GET(req: Request) {
     if (!byIp.ok) return rateLimitedResponse(byIp.retryAfterSec)
   }
 
-  const selection = stored ?? (await selectDaily(db, steamid, dateStr, now, yesterday))
+  const selection = stored ?? (await selectDaily(db, steamid, dateStr, now, yesterday, mutes))
   if (selection === NO_LIBRARY) return NextResponse.json({ error: 'nolibrary' }, { status: 409 })
+  // Выбрать было бы из чего, но всё — под «Не предлагать» (FAIL.muted на /daily)
+  if (selection === ALL_MUTED) return NextResponse.json({ error: 'muted' }, { status: 409 })
   if (!selection) return NextResponse.json({ error: 'nocandidates' }, { status: 409 })
   if (!stored) await saveDailyPick(db, steamid, dateStr, selection, now)
 
@@ -174,6 +194,12 @@ export async function GET(req: Request) {
   await refreshDealsWithin(db, pricedIds, now)
   const priced = await getGamesMeta(db, pricedIds)
   const metaNow = (appid: number): GameMeta | undefined => priced.get(appid)
+
+  // Запись могла выбрать сессия без фильтра этого браузера (см. выше): полка
+  // и запасная своя под ним не показываются. Мета у них уже прочитана — цены
+  const shown = (appid: number) => !mutedHit(metaNow(appid), mutes)
+  const shownShelf = shelf.filter((c) => shown(c.appid))
+  const shownAlt = alt && shown(alt.pick.appid) ? alt : null
 
   const reason = reasonBase + reasonPrice(pick.source, metaNow(pick.appid), now, hideUrgency)
 
@@ -201,16 +227,16 @@ export async function GET(req: Request) {
         text: shareText(selection.reasonBase, ''),
       }),
     },
-    discoveries: shelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
+    discoveries: shownShelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
     // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
-    ownAlternate: alt
+    ownAlternate: shownAlt
       ? {
-          ...alternateView(alt, metaNow(alt.pick.appid), now, hideUrgency, writer),
+          ...alternateView(shownAlt, metaNow(shownAlt.pick.appid), now, hideUrgency, writer),
           ...shareView(sessionSecret(), {
             steamid,
-            appid: alt.pick.appid,
-            source: alt.pick.source,
-            text: shareText(alt.reasonBase, ''),
+            appid: shownAlt.pick.appid,
+            source: shownAlt.pick.source,
+            text: shareText(shownAlt.reasonBase, ''),
           }),
         }
       : null,
@@ -242,6 +268,8 @@ function alternateView(
 
 /** Отличаем «библиотеки нет» от «кандидатов нет»: у них разные коды ответа */
 const NO_LIBRARY = Symbol('nolibrary')
+/** И «кандидаты были, но все под «Не предлагать»» — свой совет, свой код */
+const ALL_MUTED = Symbol('allmuted')
 
 /**
  * Собственно отбор — всё, что стоит дорого и на сутки не меняется.
@@ -256,7 +284,8 @@ async function selectDaily(
   dateStr: string,
   now: number,
   yesterday: DailySelection | null,
-): Promise<DailySelection | null | typeof NO_LIBRARY> {
+  mutes: readonly MutePreset[],
+): Promise<DailySelection | null | typeof NO_LIBRARY | typeof ALL_MUTED> {
   // Конвейер тот же, что у /play (lib/candidates.ts): настроения у страницы
   // нет, знакомого и оси тоже, а из пауз — только «надоела»: «не сейчас» на
   // /play посреди дня иначе сменило бы игру, выбранную на сутки. Сказанное
@@ -267,12 +296,18 @@ async function selectDaily(
   // сегодняшнюю: вчерашний герой сегодня героем не станет (avoid у
   // pickDaily). Записи нет или она не разобралась — выбор без исключения,
   // как раньше.
+  //
+  // mutes — «Не предлагать» браузера, который спросил (lib/mutetags.ts):
+  // выбор с ним ложится в общую запись, и другой сессии без фильтра он
+  // просто одна из годных игр дня
   const set = await buildCandidates(db, steamid, NEUTRAL_MOOD, 'all', {
     nowSec: now,
     cooldownKinds: ['tired'],
     notnowSince: dayStartSec(now),
+    muted: mutes,
   })
   if (set === 'nolibrary') return NO_LIBRARY
+  if (set === 'allmuted') return ALL_MUTED
   if (set === 'nocandidates') return null
   const { own, discovery, profile, tagWeight, metaOf } = set
 

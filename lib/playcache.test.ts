@@ -24,6 +24,7 @@ import {
   withBan,
   type PlayCache,
 } from './playcache'
+import { unkeyDeal } from './mutetags'
 import { forgetPlanned } from './planforget'
 import type { PlayPick } from './playflow'
 import { runWarmup, startPrewarm } from './warmup'
@@ -580,6 +581,24 @@ describe('хранилища', () => {
     expect(after?.deal.plan).toBeNull()
     expect(after?.deal.continueGame?.appid).toBe(570)
     expect(after?.planned).toEqual([30])
+  })
+
+  /*
+   * «Не предлагать» сменили на квизе (unkeyDeal в lib/mutetags): выдача,
+   * собранная без фильтра, после «Назад» не возвращается — а отложенные на
+   * вечер едут к новой, как при смене настроения.
+   */
+  test('после смены «Не предлагать» выдача не узнаётся, а отложенные на вечер — едут', () => {
+    const session = fakeStorage()
+    vi.stubGlobal('sessionStorage', session.area)
+    playCacheStore.set(entry({ planned: [20] }))
+    const q = { key: KEY, viewer: ME, nowMs: NOW + 1000, banned: NO_BANS }
+    expect(restoreDeal(playCacheStore.fresh(), q)).not.toBeNull()
+
+    unkeyDeal()
+
+    expect(restoreDeal(playCacheStore.fresh(), q)).toBeNull()
+    expect(heldPlanned(playCacheStore.fresh(), q)).toEqual({ viewer: ME, appids: [20] })
   })
 
   test('свой бан дописывается к хранилищу и не стирает бан соседней вкладки', () => {

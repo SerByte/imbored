@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { revokeAllSessions, revokeSession } from '@/lib/db'
 import { SESSION_COOKIE, currentSession, getDb, nowSec, sessionCookieOptions } from '@/lib/server'
+import { MUTE_COOKIE } from '@/lib/mutetags'
 import { forgetSessionCache } from '@/lib/sessions'
 
 /**
@@ -42,6 +43,11 @@ export async function POST(req: Request) {
   // Куку гасим ВСЕГДА и первым делом: даже если сессии уже нет и гасить в базе
   // нечего, человек нажал «выйти» и обязан выйти.
   res.cookies.set(SESSION_COOKIE, '', { ...sessionCookieOptions(), maxAge: 0 })
+  // И «Не предлагать» (lib/mutetags.ts): фильтр — про человека, а не про
+  // устройство, и следующий вошедший на этом браузере молча получал бы
+  // выдачу без того, что запретил не он. Путь — тот же, с которым кука
+  // ставится: иначе браузер погасил бы соседку, а её оставил
+  res.cookies.set(MUTE_COOKIE, '', { path: '/', sameSite: 'lax', maxAge: 0 })
 
   if (session) {
     const now = nowSec()

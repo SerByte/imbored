@@ -76,7 +76,9 @@ describe('экраны отказа', () => {
    */
   test('/play: повтор не предлагается там, где он вернёт тот же ответ', () => {
     const page = read('app', 'play', 'page.tsx')
-    for (const code of ['nocandidates', 'nolibrary', 'badmood']) {
+    // muted: фильтр «Не предлагать» живёт в куке, и повтор с той же кукой
+    // вернёт тот же отказ — снять его можно только на квизе
+    for (const code of ['nocandidates', 'nolibrary', 'badmood', 'muted']) {
       const at = page.indexOf(`  ${code}: {`)
       expect(at, `нет разбора для ${code}`).toBeGreaterThan(-1)
       const block = page.slice(at, page.indexOf('},', at))

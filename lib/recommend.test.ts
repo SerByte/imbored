@@ -29,6 +29,7 @@ import {
   mixHeroPool,
   moodFitAxes,
   moodWordsOf,
+  mutedHit,
   neutralParts,
   normalizedTags,
   nudgeMultiplier,
@@ -50,6 +51,7 @@ import {
 } from './recommend'
 import { DEMO_METAS, demoLibrary } from './demo'
 import { LEANS, NEUTRAL_MOOD, type Lean } from './mood'
+import { parseMutes } from './mutetags'
 import { NUDGES, planNudge } from './nudge'
 import { tagWeightFrom } from './tagweight'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
@@ -2803,5 +2805,128 @@ describe('без настроения (moodless)', () => {
 
   test('компания остаётся фильтром: одиночное ей не предлагается и без настроения', () => {
     expect(run({ ...tired, social: 'friends' }, true)).toEqual([])
+  })
+})
+
+/**
+ * «Не предлагать» (lib/mutetags.ts): тег судится среди главных, а не среди
+ * всех. Цифры мест — из замеров по копии каталога в докблоках MUTES.
+ */
+describe('«Не предлагать»: mutedHit', () => {
+  const only = (...keys: string[]) => parseMutes(keys.join('.'))
+  /** Мета, где теги стоят ровно в переданном порядке голосов */
+  const ranked = (tags: string[], extra: Partial<GameMeta> = {}): GameMeta => ({
+    ...meta(1, Object.fromEntries(tags.map((t, i) => [t, 1000 - i * 10]))),
+    ...extra,
+  })
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => `Filler${i}`)
+
+  test('пусто и без меты — мимо', () => {
+    expect(mutedHit(ranked(['Horror']), [])).toBe(false)
+    expect(mutedHit(undefined, only('horror'))).toBe(false)
+  })
+
+  test('главный тег исключает, хвостовой — нет: у Kairo «Horror» тринадцатый', () => {
+    expect(mutedHit(ranked(['Horror', ...filler(10)]), only('horror'))).toBe(true)
+    expect(mutedHit(ranked([...filler(4), 'Psychological Horror']), only('horror'))).toBe(true)
+    expect(mutedHit(ranked([...filler(5), 'Survival Horror']), only('horror'))).toBe(false)
+    expect(mutedHit(ranked([...filler(12), 'Horror']), only('horror'))).toBe(false)
+  })
+
+  /*
+   * Ряд чипсов карточки пропускает предупреждения о контенте и отдаёт место
+   * следующим (topTags). Тег, который карточка покажет, обязан исключать, —
+   * даже если по голосам он шестой-седьмой.
+   */
+  test('тег, видимый чипсом карточки, исключает, сколько бы предупреждений ни стояло выше', () => {
+    const m = ranked(['Nudity', 'Gore', 'Sexual Content', ...filler(3), 'VR'])
+    expect(topTags(m)).toContain('VR')
+    expect(mutedHit(m, only('vr'))).toBe(true)
+  })
+
+  test('предупреждения о контенте — до десятого места среди всех тегов', () => {
+    // «Nudity» у The Witcher 3 восьмой
+    expect(mutedHit(ranked([...filler(7), 'Nudity']), only('lewd'))).toBe(true)
+    expect(mutedHit(ranked([...filler(10), 'Nudity']), only('lewd'))).toBe(false)
+    // и только своим набором: «откровенное» не судит кровь
+    expect(mutedHit(ranked(['Gore', ...filler(3)]), only('lewd'))).toBe(false)
+    expect(mutedHit(ranked(['Gore', ...filler(3)]), only('gore'))).toBe(true)
+  })
+
+  test('VR — по числу чипсов: плоская игра с поддержкой шлема (VR пятый) остаётся', () => {
+    expect(mutedHit(ranked([...filler(3), 'VR']), only('vr'))).toBe(true)
+    // Resident Evil 7: VR пятый
+    expect(mutedHit(ranked([...filler(4), 'VR']), only('vr'))).toBe(false)
+  })
+
+  test('VR-версию с тегом ниже ловит имя, а VRChat — тег, а не слово', () => {
+    const tags = [...filler(4), 'VR']
+    expect(mutedHit(ranked(tags, { name: 'Sairento VR' }), only('vr'))).toBe(true)
+    expect(mutedHit(ranked(tags, { name: "Hellblade: Senua's Sacrifice VR Edition" }), only('vr'))).toBe(true)
+    expect(mutedHit(ranked([...filler(6)], { name: 'VRChat' }), only('vr'))).toBe(false)
+    expect(mutedHit(ranked(['VR', ...filler(6)], { name: 'VRChat' }), only('vr'))).toBe(true)
+  })
+
+  test('ранний доступ — жанр Steam решает и без тега, а тег у вышедшей игры — хвост', () => {
+    expect(mutedHit(ranked(filler(6), { genres: ['Экшены', 'Ранний доступ'] }), only('early'))).toBe(true)
+    // Rust: Early Access девятнадцатый, жанра нет — игра давно вышла
+    expect(mutedHit(ranked([...filler(18), 'Early Access']), only('early'))).toBe(false)
+    expect(mutedHit(ranked(['Early Access', ...filler(5)]), only('early'))).toBe(true)
+  })
+
+  test('несколько наборов — достаточно любого', () => {
+    const m = ranked(['Anime', ...filler(5)])
+    expect(mutedHit(m, only('horror'))).toBe(false)
+    expect(mutedHit(m, only('horror', 'anime'))).toBe(true)
+  })
+})
+
+describe('«Не предлагать» в scoreCandidates', () => {
+  const baseMood: Mood = { time: 'medium', vibe: 'chill', social: 'solo' }
+  const horror = parseMutes('horror')
+  // Шесть своих с убывающим вкусом: 1 и 2 — хорроры
+  const lib = [1, 2, 3, 4, 5, 6].map((appid) => game({ appid, playtimeForever: 10 }))
+  const metas = new Map(
+    lib.map((g) => [
+      g.appid,
+      meta(g.appid, { Action: 100, ...(g.appid <= 2 ? { Horror: 90 } : {}), Other: (g.appid - 1) * 30 }),
+    ]),
+  )
+  const run = (extra: Partial<Parameters<typeof scoreCandidates>[0]> = {}) =>
+    scoreCandidates({
+      profile: { Action: 1 },
+      library: lib,
+      metaOf: (id) => metas.get(id),
+      newPool: [],
+      mood: baseMood,
+      nowSec: NOW,
+      ...extra,
+    })
+
+  test('без набора и с пустым — ровно прежние скоры', () => {
+    expect(run({ muted: [] })).toEqual(run())
+  })
+
+  test('своё и каталог под фильтром уходят, и мест в limit не занимают', () => {
+    const pool = [meta(100, { Action: 100, Horror: 80 }), meta(101, { Action: 100 })]
+    const ids = run({ muted: horror, newPool: pool, limit: 4 }).map((c) => c.appid)
+    expect(ids).toHaveLength(4)
+    expect(ids).not.toContain(1)
+    expect(ids).not.toContain(2)
+    expect(ids).not.toContain(100)
+    expect(ids).toContain(101)
+  })
+
+  /*
+   * Пол паузы возвращает отложенное, когда своих меньше пятёрки. Хоррор,
+   * отложенный «не сейчас» до того, как хорроры запретили, не должен
+   * вернуться им: отсев стоит до пауз.
+   */
+  test('пол паузы не возвращает игру под фильтром', () => {
+    const paused = new Map(lib.map((g) => [g.appid, { mult: 0, kind: 'notnow' as const, at: NOW - 3600 }]))
+    const plain = run({ cooldown: paused }).map((c) => c.appid)
+    expect(plain).toContain(1)
+    const ids = run({ cooldown: paused, muted: horror }).map((c) => c.appid)
+    expect(ids).toEqual([3, 4, 5, 6])
   })
 })
