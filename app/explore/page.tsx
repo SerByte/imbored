@@ -23,6 +23,7 @@ import {
   putBack,
 } from '@/lib/explore'
 import { focusAdrift } from '@/lib/focushandoff'
+import { inTurn } from '@/lib/unlike'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -338,6 +339,15 @@ export default function ExplorePage() {
    * оба с причиной explore. Отправка без ожидания, как учебные сигналы /play:
    * потерянный свайп не беда. Сессии только для чтения сервер ответит
    * needsteam — тогда страница перестаёт слать и листает на устройстве.
+   *
+   * Без ожидания — но в очереди записей игры (inTurn в lib/unlike), той же,
+   * что держит «Зашло» и его снятие на /play. Полка и колода читают
+   * ПОСЛЕДНИЙ свайп игры (listExploreLiked, listExplore), а «Мимо» →
+   * «Вернуть» → «Интересно» за секунду — два запроса и две функции:
+   * холодная или медленная запись «Мимо» легла бы в базу второй, и после
+   * перезагрузки игры не было бы ни на полке, ни в колоде неделю, хотя на
+   * экране она лежит на полке. В очереди «Интересно» уходит, только когда
+   * «Мимо» записано (или сорвалось), — порядок строк тот же, что у нажатий.
    */
   const vote = (card: DeckCard, yes: boolean, keyboard: boolean) => {
     if (votedIds.current.has(card.appid)) return
@@ -359,19 +369,21 @@ export default function ExplorePage() {
       setLiked((l) => mergeShelf([shelfOf(card)], l))
     }
     if (writerStore.get() === false) return
-    void fetch('/api/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        appid: card.appid,
-        action: yes ? 'opened' : 'skipped',
-        reason: EXPLORE_REASON,
-      }),
-    })
-      .then(async (r) => {
-        if (await isNeedSteam(r)) writerStore.set(false)
+    void inTurn(card.appid, () =>
+      fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appid: card.appid,
+          action: yes ? 'opened' : 'skipped',
+          reason: EXPLORE_REASON,
+        }),
       })
-      .catch(() => {})
+        .then(async (r) => {
+          if (await isNeedSteam(r)) writerStore.set(false)
+        })
+        .catch(() => {}),
+    )
   }
 
   useEffect(() => {
@@ -397,10 +409,14 @@ export default function ExplorePage() {
    * забирал её без обратного хода. Сервер отмену не пишет: listExplore и listExploreLiked
    * читают ПОСЛЕДНИЙ свайп игры, так что новый голос по вернувшейся карте
    * сам перекрывает «Мимо» — «Интересно» кладёт её на полку, как обычно.
+   * Последний он и в базе, а не только на экране: голос встаёт в очередь
+   * записей игры за ещё не доехавшим «Мимо» (inTurn, см. vote).
    * Вернули и не голосовали — строка «Мимо» остаётся, и в следующую колоду
    * карта не придёт неделю. Это честно: её видели и пролистали, а пока
-   * вкладка открыта, она лежит наверху колоды. Вкус «Мимо» не трогает
-   * вовсе (listFeedback его не читает), так что отменять на сервере нечего.
+   * вкладка открыта, она лежит наверху колоды. Больше «Мимо» колоды не
+   * значит ничего: вкус его не читает (listFeedback), и план на вечер своей
+   * игры, попавшей в колоду, оно не закрывает (closesPlan в
+   * lib/eveningplan) — так что отменять на сервере нечего.
    *
    * Без таймера: кнопка живёт до следующего голоса или новой колоды. Гаснущая
    * через восемь секунд отмена не дождалась бы того, кто идёт к ней Tab'ом
@@ -443,6 +459,10 @@ export default function ExplorePage() {
    * время запроса полка могла измениться, и снимок стёр бы чужие перемены.
    * Сессия только для чтения держит полку на устройстве — ей убирать можно
    * без сервера.
+   *
+   * Запись — в той же очереди игры, что и свайп (inTurn, см. vote): «Убрать»
+   * у карты, которую секунду назад отправили «Интересно», иначе мог лечь в
+   * базу раньше неё — и после перезагрузки убранная вернулась бы на полку.
    */
   const unlike = async (card: ShelfCard) => {
     const before = liked
@@ -455,11 +475,13 @@ export default function ExplorePage() {
     setLiked((l) => l.filter((c) => c.appid !== card.appid))
     if (writerStore.get() === false) return
     try {
-      const res = await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appid: card.appid, action: 'skipped', reason: EXPLORE_REASON }),
-      })
+      const res = await inTurn(card.appid, () =>
+        fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ appid: card.appid, action: 'skipped', reason: EXPLORE_REASON }),
+        }),
+      )
       if (await isNeedSteam(res)) {
         // Права кончились, пока страница была открыта: полка дальше живёт на
         // устройстве, и убранное остаётся убранным

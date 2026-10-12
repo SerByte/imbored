@@ -151,6 +151,47 @@ describe('undoLike: второе нажатие «Зашло» у героя', (
     expect(writerStore.get()).toBe(false)
   })
 
+  /*
+   * Снятие ещё едет, а сердце нажали снова: оно зажглось, и «Зашло» встало
+   * в очередь за снятием. Сбой снятия тогда не откатывает и не говорит —
+   * последним скажет вставка, а «нажми ещё раз» под горящим сердцем звало
+   * бы снять только что поставленное.
+   */
+  test('сбой снятия, за которым уже встало новое «Зашло», молчит и сердце не трогает', async () => {
+    const reply = gate<Response>()
+    fetchMock.mockImplementationOnce(() => reply.p)
+    const p = page([appid])
+    const done = undoLike({ appid, name: 'Hades' }, p.setLiked, p.say)
+    expect(p.liked().has(appid)).toBe(false)
+    // Второе нажатие: страница зажигает сердце и ставит «Зашло» в очередь игры
+    p.setLiked((prev) => new Set(prev).add(appid))
+    const like = vi.fn(async () => true)
+    const liked = inTurn(appid, like)
+    reply.open(json(500, {}))
+    await done
+    expect(p.said).toEqual([null])
+    expect(p.liked().has(appid)).toBe(true)
+    // Вставка ушла следом за снятием — как и обещала очередь
+    expect(await liked).toBe(true)
+    expect(like).toHaveBeenCalledTimes(1)
+  })
+
+  test('снял, зажёг и снова снял: сбой первого снятия не зажигает погашенное последним', async () => {
+    const first = gate<Response>()
+    fetchMock.mockImplementationOnce(() => first.p)
+    const p = page([appid])
+    const undone = undoLike({ appid, name: 'Hades' }, p.setLiked, p.say)
+    p.setLiked((prev) => new Set(prev).add(appid))
+    void inTurn(appid, async () => true)
+    const again = undoLike({ appid, name: 'Hades' }, p.setLiked, p.say)
+    expect(p.liked().has(appid)).toBe(false)
+    first.open(json(500, {}))
+    await undone
+    await again
+    expect(p.liked().has(appid)).toBe(false)
+    expect(p.said).toEqual([null, null])
+  })
+
   test('повтор того же отказа звучит: строка гаснет до запроса', async () => {
     const reply = gate<Response>()
     fetchMock.mockImplementationOnce(() => reply.p)

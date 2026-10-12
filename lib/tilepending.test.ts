@@ -42,4 +42,23 @@ describe('TilePending', () => {
       /@media \(prefers-reduced-motion: reduce\) \{[^{}]*\.game-card:has\(\.tile-pending\) \.card-thumb::after \{\s*animation-duration: 0s;/,
     )
   })
+
+  /*
+   * «Похожие» на /game и полка /explore морфят обложку в героя: имя перехода
+   * стоит на самой .card-thumb (components/Morph), а знак ожидания гаснет
+   * только в коммите новой страницы. Без отмены на время перехода старый
+   * снимок уносил бы погашенную обложку с полоской и растягивал её до героя.
+   */
+  test('на время перехода знак снят: морф уносит чистую обложку', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+    const sel = ':root:active-view-transition .game-card:has(.tile-pending) .card-thumb::after {'
+    const at = css.indexOf(sel)
+    expect(at, 'отмены на время перехода нет — морф понесёт затемнение в героя').toBeGreaterThan(-1)
+    const rule = css.slice(at + sel.length, css.indexOf('}', at))
+    expect(rule).toMatch(/animation: none;/)
+    expect(rule).toMatch(/background: none;/)
+    // Ниже правила ожидания: при равном весе победил бы тот, кто ниже, — а
+    // так отмена выигрывает и весом (:root и псевдокласс), и местом
+    expect(at).toBeGreaterThan(css.indexOf('.game-card:has(.tile-pending) .card-thumb::after {'))
+  })
 })

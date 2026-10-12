@@ -39,7 +39,11 @@ describe('«Зашло» у героя снимается тем же нажат
 
   test('/play: нажатое сердце снимает «Зашло» через lib/unlike из куска героя, отказ — строкой под героем', () => {
     expect(play).toContain(flat('const heartOn = liked.has(pick.appid)'))
-    expect(play).toContain(flat('if (heartOn) return void heroTail().then((t) => t.undoLike(pick, setLiked, setHeroMiss), () => {})'))
+    // Не пришёл кусок (деплой сменил хеш, а вкладка старая) — не мёртвое
+    // нажатие: та же строка под героем говорит, что делать
+    expect(play).toContain(
+      flat("if (heartOn) return void heroTail().then((t) => t.undoLike(pick, setLiked, setHeroMiss), () => setHeroMiss('Обнови страницу'))"),
+    )
     // Кусок — тот, что уже грузит «Сыграю вечером»: своего загрузчика /play не заводит
     expect(play).not.toContain(flat("import('@/lib/unlike')"))
     expect(play).not.toMatch(/from'@\/lib\/unlike'/)
@@ -118,6 +122,22 @@ describe('«Мимо» в колоде /explore возвращается', () =>
     expect(body).not.toContain('fetch(')
     // Без таймера: кнопка ждёт того, кто идёт к ней Tab'ом (WCAG 2.2.1)
     expect(code).not.toMatch(/setTimeout\([^;]*setLastSkip/)
+  })
+
+  /*
+   * Отмену сервер не пишет: «Мимо» перекрывает следующий голос по той же
+   * игре — если он и в базе ляжет последним. Голая отправка без ожидания
+   * этого не обещает: «Мимо» → «Вернуть» → «Интересно», пока первая запись
+   * ещё едет, и «Мимо» ложится второй. Очередь записей игры (inTurn) — та
+   * же, что держит «Зашло» и его снятие.
+   */
+  test('голос колоды и «Убрать» с полки уходят в очереди записей игры', () => {
+    expect(code).toContain(flat("import { inTurn } from '@/lib/unlike'"))
+    const vote = code.slice(code.indexOf('constvote=('), code.indexOf('constundo='))
+    expect(vote).toContain(flat("void inTurn(card.appid, () => fetch('/api/feedback',"))
+    // Ни одной записи фидбека мимо очереди: обе — голос и «Убрать»
+    expect(code.match(/fetch\('\/api\/feedback'/g)).toHaveLength(2)
+    expect(code.match(/inTurn\(card\.appid,\(\)=>fetch\('\/api\/feedback'/g)).toHaveLength(2)
   })
 
   test('о вернувшейся карте говорит строка, которая стоит всегда', () => {

@@ -45,8 +45,12 @@ describe('план на вечер', () => {
    * ПК» — поставить на загрузку из приложения Steam, — и план, закрытый этим
    * касанием, обманул бы обещание «вечером будет ждать». С базой правило
    * сверяет lib/db.test.ts.
+   *
+   * «Мимо» в колоде /explore — листание без обязательств: своя отложенная
+   * игра встречается и там, и промах пальцем закрывал план молча, а
+   * «Вернуть» под колодой его уже не возвращал.
    */
-  test('план закрывают запуск, бан и пропуск; магазин под пальцем и бросок рулетки — нет', () => {
+  test('план закрывают запуск, бан и пропуск; магазин под пальцем, бросок рулетки и «Мимо» колоды — нет', () => {
     expect(closesPlan('launched')).toBe(true)
     expect(closesPlan('launched', null, 'launch')).toBe(true)
     expect(closesPlan('launched', null, 'store')).toBe(false)
@@ -54,6 +58,7 @@ describe('план на вечер', () => {
     expect(closesPlan('skipped')).toBe(true)
     expect(closesPlan('skipped', 'notnow')).toBe(true)
     expect(closesPlan('skipped', 'spin')).toBe(false)
+    expect(closesPlan('skipped', 'explore')).toBe(false)
     expect(closesPlan('liked')).toBe(false)
     expect(closesPlan('opened', null, 'details')).toBe(false)
   })

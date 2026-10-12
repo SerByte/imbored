@@ -16,9 +16,10 @@ import { isNeedSteam, writerStore } from '@/lib/writer'
  * значит убрать их, а не дописать маркер, который пришлось бы учитывать
  * везде, где читают вкус.
  *
- * Модуль клиентский: только fetch и lib/writer, без lib/db. /daily и
- * /library берут его сразу, а /play — ленивым куском героя
- * (components/HeroTail): там первая загрузка у самого потолка бюджета.
+ * Модуль клиентский: только fetch и lib/writer, без lib/db. /daily,
+ * /library и /explore (очередь записей, inTurn) берут его сразу, а /play —
+ * ленивым куском героя (components/HeroTail): там первая загрузка у самого
+ * потолка бюджета.
  */
 
 /** Последняя запись по игре — следующая встаёт за ней (inTurn) */
@@ -34,6 +35,10 @@ const turns = new Map<number, Promise<unknown>>()
  * уже снято. Обратная гонка та же: снять и сразу нажать снова — и
  * запоздалый DELETE стёр бы новую вставку. Поэтому запись ждёт предыдущую
  * по той же игре, удачную или нет; разные игры друг друга не ждут.
+ *
+ * Той же очередью ходят свайпы колоды /explore и «Убрать» с её полки: там
+ * правда — последний свайп игры, и «Мимо» → «Вернуть» → «Интересно» за
+ * секунду иначе могли лечь в базу в обратном порядке.
  */
 export function inTurn<T>(appid: number, send: () => Promise<T>): Promise<T> {
   const next = Promise.resolve(turns.get(appid)).then(send, send)
@@ -81,6 +86,16 @@ export const unlikeMiss = (name: string) => `Не вышло снять «Заш
  *
  * Прежний отказ гаснет до запроса: второй такой же сбой — тот же текст, и
  * без паузы строка промолчала бы (lib/liveregion.test.ts, REPEAT).
+ *
+ * Откат — только если за снятием по этой игре ничего не встало в очередь.
+ * Пока /api/unlike ехал, сердце могли нажать снова: оно зажглось, и новое
+ * «Зашло» ждёт в inTurn за снятием. Сбой снятия тогда уже ничего не решает —
+ * последним скажет вставка, и на сервере, и на экране, — а строка «нажми
+ * ещё раз» под горящим сердцем звала бы снять то, что человек только что
+ * поставил. Обратный случай тот же: снял, зажёг, снова снял — откат первого
+ * зажёг бы сердце, которое последнее нажатие погасило. Очередь хранит
+ * последнюю запись игры, и промис sendUnlike — та самая запись: не она
+ * последняя — значит, после неё нажимали, и слово за тем нажатием.
  */
 export async function undoLike(
   { appid, name }: { appid: number; name: string },
@@ -93,8 +108,9 @@ export async function undoLike(
     next.delete(appid)
     return next
   })
-  const res = await sendUnlike(appid)
-  if (res === 'ok') return
+  const sent = sendUnlike(appid)
+  const res = await sent
+  if (res === 'ok' || turns.get(appid) !== sent) return
   setLiked((prev) => new Set(prev).add(appid))
   if (res === 'fail') say(unlikeMiss(name))
 }
