@@ -98,7 +98,7 @@ describe('/api/whatsnew/feedlink: кто выпускает', () => {
     const steamid = await signInAs(db, 'openid')
     const before = await keyOf(await issue())
 
-    await revokeAllSessions(db, steamid, T0 + 1)
+    await revokeAllSessions(db, { steamid, sid: (await currentSession())!.sid }, T0 + 1)
     // Окно настоящее: кэш ещё считает сессию живой
     expect(await currentSession()).not.toBeNull()
 

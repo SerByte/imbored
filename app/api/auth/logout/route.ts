@@ -51,8 +51,10 @@ export async function POST(req: Request) {
       const db = await getDb()
       if (all) {
         // Ссылку на ленту гасит та же пачка, что и сессии: сбой посередине
-        // не оставит её живой при ответе «вышел везде»
-        await revokeAllSessions(db, session.steamid, now)
+        // не оставит её живой при ответе «вышел везде». Сессия целиком, а не
+        // один steamid: забытой «Удалить всё обо мне», но ещё живой в кэше,
+        // пачка не даст завести users заново (см. revokeAllSessions)
+        await revokeAllSessions(db, session, now)
       } else {
         await revokeSession(db, session.sid, now)
       }

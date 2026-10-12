@@ -4,6 +4,7 @@ import {
   createRoom,
   createSharedPick,
   FORGET_TABLES,
+  forgetUser,
   logFeedback,
   revokeAllSessions,
   saveLibrarySnapshot,
@@ -129,6 +130,9 @@ describe('/api/forget: кто вправе', () => {
     for (const res of [await preview(), await erase()]) {
       expect(res.status).toBe(403)
       expect(await res.json()).toEqual({ error: 'needsteam' })
+      // Сессия жива, удалено ничего не было — куки на месте
+      expect(cleared(res)).toBe(false)
+      expect(mutesCleared(res)).toBe(false)
     }
     expect(await stored(steamid)).toBe(before)
   })
@@ -207,6 +211,29 @@ describe('/api/forget: удаление', () => {
   })
 
   /*
+   * Оборванный ответ (lib/forgetreply): удаление записалось, а ответ — и с
+   * ним Set-Cookie, гасящий «Не предлагать», — до браузера не дошёл. Повтор
+   * приходит уже без входа, и 401 раньше не гасил ничего: экран честно
+   * говорил «похоже, удаление уже прошло», а «хорроры, VR» удалённого ещё
+   * год резали подбор следующему на этом браузере. Входа здесь нет — гасить
+   * можно, как выход гасит «даже если сессии уже нет».
+   */
+  test('повтор после оборванного ответа — 401, и обе куки гаснут', async () => {
+    await signIn(db, ME, { verified: true })
+    await seed(ME)
+    setTestCookie(MUTE_COOKIE, 'horror.vr')
+    // Удаление прошло, а ответ потерялся
+    await forgetUser(db, ME, { signOutFrom: T0 + 1 })
+    vi.setSystemTime((T0 + 2) * 1000)
+
+    const res = await erase()
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'nosession' })
+    expect(mutesCleared(res)).toBe(true)
+    expect(cleared(res)).toBe(true)
+  })
+
+  /*
    * Ради этого и стоит отметка удаления. Подпись куки — авторитет входа, и
    * кука без строки в базе пускает: стёртые sessions и users не выпускали
    * никого. Забытый телефон оставался «вошедшим», и первый же вход в пати
@@ -256,10 +283,10 @@ describe('/api/forget: удаление', () => {
    * с базой мимо кэша.
    */
   test('отозванная сессия из тёплого кэша не удаляет — 401, всё на месте', async () => {
-    await signIn(db, ME, { verified: true })
+    const { sid } = await signIn(db, ME, { verified: true })
     await seed(ME)
     expect(await currentSession()).not.toBeNull()
-    await revokeAllSessions(db, ME, T0 + 1)
+    await revokeAllSessions(db, { steamid: ME, sid }, T0 + 1)
     vi.setSystemTime((T0 + 2) * 1000)
     // Кэш ещё считает сессию живой — так её видел бы соседний экземпляр
     expect(await currentSession()).not.toBeNull()

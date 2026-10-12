@@ -3819,6 +3819,69 @@ describe('forgetUser: удаление по запросу', () => {
     expect(await forgetMarkAt(db, '76561197960287999')).toBeNull()
   })
 
+  /*
+   * Прогрев (/api/prepare) читает снимок в начале запроса, секунды ждёт
+   * GetOwnedGames и только потом пишет свежий. «Удалить всё обо мне»,
+   * прошедшее в эти секунды, стирало снимки, а запись без условия заводила
+   * их заново — вместе с годовой отметкой, — и /portrait/<id> и итоги года
+   * снова открывались у того, кому сказали «всё удалено». С replaces снимок
+   * ложится, только пока жив тот, что освежается.
+   */
+  test('снимок, освежённый после удаления, не ложится — ни снимка, ни годовой отметки', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 86_400)
+    await forgetUser(db, ME, { signOutFrom: NOW })
+
+    await saveLibrarySnapshot(db, ME, LIB, NOW + 5, { replaces: NOW - 86_400 })
+    expect(await getLatestSnapshot(db, ME)).toBeNull()
+    const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
+    expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
+
+    // Вход после удаления — новое начало: без replaces снимок ложится
+    await saveLibrarySnapshot(db, ME, LIB, NOW + 10)
+    expect((await getLatestSnapshot(db, ME))?.takenAt).toBe(NOW + 10)
+  })
+
+  test('снимок, освежённый поверх живого, ложится как прежде — с отметкой года', async () => {
+    const db = await freshDb()
+    await saveLibrarySnapshot(db, ME, LIB, NOW - 86_400)
+    await saveLibrarySnapshot(db, ME, [LIB[0]!], NOW, { replaces: NOW - 86_400 })
+    expect(await getLatestSnapshot(db, ME)).toEqual({ takenAt: NOW, games: [LIB[0]] })
+    const rows = Object.fromEntries((await countUserRows(db, ME)).map((r) => [r.table, r.rows]))
+    expect(rows).toMatchObject({ library_snapshots: 2, library_baselines: 1 })
+  })
+
+  /*
+   * Выход верит минутному кэшу сессий, и телефон, чья сессия живёт в кэше
+   * соседнего экземпляра, доходит до «Выйти на всех устройствах» и после
+   * удаления. UPSERT sessions_from без условия заводил строку users заново —
+   * вечную: строки настоящих людей уборка не трогает.
+   */
+  test('«выйти везде» от забытой сессии строку users не заводит', async () => {
+    const db = await freshDb()
+    await createSession(db, { sid: 'sid-phone', steamid: ME, verified: true }, NOW)
+    await forgetUser(db, ME, { signOutFrom: NOW + 10 })
+
+    await revokeAllSessions(db, { steamid: ME, sid: 'sid-phone' }, NOW + 20)
+    const left = (await countUserRows(db, ME)).filter((r) => r.rows > 0)
+    expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
+
+    // Вернулся и вошёл заново — его «везде» ставит отсечку как обычно
+    await createSession(db, { sid: 'sid-again', steamid: ME, verified: true }, NOW + 30)
+    await revokeAllSessions(db, { steamid: ME, sid: 'sid-again' }, NOW + 40)
+    const state = await getSessionState(db, 'sid-again', ME)
+    expect(state.sessionsFrom).toBe(NOW + 40)
+    expect(state.revokedAt).toBe(NOW + 40)
+  })
+
+  test('без отметки удаления строка сессии не нужна: «везде» ставит отсечку и так', async () => {
+    // Строки нет и без удаления — Turso моргнула на выдаче. Это не повод
+    // промахнуться мимо ровно тех сессий, ради которых sessions_from и есть
+    const db = await freshDb()
+    await revokeAllSessions(db, { steamid: ME, sid: 'sid-rowless' }, NOW)
+    expect((await getSessionState(db, 'sid-rowless', ME)).sessionsFrom).toBe(NOW)
+  })
+
   test('сторож: каждая таблица с людьми (steamid, created_by, owner, viewer) есть в списке удаления', async () => {
     // Новая таблица с данными людей обязана попасть в forgetUser. Иначе
     // политика обещает «удаляем всё», а удаление молча её пропускает.
@@ -3947,7 +4010,7 @@ describe('feed_links: секретная ссылка на ленту', () => {
     const before = newFeedToken()
     await issueFeedLink(db, { steamid: ME, sid: 'sid-thief', tokenHash: feedTokenHash(before), nowSec: NOW, replace: true })
 
-    await revokeAllSessions(db, ME, NOW + 10)
+    await revokeAllSessions(db, { steamid: ME, sid: 'sid-thief' }, NOW + 10)
     // «Везде» сносит и выпущенную до отзыва — той же пачкой, что и сессии
     expect(await feedLinkOwner(db, feedTokenHash(before))).toBeNull()
 
@@ -4028,7 +4091,7 @@ describe('feed_links: секретная ссылка на ленту', () => {
     const theirs = newFeedToken()
     await giveFeedLink(db, ME, mine, NOW)
     await giveFeedLink(db, OTHER, theirs, NOW)
-    await revokeAllSessions(db, ME, NOW + 1)
+    await revokeAllSessions(db, { steamid: ME, sid: 'sid-feed' }, NOW + 1)
     expect(await feedLinkOwner(db, feedTokenHash(mine))).toBeNull()
     expect(await feedLinkOwner(db, feedTokenHash(theirs))).toBe(OTHER)
   })

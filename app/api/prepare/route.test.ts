@@ -1,12 +1,22 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { InStatement } from '@libsql/client'
-import { getGamesMeta, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from '@/lib/db'
+import {
+  countUserRows,
+  forgetUser,
+  getGamesMeta,
+  getLatestSnapshot,
+  saveLibrarySnapshot,
+  updateGamePrices,
+  upsertGamesMeta,
+  type Db,
+} from '@/lib/db'
 import { META_MAX_AGE_SEC } from '@/lib/catalog'
 import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
 import { SESSION_COOKIE } from '@/lib/server'
 import { setTestCookie } from '@/lib/testing/headers'
 import { freshDb, signIn } from '@/lib/testing/route'
+import { SNAPSHOT_MAX_AGE_SEC } from '@/lib/warm'
 import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -329,5 +339,61 @@ describe('/api/prepare: потолок частоты', () => {
     await signIn(db, OTHER)
     expect((await prepare('198.51.100.1')).status).toBe(429)
     expect((await prepare('198.51.100.2')).status).toBe(409)
+  })
+})
+
+/**
+ * Протухшую библиотеку прогрев освежает сам: читает снимок в начале запроса,
+ * секунды ждёт GetOwnedGames и только потом пишет свежий. /library зовёт
+ * прогрев при открытии — а кнопка «Удалить всё обо мне» на ней же.
+ *
+ * Остальной Steam здесь ограничивает (429): метаданные не греются, остаток
+ * не ноль, и работа после ответа — онлайн и цены — не начинается. Тесту
+ * нужен только снимок, а фоновая работа пережила бы его заглушку fetch.
+ */
+describe('/api/prepare: свежая библиотека', () => {
+  /** Состарить снимок из beforeEach — прогрев пойдёт за свежим. Возвращает его takenAt */
+  async function staleSnapshot(): Promise<number> {
+    const takenAt = nowSec() - SNAPSHOT_MAX_AGE_SEC - 60
+    await db.execute({ sql: 'UPDATE library_snapshots SET taken_at = ? WHERE steamid = ?', args: [takenAt, STEAMID] })
+    return takenAt
+  }
+
+  /** Steam, отдающий библиотеку; meanwhile — что случится, пока он отвечает */
+  function steamWithLibrary(meanwhile: () => Promise<unknown> = async () => {}) {
+    return vi.fn(async (url: string) => {
+      if (!String(url).includes('GetOwnedGames')) return new Response('', { status: 429 })
+      await meanwhile()
+      const games = [{ appid: 620, name: 'Portal 2', playtime_forever: 900 }]
+      return new Response(JSON.stringify({ response: { games } }), { status: 200 })
+    })
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('STEAM_API_KEY', 'test-key')
+  })
+
+  test('протухший снимок освежается поверх прочитанного', async () => {
+    const old = await staleSnapshot()
+    vi.stubGlobal('fetch', steamWithLibrary())
+    expect((await prepare()).status).toBe(200)
+    const latest = await getLatestSnapshot(db, STEAMID)
+    expect(latest?.takenAt).toBeGreaterThan(old)
+    expect(latest?.games.map((g) => g.playtimeForever)).toEqual([900])
+  })
+
+  /*
+   * Запись без условия заводила стёртый снимок заново — вместе с годовой
+   * отметкой, — и /portrait/<id> и итоги года снова открывались у того, кому
+   * сказали «всё удалено». Сессии у него к тому времени уже нет, а строки
+   * настоящих людей уборка не трогает.
+   */
+  test('«Удалить всё обо мне», прошедшее, пока Steam отвечал, снимок не возвращает', async () => {
+    await staleSnapshot()
+    vi.stubGlobal('fetch', steamWithLibrary(() => forgetUser(db, STEAMID, { signOutFrom: nowSec() })))
+    expect((await prepare()).status).toBe(200)
+    expect(await getLatestSnapshot(db, STEAMID)).toBeNull()
+    const left = (await countUserRows(db, STEAMID)).filter((r) => r.rows > 0)
+    expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
   })
 })

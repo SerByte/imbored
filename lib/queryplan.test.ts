@@ -525,7 +525,7 @@ describe('планы запросов', () => {
    */
   test('выйти на всех устройствах: сессии по индексу, ссылка на ленту — по ключу', async () => {
     const db = await createDb(':memory:')
-    const issued = await statementsOf(db, (spy) => revokeAllSessions(spy, '76561198000000001', NOW))
+    const issued = await statementsOf(db, (spy) => revokeAllSessions(spy, { steamid: '76561198000000001', sid: 'sid' }, NOW))
     const plans = await Promise.all(issued.map((q) => planOf(db, q)))
     for (const plan of plans) expect(bareScans(plan), plan.join(' | ')).toEqual([])
     const all = plans.map((p) => p.join(' | '))

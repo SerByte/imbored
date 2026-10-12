@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { feedLinkOwner, issueFeedLink, type Db } from '@/lib/db'
+import { countUserRows, feedLinkOwner, forgetUser, issueFeedLink, type Db } from '@/lib/db'
 import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
 import { MUTE_COOKIE } from '@/lib/mutetags'
 import { SESSION_COOKIE, currentSession } from '@/lib/server'
@@ -128,6 +128,35 @@ describe('/api/auth/logout', () => {
     expect(cleared(res)).toBe(true)
     expect(await alive(phone.token)).toBe(false)
     expect(await sessionsFrom(STEAMID_OF.openid)).not.toBeNull()
+  })
+
+  /*
+   * Тот же минутный кэш, но после «Удалить всё обо мне» на соседнем
+   * экземпляре. Выход верит кэшу, и телефон проходил в «везде», а пачка
+   * отзыва ставила sessions_from UPSERT'ом без условия — и заводила строку
+   * users удалённому, которой уборка настоящих людей не трогает. Человеку
+   * сказали «останется только отметка», а осталась ещё и строка профиля.
+   * Удаление здесь — прямо в базе, мимо forgetSessionCache, как его увидел
+   * бы соседний экземпляр.
+   */
+  test('«везде» от сессии, удалившей всё на другом экземпляре, строку users не заводит', async () => {
+    const steamid = STEAMID_OF.openid
+    await signIn(db, steamid, { verified: true })
+    expect(await currentSession()).not.toBeNull()
+    await forgetUser(db, steamid, { signOutFrom: T0 + 1 })
+    vi.setSystemTime((T0 + 2) * 1000)
+    // Окно настоящее: кэш ещё считает сессию живой и подтверждённой
+    expect((await currentSession())?.verified).toBe(true)
+
+    const res = await logout(true)
+    expect(res.status).toBe(200)
+    // Гасить нечего — отметка уже отрезала всё, что выдано до неё: «вышел
+    // везде» — правда
+    expect(await res.json()).toEqual({ ok: true })
+    expect(cleared(res)).toBe(true)
+    expect(mutesCleared(res)).toBe(true)
+    const left = (await countUserRows(db, steamid)).filter((r) => r.rows > 0)
+    expect(left).toEqual([{ table: 'forget_marks', rows: 1 }])
   })
 
   test('«везде» гасит и RSS-ссылку: её мог выпустить тот, из-за кого жмут «везде»', async () => {
