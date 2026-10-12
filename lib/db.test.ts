@@ -4912,6 +4912,20 @@ describe('семантика игр', () => {
     })
   })
 
+  test('«Наиграли» переживает пересчёт каталога по тегам и доезжает до карточки', async () => {
+    // Наигранное бывает только у записи 'tags+reviews' (deriveSemantics), и
+    // её приор не затирает — semantics:build, прогнанный после крона страниц,
+    // не стирает строку «Наиграли» с карточек
+    const db = await freshDb()
+    await upsertGameMeta(db, META, NOW)
+    const played: GameSemantics = { ...BY_REVIEWS, played: { posMedianMin: 540, posN: 70 } }
+    await upsertSemantics(db, [{ appid: 620, semantics: played, computedAt: NOW, reviewsAt: NOW }])
+    await upsertSemantics(db, [{ appid: 620, semantics: BY_TAGS, computedAt: NOW + 3600 }])
+
+    expect((await getGamesMetaLite(db, [620])).get(620)?.semantics?.played).toEqual({ posMedianMin: 540, posN: 70 })
+    expect((await getGamePageRow(db, 620))?.meta.semantics?.played).toEqual({ posMedianMin: 540, posN: 70 })
+  })
+
   test('посчитанное по отзывам вытесняет приор, даже более свежий', async () => {
     const db = await freshDb()
     await upsertSemantics(db, [{ appid: 620, semantics: BY_TAGS, computedAt: NOW + 3600 }])
@@ -5019,6 +5033,12 @@ describe('семантика игр', () => {
     expect(parseSemantics(JSON.stringify(JSON.stringify(BY_TAGS)))).toEqual(BY_TAGS)
     // лишнее из базы дальше не едет
     expect(parseSemantics(JSON.stringify({ ...BY_TAGS, лишнее: 1 }))).toEqual(BY_TAGS)
+    // «Наиграли» едет: без него publishSemantics, который перекладывает строки
+    // через parseSemantics, заливал бы в облако семантику уже без наигранного
+    const played: GameSemantics = { ...BY_REVIEWS, played: { posMedianMin: 2711, posN: 64 } }
+    expect(parseSemantics(JSON.stringify(played))).toEqual(played)
+    // а запись без него — прежняя версия формата, читается как была
+    expect(parseSemantics(JSON.stringify(BY_REVIEWS))).not.toHaveProperty('played')
 
     const broken: unknown[] = [
       null,
@@ -5034,6 +5054,10 @@ describe('семантика игр', () => {
       JSON.stringify({ ...BY_TAGS, confidence: 1.5 }),
       JSON.stringify({ ...BY_TAGS, basis: 'llm' }),
       JSON.stringify({ ...BY_TAGS, timeToFun: null }),
+      JSON.stringify({ ...BY_TAGS, played: null }),
+      JSON.stringify({ ...BY_TAGS, played: { posMedianMin: 'много', posN: 64 } }),
+      JSON.stringify({ ...BY_TAGS, played: { posMedianMin: -5, posN: 64 } }),
+      JSON.stringify({ ...BY_TAGS, played: { posMedianMin: 600, posN: 0 } }),
     ]
     for (const raw of broken) expect(parseSemantics(raw), String(raw)).toBeUndefined()
   })

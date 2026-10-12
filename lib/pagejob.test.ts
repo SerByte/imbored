@@ -27,7 +27,7 @@ import {
   runPageSlice,
 } from './pagejob'
 import type { ReviewsResponse } from './reviews'
-import { MIN_REVIEWS } from './semantics'
+import { MIN_PLAYED_REVIEWS, MIN_REVIEWS } from './semantics'
 import type { GameMeta } from './types'
 
 const NOW = 1_700_000_000
@@ -1246,6 +1246,34 @@ describe('семантика из уже полученных отзывов', (
     await runPageSlice(db, stubs({ nowSec: NOW + 60, fetchReviewsRawFn: async () => null }))
 
     expect(await semanticsRow(db, 10)).toMatchObject({ basis: 'tags+reviews', computedAt: NOW })
+  })
+
+  test('«Наиграли» — из того же ответа: минуты хваливших, и карточка с ними уходит на сброс', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    // Половина отзывов reviews() — позитивные: ровно MIN_PLAYED_REVIEWS хваливших
+    const played = (min: number) => {
+      const r = reviews(2 * MIN_PLAYED_REVIEWS)
+      for (const x of r.reviews) if (x.voted_up) x.author = { playtime_at_review: min, playtime_forever: min }
+      return r
+    }
+    await runPageSlice(db, stubs({ fetchReviewsRawFn: async () => played(600) }))
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.played).toEqual({
+      posMedianMin: 600,
+      posN: MIN_PLAYED_REVIEWS,
+    })
+
+    // Хвалившие наиграли вдвое больше, остальное в ответе то же: страница
+    // недельного кэша должна перегенерироваться ради одной строки «Наиграли»
+    await db.execute('UPDATE games SET page_at = NULL')
+    const res = await runPageSlice(db, stubs({ nowSec: NOW + 60, fetchReviewsRawFn: async () => played(1200) }))
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.played?.posMedianMin).toBe(1200)
+    expect(res.cards).toEqual([10])
+
+    // тот же ответ ещё раз — не перемена
+    await db.execute('UPDATE games SET page_at = NULL')
+    const again = await runPageSlice(db, stubs({ nowSec: NOW + 120, fetchReviewsRawFn: async () => played(1200) }))
+    expect(again.cards).toEqual([])
   })
 
   test('сбой семантики не роняет карточку: скриншоты, pros/cons и отметка на месте', async () => {

@@ -20,6 +20,11 @@
  * места. Крон страниц делает то же самое сам, по мере обхода карточек, —
  * скрипт лишь ускоряет первый круг.
  *
+ * Тем же --with-reviews догоняется «Наиграли» на карточках: запись по
+ * отзывам, разобранным до PLAYED_SINCE (lib/semantics), очередь берёт ещё
+ * один раз — крон дошёл бы до верха каталога только через полгода. Догон
+ * виден в «ждут отзывов ещё N»; доехать до прода ему — через --publish.
+ *
  * Заливка не откатывает облако: посчитанное кроном по отзывам приор по тегам
  * не затрёт, старое не перепишет свежее (upsertSemantics в lib/db).
  */
@@ -27,10 +32,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createClient } from '@libsql/client'
-import { ALIVE_POOL_G, createDb, migrateDb, type Db } from '../lib/db'
+import { createDb, migrateDb, type Db } from '../lib/db'
 import { plural } from '../lib/plural'
 import { STORE_PACE_MS } from '../lib/catalog'
-import { buildTagPrior, publishSemantics, reviewPass } from './semanticsbuild'
+import { buildTagPrior, publishSemantics, reviewDueSql, reviewPass } from './semanticsbuild'
 
 /** Порция по умолчанию для --with-reviews: около пяти минут */
 const DEFAULT_REVIEW_LIMIT = 200
@@ -50,8 +55,8 @@ async function openLocal(): Promise<Db> {
   return createDb(`file:${file}`)
 }
 
-async function count(db: Db, sql: string): Promise<number> {
-  return Number((await db.execute(sql)).rows[0]?.n ?? 0)
+async function count(db: Db, stmt: string | { sql: string; args: number[] }): Promise<number> {
+  return Number((await db.execute(stmt)).rows[0]?.n ?? 0)
 }
 
 async function main() {
@@ -93,13 +98,18 @@ async function main() {
       .rows.map((r) => `${String(r.basis)}: ${Number(r.n).toLocaleString('ru-RU')}`)
       .join(', ')
   console.log(`\nв локальной базе: ${await byBasis(local)}`)
-  const due = await count(
-    local,
-    `SELECT COUNT(*) AS n FROM games g LEFT JOIN game_semantics s ON s.appid = g.appid
-     WHERE ${ALIVE_POOL_G} AND g.appid > 0
-       AND s.reviews_at IS NULL`,
-  )
-  if (due) console.log(`без отзывов ещё ${due.toLocaleString('ru-RU')}: npm run semantics:build -- --with-reviews --limit=500`)
+  // то же условие, что у очереди: и нетронутые, и разовый догон «Наиграли»
+  const queue = reviewDueSql()
+  const due = await count(local, {
+    sql: `SELECT COUNT(*) AS n FROM games g LEFT JOIN game_semantics s ON s.appid = g.appid
+          WHERE ${queue.where}`,
+    args: queue.args,
+  })
+  if (due) {
+    console.log(
+      `ждут отзывов ещё ${due.toLocaleString('ru-RU')}: npm run semantics:build -- --with-reviews --limit=500`,
+    )
+  }
 
   // ---- облако ----
   if (!publish) {

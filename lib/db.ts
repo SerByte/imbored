@@ -3131,6 +3131,23 @@ export function parseSemantics(raw: unknown): GameSemantics | undefined {
   if (!TTF_BUCKETS.has(ttf.bucket) || (hours !== null && !inRange(hours, 0, 1000))) return undefined
   if (!inRange(s.confidence, 0, 1) || !inRange(s.n, 0, Number.MAX_SAFE_INTEGER)) return undefined
   if (!BASES.has(s.basis)) return undefined
+  /*
+   * «Наиграли» необязательно: записи, посчитанные до него, той же версии
+   * (см. GameSemantics.played). Но если поле есть, оно той же строгости, что
+   * остальные, — битое гасит запись целиком. Переложить его в новый объект
+   * обязательно: publishSemantics льёт в облако то, что вернула эта функция,
+   * и без played залил бы семантику уже без наигранного.
+   */
+  let played: GameSemantics['played']
+  if (s.played !== undefined) {
+    const p = s.played as Record<string, unknown> | null
+    if (!p || typeof p !== 'object') return undefined
+    const { posMedianMin, posN } = p
+    if (!inRange(posMedianMin, 0, Number.MAX_SAFE_INTEGER) || !inRange(posN, 1, Number.MAX_SAFE_INTEGER)) {
+      return undefined
+    }
+    played = { posMedianMin, posN }
+  }
   return {
     v: SEMANTICS_V,
     axes: { challenge, complexity, pace },
@@ -3143,6 +3160,7 @@ export function parseSemantics(raw: unknown): GameSemantics | undefined {
     confidence: s.confidence,
     n: s.n,
     basis: s.basis as GameSemantics['basis'],
+    ...(played ? { played } : {}),
   }
 }
 

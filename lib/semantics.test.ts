@@ -5,6 +5,7 @@ import { LANES, mineReviews, parseReviewsRaw, type Lane, type MinedReviews } fro
 import {
   axisBucket,
   deriveSemantics,
+  MIN_PLAYED_REVIEWS,
   MIN_REVIEWS,
   TAG_PRIOR,
   TAGS_MAX_CONFIDENCE,
@@ -26,7 +27,7 @@ function mined(n: number, shares: Partial<Record<Lane, number>> = {}, over: Part
     lanes,
     timeToFunHours: null,
     timeToFunMentions: 0,
-    playtime: { total: n, medianPosMin: null, medianNegMin: null, negShortShare: null },
+    playtime: { total: n, posTimed: 0, medianPosMin: null, medianNegMin: null, negShortShare: null },
     ...over,
   }
 }
@@ -224,6 +225,44 @@ describe('deriveSemantics с отзывами', () => {
     // в рукописной выборке половина отзывов про сложность — уютная ферма от этого сложнее
     expect(s.axes.challenge).toBeGreaterThan(deriveSemantics(STARDEW, null).axes.challenge)
     expect(s.timeToFun).toEqual({ bucket: 'slow', hours: 5 })
+  })
+})
+
+describe('«Наиграли»: сколько наиграли те, кто её хвалит', () => {
+  /** Разбор, где posTimed хваливших назвали наигранное и медиана у них — medianPosMin */
+  const timed = (n: number, posTimed: number, medianPosMin: number | null) =>
+    mined(n, {}, {
+      playtime: { total: n, posTimed, medianPosMin, medianNegMin: 30, negShortShare: 1 },
+    })
+
+  test('хватило отзывов — медиана хваливших в целых минутах и их число', () => {
+    const s = deriveSemantics(CIV, timed(80, 64, 2710.5))
+    expect(s.played).toEqual({ posMedianMin: 2711, posN: 64 })
+    // ось сессии и прочее от наигранного не зависят: это отдельный факт
+    const { played, ...rest } = s
+    expect(played).toBeDefined()
+    expect(rest).toEqual(deriveSemantics(CIV, timed(80, 0, null)))
+  })
+
+  test('порог — MIN_PLAYED_REVIEWS хваливших с названным наигранным, а не все отзывы ответа', () => {
+    expect(deriveSemantics(CIV, timed(100, MIN_PLAYED_REVIEWS, 600)).played).toEqual({
+      posMedianMin: 600,
+      posN: MIN_PLAYED_REVIEWS,
+    })
+    // сотня отзывов, но хвалили с названным временем только 29 — медиана слишком шаткая
+    expect(deriveSemantics(CIV, timed(100, MIN_PLAYED_REVIEWS - 1, 600))).not.toHaveProperty('played')
+    expect(deriveSemantics(CIV, timed(100, 50, null))).not.toHaveProperty('played')
+  })
+
+  test('без отзывов и при тонкой выборке на RU/EN поля нет вовсе', () => {
+    expect(deriveSemantics(CIV, null)).not.toHaveProperty('played')
+    // Приор по тегам (basis 'tags') перезаписывает такую же запись свежей
+    // (upsertSemantics), и semantics:build стирал бы наигранное у тонких игр
+    // при каждом прогоне. Поэтому — только вместе с basis 'tags+reviews', а
+    // «меньше порога — ровно как без отзывов» держится до бита
+    const thin = deriveSemantics(CIV, timed(MIN_REVIEWS - 1, 90, 600))
+    expect(thin).not.toHaveProperty('played')
+    expect({ ...thin, n: 0 }).toEqual(deriveSemantics(CIV, null))
   })
 })
 
