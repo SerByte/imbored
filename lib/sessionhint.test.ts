@@ -307,6 +307,112 @@ describe('сверка подсказки с ответом touch', () => {
 })
 
 /**
+ * Гость наверняка (knownGuest) — для квиза: его последний ответ вёл гостя на
+ * /play, тот показывал экран прогрева и через круг до сервера (401 у
+ * /api/prepare) разворачивал на лендинг. Зная, что это гость, квиз ведёт на
+ * лендинг сразу (app/quiz, go). Ошибиться здесь дороже, чем промолчать:
+ * вошедший, принятый за гостя, вместо выдачи попал бы на лендинг, — поэтому
+ * «гость» только со слов сервера, а «не знаем» — по-старому, через /play.
+ */
+describe('гость наверняка', () => {
+  /** window с настоящим событием storage: соседняя вкладка пишет подсказку */
+  function withStorageEvents(store: Store) {
+    install(store)
+    const handlers: Array<(e: { key: string | null }) => void> = []
+    vi.stubGlobal('window', {
+      addEventListener: (type: string, h: (e: { key: string | null }) => void) => {
+        if (type === 'storage') handlers.push(h)
+      },
+      removeEventListener: () => {},
+    })
+    return (key: string | null) => handlers.forEach((h) => h({ key }))
+  }
+
+  test('пока сервер не ответил — не гость, а «не знаем»', async () => {
+    install({})
+    const m = await fresh()
+    expect(m.knownGuest()).toBe(false)
+  })
+
+  /*
+   * Гость без подсказки — самый частый случай: квиз открыли сами, главная не
+   * писала ничего. Сверка раньше на нём молча выходила, и квиз так и не
+   * узнавал, что перед ним гость.
+   */
+  test('touch ответил «гость» — и без подсказки, и с ней; слушатели узнают', async () => {
+    install({})
+    let m = await fresh()
+    let woke = 0
+    m.subscribeSessionHint(() => {
+      woke += 1
+    })
+    m.settleSessionHint({ authed: false })
+    expect(m.knownGuest()).toBe(true)
+    expect(woke).toBe(1)
+
+    const store: Store = { [KEY]: JSON.stringify({ authed: true, personaName: 'Гоша' }) }
+    install(store)
+    m = await fresh()
+    m.settleSessionHint({ authed: false })
+    expect(m.knownGuest()).toBe(true)
+    expect(store[KEY]).toBeUndefined()
+  })
+
+  test('ответ без authed: false гостем не делает', async () => {
+    for (const body of [null, 'authed', {}, { authed: 'false' }, { authed: 0 }, { authed: true, steamid: '76561197960287930', writer: true }]) {
+      install({})
+      const m = await fresh()
+      m.settleSessionHint(body)
+      expect(m.knownGuest(), JSON.stringify(body)).toBe(false)
+    }
+  })
+
+  /*
+   * Подключился на главной (ссылкой, демо) — тот же документ, и квиз после
+   * этого обязан вести в выдачу, а не на лендинг: флаг гаснет с записью
+   * подсказки о входе. А выход (forgetSessionHint) гостем не делает: выход
+   * «везде» бывает и недоделанным — тогда по-старому, через /play.
+   */
+  test('вход в этом документе гасит флаг, выход его не ставит', async () => {
+    install({})
+    const m = await fresh()
+    m.rememberGuest()
+    expect(m.knownGuest()).toBe(true)
+    m.rememberSession({ authed: true, personaName: 'Гоша' })
+    expect(m.knownGuest()).toBe(false)
+    m.forgetSessionHint()
+    expect(m.knownGuest()).toBe(false)
+  })
+
+  // Кука у вкладок общая: вошёл в соседней — здесь уже не гость
+  test('подсказка из соседней вкладки — уже не гость', async () => {
+    const store: Store = {}
+    const storage = withStorageEvents(store)
+    const m = await fresh()
+    m.subscribeSessionHint(() => {})
+    m.rememberGuest()
+    expect(m.knownGuest()).toBe(true)
+    store[KEY] = JSON.stringify({ authed: true, personaName: 'Гоша' })
+    storage(KEY)
+    expect(m.knownGuest()).toBe(false)
+  })
+
+  /*
+   * Главная зовёт touch сама, и SessionKeeper после неё в том же документе
+   * молчит двенадцать часов: гость, пришедший на квиз с главной (самый
+   * частый путь), иначе так и остался бы «не знаем». Гость — только из
+   * удачного ответа: сбой сети о сессии не говорит ничего.
+   */
+  test('главная отмечает гостя тем же флагом — только по ответу, не по сбою', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'landing', 'ConnectCard.tsx'), 'utf8')
+    expect(src).toMatch(/if \(guest\) rememberGuest\(\)\s*else rememberSession\(next\)/)
+    expect(src).toMatch(/settle\(d\.authed \? hintFrom\(d\) : null, d\.authed === false\)/)
+    expect(src).toMatch(/if \(!r\.ok\) return settle\(null\)/)
+    expect(src).toMatch(/\.catch\(\(\) => settle\(null\)\)/)
+  })
+})
+
+/**
  * Подсказка переживает перезагрузку — значит её обязан кто-то гасить, и гасит
  * ровно одно место. Если эта строка когда-нибудь уедет при рефакторинге,
  * поломка будет выглядеть так: человек нажал «Выйти», его увело на главную, и

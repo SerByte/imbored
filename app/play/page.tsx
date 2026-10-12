@@ -433,10 +433,11 @@ function Player({ say }: { say: (line: string) => void }) {
    *
    * Заход — это вкладка, а не настроение. «Изменить настроение» → квиз →
    * /play — новое монтирование под другим ключом, и выдачу не вернуть, но
-   * отложенные из свежей записи того же человека едут в новую выдачу
-   * (heldOver ниже). И наоборот: план, закрытый не здесь, — запуском со
-   * страницы игры, из «Твоих вечеров», с «Игры дня», — из записи
-   * вычёркивает lib/planforget, и «не то» у такой игры снова спросят.
+   * отложенные того же человека едут в новую выдачу (heldOver ниже), пока
+   * заход жив — час с последнего показа выдачи, сколько бы ни было ей
+   * самой (seenAt в lib/playcache). И наоборот: план, закрытый не здесь, —
+   * запуском со страницы игры, из «Твоих вечеров», с «Игры дня», — из
+   * записи вычёркивает lib/planforget, и «не то» у такой игры снова спросят.
    */
   const [planned, setPlanned] = useState<number[]>([])
   /**
@@ -955,6 +956,9 @@ function Player({ say }: { say: (line: string) => void }) {
       hero: picks[Math.min(index, picks.length - 1)].appid,
       liked: [...liked],
       planned,
+      // Выдача на экране сейчас — заход жив, и отложенным отсчёт с нуля
+      // (heldPlanned): время выдачи (meta.at) старит цены, а не план
+      seenAt: Date.now(),
     })
   }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, nudge, index, liked, planned, cacheKey])
 
@@ -1065,8 +1069,9 @@ function Player({ say }: { say: (line: string) => void }) {
       // Бан из соседней вкладки этой записи не видел
       const banned = readRecentBans(Date.now())
       const back = restoreDeal(entry, { key: cacheKey, viewer, nowMs: Date.now(), banned })
-      // Выдачу не вернули — другое настроение, вход не узнан, — а отложенные
-      // из той же записи ждут новую (heldOver)
+      // Выдачу не вернули — другое настроение, вход не узнан, выдача старше
+      // пятнадцати минут, — а отложенные из той же записи ждут новую
+      // (heldOver): их срок — от последнего показа, а не от прихода выдачи
       heldOver.current = back ? null : heldPlanned(entry, { nowMs: Date.now(), banned })
       if (back) {
         applyDeal(back.deal, back)

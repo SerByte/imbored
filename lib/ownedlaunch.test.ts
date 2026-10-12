@@ -279,7 +279,9 @@ describe('кнопка запуска', () => {
     // запись выдачи несёт список и пишется заново, когда он меняется
     const at = play.indexOf('playCacheStore.set({')
     const write = play.slice(at, play.indexOf('useEffect(', at))
-    expect(write).toMatch(/liked: \[\.\.\.liked\],\s*planned,\s*\}\)/)
+    // и время показа: от него, а не от прихода выдачи, считается срок
+    // отложенных, когда саму выдачу уже не вернуть (heldPlanned)
+    expect(write).toMatch(/liked: \[\.\.\.liked\],\s*planned,\s*seenAt: Date\.now\(\),\s*\}\)/)
     expect(write).toMatch(/\}, \[[^\]]*\bplanned\b[^\]]*\]\)/)
     // восстановленная выдача приносит его обратно — той же дверью, что и «Зашло»
     const apply = play.slice(play.indexOf('const applyDeal = useCallback('), at)

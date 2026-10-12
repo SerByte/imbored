@@ -1,4 +1,6 @@
 import type { DestinationPath } from './destination'
+import { parseMood } from './mood'
+import { moodCaption } from './quiz'
 
 /**
  * Что сказать на лендинге гостю, которого развернуло с места назначения.
@@ -13,7 +15,9 @@ import type { DestinationPath } from './destination'
  * читает записка режима просмотра в корневом лэйауте, то есть первая загрузка
  * КАЖДОЙ страницы, а тексты нужны одному лендингу (components/landing).
  * Лежали они в одном объекте с адресами — и 1.8 КБ кириллицы ехали в
- * скрипты /privacy и /support, где их никто не покажет.
+ * скрипты /privacy и /support, где их никто не покажет. Разбор настроения
+ * (lib/mood) и подписи ответов (lib/quiz) лендинг и так везёт — первый
+ * читает lib/destination, вторые память настроения в карточке входа.
  */
 
 export type Destination = {
@@ -59,3 +63,38 @@ export const DESTINATIONS: Readonly<Record<string, Destination>> = {
     action: 'Открыть ленту',
   },
 } satisfies Record<DestinationPath, Destination>
+
+/**
+ * Что сказать над заголовком лендинга про место, куда человек шёл: url —
+ * адрес из ?next=, уже проверенный destinationUrl (lib/destination). null —
+ * говорить нечего.
+ *
+ * Выдаче с настроением — само настроение. Гость отвечал на три вопроса,
+ * квиз разворачивал его на вход (knownGuest в lib/sessionhint, app/quiz), и
+ * лендинг встречал общим «одна игра под твоё состояние», как будто ответов
+ * не было: последний шаг квиза выглядел провалом, а не шагом. Теперь он
+ * слышит своё — «Пара часов · Расслабиться · Один — запомнили» — и что
+ * осталось ровно одно. Подписи — moodCaption из lib/quiz: те же слова, что
+ * на плитках, которые он только что нажимал.
+ *
+ * Только сказанное самим человеком. «Мне повезёт» (roulette) и «Ни разу не
+ * запускал» (from) настроение выбирают за него — кубиком и дефолтом, — и
+ * «запомнили» про то, чего он не говорил, было бы неправдой. Им, как и
+ * неполному настроению, — общее обещание выдачи.
+ */
+export function destinationPromise(url: string | null): string | null {
+  if (!url) return null
+  const cut = url.indexOf('?')
+  const path = cut < 0 ? url : url.slice(0, cut)
+  // hasOwn, а не in: у объекта есть наследованные toString и __proto__
+  if (!Object.hasOwn(DESTINATIONS, path)) return null
+  const q = new URLSearchParams(cut < 0 ? '' : url.slice(cut + 1))
+  const mood =
+    path === '/play' && !q.has('roulette') && !q.has('from')
+      ? parseMood({ time: q.get('time'), vibe: q.get('vibe'), social: q.get('social') })
+      : null
+  const said = mood ? moodCaption(mood) : ''
+  return said
+    ? `${said} — запомнили. Остался последний шаг: подключи Steam, и выберем одну игру из твоей библиотеки.`
+    : DESTINATIONS[path].promise
+}

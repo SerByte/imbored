@@ -46,6 +46,24 @@ const KEY = 'imbored.session-hint'
 let cache: SessionHint | null | undefined
 const listeners = new Set<() => void>()
 
+/**
+ * ГОСТЬ — СО СЛОВ СЕРВЕРА, НА ВРЕМЯ ОДНОГО ДОКУМЕНТА (knownGuest ниже).
+ *
+ * Подсказка помнит только вошедших: гость и «не знаем» в ней одинаково
+ * null. Квизу разница нужна (app/quiz, go): гостя последний ответ вёл на
+ * /play, тот показывал экран прогрева и через круг до сервера (401 у
+ * /api/prepare) разворачивал на лендинг. Зная, что перед ним гость, квиз
+ * ведёт на лендинг сам — к честному «осталось подключить».
+ *
+ * Только память, как признак записи (lib/writer), и только «гость»
+ * наверняка: ответ touch с authed: false, а не сбой сети. Гаснет со входом:
+ * подключение на главной пишет подсказку (rememberSession), вход через Steam
+ * — новый документ. Сохранённый на устройстве, флаг пережил бы вход — и
+ * вошедший вместо выдачи попадал бы на лендинг; ошибиться в эту сторону
+ * дороже, чем пройти через /play по-старому.
+ */
+let guest = false
+
 /** Значение из чужих рук: пришло из localStorage, где его мог править кто угодно. */
 function parse(raw: string): SessionHint | null {
   try {
@@ -109,6 +127,8 @@ export function getServerSessionHint(): SessionHint | null {
 export function rememberSession(hint: SessionHint | null): void {
   const next = hint && hint.authed ? hint : null
   cache = next
+  // Вошёл — уже не гость (knownGuest): квиз поведёт в выдачу
+  if (next) guest = false
   try {
     if (next) localStorage.setItem(KEY, JSON.stringify(next))
     else localStorage.removeItem(KEY)
@@ -118,9 +138,31 @@ export function rememberSession(hint: SessionHint | null): void {
   for (const cb of [...listeners]) cb()
 }
 
-/** Для выхода: забыть, что здесь кто-то был. */
+/**
+ * Для выхода: забыть, что здесь кто-то был. Гостем не делает: выход «везде»
+ * бывает и недоделанным, а «не знаем» — это путь через /play, как раньше.
+ */
 export function forgetSessionHint(): void {
   rememberSession(null)
+}
+
+/**
+ * Сервер ответил «гость» (touch: authed: false): подсказку стереть и
+ * запомнить, что это известно наверняка. Сбой сети и пятисотка сюда не ведут
+ * — о сессии они не говорят ничего.
+ */
+export function rememberGuest(): void {
+  guest = true
+  rememberSession(null)
+}
+
+/**
+ * Гость наверняка: сервер так ответил в этом документе, и подсказки о входе
+ * с тех пор не появилось. Подсказка — и из соседней вкладки: кука у вкладок
+ * общая, вошёл там — здесь уже не гость.
+ */
+export function knownGuest(): boolean {
+  return guest && !getSessionHint()
 }
 
 /**
@@ -163,12 +205,17 @@ export function hintFrom(d: { personaName?: string | null; demo?: boolean; write
  * как подсказка и заводилась, чтобы не прыгало. Вход через Steam после входа
  * по ссылке — почти всегда тот же профиль; если чужой, ник поправит главная,
  * как поправляет любую смену профиля мимо неё: steamid в подсказке нет.
+ *
+ * Гостя отмечаем и без подсказки (rememberGuest): раньше сверка на нём
+ * молча выходила, а квизу, открытому гостем напрямую, только отсюда и
+ * узнать, что перед ним гость (knownGuest).
  */
 export function settleSessionHint(body: unknown): void {
-  const hint = getSessionHint()
-  if (!hint || typeof body !== 'object' || body === null) return
+  if (typeof body !== 'object' || body === null) return
   const b = body as { authed?: unknown; steamid?: unknown; writer?: unknown }
-  if (b.authed === false) return forgetSessionHint()
+  if (b.authed === false) return rememberGuest()
+  const hint = getSessionHint()
+  if (!hint) return
   if (b.authed !== true || typeof b.steamid !== 'string' || typeof b.writer !== 'boolean') return
   const demo = isDemoId(b.steamid)
   const sameSide = demo === (hint.demo === true)
