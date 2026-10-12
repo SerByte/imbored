@@ -106,11 +106,16 @@ export function useShareLink(
     timer.current = setTimeout(() => setState('idle'), ms)
   }
 
-  async function run() {
+  /**
+   * track: false — нажатие уже посчитано раньше: это второй шаг того же
+   * намерения (ShareLinkField с counted). Панель и буфер — те же, меняется
+   * только маяк: what по-прежнему решает, открывать ли системную панель.
+   */
+  async function run({ track = true }: { track?: boolean } = {}) {
     const url = getUrl()
     if (!url) return
     // Намерение поделиться — шаг воронки, чем бы ни кончилась панель
-    if (what) trackShare(what)
+    if (what && track) trackShare(what)
     if (native) {
       try {
         await navigator.share({ title, text, url })
@@ -215,6 +220,16 @@ function ShareMark({ icon, size = 16, children }: { icon?: IconName; size?: numb
  *
  * id — из useId, а не из хвоста адреса: у всех ссылок хвост теперь «?ref=…»,
  * и два поля на странице получали один и тот же id.
+ *
+ * counted — нажатие, которое сделало эту ссылку, уже посчитано там, где её
+ * сделали (components/SharePick), и первое нажатие здесь — второй шаг того
+ * же намерения, а не новое «поделился»: на iOS попытка поделиться после
+ * ответа сервера не проходит (нужен свежий жест), и без кнопки поля ссылка не
+ * ушла бы вовсе. Считалось оно вторым share — и каждая отправка выбора с
+ * iOS лежала в счётчике дважды, а на десктопе дважды — каждый, кто после
+ * автокопирования нажал «Скопировать» ещё раз. Следующие нажатия — уже
+ * новые отправки и считаются, как у всех. Помнит поле это до размонтирования,
+ * поэтому новой ссылке — новое поле (key по адресу у того, кто его ставит).
  */
 export function ShareLinkField({
   what,
@@ -222,6 +237,7 @@ export function ShareLinkField({
   label,
   title,
   text,
+  counted = false,
 }: {
   /** чем делятся — для счётчика share (см. useShareLink) */
   what: ShareKind
@@ -230,17 +246,26 @@ export function ShareLinkField({
   label: string
   title: string
   text: string
+  /** нажатие, сделавшее ссылку, уже посчитано: первое нажатие здесь — его второй шаг */
+  counted?: boolean
 }) {
   const ref = useRef<HTMLInputElement>(null)
   const share = useShareLink(what, () => url, title, text, () => {
     ref.current?.focus()
     ref.current?.select()
   })
+  // Первое нажатие ещё впереди и уже посчитано — только при counted
+  const firstCounted = useRef(counted)
+  const press = () => {
+    const track = !firstCounted.current
+    firstCounted.current = false
+    void share.run({ track })
+  }
 
   return (
     <div className="join is-link">
       <ShareLinkInput url={url} label={label} inputRef={ref} />
-      <button type="button" onClick={() => void share.run()} className="btn-ember is-block whitespace-nowrap px-5">
+      <button type="button" onClick={press} className="btn-ember is-block whitespace-nowrap px-5">
         {share.label('Скопировать', { native: 'Отправить', manual: 'Скопируй вручную' })}
       </button>
       {share.status}

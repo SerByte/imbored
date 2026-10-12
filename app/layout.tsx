@@ -216,7 +216,11 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       <body className="min-h-full font-sans overflow-x-hidden">
         {/* Хэша в CSP у скрипта темы нет и не будет: он выключил бы
             'unsafe-inline', на котором живут инлайн-скрипты самого Next.
-            Подробно — в lib/csp.ts. */}
+            Подробно — в lib/csp.ts.
+            Исполняется он только в документе с сервера. 404 из notFound()
+            без Suspense (/game, /pick) приходит пустой оболочкой, и лэйаут
+            рисует браузер — такой <script> не исполняется; тему там ставит
+            ThemeToggle (applyStoredTheme). */}
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`,

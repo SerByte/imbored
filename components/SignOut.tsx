@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
@@ -71,6 +71,31 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
   useEffect(() => {
     if (partial && focusAdrift(document, homeRef.current)) retryRef.current?.focus()
   }, [partial])
+
+  /*
+   * Вопрос «везде?» встаёт на место нажатой кнопки, а «Отмена» уходит вместе
+   * с ним: в обе стороны нажатый узел покидает DOM, и фокус падал в body —
+   * клавиатура начинала со страницы сверху, а скринридер вопроса не слышал
+   * вовсе, хотя в нём то, ради чего он задан: ссылка на RSS умрёт тоже. У
+   * FeedLink подтверждение — та же кнопка, здесь — подмена (его докблок).
+   *
+   * Куда переносить, помнит отметка нажатия (handoff), а сам перенос — после
+   * коммита, когда новый узел уже в DOM. Без отметки эффект сработал бы и на
+   * монтировании: фокус там ещё в body, focusAdrift сказал бы «потерян», и
+   * страница /library отняла бы его у начала документа. Переносится только
+   * потерянный — как у входа для повтора выше.
+   */
+  const yesRef = useRef<HTMLButtonElement>(null)
+  const allRef = useRef<HTMLButtonElement>(null)
+  /** Нажатый узел ушёл с подменой: куда отдать фокус после коммита */
+  const handoff = useRef<'yes' | 'all' | null>(null)
+  useEffect(() => {
+    const to = handoff.current
+    handoff.current = null
+    if (to && focusAdrift(document, homeRef.current)) (to === 'yes' ? yesRef : allRef).current?.focus()
+  }, [confirmAll])
+  /** Вопрос — описание «Да, везде»: фокус встаёт на неё, и вопрос звучит вместе с именем */
+  const askId = useId()
 
   async function out(all: boolean) {
     if (busy !== null) return
@@ -151,11 +176,15 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
           </button>
           {confirmAll && verified ? (
             <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-dim">
-              {feedLink
-                ? 'Выйти на всех устройствах? Ссылка на RSS тоже перестанет работать.'
-                : 'Выйти на всех устройствах?'}
+              <span id={askId}>
+                {feedLink
+                  ? 'Выйти на всех устройствах? Ссылка на RSS тоже перестанет работать.'
+                  : 'Выйти на всех устройствах?'}
+              </span>
               <button
+                ref={yesRef}
                 type="button"
+                aria-describedby={askId}
                 onClick={() => void out(true)}
                 aria-disabled={busy !== null}
                 className="tap tap-tight text-danger hover:brightness-110 transition aria-disabled:opacity-40 cursor-pointer"
@@ -167,6 +196,7 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
                 onClick={() => {
                   if (busy !== null) return
                   setConfirmAll(false)
+                  handoff.current = 'all'
                 }}
                 aria-disabled={busy !== null}
                 className="tap tap-tight hover:text-ink transition-colors cursor-pointer"
@@ -176,10 +206,12 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
             </span>
           ) : verified ? (
             <button
+              ref={allRef}
               type="button"
               onClick={() => {
                 if (busy !== null) return
                 setConfirmAll(true)
+                handoff.current = 'yes'
               }}
               aria-disabled={busy !== null}
               className="tap tap-tight text-faint hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"

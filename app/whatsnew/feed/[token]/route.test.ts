@@ -146,6 +146,32 @@ describe('/whatsnew/feed/[token]: что в ленте', () => {
     expect(xml).toContain('/game/620/news/6200')
   })
 
+  /*
+   * Имя канала ридер показывает всегда — в списке подписок, над каждой
+   * записью. Демо-личности выпуск открыт (FeedLink), но библиотека у неё
+   * чужая: «твои игры» были бы той самой неправдой, которую строка на
+   * /whatsnew ей уже не говорит («Патчи игр демо-библиотеки»). Владелец —
+   * по ключу, а не по куке: ридер ходит без неё.
+   */
+  test('канал называет игры владельца ключа: свои — «твоих», демо — «демо-библиотеки»', async () => {
+    const own = await (await poll(key)).text()
+    expect(own).toContain('<title>Что нового в твоих играх — imbored</title>')
+    expect(own).toContain('<description>Крупные патчи игр из твоей библиотеки — коротко и по-русски.</description>')
+
+    const demo = await signInAs(db, 'demo')
+    const demoKey = newFeedToken()
+    await issueFeedLink(db, { steamid: demo, sid: 'sid-demo', tokenHash: feedTokenHash(demoKey), nowSec: NOW, replace: true })
+    // Ридер демо-ссылки тоже без куки — и уж точно не с куки демо
+    signOut()
+    const res = await poll(demoKey)
+    expect(res.status).toBe(200)
+    const xml = await res.text()
+    expect(xml).toContain('<title>Что нового в играх демо-библиотеки — imbored</title>')
+    expect(xml).toContain('<description>Крупные патчи игр демо-библиотеки — коротко и по-русски.</description>')
+    expect(xml).not.toContain('твоих играх')
+    expect(xml).not.toContain('твоей библиотеки')
+  })
+
   test('свежего нет — пустой, но валидный канал, а не общая лента', async () => {
     await saveLibrarySnapshot(
       db,

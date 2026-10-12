@@ -69,7 +69,12 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
   )
 }
 
-/** Свои же «играем» — тут скрывать нечего, это твоя собственная история */
+/**
+ * Свои же «играем» — тут скрывать нечего, это твоя собственная история.
+ *
+ * «Твой выбор — 5 игр», а не «Ты выбрал 5 игр»: род того, кто смотрит на
+ * экран, нам неизвестен так же, как род ника в «почти совпали» выше.
+ */
 export function MyLikesRail({ games }: { games: LikedGame[] }) {
   if (!games.length) return null
 
@@ -77,8 +82,8 @@ export function MyLikesRail({ games }: { games: LikedGame[] }) {
     <ScrollRail
       label={
         <>
-          Ты выбрал <span className="tabular-nums text-ember-text">{games.length}</span>{' '}
-          {plural(games.length, 'игру', 'игры', 'игр')}
+          Твой выбор — <span className="tabular-nums text-ember-text">{games.length}</span>{' '}
+          {plural(games.length, 'игра', 'игры', 'игр')}
         </>
       }
     >

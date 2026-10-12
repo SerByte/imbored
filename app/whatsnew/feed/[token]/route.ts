@@ -3,7 +3,7 @@ import { FEED_POLL_LIMIT, FEED_POLL_WINDOW_SEC, feedTokenHash, isFeedToken } fro
 import { newsDescription, newsPageTitle, newsPath } from '@/lib/newspage'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { rssFeed } from '@/lib/rss'
-import { appBaseUrl, getDb, nowSec } from '@/lib/server'
+import { appBaseUrl, getDb, isDemoId, nowSec } from '@/lib/server'
 import { resolveWhatsNew } from '@/lib/whatsnewfeed'
 
 /**
@@ -24,6 +24,12 @@ import { resolveWhatsNew } from '@/lib/whatsnewfeed'
  *
  * Ни SteamID, ни имени профиля в документе нет; адреса записей — публичные
  * страницы патчей. Сам ключ в тело не повторяется (rssFeed без self).
+ *
+ * Имя канала — по владельцу ключа. Выпуск открыт и демо-личности, но
+ * библиотека у неё чужая, и «твои игры» были бы неправдой — той, которую ей
+ * уже не говорит строка на /whatsnew (докблок components/whatsnew/FeedLink).
+ * А имя канала ридер показывает постоянно: в списке подписок, над каждой
+ * записью. Владелец — тот, кого нашёл ключ, а не кука: ридер ходит без неё.
  *
  * КЛЮЧ — единственное доказательство: ридер ходит без нашей куки. Поэтому:
  *   • формат — до базы: мусор в адресе не стоит ни одного чтения;
@@ -103,10 +109,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ token: string 
   )
 
   const base = appBaseUrl()
+  const demo = isDemoId(steamid)
   const xml = rssFeed({
-    title: 'Что нового в твоих играх — imbored',
+    title: demo ? 'Что нового в играх демо-библиотеки — imbored' : 'Что нового в твоих играх — imbored',
     link: `${base}/whatsnew`,
-    description: 'Крупные патчи игр из твоей библиотеки — коротко и по-русски.',
+    description: demo
+      ? 'Крупные патчи игр демо-библиотеки — коротко и по-русски.'
+      : 'Крупные патчи игр из твоей библиотеки — коротко и по-русски.',
     builtAt: now,
     items: items.map((item) => {
       const game = metas.get(item.appid)?.name

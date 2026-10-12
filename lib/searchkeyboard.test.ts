@@ -193,6 +193,30 @@ describe('нажатие на «Найти игру»', () => {
   })
 
   /*
+   * Отказ чанка — не тишина. После деплоя старая вкладка просит кусок
+   * прежней сборки, и 404 повторяется на каждое нажатие до перезагрузки:
+   * «нажми ещё раз» тут не помогает, помогает «обнови страницу». Отчёт —
+   * тем же путём, что у островков (lib/searchmiss.test.ts), а человеку —
+   * строка: живая область стоит всегда, текст приходит с отказом и гаснет в
+   * начале новой попытки, так что повтор звучит снова (lib/liveregion.test.ts).
+   */
+  test('отказ чанка: отчёт и строка, а прежний отказ гаснет до новой попытки', () => {
+    const miss = onClick.slice(onClick.indexOf('(err: unknown) =>'))
+    expect(miss).toMatch(/reportClientError\(\{\s*kind: 'boundary',\s*error: err,\s*island: 'search'/)
+    expect(miss).toContain('setMissed(true)')
+    const attempt = onClick.slice(onClick.indexOf('if (loaded)'), onClick.indexOf('const proxy = holdKeyboard()'))
+    expect(attempt).toContain('setMissed(false)')
+  })
+
+  test('строка отказа — живая область, которая стоит всегда; видна у строки-поля и в подсказке значка', () => {
+    expect(launcher).toMatch(/<span role="status" className="sr-only">\s*\{missed \? MISSED : ''\}\s*<\/span>/)
+    expect(launcher).toMatch(/\{field && \(missed \? MISSED : 'Найти игру по названию'\)\}/)
+    expect(launcher).toMatch(/title=\{field \? undefined : missed \? MISSED : NAME\}/)
+    // текст отказа — одной константой: каждая копия кириллицы — байты каждой страницы
+    expect(launcher.match(/'Поиск не загрузился — обнови страницу'/g)).toHaveLength(1)
+  })
+
+  /*
    * Подставка уходит по blur, и уйти она должна до того, как фон станет
    * инертным: фокус в поле окна — первым делом эффекта монтирования.
    */
@@ -227,5 +251,25 @@ describe('окно поиска не уходит под клавиатуру', 
     expect(caps).toHaveLength(2)
     for (const cap of caps) expect(cap).toContain('var(--vvh,100dvh)')
     expect(dialog).toContain('ref={panelRef}')
+  })
+})
+
+/*
+ * Esc в окне поиска двухшаговый (докблок CatalogSearch): сначала стирает
+ * набранное, на пустом поле закрывает окно. Подсказка клавиш говорила одно
+ * «Esc — закрыть» — и человек, набравший «port» и нажавший Esc, видел, как
+ * пропал запрос, а окно осталось. Подсказка идёт за тем же условием, что и
+ * обработчик.
+ */
+describe('подсказка Esc — то, что Esc сделает сейчас', () => {
+  const dialog = code(fs.readFileSync(path.join(ROOT, 'components', 'CatalogSearch.tsx'), 'utf8'))
+
+  test('обработчик: с набранным — стирает, на пустом — закрывает', () => {
+    expect(dialog).toMatch(/if \(e\.key === 'Escape'\) \{\s*e\.preventDefault\(\)\s*if \(query\) \{\s*setQuery\(''\)/)
+  })
+
+  test('подсказка по тому же условию: «стереть» при набранном, «закрыть» на пустом', () => {
+    expect(dialog).toContain("Esc — {query ? 'стереть' : 'закрыть'}")
+    expect(dialog).not.toMatch(/Esc — закрыть\s*</)
   })
 })

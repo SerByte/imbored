@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { Icon } from '@/components/Icon'
+import { clientErrorCode, reportClientError } from '@/lib/clienterr'
 
 /**
  * Кнопка «Найти игру» — лёгкий вход в поиск по каталогу.
@@ -15,7 +16,9 @@ import { Icon } from '@/components/Icon'
  * окно (8.8 КБ) их бы через него перевело. Сама кнопка — 1.0 КБ к первой
  * загрузке каждой страницы (замер сборкой, без сжатия), и ещё ~0.4 КБ —
  * подставка клавиатуры (holdKeyboard: ~0.35 КБ сама и 52 байта — её имя и
- * роль для скринридера; замер esbuild --minify до и после). Самый тесный
+ * роль для скринридера; замер esbuild --minify до и после) и ~0.35 КБ —
+ * ответ на отказ чанка (строка, отчёт, живая область; тот же замер, сам
+ * lib/clienterr уже в первой загрузке через instrumentation-client). Самый тесный
  * маршрут — /room/[id], 648 КБ из 650 (замер сборкой после e6d275f). Что
  * статический импорт окна сюда не вернётся, сторожит lib/searchlazy.test.ts —
  * граф импортов от этого файла.
@@ -49,6 +52,19 @@ import { Icon } from '@/components/Icon'
  * Значка в шапке нет на 768–1023 px: там у шапки нет на него места (замеры —
  * в components/HeaderNav.tsx). На телефоне меню уезжает в нижнюю панель и
  * места хватает, с lg — тоже.
+ *
+ * ЧАНК НЕ ПРИШЁЛ — НЕ ТИШИНА. Чаще всего это деплой: старая вкладка просит
+ * кусок прежней сборки, и 404 повторяется на каждое нажатие, пока страницу не
+ * перезагрузят (тот же довод у components/TonightLazy). Нажатие при этом не
+ * делало ничего — клавиатура моргала и опускалась, скринридер молчал, а в
+ * логе не было ни строки. Теперь отказ нажатия уходит в отчёт тем же путём и
+ * с тем же видом, что у островков (components/lazyIsland, тег search), а
+ * кнопка говорит «Поиск не загрузился — обнови страницу»: строка-поле —
+ * своей подписью, значок — цветом и подсказкой, скринридер — живой областью
+ * рядом. Отчёт — от lib/clienterr напрямую, а не через reportIslandFailure:
+ * clienterr и так в первой загрузке каждой страницы (instrumentation-client),
+ * а модуль островка — нет. Прогрев (warm) отказ не отчитывает: это догадка,
+ * а не нажатие, и его отказа человек не видел.
  */
 
 type Dialog = typeof import('./CatalogSearch').CatalogSearch
@@ -81,6 +97,9 @@ const warm = () => {
  * кириллицы — ~20 байт в первой загрузке каждой страницы.
  */
 const NAME = 'Найти игру'
+
+/** Чанк окна не пришёл на нажатие. Одной константой — по той же причине, что NAME */
+const MISSED = 'Поиск не загрузился — обнови страницу'
 
 /**
  * Подставка для клавиатуры, пока чанк окна в пути (докблок выше): невидимое
@@ -125,6 +144,8 @@ export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field
   // Компонент окна в состоянии: есть — окно открыто (см. докблок выше).
   // seed — набранное в подставку, пока чанк ехал (holdKeyboard)
   const [open, setOpen] = useState<{ Dialog: Dialog; seed: string } | null>(null)
+  // Нажатие не принесло окна: кнопка говорит об этом сама (докблок выше)
+  const [missed, setMissed] = useState(false)
   const field = variant === 'field'
 
   return (
@@ -135,11 +156,11 @@ export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field
         aria-haspopup="dialog"
         // У строки имя — её подпись; у значка подписи нет
         aria-label={field ? undefined : NAME}
-        title={field ? undefined : NAME}
+        title={field ? undefined : missed ? MISSED : NAME}
         className={
           field
             ? 'search-field'
-            : 'tap btn-glass size-10 !rounded-full !p-0 text-dim hover:text-ink md:max-lg:hidden'
+            : `tap btn-glass size-10 !rounded-full !p-0 md:max-lg:hidden ${missed ? 'text-danger' : 'text-dim hover:text-ink'}`
         }
         onPointerEnter={warm}
         onFocus={warm}
@@ -148,23 +169,42 @@ export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field
             setOpen({ Dialog: loaded, seed: '' })
             return
           }
+          // Прежний отказ гаснет до новой попытки: второй такой же иначе
+          // промолчал бы — живая область объявляет смену текста
+          setMissed(false)
           // Синхронно, до первого await: после него жест уже кончился
           const proxy = holdKeyboard()
           loadDialog().then(
             (Dialog) => setOpen({ Dialog, seed: proxy.value }),
-            // Чанк не доехал (связь) — окна нет, кнопка на месте: нажатие
-            // повторит. Фокус — с подставки обратно на кнопку: клавиатура
-            // опускается, подставка уходит по blur. Ушёл фокус раньше сам —
-            // подставки уже нет, и фокус не трогаем
-            () => {
+            // Чанк не доехал — окна нет, кнопка на месте. Моргнула связь —
+            // нажатие повторит; 404 после деплоя повтор не вылечит, поэтому
+            // кнопка просит обновить страницу, а отчёт уходит в лог. Фокус —
+            // с подставки обратно на кнопку: клавиатура опускается, подставка
+            // уходит по blur. Ушёл фокус раньше сам — подставки уже нет, и
+            // фокус не трогаем
+            (err: unknown) => {
+              reportClientError({
+                kind: 'boundary',
+                error: err,
+                island: 'search',
+                href: window.location.href,
+                code: clientErrorCode(err),
+              })
+              setMissed(true)
               if (proxy.isConnected) opener.current?.focus()
             },
           )
         }}
       >
         <Icon name="search" size={field ? 18 : 17} />
-        {field && 'Найти игру по названию'}
+        {field && (missed ? MISSED : 'Найти игру по названию')}
       </button>
+      {/* Стоит всегда, текст приходит с отказом: область, вставленная
+          вместе с текстом, звучит не везде (components/StatusLine). Не
+          StatusLine — лишний модуль в первой загрузке каждой страницы */}
+      <span role="status" className="sr-only">
+        {missed ? MISSED : ''}
+      </span>
       {open && <open.Dialog opener={opener} seed={open.seed} onClose={() => setOpen(null)} />}
     </>
   )
