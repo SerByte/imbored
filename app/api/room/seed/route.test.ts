@@ -54,4 +54,21 @@ describe('/api/room/seed', () => {
     await logFeedback(db, { steamid: me, appid: 548430, action: 'banned' }, nowSec())
     expect((await ask('548430')).status).toBe(404)
   })
+
+  test('скрытая демо-личностью — тоже 404: демо пишет, и комнату создаст с её банами', async () => {
+    const me = await signInAs(db, 'demo')
+    await logFeedback(db, { steamid: me, appid: 548430, action: 'banned' }, nowSec())
+    expect((await ask('548430')).status).toBe(404)
+  })
+
+  test('сессия по вставленной ссылке видит ответ гостя: чужие скрытые игры по одной не перебрать', async () => {
+    // Ссылку на чужой профиль вставляет кто угодно. Читай здесь баны и такой
+    // сессии — сравнение с ответом гостя по каждой игре каталога выдало бы,
+    // что владелец профиля скрыл, а это /library ссылке уже не показывает
+    const someone = await signInAs(db, 'claimed')
+    await logFeedback(db, { steamid: someone, appid: 548430, action: 'banned' }, nowSec())
+    const res = await ask('548430')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ appid: 548430, name: 'Deep Rock Galactic' })
+  })
 })

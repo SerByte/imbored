@@ -214,6 +214,30 @@ describe('не участник на сошедшейся комнате — г�
     expect(anchor).not.toMatch(/btn-/)
   })
 
+  /**
+   * Не-участник здесь — не всегда чужой. Профиль, сидящий в пати со входом
+   * через Steam, открытый по вставленной ссылке, опрос видит isMember=false и
+   * needSteam=true (lib/roomseat). Весть «Играем в X» (MatchShare) уходит в
+   * чат ровно этим адресом — и свой, открывший её на телефоне, читал «новых
+   * людей в неё уже не пускают»: что его в пати нет, и без пути к своему
+   * экрану матча. Экран приглашения открытой комнаты needSteam знал всегда.
+   */
+  test('свой по ссылке (needSteam) — не «не пускают», а вход через Steam к экрану матча', () => {
+    const room = code('app/room/[id]/page.tsx')
+    const start = room.indexOf("state.room.status === 'matched' && state.matchedGame && !state.isMember")
+    const screen = room.slice(start, room.indexOf('<MatchCeremony', start))
+    const fork = screen.indexOf('state.needSteam ? (')
+    expect(fork, 'развилки needSteam на экране нет').toBeGreaterThan(screen.indexOf('</h1>'))
+    const other = screen.indexOf(') : (', fork)
+    expect(other).toBeGreaterThan(fork)
+    const steam = screen.slice(fork, other)
+    expect(steam).toContain('href={`/api/auth/steam?join=${roomId}`}')
+    expect(steam).toMatch(/>\s*Войти через Steam\s*</)
+    expect(steam).not.toMatch(/не пускают|room\/new/)
+    // а «не пускают» и своя комната — чужому, в другой ветке
+    expect(screen.slice(other)).toMatch(/не пускают[\s\S]*href="\/room\/new"/)
+  })
+
   test('запасной экран матча отвечает на «где взять» тем же правилом', () => {
     expect(code('components/room/CeremonyBoundary.tsx')).toMatch(/const link = storeLink\(game\)/)
   })

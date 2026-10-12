@@ -358,6 +358,70 @@ describe('кнопки комнаты не висят на повисшем за
   test('доска ждёт свой снимок, но тоже с потолком', () => {
     expect(toggle).toMatch(/await refresh\(cappedSignal\(POLL_TIMEOUT_MS\)\)\.catch\(/)
   })
+
+  test('«Пустить обратно» — тоже с потолком', () => {
+    // Пришла слиянием из другой ветки без него: фаза 'busy' держит undoLocked,
+    // и кроме ответа её не гасит ничто — «Пускаю…» висел aria-disabled без
+    // строки отказа. Свой срез: запрос кончается «.catch(», а не «if (»
+    const undo = body(room, 'async function unkick()')
+    expect(undo, 'повисший POST держит «Пускаю…» до сдачи браузера').toMatch(
+      /await fetch\([\s\S]*?signal: cappedSignal\(POLL_TIMEOUT_MS\),\s*\}\)\.catch\(/,
+    )
+  })
+})
+
+/**
+ * «Пустить обратно» жила только в RoomWaiting, а ✕ сам уводит экран
+ * ожидания: состав меньше — ключ колоды (deckKeyOf) другой, /deck собирает
+ * колоду на оставшихся, игр «есть у всех» без убранного больше — и новые
+ * карты ставят SwipeDeck на место RoomWaiting. Отмена исчезала через пару
+ * секунд после ✕ — в пати на двоих ровно тогда, когда промах стоил другу
+ * получаса.
+ */
+describe('«Пустить обратно» переживает колоду, пришедшую после ✕', () => {
+  test('пока RoomWaiting нет на экране, строку ставит сама страница — ровно в дополнение к нему', () => {
+    // одно условие на обе развилки: строка не пропадает и не стоит дважды
+    expect(room).toMatch(/const waitingShown = !deckFailed && cards !== null && !card\b/)
+    expect(room).toMatch(/const aloneInvite = alone && waitingShown\b/)
+    expect(room).toMatch(/\{!waitingShown && kickUndo && <div className="kick-undo[^"]*">\{kickUndo\}<\/div>\}/)
+    // а ветка, в которой стоит RoomWaiting, — та же, что waitingShown
+    expect(room).toMatch(/\{deckFailed \? \([\s\S]*?\) : cards === null \? \([\s\S]*?\) : card \? \(\s*<SwipeDeck[\s\S]*?\) : \(\s*<RoomWaiting/)
+    const page = room.indexOf('{!waitingShown && kickUndo && <div')
+    expect(page, 'строка страницы — над колодой, под составом').toBeLessThan(room.indexOf('{deckFailed ? ('))
+    expect(page).toBeGreaterThan(room.indexOf('{card && ('))
+  })
+
+  test('фокус, упавший с экрана ожидания, встаёт на «Пустить обратно»', () => {
+    expect(room).toMatch(/ref=\{undoRef\}/)
+    expect(room).toMatch(/if \(!waitingShown && focusAdrift\(document\)\) undoRef\.current\?\.focus\(\)\s*\}, \[waitingShown\]\)/)
+  })
+})
+
+/**
+ * Высота карты на телефоне — бюджет от верха экрана (.room-page .deck-stack
+ * в globals.css: 340 px на шапку и всё прочее), и что над колодой, обязано в
+ * него влезать: лишний ряд над ней уводит кнопки голоса под нижнюю панель.
+ * Состав переносился уже двумя обычными никами, а пати из трёх — всегда:
+ * замер на 390×844 — кнопки 743–803 при верхе панели 794.
+ */
+describe('над колодой на телефоне — не больше, чем заложено в высоту карты', () => {
+  test('состав — один ряд с прокруткой вбок, перенос — только от md', () => {
+    const at = room.indexOf('{card && (')
+    const roster = room.slice(at, room.indexOf('</div>', at))
+    const row = (roster.match(/<div className="([^"]+)">/)?.[1] ?? '').split(' ')
+    expect(row).toContain('max-md:overflow-x-auto')
+    expect(row, 'перенос на телефоне — второй ряд над картой').not.toContain('flex-wrap')
+    expect(row).toContain('md:flex-wrap')
+    // без них пилюля в ряду без переноса сжимается и ломает свой текст
+    expect(roster).toMatch(/className=\{`pill shrink-0 whitespace-nowrap /)
+  })
+
+  test('строка «Пустить обратно» над колодой отнимает у карты свою высоту', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'app/globals.css'), 'utf8')
+    expect(css).toMatch(/\.room-page \.deck-stack \{\s*--deck-h: clamp\(330px, 100svh - 340px, 560px\);/)
+    // 64 = до трёх рядов строки (длинный ник) и её отступ
+    expect(css).toMatch(/\.room-page:has\(\.kick-undo\) \.deck-stack \{\s*--deck-h: clamp\(290px, 100svh - 404px, 560px\);/)
+  })
 })
 
 /**
