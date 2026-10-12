@@ -303,6 +303,47 @@ describe('/library: «Уже прошёл» у вечеров', () => {
 })
 
 /**
+ * План на вечер (lib/eveningplan.ts) закрывается запуском, а «Вернуться к
+ * ней» / «Запустить» в «Твоих вечерах» — запуск сайта, а не клиента Steam.
+ * Игра, которую советовали, запускали и потом поставили на загрузку, бывает
+ * и вечером, и планом; запущенная отсюда, она висела бы на главной «Ставил
+ * на загрузку — ждёт тебя» до конца срока. Какой план жив, решает сервер —
+ * тем же чтением, что живая строка; островок только пишет запуск по нему.
+ */
+describe('/library: план на вечер у «Твоих вечеров»', () => {
+  async function planOf(kind: SessionKind, planned: boolean) {
+    const steamid = await signInAs(db, kind)
+    await seed(steamid)
+    if (planned) {
+      await logFeedback(
+        db,
+        { steamid, appid: EVENING, action: 'opened', ctx: { source: 'play', intent: 'install' } },
+        nowSec() - 30,
+      )
+    }
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/library'>)
+    return propsOf(tree, Evenings).map((p) => p.plan)
+  }
+
+  test('живой план — его игра едет в «Твои вечера»; без плана — null', async () => {
+    expect(await planOf('openid', true)).toEqual([EVENING])
+    db = await freshDb()
+    expect(await planOf('openid', false)).toEqual([null])
+  })
+
+  // Демо-библиотека чужая, и «вечером» у неё не наступает; сессии по ссылке
+  // вечеров нет вовсе
+  test('демо — без плана, сессия по ссылке — без полки', async () => {
+    expect(await planOf('demo', true)).toEqual([null])
+    db = await freshDb()
+    expect(await planOf('claimed', true)).toEqual([])
+  })
+})
+
+/**
  * «Выйти на всех устройствах» гасит и секретную ссылку на RSS-ленту
  * (revokeAllSessions). Жмут его и просто прибраться в старых устройствах —
  * и подтверждение обязано сказать про ридер в момент нажатия, а не мелким

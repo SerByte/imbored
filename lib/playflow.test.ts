@@ -13,6 +13,7 @@ import {
   switchLine,
   weightedRandomIndex,
 } from './playflow'
+import { plural } from './plural'
 
 /** random(), который отдаёт заранее заданные числа по кругу */
 function seq(...xs: number[]): () => number {
@@ -557,6 +558,43 @@ describe('/play: пути вокруг выдачи', () => {
   })
 
   /*
+   * «Как «X», но…», «Вернуть обычную выдачу» и пилюли подталкиваний стоят в
+   * секции героя, а она ключом appid перемонтируется с каждым новым героем
+   * (AnimatePresence mode="wait"). Выдача встала с другим героем — нажатая
+   * кнопка ушла вместе со старым, и фокус падал в body: замер клавиатурой —
+   * activeElement BODY после «Как «Muck», но…», «Покороче», «Что-то другое».
+   * Поэтому каждый reshape(…, 'hero') ждёт appid героя и уносит фокус сам,
+   * как «Дальше — в духе X». Кнопка, пережившая выдачу (герой тот же), фокус
+   * держит: взведённый зря флаг отнял бы его у героя когда-нибудь потом.
+   */
+  test('кнопки в секции героя уносят фокус на нового героя, а не роняют в body', () => {
+    const calls = [...code.matchAll(/reshape\(\s*\{[^}]*\},\s*'hero',?\s*\)/g)]
+    // «Как X», «Вернуть обычную выдачу», nudgeTo и «Дальше — в духе X»
+    expect(calls).toHaveLength(4)
+    for (const c of calls) {
+      const at = c.index ?? 0
+      expect(code.slice(at - 40, at), c[0]).toMatch(/const hero = await $/)
+      expect(code.slice(at + c[0].length, at + c[0].length + 80), c[0]).toMatch(
+        /^\s*if \(hero !== null(?: && hero !== was)?\) focusHero\(/,
+      )
+    }
+    // «Как X»: затравка — сам герой, а он в своих соседях не бывает; тот же
+    // герой — кнопка на месте
+    expect(code).toMatch(
+      /const was = pick\.appid\s*const hero = await reshape\(\{ scope, lean, seed: pick\.appid, nudge: keptNudge \}, 'hero'\)\s*if \(hero !== null && hero !== was\) focusHero\(false\)/,
+    )
+    // «Вернуть обычную выдачу» уходит при любой удаче — затравки больше нет,
+    // и при том же герое фокус встаёт на его заголовок сразу
+    expect(code).toMatch(
+      /const was = pick\.appid\s*const hero = await reshape\(\{ scope, lean, seed: null, nudge: keptNudge \}, 'hero'\)\s*if \(hero !== null\) focusHero\(hero === was\)/,
+    )
+    // подталкивание: герой передаётся с места нажатия — pick объявлен ниже
+    expect(code).toMatch(/const nudgeTo = async \(n: Nudge, was: number\) => \{/)
+    expect(between('const nudgeTo', 'const advance')).toMatch(/if \(hero !== null && hero !== was\) focusHero\(false\)\s*\}\s*$/)
+    expect(code).toMatch(/onClick=\{\(\) => void nudgeTo\(n, pick\.appid\)\}/)
+  })
+
+  /*
    * Пройденная «Продолжить» бывает затравкой выдачи на экране: pickContinue
    * затравку не исключает, а в соседи она не идёт — «Ещё в этом духе» у
    * доигрываемой игры приводит ровно сюда. «Дальше — в духе X» звал бы тот
@@ -622,6 +660,25 @@ describe('/play: пути вокруг выдачи', () => {
   test('«Изменить настроение» везёт затравку туда, где она есть', () => {
     expect(code).toContain('quizHref(focus, askSeed)')
     expect(code).toContain('quizHref(focus, seedAppid)')
+  })
+
+  /*
+   * Причастие склоняется вместе с числом: «Ещё 1 вариант, похожих на
+   * «Hades»» — у нишевой игры пул соседей под настроение бывает из двух
+   * карточек, а в такую выдачу теперь приходят и адресом (страница игры,
+   * «Ещё в этом духе», «Дальше — в духе X»).
+   */
+  test('«Не то? Ещё N …, похожих на X» согласует причастие с числом', () => {
+    const forms = ["'вариант, похожий'", "'варианта, похожих'", "'вариантов, похожих'"] as const
+    expect(code).toContain(`plural(others.length, ${forms.join(', ')})} на «\${seed.name}»`)
+    expect(code).not.toMatch(/'вариантов'\)\}, похожих/)
+    const [one, few, many] = forms.map((f) => f.slice(1, -1))
+    expect([1, 2, 5, 21].map((n) => `${n} ${plural(n, one, few, many)}`)).toEqual([
+      '1 вариант, похожий',
+      '2 варианта, похожих',
+      '5 вариантов, похожих',
+      '21 вариант, похожий',
+    ])
   })
 
   /*

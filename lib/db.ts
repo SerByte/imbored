@@ -5263,6 +5263,27 @@ export async function listBanned(
   )
 }
 
+/**
+ * Пройдена ли игра — то же правило, что у полки «Пройдено» (listBanned, done):
+ * последний бан этой игры поставлен кнопкой «Уже прошёл». Бан, переставленный
+ * другой кнопкой, — уже не «пройдено», снятый «Снова предлагать» (unbanGame
+ * стирает строки) — тоже. Последний — по (created_at, id): отметку и бан
+ * в одну секунду различает порядок записи.
+ *
+ * Для страницы игры (/api/session/owns): «Уже прошёл» рядом с «Запустить»
+ * не предлагается второй раз той, что уже лежит на полке. Свои строки по
+ * idx_feedback_steamid от свежих к старым — до первой строки бана этой игры.
+ */
+export async function isFinished(db: Db, steamid: string, appid: number): Promise<boolean> {
+  const res = await db.execute({
+    sql: `SELECT reason FROM feedback
+           WHERE steamid = ? AND appid = ? AND action = 'banned'
+           ORDER BY created_at DESC, id DESC LIMIT 1`,
+    args: [steamid, appid],
+  })
+  return (res.rows[0] as unknown as { reason: string | null } | undefined)?.reason === 'done'
+}
+
 /** Сколько игр колоды исследователя читается за раз — с запасом на полку и отсев */
 const EXPLORE_ROWS = 200
 
@@ -5417,6 +5438,10 @@ export async function unlikeGame(db: Db, steamid: string, appid: number): Promis
  * рулетки ('spin') план не закрывает: это кубик, а не решение. «Зашло» и
  * открытая карточка — тоже: это не «передумал». Позже — по id, а не по
  * секундам: запуск в ту же секунду, что и план, всё равно случился после.
+ * Окна «пропуск сразу после плана не в счёт» здесь нет нарочно: «Не то —
+ * дальше» у только что отложенного героя /play пропуском не пишет вовсе
+ * (writesPlan в lib/eveningplan.ts), а «Не сегодня» у «Игры дня» вслед за
+ * «Сыграю вечером» — честное «передумал».
  *
  * Запуск — настоящий: «Открыть в Steam» у своей на телефоне пишется
  * 'launched' с intent 'store' (исход совета ему нужен), но открывает он

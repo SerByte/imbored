@@ -32,7 +32,7 @@ import { Icon } from '@/components/Icon'
 import { freshLine, playLine } from '@/lib/announce'
 import { EDGE_BADGE, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
-import { closesPlan, planBeside, planLine, type EveningPlan } from '@/lib/eveningplan'
+import { closesPlan, planBeside, planLine, writesPlan, type EveningPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
 import { reviewsBrief } from '@/lib/gametraits'
@@ -409,6 +409,16 @@ function Player({ say }: { say: (line: string) => void }) {
   const [continueGame, setContinueGame] = useState<ContinueGame | null>(null)
   /** План на вечер (lib/eveningplan.ts): поставленное на загрузку — строкой с запуском */
   const [plan, setPlan] = useState<EveningPlan | null>(null)
+  /**
+   * Игры, отложенные на вечер в этом заходе («Поставь на загрузку», «Сыграю
+   * вечером на ПК») и записанные сервером. «Не то — дальше» у такого героя —
+   * шаг по выдаче, а не «передумал»: листает без вопроса о причине и без
+   * пропуска, который закрыл бы план (writesPlan, closesPlan). План, уже
+   * закрытый здесь же (запустил с героя), отсюда уходит: после запуска «не
+   * то» — снова ответ, и причину у него спросят. Ref, а не состояние:
+   * рисовать по нему нечего, читает его только нажатие.
+   */
+  const plannedHere = useRef(new Set<number>())
   // «Сыграю вечером на ПК» под героем — кусок прогревается заранее (TonightLazy)
   useWarmTonight()
   /** Время скрыто настройками Steam (lib/playtime.ts) — эхо сервера, строка над «Продолжить» */
@@ -646,7 +656,9 @@ function Player({ say }: { say: (line: string) => void }) {
             // sendFeedback — от первого рендера
             if (r.ok && closesPlan(action, reason, ctx?.intent)) {
               setPlan((p) => (p?.appid === appid ? null : p))
+              plannedHere.current.delete(appid)
             }
+            if (r.ok && writesPlan(action, ctx?.intent)) plannedHere.current.add(appid)
             return r.ok
           })
           // Промис намеренно не отклоняется: вызывающий, которому исход не
@@ -1252,13 +1264,18 @@ function Player({ say }: { say: (line: string) => void }) {
    * источника значило бы выбросить и ту выдачу, о которой спросили. from —
    * где сказать об отказе: у переключателей или у кнопок под героем.
    *
-   * Отдаёт appid героя новой выдачи, null — выдача прежняя. «Дальше — в духе
-   * X» у пройденной игры уходит из разметки вместе с ней, и фокус ему надо
-   * унести на героя — а переключателю, который остаётся на месте, не надо.
-   * Именно appid, а не «встала»: герой новой выдачи бывает тем же (соседи X
-   * часто начинаются с похожего на X героя), тогда заголовок не
-   * перемонтируется, и ждать его ref-колбэка — потерять фокус в body, как
-   * «Обновить выдачу» до focusHero(now.appid !== was).
+   * Отдаёт appid героя новой выдачи, null — выдача прежняя. Фокус reshape
+   * не трогает, его несёт вызывающий — по тому, где стоит кнопка.
+   * Переключатели источника и оси (from 'switch') живут вне секции героя и
+   * остаются на месте: фокус с них уносить незачем. А всё, что зовёт с
+   * 'hero', уходит из разметки: «Как «X», но…», «Вернуть обычную выдачу» и
+   * пилюли подталкиваний — в секции героя, а она ключом appid
+   * перемонтируется с каждым новым героем; «Дальше — в духе X» — вместе с
+   * пройденной игрой. Им фокус надо унести на героя, иначе он падает в body
+   * (ФОКУС ТУДА, ГДЕ ИДЁТ ДЕЙСТВИЕ выше). Именно appid, а не «встала»: герой
+   * новой выдачи бывает тем же (соседи X часто начинаются с похожего на X
+   * героя), тогда заголовок не перемонтируется, и ждать его ref-колбэка —
+   * потерять фокус в body, как «Обновить выдачу» до focusHero(now.appid !== was).
    */
   const seedAppid = seed?.appid ?? null
   const keptNudge = nudge === 'different' ? null : nudge
@@ -1302,9 +1319,10 @@ function Player({ say }: { say: (line: string) => void }) {
           return null
         }
         const hero = got.picks[applyDeal(got)]
-        // Фокус не трогаем: нажатый переключатель остаётся на месте, и
-        // человек, может быть, нажмёт соседний. Сказать надо только, что
-        // герой наверху сменился.
+        // Фокус здесь не трогаем: нажатый переключатель остаётся на месте, и
+        // человек, может быть, нажмёт соседний, а кнопкам в секции героя его
+        // переносит вызывающий по appid ниже. Сказать надо только, что герой
+        // наверху сменился.
         const name = hero.name
         say(playLine(got.seed ? { kind: 'seed', name, seed: got.seed.name } : { kind: 'reshape', name }))
         return hero.appid
@@ -1326,9 +1344,9 @@ function Player({ say }: { say: (line: string) => void }) {
    * заброшенному, поэтому и переключатель источника покажет «Только моё», а
    * отжатое вернёт «Любые игры».
    */
-  const nudgeTo = (n: Nudge) => {
+  const nudgeTo = async (n: Nudge, was: number) => {
     const off = nudge === n && n !== 'different'
-    void reshape(
+    const hero = await reshape(
       {
         scope: n === 'familiar' ? (off ? 'all' : 'library') : scope,
         lean,
@@ -1338,6 +1356,10 @@ function Player({ say }: { say: (line: string) => void }) {
       },
       'hero',
     )
+    // Пилюли — в секции героя: новый герой уносит их с собой, и фокус едет
+    // на его заголовок (reshape). Тот же герой — нажатая пилюля на месте и
+    // фокус держит; взведённый зря флаг отнял бы его у героя потом
+    if (hero !== null && hero !== was) focusHero(false)
   }
 
   const advance = useCallback(
@@ -1658,8 +1680,10 @@ function Player({ say }: { say: (line: string) => void }) {
               appid={cont.appid}
               label={`Просто продолжить «${cont.name}»`}
               mobileLabel={`Открыть «${cont.name}» в Steam`}
-              onClick={() =>
-                void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', 'launch'))
+              // По ветке нажатия, как у строки «Продолжить»: под пальцем это
+              // магазин, а не запуск, и план на вечер он не закрывает (launchIntent)
+              onClick={(via) =>
+                void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', launchIntent(via)))
               }
               className="btn-ember is-block py-3"
             />
@@ -2184,9 +2208,11 @@ function Player({ say }: { say: (line: string) => void }) {
                   </Magnet>
                 ) : (
                   <button
-                    // Причину спрашивать не у кого записать — просто листаем
+                    // Причину спрашивать не у кого записать — просто листаем.
+                    // И у героя, только что отложенного на вечер: это шаг по
+                    // выдаче, а пропуск закрыл бы план (plannedHere)
                     onClick={() => {
-                      if (readOnly) {
+                      if (readOnly || plannedHere.current.has(pick.appid)) {
                         advance(index)
                         return
                       }
@@ -2475,9 +2501,14 @@ function Player({ say }: { say: (line: string) => void }) {
                   {!roulette && !focus && pick.tags.length > 0 && (
                     <button
                       type="button"
-                      onClick={() =>
-                        void reshape({ scope, lean, seed: pick.appid, nudge: keptNudge }, 'hero')
-                      }
+                      // Затравка — сам герой, а в своих соседях он не бывает:
+                      // удача почти всегда приводит другого, и кнопка уходит
+                      // вместе со старым героем — фокус едет на нового (reshape)
+                      onClick={async () => {
+                        const was = pick.appid
+                        const hero = await reshape({ scope, lean, seed: pick.appid, nudge: keptNudge }, 'hero')
+                        if (hero !== null && hero !== was) focusHero(false)
+                      }}
                       aria-disabled={switching}
                       title="Похожие на эту игру — под то же настроение"
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
@@ -2488,7 +2519,13 @@ function Player({ say }: { say: (line: string) => void }) {
                   {seed && (
                     <button
                       type="button"
-                      onClick={() => void reshape({ scope, lean, seed: null, nudge: keptNudge }, 'hero')}
+                      // Уходит при любой удаче, даже с тем же героем: затравки
+                      // больше нет. Тогда фокус — на заголовок нынешнего сразу
+                      onClick={async () => {
+                        const was = pick.appid
+                        const hero = await reshape({ scope, lean, seed: null, nudge: keptNudge }, 'hero')
+                        if (hero !== null) focusHero(hero === was)
+                      }}
                       aria-disabled={switching}
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
                     >
@@ -2524,7 +2561,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     <button
                       key={n}
                       type="button"
-                      onClick={() => nudgeTo(n)}
+                      onClick={() => void nudgeTo(n, pick.appid)}
                       aria-disabled={switching}
                       // «Что-то другое» — действие, а не переключатель: у
                       // повторяемого нажатия нет «нажатого» состояния
@@ -2687,7 +2724,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 {focus
                   ? `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} ${timeHidden ? 'из твоей библиотеки' : 'из нераспакованного'}`
                   : seed
-                    ? `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')}, похожих на «${seed.name}»`
+                    ? `Не то? Ещё ${others.length} ${plural(others.length, 'вариант, похожий', 'варианта, похожих', 'вариантов, похожих')} на «${seed.name}»`
                     : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}
                 {/* Иконка — для глаза: состояние уже в aria-expanded */}
                 <Icon name={moreOpen ? 'up' : 'down'} className="inline-block align-[-0.12em]" />

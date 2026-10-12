@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { latestEveningPlan, snapshotOwns } from '@/lib/db'
+import { isFinished, latestEveningPlan, snapshotOwns } from '@/lib/db'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 
 /**
@@ -17,18 +17,28 @@ import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
  * Vary: Cookie — чтобы браузер не отдал ответ прошлого входа следующему.
  * Гостю — no-store: иначе «нет» до входа пережило бы сам вход.
  *
- * Лимита частоты нет намеренно: одна строка по индексу и один бит наружу —
- * дешевле, чем сама проверка лимита, которая пишет в базу.
+ * Лимита частоты нет намеренно: чтения только по индексам и несколько бит
+ * наружу — дешевле, чем сама проверка лимита, которая пишет в базу.
  *
  * Второй бит — plan: у этой игры живой план на вечер (lib/eveningplan.ts).
  * Живая строка главной ведёт на страницу игры, и запуск отсюда обязан
  * закрыть план — иначе «Ставил на загрузку — ждёт тебя» висела бы и после
  * сыгранного вечера. OwnedLaunch по этому биту пишет запуск, как /play.
- * Только своей пишущей сессии не из демо — как и сам план. Ответ с планом —
- * без кэша: после запуска он перестаёт быть правдой. Чтение плана — только у
- * своей игры: «есть ли план» у чужой ничего не значит. Ответ без плана живёт
- * те же пять минут: план, поставленный в эти минуты, страница игры узнает
- * следующим ответом, а строка плана на /play закрывает его и сама.
+ * Только своей пишущей сессии не из демо — как и сам план. Чтение плана —
+ * только у своей игры: «есть ли план» у чужой ничего не значит.
+ *
+ * Третий бит — done: игра уже отмечена «Уже прошёл» (isFinished — то же
+ * правило, что у полки «Пройдено»). Без него кнопка возвращалась на каждой
+ * перезагрузке, хотя игра лежит на полке: не понять, сохранилась ли отметка,
+ * а каждое повторное нажатие писало ещё одну строку бана. Только пишущей
+ * сессии, демо тоже: кнопка — её, и в «Твоих вечерах» у неё то же слово.
+ *
+ * Поэтому «да» пишущей сессии — без кэша: оба бита она меняет сама —
+ * запуском, отметкой здесь или на /library, «Снова предлагать» на полке, —
+ * и ответ пятиминутной давности вернул бы кнопку, только что нажатую, или
+ * план, только что закрытый. Ценой — функция на каждый заход своей игры.
+ * «Нет» и «да» сессии по ссылке живут прежние пять минут: их меняет только
+ * снапшот.
  */
 const OWNED_MAX_AGE = 300
 
@@ -48,13 +58,20 @@ export async function GET(req: Request) {
   // Отрицательные appid — кураторский пул других магазинов: в библиотеке
   // Steam их не бывает, и спрашивать базу не о чем
   const owned = appid > 0 ? (await snapshotOwns(db, steamid, appid)) === true : false
-  const planned =
-    owned &&
-    isWriter(session) &&
-    !isDemoId(steamid) &&
-    (await latestEveningPlan(db, steamid, nowSec(), appid).catch(() => null)) !== null
-  if (planned) {
-    return NextResponse.json({ owned, plan: true }, { headers: { 'Cache-Control': 'private, no-store' } })
+  if (owned && isWriter(session)) {
+    // Сбой чтения — просто без бита, как и без плана: кнопка на месте
+    const [planned, done] = await Promise.all([
+      !isDemoId(steamid) &&
+        latestEveningPlan(db, steamid, nowSec(), appid).then(
+          (p) => p !== null,
+          () => false,
+        ),
+      isFinished(db, steamid, appid).catch(() => false),
+    ])
+    return NextResponse.json(
+      { owned, ...(planned ? { plan: true } : {}), ...(done ? { done: true } : {}) },
+      { headers: { 'Cache-Control': 'private, no-store' } },
+    )
   }
 
   return NextResponse.json(

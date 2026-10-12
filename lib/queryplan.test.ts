@@ -21,6 +21,7 @@ import {
   PATCH_SINCE_MAX,
   getNeighbors,
   latestEveningPlan,
+  isFinished,
   listEvenings,
   listCompatViews,
   findSharedPick,
@@ -431,6 +432,18 @@ const CASES: Case[] = [
   {
     name: 'план на вечер',
     run: (db) => latestEveningPlan(db, '76561198000000001', NOW),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  /*
+   * «Пройдена ли» — на каждый заход страницы своей игры у пишущей сессии
+   * (/api/session/owns, без кэша). Свои строки по idx_feedback_steamid от
+   * свежих, до первой строки бана этой игры; доупорядочить по id нужно
+   * только строки одной секунды.
+   */
+  {
+    name: 'пройдена ли игра',
+    run: (db) => isFinished(db, '76561198000000001', 620),
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },

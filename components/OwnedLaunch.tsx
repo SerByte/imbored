@@ -36,6 +36,13 @@ import { isNeedSteam, writerStore } from '@/lib/writer'
  * нет. Разметка ISR от этого не меняется — всё дорисовывает островок.
  * Кнопка — и на телефоне: отметка не запуск, протокол ей не нужен.
  *
+ * Уже пройденной — не кнопка, а слово (done в том же ответе владения): как
+ * в «Твоих вечерах». Отметка жила только в состоянии островка, и после
+ * перезагрузки «Уже прошёл» возвращалась к игре с полки «Пройдено» — не
+ * понять, сохранилось ли, а повторное нажатие писало ещё одну строку бана.
+ * done решает только ответ при монтировании: после нажатия MarkFinished
+ * остаётся на месте — на его строке «Пройдено» стоит фокус.
+ *
  * follow — звать ли после отметки «Дальше — в духе X». Решает страница, той
  * же полкой, что и ссылку «Похожее на X» внизу (data.similar): у игры без
  * соседей обе вели бы к экрану «похожих не нашлось», и две дороги на одной
@@ -65,15 +72,15 @@ export function OwnedLaunch({
   const hasSession = writer !== null
   // appid рядом с ответом: при переходе на соседнюю карточку старое «да» не
   // должно мелькнуть у новой игры, пока едет её ответ
-  const [owns, setOwns] = useState<{ appid: number; owned: boolean; plan: boolean } | null>(null)
+  const [owns, setOwns] = useState<{ appid: number; owned: boolean; plan: boolean; done: boolean } | null>(null)
 
   useEffect(() => {
     if (!hasSession) return
     let live = true
     fetch(`/api/session/owns?appid=${appid}`)
-      .then((r) => (r.ok ? (r.json() as Promise<{ owned?: unknown; plan?: unknown }>) : null))
+      .then((r) => (r.ok ? (r.json() as Promise<{ owned?: unknown; plan?: unknown; done?: unknown }>) : null))
       .then((d) => {
-        if (live && d) setOwns({ appid, owned: d.owned === true, plan: d.plan === true })
+        if (live && d) setOwns({ appid, owned: d.owned === true, plan: d.plan === true, done: d.done === true })
       })
       .catch(() => {})
     return () => {
@@ -109,16 +116,20 @@ export function OwnedLaunch({
             : undefined
         }
       />
-      {finishable && writer === true && (
-        <MarkFinished
-          appid={appid}
-          name={name}
-          from="game"
-          follow={follow}
-          onDenied={() => writerStore.set(false)}
-          className={className}
-        />
-      )}
+      {finishable &&
+        writer === true &&
+        (owns.done ? (
+          <span className="self-center text-sm text-dim">Пройдено — больше не предложу</span>
+        ) : (
+          <MarkFinished
+            appid={appid}
+            name={name}
+            from="game"
+            follow={follow}
+            onDenied={() => writerStore.set(false)}
+            className={className}
+          />
+        ))}
     </>
   )
 }

@@ -110,9 +110,33 @@ describe('«Уже прошёл» вне выдачи', () => {
     const evenings = fs
       .readFileSync(path.join(__dirname, '..', 'components', 'Evenings.tsx'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
+    // keep(item) между отметкой и пересчётом — см. тест ниже
     expect(evenings).toMatch(
-      /onDone=\{\(\) => \{\s*setMarked\(\(m\) => new Set\(m\)\.add\(key\)\)\s*startTransition\(\(\) => router\.refresh\(\)\)/,
+      /onDone=\{\(\) => \{\s*setMarked\(\(m\) => new Set\(m\)\.add\(key\)\)\s*keep\(item\)\s*startTransition\(\(\) => router\.refresh\(\)\)/,
     )
     expect(evenings).toMatch(/item\.finished && !marked\.has\(key\) \?/)
+  })
+
+  /*
+   * Мало держать MarkFinished — надо, чтобы пересчёт не унёс саму карточку.
+   * Сервер ставит на полку двенадцать свежих советов и сверх них —
+   * спрашиваемые (askableNow); тринадцатый с только что данным «Зацепило»
+   * уже не спрашиваемый, и refresh после «Уже прошёл» снимал его с полки
+   * вместе со строкой, на которой стоял фокус. Поэтому полка — items плюс
+   * карточки, тронутые здесь (lib/eveningshelf), и строка отказа ищет игру
+   * там же.
+   */
+  test('в «Твоих вечерах» пересчёт не снимает с полки карточку, которую только что тронули', () => {
+    const evenings = fs
+      .readFileSync(path.join(__dirname, '..', 'components', 'Evenings.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    expect(evenings).toContain('const shelf = keepOnShelf(items, kept)')
+    expect(evenings).toContain('{shelf.map((item) => {')
+    expect(evenings).not.toContain('items.map((item) => {')
+    expect(evenings).toContain('shelf.find((i) => keyOf(i) === failed)')
+    // и ответ «как тебе?»: снятый со спрашиваемых, он уходил бы с первым же пересчётом
+    const answer = evenings.slice(evenings.indexOf('async function answer('), evenings.indexOf('return (\n'))
+    expect(answer).toMatch(/keep\(item\)/)
   })
 })
