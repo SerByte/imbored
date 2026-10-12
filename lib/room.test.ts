@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   awaitingOthers,
   deckBehind,
+  kickHandoffDue,
   matchByLeader,
   matchLine,
   matchNoticeDue,
@@ -406,5 +407,41 @@ describe('roomMissText: отказ кнопки комнаты — пока он
     const miss = { text: 'Выйти не получилось', deck: '2:0' }
     expect(roomMissText(miss, { ...now, deck: '2:1' })).toBeNull()
     expect(roomMissText(miss, { ...now, deck: '3:0' })).toBeNull()
+  })
+})
+
+/**
+ * Строка «Пустить обратно» живёт весь заход, пока убранный не вернулся, а
+ * колоду на место экрана ожидания ставит не только ✕. Фокус забирала любая
+ * такая смена: «Ещё 20 игр» с клавиатуры переносил его на строку про ✕ — в
+ * 'done' на выключенную кнопку, в 'shown' на живую, и второй Enter по
+ * «Добираю…» снимал нарочный ✕.
+ */
+describe('kickHandoffDue: фокус на «Пустить обратно» — только с колодой от ✕', () => {
+  // ✕ нажали на экране троих в раунде 0
+  const ticket = { members: 3, round: 0 }
+
+  test('колода от ✕ — состав без убранного, тот же раунд: фокус на строку', () => {
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: 'shown' })).toBe(true)
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: 'failed' }), 'отмена не дошла — повторить').toBe(true)
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: 'busy' }), '«Пускаю…» нажата там же').toBe(true)
+  })
+
+  test('«Ещё 20 игр» или раунд соседа — мимо: квитанция ✕ без своей колоды до них доживает', () => {
+    expect(kickHandoffDue(ticket, { members: 2, round: 1, phase: 'shown' })).toBe(false)
+  })
+
+  test('отмена уже прошла — мимо: «Пустили обратно» выключена', () => {
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: 'done' })).toBe(false)
+  })
+
+  test('состав сдвинул не только ✕ — колода уже не от него', () => {
+    expect(kickHandoffDue(ticket, { members: 1, round: 0, phase: 'shown' }), 'ушёл кто-то ещё').toBe(false)
+    expect(kickHandoffDue(ticket, { members: 3, round: 0, phase: 'shown' }), 'кто-то вошёл').toBe(false)
+  })
+
+  test('квитанции нет или строки нет — фокус не трогаем', () => {
+    expect(kickHandoffDue(null, { members: 2, round: 0, phase: 'shown' })).toBe(false)
+    expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: null })).toBe(false)
   })
 })

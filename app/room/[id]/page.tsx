@@ -7,6 +7,7 @@ import {
   type ComponentProps,
   useCallback,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   useSyncExternalStore,
@@ -38,6 +39,8 @@ import type { GameTrait } from '@/lib/gametraits'
 import type { Mood } from '@/lib/types'
 import {
   awaitingOthers,
+  kickHandoffDue,
+  type KickTicket,
   matchLine,
   ROOM_MAX_MEMBERS,
   type RoomMiss,
@@ -52,6 +55,7 @@ import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { HIDDEN_POLL_CAP_MS, hiddenPollDelay, nextPollStep, snapshotFate } from '@/lib/roompoll'
 import { announceMatch } from '@/components/room/MatchNotify'
 import { isNeedSteam, writerStore } from '@/lib/writer'
+import { focusAdrift } from '@/lib/focushandoff'
 import { roomShareUrl } from '@/lib/roomshare'
 import { storeLink } from '@/lib/storelink'
 import { track } from '@/lib/track'
@@ -203,9 +207,9 @@ const POLL_IDLE_AFTER_MS = 60_000
  * Своим таймером на тот же AbortController, а не AbortSignal.any: того нет в
  * Safari до 17.4, и на нём опрос падал бы в catch на каждом тике.
  *
- * Тот же потолок — у выхода, ✕ хоста и переключателя доски (cappedSignal в
- * lib/deckvote): их флаги «в пути» гасят повтор, и повисший запрос держал бы
- * кнопку мёртвой без строки отказа.
+ * Тот же потолок — у выхода, ✕ хоста, «Пустить обратно» и переключателя
+ * доски (cappedSignal в lib/deckvote): их флаги «в пути» гасят повтор, и
+ * повисший запрос держал бы кнопку мёртвой без строки отказа.
  */
 const POLL_TIMEOUT_MS = 8_000
 /** Пол по частоте для догрузки лайков — см. докблок у эффекта */
@@ -1047,6 +1051,45 @@ export default function RoomPage() {
   }, [notMember])
 
   /*
+   * На экране ли RoomWaiting — ровно та ветка разметки, где он стоит (ниже,
+   * за колодой). Считается до ранних return ради эффекта под ним.
+   */
+  const card = cards?.[0]
+  const waitingShown = !deckFailed && cards !== null && !card
+  /*
+   * Фокус, упавший вместе с экраном ожидания, — на «Пустить обратно».
+   *
+   * ✕ отдаёт фокус соседней ✕ или заголовку (MemberRoster, RoomWaiting), а
+   * через пару секунд меньший состав приносит новую колоду, и весь экран
+   * ожидания уходит из-под фокуса в body. Строка отмены в эту минуту встаёт
+   * над колодой (kickUndo ниже) — ближайшее к тому, что человек делал.
+   *
+   * Только ЭТА пересборка, а не любая смена экрана ожидания колодой (почему —
+   * kickHandoffDue в lib/room): ✕ оставляет квитанцию (undoHandoff) — экран,
+   * на котором нажали. Любая смена экрана ожидания её гасит, совпала она или
+   * нет: второго шанса у строки нет. Когда ✕ колоды не принёс (на оставшихся
+   * карт не нашлось), квитанция доживает до «Ещё 20 игр» — но раунд там уже
+   * другой. И только потерянный фокус, и только когда строка есть: иначе ref
+   * пуст.
+   */
+  const undoRef = useRef<HTMLButtonElement>(null)
+  const undoHandoff = useRef<KickTicket | null>(null)
+  const handOffUndo = useEffectEvent((waiting: boolean) => {
+    const ticket = undoHandoff.current
+    undoHandoff.current = null
+    if (waiting || !state) return
+    const due = kickHandoffDue(ticket, {
+      members: state.members.length,
+      round: state.room.deckRound,
+      phase: kicked?.phase ?? null,
+    })
+    if (due && focusAdrift(document)) undoRef.current?.focus()
+  })
+  useEffect(() => {
+    handOffUndo(waitingShown)
+  }, [waitingShown])
+
+  /*
    * Ответ на вход — своими словами для каждой причины.
    *
    * Роут входа отвечает 404 (комнаты нет) и 401 (сессия протухла), а клиент
@@ -1370,6 +1413,9 @@ export default function RoomPage() {
       // этого чтения — не отказ удаления: его подхватит обычный опрос
       if (memberId) {
         setKicked({ id: memberId, name: name ?? 'участник', phase: 'shown' })
+        // Квитанция фокуса (handOffUndo): экран, на котором нажали. state —
+        // снимок того рендера, и await его не сдвигает
+        if (state) undoHandoff.current = { members: state.members.length, round: state.room.deckRound }
         void refresh().catch(() => null)
       } else router.push('/rooms')
     } catch {
@@ -1397,6 +1443,9 @@ export default function RoomPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ unkick: id }),
+      // Потолок, как у ✕ и доски: фаза 'busy' держит undoLocked, и кроме
+      // ответа её не гасит ничто. Отмена по сроку уходит в catch — 'failed'
+      signal: cappedSignal(POLL_TIMEOUT_MS),
     }).catch(() => null)
     const denied = res !== null && (await isNeedSteam(res))
     if (denied) {
@@ -1427,6 +1476,11 @@ export default function RoomPage() {
     if (publicBusy) return
     setPublicBusy(true)
     setPublicMiss(null)
+    // Прежний отказ гаснет до запроса, как у ✕ и «Пустить обратно»: второй
+    // needsteam подряд иначе не менял бы область в шапке и промолчал бы
+    // (components/StatusLine), а вход через Steam в другой вкладке оставлял
+    // бы над переключённой доской строку «войди через Steam»
+    setPublicDenied(false)
     const was = state?.room.isPublic ?? false
     const miss: RoomMiss = {
       text: 'Доска не переключилась — проверь связь и нажми ещё раз.',
@@ -1589,17 +1643,41 @@ export default function RoomPage() {
               Открыть «{state.matchedGame.name}» в {shop.where}
             </a>
           )}
-          <p className="text-dim text-sm">
-            Комната <span className="font-mono text-ink">{roomId}</span> сошлась, и новых людей в
-            неё уже не пускают. Собери свою — или подсядь к тем, кто ещё выбирает.
-          </p>
-          <Link href="/room/new" className="btn-ember is-block py-3">
-            Создать свою комнату
-          </Link>
-          <Link href="/rooms" className="tap link-more">
-            Открытые пати
-            <Icon name="arrow" size={16} />
-          </Link>
+          {/*
+            Не-участник — не всегда чужой: профиль, сидящий здесь со входом
+            через Steam, открытый по вставленной ссылке, опрос тоже отдаёт
+            не-участником (needSteam, lib/roomseat). Весть «Играем в X»
+            (MatchShare) приходит в чат этим адресом, и свой с телефона читал
+            «новых людей не пускают» — что его в пати нет. Ему — вход через
+            Steam, как на приглашении ниже: join своего в сошедшуюся комнату
+            пускает (joinRoom), и возврат откроет церемонию.
+          */}
+          {state.needSteam ? (
+            <>
+              <p className="text-dim text-sm">
+                Комната <span className="font-mono text-ink">{roomId}</span>. Этот профиль в ней — со
+                входом через Steam, а ссылка не доказывает, что он твой: войди через Steam и здесь, и
+                откроется экран матча.
+              </p>
+              <a href={`/api/auth/steam?join=${roomId}`} className="btn-ember is-block py-3">
+                Войти через Steam
+              </a>
+            </>
+          ) : (
+            <>
+              <p className="text-dim text-sm">
+                Комната <span className="font-mono text-ink">{roomId}</span> сошлась, и новых людей в
+                неё уже не пускают. Собери свою — или подсядь к тем, кто ещё выбирает.
+              </p>
+              <Link href="/room/new" className="btn-ember is-block py-3">
+                Создать свою комнату
+              </Link>
+              <Link href="/rooms" className="tap link-more">
+                Открытые пати
+                <Icon name="arrow" size={16} />
+              </Link>
+            </>
+          )}
         </div>
       </div>
     )
@@ -1697,29 +1775,38 @@ export default function RoomPage() {
   }
 
   // ---- ЛОББИ + СВАЙП ----
-  const card = cards?.[0]
 
   /*
    * «Пустить обратно» — под ростером, откуда нажат ✕ (RoomWaiting ставит её
    * и под приглашением, если ✕ убрал последнего, кроме хоста). Пропадает,
    * когда убранный снова в ростере: отменять уже нечего.
    *
+   * Экран ожидания ✕ сам и уводит: меньший состав — новая колода, и SwipeDeck
+   * встаёт на его место. Тогда строку ставит страница — под составом над
+   * колодой (waitingShown). Одно условие на обе развилки: строка не
+   * пропадает и не стоит дважды.
+   *
    * Имя после двоеточия, а глагол — без рода: «убрали», «сможет». Ник из
    * Steam не склоняется и рода не выдаёт (тот же довод — в LikesStrips).
    */
   const kickShown = kicked && !state.members.some((m) => m.id === kicked.id) ? kicked : null
+  // Кнопка — в строку за фразой, а не флекс-элементом: флекс с переносом
+  // ставил её третьим рядом под переносом фразы. Над колодой на телефоне
+  // строка — ровно один ряд: фраза в своём span обрезается многоточием, а
+  // кнопка целиком (kick-undo в globals.css) — каждый ряд там отнят у карты
   const kickUndo = kickShown ? (
-    <p className="relative flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-faint">
+    <p className="relative text-xs text-faint">
       <span>
         {kickShown.phase === 'done'
           ? `${kickShown.name} сможет войти сразу.`
           : `Убрали из пати: ${kickShown.name}. Войти снова получится через полчаса.`}
-      </span>
+      </span>{' '}
       <button
+        ref={undoRef}
         type="button"
         onClick={() => void unkick()}
         aria-disabled={undoLocked}
-        className="tap tap-tight text-ember-text hover:underline cursor-pointer aria-disabled:opacity-60 aria-disabled:no-underline"
+        className="tap tap-tight ml-1 text-ember-text hover:underline cursor-pointer aria-disabled:opacity-60 aria-disabled:no-underline"
       >
         {kickShown.phase === 'busy'
           ? 'Пускаю…'
@@ -1738,7 +1825,7 @@ export default function RoomPage() {
   const alone = state.members.length <= 1
   // Ровно то условие, при котором ниже рендерится RoomWaiting с AloneInvite:
   // колода загружена и пуста, а waitingMode отдаёт 'alone'
-  const aloneInvite = alone && !deckFailed && cards !== null && !card
+  const aloneInvite = alone && waitingShown
   // Отказы кнопок — пока они правда (roomMissText в lib/room)
   const missNow = { deck: deckWant, members: state.members, isPublic: state.room.isPublic }
   const publicMissText = roomMissText(publicMiss, missNow)
@@ -1808,7 +1895,8 @@ export default function RoomPage() {
             не влезают в строку на 390 px и встают в два ряда — замер: карта
             колоды начиналась на 329 px вместо 277, и кнопки голоса уходили
             под нижнюю панель (на 19 px на 390×844, на 113 на 375×667). Высота
-            карты (.room-page .deck-stack) считается от шапки в один ряд.
+            карты (.room-page .deck-stack) считается от шапки в один ряд — и
+            от состава над колодой в один ряд (ниже, у его разметки).
           */}
           <button onClick={copyLink} className="btn-glass py-3 text-sm">
             {share.label(
@@ -1908,12 +1996,21 @@ export default function RoomPage() {
         className="-mt-3 text-sm text-danger"
       />
 
+      {/*
+        Состав над колодой — на телефоне в один ряд, листается вбок, как
+        ScrollRail. Он переносился: двух обычных ников («Демо-игрок (ты) · 0
+        голосов» и «Демо-друг · 0 голосов») хватало на 350 px колонки, а
+        пати из трёх переносилась всегда. Карта (.room-page .deck-stack)
+        сдвигалась на ряд ниже, а её высота считается от одного ряда —
+        замер на 390×844: кнопки голоса 743–803 под панелью от 794. От md
+        переносится, как раньше: там бюджет карты другой.
+      */}
       {card && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex gap-2 md:flex-wrap max-md:-mx-5 max-md:px-5 max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
           {state.members.map((m) => (
             <span
               key={m.id}
-              className={`pill cursor-default text-xs ${m.me ? 'is-on' : 'text-dim'}`}
+              className={`pill shrink-0 whitespace-nowrap cursor-default text-xs ${m.me ? 'is-on' : 'text-dim'}`}
             >
               {/* Одной строкой в одном span: .pill — inline-flex с gap, и
                   голые куски текста вокруг числа становились отдельными
@@ -1926,8 +2023,18 @@ export default function RoomPage() {
               </span>
             </span>
           ))}
+          {/* Распорка: Chrome срезает padding-right у последнего элемента
+              в flex+overflow (см. ScrollRail) */}
+          <span aria-hidden className="shrink-0 w-px md:hidden" />
         </div>
       )}
+
+      {/*
+        «Пустить обратно», пока RoomWaiting нет на экране (см. kickShown).
+        kick-undo — для высоты карты на телефоне: строка над колодой сдвигает
+        её вниз, и карта короче ровно на это (globals.css, .deck-stack)
+      */}
+      {!waitingShown && kickUndo && <div className="kick-undo -mt-3">{kickUndo}</div>}
 
       {deckFailed ? (
         <div className="panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
