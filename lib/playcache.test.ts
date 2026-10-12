@@ -7,6 +7,7 @@ import {
   forgetPlay,
   hasFreshDeal,
   hasFreshWarm,
+  heldPlanned,
   parsePlayCache,
   parseRecentBans,
   parseWarmMark,
@@ -23,6 +24,7 @@ import {
   withBan,
   type PlayCache,
 } from './playcache'
+import { forgetPlanned } from './planforget'
 import type { PlayPick } from './playflow'
 import { runWarmup, startPrewarm } from './warmup'
 
@@ -81,6 +83,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
     },
     hero: 20,
     liked: [10],
+    planned: [],
     ...over,
   }
 }
@@ -139,6 +142,24 @@ describe('parsePlayCache', () => {
     delete old.plan
     expect(parsePlayCache({ ...e, deal: old })?.deal.plan).toBeNull()
     expect(parsePlayCache({ ...e, deal: { ...e.deal, plan: { appid: 0 } } })?.deal.plan).toBeNull()
+  })
+
+  /*
+   * Отложенные на вечер в этом заходе (app/play: «Не то — дальше» у них
+   * листает без пропуска) едут с выдачей: иначе «Подробнее» → «Назад» их
+   * забывал, и пропуск закрывал план через минуту после того, как он
+   * поставлен. Запись до этого поля — выдача без отложенных, а не битая
+   * запись: версия та же, и прогрев заново ради пустого списка не нужен.
+   */
+  test('отложенные на вечер переживают запись; запись без них — пустой список', () => {
+    const e = entry({ planned: [20, 1145360] })
+    expect(parsePlayCache(JSON.parse(JSON.stringify(e)))?.planned).toEqual([20, 1145360])
+    const old: Record<string, unknown> = { ...e }
+    delete old.planned
+    expect(parsePlayCache(old)?.planned).toEqual([])
+    // мусор — поштучно и без потери выдачи: план не стоит прогрева заново
+    expect(parsePlayCache({ ...e, planned: 'all' })?.planned).toEqual([])
+    expect(parsePlayCache({ ...e, planned: ['20', 30, 1.5] })?.planned).toEqual([30])
   })
 
   test('запись прошлой версии сайта не узнаётся', () => {
@@ -307,12 +328,59 @@ describe('restoreDeal', () => {
     expect(gone?.deal.picks[gone.index].appid).toBe(10)
   })
 
+  /*
+   * «Сыграю вечером на ПК» → «Подробнее» → «Назад»: герой, отложенный на
+   * вечер, возвращается отложенным, и «Не то — дальше» у него по-прежнему
+   * листает, а не пишет пропуск, закрывающий план. Забаненный — уже нет:
+   * бан план и так закрыл (closesPlan), а «не то» у него не спросят вовсе.
+   */
+  test('отложенные на вечер возвращаются с выдачей, забаненные — нет', () => {
+    expect(restoreDeal(entry({ planned: [20, 30] }), q)?.planned).toEqual([20, 30])
+    expect(restoreDeal(entry({ planned: [20, 30] }), { ...q, banned: new Set([30]) })?.planned).toEqual([20])
+    expect(restoreDeal(entry(), q)?.planned).toEqual([])
+  })
+
   test('забанено всё — восстанавливать нечего', () => {
     expect(restoreDeal(entry(), { ...q, banned: new Set([10, 20, 30]) })).toBeNull()
   })
 
   test('нет записи — нет и выдачи', () => {
     expect(restoreDeal(null, q)).toBeNull()
+  })
+})
+
+/*
+ * «Поставь на загрузку» у своей → «Изменить настроение» → квиз → /play с
+ * другим настроением. Новое монтирование, другой ключ: restoreDeal выдачу
+ * не вернёт — а отложенные из той же записи обязаны доехать до новой
+ * выдачи. Иначе первая же новая выдача ложилась поверх единственной записи
+ * с пустым списком, и своя игра, пришедшая героем снова, на «Не то —
+ * дальше» → «Просто не сейчас» закрывала план, поставленный минуту назад.
+ */
+describe('heldPlanned', () => {
+  const q = { nowMs: NOW + 60_000, banned: NO_BANS }
+  const mood = playCacheKey({ mood: { ...NEUTRAL_MOOD, vibe: 'engaged' }, focus: null, roulette: false, lean: null })
+
+  test('запись другого настроения выдачу не вернёт, а отложенные отдаст — с тем, чьи они', () => {
+    const e = entry({ planned: [20, 1145360] })
+    expect(restoreDeal(e, { ...q, key: mood, viewer: ME })).toBeNull()
+    expect(heldPlanned(e, q)).toEqual({ viewer: ME, appids: [20, 1145360] })
+  })
+
+  test('старше пятнадцати минут — уже не этот заход', () => {
+    const e = entry({ planned: [20] })
+    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAY_CACHE_TTL_MS })).not.toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAY_CACHE_TTL_MS + 1 })).toBeNull()
+  })
+
+  test('забаненные не едут: бан план уже закрыл', () => {
+    expect(heldPlanned(entry({ planned: [20, 30] }), { ...q, banned: new Set([30]) })?.appids).toEqual([20])
+    expect(heldPlanned(entry({ planned: [20] }), { ...q, banned: new Set([20]) })).toBeNull()
+  })
+
+  test('нести нечего — null, а не пустой список', () => {
+    expect(heldPlanned(entry(), q)).toBeNull()
+    expect(heldPlanned(null, q)).toBeNull()
   })
 })
 
@@ -483,6 +551,35 @@ describe('хранилища', () => {
       banned: readRecentBans(NOW + 1000),
     })
     expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 30])
+  })
+
+  /*
+   * План закрыт на странице игры («Запустить» по биту plan) — lib/planforget
+   * вычёркивает игру из записи по ключу, мимо модуля выдачи. Модуль в этом
+   * документе уже загружен (пришли с /play без перезагрузки) и держит в
+   * памяти прежнюю копию; /play при монтировании читает запись из
+   * хранилища (fresh) — и видит правку, а правленая запись по-прежнему
+   * узнаётся целиком.
+   */
+  test('отложенная, чей план закрыт не на /play, после «Назад» уже не отложена и не строка плана', () => {
+    const session = fakeStorage()
+    vi.stubGlobal('sessionStorage', session.area)
+    playCacheStore.set(entry({ planned: [20, 30] }))
+
+    forgetPlanned(20)
+
+    const back = restoreDeal(playCacheStore.fresh(), { key: KEY, viewer: ME, nowMs: NOW + 1000, banned: NO_BANS })
+    expect(back?.planned).toEqual([30])
+    expect(back?.deal.picks.map((p) => p.appid)).toEqual([10, 20, 30])
+    expect(back?.liked).toEqual([10])
+    expect(back?.deal.plan?.appid).toBe(1145360)
+
+    // запуск плана из строки — та уходит, а выдача остаётся узнанной целиком
+    forgetPlanned(1145360)
+    const after = restoreDeal(playCacheStore.fresh(), { key: KEY, viewer: ME, nowMs: NOW + 1000, banned: NO_BANS })
+    expect(after?.deal.plan).toBeNull()
+    expect(after?.deal.continueGame?.appid).toBe(570)
+    expect(after?.planned).toEqual([30])
   })
 
   test('свой бан дописывается к хранилищу и не стирает бан соседней вкладки', () => {

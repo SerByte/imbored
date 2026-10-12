@@ -5,6 +5,7 @@ import { FinishedNote, MarkFinished } from '@/components/MarkFinished'
 import { NeedSteam } from '@/components/NeedSteam'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { focusAdrift } from '@/lib/focushandoff'
+import { forgetPlanned } from '@/lib/planforget'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
 /** Строка на месте ушедшей кнопки забирает фокус — только потерянный (lib/focushandoff) */
@@ -78,6 +79,11 @@ const takeLost = (el: HTMLElement | null) => {
  * ушедшей «Уже прошёл»: «Запустить» на месте. Вход ведёт на квиз, а не сюда —
  * страницы игры нет в закрытом списке возвратов (lib/destination), как и у
  * ReadOnlyNote на ней; поэтому строка и не обещает «вернёшься сюда».
+ *
+ * Закрытый план забывает и выдача /play на устройстве (lib/planforget): сюда
+ * чаще всего приходят из её ⓘ «Подробнее», и после «Назад» отложенный герой
+ * иначе листался бы «Не то — дальше» молча — без ответа про игру, которую
+ * только что запустили.
  */
 export function OwnedLaunch({
   appid,
@@ -142,7 +148,7 @@ export function OwnedLaunch({
                     if (await isNeedSteam(r)) {
                       setDenied((d) => (d?.appid === appid ? d : { appid, how: 'launch' }))
                       writerStore.set(false)
-                    }
+                    } else if (r.ok) forgetPlanned(appid)
                   })
                   .catch(() => {})
             : undefined

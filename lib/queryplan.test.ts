@@ -22,6 +22,7 @@ import {
   PATCH_SINCE_MAX,
   getNeighbors,
   latestEveningPlan,
+  livePlanAppids,
   isFinished,
   bannedAppids,
   listBanned,
@@ -444,6 +445,14 @@ const CASES: Case[] = [
   {
     name: 'план на вечер',
     run: (db) => latestEveningPlan(db, '76561198000000001', NOW),
+    indexes: ['idx_feedback_steamid'],
+    sortFree: false,
+  },
+  // Все живые планы — на каждый заход /library («Твои вечера»): те же свои
+  // строки за полтора дня, только без LIMIT 1 и без каталога
+  {
+    name: 'живые планы на вечер',
+    run: (db) => livePlanAppids(db, '76561198000000001', NOW),
     indexes: ['idx_feedback_steamid'],
     sortFree: false,
   },

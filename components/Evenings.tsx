@@ -13,6 +13,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { eveningKey as keyOf, keepOnShelf } from '@/lib/eveningshelf'
 import { latestWins } from '@/lib/latestwins'
 import type { OutcomeVerdict } from '@/lib/outcome'
+import { forgetPlanned } from '@/lib/planforget'
 import { quizHref } from '@/lib/presets'
 import { isNeedSteam } from '@/lib/writer'
 
@@ -100,11 +101,13 @@ const VERDICTS: Array<{ key: Exclude<OutcomeVerdict, 'dismissed'>; label: string
  * минуты и что ещё подтянется считаются там, а текст в пропсах не весит в JS
  * маршрута.
  *
- * plan — appid живого плана на вечер (lib/eveningplan.ts), его читает
- * сервер. План закрывается запуском, а «Вернуться к ней» здесь — запуск
- * сайта: у игры плана он пишется так же, как со страницы игры (OwnedLaunch,
- * слот plan), — иначе «Ставил «X» на загрузку — ждёт тебя» висела бы на
- * главной и после сыгранного вечера. Только настоящий запуск (onLaunch):
+ * plans — appid игр полки с живым планом на вечер (lib/eveningplan.ts), их
+ * читает сервер. План закрывается запуском, а «Вернуться к ней» здесь —
+ * запуск сайта: у игры плана он пишется так же, как со страницы игры
+ * (OwnedLaunch, слот plan), — иначе «Ставил «X» на загрузку — ждёт тебя»
+ * висела бы на главной и после сыгранного вечера. Каждой карточке — план
+ * своей игры, а не один самый свежий: живых планов бывает несколько, и
+ * запуск старшего иначе не писался. Только настоящий запуск (onLaunch):
  * «Открыть в Steam» под пальцем — магазин, и план он не закрывает. У
  * остальных карточек запуск по-прежнему не пишется: это своя игра, а не
  * ответ на совет.
@@ -113,12 +116,12 @@ export function Evenings({
   items,
   lead,
   writer,
-  plan,
+  plans,
 }: {
   items: EveningItem[]
   lead: ReactNode
   writer: boolean
-  plan: number | null
+  plans: readonly number[]
 }) {
   const [verdicts, setVerdicts] = useState(() => new Map(items.map((i) => [keyOf(i), i.verdict])))
   const [denied, setDenied] = useState(false)
@@ -171,7 +174,9 @@ export function Evenings({
   /*
    * Запуск игры плана. Отправил и забыл, как OwnedLaunch: потерянный —
    * это строка плана до конца срока, а не сбой. needsteam — права сменились,
-   * пока страница была открыта: кнопки гаснут, как после отказа ответа
+   * пока страница была открыта: кнопки гаснут, как после отказа ответа.
+   * Записанный — закрыл план, и выдача /play на устройстве больше не держит
+   * игру отложенной (lib/planforget): «не то» у неё там снова спросят
    */
   const closePlan = (appid: number) =>
     void fetch('/api/feedback', {
@@ -181,6 +186,7 @@ export function Evenings({
     })
       .then(async (r) => {
         if (await isNeedSteam(r)) setDenied(true)
+        else if (r.ok) forgetPlanned(appid)
       })
       .catch(() => {})
 
@@ -307,7 +313,7 @@ export function Evenings({
                   appid={item.appid}
                   label={item.playedEnough ? 'Вернуться к ней' : 'Запустить'}
                   mobileLabel="Открыть в Steam"
-                  onLaunch={item.appid === plan ? () => closePlan(item.appid) : undefined}
+                  onLaunch={plans.includes(item.appid) ? () => closePlan(item.appid) : undefined}
                   className="link-more tap self-start"
                 />
               ) : (

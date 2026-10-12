@@ -85,6 +85,7 @@ import {
   getUserPortrait,
   insertMissingGamesMeta,
   latestEveningPlan,
+  livePlanAppids,
   joinRoom,
   listBanned,
   listExplore,
@@ -5038,6 +5039,39 @@ describe('план на вечер', () => {
     expect(await latestEveningPlan(db, ME, NOW)).toMatchObject({ appid: 570 })
   })
 
+  /*
+   * «Твои вечера» (/library) — полка, где живых планов бывает несколько:
+   * вчера «Сыграю вечером» у одной, утром «Поставь на загрузку» у другой.
+   * «Вернуться к ней» у старшей обязан закрыть её план, а не только самый
+   * свежий: иначе, едва закроют свежий, старший встанет живой строкой
+   * «Отложил «A» на вечер — ждёт тебя» про игру, в которую уже вернулись.
+   */
+  test('все живые планы разом — каждый своей игрой; закрывает их то же, что и строку', async () => {
+    const db = await withGames()
+    expect(await livePlanAppids(db, ME, NOW)).toEqual(new Set())
+    await plan(db, 620, 'tonight', NOW - 20 * HOUR)
+    await plan(db, 570, 'install', NOW - HOUR)
+    // тот же план дважды — одна игра, а не две строки
+    await plan(db, 570, 'install', NOW - HOUR + 5)
+    // чужой план и истёкший — не в счёт
+    await logFeedback(
+      db,
+      { steamid: '76561198000000002', appid: 440, action: 'opened', ctx: { intent: 'install' } },
+      NOW,
+    )
+    await plan(db, 440, 'install', NOW - PLAN_TTL_SEC - 1)
+    expect(await livePlanAppids(db, ME, NOW)).toEqual(new Set([620, 570]))
+    // «Открыть в Steam» с телефона — магазин, план стоит
+    const store = { source: 'library', slot: 'plan', intent: 'store' } as const
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched', ctx: store }, NOW - 60)
+    expect(await livePlanAppids(db, ME, NOW)).toEqual(new Set([620, 570]))
+    // настоящий запуск старшего закрывает именно его, свежий стоит
+    const launch = { source: 'library', slot: 'plan', intent: 'launch' } as const
+    await logFeedback(db, { steamid: ME, appid: 620, action: 'launched', ctx: launch }, NOW)
+    expect(await livePlanAppids(db, ME, NOW)).toEqual(new Set([570]))
+    expect(await latestEveningPlan(db, ME, NOW)).toMatchObject({ appid: 570 })
+  })
+
   test('новый план той же игры после закрытого — снова план, и его закрывает второй запуск', async () => {
     const db = await withGames()
     await plan(db, 620, 'install', NOW - 2 * HOUR)
@@ -5142,6 +5176,8 @@ describe('план на вечер', () => {
       )
       const closed = (await latestEveningPlan(db, ME, NOW, appid)) === null
       expect(closed, JSON.stringify(c)).toBe(closesPlan(c.action, c.reason, c.intent))
+      // и «Твои вечера» (livePlanAppids) — тем же правилом, а не своим
+      expect((await livePlanAppids(db, ME, NOW)).has(appid), JSON.stringify(c)).toBe(!closed)
     }
   })
 

@@ -247,16 +247,49 @@ describe('кнопка запуска', () => {
    */
   test('«Не то — дальше» у только что отложенного героя план не закрывает', () => {
     const play = code(read('app', 'play', 'page.tsx'))
-    expect(play).toMatch(/if \(r\.ok && writesPlan\(action, ctx\?\.intent\)\) plannedHere\.current\.add\(appid\)/)
+    expect(play).toMatch(
+      /if \(r\.ok && writesPlan\(action, ctx\?\.intent\)\) setPlanned\(\(a\) => \(a\.includes\(appid\) \? a : \[\.\.\.a, appid\]\)\)/,
+    )
     // закрытый план (запустил с героя) память отпускает: «не то» после
     // запуска — снова ответ с причиной
     expect(play).toMatch(
-      /if \(r\.ok && closesPlan\(action, reason, ctx\?\.intent\)\) \{\s*setPlan\([^\n]*\)\s*plannedHere\.current\.delete\(appid\)\s*\}/,
+      /if \(r\.ok && closesPlan\(action, reason, ctx\?\.intent\)\) \{\s*setPlan\([^\n]*\)\s*setPlanned\(\(a\) => \(a\.includes\(appid\) \? a\.filter\(\(x\) => x !== appid\) : a\)\)\s*\}/,
     )
-    expect(play).toMatch(/if \(readOnly \|\| plannedHere\.current\.has\(pick\.appid\)\) \{\s*advance\(index\)\s*return\s*\}\s*setAskReason\(true\)/)
+    expect(play).toMatch(/if \(readOnly \|\| planned\.includes\(pick\.appid\)\) \{\s*advance\(index\)\s*return\s*\}\s*setAskReason\(true\)/)
     // оба нажатия плана идут через sendFeedback — и попадают в память выше
     expect(play).toMatch(/sendFeedback\(pick\.appid, 'opened', undefined, ctxOf\(pick, heroFrom, 'install'\)\)/)
     expect(play).toMatch(/onPlan=\{\(\) => sendFeedback\(pick\.appid, 'opened', undefined, ctxOf\(pick, heroFrom, 'tonight'\)\)\}/)
+  })
+
+  /*
+   * Память об отложенных — не только этого монтирования. «Подробнее» →
+   * «Назад» и перезагрузка возвращают ту же выдачу из записи на устройстве
+   * (lib/playcache), но на новом монтировании, и память, жившая в ref,
+   * пустела: «Не то — дальше» у героя, отложенного минуту назад, снова
+   * спрашивал причину, а «Просто не сейчас» закрывал план. Поэтому список —
+   * состояние: его видит эффект записи выдачи (ref, тронутый после «Сыграю
+   * вечером», до записи не доходил, если следующим нажатием было ⓘ), и
+   * восстановленная выдача приносит его обратно. И «Сыграю вечером» у
+   * отложенного героя после «Назад» не зовёт отложить его второй раз.
+   */
+  test('отложенные на вечер переживают «Подробнее» → «Назад» вместе с выдачей', () => {
+    const play = code(read('app', 'play', 'page.tsx'))
+    expect(play).not.toMatch(/\bplannedHere\b/)
+    expect(play).toMatch(/const \[planned, setPlanned\] = useState<number\[\]>\(\[\]\)/)
+    // запись выдачи несёт список и пишется заново, когда он меняется
+    const at = play.indexOf('playCacheStore.set({')
+    const write = play.slice(at, play.indexOf('useEffect(', at))
+    expect(write).toMatch(/liked: \[\.\.\.liked\],\s*planned,\s*\}\)/)
+    expect(write).toMatch(/\}, \[[^\]]*\bplanned\b[^\]]*\]\)/)
+    // восстановленная выдача приносит его обратно — той же дверью, что и «Зашло»
+    const apply = play.slice(play.indexOf('const applyDeal = useCallback('), at)
+    expect(apply).toMatch(/back\?: \{ index: number; at: number; liked: number\[\]; planned: number\[\] \}/)
+    expect(apply).toMatch(/if \(back\) \{\s*setLiked\(new Set\(back\.liked\)\)\s*setPlanned\(back\.planned\)\s*\}/)
+    expect(play).toMatch(/applyDeal\(back\.deal, back\)/)
+    // «Сыграю вечером» у отложенного героя встаёт уже нажатой
+    expect(play).toMatch(/<TonightButton\s+key=\{pick\.appid\}\s+initialDone=\{planned\.includes\(pick\.appid\)\}/)
+    const tonight = code(read('components', 'TonightButton.tsx'))
+    expect(tonight).toMatch(/useState<boolean \| null>\(initialDone \|\| null\)/)
   })
 
   /*
@@ -287,12 +320,16 @@ describe('кнопка запуска', () => {
   test('«Твои вечера» пишут запуск только игре живого плана, и только настоящий', () => {
     const src = code(read('components', 'Evenings.tsx'))
     const launch = src.slice(src.indexOf('<SteamLaunch'), src.indexOf('/>', src.indexOf('<SteamLaunch')))
-    expect(launch).toMatch(/onLaunch=\{item\.appid === plan \? \(\) => closePlan\(item\.appid\) : undefined\}/)
+    // план своей игры, а не один самый свежий: живых бывает несколько
+    expect(launch).toMatch(/onLaunch=\{plans\.includes\(item\.appid\) \? \(\) => closePlan\(item\.appid\) : undefined\}/)
     expect(launch).not.toMatch(/\bonClick=/)
     expect(src).toContain("ctx: { source: 'library', slot: 'plan', intent: 'launch' }")
     const page = code(read('app', 'library', 'page.tsx'))
-    expect(page).toMatch(/writer && !isDemoId\(steamid\) \? latestEveningPlan\(db, steamid, nowSec\(\)\)\.catch\(\(\) => null\) : null/)
-    expect(page).toMatch(/<Evenings[^>]*plan=\{plan\?\.appid \?\? null\}/)
+    expect(page).toMatch(
+      /writer && !isDemoId\(steamid\)\s*\? livePlanAppids\(db, steamid, nowSec\(\)\)\.catch\(\(\) => new Set<number>\(\)\)\s*: new Set<number>\(\)/,
+    )
+    expect(page).not.toMatch(/\blatestEveningPlan\(/)
+    expect(page).toMatch(/<Evenings[^>]*plans=\{eveningPlans\}/)
   })
 
   // Запуск со страницы игры пишется только по плану: без него это не совет,
@@ -301,5 +338,61 @@ describe('кнопка запуска', () => {
     const src = code(read('components', 'OwnedLaunch.tsx'))
     expect(src).toMatch(/onLaunch=\{\s*owns\.plan\s*\?/)
     expect(src).toContain("ctx: { slot: 'plan', intent: 'launch' }")
+  })
+
+  /*
+   * Заход — вкладка, а не настроение. «Изменить настроение» ведёт через квиз
+   * на /play с другим ключом: выдачу не вернуть, и список отложенных
+   * начинался пустым — а первая новая выдача записывала пустой поверх
+   * единственной записи. Своя игра, отложенная минуту назад, приходила
+   * героем снова, и «Не то — дальше» → «Просто не сейчас» закрывал план.
+   * Отложенные из свежей записи ждут первую новую выдачу (heldOver) и
+   * сливаются в список, только если она того же человека.
+   */
+  test('отложенные на вечер переживают и смену настроения', () => {
+    const play = code(read('app', 'play', 'page.tsx'))
+    const run = play.slice(play.indexOf('async function run()'), play.indexOf('if (warmIsFresh(mark, viewer, Date.now()))'))
+    // одни и те же баны и для выдачи, и для списка без неё
+    expect(run).toMatch(/const back = restoreDeal\(entry, \{ key: cacheKey, viewer, nowMs: Date\.now\(\), banned \}\)/)
+    expect(run).toMatch(/heldOver\.current = back \? null : heldPlanned\(entry, \{ nowMs: Date\.now\(\), banned \}\)/)
+    const apply = play.slice(play.indexOf('const applyDeal = useCallback('), play.indexOf('playCacheStore.set({'))
+    expect(apply).toMatch(
+      /\} else if \(heldOver\.current\) \{\s*const held = heldOver\.current\s*heldOver\.current = null\s*if \(held\.viewer === deal\.viewer\) setPlanned\(/,
+    )
+  })
+
+  /*
+   * План закрывают и не на /play: «Запустить» со страницы игры (бит plan),
+   * из «Твоих вечеров», запуск и «Не сегодня» у «Игры дня». «Поставь на
+   * загрузку» → ⓘ «Подробнее» → «Запустить» → «Назад» возвращал героя
+   * отложенным: «Не то — дальше» молча листал, и ответ про игру, которую
+   * на деле запустили, терялся. Записанное закрытие вычёркивает игру из
+   * записи выдачи (lib/planforget) — лёгким модулем, а не разбором выдачи
+   * (lib/lightsplit.test.ts), — а /play читает запись из хранилища, а не из
+   * памяти вкладки, где модуль выдачи держит прежнюю копию.
+   */
+  test('план, закрытый не на /play, выдача на устройстве забывает', () => {
+    const owned = code(read('components', 'OwnedLaunch.tsx'))
+    const onLaunch = owned.slice(owned.indexOf('owns.plan'), owned.indexOf(': undefined', owned.indexOf('owns.plan')))
+    // needsteam ещё и ставит строку на месте кнопки (setDenied) — отсюда блок
+    expect(onLaunch).toMatch(
+      /if \(await isNeedSteam\(r\)\) \{[\s\S]*?writerStore\.set\(false\)\s*\}\s*else if \(r\.ok\) forgetPlanned\(appid\)/,
+    )
+
+    const evenings = code(read('components', 'Evenings.tsx'))
+    const close = evenings.slice(evenings.indexOf('const closePlan ='), evenings.indexOf('async function answer('))
+    expect(close).toMatch(/if \(await isNeedSteam\(r\)\) setDenied\(true\)\s*else if \(r\.ok\) forgetPlanned\(appid\)/)
+
+    // у «Игры дня» — тем же правилом, что сервер: магазин под пальцем и «Зашло» план не закрывают
+    const daily = code(read('app', 'daily', 'page.tsx'))
+    const send = daily.slice(daily.indexOf('async function sendFeedback('), daily.indexOf('export default function DailyPage'))
+    expect(send).toMatch(/else if \(r\.ok && closesPlan\(action, reason, ctx\.intent\)\) forgetPlanned\(appid\)/)
+
+    for (const src of [owned, evenings, daily]) {
+      expect(src).toContain("import { forgetPlanned } from '@/lib/planforget'")
+    }
+    const play = code(read('app', 'play', 'page.tsx'))
+    expect(play).toMatch(/const entry = playCacheStore\.fresh\(\)/)
+    expect(play).not.toMatch(/playCacheStore\.get\(\)/)
   })
 })
