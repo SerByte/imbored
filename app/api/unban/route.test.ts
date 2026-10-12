@@ -63,6 +63,24 @@ describe('/api/unban', () => {
     expect(revalidated).toEqual([[`portrait:${steamid}`, 'max']])
   })
 
+  /*
+   * Бана не было — портрету меняться не от чего, и сбрасывать кэш незачем.
+   * Иначе повтор той же кнопки (или цикл скрипта) сбрасывал бы его на каждый
+   * запрос, хотя DELETE ничего не нашёл.
+   */
+  test('снимать было нечего — кэш портрета не сбрасывается, ответ тот же', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const res = await POST(post('/api/unban', { appid: 620 }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(revalidated).toEqual([])
+    // повтор после настоящего снятия — тоже пустой
+    await ban(steamid)
+    await POST(post('/api/unban', { appid: 620 }))
+    await POST(post('/api/unban', { appid: 620 }))
+    expect(revalidated).toEqual([[`portrait:${steamid}`, 'max']])
+  })
+
   test('отказ в правах до сброса не доходит', async () => {
     const steamid = await signInAs(db, 'claimed')
     await ban(steamid)

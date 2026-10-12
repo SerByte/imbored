@@ -10,6 +10,7 @@ import {
   missingNames,
   pageNotices,
   parseRoomCode,
+  publicFailure,
   roomMissText,
   roomTabTitle,
   rosterHint,
@@ -407,6 +408,24 @@ describe('roomMissText: отказ кнопки комнаты — пока он
     const miss = { text: 'Выйти не получилось', deck: '2:0' }
     expect(roomMissText(miss, { ...now, deck: '2:1' })).toBeNull()
     expect(roomMissText(miss, { ...now, deck: '3:0' })).toBeNull()
+  })
+})
+
+/**
+ * У переключателя доски потолок частоты (public/route.ts), и 429 звал «нажми
+ * ещё раз» — каждый повтор упирался в тот же потолок до конца окна.
+ */
+describe('publicFailure: отказ переключателя доски', () => {
+  test('429 — просит подождать, а не нажать ещё раз', () => {
+    const text = publicFailure(429)
+    expect(text).toMatch(/подожди несколько минут/)
+    expect(text).not.toMatch(/проверь связь|нажми ещё раз/)
+  })
+
+  test('сеть, пятисотка и прочие отказы — прежняя строка «проверь связь»', () => {
+    for (const status of [0, 400, 404, 500, 503]) {
+      expect(publicFailure(status), String(status)).toBe('Доска не переключилась — проверь связь и нажми ещё раз.')
+    }
   })
 })
 

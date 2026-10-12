@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { listExplore, listFeedback, type Db } from '@/lib/db'
+import { listExplore, listFeedback, upsertUser, type Db } from '@/lib/db'
+import { rateUsage } from '@/lib/ratelimit'
+import { nowSec } from '@/lib/server'
 import { STEAMID_OF, freshDb, post, signIn, signInAs } from '@/lib/testing/route'
 import { POST } from './route'
 
@@ -128,6 +130,63 @@ describe('/api/feedback', () => {
       expect(res.status, kind).toBe(200)
       expect(await listFeedback(db, steamid), kind).toHaveLength(1)
     }
+  })
+})
+
+/**
+ * Потолок адреса. Демо-вход чеканит пишущие личности даром — новую на каждый
+ * вызов без куки, — и личный потолок держит лишь одну из них: скрипт,
+ * копящий личности, писал бы оценки без края. Адрес — единственная ось
+ * против него, как у /api/pick.
+ */
+describe('/api/feedback: потолок адреса', () => {
+  /** Четыре демо-личности — как их выдал бы /api/connect четырём вызовам без куки */
+  const DEMOS = ['00012345678900011', '00012345678900021', '00012345678900031', '00012345678900041']
+  const IP = '203.0.113.7'
+  const rate = (appid: number, ip = IP) =>
+    POST(post('/api/feedback', { appid, action: 'skipped' }, { 'x-forwarded-for': ip }))
+  /** Демо-вход: личность живёт строкой users (без неё сессия — «ушедшая» демо) */
+  const enterDemo = async (steamid: string) => {
+    await upsertUser(db, { steamid, personaName: 'Демо-игрок' }, nowSec())
+    await signIn(db, steamid)
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(MID_WINDOW_MS)
+  })
+
+  test('три личности по сто двадцать — потолок адреса: четвёртой с него 429, соседний адрес не задет', async () => {
+    for (const steamid of DEMOS.slice(0, 3)) {
+      await enterDemo(steamid)
+      for (let i = 0; i < 120; i++) {
+        expect((await rate(1000 + i)).status, `${steamid}: оценка ${i + 1}`).toBe(200)
+      }
+    }
+    // Свежая личность — свежий личный потолок, но адрес уже выбран
+    await enterDemo(DEMOS[3])
+    const res = await rate(620)
+    expect(res.status).toBe(429)
+    expect(await res.json()).toEqual({ error: 'ratelimited' })
+    expect(Number(res.headers.get('Retry-After'))).toBe(300)
+    // Отказ — до записи
+    expect(await listFeedback(db, DEMOS[3])).toEqual([])
+    // Та же личность с другого адреса пишет: потолок — адреса, а не личности
+    expect((await rate(620, '203.0.113.8')).status).toBe(200)
+    expect(await listFeedback(db, DEMOS[3])).toHaveLength(1)
+  })
+
+  /*
+   * Личный гейт — первым (checkRatesInOrder): иначе один человек, давящий
+   * кнопки после своего 429, выедал бы потолок адреса соседям по квартире
+   * или мобильному NAT.
+   */
+  test('отказ по личному потолку не тратит потолок адреса', async () => {
+    await enterDemo(DEMOS[0])
+    for (let i = 0; i < 120; i++) expect((await rate(1000 + i)).status).toBe(200)
+    for (let i = 0; i < 5; i++) expect((await rate(620)).status).toBe(429)
+    const used = { bucket: 'feedback-ip', id: IP, limit: 360, windowSec: 600, nowSec: nowSec() }
+    expect(await rateUsage(db, used)).toBe(120)
   })
 })
 

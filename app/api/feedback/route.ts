@@ -7,22 +7,39 @@ import { logSwallowed } from '@/lib/errlog'
 import { isFeedbackAction, isSkipReason } from '@/lib/feedbackkinds'
 import { parseMood } from '@/lib/mood'
 import { portraitTag } from '@/lib/portraitmodel'
-import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
+import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { getDb, isDemoId, nowSec, requireWriter } from '@/lib/server'
 import { readJsonObject } from '@/lib/reqbody'
 
 /*
- * Потолок на запись фидбека.
+ * Потолки на запись фидбека.
  *
  * Каждый вызов — строка в Turso, а сессию бесплатно выдаёт демо-вход, так что
  * без лимита ручка превращается в чужой счёт за записи. Сто двадцать за десять
  * минут — это клик каждые пять секунд без остановки: живой человек на /play
- * столько не нажимает даже в рулетке, а скрипт упирается быстро.
+ * столько не нажимает даже в рулетке.
  *
- * Клиент шлёт фидбек fire-and-forget и 429 не показывает: потерянная оценка
- * под флудом — не беда, в отличие от сорванной выдачи.
+ * Но личный потолок держит одну личность, а не скрипт. Демо-вход чеканит
+ * пишущие личности даром — новую на каждый /api/connect без куки, сорок восемь
+ * в час с адреса (CONNECT_LIMIT), — и живёт каждая, пока пишет (STALE_DEMO в
+ * lib/db): с одним личным потолком скрипт, копящий личности, писал бы оценки
+ * без края, и через сутки это были бы сотни тысяч строк в час. Поэтому второй
+ * гейт — по адресу: он единственная ось против такого скрипта, как у
+ * /api/pick. Втрое выше личного — соседям по квартире или мобильному NAT
+ * хватит и на троих, кто давит кнопки без остановки. Личный первым
+ * (checkRatesInOrder): отказ по нему не съедает потолок адреса соседей.
+ *
+ * Учебные сигналы (открыл, лайк, запуск) клиент шлёт fire-and-forget:
+ * потерянная под флудом оценка — не беда, в отличие от сорванной выдачи. Но
+ * бан, «Пройдено», «Не сегодня» на /daily и «Убрать» с полки /explore ждут
+ * ответа и на любой не-ok показывают строку отказа (sendFeedback на /play,
+ * components/MarkFinished, notToday на /daily, unlike на /explore). Отказ по
+ * адресу для них выглядит так же, как личный: выеденный соседями за тем же
+ * NAT адрес покажет её и тому, кто нажал раз, — потому и запас втрое (абзац
+ * выше).
  */
 const FEEDBACK_LIMIT = 120
+const FEEDBACK_IP_LIMIT = 360
 const FEEDBACK_WINDOW_SEC = 600
 
 export async function POST(req: Request) {
@@ -49,13 +66,14 @@ export async function POST(req: Request) {
 
   const db = await getDb()
   const now = nowSec()
-  const gate = await checkRate(db, {
-    bucket: 'feedback',
-    id: steamid,
-    limit: FEEDBACK_LIMIT,
-    windowSec: FEEDBACK_WINDOW_SEC,
-    nowSec: now,
-  })
+  const gate = await checkRatesInOrder(
+    db,
+    [
+      { bucket: 'feedback', id: steamid, limit: FEEDBACK_LIMIT, windowSec: FEEDBACK_WINDOW_SEC },
+      { bucket: 'feedback-ip', id: clientIp(req.headers), limit: FEEDBACK_IP_LIMIT, windowSec: FEEDBACK_WINDOW_SEC },
+    ],
+    now,
+  )
   if (!gate.ok) return rateLimitedResponse(gate.retryAfterSec)
 
   // невалидные mood/reason/ctx не роняют фидбек — просто не сохраняются.

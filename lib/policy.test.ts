@@ -26,7 +26,7 @@ import { describe, expect, test } from 'vitest'
 const PAGE = path.join(__dirname, '..', 'app', 'privacy', 'page.tsx')
 
 /** Отпечаток прозы, действительный для даты ниже. */
-const DIGEST = 'fd0211127e75147c'
+const DIGEST = '7ae9814e65f050aa'
 
 /** Та же дата, что и в UPDATED на странице. Дублируется, чтобы тест видел смену. */
 const UPDATED = '12 октября 2026'
@@ -98,6 +98,7 @@ const BY_STEAMID: Record<string, string> = {
   'room-leader': 'остальные действия в пати',
   'room-likes': 'остальные действия в пати',
   'room-trivia': 'остальные действия в пати',
+  'room-public': 'остальные действия в пати',
   feedlink: 'выпуск ссылки на RSS',
   feedrss: 'сколько раз ридер забирал ленту',
   // Счёт — по SteamID хозяина портрета, а не открывшего: стережёт пересборку
