@@ -1,8 +1,8 @@
 'use client'
 
 import { useSearchParams } from 'next/navigation'
-import { destinationPath } from '@/lib/destination'
-import { DESTINATIONS } from '@/lib/destinationtext'
+import { destinationUrl } from '@/lib/destination'
+import { destinationPromise } from '@/lib/destinationtext'
 
 /**
  * Строка намерения над заголовком: почему ты здесь, если пришёл не сам.
@@ -22,6 +22,8 @@ import { DESTINATIONS } from '@/lib/destinationtext'
  *
  * Тексты обещаний берутся ТОЛЬКО из lib/destinationtext.ts. Второй копии этих
  * фраз в проекте быть не должно: они уже разъезжались с адресами один раз.
+ * Адрес — целиком, с хвостом (destinationUrl), а не один путь: гостю,
+ * развёрнутому с квиза, строка повторяет его ответы (destinationPromise).
  *
  * ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ — и то, и другое ушло вместе с переездом карточки в
  * герой. Ссылки «Подключить →» на якорь #connect: карточка теперь стоит
@@ -36,14 +38,11 @@ export function HeroNotice() {
   const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
   const compat = search.get('compat')
   const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
-  const next = destinationPath(search.get('next'))
-  const dest = next ? DESTINATIONS[next] : null
-
   const promise = joinTarget
     ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
     : compatTarget
       ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
-      : (dest?.promise ?? null)
+      : destinationPromise(destinationUrl(search.get('next')))
 
   if (!promise) return null
 

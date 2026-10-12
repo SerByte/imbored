@@ -58,6 +58,7 @@ import { announceMatch } from '@/components/room/MatchNotify'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { focusAdrift } from '@/lib/focushandoff'
 import { roomShareUrl } from '@/lib/roomshare'
+import { forgetGuest } from '@/lib/sessionhint'
 import { storeLink } from '@/lib/storelink'
 import { track } from '@/lib/track'
 
@@ -1166,6 +1167,13 @@ export default function RoomPage() {
    *
    * try/finally — по той же причине, что у join ниже: обрыв сети оставлял
    * busy навсегда, и «Демо-друг» застывал на «Подключаю…».
+   *
+   * Вошёл демо-другом — гостем документ больше не считается (forgetGuest,
+   * knownGuest в lib/sessionhint). Гостя, открывшего приглашение, отметил
+   * touch из SessionKeeper, а этот вход подсказки не пишет и до нового
+   * touch через двенадцать часов флаг не погасил бы никто: «Подобрать игру»
+   * в шапке вело бы вошедшего через квиз на лендинг «подключать Steam», а не
+   * в выдачу.
    */
   async function joinAsDemoFriend() {
     if (busy) return
@@ -1186,6 +1194,7 @@ export default function RoomPage() {
         )
         return
       }
+      forgetGuest()
       const res = await fetch(`/api/room/${roomId}/join`, { method: 'POST' })
       if (!res.ok) {
         setJoinError(joinFailure(res.status, await failureCode(res)))

@@ -23,6 +23,7 @@ import {
   getServerSessionHint,
   getSessionHint,
   hintFrom,
+  rememberGuest,
   rememberSession,
   subscribeSessionHint,
   type SessionHint,
@@ -204,9 +205,16 @@ export function ConnectCard() {
   )
 
   useEffect(() => {
-    const settle = (next: SessionHint | null) => {
+    /*
+     * guest — сервер ответил «гость», а не сбой (knownGuest в lib/sessionhint).
+     * SessionKeeper после главной в том же документе молчит, и гость,
+     * пришедший отсюда на квиз — самый частый путь, — узнаётся только здесь:
+     * квиз поведёт его прямо сюда, мимо экрана прогрева /play.
+     */
+    const settle = (next: SessionHint | null, guest = false) => {
       setSession(next ?? { authed: false, personaName: null })
-      rememberSession(next)
+      if (guest) rememberGuest()
+      else rememberSession(next)
     }
     markSessionTouched()
     fetch('/api/session/touch?card=1', { method: 'POST' })
@@ -219,7 +227,7 @@ export function ConnectCard() {
           writer?: boolean
           live?: unknown
         }
-        settle(d.authed ? hintFrom(d) : null)
+        settle(d.authed ? hintFrom(d) : null, d.authed === false)
         setLive(liveLineFrom(d.live))
         // SessionKeeper на главной молчит, так что признак записи берём здесь
         writerStore.set(writerFrom(d))

@@ -12,6 +12,7 @@ import { SoundToggle } from '@/components/SoundToggle'
 import { SpotlightCard } from '@/components/SpotlightCard'
 import { useSearch } from '@/components/useSearch'
 import { freshLastMood, lastMoodStore } from '@/lib/lastmood'
+import { bounceTo } from '@/lib/destination'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
 import { hasFreshWarm, warmMarkStore } from '@/lib/warmmark'
@@ -20,7 +21,7 @@ import { parseSeedParam, playHref, VIBE_PRESETS } from '@/lib/presets'
 import { STEPS } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
 import type { Focus } from '@/lib/recommend'
-import { getSessionHint, subscribeSessionHint } from '@/lib/sessionhint'
+import { getSessionHint, knownGuest, subscribeSessionHint } from '@/lib/sessionhint'
 import type { Mood } from '@/lib/types'
 import { track } from '@/lib/track'
 import { forgetPrewarm, hintChanged, prewarmWanted, startPrewarm } from '@/lib/warmup'
@@ -131,6 +132,9 @@ const ITEM_VARIANTS = {
  * рельса точек внизу экрана.
  */
 
+/** Снимок сервера: гостя там не знают, как и подсказку о входе */
+const notGuest = () => false
+
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
@@ -194,6 +198,8 @@ function Quiz() {
   // Скрыто ли время в Steam — с прошлой выдачи на этом устройстве (lib/playtime)
   const timeHidden =
     useSyncExternalStore(timeHiddenStore.subscribe, timeHiddenStore.get, timeHiddenStore.server) === true
+  // Гость наверняка (lib/sessionhint) — строка о последнем шаге внизу экрана
+  const guest = useSyncExternalStore(subscribeSessionHint, knownGuest, notGuest)
 
   /** Заведён ли аудиоконтекст. Общий на оба пути — иначе снос пропускает тот,
    *  что подняли не тем путём, и контекст переживает уход на выдачу. */
@@ -288,15 +294,25 @@ function Quiz() {
     }
   }, [])
 
-  // Адрес собирает playHref (lib/presets.ts), а не строка здесь: копий было
-  // три, и ось lean добавилась бы в одну из них
+  /*
+   * Адрес собирает playHref (lib/presets.ts), а не строка здесь: копий было
+   * три, и ось lean добавилась бы в одну из них.
+   *
+   * Гостя — сразу на лендинг, тем же адресом, каким развернул бы /play
+   * (bounceTo везёт настроение, ось и затравку через вход). Раньше последний
+   * ответ вёл его на /play: экран прогрева, круг до сервера, 401 — и лендинг
+   * с общим обещанием, как будто ответов не было. Теперь лендинг повторяет
+   * их и называет один оставшийся шаг (destinationPromise). Гость — только
+   * наверняка, со слов сервера (knownGuest); «не знаем» идёт через /play,
+   * как раньше: вошедший, принятый за гостя, потерял бы выдачу. push, а не
+   * replace: запись квиза живая, и «Назад» с лендинга возвращает к ответам.
+   */
   const go = useCallback(
     (mood: Mood, opts: { roulette?: boolean; focus?: Focus; lean?: Lean } = {}) => {
       // Любой уход на выдачу — финал квиза, пресет или рулетка
       track('quiz_done')
-      router.push(
-        playHref(mood, { roulette: opts.roulette, focus: opts.focus ?? focus, lean: opts.lean, seed }),
-      )
+      const href = playHref(mood, { roulette: opts.roulette, focus: opts.focus ?? focus, lean: opts.lean, seed })
+      router.push(knownGuest() ? bounceTo(href) : href)
     },
     [focus, seed, router],
   )
@@ -595,6 +611,23 @@ function Quiz() {
             )}
           </m.div>
         </AnimatePresence>
+
+        {/*
+          Гостю — заранее, что будет после ответов (knownGuest): квиз ведёт
+          его не в выдачу, а к подключению библиотеки, и узнавать об этом
+          только на лендинге значило бы отвечать, не зная, куда ведут ответы.
+          Строка на первом шаге, под плитками и ВНЕ ПОТОКА — в нижнем поле
+          экрана (py-24), а не над вопросом: флаг приходит ответом touch уже
+          после гидратации, и строка в колонке сдвинула бы вопрос и плитки
+          под пальцем — сверху вниз, а на десктопе, где колонка по центру, и
+          снизу вверх. absolute в flex-колонке не берёт себе и зазор gap-10.
+          Снимок сервера — «не гость», как и у всех до ответа.
+        */}
+        {stepIndex === 0 && guest && (
+          <p className="absolute inset-x-0 top-full mx-auto mt-10 max-w-sm text-center text-xs text-dim anim-rise">
+            Потом останется подключить библиотеку — ссылкой на профиль, через Steam или демо: игру выбираем из неё.
+          </p>
+        )}
 
         {stepIndex > 0 && !outro && (
           <button

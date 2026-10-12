@@ -262,8 +262,12 @@ export default function DailyPage() {
           .catch(() => null)
         // Сессия отвалилась: человеку нужен вход, а не объяснение. Если
         // человек уже ушёл сам, уводить его с новой страницы нельзя.
+        // replace, а не push: запись /daily без сессии мертва, и «Назад» с
+        // лендинга открывал её снова — 401 — и снова уводил на лендинг. Гость,
+        // зашедший сюда из сцены «Игра дня» или навигации, не мог уйти
+        // «Назад» дальше /daily (так же было у /play и /explore)
         if (res.status === 401) {
-          if (!signal.aborted) router.push(bounceTo('/daily'))
+          if (!signal.aborted) router.replace(bounceTo('/daily'))
           return
         }
         setReason(code)
@@ -316,7 +320,8 @@ export default function DailyPage() {
       })
       if (warm === 'aborted') return
       if (warm === 'unauthorized') {
-        router.push(bounceTo('/daily'))
+        // replace — по той же причине, что в show
+        router.replace(bounceTo('/daily'))
         return
       }
       if (warm === 'error') {

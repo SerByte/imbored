@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { PLAN_HOLD_MS } from './eveningplan'
 import { NEUTRAL_MOOD } from './mood'
 import {
   PLAY_CACHE_TTL_MS,
@@ -84,6 +85,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
     hero: 20,
     liked: [10],
     planned: [],
+    seenAt: NOW,
     ...over,
   }
 }
@@ -160,6 +162,23 @@ describe('parsePlayCache', () => {
     // мусор — поштучно и без потери выдачи: план не стоит прогрева заново
     expect(parsePlayCache({ ...e, planned: 'all' })?.planned).toEqual([])
     expect(parsePlayCache({ ...e, planned: ['20', 30, 1.5] })?.planned).toEqual([30])
+  })
+
+  /*
+   * Когда выдачу последний раз видели на экране — срок отложенных
+   * (heldPlanned), а не приход выдачи. Запись до этого поля и мусор в нём —
+   * приход выдачи: срок у списка тот же час, только от at, а запись цела и
+   * версия та же — прогрев заново ради одной метки дороже её самой.
+   */
+  test('время последнего показа переживает запись; без него и с мусором — приход выдачи', () => {
+    const e = entry({ at: NOW - 20 * 60_000, seenAt: NOW - 60_000, planned: [20] })
+    expect(parsePlayCache(JSON.parse(JSON.stringify(e)))?.seenAt).toBe(NOW - 60_000)
+    const old: Record<string, unknown> = { ...e }
+    delete old.seenAt
+    expect(parsePlayCache(old)?.seenAt).toBe(NOW - 20 * 60_000)
+    for (const seenAt of ['вчера', String(NOW), null, Infinity, NaN]) {
+      expect(parsePlayCache({ ...e, seenAt })?.seenAt, String(seenAt)).toBe(NOW - 20 * 60_000)
+    }
   })
 
   test('запись прошлой версии сайта не узнаётся', () => {
@@ -367,10 +386,39 @@ describe('heldPlanned', () => {
     expect(heldPlanned(e, q)).toEqual({ viewer: ME, appids: [20, 1145360] })
   })
 
-  test('старше пятнадцати минут — уже не этот заход', () => {
+  /*
+   * Срок списка — от последнего показа выдачи (seenAt), а не от её прихода
+   * (at). Выдача пришла в 19:00, человек листал её и в 19:14 нажал «Сыграю
+   * вечером на ПК» у своей X; в 19:15:40 — ⓘ и «Назад». Выдача старше
+   * пятнадцати минут (цены и онлайн уже не те), restoreDeal её не вернёт, —
+   * а отложенную минуту назад игру список обязан донести до новой: та
+   * приходит героем снова (знакомые свои повторяются), и «Не то — дальше» →
+   * «Просто не сейчас» закрывал план, поставленный минуту назад. Тот же
+   * ключ, то же монтирование заново — что и у «Изменить настроение».
+   */
+  test('выдача устарела, а план ставили минуту назад — список доезжает до новой', () => {
+    const e = entry({ at: NOW - 20 * 60_000, seenAt: NOW - 60_000, planned: [20] })
+    expect(restoreDeal(e, { ...q, key: KEY, viewer: ME, nowMs: NOW })).toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW })).toEqual({ viewer: ME, appids: [20] })
+    // и под другим ключом — так же
+    expect(restoreDeal(e, { ...q, key: mood, viewer: ME, nowMs: NOW })).toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW })?.appids).toEqual([20])
+  })
+
+  test('выдачу не видели больше часа — уже не этот заход', () => {
+    expect(PLAN_HOLD_MS).toBe(60 * 60_000)
+    expect(PLAN_HOLD_MS).toBeGreaterThan(PLAY_CACHE_TTL_MS)
     const e = entry({ planned: [20] })
-    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAY_CACHE_TTL_MS })).not.toBeNull()
-    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAY_CACHE_TTL_MS + 1 })).toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAN_HOLD_MS })).not.toBeNull()
+    expect(heldPlanned(e, { ...q, nowMs: NOW + PLAN_HOLD_MS + 1 })).toBeNull()
+    // запись до поля — срок тот же час, только от прихода выдачи: за
+    // пятнадцать минут (прежний срок от at) список уже не умирает
+    const old: Record<string, unknown> = { ...entry({ at: NOW - PLAN_HOLD_MS - 1, planned: [20] }) }
+    delete old.seenAt
+    expect(heldPlanned(parsePlayCache(old), { ...q, nowMs: NOW })).toBeNull()
+    const recent: Record<string, unknown> = { ...entry({ at: NOW - 20 * 60_000, planned: [20] }) }
+    delete recent.seenAt
+    expect(heldPlanned(parsePlayCache(recent), { ...q, nowMs: NOW })?.appids).toEqual([20])
   })
 
   test('забаненные не едут: бан план уже закрыл', () => {
