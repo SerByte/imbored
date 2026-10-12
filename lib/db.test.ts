@@ -134,8 +134,10 @@ import {
   forgetDailyPick,
   topCatalogAppids,
   countUserRows,
+  hasUserRows,
   createSession,
   FORGET_TABLES,
+  forgetMarkAt,
   forgetUser,
   issueRoomDeck,
   castDeckVote,
@@ -3542,6 +3544,9 @@ describe('forgetUser: удаление по запросу', () => {
   /** Игрок, у которого есть строка в каждой таблице, где вообще бывают люди */
   async function populated() {
     const db = await freshDb()
+    // Он уже удалялся однажды и вернулся: от того раза осталась отметка
+    // удаления (forget_marks), и новое удаление обязано унести и её
+    await forgetUser(db, ME, { signOutFrom: NOW - 500 * 86_400 })
     await upsertUser(db, { steamid: ME, personaName: 'Me', avatarUrl: 'https://a/me.jpg' }, NOW)
     await setUserPortrait(db, ME, { takenAt: NOW, text: 'портрет' })
     // День последнего захода (lib/retention) — колонка users, уходит со строкой
@@ -3687,6 +3692,55 @@ describe('forgetUser: удаление по запросу', () => {
     await expect(forgetUser(db, '7656')).rejects.toThrow()
     await expect(countUserRows(db, "1' OR 1=1")).rejects.toThrow()
     expect(await getLatestSnapshot(db, ME)).not.toBeNull()
+  })
+
+  /*
+   * Удаление по запросу обязано выпустить человека со всех устройств. Само по
+   * себе стирание строк sessions и users этого не делает: авторитет — подпись
+   * куки (шапка lib/sessions), и кука без строки — «вход жив, база не
+   * ответила». Телефон, о котором человек забыл, оставался бы внутри, и
+   * первый же вход в пати по ссылке снова записал бы человека под удалённым
+   * SteamID. Поэтому удаление ставит отметку forget_marks: кука, выданная до
+   * неё, больше не пускает.
+   */
+  test('signOutFrom: отметка удаления гасит куки, выданные до неё, — других следов нет', async () => {
+    const db = await populated()
+    await forgetUser(db, ME, { signOutFrom: NOW + 60 })
+
+    // Кука, выданная до удаления, — гость: отсечка та же, что у «выйти везде»
+    const state = await getSessionState(db, 'sid-me', ME)
+    expect(state.sessionsFrom).toBe(NOW + 60)
+    // От человека остаётся одна строка — SteamID и время удаления
+    expect(await traces(db, ME)).toEqual(['forget_marks.steamid'])
+    const marks = await db.execute({ sql: 'SELECT * FROM forget_marks WHERE steamid = ?', args: [ME] })
+    expect(marks.rows.map((r) => ({ ...r }))).toEqual([{ steamid: ME, at: NOW + 60 }])
+  })
+
+  test('без signOutFrom отметки нет — удаление то же, следов ноль', async () => {
+    const db = await populated()
+    await forgetUser(db, ME)
+    expect((await getSessionState(db, 'sid-me', ME)).sessionsFrom).toBeNull()
+    expect(await traces(db, ME)).toEqual([])
+  })
+
+  /*
+   * Письмо после кнопки: от человека осталась одна отметка удаления.
+   * Скрипт по письму (scripts/forget-user.ts) обязан сказать «уже удалён», а
+   * не «нашлась строка, удали с --apply» — повтор только переставил бы
+   * отметку позже и продержал SteamID в базе дольше.
+   */
+  test('после удаления удалять нечего: отметка — след удаления, а не данные', async () => {
+    const db = await populated()
+    expect(hasUserRows(await countUserRows(db, ME))).toBe(true)
+    expect(await forgetMarkAt(db, ME)).toBe(NOW - 500 * 86_400)
+
+    await forgetUser(db, ME, { signOutFrom: NOW + 60 })
+    const left = await countUserRows(db, ME)
+    expect(left.filter((r) => r.rows > 0)).toEqual([{ table: 'forget_marks', rows: 1 }])
+    expect(hasUserRows(left)).toBe(false)
+    expect(await forgetMarkAt(db, ME)).toBe(NOW + 60)
+    // Тот, кто не удалялся вовсе, — без отметки
+    expect(await forgetMarkAt(db, '76561197960287999')).toBeNull()
   })
 
   test('сторож: каждая таблица с людьми (steamid, created_by, owner, viewer) есть в списке удаления', async () => {
@@ -4087,6 +4141,23 @@ describe('sweepStale: суточная уборка', () => {
     const left = await db.execute('SELECT sid FROM sessions ORDER BY sid')
     expect(left.rows.map((r) => r.sid)).toEqual(['quiet', 'revoked-fresh'])
     expect((await getSessionState(db, 'revoked-fresh', REAL)).revokedAt).toBe(NOW - 10 * DAY)
+  })
+
+  /*
+   * Отметка удаления (forget_marks) нужна, пока жива хоть одна кука, выданная
+   * до неё: год срока куки и тот же месяц запаса, что у строк сессий. Дальше
+   * она ничего не отсекает — и /privacy обещает, что она уходит.
+   */
+  test('отметка удаления уходит, когда истекли все куки до неё', async () => {
+    const db = await freshDb()
+    const year = 365 * DAY
+    await forgetUser(db, REAL, { signOutFrom: NOW - year - 29 * DAY })
+    await forgetUser(db, '76561197960287999', { signOutFrom: NOW - year - 31 * DAY })
+
+    await sweepStale(db, NOW)
+    const left = await db.execute('SELECT steamid FROM forget_marks')
+    expect(left.rows.map((r) => r.steamid)).toEqual([REAL])
+    expect((await getSessionState(db, 'any', REAL)).sessionsFrom).toBe(NOW - year - 29 * DAY)
   })
 
   test('комната старше двух недель уходит вместе с участниками, голосами и колодой', async () => {

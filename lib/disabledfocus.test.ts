@@ -380,6 +380,16 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     ],
   },
   {
+    // «Удалить всё обо мне», «Да, удалить всё» и «Отмена» под списком
+    file: 'components/ForgetMe.tsx',
+    expr: 'busy !== null',
+    guards: [
+      ['components/ForgetMe.tsx', /async function ask\(\) \{\s*if \(busy !== null\) return/],
+      ['components/ForgetMe.tsx', /async function erase\(\) \{\s*if \(busy !== null\) return/],
+      ['components/ForgetMe.tsx', /onClick=\{\(\) => \{\s*if \(busy !== null\) return\s*handoff\.current = 'open'/],
+    ],
+  },
+  {
     // «Получить ссылку» / «Выпустить новую», «Отключить» и «Отмена» у RSS по
     // секретной ссылке: каждая кнопка гасит повтор сама, по busy
     file: 'components/whatsnew/FeedLink.tsx',

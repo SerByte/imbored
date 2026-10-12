@@ -1,8 +1,11 @@
 'use client'
 
 import { useSearchParams } from 'next/navigation'
+import { useSyncExternalStore } from 'react'
 import { destinationUrl } from '@/lib/destination'
 import { destinationPromise } from '@/lib/destinationtext'
+import { forgotServer, subscribeForgot, takeForgot } from '@/lib/forgotnotice'
+import { getServerSessionHint, getSessionHint, subscribeSessionHint } from '@/lib/sessionhint'
 
 /**
  * Строка намерения над заголовком: почему ты здесь, если пришёл не сам.
@@ -38,11 +41,21 @@ export function HeroNotice() {
   const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
   const compat = search.get('compat')
   const compatTarget = compat && /^\d{17}$/.test(compat) ? compat : null
-  const promise = joinTarget
-    ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
-    : compatTarget
-      ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
-      : destinationPromise(destinationUrl(search.get('next')))
+  // Сюда уводит «Удалить всё обо мне» (components/ForgetMe). Без строки
+  // человек попадал бы на обычную главную гостя и не знал, сработало ли.
+  // Зажигает её метка самого удаления, забранная один раз (lib/forgotnotice),
+  // а не адрес: адрес оставался в истории и звучал бы снова и снова. И
+  // никогда — рядом с «С возвращением»: вошедшему «входы погашены» врёт
+  const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
+  const forgot = useSyncExternalStore(subscribeForgot, takeForgot, forgotServer) && hint?.authed !== true
+
+  const promise = forgot
+    ? 'Готово — всё, что imbored о тебе хранил, удалено, а входы на всех устройствах погашены.'
+    : joinTarget
+      ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
+      : compatTarget
+        ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
+        : destinationPromise(destinationUrl(search.get('next')))
 
   if (!promise) return null
 

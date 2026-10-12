@@ -351,3 +351,33 @@ describe('выход «везде»: вопрос и «Отмена» не ро�
     expect(src).toMatch(/<span id=\{askId\}>/)
   })
 })
+
+/*
+ * «Удалить всё обо мне» (components/ForgetMe) спрашивает тем же приёмом, что
+ * «Выйти везде?»: нажатая кнопка уходит, вопрос со списком встаёт ниже, и
+ * фокус без переноса падал бы в body. Отличие одно и намеренное: фокус встаёт
+ * на «Отмену», а не на «Да». Выход повторяется входом, удаление — ничем, и
+ * второй Enter, нажатый по привычке, обязан попасть в безопасную кнопку.
+ */
+describe('«Удалить всё обо мне»: фокус на безопасной кнопке', () => {
+  const src = read('components/ForgetMe.tsx')
+  const buttons = tags(src, 'button')
+
+  test('перенос — эффектом по asked, по отметке нажатия и только потерянного фокуса', () => {
+    expect(src).toMatch(
+      /useEffect\(\(\) => \{\s*const to = handoff\.current\s*handoff\.current = null\s*if \(to && focusAdrift\(document, homeRef\.current\)\) \(to === 'cancel' \? cancelRef : openRef\)\.current\?\.focus\(\)\s*\}, \[asked\]\)/,
+    )
+    expect(src).toMatch(/handoff\.current = 'cancel'\s*setAsked\(\{/)
+    expect(src).toMatch(/handoff\.current = 'open'[\s\S]*?setAsked\(null\)/)
+  })
+
+  test('вопрос со списком — описание «Отмены», а «Да» фокус не получает', () => {
+    const cancel = buttons.find((t) => /ref=\{cancelRef\}/.test(t)) ?? ''
+    expect(cancel, '«Отмена» без ref').not.toBe('')
+    expect(cancel).toMatch(/aria-describedby=\{askId\}/)
+    expect(src).toMatch(/<div id=\{askId\}/)
+    const yes = buttons.find((t) => /void erase\(\)/.test(t)) ?? ''
+    expect(yes, '«Да, удалить всё» не найдена').not.toBe('')
+    expect(yes).not.toMatch(/\sref=/)
+  })
+})

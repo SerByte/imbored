@@ -221,14 +221,19 @@ export { appBaseUrl } from './origin'
  * не могут в принципе: HTTP не разрешает Set-Cookie после начала стрима.
  * Поэтому продление живёт в единственном роуте /api/session/touch, а здесь
  * только читается флаг stale.
+ *
+ * fresh — сверить сессию с базой мимо кэша состояния (resolveSession): одно
+ * чтение по первичному ключу ради решения, которого не отменить, —
+ * удаления всех данных (app/api/forget).
  */
-export async function currentSession(): Promise<Resolved | null> {
+export async function currentSession(opts: { fresh?: boolean } = {}): Promise<Resolved | null> {
   const jar = await cookies()
   return resolveSession({
     token: jar.get(SESSION_COOKIE)?.value,
     secret: sessionSecret(),
     nowSec: nowSec(),
     lookup: async (sid, steamid) => getSessionState(await getDb(), sid, steamid),
+    fresh: opts.fresh === true,
   })
 }
 

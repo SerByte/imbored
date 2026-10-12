@@ -1,12 +1,20 @@
 import { createHmac } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { logFeedback, saveDailyPick, sweepStale, upsertGamesMeta, upsertUser, type Db } from '@/lib/db'
+import {
+  forgetUser,
+  logFeedback,
+  saveDailyPick,
+  sweepStale,
+  upsertGamesMeta,
+  upsertUser,
+  type Db,
+} from '@/lib/db'
 import { dayKey } from '@/lib/daily'
-import { SESSION_COOKIE, sessionSecret } from '@/lib/server'
+import { SESSION_COOKIE, currentSession, sessionSecret } from '@/lib/server'
 import { verifySessionV2 } from '@/lib/session'
 import { SESSION_TOUCH_AFTER_SEC } from '@/lib/sessions'
 import { setTestCookie } from '@/lib/testing/headers'
-import { STEAMID_OF, freshDb, post, signIn, signInAs } from '@/lib/testing/route'
+import { STEAMID_OF, breakDbOn, freshDb, post, signIn, signInAs } from '@/lib/testing/route'
 import { POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -82,6 +90,56 @@ describe('/api/session/touch', () => {
     const renewed = verifySessionV2(newCookie(res) ?? '', sessionSecret())
     expect(renewed?.sid).toBe(sid)
     expect(renewed?.iat).toBe(T0 + SESSION_TOUCH_AFTER_SEC + 60)
+  })
+
+  /*
+   * После «Удалить всё обо мне» строк сессий нет, и забытый телефон
+   * отсекает только время — отметка удаления (forget_marks) против iat его
+   * куки. Продление выдало бы той же куке новый iat, и она прожила бы ещё
+   * год: следующий её заход снова был бы «вошедшим». Поэтому продление
+   * решается только свежим чтением из базы — ни кэш соседнего экземпляра,
+   * ни fail-open при сбое базы его не дают.
+   */
+  describe('после удаления на другом устройстве старая кука не продлевается', () => {
+    const ME = STEAMID_OF.openid
+    const later = T0 + SESSION_TOUCH_AFTER_SEC + 60
+
+    test('по тёплому кэшу экземпляра, ещё не знающего об удалении', async () => {
+      await signIn(db, ME, { verified: true })
+      vi.setSystemTime(later * 1000)
+      // Экземпляр видел эту куку только что: в его кэше она жива
+      expect(await currentSession()).not.toBeNull()
+      // Удаление нажато на ноутбуке и прошло через соседний экземпляр — этот
+      // кэш никто не сбрасывал
+      await forgetUser(db, ME, { signOutFrom: later })
+      vi.setSystemTime((later + 1) * 1000)
+
+      const res = await POST(post('/api/session/touch'))
+      expect(await res.json()).toEqual({ authed: false })
+      expect(newCookie(res)).toBeNull()
+      // Следующий запрос с той же кукой — гость
+      expect(await currentSession()).toBeNull()
+    })
+
+    test('вслепую, пока база не отвечает на сверку', async () => {
+      await signIn(db, ME, { verified: true })
+      await forgetUser(db, ME, { signOutFrom: T0 + 60 })
+      vi.setSystemTime(later * 1000)
+      breakDbOn(db, 'LEFT JOIN forget_marks')
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const res = await POST(post('/api/session/touch'))
+        // Впустить в аварию можно — так устроены сессии (fail-open), — а
+        // продлить нельзя: отметки база сейчас не показала
+        expect(await res.json()).toMatchObject({ authed: true })
+        expect(newCookie(res)).toBeNull()
+      } finally {
+        warn.mockRestore()
+      }
+      // База вернулась — та же кука уже гость
+      ;(globalThis as typeof globalThis & { __imboredDb?: Promise<Db> }).__imboredDb = Promise.resolve(db)
+      expect(await currentSession()).toBeNull()
+    })
   })
 
   test('свежая кука не переставляется', async () => {

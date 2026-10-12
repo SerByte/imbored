@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { lazyIsland } from '@/components/lazyIsland'
 import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
@@ -9,6 +10,16 @@ import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
 import { signOutReply, type SignOutReply } from '@/lib/signoutreply'
+
+/*
+ * «Удалить всё обо мне» — отдельным чанком (components/lazyIsland), а не в
+ * первой загрузке /library: она упирается в бюджет веса
+ * (bundle-budget.json), а вопрос со списком и разбор ответов нужны одному
+ * нажатию из тысячи. До гидратации кнопка всё равно ничего не умеет, а чанк
+ * догружается сразу после неё — и только у входа через Steam: остальным
+ * островок не монтируется вовсе.
+ */
+const ForgetMe = lazyIsland(() => import('@/components/ForgetMe').then((m) => m.ForgetMe), 'forget-me')
 
 /**
  * Выход. Раньше его не было вовсе: сменить или сбросить вход можно было только
@@ -26,6 +37,10 @@ import { signOutReply, type SignOutReply } from '@/lib/signoutreply'
  *
  * Вместо кнопки — строка о том, что для этого нужно. Она действенная: вход
  * через Steam доступен в один клик и даёт право сразу.
+ *
+ * Тем же правом стоит рядом «Удалить всё обо мне» (components/ForgetMe):
+ * удаление тоже выпускает со всех устройств, и по ссылке на чужой профиль
+ * стереть чужое нельзя. Поэтому строка о входе говорит про оба.
  *
  * «Везде» гасит и секретную ссылку на RSS-ленту (revokeAllSessions в
  * lib/db): ссылка — тоже доступ, выпущенный из сессии. Жмут же «везде» и
@@ -220,7 +235,7 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
             </button>
           ) : (
             <span className="text-faint">
-              Выход на всех устройствах — после{' '}
+              Выход на всех устройствах и удаление данных — после{' '}
               {/* next=/library: после входа человек возвращается туда, где
                   нажимал, и кнопка «везде» уже на месте */}
               <a href="/api/auth/steam?next=%2Flibrary" className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2">
@@ -228,6 +243,9 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
               </a>
             </span>
           )}
+          {/* Тем же правом, что «везде»: стереть всё по ссылке на чужой профиль
+              нельзя, и сервер это проверяет сам (app/api/forget) */}
+          {verified && <ForgetMe />}
         </>
       )}
       {/* Стоит всегда, меняется только текст (components/StatusLine): отказ

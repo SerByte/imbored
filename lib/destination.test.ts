@@ -112,7 +112,18 @@ describe('разворот гостя на лендинг', () => {
           const src = fs.readFileSync(p, 'utf8')
           // SignOut разворачивает НАМЕРЕННО без назначения: человек только что
           // вышел, возвращать его туда, откуда он вышел, — бессмыслица.
+          // ForgetMe — по той же причине: после «Удалить всё обо мне» идти
+          // некуда, кроме главной. Но его разворот не молчит, пока перед ним
+          // стоит метка удаления: строку «всё удалено» зажигает она
+          // (lib/forgotnotice), а не адрес — /?forgot=1 жил бы в истории и
+          // звучал через месяц снова. Без метки — такой же нарушитель
           if (p.endsWith(path.join('components', 'SignOut.tsx'))) continue
+          if (
+            p.endsWith(path.join('components', 'ForgetMe.tsx')) &&
+            /markForgot\(\)\s*(?:\/\/.*\s*)*router\.replace\(\s*'\/'\s*\)/.test(src)
+          ) {
+            continue
+          }
           for (const m of src.matchAll(/(?:redirect|router\.(?:push|replace))\(\s*'\/'\s*\)/g)) {
             offenders.push(`${path.relative(ROOT, p)}: ${m[0]}`)
           }
