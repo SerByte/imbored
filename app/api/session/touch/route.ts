@@ -91,6 +91,10 @@ export async function POST(req: Request) {
   const card = user ? { ...user, demo, ...(withLive ? { live } : {}) } : null
   const res = NextResponse.json({ authed: true, steamid, writer: isWriter(session), ...(card ?? {}) })
 
+  // stale ставит только свежее и удавшееся чтение из базы (resolveSession):
+  // кука, выданная до «выйти везде» или до удаления, не продлевается ни по
+  // кэшу соседнего экземпляра, ни вслепую, пока база лежит, — иначе с новым
+  // iat она пережила бы отсечку на год
   if (!stale) return res
 
   // Легаси-кук без sid здесь больше не бывает: их не пускает resolveSession,

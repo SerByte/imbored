@@ -134,8 +134,10 @@ import {
   forgetDailyPick,
   topCatalogAppids,
   countUserRows,
+  hasUserRows,
   createSession,
   FORGET_TABLES,
+  forgetMarkAt,
   forgetUser,
   issueRoomDeck,
   castDeckVote,
@@ -3696,10 +3698,10 @@ describe('forgetUser: удаление по запросу', () => {
    * Удаление по запросу обязано выпустить человека со всех устройств. Само по
    * себе стирание строк sessions и users этого не делает: авторитет — подпись
    * куки (шапка lib/sessions), и кука без строки — «вход жив, база не
-   * ответила». Телефон, о котором человек забыл, оставался бы внутри, а
-   * первый же его заход в /library разобрал бы библиотеку заново — удалённое
-   * вернулось бы само. Поэтому удаление ставит отметку forget_marks: кука,
-   * выданная до неё, больше не пускает.
+   * ответила». Телефон, о котором человек забыл, оставался бы внутри, и
+   * первый же вход в пати по ссылке снова записал бы человека под удалённым
+   * SteamID. Поэтому удаление ставит отметку forget_marks: кука, выданная до
+   * неё, больше не пускает.
    */
   test('signOutFrom: отметка удаления гасит куки, выданные до неё, — других следов нет', async () => {
     const db = await populated()
@@ -3719,6 +3721,26 @@ describe('forgetUser: удаление по запросу', () => {
     await forgetUser(db, ME)
     expect((await getSessionState(db, 'sid-me', ME)).sessionsFrom).toBeNull()
     expect(await traces(db, ME)).toEqual([])
+  })
+
+  /*
+   * Письмо после кнопки: от человека осталась одна отметка удаления.
+   * Скрипт по письму (scripts/forget-user.ts) обязан сказать «уже удалён», а
+   * не «нашлась строка, удали с --apply» — повтор только переставил бы
+   * отметку позже и продержал SteamID в базе дольше.
+   */
+  test('после удаления удалять нечего: отметка — след удаления, а не данные', async () => {
+    const db = await populated()
+    expect(hasUserRows(await countUserRows(db, ME))).toBe(true)
+    expect(await forgetMarkAt(db, ME)).toBe(NOW - 500 * 86_400)
+
+    await forgetUser(db, ME, { signOutFrom: NOW + 60 })
+    const left = await countUserRows(db, ME)
+    expect(left.filter((r) => r.rows > 0)).toEqual([{ table: 'forget_marks', rows: 1 }])
+    expect(hasUserRows(left)).toBe(false)
+    expect(await forgetMarkAt(db, ME)).toBe(NOW + 60)
+    // Тот, кто не удалялся вовсе, — без отметки
+    expect(await forgetMarkAt(db, '76561197960287999')).toBeNull()
   })
 
   test('сторож: каждая таблица с людьми (steamid, created_by, owner, viewer) есть в списке удаления', async () => {

@@ -399,10 +399,12 @@ CREATE TABLE IF NOT EXISTS feed_links (
  * нужна она ровно для «выйти везде». Авторитет входа — подпись куки (шапка
  * sessions): кука, у которой нет строки, — «база не ответила», а не «вход
  * отозван». Стёртые вместе со всем остальным sessions и users поэтому
- * никого не выпускали: забытый телефон оставался внутри, и первый же его
- * заход в /library разобрал бы библиотеку заново — удалённое вернулось бы
- * само. Отметка работает как users.sessions_from: кука, выданная раньше
- * неё, не пускает (getSessionState).
+ * никого не выпускали: забытый телефон оставался «вошедшим» — главная
+ * здоровалась «С возвращением», а вход в пати по ссылке (его пускает и
+ * неподтверждённая сессия) снова записал бы человека под удалённым
+ * SteamID. Отметка работает как users.sessions_from: кука, выданная раньше
+ * неё, не пускает (getSessionState). И продлить такую куку нельзя — новый
+ * iat пережил бы отметку (resolveSession в lib/sessions).
  *
  * Отдельной таблицей, а не строкой users: та — профиль, и строка с одним
  * sessions_from выглядела бы как человек, у которого просто нет ника.
@@ -6355,6 +6357,27 @@ export async function countUserRows(db: Db, steamid: string): Promise<ForgetRepo
     'read',
   )
   return USER_ROWS.map((r, i) => ({ table: r.table, rows: Number(res[i]?.rows[0]?.n ?? 0) }))
+}
+
+/**
+ * Есть ли в счёте countUserRows что удалять.
+ *
+ * Отметка прошлого удаления (forget_marks) — не данные человека, а след
+ * самого удаления: после кнопки «Удалить всё обо мне» от человека остаётся
+ * только она. Считай её — и письмо, пришедшее вслед за кнопкой, выглядело бы
+ * в scripts/forget-user.ts как «нашлась одна строка, удали с --apply», а
+ * повтор только переставил бы отметку позже и продержал SteamID в базе
+ * лишние недели.
+ */
+export function hasUserRows(report: ForgetReport): boolean {
+  return report.some((r) => r.table !== 'forget_marks' && r.rows > 0)
+}
+
+/** Когда человек удалился (forget_marks), или null — не удалялся либо отметка уже ушла уборкой */
+export async function forgetMarkAt(db: Db, steamid: string): Promise<number | null> {
+  const res = await db.execute({ sql: 'SELECT at FROM forget_marks WHERE steamid = ?', args: [steamid] })
+  const at = res.rows[0]?.at
+  return at === undefined || at === null ? null : Number(at)
 }
 
 /**

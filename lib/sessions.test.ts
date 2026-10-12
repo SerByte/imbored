@@ -41,7 +41,7 @@ describe('resolveSession', () => {
       nowSec: NOW,
       lookup: lookupLive,
     })
-    expect(r).toEqual({ steamid: STEAMID, sid: 'a'.repeat(32), stale: false, verified: false })
+    expect(r).toEqual({ steamid: STEAMID, sid: 'a'.repeat(32), stale: false, verified: false, checked: true })
   })
 
   test('через неделю с лишним просит продлить', async () => {
@@ -124,6 +124,8 @@ describe('resolveSession', () => {
     const lines = warn.mock.calls.map((c) => JSON.parse(String(c[0])))
     warn.mockRestore()
     expect(r?.steamid).toBe(STEAMID)
+    // и вход честно помечен как пущенный на веру: о нём неизвестно ничего
+    expect(r?.checked).toBe(false)
     expect(lines).toEqual([
       expect.objectContaining({ event: 'swallowed', where: 'sessions:lookup', message: 'turso прилегла' }),
     ])
@@ -229,6 +231,59 @@ describe('resolveSession', () => {
     expect(calls).toBe(1)
     await resolveSession({ token, secret: SECRET, nowSec: NOW + 61, lookup })
     expect(calls).toBe(2)
+  })
+
+  test('fresh — мимо кэша: отзыв, поставленный в обход, виден сразу, а ответ ложится в кэш', async () => {
+    let state: SessionRow = live
+    let calls = 0
+    const lookup = async () => {
+      calls += 1
+      return state
+    }
+    const token = tokenAt(NOW)
+    await resolveSession({ token, secret: SECRET, nowSec: NOW, lookup })
+    // «Выйти везде» на соседнем экземпляре: этот кэш о нём не знает
+    state = { revokedAt: null, sessionsFrom: NOW + 1, verified: false, gone: false }
+    expect(await resolveSession({ token, secret: SECRET, nowSec: NOW + 2, lookup })).not.toBeNull()
+    expect(await resolveSession({ token, secret: SECRET, nowSec: NOW + 2, lookup, fresh: true })).toBeNull()
+    expect(calls).toBe(2)
+    // Свежий ответ обновил кэш: обычный запрос следом видит отзыв без базы
+    expect(await resolveSession({ token, secret: SECRET, nowSec: NOW + 3, lookup })).toBeNull()
+    expect(calls).toBe(2)
+  })
+
+  /*
+   * Продление переставляет куку с новым iat, а отсечки «выйти везде» и
+   * удаления бьют именно по iat. Продли по кэшу, ещё не знающему об
+   * отсечке, — и кука, выданная до неё, прожила бы ещё год. У удаления
+   * строк сессий нет вовсе, и отсекает его только время (forget_marks).
+   */
+  test('устаревшая кука сверяется с базой мимо кэша: отсечка с соседнего экземпляра не даёт её продлить', async () => {
+    let state: SessionRow = { ...live, verified: true }
+    const lookup = async () => state
+    const token = tokenAt(NOW)
+    const later = NOW + SESSION_TOUCH_AFTER_SEC + 60
+    // Этот экземпляр видел куку только что — в кэше она жива
+    expect((await resolveSession({ token, secret: SECRET, nowSec: later, lookup }))?.stale).toBe(true)
+    // Удаление на другом устройстве и другом экземпляре: отметка позже iat
+    state = { revokedAt: null, sessionsFrom: later, verified: false, gone: false }
+    expect(await resolveSession({ token, secret: SECRET, nowSec: later + 1, lookup })).toBeNull()
+  })
+
+  test('база упала — устаревшая кука впускается, но продлевать её не просят', async () => {
+    // Fail-open — право войти, а не право продлиться вслепую: отсечку, которую
+    // база сейчас не показала, продлённая кука пережила бы на год
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const r = await resolveSession({
+      token: tokenAt(NOW),
+      secret: SECRET,
+      nowSec: NOW + SESSION_TOUCH_AFTER_SEC + 60,
+      lookup: lookupThrows,
+    })
+    warn.mockRestore()
+    expect(r?.steamid).toBe(STEAMID)
+    expect(r?.stale).toBe(false)
+    expect(r?.checked).toBe(false)
   })
 
   test('ошибка базы не кэшируется: следующий запрос пробует снова', async () => {

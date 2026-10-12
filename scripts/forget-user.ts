@@ -29,12 +29,17 @@
  *
  * Удаление то же, что у кнопки «Удалить всё обо мне» (app/api/forget), и так
  * же выпускает человека со всех устройств (signOutFrom): без отметки
- * удаления его старые куки по-прежнему пускали бы, и первый заход с
- * забытого телефона разобрал бы библиотеку заново (см. таблицу forget_marks).
+ * удаления его старые куки по-прежнему пускали бы (см. таблицу forget_marks).
+ *
+ * Письмо часто приходит уже после кнопки. Тогда от человека осталась одна
+ * отметка удаления, и скрипт так и говорит: уже удалён, такого-то числа,
+ * применять нечего (hasUserRows в lib/db). Повтор с --apply ничего бы не
+ * удалил, а только переставил отметку позже — и SteamID пролежал бы в базе
+ * дольше обещанного.
  */
 
 import { createClient } from '@libsql/client'
-import { countUserRows, forgetUser, type ForgetReport } from '../lib/db'
+import { countUserRows, forgetMarkAt, forgetUser, hasUserRows, type ForgetReport } from '../lib/db'
 import { parseProfileInput, resolveVanity } from '../lib/steam'
 
 function openDb() {
@@ -90,8 +95,18 @@ async function main() {
   const found = await countUserRows(db, steamid)
   print('найдено строк:', found)
 
-  if (!found.some((r) => r.rows > 0)) {
-    console.log('\nо таком игроке в базе ничего нет — удалять нечего.')
+  if (!hasUserRows(found)) {
+    const at = await forgetMarkAt(db, steamid)
+    if (at === null) {
+      console.log('\nо таком игроке в базе ничего нет — удалять нечего.')
+      return
+    }
+    console.log(
+      `\nэтот игрок уже удалён — ${new Date(at * 1000).toISOString().slice(0, 10)} (UTC), кнопкой или по\n` +
+        'прошлому письму. В базе осталась только отметка удаления (forget_marks —\n' +
+        'SteamID и время), она уйдёт сама через год с месяцем. Применять нечего:\n' +
+        '--apply только переставил бы отметку позже. Можно отвечать, что всё удалено.',
+    )
     return
   }
   if (!apply) {

@@ -16,7 +16,7 @@ import { portraitTag } from '@/lib/portraitmodel'
 import { SESSION_COOKIE, currentSession, sessionSecret } from '@/lib/server'
 import { forgetSessionCache, mintSession } from '@/lib/sessions'
 import { setTestCookie, setTestHeaders } from '@/lib/testing/headers'
-import { STEAMID_OF, breakDbOn, freshDb, post, signIn, signInAs, signOut } from '@/lib/testing/route'
+import { STEAMID_OF, breakDbOn, freshDb, listenDb, post, signIn, signInAs, signOut } from '@/lib/testing/route'
 import { GET, POST } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -174,8 +174,8 @@ describe('/api/forget: удаление', () => {
   /*
    * Ради этого и стоит отметка удаления. Подпись куки — авторитет входа, и
    * кука без строки в базе пускает: стёртые sessions и users не выпускали
-   * никого. Забытый телефон оставался «вошедшим», и первый же его заход в
-   * /library разобрал бы библиотеку заново.
+   * никого. Забытый телефон оставался «вошедшим», и первый же вход в пати
+   * по ссылке снова записал бы человека под удалённым SteamID.
    */
   test('выпускает со всех устройств, а новый вход после — пускает', async () => {
     const phone = await signIn(db, ME, { verified: true })
@@ -235,6 +235,28 @@ describe('/api/forget: удаление', () => {
     expect(await stored(ME)).toBeGreaterThan(0)
   })
 
+  /*
+   * Сверка не ответила — вход пущен на веру (fail-open), и verified у него
+   * false не потому, что вошли по ссылке, а потому, что неизвестно ничего.
+   * needsteam позвал бы уже вошедшего через Steam войти через Steam снова,
+   * и в аварию это не помогло бы. Ответ — «не получилось», и ничего не
+   * удалено.
+   */
+  test('сбой сверки сессии — 503 failed, а не needsteam, и ничего не удалено', async () => {
+    await signIn(db, ME, { verified: true })
+    await seed(ME)
+    const before = await stored(ME)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    breakDbOn(db, 'LEFT JOIN forget_marks')
+
+    for (const res of [await preview(), await erase()]) {
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual({ error: 'failed' })
+      expect(cleared(res)).toBe(false)
+    }
+    expect(await stored(ME)).toBe(before)
+  })
+
   test('сбой базы — 503, кука цела, данные целы, в логе нет SteamID', async () => {
     await signIn(db, ME, { verified: true })
     await seed(ME)
@@ -253,6 +275,45 @@ describe('/api/forget: удаление', () => {
     expect(cleared(res)).toBe(false)
     expect(await stored(ME)).toBe(before)
     expect(logs.join('\n')).not.toContain(ME)
+  })
+})
+
+/*
+ * Сверка мимо кэша — только для своей сессии. Раньше POST сбрасывал весь
+ * кэш состояния сессий процесса ещё до того, как узнавал, есть ли кука: любой
+ * запрос без входа — отбитый 401, до потолка попыток он не доходит —
+ * заставлял каждый следующий вход на этом экземпляре идти в базу.
+ */
+describe('/api/forget: кэш сессий', () => {
+  test('POST без входа не сбрасывает кэш сессий другим', async () => {
+    const other = STEAMID_OF.claimed
+    const { token } = await signIn(db, other)
+    // Сессия соседа сверена и лежит в кэше
+    expect(await currentSession()).not.toBeNull()
+    let lookups = 0
+    listenDb(db, (sql) => {
+      if (sql.includes('LEFT JOIN forget_marks')) lookups += 1
+    })
+
+    signOut()
+    for (let i = 0; i < 5; i++) expect((await erase()).status).toBe(401)
+
+    // Соседа по-прежнему узнают по кэшу, а не новым походом в базу
+    setTestCookie(SESSION_COOKIE, token)
+    expect(await currentSession()).not.toBeNull()
+    expect(lookups).toBe(0)
+  })
+
+  test('удаление сверяет свою сессию с базой и при тёплом кэше', async () => {
+    await signIn(db, ME, { verified: true })
+    await seed(ME)
+    expect(await currentSession()).not.toBeNull()
+    let lookups = 0
+    listenDb(db, (sql) => {
+      if (sql.includes('LEFT JOIN forget_marks')) lookups += 1
+    })
+    expect((await erase()).status).toBe(200)
+    expect(lookups).toBe(1)
   })
 })
 

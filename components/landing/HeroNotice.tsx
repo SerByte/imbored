@@ -1,8 +1,11 @@
 'use client'
 
 import { useSearchParams } from 'next/navigation'
+import { useSyncExternalStore } from 'react'
 import { destinationPath } from '@/lib/destination'
 import { DESTINATIONS } from '@/lib/destinationtext'
+import { forgotServer, subscribeForgot, takeForgot } from '@/lib/forgotnotice'
+import { getServerSessionHint, getSessionHint, subscribeSessionHint } from '@/lib/sessionhint'
 
 /**
  * Строка намерения над заголовком: почему ты здесь, если пришёл не сам.
@@ -39,8 +42,12 @@ export function HeroNotice() {
   const next = destinationPath(search.get('next'))
   const dest = next ? DESTINATIONS[next] : null
   // Сюда уводит «Удалить всё обо мне» (components/ForgetMe). Без строки
-  // человек попадал бы на обычную главную гостя и не знал, сработало ли
-  const forgot = search.get('forgot') === '1'
+  // человек попадал бы на обычную главную гостя и не знал, сработало ли.
+  // Зажигает её метка самого удаления, забранная один раз (lib/forgotnotice),
+  // а не адрес: адрес оставался в истории и звучал бы снова и снова. И
+  // никогда — рядом с «С возвращением»: вошедшему «входы погашены» врёт
+  const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
+  const forgot = useSyncExternalStore(subscribeForgot, takeForgot, forgotServer) && hint?.authed !== true
 
   const promise = forgot
     ? 'Готово — всё, что imbored о тебе хранил, удалено, а входы на всех устройствах погашены.'

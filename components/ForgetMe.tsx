@@ -6,6 +6,7 @@ import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
 import { FORGET_CONFIRM, forgetPreviewReply, forgetReply, type ForgetMiss } from '@/lib/forgetreply'
+import { markForgot } from '@/lib/forgotnotice'
 import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
@@ -64,8 +65,11 @@ function missText(miss: ForgetMiss, step: 'ask' | 'erase'): ReactNode {
  *
  * После удаления — то же, что после выхода (SignOut, out): стереть подсказку
  * о входе, выдачу /play и «время скрыто» на этом устройстве — и на главную
- * со строкой «всё удалено» (?forgot=1, components/landing/HeroNotice). Кука
- * уже погашена ответом сервера, остальные устройства — отметкой удаления.
+ * со строкой «всё удалено» (components/landing/HeroNotice). Строку зажигает
+ * метка в этой вкладке, которую главная забирает один раз
+ * (lib/forgotnotice), а не адрес вроде /?forgot=1: тот жил бы в истории и
+ * говорил «удалено» и вернувшемуся через месяц. Кука уже погашена ответом
+ * сервера, остальные устройства — отметкой удаления.
  *
  * Кнопки на время запроса — aria-disabled, а не disabled
  * (lib/disabledfocus.test.ts); повтор гасят обработчики — по busy.
@@ -136,9 +140,12 @@ export function ForgetMe() {
     forgetSessionHint()
     forgetPlay()
     timeHiddenStore.set(null)
+    // Строку «всё удалено» главная покажет по метке этой вкладки — один раз
+    // (lib/forgotnotice), а не по адресу, который пережил бы удаление
+    markForgot()
     // busy не снимается: кнопки остаются «Удаляю…», пока идёт переход.
     // refresh — после перехода, как у выхода: роутерный кэш помнит /library
-    router.replace('/?forgot=1')
+    router.replace('/')
     router.refresh()
   }
 
