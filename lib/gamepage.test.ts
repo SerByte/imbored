@@ -754,6 +754,107 @@ describe('«Чем выделяется» и длина сессии', () => {
     expect(sessionTrait({ categories: [1, 2], semantics: semantics({})})?.label).toBe('Сессия')
   })
 
+  /*
+   * Кооп-кампания — не матч. Категории и теги (первые по голосам) сняты с
+   * каталога продакшна. /game/1426210 писал «Матч: ~30 мин» у It Takes Two:
+   * playMode у неё 'coop' (одиночного режима нет), и прежнее правило считало
+   * матчем любой мультиплеер без одиночного. Та же строка едет на героя /play,
+   * в колоду пати и на полки жанров — компания, выбирающая вечер, видела
+   * десятичасовую кампанию тридцатиминутным матчем.
+   *
+   * PvP-категорией одной не обойтись: у Dota 2 её нет ([1, 9]), а матч у неё
+   * самый что ни на есть — его выдают теги.
+   */
+  const IT_TAKES_TWO = {
+    categories: [1, 9, 38, 39, 24],
+    tags: {
+      'Co-op': 1486, Multiplayer: 1078, 'Split Screen': 892, 'Local Co-Op': 864, 'Online Co-Op': 733,
+      Puzzle: 681, Adventure: 564, 'Story Rich': 468, 'Local Multiplayer': 407, 'Co-op Campaign': 407,
+    },
+  }
+  const A_WAY_OUT = {
+    categories: [1, 9, 38, 39, 24],
+    tags: {
+      'Online Co-Op': 1300, 'Co-op': 1164, 'Split Screen': 993, 'Story Rich': 872, 'Local Co-Op': 845,
+      Multiplayer: 658, 'Action-Adventure': 529, Action: 486, Adventure: 438, Crime: 396,
+    },
+  }
+  const HELLDIVERS_2 = {
+    categories: [1, 9, 38],
+    tags: {
+      'Online Co-Op': 847, PvE: 759, 'Third-Person Shooter': 730, Multiplayer: 719, Shooter: 654,
+      Action: 645, 'Co-op': 584, 'Sci-fi': 575, 'Extraction Shooter': 551, Capitalism: 516,
+    },
+  }
+  const DOTA_2 = {
+    categories: [1, 9],
+    tags: {
+      'Free to Play': 3010, MOBA: 1019, Multiplayer: 778, Strategy: 723, eSports: 598,
+      'Team-Based': 554, Competitive: 422, Action: 401, 'Online Co-Op': 378, PvP: 308,
+    },
+  }
+  const AMONG_US = {
+    categories: [1, 49, 36, 47, 9, 38, 48, 27],
+    tags: { Multiplayer: 1080, 'Online Co-Op': 735, 'Social Deduction': 734, Space: 682, Survival: 567 },
+  }
+  const CS2 = {
+    categories: [1, 27],
+    tags: { FPS: 1160, Shooter: 834, Multiplayer: 795, Competitive: 681, Action: 604 },
+  }
+  const REMATCH = {
+    categories: [1, 9, 38, 27],
+    tags: { Sports: 900, 'Football (Soccer)': 800, Multiplayer: 700, PvP: 600, eSports: 500, 'Online Co-Op': 400 },
+  }
+
+  test('кооп-кампания — «Сессия», а не «Матч»', () => {
+    const s = semantics({ minutes: 30 })
+    expect(sessionTrait({ ...IT_TAKES_TWO, semantics: s })).toEqual({ label: 'Сессия', value: '~40 мин' })
+    expect(sessionTrait({ ...A_WAY_OUT, semantics: s })?.label).toBe('Сессия')
+    // кооп против ботов — тоже заход, а не матч: противника-человека нет
+    expect(sessionTrait({ ...HELLDIVERS_2, semantics: semantics({ minutes: 40 }) })?.label).toBe('Сессия')
+  })
+
+  test('настоящий матч остаётся матчем — по категориям PvP или по тегам', () => {
+    const s = semantics({ minutes: 35 })
+    // Dota 2: PvP-категории нет, матч выдают теги
+    expect(sessionTrait({ ...DOTA_2, semantics: s })).toEqual({ label: 'Матч', value: '~35 мин' })
+    expect(sessionTrait({ ...REMATCH, semantics: s })?.label).toBe('Матч')
+    expect(sessionTrait({ ...AMONG_US, semantics: semantics({ minutes: 15 }) })).toEqual({
+      label: 'Матч',
+      value: '~15 мин',
+    })
+    // сетевая игра без коопа — матч, как и прежде, тегов не спрашиваем
+    expect(sessionTrait({ ...CS2, semantics: s })?.label).toBe('Матч')
+    expect(sessionTrait({ categories: [1, 27], semantics: s })?.label).toBe('Матч')
+  })
+
+  test('PvP в хвосте тегов кооп матчем не делает', () => {
+    // Хвост тегов — шум единичных голосов: у хоррор-кооперативов вроде
+    // MIMESIS «PvP» стоит девятнадцатым из двадцати
+    const tail: Record<string, number> = { PvP: 5 }
+    for (let i = 0; i < 19; i++) tail[`Тег ${i}`] = 1000 - i * 10
+    expect(sessionTrait({ categories: [1, 9, 38], tags: tail, semantics: semantics({}) })?.label).toBe(
+      'Сессия',
+    )
+  })
+
+  test('без тегов кооп судится по одним категориям', () => {
+    // страница со старой метой: «Сессия» — осторожная сторона, «Матч» обещал бы противника
+    expect(sessionTrait({ categories: [1, 9], semantics: semantics({}) })?.label).toBe('Сессия')
+    expect(sessionTrait({ categories: [1, 49, 9], semantics: semantics({}) })?.label).toBe('Матч')
+  })
+
+  test('карточка игры передаёт теги в строку сессии', () => {
+    expect(gameTraits({ ...DOTA_2, semantics: semantics({}) }, null)).toContainEqual({
+      label: 'Матч',
+      value: '~40 мин',
+    })
+    expect(gameTraits({ ...IT_TAKES_TWO, semantics: semantics({}) }, null)).toContainEqual({
+      label: 'Сессия',
+      value: '~40 мин',
+    })
+  })
+
   test('«Чем выделяется» — русскими подписями, по порядку характерности', () => {
     expect(hookTrait(['Automation', 'Base Building'])).toEqual({
       label: 'Чем выделяется',

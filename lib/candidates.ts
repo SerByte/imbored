@@ -10,6 +10,7 @@ import {
 } from './db'
 import { editionKey } from './editions'
 import { nearGames } from './gamepage'
+import { playContextOf } from './liveness'
 import type { Lean } from './mood'
 import type { NudgePlan } from './nudge'
 import { playtimeHidden } from './playtime'
@@ -371,6 +372,10 @@ export async function buildCandidates(
 
   // Игры из библиотеки не проходят офлайн-фильтры каталога — считаем здесь.
   // «С друзьями» судим строже: в компанию не годится то, во что вместе не сесть.
+  // «Один» — тоже строже мягкого вердикта каталога: кооп без одиночного режима
+  // проходит, только если напарника найдёт толпа (playContextOf, 'alone').
+  // Каталожные находки судятся здесь же заново: их games.alive посчитан
+  // мягким 'solo' и такой кооп пропускает.
   //
   // Метаданные каталога идут в тот же расчёт, а не только библиотечные: серии
   // определяются по группе целиком, и без пула вопрос «у тебя старая часть, а
@@ -383,7 +388,7 @@ export async function buildCandidates(
   for (const [appid, meta] of poolByAppid) {
     if (judged.has(appid) && !allMetas.has(appid)) allMetas.set(appid, meta)
   }
-  const actual = filterActual(candidates, allMetas, mood.social === 'friends' ? 'party' : 'solo')
+  const actual = filterActual(candidates, allMetas, playContextOf(mood, opts.moodless === true))
 
   // Своё и «нет в библиотеке» — разные разговоры и разные блоки. Потолок
   // знакомого ставится ДО смешивания с каталогом: mixHeroPool считает, сколько
