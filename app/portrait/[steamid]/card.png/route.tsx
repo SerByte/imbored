@@ -1,4 +1,4 @@
-import { ImageResponse } from 'next/og'
+import { isrImage } from '@/lib/ogresponse'
 import { CardImage, fonts, loadCardData } from '../share-card'
 
 /**
@@ -39,7 +39,7 @@ export async function GET(
   const data = await loadCardData(steamid)
   if (!data) return new Response('Not found', { status: 404 })
 
-  return new ImageResponse(<CardImage data={data} wide={false} />, {
+  return isrImage(<CardImage data={data} wide={false} />, {
     ...SIZE,
     fonts: await fonts,
   })

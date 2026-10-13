@@ -892,6 +892,21 @@ curl -sI https://imbored.cc/portrait/<твой steamid> | grep -i x-robots-tag  
 curl -sI "https://imbored.cc/portrait/<твой steamid>/card.png" | grep -i x-robots-tag   # noindex
 ```
 
+**Карточки превью держатся в кэше.** Картинки динамических страниц (игра,
+патч, жанр, выбор, комната, портрет, совместимость) живут в ISR неделю, сутки
+или час — но только потому, что собраны `isrImage` (`lib/ogresponse.ts`): с
+голым `ImageResponse` каждый заход отвечал `STALE` и рисовал PNG заново.
+Проверка — два запроса подряд, через несколько секунд:
+
+```bash
+curl -sI https://imbored.cc/game/730/opengraph-image | grep -iE 'x-vercel-cache|^age'   # MISS или HIT
+curl -sI https://imbored.cc/game/730/opengraph-image | grep -iE 'x-vercel-cache|^age'   # HIT, Age растёт
+```
+
+Браузеру `Cache-Control` по-прежнему говорит `public, max-age=0,
+must-revalidate` — s-maxage Vercel оставляет себе, — так что смотреть надо на
+`X-Vercel-Cache`. `STALE` на втором запросе — поломка вернулась.
+
 Что сделать руками:
 
 - **Google Search Console → Индексирование → Страницы.** Если там есть адреса
