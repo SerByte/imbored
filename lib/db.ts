@@ -792,7 +792,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 9
+export const CURRENT_SCHEMA_V = 10
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -886,6 +886,12 @@ export const ADDED_COLUMNS = [
   // промоут и доливка медиа, прогрев его не просит (lib/catalog). Пустое не
   // затирает известное — COALESCE в апсерте и в setGamesMedia
   ['games', 'ru_lang INTEGER'],
+  // Русское название магазина, когда оно у игры своё: «Ведьмак 3: Дикая
+  // Охота» при «The Witcher 3: Wild Hunt» в name. Приносит его обогащение
+  // карточки (appdetails с l=russian), раскладывает апсерт (nameSql и
+  // nameRuSql), ищет по нему «Найти игру». NULL — второго названия нет или
+  // карточку ещё не обогащали
+  ['games', 'name_ru TEXT'],
 ] as const
 
 /**
@@ -3038,6 +3044,67 @@ export function keepRussianSql(col: string): string {
   )
 }
 
+/*
+ * НАЗВАНИЕ: два у одной игры, и у каждого своя колонка.
+ *
+ * name — английское название магазина: его приносят прогрев, посев и
+ * заливка (GetItems по-английски, STORE_LANGUAGE в lib/catalog), и на нём
+ * стоят эвристики junk.ts и editions.ts. name_ru — русское, если оно у игры
+ * своё: его приносит обогащение карточки (appdetails с l=russian, lib/pagejob).
+ *
+ * Писатели при этом шлют одно поле, name, — то, что сказал их источник, — и
+ * прежде правило было «последний победил»: карточка клала «Ведьмак 3: Дикая
+ * Охота» поверх «The Witcher 3: Wild Hunt», прогрев через две недели —
+ * обратно, и так по кругу. На проде к октябрю 2026 русским стояло ~70
+ * названий верха каталога, и «Найти игру» не находила «witcher 3», «hogwarts
+ * legacy», «ghost of tsushima» — индекс знал только то, что лежало в name.
+ *
+ * Теперь их раскладывает апсерт, и по тому же доводу, что у описаний: SQL
+ * помнит у всех писателей, а слияние в JS — только у тех, кто его зовёт.
+ * Различаем по букве (lib/cyrillic): русское к латинскому — латинское
+ * остаётся, русское встаёт вторым; латинское к русскому — то же самое, но
+ * русское в name было от прежней карточки, и оно уходит во второе. Так
+ * строки, испорченные до этой правки, лечатся первой же английской записью —
+ * прогревом или заливкой каталога, — без отдельного прохода по Steam.
+ *
+ * Русское к русскому — обычная замена: у игры нет английского названия
+ * вовсе («ЕСТЬ ДВА СТУЛА», «Скуф на рыбалке» — магазин и по-английски зовёт
+ * их так), и это переименование. Заглушка «App N» (ensureMeta,
+ * parseAppDetails) — не название: русское её заменяет, а не встаёт вторым.
+ *
+ * Плата — редкий случай, который отсюда не отличить: игру с латинским
+ * названием магазин переименовал в русское. Название тогда останется
+ * прежним, а новое встанет вторым — найти её можно по обоим.
+ *
+ * В SET выражения видят строку ДО обновления, поэтому оба правила решают по
+ * прежнему games.name, сколько бы колонок ни писалось рядом.
+ */
+const cyrillicName = (col: string) => `COALESCE(${col}, '') GLOB ${CYRILLIC_GLOB}`
+
+/** Русское пришло к настоящему латинскому названию (не заглушке «App N») */
+const RU_OVER_LATIN =
+  `${cyrillicName('excluded.name')} AND NOT ${cyrillicName('games.name')}` +
+  ` AND games.name IS NOT ('App ' || games.appid)`
+
+/** Латинское пришло к русскому — русское в name от прежней карточки */
+const LATIN_OVER_RU = `${cyrillicName('games.name')} AND NOT ${cyrillicName('excluded.name')}`
+
+/** games.name: английское название не заменяется русским (см. НАЗВАНИЕ выше) */
+export function nameSql(): string {
+  return `CASE WHEN ${RU_OVER_LATIN} THEN games.name ELSE excluded.name END`
+}
+
+/**
+ * games.name_ru: русское название, вытесненное из name или не пущенное туда;
+ * иначе прежнее. Писатель самой колонки не шлёт — она выводится из name.
+ */
+export function nameRuSql(): string {
+  return (
+    `CASE WHEN ${RU_OVER_LATIN} THEN excluded.name` +
+    ` WHEN ${LATIN_OVER_RU} THEN games.name ELSE games.name_ru END`
+  )
+}
+
 /**
  * Замер с отметкой времени (цена — price_at, онлайн — ccu_at): едет, только
  * если он не старше того, что уже лежит. Без отметки считается самым старым.
@@ -3057,7 +3124,9 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
           ON CONFLICT(appid) DO NOTHING`
         : `${GAME_INSERT}
           ON CONFLICT(appid) DO UPDATE SET
-            name = excluded.name,
+            -- английское и русское название — по своим колонкам, см. nameSql
+            name = ${nameSql()},
+            name_ru = ${nameRuSql()},
             tags_json = excluded.tags_json,
             -- скриншоты, жанры и русское описание берегутся от пустого и от
             -- английского — см. keepFilledSql и keepRussianSql выше
@@ -4433,22 +4502,27 @@ export async function topCatalogGames(db: Db, limit: number): Promise<SimilarGam
  * Читает частичный idx_games_pool по порядку и обрывается на LIMIT — весь
  * живой каталог, раз в сутки (ISR маршрута). Сторож плана —
  * lib/queryplan.test.ts.
+ *
+ * nameRu — русское название магазина, когда оно у игры своё (name_ru, см.
+ * nameSql): по нему «ведьмак 3» находит «The Witcher 3: Wild Hunt». Нет —
+ * поля нет вовсе, а не null: таких строк — почти все шесть тысяч.
  */
 export async function searchIndexGames(
   db: Db,
   limit: number,
-): Promise<Array<{ appid: number; name: string }>> {
+): Promise<Array<{ appid: number; name: string; nameRu?: string }>> {
   const res = await db.execute({
-    sql: `SELECT appid, name FROM games
+    sql: `SELECT appid, name, name_ru FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
           ORDER BY reviews_total DESC
           LIMIT ?`,
     args: [limit],
   })
-  return (res.rows as unknown as Array<{ appid: number; name: string }>).map((r) => ({
-    appid: Number(r.appid),
-    name: String(r.name),
-  }))
+  return (res.rows as unknown as Array<{ appid: number; name: string; name_ru: string | null }>).map((r) => {
+    const row: { appid: number; name: string; nameRu?: string } = { appid: Number(r.appid), name: String(r.name) }
+    if (r.name_ru) row.nameRu = String(r.name_ru)
+    return row
+  })
 }
 
 /**

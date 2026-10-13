@@ -11,6 +11,7 @@ import {
   markPageMissed,
   migrateDb,
   replaceGameTags,
+  searchIndexGames,
   setGameJson,
   sitemapGames,
   upsertGameMeta,
@@ -766,6 +767,33 @@ describe('кадры и трейлер — одной пачкой GetItems на
     expect(res.enriched).toBe(2)
     expect(res.withShots).toBe(2)
     expect(res.withTrailers).toBe(0)
+  })
+})
+
+/*
+ * appdetails ходит с l=russian и приносит название по-русски, если оно у
+ * игры в Steam своё. Прежде слияние клало его в name поверх английского из
+ * GetItems, и «Найти игру» теряла верх каталога по английским названиям:
+ * «witcher 3», «hogwarts legacy», «ghost of tsushima» отвечали «Ничего не
+ * нашлось». Раскладывает названия апсерт (nameSql в lib/db) — здесь
+ * проверено, что карточка до него доносит русское, а не теряет.
+ */
+describe('русское название из appdetails', () => {
+  test('английское остаётся названием, русское встаёт вторым — и едет в индекс поиска', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(292030, { name: 'The Witcher 3: Wild Hunt', reviewsTotal: 900 }), NOW)
+    await replaceGameTags(db, 292030, [{ tag: 'Action', weight: 100 }])
+
+    const res = await runPageSlice(
+      db,
+      stubs({ fetchDetails: async (appid: number) => meta(appid, { name: 'Ведьмак 3: Дикая Охота' }) }),
+    )
+
+    expect(res.enriched).toBe(1)
+    expect((await getGamesMeta(db, [292030])).get(292030)?.name).toBe('The Witcher 3: Wild Hunt')
+    expect(await searchIndexGames(db, 10)).toEqual([
+      { appid: 292030, name: 'The Witcher 3: Wild Hunt', nameRu: 'Ведьмак 3: Дикая Охота' },
+    ])
   })
 })
 

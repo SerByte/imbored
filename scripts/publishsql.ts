@@ -1,4 +1,12 @@
-import { fillUnknownSql, keepFilledSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
+import {
+  fillUnknownSql,
+  keepFilledSql,
+  keepRussianSql,
+  nameRuSql,
+  nameSql,
+  newerMeasureSql,
+  type GameJsonRepair,
+} from '../lib/db'
 import { plural } from '../lib/plural'
 
 /**
@@ -68,6 +76,13 @@ export function buildSetList(cols: readonly string[]): string {
     .map((c) => {
       if (ОТ_ОБОГАЩЕНИЯ.has(c)) return `${c} = ${keepFilledSql(c)}`
       if (c === 'short_description') return `${c} = ${keepRussianSql(c)}`
+      // Название — по тем же правилам, что у апсерта (nameSql в lib/db):
+      // русское, которое крон карточек клал в name облака до этих правил,
+      // заливка английским локальным уводит во второе название, а не
+      // выбрасывает. name_ru в списке колонок нет — локальный каталог его
+      // не везёт, — и колонка выводится из name: прежний русский name облака
+      // становится вторым, а свой name_ru облака остаётся
+      if (c === 'name') return `name = ${nameSql()}, name_ru = ${nameRuSql()}`
       // Русский язык в облаке привозят крон карточек и доливка медиа, а
       // локальный каталог знает его только у игр, прошедших промоут после
       // появления колонки. NULL отсюда — «не спрашивали», а не «русского нет».

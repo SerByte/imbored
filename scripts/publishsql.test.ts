@@ -100,6 +100,46 @@ describe('публикация каталога: трейлер', () => {
   })
 })
 
+/*
+ * Название в облаке бывает русским: его клал крон карточек (appdetails с
+ * l=russian) поверх английского, до правила двух названий (nameSql в lib/db).
+ * Локальный каталог везёт английское — и заливка обязана разложить их так
+ * же, как апсерт: английское в name, русское вторым, а не выбросить его.
+ */
+describe('публикация каталога: два названия', () => {
+  const cols = ['appid', 'name', 'updated_at'] as const
+
+  async function заливаем(облако: { name: string; name_ru: string | null }, локально: string) {
+    const db = await createDb(':memory:')
+    await db.execute({
+      sql: 'INSERT INTO games (appid, name, name_ru, updated_at) VALUES (292030, ?, ?, 0)',
+      args: [облако.name, облако.name_ru],
+    })
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (292030, ?, 1)
+            ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+      args: [локально],
+    })
+    const r = await db.execute('SELECT name, name_ru FROM games')
+    return { ...(r.rows[0] as unknown as { name: string; name_ru: string | null }) }
+  }
+
+  const EN = 'The Witcher 3: Wild Hunt'
+  const RU = 'Ведьмак 3: Дикая Охота'
+
+  test('русское в облаке уходит вторым названием, английское встаёт на место', async () => {
+    expect(await заливаем({ name: RU, name_ru: null }, EN)).toEqual({ name: EN, name_ru: RU })
+  })
+
+  test('уже разложенные названия заливка не трогает', async () => {
+    expect(await заливаем({ name: EN, name_ru: RU }, EN)).toEqual({ name: EN, name_ru: RU })
+  })
+
+  test('русское из локального каталога английское в облаке не затирает', async () => {
+    expect(await заливаем({ name: EN, name_ru: null }, RU)).toEqual({ name: EN, name_ru: RU })
+  })
+})
+
 describe('публикация каталога: замеры не откатываются к старым', () => {
   const ЗАМЕРЫ = [
     'appid', 'name', 'price_final', 'price_initial', 'discount_percent', 'discount_ends_at',

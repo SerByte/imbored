@@ -56,13 +56,28 @@ export const SEARCH_INDEX_MAX = 10_000
  * сжимаются хуже. Замер на 5816 играх: пары — 83.1 КБ gzip, колонки — 76.4.
  * Порядок строк — по числу отзывов, и он же порядок популярности при равном
  * совпадении: отдельного ранга на проводе нет.
+ *
+ * alt — второе название: русское из магазина Steam (games.name_ru), когда
+ * оно у игры своё и не сворачивается в то же, что английское. Ключ — номер
+ * строки в ids и names, а не appid: ключ короче. Колонка редкая — у сотни
+ * игр из шести тысяч, — поэтому не третий массив на все строки, где почти
+ * всё было бы пустым, а словарь только с ними; нет ни одного — нет и поля.
+ *
+ * Весит оно мало. Замер по копии прода от 24 сентября — 5919 игр индекса,
+ * у 34 из них второе название, а английские взяты из локального каталога:
+ * с одними английскими индекс — 78.0 КБ gzip и 67.6 КБ br, со вторыми —
+ * 79.3 и 68.5, то есть ~37 байт gzip (~28 br) на название. На сотню вторых
+ * названий — ~4 КБ gzip, 5% индекса. Читатель старше поля его просто не
+ * видит и ищет по одному названию, как прежде.
  */
-export type SearchIndexWire = { ids: number[]; names: string[] }
+export type SearchIndexWire = { ids: number[]; names: string[]; alt?: Record<number, string> }
 
-/** Строка индекса в браузере: свёрнутое название посчитано один раз при чтении */
-export type SearchEntry = {
-  appid: number
-  name: string
+/**
+ * Свёрнутое название в том виде, в каком его сверяет tierOf: у строки
+ * индекса таких одно или два (SearchEntry.alt) — и каждое считается раз при
+ * чтении индекса.
+ */
+export type SearchKey = {
   /** foldTitle(name) с пробелом спереди: «начало слова» — это ' ' + слово */
   hay: string
   /**
@@ -98,6 +113,19 @@ export type SearchEntry = {
   spaced: number[]
 }
 
+/** Строка индекса в браузере: свёрнутое название посчитано один раз при чтении */
+export type SearchEntry = SearchKey & {
+  appid: number
+  /** Английское название магазина — им строка списка и называет игру */
+  name: string
+  /**
+   * Русское название, если у игры оно другое (SearchIndexWire.alt). Ищется
+   * наравне с name — берётся лучшая ступень из двух (collect), — а
+   * показывается, только когда нашло лучше английского (SearchHit.alias).
+   */
+  alt?: SearchKey & { name: string }
+}
+
 /** Где начинается каждый кусок, если их склеить подряд: ['half', 'life', '2'] — [0, 4, 8] */
 function startsOf(parts: string[]): number[] {
   const out: number[] = []
@@ -129,7 +157,17 @@ function spacedOf(name: string): number[] {
 
 const PLAIN = /^[a-z0-9]*$/i
 
-export type SearchHit = { appid: number; name: string }
+export type SearchHit = {
+  appid: number
+  name: string
+  /**
+   * Русское название — только если игра нашлась по нему лучше, чем по
+   * английскому: на «ведьмак» строка «The Witcher 3: Wild Hunt» без слова
+   * «ведьмак» выглядела бы чужой находкой. Строка списка ставит его вторым
+   * рядом (components/CatalogSearch). Поля нет — нашлось по английскому.
+   */
+  alias?: string
+}
 
 export type SearchResult = {
   /** Первые SEARCH_SHOWN — по совпадению, при равном — по порядку индекса */
@@ -150,17 +188,40 @@ export type SearchResult = {
 
 const clean = (name: string) => name.replace(/\s+/g, ' ').trim()
 
-/** Строки базы → провод. Пустое после чистки название не едет: его не найти и не показать */
-export function encodeSearchIndex(rows: Array<{ appid: number; name: string }>): SearchIndexWire {
+/**
+ * Строки базы → провод. Пустое после чистки название не едет: его не найти и
+ * не показать. Второе название (nameRu) едет, только если свёрнутым оно не
+ * то же, что первое: «ЕСТЬ ДВА СТУЛА» при нём же или «BioShock» при «BioShock™»
+ * ничего не добавят поиску, а вес — добавят.
+ */
+export function encodeSearchIndex(
+  rows: Array<{ appid: number; name: string; nameRu?: string | null }>,
+): SearchIndexWire {
   const ids: number[] = []
   const names: string[] = []
+  const alt: Record<number, string> = {}
+  let alts = 0
   for (const r of rows) {
     const name = clean(r.name)
     if (!name) continue
+    const ru = r.nameRu ? clean(r.nameRu) : ''
+    const ruFolded = ru && foldTitle(ru)
+    if (ruFolded && ruFolded !== foldTitle(name)) {
+      alt[ids.length] = ru
+      alts++
+    }
     ids.push(r.appid)
     names.push(name)
   }
-  return { ids, names }
+  return alts ? { ids, names, alt } : { ids, names }
+}
+
+/** Свёртка и границы слов одного названия; null — свёртка не оставила ничего */
+function keyOf(name: string): SearchKey | null {
+  const folded = foldTitle(name)
+  if (!folded) return null
+  const words = folded.split(' ')
+  return { hay: ` ${folded}`, tight: words.join(''), words: startsOf(words), spaced: spacedOf(name) }
 }
 
 /**
@@ -180,27 +241,28 @@ export function encodeSearchIndex(rows: Array<{ appid: number; name: string }>):
  *
  * Свёртка и границы слов (SearchEntry) считаются здесь, раз на вкладку, а не
  * на клавишу: ~7 мс на 5816 играх (Node, замер по локальной копии каталога).
+ *
+ * Второе название (alt) — необязательное: не тот вид у словаря целиком или у
+ * одного названия — строка читается с одним английским, как прежде. Из-за
+ * второго названия не терять ни строки, ни поиска.
  */
 export function readSearchIndex(body: unknown): SearchEntry[] | null {
   if (!body || typeof body !== 'object') return null
-  const { ids, names } = body as Partial<SearchIndexWire>
+  const { ids, names, alt } = body as Partial<SearchIndexWire>
   if (!Array.isArray(ids) || !Array.isArray(names) || ids.length !== names.length) return null
+  const alts: Record<number, unknown> = alt && typeof alt === 'object' && !Array.isArray(alt) ? alt : {}
   const out: SearchEntry[] = []
   for (let i = 0; i < ids.length; i++) {
     const appid = ids[i]
     const name = names[i]
     if (!Number.isInteger(appid) || appid <= 0 || typeof name !== 'string') continue
-    const folded = foldTitle(name)
-    if (!folded) continue
-    const words = folded.split(' ')
-    out.push({
-      appid,
-      name,
-      hay: ` ${folded}`,
-      tight: words.join(''),
-      words: startsOf(words),
-      spaced: spacedOf(name),
-    })
+    const key = keyOf(name)
+    if (!key) continue
+    const ru = alts[i]
+    const ruKey = typeof ru === 'string' ? keyOf(ru) : null
+    const entry: SearchEntry = { appid, name, ...key }
+    if (ruKey) entry.alt = { name: ru as string, ...ruKey }
+    out.push(entry)
   }
   return out.length ? out : null
 }
@@ -208,8 +270,10 @@ export function readSearchIndex(body: unknown): SearchEntry[] | null {
 /**
  * ЙЦУКЕН → QWERTY по клавишам: «цшесрук» — это «witcher», набранный в русской
  * раскладке. Самая частая ошибка русскоязычного набора латинского названия, а
- * каталог почти целиком латиницей (русских названий — два на 5816). null —
- * в запросе нет русских букв, переводить нечего.
+ * каталог почти целиком латиницей: названия — английские, как в магазине
+ * Steam, а русское второе (SearchIndexWire.alt) есть лишь у сотни игр из
+ * шести тысяч — у тех, кому его дал сам Steam. null — в запросе нет русских
+ * букв, переводить нечего.
  *
  * Знаки на месте букв (б → «,», ж → «;», э → «'») тоже переводятся: свёртка
  * затем сделает из них то же, что из знака настоящего названия, — апостроф
@@ -313,7 +377,7 @@ function brokenByLayout(query: string, alt: string): boolean {
  *
  * Внутри ступени — порядок индекса, то есть число отзывов.
  */
-function tierOf(e: SearchEntry, q: Wanted): number | null {
+function tierOf(e: SearchKey, q: Wanted): number | null {
   // Сито (см. tight): каждое слово запроса — хотя бы где-то в названии слитно.
   // Это нужно любой ступени, а сверка по короткому tight — самая дешёвая
   if (!q.words.every((w) => e.tight.includes(w))) return null
@@ -332,7 +396,7 @@ function tierOf(e: SearchEntry, q: Wanted): number | null {
  * границе слов названия, а пробел названия внутри набранного — только там,
  * где пробел запроса.
  */
-function fromStart(e: SearchEntry, q: Wanted): boolean {
+function fromStart(e: SearchKey, q: Wanted): boolean {
   if (!e.tight.startsWith(q.tight)) return false
   if (!q.cuts.every((at) => e.words.includes(at))) return false
   return e.spaced.every((at) => at === 0 || at >= q.tight.length || q.cuts.includes(at))
@@ -343,7 +407,7 @@ function fromStart(e: SearchEntry, q: Wanted): boolean {
  * умещаясь в это слово, через его знаки («spiderman» в «Spider-Man»), 3 —
  * дальше, через пробел («dota2» в «Dota 2»), null — ни с какого.
  */
-function gluedTier(e: SearchEntry, s: string): 2 | 3 | null {
+function gluedTier(e: SearchKey, s: string): 2 | 3 | null {
   let tier: 3 | null = null
   for (let i = 0; i < e.spaced.length; i++) {
     const at = e.spaced[i]
@@ -377,33 +441,41 @@ function wanted(folded: string): Wanted {
 /**
  * Один проход по индексу: первые limit по ступени не хуже worst, при равной
  * ступени — по порядку индекса, и сколько нашлось всего.
+ *
+ * У строки с двумя названиями ступень — лучшая из двух: «ведьмак 3» с
+ * начала русского названия — ступень 1, как «witcher 3» у английского. И
+ * игра одна, сколько бы её названий ни подошло: строка в списке одна и в
+ * total считается раз. Второе название сверяется всего у сотни строк, так
+ * что проход на клавишу не дорожает.
  */
 function collect(index: SearchEntry[], folded: string, limit: number, worst: number) {
   const q = wanted(folded)
-  const buckets: SearchEntry[][] = [[], [], [], [], []]
+  const buckets: SearchHit[][] = [[], [], [], [], []]
   let total = 0
   for (const e of index) {
-    const tier = tierOf(e, q)
+    const main = tierOf(e, q)
+    const ru = e.alt ? tierOf(e.alt, q) : null
+    const viaRu = ru !== null && (main === null || ru < main)
+    const tier = viaRu ? ru : main
     if (tier === null || tier > worst) continue
     total++
-    if (buckets[tier].length < limit) buckets[tier].push(e)
+    if (buckets[tier].length >= limit) continue
+    const hit: SearchHit = { appid: e.appid, name: e.name }
+    if (viaRu && e.alt) hit.alias = e.alt.name
+    buckets[tier].push(hit)
   }
-  const games = buckets
-    .flat()
-    .slice(0, limit)
-    .map((e) => ({ appid: e.appid, name: e.name }))
-  return { games, total }
+  return { games: buckets.flat().slice(0, limit), total }
 }
 
 /**
  * Поиск по индексу: первые limit по ступени совпадения, при равной — по
  * порядку индекса.
  *
- * Запрос ищется как набран (русские названия в каталоге есть), а в QWERTY —
- * только если как набран не нашлось НИЧЕГО. Прежде переведённый искали
- * всегда и ставили следом за найденным, но запрос, который что-то нашёл, —
- * не перепутанная раскладка, и перевод добавлял к нему один шум. Раскладка —
- * спасение пустого ответа.
+ * Запрос ищется как набран (русские названия в каталоге есть — вторые, см.
+ * SearchIndexWire.alt), а в QWERTY — только если как набран не нашлось
+ * НИЧЕГО. Прежде переведённый искали всегда и ставили следом за найденным,
+ * но запрос, который что-то нашёл, — не перепутанная раскладка, и перевод
+ * добавлял к нему один шум. Раскладка — спасение пустого ответа.
  *
  * И переведённый — только по началам слов (ступени 0–3): раскладку
  * перепутали, но слово набирали с начала, а двухбуквенное «да» в QWERTY —
@@ -455,8 +527,12 @@ export type SearchPhase = 'idle' | 'loading' | 'ready' | 'failed'
  * человек не начал набирать. Отказ — наоборот, звучит и без запроса: поиск
  * без каталога мёртв, и кнопка «Попробовать снова» стоит рядом.
  *
- * «Ничего не нашлось» на русский запрос — с подсказкой: каталог латиницей, и
- * «ведьмак» не найдёт ничего не потому, что игры нет.
+ * «Ничего не нашлось» на русский запрос — с подсказкой. По-русски ищутся
+ * только русские названия, которые игре дал сам Steam (SearchIndexWire.alt),
+ * а их у сотни игр из шести тысяч: «Ведьмак 3» найдётся, а «гонки» или
+ * «скайрим» — нет, и не потому, что игры нет. Прежняя подсказка —
+ * «названия здесь… обычно латиницей» — говорила, что по-русски искать
+ * незачем вовсе, а это уже не так.
  */
 export function searchStatus(phase: SearchPhase, query: string, found: SearchResult): string {
   if (phase === 'failed') return 'Каталог не загрузился — проверь связь и попробуй ещё раз'
@@ -465,7 +541,7 @@ export function searchStatus(phase: SearchPhase, query: string, found: SearchRes
   const { total } = found
   if (total === 0) {
     return hasCyrillic(query)
-      ? 'Ничего не нашлось. Названия здесь — как в Steam, обычно латиницей'
+      ? 'Ничего не нашлось. Русское название есть не у каждой игры — попробуй как в Steam, латиницей'
       : 'Ничего не нашлось'
   }
   const verb = plural(total, 'Нашлась', 'Нашлись', 'Нашлось')
