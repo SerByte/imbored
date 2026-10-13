@@ -13,7 +13,9 @@ import {
   PAGE_MAX_AGE_SEC,
   PAGE_MAX_TRIES,
   PAGE_REDO_AFTER_SEC,
+  runCardCatchUp,
   runPageSlice,
+  type CatchUpResult,
   type PageSliceResult,
 } from '@/lib/pagejob'
 import { getDb, nowSec } from '@/lib/server'
@@ -37,10 +39,12 @@ export const maxDuration = 300
  */
 const MAX_LINKS = 8
 
-type PagesLink = Omit<PageSliceResult, 'cards'> & { сброшено: number; сигналы?: SignalsResult }
+type PagesLink = Omit<PageSliceResult, 'cards'> &
+  Partial<Omit<CatchUpResult, 'cards'>> & { сброшено: number; сигналы?: SignalsResult }
 
 /**
- * Обогащение карточек игр: скриншоты, вердикт отзывов, pros/cons.
+ * Обогащение карточек игр: скриншоты, вердикт отзывов, pros/cons, — и догон
+ * уже обогащённых: русский язык и «Наиграли» (runCardCatchUp в lib/pagejob).
  *
  * Устроено как /api/cron/news: 202 сразу, работа в after() — звенья подряд
  * внутри этого же вызова (lib/chain). Зовут сюда суточное расписание в
@@ -78,7 +82,7 @@ export async function GET(req: Request) {
       maxDurationSec: maxDuration,
       maxLinks: MAX_LINKS,
       dailyCap,
-      totals: ['enriched', 'withShots', 'withProsCons', 'viaClaude', 'withSemantics', 'сброшено'],
+      totals: ['enriched', 'withShots', 'withProsCons', 'viaClaude', 'withSemantics', 'русский', 'наиграли', 'сброшено'],
       link: async ({ deadlineAt }) => {
         /*
          * Сигналы каталога — рядом со срезом карточек, а не после него.
@@ -97,13 +101,34 @@ export async function GET(req: Request) {
           return null
         })
         try {
-          // Карточки, которые срез поменял, — в перегенерацию: страница живёт
-          // неделю (lib/gamecache), и без сброса свежие pros/cons и кадры
-          // ждали бы её конца. Сверка сигналов карточки не сбрасывает: её
-          // шаг — неделя, ровно срок кэша, и он доезжает сам
-          const slice = resetSliceCards(await runPageSlice(db, { deadlineAt }), revalidatePath)
+          /*
+           * Догон уже обогащённых карточек — русский язык и «Наиграли»
+           * (runCardCatchUp) — до среза, а не после: срез съедает звено
+           * целиком, пока в его очереди есть работа, и после него догон не
+           * начался бы никогда. Сам догон короткий (CATCHUP_PLAYED_MS), а
+           * когда догонять нечего — ни строки чтения и ни шага в Steam.
+           *
+           * Его сбой (база) звено не роняет: срез карточек от него не
+           * зависит, а догон повторит следующее звено — очередь у него в
+           * самих строках, без отметок.
+           */
+          const догон = await runCardCatchUp(db, { deadlineAt }).catch((err: unknown) => {
+            logSwallowed('cron/pages:catchup', err)
+            return null
+          })
+          const срез = await runPageSlice(db, { deadlineAt })
+          // Карточки, которые срез или догон поменяли, — в перегенерацию:
+          // страница живёт неделю (lib/gamecache), и без сброса свежие
+          // pros/cons, кадры, язык и «Наиграли» ждали бы её конца. Сверка
+          // сигналов карточки не сбрасывает: её шаг — неделя, ровно срок
+          // кэша, и он доезжает сам
+          const slice = resetSliceCards({ ...срез, cards: [...срез.cards, ...(догон?.cards ?? [])] }, revalidatePath)
           const сигналы = await сверка
-          return { ...slice, ...(сигналы ? { сигналы } : {}) }
+          return {
+            ...slice,
+            ...(догон ? { русский: догон.русский, наиграли: догон.наиграли } : {}),
+            ...(сигналы ? { сигналы } : {}),
+          }
         } finally {
           // Упал срез — сверку всё равно дожидаемся: иначе она шла бы рядом со
           // следующим звеном, а у того своя

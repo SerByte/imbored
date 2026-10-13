@@ -1,5 +1,6 @@
 import {
   ALIVE_POOL_G,
+  markReviewsParsed,
   parseSemantics,
   parseTagMap,
   upsertSemantics,
@@ -79,8 +80,10 @@ export async function buildTagPrior(db: Db, nowSec: number): Promise<{ games: nu
  * встаёт позже отсечки (reviewPass ставит её, даже если запись не легла), и
  * тонкая игра второй раз сюда не придёт. Запись по тегам не возвращается:
  * played пишется только вместе с отзывами, сдвинувшими оси, и тонкой игре
- * его взять неоткуда. Догнать верх каталога — владельцу:
- * semantics:build --with-reviews --limit=500, затем --publish.
+ * его взять неоткуда. Верх каталога догоняет и крон карточек, по пять игр
+ * за звено (runCardCatchUp в lib/pagejob, выборка gamesMissingPlayed — эта
+ * же разовая ветка); ускорить — владельцу: semantics:build --with-reviews
+ * --limit=500, затем --publish.
  */
 export function reviewDueSql(): { where: string; args: number[] } {
   return {
@@ -170,20 +173,11 @@ export async function reviewPass(
     const semantics = deriveSemantics(tags, all ? mineReviews(all) : null)
     const at = now()
     await upsertSemantics(db, [{ appid, semantics, computedAt: at, reviewsAt: at }])
-    /*
-     * Отметку похода — и тогда, когда запись не легла. Так бывает у догона
-     * «Наиграли» (reviewDueSql): запись по отзывам вернулась в очередь, а
-     * Steam в этот раз отдал меньше отзывов, чем нужно сдвинуть оси, — или
-     * пустой ответ. Приор по тегам upsertSemantics поверх неё не пишет, и
-     * правильно, но вместе с записью не двигалась бы и reviews_at: игра
-     * стояла бы в голове очереди каждый запуск. reviews_at и значит «когда
-     * отзывы последний раз разбирались» (схема game_semantics в lib/db), а
-     * не «из каких отзывов запись».
-     */
-    await db.execute({
-      sql: 'UPDATE game_semantics SET reviews_at = ? WHERE appid = ? AND (reviews_at IS NULL OR reviews_at < ?)',
-      args: [at, appid, at],
-    })
+    // Отметку похода — и тогда, когда запись не легла: иначе игра догона
+    // «Наиграли» (reviewDueSql) стояла бы в голове очереди каждый запуск.
+    // Почему — у markReviewsParsed; ею же пользуется догон кроном
+    // (runCardCatchUp в lib/pagejob)
+    await markReviewsParsed(db, appid, at)
     answered++
     if (semantics.basis === 'tags+reviews') withReviews++
     if (answered % 25 === 0) {

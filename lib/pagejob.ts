@@ -16,15 +16,18 @@
  * одно и то же.
  */
 
-import { fetchAppDetails, fetchStoreMedia, mergeMeta } from './catalog'
+import { fetchAppDetails, fetchStoreLanguages, fetchStoreMedia, mergeMeta } from './catalog'
 import { sliceClock } from './cron'
 import {
   claimPageEnrichBatch,
+  gamesMissingPlayed,
+  gamesMissingRuLang,
   getCatalogMeta,
   getGameMeta,
   getGamePageRows,
   markPageEnriched,
   markPageMissed,
+  markReviewsParsed,
   setCatalogMeta,
   setGameJson,
   setGamesMedia,
@@ -38,7 +41,7 @@ import { claudeProsCons, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, Ll
 import { llmBudgetLeft, takeLlmBudget } from './llmcap'
 import { fetchReviewsRaw, heuristicProsCons, parseReviews, type ProsCons } from './reviews'
 import { mineReviews, parseReviewsRaw } from './reviewmine'
-import { deriveSemantics } from './semantics'
+import { deriveSemantics, PLAYED_SINCE } from './semantics'
 
 /** Раз в полгода карточку стоит перечитать: отзывы и цена уезжают. */
 export const PAGE_MAX_AGE_SEC = 180 * 86_400
@@ -286,7 +289,8 @@ export async function runPageSlice(
    * Кадры, трейлеры и русский язык — одной пачкой GetItems на весь срез, до
    * карточек. Язык (ступень RuLang) едет тем же запросом и пишется тем же
    * узким UPDATE: appdetails ниже знает о нём только «озвучка» и «нет», и
-   * точная ступень отсюда переживает слияние с его ответом.
+   * точная ступень отсюда переживает слияние с его ответом. Уже обогащённым
+   * играм вне среза язык довозит догон (runCardCatchUp ниже).
    *
    * Не по запросу на карточку: GetItems берёт до двухсот appid за раз, и
    * двадцать игр среза — это один поход на ~130 КБ (и ~25 КБ языков сверху:
@@ -492,8 +496,8 @@ export async function runPageSlice(
      * и «Наиграли» карточки (GameSemantics.played, минуты хваливших): строка
      * появляется на /game после этого обхода, а сброс страницы в ISR она
      * получает от отпечатка карточки — семантика в нём есть. Карточкам,
-     * обойдённым до PLAYED_SINCE (lib/semantics), строку приносит разовый
-     * догон semantics:build — их страницы доезжают по сроку кэша.
+     * обойдённым до PLAYED_SINCE (lib/semantics), строку приносит догон
+     * кроном (runCardCatchUp ниже) — со сбросом их страниц.
      *
      * Отзывов нет, их мало или сеть отказала — пишется приор по тегам. Он
      * ничего не стоит и не затрёт посчитанного раньше по отзывам: это решает
@@ -600,4 +604,154 @@ export async function runPageSlice(
       : {}),
     ...(llmCapped ? { llmCapped: true as const } : {}),
   }
+}
+
+/**
+ * Сколько игр за звено догоняет русский язык: один GetItems с одним флагом,
+ * ~130 КБ ответа (fetchStoreLanguages). Сотня, а не двести, хотя GetItems
+ * берёт и двести: таймаут растёт с пачкой, и у сотни он — те же десять
+ * секунд, что у любого запроса, а не двадцать из сорока восьми секунд звена.
+ * При девяти–двадцати четырёх звеньях в сутки (pagesDailyLinks) это пул в
+ * шесть тысяч игр за три–семь дней, а верхняя тысяча — в первые же сутки.
+ */
+export const CATCHUP_RU_LANG = 100
+
+/**
+ * Сколько игр за звено перечитывают отзывы ради «Наиграли». Каждая — поход в
+ * appreviews под тем же пейсером store.steampowered.com, что у карточек среза
+ * (1,7 с), то есть пять игр — около десяти секунд звена, карточка-две среза.
+ * Размен честный: срез обогащает хвост каталога, а догон — верх, страницы,
+ * которые открывают чаще всего. И временный: ждущих догона только убывает.
+ */
+export const CATCHUP_PLAYED = 5
+
+/**
+ * Потолок времени догона «Наиграли» в звене, мс. При медленном Steam пять
+ * походов съели бы всё звено, и срез карточек не начался бы вовсе.
+ */
+export const CATCHUP_PLAYED_MS = 15_000
+
+export type CatchUpResult = {
+  /** Игр, которым Steam назвал ступень русского («нет» — тоже ответ) */
+  русский: number
+  /** Игр, чьи отзывы перечитаны ради «Наиграли» — легла запись или нет */
+  наиграли: number
+  /**
+   * Карточки, чья строка поменялась: язык записан или семантика по отзывам
+   * переписана. Роут сбрасывает их в ISR вместе с карточками среза.
+   */
+  cards: number[]
+}
+
+/**
+ * Догон уже обогащённых карточек: русский язык и «Наиграли».
+ *
+ * Обе строки карточки («Русский: субтитры — по данным Steam» и «Наиграли»)
+ * появились, когда верх каталога был давно обогащён. Срез сам их пишет — но
+ * только карточкам своего среза, а к обогащённой возвращается раз в полгода
+ * (PAGE_MAX_AGE_SEC). Довозить их верху каталога поручили ручным проходам —
+ * доливке медиа (catalog:media) и разовому semantics:build --with-reviews, — и
+ * на проде их так и не запустили: ни на одной из тридцати двух проверенных
+ * карточек (CS2, Dota 2, Rainbow Six Siege, Palworld…) не было ни строки
+ * «Русский», ни inLanguage в разметке, а у Hades и Deep Rock Galactic — и
+ * «Наиграли». Два готовых свойства карточки стояли невидимыми именно на самых
+ * посещаемых страницах.
+ *
+ * Здесь это делает крон, понемногу на каждом звене, и без ручного шага:
+ *   • язык — играм, о которых Steam не спрашивали (gamesMissingRuLang), по
+ *     CATCHUP_RU_LANG за звено одним GetItems с одним флагом;
+ *   • «Наиграли» — играм, чьи отзывы разобраны до PLAYED_SINCE
+ *     (gamesMissingPlayed), по CATCHUP_PLAYED за звено: appreviews, разбор,
+ *     семантика — ровно то, что делает срез, но без appdetails и БЕЗ МОДЕЛИ.
+ *     pros/cons здесь не трогаются вовсе: пересобирать карточку целиком ради
+ *     одной строки значило бы платить вызов модели за каждую.
+ * Обе выборки — по частичным индексам, которые тают с догоном: когда
+ * догонять нечего, звено не читает ни строки и в Steam не ходит.
+ *
+ * Поменявшиеся карточки уходят в сброс ISR вместе с карточками среза. Лишних
+ * ISR Writes это не добавляет: пометка ничего не рендерит, а запись при
+ * заходе случается только с новым выводом — тем самым, который иначе лёг бы
+ * недельной перегенерацией, только на неделю позже (lib/gamecache).
+ *
+ * Ручки разные и лимиты разные: язык — api.steampowered.com (pace
+ * 'steam-api'), отзывы — store.steampowered.com ('steam-store'). Поэтому язык
+ * идёт параллельно с отзывами, а отказ одного не останавливает другое. Отказ
+ * сети на отзывах обрывает догон «Наиграли» до следующего звена: закрылся
+ * Steam — остальные походы были бы теми же отказами. Отметок догону не
+ * нужно: всё, что он знает о своей очереди, — в самих строках.
+ *
+ * Звено зовёт догон ДО среза карточек: после среза он не начался бы
+ * никогда, срез съедает звено целиком, пока в его очереди есть работа (тот
+ * же довод, что у сверки сигналов в роуте). Срок звена и CATCHUP_PLAYED_MS
+ * держат его коротким.
+ *
+ * Сбой базы бросается наружу — роут его глотает и ведёт звено дальше, к
+ * срезу. Язык при этом дожидается: его запись не должна идти рядом со
+ * срезом.
+ */
+export async function runCardCatchUp(
+  db: Db,
+  opts: {
+    deadlineAt: number
+    nowSec?: number
+    /** подменяются в тестах: иначе догон уходит и в сеть, и в лимитер темпа */
+    fetchLangsFn?: typeof fetchStoreLanguages
+    fetchReviewsRawFn?: typeof fetchReviewsRaw
+    semanticsFn?: typeof deriveSemantics
+  },
+): Promise<CatchUpResult> {
+  const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
+  const langsOf = opts.fetchLangsFn ?? fetchStoreLanguages
+  const reviewsOf = opts.fetchReviewsRawFn ?? fetchReviewsRaw
+  const semanticsOf = opts.semanticsFn ?? deriveSemantics
+
+  const языки = (async (): Promise<number[]> => {
+    const ids = await gamesMissingRuLang(db, CATCHUP_RU_LANG)
+    if (!ids.length) return []
+    let got: Awaited<ReturnType<typeof fetchStoreLanguages>>
+    try {
+      got = await langsOf(ids)
+    } catch (err) {
+      // Лимит или сбой GetItems — не про игры: они остались без языка и
+      // попадут в пачку следующего звена
+      logSwallowed('pagejob:catchup-lang', err, { batch: ids.length })
+      return []
+    }
+    const rows = [...got].map(([appid, ruLang]) => ({ appid, ruLang }))
+    // Узкий UPDATE: язык был NULL, значит каждая записанная строка — перемена
+    await setGamesMedia(db, rows)
+    return rows.map((r) => r.appid)
+  })()
+  // Исключение языка заберёт await ниже; до него оно не «необработанное»
+  языки.catch(() => {})
+
+  let наиграли = 0
+  const переписаны: number[] = []
+  try {
+    const due = await gamesMissingPlayed(db, PLAYED_SINCE, CATCHUP_PLAYED)
+    const часы = sliceClock(Math.min(opts.deadlineAt, Date.now() + CATCHUP_PLAYED_MS))
+    for (const { appid, tags } of due) {
+      if (!часы.next()) break
+      let raw: unknown
+      try {
+        raw = await reviewsOf(appid)
+      } catch (err) {
+        logSwallowed('pagejob:catchup-played', err, { appid })
+        break
+      }
+      const all = parseReviewsRaw(raw)
+      const semantics = semanticsOf(tags, all ? mineReviews(all) : null)
+      // Приор по тегам (тонкий или пустой ответ) запись по отзывам не затрёт —
+      // это решает upsertSemantics; отметка разбора двигается всё равно
+      await upsertSemantics(db, [{ appid, semantics, computedAt: now, reviewsAt: now }])
+      await markReviewsParsed(db, appid, now)
+      наиграли++
+      if (semantics.basis === 'tags+reviews') переписаны.push(appid)
+    }
+  } finally {
+    await языки.catch(() => {})
+  }
+
+  const русский = await языки
+  return { русский: русский.length, наиграли, cards: [...русский, ...переписаны] }
 }
