@@ -55,18 +55,99 @@ const PATCH_WORD = words(
     'хотфикс\\p{L}*|исправлени\\p{L}*|updated?|updates|patch(?:ed|es)?|hotfix|bugfix',
 )
 
-/** Номер версии рядом со словом версии: голое \d+\.\d+ ловит «19.99» и «с 1.5 по 3.6» */
+/**
+ * Номер версии рядом со словом версии: голое \d+\.\d+ ловит «19.99» и «с 1.5 по 3.6».
+ * Скобка — как решётка: «Roadmap & Major Update (1.1.5.7)» — вышедший патч,
+ * и без своей версии он проигрывал дорожной карте в том же заголовке (NOT_YET).
+ */
 const VERSION =
-  /(?:^|[^\p{L}\p{N}])(?:v|версия|версии|patch|update|обновление|обновлени\p{L}*|патч\p{L}*)\s*#?\s*\d+\.\d+/iu
+  /(?:^|[^\p{L}\p{N}])(?:v|версия|версии|patch|update|обновление|обновлени\p{L}*|патч\p{L}*)\s*[#(]?\s*\d+\.\d+/iu
 
 /** Заголовок обещает что угодно, только не патч */
 const NEWS_WORD = words(
   'скидк\\p{L}*|распродаж\\p{L}*|sale|free\\s+weekend|бесплатные\\s+выходные|' +
     'предзаказ\\p{L}*|pre-?order|конкурс\\p{L}*|розыгрыш\\p{L}*|giveaway|' +
     'турнир\\p{L}*|чемпионат\\p{L}*|трансляц\\p{L}*|фэнтези|стрим\\p{L}*|' +
-    'дневник\\p{L}*|dev\\s?diary|анонс\\p{L}*|announc\\p{L}*|трейлер\\p{L}*|trailer|' +
+    'дневник\\p{L}*|dev\\s?diary|dev\\s?corner|уголок\\s+разработчик\\p{L}*|' +
+    'анонс\\p{L}*|announc\\p{L}*|трейлер\\p{L}*|trailer|' +
     'wishlist|бандл|bundle|наклейк\\p{L}*|статуэтк\\p{L}*|statue|vinyl|merch\\p{L}*|' +
     'годовщин\\p{L}*|фигурк\\p{L}*',
+)
+
+/**
+ * «Update» в значении «новости о…», а не «обновление игры»: «Community
+ * Update», «Developer Update #8», «An Update on the Roadmap», «Anti-Cheat
+ * Update», «обновление о ходе разработки». По-английски это одно слово, и
+ * PATCH_WORD давал за него +2 сводкам сообщества, отчётам о банах и письмам
+ * студии — Apex «An Update from the Anti Cheat Team» стоял героем /whatsnew с
+ * «8 правок в патче».
+ *
+ * Не штраф, а нейтрализация: оборот вырезается из заголовка перед проверкой
+ * слова обновления и версии. Штраф топил бы сводку, в которой патч правда
+ * есть, — «Community Update #34 - Connecting With Cross-Play & Hotfix #32»
+ * держится на своём «Hotfix», а не на «Update». Сам античит тоже не штраф:
+ * «Anti-Cheat Improvements: Phase One - Out Now» — вышедшие правки со
+ * списком, и решает тело.
+ *
+ * Флаг g — только для replace: test() с ним помнит lastIndex между вызовами.
+ */
+const STATUS_UPDATE = words(
+  '(?:community|status|dev|developer|development|studio|team|progress|ban\\s?wave|' +
+    'anti-?\\s?cheat(?:\\s+\\p{L}+)?)\\s+updates?|' +
+    'an?\\s+update\\s+(?:on|from|about|regarding)|^update\\s+(?:on|about|regarding)|' +
+    'обновлени\\p{L}*\\s+(?:о|по)\\s+(?:ходе\\s+)?разработк\\p{L}*|обновлени\\p{L}*\\s+античит\\p{L}*',
+  'giu',
+)
+
+/**
+ * Заголовок про то, чего в игре ЕЩЁ нет: дорожная карта, «Looking Ahead»,
+ * превью, «coming soon», «на следующей неделе», анонс стрима.
+ *
+ * −4, а не −2, как у NEWS_WORD: у превью тело такое же, как у патча, —
+ * список с «added/changed/fixed» (+2), — а в заголовке слово обновления (+2).
+ * С −2 «Phasmophobia Quality of Life Update Preview» и «Marathon: дорожная
+ * карта обновлений» набирали ровно порог. Явный патчноут с версией −4
+ * переживает: «Christmas Update & Optimization Preview | Patch Notes - v1.4.9»
+ * — это 3 + 2 + 2.
+ *
+ * «upcoming» — только перед словом про сам патч («Upcoming Update», «Upcoming
+ * Anniversary Update», «Upcoming Fixes»): «Backend Update, UI Rework, Upcoming
+ * Event» — вышедший патч с ивентом впереди. Стрим — со своей приставкой
+ * («REDstreams», «Civ Streams»): lookbehind в words() не даёт найти «stream»
+ * внутри слова, а голое «stream» поймало бы «Stream Deck support».
+ */
+const NOT_YET = words(
+  'roadmap|дорожн\\p{L}*\\s+карт\\p{L}*|looking\\s+ahead|coming\\s+soon|' +
+    'upcoming\\s+(?:[\\p{L}\\p{N}’\'-]+\\s+){0,3}?' +
+    '(?:updates?|patch\\p{L}*|hotfix\\p{L}*|fix\\p{L}*|changes?|features?|content|season)|' +
+    'preview\\p{L}*|превью|next\\s+week|на\\s+следующей\\s+неделе|в\\s+разработке|' +
+    '\\p{L}*streams|(?:live|dev)\\s?stream\\p{L}*',
+)
+
+/**
+ * То же «впереди», но слабее (−2): рядом с ним часто стоит и вышедшее. «Летний
+ * патч и обновление о разработке: что выходит сейчас и что дальше» — патч, и
+ * его список правок этот минус перевешивает; «… Beta 2 Results and What's
+ * Next» без патча в заголовке до порога не дотягивает.
+ */
+const LATER = words(
+  'what[’\']?s\\s+next|что\\s+дальше|sneak\\s+peek|будущ\\p{L}*\\s+обновлени\\p{L}*',
+)
+
+/**
+ * Ветка по желанию, а не игра у всех: открытая бета, бета-тест, тестовый
+ * сервер (PTS). Игрок, запустивший игру, этих правок не увидит, а пересказ
+ * писал «переработана система энергии» о бете, про которую HoI4 пишет «We are
+ * still not sure if we should release this».
+ *
+ * −2, а не −4, и не голое «beta/бета»: «Обновление 0.4 для бета-версии» — это
+ * патч игры, которая сама в бете, а «Beta Patch Notes - v0.110.0» со списком
+ * правок остаётся патчем, и «В бете:» в его пересказ ставит модель (lib/llm).
+ */
+const BETA = words(
+  '(?:open|public|closed)[\\s-]+beta|beta[\\s-]+(?:test\\p{L}*|branch\\p{L}*)|playtest\\p{L}*|' +
+    'открыт\\p{L}*\\s+бет\\p{L}*|бета-?\\s?(?:тест\\p{L}*|ветк\\p{L}*)|' +
+    'тестов\\p{L}*\\s+(?:ветк|сервер)\\p{L}*|public\\s+test\\p{L}*|pts',
 )
 
 /** Глаголы изменений — по ним узнаём патч, когда заголовок молчит */
@@ -188,15 +269,28 @@ export async function fetchGameNews(
  * приоритете «нашли слово про распродажу — значит не патч» навсегда терялись бы
  * заголовки вида «Обновление 1.5 — новый сезон и скидки», а это ровно тот
  * крупный патч, ради которого затевалась лента.
+ *
+ * Анти-сигналы того, что пост про НЕВЫШЕДШЕЕ (NOT_YET, LATER, BETA), стоят
+ * только в заголовке. В теле их нет намеренно: «subject to change» и
+ * «currently exploring» пишут и в настоящих патчноутах — про длительность
+ * техработ, про драйверы, про то, что вернут в следующем патче, — и проверка
+ * на выгрузке прода роняла такие патчи в новости. Длинный хвост (превью без
+ * таких слов в заголовке, пост про сиквел на странице первой части) ловит
+ * пересказ: модель отвечает scale 'none' (lib/llm, claudeNewsDigest).
  */
 export function newsScore(title: string, text: string): number {
   const t = title ?? ''
+  // «Update» сводки — не слово патча; что останется, проверяется как обычно
+  const core = t.replace(STATUS_UPDATE, ' ')
   let score = 0
   if (PATCH_TITLE.test(t)) score += 3
-  if (PATCH_WORD.test(t)) score += 2
-  if (VERSION.test(t)) score += 2
+  if (PATCH_WORD.test(core)) score += 2
+  if (VERSION.test(core)) score += 2
   // −2, а не −3: «Обновление 1.5 — новый сезон и скидки» должно остаться патчем
   if (NEWS_WORD.test(t)) score -= 2
+  if (NOT_YET.test(t)) score -= 4
+  if (LATER.test(t)) score -= 2
+  if (BETA.test(t)) score -= 2
 
   const body = (text ?? '').slice(0, 4000)
   const bullets = body.split('\n').filter((l) => l.startsWith('•')).length
@@ -215,6 +309,37 @@ export function isPatchNote(title: string, text: string): boolean {
 }
 
 /**
+ * Патч ли СОХРАНЁННАЯ запись — по правилу, действующему сейчас, а не тому, что
+ * действовало при её записи.
+ *
+ * kind пишет опрос (lib/newsjob), и пишет его правилом своего дня. Переопрос
+ * переписывает kind, но не сразу и не всем: игра опрашивается раз в сутки,
+ * неделю или четыре недели (pollInterval), и только посты из окна ленты
+ * (MAX_ITEMS), а в базе их держится больше (NEWS_KEEP). Значит, после правки
+ * классификатора уже опубликованная «дорожная карта» жила бы страницей
+ * «— что изменилось» до переопроса, а самые старые записи — всегда. Пересчёт
+ * на чтении закрывает это без прогона по базе: тело и заголовок лежат в той же
+ * строке, правило — чистая функция, и ответ совпадает с тем, что запишет
+ * следующий опрос.
+ *
+ * Только в одну сторону: новость патчем на чтении не становится. Иначе
+ * страница возникала бы раньше, чем её увидят лента, карта сайта и очередь
+ * пересказа, — без пересказа и без проверки моделью.
+ *
+ * Зовут её те, у кого тело на руках и чья ошибка видна: страница патча
+ * (loadPatch — 404, как у новости) и лента карточки игры (loadGamePage в
+ * lib/gamepage — ссылка на 404 из серверного HTML была бы хуже строки,
+ * которой нет). Голова ленты /whatsnew, карта сайта, IndexNow, RSS и «Другие
+ * патчи» тел не читают и держатся за kind: их чинит переопрос (горячие игры —
+ * за сутки, на выгрузке прода вне окна ленты остались две записи из ста
+ * тридцати одной), а до него ссылка оттуда ведёт на 404, а не на неправду.
+ * Не ждать — scripts/news-reclass.ts, прогон необязательный.
+ */
+export function isStoredPatch(item: { kind: string; title: string; blocks: NewsBlock[] }): boolean {
+  return item.kind === 'patch' && isPatchNote(item.title, newsText(item))
+}
+
+/**
  * Дешёвый предфильтр перед Claude: такие патчи сразу получают scale='minor'
  * без обращения к модели. «Карта обновлена до последней версии из мастерской»
  * — самый частый пост CS2, пересказывать там нечего.
@@ -226,8 +351,12 @@ export function looksTrivial(title: string, text: string): boolean {
   return TRIVIAL_BODY.test(body) || body.length < 120
 }
 
-/** Текст поста для классификатора и промпта — из уже разобранных блоков */
-export function newsText(item: RawNewsItem, limit = 4000): string {
+/**
+ * Текст поста для классификатора и промпта — из уже разобранных блоков. Тот
+ * же для свежего поста из ленты и для строки из базы (isStoredPatch): иначе
+ * пересчёт на чтении расходился бы с тем, что запишет опрос.
+ */
+export function newsText(item: { blocks: NewsBlock[] }, limit = 4000): string {
   return blocksToText(item.blocks, limit)
 }
 

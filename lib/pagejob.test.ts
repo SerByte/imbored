@@ -1439,6 +1439,21 @@ describe('карта сайта', () => {
     expect(await sitemapGames(db, 10)).toEqual([{ appid: 10, updatedAt: NOW }])
   })
 
+  test('пост, который модель признала не патчем, lastmod тоже не двигает', async () => {
+    // scale = 'none' — вердикт пересказа (lib/llm): дорожная карта, анонс,
+    // пост про сиквел. kind у такой строки остаётся 'patch' (его переписывает
+    // опрос), но на карточке её нет — getGameNews, то же правило
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await db.execute({
+      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, kind, scale, tldr, created_at, updated_at)
+            VALUES (10, 'map', 'Roadmap 2027', 'u', ?, 'patch', 'none', '', ?, ?)`,
+      args: [NOW + 2000, NOW, NOW],
+    })
+
+    expect(await sitemapGames(db, 10)).toEqual([{ appid: 10, updatedAt: NOW }])
+  })
+
   test('игры без тегов в карту не попадают: страница была бы пустой', async () => {
     const db = await freshDb()
     await upsertGameMeta(db, { ...meta(10), tags: {} }, NOW)

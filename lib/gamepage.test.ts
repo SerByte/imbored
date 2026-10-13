@@ -6,6 +6,7 @@ import {
   setGameJson,
   upsertGameMeta,
   upsertNeighbors,
+  upsertNewsItems,
   upsertSemantics,
   type Db,
 } from './db'
@@ -61,6 +62,41 @@ describe('loadGamePage', () => {
   test('незнакомый appid — null, чтобы краулер получил 404 после одного чтения', async () => {
     await withDb()
     expect(await loadGamePage(999_999_999)).toBeNull()
+  })
+
+  /*
+   * Строка ленты на карточке — заголовок-ссылка на страницу патча, а та
+   * сверяет запись с нынешним правилом классификатора и «дорожной карте»
+   * отвечает 404 (loadPatch). Карточка обязана решать так же: иначе из её
+   * серверного HTML вела бы ссылка в 404, а «Looking Ahead» стоял бы в ленте
+   * патчем, пока опрос не перепишет kind.
+   */
+  test('лента патчей на карточке — по нынешнему правилу, а не по записанному kind', async () => {
+    const db = await withDb()
+    await addGame(db, 10)
+    const post = (gid: string, title: string, publishedAt: number) => ({
+      appid: 10,
+      gid,
+      title,
+      url: `https://store.steampowered.com/news/app/10/view/${gid}`,
+      publishedAt,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Исправлен вылет при загрузке.' }] }],
+      bodyHash: `h${gid}`,
+      rank: 5000,
+    })
+    await upsertNewsItems(
+      db,
+      [
+        post('1', 'Патч 2.31', NOW - 200),
+        // записано патчем до правки классификатора
+        post('2', 'Marathon: дорожная карта обновлений на 2026 год', NOW - 100),
+      ],
+      NOW,
+    )
+    const page = await loadGamePage(10)
+    expect(page?.news.map((n) => n.gid)).toEqual(['1'])
   })
 
   /**

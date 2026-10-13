@@ -144,12 +144,16 @@ async function main() {
       SUM(kind='patch' AND scale='hotfix' AND tldr IS NULL)     AS by_heuristic,
       SUM(kind='patch' AND scale='hotfix' AND tldr IS NOT NULL) AS by_claude,
       SUM(kind='patch' AND scale='major'  AND tldr IS NOT NULL) AS major_claude,
-      SUM(kind='patch' AND scale='major'  AND tldr IS NULL)     AS major_pending
+      SUM(kind='patch' AND scale='major'  AND tldr IS NULL)     AS major_pending,
+      SUM(kind='patch' AND scale='none')                        AS not_patch
     FROM news_items`)
   console.log(`  hotfix эвристикой (looksTrivial):  ${ru(d.by_heuristic).padStart(8)}  ← назад пути нет`)
   console.log(`  hotfix моделью:                    ${ru(d.by_claude).padStart(8)}`)
   console.log(`  major подтверждён моделью:         ${ru(d.major_claude).padStart(8)}`)
   console.log(`  major ждёт пересказа:              ${ru(d.major_pending).padStart(8)}`)
+  // вердикт «не патч» (NewsVerdict в lib/db): эвристика сказала «патч»,
+  // модель — «планы, анонс, стрим или чужая игра»
+  console.log(`  «не патч» по мнению модели:        ${ru(d.not_patch).padStart(8)}`)
 
   // ── E. Форензика rank ──────────────────────────────────────────────────
   head('E. Крупные патчи, выпавшие из ленты по rank = 0')
