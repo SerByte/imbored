@@ -4,7 +4,7 @@ import { GameArt } from '@/components/GameArt'
 import { createSharedPick, replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
 import { quizHref, roomSeedHref } from '@/lib/presets'
 import { nowSec } from '@/lib/server'
-import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
+import { classOfTag, flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import type { PickKind } from '@/lib/sharedpick'
 import type { GameMeta } from '@/lib/types'
@@ -183,5 +183,32 @@ describe('«Похожее на «X» — по моей библиотеке»',
   test('без тегов — соседей не ищем, ссылки нет', async () => {
     const params = await share('ghjkmnpqrstu', game(23, {}))
     expect(await seedLinks(params, 23)).toHaveLength(0)
+  })
+})
+
+/** Класс h1 раскрытой страницы — заголовок героя один */
+function h1ClassOf(page: unknown): string {
+  const cls = classOfTag(page, 'h1')
+  expect(cls, 'h1 на странице не найден — сторож ослеп').toBeDefined()
+  return cls!
+}
+
+/**
+ * Тот же h1 с тем же кеглем, что у героя карточки игры, — и та же беда с
+ * длинным названием: стена из восьми строк вместо причины и кнопок. Правило
+ * одно на оба героя — lib/titlesize.
+ */
+describe('кегль названия в герое', () => {
+  test('обычное имя — кегль героя, длинное — титул экрана', async () => {
+    let params = await share('hjkmnpqrstuv', game(30, { name: 'Hades' }))
+    expect(h1ClassOf(flightOf(await PickPage(params), ISLANDS))).toMatch(/\btext-display-lg\b/)
+
+    params = await share(
+      'jkmnpqrstuvw',
+      game(31, { name: 'YEAH! YOU WANT "THOSE GAMES," RIGHT? SO HERE YOU GO! NOW, LET\'S SEE YOU CLEAR THEM!' }),
+    )
+    const cls = h1ClassOf(flightOf(await PickPage(params), ISLANDS))
+    expect(cls).toMatch(/\btext-display-md\b/)
+    expect(cls).toContain('[overflow-wrap:anywhere]')
   })
 })

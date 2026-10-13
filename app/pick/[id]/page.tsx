@@ -13,6 +13,7 @@ import { quizHref, roomSeedHref } from '@/lib/presets'
 import { seedable } from '@/lib/roomseed'
 import { pickCopy, quoted } from '@/lib/sharedpick'
 import { OG_SITE } from '@/lib/site'
+import { heroTitleClass } from '@/lib/titlesize'
 import { loadSharedPick, pickHasNear } from './load'
 
 /*
@@ -103,9 +104,11 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
             <Eyebrow className="mb-3">
               {eyebrow} · {dayLabel(dayKey(pick.createdAt))}
             </Eyebrow>
-            {/* Кегль героя игры, как на /play и /daily: крупнее одно длинное
-                слово названия на телефоне не помещается */}
-            <h1 className="font-display text-display-lg [overflow-wrap:anywhere]">{meta.name}</h1>
+            {/* Кегль героя игры, как на /play и /daily, а у длинного имени —
+                ступенью ниже, как на карточке игры: восемь строк display-lg
+                закрывали причину. Одно длинное слово рвётся внутри — крупнее
+                оно на телефоне не помещается. Всё это — lib/titlesize */}
+            <h1 className={heroTitleClass(meta.name)}>{meta.name}</h1>
             <blockquote className="mt-5 text-lg leading-relaxed text-ink">{quoted(pick.reason)}</blockquote>
             <p className="mt-3 text-sm text-dim">{sourceLine(pick.source, meta.appid)}</p>
           </div>

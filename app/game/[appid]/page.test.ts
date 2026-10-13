@@ -21,7 +21,7 @@ import {
 } from '@/lib/db'
 import { GAME_PAGE_REVALIDATE_SEC, PRERENDER_TOP } from '@/lib/gamecache'
 import { roomSeedHref } from '@/lib/presets'
-import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
+import { classOfTag, flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
 import GamePage, { generateMetadata, generateStaticParams, revalidate } from './page'
@@ -427,5 +427,40 @@ describe('«Позвать в эту игру»', () => {
     await upsertGameMeta(db, game(22, { categories: [2, 1, 9], ccu: 100 }), T0)
     expect(await partyLinks(21)).toEqual([])
     expect(await partyLinks(22)).toEqual([roomSeedHref(22)])
+  })
+})
+
+/** Класс h1 раскрытой страницы — заголовок героя у карточки один */
+function h1ClassOf(page: unknown): string {
+  const cls = classOfTag(page, 'h1')
+  expect(cls, 'h1 на карточке не найден — сторож ослеп').toBeDefined()
+  return cls!
+}
+
+/**
+ * Длинное название не уводит кнопки героя за первый экран. Замер на проде при
+ * 1440×900: /game/3191050 (108 знаков) — h1 в 8 строк display-lg, «Страница
+ * в Steam» на y=1063. Порог и его вывод — lib/titlesize.
+ */
+describe('кегль названия в герое', () => {
+  const LONG =
+    'BRAZILIAN DRUG DEALER 3: I OPENED A PORTAL TO HELL IN THE FAVELA TRYING TO REVIVE MIT AIA I NEED TO CLOSE IT'
+
+  test('обычное имя — кегль героя', async () => {
+    await upsertGameMeta(db, game(APPID, { name: 'Counter-Strike 2' }), T0)
+    const cls = h1ClassOf(flight(await GamePage(params)))
+    expect(cls).toMatch(/\btext-display-lg\b/)
+  })
+
+  test('108 знаков — титул экрана, а не стена из восьми строк', async () => {
+    await upsertGameMeta(db, game(APPID, { name: LONG }), T0)
+    const cls = h1ClassOf(flight(await GamePage(params)))
+    expect(cls).toMatch(/\btext-display-md\b/)
+    expect(cls).not.toMatch(/\btext-display-lg\b/)
+  })
+
+  test('длинное слово на телефоне рвётся внутри, а не уезжает за край', async () => {
+    await upsertGameMeta(db, game(APPID, { name: 'TROUBLESHOOTER: Abandoned Children' }), T0)
+    expect(h1ClassOf(flight(await GamePage(params)))).toContain('[overflow-wrap:anywhere]')
   })
 })

@@ -39,6 +39,7 @@ import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
+import { heroTitleClass } from '@/lib/titlesize'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { GameCardBody } from '@/components/GameCard'
@@ -450,7 +451,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </Link>
               </nav>
             )}
-            <h1 className="font-display text-display-lg">{meta.name}</h1>
+            {/* Кегль — по длине имени: у 108-знаковых display-lg давал стену в
+                восемь строк, и оценка с кнопками уходили за первый экран.
+                Порог и замеры — lib/titlesize */}
+            <h1 className={heroTitleClass(meta.name)}>{meta.name}</h1>
             {/*
               Студия и год. Оба поля заполнены у ВСЕХ игр каталога (1000 из
               1000, проверено запросом), а страница не показывала ни одного из
