@@ -290,6 +290,44 @@ describe('кэш карточки игры', () => {
     expect(text).toContain('играли')
     expect(text).not.toContain('сейчас играют')
   })
+
+  /*
+   * Кольцо — все языки из сверки каталога, а под ним пульс: месяц, который
+   * разошёлся со всем временем, и отзывы на русском. Подписи датой, а не «месяц
+   * назад», — и вывод за неделю кэша не меняется от одних часов.
+   */
+  test('кольцо — все языки, под ним месяц и русские; через три дня — та же страница', async () => {
+    await seed()
+    await db.execute({
+      sql: `UPDATE games SET reviews_total = 142783, reviews_percent = 98,
+              reviews_all_total = 309180, reviews_all_percent = 97, reviews_all_score = 9,
+              reviews_ru_total = 16893, reviews_ru_percent = 96,
+              reviews_recent_total = 7948, reviews_recent_percent = 71, reviews_recent_at = ?
+            WHERE appid = ?`,
+      args: [T0 - DAY, APPID],
+    })
+    const text = textOf(flight(await GamePage(params)))
+    expect(text).toContain('Крайне положительные')
+    expect(text).toMatch(/из 309\s180 отзывов/)
+    // англоязычная шкала порогов людям не показывается
+    expect(text).not.toMatch(/142\s783/)
+    // 1_760_000_000 — 9 октября 2025 UTC, замер — сутками раньше
+    expect(text).toMatch(/За 30 дней до 8 октября:71% положительных из 7\s948 отзывов — ниже, чем за всё время/)
+    expect(text).toMatch(/На русском:96% положительных из 16\s893 отзывов/)
+
+    const first = await snapshot()
+    at(T0 + 3 * DAY)
+    expect(await snapshot()).toBe(first)
+  })
+
+  test('ноль онлайна — «онлайн при замере: 0», а не «0 играли»', async () => {
+    // /game/711810: «0 играли» рядом с «72% из 1 886 отзывов» читалось как
+    // «в неё не играл никто». И у игры без студии ноль не выпадает литералом
+    await upsertGameMeta(db, game(APPID, { ccu: 0, ccuAt: T0 - 3 * DAY }), T0)
+    const text = textOf(flight(await GamePage(params)))
+    expect(text).toContain('онлайн при замере: 0')
+    expect(text).not.toMatch(/0\s*играли/)
+  })
 })
 
 /** JSON-LD страницы, как он уходит в HTML: первый <script type="application/ld+json"> */
@@ -326,6 +364,41 @@ describe('микроразметка говорит не больше стран
     await upsertGameMeta(db, game(APPID, { priceFinal: 1999, priceInitial: 1999, priceAt: T0 }), T0)
     const [video] = jsonLdOf(flight(await GamePage(params)))
     expect(video.offers).toMatchObject({ '@type': 'Offer', price: '19.99' })
+  })
+
+  /*
+   * Погасшая распродажа: замер пришёлся на акцию, а она кончилась. Сама цена
+   * — акционная, и показывать её нельзя (trustedPrice), но герой без цены и
+   * с «Steam возвращает деньги» под кнопками читался сбоем — так неделями
+   * стояли Hades и ICARUS, пока сверка не переснимет цену. Обычную цену мы
+   * знаем — «было» той же пары, — и подписанная как обычная, она правдива,
+   * кончилась акция или продлена. Ценой она не названа, поэтому Offer нет.
+   */
+  test('погасшая распродажа: в герое — обычная цена с подписью, в разметке Offer нет', async () => {
+    await upsertGameMeta(
+      db,
+      game(APPID, {
+        priceFinal: 999,
+        priceInitial: 1999,
+        discountPercent: 50,
+        discountEndsAt: T0 - DAY,
+        priceAt: T0 - 10 * DAY,
+      }),
+      T0,
+    )
+    const page = flight(await GamePage(params))
+    expect(textOf(page)).toContain('обычная цена')
+    expect(textOf(page)).toContain('19,99')
+    // акционное число не всплывает ни в каком виде
+    expect(textOf(page)).not.toMatch(/(^|[^\d])9,99/)
+    expect(jsonLdOf(page)[0]).not.toHaveProperty('offers')
+  })
+
+  test('сторож не слепой: у живой скидки и у обычной цены подписи «обычная цена» нет', async () => {
+    await seed()
+    expect(textOf(flight(await GamePage(params)))).not.toContain('обычная цена')
+    await upsertGameMeta(db, game(APPID, { priceFinal: 1999, priceInitial: 1999, discountPercent: 0, priceAt: T0 }), T0)
+    expect(textOf(flight(await GamePage(params)))).not.toContain('обычная цена')
   })
 
   test('русский: строка — при любом ответе Steam, inLanguage — только при «есть»', async () => {

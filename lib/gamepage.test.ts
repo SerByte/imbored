@@ -19,7 +19,12 @@ import {
   loadGamePage,
   nearGames,
   pickSimilar,
+  PULSE_MIN_GAP,
+  PULSE_MIN_RECENT,
+  PULSE_SHOW_MAX_AGE_SEC,
   reviewFacts,
+  reviewPulse,
+  RU_MIN_REVIEWS,
   SESSION_MIN_CONFIDENCE,
   sessionTrait,
   SIMILAR_CANDIDATES,
@@ -435,56 +440,114 @@ describe('готовые соседи на карточке', () => {
  * Страница игры называется «стоит ли играть», а кольцо с процентом рисовалось
  * только из сводки отзывов, которую наполняет крон. В каталоге на тысячу игр
  * её нет у 278 — то есть 28% страниц не отвечали на вопрос из собственного
- * заголовка, при том что процент и количество лежат в той же строке базы и
- * заполнены у всех до одной.
+ * заголовка.
+ *
+ * Запасным путём тогда стали reviews_total и reviews_percent — «заполненные у
+ * всех». Но это англоязычная шкала порогов: Hades с ней — «98% из 143 тыс.»
+ * при 309 тысячах, и хаб с /play показывали те же урезанные числа. Теперь
+ * кольцо, хабы и /play читают одно правило (shownReviews): все языки из
+ * сверки каталога, а сводка карточки — только пока сверка до игры не дошла.
  */
 describe('reviewFacts', () => {
   const summary = { scoreDesc: 'Very Positive', totalPositive: 90, totalNegative: 10 }
+  /** Все языки из сверки каталога — то, что видят люди */
+  const all = (total: number, percent: number, score?: number) => ({
+    reviewsAllTotal: total,
+    reviewsAllPercent: percent,
+    ...(score === undefined ? {} : { reviewsAllScore: score }),
+  })
 
-  test('сводка точнее: процент считается из сырых количеств', () => {
-    expect(reviewFacts({ reviewsPercent: 50, reviewsTotal: 2 }, summary)).toEqual({
-      percent: 90,
-      total: 100,
-      label: 'Very Positive',
+  test('все языки из сверки — первыми, и слово Steam той же сводки', () => {
+    // Сводка карточки старше (её перечитывают раз в полгода) и на плитках
+    // хабов и /play её нет — одна игра везде одним числом только так
+    expect(reviewFacts(all(309_180, 98, 9), summary)).toEqual({
+      percent: 98,
+      total: 309_180,
+      label: 'Overwhelmingly Positive',
     })
   })
 
-  test('без сводки берутся колонки — ровно тот случай, ради которого всё и делалось', () => {
-    expect(reviewFacts({ reviewsPercent: 95, reviewsTotal: 13_440 }, null)).toEqual({
-      percent: 95,
-      total: 13_440,
-      label: null,
-    })
+  test('сверка до игры не дошла — сводка карточки: процент из сырых количеств', () => {
+    expect(reviewFacts({}, summary)).toEqual({ percent: 90, total: 100, label: 'Very Positive' })
+  })
+
+  test('англоязычная шкала порогов не показывается никогда — ни одна, ни рядом со сводкой', () => {
+    // Hades: 142 783 англоязычных из 309 тысяч — «из 143 тыс. отзывов» выдавало
+    // треть за целое
+    const english = { reviewsPercent: 98, reviewsTotal: 142_783 } as Parameters<typeof reviewFacts>[0]
+    expect(reviewFacts(english, null)).toBeNull()
+    expect(reviewFacts(english, summary)).toEqual({ percent: 90, total: 100, label: 'Very Positive' })
   })
 
   /**
    * Числа — факт площадки, и мы их пересказываем. Словесная шкала — её
    * суждение, и придумывать его за неё нельзя, как бы ни хотелось заполнить
-   * пустое место словом.
+   * пустое место словом. И слово одной сводки к числам другой не пришивается:
+   * на границе вышло бы «Очень положительные» при 79%.
    */
-  test('слово без сводки не выдумывается', () => {
-    expect(reviewFacts({ reviewsPercent: 97, reviewsTotal: 60_000 }, null)?.label).toBeNull()
+  test('слово без оценки той же сводки не выдумывается и не берётся у соседней', () => {
+    expect(reviewFacts(all(60_000, 97), null)?.label).toBeNull()
+    expect(reviewFacts(all(60_000, 79), summary)?.label).toBeNull()
+    expect(reviewFacts(all(60_000, 97, 0), null)?.label).toBeNull()
   })
 
   test('пустая сводка не считается сводкой', () => {
     const empty = { scoreDesc: 'No user reviews', totalPositive: 0, totalNegative: 0 }
-    expect(reviewFacts({ reviewsPercent: 80, reviewsTotal: 10 }, empty)).toEqual({
-      percent: 80,
-      total: 10,
-      label: null,
-    })
+    expect(reviewFacts({}, empty)).toBeNull()
+    expect(reviewFacts(all(10, 80), empty)).toEqual({ percent: 80, total: 10, label: null })
   })
 
   test('когда нечего показать — null, а не ноль процентов', () => {
     expect(reviewFacts({}, null)).toBeNull()
-    expect(reviewFacts({ reviewsPercent: 90 }, null)).toBeNull()
-    expect(reviewFacts({ reviewsTotal: 100 }, null)).toBeNull()
-    expect(reviewFacts({ reviewsPercent: 90, reviewsTotal: 0 }, null)).toBeNull()
+    expect(reviewFacts({ reviewsAllPercent: 90 }, null)).toBeNull()
+    expect(reviewFacts({ reviewsAllTotal: 100 }, null)).toBeNull()
+    expect(reviewFacts(all(0, 90), null)).toBeNull()
   })
 
-  test('процент из колонок зажимается в 0…100', () => {
-    expect(reviewFacts({ reviewsPercent: 140, reviewsTotal: 5 }, null)?.percent).toBe(100)
-    expect(reviewFacts({ reviewsPercent: -3, reviewsTotal: 5 }, null)?.percent).toBe(0)
+  test('процент зажимается в 0…100', () => {
+    expect(reviewFacts(all(5, 140), null)?.percent).toBe(100)
+    expect(reviewFacts(all(5, -3), null)?.percent).toBe(0)
+  })
+})
+
+/**
+ * Пульс отзывов под кольцом карточки: последний месяц и русскоязычные.
+ * «Раньше ругали — сейчас хвалят» и что думают игроки на русском — факты для
+ * решения, которых не показывал ни один экран.
+ */
+describe('reviewPulse', () => {
+  // 3 октября 2023 UTC — дата замера в подписи
+  const AT = Date.UTC(2023, 9, 3, 12) / 1000
+  const ring = { percent: 97, total: 309_180, label: 'Overwhelmingly Positive' }
+  const pulse = (over: Partial<GameMeta> = {}) =>
+    meta(1, { reviewsRecentTotal: 7948, reviewsRecentPercent: 71, reviewsRecentAt: AT, ...over })
+
+  test('месяц разошёлся со всем временем — строка с датой и сравнением с кольцом', () => {
+    expect(reviewPulse(pulse(), ring, AT + 86_400)).toEqual([
+      { label: 'За 30 дней до 3 октября', value: '71% положительных из 7 948 отзывов — ниже, чем за всё время' },
+    ])
+    expect(reviewPulse(pulse({ reviewsRecentPercent: 95 }), { ...ring, percent: 80 }, AT)[0].value).toMatch(
+      /— выше, чем за всё время$/,
+    )
+  })
+
+  test('совпадающий месяц, полупустой месяц и давний замер — строки нет', () => {
+    expect(reviewPulse(pulse({ reviewsRecentPercent: 97 - PULSE_MIN_GAP + 1 }), ring, AT)).toEqual([])
+    expect(reviewPulse(pulse({ reviewsRecentTotal: PULSE_MIN_RECENT - 1 }), ring, AT)).toEqual([])
+    expect(reviewPulse(pulse(), ring, AT + PULSE_SHOW_MAX_AGE_SEC + 1)).toEqual([])
+    // без кольца сравнивать не с чем
+    expect(reviewPulse(pulse(), null, AT)).toEqual([])
+  })
+
+  test('на русском — простым фактом, от двух сотен отзывов', () => {
+    const ru = meta(1, { reviewsRuTotal: 16_893, reviewsRuPercent: 96 })
+    expect(reviewPulse(ru, ring, AT)).toEqual([{ label: 'На русском', value: '96% положительных из 16 893 отзывов' }])
+    expect(reviewPulse(meta(1, { reviewsRuTotal: RU_MIN_REVIEWS - 1, reviewsRuPercent: 96 }), ring, AT)).toEqual([])
+  })
+
+  test('вывод от часов внутри срока показа не зависит — недельный кэш карточки', () => {
+    const m = pulse({ reviewsRuTotal: 16_893, reviewsRuPercent: 96 })
+    expect(reviewPulse(m, ring, AT + 6 * 86_400)).toEqual(reviewPulse(m, ring, AT))
   })
 })
 
@@ -520,6 +583,28 @@ describe('вердикт мёртвой игре', () => {
     expect(
       deadVerdict(dead({ deadReason: 'panned', categories: [2], reviewsPercent: 72, reviewsTotal: 5_000 })),
     ).toBeNull()
+  })
+
+  /*
+   * «Большинство отзывов отрицательные» — за всё время. Починенную игру,
+   * которую за последний месяц хвалят, это суждение не описывает, а строка
+   * пульса под кольцом спорила бы с ним в сантиметре.
+   */
+  test('разгромленная, но за месяц её хвалят — молчим; без часов и по давнему замеру — нет', () => {
+    const panned = dead({
+      deadReason: 'panned',
+      categories: [2],
+      reviewsPercent: 31,
+      reviewsTotal: 5_000,
+      reviewsRecentTotal: 120,
+      reviewsRecentPercent: 82,
+      reviewsRecentAt: NOW - 86_400,
+    })
+    expect(deadVerdict(panned, NOW)).toBeNull()
+    expect(deadVerdict(panned)).toMatch(/отрицательные/)
+    expect(deadVerdict(panned, NOW + PULSE_SHOW_MAX_AGE_SEC + 86_400)).toMatch(/отрицательные/)
+    expect(deadVerdict({ ...panned, reviewsRecentPercent: 55 }, NOW)).toMatch(/отрицательные/)
+    expect(deadVerdict({ ...panned, reviewsRecentTotal: 12 }, NOW)).toMatch(/отрицательные/)
   })
 
   test('без свежих чисел спорить нечем — верим курации', () => {

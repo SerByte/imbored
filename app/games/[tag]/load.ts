@@ -4,7 +4,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { getGamesMetaLite, getLovedFor, topGamesByTags } from '@/lib/db'
 import { HUB_GENRES, HUB_MIN_WEIGHT, HUB_PAGE, hubTagOf } from '@/lib/gamehub'
 import { isRussianText } from '@/lib/gamepage'
-import { reviewsBrief, sessionTrait, type GameTrait, type ReviewsBrief } from '@/lib/gametraits'
+import { reviewsBrief, sessionTrait, shownReviews, type GameTrait, type ReviewsBrief } from '@/lib/gametraits'
 import { getDb } from '@/lib/server'
 
 export type GenreGame = {
@@ -12,7 +12,11 @@ export type GenreGame = {
   name: string
   headerImage: string | null
   art: GameArtUrls | null
-  /** «92% из 48 тыс.» — доля положительных отзывов Steam */
+  /**
+   * «92% из 48 тыс.» — доля положительных отзывов Steam на всех языках: та же
+   * пара, что кольцо на карточке игры (shownReviews), а не англоязычная шкала
+   * порогов, которая печаталась здесь втрое меньшим числом
+   */
   reviews: ReviewsBrief | null
   /** «Сессия: ~40 мин» — только из уверенной семантики (lib/gametraits) */
   session: GameTrait | null
@@ -35,12 +39,13 @@ async function readGenre(tag: string): Promise<GenreGame[]> {
   return rows.map((r) => {
     const meta = metas.get(r.appid)
     const about = meta?.shortDescription?.trim()
+    const shown = meta ? shownReviews(meta) : null
     return {
       appid: r.appid,
       name: r.name,
       headerImage: r.headerImage,
       art: r.art,
-      reviews: reviewsBrief(meta?.reviewsPercent, meta?.reviewsTotal),
+      reviews: reviewsBrief(shown?.percent, shown?.total),
       session: meta ? sessionTrait(meta) : null,
       loved: loved.get(r.appid) ?? [],
       about: about && isRussianText(about) ? about : null,

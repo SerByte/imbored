@@ -246,11 +246,55 @@ function compactCount(n: number): string {
   return `${tenths(n / 1_000_000)} млн`
 }
 
+/** Отзывы, которые показываются людям: доля положительных, сколько и оценка Steam */
+export type ShownReviews = {
+  /** 0…100 */
+  percent: number
+  total: number
+  /** EUserReviewScore той же сводки, 1…9; null — Steam оценки не назвал */
+  score: number | null
+}
+
+/**
+ * Какие отзывы показывать людям — одно правило на весь сайт: кольцо /game, его
+ * meta description и OG-картинка (reviewFacts в lib/gamepage), плитки хабов
+ * жанров (app/games/[tag]) и полка покупок /play (cardView в lib/cards).
+ *
+ * Показываются все языки — сводка магазина (GetItems summary_filtered),
+ * которую крон сигналов каталога сверяет у всего пула раз в неделю. Раньше
+ * плитки печатали reviews_total, а это англоязычная шкала (посев каталога
+ * читал поиск с l=english, сверка держит ту же шкалу ради порогов живости):
+ * The Binding of Isaac на /games/roguelike — «96% из 165 тыс.», а на своей
+ * карточке — «97% из 459 857». Одно из двух чисел выглядело выдуманным, а
+ * доверие — ровно то, что продукт продаёт. Англоязычные колонки остаются
+ * шкалой порогов и порядка пула, людям они не показываются: молчание здесь
+ * лучше, чем «N отзывов» не той шкалы. Пока сверка до игры не дошла (неделя
+ * после выкладки), плитка молчит, а кольцо /game берёт сводку своей карточки
+ * — тоже все языки (reviewFacts).
+ *
+ * Оценка словами — той же сводки и того же замера, что числа: слово от одной
+ * сводки рядом с долей из другой разошлось бы на границе («Очень
+ * положительные» при 79%).
+ */
+export function shownReviews(
+  meta: Pick<GameMeta, 'reviewsAllTotal' | 'reviewsAllPercent'> & Partial<Pick<GameMeta, 'reviewsAllScore'>>,
+): ShownReviews | null {
+  const { reviewsAllTotal: total, reviewsAllPercent: percent, reviewsAllScore: score } = meta
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null
+  if (typeof percent !== 'number' || !Number.isFinite(percent)) return null
+  return {
+    percent: Math.round(Math.min(100, Math.max(0, percent))),
+    total: Math.round(total),
+    score: typeof score === 'number' && Number.isInteger(score) && score >= 1 && score <= 9 ? score : null,
+  }
+}
+
 /**
  * «92% из 48 тыс.» — доверие к покупке на плитке полки: та же пара чисел, что
- * кольцо на карточке игры (reviewFacts в lib/gamepage), только короче. Полная
- * фраза — с тем же склонением, что там: «92% из 48 213 отзывов — положительные».
- * null — отзывов нет или они битые: пустое «0% из 0» хуже молчания.
+ * кольцо на карточке игры (shownReviews — одно правило для обоих), только
+ * короче. Полная фраза — с тем же склонением, что там: «92% из 48 213 отзывов
+ * — положительные». null — отзывов нет или они битые: пустое «0% из 0» хуже
+ * молчания.
  */
 export function reviewsBrief(
   percent: number | null | undefined,

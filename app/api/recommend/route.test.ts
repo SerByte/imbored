@@ -354,6 +354,10 @@ describe('/api/recommend: семантика в карточке', () => {
       })),
       now,
     )
+    // Все языки — то, что сверка каталога кладёт рядом с англоязычной шкалой
+    // порогов (lib/catalogsignals); у 105600 есть только англоязычная
+    await db.execute('UPDATE games SET reviews_all_total = 140213, reviews_all_percent = 93 WHERE appid = 620')
+    await db.execute('UPDATE games SET reviews_total = 5000, reviews_percent = 70 WHERE appid = 105600')
     await upsertSemantics(db, [
       { appid: 620, semantics: semantics(20, 0.8), computedAt: now },
       { appid: 413150, semantics: semantics(20, 0.3), computedAt: now },
@@ -381,9 +385,12 @@ describe('/api/recommend: семантика в карточке', () => {
     // Casual по тегам сказал бы «низкий»; без неё говорит жанр
     expect(byId.get(620)?.entry).toBeNull()
     expect(byId.get(413150)?.entry).toEqual({ level: 'low', hours: null, basis: 'tags' })
-    // Отзывы — для «92% из 48 тыс.» на плитке полки
-    expect(byId.get(620)).toMatchObject({ reviewsPercent: 92, reviewsTotal: 48_213 })
+    // Отзывы — для «93% из 140 тыс.» на плитке полки: все языки, та же пара,
+    // что кольцо на карточке игры (shownReviews). Англоязычная шкала порогов
+    // на плитку не выходит — ни рядом со всеми языками, ни вместо них
+    expect(byId.get(620)).toMatchObject({ reviewsPercent: 93, reviewsTotal: 140_213 })
     expect(byId.get(413150)).toMatchObject({ reviewsPercent: null, reviewsTotal: null })
+    expect(byId.get(105600)).toMatchObject({ reviewsPercent: null, reviewsTotal: null })
   })
 })
 

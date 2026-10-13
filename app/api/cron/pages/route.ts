@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { after, NextResponse } from 'next/server'
-import { refreshCatalogSignals, type SignalsResult } from '@/lib/catalogsignals'
+import { refreshCatalogSignals, refreshReviewPulse, type PulseResult, type SignalsResult } from '@/lib/catalogsignals'
 import { openRun, runChain } from '@/lib/chain'
 import { cronAuthorized, pagesDailyLinks, pagesLinkVerdict } from '@/lib/cron'
 import { countPageEnrichDue, STEAM_LEASE } from '@/lib/db'
@@ -37,7 +37,11 @@ export const maxDuration = 300
  */
 const MAX_LINKS = 8
 
-type PagesLink = Omit<PageSliceResult, 'cards'> & { сброшено: number; сигналы?: SignalsResult }
+type PagesLink = Omit<PageSliceResult, 'cards'> & {
+  сброшено: number
+  сигналы?: SignalsResult
+  пульс?: PulseResult
+}
 
 /**
  * Обогащение карточек игр: скриншоты, вердикт отзывов, pros/cons.
@@ -96,18 +100,29 @@ export async function GET(req: Request) {
           logSwallowed('cron/pages:signals', err)
           return null
         })
+        /*
+         * Пульс отзывов — тоже рядом, но лимит он со срезом карточек ДЕЛИТ:
+         * оба ходят в store.steampowered.com через pace('steam-store'). Пейсер
+         * общий на процесс и сам разводит их по шагам, а потолок пульса на
+         * звено (PULSE_PER_LINK) держит его долю — несколько шагов из
+         * тридцати. Своё исключение он глотает так же, как сверка.
+         */
+        const пульсЗвена = refreshReviewPulse(db, { deadlineAt }).catch((err: unknown) => {
+          logSwallowed('cron/pages:pulse', err)
+          return null
+        })
         try {
           // Карточки, которые срез поменял, — в перегенерацию: страница живёт
           // неделю (lib/gamecache), и без сброса свежие pros/cons и кадры
-          // ждали бы её конца. Сверка сигналов карточки не сбрасывает: её
-          // шаг — неделя, ровно срок кэша, и он доезжает сам
+          // ждали бы её конца. Сверка сигналов и пульс карточки не
+          // сбрасывают: их шаг — неделя, ровно срок кэша, и он доезжает сам
           const slice = resetSliceCards(await runPageSlice(db, { deadlineAt }), revalidatePath)
-          const сигналы = await сверка
-          return { ...slice, ...(сигналы ? { сигналы } : {}) }
+          const [сигналы, пульс] = await Promise.all([сверка, пульсЗвена])
+          return { ...slice, ...(сигналы ? { сигналы } : {}), ...(пульс ? { пульс } : {}) }
         } finally {
-          // Упал срез — сверку всё равно дожидаемся: иначе она шла бы рядом со
-          // следующим звеном, а у того своя
-          await сверка
+          // Упал срез — сверку и пульс всё равно дожидаемся: иначе они шли бы
+          // рядом со следующим звеном, а у того свои
+          await Promise.all([сверка, пульсЗвена])
         }
       },
       // Работа — у среза карточек или у сверки сигналов; см. pagesLinkVerdict

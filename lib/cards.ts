@@ -8,7 +8,7 @@ import { entryCost, showsEntry } from './entry'
 import { logSwallowed } from './errlog'
 import { partsView } from './feedbackctx'
 import { isRussianText } from './gamepage'
-import { ruLangLine, sessionTrait } from './gametraits'
+import { ruLangLine, sessionTrait, shownReviews } from './gametraits'
 import type { Pick as LlmPick } from './llm'
 import {
   buildAnchorFinder,
@@ -226,6 +226,7 @@ export function aboutLine(source: CandidateSource, meta: GameMeta | undefined): 
 
 export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = null) {
   const meta = ctx.metaNow(p.appid)
+  const reviews = meta ? shownReviews(meta) : null
   return {
     appid: p.appid,
     name: p.name,
@@ -250,10 +251,13 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     // ступенью: клиенту /play таблица подписей в бандле ни к чему. null —
     // не знаем, и строки нет
     russian: ruLangLine(meta?.ruLang),
-    // «92% из 48 тыс.» на плитке полки покупок: те же числа, по которым
-    // confidenceMultiplier решил, насколько новинке верить
-    reviewsPercent: meta?.reviewsPercent ?? null,
-    reviewsTotal: meta?.reviewsTotal ?? null,
+    // «92% из 48 тыс.» на плитке полки покупок — все языки, та же пара, что
+    // кольцо на карточке игры (shownReviews). Не reviewsTotal: по той
+    // англоязычной шкале confidenceMultiplier решает, насколько новинке
+    // верить, но людям она показывала Hades «из 143 тыс.» при 309 тысячах.
+    // Имена полей прежние — их читает и выдача, сохранённая на устройстве
+    reviewsPercent: reviews?.percent ?? null,
+    reviewsTotal: reviews?.total ?? null,
     ...buyView(meta, p.source, ctx.now, ctx.hideUrgency),
     signals: meta ? explainMatch(ctx.profile, meta, ctx.mood, ctx.tagWeight) : null,
     // Своя игра, на которую эта похожа. Причина от модели может её не

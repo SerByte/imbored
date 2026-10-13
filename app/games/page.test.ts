@@ -67,6 +67,12 @@ beforeEach(async () => {
       T0,
     )
     await replaceGameTags(db, appid, [{ tag: 'Open World', weight: 1000 }])
+    // Строка отзывов на плитке — все языки из сверки каталога (shownReviews),
+    // а не англоязычная шкала порогов выше: та на плитку не выходит
+    await db.execute({
+      sql: 'UPDATE games SET reviews_all_total = ?, reviews_all_percent = 91 WHERE appid = ?',
+      args: [30_000 - appid, appid],
+    })
   }
 })
 
@@ -106,9 +112,11 @@ describe('страница жанра /games/<slug>', () => {
     expect(islandsOf(page, 'GameArt')).toEqual([])
     const text = JSON.stringify(page)
     expect(text).not.toContain('hero.jpg')
-    // номер места — угол обложки, «90% из …» — строка под названием
+    // номер места — угол обложки, «91% из 30 тыс.» — строка под названием:
+    // все языки, а не англоязычные «90% из 10 тыс.»
     expect(text).toContain('"className":"lib-badge badge-line tabular-nums","children":1')
-    expect(text).toMatch(/90%/)
+    expect(text).toMatch(/91% из 30 тыс\./)
+    expect(text).not.toMatch(/90%/)
     expect(text.match(/"loading":"eager"/g)).toHaveLength(3)
   })
 })
