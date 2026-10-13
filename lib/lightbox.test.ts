@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { stepIndex, SWIPE_MIN, swipeStep } from './lightbox'
+import { pressSwipes, stepIndex, SWIPE_MIN, swipeStep, zoomedIn } from './lightbox'
 
 /**
  * Лайтбокс: листание и модальность.
@@ -40,6 +40,48 @@ describe('индекс по кругу', () => {
 
   test('пустой список не даёт NaN', () => {
     expect(stepIndex(0, 1, 0)).toBe(0)
+  })
+})
+
+/**
+ * Увеличенный щипком кадр — не повод листать.
+ *
+ * Оверлей разрешает браузеру только щипок (touch-pinch-zoom): палец ведёт
+ * свайп, а не прокрутку. Но после щипка один палец обязан водить по
+ * увеличенному кадру — а прокрутку, то есть и панораму визуального
+ * вьюпорта, оверлей запрещал, и свайп листал кадры при любом масштабе.
+ * Замер на проде, 390×844 с тачем, масштаб 2.5 в открытом лайтбоксе:
+ * протяжка одним пальцем оставила visualViewport.offsetLeft на 0 и сменила
+ * «Скриншот 1 из 6» на «Скриншот 2 из 6»; вертикальная не сделала ничего.
+ * Тот же масштаб и те же протяжки на /privacy увели вьюпорт на 214 и 344.
+ */
+describe('щипок: палец водит по кадру, а не листает', () => {
+  test('масштаб 1 и шум вокруг него — не увеличение', () => {
+    expect(zoomedIn(undefined)).toBe(false)
+    expect(zoomedIn(1)).toBe(false)
+    expect(zoomedIn(1.005)).toBe(false)
+    expect(zoomedIn(1.5)).toBe(true)
+    expect(zoomedIn(5)).toBe(true)
+  })
+
+  test('без увеличения свайп ведёт любое нажатие', () => {
+    for (const type of ['touch', 'pen', 'mouse']) expect(pressSwipes(type, 1), type).toBe(true)
+    // нет visualViewport (старый браузер) — масштаба не знаем, листаем как раньше
+    expect(pressSwipes('touch', undefined)).toBe(true)
+  })
+
+  test('увеличено: палец и перо панорамируют, а не листают', () => {
+    expect(pressSwipes('touch', 2.5)).toBe(false)
+    expect(pressSwipes('pen', 2.5)).toBe(false)
+  })
+
+  /*
+   * Мышь вьюпорт не двигает и при щипке трекпадом, а клик после протяжки
+   * мышью приходит всегда. Не начни нажатие свайп — этот клик закрыл бы окно:
+   * протяжка закрывала бы кадр вместо листания.
+   */
+  test('мышь листает и при увеличении', () => {
+    expect(pressSwipes('mouse', 2.5)).toBe(true)
   })
 })
 
@@ -177,5 +219,45 @@ describe('лайтбокс тёмный в обеих темах и не лез�
     expect(src, 'видимый счётчик голосом звучит дробью').toMatch(
       /<span\s+aria-hidden\s+className="[^"]*"\s*>\s*\{index \+ 1\}\/\{images\.length\}/,
     )
+  })
+})
+
+/**
+ * Подключение щипка в оверлее. touch-action браузер читает в начале касания,
+ * поэтому переключать его можно после щипка — к следующему жесту успеет.
+ * Обратно — обязательно: с manipulation при масштабе 1 Chrome начинает
+ * панораму на каждом свайпе и гасит его pointercancel'ом. Проверено на проде
+ * подменой стиля после щипка: протяжки одним пальцем сдвинули offsetLeft
+ * 72 → 147 → 312, кончились pointercancel, кадр остался 1/6.
+ */
+describe('лайтбокс: увеличенный кадр панорамируется пальцем', () => {
+  const src = code('components/Lightbox.tsx')
+  const at = src.indexOf('ref={overlayRef}')
+  const overlay = src.slice(at, src.indexOf('role="dialog"', at))
+
+  test('масштаб читается по resize визуального вьюпорта', () => {
+    expect(src).toMatch(/useSyncExternalStore\(subscribeZoom, readZoom, serverZoom\)/)
+    expect(src).toMatch(/window\.visualViewport/)
+    expect(src).toMatch(/addEventListener\('resize', onChange\)/)
+    expect(src).toMatch(/removeEventListener\('resize', onChange\)/)
+    expect(src).toMatch(/const readZoom = \(\) => zoomedIn\(window\.visualViewport\?\.scale\)/)
+    // сервер масштаба не знает: гидратация — с неувеличенной страницы
+    expect(src).toMatch(/const serverZoom = \(\) => false/)
+  })
+
+  test('пока увеличено, оверлей отдаёт браузеру и панораму, а без увеличения — только щипок', () => {
+    expect(at, 'корень оверлея не найден — сторож ослеп').toBeGreaterThan(-1)
+    expect(overlay).toMatch(/className="[^"]*\btouch-pinch-zoom\b[^"]*"/)
+    expect(overlay).toContain("style={zoomed ? { touchAction: 'manipulation' } : undefined}")
+  })
+
+  test('нажатие по увеличенному кадру не начинает свайп — масштаб читается в момент нажатия', () => {
+    const down = src.match(/onPointerDown=\{\(e\) => \{([\s\S]*?)\n {12}\}\}/)
+    expect(down, 'onPointerDown у оверлея не найден').toBeTruthy()
+    expect(down![1].replace(/\s+/g, ' ')).toContain(
+      'pressRef.current = many && pressSwipes(e.pointerType, window.visualViewport?.scale) ? { x: e.clientX, y: e.clientY, id: e.pointerId } : null',
+    )
+    // нажатие «здесь» засчитывается при любом масштабе: закрытие по фону от щипка не зависит
+    expect(down![1]).toMatch(/pressedHereRef\.current = true/)
   })
 })

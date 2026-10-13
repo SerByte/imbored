@@ -9,7 +9,7 @@ import {
   type Variants,
 } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type Ref } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
 import { PlayersNow } from '@/components/PlayersNow'
@@ -116,6 +116,7 @@ const FLY: Variants = {
  *    матовых панелей читается дороже, чем веер игральных карт.
  */
 function TopCard({
+  ref,
   nowSec,
   card,
   alone,
@@ -123,6 +124,18 @@ function TopCard({
   focusOn,
   onCommit,
 }: {
+  /**
+   * Узел карты для AnimatePresence mode="popLayout" — ставит его PopChild, а
+   * не колода. Улетающую карту popLayout на время вылета делает absolute на
+   * её же месте, и следующая встаёт в поток сразу. Меряет и вынимает он узел
+   * по этому ref, а в React 19 ref приходит компоненту обычным пропом: пока
+   * TopCard его не передавал, popLayout молча ничего не делал. Карта уходила
+   * в потоке, новая стояла под ней — стопка на 220 мс вылета становилась
+   * вдвое выше (278–709 и 709–1140 на 390×844), и полоса прогресса со всем,
+   * что под колодой, прыгала вниз и обратно на каждом голосе — и в /explore,
+   * и в комнате. Сторож — lib/swipedeck.test.ts.
+   */
+  ref?: Ref<HTMLDivElement>
   /** серверные часы ответа /deck — см. PlayersNow */
   nowSec: number
   card: DeckCard
@@ -183,11 +196,19 @@ function TopCard({
 
   return (
     <m.div
+      ref={ref}
       /* panel-lift — общий материал панелей продукта: замерено, у колоды был
          box-shadow ровно none, то есть плоское стекло. Карточка, которую
          листают и по которой голосуют, — тот же предмет, что карточка ответа в
          квизе и карточка подключения на первом экране. */
-      className="deck-card media-card relative touch-pan-y"
+      /* z-10 — только у улетающей. popLayout вынимает её из потока на то же
+         место, где уже встаёт следующая, а в DOM она стоит ПЕРЕД следующей:
+         AnimatePresence держит уходящего ребёнка на его прежнем индексе. При
+         равном z-index позиционированные рисуются в порядке разметки, и
+         проголосованная карта уезжала ПОД проступающую новую — на 70 мс
+         вылета из-под той торчал только её край. Теперь улетает она поверх,
+         а следующая проступает из стопки под ней. */
+      className={`deck-card media-card relative touch-pan-y${present ? '' : ' z-10'}`}
       style={{ x, rotate }}
       inert={!present}
       drag="x"
