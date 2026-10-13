@@ -23,7 +23,10 @@ import { SwipeDeck, type DeckCard } from '../components/SwipeDeck'
  * записывающей обёрткой — серверный рендер ref не вызывает, но проп видит.
  */
 
-const seen = vi.hoisted(() => ({ divs: [] as { className: string; ref: unknown }[] }))
+const seen = vi.hoisted(() => ({
+  divs: [] as { className: string; ref: unknown }[],
+  presence: [] as { mode: unknown; anchorY: unknown }[],
+}))
 
 vi.mock('framer-motion', async (importOriginal) => {
   const fm = await importOriginal<typeof import('framer-motion')>()
@@ -33,8 +36,14 @@ vi.mock('framer-motion', async (importOriginal) => {
     seen.divs.push({ className: String(props.className ?? ''), ref: props.ref })
     return h(Div, props)
   }
+  const Presence = fm.AnimatePresence
+  function RecordingPresence(props: Parameters<typeof Presence>[0]) {
+    seen.presence.push({ mode: props.mode, anchorY: props.anchorY })
+    return h(Presence, props)
+  }
   return {
     ...fm,
+    AnimatePresence: RecordingPresence,
     m: new Proxy(fm.m, { get: (target, key) => (key === 'div' ? RecordingDiv : Reflect.get(target, key)) }),
   }
 })
@@ -50,19 +59,23 @@ const card = (appid: number): DeckCard => ({
 
 beforeEach(() => {
   seen.divs = []
+  seen.presence = []
 })
+
+const renderDeck = () =>
+  renderToStaticMarkup(
+    createElement(SwipeDeck, {
+      cards: [card(10), card(20), card(30)],
+      onVote: () => {},
+      votedCount: 0,
+      deckTotal: 3,
+      nowSec: 1_760_000_000,
+    }),
+  )
 
 describe('колода: улетающая карта не толкает стопку', () => {
   test('ref от AnimatePresence (popLayout) доезжает до узла верхней карты', () => {
-    renderToStaticMarkup(
-      createElement(SwipeDeck, {
-        cards: [card(10), card(20), card(30)],
-        onVote: () => {},
-        votedCount: 0,
-        deckTotal: 3,
-        nowSec: 1_760_000_000,
-      }),
-    )
+    renderDeck()
     // верхняя карта — deck-card без deck-back: задние карты стопки — только глубина
     const top = seen.divs.filter((d) => /\bdeck-card\b/.test(d.className) && !/\bdeck-back\b/.test(d.className))
     expect(top, 'верхняя карта не найдена — сторож ослеп').toHaveLength(1)
@@ -70,6 +83,23 @@ describe('колода: улетающая карта не толкает сто
       typeof top[0].ref,
       'без ref popLayout не вынимает улетающую карту из потока — стопка на вылете вдвое выше',
     ).toBe('function')
+  })
+
+  /*
+   * Вынутая карта прибита к НИЗУ стопки. В /explore на телефоне первый
+   * «Мимо» ставит над колодой «Вернуть «X»», а «Интересно» после «Мимо»
+   * строку убирает — в том же коммите, что и голос, — и карта короче или
+   * длиннее на ряд строки, 33 px (.explore-deck:has(> .skip-undo)). Верх
+   * стопки при этом сдвигается, низ — нет. С якорем по умолчанию (top)
+   * улетающая карта в замороженной высоте съезжала на 33 px вниз поверх
+   * полосы прогресса или прыгала на 33 вверх, выдёргивая кнопки голоса
+   * из-под пальца. Замерить это может только браузер, здесь — проп, от
+   * которого PopChild ставит bottom вместо top.
+   */
+  test('улетающая карта уходит от низа стопки: строка «Вернуть» над колодой её не сдвигает', () => {
+    renderDeck()
+    expect(seen.presence, 'AnimatePresence колоды не найден — сторож ослеп').toHaveLength(1)
+    expect(seen.presence[0]).toEqual({ mode: 'popLayout', anchorY: 'bottom' })
   })
 
   /*
