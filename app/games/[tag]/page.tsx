@@ -7,6 +7,7 @@ import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { clip } from '@/lib/clip'
 import { HUB_GENRES, HUB_MIN_SHELF, HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { genreBreadcrumbLd, genreItemListLd, ldScript } from '@/lib/jsonld'
+import { pointsLine } from '@/lib/modeltext'
 import { plural } from '@/lib/plural'
 import { appBaseUrl } from '@/lib/server'
 import { OG_SITE } from '@/lib/site'
@@ -184,12 +185,16 @@ export default async function GenrePage({ params }: Params) {
  * Строка под карточкой: за что игру любят — или, пока это не собрано, её
  * описание витрины, если оно по-русски. Английский абзац посреди русской
  * страницы хуже, чем ничего.
+ *
+ * Два пункта — двумя предложениями (pointsLine), а не через «; »: второй
+ * пункт начинается с заглавной, и выходило «…повторяемость; Богатая
+ * история».
  */
 function Why({ game }: { game: GenreGame }) {
   if (game.loved.length) {
     return (
       <p className="mt-2 text-sm leading-snug text-dim">
-        <span className="font-semibold text-ink">За что любят:</span> {game.loved.slice(0, 2).join('; ')}
+        <span className="font-semibold text-ink">За что любят:</span> {pointsLine(game.loved.slice(0, 2))}
       </p>
     )
   }

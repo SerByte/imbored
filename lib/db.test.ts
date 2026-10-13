@@ -1157,6 +1157,21 @@ describe('db', () => {
     expect(await getLovedFor(db, [])).toEqual(new Map())
   })
 
+  // Плитка хаба — та же витрина, что карточка игры: битое, лежащее в базе с
+  // до-фильтровых времён, не показывается и здесь (см. shownProsCons в lib/gamepage)
+  test('«за что любят» пачкой — без битых пунктов', async () => {
+    const db = await freshDb()
+    for (const appid of [620, 621]) await upsertGameMeta(db, { ...META, appid }, NOW)
+    await setGameJson(db, 620, 'pros_cons_json', {
+      pros: ["Сложность хорошо подобрана, справедливо'],", 'Глубокая геймплей механика', 'Атмосфера'],
+      cons: [],
+      source: 'claude',
+    })
+    await setGameJson(db, 621, 'pros_cons_json', { pros: ['Отличный модификация Quake'], cons: [], source: 'claude' })
+    const loved = await getLovedFor(db, [620, 621])
+    expect([...loved.entries()]).toEqual([[620, ['Атмосфера']]])
+  })
+
   test('портрет кэшируется в users и читается', async () => {
     const db = await freshDb()
     await upsertUser(db, { steamid: 'u1', personaName: 'A' }, NOW)

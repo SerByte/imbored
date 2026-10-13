@@ -12,6 +12,7 @@ import {
   type SkipReason,
 } from './feedbackkinds'
 import { isDeadReason } from './liveness'
+import { modelTextFlaw } from './modeltext'
 import { parseMood } from './mood'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
@@ -4520,6 +4521,10 @@ export async function topGamesByTags(
  * не у вызывающего: эвристика ('reviews', 'thin') бывает на английском и с
  * бранью из отзывов, и страница игры её не показывает никогда (lib/gamepage).
  * Новому потребителю обойти это правило нечем — строк с ней он не получит.
+ *
+ * И без битых пунктов (modelTextFlaw) — по той же причине, что shownProsCons
+ * у карточки: обломки JSON и «геймплей механика» лежат в базе с тех пор, как
+ * фильтра после модели не было, а пересборка дойдёт до них через полгода.
  */
 export async function getLovedFor(db: Db, appids: number[]): Promise<Map<number, string[]>> {
   if (!appids.length) return new Map()
@@ -4537,7 +4542,9 @@ export async function getLovedFor(db: Db, appids: number[]): Promise<Map<number,
       continue
     }
     if (!Array.isArray(pros)) continue
-    const clean = pros.filter((p): p is string => typeof p === 'string' && p.trim() !== '').map((p) => p.trim())
+    const clean = pros
+      .filter((p): p is string => typeof p === 'string' && p.trim() !== '' && !modelTextFlaw(p))
+      .map((p) => p.trim())
     if (clean.length) out.set(Number(r.appid), clean)
   }
   return out

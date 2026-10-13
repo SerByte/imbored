@@ -442,6 +442,26 @@ describe('validateDigest', () => {
       .toBe('В Даром.рф новая карта')
   })
 
+  // Пересказ уезжает в «Коротко», ленту, RSS, OG и сниппет: негодный ответ
+  // тратит одну из трёх попыток, и следующий заход крона пишет пересказ заново
+  test('смесь алфавитов и обломки JSON — негодный ответ, как реклама', () => {
+    const broken = [
+      // Dark and Darker
+      'Сезон 10 с новыми сундуками и космetics-предметами для всех классов.',
+      'Исправлены краши при изменении видеосettings в мультиплеере.',
+      'Новая карта и режим"],',
+      '{"tldr": "Починили вылет"}',
+    ]
+    for (const tldr of broken) expect(validateDigest({ tldr, scale: 'major' }), tldr).toBeNull()
+    // английское имя с апострофом — не обломок: «Tam o' Shanter», «X-Men '97»
+    const fine = [
+      "Добавлены скины для шапки Tam o' Shanter и 11 исправлений.",
+      "Скины из X-Men '97 и новая эмоция.",
+      'Исправлен вылет [DX12] при запуске.',
+    ]
+    for (const tldr of fine) expect(validateDigest({ tldr, scale: 'hotfix' })?.tldr, tldr).toBe(tldr)
+  })
+
   test('имя игры не прикрывает чужой домен, ссылку и промокод рядом', () => {
     const name = 'Deeeep.io'
     const spam = [
@@ -1151,6 +1171,32 @@ describe('cleanProsCons', () => {
     expect(cleanProsCons('строка')).toEqual([])
     expect(cleanProsCons([1, null, '   ', ' ок '])).toEqual(['ок'])
   })
+
+  // Дословно с прода: /game/317400, /game/3191050, /game/730. Пункт выбрасывается
+  // целиком, а не чинится: обломок и сам оборван на полумысли
+  test('обломки JSON, смесь алфавитов и битый русский выбрасываются', () => {
+    expect(
+      cleanProsCons([
+        "Сложность хорошо подобрана, справедливо'],",
+        'Режим "Королевская битва"',
+        'Нет "кавычки',
+        'Отличный модификация Quake',
+        'Огромное количество читеров в каждой матч невозможно получить бан',
+        'Античит система полностью неэффективна и неработает',
+        'Отличный сюжет с хорошим пacing',
+        "Сюжет в духе Assassin's Creed",
+        'Ок',
+      ]),
+    ).toEqual(['Режим "Королевская битва"', "Сюжет в духе Assassin's Creed", 'Ок'])
+  })
+
+  test('обрезка по сотому символу не оставляет непарную кавычку', () => {
+    // кавычка открывается до сотого символа, а закрывается после
+    const long = `${'Очень длинный пункт '.repeat(4)}про режим "Королевская битва" и всё остальное`
+    expect(long.indexOf('"')).toBeLessThan(100)
+    expect(long.lastIndexOf('"')).toBeGreaterThan(100)
+    expect(cleanProsCons([long, 'Ок'])).toEqual(['Ок'])
+  })
 })
 
 describe('isSystemic', () => {
@@ -1291,6 +1337,80 @@ describe('отказ сервиса против отказа по записи'
     expect(prompt).toContain('Не включай ссылки')
     // ограду из самого отзыва не закрыть: тег гасит fenceData
     expect(prompt.match(/<\/reviews>/g)).toHaveLength(1)
+  })
+
+  /*
+   * Промпт просит грамотный русский и не спорить с плюсами, а код за ним
+   * проверяет: битый пункт до страницы не доезжает. Ответы — дословно с прода.
+   */
+  test('pros/cons: промпт просит грамотный русский, битые пункты не доезжают', async () => {
+    create.mockResolvedValue({
+      stop_reason: 'end_turn',
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            pros: ['Глубокая и увлекательная геймплей механика для длительной игры', 'Точная стрельба'],
+            cons: ['Огромное количество читеров в каждой матч невозможно получить бан', 'Токсичное сообщество'],
+          }),
+        },
+      ],
+    })
+    await expect(claudeProsCons('Counter-Strike 2', REVIEWS)).resolves.toEqual({
+      pros: ['Точная стрельба'],
+      cons: ['Токсичное сообщество'],
+    })
+    const prompt = create.mock.calls[0][0].messages[0].content as string
+    expect(prompt).toContain('согласуй род, число и падеж')
+    expect(prompt).toContain('не склеивай русские слова с английскими')
+    expect(prompt).toContain('противоречит')
+  })
+
+  /*
+   * Плюсы были, но все оказались битыми — остались одни жалобы. Такую карточку
+   * лучше не записывать вовсе: эвристика ('reviews') вернёт её в очередь к
+   * модели через неделю (redoHeuristic), а прежний пересказ от модели, если он
+   * был, setGameJson не затрёт. Перекос «только ругают» у игры, которую
+   * хвалят, хуже недели без блока.
+   */
+  test('pros/cons: все плюсы битые — ответ негоден, пересоберёт следующий заход', async () => {
+    create.mockResolvedValue({
+      stop_reason: 'end_turn',
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            pros: ['Отличный модификация Quake', "Сложность хорошо подобрана, справедливо'],"],
+            cons: ['Короткая кампания'],
+          }),
+        },
+      ],
+    })
+    await expect(claudeProsCons('Игра', REVIEWS)).resolves.toBeNull()
+  })
+
+  test('pros/cons: честный ответ без плюсов публикуется — у провальной игры их может не быть', async () => {
+    create.mockResolvedValue({
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: JSON.stringify({ pros: [], cons: ['Вылеты на старте'] }) }],
+    })
+    await expect(claudeProsCons('Игра', REVIEWS)).resolves.toEqual({ pros: [], cons: ['Вылеты на старте'] })
+  })
+
+  test('пересказ: промпт просит грамотный русский без смеси алфавитов', async () => {
+    create.mockResolvedValue({
+      stop_reason: 'end_turn',
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ tldr: 'Добавили 72 новых пала и сундуки с космetics-предметами.', scale: 'major' }),
+        },
+      ],
+    })
+    await expect(claudeNewsDigest(DIGEST)).resolves.toBeNull()
+    const prompt = create.mock.calls[0][0].messages[0].content as string
+    expect(prompt).toContain('согласуй род, число и падеж')
+    expect(prompt).toContain('не склеивай русские слова с английскими')
   })
 
   test('пересказ: текст патча в рамке «данные», а реклама из ответа модели не доезжает', async () => {
