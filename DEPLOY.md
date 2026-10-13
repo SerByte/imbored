@@ -890,7 +890,13 @@ curl -s https://imbored.cc/privacy | grep -o '<meta property="og:url"[^>]*>'   #
 curl -s https://imbored.cc/ | grep -o '<link rel="canonical"[^>]*>'     # https://imbored.cc
 curl -sI https://imbored.cc/portrait/<твой steamid> | grep -i x-robots-tag     # noindex
 curl -sI "https://imbored.cc/portrait/<твой steamid>/card.png" | grep -i x-robots-tag   # noindex
+curl -sI "https://imbored.cc/room/new?game=730" | grep -iE '^HTTP|x-robots-tag'     # 200 и noindex
 ```
+
+`/room/new` тоже больше не закрыт в `robots.txt`: «Позвать в эту игру» ставит
+`/room/new?game=<appid>` на тысячи карточек, и закрытым он копил в Search
+Console «Заблокировано в robots.txt» (почему так плохо — `lib/robots.ts`).
+Такие адреса в отчёте теперь переедут в «Исключено: noindex» — это норма.
 
 **Карточки превью держатся в кэше.** Картинки динамических страниц (игра,
 патч, жанр, выбор, комната, портрет, совместимость) живут в ISR неделю, сутки
