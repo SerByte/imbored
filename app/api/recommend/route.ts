@@ -4,6 +4,7 @@ import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getGamesMetaLite, getHeroMedia, latestEveningPlan } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
+import { localeFromRequest } from '@/lib/i18n'
 import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
 import { llmDailyCap, takeLlmBudgetForIp } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -92,6 +93,12 @@ const DEMO_LLM_LIMIT = 2
 const DEMO_LLM_WINDOW_SEC = 86_400
 
 export async function POST(req: Request) {
+  /*
+   * Язык причин, подписей и текста «Отправить другу» — из адреса (/play
+   * зовёт withLang): всё, что здесь пишется словами, пишется на нём. Ответ —
+   * POST и не кэшируется, но правило одно на все роуты (docs/i18n.md).
+   */
+  const locale = localeFromRequest(req)
   const session = await currentSession()
   if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
   const { steamid } = session
@@ -200,7 +207,7 @@ export async function POST(req: Request) {
     db,
     set,
     [...new Set([...heroPool, ...discovery].map((c) => c.appid))],
-    { patches: isWriter(session) },
+    { patches: isWriter(session), locale },
   )
   const { metaNow, anchorOf, hoursOf, hideUrgency, patchOf } = ctx
 
@@ -258,6 +265,7 @@ export async function POST(req: Request) {
           // «С твоего последнего захода вышло крупное обновление» — у
           // заброшенных, где патч подтверждён моделью (lib/comeback.ts)
           patchOf,
+          locale,
         })
       : null
   const byHeuristic = (pool: ScoredCandidate[], count: number) =>
@@ -271,6 +279,7 @@ export async function POST(req: Request) {
       hideUrgency,
       playtimeHidden: set.playtimeHidden,
       patchOf,
+      locale,
     })
   // Модель могла вернуть меньше пятёрки (отсеяла validatePicks) — недостающее
   // добирает та же эвристика из кандидатов, которых модель не взяла
@@ -290,7 +299,7 @@ export async function POST(req: Request) {
         DISCOVERY_CARDS,
         now,
         profile,
-        { tagWeight, anchorOf, hideUrgency, playtimeHidden: set.playtimeHidden },
+        { tagWeight, anchorOf, hideUrgency, playtimeHidden: set.playtimeHidden, locale },
       )
 
   // «Продолжить «X»» — то, во что он играет сейчас: строкой под героем, а не
@@ -371,15 +380,18 @@ export async function POST(req: Request) {
       // И без факта о патче: «С твоего последнего захода…» на публичной
       // странице получатель прочтёт про себя, а дату запуска она выдаст
       // любому (shareText, lib/comeback.ts)
+      // Язык текста — в подписи (lang): /api/pick сверит и запишет его
       ...shareView(sessionSecret(), {
         steamid,
         appid: p.appid,
         source: p.source,
         text: shareText(
           p.reason,
-          reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency),
+          // Тот же язык, что у причины: хвост режется точным совпадением
+          reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency, locale),
           patchOf(p.appid),
         ),
+        lang: locale,
       }),
     })),
     discoveries: discoveries.map((p, i) => ({
