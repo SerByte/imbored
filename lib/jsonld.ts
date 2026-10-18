@@ -429,7 +429,7 @@ export type NewsArticleLd = {
   url: string
   mainEntityOfPage: string
   datePublished: string
-  /** Язык текста статьи — язык страницы: пересказ ей передают на её языке */
+  /** Язык текста статьи: язык пересказа, а без пересказа — язык страницы */
   inLanguage: string
   description?: string
   image?: string[]
@@ -450,7 +450,8 @@ export type NewsArticleLd = {
  *
  * item.tldr — пересказ на языке страницы: на /en это английский пересказ
  * (tldr_en), и без него описания в разметке нет — как нет и «In short» на
- * странице.
+ * странице. Пока чтение патча его не отдаёт, /en передаёт русский пересказ —
+ * и разметка повторяет страницу: description русский, inLanguage 'ru'.
  */
 export function patchArticleLd({
   item,
@@ -472,11 +473,14 @@ export function patchArticleLd({
     url,
     mainEntityOfPage: url,
     datePublished: new Date(item.publishedAt * 1000).toISOString(),
-    // Язык ТЕКСТА статьи. Пересказ приходит на языке страницы (на /en — только
-    // английский, русского там нет вовсе: docs/i18n.md, п. 8), поэтому язык
-    // статьи — язык страницы. Заголовок поста издатель пишет на своём языке, и
-    // язык нашего текста он не решает
-    inLanguage: htmlLang(locale),
+    // Язык ТЕКСТА статьи. Текст статьи — наш пересказ, и язык ему судит он
+    // сам, а не адрес страницы: пока чтение патча не отдаёт tldr_en (W2-news),
+    // /en получает русский пересказ, и «en» назвало бы английским русский
+    // текст description. Русский пересказ — 'ru' на любой странице; любой
+    // другой и его отсутствие — язык страницы: без пересказа текст статьи —
+    // подписи страницы, а заголовок поста издатель пишет на своём языке, и
+    // язык нашего текста он не решает. На /ru это 'ru' всегда, как и было
+    inLanguage: isRussianText(item.tldr?.trim()) ? 'ru' : htmlLang(locale),
     ...(item.tldr?.trim() ? { description: item.tldr.trim() } : {}),
     ...(item.imageUrl ? { image: [item.imageUrl] } : {}),
     ...(game ? { about: { '@type': 'VideoGame', name: game.name, url: at(baseUrl, locale, `/game/${item.appid}`) } } : {}),

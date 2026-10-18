@@ -495,12 +495,51 @@ describe('адреса разметки на языке страницы', () =>
     expect(article.url).toBe('https://imbored.cc/en/game/730/news/5123894512345')
     expect(article.mainEntityOfPage).toBe(article.url)
     expect(article.about?.url).toBe('https://imbored.cc/en/game/730')
-    // язык ТЕКСТА статьи: на /en пересказ передают английский (tldr_en), а
-    // русского там нет вовсе — значит, статья английская
+    // язык ТЕКСТА статьи: пересказа нет — текст статьи составляют подписи
+    // страницы, а они на /en английские
     expect(article.inLanguage).toBe('en')
     expect(
       patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' }).itemListElement.map((i) => i.item),
     ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/game/730', 'https://imbored.cc/en/game/730/news/5123894512345'])
+  })
+})
+
+/**
+ * Язык статьи патча — язык её текста, то есть пересказа. Пока чтение патча не
+ * отдаёт tldr_en, /en получает русский пересказ: назвать его английским —
+ * сказать роботу неправду о description, который он покажет сниппетом.
+ */
+describe('язык статьи патча — язык пересказа', () => {
+  const base = {
+    appid: 730,
+    gid: '5123894512345',
+    title: 'Counter-Strike 2 Update',
+    url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+    publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+  }
+  const game = { name: 'Counter-Strike 2' }
+
+  test('русский пересказ на /en — статья русская, description тот же, что на странице', () => {
+    const ld = patchArticleLd({ item: { ...base, tldr: 'Поправили баланс AWP и карту Mirage.' }, game, baseUrl: BASE, locale: 'en' })
+    expect(ld.inLanguage).toBe('ru')
+    expect(ld.description).toBe('Поправили баланс AWP и карту Mirage.')
+  })
+
+  test('английский пересказ на /en — статья английская', () => {
+    const ld = patchArticleLd({ item: { ...base, tldr: 'AWP rebalanced, Mirage reworked.' }, game, baseUrl: BASE, locale: 'en' })
+    expect(ld.inLanguage).toBe('en')
+    expect(ld.description).toBe('AWP rebalanced, Mirage reworked.')
+  })
+
+  test('пустой пересказ на /en — язык страницы', () => {
+    expect(patchArticleLd({ item: { ...base, tldr: '   ' }, game, baseUrl: BASE, locale: 'en' }).inLanguage).toBe('en')
+    expect(patchArticleLd({ item: { ...base, tldr: null }, game, baseUrl: BASE, locale: 'en' }).inLanguage).toBe('en')
+  })
+
+  test('на русской странице — ru при любом пересказе, как было', () => {
+    for (const tldr of ['Поправили баланс AWP.', 'AWP rebalanced.', '1.0.3', null, undefined]) {
+      expect(patchArticleLd({ item: { ...base, tldr }, game, baseUrl: BASE }).inLanguage).toBe('ru')
+    }
   })
 })
 
