@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { logFeedback, saveLibrarySnapshot, unbanGame, upsertGamesMeta, type Db } from '@/lib/db'
+import {
+  logFeedback,
+  saveLibrarySnapshot,
+  unbanGame,
+  upsertGamesMeta,
+  upsertNeighbors,
+  type Db,
+} from '@/lib/db'
+import { NEAR_SHOWN } from '@/lib/ownednear'
 import { nowSec } from '@/lib/server'
 import { freshDb, signInAs, signOut } from '@/lib/testing/route'
 import type { LibraryGame } from '@/lib/types'
@@ -188,6 +196,121 @@ describe('/api/session/owns', () => {
     const me = await signInAs(db, 'claimed')
     await saveLibrarySnapshot(db, me, lib(730), nowSec())
     expect(await owned(730)).toBe(true)
+  })
+
+  /*
+   * «Похожее уже есть у тебя» (lib/ownednear): соседи страницы, которые
+   * лежат на своей полке. Тем же ответом владения, по near=1, и только там,
+   * где «у тебя» — правда про смотрящего: пишущая сессия не из демо, и
+   * самой игры у неё нет.
+   */
+  describe('near — свои из соседей', () => {
+    /** Соседи 1000: 1001…1006 по порядку; у всех теги, иначе пул их не держит */
+    async function neighbors() {
+      await upsertGamesMeta(
+        db,
+        [1000, 1001, 1002, 1003, 1004, 1005, 1006].map((appid) => ({
+          appid,
+          name: `Игра ${appid}`,
+          tags: { Roguelike: 100 },
+          genres: [],
+          categories: [],
+        })),
+        nowSec(),
+      )
+      await upsertNeighbors(
+        db,
+        new Map([[1000, [1001, 1002, 1003, 1004, 1005, 1006].map((neighbor, i) => ({ neighbor, score: 0.9 - i / 10, shared: [] }))]]),
+      )
+    }
+    const askNear = (appid: number) => GET(new Request(`http://localhost/api/session/owns?appid=${appid}&near=1`))
+    const libWith = (minutes: Record<number, number>): LibraryGame[] =>
+      Object.entries(minutes).map(([appid, m]) => ({
+        appid: Number(appid),
+        name: `Игра ${appid}`,
+        playtimeForever: m,
+        playtime2Weeks: 0,
+      }))
+
+    test('пишущей — свои соседи в порядке соседей, с наигранным, не больше трёх', async () => {
+      await neighbors()
+      const me = await signInAs(db, 'openid')
+      await saveLibrarySnapshot(db, me, libWith({ 1006: 0, 1004: 180, 1002: 0, 1001: 25, 730: 600 }), nowSec())
+      const res = await askNear(1000)
+      expect(await res.json()).toEqual({
+        owned: false,
+        near: [
+          { appid: 1001, name: 'Игра 1001', minutes: 25 },
+          { appid: 1002, name: 'Игра 1002', minutes: 0 },
+          { appid: 1004, name: 'Игра 1004', minutes: 180 },
+        ],
+      })
+      expect(NEAR_SHOWN).toBe(3)
+      // «нет» остаётся «нет»: прежние пять минут и Vary
+      expect(res.headers.get('cache-control')).toBe('private, max-age=300')
+      expect(res.headers.get('vary')).toBe('Cookie')
+    })
+
+    test('без near=1 ответ прежний: другие вызывающие соседей не просили', async () => {
+      await neighbors()
+      const me = await signInAs(db, 'openid')
+      await saveLibrarySnapshot(db, me, libWith({ 1001: 25 }), nowSec())
+      expect(await (await ask(1000)).json()).toEqual({ owned: false })
+    })
+
+    test('забаненное и пройденное — мимо: бан — «не предлагать», пройденное — не замена покупке', async () => {
+      await neighbors()
+      const me = await signInAs(db, 'openid')
+      await saveLibrarySnapshot(db, me, libWith({ 1001: 0, 1002: 0, 1003: 40 }), nowSec())
+      await logFeedback(db, { steamid: me, appid: 1001, action: 'banned' }, nowSec() - 60)
+      await logFeedback(db, { steamid: me, appid: 1002, action: 'banned', reason: 'done' }, nowSec() - 60)
+      expect(await (await askNear(1000)).json()).toEqual({
+        owned: false,
+        near: [{ appid: 1003, name: 'Игра 1003', minutes: 40 }],
+      })
+    })
+
+    test('своя игра — без near: брать ли её, вопрос не стоит', async () => {
+      await neighbors()
+      const me = await signInAs(db, 'openid')
+      await saveLibrarySnapshot(db, me, libWith({ 1000: 10, 1001: 0 }), nowSec())
+      expect(await (await askNear(1000)).json()).toEqual({ owned: true })
+    })
+
+    test.each(['claimed', 'demo'] as const)('%s — без near: «у тебя» было бы не про смотрящего', async (kind) => {
+      await neighbors()
+      const me = await signInAs(db, kind)
+      await saveLibrarySnapshot(db, me, libWith({ 1001: 0, 1002: 30 }), nowSec())
+      expect(await (await askNear(1000)).json()).toEqual({ owned: false })
+    })
+
+    test('гостю — ничего', async () => {
+      await neighbors()
+      signOut()
+      expect(await (await askNear(1000)).json()).toEqual({ owned: false })
+    })
+
+    test('время скрыто настройками Steam — без минут, а не «не запускал»', async () => {
+      await neighbors()
+      const me = await signInAs(db, 'openid')
+      // десять игр и ни одной минуты — признак lib/playtime
+      const zeros = Object.fromEntries([1001, 1003, ...Array.from({ length: 8 }, (_, i) => 2000 + i)].map((id) => [id, 0]))
+      await saveLibrarySnapshot(db, me, libWith(zeros), nowSec())
+      expect(await (await askNear(1000)).json()).toEqual({
+        owned: false,
+        near: [
+          { appid: 1001, name: 'Игра 1001', minutes: null },
+          { appid: 1003, name: 'Игра 1003', minutes: null },
+        ],
+      })
+    })
+
+    test('ни одного своего среди соседей — поля нет вовсе', async () => {
+      await neighbors()
+      const me = await signInAs(db, 'openid')
+      await saveLibrarySnapshot(db, me, libWith({ 730: 60 }), nowSec())
+      expect(await (await askNear(1000)).json()).toEqual({ owned: false })
+    })
   })
 
   test('чужая библиотека ответа не меняет', async () => {

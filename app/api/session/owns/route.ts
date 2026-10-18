@@ -1,5 +1,14 @@
 import { NextResponse } from 'next/server'
-import { isFinished, latestEveningPlan, snapshotOwns } from '@/lib/db'
+import {
+  bannedAppids,
+  getNeighbors,
+  isFinished,
+  latestEveningPlan,
+  snapshotOwns,
+  snapshotOwnsMany,
+  type Db,
+} from '@/lib/db'
+import { NEAR_SHOWN, type OwnedNearGame } from '@/lib/ownednear'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 
 /**
@@ -44,11 +53,43 @@ import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
  * план, только что закрытый. Ценой — функция на каждый заход своей игры.
  * «Нет» и «да» сессии по ссылке живут прежние пять минут: их меняет только
  * снапшот.
+ *
+ * Четвёртое — near, «Похожее уже есть у тебя» (lib/ownednear): с near=1 «нет»
+ * пишущей сессии не из демо несёт до NEAR_SHOWN своих игр из соседей этой
+ * (getNeighbors — та же таблица, что у «Похожих» ниже на странице), в их
+ * порядке и с наигранным. Тем же запросом, что «Запустить», а не вторым: у
+ * не своей игры его и так задаёт каждый заход вошедшего. Сессии по ссылке и
+ * демо — ничего (почему — в lib/ownednear). Кэш у такого «нет» прежний, пять
+ * минут: свою полку человек меняет баном, а бан, увиденный строкой ещё пять
+ * минут на уже открытой однажды карточке, — цена, которая дешевле функции на
+ * каждый «Назад».
  */
 const OWNED_MAX_AGE = 300
 
+/**
+ * Свои из соседей: в порядке соседей, без забаненного (пройденное — тоже
+ * бан, reason 'done'), не больше NEAR_SHOWN. Сбой любого чтения — пустой
+ * список: строка — подсказка, и без неё страница та же, что у гостя.
+ */
+async function ownedNear(db: Db, steamid: string, appid: number): Promise<OwnedNearGame[]> {
+  try {
+    const [near, banned] = await Promise.all([getNeighbors(db, appid), bannedAppids(db, steamid)])
+    const ids = near.map((g) => g.appid).filter((id) => id !== appid && !banned.has(id))
+    if (!ids.length) return []
+    const minutes = await snapshotOwnsMany(db, steamid, ids)
+    return near
+      .filter((g) => ids.includes(g.appid) && minutes.has(g.appid))
+      .slice(0, NEAR_SHOWN)
+      .map((g) => ({ appid: g.appid, name: g.name, minutes: minutes.get(g.appid) ?? null }))
+  } catch {
+    return []
+  }
+}
+
 export async function GET(req: Request) {
-  const appid = Number(new URL(req.url).searchParams.get('appid'))
+  const params = new URL(req.url).searchParams
+  const appid = Number(params.get('appid'))
+  const wantNear = params.get('near') === '1'
   if (!Number.isInteger(appid) || appid === 0) {
     return NextResponse.json({ error: 'badinput' }, { status: 400 })
   }
@@ -79,8 +120,13 @@ export async function GET(req: Request) {
     )
   }
 
+  const near =
+    wantNear && !owned && appid > 0 && isWriter(session) && !isDemoId(steamid)
+      ? await ownedNear(db, steamid, appid)
+      : []
+
   return NextResponse.json(
-    { owned },
+    { owned, ...(near.length ? { near } : {}) },
     {
       headers: {
         'Cache-Control': `private, max-age=${OWNED_MAX_AGE}`,
