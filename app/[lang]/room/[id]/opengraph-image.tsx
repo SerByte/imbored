@@ -7,12 +7,14 @@ import { loadRoomInvite, ROOM_ID_RE } from './invite'
 import { isLocale, tr } from '@/lib/i18n'
 
 /*
- * Подпись картинки — одна на оба языка: alt у файловой карточки статичен, а
- * generateImageMetadata дописал бы к адресу картинки свой хвост, и сброс
- * кэша карточки по roomCardPath (lib/roomcard) промахивался бы. Поэтому —
- * двумя языками сразу, а не русской на английской странице.
+ * Подпись картинки — одна на оба языка и без слов языка: alt у файловой
+ * карточки статичен, а generateImageMetadata дописал бы к адресу картинки
+ * свой хвост, и сброс кэша карточки по roomCardPath (lib/roomcard)
+ * промахивался бы. Русская подпись на английской странице — кириллица в
+ * превью, двуязычная — тоже, поэтому — имя продукта: что это приглашение,
+ * говорят заголовок и описание превью, они на языке страницы (inviteCopy).
  */
-export const alt = 'Приглашение в пати · Party invite — imbored'
+export const alt = 'imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 

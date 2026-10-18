@@ -99,6 +99,25 @@ describe('приглашение в пати: настроение и игра, 
     expect(inviteCopy('SEED22', await loadRoomInvite('SEED22')).title).toBe('Пати SEED22 сошлась на «Dota 2»')
   })
 
+  /*
+   * Ник демо-хоста записан русской подписью, и английское превью без
+   * признака назвало бы его по-русски посреди английской фразы. Признак
+   * ставит загрузчик по steamid; живой ник остаётся как записан.
+   */
+  test('демо-хост — признаком: английское превью зовёт его «Demo player», русское — как было', async () => {
+    const DEMO = '00012345678901231'
+    await createRoom(db, { id: 'DEMO22', steamid: DEMO }, nowSec())
+    await joinRoom(db, 'DEMO22', DEMO, 'Демо-игрок', nowSec())
+    const invite = await loadRoomInvite('DEMO22')
+    expect(invite).toMatchObject({ host: 'Демо-игрок', hostDemo: true })
+    expect(inviteCopy('DEMO22', invite, 'en').title).toBe('Demo player invites you to Party DEMO22')
+    expect(inviteCopy('DEMO22', invite).title).toBe('Демо-игрок зовёт в пати DEMO22')
+    // живой хост — не демо, и ник его на английском превью не переводится
+    await room('LIVE22', {})
+    expect(await loadRoomInvite('LIVE22')).toMatchObject({ host: 'Аня', hostDemo: false })
+    expect(inviteCopy('LIVE22', await loadRoomInvite('LIVE22'), 'en').title).toBe('Аня invites you to Party LIVE22')
+  })
+
   test('игры уже нет в каталоге — приглашение без неё, а не с пустыми кавычками', async () => {
     await room('SEED23', { seedAppid: 999999 })
     const invite = await loadRoomInvite('SEED23')

@@ -370,7 +370,7 @@ export function RoomWaiting({
           <span className="text-xs text-faint">
             {tr(locale, {
               ru: 'Игры кончились — мы честно перебрали всё, что нашли у вас и рядом.',
-              en: "That's every game — we really went through everything we found in your libraries and nearby.",
+              en: 'Out of games — we checked everything in your libraries and nearby.',
             })}
           </span>
         )}
