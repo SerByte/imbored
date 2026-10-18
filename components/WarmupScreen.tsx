@@ -9,7 +9,7 @@ import { Spinner } from '@/components/Spinner'
 import { legacyArtUrl, type GameArtUrls } from '@/lib/art'
 import { plural } from '@/lib/plural'
 import { warmupPercent, warmupStage, type WallMemo, type WarmupProgress } from '@/lib/warmup'
-import { NARROW_WALL_MEDIA, stopWallLoads, wallPool } from '@/lib/warmupwall'
+import { NARROW_WALL_MEDIA, stopWallLoads, wallPool, wallRows } from '@/lib/warmupwall'
 import { Eyebrow } from '@/components/Labels'
 
 /**
@@ -250,8 +250,7 @@ function PosterWall({ ids, stop }: { ids: number[]; stop: boolean }) {
       if (!root.isConnected) stopWallLoads(root)
     }
   }, [stop])
-  const pool = wallPool(ids, narrow)
-  const rows = [0, 1, 2].map((r) => pool.filter((_, i) => i % 3 === r))
+  const rows = wallRows(wallPool(ids, narrow))
   return (
     <div ref={ref} aria-hidden className="pwall">
       <div className="pwall-grid">

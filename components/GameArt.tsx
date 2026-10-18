@@ -1,11 +1,14 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import {
   artCandidates,
   artSrcSet,
+  brokenImageSrc,
   HERO_SIZES,
+  nextArtTry,
   PORTRAIT_HERO_MEDIA,
+  type ArtTry,
   type ArtVariant,
   type GameArtUrls,
 } from '@/lib/art'
@@ -84,7 +87,9 @@ export function GameArt({
    * Только по просьбе: у героев /play и /daily поверх арта стоит логотип
    * игры (HeroTitle), а у постера свой, впечатанный, — их было бы два.
    * Не загрузился постер — назад к library_hero (posterFailed), а не дальше
-   * по цепочке к капсуле.
+   * по цепочке к капсуле. Плоский library_600x900 есть не у всех: у игр,
+   * вышедших после перехода Valve на хэшированные пути, его нет вовсе, и
+   * 404 приходит ещё до гидрации — его ловит проверка при монтировании.
    */
   portrait?: boolean
 }) {
@@ -92,7 +97,7 @@ export function GameArt({
   const candidates = artCandidates(source, variant)
   // Состояние сбрасывается при смене игры без useEffect: обновление во время
   // рендера — штатный приём React для «состояния, зависящего от пропсов»
-  const [tried, setTried] = useState({ appid, idx: 0, posterFailed: false })
+  const [tried, setTried] = useState<ArtTry>({ appid, idx: 0, posterFailed: false })
   const [loaded, setLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
   if (tried.appid !== appid) {
@@ -103,6 +108,16 @@ export function GameArt({
   const idx = tried.appid === appid ? tried.idx : 0
   const src = candidates[idx]
   const posterFailed = tried.appid === appid && tried.posterFailed
+  // Постер для портретного экрана — пока герой на первом кандидате и
+  // постер не отказал (см. portrait)
+  const posterSet =
+    portrait && variant === 'hero' && appid > 0 && idx === 0 && !posterFailed
+      ? artSrcSet(source, 'poster')
+      : undefined
+
+  // Отказ картинки — один разбор на оба пути, onError и проверку ниже:
+  // постер — назад к полосе героя, остальное — следующий кандидат
+  const fail = (url: string) => setTried((t) => nextArtTry(t, { appid, idx, url, posterSet }))
 
   // Кэшированная картинка может быть готова до подписки на onLoad
   useEffect(() => {
@@ -110,6 +125,28 @@ export function GameArt({
     const el = imgRef.current
     if (el?.complete && el.naturalWidth > 0) setLoaded(true)
   }, [fade, loaded, src])
+
+  /*
+   * ОТКАЗ ДО ГИДРАЦИИ. Картинку из серверной разметки браузер качает сразу,
+   * а React вешает на неё onError только при гидрации и уже случившуюся
+   * ошибку не повторяет. Герою /pick на телефоне это стоило картинки целиком:
+   * сканер предзагрузки просит плоский library_600x900_2x первым, 404 у игры
+   * без плоских путей приходит за сотни миллисекунд, а гидрация — дольше
+   * секунды. onError так и не звучал, и вместо героя оставалась битая
+   * картинка с alt="" поверх тёмного фона. Так же молча вставала и цепочка
+   * кандидатов у любого серверного героя.
+   *
+   * Поэтому один раз при монтировании смотрим, не отказала ли она уже, — тем
+   * же приёмом, что у логотипа в HeroTitle. Дальше события приходят живыми:
+   * и новые кандидаты, и <img>, который React создаёт сам, подписаны до
+   * своего запроса. Сработали оба пути на один отказ — nextArtTry второй
+   * гасит.
+   */
+  const failedBeforeMount = useEffectEvent((url: string) => fail(url))
+  useEffect(() => {
+    const url = brokenImageSrc(imgRef.current)
+    if (url) failedBeforeMount(url)
+  }, [])
 
   /*
    * Игре не из Steam картинок взять неоткуда — вместо заглушки типографская
@@ -147,12 +184,6 @@ export function GameArt({
   // запасных ссылках размеры уже другие
   const srcSet = idx === 0 ? artSrcSet(source, variant) : undefined
   const slot = sizes ?? (variant === 'hero' ? HERO_SIZES : undefined)
-  // Постер для портретного экрана — пока герой на первом кандидате и
-  // постер не отказал (см. portrait)
-  const posterSet =
-    portrait && variant === 'hero' && appid > 0 && idx === 0 && !posterFailed
-      ? artSrcSet(source, 'poster')
-      : undefined
 
   const img = (
     // eslint-disable-next-line @next/next/no-img-element
@@ -164,14 +195,7 @@ export function GameArt({
       alt=""
       loading={eager ? 'eager' : 'lazy'}
       fetchPriority={fetchPriority}
-      onError={(e) => {
-        const failed = e.currentTarget.currentSrc
-        if (posterSet && srcSetUrls(posterSet).includes(failed)) {
-          setTried((t) => ({ ...t, appid, posterFailed: true }))
-        } else {
-          setTried((t) => ({ ...t, appid, idx: t.idx + 1 }))
-        }
-      }}
+      onError={(e) => fail(e.currentTarget.currentSrc)}
       onLoad={fade ? () => setLoaded(true) : undefined}
       data-art-fade={fade ? '' : undefined}
       data-loaded={fade && loaded ? '' : undefined}
@@ -193,11 +217,6 @@ export function GameArt({
       {img}
     </picture>
   )
-}
-
-/** Адреса из srcSet — без дескрипторов ширины */
-function srcSetUrls(set: string): string[] {
-  return set.split(',').map((part) => part.trim().split(/\s+/)[0])
 }
 
 /** Типографская заглушка: название игры вместо иконки битой картинки. */

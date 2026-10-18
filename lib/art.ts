@@ -240,6 +240,54 @@ export const HERO_SIZES = '100vw'
  */
 export const PORTRAIT_HERO_MEDIA = '(max-aspect-ratio: 1/1)'
 
+/** Какой источник пробует GameArt: игра, номер кандидата, отказал ли постер. */
+export type ArtTry = { appid: number; idx: number; posterFailed: boolean }
+
+/**
+ * Следующая попытка GameArt после того, как картинка отказала по адресу url.
+ *
+ * Отказал постер портретного экрана (адрес из posterSet — <source> героя
+ * с portrait) — назад к library_hero того же кандидата, а не дальше по
+ * цепочке к капсуле. Любой другой адрес — следующий кандидат.
+ *
+ * Об одном отказе GameArt узнаёт двумя путями: onError и проверкой после
+ * гидрации (brokenImageSrc). Если сработали оба, второй — тот же отказ, а
+ * не новый, и пропустить из-за него живой кандидат нельзя. Поэтому шаг
+ * делается только от того кандидата, что отказал (failed.idx), и повтор
+ * возвращает прежний объект: React такую запись отбрасывает без рендера.
+ * Отказ от прежней игры (appid уже другой) не трогает новую.
+ */
+export function nextArtTry(
+  t: ArtTry,
+  failed: { appid: number; idx: number; url: string; posterSet?: string },
+): ArtTry {
+  if (t.appid !== failed.appid) return t
+  if (failed.posterSet && srcSetUrls(failed.posterSet).includes(failed.url)) {
+    return t.posterFailed ? t : { ...t, posterFailed: true }
+  }
+  return t.idx === failed.idx ? { ...t, idx: t.idx + 1 } : t
+}
+
+/**
+ * Адрес картинки, которая уже отказала, — или null, если она грузится, ждёт
+ * своей очереди (loading="lazy") или загрузилась.
+ *
+ * Отказ — это complete без пикселей: браузер закончил с запросом, а
+ * naturalWidth остался нулём. currentSrc нужен и как ответ (какой из
+ * <source> и srcSet отказал), и как признак: у <img> без адреса complete
+ * тоже true, но отказываться там не от чего.
+ */
+export function brokenImageSrc(
+  img: { complete: boolean; naturalWidth: number; currentSrc: string } | null | undefined,
+): string | null {
+  return img?.complete && img.naturalWidth === 0 && img.currentSrc ? img.currentSrc : null
+}
+
+/** Адреса из srcSet — без дескрипторов ширины */
+function srcSetUrls(set: string): string[] {
+  return set.split(',').map((part) => part.trim().split(/\s+/)[0])
+}
+
 /**
  * sizes капсулы в полке-ряду (.shelf-rail): хаб /games и «Вечера» на /library.
  *

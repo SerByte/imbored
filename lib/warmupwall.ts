@@ -30,21 +30,55 @@ export const NARROW_WALL_MEDIA = '(max-width: 480px)'
  * Широкий экран: от WALL_MIN до всех пришедших (не больше WALL_MAX в
  * lib/warmup) — восемь в ряду закрывают десктоп.
  *
- * Узкий: ровно WALL_NARROW. Пять постеров в ряду (кегль высоты 24vh,
- * пропорция 2:3, зазор 12 px) — это 575–790 px на половину ряда при
+ * Узкий: не больше WALL_NARROW разных. Пять постеров в ряду (кегль высоты
+ * 24vh, пропорция 2:3, зазор 12 px) — это 575–790 px на половину ряда при
  * видимых 470–620 px у телефонов шириной 360–480: петля по-прежнему без
  * дыры, а девять постеров (около полумегабайта) не качаются ради места за
- * краем стекла. Маленькая библиотека добирается повтором до той же длины —
- * повтор ничего не стоит, адрес у него тот же.
+ * краем стекла.
+ *
+ * Маленькая библиотека (меньше WALL_NARROW на телефоне, меньше WALL_MIN на
+ * широком) добирается повтором до WALL_MIN и дальше — повтор ничего не
+ * стоит, адрес у него тот же. Не до WALL_NARROW: на пятнадцати шов петли
+ * ставил вплотную две одинаковые обложки у библиотек из 2, 4, 6 и 12 игр,
+ * и длину повтора выбирает он (seamRepeats).
  */
 export const WALL_MIN = 18
 export const WALL_NARROW = 15
 
 export function wallPool(ids: readonly number[], narrow: boolean): number[] {
   if (ids.length === 0) return []
-  const size = narrow ? WALL_NARROW : WALL_MIN
-  const pool = narrow ? ids.slice(0, WALL_NARROW) : [...ids]
-  return pool.length >= size ? pool : Array.from({ length: size }, (_, i) => pool[i % pool.length])
+  if (narrow && ids.length >= WALL_NARROW) return ids.slice(0, WALL_NARROW)
+  if (ids.length >= WALL_MIN) return [...ids]
+  const repeat = (size: number) => Array.from({ length: size }, (_, i) => ids[i % ids.length])
+  for (const size of [WALL_MIN, WALL_MIN + 3, WALL_MIN + 6]) {
+    const pool = repeat(size)
+    if (!seamRepeats(pool)) return pool
+  }
+  // Один или три постера на всю стену — ряд и так из одной картинки
+  return repeat(WALL_MIN)
+}
+
+/**
+ * Ряды стены — каждый третий постер пула. Тем же делением рисует
+ * PosterWall (components/WarmupScreen), и по нему же wallPool проверяет шов.
+ */
+export function wallRows(pool: readonly number[]): number[][] {
+  return [0, 1, 2].map((r) => pool.filter((_, i) => i % 3 === r))
+}
+
+/**
+ * Встанет ли постер вплотную к самому себе на шве петли.
+ *
+ * Ряд рисуется дважды подряд, [...row, ...row], и последний постер ряда
+ * стоит рядом с первым. Пул из k постеров, повторённый по кругу до длины
+ * size, кладёт их рядом, когда k делит 3·(size/3 − 1): так при k = 2, 4,
+ * 6 и 12 выходило на пятнадцати, а при k = 5 и 15 — на восемнадцати, и
+ * две одинаковые обложки плыли через экран парой. Из 18, 21 и 24 для
+ * любого k, кроме 1 и 3, годится хотя бы одна длина: 15, 18 и 21 вместе
+ * делит только тройка.
+ */
+function seamRepeats(pool: readonly number[]): boolean {
+  return wallRows(pool).some((row) => row.length > 1 && row[0] === row[row.length - 1])
 }
 
 /**

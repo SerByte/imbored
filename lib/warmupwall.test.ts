@@ -11,6 +11,7 @@ import {
   WALL_MIN,
   WALL_NARROW,
   wallPool,
+  wallRows,
 } from './warmupwall'
 
 /**
@@ -42,22 +43,47 @@ describe('wallPool', () => {
   })
 
   test('маленькая библиотека добирается повтором — ряд шире экрана, файлов не больше', () => {
-    expect(wallPool(ids(5), false)).toHaveLength(WALL_MIN)
-    expect(new Set(wallPool(ids(5), false)).size).toBe(5)
-    expect(wallPool(ids(5), true)).toHaveLength(WALL_NARROW)
-    expect(new Set(wallPool(ids(5), true)).size).toBe(5)
-  })
-
-  test('ряды телефона не повторяют постер встык на шве петли', () => {
-    // Ряд — каждый третий из пула, повторённый дважды: [...row, ...row]
-    for (const n of [WALL_NARROW, WALL_MAX]) {
-      const pool = wallPool(ids(n), true)
-      for (const r of [0, 1, 2]) {
-        const row = pool.filter((_, i) => i % 3 === r)
-        const loop = [...row, ...row]
-        for (let i = 1; i < loop.length; i++) expect(loop[i]).not.toBe(loop[i - 1])
+    for (const narrow of [false, true]) {
+      for (const n of [2, 5, 12]) {
+        const pool = wallPool(ids(n), narrow)
+        expect(pool.length, `${n}, narrow=${narrow}`).toBeGreaterThanOrEqual(WALL_MIN)
+        expect(new Set(pool).size).toBe(n)
       }
     }
+  })
+
+  test('телефону с пятнадцатью-семнадцатью играми — пятнадцать разных, без повтора', () => {
+    for (const n of [15, 16, 17]) expect(wallPool(ids(n), true)).toEqual(ids(WALL_NARROW))
+  })
+
+  /*
+   * Ряд рисуется дважды подряд, и последний постер стоит вплотную к первому.
+   * Повтор до пятнадцати ставил так две одинаковые обложки у библиотек из 2,
+   * 4, 6 и 12 игр, до восемнадцати — из 5 и 15. Один и три постера — не в
+   * счёт: там весь ряд из одной картинки при любой длине.
+   */
+  test('ни один ряд не встречает сам себя на шве петли', () => {
+    for (const narrow of [false, true]) {
+      for (let n = 2; n <= WALL_MAX; n++) {
+        if (n === 3) continue
+        for (const [r, row] of wallRows(wallPool(ids(n), narrow)).entries()) {
+          const loop = [...row, ...row]
+          for (let i = 1; i < loop.length; i++) {
+            expect(loop[i], `${n} игр, narrow=${narrow}, ряд ${r}`).not.toBe(loop[i - 1])
+          }
+        }
+      }
+    }
+  })
+
+  test('ряды — каждый третий постер, тем же делением, что рисует стена', () => {
+    expect(wallRows(ids(7))).toEqual([
+      [1, 4, 7],
+      [2, 5],
+      [3, 6],
+    ])
+    const screen = fs.readFileSync(path.join(__dirname, '..', 'components', 'WarmupScreen.tsx'), 'utf8')
+    expect(screen).toMatch(/wallRows\(wallPool\(ids, narrow\)\)/)
   })
 
   test('пустая стена остаётся пустой', () => {
