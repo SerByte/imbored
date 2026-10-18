@@ -85,6 +85,8 @@ describe('/api/cron/pages', () => {
     expect(await linksToday(db, 'pages', T0)).toBe(1)
     const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.pages.lastKey)) ?? '{}') as Record<string, unknown>
     expect(mark).toMatchObject({ links: 1, ended: 'done', claimed: 0, сигналы: { stopped: 'done' } })
+    // пульс отзывов идёт тем же звеном и тоже отмечается — на пустом пуле пустым
+    expect(mark).toMatchObject({ пульс: { measured: 0, stopped: 'done' } })
     // ничего не поменялось — ни одной карточки в перегенерацию
     expect(revalidated).toEqual([])
     expect(mark).toMatchObject({ сброшено: 0, итого: { сброшено: 0 } })

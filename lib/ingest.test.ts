@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
   CCU_FAIL_STREAK,
+  fetchRecentPulse,
+  fetchRecentReviews,
+  parseRecentPulse,
   parseReleaseYear,
   parseReviewTooltip,
   parseSearchRows,
@@ -190,5 +193,54 @@ describe('pollPlayerCounts', () => {
       },
     })
     expect({ counts, stopped }).toEqual({ counts: [], stopped: false })
+  })
+})
+
+/**
+ * Пульс отзывов — appreviews за 30 дней с num_per_page=0. Ответ синтетический,
+ * формы query_summary из документации Steam (getreviews): у промоута из него
+ * бралось только total_reviews, карточке нужна и доля — total_positive.
+ */
+describe('пульс отзывов', () => {
+  const answer = (summary: Record<string, unknown>, success = 1) => ({
+    success,
+    query_summary: { num_reviews: 0, review_score: 8, review_score_desc: 'Very Positive', ...summary },
+    reviews: [],
+  })
+
+  test('сколько за месяц и сколько из них положительных', () => {
+    expect(parseRecentPulse(answer({ total_reviews: 7948, total_positive: 7551, total_negative: 397 }))).toEqual({
+      total: 7948,
+      positive: 7551,
+    })
+    // ноль за месяц — тоже ответ: число есть, доли нет
+    expect(parseRecentPulse(answer({ total_reviews: 0, total_positive: 0 }))).toEqual({ total: 0, positive: 0 })
+  })
+
+  test('не про игру или без чисел — undefined, а не ноль', () => {
+    expect(parseRecentPulse(answer({ total_reviews: 10, total_positive: 9 }, 2))).toBeUndefined()
+    expect(parseRecentPulse(answer({ total_reviews: 10 }))).toBeUndefined()
+    expect(parseRecentPulse(answer({ total_reviews: 10, total_positive: 11 }))).toBeUndefined()
+    expect(parseRecentPulse(null)).toBeUndefined()
+  })
+
+  test('окно — 30 дней до замера, тот же адрес, что у промоута', async () => {
+    const urls: string[] = []
+    const fetchFn = (async (url: string) => {
+      urls.push(url)
+      return new Response(JSON.stringify(answer({ total_reviews: 810, total_positive: 700 })), { status: 200 })
+    }) as unknown as typeof fetch
+    const NOW = 1_790_000_000
+    expect(await fetchRecentPulse(730, NOW, fetchFn)).toEqual({ total: 810, positive: 700 })
+    expect(await fetchRecentReviews(730, NOW, fetchFn)).toBe(810)
+    expect(urls[0]).toBe(urls[1])
+    expect(urls[0]).toContain(`start_date=${NOW - 30 * 86_400}&end_date=${NOW}`)
+    expect(urls[0]).toContain('filter=recent')
+    expect(urls[0]).toContain('language=all')
+  })
+
+  test('отказ магазина — исключение: вызывающий не запишет «ноль за месяц»', async () => {
+    const fail = (async () => new Response('', { status: 429 })) as unknown as typeof fetch
+    await expect(fetchRecentPulse(730, 1_790_000_000, fail)).rejects.toThrow('HTTP 429')
   })
 })

@@ -14,6 +14,7 @@ import {
   bannedAppids,
   bannedAppidsOf,
   castRoomVote,
+  catalogSignalsQueue,
   claimNewsPollBatch,
   countIngest,
   countNewsPollDue,
@@ -4997,8 +4998,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 10,
-      columns: 41,
+      version: 12,
+      columns: 50,
     })
   })
 })
@@ -5156,6 +5157,47 @@ describe('превью и продовая база', () => {
     }
     expect(await getCatalogMeta(db, 'repair_tags_v1')).toBe('1')
     expect(await repairGameJson(db, { dryRun: true })).toEqual([])
+  })
+
+  /*
+   * Отзывы на всех языках — новые колонки, пустые у всего пула разом, а
+   * сверка каталога берёт игру только по просроченному reviews_at. Без
+   * разового шага плитки хабов неделю молчали бы об отзывах, а у карточек без
+   * сводки пропало бы кольцо: англоязычные колонки людям больше не показываются.
+   */
+  test('пул без отзывов на всех языках встаёт в голову сверки — раз и только на проде', async () => {
+    const db = await freshDb()
+    for (const appid of [1, 2, 3, 4]) await upsertGameMeta(db, { ...META, appid }, NOW)
+    await db.execute({ sql: 'UPDATE games SET reviews_at = ?', args: [NOW] })
+    // 2 уже сверена с новыми колонками, 3 снята с подбора, у 4 сверки не было вовсе
+    await db.execute('UPDATE games SET reviews_all_total = 500, reviews_all_percent = 90 WHERE appid = 2')
+    await db.execute('UPDATE games SET alive = 0 WHERE appid = 3')
+    await db.execute('UPDATE games SET reviews_at = NULL WHERE appid = 4')
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'reviews_all_due_v1'")
+    const stamps = async () =>
+      (await db.execute('SELECT appid, reviews_at FROM games ORDER BY appid')).rows.map((r) => [
+        Number(r.appid),
+        r.reviews_at === null ? null : Number(r.reviews_at),
+      ])
+
+    // Превью на продовой базе флаг не ставит: пул в голове очереди разобрал бы
+    // крон прода, который новых колонок ещё не пишет, — и шаг не повторился бы
+    await migrateDb(db, PREVIEW)
+    expect(await stamps()).toEqual([[1, NOW], [2, NOW], [3, NOW], [4, null]])
+    expect(await getCatalogMeta(db, 'reviews_all_due_v1')).toBeNull()
+
+    // Первый старт прода после мержа. Отметка 1, а не NULL: сверено, давно, —
+    // и безотметочный снимок заливки каталога облачные числа не перетрёт
+    await migrateDb(db, { VERCEL_ENV: 'production' })
+    expect(await stamps()).toEqual([[1, 1], [2, NOW], [3, NOW], [4, null]])
+    expect(await getCatalogMeta(db, 'reviews_all_due_v1')).toBe('1')
+    // в очереди сверки — сразу за ни разу не сверенными
+    expect((await catalogSignalsQueue(db, 10)).map((r) => r.appid)).toEqual([4, 1, 2])
+
+    // Флаг стоит — следующий старт проход по games не повторяет
+    await db.execute({ sql: 'UPDATE games SET reviews_at = ? WHERE appid = 1', args: [NOW] })
+    await migrateDb(db, { VERCEL_ENV: 'production' })
+    expect((await stamps())[0]).toEqual([1, NOW])
   })
 
   test('превью со своей базой мигрирует целиком', async () => {

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 import {
   bannedAppidsOf,
   catalogSignalsQueue,
+  reviewPulseQueue,
   claimNewsPollBatch,
   countNewsPollDue,
   createDb,
@@ -332,6 +333,16 @@ const CASES: Case[] = [
     run: (db) => catalogSignalsQueue(db, 200),
     indexes: ['idx_games_reviews_at'],
     sortFree: true,
+  },
+  // Пульс отзывов: верх пула — по порядку частичного idx_games_pool,
+  // разгромленные — по порядку idx_games_panned, чтение каждой ветки обрывает
+  // её LIMIT; сортируются по отметке только эти строки, а не пул. Без своего
+  // индекса ветка разгромленных читала бы всю games на каждое звено крона
+  {
+    name: 'очередь пульса отзывов',
+    run: (db) => reviewPulseQueue(db, { top: 400, panned: 50, before: NOW, limit: 6 }),
+    indexes: ['idx_games_panned', 'idx_games_pool'],
+    sortFree: false,
   },
   // «Ещё у этой студии» на карточке: диапазон developer=? частичного индекса,
   // порядок — отзывы и appid (rowid, которым индекс кончается сам), и чтение
@@ -752,6 +763,12 @@ describe('выборки по списку appid', () => {
     [
       'stalePriceAppids со скрытыми',
       (db) => stalePriceAppids(db, IDS, Number.MAX_SAFE_INTEGER, NOW, 200, 'us', { hidden: true }),
+    ],
+    // и с погасшими скидками — ещё одно OR, тот же поиск по ключу
+    [
+      'stalePriceAppids с погасшими скидками',
+      (db) =>
+        stalePriceAppids(db, IDS, Number.MAX_SAFE_INTEGER, NOW, 200, 'us', { hidden: true, deadDeals: true }),
     ],
   ]
 

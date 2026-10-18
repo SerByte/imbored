@@ -74,9 +74,35 @@ export type GameMeta = {
   releaseYear?: number
   developer?: string
   publisher?: string
-  /** всего отзывов и доля положительных — сигналы актуальности */
+  /**
+   * Всего отзывов и доля положительных — сигналы актуальности. Шкала
+   * англоязычная (посев каталога и сверка, lib/catalogsignals): на ней стоят
+   * пороги живости и порядок пула. Людям это число не показывается — им
+   * показывают reviewsAll* (shownReviews в lib/gametraits).
+   */
   reviewsTotal?: number
   reviewsPercent?: number
+  /**
+   * Отзывы для людей: все языки, сводка магазина Steam (GetItems
+   * summary_filtered) — кольцо /game, плитки хабов и /play. Только парой.
+   */
+  reviewsAllTotal?: number
+  reviewsAllPercent?: number
+  /**
+   * Оценка Steam словами по той же сводке — EUserReviewScore: 9 «Крайне
+   * положительные» … 1 «Крайне отрицательные». Есть только в полной мете.
+   */
+  reviewsAllScore?: number
+  /** Отзывы на русском — та же сводка магазина в русском контексте. Только парой */
+  reviewsRuTotal?: number
+  reviewsRuPercent?: number
+  /**
+   * Пульс: отзывы за 30 дней до reviewsRecentAt (unix-секунды), все языки.
+   * Только тройкой — без даты замера «последний месяц» был бы неизвестно каким.
+   */
+  reviewsRecentTotal?: number
+  reviewsRecentPercent?: number
+  reviewsRecentAt?: number
   /** отзывов за последние 30 дней — запасной сигнал актуальности */
   reviews30d?: number
   /** игроков прямо сейчас — главный сигнал «можно ли в это играть сегодня» */

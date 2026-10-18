@@ -4,7 +4,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { getGamesMetaLite, getLovedFor, topGamesByTags } from '@/lib/db'
 import { HUB_GENRES, HUB_MIN_WEIGHT, HUB_PAGE, hubTagOf } from '@/lib/gamehub'
 import { isRussianText } from '@/lib/gamepage'
-import { reviewsBrief, sessionTrait, type GameTrait, type ReviewsBrief } from '@/lib/gametraits'
+import { reviewsBrief, sessionTrait, shownReviews, type GameTrait, type ReviewsBrief } from '@/lib/gametraits'
 import { getDb } from '@/lib/server'
 
 export type GenreGame = {
@@ -12,7 +12,11 @@ export type GenreGame = {
   name: string
   headerImage: string | null
   art: GameArtUrls | null
-  /** «92% из 48 тыс.» — доля положительных отзывов Steam */
+  /**
+   * «92% из 48 тыс.» — доля положительных отзывов Steam на всех языках: та же
+   * пара, что кольцо на карточке игры (shownReviews), а не англоязычная шкала
+   * порогов, которая печаталась здесь втрое меньшим числом
+   */
   reviews: ReviewsBrief | null
   /** «Сессия: ~40 мин» — только из уверенной семантики (lib/gametraits) */
   session: GameTrait | null
@@ -32,20 +36,46 @@ async function readGenre(tag: string): Promise<GenreGame[]> {
   const rows = await topGamesByTags(db, [tag], { minWeight: HUB_MIN_WEIGHT, perTag: HUB_PAGE })
   const ids = rows.map((r) => r.appid)
   const [metas, loved] = await Promise.all([getGamesMetaLite(db, ids), getLovedFor(db, ids)])
-  return rows.map((r) => {
+  const tiles = rows.map((r) => {
     const meta = metas.get(r.appid)
     const about = meta?.shortDescription?.trim()
-    return {
+    const shown = meta ? shownReviews(meta) : null
+    const game: GenreGame = {
       appid: r.appid,
       name: r.name,
       headerImage: r.headerImage,
       art: r.art,
-      reviews: reviewsBrief(meta?.reviewsPercent, meta?.reviewsTotal),
+      reviews: reviewsBrief(shown?.percent, shown?.total),
       session: meta ? sessionTrait(meta) : null,
       loved: loved.get(r.appid) ?? [],
       about: about && isRussianText(about) ? about : null,
     }
+    return { game, total: shown?.total ?? null }
   })
+  return byShownTotal(tiles)
+}
+
+/**
+ * Порядок плиток — по тем отзывам, что на них напечатаны.
+ *
+ * Отбирает игры жанра topGamesByTags, и по англоязычному reviews_total: та же
+ * шкала, что у порядка пула и у соседних полок хаба, и менять её здесь значило
+ * бы, что /games и /games/<slug> собирают разный верх. Но плитка печатает все
+ * языки (shownReviews), номер места стоит в её углу, а шапка обещает «порядок
+ * — по числу отзывов в Steam». У игр, которые больше хвалят не по-английски
+ * (китайские и японские хиты), доля английских совсем другая, и по порядку
+ * отбора полка показала бы №1 «из 400 тыс.» прямо над №2 «из 1 млн» — то же
+ * «одно из чисел выдумано», от которого и заведено одно правило показа.
+ *
+ * Поэтому внутри отобранного плитки с числами встают по своему числу, а
+ * плитка без чисел (сверка до игры не дошла) остаётся на месте отбора: ей
+ * спорить нечем, и прыжок в хвост был бы таким же выдуманным порядком.
+ * Сортировка устойчивая — при равных числах порядок отбора.
+ */
+function byShownTotal(tiles: ReadonlyArray<{ game: GenreGame; total: number | null }>): GenreGame[] {
+  const counted = tiles.filter((t) => t.total !== null).sort((a, b) => (b.total ?? 0) - (a.total ?? 0))
+  let next = 0
+  return tiles.map((t) => (t.total === null ? t.game : counted[next++].game))
 }
 
 /**

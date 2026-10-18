@@ -243,6 +243,33 @@ describe('публикация каталога: замеры не откаты�
       [2, 120, 55],
     ])
   })
+
+  /*
+   * Месяц отзывов в облаке меряет пульс, и по reviews_30d судит живость
+   * совместной игры без замера онлайна. Промоутный снимок поверх него
+   * откатил бы число к дню промоута, а свежий пульс под кольцом остался бы
+   * рядом — с другим числом за тот же месяц.
+   */
+  test('отзывы за 30 дней, замеренные пульсом, заливка не откатывает к промоуту', async () => {
+    // reviews_recent_checked_at в заливку не входит, как и reviews_at
+    const cols = ['appid', 'name', 'reviews_30d', 'updated_at'] as const
+    const db = await createDb(':memory:')
+    await db.execute(`INSERT INTO games (appid, name, reviews_30d, reviews_recent_checked_at, updated_at)
+                      VALUES (1, 'Замеренная', 7948, ${ВЧЕРА}, 0),
+                             (2, 'Не замеренная', 40, NULL, 0)`)
+    for (const [appid, recent] of [[1, 5100], [2, 61]]) {
+      await db.execute({
+        sql: `INSERT INTO games (${cols.join(', ')}) VALUES (?, 'x', ?, 1)
+              ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+        args: [appid, recent],
+      })
+    }
+    const r = await db.execute('SELECT appid, reviews_30d FROM games ORDER BY appid')
+    expect(r.rows.map((x) => [x.appid, x.reviews_30d])).toEqual([
+      [1, 7948],
+      [2, 61],
+    ])
+  })
 })
 
 describe('публикация каталога: битые JSON-колонки не едут', () => {

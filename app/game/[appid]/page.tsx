@@ -14,7 +14,7 @@ import { ProgressRing } from '@/components/ProgressRing'
 import { RefundNote } from '@/components/RefundNote'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { sitemapGames } from '@/lib/db'
-import { discountTrustedUntil, discountView, trustedPrice } from '@/lib/discount'
+import { discountTrustedUntil, discountView, lapsedRegularPrice, trustedPrice } from '@/lib/discount'
 import { trimArt } from '@/lib/art'
 import { PRERENDER_TOP, prerenderAtBuild } from '@/lib/gamecache'
 import { HUB_GENRES, hubPath, primaryGenre } from '@/lib/gamehub'
@@ -26,6 +26,7 @@ import {
   isRussianText,
   loadGamePage,
   reviewFacts,
+  reviewPulse,
   type StudioLine,
 } from '@/lib/gamepage'
 import { gameBreadcrumbLd, gameJsonLd, ldScript, pageNameRu } from '@/lib/jsonld'
@@ -123,7 +124,7 @@ export async function generateMetadata({
     meta,
     facts: reviewFacts(meta, reviewsSummary),
     prosCons,
-    verdict: deadVerdict(meta),
+    verdict: deadVerdict(meta, nowSec()),
   })
 
   const canonical = `/game/${appid}`
@@ -284,14 +285,20 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   // null — цене верить нечему (сгоревшая распродажа), см. trustedPrice. Плашку
   // тогда не рисуем вовсе: пустое стекло в герое хуже отсутствия цены.
   const price = trustedPrice(meta, now)
+  // Спрятанная цена погасшей распродажи — не молчание: обычную цену той же
+  // пары герой называет с подписью, пока сверка не переснимет (lapsedRegularPrice)
+  const regular = price === null ? lapsedRegularPrice(meta, now) : null
   // Страница публичная и не знает, куплена ли игра у читающего, — поэтому
   // строка про возврат здесь нейтральная, без «не зайдёт»
   const refund = refundEligible(meta, now)
   const studio = byline(meta.developer, meta.releaseYear)
   const facts = reviewFacts(meta, reviewsSummary)
+  // Месяц и русские под кольцом (reviewPulse): пустой список — строк нет
+  const pulse = reviewPulse(meta, facts, now)
   // Ответ мёртвой игре — он же прячет «Запустить»: звать в пустой матчмейкинг
-  // кнопкой запуска значит спорить с собственным вердиктом
-  const verdict = deadVerdict(meta)
+  // кнопкой запуска значит спорить с собственным вердиктом. Часы — ради
+  // пульса: свежий месяц похвал снимает «большинство отзывов отрицательные»
+  const verdict = deadVerdict(meta, now)
   // При равных весах — по имени: тот же порядок, что у жанров в разметке
   // (gameJsonLd), иначе видимое и размеченное расходились бы на ничьих
   const topTags = Object.entries(meta.tags)
@@ -484,7 +491,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               MetaLine, а не свои классы: роль ровно её — строка фактов через
               разделитель.
             */}
-            {(studio || meta.ccu) && (
+            {/* typeof, а не голый meta.ccu: у игры без студии ноль онлайна
+                иначе выпал бы в разметку литералом «0» вместо строки */}
+            {(studio || typeof meta.ccu === 'number') && (
               <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 {studio && <MetaLine>{studio}</MetaLine>}
                 {/*
@@ -505,15 +514,17 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               </p>
             )}
             {/*
-              Оценка собирается из того, что есть: сводка точнее, но её нет у
-              278 игр из тысячи — там числа берутся из колонок, заполненных у
-              всех. Раньше блок целиком висел на сводке, и почти треть страниц
-              не отвечала на вопрос из собственного заголовка.
+              Оценка собирается из того, что есть (reviewFacts): все языки из
+              сверки каталога — те же, что на плитках хабов и /play, — а пока
+              сверка до игры не дошла, сводка карточки. Англоязычная шкала
+              порогов сюда не выходит: «из 143 тыс.» у Hades при 309 тысячах.
+              Раньше блок целиком висел на сводке, и почти треть страниц не
+              отвечала на вопрос из собственного заголовка.
 
-              Слово — только из сводки. Проценты и количество мы пересказываем,
-              а словесную шкалу Steam придумывать за неё нельзя; без сводки
-              рядом с кольцом остаётся «положительных из N отзывов», и этого
-              хватает — процент уже стоит внутри кольца.
+              Слово — только той же сводки, что числа. Проценты и количество мы
+              пересказываем, а словесную шкалу Steam придумывать за неё нельзя;
+              без слова рядом с кольцом остаётся «положительных из N отзывов»,
+              и этого хватает — процент уже стоит внутри кольца.
             */}
             {facts && (
               <div className="flex items-center gap-3.5 text-sm">
@@ -540,6 +551,24 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   </span>
                 </div>
               </div>
+            )}
+            {/*
+              Пульс отзывов — прямо под кольцом: последний месяц, когда он
+              расходится со всем временем, и отзывы на русском (reviewPulse).
+              Это то же «стоит ли играть», только про сейчас и про своих: «раньше
+              ругали — сейчас хвалят» не видно ни по какому числу за всё время.
+              dl, как у фактов ниже: пары «подпись — значение» скринридер
+              читает парами.
+            */}
+            {pulse.length > 0 && (
+              <dl className="-mt-1 flex flex-col gap-0.5 text-xs text-dim">
+                {pulse.map((t) => (
+                  <div key={t.label} className="flex flex-wrap gap-x-1.5">
+                    <dt>{t.label}:</dt>
+                    <dd className="tabular-nums text-ink/80">{t.value}</dd>
+                  </div>
+                ))}
+              </dl>
             )}
             {/*
               Вердикт мёртвой игре — сразу под оценкой, выше тегов: это и есть
@@ -723,6 +752,30 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     )}
                   </span>
                 </PriceLine>
+              )}
+              {/* Погасшая распродажа: само акционное число прячет
+                  trustedPrice, а обычную цену той же пары называем — с
+                  подписью, потому что текущий ценник (обычный или продлённой
+                  акции) отсюда не узнать. Без неё герой молчал о цене, хотя
+                  «Steam возвращает деньги» под кнопками стоял. Без ShownUntil:
+                  срока у этой строки нет, её снимает перезамер цены.
+
+                  Подпись — видимым текстом, а не title: подсказку при
+                  наведении не видят ни на телефоне, ни скринридером, а без
+                  неё «обычная цена» читалась бы как «сейчас столько». И
+                  правдивая в обоих случаях, что прячет trustedPrice: срок
+                  акции вышел (её могли и продлить) или замер без срока
+                  протух — кончилась ли скидка, отсюда не узнать */}
+              {!meta.isFree && !meta.storeHidden && regular !== null && (
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm">
+                  <span className="text-dim">обычная цена</span>
+                  {/* бесплатной строки здесь не бывает — её отсекает условие выше */}
+                  <PriceTag priceFinal={regular} cc={meta.priceCc ?? null} isFree={false} size="hero" />
+                  <PriceWhere cc={meta.priceCc} />
+                  <span className="basis-full text-xs text-dim">
+                    Цену сняли во время скидки, а идёт ли она ещё, мы не знаем — в Steam может быть дешевле
+                  </span>
+                </span>
               )}
             </div>
             {refund && <RefundNote tone="neutral" />}

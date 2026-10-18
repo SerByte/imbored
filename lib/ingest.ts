@@ -143,6 +143,9 @@ export async function pollPlayerCounts(
   return { counts, stopped }
 }
 
+/** Окно «последнего месяца» — то же у промоута и у пульса на карточке */
+export const RECENT_WINDOW_SEC = 30 * 86_400
+
 /**
  * Отзывов за последние 30 дней — главный сигнал «во что играют сейчас».
  * Работает без ключа для любого appid, ответ ~200 байт. Именно он отличает
@@ -154,20 +157,61 @@ export async function fetchRecentReviews(
   nowSec: number,
   fetchFn: typeof fetch = fetch,
 ): Promise<number | undefined> {
-  const start = nowSec - 30 * 86_400
-  const url =
-    `https://store.steampowered.com/appreviews/${appid}?json=1&language=all` +
-    `&purchase_type=all&num_per_page=0&filter=recent` +
-    `&start_date=${start}&end_date=${nowSec}&date_range_type=include`
-  const res = await fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-  if (!res.ok) throw new Error(`appreviews ${appid}: HTTP ${res.status}`)
-  const json = (await res.json()) as {
+  const json = (await fetchRecentJson(appid, nowSec, fetchFn)) as {
     success?: number
     query_summary?: { total_reviews?: number }
   }
   if (json.success !== 1) return undefined
   const total = json.query_summary?.total_reviews
   return typeof total === 'number' ? total : undefined
+}
+
+/** Сырой ответ appreviews за окно RECENT_WINDOW_SEC — один адрес у промоута и у пульса */
+async function fetchRecentJson(appid: number, nowSec: number, fetchFn: typeof fetch): Promise<unknown> {
+  const start = nowSec - RECENT_WINDOW_SEC
+  const url =
+    `https://store.steampowered.com/appreviews/${appid}?json=1&language=all` +
+    `&purchase_type=all&num_per_page=0&filter=recent` +
+    `&start_date=${start}&end_date=${nowSec}&date_range_type=include`
+  const res = await fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+  if (!res.ok) throw new Error(`appreviews ${appid}: HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Отзывы за окно RECENT_WINDOW_SEC до замера: сколько и сколько из них положительных */
+export type RecentPulse = { total: number; positive: number }
+
+/**
+ * Разбор ответа appreviews с num_per_page=0: undefined — Steam ответил, но
+ * не про игру (success ≠ 1) или без чисел. Положительных больше, чем всего,
+ * не бывает — такой ответ тоже не ответ.
+ */
+export function parseRecentPulse(json: unknown): RecentPulse | undefined {
+  const j = json as { success?: number; query_summary?: { total_reviews?: unknown; total_positive?: unknown } }
+  if (j?.success !== 1) return undefined
+  const total = j.query_summary?.total_reviews
+  const positive = j.query_summary?.total_positive
+  if (typeof total !== 'number' || !Number.isInteger(total) || total < 0) return undefined
+  if (typeof positive !== 'number' || !Number.isInteger(positive) || positive < 0 || positive > total) {
+    return undefined
+  }
+  return { total, positive }
+}
+
+/**
+ * Пульс игры: отзывы за последние 30 дней на всех языках — сколько и сколько
+ * положительных. Тот же запрос, что у промоута (fetchRecentReviews), — у того
+ * из ответа бралось только «сколько»; карточке игры нужна и доля: «раньше
+ * ругали — сейчас хвалят» не видно ни по какому другому числу. Пейсер —
+ * забота вызывающего: у промоута свой темп, крон ходит через
+ * pace('steam-store').
+ */
+export async function fetchRecentPulse(
+  appid: number,
+  nowSec: number,
+  fetchFn: typeof fetch = fetch,
+): Promise<RecentPulse | undefined> {
+  return parseRecentPulse(await fetchRecentJson(appid, nowSec, fetchFn))
 }
 
 /** Год выхода регуляркой — дата приходит в локали магазина и парсингу не поддаётся */

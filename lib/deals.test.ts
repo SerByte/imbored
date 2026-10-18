@@ -444,4 +444,43 @@ describe('регион цен', () => {
     // сверке — при любом возрасте; чужой регион протух и без флага
     expect(await stalePriceAppids(db, [1, 2, 3], Number.MAX_SAFE_INTEGER, NOW, 200, 'ru', { hidden: true })).toEqual([3, 2])
   })
+
+  /*
+   * Погасшая распродажа: в строке акционная пара, а скидке уже не верят —
+   * срок прошёл или замер без срока старше PRICE_TRUST_SEC. trustedPrice такую
+   * цену прячет целиком (Hades, ICARUS, Among Us на проде — герой без цены, но
+   * с «Steam возвращает деньги»), а переснять её некому: свою цену сверка без
+   * флага не трогает, а заходы людей доходят не до всех игр. С флагом сверка
+   * берёт ровно те строки, где витрина цену прячет, — и только их.
+   */
+  test('stalePriceAppids с deadDeals: ровно те свои цены, которые витрина прячет', async () => {
+    const db = await freshDb()
+    const sale = { priceCc: 'us', priceFinal: 1799, priceInitial: 2999, discountPercent: 40 } as const
+    const rows: GameMeta[] = [
+      // 1 — срок распродажи прошёл час назад
+      meta(1, { ...sale, discountEndsAt: NOW - HOUR, priceAt: NOW - 10 * 24 * HOUR }),
+      // 2 — срока Steam не назвал, а замеру двое суток
+      meta(2, { ...sale, priceAt: NOW - 48 * HOUR }),
+      // 3 — распродажа идёт ещё сутки
+      meta(3, { ...sale, discountEndsAt: NOW + 24 * HOUR, priceAt: NOW - 10 * 24 * HOUR }),
+      // 4 — обычная цена месячной давности: неточная, но не ложная
+      meta(4, { priceCc: 'us', priceFinal: 2999, priceInitial: 2999, discountPercent: 0, priceAt: NOW - 30 * 24 * HOUR }),
+      // 5 — скидка без срока, но замер свежий
+      meta(5, { ...sale, priceAt: NOW - HOUR }),
+    ]
+    for (const m of rows) await upsertGameMeta(db, m, NOW)
+    const ids = rows.map((m) => m.appid)
+
+    // без флага своя цена не переснимается вовсе — прежнее поведение сверки
+    expect(await stalePriceAppids(db, ids, Number.MAX_SAFE_INTEGER, NOW, 200, 'us')).toEqual([])
+    const dead = await stalePriceAppids(db, ids, Number.MAX_SAFE_INTEGER, NOW, 200, 'us', { deadDeals: true })
+    expect([...dead].sort((a, b) => a - b)).toEqual([1, 2])
+
+    // SQL — это trustedPrice: в очереди ровно те, у кого цена есть, а показать её нельзя
+    for (const appid of ids) {
+      const m = (await getGameMeta(db, appid))!
+      const hidden = m.priceFinal !== undefined && trustedPrice(m, NOW) === null
+      expect(dead.includes(appid), `appid ${appid}`).toBe(hidden)
+    }
+  })
 })

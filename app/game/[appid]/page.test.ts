@@ -10,15 +10,18 @@ import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { ProgressRing } from '@/components/ProgressRing'
 import { ShownUntil } from '@/components/ShownUntil'
 import { TrailerPreview } from '@/components/TrailerPreview'
+import { PULSE_RESHOW_SEC } from '@/lib/catalogsignals'
 import {
   replaceGameTags,
   setGameJson,
   setNewsDigest,
+  updateReviewPulse,
   upsertGameMeta,
   upsertNewsItems,
   type Db,
   type StoredNews,
 } from '@/lib/db'
+import { PRICE_TRUST_SEC } from '@/lib/discount'
 import { GAME_PAGE_REVALIDATE_SEC, PRERENDER_TOP } from '@/lib/gamecache'
 import { roomSeedHref } from '@/lib/presets'
 import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
@@ -290,6 +293,78 @@ describe('кэш карточки игры', () => {
     expect(text).toContain('играли')
     expect(text).not.toContain('сейчас играют')
   })
+
+  /*
+   * Кольцо — все языки из сверки каталога, а под ним пульс: месяц, который
+   * разошёлся со всем временем, и отзывы на русском. Подписи датой, а не «месяц
+   * назад», — и вывод за неделю кэша не меняется от одних часов.
+   */
+  test('кольцо — все языки, под ним месяц и русские; через три дня — та же страница', async () => {
+    await seed()
+    await db.execute({
+      sql: `UPDATE games SET reviews_total = 142783, reviews_percent = 98,
+              reviews_all_total = 309180, reviews_all_percent = 97, reviews_all_score = 9,
+              reviews_ru_total = 16893, reviews_ru_percent = 96,
+              reviews_recent_total = 7948, reviews_recent_percent = 71, reviews_recent_at = ?
+            WHERE appid = ?`,
+      args: [T0 - DAY, APPID],
+    })
+    const text = textOf(flight(await GamePage(params)))
+    expect(text).toContain('Крайне положительные')
+    expect(text).toMatch(/из 309\s180 отзывов/)
+    // англоязычная шкала порогов людям не показывается
+    expect(text).not.toMatch(/142\s783/)
+    // 1_760_000_000 — 9 октября 2025 UTC, замер — сутками раньше
+    expect(text).toMatch(/За 30 дней до 8 октября:71% положительных из 7\s948 отзывов — ниже, чем за всё время/)
+    expect(text).toMatch(/На русском:96% положительных из 16\s893 отзывов/)
+
+    const first = await snapshot()
+    at(T0 + 3 * DAY)
+    expect(await snapshot()).toBe(first)
+  })
+
+  /*
+   * Пульс меряется раз в неделю, и каждый замер чуть другой: на пункт другая
+   * доля, на пару сотен другой счёт и всегда другая дата. Перепиши он строку
+   * под кольцом — карточка верха пула, самая читаемая, была бы новой
+   * страницей в ISR каждую неделю. Мелочь показанный замер не трогает
+   * (updateReviewPulse), а подпись датой честна и про прежний.
+   */
+  test('пульс не дёргает карточку от мелочи: два недельных замера на пункт врозь — та же страница', async () => {
+    await seed()
+    await db.execute({
+      sql: 'UPDATE games SET reviews_all_total = 309180, reviews_all_percent = 97, reviews_all_score = 9 WHERE appid = ?',
+      args: [APPID],
+    })
+    const pulse = (nowSec: number, total: number, positive: number) =>
+      updateReviewPulse(db, [{ appid: APPID, pulse: { total, positive } }], nowSec, {
+        reshowBefore: nowSec - PULSE_RESHOW_SEC,
+      })
+    await pulse(T0 - DAY, 7948, 5643) // 71%
+
+    // Неделя спустя — 72% из 8 211: тот же месяц на глаз. Часы одни и те же
+    // у обоих снимков: здесь проверяется замер, а не время
+    const week = T0 + 6 * DAY
+    at(week)
+    const first = await snapshot()
+    expect(textOf(flight(await GamePage(params)))).toMatch(/За 30 дней до 8 октября:71% положительных из 7\s948/)
+    await pulse(week, 8211, 5912)
+    expect(await snapshot()).toBe(first)
+
+    // Сторож не слепой: доля ушла на пять пунктов — это уже новость
+    await pulse(week, 8211, 5420) // 66%
+    expect(await snapshot()).not.toBe(first)
+    expect(textOf(flight(await GamePage(params)))).toMatch(/За 30 дней до 15 октября:66% положительных из 8\s211/)
+  })
+
+  test('ноль онлайна — «онлайн при замере: 0», а не «0 играли»', async () => {
+    // /game/711810: «0 играли» рядом с «72% из 1 886 отзывов» читалось как
+    // «в неё не играл никто». И у игры без студии ноль не выпадает литералом
+    await upsertGameMeta(db, game(APPID, { ccu: 0, ccuAt: T0 - 3 * DAY }), T0)
+    const text = textOf(flight(await GamePage(params)))
+    expect(text).toContain('онлайн при замере: 0')
+    expect(text).not.toMatch(/0\s*играли/)
+  })
 })
 
 /** JSON-LD страницы, как он уходит в HTML: первый <script type="application/ld+json"> */
@@ -326,6 +401,46 @@ describe('микроразметка говорит не больше стран
     await upsertGameMeta(db, game(APPID, { priceFinal: 1999, priceInitial: 1999, priceAt: T0 }), T0)
     const [video] = jsonLdOf(flight(await GamePage(params)))
     expect(video.offers).toMatchObject({ '@type': 'Offer', price: '19.99' })
+  })
+
+  /*
+   * Погасшая распродажа: замер пришёлся на акцию, а она кончилась. Сама цена
+   * — акционная, и показывать её нельзя (trustedPrice), но герой без цены и
+   * с «Steam возвращает деньги» под кнопками читался сбоем — так неделями
+   * стояли Hades и ICARUS, пока сверка не переснимет цену. Обычную цену мы
+   * знаем — «было» той же пары, — и подписанная как обычная, она правдива,
+   * кончилась акция или продлена. Ценой она не названа, поэтому Offer нет.
+   */
+  test('погасшая распродажа: в герое — обычная цена с подписью, в разметке Offer нет', async () => {
+    // Оба случая, что прячет trustedPrice: срок, названный Steam, вышел — и
+    // срока не было, а замер старше срока доверия
+    for (const lapsed of [
+      { discountEndsAt: T0 - DAY, priceAt: T0 - 10 * DAY },
+      { discountEndsAt: undefined, priceAt: T0 - PRICE_TRUST_SEC - DAY },
+    ]) {
+      await upsertGameMeta(
+        db,
+        game(APPID, { priceFinal: 999, priceInitial: 1999, discountPercent: 50, ...lapsed }),
+        T0,
+      )
+      const page = flight(await GamePage(params))
+      expect(textOf(page)).toContain('обычная цена')
+      expect(textOf(page)).toContain('19,99')
+      // Подпись — видимым текстом (title не видят ни телефон, ни скринридер), и
+      // без «кончилась»: продлённую акцию отсюда от кончившейся не отличить
+      expect(textOf(page)).toContain('идёт ли она ещё, мы не знаем — в Steam может быть дешевле')
+      expect(JSON.stringify(page)).not.toMatch(/кончилась/)
+      // акционное число не всплывает ни в каком виде
+      expect(textOf(page)).not.toMatch(/(^|[^\d])9,99/)
+      expect(jsonLdOf(page)[0]).not.toHaveProperty('offers')
+    }
+  })
+
+  test('сторож не слепой: у живой скидки и у обычной цены подписи «обычная цена» нет', async () => {
+    await seed()
+    expect(textOf(flight(await GamePage(params)))).not.toContain('обычная цена')
+    await upsertGameMeta(db, game(APPID, { priceFinal: 1999, priceInitial: 1999, discountPercent: 0, priceAt: T0 }), T0)
+    expect(textOf(flight(await GamePage(params)))).not.toContain('обычная цена')
   })
 
   test('русский: строка — при любом ответе Steam, inLanguage — только при «есть»', async () => {

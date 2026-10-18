@@ -474,6 +474,21 @@ export const ALIVE_POOL = alivePool('')
 export const ALIVE_POOL_G = alivePool('g.')
 
 /**
+ * Разгромленная игра, которую курация сняла с подбора (judgeLiveness, причина
+ * 'panned').
+ *
+ * Вторая ветка очереди пульса (reviewPulseQueue). Вердикт «большинство
+ * отзывов отрицательные» на карточке молчит, когда месяц похвал говорит
+ * обратное (deadVerdict в lib/gamepage), — но месяц этот кто-то должен
+ * измерить, а пул (ALIVE_POOL) мёртвых не содержит по построению. Строкой,
+ * а не копией в запросе, по той же причине, что ALIVE_POOL: ею построен
+ * частичный idx_games_panned, и SQLite берёт его только при дословном
+ * повторе. Вытесненных сиквелом не отсекаем: их карточка — своя страница со
+ * своим вердиктом (см. «мёртвая» в app/game/[appid]/page.tsx).
+ */
+const PANNED_DEAD = `alive = 0 AND dead_reason = 'panned'`
+
+/**
  * До какого момента витрина верит скидке — discountOf (lib/discount) в SQL:
  * срок, названный Steam, а без него — замер плюс PRICE_TRUST_SEC. Им построен
  * idx_games_deal_until, и запрос обязан повторять это выражение дословно:
@@ -579,6 +594,13 @@ CREATE INDEX IF NOT EXISTS idx_games_ccu ON games (ccu DESC)
 -- двухсот прочитанных, а не всего пула.
 CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_total DESC)
   WHERE ${ALIVE_POOL};
+
+-- Разгромленные, снятые с подбора (PANNED_DEAD), по числу отзывов — вторая
+-- ветка очереди пульса (reviewPulseQueue). Их полсотни на весь каталог, и
+-- без индекса ради них каждое звено крона карточек читало бы всю games.
+-- Здесь, а не в SCHEMA: dead_reason у старых баз приезжает ALTER'ом.
+CREATE INDEX IF NOT EXISTS idx_games_panned ON games (reviews_total DESC)
+  WHERE ${PANNED_DEAD};
 
 -- «Ещё у этой студии» на карточке игры (gamesByDeveloper): игры одного
 -- разработчика по отзывам, второй ключ — appid, он же rowid, которым индекс
@@ -780,6 +802,9 @@ const SCHEMA_COLS_KEY = 'schema_cols'
 /** Ключ разового досева кураторского пула других магазинов (см. migrateDb). */
 const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
 
+/** Ключ разовой постановки пула в голову сверки ради отзывов на всех языках (см. migrateDb). */
+const REVIEWS_ALL_DUE_KEY = 'reviews_all_due_v1'
+
 /**
  * Версия схемы: набор колонок из ADDED_COLUMNS плюс форма таблиц, которые
  * приходится пересобирать (CHECK у feedback).
@@ -806,7 +831,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 10
+export const CURRENT_SCHEMA_V = 12
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -906,6 +931,33 @@ export const ADDED_COLUMNS = [
   // nameRuSql), ищет по нему «Найти игру». NULL — второго названия нет или
   // карточку ещё не обогащали
   ['games', 'name_ru TEXT'],
+  // Отзывы, которые видят люди: все языки, сводка магазина (GetItems
+  // summary_filtered) и её оценка словами — EUserReviewScore 1…9. Пишет крон
+  // сигналов каталога (lib/catalogsignals) тем же запросом, что англоязычные
+  // reviews_total и reviews_percent, а читает одно правило показа —
+  // shownReviews в lib/gametraits: кольцо /game, плитки хабов и /play. Те
+  // остаются шкалой порогов и порядка пула. NULL — ещё не сверяли
+  ['games', 'reviews_all_total INTEGER'],
+  ['games', 'reviews_all_percent INTEGER'],
+  ['games', 'reviews_all_score INTEGER'],
+  // Отзывы на русском — та же сводка магазина в русском контексте: вторым
+  // GetItems на пачку сверки. NULL — не сверяли или на русском их нет
+  ['games', 'reviews_ru_total INTEGER'],
+  ['games', 'reviews_ru_percent INTEGER'],
+  // Пульс: отзывы за 30 дней до reviews_recent_at, все языки (appreviews
+  // filter=recent) — доля положительных рядом с кольцом /game. Своя отметка:
+  // замер по игре, а не пачкой, и ходит своей очередью (reviewPulseQueue).
+  // Тройка — то, что ПОКАЗАНО (подпись «за 30 дней до <дата>» несёт её
+  // дату), и переписывается только заметным сдвигом (updateReviewPulse)
+  ['games', 'reviews_recent_total INTEGER'],
+  ['games', 'reviews_recent_percent INTEGER'],
+  ['games', 'reviews_recent_at INTEGER'],
+  // Когда пульс спрашивали в последний раз — очередь и «Steam промолчал». Не
+  // reviews_recent_at: та — дата показанного замера, и двигать её каждой
+  // недельной проверкой значило бы переписывать строку под кольцом, а с ней
+  // и карточку в ISR, каждую неделю. По ней же заливка каталога бережёт
+  // облачный reviews_30d (ПО_ОТМЕТКЕ в scripts/publishsql)
+  ['games', 'reviews_recent_checked_at INTEGER'],
 ] as const
 
 /** «таблица.колонка» каждой из ADDED_COLUMNS — тем же видом, что у presentAddedColumns */
@@ -962,6 +1014,7 @@ const ONE_OFF_STEPS = {
   [PAGE_TRIES_BACKFILL_KEY]: 'пометка карточек без данных (page_tries): UPDATE по всей games',
   [REPAIR_TAGS_KEY]: 'починка дважды закодированных JSON-колонок: ПЕРЕЗАПИСЬ строк games',
   [NEWS_RANK_FIX_KEY]: 'обнуление веса патчей вне каталога: UPDATE по news_items',
+  [REVIEWS_ALL_DUE_KEY]: 'пул без отзывов на всех языках — в голову сверки каталога: UPDATE reviews_at по games',
 } as const
 
 /**
@@ -1244,6 +1297,45 @@ export async function migrateDb(
     })
   }
 
+  /*
+   * Разовая постановка пула в голову сверки каталога — ради отзывов на всех
+   * языках (reviews_all_*): колонки новые, и пусты они у всего пула разом.
+   *
+   * Без неё колонки заполнялись бы неделю: сверка берёт игру, только когда её
+   * reviews_at старше SIGNALS_MAX_AGE_SEC, а крон держал его свежим у всего
+   * пула. Неделю плитки хабов и /play молчали бы об отзывах, а у карточек без
+   * сводки (reviews_summary_json — её нет у 278 из тысячи) пропало бы кольцо
+   * целиком: англоязычные колонки, которые оно брало раньше, людям больше не
+   * показываются (reviewFacts в lib/gamepage). Сверка проходит пул меньше чем
+   * за сутки, если поставить его в голову очереди.
+   *
+   * Отметка 1, а не NULL. Очередь читает её так же: NULL идут первыми, сразу
+   * за ними — единицы, и обе давно просрочены. А заливка каталога различает:
+   * reviews_total и reviews_percent едут из локального снимка, только если он
+   * не старше облачного замера по reviews_at (ПО_ОТМЕТКЕ в scripts/publishsql),
+   * и при NULL catalog:publish в эти сутки откатил бы сверенные кроном числа к
+   * посевным. Единица — «сверено, давно»: замер был, и локальный безотметочный
+   * снимок его не перетрёт. Ни разу не сверенных (NULL) не трогаем — они и так
+   * первые.
+   *
+   * Под destructiveMigrationsAllowed, хотя данных шаг не стирает, — ради
+   * флага. Превью на продовой базе выставило бы его, а пул в голове очереди
+   * разобрал бы крон прода, ещё не знающий новых колонок: отметки снова
+   * свежие, колонки пустые, а шаг больше не повторится. Флаг ставит тот, кто
+   * колонки и заполнит, — первый старт прода после мержа.
+   *
+   * Под флагом по той же причине, что и бэкфиллы выше: проход по games, а
+   * Turso считает прочитанные строки.
+   */
+  if (!flags.has(REVIEWS_ALL_DUE_KEY) && allowed) {
+    await db.execute(`UPDATE games SET reviews_at = 1
+      WHERE ${ALIVE_POOL} AND reviews_all_total IS NULL AND reviews_at IS NOT NULL`)
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [REVIEWS_ALL_DUE_KEY, '1'],
+    })
+  }
+
   // Разовая починка веса у уже записанных патчей. До неё вес считался по числу
   // отзывов для любой опрошенной игры, и в общую ленту налезли Half-Life 2:
   // Deathmatch с Condition Zero — те самые, что каталог метит alive = 0.
@@ -1322,9 +1414,10 @@ export async function migrateDb(
  * смотрят предпросмотр.
  *
  * Условия шагов те же, что в migrateDb: досев пула — только с seedContent,
- * починка JSON-колонок, пересборка feedback и отметка версии — только там,
- * где destructiveMigrationsAllowed. Что migrateDb на этой базе пропустит,
- * того и здесь нет; сторожит это тест «после migrateDb ждать нечего».
+ * починка JSON-колонок, постановка пула в голову сверки, пересборка feedback
+ * и отметка версии — только там, где destructiveMigrationsAllowed. Что
+ * migrateDb на этой базе пропустит, того и здесь нет; сторожит это тест
+ * «после migrateDb ждать нечего».
  *
  * Только чтение: sqlite_master, колонки (pragma_table_info) и флаги в
  * catalog_meta. Не видно того, чего не видит и сама migrateDb: индекса со
@@ -1397,7 +1490,7 @@ export async function pendingMigrations(
   for (const [key, what] of Object.entries(ONE_OFF_STEPS)) {
     if (flags.has(key)) continue
     if (key === OTHER_STORES_SEED_KEY && !opts.seedContent) continue
-    if (key === REPAIR_TAGS_KEY && !allowed) continue
+    if ((key === REPAIR_TAGS_KEY || key === REVIEWS_ALL_DUE_KEY) && !allowed) continue
     pending.push(`${key}: ${what}`)
   }
   return pending
@@ -3625,6 +3718,17 @@ export type GameRow = {
   dead_reason?: string | null
   /** Колонка из ALTER-цикла, как price_cc: у строки старше неё поля нет */
   ru_lang?: number | null
+  /** Отзывы для людей — все языки (shownReviews); колонки из ALTER-цикла */
+  reviews_all_total?: number | null
+  reviews_all_percent?: number | null
+  /** В узкой выборке колонки нет: словами оценку пишет только кольцо /game */
+  reviews_all_score?: number | null
+  /** Отзывы на русском и пульс за 30 дней — только /game, в узкой выборке их нет */
+  reviews_ru_total?: number | null
+  reviews_ru_percent?: number | null
+  reviews_recent_total?: number | null
+  reviews_recent_percent?: number | null
+  reviews_recent_at?: number | null
   /**
    * game_semantics.json через SEMANTICS_JOIN. Есть только у выборок пачкой;
    * одиночные чтения (getGameMeta, страница игры) таблицу не джойнят.
@@ -3700,6 +3804,27 @@ export function rowToMeta(row: GameRow, cc: string = priceRegion()): GameMeta {
   }
   if (row.reviews_percent !== null && row.reviews_percent !== undefined) {
     meta.reviewsPercent = row.reviews_percent
+  }
+  // Отзывы для людей, на русском и пульс — только парой «сколько и какая
+  // доля»: половина пары — не факт, а повод показать «0% из 1 200»
+  const pair = (total: number | null | undefined, percent: number | null | undefined) =>
+    typeof total === 'number' && typeof percent === 'number' ? { total, percent } : null
+  const all = pair(row.reviews_all_total, row.reviews_all_percent)
+  if (all) {
+    meta.reviewsAllTotal = all.total
+    meta.reviewsAllPercent = all.percent
+    if (typeof row.reviews_all_score === 'number') meta.reviewsAllScore = row.reviews_all_score
+  }
+  const ru = pair(row.reviews_ru_total, row.reviews_ru_percent)
+  if (ru) {
+    meta.reviewsRuTotal = ru.total
+    meta.reviewsRuPercent = ru.percent
+  }
+  const recent = pair(row.reviews_recent_total, row.reviews_recent_percent)
+  if (recent && typeof row.reviews_recent_at === 'number') {
+    meta.reviewsRecentTotal = recent.total
+    meta.reviewsRecentPercent = recent.percent
+    meta.reviewsRecentAt = row.reviews_recent_at
   }
   // Эти три колонки пишутся в upsertGameMeta и до сих пор молча терялись при
   // чтении: в GameRow их не было, в маппинге тоже. Из-за этого подпись вида
@@ -4104,6 +4229,10 @@ const GAME_LITE_COLS = [
   // ru_lang — одно число, а нужен он именно здесь: полка покупок и герой /play
   // читают мету этой выборкой (подбор, пул открытий)
   'ru_lang',
+  // «92% из 48 тыс.» на плитках хабов и /play — та же пара, что кольцо /game
+  // (shownReviews), а не англоязычная шкала порогов. Оценка словами, русские
+  // и пульс плиткам не нужны — их читает только карточка, строкой целиком
+  'reviews_all_total', 'reviews_all_percent',
 ] as const
 
 /**
@@ -5251,6 +5380,13 @@ const PRICE_CC = `COALESCE(price_cc, '${LEGACY_PRICE_CC}')`
  * человека её не переснимет, — без сверки однажды пойманный visible:false
  * остался бы на игре каталога навсегда. Заходам людей флаг не нужен: им
  * хватает срока.
+ *
+ * deadDeals — своя цена, которую витрина прячет (DEAD_DEAL), тоже протухшая
+ * при любом возрасте. Тоже нужно только сверке, и довод тот же: погасшую
+ * распродажу trustedPrice не показывает вовсе, а переснимают цену только
+ * заходы людей, которые до игры доходят не всегда, — на проде так неделями
+ * стояли без цены Hades, ICARUS и Among Us. Заходам людей флаг опять не
+ * нужен: замер старше их срока протух и так.
  */
 export async function stalePriceAppids(
   db: Db,
@@ -5259,23 +5395,44 @@ export async function stalePriceAppids(
   nowSec: number,
   limit = 200,
   cc: string = priceRegion(),
-  opts: { hidden?: boolean } = {},
+  opts: { hidden?: boolean; deadDeals?: boolean } = {},
 ): Promise<number[]> {
   const positive = appids.filter((id) => id > 0)
   if (!positive.length) return []
   const hidden = opts.hidden ? ' OR store_hidden = 1' : ''
+  const dead = opts.deadDeals ? ` OR ${DEAD_DEAL}` : ''
   const res = await db.execute({
     // Сначала те, у кого цены своего региона не было никогда, потом самые
     // давние: бюджет одного вызова конечен, а пустая цена заметнее устаревшей
     sql: `SELECT appid FROM games
           WHERE ${APPIDS_IN}
-            AND (price_at IS NULL OR price_at < ? OR ${PRICE_CC} <> ?${hidden})
+            AND (price_at IS NULL OR price_at < ? OR ${PRICE_CC} <> ?${hidden}${dead})
           ORDER BY (price_at IS NOT NULL AND ${PRICE_CC} = ?), price_at
           LIMIT ?`,
-    args: [JSON.stringify(positive), nowSec - maxAgeSec, cc, cc, limit],
+    args: [
+      JSON.stringify(positive),
+      nowSec - maxAgeSec,
+      cc,
+      ...(opts.deadDeals ? [nowSec] : []),
+      cc,
+      limit,
+    ],
   })
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }
+
+/**
+ * Цена есть, а показать её нельзя — trustedPrice (lib/discount) в SQL, с одним
+ * параметром «сейчас». Скидка заявлена, но discountOf ей не верит: пары «было
+ * — стало» нет, «было» не выше «стало» или срок доверия (DEAL_UNTIL) прошёл.
+ * COALESCE — для строки со скидкой без отметки замера и без срока: ей не
+ * верят тем более.
+ *
+ * Регион здесь не проверяется: цена чужого региона и так протухшая в
+ * stalePriceAppids (PRICE_CC <> ?), а своя — ровно то, что прячет витрина.
+ */
+const DEAD_DEAL = `(discount_percent > 0 AND price_final IS NOT NULL
+  AND (price_initial IS NULL OR price_initial <= price_final OR COALESCE(${DEAL_UNTIL}, 0) <= ?))`
 
 /**
  * Лежащая цена переживает котировку без блока покупки, только если она своего
@@ -5450,12 +5607,25 @@ export async function catalogSignalsQueue(db: Db, limit: number): Promise<Signal
  * тем, про кого Steam промолчал (снята с продажи, нет отзывов на языке):
  * иначе они вечно стояли бы в голове очереди и съедали бы каждую пачку.
  * Значения отзывов пишутся только тем, у кого они приехали.
+ *
+ * Отзывы для людей (все языки и русские) пишутся отдельным UPDATE со своим
+ * условием — только когда показанное число сдвинулось заметно, см.
+ * SHOWN_DRIFT. Англоязычные пороги — каждую сверку, как прежде.
  */
 export async function updateCatalogSignals(
   db: Db,
   signals: {
     checked: readonly number[]
-    reviews: ReadonlyMap<number, { total: number; percent: number } | null>
+    reviews: ReadonlyMap<
+      number,
+      | {
+          total: number
+          percent: number
+          all?: { total: number; percent: number; score: number | null }
+          ru?: { total: number; percent: number }
+        }
+      | null
+    >
     ccu: ReadonlyArray<{ appid: number; ccu: number }>
   },
   nowSec: number,
@@ -5470,12 +5640,200 @@ export async function updateCatalogSignals(
           }
         : { sql: 'UPDATE games SET reviews_at = ? WHERE appid = ?', args: [nowSec, appid] }
     }),
+    ...signals.checked.flatMap((appid) => {
+      const r = signals.reviews.get(appid)
+      const out: Array<{ sql: string; args: Array<number | null> }> = []
+      if (r?.all) {
+        const { total, percent, score } = r.all
+        out.push({
+          sql: `UPDATE games SET reviews_all_total = ?, reviews_all_percent = ?, reviews_all_score = ?
+                WHERE appid = ? AND (${shownMoved('reviews_all_total', 'reviews_all_percent')}
+                  OR reviews_all_score IS NOT ?)`,
+          args: [total, percent, score, appid, percent, total, score],
+        })
+      }
+      if (r?.ru) {
+        out.push({
+          sql: `UPDATE games SET reviews_ru_total = ?, reviews_ru_percent = ?
+                WHERE appid = ? AND ${shownMoved('reviews_ru_total', 'reviews_ru_percent')}`,
+          args: [r.ru.total, r.ru.percent, appid, r.ru.percent, r.ru.total],
+        })
+      }
+      return out
+    }),
     ...signals.ccu.map(({ appid, ccu }) => ({
       sql: 'UPDATE games SET ccu = ?, ccu_at = ? WHERE appid = ?',
       args: [ccu, nowSec, appid],
     })),
   ]
   if (stmts.length) await db.batch(stmts, 'write')
+}
+
+/**
+ * Показанное людям число отзывов переписывается, только когда сдвинулось на
+ * 1/SHOWN_DRIFT (2%) или поменялась доля.
+ *
+ * Это про ISR. Карточка игры живёт неделю и пишется заново, только если её
+ * вывод разошёлся с прошлым (lib/gamecache), а кольцо печатает число отзывов
+ * до единицы. Сверка идёт раз в неделю, и у игры, которая прибавляет хоть
+ * десяток отзывов, каждая перегенерация была бы новой страницей — запись ISR
+ * на каждую зашедшую карточку каждую неделю, при выбранном бюджете. С порогом
+ * Hades (309 тысяч, +1–2 тысячи в неделю) переписывается раз в несколько
+ * недель, а число на странице отстаёт не больше чем на 2%: решению «стоит ли
+ * играть» эти два процента ничего не меняют. Доля — сразу при любом сдвиге:
+ * «97%» вместо «98%» — уже другой факт.
+ */
+const SHOWN_DRIFT = 50
+
+/**
+ * Условие перезаписи пары «сколько — какая доля» (SHOWN_DRIFT): NULL — ещё не
+ * писали. Параметры по порядку: новая доля, новое число.
+ */
+function shownMoved(totalCol: string, percentCol: string): string {
+  return `(${totalCol} IS NULL OR ${percentCol} IS NOT ?
+    OR ABS(${totalCol} - ?) * ${SHOWN_DRIFT} >= ${totalCol})`
+}
+
+/**
+ * Голова очереди пульса отзывов (refreshReviewPulse в lib/catalogsignals):
+ * из верхних `top` игр пула по отзывам и верхних `panned` разгромленных,
+ * снятых с подбора (PANNED_DEAD), — те, чей пульс не спрашивали или
+ * спрашивали раньше `before`; сперва ни разу не спрошенные, потом самые
+ * давние, а среди равных — у кого больше отзывов.
+ *
+ * Только верх, и это про цену. Пульс — запрос на игру в store.steampowered.com
+ * через тот же пейсер, что у крона карточек (1.7 с на шаг), и каждый его шаг
+ * — полкарточки, не обогащённой в этом звене. Пульсу же есть что сказать
+ * только у игры с полусотней отзывов в месяц (PULSE_MIN_RECENT), а это и есть
+ * верх каталога — и его карточки читают чаще всего.
+ *
+ * Разгромленные — исключение из «только пул», и не ради строки под кольцом.
+ * Вердикт «большинство отзывов отрицательные» молчит, когда за месяц игру
+ * хвалят (deadVerdict в lib/gamepage): починенной игре суждение за всё время
+ * врёт так же, как «почти не осталось людей» игре с вернувшимся онлайном. Но
+ * молчать ему не по чему, пока месяц никто не мерил, а пул по построению
+ * мёртвых не содержит. Их полсотни на каталог — к четырём сотням верха это
+ * восьмая часть.
+ *
+ * Отметка — reviews_recent_checked_at, а не reviews_recent_at: та — дата
+ * показанного замера, и переписывается она не каждой проверкой (см.
+ * updateReviewPulse).
+ *
+ * Обе ветки читаются своими частичными индексами по порядку (idx_games_pool и
+ * idx_games_panned), а сортировка по отметке — только их `top + panned` строк.
+ */
+export async function reviewPulseQueue(
+  db: Db,
+  opts: { top: number; panned: number; before: number; limit: number },
+): Promise<number[]> {
+  const res = await db.execute({
+    sql: `SELECT appid FROM (
+            SELECT * FROM (
+              SELECT appid, reviews_total, reviews_recent_checked_at AS checked FROM games
+              WHERE ${ALIVE_POOL} AND appid > 0
+              ORDER BY reviews_total DESC
+              LIMIT ?
+            )
+            UNION ALL
+            SELECT * FROM (
+              SELECT appid, reviews_total, reviews_recent_checked_at AS checked FROM games
+              WHERE ${PANNED_DEAD} AND appid > 0
+              ORDER BY reviews_total DESC
+              LIMIT ?
+            )
+          )
+          WHERE checked IS NULL OR checked < ?
+          ORDER BY checked, reviews_total DESC
+          LIMIT ?`,
+    args: [opts.top, opts.panned, opts.before, opts.limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number }>).map((r) => Number(r.appid))
+}
+
+/**
+ * Показанный пульс переписывается, только когда новый замер говорит заметно
+ * другое, — и это снова про ISR, как SHOWN_DRIFT.
+ *
+ * Строка под кольцом — «за 30 дней до 3 октября: 71% положительных из 7 948
+ * отзывов», и с каждым замером в ней меняется что-нибудь: дата — всегда, счёт
+ * — почти всегда, доля — через раз. Переписывай её каждой недельной
+ * проверкой — и каждая зашедшая карточка верха пула, самые читаемые карточки
+ * сайта, была бы записью ISR в неделю при выбранном бюджете (lib/gamecache).
+ * А правды бы не прибавилось: подпись несёт дату, и прежний замер верен ровно
+ * так же, как новый, — он просто про месяц на неделю раньше.
+ *
+ * Поэтому переписывается новость, а не дата:
+ *   • доля сдвинулась на PULSE_SHARE_DRIFT пункта — при полусотне отзывов
+ *     (PULSE_MIN_RECENT) один отзыв и есть два пункта, меньшее — шум;
+ *   • счёт сдвинулся больше чем на 1/PULSE_COUNT_DRIFT (20%) — «из 8 тысяч»
+ *     против «из 10 тысяч» уже другой масштаб, а «7 948» против «8 102» нет;
+ *   • показанный замер старше reshowBefore — тогда любой новый: иначе месяц
+ *     игры, где ничего не случилось, однажды состарился бы за срок показа
+ *     (PULSE_SHOW_MAX_AGE_SEC в lib/gamepage), и строка пропала бы как раз у
+ *     неё.
+ * Ноль отзывов против любого числа — сдвиг на всё число, его ловит второе
+ * правило.
+ *
+ * Порогов показа (PULSE_MIN_RECENT, PULSE_MIN_GAP) здесь нет намеренно.
+ * «Переписать при пересечении» дёргало бы страницу каждую неделю у игры,
+ * чьи отзывы колеблются у самой границы, — ровно то, от чего правило
+ * заведено. Без него показанная доля отстаёт от новой меньше чем на
+ * PULSE_SHARE_DRIFT, и строка появляется или гаснет на пункт позже границы,
+ * которая и сама выбрана на глаз.
+ *
+ * Параметры условия по порядку: reshowBefore, новое число, новая доля.
+ */
+const PULSE_SHARE_DRIFT = 2
+const PULSE_COUNT_DRIFT = 5
+const PULSE_MOVED = `(reviews_recent_at IS NULL OR reviews_recent_total IS NULL
+    OR reviews_recent_at < ?
+    OR ABS(reviews_recent_total - ?) * ${PULSE_COUNT_DRIFT} > reviews_recent_total
+    OR ABS(reviews_recent_percent - ?) >= ${PULSE_SHARE_DRIFT})`
+
+/**
+ * Записывает пульс отзывов узкими UPDATE — по той же причине, что сверка
+ * каталога: upsertGameMeta двигал бы updated_at.
+ *
+ * Проверка и показ пишутся раздельно. Каждым ответом Steam —
+ * reviews_recent_checked_at (по ней идёт очередь) и reviews_30d: то же число
+ * за месяц, им судит живость совместной игры без замера онлайна
+ * (judgeLiveness), и до пульса его освежал только ручной промоут. Тройка же,
+ * которую печатает строка под кольцом /game, — только по PULSE_MOVED.
+ *
+ * pulse undefined — Steam ответил, но не про игру: ставится одна отметка
+ * проверки, иначе игра стояла бы в голове очереди вечно. Показанный замер
+ * остаётся со своей датой и гаснет на странице сам, по сроку показа: подпись
+ * датой не даёт ему выдать себя за свежий, а одна осечка Steam не стоит
+ * карточке записи ISR. Ноль отзывов за месяц — ответ: число пишется, доли у
+ * него нет.
+ */
+export async function updateReviewPulse(
+  db: Db,
+  rows: ReadonlyArray<{ appid: number; pulse: { total: number; positive: number } | undefined }>,
+  nowSec: number,
+  opts: { reshowBefore: number },
+): Promise<void> {
+  if (!rows.length) return
+  await db.batch(
+    rows.flatMap(({ appid, pulse }) => {
+      if (!pulse) {
+        return [{ sql: 'UPDATE games SET reviews_recent_checked_at = ? WHERE appid = ?', args: [nowSec, appid] }]
+      }
+      const percent = pulse.total > 0 ? Math.round((pulse.positive / pulse.total) * 100) : null
+      return [
+        {
+          sql: 'UPDATE games SET reviews_30d = ?, reviews_recent_checked_at = ? WHERE appid = ?',
+          args: [pulse.total, nowSec, appid],
+        },
+        {
+          sql: `UPDATE games SET reviews_recent_total = ?, reviews_recent_percent = ?, reviews_recent_at = ?
+                WHERE appid = ? AND ${PULSE_MOVED}`,
+          args: [pulse.total, percent, nowSec, appid, opts.reshowBefore, pulse.total, percent],
+        },
+      ]
+    }),
+    'write',
+  )
 }
 
 /* ---------- фидбек ---------- */
