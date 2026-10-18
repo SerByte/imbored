@@ -1,17 +1,25 @@
 // Стили — сами: global-not-found рендерится мимо корневого layout
 import './globals.css'
 import type { Metadata } from 'next'
+import { Manrope } from 'next/font/google'
 
 /**
- * 404 для адреса, которого нет ни в одном языке: /xyz-nope.
+ * 404 для адреса, который не дошёл ни до одного языка.
  *
- * Корневой layout живёт под [lang] (app/[lang]/layout.tsx), и для адреса вне
- * разделов собрать 404 из него нельзя — язык неизвестен. Next отдаёт этот
- * файл сам, мимо layout (docs: not-found.md, global-not-found). Поэтому здесь
- * всё своё: стили, тема и оба языка разом — по адресу не понять, чей он.
+ * Корневой layout живёт под [lang] (app/[lang]/layout.tsx), и для адреса без
+ * языка собрать 404 из него нельзя. Next отдаёт этот файл сам, мимо layout
+ * (docs: not-found.md, global-not-found). Поэтому здесь всё своё: стили,
+ * шрифт, тема и оба языка разом — по адресу не понять, чей он.
  *
- * Адреса под языком (/en/xyz-nope, /quiz/xyz-nope) сюда не попадают: их ловит
- * app/[lang]/[...missing] и рисует not-found своего языка со шапкой.
+ * Сюда доезжает немногое: мусорный адрес вне разделов next.config уводит в
+ * статическую 404 со шапкой (app/[lang]/missing, garbageRewrites в
+ * lib/i18nroutes.ts), а адрес под языком и под разделом ловит
+ * app/[lang]/[...missing]. Остаются служебные первые сегменты, которые
+ * правило не трогает (/_next, /_vercel без маршрута).
+ *
+ * Шрифт — тот же Manrope, что в корневом layout: --font-sans из globals.css
+ * ссылается на его переменную, и без неё страница рисовалась бы system-ui
+ * (not-found.md: global-not-found обязан подключить шрифты сам).
  *
  * Тема — тем же скриптом, что в корневом layout: светлая у тех, кто её
  * выбрал, иначе тёмная по умолчанию. Ссылки — обычные <a>: клиентского
@@ -21,11 +29,16 @@ export const metadata: Metadata = {
   title: 'Такой страницы нет · Page not found · imbored',
 }
 
+const manrope = Manrope({
+  variable: '--font-manrope',
+  subsets: ['latin', 'cyrillic'],
+})
+
 const THEME_SCRIPT = `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`
 
 export default function GlobalNotFound() {
   return (
-    <html lang="ru" suppressHydrationWarning className="h-full antialiased">
+    <html lang="ru" suppressHydrationWarning className={`${manrope.variable} h-full antialiased`}>
       <body className="min-h-full font-sans overflow-x-hidden">
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <main

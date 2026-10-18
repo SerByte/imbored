@@ -1,17 +1,25 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import type { NextConfig } from 'next'
 import { getRedirectUrl, getRewrittenUrl, unstable_getResponseFromNextConfig } from 'next/experimental/testing/server'
 import { describe, expect, test } from 'vitest'
 import nextConfig from '../next.config'
 import { LOCALIZED_SECTIONS } from './i18n'
+import { garbageRewrites, localeRewrites } from './i18nroutes'
 
 const ROOT = path.join(__dirname, '..')
 const LANG_DIR = path.join(ROOT, 'app', '[lang]')
 const BASE = 'https://imbored.cc'
 
-/** Как Next разберёт адрес правилами next.config: редирект, rewrite или как есть */
-async function route(url: string, headers: Record<string, string> = {}) {
-  const res = await unstable_getResponseFromNextConfig({ url: BASE + url, nextConfig, headers })
+/**
+ * Как Next разберёт адрес правилами next.config: редирект, rewrite или как есть.
+ *
+ * Утилита Next не знает файловой системы: для неё afterFiles срабатывают и
+ * на /favicon.ico, хотя на деле файл отдаётся раньше них. Поэтому про файлы
+ * спрашиваем конфиг без afterFiles — ровно то, что идёт ДО файлов.
+ */
+async function route(url: string, headers: Record<string, string> = {}, config: NextConfig = nextConfig) {
+  const res = await unstable_getResponseFromNextConfig({ url: BASE + url, nextConfig: config, headers })
   const redirect = getRedirectUrl(res)
   const rewrite = getRewrittenUrl(res)
   const short = (u: string | null) => (u ? u.replace(BASE, '') : null)
@@ -64,6 +72,78 @@ describe('разделы под app/[lang]', () => {
   })
 })
 
+/** Конфиг с одними beforeFiles — то, что Next проверяет до файлов public/ и корня app/ */
+const beforeFiles: NextConfig = {
+  ...nextConfig,
+  rewrites: async () => ({ beforeFiles: localeRewrites(), afterFiles: [], fallback: [] }),
+}
+
+describe('rewrites в next.config', () => {
+  test('до файлов — только корень и разделы, мусорное правило — после файлов', async () => {
+    const rewrites = await nextConfig.rewrites!()
+    if (Array.isArray(rewrites)) throw new Error('rewrites без деления на beforeFiles/afterFiles')
+    expect(rewrites.beforeFiles).toEqual(localeRewrites())
+    expect(rewrites.beforeFiles).toHaveLength(2)
+    expect(rewrites.afterFiles).toEqual(garbageRewrites())
+  })
+})
+
+/**
+ * beforeFiles идут ДО файлов: правило, задевшее файл, отнимает у него адрес.
+ * Так мусорное правило в beforeFiles отдавало 404 вместо скриншотов из
+ * манифеста PWA (public/screenshots/*.jpg). Сторож обходит public/ и файлы
+ * корня app/ целиком: новый файл проверяется сам, без строки в тесте.
+ */
+describe('файлы public/ и корня app/', () => {
+  const PUBLIC = path.join(ROOT, 'public')
+  const APP = path.join(ROOT, 'app')
+  /** Файлы метаданных, у которых адрес не совпадает с именем */
+  const METADATA: Record<string, string> = {
+    'manifest.ts': '/manifest.webmanifest',
+    'robots.ts': '/robots.txt',
+    'sitemap.ts': '/sitemap.xml',
+  }
+  /** Не адреса: стили, границы ошибок, тесты */
+  const NOT_ROUTES = /^(globals\.css|global-error\.tsx|global-not-found\.tsx|.*\.test\.tsx?)$/
+
+  function publicFiles(dir = PUBLIC, out: string[] = []): string[] {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) publicFiles(p, out)
+      else out.push('/' + path.relative(PUBLIC, p).split(path.sep).join('/'))
+    }
+    return out
+  }
+
+  function rootFiles(): string[] {
+    const out: string[] = []
+    for (const e of fs.readdirSync(APP, { withFileTypes: true })) {
+      if (e.isDirectory()) {
+        // Каталог маршрута в корне — это адрес-файл: /search-index.json, /indexnow-key.txt
+        if (e.name !== 'api' && !e.name.startsWith('[')) out.push(`/${e.name}`)
+      } else if (!NOT_ROUTES.test(e.name)) {
+        out.push(METADATA[e.name] ?? `/${e.name.replace(/\.(tsx|ts)$/, '')}`)
+      }
+    }
+    return out
+  }
+
+  test('сторож видит и public/, и файлы корня', () => {
+    expect(publicFiles()).toEqual(expect.arrayContaining(['/screenshots/narrow.jpg', '/screenshots/wide.jpg']))
+    expect(rootFiles()).toEqual(
+      expect.arrayContaining(['/favicon.ico', '/manifest.webmanifest', '/sitemap.xml', '/search-index.json', '/apple-icon']),
+    )
+  })
+
+  test('ни одно правило до файлов их не переписывает и не редиректит', async () => {
+    for (const url of [...publicFiles(), ...rootFiles()]) {
+      const r = await route(url, {}, beforeFiles)
+      expect(r.rewrite, url).toBe(null)
+      expect(r.redirect, url).toBe(null)
+    }
+  })
+})
+
 describe('rewrites русской ветки', () => {
   test('корень и разделы уезжают под /ru, строка запроса — с ними', async () => {
     expect((await route('/')).rewrite).toBe('/ru')
@@ -86,7 +166,7 @@ describe('rewrites русской ветки', () => {
     }
   })
 
-  test('английский, /api, файлы корня и мусор — как есть', async () => {
+  test('до файлов английский, /api, файлы корня и мусор — как есть', async () => {
     for (const url of [
       '/en',
       '/en/play',
@@ -100,40 +180,65 @@ describe('rewrites русской ветки', () => {
       '/xyz-nope',
       '/playground',
       '/games2',
+      '/wp-admin/setup.php',
     ]) {
-      const r = await route(url)
+      const r = await route(url, {}, beforeFiles)
       expect(r.rewrite, url).toBe(null)
       expect(r.redirect, url).toBe(null)
     }
   })
 })
 
-describe('мусор глубже одного сегмента', () => {
+describe('адрес вне разделов', () => {
   /**
    * Без правила /wp-admin/setup.php доходил до корневого layout с языком
-   * «wp-admin», и 404 рисовать было не в чем — стоковая страница Next.
+   * «wp-admin», и 404 рисовать было не в чем — стоковая страница Next. Все
+   * такие адреса — в ОДНУ статическую 404: сканер перебирает их тысячами, и
+   * каждый должен отдаваться с CDN, а не рендером.
    */
-  test('уходит в ловушку русской ветки — 404 со шапкой', async () => {
-    expect((await route('/wp-admin/setup.php')).rewrite).toBe('/ru/wp-admin/setup.php')
-    expect((await route('/xx/quiz')).rewrite).toBe('/ru/xx/quiz')
-    expect((await route('/run/x')).rewrite).toBe('/ru/run/x')
-    expect((await route('/enx/y')).rewrite).toBe('/ru/enx/y')
+  test('уходит в статическую 404 русской ветки — одну на все адреса', async () => {
+    for (const url of [
+      '/xyz-nope',
+      '/playground',
+      '/games2',
+      '/wp-login.php',
+      '/wp-admin/setup.php',
+      '/xx/quiz',
+      '/run/x',
+      '/enx/y',
+      '/rux',
+      '/.env',
+      '/.well-known/security.txt',
+      '/_foo/bar',
+      '/_x/portrait/76561198000000000/card.png',
+    ]) {
+      expect((await route(url)).rewrite, url).toBe('/ru/missing')
+    }
   })
 
   test('свои первые сегменты и служебное не трогает', async () => {
     for (const url of [
+      '/en',
       '/en/xyz-nope',
       '/en/play',
+      '/api/nope',
       '/api/session/touch',
       '/api/auth/steam/return',
+      '/api/portrait/76561198000000000/card.png',
       '/_next/static/chunks/a.js',
       '/_next/image',
       '/_vercel/insights/script.js',
-      '/.well-known/security.txt',
       '/ru/game/730/opengraph-image',
     ]) {
       expect((await route(url)).rewrite, url).toBe(null)
     }
+  })
+
+  test('разделы по-прежнему уезжают в свои страницы, а не в 404', async () => {
+    expect((await route('/quiz')).rewrite).toBe('/ru/quiz')
+    // Опечатка под разделом — это /ru/quiz/xyz, её ловит /[lang]/[...missing]
+    expect((await route('/quiz/xyz')).rewrite).toBe('/ru/quiz/xyz')
+    expect((await route('/missing')).rewrite).toBe('/ru/missing')
   })
 })
 

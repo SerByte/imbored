@@ -103,8 +103,9 @@ async function shelf() {
 
 /**
  * Язык — из сегмента [lang] (next/root-params): 404 под /en/… рисуется
- * внутри английского layout и обязан говорить по-английски. Адреса вне
- * всех языков сюда не доходят — их отдаёт app/global-not-found.tsx.
+ * внутри английского layout и обязан говорить по-английски. Адрес вне всех
+ * разделов приходит сюда же, но русским: next.config уводит его в
+ * статическую app/[lang]/missing (lib/i18nroutes.ts).
  */
 export default async function NotFound() {
   const [games, locale] = await Promise.all([shelf(), getLocale()])

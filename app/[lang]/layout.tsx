@@ -181,9 +181,9 @@ export default async function RootLayout({ children, params }: LayoutProps<'/[la
   /*
    * Язык — из сегмента, а не из кук и заголовков: layout обязан остаться
    * статическим (см. Backstage ниже). Чужой сегмент сюда почти не доезжает:
-   * одиночный мусор (/xyz) отбивает dynamicParams = false у страниц, а
-   * глубже (/xx/play) rewrites уводят в ловушку русской ветки
-   * (lib/i18nroutes.ts). Проверка — страховка: dynamicParams в корне не
+   * адрес вне разделов (/xyz, /xx/play) rewrites уводят в статическую 404
+   * русской ветки, а /api/… — в свою JSON-404 (lib/i18nroutes.ts,
+   * app/api/[...missing]). Проверка — страховка: dynamicParams в корне не
    * выключен (см. generateStaticParams), и без неё мусорный адрес мог бы
    * отрисовать русскую страницу с кодом 200.
    */

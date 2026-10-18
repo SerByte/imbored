@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 import { cspMode, securityHeaders } from "./lib/csp";
-import { localeRedirects, localeRewrites } from "./lib/i18nroutes";
+import { garbageRewrites, localeRedirects, localeRewrites } from "./lib/i18nroutes";
 import { noindexHeaders } from "./lib/robots";
 
 const nextConfig: NextConfig = {
@@ -27,8 +27,10 @@ const nextConfig: NextConfig = {
   async redirects() {
     return localeRedirects();
   },
+  // beforeFiles — разделы русской ветки, afterFiles — мусорный адрес в
+  // статическую 404; почему одно до файлов, а другое после — там же
   async rewrites() {
-    return { beforeFiles: localeRewrites(), afterFiles: [], fallback: [] };
+    return { beforeFiles: localeRewrites(), afterFiles: garbageRewrites(), fallback: [] };
   },
 };
 

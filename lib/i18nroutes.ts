@@ -1,5 +1,6 @@
 /**
- * Адреса языков для next.config.ts: rewrites русской ветки и редирект с /ru.
+ * Адреса языков для next.config.ts: rewrites русской ветки, ловушка мусорных
+ * адресов и редирект с /ru.
  *
  * Модуль без Next и без базы — его читает next.config.ts ещё до сборки (как
  * lib/csp.ts и lib/robots.ts).
@@ -9,9 +10,10 @@
  * до поиска маршрута. Не прокси: правило из next.config CDN Vercel выполняет
  * сам, без функции, и статическая главная остаётся статической.
  *
- * Переписывается ровно LOCALIZED_SECTIONS и корень. Всё остальное идёт как
- * есть: /api, /_next, файлы корня, /en/… — и мусорный /xyz-nope, который
- * так и не находит маршрута и получает app/global-not-found.tsx.
+ * beforeFiles переписывают ровно LOCALIZED_SECTIONS и корень — и ничего
+ * больше: они идут ДО файлов (public/, файлы корня app/), и правило шире
+ * разделов отняло бы у них адрес. Всё остальное, чему не нашлось ни файла,
+ * ни страницы, подбирает уже afterFiles — см. garbageRewrites.
  */
 import { LOCALIZED_SECTIONS } from './i18n'
 
@@ -32,21 +34,41 @@ export function localeRewrites(): Rewrite[] {
   return [
     { source: '/', destination: '/ru' },
     { source: `/:section(${SECTION_RE})/:path*`, destination: '/ru/:section/:path*' },
-    /*
-     * Мусор в два сегмента и глубже (/wp-admin/setup.php, /xx/quiz) — в
-     * ловушку русской ветки: 404 со шапкой и полкой, как было до [lang].
-     * Без правила такой адрес доходил до корневого layout с языком «wp-admin»,
-     * тот отвечал notFound(), и рисовать 404 было уже не в чем — Next отдавал
-     * голую стоковую страницу.
-     *
-     * Только два сегмента и глубже: одиночный /xyz может оказаться файлом
-     * корня (/favicon.ico, /robots.txt), а beforeFiles идут ДО файлов — его
-     * правило не трогает, им занимается app/global-not-found.tsx. Не трогает
-     * и свои первые сегменты: языки, /api, служебные /_next, /_vercel и
-     * /.well-known (всё, что с «_» и «.»).
-     */
-    { source: '/:first((?!(?:ru|en|api)/)[^/_.][^/]*)/:rest+', destination: '/ru/:first/:rest+' },
   ]
+}
+
+/**
+ * Адрес вне всех разделов (/xyz, /wp-admin/setup.php, /xx/quiz,
+ * /.well-known/…) — в статическую 404 русской ветки, app/[lang]/missing.
+ *
+ * afterFiles, а не beforeFiles. afterFiles идут ПОСЛЕ файлов и статических
+ * маршрутов, но ДО динамических (docs: rewrites.md, порядок проверки). Файлы
+ * public/ (/screenshots/narrow.jpg из манифеста PWA) и корня app/
+ * (/favicon.ico, /sitemap.xml, /search-index.json) к этому шагу уже отданы,
+ * и правило их не видит. Стояло в beforeFiles — и переписывало в 404
+ * скриншоты манифеста.
+ *
+ * А до динамических — потому что иначе мусор находил бы маршрут сам:
+ * /wp-admin/x — это /[lang]/[...missing] с языком «wp-admin», а /xx/quiz —
+ * /[lang]/quiz с языком «xx». Корневой layout отвечает на чужой язык
+ * notFound(), но 404 рисовать уже не в чем, и Next отдавал голую стоковую
+ * страницу; /portrait/<id>/card.png под чужим языком и вовсе доходил до
+ * обработчика.
+ *
+ * Цель — один и тот же пререндеренный адрес, а не /ru/<адрес>. Ловушка
+ * /[lang]/[...missing] — динамическая (кэшировать её по пути — значит
+ * завести запись ISR на каждый адрес сканера), а сканеры приходят именно
+ * сюда: /wp-login.php, /.env, /xmlrpc.php. Статическая 404 отдаётся с CDN без
+ * функции, со шапкой, подвалом и полкой, как до [lang]. Свою динамическую
+ * ловушку получают только адреса под языком и под разделом (/en/xyz,
+ * /quiz/xyz): их решает маршрут, а не правило.
+ *
+ * Не трогает: свои языки (/ru/… сюда доходит после beforeFiles — это и
+ * разделы, и карточки /ru/…/opengraph-image), /api (там своя JSON-404,
+ * app/api/[...missing]) и служебные /_next, /_vercel.
+ */
+export function garbageRewrites(): Rewrite[] {
+  return [{ source: '/:path((?!(?:ru|en|api|_next|_vercel)(?:/|$)).+)', destination: '/ru/missing' }]
 }
 
 /**

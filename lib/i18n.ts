@@ -32,6 +32,8 @@ export const LANG_COOKIE = 'lang'
  *
  * opengraph-image — не каталог, а файловая карточка корня
  * (app/[lang]/opengraph-image.tsx): её адрес тоже первый сегмент под [lang].
+ * missing — не раздел, а статическая 404, куда next.config уводит адрес вне
+ * всех разделов (garbageRewrites в lib/i18nroutes.ts).
  */
 export const LOCALIZED_SECTIONS = [
   'compat',
@@ -40,6 +42,7 @@ export const LOCALIZED_SECTIONS = [
   'game',
   'games',
   'library',
+  'missing',
   'opengraph-image',
   'pick',
   'play',
