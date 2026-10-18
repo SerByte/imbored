@@ -14,6 +14,7 @@
     "test": "vitest run",
     "budget": "tsx scripts/bundle-budget.ts",
     "smoke": "tsx scripts/smoke.ts",
+    "i18n:audit": "tsx scripts/i18n-audit.ts",
     "seed:catalog": "tsx scripts/seed-catalog.ts",
     "catalog:promote": "tsx scripts/promote-catalog.ts",
     "catalog:descriptions": "tsx scripts/backfill-descriptions.ts",
