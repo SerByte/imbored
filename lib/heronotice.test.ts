@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SessionHint } from './sessionhint'
@@ -32,6 +32,8 @@ vi.mock('@/lib/sessionhint', async (importOriginal) => ({
 }))
 
 const { HeroNotice } = await import('@/components/landing/HeroNotice')
+const { LocaleProvider } = await import('@/components/LocaleProvider')
+const { destinationPromise } = await import('@/lib/destinationtext')
 
 const render = (query = '') => {
   state.params = new URLSearchParams(query)
@@ -100,5 +102,43 @@ describe('HeroNotice после удаления', () => {
   test('метка удаления важнее приглашения: строка о пати не перебивает «удалено»', () => {
     state.forgot = true
     expect(render('join=ABC234')).not.toContain('пати')
+  })
+})
+
+/*
+ * Та же строка на /en: язык — из контекста страницы (LocaleProvider), те же
+ * случаи и тот же порядок важности. Про отметку удаления — те же три факта,
+ * что в вопросе «Удалить всё?» и в /privacy (lib/forget.test.ts).
+ */
+describe('HeroNotice по-английски', () => {
+  const renderEn = (query = '') => {
+    state.params = new URLSearchParams(query)
+    return renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(HeroNotice)))
+      .replace(/&#x27;/g, "'")
+  }
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('после удаления — удалено, входы погашены, и про отметку честно', () => {
+    state.forgot = true
+    const html = renderEn()
+    expect(html).toContain('everything imbored stored about you is deleted')
+    expect(html).toContain("you're signed out on all devices")
+    expect(html).toContain('SteamID and the time of deletion')
+    expect(html).toContain('getting back in')
+    expect(html).toContain('after a year and a month')
+    expect(html).toContain('tabindex="-1"')
+    expect(html).not.toMatch(CYRILLIC)
+    // метка удаления важнее приглашения и здесь
+    expect(renderEn('join=ABC234')).not.toContain('Party')
+  })
+
+  test('приглашение, сравнение и место назначения — по-английски', () => {
+    expect(renderEn('join=abc234')).toContain("You're invited to Party ABC234 — connect your library to join.")
+    expect(renderEn('compat=76561198000000001')).toContain('Connect your library to see how well your tastes match.')
+    expect(renderEn('next=/library')).toContain(destinationPromise('/library', 'en') as string)
+    for (const q of ['join=ABC234', 'compat=76561198000000001', 'next=/library', 'next=/room/new']) {
+      expect(renderEn(q), q).not.toMatch(CYRILLIC)
+    }
+    expect(renderEn()).toBe('')
   })
 })
