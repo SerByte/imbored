@@ -19,6 +19,7 @@
  *
  * Модуль клиентобезопасный: ни базы, ни сети.
  */
+import type { Locale } from './i18n'
 import { TAGS_RU_OVERRIDES } from './tagsru.overrides'
 import { TAGS_RU_STEAM } from './tagsru.steam'
 
@@ -38,6 +39,16 @@ const RU = new Map<string, string>([
 export function tagRu(tag: string): string {
   const key = tag.trim()
   return RU.get(key) ?? key
+}
+
+/**
+ * Подпись тега на языке страницы (docs/i18n.md, «Как переводить строку»):
+ * для en — сам тег Steam, он и так английский; для ru — tagRu. Пробелы по
+ * краям не в счёт в обоих языках. Ключ тега при этом не меняется — это
+ * только вывод.
+ */
+export function tagLabel(tag: string, locale: Locale): string {
+  return locale === 'en' ? tag.trim() : tagRu(tag)
 }
 
 /** Есть ли у тега русская подпись */

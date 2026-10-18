@@ -1,3 +1,5 @@
+import { splitLocale } from './i18n'
+
 /**
  * Подсвечивать ли пункт навигации на этом адресе.
  *
@@ -16,12 +18,18 @@
  * везде, потому что с него начинается любой путь. И соседний путь с общим
  * префиксом своим не считается: `/playground` — не `/play`.
  *
- * Модуль без импортов: его читают обе навигации, и тянуть за собой ему нечего.
+ * Язык в адресе не в счёт: на /en/play пункт «Подобрать» подсвечен так же,
+ * как на /play, а href пунктов — адреса без языка (префикс ставит
+ * components/Link). /ru/play — тоже /play: так pathname статической
+ * страницы видит сервер, и разметка обязана совпасть с браузерной
+ * (splitLocale в lib/i18n.ts).
+ *
+ * Импорт один — чистый lib/i18n: модуль читают обе навигации, и тянуть за
+ * собой ему больше нечего.
  */
 export function isNavActive(pathname: string, href: string, also: readonly string[] = []): boolean {
-  return [href, ...also].some((p) =>
-    p === '/' ? pathname === '/' : pathname === p || pathname.startsWith(`${p}/`),
-  )
+  const { path } = splitLocale(pathname)
+  return [href, ...also].some((p) => (p === '/' ? path === '/' : path === p || path.startsWith(`${p}/`)))
 }
 
 /**
@@ -53,6 +61,6 @@ export const DYNAMIC_SECTIONS = ['/whatsnew', '/compat', '/library', '/portrait'
  * `/<steamid>`) раздел не меняет.
  */
 export function navPrefetch(href: string): false | undefined {
-  const path = href.split(/[?#]/)[0]
+  const { path } = splitLocale(href.split(/[?#]/)[0])
   return DYNAMIC_SECTIONS.some((p) => path === p || path.startsWith(`${p}/`)) ? false : undefined
 }

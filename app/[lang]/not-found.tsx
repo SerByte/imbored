@@ -8,6 +8,8 @@ import { SearchLauncher } from '@/components/SearchLauncher'
 import { topCatalogGames } from '@/lib/db'
 import { dayKey } from '@/lib/forgotten'
 import { hashString, mulberry32 } from '@/lib/daily'
+import { tr } from '@/lib/i18n'
+import { getLocale } from '@/lib/i18n-server'
 import { getDb } from '@/lib/server'
 
 /**
@@ -99,8 +101,13 @@ async function shelf() {
   }
 }
 
+/**
+ * Язык — из сегмента [lang] (next/root-params): 404 под /en/… рисуется
+ * внутри английского layout и обязан говорить по-английски. Адреса вне
+ * всех языков сюда не доходят — их отдаёт app/global-not-found.tsx.
+ */
 export default async function NotFound() {
-  const games = await shelf()
+  const [games, locale] = await Promise.all([shelf(), getLocale()])
 
   return (
     <div className="relative flex-1 overflow-hidden">
@@ -110,10 +117,15 @@ export default async function NotFound() {
           {/* «404» крупно, как титр: цифра — это и есть новость экрана, а
               знак сайта уже стоит в шапке */}
           <p aria-hidden className="nf-code">404</p>
-          <Eyebrow tone="faint" className="sr-only">Ошибка 404</Eyebrow>
-          <h1 className="font-display text-display-md">Такой страницы нет</h1>
+          <Eyebrow tone="faint" className="sr-only">
+            {tr(locale, { ru: 'Ошибка 404', en: 'Error 404' })}
+          </Eyebrow>
+          <h1 className="font-display text-display-md">{tr(locale, { ru: 'Такой страницы нет', en: 'Page not found' })}</h1>
           <p className="max-w-md leading-relaxed text-dim">
-            Ссылка битая или игру убрали из каталога. Бывает — зато есть, во что поиграть.
+            {tr(locale, {
+              ru: 'Ссылка битая или игру убрали из каталога. Бывает — зато есть, во что поиграть.',
+              en: 'The link is broken or the game left the catalog. It happens — and there’s still plenty to play.',
+            })}
           </p>
         </div>
 
@@ -128,17 +140,17 @@ export default async function NotFound() {
             href="/quiz"
             className="btn-ember px-6 py-3"
           >
-            Подобрать игру
+            {tr(locale, { ru: 'Подобрать игру', en: 'Find a game' })}
           </Link>
           <Link href="/" className="btn-glass">
             <Icon name="home" size={18} />
-            На главную
+            {tr(locale, { ru: 'На главную', en: 'Home' })}
           </Link>
         </div>
 
         {games.length > 0 && (
           <section className="w-full anim-rise" style={{ animationDelay: '120ms' }}>
-            <Eyebrow className="mb-3">Из каталога</Eyebrow>
+            <Eyebrow className="mb-3">{tr(locale, { ru: 'Из каталога', en: 'From the catalog' })}</Eyebrow>
             <div className="grid grid-cols-2 gap-x-4 gap-y-6 md:grid-cols-4">
               {games.map((g) => (
                 <Link

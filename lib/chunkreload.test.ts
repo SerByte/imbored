@@ -32,6 +32,9 @@ vi.mock('@/lib/clienterr', async (importOriginal) => ({
 vi.mock('react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react')>()),
   useEffect: () => {},
+  // язык аварийного экрана — из адреса (app/global-error.tsx); при прямом
+  // вызове компонента хук отдаёт снимок браузера как есть
+  useSyncExternalStore: (_subscribe: unknown, get: () => unknown) => get(),
 }))
 
 afterEach(() => {
@@ -118,5 +121,30 @@ describe('экраны ошибки и отказ чанка', () => {
     button!.props.onClick()
     expect(retry).toHaveBeenCalledTimes(1)
     expect(reload).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Аварийный экран стоит вместо корневого layout, и языка из сегмента у него
+ * нет — он берёт его из адреса в браузере (app/global-error.tsx).
+ */
+describe('аварийный экран на языке адреса', () => {
+  test('на /en/… — по-английски, со ссылкой на английскую главную', async () => {
+    vi.stubGlobal('window', { location: { reload, href: 'https://imbored.cc/en/play', pathname: '/en/play' } })
+    const { default: Screen } = await import('@/app/global-error')
+    const html = renderToStaticMarkup(createElement(Screen, { error: turbopackChunk(), retry: vi.fn() }))
+    expect(html).toContain('lang="en"')
+    expect(html).toContain('Reload the page')
+    expect(html).toContain('href="/en"')
+    expect(html).not.toContain('Обновить страницу')
+  })
+
+  test('на русском адресе — по-русски, как было', async () => {
+    vi.stubGlobal('window', { location: { reload, href: 'https://imbored.cc/play', pathname: '/play' } })
+    const { default: Screen } = await import('@/app/global-error')
+    const html = renderToStaticMarkup(createElement(Screen, { error: new TypeError('boom'), retry: vi.fn() }))
+    expect(html).toContain('lang="ru"')
+    expect(html).toContain('Попробовать снова')
+    expect(html).toContain('href="/"')
   })
 })

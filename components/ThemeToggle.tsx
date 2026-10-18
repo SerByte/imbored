@@ -1,8 +1,10 @@
 'use client'
 
 import { useLayoutEffect, useSyncExternalStore } from 'react'
+import { tr } from '@/lib/i18n'
 import { syncThemeColor } from '@/lib/themecolor'
 import { Icon } from './Icon'
+import { useLocale } from './LocaleProvider'
 
 /** Тот же ключ читает скрипт темы в app/layout.tsx (сторож — lib/themecolor.test.ts) */
 export const STORAGE_KEY = 'imbored-theme'
@@ -89,6 +91,7 @@ export function saveTheme(next: 'dark' | 'light', storage: () => Pick<Storage, '
 
 export function ThemeToggle() {
   const theme = useSyncExternalStore(subscribe, readTheme, serverTheme)
+  const locale = useLocale()
 
   /*
    * Тема для документа, который нарисовал браузер (applyStoredTheme выше).
@@ -118,8 +121,12 @@ export function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
-      aria-label="Переключить тему"
+      title={
+        theme === 'dark'
+          ? tr(locale, { ru: 'Светлая тема', en: 'Light theme' })
+          : tr(locale, { ru: 'Тёмная тема', en: 'Dark theme' })
+      }
+      aria-label={tr(locale, { ru: 'Переключить тему', en: 'Switch theme' })}
       className="tap btn-glass size-10 !rounded-full !p-0 text-dim hover:text-ink"
     >
       <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={17} />

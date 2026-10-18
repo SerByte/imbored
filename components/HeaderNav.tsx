@@ -3,7 +3,9 @@
 import Link from '@/components/Link'
 import { usePathname } from 'next/navigation'
 import { LinkPending } from '@/components/LinkPending'
+import { useLocale } from '@/components/LocaleProvider'
 import { PickLink } from '@/components/PickLink'
+import { tr } from '@/lib/i18n'
 import { isNavActive, navPrefetch } from '@/lib/nav'
 
 /**
@@ -67,19 +69,36 @@ import { isNavActive, navPrefetch } from '@/lib/nav'
  * правом краю логотипа (зазор 0), и «Игра дня» легла на вордмарк. С lg запас
  * 70 px (55 при полосе прокрутки). На планшете поиск остаётся на /games и
  * на 404.
+ *
+ * АНГЛИЙСКИЙ РЯД — НЕ ШИРЕ РУССКОГО, и это замер, а не вкус (docs/i18n.md,
+ * «Длина»): весь запас на 768 px выше посчитан по русской строке. Подписи —
+ * из глоссария, полными формами шапки. «Game of the day» шире «Игры дня»
+ * (100 px против 57), но ряд целиком уже: «Find a game», «Library» и
+ * «Compatibility» короче русских. Замер собранного сайта на 768 (13 px,
+ * полужирный): меню 473 px против 508 у русского, зазор до логотипа 82 px
+ * против 47; на 1024 с «Catalog» — 631 против 671. Одной строкой оба.
+ * Если подпись сменится, ряд мерить заново — короткие формы глоссария
+ * («Daily», «Compat») дают 369 px.
  */
 const ITEMS = [
-  { href: '/daily', label: 'Игра дня' },
-  { href: '/quiz', label: 'Подобрать игру', also: ['/play'], pick: true },
-  { href: '/rooms', label: 'Пати', also: ['/room'] },
-  { href: '/whatsnew', label: 'Что нового' },
-  { href: '/games', label: 'Каталог', also: ['/game'], wide: true },
-  { href: '/compat', label: 'Совместимость' },
-  { href: '/library', label: 'Библиотека' },
-] satisfies Array<{ href: string; label: string; also?: string[]; pick?: boolean; wide?: boolean }>
+  { href: '/daily', label: { ru: 'Игра дня', en: 'Game of the day' } },
+  { href: '/quiz', label: { ru: 'Подобрать игру', en: 'Find a game' }, also: ['/play'], pick: true },
+  { href: '/rooms', label: { ru: 'Пати', en: 'Party' }, also: ['/room'] },
+  { href: '/whatsnew', label: { ru: 'Что нового', en: "What's new" } },
+  { href: '/games', label: { ru: 'Каталог', en: 'Catalog' }, also: ['/game'], wide: true },
+  { href: '/compat', label: { ru: 'Совместимость', en: 'Compatibility' } },
+  { href: '/library', label: { ru: 'Библиотека', en: 'Library' } },
+] satisfies Array<{
+  href: string
+  label: { ru: string; en: string }
+  also?: string[]
+  pick?: boolean
+  wide?: boolean
+}>
 
 export function HeaderNav() {
   const pathname = usePathname() ?? ''
+  const locale = useLocale()
 
   return (
     <span className="hidden md:flex items-center gap-3.5 lg:gap-6">
@@ -88,7 +107,7 @@ export function HeaderNav() {
         const props = {
           'aria-current': active ? ('page' as const) : undefined,
           className: `tap whitespace-nowrap transition-colors ${'wide' in item ? 'hidden lg:inline' : ''} ${active ? 'text-ink font-extrabold' : 'font-semibold hover:text-ink'}`,
-          children: <LinkPending>{item.label}</LinkPending>,
+          children: <LinkPending>{tr(locale, item.label)}</LinkPending>,
         }
         return 'pick' in item ? (
           <PickLink key={item.href} {...props} />

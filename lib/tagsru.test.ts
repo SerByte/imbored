@@ -4,9 +4,23 @@ import { describe, expect, test } from 'vitest'
 import { VIBE_TAGS } from './mood'
 import { TIME_TAGS } from './recommend'
 import { TAG_PRIOR } from './semantics'
-import { hasTagRu, tagRu } from './tagsru'
+import { hasTagRu, tagLabel, tagRu } from './tagsru'
 import { TAGS_RU_OVERRIDES } from './tagsru.overrides'
 import { TAGS_RU_STEAM } from './tagsru.steam'
+
+describe('tagLabel', () => {
+  test('на английском — сам тег Steam, без пробелов по краям', () => {
+    expect(tagLabel('Roguelike', 'en')).toBe('Roguelike')
+    expect(tagLabel('Dystopian ', 'en')).toBe('Dystopian')
+    expect(tagLabel('Тег без перевода', 'en')).toBe('Тег без перевода')
+  })
+
+  test('на русском — ровно tagRu', () => {
+    for (const tag of ['Roguelike', 'Dystopian ', 'Souls-like', 'Нет такого тега']) {
+      expect(tagLabel(tag, 'ru'), tag).toBe(tagRu(tag))
+    }
+  })
+})
 
 describe('tagRu', () => {
   test('переводит по английскому ключу', () => {

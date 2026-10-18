@@ -138,7 +138,8 @@ describe('граница загрузки не прячет страницу', (
   test('пункты обоих меню показывают, что нажаты', () => {
     for (const f of ['HeaderNav.tsx', 'MobileNav.tsx']) {
       const src = fs.readFileSync(path.join(ROOT, 'components', f), 'utf8')
-      expect(src, f).toMatch(/<LinkPending>\{item\.label\}<\/LinkPending>/)
+      // подпись — на языке страницы (tr), но по-прежнему внутри LinkPending
+      expect(src, f).toMatch(/<LinkPending>\{tr\(locale, item\.label\)\}<\/LinkPending>/)
     }
   })
 
