@@ -1633,3 +1633,266 @@ describe('причина в третьем лице — для демо глав
     expect(back.reason).not.toMatch(/обновление|планеты/i)
   })
 })
+
+/**
+ * Английская причина (opts.locale = 'en'): те же доводы и ветки, что у
+ * русской, но написанные по-английски целиком. Названия и теги в фикстурах
+ * латинские — значит, кириллице в выводе взяться неоткуда, и любая буква
+ * оттуда — недопереведённый кусок шаблона.
+ */
+describe('английская причина', () => {
+  const CYR = /[А-Яа-яЁё]/
+  const en = { locale: 'en' as const }
+  const one = (source: ScoredCandidate['source']): ScoredCandidate[] => [
+    { appid: 7, name: 'Shapez', source, score: 0.9 },
+  ]
+  const puzzle = (appid: number): GameMeta => ({ appid, name: 'Shapez', tags: { Puzzle: 100 }, genres: [], categories: [2] })
+  const two = (appid: number): GameMeta => ({
+    appid,
+    name: 'Shapez',
+    tags: { Sandbox: 100, Survival: 80 },
+    genres: [],
+    categories: [2],
+  })
+  const anchor = { appid: 1, name: 'Factorio', hours: 300 }
+
+  test('каждый источник с одним тегом — точный текст, тег подписан самим тегом Steam', () => {
+    const want: Record<ScoredCandidate['source'], string> = {
+      untouched:
+        "You've never launched “Shapez” — zero minutes. Going by its tag (Puzzle), it's right up your alley; today's a good day to fix that.",
+      backlog:
+        'You opened “Shapez” and closed it before figuring it out — but its tag (Puzzle) is right up your alley. Give it another shot.',
+      comeback:
+        "You already have 42 h in “Shapez”. Its tag (Puzzle) is still your kind of thing — go back and see what it's like now.",
+      familiar:
+        "You already know the controls in “Shapez” — you've got 42 h in it. Nothing new to learn: just jump in.",
+      owned: "“Shapez” is already in your library, and going by its tag (Puzzle), it's right up your alley.",
+      new: "“Shapez” isn't in your library, but its tag (Puzzle) matches what you play the most.",
+    }
+    for (const source of CANDIDATE_SOURCES) {
+      const [pick] = heuristicPicks(one(source), puzzle, 1, NOW, { Puzzle: 1 }, { ...en, hoursOf: () => 42 })
+      expect(pick.reason, source).toBe(want[source])
+      expect(pick.reason, source).not.toMatch(CYR)
+    }
+  })
+
+  test('два тега — множественное число: tags are, tags match', () => {
+    const profile = { Sandbox: 5, Survival: 3 }
+    const cases: Array<[ScoredCandidate['source'], string]> = [
+      ['untouched', 'Going by its tags (Sandbox, Survival), it'],
+      ['backlog', 'but its tags (Sandbox, Survival) are right up your alley.'],
+      ['comeback', 'Its tags (Sandbox, Survival) are still your kind of thing'],
+      ['owned', 'going by its tags (Sandbox, Survival), it'],
+      ['new', 'but its tags (Sandbox, Survival) match what you play the most.'],
+    ]
+    for (const [source, part] of cases) {
+      const [pick] = heuristicPicks(one(source), two, 1, NOW, profile, en)
+      expect(pick.reason, source).toContain(part)
+      expect(pick.reason, source).not.toMatch(CYR)
+    }
+  })
+
+  test('без тегов и с якорем — свои ветки, тоже без кириллицы', () => {
+    const bare = heuristicPicks(one('untouched'), () => undefined, 1, NOW, {}, en)[0]!.reason
+    expect(bare).toBe("You've never launched “Shapez” — zero minutes. Today's a good day to fix that.")
+    const near = heuristicPicks(one('new'), puzzle, 1, NOW, { Puzzle: 1 }, { ...en, anchorOf: () => anchor })[0]!
+    expect(near.reason).toBe("“Shapez” isn't in your library, but it's closest to “Factorio”, where you've spent 300 h.")
+    const hidden = heuristicPicks(one('new'), puzzle, 1, NOW, { Puzzle: 1 }, { ...en, playtimeHidden: true })[0]!
+    expect(hidden.reason).toBe("“Shapez” isn't in your library, but its tag (Puzzle) matches what's already in it.")
+    for (const source of CANDIDATE_SOURCES) {
+      for (const opts of [en, { ...en, anchorOf: () => anchor }, { ...en, playtimeHidden: true }]) {
+        const [pick] = heuristicPicks(one(source), () => undefined, 1, NOW, {}, opts)
+        expect(pick.reason, source).not.toMatch(CYR)
+        expect(pick.reason, source).toContain('“Shapez”')
+      }
+    }
+  })
+
+  test('заброшенная: английский пересказ патча вместо «go back and see»', () => {
+    const [pick] = heuristicPicks(one('comeback'), puzzle, 1, NOW, { Puzzle: 1 }, {
+      ...en,
+      hoursOf: () => 40,
+      patchOf: () => 'Reworked combat and added a new biome.',
+    })
+    expect(pick.reason).toBe(
+      'You already have 40 h in “Shapez”. Since you last played, a major update came out: reworked combat and added a new biome.',
+    )
+  })
+
+  test('русский пересказ в английскую причину не попадает — фраза прежняя', () => {
+    const plain = heuristicPicks(one('comeback'), puzzle, 1, NOW, { Puzzle: 1 }, { ...en, hoursOf: () => 40 })[0]!.reason
+    const [pick] = heuristicPicks(one('comeback'), puzzle, 1, NOW, { Puzzle: 1 }, {
+      ...en,
+      hoursOf: () => 40,
+      patchOf: () => 'Переделали бои и добавили новый биом.',
+    })
+    expect(pick.reason).toBe(plain)
+    expect(pick.reason).not.toMatch(CYR)
+  })
+
+  test('длинный пересказ и высокий вход — в пределе длины, с фразой про управление', () => {
+    const hard = (appid: number): GameMeta => ({ ...puzzle(appid), tags: { Puzzle: 100, Automation: 80 } })
+    const long =
+      'Reworked the whole crafting system, added two biomes, a new boss, four-player co-op, daily challenges, ' +
+      'a level editor and forty more balance changes to weapons and enemies across the game.'
+    const [pick] = heuristicPicks(
+      [{ appid: 7, name: 'A Very Long Game Title: The Complete Edition With All DLC', source: 'comeback', score: 0.9 }],
+      hard,
+      1,
+      NOW,
+      { Puzzle: 1 },
+      { ...en, hoursOf: () => 1234, patchOf: () => long },
+    )
+    expect(pick.reason).toContain('Since you last played, a major update came out: reworked')
+    expect(pick.reason).toContain('remembering the controls')
+    expect(pick.reason.length).toBeLessThanOrEqual(REASON_MAX)
+    expect(pick.reason).not.toMatch(CYR)
+  })
+
+  test('ценовой хвост: бесплатная, цена, скидка — по-английски и ровно тем хвостом, что даёт reasonPrice', () => {
+    const free = (appid: number): GameMeta => ({ ...puzzle(appid), isFree: true })
+    const priced = (appid: number): GameMeta => ({ ...puzzle(appid), priceFinal: 1499 })
+    const sale = (appid: number): GameMeta => ({
+      ...puzzle(appid),
+      priceFinal: 749,
+      priceInitial: 1499,
+      discountPercent: 50,
+      discountEndsAt: NOW + 2 * 86_400,
+      priceAt: NOW,
+    })
+    expect(reasonPrice('new', free(7), NOW, false, 'en')).toBe(" It's free.")
+    // Сумму пишет formatPrice — её формат здесь не проверяется, только фраза вокруг
+    expect(reasonPrice('new', priced(7), NOW, false, 'en')).toMatch(/^ It's \S.* on Steam\.$/)
+    for (const hideUrgency of [false, true]) {
+      const tail = reasonPrice('new', sale(7), NOW, hideUrgency, 'en')
+      expect(tail).toMatch(/^ 50% off now: \S.* instead of \S.*\.$/)
+      // Срок до трёх дней по-русски — «осталось 2 дня»: в английский хвост он не попадает
+      expect(tail).not.toMatch(CYR)
+    }
+    for (const meta of [free, priced, sale]) {
+      const [pick] = heuristicPicks(one('new'), meta, 1, NOW, { Puzzle: 1 }, en)
+      expect(pick.reason.endsWith(reasonPrice('new', meta(7), NOW, false, 'en'))).toBe(true)
+      expect(pick.reason).not.toMatch(CYR)
+    }
+    expect(reasonPrice('backlog', priced(7), NOW, false, 'en')).toBe('')
+  })
+
+  test('без locale — прежний русский текст', () => {
+    const [ru] = heuristicPicks(one('owned'), puzzle, 1, NOW, { Puzzle: 1 })
+    const [explicit] = heuristicPicks(one('owned'), puzzle, 1, NOW, { Puzzle: 1 }, { locale: 'ru' })
+    expect(ru.reason).toBe('«Shapez» уже есть в твоей библиотеке, а по тегам (Головоломка) это очень твоё.')
+    expect(explicit.reason).toBe(ru.reason)
+  })
+})
+
+describe('patchSentence: английский пересказ', () => {
+  const lead = 'Since you last played, a major update came out'
+  test('строчная после двоеточия — только у предсказуемого слова перед строчным', () => {
+    expect(patchSentence('Added a new biome', Infinity, 'en')).toBe(`${lead}: added a new biome.`)
+    expect(patchSentence('Reworked combat', Infinity, 'en')).toBe(`${lead}: reworked combat.`)
+    expect(patchSentence('The new map is huge!', Infinity, 'en')).toBe(`${lead}: the new map is huge!`)
+    expect(patchSentence('New biome and two bosses', Infinity, 'en')).toBe(`${lead}: new biome and two bosses.`)
+    expect(patchSentence('You can now play in pairs', Infinity, 'en')).toBe(`${lead}: you can now play in pairs.`)
+    // имена — каждым словом с заглавной, и остаются как есть
+    expect(patchSentence('The Witcher got a next-gen mode', Infinity, 'en')).toBe(
+      `${lead}: The Witcher got a next-gen mode.`,
+    )
+    expect(patchSentence('It Takes Two got a friend pass', Infinity, 'en')).toBe(`${lead}: It Takes Two got a friend pass.`)
+    expect(patchSentence('AI is smarter!', Infinity, 'en')).toBe(`${lead}: AI is smarter!`)
+    expect(patchSentence('Space Age launched.', Infinity, 'en')).toBe(`${lead}: Space Age launched.`)
+    expect(patchSentence('   ', Infinity, 'en')).toBeNull()
+    expect(patchSentence('Added a mode', 80, 'en')).toBeNull()
+  })
+
+  test('пересказ, называющий обновление: имя — в скобках после неизменной вводной', () => {
+    expect(patchSentence('Update 1.5: a new biome.', Infinity, 'en')).toBe(`${lead} (1.5): a new biome.`)
+    expect(patchSentence('A major update “Frontier”: a new map', Infinity, 'en')).toBe(`${lead} (“Frontier”): a new map.`)
+    expect(patchSentence('Major update — reworked combat', Infinity, 'en')).toBe(`${lead}: reworked combat.`)
+    expect(patchSentence('Patch 2.0 — The game gets co-op', Infinity, 'en')).toBe(`${lead} (2.0): the game gets co-op.`)
+    // склеить без повтора нельзя — фразы нет
+    expect(patchSentence('Update 1.5 adds a biome.', Infinity, 'en')).toBeNull()
+    expect(patchSentence('A new update with a new map', Infinity, 'en')).toBeNull()
+    expect(patchSentence('Update:', Infinity, 'en')).toBeNull()
+    // «Updated» и «Patched» — глаголы, а не имя апдейта
+    expect(patchSentence('Updated the UI and menus', Infinity, 'en')).toBe(`${lead}: updated the UI and menus.`)
+    expect(patchSentence('New season: map and mode', Infinity, 'en')).toBe(`${lead}: new season: map and mode.`)
+  })
+
+  test('срок и кириллица — фразы нет', () => {
+    for (const tldr of ['The Halloween season runs until November 5', 'Event ends Nov 5', 'Новый режим']) {
+      expect(patchSentence(tldr, Infinity, 'en'), tldr).toBeNull()
+    }
+  })
+
+  test('вводная — всегда в начале: по ней shareText узнаёт факт', () => {
+    for (const tldr of ['Added a biome', 'Update 1.5: a biome', 'Patch 2.0 — co-op']) {
+      expect(patchSentence(tldr, Infinity, 'en')!.startsWith(lead), tldr).toBe(true)
+    }
+  })
+})
+
+describe('причина в третьем лице по-английски — для демо главной', () => {
+  const YOU = /\b(?:you|your|yours|yourself|you've|you're|you'll)\b/i
+  const tagMeta = (tags: Record<string, number>) => (appid: number): GameMeta => ({
+    appid,
+    name: 'Shapez',
+    tags,
+    genres: [],
+    categories: [2],
+    priceFinal: 1499,
+  })
+  const anchor = { appid: 1, name: 'Factorio', hours: 300 }
+  const variants: Array<{ meta: (appid: number) => GameMeta; profile: Record<string, number>; opts: object }> = [
+    { meta: tagMeta({ Puzzle: 100 }), profile: { Puzzle: 1 }, opts: { anchorOf: () => anchor, hoursOf: () => 42 } },
+    { meta: tagMeta({ Puzzle: 100 }), profile: { Puzzle: 1 }, opts: { hoursOf: () => 42 } },
+    { meta: tagMeta({ Puzzle: 100, Automation: 80 }), profile: { Puzzle: 1, Automation: 1 }, opts: {} },
+    { meta: tagMeta({}), profile: {}, opts: {} },
+    { meta: tagMeta({ Puzzle: 100 }), profile: { Puzzle: 1 }, opts: { playtimeHidden: true } },
+  ]
+
+  test('ни одна ветка ни одного источника не говорит «you», без кириллицы и цены', () => {
+    for (const source of CANDIDATE_SOURCES) {
+      for (const v of variants) {
+        const cand: ScoredCandidate[] = [{ appid: 7, name: 'Shapez', source, score: 0.9 }]
+        const [pick] = heuristicPicks(cand, v.meta, 1, NOW, v.profile, { ...v.opts, voice: 'them', locale: 'en' })
+        expect(pick.reason, `${source}: ${pick.reason}`).not.toMatch(YOU)
+        expect(pick.reason, source).not.toMatch(/[А-Яа-яЁё]/)
+        expect(pick.reason, source).not.toMatch(/\$|on Steam/)
+        expect(pick.reason, source).toContain('“Shapez”')
+        expect(pick.reason.length, source).toBeLessThanOrEqual(REASON_MAX)
+      }
+    }
+  })
+
+  test('сторож не вакуумный: голос по умолчанию по-английски говорит «you» в каждом источнике', () => {
+    for (const source of CANDIDATE_SOURCES) {
+      const cand: ScoredCandidate[] = [{ appid: 7, name: 'Shapez', source, score: 0.9 }]
+      const [pick] = heuristicPicks(cand, variants[1].meta, 1, NOW, variants[1].profile, {
+        ...variants[1].opts,
+        locale: 'en',
+      })
+      expect(pick.reason, source).toMatch(YOU)
+    }
+  })
+
+  test('доводы те же: якорь и часы демо-игрока', () => {
+    const cand = (source: ScoredCandidate['source']): ScoredCandidate[] => [{ appid: 7, name: 'Shapez', source, score: 0.9 }]
+    const [near] = heuristicPicks(cand('untouched'), variants[0].meta, 1, NOW, { Puzzle: 1 }, {
+      anchorOf: () => anchor,
+      voice: 'them',
+      locale: 'en',
+    })
+    expect(near.reason).toBe(
+      "The demo player has never launched “Shapez” — zero minutes — but it's closest to “Factorio”, where they've spent 300 h. High time to fix that.",
+    )
+    const [back] = heuristicPicks(cand('comeback'), variants[2].meta, 1, NOW, variants[2].profile, {
+      hoursOf: () => 42,
+      voice: 'them',
+      locale: 'en',
+      patchOf: () => 'Added new planets.',
+    })
+    expect(back.reason).toContain('The demo player already has 42 h in “Shapez”')
+    expect(back.reason).toContain('remembering the controls')
+    expect(back.reason).not.toMatch(/update|planets/i)
+  })
+})

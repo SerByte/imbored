@@ -1,14 +1,15 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NewsScale } from './db'
-import { PATCH_SINCE_LEAD, patchHasDeadline } from './comeback'
+import { PATCH_SINCE_LEAD, PATCH_SINCE_LEADS, patchHasDeadline } from './comeback'
 import { discountEndsLabel, discountOf, trustedPrice } from './discount'
 import { entryCost, type EntryCost } from './entry'
 import { GENERIC_TAGS } from './hook'
+import { pl, tr, type Locale } from './i18n'
 import type { Lean } from './mood'
 import { playtimeHidden } from './playtime'
 import { rankByTaste, sharedTasteTags, type Focus, type OwnAnchor } from './recommend'
 import { formatPrice, LEGACY_PRICE_CC } from './steamregion'
-import { tagRu } from './tagsru'
+import { tagLabel } from './tagsru'
 import type { TagWeight } from './tagweight'
 import { CANDIDATE_SOURCES } from './types'
 import type { CandidateSource, GameMeta, LibraryGame, Mood, ScoredCandidate } from './types'
@@ -1005,6 +1006,27 @@ function lowerLead(s: string): string {
 }
 
 /*
+ * ТО ЖЕ ДЛЯ АНГЛИЙСКОГО ПЕРЕСКАЗА (tldr_en) — то же правило «строчной
+ * делается только предсказуемое», но предсказуемое здесь другое:
+ *   • глагол на -ed («Added», «Reworked», «Fixed») — им модель начинает
+ *     английский пересказ так же охотно, как русский «Добавили»;
+ *   • служебное слово или частый зачин («A», «The», «In», «Now», «New»).
+ * И у обоих — условие, которого у русского нет: следующее слово строчное.
+ * Английские имена пишутся каждым словом с заглавной, и только так «The
+ * Witcher», «It Takes Two», «New Vegas» и «Wicked Isles» остаются именами, а
+ * «The new map» и «Added a biome» становятся строчными. Цена записана:
+ * «Added Steam Deck support» останется с заглавной — мелочь стиля, а не
+ * ошибка в имени.
+ */
+const LOWER_WORD_EN = /^[A-Z][a-z]{2,}ed(?=\s+[a-z0-9])/
+const LOWER_LEAD_EN =
+  /^(?:A|An|The|In|On|At|With|For|To|From|After|Now|New|More|Also|Finally|Plus|Better|Several|Many|Lots|Various|Two|Three|Four|Five|Fixes|Players|There|It|Its|This|You|Your)(?=\s+[a-z0-9])/
+
+function lowerLeadEn(s: string): string {
+  return LOWER_WORD_EN.test(s) || LOWER_LEAD_EN.test(s) ? s[0]!.toLowerCase() + s.slice(1) : s
+}
+
+/*
  * Пересказ, который сам называет обновление. На крупном патче модель охотно
  * начинает с имени апдейта: «Обновление 1.5: новый биом», «Вышло обновление
  * «Frontier»: новая карта». После «вышло крупное обновление:» это дало бы
@@ -1017,6 +1039,43 @@ const NAMED_UPDATE =
   /^(?:вышл[а-яё]*\s+)?(?:(?:крупн|больш|нов)[а-яё]*\s+)?(?:обновлени|патч|апдейт)[а-яё]*((?:[^:—–.!?]|(?<=\d)\.(?=\d)){0,40}?)\s*(?::|\s[—–-])\s*/i
 const STARTS_AS_UPDATE = /^(?:вышл[а-яё]*\s+)?(?:(?:крупн|больш|нов)[а-яё]*\s+)?(?:обновлени|патч|апдейт)/i
 
+/*
+ * Английские двойники: «Update 1.5: a new biome», «A major update “Frontier”:
+ * a new map», «Patch 2.0 — co-op». «Updated the UI» и «Patched the exploit»
+ * сюда не попадают (\b после update|patch): это глагол, а не имя апдейта.
+ */
+const NAMED_UPDATE_EN =
+  /^(?:(?:the|a|an)\s+)?(?:(?:major|big|huge|large|new)\s+)?(?:update|patch)\b((?:[^:—–.!?]|(?<=\d)\.(?=\d)){0,40}?)\s*(?::|\s[—–-])\s*/i
+const STARTS_AS_UPDATE_EN = /^(?:(?:the|a|an)\s+)?(?:(?:major|big|huge|large|new)\s+)?(?:update|patch)\b/i
+
+/** Кириллица в тексте — признак, что английского пересказа на самом деле нет */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+/**
+ * Правила фразы о патче по языкам. Вводная — неизменный префикс (см.
+ * PATCH_SINCE_LEADS): имя апдейта встаёт после неё. По-русски — через пробел
+ * («обновление 1.5: …»), по-английски — в скобках: «a major update came out
+ * (1.5): …» — «came out 1.5» не читается, а вставить имя внутрь вводной
+ * нельзя, по ней ссылка /pick узнаёт факт.
+ */
+const PATCH_RULES = {
+  ru: {
+    named: NAMED_UPDATE,
+    startsAsUpdate: STARTS_AS_UPDATE,
+    lowerLead,
+    lead: (name: string) => `${PATCH_SINCE_LEAD}${name ? ` ${name}` : ''}: `,
+  },
+  en: {
+    named: NAMED_UPDATE_EN,
+    startsAsUpdate: STARTS_AS_UPDATE_EN,
+    lowerLead: lowerLeadEn,
+    lead: (name: string) => `${PATCH_SINCE_LEADS.en}${name ? ` (${name})` : ''}: `,
+  },
+} satisfies Record<
+  Locale,
+  { named: RegExp; startsAsUpdate: RegExp; lowerLead: (s: string) => string; lead: (name: string) => string }
+>
+
 /**
  * «С твоего последнего захода вышло крупное обновление: …» — факт вместо
  * «вернись и проверь». budget — сколько символов фразе можно занять целиком;
@@ -1028,23 +1087,33 @@ const STARTS_AS_UPDATE = /^(?:вышл[а-яё]*\s+)?(?:(?:крупн|больш
  * lib/comeback.ts): «сезон идёт до 5 ноября» превратил бы повод про игру в
  * «успей», а у кого срочность скрыта (hideUrgency), и вовсе в то, от чего он
  * отказался.
+ *
+ * locale — язык причины, и tldr обязан быть на нём же: на 'en' — английский
+ * пересказ (tldr_en). Фраза тогда — «Since you last played, a major update
+ * came out: …» (PATCH_SINCE_LEADS), со своими правилами имени апдейта и
+ * строчной буквы (PATCH_RULES).
  */
-export function patchSentence(tldr: string, budget = Infinity): string | null {
+export function patchSentence(tldr: string, budget = Infinity, locale: Locale = 'ru'): string | null {
   let text = tldr.trim()
   if (!text || patchHasDeadline(text)) return null
+  // Русский пересказ в английской причине — то, чего на /en быть не должно
+  // (docs/i18n.md, «Тексты модели»): английского нет — фраза прежняя, как
+  // без пересказа вовсе. Вызывающий и так обязан дать tldr_en, это страховка
+  if (locale === 'en' && CYRILLIC.test(text)) return null
+  const rules = PATCH_RULES[locale]
   let name = ''
-  const named = NAMED_UPDATE.exec(text)
+  const named = rules.named.exec(text)
   if (named) {
     name = named[1]!.trim()
     text = text.slice(named[0].length).trim()
-  } else if (STARTS_AS_UPDATE.test(text)) {
+  } else if (rules.startsAsUpdate.test(text)) {
     return null
   }
   if (!text) return null
-  const lead = `${PATCH_SINCE_LEAD}${name ? ` ${name}` : ''}: `
+  const lead = rules.lead(name)
   const room = Math.min(PATCH_TLDR_MAX, budget - lead.length - 1)
   if (room < PATCH_TLDR_MIN) return null
-  const cut = trimTldr(lowerLead(text), room)
+  const cut = trimTldr(rules.lowerLead(text), room)
   return `${lead}${cut}${/[.!?…]$/.test(cut) ? '' : '.'}`
 }
 
@@ -1052,6 +1121,21 @@ export function patchSentence(tldr: string, budget = Infinity): string | null {
 function nearSentence(a: OwnAnchor): string {
   return `ближе всего она к «${a.name}», где у тебя ${a.hours} ч`
 }
+
+/** То же по-английски: «h» — сокращение часов из глоссария, как «ч» */
+function nearSentenceEn(a: OwnAnchor): string {
+  return `it's closest to “${a.name}”, where you've spent ${a.hours} h`
+}
+
+/**
+ * Фраза про управление у заброшенной с высоким порогом входа — одна на оба
+ * голоса: в ней нет ни «ты», ни «он», поэтому шаблонам демо-игрока она годится
+ * как есть.
+ */
+const RECALL = {
+  ru: ' Первые минут десять уйдут на то, чтобы вспомнить управление, — это нормально.',
+  en: " The first ten minutes or so will go to remembering the controls — that's normal.",
+} satisfies Record<Locale, string>
 
 /**
  * Теги для причины: русские подписи через запятую и сколько их.
@@ -1080,10 +1164,9 @@ type ReasonTags = { text: string; n: number }
  * открыл и закрыл, забросил, не покупал. Это и есть повод, а тег был лишь
  * подтверждением.
  */
-const SOURCE_TEMPLATES: Record<
-  CandidateSource,
-  (name: string, tags: ReasonTags | null, ctx: TemplateCtx) => string
-> = {
+type Templates = Record<CandidateSource, (name: string, tags: ReasonTags | null, ctx: TemplateCtx) => string>
+
+const SOURCE_TEMPLATES: Templates = {
   untouched: (name, tags, { anchor }) =>
     anchor
       ? `«${name}» ты не запускал ни разу — ноль минут, а ${nearSentence(anchor)}. Сегодня хороший день это исправить.`
@@ -1115,10 +1198,7 @@ const SOURCE_TEMPLATES: Record<
   // похожести, а причина обязана уложиться в REASON_MAX.
   comeback: (name, tags, { hours, entry, patch }) => {
     const known = hours ? `У тебя в «${name}» уже ${hours} ч` : `«${name}» ты уже начинал`
-    const recall =
-      entry?.level === 'high'
-        ? ' Первые минут десять уйдут на то, чтобы вспомнить управление, — это нормально.'
-        : ''
+    const recall = entry?.level === 'high' ? RECALL.ru : ''
     const fact = patch ? patchSentence(patch, REASON_MAX - known.length - 2 - recall.length) : null
     if (fact) return `${known}. ${fact}${recall}`
     return tags
@@ -1178,10 +1258,7 @@ function nearSentenceThem(a: OwnAnchor): string {
   return `ближе всего она к «${a.name}», где у него ${a.hours} ч`
 }
 
-const THEM_TEMPLATES: Record<
-  CandidateSource,
-  (name: string, tags: ReasonTags | null, ctx: TemplateCtx) => string
-> = {
+const THEM_TEMPLATES: Templates = {
   untouched: (name, tags, { anchor }) =>
     anchor
       ? `«${name}» демо-игрок не запускал ни разу — ноль минут, а ${nearSentenceThem(anchor)}. Самое время это исправить.`
@@ -1197,10 +1274,7 @@ const THEM_TEMPLATES: Record<
   // Часы — как опыт, а не как вложение, ровно как в шаблоне выше
   comeback: (name, tags, { hours, entry }) => {
     const known = hours ? `У демо-игрока в «${name}» уже ${hours} ч` : `«${name}» демо-игрок уже начинал`
-    const recall =
-      entry?.level === 'high'
-        ? ' Первые минут десять уйдут на то, чтобы вспомнить управление, — это нормально.'
-        : ''
+    const recall = entry?.level === 'high' ? RECALL.ru : ''
     return tags
       ? `${known}. ${tags.n === 1 ? 'Тег' : 'Теги'} (${tags.text}) по-прежнему в его вкусе — пора вернуться и проверить, как оно теперь.${recall}`
       : `${known} — пора вернуться и проверить, как оно теперь.${recall}`
@@ -1225,15 +1299,141 @@ const THEM_TEMPLATES: Record<
         : `«${name}» в библиотеке демо-игрока нет.`,
 }
 
+/*
+ * АНГЛИЙСКИЕ ШАБЛОНЫ — те же доводы и те же ветки, но написанные по-английски
+ * целиком, а не собранные из переводов кусков: порядок слов, согласование
+ * «tag is / tags are» и «its tag matches / its tags match» у каждого случая
+ * свои. Голос — на «you», коротко и прямо (docs/i18n.md, «Голос»). Кавычки
+ * вокруг названий — “…”, как у quoted() в lib/sharedpick.ts.
+ *
+ * Record, а не Partial, по той же причине, что у русских: новый источник без
+ * своей английской строки — красный tsc, а не русская причина на /en.
+ */
+
+/**
+ * «tag» или «tags» в «going by its tag (…)». Русскому «по тегам» число не
+ * важно («судя по тегам» верно и при одном), английскому — важно.
+ */
+function tagsWord(n: number): string {
+  return pl('en', n, { ru: ['тег', 'тега', 'тегов'], en: ['tag', 'tags'] })
+}
+
+const SOURCE_TEMPLATES_EN: Templates = {
+  untouched: (name, tags, { anchor }) =>
+    anchor
+      ? `You've never launched “${name}” — zero minutes — but ${nearSentenceEn(anchor)}. Today's a good day to fix that.`
+      : tags
+        ? `You've never launched “${name}” — zero minutes. Going by its ${tagsWord(tags.n)} (${tags.text}), it's right up your alley; today's a good day to fix that.`
+        : `You've never launched “${name}” — zero minutes. Today's a good day to fix that.`,
+  backlog: (name, tags, { anchor }) =>
+    anchor
+      ? `You opened “${name}” and closed it before figuring it out — but ${nearSentenceEn(anchor)}. Give it another shot.`
+      : tags
+        ? `You opened “${name}” and closed it before figuring it out — but ${tags.n === 1 ? `its tag (${tags.text}) is` : `its tags (${tags.text}) are`} right up your alley. Give it another shot.`
+        : `You opened “${name}” and closed it before figuring it out. Give it another shot.`,
+  // Часы — как опыт, а не как вложение, и патч вместо «вернись и проверь» —
+  // ровно как в русском шаблоне выше
+  comeback: (name, tags, { hours, entry, patch }) => {
+    const known = hours ? `You already have ${hours} h in “${name}”` : `You've already started “${name}”`
+    const recall = entry?.level === 'high' ? RECALL.en : ''
+    const fact = patch ? patchSentence(patch, REASON_MAX - known.length - 2 - recall.length, 'en') : null
+    if (fact) return `${known}. ${fact}${recall}`
+    return tags
+      ? `${known}. ${tags.n === 1 ? `Its tag (${tags.text}) is` : `Its tags (${tags.text}) are`} still your kind of thing — go back and see what it's like now.${recall}`
+      : `${known} — go back and see what it's like now.${recall}`
+  },
+  familiar: (name, _tags, { hours }) =>
+    hours
+      ? `You already know the controls in “${name}” — you've got ${hours} h in it. Nothing new to learn: just jump in.`
+      : `You already know the controls in “${name}”. Nothing new to learn: just jump in.`,
+  owned: (name, tags, { anchor }) =>
+    anchor
+      ? `“${name}” is already in your library, and ${nearSentenceEn(anchor)}.`
+      : tags
+        ? `“${name}” is already in your library, and going by its ${tagsWord(tags.n)} (${tags.text}), it's right up your alley.`
+        : `“${name}” is already in your library — nothing to buy.`,
+  new: (name, tags, { anchor, playtimeHidden }) =>
+    anchor
+      ? `“${name}” isn't in your library, but ${nearSentenceEn(anchor)}.`
+      : tags
+        ? `“${name}” isn't in your library, but ${tags.n === 1 ? `its tag (${tags.text}) matches` : `its tags (${tags.text}) match`} ${
+            playtimeHidden ? "what's already in it" : 'what you play the most'
+          }.`
+        : `“${name}” isn't in your library.`,
+}
+
+/** Якорь демо-игрока по-английски: «they» — без «you», как у русского «у него» */
+function nearSentenceThemEn(a: OwnAnchor): string {
+  return `it's closest to “${a.name}”, where they've spent ${a.hours} h`
+}
+
+/*
+ * Демо-игрок по-английски — тот же сторож, что у русского голоса: ни одна
+ * ветка не говорит «you» (lib/llm.test.ts). Без пересказа патча и без цены —
+ * по тем же причинам, что выше.
+ */
+const THEM_TEMPLATES_EN: Templates = {
+  untouched: (name, tags, { anchor }) =>
+    anchor
+      ? `The demo player has never launched “${name}” — zero minutes — but ${nearSentenceThemEn(anchor)}. High time to fix that.`
+      : tags
+        ? `The demo player has never launched “${name}” — zero minutes. Going by its ${tagsWord(tags.n)} (${tags.text}), it's right up their alley; high time to fix that.`
+        : `The demo player has never launched “${name}” — zero minutes. High time to fix that.`,
+  backlog: (name, tags, { anchor }) =>
+    anchor
+      ? `The demo player opened “${name}” and closed it before figuring it out — but ${nearSentenceThemEn(anchor)}. It deserves another shot.`
+      : tags
+        ? `The demo player opened “${name}” and closed it before figuring it out — but ${tags.n === 1 ? `its tag (${tags.text}) is` : `its tags (${tags.text}) are`} right up their alley. It deserves another shot.`
+        : `The demo player opened “${name}” and closed it before figuring it out. It deserves another shot.`,
+  comeback: (name, tags, { hours, entry }) => {
+    const known = hours
+      ? `The demo player already has ${hours} h in “${name}”`
+      : `The demo player has already started “${name}”`
+    const recall = entry?.level === 'high' ? RECALL.en : ''
+    return tags
+      ? `${known}. ${tags.n === 1 ? `Its tag (${tags.text}) is` : `Its tags (${tags.text}) are`} still their kind of thing — time to go back and see what it's like now.${recall}`
+      : `${known} — time to go back and see what it's like now.${recall}`
+  },
+  familiar: (name, _tags, { hours }) =>
+    hours
+      ? `The demo player already knows the controls in “${name}” — they've got ${hours} h in it. Nothing new to learn: they can jump right in.`
+      : `The demo player already knows the controls in “${name}”. Nothing new to learn: they can jump right in.`,
+  owned: (name, tags, { anchor }) =>
+    anchor
+      ? `“${name}” is already in the demo player's library, and ${nearSentenceThemEn(anchor)}.`
+      : tags
+        ? `“${name}” is already in the demo player's library, and going by its ${tagsWord(tags.n)} (${tags.text}), it's right up their alley.`
+        : `“${name}” is already in the demo player's library — nothing to buy.`,
+  new: (name, tags, { anchor, playtimeHidden }) =>
+    anchor
+      ? `“${name}” isn't in the demo player's library, but ${nearSentenceThemEn(anchor)}.`
+      : tags
+        ? `“${name}” isn't in the demo player's library, but ${tags.n === 1 ? `its tag (${tags.text}) matches` : `its tags (${tags.text}) match`} ${
+            playtimeHidden ? "what's already in it" : 'what they play the most'
+          }.`
+        : `“${name}” isn't in the demo player's library.`,
+}
+
+/** Шаблоны по голосу и языку: одна таблица, чтобы новая пара не потерялась */
+const TEMPLATES = {
+  you: { ru: SOURCE_TEMPLATES, en: SOURCE_TEMPLATES_EN },
+  them: { ru: THEM_TEMPLATES, en: THEM_TEMPLATES_EN },
+} satisfies Record<'you' | 'them', Record<Locale, Templates>>
+
 /**
  * Хвост причины для не купленной игры: цена, а если идёт распродажа — то и она.
  *
  * Без него шаблон советовал бы покупку, умалчивая, что это покупка. У своих
  * игр такого хвоста нет и быть не может — там платить уже нечего.
  */
-function priceSentence(meta: GameMeta | undefined, nowSec: number, hideUrgency = false): string {
+function priceSentence(
+  meta: GameMeta | undefined,
+  nowSec: number,
+  hideUrgency = false,
+  locale: Locale = 'ru',
+): string {
   if (!meta) return ''
-  if (meta.isFree) return ' Она бесплатная.'
+  if (meta.isFree) return tr(locale, { ru: ' Она бесплатная.', en: " It's free." })
   // trustedPrice по той же причине, что у priceNote: этот хвост — запасной
   // текст той же причины, и стоит он там же, под ценником. При сгоревшей
   // скидке price_final — акционное число без акции, и назвать его обычной
@@ -1243,12 +1443,41 @@ function priceSentence(meta: GameMeta | undefined, nowSec: number, hideUrgency =
   const deal = discountOf(meta, nowSec)
   // «Нет в библиотеке» здесь больше не повторяется: это уже сказано шаблоном
   // источника new, и вместе получалось «у тебя нет … Её нет в библиотеке».
+  //
+  // Сумма пока пишется одним русским форматом и на /en («14,99 $»): язык
+  // formatPrice (lib/steamregion.ts) получает отдельной правкой, и тогда
+  // здесь у каждого вызова добавится { locale }. Кириллицы в сумме нет, так
+  // что английская фраза и до того остаётся английской.
   const cc = meta.priceCc ?? LEGACY_PRICE_CC
-  if (!deal) return ` В Steam — ${formatPrice(price, cc)}.`
+  if (!deal) {
+    return tr(locale, {
+      ru: ` В Steam — ${formatPrice(price, cc)}.`,
+      en: ` It's ${formatPrice(price, cc)} on Steam.`,
+    })
+  }
   // Срок — только когда он не давит: см. HeuristicOptions.hideUrgency
   const ends =
-    deal.endsAt && !hideUrgency ? (discountEndsLabel(deal.endsAt, nowSec) ?? '') : ''
-  return ` Сейчас −${deal.percent}%: ${formatPrice(deal.finalCents, cc)} вместо ${formatPrice(deal.initialCents, cc)}${ends ? ` — ${ends}` : ''}.`
+    deal.endsAt && !hideUrgency ? (endsLabel(deal.endsAt, nowSec, locale) ?? '') : ''
+  const final = formatPrice(deal.finalCents, cc)
+  const initial = formatPrice(deal.initialCents, cc)
+  return tr(locale, {
+    ru: ` Сейчас −${deal.percent}%: ${final} вместо ${initial}${ends ? ` — ${ends}` : ''}.`,
+    en: ` ${deal.percent}% off now: ${final} instead of ${initial}${ends ? ` — ${ends}` : ''}.`,
+  })
+}
+
+/**
+ * Срок распродажи на языке причины.
+ *
+ * discountEndsLabel (lib/discount.ts) пока говорит только по-русски («до 24
+ * ноября», «остался 1 день»), а русский срок посреди английской причины —
+ * ровно то, чего на /en быть не должно. Поэтому, пока у неё нет языка,
+ * английская причина срок не называет, как при hideUrgency: цена и процент
+ * остаются, обратный отсчёт молчит. Когда язык появится, здесь останется одна
+ * строка: discountEndsLabel(endsAt, nowSec, { locale }) для обоих языков.
+ */
+function endsLabel(endsAt: number, nowSec: number, locale: Locale): string | null {
+  return locale === 'en' ? null : discountEndsLabel(endsAt, nowSec)
 }
 
 /**
@@ -1266,8 +1495,10 @@ export function reasonPrice(
   meta: GameMeta | undefined,
   nowSec: number,
   hideUrgency = false,
+  /** Язык причины — тот же, что у heuristicPicks (opts.locale): иначе разрез по хвосту промахнётся */
+  locale: Locale = 'ru',
 ): string {
-  return source === 'new' ? priceSentence(meta, nowSec, hideUrgency) : ''
+  return source === 'new' ? priceSentence(meta, nowSec, hideUrgency, locale) : ''
 }
 
 /** null, а не слово-затычка: см. комментарий к SOURCE_TEMPLATES. */
@@ -1321,16 +1552,18 @@ function matchedTags(
   meta: GameMeta | undefined,
   profile: Record<string, number>,
   tagWeight: TagWeight | null,
+  locale: Locale = 'ru',
 ): ReasonTags | null {
   if (!meta) return null
   const tags = sharedTasteTags(profile, meta, tagWeight)
     .filter((t) => !GENERIC_TAGS.has(t) && (!tagWeight || tagWeight(t) > 0))
     .slice(0, REASON_TAGS)
   // Отбор — по английским ключам (профиль вкуса собран из них), а в причину
-  // идут русские подписи: фраза русская, и «По тегам (Roguelike, Deckbuilding)»
-  // посреди неё читалось как недопереведённое. Чипсы под причиной переводятся
-  // тем же tagRu — одно и то же слово в обоих местах.
-  return tags.length ? { text: tags.map(tagRu).join(', '), n: tags.length } : null
+  // идут подписи на языке фразы: в русской «По тегам (Roguelike, Deckbuilding)»
+  // читалось как недопереведённое, а в английской подпись и есть сам тег.
+  // Чипсы под причиной подписываются тем же tagLabel — одно и то же слово в
+  // обоих местах.
+  return tags.length ? { text: tags.map((t) => tagLabel(t, locale)).join(', '), n: tags.length } : null
 }
 
 /**
@@ -1374,6 +1607,13 @@ export type HeuristicOptions = {
    * пересказа патча (patchOf не читается) и без ценового хвоста.
    */
   voice?: 'you' | 'them'
+  /**
+   * Язык причины (по умолчанию 'ru' — прежний вывод до буквы). На 'en' шаблоны,
+   * подписи тегов и ценовой хвост — английские, а patchOf обязан отдавать
+   * английский пересказ (tldr_en): русский пересказ в английской причине
+   * patchSentence не возьмёт, и фраза будет прежней, без факта.
+   */
+  locale?: Locale
 }
 
 const DEFAULT_GUARANTEED: readonly CandidateSource[] = CANDIDATE_SOURCES.filter(
@@ -1448,11 +1688,12 @@ export function heuristicPicks(
   }
   chosen.sort((a, b) => b.score - a.score)
   const them = opts.voice === 'them'
-  const templates = them ? THEM_TEMPLATES : SOURCE_TEMPLATES
+  const locale = opts.locale ?? 'ru'
+  const templates = TEMPLATES[them ? 'them' : 'you'][locale]
   return chosen.map((c) => {
     const meta = metaOf(c.appid)
     // Ценника на главной нет — см. THEM_TEMPLATES
-    const price = them ? '' : reasonPrice(c.source, meta, nowSec, opts.hideUrgency)
+    const price = them ? '' : reasonPrice(c.source, meta, nowSec, opts.hideUrgency, locale)
     return {
       appid: c.appid,
       name: c.name,
@@ -1474,7 +1715,7 @@ export function heuristicPicks(
        * человека ему же обратно.
        */
       reason:
-        templates[c.source](c.name, matchedTags(meta, profile, tagWeight), {
+        templates[c.source](c.name, matchedTags(meta, profile, tagWeight, locale), {
           anchor: opts.anchorOf?.(c.appid) ?? null,
           hours: opts.hoursOf?.(c.appid) ?? null,
           entry: meta ? entryCost(meta) : null,
